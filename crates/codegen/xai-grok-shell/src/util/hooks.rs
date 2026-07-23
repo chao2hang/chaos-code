@@ -88,7 +88,10 @@ pub fn discover_hook_source_paths(
             project.push(root.join(".claude").join("settings.json"));
             project.push(root.join(".claude").join("settings.local.json"));
         }
+        // Dual-read project hooks: legacy `.grok/hooks` then Chaos `.chaos/hooks`
+        // (later sources win when both define the same event).
         project.push(root.join(".grok").join("hooks"));
+        project.push(root.join(".chaos").join("hooks"));
         if !skip_cursor {
             project.push(root.join(".cursor").join("hooks.json"));
         }

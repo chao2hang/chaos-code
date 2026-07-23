@@ -147,12 +147,20 @@ pub fn discover_plugins(
 // Project config
 // ---------------------------------------------------------------------------
 
-/// Load the project config from `<root_cwd>/.grok/config.toml`.
+/// Load the project config from `<root_cwd>/.chaos/config.toml` or
+/// `<root_cwd>/.grok/config.toml` (Chaos preferred when both exist).
 ///
-/// Returns `Value::Null` if the file does not exist or cannot be
-/// parsed. Non-fatal errors are logged.
+/// Returns `Value::Null` if neither file exists or cannot be parsed.
+/// Non-fatal errors are logged.
 pub fn load_project_config(root_cwd: &Path) -> Value {
-    let config_path = root_cwd.join(".grok").join("config.toml");
+    // Prefer Chaos when present; fall back to legacy Grok project config.
+    let candidates = [
+        root_cwd.join(".chaos").join("config.toml"),
+        root_cwd.join(".grok").join("config.toml"),
+    ];
+    let Some(config_path) = candidates.into_iter().find(|p| p.is_file()) else {
+        return Value::Null;
+    };
     match xai_grok_config::load_config_file(&config_path) {
         Ok(toml::Value::Table(ref t)) if t.is_empty() => {
             // The config loader returns an empty table when the file

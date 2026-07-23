@@ -849,9 +849,10 @@ pub fn discover_skills_for_paths(
     already_checked: &mut HashSet<PathBuf>,
     compat: CompatConfig,
 ) -> Vec<SkillInfo> {
-    // `.grok` and `.agents` are always scanned; `.claude` is gated on the
-    // claude-vendor skills cell. (`.cursor` is excluded here by design — see fn docs.)
-    let mut config_dir_names: Vec<&str> = vec![".grok", ".agents"];
+    // `.grok` / `.chaos` and `.agents` are always scanned; `.claude` is gated
+    // on the claude-vendor skills cell. (`.cursor` is excluded here by design
+    // — see fn docs.) Within a depth, `.grok` then `.chaos` so Chaos wins.
+    let mut config_dir_names: Vec<&str> = vec![".grok", ".chaos", ".agents"];
     if compat.claude.skills {
         config_dir_names.push(".claude");
     }
