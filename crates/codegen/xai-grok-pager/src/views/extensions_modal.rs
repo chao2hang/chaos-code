@@ -199,14 +199,14 @@ pub fn plugin_group(plugin: &xai_hooks_plugins_types::PluginInfo) -> PluginGroup
     use xai_hooks_plugins_types::{PluginOrigin, PluginScope};
 
     match &plugin.origin {
-        Some(PluginOrigin::ProjectGrok) => PluginGroup::new(0, "origin:project", "Project"),
+        Some(PluginOrigin::ProjectGrok) => PluginGroup::new(0, "origin:project", "项目"),
         Some(PluginOrigin::ProjectClaude) => {
-            PluginGroup::new(1, "origin:project-claude", "Project (Claude)")
+            PluginGroup::new(1, "origin:project-claude", "项目 (Claude)")
         }
-        Some(PluginOrigin::UserGrok) => PluginGroup::new(2, "origin:user", "User"),
+        Some(PluginOrigin::UserGrok) => PluginGroup::new(2, "origin:user", "用户"),
         Some(PluginOrigin::UserClaude)
         | Some(PluginOrigin::ClaudeInstalled { marketplace: None }) => {
-            PluginGroup::new(3, "origin:user-claude", "User (Claude)")
+            PluginGroup::new(3, "origin:user-claude", "用户 (Claude)")
         }
         Some(PluginOrigin::ClaudeMarketplace { marketplace })
         | Some(PluginOrigin::ClaudeInstalled {
@@ -226,24 +226,24 @@ pub fn plugin_group(plugin: &xai_hooks_plugins_types::PluginInfo) -> PluginGroup
         },
         Some(PluginOrigin::MarketplaceInstall {
             source_name: None, ..
-        }) => PluginGroup::new(6, "origin:direct", "Direct installs"),
-        Some(PluginOrigin::CliOverride) => PluginGroup::new(7, "origin:cli", "CLI override"),
-        Some(PluginOrigin::ConfigPath) => PluginGroup::new(8, "origin:config", "Custom paths"),
+        }) => PluginGroup::new(6, "origin:direct", "直接安装"),
+        Some(PluginOrigin::CliOverride) => PluginGroup::new(7, "origin:cli", "CLI 覆盖"),
+        Some(PluginOrigin::ConfigPath) => PluginGroup::new(8, "origin:config", "自定义路径"),
         Some(PluginOrigin::Unknown) | None => match plugin.scope {
-            PluginScope::Project => PluginGroup::new(0, "origin:project", "Project"),
+            PluginScope::Project => PluginGroup::new(0, "origin:project", "项目"),
             PluginScope::User => match plugin.marketplace_source.as_deref() {
                 Some(source) if source.starts_with("git: ") => {
-                    PluginGroup::new(6, "origin:direct", "Direct installs")
+                    PluginGroup::new(6, "origin:direct", "直接安装")
                 }
                 Some(source) => PluginGroup {
                     rank: 5,
                     key: format!("grok-mp:{source}"),
                     label: source.to_string(),
                 },
-                None => PluginGroup::new(2, "origin:user", "User"),
+                None => PluginGroup::new(2, "origin:user", "用户"),
             },
-            PluginScope::Cli => PluginGroup::new(7, "origin:cli", "CLI override"),
-            PluginScope::Config => PluginGroup::new(8, "origin:config", "Custom paths"),
+            PluginScope::Cli => PluginGroup::new(7, "origin:cli", "CLI 覆盖"),
+            PluginScope::Config => PluginGroup::new(8, "origin:config", "自定义路径"),
         },
     }
 }
@@ -514,10 +514,12 @@ impl ExtensionsTab {
     pub fn label(self) -> &'static str {
         match self {
             Self::Hooks => "Hooks",
-            Self::Plugins => "Plugins",
-            Self::Marketplace => "Marketplace",
+            Self::Plugins => "插件",
+            Self::Marketplace => "市场",
+            // Keep product names Hooks/Skills as English brand tokens;
+            // Plugins/Marketplace/MCP use localized UI labels.
             Self::Skills => "Skills",
-            Self::McpServers => "MCP Servers",
+            Self::McpServers => "MCP 服务器",
         }
     }
 
@@ -570,9 +572,9 @@ pub enum StatusFilter {
 impl StatusFilter {
     pub fn label(self) -> &'static str {
         match self {
-            Self::All => "All",
-            Self::Enabled => "Enabled",
-            Self::Disabled => "Disabled",
+            Self::All => "全部",
+            Self::Enabled => "已启用",
+            Self::Disabled => "已禁用",
         }
     }
 
@@ -816,7 +818,7 @@ impl ModalInput {
                     .map(|(_, f)| f.label())
                     .collect();
                 if !empty_required.is_empty() {
-                    self.error = Some(format!("Required: {}", empty_required.join(", ")));
+                    self.error = Some(format!("必填: {}", empty_required.join(", ")));
                     return ModalInputOutcome::Changed;
                 }
                 ModalInputOutcome::Submit {
@@ -1001,7 +1003,7 @@ impl McpSetupFormState {
             }
             KeyCode::Enter => {
                 if self.selected_value().is_none() {
-                    self.error = Some("Select an option".to_string());
+                    self.error = Some("请选择一项".to_string());
                     McpSetupOutcome::Changed
                 } else {
                     McpSetupOutcome::Submit
@@ -1066,15 +1068,15 @@ pub const RESULT_NOTICE_TICKS: u16 = 75;
 /// the renderer (hint bar), the picker (`PickerConfig::action_keys`), and
 /// `resolve_key` (must have a matching arm for every entry).
 pub const MCP_SERVERS_ACTION_KEYS: &[(char, &str)] = &[
-    ('r', "refresh"),
-    ('a', "add"),
-    ('i', "auth"),
+    ('r', "刷新"),
+    ('a', "添加"),
+    ('i', "认证"),
     (' ', "toggle"),
-    ('x', "remove"),
+    ('x', "移除"),
 ];
 
 /// Footer label for the MCP tab Ctrl+O shortcut (not in [`MCP_SERVERS_ACTION_KEYS`]).
-pub const MCP_SERVERS_OPEN_CONNECTORS_FOOTER: &str = "ctrl-o open";
+pub const MCP_SERVERS_OPEN_CONNECTORS_FOOTER: &str = "ctrl-o 打开";
 
 /// Map an action key character to its display string for shortcut hints.
 ///
@@ -1105,27 +1107,27 @@ pub fn action_key_display(ch: char) -> &'static str {
 pub fn extensions_action_keys(tab: ExtensionsTab) -> Vec<(char, &'static str)> {
     match tab {
         ExtensionsTab::Hooks => vec![
-            ('r', "reload"),
-            ('a', "add"),
+            ('r', "重载"),
+            ('a', "添加"),
             (' ', "toggle"),
-            ('x', "remove"),
+            ('x', "移除"),
         ],
         ExtensionsTab::Plugins => vec![
-            ('r', "reload"),
-            ('u', "update"),
-            ('a', "install"),
+            ('r', "重载"),
+            ('u', "更新"),
+            ('a', "安装"),
             (' ', "toggle"),
-            ('x', "uninstall"),
+            ('x', "卸载"),
         ],
         ExtensionsTab::Marketplace => vec![
-            ('i', "install"),
-            ('r', "refresh"),
-            ('u', "update"),
-            ('a', "add source"),
-            ('d', "uninstall"),
-            ('x', "remove source"),
+            ('i', "安装"),
+            ('r', "刷新"),
+            ('u', "更新"),
+            ('a', "添加源"),
+            ('d', "卸载"),
+            ('x', "移除源"),
         ],
-        ExtensionsTab::Skills => vec![(' ', "toggle"), ('f', "filter"), ('r', "reload")],
+        ExtensionsTab::Skills => vec![(' ', "toggle"), ('f', "筛选"), ('r', "重载")],
         ExtensionsTab::McpServers => MCP_SERVERS_ACTION_KEYS.to_vec(),
     }
 }
@@ -1160,9 +1162,9 @@ fn action_key_footer_desc_for_mapping(
 ) -> &'static str {
     if ch == ' ' && desc == "toggle" {
         match selected_item_enabled_at(state, entry_data_indices, entry_group_keys, selected) {
-            Some(true) => "disable",
-            Some(false) => "enable",
-            None => "enable/disable",
+            Some(true) => "禁用",
+            Some(false) => "启用",
+            None => "启用/禁用",
         }
     } else {
         desc
@@ -1171,7 +1173,7 @@ fn action_key_footer_desc_for_mapping(
 
 pub fn action_key_cheatsheet_desc(ch: char, desc: &'static str) -> &'static str {
     if ch == ' ' && desc == "toggle" {
-        "enable/disable"
+        "启用/禁用"
     } else {
         desc
     }
@@ -1281,11 +1283,11 @@ pub fn tab_all_hints(tab: ExtensionsTab) -> Vec<crate::views::shortcuts_bar::Hin
         hints.push(item);
     }
     // Common navigation.
-    hints.push(HintItem::paired(crate::key!('j'), crate::key!('k'), "nav"));
-    hints.push(HintItem::new(crate::key!(Tab), "switch tab"));
-    hints.push(HintItem::new(crate::key!('/'), "search"));
-    hints.push(HintItem::new(crate::key!(Enter), "expand"));
-    hints.push(HintItem::new(crate::key!(Esc), "close"));
+    hints.push(HintItem::paired(crate::key!('j'), crate::key!('k'), "导航"));
+    hints.push(HintItem::new(crate::key!(Tab), "切换标签"));
+    hints.push(HintItem::new(crate::key!('/'), "搜索"));
+    hints.push(HintItem::new(crate::key!(Enter), "展开"));
+    hints.push(HintItem::new(crate::key!(Esc), "关闭"));
     hints
 }
 
@@ -1309,9 +1311,9 @@ pub fn resolve_key(tab: ExtensionsTab, ch: char) -> Option<ButtonAction> {
         (ExtensionsTab::Plugins, 'a') => Some(ButtonAction::StartInput {
             command_prefix: "plugins_install".into(),
             fields: vec![FieldSpec {
-                label: "Source".into(),
+                label: "来源".into(),
                 required: true,
-                placeholder: Some("owner/repo, URL, or local path".into()),
+                placeholder: Some("owner/repo、URL 或本地路径".into()),
             }],
         }),
         // Toggle enable/disable on the selected plugin.
@@ -1322,7 +1324,7 @@ pub fn resolve_key(tab: ExtensionsTab, ch: char) -> Option<ButtonAction> {
         (ExtensionsTab::Hooks, 'a') => Some(ButtonAction::StartInput {
             command_prefix: "hooks_add".into(),
             fields: vec![FieldSpec {
-                label: "Path".into(),
+                label: "路径".into(),
                 required: true,
                 placeholder: None,
             }],
@@ -1342,9 +1344,9 @@ pub fn resolve_key(tab: ExtensionsTab, ch: char) -> Option<ButtonAction> {
         (ExtensionsTab::Marketplace, 'a') => Some(ButtonAction::StartInput {
             command_prefix: "marketplace_add_source".into(),
             fields: vec![FieldSpec {
-                label: "Source".into(),
+                label: "来源".into(),
                 required: true,
-                placeholder: Some("owner/repo, git URL, or local path".into()),
+                placeholder: Some("owner/repo、git URL 或本地路径".into()),
             }],
         }),
         (ExtensionsTab::Marketplace, 'x') => Some(ButtonAction::RemoveSelectedMarketplaceSource),
@@ -1358,14 +1360,14 @@ pub fn resolve_key(tab: ExtensionsTab, ch: char) -> Option<ButtonAction> {
             // `build_action_from_input` reads matching indices.
             fields: vec![
                 FieldSpec {
-                    label: "URL / Command".into(),
+                    label: "URL / 命令".into(),
                     required: true,
-                    placeholder: Some("https://... or command [args...]".into()),
+                    placeholder: Some("https://... 或 command [args...]".into()),
                 },
                 FieldSpec {
-                    label: "Name".into(),
+                    label: "名称".into(),
                     required: false,
-                    placeholder: Some("Auto generated by URL".into()),
+                    placeholder: Some("可由 URL 自动生成".into()),
                 },
             ],
         }),
@@ -2250,21 +2252,21 @@ pub fn derive_source_label(source_dir: &str) -> (String, bool) {
             .map(|w| w[2].clone())
     };
     if let Some(name) = plugin_name("plugins").or_else(|| plugin_name("installed-plugins")) {
-        return (format!("Plugin: {name}"), false);
+        return (format!("插件: {name}"), false);
     }
     // Global hooks under $GROK_HOME/hooks
     let global_hooks = grok.join("hooks");
     let global_str = global_hooks.display().to_string();
     if source_dir == global_str || source_dir.starts_with(&format!("{global_str}/")) {
-        return ("Global hooks".into(), false);
+        return ("全局 Hooks".into(), false);
     }
     // Settings under .claude/
     if source_dir.contains("/.claude/") {
-        return ("Claude settings".into(), false);
+        return ("Claude 设置".into(), false);
     }
     // Project hooks
     if source_dir.ends_with("/.grok/hooks") || source_dir.contains("/.grok/hooks/") {
-        return ("Project hooks".into(), false);
+        return ("项目 Hooks".into(), false);
     }
     // Custom directory — removable
     let display = {
@@ -2272,15 +2274,15 @@ pub fn derive_source_label(source_dir: &str) -> (String, bool) {
             let prefix = crate::util::display_grok_home_prefix();
             let rest_str = rest.to_string_lossy();
             let rest_trimmed = rest_str.strip_prefix('/').unwrap_or(&rest_str);
-            format!("Custom: {prefix}/{rest_trimmed}")
+            format!("自定义: {prefix}/{rest_trimmed}")
         } else if let Some(home) = dirs::home_dir() {
             let home_str = home.display().to_string();
             source_dir
                 .strip_prefix(&home_str)
-                .map(|rest| format!("Custom: ~{rest}"))
-                .unwrap_or_else(|| format!("Custom: {source_dir}"))
+                .map(|rest| format!("自定义: ~{rest}"))
+                .unwrap_or_else(|| format!("自定义: {source_dir}"))
         } else {
-            format!("Custom: {source_dir}")
+            format!("自定义: {source_dir}")
         }
     };
     (display, true)
@@ -2397,7 +2399,7 @@ fn build_plugin_fields(plugin: &xai_hooks_plugins_types::PluginInfo) -> Vec<Stri
 const COMPONENT_ITEMS_CAP: usize = 8;
 
 /// Copy for a catalog entry verified to provide nothing detectable.
-const NO_DETECTABLE_COMPONENTS: &str = "no detectable components";
+const NO_DETECTABLE_COMPONENTS: &str = "未检测到组件";
 
 fn component_categories(
     components: &xai_hooks_plugins_types::PluginComponents,
@@ -2910,16 +2912,16 @@ pub fn render_extensions_modal(
                                 continue;
                             }
                             let status_label = match plugin.install_status.as_str() {
-                                "installed" => "[installed]",
-                                "update_available" => "[update available]",
+                                "installed" => "[已安装]",
+                                "update_available" => "[有更新]",
                                 _ => "",
                             };
                             entry_labels.push(plugin.name.clone());
                             let right = match (plugin.version.as_deref(), plugin.author.as_deref())
                             {
-                                (Some(v), Some(a)) => format!("v{v} by {a}"),
+                                (Some(v), Some(a)) => format!("v{v} · {a}"),
                                 (Some(v), None) => format!("v{v}"),
-                                (None, Some(a)) => format!("by {a}"),
+                                (None, Some(a)) => a.to_string(),
                                 (None, None) => String::new(),
                             };
                             entry_right_labels.push(right);
@@ -2961,7 +2963,7 @@ pub fn render_extensions_modal(
                                     if plugin.remote_url.is_some() {
                                         fields.push((
                                             "provides".to_string(),
-                                            "contents shown after install".to_string(),
+                                            "安装后显示内容".to_string(),
                                         ));
                                     }
                                 }
@@ -3276,17 +3278,17 @@ pub fn render_extensions_modal(
         // Input-mode is handled below; it owns its own footer.
     } else if state.mcp_setup.is_some() {
         shortcuts.push(Shortcut {
-            label: "Enter save and authenticate",
+            label: "Enter 保存并认证",
             clickable: false,
             id: 0,
         });
         shortcuts.push(Shortcut {
-            label: "↑/↓ select",
+            label: "↑/↓ 选择",
             clickable: false,
             id: 0,
         });
         shortcuts.push(Shortcut {
-            label: "Esc cancel",
+            label: "Esc 取消",
             clickable: false,
             id: 0,
         });
@@ -3295,21 +3297,21 @@ pub fn render_extensions_modal(
         // handles. Tab is either path completion (single-field) or
         // field navigation (multi-field).
         shortcuts.push(Shortcut {
-            label: "Enter submit",
+            label: "Enter 提交",
             clickable: false,
             id: 0,
         });
         shortcuts.push(Shortcut {
             label: if input.is_multi_field() {
-                "Tab/Shift+Tab field"
+                "Tab/Shift+Tab 字段"
             } else {
-                "Tab complete"
+                "Tab 补全"
             },
             clickable: false,
             id: 0,
         });
         shortcuts.push(Shortcut {
-            label: "Esc cancel",
+            label: "Esc 取消",
             clickable: false,
             id: 0,
         });
@@ -3321,7 +3323,7 @@ pub fn render_extensions_modal(
         // cycles forward; `Shift+Tab` is still listed in the
         // cheatsheet (`?` shortcut help).
         shortcuts.push(Shortcut {
-            label: "Tab tabs",
+            label: "Tab 切换页",
             clickable: true,
             id: 98,
         });
@@ -3344,7 +3346,7 @@ pub fn render_extensions_modal(
         // from the footer to save space — the cheatsheet still lists it.
         // ID 99 = close action, handled in the mouse handler.
         shortcuts.push(Shortcut {
-            label: "Esc close",
+            label: "Esc 关闭",
             clickable: true,
             id: 99,
         });
@@ -4013,12 +4015,12 @@ mod tests {
         // a (non-removable) plugin, not a removable "Custom" source. The user
         // grok-home branch is GROK_HOME-aware; this covers the project fallback.
         let (label, is_custom) = derive_source_label("/repo/work/.grok/plugins/my-plugin/hooks");
-        assert_eq!(label, "Plugin: my-plugin");
+        assert_eq!(label, "插件: my-plugin");
         assert!(!is_custom);
 
         let (label, is_custom) =
             derive_source_label("/repo/work/.grok/installed-plugins/vendor-abc123/skills");
-        assert_eq!(label, "Plugin: vendor-abc123");
+        assert_eq!(label, "插件: vendor-abc123");
         assert!(!is_custom);
     }
 
@@ -4073,45 +4075,45 @@ mod tests {
             (
                 ExtensionsTab::Hooks,
                 &[
-                    ('r', "reload"),
-                    ('a', "add"),
+                    ('r', "重载"),
+                    ('a', "添加"),
                     (' ', "toggle"),
-                    ('x', "remove"),
+                    ('x', "移除"),
                 ],
             ),
             (
                 ExtensionsTab::Plugins,
                 &[
-                    ('r', "reload"),
-                    ('u', "update"),
-                    ('a', "install"),
+                    ('r', "重载"),
+                    ('u', "更新"),
+                    ('a', "安装"),
                     (' ', "toggle"),
-                    ('x', "uninstall"),
+                    ('x', "卸载"),
                 ],
             ),
             (
                 ExtensionsTab::Marketplace,
                 &[
-                    ('i', "install"),
-                    ('r', "refresh"),
-                    ('u', "update"),
-                    ('a', "add_source"),
-                    ('d', "uninstall"),
-                    ('x', "remove_source"),
+                    ('i', "安装"),
+                    ('r', "刷新"),
+                    ('u', "更新"),
+                    ('a', "添加源"),
+                    ('d', "卸载"),
+                    ('x', "移除源"),
                 ],
             ),
             (
                 ExtensionsTab::Skills,
-                &[(' ', "toggle"), ('f', "filter"), ('r', "reload")],
+                &[(' ', "toggle"), ('f', "筛选"), ('r', "重载")],
             ),
             (
                 ExtensionsTab::McpServers,
                 &[
-                    ('r', "refresh"),
-                    ('a', "add"),
-                    ('i', "auth"),
+                    ('r', "刷新"),
+                    ('a', "添加"),
+                    ('i', "认证"),
                     (' ', "toggle"),
-                    ('x', "remove"),
+                    ('x', "移除"),
                 ],
             ),
         ];
@@ -4935,9 +4937,9 @@ mod tests {
         let mut state = ExtensionsModalState::new(ExtensionsTab::Plugins);
         assert_eq!(
             action_key_footer_desc(' ', "toggle", &state),
-            "enable/disable"
+            "启用/禁用"
         );
-        assert_eq!(action_key_cheatsheet_desc(' ', "toggle"), "enable/disable");
+        assert_eq!(action_key_cheatsheet_desc(' ', "toggle"), "启用/禁用");
 
         state.entry_data_indices = vec![Some(0), Some(1)];
         state.picker_state.selected = 0;
@@ -4949,15 +4951,15 @@ mod tests {
         });
 
         assert_eq!(state.selected_item_enabled(), Some(true));
-        assert_eq!(action_key_footer_desc(' ', "toggle", &state), "disable");
+        assert_eq!(action_key_footer_desc(' ', "toggle", &state), "禁用");
 
         state.picker_state.selected = 1;
         assert_eq!(state.selected_item_enabled(), Some(false));
-        assert_eq!(action_key_footer_desc(' ', "toggle", &state), "enable");
+        assert_eq!(action_key_footer_desc(' ', "toggle", &state), "启用");
 
-        assert_eq!(action_key_footer_desc('a', "install", &state), "install");
-        assert_eq!(action_key_footer_desc('r', "reload", &state), "reload");
-        assert_eq!(action_key_cheatsheet_desc('a', "install"), "install");
+        assert_eq!(action_key_footer_desc('a', "安装", &state), "安装");
+        assert_eq!(action_key_footer_desc('r', "重载", &state), "重载");
+        assert_eq!(action_key_cheatsheet_desc('a', "安装"), "安装");
     }
 
     /// Regression: footer Space verb must follow the *current*
@@ -4979,7 +4981,7 @@ mod tests {
         state.picker_state.selected = 0;
         assert_eq!(
             action_key_footer_desc_for_mapping(' ', "toggle", &state, &unfiltered, &[], 0,),
-            "disable"
+            "禁用"
         );
 
         // Filtered to the disabled plugin only — same selected *row* index 0,
@@ -4992,14 +4994,14 @@ mod tests {
         );
         assert_eq!(
             action_key_footer_desc_for_mapping(' ', "toggle", &state, &filtered, &[], 0),
-            "enable"
+            "启用"
         );
 
         // Published-state path (input handling / unit tests) still works when
         // state.entry_data_indices is set explicitly.
         state.entry_data_indices = filtered;
         assert_eq!(state.selected_item_enabled(), Some(false));
-        assert_eq!(action_key_footer_desc(' ', "toggle", &state), "enable");
+        assert_eq!(action_key_footer_desc(' ', "toggle", &state), "启用");
     }
 
     #[test]
@@ -5025,7 +5027,7 @@ mod tests {
             );
         }
         let plugins = tab_all_hints(ExtensionsTab::Plugins);
-        assert!(plugins.iter().any(|h| h.label == "install"));
+        assert!(plugins.iter().any(|h| h.label == "安装"));
         assert!(!plugins.iter().any(|h| h.label == "add"));
     }
 
@@ -5039,7 +5041,7 @@ mod tests {
         }
         assert_eq!(
             action_telemetry_label(ExtensionsTab::Plugins, 'a').as_deref(),
-            Some("install")
+            Some("安装")
         );
         assert_eq!(
             action_telemetry_label(ExtensionsTab::Plugins, ' ').as_deref(),
@@ -6257,7 +6259,7 @@ mod tests {
             }) => {
                 assert_eq!(command_prefix, "marketplace_add_source");
                 assert_eq!(fields.len(), 1);
-                assert_eq!(fields[0].label, "Source");
+                assert_eq!(fields[0].label, "来源");
                 assert!(fields[0].required);
             }
             other => panic!("expected StartInput for marketplace_add_source, got {other:?}"),
@@ -6601,12 +6603,16 @@ mod tests {
     }
 
     fn buffer_count(buf: &Buffer, needle: &str) -> usize {
+        use unicode_width::UnicodeWidthStr;
         let area = *buf.area();
         let mut count = 0usize;
         for y in area.top()..area.bottom() {
             let mut row = String::new();
-            for x in area.left()..area.right() {
-                row.push_str(buf[(x, y)].symbol());
+            let mut x = area.left();
+            while x < area.right() {
+                let symbol = buf[(x, y)].symbol();
+                row.push_str(symbol);
+                x = x.saturating_add(UnicodeWidthStr::width(symbol).max(1) as u16);
             }
             count += row.matches(needle).count();
         }
@@ -6663,7 +6669,7 @@ mod tests {
             "legacy scan counts must not render in the expanded view"
         );
         assert_eq!(
-            buffer_count(&expanded_buf, "contents shown after install"),
+            buffer_count(&expanded_buf, "安装后显示内容"),
             1,
             "catalog-less URL entry shows the install hint in the provides field"
         );
@@ -6720,25 +6726,25 @@ mod tests {
     fn plugin_group_maps_each_origin_variant() {
         use xai_hooks_plugins_types::PluginOrigin;
         for (origin, rank, key, label) in [
-            (PluginOrigin::ProjectGrok, 0, "origin:project", "Project"),
+            (PluginOrigin::ProjectGrok, 0, "origin:project", "项目"),
             (
                 PluginOrigin::ProjectClaude,
                 1,
                 "origin:project-claude",
-                "Project (Claude)",
+                "项目 (Claude)",
             ),
-            (PluginOrigin::UserGrok, 2, "origin:user", "User"),
+            (PluginOrigin::UserGrok, 2, "origin:user", "用户"),
             (
                 PluginOrigin::UserClaude,
                 3,
                 "origin:user-claude",
-                "User (Claude)",
+                "用户 (Claude)",
             ),
             (
                 PluginOrigin::ClaudeInstalled { marketplace: None },
                 3,
                 "origin:user-claude",
-                "User (Claude)",
+                "用户 (Claude)",
             ),
             (
                 PluginOrigin::ClaudeMarketplace {
@@ -6764,10 +6770,10 @@ mod tests {
                 },
                 6,
                 "origin:direct",
-                "Direct installs",
+                "直接安装",
             ),
-            (PluginOrigin::CliOverride, 7, "origin:cli", "CLI override"),
-            (PluginOrigin::ConfigPath, 8, "origin:config", "Custom paths"),
+            (PluginOrigin::CliOverride, 7, "origin:cli", "CLI 覆盖"),
+            (PluginOrigin::ConfigPath, 8, "origin:config", "自定义路径"),
         ] {
             let group = plugin_group(&make_plugin_with_origin("p", origin.clone()));
             assert_eq!(group.rank, rank, "{origin:?}");
@@ -6849,8 +6855,8 @@ mod tests {
         ]);
         let buf = render_plugins_into_buffer(&mut state, 100, 40);
 
-        assert_eq!(buffer_count(&buf, "User (1 plugin)"), 1);
-        assert_eq!(buffer_count(&buf, "User (Claude) (1 plugin)"), 1);
+        assert_eq!(buffer_count(&buf, "用户 (1 plugin)"), 1);
+        assert_eq!(buffer_count(&buf, "用户 (Claude) (1 plugin)"), 1);
         assert_eq!(buffer_count(&buf, "claude-market (1 plugin)"), 1);
         assert_eq!(buffer_count(&buf, "user-tool"), 1);
         assert_eq!(buffer_count(&buf, "claude-tool"), 1);
@@ -6939,7 +6945,7 @@ mod tests {
         state.plugins_collapsed_groups.insert("origin:user".into());
 
         let buf = render_plugins_into_buffer(&mut state, 100, 40);
-        assert_eq!(buffer_count(&buf, "User (1 plugin)"), 1);
+        assert_eq!(buffer_count(&buf, "用户 (1 plugin)"), 1);
         assert_eq!(buffer_count(&buf, "user-tool"), 0);
 
         state.picker_state.set_query("user");
@@ -6962,9 +6968,9 @@ mod tests {
         let mut state = plugins_modal_state(vec![direct, mp, plain]);
         let buf = render_plugins_into_buffer(&mut state, 100, 40);
 
-        assert_eq!(buffer_count(&buf, "User (1 plugin)"), 1);
+        assert_eq!(buffer_count(&buf, "用户 (1 plugin)"), 1);
         assert_eq!(buffer_count(&buf, "xAI Official (1 plugin)"), 1);
-        assert_eq!(buffer_count(&buf, "Direct installs (1 plugin)"), 1);
+        assert_eq!(buffer_count(&buf, "直接安装 (1 plugin)"), 1);
     }
 
     #[test]
@@ -6980,11 +6986,11 @@ mod tests {
 
         let buf = render_plugins_into_buffer(&mut state, 100, 40);
         assert_eq!(
-            buffer_count(&buf, "User (1 plugin)"),
+            buffer_count(&buf, "用户 (1 plugin)"),
             0,
             "group with no matching plugins must be omitted"
         );
-        assert_eq!(buffer_count(&buf, "User (Claude) (1 plugin)"), 1);
+        assert_eq!(buffer_count(&buf, "用户 (Claude) (1 plugin)"), 1);
         assert_eq!(buffer_count(&buf, "off-tool"), 1);
         assert_eq!(buffer_count(&buf, "[disabled]"), 1);
     }
@@ -7004,12 +7010,12 @@ mod tests {
 
         let collapsed_buf = render_marketplace_into_buffer(&mut state, 100, 40);
         assert_eq!(
-            buffer_count(&collapsed_buf, "no detectable components"),
+            buffer_count(&collapsed_buf, "未检测到组件"),
             0,
             "collapsed row must not show the empty-catalog placeholder"
         );
         assert_eq!(
-            buffer_count(&collapsed_buf, "contents shown after install"),
+            buffer_count(&collapsed_buf, "安装后显示内容"),
             0,
             "collapsed row must not show the install hint placeholder"
         );
@@ -7018,12 +7024,12 @@ mod tests {
         state.picker_state.expanded.insert(2);
         let expanded_buf = render_marketplace_into_buffer(&mut state, 100, 40);
         assert_eq!(
-            buffer_count(&expanded_buf, "no detectable components"),
+            buffer_count(&expanded_buf, "未检测到组件"),
             1,
             "expanded view shows the empty-catalog placeholder exactly once"
         );
         assert_eq!(
-            buffer_count(&expanded_buf, "contents shown after install"),
+            buffer_count(&expanded_buf, "安装后显示内容"),
             1,
             "expanded view shows the install hint placeholder exactly once"
         );

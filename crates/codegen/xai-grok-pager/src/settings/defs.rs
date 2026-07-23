@@ -41,34 +41,34 @@ pub(crate) const MAX_THOUGHTS_WIDTH_KEY: &str = "max_thoughts_width";
 const THEME_CHOICES: &[EnumChoice] = &[
     EnumChoice {
         canonical: "auto",
-        display: "Auto",
-        description: "Follow system dark/light appearance.",
+        display: "自动",
+        description: "跟随系统深色/浅色外观。",
     },
     EnumChoice {
         canonical: "groknight",
         display: "Chaos Night",
-        description: "Neutral dark with magenta accent.",
+        description: "中性深色，品红强调色。",
     },
     EnumChoice {
         canonical: "grokday",
         display: "Chaos Day",
-        description: "Light theme for bright environments.",
+        description: "适合明亮环境的浅色主题。",
     },
     EnumChoice {
         canonical: "tokyonight",
         display: "Tokyo Night",
-        description: "Dark + blue-tinted; needs truecolor.",
+        description: "深蓝调深色；需要真彩色。",
     },
     // ASCII "Rose Pine Moon" (not "Rosé") for cross-terminal compatibility.
     EnumChoice {
         canonical: "rosepine-moon",
         display: "Rose Pine Moon",
-        description: "Muted dark with mauve accents; needs truecolor.",
+        description: "柔和深色带淡紫强调；需要真彩色。",
     },
     EnumChoice {
         canonical: "oscura-midnight",
         display: "Oscura Midnight",
-        description: "Deep dark with warm accents; needs truecolor.",
+        description: "深黑带暖色强调；需要真彩色。",
     },
 ];
 
@@ -99,23 +99,23 @@ const PERMISSION_MODE_CHOICES: &[EnumChoice] = &[
     // distinct on disk and in the modal indicator.
     EnumChoice {
         canonical: "default",
-        display: "Default",
-        description: "Use the agent's default permission behavior (currently equivalent to Ask).",
+        display: "默认",
+        description: "使用 Agent 默认权限行为（目前等同于询问）。",
     },
     EnumChoice {
         canonical: "ask",
-        display: "Ask",
-        description: "Prompt for permission before tool actions.",
+        display: "询问",
+        description: "工具操作前请求权限确认。",
     },
     EnumChoice {
         canonical: "auto",
-        display: "Auto",
-        description: "LLM classifier approves safe tools; dangerous actions may still prompt or deny.",
+        display: "自动",
+        description: "LLM 分类器批准安全工具；危险操作仍可能询问或拒绝。",
     },
     EnumChoice {
         canonical: "always-approve",
-        display: "Always approve",
-        description: "Auto-approve every tool action. Skips ALL permission prompts.",
+        display: "总是批准",
+        description: "自动批准所有工具操作。跳过全部权限确认。",
     },
 ];
 
@@ -133,13 +133,13 @@ const PERMISSION_MODE_CHOICES: &[EnumChoice] = &[
 const CODING_DATA_SHARING_CHOICES: &[EnumChoice] = &[
     EnumChoice {
         canonical: "opt-in",
-        display: "Opt in",
-        description: "Allow SpaceXAI to retain coding session data for model training and product improvement.",
+        display: "选择加入",
+        description: "允许保留编码会话数据用于模型训练与产品改进。",
     },
     EnumChoice {
         canonical: "opt-out",
-        display: "Opt out",
-        description: "Do not retain coding session data for training. Does not disable product analytics.",
+        display: "选择退出",
+        description: "不保留编码会话数据用于训练。不会关闭产品分析。",
     },
 ];
 
@@ -205,13 +205,13 @@ const DEFAULT_SELECTED_PERMISSION_CHOICES: &[EnumChoice] = &[
 const PLAN_MODE_CHOICES: &[EnumChoice] = &[
     EnumChoice {
         canonical: "off",
-        display: "Off",
-        description: "Agent runs tools and edits files directly (default).",
+        display: "关",
+        description: "Agent 直接运行工具并编辑文件（默认）。",
     },
     EnumChoice {
         canonical: "on",
-        display: "On",
-        description: "Agent summarises a plan and asks for approval before running tools.",
+        display: "开",
+        description: "Agent 先总结计划，经批准后再运行工具。",
     },
 ];
 
@@ -226,18 +226,18 @@ const PLAN_MODE_CHOICES: &[EnumChoice] = &[
 const RENDER_MERMAID_CHOICES: &[EnumChoice] = &[
     EnumChoice {
         canonical: "auto",
-        display: "Auto",
-        description: "Show diagrams with a clickable row to open/copy the rendered image.",
+        display: "自动",
+        description: "显示图表，并提供可点击行以打开/复制渲染图。",
     },
     EnumChoice {
         canonical: "on",
-        display: "On",
-        description: "Same as auto: always show the clickable affordance row.",
+        display: "开",
+        description: "与自动相同：始终显示可点击操作行。",
     },
     EnumChoice {
         canonical: "off",
-        display: "Off",
-        description: "Always show the raw Mermaid source as a code block.",
+        display: "关",
+        description: "始终以代码块显示原始 Mermaid 源码。",
     },
 ];
 
@@ -246,36 +246,36 @@ const RENDER_MERMAID_CHOICES: &[EnumChoice] = &[
 const SCROLL_MODE_CHOICES: &[EnumChoice] = &[
     EnumChoice {
         canonical: ScrollMode::Auto.as_canonical(),
-        display: "Auto-detect",
-        description: "Detect wheel vs trackpad per gesture from event timing. Default.",
+        display: "自动检测",
+        description: "按事件时序检测滚轮与触控板。默认。",
     },
     EnumChoice {
         canonical: ScrollMode::Wheel.as_canonical(),
-        display: "Mouse wheel",
-        description: "Always treat scrolling as wheel notches (fixed lines per tick).",
+        display: "鼠标滚轮",
+        description: "始终按滚轮刻度滚动（每次固定行数）。",
     },
     EnumChoice {
         canonical: ScrollMode::Trackpad.as_canonical(),
-        display: "Trackpad",
-        description: "Always treat scrolling as a trackpad (fractional accumulation).",
+        display: "触控板",
+        description: "始终按触控板滚动（分数累积）。",
     },
 ];
 
 const TEXT_SELECTION_CHOICES: &[EnumChoice] = &[
     EnumChoice {
         canonical: TextSelection::Flash.as_canonical(),
-        display: "Flash after copy",
-        description: "Brief highlight on mouse-up, then clear. Double-click toggles fold. Default.",
+        display: "复制后闪烁",
+        description: "鼠标抬起时短暂高亮后清除。双击切换折叠。默认。",
     },
     EnumChoice {
         canonical: TextSelection::Hold.as_canonical(),
-        display: "Hold until dismissed",
-        description: "Keep the selection visible until Esc, click, or scroll. Double-click toggles fold.",
+        display: "保持到关闭",
+        description: "选区保持可见直到 Esc、点击或滚动。双击切换折叠。",
     },
     EnumChoice {
         canonical: TextSelection::WordSelect.as_canonical(),
-        display: "Word select (terminal-like)",
-        description: "Double-click selects & copies a word, triple-click a line; selection stays until dismissed.",
+        display: "选词（类终端）",
+        description: "双击选中并复制单词，三击选中整行；选区保持到关闭。",
     },
 ];
 
@@ -285,31 +285,31 @@ const TEXT_SELECTION_CHOICES: &[EnumChoice] = &[
 const HUNK_TRACKER_MODE_CHOICES: &[EnumChoice] = &[
     EnumChoice {
         canonical: "agent_only",
-        display: "Agent only",
-        description: "Track only files the agent edits (default).",
+        display: "仅 Agent",
+        description: "仅跟踪 Agent 编辑的文件（默认）。",
     },
     EnumChoice {
         canonical: "all_dirty",
-        display: "All dirty",
-        description: "Track every git-dirty file, including external edits.",
+        display: "全部脏文件",
+        description: "跟踪所有 git 脏文件，包括外部编辑。",
     },
     EnumChoice {
         canonical: "off",
-        display: "Off",
-        description: "Disable hunk tracking entirely. Also disables LOC tracking.",
+        display: "关",
+        description: "完全禁用块跟踪。同时禁用代码行统计。",
     },
 ];
 
 const SCREEN_MODE_CHOICES: &[EnumChoice] = &[
     EnumChoice {
         canonical: "fullscreen",
-        display: "Fullscreen",
-        description: "Open plain grok in the standard fullscreen TUI. Default when unset.",
+        display: "全屏",
+        description: "以标准全屏 TUI 打开。未设置时的默认值。",
     },
     EnumChoice {
         canonical: "minimal",
-        display: "Minimal",
-        description: "Open plain grok in scrollback-native (minimal) mode.",
+        display: "极简",
+        description: "以原生滚动（极简）模式打开。",
     },
 ];
 
@@ -320,13 +320,13 @@ const SCREEN_MODE_CHOICES: &[EnumChoice] = &[
 const VOICE_CAPTURE_MODE_CHOICES: &[EnumChoice] = &[
     EnumChoice {
         canonical: "toggle",
-        display: "Toggle",
-        description: "Ctrl+Space / F8 starts dictation; press again (or Esc/Enter) to stop.",
+        display: "切换",
+        description: "Ctrl+Space / F8 开始听写；再按（或 Esc/Enter）停止。",
     },
     EnumChoice {
         canonical: "hold",
-        display: "Hold to talk",
-        description: "Hold Ctrl+Space / F8 to record, release to stop. Needs a Kitty-protocol terminal.",
+        display: "按住说话",
+        description: "按住 Ctrl+Space / F8 录音，松开停止。需要 Kitty 协议终端。",
     },
 ];
 
@@ -345,8 +345,8 @@ const VOICE_STT_LANGUAGE_CHOICES: &[EnumChoice] = &[
     },
     EnumChoice {
         canonical: "auto",
-        display: "System",
-        description: "Use the system locale when it is a supported STT language; otherwise English.",
+        display: "系统",
+        description: "系统语言为支持的 STT 语言时使用系统语言；否则使用英语。",
     },
     EnumChoice {
         canonical: "ar",
@@ -477,27 +477,27 @@ const CONCRETE_THEME_CHOICES: &[EnumChoice] = &[
     EnumChoice {
         canonical: "groknight",
         display: "Chaos Night",
-        description: "Neutral dark with magenta accent.",
+        description: "中性深色，品红强调色。",
     },
     EnumChoice {
         canonical: "grokday",
         display: "Chaos Day",
-        description: "Light theme for bright environments.",
+        description: "适合明亮环境的浅色主题。",
     },
     EnumChoice {
         canonical: "tokyonight",
         display: "Tokyo Night",
-        description: "Dark + blue-tinted; needs truecolor.",
+        description: "深蓝调深色；需要真彩色。",
     },
     EnumChoice {
         canonical: "rosepine-moon",
         display: "Rose Pine Moon",
-        description: "Muted dark with mauve accents; needs truecolor.",
+        description: "柔和深色带淡紫强调；需要真彩色。",
     },
     EnumChoice {
         canonical: "oscura-midnight",
         display: "Oscura Midnight",
-        description: "Deep dark with warm accents; needs truecolor.",
+        description: "深黑带暖色强调；需要真彩色。",
     },
 ];
 
@@ -527,9 +527,9 @@ pub fn default_settings() -> Vec<SettingMeta> {
             key: "compact_mode",
             category: SettingCategory::Appearance,
             owner: SettingOwner::Shared,
-            label: "Compact mode",
-            description: "Reduce padding around messages for more content density. \
-                          Auto-enabled while the terminal is 20 rows or shorter.",
+            label: "紧凑模式",
+            description: "减少消息周围边距以提高内容密度。\
+                          终端高度不超过 20 行时自动启用。",
             keywords: &[
                 "compact", "density", "padding", "tight", "small", "screen", "auto",
             ],
@@ -543,10 +543,9 @@ pub fn default_settings() -> Vec<SettingMeta> {
             key: "screen_mode",
             category: SettingCategory::Appearance,
             owner: SettingOwner::Shell,
-            label: "Default screen mode",
-            description: "How plain grok opens next time: Fullscreen (default when unset) or \
-                          Minimal. Writes [ui] screen_mode in config.toml. Restart required. \
-                          Switch this session only with /minimal or /fullscreen.",
+            label: "默认屏幕模式",
+            description: "下次启动时的界面模式：全屏（未设置时的默认）或极简。写入 config.toml 的 [ui] screen_mode。需重启。\
+                          仅本会话切换可用 /minimal 或 /fullscreen。",
             keywords: &[
                 "screen",
                 "mode",
@@ -571,8 +570,8 @@ pub fn default_settings() -> Vec<SettingMeta> {
             key: "show_timestamps",
             category: SettingCategory::Appearance,
             owner: SettingOwner::Shared,
-            label: "Show timestamps",
-            description: "Show clock time next to user messages and agent responses.",
+            label: "显示时间戳",
+            description: "在用户消息与 Agent 回复旁显示时钟时间。",
             keywords: &["timestamps", "time", "clock", "date"],
             kind: SettingKind::Bool {
                 // `Option<bool>` — `None` treated as `true`.
@@ -585,8 +584,8 @@ pub fn default_settings() -> Vec<SettingMeta> {
             key: "show_timeline",
             category: SettingCategory::Appearance,
             owner: SettingOwner::Shared,
-            label: "Timeline sidebar",
-            description: "Per-turn tick rail in place of the scrollbar: hover previews a turn, click jumps to it.",
+            label: "时间线侧栏",
+            description: "用每轮刻度轨代替滚动条：悬停预览该轮，点击跳转。",
             keywords: &["timeline", "sidebar", "ticks", "turns", "navigator", "rail"],
             kind: SettingKind::Bool {
                 // Single source: UiConfig::SHOW_TIMELINE_DEFAULT (opt-in).
@@ -600,10 +599,8 @@ pub fn default_settings() -> Vec<SettingMeta> {
             key: "page_flip_on_send",
             category: SettingCategory::Appearance,
             owner: SettingOwner::Shared,
-            label: "Snap prompt to top on send",
-            description: "When you send a prompt, scroll it to the top of the screen so the \
-                          response starts on a fresh page (default). Turn off to leave the scroll \
-                          position unchanged when you send.",
+            label: "发送时将提示顶到顶部",
+            description: "发送提示时将其滚到屏幕顶部，使回复从新一页开始（默认）。关闭则发送时保持滚动位置不变。",
             keywords: &[
                 "page", "flip", "send", "prompt", "scroll", "top", "jump", "auto", "snap",
             ],
@@ -617,11 +614,10 @@ pub fn default_settings() -> Vec<SettingMeta> {
             key: "combine_queued_prompts",
             category: SettingCategory::Editor,
             owner: SettingOwner::Shared,
-            label: "Combine queued prompts",
-            description: "Merge consecutive plain follow-ups into one model turn \
-                          (TUI shows one bubble each). Stops at bash, slash commands, \
-                          cron, expanded skills, image follow-ups, or a row under edit. \
-                          Default off; applies on local drain and shell promote.",
+            label: "合并排队提示",
+            description: "将连续的普通跟进合并为同一模型轮次（TUI 仍各显示一个气泡）。遇到 bash、斜杠命令、\
+                          定时任务、展开的技能、带图跟进或正在编辑的行时停止。\
+                          默认关闭；在本地排空与 shell promote 时生效。",
             keywords: &["queue", "combine", "batch", "follow-up", "merge", "pending"],
             kind: SettingKind::Bool {
                 default: ui_default.combine_queued_prompts.unwrap_or(false),
@@ -636,8 +632,8 @@ pub fn default_settings() -> Vec<SettingMeta> {
             key: "simple_mode",
             category: SettingCategory::Appearance,
             owner: SettingOwner::Shared,
-            label: "Disable vim input mode",
-            description: "Use plain readline-style input instead of vim keys in the prompt. Experimental.",
+            label: "禁用 vim 输入模式",
+            description: "在提示输入中使用普通 readline 风格，而非 vim 键位。实验性功能。",
             keywords: &[
                 "simple",
                 "ascii",
@@ -666,8 +662,8 @@ pub fn default_settings() -> Vec<SettingMeta> {
             key: "vim_mode",
             category: SettingCategory::Appearance,
             owner: SettingOwner::Shell,
-            label: "Vim scrollback navigation",
-            description: "Enable vim keys (h/j/k/l, gg/G, /) for navigating the scrollback. Does not affect the input prompt.",
+            label: "Vim 滚动导航",
+            description: "用 vim 键（h/j/k/l、gg/G、/）导航滚动历史。不影响输入提示。",
             keywords: &[
                 "vim",
                 "scrollback",
@@ -688,8 +684,8 @@ pub fn default_settings() -> Vec<SettingMeta> {
             key: "theme",
             category: SettingCategory::Appearance,
             owner: SettingOwner::Shared,
-            label: "Theme",
-            description: "Color theme for the pager UI.",
+            label: "主题",
+            description: "分页器界面的配色主题。",
             keywords: &[
                 "theme",
                 "color",
@@ -712,8 +708,8 @@ pub fn default_settings() -> Vec<SettingMeta> {
             key: "auto_dark_theme",
             category: SettingCategory::Appearance,
             owner: SettingOwner::Shared,
-            label: "Auto dark theme",
-            description: "Theme to use when the system is in dark mode (only with theme=auto).",
+            label: "自动深色主题",
+            description: "系统处于深色模式时使用的主题（仅当 theme=auto）。",
             keywords: &["auto", "dark", "theme", "system", "appearance", "night"],
             kind: SettingKind::Enum {
                 // `Option<String>` — `None` falls back to "groknight".
@@ -728,8 +724,8 @@ pub fn default_settings() -> Vec<SettingMeta> {
             key: "auto_light_theme",
             category: SettingCategory::Appearance,
             owner: SettingOwner::Shared,
-            label: "Auto light theme",
-            description: "Theme to use when the system is in light mode (only with theme=auto).",
+            label: "自动浅色主题",
+            description: "系统处于浅色模式时使用的主题（仅当 theme=auto）。",
             keywords: &["auto", "light", "theme", "system", "appearance", "day"],
             kind: SettingKind::Enum {
                 // `Option<String>` — `None` falls back to "grokday".
@@ -747,9 +743,8 @@ pub fn default_settings() -> Vec<SettingMeta> {
             key: "render_mermaid",
             category: SettingCategory::Appearance,
             owner: SettingOwner::Shell,
-            label: "Render Mermaid diagrams",
-            description: "How ```mermaid code blocks are shown: auto/on add a clickable row to \
-                          open the rendered diagram; off shows the raw source.",
+            label: "渲染 Mermaid 图表",
+            description: "```mermaid 代码块的显示方式：自动/开 增加可点击行以打开渲染图；关 则显示原始源码。",
             keywords: &[
                 "mermaid",
                 "diagram",
@@ -774,11 +769,9 @@ pub fn default_settings() -> Vec<SettingMeta> {
             key: "permission_mode",
             category: SettingCategory::Agent,
             owner: SettingOwner::Shell,
-            label: "Permission mode",
-            description: "Default uses the agent's built-in behavior; \
-                          Ask prompts for each tool action; \
-                          Auto uses an LLM classifier for risky tools; \
-                          Always approve grants all permissions automatically.",
+            label: "权限模式",
+            description: "默认使用 Agent 内置行为；询问 会在每次工具操作前提示；\
+                          自动 用 LLM 分类器处理有风险的工具；总是批准 自动授予全部权限。",
             keywords: &[
                 "permission",
                 "approve",
@@ -806,10 +799,8 @@ pub fn default_settings() -> Vec<SettingMeta> {
             key: "remember_tool_approvals",
             category: SettingCategory::Agent,
             owner: SettingOwner::Shell,
-            label: "Remember tool approvals",
-            description: "Show \"Always allow\" options in permission prompts so you can stop \
-                          being re-asked about a specific command or tool. Applies in ask and \
-                          auto; Always-approve still skips all prompts. Restart required.",
+            label: "记住工具批准",
+            description: "在权限提示中显示「总是允许」选项，避免对同一命令或工具反复确认。适用于询问与自动模式；总是批准仍会跳过全部提示。需重启。",
             keywords: &[
                 "permission",
                 "approve",
@@ -835,8 +826,8 @@ pub fn default_settings() -> Vec<SettingMeta> {
             key: "multiline_mode",
             category: SettingCategory::Editor,
             owner: SettingOwner::Pager,
-            label: "Multiline",
-            description: "When on, Enter inserts a newline and Shift+Enter sends. Resets each session.",
+            label: "多行输入",
+            description: "开启后 Enter 插入换行，Shift+Enter 发送。每会话重置。",
             keywords: &["multiline", "newline", "input", "editor", "enter"],
             kind: SettingKind::Bool { default: false },
             restart_required: false,
@@ -849,8 +840,8 @@ pub fn default_settings() -> Vec<SettingMeta> {
             key: "default_model",
             category: SettingCategory::Models,
             owner: SettingOwner::Shell,
-            label: "Default model",
-            description: "Model used for new sessions. Changing this also switches the active session. Pick `(no override)` to clear.",
+            label: "默认模型",
+            description: "新会话使用的模型。更改也会切换当前会话。选「（不覆盖）」可清除。",
             keywords: &["model", "default", "agent", "llm", "grok", "switch"],
             kind: SettingKind::DynamicEnum {
                 default: "",
@@ -866,8 +857,8 @@ pub fn default_settings() -> Vec<SettingMeta> {
             key: MAX_THOUGHTS_WIDTH_KEY,
             category: SettingCategory::Appearance,
             owner: SettingOwner::Shared,
-            label: "Max thoughts width",
-            description: "Column width budget for the agent's thoughts panel (40-500, default 120).",
+            label: "思考区最大宽度",
+            description: "Agent 思考面板的列宽预算（40–500，默认 120）。",
             keywords: &[
                 "thoughts",
                 "width",
@@ -890,8 +881,8 @@ pub fn default_settings() -> Vec<SettingMeta> {
             key: "show_thinking_blocks",
             category: SettingCategory::Appearance,
             owner: SettingOwner::Shell,
-            label: "Show thinking blocks",
-            description: "Show agent thinking/reasoning blocks in the scrollback while streaming.",
+            label: "显示思考块",
+            description: "流式输出时在滚动历史中显示 Agent 思考/推理块。",
             keywords: &[
                 "thinking",
                 "reasoning",
@@ -912,10 +903,9 @@ pub fn default_settings() -> Vec<SettingMeta> {
             key: "prompt_suggestions",
             category: SettingCategory::Editor,
             owner: SettingOwner::Shell,
-            label: "Prompt suggestions",
-            description: "After each turn, predict your likely next prompt and show it as \
-                          ghost text in the input (Tab to accept). Uses a small model call \
-                          per turn.",
+            label: "提示建议",
+            description: "每轮结束后预测你可能的下一条提示，并以幽灵文字显示在输入框中（Tab 接受）。\
+                          每轮会调用一次小模型。",
             keywords: &[
                 "prompt",
                 "suggestion",
@@ -940,9 +930,8 @@ pub fn default_settings() -> Vec<SettingMeta> {
             key: "respect_manual_folds",
             category: SettingCategory::Appearance,
             owner: SettingOwner::Pager,
-            label: "Respect manual folds",
-            description: "Keep manually folded blocks as-is while streaming and stop \
-                          auto-scroll when expanding a block. Experimental.",
+            label: "保留手动折叠",
+            description: "流式输出时保持手动折叠的块不变；展开块时停止自动滚动。实验性功能。",
             keywords: &[
                 "fold", "pin", "collapse", "expand", "thinking", "follow", "scroll",
             ],
@@ -957,9 +946,8 @@ pub fn default_settings() -> Vec<SettingMeta> {
             key: "group_tool_verbs",
             category: SettingCategory::Appearance,
             owner: SettingOwner::Shell,
-            label: "Group tool calls",
-            description: "Fold consecutive read/search/list tool calls and subagent rows into \
-                          one summary row; finished thoughts fold into the group too.",
+            label: "合并工具调用",
+            description: "将连续的读/搜/列工具调用与子 Agent 行折叠为一行摘要；已完成的思考也会并入该组。",
             keywords: &[
                 "group", "tool", "verbs", "fold", "collapse", "read", "search", "summary",
                 "thinking", "subagent",
@@ -976,10 +964,9 @@ pub fn default_settings() -> Vec<SettingMeta> {
             key: "collapsed_edit_blocks",
             category: SettingCategory::Appearance,
             owner: SettingOwner::Shell,
-            label: "Collapsed edit blocks",
-            description: "Show edits as one-line +N/-M diffstat summaries and merge \
-                          back-to-back edits to the same file into one block; expand a \
-                          row to see the diffs.",
+            label: "折叠编辑块",
+            description: "将编辑显示为一行 +N/-M diffstat 摘要，并把同一文件的连续编辑合并为一块；\
+                          展开行可查看 diff。",
             keywords: &[
                 "edit",
                 "edits",
@@ -1005,10 +992,9 @@ pub fn default_settings() -> Vec<SettingMeta> {
             key: "display_refresh_auto_cadence",
             category: SettingCategory::Appearance,
             owner: SettingOwner::Shell,
-            label: "Match display refresh rate",
-            description: "On high-refresh displays, the TUI will stream/scroll faster \
-                          to match the display. Off keeps the classic ~60 Hz cadence. \
-                          Restart required.",
+            label: "匹配显示器刷新率",
+            description: "在高刷新率显示器上，TUI 会更快地流式输出/滚动以匹配刷新率。关闭则保持约 60 Hz 节奏。\
+                          需重启。",
             keywords: &[
                 "display", "refresh", "rate", "hz", "cadence", "fps", "smooth", "scroll", "stream",
                 "high", "120", "144",
@@ -1027,8 +1013,8 @@ pub fn default_settings() -> Vec<SettingMeta> {
             key: "scroll_speed",
             category: SettingCategory::Mouse,
             owner: SettingOwner::Shell,
-            label: "Scroll speed",
-            description: "Mouse-wheel and trackpad scroll speed multiplier (1-100). Higher = faster.",
+            label: "滚动速度",
+            description: "鼠标滚轮与触控板滚动速度倍率（1–100）。越大越快。",
             keywords: &[
                 "scroll", "speed", "mouse", "wheel", "trackpad", "fast", "slow",
             ],
@@ -1045,9 +1031,8 @@ pub fn default_settings() -> Vec<SettingMeta> {
             key: "scroll_mode",
             category: SettingCategory::Mouse,
             owner: SettingOwner::Shell,
-            label: "Scroll input",
-            description: "Force wheel or trackpad scroll behavior when auto-detection \
-                          misreads your device.",
+            label: "滚动输入",
+            description: "当自动检测误判设备时，强制按滚轮或触控板行为滚动。",
             keywords: &[
                 "scroll", "mode", "wheel", "trackpad", "mouse", "detect", "force", "input",
             ],
@@ -1072,9 +1057,8 @@ pub fn default_settings() -> Vec<SettingMeta> {
             key: "scroll_lines",
             category: SettingCategory::Mouse,
             owner: SettingOwner::Shell,
-            label: "Scroll lines",
-            description: "Lines per scroll tick for both wheel and trackpad (1-10). \
-                          Until set, each terminal's own profile applies.",
+            label: "滚动行数",
+            description: "滚轮与触控板每次滚动的行数（1–10）。未设置前沿用各终端自身配置。",
             keywords: &[
                 "scroll", "lines", "tick", "notch", "wheel", "trackpad", "mouse",
             ],
@@ -1091,8 +1075,8 @@ pub fn default_settings() -> Vec<SettingMeta> {
             key: "invert_scroll",
             category: SettingCategory::Mouse,
             owner: SettingOwner::Shell,
-            label: "Invert scroll",
-            description: "Reverse vertical scroll direction (natural scrolling).",
+            label: "反转滚动",
+            description: "反转垂直滚动方向（自然滚动）。",
             keywords: &[
                 "invert",
                 "scroll",
@@ -1113,8 +1097,8 @@ pub fn default_settings() -> Vec<SettingMeta> {
             key: "keep_text_selection",
             category: SettingCategory::Mouse,
             owner: SettingOwner::Shell,
-            label: "Text selection",
-            description: "How long in-app selection stays on screen and what double-click does (fold vs. select & copy a word). For your terminal or multiplexer's own selection, hold Shift while dragging (native copy).",
+            label: "文本选择",
+            description: "应用内选区在屏幕上保留多久，以及双击行为（折叠 vs 选中并复制单词）。终端或多路复用器自带选区请在拖动时按住 Shift（原生复制）。",
             keywords: &[
                 "selection",
                 "drag",
@@ -1149,10 +1133,8 @@ pub fn default_settings() -> Vec<SettingMeta> {
             key: "coding_data_sharing",
             category: SettingCategory::Privacy,
             owner: SettingOwner::Shell,
-            label: "Coding data sharing",
-            description: "Controls whether SpaceXAI may retain and train on coding session \
-                          data. Does not affect product analytics; see Configuration and \
-                          Monitoring docs.",
+            label: "编码数据共享",
+            description: "控制是否允许保留编码会话数据用于模型训练。不影响产品分析；详见配置与监控文档。",
             keywords: &[
                 "privacy",
                 "data",
@@ -1180,8 +1162,8 @@ pub fn default_settings() -> Vec<SettingMeta> {
             key: "default_selected_permission",
             category: SettingCategory::Agent,
             owner: SettingOwner::Shell,
-            label: "Default selected permission",
-            description: "Which row the cursor preselects on permission prompts.",
+            label: "默认选中的权限项",
+            description: "权限提示中光标默认选中的行。",
             keywords: &[
                 "permission",
                 "approval",
@@ -1213,9 +1195,8 @@ pub fn default_settings() -> Vec<SettingMeta> {
             key: "toolset.ask_user_question.timeout_enabled",
             category: SettingCategory::Agent,
             owner: SettingOwner::Shell,
-            label: "Ask-Question timeout",
-            description: "When on, the ask_user_question tool will time out after a set period \
-                          of time instead of infinitely blocking.",
+            label: "提问超时",
+            description: "开启后，ask_user_question 工具会在设定时间后超时，而不是无限阻塞。",
             keywords: &[
                 "ask",
                 "question",
@@ -1240,8 +1221,8 @@ pub fn default_settings() -> Vec<SettingMeta> {
             key: "plan_mode",
             category: SettingCategory::Agent,
             owner: SettingOwner::Pager,
-            label: "Plan mode",
-            description: "When on, the agent summarises a plan before running tools or making edits.",
+            label: "计划模式",
+            description: "开启后，Agent 在运行工具或编辑前会先总结计划。",
             keywords: &[
                 "plan", "mode", "agent", "summary", "approval", "review", "session",
             ],
@@ -1259,8 +1240,8 @@ pub fn default_settings() -> Vec<SettingMeta> {
             key: "show_tips",
             category: SettingCategory::Advanced,
             owner: SettingOwner::Shell,
-            label: "Show tips",
-            description: "Show the tip-of-the-day banner on startup. Restart required.",
+            label: "显示提示",
+            description: "启动时显示每日提示横幅。需重启。",
             keywords: &[
                 "tips", "tip", "show", "banner", "welcome", "startup", "launch",
             ],
@@ -1275,9 +1256,8 @@ pub fn default_settings() -> Vec<SettingMeta> {
             key: "contextual_hints",
             category: SettingCategory::Advanced,
             owner: SettingOwner::Shell,
-            label: "Show contextual hints",
-            description: "Show brief, in-context keyboard hints as you work; \
-                          toggle each one individually.",
+            label: "显示情境提示",
+            description: "工作时显示简短的情境快捷键提示；可逐项开关。",
             keywords: &[
                 "contextual",
                 "hints",
@@ -1320,9 +1300,8 @@ pub fn default_settings() -> Vec<SettingMeta> {
             key: "auto_update",
             category: SettingCategory::Advanced,
             owner: SettingOwner::Shell,
-            label: "Auto-update",
-            description: "Automatically download and install pager updates on startup. \
-                          Restart required.",
+            label: "自动更新",
+            description: "启动时自动下载并安装分页器更新。需重启。",
             keywords: &[
                 "auto", "update", "updates", "upgrade", "version", "install", "channel",
             ],
@@ -1336,9 +1315,8 @@ pub fn default_settings() -> Vec<SettingMeta> {
             key: "hunk_tracker_mode",
             category: SettingCategory::Advanced,
             owner: SettingOwner::Shell,
-            label: "Hunk tracker",
-            description: "Which file changes the agent tracks as hunks. \
-                          Off disables tracking (and LOC stats) entirely. \
+            label: "变更块跟踪",
+            description: "Agent 将哪些文件变更作为块跟踪。关闭则完全禁用跟踪（及代码行统计）。 \
                           Restart required.",
             keywords: &[
                 "hunk", "tracker", "tracking", "diff", "changes", "git", "loc", "off", "disable",
@@ -1358,10 +1336,9 @@ pub fn default_settings() -> Vec<SettingMeta> {
             key: "voice_capture_mode",
             category: SettingCategory::Editor,
             owner: SettingOwner::Shell,
-            label: "Voice capture",
-            description: "How the voice chord (Ctrl+Space / F8) behaves: Toggle \
-                          (press to start/stop) or Hold to talk (hold to record, \
-                          release to stop; needs a Kitty-protocol terminal).",
+            label: "语音捕获",
+            description: "语音快捷键（Ctrl+Space / F8）的行为：切换（再按开始/停止）或按住说话\
+                          （按住录音、松开停止；需要 Kitty 协议终端）。",
             keywords: &[
                 "voice",
                 "dictation",
@@ -1392,10 +1369,9 @@ pub fn default_settings() -> Vec<SettingMeta> {
             key: "voice_stt_language",
             category: SettingCategory::Editor,
             owner: SettingOwner::Shell,
-            label: "Voice language",
-            description: "Speech-to-text language for voice dictation (Grok STT). \
-                          English by default; System uses your locale when supported. \
-                          Sets formatting language for numbers and currencies.",
+            label: "语音语言",
+            description: "语音听写的语音转文字语言。默认英语；系统选项在受支持时跟随区域设置。\
+                          同时决定数字与货币的格式语言。",
             keywords: &["voice", "language", "locale", "dictation", "stt", "speech"],
             kind: SettingKind::Enum {
                 default: "en",
@@ -1411,8 +1387,8 @@ pub fn default_settings() -> Vec<SettingMeta> {
             key: "contextual_hints.undo",
             category: SettingCategory::Advanced,
             owner: SettingOwner::Shell,
-            label: "Undo",
-            description: "Remind you that Ctrl+Z restores the prompt after you clear it.",
+            label: "撤销",
+            description: "清空提示后提醒你可用 Ctrl+Z 恢复。",
             keywords: &["undo", "ctrl+z", "draft", "wipe", "hint"],
             kind: SettingKind::Bool {
                 default: ui_default.contextual_hints.undo.unwrap_or(true),
@@ -1424,9 +1400,8 @@ pub fn default_settings() -> Vec<SettingMeta> {
             key: "contextual_hints.plan_mode",
             category: SettingCategory::Advanced,
             owner: SettingOwner::Shell,
-            label: "Plan mode",
-            description: "Suggest plan mode (Shift+Tab) when your prompt looks like a \
-                          planning request.",
+            label: "计划模式",
+            description: "当提示像规划请求时，建议使用计划模式（Shift+Tab）。",
             keywords: &["plan", "mode", "nudge", "shift+tab", "hint"],
             kind: SettingKind::Bool {
                 default: ui_default.contextual_hints.plan_mode.unwrap_or(true),
@@ -1438,9 +1413,8 @@ pub fn default_settings() -> Vec<SettingMeta> {
             key: "contextual_hints.image_input",
             category: SettingCategory::Advanced,
             owner: SettingOwner::Shell,
-            label: "Image input",
-            description: "Offer to paste an image when one is on the clipboard and the \
-                          model accepts images.",
+            label: "图片输入",
+            description: "剪贴板有图片且模型支持时，提示粘贴图片。",
             keywords: &["image", "clipboard", "paste", "input", "hint"],
             kind: SettingKind::Bool {
                 default: ui_default.contextual_hints.image_input.unwrap_or(true),
@@ -1452,9 +1426,8 @@ pub fn default_settings() -> Vec<SettingMeta> {
             key: "contextual_hints.send_now",
             category: SettingCategory::Advanced,
             owner: SettingOwner::Shell,
-            label: "Send now",
-            description: "After you queue a follow-up mid-turn, remind you that Enter \
-                          on an empty prompt sends the top queued item now.",
+            label: "立即发送",
+            description: "在轮次中途排队跟进后，提醒你在空提示上按 Enter 可立即发送队首项。",
             keywords: &[
                 "send",
                 "now",
@@ -1475,9 +1448,8 @@ pub fn default_settings() -> Vec<SettingMeta> {
             key: "contextual_hints.small_screen",
             category: SettingCategory::Advanced,
             owner: SettingOwner::Shell,
-            label: "Small screen",
-            description: "Suggest /compact-mode once per run when the terminal \
-                          is short on rows.",
+            label: "小屏幕",
+            description: "终端行数不足时，每次运行提示一次 /compact-mode。",
             keywords: &["small", "screen", "compact", "space", "rows", "hint"],
             kind: SettingKind::Bool {
                 default: ui_default.contextual_hints.small_screen.unwrap_or(true),
@@ -1489,9 +1461,8 @@ pub fn default_settings() -> Vec<SettingMeta> {
             key: "contextual_hints.word_select",
             category: SettingCategory::Advanced,
             owner: SettingOwner::Shell,
-            label: "Word select",
-            description: "After double-clicking conversation text while Text selection \
-                          is fold/nav, remind you that Word select lives in Settings.",
+            label: "选词",
+            description: "在文本选择为折叠/导航时双击会话文本后，提醒你可在设置中切换为选词。",
             keywords: &[
                 "word",
                 "select",
@@ -1513,9 +1484,8 @@ pub fn default_settings() -> Vec<SettingMeta> {
             key: "contextual_hints.ssh_wrap",
             category: SettingCategory::Advanced,
             owner: SettingOwner::Shell,
-            label: "SSH wrap",
-            description: "At session load over SSH, recommend `grok wrap ssh` for \
-                          clipboard forwarding and terminal restore.",
+            label: "SSH 包装",
+            description: "通过 SSH 加载会话时，建议使用 `chaos wrap ssh` 以获得剪贴板转发与终端恢复。",
             keywords: &[
                 "ssh",
                 "wrap",
@@ -1545,8 +1515,8 @@ pub fn default_settings() -> Vec<SettingMeta> {
             key: "fork_secondary_model",
             category: SettingCategory::Models,
             owner: SettingOwner::Shell,
-            label: "Fork secondary model",
-            description: "Model used for the secondary agent when forking. Pick `(no override)` to clear.",
+            label: "分叉副模型",
+            description: "分叉时副 Agent 使用的模型。选「（不覆盖）」可清除。",
             keywords: &[
                 "fork",
                 "secondary",

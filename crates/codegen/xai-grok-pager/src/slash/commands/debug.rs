@@ -30,7 +30,7 @@ pub const LISTED_IN_COMPLETIONS: bool = cfg!(debug_assertions);
 
 /// Subcommand name/description pairs (single source for run + suggestions).
 const SUBCOMMANDS: &[(&str, &str)] = &[
-    ("scroll", "Toggle the scroll-diagnostics HUD"),
+    ("scroll", "切换滚动诊断 HUD"),
     ("fps", "Toggle the FPS overlay"),
     ("log", "Toggle the scroll flight recorder (JSONL)"),
 ];
@@ -44,7 +44,7 @@ impl SlashCommand for DebugCommand {
     }
 
     fn description(&self) -> &str {
-        "Toggle debug overlays"
+        "切换调试叠加层"
     }
 
     fn usage(&self) -> &str {

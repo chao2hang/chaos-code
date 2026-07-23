@@ -6,7 +6,7 @@
 use crate::app::actions::Action;
 use crate::slash::command::{CommandExecCtx, CommandResult, SlashCommand};
 
-/// Open the settings modal.
+/// 打开设置对话框.
 pub struct SettingsCommand;
 
 impl SlashCommand for SettingsCommand {
@@ -19,7 +19,7 @@ impl SlashCommand for SettingsCommand {
     }
 
     fn description(&self) -> &str {
-        "Open the settings modal"
+        "打开设置对话框"
     }
 
     fn usage(&self) -> &str {

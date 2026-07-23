@@ -8,7 +8,7 @@
 use crate::app::actions::{Action, PlanModeKind};
 use crate::slash::command::{CommandExecCtx, CommandResult, SlashCommand};
 
-/// Enter plan mode.
+/// 进入计划模式.
 pub struct PlanCommand;
 
 impl SlashCommand for PlanCommand {
@@ -17,7 +17,7 @@ impl SlashCommand for PlanCommand {
     }
 
     fn description(&self) -> &str {
-        "Enter plan mode"
+        "进入计划模式"
     }
 
     fn session_scoped(&self) -> bool {

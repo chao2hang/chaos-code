@@ -123,7 +123,7 @@ async fn queued_message_renders_once_not_twice() {
             )
         });
     assert!(
-        !harness.contains_text("Worked for"),
+        !harness.contains_text("耗时"),
         "held queued rows must suppress the park marker\nscreen:\n{}",
         harness.screen_contents()
     );

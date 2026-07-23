@@ -2,7 +2,7 @@
 //! "Worked for X" line (the still-running work shows on the status row's
 //! "… still running" cue, not in the transcript) and the turn that follows ends
 //! with its own marker below. A prompt typed mid-park is cancel-and-send:
-//! the shell silently cancels the parked turn (no "Turn cancelled by user"
+//! the shell silently cancels the parked turn (no "用户在"
 //! marker) and runs the message as its OWN next turn, whose completion pushes
 //! the second marker; the park line is never edited, so the transcript holds
 //! BOTH markers with the park text intact, in order.
@@ -117,7 +117,7 @@ async fn endline_park_two_static_markers() {
     // Park: the first static marker reads as a plain completion; the
     // still-running work shows on the status row's watching cue instead.
     harness
-        .wait_for_text("Worked for", Duration::from_secs(90))
+        .wait_for_text("耗时", Duration::from_secs(90))
         .unwrap_or_else(|_| {
             panic!(
                 "parked marker never appeared; screen:\n{}\n--- non-system messages ---\n{}",
@@ -139,7 +139,7 @@ async fn endline_park_two_static_markers() {
     assert!(
         screen
             .lines()
-            .filter(|l| l.contains("Worked for"))
+            .filter(|l| l.contains("耗时"))
             .all(|l| !l.contains("still running")),
         "the parked marker carries no still-running suffix; screen:\n{screen}"
     );
@@ -180,17 +180,17 @@ async fn endline_park_two_static_markers() {
         let screen = harness.screen_contents();
         // Positional: park marker ABOVE the promoted prompt ABOVE the final
         // marker (screen text is row-major), both markers intact.
-        screen.matches("Worked for").count() == 2
+        screen.matches("耗时").count() == 2
             && screen
                 .lines()
-                .filter(|l| l.contains("Worked for"))
+                .filter(|l| l.contains("耗时"))
                 .all(|l| !l.contains("still running"))
-            && !screen.contains("Turn cancelled by user")
+            && !screen.contains("用户在")
             && matches!(
                 (
-                    screen.find("Worked for"),
+                    screen.find("耗时"),
                     screen.find("hurry up please"),
-                    screen.rfind("Worked for"),
+                    screen.rfind("耗时"),
                 ),
                 (Some(park), Some(prompt), Some(fin)) if park < prompt && prompt < fin
             )

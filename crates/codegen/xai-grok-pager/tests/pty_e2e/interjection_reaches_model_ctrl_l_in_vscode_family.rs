@@ -60,7 +60,7 @@ async fn interjection_reaches_model_ctrl_l_in_vscode_family() {
 
     // The send-now cancel of turn 1 is silent.
     assert!(
-        !harness.contains_text("Turn cancelled by user"),
+        !harness.contains_text("用户在"),
         "send-now cancel must not render a cancelled marker\nscreen:\n{}",
         harness.screen_contents()
     );

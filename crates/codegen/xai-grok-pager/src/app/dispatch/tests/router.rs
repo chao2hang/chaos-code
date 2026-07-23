@@ -1316,7 +1316,7 @@ fn acp_command_colliding_with_builtin_skipped_in_autocomplete() {
     }
     let registry = app.agents[&id].prompt.slash_controller.registry();
     let exit_cmd = registry.get("exit").unwrap();
-    assert_eq!(exit_cmd.description(), "Quit the application");
+    assert_eq!(exit_cmd.description(), "退出应用");
     assert!(registry.get("flush").is_some());
 }
 #[test]
@@ -2057,7 +2057,7 @@ fn show_tasks_empty_commits_empty_message() {
     assert_eq!(agent_scrollback_len(&app), before + 1);
     assert_eq!(
         last_system_text(&app, AgentId(0)),
-        "No background tasks, workflows, or subagents."
+        "没有后台任务、工作流或子 Agent。"
     );
 }
 #[test]

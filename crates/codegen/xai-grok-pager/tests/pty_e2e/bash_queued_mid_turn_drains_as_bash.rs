@@ -4,7 +4,7 @@ use super::common::*;
 
 /// A `!` row queued mid-turn stays real bash under empty-Enter send-now:
 /// the row is promoted to run NOW as its own bash turn (silent cancel of the
-/// running turn — no "Turn cancelled by user" marker), never leaking to the
+/// running turn — no "用户在" marker), never leaking to the
 /// model as prompt/interjection text and never rendering a "❯ !…" block.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore]
@@ -74,7 +74,7 @@ async fn bash_queued_mid_turn_drains_as_bash() {
     );
     // The send-now cancel of turn 1 is silent.
     assert!(
-        !harness.contains_text("Turn cancelled by user"),
+        !harness.contains_text("用户在"),
         "send-now cancel must not render a cancelled marker\nscreen:\n{}",
         harness.screen_contents()
     );

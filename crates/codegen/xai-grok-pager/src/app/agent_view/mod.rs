@@ -682,7 +682,7 @@ pub(crate) enum AgentDeferredSend {
 /// prompt id and both keep the parked (idle) chrome. `Rendered` markers are
 /// one-per-park-episode — a re-park after new parent output (epoch bump)
 /// pushes a fresh one (see `maybe_push_parked_marker`); `Forgone` (an
-/// interjection continued the parked turn) is final — a later "Worked for"
+/// interjection continued the parked turn) is final — a later "耗时"
 /// line would land below the interjected message, flipping the transcript.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ParkedMarkerSlot {

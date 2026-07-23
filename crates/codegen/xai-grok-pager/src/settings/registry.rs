@@ -60,14 +60,14 @@ impl SettingCategory {
     /// Section-header label as rendered in the modal.
     pub fn label(&self) -> &'static str {
         match self {
-            Self::Appearance => "Appearance",
-            Self::Mouse => "Mouse",
-            Self::Editor => "Editor & Input",
-            Self::Agent => "Agent & Approval",
-            Self::Privacy => "Privacy",
-            Self::Models => "Models",
-            Self::Session => "Session",
-            Self::Advanced => "Advanced",
+            Self::Appearance => "外观",
+            Self::Mouse => "鼠标",
+            Self::Editor => "编辑与输入",
+            Self::Agent => "Agent 与审批",
+            Self::Privacy => "隐私",
+            Self::Models => "模型",
+            Self::Session => "会话",
+            Self::Advanced => "高级",
         }
     }
 }
@@ -1296,7 +1296,7 @@ mod tests {
         for c in choices.iter() {
             if c.canonical == "auto" {
                 saw_auto = true;
-                assert_eq!(c.display, "System");
+                assert_eq!(c.display, "系统");
                 continue;
             }
             assert!(
@@ -1585,7 +1585,7 @@ mod tests {
     fn compact_mode_description_tracks_auto_compact_threshold() {
         let reg = SettingsRegistry::defaults();
         let meta = reg.find("compact_mode").expect("compact_mode registered");
-        let expected = format!("{} rows", crate::views::agent::AUTO_COMPACT_MAX_ROWS);
+        let expected = format!("{} 行", crate::views::agent::AUTO_COMPACT_MAX_ROWS);
         assert!(
             meta.description.contains(&expected),
             "compact_mode description must mention the `{expected}` auto-compact \

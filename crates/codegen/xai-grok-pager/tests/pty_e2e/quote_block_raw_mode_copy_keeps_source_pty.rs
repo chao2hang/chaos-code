@@ -62,7 +62,7 @@ async fn quote_block_raw_mode_copy_keeps_source_pty() {
     );
 
     // Focus scrollback, select the agent message by clicking it (the last
-    // entry is the "Worked for" event, so `k` would select that instead),
+    // entry is the "耗时" event, so `k` would select that instead),
     // then toggle raw with `r` (ToggleRaw).
     harness.inject_keys(b"\t").expect("focus scrollback");
     harness

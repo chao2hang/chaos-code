@@ -3,7 +3,7 @@
 use crate::app::actions::Action;
 use crate::slash::command::{CommandExecCtx, CommandResult, SlashCommand};
 
-/// Save a memory note inline or enter remember mode.
+/// 保存一条记忆笔记 inline or enter remember mode.
 pub struct RememberCommand;
 
 impl SlashCommand for RememberCommand {
@@ -12,7 +12,7 @@ impl SlashCommand for RememberCommand {
     }
 
     fn description(&self) -> &str {
-        "Save a memory note"
+        "保存一条记忆笔记"
     }
 
     fn usage(&self) -> &str {

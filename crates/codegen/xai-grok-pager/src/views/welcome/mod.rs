@@ -50,7 +50,7 @@ fn quit_hint_spans(theme: &Theme) -> Vec<Span<'static>> {
                 .fg(theme.accent_user)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled("  quit", Style::default().fg(theme.gray)),
+        Span::styled("  退出", Style::default().fg(theme.gray)),
     ]
 }
 
@@ -688,8 +688,8 @@ pub fn render_welcome(
     let mut result = match params.auth_state {
         AuthState::Pending { error } => {
             let label = params.login_label.unwrap_or("grok.com");
-            let login_text = format!("Login with {}", label);
-            let menu = [("l", login_text.as_str()), ("q", "Quit")];
+            let login_text = format!("使用 {} 登录", label);
+            let menu = [("l", login_text.as_str()), ("q", "退出")];
             let msg = error.as_deref().map(|e| (e, theme.accent_error));
             let info = PromptInfo {
                 model_name: params.model_name,
@@ -1003,11 +1003,11 @@ fn render_welcome_trust(
 }
 
 /// Header text shared by Loopback and Command auth modes.
-const AUTH_HEADER: &str = "A browser window will open for authentication.";
+const AUTH_HEADER: &str = "将打开浏览器窗口以完成认证。";
 /// Header text for the device-flow auth mode.
-const DEVICE_AUTH_HEADER: &str = "Approve in your browser to finish signing in.";
+const DEVICE_AUTH_HEADER: &str = "请在浏览器中批准以完成登录。";
 /// Caption beneath the device code.
-const DEVICE_CODE_CAPTION: &str = "Make sure your browser shows this code.";
+const DEVICE_CODE_CAPTION: &str = "请确认浏览器显示此代码。";
 
 /// Extract `user_code` from a device verification URL (`None` if absent or
 /// malformed). Shown on-screen so the user can confirm it matches the browser
@@ -1022,9 +1022,9 @@ fn extract_user_code(url: &str) -> Option<&str> {
     valid.then_some(code)
 }
 /// Clickable copy prompt shared by Loopback and Command auth modes.
-const AUTH_COPY_PREFIX: &str = "If it doesn't open, click ";
-const AUTH_COPY_HERE: &str = "here";
-const AUTH_COPY_SUFFIX: &str = " to copy.";
+const AUTH_COPY_PREFIX: &str = "如果未打开，点击";
+const AUTH_COPY_HERE: &str = "此处";
+const AUTH_COPY_SUFFIX: &str = "复制。";
 
 /// Build the "click here to copy" line with "here" underlined in accent color.
 fn auth_copy_line(theme: &Theme) -> Line<'static> {
@@ -1259,10 +1259,10 @@ fn render_browser_status_arm(
 
     // Device also parses the user code from the verification URL.
     let (header, waiting_text, user_code) = match kind {
-        BrowserStatusKind::Command => (AUTH_HEADER, "Waiting for login to complete...", None),
+        BrowserStatusKind::Command => (AUTH_HEADER, "正在等待登录完成…", None),
         BrowserStatusKind::Device => (
             DEVICE_AUTH_HEADER,
-            "Waiting for approval...",
+            "正在等待批准…",
             auth_url.and_then(extract_user_code),
         ),
     };
@@ -1564,7 +1564,7 @@ fn render_changelog_section(
             .fg(theme.gray_bright)
             .add_modifier(Modifier::DIM),
     );
-    let title = "Changelog";
+    let title = "更新日志";
     buf.set_span(
         centered.x,
         centered.y,
@@ -1686,7 +1686,7 @@ fn render_welcome_done(
     let cta = p
         .gate
         .and_then(|g| g.label.as_deref())
-        .unwrap_or("Upgrade Subscription");
+        .unwrap_or("升级订阅");
     let in_vscode_family = welcome_in_vscode_family();
     let (key_g, key_l, key_q) = (
         "ctrl+g",
@@ -1730,7 +1730,7 @@ fn render_welcome_done(
     let gate_menu;
     let owned_menu;
     let menu_items: &[(&str, &str)] = if !p.has_access {
-        gate_menu = [(key_g, cta), (key_l, "Logout"), (key_q, "Quit")];
+        gate_menu = [(key_g, cta), (key_l, "退出登录"), (key_q, "退出")];
         &gate_menu
     } else {
         let (key_w, key_s, key_q, key_i_with_x) = (
@@ -1748,15 +1748,15 @@ fn render_welcome_done(
             // 3 cells of this row as dismiss instead of open. Keyboard:
             // ctrl-shift-i. The key string is right-aligned by render_menu,
             // so [x] sits at the very end of the row.
-            items.push((key_i_with_x, "Import Claude settings"));
+            items.push((key_i_with_x, "导入 Claude 设置"));
         }
-        items.push((key_w, "New worktree"));
-        items.push((key_s, "Resume session"));
-        // "Changelog" above Quit; no shortcut — opened by click (row or block).
+        items.push((key_w, "新建工作树"));
+        items.push((key_s, "恢复会话"));
+        // "更新日志" above Quit; no shortcut — opened by click (row or block).
         if show_changelog_action {
-            items.push(("", "Changelog"));
+            items.push(("", "更新日志"));
         }
-        items.push((key_q, "Quit"));
+        items.push((key_q, "退出"));
         owned_menu = items;
         owned_menu.as_slice()
     };
@@ -1962,7 +1962,7 @@ fn render_welcome_done(
         let gate_text = p
             .gate
             .map(|g| g.message.as_str())
-            .unwrap_or("SuperGrok subscription required");
+            .unwrap_or("需要订阅才能继续使用");
         let msg = Line::from(Span::styled(
             gate_text,
             Style::default().fg(theme.gray_bright),
@@ -2044,13 +2044,13 @@ fn render_welcome_done(
             let key_name = "ctrl+u";
             let line = Line::from(vec![
                 Span::styled(
-                    "Update: ",
+                    "更新：",
                     Style::default()
                         .fg(theme.accent_user)
                         .add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(
-                    format!("v{ver} available \u{2014} press {key_name} to restart"),
+                    format!("v{ver} 可用 \u{2014} 按 {key_name} 重启"),
                     Style::default().fg(theme.accent_user),
                 ),
             ]);
@@ -2081,18 +2081,19 @@ fn render_welcome_done(
             };
             let mins = hint.age.as_secs() / 60;
             let when = if mins == 0 {
-                "moments ago".to_string()
+                "刚刚".to_string()
             } else {
-                format!("{mins}m ago")
+                format!("{mins} 分钟前")
             };
             let accent = Style::default().fg(theme.accent_user);
             let accent_bold = accent.add_modifier(Modifier::BOLD);
             let tool = crate::app::foreign_tool_display_label(hint.tool);
             let line = Line::from(vec![
-                Span::styled("Coming from ", accent),
+                Span::styled("刚从 ", accent),
                 Span::styled(tool, accent_bold),
-                Span::styled(format!("? Resume your session from {when} using "), accent),
+                Span::styled(format!(" 过来？用 "), accent),
                 Span::styled("ctrl+u", accent_bold),
+                Span::styled(format!(" 恢复 {when} 的会话"), accent),
             ]);
             Paragraph::new(line)
                 .style(Style::default().bg(theme.bg_base))
@@ -2382,7 +2383,7 @@ pub(crate) fn render_session_picker(
     }
 
     let config = PickerConfig {
-        title: Some("Resume session"),
+        title: Some("恢复会话"),
         show_search_hint: true,
         expandable: true,
         esc_clears_query: true,
@@ -2539,7 +2540,7 @@ fn build_masked_auth_token(input: &str, cursor_byte: usize) -> MaskedAuthToken {
 
 fn masked_auth_token_view(input: &str, cursor_byte: usize, width: usize) -> (String, usize) {
     if input.is_empty() {
-        return ("Paste your token here...".to_string(), 0);
+        return ("在此粘贴令牌…".to_string(), 0);
     }
     let masked = build_masked_auth_token(input, cursor_byte);
     let buffer =
@@ -2584,7 +2585,7 @@ mod tests {
     fn masked_auth_token_preserves_reveal_policy() {
         assert_eq!(
             masked_auth_token_view("", 0, 24),
-            ("Paste your token here...".to_string(), 0)
+            ("在此粘贴令牌…".to_string(), 0)
         );
         assert_eq!(build_masked_auth_token("12345678", 8).display, "12345678");
         assert_eq!(build_masked_auth_token("123456789", 9).display, "•••••6789");
@@ -2751,8 +2752,8 @@ mod tests {
             let mut params = render_params(&auth, &trust, None);
             params.foreign_resume_hint = Some(&hint);
             let text = render_done_text(&params);
-            assert!(text.contains(&format!("Coming from {label}?")), "{text}");
-            assert!(text.contains("2m ago"), "{text}");
+            assert!(text.contains(&format!("刚从 {label} 过来？")), "{text}");
+            assert!(text.contains("2 分钟前"), "{text}");
             assert!(text.contains("ctrl+u"), "{text}");
         }
     }
@@ -2771,8 +2772,8 @@ mod tests {
         params.pending_update_version = Some("9.9.9");
 
         let text = render_done_text(&params);
-        assert!(text.contains("v9.9.9 available"), "{text}");
-        assert!(!text.contains("Coming from Cursor?"), "{text}");
+        assert!(text.contains("v9.9.9 可用"), "{text}");
+        assert!(!text.contains("刚从 Cursor 过来？"), "{text}");
     }
 
     fn png() -> [u8; 8] {
@@ -2888,14 +2889,20 @@ mod tests {
                     chat_mode: true,
                 },
             );
+            use unicode_width::UnicodeWidthStr;
             (0..area.height)
                 .map(|y| {
-                    (0..area.width)
-                        .map(|x| {
-                            buf.cell((x, y))
-                                .map_or(' ', |c| c.symbol().chars().next().unwrap_or(' '))
-                        })
-                        .collect::<String>()
+                    let mut line = String::new();
+                    let mut x = 0u16;
+                    while x < area.width {
+                        let symbol = buf
+                            .cell((x, y))
+                            .map(|c| c.symbol())
+                            .unwrap_or(" ");
+                        line.push_str(symbol);
+                        x = x.saturating_add(UnicodeWidthStr::width(symbol).max(1) as u16);
+                    }
+                    line
                 })
                 .collect::<Vec<_>>()
                 .join("\n")
@@ -2903,7 +2910,7 @@ mod tests {
 
         let stamped = render(Some("hit"));
         assert!(
-            !stamped.contains("Searching session content"),
+            !stamped.contains("正在搜索会话内容"),
             "stamp==live must not render the search header:\n{stamped}"
         );
         assert!(
@@ -2915,7 +2922,7 @@ mod tests {
         // negative assertion above exercises the gate.
         let unstamped = render(None);
         assert!(
-            unstamped.contains("Searching session content"),
+            unstamped.contains("正在搜索会话内容"),
             "in-flight search without the stamp must render the header:\n{unstamped}"
         );
     }
@@ -3048,7 +3055,7 @@ mod tests {
 
     fn resume_picker_config() -> crate::views::picker::PickerConfig<'static> {
         crate::views::picker::PickerConfig {
-            title: Some("Resume session"),
+            title: Some("恢复会话"),
             show_search_hint: true,
             expandable: true,
             esc_clears_query: true,
@@ -3231,14 +3238,14 @@ mod tests {
 
     #[test]
     fn hero_box_active_on_wide_tall_terminal() {
-        // 90 cols, 50 rows: meets the minimum for the hero box.
-        let area = Rect::new(0, 0, 90, 50);
+        // 110 cols, 50 rows: meets the minimum for the hero box.
+        let area = Rect::new(0, 0, 110, 50);
         let layout = WelcomeLayout::compute(WelcomeLayoutInput {
             content_area: area,
             menu_height: 4,
             ..Default::default()
         });
-        assert!(layout.has_hero_box(), "hero box should be active at 90x50");
+        assert!(layout.has_hero_box(), "hero box should be active at 110x50");
         assert!(layout.hero_box.width > 0);
         assert!(layout.hero_box.height > 0);
         // Logo and menu slots are zero in hero box mode (content is inside the box).
@@ -3252,8 +3259,8 @@ mod tests {
 
     #[test]
     fn hero_box_inactive_on_narrow_terminal() {
-        // 80 cols is below the 90-col threshold.
-        let area = Rect::new(0, 0, 80, 50);
+        // 100 cols is below the 110-col threshold.
+        let area = Rect::new(0, 0, 100, 50);
         let layout = WelcomeLayout::compute(WelcomeLayoutInput {
             content_area: area,
             menu_height: 4,
@@ -3261,14 +3268,14 @@ mod tests {
         });
         assert!(
             !layout.has_hero_box(),
-            "hero box should be inactive at 80x50"
+            "hero box should be inactive at 100x50"
         );
         assert_eq!(layout.hero_box.width, 0);
     }
 
     #[test]
     fn hero_box_boundary_at_min_width() {
-        let just_below = Rect::new(0, 0, 89, 50);
+        let just_below = Rect::new(0, 0, 109, 50);
         let layout = WelcomeLayout::compute(WelcomeLayoutInput {
             content_area: just_below,
             menu_height: 4,
@@ -3276,10 +3283,10 @@ mod tests {
         });
         assert!(
             !layout.has_hero_box(),
-            "hero box should be inactive at 89 cols"
+            "hero box should be inactive at 109 cols"
         );
 
-        let at_threshold = Rect::new(0, 0, 90, 50);
+        let at_threshold = Rect::new(0, 0, 110, 50);
         let layout = WelcomeLayout::compute(WelcomeLayoutInput {
             content_area: at_threshold,
             menu_height: 4,
@@ -3287,7 +3294,7 @@ mod tests {
         });
         assert!(
             layout.has_hero_box(),
-            "hero box should be active at 90 cols"
+            "hero box should be active at 110 cols"
         );
     }
 
@@ -3311,9 +3318,9 @@ mod tests {
 
     #[test]
     fn hero_box_inactive_on_short_terminal() {
-        // 16 rows is one short of the 17 the box needs (11 box + 1 flex gap +
-        // 5 fixed-below), so it falls back to the stacked layout.
-        let area = Rect::new(0, 0, 90, 16);
+        // Full CHAOS logo is 13 rows → box = 2+2+13 = 17, plus flex(1)+fixed(5) = 23.
+        // 22 rows is one short, so it falls back to the stacked layout.
+        let area = Rect::new(0, 0, 110, 22);
         let layout = WelcomeLayout::compute(WelcomeLayoutInput {
             content_area: area,
             menu_height: 4,
@@ -3321,17 +3328,17 @@ mod tests {
         });
         assert!(
             !layout.has_hero_box(),
-            "hero box should be inactive at 90x16 (needs 17 rows)"
+            "hero box should be inactive at 110x22 (needs 23 rows)"
         );
     }
 
     #[test]
     fn hero_box_inactive_when_warning_would_overflow() {
-        // Regression: the box is forced to the full 7-row logo, so even a
-        // 3-item menu needs 11 box rows. A startup warning (error_height = 2)
-        // pushes the total past height 19, so the gate must fall back to the
-        // stacked layout instead of overflowing by a row.
-        let area = Rect::new(0, 0, 90, 19);
+        // Regression: the box is forced to the full 13-row logo, so even a
+        // 3-item menu needs 17 box rows (2 border + 2 v_pad + 13). A startup
+        // warning (error_height = 2 + gap 1) pushes past height 23, so the
+        // gate must fall back to the stacked layout instead of overflowing.
+        let area = Rect::new(0, 0, 110, 23);
         let with_warning = WelcomeLayout::compute(WelcomeLayoutInput {
             content_area: area,
             error_height: 2,
@@ -3382,12 +3389,12 @@ mod tests {
 
     #[test]
     fn hero_box_does_not_overflow_with_tall_menu() {
-        // A 6-item menu makes the box 2 rows taller than the default-4 box, so
-        // the centering pad (derived from the default box) must be clamped or
-        // the box gets pushed down and the version row clips at exactly
-        // min_content_height. 19 == min_content_height(0, 6, 0, 0): a 13-row box
-        // + 1 flex gap + 5 fixed-below.
-        let area = Rect::new(0, 0, 100, 19);
+        // A 6-item menu is still shorter than the 13-row logo, so the box stays
+        // at 17 rows. The centering pad (derived from the default-4 menu box)
+        // must be clamped at exactly min_content_height or the version row
+        // clips. 23 == min_content_height(0, 6, 0, 0): 17-row box + 1 flex + 5
+        // fixed-below.
+        let area = Rect::new(0, 0, 120, 23);
         let layout = WelcomeLayout::compute(WelcomeLayoutInput {
             content_area: area,
             menu_height: 6,
@@ -3413,22 +3420,22 @@ mod tests {
 
     #[test]
     fn hero_box_height_accounts_for_borders_and_padding() {
-        // At h >= 26, logo07 is used (7 lines). With menu_height=3:
-        // right_col = 2 + 0 + 0 + 1 + 3 = 6, inner = max(7, 6) = 7.
-        // hero_box_height = 2 (borders) + 2 (v_pad) + 7 = 11.
-        let area = Rect::new(0, 0, 100, 50);
+        // Full CHAOS logo is 13 lines. With menu_height=3:
+        // right_col = 1 + 1 + 0 + 1 + 3 = 6, inner = max(13, 6) = 13.
+        // hero_box_height = 2 (borders) + 2 (v_pad) + 13 = 17.
+        let area = Rect::new(0, 0, 120, 50);
         let layout = WelcomeLayout::compute(WelcomeLayoutInput {
             content_area: area,
             menu_height: 3,
             ..Default::default()
         });
         assert!(layout.has_hero_box());
-        assert_eq!(layout.hero_box.height, 11);
+        assert_eq!(layout.hero_box.height, 17);
     }
 
     #[test]
     fn hero_box_logo_top_aligned() {
-        let area = Rect::new(0, 0, 100, 50);
+        let area = Rect::new(0, 0, 120, 50);
         let layout = WelcomeLayout::compute(WelcomeLayoutInput {
             content_area: area,
             menu_height: 3,
@@ -3442,7 +3449,7 @@ mod tests {
     fn hero_box_with_changelog() {
         // With no announcement, the changelog renders inside the box (info
         // slot), not in a separate area below it.
-        let area = Rect::new(0, 0, 100, 50);
+        let area = Rect::new(0, 0, 120, 50);
         let layout = WelcomeLayout::compute(WelcomeLayoutInput {
             content_area: area,
             menu_height: 3,
@@ -3459,7 +3466,7 @@ mod tests {
 
     #[test]
     fn hero_box_with_announcement() {
-        let area = Rect::new(0, 0, 100, 50);
+        let area = Rect::new(0, 0, 120, 50);
         let a = long_ann();
         let layout = WelcomeLayout::compute(WelcomeLayoutInput {
             content_area: area,
@@ -3484,7 +3491,7 @@ mod tests {
     fn hero_box_announcement_takes_priority_over_changelog() {
         // When both are present, the info slot is sized for the announcement
         // and the changelog is suppressed (never shown outside the box).
-        let area = Rect::new(0, 0, 100, 50);
+        let area = Rect::new(0, 0, 120, 50);
         let a = long_ann();
         let layout = WelcomeLayout::compute(WelcomeLayoutInput {
             content_area: area,
@@ -3503,7 +3510,8 @@ mod tests {
         // A real announcement can't disable the hero box: the slot is clamped to
         // whatever still fits (the renderer trails a `…`), so the box stays
         // active rather than falling back to the stacked layout.
-        let area = Rect::new(0, 0, 100, 17);
+        // min_content_height(0, 3, 0, 0) = 17 box + 1 flex + 5 fixed = 23.
+        let area = Rect::new(0, 0, 120, 23);
         let a = long_ann();
         let without = WelcomeLayout::compute(WelcomeLayoutInput {
             content_area: area,
@@ -3532,17 +3540,18 @@ mod tests {
     fn hero_box_keeps_one_bottom_pad_below_actions() {
         // With a changelog/announcement the subtitle is hidden, but there's
         // still exactly one padding row between the actions and the bottom
-        // border. (menu=4 + info=3 fills the inner, so the menu reaches the pad.)
-        let area = Rect::new(0, 0, 100, 50);
+        // border. Full logo is 13 rows; collapsed announcement is 3, so
+        // menu=7 fills the right column (1+0+1+3+1+7 = 13).
+        let area = Rect::new(0, 0, 120, 50);
         let a = long_ann();
         let no_info = WelcomeLayout::compute(WelcomeLayoutInput {
             content_area: area,
-            menu_height: 4,
+            menu_height: 7,
             ..Default::default()
         });
         let with_info = WelcomeLayout::compute(WelcomeLayoutInput {
             content_area: area,
-            menu_height: 4,
+            menu_height: 7,
             announcement: Some(&a),
             ..Default::default()
         });
@@ -3559,11 +3568,17 @@ mod tests {
 
     /// Flatten a rendered buffer into one string for substring assertions.
     fn buffer_text(buf: &Buffer) -> String {
+        use unicode_width::UnicodeWidthStr;
         let area = *buf.area();
         let mut out = String::new();
         for y in area.y..area.y + area.height {
-            for x in area.x..area.x + area.width {
-                out.push_str(buf[(x, y)].symbol());
+            let mut x = area.x;
+            while x < area.x + area.width {
+                // Advance by display width so wide (CJK) glyphs don't leave a
+                // phantom space from their continuation cell.
+                let symbol = buf[(x, y)].symbol();
+                out.push_str(symbol);
+                x = x.saturating_add(UnicodeWidthStr::width(symbol).max(1) as u16);
             }
             out.push('\n');
         }
@@ -3614,7 +3629,7 @@ mod tests {
 
         let text = buffer_text(&buf);
         assert!(
-            text.contains("Approve in your browser"),
+            text.contains("请在浏览器中批准"),
             "device arm must show the approval header, got:\n{text}"
         );
         // Device code shown for the browser-match check (anti-phishing).
@@ -3623,17 +3638,17 @@ mod tests {
             "device arm must show the device code, got:\n{text}"
         );
         assert!(
-            text.contains("Make sure your browser shows this code"),
+            text.contains("请确认浏览器显示此代码"),
             "device arm must show the code caption, got:\n{text}"
         );
         // Copy affordance (click-to-copy line) is present.
         assert!(
-            text.contains("to copy"),
+            text.contains("复制"),
             "device arm must show the copy-URL affordance, got:\n{text}"
         );
         // No manual-paste affordance in device mode.
         assert!(
-            !text.contains("Paste your token"),
+            !text.contains("在此粘贴令牌"),
             "device arm must NOT render the token paste box, got:\n{text}"
         );
         // Copy + fallback links are clickable.
@@ -3774,21 +3789,21 @@ mod tests {
 
         let text = buffer_text(&buf);
         assert!(
-            text.contains("A browser window will open"),
+            text.contains("将打开浏览器窗口以完成认证"),
             "command arm must show the auth header, got:\n{text}"
         );
         assert!(
-            text.contains("Waiting for login to complete"),
+            text.contains("正在等待登录完成"),
             "command arm must show the waiting status, got:\n{text}"
         );
         // No device code — that's device-flow only.
         assert!(
-            !text.contains("Make sure your browser shows this code"),
+            !text.contains("请确认浏览器显示此代码"),
             "command arm must NOT show the device-code caption, got:\n{text}"
         );
         // No manual-paste affordance in command mode.
         assert!(
-            !text.contains("Paste your token"),
+            !text.contains("在此粘贴令牌"),
             "command arm must NOT render the token paste box, got:\n{text}"
         );
         // Copy + fallback links are clickable.

@@ -11,7 +11,7 @@ impl SlashCommand for ResumeCommand {
     }
 
     fn description(&self) -> &str {
-        "Resume a previous session"
+        "恢复先前会话"
     }
 
     fn usage(&self) -> &str {

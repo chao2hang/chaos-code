@@ -93,7 +93,7 @@ async fn queue_and_interjection_lifecycle() {
 
     // The send-now cancel of turn 1 is silent.
     assert!(
-        !harness.contains_text("Turn cancelled by user"),
+        !harness.contains_text("用户在"),
         "send-now cancel must not render a cancelled marker\nscreen:\n{}",
         harness.screen_contents()
     );

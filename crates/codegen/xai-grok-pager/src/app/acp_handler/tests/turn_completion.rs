@@ -345,7 +345,7 @@
 
     #[test]
     fn failed_wake_turn_keeps_markerless_shape() {
-        // "Worked for" would lie about an errored/cancelled wake turn, and
+        // "耗时" would lie about an errored/cancelled wake turn, and
         // the cancel/failure UX is driver-side context this signal lacks —
         // those stop reasons keep today's markerless shape.
         let mut app = make_app_with_agent("sess-wake");
@@ -397,7 +397,7 @@
     fn wake_terminal_during_local_turn_pushes_nothing() {
         // Wire interleave: wake turn W streams (pager idle), the user sends a
         // prompt locally (TurnRunning), then FIFO delivers W's terminal
-        // before the new turn's deltas. A foreign "Worked for" under the
+        // before the new turn's deltas. A foreign "耗时" under the
         // fresh prompt would misattribute — the local turn pushes its own
         // marker when it ends.
         let mut app = make_app_with_agent("sess-wake");

@@ -47,7 +47,7 @@ async fn esc_mid_turn_from_prompt_is_swallowed_preserves_draft() {
     let screen = harness.screen_contents();
 
     assert!(
-        !screen.contains("Turn cancelled by user"),
+        !screen.contains("用户在"),
         "mid-turn Esc must NOT cancel the turn\nscreen:\n{screen}"
     );
     assert!(
@@ -73,7 +73,7 @@ async fn esc_mid_turn_from_prompt_is_swallowed_preserves_draft() {
     );
     harness.inject_keys(keys::CTRL_C).expect("second ctrl+c");
     harness
-        .wait_for_text("Turn cancelled by user", Duration::from_secs(15))
+        .wait_for_text("用户在", Duration::from_secs(15))
         .expect("Ctrl+C on the empty prompt must cancel the still-running turn");
 
     assert!(

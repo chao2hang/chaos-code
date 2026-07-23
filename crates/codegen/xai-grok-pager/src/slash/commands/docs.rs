@@ -11,7 +11,7 @@ use crate::slash::command::{AppCtx, ArgItem, CommandExecCtx, CommandResult, Slas
 /// Online Build docs landing page (hardcoded like other TUI deep-links; docs.x.ai can redirect if the path moves).
 pub const BUILD_DOCS_URL: &str = "https://docs.x.ai/build/overview";
 
-/// Open How-to Guides or online Build docs.
+/// 打开使用指南或在线文档.
 pub struct DocsCommand;
 
 impl SlashCommand for DocsCommand {
@@ -24,7 +24,7 @@ impl SlashCommand for DocsCommand {
     }
 
     fn description(&self) -> &str {
-        "Open How-to Guides or online Build docs"
+        "打开使用指南或在线文档"
     }
 
     fn usage(&self) -> &str {
@@ -49,13 +49,13 @@ impl SlashCommand for DocsCommand {
                 display: "how-to".into(),
                 match_text: "how-to".into(),
                 insert_text: "how-to".into(),
-                description: "Browse in-TUI How-to Guides".into(),
+                description: "在 TUI 内浏览使用指南".into(),
             },
             ArgItem {
                 display: "web".into(),
                 match_text: "web".into(),
                 insert_text: "web".into(),
-                description: "Open docs.x.ai/build in the browser".into(),
+                description: "在浏览器中打开文档".into(),
             },
         ];
         items.extend(all_titles().map(|title| ArgItem {

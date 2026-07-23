@@ -766,9 +766,9 @@ pub(crate) async fn run(
         app.minimal_state.welcome_pending = true;
     }
     if term_state.relaunched_into_minimal && app.screen_mode.is_minimal() {
-        app.screen_mode_switch_hint = Some("Switched to minimal mode · /fullscreen to go back");
+        app.screen_mode_switch_hint = Some("已切换到极简模式 · 用 /fullscreen 返回");
     } else if term_state.relaunched_into_fullscreen && !app.screen_mode.is_minimal() {
-        app.screen_mode_switch_hint = Some("Switched to fullscreen mode · /minimal to go back");
+        app.screen_mode_switch_hint = Some("已切换到全屏模式 · 用 /minimal 返回");
     }
     let remote_permission_mode = remote_settings
         .as_ref()

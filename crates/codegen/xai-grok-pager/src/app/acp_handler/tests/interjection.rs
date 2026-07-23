@@ -120,7 +120,7 @@
         let agent = app.agents.get_mut(&AgentId(0)).unwrap();
         assert_eq!(
             parked_marker_messages(agent),
-            vec!["Worked for 0.0s".to_string()],
+            vec!["耗时 0.0s".to_string()],
             "one plain marker per park episode — completions never re-push"
         );
         assert!(
@@ -169,7 +169,7 @@
         );
         assert_eq!(
             parked_marker_messages(agent),
-            vec!["Worked for 0.0s".to_string()],
+            vec!["耗时 0.0s".to_string()],
         );
     }
 
@@ -190,7 +190,7 @@
         let agent = app.agents.get_mut(&AgentId(0)).unwrap();
         assert_eq!(
             parked_marker_messages(agent),
-            vec!["Worked for 0.0s".to_string()],
+            vec!["耗时 0.0s".to_string()],
             "subagent finishes never re-push or mutate the park marker"
         );
         assert_eq!(parked_marker_ids(agent), vec![marker_id]);
@@ -278,7 +278,7 @@
             let agent = app.agents.get_mut(&AgentId(0)).unwrap();
             assert_eq!(
                 parked_marker_messages(agent),
-                vec!["Worked for 0.0s".to_string(), "Worked for 0.0s".to_string()],
+                vec!["耗时 0.0s".to_string(), "耗时 0.0s".to_string()],
                 "{output_kind} output must start a new park episode",
             );
             let marker_ids = parked_marker_ids(agent);
@@ -311,7 +311,7 @@
         let agent = app.agents.get_mut(&AgentId(0)).unwrap();
         assert_eq!(
             parked_marker_messages(agent),
-            vec!["Worked for 0.0s".to_string()],
+            vec!["耗时 0.0s".to_string()],
         );
         assert_eq!(parked_marker_ids(agent), vec![marker_id]);
     }
@@ -334,7 +334,7 @@
         let agent = app.agents.get_mut(&AgentId(0)).unwrap();
         assert_eq!(
             parked_marker_messages(agent),
-            vec!["Worked for 0.0s".to_string()],
+            vec!["耗时 0.0s".to_string()],
         );
         assert_eq!(parked_marker_ids(agent), vec![marker_id]);
     }
@@ -366,7 +366,7 @@
         let agent = app.agents.get_mut(&AgentId(0)).unwrap();
         assert_eq!(
             parked_marker_messages(agent),
-            vec!["Worked for 0.0s".to_string()],
+            vec!["耗时 0.0s".to_string()],
         );
         assert_eq!(parked_marker_ids(agent), vec![marker_id]);
     }
@@ -478,7 +478,7 @@
         assert_eq!(count_parked(agent), 1, "genuine park still renders");
         assert_eq!(
             parked_marker_messages(agent),
-            vec!["Worked for 0.0s".to_string()],
+            vec!["耗时 0.0s".to_string()],
         );
     }
 
@@ -605,7 +605,7 @@
         assert_eq!(count_parked(agent), 1, "wait-all on live work parks");
         assert_eq!(
             parked_marker_messages(agent),
-            vec!["Worked for 0.0s".to_string()],
+            vec!["耗时 0.0s".to_string()],
         );
     }
 
@@ -637,7 +637,7 @@
         assert_eq!(count_parked(agent), 1, "spawn re-evaluates the skipped park");
         assert_eq!(
             parked_marker_messages(agent),
-            vec!["Worked for 0.0s".to_string()],
+            vec!["耗时 0.0s".to_string()],
         );
     }
 
@@ -670,7 +670,7 @@
         );
         assert_eq!(
             parked_marker_messages(agent),
-            vec!["Worked for 0.0s".to_string()],
+            vec!["耗时 0.0s".to_string()],
         );
     }
 

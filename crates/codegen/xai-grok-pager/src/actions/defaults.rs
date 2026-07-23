@@ -26,8 +26,8 @@ fn mode_ctrl_g_action(screen_mode: crate::app::ScreenMode) -> ActionDef {
     if screen_mode.is_minimal() {
         ActionDef {
             id: ActionId::EditPromptExternal,
-            label: "edit prompt",
-            description: "Edit prompt in external editor",
+            label: "编辑提示",
+            description: "在外部编辑器中编辑提示",
             default_key: key!('g', CONTROL),
             alt_keys: vec![],
             category: Category::Input,
@@ -42,8 +42,8 @@ fn mode_ctrl_g_action(screen_mode: crate::app::ScreenMode) -> ActionDef {
     } else {
         ActionDef {
             id: ActionId::ToggleTasks,
-            label: "tasks",
-            description: "Toggle tasks pane",
+            label: "任务",
+            description: "切换任务面板",
             default_key: key!('g', CONTROL),
             alt_keys: vec![],
             category: Category::Panels,
@@ -83,8 +83,8 @@ pub(super) fn default_actions(
         // ── Navigation (scrollback) ─────────────────────────────────
         ActionDef {
             id: ActionId::SelectNext,
-            label: "nav",
-            description: "Select next entry",
+            label: "导航",
+            description: "选择下一项",
             default_key: key!('j'),
             alt_keys: vec![key!(Down)],
             category: Category::ConversationNav,
@@ -96,8 +96,8 @@ pub(super) fn default_actions(
         },
         ActionDef {
             id: ActionId::SelectPrev,
-            label: "nav",
-            description: "Select previous entry",
+            label: "导航",
+            description: "选择上一项",
             default_key: key!('k'),
             alt_keys: vec![key!(Up)],
             category: Category::ConversationNav,
@@ -109,8 +109,8 @@ pub(super) fn default_actions(
         },
         ActionDef {
             id: ActionId::NextTurn,
-            label: "turn",
-            description: "Next turn",
+            label: "轮次",
+            description: "下一轮",
             default_key: key!('L'),
             alt_keys: vec![key!(Right, SHIFT)],
             category: Category::ConversationNav,
@@ -122,8 +122,8 @@ pub(super) fn default_actions(
         },
         ActionDef {
             id: ActionId::PrevTurn,
-            label: "turn",
-            description: "Previous turn",
+            label: "轮次",
+            description: "上一轮",
             default_key: key!('H'),
             alt_keys: vec![key!(Left, SHIFT)],
             category: Category::ConversationNav,
@@ -135,8 +135,8 @@ pub(super) fn default_actions(
         },
         ActionDef {
             id: ActionId::NextResponse,
-            label: "response",
-            description: "Next response",
+            label: "回复",
+            description: "下一条回复",
             default_key: key!('J'),
             alt_keys: vec![],
             category: Category::ConversationNav,
@@ -148,8 +148,8 @@ pub(super) fn default_actions(
         },
         ActionDef {
             id: ActionId::PrevResponse,
-            label: "response",
-            description: "Previous response",
+            label: "回复",
+            description: "上一条回复",
             default_key: key!('K'),
             alt_keys: vec![],
             category: Category::ConversationNav,
@@ -161,8 +161,8 @@ pub(super) fn default_actions(
         },
         ActionDef {
             id: ActionId::GotoTop,
-            label: "top/btm",
-            description: "Go to top",
+            label: "顶/底",
+            description: "跳到顶部",
             default_key: key!('g'),
             alt_keys: vec![],
             category: Category::ConversationNav,
@@ -174,8 +174,8 @@ pub(super) fn default_actions(
         },
         ActionDef {
             id: ActionId::GotoBottom,
-            label: "bottom",
-            description: "Go to bottom",
+            label: "底部",
+            description: "跳到底部",
             default_key: key!('G'),
             alt_keys: vec![],
             category: Category::ConversationNav,
@@ -187,8 +187,8 @@ pub(super) fn default_actions(
         },
         ActionDef {
             id: ActionId::ScrollUp,
-            label: "scroll up",
-            description: "Scroll up one line",
+            label: "向上滚动",
+            description: "向上滚动一行",
             default_key: key!('k', CONTROL),
             alt_keys: vec![],
             category: Category::ConversationNav,
@@ -200,8 +200,8 @@ pub(super) fn default_actions(
         },
         ActionDef {
             id: ActionId::ScrollDown,
-            label: "scroll down",
-            description: "Scroll down one line",
+            label: "向下滚动",
+            description: "向下滚动一行",
             default_key: key!('j', CONTROL),
             alt_keys: vec![],
             category: Category::ConversationNav,
@@ -213,8 +213,8 @@ pub(super) fn default_actions(
         },
         ActionDef {
             id: ActionId::HalfPageUp,
-            label: "half page up",
-            description: "Scroll up half page",
+            label: "上半页",
+            description: "向上滚动半页",
             default_key: key!('u', CONTROL),
             alt_keys: vec![],
             category: Category::ConversationNav,
@@ -226,8 +226,8 @@ pub(super) fn default_actions(
         },
         ActionDef {
             id: ActionId::HalfPageDown,
-            label: "half page down",
-            description: "Scroll down half page",
+            label: "下半页",
+            description: "向下滚动半页",
             default_key: if in_vscode {
                 key!('D')
             } else {
@@ -243,8 +243,8 @@ pub(super) fn default_actions(
         },
         ActionDef {
             id: ActionId::PageUp,
-            label: "page up",
-            description: "Scroll up one page",
+            label: "上一页",
+            description: "向上滚动一页",
             default_key: key!(PageUp),
             alt_keys: vec![],
             category: Category::ConversationNav,
@@ -256,8 +256,8 @@ pub(super) fn default_actions(
         },
         ActionDef {
             id: ActionId::PageDown,
-            label: "page down",
-            description: "Scroll down one page",
+            label: "下一页",
+            description: "向下滚动一页",
             default_key: key!(PageDown),
             alt_keys: vec![],
             category: Category::ConversationNav,
@@ -270,8 +270,8 @@ pub(super) fn default_actions(
         // ── View (scrollback) ───────────────────────────────────────
         ActionDef {
             id: ActionId::Collapse,
-            label: "fold",
-            description: "Collapse selected entry",
+            label: "折叠",
+            description: "折叠选中项",
             default_key: key!('h'),
             alt_keys: vec![key!(Left)],
             category: Category::ConversationAction,
@@ -283,8 +283,8 @@ pub(super) fn default_actions(
         },
         ActionDef {
             id: ActionId::Expand,
-            label: "fold",
-            description: "Expand selected entry",
+            label: "折叠",
+            description: "展开选中项",
             default_key: key!('l'),
             alt_keys: vec![key!(Right)],
             category: Category::ConversationAction,
@@ -296,8 +296,8 @@ pub(super) fn default_actions(
         },
         ActionDef {
             id: ActionId::ToggleFold,
-            label: "fold",
-            description: "Expand / collapse",
+            label: "折叠",
+            description: "展开 / 折叠",
             default_key: key!('e'),
             alt_keys: vec![],
             category: Category::ConversationAction,
@@ -311,8 +311,8 @@ pub(super) fn default_actions(
         },
         ActionDef {
             id: ActionId::ToggleExpandAll,
-            label: "all",
-            description: "Expand all / collapse all",
+            label: "全部",
+            description: "全部展开 / 全部折叠",
             default_key: key!('E'),
             alt_keys: vec![],
             category: Category::ConversationAction,
@@ -326,8 +326,8 @@ pub(super) fn default_actions(
         },
         ActionDef {
             id: ActionId::ExpandAllThinking,
-            label: "expand/collapse thinking",
-            description: "Toggle all thinking blocks",
+            label: "展开/折叠思考",
+            description: "切换全部思考块",
             default_key: key!('e', CONTROL),
             alt_keys: vec![],
             category: Category::ConversationAction,
@@ -341,8 +341,8 @@ pub(super) fn default_actions(
         },
         ActionDef {
             id: ActionId::ToggleRaw,
-            label: "raw",
-            description: "Toggle raw markdown",
+            label: "原始",
+            description: "切换原始 Markdown",
             default_key: key!('r'),
             alt_keys: vec![],
             category: Category::ConversationAction,
@@ -357,8 +357,8 @@ pub(super) fn default_actions(
         // ── Block content ────────────────────────────────────────────
         ActionDef {
             id: ActionId::CopyBlockContent,
-            label: "copy",
-            description: "Copy content",
+            label: "复制",
+            description: "复制内容",
             default_key: key!('y'),
             alt_keys: vec![],
             category: Category::ConversationAction,
@@ -372,8 +372,8 @@ pub(super) fn default_actions(
         },
         ActionDef {
             id: ActionId::CopyBlockMeta,
-            label: "copy cmd",
-            description: "Copy command / path",
+            label: "复制命令",
+            description: "复制命令 / 路径",
             default_key: key!('Y'),
             alt_keys: vec![],
             category: Category::ConversationAction,
@@ -387,8 +387,8 @@ pub(super) fn default_actions(
         },
         ActionDef {
             id: ActionId::OpenBlockViewer,
-            label: "view",
-            description: "Open in viewer",
+            label: "查看",
+            description: "在查看器中打开",
             default_key: key!(Enter),
             alt_keys: vec![key!('f', CONTROL)],
             category: Category::ConversationAction,
@@ -403,8 +403,8 @@ pub(super) fn default_actions(
         // ── Link navigation ─────────────────────────────────────────
         ActionDef {
             id: ActionId::OpenNextLink,
-            label: "link",
-            description: "Next link",
+            label: "链接",
+            description: "下一个链接",
             default_key: key!('o'),
             alt_keys: vec![],
             category: Category::ConversationNav,
@@ -416,8 +416,8 @@ pub(super) fn default_actions(
         },
         ActionDef {
             id: ActionId::OpenPrevLink,
-            label: "link",
-            description: "Previous link",
+            label: "链接",
+            description: "上一个链接",
             default_key: key!('O'),
             alt_keys: vec![],
             category: Category::ConversationNav,
@@ -430,8 +430,8 @@ pub(super) fn default_actions(
         // ── Scrollback (contextual — block-type-dependent) ────────────
         ActionDef {
             id: ActionId::Rewind,
-            label: "rewind",
-            description: "Rewind to selected turn",
+            label: "回退",
+            description: "回退到选中轮次",
             default_key: key!(Null),
             alt_keys: vec![],
             category: Category::ConversationAction,
@@ -445,8 +445,8 @@ pub(super) fn default_actions(
         },
         ActionDef {
             id: ActionId::KillBgTask,
-            label: "kill",
-            description: "Kill background task",
+            label: "终止",
+            description: "终止后台任务",
             default_key: key!('x'),
             alt_keys: vec![],
             category: Category::ConversationAction,
@@ -461,8 +461,8 @@ pub(super) fn default_actions(
         // ── Essentials ────────────────────────────────────────────────
         ActionDef {
             id: ActionId::SendPrompt,
-            label: "send",
-            description: "Send",
+            label: "发送",
+            description: "发送",
             default_key: key!(Enter),
             alt_keys: vec![],
             category: Category::GettingStarted,
@@ -474,8 +474,8 @@ pub(super) fn default_actions(
         },
         ActionDef {
             id: ActionId::FocusPrompt,
-            label: "prompt",
-            description: "Focus prompt",
+            label: "提示",
+            description: "聚焦提示输入",
             default_key: key!(Tab),
             alt_keys: vec![key!('i'), key!(' ')],
             category: Category::GettingStarted,
@@ -487,8 +487,8 @@ pub(super) fn default_actions(
         },
         ActionDef {
             id: ActionId::FocusScrollback,
-            label: "scrollback",
-            description: "Focus scrollback",
+            label: "滚动历史",
+            description: "聚焦滚动历史",
             default_key: key!(Tab),
             alt_keys: vec![],
             category: Category::GettingStarted,
@@ -502,8 +502,8 @@ pub(super) fn default_actions(
         },
         ActionDef {
             id: ActionId::CancelTurn,
-            label: "cancel",
-            description: "Cancel turn",
+            label: "取消",
+            description: "取消当前轮次",
             default_key: key!('c', CONTROL),
             alt_keys: vec![],
             category: Category::GettingStarted,
@@ -517,8 +517,8 @@ pub(super) fn default_actions(
         },
         ActionDef {
             id: ActionId::CycleMode,
-            label: "mode",
-            description: "Cycle mode (Normal / Plan / Always-approve)",
+            label: "模式",
+            description: "循环模式（普通 / 计划 / 总是批准）",
             // All Shift+Tab encodings — see `input::key::shift_tab_keys()`.
             default_key: crate::input::key::shift_tab_keys()[0],
             alt_keys: crate::input::key::shift_tab_keys()[1..].to_vec(),
@@ -535,8 +535,8 @@ pub(super) fn default_actions(
         mode_ctrl_g_action(screen_mode),
         ActionDef {
             id: ActionId::ToggleTodos,
-            label: "todos",
-            description: "Toggle todo pane",
+            label: "待办",
+            description: "切换待办面板",
             default_key: key!('t', CONTROL),
             alt_keys: vec![],
             category: Category::Panels,
@@ -550,8 +550,8 @@ pub(super) fn default_actions(
         },
         ActionDef {
             id: ActionId::ToggleQueue,
-            label: "queue",
-            description: "Toggle prompt queue",
+            label: "队列",
+            description: "切换提示队列",
             // Local macOS VS Code family only: ; / ' often never arrive (saw
             // Ctrl+4 in input-debug). SSH and non-Mac keep ; (+ ' alt). Win/Linux
             // VS maps Ctrl+4 to focusFourthEditorGroup.
@@ -578,8 +578,8 @@ pub(super) fn default_actions(
         },
         ActionDef {
             id: ActionId::OpenSessions,
-            label: "sessions",
-            description: "Open sessions",
+            label: "会话",
+            description: "打开会话列表",
             default_key: key!('s', CONTROL),
             alt_keys: vec![],
             category: Category::Panels,
@@ -593,8 +593,8 @@ pub(super) fn default_actions(
         },
         ActionDef {
             id: ActionId::OpenExtensions,
-            label: "extensions",
-            description: "Open extensions",
+            label: "扩展",
+            description: "打开扩展",
             // VS Code family: Ctrl+L is interject; plugins via /plugins (no chord here).
             default_key: if in_vscode_family {
                 key!(Null)
@@ -613,8 +613,8 @@ pub(super) fn default_actions(
         },
         ActionDef {
             id: ActionId::SendToBackground,
-            label: "send to bg",
-            description: "Send running task to background",
+            label: "后台运行",
+            description: "将运行中的任务放到后台",
             default_key: key!('b', CONTROL),
             alt_keys: vec![],
             category: Category::Panels,
@@ -630,8 +630,8 @@ pub(super) fn default_actions(
             // "send now" label: Enter queues a follow-up while a turn runs;
             // this chord is cancel-and-send — stop the current turn and run
             // the message as the next one ("send now").
-            label: "send now",
-            description: "Send now while running (cancels the current turn)",
+            label: "立即发送",
+            description: "运行中立即发送（取消当前轮次）",
             default_key: if in_apple_terminal {
                 key!('o', CONTROL)
             } else if in_vscode_family {
@@ -660,8 +660,8 @@ pub(super) fn default_actions(
         },
         ActionDef {
             id: ActionId::EnableVoiceMode,
-            label: "voice mode",
-            description: "Start voice dictation (Ctrl+Space / F8)",
+            label: "语音模式",
+            description: "开始语音听写（Ctrl+Space / F8）",
             // No key binding (`KeyCode::Null`): dispatched directly by the voice
             // chord's hold-to-talk press in the event loop, not via the registry.
             default_key: key!(Null),
@@ -682,8 +682,8 @@ pub(super) fn default_actions(
             // Fn+F8 on a laptop). The event loop maps a press to hold-to-talk or
             // tap-toggle per `[ui].voice_capture_mode` before normal routing.
             id: ActionId::VoiceToggle,
-            label: "mic",
-            description: "Voice dictation (Ctrl+Space / F8)",
+            label: "麦克风",
+            description: "语音听写（Ctrl+Space / F8）",
             default_key: key!(' ', CONTROL),
             alt_keys: vec![key!(F(8))],
             category: Category::Input,
@@ -701,8 +701,8 @@ pub(super) fn default_actions(
         // `/history` opens the search panel; Up on an empty prompt browses.
         ActionDef {
             id: ActionId::ToggleMultiline,
-            label: "multiline",
-            description: "Toggle multiline",
+            label: "多行",
+            description: "切换多行输入",
             default_key: key!('m', CONTROL),
             alt_keys: vec![],
             category: Category::Input,
@@ -716,8 +716,8 @@ pub(super) fn default_actions(
         },
         ActionDef {
             id: ActionId::BashMode,
-            label: "shell",
-            description: "Shell mode (type ! on empty prompt)",
+            label: "Shell",
+            description: "Shell 模式（空提示输入 !）",
             default_key: key!('!'),
             alt_keys: vec![],
             category: Category::Input,
@@ -732,8 +732,8 @@ pub(super) fn default_actions(
         // ── Agent ────────────────────────────────────────────────────
         ActionDef {
             id: ActionId::ToggleYolo,
-            label: "yolo",
-            description: "Toggle always-approve",
+            label: "总是批准",
+            description: "切换总是批准",
             default_key: key!('o', CONTROL),
             alt_keys: vec![],
             category: Category::Session,
@@ -747,8 +747,8 @@ pub(super) fn default_actions(
         },
         ActionDef {
             id: ActionId::NewSession,
-            label: "new",
-            description: "New session",
+            label: "新建",
+            description: "新建会话",
             default_key: key!('n', CONTROL),
             alt_keys: vec![],
             category: Category::Session,
@@ -762,8 +762,8 @@ pub(super) fn default_actions(
         },
         ActionDef {
             id: ActionId::Quit,
-            label: "quit",
-            description: "Quit",
+            label: "退出",
+            description: "退出",
             default_key: if in_vscode {
                 key!('d', CONTROL)
             } else {
@@ -785,8 +785,8 @@ pub(super) fn default_actions(
         },
         ActionDef {
             id: ActionId::CommandPalette,
-            label: "commands",
-            description: "Command palette",
+            label: "命令",
+            description: "命令面板",
             default_key: key!('p', CONTROL),
             alt_keys: vec![key!('?')],
             category: Category::GettingStarted,
@@ -800,8 +800,8 @@ pub(super) fn default_actions(
         },
         ActionDef {
             id: ActionId::ShortcutsHelp,
-            label: "shortcuts",
-            description: "Keyboard shortcuts",
+            label: "快捷键",
+            description: "键盘快捷键",
             default_key: if ctrl_dot_unreliable {
                 key!('x', CONTROL)
             } else {
@@ -823,8 +823,8 @@ pub(super) fn default_actions(
         },
         ActionDef {
             id: ActionId::ModelPicker,
-            label: "model",
-            description: "Pick model",
+            label: "模型",
+            description: "选择模型",
             default_key: key!('m', CONTROL),
             alt_keys: vec![],
             category: Category::Session,
@@ -838,8 +838,8 @@ pub(super) fn default_actions(
         },
         ActionDef {
             id: ActionId::OpenSettings,
-            label: "settings",
-            description: "Open the settings modal",
+            label: "设置",
+            description: "打开设置弹窗",
             default_key: key!(F(2)),
             alt_keys: vec![key!(',', CONTROL), key!(',', SUPER)],
             category: Category::GettingStarted,
@@ -863,8 +863,8 @@ pub(super) fn default_actions(
     if mouse_reporting_toggle_enabled {
         actions.push(ActionDef {
             id: ActionId::ToggleMouseCapture,
-            label: "mouse reporting",
-            description: "Toggle mouse reporting (native copy/paste)",
+            label: "鼠标上报",
+            description: "切换鼠标上报（原生复制/粘贴）",
             default_key: key!('r', CONTROL),
             alt_keys: vec![],
             category: Category::Panels,
@@ -889,8 +889,8 @@ pub(super) fn default_actions(
     actions.extend([
         ActionDef {
             id: ActionId::OpenDashboard,
-            label: "dashboard",
-            description: "Open the Agent Dashboard",
+            label: "仪表盘",
+            description: "打开 Agent 仪表盘",
             default_key: key!('\\', CONTROL),
             alt_keys: vec![],
             category: Category::Dashboard,
@@ -909,8 +909,8 @@ pub(super) fn default_actions(
         // rebind any of them through `~/.grok/config.toml`.
         ActionDef {
             id: ActionId::DashboardSelectNext,
-            label: "next",
-            description: "Select next row",
+            label: "下一个",
+            description: "选择下一行",
             default_key: key!(Down),
             alt_keys: vec![key!('j')],
             category: Category::Dashboard,
@@ -922,8 +922,8 @@ pub(super) fn default_actions(
         },
         ActionDef {
             id: ActionId::DashboardSelectPrev,
-            label: "prev",
-            description: "Select previous row",
+            label: "上一个",
+            description: "选择上一行",
             default_key: key!(Up),
             alt_keys: vec![key!('k')],
             category: Category::Dashboard,
@@ -935,8 +935,8 @@ pub(super) fn default_actions(
         },
         ActionDef {
             id: ActionId::DashboardTogglePin,
-            label: "pin",
-            description: "Pin / unpin agent",
+            label: "固定",
+            description: "固定 / 取消固定 Agent",
             default_key: key!('t', CONTROL),
             alt_keys: vec![],
             category: Category::Dashboard,
@@ -950,8 +950,8 @@ pub(super) fn default_actions(
         },
         ActionDef {
             id: ActionId::DashboardBeginRename,
-            label: "rename",
-            description: "Rename agent",
+            label: "重命名",
+            description: "重命名 Agent",
             default_key: key!('r', CONTROL),
             alt_keys: vec![],
             category: Category::Dashboard,
@@ -963,8 +963,8 @@ pub(super) fn default_actions(
         },
         ActionDef {
             id: ActionId::DashboardStop,
-            label: "stop",
-            description: "Stop / Close agent",
+            label: "停止",
+            description: "停止 / 关闭 Agent",
             default_key: key!('x', CONTROL),
             alt_keys: vec![],
             category: Category::Dashboard,
@@ -978,8 +978,8 @@ pub(super) fn default_actions(
         },
         ActionDef {
             id: ActionId::DashboardCycleMode,
-            label: "mode",
-            description: "Cycle dispatch mode",
+            label: "模式",
+            description: "循环调度模式",
             // All Shift+Tab encodings — see `input::key::shift_tab_keys()`.
             // Registry `matches` is exact-modifier, so the SHIFT-bearing
             // forms must be alts.
@@ -996,8 +996,8 @@ pub(super) fn default_actions(
         },
         ActionDef {
             id: ActionId::DashboardToggleGrouping,
-            label: "group",
-            description: "Toggle row grouping",
+            label: "分组",
+            description: "切换行分组",
             // `Ctrl+G` ("group"). `Ctrl+S` was reassigned to the peek /
             // dispatch "send + open" chord so `Shift+Enter` could be
             // freed for newline insertion. (`Ctrl+G` also has a
@@ -1016,8 +1016,8 @@ pub(super) fn default_actions(
         },
         ActionDef {
             id: ActionId::DashboardReorderUp,
-            label: "reorder up",
-            description: "Reorder agent up",
+            label: "上移",
+            description: "将 Agent 上移",
             default_key: key!(Up, SHIFT),
             alt_keys: vec![],
             category: Category::Dashboard,
@@ -1029,8 +1029,8 @@ pub(super) fn default_actions(
         },
         ActionDef {
             id: ActionId::DashboardReorderDown,
-            label: "reorder down",
-            description: "Reorder agent down",
+            label: "下移",
+            description: "将 Agent 下移",
             default_key: key!(Down, SHIFT),
             alt_keys: vec![],
             category: Category::Dashboard,
@@ -1042,8 +1042,8 @@ pub(super) fn default_actions(
         },
         ActionDef {
             id: ActionId::DashboardShortcutsHelp,
-            label: "shortcuts",
-            description: "Show shortcuts overlay",
+            label: "快捷键",
+            description: "显示快捷键浮层",
             // Ctrl+. / `?` dual-bound; primary follows ctrl_dot_unreliable.
             // Ctrl+X is DashboardStop — never an alt here.
             default_key: if ctrl_dot_unreliable {
@@ -1077,8 +1077,8 @@ pub(super) fn default_actions(
         // effective binding via `Esc` as a fallback.
         ActionDef {
             id: ActionId::DashboardExit,
-            label: "exit",
-            description: "Close dashboard",
+            label: "退出",
+            description: "关闭仪表盘",
             default_key: key!(Esc),
             alt_keys: vec![],
             category: Category::Dashboard,
@@ -1096,8 +1096,8 @@ pub(super) fn default_actions(
         // view (and from inside the session overlay).
         ActionDef {
             id: ActionId::DashboardToggleAutoApprove,
-            label: "always-approve",
-            description: "Toggle always-approve",
+            label: "总是批准",
+            description: "切换总是批准",
             default_key: key!('o', CONTROL),
             alt_keys: vec![],
             category: Category::Dashboard,
@@ -1115,8 +1115,8 @@ pub(super) fn default_actions(
         // OpenExtensions under `AgentScreen`, a different context).
         ActionDef {
             id: ActionId::DashboardOpenLocationPicker,
-            label: "location",
-            description: "Change working directory for new agents",
+            label: "位置",
+            description: "更改新 Agent 的工作目录",
             default_key: key!('l', CONTROL),
             alt_keys: vec![],
             category: Category::Dashboard,
@@ -1135,8 +1135,8 @@ pub(super) fn default_actions(
         // under `DashboardOverlay`, a different context).
         ActionDef {
             id: ActionId::DashboardToggleWorktree,
-            label: "worktree",
-            description: "Toggle worktree mode for new agents",
+            label: "工作树",
+            description: "切换新 Agent 的工作树模式",
             default_key: key!('w', CONTROL),
             alt_keys: vec![],
             category: Category::Dashboard,
@@ -1155,8 +1155,8 @@ pub(super) fn default_actions(
         // they don't apply) while keeping them lit inside the overlay.
         ActionDef {
             id: ActionId::DashboardOverlayExit,
-            label: "close overlay",
-            description: "Back to dashboard",
+            label: "关闭浮层",
+            description: "返回仪表盘",
             // The primary back-out shortcuts are reached through
             // different routes:
             //   - Ctrl+\\ → OpenDashboard (registered separately above);
@@ -1188,8 +1188,8 @@ pub(super) fn default_actions(
         },
         ActionDef {
             id: ActionId::DashboardOverlayPrev,
-            label: "prev session",
-            description: "Previous session",
+            label: "上一会话",
+            description: "上一会话",
             default_key: key!('[', CONTROL),
             alt_keys: vec![],
             category: Category::Dashboard,
@@ -1201,8 +1201,8 @@ pub(super) fn default_actions(
         },
         ActionDef {
             id: ActionId::DashboardOverlayNext,
-            label: "next session",
-            description: "Next session",
+            label: "下一会话",
+            description: "下一会话",
             default_key: key!(']', CONTROL),
             alt_keys: vec![],
             category: Category::Dashboard,
@@ -1219,8 +1219,8 @@ pub(super) fn default_actions(
         // cheatsheet there.
         ActionDef {
             id: ActionId::DashboardOverlayStop,
-            label: "stop",
-            description: "Stop agent, close session (back to dashboard)",
+            label: "停止",
+            description: "停止 Agent、关闭会话（返回仪表盘）",
             default_key: key!('x', CONTROL),
             alt_keys: vec![],
             category: Category::Dashboard,

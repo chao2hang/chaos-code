@@ -38,9 +38,9 @@ async fn interjection_reaches_model_in_same_turn() {
     tokio::time::timeout(Duration::from_secs(10), turn_one.wait_blocked())
         .await
         .expect("turn 1 reached completion barrier");
-    // Still mid-stream (hold gates completion) — not "Worked for".
+    // Still mid-stream (hold gates completion) — not "耗时".
     assert!(
-        !harness.contains_text("Worked for"),
+        !harness.contains_text("耗时"),
         "turn must still be open before send-now\nscreen:\n{}",
         harness.screen_contents()
     );
@@ -77,7 +77,7 @@ async fn interjection_reaches_model_in_same_turn() {
 
     // The send-now cancel of turn 1 is silent.
     assert!(
-        !harness.contains_text("Turn cancelled by user"),
+        !harness.contains_text("用户在"),
         "send-now cancel must not render a cancelled marker\nscreen:\n{}",
         harness.screen_contents()
     );

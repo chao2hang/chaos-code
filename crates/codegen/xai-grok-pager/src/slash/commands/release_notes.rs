@@ -16,7 +16,7 @@ impl SlashCommand for ReleaseNotesCommand {
     }
 
     fn description(&self) -> &str {
-        "View release notes for the current version"
+        "查看当前版本的更新说明"
     }
 
     fn usage(&self) -> &str {
@@ -27,10 +27,10 @@ impl SlashCommand for ReleaseNotesCommand {
         let changelog = xai_grok_shell::util::changelog::ChangelogManager::new().fetch();
         match changelog.markdown {
             Some(content) => CommandResult::Action(Action::ShowReleaseNotes {
-                title: "Release Notes".to_string(),
+                title: "更新日志".to_string(),
                 content: content.trim().to_string(),
             }),
-            None => CommandResult::Error("No release notes available (offline).".to_string()),
+            None => CommandResult::Error("暂无更新日志（离线且无本地缓存）。".to_string()),
         }
     }
 }

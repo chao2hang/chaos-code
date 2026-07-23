@@ -1,7 +1,7 @@
-//! Logo component — renders the braille art logo.
+//! Logo component — renders the Chaos block-shade art logo.
 //!
-//! Hidden entirely on legacy Windows consoles: the U+2800 braille block is
-//! not covered by the ConHost raster fonts and would render as tofu.
+//! Uses Unicode shade / half-block glyphs (no braille). Modern terminals render
+//! these correctly; very old ConHost raster fonts may fall back poorly.
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Rect};
@@ -16,15 +16,15 @@ const LOGO: &str = include_str!("../../../assets/logo/logo07.txt");
 const LOGO_SMALL: &str = include_str!("../../../assets/logo/logo05.txt");
 
 /// Height at or above which the small logo is shown (below it, no logo).
-const SMALL_LOGO_MIN_HEIGHT: u16 = 22;
+const SMALL_LOGO_MIN_HEIGHT: u16 = 24;
 /// Height at or above which the full logo is shown.
-const FULL_LOGO_MIN_HEIGHT: u16 = 26;
+const FULL_LOGO_MIN_HEIGHT: u16 = 34;
 
 fn pick_logo(window_height: u16) -> Option<&'static str> {
     pick_logo_for(window_height, logo_hidden())
 }
 
-/// Pure tier selection so tests can drive the legacy-console flag directly.
+/// Pure tier selection so tests can drive the hide flag directly.
 fn pick_logo_for(window_height: u16, hidden: bool) -> Option<&'static str> {
     if hidden || window_height < SMALL_LOGO_MIN_HEIGHT {
         None
@@ -35,9 +35,10 @@ fn pick_logo_for(window_height: u16, hidden: bool) -> Option<&'static str> {
     }
 }
 
-/// The braille art has no ASCII stand-in; see the module doc.
+/// Logo is always visible. Kept as a seam so layout helpers that previously
+/// collapsed for braille-only consoles still share one gate.
 fn logo_hidden() -> bool {
-    crate::glyphs::is_legacy_windows_console()
+    false
 }
 
 fn non_empty_lines(logo: &str) -> impl Iterator<Item = &str> {
@@ -119,9 +120,9 @@ fn render_into(area: Rect, buf: &mut Buffer, theme: &Theme, logo: &str) {
     let secs = anim_phase_secs();
 
     // Blend each glyph from the resting gray toward the bright text color by its
-    // shine opacity, so a sheen sweeps across the braille art. Adjacent glyphs
-    // that land on the same blended color share one Span to hold down the
-    // per-frame allocation.
+    // shine opacity, so a sheen sweeps across the art. Adjacent glyphs that land
+    // on the same blended color share one Span to hold down the per-frame
+    // allocation.
     let base = theme.gray;
     let hilite = theme.text_primary;
     let logo_lines: Vec<Line> = lines
@@ -197,7 +198,7 @@ pub fn render_full_logo(area: Rect, buf: &mut Buffer, theme: &Theme) {
 }
 
 /// Line count of the small logo used in minimal's committed welcome card
-/// (0 on a legacy Windows console, where the braille art is suppressed).
+/// (0 when the logo is hidden).
 pub fn compact_logo_line_count() -> u16 {
     if logo_hidden() {
         0
@@ -206,8 +207,8 @@ pub fn compact_logo_line_count() -> u16 {
     }
 }
 
-/// Render the small braille logo (centered) into `area` for minimal's welcome
-/// card. No-op when the logo is hidden.
+/// Render the small logo (centered) into `area` for minimal's welcome card.
+/// No-op when the logo is hidden.
 pub fn render_compact_logo(area: Rect, buf: &mut Buffer, theme: &Theme) {
     if !logo_hidden() {
         render_into(area, buf, theme, LOGO_SMALL);
@@ -232,10 +233,8 @@ mod tests {
         assert_eq!(pick_logo_for(FULL_LOGO_MIN_HEIGHT, false), Some(LOGO));
     }
 
-    // The braille art has no legacy-safe stand-in, so every height tier must
-    // collapse to no logo when the legacy-console flag is set.
     #[test]
-    fn logo_hidden_on_legacy_console_at_every_height() {
+    fn logo_hidden_flag_collapses_every_height() {
         for h in [0, SMALL_LOGO_MIN_HEIGHT, FULL_LOGO_MIN_HEIGHT, u16::MAX] {
             assert!(pick_logo_for(h, true).is_none(), "height {h}");
         }
@@ -248,7 +247,8 @@ mod tests {
         assert_eq!(full_logo_line_count_for(false), count_lines(LOGO));
         assert_eq!(full_logo_visual_width_for(false), visual_width(LOGO));
         assert!(full_logo_line_count_for(false) > count_lines(LOGO_SMALL));
-        assert!(full_logo_visual_width_for(false) > visual_width(LOGO_SMALL));
+        // Compact cut shares the same column width; height is the tier signal.
+        assert!(full_logo_visual_width_for(false) >= visual_width(LOGO_SMALL));
     }
 
     #[test]
@@ -269,6 +269,25 @@ mod tests {
         } else {
             assert_eq!(compact_logo_line_count(), 0);
         }
+    }
+
+    #[test]
+    fn full_logo_is_ten_lines_wide_chaos_art() {
+        assert_eq!(count_lines(LOGO), 10);
+        assert_eq!(visual_width(LOGO), 46);
+        assert!(LOGO.contains("▄████▄"));
+        assert!(LOGO.contains("▒█████"));
+        // Full logo is strictly taller than the compact 5-line cut.
+        assert!(count_lines(LOGO) > count_lines(LOGO_SMALL));
+        // Width may match the small cut (same art, fewer rows); height is the
+        // distinguishing tier signal.
+        assert!(visual_width(LOGO) >= visual_width(LOGO_SMALL));
+    }
+
+    #[test]
+    fn hero_box_logo_is_at_least_as_wide_as_small() {
+        // Same glyph columns as the small cut; not necessarily wider.
+        assert!(full_logo_visual_width_for(false) >= visual_width(LOGO_SMALL));
     }
 
     #[test]

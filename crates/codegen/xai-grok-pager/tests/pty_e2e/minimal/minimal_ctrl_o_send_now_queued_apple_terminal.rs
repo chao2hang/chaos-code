@@ -71,7 +71,7 @@ async fn minimal_ctrl_o_send_now_queued_apple_terminal() {
     // The send-now cancel of turn 1 is silent (scrollback-aware check:
     // minimal commits blocks into native history).
     assert!(
-        !harness.contains_full_text("Turn cancelled by user"),
+        !harness.contains_full_text("用户在"),
         "send-now cancel must not render a cancelled marker\nfull contents:\n{}",
         harness.full_text()
     );
