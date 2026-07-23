@@ -146,14 +146,15 @@ pub fn existing_project_config_dirs(project_root: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
-/// Canonical grok application path: `$GROK_HOME/bin/grok` (Unix) or `grok.exe` (Windows).
+/// Canonical Chaos application path: `$CHAOS_HOME/bin/chaos` (or dual-read
+/// `$GROK_HOME` / `~/.chaos` / `~/.grok`), `chaos.exe` on Windows.
 pub fn grok_application() -> PathBuf {
     grok_application_in(&grok_home())
 }
 
-/// [`grok_application`] under an explicit home instead of `$GROK_HOME`.
+/// [`grok_application`] under an explicit home instead of the resolved default.
 pub fn grok_application_in(home: &std::path::Path) -> PathBuf {
-    let name = if cfg!(windows) { "grok.exe" } else { "grok" };
+    let name = if cfg!(windows) { "chaos.exe" } else { "chaos" };
     home.join("bin").join(name)
 }
 

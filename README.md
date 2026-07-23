@@ -8,6 +8,7 @@
 crate 仍保留 `xai-grok-*` 命名以利同步上游。`SOURCE_REV` 记录当前对齐的 monorepo
 提交 SHA。
 
+[安装](#安装) ·
 [从源码构建](#从源码构建) ·
 [配置](#配置) ·
 [文档](#文档) ·
@@ -15,7 +16,30 @@ crate 仍保留 `xai-grok-*` 命名以利同步上游。`SOURCE_REV` 记录当�
 
 ---
 
-## 从源码构建
+## 安装
+
+### npm（推荐，预编译二进制）
+
+```sh
+npm i -g chaos-code
+chaos --version
+```
+
+需要 Node.js ≥ 20。npm 会安装元包 + 当前平台的 optional 依赖包
+（如 `chaos-code-linux-x64`），`postinstall` 将二进制解压到
+`~/.chaos/bin/chaos`（若已有 `~/.grok` 则沿用其 `bin/`）。
+
+**发布**：
+
+- **现在没有 Actions / 加不了 `NPM_TOKEN`**：本机 `npm login` 后  
+  `./scripts/ci/local-publish-host.sh --publish`（只发当前平台）。  
+- **有 CI 之后**：push `.github/workflows`，在  
+  Settings → Secrets → Actions 加 `NPM_TOKEN`，再打 `v*` tag。  
+
+详见
+[`npm/PUBLISH.md`](crates/codegen/xai-grok-pager/npm/PUBLISH.md)。
+
+### 从源码构建
 
 环境要求：
 

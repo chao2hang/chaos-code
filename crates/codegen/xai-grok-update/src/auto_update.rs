@@ -38,8 +38,8 @@ fn manual_install_cmd() -> &'static str {
 /// Build a reinstall hint for a known installer type.
 fn reinstall_hint(installer: &str) -> String {
     match installer {
-        "npm" => "请通过 npm 重新安装:\n  npm i -g chaos-cli".to_string(),
-        "gh-release" => "请通过 GitHub Releases 重新安装:\n  gh release download --repo chaos-code/chaos --pattern 'chaos-*' --output chaos && chmod +x chaos".to_string(),
+        "npm" => "请通过 npm 重新安装:\n  npm i -g chaos-code".to_string(),
+        "gh-release" => "请通过 GitHub Releases 重新安装:\n  gh release download --repo chao2hang/chaos-code --pattern 'chaos-*' --output chaos && chmod +x chaos".to_string(),
         _ => format!("请通过以下方式重新安装:\n  {}", manual_install_cmd()),
     }
 }
@@ -1229,7 +1229,7 @@ async fn activate_verified_download(download: &VerifiedDownload) -> Result<()> {
     let bin_dir = grok_home.join("bin");
     tokio::fs::create_dir_all(&bin_dir).await?;
 
-    // Atomic swap of ~/.grok/bin/{grok,agent} -> downloaded binary.
+    // Atomic swap of <home>/bin/{chaos,agent} -> downloaded binary.
     let link_path = swap_managed_bin_links(&download.binary_path, &bin_dir).await?;
 
     remove_stale_pager(&bin_dir).await;
@@ -1237,6 +1237,7 @@ async fn activate_verified_download(download: &VerifiedDownload) -> Result<()> {
     eprintln!();
 
     // Clean up old versioned binaries (keeps current + 1 previous).
+    cleanup_old_downloads(&download_dir, "chaos", &download.version).await;
     cleanup_old_downloads(&download_dir, "grok", &download.version).await;
     cleanup_old_downloads(&download_dir, "grok-pager", &download.version).await;
 
@@ -1266,9 +1267,9 @@ async fn regenerate_completions(binary: &std::path::Path, grok_home: &std::path:
     let user_home = std::env::home_dir().unwrap_or_default();
 
     let completions: &[(&str, std::path::PathBuf)] = &[
-        ("bash", grok_home.join("completions/bash/grok.bash")),
-        ("zsh", grok_home.join("completions/zsh/_grok")),
-        ("fish", user_home.join(".config/fish/completions/grok.fish")),
+        ("bash", grok_home.join("completions/bash/chaos.bash")),
+        ("zsh", grok_home.join("completions/zsh/_chaos")),
+        ("fish", user_home.join(".config/fish/completions/chaos.fish")),
     ];
 
     for (shell, dest) in completions {
@@ -1322,16 +1323,14 @@ fn relative_symlink_target(target: &std::path::Path, link: &std::path::Path) -> 
     target.to_path_buf()
 }
 
-/// Swap `~/.grok/bin/{grok,agent}` to point at `binary_path`. Returns the
-/// `grok` link path (for [`regenerate_completions`]).
+/// Swap `<home>/bin/{chaos,agent}` to point at `binary_path`. Returns the
+/// `chaos` link path (for [`regenerate_completions`]).
 ///
-/// `grok` and `agent` are first-class entry points that the bootstrap
-/// installers (`install.sh`, `install.ps1`, `install-enterprise.sh`)
-/// maintain in lockstep, and so must the updater — otherwise `grok update`
-/// leaves `agent` pinned at the previous version.
+/// `chaos` is the primary entry point; `agent` is kept as a secondary alias
+/// (upstream installers maintained both in lockstep).
 ///
 /// Unix: atomic symlink swap with relative target (survives Docker
-/// bind-mounts of `~/.grok/`). Windows: [`windows_replace_exe`].
+/// bind-mounts of `~/.chaos/` / `~/.grok/`). Windows: [`windows_replace_exe`].
 ///
 /// **All-or-nothing.** Each link's prior state is captured (Unix: prior
 /// symlink target; Windows: `.rollback.bak`; or `Absent` marker via
@@ -1344,9 +1343,9 @@ async fn swap_managed_bin_links(
     binary_path: &std::path::Path,
     bin_dir: &std::path::Path,
 ) -> Result<std::path::PathBuf> {
-    let grok_name = if cfg!(windows) { "grok.exe" } else { "grok" };
+    let chaos_name = if cfg!(windows) { "chaos.exe" } else { "chaos" };
     let agent_name = if cfg!(windows) { "agent.exe" } else { "agent" };
-    let grok_link = bin_dir.join(grok_name);
+    let grok_link = bin_dir.join(chaos_name);
     let agent_link = bin_dir.join(agent_name);
     let link_paths: [std::path::PathBuf; 2] = [grok_link.clone(), agent_link];
 
@@ -1882,7 +1881,7 @@ async fn heal_managed_install(installer: &str) {
 
 #[cfg(unix)]
 async fn reconcile_agent_to_grok(bin_dir: &std::path::Path) {
-    let grok_link = bin_dir.join("grok");
+    let grok_link = bin_dir.join("chaos");
     let agent_link = bin_dir.join("agent");
 
     let Ok(grok_target) = tokio::fs::read_link(&grok_link).await else {
@@ -2001,7 +2000,7 @@ async fn gh_release_download(tag: &str, pattern: &str, dest: &std::path::Path) -
     Ok(())
 }
 
-/// Download and install grok from GitHub Releases (xai-org-shared/grok-build).
+/// Download and install chaos from GitHub Releases (chao2hang/chaos-code).
 ///
 /// Uses `gh release download` to fetch the binary matching the current platform.
 /// This works anywhere the `gh` CLI is authenticated, without needing npm or
@@ -2039,30 +2038,33 @@ async fn install_gh_release(target: Option<&str>) -> Result<()> {
         tokio::fs::set_permissions(&binary_path, std::fs::Permissions::from_mode(0o755)).await?;
     }
 
-    // Atomic swap of ~/.grok/bin/{grok,agent} -> downloaded binary.
+    // Atomic swap of <home>/bin/{chaos,agent} -> downloaded binary.
     swap_managed_bin_links(&binary_path, &bin_dir).await?;
 
-    // Update grok-latest -> versioned binary so any existing symlinks that route
-    // through it (e.g. /usr/local/bin/grok -> ~/.grok/downloads/grok-latest)
+    // Update chaos-latest -> versioned binary so any existing symlinks that route
+    // through it (e.g. /usr/local/bin/chaos -> <home>/downloads/chaos-latest)
     // resolve to the newly installed version.
     #[cfg(unix)]
     {
-        let latest_path = download_dir.join("grok-latest");
+        let latest_path = download_dir.join("chaos-latest");
         let rel_target = relative_symlink_target(&binary_path, &latest_path);
         if let Err(e) = atomic_symlink_swap(&rel_target, &latest_path).await {
-            tracing::warn!("Failed to update grok-latest symlink: {e}");
+            tracing::warn!("Failed to update chaos-latest symlink: {e}");
         }
     }
 
-    // Also update /usr/local/bin/{grok,agent} if either points directly into
-    // ~/.grok/downloads/ (legacy layout — skips the grok-latest indirection).
+    // Also update /usr/local/bin/{chaos,agent} if either points directly into
+    // downloads/ (legacy layout — skips the chaos-latest indirection).
     // Permission errors ignored.
     #[cfg(unix)]
-    for name in ["grok", "agent"] {
+    for name in ["chaos", "agent"] {
         let system_link = std::path::PathBuf::from(format!("/usr/local/bin/{name}"));
         if let Ok(existing_target) = tokio::fs::read_link(&system_link).await {
             let target_str = existing_target.to_string_lossy();
-            if target_str.contains(".grok/downloads/") && !target_str.ends_with("grok-latest") {
+            if (target_str.contains(".chaos/downloads/") || target_str.contains(".grok/downloads/"))
+                && !target_str.ends_with("chaos-latest")
+                && !target_str.ends_with("grok-latest")
+            {
                 // Try to update; ignore permission errors
                 let _ = atomic_symlink_swap(&binary_path, &system_link).await;
             }
@@ -2074,6 +2076,7 @@ async fn install_gh_release(target: Option<&str>) -> Result<()> {
     eprintln!();
 
     // Clean up old versioned binaries (keeps current + 1 previous).
+    cleanup_old_downloads(&download_dir, "chaos", &version).await;
     cleanup_old_downloads(&download_dir, "grok", &version).await;
     cleanup_old_downloads(&download_dir, "grok-pager", &version).await;
 
@@ -2172,7 +2175,7 @@ fn install_npm(target: Option<&str>, channel: &str, npm_registry: Option<&str>) 
     warn_if_other_grok_processes_running();
 
     let version_arg = match target {
-        Some(ver) => format!("@xai-official/grok@{ver}"),
+        Some(ver) => format!("chaos-code@{ver}"),
         None => {
             // All current callers resolve the version via get_latest_version
             // (which applies max(stable, alpha) for the alpha channel) before
@@ -2183,7 +2186,7 @@ fn install_npm(target: Option<&str>, channel: &str, npm_registry: Option<&str>) 
                 "install_npm called without a resolved version, falling back to dist-tag"
             );
             format!(
-                "@xai-official/grok@{}",
+                "chaos-code@{}",
                 if channel == "alpha" {
                     "alpha"
                 } else {
@@ -3448,7 +3451,7 @@ mod tests {
         let hint = reinstall_hint("npm");
         assert!(hint.contains("npm i -g"), "should suggest npm i -g: {hint}");
         assert!(
-            hint.contains("@xai-official/grok"),
+            hint.contains("chaos-code"),
             "should name the package: {hint}"
         );
     }
@@ -3461,27 +3464,20 @@ mod tests {
             "should suggest gh release download: {hint}"
         );
         assert!(
-            hint.contains("xai-org-shared/grok-build"),
+            hint.contains("chao2hang/chaos-code"),
             "should name the repo: {hint}"
         );
     }
 
     #[test]
-    fn test_reinstall_hint_internal_mentions_platform_installer() {
+    fn test_reinstall_hint_internal_mentions_github_releases() {
+        // Chaos no longer ships x.ai install.sh; internal/unknown fall back
+        // to a GitHub Releases reinstall hint.
         let hint = reinstall_hint("internal");
-        if cfg!(windows) {
-            assert!(hint.contains("irm"), "should suggest irm install: {hint}");
-            assert!(
-                hint.contains("install.ps1"),
-                "should reference install.ps1: {hint}"
-            );
-        } else {
-            assert!(hint.contains("curl"), "should suggest curl install: {hint}");
-            assert!(
-                hint.contains("install.sh"),
-                "should reference install.sh: {hint}"
-            );
-        }
+        assert!(
+            hint.contains("GitHub Releases") || hint.contains("github.com"),
+            "should point at GitHub Releases: {hint}"
+        );
     }
 
     #[test]
