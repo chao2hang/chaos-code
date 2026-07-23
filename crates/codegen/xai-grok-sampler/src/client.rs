@@ -439,6 +439,14 @@ impl SamplingClient {
         for (key, value) in &config.extra_headers {
             let header_name = HeaderName::try_from(key.as_str())
                 .map_err(|_| SamplingError::InvalidConfiguration("Invalid extra header name"))?;
+            if config.api_key.is_some()
+                && (header_name == AUTHORIZATION
+                    || header_name == HeaderName::from_static("x-api-key"))
+            {
+                return Err(SamplingError::InvalidConfiguration(
+                    "Authentication headers cannot override api_key",
+                ));
+            }
             let header_value = HeaderValue::from_str(value)
                 .map_err(|_| SamplingError::InvalidConfiguration("Invalid extra header value"))?;
             headers.insert(header_name, header_value);
@@ -706,6 +714,20 @@ impl SamplingClient {
         format!("{base}/{path}")
     }
 
+    /// Fail fast when `base_url` is empty — otherwise reqwest yields the opaque
+    /// "builder error" for relative paths like `/chat/completions`.
+    fn require_base_url(&self) -> Result<()> {
+        if self.base_url.trim().is_empty() {
+            return Err(SamplingError::EventStreamError(
+                "empty base_url: no inference endpoint configured. \
+                 Use a BYOK model with model_provider/base_url, or run `grok login` \
+                 / set GROK_CLI_CHAT_PROXY_BASE_URL / GROK_XAI_API_BASE_URL."
+                    .into(),
+            ));
+        }
+        Ok(())
+    }
+
     fn apply_defaults(&self, mut request: ChatCompletionRequest) -> Result<ChatCompletionRequest> {
         if request.model.is_none() {
             request.model = Some(self.defaults.model.clone());
@@ -771,6 +793,7 @@ impl SamplingClient {
         &self,
         request: ChatCompletionRequest,
     ) -> Result<ChatCompletionResponse> {
+        self.require_base_url()?;
         let payload = self.apply_defaults(request)?;
         let x_grok_conv_id = &payload.x_grok_conv_id.clone().unwrap_or_default();
         let x_grok_req_id = &payload.x_grok_req_id.clone().unwrap_or_default();
@@ -824,6 +847,7 @@ impl SamplingClient {
         BoxStream<'static, Result<ChatCompletionChunk>>,
         Option<ResponseModelMetadata>,
     )> {
+        self.require_base_url()?;
         let payload = self.apply_defaults(request)?;
         let x_grok_conv_id = &payload.x_grok_conv_id.clone().unwrap_or_default();
         let x_grok_req_id = &payload.x_grok_req_id.clone().unwrap_or_default();
@@ -1030,6 +1054,7 @@ impl SamplingClient {
         &self,
         mut request: CreateResponseWrapper,
     ) -> Result<rs::Response> {
+        self.require_base_url()?;
         self.apply_response_defaults(&mut request)?;
 
         let x_grok_conv_id = request.x_grok_conv_id.as_deref().unwrap_or_default();
@@ -1152,6 +1177,7 @@ impl SamplingClient {
         Option<ResponseModelMetadata>,
         Option<crate::doom_loop::DoomLoopSignalCollector>,
     )> {
+        self.require_base_url()?;
         self.apply_response_defaults(&mut request)?;
 
         // Enable streaming
@@ -1380,6 +1406,7 @@ impl SamplingClient {
         &self,
         mut request: MessagesRequestWrapper,
     ) -> Result<messages::MessagesResponse> {
+        self.require_base_url()?;
         self.apply_message_defaults(&mut request)?;
 
         let x_grok_conv_id = request.x_grok_conv_id.as_deref().unwrap_or_default();
@@ -1481,6 +1508,7 @@ impl SamplingClient {
         BoxStream<'static, Result<messages::MessageStreamEvent>>,
         Option<ResponseModelMetadata>,
     )> {
+        self.require_base_url()?;
         self.apply_message_defaults(&mut request)?;
 
         // Enable streaming
@@ -2112,6 +2140,38 @@ mod tests {
                 .default_headers
                 .get(HeaderName::from_static("x-api-key"))
                 .is_none()
+        );
+    }
+
+    #[test]
+    fn extra_headers_cannot_override_configured_authentication() {
+        for header in ["authorization", "X-API-Key"] {
+            let mut cfg = minimal_config();
+            cfg.extra_headers
+                .insert(header.to_string(), "attacker-controlled".to_string());
+            let error = SamplingClient::new(cfg).expect_err("auth override must be rejected");
+            assert!(matches!(
+                error,
+                SamplingError::InvalidConfiguration(
+                    "Authentication headers cannot override api_key"
+                )
+            ));
+        }
+    }
+
+    #[test]
+    fn explicit_auth_header_is_allowed_without_api_key() {
+        let mut cfg = minimal_config();
+        cfg.api_key = None;
+        cfg.extra_headers
+            .insert("Authorization".to_string(), "Basic proxy-token".to_string());
+        let client = SamplingClient::new(cfg).expect("header-only auth should remain supported");
+        assert_eq!(
+            client
+                .default_headers
+                .get(AUTHORIZATION)
+                .and_then(|v| v.to_str().ok()),
+            Some("Basic proxy-token")
         );
     }
 

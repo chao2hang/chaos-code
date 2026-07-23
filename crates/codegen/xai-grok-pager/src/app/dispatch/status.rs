@@ -334,7 +334,7 @@ pub(super) fn dispatch_manage_billing(app: &mut AppView) -> Vec<Effect> {
         return vec![];
     }
     super::router::dispatch(
-        crate::app::actions::Action::OpenUrl("https://grok.com/?_s=usage".to_string()),
+        crate::app::actions::Action::OpenUrl(String::new()),
         app,
     )
 }
@@ -425,8 +425,8 @@ pub(super) fn notify_session_ready(
 ) {
     notification_service.notify(NotificationEvent {
         kind: NotificationEventKind::SessionReady,
-        title: "Grok".into(),
-        body: NotificationEventKind::SessionReady.as_str().into(),
+        title: "Chaos".into(),
+        body: "会话已就绪".into(),
         session_id: agent.session.session_id.as_ref().map(|s| s.0.to_string()),
     });
 }

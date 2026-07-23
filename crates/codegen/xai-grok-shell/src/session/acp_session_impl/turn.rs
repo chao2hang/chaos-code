@@ -1918,6 +1918,7 @@ impl SessionActor {
                 );
             }
             self.maybe_inject_mcp_reminder().await;
+            self.maybe_inject_selective_compaction_nudge().await;
             if self.tool_context.task_output_token_budget.is_none()
                 && self.two_pass_active()
                 && !self.compaction.prefire.has_cache()

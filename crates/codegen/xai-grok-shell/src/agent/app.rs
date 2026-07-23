@@ -564,7 +564,7 @@ async fn run_headless_inner(
             // Print to stderr (not logger) so user sees it
             eprintln!();
             eprintln!(
-                "Open Grok Build: {} (press Enter to open in browser)",
+                "打开 Chaos: {} (按回车键在浏览器中打开)",
                 grok_code_url
             );
             eprintln!();

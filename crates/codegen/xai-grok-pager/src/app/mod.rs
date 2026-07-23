@@ -449,21 +449,11 @@ pub async fn run(
     let screen_mode_override = screen_mode_relaunch::take_screen_mode_env_override();
     let cancel = CancellationToken::new();
     let startup_start = std::time::Instant::now();
-    let raw_config = xai_grok_shell::config::load_effective_config()
+    let _raw_config = xai_grok_shell::config::load_effective_config()
         .map_err(|e| anyhow::anyhow!("Failed to load config: {e}"))?;
-    let grok_com_config =
-        match xai_grok_shell::agent::config::Config::new_from_toml_cfg(&raw_config) {
-            Ok(c) => c.grok_com_config,
-            Err(e) => {
-                tracing::warn!(
-                    error = % e, "failed to parse config for auth refresh, using defaults"
-                );
-                xai_grok_shell::auth::GrokComConfig::default()
-            }
-        };
-    let refreshed_auth = xai_grok_shell::auth::try_ensure_fresh_auth(&grok_com_config).await;
-    let early_prefetch =
-        xai_grok_shell::agent::models::start_early_prefetch_with_auth(refreshed_auth);
+    // Chaos is provider-only. Never read or refresh the legacy Grok login cache
+    // during startup; model discovery may still run without account credentials.
+    let early_prefetch = xai_grok_shell::agent::models::start_early_prefetch_with_auth(None);
     xai_grok_shell::agent::mvp_agent::warm_async_http_client();
     tokio::task::spawn_blocking(|| {});
     if let Ok(cwd) = std::env::current_dir() {
@@ -796,11 +786,11 @@ fn print_exit_resume_hint(info: &ExitInfo, max_width: usize, w: &mut impl Write)
         }
         let _ = writeln!(w);
     }
-    let _ = writeln!(w, "Resume this session with:");
+    let _ = writeln!(w, "恢复此会话请使用：");
     if info.minimal {
-        let _ = writeln!(w, "  grok --minimal --resume {}", info.session_id);
+        let _ = writeln!(w, "  chaos --minimal --resume {}", info.session_id);
     } else {
-        let _ = writeln!(w, "  grok --resume {}", info.session_id);
+        let _ = writeln!(w, "  chaos --resume {}", info.session_id);
     }
 }
 /// Screen-mode relaunch failure fallback (same quit tail as plain resume).
@@ -810,8 +800,8 @@ fn print_relaunch_failure_hint(
     want_minimal: bool,
     w: &mut impl Write,
 ) {
-    let _ = writeln!(w, "Failed to relaunch in requested mode: {error}");
-    let _ = writeln!(w, "Resume this session with:");
+    let _ = writeln!(w, "重新启动失败: {error}");
+    let _ = writeln!(w, "恢复此会话请使用：");
     let _ = writeln!(
         w,
         "  {}",
@@ -1839,15 +1829,15 @@ mod tests {
         assert_eq!(
             first_5,
             vec![
-                "Grok Build TUI",
+                "Chaos AI 编码助手",
                 "",
-                "Usage: grok [OPTIONS] [PROMPT] [COMMAND]",
+                "用法： chaos [OPTIONS] [PROMPT] [COMMAND]",
                 "",
-                "Arguments:",
+                "参数：",
             ]
         );
-        assert!(help.find("Arguments:\n").unwrap() < help.find("Options:\n").unwrap());
-        assert!(help.find("Options:\n").unwrap() < help.find("Commands:\n").unwrap());
+        assert!(help.find("参数：\n").unwrap() < help.find("选项：\n").unwrap());
+        assert!(help.find("选项：\n").unwrap() < help.find("命令：\n").unwrap());
     }
     #[test]
     fn cli_completions_parses() {
@@ -1887,7 +1877,7 @@ mod tests {
         print_exit_resume_hint(&bare_exit_info("sess-abc", false), 80, &mut buf);
         assert_eq!(
             String::from_utf8(buf).unwrap(),
-            "\nResume this session with:\n  grok --resume sess-abc\n"
+            "\n恢复此会话请使用：\n  chaos --resume sess-abc\n"
         );
     }
     #[test]
@@ -1896,7 +1886,7 @@ mod tests {
         print_exit_resume_hint(&bare_exit_info("sess-abc", true), 80, &mut buf);
         assert_eq!(
             String::from_utf8(buf).unwrap(),
-            "\nResume this session with:\n  grok --minimal --resume sess-abc\n"
+            "\n恢复此会话请使用：\n  chaos --minimal --resume sess-abc\n"
         );
     }
     #[test]
@@ -1920,8 +1910,8 @@ mod tests {
                 "> make the suite deterministic\n",
                 "  Pinned the seed; 200 consecutive green runs.\n",
                 "\n",
-                "Resume this session with:\n",
-                "  grok --resume sess-abc\n",
+                "恢复此会话请使用：\n",
+                "  chaos --resume sess-abc\n",
             )
         );
     }
@@ -1942,7 +1932,7 @@ mod tests {
         assert!(out.contains(&format!("\n{}…\n", "t".repeat(19))));
         assert!(out.contains(&format!("\n> {}…\n", "p".repeat(17))));
         assert!(out.contains(&format!("\n  {}…\n", "r".repeat(17))));
-        assert!(out.contains("  grok --resume sess-abc\n"));
+        assert!(out.contains("  chaos --resume sess-abc\n"));
     }
     #[test]
     fn print_relaunch_failure_hint_writes_expected_lines() {
@@ -1952,8 +1942,8 @@ mod tests {
         assert_eq!(
             String::from_utf8(buf).unwrap(),
             format!(
-                "Failed to relaunch in requested mode: exec failed\n\
-                 Resume this session with:\n  {hint}\n"
+                "重新启动失败: exec failed\n\
+                 恢复此会话请使用：\n  {hint}\n"
             )
         );
     }

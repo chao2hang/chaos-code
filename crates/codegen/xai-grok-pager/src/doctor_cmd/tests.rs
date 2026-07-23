@@ -317,7 +317,7 @@ fn human_wayland_error_includes_detail_once() {
     assert_eq!(
         human::format(&report),
         concat!(
-            "Grok Doctor\n",
+            "Chaos 诊断\n",
             "\n",
             "Terminal\n",
             "  · terminal                     Ghostty\n",
@@ -422,7 +422,7 @@ fn human_healthy_fixture_is_exact() {
     assert_eq!(
         human::format(&healthy_report()),
         concat!(
-            "Grok Doctor\n",
+            "Chaos 诊断\n",
             "\n",
             "Terminal\n",
             "  · terminal                     Ghostty\n",
@@ -449,7 +449,7 @@ fn human_mixed_fixture_is_exact() {
     assert_eq!(
         human::format(&mixed_report()),
         concat!(
-            "Grok Doctor\n",
+            "Chaos 诊断\n",
             "\n",
             "Terminal\n",
             "  · terminal                     Ghostty\n",
@@ -605,7 +605,7 @@ fn human_incomplete_fixture_is_exact_without_duplicate_probe_rows() {
     assert_eq!(
         human::format(&report),
         concat!(
-            "Grok Doctor\n",
+            "Chaos 诊断\n",
             "\n",
             "Terminal\n",
             "  · terminal                     Ghostty\n",
@@ -768,7 +768,7 @@ fn json_contract_is_structural_stable_ordered_and_ansi_free() {
     assert!(issue < recommendation);
     assert!(version < extended && extended < unsupported && unsupported < unavailable);
     assert!(!text.contains("\u{1b}"));
-    assert!(!text.contains("Grok Doctor"));
+    assert!(!text.contains("Chaos 诊断"));
 }
 
 #[test]

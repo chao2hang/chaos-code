@@ -365,12 +365,12 @@ impl MemoryStorage {
         if !global_file.exists() {
             std::fs::write(
                 &global_file,
-                "# Global Memory\n\
+                "# 全局记忆\n\
                  \n\
-                 > This file is automatically managed by Grok's memory system.\n\
-                 > You can also edit it manually — changes will be indexed on next session.\n\
+                 > 此文件由 Chaos 记忆系统自动管理。\n\
+                 > 你也可以手动编辑 — 更改将在下次会话时被索引。\n\
                  \n\
-                 ## Preferences\n\
+                 ## 偏好设置\n\
                  \n\
                  <!-- Add any cross-project preferences here -->\n",
             )?;

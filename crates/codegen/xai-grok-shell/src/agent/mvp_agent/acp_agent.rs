@@ -161,176 +161,18 @@ impl acp::Agent for MvpAgent {
         if self.initialize_request.set(arguments).is_err() {
             tracing::info!("Initialize called on reconnect (already initialized)");
         }
-        let pre = self
-            .auth_manager
-            .current()
-            .map(|a| (
-                crate::auth::token_suffix(&a.key).to_owned(),
-                a
-                    .refresh_token
-                    .as_deref()
-                    .map(|t| crate::auth::token_suffix(t).to_owned()),
-            ));
-        self.auth_manager.force_reload_from_disk();
-        let post = self
-            .auth_manager
-            .current()
-            .map(|a| (
-                crate::auth::token_suffix(&a.key).to_owned(),
-                a
-                    .refresh_token
-                    .as_deref()
-                    .map(|t| crate::auth::token_suffix(t).to_owned()),
-            ));
-        xai_grok_telemetry::unified_log::info(
-            "auth init disk refresh",
-            None,
-            Some(
-                serde_json::json!(
-                    { "pre_key" : pre.as_ref().map(| p | & p.0), "pre_rt" : pre.as_ref()
-                    .and_then(| p | p.1.as_deref()), "post_key" : post.as_ref().map(| p |
-                    & p.0), "post_rt" : post.as_ref().and_then(| p | p.1.as_deref()),
-                    "changed" : pre.as_ref().map(| p | & p.0) != post.as_ref().map(| p |
-                    & p.0), }
-                ),
-            ),
-        );
-        xai_grok_telemetry::unified_log::info(
-            "auth: initialize() refreshed auth state from disk",
-            None,
-            Some(
-                serde_json::json!(
-                    { "has_current" : self.auth_manager.current().is_some(), "is_expired"
-                    : self.auth_manager.is_expired(), "auth_mode" : self.auth_manager
-                    .current().map(| a | format!("{:?}", a.auth_mode)), }
-                ),
-            ),
-        );
-        if !self.cfg.borrow().grok_com_config.api_key_auth_disabled()
-            && auth_method::read_xai_api_key_env().is_err()
-            && let Some(api_key) = crate::auth::read_api_key(
-                &crate::util::grok_home::grok_home(),
-            )
-        {
-            unsafe { std::env::set_var("XAI_API_KEY", &api_key) };
-            tracing::info!("auth: loaded API key from auth.json (xai::api_key scope)");
-            xai_grok_telemetry::unified_log::info(
-                "auth: loaded API key from auth.json (xai::api_key scope)",
-                None,
-                None,
-            );
-        }
-        let disable_api_key_auth = self
-            .cfg
-            .borrow()
-            .grok_com_config
-            .api_key_auth_disabled();
-        {
-            let cfg = self.cfg.borrow();
-            let gc = &cfg.grok_com_config;
-            if disable_api_key_auth || gc.force_login_team_uuid.is_some() {
-                xai_grok_telemetry::unified_log::info(
-                    "auth: enterprise login policy active",
-                    None,
-                    Some(
-                        serde_json::json!(
-                            { "force_login_team_uuid" : gc.force_login_team_uuid.as_ref()
-                            .map(| t | format!("{t:?}")), "disable_api_key_auth_knob" :
-                            gc.disable_api_key_auth, "api_key_auth_disabled" :
-                            disable_api_key_auth, }
-                        ),
-                    ),
-                );
-            }
-        }
-        let has_external_api_key = auth_method::should_advertise_xai_api_key(
-            disable_api_key_auth,
-            self.models_manager.models().values(),
-        );
-        let init_has_current = self.auth_manager.current().is_some();
-        let init_is_expired = self.auth_manager.is_expired();
-        xai_grok_telemetry::unified_log::info(
-            "auth init token state",
-            None,
-            Some(
-                serde_json::json!(
-                    { "has_current" : init_has_current, "is_expired" : init_is_expired, }
-                ),
-            ),
-        );
-        let mut has_cached_token = init_has_current;
-        if !init_has_current && init_is_expired {
-            let refreshed = self.auth_manager.auth().await.is_ok();
-            if refreshed {
-                tracing::debug!(
-                    auth_type = ? self.auth_type(),
-                    "auth: initialize() silent refresh succeeded",
-                );
-                xai_grok_telemetry::unified_log::info(
-                    "auth: initialize() silent refresh succeeded",
-                    None,
-                    Some(
-                        serde_json::json!(
-                            { "auth_type" : format!("{:?}", self.auth_type()) }
-                        ),
-                    ),
-                );
-                has_cached_token = true;
-            } else {
-                tracing::warn!(
-                    "auth: token expired, silent refresh failed - re-authentication required"
-                );
-                xai_grok_telemetry::unified_log::warn(
-                    "auth: token expired, silent refresh failed - re-authentication required",
-                    None,
-                    None,
-                );
-            }
-        }
-        let (
-            login_label,
-            has_auth_provider,
-            has_enterprise_oidc,
-            enterprise_oidc_issuer,
-        ) = {
-            let cfg = self.cfg.borrow();
-            let issuer = cfg.grok_com_config.oidc.as_ref().map(|o| o.issuer.clone());
-            (
-                cfg.grok_com_config.auth_provider_label.clone(),
-                cfg.grok_com_config.auth_provider_command.is_some(),
-                cfg.grok_com_config.oidc.is_some(),
-                issuer,
-            )
-        };
-        if has_enterprise_oidc {
-            let issuer = enterprise_oidc_issuer
-                .as_deref()
-                .expect(
-                    "enterprise_oidc_issuer must be Some when has_enterprise_oidc is true",
-                );
-            tracing::info!(
-                issuer = % issuer, "auth: advertising enterprise OIDC auth method",
-            );
-            xai_grok_telemetry::unified_log::info(
-                "auth: advertising enterprise OIDC auth method",
-                None,
-                Some(serde_json::json!({ "issuer" : issuer })),
-            );
-        } else {
-            tracing::info!(
-                label = ? login_label, has_auth_provider,
-                "auth: advertising grok.com auth method",
-            );
-        }
-        let preferred_method = self.cfg.borrow().grok_com_config.preferred_method;
-        let has_external_api_key = match preferred_method {
-            Some(crate::auth::PreferredAuthMethod::Oidc) => false,
-            _ => has_external_api_key,
-        };
-        let has_cached_token = match preferred_method {
-            Some(crate::auth::PreferredAuthMethod::ApiKey) => false,
-            _ => has_cached_token,
-        };
+        // Chaos is provider-only. Do not read auth.json, refresh xAI sessions,
+        // or advertise browser/OIDC login during ACP initialization.
+        let disable_api_key_auth = false;
+        let has_external_api_key = true;
+        let has_cached_token = false;
+        let has_enterprise_oidc = false;
+        let enterprise_oidc_issuer: Option<String> = None;
+        let login_label: Option<String> = None;
+        let has_auth_provider = false;
+        let preferred_method = None;
+        let init_has_current = false;
+        let init_is_expired = false;
         let built = auth_method::build_auth_methods(auth_method::AuthMethodsBuildInputs {
             has_external_api_key,
             has_cached_token,
@@ -470,56 +312,17 @@ impl acp::Agent for MvpAgent {
             None,
             Some(serde_json::json!({ "method" : arguments.method_id.0.as_ref() })),
         );
-        if let Some(preferred) = self.cfg.borrow().grok_com_config.preferred_method {
-            let kind = auth_method::AuthMethodKind::from_id(&arguments.method_id);
-            let allowed = match preferred {
-                crate::auth::PreferredAuthMethod::ApiKey => kind.is_api_key(),
-                crate::auth::PreferredAuthMethod::Oidc => kind.is_session_based(),
-            };
-            if !allowed {
-                let msg = match preferred {
-                    crate::auth::PreferredAuthMethod::ApiKey => {
-                        auth_method::PREFERRED_API_KEY_UNAVAILABLE
-                    }
-                    crate::auth::PreferredAuthMethod::Oidc => {
-                        "preferred_method=oidc; API-key auth is not allowed."
-                    }
-                };
-                emit_login_span(
-                    false,
-                    arguments.method_id.0.as_ref(),
-                    None,
-                    Some("preferred_method_mismatch"),
-                );
-                return Err(acp::Error::auth_required().data(msg));
-            }
+        if arguments.method_id.0.as_ref() != auth_method::XAI_API_KEY_METHOD_ID {
+            return Err(acp::Error::auth_required().data(
+                "Chaos 仅支持 Provider API Key；请配置 api_key/env_key、base_url 和 auth_scheme。",
+            ));
         }
         match arguments.method_id.0.as_ref() {
             auth_method::XAI_API_KEY_METHOD_ID => {
-                if self.cfg.borrow().grok_com_config.api_key_auth_disabled() {
-                    emit_login_span(false, "api_key", None, Some("disabled_by_admin"));
-                    return Err(
-                        acp::Error::auth_required()
-                            .data("API-key auth is disabled by your administrator."),
-                    );
-                }
                 let mut sampling_config = self.sampling_config.borrow_mut();
                 if sampling_config.api_key.is_none() {
                     if let Ok(api_key) = auth_method::read_xai_api_key_env() {
                         sampling_config.api_key = Some(api_key.clone());
-                        if let Err(e) = crate::auth::store_api_key(
-                            &crate::util::grok_home::grok_home(),
-                            &api_key,
-                        ) {
-                            tracing::warn!(
-                                "failed to persist API key to auth.json: {e}"
-                            );
-                            xai_grok_telemetry::unified_log::warn(
-                                "failed to persist API key to auth.json",
-                                None,
-                                Some(serde_json::json!({ "error" : e.to_string() })),
-                            );
-                        }
                     } else if !self
                         .models_manager
                         .models()
@@ -530,7 +333,7 @@ impl acp::Agent for MvpAgent {
                         return Err(
                             acp::Error::auth_required()
                                 .data(
-                                    "Set XAI_API_KEY or add api_key/env_key to config.toml.",
+                                    "请在当前模型或 model_providers 中配置 api_key/env_key，并检查 base_url 与 auth_scheme。",
                                 ),
                         );
                     }

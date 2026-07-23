@@ -12,7 +12,7 @@
 use std::path::PathBuf;
 
 /// CDN base for all changelogs (proxies to GCS, cache-friendly).
-const CHANGELOG_BASE: &str = "https://x.ai/cli/changelogs";
+const CHANGELOG_BASE: &str = "https://github.com/chaos-code/chaos/releases";
 const FETCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
 
 /// A single structured changelog entry from the published JSON changelog.

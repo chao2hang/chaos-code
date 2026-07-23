@@ -435,9 +435,15 @@ pub(crate) async fn spawn_session_actor(
         chat_state_event_tx,
         tokio_util::sync::CancellationToken::new(),
     );
+    let persisted_selective =
+        crate::session::persistence::session_dir(&session_info).join("selective_compaction.json");
+    let persisted_selective = std::fs::read(&persisted_selective)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<xai_chat_state::SelectiveState>(&bytes).ok());
     if (!initial_prompt_texts.is_empty()
         || initial_total_tokens > 0
-        || initial_last_compaction.is_some())
+        || initial_last_compaction.is_some()
+        || persisted_selective.is_some())
         && let Some(mut snap) = chat_state_handle.snapshot().await
     {
         snap.prompt_index = initial_prompt_texts.len();
@@ -446,6 +452,22 @@ pub(crate) async fn spawn_session_actor(
             snap.total_tokens = initial_total_tokens;
         }
         snap.last_compaction_prompt_index = initial_last_compaction;
+        if let Some(state) = persisted_selective {
+            let compatible = state
+                .active_blocks()
+                .all(|block| block.start <= block.end && block.end < snap.conversation.len());
+            if compatible {
+                if initial_total_tokens == 0 {
+                    let saved = state.total_tokens_saved();
+                    snap.total_tokens = snap.total_tokens.saturating_sub(saved);
+                    snap.estimate_at_last_response =
+                        snap.estimate_at_last_response.saturating_sub(saved);
+                }
+                snap.selective_compaction = state;
+            } else {
+                tracing::warn!("ignored incompatible selective compaction state on resume");
+            }
+        }
         chat_state_handle.restore_snapshot(snap);
     }
     chat_state_handle.update_credentials(credentials);
@@ -1434,6 +1456,8 @@ pub(crate) async fn spawn_session_actor(
             tool_choice: compaction_tool_choice,
             prefire: crate::session::compaction_config::PrefireState::default(),
             prefix_released: std::sync::atomic::AtomicBool::new(false),
+            dcp: Default::default(),
+            dcp_runtime: Default::default(),
         },
         memory: super::memory_state::SessionMemory {
             flush_config: memory_config.as_ref().map_or_else(

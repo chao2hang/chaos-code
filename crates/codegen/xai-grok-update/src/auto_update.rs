@@ -23,24 +23,24 @@ pub enum UpdateRunMode {
     NonBlocking,
 }
 
-const PROMPT_UPDATE_NOW: &str = "Update now? [Y/n/d]";
+const PROMPT_UPDATE_NOW: &str = "现在更新？[Y/n/d]";
 const MSG_AUTO_UPDATE_BACKGROUND: &str = "Auto-update running in background.";
-const MSG_RUN_UPDATE_MANUAL: &str = "Run `grok update` to get the latest version.";
+const MSG_RUN_UPDATE_MANUAL: &str = "运行 `chaos update` 获取最新版本。";
 /// Manual-install one-liner for this platform's bootstrap installer.
 fn manual_install_cmd() -> &'static str {
     if cfg!(windows) {
-        "irm https://x.ai/cli/install.ps1 | iex"
+        "请从 GitHub Releases 下载最新版本"
     } else {
-        "curl -fsSL https://x.ai/cli/install.sh | bash"
+        "请从 GitHub Releases 下载最新版本"
     }
 }
 
 /// Build a reinstall hint for a known installer type.
 fn reinstall_hint(installer: &str) -> String {
     match installer {
-        "npm" => "Please reinstall via npm:\n  npm i -g @xai-official/grok".to_string(),
-        "gh-release" => "Please reinstall via GitHub Releases:\n  gh release download --repo xai-org-shared/grok-build --pattern 'grok-*' --output grok && chmod +x grok".to_string(),
-        _ => format!("Please reinstall via:\n  {}", manual_install_cmd()),
+        "npm" => "请通过 npm 重新安装:\n  npm i -g chaos-cli".to_string(),
+        "gh-release" => "请通过 GitHub Releases 重新安装:\n  gh release download --repo chaos-code/chaos --pattern 'chaos-*' --output chaos && chmod +x chaos".to_string(),
+        _ => format!("请通过以下方式重新安装:\n  {}", manual_install_cmd()),
     }
 }
 
@@ -66,10 +66,10 @@ pub fn print_update_status(status: &UpdateStatus, json: bool) -> anyhow::Result<
 
     if let Some(error) = status.error.as_deref() {
         println!(
-            "Grok Build - v{} [{}]",
+            "Chaos - v{} [{}]",
             status.current_version, status.channel
         );
-        println!("Update check failed: {error}");
+        println!("更新检查失败: {error}");
         return Ok(());
     }
 
@@ -78,24 +78,24 @@ pub fn print_update_status(status: &UpdateStatus, json: bool) -> anyhow::Result<
     if status.update_available {
         if let Some(latest_version) = status.latest_version.as_deref() {
             println!(
-                "A new version of Grok Build is available: {} -> {}{}",
+                "Chaos 新版本可用: {} -> {}{}",
                 status.current_version, latest_version, channel_label
             );
         } else {
-            println!("A new version of Grok Build is available.");
+            println!("Chaos 新版本可用。");
         }
         return Ok(());
     }
 
     if let Some(latest_version) = status.latest_version.as_deref() {
         println!(
-            "Grok Build - v{} (latest: {}){}",
+            "Chaos - v{} (最新: {}){}",
             status.current_version, latest_version, channel_label
         );
         return Ok(());
     }
 
-    println!("Grok Build - v{}{}", status.current_version, channel_label);
+    println!("Chaos - v{}{}", status.current_version, channel_label);
     Ok(())
 }
 
@@ -525,12 +525,12 @@ pub async fn run_update_if_available(
     let channel_label = format!(" [{}]", update_config.channel);
     if auto_update {
         eprintln!(
-            "A new version of Grok Build is available: {} -> {}{}",
+            "Chaos 新版本可用: {} -> {}{}",
             current_version, latest_version, channel_label
         );
         if interactive {
             if let Err(e) = run_update_subcommand(run_mode).await {
-                eprintln!("Update failed: {}", e);
+                eprintln!("更新失败: {}", e);
             } else if matches!(run_mode, UpdateRunMode::Blocking) {
                 return Ok(true);
             } else {
@@ -538,7 +538,7 @@ pub async fn run_update_if_available(
                 return Ok(false);
             }
         } else if let Err(e) = run_update_subcommand(run_mode).await {
-            eprintln!("Update failed: {}", e);
+            eprintln!("更新失败: {}", e);
         } else if matches!(run_mode, UpdateRunMode::Blocking) {
             return Ok(true);
         }
@@ -553,7 +553,7 @@ pub async fn run_update_if_available(
             return Ok(false);
         }
         eprintln!(
-            "A new version of Grok Build is available: {} -> {}{}",
+            "Chaos 新版本可用: {} -> {}{}",
             current_version, latest_version, channel_label
         );
         if interactive {
@@ -563,7 +563,7 @@ pub async fn run_update_if_available(
                 let ans = line.trim().to_ascii_lowercase();
                 if ans.is_empty() || ans == "y" || ans == "yes" {
                     if let Err(e) = run_update_subcommand(run_mode).await {
-                        eprintln!("Update failed: {}", e);
+                        eprintln!("更新失败: {}", e);
                     } else if matches!(run_mode, UpdateRunMode::Blocking) {
                         return Ok(true);
                     } else {
@@ -2266,7 +2266,7 @@ pub async fn run_update(
     let installer = match get_installer().await {
         Some(i) => i,
         None => {
-            eprintln!("Auto-update is not available for manual installations.");
+            eprintln!("手动安装不支持自动更新。");
             return Ok(None);
         }
     };
@@ -2311,7 +2311,7 @@ pub async fn run_update(
     let pb = ProgressBar::new_spinner();
     pb.set_style(
         ProgressStyle::default_spinner()
-            .template("  {spinner:.cyan} Checking for updates...")
+            .template("  {spinner:.cyan} 正在检查更新...")
             .unwrap(),
     );
     pb.enable_steady_tick(Duration::from_millis(100));

@@ -513,6 +513,7 @@ impl<'a> EffectiveCommandCatalog<'a> {
             "plugins",
             "preferences",
             "prefs",
+            "provider",
             "privacy",
             "queue",
             "quit",

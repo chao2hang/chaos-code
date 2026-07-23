@@ -15,7 +15,7 @@ impl SlashCommand for UsageCommand {
     }
 
     fn description(&self) -> &str {
-        "View usage"
+        "查看本次会话的 Token 用量和费用"
     }
 
     fn usage(&self) -> &str {
@@ -40,13 +40,13 @@ impl SlashCommand for UsageCommand {
                 display: "show".into(),
                 match_text: "show".into(),
                 insert_text: "show".into(),
-                description: "View usage".into(),
+                description: "查看用量".into(),
             },
             ArgItem {
                 display: "manage".into(),
                 match_text: "manage".into(),
                 insert_text: "manage".into(),
-                description: "Manage billing".into(),
+                description: "管理计费".into(),
             },
         ])
     }
@@ -56,14 +56,14 @@ impl SlashCommand for UsageCommand {
         if !ctx.billing_surface_visible {
             return match arg {
                 "" => CommandResult::Action(Action::ShowUsage),
-                _ => CommandResult::Error(format!("Unknown argument: {arg}. Use /usage")),
+                _ => CommandResult::Error(format!("未知参数：{arg}。请使用 /usage")),
             };
         }
         match arg {
             "" | "show" => CommandResult::Action(Action::ShowUsage),
             "manage" => CommandResult::Action(Action::ManageBilling),
             _ => CommandResult::Error(format!(
-                "Unknown argument: {arg}. Use /usage show or /usage manage"
+                "未知参数：{arg}。请使用 /usage show 或 /usage manage"
             )),
         }
     }

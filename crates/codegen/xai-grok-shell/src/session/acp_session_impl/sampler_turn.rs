@@ -146,7 +146,8 @@ impl SessionActor {
     }
     pub(super) async fn prepare_tool_definitions_inner(&self) -> Vec<ToolDefinition> {
         let bridge = self.agent.borrow().tool_bridge().clone();
-        let defs = bridge.tool_definitions_builtins_only().await;
+        let mut defs = bridge.tool_definitions_builtins_only().await;
+        defs.push(super::selective_compaction::compress_tool_definition());
         let plan_active = self.plan_mode.lock().is_active();
         filter_cursor_tools_by_plan_mode(defs, plan_active)
     }

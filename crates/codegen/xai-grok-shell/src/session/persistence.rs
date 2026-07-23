@@ -354,6 +354,8 @@ pub enum PersistenceMsg {
     },
     /// Persist a compaction checkpoint file to `compaction_checkpoints/{id}.json`.
     CompactionCheckpoint(crate::extensions::notification::CompactionCheckpointFile),
+    /// Persist request-only dynamic context pruning metadata.
+    SelectiveCompaction(xai_grok_compaction::selective::SelectiveState),
     /// Persist a compaction request+response artifact to
     /// `compaction_requests/{request_id}.json`. Used for offline prompt
     /// iteration — captures the exact ConversationItem list sent to the
@@ -2096,6 +2098,21 @@ impl SessionPersistence {
                         tracing::warn!(?e, "failed to write compaction checkpoint file");
                     }
                 }
+                PersistenceMsg::SelectiveCompaction(state) => {
+                    let dir = session_dir(&self.info);
+                    let path = dir.join("selective_compaction.json");
+                    let temp = dir.join("selective_compaction.json.tmp");
+                    let result = async {
+                        tokio::fs::create_dir_all(&dir).await?;
+                        let bytes = serde_json::to_vec_pretty(&state).map_err(io::Error::other)?;
+                        tokio::fs::write(&temp, bytes).await?;
+                        tokio::fs::rename(&temp, &path).await
+                    }
+                    .await;
+                    if let Err(error) = result {
+                        tracing::warn!(?error, "failed to persist selective compaction state");
+                    }
+                }
                 PersistenceMsg::CompactionRequest(request) => {
                     if let Err(e) = self
                         .storage
@@ -2760,7 +2777,7 @@ pub async fn delete_session_history(
     session_id: &str,
     cwd: Option<&str>,
     needs_remote: bool,
-    auth_manager: Arc<crate::auth::AuthManager>,
+    auth_manager: Option<Arc<crate::auth::AuthManager>>,
 ) -> Result<SessionDeletion, DeleteSessionError> {
     let sid = acp::SessionId::new(Arc::from(session_id));
 
@@ -2780,6 +2797,8 @@ pub async fn delete_session_history(
     // reappear; a `404` means the copy is already gone, so deletion stays
     // idempotent and falls through to local cleanup.
     let remote_removed = if needs_remote {
+        let auth_manager = auth_manager
+            .expect("remote session deletion requires an authenticated session manager");
         let result = crate::remote::client::BackendClient::new()
             .with_auth_manager(auth_manager)
             .delete_session_data(session_id)

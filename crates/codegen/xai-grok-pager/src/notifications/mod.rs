@@ -478,8 +478,8 @@ mod tests {
         });
         svc.notify(NotificationEvent {
             kind: NotificationEventKind::TurnComplete,
-            title: "Grok".into(),
-            body: "Turn complete".into(),
+            title: "Chaos".into(),
+            body: "对话轮次完成".into(),
             session_id: Some("test-session".into()),
         });
     }
@@ -493,8 +493,8 @@ mod tests {
         });
         svc.notify(NotificationEvent {
             kind: NotificationEventKind::SessionReady,
-            title: "Grok".into(),
-            body: "Session ready".into(),
+            title: "Chaos".into(),
+            body: "会话就绪".into(),
             session_id: None,
         });
     }
@@ -750,8 +750,8 @@ mod tests {
         // crash regardless of suppression state.
         svc.notify(NotificationEvent {
             kind: NotificationEventKind::TurnComplete,
-            title: "Grok".into(),
-            body: "Done".into(),
+            title: "Chaos".into(),
+            body: "完成".into(),
             session_id: None,
         });
     }

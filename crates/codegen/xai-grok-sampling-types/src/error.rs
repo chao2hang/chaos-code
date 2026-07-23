@@ -356,19 +356,19 @@ pub const MAX_USER_ERROR_BODY_CHARS: usize = 280;
 pub fn status_user_message(status: StatusCode) -> String {
     match status.as_u16() {
         code @ 502..=504 => {
-            format!("Grok is temporarily unavailable. Please try again in a moment. (HTTP {code}).")
+            format!("服务暂时不可用，请稍后重试。(HTTP {code})")
         }
         // Cloudflare edge codes (origin down / connect fail / timeout / …).
         code @ 520..=524 => {
             format!(
-                "Connection to Grok timed out or was interrupted. Please try again. (HTTP {code})."
+                "连接超时或中断，请重试。(HTTP {code})"
             )
         }
         code if status.is_server_error() => {
-            format!("Something went wrong on the server (HTTP {code}).")
+            format!("服务器内部错误。(HTTP {code})")
         }
-        code if status.is_client_error() => format!("Request failed (HTTP {code})."),
-        code => format!("Request failed (HTTP {code})."),
+        code if status.is_client_error() => format!("请求失败。(HTTP {code})"),
+        code => format!("请求失败。(HTTP {code})"),
     }
 }
 

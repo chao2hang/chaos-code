@@ -12,7 +12,7 @@ impl SlashCommand for ContextCommand {
     }
 
     fn description(&self) -> &str {
-        "View context usage"
+        "查看上下文窗口和 Token 使用情况"
     }
 
     fn session_scoped(&self) -> bool {
@@ -25,7 +25,7 @@ impl SlashCommand for ContextCommand {
 
     fn run(&self, ctx: &mut CommandExecCtx, _args: &str) -> CommandResult {
         if ctx.session_id.is_none() {
-            return CommandResult::Error("No active session".to_string());
+            return CommandResult::Error("当前没有活动会话".to_string());
         }
 
         CommandResult::Action(Action::ShowContextInfo)

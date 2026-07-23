@@ -333,6 +333,12 @@ impl SessionActor {
                 )
                 .await;
             let call_name = call.function.name.clone();
+            if call_name == super::selective_compaction::COMPRESS_TOOL_NAME {
+                self.execute_compress_tool(&call).await?;
+                self.events.tool_finished();
+                self.signals_handle().record_tool_call(&call_name);
+                continue;
+            }
             match self
                 .prepare_tool_call(call, &mut deferred_followups)
                 .await?

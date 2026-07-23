@@ -4,8 +4,131 @@ use super::ChatStateActor;
 use crate::compaction_utils::extract_last_user_query;
 use crate::events::ChatStateEvent;
 use crate::types::{AutoCompactTrigger, ChatStateSnapshot, ConversationCounts, NotificationMeta};
+use std::collections::{BTreeMap, BTreeSet};
 
 impl ChatStateActor {
+    pub(super) fn extend_selective_protected_items(&self, protected: &mut BTreeSet<usize>) {
+        use xai_grok_sampling_types::{ConversationItem, SyntheticReason};
+
+        let mut real_user_indices = Vec::new();
+        for (index, item) in self.state.conversation.iter().enumerate() {
+            match item {
+                ConversationItem::System(_) => {
+                    protected.insert(index);
+                }
+                ConversationItem::User(user) => {
+                    if user.synthetic_reason.is_none()
+                        || matches!(
+                            user.synthetic_reason,
+                            Some(
+                                SyntheticReason::ProjectInstructions
+                                    | SyntheticReason::SystemReminder
+                            )
+                        )
+                    {
+                        protected.insert(index);
+                    }
+                    if user.synthetic_reason.is_none() {
+                        real_user_indices.push(index);
+                    }
+                }
+                ConversationItem::Assistant(assistant) => {
+                    if assistant.tool_calls.iter().any(|call| {
+                        matches!(
+                            call.name.to_ascii_lowercase().as_str(),
+                            "task"
+                                | "spawn_subagent"
+                                | "skill"
+                                | "todo"
+                                | "todo_write"
+                                | "update_plan"
+                                | "update_goal"
+                                | "write"
+                                | "write_file"
+                                | "edit"
+                                | "edit_file"
+                                | "apply_patch"
+                                | "search_replace"
+                        )
+                    }) {
+                        protected.insert(index);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if let Some(start) = real_user_indices
+            .get(real_user_indices.len().saturating_sub(3))
+            .copied()
+        {
+            protected.extend(start..self.state.conversation.len());
+        }
+
+        let mut calls = BTreeMap::<String, usize>::new();
+        let mut results = BTreeMap::<String, usize>::new();
+        for (index, item) in self.state.conversation.iter().enumerate() {
+            match item {
+                ConversationItem::Assistant(assistant) => {
+                    for call in &assistant.tool_calls {
+                        calls.insert(call.id.to_string(), index);
+                    }
+                }
+                ConversationItem::ToolResult(result) => {
+                    results.insert(result.tool_call_id.clone(), index);
+                }
+                _ => {}
+            }
+        }
+        for (id, call_index) in &calls {
+            if !results.contains_key(id) {
+                protected.insert(*call_index);
+            }
+        }
+    }
+
+    pub(super) fn validate_selective_tool_pairs(
+        &self,
+        ranges: &[xai_grok_compaction::selective::CompressionRange],
+    ) -> Result<(), xai_grok_compaction::selective::SelectiveError> {
+        use xai_grok_sampling_types::ConversationItem;
+
+        let mut calls = BTreeMap::<String, usize>::new();
+        let mut results = BTreeMap::<String, usize>::new();
+        for (index, item) in self.state.conversation.iter().enumerate() {
+            match item {
+                ConversationItem::Assistant(assistant) => {
+                    for call in &assistant.tool_calls {
+                        calls.insert(call.id.to_string(), index);
+                    }
+                }
+                ConversationItem::ToolResult(result) => {
+                    results.insert(result.tool_call_id.clone(), index);
+                }
+                _ => {}
+            }
+        }
+        for range in ranges {
+            for (id, call_index) in &calls {
+                let Some(result_index) = results.get(id) else {
+                    continue;
+                };
+                let contains_call = (range.start..=range.end).contains(call_index);
+                let contains_result = (range.start..=range.end).contains(result_index);
+                if contains_call != contains_result {
+                    return Err(
+                        xai_grok_compaction::selective::SelectiveError::ToolPairSplit {
+                            start: range.start,
+                            end: range.end,
+                            tool_call_id: id.clone(),
+                        },
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Build a notification meta from current timing state.
     pub(super) fn get_notification_meta(&self) -> NotificationMeta {
         NotificationMeta {
@@ -28,6 +151,7 @@ impl ChatStateActor {
             turn_start_ms: self.state.turn_start_ms,
             last_compaction_prompt_index: self.state.last_compaction_prompt_index,
             credentials: self.state.credentials.clone(),
+            selective_compaction: self.state.selective_compaction.clone(),
         }
     }
 
@@ -66,6 +190,9 @@ impl ChatStateActor {
         }
 
         self.state.conversation.truncate(truncate_at);
+        self.state.selective_compaction.reset();
+        self.persistence
+            .persist_selective_compaction(&self.state.selective_compaction);
         self.state.prompt_texts.truncate(target_prompt_index);
         self.state.prompt_index = target_prompt_index;
         self.state.total_tokens =

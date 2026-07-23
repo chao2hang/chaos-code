@@ -20,11 +20,11 @@ pub struct GrokBuildEndpoints {
     pub ws_origin: &'static str,
 }
 const PRODUCTION_ENDPOINTS: GrokBuildEndpoints = GrokBuildEndpoints {
-    cli_chat_proxy_base_url: "https://cli-chat-proxy.grok.com/v1",
-    asset_server_url: "https://assets.grok.com",
-    relay_ws_url: "wss://code.grok.com/ws/code-agent",
-    gateway_ws_url: "wss://grok.com/ws/gw/",
-    ws_origin: "https://grok.com",
+    cli_chat_proxy_base_url: "",
+    asset_server_url: "",
+    relay_ws_url: "",
+    gateway_ws_url: "",
+    ws_origin: "",
 };
 pub const PROD_CLI_CHAT_PROXY_BASE_URL: &str = PRODUCTION_ENDPOINTS.cli_chat_proxy_base_url;
 pub const PROD_ASSET_SERVER_URL: &str = PRODUCTION_ENDPOINTS.asset_server_url;

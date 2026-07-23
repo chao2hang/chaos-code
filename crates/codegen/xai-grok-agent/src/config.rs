@@ -1468,7 +1468,7 @@ impl AgentDefinition {
     pub fn default_grok_build() -> Self {
         Self::base(
             BuiltinAgentName::GrokBuild,
-            "Grok Build agent for software engineering tasks.",
+            "Chaos 软件工程智能体。",
         )
     }
     /// Grok Build Concise agent definition — concise output format for SFT/RL.
@@ -1478,7 +1478,7 @@ impl AgentDefinition {
             agents_md: false,
             ..Self::base(
                 BuiltinAgentName::GrokBuildConcise,
-                "Grok Build agent with concise output format.",
+                "Chaos 智能体（简洁输出格式）。",
             )
         }
     }
@@ -1488,7 +1488,7 @@ impl AgentDefinition {
             tool_config: grok_build_plan_toolset(),
             ..Self::base(
                 BuiltinAgentName::GrokBuildPlan,
-                "Grok Build agent with plan mode support.",
+                "Chaos 智能体（计划模式）。",
             )
         }
     }
@@ -1498,7 +1498,7 @@ impl AgentDefinition {
             tool_config: grok_build_plan_no_subagents_toolset(),
             ..Self::base(
                 BuiltinAgentName::GrokBuildPlanNoSubagents,
-                "Grok Build agent with plan mode (no subagents).",
+                "Chaos 智能体（计划模式，无子智能体）。",
             )
         }
     }
@@ -1508,7 +1508,7 @@ impl AgentDefinition {
             tool_config: grok_build_ask_user_toolset(),
             ..Self::base(
                 BuiltinAgentName::GrokBuildAskUser,
-                "Grok Build agent with ask-user-question tool.",
+                "Chaos 智能体（带用户提问工具）。",
             )
         }
     }
@@ -1594,7 +1594,7 @@ impl AgentDefinition {
             prompt_body: Some(ORCHESTRATOR_PROMPT_BODY.to_string()),
             ..Self::base(
                 BuiltinAgentName::GrokBuildOrchestrator,
-                "GrokBuild orchestrator that delegates coding to specialized subagents",
+                "Chaos 编排智能体，将编码任务委派给专用子智能体",
             )
         }
     }

@@ -1660,6 +1660,22 @@ pub(crate) fn execute(
             let tx = acp_tx.clone();
             tasks
                 .spawn(async move {
+                    // Provider hub writes `[model.*]` then switches immediately.
+                    // Force agent catalog reload so the new key (+ model_providers
+                    // inheritance) exists before SetSessionModel.
+                    let reload = acp::ExtRequest::new(
+                        "x.ai/internal/reload_models",
+                        serde_json::value::to_raw_value(&serde_json::json!({}))
+                            .expect("serialize reload_models params")
+                            .into(),
+                    );
+                    if let Err(e) = acp_send(reload, &tx).await {
+                        tracing::warn!(
+                            error = %e,
+                            "reload_models before SwitchModel failed; switch may miss new catalog entries"
+                        );
+                    }
+
                     let meta = effort
                         .map(|eff| {
                             use xai_grok_shell::sampling::types::{

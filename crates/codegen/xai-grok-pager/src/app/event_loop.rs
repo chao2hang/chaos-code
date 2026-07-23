@@ -856,7 +856,7 @@ pub(crate) async fn run(
         .as_deref()
         .map(agent_client_protocol::ModelId::new);
     app.cli_effort_token = args.reasoning_effort.clone();
-    app.auth_use_oauth = args.oauth;
+    app.auth_use_oauth = false;
     app.show_resolved_model = remote_settings
         .as_ref()
         .and_then(|s| s.show_resolved_model)
@@ -890,13 +890,12 @@ pub(crate) async fn run(
     app.cancel_rewind_enabled = connection.cancel_rewind_enabled;
     apply_session_recap_available(&mut app, connection.session_recap_available);
 
-    // Preserve auth methods so logout→re-login works without restarting.
+    // Chaos only keeps non-interactive provider authentication methods.
     app.auth_methods = connection.auth_methods.clone();
 
-    // Seed auth state from ACP connection metadata.
-    // --force-login overrides: show the login screen even when credentials exist.
-    let force_login = args.force_login && !connection.auth_methods.is_empty();
-    let needs_interactive_login = connection.needs_login || force_login;
+    // Chaos never enters an xAI/Grok interactive login flow. Provider credentials
+    // are resolved from the selected model's configuration.
+    let needs_interactive_login = false;
     if needs_interactive_login {
         app.welcome_prompt_focused = false;
 

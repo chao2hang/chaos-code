@@ -1074,12 +1074,12 @@ mod tests {
     /// The auto-generated global MEMORY.md stub, written verbatim by
     /// `MemoryStorage::ensure_initialized` (storage.rs), including the trailing
     /// newline. Kept in sync with that source.
-    const GLOBAL_STUB: &str = "# Global Memory\n\
+    const GLOBAL_STUB: &str = "# 全局记忆\n\
          \n\
-         > This file is automatically managed by Grok's memory system.\n\
-         > You can also edit it manually — changes will be indexed on next session.\n\
+         > 此文件由 Chaos 记忆系统自动管理。\n\
+         > 你也可以手动编辑 — 更改将在下次会话时被索引。\n\
          \n\
-         ## Preferences\n\
+         ## 偏好设置\n\
          \n\
          <!-- Add any cross-project preferences here -->\n";
 

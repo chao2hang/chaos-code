@@ -80,7 +80,7 @@ impl HeadlessPrompt {
     /// `.json` files are parsed as content blocks, everything else as text.
     pub fn from_file(path: &Path) -> anyhow::Result<Self> {
         let content = std::fs::read_to_string(path)
-            .map_err(|e| anyhow::anyhow!("Failed to read '{}': {e}", path.display()))?;
+            .map_err(|e| anyhow::anyhow!("无法读取 '{}'：{e}", path.display()))?;
 
         let context = |e| anyhow::anyhow!("'{}': {e}", path.display());
         if path.extension().and_then(|e| e.to_str()) == Some("json") {
@@ -502,19 +502,10 @@ fn auto_respond_to_permissions(
     None
 }
 
-/// "Not signed in" error message, tailored to the session type.
-fn auth_required_message(interactive: bool) -> String {
-    if interactive {
-        "Not signed in. Run `grok login` to authenticate \
-         (or `grok login --device-code` if no browser is available)."
-            .to_string()
-    } else {
-        "Not signed in. To authenticate without a browser, run:\n  \
-         grok login --device-code\n\n\
-         Alternatively, set the XAI_API_KEY environment variable \
-         or run `grok login` on a machine with a browser."
-            .to_string()
-    }
+/// Provider configuration error used by both interactive and headless sessions.
+fn auth_required_message(_interactive: bool) -> String {
+    "模型认证失败。请检查当前模型的 api_key/env_key、base_url、api_backend 和 auth_scheme 配置。"
+        .to_string()
 }
 
 /// Authenticate using the agent's `defaultAuthMethodId` (source of truth for
@@ -784,12 +775,12 @@ async fn apply_headless_model_and_effort(
     .map_err(|e| {
         if let Some(name) = model_name {
             anyhow::anyhow!(
-                "Couldn't set model '{}': {}. Run 'grok models' to see available models.",
+                "无法设置模型 '{}'：{}。运行 `chaos models` 查看可用模型。",
                 name,
                 e
             )
         } else {
-            anyhow::anyhow!("Couldn't apply reasoning effort: {e}")
+            anyhow::anyhow!("无法应用推理强度：{e}")
         }
     })?;
     tracing::debug!(
@@ -837,9 +828,9 @@ pub async fn run_single_turn(
     // Load config and spawn agent
     let t_spawn = Instant::now();
     let raw_config = xai_grok_shell::config::load_effective_config()
-        .map_err(|e| anyhow::anyhow!("Failed to load config: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("无法加载配置：{e}"))?;
     let mut agent_config = AgentConfig::new_from_toml_cfg(&raw_config)
-        .map_err(|e| anyhow::anyhow!("Failed to create agent config: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("无法创建 Agent 配置：{e}"))?;
 
     // Canonical-only early stamp; remaps need the post-session catalog resolve below.
     if let Some(ref token) = options.reasoning_effort
@@ -912,7 +903,7 @@ pub async fn run_single_turn(
     let spawned = match spawn_grok_shell(agent_config, &cancel, memory_config).await {
         Ok(s) => s,
         Err(e) => {
-            let msg = format!("Couldn't start session: {e}");
+            let msg = format!("无法启动会话：{e}");
             emitter.on_error(&msg);
             anyhow::bail!("{msg}");
         }
@@ -934,7 +925,7 @@ pub async fn run_single_turn(
     let init_resp: acp::InitializeResponse = match acp_send(init_req, &acp_tx).await {
         Ok(r) => r,
         Err(e) => {
-            let msg = format!("Couldn't initialize: {e}");
+            let msg = format!("初始化失败：{e}");
             emitter.on_error(&msg);
             cancel.cancel();
             anyhow::bail!("{msg}");
@@ -1028,7 +1019,7 @@ pub async fn run_single_turn(
     } = match opened {
         Ok(v) => v,
         Err(e) => {
-            let msg = format!("Couldn't create session: {e}");
+            let msg = format!("无法创建会话：{e}");
             emitter.on_error(&msg);
             cancel.cancel();
             anyhow::bail!("{msg}");
@@ -1695,7 +1686,7 @@ fn handle_ext_notification(
                 );
             }
             OutputFormat::Plain => {
-                eprintln!("Auto-compacting conversation ({percentage}% full)...");
+                eprintln!("正在自动压缩会话（上下文已使用 {percentage}%）...");
             }
             OutputFormat::Json => {}
         },
@@ -1703,7 +1694,7 @@ fn handle_ext_notification(
             OutputFormat::StreamingJson => {
                 println!("{}", serde_json::json!({"type": "auto_compact_completed"}));
             }
-            OutputFormat::Plain => eprintln!("Conversation compacted."),
+            OutputFormat::Plain => eprintln!("会话压缩完成。"),
             OutputFormat::Json => {}
         },
         XaiUpdate::AutoCompactFailed { error } => match format {
@@ -1715,9 +1706,9 @@ fn handle_ext_notification(
             }
             OutputFormat::Plain => {
                 if error.trim().is_empty() {
-                    eprintln!("Auto-compact failed.");
+                    eprintln!("自动压缩失败。");
                 } else {
-                    eprintln!("Auto-compact failed: {error}");
+                    eprintln!("自动压缩失败：{error}");
                 }
             }
             OutputFormat::Json => {}
@@ -1726,7 +1717,7 @@ fn handle_ext_notification(
             OutputFormat::StreamingJson => {
                 println!("{}", serde_json::json!({"type": "auto_compact_cancelled"}));
             }
-            OutputFormat::Plain => eprintln!("Auto-compact cancelled."),
+            OutputFormat::Plain => eprintln!("已取消自动压缩。"),
             OutputFormat::Json => {}
         },
         XaiUpdate::AutoContinueCompleted { total_tokens } => match format {
@@ -1736,7 +1727,7 @@ fn handle_ext_notification(
                     serde_json::json!({"type": "auto_continue_completed", "total_tokens": total_tokens})
                 );
             }
-            OutputFormat::Plain => eprintln!("Resumed after compaction."),
+            OutputFormat::Plain => eprintln!("压缩完成，已继续执行。"),
             OutputFormat::Json => {}
         },
         XaiUpdate::ImageCompressed { message } => match format {
@@ -2045,10 +2036,10 @@ mod tests {
             }),
         );
         assert!(matches!(
-            handle_ext_notification(&notif, OutputFormat::Plain),
-            ExtEvent::TaskBackgrounded { task_id, is_monitor: false }
-if task_id == "task-abc"
-        ));
+                    handle_ext_notification(&notif, OutputFormat::Plain),
+                    ExtEvent::TaskBackgrounded { task_id, is_monitor: false }
+        if task_id == "task-abc"
+                ));
     }
 
     #[test]
@@ -2062,10 +2053,10 @@ if task_id == "task-abc"
             }),
         );
         assert!(matches!(
-            handle_ext_notification(&notif, OutputFormat::Plain),
-            ExtEvent::TaskBackgrounded { task_id, is_monitor: true }
-if task_id == "mon-1"
-        ));
+                    handle_ext_notification(&notif, OutputFormat::Plain),
+                    ExtEvent::TaskBackgrounded { task_id, is_monitor: true }
+        if task_id == "mon-1"
+                ));
     }
 
     #[test]
@@ -2083,10 +2074,10 @@ if task_id == "mon-1"
             }),
         );
         assert!(matches!(
-            handle_ext_notification(&notif, OutputFormat::Plain),
-            ExtEvent::TaskCompleted { task_id }
-if task_id == "task-abc"
-        ));
+                    handle_ext_notification(&notif, OutputFormat::Plain),
+                    ExtEvent::TaskCompleted { task_id }
+        if task_id == "task-abc"
+                ));
     }
 
     #[test]
@@ -2103,10 +2094,10 @@ if task_id == "task-abc"
             }),
         );
         assert!(matches!(
-            handle_ext_notification(&spawned, OutputFormat::Plain),
-            ExtEvent::SubagentSpawned { subagent_id }
-if subagent_id == "sub-1"
-        ));
+                    handle_ext_notification(&spawned, OutputFormat::Plain),
+                    ExtEvent::SubagentSpawned { subagent_id }
+        if subagent_id == "sub-1"
+                ));
         let finished = make_ext_notif(
             "x.ai/session_notification",
             serde_json::json!({
@@ -2120,10 +2111,10 @@ if subagent_id == "sub-1"
             }),
         );
         assert!(matches!(
-            handle_ext_notification(&finished, OutputFormat::Plain),
-            ExtEvent::SubagentFinished { subagent_id }
-if subagent_id == "sub-1"
-        ));
+                    handle_ext_notification(&finished, OutputFormat::Plain),
+                    ExtEvent::SubagentFinished { subagent_id }
+        if subagent_id == "sub-1"
+                ));
     }
 
     #[test]

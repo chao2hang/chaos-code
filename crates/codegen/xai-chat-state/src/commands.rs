@@ -136,6 +136,18 @@ pub enum ChatStateCommand {
         is_compaction: bool,
     },
 
+    /// Atomically add request-only selective compression blocks.
+    ApplySelectiveCompression {
+        ranges: Vec<xai_grok_compaction::selective::CompressionRange>,
+        protected_items: BTreeSet<usize>,
+        reply: oneshot::Sender<
+            Result<
+                Vec<xai_grok_compaction::selective::BlockId>,
+                xai_grok_compaction::selective::SelectiveError,
+            >,
+        >,
+    },
+
     /// Out-of-band history repair (`x.ai/session/repair`): run
     /// [`crate::compaction_utils::repair_history`] and persist when changed;
     /// `dry_run` only reports.
@@ -218,6 +230,10 @@ pub enum ChatStateCommand {
     /// Get a clone of the full conversation.
     GetConversation {
         reply: oneshot::Sender<Vec<ConversationItem>>,
+    },
+
+    GetSelectiveCompaction {
+        reply: oneshot::Sender<xai_grok_compaction::selective::SelectiveState>,
     },
 
     /// Get current prompt index.

@@ -5,6 +5,8 @@
 //! gates, the preflight overflow check, and every client renderer use to talk
 //! about context-window usage.
 
+pub mod pricing;
+
 /// Bytes per token under the rough character-based heuristic.
 pub const BYTES_PER_TOKEN: u64 = 4;
 

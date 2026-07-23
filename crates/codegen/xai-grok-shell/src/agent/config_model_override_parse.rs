@@ -441,6 +441,7 @@ fn field_parse_error(field: &str, value: &toml::Value) -> Option<toml::de::Error
 mod tests {
     use super::*;
     use crate::sampling::ApiBackend;
+    use xai_grok_sampler::AuthScheme;
     use xai_grok_sampling_types::{
         CompactionAtTokens, CompactionsRemaining, ReasoningEffort, ReasoningEffortOption,
     };
@@ -618,6 +619,21 @@ mod tests {
     }
 
     #[test]
+    fn parses_model_level_x_api_key_auth_scheme() {
+        let (models, warnings) = parse_raw(
+            r#"
+            [model.claude]
+            api_backend = "messages"
+            auth_scheme = "x_api_key"
+            "#,
+        );
+        let model = models.get("claude").expect("model should parse");
+        assert_eq!(model.api_backend, Some(ApiBackend::Messages));
+        assert_eq!(model.auth_scheme, Some(AuthScheme::XApiKey));
+        assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
+    }
+
+    #[test]
     fn invalid_canonical_key_falls_back_to_legacy_alias() {
         let (models, warnings) = parse_raw(
             r#"
@@ -680,6 +696,7 @@ if key == "oops"
             temperature: Some(0.5),
             top_p: Some(0.9),
             api_backend: Some(ApiBackend::Messages),
+            auth_scheme: Some(AuthScheme::XApiKey),
             extra_headers: [("x-team".to_owned(), "codegen".to_owned())]
                 .into_iter()
                 .collect(),

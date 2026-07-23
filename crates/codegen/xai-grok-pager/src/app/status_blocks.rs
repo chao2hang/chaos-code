@@ -185,40 +185,39 @@ pub(crate) fn session_usage_block_text(
     let t = &usage.totals;
     if t.model_calls == 0 && usage.model_usage.is_empty() {
         return if usage.usage_is_incomplete {
-            "Session usage: none recorded, but tracking is incomplete and may under-count."
-                .to_string()
+            "会话用量：尚无记录，但统计不完整，实际用量可能更高。".to_string()
         } else {
-            "Session usage: no model calls yet in this session.".to_string()
+            "会话用量：本次会话尚未调用模型。".to_string()
         };
     }
 
     let mut rows = Vec::new();
     rows.push(format!(
-        "  Input tokens:   {} ({} cached)",
+        "  输入 Token：    {}（缓存命中 {}）",
         group_thousands(t.input_tokens),
         group_thousands(t.cached_read_tokens),
     ));
     rows.push(format!(
-        "  Output tokens:  {} ({} reasoning)",
+        "  输出 Token：    {}（推理 {}）",
         group_thousands(t.output_tokens),
         group_thousands(t.reasoning_tokens),
     ));
     rows.push(format!(
-        "  Total tokens:   {}",
+        "  Token 总计：    {}",
         group_thousands(t.total_tokens)
     ));
     rows.push(format!(
-        "  Model calls:    {} · API time: {}",
+        "  模型调用：      {} 次 · API 耗时 {}",
         group_thousands(t.model_calls),
         format_duration(std::time::Duration::from_millis(t.api_duration_ms)),
     ));
-    rows.push(format!("  Cost:           {}", format_cost(t)));
+    rows.push(format!("  费用：          {}", format_cost(t)));
 
     if usage.model_usage.len() > 1 {
-        rows.push("  By model:".to_string());
+        rows.push("  按模型：".to_string());
         for (model, m) in &usage.model_usage {
             rows.push(format!(
-                "    {model} — {} in / {} out · {}",
+                "    {model}：输入 {} / 输出 {} · {}",
                 group_thousands(m.input_tokens),
                 group_thousands(m.output_tokens),
                 format_cost(m),
@@ -227,13 +226,10 @@ pub(crate) fn session_usage_block_text(
     }
 
     if usage.usage_is_incomplete {
-        rows.push("  Note: usage is incomplete and may under-count.".to_string());
+        rows.push("  注意：用量统计不完整，实际用量可能更高。".to_string());
     }
 
-    join_header_rows(
-        "Session usage (since start or last resume):".to_string(),
-        rows,
-    )
+    join_header_rows("会话用量（自启动或最近一次恢复后）：".to_string(), rows)
 }
 
 /// Cost cell. Ticks are 1e10 per USD; partial sums are scrubbed to absent.
@@ -241,8 +237,8 @@ fn format_cost(m: &xai_grok_shell::extensions::notification::PromptUsageModel) -
     use xai_grok_shell::extensions::notification::ticks_to_usd;
     match m.cost_usd_ticks {
         Some(ticks) => format!("${:.4}", ticks_to_usd(ticks)),
-        None if m.cost_is_partial => "not available (not reported for some calls)".to_string(),
-        None => "not available (not reported)".to_string(),
+        None if m.cost_is_partial => "不可用（部分调用未返回价格）".to_string(),
+        None => "不可用（提供商未返回价格）".to_string(),
     }
 }
 
@@ -303,7 +299,7 @@ mod tests {
         let usage = PromptUsage::default();
         assert_eq!(
             session_usage_block_text(&usage),
-            "Session usage: no model calls yet in this session."
+            "会话用量：本次会话尚未调用模型。"
         );
 
         // Empty but incomplete must not read as a clean zero.
@@ -311,7 +307,7 @@ mod tests {
             usage_is_incomplete: true,
             ..Default::default()
         };
-        assert!(session_usage_block_text(&incomplete).contains("incomplete"));
+        assert!(session_usage_block_text(&incomplete).contains("统计不完整"));
     }
 
     #[test]
@@ -326,6 +322,16 @@ mod tests {
             ..Default::default()
         };
         let text = session_usage_block_text(&usage);
+        for expected in [
+            "输入 Token：    1,234,567（缓存命中 1,000,000）",
+            "输出 Token：    45,678（推理 12,000）",
+            "Token 总计：    1,280,245",
+        ] {
+            assert!(
+                text.contains(expected),
+                "缺少用量字段 `{expected}`：\n{text}"
+            );
+        }
         // Snapshot pins content and column alignment together; single-model
         // sessions must skip the redundant by-model breakdown.
         insta::assert_snapshot!("session_usage_block_full", text);
@@ -344,9 +350,9 @@ mod tests {
             .model_usage
             .insert("grok-4".into(), model_row(50, 5, None));
         let text = session_usage_block_text(&usage);
-        assert!(text.contains("By model:"), "{text}");
-        assert!(text.contains("grok-build — 100 in / 10 out"), "{text}");
-        assert!(text.contains("grok-4 — 50 in / 5 out"), "{text}");
+        assert!(text.contains("按模型："), "{text}");
+        assert!(text.contains("grok-build：输入 100 / 输出 10"), "{text}");
+        assert!(text.contains("grok-4：输入 50 / 输出 5"), "{text}");
     }
 
     #[test]
@@ -371,8 +377,8 @@ mod tests {
             ..Default::default()
         };
         let text = session_usage_block_text(&usage);
-        assert!(text.contains("not reported for some calls"), "{text}");
-        assert!(text.contains("usage is incomplete"), "{text}");
+        assert!(text.contains("部分调用未返回价格"), "{text}");
+        assert!(text.contains("用量统计不完整"), "{text}");
     }
 
     #[test]
