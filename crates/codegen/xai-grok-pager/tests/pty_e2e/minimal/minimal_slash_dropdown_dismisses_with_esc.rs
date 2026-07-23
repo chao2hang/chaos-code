@@ -31,7 +31,7 @@ async fn minimal_slash_dropdown_dismisses_with_esc() {
     );
     // Dismiss only — Esc must not have armed the idle clear or opened rewind.
     assert!(
-        !screen.contains("press again to clear"),
+        !screen.contains("再按一次以清空"),
         "slash-dropdown Esc must not fall through to the idle clear\nscreen:\n{screen}"
     );
     assert!(

@@ -99,7 +99,7 @@ async fn esc_policy_and_tab_focus_work_in_simple_mode() {
         .expect("draft renders");
     harness.inject_keys(keys::ESC).expect("first esc");
     harness
-        .wait_for_text("press again to clear", Duration::from_secs(15))
+        .wait_for_text("再按一次以清空", Duration::from_secs(15))
         .expect("simple_mode idle Esc must arm the clear confirm");
     harness.inject_keys(keys::ESC).expect("second esc");
     wait_for_labels_absent(&mut harness, &[draft], Duration::from_secs(5));

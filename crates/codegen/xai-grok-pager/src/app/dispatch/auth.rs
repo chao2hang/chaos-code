@@ -52,7 +52,7 @@ fn no_login_method_error(app: &AppView) -> String {
     if app.auth_methods.is_empty() {
         xai_grok_shell::agent::auth_method::PREFERRED_API_KEY_UNAVAILABLE.to_string()
     } else {
-        "No login method available".to_string()
+        "没有可用的认证方式；请配置 Provider API Key（/provider）。".to_string()
     }
 }
 
@@ -355,7 +355,7 @@ pub(super) fn handle_auth_complete(
                 // auth detour, so a plain front-enqueue + drain is safe.
                 if let Some(prompt) = agent.reauth_stashed_prompt.take() {
                     agent.scrollback.push_block(RenderBlock::system(
-                        "Re-authenticated. Retrying\u{2026}".to_string(),
+                        "已重新认证，正在重试\u{2026}".to_string(),
                     ));
                     agent.session.enqueue_in_flight_prompt_front(prompt);
                     let drain = maybe_drain_queue(agent);

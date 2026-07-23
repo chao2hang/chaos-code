@@ -377,9 +377,9 @@ pub fn xai_api_key_auth_method() -> acp::AuthMethod {
             acp::AuthMethodId::new(XAI_API_KEY_METHOD_ID),
             "xai.api_key".to_string(),
         )
-        .description(Some(format!(
-            "{XAI_API_KEY_ENV_VAR} or api_key/env_key in config.toml"
-        ))),
+        .description(Some(
+            "config.toml 中 model_providers 的 api_key/env_key（或环境变量）".to_string(),
+        )),
     )
 }
 

@@ -1,82 +1,53 @@
 # Getting Started
 
-Grok Build is a terminal-based AI coding assistant from SpaceXAI. It runs as a TUI (Terminal User Interface) that understands your codebase, executes shell commands, edits files, searches the web, and manages tasks.
+> **Chaos 分支：** 从源码构建的二进制名为 `chaos`（包 `xai-grok-pager-bin`）。
+> 模型凭证由用户自带，无需 Grok 登录。详见仓库根 [CHAOS.md](../../../../CHAOS.md)。
 
-You can use it interactively as a full-screen TUI, run it headlessly for scripting and CI/CD, or integrate it into editors via the Agent Client Protocol (ACP).
-
----
-
-## Installation
-
-Install the latest stable release (macOS, Linux, or Windows via Git Bash):
-
-```bash
-curl -fsSL https://x.ai/cli/install.sh | bash
-```
-
-Install a specific version:
-
-```bash
-curl -fsSL https://x.ai/cli/install.sh | bash -s 0.1.42
-```
-
-On **Windows (PowerShell)**, use the native PowerShell installer:
-
-```powershell
-irm https://x.ai/cli/install.ps1 | iex
-```
-
-Install a specific version:
-
-```powershell
-$env:GROK_VERSION="0.1.42"; irm https://x.ai/cli/install.ps1 | iex
-```
-
-The PowerShell installer automatically adds `%USERPROFILE%\.grok\bin` to your User PATH. Alternatively, install via [Git for Windows](https://gitforwindows.org/) (Git Bash) or MSYS2 using the bash script above. WSL users get the Linux binary automatically.
-
-Verify the installation:
-
-```bash
-grok --version
-```
-
-Update to the latest version at any time:
-
-```bash
-grok update
-```
+Chaos 是终端 AI 编码助手。它以全屏 TUI 理解代码库、执行 shell、编辑文件、搜索网页并管理任务；也可无头运行（脚本/CI）或通过 ACP 嵌入编辑器。
 
 ---
 
-## First Launch
+## 从源码构建
 
-Start Grok by running:
-
-```bash
-grok
-```
-
-On first launch, Grok opens your browser to authenticate with grok.com. After you sign in, Grok stores your credentials in `~/.grok/auth.json`, where they persist across sessions. Grok refreshes your credentials automatically and prompts you to sign in again when they can no longer be renewed.
-
-If you prefer API key authentication (e.g., for CI/CD or environments without a browser), set the `XAI_API_KEY` environment variable instead:
+环境要求：Rust（见 `rust-toolchain.toml`）、DotSlash、`protoc`。在仓库根目录：
 
 ```bash
-export XAI_API_KEY="xai-..."
-grok
+cargo build -p xai-grok-pager-bin --release
+./target/release/chaos --version
 ```
 
-See [Authentication](02-authentication.md) for the full set of auth options including OIDC, external auth providers, and device code flow.
+开发模式：
+
+```bash
+cargo run -p xai-grok-pager-bin
+```
+
+（上游官方安装脚本安装的是 `grok`，与本 fork 无关。）
 
 ---
 
-## Basic Interaction
+## 首次启动
 
-Once authenticated, Grok presents a full-screen TUI with two main areas:
+1. 按 [Authentication](02-authentication.md) 或 [CHAOS.md](../../../../CHAOS.md) 配置 `~/.grok/config.toml` 中的 `model_providers` 与 `model`。
+2. 导出密钥环境变量（例如 `OPENAI_API_KEY` 或 `ANTHROPIC_API_KEY`）。
+3. 启动：
 
-- **Scrollback** -- the conversation history showing your prompts, Grok's responses, tool calls, file edits, and more.
-- **Prompt** -- the input area at the bottom where you type messages.
+```bash
+./target/release/chaos
+```
 
-Type a message and press `Enter` to send it. Grok reads files, runs commands, and edits code as needed. Each tool run streams into the scrollback in real time.
+Chaos **不会**打开浏览器登录 grok.com。缺少凭证时，欢迎页会提示配置 Provider（`/provider` 或按 `p`）。
+
+---
+
+## 基本交互
+
+启动后 TUI 主要区域：
+
+- **回滚区（Scrollback）** — 对话历史：提示、回复、工具调用、文件编辑等。
+- **提示框（Prompt）** — 底部输入区。
+
+输入消息后按 `Enter` 发送。助手会按需读文件、跑命令、改代码；工具输出实时进入回滚区。
 
 Press `Tab` to move focus between the prompt and the scrollback. While a turn is running, `Ctrl+C` cancels it (or clears a non-empty draft first); `Esc` is a no-op mid-turn. Idle, press `Esc` twice within 800ms to clear a non-empty prompt, or (with an empty prompt and conversation messages) to open rewind — see [Keyboard Shortcuts](03-keyboard-shortcuts.md#escape). With the scrollback focused, use the arrow keys to select entries and to collapse or expand them. To navigate with `j`/`k` and fold with `h`/`l` instead, enable Vim mode.
 

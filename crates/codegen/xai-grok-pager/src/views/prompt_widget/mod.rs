@@ -173,8 +173,8 @@ pub struct PromptStyle {
     /// Used for bash mode (`"! "` in yellow).
     pub prefix_override: Option<(&'static str, ratatui::style::Color)>,
     /// Override the placeholder text shown when the textarea is empty.
-    /// When `Some(text)`, uses this instead of the default `"Build anything"`.
-    /// Used for feedback mode (`"Type your feedback..."`).
+    /// When `Some(text)`, uses this instead of the default `"开始构建"`.
+    /// Used for feedback mode (`"输入反馈…"`).
     pub placeholder_override: Option<&'static str>,
     /// Compact mode (currently unused for info_block sizing).
     pub compact: bool,
@@ -3125,7 +3125,7 @@ impl PromptWidget {
             && !style.focused
             && !voice_interim_shown
         {
-            let placeholder = style.placeholder_override.unwrap_or("Build anything");
+            let placeholder = style.placeholder_override.unwrap_or("开始构建");
             buf.set_string(
                 ta_area.x,
                 ta_area.y,

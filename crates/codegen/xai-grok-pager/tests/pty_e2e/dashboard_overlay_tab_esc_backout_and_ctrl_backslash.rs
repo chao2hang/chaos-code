@@ -35,7 +35,7 @@ fn attach_overlay(h: &mut PtyHarness) {
 ///   - **Ctrl+\** opens the dashboard from a session (and from inside the overlay);
 ///   - **empty-prompt Esc** backs out;
 ///   - **Left on an empty prompt** backs out;
-///   - **a drafted-prompt Esc** does NOT back out — it arms "press again to clear";
+///   - **a drafted-prompt Esc** does NOT back out — it arms "再按一次以清空";
 ///   - **Tab then a neutral scrollback Esc** backs out.
 /// Each back-out is re-verified against a freshly re-attached overlay.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -67,7 +67,7 @@ async fn dashboard_overlay_tab_esc_backout_and_ctrl_backslash() {
         .wait_for_text("+ 新建会话", Duration::from_secs(10))
         .expect("Ctrl+\\ opens the dashboard");
 
-    // ── (c) Drafted-prompt Esc must NOT back out (arms "press again to clear")
+    // ── (c) Drafted-prompt Esc must NOT back out (arms "再按一次以清空")
     //    and (d) empty-prompt Esc backs out. Overlay lands on Prompt.
     attach_overlay(&mut harness);
     let draft = "OVLDRAFT";
@@ -78,7 +78,7 @@ async fn dashboard_overlay_tab_esc_backout_and_ctrl_backslash() {
     harness.inject_keys(keys::ESC).expect("esc with draft");
     harness.update(Duration::from_millis(300));
     assert!(
-        harness.contains_text("press again to clear"),
+        harness.contains_text("再按一次以清空"),
         "a drafted overlay prompt Esc must arm clear, not back out\nscreen:\n{}",
         harness.screen_contents()
     );

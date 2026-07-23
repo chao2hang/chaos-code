@@ -3274,7 +3274,7 @@ fn render_footer(
             .unwrap_or_else(|| key!('x', CONTROL));
         let pending = PendingHint {
             shortcut: stop_key,
-            label: "close this session",
+            label: "关闭此会话",
         };
         ShortcutsBar::new(&[])
             .with_pending(Some(pending))
@@ -8656,12 +8656,12 @@ if *state == RowState::Idle && *count == total as usize
         );
         let content = buf_to_text(&buf);
         assert!(
-            content.to_lowercase().contains("press again"),
-            "stop-confirm footer must say `press again`, got: {content:?}",
+            content.contains("再按一次"),
+            "stop-confirm footer must say 再按一次, got: {content:?}",
         );
         assert!(
-            content.to_lowercase().contains("close this session"),
-            "stop-confirm footer must mention closing the session, got: {content:?}",
+            content.contains("关闭此会话"),
+            "stop-confirm footer must mention 关闭此会话, got: {content:?}",
         );
     }
 

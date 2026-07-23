@@ -2666,7 +2666,7 @@ impl AppView {
                     };
                     let shortcut = KeyShortcut::from(*key);
                     self.pending_action =
-                        Some(PendingAction::new(action, shortcut, "new in worktree"));
+                        Some(PendingAction::new(action, shortcut, "在工作树中新建"));
                     return InputOutcome::Changed;
                 }
                 _ => unreachable!(),
@@ -2706,7 +2706,7 @@ impl AppView {
             self.pending_action = Some(PendingAction::new(
                 Action::Quit,
                 KeyShortcut::from(*key),
-                "quit",
+                "退出",
             ));
             return InputOutcome::Changed;
         }
@@ -3318,8 +3318,12 @@ fn handle_welcome_input(ev: &Event, ctx: &mut WelcomeInputCtx<'_>) -> InputOutco
                     }
                     return InputOutcome::Action(Action::QuitConfirmed);
                 }
-                if key!('l').matches(key) || key!(Enter).matches(key) {
-                    return InputOutcome::Action(Action::Login);
+                // Chaos is BYOK-only: open provider configuration instead of
+                // browser login when credentials are missing.
+                if key!('p').matches(key) || key!(Enter).matches(key) {
+                    return InputOutcome::Action(Action::OpenProviderModal {
+                        mode: crate::views::provider_modal::ProviderModalMode::List,
+                    });
                 }
             }
             AuthState::Authenticating { .. } if *ctx.show_raw_url => {
@@ -3601,11 +3605,13 @@ fn handle_menu_nav(
         _ => None,
     }
 }
-/// Dispatch an action for a welcome menu item when not yet authenticated.
-/// Menu layout: 0 = Login, 1 = Quit.
+/// Dispatch an action for a welcome menu item when credentials are missing.
+/// Menu layout: 0 = Configure provider, 1 = Quit.
 fn dispatch_pending_menu_action(index: usize) -> InputOutcome {
     match index {
-        0 => InputOutcome::Action(Action::Login),
+        0 => InputOutcome::Action(Action::OpenProviderModal {
+            mode: crate::views::provider_modal::ProviderModalMode::List,
+        }),
         1 => InputOutcome::Action(Action::Quit),
         _ => InputOutcome::Unchanged,
     }
@@ -3619,12 +3625,14 @@ fn dispatch_zdr_menu_action(index: usize) -> InputOutcome {
         _ => InputOutcome::Unchanged,
     }
 }
-/// Menu actions when user is access-gated: 0 = Subscribe CTA, 1 = Logout, 2 = Quit.
+/// Menu actions when user is access-gated: 0 = Subscribe CTA, 1 = Provider, 2 = Quit.
 /// "Refresh" (ctrl-r) is handled as a direct key shortcut, not a menu item.
 fn dispatch_access_gate_menu_action(index: usize) -> InputOutcome {
     match index {
         0 => InputOutcome::Action(Action::OpenSupergrokUrl),
-        1 => InputOutcome::Action(Action::Logout),
+        1 => InputOutcome::Action(Action::OpenProviderModal {
+            mode: crate::views::provider_modal::ProviderModalMode::List,
+        }),
         2 => InputOutcome::Action(Action::Quit),
         _ => InputOutcome::Unchanged,
     }
@@ -8512,20 +8520,26 @@ pub(crate) mod tests {
         }
     }
     #[test]
-    fn welcome_pending_l_triggers_login() {
+    fn welcome_pending_p_opens_provider_modal() {
         let mut app = test_app();
         app.auth_state = AuthState::Pending { error: None };
         app.welcome_prompt_focused = false;
-        let outcome = app.handle_input(&key_event(KeyCode::Char('l'), KeyModifiers::NONE));
-        assert!(matches!(outcome, InputOutcome::Action(Action::Login)));
+        let outcome = app.handle_input(&key_event(KeyCode::Char('p'), KeyModifiers::NONE));
+        assert!(matches!(
+            outcome,
+            InputOutcome::Action(Action::OpenProviderModal { .. })
+        ));
     }
     #[test]
-    fn welcome_pending_enter_triggers_login() {
+    fn welcome_pending_enter_opens_provider_modal() {
         let mut app = test_app();
         app.auth_state = AuthState::Pending { error: None };
         app.welcome_prompt_focused = false;
         let outcome = app.handle_input(&key_event(KeyCode::Enter, KeyModifiers::NONE));
-        assert!(matches!(outcome, InputOutcome::Action(Action::Login)));
+        assert!(matches!(
+            outcome,
+            InputOutcome::Action(Action::OpenProviderModal { .. })
+        ));
     }
     #[test]
     fn welcome_pending_n_is_unchanged() {

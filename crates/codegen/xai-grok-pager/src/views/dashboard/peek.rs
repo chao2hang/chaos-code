@@ -864,7 +864,7 @@ pub fn render_peek_panel(
         vpad_top: 0,
         chrome: false,
         bg_override: Some(theme.bg_base),
-        placeholder_override: Some("reply\u{2026}"),
+        placeholder_override: Some("回复\u{2026}"),
         image_preview: false,
         ..PromptStyle::default()
     };
@@ -1586,8 +1586,10 @@ mod tests {
             content.contains('\u{276F}'),
             "peek must paint ❯ on the reply row"
         );
+        // CJK wide glyphs leave blank continuation cells when scanning
+        // cell-by-cell, so match a spaced form of the placeholder.
         assert!(
-            !content.contains("reply\u{2026}"),
+            !content.contains("回 复") && !content.contains("回复\u{2026}"),
             "focused reply input must not paint the placeholder, got: {content:?}"
         );
         // No in-box title bar / [×] close.
@@ -1635,7 +1637,10 @@ mod tests {
         }
         assert!(content.contains("ship it"), "got: {content:?}");
         // No placeholder once the user has typed.
-        assert!(!content.contains("reply\u{2026}"), "got: {content:?}");
+        assert!(
+            !content.contains("回 复") && !content.contains("回复\u{2026}"),
+            "got: {content:?}"
+        );
         assert!(res.caret.is_some(), "reply input must report a caret");
         assert!(res.reply_rect.is_some(), "reply rect must be reported");
     }
@@ -1716,8 +1721,9 @@ mod tests {
             }
             content.push('\n');
         }
+        // Wide CJK cells read as "回 复 …" when concatenating cell symbols.
         assert!(
-            content.contains("reply\u{2026}"),
+            content.contains("回 复") || content.contains("回复\u{2026}"),
             "unfocused empty reply must paint the placeholder, got: {content:?}"
         );
     }
