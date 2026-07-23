@@ -2171,13 +2171,13 @@ mod link_click_tests {
             !(0..short.height).any(|y| buffer_row(&buf, short.width, y).contains("ZZTIPZZ")),
             "short terminal must not reserve or paint the tip row"
         );
-        agent.show_mode_switch_banner("PlanMode");
+        agent.show_mode_switch_banner("计划模式");
         let buf = render_agent(&mut agent, tall, &reg);
         let frame: String = (0..tall.height)
             .map(|y| buffer_row(&buf, tall.width, y))
             .collect();
         assert!(
-            frame.contains("已切换到模式：PlanMode"),
+            frame.contains("已切换到模式：计划模式"),
             "mode-switch banner must own the slot"
         );
         assert!(

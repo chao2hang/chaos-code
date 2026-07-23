@@ -483,20 +483,20 @@ fn paint_peek_config_badge(
     // honest badge even when yolo stays armed underneath.
     if panel.plan_mode {
         flags.push(PromptFlag {
-            text: "plan",
+            text: "计划",
             color: Some(theme.accent_plan),
             bold: false,
         });
     } else if panel.auto_approve {
         flags.push(PromptFlag {
-            text: "always-approve",
+            text: "总是批准",
             color: None,
             bold: false,
         });
     } else if panel.auto {
         // Auto (LLM classifier) mode. Blue `accent_system`.
         flags.push(PromptFlag {
-            text: "auto",
+            text: "自动",
             color: Some(theme.accent_system),
             bold: false,
         });
@@ -1372,6 +1372,10 @@ mod tests {
                 .map(|x| buf[(x, h - 1)].symbol().to_string())
                 .collect()
         };
+        // Wide CJK glyphs occupy two buffer cells; cell-by-cell dumps insert a
+        // blank between codepoints ("总 是 批 准"). Collapse whitespace for
+        // Chinese flag checks while keeping the raw dump in failure messages.
+        let compact = |s: &str| -> String { s.chars().filter(|c| !c.is_whitespace()).collect() };
 
         // Summary mode → model + always-approve on the bottom border.
         let mut panel =
@@ -1384,7 +1388,7 @@ mod tests {
             "model on bottom border: {bottom:?}"
         );
         assert!(
-            bottom.contains("always-approve"),
+            compact(&bottom).contains("总是批准"),
             "always-approve flag: {bottom:?}"
         );
 
@@ -1411,7 +1415,7 @@ mod tests {
         plain.auto_approve = false;
         let plain_bottom = badge_row(&plain, 6);
         assert!(
-            !plain_bottom.contains("always-approve"),
+            !compact(&plain_bottom).contains("总是批准"),
             "no flag without yolo: {plain_bottom:?}",
         );
 
@@ -1423,7 +1427,7 @@ mod tests {
         planp.plan_mode = true;
         let plan_bottom = badge_row(&planp, 6);
         assert!(
-            plan_bottom.contains("plan"),
+            compact(&plan_bottom).contains("计划"),
             "plan flag must show in plan mode: {plan_bottom:?}",
         );
 
@@ -1434,11 +1438,12 @@ mod tests {
         planp.auto = true;
         let plan_yolo_bottom = badge_row(&planp, 6);
         assert!(
-            plan_yolo_bottom.contains("plan"),
+            compact(&plan_yolo_bottom).contains("计划"),
             "plan flag must show in plan+yolo: {plan_yolo_bottom:?}",
         );
         assert!(
-            !plan_yolo_bottom.contains("always-approve") && !plan_yolo_bottom.contains("auto"),
+            !compact(&plan_yolo_bottom).contains("总是批准")
+                && !compact(&plan_yolo_bottom).contains("自动"),
             "plan suppresses always-approve and auto: {plan_yolo_bottom:?}",
         );
 
@@ -1446,7 +1451,7 @@ mod tests {
         planp.plan_mode = false;
         let yolo_bottom = badge_row(&planp, 6);
         assert!(
-            yolo_bottom.contains("always-approve") && !yolo_bottom.contains("auto"),
+            compact(&yolo_bottom).contains("总是批准") && !compact(&yolo_bottom).contains("自动"),
             "always-approve shows once plan is off and wins over auto: {yolo_bottom:?}",
         );
     }

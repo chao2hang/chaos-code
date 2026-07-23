@@ -32,22 +32,22 @@ async fn shift_tab_in_session_cycles_mode() {
 
     harness.inject_keys(b"\x1b[Z").expect("inject BackTab");
     harness
-        .wait_for_text("已切换到模式：Plan", Duration::from_secs(10))
+        .wait_for_text("已切换到模式：计划", Duration::from_secs(10))
         .expect("first cycle: Normal -> Plan");
 
     harness.inject_keys(b"\x1b[Z").expect("inject BackTab");
     harness
-        .wait_for_text("已切换到模式：Auto", Duration::from_secs(10))
+        .wait_for_text("已切换到模式：自动", Duration::from_secs(10))
         .expect("second cycle: Plan -> Auto");
 
     harness.inject_keys(b"\x1b[Z").expect("inject BackTab");
     harness
-        .wait_for_text("已切换到模式：Always-Approve", Duration::from_secs(10))
+        .wait_for_text("已切换到模式：总是批准", Duration::from_secs(10))
         .expect("third cycle: Auto -> Always-Approve");
 
     harness.inject_keys(b"\x1b[Z").expect("inject BackTab");
     harness
-        .wait_for_text("已切换到模式：Normal", Duration::from_secs(10))
+        .wait_for_text("已切换到模式：正常", Duration::from_secs(10))
         .expect("fourth cycle: Always-Approve -> Normal (full loop)");
 
     assert!(

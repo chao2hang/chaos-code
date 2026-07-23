@@ -154,7 +154,7 @@ impl AgentView {
                             };
                             hints.push(HintItem::new(key!('f', CONTROL), label));
                         }
-                        hints.push(HintItem::new(key!('o', CONTROL), "always-approve"));
+                        hints.push(HintItem::new(key!('o', CONTROL), "总是批准"));
                         hints.push(HintItem::new(key!('c', CONTROL), "cancel"));
                         hints
                     }
@@ -1251,7 +1251,7 @@ impl AgentView {
             if self.hit_plan_button.hovered {
                 plan_style = plan_style.add_modifier(ratatui::style::Modifier::BOLD);
             }
-            status.push("plan", Line::from(Span::styled("plan", plan_style)));
+            status.push("plan", Line::from(Span::styled("计划", plan_style)));
         }
         if let Some(ref goal) = self.goal_state {
             let tick = self.tasks.tick_count() as usize;
@@ -2033,25 +2033,14 @@ impl AgentView {
                 let base_fg = theme.text_secondary;
                 let fg = crate::render::color::blend_color(theme.bg_base, base_fg, opacity)
                     .unwrap_or(base_fg);
+                // Truncate and paint by display columns so CJK mode labels
+                // (e.g. 「总是批准」) are not cut mid-glyph or drawn one cell
+                // per Unicode scalar (which clips double-width characters).
                 let text = format!("  {}", msg);
                 let maxw = layout.banner.width.saturating_sub(2) as usize;
-                let display: String = if text.len() > maxw {
-                    text.chars()
-                        .take(maxw.saturating_sub(1))
-                        .collect::<String>()
-                        + "…"
-                } else {
-                    text
-                };
-                let x = layout.banner.x;
-                let y = layout.banner.y;
-                for (i, ch) in display.chars().enumerate() {
-                    if let Some(cell) = buf.cell_mut((x + i as u16, y)) {
-                        cell.set_char(ch);
-                        cell.fg = fg;
-                        cell.bg = bg;
-                    }
-                }
+                let display = crate::render::line_utils::truncate_str(&text, maxw);
+                let style = Style::default().fg(fg).bg(bg);
+                buf.set_string_safe(layout.banner.x, layout.banner.y, &display, style);
             }
         } else {
             let announcement_banner_owns_slot =
@@ -2165,15 +2154,15 @@ impl AgentView {
             };
             let plan_label: &str = if approval_is_commenting || casual_commenting {
                 commenting_label = match commenting_range {
-                    Some(r) if r.len() == 1 => format!("commenting L{}", r.start),
-                    Some(r) => format!("commenting L{}-{}", r.start, r.end - 1),
-                    None => "commenting".to_string(),
+                    Some(r) if r.len() == 1 => format!("批注 L{}", r.start),
+                    Some(r) => format!("批注 L{}-{}", r.start, r.end - 1),
+                    None => "批注".to_string(),
                 };
                 commenting_label.as_str()
             } else if self.plan_approval_view.is_some() {
-                "plan approval"
+                "计划审批"
             } else {
-                "plan"
+                "计划"
             };
             mode_flags_vec.push(PromptFlag {
                 text: plan_label,
@@ -2183,14 +2172,14 @@ impl AgentView {
         }
         if self.session.is_yolo() && !effective_plan {
             mode_flags_vec.push(PromptFlag {
-                text: "always-approve",
+                text: "总是批准",
                 color: None,
                 bold: false,
             });
         }
         if self.auto_flag_visible(effective_plan) {
             mode_flags_vec.push(PromptFlag {
-                text: "auto",
+                text: "自动",
                 color: Some(theme.accent_system),
                 bold: false,
             });
@@ -3099,7 +3088,7 @@ impl AgentView {
                             };
                             hints.push(HintItem::new(key!('f', CONTROL), label));
                         }
-                        hints.push(HintItem::new(key!('o', CONTROL), "always-approve"));
+                        hints.push(HintItem::new(key!('o', CONTROL), "总是批准"));
                         hints.push(HintItem::new(key!('c', CONTROL), "cancel"));
                         hints
                     }
