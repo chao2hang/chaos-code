@@ -1,0 +1,23 @@
+{
+    "name": "chaos-code-win32-x64",
+    "version": "0.2.109",
+    "description": "win32-x64 binary for chaos-code. Do not install directly; install chaos-code instead.",
+    "license": "Apache-2.0",
+    "files": [
+        "bin/",
+        "THIRD_PARTY_NOTICES.md"
+    ],
+    "os": [
+        "win32"
+    ],
+    "cpu": [
+        "x64"
+    ],
+    "publishConfig": {
+        "access": "public"
+    },
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/chao2hang/chaos-code.git"
+    }
+}

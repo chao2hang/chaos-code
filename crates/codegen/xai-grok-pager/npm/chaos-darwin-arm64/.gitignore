@@ -1,0 +1,5 @@
+# Assembled binaries (CI / local assemble) — never commit
+bin/*
+!bin/.gitkeep
+*.br
+THIRD_PARTY_NOTICES.md

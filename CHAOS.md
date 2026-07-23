@@ -3,7 +3,24 @@
 Chaos 是终端 AI 编码助手。它不使用 Grok 登录，也不会在启动时读取或刷新 xAI
 登录会话。模型、接口地址和密钥均由用户自行配置。
 
-## 构建与启动
+## 安装与启动
+
+### npm（预编译二进制）
+
+```sh
+npm i -g chaos-code
+chaos
+chaos --version
+```
+
+Node.js ≥ 20。包名是 **`chaos-code`**（不要用已被 npm 占位的 `chaos-cli`）。
+
+维护者发版：**CI 构建六平台二进制 → 发布 npmjs**（不要只靠本机手工 publish）。
+推送 tag `v0.2.x` 或跑 Actions **Release**；说明见
+[`npm/PUBLISH.md`](crates/codegen/xai-grok-pager/npm/PUBLISH.md) 与
+[`.github/workflows/release.yml`](.github/workflows/release.yml)。
+
+### 从源码构建
 
 环境要求：Rust（见 `rust-toolchain.toml`）、DotSlash 和 `protoc`。在仓库根目录执行：
 
