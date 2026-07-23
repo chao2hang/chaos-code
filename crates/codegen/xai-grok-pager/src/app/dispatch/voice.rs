@@ -40,8 +40,8 @@ fn voice_target_for_view(app: &AppView) -> Option<VoiceTarget> {
     }
 }
 
-/// Show the SuperGrok upsell when a tier-restricted (free / X Basic) user tries
-/// to start voice via the Ctrl+Space / F8 keybinding, which bypasses the slash
+/// Show the Provider / capability upsell when a tier-restricted user tries to
+/// start voice via the Ctrl+Space / F8 keybinding, which bypasses the slash
 /// registry (`/voice` is instead hidden + upsold via the deny list). Mirrors the
 /// slash-command upsell surfaces: a Q&A modal on an agent screen
 /// ([`super::billing::open_restricted_command_upsell`]), the feedback toast on
@@ -58,10 +58,8 @@ fn open_voice_tier_upsell(app: &mut AppView) -> Vec<Effect> {
         }
         ActiveView::AgentDashboard => {
             if let Some(d) = app.dashboard.as_mut() {
-                d.set_error_toast(&format!(
-                    "/voice requires SuperGrok — upgrade at {}",
-                    super::billing::UPSELL_URL_UPGRADE
-                ));
+                // Chaos is BYOK: no SuperGrok upgrade URL.
+                d.set_error_toast("/voice 当前不可用 — 请配置支持语音的 Provider，或使用 /provider");
             }
         }
         _ => {}

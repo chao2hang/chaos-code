@@ -1981,16 +1981,20 @@ fn render_welcome_done(
             buf,
         );
 
-        if centered.height > 2 {
+        // Chaos is BYOK: only paint a clickable gate URL when one was
+        // explicitly provided (remote settings / gate). Never fall back to
+        // grok.com SuperGrok.
+        if centered.height > 2
+            && let Some(gate_link) = p
+                .gate
+                .and_then(|g| g.url.as_deref())
+                .filter(|u| !u.is_empty())
+        {
             let url_area = Rect {
                 y: centered.y + 2,
                 height: 1,
                 ..centered
             };
-            let gate_link = p
-                .gate
-                .and_then(|g| g.url.as_deref())
-                .unwrap_or("https://grok.com/supergrok?referrer=grok-build");
             let url = Line::from(Span::styled(
                 gate_link,
                 Style::default()

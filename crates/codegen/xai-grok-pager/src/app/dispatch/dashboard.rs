@@ -1338,9 +1338,9 @@ pub(super) fn dispatch_dashboard_dispatch_slash(app: &mut AppView, text: String)
             let token = invocation.token.to_string();
             if let Some(d) = app.dashboard.as_mut() {
                 d.dispatch.set_text("");
+                // Chaos is BYOK: no SuperGrok upgrade URL.
                 d.set_error_toast(&format!(
-                    "/{token} requires SuperGrok — upgrade at {}",
-                    super::billing::UPSELL_URL_UPGRADE
+                    "/{token} 当前不可用 — 请配置可用的 Provider（/provider）"
                 ));
             }
             return vec![];

@@ -533,18 +533,17 @@ pub(super) fn dispatch_open_supergrok_url(app: &mut AppView) -> Vec<Effect> {
         source: SuperGrokUpsell::WelcomeScreen,
         auth_method: app.login_method_id.as_ref().map(|id| id.0.to_string()),
     });
-    let url = app
+    // Chaos is BYOK: never default to grok.com SuperGrok. Only open a URL when
+    // remote settings / gate explicitly provided one.
+    let Some(url) = app
         .gate
         .as_ref()
         .and_then(|g| g.url.as_deref())
-        .unwrap_or("https://grok.com/supergrok?referrer=grok-build");
-    // Funnel attribution: tag CLI-originated SuperGrok upsell clicks
-    // with `referrer=grok-build`, matching the OAuth consent flow and
-    // x.ai/cli marketing links. Applied even when the URL came from
-    // remote settings's `gate_url`, so we don't depend on the remote flag
-    // being correctly configured. If the URL already specifies a
-    // referrer it's left alone.
-    let url = crate::app::link_opener::ensure_query_param(url, "referrer", "grok-build");
+        .filter(|u| !u.is_empty())
+        .map(|u| u.to_string())
+    else {
+        return vec![];
+    };
     super::ctx::open_url_or_show(app, &url);
     vec![]
 }

@@ -6618,11 +6618,11 @@ if *state == RowState::Idle && *count == total as usize
             "row 0 col 4 must start the label"
         );
 
-        // Secondary row — `Responding` starts at the same column as
-        // the title's label start (col 4).
+        // Secondary row — Chinese activity `回复中` starts at the same
+        // column as the title's label start (col 4).
         assert_eq!(
             buf[(4, 1)].symbol(),
-            "R",
+            "回",
             "row 1 col 4 must start the secondary text",
         );
 
