@@ -82,7 +82,7 @@ async fn bracketed_ime_paste_skips_clipboard_image_linux() {
             .inject_keys(b"\x1b[92;5u")
             .expect("ctrl+\\ open dashboard");
         harness
-            .wait_for_text("+ New Agent", Duration::from_secs(10))
+            .wait_for_text("+ 新建会话", Duration::from_secs(10))
             .expect("dashboard opens");
         harness
     }

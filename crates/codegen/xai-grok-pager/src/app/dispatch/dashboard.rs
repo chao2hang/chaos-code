@@ -197,7 +197,7 @@ pub(super) fn dispatch_open_dashboard(app: &mut AppView) -> Vec<Effect> {
     // switches the whole view to the agent's fullscreen view
     // (handled in `dispatch_dashboard_attach`).
     //
-    // Always open in NEW-SESSION mode: focus the `[+ New Agent]` button
+    // Always open in NEW-SESSION mode: focus the `[+ 新建会话]` button
     // (no row selected) so typing a prompt + Enter dispatches a brand
     // new agent. Reply mode is opt-in — the user navigates (↑/↓ or j/k)
     // or clicks a row to select it, which arms "reply to that agent".
@@ -537,7 +537,7 @@ pub(super) fn dispatch_dashboard_overlay_stop(app: &mut AppView) -> Vec<Effect> 
         && let Some(d) = app.dashboard.as_mut()
     {
         // Move the cursor onto the neighbouring row, or the always-present
-        // `[+ New Agent]` button when none is left — both go through the
+        // `[+ 新建会话]` button when none is left — both go through the
         // focus helpers so the "exactly one cursor active" invariant holds
         // (a bare `selected = None` would leave no cursor and drop the footer
         // into its defensive fallback).
@@ -559,7 +559,7 @@ pub(super) fn dispatch_dashboard_overlay_stop(app: &mut AppView) -> Vec<Effect> 
 /// Toggle worktree-dispatch mode for the dashboard (bound to Ctrl+W).
 ///
 /// When armed, the next agent dispatched from the dashboard spawns in a fresh
-/// git worktree and the `[+ New Agent]` button reads `[+ New Worktree]`.
+/// git worktree and the `[+ 新建会话]` button reads `[+ 新建 Worktree]`.
 /// Worktrees require a git repo, so outside one the toggle is a no-op and we
 /// surface an explanatory toast instead of silently doing nothing (and the
 /// dashboard is never left in worktree mode in a non-git directory).
@@ -662,7 +662,7 @@ fn open_dashboard_worktree_dialog(
 }
 
 /// Create a new session AND switch into its detail view. Routed from the
-/// `[+ New Agent]` button and Enter-on-empty-prompt while it's focused.
+/// `[+ 新建会话]` button and Enter-on-empty-prompt while it's focused.
 /// Mirrors `dispatch_dashboard_dispatch`'s new-session arm with `attach=true`,
 /// minus the prompt enqueue.
 pub(super) fn dispatch_dashboard_create_new_agent_with_detail(app: &mut AppView) -> Vec<Effect> {
@@ -1841,7 +1841,7 @@ pub(super) fn dispatch_dashboard_commit_rename(app: &mut AppView) -> Vec<Effect>
 /// row, the previous visible row. Section headers are skipped so the
 /// cursor always lands on an agent row. Returns `None` when `closed`
 /// is the only row — the caller then clears the selection and lets
-/// `reanchor_selection` fall back to the `[+ New Agent]` button.
+/// `reanchor_selection` fall back to the `[+ 新建会话]` button.
 ///
 /// Without this, closing the selected agent leaves a stale cursor that
 /// `reanchor_selection` drops to `None`, and the next ↑/↓ restarts from
@@ -1937,7 +1937,7 @@ pub(super) fn dispatch_dashboard_stop(app: &mut AppView) -> Vec<Effect> {
                     match neighbor {
                         Some(n) => d.focus_row(n),
                         // No neighbour left — land on the always-present
-                        // `[+ New Agent]` button via the focus helper so the
+                        // `[+ 新建会话]` button via the focus helper so the
                         // "exactly one cursor active" invariant holds (a bare
                         // `selected = None` would leave no cursor and drop the
                         // footer into its defensive fallback).
@@ -2078,7 +2078,7 @@ pub(super) fn dispatch_dashboard_select(app: &mut AppView, next: bool) {
             crate::views::dashboard::Focusable::IdleOverflow => d.selected_idle_overflow,
         })
         .unwrap_or(0);
-    // Up on the first focusable → focus the `[+ New Agent]` button.
+    // Up on the first focusable → focus the `[+ 新建会话]` button.
     // The button acts as a sentinel above index 0, exactly like the
     // agent's tabs in the agents modal.
     if !next && cur == 0 {

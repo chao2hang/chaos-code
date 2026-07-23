@@ -102,7 +102,7 @@ async fn iterm_raw_readline_sequences_edit_picker_and_dashboard_rename() {
 
     harness.inject_keys(CTRL_BACKSLASH).expect("open dashboard");
     harness
-        .wait_for_text("+ New Agent", Duration::from_secs(10))
+        .wait_for_text("+ 新建会话", Duration::from_secs(10))
         .expect("dashboard open");
     click_visible_text(&mut harness, ROW_TITLE);
     harness

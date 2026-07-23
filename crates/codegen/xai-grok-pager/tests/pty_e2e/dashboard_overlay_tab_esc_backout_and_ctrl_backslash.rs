@@ -11,7 +11,7 @@ const CTRL_BACKSLASH: &[u8] = b"\x1b[92;5u";
 /// Down clamps at the last focusable, so three Downs land on the row regardless
 /// of the current cursor (fresh open = New Agent button; after a back-out =
 /// previously-selected row); Enter then attaches the peeked row. Waits until the
-/// overlay is up: the dashboard list ("+ New Agent") is gone and the agent's
+/// overlay is up: the dashboard list ("+ 新建会话") is gone and the agent's
 /// transcript (MOCKRESPONSE) is shown.
 fn attach_overlay(h: &mut PtyHarness) {
     for _ in 0..3 {
@@ -19,11 +19,11 @@ fn attach_overlay(h: &mut PtyHarness) {
         h.update(Duration::from_millis(200));
     }
     h.inject_keys(keys::ENTER).expect("attach row");
-    wait_for_labels_absent(h, &["+ New Agent"], Duration::from_secs(10));
+    wait_for_labels_absent(h, &["+ 新建会话"], Duration::from_secs(10));
     h.wait_for_text(MOCK_RESPONSE_SENTINEL, Duration::from_secs(10))
         .expect("attached the original agent as an overlay");
     assert!(
-        !h.contains_text("+ New Agent"),
+        !h.contains_text("+ 新建会话"),
         "attach must leave the dashboard list for the agent overlay\nscreen:\n{}",
         h.screen_contents()
     );
@@ -64,7 +64,7 @@ async fn dashboard_overlay_tab_esc_backout_and_ctrl_backslash() {
         .inject_keys(CTRL_BACKSLASH)
         .expect("ctrl+\\ open dashboard");
     harness
-        .wait_for_text("+ New Agent", Duration::from_secs(10))
+        .wait_for_text("+ 新建会话", Duration::from_secs(10))
         .expect("Ctrl+\\ opens the dashboard");
 
     // ── (c) Drafted-prompt Esc must NOT back out (arms "press again to clear")
@@ -83,7 +83,7 @@ async fn dashboard_overlay_tab_esc_backout_and_ctrl_backslash() {
         harness.screen_contents()
     );
     assert!(
-        !harness.contains_text("+ New Agent"),
+        !harness.contains_text("+ 新建会话"),
         "a drafted overlay prompt Esc must NOT return to the dashboard\nscreen:\n{}",
         harness.screen_contents()
     );
@@ -93,7 +93,7 @@ async fn dashboard_overlay_tab_esc_backout_and_ctrl_backslash() {
     // (d) Empty-prompt Esc now backs out to the dashboard.
     harness.inject_keys(keys::ESC).expect("empty-prompt esc");
     harness
-        .wait_for_text("+ New Agent", Duration::from_secs(10))
+        .wait_for_text("+ 新建会话", Duration::from_secs(10))
         .expect("empty-prompt overlay Esc must back out to the dashboard");
 
     // ── (a) Left on an empty prompt backs out. (Left arrow = CSI D.)
@@ -102,7 +102,7 @@ async fn dashboard_overlay_tab_esc_backout_and_ctrl_backslash() {
         .inject_keys(b"\x1b[D")
         .expect("left on empty prompt");
     harness
-        .wait_for_text("+ New Agent", Duration::from_secs(10))
+        .wait_for_text("+ 新建会话", Duration::from_secs(10))
         .expect("Left on an empty overlay prompt must back out to the dashboard");
 
     // ── (b) Ctrl+\ from inside the overlay backs out.
@@ -111,7 +111,7 @@ async fn dashboard_overlay_tab_esc_backout_and_ctrl_backslash() {
         .inject_keys(CTRL_BACKSLASH)
         .expect("ctrl+\\ from overlay");
     harness
-        .wait_for_text("+ New Agent", Duration::from_secs(10))
+        .wait_for_text("+ 新建会话", Duration::from_secs(10))
         .expect("Ctrl+\\ from inside the overlay must back out to the dashboard");
 
     // ── Tab then a neutral scrollback Esc backs out (bare-scrollback path).
@@ -122,7 +122,7 @@ async fn dashboard_overlay_tab_esc_backout_and_ctrl_backslash() {
         .inject_keys(keys::ESC)
         .expect("neutral esc back-out");
     harness
-        .wait_for_text("+ New Agent", Duration::from_secs(10))
+        .wait_for_text("+ 新建会话", Duration::from_secs(10))
         .expect("Tab then neutral Esc returns to the dashboard list");
 
     assert!(

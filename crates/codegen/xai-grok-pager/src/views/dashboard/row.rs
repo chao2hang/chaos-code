@@ -87,10 +87,10 @@ impl RowBadge {
     pub fn label(self) -> &'static str {
         match self {
             Self::Worktree => "worktree",
-            Self::NeedsInput => "needs-input",
-            Self::BgTask => "bg",
-            Self::Pinned => "pinned",
-            Self::Failed => "failed",
+            Self::NeedsInput => "待输入",
+            Self::BgTask => "后台",
+            Self::Pinned => "置顶",
+            Self::Failed => "失败",
         }
     }
 }
@@ -416,9 +416,9 @@ pub fn has_background_work(agent: &AgentView) -> bool {
 fn background_work_label(agent: &AgentView) -> Option<String> {
     let w = agent.watchers();
     crate::views::turn_status::format_still_running([
-        (w.monitors, "monitor"),
-        (w.loops, "loop"),
-        (w.commands, "task"),
+        (w.monitors, "监控"),
+        (w.loops, "循环"),
+        (w.commands, "任务"),
     ])
 }
 /// Classify a subagent.
@@ -1925,7 +1925,7 @@ mod tests {
             .insert("m1".into(), running_bg_task("m1", true));
         assert_eq!(classify_top_level(&agent), RowState::Working);
         let row = top_level_row(AgentId(0), &agent, false, false, None);
-        assert_eq!(row.activity.as_deref(), Some("1 monitor still running"));
+        assert_eq!(row.activity.as_deref(), Some("1 个监控 仍在运行"));
     }
     /// An active scheduled `/loop` keeps the agent `Working` even with a
     /// fully idle turn, labelled as a loop.
@@ -1938,10 +1938,10 @@ mod tests {
             .insert("l1".into(), scheduled_loop("l1"));
         assert_eq!(classify_top_level(&agent), RowState::Working);
         let row = top_level_row(AgentId(0), &agent, false, false, None);
-        assert_eq!(row.activity.as_deref(), Some("1 loop still running"));
+        assert_eq!(row.activity.as_deref(), Some("1 个循环 仍在运行"));
     }
     /// The background-work label lists every non-zero kind (monitors,
-    /// then loops, then plain tasks) with correct singular/plural nouns.
+    /// then loops, then plain tasks).
     #[test]
     fn background_work_label_lists_all_kinds() {
         let mut agent = make_idle_agent_with_model(None);
@@ -1965,7 +1965,7 @@ mod tests {
         let row = top_level_row(AgentId(0), &agent, false, false, None);
         assert_eq!(
             row.activity.as_deref(),
-            Some("1 monitor · 1 loop · 2 tasks still running"),
+            Some("1 个监控 · 1 个循环 · 2 个任务 仍在运行"),
         );
     }
     /// The background-work label is the LAST activity fallback: a more

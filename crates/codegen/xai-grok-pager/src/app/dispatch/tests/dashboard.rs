@@ -645,7 +645,7 @@ fn dashboard_toggle_worktree_outside_git_repo_is_noop_with_toast() {
         "a toast must explain why the toggle is unavailable",
     );
 }
-/// `[+ New Agent]` with worktree mode armed opens the worktree-label
+/// `[+ 新建会话]` with worktree mode armed opens the worktree-label
 /// dialog instead of creating a plain session (no prompt stashed).
 #[test]
 fn dashboard_create_new_agent_with_worktree_mode_opens_dialog() {
@@ -715,7 +715,7 @@ fn dashboard_dispatch_with_worktree_mode_stashes_prompt_and_opens_dialog() {
     );
 }
 /// Confirming the worktree dialog with `attach` set (Ctrl+S / the
-/// `[+ New Agent]` button) creates a worktree session, replays the stashed
+/// `[+ 新建会话]` button) creates a worktree session, replays the stashed
 /// prompt, and opens the new agent as the dashboard's detail view.
 #[test]
 fn dashboard_confirm_worktree_creates_session_with_prompt() {
@@ -2018,7 +2018,7 @@ fn dashboard_dispatch_applies_pending_model_and_plan() {
     );
     assert_eq!(agent.plan_mode_pending, Some(true));
 }
-/// The `[+ New Agent]` button path (`DashboardCreateNewAgentWithDetail`,
+/// The `[+ 新建会话]` button path (`DashboardCreateNewAgentWithDetail`,
 /// no queued prompt) applies the same staged model + mode as the dispatch
 /// path: the model id threads into `CreateSession`, the effort is stashed
 /// as a deferred switch, and plan mode is deferred + optimistic.
@@ -2561,7 +2561,7 @@ fn dashboard_attach_subagent_lazily_replays_deferred_transcript() {
 /// pressing Enter on its row.
 ///
 /// Opening from an agent now lands in NEW-SESSION mode (the
-/// `[+ New Agent]` button focused, no row selected) so typing +
+/// `[+ 新建会话]` button focused, no row selected) so typing +
 /// Enter dispatches a brand new agent. Previously the dashboard
 /// pre-seeded `selected` to the came-from agent, which armed reply
 /// mode and trapped the user replying to that one agent.
@@ -2586,14 +2586,14 @@ fn dashboard_open_does_not_auto_attach_to_focused_agent() {
     );
     assert!(
         d.new_agent_button_focused,
-        "open must default to the `[+ New Agent]` button (new-session mode)",
+        "open must default to the `[+ 新建会话]` button (new-session mode)",
     );
     assert!(
         d.list_focused,
         "open with agents must list-focus for navigation",
     );
 }
-/// Open with ≥1 agent → overview list focused (nav mode); `[+ New Agent]`
+/// Open with ≥1 agent → overview list focused (nav mode); `[+ 新建会话]`
 /// stays the cursor target so no row is pre-selected (no silent reply mode).
 #[serial_test::serial(GROK_AGENT_DASHBOARD)]
 #[test]
@@ -2668,7 +2668,7 @@ fn dashboard_dispatch_after_open_from_agent_spawns_new_sessions() {
         "rapid dispatch must keep spawning new agents",
     );
 }
-/// Opening from Welcome leaves the `[+ New Agent]`
+/// Opening from Welcome leaves the `[+ 新建会话]`
 /// button as the default focus. Previously the dashboard
 /// seeded selection to the first agent so Enter would attach
 /// without navigating; with the button taking that role,
@@ -2693,7 +2693,7 @@ fn dashboard_open_from_welcome_focuses_new_agent_button() {
     );
     assert!(
         d.new_agent_button_focused,
-        "the `[+ New Agent]` button must be focused as the default",
+        "the `[+ 新建会话]` button must be focused as the default",
     );
 }
 #[serial_test::serial(GROK_AGENT_DASHBOARD)]
@@ -4215,7 +4215,7 @@ fn dashboard_focus_new_agent_button_action_clears_selection() {
     );
 }
 /// Up-arrow on the FIRST row hands focus over to the
-/// `[+ New Agent]` button — the button behaves as a virtual
+/// `[+ 新建会话]` button — the button behaves as a virtual
 /// row at index -1 so the user can walk straight off the top
 /// of the list onto it without an extra Esc.
 #[serial_test::serial(GROK_AGENT_DASHBOARD)]
@@ -5060,7 +5060,7 @@ fn dashboard_question_answer_walks_multiple_questions() {
 }
 /// The peek panel auto-opens when a row is selected (replacing the
 /// new-session input) and closes when the selection clears (e.g. the
-/// `[+ New Agent]` button is focused).
+/// `[+ 新建会话]` button is focused).
 #[serial_test::serial(GROK_AGENT_DASHBOARD)]
 #[test]
 fn dashboard_peek_auto_opens_for_selected_row() {

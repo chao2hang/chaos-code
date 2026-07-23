@@ -246,7 +246,14 @@ if matches!(status.as_u16(), 400 | 500) && message.contains("Could not process i
             SamplingError::Http(err) => is_retryable_reqwest(err),
             SamplingError::Serialization(_) => false,
             SamplingError::Api { status, .. } => {
-                matches!(status.as_u16(), 429 | 500 | 502 | 503 | 504 | 520)
+                // 429 rate-limit; 5xx server errors; Cloudflare edge 520–524
+                // (origin down / connect fail / timeout / …). CF 521–524 were
+                // previously omitted so a 524 would surface immediately with
+                // no exponential backoff — include the full 52x range.
+                matches!(
+                    status.as_u16(),
+                    429 | 500 | 502 | 503 | 504 | 520..=524
+                )
             }
             SamplingError::EventStreamError(_) => true,
             SamplingError::StreamError { .. } => true,
@@ -690,6 +697,23 @@ mod tests {
         assert!(err.is_retryable(), "429 should be retryable");
         assert!(!err.is_auth_error());
         assert!(!err.is_payload_too_large());
+    }
+
+    #[test]
+    fn cloudflare_52x_edge_errors_are_retryable() {
+        for code in [520u16, 521, 522, 523, 524] {
+            let err = SamplingError::Api {
+                status: StatusCode::from_u16(code).unwrap(),
+                message: format!("CF edge {code}"),
+                model_metadata: None,
+                retry_after_secs: None,
+                should_retry: None,
+            };
+            assert!(
+                err.is_retryable(),
+                "Cloudflare HTTP {code} must be retryable (transient edge/origin)"
+            );
+        }
     }
 
     #[test]

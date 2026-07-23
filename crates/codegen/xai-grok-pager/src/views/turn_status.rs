@@ -124,9 +124,9 @@ impl Watchers {
     }
 }
 
-/// Format a counts-first `"… still running"` cue from `(count, noun)` pairs,
-/// listing only the non-zero kinds (plain-`s` plurals) — e.g.
-/// `"1 command · 2 monitors still running"`. `None` when every count is
+/// Format a counts-first `"… 仍在运行"` cue from `(count, noun)` pairs,
+/// listing only the non-zero kinds — e.g.
+/// `"1 个命令 · 2 个监控 仍在运行"`. `None` when every count is
 /// zero. Single owner of the format mechanics so the agent view's idle cue
 /// and the dashboard's background-work label cannot drift.
 pub(crate) fn format_still_running<'a>(
@@ -141,28 +141,27 @@ pub(crate) fn format_still_running<'a>(
         if !label.is_empty() {
             label.push_str(" \u{00b7} ");
         }
-        let plural = if count == 1 { "" } else { "s" };
-        let _ = write!(label, "{count} {noun}{plural}");
+        let _ = write!(label, "{count} 个{noun}");
     }
     if label.is_empty() {
         return None;
     }
-    label.push_str(" still running");
+    label.push_str(" 仍在运行");
     Some(label)
 }
 
 /// The idle watcher cue's label — e.g.
-/// `"1 command · 2 monitors · 1 loop · 1 subagent still running"`. Leads
+/// `"1 个命令 · 2 个监控 · 1 个循环 · 1 个子代理 仍在运行"`. Leads
 /// with the counts (not an ambient "watching") so a glance under a
 /// "Worked for X" marker still reads as unfinished work. `None` when no
 /// watchers are live.
 fn still_running_label(watchers: Watchers) -> Option<String> {
     format_still_running([
-        (watchers.commands, "command"),
-        (watchers.monitors, "monitor"),
-        (watchers.loops, "loop"),
-        (watchers.subagents, "subagent"),
-        (watchers.workflows, "workflow"),
+        (watchers.commands, "命令"),
+        (watchers.monitors, "监控"),
+        (watchers.loops, "循环"),
+        (watchers.subagents, "子代理"),
+        (watchers.workflows, "工作流"),
     ])
 }
 
@@ -347,7 +346,7 @@ pub fn render_turn_status(
     let show_bg = show_cancel && has_running_execute;
     let bg_str = if show_bg {
         if bg_hovered {
-            " [send to bg]"
+            " [放到后台]"
         } else {
             " [\u{2193}]"
         }
@@ -356,14 +355,14 @@ pub fn render_turn_status(
     };
     let bg_width = bg_str.width();
 
-    // Cancel button: always `[stop]`. Leading space only when the bg button
+    // Cancel button: always `[停止]`. Leading space only when the bg button
     // is not shown (otherwise they're adjacent). Every arm is a `&'static str`
     // so the per-frame status line never allocates. Hover state is conveyed by
     // color (red on hover, see `cancel_style`), not by swapping the label.
     let cancel_str: &str = match (show_cancel, show_bg) {
         (false, _) => "",
-        (true, true) => "[stop]",
-        (true, false) => " [stop]",
+        (true, true) => "[停止]",
+        (true, false) => " [停止]",
     };
     let cancel_width = cancel_str.width();
 
@@ -460,7 +459,7 @@ pub fn render_turn_status(
                     .strip_prefix("Ask: ")
                     .or_else(|| title.strip_prefix("Ask "))
                     .unwrap_or(title.as_str());
-                let msg = format!("Waiting on answers for {detail}");
+                let msg = format!("等待回答：{detail}");
                 let display = truncate_str(&msg, available_for_label);
                 left_spans.push(Span::styled(display, activity_style));
             } else if let Some(desc) = description
@@ -520,9 +519,9 @@ pub fn render_turn_status(
         // toast — see `AgentView::held_queue_top_sendable`).
         let suffix = if held_queue > 0 && is_sendable_wait(activity) {
             if held_queue_top_sendable {
-                format!(" · {held_queue} queued — Enter to send now")
+                format!(" · {held_queue} 条排队 — Enter 立即发送")
             } else {
-                format!(" · {held_queue} queued")
+                format!(" · {held_queue} 条排队")
             }
         } else {
             String::new()
@@ -617,28 +616,28 @@ fn compute_activity(
     match (state, activity) {
         (AgentState::TurnCancelling | AgentState::CommandCancelling { .. }, _) => (
             Style::default().fg(theme.accent_error),
-            "Cancelling…".to_string(),
+            "取消中…".to_string(),
             false,
         ),
         // Goal-mode completion verification runs in-turn after the model
         // stops streaming. The harness drives the skeptic panel (the model
         // itself is idle), but the turn's last streaming activity can still
         // read as `Responding`/`Thinking`; label the whole window
-        // "Verifying…" so the multi-minute panel isn't mislabelled as the
-        // model responding (or a hung "Waiting…").
+        // "验证中…" so the multi-minute panel isn't mislabelled as the
+        // model responding (or a hung "等待中…").
         (AgentState::TurnRunning, _) if goal_verifying => (
             Style::default().fg(theme.text_secondary),
-            "Verifying…".to_string(),
+            "验证中…".to_string(),
             false,
         ),
         (AgentState::TurnRunning, Some(TurnActivity::Thinking)) => (
             Style::default().fg(theme.text_secondary),
-            "Thinking…".to_string(),
+            "思考中…".to_string(),
             false,
         ),
         (AgentState::TurnRunning, Some(TurnActivity::Responding)) => (
             Style::default().fg(theme.text_secondary),
-            "Responding…".to_string(),
+            "回复中…".to_string(),
             false,
         ),
         (AgentState::TurnRunning, Some(TurnActivity::ToolRunning { title, description })) => {
@@ -661,26 +660,26 @@ fn compute_activity(
         }
         (AgentState::TurnRunning, Some(TurnActivity::AutoCompacting)) => (
             Style::default().fg(theme.text_secondary),
-            "Compacting…".to_string(),
+            "压缩中…".to_string(),
             false,
         ),
         (AgentState::TurnRunning, Some(TurnActivity::Retrying { attempt, .. })) => (
             Style::default().fg(theme.warning),
-            format!("Retrying (attempt {attempt})…"),
+            format!("重试中（第 {attempt} 次）…"),
             false,
         ),
         (AgentState::TurnRunning, Some(TurnActivity::Waiting(reason))) => (
             // Explicit wait reason (model / subagent / task output / tasks /
             // sleep): name what the agent is blocked on instead of a generic
-            // "Waiting…". See `WaitingReason` and `AgentView::resolve_turn_activity`.
+            // "等待中…". See `WaitingReason` and `AgentView::resolve_turn_activity`.
             Style::default().fg(theme.text_secondary),
             reason.label(),
             false,
         ),
         (AgentState::TurnRunning, None) if is_bash_turn => (
-            // Bash turn: not inference, show generic "Running…".
+            // Bash turn: not inference, show generic "运行中…".
             Style::default().fg(theme.text_secondary),
-            "Running…".to_string(),
+            "运行中…".to_string(),
             false,
         ),
         (AgentState::TurnRunning, None) => (
@@ -688,7 +687,7 @@ fn compute_activity(
             // view resolves this gap into Waiting(Model/Subagent) before render,
             // so this is now a rarely-hit safety net.
             Style::default().fg(theme.text_secondary),
-            "Waiting…".to_string(),
+            "等待中…".to_string(),
             false,
         ),
         (
@@ -894,15 +893,15 @@ mod tests {
     #[test]
     fn activity_label_reads_verifying_while_goal_verifying_overriding_stale_activity() {
         let theme = Theme::current();
-        // Running turn, no streaming activity, goal verifying → "Verifying…".
+        // Running turn, no streaming activity, goal verifying → "验证中…".
         let (_, label, _) = compute_activity(&theme, &AgentState::TurnRunning, &None, false, true);
-        assert_eq!(label, "Verifying…");
-        // Same state without the verifying flag → generic "Waiting…".
+        assert_eq!(label, "验证中…");
+        // Same state without the verifying flag → generic "等待中…".
         let (_, label, _) = compute_activity(&theme, &AgentState::TurnRunning, &None, false, false);
-        assert_eq!(label, "Waiting…");
+        assert_eq!(label, "等待中…");
         // During verification the model is idle but its last streaming
         // activity (Responding/Thinking) can linger — the flag overrides it
-        // so the panel reads "Verifying…", not "Responding…" (the bug).
+        // so the panel reads "验证中…", not "回复中…" (the bug).
         for activity in [TurnActivity::Responding, TurnActivity::Thinking] {
             let (_, label, _) = compute_activity(
                 &theme,
@@ -911,7 +910,7 @@ mod tests {
                 false,
                 true,
             );
-            assert_eq!(label, "Verifying…");
+            assert_eq!(label, "验证中…");
         }
         // Without the flag the streaming label stands.
         let (_, label, _) = compute_activity(
@@ -921,7 +920,7 @@ mod tests {
             false,
             false,
         );
-        assert_eq!(label, "Responding…");
+        assert_eq!(label, "回复中…");
     }
 
     #[test]
@@ -929,9 +928,9 @@ mod tests {
         use crate::acp::tracker::WaitingReason;
         let theme = Theme::current();
         let cases = [
-            (WaitingReason::Model, "Waiting for response…"),
-            (WaitingReason::Subagent, "Waiting on subagent…"),
-            (WaitingReason::task_output(), "Waiting on task output…"),
+            (WaitingReason::Model, "等待回复…"),
+            (WaitingReason::Subagent, "等待子代理…"),
+            (WaitingReason::task_output(), "等待任务输出…"),
             (
                 WaitingReason::TaskOutput {
                     task_ids: vec!["t1".into()],
@@ -940,8 +939,8 @@ mod tests {
                 },
                 "compile release…",
             ),
-            (WaitingReason::TasksComplete, "Waiting on tasks…"),
-            (WaitingReason::Sleep, "Sleeping…"),
+            (WaitingReason::TasksComplete, "等待任务完成…"),
+            (WaitingReason::Sleep, "休眠中…"),
         ];
         for (reason, expected) in cases {
             let (_, label, is_tool) = compute_activity(
@@ -959,10 +958,10 @@ mod tests {
     #[test]
     fn bash_turn_still_renders_running_not_waiting() {
         let theme = Theme::current();
-        // A bash (non-inference) turn with no activity keeps its own "Running…"
+        // A bash (non-inference) turn with no activity keeps its own "运行中…"
         // label — the view leaves it as `None` rather than Waiting(Model).
         let (_, label, _) = compute_activity(&theme, &AgentState::TurnRunning, &None, true, false);
-        assert_eq!(label, "Running…");
+        assert_eq!(label, "运行中…");
     }
 
     #[test]
@@ -1112,12 +1111,26 @@ mod tests {
     }
 
     /// Collect every rendered glyph in `area` into a single string.
+    ///
+    /// Advances by each glyph's display width so CJK double-width cells
+    /// (whose second column is a blank placeholder) are not emitted twice.
     fn buffer_text(buf: &Buffer, area: Rect) -> String {
         (area.y..area.y + area.height)
             .map(|y| {
-                (area.x..area.x + area.width)
-                    .filter_map(|x| buf.cell((x, y)).map(|c| c.symbol().to_string()))
-                    .collect::<String>()
+                let mut out = String::new();
+                let mut x = area.x;
+                let end = area.x + area.width;
+                while x < end {
+                    if let Some(cell) = buf.cell((x, y)) {
+                        let s = cell.symbol();
+                        out.push_str(s);
+                        let w = s.width().max(1) as u16;
+                        x = x.saturating_add(w);
+                    } else {
+                        x = x.saturating_add(1);
+                    }
+                }
+                out
             })
             .collect::<Vec<_>>()
             .join("\n")
@@ -1245,7 +1258,7 @@ mod tests {
     fn idle_with_monitors_renders_still_running_cue() {
         let text = render_idle_with_monitors(2);
         assert!(
-            text.contains("2 monitors still running"),
+            text.contains("2 个监控 仍在运行"),
             "idle with monitors must render the still-running cue, got: {text:?}"
         );
     }
@@ -1254,7 +1267,7 @@ mod tests {
     fn idle_with_one_monitor_uses_singular() {
         let text = render_idle_with_monitors(1);
         assert!(
-            text.contains("1 monitor still running") && !text.contains("monitors"),
+            text.contains("1 个监控 仍在运行"),
             "single monitor must use the singular noun, got: {text:?}"
         );
     }
@@ -1275,7 +1288,7 @@ mod tests {
             ..Watchers::default()
         });
         assert!(
-            text.contains("2 loops still running"),
+            text.contains("2 个循环 仍在运行"),
             "idle with loops must render the still-running cue, got: {text:?}"
         );
     }
@@ -1287,7 +1300,7 @@ mod tests {
             ..Watchers::default()
         });
         assert!(
-            text.contains("1 loop still running") && !text.contains("loops"),
+            text.contains("1 个循环 仍在运行"),
             "single loop must use the singular noun, got: {text:?}"
         );
     }
@@ -1299,7 +1312,7 @@ mod tests {
             ..Watchers::default()
         });
         assert!(
-            text.contains("2 subagents still running"),
+            text.contains("2 个子代理 仍在运行"),
             "idle with subagents must render the still-running cue, got: {text:?}"
         );
     }
@@ -1311,7 +1324,7 @@ mod tests {
             ..Watchers::default()
         });
         assert!(
-            text.contains("1 subagent still running") && !text.contains("subagents"),
+            text.contains("1 个子代理 仍在运行"),
             "single subagent must use the singular noun, got: {text:?}"
         );
     }
@@ -1322,7 +1335,7 @@ mod tests {
             workflows: 1,
             ..Watchers::default()
         });
-        assert!(text.contains("1 workflow still running"), "got: {text:?}");
+        assert!(text.contains("1 个工作流 仍在运行"), "got: {text:?}");
     }
 
     #[test]
@@ -1335,7 +1348,7 @@ mod tests {
             ..Watchers::default()
         });
         assert!(
-            text.contains("1 monitor \u{00b7} 2 loops still running"),
+            text.contains("1 个监控 · 2 个循环 仍在运行"),
             "both kinds must be listed in one cue, got: {text:?}"
         );
     }
@@ -1353,7 +1366,7 @@ mod tests {
         });
         assert!(
             text.contains(
-                "1 command \u{00b7} 2 monitors \u{00b7} 1 loop \u{00b7} 3 subagents still running"
+                "1 个命令 · 2 个监控 · 1 个循环 · 3 个子代理 仍在运行"
             ),
             "all kinds must be listed in one cue, got: {text:?}"
         );
@@ -1373,7 +1386,7 @@ mod tests {
         };
         let text = render_idle_with_watchers_in_width(watchers, 0, 40);
         assert!(
-            text.contains("1 command \u{00b7} 2 monitors \u{00b7} 1 loop"),
+            text.contains("1 个命令 · 2 个监控 · 1 个循环"),
             "the counts must survive the clip, got: {text:?}"
         );
     }
@@ -1387,7 +1400,7 @@ mod tests {
             ..Watchers::default()
         });
         assert!(
-            text.contains("2 commands still running"),
+            text.contains("2 个命令 仍在运行"),
             "idle with bg commands must render the still-running cue, got: {text:?}"
         );
         let text = render_idle_with_watchers(Watchers {
@@ -1395,7 +1408,7 @@ mod tests {
             ..Watchers::default()
         });
         assert!(
-            text.contains("1 command still running") && !text.contains("commands"),
+            text.contains("1 个命令 仍在运行"),
             "single command must use the singular noun, got: {text:?}"
         );
     }
@@ -1410,11 +1423,11 @@ mod tests {
             ..Watchers::default()
         });
         assert!(
-            text.contains("2 commands still running"),
+            text.contains("2 个命令 仍在运行"),
             "parked with bg work must render the still-running cue, got: {text:?}"
         );
         assert!(
-            !text.contains("Waiting") && !text.contains("[stop]"),
+            !text.contains("等待") && !text.contains("[停止]"),
             "parked must not render the running-turn chrome, got: {text:?}"
         );
     }
@@ -1465,7 +1478,7 @@ mod tests {
         );
         let text = buffer_text(&buf, area);
         assert!(
-            text.contains("Waiting on subagent… 5m59s · 1 queued — Enter to send now"),
+            text.contains("等待子代理… 5m59s · 1 条排队 — Enter 立即发送"),
             "phase timer must sit between the wait label and the queued hint, got: {text:?}"
         );
     }
@@ -1477,28 +1490,28 @@ mod tests {
                 commands: 2,
                 ..Watchers::default()
             }),
-            Some("2 commands still running".into())
+            Some("2 个命令 仍在运行".into())
         );
         assert_eq!(
             still_running_label(Watchers {
                 monitors: 2,
                 ..Watchers::default()
             }),
-            Some("2 monitors still running".into())
+            Some("2 个监控 仍在运行".into())
         );
         assert_eq!(
             still_running_label(Watchers {
                 loops: 1,
                 ..Watchers::default()
             }),
-            Some("1 loop still running".into())
+            Some("1 个循环 仍在运行".into())
         );
         assert_eq!(
             still_running_label(Watchers {
                 subagents: 1,
                 ..Watchers::default()
             }),
-            Some("1 subagent still running".into())
+            Some("1 个子代理 仍在运行".into())
         );
         assert_eq!(
             still_running_label(Watchers {
@@ -1506,7 +1519,7 @@ mod tests {
                 loops: 2,
                 ..Watchers::default()
             }),
-            Some("1 monitor \u{00b7} 2 loops still running".into())
+            Some("1 个监控 · 2 个循环 仍在运行".into())
         );
         assert_eq!(
             still_running_label(Watchers {
@@ -1517,7 +1530,7 @@ mod tests {
                 workflows: 0,
             }),
             Some(
-                "1 command \u{00b7} 1 monitor \u{00b7} 1 loop \u{00b7} 2 subagents still running"
+                "1 个命令 · 1 个监控 · 1 个循环 · 2 个子代理 仍在运行"
                     .into()
             )
         );

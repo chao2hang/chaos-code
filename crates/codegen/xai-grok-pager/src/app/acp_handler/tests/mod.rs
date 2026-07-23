@@ -1095,7 +1095,7 @@ pub(super) fn last_marker_stop_hook_groups(
 pub(super) fn work_status_lines(sb: &ScrollbackState) -> Vec<String> {
     (0..sb.len())
         .filter_map(|i| match sb.get(i).map(|e| &e.block) {
-            Some(RenderBlock::System(b)) if b.text.contains("still running") => {
+            Some(RenderBlock::System(b)) if b.text.contains("仍在运行") => {
                 Some(b.text.clone())
             }
             _ => None,

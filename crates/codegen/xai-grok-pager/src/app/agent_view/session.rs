@@ -734,7 +734,7 @@ impl AgentView {
     /// a *short* command / subagent description).
     ///
     /// Long bare commands are intentionally not used as subjects — the spinner
-    /// falls back to the generic `"Waiting on task output…"` instead of
+    /// falls back to the generic `"等待任务输出…"` instead of
     /// stuffing a wall of shell into the status line. Descriptions are kept
     /// but clamped by the caller via [`clamp_activity_subject`].
     fn lookup_task_subject(&self, task_id: &str) -> Option<String> {
@@ -1394,7 +1394,7 @@ mod resolve_turn_activity_tests {
         };
         assert_eq!(
             reason.label(),
-            "Waiting on task output…",
+            "等待任务输出…",
             "long command without description must not become the spinner subject"
         );
         assert_eq!(

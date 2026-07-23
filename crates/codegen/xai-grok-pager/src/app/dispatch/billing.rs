@@ -502,7 +502,7 @@ pub(super) fn handle_credit_limit_recheck_complete(
         if let Some(prompt) = agent.credit_limit_stashed_prompt.take() {
             let tier_name = app.subscription_tier.as_deref().unwrap_or("a higher tier");
             agent.scrollback.push_block(RenderBlock::system(format!(
-                "Subscription upgraded to {tier_name}. Retrying\u{2026}"
+                "订阅已升级到 {tier_name}。正在重试\u{2026}"
             )));
             agent.session.enqueue_in_flight_prompt_front(prompt);
         }

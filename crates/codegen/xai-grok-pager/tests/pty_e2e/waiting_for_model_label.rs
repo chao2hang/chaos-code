@@ -38,10 +38,10 @@ async fn waiting_for_model_label_shows_before_first_token() {
     // The new explicit label, not the old generic "Waiting…". Match without the
     // trailing ellipsis so terminal width / glyph handling can't flake it.
     harness
-        .wait_for_text("Waiting for response", Duration::from_secs(10))
+        .wait_for_text("等待回复", Duration::from_secs(10))
         .unwrap_or_else(|_| {
             panic!(
-                "expected 'Waiting for response…' spinner before first token\nscreen:\n{}",
+                "expected '等待回复…' spinner before first token\nscreen:\n{}",
                 harness.screen_contents()
             )
         });

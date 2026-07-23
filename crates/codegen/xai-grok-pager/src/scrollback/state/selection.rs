@@ -604,10 +604,10 @@ impl ScrollbackState {
         }
     }
 
-    /// Returns "expand thinking" or "collapse thinking" based on current state.
+    /// Returns Chinese "展开思考" or "折叠思考" based on current state.
     ///
     /// Uses the same logic as `expand_all_thinking`: if ANY thinking block is
-    /// collapsed the next toggle will expand, so the label is "expand thinking".
+    /// collapsed the next toggle will expand, so the label is "展开思考".
     pub fn thinking_fold_label(&self) -> &'static str {
         let any_collapsed = self.entries.values().any(|entry| {
             matches!(entry.block, RenderBlock::Thinking(_))
@@ -615,9 +615,9 @@ impl ScrollbackState {
                 && entry.display_mode == DisplayMode::Collapsed
         });
         if any_collapsed {
-            "expand thinking"
+            "展开思考"
         } else {
-            "collapse thinking"
+            "折叠思考"
         }
     }
 
@@ -641,10 +641,10 @@ impl ScrollbackState {
             })
     }
 
-    /// "expand" / "collapse" when the selected entry is a group header, else
+    /// "展开" / "折叠" when the selected entry is a group header, else
     /// `None`. Distinct from the entry-level fold label: a collapse header's
     /// entry stays `DisplayMode::Collapsed` (expansion lives in
-    /// `expanded_groups`), which would mislabel it "expand".
+    /// `expanded_groups`), which would mislabel it "展开".
     pub fn selected_group_header_fold_label(&self) -> Option<&'static str> {
         let sel = self.selected?;
         let info = self.layout_cache.as_ref()?.entries.get(sel)?;
@@ -653,9 +653,9 @@ impl ScrollbackState {
             // footer advertises the member's own fold, not the group's.
             None
         } else if info.group_collapse_header {
-            Some("collapse")
+            Some("折叠")
         } else if info.group_header_count > 0 {
-            Some("expand")
+            Some("展开")
         } else {
             None
         }
@@ -2128,7 +2128,7 @@ mod tests {
         // The folded singleton carries the full header interaction surface.
         state.set_selected(Some(0));
         assert!(state.is_selected_group_header());
-        assert_eq!(state.selected_group_header_fold_label(), Some("expand"));
+        assert_eq!(state.selected_group_header_fold_label(), Some("展开"));
 
         // Expand: the slot stacks the header line above the member's own row.
         assert!(state.toggle_group_expansion());
