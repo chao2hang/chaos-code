@@ -8228,29 +8228,42 @@ if n == name && f.as_deref() == field
     }
     #[test]
     fn e2e_default_model_with_session_routes_to_proxy() {
-        let (_, models) = resolve_models_from_toml("", None);
-        let model = models
-            .get(crate::models::default_model())
-            .expect("default model should exist");
-        let sampling = resolve_sampling(model, Some("session-token-123"));
+        // Chaos ships no bundled Grok catalog; build the dual-endpoint shape
+        // that upstream defaults used (proxy + api.x.ai).
+        let endpoints = EndpointsConfig::default();
+        let dm = crate::models::default_model();
+        let model = test_model_entry(
+            dm,
+            &endpoints.resolve_inference_base_url(),
+            None,
+            None,
+            Some(&endpoints.xai_api_base_url),
+        );
+        let sampling = resolve_sampling(&model, Some("session-token-123"));
         assert_eq!(sampling.api_key.as_deref(), Some("session-token-123"));
         assert_eq!(
-            sampling.base_url, "https://cli-chat-proxy.grok.com/v1",
+            sampling.base_url,
+            endpoints.resolve_inference_base_url(),
             "session auth should route to cli-chat-proxy, not api.x.ai"
         );
     }
     #[test]
     #[serial]
     fn e2e_default_model_with_external_api_key_routes_to_api_xai() {
-        let (_, models) = resolve_models_from_toml("", None);
-        let model = models
-            .get(crate::models::default_model())
-            .expect("default model should exist");
+        let endpoints = EndpointsConfig::default();
+        let dm = crate::models::default_model();
+        let model = test_model_entry(
+            dm,
+            &endpoints.resolve_inference_base_url(),
+            None,
+            None,
+            Some(&endpoints.xai_api_base_url),
+        );
         unsafe { std::env::set_var("XAI_API_KEY", "xai-external-key") };
-        let sampling = resolve_sampling(model, None);
+        let sampling = resolve_sampling(&model, None);
         assert_eq!(sampling.api_key.as_deref(), Some("xai-external-key"));
         assert_eq!(
-            sampling.base_url, "https://api.x.ai/v1",
+            sampling.base_url, endpoints.xai_api_base_url,
             "external API key should route to api.x.ai via api_base_url"
         );
         unsafe { std::env::remove_var("XAI_API_KEY") };
@@ -8407,10 +8420,20 @@ if n == name && f.as_deref() == field
     fn e2e_default_endpoint_still_injects_defaults() {
         let cfg = Config::default();
         let resolved = resolve_model_list(&cfg, None);
-        assert!(
-            resolved.contains_key(crate::models::default_model()),
-            "default model should be present when using default endpoint"
-        );
+        // Chaos ships an empty bundled catalog (BYOK). Upstream injects Grok
+        // defaults; we only require that resolve does not invent remote models.
+        let bundled = default_model_entries(&EndpointsConfig::default());
+        if bundled.is_empty() {
+            assert!(
+                resolved.is_empty(),
+                "empty default_models.json must not inject catalog entries"
+            );
+        } else {
+            assert!(
+                resolved.contains_key(crate::models::default_model()),
+                "default model should be present when using default endpoint"
+            );
+        }
     }
     #[test]
     fn e2e_acp_model_info_no_dedup_on_model_field() {
@@ -8489,17 +8512,20 @@ if n == name && f.as_deref() == field
     }
     #[test]
     fn e2e_enterprise_endpoints_only_no_model_override() {
-        let (_, models) = resolve_models_from_toml(
-            r#"
-            [endpoints]
-            cli_chat_proxy_base_url = "https://enterprise-proxy.acme.com/v1"
-            xai_api_base_url = "https://enterprise-api.acme.com/v1"
-            "#,
+        // Bundled defaults inherit endpoints; Chaos catalog is empty, so build
+        // the same dual-endpoint entry via test helper + enterprise endpoints.
+        let mut endpoints = EndpointsConfig::default();
+        endpoints.cli_chat_proxy_base_url =
+            Some("https://enterprise-proxy.acme.com/v1".to_string());
+        endpoints.xai_api_base_url = "https://enterprise-api.acme.com/v1".into();
+        let dm = crate::models::default_model();
+        let model = test_model_entry(
+            dm,
+            &endpoints.resolve_inference_base_url(),
             None,
+            None,
+            Some(endpoints.xai_api_base_url.as_str()),
         );
-        let model = models
-            .get(crate::models::default_model())
-            .expect("model should exist");
         assert_eq!(
             model.info.base_url, "https://enterprise-proxy.acme.com/v1",
             "default model should use enterprise cli_chat_proxy_base_url"
@@ -11882,6 +11908,14 @@ default = "grok-4.5"
         let cfg = Config::default();
         let dm = crate::models::default_model();
         let mut defs = default_model_entries(&EndpointsConfig::default());
+        // Chaos: empty bundled catalog — only assert empty/no-leak behavior.
+        if defs.is_empty() {
+            let no_p = resolve_model_list(&cfg, None);
+            assert!(no_p.is_empty());
+            let resolved = resolve_model_list(&cfg, Some(IndexMap::new()));
+            assert!(resolved.is_empty());
+            return;
+        }
         let mut p = IndexMap::new();
         if let Some(e) = defs.shift_remove(dm) {
             p.insert(dm.to_string(), e);
@@ -11897,7 +11931,19 @@ default = "grok-4.5"
         let dm = crate::models::default_model();
         let mut defs = default_model_entries(&EndpointsConfig::default());
         let mut p = IndexMap::new();
-        if let Some(e) = defs.shift_remove(dm) {
+        if defs.is_empty() {
+            // Seed one visible dual-auth entry when Chaos has no bundled models.
+            p.insert(
+                dm.to_string(),
+                test_model_entry(
+                    dm,
+                    "https://cli-chat-proxy.grok.com/v1",
+                    None,
+                    None,
+                    Some("https://api.x.ai/v1"),
+                ),
+            );
+        } else if let Some(e) = defs.shift_remove(dm) {
             p.insert(dm.to_string(), e);
         }
         let resolved = resolve_model_list(&cfg, Some(p));

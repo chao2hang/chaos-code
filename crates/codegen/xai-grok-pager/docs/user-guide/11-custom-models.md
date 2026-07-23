@@ -40,22 +40,24 @@ Or use the alias:
 
 ### Model Picker (Ctrl+M)
 
-Press `Ctrl+M` from the scrollback pane to open the model picker. It lists all available models, both built-in and custom, and lets you switch with a single keystroke. With the prompt focused, `Ctrl+M` toggles multiline input instead -- use `/model` to switch without leaving the prompt.
+Press `Ctrl+M` from the scrollback pane to open the model picker. Chaos **does not ship built-in Grok models**; the list is only your `[model.*]` entries (and optional remote catalog). With the prompt focused, `Ctrl+M` toggles multiline input instead — use `/model` to switch without leaving the prompt.
 
 ### Config Default
 
-Set a persistent default in `~/.grok/config.toml`:
+Set a persistent default in `~/.chaos/config.toml`（或兼容的 `~/.grok/config.toml`）:
 
 ```toml
 [models]
-default = "grok-build"
+default = "gpt-5"
 ```
+
+`default` 必须是某个 `[model.<key>]` 的 catalog 键。
 
 ---
 
 ## Supported API Backends
 
-Grok supports three API backends. Set `api_backend` in your `[model.*]` config to choose which protocol the model uses:
+Chaos supports three API backends. Set `api_backend` in your `[model.*]` config to choose which protocol the model uses:
 
 | Value | API | Default |
 |-------|-----|---------|

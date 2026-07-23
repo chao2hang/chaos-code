@@ -1,6 +1,12 @@
 //! Default model IDs loaded from `default_models.json` at runtime.
 //! Edit that JSON file to change them.
 //!
+//! Chaos is BYOK-only: the embedded catalog is intentionally empty so the
+//! picker does not advertise xAI / Grok models. Users define models via
+//! `config.toml` (`[model.*]` + `model_providers`). The `default` string is
+//! only a fallback slug when nothing is configured yet (e.g. pre-catalog
+//! sampling), not a real product model.
+//!
 //! At runtime each model is resolved via:
 //!   CLI flag > ENV var > config.toml > remote settings > these defaults
 
@@ -33,17 +39,23 @@ static DEFAULTS: LazyLock<DefaultModels> = LazyLock::new(|| {
         .expect("default_models.json: invalid JSON or missing 'default' field");
 
     // Baked-in JSON — a mismatch here is a developer error, not a runtime condition.
-    let model_ids: Vec<&str> = defaults.models.iter().map(|m| m.model.as_str()).collect();
-    assert!(
-        model_ids.contains(&defaults.default.as_str()),
-        "default_models.json: 'default' is '{}' but 'models' array only has {model_ids:?}",
-        defaults.default,
-    );
+    // Empty `models` is allowed (Chaos BYOK): `default` is then only a fallback slug.
+    if !defaults.models.is_empty() {
+        let model_ids: Vec<&str> = defaults.models.iter().map(|m| m.model.as_str()).collect();
+        assert!(
+            model_ids.contains(&defaults.default.as_str()),
+            "default_models.json: 'default' is '{}' but 'models' array only has {model_ids:?}",
+            defaults.default,
+        );
+    }
 
     defaults
 });
 
 /// Primary model for coding tasks and general fallback.
+///
+/// Chaos ships an empty bundled catalog; this may be a placeholder slug that is
+/// **not** present in `models` until the user configures `config.toml`.
 pub fn default_model() -> &'static str {
     &DEFAULTS.default
 }
