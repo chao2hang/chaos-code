@@ -6,7 +6,7 @@
   },
   {
     "category": "features",
-    "description": "**/btw** now works inside `grok --minimal`, showing answers in the live area and committing them to scrollback on Esc.",
+    "description": "**/btw** now works inside `chaos --minimal`, showing answers in the live area and committing them to scrollback on Esc.",
     "breaking_change": false
   },
   {
@@ -21,7 +21,7 @@
   },
   {
     "category": "fixes",
-    "description": "**Global rules** from ~/.grok/rules and compatible vendor homes are now discovered correctly.",
+    "description": "**Global rules** from ~/.chaos/rules and compatible vendor homes are now discovered correctly.",
     "breaking_change": false
   },
   {

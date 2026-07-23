@@ -772,7 +772,7 @@ mod tests {
                 git_url: None,
             },
             PluginOrigin::MarketplaceInstall {
-                source_name: Some("xAI Official".into()),
+                source_name: Some("Official Marketplace".into()),
                 git_url: Some("https://example.com/r.git".into()),
             },
             PluginOrigin::ConfigPath,

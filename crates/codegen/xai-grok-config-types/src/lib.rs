@@ -507,9 +507,10 @@ pub struct RemoteSettings {
     /// OAuth2 client_id for the CLI. Paired with `oauth2_issuer`.
     #[serde(default)]
     pub oauth2_client_id: Option<String>,
-    /// When `Some(true)`, enable grok's default OAuth2 (xAI auth.x.ai).
-    /// Enterprise OIDC (user's own IdP via `oidc` config) always wins.
-    /// Controlled via remote settings; `--oauth` CLI flag overrides.
+    /// When `Some(true)`, enable the default OAuth2 path (xAI auth.x.ai).
+    /// Chaos defaults this off (BYOK). Enterprise OIDC (user's own IdP via
+    /// `oidc` config) always wins. Controlled via remote settings;
+    /// `--oauth` / ACP `use_oauth` overrides.
     #[serde(default)]
     pub grok_oauth_enabled: Option<bool>,
     #[serde(default)]

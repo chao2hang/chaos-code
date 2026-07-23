@@ -906,7 +906,7 @@ pub(super) fn default_actions(
         // the registry under `When::DashboardFocused`. The dispatch
         // path in `dashboard::state::handle_key` looks these up via
         // `registry.lookup(key, When::DashboardFocused)` so users can
-        // rebind any of them through `~/.grok/config.toml`.
+        // rebind any of them through `~/.chaos/config.toml` (or `~/.grok/`).
         ActionDef {
             id: ActionId::DashboardSelectNext,
             label: "下一个",

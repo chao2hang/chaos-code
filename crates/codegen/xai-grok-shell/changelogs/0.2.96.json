@@ -51,7 +51,7 @@
   },
   {
     "category": "fixes",
-    "description": "**Resumed grok.com chats** now use the conversation's last model instead of the gateway default.",
+    "description": "**Resumed remote chats** now use the conversation's last model instead of the gateway default.",
     "breaking_change": false
   },
   {
@@ -86,7 +86,7 @@
   },
   {
     "category": "features",
-    "description": "**`grok worktree ls`** now works as a short alias for `grok worktree list`.",
+    "description": "**`chaos worktree ls`** now works as a short alias for `chaos worktree list`.",
     "breaking_change": false
   },
   {

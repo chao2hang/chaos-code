@@ -16,7 +16,7 @@
   },
   {
     "category": "features",
-    "description": "**grok login** now requests Grok Projects scopes so workspace listing works after consent.",
+    "description": "**chaos login** now requests workspace project scopes so workspace listing works after consent.",
     "breaking_change": false
   },
   {
@@ -46,7 +46,7 @@
   },
   {
     "category": "features",
-    "description": "**`grok plugin install`** now accepts a marketplace's registered name as a qualifier.",
+    "description": "**`chaos plugin install`** now accepts a marketplace's registered name as a qualifier.",
     "breaking_change": false
   },
   {
@@ -166,7 +166,7 @@
   },
   {
     "category": "fixes",
-    "description": "**Fixed background task tracking** when using grok -p --no-wait-for-background so tasks are properly reaped on exit.",
+    "description": "**Fixed background task tracking** when using chaos -p --no-wait-for-background so tasks are properly reaped on exit.",
     "breaking_change": false
   },
   {

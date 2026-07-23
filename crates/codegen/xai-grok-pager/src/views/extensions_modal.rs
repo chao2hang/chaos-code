@@ -6758,12 +6758,12 @@ mod tests {
             ),
             (
                 PluginOrigin::MarketplaceInstall {
-                    source_name: Some("xAI Official".into()),
+                    source_name: Some("Official Marketplace".into()),
                     git_url: Some("https://example.com/r.git".into()),
                 },
                 5,
-                "grok-mp:xAI Official",
-                "xAI Official",
+                "grok-mp:Official Marketplace",
+                "Official Marketplace",
             ),
             (
                 PluginOrigin::MarketplaceInstall {
@@ -6820,10 +6820,10 @@ mod tests {
         assert_eq!(plugin_group(&config).key, "origin:config");
 
         let mut mp = make_plugin("mp-tool");
-        mp.marketplace_source = Some("xAI Official".into());
+        mp.marketplace_source = Some("Official Marketplace".into());
         let group = plugin_group(&mp);
-        assert_eq!(group.key, "grok-mp:xAI Official");
-        assert_eq!(group.label, "xAI Official");
+        assert_eq!(group.key, "grok-mp:Official Marketplace");
+        assert_eq!(group.label, "Official Marketplace");
 
         let mut direct = make_plugin("direct-tool");
         direct.marketplace_source = Some("git: owner/repo".into());
@@ -6838,8 +6838,8 @@ mod tests {
         );
         assert_eq!(plugin_group(&unknown).key, "origin:user");
 
-        unknown.marketplace_source = Some("xAI Official".into());
-        assert_eq!(plugin_group(&unknown).key, "grok-mp:xAI Official");
+        unknown.marketplace_source = Some("Official Marketplace".into());
+        assert_eq!(plugin_group(&unknown).key, "grok-mp:Official Marketplace");
     }
 
     #[test]
@@ -6964,14 +6964,14 @@ mod tests {
         let mut direct = make_plugin("direct-tool");
         direct.marketplace_source = Some("git: owner/repo".into());
         let mut mp = make_plugin("official-tool");
-        mp.marketplace_source = Some("xAI Official".into());
+        mp.marketplace_source = Some("Official Marketplace".into());
         let plain = make_plugin("plain-tool");
 
         let mut state = plugins_modal_state(vec![direct, mp, plain]);
         let buf = render_plugins_into_buffer(&mut state, 100, 40);
 
         assert_eq!(buffer_count(&buf, "用户 (1 plugin)"), 1);
-        assert_eq!(buffer_count(&buf, "xAI Official (1 plugin)"), 1);
+        assert_eq!(buffer_count(&buf, "Official Marketplace (1 plugin)"), 1);
         assert_eq!(buffer_count(&buf, "直接安装 (1 plugin)"), 1);
     }
 
