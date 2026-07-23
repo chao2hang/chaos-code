@@ -629,7 +629,8 @@ pub enum ButtonAction {
     ReloadSkills,
     /// Refresh MCP server list (re-fetch from shell).
     RefreshMcpList,
-    /// Open grok.com connectors page (MCP tab: press `o`).
+    /// Open managed connectors portal when configured (MCP tab: press `o`).
+    /// Chaos has no default remote portal; action no-ops if the URL is empty.
     OpenManagedConnectors,
     /// Update (fetch latest from source) the selected plugin.
     UpdateSelectedPlugin,
@@ -4370,8 +4371,9 @@ mod tests {
         assert!(
             rows.labels
                 .iter()
-                .any(|l| l.starts_with("Managed by grok.com")),
-            "managed section header must appear"
+                .any(|l| l.starts_with("托管 MCP") || l.starts_with("Managed")),
+            "managed section header must appear: {:?}",
+            rows.labels
         );
         assert!(
             !rows.labels.iter().any(|l| l == "grok_com_linear"),

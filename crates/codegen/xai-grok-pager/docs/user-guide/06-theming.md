@@ -1,17 +1,21 @@
 # Theming and Appearance Customization
 
-Grok Build draws all TUI colors from a central theme. You can switch themes while Grok is running, follow your operating system's light or dark appearance, and adjust scrollback layout, animations, and block styling through configuration files.
+Chaos 从中心主题绘制全部 TUI 颜色。运行时可切换主题、跟随系统浅色/深色外观，
+并通过配置文件调整回滚区布局、动画与块样式。
+
+> 界面显示名为 **Chaos Night / Chaos Day**；配置键仍兼容上游的 `groknight` /
+> `grokday` 等别名。用户配置根见 [Configuration](05-configuration.md)。
 
 ---
 
 ## Available Themes
 
-Grok includes five built-in themes, plus an `auto` option that follows your system appearance:
+内置五套主题，外加跟随系统外观的 `auto`：
 
 | Theme | Config Names | Description | Truecolor Required |
 |-------|-------------|-------------|--------------------|
-| **GrokNight** | `groknight`, `grok-night`, `dark` | Neutral dark base with a magenta accent. Default theme. Survives quantization cleanly on 256-color and 16-color terminals. | No |
-| **GrokDay** | `grokday`, `grok-day`, `light`, `day` | Light theme for bright terminal backgrounds. | No |
+| **Chaos Night**（内部 `GrokNight`） | `groknight`, `grok-night`, `dark` | 中性深色底 + 品红强调。默认主题。256/16 色终端量化后仍清晰。 | No |
+| **Chaos Day**（内部 `GrokDay`） | `grokday`, `grok-day`, `light`, `day` | 浅色主题，适合亮色终端背景。 | No |
 | **TokyoNight** | `tokyonight`, `tokyo-night`, `tokyo` | Dark, blue-tinted backgrounds from the Tokyo Night palette. Loses its character when quantized. | Yes |
 | **RosePineMoon** | `rosepine`, `rose-pine`, `rosepine-moon`, `rose-pine-moon` | Muted dark palette with mauve accents, from the Rosé Pine family. | Yes |
 | **OscuraMidnight** | `oscura`, `oscura-midnight` | Deep dark base with purple accents. | Yes |
@@ -30,7 +34,7 @@ Syntax highlighting in minimal mode does **not** switch between light and dark t
 
 ### In the TUI
 
-Run the `/theme` slash command (alias `/t`) to open the theme picker. As you move through the list with the arrow keys, Grok previews each theme in real time. Press Enter to apply and save your choice, or press Escape to revert.
+Run the `/theme` slash command (alias `/t`) to open the theme picker. As you move through the list with the arrow keys, Chaos previews each theme in real time. Press Enter to apply and save your choice, or press Escape to revert.
 
 To switch without the picker, pass a name directly:
 
@@ -42,7 +46,7 @@ Submitting `/theme` on its own -- without choosing from the picker -- cycles to 
 
 ### Via Config File
 
-Set the theme in `~/.grok/config.toml`:
+Set the theme in `~/.chaos/config.toml`（或兼容的 `~/.grok/config.toml`）:
 
 ```toml
 [ui]

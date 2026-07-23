@@ -1,26 +1,27 @@
 # Keyboard Shortcuts
 
-Reference for key bindings in the Grok Build TUI. Bindings are built in and cannot currently be remapped.
+Chaos TUI 快捷键参考。绑定为内置，目前不可自定义重映射。
+
+> 配置路径：`~/.chaos/config.toml` 或兼容的 `~/.grok/config.toml`（双读，见
+> [Configuration](05-configuration.md) / [CHAOS.md](../../../../CHAOS.md)）。
 
 ---
 
 ## Input Modes
 
-Grok has two input modes that control how you navigate the scrollback:
+Chaos 有两种输入模式，控制回滚区导航方式：
 
-- **Simple mode** (default): Arrow keys for navigation, `Shift+Arrow` for turn navigation, `Space` to focus the prompt, and any letter key auto-focuses the prompt.
-- **Vim mode** (opt-in): `j`/`k` for navigation, `H`/`L` for turn navigation, `J`/`K` for response navigation, `h`/`l` for fold, `e`/`E` for expand/collapse, and `i`/`Tab`/`Space` to focus the prompt.
+- **Simple mode**（默认）：方向键导航，`Shift+Arrow` 按回合跳转，`Space` 聚焦提示框，字母键自动聚焦提示框。
+- **Vim mode**（可选）：`j`/`k` 导航，`H`/`L` 按回合，`J`/`K` 按回复，`h`/`l` 折叠，`e`/`E` 展开/收起，`i`/`Tab`/`Space` 聚焦提示框。
 
-Simple mode is active by default. To switch to Vim mode, set `vim_mode = true` under `[ui]` in `~/.grok/config.toml`, or toggle it at runtime with `/vim-mode`. See [Configuration](05-configuration.md) for details.
+默认 Simple。切换到 Vim：在用户 `config.toml` 的 `[ui]` 下设 `vim_mode = true`，或运行时 `/vim-mode`。详见 [Configuration](05-configuration.md)。
 
-The tables below document bindings for both modes. The "Key" column shows the Vim-mode binding, and the "Alt Key" column shows the equivalent in simple mode (arrow keys, etc.).
+下表同时记录两种模式。"Key" 为 Vim 绑定，"Alt Key" 为 Simple 等价键。
 
-> **Vim-mode required**: Single-letter and `Shift+letter` bindings in the
-> **Scrollback** context (`j/k`, `h/l`, `g/G`, `L/H`, `y/Y`, `o/O`, `r`,
-> `x`, `e/E`, and the `i` insert-mode alt) require `[ui].vim_mode = true`
-> in `~/.grok/config.toml` (or `/vim-mode` to toggle). Arrow keys, `Tab`,
-> `Esc`, `Space`, `PageUp/Down`, and every `Ctrl+letter` shortcut work in
-> both modes.
+> **需开启 Vim mode**：回滚区上下文中的单字母与 `Shift+字母` 绑定（`j/k`、
+> `h/l`、`g/G`、`L/H`、`y/Y`、`o/O`、`r`、`x`、`e/E`、以及 `i` 插入模式）
+> 要求 `[ui].vim_mode = true`（或 `/vim-mode`）。方向键、`Tab`、`Esc`、
+> `Space`、`PageUp/Down` 与所有 `Ctrl+字母` 在两种模式下均可用。
 
 ---
 

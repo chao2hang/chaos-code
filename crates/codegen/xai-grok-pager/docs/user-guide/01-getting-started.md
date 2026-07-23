@@ -28,7 +28,9 @@ cargo run -p xai-grok-pager-bin
 
 ## 首次启动
 
-1. 按 [Authentication](02-authentication.md) 或 [CHAOS.md](../../../../CHAOS.md) 配置 `~/.grok/config.toml` 中的 `model_providers` 与 `model`。
+1. 按 [Authentication](02-authentication.md) 或 [CHAOS.md](../../../../CHAOS.md)
+   在配置根（`~/.chaos` 或兼容的 `~/.grok`）的 `config.toml` 中配置
+   `model_providers` 与 `model`。
 2. 导出密钥环境变量（例如 `OPENAI_API_KEY` 或 `ANTHROPIC_API_KEY`）。
 3. 启动：
 
@@ -70,11 +72,11 @@ The `@` operator opens a fuzzy file picker. By default it respects `.gitignore` 
 
 ### Permissions
 
-By default, Grok asks for permission before executing shell commands or editing files. You can approve individually or toggle always-approve mode:
+默认情况下，Chaos 在执行 shell 或编辑文件前会请求确认。可单次批准，或开启始终批准：
 
-- Press `Ctrl+O` to toggle always-approve mode
-- Use the `--yolo` flag at launch: `grok --yolo`
-- Type `/always-approve` in the prompt to toggle the mode
+- 按 `Ctrl+O` 切换始终批准模式
+- 启动时加 `--yolo`：`chaos --yolo`
+- 在提示框输入 `/always-approve` 切换
 
 ---
 

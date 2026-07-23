@@ -44,20 +44,30 @@ pub fn section_key(section: &McpSectionId) -> String {
     }
 }
 
-/// Display label for a section header, e.g. `"Managed by grok.com (3)"`.
+/// Display label for a section header, e.g. `"托管 MCP (3)"`.
 pub fn section_label(section: &McpSectionId, count: usize) -> String {
     match section {
-        McpSectionId::Managed => format!("Managed by grok.com ({count})"),
-        McpSectionId::Plugin(name) => format!("Plugin: {name} ({count})"),
-        McpSectionId::Local => format!("Local ({count})"),
+        // Chaos is BYOK: managed MCP is local/config-managed, not grok.com.
+        McpSectionId::Managed => format!("托管 MCP ({count})"),
+        McpSectionId::Plugin(name) => format!("插件: {name} ({count})"),
+        McpSectionId::Local => format!("本地 ({count})"),
     }
 }
 
-/// Base grok.com connectors URL (no team). Prefer [`managed_connectors_url`] when opening.
-pub const MANAGED_SECTION_CONNECTORS_URL: &str = "https://grok.com/connectors";
+/// Optional remote connectors URL for managed MCP.
+///
+/// Chaos has no grok.com connectors portal; keep empty so Ctrl+O / open actions
+/// no-op instead of sending users to an xAI product page. Upstream may set a
+/// non-empty value when a remote catalog exists.
+pub const MANAGED_SECTION_CONNECTORS_URL: &str = "";
 
 /// Connectors deep link, appending percent-encoded `teamId` when the session is a team principal.
+///
+/// Returns empty when [`MANAGED_SECTION_CONNECTORS_URL`] is empty (Chaos default).
 pub fn managed_connectors_url(team_id: Option<&str>) -> String {
+    if MANAGED_SECTION_CONNECTORS_URL.is_empty() {
+        return String::new();
+    }
     match team_id.filter(|id| !id.is_empty()) {
         Some(id) => format!(
             "{MANAGED_SECTION_CONNECTORS_URL}?teamId={}",
@@ -70,9 +80,12 @@ pub fn managed_connectors_url(team_id: Option<&str>) -> String {
 /// Display form of [`managed_connectors_url`] with the `https://` scheme dropped.
 ///
 /// Used for the Managed section subtitle so the URL is shorter and more likely
-/// to fit on one row; the Ctrl+O action still opens the full-scheme URL.
+/// to fit on one row; the Ctrl+O action still opens the full-scheme URL when set.
 pub fn managed_connectors_url_display(team_id: Option<&str>) -> String {
     let url = managed_connectors_url(team_id);
+    if url.is_empty() {
+        return String::new();
+    }
     url.strip_prefix("https://").unwrap_or(&url).to_string()
 }
 
@@ -82,10 +95,18 @@ pub fn section_description_lines(section: &McpSectionId, team_id: Option<&str>) 
     match section {
         McpSectionId::Managed => {
             let url = managed_connectors_url_display(team_id);
-            vec![
-                "Add, remove, or manage connectors. Ctrl+O to open or go to:".into(),
-                format!("[{url}]"),
-            ]
+            if url.is_empty() {
+                vec![
+                    "在配置文件中添加、移除或管理 MCP 服务器（config.toml 的 [mcp_servers]）。"
+                        .into(),
+                    "使用 /mcp 或扩展面板刷新列表。".into(),
+                ]
+            } else {
+                vec![
+                    "添加、移除或管理连接器。Ctrl+O 打开，或访问：".into(),
+                    format!("[{url}]"),
+                ]
+            }
         }
         McpSectionId::Plugin(_) | McpSectionId::Local => vec![],
     }
@@ -457,53 +478,32 @@ mod tests {
     }
 
     #[test]
-    fn section_description_lines_managed_includes_connectors_url() {
+    fn section_description_lines_managed_is_provider_local_when_no_portal() {
         let lines = section_description_lines(&McpSectionId::Managed, None);
         assert_eq!(lines.len(), 2);
-        // Instruction leads; Ctrl+O hint lives on the first line.
         assert!(
-            lines[0].contains("Ctrl+O"),
-            "should mention Ctrl+O shortcut: {}",
+            lines[0].contains("mcp_servers") || lines[0].contains("MCP"),
+            "should mention local MCP config: {}",
             lines[0]
         );
-        // URL sits alone on the second line, scheme-stripped and bracket-highlighted.
-        assert_eq!(lines[1], "[grok.com/connectors]");
         assert!(
-            !lines[1].contains("https://"),
-            "displayed URL should drop the scheme: {}",
-            lines[1]
+            !lines.iter().any(|l| l.contains("grok.com")),
+            "Chaos must not surface grok.com connectors: {lines:?}"
         );
+        // No remote portal → team id does not invent a URL line.
         let with_team = section_description_lines(&McpSectionId::Managed, Some("team-1"));
-        assert_eq!(with_team[1], "[grok.com/connectors?teamId=team-1]");
+        assert_eq!(with_team.len(), 2);
+        assert!(!with_team.iter().any(|l| l.contains("team-1")));
     }
 
     #[test]
-    fn managed_connectors_url_display_strips_scheme() {
-        assert_eq!(managed_connectors_url_display(None), "grok.com/connectors");
-        assert_eq!(
-            managed_connectors_url_display(Some("team-uuid-1")),
-            "grok.com/connectors?teamId=team-uuid-1"
-        );
-    }
-
-    #[test]
-    fn managed_connectors_url_appends_team_id_when_present() {
-        assert_eq!(managed_connectors_url(None), MANAGED_SECTION_CONNECTORS_URL);
-        assert_eq!(
-            managed_connectors_url(Some("")),
-            MANAGED_SECTION_CONNECTORS_URL
-        );
-        assert_eq!(
-            managed_connectors_url(Some("team-uuid-1")),
-            format!("{MANAGED_SECTION_CONNECTORS_URL}?teamId=team-uuid-1")
-        );
-        assert_eq!(
-            managed_connectors_url(Some("a b/c")),
-            format!(
-                "{MANAGED_SECTION_CONNECTORS_URL}?teamId={}",
-                urlencoding::encode("a b/c")
-            )
-        );
+    fn managed_connectors_url_empty_without_portal() {
+        assert_eq!(managed_connectors_url(None), "");
+        assert_eq!(managed_connectors_url(Some("")), "");
+        assert_eq!(managed_connectors_url(Some("team-uuid-1")), "");
+        assert_eq!(managed_connectors_url_display(None), "");
+        assert_eq!(managed_connectors_url_display(Some("team-uuid-1")), "");
+        assert_eq!(MANAGED_SECTION_CONNECTORS_URL, "");
     }
 
     #[test]

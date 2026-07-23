@@ -9,7 +9,7 @@
 | 登录 | 不依赖 Grok/OIDC；用户自带模型凭证 | 浏览器登录 xAI / 订阅 |
 | 品牌 | Chaos / 中文 UI | Grok Build / 英文 |
 | 二进制 | `chaos`（`xai-grok-pager-bin`） | `grok` / `xai-grok-pager` |
-| 配置目录 | 现读 `~/.grok`，规划 `~/.chaos` | `~/.grok` |
+| 配置目录 | 双读 `~/.chaos` / `~/.grok`（不覆盖任一侧） | `~/.grok` |
 
 ## 高风险路径（改前必读 diff 两侧）
 
