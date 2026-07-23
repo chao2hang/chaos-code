@@ -1,58 +1,60 @@
-# Chaos / Grok Build User Guide
+# Chaos 用户指南
 
-> **Chaos：** 本仓库 fork 为无需 Grok 登录、用户自带模型凭证的 `chaos` 助手。
-> 认证与模型配置以 [CHAOS.md](../../../../CHAOS.md) 与 [Authentication](02-authentication.md) 为准。
-> 其余指南大量沿用上游 Grok Build 文案，遇到登录/订阅/遥测差异时以 Chaos 文档为准。
+> **Chaos** 是本仓库 fork：无需 Grok / xAI 登录，用户自带模型凭证（BYOK）。
+> 认证与模型配置以仓库根 [CHAOS.md](../../../../CHAOS.md) 与
+> [Authentication](02-authentication.md) 为准。
+> 部分进阶章节仍沿用上游 Grok Build 结构；路径请按双读规则把 `~/.grok` 理解为
+> 「解析后的配置根」（也可能是 `~/.chaos`），`grok` 命令一律用 `chaos`。
 
-Learn how to install, configure, and extend the terminal-based AI coding assistant.
-
----
-
-## Tier 1: Essential User Docs
-
-Start here. These guides cover what you need on your first day.
-
-| # | Document | Description |
-|---|----------|-------------|
-| 1 | [Getting Started](01-getting-started.md) | Build, first launch, BYOK setup, basic interaction |
-| 2 | [Authentication](02-authentication.md) | Chaos BYOK：`model_providers`、API Key、`/provider`（无浏览器登录） |
-| 3 | [Keyboard Shortcuts](03-keyboard-shortcuts.md) | Reference for every key binding and mouse action in the TUI |
-| 4 | [Slash Commands](04-slash-commands.md) | Every `/` command, including goals, deep research, and workflow run management |
-| 5 | [Configuration](05-configuration.md) | `config.toml`, `pager.toml`, environment variables, and file locations |
+了解如何安装、配置与扩展终端 AI 编码助手。
 
 ---
 
-## Tier 2: Core Feature Docs
+## Tier 1: 入门
 
-Customize and extend Grok Build.
+从这里开始，覆盖第一天所需内容。
 
-| # | Document | Description |
-|---|----------|-------------|
-| 6 | [Theming and Appearance](06-theming.md) | Themes, the `/theme` command, `pager.toml`, and color-support detection |
-| 7 | [MCP Servers](07-mcp-servers.md) | External tool integrations through the Model Context Protocol |
-| 8 | [Skills](08-skills.md) | Reusable prompt packages in the SKILL.md format |
-| 9 | [Plugins](09-plugins.md) | Bundle and share skills, commands, agents, hooks, and MCP servers; install from marketplace sources |
-| 10 | [Hooks](10-hooks.md) | Lifecycle scripts and HTTP callbacks for pre- and post-tool-use events |
-| 11 | [Custom Models](11-custom-models.md) | Bring-your-own-key, Ollama, and OpenAI-compatible endpoints |
-| 12 | [Project Rules (AGENTS.md)](12-project-rules.md) | Per-directory AGENTS.md instructions and their precedence |
-| 13 | [Memory](13-memory.md) | Cross-session knowledge persistence with `/flush`, `/dream`, and hybrid search |
+| # | 文档 | 说明 |
+|---|------|------|
+| 1 | [Getting Started](01-getting-started.md) | 构建、首次启动、BYOK、基本交互 |
+| 2 | [Authentication](02-authentication.md) | BYOK：`model_providers`、API Key、`/provider`（无浏览器登录） |
+| 3 | [Keyboard Shortcuts](03-keyboard-shortcuts.md) | TUI 快捷键与鼠标操作 |
+| 4 | [Slash Commands](04-slash-commands.md) | 全部 `/` 命令 |
+| 5 | [Configuration](05-configuration.md) | `config.toml`、`pager.toml`、环境变量与文件位置 |
 
 ---
 
-## Tier 3: Advanced Usage Docs
+## Tier 2: 核心功能
 
-Automate, script, and integrate Grok Build with other systems.
+自定义与扩展 Chaos。
 
-| # | Document | Description |
-|---|----------|-------------|
-| 14 | [Headless Mode and Scripting](14-headless-mode.md) | `grok -p`, output formats, CI/CD integration, and piping |
-| 15 | [Agent Mode and IDE Integration](15-agent-mode.md) | ACP stdio transport, WebSocket relay, and SDK integration |
-| 16 | [Subagents and Personas](16-subagents.md) | Parallel child sessions, agent types, personas, and capability modes |
-| 17 | [Session Management](17-sessions.md) | Save, load, resume, rewind, compact, and the session persistence format |
-| 18 | [Sandbox Mode](18-sandbox.md) | OS-level filesystem and network isolation profiles |
-| 19 | [Plan Mode](19-plan-mode.md) | Structured planning, plan-file edits, and approval before coding |
-| 20 | [Background Tasks and Monitoring](20-background-tasks.md) | `background: true`, `/loop`, `monitor`, and `Ctrl+B` to demote |
-| 21 | [Terminal Support and Troubleshooting](21-terminal-support.md) | tmux, SSH, truecolor, clipboard, and OSC 52 |
-| 22 | [Permissions and Safety Controls](22-permissions-and-safety.md) | `dontAsk` mode, auto-approved tools, the safe-bash list, and restrictive PreToolUse hooks (such as git/gh-only) |
-| 23 | [Agent Dashboard](23-dashboard.md) | Central overview of local sessions and forks |
-| 24 | [Monitoring Usage (External OpenTelemetry)](24-monitoring-usage.md) | Customer OTEL export |
+| # | 文档 | 说明 |
+|---|------|------|
+| 6 | [Theming and Appearance](06-theming.md) | 主题、`/theme`、`pager.toml` |
+| 7 | [MCP Servers](07-mcp-servers.md) | 通过 MCP 接入外部工具 |
+| 8 | [Skills](08-skills.md) | SKILL.md 可复用提示包 |
+| 9 | [Plugins](09-plugins.md) | 打包 skills/commands/agents/hooks/MCP |
+| 10 | [Hooks](10-hooks.md) | 工具前后生命周期脚本 |
+| 11 | [Custom Models](11-custom-models.md) | BYOK、Ollama、OpenAI 兼容端点 |
+| 12 | [Project Rules (AGENTS.md)](12-project-rules.md) | 目录级指令与优先级 |
+| 13 | [Memory](13-memory.md) | 跨会话记忆 |
+
+---
+
+## Tier 3: 进阶
+
+自动化、脚本与系统集成。
+
+| # | 文档 | 说明 |
+|---|------|------|
+| 14 | [Headless Mode and Scripting](14-headless-mode.md) | `chaos -p`、输出格式、CI |
+| 15 | [Agent Mode and IDE Integration](15-agent-mode.md) | ACP、WebSocket、SDK |
+| 16 | [Subagents and Personas](16-subagents.md) | 子代理与能力模式 |
+| 17 | [Session Management](17-sessions.md) | 会话保存/恢复/压缩 |
+| 18 | [Sandbox Mode](18-sandbox.md) | 沙箱配置 |
+| 19 | [Plan Mode](19-plan-mode.md) | 计划模式 |
+| 20 | [Background Tasks and Monitoring](20-background-tasks.md) | 后台任务与 `monitor` |
+| 21 | [Terminal Support and Troubleshooting](21-terminal-support.md) | tmux、SSH、剪贴板 |
+| 22 | [Permissions and Safety Controls](22-permissions-and-safety.md) | 权限与安全 |
+| 23 | [Agent Dashboard](23-dashboard.md) | 本地会话总览 |
+| 24 | [Monitoring Usage (External OpenTelemetry)](24-monitoring-usage.md) | 外部 OTEL 导出 |

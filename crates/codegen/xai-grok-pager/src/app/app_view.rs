@@ -6761,8 +6761,8 @@ pub(crate) mod tests {
     fn apply_auth_meta_clears_gate_on_subscription() {
         let mut app = test_app();
         app.gate = Some(xai_grok_shell::auth::GateInfo {
-            message: "Subscribe to use Grok Build".into(),
-            url: Some("https://grok.com/supergrok?referrer=grok-build".into()),
+            message: "请配置 Provider 以使用 Chaos".into(),
+            url: Some("https://example.com/provider".into()),
             label: None,
         });
         assert!(app.is_access_blocked());

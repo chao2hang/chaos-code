@@ -56,7 +56,7 @@ pub enum Action {
     ExitSession,
     /// Exit session without double-press confirmation (e.g., from command palette).
     ExitSessionConfirmed,
-    /// Open grok.com in the browser for SuperGrok subscription upsell.
+    /// Open an optional upgrade URL from gate/remote settings (Chaos: often no-op).
     OpenSupergrokUrl,
     /// Re-check subscription status via the shell's `x.ai/auth/check_subscription`.
     CheckSubscription,
@@ -64,7 +64,7 @@ pub enum Action {
     OpenUrl(String),
     /// Open a semantic scrollback link.
     OpenLink(crate::render::osc8::LinkTarget),
-    /// Open grok.com managed connectors, appending session teamId when set.
+    /// Open managed connectors portal when configured (empty URL no-ops on Chaos).
     OpenManagedConnectors,
     /// Cycle to the next visible link (or highlight the first if none selected).
     OpenNextLink,

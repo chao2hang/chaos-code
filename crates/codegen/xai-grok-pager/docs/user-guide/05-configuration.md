@@ -1,6 +1,11 @@
 # Configuration
 
-Grok reads settings from config files, environment variables, and CLI flags. This page covers the common options.
+Chaos 从配置文件、环境变量和 CLI flags 读取设置。本页覆盖常用选项。
+
+> **配置根（user home）：** `$CHAOS_HOME` → `$GROK_HOME` → 已有 `~/.chaos` →
+> 已有 `~/.grok` → 默认新建 `~/.chaos`。下文写 `~/.chaos/...` 时，若你仍在用
+> 兼容目录，请替换为 `~/.grok/...`。项目级同样双读 `.chaos/` 与 `.grok/`。
+> 模型与 Provider 完整示例见 [CHAOS.md](../../../../CHAOS.md)。
 
 ---
 
@@ -8,17 +13,17 @@ Grok reads settings from config files, environment variables, and CLI flags. Thi
 
 Settings resolve highest-priority first:
 
-1. **CLI flags** (e.g. `--yolo`, `--model`, `--sandbox`)
-2. **Environment variables** (e.g. `XAI_API_KEY`, `GROK_MEMORY`)
-3. **config.toml** (`~/.grok/config.toml`)
-4. **Managed / requirements config** (files your org may deploy, e.g. `managed_config.toml` / `requirements.toml`)
-5. **Built-in defaults**
+1. **CLI flags**（如 `--yolo`、`--model`、`--sandbox`）
+2. **环境变量**（如 Provider 的 `env_key`、`GROK_MEMORY`）
+3. **config.toml**（`~/.chaos/config.toml` 或兼容路径）
+4. **Managed / requirements config**（组织部署的 `managed_config.toml` / `requirements.toml`）
+5. **内置默认值**
 
 ---
 
 ## config.toml (main configuration)
 
-Location: `~/.grok/config.toml`. If the file is missing, Grok uses its built-in defaults, so you only need to set the values you want to override.
+位置：`~/.chaos/config.toml`（或双读解析到的 `~/.grok/config.toml`）。文件不存在时使用内置默认值，只需覆盖你需要的项。
 
 ### General settings
 
@@ -755,19 +760,19 @@ User home below means the resolved config root (`$CHAOS_HOME` / `$GROK_HOME` / d
 
 ## Project-scoped configuration
 
-Some settings can be set per-project by placing files in `.grok/` inside your repository:
+项目级配置放在仓库内的 `.chaos/` 或 `.grok/`（双读，同名冲突时 Chaos 侧优先）：
 
 | File | What it configures |
 |------|--------------------|
-| `.grok/config.toml` | MCP servers, plugins, permission rules, and the `[mcp] max_output_bytes` tool-result cap (other sections load only from `~/.grok/config.toml`) |
-| `.grok/skills/` | Project-specific skills |
-| `.grok/hooks/` | Project-specific lifecycle hooks |
-| `.grok/agents/` | Project-specific agent definitions |
-| `.grok/lsp.json` | LSP server configuration |
-| `.grok/sandbox.toml` | Custom sandbox profiles |
-| `AGENTS.md` | Project instructions (system prompt) |
+| `.chaos/config.toml` 或 `.grok/config.toml` | MCP、plugins、permission 与 `[mcp] max_output_bytes`（其余 section 只从用户 `config.toml` 加载） |
+| `.chaos/skills/` 或 `.grok/skills/` | 项目 skills |
+| `.chaos/hooks/` 或 `.grok/hooks/` | 项目 hooks |
+| `.chaos/agents/` 或 `.grok/agents/` | 项目 agent 定义 |
+| `.chaos/lsp.json` 或 `.grok/lsp.json` | LSP 配置 |
+| `.chaos/sandbox.toml` 或 `.grok/sandbox.toml` | 沙箱 profile |
+| `AGENTS.md` | 项目指令（系统提示） |
 
-Project-scoped MCP servers override global ones with the same name (full replacement, not a merge).
+同名项目级 MCP 会覆盖全局配置（整段替换，非字段合并）。
 
 ---
 

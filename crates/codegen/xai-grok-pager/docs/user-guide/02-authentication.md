@@ -10,7 +10,9 @@
 
 Chaos 仅通过 **Provider API Key** 访问模型：
 
-1. 在 `~/.grok/config.toml` 配置 `model_providers` 与 `model`（后续版本会迁移到 `~/.chaos`，迁移期间不覆盖旧配置）。
+1. 在解析后的用户配置根写入 `config.toml`（顺序见 [CHAOS.md](../../../../CHAOS.md)：
+   `$CHAOS_HOME` → `$GROK_HOME` → 已有 `~/.chaos` → 已有 `~/.grok` → 默认 `~/.chaos`）。
+   配置 `model_providers` 与 `model`。程序**不会**自动复制或覆盖任一侧已有目录。
 2. 密钥优先放在环境变量中（`env_key`），不要写入 Git。
 3. 使用 `/provider` 在 TUI 中管理 Provider 列表、密钥与默认模型。
 

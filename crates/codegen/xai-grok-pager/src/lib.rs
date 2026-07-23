@@ -1,4 +1,4 @@
-//! xai-grok-pager — Grok Build TUI.
+//! xai-grok-pager — Chaos / Grok Build TUI (binary name: `chaos`).
 //!
 //! A clean-room implementation built on the v3 pager rendering engine.
 

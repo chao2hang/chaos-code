@@ -1053,7 +1053,13 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
         }
         Action::OpenManagedConnectors => {
             let url = crate::views::mcps_modal::managed_connectors_url(app.team_id.as_deref());
-            open_url_or_show(app, &url);
+            if url.is_empty() {
+                app.show_toast(
+                    "Chaos 无远程连接器门户；请在 config.toml 的 [mcp_servers] 中配置 MCP",
+                );
+            } else {
+                open_url_or_show(app, &url);
+            }
             vec![]
         }
         Action::OpenNextLink => {

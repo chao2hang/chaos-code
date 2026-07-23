@@ -1,9 +1,9 @@
 //! CreditLimitBlock — scrollback card shown when a max-tier user exhausts credits.
 //!
-//! Replaces the Q&A question modal for users already at the highest tier
-//! (SuperGrok Heavy). Instead of offering "Upgrade tier" + PAYG / buy-credits
-//! options in the question overlay, this block renders an inline card with a
-//! descriptive message and a link to the usage/billing page.
+//! Replaces the Q&A question modal for users already at the highest billing tier.
+//! Instead of offering upgrade + PAYG / buy-credits options in the question
+//! overlay, this block renders an inline card with a descriptive message and
+//! an optional link to the Provider usage/billing page (may be empty on Chaos).
 
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -68,18 +68,19 @@ impl BlockContent for CreditLimitBlock {
         };
         let body_line = Line::from(Span::styled(body.to_string(), muted));
 
-        // Clickable link styled as a button.
-        let link_style = theme.link_style();
-        let link_line = Line::from(vec![Span::styled(self.url.clone(), link_style)]);
-
-        BlockOutput {
-            lines: vec![
-                BlockLine::styled(heading).with_selection_range(Some(0)),
-                BlockLine::separator(Line::from("")),
-                BlockLine::styled(body_line).with_selection_range(Some(0)),
-                BlockLine::styled(link_line).with_selection_range(Some(0)),
-            ],
+        let mut lines = vec![
+            BlockLine::styled(heading).with_selection_range(Some(0)),
+            BlockLine::separator(Line::from("")),
+            BlockLine::styled(body_line).with_selection_range(Some(0)),
+        ];
+        // Optional billing/usage URL — Chaos often leaves this empty (BYOK).
+        if !self.url.trim().is_empty() {
+            let link_style = theme.link_style();
+            let link_line = Line::from(vec![Span::styled(self.url.clone(), link_style)]);
+            lines.push(BlockLine::styled(link_line).with_selection_range(Some(0)));
         }
+
+        BlockOutput { lines }
     }
 
     fn accent(&self, _ctx: &BlockContext) -> Option<AccentStyle> {
@@ -209,7 +210,7 @@ mod tests {
 
     #[test]
     fn output_structure_and_content() {
-        let url = "https://grok.com?_s=usage";
+        let url = "https://example.com/usage";
         let block = CreditLimitBlock::new("Test heading", CreditLimitCardAction::EnablePayg, url);
         let output = block.output(&ctx());
 
@@ -222,6 +223,7 @@ mod tests {
             .flat_map(|l| l.content.spans.iter().map(|s| s.content.as_ref()))
             .collect();
         assert!(all_text.contains(url));
+        assert!(!all_text.contains("grok.com"));
 
         // Heading uses bold modifier.
         assert!(
@@ -231,6 +233,14 @@ mod tests {
                 .iter()
                 .any(|s| s.style.add_modifier.contains(Modifier::BOLD))
         );
+    }
+
+    #[test]
+    fn output_omits_link_when_url_empty() {
+        let block = CreditLimitBlock::new("Test heading", CreditLimitCardAction::EnablePayg, "");
+        let output = block.output(&ctx());
+        // heading, separator, body — no link line
+        assert_eq!(output.lines.len(), 3);
     }
 
     #[test]

@@ -1,26 +1,31 @@
 # MCP Servers
 
-MCP (Model Context Protocol) servers extend Grok with external tool integrations. They let Grok interact with any service that implements the MCP standard.
+MCP（Model Context Protocol）服务器为 Chaos 接入外部工具。可与任何实现 MCP 标准的服务交互。
+
+> Chaos **没有** grok.com 远程连接器门户。请在用户或项目 `config.toml` 的
+> `[mcp_servers]` 中配置本地/远程 MCP。扩展面板中的「托管 MCP」指本地托管分类，
+> 不是 xAI 云托管。
 
 ---
 
 ## What Are MCP Servers?
 
-An MCP server is a process that exposes tools to Grok over a standardized protocol. When you configure an MCP server, its tools become available to the model alongside Grok's built-in tools. The model can discover and call these tools during a session.
+MCP 服务器通过标准协议向 Chaos 暴露工具。配置后，其工具与内置工具一并提供给模型，可在会话中发现并调用。
 
-For example, a GitHub MCP server might expose tools like `create_issue`, `list_pull_requests`, and `search_code`. A database server might expose `query`, `list_tables`, and `describe_schema`.
+例如 GitHub MCP 可提供 `create_issue`、`list_pull_requests`、`search_code`；数据库服务器可提供 `query`、`list_tables`、`describe_schema`。
 
-See the [MCP specification](https://modelcontextprotocol.io) for protocol details.
+协议细节见 [MCP specification](https://modelcontextprotocol.io)。
 
 ---
 
 ## Configuration
 
-MCP servers are configured in `~/.grok/config.toml` under `[mcp_servers.<name>]` sections.
+在用户配置根的 `config.toml`（`~/.chaos` 或兼容 `~/.grok`）中配置
+`[mcp_servers.<name>]`。项目级见 `.chaos/config.toml` / `.grok/config.toml`。
 
 ### stdio Transport (Local Process)
 
-Grok spawns a local process and communicates over stdin/stdout:
+Chaos 拉起本地进程，经 stdin/stdout 通信：
 
 ```toml
 [mcp_servers.my-server]
