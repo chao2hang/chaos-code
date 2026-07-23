@@ -43,11 +43,21 @@ pub struct UsageTotals {
 
 impl UsageTotals {
     fn from_call(
+        model_id: &str,
         usage: &TokenUsage,
         api_duration_ms: Option<u64>,
         cost_usd_ticks: Option<i64>,
     ) -> Self {
-        let cost_usd_ticks = xai_grok_sampling_types::reported_cost_ticks(cost_usd_ticks);
+        let server_cost = xai_grok_sampling_types::reported_cost_ticks(cost_usd_ticks);
+        // 服务器未报告费用时，尝试本地定价表估算（支持 BYOK 模型）
+        let cost_usd_ticks = server_cost.or_else(|| {
+            xai_token_estimation::pricing::estimate_cost_usd_ticks(
+                model_id,
+                u64::from(usage.prompt_tokens),
+                u64::from(usage.completion_tokens),
+                u64::from(usage.cached_prompt_tokens),
+            )
+        });
         Self {
             input_tokens: u64::from(usage.prompt_tokens),
             output_tokens: u64::from(usage.completion_tokens),
@@ -118,7 +128,7 @@ impl UsageLedger {
         api_duration_ms: Option<u64>,
         cost_usd_ticks: Option<i64>,
     ) {
-        let call = UsageTotals::from_call(usage, api_duration_ms, cost_usd_ticks);
+        let call = UsageTotals::from_call(model_id, usage, api_duration_ms, cost_usd_ticks);
         self.main_loop_model_calls = self.main_loop_model_calls.saturating_add(1);
         self.fold_entry(model_id, &call);
     }

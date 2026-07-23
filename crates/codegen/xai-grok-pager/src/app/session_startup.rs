@@ -631,31 +631,22 @@ async fn resolve_existing_session(
     let agent_config = xai_grok_shell::agent::config::Config::new_from_toml_cfg(&raw_config)
         .map_err(|e| anyhow::anyhow!("Failed to create agent config: {}", e))?;
     use xai_grok_shell::agent::session_registry_client::SessionRegistryClient;
-    use xai_grok_shell::auth::{AuthManager, ensure_authenticated_or_noninteractive};
     use xai_grok_shell::session::restore::restore_session_with_storage;
-    use xai_grok_shell::util::grok_home::grok_home;
     let deployment_key = agent_config.endpoints.deployment_key.clone();
-    ensure_authenticated_or_noninteractive(
-        &agent_config.grok_com_config,
-        deployment_key.is_some(),
-        None,
-    )
-    .await
-    .map_err(|e| anyhow::anyhow!("Failed to authenticate for session restore: {}", e))?;
-    let auth_manager = std::sync::Arc::new(AuthManager::new(
-        &grok_home(),
-        agent_config.grok_com_config.clone(),
-    ));
+    if deployment_key.is_none() {
+        anyhow::bail!(
+            "远程会话恢复需要显式 deployment_key；Chaos 不读取第三方登录缓存。"
+        );
+    }
     let registry_client =
         SessionRegistryClient::new(agent_config.endpoints.proxy_url(), String::new())
             .with_deployment_key(deployment_key.clone())
-            .with_alpha_test_key(agent_config.endpoints.alpha_test_key.clone())
-            .with_auth(auth_manager.clone());
+            .with_alpha_test_key(agent_config.endpoints.alpha_test_key.clone());
     let storage_client = xai_grok_shell::auth::credential_provider::build_storage_client_for_proxy(
         &agent_config.endpoints.proxy_url(),
         deployment_key,
         agent_config.endpoints.alpha_test_key.clone(),
-        Some(auth_manager),
+        None,
         None,
         None,
         "grok-pager",

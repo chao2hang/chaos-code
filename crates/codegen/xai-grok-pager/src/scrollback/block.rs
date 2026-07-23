@@ -1561,6 +1561,7 @@ mod searchable_text_tests {
             tool_definitions_count: 1,
             tool_definitions_tokens: 20,
             compaction_count: 0,
+            selective_compaction_tokens_saved: 0,
             turn_count: 1,
             tool_call_count: 1,
             message_count: 1,

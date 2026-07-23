@@ -428,7 +428,7 @@ pub(super) fn render_version_badge(
     }
     if show_api_key && is_api_key_auth {
         spans.push(Span::styled(
-            "Logged in with API key",
+            "使用 API 密钥登录",
             Style::default().fg(theme.gray),
         ));
         spans.push(sep);
@@ -438,7 +438,7 @@ pub(super) fn render_version_badge(
     match &mode {
         VersionBadgeMode::Full { .. } => {
             spans.push(Span::styled(
-                "Grok Build  ",
+                "Chaos  ",
                 Style::default()
                     .fg(theme.text_primary)
                     .add_modifier(Modifier::BOLD),
@@ -448,7 +448,7 @@ pub(super) fn render_version_badge(
                 Style::default().fg(theme.gray),
             ));
             spans.push(Span::styled(
-                " Beta",
+                "",
                 Style::default()
                     .fg(theme.text_primary)
                     .add_modifier(Modifier::BOLD),
@@ -456,7 +456,7 @@ pub(super) fn render_version_badge(
         }
         VersionBadgeMode::HeroFooter => {
             let channel_display = if channel.is_empty() {
-                "Beta"
+                ""
             } else {
                 channel.trim()
             };
@@ -467,7 +467,7 @@ pub(super) fn render_version_badge(
         }
         VersionBadgeMode::HeroInline => {
             spans.push(Span::styled(
-                "Grok Build Beta  ",
+                "Chaos  ",
                 Style::default()
                     .fg(theme.text_primary)
                     .add_modifier(Modifier::BOLD),
@@ -759,12 +759,12 @@ pub fn render_welcome(
             }
         }
         AuthState::Done if params.is_zdr_blocked => {
-            let menu = [("l", "Switch account"), ("q", "Quit")];
+            let menu = [("l", "切换账户"), ("q", "退出")];
             let (menu_rects, post_flush_escapes) = render_welcome_blocked(
                 content_area,
                 buf,
                 Some((
-                    "Grok Build is not yet available for this account.",
+                    "Chaos 暂不可用于此账户。",
                     theme.gray_bright,
                 )),
                 &menu,
@@ -935,10 +935,10 @@ fn render_welcome_trust(
     h_margin: u16,
     compact: bool,
 ) -> WelcomeRenderResult {
-    let menu_items = [("y", "Yes, proceed"), ("n", "No, quit")];
+    let menu_items = [("y", "是，继续"), ("n", "否，退出")];
     let lines = vec![
         Line::from(Span::styled(
-            "Do you trust the contents of this directory?",
+            "您信任此目录的内容吗？",
             Style::default().fg(theme.gray_bright),
         ))
         .alignment(Alignment::Center),
@@ -951,12 +951,12 @@ fn render_welcome_trust(
         // Two lines so the warning never clips at narrow / compact widths
         // (a single ~78-char line would truncate "...posing security risks").
         Line::from(Span::styled(
-            "Grok Build may run or modify contents in this directory,",
+            "Chaos 可能在此目录中运行或修改内容，",
             Style::default().fg(theme.gray),
         ))
         .alignment(Alignment::Center),
         Line::from(Span::styled(
-            "posing security risks.",
+            "存在安全风险。",
             Style::default().fg(theme.gray),
         ))
         .alignment(Alignment::Center),

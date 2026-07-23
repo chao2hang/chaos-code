@@ -12,7 +12,9 @@ use ratatui::text::Line;
 use ratatui::widgets::Widget;
 
 use super::actions::Action;
-use super::agent_view::{AgentView, active_contexts_for_pane, apply_settings_outcome};
+use super::agent_view::{
+    AgentView, active_contexts_for_pane, apply_provider_outcome, apply_settings_outcome,
+};
 use super::app_view::InputOutcome;
 
 use crate::theme::Theme;
@@ -433,6 +435,29 @@ impl AgentView {
             }
         }
 
+        // ProviderModal: route through ModalWindow chrome, then delegate.
+        if let ActiveModal::ProviderModal { state } = modal {
+            let chrome_cfg = mw::ModalWindowConfig {
+                title: "",
+                tabs: None,
+                shortcuts: &[],
+                sizing: mw::ModalSizing::default(),
+                fold_info: None,
+            };
+            let chrome_outcome = mw::handle_modal_key(&mut state.window, key, &chrome_cfg);
+            match chrome_outcome {
+                ModalWindowOutcome::CloseRequested => {
+                    self.active_modal = None;
+                    return InputOutcome::Changed;
+                }
+                ModalWindowOutcome::Unhandled => {
+                    let out = crate::views::provider_modal::handle_provider_key(state, key);
+                    return apply_provider_outcome(self, out);
+                }
+                _ => return InputOutcome::Changed,
+            }
+        }
+
         // ResetSettingsConfirm: y/n routing. Handled before generic
         // char-match so Esc/F2/Ctrl+, route to Cancel (not modal close).
         if let Some(ActiveModal::ResetSettingsConfirm { modal, .. }) = self.active_modal.as_ref() {
@@ -483,6 +508,7 @@ impl AgentView {
             | ActiveModal::ShortcutsHelp { .. }
             | ActiveModal::MemoryBrowser { .. }
             | ActiveModal::Settings { .. }
+            | ActiveModal::ProviderModal { .. }
             | ActiveModal::ResetSettingsConfirm { .. }
             | ActiveModal::RememberNoteReview { .. } => unreachable!(),
         }
@@ -529,6 +555,11 @@ impl AgentView {
         };
         if let Some(outcome) = settings_outcome {
             return apply_settings_outcome(self, outcome);
+        }
+        // ProviderModal: 粘贴到当前表单字段
+        if let Some(ActiveModal::ProviderModal { state }) = self.active_modal.as_mut() {
+            let out = crate::views::provider_modal::handle_provider_paste(state, text);
+            return apply_provider_outcome(self, out);
         }
         if self.active_modal.is_some() {
             InputOutcome::Changed
@@ -1593,6 +1624,19 @@ impl AgentView {
             }
         }
 
+        // ProviderModal: route mouse through ModalWindow chrome.
+        if let Some(ActiveModal::ProviderModal { state }) = &mut self.active_modal {
+            let outcome =
+                mw::handle_modal_mouse(&mut state.window, mouse.kind, mouse.column, mouse.row);
+            match outcome {
+                ModalWindowOutcome::CloseRequested => {
+                    self.active_modal = None;
+                    return InputOutcome::Changed;
+                }
+                _ => return InputOutcome::Changed,
+            }
+        }
+
         // ResetSettingsConfirm: route mouse events through the
         // modal-window chrome.
         if let Some(ActiveModal::ResetSettingsConfirm { settings_state, .. }) =
@@ -2355,6 +2399,10 @@ impl AgentView {
                         Some(&overlay),
                     );
                 }
+            } else if let modal::ActiveModal::ProviderModal { state: provider_state } =
+                active_modal
+            {
+                crate::views::provider_modal::render_provider_modal(buf, area, provider_state);
             }
         }
     }

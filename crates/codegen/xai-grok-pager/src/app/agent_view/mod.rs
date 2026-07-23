@@ -1948,6 +1948,121 @@ pub(super) fn apply_settings_outcome(
         SettingsKeyOutcome::Unchanged => InputOutcome::Unchanged,
     }
 }
+
+pub(super) fn apply_provider_outcome(
+    agent: &mut AgentView,
+    outcome: crate::views::provider_modal::ProviderKeyOutcome,
+) -> InputOutcome {
+    use crate::views::provider_modal::ProviderKeyOutcome;
+    match outcome {
+        ProviderKeyOutcome::Close => {
+            agent.active_modal = None;
+            InputOutcome::Changed
+        }
+        ProviderKeyOutcome::Changed => InputOutcome::Changed,
+        ProviderKeyOutcome::Commit => {
+            if let Some(crate::views::modal::ActiveModal::ProviderModal { state }) =
+                &mut agent.active_modal
+            {
+                try_commit_provider_form(state);
+            }
+            InputOutcome::Changed
+        }
+        ProviderKeyOutcome::Unchanged => InputOutcome::Unchanged,
+        ProviderKeyOutcome::SwitchModel(model_id) => {
+            let provider_name = if let Some(crate::views::modal::ActiveModal::ProviderModal { state }) =
+                &agent.active_modal
+            {
+                match &state.mode {
+                    crate::views::provider_modal::ProviderModalMode::SetModel(name)
+                    | crate::views::provider_modal::ProviderModalMode::Models(name) => {
+                        Some(name.clone())
+                    }
+                    _ => None,
+                }
+            } else {
+                None
+            };
+            agent.active_modal = None;
+
+            // 写入 [model."<provider>/<id>"] + models.default，并乐观注入
+            // 会话 catalog，否则 SetDefaultModel 会因「不在 catalog」直接 no-op。
+            let catalog_key = if let Some(name) = &provider_name {
+                match crate::slash::commands::provider::register_and_set_model(name, &model_id) {
+                    Ok(key) => key,
+                    Err(e) => {
+                        tracing::error!(error = %e, "register_and_set_model failed");
+                        crate::slash::commands::provider::provider_model_catalog_key(
+                            name, &model_id,
+                        )
+                    }
+                }
+            } else {
+                model_id.clone()
+            };
+
+            let mid: agent_client_protocol::ModelId = catalog_key.clone().into();
+            let display = if let Some(name) = &provider_name {
+                format!("{name}/{model_id}")
+            } else {
+                catalog_key.clone()
+            };
+            agent
+                .session
+                .models
+                .available
+                .entry(mid.clone())
+                .or_insert_with(|| agent_client_protocol::ModelInfo::new(mid.clone(), display));
+
+            InputOutcome::Action(Action::SetDefaultModel(mid))
+        }
+    }
+}
+
+fn try_commit_provider_form(state: &mut crate::views::provider_modal::ProviderModalState) {
+    use crate::views::provider_modal::{FormStep, ProviderModalMode};
+
+    if state.success.is_some() {
+        return;
+    }
+
+    match &state.mode {
+        ProviderModalMode::Add
+            if state.current_step == FormStep::ApiKey
+                && !state.name.is_empty()
+                && !state.api_key.is_empty() =>
+        {
+            let result = crate::slash::commands::provider::add_provider(
+                &state.name,
+                &state.base_url,
+                state.auth_scheme(),
+                state.api_backend(),
+                &state.api_key,
+            );
+            match result {
+                Ok(()) => {
+                    state.success = Some(format!("渠道 \"{}\" 已添加", state.name));
+                }
+                Err(e) => {
+                    state.error = Some(e);
+                }
+            }
+        }
+        ProviderModalMode::SetKey(name) if !state.api_key.is_empty() => {
+            let result = crate::slash::commands::provider::set_provider_key(name, &state.api_key);
+            match result {
+                Ok(()) => {
+                    state.success = Some(format!("渠道 \"{name}\" 的 API Key 已设置"));
+                }
+                Err(e) => {
+                    state.error = Some(e);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Whether this key event represents `#` (hash).
 ///
 /// Most terminals report `KeyCode::Char('#')` directly. Under the Kitty

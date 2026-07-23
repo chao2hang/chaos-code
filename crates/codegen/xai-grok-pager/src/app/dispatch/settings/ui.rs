@@ -216,6 +216,85 @@ pub(in crate::app::dispatch) fn dispatch_open_settings(app: &mut AppView) -> Vec
     vec![]
 }
 
+/// Open the provider management modal (`/provider` subcommands).
+/// Single-instance: if already open, closes it first.
+pub(in crate::app::dispatch) fn dispatch_open_provider_modal(
+    app: &mut AppView,
+    mode: crate::views::provider_modal::ProviderModalMode,
+) -> Vec<Effect> {
+    use crate::views::modal::ActiveModal;
+    use crate::views::provider_modal::ProviderModalState;
+
+    let ActiveView::Agent(id) = app.active_view else {
+        return vec![];
+    };
+
+    // 预填充模式相关的状态
+    let mut state = ProviderModalState::new(mode.clone());
+
+    match &mode {
+        crate::views::provider_modal::ProviderModalMode::List => {
+            match crate::slash::commands::provider::load_config() {
+                Ok(doc) => {
+                    let providers = crate::slash::commands::provider::list_providers(&doc);
+                    let current_provider =
+                        crate::slash::commands::provider::current_provider_name(&doc);
+                    state.providers = providers
+                        .iter()
+                        .map(|name| {
+                            let base_url = crate::slash::commands::provider::provider_field(&doc, name, "base_url").unwrap_or_default();
+                            let auth_scheme = crate::slash::commands::provider::provider_field(&doc, name, "auth_scheme").unwrap_or_default();
+                            let api_backend = crate::slash::commands::provider::provider_field(&doc, name, "api_backend").unwrap_or_default();
+                            let has_key = crate::slash::commands::provider::provider_field(&doc, name, "api_key").is_some();
+                            let is_current = current_provider.as_deref() == Some(name.as_str());
+                            crate::views::provider_modal::ProviderSummary {
+                                name: name.clone(),
+                                base_url,
+                                auth_scheme,
+                                api_backend,
+                                has_key,
+                                is_current,
+                            }
+                        })
+                        .collect();
+                }
+                Err(e) => {
+                    state.error = Some(e);
+                }
+            }
+        }
+        crate::views::provider_modal::ProviderModalMode::Models(name)
+        | crate::views::provider_modal::ProviderModalMode::SetModel(name) => {
+            state.models_loading = true;
+            match crate::slash::commands::provider::fetch_provider_models(name) {
+                Ok(models) => {
+                    state.models = models;
+                    state.models_loading = false;
+                }
+                Err(e) => {
+                    state.error = Some(e);
+                    state.models_loading = false;
+                }
+            }
+        }
+        _ => {}
+    }
+
+    let Some(agent) = app.agents.get_mut(&id) else {
+        return vec![];
+    };
+
+    if matches!(&agent.active_modal, Some(ActiveModal::ProviderModal { .. })) {
+        agent.active_modal = None;
+        return vec![];
+    }
+
+    agent.active_modal = Some(ActiveModal::ProviderModal {
+        state: Box::new(state),
+    });
+    vec![]
+}
+
 /// Open the reset-settings confirmation modal.
 ///
 /// **Modal stack contract.** The current `ActiveModal::Settings`

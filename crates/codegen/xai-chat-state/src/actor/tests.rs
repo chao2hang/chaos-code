@@ -108,6 +108,109 @@ impl TestHarness {
 // ============================================================================
 
 #[tokio::test]
+async fn selective_compaction_projects_without_mutating_history_and_survives_snapshot() {
+    let canonical = vec![
+        ConversationItem::system("系统"),
+        ConversationItem::user("旧问题"),
+        ConversationItem::assistant("旧回答及过程。".repeat(400)),
+        ConversationItem::user("后续问题一"),
+        ConversationItem::user("后续问题二"),
+        ConversationItem::user("当前问题"),
+    ];
+    let h = TestHarness::with_conversation(canonical.clone());
+    let ids = h
+        .handle
+        .apply_selective_compression(
+            vec![crate::SelectiveCompressionRange {
+                start: 2,
+                end: 2,
+                topic: "旧问题处理结果".to_owned(),
+                summary: "已完成旧问题，并保留关键结论。".to_owned(),
+                tokens_before: 1,
+                tokens_after: 1,
+            }],
+            std::collections::BTreeSet::new(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(ids.len(), 1);
+
+    let request = h
+        .handle
+        .build_request(vec![], None, false, None, "c".into(), "r".into())
+        .await
+        .unwrap();
+    assert_eq!(request.items.len(), 6);
+    let encoded = serde_json::to_string(&request.items).unwrap();
+    assert!(encoded.contains("context-summary"));
+    assert!(encoded.contains("已完成旧问题"));
+    assert_eq!(h.handle.get_conversation().await.len(), canonical.len());
+
+    let snapshot = h.handle.snapshot().await.unwrap();
+    h.handle.restore_snapshot(snapshot);
+    let restored = h.handle.get_selective_compaction().await;
+    assert_eq!(restored.active_blocks().count(), 1);
+    assert!(restored.total_tokens_saved() > 1_000);
+}
+
+#[tokio::test]
+async fn selective_compaction_protects_user_requests_and_tool_pairs() {
+    use xai_grok_sampling_types::ToolCall;
+
+    let h = TestHarness::with_conversation(vec![
+        ConversationItem::system("system"),
+        ConversationItem::assistant_tool_calls(vec![ToolCall {
+            id: "read-1".into(),
+            name: "read_file".to_string(),
+            arguments: r#"{"target_file":"a.rs"}"#.into(),
+        }]),
+        ConversationItem::tool_result("read-1", "文件内容"),
+        ConversationItem::user("必须保留的需求"),
+        ConversationItem::user("后续需求"),
+        ConversationItem::user("当前需求"),
+    ]);
+    let user_error = h
+        .handle
+        .apply_selective_compression(
+            vec![crate::SelectiveCompressionRange {
+                start: 3,
+                end: 3,
+                topic: "需求".into(),
+                summary: "摘要".into(),
+                tokens_before: 0,
+                tokens_after: 0,
+            }],
+            Default::default(),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        user_error,
+        crate::SelectiveError::ProtectedItem { index: 3, .. }
+    ));
+
+    let pair_error = h
+        .handle
+        .apply_selective_compression(
+            vec![crate::SelectiveCompressionRange {
+                start: 1,
+                end: 1,
+                topic: "读取".into(),
+                summary: "读取完成".into(),
+                tokens_before: 0,
+                tokens_after: 0,
+            }],
+            Default::default(),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        pair_error,
+        crate::SelectiveError::ToolPairSplit { .. }
+    ));
+}
+
+#[tokio::test]
 async fn actor_spawns_and_shuts_down_via_cancellation() {
     let (mock, _rx) = MockChatPersistence::new();
     let (event_tx, _event_rx) = mpsc::unbounded_channel();
@@ -716,8 +819,9 @@ async fn replace_conversation_persists_and_emits_reset() {
     assert_eq!(conv.len(), 1);
 
     let records = h.drain_persistence();
-    assert_eq!(records.len(), 1);
+    assert_eq!(records.len(), 2);
     assert!(matches!(&records[0], PersistenceRecord::ReplaceHistory(_)));
+    assert!(matches!(&records[1], PersistenceRecord::SelectiveCompaction(_)));
 }
 
 #[tokio::test]

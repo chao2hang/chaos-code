@@ -456,6 +456,12 @@ impl ChatStateActor {
             estimated_tokens = estimated_tokens.min(pre_replace_total);
         }
         self.state.conversation = items;
+        // Any whole-history replacement changes canonical ordinals. A full
+        // compaction has already absorbed the active projection into its
+        // summary, while other replacements must fail closed and rebuild it.
+        self.state.selective_compaction.reset();
+        self.persistence
+            .persist_selective_compaction(&self.state.selective_compaction);
         self.state.estimated_tokens_since_model = 0;
         self.state.total_tokens = estimated_tokens;
         self.state.estimate_at_last_response =
@@ -514,6 +520,9 @@ impl ChatStateActor {
         self.state.turn_start_ms = snap.turn_start_ms;
         self.state.last_compaction_prompt_index = snap.last_compaction_prompt_index;
         self.state.credentials = snap.credentials;
+        self.state.selective_compaction = snap.selective_compaction;
+        self.persistence
+            .persist_selective_compaction(&self.state.selective_compaction);
         // Drop abandoned prompt billing; session ledger is lifetime.
         self.state.prompt_usage = None;
     }

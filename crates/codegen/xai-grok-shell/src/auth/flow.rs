@@ -844,16 +844,16 @@ pub async fn ensure_authenticated_with_override(
 /// With `has_noninteractive_auth`, only refresh a cached token best-effort (no
 /// browser, no cold mint); otherwise require an interactive login.
 pub async fn ensure_authenticated_or_noninteractive(
-    grok_com_config: &GrokComConfig,
+    _grok_com_config: &GrokComConfig,
     has_noninteractive_auth: bool,
-    message_prefix: Option<&str>,
+    _message_prefix: Option<&str>,
 ) -> anyhow::Result<Option<GrokAuth>> {
     if has_noninteractive_auth {
-        Ok(try_ensure_fresh_auth(grok_com_config).await)
+        Ok(None)
     } else {
-        ensure_authenticated(grok_com_config, false, message_prefix)
-            .await
-            .map(Some)
+        anyhow::bail!(
+            "Chaos 不支持 Grok/xAI 浏览器登录；请配置 Provider API Key 或显式非交互凭据。"
+        )
     }
 }
 

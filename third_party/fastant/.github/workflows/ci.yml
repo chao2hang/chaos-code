@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    env:
+      RUST_BACKTRACE: 1
+    steps:
+        - uses: actions/checkout@v4
+        - uses: Swatinem/rust-cache@v2
+        - name: Set up toolchains
+          uses: dtolnay/rust-toolchain@master
+          with:
+            toolchain: nightly
+            components: rustfmt, clippy
+        - name: Check format
+          run: cargo +nightly fmt --all -- --check
+        - name: Clippy
+          run: cargo +nightly clippy --workspace --all-targets --all-features -- -D warnings
+
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-24.04, macos-14, windows-2022 ]
+        features: [ "atomic", "atomic,fallback-coarse" ]
+    env:
+      RUST_BACKTRACE: 1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      - name: Set up toolchains
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+      - name: Build
+        run: cargo build --workspace --all-targets --features ${{ matrix.features }}
+      - name: Run tests
+        run: cargo test --workspace --all-targets --features ${{ matrix.features }} -- --nocapture
+      - name: Run benches
+        run: cargo bench --workspace --all-targets --features ${{ matrix.features }}
+
+  build-wasm:
+    runs-on: ubuntu-24.04
+    env:
+      RUST_BACKTRACE: 1
+      RUSTFLAGS: --cfg getrandom_backend="wasm_js"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up toolchains
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+      - run: wasm-pack test --node

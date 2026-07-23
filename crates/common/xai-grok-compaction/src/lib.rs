@@ -46,7 +46,9 @@ pub mod prompt;
 pub mod reminder;
 pub mod sampler;
 pub mod select;
+pub mod selective;
 pub mod steps;
+pub mod strategies;
 pub mod token;
 
 /// Shared code default for the dedicated compaction model name.

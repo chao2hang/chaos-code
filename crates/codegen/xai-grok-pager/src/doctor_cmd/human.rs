@@ -9,7 +9,7 @@ const LIVE_TUI_PROBE_CTA: &str = "Run /doctor inside Grok.";
 
 pub(super) fn format(report: &DiagnosticReport) -> String {
     let facts = &report.facts;
-    let mut out = String::from("Grok Doctor\n\nTerminal\n");
+    let mut out = String::from("Chaos 诊断\n\n终端\n");
 
     fact(&mut out, "terminal", &facts.terminal.to_string());
     match &facts.xtversion {

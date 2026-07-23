@@ -53,6 +53,9 @@ pub struct ChatStateSnapshot {
     /// Opaque credential secrets (API key, optional extra auth, client version).
     #[serde(default)]
     pub credentials: Credentials,
+    /// Request-only dynamic context projection state.
+    #[serde(default)]
+    pub selective_compaction: xai_grok_compaction::selective::SelectiveState,
 }
 
 /// Metadata for session notifications (timing info).
@@ -194,6 +197,7 @@ mod tests {
             turn_start_ms: None,
             last_compaction_prompt_index: None,
             credentials: Credentials::default(),
+            selective_compaction: Default::default(),
         };
 
         let json = serde_json::to_string(&snapshot).expect("serialize");
@@ -240,6 +244,7 @@ mod tests {
             turn_start_ms: Some(1234567800),
             last_compaction_prompt_index: Some(2),
             credentials: Credentials::default(),
+            selective_compaction: Default::default(),
         };
 
         let json = serde_json::to_string(&snapshot).expect("serialize");

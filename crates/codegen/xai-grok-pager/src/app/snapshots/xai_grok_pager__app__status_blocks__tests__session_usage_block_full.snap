@@ -2,9 +2,9 @@
 source: crates/codegen/xai-grok-pager/src/app/status_blocks.rs
 expression: text
 ---
-Session usage (since start or last resume):
-  Input tokens:   1,234,567 (1,000,000 cached)
-  Output tokens:  45,678 (12,000 reasoning)
-  Total tokens:   1,280,245
-  Model calls:    42 · API time: 3m12s
-  Cost:           $1.2345
+会话用量（自启动或最近一次恢复后）：
+  输入 Token：    1,234,567（缓存命中 1,000,000）
+  输出 Token：    45,678（推理 12,000）
+  Token 总计：    1,280,245
+  模型调用：      42 次 · API 耗时 3m12s
+  费用：          $1.2345

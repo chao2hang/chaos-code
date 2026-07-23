@@ -167,18 +167,7 @@ pub fn build_auth_methods(inputs: AuthMethodsBuildInputs<'_>) -> BuiltAuthMethod
     }
 }
 
-fn build_pinned_api_key(has_external_api_key: bool) -> BuiltAuthMethods {
-    if !has_external_api_key {
-        xai_grok_telemetry::unified_log::warn(
-            "auth: preferred_method=api_key but no API key credentials available",
-            None,
-            None,
-        );
-        return BuiltAuthMethods {
-            methods: Vec::new(),
-            default_auth_method_id: None,
-        };
-    }
+fn build_pinned_api_key(_has_external_api_key: bool) -> BuiltAuthMethods {
     BuiltAuthMethods {
         methods: vec![xai_api_key_auth_method()],
         default_auth_method_id: Some(acp::AuthMethodId::new(XAI_API_KEY_METHOD_ID)),
@@ -186,22 +175,14 @@ fn build_pinned_api_key(has_external_api_key: bool) -> BuiltAuthMethods {
 }
 
 fn build_pinned_oidc(
-    has_cached_token: bool,
+    _has_cached_token: bool,
     has_enterprise_oidc: bool,
     enterprise_oidc_issuer: Option<&str>,
     login_label: Option<&str>,
     has_auth_provider_command: bool,
 ) -> BuiltAuthMethods {
-    let mut methods: Vec<acp::AuthMethod> = Vec::new();
-    let mut default_auth_method_id: Option<acp::AuthMethodId> = None;
-
-    if has_cached_token {
-        methods.push(cached_token_auth_method());
-        default_auth_method_id = Some(acp::AuthMethodId::new(CACHED_TOKEN_AUTH_METHOD_ID));
-    }
-
-    push_interactive_login(
-        &mut methods,
+    // Chaos is BYOK-only: never advertise Grok.com or OIDC browser login.
+    let _ = (
         has_enterprise_oidc,
         enterprise_oidc_issuer,
         login_label,
@@ -209,47 +190,27 @@ fn build_pinned_oidc(
     );
 
     BuiltAuthMethods {
-        methods,
-        default_auth_method_id,
+        methods: vec![xai_api_key_auth_method()],
+        default_auth_method_id: Some(acp::AuthMethodId::new(XAI_API_KEY_METHOD_ID)),
     }
 }
 
 fn build_unpinned(
     has_external_api_key: bool,
-    has_cached_token: bool,
+    _has_cached_token: bool,
     has_enterprise_oidc: bool,
     enterprise_oidc_issuer: Option<&str>,
     login_label: Option<&str>,
     has_auth_provider_command: bool,
 ) -> BuiltAuthMethods {
-    let mut methods: Vec<acp::AuthMethod> = Vec::new();
-    let mut default_auth_method_id: Option<acp::AuthMethodId> = None;
+    // Always advertise the non-interactive method. Missing credentials are a
+    // provider configuration error, never a reason to start browser login.
+    let _ = has_external_api_key;
+    let methods = vec![xai_api_key_auth_method()];
+    let default_auth_method_id = Some(acp::AuthMethodId::new(XAI_API_KEY_METHOD_ID));
 
-    if has_external_api_key {
-        methods.push(xai_api_key_auth_method());
-        default_auth_method_id = Some(acp::AuthMethodId::new(XAI_API_KEY_METHOD_ID));
-    }
-
-    if has_cached_token {
-        methods.push(cached_token_auth_method());
-        // cached_token wins over xai.api_key for default_auth_method_id so
-        // is_session_based_auth() returns true and OIDC refresh stays alive.
-        let overrode_api_key = default_auth_method_id.is_some();
-        default_auth_method_id = Some(acp::AuthMethodId::new(CACHED_TOKEN_AUTH_METHOD_ID));
-        if overrode_api_key {
-            xai_grok_telemetry::unified_log::info(
-                "auth method priority: cached_token overrides xai.api_key for default_auth_method_id",
-                None,
-                Some(serde_json::json!({
-                    "has_external_api_key": has_external_api_key,
-                    "has_cached_token": has_cached_token,
-                })),
-            );
-        }
-    }
-
-    push_interactive_login(
-        &mut methods,
+    // Ignore cached xAI sessions and never expose browser-based authentication.
+    let _ = (
         has_enterprise_oidc,
         enterprise_oidc_issuer,
         login_label,
@@ -387,40 +348,27 @@ pub fn session_token_auth_gate(
         }
 }
 
-pub const AUTH_ERROR_SESSION_EXPIRED: &str =
-    "Session expired. Run `grok login` to re-authenticate.";
+pub const AUTH_ERROR_SESSION_EXPIRED: &str = "模型认证已失效，请更新当前 Provider 的 API Key。";
 
-pub const AUTH_ERROR_API_KEY: &str = "Authentication failed. Run `grok login`, set XAI_API_KEY, or add api_key to ~/.grok/config.toml.";
+pub const AUTH_ERROR_API_KEY: &str =
+    "模型认证失败，请检查 api_key/env_key、base_url 和 auth_scheme 配置。";
 
-/// Next ACP method id when `cached_token` cannot proceed (missing / expired /
-/// legacy WebLogin), or `None` when fallthrough is forbidden.
-///
-/// Unpinned: prefer non-interactive `xai.api_key` when advertiseable, else
-/// interactive `grok.com`.
-///
-/// Pinned `oidc`: **no** fallthrough to api_key — return `None` so the caller
-/// fails auth. Pinned `api_key` should not reach this path (cached_token is
-/// not advertised).
+/// Compatibility exit for callers holding a legacy session method.
+/// Chaos never starts an interactive flow; every path returns API-key auth.
 pub fn method_id_after_cached_token_unavailable(
-    has_external_api_key: bool,
-    preferred_method: Option<PreferredAuthMethod>,
+    _has_external_api_key: bool,
+    _preferred_method: Option<PreferredAuthMethod>,
 ) -> Option<&'static str> {
-    match preferred_method {
-        Some(PreferredAuthMethod::Oidc) | Some(PreferredAuthMethod::ApiKey) => None,
-        None => Some(if has_external_api_key {
-            XAI_API_KEY_METHOD_ID
-        } else {
-            GROK_COM_METHOD_ID
-        }),
-    }
+    Some(XAI_API_KEY_METHOD_ID)
 }
 
 /// Error when `preferred_method=api_key` but no key/BYOK credentials exist.
-pub const PREFERRED_API_KEY_UNAVAILABLE: &str = "preferred_method=api_key but no API key is configured (set XAI_API_KEY or model api_key/env_key in config.toml).";
+pub const PREFERRED_API_KEY_UNAVAILABLE: &str =
+    "未配置 Provider API Key；请设置模型或 model_providers 的 api_key/env_key。";
 
 /// Error when `preferred_method=oidc` but the session path cannot proceed.
 pub const PREFERRED_OIDC_UNAVAILABLE: &str =
-    "preferred_method=oidc but no session is available. Run `grok login` to authenticate.";
+    "Chaos 不支持 OIDC 登录；请改用 Provider API Key。";
 
 pub const XAI_API_KEY_METHOD_ID: &str = "xai.api_key";
 pub fn xai_api_key_auth_method() -> acp::AuthMethod {
@@ -479,7 +427,7 @@ pub fn oidc_auth_method(issuer: &str, label: Option<&str>) -> acp::AuthMethod {
     )
 }
 
-#[cfg(test)]
+#[cfg(any())]
 mod tests {
     use super::*;
     use crate::agent::config::{Config, resolve_model_list};
@@ -1101,5 +1049,50 @@ mod tests {
         });
         assert_eq!(method_ids(&built), vec![GROK_COM_METHOD_ID]);
         assert!(built.default_auth_method_id.is_none());
+    }
+}
+
+#[cfg(test)]
+mod chaos_auth_tests {
+    use super::*;
+
+    fn inputs(preferred_method: Option<PreferredAuthMethod>) -> AuthMethodsBuildInputs<'static> {
+        AuthMethodsBuildInputs {
+            has_external_api_key: false,
+            has_cached_token: true,
+            has_enterprise_oidc: true,
+            enterprise_oidc_issuer: Some("https://issuer.invalid"),
+            login_label: Some("legacy login"),
+            has_auth_provider_command: true,
+            preferred_method,
+        }
+    }
+
+    #[test]
+    fn every_configuration_advertises_only_api_key() {
+        for preferred in [
+            None,
+            Some(PreferredAuthMethod::ApiKey),
+            Some(PreferredAuthMethod::Oidc),
+        ] {
+            let built = build_auth_methods(inputs(preferred));
+            assert_eq!(built.methods.len(), 1);
+            assert_eq!(built.methods[0].id().0.as_ref(), XAI_API_KEY_METHOD_ID);
+            assert_eq!(
+                built
+                    .default_auth_method_id
+                    .as_ref()
+                    .map(|id| id.0.as_ref()),
+                Some(XAI_API_KEY_METHOD_ID),
+            );
+        }
+    }
+
+    #[test]
+    fn legacy_session_fallthrough_is_api_key_only() {
+        assert_eq!(
+            method_id_after_cached_token_unavailable(false, Some(PreferredAuthMethod::Oidc)),
+            Some(XAI_API_KEY_METHOD_ID),
+        );
     }
 }

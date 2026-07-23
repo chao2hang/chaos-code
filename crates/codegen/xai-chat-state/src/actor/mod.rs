@@ -221,6 +221,57 @@ impl ChatStateActor {
             } => {
                 self.replace_conversation(items, is_compaction);
             }
+            ChatStateCommand::ApplySelectiveCompression {
+                mut ranges,
+                mut protected_items,
+                reply,
+            } => {
+                self.extend_selective_protected_items(&mut protected_items);
+                let saved_before = self.state.selective_compaction.total_tokens_saved();
+                let result = self.validate_selective_tool_pairs(&ranges).and_then(|()| {
+                    for range in &mut ranges {
+                        let Some(items) = self.state.conversation.get(range.start..=range.end)
+                        else {
+                            return Err(
+                                xai_grok_compaction::selective::SelectiveError::InvalidRange {
+                                    start: range.start,
+                                    end: range.end,
+                                    history_len: self.state.conversation.len(),
+                                },
+                            );
+                        };
+                        range.tokens_before = items.iter().map(state::estimate_item_tokens).sum();
+                        let projected_summary =
+                            xai_grok_sampling_types::ConversationItem::user_meta(format!(
+                                "<context-summary topic=\"{}\">\n{}\n</context-summary>",
+                                range.topic, range.summary
+                            ));
+                        range.tokens_after = state::estimate_item_tokens(&projected_summary);
+                    }
+                    self.state.selective_compaction.compress(
+                        self.state.conversation.len(),
+                        ranges,
+                        &protected_items,
+                    )
+                });
+                if result.is_ok() {
+                    let saved_after = self.state.selective_compaction.total_tokens_saved();
+                    if saved_after >= saved_before {
+                        let delta = saved_after - saved_before;
+                        self.state.total_tokens = self.state.total_tokens.saturating_sub(delta);
+                        self.state.estimate_at_last_response =
+                            self.state.estimate_at_last_response.saturating_sub(delta);
+                    } else {
+                        let delta = saved_before - saved_after;
+                        self.state.total_tokens = self.state.total_tokens.saturating_add(delta);
+                        self.state.estimate_at_last_response =
+                            self.state.estimate_at_last_response.saturating_add(delta);
+                    }
+                    self.persistence
+                        .persist_selective_compaction(&self.state.selective_compaction);
+                }
+                let _ = reply.send(result);
+            }
             ChatStateCommand::RepairHistory {
                 dry_run,
                 turn_active,
@@ -308,6 +359,9 @@ impl ChatStateActor {
                     "ChatState: cloning full conversation for GetConversation"
                 );
                 let _ = reply.send(self.state.conversation.clone());
+            }
+            ChatStateCommand::GetSelectiveCompaction { reply } => {
+                let _ = reply.send(self.state.selective_compaction.clone());
             }
             ChatStateCommand::GetPromptIndex { reply } => {
                 let _ = reply.send(self.state.prompt_index);
@@ -423,7 +477,10 @@ impl ChatStateActor {
                 let _ = reply.send(self.get_system_message());
             }
             ChatStateCommand::GetEstimatedMessagesTokens { reply } => {
-                let _ = reply.send(state::estimate_messages_tokens(&self.state.conversation));
+                let _ = reply.send(
+                    state::estimate_messages_tokens(&self.state.conversation)
+                        .saturating_sub(self.state.selective_compaction.total_tokens_saved()),
+                );
             }
         }
     }

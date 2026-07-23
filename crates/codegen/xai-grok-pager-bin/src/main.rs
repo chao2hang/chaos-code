@@ -35,7 +35,7 @@ use xai_grok_pager::app::{
 };
 use xai_grok_pager::app::{WorkspaceMgmtArgs, WorkspaceMgmtCommand, WorkspaceStartArgs};
 use xai_grok_pager::client_identity::PAGER_CLIENT_VERSION;
-use xai_grok_shell::agent::app::{run_headless, run_leader, run_stdio_agent};
+use xai_grok_shell::agent::app::{run_leader, run_stdio_agent};
 use xai_grok_shell::agent::config::Config as AgentConfig;
 use xai_grok_shell::leader::{
     ClientCapabilities, ClientMode, ControlCommand, LeaderCapabilities, LeaderDescriptor,
@@ -73,14 +73,15 @@ fn resolve_agent_profile_path(path: &std::path::Path) -> std::path::PathBuf {
     match dunce::canonicalize(path) {
         Ok(abs) if abs.is_file() => abs,
         Ok(abs) => {
-            eprintln!(
-                "error: --agent-profile path is not a file: {}",
-                abs.display()
-            );
+            eprintln!("错误：--agent-profile 路径不是文件：{}", abs.display());
             std::process::exit(1);
         }
         Err(e) => {
-            eprintln!("error: --agent-profile path '{}': {}", path.display(), e);
+            eprintln!(
+                "错误：无法读取 --agent-profile 路径 '{}'：{}",
+                path.display(),
+                e
+            );
             std::process::exit(1);
         }
     }
@@ -88,10 +89,10 @@ fn resolve_agent_profile_path(path: &std::path::Path) -> std::path::PathBuf {
 /// Print startup information for the serve command.
 fn print_serve_startup_info(bind_addr: SocketAddr, secret: &str) {
     eprintln!();
-    eprintln!("   Grok agent server starting...");
+    eprintln!("   Chaos Agent 服务正在启动...");
     eprintln!();
-    eprintln!("   Address:  {}:{}", bind_addr.ip(), bind_addr.port());
-    eprintln!("   Secret:   {}", secret);
+    eprintln!("   地址：    {}:{}", bind_addr.ip(), bind_addr.port());
+    eprintln!("   密钥：    {}", secret);
     eprintln!();
     eprintln!(
         "   WebSocket URL: ws://{}/ws?server-key={}",
@@ -152,26 +153,23 @@ fn init_tracing_simple(app_entrypoint: &'static str) {
 async fn run_setup_command(json: bool) {
     use xai_grok_shell::managed_config::{self, SetupOutcome};
     if !managed_config::has_principal() {
-        eprintln!("No deployment key or team sign-in found.");
+        eprintln!("未找到部署密钥或可用的 Provider 凭据。");
         eprintln!();
-        eprintln!("To install managed configuration, sign in with a team using `grok login`,");
-        eprintln!("or set a deployment key:");
+        eprintln!("请在模型配置中设置 api_key/env_key，或设置部署密钥：");
         eprintln!();
         if cfg!(unix) {
             eprintln!("  export GROK_DEPLOYMENT_KEY=<your-key>");
         } else {
             eprintln!("  $env:GROK_DEPLOYMENT_KEY=\"<your-key>\"");
         }
-        eprintln!("  grok setup");
+        eprintln!("  chaos setup");
         eprintln!();
-        eprintln!("Or add the key to ~/.grok/config.toml:");
+        eprintln!("也可以将密钥写入 ~/.grok/config.toml：");
         eprintln!();
         eprintln!("  [endpoints]");
         eprintln!("  deployment_key = \"<your-key>\"");
         eprintln!();
-        eprintln!(
-            "If you don't have a deployment key, contact your organization's Grok administrator."
-        );
+        eprintln!("如果没有部署密钥，请联系组织管理员。");
         std::process::exit(1);
     }
     if json {
@@ -181,32 +179,28 @@ async fn run_setup_command(json: bool) {
                     .expect("setup report has no non-serializable values");
                 println!("{out}");
                 if !report.configured {
-                    eprintln!(
-                        "Your team doesn't have a managed configuration yet. A team admin can set one up at console.x.ai."
-                    );
+                    eprintln!("团队尚未配置托管设置，请联系团队管理员。");
                 }
             }
             Err(e) => {
-                eprintln!("Couldn't fetch managed configuration. {e}");
+                eprintln!("无法获取托管配置：{e}");
                 std::process::exit(1);
             }
         }
         return;
     }
     match managed_config::run_setup().await {
-        SetupOutcome::Installed => eprintln!("Applied managed configuration."),
+        SetupOutcome::Installed => eprintln!("已应用托管配置。"),
         SetupOutcome::NothingConfigured => {
-            eprintln!(
-                "Your team doesn't have a managed configuration yet. A team admin can set one up at console.x.ai."
-            );
+            eprintln!("团队尚未配置托管设置，请联系团队管理员。");
         }
         SetupOutcome::Skipped => {
             eprintln!(
-                "Managed configuration was not applied this run (another process held the apply lock, or the credential changed during the fetch). Run `grok setup` again."
+                "本次未应用托管配置（可能有其他进程持有锁，或凭据已变化）。请重新运行 `chaos setup`。"
             );
         }
         SetupOutcome::Failed(e) => {
-            eprintln!("Couldn't apply managed configuration. {e}");
+            eprintln!("无法应用托管配置：{e}");
             std::process::exit(1);
         }
     }
@@ -430,9 +424,7 @@ async fn run_workspace_mgmt(args: WorkspaceMgmtArgs) -> Result<()> {
         }
         WorkspaceGate::Unknown => {
             anyhow::bail!(
-                "Could not load your settings for `grok workspace`. Check your \
-             network connection (run `grok login` if you are signed out), then \
-             try again."
+                "无法加载 `chaos workspace` 设置。请检查网络以及 Provider API Key 配置后重试。"
             )
         }
     }
@@ -512,7 +504,6 @@ async fn workspace_start(
     restart: bool,
     remote_settings: Option<xai_grok_shell::util::config::RemoteSettings>,
 ) -> Result<()> {
-    use xai_grok_shell::auth::ensure_authenticated;
     xai_grok_shell::util::config::set_remote_campaigns_from_settings(remote_settings.as_ref());
     let raw_config = xai_grok_shell::config::load_effective_config()
         .map_err(|e| anyhow::anyhow!("Failed to load config: {e}"))?;
@@ -531,12 +522,11 @@ async fn workspace_start(
              Enable it with `[cli] use_leader = true` in ~/.grok/config.toml, or pass --leader."
         );
     }
-    ensure_authenticated(
-        &agent_config.grok_com_config,
-        false,
-        Some("No cached credentials found. Run `grok login` first."),
-    )
-    .await?;
+    if agent_config.endpoints.deployment_key.is_none() {
+        anyhow::bail!(
+            "`chaos workspace` 需要显式 deployment_key；Chaos 不支持 Grok/xAI 账号登录。"
+        );
+    }
     let env_urls = LeaderEnvUrls::from(&agent_config.grok_com_config);
     let capabilities = ClientCapabilities {
         client_version: Some(PAGER_CLIENT_VERSION.to_string()),
@@ -987,8 +977,8 @@ async fn forward_stdio_line_to_leader(
 }
 /// Emitted by both leader guards (server mode and leader-connect) so the two sites
 /// can't drift.
-const PLUGIN_DIR_LEADER_WARNING: &str = "grok: --plugin-dir is ignored in leader mode; run with --no-leader to \
-     load per-process plugins";
+const PLUGIN_DIR_LEADER_WARNING: &str =
+    "chaos：Leader 模式会忽略 --plugin-dir；请使用 --no-leader 加载当前进程的插件";
 /// Run the `agent` subcommand, dispatching to the appropriate mode.
 async fn run_agent_command(
     agent_args: Box<xai_grok_pager::app::AgentArgs>,
@@ -1035,7 +1025,7 @@ async fn run_agent_command(
     let is_leader = matches!(agent_args.mode, Some(AgentCmd::Leader(_)));
     if !is_stdio && !is_leader {
         eprintln!(
-            "Grok Build (pager) - v{}",
+            "Chaos AI 编码助手 - v{}",
             xai_grok_version::display_version_with_commit(
                 env!("VERSION_WITH_COMMIT"),
                 xai_grok_update::channel_label(),
@@ -1054,9 +1044,9 @@ async fn run_agent_command(
     let remote_settings = join_early_prefetch(early_prefetch);
     xai_grok_shell::util::config::set_remote_campaigns_from_settings(remote_settings.as_ref());
     let raw_config = xai_grok_shell::config::load_effective_config()
-        .map_err(|e| anyhow::anyhow!("Failed to load config: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("无法加载配置：{}", e))?;
     let mut agent_config = AgentConfig::new_from_toml_cfg(&raw_config)
-        .map_err(|e| anyhow::anyhow!("Failed to create agent config: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("无法创建 Agent 配置：{}", e))?;
     agent_config.default_model_override = agent_args.model.clone();
     agent_config.reasoning_effort_override = agent_args
         .reasoning_effort
@@ -1068,7 +1058,7 @@ async fn run_agent_command(
         None,
     );
     if let Some(warning) = launch_yolo.blocked_warning {
-        eprintln!("grok: {warning}");
+        eprintln!("chaos：{warning}");
     }
     agent_config.default_yolo_mode = launch_yolo.yolo;
     agent_config.default_auto_mode = xai_grok_shell::util::config::effective_auto_for_launch(
@@ -1308,16 +1298,9 @@ async fn run_agent_command(
     }
     match agent_args.mode {
         Some(AgentCmd::Stdio) => run_stdio_agent(&agent_config, None, agent_memory_config).await,
-        Some(AgentCmd::Headless(a)) => {
-            let mut agent_config = agent_config.clone();
-            apply_headless_args_to_config(&a, &mut agent_config);
-            run_headless(
-                &agent_config,
-                agent_args.reauthenticate,
-                agent_memory_config,
-            )
-            .await
-        }
+        Some(AgentCmd::Headless(_)) => anyhow::bail!(
+            "`chaos agent headless` 依赖已移除的 Grok relay 登录；请使用 `chaos agent stdio`。"
+        ),
         Some(AgentCmd::Serve(a)) => {
             let mut agent_config = agent_config.clone();
             apply_headless_args_to_config(&a.headless, &mut agent_config);
@@ -1390,14 +1373,7 @@ async fn run_agent_command(
             .await
         }
         None => {
-            let mut agent_config = agent_config.clone();
-            apply_headless_args_to_config(&agent_args.headless, &mut agent_config);
-            run_headless(
-                &agent_config,
-                agent_args.reauthenticate,
-                agent_memory_config,
-            )
-            .await
+            anyhow::bail!("请指定 `chaos agent stdio`；默认 relay 模式依赖已移除的 Grok 登录。")
         }
     }
 }
@@ -1659,12 +1635,9 @@ fn main() {
     );
     raise_fd_limit();
     if let Err(e) = xai_grok_config::validate_requirements() {
-        eprintln!("Couldn't start Grok: {e}");
+        eprintln!("无法启动 Chaos：{e}");
         eprintln!();
-        eprintln!(
-            "Update Grok to a version the policy allows, or ask your administrator \
-             to fix the managed requirements."
-        );
+        eprintln!("请将 Chaos 更新到策略允许的版本，或联系管理员修复托管要求。");
         std::process::exit(2);
     }
     let _sentry_guard = xai_grok_telemetry::sentry::init(xai_grok_telemetry::sentry::Config {
@@ -1678,10 +1651,10 @@ fn main() {
     if xai_grok_shell::util::config::load_crash_handler_enabled_sync() {
         let crash_dir = xai_grok_shell::util::grok_home::grok_home().join("crash");
         if let Some(report) = xai_crash_handler::check_previous_crash(&crash_dir) {
-            eprintln!("Grok crashed during your last session.");
-            eprintln!("  Signal:  {}", report.signal_name);
-            eprintln!("  Version: {}", report.app_version);
-            eprintln!("  Report:  {}", report.report_path.display());
+            eprintln!("Chaos 在上一次会话中异常退出。");
+            eprintln!("  信号：{}", report.signal_name);
+            eprintln!("  版本：{}", report.app_version);
+            eprintln!("  报告：{}", report.report_path.display());
             eprintln!();
         }
         if !xai_crash_handler::install(xai_crash_handler::CrashHandlerConfig {
@@ -1689,7 +1662,7 @@ fn main() {
             crash_dir: crash_dir.clone(),
         }) {
             eprintln!(
-                "warning: crash handler enabled but failed to install (check permissions on {})",
+                "警告：崩溃处理器已启用但安装失败，请检查目录权限：{}",
                 crash_dir.display()
             );
         }
@@ -1928,31 +1901,6 @@ async fn async_main(args: PagerArgs) -> Result<()> {
                 )
                 .await;
             }
-            Command::Login {
-                legacy: _,
-                oauth,
-                device_auth,
-                devbox,
-            } => {
-                init_tracing_simple("cli");
-                let _otel_guard = xai_grok_telemetry::otel_layer::otel_guard();
-                let config = xai_grok_shell::config::load_effective_config_disk_only()
-                    .map_err(|e| anyhow::anyhow!("Failed to load config: {e}"))?;
-                let config = AgentConfig::new_from_toml_cfg(&config)
-                    .map_err(|e| anyhow::anyhow!("Failed to create agent config: {e}"))?;
-                xai_grok_shell::auth::run_cli_login(&config, oauth, device_auth, devbox).await?;
-                println!();
-                xai_grok_shell::instrumentation::finalize_and_exit(0);
-            }
-            Command::Logout => {
-                init_tracing_simple("cli");
-                let config = xai_grok_shell::config::load_effective_config_disk_only()
-                    .map_err(|e| anyhow::anyhow!("Failed to load config: {e}"))?;
-                let config = AgentConfig::new_from_toml_cfg(&config)
-                    .map_err(|e| anyhow::anyhow!("Failed to create agent config: {e}"))?;
-                xai_grok_shell::auth::run_cli_logout(&config)?;
-                xai_grok_shell::instrumentation::finalize_and_exit(0);
-            }
             Command::Wrap(ref wrap_args) => {
                 return xai_grok_pager::wrap_cmd::run(wrap_args);
             }
@@ -1981,7 +1929,7 @@ async fn async_main(args: PagerArgs) -> Result<()> {
             None,
         );
         if let Some(warning) = launch_yolo.blocked_warning {
-            eprintln!("grok: {warning}");
+            eprintln!("chaos：{warning}");
         }
         let json_schema = args
             .json_schema
@@ -2056,9 +2004,9 @@ async fn async_main(args: PagerArgs) -> Result<()> {
         Ok(true) => {
             let adopted = bg_update_wait.lock().await.take();
             if finish_update_on_exit(adopted, &update_config).await {
-                eprintln!("Update installed. Run `grok` to start.");
+                eprintln!("更新已安装。运行 `chaos` 启动。");
             } else {
-                eprintln!("Update did not complete. Run `grok update` to retry.");
+                eprintln!("更新未完成。运行 `chaos update` 重试。");
             }
             Ok(())
         }

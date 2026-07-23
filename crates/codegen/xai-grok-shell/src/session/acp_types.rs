@@ -448,6 +448,8 @@ pub struct ContextInfo {
     pub tool_definitions_count: u64,
     pub tool_definitions_tokens: u64,
     pub compaction_count: u64,
+    /// Net tokens removed from the current request by selective compaction.
+    pub selective_compaction_tokens_saved: u64,
     pub turn_count: u64,
     pub tool_call_count: u64,
     /// Total conversation items (system + user + assistant + tool responses).

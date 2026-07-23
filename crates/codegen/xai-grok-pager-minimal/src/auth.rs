@@ -206,7 +206,7 @@ pub(super) fn render_auth(buf: &mut Buffer, area: Rect, theme: &Theme, hint: &Mi
                 area,
                 y,
                 bottom,
-                Line::from(Span::styled("Sign in to Grok", bold)),
+                Line::from(Span::styled("登录 Chaos", bold)),
             );
             y = put_line(buf, area, y, bottom, Line::default());
             match url {
@@ -248,7 +248,7 @@ pub(super) fn render_auth(buf: &mut Buffer, area: Rect, theme: &Theme, hint: &Mi
                         area,
                         y,
                         bottom,
-                        Line::from(Span::styled("Waiting for approval\u{2026}", gray)),
+                        Line::from(Span::styled("等待批准\u{2026}", gray)),
                     );
                 }
                 None => {
@@ -313,7 +313,7 @@ pub(super) fn render_auth(buf: &mut Buffer, area: Rect, theme: &Theme, hint: &Mi
                 y,
                 bottom,
                 Line::from(Span::styled(
-                    "Grok Build may run or modify contents in this directory,",
+                    "Chaos 可能在此目录中运行或修改内容，",
                     gray,
                 )),
             );
@@ -486,11 +486,11 @@ mod tests {
         };
         render_auth(&mut buf, area, &theme, &hint);
         let text = buffer_text(&buf, area);
-        assert!(text.contains("Sign in to Grok"), "header: {text:?}");
+        assert!(text.contains("登录 Chaos"), "header: {text:?}");
         assert!(text.contains("accounts.x.ai/device"), "url: {text:?}");
         assert!(text.contains("ABCD-EFGH"), "device code: {text:?}");
         assert!(
-            text.contains("Waiting for approval"),
+            text.contains("等待批准"),
             "waiting line: {text:?}"
         );
     }

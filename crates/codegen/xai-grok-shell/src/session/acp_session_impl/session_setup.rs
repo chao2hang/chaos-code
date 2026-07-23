@@ -569,6 +569,11 @@ impl SessionActor {
         let tool_definitions_tokens = xai_chat_state::estimate_tool_definitions_tokens(&tool_defs);
         let message_count = self.chat_state_handle.get_conversation_len().await;
         let message_tokens = self.chat_state_handle.get_estimated_messages_tokens().await;
+        let selective_compaction_tokens_saved = self
+            .chat_state_handle
+            .get_selective_compaction()
+            .await
+            .total_tokens_saved();
         let usage_categories = self.usage_categories().await;
         let free_tokens = xai_token_estimation::free_tokens(context_window, total_tokens);
         let usage_pct = xai_token_estimation::usage_percentage_u8(total_tokens, context_window);
@@ -597,6 +602,7 @@ impl SessionActor {
                 tool_definitions_count: tool_definitions_count as u64,
                 tool_definitions_tokens,
                 compaction_count: compaction_count as u64,
+                selective_compaction_tokens_saved,
                 turn_count: turn_count as u64,
                 tool_call_count: tool_call_count as u64,
                 message_count: message_count as u64,

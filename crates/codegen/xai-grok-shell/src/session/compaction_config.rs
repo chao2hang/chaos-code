@@ -153,6 +153,10 @@ pub struct CompactionConfig {
     pub prefire: PrefireState,
     /// Sticky once a forked session releases its inherited prefix under compaction pressure (see `run_compact_inner`), so it stops re-pinning it.
     pub prefix_released: AtomicBool,
+    /// 动态上下文裁剪配置（三层提醒、自动策略、受保护内容）。
+    pub dcp: super::dcp_config::DcpConfig,
+    /// DCP 运行时跟踪状态（提醒频率、用户轮次间隔）。
+    pub dcp_runtime: super::dcp_config::DcpRuntimeState,
 }
 
 #[cfg(test)]

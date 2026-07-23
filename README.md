@@ -1,3 +1,7 @@
+> **Chaos 分支说明：** 本仓库正在改造为无需 Grok 登录、由用户自带模型凭证的
+> `chaos` AI 编码助手。构建、模型配置、Token 统计和动态上下文裁剪说明请先阅读
+> [CHAOS.md](CHAOS.md)。原始上游说明保留在下方，供内部 crate 和兼容行为查阅。
+
 <div align="center">
 
 <h1>

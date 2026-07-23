@@ -87,7 +87,7 @@ pub enum SessionEvent {
     },
     /// The server rejected the credentials (401 / auth error) and automatic
     /// recovery was exhausted. Rendered as a prominent call-to-action that
-    /// points the user at `/login` to re-authenticate, replacing the raw
+    /// points the user at Provider API-key configuration, replacing the raw
     /// "Retry failed: Unauthorized (401) …" dump.
     ReAuthRequired,
     /// Terminal context overflow — ideally unreachable, since auto-compaction should
@@ -214,9 +214,8 @@ impl SessionEvent {
                 }
             }
             SessionEvent::ReAuthRequired => {
-                "Authentication required \u{2014} your session has expired or your \
-                 credentials were rejected. Run /login to re-authenticate, then resend \
-                 your message."
+                "模型认证失败：凭证缺失或被提供商拒绝。请检查当前模型的 \
+                 api_key/env_key、base_url 和 auth_scheme，然后重新发送消息。"
                     .to_string()
             }
             SessionEvent::ContextTooLarge => {
@@ -776,14 +775,13 @@ mod tests {
     }
 
     #[test]
-    fn reauth_required_message_points_at_login() {
+    fn reauth_required_message_points_at_provider_config() {
         let msg = SessionEvent::ReAuthRequired.message();
-        assert!(msg.contains("/login"), "must tell the user to run /login");
         assert!(
-            msg.to_lowercase().contains("authentication")
-                || msg.to_lowercase().contains("credentials"),
-            "must explain it is an auth problem: {msg}"
+            msg.contains("api_key/env_key") && msg.contains("base_url"),
+            "must point at provider credentials and endpoint: {msg}"
         );
+        assert!(!msg.contains("/login"), "removed login command must not be suggested");
     }
 
     #[test]

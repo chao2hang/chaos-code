@@ -209,6 +209,34 @@ impl ChatStateHandle {
         });
     }
 
+    /// Add selective compression blocks without modifying canonical history.
+    pub async fn apply_selective_compression(
+        &self,
+        ranges: Vec<xai_grok_compaction::selective::CompressionRange>,
+        protected_items: BTreeSet<usize>,
+    ) -> Result<
+        Vec<xai_grok_compaction::selective::BlockId>,
+        xai_grok_compaction::selective::SelectiveError,
+    > {
+        self.query("ApplySelectiveCompression", |reply| {
+            ChatStateCommand::ApplySelectiveCompression {
+                ranges,
+                protected_items,
+                reply,
+            }
+        })
+        .await
+        .unwrap_or_else(|| {
+            Err(
+                xai_grok_compaction::selective::SelectiveError::InvalidRange {
+                    start: 0,
+                    end: 0,
+                    history_len: 0,
+                },
+            )
+        })
+    }
+
     /// Out-of-band history repair (`x.ai/session/repair`); see
     /// [`ChatStateCommand::RepairHistory`]. Returns `None` if the actor is
     /// dead, `Some(Err(_))` if a turn was in flight at processing time.
@@ -454,6 +482,14 @@ impl ChatStateHandle {
     pub async fn get_agent_edited_paths(&self) -> BTreeSet<String> {
         self.query("GetAgentEditedPaths", |reply| {
             ChatStateCommand::GetAgentEditedPaths { reply }
+        })
+        .await
+        .unwrap_or_default()
+    }
+
+    pub async fn get_selective_compaction(&self) -> crate::SelectiveState {
+        self.query("GetSelectiveCompaction", |reply| {
+            ChatStateCommand::GetSelectiveCompaction { reply }
         })
         .await
         .unwrap_or_default()

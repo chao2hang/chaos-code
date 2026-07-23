@@ -259,7 +259,7 @@ async fn handle_session_delete(agent: &MvpAgent, args: &acp::ExtRequest) -> ExtR
         &req.session_id,
         req.cwd.as_deref(),
         needs_remote,
-        agent.auth_manager.clone(),
+        Some(agent.auth_manager.clone()),
     )
     .await
     .map_err(|e| {
@@ -574,6 +574,11 @@ fn handle_reload_models(agent: &MvpAgent) -> ExtResult {
         let mut agent_config = agent.cfg.borrow_mut();
         agent_config.models = toml_config.models.clone();
         agent_config.config_models = toml_config.config_models.clone();
+        // Required for `[model.*] model_provider = "..."` inheritance (base_url,
+        // api_key, api_backend). Without this, mid-session provider registration
+        // reloads the model entry but drops the provider connection defaults.
+        agent_config.model_providers = toml_config.model_providers.clone();
+        agent_config.auth_providers = toml_config.auth_providers.clone();
         agent_config.web_search_model = overrides.web_search;
         agent_config.session_summary_model = overrides.session_summary;
         agent_config.image_description_model = overrides.image_description;

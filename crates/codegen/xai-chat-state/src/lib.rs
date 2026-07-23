@@ -53,3 +53,7 @@ pub use persistence::{
 };
 pub use types::*;
 pub use usage::{UsageLedger, UsageTotals};
+pub use xai_grok_compaction::selective::{
+    BlockId as SelectiveBlockId, CompressionRange as SelectiveCompressionRange, SelectiveBlock,
+    SelectiveError, SelectiveState,
+};

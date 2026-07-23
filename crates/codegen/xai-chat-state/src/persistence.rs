@@ -33,6 +33,12 @@ pub trait ChatPersistence: Send + 'static {
     /// Replace the entire chat history (compaction / rewind).
     fn replace_history(&mut self, items: &[ConversationItem]);
 
+    /// Persist request-only selective compaction metadata.
+    fn persist_selective_compaction(
+        &mut self,
+        state: &xai_grok_compaction::selective::SelectiveState,
+    );
+
     /// Flush pending writes to disk.
     fn flush(&mut self);
 }
@@ -50,6 +56,8 @@ pub enum PersistenceRecord {
     AcknowledgedMessage(ConversationItem),
     /// The full history was replaced.
     ReplaceHistory(Vec<ConversationItem>),
+    /// Selective compaction metadata was replaced atomically.
+    SelectiveCompaction(xai_grok_compaction::selective::SelectiveState),
     /// A flush was requested.
     Flush,
 }
@@ -185,6 +193,15 @@ impl ChatPersistence for MockChatPersistence {
             .send(PersistenceRecord::ReplaceHistory(items.to_vec()));
     }
 
+    fn persist_selective_compaction(
+        &mut self,
+        state: &xai_grok_compaction::selective::SelectiveState,
+    ) {
+        let _ = self
+            .tx
+            .send(PersistenceRecord::SelectiveCompaction(state.clone()));
+    }
+
     fn flush(&mut self) {
         let _ = self.tx.send(PersistenceRecord::Flush);
     }
@@ -208,6 +225,11 @@ impl ChatPersistence for NullChatPersistence {
         receiver
     }
     fn replace_history(&mut self, _items: &[ConversationItem]) {}
+    fn persist_selective_compaction(
+        &mut self,
+        _state: &xai_grok_compaction::selective::SelectiveState,
+    ) {
+    }
     fn flush(&mut self) {}
 }
 

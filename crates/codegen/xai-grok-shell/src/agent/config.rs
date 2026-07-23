@@ -46,11 +46,9 @@ pub fn default_agent_type() -> String {
     DEFAULT_AGENT_TYPE.to_owned()
 }
 /// Default base URL for the cli chat proxy.
-pub const CLI_CHAT_PROXY_BASE_URL_DEFAULT: &str = "https://cli-chat-proxy.grok.com/v1";
-/// Default base URL for the public xAI API.
-pub const XAI_API_BASE_URL_DEFAULT: &str = "https://api.x.ai/v1";
-/// Default base URL for the asset server (profile images, etc.).
-pub const ASSET_SERVER_URL_DEFAULT: &str = "https://assets.grok.com";
+pub const CLI_CHAT_PROXY_BASE_URL_DEFAULT: &str = "";
+pub const XAI_API_BASE_URL_DEFAULT: &str = "";
+pub const ASSET_SERVER_URL_DEFAULT: &str = "";
 /// One or more environment variable names that may hold a model API key.
 ///
 /// Serde `untagged`: accepts a string or an array in TOML/JSON.
@@ -3457,12 +3455,14 @@ pub fn resolve_model_list(
                 .api_base_url
                 .as_deref()
                 .is_some_and(|url| !crate::util::is_xai_api_bearer_url(url));
-        if let Some(pid) = model_override.model_provider.as_deref()
-            && entry.auth_provider.is_none()
-            && session_bearer_unsafe
-        {
+        if entry.auth_provider.is_none() && session_bearer_unsafe {
+            let source = model_override
+                .model_provider
+                .as_deref()
+                .map(|pid| format!("model_provider:{pid}"))
+                .unwrap_or_else(|| format!("model:{key}"));
             entry.auth_provider = Some(crate::auth::AuthProviderRef::fail_closed(format!(
-                "model_provider:{pid} (fail-closed)"
+                "{source} (fail-closed)"
             )));
         }
         tracing::debug!(
@@ -3880,6 +3880,7 @@ pub struct ConfigModelOverride {
     pub temperature: Option<f32>,
     pub top_p: Option<f32>,
     pub api_backend: Option<ApiBackend>,
+    pub auth_scheme: Option<AuthScheme>,
     #[serde(default)]
     pub extra_headers: IndexMap<String, String>,
     pub context_window: Option<u64>,
@@ -3942,6 +3943,9 @@ impl ConfigModelOverride {
         }
         if let Some(ref v) = self.api_backend {
             entry.info.api_backend = v.clone();
+        }
+        if let Some(v) = self.auth_scheme {
+            entry.info.auth_scheme = v;
         }
         if !self.extra_headers.is_empty() {
             entry.info.extra_headers = self.extra_headers.clone();

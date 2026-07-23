@@ -303,13 +303,13 @@ mod tests {
     #[test]
     fn cta_parses_nested_partial_and_absent() {
         let full: RemoteAnnouncement = serde_json::from_str(
-            r#"{"id":"p","severity":"promo","cta":{"label":"Get SuperGrok","url":"https://x.ai/grok","caption":"or use Ctrl+O"}}"#,
+            r#"{"id":"p","severity":"promo","cta":{"label":"升级","url":"https://github.com/chaos-code/chaos","caption":"按 Ctrl+O"}}"#,
         )
         .unwrap();
         let cta = full.cta.as_ref().expect("cta present");
-        assert_eq!(cta.label.as_deref(), Some("Get SuperGrok"));
-        assert_eq!(cta.url.as_deref(), Some("https://x.ai/grok"));
-        assert_eq!(cta.caption.as_deref(), Some("or use Ctrl+O"));
+        assert_eq!(cta.label.as_deref(), Some("升级"));
+        assert_eq!(cta.url.as_deref(), Some("https://github.com/chaos-code/chaos"));
+        assert_eq!(cta.caption.as_deref(), Some("按 Ctrl+O"));
 
         let partial: RemoteAnnouncement =
             serde_json::from_str(r#"{"cta":{"label":"only label"}}"#).unwrap();

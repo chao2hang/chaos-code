@@ -2248,7 +2248,7 @@ fn rollback_to_always_approve_blocked_by_policy_pin() {
 /// A degraded conversations lane surfaces an actionable notice instead of
 /// the misleading "No sessions found" toast.
 #[test]
-fn session_list_partial_no_oauth_surfaces_login_hint() {
+fn session_list_partial_no_oauth_surfaces_deployment_key_hint() {
     let mut app = test_app_with_agent();
     open_session_picker_with(&mut app, vec![]);
     let _ = dispatch(
@@ -2261,10 +2261,10 @@ fn session_list_partial_no_oauth_surfaces_login_hint() {
         }),
         &mut app,
     );
-    assert!(
-        read_toast(&app).contains("/login"),
-        "no_oauth must point at /login"
-    );
+    let toast = read_toast(&app);
+    assert!(toast.contains("deployment key"), "toast: {toast}");
+    assert!(toast.contains("本地会话"), "toast: {toast}");
+    assert!(!toast.contains("/login"), "toast: {toast}");
 }
 
 /// Notice fires once per relaxed run; survives search, re-arms on a cwd-scoped browse.

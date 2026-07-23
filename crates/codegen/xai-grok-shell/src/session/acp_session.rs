@@ -98,6 +98,8 @@ mod goal;
 mod interjection;
 #[path = "acp_session_impl/tool_calls.rs"]
 mod tool_calls;
+#[path = "acp_session_impl/selective_compaction.rs"]
+mod selective_compaction;
 #[path = "acp_session_impl/turn.rs"]
 mod turn;
 #[path = "acp_session_impl/workflow.rs"]

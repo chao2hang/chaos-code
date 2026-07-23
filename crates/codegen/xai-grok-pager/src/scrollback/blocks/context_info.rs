@@ -14,7 +14,7 @@ use crate::render::wrapping::word_wrap_lines;
 use crate::scrollback::block::BlockContent;
 use crate::scrollback::types::{AccentStyle, BlockContext, BlockLine, BlockOutput};
 use crate::theme::{Theme, quantize};
-use xai_grok_shell::session::{ContextInfo, count_detail};
+use xai_grok_shell::session::ContextInfo;
 
 /// Block that renders a `/context` snapshot in scrollback.
 ///
@@ -130,6 +130,19 @@ struct LegendRow {
     detail: Option<String>,
 }
 
+fn localize_count_detail(detail: &str) -> String {
+    let Some((count, noun)) = detail.split_once(' ') else {
+        return detail.to_string();
+    };
+    let noun = match noun {
+        "skill" | "skills" => "个技能",
+        "server" | "servers" => "个服务器",
+        "tool" | "tools" => "个工具",
+        _ => return detail.to_string(),
+    };
+    format!("{count} {noun}")
+}
+
 /// Column widths for the legend and informational rows, measured from the
 /// rows that actually render so token counts, percentages, and detail
 /// counts stay aligned no matter the labels or magnitudes.
@@ -177,7 +190,7 @@ impl RowLayout {
     /// The row's numeric cells: tokens and percent, each right-aligned.
     fn cells(&self, tokens: u64, total: u64) -> String {
         format!(
-            "{:>tokens_width$} tokens   {:>percent_width$}",
+            "{:>tokens_width$} Token   {:>percent_width$}",
             fmt_tok(tokens),
             Self::percent(tokens, total),
             tokens_width = self.tokens_width,
@@ -220,7 +233,7 @@ impl RowLayout {
                 Span::raw(" "),
                 Span::styled(
                     format!(
-                        "{} tokens   {}",
+                        "{} Token   {}",
                         fmt_tok(row.tokens),
                         Self::percent(row.tokens, total)
                     ),
@@ -288,6 +301,7 @@ impl ContextInfoBlock {
         let turn_count = snapshot.turn_count;
         let tool_call_count = snapshot.tool_call_count;
         let compaction_count = snapshot.compaction_count;
+        let selective_tokens_saved = snapshot.selective_compaction_tokens_saved;
         let overhead_tokens = used.saturating_sub(system_tokens + message_tokens);
 
         let muted = theme.muted();
@@ -374,14 +388,14 @@ impl ContextInfoBlock {
             LegendRow {
                 glyph: system_glyph,
                 color: system_color,
-                label: "System prompt".to_string(),
+                label: "系统提示词".to_string(),
                 tokens: system_tokens,
                 detail: None,
             },
             LegendRow {
                 glyph: messages_glyph,
                 color: messages_color,
-                label: "Messages".to_string(),
+                label: "会话消息".to_string(),
                 tokens: message_tokens,
                 detail: None,
             },
@@ -390,7 +404,7 @@ impl ContextInfoBlock {
             legend_rows.push(LegendRow {
                 glyph: overhead_glyph,
                 color: overhead_color,
-                label: "Reasoning/overhead".to_string(),
+                label: "推理及其他开销".to_string(),
                 tokens: overhead_tokens,
                 detail: None,
             });
@@ -398,23 +412,34 @@ impl ContextInfoBlock {
         legend_rows.push(LegendRow {
             glyph: free_glyph,
             color: empty_color,
-            label: "Free".to_string(),
+            label: "可用空间".to_string(),
             tokens: free_tokens,
             detail: None,
         });
         let info_rows: Vec<LegendRow> = std::iter::once(LegendRow {
             glyph: tools_glyph,
             color: tools_color,
-            label: "Tool definitions".to_string(),
+            label: "工具定义".to_string(),
             tokens: tool_tokens,
-            detail: Some(count_detail(tool_count, "tool")),
+            detail: Some(format!("{tool_count} 个工具")),
         })
+        .chain((selective_tokens_saved > 0).then_some(LegendRow {
+            glyph: tools_glyph,
+            color: overhead_color,
+            label: "动态裁剪节省".to_string(),
+            tokens: selective_tokens_saved,
+            detail: None,
+        }))
         .chain(snapshot.usage_categories.iter().map(|c| LegendRow {
             glyph: tools_glyph,
             color: tools_color,
-            label: c.label.clone(),
+            label: match c.label.as_str() {
+                "Skills" => "技能".to_string(),
+                "MCP servers" => "MCP 服务器".to_string(),
+                _ => c.label.clone(),
+            },
             tokens: c.tokens,
-            detail: c.detail.clone(),
+            detail: c.detail.as_deref().map(localize_count_detail),
         }))
         .collect();
         let layout = RowLayout::measure(legend_rows.iter().chain(info_rows.iter()), total);
@@ -422,7 +447,7 @@ impl ContextInfoBlock {
 
         let mut lines: Vec<Line<'static>> = vec![
             // Header: bold white "Context"
-            Line::from(Span::styled("Context", primary)),
+            Line::from(Span::styled("上下文", primary)),
             // Blank row between header and the at-a-glance summary
             Line::from(""),
             // Sub-header: token totals + percent. Uses `text_secondary` for
@@ -435,7 +460,7 @@ impl ContextInfoBlock {
             // `ContextInfo` is pre-rounded to an integer).
             Line::from(Span::styled(
                 format!(
-                    "{} / {} tokens ({:.2}%)",
+                    "{} / {} Token（{:.2}%）",
                     fmt_tok_big(used),
                     fmt_tok_big(total),
                     precise_usage_percent(used, total),
@@ -481,7 +506,7 @@ impl ContextInfoBlock {
             let remaining = threshold_tokens.saturating_sub(used);
             let (text, style) = if usage_pct >= threshold_percent {
                 (
-                    format!("Auto-compact triggers next turn (at {threshold_percent}%)"),
+                    format!("将在下一轮自动压缩（阈值 {threshold_percent}%）"),
                     Style::default().fg(quantize(theme.warning)),
                 )
             } else {
@@ -491,7 +516,7 @@ impl ContextInfoBlock {
                 // `~1000k tokens remaining`.
                 (
                     format!(
-                        "Auto-compact at {threshold_percent}% \u{00b7} ~{} tokens remaining",
+                        "自动压缩阈值 {threshold_percent}% \u{00b7} 距阈值约剩 {} Token",
                         fmt_tok_big(remaining)
                     ),
                     muted,
@@ -504,7 +529,7 @@ impl ContextInfoBlock {
         // Footer stats
         lines.push(Line::from(Span::styled(
             format!(
-                "Turns: {turn_count} \u{00b7} Tool calls: {tool_call_count} \u{00b7} Compactions: {compaction_count}"
+                "轮次：{turn_count} \u{00b7} 工具调用：{tool_call_count} \u{00b7} 压缩次数：{compaction_count}"
             ),
             muted,
         )));
@@ -518,7 +543,7 @@ impl ContextInfoBlock {
         if (80..snapshot.auto_compact_threshold_percent).contains(&usage_pct) {
             lines.push(Line::from(""));
             lines.push(Line::from(Span::styled(
-                "Tip: run /compact to free up context space.".to_string(),
+                "提示：运行 /compact 可释放上下文空间。".to_string(),
                 Style::default().fg(quantize(theme.warning)),
             )));
         }
@@ -667,6 +692,7 @@ mod tests {
             tool_definitions_count: 12,
             tool_definitions_tokens: 5_600,
             compaction_count: 0,
+            selective_compaction_tokens_saved: 0,
             turn_count: 5,
             tool_call_count: 12,
             message_count: 8,
@@ -709,12 +735,12 @@ mod tests {
         let theme = test_theme();
         let lines = block.build_lines(&theme, BarLayout::WIDE);
         // Layout: Context / <blank> / tokens / model.
-        assert_eq!(line_text(&lines, 0), "Context");
+        assert_eq!(line_text(&lines, 0), "上下文");
         assert_eq!(line_text(&lines, 1), "");
         let l2 = line_text(&lines, 2);
-        assert!(l2.contains("tokens"));
+        assert!(l2.contains("Token"));
         // Percent now shows 2 decimal places (36.7k / 1m = 3.67%).
-        assert!(l2.contains("(3.67%)"), "got: {l2:?}");
+        assert!(l2.contains("（3.67%）"), "got: {l2:?}");
         assert_eq!(line_text(&lines, 3), "grok-4");
     }
 
@@ -724,8 +750,19 @@ mod tests {
         let theme = test_theme();
         let lines = block.build_lines(&theme, BarLayout::WIDE);
         let l2 = line_text(&lines, 2);
-        assert!(l2.contains("tokens"));
-        assert!(l2.contains("(3.67%)"));
+        assert!(l2.contains("Token"));
+        assert!(l2.contains("（3.67%）"));
+    }
+
+    #[test]
+    fn build_lines_shows_dcp_tokens_saved() {
+        let mut snap = snapshot();
+        snap.selective_compaction_tokens_saved = 12_345;
+        let block = ContextInfoBlock::new(snap, "test-model");
+        let lines = block.build_lines(&test_theme(), BarLayout::WIDE);
+        let text = all_text(&lines);
+        assert!(text.contains("动态裁剪节省"), "{text}");
+        assert!(text.contains("12.3k Token"), "{text}");
     }
 
     #[test]
@@ -783,7 +820,7 @@ mod tests {
         let lines = block.build_lines(&theme, BarLayout::WIDE);
         let all = all_text(&lines);
         assert!(
-            all.contains("Auto-compact at 85%") && all.contains("tokens remaining"),
+            all.contains("自动压缩阈值 85%") && all.contains("距阈值约剩"),
             "expected `Auto-compact at 85% · ~X tokens remaining` line, got:\n{all}"
         );
     }
@@ -801,7 +838,7 @@ mod tests {
         let lines = block.build_lines(&theme, BarLayout::WIDE);
         let all = all_text(&lines);
         assert!(
-            all.contains("~3.4m tokens remaining"),
+            all.contains("距阈值约剩 3.4m Token"),
             "expected ETA to use millions, got:\n{all}"
         );
     }
@@ -814,7 +851,7 @@ mod tests {
         let lines = block.build_lines(&theme, BarLayout::WIDE);
         let all = all_text(&lines);
         assert!(
-            all.contains("~813k tokens remaining"),
+            all.contains("距阈值约剩 813k Token"),
             "expected `~813k tokens remaining`, got:\n{all}"
         );
     }
@@ -854,7 +891,7 @@ mod tests {
         let lines = block.build_lines(&theme, BarLayout::WIDE);
         let l2 = line_text(&lines, 2);
         assert!(
-            l2.contains("/ 2.0m tokens"),
+            l2.contains("/ 2.0m Token"),
             "expected `/ 2.0m tokens` in summary line, got {l2:?}"
         );
     }
@@ -868,7 +905,7 @@ mod tests {
         let lines = block.build_lines(&theme, BarLayout::WIDE);
         let all = all_text(&lines);
         assert!(
-            all.contains("Auto-compact triggers next turn"),
+            all.contains("将在下一轮自动压缩"),
             "expected `Auto-compact triggers next turn` line, got:\n{all}"
         );
     }
@@ -1018,6 +1055,7 @@ mod tests {
             tool_definitions_count: 190,
             tool_definitions_tokens: 75_000,
             compaction_count: 0,
+            selective_compaction_tokens_saved: 0,
             turn_count: 1,
             tool_call_count: 0,
             message_count: 4,
@@ -1033,11 +1071,11 @@ mod tests {
 
         let all = all_text(&lines);
         assert!(
-            all.contains("Reasoning/overhead") && all.contains("70.0k"),
+            all.contains("推理及其他开销") && all.contains("70.0k"),
             "overhead row (70.0k) missing:\n{all}"
         );
         assert!(
-            all.contains("Tool definitions") && all.contains("190 tools"),
+            all.contains("工具定义") && all.contains("190 个工具"),
             "tools row must be shown with its count:\n{all}"
         );
 
@@ -1076,7 +1114,7 @@ mod tests {
         // single-digit counts are right-aligned ("·  4 servers").
         let is_row = |l: &&str| {
             (l.starts_with('\u{25C6}') || l.starts_with('\u{25C8}') || l.starts_with('\u{25C7}'))
-                && l.contains(" tokens ")
+                && l.contains(" Token ")
         };
         let cols = |needle: &str| -> Vec<usize> {
             all.lines()
@@ -1084,7 +1122,7 @@ mod tests {
                 .filter_map(|l| l.find(needle))
                 .collect()
         };
-        for needle in [" tokens ", ")"] {
+        for needle in [" Token ", "）"] {
             let positions = cols(needle);
             assert!(
                 positions.windows(2).all(|w| w[0] == w[1]),
@@ -1261,13 +1299,13 @@ mod tests {
         let block = ContextInfoBlock::new(snapshot(), "grok-4");
         let theme = test_theme();
         let lines = block.build_lines(&theme, BarLayout::WIDE);
-        let row = find_legend_line(&lines, "System prompt").expect("legend row");
+        let row = find_legend_line(&lines, "系统提示词").expect("legend row");
         // Span layout for WIDE: [glyph+space, label, " ", tokens, ...].
         // The label span content begins with "System prompt".
         let label_span = row
             .spans
             .iter()
-            .find(|s| s.content.as_ref().starts_with("System prompt"))
+            .find(|s| s.content.as_ref().starts_with("系统提示词"))
             .expect("label span");
         assert_eq!(
             label_span.style.fg,
@@ -1282,12 +1320,12 @@ mod tests {
         let block = ContextInfoBlock::new(snapshot(), "grok-4");
         let theme = test_theme();
         let lines = block.build_lines(&theme, BarLayout::NARROW);
-        let row = find_legend_line(&lines, "System prompt").expect("legend row 1");
+        let row = find_legend_line(&lines, "系统提示词").expect("legend row 1");
         // Span layout for NARROW row 1: [glyph+space, label].
         let label_span = row
             .spans
             .iter()
-            .find(|s| s.content.as_ref() == "System prompt")
+            .find(|s| s.content.as_ref() == "系统提示词")
             .expect("label span");
         assert_eq!(
             label_span.style.fg,
@@ -1303,10 +1341,10 @@ mod tests {
         let theme = test_theme();
         let lines = block.build_lines(&theme, BarLayout::NARROW);
         let categories = [
-            ("System prompt", "1.2k"),
-            ("Messages", "29.9k"),
-            ("Reasoning/overhead", "5.6k"),
-            ("Free", "963k"),
+            ("系统提示词", "1.2k"),
+            ("会话消息", "29.9k"),
+            ("推理及其他开销", "5.6k"),
+            ("可用空间", "963k"),
         ];
         let mut idx = 16;
         for (label, expected_tokens) in categories {
@@ -1362,22 +1400,22 @@ mod tests {
             |i: usize| -> String { lines[i].spans.iter().map(|s| s.content.as_ref()).collect() };
         let l11 = row_text(11);
         assert!(
-            l11.contains("System prompt") && l11.contains("1.2k"),
+            l11.contains("系统提示词") && l11.contains("1.2k"),
             "wide legend should keep label + tokens on one line, got: {l11:?}"
         );
         let l12 = row_text(12);
         assert!(
-            l12.contains("Messages") && l12.contains("29.9k"),
+            l12.contains("会话消息") && l12.contains("29.9k"),
             "wide legend should keep label + tokens on one line, got: {l12:?}"
         );
         let l13 = row_text(13);
         assert!(
-            l13.contains("Reasoning/overhead") && l13.contains("5.6k"),
+            l13.contains("推理及其他开销") && l13.contains("5.6k"),
             "wide legend should show reasoning/overhead on one line, got: {l13:?}"
         );
         let l14 = row_text(14);
         assert!(
-            l14.contains("Free") && l14.contains("963k"),
+            l14.contains("可用空间") && l14.contains("963k"),
             "wide legend should keep label + tokens on one line, got: {l14:?}"
         );
     }
