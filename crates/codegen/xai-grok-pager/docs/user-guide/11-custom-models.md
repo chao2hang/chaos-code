@@ -6,12 +6,14 @@ Grok connects to custom model endpoints for alternative providers, self-hosted m
 
 ## Default Models
 
-By default, Grok uses models hosted by SpaceXAI, and new sessions start with `grok-build`. Default models require no configuration. Authenticate with `grok login` or an API key, then start a session.
+Chaos ships **no built-in models**. A fresh install has an empty catalog until
+you add `[model.*]` (and optional `model_providers`) in `config.toml`. Online
+catalog fetches are off by default (`[features] remote_fetch = false`).
 
-List all available models:
+List configured models:
 
 ```bash
-grok models
+chaos models
 ```
 
 ---
@@ -40,7 +42,7 @@ Or use the alias:
 
 ### Model Picker (Ctrl+M)
 
-Press `Ctrl+M` from the scrollback pane to open the model picker. Chaos **does not ship built-in Grok models**; the list is only your `[model.*]` entries (and optional remote catalog). With the prompt focused, `Ctrl+M` toggles multiline input instead — use `/model` to switch without leaving the prompt.
+Press `Ctrl+M` from the scrollback pane to open the model picker. Chaos **does not ship built-in models**; the list is only your `[model.*]` entries (remote catalog only if you set `remote_fetch = true` and a models list URL). With the prompt focused, `Ctrl+M` toggles multiline input instead — use `/model` to switch without leaving the prompt.
 
 ### Config Default
 
