@@ -367,13 +367,14 @@ async fn test_headless_free_usage_exhausted_prints_paywall_message() {
     assert_no_crashes(&result.stderr);
     let combined = format!("{}\n{}", result.stdout, result.stderr);
     assert!(
-        combined.contains("reached your free Grok Build usage limit"),
+        combined.contains("当前免费额度已用尽"),
         "expected the free-usage paywall message\nstdout:\n{}\nstderr tail:\n{}",
         result.stdout,
         stderr_tail(&result.stderr, 1000)
     );
     assert!(
-        !combined.contains("hit the rate limit for your plan"),
+        !combined.contains("hit the rate limit for your plan")
+            && !combined.contains("已达到当前计划的速率限制"),
         "generic rate-limit message must be replaced by the paywall text"
     );
 }

@@ -62,15 +62,9 @@ impl BlockContent for CreditLimitBlock {
         // Body copy — contextual message based on billing mode.
         let muted = theme.muted();
         let body = match self.action {
-            CreditLimitCardAction::IncreasePaygLimit => {
-                "You can continue by increasing your spending limit."
-            }
-            CreditLimitCardAction::EnablePayg => {
-                "You can continue by enabling pay-as-you-go usage."
-            }
-            CreditLimitCardAction::PurchaseCredits => {
-                "You can continue by purchasing more credits."
-            }
+            CreditLimitCardAction::IncreasePaygLimit => "可通过提高消费限额继续使用。",
+            CreditLimitCardAction::EnablePayg => "可通过启用按量付费继续使用。",
+            CreditLimitCardAction::PurchaseCredits => "可通过购买更多额度继续使用。",
         };
         let body_line = Line::from(Span::styled(body.to_string(), muted));
 
@@ -139,9 +133,9 @@ mod tests {
     #[test]
     fn output_payg_off_mentions_enabling() {
         let block = CreditLimitBlock::new(
-            "You\u{2019}ve hit your credit limit.",
+            "已达到额度上限。",
             CreditLimitCardAction::EnablePayg,
-            "https://grok.com?_s=usage",
+            "https://example.com/usage",
         );
         let output = block.output(&ctx());
         let all_text: String = output
@@ -149,17 +143,17 @@ mod tests {
             .iter()
             .flat_map(|l| l.content.spans.iter().map(|s| s.content.as_ref()))
             .collect();
-        assert!(all_text.contains("credit limit"));
-        assert!(all_text.contains("enabling pay-as-you-go"));
-        assert!(all_text.contains("grok.com?_s=usage"));
+        assert!(all_text.contains("额度上限"));
+        assert!(all_text.contains("按量付费"));
+        assert!(all_text.contains("example.com/usage"));
     }
 
     #[test]
     fn output_payg_on_mentions_increasing() {
         let block = CreditLimitBlock::new(
-            "You\u{2019}ve hit your spending cap.",
+            "已达到消费上限。",
             CreditLimitCardAction::IncreasePaygLimit,
-            "https://grok.com?_s=usage",
+            "https://example.com/usage",
         );
         let output = block.output(&ctx());
         let all_text: String = output
@@ -167,17 +161,17 @@ mod tests {
             .iter()
             .flat_map(|l| l.content.spans.iter().map(|s| s.content.as_ref()))
             .collect();
-        assert!(all_text.contains("spending cap"));
-        assert!(all_text.contains("increasing your spending limit"));
-        assert!(all_text.contains("grok.com?_s=usage"));
+        assert!(all_text.contains("消费上限"));
+        assert!(all_text.contains("消费限额"));
+        assert!(all_text.contains("example.com/usage"));
     }
 
     #[test]
     fn output_unified_mentions_purchasing_credits() {
         let block = CreditLimitBlock::new(
-            "You hit your weekly limit.",
+            "已达到本周用量上限。",
             CreditLimitCardAction::PurchaseCredits,
-            "https://grok.com?_s=usage",
+            "https://example.com/usage",
         );
         let output = block.output(&ctx());
         let all_text: String = output
@@ -185,8 +179,8 @@ mod tests {
             .iter()
             .flat_map(|l| l.content.spans.iter().map(|s| s.content.as_ref()))
             .collect();
-        assert!(all_text.contains("purchasing more credits"));
-        assert!(all_text.contains("grok.com?_s=usage"));
+        assert!(all_text.contains("购买更多额度"));
+        assert!(all_text.contains("example.com/usage"));
     }
 
     #[test]

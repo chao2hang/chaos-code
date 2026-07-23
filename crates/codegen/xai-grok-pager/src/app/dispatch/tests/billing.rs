@@ -145,9 +145,9 @@ fn upsell_non_max_shows_qa_with_two_options() {
     );
     let q = &agent_qv(&app).questions[0];
     assert_eq!(q.options.len(), 2);
-    assert_eq!(q.options[0].label, "Upgrade tier");
+    assert_eq!(q.options[0].label, "调整 Provider 配额");
     assert_eq!(q.options[0].id.as_deref(), Some(UPSELL_URL_UPGRADE));
-    assert_eq!(q.options[1].label, "Pay as you go");
+    assert_eq!(q.options[1].label, "按量付费");
     assert_eq!(q.options[1].id.as_deref(), Some(UPSELL_URL_PAYG));
 }
 
@@ -160,7 +160,7 @@ fn upsell_non_max_payg_on_shows_increase_label() {
     );
     let q = &agent_qv(&app).questions[0];
     assert_eq!(q.options.len(), 2);
-    assert_eq!(q.options[1].label, "Increase limit");
+    assert_eq!(q.options[1].label, "提高限额");
 }
 
 #[test]
@@ -172,8 +172,8 @@ fn upsell_non_max_qa_heading_is_credit_limit_when_payg_off() {
     );
     let heading = &agent_qv(&app).questions[0].question;
     assert!(
-        heading.contains("credit limit"),
-        "expected 'credit limit' in heading, got: {heading}"
+        heading.contains("额度上限"),
+        "expected '额度上限' in heading, got: {heading}"
     );
 }
 
@@ -186,13 +186,14 @@ fn upsell_non_max_qa_heading_is_spending_cap_when_payg_on() {
     );
     let heading = &agent_qv(&app).questions[0].question;
     assert!(
-        heading.contains("spending cap"),
-        "expected 'spending cap' in heading, got: {heading}"
+        heading.contains("消费上限"),
+        "expected '消费上限' in heading, got: {heading}"
     );
 }
 
 #[test]
-fn upsell_non_max_upgrade_url_is_supergrok() {
+fn upsell_non_max_upgrade_url_is_empty_for_byok() {
+    // Chaos is BYOK: no SuperGrok / grok.com upgrade links.
     let mut app = test_app_with_agent();
     open_upsell_qa(
         &mut app,
@@ -202,12 +203,14 @@ fn upsell_non_max_upgrade_url_is_supergrok() {
         .id
         .as_deref()
         .unwrap();
-    assert!(url.contains("supergrok"), "got: {url}");
-    assert!(url.contains("referrer=grok-build"), "got: {url}");
+    assert_eq!(url, UPSELL_URL_UPGRADE);
+    assert!(url.is_empty(), "got: {url}");
+    assert!(!url.contains("supergrok"), "got: {url}");
+    assert!(!url.contains("grok.com"), "got: {url}");
 }
 
 #[test]
-fn upsell_non_max_payg_url_is_usage() {
+fn upsell_non_max_payg_url_is_empty_for_byok() {
     let mut app = test_app_with_agent();
     open_upsell_qa(
         &mut app,
@@ -217,7 +220,9 @@ fn upsell_non_max_payg_url_is_usage() {
         .id
         .as_deref()
         .unwrap();
-    assert!(url.contains("_s=usage"), "got: {url}");
+    assert_eq!(url, UPSELL_URL_PAYG);
+    assert!(url.is_empty(), "got: {url}");
+    assert!(!url.contains("grok.com"), "got: {url}");
 }
 
 #[test]
@@ -229,7 +234,7 @@ fn upsell_non_max_payg_on_description_mentions_spending_cap() {
     );
     assert_eq!(
         agent_qv(&app).questions[0].options[1].description,
-        "Raise your pay-as-you-go spending cap"
+        "提高按量付费消费上限"
     );
 }
 
@@ -242,7 +247,7 @@ fn upsell_non_max_payg_off_description_mentions_on_demand() {
     );
     assert_eq!(
         agent_qv(&app).questions[0].options[1].description,
-        "Enable pay-as-you-go credits for on-demand usage"
+        "启用按量付费额度以便按需使用"
     );
 }
 
@@ -251,16 +256,13 @@ fn upsell_non_max_unified_shows_buy_credits() {
     let mut app = test_app_with_agent();
     open_upsell_qa(&mut app, CreditLimitUpsellMode::UnifiedCredits);
     let q = &agent_qv(&app).questions[0];
-    assert!(q.question.contains("weekly limit"));
+    assert!(q.question.contains("本周用量上限"));
     assert_eq!(
         q.options[0].description,
-        "Upgrade to a higher tier for more usage"
+        "请在 Provider 控制台提高配额或更换模型"
     );
-    assert_eq!(q.options[1].label, "Buy more credits");
-    assert_eq!(
-        q.options[1].description,
-        "Purchase credits to keep using Grok Build"
-    );
+    assert_eq!(q.options[1].label, "购买额度");
+    assert_eq!(q.options[1].description, "购买额度以继续使用 Chaos");
 }
 
 #[test]
@@ -273,7 +275,7 @@ fn upsell_max_unified_card_mentions_purchasing() {
         blk.action,
         crate::scrollback::blocks::CreditLimitCardAction::PurchaseCredits
     );
-    assert!(blk.heading.contains("weekly limit"));
+    assert!(blk.heading.contains("本周用量上限"));
 }
 
 #[test]
@@ -411,7 +413,7 @@ fn upsell_max_tier_pushes_scrollback_card_payg_off() {
     );
     assert_eq!(agent_scrollback_len(&app), before + 1);
     let blk = last_credit_limit_block(&app, before);
-    assert!(blk.heading.contains("credit limit"));
+    assert!(blk.heading.contains("额度上限"));
     assert_eq!(
         blk.action,
         crate::scrollback::blocks::CreditLimitCardAction::EnablePayg
@@ -430,7 +432,7 @@ fn upsell_max_tier_pushes_scrollback_card_payg_on() {
     assert!(app.agents.get(&AgentId(0)).unwrap().question_view.is_none());
     assert_eq!(agent_scrollback_len(&app), before + 1);
     let blk = last_credit_limit_block(&app, before);
-    assert!(blk.heading.contains("spending cap"));
+    assert!(blk.heading.contains("消费上限"));
     assert_eq!(
         blk.action,
         crate::scrollback::blocks::CreditLimitCardAction::IncreasePaygLimit
@@ -575,9 +577,14 @@ fn manage_billing_gates_on_consumer_billing_surface() {
     // SAFETY: serialized via `serial_test` so no other test races the env var.
     unsafe { std::env::set_var("GROK_TEST_OPEN_URL_FILE", &out) };
     let mut app = test_app_with_agent();
+    let before = agent_scrollback_len(&app);
     dispatch(Action::ManageBilling, &mut app);
+    // Chaos is BYOK: manage-billing opens an empty URL (no grok.com console).
+    // Empty scheme is rejected silently — no browser open, no scrollback spam.
     let opened = std::fs::read_to_string(&out).unwrap_or_default();
-    assert!(opened.contains("grok.com/?_s=usage"), "got: {opened}");
+    assert!(opened.is_empty(), "must not open a billing URL; got: {opened}");
+    assert!(!opened.contains("grok.com"), "got: {opened}");
+    assert_eq!(agent_scrollback_len(&app), before);
     let _ = std::fs::remove_file(&out);
 
     // Non-consumer: silent no-op (slash command never offers manage).
@@ -586,6 +593,7 @@ fn manage_billing_gates_on_consumer_billing_surface() {
     let before = agent_scrollback_len(&app);
     assert!(dispatch(Action::ManageBilling, &mut app).is_empty());
     assert_eq!(agent_scrollback_len(&app), before);
+    unsafe { std::env::remove_var("GROK_TEST_OPEN_URL_FILE") };
 }
 
 #[test]
@@ -607,7 +615,8 @@ fn session_usage_complete_pushes_block_and_chains_billing() {
     assert_eq!(agent_scrollback_len(&app), before + 1);
     let text = last_system_text(&app, AgentId(0));
     assert!(
-        text.contains("Session usage") && text.contains("$0.5000"),
+        (text.contains("Session usage") || text.contains("会话用量"))
+            && text.contains("$0.5000"),
         "{text}"
     );
     assert!(is_nonsilent_billing(&effects));
@@ -1007,16 +1016,16 @@ fn free_usage_upsell_shows_two_options_with_exact_labels() {
         )
     ));
     let q = &qv.questions[0];
-    assert_eq!(q.question, "You hit your free usage limit.");
+    assert_eq!(q.question, "当前免费额度已用尽。");
     let expected = [
         (
-            "Upgrade to SuperGrok",
-            "For everyday coding and productivity tasks",
+            "配置 Provider",
+            "设置模型、接口地址与 API 密钥（/provider）",
             Some(UPSELL_URL_UPGRADE),
         ),
         (
-            "Upgrade to SuperGrok Heavy",
-            "Get the most out of Grok Build. Highest usage limits.",
+            "查看用量说明",
+            "额度与限流由你的 Provider 决定，与 Chaos 订阅无关。",
             Some(UPSELL_URL_UPGRADE),
         ),
     ];
@@ -1116,7 +1125,7 @@ fn free_usage_translate_local_submit_maps_options() {
 
 // ── Restricted-command upsell tests ─────────────────────────────────
 
-/// Submitting a tier-restricted command opens the two-option SuperGrok
+/// Submitting a tier-restricted command opens the two-option Provider
 /// upsell and neither runs the command nor leaks the text to the model.
 #[test]
 fn restricted_command_submit_opens_two_option_upsell() {
@@ -1150,11 +1159,11 @@ fn restricted_command_submit_opens_two_option_upsell() {
         )
     ));
     let q = &qv.questions[0];
-    assert_eq!(q.question, "Unlock all features with SuperGrok.");
+    assert_eq!(q.question, "此功能需要可用的 Provider 配置。");
     assert_eq!(q.options.len(), 2);
-    assert_eq!(q.options[0].label, "Upgrade to SuperGrok");
+    assert_eq!(q.options[0].label, "配置 Provider");
     assert_eq!(q.options[0].id.as_deref(), Some(UPSELL_URL_UPGRADE));
-    assert_eq!(q.options[1].label, "Upgrade to SuperGrok Heavy");
+    assert_eq!(q.options[1].label, "查看用量说明");
     assert_eq!(q.options[1].id.as_deref(), Some(UPSELL_URL_UPGRADE));
 }
 
@@ -1245,10 +1254,27 @@ fn unknown_non_restricted_command_still_passes_through() {
 
 // ── Browser-unavailable URL fallback ────────────────────────────────
 
+/// Chaos BYOK keeps upsell URLs empty; empty OpenUrl is scheme-rejected
+/// and must not push scrollback spam.
+#[test]
+fn empty_upsell_url_open_is_silent_noop() {
+    let mut app = test_app_with_agent();
+    let before = agent_scrollback_len(&app);
+    assert!(UPSELL_URL_UPGRADE.is_empty());
+    assert!(UPSELL_URL_PAYG.is_empty());
+    let effects = dispatch(Action::OpenUrl(UPSELL_URL_UPGRADE.to_string()), &mut app);
+    assert!(effects.is_empty());
+    assert_eq!(
+        agent_scrollback_len(&app),
+        before,
+        "empty URL must not push fallback scrollback"
+    );
+}
+
 /// When the OS browser opener cannot run (simulated via a broken
-/// `GROK_TEST_OPEN_URL_FILE` seam), `Action::OpenUrl` for a billing CTA
+/// `GROK_TEST_OPEN_URL_FILE` seam), `Action::OpenUrl` for a non-empty URL
 /// must push a scrollback system message that includes the full URL —
-/// the headless-VM fix for silent Upgrade / Buy-more-credits no-ops.
+/// the headless-VM fix for silent open no-ops.
 #[serial_test::serial(GROK_TEST_OPEN_URL_FILE)]
 #[test]
 fn open_url_shows_manual_url_when_browser_unavailable() {
@@ -1263,7 +1289,8 @@ fn open_url_shows_manual_url_when_browser_unavailable() {
 
     let mut app = test_app_with_agent();
     let before = agent_scrollback_len(&app);
-    let url = UPSELL_URL_UPGRADE;
+    // Use a stand-in URL — Chaos production upsell URLs are empty.
+    let url = "https://example.com/billing";
     let effects = dispatch(Action::OpenUrl(url.to_string()), &mut app);
     assert!(effects.is_empty());
 
@@ -1279,7 +1306,7 @@ fn open_url_shows_manual_url_when_browser_unavailable() {
     );
     assert!(
         text.contains(url),
-        "full billing URL must be visible for copy: {text}"
+        "full URL must be visible for copy: {text}"
     );
     let toast = app.agents[&AgentId(0)]
         .toast
@@ -1303,7 +1330,8 @@ fn open_url_does_not_show_fallback_when_opener_succeeds() {
 
     let mut app = test_app_with_agent();
     let before = agent_scrollback_len(&app);
-    let url = UPSELL_URL_PAYG;
+    // Use a stand-in URL — Chaos production upsell URLs are empty.
+    let url = "https://example.com/usage";
     let _ = dispatch(Action::OpenUrl(url.to_string()), &mut app);
 
     assert_eq!(
@@ -1322,21 +1350,13 @@ fn open_url_does_not_show_fallback_when_opener_succeeds() {
     let _ = std::fs::remove_file(&url_file);
 }
 
-/// Credit-limit upsell Q&A submit routes through OpenUrl; when the browser
-/// is unavailable the full option URL must land in scrollback.
-#[serial_test::serial(GROK_TEST_OPEN_URL_FILE)]
+/// Credit-limit upsell Q&A submit still routes through OpenUrl, but Chaos
+/// BYOK leaves the option URL empty so the open is a silent no-op.
 #[test]
-fn credit_limit_upsell_submit_shows_url_when_browser_unavailable() {
+fn credit_limit_upsell_submit_empty_url_is_silent() {
     use crate::app::agent_view::translate_local_submit_for_test;
     use crate::app::app_view::InputOutcome;
     use crate::views::question_view::{LocalQuestionKind, QuestionSelection};
-
-    let bad = std::env::temp_dir().join(format!(
-        "grok-open-url-upsell-missing-{}/out.txt",
-        std::process::id()
-    ));
-    // SAFETY: serialized via `serial_test`.
-    unsafe { std::env::set_var("GROK_TEST_OPEN_URL_FILE", &bad) };
 
     let mut app = test_app_with_agent();
     open_upsell_qa(&mut app, CreditLimitUpsellMode::UnifiedCredits);
@@ -1347,7 +1367,7 @@ fn credit_limit_upsell_submit_shows_url_when_browser_unavailable() {
         .question_view
         .take()
         .expect("expected credit-limit upsell modal");
-    // Select option 1 = "Buy more credits" (credits / usage URL).
+    // Select option 1 = "购买额度" (PAYG / usage URL id).
     qv.selections[0] = QuestionSelection::Single(Some(1));
     let kind = LocalQuestionKind::CreditLimitUpsell {
         choices: vec![
@@ -1361,16 +1381,13 @@ fn credit_limit_upsell_submit_shows_url_when_browser_unavailable() {
         panic!("expected OpenUrl from upsell submit");
     };
     assert_eq!(url, UPSELL_URL_PAYG);
+    assert!(url.is_empty());
 
     let before = agent_scrollback_len(&app);
-    let _ = dispatch(Action::OpenUrl(url.clone()), &mut app);
-    let text = last_system_text(&app, AgentId(0));
-    assert_eq!(agent_scrollback_len(&app), before + 1);
-    assert!(
-        text.contains(&url),
-        "upsell URL missing from fallback: {text}"
+    let _ = dispatch(Action::OpenUrl(url), &mut app);
+    assert_eq!(
+        agent_scrollback_len(&app),
+        before,
+        "empty upsell URL must not push fallback scrollback"
     );
-
-    // SAFETY: serialized via `serial_test`.
-    unsafe { std::env::remove_var("GROK_TEST_OPEN_URL_FILE") };
 }

@@ -139,12 +139,13 @@ pub fn canonical_name(value: &str) -> Option<&'static str> {
 }
 
 /// Human-friendly display name for a canonical theme value (e.g.
-/// `"groknight"` → `"Grok Night"`). Falls back to `value` verbatim.
+/// `"groknight"` → `"Chaos Night"`). Canonical keys keep the upstream
+/// `groknight` / `grokday` ids for config compatibility.
 pub fn display_name_for_canonical(value: &str) -> &str {
     match value {
-        "auto" => "Auto",
-        "groknight" => "Grok Night",
-        "grokday" => "Grok Day",
+        "auto" => "自动",
+        "groknight" => "Chaos Night",
+        "grokday" => "Chaos Day",
         "tokyonight" => "Tokyo Night",
         "rosepine-moon" => "Rose Pine Moon",
         other => other,
