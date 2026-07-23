@@ -2515,18 +2515,29 @@ impl Config {
     /// `image_gen` tool gate. Default on; gated only by the `GROK_IMAGE_GEN`
     /// env var and managed-config requirement pin.
     pub(crate) fn resolve_image_gen(&self) -> Resolved<bool> {
+        use xai_grok_tools::implementations::grok_build::IMAGE_GEN_TOOL_NAME;
+        if let Some(pinned) = self.requirements.image_gen.pinned() {
+            return Resolved::new(pinned, ConfigSource::Requirement);
+        }
+        if self
+            .remote_settings
+            .as_ref()
+            .is_some_and(|s| s.imagine_tool_disabled(IMAGE_GEN_TOOL_NAME))
+        {
+            return Resolved::new(false, ConfigSource::Remote);
+        }
         BoolFlag::env("GROK_IMAGE_GEN")
-            .requirement(self.requirements.image_gen.pinned())
+            .config(self.features.image_gen)
+            .feature_flag(
+                self.remote_settings
+                    .as_ref()
+                    .and_then(|s| s.image_gen_enabled),
+            )
             .default(true)
             .resolve()
     }
-    /// `image_edit` tool gate.
-    ///
-    /// The remote settings `imagine_tools_disabled` denylist is authoritative:
-    /// when it lists `image_edit`, the tool is force-removed and local
-    /// env/config can't re-enable it. A managed requirement pin still outranks
-    /// it; otherwise the tool defaults on and is overridable via
-    /// `GROK_IMAGE_EDIT`.
+    /// `image_edit` tool gate. Same denylist / requirement pattern as
+    /// [`Self::resolve_image_gen`]; no `[features]` key (defaults on).
     pub(crate) fn resolve_image_edit(&self) -> Resolved<bool> {
         use xai_grok_tools::implementations::grok_build::IMAGE_EDIT_TOOL_NAME;
         if let Some(pinned) = self.requirements.image_edit.pinned() {
@@ -2541,6 +2552,34 @@ impl Config {
         }
         BoolFlag::env("GROK_IMAGE_EDIT").default(true).resolve()
     }
+    /// `image_to_video` / `reference_to_video` (+ `/imagine-video`). Default on.
+    ///
+    /// Registered as a pair; denylisting either tool name (or `video_gen`)
+    /// disables both. Otherwise same precedence as [`Self::resolve_image_gen`].
+    pub(crate) fn resolve_video_gen(&self) -> Resolved<bool> {
+        use xai_grok_tools::implementations::grok_build::{
+            IMAGE_TO_VIDEO_TOOL_NAME, REFERENCE_TO_VIDEO_TOOL_NAME,
+        };
+        if let Some(pinned) = self.requirements.video_gen.pinned() {
+            return Resolved::new(pinned, ConfigSource::Requirement);
+        }
+        if self.remote_settings.as_ref().is_some_and(|s| {
+            s.imagine_tool_disabled(IMAGE_TO_VIDEO_TOOL_NAME)
+                || s.imagine_tool_disabled(REFERENCE_TO_VIDEO_TOOL_NAME)
+                || s.imagine_tool_disabled("video_gen")
+        }) {
+            return Resolved::new(false, ConfigSource::Remote);
+        }
+        BoolFlag::env("GROK_VIDEO_GEN")
+            .config(self.features.video_gen)
+            .feature_flag(
+                self.remote_settings
+                    .as_ref()
+                    .and_then(|s| s.video_gen_enabled),
+            )
+            .default(true)
+            .resolve()
+    }
     /// Optional Imagine model override for `image_gen`. When set (non-empty),
     /// `image_gen` calls this model slug instead of the default quality model.
     /// Precedence: env `GROK_IMAGE_GEN_MODEL_OVERRIDE` > `[features]
@@ -2554,6 +2593,20 @@ impl Config {
             self.remote_settings
                 .as_ref()
                 .and_then(|s| s.image_gen_model_override.as_deref()),
+        )
+        .map(|r| r.value)
+    }
+    /// Optional Imagine model override for `image_edit`.
+    /// Precedence: env `GROK_IMAGE_EDIT_MODEL_OVERRIDE` > `[features]
+    /// image_edit_model_override` > remote settings.
+    pub(crate) fn resolve_image_edit_model_override(&self) -> Option<String> {
+        resolve_string_flag(
+            None,
+            "GROK_IMAGE_EDIT_MODEL_OVERRIDE",
+            self.features.image_edit_model_override.as_deref(),
+            self.remote_settings
+                .as_ref()
+                .and_then(|s| s.image_edit_model_override.as_deref()),
         )
         .map(|r| r.value)
     }
@@ -4492,6 +4545,9 @@ pub struct Features {
     /// compaction. `None` = defer to remote settings / env / default (`false`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub two_pass_compaction: Option<bool>,
+    /// `image_gen` / `/imagine`. `None` = env / remote / default (`true`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_gen: Option<bool>,
     /// Video generation tool. `None` = defer to remote settings / env / default (false).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub video_gen: Option<bool>,
@@ -4499,6 +4555,8 @@ pub struct Features {
     /// (`image_gen_model_override`) / env / default (`grok-imagine-image-quality`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image_gen_model_override: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_edit_model_override: Option<String>,
     /// Write file tool. `None` = defer to remote settings / env / default (true).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub write_file: Option<bool>,

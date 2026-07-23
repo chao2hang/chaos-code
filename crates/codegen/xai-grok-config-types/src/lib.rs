@@ -792,6 +792,9 @@ pub struct RemoteSettings {
     /// (`grok-imagine-image-quality`). Absent/empty → default model.
     #[serde(default)]
     pub image_gen_model_override: Option<String>,
+    /// Optional Imagine model override for `image_edit`. Absent/empty → default.
+    #[serde(default)]
+    pub image_edit_model_override: Option<String>,
     /// When `Some(true)`, enable the `video_gen` tool for session-based auth users.
     /// When `Some(false)` or absent, the tool is hidden regardless of credentials.
     #[serde(default)]
