@@ -116,36 +116,41 @@ impl VerbGroupKind {
     /// Verb-group row verb: present tense while running, past otherwise.
     pub fn verb(self, running: bool) -> &'static str {
         let (past, present) = match self {
-            VerbGroupKind::File | VerbGroupKind::Skill => ("Read", "Reading"),
+            VerbGroupKind::File | VerbGroupKind::Skill => ("读取", "读取中"),
             VerbGroupKind::Search
             | VerbGroupKind::WebSearch
             | VerbGroupKind::MemorySearch
-            | VerbGroupKind::IntegrationSearch => ("Searched", "Searching"),
-            VerbGroupKind::Dir => ("Listed", "Listing"),
-            VerbGroupKind::WebFetch => ("Fetched", "Fetching"),
+            | VerbGroupKind::IntegrationSearch => ("搜索", "搜索中"),
+            VerbGroupKind::Dir => ("列出", "列出中"),
+            VerbGroupKind::WebFetch => ("抓取", "抓取中"),
             VerbGroupKind::Subagent | VerbGroupKind::Command | VerbGroupKind::OtherTool => {
-                ("Ran", "Running")
+                ("运行", "运行中")
             }
-            VerbGroupKind::EditFile => ("Edited", "Editing"),
-            VerbGroupKind::McpCall => ("Called", "Calling"),
+            VerbGroupKind::EditFile => ("编辑", "编辑中"),
+            VerbGroupKind::McpCall => ("调用", "调用中"),
         };
         if running { present } else { past }
     }
 
     /// Verb-group row noun, pluralized by `count`.
+    ///
+    /// Chinese uses measure words; singular/plural share the same form.
     pub fn noun(self, count: usize) -> &'static str {
         let (one, many) = match self {
-            VerbGroupKind::File | VerbGroupKind::EditFile => ("file", "files"),
-            VerbGroupKind::Skill => ("skill", "skills"),
-            VerbGroupKind::Search => ("pattern", "patterns"),
-            VerbGroupKind::Dir => ("dir", "dirs"),
-            VerbGroupKind::WebFetch | VerbGroupKind::WebSearch => ("website", "websites"),
-            VerbGroupKind::MemorySearch => ("memory", "memories"),
-            VerbGroupKind::IntegrationSearch | VerbGroupKind::McpCall => ("MCP tool", "MCP tools"),
-            VerbGroupKind::Subagent => ("subagent", "subagents"),
-            VerbGroupKind::Command => ("command", "commands"),
-            VerbGroupKind::OtherTool => ("tool", "tools"),
+            VerbGroupKind::File | VerbGroupKind::EditFile => ("个文件", "个文件"),
+            VerbGroupKind::Skill => ("个技能", "个技能"),
+            VerbGroupKind::Search => ("个模式", "个模式"),
+            VerbGroupKind::Dir => ("个目录", "个目录"),
+            VerbGroupKind::WebFetch | VerbGroupKind::WebSearch => ("个网站", "个网站"),
+            VerbGroupKind::MemorySearch => ("条记忆", "条记忆"),
+            VerbGroupKind::IntegrationSearch | VerbGroupKind::McpCall => {
+                ("个 MCP 工具", "个 MCP 工具")
+            }
+            VerbGroupKind::Subagent => ("个子代理", "个子代理"),
+            VerbGroupKind::Command => ("个命令", "个命令"),
+            VerbGroupKind::OtherTool => ("个工具", "个工具"),
         };
+        let _ = count;
         if count == 1 { one } else { many }
     }
 }
@@ -618,51 +623,51 @@ mod tests {
 
     #[test]
     fn verb_is_tense_aware() {
-        assert_eq!(VerbGroupKind::File.verb(false), "Read");
-        assert_eq!(VerbGroupKind::File.verb(true), "Reading");
-        assert_eq!(VerbGroupKind::Skill.verb(false), "Read");
-        assert_eq!(VerbGroupKind::Search.verb(false), "Searched");
-        assert_eq!(VerbGroupKind::Search.verb(true), "Searching");
-        assert_eq!(VerbGroupKind::Dir.verb(false), "Listed");
-        assert_eq!(VerbGroupKind::Dir.verb(true), "Listing");
-        assert_eq!(VerbGroupKind::WebFetch.verb(false), "Fetched");
-        assert_eq!(VerbGroupKind::WebFetch.verb(true), "Fetching");
-        assert_eq!(VerbGroupKind::WebSearch.verb(false), "Searched");
-        assert_eq!(VerbGroupKind::MemorySearch.verb(false), "Searched");
-        assert_eq!(VerbGroupKind::IntegrationSearch.verb(true), "Searching");
-        assert_eq!(VerbGroupKind::Subagent.verb(false), "Ran");
-        assert_eq!(VerbGroupKind::Subagent.verb(true), "Running");
-        assert_eq!(VerbGroupKind::Command.verb(false), "Ran");
-        assert_eq!(VerbGroupKind::Command.verb(true), "Running");
-        assert_eq!(VerbGroupKind::EditFile.verb(false), "Edited");
-        assert_eq!(VerbGroupKind::EditFile.verb(true), "Editing");
-        assert_eq!(VerbGroupKind::McpCall.verb(false), "Called");
-        assert_eq!(VerbGroupKind::McpCall.verb(true), "Calling");
-        assert_eq!(VerbGroupKind::OtherTool.verb(false), "Ran");
+        assert_eq!(VerbGroupKind::File.verb(false), "读取");
+        assert_eq!(VerbGroupKind::File.verb(true), "读取中");
+        assert_eq!(VerbGroupKind::Skill.verb(false), "读取");
+        assert_eq!(VerbGroupKind::Search.verb(false), "搜索");
+        assert_eq!(VerbGroupKind::Search.verb(true), "搜索中");
+        assert_eq!(VerbGroupKind::Dir.verb(false), "列出");
+        assert_eq!(VerbGroupKind::Dir.verb(true), "列出中");
+        assert_eq!(VerbGroupKind::WebFetch.verb(false), "抓取");
+        assert_eq!(VerbGroupKind::WebFetch.verb(true), "抓取中");
+        assert_eq!(VerbGroupKind::WebSearch.verb(false), "搜索");
+        assert_eq!(VerbGroupKind::MemorySearch.verb(false), "搜索");
+        assert_eq!(VerbGroupKind::IntegrationSearch.verb(true), "搜索中");
+        assert_eq!(VerbGroupKind::Subagent.verb(false), "运行");
+        assert_eq!(VerbGroupKind::Subagent.verb(true), "运行中");
+        assert_eq!(VerbGroupKind::Command.verb(false), "运行");
+        assert_eq!(VerbGroupKind::Command.verb(true), "运行中");
+        assert_eq!(VerbGroupKind::EditFile.verb(false), "编辑");
+        assert_eq!(VerbGroupKind::EditFile.verb(true), "编辑中");
+        assert_eq!(VerbGroupKind::McpCall.verb(false), "调用");
+        assert_eq!(VerbGroupKind::McpCall.verb(true), "调用中");
+        assert_eq!(VerbGroupKind::OtherTool.verb(false), "运行");
     }
 
     #[test]
     fn noun_pluralizes_by_count() {
-        assert_eq!(VerbGroupKind::File.noun(1), "file");
-        assert_eq!(VerbGroupKind::File.noun(2), "files");
-        assert_eq!(VerbGroupKind::Skill.noun(2), "skills");
-        assert_eq!(VerbGroupKind::Search.noun(1), "pattern");
-        assert_eq!(VerbGroupKind::Dir.noun(2), "dirs");
-        assert_eq!(VerbGroupKind::WebFetch.noun(1), "website");
-        assert_eq!(VerbGroupKind::WebSearch.noun(2), "websites");
-        // Irregular plural.
-        assert_eq!(VerbGroupKind::MemorySearch.noun(1), "memory");
-        assert_eq!(VerbGroupKind::MemorySearch.noun(2), "memories");
-        assert_eq!(VerbGroupKind::IntegrationSearch.noun(1), "MCP tool");
-        assert_eq!(VerbGroupKind::IntegrationSearch.noun(2), "MCP tools");
-        assert_eq!(VerbGroupKind::Subagent.noun(1), "subagent");
-        assert_eq!(VerbGroupKind::Subagent.noun(2), "subagents");
-        assert_eq!(VerbGroupKind::Command.noun(1), "command");
-        assert_eq!(VerbGroupKind::Command.noun(2), "commands");
-        assert_eq!(VerbGroupKind::EditFile.noun(2), "files");
-        assert_eq!(VerbGroupKind::McpCall.noun(1), "MCP tool");
-        assert_eq!(VerbGroupKind::OtherTool.noun(1), "tool");
-        assert_eq!(VerbGroupKind::OtherTool.noun(2), "tools");
+        // Chinese measure-word forms; singular/plural share the same text.
+        assert_eq!(VerbGroupKind::File.noun(1), "个文件");
+        assert_eq!(VerbGroupKind::File.noun(2), "个文件");
+        assert_eq!(VerbGroupKind::Skill.noun(2), "个技能");
+        assert_eq!(VerbGroupKind::Search.noun(1), "个模式");
+        assert_eq!(VerbGroupKind::Dir.noun(2), "个目录");
+        assert_eq!(VerbGroupKind::WebFetch.noun(1), "个网站");
+        assert_eq!(VerbGroupKind::WebSearch.noun(2), "个网站");
+        assert_eq!(VerbGroupKind::MemorySearch.noun(1), "条记忆");
+        assert_eq!(VerbGroupKind::MemorySearch.noun(2), "条记忆");
+        assert_eq!(VerbGroupKind::IntegrationSearch.noun(1), "个 MCP 工具");
+        assert_eq!(VerbGroupKind::IntegrationSearch.noun(2), "个 MCP 工具");
+        assert_eq!(VerbGroupKind::Subagent.noun(1), "个子代理");
+        assert_eq!(VerbGroupKind::Subagent.noun(2), "个子代理");
+        assert_eq!(VerbGroupKind::Command.noun(1), "个命令");
+        assert_eq!(VerbGroupKind::Command.noun(2), "个命令");
+        assert_eq!(VerbGroupKind::EditFile.noun(2), "个文件");
+        assert_eq!(VerbGroupKind::McpCall.noun(1), "个 MCP 工具");
+        assert_eq!(VerbGroupKind::OtherTool.noun(1), "个工具");
+        assert_eq!(VerbGroupKind::OtherTool.noun(2), "个工具");
     }
 
     #[test]

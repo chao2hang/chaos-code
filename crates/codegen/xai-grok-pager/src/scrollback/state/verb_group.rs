@@ -256,7 +256,7 @@ pub fn verb_group_header_label(
 }
 
 /// Aggregated label for a truncation ("N more") header, describing the rows
-/// the fold hid — "Ran 6 commands, Read 2 files" — through the same bucket
+/// the fold hid — "Ran 6 commands, 读取 2 个文件" — through the same bucket
 /// vocabulary as verb-group headers.
 ///
 /// Walks the span's participants (skipping hidden thinking exactly like the
@@ -393,7 +393,7 @@ impl<'e> BucketAccumulator<'e> {
             spans.push(Span::styled(segment, text_style));
         }
         if self.failed_count > 0 {
-            let suffix = format!(" · {} failed", self.failed_count);
+            let suffix = format!(" · {} 失败", self.failed_count);
             text.push_str(&suffix);
             spans.push(Span::styled(suffix, theme.fg(theme.accent_error)));
         }
@@ -483,7 +483,7 @@ mod tests {
             entry(ToolCallBlock::ListDir(ListDirToolCallBlock::new("src"))),
         ];
         let l = label(&entries);
-        assert_eq!(l.text, "Read 2 files, Searched 1 pattern, Listed 1 dir");
+        assert_eq!(l.text, "读取 2 个文件, 搜索 1 个模式, 列出 1 个目录");
         assert!(!l.running);
         assert!(!l.failed);
     }
@@ -496,7 +496,7 @@ mod tests {
             read("b.rs"),
         ];
         let l = label(&entries);
-        assert_eq!(l.text, "Read 2 files, Read 1 skill");
+        assert_eq!(l.text, "读取 2 个文件, 读取 1 个技能");
     }
 
     #[test]
@@ -511,7 +511,7 @@ mod tests {
             )),
         ];
         let l = label(&entries);
-        assert_eq!(l.text, "Read 3 files · 2 failed");
+        assert_eq!(l.text, "读取 3 个文件 · 2 失败");
         assert!(l.failed);
     }
 
@@ -528,7 +528,7 @@ mod tests {
 
         entries[1].is_running = false;
         let l = label(&entries);
-        assert_eq!(l.text, "Read 1 file, Searched 1 pattern");
+        assert_eq!(l.text, "读取 1 个文件, 搜索 1 个模式");
         assert!(!l.running);
     }
 
@@ -574,7 +574,7 @@ mod tests {
             /*show_thinking=*/ false,
             &Theme::current(),
         );
-        assert_eq!(l.text, "Read 2 files");
+        assert_eq!(l.text, "读取 2 个文件");
     }
 
     #[test]
@@ -606,7 +606,7 @@ mod tests {
             /*show_thinking=*/ true,
             &Theme::current(),
         );
-        assert_eq!(l.text, "Read 4 files");
+        assert_eq!(l.text, "读取 4 个文件");
     }
 
     fn execute() -> ScrollbackEntry {
@@ -659,7 +659,7 @@ mod tests {
             execute(),
         ];
         let l = trunc_label(&entries, None).expect("buckets");
-        assert_eq!(l.text, "Ran 2 commands, Read 1 file, Edited 1 file");
+        assert_eq!(l.text, "运行 2 个命令, 读取 1 个文件, 编辑 1 个文件");
     }
 
     #[test]
@@ -698,7 +698,7 @@ mod tests {
             ScrollbackEntry::new(failed).with_display_mode(DisplayMode::Collapsed),
         ];
         let l = trunc_label(&entries, None).expect("buckets");
-        assert_eq!(l.text, "Ran 2 commands · 1 failed");
+        assert_eq!(l.text, "运行 2 个命令 · 1 失败");
         assert!(l.failed);
     }
 
@@ -727,7 +727,7 @@ mod tests {
             sub_completed("child-A"),
         ];
         let l = label(&entries);
-        assert_eq!(l.text, "Read 2 files, Ran 1 subagent");
+        assert_eq!(l.text, "读取 2 个文件, Ran 1 subagent");
         assert!(!l.failed);
     }
 
@@ -754,7 +754,7 @@ mod tests {
             )),
         ];
         let l = label(&entries);
-        assert_eq!(l.text, "Ran 2 subagents · 1 failed");
+        assert_eq!(l.text, "运行 2 个子代理 · 1 失败");
         assert!(l.failed);
     }
 
@@ -763,7 +763,7 @@ mod tests {
         let mut entries = vec![read("a.rs"), sub_started("child-A")];
         entries[1].is_running = true;
         let l = label(&entries);
-        assert_eq!(l.text, "Reading 1 file, Running 1 subagent");
+        assert_eq!(l.text, "读取中 1 个文件, 运行中 1 个子代理");
         assert!(l.running);
     }
 }

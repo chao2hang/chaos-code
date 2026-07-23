@@ -191,10 +191,10 @@ impl GroupKind {
     /// Display label shown in the group header.
     fn label(self) -> &'static str {
         match self {
-            GroupKind::Workflows => "Workflows",
-            GroupKind::Subagents => "Subagents",
-            GroupKind::Tasks => "Tasks",
-            GroupKind::Watchers => "Watchers",
+            GroupKind::Workflows => "工作流",
+            GroupKind::Subagents => "子代理",
+            GroupKind::Tasks => "任务",
+            GroupKind::Watchers => "监视器",
         }
     }
 
@@ -287,7 +287,7 @@ impl TaskEntry {
             let text = description
                 .map(|d| d.replace('\n', " "))
                 .unwrap_or_else(|| task.command.trim().replace('\n', " "));
-            const TAG: &str = "Monitor";
+            const TAG: &str = "监控";
             let desc_style = if running {
                 Style::default().fg(theme.text_secondary)
             } else {
@@ -303,12 +303,12 @@ impl TaskEntry {
             // Collapse newlines so multi-line descriptions render on one row.
             let one_line = desc.replace('\n', " ");
             let theme = Theme::current();
-            // Prefix the description with a constant `Task` tag in the
+            // Prefix the description with a constant `任务` tag in the
             // theme's secondary text color so the entry type is identifiable
             // at a glance, the same way subagent rows lead with their
             // persona/role label. The prefix is included in `label` so it
             // is searchable (the tasks-pane filter matches against `label`).
-            const PREFIX: &str = "Task ";
+            const PREFIX: &str = "任务 ";
             let desc_style = if running {
                 Style::default().fg(theme.text_primary)
             } else {
@@ -2097,8 +2097,8 @@ mod tests {
             TaskEntry::BgTask { label, .. } => label.as_str(),
             _ => panic!("expected BgTask variant"),
         };
-        // `Task ` prefix is included in the searchable label.
-        assert_eq!(label, "Task Run release tests");
+        // `任务 ` prefix is included in the searchable label.
+        assert_eq!(label, "任务 Run release tests");
     }
 
     #[test]
@@ -2113,7 +2113,7 @@ mod tests {
         };
         let theme = Theme::current();
         assert_eq!(styled.spans.len(), 2);
-        assert_eq!(styled.spans[0].content.as_ref(), "Task ");
+        assert_eq!(styled.spans[0].content.as_ref(), "任务 ");
         assert_eq!(styled.spans[0].style.fg, Some(theme.text_secondary));
         assert_eq!(styled.spans[1].content.as_ref(), "Run release tests");
         assert_eq!(styled.spans[1].style.fg, Some(theme.text_primary));
@@ -2121,7 +2121,7 @@ mod tests {
 
     #[test]
     fn monitor_task_styled_with_monitor_tag() {
-        // Monitors render a blue "Monitor" tag + neutral description,
+        // Monitors render a blue "监控" tag + neutral description,
         // mirroring scheduled /loop rows — NOT the bash-highlighted command.
         let mut task = make_bg_task("mon1", "python -u counter.py", BgTaskStatus::Running);
         task.is_monitor = true;
@@ -2133,9 +2133,9 @@ mod tests {
             _ => panic!("expected BgTask variant"),
         };
         let theme = Theme::current();
-        assert_eq!(label, "Monitor incrementing event counter every 3s");
+        assert_eq!(label, "监控 incrementing event counter every 3s");
         assert_eq!(styled.spans.len(), 2);
-        assert_eq!(styled.spans[0].content.as_ref(), "Monitor ");
+        assert_eq!(styled.spans[0].content.as_ref(), "监控 ");
         assert_eq!(styled.spans[0].style.fg, Some(theme.accent_system));
         assert_eq!(
             styled.spans[1].content.as_ref(),
@@ -2158,7 +2158,7 @@ mod tests {
         assert_eq!(label, "ls -la");
         let joined: String = styled.spans.iter().map(|s| s.content.as_ref()).collect();
         assert!(
-            !joined.starts_with("Task "),
+            !joined.starts_with("任务 "),
             "no description ⇒ no prefix, got: {joined:?}"
         );
     }
@@ -2186,7 +2186,7 @@ mod tests {
             TaskEntry::BgTask { label, .. } => label.as_str(),
             _ => panic!("expected BgTask variant"),
         };
-        assert_eq!(label, "Task First line Second line");
+        assert_eq!(label, "任务 First line Second line");
         assert!(!label.contains('\n'));
     }
 
@@ -2885,7 +2885,7 @@ mod tests {
             }
             _ => unreachable!(),
         };
-        assert!(header_text.contains("Subagents"), "got: {header_text}");
+        assert!(header_text.contains("子代理"), "got: {header_text}");
         assert!(header_text.contains('1'), "count in header: {header_text}");
     }
 

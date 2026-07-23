@@ -1203,12 +1203,24 @@ mod tests {
             .sum()
     }
 
-    /// The plain text of buffer row `y` (viewport x starts at 0, so a byte
-    /// index into this string equals the buffer column for ASCII content).
+    /// The plain text of buffer row `y`.
+    ///
+    /// Skips the continuation cells of wide (CJK) glyphs so double-width
+    /// characters do not pick up a trailing space from the placeholder
+    /// column. For ASCII content, a byte index into this string still equals
+    /// the buffer column (wide glyphs break that invariant).
     fn buffer_row_text(buf: &Buffer, y: u16) -> String {
-        (buf.area.left()..buf.area.right())
-            .map(|x| buf[(x, y)].symbol())
-            .collect()
+        use unicode_width::UnicodeWidthStr;
+        let mut out = String::with_capacity((buf.area.width as usize) * 2);
+        let mut x = buf.area.left();
+        let right = buf.area.right();
+        while x < right {
+            let sym = buf[(x, y)].symbol();
+            let w = UnicodeWidthStr::width(sym).max(1) as u16;
+            out.push_str(sym);
+            x = x.saturating_add(w);
+        }
+        out
     }
 
     /// Buffer columns on row `y` whose cell carries the REVERSED modifier.
@@ -1625,7 +1637,7 @@ mod tests {
 
         let header_row = buffer_row_text(&buf, 0);
         assert!(
-            header_row.contains("Read 2 files"),
+            header_row.contains("读取 2 个文件"),
             "label must count members on both sides of hidden thinking: {header_row:?}"
         );
     }
@@ -1678,7 +1690,7 @@ mod tests {
 
         let header_row = buffer_row_text(&buf, 0);
         assert!(
-            header_row.contains("Read 2 files"),
+            header_row.contains("读取 2 个文件"),
             "label must stay tools-only: {header_row:?}"
         );
         for y in 0..viewport.height {
@@ -1740,7 +1752,7 @@ mod tests {
 
         let header_row = buffer_row_text(&buf, 0);
         assert!(
-            header_row.contains("Listed 1 dir"),
+            header_row.contains("列出 1 个目录"),
             "singleton header must render the aggregated label: {header_row:?}"
         );
         for y in 0..viewport.height {
@@ -1799,7 +1811,7 @@ mod tests {
         );
         let header_row = buffer_row_text(&buf, 0);
         assert!(
-            header_row.contains("Read 1 file, Ran 1 subagent"),
+            header_row.contains("读取 1 个文件, 运行 1 个子代理"),
             "header must aggregate tool and subagent members: {header_row:?}"
         );
 
@@ -1835,7 +1847,7 @@ mod tests {
         assert!(
             member_rows
                 .iter()
-                .any(|r| r.contains("Subagent") && r.contains("\u{2014} Thinking")),
+                .any(|r| r.contains("子代理") && r.contains("\u{2014} Thinking")),
             "expanded member row must keep the activity suffix: {member_rows:?}"
         );
     }
@@ -2155,7 +2167,7 @@ mod tests {
             .map(|y| buffer_row_text(&buf, y))
             .collect();
         assert!(
-            rows.iter().any(|r| r.contains("Read 2 files")),
+            rows.iter().any(|r| r.contains("读取 2 个文件")),
             "verb header must render its label: {rows:?}"
         );
         assert!(
@@ -2167,7 +2179,7 @@ mod tests {
         let verb = model
             .range(0, GROUP_HEADER_RANGE_ID)
             .expect("verb header range");
-        assert_eq!(verb.lines[0].text, "Read 2 files");
+        assert_eq!(verb.lines[0].text, "读取 2 个文件");
         let trunc = model
             .range(2, GROUP_HEADER_RANGE_ID)
             .expect("truncation header range");
@@ -3097,9 +3109,9 @@ mod tests {
         };
 
         let collapsed = header_line(false);
-        assert_eq!(collapsed.text, "Read 2 files");
+        assert_eq!(collapsed.text, "读取 2 个文件");
         let expanded = header_line(true);
-        assert_eq!(expanded.text, "Read 2 files");
+        assert_eq!(expanded.text, "读取 2 个文件");
         assert_eq!(
             collapsed.selectable_cols, expanded.selectable_cols,
             "hitbox always spans exactly the label glyphs"
@@ -3275,7 +3287,7 @@ mod tests {
         // their own screen rows.
         let header = model.range(0, GROUP_HEADER_RANGE_ID).expect("header range");
         assert_eq!(header.lines.len(), 1);
-        assert_eq!(header.lines[0].text, "Read 2 files");
+        assert_eq!(header.lines[0].text, "读取 2 个文件");
         assert_eq!(header.lines[0].screen_y, 0);
         let member = model
             .range(0, crate::scrollback::blocks::tool::TOOL_HEADER_RANGE)
@@ -3287,11 +3299,11 @@ mod tests {
         // A same-row drag over each row reconstructs that row's text only.
         let header_copy = reconstruct_selection_text(model, &full_row_drag(&header.lines[0]))
             .expect("header copy");
-        assert_eq!(header_copy, "Read 2 files");
+        assert_eq!(header_copy, "读取 2 个文件");
         let member_copy = reconstruct_selection_text(model, &full_row_drag(&member.lines[0]))
             .expect("member copy");
         assert!(
-            member_copy.contains("b1.rs") && !member_copy.contains("Read 2 files"),
+            member_copy.contains("b1.rs") && !member_copy.contains("读取 2 个文件"),
             "member drag must not drag the header along: {member_copy:?}"
         );
     }

@@ -208,11 +208,11 @@ impl ExecuteToolCallBlock {
                 } else {
                     theme.primary().add_modifier(Modifier::BOLD)
                 };
-                let mut spans = vec![Span::styled("Run ".to_string(), label_style)];
-                let mut hang = UnicodeWidthStr::width("Run ");
+                let mut spans = vec![Span::styled("运行 ".to_string(), label_style)];
+                let mut hang = UnicodeWidthStr::width("运行 ");
                 if self.bash_mode {
-                    spans.push(Span::styled("(user) ".to_string(), theme.muted()));
-                    hang += UnicodeWidthStr::width("(user) ");
+                    spans.push(Span::styled("(用户) ".to_string(), theme.muted()));
+                    hang += UnicodeWidthStr::width("(用户) ");
                 }
                 (spans, hang)
             }
@@ -303,10 +303,10 @@ impl ExecuteToolCallBlock {
         } else {
             theme.primary().add_modifier(Modifier::BOLD)
         };
-        let mut spans = vec![Span::styled("Run ", label_style)];
+        let mut spans = vec![Span::styled("运行 ", label_style)];
         if self.bash_mode {
-            // Same style as session event messages (e.g. "Worked for 2.3s")
-            spans.push(Span::styled("(user) ", theme.muted()));
+            // Same style as session event messages (e.g. "用时 2.3s")
+            spans.push(Span::styled("(用户) ", theme.muted()));
         }
         // Single ratatui Line — never pass raw newlines (callers that need
         // multi-line command display use `push_command_soft_wrap`).
@@ -626,13 +626,17 @@ impl ExecuteToolCallBlock {
     }
 }
 
-/// Drop a leading `Run` / `Running` word (case-insensitive) plus following
-/// whitespace so Label headers do not read `Run Run the tests`.
+/// Drop a leading `Run` / `Running` / `运行` word plus following whitespace
+/// so Label headers do not read `运行 Run the tests` or `Run Run the tests`.
 fn strip_leading_run_word(s: &str) -> String {
     let lower = s.to_ascii_lowercase();
     let rest = if let Some(rest) = lower.strip_prefix("running") {
         rest
     } else if let Some(rest) = lower.strip_prefix("run") {
+        rest
+    } else if let Some(rest) = s.strip_prefix("运行中") {
+        rest
+    } else if let Some(rest) = s.strip_prefix("运行") {
         rest
     } else {
         return s.to_string();
@@ -840,7 +844,7 @@ mod tests {
         let title = line_text(&headers[0].0);
         let cmd = line_text(&headers[1].0);
         // Leading "Run " on the description is stripped (Label already has it).
-        assert_eq!(title, "Run the unit test suite");
+        assert_eq!(title, "运行 the unit test suite");
         assert!(cmd.starts_with("$ "), "cmd={cmd:?}");
         assert!(cmd.contains("cargo test --lib"), "cmd={cmd:?}");
         // Prefix span counts: "Run " only on title; "$ " on command.
@@ -855,7 +859,7 @@ mod tests {
         let theme = Theme::current();
         let headers = block.header_lines(&theme, ExecuteHeaderStyle::Label, true, false);
         assert_eq!(headers.len(), 1);
-        assert_eq!(line_text(&headers[0].0), "Run the unit test suite");
+        assert_eq!(line_text(&headers[0].0), "运行 the unit test suite");
     }
 
     #[test]
@@ -887,7 +891,7 @@ mod tests {
         let headers = block.header_lines(&theme, ExecuteHeaderStyle::Label, false, false);
         assert_eq!(headers.len(), 1);
         let text = line_text(&headers[0].0);
-        assert!(text.starts_with("Run "), "header={text:?}");
+        assert!(text.starts_with("运行 "), "header={text:?}");
         assert!(text.contains("echo hi"), "header={text:?}");
     }
 
@@ -931,7 +935,7 @@ mod tests {
         );
         let first = line_text(&lines[0].content);
         assert!(
-            first.starts_with("Run "),
+            first.starts_with("运行 "),
             "Label soft-wrap first row needs Run prefix: {first:?}"
         );
         assert!(
@@ -971,8 +975,8 @@ mod tests {
         let headers = block.header_lines(&theme, ExecuteHeaderStyle::Label, false, true);
         assert_eq!(headers.len(), 2);
         let title = line_text(&headers[0].0);
-        assert_eq!(title, "Run (user) List files");
-        assert_eq!(headers[0].1, 2); // "Run " + "(user) "
+        assert_eq!(title, "运行 (用户) List files");
+        assert_eq!(headers[0].1, 2); // "运行 " + "(用户) "
     }
 
     #[test]

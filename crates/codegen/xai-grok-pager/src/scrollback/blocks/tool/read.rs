@@ -172,22 +172,22 @@ impl ReadToolCallBlock {
             theme.muted()
         };
 
-        // SKILL.md reads render as "Skill {skill_name}".
+        // SKILL.md reads render as "技能 {skill_name}".
         if let Some(skill) = self.skill_name() {
             return Line::from(vec![
-                Span::styled("Skill ", bold_style),
+                Span::styled("技能 ", bold_style),
                 Span::styled(skill.to_owned(), path_style),
             ]);
         }
 
-        let prefix = "Read ";
+        let prefix = "读取 ";
         let range_suffix = self
             .line_range
             .map(|r| {
                 if let Some(total) = self.total_lines
                     && total > r.end.saturating_sub(r.start) + 1
                 {
-                    format!(" ({} of {total})", r)
+                    format!(" ({} / {total})", r)
                 } else {
                     format!(" ({})", r)
                 }
@@ -195,11 +195,11 @@ impl ReadToolCallBlock {
             .unwrap_or_default();
         // Extra suffix for errors or empty content
         let extra_suffix = if self.content.as_ref().is_some_and(|c| c.is_empty()) {
-            " (empty)".to_string()
+            " (空)".to_string()
         } else if let Some(media) = &self.media_kind {
             match media {
-                ReadMediaKind::Image => " (image)".to_string(),
-                ReadMediaKind::Pdf { pages } => format!(" ({pages} pages)"),
+                ReadMediaKind::Image => " (图片)".to_string(),
+                ReadMediaKind::Pdf { pages } => format!(" ({pages} 页)"),
             }
         } else {
             String::new()
@@ -231,7 +231,7 @@ impl ReadToolCallBlock {
 
     /// Header line with only the path (or skill name) span selectable.
     ///
-    /// Spans: `["Read ", path, optional_range_suffix, optional_extra_suffix]`
+    /// Spans: `["读取 ", path, optional_range_suffix, optional_extra_suffix]`
     /// or `["Skill ", skill_name]`. Prefix/suffixes excluded (no `selection_text`
     /// override). Attaches a semantic filesystem target for non-skill paths.
     fn header_block_line(&self, line: Line<'static>, cwd: Option<&std::path::Path>) -> BlockLine {
@@ -495,7 +495,7 @@ mod tests {
             .iter()
             .map(|s| s.content.as_ref())
             .collect();
-        assert_eq!(text, "Skill deploy");
+        assert_eq!(text, "技能 deploy");
     }
 
     #[test]
@@ -509,7 +509,7 @@ mod tests {
             .map(|s| s.content.as_ref())
             .collect();
         assert!(
-            text.starts_with("Read "),
+            text.starts_with("读取 "),
             "expected 'Read ...' got '{text}'"
         );
         assert!(text.contains("main.rs"));
@@ -526,7 +526,7 @@ mod tests {
             .iter()
             .map(|s| s.content.as_ref())
             .collect();
-        assert_eq!(text, "Read main.rs (1-10)");
+        assert_eq!(text, "读取 main.rs (1-10)");
     }
 
     #[test]
@@ -544,7 +544,7 @@ mod tests {
             .iter()
             .map(|s| s.content.as_ref())
             .collect();
-        assert_eq!(header, "Read src/main.rs");
+        assert_eq!(header, "读取 src/main.rs");
 
         let preamble = block.preamble(&ctx).unwrap();
         let preamble_text: String = preamble
@@ -553,7 +553,7 @@ mod tests {
             .flat_map(|l| l.spans.iter())
             .map(|s| s.content.as_ref())
             .collect();
-        assert_eq!(preamble_text, "Read /Users/me/project/src/main.rs");
+        assert_eq!(preamble_text, "读取 /Users/me/project/src/main.rs");
     }
 
     #[test]
@@ -600,7 +600,7 @@ mod tests {
             "main.rs",
             "copy/highlight should match the painted path span, not 'Read …'"
         );
-        assert_eq!(header.content.spans[0].content.as_ref(), "Read ");
+        assert_eq!(header.content.spans[0].content.as_ref(), "读取 ");
         assert!(header.selection_text.is_none());
     }
 
@@ -666,7 +666,7 @@ mod tests {
 
         assert!(matches!(&header.selectable, Selectable::Spans(r) if *r == (1..2)));
         assert_eq!(derive_selection_text(header), "deploy");
-        assert_eq!(header.content.spans[0].content.as_ref(), "Skill ");
+        assert_eq!(header.content.spans[0].content.as_ref(), "技能 ");
     }
 
     #[test]

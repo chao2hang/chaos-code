@@ -148,14 +148,14 @@ impl BlockContent for BgTaskBlock {
         };
         let line = match &self.kind {
             BgTaskKind::Started => Line::from(vec![
-                Span::styled("Task ", bold),
-                Span::styled("started: ", muted),
+                Span::styled("任务", bold),
+                Span::styled("已启动：", muted),
                 Span::styled(display, muted),
             ]),
             BgTaskKind::Completed { elapsed } => Line::from(vec![
-                Span::styled("Task ", bold),
+                Span::styled("任务", bold),
                 Span::styled(
-                    format!("completed in {}: ", format_duration(*elapsed)),
+                    format!("已完成（用时 {}）：", format_duration(*elapsed)),
                     muted,
                 ),
                 Span::styled(display, muted),
@@ -169,19 +169,22 @@ impl BlockContent for BgTaskBlock {
                 let is_killed = signal
                     .as_deref()
                     .is_some_and(|s| matches!(s, "killed" | "SIGTERM" | "SIGKILL" | "oom"));
-                let verb = if is_killed { "killed" } else { "failed" };
+                let verb = if is_killed { "已终止" } else { "失败" };
                 let detail = if is_killed {
                     String::new()
                 } else {
                     match (exit_code, signal) {
-                        (_, Some(sig)) => format!(" ({})", sig),
-                        (Some(code), None) => format!(" (exit {})", code),
+                        (_, Some(sig)) => format!("（{}）", sig),
+                        (Some(code), None) => format!("（退出码 {}）", code),
                         (None, None) => String::new(),
                     }
                 };
                 Line::from(vec![
-                    Span::styled("Task ", bold),
-                    Span::styled(format!("{verb} in {}: ", format_duration(*elapsed)), muted),
+                    Span::styled("任务", bold),
+                    Span::styled(
+                        format!("{verb}（用时 {}）：", format_duration(*elapsed)),
+                        muted,
+                    ),
                     Span::styled(format!("{}{}", display, detail), muted),
                 ])
             }
@@ -401,7 +404,7 @@ mod tests {
             .with_description(Some("Wait twenty seconds".into()));
         let completed_text = line_text(&completed);
         assert!(
-            completed_text.contains("completed"),
+            completed_text.contains("已完成"),
             "completed={completed_text:?}"
         );
         assert!(

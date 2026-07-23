@@ -110,11 +110,10 @@ impl ListDirToolCallBlock {
             theme.fg(theme.path)
         };
 
-        let prefix = "List ";
+        let prefix = "列表 ";
         let entry_count = self.output.lines().filter(|l| !l.trim().is_empty()).count();
         let suffix = if self.error.is_none() && entry_count > 0 {
-            let s = if entry_count == 1 { "y" } else { "ies" };
-            format!(" ({entry_count} entr{s})")
+            format!(" ({entry_count} 项)")
         } else {
             String::new()
         };
@@ -269,18 +268,18 @@ mod tests {
     #[test]
     fn collapsed_header_shows_entry_count() {
         let block = ListDirToolCallBlock::new("src").with_output("a.rs\nb.rs\nsub/\n");
-        assert_eq!(header_text(&block), "List src (3 entries)");
+        assert_eq!(header_text(&block), "列表 src (3 项)");
 
         let single = ListDirToolCallBlock::new("src").with_output("lonely.rs\n");
-        assert_eq!(header_text(&single), "List src (1 entry)");
+        assert_eq!(header_text(&single), "列表 src (1 项)");
     }
 
     #[test]
     fn collapsed_header_omits_count_when_empty_or_failed() {
         let empty = ListDirToolCallBlock::new("src");
-        assert_eq!(header_text(&empty), "List src");
+        assert_eq!(header_text(&empty), "列表 src");
 
         let failed = ListDirToolCallBlock::new("gone").with_error("no such directory");
-        assert_eq!(header_text(&failed), "List gone");
+        assert_eq!(header_text(&failed), "列表 gone");
     }
 }
