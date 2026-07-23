@@ -11,19 +11,23 @@ pub fn pager_toml_path() -> PathBuf {
     grok_home().join("pager.toml")
 }
 
-/// User-facing label for the user grok directory (``~/.grok`` or ``$GROK_HOME``).
+/// User-facing label for the user config directory
+/// (``~/.chaos`` / ``~/.grok`` / ``$CHAOS_HOME`` / ``$GROK_HOME``).
 ///
 /// Derived from resolved [`grok_home()`] vs `xai_grok_config::default_grok_home()`,
-/// not from whether `GROK_HOME` is set in the environment.
+/// not from whether an env override is set. When overridden, prefer
+/// `$CHAOS_HOME` in the label if that env is present.
 pub fn display_grok_home_prefix() -> String {
     if grok_home() == xai_grok_config::default_grok_home() {
-        "~/.grok".to_string()
+        xai_grok_config::default_home_display_prefix().to_string()
+    } else if std::env::var_os("CHAOS_HOME").is_some() {
+        "$CHAOS_HOME".to_string()
     } else {
         "$GROK_HOME".to_string()
     }
 }
 
-/// User-facing path under [`grok_home()`], e.g. ``~/.grok/config.toml``.
+/// User-facing path under [`grok_home()`], e.g. ``~/.chaos/config.toml``.
 pub fn display_user_grok_path(relative: impl AsRef<Path>) -> String {
     let rel = relative.as_ref();
     let prefix = display_grok_home_prefix();

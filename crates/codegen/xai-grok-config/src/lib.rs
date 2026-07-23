@@ -1,8 +1,11 @@
-//! Config file loading for Grok.
+//! Config file loading for Grok / Chaos.
+//!
+//! User home is `$CHAOS_HOME`, else `$GROK_HOME`, else dual-read
+//! `~/.chaos` / `~/.grok` (see [`paths::default_grok_home`]).
 //!
 //! Merge order (lowest → highest priority):
 //! 1. `/etc/grok/managed_config.toml`
-//! 2. `$GROK_HOME/managed_config.toml`
+//! 2. `$GROK_HOME/managed_config.toml` (or `$CHAOS_HOME` / resolved default)
 //! 3. `$GROK_HOME/config.toml`
 //! 4. `$GROK_HOME/requirements.toml` (cloud cache; Ed25519-signed at rest once a
 //!    key is embedded — see [`signed_policy`] — below the OS-protected layers)
@@ -48,9 +51,11 @@ pub use managed_cache::{
     mark_managed_config_synced, mark_managed_config_synced_at, normalize_identity,
 };
 pub use paths::{
-    claude_managed_settings_path, claude_managed_settings_probe_path, decode_cwd_from_dirname,
-    default_grok_home, encode_cwd_dirname, ensure_sessions_cwd_dir, grok_application,
-    grok_application_in, grok_home, sessions_cwd_dir, system_config_dir, user_grok_home,
+    CHAOS_HOME_DIRNAME, LEGACY_GROK_HOME_DIRNAME, claude_managed_settings_path,
+    claude_managed_settings_probe_path, decode_cwd_from_dirname, default_grok_home,
+    default_home_display_prefix, encode_cwd_dirname, ensure_sessions_cwd_dir, grok_application,
+    grok_application_in, grok_home, resolve_default_home_under, sessions_cwd_dir, system_config_dir,
+    user_grok_home,
 };
 pub use validation::{
     RequirementsError, RequirementsLayer, RequirementsSource, load_merged_requirements,

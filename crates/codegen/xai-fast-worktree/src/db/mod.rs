@@ -386,15 +386,32 @@ pub fn now_epoch_secs() -> i64 {
 }
 
 pub fn resolve_grok_home() -> Result<PathBuf> {
+    // Keep dual-home policy in sync with xai_grok_config::paths (`CHAOS_HOME` >
+    // `GROK_HOME` > prefer existing ~/.chaos > existing ~/.grok > default ~/.chaos).
+    // Home resolution deliberately differs ($HOME here vs std::env::home_dir()).
+    if let Ok(v) = std::env::var("CHAOS_HOME") {
+        return Ok(PathBuf::from(v));
+    }
     if let Ok(v) = std::env::var("GROK_HOME") {
         return Ok(PathBuf::from(v));
     }
-    let home = PathBuf::from(std::env::var("HOME").context("neither $GROK_HOME nor $HOME is set")?);
-    // Canonicalize the home dir so worktree paths share the same physical .grok
-    // tree as trust/hooks even when it is symlinked. The dunce canonicalization
-    // must stay in sync with xai_grok_config::default_grok_home();
-    // home resolution deliberately differs ($HOME here vs std::env::home_dir()).
-    Ok(dunce::canonicalize(&home).unwrap_or(home).join(".grok"))
+    let home = PathBuf::from(
+        std::env::var("HOME")
+            .context("neither $CHAOS_HOME, $GROK_HOME, nor $HOME is set")?,
+    );
+    // Canonicalize the home dir so worktree paths share the same physical
+    // config tree as trust/hooks even when it is symlinked. Dunce
+    // canonicalization matches xai_grok_config::default_grok_home().
+    let home = dunce::canonicalize(&home).unwrap_or(home);
+    let chaos = home.join(".chaos");
+    let grok = home.join(".grok");
+    if chaos.is_dir() {
+        Ok(chaos)
+    } else if grok.is_dir() {
+        Ok(grok)
+    } else {
+        Ok(chaos)
+    }
 }
 
 /// Serializes tests that mutate the process-global `GROK_HOME` env var so they
