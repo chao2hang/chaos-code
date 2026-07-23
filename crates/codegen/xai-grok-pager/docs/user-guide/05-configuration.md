@@ -32,8 +32,8 @@ Settings resolve highest-priority first:
 auto_update = true                     # check for updates on launch
 
 [models]
-default = "grok-build"                 # model used for new sessions
-web_search = "grok-4.20-multi-agent"   # model used by the web_search tool
+default = "gpt-5"                      # catalog key from [model.*] (required for BYOK)
+# web_search / image_description / session_summary 未设时回落到 default
 
 # Defaults applied to every model; a per-model [model.<id>] value always wins.
 # See "Custom Models" for the per-model overrides and full details.
