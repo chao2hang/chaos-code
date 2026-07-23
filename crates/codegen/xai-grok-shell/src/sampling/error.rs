@@ -18,14 +18,15 @@ use agent_client_protocol as acp;
 /// stop reason with no detail.
 pub const RATE_LIMITED_ERROR_CODE: i32 = -32003;
 
-/// OAuth / session rate-limit copy (personal plan upgrade path).
+/// OAuth / session rate-limit copy (legacy personal plan path).
+/// Chaos is BYOK-only; keep wording provider-neutral.
 pub const RATE_LIMITED_USER_MESSAGE_OAUTH: &str =
-    "You\u{2019}ve hit the rate limit for your plan. Upgrade your account or try again later.";
+    "已达到当前计划的速率限制。请稍后重试，或检查 Provider 配额与计费设置。";
 
-/// API key / team rate-limit copy. Personal grok.com upgrades do not raise API
-/// team limits; admins purchase credits or a higher spend-based tier.
-/// See https://docs.x.ai/developers/rate-limits#rate-limit-tiers
-pub const RATE_LIMITED_USER_MESSAGE_API_KEY: &str = "You\u{2019}ve hit your team\u{2019}s API rate limit. Ask a team admin to purchase more credits for higher limits, or try again later. See https://docs.x.ai/developers/rate-limits#rate-limit-tiers";
+/// API key / team rate-limit copy. Chaos uses user-supplied Provider keys;
+/// higher limits come from the Provider dashboard, not a Grok subscription.
+pub const RATE_LIMITED_USER_MESSAGE_API_KEY: &str =
+    "已达到 API 速率限制。请稍后重试，或在 Provider 控制台提高配额/额度。";
 
 /// Well-known free-usage exhaustion code CCP returns on HTTP 429.
 /// Matches `prod_util_well_known_errors::SUBSCRIPTION_FREE_USAGE_EXHAUSTED`.
@@ -33,9 +34,9 @@ pub const RATE_LIMITED_USER_MESSAGE_API_KEY: &str = "You\u{2019}ve hit your team
 /// flattened message, so this reaches clients embedded in error detail.
 pub const FREE_USAGE_EXHAUSTED_ERROR_CODE: &str = "subscription:free-usage-exhausted";
 
-/// User-facing free-usage exhaustion copy (paywall). Deliberately promises no
-/// reset duration — the quota window is backend-config-driven.
-pub const FREE_USAGE_USER_MESSAGE: &str = "You\u{2019}ve reached your free Grok Build usage limit for now. Get SuperGrok for much higher limits, or try again later: https://grok.com/supergrok?referrer=grok-build";
+/// User-facing free-usage exhaustion copy. Chaos is BYOK — no SuperGrok upsell.
+pub const FREE_USAGE_USER_MESSAGE: &str =
+    "当前免费额度已用尽。请检查 Provider 配额与计费，或稍后重试。使用 /provider 配置模型与密钥。";
 
 /// Whether flattened server detail is free-usage-quota exhaustion (paywall),
 /// not transient throttling. Sniffs the well-known code embedded by
@@ -385,14 +386,12 @@ mod tests {
             format_rate_limited_user_message(None, true),
             RATE_LIMITED_USER_MESSAGE_API_KEY
         );
-        assert!(RATE_LIMITED_USER_MESSAGE_OAUTH.contains("Upgrade your account"));
-        assert!(RATE_LIMITED_USER_MESSAGE_API_KEY.contains("team"));
-        assert!(RATE_LIMITED_USER_MESSAGE_API_KEY.contains("credits"));
-        assert!(
-            RATE_LIMITED_USER_MESSAGE_API_KEY
-                .contains("https://docs.x.ai/developers/rate-limits#rate-limit-tiers")
-        );
-        assert!(!RATE_LIMITED_USER_MESSAGE_API_KEY.contains("Upgrade your account"));
+        assert!(RATE_LIMITED_USER_MESSAGE_OAUTH.contains("速率限制"));
+        assert!(RATE_LIMITED_USER_MESSAGE_API_KEY.contains("API"));
+        assert!(RATE_LIMITED_USER_MESSAGE_API_KEY.contains("Provider"));
+        assert!(!RATE_LIMITED_USER_MESSAGE_API_KEY.contains("SuperGrok"));
+        assert!(!FREE_USAGE_USER_MESSAGE.contains("SuperGrok"));
+        assert!(!FREE_USAGE_USER_MESSAGE.contains("grok.com"));
     }
 
     #[test]

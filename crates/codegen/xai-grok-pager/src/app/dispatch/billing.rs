@@ -115,28 +115,28 @@ pub(super) fn open_credit_limit_upsell(
         bool,
     ) = match mode {
         CreditLimitUpsellMode::UnifiedCredits => (
-            "You hit your weekly limit.",
-            "Upgrade to a higher tier for more usage",
-            "Buy more credits",
+            "已达到本周用量上限。",
+            "请在 Provider 控制台提高配额或更换模型",
+            "购买额度",
             "购买额度以继续使用 Chaos",
             CreditLimitCardAction::PurchaseCredits,
             xai_grok_telemetry::events::CreditLimitChoice::PurchaseCredits,
             false,
         ),
         CreditLimitUpsellMode::LegacyPayg { enabled: true } => (
-            "You\u{2019}ve hit your spending cap.",
-            "Upgrade to a higher tier for more credits",
-            "Increase limit",
-            "Raise your pay-as-you-go spending cap",
+            "已达到消费上限。",
+            "请在 Provider 控制台提高额度或更换模型",
+            "提高限额",
+            "提高按量付费消费上限",
             CreditLimitCardAction::IncreasePaygLimit,
             xai_grok_telemetry::events::CreditLimitChoice::PayAsYouGo,
             true,
         ),
         CreditLimitUpsellMode::LegacyPayg { enabled: false } => (
-            "You\u{2019}ve hit the credit limit for your plan.",
-            "Upgrade to a higher tier for more credits",
-            "Pay as you go",
-            "Enable pay-as-you-go credits for on-demand usage",
+            "已达到当前计划的额度上限。",
+            "请在 Provider 控制台提高额度或更换模型",
+            "按量付费",
+            "启用按量付费额度以便按需使用",
             CreditLimitCardAction::EnablePayg,
             xai_grok_telemetry::events::CreditLimitChoice::PayAsYouGo,
             false,
@@ -182,7 +182,7 @@ pub(super) fn open_credit_limit_upsell(
         question: heading.into(),
         options: vec![
             QuestionOption {
-                label: "Upgrade tier".into(),
+                label: "调整 Provider 配额".into(),
                 description: upgrade_tier_desc.into(),
                 preview: None,
                 id: Some(UPSELL_URL_UPGRADE.into()),
@@ -268,14 +268,15 @@ fn open_supergrok_upsell(
         return false;
     }
 
+    // Chaos is BYOK: never push SuperGrok / grok.com upgrade links.
     let (heading, source, modal_id_prefix) = match reason {
         UpsellReason::FreeUsageLimit => (
-            "You hit your free usage limit.",
+            "当前免费额度已用尽。",
             SuperGrokUpsell::FreeUsagePaywall,
             "free-usage-upsell",
         ),
         UpsellReason::RestrictedCommand => (
-            "Unlock all features with SuperGrok.",
+            "此功能需要可用的 Provider 配置。",
             SuperGrokUpsell::RestrictedCommand,
             "restricted-command-upsell",
         ),
@@ -288,17 +289,15 @@ fn open_supergrok_upsell(
 
     let options = vec![
         QuestionOption {
-            label: "Upgrade to SuperGrok".into(),
-            description: "For everyday coding and productivity tasks".into(),
+            label: "配置 Provider".into(),
+            description: "设置模型、接口地址与 API 密钥（/provider）".into(),
             preview: None,
             id: Some(UPSELL_URL_UPGRADE.into()),
         },
         QuestionOption {
-            label: "Upgrade to SuperGrok Heavy".into(),
-            description: "充分发挥 Chaos。最高用量上限。".into(),
+            label: "查看用量说明".into(),
+            description: "额度与限流由你的 Provider 决定，与 Chaos 订阅无关。".into(),
             preview: None,
-            // No Heavy-specific URL exists; the /supergrok page lists
-            // both plans, so both upgrade options land there.
             id: Some(UPSELL_URL_UPGRADE.into()),
         },
     ];

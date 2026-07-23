@@ -1629,10 +1629,10 @@ mod question_no_freeform_tests {
             id: None,
         };
         Question {
-            question: "You hit your free usage limit.".into(),
+            question: "当前免费额度已用尽。".into(),
             options: vec![
-                opt("Upgrade to SuperGrok", "For everyday coding"),
-                opt("Upgrade to SuperGrok Heavy", "Highest usage limits"),
+                opt("配置 Provider", "设置模型、接口地址与 API 密钥"),
+                opt("查看用量说明", "额度与限流由 Provider 决定"),
             ],
             multi_select: Some(false),
             id: None,
