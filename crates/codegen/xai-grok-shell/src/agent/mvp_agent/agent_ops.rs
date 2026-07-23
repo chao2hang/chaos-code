@@ -1333,6 +1333,7 @@ impl MvpAgent {
             image_gen_enabled: cfg.resolve_image_gen().value,
             image_edit_enabled: cfg.resolve_image_edit().value,
             model_override: cfg.resolve_image_gen_model_override(),
+            edit_model_override: cfg.resolve_image_edit_model_override(),
             tier_restricted,
         }
     }
@@ -1348,11 +1349,14 @@ impl MvpAgent {
         &self,
     ) -> xai_grok_tools::implementations::grok_build::video_gen::VideoGenConfig {
         use xai_grok_tools::implementations::grok_build::video_gen::VideoGenConfig;
+        let cfg = self.cfg.borrow();
+        if !cfg.resolve_video_gen().value {
+            return VideoGenConfig::Disabled;
+        }
         let Some(api_key) = self.sampling_config.borrow().api_key.clone() else {
             return VideoGenConfig::Disabled;
         };
         let tier_restricted = self.is_tier_restricted_capability();
-        let cfg = self.cfg.borrow();
         let zdr_video_output_s3 = cfg
             .disable_zdr_incompatible_tools
             .then(|| cfg.zdr_video_output_s3.clone())
