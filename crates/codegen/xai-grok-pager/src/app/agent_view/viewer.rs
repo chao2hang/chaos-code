@@ -967,8 +967,8 @@ impl AgentView {
 
     /// Dynamic fold label for the shortcuts bar hint.
     ///
-    /// Returns "expand" if the selected entry is collapsed/truncated,
-    /// "collapse" if expanded, or `None` if the selected entry isn't foldable.
+    /// Returns "展开" if the selected entry is collapsed/truncated,
+    /// "折叠" if expanded, or `None` if the selected entry isn't foldable.
     pub(super) fn selected_fold_label(&self) -> Option<&'static str> {
         let idx = self.scrollback.selected()?;
         let entry = self.scrollback.get(idx)?;
@@ -976,8 +976,8 @@ impl AgentView {
             return None;
         }
         Some(match entry.display_mode() {
-            DisplayMode::Expanded => "collapse",
-            _ => "expand",
+            DisplayMode::Expanded => "折叠",
+            _ => "展开",
         })
     }
 }

@@ -395,7 +395,7 @@ pub struct DashboardState {
     pub hovered_row: Option<DashboardRowId>,
     /// Section-header cursor target. When `Some`, a collapsible section
     /// title (e.g. "Working") holds the cursor instead of a row or the
-    /// `[+ New Agent]` button. Mutually exclusive with [`Self::selected`]
+    /// `[+ 新建会话]` button. Mutually exclusive with [`Self::selected`]
     /// and [`Self::new_agent_button_focused`].
     pub selected_section: Option<SectionKey>,
     /// Hovered section header (mouse-move driven); the renderer brightens
@@ -542,7 +542,7 @@ pub struct DashboardState {
     ///     clicks a dashboard row OUTSIDE this rect (switches the
     ///     popup target to the clicked row).
     pub popup_outer_rect: Option<Rect>,
-    /// Hit area for the header's `[+ New Agent]`
+    /// Hit area for the header's `[+ 新建会话]`
     /// button. Painted by `render_header` and consumed by the mouse
     /// handler to create a new session. Carries both the rect (for
     /// click hit-testing) and a `hovered` flag (driven by mouse-move
@@ -624,7 +624,7 @@ pub struct DashboardState {
     /// list. Cleared on close (Esc, `[✗]`, or the chrome's
     /// CloseRequested).
     pub shortcuts_modal: Option<Box<ShortcutsModalState>>,
-    /// True when the header's `[+ New Agent]` button has focus.
+    /// True when the header's `[+ 新建会话]` button has focus.
     ///
     /// The button is the default selection target when no row is
     /// selected — Up-arrow from the first row, Esc deselect, and
@@ -697,7 +697,7 @@ pub struct DashboardState {
     /// Prompt state stashed while [`Self::worktree_dialog`] is open.
     pub pending_worktree_prompt: Option<crate::views::prompt_widget::StashedPrompt>,
     /// Whether confirming the in-flight [`Self::worktree_dialog`] should open
-    /// the new agent's detail view (`true` — the `[+ New Agent]` button and
+    /// the new agent's detail view (`true` — the `[+ 新建会话]` button and
     /// `Ctrl+S` "send + open") or stay on the dashboard (`false` — a plain
     /// `Enter` prompt-send). Stashed alongside [`Self::pending_worktree_prompt`]
     /// when the dialog opens; consumed on confirm. Mirrors the `attach` flag of
@@ -1453,7 +1453,7 @@ impl DashboardState {
         self.error_toast = Some(format!("{} {msg}", crate::glyphs::ballot_x()));
     }
 
-    /// Focus the header's `[+ New Agent]` button. Clears any
+    /// Focus the header's `[+ 新建会话]` button. Clears any
     /// row selection so the "button focused → no row selected"
     /// invariant stays honoured. Idempotent — safe to call when
     /// the button is already focused.
@@ -1478,7 +1478,7 @@ impl DashboardState {
     }
 
     /// Focus the section header identified by `key` — the third cursor
-    /// target alongside rows and the `[+ New Agent]` button. Clears the
+    /// target alongside rows and the `[+ 新建会话]` button. Clears the
     /// row selection and button focus so exactly one cursor is active.
     pub fn focus_section(&mut self, key: SectionKey) {
         self.selected_section = Some(key);
@@ -2664,7 +2664,7 @@ impl DashboardState {
 
         // Esc: the peek is shown by default while a row is selected, so
         // Esc UNSELECTS — first clearing a typed reply, then deselecting
-        // the row and focusing the `[+ New Agent]` button (which closes
+        // the row and focusing the `[+ 新建会话]` button (which closes
         // the peek and brings back the new-session input).
         if matches!(key.code, KeyCode::Esc) {
             if !self.peek_reply.text().is_empty() {
@@ -2968,7 +2968,7 @@ impl DashboardState {
     /// dashboard) and the `Ctrl+S` "send + open" chord (`attach ==
     /// true`, walk into the detail view). Empty-prompt fallbacks mirror
     /// the old Enter handler: open the selected row, or create from the
-    /// `[+ New Agent]` button. A `/command` always routes to the slash
+    /// `[+ 新建会话]` button. A `/command` always routes to the slash
     /// dispatcher (there's no session to "open"), so `attach` only
     /// affects the plain-dispatch path.
     fn dispatch_send_action(&self, attach: bool) -> InputOutcome {
@@ -3332,7 +3332,7 @@ impl DashboardState {
             // makes the dispatch input reply to it, and deselecting flips
             // it back to "new session" mode without leaving the dashboard.
             if self.selected.is_some() {
-                // Deselect → focus the `[+ New Agent]` button so
+                // Deselect → focus the `[+ 新建会话]` button so
                 // the cursor lands on a stable target instead of
                 // floating in `None`. The Enter-with-empty-prompt
                 // path keys off this to create-and-open, and the
@@ -3348,7 +3348,7 @@ impl DashboardState {
                 return InputOutcome::Changed;
             }
             if self.selected_section.is_some() {
-                // Deselect the section header → focus the `[+ New Agent]`
+                // Deselect the section header → focus the `[+ 新建会话]`
                 // button, mirroring the row-deselect tier above.
                 self.focus_new_agent_button();
                 self.manual_scroll_active = false;
@@ -3356,7 +3356,7 @@ impl DashboardState {
             }
             if self.selected_idle_overflow {
                 // Deselect the Idle overflow toggle → focus the
-                // `[+ New Agent]` button, mirroring the section tier.
+                // `[+ 新建会话]` button, mirroring the section tier.
                 self.focus_new_agent_button();
                 self.manual_scroll_active = false;
                 return InputOutcome::Changed;
@@ -3554,7 +3554,7 @@ impl DashboardState {
         self.last_mouse_pos = Some((mouse.column, mouse.row));
 
         // Update hover state when the mouse moves over a row or the
-        // header's `[+ New Agent]` button.
+        // header's `[+ 新建会话]` button.
         if matches!(mouse.kind, MouseEventKind::Moved) {
             let mut changed = self
                 .new_agent_button_hit
@@ -3813,7 +3813,7 @@ impl DashboardState {
                 return InputOutcome::Changed;
             }
 
-            // Click on the `[+ New Agent]` button — same outcome
+            // Click on the `[+ 新建会话]` button — same outcome
             // as Enter-with-empty-prompt while the button is
             // focused. Routed through the dispatcher so the
             // create-session + view-switch sequence stays in one
@@ -3835,7 +3835,7 @@ impl DashboardState {
             }
 
             // Click on the header location label → open the location
-            // picker. Sits next to the `[+ New Agent]` check since both
+            // picker. Sits next to the `[+ 新建会话]` check since both
             // are header affordances in separate columns.
             if self.location_hit.contains(mouse.column, mouse.row) {
                 return InputOutcome::Action(Action::DashboardOpenLocationPicker);
@@ -4124,7 +4124,7 @@ impl DashboardState {
                 // stashed prompt (from the prompt-send path) to the dispatch
                 // input so they can resend it instead of losing it. Mirrors the
                 // restore in `dispatch_dashboard_confirm_worktree`'s not-a-repo
-                // error path. When the dialog was opened from the [+ New Agent]
+                // error path. When the dialog was opened from the [+ 新建会话]
                 // button there's no stash, so `take()` yields `None` and the
                 // input is left untouched.
                 if let Some(prompt) = self.pending_worktree_prompt.take() {
@@ -4265,7 +4265,7 @@ impl DashboardState {
         // Working agent going idle) removes the header outright.
         // Re-derive the focusable set the renderer is about to paint
         // and, when the cursor's header is gone, move it to the
-        // `[+ New Agent]` button (mirroring `toggle_grouping`) so the
+        // `[+ 新建会话]` button (mirroring `toggle_grouping`) so the
         // footer hints and the Right/Left/Enter collapse keys never
         // act on an invisible section.
         let focusables = super::render::focusables(
@@ -4288,7 +4288,7 @@ impl DashboardState {
         // disappears when the Idle group shrinks below the cap (or the
         // user expands it, which removes the fold). A stranded cursor
         // there would leave Enter/footer hints acting on nothing, so
-        // fall back to the `[+ New Agent]` button.
+        // fall back to the `[+ 新建会话]` button.
         if self.selected_idle_overflow
             && !focusables
                 .iter()
@@ -5144,7 +5144,7 @@ mod tests {
             "Ctrl+G must emit DashboardToggleGrouping",
         );
 
-        // Ctrl+S on the empty `[+ New Agent]` button is "send + open"
+        // Ctrl+S on the empty `[+ 新建会话]` button is "send + open"
         // (create + detail), NOT a grouping toggle.
         let ctrl_s = KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL);
         assert!(
@@ -5621,7 +5621,7 @@ mod tests {
         assert_eq!(state.dispatch.drain_images().len(), 1);
     }
 
-    /// Cancelling the dialog when it was opened from the `[+ New Agent]`
+    /// Cancelling the dialog when it was opened from the `[+ 新建会话]`
     /// button (no stashed prompt) leaves the dispatch input untouched.
     #[test]
     fn worktree_dialog_cancel_without_stash_leaves_input_empty() {
@@ -6307,7 +6307,7 @@ mod tests {
     }
 
     /// Esc unselects: with an empty draft it clears the selection and
-    /// focuses the `[+ New Agent]` button (the new-session entry); a
+    /// focuses the `[+ 新建会话]` button (the new-session entry); a
     /// typed draft is cleared first.
     #[test]
     fn peek_esc_clears_draft_then_unselects() {
@@ -6319,7 +6319,7 @@ mod tests {
         let _ = state.handle_key(&esc, &reg);
         assert!(state.peek_reply.text().is_empty());
         assert!(state.selected.is_some());
-        // Second Esc unselects → focuses the + New Agent button + closes peek.
+        // Second Esc unselects → focuses the + 新建会话 button + closes peek.
         let _ = state.handle_key(&esc, &reg);
         assert!(state.peek.is_none());
         assert!(state.selected.is_none());
@@ -7098,7 +7098,7 @@ mod tests {
         );
         assert!(
             state.new_agent_button_focused,
-            "Esc-deselect must focus the `[+ New Agent]` button as the new cursor target",
+            "Esc-deselect must focus the `[+ 新建会话]` button as the new cursor target",
         );
     }
 
@@ -7267,7 +7267,7 @@ mod tests {
     }
 
     /// Full Esc cascade from a focused input with a row selected:
-    /// blur (→ list) → deselect (→ `[+ New Agent]`) → exit. Pins the
+    /// blur (→ list) → deselect (→ `[+ 新建会话]`) → exit. Pins the
     /// tier ordering, catching a regression that would skip any tier.
     #[test]
     fn esc_cascade_blurs_then_deselects_then_exits() {
@@ -7716,7 +7716,7 @@ mod tests {
     }
 
     /// Overview focused: Enter opens the focused row; Esc backs out of
-    /// the selection (focuses `[+ New Agent]`) and STAYS on the list —
+    /// the selection (focuses `[+ 新建会话]`) and STAYS on the list —
     /// it no longer returns to the input (Tab / `i` do that now).
     #[test]
     fn list_focus_enter_opens_and_esc_backs_out() {
@@ -7739,7 +7739,7 @@ mod tests {
     }
 
     /// Regression for the Esc-blur draft-loss path: with the list focused
-    /// (e.g. after Esc unfocuses the input) on the `[+ New Agent]`
+    /// (e.g. after Esc unfocuses the input) on the `[+ 新建会话]`
     /// button, Enter must SEND a typed draft rather than create an empty
     /// session and silently drop it. An empty draft still
     /// creates-with-detail.
@@ -9239,7 +9239,7 @@ mod tests {
     }
 
     /// With the list focused and the Idle overflow toggle selected, Esc
-    /// focuses the `[+ New Agent]` button (mirroring the section / row
+    /// focuses the `[+ 新建会话]` button (mirroring the section / row
     /// deselect tiers), rather than exiting.
     #[test]
     fn idle_overflow_esc_focuses_new_agent_button() {
@@ -9281,7 +9281,7 @@ mod tests {
 
     /// `reanchor_selection` drops a stale overflow cursor (the toggle row
     /// vanished because the Idle group is no longer capped) onto the
-    /// `[+ New Agent]` button.
+    /// `[+ 新建会话]` button.
     #[test]
     fn reanchor_clears_stale_idle_overflow_cursor() {
         let mut state = DashboardState::new();
@@ -9296,7 +9296,7 @@ mod tests {
     }
 
     /// With the list focused and a section header selected, Esc focuses
-    /// the `[+ New Agent]` button (mirroring the row-deselect tier),
+    /// the `[+ 新建会话]` button (mirroring the row-deselect tier),
     /// rather than exiting.
     #[test]
     fn section_esc_focuses_new_agent_button() {
@@ -9307,7 +9307,7 @@ mod tests {
         let _ = state.handle_key(&KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), &reg);
         assert!(
             state.new_agent_button_focused,
-            "Esc on a section must focus [+ New Agent]",
+            "Esc on a section must focus [+ 新建会话]",
         );
         assert!(
             state.selected_section.is_none(),
@@ -9800,7 +9800,7 @@ mod tests {
     }
 
     /// A selected section header whose section no longer exists (row
-    /// churn removed its last row) is moved to the `[+ New Agent]`
+    /// churn removed its last row) is moved to the `[+ 新建会话]`
     /// button by `reanchor_selection`, so the footer hints and the
     /// collapse keys never act on an invisible header.
     #[test]
@@ -9816,7 +9816,7 @@ mod tests {
         );
         assert!(
             state.new_agent_button_focused,
-            "cursor must move to the [+ New Agent] button",
+            "cursor must move to the [+ 新建会话] button",
         );
     }
 

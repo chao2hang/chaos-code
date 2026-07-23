@@ -105,7 +105,7 @@ pub fn clamp_activity_subject(s: &str) -> String {
 pub fn format_waiting_for_subject(subject: &str) -> String {
     let clamped = clamp_activity_subject(subject);
     if clamped.is_empty() {
-        "Waiting on task output…".to_string()
+        "等待任务输出…".to_string()
     } else {
         format!("{clamped}…")
     }
@@ -123,15 +123,15 @@ impl WaitingReason {
     /// User-facing spinner label.
     pub fn label(&self) -> String {
         match self {
-            Self::Model => "Waiting for response…".to_string(),
-            Self::Subagent => "Waiting on subagent…".to_string(),
+            Self::Model => "等待回复…".to_string(),
+            Self::Subagent => "等待子代理…".to_string(),
             Self::TaskOutput {
                 subject: Some(subject),
                 ..
             } => format_waiting_for_subject(subject),
-            Self::TaskOutput { .. } => "Waiting on task output…".to_string(),
-            Self::TasksComplete => "Waiting on tasks…".to_string(),
-            Self::Sleep => "Sleeping…".to_string(),
+            Self::TaskOutput { .. } => "等待任务输出…".to_string(),
+            Self::TasksComplete => "等待任务完成…".to_string(),
+            Self::Sleep => "休眠中…".to_string(),
         }
     }
     /// Short, stable snake_case label for telemetry / phase-transition logs.
@@ -5318,7 +5318,7 @@ mod tests {
         );
         assert_eq!(
             WaitingReason::task_output().label(),
-            "Waiting on task output…"
+            "等待任务输出…"
         );
         assert_eq!(
             WaitingReason::TaskOutput {
@@ -5343,7 +5343,7 @@ mod tests {
     #[test]
     fn format_waiting_for_subject_matches_label_shape() {
         assert_eq!(format_waiting_for_subject("run tests"), "run tests…");
-        assert_eq!(format_waiting_for_subject("   "), "Waiting on task output…");
+        assert_eq!(format_waiting_for_subject("   "), "等待任务输出…");
     }
     /// A `task` ToolCall carrying the shell's `_meta.subagentBackground` flag.
     fn task_call_with_bg(id: &str, background: bool) -> acp::SessionUpdate {

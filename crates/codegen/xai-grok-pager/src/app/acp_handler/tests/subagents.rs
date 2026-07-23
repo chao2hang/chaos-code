@@ -266,7 +266,7 @@
         );
         let agent = app.agents.get(&AgentId(0)).unwrap();
         let info = agent.subagent_sessions.get(child_sid).unwrap();
-        assert_eq!(info.activity_label.as_deref(), Some("Responding"));
+        assert_eq!(info.activity_label.as_deref(), Some("回复中"));
         let entry_id = info.scrollback_entry_id.unwrap();
         let entry = agent.scrollback.get_by_id(entry_id).unwrap();
         let RenderBlock::Subagent(sb) = &entry.block else {
@@ -297,7 +297,7 @@
                 .unwrap()
                 .activity_label
                 .as_deref(),
-            Some("Responding")
+            Some("回复中")
         );
 
         let _ = handle(

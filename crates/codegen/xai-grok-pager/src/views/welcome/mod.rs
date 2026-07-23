@@ -1411,7 +1411,7 @@ fn render_welcome_authenticating(
             } else {
                 lines.push(
                     Line::from(Span::styled(
-                        "Waiting for auth URL...",
+                        "正在获取登录链接…",
                         Style::default().fg(theme.gray),
                     ))
                     .alignment(Alignment::Center),

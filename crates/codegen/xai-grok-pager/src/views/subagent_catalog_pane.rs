@@ -129,9 +129,9 @@ impl SubagentCatalogPane {
         let desc_style = Style::default().fg(theme.gray_bright);
 
         let groups: [(&str, &'static str, &[String]); 3] = [
-            ("Personas", "persona", &state.personas),
-            ("Roles", "role", &state.roles),
-            ("Agents", "agent", &state.agents),
+            ("人设", "persona", &state.personas),
+            ("角色", "role", &state.roles),
+            ("代理", "agent", &state.agents),
         ];
 
         for (name, kind, items) in &groups {
@@ -327,17 +327,17 @@ mod tests {
         // 3 headers + 4 items = 7 entries
         assert_eq!(pane.entries.len(), 7);
         assert!(pane.entries[0].is_header);
-        assert_eq!(pane.entries[0].label, "Personas");
+        assert_eq!(pane.entries[0].label, "人设");
         assert!(!pane.entries[1].is_header);
         assert_eq!(pane.entries[1].label, "researcher");
         assert!(!pane.entries[2].is_header);
         assert_eq!(pane.entries[2].label, "implementer");
         assert!(pane.entries[3].is_header);
-        assert_eq!(pane.entries[3].label, "Roles");
+        assert_eq!(pane.entries[3].label, "角色");
         assert!(!pane.entries[4].is_header);
         assert_eq!(pane.entries[4].label, "reviewer");
         assert!(pane.entries[5].is_header);
-        assert_eq!(pane.entries[5].label, "Agents");
+        assert_eq!(pane.entries[5].label, "代理");
         assert!(!pane.entries[6].is_header);
         assert_eq!(pane.entries[6].label, "default");
     }
@@ -350,7 +350,7 @@ mod tests {
         // 1 header + 2 items = 3 (no Roles/Agents headers)
         assert_eq!(pane.entries.len(), 3);
         assert!(pane.entries[0].is_header);
-        assert_eq!(pane.entries[0].label, "Personas");
+        assert_eq!(pane.entries[0].label, "人设");
         assert!(!pane.entries[1].is_header);
         assert!(!pane.entries[2].is_header);
     }

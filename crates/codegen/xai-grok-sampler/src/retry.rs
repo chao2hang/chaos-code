@@ -5,8 +5,9 @@
 //!
 //! # Retry behavior summary
 //!
-//! **Retried** (up to [`DEFAULT_MAX_RETRIES`] = 15, ~6 min with 30s backoff cap):
-//! - 500, 502, 503, 504, 520 (server errors)
+//! **Retried** (up to [`DEFAULT_MAX_RETRIES`] = 10, ~4–5 min with 30s backoff cap):
+//! - 500, 502, 503, 504 (server errors)
+//! - 520–524 (Cloudflare edge: origin error / down / connect / timeout)
 //! - Connection errors (timeout, refused, reset)
 //! - `EventStreamError` / `StreamError` (mid-stream failures)
 //! - `EmptyResponse` (model returned no content/tool calls)
@@ -29,9 +30,10 @@
 //! - `true` / absent → falls through to status-code logic above
 //!
 //! Today CCP's header mirrors the client's `is_retryable()` logic
-//! (4xx except 429 = false, 5xx + 429 = true), so no behavior changes
-//! on merge. The header enables future CCP-side refinements (e.g.
-//! marking content-caused 500s as non-retryable) without client updates.
+//! (4xx except 429 = false, 5xx + 429 + CF 52x = true), so no behavior
+//! changes on merge for standard codes. The header enables future
+//! CCP-side refinements (e.g. marking content-caused 500s as
+//! non-retryable) without client updates.
 
 use std::time::Duration;
 
@@ -42,11 +44,12 @@ use xai_grok_sampling_types::SamplingError;
 /// no point burning a long backoff just to be rate-limited again.
 pub const RATE_LIMIT_RETRY_THRESHOLD: u32 = 2;
 
-/// Default max retries when no env or model override is set.
-/// With 30s backoff cap this gives ~6 min of retry budget:
-/// retries 1-4 are exponential (2s+4s+8s+16s ≈ 30s), retries
-/// 5-15 are flat at ~30s each (≈ 5.5 min).
-pub const DEFAULT_MAX_RETRIES: u32 = 15;
+/// Default max attempts when no env or model override is set
+/// (1 initial + retries until budget is exhausted).
+/// With 30s backoff cap this gives ~4–5 min of retry budget:
+/// attempts 1–4 back off exponentially (2s+4s+8s+16s ≈ 30s),
+/// later attempts are flat at ~30s each.
+pub const DEFAULT_MAX_RETRIES: u32 = 10;
 
 /// Resolve max API retries from an optional env override, model config,
 /// or default ([`DEFAULT_MAX_RETRIES`]).
@@ -681,6 +684,51 @@ mod tests {
         match classify_error(&err, 4, 5, RATE_LIMIT_RETRY_THRESHOLD) {
             RetryDecision::Fatal(SamplingError::Api { .. }) => {}
             other => panic!("expected Fatal, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn classify_cloudflare_524_retries_with_exponential_backoff() {
+        // 524 A timeout occurred was previously non-retryable; must enter the
+        // same exponential-backoff path as other 5xx / CF edge errors.
+        let err = api_err(StatusCode::from_u16(524).unwrap(), "A timeout occurred");
+        match classify_error(&err, 0, DEFAULT_MAX_RETRIES, RATE_LIMIT_RETRY_THRESHOLD) {
+            RetryDecision::RetryWithClientRebuild { backoff } => {
+                assert!(backoff >= Duration::from_millis(1600));
+            }
+            other => panic!("expected RetryWithClientRebuild for 524, got {other:?}"),
+        }
+        match classify_error(&err, 1, DEFAULT_MAX_RETRIES, RATE_LIMIT_RETRY_THRESHOLD) {
+            RetryDecision::Retry { backoff } => {
+                assert!(backoff >= Duration::from_millis(3200));
+            }
+            other => panic!("expected Retry for 524 second attempt, got {other:?}"),
+        }
+        // Budget: next_attempt >= DEFAULT_MAX_RETRIES → Fatal.
+        match classify_error(
+            &err,
+            DEFAULT_MAX_RETRIES - 1,
+            DEFAULT_MAX_RETRIES,
+            RATE_LIMIT_RETRY_THRESHOLD,
+        ) {
+            RetryDecision::Fatal(SamplingError::Api { status, .. }) => {
+                assert_eq!(status.as_u16(), 524);
+            }
+            other => panic!("expected Fatal after exhausting 10 attempts, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn classify_cloudflare_52x_all_retryable() {
+        for code in [520u16, 521, 522, 523, 524] {
+            let err = api_err(StatusCode::from_u16(code).unwrap(), "cf edge");
+            assert!(
+                matches!(
+                    classify_error(&err, 0, DEFAULT_MAX_RETRIES, RATE_LIMIT_RETRY_THRESHOLD),
+                    RetryDecision::RetryWithClientRebuild { .. }
+                ),
+                "HTTP {code} should retry with client rebuild on first failure"
+            );
         }
     }
 

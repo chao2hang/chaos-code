@@ -149,7 +149,7 @@ fn write_item(
                 write_activity(buf, activity);
             } else if state.is_busy {
                 push_separator(buf, has_parts);
-                buf.push_str("Waiting");
+                buf.push_str("等待中");
             } else {
                 return false;
             }
@@ -203,7 +203,7 @@ fn write_item(
                 return false;
             }
             push_separator(buf, has_parts);
-            buf.push_str("\u{26A0} Action Required");
+            buf.push_str("\u{26A0} 需要操作");
         }
     }
     *has_parts = true;
@@ -218,8 +218,8 @@ fn push_separator(buf: &mut String, has_parts: &mut bool) {
 
 fn write_activity(buf: &mut String, activity: &TurnActivity) {
     match activity {
-        TurnActivity::Thinking => buf.push_str("Thinking"),
-        TurnActivity::Responding => buf.push_str("Responding"),
+        TurnActivity::Thinking => buf.push_str("思考中"),
+        TurnActivity::Responding => buf.push_str("回复中"),
         TurnActivity::ToolRunning { title, description } => {
             if let Some(desc) = description
                 .as_deref()
@@ -228,19 +228,19 @@ fn write_activity(buf: &mut String, activity: &TurnActivity) {
             {
                 buf.push_str(&crate::acp::tracker::format_waiting_for_subject(desc));
             } else if title.is_empty() {
-                buf.push_str("Running tool");
+                buf.push_str("运行工具");
             } else {
-                buf.push_str("Running: ");
+                buf.push_str("运行: ");
                 write_truncated(buf, title, 30);
             }
         }
-        TurnActivity::AutoCompacting => buf.push_str("Compacting"),
+        TurnActivity::AutoCompacting => buf.push_str("压缩中"),
         TurnActivity::Retrying {
             attempt,
             max_retries,
             ..
         } => {
-            let _ = write!(buf, "Retrying ({}/{})", attempt, max_retries);
+            let _ = write!(buf, "重试中 ({}/{})", attempt, max_retries);
         }
         TurnActivity::Waiting(reason) => buf.push_str(&reason.label()),
     }
@@ -455,7 +455,7 @@ mod tests {
             ..idle_state()
         };
         mgr.update(&state);
-        assert_eq!(mgr.last_title, "Thinking");
+        assert_eq!(mgr.last_title, "思考中");
     }
 
     #[test]
@@ -468,7 +468,7 @@ mod tests {
             ..idle_state()
         };
         mgr.update(&state);
-        assert_eq!(mgr.last_title, "Responding");
+        assert_eq!(mgr.last_title, "回复中");
     }
 
     #[test]
@@ -484,7 +484,7 @@ mod tests {
             ..idle_state()
         };
         mgr.update(&state);
-        assert_eq!(mgr.last_title, "Running: cargo build");
+        assert_eq!(mgr.last_title, "运行: cargo build");
     }
 
     #[test]
@@ -500,7 +500,7 @@ mod tests {
             ..idle_state()
         };
         mgr.update(&state);
-        assert_eq!(mgr.last_title, "Running tool");
+        assert_eq!(mgr.last_title, "运行工具");
     }
 
     #[test]
@@ -517,7 +517,7 @@ mod tests {
             ..idle_state()
         };
         mgr.update(&state);
-        assert_eq!(mgr.last_title, "Retrying (2/5)");
+        assert_eq!(mgr.last_title, "重试中 (2/5)");
     }
 
     #[test]
@@ -555,7 +555,7 @@ mod tests {
             ..idle_state()
         };
         mgr.update(&state);
-        assert_eq!(mgr.last_title, "Waiting - grok");
+        assert_eq!(mgr.last_title, "等待中 - grok");
     }
 
     #[test]
@@ -569,7 +569,7 @@ mod tests {
             ..idle_state()
         };
         mgr.update(&state);
-        assert_eq!(mgr.last_title, "Thinking - grok");
+        assert_eq!(mgr.last_title, "思考中 - grok");
     }
 
     // --- Action Required blinking ---
@@ -586,7 +586,7 @@ mod tests {
         // tick_count=0 (even) on first render → ActionRequired visible.
         mgr.update(&state);
         assert!(
-            mgr.last_title.contains("Action Required"),
+            mgr.last_title.contains("需要操作"),
             "first tick should show ActionRequired, got: {}",
             mgr.last_title
         );
@@ -620,8 +620,8 @@ mod tests {
         let t2 = mgr.last_title.clone();
 
         assert_ne!(t1, t2);
-        assert!(t1.contains("Action Required"));
-        assert!(!t2.contains("Action Required"));
+        assert!(t1.contains("需要操作"));
+        assert!(!t2.contains("需要操作"));
     }
 
     #[test]
@@ -806,12 +806,12 @@ mod tests {
         // Both should contain the persistent parts.
         for t in [&t1, &t2] {
             assert!(t.contains("grok"), "title missing 'grok': {t}");
-            assert!(t.contains("Responding"), "title missing 'Responding': {t}");
+            assert!(t.contains("回复中"), "title missing 'Responding': {t}");
             assert!(t.contains("my-session"), "title missing session name: {t}");
         }
         // One should have ActionRequired, the other should not (blinking).
-        let w1 = t1.contains("Action Required");
-        let w2 = t2.contains("Action Required");
+        let w1 = t1.contains("需要操作");
+        let w2 = t2.contains("需要操作");
         assert_ne!(w1, w2, "expected blink toggle between t1={t1} and t2={t2}");
     }
 
@@ -846,7 +846,7 @@ mod tests {
         mgr.update(&state);
         assert_eq!(
             mgr.last_title,
-            "Thinking - proj - grok-3 - workspace - grok"
+            "思考中 - proj - grok-3 - workspace - grok"
         );
     }
 
@@ -864,8 +864,8 @@ mod tests {
             ..idle_state()
         };
         mgr.update(&state);
-        // "Running: " (9 chars) + 30 chars + ellipsis = 40 chars
-        assert!(mgr.last_title.starts_with("Running: "));
+        // "运行: " + 30 chars + ellipsis
+        assert!(mgr.last_title.starts_with("运行: "));
         assert!(mgr.last_title.ends_with('\u{2026}'));
     }
 

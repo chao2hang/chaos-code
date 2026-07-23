@@ -2176,9 +2176,11 @@ mod link_click_tests {
         let frame: String = (0..tall.height)
             .map(|y| buffer_row(&buf, tall.width, y))
             .collect();
+        // CJK wide glyphs may insert blanks between codepoints in cell dumps.
+        let compact: String = frame.chars().filter(|c| !c.is_whitespace()).collect();
         assert!(
-            frame.contains("已切换到模式：计划模式"),
-            "mode-switch banner must own the slot"
+            compact.contains("已切换到模式：计划模式"),
+            "mode-switch banner must own the slot: {frame:?}"
         );
         assert!(
             !frame.contains("ZZTIPZZ"),
