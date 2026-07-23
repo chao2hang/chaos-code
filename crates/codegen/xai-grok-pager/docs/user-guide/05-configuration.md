@@ -711,7 +711,8 @@ The key ones. See the README for the complete list.
 
 | Variable | Description |
 |----------|-------------|
-| `GROK_HOME` | Override config directory (default: `~/.grok`) |
+| `CHAOS_HOME` | Override config directory (Chaos preferred; highest precedence) |
+| `GROK_HOME` | Override config directory (legacy; used when `CHAOS_HOME` is unset). Default dual-read: existing `~/.chaos`, else existing `~/.grok`, else `~/.chaos` |
 | `GROK_RESPECT_GITIGNORE` | Force gitignore filtering on (`1`) or off (`0`); overrides `[tools] respect_gitignore` |
 
 ### Telemetry
@@ -729,18 +730,20 @@ The key ones. See the README for the complete list.
 
 ## File locations
 
+User home below means the resolved config root (`$CHAOS_HOME` / `$GROK_HOME` / dual-read `~/.chaos` or `~/.grok`). Paths still document the legacy `~/.grok/...` form; substitute `~/.chaos` when that is your active home.
+
 | Path | Description |
 |------|-------------|
-| `~/.grok/config.toml` | Main configuration file |
-| `~/.grok/pager.toml` | TUI appearance configuration |
-| `~/.grok/auth.json` | Authentication credentials (auto-managed) |
-| `~/.grok/sessions/` | Persisted sessions (organized by working directory) |
-| `~/.grok/memory/` | Cross-session memory files and index |
-| `~/.grok/skills/` | User-scoped skill definitions |
-| `~/.grok/plugins/` | User-scoped plugins |
-| `~/.grok/agents/` | User-scoped agent definitions |
-| `~/.grok/lsp.json` | LSP server configuration (user-scoped) |
-| `~/.grok/logs/` | Internal log files (e.g. `unified.jsonl`, MCP server logs) |
+| `~/.chaos/config.toml` or `~/.grok/config.toml` | Main configuration file |
+| `~/.chaos/pager.toml` or `~/.grok/pager.toml` | TUI appearance configuration |
+| `~/.chaos/auth.json` or `~/.grok/auth.json` | Authentication credentials (auto-managed) |
+| `~/.chaos/sessions/` or `~/.grok/sessions/` | Persisted sessions (organized by working directory) |
+| `~/.chaos/memory/` or `~/.grok/memory/` | Cross-session memory files and index |
+| `~/.chaos/skills/` or `~/.grok/skills/` | User-scoped skill definitions |
+| `~/.chaos/plugins/` or `~/.grok/plugins/` | User-scoped plugins |
+| `~/.chaos/agents/` or `~/.grok/agents/` | User-scoped agent definitions |
+| `~/.chaos/lsp.json` or `~/.grok/lsp.json` | LSP server configuration (user-scoped) |
+| `~/.chaos/logs/` or `~/.grok/logs/` | Internal log files (e.g. `unified.jsonl`, MCP server logs) |
 | `.grok/config.toml` | Project-scoped MCP servers, plugins, and permission rules |
 | `.grok/skills/` | Project-scoped skill definitions |
 | `.grok/plugins/` | Project-scoped plugins |

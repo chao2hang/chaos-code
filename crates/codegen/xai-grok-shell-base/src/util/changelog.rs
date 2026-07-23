@@ -63,18 +63,19 @@ impl Default for ChangelogManager {
 
 impl ChangelogManager {
     pub fn new() -> Self {
-        // Prefer live `$GROK_HOME` so harness-injected homes (PTY e2e) always
-        // win over a OnceLock that may have been initialised earlier with a
-        // different path in the same process graph.
+        // Prefer live `$CHAOS_HOME` / `$GROK_HOME` so harness-injected homes
+        // (PTY e2e) always win over a OnceLock that may have been initialised
+        // earlier with a different path in the same process graph.
         Self::from_env_home()
     }
 
     /// Resolve cache paths from the live process environment (not the
-    /// `grok_home()` OnceLock). A seeded `$GROK_HOME` set on the pager
-    /// process is always honoured even if some earlier init path cached a
-    /// different home.
+    /// `grok_home()` OnceLock). A seeded `$CHAOS_HOME` / `$GROK_HOME` set on
+    /// the pager process is always honoured even if some earlier init path
+    /// cached a different home.
     fn from_env_home() -> Self {
-        let home = std::env::var_os("GROK_HOME")
+        let home = std::env::var_os("CHAOS_HOME")
+            .or_else(|| std::env::var_os("GROK_HOME"))
             .map(std::path::PathBuf::from)
             .filter(|p| !p.as_os_str().is_empty())
             .unwrap_or_else(crate::util::grok_home::grok_home);
