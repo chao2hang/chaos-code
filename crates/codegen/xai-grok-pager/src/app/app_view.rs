@@ -3030,7 +3030,7 @@ fn handle_welcome_input(ev: &Event, ctx: &mut WelcomeInputCtx<'_>) -> InputOutco
         let entry_count = entry_map.len();
         let non_selectable_flags: Vec<bool> = entry_map.iter().map(|e| e.is_none()).collect();
         let config = PickerConfig {
-            title: Some("Resume session"),
+            title: Some("恢复会话"),
             show_search_hint: true,
             expandable: true,
             esc_clears_query: true,

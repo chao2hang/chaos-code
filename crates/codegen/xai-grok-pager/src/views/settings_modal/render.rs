@@ -332,22 +332,22 @@ fn build_reset_confirm_shortcuts() -> Vec<Shortcut<'static>> {
     use crate::views::modal::{RESET_CONFIRM_NO_ID, RESET_CONFIRM_YES_ID};
     vec![
         Shortcut {
-            label: "y reset",
+            label: "y 重置",
             clickable: true,
             id: RESET_CONFIRM_YES_ID,
         },
         Shortcut {
-            label: "n cancel",
+            label: "n 取消",
             clickable: true,
             id: RESET_CONFIRM_NO_ID,
         },
         Shortcut {
-            label: "Esc cancel",
+            label: "Esc 取消",
             clickable: false,
             id: 0,
         },
         Shortcut {
-            label: "F2 cancel",
+            label: "F2 取消",
             clickable: false,
             id: 0,
         },
@@ -433,8 +433,8 @@ pub(super) fn render_row_list_with_search_bar(
 
 pub(super) fn render_docs_footer(buf: &mut Buffer, area: Rect, theme: &Theme) {
     const LONG: &str =
-        "Tip · Ask Grok: \"change theme to grokday\" or \"what does compact mode do?\"";
-    const SHORT: &str = "Tip · Ask Grok to change a setting";
+        "提示 · 可对 Chaos 说：「把主题改成 chaosday」或「紧凑模式是做什么的？」";
+    const SHORT: &str = "提示 · 可让 Chaos 帮你改设置";
     let text = modal_window::fit_tip_line(&[LONG, SHORT], area.width as usize);
     modal_window::render_centered_tip_footer(buf, area, theme, text.as_ref());
 }
@@ -468,7 +468,7 @@ pub(super) fn render_rows(
     // Empty filter — show "No matches for <query>".
     if total_visible == 0 {
         if !state.query().is_empty() {
-            let prefix = "No matches for ";
+            let prefix = "无匹配：";
             let suffix_quote_w = 2u16; // surrounding "" chars
             let available_for_query = (area.width as usize)
                 .saturating_sub(prefix.width())
@@ -2062,7 +2062,7 @@ fn render_preview_block(
     // clamp signal has been moved to a note row below the content
     // (see the bottom of this function) so the title carries the
     // same shape regardless of clamp state.
-    let title_text: &str = "preview";
+    let title_text: &str = "预览";
     let title_text_truncated: std::borrow::Cow<'_, str> =
         if title_text.width() <= effective_width as usize {
             std::borrow::Cow::Borrowed(title_text)
@@ -2136,7 +2136,7 @@ fn render_preview_block(
             .saturating_add(1);
         let area_end_y = area.y.saturating_add(area.height);
         if note_y < area_end_y {
-            let note_text = format!("note: clamped at {effective_width} cols");
+            let note_text = format!("说明：已限制为 {effective_width} 列");
             let note_text_truncated: std::borrow::Cow<'_, str> =
                 if note_text.width() <= area.width as usize {
                     std::borrow::Cow::Borrowed(note_text.as_str())
@@ -2229,7 +2229,7 @@ pub(super) const ROW_RIGHT_PAD_W: u16 = 1;
 const ROW_CHEVRON_W: u16 = 2;
 /// Chevron column width — reserved for all rows for alignment.
 pub(super) const ROW_CHEVRON_COL_W: u16 = ROW_CHEVRON_W;
-const ROW_RESTART_PILL_W: u16 = 10; // " · restart" — used for layout budgeting only.
+const ROW_RESTART_PILL_W: u16 = 10; // " · 需重启" — used for layout budgeting only.
 
 /// Per-row layout decision.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2375,7 +2375,7 @@ pub(super) fn render_setting_row(
     // Pill only while expanded — change-time feedback is the toast's job, and
     // a collapsed non-default row would misread as "restart pending" forever.
     let show_restart_pill = meta.restart_required && is_expanded;
-    let restart_pill_text = " \u{00B7} restart";
+    let restart_pill_text = " \u{00B7} 需重启";
     let restart_w = if show_restart_pill {
         restart_pill_text.width() as u16
     } else {
@@ -2718,22 +2718,22 @@ pub(super) fn build_shortcuts(state: &SettingsModalState) -> Vec<Shortcut<'stati
     match &state.state.mode {
         SettingsMode::Browse => {
             let enter_label = match state.focused_setting() {
-                Some((_, meta)) if matches!(meta.kind, SettingKind::Bool { .. }) => "Enter toggle",
-                _ => "Enter edit",
+                Some((_, meta)) if matches!(meta.kind, SettingKind::Bool { .. }) => "Enter 切换",
+                _ => "Enter 编辑",
             };
             let mut shortcuts = vec![
                 Shortcut {
-                    label: "\u{2191}/\u{2193}/j/k nav",
+                    label: "\u{2191}/\u{2193}/j/k 导航",
                     clickable: false,
                     id: 0,
                 },
                 Shortcut {
-                    label: "g/G top/btm",
+                    label: "g/G 顶/底",
                     clickable: false,
                     id: 0,
                 },
                 Shortcut {
-                    label: "Space toggle",
+                    label: "Space 切换",
                     clickable: false,
                     id: 0,
                 },
@@ -2743,22 +2743,22 @@ pub(super) fn build_shortcuts(state: &SettingsModalState) -> Vec<Shortcut<'stati
                     id: 0,
                 },
                 Shortcut {
-                    label: "\u{2192} expand",
+                    label: "\u{2192} 展开",
                     clickable: false,
                     id: 0,
                 },
                 Shortcut {
-                    label: "/ search",
+                    label: "/ 搜索",
                     clickable: false,
                     id: 0,
                 },
                 Shortcut {
-                    label: "d reset",
+                    label: "d 重置",
                     clickable: false,
                     id: 0,
                 },
                 Shortcut {
-                    label: "F2/Esc close",
+                    label: "F2/Esc 关闭",
                     clickable: false,
                     id: 0,
                 },
@@ -2770,27 +2770,27 @@ pub(super) fn build_shortcuts(state: &SettingsModalState) -> Vec<Shortcut<'stati
         }
         SettingsMode::FilterFocused => vec![
             Shortcut {
-                label: "type to filter",
+                label: "输入筛选",
                 clickable: false,
                 id: 0,
             },
             Shortcut {
-                label: "\u{2191}/\u{2193} nav",
+                label: "\u{2191}/\u{2193} 导航",
                 clickable: false,
                 id: 0,
             },
             Shortcut {
-                label: "Backspace edit",
+                label: "Backspace 编辑",
                 clickable: false,
                 id: 0,
             },
             Shortcut {
-                label: "Enter commit",
+                label: "Enter 确认",
                 clickable: false,
                 id: 0,
             },
             Shortcut {
-                label: "Esc clear",
+                label: "Esc 清除",
                 clickable: false,
                 id: 0,
             },
@@ -2801,11 +2801,11 @@ pub(super) fn build_shortcuts(state: &SettingsModalState) -> Vec<Shortcut<'stati
         } => {
             // Labels depend on whether the Enum supports live preview.
             let nav_label = if *sp {
-                "\u{2191}/\u{2193} try"
+                "\u{2191}/\u{2193} 试用"
             } else {
-                "\u{2191}/\u{2193} nav"
+                "\u{2191}/\u{2193} 导航"
             };
-            let esc_label = if *sp { "Esc revert" } else { "Esc cancel" };
+            let esc_label = if *sp { "Esc 还原" } else { "Esc 取消" };
             vec![
                 Shortcut {
                     label: nav_label,
@@ -2813,7 +2813,7 @@ pub(super) fn build_shortcuts(state: &SettingsModalState) -> Vec<Shortcut<'stati
                     id: 0,
                 },
                 Shortcut {
-                    label: "Enter commit",
+                    label: "Enter 确认",
                     clickable: false,
                     id: 0,
                 },
@@ -2823,7 +2823,7 @@ pub(super) fn build_shortcuts(state: &SettingsModalState) -> Vec<Shortcut<'stati
                     id: 0,
                 },
                 Shortcut {
-                    label: "d reset",
+                    label: "d 重置",
                     clickable: false,
                     id: 0,
                 },
@@ -2844,17 +2844,17 @@ pub(super) fn build_shortcuts(state: &SettingsModalState) -> Vec<Shortcut<'stati
                     id: 0,
                 },
                 Shortcut {
-                    label: "Enter commit",
+                    label: "Enter 确认",
                     clickable: false,
                     id: 0,
                 },
                 Shortcut {
-                    label: "Esc cancel",
+                    label: "Esc 取消",
                     clickable: false,
                     id: 0,
                 },
                 Shortcut {
-                    label: "d reset",
+                    label: "d 重置",
                     clickable: false,
                     id: 0,
                 },
@@ -2862,39 +2862,39 @@ pub(super) fn build_shortcuts(state: &SettingsModalState) -> Vec<Shortcut<'stati
         }
         SettingsMode::EditingString { .. } => vec![
             Shortcut {
-                label: "type to edit",
+                label: "输入编辑",
                 clickable: false,
                 id: 0,
             },
             Shortcut {
-                label: "\u{2190}/\u{2192} cursor",
+                label: "\u{2190}/\u{2192} 光标",
                 clickable: false,
                 id: 0,
             },
             Shortcut {
-                label: "Enter commit",
+                label: "Enter 确认",
                 clickable: false,
                 id: 0,
             },
             Shortcut {
-                label: "Esc cancel",
+                label: "Esc 取消",
                 clickable: false,
                 id: 0,
             },
         ],
         SettingsMode::PickingGroup { .. } => vec![
             Shortcut {
-                label: "\u{2191}/\u{2193}/j/k nav",
+                label: "\u{2191}/\u{2193}/j/k 导航",
                 clickable: false,
                 id: 0,
             },
             Shortcut {
-                label: "Space/Enter toggle",
+                label: "Space/Enter 切换",
                 clickable: false,
                 id: 0,
             },
             Shortcut {
-                label: "Esc back",
+                label: "Esc 返回",
                 clickable: false,
                 id: 0,
             },

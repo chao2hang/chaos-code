@@ -18,7 +18,7 @@ impl SlashCommand for QueueCommand {
     }
 
     fn description(&self) -> &str {
-        "List the prompts queued behind the running turn"
+        "列出当前轮次后排队的提示"
     }
 
     fn session_scoped(&self) -> bool {

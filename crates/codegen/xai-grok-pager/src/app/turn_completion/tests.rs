@@ -435,7 +435,7 @@ fn real_end_marker_stays_plain_with_running_work() {
     let block = last_marker_block(&agent);
     assert!(!block.parked);
     assert_eq!(block.prompt_id.as_deref(), Some("p1"));
-    assert_eq!(block.event.message(), "Worked for 2.0s");
+    assert_eq!(block.event.message(), "耗时 2.0s");
     assert_eq!(
         agent.watchers().commands,
         1,
@@ -456,7 +456,7 @@ fn workless_marker_renders_legacy_text() {
     );
 
     let block = last_marker_block(&agent);
-    assert_eq!(block.event.message(), "Worked for 2.0s");
+    assert_eq!(block.event.message(), "耗时 2.0s");
 }
 
 // ── Send-now cancel marker suppression (viewer finalize rail) ────────
@@ -585,7 +585,7 @@ fn completion_folds_tail_parked_marker_instead_of_duplicating() {
     assert!(!markers[0].parked, "the folded marker is the real turn end");
     assert_eq!(
         markers[0].event.message(),
-        "Worked for 5.0s",
+        "耗时 5.0s",
         "the folded marker carries the final elapsed"
     );
 }
@@ -756,7 +756,7 @@ fn completion_does_not_fold_foreign_or_buried_parked_markers() {
 
 #[test]
 fn failure_never_folds_into_a_parked_marker() {
-    // A parked "Worked for" is a completion-shaped boundary; a failure is a
+    // A parked "耗时" is a completion-shaped boundary; a failure is a
     // different outcome and must render as its own row beneath it.
     let mut agent = running_driver("p1");
     push_parked_tail(&mut agent, "p1", 3);

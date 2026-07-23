@@ -235,7 +235,7 @@ if editing_id == id
         let agent_output_epoch = self.session.tracker.agent_output_epoch();
         let mut block = crate::scrollback::blocks::SessionEventBlock::new(
             crate::scrollback::blocks::SessionEvent::TurnCompleted {
-                // Unknown elapsed renders as "Worked for 0.0s" rather than
+                // Unknown elapsed renders as "耗时 0.0s" rather than
                 // falling back to `None`'s bare "Turn completed." — the park
                 // boundary should read like every other turn marker.
                 elapsed: Some(self.turn_elapsed().unwrap_or_default()),

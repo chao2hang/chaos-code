@@ -778,7 +778,7 @@ mod tests {
     fn find_action_def() {
         let registry = ActionRegistry::defaults();
         let def = registry.find(ActionId::Quit).unwrap();
-        assert_eq!(def.label, "quit");
+        assert_eq!(def.label, "退出");
         assert!(def.requires_confirmation);
     }
 
@@ -895,7 +895,7 @@ mod tests {
         let def = registry
             .find(ActionId::ShortcutsHelp)
             .expect("ShortcutsHelp action should be registered");
-        assert_eq!(def.label, "shortcuts");
+        assert_eq!(def.label, "快捷键");
         assert!(!def.requires_confirmation);
 
         // Both Ctrl+. and Ctrl+X should resolve to ShortcutsHelp

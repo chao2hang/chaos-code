@@ -2174,7 +2174,7 @@
         // the actor and emits NO `x.ai/session/prompt_complete`. If a viewer
         // entered TurnRunning for it, nothing would ever finish the turn and the
         // viewer would be stuck "Responding…" forever — exactly the bug where one
-        // dashboard showed "Worked for" while the other was stuck responding.
+        // dashboard showed "耗时" while the other was stuck responding.
         // The driver also declines to show chrome for these (its server-initiated
         // adopt path never calls start_turn), so the viewer must mirror that:
         // adopt the id (so content renders) but stay Idle (no running chrome).

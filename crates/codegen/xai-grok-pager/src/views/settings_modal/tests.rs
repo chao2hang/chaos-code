@@ -539,12 +539,7 @@ fn render_setting_row_shows_full_label_when_one_line_fits() {
         false, // is_expanded
         false, // is_hovered
     );
-    let mut rendered = String::new();
-    for x in 0..area.width {
-        if let Some(cell) = buf.cell((x, 0)) {
-            rendered.push_str(cell.symbol());
-        }
-    }
+    let rendered = rendered_row_no_phantom(&buf, 0, area.width);
     assert!(
         !rendered.contains('\u{2026}'),
         "Commit 13: a row whose label + value fits on one line \
@@ -1429,14 +1424,9 @@ fn render_setting_row_emits_restart_pill_when_required() {
         true,  // is_expanded — gate on
         false, // is_hovered
     );
-    let mut rendered = String::new();
-    for x in 0..area.width {
-        if let Some(cell) = buf.cell((x, 0)) {
-            rendered.push_str(cell.symbol());
-        }
-    }
+    let rendered = rendered_row_no_phantom(&buf, 0, area.width);
     assert!(
-        rendered.contains("restart"),
+        rendered.contains("需重启"),
         "expanded row must contain the 'restart' pill: {rendered:?}"
     );
 
@@ -1453,14 +1443,9 @@ fn render_setting_row_emits_restart_pill_when_required() {
         false, // is_expanded — off
         false, // is_hovered
     );
-    let mut rendered = String::new();
-    for x in 0..area.width {
-        if let Some(cell) = buf.cell((x, 0)) {
-            rendered.push_str(cell.symbol());
-        }
-    }
+    let rendered = rendered_row_no_phantom(&buf, 0, area.width);
     assert!(
-        !rendered.contains("restart"),
+        !rendered.contains("需重启"),
         "edited-but-collapsed row must NOT contain the 'restart' pill: {rendered:?}"
     );
 }
@@ -1501,14 +1486,9 @@ fn render_setting_row_hides_restart_pill_when_at_default_and_collapsed() {
         false, // is_expanded
         false, // is_hovered
     );
-    let mut rendered = String::new();
-    for x in 0..area.width {
-        if let Some(cell) = buf.cell((x, 0)) {
-            rendered.push_str(cell.symbol());
-        }
-    }
+    let rendered = rendered_row_no_phantom(&buf, 0, area.width);
     assert!(
-        !rendered.contains("restart"),
+        !rendered.contains("需重启"),
         "at-default, not-expanded row must NOT contain the 'restart' pill: {rendered:?}"
     );
 }
@@ -2651,19 +2631,31 @@ fn picker_highlights_current_choice() {
 
     // Cell at the LAST column of each row carries the row bg
     // independent of prefix-width tweaks.
+    // `settings_list_row_bg` falls back to ANSI DarkGray / Reset when
+    // the theme collapses `bg_visual` (terminal-native / Reset tokens).
+    let expect_focused_bg = if matches!(theme.bg_visual, Color::Reset) {
+        Color::DarkGray
+    } else {
+        theme.bg_visual
+    };
+    let expect_unfocused_bg = if matches!(theme.bg_visual, Color::Reset) {
+        Color::Reset
+    } else {
+        theme.bg_base
+    };
     let bg_at = |y: u16| -> Option<ratatui::style::Color> {
         buf.cell((area.x + area.width - 1, y))
             .and_then(|c| c.style().bg)
     };
     assert_eq!(
         bg_at(4),
-        Some(theme.bg_visual),
-        "focused row must have bg_visual background"
+        Some(expect_focused_bg),
+        "focused row must have selection background"
     );
     assert_eq!(
         bg_at(3),
-        Some(theme.bg_base),
-        "unfocused row must have bg_base background"
+        Some(expect_unfocused_bg),
+        "unfocused row must have base/reset background"
     );
 
     // Display text on focused row carries BOLD modifier
@@ -4178,14 +4170,27 @@ fn advance_prev_recovers_when_selection_is_hidden() {
 /// Scan one row of the buffer and return its text content (no
 /// styles) with leading/trailing whitespace preserved.
 fn buf_row_text(buf: &Buffer, y: u16, x: u16, width: u16) -> String {
+    use unicode_width::UnicodeWidthStr;
     let mut s = String::new();
-    for col in x..x.saturating_add(width) {
+    let mut col = x;
+    let end = x.saturating_add(width);
+    while col < end {
         if let Some(cell) = buf.cell((col, y)) {
-            s.push_str(cell.symbol());
+            let symbol = cell.symbol();
+            s.push_str(symbol);
+            col = col.saturating_add(UnicodeWidthStr::width(symbol).max(1) as u16);
+        } else {
+            col = col.saturating_add(1);
         }
     }
     s
 }
+
+/// Collapse ratatui wide-glyph continuation cells for `contains` checks.
+fn rendered_row_no_phantom(buf: &Buffer, y: u16, width: u16) -> String {
+    buf_row_text(buf, y, 0, width)
+}
+
 
 /// Find the absolute column index where `needle` begins on row
 /// `y` of `buf`, scanning from `x_start` to `x_end - 1`. Walks
@@ -4603,8 +4608,7 @@ fn pathologically_narrow_truncates_label_with_ellipsis() {
 /// Two-line rows expand `state.row_rects` to span BOTH lines so
 /// mouse clicks on either line trigger the same default action.
 ///
-/// `coding_data_sharing`: label 19 + value "Opt out" 7 + chevron
-/// 2 + chrome 4 = 32 cells one-line. We render at width=28 so
+/// `coding_data_sharing`: Chinese label is denser; render at width=20 so
 /// the row drops to two lines.
 #[test]
 fn two_line_row_hit_rect_spans_both_lines() {
@@ -4619,7 +4623,7 @@ fn two_line_row_hit_rect_spans_both_lines() {
     let area = Rect {
         x: 0,
         y: 0,
-        width: 28,
+        width: 20,
         height: 60,
     };
     let mut buf = Buffer::empty(area);
@@ -4672,8 +4676,8 @@ fn two_line_row_hit_rect_spans_both_lines() {
 #[test]
 fn two_line_row_with_expansion_renders_three_segments() {
     let mut s = make_state();
-    // Coding data sharing's label + value (with chevron) won't
-    // fit on a 28-col line, forcing two-line layout.
+    // 编码数据共享 label + value (with chevron) won't fit on a
+    // 20-col line, forcing two-line layout.
     let row_idx = s
         .rows
         .iter()
@@ -4685,7 +4689,7 @@ fn two_line_row_with_expansion_renders_three_segments() {
     let area = Rect {
         x: 0,
         y: 0,
-        width: 28,
+        width: 20,
         height: 60,
     };
     let mut buf = Buffer::empty(area);
@@ -4701,18 +4705,13 @@ fn two_line_row_with_expansion_renders_three_segments() {
     // The row label is on line 1.
     let label_line = buf_row_text(&buf, rect.y, area.x, area.width);
     assert!(
-        label_line.contains("Coding data sharing"),
+        label_line.contains("编码数据共享"),
         "line 1 must contain the row label: {label_line:?}"
     );
-    // The value (display: "Opt out" or similar) is on line 2.
+    // The value (display: "选择退出" for default opt-out) is on line 2.
     let value_line = buf_row_text(&buf, rect.y + 1, area.x, area.width);
-    // Value comes from displaying the canonical → display mapping,
-    // which uses the synthetic enum's "Third Option" canonical of
-    // "opt-out". The display fallback returns the canonical when
-    // the lookup misses — registry has the real `CodingDataSharing`
-    // choices, so display should be "Opt out".
     assert!(
-        value_line.contains("Opt") || value_line.contains("opt") || value_line.contains("out"),
+        value_line.contains("选择退出") || value_line.contains("选择加入"),
         "line 2 must contain the value text: {value_line:?}"
     );
     // The expanded description renders on line 3 and below.
@@ -4754,7 +4753,7 @@ fn group_row_renders_expanded_description() {
     // Line 1 is the group's chevron row (its label).
     let label_line = buf_row_text(&buf, rect.y, area.x, area.width);
     assert!(
-        label_line.contains("Show contextual hints"),
+        label_line.contains("显示情境提示"),
         "line 1 must contain the group label: {label_line:?}"
     );
     // The description renders on the line below the chevron row (non-blank).
@@ -4771,13 +4770,13 @@ fn group_row_renders_expanded_description() {
         .find("contextual_hints")
         .expect("group registered")
         .description;
-    let token = desc
-        .split_whitespace()
-        .nth(1)
-        .unwrap_or("")
-        .trim_matches(|c: char| !c.is_alphanumeric());
+    let token: String = desc
+        .chars()
+        .filter(|c| !c.is_whitespace() && *c != '；' && *c != '。' && *c != '，')
+        .take(4)
+        .collect();
     assert!(
-        !token.is_empty() && desc_line.contains(token),
+        !token.is_empty() && desc_line.contains(&token),
         "expanded group description must render its text (token `{token}`): {desc_line:?}"
     );
 }
@@ -4852,6 +4851,20 @@ fn find_row_y(buf: &Buffer, area: Rect, needle: &str) -> Option<u16> {
     None
 }
 
+/// Footer tip row: LONG uses "可对 Chaos", SHORT uses "可让 Chaos".
+/// Both share the `提示` prefix and `Chaos` — require both so we
+/// don't match theme display names like "Chaos Night" earlier in
+/// the settings list.
+fn find_tip_row_y(buf: &Buffer, area: Rect) -> Option<u16> {
+    for y in area.y..area.y.saturating_add(area.height) {
+        let row = buf_row_text(buf, y, area.x, area.width);
+        if row.contains("提示") && row.contains("Chaos") {
+            return Some(y);
+        }
+    }
+    None
+}
+
 /// Return true if every cell strictly INSIDE the modal popup's
 /// vertical borders on the given row is whitespace. The modal
 /// borders (`│` at popup_area.x and at popup_area.x + width - 1)
@@ -4894,16 +4907,15 @@ fn footer_has_blank_line_between_tip_and_hints_when_hints_wrap() {
     render_settings_modal(&mut buf, area, &mut s, false, None);
     let popup_area = s.window.popup_area.expect("modal must have rendered");
 
-    let tip_y = find_row_y(&buf, area, "Tip").expect("tip row must render");
+    let tip_y = find_tip_row_y(&buf, area).expect("tip row must render");
     // Sanity-check that the hints actually wrap — if a future PR
     // trims the hint string enough that they fit on one row at
     // this width the test passes for the wrong reason. Look for
     // the first hint label (`nav`) AND the last (`F2/Esc`); they
     // must land on different y if the hints wrapped.
-    // Use `j/k nav` (hint-unique) rather than `nav` alone, which
-    // also matches the `vim_mode` row's "navigation" keyword.
-    let first_hint_y = find_row_y(&buf, area, "j/k nav").expect("first hint line must render");
-    let last_hint_y = find_row_y(&buf, area, "F2/Esc").expect("close hint must render");
+    // Use `j/k 导航` (hint-unique) rather than `导航` alone.
+    let first_hint_y = find_row_y(&buf, area, "j/k 导航").expect("first hint line must render");
+    let last_hint_y = find_row_y(&buf, area, "F2/Esc 关闭").expect("close hint must render");
     assert!(
         last_hint_y > first_hint_y,
         "this test requires the hints to wrap to ≥2 lines; got first_hint_y={first_hint_y} \
@@ -4950,12 +4962,12 @@ fn footer_has_blank_line_between_tip_and_hints_when_hints_dont_wrap() {
     render_settings_modal(&mut buf, area, &mut s, false, None);
     let popup_area = s.window.popup_area.expect("modal must have rendered");
 
-    let tip_y = find_row_y(&buf, area, "Tip").expect("tip row must render");
+    let tip_y = find_tip_row_y(&buf, area).expect("tip row must render");
     // FilterFocused-mode hints: `type to filter | ↑/↓ nav |
     // Backspace edit | Enter commit | Esc clear`. Verify both
     // ends land on the SAME row (proves no wrap).
-    let first_hint_y = find_row_y(&buf, area, "type to filter").expect("first hint must render");
-    let last_hint_y = find_row_y(&buf, area, "Esc clear").expect("last hint must render");
+    let first_hint_y = find_row_y(&buf, area, "输入筛选").expect("first hint must render");
+    let last_hint_y = find_row_y(&buf, area, "Esc 清除").expect("last hint must render");
     assert_eq!(
         first_hint_y, last_hint_y,
         "this test requires the hints to fit on a single line; at width=150 + \
@@ -5027,16 +5039,16 @@ fn footer_total_height_grows_when_hints_wrap() {
     // narrow case wrapped further, which would be a silent test
     // bug).
     let narrow_first_hint =
-        find_row_y(&buf_narrow, narrow_area, "type to filter").expect("first hint");
-    let narrow_last_hint = find_row_y(&buf_narrow, narrow_area, "Esc clear").expect("last hint");
+        find_row_y(&buf_narrow, narrow_area, "输入筛选").expect("first hint");
+    let narrow_last_hint = find_row_y(&buf_narrow, narrow_area, "Esc 清除").expect("last hint");
     assert_eq!(
         narrow_last_hint,
         narrow_first_hint + 1,
         "narrow fixture must wrap the hints to exactly 2 rows; got \
          first={narrow_first_hint} last={narrow_last_hint}"
     );
-    let wide_first_hint = find_row_y(&buf_wide, wide_area, "type to filter").expect("first");
-    let wide_last_hint = find_row_y(&buf_wide, wide_area, "Esc clear").expect("last");
+    let wide_first_hint = find_row_y(&buf_wide, wide_area, "输入筛选").expect("first");
+    let wide_last_hint = find_row_y(&buf_wide, wide_area, "Esc 清除").expect("last");
     assert_eq!(
         wide_first_hint, wide_last_hint,
         "wide fixture must NOT wrap the hints; got first={wide_first_hint} \
@@ -5665,12 +5677,13 @@ fn docs_footer_tip_is_centered() {
         };
         let mut buf = Buffer::empty(area);
         render_docs_footer(&mut buf, area, &theme);
-        let row: String = (area.x..area.x + area.width)
-            .filter_map(|x| buf.cell((x, 0)).map(|c| c.symbol().to_string()))
-            .collect();
-        let tip_start = row.find("Tip").expect("docs footer must contain `Tip`");
+        // CJK-aware: skip wide-glyph continuation cells.
+        let row = buf_row_text(&buf, 0, area.x, area.width);
+        let tip_start = row.find("提示").expect("docs footer must contain `提示`");
+        // Column of tip is display width of leading whitespace, not char index.
+        let tip_col = unicode_width::UnicodeWidthStr::width(&row[..tip_start]);
         let trailing_ws = row.chars().rev().take_while(|c| *c == ' ').count();
-        (row, tip_start, trailing_ws)
+        (row, tip_col, trailing_ws)
     };
 
     // LONG path: width=80 fits the full message.
@@ -5685,16 +5698,15 @@ fn docs_footer_tip_is_centered() {
     );
 
     // SHORT path: width that fits SHORT but not LONG.
-    // SHORT = "Tip · Ask Grok to change a setting" (34 cells);
-    // LONG ≈ 73 cells. width=40 lands in the SHORT band.
+    // SHORT tip Chinese; LONG is wider. width=40 lands in the SHORT band.
     let (row_short, tip_start_short, trailing_short) = render(40);
     assert!(
-        row_short.contains("change a setting"),
-        "width=40 must render SHORT path (contains `change a setting`): {row_short:?}",
+        row_short.contains("帮你改设置"),
+        "width=40 must render SHORT path (contains `帮你改设置`): {row_short:?}",
     );
     assert!(
-        !row_short.contains("grokday"),
-        "width=40 must NOT render LONG path (no `grokday`): {row_short:?}",
+        !row_short.contains("chaosday"),
+        "width=40 must NOT render LONG path (no `chaosday`): {row_short:?}",
     );
     assert!(
         tip_start_short.abs_diff(trailing_short) <= 1,
@@ -5703,11 +5715,11 @@ fn docs_footer_tip_is_centered() {
     );
 
     // Truncated path: width too narrow even for SHORT. The
-    // truncation prefix `Tip · …` should still render; the
+    // truncation prefix `提示 · …` should still render; the
     // centering math operates on the truncated SHORT.
     let (row_tiny, tip_start_tiny, _trailing_tiny) = render(15);
     assert!(
-        row_tiny.contains("Tip"),
+        row_tiny.contains("提示"),
         "even at width=15 the `Tip` prefix must render: {row_tiny:?}",
     );
     // At width=15, the truncated SHORT fills most/all of the
@@ -5738,7 +5750,7 @@ fn tip_line_has_blank_row_above() {
     let mut tip_y: Option<u16> = None;
     for y in 0..area.height {
         let txt = buf_row_text(&buf, y, area.x, area.width);
-        if txt.contains("Tip") && txt.contains("Ask Grok") {
+        if txt.contains("提示") && txt.contains("Chaos") {
             tip_y = Some(y);
             break;
         }
@@ -6508,7 +6520,7 @@ fn max_thoughts_width_preview_renders_below_stepper() {
     let stepper_y =
         find_text_row(&buf, area, int_stepper_left_glyph()).expect("stepper row must render");
     // Locate the preview title row.
-    let preview_y = find_text_row(&buf, area, "preview")
+    let preview_y = find_text_row(&buf, area, "预览")
         .expect("`preview` title row must render below the stepper");
     // Exact placement: 1 blank row between stepper and preview
     // title, regardless of `area.height` (no bottom-anchoring).
@@ -6549,23 +6561,23 @@ fn max_thoughts_width_preview_title_is_bold_italic_lowercase() {
         height: 24,
     };
     let (buf, _) = render_max_thoughts_width_at(85, area);
-    let preview_y = find_text_row(&buf, area, "preview").expect("preview title must render");
+    let preview_y = find_text_row(&buf, area, "预览").expect("preview title must render");
     // Assert the exact lowercase substring (the row must NOT
     // contain "Preview" or "PREVIEW").
     let row = buf_row_text(&buf, preview_y, area.x, area.width);
     assert!(
-        row.contains("preview"),
+        row.contains("预览"),
         "title row must contain lowercase `preview`; row={row:?}",
     );
     assert!(
         !row.contains("Preview") && !row.contains("PREVIEW"),
         "title row must NOT contain capitalised forms; row={row:?}",
     );
-    // Sample the first cell of the title text.
+    // Sample the first cell of the title text ("预览").
     let cell = buf
         .cell((area.x, preview_y))
         .expect("preview title cell at column 0");
-    assert_eq!(cell.symbol(), "p", "expected `p` at title column 0");
+    assert_eq!(cell.symbol(), "预", "expected first CJK glyph of 预览 at title column 0");
     assert!(
         cell.modifier.contains(Modifier::BOLD),
         "title cell must carry Modifier::BOLD; got {:?}",
@@ -6589,7 +6601,7 @@ fn max_thoughts_width_preview_content_is_italic() {
         height: 24,
     };
     let (buf, _) = render_max_thoughts_width_at(85, area);
-    let preview_y = find_text_row(&buf, area, "preview").expect("preview title must render");
+    let preview_y = find_text_row(&buf, area, "预览").expect("preview title must render");
     // The first content row is the row immediately below the
     // title. Sample column 0 — the first character of the
     // wrapped sample text (`L` from "Let me trace through ...").
@@ -6639,7 +6651,7 @@ fn max_thoughts_width_preview_title_styling_distinguishes_from_content() {
         height: 24,
     };
     let (buf, _) = render_max_thoughts_width_at(85, area);
-    let preview_y = find_text_row(&buf, area, "preview").expect("preview title must render");
+    let preview_y = find_text_row(&buf, area, "预览").expect("preview title must render");
     let title_cell = buf
         .cell((area.x, preview_y))
         .expect("title cell at column 0");
@@ -6711,7 +6723,7 @@ fn max_thoughts_width_preview_wraps_at_pending_value() {
         height: 24,
     };
     let (buf, _) = render_max_thoughts_width_at(50, area);
-    let preview_y = find_text_row(&buf, area, "preview").expect("preview title must render");
+    let preview_y = find_text_row(&buf, area, "预览").expect("preview title must render");
     // Walk content rows below the title until a blank row
     // (signals end of preview block).
     let mut content_lines: Vec<String> = Vec::new();
@@ -6761,7 +6773,7 @@ fn max_thoughts_width_preview_clamps_when_terminal_narrower_than_value() {
         height: 24,
     };
     let (buf, _) = render_max_thoughts_width_at(85, area);
-    let preview_y = find_text_row(&buf, area, "preview").expect("preview title must render");
+    let preview_y = find_text_row(&buf, area, "预览").expect("preview title must render");
     let title_row = buf_row_text(&buf, preview_y, area.x, area.width);
     // Title must NOT carry the legacy `clamped to N cols`
     // suffix — that signal lives in the note row now.
@@ -6816,13 +6828,13 @@ fn clamped_preview_renders_note_below_content() {
         height: 24,
     };
     let (buf, _) = render_max_thoughts_width_at(85, area);
-    let preview_y = find_text_row(&buf, area, "preview").expect("preview title must render");
+    let preview_y = find_text_row(&buf, area, "预览").expect("preview title must render");
 
     // Title row carries the lowercase `preview` text and no
     // `clamped` suffix.
     let title_row = buf_row_text(&buf, preview_y, area.x, area.width);
     assert!(
-        title_row.contains("preview"),
+        title_row.contains("预览"),
         "title row must contain lowercase `preview`; row={title_row:?}",
     );
     assert!(
@@ -6842,7 +6854,7 @@ fn clamped_preview_renders_note_below_content() {
     for y in (preview_y + 1)..(area.y + area.height) {
         let row = buf_row_text(&buf, y, area.x, area.width);
         let trimmed = row.trim_end();
-        if trimmed.starts_with("note:") {
+        if trimmed.starts_with("说明：") || trimmed.starts_with("note:") {
             note_y = Some(y);
             break;
         }
@@ -6876,7 +6888,7 @@ fn clamped_preview_renders_note_below_content() {
     // The note text reports the actual clamp width (area.width = 60).
     let note_row = buf_row_text(&buf, note_y, area.x, area.width);
     assert!(
-        note_row.contains("note: clamped at 60 cols"),
+        note_row.contains("说明：已限制为 60 列"),
         "note row must read `note: clamped at 60 cols`; got {note_row:?}",
     );
 
@@ -6890,7 +6902,7 @@ fn clamped_preview_renders_note_below_content() {
     let cell = buf
         .cell((area.x, note_y))
         .expect("note cell at column 0 must exist");
-    assert_eq!(cell.symbol(), "n", "expected `n` at note column 0");
+    assert_eq!(cell.symbol(), "说", "expected first CJK glyph of 说明 at note column 0");
     assert_eq!(
         cell.fg, theme.text_secondary,
         "note fg must be theme.text_secondary; got {:?}",
@@ -6939,10 +6951,10 @@ fn clamped_note_omitted_when_insufficient_height() {
         let (buf, _) = render_max_thoughts_width_at(85, area);
         // Skip heights at which the preview is omitted
         // entirely (too short).
-        let Some(preview_y) = find_text_row(&buf, area, "preview") else {
+        let Some(preview_y) = find_text_row(&buf, area, "预览") else {
             continue;
         };
-        let note_present = find_text_row(&buf, area, "note: clamped").is_some();
+        let note_present = find_text_row(&buf, area, "说明：已限制").is_some();
         if !note_present {
             tight_height = Some(h);
             // Sanity: verify wrap content still rendered for
@@ -6975,7 +6987,7 @@ fn clamped_note_omitted_when_insufficient_height() {
     };
     let (buf, _) = render_max_thoughts_width_at(85, area);
     assert!(
-        find_text_row(&buf, area, "note: clamped").is_none(),
+        find_text_row(&buf, area, "说明：已限制").is_none(),
         "at the tight boundary height (h={tight}) the clamped note must NOT render",
     );
 }
@@ -6993,7 +7005,7 @@ fn unclamped_preview_omits_note() {
     };
     let (buf, _) = render_max_thoughts_width_at(50, area);
     assert!(
-        find_text_row(&buf, area, "preview").is_some(),
+        find_text_row(&buf, area, "预览").is_some(),
         "preview must render at this size",
     );
     assert!(
@@ -7029,7 +7041,7 @@ fn max_thoughts_width_preview_omitted_when_modal_too_short() {
     );
     // The preview is omitted.
     assert!(
-        find_text_row(&buf, area, "preview").is_none(),
+        find_text_row(&buf, area, "预览").is_none(),
         "preview must be omitted when remaining height < 5 rows",
     );
 }
@@ -7046,7 +7058,7 @@ fn max_thoughts_width_preview_omitted_when_modal_too_narrow() {
     };
     let (buf, _) = render_max_thoughts_width_at(85, area);
     assert!(
-        find_text_row(&buf, area, "preview").is_none(),
+        find_text_row(&buf, area, "预览").is_none(),
         "preview must be omitted when area.width < 30 cols",
     );
 }
@@ -7099,7 +7111,7 @@ fn max_thoughts_width_preview_only_renders_for_max_thoughts_width_key() {
     );
     // No preview because the key is NOT max_thoughts_width.
     assert!(
-        find_text_row(&buf, area, "preview").is_none(),
+        find_text_row(&buf, area, "预览").is_none(),
         "preview must be hidden for non-max_thoughts_width Int settings",
     );
 }
@@ -7120,7 +7132,7 @@ fn max_thoughts_width_preview_updates_when_stepper_changes() {
     // Capture wrap shape at pending = 50.
     let (buf_50, _) = render_max_thoughts_width_at(50, area);
     let preview_y_50 =
-        find_text_row(&buf_50, area, "preview").expect("preview must render at pending 50");
+        find_text_row(&buf_50, area, "预览").expect("preview must render at pending 50");
     let mut wrap_50: Vec<String> = Vec::new();
     for y in (preview_y_50 + 1)..area.height {
         let row = buf_row_text(&buf_50, y, area.x, area.width);
@@ -7148,7 +7160,7 @@ fn max_thoughts_width_preview_updates_when_stepper_changes() {
     let theme = Theme::current();
     render_editing_value(&mut buf_55, area, &mut s, &theme);
     let preview_y_55 =
-        find_text_row(&buf_55, area, "preview").expect("preview must render at pending 55");
+        find_text_row(&buf_55, area, "预览").expect("preview must render at pending 55");
     let mut wrap_55: Vec<String> = Vec::new();
     for y in (preview_y_55 + 1)..area.height {
         let row = buf_row_text(&buf_55, y, area.x, area.width);
@@ -7201,7 +7213,7 @@ fn max_thoughts_width_preview_renders_at_just_fits_height() {
     };
     let (buf_fit, _) = render_max_thoughts_width_at(85, just_fits);
     assert!(
-        find_text_row(&buf_fit, just_fits, "preview").is_some(),
+        find_text_row(&buf_fit, just_fits, "预览").is_some(),
         "preview must render at the just-fits boundary height (header_rows + 5)",
     );
     // One row below the threshold: preview omitted, stepper
@@ -7218,7 +7230,7 @@ fn max_thoughts_width_preview_renders_at_just_fits_height() {
         "stepper must still render one row below the preview threshold",
     );
     assert!(
-        find_text_row(&buf_short, just_short, "preview").is_none(),
+        find_text_row(&buf_short, just_short, "预览").is_none(),
         "preview must omit at one row below the just-fits boundary",
     );
 }
@@ -7236,7 +7248,7 @@ fn max_thoughts_width_preview_renders_at_just_fits_width() {
     };
     let (buf_fit, _) = render_max_thoughts_width_at(85, just_fits);
     assert!(
-        find_text_row(&buf_fit, just_fits, "preview").is_some(),
+        find_text_row(&buf_fit, just_fits, "预览").is_some(),
         "preview must render at the MIN_WIDTH (30 cols) boundary",
     );
     let just_narrow = Rect {
@@ -7247,7 +7259,7 @@ fn max_thoughts_width_preview_renders_at_just_fits_width() {
     };
     let (buf_narrow, _) = render_max_thoughts_width_at(85, just_narrow);
     assert!(
-        find_text_row(&buf_narrow, just_narrow, "preview").is_none(),
+        find_text_row(&buf_narrow, just_narrow, "预览").is_none(),
         "preview must omit one column below MIN_WIDTH",
     );
 }
@@ -7419,7 +7431,7 @@ fn preview_renders_at_full_width_when_modal_widened() {
     );
     // Sanity: the preview itself still renders.
     assert!(
-        find_text_row(&buf, area, "preview").is_some(),
+        find_text_row(&buf, area, "预览").is_some(),
         "preview must render at the wide terminal size",
     );
 }
@@ -7457,11 +7469,11 @@ fn preview_remains_clamped_when_pending_exceeds_widened_width() {
     );
     // Preview still renders, AND the clamped note is present.
     assert!(
-        find_text_row(&buf, area, "preview").is_some(),
+        find_text_row(&buf, area, "预览").is_some(),
         "preview must render even when clamping",
     );
     assert!(
-        find_text_row(&buf, area, "note: clamped").is_some(),
+        find_text_row(&buf, area, "说明：已限制").is_some(),
         "clamped note must render when pending > interior, even after widening",
     );
 }

@@ -10,7 +10,7 @@ use crate::app::actions::Action;
 use crate::slash::command::{AppCtx, ArgItem, CommandExecCtx, CommandResult, SlashCommand};
 use crate::slash::commands::effort_levels::build_effort_arg_items;
 
-/// Switch the active model (and optionally its reasoning effort).
+/// 切换当前模型 (and optionally its reasoning effort).
 pub struct ModelCommand;
 
 impl SlashCommand for ModelCommand {
@@ -23,7 +23,7 @@ impl SlashCommand for ModelCommand {
     }
 
     fn description(&self) -> &str {
-        "Switch the active model"
+        "切换当前模型"
     }
 
     fn session_scoped(&self) -> bool {

@@ -3,7 +3,7 @@
 use crate::app::actions::Action;
 use crate::slash::command::{CommandExecCtx, CommandResult, SlashCommand};
 
-/// Rename the current session's title/summary.
+/// 重命名当前会话's title/summary.
 pub struct RenameCommand;
 
 impl SlashCommand for RenameCommand {
@@ -16,7 +16,7 @@ impl SlashCommand for RenameCommand {
     }
 
     fn description(&self) -> &str {
-        "Rename the current session"
+        "重命名当前会话"
     }
 
     fn session_scoped(&self) -> bool {

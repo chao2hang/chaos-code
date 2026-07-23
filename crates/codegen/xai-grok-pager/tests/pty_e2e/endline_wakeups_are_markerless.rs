@@ -1,5 +1,5 @@
 //! PTY: auto-wake turns close MARKERLESS — a turn ends with three flag-gated
-//! background commands running (one plain "Worked for" marker), and each
+//! background commands running (one plain "耗时" marker), and each
 //! released flag lands a completion chip and the auto-wake response with NO
 //! wake-end marker after it, while every earlier line stays unchanged above
 //! (nothing mutates). The persistent "N commands still running" status row
@@ -7,7 +7,7 @@
 //! disappears once nothing is left; markers never carry that copy as a suffix.
 //!
 //! Positional chain asserted at the end: marker < chip < wake reply < chip <
-//! reply < chip < reply — exactly ONE "Worked for" total (the user turn's).
+//! reply < chip < reply — exactly ONE "耗时" total (the user turn's).
 #[allow(unused_imports)]
 use super::common::*;
 
@@ -90,7 +90,7 @@ async fn endline_wakeups_are_markerless() {
             )
         });
     harness
-        .wait_for_text("Worked for", Duration::from_secs(30))
+        .wait_for_text("耗时", Duration::from_secs(30))
         .unwrap_or_else(|_| {
             panic!(
                 "the end marker never appeared; screen:\n{}",
@@ -114,7 +114,7 @@ async fn endline_wakeups_are_markerless() {
         harness.update(Duration::from_millis(100));
         let screen = harness.screen_contents();
         screen.contains("WAKE_REPLY_ONE")
-            && screen.matches("Worked for").count() == 1
+            && screen.matches("耗时").count() == 1
             && screen.contains("2 commands still running")
     });
     assert!(
@@ -129,7 +129,7 @@ async fn endline_wakeups_are_markerless() {
         harness.update(Duration::from_millis(100));
         let screen = harness.screen_contents();
         screen.contains("WAKE_REPLY_TWO")
-            && screen.matches("Worked for").count() == 1
+            && screen.matches("耗时").count() == 1
             && screen.contains("1 command still running")
     });
     assert!(
@@ -145,7 +145,7 @@ async fn endline_wakeups_are_markerless() {
         harness.update(Duration::from_millis(100));
         let screen = harness.screen_contents();
         screen.contains("WAKE_REPLY_THREE")
-            && screen.matches("Worked for").count() == 1
+            && screen.matches("耗时").count() == 1
             && !screen.contains("still running")
     });
     assert!(
@@ -167,7 +167,7 @@ async fn endline_wakeups_are_markerless() {
         TASKS,
         "one completion chip per task; screen:\n{screen}"
     );
-    let markers: Vec<usize> = screen.match_indices("Worked for").map(|(i, _)| i).collect();
+    let markers: Vec<usize> = screen.match_indices("耗时").map(|(i, _)| i).collect();
     assert_eq!(
         markers.len(),
         1,
@@ -188,7 +188,7 @@ async fn endline_wakeups_are_markerless() {
     assert!(
         screen
             .lines()
-            .filter(|l| l.contains("Worked for"))
+            .filter(|l| l.contains("耗时"))
             .all(|l| !l.contains("still running")),
         "markers must never carry a still-running suffix; screen:\n{screen}"
     );

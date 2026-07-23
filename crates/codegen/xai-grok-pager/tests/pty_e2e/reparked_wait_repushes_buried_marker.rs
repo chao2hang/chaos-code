@@ -145,7 +145,7 @@ async fn reparked_wait_repushes_buried_marker() {
 
     // Park #1 marker (plain "Worked for X" — no still-running suffix).
     harness
-        .wait_for_text("Worked for", Duration::from_secs(90))
+        .wait_for_text("耗时", Duration::from_secs(90))
         .unwrap_or_else(|_| {
             panic!(
                 "park #1 marker never appeared; screen:\n{}\n--- non-system messages ---\n{}",
@@ -189,7 +189,7 @@ async fn reparked_wait_repushes_buried_marker() {
     // park episode after new parent output).
     let repushed = wait_until(Duration::from_secs(30), || {
         harness.update(Duration::from_millis(100));
-        harness.screen_contents().matches("Worked for").count() == 2
+        harness.screen_contents().matches("耗时").count() == 2
     });
     assert!(
         repushed,
@@ -199,22 +199,22 @@ async fn reparked_wait_repushes_buried_marker() {
     let screen = harness.screen_contents();
 
     // Screen text is row-major: marker, content, re-pushed marker in order.
-    let first_marker = screen.find("Worked for").expect("first marker");
+    let first_marker = screen.find("耗时").expect("first marker");
     let midwork_at = screen
         .rfind(MIDWORK)
         .expect("between-parks content on screen");
-    let second_marker = screen.rfind("Worked for").expect("re-pushed marker");
+    let second_marker = screen.rfind("耗时").expect("re-pushed marker");
     assert!(
         first_marker < midwork_at && midwork_at < second_marker,
         "expected marker, content, then the re-pushed marker in order; screen:\n{screen}"
     );
     // The still-running story lives in the status row, not the transcript:
-    // no "Worked for" line carries the suffix (line-scoped like the sibling
+    // no "耗时" line carries the suffix (line-scoped like the sibling
     // suites — other surfaces may legitimately use the phrase).
     assert!(
         screen
             .lines()
-            .filter(|l| l.contains("Worked for"))
+            .filter(|l| l.contains("耗时"))
             .all(|l| !l.contains("still running")),
         "no marker line may carry the still-running suffix; screen:\n{screen}"
     );

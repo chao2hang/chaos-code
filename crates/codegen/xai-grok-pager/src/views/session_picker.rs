@@ -808,7 +808,7 @@ pub(crate) fn build_content_header_label(
         let spinner_frames = crate::glyphs::dot_spinner_frames();
         let frame_idx = (tick / 4) as usize % spinner_frames.len();
         format!(
-            "{} Searching session content\u{2026}",
+            "{} 正在搜索会话内容\u{2026}",
             spinner_frames[frame_idx]
         )
     } else if has_content_rows {

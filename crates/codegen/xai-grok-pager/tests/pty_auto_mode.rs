@@ -21,7 +21,7 @@ use xai_grok_pager_pty_harness::{PtyHarness, pager_binary};
 const ROWS: u16 = 40;
 const COLS: u16 = 120;
 const WELCOME_TIMEOUT: Duration = Duration::from_secs(25);
-const WELCOME_SCREEN_SENTINEL: &str = "Quit";
+const WELCOME_SCREEN_SENTINEL: &str = "退出";
 
 /// Back-tab / Shift+Tab (CSI Z) — pager binds this to CycleMode.
 const SHIFT_TAB: &[u8] = b"\x1b[Z";
@@ -95,7 +95,7 @@ fn prepare_sandbox(home: &Path, gate_on: bool) -> Vec<(String, String)> {
 
 fn is_login_screen(screen: &str) -> bool {
     screen.contains("Waiting for approval")
-        || screen.contains("Approve in your browser")
+        || screen.contains("请在浏览器中批准")
         || screen.contains("finish signing in")
 }
 
@@ -178,7 +178,7 @@ fn pty_shift_tab_cycles_to_auto_mode_banner() {
     }
 
     assert!(
-        saw_auto || screen.contains("Auto") || screen.contains("Switched to mode: Auto"),
+        saw_auto || screen.contains("Auto") || screen.contains("已切换到模式：Auto"),
         "after Plan → Auto cycle, screen must show Auto (distinct mode). screen=\n{screen}"
     );
     if screen.contains("Always-Approve") && !screen.contains("Auto") {
@@ -246,13 +246,13 @@ fn pty_shift_tab_skips_auto_when_gate_off() {
             eprintln!("pty_auto_mode(gate off): landed on login after key inject; env auth limit");
             return;
         }
-        if s.contains("Switched to mode: Plan") {
+        if s.contains("已切换到模式：Plan") {
             saw_plan = true;
         }
-        if s.contains("Switched to mode: Always-Approve") {
+        if s.contains("已切换到模式：Always-Approve") {
             saw_always = true;
         }
-        if s.contains("Switched to mode: Auto") {
+        if s.contains("已切换到模式：Auto") {
             saw_auto = true;
         }
     }

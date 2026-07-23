@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use crate::app::actions::Action;
 use crate::slash::command::{AppCtx, ArgItem, CommandExecCtx, CommandResult, SlashCommand};
 
-/// Export the current conversation to a file or clipboard.
+/// 将会话导出到文件或剪贴板.
 pub struct ExportCommand;
 
 impl SlashCommand for ExportCommand {
@@ -21,7 +21,7 @@ impl SlashCommand for ExportCommand {
     }
 
     fn description(&self) -> &str {
-        "Export the current conversation to a file or clipboard"
+        "将会话导出到文件或剪贴板"
     }
 
     fn session_scoped(&self) -> bool {

@@ -17,7 +17,7 @@ impl SlashCommand for DoctorCommand {
     }
 
     fn description(&self) -> &str {
-        "Check terminal, color, clipboard, and voice input"
+        "检查终端、颜色、剪贴板和语音输入"
     }
 
     fn usage(&self) -> &str {

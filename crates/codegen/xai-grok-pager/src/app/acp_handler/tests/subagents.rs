@@ -459,7 +459,7 @@
                 1,
                 "opening a finished subagent after resume must show its transcript"
             );
-            // The lazy load reapplies the "Worked for" footer (live parity).
+            // The lazy load reapplies the "耗时" footer (live parity).
             let child = agent.subagent_views.get(child_sid).unwrap();
             assert!(
                 (0..child.scrollback.len()).any(|i| child

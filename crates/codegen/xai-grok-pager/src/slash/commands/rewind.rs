@@ -9,7 +9,7 @@ impl SlashCommand for RewindCommand {
     }
 
     fn description(&self) -> &str {
-        "Rewind to a previous turn"
+        "回退到先前一轮"
     }
 
     fn session_scoped(&self) -> bool {

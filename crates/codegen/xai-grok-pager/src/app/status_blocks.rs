@@ -32,13 +32,9 @@ pub(crate) fn queue_block_text(agent: &AgentView) -> String {
     }
 
     if rows.is_empty() {
-        "Queue is empty.".to_string()
+        "队列为空。".to_string()
     } else {
-        let header = format!(
-            "Queued prompt{} ({}):",
-            if rows.len() == 1 { "" } else { "s" },
-            rows.len()
-        );
+        let header = format!("排队提示（{}）：", rows.len());
         join_header_rows(header, rows)
     }
 }
@@ -59,8 +55,8 @@ pub(crate) fn tasks_block_text(agent: &AgentView) -> String {
         let active = run.active_agent_count();
         let agents = match active {
             0 => String::new(),
-            1 => " · 1 agent".to_string(),
-            n => format!(" · {n} agents"),
+            1 => " · 1 个 Agent".to_string(),
+            n => format!(" · {n} 个 Agent"),
         };
         let phase = run
             .current_phase
@@ -70,9 +66,9 @@ pub(crate) fn tasks_block_text(agent: &AgentView) -> String {
             .map(|phase| format!(" · {phase}"))
             .unwrap_or_default();
         rows.push(format!(
-            "  {:<9}Workflow · {}{phase}{agents}  ({})",
+            "  {:<9}工作流 · {}{phase}{agents}  ({})",
             if run.is_active() {
-                "running".to_string()
+                "运行中".to_string()
             } else {
                 run.status.replace('_', " ")
             },
@@ -96,11 +92,11 @@ pub(crate) fn tasks_block_text(agent: &AgentView) -> String {
     for info in subs {
         let (type_label, desc) = format_subagent_label(info);
         let status = if info.pending_kill {
-            "stopping"
+            "停止中"
         } else if info.is_running() {
-            "running"
+            "运行中"
         } else {
-            info.status.as_deref().unwrap_or("done")
+            info.status.as_deref().unwrap_or("完成")
         };
         let label = if desc.is_empty() {
             type_label
@@ -125,7 +121,7 @@ pub(crate) fn tasks_block_text(agent: &AgentView) -> String {
             .then(a.task_id.cmp(&b.task_id))
     });
     for task in tasks {
-        let kind = if task.is_monitor { "Monitor" } else { "Task" };
+        let kind = if task.is_monitor { "监视" } else { "任务" };
         let one_line = task
             .description
             .as_deref()
@@ -133,12 +129,12 @@ pub(crate) fn tasks_block_text(agent: &AgentView) -> String {
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| first_nonempty_line(&task.command));
         let status = if task.pending_kill {
-            "stopping"
+            "停止中"
         } else {
             match task.status {
-                BgTaskStatus::Running => "running",
-                BgTaskStatus::Done => "done",
-                BgTaskStatus::Failed => "failed",
+                BgTaskStatus::Running => "运行中",
+                BgTaskStatus::Done => "完成",
+                BgTaskStatus::Failed => "失败",
             }
         };
         rows.push(format!(
@@ -158,7 +154,7 @@ pub(crate) fn tasks_block_text(agent: &AgentView) -> String {
     for info in sched {
         rows.push(format!(
             "  {:<9}{} · {} · {}",
-            "scheduled",
+            "已调度",
             info.tag,
             info.human_schedule,
             first_nonempty_line(&info.prompt)
@@ -166,13 +162,9 @@ pub(crate) fn tasks_block_text(agent: &AgentView) -> String {
     }
 
     if rows.is_empty() {
-        "No background tasks, workflows, or subagents.".to_string()
+        "没有后台任务、工作流或子 Agent。".to_string()
     } else {
-        let header = format!(
-            "Task{} ({}):",
-            if rows.len() == 1 { "" } else { "s" },
-            rows.len()
-        );
+        let header = format!("任务（{}）：", rows.len());
         join_header_rows(header, rows)
     }
 }

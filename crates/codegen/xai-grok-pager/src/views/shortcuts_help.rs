@@ -76,13 +76,13 @@ impl ShortcutsHelpEntry {
 
 /// Category display order and labels for the cheatsheet.
 const CATEGORY_ORDER: &[(Category, &str)] = &[
-    (Category::GettingStarted, "Essentials"),
-    (Category::Input, "Input"),
-    (Category::ConversationNav, "Conversation Navigation"),
-    (Category::ConversationAction, "Conversation Actions"),
-    (Category::Panels, "Panels"),
-    (Category::Session, "Session"),
-    (Category::Dashboard, "Dashboard"),
+    (Category::GettingStarted, "常用"),
+    (Category::Input, "输入"),
+    (Category::ConversationNav, "会话导航"),
+    (Category::ConversationAction, "会话操作"),
+    (Category::Panels, "面板"),
+    (Category::Session, "会话"),
+    (Category::Dashboard, "仪表盘"),
 ];
 
 pub fn default_collapsed() -> std::collections::HashSet<usize> {
@@ -93,23 +93,19 @@ pub fn default_collapsed() -> std::collections::HashSet<usize> {
 // hold on every host (agent + dashboard); non-image file paths are agent-only.
 #[cfg(target_os = "windows")]
 const PASTE_LONG_HELP: &str = "\
-Pastes clipboard images into the prompt as chips, and plain text as typed.\n\
-Prefer Ctrl+V. Use Alt+V as a fallback when Ctrl+V fails (some terminals or \
-configs drop image clipboards; older Windows Terminal versions only pasted \
-text).\n\
-You can also drag an image file from Explorer into the prompt.";
+将剪贴板图片粘贴为提示中的芯片，纯文本按输入插入。\n\
+优先使用 Ctrl+V。当 Ctrl+V 失败时可用 Alt+V 作为后备（部分终端或配置会丢弃图片剪贴板；旧版 Windows Terminal 可能只粘贴文本）。\n\
+也可从资源管理器拖入图片文件。";
 #[cfg(target_os = "macos")]
 const PASTE_LONG_HELP: &str = "\
-Pastes clipboard images into the prompt as chips, and plain text as typed.\n\
-Use Ctrl+V for screenshots, browser \"Copy Image\", and file-manager image \
-copies (many terminals swallow Cmd+V and never deliver it to the TUI).\n\
-You can also drag an image file into the prompt.";
+将剪贴板图片粘贴为提示中的芯片，纯文本按输入插入。\n\
+截图、浏览器「复制图片」与文件管理器图片请用 Ctrl+V（许多终端会吞掉 Cmd+V，不会传给 TUI）。\n\
+也可将图片文件拖入提示框。";
 #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
 const PASTE_LONG_HELP: &str = "\
-Pastes clipboard images into the prompt as chips, and plain text as typed.\n\
-Use Ctrl+V for screenshots, browser \"Copy Image\", and file-manager image \
-copies.\n\
-You can also drag an image file into the prompt.";
+将剪贴板图片粘贴为提示中的芯片，纯文本按输入插入。\n\
+截图、浏览器「复制图片」与文件管理器图片请用 Ctrl+V。\n\
+也可将图片文件拖入提示框。";
 
 /// Build the entries vector for the modal, grouped by category.
 ///
@@ -254,8 +250,8 @@ pub fn build_entries(
         // Scrollback search (`/`) has no registered ActionDef yet — vim-only,
         // handled inline; surface it here for discoverability.
         if vim_mode && cat == Category::ConversationNav {
-            let mut item = HintItem::new(crate::key!('/'), "search");
-            item.description = Some("Search scrollback".into());
+            let mut item = HintItem::new(crate::key!('/'), "搜索");
+            item.description = Some("搜索滚动历史".into());
             let dimmed = !active_contexts.contains(&When::ScrollbackFocused);
             entries.push(ShortcutsHelpEntry::Hint {
                 item,
@@ -268,8 +264,8 @@ pub fn build_entries(
         // Windows also Alt+V as a fallback. Super/Cmd omitted — many terminals
         // swallow it. Lit on the agent prompt and the dashboard (both paste).
         if cat == Category::Input {
-            let mut item = HintItem::new(crate::key!('v', CONTROL), "paste");
-            item.description = Some("Paste images (and text) from the clipboard".into());
+            let mut item = HintItem::new(crate::key!('v', CONTROL), "粘贴");
+            item.description = Some("从剪贴板粘贴图片（与文本）".into());
             #[cfg(target_os = "windows")]
             item.keys.push(crate::key!('v', ALT));
             let dimmed = !active_contexts.contains(&When::PromptFocused)
@@ -585,17 +581,17 @@ pub fn modal_footer_detail() -> Vec<crate::views::modal_window::Shortcut<'static
     use crate::views::modal_window::Shortcut;
     vec![
         Shortcut {
-            label: "Esc back",
+            label: "Esc 返回",
             clickable: false,
             id: 0,
         },
         Shortcut {
-            label: "\u{2191}/\u{2193} scroll",
+            label: "\u{2191}/\u{2193} 滚动",
             clickable: false,
             id: 0,
         },
         Shortcut {
-            label: "Ctrl+./X close",
+            label: "Ctrl+./X 关闭",
             clickable: false,
             id: 0,
         },
@@ -690,7 +686,7 @@ pub fn render_detail(
     };
     let footer = modal_footer_detail();
     let modal_config = mw::ModalWindowConfig {
-        title: "Keyboard Shortcuts",
+        title: "键盘快捷键",
         tabs: None,
         shortcuts: &footer,
         sizing: modal_sizing(compact),
@@ -1002,41 +998,41 @@ pub fn modal_footer(filter_active: bool) -> Vec<crate::views::modal_window::Shor
     use crate::views::modal_window::Shortcut;
     let mut shortcuts = vec![
         Shortcut {
-            label: "\u{2191}/\u{2193} nav",
+            label: "\u{2191}/\u{2193} 导航",
             clickable: false,
             id: 0,
         },
         Shortcut {
             label: if filter_active {
-                "f show all"
+                "f 显示全部"
             } else {
-                "f filter"
+                "f 筛选"
             },
             clickable: false,
             id: 0,
         },
         Shortcut {
-            label: "e/Space/\u{2192} expand",
+            label: "e/Space/\u{2192} 展开",
             clickable: false,
             id: 0,
         },
         Shortcut {
-            label: "\u{2190} collapse",
+            label: "\u{2190} 折叠",
             clickable: false,
             id: 0,
         },
         Shortcut {
-            label: "Enter details",
+            label: "Enter 详情",
             clickable: false,
             id: 0,
         },
         Shortcut {
-            label: "/ search",
+            label: "/ 搜索",
             clickable: false,
             id: 0,
         },
         Shortcut {
-            label: "Esc close",
+            label: "Esc 关闭",
             clickable: false,
             id: 0,
         },
@@ -1274,7 +1270,7 @@ pub fn render_modal(
     let non_sel: Vec<bool> = vec![false; picker_entries.len()];
     let footer = modal_footer(filter_active);
     let modal_config = mw::ModalWindowConfig {
-        title: "Keyboard Shortcuts",
+        title: "键盘快捷键",
         tabs: None,
         shortcuts: &footer,
         sizing: modal_sizing(compact),
@@ -1393,7 +1389,7 @@ pub fn handle_modal_key(
         modal_footer(filter_active)
     };
     let chrome_cfg = mw::ModalWindowConfig {
-        title: "Keyboard Shortcuts",
+        title: "键盘快捷键",
         tabs: None,
         shortcuts: &footer,
         sizing: modal_sizing(compact),
@@ -1529,7 +1525,7 @@ mod tests {
             .iter()
             .find_map(|e| match e {
                 ShortcutsHelpEntry::Hint { item, .. }
-                    if item.description.as_deref() == Some("Cycle dispatch mode") =>
+                    if item.description.as_deref() == Some("循环调度模式") =>
                 {
                     Some(item)
                 }
@@ -1547,10 +1543,10 @@ mod tests {
     fn filter_empty_query_returns_all_indices() {
         let entries = vec![
             header("Nav", 0, 2),
-            hint("send", key!(Enter)),
+            hint("发送", key!(Enter)),
             hint("nav", key!('j')),
             header("App", 1, 1),
-            hint("quit", key!('q', CONTROL)),
+            hint("退出", key!('q', CONTROL)),
         ];
         assert_eq!(
             filter_entries(&entries, "", false, &no_collapsed()),
@@ -1562,13 +1558,13 @@ mod tests {
     fn filter_keeps_header_when_section_has_match() {
         let entries = vec![
             header("Nav", 0, 2),
-            hint("send", key!(Enter)),
+            hint("发送", key!(Enter)),
             hint("nav", key!('j')),
             header("App", 1, 1),
-            hint("quit", key!('q', CONTROL)),
+            hint("退出", key!('q', CONTROL)),
         ];
         assert_eq!(
-            filter_entries(&entries, "send", false, &no_collapsed()),
+            filter_entries(&entries, "发送", false, &no_collapsed()),
             vec![0, 1]
         );
     }
@@ -1577,12 +1573,12 @@ mod tests {
     fn filter_drops_header_when_section_empty() {
         let entries = vec![
             header("Nav", 0, 1),
-            hint("send", key!(Enter)),
+            hint("发送", key!(Enter)),
             header("App", 1, 1),
-            hint("quit", key!('q', CONTROL)),
+            hint("退出", key!('q', CONTROL)),
         ];
         assert_eq!(
-            filter_entries(&entries, "quit", false, &no_collapsed()),
+            filter_entries(&entries, "退出", false, &no_collapsed()),
             vec![2, 3]
         );
     }
@@ -1591,7 +1587,7 @@ mod tests {
     fn filter_matches_against_key_display() {
         let entries = vec![
             header("Nav", 0, 2),
-            hint("send", key!(Enter)),
+            hint("发送", key!(Enter)),
             hint("nav", key!('j')),
         ];
         assert_eq!(
@@ -1606,7 +1602,7 @@ mod tests {
             header("Nav", 0, 1),
             hint("nav", key!('j')),
             header("App", 1, 1),
-            hint("new session", key!('n', CONTROL)),
+            hint("新建会话", key!('n', CONTROL)),
         ];
         let result = filter_entries(&entries, "n", false, &no_collapsed());
         assert!(result.contains(&0));
@@ -1619,10 +1615,10 @@ mod tests {
     fn collapsed_section_shows_header_only() {
         let entries = vec![
             header("Nav", 0, 2),
-            hint("send", key!(Enter)),
+            hint("发送", key!(Enter)),
             hint("nav", key!('j')),
             header("App", 1, 1),
-            hint("quit", key!('q', CONTROL)),
+            hint("退出", key!('q', CONTROL)),
         ];
         let mut collapsed = std::collections::HashSet::new();
         collapsed.insert(0);
@@ -1636,7 +1632,7 @@ mod tests {
             header("Nav", 0, 1),
             hint("nav", key!('j')),
             header("App", 1, 1),
-            hint("quit", key!('q', CONTROL)),
+            hint("退出", key!('q', CONTROL)),
         ];
         let mut collapsed = std::collections::HashSet::new();
         collapsed.insert(0);
@@ -1668,9 +1664,9 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert!(headers.contains(&"Essentials"));
-        assert!(headers.contains(&"Conversation Navigation"));
-        assert!(headers.contains(&"Panels"));
+        assert!(headers.contains(&"常用"));
+        assert!(headers.contains(&"会话导航"));
+        assert!(headers.contains(&"面板"));
     }
 
     #[test]
@@ -1683,7 +1679,7 @@ mod tests {
             matches!(
                 e,
                 ShortcutsHelpEntry::Hint { item, .. }
-if item.label == "mouse reporting"
+if item.label == "鼠标上报"
             )
         });
         assert!(
@@ -1699,10 +1695,10 @@ if item.label == "mouse reporting"
             .find(ActionId::ToggleMouseCapture)
             .expect("ToggleMouseCapture action must be registered when config-enabled");
         assert_eq!(def.category, Category::Panels);
-        assert_eq!(def.label, "mouse reporting");
+        assert_eq!(def.label, "鼠标上报");
         assert_eq!(
             def.description,
-            "Toggle mouse reporting (native copy/paste)",
+            "切换鼠标上报（原生复制/粘贴）",
         );
 
         let entries = build_entries(&all_contexts(), &registry, true);
@@ -1712,11 +1708,11 @@ if item.label == "mouse reporting"
         for entry in &entries {
             match entry {
                 ShortcutsHelpEntry::SectionHeader { label, .. } => {
-                    in_panels = *label == "Panels";
-                    in_essentials = *label == "Essentials";
+                    in_panels = *label == "面板";
+                    in_essentials = *label == "常用";
                 }
                 ShortcutsHelpEntry::Hint { item, .. } => {
-                    if item.label == "mouse reporting" {
+                    if item.label == "鼠标上报" {
                         assert!(
                             in_panels,
                             "mouse reporting row must be in Panels, not Essentials"
@@ -1727,7 +1723,7 @@ if item.label == "mouse reporting"
                         );
                         assert_eq!(
                             item.description.as_deref(),
-                            Some("Toggle mouse reporting (native copy/paste)"),
+                            Some("切换鼠标上报（原生复制/粘贴）"),
                         );
                         let key_text = hint_key_pretty(item);
                         assert!(
@@ -1845,21 +1841,21 @@ if item.keys.contains(&crate::key!('g', CONTROL))
             matches!(
                 e,
                 ShortcutsHelpEntry::Hint { item, .. }
-if item.label == "todos"
+if item.label == "待办"
             )
         });
         let has_sessions = entries.iter().any(|e| {
             matches!(
                 e,
                 ShortcutsHelpEntry::Hint { item, .. }
-if item.label == "sessions"
+if item.label == "会话"
             )
         });
         let has_queue = entries.iter().any(|e| {
             matches!(
                 e,
                 ShortcutsHelpEntry::Hint { item, .. }
-if item.label == "queue"
+if item.label == "队列"
             )
         });
         assert!(has_todos, "should include toggle todos");
@@ -1872,7 +1868,7 @@ if item.label == "queue"
             matches!(
                 e,
                 ShortcutsHelpEntry::Hint { item, .. }
-                    if item.label == "search" && item.keys.iter().any(|k| k.display() == "/")
+                    if item.label == "搜索" && item.keys.iter().any(|k| k.display() == "/")
             )
         })
     }
@@ -1911,7 +1907,7 @@ if item.label == "queue"
                         action_id: None,
                         ..
                     }
-if item.label == "paste"
+if item.label == "粘贴"
                 )
             })
             .expect("cheatsheet should list paste");
@@ -1925,7 +1921,7 @@ if item.label == "paste"
         assert!(
             item.description
                 .as_deref()
-                .is_some_and(|d| d.to_lowercase().contains("image")),
+                .is_some_and(|d| d.contains("图片") || d.to_lowercase().contains("image")),
             "description should mention image for search"
         );
         assert_eq!(*long_help, Some(PASTE_LONG_HELP));
@@ -1946,7 +1942,7 @@ if item.label == "paste"
                 dimmed,
                 action_id: None,
                 ..
-            } if item.label == "paste" => Some(*dimmed),
+            } if item.label == "粘贴" => Some(*dimmed),
             _ => None,
         })
     }
@@ -1995,7 +1991,7 @@ if item.label == "paste"
             matches!(
                 e,
                 ShortcutsHelpEntry::Hint { item, dimmed: true, .. }
-if item.label == "nav"
+if item.label == "导航"
             )
         });
         assert!(
@@ -2007,7 +2003,7 @@ if item.label == "nav"
             matches!(
                 e,
                 ShortcutsHelpEntry::Hint { item, dimmed: false, .. }
-if item.label == "quit"
+if item.label == "退出"
             )
         });
         assert!(quit_bright, "quit should not be dimmed (When::Always)");
@@ -2016,7 +2012,7 @@ if item.label == "quit"
             matches!(
                 e,
                 ShortcutsHelpEntry::Hint { item, dimmed: false, .. }
-if item.label == "cancel"
+if item.label == "取消"
             )
         });
         assert!(
@@ -2035,7 +2031,7 @@ if item.label == "cancel"
             matches!(
                 e,
                 ShortcutsHelpEntry::Hint { item, dimmed: true, .. }
-if item.label == "send"
+if item.label == "发送"
             )
         });
         assert!(
@@ -2047,7 +2043,7 @@ if item.label == "send"
             matches!(
                 e,
                 ShortcutsHelpEntry::Hint { item, dimmed: true, .. }
-if item.label == "nav"
+if item.label == "导航"
             )
         });
         assert!(
@@ -2076,14 +2072,14 @@ if item.label == "nav"
         // Dashboard LIST: list shortcuts lit, overlay shortcuts dimmed.
         let list = build_entries(&[When::DashboardFocused, When::Always], &registry, true);
         assert_eq!(
-            dimmed_of(&list, "pin"),
+            dimmed_of(&list, "固定"),
             Some(false),
-            "list `pin` must be lit on the dashboard list",
+            "list `固定` must be lit on the dashboard list",
         );
         assert_eq!(
-            dimmed_of(&list, "prev session"),
+            dimmed_of(&list, "上一会话"),
             Some(true),
-            "overlay `prev session` must be dimmed on the dashboard list",
+            "overlay `上一会话` must be dimmed on the dashboard list",
         );
 
         // Session OVERLAY (details): overlay shortcuts lit, list shortcuts dimmed.
@@ -2093,14 +2089,14 @@ if item.label == "nav"
             true,
         );
         assert_eq!(
-            dimmed_of(&overlay, "prev session"),
+            dimmed_of(&overlay, "上一会话"),
             Some(false),
-            "overlay `prev session` must be lit inside the overlay",
+            "overlay `上一会话` must be lit inside the overlay",
         );
         assert_eq!(
-            dimmed_of(&overlay, "pin"),
+            dimmed_of(&overlay, "固定"),
             Some(true),
-            "list `pin` must be dimmed inside the overlay",
+            "list `固定` must be dimmed inside the overlay",
         );
     }
 
@@ -2118,7 +2114,7 @@ if item.label == "nav"
             entries
                 .iter()
                 .filter_map(|e| match e {
-                    ShortcutsHelpEntry::Hint { item, dimmed, .. } if item.label == "stop" => {
+                    ShortcutsHelpEntry::Hint { item, dimmed, .. } if item.label == "停止" => {
                         Some((
                             item.description.as_deref().unwrap_or_default().to_string(),
                             *dimmed,
@@ -2134,7 +2130,7 @@ if item.label == "nav"
                 .find_map(|e| match e {
                     ShortcutsHelpEntry::Hint {
                         item, action_id, ..
-                    } if item.label == "stop" => Some(*action_id),
+                    } if item.label == "停止" => Some(*action_id),
                     _ => None,
                 })
                 .flatten()
@@ -2143,7 +2139,7 @@ if item.label == "nav"
             entries
                 .iter()
                 .find_map(|e| match e {
-                    ShortcutsHelpEntry::Hint { item, .. } if item.label == "shortcuts" => {
+                    ShortcutsHelpEntry::Hint { item, .. } if item.label == "快捷键" => {
                         Some(item.keys.clone())
                     }
                     _ => None,
@@ -2156,7 +2152,7 @@ if item.label == "nav"
         let list = build_entries(&[When::DashboardFocused, When::Always], &registry, true);
         assert_eq!(
             stop_rows(&list),
-            vec![("Stop / Close agent".to_string(), false)],
+            vec![("停止 / 关闭 Agent".to_string(), false)],
             "the dashboard list must show exactly the list `stop`, lit",
         );
         assert_eq!(
@@ -2179,7 +2175,7 @@ if item.label == "nav"
         assert_eq!(
             stop_rows(&overlay),
             vec![(
-                "Stop agent, close session (back to dashboard)".to_string(),
+                "停止 Agent、关闭会话（返回仪表盘）".to_string(),
                 false
             )],
             "the overlay must show exactly the overlay `stop`, lit",
@@ -2204,7 +2200,7 @@ if item.label == "nav"
     fn initial_state_selects_first_hint_not_header() {
         let entries = vec![
             header("Nav", 0, 2),
-            hint("send", key!(Enter)),
+            hint("发送", key!(Enter)),
             hint("nav", key!('j')),
         ];
         let state = build_initial_picker_state(&entries);
@@ -2221,7 +2217,7 @@ if item.label == "nav"
     fn setup_on_header() -> (Vec<ShortcutsHelpEntry>, PickerState) {
         let entries = vec![
             header("Nav", 0, 2),
-            hint("send", key!(Enter)),
+            hint("发送", key!(Enter)),
             hint("nav", key!('j')),
         ];
         let mut state = build_initial_picker_state(&entries);
@@ -2264,7 +2260,7 @@ if item.label == "nav"
     #[test]
     fn enter_on_hint_without_action_id_is_unchanged() {
         // Pseudo/legacy hints have no action_id — Enter does not close or open detail.
-        let entries = vec![header("Nav", 0, 1), hint("send", key!(Enter))];
+        let entries = vec![header("Nav", 0, 1), hint("发送", key!(Enter))];
         let mut state = build_initial_picker_state(&entries);
         state.selected = 1; // select the hint
         let mut mode = browse_mode();
@@ -2402,8 +2398,8 @@ if item.label == "nav"
     fn modal_footer_advertises_detail() {
         let footer = modal_footer(false);
         assert!(
-            footer.iter().any(|s| s.label.contains("details")),
-            "browse footer must advertise Enter details"
+            footer.iter().any(|s| s.label.contains("详情")),
+            "browse footer must advertise Enter 详情"
         );
     }
 
@@ -2419,7 +2415,7 @@ if item.label == "nav"
             "vim-mode cheatsheet footer must advertise `i search`"
         );
         assert!(
-            footer.iter().any(|s| s.label == "/ search"),
+            footer.iter().any(|s| s.label == "/ 搜索"),
             "`/ search` must remain regardless of vim-mode"
         );
     }
@@ -2682,7 +2678,7 @@ if item.label == "nav"
                 matches!(
                     e,
                     ShortcutsHelpEntry::Hint { item, action_id: None, .. }
-                        if item.label == "search"
+                        if item.label == "搜索"
                 )
             })
             .expect("vim-mode entries include the `/`-search pseudo-row");
@@ -2721,7 +2717,7 @@ if item.label == "nav"
                         long_help: Some(_),
                         ..
                     }
-if item.label == "paste"
+if item.label == "粘贴"
                 )
             })
             .expect("paste pseudo-row with long_help");
@@ -2860,7 +2856,7 @@ if item.label == "paste"
     /// modal); it returns to browse and keeps the modal open.
     #[test]
     fn handle_modal_key_esc_in_detail_is_back_not_close() {
-        let entries = vec![header("Nav", 0, 1), hint("send", key!(Enter))];
+        let entries = vec![header("Nav", 0, 1), hint("发送", key!(Enter))];
         let mut state = build_initial_picker_state(&entries);
         let mut window = crate::views::modal_window::ModalWindowState::default();
         let collapsed = no_collapsed();
@@ -2893,7 +2889,7 @@ if item.label == "paste"
 
     #[test]
     fn esc_in_browse_closes_via_picker() {
-        let entries = vec![header("Nav", 0, 1), hint("send", key!(Enter))];
+        let entries = vec![header("Nav", 0, 1), hint("发送", key!(Enter))];
         let mut state = build_initial_picker_state(&entries);
         let mut mode = browse_mode();
         let result = handle_input(
@@ -2939,7 +2935,7 @@ if item.label == "paste"
     #[test]
     fn ctrl_x_closes_from_browse_mode() {
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-        let entries = vec![header("Nav", 0, 1), hint("send", key!(Enter))];
+        let entries = vec![header("Nav", 0, 1), hint("发送", key!(Enter))];
         let mut state = build_initial_picker_state(&entries);
         let mut mode = browse_mode();
         let key = KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL);
@@ -2994,9 +2990,9 @@ if item.label == "paste"
         let _vim_mode = VimModeGuard::set(true);
         let entries = vec![
             header("Nav", 0, 3),
-            hint("send", key!(Enter)),
+            hint("发送", key!(Enter)),
             hint("next", key!('n')),
-            hint("quit", key!('q', CONTROL)),
+            hint("退出", key!('q', CONTROL)),
         ];
         let mut state = build_initial_picker_state(&entries);
         let mut mode = browse_mode();
@@ -3071,7 +3067,7 @@ if item.label == "paste"
         let nav = entries
             .iter()
             .find_map(|e| match e {
-                ShortcutsHelpEntry::Hint { item, dimmed, .. } if item.label == "nav" => {
+                ShortcutsHelpEntry::Hint { item, dimmed, .. } if item.label == "导航" => {
                     Some((item, *dimmed))
                 }
                 _ => None,
@@ -3123,7 +3119,7 @@ if item.label == label
         let nav_keys: Vec<String> = entries
             .iter()
             .find_map(|e| match e {
-                ShortcutsHelpEntry::Hint { item, .. } if item.label == "nav" => {
+                ShortcutsHelpEntry::Hint { item, .. } if item.label == "导航" => {
                     Some(item.keys.iter().map(|k| k.display().to_string()).collect())
                 }
                 _ => None,
@@ -3167,14 +3163,14 @@ if item.label == label
         let registry = ActionRegistry::defaults();
         let entries = build_entries(&all_contexts(), &registry, true);
         // Action label is compact "send now" wording (interject under the hood).
-        assert_cheatsheet_row_has_key(&entries, "send now", "Ctrl+i");
+        assert_cheatsheet_row_has_key(&entries, "立即发送", "Ctrl+i");
     }
 
     #[test]
     fn build_entries_surfaces_queue_ctrl_apostrophe_fallback() {
         let registry = ActionRegistry::defaults();
         let entries = build_entries(&all_contexts(), &registry, true);
-        assert_cheatsheet_row_has_key(&entries, "queue", "Ctrl+'");
+        assert_cheatsheet_row_has_key(&entries, "队列", "Ctrl+'");
     }
 
     /// A section whose entries are all filtered out should have its
@@ -3206,7 +3202,7 @@ if item.label == label
                 item,
                 action_id: Some(id),
                 ..
-            } if item.description.as_deref() == Some("Keyboard shortcuts") => Some(*id),
+            } if item.description.as_deref() == Some("键盘快捷键") => Some(*id),
             _ => None,
         });
         assert_eq!(
@@ -3225,8 +3221,8 @@ if item.label == label
             else {
                 continue;
             };
-            let is_pseudo = (item.label == "search" && item.keys.contains(&search_key))
-                || (item.label == "paste" && item.keys.contains(&paste_key));
+            let is_pseudo = (item.label == "搜索" && item.keys.contains(&search_key))
+                || (item.label == "粘贴" && item.keys.contains(&paste_key));
             if is_pseudo {
                 assert!(
                     action_id.is_none(),
@@ -3357,7 +3353,7 @@ if item.label == label
                 matches!(
                     e,
                     ShortcutsHelpEntry::Hint { item, action_id: None, .. }
-                        if item.label == "search"
+                        if item.label == "搜索"
                 )
             })
             .expect("vim-mode entries include the `/`-search pseudo-row");
@@ -3400,11 +3396,11 @@ if item.label == label
                         long_help: Some(_),
                         ..
                     }
-if item.label == "paste"
+if item.label == "粘贴"
                 )
             })
             .expect("paste pseudo-row with long_help");
-        let key_id = ExpandKey::Pseudo("paste");
+        let key_id = ExpandKey::Pseudo("粘贴");
         assert_eq!(expand_key(&entries[paste_idx]), Some(key_id));
         let mut state = build_initial_picker_state(&entries);
         state.selected = paste_idx;
@@ -3519,7 +3515,7 @@ if item.label == "paste"
         item.description = Some("Quit the app".into());
         let entries = vec![
             ShortcutsHelpEntry::SectionHeader {
-                label: "Essentials",
+                label: "常用",
                 category_idx: 0,
                 entry_count: 1,
             },
@@ -3581,7 +3577,7 @@ if item.label == "paste"
         item.description = Some("Quit the app".into());
         let entries = vec![
             ShortcutsHelpEntry::SectionHeader {
-                label: "Essentials",
+                label: "常用",
                 category_idx: 0,
                 entry_count: 1,
             },
@@ -3615,7 +3611,7 @@ if item.label == "paste"
         let item = HintItem::new(key!('q', CONTROL), "quit");
         let entries = vec![
             ShortcutsHelpEntry::SectionHeader {
-                label: "Essentials",
+                label: "常用",
                 category_idx: 0,
                 entry_count: 1,
             },

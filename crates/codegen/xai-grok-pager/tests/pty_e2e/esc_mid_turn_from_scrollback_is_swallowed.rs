@@ -44,7 +44,7 @@ async fn esc_mid_turn_from_scrollback_is_swallowed() {
     harness.update(Duration::from_millis(1000));
     let screen = harness.screen_contents();
     assert!(
-        !screen.contains("Turn cancelled by user"),
+        !screen.contains("用户在"),
         "mid-turn Esc from scrollback must NOT cancel\nscreen:\n{screen}"
     );
 
@@ -53,7 +53,7 @@ async fn esc_mid_turn_from_scrollback_is_swallowed() {
     // Ctrl+C — the replacement cancel gesture — works from the scrollback pane.
     harness.inject_keys(keys::CTRL_C).expect("press ctrl+c");
     harness
-        .wait_for_text("Turn cancelled by user", Duration::from_secs(15))
+        .wait_for_text("用户在", Duration::from_secs(15))
         .expect("Ctrl+C from scrollback must cancel the still-running turn");
 
     assert!(

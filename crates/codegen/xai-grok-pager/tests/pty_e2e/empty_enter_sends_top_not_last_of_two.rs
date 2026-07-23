@@ -75,7 +75,7 @@ async fn empty_enter_sends_top_not_last_of_two() {
 
     // The send-now cancel of turn 1 is silent.
     assert!(
-        !harness.contains_text("Turn cancelled by user"),
+        !harness.contains_text("用户在"),
         "send-now cancel must not render a cancelled marker\nscreen:\n{}",
         harness.screen_contents()
     );

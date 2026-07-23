@@ -32,7 +32,7 @@ async fn minimal_esc_mid_turn_is_swallowed() {
     // Full-text: minimal commits the cancel marker to native scrollback, so it
     // may sit above the pinned viewport — check scrollback + screen.
     assert!(
-        !harness.contains_full_text("Turn cancelled by user"),
+        !harness.contains_full_text("用户在"),
         "mid-turn Esc must NOT cancel in minimal mode\nfull contents:\n{}",
         harness.full_text()
     );
@@ -44,7 +44,7 @@ async fn minimal_esc_mid_turn_is_swallowed() {
     // quit arm applies only to an idle empty prompt).
     harness.inject_keys(keys::CTRL_C).expect("press ctrl+c");
     harness
-        .wait_for_full_text("Turn cancelled by user", Duration::from_secs(15))
+        .wait_for_full_text("用户在", Duration::from_secs(15))
         .expect("Ctrl+C must cancel the still-running turn in minimal mode");
 
     assert!(

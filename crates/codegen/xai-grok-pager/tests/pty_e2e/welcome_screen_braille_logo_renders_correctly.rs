@@ -2,23 +2,18 @@
 #[allow(unused_imports)]
 use super::common::*;
 
-/// 1b. **Welcome screen renders Unicode Braille logo correctly.**
+/// 1b. **Welcome screen renders Chaos block-shade logo correctly.**
 ///
-/// The logo uses Unicode Braille Pattern characters (U+2800–U+28FF).
-/// A regression in the writer thread (using `WriteFile` instead of
-/// `WriteConsoleW` on Windows, or a missing `SetConsoleOutputCP(65001)`)
-/// causes these multi-byte UTF-8 characters to be misinterpreted as
-/// individual legacy code-page bytes, producing garbled output.
-///
-/// This test asserts that specific Braille characters from the logo
-/// appear intact in the PTY screen buffer.
+/// The welcome logo is Unicode shade/half-block art spelling "CHAOS". This
+/// test asserts distinctive fragments from the full logo appear intact in the
+/// PTY screen buffer (regression guard for encoding / layout regressions).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore]
 async fn welcome_screen_braille_logo_renders_correctly() {
     let content = ContentController::start().await.expect("start content");
 
     let binary = pager_binary().expect("resolve pager binary");
-    // Use a tall terminal so pick_logo() selects the 7-line logo (≥26 rows).
+    // Use a tall terminal so pick_logo() selects the full logo.
     let mut harness =
         PtyHarness::spawn_with_content(&binary, DEFAULT_ROWS, DEFAULT_COLS, &content, &[])
             .expect("spawn pager");
@@ -29,23 +24,17 @@ async fn welcome_screen_braille_logo_renders_correctly() {
 
     let screen = harness.screen_contents();
 
-    // The logo contains distinctive Braille characters. If the writer
-    // thread sends raw UTF-8 bytes through a code-page-dependent API,
-    // these 3-byte characters would be mangled into 3 separate single-
-    // byte characters each (e.g. Cyrillic). Check for a few that only
-    // appear in the logo — not in any ASCII menu label.
-    //
-    // From logo07.txt (black-hole ring art): rim uses ⡿/⣿.
+    // Distinctive fragments from logo07.txt (full CHAOS block-shade art).
     assert!(
-        screen.contains('⡿'),
-        "Braille character ⡿ (U+28F7) not found in screen — \
-         logo may be garbled by code-page misinterpretation.\n\
+        screen.contains("▄████▄"),
+        "logo fragment `▄████▄` not found in screen — \
+         logo may be missing or truncated.\n\
          Screen contents:\n{screen}"
     );
     assert!(
-        screen.contains('⣿'),
-        "Braille character ⣿ (U+28FF) not found in screen — \
-         logo may be garbled.\n\
+        screen.contains("▒█████"),
+        "logo fragment `▒█████` not found in screen — \
+         logo may be missing or truncated.\n\
          Screen contents:\n{screen}"
     );
 

@@ -67,7 +67,7 @@ async fn empty_enter_force_sends_top_queued() {
     // The send-now cancel is silent: no cancelled marker between the partial
     // turn-1 output and the promoted prompt.
     assert!(
-        !harness.contains_text("Turn cancelled by user"),
+        !harness.contains_text("用户在"),
         "send-now cancel must not render a cancelled marker\nscreen:\n{}",
         harness.screen_contents()
     );

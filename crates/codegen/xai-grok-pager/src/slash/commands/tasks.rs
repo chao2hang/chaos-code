@@ -9,7 +9,7 @@
 use crate::app::actions::Action;
 use crate::slash::command::{CommandExecCtx, CommandResult, SlashCommand};
 
-/// List background tasks, subagents, and scheduled tasks.
+/// 列出后台任务、子 Agent 和定时任务.
 pub struct TasksCommand;
 
 impl SlashCommand for TasksCommand {
@@ -18,7 +18,7 @@ impl SlashCommand for TasksCommand {
     }
 
     fn description(&self) -> &str {
-        "List background tasks, subagents, and scheduled tasks"
+        "列出后台任务、子 Agent 和定时任务"
     }
 
     fn session_scoped(&self) -> bool {

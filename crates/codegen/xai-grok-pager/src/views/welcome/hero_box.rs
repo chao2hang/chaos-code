@@ -11,7 +11,8 @@ use crate::theme::Theme;
 use super::WelcomeLayout;
 
 /// Minimum terminal width for the side-by-side hero box layout.
-pub(super) const HERO_BOX_MIN_WIDTH: u16 = 90;
+/// Sized for the full Chaos ASCII logo (~53 cols) + padding + menu column.
+pub(super) const HERO_BOX_MIN_WIDTH: u16 = 110;
 
 /// Vertical padding (rows) between the box border and its inner content.
 const V_PAD: u16 = 1;
@@ -523,7 +524,7 @@ fn render_hero_changelog(
             .fg(theme.gray_bright)
             .add_modifier(Modifier::DIM),
     );
-    let title = "Changelog";
+    let title = "更新日志";
     buf.set_span(
         area.x,
         area.y,

@@ -919,7 +919,7 @@ fn turn_end_drains_next_queued_prompt() {
         Some(pid_second.as_str())
     );
     assert!(app.pending_running_adoptions.is_empty());
-    // Scrollback: user "first" + "Worked for" + user "second".
+    // Scrollback: user "first" + "耗时" + user "second".
     assert_eq!(app.agents[&id].scrollback.len(), 3);
 }
 
@@ -996,7 +996,7 @@ fn turn_end_with_empty_queue_stays_idle() {
         Effect::FetchBilling { silent: true, .. }
     ));
     assert!(app.agents[&id].session.state.is_idle());
-    // Session event "Worked for" added.
+    // Session event "耗时" added.
     assert_eq!(app.agents[&id].scrollback.len(), 1);
 }
 
@@ -2853,7 +2853,7 @@ fn show_queue_empty_commits_empty_message() {
     let effects = dispatch(Action::ShowQueue, &mut app);
     assert!(effects.is_empty(), "got: {effects:?}");
     assert_eq!(agent_scrollback_len(&app), before + 1);
-    assert_eq!(last_system_text(&app, AgentId(0)), "Queue is empty.");
+    assert_eq!(last_system_text(&app, AgentId(0)), "队列为空。");
 }
 
 #[test]
@@ -3409,7 +3409,7 @@ fn interactive_cancel_supersedes_send_now_expectation() {
     );
 }
 
-/// The parked "Worked for" marker stays the only marker across a send-now cancel.
+/// The parked "耗时" marker stays the only marker across a send-now cancel.
 #[test]
 fn send_now_cancel_after_park_leaves_single_parked_marker() {
     use crate::app::agent_view::test_fixtures::{count_parked, simulate_task_output_wait};

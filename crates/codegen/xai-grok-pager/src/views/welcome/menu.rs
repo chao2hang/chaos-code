@@ -4,6 +4,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::Span;
+use unicode_width::UnicodeWidthStr;
 
 use crate::theme::Theme;
 
@@ -32,11 +33,11 @@ pub fn render_menu(
         .fg(theme.gray_bright)
         .bg(theme.bg_highlight);
 
-    // Width: label + gap + key. Keep a 4-col gap between label and key for
-    // readability.
+    // Width: label + gap + key. Use display columns (not UTF-8 bytes) so CJK
+    // labels size correctly. Keep a 4-col gap between label and key.
     let content_min: u16 = items
         .iter()
-        .map(|(key, label)| (key.len() + label.len() + 4) as u16)
+        .map(|(key, label)| (key.width() + label.width() + 4) as u16)
         .max()
         .unwrap_or(0);
     let menu_width = logo_visual_width(area.height)
@@ -60,8 +61,8 @@ pub fn render_menu(
         }
 
         let is_selected = selected == Some(i);
-        let key_width = key.len() as u16;
-        let label_len = label.len() as u16;
+        let key_width = key.width() as u16;
+        let label_width = label.width() as u16;
 
         let row_rect = Rect {
             x: menu_centered.x,
@@ -87,7 +88,12 @@ pub fn render_menu(
         } else {
             label_style
         };
-        buf.set_span(menu_centered.x, y, &Span::styled(*label, lstyle), label_len);
+        buf.set_span(
+            menu_centered.x,
+            y,
+            &Span::styled(*label, lstyle),
+            label_width,
+        );
 
         // Key shortcut flush with the right edge of the menu column.
         let kstyle = if is_selected {

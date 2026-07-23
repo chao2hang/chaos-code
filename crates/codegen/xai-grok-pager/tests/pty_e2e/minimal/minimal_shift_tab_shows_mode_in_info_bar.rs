@@ -19,7 +19,7 @@ async fn minimal_shift_tab_shows_mode_in_info_bar() {
     // is "/help for commands …", the status line "minimal · /help", and the
     // empty-prompt placeholder "Build anything". So a lowercase "plan" can only
     // come from the mode flag under test. (The shell's transient
-    // "Switched to mode: Plan" banner uses a capital P, which we don't match.)
+    // "已切换到模式：Plan" banner uses a capital P, which we don't match.)
     assert!(
         !harness.contains_text("plan"),
         "precondition: idle minimal screen must not already show 'plan'\nscreen:\n{}",

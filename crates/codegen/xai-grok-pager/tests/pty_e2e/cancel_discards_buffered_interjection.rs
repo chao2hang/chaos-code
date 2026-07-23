@@ -7,7 +7,7 @@ use super::common::*;
 /// The chord is now cancel-and-send: text + Ctrl+Enter mid-stream silently
 /// cancels the running turn and delivers the text as its OWN next turn (no
 /// interjection preamble on the wire). A later explicit Ctrl+C still renders
-/// its "Turn cancelled by user" marker — the consumed send-now expectation
+/// its "用户在" marker — the consumed send-now expectation
 /// must never suppress a real user cancel.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore]
@@ -54,7 +54,7 @@ async fn cancel_discards_buffered_interjection() {
         .expect("steer runs as its own turn");
     // The send-now half cancelled turn 1 silently.
     assert!(
-        !harness.contains_text("Turn cancelled by user"),
+        !harness.contains_text("用户在"),
         "send-now cancel must not render a cancelled marker\nscreen:\n{}",
         harness.screen_contents()
     );
@@ -64,7 +64,7 @@ async fn cancel_discards_buffered_interjection() {
     // consumed and must not silence it.
     harness.inject_keys(keys::CTRL_C).expect("cancel turn");
     harness
-        .wait_for_text("Turn cancelled by user", Duration::from_secs(10))
+        .wait_for_text("用户在", Duration::from_secs(10))
         .expect("explicit cancel marker");
 
     harness

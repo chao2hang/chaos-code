@@ -12,7 +12,7 @@ impl SlashCommand for EditPromptCommand {
     }
 
     fn description(&self) -> &str {
-        "Open an external editor for an empty prompt; use the command palette to preserve a draft"
+        "用外部编辑器编辑空提示；用命令面板可保留草稿"
     }
 
     fn usage(&self) -> &str {
