@@ -181,7 +181,7 @@ impl Widget for ShortcutsBar<'_> {
         // If pending confirmation, show only "press again to {label}"
         if let Some(pending) = &self.pending_confirmation {
             let key_text = pending.shortcut.display();
-            let label = format!("press again to {}", pending.label);
+            let label = format!("再按一次以{}", pending.label);
 
             let mut x = area.x;
 

@@ -139,7 +139,7 @@ async fn iterm_raw_readline_sequences_edit_picker_and_dashboard_rename() {
     );
     harness.inject_keys(b"\x11").expect("Ctrl+Q arm");
     harness
-        .wait_for_text("press again to quit", Duration::from_secs(10))
+        .wait_for_text("再按一次以退出", Duration::from_secs(10))
         .expect("quit confirmation rendered");
     harness.inject_keys(b"\x11").expect("Ctrl+Q confirm");
     assert_eq!(

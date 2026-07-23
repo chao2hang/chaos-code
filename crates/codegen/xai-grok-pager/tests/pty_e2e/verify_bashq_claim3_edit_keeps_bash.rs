@@ -72,7 +72,7 @@ async fn verify_bashq_claim3_edit_keeps_bash() {
     harness.inject_keys(b"e").expect("edit queued row");
     // A bash-row edit shows the bash info override, not "editing queued #N".
     harness
-        .wait_for_text("Run shell command", Duration::from_secs(10))
+        .wait_for_text("运行 Shell 命令", Duration::from_secs(10))
         .expect("bash edit mode entered");
 
     // The cursor sits at 0, so the edit prepends and comments out the original.
@@ -84,7 +84,7 @@ async fn verify_bashq_claim3_edit_keeps_bash() {
         .expect("edited text echoes in the composer");
     harness.inject_keys(b"\r").expect("save the edit");
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
-    while harness.contains_text("Run shell command") {
+    while harness.contains_text("运行 Shell 命令") {
         assert!(
             std::time::Instant::now() < deadline,
             "edit mode never exited after save\nscreen:\n{}",

@@ -1,6 +1,10 @@
-# Grok Build User Guide
+# Chaos / Grok Build User Guide
 
-Learn how to install, configure, and extend Grok Build, the terminal-based AI coding assistant from SpaceXAI.
+> **Chaos：** 本仓库 fork 为无需 Grok 登录、用户自带模型凭证的 `chaos` 助手。
+> 认证与模型配置以 [CHAOS.md](../../../../CHAOS.md) 与 [Authentication](02-authentication.md) 为准。
+> 其余指南大量沿用上游 Grok Build 文案，遇到登录/订阅/遥测差异时以 Chaos 文档为准。
+
+Learn how to install, configure, and extend the terminal-based AI coding assistant.
 
 ---
 
@@ -10,8 +14,8 @@ Start here. These guides cover what you need on your first day.
 
 | # | Document | Description |
 |---|----------|-------------|
-| 1 | [Getting Started](01-getting-started.md) | Installation, first launch, authentication, basic interaction, and key concepts |
-| 2 | [Authentication](02-authentication.md) | Browser login, API keys, OIDC/SSO, external auth providers, and device-code flow |
+| 1 | [Getting Started](01-getting-started.md) | Build, first launch, BYOK setup, basic interaction |
+| 2 | [Authentication](02-authentication.md) | Chaos BYOK：`model_providers`、API Key、`/provider`（无浏览器登录） |
 | 3 | [Keyboard Shortcuts](03-keyboard-shortcuts.md) | Reference for every key binding and mouse action in the TUI |
 | 4 | [Slash Commands](04-slash-commands.md) | Every `/` command, including goals, deep research, and workflow run management |
 | 5 | [Configuration](05-configuration.md) | `config.toml`, `pager.toml`, environment variables, and file locations |

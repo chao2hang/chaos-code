@@ -55,7 +55,7 @@ async fn esc_mid_turn_from_prompt_is_swallowed_preserves_draft() {
         "mid-turn Esc must preserve the draft\nscreen:\n{screen}"
     );
     assert!(
-        !screen.contains("press again to clear"),
+        !screen.contains("再按一次以清空"),
         "running-turn Esc must not arm the idle clear\nscreen:\n{screen}"
     );
 

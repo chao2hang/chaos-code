@@ -330,12 +330,12 @@ impl PromptInputMode {
     pub fn placeholder_override(self, multiline: bool) -> Option<&'static str> {
         match self {
             PromptInputMode::Normal | PromptInputMode::Bash => None,
-            PromptInputMode::Feedback => Some("Type your feedback..."),
+            PromptInputMode::Feedback => Some("输入反馈…"),
             PromptInputMode::Remember => {
                 if multiline {
-                    Some("Save a memory note... (Enter for newline, Shift+Enter to save)")
+                    Some("保存记忆笔记…（Enter 换行，Shift+Enter 保存）")
                 } else {
-                    Some("Save a memory note... (Shift+Enter for multiline)")
+                    Some("保存记忆笔记…（Shift+Enter 多行）")
                 }
             }
         }
@@ -343,9 +343,9 @@ impl PromptInputMode {
     pub fn prompt_info_override(self) -> Option<&'static str> {
         match self {
             PromptInputMode::Normal => None,
-            PromptInputMode::Bash => Some("Run shell command"),
-            PromptInputMode::Feedback => Some("Send feedback"),
-            PromptInputMode::Remember => Some("Save memory note"),
+            PromptInputMode::Bash => Some("运行 Shell 命令"),
+            PromptInputMode::Feedback => Some("发送反馈"),
+            PromptInputMode::Remember => Some("保存记忆笔记"),
         }
     }
     pub fn send_action(self, text: String) -> Action {
@@ -3553,19 +3553,19 @@ mod prompt_input_mode_tests {
         assert_eq!(PromptInputMode::Bash.placeholder_override(true), None);
         assert_eq!(
             PromptInputMode::Feedback.placeholder_override(false),
-            Some("Type your feedback...")
+            Some("输入反馈…")
         );
         assert_eq!(
             PromptInputMode::Feedback.placeholder_override(true),
-            Some("Type your feedback...")
+            Some("输入反馈…")
         );
         assert_eq!(
             PromptInputMode::Remember.placeholder_override(false),
-            Some("Save a memory note... (Shift+Enter for multiline)")
+            Some("保存记忆笔记…（Shift+Enter 多行）")
         );
         assert_eq!(
             PromptInputMode::Remember.placeholder_override(true),
-            Some("Save a memory note... (Enter for newline, Shift+Enter to save)")
+            Some("保存记忆笔记…（Enter 换行，Shift+Enter 保存）")
         );
     }
     #[test]
@@ -3573,15 +3573,15 @@ mod prompt_input_mode_tests {
         assert_eq!(PromptInputMode::Normal.prompt_info_override(), None);
         assert_eq!(
             PromptInputMode::Bash.prompt_info_override(),
-            Some("Run shell command")
+            Some("运行 Shell 命令")
         );
         assert_eq!(
             PromptInputMode::Feedback.prompt_info_override(),
-            Some("Send feedback")
+            Some("发送反馈")
         );
         assert_eq!(
             PromptInputMode::Remember.prompt_info_override(),
-            Some("Save memory note")
+            Some("保存记忆笔记")
         );
     }
     #[test]

@@ -1,4 +1,6 @@
-//! `/login` -- log in or re-authenticate with your account.
+//! `/login` -- Chaos does not support browser login (kept for path compatibility).
+//!
+//! Not registered in `builtin_commands()`. Prefer `/provider` and `CHAOS.md`.
 
 use crate::app::actions::Action;
 use crate::slash::command::{CommandExecCtx, CommandResult, SlashCommand};
@@ -11,7 +13,7 @@ impl SlashCommand for LoginCommand {
     }
 
     fn description(&self) -> &str {
-        "登录或重新认证账号"
+        "Chaos 不支持账号登录；请使用 /provider 配置 API Key"
     }
 
     fn usage(&self) -> &str {
@@ -19,6 +21,9 @@ impl SlashCommand for LoginCommand {
     }
 
     fn run(&self, _ctx: &mut CommandExecCtx, _args: &str) -> CommandResult {
-        CommandResult::Action(Action::Login)
+        // Fail closed: never start browser OIDC. Send users to provider config.
+        CommandResult::Action(Action::OpenProviderModal {
+            mode: crate::views::provider_modal::ProviderModalMode::List,
+        })
     }
 }

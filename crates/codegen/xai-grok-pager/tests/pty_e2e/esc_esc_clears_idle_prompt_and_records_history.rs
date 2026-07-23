@@ -3,7 +3,7 @@
 use super::common::*;
 
 /// Esc double-press policy (idle, non-empty prompt): the **first Esc shows
-/// "press again to clear"** and the **second Esc clears the prompt**, recording
+/// "再按一次以清空"** and the **second Esc clears the prompt**, recording
 /// the cleared text into prompt history (recallable via the Up-arrow history
 /// panel). Proves `try_handle_esc_policy`'s idle clear arm +
 /// `dispatch_clear_prompt` end-to-end on the real binary.
@@ -44,7 +44,7 @@ async fn esc_esc_clears_idle_prompt_and_records_history() {
     // and a single `ESC ESC` byte pair collapses to one `Esc` in crossterm.
     harness.inject_keys(keys::ESC).expect("first esc");
     harness
-        .wait_for_text("press again to clear", Duration::from_secs(15))
+        .wait_for_text("再按一次以清空", Duration::from_secs(15))
         .expect("first idle Esc must show the clear confirm hint");
 
     // Second Esc fires the clear.
@@ -57,7 +57,7 @@ async fn esc_esc_clears_idle_prompt_and_records_history() {
     );
     // The confirm hint must be gone once the pending fired.
     assert!(
-        !harness.contains_text("press again to clear"),
+        !harness.contains_text("再按一次以清空"),
         "clear-confirm hint must clear after the second Esc fires\nscreen:\n{}",
         harness.screen_contents()
     );

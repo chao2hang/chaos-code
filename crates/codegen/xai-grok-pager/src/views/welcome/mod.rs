@@ -421,14 +421,14 @@ pub(super) fn render_version_badge(
         } = &mode
     {
         spans.push(Span::styled(
-            format!("Tier: {tier}"),
+            format!("套餐: {tier}"),
             Style::default().fg(theme.gray),
         ));
         spans.push(sep.clone());
     }
     if show_api_key && is_api_key_auth {
         spans.push(Span::styled(
-            "使用 API 密钥登录",
+            "使用 Provider API Key",
             Style::default().fg(theme.gray),
         ));
         spans.push(sep);
@@ -543,7 +543,7 @@ fn render_prompt_and_version(
             .add_modifier(Modifier::BOLD);
         let action_style = Style::default().fg(theme.gray);
         let key_text = pending.shortcut.display();
-        let label = format!("press again to {}", pending.label);
+        let label = format!("再按一次以{}", pending.label);
         let line = Line::from(vec![
             Span::styled(format!("  {key_text}"), key_style),
             Span::styled(":", action_style),
@@ -687,10 +687,12 @@ pub fn render_welcome(
 
     let mut result = match params.auth_state {
         AuthState::Pending { error } => {
-            let label = params.login_label.unwrap_or("grok.com");
-            let login_text = format!("使用 {} 登录", label);
-            let menu = [("l", login_text.as_str()), ("q", "退出")];
-            let msg = error.as_deref().map(|e| (e, theme.accent_error));
+            // Chaos is BYOK-only: never offer browser login. Guide users to
+            // configure model_providers / API keys via `/provider`.
+            let menu = [("p", "配置 Provider"), ("q", "退出")];
+            let default_hint = xai_grok_shell::agent::auth_method::PREFERRED_API_KEY_UNAVAILABLE;
+            let err_text = error.as_deref().unwrap_or(default_hint);
+            let msg = Some((err_text, theme.accent_error));
             let info = PromptInfo {
                 model_name: params.model_name,
                 flags: params.flags,
@@ -1053,7 +1055,7 @@ fn auth_copy_line_rows(inner_width: u16) -> u16 {
     (copy_len as u16).div_ceil(inner_width)
 }
 
-const AUTH_FALLBACK_TEXT: &str = "Copying not working? Click here to show full URL.";
+const AUTH_FALLBACK_TEXT: &str = "复制无效？点击此处显示完整 URL。";
 
 /// Build the fallback "show full URL" link line.
 fn auth_fallback_line(theme: &Theme) -> Line<'static> {
@@ -1077,16 +1079,16 @@ fn push_auth_copy_block(
     lines.push(Line::default());
     lines.push(match clipboard_delivery {
         Some(crate::clipboard::ClipboardDelivery::Confirmed) => {
-            Line::from(Span::styled("copied!", Style::default().fg(theme.gray)))
+            Line::from(Span::styled("已复制！", Style::default().fg(theme.gray)))
                 .alignment(Alignment::Center)
         }
         Some(crate::clipboard::ClipboardDelivery::Unverified) => Line::from(Span::styled(
-            "copy sent—verify paste",
+            "已发送复制—请确认粘贴",
             Style::default().fg(theme.gray),
         ))
         .alignment(Alignment::Center),
         Some(crate::clipboard::ClipboardDelivery::Failed) => {
-            Line::from(Span::styled("copy failed", Style::default().fg(theme.gray)))
+            Line::from(Span::styled("复制失败", Style::default().fg(theme.gray)))
                 .alignment(Alignment::Center)
         }
         None => Line::default(),
@@ -1160,7 +1162,7 @@ fn render_raw_url_mode(
 
     // Render hint above the URL.
     let hint = Line::from(Span::styled(
-        "Select the URL below with your mouse and copy manually.",
+        "用鼠标选中下方 URL 并手动复制。",
         Style::default().fg(theme.gray),
     ))
     .alignment(Alignment::Center);
@@ -1730,7 +1732,9 @@ fn render_welcome_done(
     let gate_menu;
     let owned_menu;
     let menu_items: &[(&str, &str)] = if !p.has_access {
-        gate_menu = [(key_g, cta), (key_l, "退出登录"), (key_q, "退出")];
+        // Chaos has no subscription/login wall product surface; keep quit and
+        // optional CTA, but replace "log out" with provider configuration.
+        gate_menu = [(key_g, cta), (key_l, "配置 Provider"), (key_q, "退出")];
         &gate_menu
     } else {
         let (key_w, key_s, key_q, key_i_with_x) = (
@@ -1924,11 +1928,11 @@ fn render_welcome_done(
         .areas(layout.prompt);
         // Show the user's current tier + clickable refresh button above the gate message.
         let tier_label = p.subscription_tier.unwrap_or("Free");
-        let tier_prefix = format!("Tier: {tier_label}  ");
-        let refresh_text = "[Refresh]";
+        let tier_prefix = format!("套餐: {tier_label}  ");
+        let refresh_text = "[刷新]";
         let total_width = tier_prefix.len() + refresh_text.len();
         let tier_line = Line::from(vec![
-            Span::styled("Tier: ", Style::default().fg(theme.gray)),
+            Span::styled("套餐: ", Style::default().fg(theme.gray)),
             Span::styled(
                 tier_label,
                 Style::default()
@@ -2563,12 +2567,12 @@ mod tests {
     fn auth_copy_feedback_covers_delivery_states() {
         let theme = Theme::current();
         for (delivery, expected) in [
-            (crate::clipboard::ClipboardDelivery::Confirmed, "copied!"),
+            (crate::clipboard::ClipboardDelivery::Confirmed, "已复制！"),
             (
                 crate::clipboard::ClipboardDelivery::Unverified,
-                "copy sent—verify paste",
+                "已发送复制—请确认粘贴",
             ),
-            (crate::clipboard::ClipboardDelivery::Failed, "copy failed"),
+            (crate::clipboard::ClipboardDelivery::Failed, "复制失败"),
         ] {
             let mut lines = Vec::new();
             push_auth_copy_block(&mut lines, &theme, Some(delivery));
