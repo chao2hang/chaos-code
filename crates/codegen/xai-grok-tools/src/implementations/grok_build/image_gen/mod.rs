@@ -576,8 +576,13 @@ mod tests {
 
         match result {
             ToolOutput::Text(t) => {
-                assert!(t.text.contains("SuperGrok"), "got: {}", t.text);
-                assert!(t.text.contains("supergrok?referrer=grok-build"));
+                assert!(
+                    t.text.contains("图片生成") || t.text.contains("Provider") || t.text.contains("提供商"),
+                    "got: {}",
+                    t.text
+                );
+                assert!(!t.text.contains("SuperGrok"), "got: {}", t.text);
+                assert!(!t.text.contains("supergrok"), "got: {}", t.text);
             }
             other => panic!("expected Text upsell, got {other:?}"),
         }

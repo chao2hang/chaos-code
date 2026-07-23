@@ -6619,14 +6619,13 @@ mod tests {
             "uploaded_url-only media must not claim a local open path"
         );
     }
-    /// A tier-restricted (free / X Basic) imagine call short-circuits with the
-    /// SuperGrok upsell as `ToolOutput::Text` on a `Completed` status. The media
+    /// A tier-restricted imagine call short-circuits with BYOK Provider
+    /// guidance as `ToolOutput::Text` on a `Completed` status. The media
     /// renderer has no file to open, so it must surface the upsell text in the
     /// card body (not a bare title) and must NOT mark the card as an error.
     #[test]
     fn tier_restricted_media_shows_upsell_text_not_error() {
-        let upsell = "Image generation is a SuperGrok feature. Upgrade at \
-             https://grok.com/supergrok?referrer=grok-build";
+        let upsell = "图片生成功能不可用。请通过配置文件添加支持图片生成的模型提供商。不要重试此工具。";
         let output = ToolOutput::Text(xai_grok_tools::types::output::TextOutput::from(upsell));
         let tc = acp::ToolCall::new(
             acp::ToolCallId::new(Arc::from("tier-restricted-img")),
@@ -6653,7 +6652,7 @@ mod tests {
                 .output
                 .as_deref()
                 .unwrap_or_default()
-                .contains("SuperGrok"),
+                .contains("图片生成"),
             "upsell text must be shown in the card body, got: {:?}",
             block.output
         );
