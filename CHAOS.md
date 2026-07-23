@@ -48,10 +48,11 @@ cargo run -p xai-grok-pager-bin
 推荐使用 `model_providers` 复用同一提供商的连接和认证设置，再用 `model` 定义具体模型。
 密钥优先放在环境变量中，不要把密钥提交到 Git。
 
-**内置模型目录为空。** Chaos 不会预装 Grok 4.5 或其它 xAI 产品模型；
-`/model` 列表只来自你的 `[model.*]`（以及可选远程目录）。请在
-`config.toml` 中至少配置一个模型，并用 `[models] default = "…"` 指定默认
-catalog 键（与 `[model.<key>]` 的键一致）。
+**内置模型目录为空。** Chaos 不会预装任何产品模型，也不会在启动时自动从
+xAI 拉取目录。`/model` 列表只来自你在 `config.toml` 里写的 `[model.*]`。
+默认 `[features] remote_fetch = false`；只有你显式打开并配置了
+`[endpoints]` 的模型列表地址时，才会尝试在线拉取。请至少配置一个模型，
+并用 `[models] default = "…"` 指定默认 catalog 键（与 `[model.<key>]` 的键一致）。
 
 ### OpenAI 兼容协议
 
