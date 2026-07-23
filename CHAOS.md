@@ -5,11 +5,12 @@ Chaos 是终端 AI 编码助手。它不使用 Grok 登录，也不会在启动�
 
 ## 构建与启动
 
-环境要求：Rust 1.92、DotSlash 和 `protoc`。在仓库根目录执行：
+环境要求：Rust（见 `rust-toolchain.toml`）、DotSlash 和 `protoc`。在仓库根目录执行：
 
 ```sh
 cargo build -p xai-grok-pager-bin --release
 ./target/release/chaos
+./target/release/chaos --version
 ```
 
 开发模式：
@@ -17,6 +18,9 @@ cargo build -p xai-grok-pager-bin --release
 ```sh
 cargo run -p xai-grok-pager-bin
 ```
+
+包名仍为上游 `xai-grok-pager-bin`，**产出二进制名为 `chaos`**。请勿使用
+`https://x.ai/cli/install.sh`（那是官方 `grok` 安装脚本）。
 
 ## 配置文件
 

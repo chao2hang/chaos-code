@@ -6,11 +6,12 @@ license = "Apache-2.0"
 authors = ["xAI"]
 default-run = "chaos"
 
-# Composition-root binary for the Grok Build TUI. The artifact is still named
-# `xai-grok-pager`. This package exists so the binary can link both the pager
-# library and the optional `xai-grok-pager-minimal` render mode: `minimal`
-# depends on `xai-grok-pager`, so the pager library cannot depend back on it
-# (cargo cycle). The binary installs the minimal-mode IoC hooks at startup.
+# Composition-root binary for the Chaos TUI. Package keeps the upstream crate
+# name `xai-grok-pager-bin` for monorepo sync; the installed binary is `chaos`.
+# This package exists so the binary can link both the pager library and the
+# optional `xai-grok-pager-minimal` render mode: `minimal` depends on
+# `xai-grok-pager`, so the pager library cannot depend back on it (cargo cycle).
+# The binary installs the minimal-mode IoC hooks at startup.
 [[bin]]
 name = "chaos"
 path = "src/main.rs"

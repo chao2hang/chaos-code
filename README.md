@@ -1,113 +1,78 @@
-> **Chaos 分支说明：** 本仓库正在改造为无需 Grok 登录、由用户自带模型凭证的
-> `chaos` AI 编码助手。构建、模型配置、Token 统计和动态上下文裁剪说明请先阅读
-> [CHAOS.md](CHAOS.md)。原始上游说明保留在下方，供内部 crate 和兼容行为查阅。
+# Chaos
 
-<div align="center">
+**Chaos** 是终端 AI 编码助手（二进制名 `chaos`）。它**不使用 Grok / xAI 登录**；
+模型、接口地址与密钥均由用户自行配置（BYOK）。完整产品说明见
+[CHAOS.md](CHAOS.md)。
 
-<h1>
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://media.x.ai/v1/website/spacexai-symbol-white-transparent-0c31957f.png">
-    <source media="(prefers-color-scheme: light)" srcset="https://media.x.ai/v1/website/spacexai-symbol-black-transparent-6435cf42.png">
-    <img alt="SpaceXAI logo" src="https://media.x.ai/v1/website/spacexai-symbol-black-transparent-6435cf42.png" width="96">
-  </picture>
-  <br>
-  Grok Build (<code>grok</code>)
-</h1>
+本仓库基于 [Grok Build](https://github.com/xai-org/grok-build) 上游源码改造；内部
+crate 仍保留 `xai-grok-*` 命名以利同步上游。`SOURCE_REV` 记录当前对齐的 monorepo
+提交 SHA。
 
-**Grok Build** is SpaceXAI's terminal-based AI coding agent. It runs as a
-full-screen TUI that understands your codebase, edits files, executes shell
-commands, searches the web, and manages long-running tasks — interactively,
-headlessly for scripting/CI, or embedded in editors via the Agent Client
-Protocol (ACP).
-
-[Installing the released binary](#installing-the-released-binary) ·
-[Building from source](#building-from-source) ·
-[Documentation](#documentation) ·
-[Repository layout](#repository-layout) ·
-[Development](#development) ·
-[Contributing](#contributing) ·
-[License](#license)
-
-![Grok Build TUI](https://media.x.ai/v1/website/universe-tui-screenshot-6f7a0837.png)
-
-**Learn more about Grok Build at [x.ai/cli](https://x.ai/cli)**
-
-This repository contains the Rust source for the `grok` CLI/TUI and its agent
-runtime. It is synced periodically from the SpaceXAI monorepo.
-
-A small `SOURCE_REV` file at the root records the full monorepo commit SHA
-for the version of the code present in this tree.
-
-</div>
+[从源码构建](#从源码构建) ·
+[配置](#配置) ·
+[文档](#文档) ·
+[仓库结构](#仓库结构)
 
 ---
 
-## Installing the released binary
+## 从源码构建
 
-Prebuilt binaries are published for macOS, Linux, and Windows:
+环境要求：
 
-```sh
-curl -fsSL https://x.ai/cli/install.sh | bash   # macOS / Linux / Git Bash
-irm https://x.ai/cli/install.ps1 | iex          # Windows PowerShell
-grok --version
-```
-
-See the [changelog](https://x.ai/build/changelog) for the latest fixes,
-features, and improvements in each release.
-
-## Building from source
-
-Requirements:
-
-- **Rust** — the toolchain is pinned by [`rust-toolchain.toml`](rust-toolchain.toml);
-  `rustup` installs it automatically on first build.
-- **[DotSlash](https://dotslash-cli.com)** — required so hermetic tools under
-  [`bin/`](bin/) (notably [`bin/protoc`](bin/protoc)) can download and run.
-  Install it and ensure `dotslash` is on your `PATH` **before** building:
+- **Rust** — 工具链由 [`rust-toolchain.toml`](rust-toolchain.toml) 固定；
+  `rustup` 首次构建时会自动安装。
+- **[DotSlash](https://dotslash-cli.com)** — 供 [`bin/`](bin/) 下 hermetic 工具
+  （尤其是 [`bin/protoc`](bin/protoc)）下载运行。构建前请确保 `dotslash` 在
+  `PATH` 中：
 
   ```sh
   cargo install dotslash
-  # or: prebuilt packages — https://dotslash-cli.com/docs/installation/
-  /usr/bin/env dotslash --help   # sanity check
+  # 或预编译包：https://dotslash-cli.com/docs/installation/
+  /usr/bin/env dotslash --help
   ```
 
-- **protoc** — proto codegen resolves [`bin/protoc`](bin/protoc) via DotSlash,
-  or falls back to a `protoc` on `PATH` / `$PROTOC`.
-- macOS and Linux are supported build hosts; Windows builds are best-effort
-  and not currently tested from this tree.
+- **protoc** — 通过 DotSlash 解析 `bin/protoc`，或使用 `PATH` / `$PROTOC` 中的
+  `protoc`。
+- 支持 macOS / Linux 构建主机；Windows 为 best-effort。
 
 ```sh
-cargo run -p xai-grok-pager-bin              # build + launch the TUI
-cargo build -p xai-grok-pager-bin --release  # release binary: target/release/xai-grok-pager
-cargo check -p xai-grok-pager-bin            # fast validation
+cargo run -p xai-grok-pager-bin              # 构建并启动 TUI（二进制名 chaos）
+cargo build -p xai-grok-pager-bin --release  # 产物：target/release/chaos
+cargo check -p xai-grok-pager-bin            # 快速校验
+./target/release/chaos --version
 ```
 
-The binary artifact is named `xai-grok-pager`; official installs ship it as
-`grok`. On first launch it opens your browser to authenticate — see the
-[authentication guide](crates/codegen/xai-grok-pager/docs/user-guide/02-authentication.md).
+**不要**运行上游的 `https://x.ai/cli/install.sh`：那会安装官方 `grok`，不是 Chaos。
 
-## Documentation
+## 配置
 
-Full online documentation is available at
-[docs.x.ai/build/overview](https://docs.x.ai/build/overview).
+用户配置目录双读（不覆盖任一侧）：
 
-The user guide ships with the pager crate:
-[`crates/codegen/xai-grok-pager/docs/user-guide/`](crates/codegen/xai-grok-pager/docs/user-guide/)
-— getting started, keyboard shortcuts, slash commands, configuration, theming,
-MCP servers, skills, plugins, hooks, headless mode, sandboxing, and more.
+1. `$CHAOS_HOME` → 2. `$GROK_HOME` → 3. 已有 `~/.chaos` → 4. 已有 `~/.grok` →
+5. 默认新建 `~/.chaos`
 
-## Repository layout
+项目级 `.chaos/` 与 `.grok/` 同样双读。模型与 Provider 示例见
+[CHAOS.md](CHAOS.md)。密钥请用环境变量，勿提交到 Git。
+
+## 文档
+
+- 产品入口与 BYOK 说明：[CHAOS.md](CHAOS.md)
+- 用户指南（随 pager 发布）：
+  [`crates/codegen/xai-grok-pager/docs/user-guide/`](crates/codegen/xai-grok-pager/docs/user-guide/)
+  （部分章节仍写上游路径名；以 CHAOS.md 与双读策略为准）
+
+## 仓库结构
 
 | Path | Contents |
 |------|----------|
-| `crates/codegen/xai-grok-pager-bin` | Composition-root package; builds the `xai-grok-pager` binary |
-| `crates/codegen/xai-grok-pager` | The TUI: scrollback, prompt, modals, rendering |
-| `crates/codegen/xai-grok-shell` | Agent runtime + leader/stdio/headless entry points |
-| `crates/codegen/xai-grok-tools` | Tool implementations (terminal, file edit, search, ...) |
-| `crates/codegen/xai-grok-workspace` | Host filesystem, VCS, execution, checkpoints |
-| `crates/codegen/...` | The rest of the CLI crate closure (config, MCP, markdown, sandbox, ...) |
-| `crates/common/`, `crates/build/`, `prod/mc/` | Small shared leaf crates pulled in by the closure |
-| `third_party/` | Vendored upstream source (Mermaid diagram stack) — see below |
+| `crates/codegen/xai-grok-pager-bin` | 组合根包；产出 `chaos` 二进制 |
+| `crates/codegen/xai-grok-pager` | TUI：scrollback、prompt、模态、渲染 |
+| `crates/codegen/xai-grok-shell` | Agent 运行时 + leader/stdio/headless |
+| `crates/codegen/xai-grok-tools` | 工具实现（终端、编辑、搜索等） |
+| `crates/codegen/xai-grok-workspace` | 主机文件系统、VCS、执行、检查点 |
+| `crates/codegen/...` | 其余 CLI 依赖闭包（config、MCP、markdown、sandbox 等） |
+| `crates/common/`、`crates/build/`、`prod/mc/` | 闭包用到的共享叶子 crate |
+| `third_party/` | 上游 vendored 源码（Mermaid 等） |
 
 > [!IMPORTANT]
 > The root `Cargo.toml` (workspace members, dependency versions, lints,

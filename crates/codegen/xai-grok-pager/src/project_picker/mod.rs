@@ -70,16 +70,16 @@ pub fn build_project_question(
     // Kept out of `resolved_paths` so the path options stay index-aligned.
     let dont_ask_index = options.len();
     options.push(QuestionOption {
-        label: "Don't ask me again".to_string(),
-        description: "Always start in the current directory (reset in config.toml)".to_string(),
+        label: "不再询问".to_string(),
+        description: "始终在当前目录启动（可在 config.toml 中重置）".to_string(),
         preview: None,
         id: None,
     });
 
     ProjectQuestion {
         question: Question {
-            question: "Run Grok Build in a project directory?\n\n\
-                 This gives Grok Build full context of your codebase for better results."
+            question: "要在项目目录中运行 Chaos 吗？\n\n\
+                 这样 Chaos 能获得完整代码库上下文，效果更好。"
                 .into(),
             id: None,
             options,
@@ -123,9 +123,6 @@ mod tests {
         let pq = build_project_question(&[], Path::new("/home/user"));
         assert_eq!(pq.dont_ask_index, pq.resolved_paths.len());
         assert_eq!(pq.dont_ask_index, pq.question.options.len() - 1);
-        assert_eq!(
-            pq.question.options[pq.dont_ask_index].label,
-            "Don't ask me again"
-        );
+        assert_eq!(pq.question.options[pq.dont_ask_index].label, "不再询问");
     }
 }

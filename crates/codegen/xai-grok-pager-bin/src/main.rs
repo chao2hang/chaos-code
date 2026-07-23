@@ -164,7 +164,10 @@ async fn run_setup_command(json: bool) {
         }
         eprintln!("  chaos setup");
         eprintln!();
-        eprintln!("也可以将密钥写入 ~/.grok/config.toml：");
+        eprintln!(
+            "也可以将密钥写入 {}/config.toml：",
+            xai_grok_config::default_home_display_prefix()
+        );
         eprintln!();
         eprintln!("  [endpoints]");
         eprintln!("  deployment_key = \"<your-key>\"");
@@ -518,8 +521,9 @@ async fn workspace_start(
     );
     if !use_leader {
         anyhow::bail!(
-            "`grok workspace` requires leader mode (the workspace is shared via the leader).\n\
-             Enable it with `[cli] use_leader = true` in ~/.grok/config.toml, or pass --leader."
+            "`chaos workspace` 需要 leader 模式（workspace 由 leader 共享）。\n\
+             在 {}/config.toml 中设置 `[cli] use_leader = true`，或传入 --leader。",
+            xai_grok_config::default_home_display_prefix()
         );
     }
     if agent_config.endpoints.deployment_key.is_none() {
@@ -1437,9 +1441,9 @@ fn flag_dashboard_at_startup_if_requested(args: &mut PagerArgs) -> Result<()> {
     }
     if !xai_grok_pager::views::dashboard::dashboard_enabled() {
         anyhow::bail!(
-            "the Agent Dashboard is disabled. Enable it by removing \
-             `[dashboard] enabled = false` from ~/.grok/config.toml and \
-             unsetting GROK_AGENT_DASHBOARD=0."
+            "Agent Dashboard 已禁用。请从 {}/config.toml 中移除 \
+             `[dashboard] enabled = false`，并取消设置 GROK_AGENT_DASHBOARD=0。",
+            xai_grok_config::default_home_display_prefix()
         );
     }
     args.command = None;

@@ -118,7 +118,7 @@ pub(super) fn open_credit_limit_upsell(
             "You hit your weekly limit.",
             "Upgrade to a higher tier for more usage",
             "Buy more credits",
-            "Purchase credits to keep using Grok Build",
+            "购买额度以继续使用 Chaos",
             CreditLimitCardAction::PurchaseCredits,
             xai_grok_telemetry::events::CreditLimitChoice::PurchaseCredits,
             false,
@@ -295,7 +295,7 @@ fn open_supergrok_upsell(
         },
         QuestionOption {
             label: "Upgrade to SuperGrok Heavy".into(),
-            description: "Get the most out of Grok Build. Highest usage limits.".into(),
+            description: "充分发挥 Chaos。最高用量上限。".into(),
             preview: None,
             // No Heavy-specific URL exists; the /supergrok page lists
             // both plans, so both upgrade options land there.

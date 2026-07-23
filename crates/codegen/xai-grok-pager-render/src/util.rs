@@ -422,17 +422,27 @@ mod tests {
 
     #[test]
     fn display_grok_home_prefix_default_install() {
-        if std::env::var("GROK_HOME").is_ok() {
+        if std::env::var_os("CHAOS_HOME").is_some() || std::env::var_os("GROK_HOME").is_some() {
             return;
         }
-        assert_eq!(display_grok_home_prefix(), "~/.grok");
+        let prefix = display_grok_home_prefix();
+        assert!(
+            prefix == "~/.chaos" || prefix == "~/.grok",
+            "unexpected default home prefix: {prefix}"
+        );
     }
 
     #[test]
     fn display_user_grok_path_joins_relative() {
         let path = display_user_grok_path("config.toml");
         assert!(path.ends_with("/config.toml") || path.ends_with("\\config.toml"));
-        assert!(path.contains(".grok") || path.contains("$GROK_HOME"));
+        assert!(
+            path.contains(".chaos")
+                || path.contains(".grok")
+                || path.contains("$CHAOS_HOME")
+                || path.contains("$GROK_HOME"),
+            "unexpected path: {path}"
+        );
     }
 
     #[test]
