@@ -3961,7 +3961,7 @@ impl AppView {
                             Vec::new();
                         if self.default_yolo {
                             flags_vec.push(crate::views::prompt_widget::PromptFlag {
-                                text: "always-approve",
+                                text: "总是批准",
                                 color: None,
                                 bold: false,
                             });
@@ -5900,7 +5900,7 @@ pub(crate) mod tests {
         app.agents
             .get_mut(&id)
             .unwrap()
-            .show_mode_switch_banner("Plan");
+            .show_mode_switch_banner("计划");
         assert!(
             app.needs_animation(),
             "mode_switch_banner must request ticks (tick_mode_banner countdown)"

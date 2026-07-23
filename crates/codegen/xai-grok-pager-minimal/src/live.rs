@@ -625,11 +625,11 @@ fn render_prompt_info(
     let effective_plan =
         minimal_api::plan_mode_pending(agent).unwrap_or(minimal_api::plan_mode_active(agent));
     let mode_flag: Option<(&str, Color)> = if effective_plan {
-        Some(("plan", theme.accent_plan))
+        Some(("计划", theme.accent_plan))
     } else if agent.session.is_yolo() {
-        Some(("always-approve", theme.warning))
+        Some(("总是批准", theme.warning))
     } else if agent.session.is_auto() {
-        Some(("auto", theme.accent_system))
+        Some(("自动", theme.accent_system))
     } else {
         None
     };
@@ -932,11 +932,15 @@ mod tests {
     fn prompt_info_shows_session_mode_flag() {
         let theme = Theme::current();
         let area = Rect::new(0, 0, 80, 1);
+        // Ratatui stores each wide (CJK) glyph across two cells; reconstructing
+        // by cell symbol can insert a blank between codepoints ("计 划"). Collapse
+        // whitespace for Chinese flag checks while keeping the raw dump for errors.
         let read = |buf: &Buffer| -> String {
             (0..area.width)
                 .filter_map(|x| buf.cell((x, 0)).map(|c| c.symbol().to_string()))
                 .collect()
         };
+        let compact = |s: &str| -> String { s.chars().filter(|c| !c.is_whitespace()).collect() };
         let render = |a: &xai_grok_pager::app::agent_view::AgentView| -> String {
             let mut buf = Buffer::empty(area);
             render_prompt_info(&mut buf, area, a, 0, "ctrl+o transcript", &theme);
@@ -944,19 +948,35 @@ mod tests {
         };
         let mut a = agent();
         let text = render(&a);
-        assert!(!text.contains("plan"), "normal shows no flag: {text:?}");
-        assert!(!text.contains("always-approve"), "normal: {text:?}");
+        assert!(
+            !compact(&text).contains("计划"),
+            "normal shows no flag: {text:?}"
+        );
+        assert!(
+            !compact(&text).contains("总是批准"),
+            "normal: {text:?}"
+        );
         minimal_api::set_plan_mode_pending(&mut a, Some(true));
-        assert!(render(&a).contains("plan"), "plan flag: {:?}", render(&a));
+        let text = render(&a);
+        assert!(
+            compact(&text).contains("计划"),
+            "plan flag: {text:?}"
+        );
         minimal_api::set_plan_mode_pending(&mut a, None);
         minimal_api::set_plan_mode_active(&mut a, false);
         minimal_api::set_yolo_mode_for_test(&mut a.session, true);
         minimal_api::set_auto_mode_for_test(&mut a.session, true);
         let text = render(&a);
-        assert!(text.contains("always-approve"), "yolo flag: {text:?}");
+        assert!(
+            compact(&text).contains("总是批准"),
+            "yolo flag: {text:?}"
+        );
         minimal_api::set_yolo_mode_for_test(&mut a.session, false);
         let text = render(&a);
-        assert!(text.contains("auto"), "auto flag: {text:?}");
+        assert!(
+            compact(&text).contains("自动"),
+            "auto flag: {text:?}"
+        );
     }
     #[test]
     fn pending_hint_formats_press_again() {

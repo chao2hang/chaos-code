@@ -2687,12 +2687,12 @@ fn paint_dispatch_config_badge(
     let mut flags: Vec<PromptFlag> = Vec::new();
     match state.pending_mode {
         DashboardDispatchMode::Plan => flags.push(PromptFlag {
-            text: "plan",
+            text: "计划",
             color: Some(theme.accent_plan),
             bold: false,
         }),
         DashboardDispatchMode::AlwaysApprove => flags.push(PromptFlag {
-            text: "always-approve",
+            text: "总是批准",
             color: None,
             bold: false,
         }),

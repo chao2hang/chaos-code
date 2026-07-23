@@ -3,7 +3,7 @@
 use super::ctx::with_active_agent;
 use super::queue::{maybe_drain_queue, note_peek_page_flip};
 use super::session::lifecycle::skip_picker_and_create_session;
-use super::settings::ui::{refresh_open_settings_modals, save_success_toast};
+use super::settings::ui::refresh_open_settings_modals;
 use crate::app::actions::Effect;
 use crate::app::app_view::{ActiveView, AppView};
 use agent_client_protocol as acp;
@@ -192,7 +192,8 @@ pub(super) fn set_plan_mode(
 /// (unlike YOLO), so both ON and OFF use the uniform ✓ glyph.
 /// Uses lowercase "on"/"off" via `save_success_toast`.
 fn plan_mode_toast(kind: crate::app::actions::PlanModeKind) -> String {
-    save_success_toast("Plan mode", kind.to_bool())
+    let value = if kind.to_bool() { "开" } else { "关" };
+    format!("\u{2713} 计划模式：{value}")
 }
 
 /// The single gate for client paths that ENABLE always-approve: `Some(reason)`
@@ -487,9 +488,9 @@ pub(super) fn permission_mode_toast(kind: crate::app::actions::PermissionModeKin
     use crate::app::actions::PermissionModeKind;
     match kind {
         PermissionModeKind::AlwaysApprove => yolo_toast(true),
-        PermissionModeKind::Auto => "\u{2713} Permission mode: Auto (classifier)".to_string(),
-        PermissionModeKind::Ask => "\u{2713} Permission mode: Ask".to_string(),
-        PermissionModeKind::Default => "\u{2713} Permission mode: Default".to_string(),
+        PermissionModeKind::Auto => "\u{2713} 权限模式：自动（分类器）".to_string(),
+        PermissionModeKind::Ask => "\u{2713} 权限模式：询问".to_string(),
+        PermissionModeKind::Default => "\u{2713} 权限模式：默认".to_string(),
     }
 }
 
@@ -497,16 +498,16 @@ pub(super) fn permission_mode_toast(kind: crate::app::actions::PermissionModeKin
 /// fast path, but the shell's plan-mode gate still rejects non-plan-file
 /// edits, so the standard "all tool actions auto-run" would overpromise.
 pub(super) const YOLO_ON_UNDER_PLAN_TOAST: &str =
-    "\u{26A0} Always-approve ON: plan mode still blocks file edits until you exit plan mode";
+    "\u{26A0} 总是批准已开启：计划模式下仍会阻止文件编辑，直到你退出计划模式";
 
 /// Build the YOLO toast — ⚠ on ON (destructive), ✓ on OFF (safe default).
 fn yolo_toast(new: bool) -> String {
     if new {
         // Warning glyph + consequence — only post-commit feedback.
-        "\u{26A0} Always-approve ON: all tool actions auto-run".to_string()
+        "\u{26A0} 总是批准已开启：所有工具操作将自动执行".to_string()
     } else {
         // OFF restores safe default — uniform ✓ glyph.
-        save_success_toast("Always-approve", false)
+        "\u{2713} 总是批准：关".to_string()
     }
 }
 
@@ -667,7 +668,7 @@ fn dispatch_cycle_mode_inner(app: &mut AppView) -> Vec<Effect> {
             (false, false, false) => {
                 agent.plan_mode_pending = Some(true);
                 agent.deferred_session_mode = Some(xai_grok_tools::types::SessionMode::Plan);
-                agent.show_mode_switch_banner("Plan");
+                agent.show_mode_switch_banner("计划");
                 tracing::info!("Mode cycle (pre-session): Normal → Plan");
                 None
             }
@@ -683,7 +684,7 @@ fn dispatch_cycle_mode_inner(app: &mut AppView) -> Vec<Effect> {
                     agent.session.yolo_mode = false;
                     app.default_yolo = false;
                     app.current_ui.permission_mode = Some("auto".into());
-                    agent.show_mode_switch_banner("Auto");
+                    agent.show_mode_switch_banner("自动");
                     tracing::info!("Mode cycle (pre-session): Plan → Auto");
                     Some("auto")
                 } else if let Some(warning) = yolo_locked {
@@ -691,14 +692,14 @@ fn dispatch_cycle_mode_inner(app: &mut AppView) -> Vec<Effect> {
                     agent.session.yolo_mode = false;
                     app.default_yolo = false;
                     agent.show_toast(warning);
-                    agent.show_mode_switch_banner("Normal");
+                    agent.show_mode_switch_banner("正常");
                     tracing::info!("Mode cycle (pre-session): Plan → Normal (auto gated, policy)");
                     Some("ask")
                 } else {
                     agent.session.yolo_mode = true;
                     app.default_yolo = true;
                     app.current_ui.permission_mode = Some("always-approve".into());
-                    agent.show_mode_switch_banner("Always-Approve");
+                    agent.show_mode_switch_banner("总是批准");
                     tracing::info!("Mode cycle (pre-session): Plan → Always-Approve (auto gated)");
                     Some("always-approve")
                 }
@@ -710,14 +711,14 @@ fn dispatch_cycle_mode_inner(app: &mut AppView) -> Vec<Effect> {
                     agent.session.yolo_mode = false;
                     app.default_yolo = false;
                     agent.show_toast(warning);
-                    agent.show_mode_switch_banner("Normal");
+                    agent.show_mode_switch_banner("正常");
                     tracing::info!("Mode cycle (pre-session): Auto → Normal (policy)");
                     Some("ask")
                 } else {
                     agent.session.yolo_mode = true;
                     app.default_yolo = true;
                     app.current_ui.permission_mode = Some("always-approve".into());
-                    agent.show_mode_switch_banner("Always-Approve");
+                    agent.show_mode_switch_banner("总是批准");
                     tracing::info!("Mode cycle (pre-session): Auto → Always-Approve");
                     Some("always-approve")
                 }
@@ -727,7 +728,7 @@ fn dispatch_cycle_mode_inner(app: &mut AppView) -> Vec<Effect> {
                 agent.session.yolo_mode = false;
                 app.default_yolo = false;
                 app.current_ui.permission_mode = Some("ask".into());
-                agent.show_mode_switch_banner("Normal");
+                agent.show_mode_switch_banner("正常");
                 tracing::info!("Mode cycle (pre-session): Always-Approve → Normal");
                 Some("ask")
             }
@@ -743,12 +744,12 @@ fn dispatch_cycle_mode_inner(app: &mut AppView) -> Vec<Effect> {
                 app.default_yolo = false;
                 if auto_gate && in_auto && !in_yolo {
                     app.current_ui.permission_mode = Some("auto".into());
-                    agent.show_mode_switch_banner("Auto");
+                    agent.show_mode_switch_banner("自动");
                     tracing::info!("Mode cycle (pre-session): Plan+Auto → Auto");
                     Some("auto")
                 } else {
                     app.current_ui.permission_mode = Some("ask".into());
-                    agent.show_mode_switch_banner("Normal");
+                    agent.show_mode_switch_banner("正常");
                     tracing::info!("Mode cycle (pre-session): Plan(*) → Normal");
                     Some("ask")
                 }
@@ -781,7 +782,7 @@ fn dispatch_cycle_mode_inner(app: &mut AppView) -> Vec<Effect> {
         // Normal → Plan
         (false, false, false) => {
             agent.plan_mode_pending = Some(true);
-            agent.show_mode_switch_banner("Plan");
+            agent.show_mode_switch_banner("计划");
             refresh_open_settings_modals(app);
             tracing::info!("Mode cycle: Normal → Plan");
             vec![Effect::SetSessionMode {
@@ -801,7 +802,7 @@ fn dispatch_cycle_mode_inner(app: &mut AppView) -> Vec<Effect> {
                     refresh_open_settings_modals(app);
                     if let Some(a) = app.agents.get_mut(&id) {
                         a.show_toast(warning);
-                        a.show_mode_switch_banner("Normal");
+                        a.show_mode_switch_banner("正常");
                     }
                     tracing::info!(
                         "Mode cycle: Plan → Normal (auto gated, always-approve blocked by policy)"
@@ -825,7 +826,7 @@ fn dispatch_cycle_mode_inner(app: &mut AppView) -> Vec<Effect> {
                 app.current_ui.permission_mode = Some("always-approve".into());
                 refresh_open_settings_modals(app);
                 if let Some(a) = app.agents.get_mut(&id) {
-                    a.show_mode_switch_banner("Always-Approve");
+                    a.show_mode_switch_banner("总是批准");
                 }
                 tracing::info!("Mode cycle: Plan → Always-Approve (auto gated)");
                 return vec![
@@ -846,7 +847,7 @@ fn dispatch_cycle_mode_inner(app: &mut AppView) -> Vec<Effect> {
             app.current_ui.permission_mode = Some("auto".into());
             refresh_open_settings_modals(app);
             if let Some(a) = app.agents.get_mut(&id) {
-                a.show_mode_switch_banner("Auto");
+                a.show_mode_switch_banner("自动");
             }
             tracing::info!("Mode cycle: Plan → Auto");
             vec![
@@ -871,7 +872,7 @@ fn dispatch_cycle_mode_inner(app: &mut AppView) -> Vec<Effect> {
                 refresh_open_settings_modals(app);
                 if let Some(a) = app.agents.get_mut(&id) {
                     a.show_toast(warning);
-                    a.show_mode_switch_banner("Normal");
+                    a.show_mode_switch_banner("正常");
                 }
                 tracing::info!("Mode cycle: Auto → Normal (always-approve blocked by policy)");
                 return vec![Effect::PersistPermissionMode {
@@ -884,7 +885,7 @@ fn dispatch_cycle_mode_inner(app: &mut AppView) -> Vec<Effect> {
             app.current_ui.permission_mode = Some("always-approve".into());
             refresh_open_settings_modals(app);
             if let Some(a) = app.agents.get_mut(&id) {
-                a.show_mode_switch_banner("Always-Approve");
+                a.show_mode_switch_banner("总是批准");
             }
             tracing::info!("Mode cycle: Auto → Always-Approve");
             vec![Effect::PersistPermissionMode {
@@ -899,7 +900,7 @@ fn dispatch_cycle_mode_inner(app: &mut AppView) -> Vec<Effect> {
             app.current_ui.permission_mode = Some("ask".into());
             refresh_open_settings_modals(app);
             if let Some(a) = app.agents.get_mut(&id) {
-                a.show_mode_switch_banner("Normal");
+                a.show_mode_switch_banner("正常");
             }
             tracing::info!("Mode cycle: Always-Approve → Normal");
             vec![Effect::PersistPermissionMode {
@@ -916,7 +917,7 @@ fn dispatch_cycle_mode_inner(app: &mut AppView) -> Vec<Effect> {
             app.current_ui.permission_mode = Some("auto".into());
             refresh_open_settings_modals(app);
             if let Some(a) = app.agents.get_mut(&id) {
-                a.show_mode_switch_banner("Auto");
+                a.show_mode_switch_banner("自动");
             }
             tracing::info!("Mode cycle: Plan+Auto → Auto (exit plan, keep classifier)");
             vec![
@@ -947,7 +948,7 @@ fn dispatch_cycle_mode_inner(app: &mut AppView) -> Vec<Effect> {
             app.current_ui.permission_mode = Some("ask".into());
             refresh_open_settings_modals(app);
             if let Some(a) = app.agents.get_mut(&id) {
-                a.show_mode_switch_banner("Normal");
+                a.show_mode_switch_banner("正常");
             }
             tracing::info!("Mode cycle: mixed state → Normal");
             let mut effects = vec![];
