@@ -16,7 +16,7 @@
   },
   {
     "category": "fixes",
-    "description": "**Xcode / Foundation ACP clients** can now drive grok agent stdio without silent parse drops on session/* calls.",
+    "description": "**Xcode / Foundation ACP clients** can now drive chaos agent stdio without silent parse drops on session/* calls.",
     "breaking_change": false
   },
   {
@@ -36,12 +36,12 @@
   },
   {
     "category": "fixes",
-    "description": "**grok --minimal** now supports native drag-select on classic Windows conhost terminals.",
+    "description": "**chaos --minimal** now supports native drag-select on classic Windows conhost terminals.",
     "breaking_change": false
   },
   {
     "category": "features",
-    "description": "**grok inspect** now lists skills from [skills].paths and correctly labels bundled vs user skills.",
+    "description": "**chaos inspect** now lists skills from [skills].paths and correctly labels bundled vs user skills.",
     "breaking_change": false
   },
   {

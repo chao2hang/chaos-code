@@ -2874,16 +2874,19 @@ impl Config {
             .default(true)
             .resolve()
     }
-    /// Resolve whether to use grok's default OAuth2 (xAI auth.x.ai).
+    /// Resolve whether to use the default OAuth2 path (xAI auth.x.ai).
     ///
-    /// Enterprise OIDC (`oidc` in config.toml) always wins — this only gates
-    /// the default xAI OAuth2 fallback when no enterprise OIDC is configured.
+    /// Chaos is BYOK-first: this defaults **off**. Enterprise OIDC (`oidc` in
+    /// config.toml) always wins when configured. The only call site is the ACP
+    /// `authenticate` handler for an explicit OIDC method id — Chaos does not
+    /// advertise that method in `auth_methods`, so the path is gated above.
     ///
-    /// Priority: `--oauth` > GROK_OAUTH_ENABLED env > default (true = OAuth).
+    /// Priority: `--oauth` / ACP `use_oauth` > `GROK_OAUTH_ENABLED` env >
+    /// default (`false` = no xAI OAuth fallback).
     pub fn resolve_grok_oauth(&self, cli_oidc: Option<bool>) -> Resolved<bool> {
         BoolFlag::env("GROK_OAUTH_ENABLED")
             .cli(cli_oidc)
-            .default(true)
+            .default(false)
             .resolve()
     }
     /// Resolve whether to spawn the per-`Ready`-client transport

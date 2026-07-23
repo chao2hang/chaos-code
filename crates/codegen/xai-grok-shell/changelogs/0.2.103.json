@@ -36,7 +36,7 @@
   },
   {
     "category": "fixes",
-    "description": "**grok wrap** now restores the terminal after SSH disconnects or other abrupt child exits.",
+    "description": "**chaos wrap** now restores the terminal after SSH disconnects or other abrupt child exits.",
     "breaking_change": false
   },
   {
@@ -46,12 +46,12 @@
   },
   {
     "category": "fixes",
-    "description": "**Voice speech-to-text** now works with per-model API keys in config.toml without requiring `grok login`.",
+    "description": "**Voice speech-to-text** now works with per-model API keys in config.toml without requiring `chaos login`.",
     "breaking_change": false
   },
   {
     "category": "features",
-    "description": "**SSH sessions** now show a one-time tip recommending `grok wrap ssh <host>` for clipboard and terminal restore.",
+    "description": "**SSH sessions** now show a one-time tip recommending `chaos wrap ssh <host>` for clipboard and terminal restore.",
     "breaking_change": false
   },
   {

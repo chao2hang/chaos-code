@@ -23,13 +23,17 @@ pub use error::MarketplaceError;
 pub use scanner::scan_marketplace;
 pub use types::*;
 
-/// Display name of the official xAI marketplace source.
-pub const OFFICIAL_SOURCE_NAME: &str = "xAI Official";
+/// Display name of the built-in official marketplace source (UI group label).
+///
+/// Chaos does not advertise an xAI-branded marketplace; this label is neutral.
+/// URL identity is still matched via [`is_official_source_url`].
+pub const OFFICIAL_SOURCE_NAME: &str = "Official Marketplace";
 
-/// Git URL of the official xAI marketplace source. Auto-registered on first run.
+/// Git URL of the built-in official marketplace source. Auto-registration is
+/// off by default in Chaos (`resolve_official_marketplace_auto_register`).
 pub const OFFICIAL_SOURCE_GIT_URL: &str = "https://github.com/xai-org/plugin-marketplace.git";
 
-/// Whether `url` is the official xAI marketplace source, normalizing case, a
+/// Whether `url` is the built-in official marketplace source, normalizing case, a
 /// `www.` prefix, a trailing `/` or `.git`, and HTTPS/SSH forms before comparing.
 pub fn is_official_source_url(url: &str) -> bool {
     canonical_github_owner_repo(url).as_deref() == Some("xai-org/plugin-marketplace")

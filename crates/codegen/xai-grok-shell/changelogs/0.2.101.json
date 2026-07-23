@@ -6,7 +6,7 @@
   },
   {
     "category": "features",
-    "description": "**grok inspect** now shows effective compatibility settings for Cursor, Claude, and Codex sessions.",
+    "description": "**chaos inspect** now shows effective compatibility settings for Cursor, Claude, and Codex sessions.",
     "breaking_change": false
   },
   {
@@ -21,7 +21,7 @@
   },
   {
     "category": "fixes",
-    "description": "**Resume hint** after quitting minimal mode now prints the correct grok --minimal --resume command.",
+    "description": "**Resume hint** after quitting minimal mode now prints the correct chaos --minimal --resume command.",
     "breaking_change": false
   },
   {

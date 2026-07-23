@@ -26,7 +26,7 @@
   },
   {
     "category": "fixes",
-    "description": "**grok quit** no longer hangs when background git or network tasks are slow.",
+    "description": "**chaos quit** no longer hangs when background git or network tasks are slow.",
     "breaking_change": false
   },
   {
@@ -71,7 +71,7 @@
   },
   {
     "category": "features",
-    "description": "**grok sessions delete <id>** command now lets you permanently remove a session from the CLI.",
+    "description": "**chaos sessions delete <id>** command now lets you permanently remove a session from the CLI.",
     "breaking_change": false
   },
   {

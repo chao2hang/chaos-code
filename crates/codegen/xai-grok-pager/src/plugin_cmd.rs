@@ -1078,12 +1078,12 @@ mod tests {
     #[test]
     fn trust_prompt_marketplace_has_no_error_framing() {
         let msg = trust_prompt(
-            "\"sentry\" from marketplace \"xAI Official\"",
+            "\"sentry\" from marketplace \"Official Marketplace\"",
             "sentry@xai-org/plugin-marketplace",
         );
         assert!(
             msg.starts_with(
-                "Installing \"sentry\" from marketplace \"xAI Official\" requires confirmation."
+                "Installing \"sentry\" from marketplace \"Official Marketplace\" requires confirmation."
             ),
             "{msg}"
         );

@@ -41,7 +41,7 @@
   },
   {
     "category": "features",
-    "description": "**grok setup --json** prints your team's managed configuration without installing it.",
+    "description": "**chaos setup --json** prints your team's managed configuration without installing it.",
     "breaking_change": false
   },
   {

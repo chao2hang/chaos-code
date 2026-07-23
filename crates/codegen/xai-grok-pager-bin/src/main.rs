@@ -268,7 +268,7 @@ async fn kill_leaders() -> Result<()> {
         };
         if !xai_grok_shell::util::is_grok_process(pid) {
             if let Some(ref lock) = d.lock_path {
-                eprintln!("  PID {pid} is not a grok process, removing stale lock");
+                eprintln!("  PID {pid} 不是 chaos 进程，正在移除陈旧锁文件");
                 let _ = std::fs::remove_file(lock);
                 cleaned += 1;
             }
@@ -421,8 +421,7 @@ async fn run_workspace_mgmt(args: WorkspaceMgmtArgs) -> Result<()> {
         WorkspaceGate::Enabled => {}
         WorkspaceGate::Disabled => {
             anyhow::bail!(
-                "`grok workspace` is not enabled for this account \
-             (gated by a server-side feature flag that is currently off)."
+                "`chaos workspace` 未对本账号启用（服务端功能开关当前为关闭）。"
             )
         }
         WorkspaceGate::Unknown => {
@@ -481,8 +480,8 @@ async fn connect_workspace_control(
     .await
     .map_err(|e| {
         anyhow::anyhow!(
-            "no running leader for this environment ({e}). \
-             Start a grok session, or run `grok workspace start`."
+            "当前环境没有运行中的 leader（{e}）。\
+             请先启动 chaos 会话，或运行 `chaos workspace start`。"
         )
     })
 }
@@ -1783,8 +1782,8 @@ async fn async_main(args: PagerArgs) -> Result<()> {
                         "--no-leader"
                     };
                     anyhow::bail!(
-                        "top-level {flag} applies to the pager TUI, not the agent subcommand. \
-                         Use `grok-pager agent {flag}` instead."
+                        "顶层 {flag} 仅作用于 pager TUI，不适用于 agent 子命令。\
+                         请改用 `chaos agent {flag}`。"
                     );
                 }
                 enforce_minimum_version_or_exit(&update_config).await;

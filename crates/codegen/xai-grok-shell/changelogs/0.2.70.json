@@ -1,7 +1,7 @@
 [
   {
     "category": "breaking",
-    "description": "**Added `grok wrap`** to run any command with local clipboard support.",
+    "description": "**Added `chaos wrap`** to run any command with local clipboard support.",
     "breaking_change": true
   },
   {
@@ -16,7 +16,7 @@
   },
   {
     "category": "fixes",
-    "description": "**Fixed `grok agent stdio` startup hangs** on Windows when used with persistent clients such as VS Code or grok-desktop.",
+    "description": "**Fixed `chaos agent stdio` startup hangs** on Windows when used with persistent clients such as VS Code or chaos-desktop.",
     "breaking_change": false
   },
   {

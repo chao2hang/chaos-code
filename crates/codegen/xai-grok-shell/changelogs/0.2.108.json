@@ -11,12 +11,12 @@
   },
   {
     "category": "features",
-    "description": "**grok doctor** now shows standalone terminal, tmux, clipboard, and keyboard diagnostics without starting the TUI.",
+    "description": "**chaos doctor** now shows standalone terminal, tmux, clipboard, and keyboard diagnostics without starting the TUI.",
     "breaking_change": false
   },
   {
     "category": "fixes",
-    "description": "**Image paste** over grok wrap now works on headless remotes.",
+    "description": "**Image paste** over chaos wrap now works on headless remotes.",
     "breaking_change": false
   }
 ]

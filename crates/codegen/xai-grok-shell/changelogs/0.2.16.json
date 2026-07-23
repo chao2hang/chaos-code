@@ -36,7 +36,7 @@
   },
   {
     "category": "features",
-    "description": "**grok inspect** now shows the resolved on/off state and source for every Claude/Cursor compatibility toggle.",
+    "description": "**chaos inspect** now shows the resolved on/off state and source for every Claude/Cursor compatibility toggle.",
     "breaking_change": false
   },
   {
