@@ -124,7 +124,7 @@ impl WebFetchToolCallBlock {
             theme.fg(theme.command)
         };
 
-        let prefix = "Fetch ";
+        let prefix = "抓取 ";
         let display_url = match max_width {
             Some(w) => truncate_str(&self.url, w.saturating_sub(prefix.len())),
             None => self.url.clone(),

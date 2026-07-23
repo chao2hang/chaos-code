@@ -131,7 +131,7 @@ impl SearchToolCallBlock {
             theme.fg(theme.command)
         };
 
-        let prefix = "Search Tools ";
+        let prefix = "搜索工具 ";
 
         match max_width {
             Some(w) => {

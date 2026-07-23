@@ -743,7 +743,7 @@ pub struct EditToolCallBlock {
     pub started_at: Option<std::time::Instant>,
     /// Elapsed time in ms after completion (Phase 2: time tracking).
     pub elapsed_ms: Option<i64>,
-    /// Header prefix (e.g. "Edit " or "Creating ").
+    /// Header prefix (e.g. "编辑 " or "Creating ").
     pub prefix: &'static str,
     pub display_name: Option<String>,
     /// One-liner summary can't be trusted: the call touched multiple files
@@ -791,9 +791,9 @@ impl EditToolCallBlock {
             started_at: None,
             elapsed_ms: None,
             prefix: if display_name.is_some() {
-                "Editing workflow "
+                "编辑工作流 "
             } else {
-                "Edit "
+                "编辑 "
             },
             display_name,
             summary_untrusted: false,
@@ -803,8 +803,16 @@ impl EditToolCallBlock {
     }
 
     pub fn with_prefix(mut self, prefix: &'static str) -> Self {
-        self.prefix = if self.display_name.is_some() && prefix == "Creating " {
-            "Creating workflow "
+        self.prefix = if self.display_name.is_some()
+            && (prefix == "Creating " || prefix == "创建 ")
+        {
+            "创建工作流 "
+        } else if prefix == "Creating " {
+            "创建 "
+        } else if prefix == "编辑 " {
+            "编辑 "
+        } else if prefix == "Editing workflow " {
+            "编辑工作流 "
         } else {
             prefix
         };
@@ -961,7 +969,7 @@ impl EditToolCallBlock {
                 }
             } else if collapsed && self.edit_count > 1 {
                 vec![Span::styled(
-                    format!(" ({} edits)", self.edit_count),
+                    format!(" ({} 处修改)", self.edit_count),
                     detail_style,
                 )]
             } else {
@@ -1219,7 +1227,7 @@ impl EditToolCallBlock {
                     cwd,
                     Some(ctx.content_width()),
                 );
-                // Spans: ["Edit ", path, optional suffix spans...]
+                // Spans: ["编辑 ", path, optional suffix spans...]
                 // Only the path span (index 1) is selectable.
                 let path_end = if line.spans.len() > 2 {
                     2
@@ -1545,7 +1553,7 @@ mod tests {
             None,
         );
         let text: String = header.spans.iter().map(|s| s.content.as_ref()).collect();
-        assert_eq!(text, "Edit src/main.rs");
+        assert_eq!(text, "编辑 src/main.rs");
     }
 
     #[test]
@@ -1563,7 +1571,7 @@ mod tests {
             Some(80),
         );
         let text: String = header.spans.iter().map(|s| s.content.as_ref()).collect();
-        assert_eq!(text, "Edit main.rs (3 edits)");
+        assert_eq!(text, "编辑 main.rs (3 处修改)");
     }
 
     #[test]
@@ -1601,10 +1609,10 @@ mod tests {
             None,
         );
         let text: String = header.spans.iter().map(|s| s.content.as_ref()).collect();
-        assert_eq!(text, "Creating workflow triage");
+        assert_eq!(text, "创建工作流 triage");
 
         let block = EditToolCallBlock::new("scripts/build.rhai", vec![]);
-        assert_eq!(block.prefix, "Edit ");
+        assert_eq!(block.prefix, "编辑 ");
         assert!(block.display_name.is_none());
 
         let block = EditToolCallBlock::new("workflows/wf_0199abc/script.rhai", vec![]);
@@ -1624,11 +1632,11 @@ mod tests {
             None,
             Some(80),
         );
-        // Spans: ["Edit ", basename, " +1", "/", "-1"] — path stays span 1 so
+        // Spans: ["编辑 ", basename, " +1", "/", "-1"] — path stays span 1 so
         // the collapsed arm's selection/link invariant holds. Sole pin of the
         // exact diffstat suffix format.
         assert_eq!(header.spans.len(), 5);
-        assert_eq!(header.spans[0].content.as_ref(), "Edit ");
+        assert_eq!(header.spans[0].content.as_ref(), "编辑 ");
         assert_eq!(header.spans[1].content.as_ref(), "foo.rs");
         assert_eq!(header.spans[2].content.as_ref(), " +1");
         assert_eq!(header.spans[2].style.fg, Some(theme.diff_insert_fg));
@@ -1669,7 +1677,7 @@ mod tests {
             Some(80),
         );
         let text: String = header.spans.iter().map(|s| s.content.as_ref()).collect();
-        assert_eq!(text, "Edit foo.rs");
+        assert_eq!(text, "编辑 foo.rs");
 
         let block = block.with_edit_count(3);
         let header = block.header_line(
@@ -1682,7 +1690,7 @@ mod tests {
             Some(80),
         );
         let text: String = header.spans.iter().map(|s| s.content.as_ref()).collect();
-        assert_eq!(text, "Edit foo.rs (3 edits)");
+        assert_eq!(text, "编辑 foo.rs (3 处修改)");
     }
 
     #[test]
@@ -1704,7 +1712,7 @@ mod tests {
         assert_eq!(output.lines.len(), 1, "collapsed shows the header only");
         // Exact suffix format is pinned by header_diffstat_spans_use_diff_colors.
         let text = line_to_string(&output.lines[0].content);
-        assert!(text.starts_with("Edit foo.rs"), "header line: {text:?}");
+        assert!(text.starts_with("编辑 foo.rs"), "header line: {text:?}");
         assert!(!text.contains("let y"), "no diff body while collapsed");
     }
 
@@ -1724,7 +1732,7 @@ mod tests {
             None,
         );
         let text: String = header.spans.iter().map(|s| s.content.as_ref()).collect();
-        assert_eq!(text, "Edit src/foo.rs");
+        assert_eq!(text, "编辑 src/foo.rs");
 
         let mut ctx = test_ctx();
         ctx.mode = DisplayMode::Expanded;
@@ -1736,7 +1744,7 @@ mod tests {
             .flat_map(|l| l.spans.iter())
             .map(|s| s.content.as_ref())
             .collect();
-        assert_eq!(preamble_text, "Edit /Users/me/project/src/foo.rs");
+        assert_eq!(preamble_text, "编辑 /Users/me/project/src/foo.rs");
     }
 
     #[test]
@@ -1807,7 +1815,7 @@ mod tests {
                 // Mirrors production: expanded headers are prefix + path only
                 // (the diffstat suffix is collapsed-only, and collapsed
                 // headers never reach wrap_edit_header).
-                let header = Line::from(vec![Span::raw("Edit "), Span::raw(path.to_owned())]);
+                let header = Line::from(vec![Span::raw("编辑 "), Span::raw(path.to_owned())]);
                 let wrapped = wrap_edit_header(header, width, 2);
                 let mut reassembled = String::new();
 

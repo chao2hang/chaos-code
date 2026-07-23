@@ -255,7 +255,7 @@ impl SearchToolCallBlock {
             theme.fg(theme.path)
         };
 
-        let mut spans = vec![Span::styled("Search ".to_string(), bold_style)];
+        let mut spans = vec![Span::styled("搜索 ".to_string(), bold_style)];
 
         // Search term: either promoted glob or quoted pattern
         if self.is_trivial_pattern()
@@ -269,7 +269,7 @@ impl SearchToolCallBlock {
 
             // Case 2: glob shown as first "in" scope (string-styled, not path)
             if let Some(ref glob) = self.meta.glob {
-                spans.push(Span::styled(" in ".to_string(), text_style));
+                spans.push(Span::styled(" 于 ".to_string(), text_style));
                 spans.push(Span::styled(glob.to_string(), pattern_style));
             }
         }

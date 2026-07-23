@@ -187,7 +187,7 @@ impl BlockContent for SubagentBlock {
 
         let line = match (&self.kind, self.is_background) {
             (SubagentBlockKind::Started, bg) => {
-                let verb = if bg { "started: " } else { "running: " };
+                let verb = if bg { "已启动：" } else { "运行中：" };
                 let activity_suffix: String = self
                     .activity_label
                     .as_deref()
@@ -199,11 +199,13 @@ impl BlockContent for SubagentBlock {
                     self.role.as_deref(),
                     self.model.as_deref(),
                 );
-                // "Subagent running: " / "Subagent started: " = 18 chars
-                let overhead = 18 + meta.width() + activity_suffix.width();
+                // Display width of "子代理" + verb (CJK-aware overhead for truncation).
+                let label_w = unicode_width::UnicodeWidthStr::width("子代理")
+                    + unicode_width::UnicodeWidthStr::width(verb);
+                let overhead = label_w + meta.width() + activity_suffix.width();
                 let desc = quoted_desc(&self.description, w.saturating_sub(overhead));
                 let mut spans = vec![
-                    Span::styled("Subagent ", bold),
+                    Span::styled("子代理", bold),
                     Span::styled(verb, muted),
                     Span::styled(desc, muted),
                 ];
@@ -213,42 +215,46 @@ impl BlockContent for SubagentBlock {
                 spans.push(Span::styled(meta, muted));
                 Line::from(spans)
             }
-            // Completed: Subagent completed in Xs: "description"
+            // Completed: 子代理已完成（用时 Xs）："description"
             (SubagentBlockKind::Completed { elapsed }, _) => {
                 let time_str = format_duration(*elapsed);
-                // "Subagent completed in Xs: " = 26 + time_str.len()
-                let prefix_len = 26 + time_str.len();
+                let verb = format!("已完成（用时 {time_str}）：");
+                let prefix_len = unicode_width::UnicodeWidthStr::width("子代理")
+                    + unicode_width::UnicodeWidthStr::width(verb.as_str());
                 let desc = quoted_desc(&self.description, w.saturating_sub(prefix_len));
                 Line::from(vec![
-                    Span::styled("Subagent ", bold),
-                    Span::styled(format!("completed in {time_str}: "), muted),
+                    Span::styled("子代理", bold),
+                    Span::styled(verb, muted),
                     Span::styled(desc, muted),
                 ])
             }
-            // Failed: Subagent failed in Xs: "description"
+            // Failed: 子代理失败（用时 Xs）："description"
             (SubagentBlockKind::Failed { elapsed, error }, _) => {
                 let time_str = format_duration(*elapsed);
                 let detail = error
                     .as_deref()
-                    .map(|e| format!(" ({e})"))
+                    .map(|e| format!("（{e}）"))
                     .unwrap_or_default();
-                let prefix_len = 21 + time_str.len() + detail.len();
+                let verb = format!("失败（用时 {time_str}{detail}）：");
+                let prefix_len = unicode_width::UnicodeWidthStr::width("子代理")
+                    + unicode_width::UnicodeWidthStr::width(verb.as_str());
                 let desc = quoted_desc(&self.description, w.saturating_sub(prefix_len));
                 Line::from(vec![
-                    Span::styled("Subagent ", bold),
-                    Span::styled(format!("failed in {time_str}{detail}: "), muted),
+                    Span::styled("子代理", bold),
+                    Span::styled(verb, muted),
                     Span::styled(desc, muted),
                 ])
             }
-            // Cancelled: Subagent cancelled in Xs: "description"
+            // Cancelled: 子代理已取消（用时 Xs）："description"
             (SubagentBlockKind::Cancelled { elapsed }, _) => {
                 let time_str = format_duration(*elapsed);
-                // "Subagent cancelled in Xs: " = 26 + time_str.len()
-                let prefix_len = 26 + time_str.len();
+                let verb = format!("已取消（用时 {time_str}）：");
+                let prefix_len = unicode_width::UnicodeWidthStr::width("子代理")
+                    + unicode_width::UnicodeWidthStr::width(verb.as_str());
                 let desc = quoted_desc(&self.description, w.saturating_sub(prefix_len));
                 Line::from(vec![
-                    Span::styled("Subagent ", bold),
-                    Span::styled(format!("cancelled in {time_str}: "), muted),
+                    Span::styled("子代理", bold),
+                    Span::styled(verb, muted),
                     Span::styled(desc, muted),
                 ])
             }
