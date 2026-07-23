@@ -112,6 +112,40 @@ pub fn default_home_display_prefix() -> &'static str {
     }
 }
 
+/// Project-local config directory names in **merge order** (lower → higher
+/// priority). Legacy `.grok` is listed first so a co-located `.chaos` layer
+/// wins when both exist at the same path depth.
+pub fn project_config_dirnames() -> [&'static str; 2] {
+    [LEGACY_GROK_HOME_DIRNAME, CHAOS_HOME_DIRNAME]
+}
+
+/// Candidate `config.toml` paths under `dir` for both project dirnames,
+/// in merge order (see [`project_config_dirnames`]).
+pub fn project_config_toml_candidates(dir: &Path) -> [PathBuf; 2] {
+    [
+        dir.join(LEGACY_GROK_HOME_DIRNAME).join("config.toml"),
+        dir.join(CHAOS_HOME_DIRNAME).join("config.toml"),
+    ]
+}
+
+/// Resolve which project-local config root to use for **new writes** under
+/// `project_root`: prefer existing `.chaos`, else existing `.grok`, else
+/// default `.chaos`. Same dual-read policy as [`resolve_default_home_under`];
+/// never creates or overwrites either tree.
+pub fn resolve_project_config_dir(project_root: &Path) -> PathBuf {
+    resolve_default_home_under(project_root)
+}
+
+/// Existing project-local config roots under `project_root` (both `.chaos` and
+/// `.grok` when present), in merge order. Empty when neither directory exists.
+pub fn existing_project_config_dirs(project_root: &Path) -> Vec<PathBuf> {
+    project_config_dirnames()
+        .into_iter()
+        .map(|name| project_root.join(name))
+        .filter(|p| p.is_dir())
+        .collect()
+}
+
 /// Canonical grok application path: `$GROK_HOME/bin/grok` (Unix) or `grok.exe` (Windows).
 pub fn grok_application() -> PathBuf {
     grok_application_in(&grok_home())

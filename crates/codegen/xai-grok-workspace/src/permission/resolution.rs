@@ -215,31 +215,8 @@ fn load_requirements_permissions() -> Vec<Sourced<PermissionRule>> {
 /// Returned paths are ordered from repo root (lowest priority) to `cwd`
 /// (highest priority), matching `xai-grok-shell::config::find_project_configs`.
 fn find_project_grok_configs(cwd: &Path) -> Vec<PathBuf> {
-    let git_root = git2::Repository::discover(cwd)
-        .ok()
-        .and_then(|repo| repo.workdir().map(|p| p.to_path_buf()));
-
-    let mut configs = Vec::new();
-    if let Some(ref root) = git_root {
-        let mut current = Some(cwd.to_path_buf());
-        while let Some(dir) = current {
-            let p = dir.join(".grok").join("config.toml");
-            if p.is_file() {
-                configs.push(p);
-            }
-            if dir == *root {
-                break;
-            }
-            current = dir.parent().map(|p| p.to_path_buf());
-        }
-        configs.reverse();
-    } else {
-        let p = cwd.join(".grok").join("config.toml");
-        if p.is_file() {
-            configs.push(p);
-        }
-    }
-    configs
+    // Dual-read via shared project config discovery (`.chaos` + `.grok`).
+    crate::project_config::find_project_configs(cwd)
 }
 
 /// Load `[permission]` rules from native Grok TOML config files:

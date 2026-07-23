@@ -358,14 +358,14 @@ impl CompatConfig {
     }
 
     /// Config directories that may contain `skills/` subdirectories, in
-    /// priority order. `.grok` and `.agents` are always included; `.claude`
-    /// and `.cursor` are gated on their respective `skills` cell.
+    /// priority order. `.grok` / `.chaos` and `.agents` are always included;
+    /// `.claude` and `.cursor` are gated on their respective `skills` cell.
     ///
-    /// Replaces the hard-coded `[".grok", ".agents", ".claude", ".cursor"]`
-    /// in `collect_skill_config_dirs`. When all cells are on, the returned
-    /// list is identical to the historical constant.
+    /// Within the same depth, `.grok` is listed before `.chaos` so Chaos wins
+    /// when both ship the same skill name. Replaces the hard-coded
+    /// `[".grok", ".agents", ".claude", ".cursor"]` in `collect_skill_config_dirs`.
     pub fn skill_config_dirs(&self) -> Vec<&'static str> {
-        let mut dirs = vec![".grok", ".agents"];
+        let mut dirs = vec![".grok", ".chaos", ".agents"];
         if self.claude.skills {
             dirs.push(".claude");
         }
@@ -375,14 +375,13 @@ impl CompatConfig {
         dirs
     }
 
-    /// Subdirectories scanned for `*.md` rules files. `.grok/rules` is always
-    /// included; `.claude/rules` and `.cursor/rules` are gated on their
-    /// respective `rules` cell.
+    /// Subdirectories scanned for `*.md` rules files. `.grok/rules` /
+    /// `.chaos/rules` are always included; `.claude/rules` and `.cursor/rules`
+    /// are gated on their respective `rules` cell.
     ///
-    /// Replaces the hard-coded `RULES_DIRS` constant. When all cells are on,
-    /// the returned list is identical.
+    /// Replaces the hard-coded `RULES_DIRS` constant.
     pub fn rules_dirs(&self) -> Vec<&'static str> {
-        let mut dirs = vec![".grok/rules"];
+        let mut dirs = vec![".grok/rules", ".chaos/rules"];
         if self.claude.rules {
             dirs.push(".claude/rules");
         }
@@ -510,11 +509,11 @@ mod tests {
     }
 
     #[test]
-    fn skill_config_dirs_all_on_matches_legacy_constant() {
-        // Historical constant was `[".grok", ".agents", ".claude", ".cursor"]`.
+    fn skill_config_dirs_all_on_includes_chaos() {
+        // Chaos dual-read: `.chaos` sits after `.grok` so it wins on name clash.
         assert_eq!(
             CompatConfig::default().skill_config_dirs(),
-            vec![".grok", ".agents", ".claude", ".cursor"]
+            vec![".grok", ".chaos", ".agents", ".claude", ".cursor"]
         );
     }
 
@@ -522,23 +521,33 @@ mod tests {
     fn skill_config_dirs_gates_each_vendor() {
         let mut c = CompatConfig::default();
         c.cursor.skills = false;
-        assert_eq!(c.skill_config_dirs(), vec![".grok", ".agents", ".claude"]);
+        assert_eq!(
+            c.skill_config_dirs(),
+            vec![".grok", ".chaos", ".agents", ".claude"]
+        );
 
         c.claude.skills = false;
-        assert_eq!(c.skill_config_dirs(), vec![".grok", ".agents"]);
+        assert_eq!(c.skill_config_dirs(), vec![".grok", ".chaos", ".agents"]);
 
         // Only the `cursor` cell on (`claude` off): `cursor` still appended last.
         let mut c2 = CompatConfig::default();
         c2.claude.skills = false;
-        assert_eq!(c2.skill_config_dirs(), vec![".grok", ".agents", ".cursor"]);
+        assert_eq!(
+            c2.skill_config_dirs(),
+            vec![".grok", ".chaos", ".agents", ".cursor"]
+        );
     }
 
     #[test]
-    fn rules_dirs_all_on_matches_legacy_constant() {
-        // Historical `RULES_DIRS` was `[".grok/rules", ".claude/rules", ".cursor/rules"]`.
+    fn rules_dirs_all_on_includes_chaos() {
         assert_eq!(
             CompatConfig::default().rules_dirs(),
-            vec![".grok/rules", ".claude/rules", ".cursor/rules"]
+            vec![
+                ".grok/rules",
+                ".chaos/rules",
+                ".claude/rules",
+                ".cursor/rules"
+            ]
         );
     }
 
@@ -546,9 +555,12 @@ mod tests {
     fn rules_dirs_gates_each_vendor() {
         let mut c = CompatConfig::default();
         c.cursor.rules = false;
-        assert_eq!(c.rules_dirs(), vec![".grok/rules", ".claude/rules"]);
+        assert_eq!(
+            c.rules_dirs(),
+            vec![".grok/rules", ".chaos/rules", ".claude/rules"]
+        );
         c.claude.rules = false;
-        assert_eq!(c.rules_dirs(), vec![".grok/rules"]);
+        assert_eq!(c.rules_dirs(), vec![".grok/rules", ".chaos/rules"]);
     }
 
     #[test]

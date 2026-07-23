@@ -1,5 +1,6 @@
 //! Project config-file discovery: locating repo-local `.mcp.json` and
-//! `.grok/config.toml` files by walking from `cwd` up to the git root.
+//! `.chaos/config.toml` / `.grok/config.toml` files by walking from `cwd`
+//! up to the git root.
 //!
 //! These pure `git2` + filesystem walks are shared by the shell's config
 //! loaders and the folder-trust gate's `repo_configs_present`.
@@ -57,20 +58,22 @@ fn is_user_grok_config_file(config_path: &Path) -> bool {
     canonical_config == canonical_user
 }
 
-/// Find all `.grok/config.toml` files from `cwd` upward to the git repo root.
-/// Returns paths ordered from repo root (lowest priority) to cwd (highest priority),
-/// matching the convention used by skills and AGENTS.md discovery.
+/// Find all project `config.toml` files from `cwd` upward to the git repo root.
 ///
-/// If no git repo is found, only checks `cwd/.grok/config.toml`. Excludes the
-/// user-global config so `cwd == $HOME` does not treat `~/.grok/config.toml` as
-/// a project overlay.
+/// Dual-read: both `.chaos/config.toml` and legacy `.grok/config.toml` are
+/// collected. Order is repo root → cwd (lowest → highest priority). Within the
+/// same depth, `.grok` is emitted before `.chaos` so Chaos wins when both exist.
+///
+/// If no git repo is found, only checks under `cwd`. Excludes the user-global
+/// config so `cwd == $HOME` does not treat `~/.chaos/config.toml` /
+/// `~/.grok/config.toml` as a project overlay.
 pub fn find_project_configs(cwd: &Path) -> Vec<PathBuf> {
     find_project_configs_in(&RepoDirChain::resolve(cwd).dirs)
 }
 
 /// [`find_project_configs`] over a precomputed cwd→git-root dir chain
 /// ([`RepoDirChain`]), repo-root-first. Excludes the user-global config so
-/// `cwd == $HOME` does not treat `~/.grok/config.toml` as a project overlay.
+/// `cwd == $HOME` does not treat the user home config as a project overlay.
 /// `pub(crate)` — the gate (`repo_configs_present`) reaches it within this crate.
 pub(crate) fn find_project_configs_in(chain_dirs: &[PathBuf]) -> Vec<PathBuf> {
     // `dirs` is cwd-first; reverse so repo root comes first (lowest priority)
@@ -78,7 +81,7 @@ pub(crate) fn find_project_configs_in(chain_dirs: &[PathBuf]) -> Vec<PathBuf> {
     chain_dirs
         .iter()
         .rev()
-        .map(|dir| dir.join(".grok").join("config.toml"))
+        .flat_map(|dir| xai_grok_config::project_config_toml_candidates(dir))
         .filter(|config_path| config_path.is_file() && !is_user_grok_config_file(config_path))
         .collect()
 }
@@ -111,5 +114,33 @@ mod tests {
         let found = find_project_configs(&project);
         assert_eq!(found.len(), 1);
         assert!(!is_user_grok_config_file(&found[0]));
+    }
+
+    #[test]
+    fn find_project_configs_prefers_chaos_after_legacy_at_same_depth() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project = tmp.path().join("repo");
+        std::fs::create_dir_all(project.join(".grok")).unwrap();
+        std::fs::create_dir_all(project.join(".chaos")).unwrap();
+        std::fs::write(project.join(".grok/config.toml"), "# legacy\n").unwrap();
+        std::fs::write(project.join(".chaos/config.toml"), "# chaos\n").unwrap();
+        let found = find_project_configs(&project);
+        assert_eq!(found.len(), 2);
+        assert!(found[0].ends_with(".grok/config.toml") || found[0].ends_with(".grok\\config.toml"));
+        assert!(
+            found[1].ends_with(".chaos/config.toml") || found[1].ends_with(".chaos\\config.toml")
+        );
+    }
+
+    #[test]
+    fn find_project_configs_reads_chaos_only() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project = tmp.path().join("repo");
+        std::fs::create_dir_all(project.join(".chaos")).unwrap();
+        std::fs::write(project.join(".chaos/config.toml"), "# chaos\n").unwrap();
+        let found = find_project_configs(&project);
+        assert_eq!(found.len(), 1);
+        assert!(found[0].ends_with("config.toml"));
+        assert!(found[0].to_string_lossy().contains(".chaos"));
     }
 }

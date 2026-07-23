@@ -327,8 +327,10 @@ fn collect_repo_config_kinds(cwd: &Path, first_only: bool) -> Vec<&'static str> 
             hit!("plugins");
         }
     }
-    // Project `.grok/lsp.json`.
-    if cwd.join(".grok").join("lsp.json").is_file() {
+    // Project `.chaos/lsp.json` or legacy `.grok/lsp.json`.
+    if cwd.join(".chaos").join("lsp.json").is_file()
+        || cwd.join(".grok").join("lsp.json").is_file()
+    {
         hit!("lsp");
     }
     // Project `.cursor/mcp.json` — vendor MCP loading is default-on and tagged
@@ -363,7 +365,8 @@ fn collect_repo_config_kinds(cwd: &Path, first_only: bool) -> Vec<&'static str> 
     // resolve trusted and run ungated. Presence mirrors discovery's "something to
     // gate" check.
     let hook_root = chain.git_root.as_deref().unwrap_or(cwd);
-    if path_present_or_uncertain(&hook_root.join(".grok").join("hooks"))
+    if path_present_or_uncertain(&hook_root.join(".chaos").join("hooks"))
+        || path_present_or_uncertain(&hook_root.join(".grok").join("hooks"))
         || hook_root.join(".cursor").join("hooks.json").is_file()
     {
         hit!("hooks");
@@ -386,14 +389,18 @@ fn collect_repo_config_kinds(cwd: &Path, first_only: bool) -> Vec<&'static str> 
         hit!("agents");
     }
     // Presence matches exact-cwd discovery without parsing repository content.
-    let grok = cwd.join(".grok");
-    if directory_present_or_uncertain(&grok.join("roles")) {
-        hit!("roles");
+    // Dual-read project dirs: Chaos and legacy Grok.
+    for project_dir in [cwd.join(".chaos"), cwd.join(".grok")] {
+        if directory_present_or_uncertain(&project_dir.join("roles")) {
+            hit!("roles");
+        }
+        if directory_present_or_uncertain(&project_dir.join("personas")) {
+            hit!("personas");
+        }
     }
-    if directory_present_or_uncertain(&grok.join("personas")) {
-        hit!("personas");
-    }
-    if directory_present_or_uncertain(&hook_root.join(".grok").join("workflows")) {
+    if directory_present_or_uncertain(&hook_root.join(".chaos").join("workflows"))
+        || directory_present_or_uncertain(&hook_root.join(".grok").join("workflows"))
+    {
         hit!("workflows");
     }
     // `~/.claude.json` `projects.<cwd>.mcpServers`.

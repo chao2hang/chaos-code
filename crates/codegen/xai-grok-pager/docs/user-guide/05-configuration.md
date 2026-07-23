@@ -744,12 +744,12 @@ User home below means the resolved config root (`$CHAOS_HOME` / `$GROK_HOME` / d
 | `~/.chaos/agents/` or `~/.grok/agents/` | User-scoped agent definitions |
 | `~/.chaos/lsp.json` or `~/.grok/lsp.json` | LSP server configuration (user-scoped) |
 | `~/.chaos/logs/` or `~/.grok/logs/` | Internal log files (e.g. `unified.jsonl`, MCP server logs) |
-| `.grok/config.toml` | Project-scoped MCP servers, plugins, and permission rules |
-| `.grok/skills/` | Project-scoped skill definitions |
-| `.grok/plugins/` | Project-scoped plugins |
-| `.grok/agents/` | Project-scoped agent definitions |
-| `.grok/hooks/` | Project-scoped hooks |
-| `.grok/lsp.json` | LSP server configuration |
+| `.chaos/config.toml` or `.grok/config.toml` | Project-scoped MCP servers, plugins, and permission rules (both dual-read; Chaos wins on conflict) |
+| `.chaos/skills/` or `.grok/skills/` | Project-scoped skill definitions |
+| `.chaos/plugins/` or `.grok/plugins/` | Project-scoped plugins |
+| `.chaos/agents/` or `.grok/agents/` | Project-scoped agent definitions |
+| `.chaos/hooks/` or `.grok/hooks/` | Project-scoped hooks |
+| `.chaos/lsp.json` or `.grok/lsp.json` | LSP server configuration |
 
 ---
 

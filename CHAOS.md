@@ -30,6 +30,17 @@ cargo run -p xai-grok-pager-bin
 
 因此旧用户可继续用 `~/.grok/config.toml`；新安装写入 `~/.chaos/`。若要主动迁到 Chaos 目录，自行复制/移动配置到 `~/.chaos` 即可，程序不会改写 `~/.grok`。
 
+**项目级**配置同样双读，不会覆盖任一侧：
+
+| 路径 | 说明 |
+|------|------|
+| `.chaos/config.toml` / `.grok/config.toml` | 项目 MCP、plugins、permission 等 |
+| `.chaos/skills/` / `.grok/skills/` | 项目 skills（同名时 Chaos 优先） |
+| `.chaos/hooks/` / `.grok/hooks/` | 项目 hooks |
+| `.chaos/agents/` / `.grok/agents/` | 项目 agent 定义 |
+| `.chaos/plugins/` / `.grok/plugins/` | 项目 plugins |
+| `.chaos/sandbox.toml` / `.grok/sandbox.toml` | 项目沙箱配置 |
+
 推荐使用 `model_providers` 复用同一提供商的连接和认证设置，再用 `model` 定义具体模型。
 密钥优先放在环境变量中，不要把密钥提交到 Git。
 
