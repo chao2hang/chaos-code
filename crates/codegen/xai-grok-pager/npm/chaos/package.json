@@ -1,6 +1,6 @@
 {
     "name": "chaos-code",
-    "version": "0.2.110",
+    "version": "0.2.111",
     "description": "Chaos terminal AI coding assistant (BYOK). Binary name: chaos.",
     "license": "Apache-2.0",
     "bin": {
@@ -45,11 +45,11 @@
         "@iarna/toml": "^3.0.0"
     },
     "optionalDependencies": {
-        "chaos-code-darwin-arm64": "0.2.110",
-        "chaos-code-darwin-x64": "0.2.110",
-        "chaos-code-linux-arm64": "0.2.110",
-        "chaos-code-linux-x64": "0.2.110",
-        "chaos-code-win32-arm64": "0.2.110",
-        "chaos-code-win32-x64": "0.2.110"
+        "chaos-code-darwin-arm64": "0.2.111",
+        "chaos-code-darwin-x64": "0.2.111",
+        "chaos-code-linux-arm64": "0.2.111",
+        "chaos-code-linux-x64": "0.2.111",
+        "chaos-code-win32-arm64": "0.2.111",
+        "chaos-code-win32-x64": "0.2.111"
     }
 }

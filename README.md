@@ -33,7 +33,7 @@ chaos --version
 指定版本 / 强制覆盖：
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.sh | bash -s -- --version 0.2.110
+curl -fsSL https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.sh | bash -s -- --version 0.2.111
 curl -fsSL https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.sh | bash -s -- --force
 ```
 
@@ -47,7 +47,7 @@ chaos --version
 指定版本：
 
 ```powershell
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.ps1))) -Version 0.2.110
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.ps1))) -Version 0.2.111
 ```
 
 脚本行为：
@@ -62,9 +62,9 @@ chaos --version
 本地已有仓库时：
 
 ```sh
-./scripts/install.sh --version 0.2.110
+./scripts/install.sh --version 0.2.111
 # Windows:
-# .\scripts\install.ps1 -Version 0.2.110
+# .\scripts\install.ps1 -Version 0.2.111
 ```
 
 ### 自更新（`chaos update`）
@@ -74,7 +74,7 @@ chaos --version
 ```sh
 chaos update
 # 固定版本：
-chaos update --version 0.2.110
+chaos update --version 0.2.111
 ```
 
 默认 installer 为 `gh-release`：从
