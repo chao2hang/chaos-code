@@ -4,10 +4,10 @@
 #   irm https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.ps1 | iex
 #
 # Pin a version:
-#   & ([scriptblock]::Create((irm https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.ps1))) -Version 0.2.110
+#   & ([scriptblock]::Create((irm https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.ps1))) -Version 0.2.111
 #
 # Or clone/download this file:
-#   .\install.ps1 -Version 0.2.110
+#   .\install.ps1 -Version 0.2.111
 #   .\install.ps1 -Dir "$env:USERPROFILE\.chaos\bin" -Force
 #
 # Parameters:
@@ -32,10 +32,16 @@ $BinName = "chaos.exe"
 function Resolve-ChaosHome {
     if ($env:CHAOS_HOME) { return $env:CHAOS_HOME }
     if ($env:GROK_HOME) { return $env:GROK_HOME }
-    $home = $env:USERPROFILE
-    if (-not $home) { $home = $env:HOME }
-    $chaos = Join-Path $home ".chaos"
-    $grok = Join-Path $home ".grok"
+    # Do NOT assign to $HOME / $home — PowerShell automatic variable is read-only
+    # (iex one-liner fails with: Cannot overwrite variable HOME because it is read-only).
+    $userHome = $env:USERPROFILE
+    if (-not $userHome) {
+        try { $userHome = [Environment]::GetFolderPath('UserProfile') } catch { }
+    }
+    if (-not $userHome -and $env:HOME) { $userHome = $env:HOME }
+    if (-not $userHome) { throw "cannot resolve user profile (USERPROFILE/HOME empty)" }
+    $chaos = Join-Path $userHome ".chaos"
+    $grok = Join-Path $userHome ".grok"
     if (Test-Path -LiteralPath $chaos) { return $chaos }
     if (Test-Path -LiteralPath $grok) { return $grok }
     return $chaos
