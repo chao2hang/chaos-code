@@ -154,50 +154,19 @@ impl JsonlStorageAdapter {
     ///
     /// Returns the path to each session directory (not the summary file).
     /// Shared by both `list_sessions` (full scan) and `list_sessions_recent`
-    /// (mtime-based tail).
-    fn scan_session_dirs(&self, cwd: Option<&str>) -> Vec<PathBuf> {
+    /// (mtime-based tail). Uses [`RelocationView`] so in-flight relocations
+    /// fail closed instead of listing both source and target copies.
+    fn scan_session_dirs(&self, cwd: Option<&str>) -> io::Result<Vec<PathBuf>> {
         let root_dir = match &self.dir_mode {
-            SessionDirMode::FromRoot(root) => root.clone(),
-            SessionDirMode::Explicit(_) => return Vec::new(),
+            SessionDirMode::FromRoot(root) => root,
+            SessionDirMode::Explicit(_) => return Ok(Vec::new()),
         };
-        let sessions_root = root_dir.join("sessions");
-        if !sessions_root.exists() {
-            return Vec::new();
-        }
-        let mut scan_cwds: Vec<PathBuf> = Vec::new();
-        if let Some(cwd_str) = cwd {
-            let enc = crate::util::grok_home::encode_cwd_dirname(cwd_str);
-            scan_cwds.push(sessions_root.join(enc));
-        } else {
-            match std::fs::read_dir(&sessions_root) {
-                Ok(it) => {
-                    for entry in it.flatten() {
-                        let p = entry.path();
-                        if p.is_dir() {
-                            scan_cwds.push(p);
-                        }
-                    }
-                }
-                Err(_) => return Vec::new(),
-            }
-        }
-        let mut session_dirs = Vec::new();
-        for cwd_dir in scan_cwds {
-            let it = match std::fs::read_dir(&cwd_dir) {
-                Ok(rd) => rd,
-                Err(_) => continue,
-            };
-            for entry in it.flatten() {
-                let path = entry.path();
-                if path.is_dir() {
-                    session_dirs.push(path);
-                }
-            }
-        }
-        session_dirs
+        crate::session::storage::relocation::RelocationView::load(root_dir)
+            .and_then(|view| view.session_dirs(cwd))
+            .map_err(io::Error::other)
     }
     fn list_sessions_sync(&self, cwd: Option<&str>) -> io::Result<Vec<Summary>> {
-        let session_dirs = self.scan_session_dirs(cwd);
+        let session_dirs = self.scan_session_dirs(cwd)?;
         let mut summaries = Vec::new();
         for session_dir in session_dirs {
             let summary_path = session_dir.join(super::SUMMARY_FILE);
@@ -229,7 +198,7 @@ impl JsonlStorageAdapter {
     /// this reduces cold-boot `workspace_list` from ~3s to ~200ms.
     /// Final order among candidates uses `last_active_at` else `updated_at`.
     pub async fn list_sessions_recent(&self, limit: usize) -> io::Result<Vec<Summary>> {
-        let session_dirs = self.scan_session_dirs(None);
+        let session_dirs = self.scan_session_dirs(None)?;
         let mut candidates: Vec<(PathBuf, std::time::SystemTime)> =
             Vec::with_capacity(session_dirs.len());
         for session_dir in session_dirs {
