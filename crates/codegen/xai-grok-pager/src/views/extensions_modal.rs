@@ -1738,6 +1738,13 @@ pub struct ExtensionsModalState {
     pub plugins_scroll: usize,
     /// Marketplace tab state.
     pub marketplace_data: TabDataState<xai_hooks_plugins_types::MarketplaceListResponse>,
+    /// True while a marketplace list fetch is outstanding. Coalesces overlapping
+    /// refresh requests (open + post-action + deferred session-ready) so network
+    /// work does not pile up; see [`marketplace_refetch_queued`].
+    pub marketplace_fetch_inflight: bool,
+    /// A refetch arrived while one was in flight; it runs when the current
+    /// fetch lands so post-action results stay fresh.
+    pub marketplace_refetch_queued: bool,
     pub marketplace_selected: usize,
     pub marketplace_scroll: usize,
     /// Skills tab state.
@@ -1826,6 +1833,8 @@ impl ExtensionsModalState {
             hooks_scroll: 0,
             plugins_scroll: 0,
             marketplace_data: TabDataState::Loading,
+            marketplace_fetch_inflight: false,
+            marketplace_refetch_queued: false,
             marketplace_selected: 0,
             marketplace_scroll: 0,
             skills_data: TabDataState::Loading,
