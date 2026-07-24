@@ -22,7 +22,7 @@ curl -fsSL https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/i
 irm https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.ps1 | iex
 ```
 
-Pin a version: `bash -s -- --version 0.2.112` / `-Version 0.2.112`.  
+Pin a version: `bash -s -- --version 0.2.113` / `-Version 0.2.113`.  
 Scripts install under `~/.chaos/bin` (or `~/.grok/bin`) and configure PATH.
 
 ### npm
