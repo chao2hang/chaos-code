@@ -29,18 +29,22 @@ const MSG_RUN_UPDATE_MANUAL: &str = "运行 `chaos update` 获取最新版本。
 /// Manual-install one-liner for this platform's bootstrap installer.
 fn manual_install_cmd() -> &'static str {
     if cfg!(windows) {
-        "请从 GitHub Releases 下载最新版本"
+        "irm https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.ps1 | iex"
     } else {
-        "请从 GitHub Releases 下载最新版本"
+        "curl -fsSL https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.sh | bash"
     }
 }
 
 /// Build a reinstall hint for a known installer type.
 fn reinstall_hint(installer: &str) -> String {
     match installer {
-        "npm" => "请通过 npm 重新安装:\n  npm i -g chaos-code".to_string(),
-        "gh-release" => "请通过 GitHub Releases 重新安装:\n  gh release download --repo chao2hang/chaos-code --pattern 'chaos-*' --output chaos && chmod +x chaos".to_string(),
-        _ => format!("请通过以下方式重新安装:\n  {}", manual_install_cmd()),
+        "npm" => "请通过 npm 重新安装:\n  npm i -g chaos-code\n\n或使用 GitHub Release 一键安装:\n  ".to_string()
+            + manual_install_cmd(),
+        // gh-release / internal / unknown all point at our install script.
+        _ => format!(
+            "请通过 GitHub Releases 重新安装:\n  {}",
+            manual_install_cmd()
+        ),
     }
 }
 
@@ -298,9 +302,17 @@ pub async fn get_installer() -> Option<&'static str> {
     }
     let cfg = config::load_config().await;
     match cfg.cli.installer.as_deref() {
-        Some("npm") => Some("npm"),
-        Some("gh-release") => Some("gh-release"),
-        _ => Some("internal"),
+        // Prefer GitHub Releases for Chaos. Stale config.toml may still say
+        // `installer = "npm"` from early ports; only honor npm when the
+        // process is actually npm-managed (env — handled above) or the user
+        // forces GROK_INSTALLER=npm.
+        Some("npm") => Some("gh-release"),
+        Some("gh-release") | Some("gh") => Some("gh-release"),
+        // Chaos ships via GitHub Releases (not xAI GCS). Treat unset /
+        // "internal" config as gh-release so `chaos update` uses our channel.
+        Some("internal") | None => Some("gh-release"),
+        // Unknown explicit values: still prefer our GH channel over npm.
+        Some(_) => Some("gh-release"),
     }
 }
 
@@ -658,7 +670,7 @@ pub fn restart_grok() -> Result<()> {
     }
     cmd.env_clear();
     cmd.envs(std::env::vars_os().filter(|(k, _)| k != "GROK_AUTO_UPDATE"));
-    eprintln!("Restarting Grok...");
+    eprintln!("Restarting Chaos...");
 
     // Use exec on Unix to replace the current process, avoiding stdio issues
     // when the parent exits. On Windows, fall back to spawn + exit.
@@ -1193,10 +1205,10 @@ async fn download_verified_from_base(
     let download_dir = grok_home.join("downloads");
     tokio::fs::create_dir_all(&download_dir).await?;
 
-    let binary_name = format!("grok-{}-{}", version, platform);
+    let binary_name = format!("chaos-{}-{}", version, platform);
     let binary_path = download_dir.join(&binary_name);
 
-    eprintln!("  Downloading grok v{} ({})...", version, platform);
+    eprintln!("  Downloading chaos v{} ({})...", version, platform);
 
     // Published already +x (see `publish_downloaded_artifact`).
     download_cli_artifact_from_gcs(gcs_base_url, &binary_name, &binary_path, true).await?;
@@ -1881,24 +1893,35 @@ async fn heal_managed_install(installer: &str) {
 
 #[cfg(unix)]
 async fn reconcile_agent_to_grok(bin_dir: &std::path::Path) {
-    let grok_link = bin_dir.join("chaos");
+    // Prefer Chaos primary link; fall back to legacy `grok` for dual-read homes.
+    let primary_link = {
+        let chaos = bin_dir.join("chaos");
+        let grok = bin_dir.join("grok");
+        if tokio::fs::symlink_metadata(&chaos).await.is_ok() {
+            chaos
+        } else if tokio::fs::symlink_metadata(&grok).await.is_ok() {
+            grok
+        } else {
+            return;
+        }
+    };
     let agent_link = bin_dir.join("agent");
 
-    let Ok(grok_target) = tokio::fs::read_link(&grok_link).await else {
+    let Ok(primary_target) = tokio::fs::read_link(&primary_link).await else {
         return;
     };
-    if tokio::fs::metadata(&grok_link).await.is_err() {
+    if tokio::fs::metadata(&primary_link).await.is_err() {
         return;
     }
     if let Ok(agent_target) = tokio::fs::read_link(&agent_link).await
-        && agent_target == grok_target
+        && agent_target == primary_target
     {
         return;
     }
-    match atomic_symlink_swap(&grok_target, &agent_link).await {
+    match atomic_symlink_swap(&primary_target, &agent_link).await {
         Ok(()) => tracing::info!(
-            grok_target = %grok_target.display(),
-            "reconciled agent bin symlink to grok target"
+            primary_target = %primary_target.display(),
+            "reconciled agent bin symlink to chaos/grok target"
         ),
         Err(e) => tracing::warn!("failed to reconcile agent bin symlink: {e:#}"),
     }
@@ -1906,13 +1929,13 @@ async fn reconcile_agent_to_grok(bin_dir: &std::path::Path) {
 
 #[cfg(windows)]
 async fn reconcile_agent_exe_to_grok(bin_dir: &std::path::Path) {
-    let grok_exe = bin_dir.join("grok.exe");
+    let chaos_exe = bin_dir.join("chaos.exe");
     let agent_exe = bin_dir.join("agent.exe");
 
-    if tokio::fs::metadata(&grok_exe).await.is_err() {
+    if tokio::fs::metadata(&chaos_exe).await.is_err() {
         return;
     }
-    match agent_exe_differs(&grok_exe, &agent_exe).await {
+    match agent_exe_differs(&chaos_exe, &agent_exe).await {
         Ok(true) => {}
         Ok(false) => return,
         Err(e) => {
@@ -1920,9 +1943,9 @@ async fn reconcile_agent_exe_to_grok(bin_dir: &std::path::Path) {
             return;
         }
     }
-    match windows_replace_exe(&grok_exe, &agent_exe).await {
-        Ok(()) => tracing::info!("reconciled agent.exe to grok.exe"),
-        Err(e) => tracing::warn!("failed to reconcile agent.exe to grok.exe: {e:#}"),
+    match windows_replace_exe(&chaos_exe, &agent_exe).await {
+        Ok(()) => tracing::info!("reconciled agent.exe to chaos.exe"),
+        Err(e) => tracing::warn!("failed to reconcile agent.exe to chaos.exe: {e:#}"),
     }
 }
 
@@ -1955,62 +1978,21 @@ async fn agent_exe_differs(
     }
 }
 
-/// Download a single asset from a GitHub release via `gh release download`.
-async fn gh_release_download(tag: &str, pattern: &str, dest: &std::path::Path) -> Result<()> {
-    let pb = ProgressBar::new_spinner();
-    pb.set_style(
-        ProgressStyle::default_spinner()
-            .template("  {spinner:.cyan} Downloading from GitHub Releases...")
-            .unwrap(),
-    );
-    pb.enable_steady_tick(Duration::from_millis(100));
-
-    let mut cmd = tokio::process::Command::new("gh");
-    cmd.args([
-        "release",
-        "download",
-        tag,
-        "--repo",
-        crate::version::GH_RELEASE_REPO,
-        "--pattern",
-        pattern,
-        "--output",
-        &dest.to_string_lossy(),
-        "--clobber",
-    ])
-    .stdin(Stdio::null())
-    .stdout(Stdio::null())
-    .stderr(Stdio::piped());
-    xai_grok_tools::util::detach_command(&mut cmd);
-    cmd.envs(xai_grok_tools::util::pager_env());
-    let output = cmd.output().await?;
-
-    pb.finish_and_clear();
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!(
-            "gh release download failed for {} tag {} from {}: {}",
-            pattern,
-            tag,
-            crate::version::GH_RELEASE_REPO,
-            stderr.trim()
-        );
-    }
-    Ok(())
-}
-
 /// Download and install chaos from GitHub Releases (chao2hang/chaos-code).
 ///
-/// Uses `gh release download` to fetch the binary matching the current platform.
-/// This works anywhere the `gh` CLI is authenticated, without needing npm or
-/// internal network access.
+/// Uses HTTPS asset URLs (same as `scripts/install.sh`) — no `gh` CLI or npm.
+/// Asset names match CI: `chaos-linux-x64`, `chaos-darwin-arm64`,
+/// `chaos-win32-x64.exe`, …
 async fn install_gh_release(target: Option<&str>) -> Result<()> {
     let (os, arch) = detect_platform()?;
-    let platform = format!("{}-{}", os, arch);
+    let asset_name = crate::version::gh_release_asset_name(os, arch)?;
 
     let version = match target {
-        Some(v) => v.to_string(),
+        Some(v) => {
+            semver::Version::parse(v)
+                .map_err(|_| anyhow::anyhow!("invalid version format: '{v}'"))?;
+            v.strip_prefix('v').unwrap_or(v).to_string()
+        }
         None => crate::version::fetch_gh_release_version("stable").await?,
     };
 
@@ -2020,22 +2002,35 @@ async fn install_gh_release(target: Option<&str>) -> Result<()> {
     tokio::fs::create_dir_all(&download_dir).await?;
     tokio::fs::create_dir_all(&bin_dir).await?;
 
-    let binary_name = format!("grok-{}-{}", version, platform);
-    let binary_path = download_dir.join(&binary_name);
-    let tag = format!("v{}", version);
+    // Store as chaos-<version>-<platform> so disk-version probe / cleanup work.
+    let platform = format!("{}-{}", os, arch);
+    let stored_name = format!("chaos-{}-{}", version, platform);
+    let binary_path = download_dir.join(&stored_name);
+    let url = crate::version::gh_release_asset_url(&version, &asset_name);
 
     eprintln!(
-        "  Downloading grok v{} ({}) from GitHub Releases...",
-        version, platform
+        "  Downloading chaos v{} ({}) from GitHub Releases...",
+        version, asset_name
     );
+    eprintln!("  {}", url);
 
-    gh_release_download(&tag, &binary_name, &binary_path).await?;
+    download_with_progress(&url, &binary_path).await?;
 
-    // chmod +x
+    // chmod +x (download_with_progress may already set it on unix via publish)
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         tokio::fs::set_permissions(&binary_path, std::fs::Permissions::from_mode(0o755)).await?;
+    }
+
+    if !smoke_test_binary(&binary_path).await {
+        let _ = tokio::fs::remove_file(&binary_path).await;
+        anyhow::bail!(
+            "downloaded binary failed to run.\n\
+             Your current version is unchanged.\n\
+             To update manually: {}",
+            manual_install_cmd()
+        );
     }
 
     // Atomic swap of <home>/bin/{chaos,agent} -> downloaded binary.
@@ -2293,7 +2288,7 @@ pub async fn run_update(
             anyhow::bail!("{e}");
         }
         eprintln!(
-            "Installing Grok {} (current: {})...",
+            "Installing Chaos {} (current: {})...",
             version, current_version
         );
         eprintln!();
@@ -2306,8 +2301,8 @@ pub async fn run_update(
         {
             tracing::warn!("Failed to persist auto_update=false for pinned install: {e}");
         }
-        eprintln!("  ✓ grok v{} installed successfully!", version);
-        eprintln!("  Please restart Grok.");
+        eprintln!("  ✓ chaos v{} installed successfully!", version);
+        eprintln!("  Please restart Chaos.");
         return Ok(Some(version.to_string()));
     }
 
@@ -2404,12 +2399,15 @@ pub async fn run_update(
         .unwrap_or(true)
     {
         eprintln!(
-            "Forcing reinstall of Grok {} (already up to date)",
+            "Forcing reinstall of Chaos {} (already up to date)",
             effective_current
         );
         &effective_current
     } else {
-        eprintln!("Updating Grok {} → {}", effective_current, install_target);
+        eprintln!(
+            "Updating Chaos {} → {}",
+            effective_current, install_target
+        );
         &install_target
     };
 
@@ -2421,10 +2419,10 @@ pub async fn run_update(
     let stable_ptr = try_fetch_stable_pointer().await;
     write_version_cache(target_version, stable_ptr.as_deref()).await;
     refresh_deployment_config().await;
-    eprintln!("  ✓ grok v{} installed successfully!", target_version);
+    eprintln!("  ✓ chaos v{} installed successfully!", target_version);
 
     if !force && std::env::var_os("GROK_AUTO_UPDATE").is_none() {
-        eprintln!("  Please restart Grok.");
+        eprintln!("  Please restart Chaos.");
     }
     Ok(Some(target_version.to_string()))
 }
@@ -3457,15 +3455,11 @@ mod tests {
     }
 
     #[test]
-    fn test_reinstall_hint_gh_release_mentions_gh_command() {
+    fn test_reinstall_hint_gh_release_mentions_install_script() {
         let hint = reinstall_hint("gh-release");
         assert!(
-            hint.contains("gh release download"),
-            "should suggest gh release download: {hint}"
-        );
-        assert!(
-            hint.contains("chao2hang/chaos-code"),
-            "should name the repo: {hint}"
+            hint.contains("chao2hang/chaos-code") || hint.contains("install.sh") || hint.contains("install.ps1"),
+            "should suggest Chaos install script / repo: {hint}"
         );
     }
 
@@ -3475,8 +3469,11 @@ mod tests {
         // to a GitHub Releases reinstall hint.
         let hint = reinstall_hint("internal");
         assert!(
-            hint.contains("GitHub Releases") || hint.contains("github.com"),
-            "should point at GitHub Releases: {hint}"
+            hint.contains("GitHub Releases")
+                || hint.contains("github.com")
+                || hint.contains("install.sh")
+                || hint.contains("install.ps1"),
+            "should point at GitHub Releases / install script: {hint}"
         );
     }
 
@@ -4190,14 +4187,15 @@ mod tests {
 
     #[test]
     fn test_user_facing_constants_are_stable() {
-        assert_eq!(PROMPT_UPDATE_NOW, "Update now? [Y/n/d]");
+        // Chaos localizes these; lock the Chaos copy (not upstream English).
+        assert_eq!(PROMPT_UPDATE_NOW, "现在更新？[Y/n/d]");
         assert_eq!(
             MSG_AUTO_UPDATE_BACKGROUND,
             "Auto-update running in background."
         );
         assert_eq!(
             MSG_RUN_UPDATE_MANUAL,
-            "Run `grok update` to get the latest version."
+            "运行 `chaos update` 获取最新版本。"
         );
     }
 
