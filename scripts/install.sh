@@ -5,8 +5,8 @@
 #   curl -fsSL https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.sh | bash
 #
 # Pin a version:
-#   curl -fsSL .../install.sh | bash -s -- --version 0.2.111
-#   CHAOS_VERSION=0.2.111 bash install.sh
+#   curl -fsSL .../install.sh | bash -s -- --version 0.2.112
+#   CHAOS_VERSION=0.2.112 bash install.sh
 #
 # Options:
 #   --version X.Y.Z   Release version without leading v (default: latest)

@@ -18,10 +18,14 @@ use std::process::Command;
 use crate::slash::command::{CommandExecCtx, CommandResult, SlashCommand};
 use crate::views::provider_modal::ProviderModalMode;
 
-/// 配置文件路径：`~/.grok/config.toml`
+/// 用户配置路径：`$CHAOS_HOME| $GROK_HOME | ~/.chaos|~/.grok`/config.toml。
+///
+/// 必须与 shell / 其它 pager 设置读写同一 home（`xai_grok_config::grok_home`）。
+/// 旧实现硬编码 `$HOME/.grok`：Windows 常无 `HOME`、且新装默认 `~/.chaos`，
+/// 导致渠道写入的 `[model."provider/id"]` 进不了 agent catalog，
+/// `/model` / 渠道切模型报 `unknown model id`（issue #5）。
 fn config_path() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-    PathBuf::from(home).join(".grok").join("config.toml")
+    xai_grok_config::grok_home().join("config.toml")
 }
 
 /// 读取配置文件为 toml_edit 文档

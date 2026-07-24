@@ -4,10 +4,10 @@
 #   irm https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.ps1 | iex
 #
 # Pin a version:
-#   & ([scriptblock]::Create((irm https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.ps1))) -Version 0.2.111
+#   & ([scriptblock]::Create((irm https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.ps1))) -Version 0.2.112
 #
 # Or clone/download this file:
-#   .\install.ps1 -Version 0.2.111
+#   .\install.ps1 -Version 0.2.112
 #   .\install.ps1 -Dir "$env:USERPROFILE\.chaos\bin" -Force
 #
 # Parameters:

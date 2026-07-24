@@ -1,6 +1,6 @@
 {
     "name": "chaos-code-linux-x64",
-    "version": "0.2.111",
+    "version": "0.2.112",
     "description": "linux-x64 binary for chaos-code. Do not install directly; install chaos-code instead.",
     "license": "Apache-2.0",
     "files": [
