@@ -1158,6 +1158,34 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
             );
             effects
         }
+        Action::DoctorFixConfirmed { target, plan } => {
+            let Some(target) = super::task_result::current_doctor_target(app, &target) else {
+                super::task_result::deliver_doctor_message(
+                    app,
+                    target.agent_id,
+                    "This fix was cancelled because the session changed. Run `/doctor fix` again."
+                        .to_owned(),
+                );
+                return vec![];
+            };
+            if let Some(agent) = app.agents.get_mut(&target.agent_id) {
+                agent
+                    .scrollback
+                    .push_block(crate::scrollback::block::RenderBlock::system(format!(
+                        "Applying {}…",
+                        plan.id()
+                    )));
+            }
+            vec![Effect::ApplyDoctorFix { target, plan }]
+        }
+        Action::DoctorFixCancelled(target) => {
+            super::task_result::deliver_doctor_message(
+                app,
+                target.agent_id,
+                "Fix cancelled.".to_owned(),
+            );
+            vec![]
+        }
         Action::AgentTypeMismatchAnswered {
             start_new,
             model_id,

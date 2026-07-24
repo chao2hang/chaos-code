@@ -1828,6 +1828,52 @@ pub(crate) fn execute(
                     TaskResult::PromptImagePreviewPrepared
                 });
         }
+        Effect::PlanDoctorFix {
+            target,
+            report,
+            terminal,
+            request,
+        } => {
+            tasks.spawn(async move {
+                let result = tokio::task::spawn_blocking(move || match request {
+                    crate::slash::command::DoctorRequest::ListFixes => {
+                        Ok(actions::DoctorPlanningOutcome::Listing(
+                            crate::diagnostics::format_applicable_automatic_fixes(
+                                &report, &terminal,
+                            ),
+                        ))
+                    }
+                    crate::slash::command::DoctorRequest::Fix(id) => {
+                        match crate::diagnostics::select_fix_plan(id, &report, &terminal) {
+                            Ok(Some(plan)) => {
+                                Ok(actions::DoctorPlanningOutcome::Plan(Box::new(plan)))
+                            }
+                            Ok(None) => Ok(actions::DoctorPlanningOutcome::RunLocally(
+                                crate::diagnostics::human_fix_command(id)
+                                    .unwrap_or_else(|| id.to_string()),
+                            )),
+                            Err(error) => Err(error.to_string()),
+                        }
+                    }
+                    crate::slash::command::DoctorRequest::Report => {
+                        unreachable!("report does not enter the planning effect")
+                    }
+                })
+                .await
+                .map_err(|error| format!("Could not prepare the fix: {error}"))
+                .and_then(|result| result);
+                TaskResult::DoctorFixPlanned { target, result }
+            });
+        }
+        Effect::ApplyDoctorFix { target, plan } => {
+            tasks.spawn(async move {
+                let result = tokio::task::spawn_blocking(move || crate::diagnostics::apply_fix(*plan))
+                    .await
+                    .map_err(|error| format!("Could not apply the fix: {error}"))
+                    .and_then(|result| result.map_err(|error| error.to_string()));
+                TaskResult::DoctorFixApplied { target, result }
+            });
+        }
         Effect::FetchChangelog => {
             tasks
                 .spawn(async move {

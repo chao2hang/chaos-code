@@ -1664,6 +1664,13 @@ fn translate_local_submit(
                 effort,
             })
         }
+        LocalQuestionKind::DoctorFix { target, plan } => {
+            if *idx == 0 {
+                InputOutcome::Action(Action::DoctorFixConfirmed { target, plan })
+            } else {
+                InputOutcome::Action(Action::DoctorFixCancelled(target))
+            }
+        }
         LocalQuestionKind::ProjectSelect { .. } => unreachable!(),
     }
 }
