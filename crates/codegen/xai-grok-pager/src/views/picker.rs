@@ -1736,8 +1736,12 @@ pub struct PickerConfig<'a> {
     pub filter_label: Option<&'a str>,
     /// Key hint for the filter (e.g., "f").
     pub filter_key_hint: Option<&'a str>,
-    /// Whether the filter is active (not in default/All state).
+    /// Whether the filter is active (not in its default state).
     pub filter_active: bool,
+    /// Pinned single-line note rendered between the search/filter chrome and
+    /// the first entry (e.g. the hidden-external sessions hint). Render-only:
+    /// never part of the entry list, hit areas, or scrolling.
+    pub header_note: Option<&'a str>,
     /// Custom action keys that produce `PickerOutcome::Action`.
     /// Each entry is `(key_char, description)` shown in shortcuts.
     pub action_keys: &'a [(char, &'a str)],
@@ -2420,7 +2424,28 @@ pub fn render_picker(
         render_divider(buf, content.x, sep_y, content.width, theme, bg);
     }
 
-    let entries_start_y = sep_y + 1;
+    let mut entries_start_y = sep_y + 1;
+
+    // Pinned header note: reserve the first list row so it stays visible
+    // regardless of list scroll.
+    if let Some(note) = config.header_note
+        && entries_start_y < content.y + content.height
+    {
+        let note_style = Style::default().fg(theme.gray_dim);
+        let note_style = if let Some(c) = bg {
+            note_style.bg(c)
+        } else {
+            note_style
+        };
+        buf.set_stringn(
+            content.x + 1,
+            entries_start_y,
+            note,
+            content.width.saturating_sub(1) as usize,
+            note_style,
+        );
+        entries_start_y += 1;
+    }
 
     // Delegate entry rendering + scrollbar to render_picker_content.
     let entries_area = Rect {
@@ -3222,6 +3247,7 @@ mod tests {
             filter_label: None,
             filter_key_hint: None,
             filter_active: false,
+            header_note: None,
             action_keys: &[],
             disable_search: false,
             compact_bottom_bar: false,

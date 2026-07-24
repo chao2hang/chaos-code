@@ -4741,6 +4741,11 @@ mod soft_default_settings_emit {
                 let cfg = AgentConfig {
                     remote_settings: Some(crate::util::config::RemoteSettings {
                         permission_mode: Some("always-approve".into()),
+                        slash_command_tags: Some(
+                            [("workflows".to_string(), "new".to_string())]
+                                .into_iter()
+                                .collect(),
+                        ),
                         ..Default::default()
                     }),
                     ..Default::default()
@@ -4760,6 +4765,14 @@ mod soft_default_settings_emit {
                     params.get("permission_mode").and_then(|v| v.as_str()),
                     Some("always-approve"),
                     "post-auth emit must carry remote permission_mode for first session"
+                );
+                assert_eq!(
+                    params
+                        .get("slash_command_tags")
+                        .and_then(|v| v.get("workflows"))
+                        .and_then(|v| v.as_str()),
+                    Some("new"),
+                    "post-auth emit must carry remote slash_command_tags"
                 );
                 let _ = args.response_tx.send(Ok(()));
             })

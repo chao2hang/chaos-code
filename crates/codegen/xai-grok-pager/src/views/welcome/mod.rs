@@ -2390,6 +2390,12 @@ pub(crate) fn render_session_picker(
         });
     }
 
+    let hidden_hint = if ctx.chat_mode {
+        None
+    } else {
+        crate::views::session_picker::hidden_external_hint(ctx.sessions, ctx.source_filter)
+    };
+
     let config = PickerConfig {
         title: Some("恢复会话"),
         show_search_hint: true,
@@ -2405,6 +2411,7 @@ pub(crate) fn render_session_picker(
         filter_label: (!ctx.chat_mode).then(|| ctx.source_filter.label()),
         filter_key_hint: (!ctx.chat_mode).then_some("f"),
         filter_active: !ctx.chat_mode && ctx.source_filter.is_active(),
+        header_note: hidden_hint.as_deref(),
         action_keys: &[],
         disable_search: false,
         compact_bottom_bar: false,
@@ -3077,6 +3084,7 @@ mod tests {
             filter_label: None,
             filter_key_hint: None,
             filter_active: false,
+            header_note: None,
             action_keys: &[],
             disable_search: false,
             compact_bottom_bar: false,

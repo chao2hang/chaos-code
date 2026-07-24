@@ -1267,6 +1267,8 @@ pub struct AgentView {
     /// per-request — stashing happens on the `empty -> non-empty` transition
     /// and restoring on the `non-empty -> empty` transition.
     pub permission_stashed_prompt: Option<StashedPrompt>,
+    /// Scrollback focus stolen for a permission prompt; restored when the queue empties.
+    pub permission_stashed_pane: Option<AgentPane>,
     /// Active plan approval view (from `exit_plan_mode` ext_method). When `Some`,
     /// the prompt area shows the plan approval overlay and input is modal.
     pub(crate) plan_approval_view: Option<PlanApprovalViewState>,
@@ -1661,6 +1663,13 @@ fn translate_local_submit(
                 model_id: model_id.clone(),
                 effort,
             })
+        }
+        LocalQuestionKind::DoctorFix { target, plan } => {
+            if *idx == 0 {
+                InputOutcome::Action(Action::DoctorFixConfirmed { target, plan })
+            } else {
+                InputOutcome::Action(Action::DoctorFixCancelled(target))
+            }
         }
         LocalQuestionKind::ProjectSelect { .. } => unreachable!(),
     }
@@ -2547,6 +2556,7 @@ pub(crate) mod test_fixtures {
             bg_tool_call_to_task: std::collections::HashMap::new(),
             scheduled_tasks: std::collections::HashMap::new(),
             in_flight_prompt: None,
+            compact_held_prompt: None,
             current_prompt_id: None,
             created_via_new: false,
         };
@@ -2609,6 +2619,7 @@ pub(crate) mod test_fixtures {
                 bg_tool_call_to_task: std::collections::HashMap::new(),
                 scheduled_tasks: std::collections::HashMap::new(),
                 in_flight_prompt: None,
+                compact_held_prompt: None,
                 current_prompt_id: None,
                 created_via_new: false,
             },
@@ -3429,6 +3440,7 @@ pub(crate) fn test_agent_view(session_id: Option<&str>, cwd: std::path::PathBuf)
             bg_tool_call_to_task: std::collections::HashMap::new(),
             scheduled_tasks: std::collections::HashMap::new(),
             in_flight_prompt: None,
+            compact_held_prompt: None,
             current_prompt_id: None,
             created_via_new: false,
         },

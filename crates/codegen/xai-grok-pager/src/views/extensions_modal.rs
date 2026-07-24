@@ -1023,20 +1023,32 @@ pub enum McpSetupOutcome {
     Submit,
 }
 
+/// Concrete action to run after the user presses `y` on a confirmation overlay.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConfirmationAction {
+    /// Replay a hooks action (e.g. remove a hook source directory).
+    Hooks(xai_hooks_plugins_types::HooksAction),
+    /// Replay a plugins action (e.g. uninstall; may still be `confirmed: false`
+    /// so multi-plugin repos can return a second server-owned prompt).
+    Plugins(xai_hooks_plugins_types::PluginsAction),
+    /// Replay a marketplace action (uninstall plugin or remove source).
+    Marketplace(xai_hooks_plugins_types::MarketplaceAction),
+    /// Delete a removable (local) MCP server by name.
+    DeleteMcpServer { server_name: String },
+}
+
 /// Modal message overlay (errors, confirmations).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ModalMessage {
     /// An error message from a failed action. Any key dismisses.
     Error(String),
-    /// A confirmation prompt. Stores the action to replay with confirmed=true.
+    /// A confirmation prompt. Stores the concrete action to run on `y`.
     Confirmation {
         message: String,
-        action: xai_hooks_plugins_types::PluginsAction,
-    },
-    /// A confirmation prompt for a marketplace action (install/uninstall/update).
-    MarketplaceConfirmation {
-        message: String,
-        action: xai_hooks_plugins_types::MarketplaceAction,
+        action: ConfirmationAction,
+        /// Row to re-stamp as `pending_entry_index` after confirm (scroll can
+        /// move selection under the overlay).
+        pending_entry_index: Option<usize>,
     },
 }
 
@@ -1726,6 +1738,13 @@ pub struct ExtensionsModalState {
     pub plugins_scroll: usize,
     /// Marketplace tab state.
     pub marketplace_data: TabDataState<xai_hooks_plugins_types::MarketplaceListResponse>,
+    /// True while a marketplace list fetch is outstanding. Coalesces overlapping
+    /// refresh requests (open + post-action + deferred session-ready) so network
+    /// work does not pile up; see [`marketplace_refetch_queued`].
+    pub marketplace_fetch_inflight: bool,
+    /// A refetch arrived while one was in flight; it runs when the current
+    /// fetch lands so post-action results stay fresh.
+    pub marketplace_refetch_queued: bool,
     pub marketplace_selected: usize,
     pub marketplace_scroll: usize,
     /// Skills tab state.
@@ -1814,6 +1833,8 @@ impl ExtensionsModalState {
             hooks_scroll: 0,
             plugins_scroll: 0,
             marketplace_data: TabDataState::Loading,
+            marketplace_fetch_inflight: false,
+            marketplace_refetch_queued: false,
             marketplace_selected: 0,
             marketplace_scroll: 0,
             skills_data: TabDataState::Loading,
@@ -3261,9 +3282,7 @@ pub fn render_extensions_modal(
     // The overlay above is shortened to leave the footer line visible.
     let modal_msg_kind = state.modal_message.as_ref().map(|m| match m {
         ModalMessage::Error(_) => ModalMsgKind::Error,
-        ModalMessage::Confirmation { .. } | ModalMessage::MarketplaceConfirmation { .. } => {
-            ModalMsgKind::Confirm
-        }
+        ModalMessage::Confirmation { .. } => ModalMsgKind::Confirm,
     });
     let mut shortcuts: Vec<Shortcut<'_>> = Vec::new();
     if modal_msg_kind.is_some() {
@@ -3641,10 +3660,7 @@ pub fn render_extensions_modal(
     if let Some(ref msg) = state.modal_message {
         let (text, fg) = match msg {
             ModalMessage::Error(e) => (e.as_str(), theme.accent_error),
-            ModalMessage::Confirmation { message, .. }
-            | ModalMessage::MarketplaceConfirmation { message, .. } => {
-                (message.as_str(), theme.accent_tool)
-            }
+            ModalMessage::Confirmation { message, .. } => (message.as_str(), theme.accent_tool),
         };
         if let Some(popup_rect) = state.window.popup_area {
             let msg_content_y = popup_rect.y + 2;

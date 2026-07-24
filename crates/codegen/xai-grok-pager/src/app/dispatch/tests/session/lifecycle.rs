@@ -587,15 +587,44 @@ fn session_created_without_flag_emits_no_extension_fetches() {
     assert_eq!(count_extension_fetches(&effects), 0);
 }
 #[test]
-fn session_failed_clears_flag_no_fetches() {
-    use crate::views::extensions_modal::{ExtensionsModalState, ExtensionsTab};
+fn session_failed_keeps_agent_clears_loading_and_toasts() {
+    let mut app = test_app_with_agent();
+    let id = AgentId(0);
+    {
+        let a = app.agents.get_mut(&id).unwrap();
+        a.session.session_id = Some(acp::SessionId::new("existing"));
+        a.pending_extensions_fetch = true;
+        a.mcp_init_progress = Some(crate::app::agent_view::McpInitProgress {
+            total: 0,
+            connected: 0,
+            started_at: std::time::Instant::now(),
+        });
+    }
+    let effects = dispatch(
+        Action::TaskComplete(TaskResult::SessionFailed {
+            agent_id: id,
+            error: "No space left on device".to_string(),
+        }),
+        &mut app,
+    );
+    assert!(effects.is_empty());
+    let agent = &app.agents[&id];
+    assert!(!agent.pending_extensions_fetch);
+    assert!(agent.mcp_init_progress.is_none());
+    assert_eq!(
+        agent.toast.as_ref().map(|(m, _)| m.as_str()),
+        Some("会话创建失败：No space left on device"),
+    );
+}
+#[test]
+fn session_failed_orphan_returns_to_welcome_with_warning() {
     let mut app = test_app_with_agent();
     let id = AgentId(0);
     {
         let a = app.agents.get_mut(&id).unwrap();
         a.session.session_id = None;
+        a.session.forked_from = None;
         a.pending_extensions_fetch = true;
-        a.extensions_modal = Some(ExtensionsModalState::new(ExtensionsTab::Hooks));
     }
     let effects = dispatch(
         Action::TaskComplete(TaskResult::SessionFailed {
@@ -604,8 +633,15 @@ fn session_failed_clears_flag_no_fetches() {
         }),
         &mut app,
     );
-    assert_eq!(count_extension_fetches(&effects), 0);
-    assert!(!app.agents[&id].pending_extensions_fetch);
+    assert!(effects.is_empty());
+    assert!(!app.agents.contains_key(&id));
+    assert!(matches!(app.active_view, ActiveView::Welcome));
+    assert!(
+        app.startup_warnings
+            .iter()
+            .any(|w| w.message.contains("boom")),
+        "expected startup warning containing the error"
+    );
 }
 #[test]
 fn switch_model_without_session_does_nothing() {

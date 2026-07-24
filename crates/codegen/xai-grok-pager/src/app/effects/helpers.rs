@@ -253,6 +253,11 @@ pub(crate) struct SessionFlags {
     /// Active auth is API key (not OAuth/session). Drives rate-limit copy in
     /// `format_acp_error`. Default `false` (OAuth copy) for tests.
     pub is_api_key_auth: bool,
+    /// Startup resume target that missed local id/title resolution and was
+    /// deferred to the worktree resume path. When set and equal to the
+    /// worktree resume session id, failure messages append the title-miss
+    /// hint (see [`crate::app::session_title_resolve::worktree_resume_failure_message`]).
+    pub resume_local_miss: Option<String>,
 }
 impl SessionFlags {
     /// Resolve the agent profile name from the flags.

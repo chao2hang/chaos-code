@@ -763,6 +763,13 @@ pub enum Action {
         model_id: acp::ModelId,
         effort: Option<ReasoningEffort>,
     },
+    /// User confirmed applying a `/doctor fix` plan in the question modal.
+    DoctorFixConfirmed {
+        target: DoctorFixTarget,
+        plan: Box<crate::diagnostics::FixPlan>,
+    },
+    /// User cancelled a `/doctor fix` plan (or the question was dismissed).
+    DoctorFixCancelled(DoctorFixTarget),
     /// User selected a project directory from the project picker.
     ProjectSelected {
         path: std::path::PathBuf,
@@ -955,6 +962,8 @@ pub enum Action {
     OpenMemoryModal,
     /// Open the hidden `/gboom` easter egg (DOOM-style raycaster modal).
     OpenGboom,
+    /// Open the onboarding tutorial overlay (`/tutorial` or the command palette).
+    OpenTutorial,
     /// Suspend the TUI and open a configuration file in `$EDITOR`.
     SuspendForEditor {
         path: std::path::PathBuf,
@@ -1347,6 +1356,17 @@ pub enum ProbedAttachment {
     /// The attachment probe task failed or timed out.
     ProbeFailed,
 }
+
+/// Session identity for a `/doctor fix` confirmation so a late apply cannot
+/// target a different session after rebind/resume.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DoctorFixTarget {
+    pub agent_id: AgentId,
+    pub session_id: Option<acp::SessionId>,
+    pub session_binding_epoch: u32,
+    pub cwd: std::path::PathBuf,
+}
+
 #[derive(Debug)]
 pub enum Effect {
     /// Create a new ACP session.
@@ -2090,7 +2110,28 @@ pub enum Effect {
     PreparePromptImagePreview {
         preparation: crate::prompt_images::PromptImagePreviewPreparation,
     },
+    /// Plan a `/doctor fix` (or list available automatic fixes) off the UI thread.
+    PlanDoctorFix {
+        target: DoctorFixTarget,
+        report: Box<crate::diagnostics::DiagnosticReport>,
+        terminal: crate::terminal::TerminalContext,
+        request: crate::slash::command::DoctorRequest,
+    },
+    /// Apply a confirmed `/doctor fix` plan off the UI thread.
+    ApplyDoctorFix {
+        target: DoctorFixTarget,
+        plan: Box<crate::diagnostics::FixPlan>,
+    },
 }
+
+/// Outcome of planning a doctor automatic fix.
+#[derive(Debug)]
+pub enum DoctorPlanningOutcome {
+    Listing(String),
+    Plan(Box<crate::diagnostics::FixPlan>),
+    RunLocally(String),
+}
+
 /// Outcome of an `x.ai/subagent/cancel` request, telling dispatch whether the
 /// pager must finalize the subagent row itself.
 #[derive(Debug)]
@@ -2798,6 +2839,16 @@ pub enum TaskResult {
     },
     /// Shared prompt-image preview state was resolved off-thread.
     PromptImagePreviewPrepared,
+    /// Off-thread `/doctor fix` planning finished.
+    DoctorFixPlanned {
+        target: DoctorFixTarget,
+        result: Result<DoctorPlanningOutcome, String>,
+    },
+    /// Off-thread `/doctor fix` apply finished.
+    DoctorFixApplied {
+        target: DoctorFixTarget,
+        result: Result<crate::diagnostics::FixOutcome, String>,
+    },
 }
 #[cfg(test)]
 mod tests {
