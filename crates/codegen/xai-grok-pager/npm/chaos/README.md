@@ -6,12 +6,37 @@ The installed command is **`chaos`**.
 
 ## Install
 
+### One-liner (GitHub Release binary — recommended)
+
+Works when npm platform packages are incomplete (e.g. Windows `win32-x64` missing).
+
+**macOS / Linux:**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.sh | bash
+```
+
+**Windows (PowerShell):**
+
+```powershell
+irm https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.ps1 | iex
+```
+
+Pin a version: `bash -s -- --version 0.2.110` / `-Version 0.2.110`.  
+Scripts install under `~/.chaos/bin` (or `~/.grok/bin`) and configure PATH.
+
+### npm
+
 ```bash
 npm i -g chaos-code
 ```
 
 Requires Node.js ≥ 20. npm installs the meta package plus one platform package
 (`chaos-code-<os>-<cpu>`) that carries a brotli-compressed binary.
+
+If you see `no platform binary installed for win32-x64`, use the one-liner above
+or download `chaos-win32-x64.exe` from
+[GitHub Releases](https://github.com/chao2hang/chaos-code/releases/latest).
 
 ## Get Started
 
@@ -32,6 +57,10 @@ in the repo.
 ## Update
 
 ```bash
+# Release installer (re-run one-liner, or):
+curl -fsSL https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.sh | bash -s -- --force
+
+# npm:
 npm i -g chaos-code@latest
 # or, if installed via npm:
 chaos update
