@@ -64,6 +64,34 @@ pub(crate) fn list_providers(doc: &toml_edit::DocumentMut) -> Vec<String> {
     providers
 }
 
+/// 配置中的默认模型 id（`[models] default = "..."`），空串视为未设置。
+pub(crate) fn configured_default_model(doc: &toml_edit::DocumentMut) -> Option<String> {
+    doc.get("models")
+        .and_then(|v| v.as_table())
+        .and_then(|t| t.get("default"))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+}
+
+/// 是否尚未完成对话所需的渠道 + 默认模型配置。
+///
+/// Chaos 内置 catalog 为空：无 `[model_providers]` 或无 `[models].default`
+/// 时，发送真实 prompt 应引导用户打开渠道设置，而不是把请求打到占位模型。
+pub(crate) fn needs_provider_setup() -> bool {
+    match load_config() {
+        Ok(doc) => {
+            if list_providers(&doc).is_empty() {
+                return true;
+            }
+            configured_default_model(&doc).is_none()
+        }
+        // 读配置失败时 fail-closed：打开设置页比静默发失败请求更友好。
+        Err(_) => true,
+    }
+}
+
 /// 获取渠道的某个字段值
 pub(crate) fn provider_field(doc: &toml_edit::DocumentMut, provider: &str, field: &str) -> Option<String> {
     doc.get("model_providers")
@@ -171,6 +199,15 @@ pub(crate) fn add_provider(
     api_backend: &str,
     api_key: &str,
 ) -> Result<(), String> {
+    let name = name.trim();
+    let base_url = base_url.trim().trim_end_matches(['\r', '\n']);
+    // Windows paste often leaves `\r` / trailing newline on the key; strip
+    // before writing so config.toml and subsequent HTTP auth stay intact.
+    let api_key = crate::views::provider_modal::sanitize_provider_field(api_key);
+    if name.is_empty() {
+        return Err("渠道名称不能为空".into());
+    }
+
     let mut doc = load_config()?;
 
     if !doc.contains_key("model_providers") {
@@ -185,7 +222,7 @@ pub(crate) fn add_provider(
     provider_table["api_backend"] = toml_edit::value(api_backend);
 
     if !api_key.is_empty() {
-        provider_table["api_key"] = toml_edit::value(api_key);
+        provider_table["api_key"] = toml_edit::value(api_key.as_str());
     }
 
     let env_key = match name {
@@ -210,6 +247,11 @@ pub(crate) fn add_provider(
 
 /// 设置渠道的 API Key。供 `views/provider_modal` 调用。
 pub(crate) fn set_provider_key(name: &str, key: &str) -> Result<(), String> {
+    let key = crate::views::provider_modal::sanitize_provider_field(key);
+    if key.is_empty() {
+        return Err("API Key 不能为空".into());
+    }
+
     let mut doc = load_config()?;
 
     if doc
@@ -225,10 +267,13 @@ pub(crate) fn set_provider_key(name: &str, key: &str) -> Result<(), String> {
     let Some(table) = provider_table.as_table_mut() else {
         return Err(format!("渠道 \"{name}\" 配置格式错误"));
     };
-    table["api_key"] = toml_edit::value(key);
+    table["api_key"] = toml_edit::value(key.as_str());
 
     save_config(&doc)
 }
+
+/// 单次写入 catalog 的模型数上限（防止异常大列表拖垮 config.toml）。
+const MAX_PROVIDER_CATALOG_MODELS: usize = 500;
 
 /// 注册渠道模型到 catalog 并设为默认。
 ///
@@ -246,6 +291,21 @@ pub(crate) fn set_provider_key(name: &str, key: &str) -> Result<(), String> {
 /// 返回 catalog key（供 `/model` / `SetDefaultModel` 使用）。
 /// 旧版错误的顶层 `[model] provider/id` 不会再写入（shell 只认 `[model.<key>]`）。
 pub(crate) fn register_and_set_model(provider: &str, model_id: &str) -> Result<String, String> {
+    let keys = register_provider_models(provider, std::slice::from_ref(&model_id.to_string()), Some(model_id))?;
+    keys.into_iter().next().ok_or_else(|| "注册模型失败：空结果".into())
+}
+
+/// 将渠道拉取到的模型批量写入 `[model."provider/id"]`，供 `/model` 与会话 catalog 使用。
+///
+/// - `model_ids`：API 返回的原始 model id（不是 catalog key）
+/// - `set_default`：若 `Some(id)`，同时把 `[models].default` 设为该模型的 catalog key
+///
+/// 返回写入的 catalog keys（与输入顺序一致，去重后）。
+pub(crate) fn register_provider_models(
+    provider: &str,
+    model_ids: &[String],
+    set_default: Option<&str>,
+) -> Result<Vec<String>, String> {
     let mut doc = load_config()?;
 
     if doc
@@ -259,8 +319,39 @@ pub(crate) fn register_and_set_model(provider: &str, model_id: &str) -> Result<S
         ));
     }
 
-    let catalog_key = provider_model_catalog_key(provider, model_id);
+    ensure_model_table(&mut doc);
 
+    let mut keys = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for raw in model_ids.iter().take(MAX_PROVIDER_CATALOG_MODELS) {
+        let model_id = raw.trim();
+        if model_id.is_empty() || !seen.insert(model_id.to_string()) {
+            continue;
+        }
+        keys.push(upsert_provider_model_entry(&mut doc, provider, model_id));
+    }
+
+    if let Some(default_id) = set_default.map(str::trim).filter(|s| !s.is_empty()) {
+        // 确保默认模型条目存在（即使不在本批 model_ids 里）。
+        if !seen.contains(default_id) {
+            keys.push(upsert_provider_model_entry(
+                &mut doc, provider, default_id,
+            ));
+        }
+        let default_key = provider_model_catalog_key(provider, default_id);
+        if !doc.contains_key("models") {
+            doc["models"] = toml_edit::table();
+        }
+        if let Some(models) = doc["models"].as_table_mut() {
+            models["default"] = toml_edit::value(default_key.as_str());
+        }
+    }
+
+    save_config(&doc)?;
+    Ok(keys)
+}
+
+fn ensure_model_table(doc: &mut toml_edit::DocumentMut) {
     if !doc.contains_key("model") {
         doc["model"] = toml_edit::table();
     }
@@ -269,25 +360,24 @@ pub(crate) fn register_and_set_model(provider: &str, model_id: &str) -> Result<S
         table.remove("provider");
         table.remove("id");
     }
+}
 
+/// 写入/更新单条 `[model."provider/id"]`，返回 catalog key。
+fn upsert_provider_model_entry(
+    doc: &mut toml_edit::DocumentMut,
+    provider: &str,
+    model_id: &str,
+) -> String {
+    let catalog_key = provider_model_catalog_key(provider, model_id);
     let entry = &mut doc["model"][catalog_key.as_str()];
     if !entry.is_table() {
         *entry = toml_edit::table();
     }
-    let entry = entry.as_table_mut().unwrap();
+    let entry = entry.as_table_mut().expect("model entry is table");
     entry["model"] = toml_edit::value(model_id);
     entry["model_provider"] = toml_edit::value(provider);
     entry["name"] = toml_edit::value(format!("{provider}/{model_id}"));
-
-    if !doc.contains_key("models") {
-        doc["models"] = toml_edit::table();
-    }
-    if let Some(models) = doc["models"].as_table_mut() {
-        models["default"] = toml_edit::value(catalog_key.as_str());
-    }
-
-    save_config(&doc)?;
-    Ok(catalog_key)
+    catalog_key
 }
 
 /// Catalog key 形如 `provider/model_id`，保证跨渠道不冲突。

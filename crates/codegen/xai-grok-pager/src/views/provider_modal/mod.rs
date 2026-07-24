@@ -13,6 +13,8 @@ mod render;
 mod state;
 
 pub use input::{handle_provider_key, handle_provider_paste};
+// sanitize used by slash/commands/provider commit path
+pub(crate) use input::sanitize_provider_field;
 pub use render::render_provider_modal;
 pub use state::{
     MODAL_TITLE, FormStep, ProviderAction, ProviderKeyOutcome, ProviderModalMode,

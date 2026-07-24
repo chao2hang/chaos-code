@@ -1,8 +1,13 @@
 //! Provider modal rendering.
+//!
+//! Visual chrome matches the rest of the pager modals (settings / pickers):
+//! shared [`ModalSizing`] (70% × max 110, `v_margin: 3`), square
+//! `gray_dim` border via [`mw::render_modal_window`], and full-row
+//! `bg_visual` selection — not the older accent-fg + `▸` list style.
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Widget;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
@@ -15,29 +20,88 @@ use super::state::{
     PROVIDER_PRESETS,
 };
 
+/// Same footprint as the settings modal: ~70% width, max 110 cols.
+const STANDARD_MAX_WIDTH: u16 = 110;
+
+/// Shared sizing for every provider-modal surface (list / form / menus).
+fn provider_sizing(compact: bool) -> ModalSizing {
+    ModalSizing {
+        width_pct: 0.70,
+        max_width: STANDARD_MAX_WIDTH,
+        min_width: 44,
+        v_margin: 3,
+        h_pad: 2,
+        v_pad: 1,
+        footer_lines: 2,
+    }
+    .with_compact(compact)
+}
+
+/// Row background: selected → `bg_visual` (DarkGray on terminal-native),
+/// otherwise modal base. Mirrors settings_list_row_bg / picker rows.
+fn list_row_bg(theme: &Theme, selected: bool) -> Color {
+    if crate::theme::cache::terminal_native_locked() || matches!(theme.bg_visual, Color::Reset) {
+        return if selected {
+            Color::DarkGray
+        } else {
+            Color::Reset
+        };
+    }
+    if selected {
+        theme.bg_visual
+    } else {
+        theme.bg_base
+    }
+}
+
+/// Paint a selectable list row with full-width bg + bold primary text.
+/// Selection is the band, not a `▸` glyph (matches import-claude / picker).
+fn paint_list_row(buf: &mut Buffer, area: Rect, y: u16, selected: bool, theme: &Theme, spans: Vec<Span<'_>>) {
+    let bg = list_row_bg(theme, selected);
+    let row = Rect {
+        x: area.x,
+        y,
+        width: area.width,
+        height: 1,
+    };
+    buf.set_style(row, Style::default().bg(bg));
+    let line = Line::from(
+        spans
+            .into_iter()
+            .map(|s| {
+                let mut style = s.style.bg(bg);
+                if selected {
+                    style = style.add_modifier(Modifier::BOLD);
+                }
+                Span::styled(s.content, style)
+            })
+            .collect::<Vec<_>>(),
+    );
+    line.render(row, buf);
+}
+
 /// 渲染 Provider 模态框。
-pub fn render_provider_modal(buf: &mut Buffer, area: Rect, state: &mut ProviderModalState) {
+pub fn render_provider_modal(
+    buf: &mut Buffer,
+    area: Rect,
+    state: &mut ProviderModalState,
+    compact: bool,
+) {
     let theme = Theme::current();
     let mode = state.mode.clone();
     match &mode {
-        ProviderModalMode::SetKey(name) => render_set_key(buf, area, state, name, &theme),
-        ProviderModalMode::Models(name) => render_models(buf, area, state, name, &theme),
-        ProviderModalMode::SetModel(name) => render_set_model(buf, area, state, name, &theme),
-        ProviderModalMode::Actions(name) => render_actions(buf, area, state, name, &theme),
+        ProviderModalMode::SetKey(name) => render_set_key(buf, area, state, name, &theme, compact),
+        ProviderModalMode::Models(name) => render_models(buf, area, state, name, &theme, compact),
+        ProviderModalMode::SetModel(name) => {
+            render_set_model(buf, area, state, name, &theme, compact)
+        }
+        ProviderModalMode::Actions(name) => render_actions(buf, area, state, name, &theme, compact),
         ProviderModalMode::List | ProviderModalMode::Add => {
             let title = match &mode {
                 ProviderModalMode::Add => "添加渠道",
                 _ => "渠道管理",
             };
-            let sizing = ModalSizing {
-                width_pct: 0.55,
-                max_width: 90,
-                min_width: 50,
-                v_margin: 6,
-                h_pad: 2,
-                v_pad: 1,
-                footer_lines: 2,
-            };
+            let sizing = provider_sizing(compact);
             let shortcuts: &[mw::Shortcut<'static>] = match &mode {
                 ProviderModalMode::List => &[
                     mw::Shortcut {
@@ -101,9 +165,6 @@ fn render_add_form(buf: &mut Buffer, area: Rect, state: &ProviderModalState, the
         .fg(theme.accent_user)
         .add_modifier(Modifier::BOLD);
     let dim_style = Style::default().fg(theme.gray_dim);
-    let selected_style = Style::default()
-        .fg(theme.accent_user)
-        .add_modifier(Modifier::BOLD);
 
     let mut y = area.y;
 
@@ -120,38 +181,38 @@ fn render_add_form(buf: &mut Buffer, area: Rect, state: &ProviderModalState, the
             if y >= area.y + area.height {
                 break;
             }
-            let style = if i == state.selected {
-                selected_style
-            } else {
-                value_style
-            };
-            let prefix = if i == state.selected { "▸ " } else { "  " };
-            let line = Line::from(vec![
-                Span::styled(prefix, style),
-                Span::styled(p.display, style),
-                Span::styled(format!("  ({})", p.base_url), dim_style),
-            ]);
-            line.render(Rect::new(area.x, y, area.width, 1), buf);
+            let selected = i == state.selected;
+            paint_list_row(
+                buf,
+                area,
+                y,
+                selected,
+                theme,
+                vec![
+                    Span::styled(
+                        format!("  {}", p.display),
+                        Style::default().fg(theme.text_primary),
+                    ),
+                    Span::styled(format!("  ({})", p.base_url), Style::default().fg(theme.gray_dim)),
+                ],
+            );
             y += 1;
         }
         // 自定义选项
         let custom_idx = PROVIDER_PRESETS.len();
         if y < area.y + area.height {
-            let style = if state.selected == custom_idx {
-                selected_style
-            } else {
-                value_style
-            };
-            let prefix = if state.selected == custom_idx {
-                "▸ "
-            } else {
-                "  "
-            };
-            let line = Line::from(vec![
-                Span::styled(prefix, style),
-                Span::styled("自定义", style),
-            ]);
-            line.render(Rect::new(area.x, y, area.width, 1), buf);
+            let selected = state.selected == custom_idx;
+            paint_list_row(
+                buf,
+                area,
+                y,
+                selected,
+                theme,
+                vec![Span::styled(
+                    "  自定义",
+                    Style::default().fg(theme.text_primary),
+                )],
+            );
             y += 1;
         }
     } else {
@@ -251,16 +312,9 @@ fn render_set_key(
     state: &mut ProviderModalState,
     name: &str,
     theme: &Theme,
+    compact: bool,
 ) {
-    let sizing = ModalSizing {
-        width_pct: 0.50,
-        max_width: 80,
-        min_width: 50,
-        v_margin: 8,
-        h_pad: 2,
-        v_pad: 1,
-        footer_lines: 2,
-    };
+    let sizing = provider_sizing(compact);
     let back = if state.from_hub {
         "Esc 返回"
     } else {
@@ -349,10 +403,6 @@ fn render_list_content(buf: &mut Buffer, area: Rect, state: &ProviderModalState,
     let header_style = Style::default()
         .fg(theme.text_secondary)
         .add_modifier(Modifier::BOLD);
-    let normal_style = Style::default().fg(theme.text_primary);
-    let selected_style = Style::default()
-        .fg(theme.accent_user)
-        .add_modifier(Modifier::BOLD);
     let dim_style = Style::default().fg(theme.gray_dim);
 
     let mut y = area.y;
@@ -365,9 +415,9 @@ fn render_list_content(buf: &mut Buffer, area: Rect, state: &ProviderModalState,
         line.render(Rect::new(area.x, y, area.width, 1), buf);
         y += 2;
     } else {
-        // 表头
+        // 表头（非可选行，不铺选中底）
         let header = Line::from(vec![
-            Span::styled("名称", header_style),
+            Span::styled("  名称", header_style),
             Span::styled("  ", header_style),
             Span::styled("Base URL", header_style),
             Span::styled("  ", header_style),
@@ -380,7 +430,7 @@ fn render_list_content(buf: &mut Buffer, area: Rect, state: &ProviderModalState,
         header.render(Rect::new(area.x, y, area.width, 1), buf);
         y += 1;
 
-        // 分隔线
+        // 分隔线（与 modal chrome 一致的 gray_dim ─）
         if y < area.y + area.height {
             let div: String = std::iter::repeat_n('─', area.width as usize).collect();
             buf.set_string(area.x, y, &div, dim_style);
@@ -391,27 +441,40 @@ fn render_list_content(buf: &mut Buffer, area: Rect, state: &ProviderModalState,
             if y >= area.y + area.height {
                 break;
             }
-            let style = if i == state.selected {
-                selected_style
-            } else {
-                normal_style
-            };
+            let selected = i == state.selected;
             let marker = if p.is_current { " *" } else { "  " };
             let key_status = if p.has_key { "✓" } else { "✗" };
-            let prefix = if i == state.selected { "▸ " } else { "  " };
-            let row = Line::from(vec![
-                Span::styled(prefix, style),
-                Span::styled(format!("{}{}", p.name, marker), style),
-                Span::styled("  ", style),
-                Span::styled(truncate_str(&p.base_url, 28), style),
-                Span::styled("  ", style),
-                Span::styled(&p.auth_scheme, style),
-                Span::styled("  ", style),
-                Span::styled(&p.api_backend, style),
-                Span::styled("  ", style),
-                Span::styled(key_status, style),
-            ]);
-            row.render(Rect::new(area.x, y, area.width, 1), buf);
+            paint_list_row(
+                buf,
+                area,
+                y,
+                selected,
+                theme,
+                vec![
+                    Span::styled(
+                        format!("  {}{}", p.name, marker),
+                        Style::default().fg(theme.text_primary),
+                    ),
+                    Span::styled("  ", Style::default()),
+                    Span::styled(
+                        truncate_str(&p.base_url, 28),
+                        Style::default().fg(theme.text_primary),
+                    ),
+                    Span::styled("  ", Style::default()),
+                    Span::styled(p.auth_scheme.as_str(), Style::default().fg(theme.gray)),
+                    Span::styled("  ", Style::default()),
+                    Span::styled(p.api_backend.as_str(), Style::default().fg(theme.gray)),
+                    Span::styled("  ", Style::default()),
+                    Span::styled(
+                        key_status,
+                        Style::default().fg(if p.has_key {
+                            theme.accent_success
+                        } else {
+                            theme.accent_error
+                        }),
+                    ),
+                ],
+            );
             y += 1;
         }
         y += 1;
@@ -420,22 +483,21 @@ fn render_list_content(buf: &mut Buffer, area: Rect, state: &ProviderModalState,
     // 「+ 添加渠道」固定末行
     if y < area.y + area.height {
         let add_idx = state.providers.len();
-        let style = if state.selected == add_idx {
-            selected_style
-        } else {
-            normal_style
-        };
-        let prefix = if state.selected == add_idx {
-            "▸ "
-        } else {
-            "  "
-        };
-        let line = Line::from(vec![
-            Span::styled(prefix, style),
-            Span::styled("+ 添加渠道", style),
-            Span::styled("  (a)", dim_style),
-        ]);
-        line.render(Rect::new(area.x, y, area.width, 1), buf);
+        let selected = state.selected == add_idx;
+        paint_list_row(
+            buf,
+            area,
+            y,
+            selected,
+            theme,
+            vec![
+                Span::styled(
+                    "  + 添加渠道",
+                    Style::default().fg(theme.text_primary),
+                ),
+                Span::styled("  (a)", Style::default().fg(theme.gray_dim)),
+            ],
+        );
         y += 1;
     }
 
@@ -458,16 +520,9 @@ fn render_actions(
     state: &mut ProviderModalState,
     name: &str,
     theme: &Theme,
+    compact: bool,
 ) {
-    let sizing = ModalSizing {
-        width_pct: 0.45,
-        max_width: 70,
-        min_width: 40,
-        v_margin: 8,
-        h_pad: 2,
-        v_pad: 1,
-        footer_lines: 2,
-    };
+    let sizing = provider_sizing(compact);
     let shortcuts: &[mw::Shortcut<'static>] = &[
         mw::Shortcut {
             label: "Enter 确认",
@@ -494,14 +549,11 @@ fn render_actions(
     };
     let content = mca.content;
 
-    let normal_style = Style::default().fg(theme.text_primary);
-    let selected_style = Style::default()
-        .fg(theme.accent_user)
-        .add_modifier(Modifier::BOLD);
-    let dim_style = Style::default().fg(theme.gray_dim);
-
     let mut y = content.y;
-    let hint = Line::from(Span::styled("选择操作:", dim_style));
+    let hint = Line::from(Span::styled(
+        "选择操作:",
+        Style::default().fg(theme.gray_dim),
+    ));
     hint.render(Rect::new(content.x, y, content.width, 1), buf);
     y += 1;
 
@@ -509,18 +561,24 @@ fn render_actions(
         if y >= content.y + content.height {
             break;
         }
-        let style = if i == state.selected {
-            selected_style
-        } else {
-            normal_style
-        };
-        let prefix = if i == state.selected { "▸ " } else { "  " };
-        let line = Line::from(vec![
-            Span::styled(prefix, style),
-            Span::styled(action.label(), style),
-            Span::styled(format!("  {}", action.hint()), dim_style),
-        ]);
-        line.render(Rect::new(content.x, y, content.width, 1), buf);
+        let selected = i == state.selected;
+        paint_list_row(
+            buf,
+            content,
+            y,
+            selected,
+            theme,
+            vec![
+                Span::styled(
+                    format!("  {}", action.label()),
+                    Style::default().fg(theme.text_primary),
+                ),
+                Span::styled(
+                    format!("  {}", action.hint()),
+                    Style::default().fg(theme.gray_dim),
+                ),
+            ],
+        );
         y += 1;
     }
 
@@ -544,35 +602,50 @@ fn render_models(
     state: &mut ProviderModalState,
     name: &str,
     theme: &Theme,
+    compact: bool,
 ) {
-    let sizing = ModalSizing {
-        width_pct: 0.60,
-        max_width: 100,
-        min_width: 50,
-        v_margin: 5,
-        h_pad: 2,
-        v_pad: 1,
-        footer_lines: 2,
-    };
+    let sizing = provider_sizing(compact);
     let shortcuts: &[mw::Shortcut<'static>] = if state.from_hub {
         &[
             mw::Shortcut {
-                label: "Enter 切换",
+                label: "输入筛选",
                 clickable: false,
                 id: 0,
             },
             mw::Shortcut {
-                label: "Esc 返回",
+                label: "↑↓ 滚动",
                 clickable: false,
                 id: 1,
             },
+            mw::Shortcut {
+                label: "Enter 切换",
+                clickable: false,
+                id: 2,
+            },
+            mw::Shortcut {
+                label: "Esc 返回",
+                clickable: false,
+                id: 3,
+            },
         ]
     } else {
-        &[mw::Shortcut {
-            label: "Esc 关闭",
-            clickable: false,
-            id: 0,
-        }]
+        &[
+            mw::Shortcut {
+                label: "输入筛选",
+                clickable: false,
+                id: 0,
+            },
+            mw::Shortcut {
+                label: "↑↓ 滚动",
+                clickable: false,
+                id: 1,
+            },
+            mw::Shortcut {
+                label: "Esc 关闭",
+                clickable: false,
+                id: 2,
+            },
+        ]
     };
     let title = format!("渠道 \"{name}\" 可用模型");
     let config = ModalWindowConfig {
@@ -586,58 +659,7 @@ fn render_models(
     let Some(mca) = mw::render_modal_window(buf, area, &mut state.window, &config, theme) else {
         return;
     };
-    let content = mca.content;
-
-    if state.models_loading {
-        let line = Line::from(Span::styled(
-            "正在获取模型列表…",
-            Style::default().fg(theme.gray),
-        ));
-        line.render(content, buf);
-        return;
-    }
-
-    if let Some(err) = &state.error {
-        let line = Line::from(Span::styled(
-            format!("✗ {err}"),
-            Style::default().fg(theme.accent_error),
-        ));
-        line.render(content, buf);
-        return;
-    }
-
-    if state.models.is_empty() {
-        let line = Line::from(Span::styled(
-            "未返回任何模型。",
-            Style::default().fg(theme.gray),
-        ));
-        line.render(content, buf);
-        return;
-    }
-
-    let normal_style = Style::default().fg(theme.text_primary);
-    let selected_style = Style::default()
-        .fg(theme.accent_user)
-        .add_modifier(Modifier::BOLD);
-
-    let mut y = content.y;
-    for (i, m) in state.models.iter().enumerate() {
-        if y >= content.y + content.height {
-            break;
-        }
-        let style = if i == state.selected {
-            selected_style
-        } else {
-            normal_style
-        };
-        let prefix = if i == state.selected { "▸ " } else { "  " };
-        let line = Line::from(vec![
-            Span::styled(prefix, style),
-            Span::styled(m, style),
-        ]);
-        line.render(Rect::new(content.x, y, content.width, 1), buf);
-        y += 1;
-    }
+    render_model_list_body(buf, mca.content, state, theme);
 }
 
 // ── /provider set-model <name> ─────────────────────────────────────────────
@@ -648,16 +670,9 @@ fn render_set_model(
     state: &mut ProviderModalState,
     name: &str,
     theme: &Theme,
+    compact: bool,
 ) {
-    let sizing = ModalSizing {
-        width_pct: 0.60,
-        max_width: 100,
-        min_width: 50,
-        v_margin: 5,
-        h_pad: 2,
-        v_pad: 1,
-        footer_lines: 2,
-    };
+    let sizing = provider_sizing(compact);
     let back = if state.from_hub {
         "Esc 返回"
     } else {
@@ -665,14 +680,24 @@ fn render_set_model(
     };
     let shortcuts: &[mw::Shortcut<'static>] = &[
         mw::Shortcut {
-            label: "Enter 确认",
+            label: "输入筛选",
             clickable: false,
             id: 0,
         },
         mw::Shortcut {
-            label: back,
+            label: "↑↓ 滚动",
             clickable: false,
             id: 1,
+        },
+        mw::Shortcut {
+            label: "Enter 确认",
+            clickable: false,
+            id: 2,
+        },
+        mw::Shortcut {
+            label: back,
+            clickable: false,
+            id: 3,
         },
     ];
     let title = format!("为渠道 \"{name}\" 选择模型");
@@ -687,8 +712,16 @@ fn render_set_model(
     let Some(mca) = mw::render_modal_window(buf, area, &mut state.window, &config, theme) else {
         return;
     };
-    let content = mca.content;
+    render_model_list_body(buf, mca.content, state, theme);
+}
 
+/// Shared body for Models / SetModel: search bar + filtered scrolled list.
+fn render_model_list_body(
+    buf: &mut Buffer,
+    content: Rect,
+    state: &mut ProviderModalState,
+    theme: &Theme,
+) {
     if state.models_loading {
         let line = Line::from(Span::styled(
             "正在获取模型列表…",
@@ -716,28 +749,151 @@ fn render_set_model(
         return;
     }
 
-    let normal_style = Style::default().fg(theme.text_primary);
-    let selected_style = Style::default()
-        .fg(theme.accent_user)
-        .add_modifier(Modifier::BOLD);
-
+    // Layout: [search bar] [divider] [list…] [optional status]
     let mut y = content.y;
-    for (i, m) in state.models.iter().enumerate() {
-        if y >= content.y + content.height {
+    let bottom = content.y + content.height;
+
+    // ── search bar ──
+    if y < bottom {
+        render_model_search_bar(buf, content.x, y, content.width, state, theme);
+        y += 1;
+    }
+    // divider under search (matches settings / picker chrome)
+    if y < bottom {
+        let div: String = std::iter::repeat_n('─', content.width as usize).collect();
+        buf.set_string(content.x, y, &div, Style::default().fg(theme.gray_dim));
+        y += 1;
+    }
+
+    let filtered_len = state.filtered_model_count();
+    let catalog_total = state.models.len();
+
+    if filtered_len == 0 {
+        if y < bottom {
+            let line = Line::from(Span::styled(
+                "  无匹配模型（Esc 清除筛选）",
+                Style::default().fg(theme.gray),
+            ));
+            line.render(Rect::new(content.x, y, content.width, 1), buf);
+        }
+        state.set_list_viewport(0, 0);
+        return;
+    }
+
+    let remaining = bottom.saturating_sub(y) as usize;
+    // Status when filtered list is long, or when filter is active (show match count).
+    let filter_active = !state.model_filter.trim().is_empty();
+    let need_status = filtered_len > remaining.saturating_sub(1).max(1) || filter_active;
+    let list_h = if need_status {
+        remaining.saturating_sub(1).max(1)
+    } else {
+        remaining.max(1)
+    };
+    // Mutate scroll/viewport before borrowing filtered ids for paint.
+    state.set_list_viewport(list_h, filtered_len);
+
+    let start = state.scroll_offset.min(filtered_len.saturating_sub(1));
+    let end = (start + list_h).min(filtered_len);
+    let filtered = state.filtered_models();
+
+    for i in start..end {
+        if y >= bottom {
             break;
         }
-        let style = if i == state.selected {
-            selected_style
-        } else {
-            normal_style
-        };
-        let prefix = if i == state.selected { "▸ " } else { "  " };
-        let line = Line::from(vec![
-            Span::styled(prefix, style),
-            Span::styled(m, style),
-        ]);
-        line.render(Rect::new(content.x, y, content.width, 1), buf);
+        let m = filtered[i];
+        let selected = i == state.selected;
+        paint_list_row(
+            buf,
+            content,
+            y,
+            selected,
+            theme,
+            vec![Span::styled(
+                format!("  {m}"),
+                Style::default().fg(theme.text_primary),
+            )],
+        );
         y += 1;
+    }
+
+    if need_status && y < bottom {
+        let status = if filter_active {
+            format!(
+                "  {}–{} / {} 匹配 · 共 {}  ·  ↑↓  PgUp/Dn  Esc 清筛选",
+                if filtered_len == 0 { 0 } else { start + 1 },
+                end,
+                filtered_len,
+                catalog_total
+            )
+        } else {
+            format!(
+                "  {}–{} / {}  ·  输入筛选  ↑↓  PgUp/Dn  Home/End",
+                start + 1,
+                end,
+                catalog_total
+            )
+        };
+        let line = Line::from(Span::styled(
+            status,
+            Style::default().fg(theme.gray_dim),
+        ));
+        line.render(Rect::new(content.x, y, content.width, 1), buf);
+    }
+}
+
+/// Top search field: ` 搜索: <query>█` with placeholder when empty.
+fn render_model_search_bar(
+    buf: &mut Buffer,
+    x: u16,
+    y: u16,
+    width: u16,
+    state: &ProviderModalState,
+    theme: &Theme,
+) {
+    let label = " 搜索: ";
+    let label_w = label.width() as u16;
+    let label_style = Style::default()
+        .fg(theme.accent_user)
+        .add_modifier(Modifier::BOLD);
+    let query_style = Style::default().fg(theme.text_primary);
+    let placeholder_style = Style::default().fg(theme.gray_dim);
+
+    // Paint row background (search is always the focused text field).
+    let row = Rect {
+        x,
+        y,
+        width,
+        height: 1,
+    };
+    let bg = list_row_bg(theme, false);
+    buf.set_style(row, Style::default().bg(bg));
+
+    buf.set_string(x, y, label, label_style.bg(bg));
+
+    let input_x = x.saturating_add(label_w);
+    let input_w = width.saturating_sub(label_w);
+    if input_w == 0 {
+        return;
+    }
+
+    let query = state.model_filter.as_str();
+    if query.is_empty() {
+        let hint = "输入模型名筛选…";
+        let hint_disp = truncate_str(hint, input_w as usize);
+        buf.set_string(input_x, y, &hint_disp, placeholder_style.bg(bg));
+        // Cursor at start of placeholder
+        if let Some(cell) = buf.cell_mut((input_x, y)) {
+            cell.set_style(Style::default().fg(theme.bg_dark).bg(theme.text_primary));
+        }
+    } else {
+        let disp = truncate_str(query, input_w.saturating_sub(1) as usize);
+        buf.set_string(input_x, y, &disp, query_style.bg(bg));
+        let cursor_x = input_x + disp.width() as u16;
+        if cursor_x < x + width {
+            if let Some(cell) = buf.cell_mut((cursor_x, y)) {
+                cell.set_style(Style::default().fg(theme.bg_dark).bg(theme.text_primary));
+            }
+        }
     }
 }
 

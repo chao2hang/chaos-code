@@ -169,10 +169,15 @@ pub struct ProviderModalState {
     pub models: Vec<String>,
     /// 模型列表是否正在加载。
     pub models_loading: bool,
+    /// 模型列表顶部搜索框内容（子串匹配，不区分大小写）。
+    pub model_filter: String,
     /// `List` / `Actions` / `Models` / `SetModel` 模式下的选中索引。
+    /// 在模型列表中是 **过滤结果** 内的下标，不是 `models` 原始下标。
     pub selected: usize,
-    /// 垂直滚动偏移。
+    /// 垂直滚动偏移（模型列表 / 渠道列表可见窗口起点）。
     pub scroll_offset: usize,
+    /// 最近一次渲染时列表可见行数（供 PageUp/Down 与选中跟随滚动）。
+    pub list_viewport: usize,
     /// `List` 模式下读取的渠道条目。
     pub providers: Vec<ProviderSummary>,
 }
@@ -206,10 +211,143 @@ impl ProviderModalState {
             success: None,
             models: Vec::new(),
             models_loading: false,
+            model_filter: String::new(),
             selected: 0,
             scroll_offset: 0,
+            list_viewport: 0,
             providers: Vec::new(),
         }
+    }
+
+    /// 当前过滤后的模型 id 列表（保持 API 返回顺序）。
+    pub fn filtered_models(&self) -> Vec<&str> {
+        let q = self.model_filter.trim();
+        if q.is_empty() {
+            return self.models.iter().map(|s| s.as_str()).collect();
+        }
+        let q_lower = q.to_lowercase();
+        self.models
+            .iter()
+            .filter(|m| m.to_lowercase().contains(&q_lower))
+            .map(|s| s.as_str())
+            .collect()
+    }
+
+    /// 当前过滤列表长度。
+    pub fn filtered_model_count(&self) -> usize {
+        let q = self.model_filter.trim();
+        if q.is_empty() {
+            return self.models.len();
+        }
+        let q_lower = q.to_lowercase();
+        self.models
+            .iter()
+            .filter(|m| m.to_lowercase().contains(&q_lower))
+            .count()
+    }
+
+    /// 过滤结果中当前选中项的模型 id。
+    pub fn selected_filtered_model(&self) -> Option<&str> {
+        let filtered = self.filtered_models();
+        filtered.get(self.selected).copied()
+    }
+
+    /// 记录列表可视高度，并保证当前选中行落在窗口内。
+    pub fn set_list_viewport(&mut self, rows: usize, item_count: usize) {
+        self.list_viewport = rows;
+        self.ensure_selected_visible(item_count);
+    }
+
+    /// 将 `scroll_offset` 夹到使 `selected` 可见。
+    pub fn ensure_selected_visible(&mut self, item_count: usize) {
+        if item_count == 0 {
+            self.selected = 0;
+            self.scroll_offset = 0;
+            return;
+        }
+        if self.selected >= item_count {
+            self.selected = item_count - 1;
+        }
+        let viewport = self.list_viewport.max(1);
+        if self.selected < self.scroll_offset {
+            self.scroll_offset = self.selected;
+        } else if self.selected >= self.scroll_offset.saturating_add(viewport) {
+            self.scroll_offset = self.selected + 1 - viewport;
+        }
+        let max_off = item_count.saturating_sub(viewport);
+        if self.scroll_offset > max_off {
+            self.scroll_offset = max_off;
+        }
+    }
+
+    /// 模型列表：移动选中并滚动跟随（基于过滤结果）。
+    pub fn move_models_selection(&mut self, delta: isize) {
+        let len = self.filtered_model_count();
+        if len == 0 {
+            return;
+        }
+        let next = if delta >= 0 {
+            (self.selected as isize + delta).min(len as isize - 1)
+        } else {
+            (self.selected as isize + delta).max(0)
+        };
+        self.selected = next as usize;
+        self.ensure_selected_visible(len);
+    }
+
+    /// 模型列表：按页翻动。
+    pub fn page_models(&mut self, forward: bool) {
+        let len = self.filtered_model_count();
+        if len == 0 {
+            return;
+        }
+        let step = self.list_viewport.max(1) as isize;
+        let delta = if forward { step } else { -step };
+        self.move_models_selection(delta);
+    }
+
+    /// 向搜索框追加字符，并重置选中到过滤结果首项。
+    pub fn push_model_filter_char(&mut self, c: char) {
+        if c.is_control() {
+            return;
+        }
+        self.model_filter.push(c);
+        self.on_model_filter_changed();
+    }
+
+    /// 搜索框退格。
+    pub fn pop_model_filter_char(&mut self) -> bool {
+        if self.model_filter.pop().is_some() {
+            self.on_model_filter_changed();
+            true
+        } else {
+            false
+        }
+    }
+
+    /// 清空搜索框。
+    pub fn clear_model_filter(&mut self) {
+        if self.model_filter.is_empty() {
+            return;
+        }
+        self.model_filter.clear();
+        self.on_model_filter_changed();
+    }
+
+    /// 设置/粘贴搜索内容（已清洗的单行文本）。
+    pub fn set_model_filter(&mut self, text: String) {
+        if self.model_filter == text {
+            return;
+        }
+        self.model_filter = text;
+        self.on_model_filter_changed();
+    }
+
+    fn on_model_filter_changed(&mut self) {
+        self.selected = 0;
+        self.scroll_offset = 0;
+        let len = self.filtered_model_count();
+        self.ensure_selected_visible(len);
     }
 
     /// 当前认证方式。
@@ -285,14 +423,42 @@ impl ProviderModalState {
     }
 
     /// 拉取并填充模型列表。
+    ///
+    /// 成功后把整表写入 config 的 `[model."provider/id"]`，这样 `/model` 在
+    /// 仅「查看可用模型」后也能列出渠道模型。若配置尚无默认模型，则把第一项
+    /// 设为 default（用户在「切换模型」里 Enter 仍会覆盖为选中项）。
     pub fn load_models_for(&mut self, name: &str) {
         self.models_loading = true;
         self.models.clear();
+        self.model_filter.clear();
         self.error = None;
         self.selected = 0;
         self.scroll_offset = 0;
         match crate::slash::commands::provider::fetch_provider_models(name) {
             Ok(models) => {
+                // Register into catalog while we have the list. Failures are
+                // non-fatal for the modal (user can still browse the in-memory list).
+                let need_default = crate::slash::commands::provider::load_config()
+                    .map(|doc| {
+                        crate::slash::commands::provider::configured_default_model(&doc).is_none()
+                    })
+                    .unwrap_or(false);
+                let first = models.first().cloned();
+                if let Err(e) = crate::slash::commands::provider::register_provider_models(
+                    name,
+                    &models,
+                    if need_default {
+                        first.as_deref()
+                    } else {
+                        None
+                    },
+                ) {
+                    tracing::warn!(
+                        provider = %name,
+                        error = %e,
+                        "failed to register provider models into catalog"
+                    );
+                }
                 self.models = models;
                 self.models_loading = false;
             }
@@ -310,6 +476,7 @@ impl ProviderModalState {
         self.clear_messages();
         self.api_key.clear();
         self.models.clear();
+        self.model_filter.clear();
         self.models_loading = false;
         self.current_step = FormStep::Preset;
         self.selected = self.selected.min(self.list_row_count().saturating_sub(1));
@@ -327,6 +494,7 @@ impl ProviderModalState {
         self.clear_messages();
         self.api_key.clear();
         self.models.clear();
+        self.model_filter.clear();
         self.models_loading = false;
         self.selected = 0;
         self.scroll_offset = 0;

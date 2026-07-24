@@ -12,6 +12,7 @@ use super::queue::{
 use super::router::dispatch;
 use super::session::fork::open_project_question;
 use super::session::lifecycle::skip_picker_and_create_session;
+use super::settings::ui::dispatch_open_provider_modal;
 use super::voice::voice_stop_on_submit;
 use crate::app::actions::{Action, DoctorFixTarget, Effect};
 use crate::app::agent::{AgentId, AgentState};
@@ -451,6 +452,23 @@ pub(super) fn dispatch_send_prompt_inner(
     if app.reconnect_pending {
         app.show_toast("Reconnecting, please wait...");
         return vec![];
+    }
+
+    // Channel/model setup is more fundamental than the project picker: Chaos
+    // ships an empty catalog, so a real prompt with no providers / no default
+    // model should open the provider hub instead of failing mid-turn.
+    // Slash commands, exit aliases, empty input, and literal chip text pass
+    // through (same gate as the project picker) so `/provider` and friends
+    // still work when setup is incomplete. The draft is left in the composer.
+    if !literal
+        && input_can_trigger_project_picker(&text)
+        && crate::slash::commands::provider::needs_provider_setup()
+    {
+        app.show_toast("请先添加渠道并设置默认模型后再对话");
+        return dispatch_open_provider_modal(
+            app,
+            crate::views::provider_modal::ProviderModalMode::List,
+        );
     }
 
     // The picker intercepts only real, user-authored prompts; slash commands,

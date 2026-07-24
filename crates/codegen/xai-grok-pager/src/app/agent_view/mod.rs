@@ -1979,51 +1979,109 @@ pub(super) fn apply_provider_outcome(
         }
         ProviderKeyOutcome::Unchanged => InputOutcome::Unchanged,
         ProviderKeyOutcome::SwitchModel(model_id) => {
-            let provider_name = if let Some(crate::views::modal::ActiveModal::ProviderModal { state }) =
-                &agent.active_modal
-            {
-                match &state.mode {
-                    crate::views::provider_modal::ProviderModalMode::SetModel(name)
-                    | crate::views::provider_modal::ProviderModalMode::Models(name) => {
-                        Some(name.clone())
-                    }
-                    _ => None,
-                }
-            } else {
-                None
-            };
+            // Snapshot before closing the modal.
+            // Chaos ships an empty bundled catalog: only `[model."provider/id"]`
+            // entries appear in `/model`. Register the full fetched list so the
+            // picker is usable, and set the selected model as `[models].default`.
+            let (provider_name, fetched_models) =
+                if let Some(crate::views::modal::ActiveModal::ProviderModal { state }) =
+                    &agent.active_modal
+                {
+                    let name = match &state.mode {
+                        crate::views::provider_modal::ProviderModalMode::SetModel(name)
+                        | crate::views::provider_modal::ProviderModalMode::Models(name) => {
+                            Some(name.clone())
+                        }
+                        _ => None,
+                    };
+                    (name, state.models.clone())
+                } else {
+                    (None, Vec::new())
+                };
             agent.active_modal = None;
 
-            // 写入 [model."<provider>/<id>"] + models.default，并乐观注入
-            // 会话 catalog，否则 SetDefaultModel 会因「不在 catalog」直接 no-op。
             let catalog_key = if let Some(name) = &provider_name {
-                match crate::slash::commands::provider::register_and_set_model(name, &model_id) {
-                    Ok(key) => key,
+                let mut ids = fetched_models;
+                if !ids.iter().any(|m| m == &model_id) {
+                    ids.push(model_id.clone());
+                }
+                let expected =
+                    crate::slash::commands::provider::provider_model_catalog_key(name, &model_id);
+                match crate::slash::commands::provider::register_provider_models(
+                    name,
+                    &ids,
+                    Some(&model_id),
+                ) {
+                    Ok(keys) => keys.into_iter().find(|k| k == &expected).unwrap_or(expected),
                     Err(e) => {
-                        tracing::error!(error = %e, "register_and_set_model failed");
-                        crate::slash::commands::provider::provider_model_catalog_key(
+                        tracing::error!(error = %e, "register_provider_models failed");
+                        match crate::slash::commands::provider::register_and_set_model(
                             name, &model_id,
-                        )
+                        ) {
+                            Ok(key) => key,
+                            Err(e2) => {
+                                tracing::error!(error = %e2, "register_and_set_model failed");
+                                expected
+                            }
+                        }
                     }
                 }
             } else {
                 model_id.clone()
             };
 
-            let mid: agent_client_protocol::ModelId = catalog_key.clone().into();
-            let display = if let Some(name) = &provider_name {
-                format!("{name}/{model_id}")
+            // Optimistic inject into session catalog so `/model` works before
+            // the agent reloads config and broadcasts `x.ai/models/update`.
+            if let Some(name) = &provider_name {
+                inject_provider_models_into_session(agent, name, &model_id, &catalog_key);
             } else {
-                catalog_key.clone()
-            };
-            agent
-                .session
-                .models
-                .available
-                .entry(mid.clone())
-                .or_insert_with(|| agent_client_protocol::ModelInfo::new(mid.clone(), display));
+                let mid: agent_client_protocol::ModelId = catalog_key.clone().into();
+                agent.session.models.available.entry(mid.clone()).or_insert_with(|| {
+                    agent_client_protocol::ModelInfo::new(mid.clone(), catalog_key.clone())
+                });
+            }
 
+            let mid: agent_client_protocol::ModelId = catalog_key.into();
+            // SetDefaultModel → SwitchModel effect reloads agent catalog from
+            // disk, then switches session model and persists default.
             InputOutcome::Action(Action::SetDefaultModel(mid))
+        }
+    }
+}
+
+/// Inject the selected model and sibling `[model."provider/*"]` entries into
+/// the session catalog (optimistic path before `models/update`).
+fn inject_provider_models_into_session(
+    agent: &mut AgentView,
+    provider: &str,
+    model_id: &str,
+    catalog_key: &str,
+) {
+    let mid: agent_client_protocol::ModelId = catalog_key.to_string().into();
+    let display = format!("{provider}/{model_id}");
+    agent
+        .session
+        .models
+        .available
+        .entry(mid.clone())
+        .or_insert_with(|| agent_client_protocol::ModelInfo::new(mid, display));
+
+    if let Ok(doc) = crate::slash::commands::provider::load_config()
+        && let Some(table) = doc.get("model").and_then(|v| v.as_table())
+    {
+        let prefix = format!("{provider}/");
+        for (key, item) in table.iter() {
+            if !key.starts_with(&prefix) || !item.is_table() {
+                continue;
+            }
+            let display = item
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or(key);
+            let mid: agent_client_protocol::ModelId = key.to_string().into();
+            agent.session.models.available.entry(mid.clone()).or_insert_with(|| {
+                agent_client_protocol::ModelInfo::new(mid, display.to_string())
+            });
         }
     }
 }
