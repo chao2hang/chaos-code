@@ -13,6 +13,7 @@ use crate::session::export::ExportedMetadata;
 use xai_grok_workspace::session::file_state::RewindPoint;
 
 use crate::session::signals::SessionSignals;
+use crate::session::storage::relocation::{RelocationError, RelocationView};
 use crate::session::storage::{JsonlStorageAdapter, StorageAdapter};
 use crate::tools::todo::TodoState;
 use crate::util::grok_home::grok_home;
@@ -635,24 +636,47 @@ fn is_uniquely_persisted_session_id(session_id: &str, sessions_root: &Path) -> b
     collect_persisted_cwds_for_id(session_id, sessions_root).len() == 1
 }
 
+fn storage_view(sessions_root: &Path) -> crate::session::storage::relocation::Result<RelocationView> {
+    RelocationView::load_for_sessions_root(sessions_root)
+}
+
 /// Scan all CWD directories for a session and return its directory path.
+///
+/// Uses [`RelocationView`] authority when a relocation journal exists so
+/// incomplete moves fail closed instead of returning a stale path.
 pub fn find_session_dir_by_id(session_id: &str) -> Option<PathBuf> {
-    let sessions_root = grok_home().join("sessions");
-    find_session_dir_by_id_in_root(session_id, &sessions_root)
+    find_any_session_dir_by_id_result(session_id).ok().flatten()
 }
 
 /// Scan all CWD directories under `sessions_root` for a session directory.
 pub fn find_session_dir_by_id_in_root(session_id: &str, sessions_root: &Path) -> Option<PathBuf> {
-    if !sessions_root.exists() {
-        return None;
-    }
-    for entry in std::fs::read_dir(sessions_root).ok()?.flatten() {
-        let candidate = entry.path().join(session_id);
-        if candidate.is_dir() {
-            return Some(candidate);
-        }
-    }
-    None
+    storage_view(sessions_root)
+        .and_then(|view| view.find_any_session_dir(session_id))
+        .ok()
+        .flatten()
+}
+
+/// Resume/export path: require a persisted summary and journal authority.
+pub(crate) fn find_persisted_session_dir_by_id_result(
+    session_id: &str,
+) -> io::Result<Option<PathBuf>> {
+    find_persisted_session_dir_by_id_in_root_result(session_id, &grok_home().join("sessions"))
+}
+
+/// Like [`find_persisted_session_dir_by_id_result`] with an injectable sessions root.
+pub(crate) fn find_persisted_session_dir_by_id_in_root_result(
+    session_id: &str,
+    sessions_root: &Path,
+) -> io::Result<Option<PathBuf>> {
+    storage_view(sessions_root)
+        .and_then(|view| view.find_persisted_session_dir(session_id))
+        .map_err(io::Error::other)
+}
+
+pub(crate) fn find_any_session_dir_by_id_result(session_id: &str) -> io::Result<Option<PathBuf>> {
+    storage_view(&grok_home().join("sessions"))
+        .and_then(|view| view.find_any_session_dir(session_id))
+        .map_err(io::Error::other)
 }
 
 pub fn session_exists_by_id(session_id: &str) -> bool {
@@ -693,20 +717,22 @@ pub(crate) fn find_summary_by_session_id_in_root(
     if session_id.contains('/') || session_id.contains('\\') || session_id.contains("..") {
         return None;
     }
-    let entries = std::fs::read_dir(sessions_root).ok()?;
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if !path.is_dir() {
-            continue;
-        }
-        let summary_path = path.join(session_id).join("summary.json");
-        if let Ok(bytes) = std::fs::read(&summary_path)
-            && let Ok(summary) = serde_json::from_slice::<Summary>(&bytes)
-        {
-            return Some(summary);
-        }
-    }
-    None
+    let path = storage_view(sessions_root)
+        .ok()?
+        .find_persisted_session_dir(session_id)
+        .ok()
+        .flatten()?;
+    read_summary_from_dir(&path).ok()
+}
+
+fn read_summary_from_dir(session_dir: &Path) -> crate::session::storage::relocation::Result<Summary> {
+    let path = session_dir.join("summary.json");
+    let bytes = std::fs::read(&path).map_err(|error| RelocationError::Io {
+        operation: "read",
+        path: path.clone(),
+        source: error,
+    })?;
+    serde_json::from_slice(&bytes).map_err(|source| RelocationError::Json { path, source })
 }
 
 /// The most recently updated local session summary for `cwd` (by

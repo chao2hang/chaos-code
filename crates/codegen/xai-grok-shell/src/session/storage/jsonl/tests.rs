@@ -1994,13 +1994,13 @@ fn write_test_summary(
 #[test]
 fn scan_session_dirs_returns_empty_for_explicit_mode() {
     let adapter = JsonlStorageAdapter::with_explicit_session_dir(PathBuf::from("/fake"));
-    assert!(adapter.scan_session_dirs(None).is_empty());
+    assert!(adapter.scan_session_dirs(None).unwrap().is_empty());
 }
 #[test]
 fn scan_session_dirs_returns_empty_when_no_sessions_dir() {
     let tmp = TempDir::new().unwrap();
     let adapter = JsonlStorageAdapter::with_root(tmp.path().to_path_buf());
-    assert!(adapter.scan_session_dirs(None).is_empty());
+    assert!(adapter.scan_session_dirs(None).unwrap().is_empty());
 }
 #[test]
 fn scan_session_dirs_finds_all_sessions() {
@@ -2010,7 +2010,7 @@ fn scan_session_dirs_finds_all_sessions() {
     write_test_summary(tmp.path(), &cwd, "s1", now, None, None, None);
     write_test_summary(tmp.path(), &cwd, "s2", now, None, None, None);
     let adapter = JsonlStorageAdapter::with_root(tmp.path().to_path_buf());
-    let dirs = adapter.scan_session_dirs(None);
+    let dirs = adapter.scan_session_dirs(None).unwrap();
     assert_eq!(dirs.len(), 2);
 }
 #[test]
@@ -2022,10 +2022,10 @@ fn scan_session_dirs_filters_by_cwd() {
     write_test_summary(tmp.path(), &cwd_a, "s1", now, None, None, None);
     write_test_summary(tmp.path(), &cwd_b, "s2", now, None, None, None);
     let adapter = JsonlStorageAdapter::with_root(tmp.path().to_path_buf());
-    let a_dirs = adapter.scan_session_dirs(Some("/home/user/project-a"));
+    let a_dirs = adapter.scan_session_dirs(Some("/home/user/project-a")).unwrap();
     assert_eq!(a_dirs.len(), 1);
     assert!(a_dirs[0].ends_with("s1"));
-    let all_dirs = adapter.scan_session_dirs(None);
+    let all_dirs = adapter.scan_session_dirs(None).unwrap();
     assert_eq!(all_dirs.len(), 2);
 }
 #[test]
@@ -2036,8 +2036,10 @@ fn scan_session_dirs_skips_non_directory_entries() {
     std::fs::create_dir_all(&cwd_dir).unwrap();
     std::fs::write(cwd_dir.join("stray-file.txt"), b"oops").unwrap();
     std::fs::create_dir(cwd_dir.join("real-session")).unwrap();
+    // RelocationView only surfaces dirs with a real summary.json.
+    std::fs::write(cwd_dir.join("real-session/summary.json"), b"{}").unwrap();
     let adapter = JsonlStorageAdapter::with_root(tmp.path().to_path_buf());
-    let dirs = adapter.scan_session_dirs(None);
+    let dirs = adapter.scan_session_dirs(None).unwrap();
     assert_eq!(dirs.len(), 1);
     assert!(dirs[0].ends_with("real-session"));
 }
