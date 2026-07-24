@@ -531,9 +531,8 @@ fn render_rename_editor(
 fn rename_cursor_pos(state: &DashboardState, rows: &[DashboardRow]) -> Option<(u16, u16)> {
     let rn = state.rename.as_ref()?;
     let (_, rect) = state.row_rects.iter().find(|(id, _)| *id == rn.row)?;
-    let (marker_width, indent_width, icon_width) = rows
-        .iter()
-        .find(|r| r.id == rn.row)
+    let row = rows.iter().find(|r| r.id == rn.row);
+    let (marker_width, indent_width, icon_width) = row
         .map(|r| {
             (
                 UnicodeWidthStr::width(crate::glyphs::selection_bar()) as u16,
@@ -549,7 +548,10 @@ fn rename_cursor_pos(state: &DashboardState, rows: &[DashboardRow]) -> Option<(u
     let cursor_x = content_x
         .saturating_add(cursor_offset)
         .min(rect.x.saturating_add(rect.width.saturating_sub(1)));
-    Some((cursor_x, rect.y))
+    // Mirror `render_row`'s vertical centering so the caret lands on
+    // the title line (narrow-mode single-line rects yield offset 0).
+    let title_y = rect.y + row.map_or(0, |r| row_content_offset(rect.height, r));
+    Some((cursor_x, title_y))
 }
 
 /// Render the compact dashboard "banner" used when an agent is
@@ -608,14 +610,14 @@ fn render_dashboard_banner(
             needs_input += 1;
         }
     }
-    let agent_word = if total == 1 { "个会话" } else { "个会话" };
-    let mut title_parts: Vec<String> = vec!["控制台".to_string()];
+    let agent_word = if total == 1 { "agent" } else { "agents" };
+    let mut title_parts: Vec<String> = vec!["Dashboard".to_string()];
     title_parts.push(format!("{total} {agent_word}"));
     if working > 0 {
-        title_parts.push(format!("{working} 运行中"));
+        title_parts.push(format!("{working} working"));
     }
     if needs_input > 0 {
-        title_parts.push(format!("{needs_input} 待处理"));
+        title_parts.push(format!("{needs_input} awaiting"));
     }
     let title = format!(" {} ", title_parts.join(" · "));
 
@@ -665,7 +667,7 @@ fn render_dashboard_banner(
 /// Render the dashboard header row:
 ///
 /// ```text
-///   main worktree ~/wt/wt1 (worktree of ~/proj)   ◆ 2 awaiting · ⋮ 3 working · ◇ 1 idle │ [+ 新建会话]
+///   main worktree ~/wt/wt1 (worktree of ~/proj)   ◆ 2 awaiting · ⋮ 3 working · ◇ 1 idle │ [+ New Agent]
 /// ```
 ///
 /// Left: the current location — git branch + worktree badge + cwd, the
@@ -680,7 +682,7 @@ fn render_dashboard_banner(
 /// inflate the tallies if counted directly. Chips with zero count are
 /// suppressed.
 ///
-/// Reintroduces a `[+ 新建会话]` button on the right edge of
+/// Reintroduces a `[+ New Agent]` button on the right edge of
 /// the header. The button is the default cursor target whenever
 /// no row is selected — Up-arrow from the first row, Esc deselect,
 /// and dashboard-open-without-prior-agent all land here. While
@@ -714,19 +716,19 @@ fn render_header(
     }
     buf.set_style(area, Style::default().bg(theme.bg_base));
 
-    // Paint the `[+ 新建会话]` button on the far right FIRST,
+    // Paint the `[+ New Agent]` button on the far right FIRST,
     // before the status chips. We then shrink the chip rendering
     // area so the chips don't overlap the button. Right-margin
     // is 1 cell so the button doesn't kiss the panel edge.
     // Worktree mode armed (and the cwd is a git repo, so it can actually
     // take effect) → the button creates the next session in a fresh git
-    // worktree, so label it `[+ 新建 Worktree]` to match. Otherwise it's the
+    // worktree, so label it `[+ New Worktree]` to match. Otherwise it's the
     // plain new-session button. Width is derived from the chosen label so the
     // positioning + hit rect below stay correct for either string.
     let button_label: &str = if state.dispatch_worktree && state.cwd_has_git_ancestor {
-        "[+ 新建 Worktree]"
+        "[+ New Worktree]"
     } else {
-        "[+ 新建会话]"
+        "[+ New Agent]"
     };
     let button_w = UnicodeWidthStr::width(button_label) as u16;
     let right_margin: u16 = 1;
@@ -817,7 +819,7 @@ fn render_header(
                 crate::glyphs::diamond_filled(),
                 theme.warning,
                 awaiting,
-                "待处理",
+                "awaiting",
             ),
         );
     }
@@ -829,7 +831,7 @@ fn render_header(
         let spin = frames[(state.spinner_tick / SPINNER_DIVISOR) as usize % frames.len()];
         status.push(
             "working",
-            chip(spin, theme.accent_running, working, "运行中"),
+            chip(spin, theme.accent_running, working, "working"),
         );
     }
     if blocked > 0 {
@@ -839,7 +841,7 @@ fn render_header(
                 crate::glyphs::diamond_filled(),
                 theme.warning,
                 blocked,
-                "已阻塞",
+                "blocked",
             ),
         );
     }
@@ -850,7 +852,7 @@ fn render_header(
                 crate::glyphs::diamond_hollow(),
                 theme.gray_dim,
                 idle,
-                "空闲",
+                "idle",
             ),
         );
     }
@@ -861,7 +863,7 @@ fn render_header(
                 crate::glyphs::diamond_filled(),
                 theme.accent_success,
                 done,
-                "已完成",
+                "done",
             ),
         );
     }
@@ -872,12 +874,12 @@ fn render_header(
                 crate::glyphs::diamond_filled(),
                 theme.accent_error,
                 failed,
-                "失败",
+                "failed",
             ),
         );
     }
     // Chips render right-aligned within `chip_area` so they sit
-    // immediately to the left of the `[+ 新建会话]` button. Capture
+    // immediately to the left of the `[+ New Agent]` button. Capture
     // the per-chip rects so the left label's width budget stops short
     // of the leftmost chip instead of painting over it.
     let chip_rects = status.render(buf, chip_area);
@@ -928,7 +930,7 @@ fn render_header(
 
     // Record the painted label as a click target so the mouse handler
     // can open the location picker. Width is clamped to the label budget
-    // so the hit area never extends under the chips / `[+ 新建会话]`.
+    // so the hit area never extends under the chips / `[+ New Agent]`.
     let hit_w = location_w.min(label_budget as u16);
     if hit_w > 0 {
         state.location_hit.set(Some(Rect {
@@ -1553,7 +1555,7 @@ fn render_rows(
     }
 
     // Rows are 3 visual cells tall (title + secondary
-    // + breathing gap) and headers are 2 cells tall (label + gap).
+    // + padding) and headers are 2 cells tall (label + gap).
     // Viewport scrolling works on cumulative cell offsets so partial
     // rows can't peek out at the top / bottom of the list. The
     // clamp helper still operates in "1 unit = 1 cell" — we just
@@ -1645,6 +1647,10 @@ fn render_rows(
     let body_width = area.width;
     let max_y = area.y + area.height;
 
+    // Content background per visible line (`None` = spacer), consumed
+    // by the half-block halo pass after the items are painted.
+    let mut line_bg: Vec<Option<Color>> = vec![None; viewport_h];
+
     let mut cell_y: usize = 0;
     for (line, &h) in lines.iter().zip(heights.iter()) {
         let next_cell_y = cell_y + h as usize;
@@ -1672,6 +1678,14 @@ fn render_rows(
             width: body_width,
             height: render_h,
         };
+        // `line_bg` records each visible line's CONTENT background
+        // (`None` = spacer line) for the half-block halo pass below.
+        let mark = |line_bg: &mut Vec<Option<Color>>, dy: u16, bg: Color| {
+            let idx = (y - area.y + dy) as usize;
+            if let Some(slot) = line_bg.get_mut(idx) {
+                *slot = Some(bg);
+            }
+        };
         match line {
             DashboardLine::PinnedHeader { count } => {
                 let key = SectionKey::Pinned;
@@ -1681,12 +1695,16 @@ fn render_rows(
                 render_group_header(
                     buf, line_rect, theme, "Pinned", *count, collapsed, selected, hovered,
                 );
+                mark(&mut line_bg, 0, theme.bg_base);
+                // Full-height hit rect (label + trailing gap) — no
+                // hover/click dead zone between items.
                 state
                     .section_rects
-                    .push((key, Rect::new(area.x, y, body_width, 1)));
+                    .push((key, Rect::new(area.x, y, body_width, render_h)));
             }
             DashboardLine::Divider => {
                 render_divider(buf, line_rect, theme);
+                mark(&mut line_bg, 0, theme.bg_base);
             }
             DashboardLine::Header { state: rs, count } => {
                 // Headers only paint into the first cell; the
@@ -1705,22 +1723,31 @@ fn render_rows(
                     selected,
                     hovered,
                 );
+                mark(&mut line_bg, 0, theme.bg_base);
+                // Full-height hit rect (label + trailing gap) — no
+                // hover/click dead zone between items.
                 state
                     .section_rects
-                    .push((key, Rect::new(area.x, y, body_width, 1)));
+                    .push((key, Rect::new(area.x, y, body_width, render_h)));
             }
             DashboardLine::Row(row) => {
                 render_row(buf, line_rect, theme, row, state);
+                let bg = row_bg(theme, state, row);
+                let content_top = row_content_offset(render_h, row);
+                let content_h = row_content_height(row).min(render_h);
+                for dy in content_top..(content_top + content_h).min(render_h) {
+                    mark(&mut line_bg, dy, bg);
+                }
                 if !row.is_more_placeholder {
-                    // Hit rect covers the two content cells so a
-                    // click on the secondary line still selects the
-                    // row. The trailing gap (if any) stays outside.
-                    let hit_h = render_h.min(2);
+                    // Full-height hit rect (content + spacer lines) —
+                    // no hover/click dead zone between items; the
+                    // highlight covers the content plus half-cell
+                    // halos on the neighbouring spacer lines.
                     let hit = Rect {
                         x: area.x,
                         y,
                         width: body_width,
-                        height: hit_h,
+                        height: render_h,
                     };
                     state.row_rects.push((row.id.clone(), hit));
                 }
@@ -1735,14 +1762,59 @@ fn render_rows(
                     state.selected_idle_overflow,
                     state.hovered_idle_overflow,
                 );
-                state.idle_overflow_rect = Some(Rect::new(area.x, y, body_width, 1));
+                mark(&mut line_bg, 0, theme.bg_base);
+                // Full-height hit rect (label + trailing gap) — no
+                // hover/click dead zone below the overflow row.
+                state.idle_overflow_rect = Some(Rect::new(area.x, y, body_width, render_h));
             }
         }
         cell_y = next_cell_y;
     }
 
+    render_spacer_halos(buf, area, body_width, &line_bg, theme.bg_base);
+
     if needs_scrollbar {
         render_scrollbar(buf, area, offset, viewport_h, total_cells, theme);
+    }
+}
+
+/// Paint the spacer lines between items as half-cell "halos" so a
+/// highlighted row reads as vertically centered: the spacer below a
+/// highlighted block shows the highlight in its TOP half, and the
+/// spacer above shows it in its BOTTOM half. Implemented with the
+/// upper-half-block glyph (`▀`, CP437 `0xDF` — safe on legacy
+/// consoles): fg paints the top half with the colour of the content
+/// line above, bg paints the bottom half with the colour of the
+/// content line below. Spacers between two `bg_base` neighbours are
+/// left untouched.
+fn render_spacer_halos(
+    buf: &mut Buffer,
+    area: Rect,
+    body_width: u16,
+    line_bg: &[Option<Color>],
+    base: Color,
+) {
+    for (i, slot) in line_bg.iter().enumerate() {
+        if slot.is_some() {
+            continue;
+        }
+        let above = if i > 0 {
+            line_bg[i - 1].unwrap_or(base)
+        } else {
+            base
+        };
+        let below = line_bg.get(i + 1).copied().flatten().unwrap_or(base);
+        if above == base && below == base {
+            continue;
+        }
+        let y = area.y + i as u16;
+        if above == below {
+            let fill = " ".repeat(body_width as usize);
+            buf.set_string(area.x, y, &fill, Style::default().bg(above));
+        } else {
+            let fill = "\u{2580}".repeat(body_width as usize);
+            buf.set_string(area.x, y, &fill, Style::default().fg(above).bg(below));
+        }
     }
 }
 
@@ -2026,10 +2098,38 @@ fn snap_offset_to_line_boundary(offset: usize, heights: &[u16]) -> usize {
     snapped
 }
 
-/// Render a row as a 2-line block (`rect.height` is
-/// expected to be `>= 2`; the caller — `render_rows` — sizes the
-/// rect to either 2 or 3 lines depending on whether the trailing
-/// breathing-room gap is in budget).
+/// Number of content lines a row renders: title + optional secondary.
+fn row_content_height(row: &DashboardRow) -> u16 {
+    if row.secondary_line.as_deref().is_some_and(|s| !s.is_empty()) {
+        2
+    } else {
+        1
+    }
+}
+
+/// Vertical offset of a row's content block within its rect. The
+/// 1- or 2-line content is centered at cell granularity: a title-only
+/// row in a 3-cell rect gets one padding line above and below, while
+/// a title+secondary row stays top-aligned ((3 - 2) / 2 = 0).
+fn row_content_offset(height: u16, row: &DashboardRow) -> u16 {
+    height.saturating_sub(row_content_height(row)) / 2
+}
+
+/// The row's background: keyboard selection wins over mouse hover.
+fn row_bg(theme: &Theme, state: &DashboardState, row: &DashboardRow) -> Color {
+    if state.selected.as_ref().is_some_and(|s| *s == row.id) {
+        theme.bg_highlight
+    } else if state.hovered_row.as_ref().is_some_and(|h| *h == row.id) {
+        theme.bg_hover
+    } else {
+        theme.bg_base
+    }
+}
+
+/// Render a row as a 2-line block plus a trailing padding line
+/// (`rect.height` is expected to be `>= 2`; the caller —
+/// `render_rows` — sizes the rect to either 2 or 3 lines depending
+/// on whether the padding is in budget).
 ///
 /// Visual:
 ///
@@ -2043,9 +2143,15 @@ fn snap_offset_to_line_boundary(offset: usize, heights: &[u16]) -> usize {
 /// tool call, the last assistant message, or a `Pending: …` preview
 /// of the front-most permission request.
 ///
-/// Selection / hover backgrounds cover both content rows (the
-/// trailing gap row, if any, stays on `bg_base` so consecutive
-/// selected rows still look distinct).
+/// The content block is vertically centered within the rect (see
+/// [`row_content_offset`]): a title-only row in a 3-cell rect renders
+/// as padding + title + padding.
+///
+/// Selection / hover backgrounds fill the CONTENT lines; the spacer
+/// lines around them are painted afterwards by `render_rows`'s
+/// half-block pass (see `render_spacer_halos`), which extends the
+/// highlight half a cell above and below so it reads as centered on
+/// the text.
 fn render_row(
     buf: &mut Buffer,
     rect: Rect,
@@ -2057,21 +2163,16 @@ fn render_row(
         return;
     }
     let selected = state.selected.as_ref().is_some_and(|s| *s == row.id);
-    let hovered = state.hovered_row.as_ref().is_some_and(|h| *h == row.id);
     let renaming = state.rename.as_ref().is_some_and(|r| r.row == row.id);
-    let bg = if selected {
-        theme.bg_highlight
-    } else if hovered {
-        theme.bg_hover
-    } else {
-        theme.bg_base
-    };
+    let bg = row_bg(theme, state, row);
 
-    // Paint both content rows with the same background so selection
-    // reads as a single block.
-    let content_h = rect.height.min(2);
+    // Paint the content lines with the row background. Spacer lines
+    // keep `bg_base` here; the halo pass splits them between the
+    // neighbouring items.
+    let content_top = row_content_offset(rect.height, row);
+    let content_h = row_content_height(row).min(rect.height);
     let fill = " ".repeat(rect.width as usize);
-    for dy in 0..content_h {
+    for dy in content_top..(content_top + content_h).min(rect.height) {
         buf.set_string(rect.x, rect.y + dy, &fill, Style::default().bg(bg));
     }
 
@@ -2095,8 +2196,11 @@ fn render_row(
     let icon_w = UnicodeWidthStr::width(icon) as u16;
     // Title-row paint cursor (no leading 1-col gap before the marker
     // — the marker IS the leftmost cell, mirroring the wide-mode
-    // header which starts flush-left at col 0).
-    let title_y = rect.y;
+    // header which starts flush-left at col 0). The content block is
+    // vertically centered within the rect at cell granularity:
+    // title-only rows sit padded above and below, while 2-line rows
+    // stay top-aligned (2 lines cannot center in a 3-cell row).
+    let title_y = rect.y + row_content_offset(rect.height, row);
     let content_start_x = rect.x + marker_w + 1 + indent_w + icon_w + 1;
 
     // Rename overlay: keep the row's chrome (marker + state icon) in
@@ -2113,14 +2217,14 @@ fn render_row(
                 .fg(theme.accent_user)
                 .add_modifier(Modifier::BOLD),
         );
-        // Keep the left bar continuous on secondary lines even while
-        // the rename overlay is active on the title line.
-        if selected && content_h >= 2 {
+        // Keep the left bar continuous on every content line even
+        // while the rename overlay is active on the title line.
+        if selected {
             let bar_style = Style::default()
                 .bg(bg)
                 .fg(theme.accent_user)
                 .add_modifier(Modifier::BOLD);
-            for dy in 1..content_h {
+            for dy in content_top..(content_top + content_h).min(rect.height) {
                 buf.set_string(
                     rect.x,
                     rect.y + dy,
@@ -2163,16 +2267,15 @@ fn render_row(
     );
 
     // For the active selection, extend the thin left bar down every
-    // content line of the row (title + secondary) so it forms one
-    // continuous vertical rule along the full height of the selected
-    // item. Hover and normal states keep their marker only on the
-    // title line.
-    if selected && content_h >= 2 {
+    // content line of the row so it forms one continuous vertical rule
+    // along the highlighted text. Hover and normal states keep their
+    // marker only on the title line.
+    if selected {
         let bar_style = Style::default()
             .bg(bg)
             .fg(theme.accent_user)
             .add_modifier(Modifier::BOLD);
-        for dy in 1..content_h {
+        for dy in content_top..(content_top + content_h).min(rect.height) {
             buf.set_string(
                 rect.x,
                 rect.y + dy,
@@ -2279,8 +2382,8 @@ fn render_row(
             }
             let label = match badge {
                 RowBadge::NeedsInput | RowBadge::Worktree | RowBadge::Pinned => continue,
-                RowBadge::Failed => "失败",
-                RowBadge::BgTask => "后台",
+                RowBadge::Failed => "failed",
+                RowBadge::BgTask => "bg",
             };
             let chip = format!(" [{label}]");
             let cw = UnicodeWidthStr::width(chip.as_str()) as u16;
@@ -2305,7 +2408,7 @@ fn render_row(
         && let Some(secondary) = row.secondary_line.as_deref()
         && !secondary.is_empty()
     {
-        let sec_y = rect.y + 1;
+        let sec_y = title_y + 1;
         let avail = rect
             .width
             .saturating_sub(content_start_x - rect.x)
@@ -2687,12 +2790,12 @@ fn paint_dispatch_config_badge(
     let mut flags: Vec<PromptFlag> = Vec::new();
     match state.pending_mode {
         DashboardDispatchMode::Plan => flags.push(PromptFlag {
-            text: "计划",
+            text: "plan",
             color: Some(theme.accent_plan),
             bold: false,
         }),
         DashboardDispatchMode::AlwaysApprove => flags.push(PromptFlag {
-            text: "总是批准",
+            text: "always-approve",
             color: None,
             bold: false,
         }),
@@ -3274,7 +3377,7 @@ fn render_footer(
             .unwrap_or_else(|| key!('x', CONTROL));
         let pending = PendingHint {
             shortcut: stop_key,
-            label: "关闭此会话",
+            label: "close this session",
         };
         ShortcutsBar::new(&[])
             .with_pending(Some(pending))
@@ -3287,8 +3390,8 @@ fn render_footer(
     // exactly its two actions instead of the dispatch + nav matrix.
     if state.rename.is_some() {
         let hints = vec![
-            HintItem::new(key!(Enter), "保存"),
-            HintItem::new(key!(Esc), "取消"),
+            HintItem::new(key!(Enter), "save"),
+            HintItem::new(key!(Esc), "cancel"),
         ];
         ShortcutsBar::new(&hints)
             .compact(4, None)
@@ -3300,9 +3403,9 @@ fn render_footer(
     // live filter rather than the dispatch + nav matrix.
     if state.search_mode {
         let hints = vec![
-            HintItem::paired(key!(Up), key!(Down), "导航"),
-            HintItem::new(key!(Enter), "应用"),
-            HintItem::new(key!(Esc), "取消"),
+            HintItem::paired(key!(Up), key!(Down), "nav"),
+            HintItem::new(key!(Enter), "apply"),
+            HintItem::new(key!(Esc), "cancel"),
         ];
         ShortcutsBar::new(&hints)
             .compact(4, None)
@@ -3324,9 +3427,9 @@ fn render_footer(
         selected_state,
         Some(RowState::Working | RowState::NeedsInput)
     ) {
-        "停止"
+        "stop"
     } else {
-        "关闭"
+        "close"
     };
 
     // Overview list focused (via Tab) — navigation hints: arrows / j-k
@@ -3353,16 +3456,16 @@ fn render_footer(
         // is omitted here too, mirroring the section-header row below.
         if state.selected_idle_overflow {
             let toggle = if state.idle_show_all {
-                "显示更少"
+                "show fewer"
             } else {
-                "显示全部"
+                "show all"
             };
             let hints = vec![
                 HintItem::new(key!(Enter), toggle),
-                HintItem::new(key!(Tab), "输入"),
+                HintItem::new(key!(Tab), "input"),
             ];
             ShortcutsBar::new(&hints)
-                .compact(4, Some(HintItem::new(help, "快捷键")))
+                .compact(4, Some(HintItem::new(help, "shortcuts")))
                 .render(inner, buf);
             return;
         }
@@ -3371,22 +3474,22 @@ fn render_footer(
         // to the dispatch input (Esc does too, one tier at a time).
         if let Some(section) = state.selected_section {
             let toggle = if state.is_section_collapsed(section) {
-                "展开"
+                "expand"
             } else {
-                "折叠"
+                "collapse"
             };
             let hints = vec![
                 HintItem::new(key!(Enter), toggle),
-                HintItem::new(key!(Tab), "输入"),
+                HintItem::new(key!(Tab), "input"),
             ];
             ShortcutsBar::new(&hints)
-                .compact(4, Some(HintItem::new(help, "快捷键")))
+                .compact(4, Some(HintItem::new(help, "shortcuts")))
                 .render(inner, buf);
             return;
         }
         let mut hints = vec![
-            HintItem::new(key!(Enter), "打开"),
-            HintItem::new(key!(Tab), "输入"),
+            HintItem::new(key!(Enter), "open"),
+            HintItem::new(key!(Tab), "input"),
         ];
         if stoppable {
             // Pinned so the stop chip always survives compact
@@ -3394,7 +3497,7 @@ fn render_footer(
             hints.push(HintItem::new(stop, stop_label).pinned());
         }
         ShortcutsBar::new(&hints)
-            .compact(4, Some(HintItem::new(help, "快捷键")))
+            .compact(4, Some(HintItem::new(help, "shortcuts")))
             .render(inner, buf);
         return;
     }
@@ -3425,7 +3528,7 @@ fn render_footer(
         key!('.', CONTROL),
     );
 
-    let help_hint = HintItem::new(help, "快捷键");
+    let help_hint = HintItem::new(help, "shortcuts");
 
     // Submit chord is `send_key` (Enter, or Shift/Alt+Enter in multiline).
     // Ctrl+S is send+open. Empty draft: create/open on the submit chord;
@@ -3436,11 +3539,11 @@ fn render_footer(
 
     let hints: Vec<HintItem> = if peek_active {
         // Peek mode — Enter labels mirror `DashboardState::handle_peek_key`:
-        //   vim + unfocused reply → Enter focuses reply ("输入")
+        //   vim + unfocused reply → Enter focuses reply ("input")
         //   focused + non-empty   → Enter sends
         //   otherwise             → Enter opens / attaches
         // Ctrl+S remains send+open whenever there is a non-empty draft.
-        // Esc: no draft → unselect ("新建会话"); with draft → "返回".
+        // Esc: no draft → unselect ("New Agent"); with draft → "back".
         let esc = key!(Esc);
         // Pending permission / ask-tool: `1-9` selects even while unfocused
         // (handler focuses the panel). Focused + selected option → answer.
@@ -3454,7 +3557,7 @@ fn render_footer(
             .as_ref()
             .is_some_and(|p| p.selected_option.is_some());
         let reply_empty = state.peek_reply.text().trim().is_empty();
-        let esc_label = if reply_empty { "新建会话" } else { "返回" };
+        let esc_label = if reply_empty { "New Agent" } else { "back" };
         // Pin Esc when it clears a draft (`back`) so compact doesn't drop it
         // behind stop/help — matches how important it is in handle_peek_key.
         let esc_hint = {
@@ -3466,11 +3569,11 @@ fn render_footer(
         // reply unfocused so j/k keep selecting.
         let peek_focused = state.peek.as_ref().map(|p| p.focused).unwrap_or(true);
         let question_focused = peek_focused && has_pending_question;
-        let tab_hint = HintItem::new(key!(Tab), if peek_focused { "列表" } else { "输入" });
+        let tab_hint = HintItem::new(key!(Tab), if peek_focused { "list" } else { "input" });
         // `1-9 select` hint for the question picker (no single bound key).
         let select_hint = HintItem {
             keys: vec![],
-            label: "选择".into(),
+            label: "select".into(),
             custom_display: Some("1-9"),
             description: None,
             pinned: false,
@@ -3481,11 +3584,11 @@ fn render_footer(
             // two-focus toggle the other peek states surface). (↑/↓ still
             // move within the options; the nav chip is dropped to save
             // bottom-bar space.)
-            vec![HintItem::new(enter, "回答"), tab_hint, esc_hint]
+            vec![HintItem::new(enter, "answer"), tab_hint, esc_hint]
         } else if has_pending_question && peek_focused {
             // Question pending, focused, nothing selected — navigation + select.
             let mut h = vec![
-                HintItem::new(enter, "打开"),
+                HintItem::new(enter, "open"),
                 select_hint,
                 tab_hint,
                 esc_hint,
@@ -3499,9 +3602,9 @@ fn render_footer(
             // Right still attaches — surface it so open stays discoverable.
             // Pending question: keep 1-9 select (digits still work unfocused).
             let mut h = vec![
-                HintItem::new(enter, "输入"),
+                HintItem::new(enter, "input"),
                 // Pin open: attach is the replacement for Enter in this mode.
-                HintItem::new(key!(Right), "打开").pinned(),
+                HintItem::new(key!(Right), "open").pinned(),
                 tab_hint,
                 esc_hint,
             ];
@@ -3509,7 +3612,7 @@ fn render_footer(
                 h.insert(2, select_hint);
             }
             if !reply_empty {
-                h.insert(1, HintItem::new(send_open, "发送并打开"));
+                h.insert(1, HintItem::new(send_open, "send+open"));
             }
             if stoppable {
                 h.push(HintItem::new(stop, stop_label).pinned());
@@ -3518,7 +3621,7 @@ fn render_footer(
         } else if has_pending_question {
             // Non-vim unfocused (or other) with a pending question — open + select.
             let mut h = vec![
-                HintItem::new(enter, "打开"),
+                HintItem::new(enter, "open"),
                 select_hint,
                 tab_hint,
                 esc_hint,
@@ -3529,16 +3632,16 @@ fn render_footer(
             h
         } else if peek_focused && !reply_empty {
             vec![
-                HintItem::new(send_key, "发送"),
-                HintItem::new(send_open, "发送并打开"),
+                HintItem::new(send_key, "send"),
+                HintItem::new(send_open, "send+open"),
                 tab_hint,
-                HintItem::new(esc, "返回").pinned(),
+                HintItem::new(esc, "back").pinned(),
             ]
         } else {
             // Focused empty: open is on the submit chord (send_key). Unfocused:
             // bare Enter still attaches.
             let open_key = if peek_focused { send_key } else { enter };
-            let mut h = vec![HintItem::new(open_key, "打开"), tab_hint, esc_hint];
+            let mut h = vec![HintItem::new(open_key, "open"), tab_hint, esc_hint];
             if stoppable {
                 h.push(HintItem::new(stop, stop_label).pinned());
             }
@@ -3549,26 +3652,26 @@ fn render_footer(
         // there's no session under a section header.
         if prompt_empty {
             // ↑↓ navigate, Enter toggles collapse/expand, Esc returns
-            // to the `[+ 新建会话]` button.
+            // to the `[+ New Agent]` button.
             let toggle = if state.is_section_collapsed(section) {
-                "展开"
+                "expand"
             } else {
-                "折叠"
+                "collapse"
             };
             vec![
                 HintItem::new(enter, toggle),
-                HintItem::new(key!(Esc), "新建会话"),
+                HintItem::new(key!(Esc), "New Agent"),
             ]
         } else {
             // Typed text dispatches a NEW agent (a section header is
             // never a reply target), so surface the same chips as the
-            // `[+ 新建会话]` button with a draft: send_key sends (stays
+            // `[+ New Agent]` button with a draft: send_key sends (stays
             // on the dashboard), Ctrl+S sends + opens detail,
             // Shift+Tab cycles the dispatch mode.
             vec![
-                HintItem::new(send_key, "发送"),
-                HintItem::new(send_open, "发送并打开"),
-                HintItem::new(key!(BackTab), "模式"),
+                HintItem::new(send_key, "send"),
+                HintItem::new(send_open, "send+open"),
+                HintItem::new(key!(BackTab), "mode"),
             ]
         }
     } else if state.selected_idle_overflow {
@@ -3576,40 +3679,40 @@ fn render_footer(
         // there's no session under it — no stop chip.
         if prompt_empty {
             let toggle = if state.idle_show_all {
-                "显示更少"
+                "show fewer"
             } else {
-                "显示全部"
+                "show all"
             };
             vec![
                 HintItem::new(enter, toggle),
-                HintItem::new(key!(Esc), "新建会话"),
+                HintItem::new(key!(Esc), "New Agent"),
             ]
         } else {
             vec![
-                HintItem::new(send_key, "发送"),
-                HintItem::new(send_open, "发送并打开"),
-                HintItem::new(key!(BackTab), "模式"),
+                HintItem::new(send_key, "send"),
+                HintItem::new(send_open, "send+open"),
+                HintItem::new(key!(BackTab), "mode"),
             ]
         }
     } else if button_focused {
         let mut h: Vec<HintItem> = vec![];
         if prompt_empty {
-            h.push(HintItem::new(send_key, "创建"));
-            h.push(HintItem::new(key!(Tab), "列表"));
+            h.push(HintItem::new(send_key, "create"));
+            h.push(HintItem::new(key!(Tab), "list"));
         } else {
-            h.push(HintItem::new(send_key, "发送"));
-            h.push(HintItem::new(send_open, "发送并打开"));
+            h.push(HintItem::new(send_key, "send"));
+            h.push(HintItem::new(send_open, "send+open"));
         }
-        h.push(HintItem::new(key!(BackTab), "模式"));
+        h.push(HintItem::new(key!(BackTab), "mode"));
         h
     } else if row_selected {
         let mut h: Vec<HintItem> = vec![];
         if prompt_empty {
-            h.push(HintItem::new(send_key, "打开"));
-            h.push(HintItem::new(key!(Tab), "列表"));
+            h.push(HintItem::new(send_key, "open"));
+            h.push(HintItem::new(key!(Tab), "list"));
         } else {
-            h.push(HintItem::new(send_key, "发送"));
-            h.push(HintItem::new(send_open, "发送并打开"));
+            h.push(HintItem::new(send_key, "send"));
+            h.push(HintItem::new(send_open, "send+open"));
         }
         if stoppable {
             // Pinned so Ctrl+x always shows while an agent row is
@@ -3624,7 +3727,7 @@ fn render_footer(
         // `DashboardState`, but a fall-through keeps the bar
         // populated rather than silently empty.
         vec![
-            HintItem::new(send_key, "创建"),
+            HintItem::new(send_key, "create"),
             HintItem::new(stop, stop_label),
         ]
     };
@@ -4267,19 +4370,11 @@ mod tests {
 
     /// Helper: read buffer row-by-row so multi-cell substring checks
     /// see the visible text in left-to-right order.
-    ///
-    /// Advances by each glyph's display width so CJK double-width cells
-    /// (whose second column is a blank placeholder) are not emitted as
-    /// an extra space between wide characters.
     fn buf_to_text(buf: &Buffer) -> String {
         let mut content = String::new();
         for y in 0..buf.area.height {
-            let mut x = 0u16;
-            while x < buf.area.width {
-                let s = buf[(x, y)].symbol();
-                content.push_str(s);
-                let w = UnicodeWidthStr::width(s).max(1) as u16;
-                x = x.saturating_add(w);
+            for x in 0..buf.area.width {
+                content.push_str(buf[(x, y)].symbol());
             }
             content.push('\n');
         }
@@ -4756,7 +4851,7 @@ mod tests {
         );
     }
 
-    /// The `[+ 新建会话]` header button paints green (`accent_success`)
+    /// The `[+ New Agent]` header button paints green (`accent_success`)
     /// when focused so the cursor is obvious, and dim gray otherwise.
     #[test]
     fn header_new_agent_button_focused_is_green() {
@@ -4776,7 +4871,7 @@ mod tests {
         assert_eq!(
             buf[(rect.x, rect.y)].fg,
             theme.accent_success,
-            "focused [+ 新建会话] must paint green (accent_success), got {:?}",
+            "focused [+ New Agent] must paint green (accent_success), got {:?}",
             buf[(rect.x, rect.y)].fg,
         );
 
@@ -4794,12 +4889,12 @@ mod tests {
         assert_eq!(
             buf2[(rect2.x, rect2.y)].fg,
             theme.gray,
-            "unfocused [+ 新建会话] must paint dim gray, got {:?}",
+            "unfocused [+ New Agent] must paint dim gray, got {:?}",
             buf2[(rect2.x, rect2.y)].fg,
         );
     }
 
-    /// The `[+ 新建会话]` header button brightens its text on hover
+    /// The `[+ New Agent]` header button brightens its text on hover
     /// (`gray` → `text_primary`, when not focused) so the mouse user
     /// gets clear feedback that it's clickable. Only the foreground
     /// changes — the background stays `bg_base` (no fill). Driven by
@@ -4836,12 +4931,12 @@ mod tests {
         let cell = &buf2[(rect.x, rect.y)];
         assert_eq!(
             cell.fg, theme.text_primary,
-            "hovered [+ 新建会话] must use text_primary fg, got {:?}",
+            "hovered [+ New Agent] must use text_primary fg, got {:?}",
             cell.fg,
         );
         assert_eq!(
             cell.bg, theme.bg_base,
-            "hovered [+ 新建会话] must keep bg_base (no hover fill), got {:?}",
+            "hovered [+ New Agent] must keep bg_base (no hover fill), got {:?}",
             cell.bg,
         );
 
@@ -4856,12 +4951,12 @@ mod tests {
         let cell3 = &buf3[(rect.x, rect.y)];
         assert_eq!(
             cell3.bg, theme.bg_base,
-            "non-hovered [+ 新建会话] must paint on bg_base, got {:?}",
+            "non-hovered [+ New Agent] must paint on bg_base, got {:?}",
             cell3.bg,
         );
         assert_eq!(
             cell3.fg, theme.gray,
-            "non-hovered [+ 新建会话] must use gray fg, got {:?}",
+            "non-hovered [+ New Agent] must use gray fg, got {:?}",
             cell3.fg,
         );
     }
@@ -4895,8 +4990,8 @@ mod tests {
         );
     }
 
-    /// The header button reads `[+ 新建 Worktree]` when worktree mode is armed
-    /// in a git repo, and `[+ 新建会话]` otherwise (off, or armed but not a
+    /// The header button reads `[+ New Worktree]` when worktree mode is armed
+    /// in a git repo, and `[+ New Agent]` otherwise (off, or armed but not a
     /// git repo — worktree mode can't take effect there).
     #[test]
     fn header_button_label_reflects_worktree_mode() {
@@ -4911,8 +5006,8 @@ mod tests {
         render_header(&mut buf, area, &theme, &rows, &mut off, None);
         let text = buf_to_text(&buf);
         assert!(
-            text.contains("[+ 新建会话]") && !text.contains("Worktree"),
-            "worktree mode off → [+ 新建会话], got: {text:?}",
+            text.contains("[+ New Agent]") && !text.contains("Worktree"),
+            "worktree mode off → [+ New Agent], got: {text:?}",
         );
 
         // Armed in a git repo → worktree button.
@@ -4923,8 +5018,8 @@ mod tests {
         render_header(&mut buf2, area, &theme, &rows, &mut armed, None);
         let text2 = buf_to_text(&buf2);
         assert!(
-            text2.contains("[+ 新建 Worktree]"),
-            "worktree mode armed in a repo → [+ 新建 Worktree], got: {text2:?}",
+            text2.contains("[+ New Worktree]"),
+            "worktree mode armed in a repo → [+ New Worktree], got: {text2:?}",
         );
 
         // Armed but NOT a git repo → still the plain button (mode is inert).
@@ -4935,8 +5030,8 @@ mod tests {
         render_header(&mut buf3, area, &theme, &rows, &mut armed_no_git, None);
         let text3 = buf_to_text(&buf3);
         assert!(
-            text3.contains("[+ 新建会话]") && !text3.contains("Worktree"),
-            "armed outside a repo → [+ 新建会话], got: {text3:?}",
+            text3.contains("[+ New Agent]") && !text3.contains("Worktree"),
+            "armed outside a repo → [+ New Agent], got: {text3:?}",
         );
     }
 
@@ -5077,6 +5172,112 @@ mod tests {
         let theme = Theme::current();
         render_narrow_rows(&mut buf, Rect::new(0, 0, 30, 5), &theme, &rows, &mut state);
         assert!(!state.row_rects.is_empty());
+    }
+
+    /// Wide-mode hit rects include each item's trailing gap line and
+    /// tile the list contiguously, so hover/click never falls into a
+    /// dead zone between items.
+    #[test]
+    fn render_rows_hit_rects_leave_no_dead_zones() {
+        let rows = vec![
+            header_test_row(1, RowState::Working, "alpha"),
+            header_test_row(2, RowState::Working, "beta"),
+            header_test_row(3, RowState::Idle, "gamma"),
+        ];
+        let area = Rect::new(0, 0, 60, 30);
+        let mut buf = Buffer::empty(area);
+        let mut state = DashboardState::new();
+        state.grouping = Grouping::State;
+        let theme = Theme::current();
+        render_rows(&mut buf, area, &theme, &rows, &mut state);
+
+        assert_eq!(state.row_rects.len(), 3);
+        for (id, rect) in &state.row_rects {
+            assert_eq!(rect.height, ROW_HEIGHT, "row {id:?} must be full-height");
+        }
+        assert_eq!(state.section_rects.len(), 2);
+        for (key, rect) in &state.section_rects {
+            assert_eq!(
+                rect.height, GROUP_HEADER_HEIGHT,
+                "section {key:?} must be full-height",
+            );
+        }
+
+        // Each hit rect starts exactly where the previous one ended.
+        let mut rects: Vec<Rect> = state
+            .row_rects
+            .iter()
+            .map(|(_, r)| *r)
+            .chain(state.section_rects.iter().map(|(_, r)| *r))
+            .collect();
+        rects.sort_by_key(|r| r.y);
+        for pair in rects.windows(2) {
+            assert_eq!(
+                pair[0].y + pair[0].height,
+                pair[1].y,
+                "hit rects must tile without gaps: {pair:?}",
+            );
+        }
+
+        // Hovering a row highlights its content line fully and paints
+        // half-cell halos on the spacer lines above and below, so the
+        // highlight reads as centered on the text. These rows are
+        // title-only, so the content line is the middle of the 3-cell
+        // rect. Use an unquantized theme: `Theme::current()` in the
+        // test environment collapses `bg_hover` onto `bg_base`, which
+        // (correctly) suppresses the halos.
+        let theme = Theme::groknight();
+        assert_ne!(theme.bg_hover, theme.bg_base);
+        let (id, rect) = state.row_rects[0].clone();
+        state.hovered_row = Some(id);
+        render_rows(&mut buf, area, &theme, &rows, &mut state);
+        let title_y = rect.y + 1;
+        assert_eq!(
+            buf[(rect.x, title_y)].style().bg,
+            Some(theme.bg_hover),
+            "hovered row must highlight its content line",
+        );
+        let above = &buf[(rect.x, title_y - 1)];
+        assert_eq!(above.symbol(), "\u{2580}", "spacer above must be a halo");
+        assert_eq!(
+            above.style().bg,
+            Some(theme.bg_hover),
+            "halo above must show the hover colour in its bottom half",
+        );
+        let below = &buf[(rect.x, title_y + 1)];
+        assert_eq!(below.symbol(), "\u{2580}", "spacer below must be a halo");
+        assert_eq!(
+            below.style().fg,
+            Some(theme.bg_hover),
+            "halo below must show the hover colour in its top half",
+        );
+    }
+
+    /// A row's content is vertically centered within its 3-cell rect:
+    /// a title-only row renders padding + title + padding, while a
+    /// title + secondary row stays top-aligned (2 lines cannot center
+    /// in 3 cells).
+    #[test]
+    fn render_row_centers_title_only_content() {
+        let theme = Theme::current();
+        let state = DashboardState::new();
+
+        // Title-only → centered on the middle line.
+        let row = header_test_row(1, RowState::Idle, "solo");
+        let mut buf = Buffer::empty(Rect::new(0, 0, 40, 3));
+        render_row(&mut buf, Rect::new(0, 0, 40, 3), &theme, &row, &state);
+        assert_eq!(buf[(4, 1)].symbol(), "s", "title must sit on line 1");
+        assert_eq!(buf[(4, 0)].symbol(), " ", "line 0 must be padding");
+        assert_eq!(buf[(4, 2)].symbol(), " ", "line 2 must be padding");
+
+        // Title + secondary → top-aligned.
+        let mut row = header_test_row(2, RowState::Working, "pair");
+        row.secondary_line = Some("Responding".to_string());
+        let mut buf = Buffer::empty(Rect::new(0, 0, 40, 3));
+        render_row(&mut buf, Rect::new(0, 0, 40, 3), &theme, &row, &state);
+        assert_eq!(buf[(4, 0)].symbol(), "p", "title must sit on line 0");
+        assert_eq!(buf[(4, 1)].symbol(), "R", "secondary must sit on line 1");
+        assert_eq!(buf[(4, 2)].symbol(), " ", "line 2 must be padding");
     }
 
     /// Empty area is a quick exit.
@@ -5364,14 +5565,14 @@ mod tests {
         );
         let content = buf_to_text(&buf);
         assert!(
-            content.contains("快捷键"),
+            content.contains("shortcuts"),
             "footer must mention `shortcuts` (the help chip), got: {content:?}",
         );
         let primary = registry
             .find(crate::actions::ActionId::DashboardShortcutsHelp)
             .map(|d| d.default_key.display())
             .unwrap_or_else(|| "Ctrl+.".into());
-        let expected = format!("{primary}:快捷键");
+        let expected = format!("{primary}:shortcuts");
         assert!(
             content.contains(&expected),
             "footer must include `{expected}` chip (registry primary), got: {content:?}",
@@ -5557,7 +5758,9 @@ mod tests {
             (0..w).map(|x| buf[(x, y)].symbol().to_string()).collect()
         };
 
-        // Wide path: title row sits 2 below the group header (header + gap).
+        // Wide path: this title-only row centers its title within its
+        // 3-cell rect, so the title sits 3 below the group header
+        // (header + gap + row top padding).
         // `title_byte` is a byte offset (for `str::find` comparisons);
         // `title_col` is the display column (the icon glyph is
         // multi-byte UTF-8, so the two differ) for cursor math.
@@ -5565,7 +5768,7 @@ mod tests {
             let mut buf = Buffer::empty(Rect::new(0, 0, 80, 5));
             let mut state = DashboardState::new();
             render_rows(&mut buf, Rect::new(0, 0, 80, 5), &theme, &rows, &mut state);
-            let line = row_text(&buf, 2, 80);
+            let line = row_text(&buf, 3, 80);
             let byte = line.find("row label").expect("title must render");
             (byte, line[..byte].chars().count() as u16)
         };
@@ -5574,14 +5777,14 @@ mod tests {
             let mut state = DashboardState::new();
             state.rename = Some(RenameDraft::new(id.clone(), "new name"));
             render_rows(&mut buf, Rect::new(0, 0, 80, 5), &theme, &rows, &mut state);
-            let line = row_text(&buf, 2, 80);
+            let line = row_text(&buf, 3, 80);
             assert_eq!(
                 line.find("rename: new name"),
                 Some(title_byte),
                 "wide: `rename:` must start at the title column, got: {line:?}",
             );
             assert_eq!(
-                buf[(2, 2)].symbol(),
+                buf[(2, 3)].symbol(),
                 crate::glyphs::diamond_hollow(),
                 "wide: the state icon must stay in place while renaming",
             );
@@ -5591,7 +5794,7 @@ mod tests {
             let draft_w = "new name".len() as u16;
             assert_eq!(
                 rename_cursor_pos(&state, &rows),
-                Some((title_col + prefix_w + draft_w, 2)),
+                Some((title_col + prefix_w + draft_w, 3)),
                 "cursor must sit one cell past the draft text",
             );
             // With an empty draft the cursor sits immediately after
@@ -5599,7 +5802,7 @@ mod tests {
             state.rename = Some(RenameDraft::new(id.clone(), ""));
             assert_eq!(
                 rename_cursor_pos(&state, &rows),
-                Some((title_col + prefix_w, 2)),
+                Some((title_col + prefix_w, 3)),
                 "empty draft: cursor must sit right after `rename: `",
             );
         }
@@ -5662,7 +5865,7 @@ mod tests {
         let theme = Theme::current();
         let registry = crate::actions::ActionRegistry::defaults();
 
-        for (width, narrow, row_y) in [(80, false, 2), (30, true, 1)] {
+        for (width, narrow, row_y) in [(80, false, 3), (30, true, 1)] {
             let area = Rect::new(0, 0, width, if narrow { 3 } else { 5 });
             let mut buffer = Buffer::empty(area);
             let mut state = DashboardState::new();
@@ -5965,12 +6168,12 @@ mod tests {
         let theme = Theme::current();
         let mut state = DashboardState::new();
         let check = crate::glyphs::check_mark();
-        state.error_toast = Some(format!("{check} Theme: Chaos Day"));
+        state.error_toast = Some(format!("{check} Theme: Grok Day"));
         let _ = render_dispatch(&mut buf, Rect::new(0, 0, 80, 3), &theme, &mut state, None);
 
         let top_row: String = (0..80).map(|x| buf[(x, 0)].symbol().to_string()).collect();
         assert!(
-            top_row.contains(&format!("{check} Theme: Chaos Day")),
+            top_row.contains(&format!("{check} Theme: Grok Day")),
             "badge must paint the message verbatim, got: {top_row:?}",
         );
         assert!(
@@ -6049,8 +6252,7 @@ mod tests {
         assert!(
             lines.iter().any(|l| matches!(
                 l,
-                DashboardLine::Header { state, count }
-if *state == RowState::Working && *count == 2
+                DashboardLine::Header { state, count } if *state == RowState::Working && *count == 2
             )),
             "collapsed Working header must still render with its true count",
         );
@@ -6152,8 +6354,7 @@ if *state == RowState::Working && *count == 2
         assert!(
             lines.iter().any(|l| matches!(
                 l,
-                DashboardLine::Header { state, count }
-if *state == RowState::Idle && *count == total as usize
+                DashboardLine::Header { state, count } if *state == RowState::Idle && *count == total as usize
             )),
             "Idle header keeps the true total count",
         );
@@ -6201,7 +6402,7 @@ if *state == RowState::Idle && *count == total as usize
     }
 
     /// `idle_show_all` reveals every agent and flips the overflow row to
-    /// the "显示更少" (expanded) state.
+    /// the "show fewer" (expanded) state.
     #[test]
     fn idle_cap_show_all_reveals_all() {
         use std::collections::HashSet;
@@ -6575,8 +6776,8 @@ if *state == RowState::Idle && *count == total as usize
             label: "who are you?".to_string(),
             subtitle: None,
             state: RowState::Working,
-            activity: Some("回复中".to_string()),
-            secondary_line: Some("回复中".to_string()),
+            activity: Some("Responding".to_string()),
+            secondary_line: Some("Responding".to_string()),
             cwd_display: String::new(),
             cwd: PathBuf::from("/tmp"),
             last_change_at: SystemTime::now(),
@@ -6618,11 +6819,11 @@ if *state == RowState::Idle && *count == total as usize
             "row 0 col 4 must start the label"
         );
 
-        // Secondary row — Chinese activity `回复中` starts at the same
-        // column as the title's label start (col 4).
+        // Secondary row — `Responding` starts at the same column as
+        // the title's label start (col 4).
         assert_eq!(
             buf[(4, 1)].symbol(),
-            "回",
+            "R",
             "row 1 col 4 must start the secondary text",
         );
 
@@ -6659,11 +6860,11 @@ if *state == RowState::Idle && *count == total as usize
             label: "investigate caching".to_string(),
             subtitle: None,
             state: RowState::Working,
-            activity: Some("回复中".to_string()),
+            activity: Some("Responding".to_string()),
             // The 'R' in "Responding" lives at column 4 (matches
             // `render_row_two_line_layout_paints_title_and_secondary`),
             // so we sample fg at (4, 1).
-            secondary_line: Some("回复中".to_string()),
+            secondary_line: Some("Responding".to_string()),
             cwd_display: String::new(),
             cwd: PathBuf::from("/tmp"),
             last_change_at: SystemTime::now(),
@@ -6855,8 +7056,9 @@ if *state == RowState::Idle && *count == total as usize
     /// Group header (section title) leads with a disclosure glyph at
     /// col 0, then the label at col 2, within the list area. Row content
     /// below is indented (marker col 0, gap col 1, icon col 2). The
-    /// header is 2 visual cells tall (label + gap) so the row's title
-    /// sits 2 rows below the header in this fixture.
+    /// header is 2 visual cells tall (label + gap) and the title-only
+    /// row centers its title, so the title sits 3 rows below the
+    /// header in this fixture.
     #[test]
     fn render_group_header_leads_with_disclosure_glyph() {
         let mut buf = Buffer::empty(Rect::new(0, 0, 80, 8));
@@ -6879,12 +7081,13 @@ if *state == RowState::Idle && *count == total as usize
             "section title `Idle …` must start after the disclosure glyph, got: {header_label_x:?}",
         );
 
-        // Header gap → row 1 is blank. Row's title row starts at y=2
-        // (after the 2-cell header). Rows still render their marker/icon
-        // in the left chrome columns.
-        let row_col0 = buf[(0, 2)].symbol().to_string();
-        let row_col1 = buf[(1, 2)].symbol().to_string();
-        let row_col2 = buf[(2, 2)].symbol().to_string();
+        // Header gap → row 1 is blank. The title-only row centers its
+        // title within its 3-cell rect (y=2..5), so the title sits at
+        // y=3. Rows still render their marker/icon in the left chrome
+        // columns.
+        let row_col0 = buf[(0, 3)].symbol().to_string();
+        let row_col1 = buf[(1, 3)].symbol().to_string();
+        let row_col2 = buf[(2, 3)].symbol().to_string();
         assert_eq!(
             row_col0, " ",
             "row's col 0 must be the marker space when nothing selected, got: {row_col0:?}",
@@ -6974,7 +7177,7 @@ if *state == RowState::Idle && *count == total as usize
     #[test]
     fn render_rows_subagents_do_not_trigger_their_own_headers() {
         use crate::app::agent::AgentId;
-        let mut buf = Buffer::empty(Rect::new(0, 0, 80, 10));
+        let mut buf = Buffer::empty(Rect::new(0, 0, 80, 20));
         let mut state = DashboardState::new();
         let parent = DashboardRow {
             id: DashboardRowId::TopLevel(AgentId(1)),
@@ -7211,7 +7414,7 @@ if *state == RowState::Idle && *count == total as usize
             content.contains(&basename),
             "header must show the current location (`{basename}`), got: {content:?}",
         );
-        for chip in ["2 待处理", "1 运行中", "1 空闲"] {
+        for chip in ["2 awaiting", "1 working", "1 idle"] {
             assert!(
                 content.contains(chip),
                 "header missing chip `{chip}`, got: {content:?}",
@@ -7563,10 +7766,10 @@ if *state == RowState::Idle && *count == total as usize
         );
         let content = buf_to_text(&buf);
         assert!(
-            content.contains("1 空闲"),
-            "expected `1 空闲`, got: {content:?}"
+            content.contains("1 idle"),
+            "expected `1 idle`, got: {content:?}"
         );
-        for absent in ["0 待处理", "0 运行中", "0 已完成", "0 失败", "0 已阻塞"] {
+        for absent in ["0 awaiting", "0 working", "0 done", "0 failed", "0 blocked"] {
             assert!(
                 !content.contains(absent),
                 "zero-count chip `{absent}` must be suppressed, got: {content:?}",
@@ -7595,7 +7798,7 @@ if *state == RowState::Idle && *count == total as usize
         );
         let content = buf_to_text(&buf);
         assert!(
-            content.contains("1 空闲"),
+            content.contains("1 idle"),
             "idle chip must still render, got: {content:?}"
         );
         assert!(
@@ -7638,7 +7841,7 @@ if *state == RowState::Idle && *count == total as usize
 
     /// On a narrow header the location label truncates against the
     /// leftmost chip's separator instead of painting over the chips
-    /// or the `[+ 新建会话]` button.
+    /// or the `[+ New Agent]` button.
     #[test]
     fn render_header_location_label_never_overlaps_chips() {
         let theme = Theme::current();
@@ -7655,7 +7858,7 @@ if *state == RowState::Idle && *count == total as usize
         render_header(&mut buf, area, &theme, &rows, &mut state, None);
         let content = buf_to_text(&buf);
         // Chips and button must survive the (long) location label.
-        for chunk in ["1 待处理", "1 运行中", "1 空闲", "[+ 新建会话]"] {
+        for chunk in ["1 awaiting", "1 working", "1 idle", "[+ New Agent]"] {
             assert!(
                 content.contains(chunk),
                 "`{chunk}` must not be overpainted by the location label, got: {content:?}",
@@ -7683,7 +7886,7 @@ if *state == RowState::Idle && *count == total as usize
         );
         let content = buf_to_text(&buf);
         assert!(
-            content.contains(":创建") || content.contains(":附加"),
+            content.contains(":create") || content.contains(":attach"),
             "footer must use `Key:label` chip format, got: {content:?}",
         );
         assert!(
@@ -7693,7 +7896,7 @@ if *state == RowState::Idle && *count == total as usize
     }
 
     /// Fresh `DashboardState` defaults to button-focused
-    /// with an empty prompt. The footer surfaces `Enter:创建`
+    /// with an empty prompt. The footer surfaces `Enter:create`
     /// (single primary action) and the trailing shortcuts chip. The
     /// ↑/↓ nav chip is no longer shown (dropped to save space), and no
     /// send / send+open chip is shown because there's nothing to send.
@@ -7714,7 +7917,7 @@ if *state == RowState::Idle && *count == total as usize
             None,
         );
         let content = buf_to_text(&buf);
-        for chip in [":创建", ":快捷键"] {
+        for chip in [":create", ":shortcuts"] {
             assert!(
                 content.contains(chip),
                 "footer must contain `{chip}` chip, got: {content:?}",
@@ -7722,13 +7925,13 @@ if *state == RowState::Idle && *count == total as usize
         }
         // The nav chip is dropped from the bottom bar to save space.
         assert!(
-            !content.contains(":导航"),
+            !content.contains(":nav"),
             "footer must NOT include the ↑/↓ nav chip, got: {content:?}",
         );
-        // Empty prompt: no send / send+open chip (`:发送` is a prefix
-        // of `:发送并打开`, so one check covers both).
+        // Empty prompt: no send / send+open chip (`:send` is a prefix
+        // of `:send+open`, so one check covers both).
         assert!(
-            !content.contains(":发送"),
+            !content.contains(":send"),
             "empty-prompt footer must NOT include send / send+open chips, \
              got: {content:?}",
         );
@@ -7792,11 +7995,11 @@ if *state == RowState::Idle && *count == total as usize
         // into the next test sharing this thread's cache.
         crate::appearance::cache::set_vim_mode(false);
         assert!(
-            !content.contains(":导航") && !content.contains("j/k"),
+            !content.contains(":nav") && !content.contains("j/k"),
             "list-focused footer must omit the nav chip, got: {content:?}",
         );
         assert!(
-            content.contains(":打开"),
+            content.contains(":open"),
             "list-focused footer keeps the open chip, got: {content:?}",
         );
     }
@@ -7825,13 +8028,13 @@ if *state == RowState::Idle && *count == total as usize
         );
         let content = buf_to_text(&buf);
         assert!(
-            !content.contains(":导航") && !content.contains('\u{2191}'),
+            !content.contains(":nav") && !content.contains('\u{2191}'),
             "list-focused footer must omit the nav chip, got: {content:?}",
         );
     }
 
     /// When peek is active, the footer flips to peek-
-    /// mode hints (`enter:打开 · esc:New Agent · ctrl+x:关闭`). The
+    /// mode hints (`enter:open · esc:New Agent · ctrl+x:close`). The
     /// nav chip is dropped (saving space) and the Ctrl+x chip stays
     /// visible while the agent is selected.
     #[test]
@@ -7852,18 +8055,18 @@ if *state == RowState::Idle && *count == total as usize
         );
         let content = buf_to_text(&buf);
         assert!(
-            content.contains(":打开") && content.contains(":新建会话"),
-            "peek-mode footer must include open + new-session (unselect) hints, got: {content:?}",
+            content.contains(":open") && content.contains(":New Agent"),
+            "peek-mode footer must include open + New Agent (unselect) hints, got: {content:?}",
         );
         // The stop chip stays visible while an agent is selected. With
         // no row state passed (None) the label is the idle-style `close`.
         assert!(
-            content.contains(":关闭"),
+            content.contains(":close"),
             "peek-mode footer must keep the Ctrl+x stop chip, got: {content:?}",
         );
         // The nav chip is dropped to save bottom-bar space.
         assert!(
-            !content.contains(":导航"),
+            !content.contains(":nav"),
             "peek-mode footer must NOT show the nav chip, got: {content:?}",
         );
         assert!(
@@ -7873,7 +8076,7 @@ if *state == RowState::Idle && *count == total as usize
     }
 
     /// Peek footer flips to send affordances once the reply has text
-    /// and is focused: `enter:发送 · ctrl+s:发送并打开 · esc:返回`.
+    /// and is focused: `enter:send · ctrl+s:send+open · esc:back`.
     #[test]
     fn render_footer_peek_with_reply_text_shows_send() {
         crate::appearance::cache::set_vim_mode(false);
@@ -7908,7 +8111,7 @@ if *state == RowState::Idle && *count == total as usize
         );
         let content = buf_to_text(&buf);
         assert!(
-            content.contains(":发送"),
+            content.contains(":send"),
             "peek footer with a typed reply must show `send`, got: {content:?}",
         );
     }
@@ -7949,15 +8152,15 @@ if *state == RowState::Idle && *count == total as usize
         );
         let content = buf_to_text(&buf);
         assert!(
-            content.contains(":输入"),
+            content.contains(":input"),
             "vim unfocused peek must label Enter as input, got: {content:?}",
         );
         assert!(
-            content.contains(":打开"),
-            "vim unfocused peek must surface Right:打开 for attach, got: {content:?}",
+            content.contains(":open"),
+            "vim unfocused peek must surface Right:open for attach, got: {content:?}",
         );
         assert!(
-            content.contains(":返回"),
+            content.contains(":back"),
             "non-empty draft must label Esc as back, got: {content:?}",
         );
         crate::appearance::cache::set_vim_mode(false);
@@ -8000,19 +8203,19 @@ if *state == RowState::Idle && *count == total as usize
         );
         let content = buf_to_text(&buf);
         assert!(
-            content.contains(":返回"),
-            "unfocused peek with draft must show Esc:返回, got: {content:?}",
+            content.contains(":back"),
+            "unfocused peek with draft must show Esc:back, got: {content:?}",
         );
         assert!(
-            !content.contains("新建会话"),
+            !content.contains("New Agent"),
             "must not label Esc as New Agent while a draft remains, got: {content:?}",
         );
     }
 
     /// A pending question is an ANSWER surface only when focused AND an
-    /// option is selected. Focused + selected → `enter:回答` (+ Tab `list`);
-    /// focused + no selection → `enter:打开` + `1-9:选择`; unfocused still
-    /// keeps `1-9:选择` (digits work). None of the non-answer states show `answer`.
+    /// option is selected. Focused + selected → `enter:answer` (+ Tab `list`);
+    /// focused + no selection → `enter:open` + `1-9:select`; unfocused still
+    /// keeps `1-9:select` (digits work). None of the non-answer states show `answer`.
     #[test]
     fn render_footer_peek_question_focus_flips_answer_vs_open() {
         crate::appearance::cache::set_vim_mode(false);
@@ -8059,45 +8262,45 @@ if *state == RowState::Idle && *count == total as usize
         // Focused + an option selected → answer surface (+ Tab `list`).
         let answering = render(&make_state(true, Some(0)));
         assert!(
-            answering.contains(":回答"),
+            answering.contains(":answer"),
             "focused + selected footer must show `answer`, got: {answering:?}",
         );
         assert!(
-            answering.contains(":列表"),
+            answering.contains(":list"),
             "answer footer must surface the Tab `list` hint, got: {answering:?}",
         );
 
         // Focused + nothing selected → navigation surface: open + `1-9 select`.
         let picking = render(&make_state(true, None));
         assert!(
-            picking.contains(":打开"),
+            picking.contains(":open"),
             "focused + no selection footer must show `open`, got: {picking:?}",
         );
         assert!(
-            picking.contains(":选择"),
+            picking.contains(":select"),
             "focused + no selection footer must surface the `1-9 select` hint, got: {picking:?}",
         );
         assert!(
-            !picking.contains(":回答"),
+            !picking.contains(":answer"),
             "no-selection footer must NOT show `answer`, got: {picking:?}",
         );
 
         // Unfocused → Enter opens; 1-9 select still shown (digits work).
         let unfocused = render(&make_state(false, None));
         assert!(
-            unfocused.contains(":打开"),
+            unfocused.contains(":open"),
             "unfocused question footer must show `open`, got: {unfocused:?}",
         );
         assert!(
-            unfocused.contains(":选择"),
+            unfocused.contains(":select"),
             "unfocused question footer must keep 1-9 select, got: {unfocused:?}",
         );
         assert!(
-            !unfocused.contains(":回答"),
+            !unfocused.contains(":answer"),
             "unfocused question footer must NOT show `answer`, got: {unfocused:?}",
         );
 
-        // Vim unfocused + question: Enter:输入, Right:打开, still 1-9 select.
+        // Vim unfocused + question: Enter:input, Right:open, still 1-9 select.
         crate::appearance::cache::set_vim_mode(true);
         let mut vim_q = make_state(false, None);
         // Rebuild under vim so focused defaults false.
@@ -8123,18 +8326,18 @@ if *state == RowState::Idle && *count == total as usize
         });
         let vim_unfocused = render(&vim_q);
         assert!(
-            vim_unfocused.contains(":输入"),
+            vim_unfocused.contains(":input"),
             "vim unfocused question must label Enter as input, got: {vim_unfocused:?}",
         );
         assert!(
-            vim_unfocused.contains(":选择"),
+            vim_unfocused.contains(":select"),
             "vim unfocused question must keep 1-9 select, got: {vim_unfocused:?}",
         );
         crate::appearance::cache::set_vim_mode(false);
     }
 
     /// When a row (NeedsInput or otherwise) is selected
-    /// with an empty prompt, the footer shows `Enter:打开`.
+    /// with an empty prompt, the footer shows `Enter:open`.
     /// The previous `see details` label is folded into the
     /// unified "row selected → open" semantics — every row's
     /// detail view is the answer surface for any user-input
@@ -8158,18 +8361,18 @@ if *state == RowState::Idle && *count == total as usize
         );
         let content = buf_to_text(&buf);
         assert!(
-            content.contains(":打开"),
-            "row-selected + empty prompt footer must hint `Enter:打开`, got: {content:?}",
+            content.contains(":open"),
+            "row-selected + empty prompt footer must hint `Enter:open`, got: {content:?}",
         );
         assert!(
-            !content.contains(":发送"),
-            "empty-prompt footer must NOT include `:发送` chip, got: {content:?}",
+            !content.contains(":send"),
+            "empty-prompt footer must NOT include `:send` chip, got: {content:?}",
         );
-        // Two-focus discoverability — mirrors the `[+ 新建会话]`
+        // Two-focus discoverability — mirrors the `[+ New Agent]`
         // button's empty-prompt chip: Tab hands focus to the list.
         assert!(
-            content.contains(":列表"),
-            "row-selected + empty prompt footer must hint `Tab:列表`, got: {content:?}",
+            content.contains(":list"),
+            "row-selected + empty prompt footer must hint `Tab:list`, got: {content:?}",
         );
     }
 
@@ -8196,11 +8399,11 @@ if *state == RowState::Idle && *count == total as usize
         );
         let content = buf_to_text(&buf);
         assert!(
-            !content.contains(":停止") && !content.contains(":关闭"),
+            !content.contains(":stop") && !content.contains(":close"),
             "inactive row footer must NOT show the stop chip, got: {content:?}",
         );
         assert!(
-            content.contains(":打开"),
+            content.contains(":open"),
             "inactive row footer keeps the open chip, got: {content:?}",
         );
 
@@ -8219,7 +8422,7 @@ if *state == RowState::Idle && *count == total as usize
         );
         let content2 = buf_to_text(&buf2);
         assert!(
-            !content2.contains(":停止") && !content2.contains(":关闭"),
+            !content2.contains(":stop") && !content2.contains(":close"),
             "list-focused inactive footer must NOT show the stop chip, got: {content2:?}",
         );
 
@@ -8239,7 +8442,7 @@ if *state == RowState::Idle && *count == total as usize
         );
         let content3 = buf_to_text(&buf3);
         assert!(
-            content3.contains(":关闭"),
+            content3.contains(":close"),
             "idle row footer must keep the stop chip labelled `close`, got: {content3:?}",
         );
     }
@@ -8269,7 +8472,7 @@ if *state == RowState::Idle && *count == total as usize
         );
         let working = buf_to_text(&buf);
         assert!(
-            working.contains(":停止") && !working.contains(":关闭"),
+            working.contains(":stop") && !working.contains(":close"),
             "Working agent footer must label Ctrl+x as `stop`, got: {working:?}",
         );
 
@@ -8288,7 +8491,7 @@ if *state == RowState::Idle && *count == total as usize
         );
         let needs_input = buf_to_text(&buf_ni);
         assert!(
-            needs_input.contains(":停止") && !needs_input.contains(":关闭"),
+            needs_input.contains(":stop") && !needs_input.contains(":close"),
             "NeedsInput agent footer must label Ctrl+x as `stop`, got: {needs_input:?}",
         );
 
@@ -8306,13 +8509,13 @@ if *state == RowState::Idle && *count == total as usize
         );
         let idle = buf_to_text(&buf2);
         assert!(
-            idle.contains(":关闭") && !idle.contains(":停止"),
+            idle.contains(":close") && !idle.contains(":stop"),
             "Idle agent footer must label Ctrl+x as `close`, got: {idle:?}",
         );
     }
 
     /// When a section header is selected the footer shows the toggle
-    /// (Enter:折叠 / :展开) and `Esc:New Agent`, and omits the
+    /// (Enter:collapse / :expand) and `Esc:New Agent`, and omits the
     /// stop chip (no session under a header).
     #[test]
     fn render_footer_section_selected_shows_toggle_no_stop() {
@@ -8335,15 +8538,15 @@ if *state == RowState::Idle && *count == total as usize
         );
         let content = buf_to_text(&buf);
         assert!(
-            content.contains(":折叠"),
-            "expanded section footer must hint Enter:折叠, got: {content:?}",
+            content.contains(":collapse"),
+            "expanded section footer must hint Enter:collapse, got: {content:?}",
         );
         assert!(
-            content.contains("新建会话"),
-            "section footer must hint Esc:新建会话, got: {content:?}",
+            content.contains("New Agent"),
+            "section footer must hint Esc:New Agent, got: {content:?}",
         );
         assert!(
-            !content.contains(":停止") && !content.contains(":关闭"),
+            !content.contains(":stop") && !content.contains(":close"),
             "section footer must NOT show the stop chip, got: {content:?}",
         );
 
@@ -8362,13 +8565,13 @@ if *state == RowState::Idle && *count == total as usize
         );
         let content2 = buf_to_text(&buf2);
         assert!(
-            content2.contains(":展开"),
-            "collapsed section footer must hint Enter:展开, got: {content2:?}",
+            content2.contains(":expand"),
+            "collapsed section footer must hint Enter:expand, got: {content2:?}",
         );
     }
 
     /// Section header selected while the LIST is focused (Tab) — the
-    /// footer shows the section's own hints (collapse / Tab:输入)
+    /// footer shows the section's own hints (collapse / Tab:input)
     /// instead of the generic row chips (`open` / `stop` would lie:
     /// Enter toggles the section, and there's no session to stop).
     #[test]
@@ -8391,19 +8594,19 @@ if *state == RowState::Idle && *count == total as usize
         );
         let content = buf_to_text(&buf);
         assert!(
-            content.contains(":折叠"),
-            "list-focused section footer must hint Enter:折叠, got: {content:?}",
+            content.contains(":collapse"),
+            "list-focused section footer must hint Enter:collapse, got: {content:?}",
         );
         assert!(
-            content.contains(":输入"),
-            "list-focused section footer must hint Tab:输入, got: {content:?}",
+            content.contains(":input"),
+            "list-focused section footer must hint Tab:input, got: {content:?}",
         );
         assert!(
-            !content.contains(":打开") && !content.contains(":停止") && !content.contains(":关闭"),
+            !content.contains(":open") && !content.contains(":stop") && !content.contains(":close"),
             "list-focused section footer must NOT show open/stop chips, got: {content:?}",
         );
         assert!(
-            content.contains(":快捷键"),
+            content.contains(":shortcuts"),
             "list-focused section footer keeps the shortcuts chip, got: {content:?}",
         );
     }
@@ -8433,19 +8636,19 @@ if *state == RowState::Idle && *count == total as usize
         );
         let content = buf_to_text(&buf);
         assert!(
-            content.contains(":发送") && content.contains(":发送并打开"),
+            content.contains(":send") && content.contains(":send+open"),
             "section + typed prompt footer must hint send / send+open, got: {content:?}",
         );
         assert!(
-            content.contains(":模式"),
-            "section + typed prompt footer must hint Shift+Tab:模式, got: {content:?}",
+            content.contains(":mode"),
+            "section + typed prompt footer must hint Shift+Tab:mode, got: {content:?}",
         );
         assert!(
-            !content.contains(":折叠") && !content.contains(":展开"),
+            !content.contains(":collapse") && !content.contains(":expand"),
             "section + typed prompt footer must NOT show the toggle chip, got: {content:?}",
         );
         assert!(
-            !content.contains(":停止") && !content.contains(":关闭"),
+            !content.contains(":stop") && !content.contains(":close"),
             "section footer never shows the stop chip, got: {content:?}",
         );
     }
@@ -8473,15 +8676,15 @@ if *state == RowState::Idle && *count == total as usize
         );
         let content = buf_to_text(&buf);
         assert!(
-            content.contains(":保存"),
-            "rename footer must hint Enter:保存, got: {content:?}",
+            content.contains(":save"),
+            "rename footer must hint Enter:save, got: {content:?}",
         );
         assert!(
-            content.contains(":取消"),
-            "rename footer must hint Esc:取消, got: {content:?}",
+            content.contains(":cancel"),
+            "rename footer must hint Esc:cancel, got: {content:?}",
         );
         assert!(
-            !content.contains(":停止") && !content.contains(":关闭") && !content.contains(":打开"),
+            !content.contains(":stop") && !content.contains(":close") && !content.contains(":open"),
             "rename footer must hide the normal nav/stop chips, got: {content:?}",
         );
     }
@@ -8509,20 +8712,20 @@ if *state == RowState::Idle && *count == total as usize
             None,
         );
         let content = buf_to_text(&buf);
-        for chip in [":发送", ":发送并打开"] {
+        for chip in [":send", ":send+open"] {
             assert!(
                 content.contains(chip),
                 "row-selected + non-empty footer must contain `{chip}`, got: {content:?}",
             );
         }
         assert!(
-            !content.contains(":打开  "),
-            "send/send+open footer must NOT include the empty-prompt `:打开` chip, \
+            !content.contains(":open  "),
+            "send/send+open footer must NOT include the empty-prompt `:open` chip, \
              got: {content:?}",
         );
     }
 
-    /// When the `[+ 新建会话]` button is focused AND the
+    /// When the `[+ New Agent]` button is focused AND the
     /// user has typed, Enter sends (stays on dashboard) and
     /// Ctrl+S sends + opens detail. Stop chip is suppressed
     /// because the button has no underlying session to close.
@@ -8546,7 +8749,7 @@ if *state == RowState::Idle && *count == total as usize
             None,
         );
         let content = buf_to_text(&buf);
-        for chip in [":发送", ":发送并打开"] {
+        for chip in [":send", ":send+open"] {
             assert!(
                 content.contains(chip),
                 "button-focused + non-empty footer must contain `{chip}`, \
@@ -8554,11 +8757,11 @@ if *state == RowState::Idle && *count == total as usize
             );
         }
         assert!(
-            content.contains("Enter:发送"),
+            content.contains("Enter:send"),
             "default compose: bare Enter is send, got: {content:?}",
         );
         assert!(
-            !content.contains(":停止") && !content.contains(":关闭"),
+            !content.contains(":stop") && !content.contains(":close"),
             "button-focused footer must NOT show the stop chip (no row to close), \
              got: {content:?}",
         );
@@ -8586,17 +8789,17 @@ if *state == RowState::Idle && *count == total as usize
         );
         let content = buf_to_text(&buf);
         assert!(
-            content.contains("Shift+Enter:发送") || content.contains("Alt+Enter:发送"),
+            content.contains("Shift+Enter:send") || content.contains("Alt+Enter:send"),
             "multiline footer must advertise Shift/Alt+Enter as send, got: {content:?}",
         );
-        // Bare Enter:发送 would appear as "  Enter:发送" (footer pad); the
-        // modified chords contain the substring "Enter:发送" so avoid that.
+        // Bare Enter:send would appear as "  Enter:send" (footer pad); the
+        // modified chords contain the substring "Enter:send" so avoid that.
         assert!(
-            !content.contains("  Enter:发送"),
-            "multiline footer must not claim bare Enter:发送, got: {content:?}",
+            !content.contains("  Enter:send"),
+            "multiline footer must not claim bare Enter:send, got: {content:?}",
         );
         assert!(
-            content.contains(":发送并打开"),
+            content.contains(":send+open"),
             "Ctrl+S send+open must remain, got: {content:?}",
         );
     }
@@ -8623,12 +8826,12 @@ if *state == RowState::Idle && *count == total as usize
         );
         let content = buf_to_text(&buf);
         assert!(
-            content.contains("Shift+Enter:创建") || content.contains("Alt+Enter:创建"),
+            content.contains("Shift+Enter:create") || content.contains("Alt+Enter:create"),
             "multiline empty footer must advertise Shift/Alt+Enter as create, got: {content:?}",
         );
         assert!(
-            !content.contains("  Enter:创建"),
-            "multiline empty footer must not claim bare Enter:创建, got: {content:?}",
+            !content.contains("  Enter:create"),
+            "multiline empty footer must not claim bare Enter:create, got: {content:?}",
         );
     }
 
@@ -8655,13 +8858,18 @@ if *state == RowState::Idle && *count == total as usize
             None,
         );
         let content = buf_to_text(&buf);
+        // Chaos localizes the double-press footer (`再按一次以…`);
+        // upstream English is `press again to …`.
         assert!(
-            content.contains("再按一次"),
-            "stop-confirm footer must say 再按一次, got: {content:?}",
+            content.to_lowercase().contains("press again")
+                || content.contains("再按一次")
+                || content.contains("再 按 一 次"),
+            "stop-confirm footer must say press-again (en or zh), got: {content:?}",
         );
         assert!(
-            content.contains("关闭此会话"),
-            "stop-confirm footer must mention 关闭此会话, got: {content:?}",
+            content.to_lowercase().contains("close this session")
+                || content.contains("close this session"),
+            "stop-confirm footer must mention closing the session, got: {content:?}",
         );
     }
 
@@ -8698,7 +8906,7 @@ if *state == RowState::Idle && *count == total as usize
             "expired stop-confirm must not paint the pending hint, got: {content:?}",
         );
         assert!(
-            content.contains(":打开"),
+            content.contains(":open"),
             "expired stop-confirm must fall back to the regular hints, got: {content:?}",
         );
     }
@@ -8735,8 +8943,8 @@ if *state == RowState::Idle && *count == total as usize
         let content = buf_to_text(&buf);
         // Only the top-level parent counts: its Working chip shows.
         assert!(
-            content.contains("1 运行中"),
-            "expected `1 运行中` chip for the top-level parent, got: {content:?}"
+            content.contains("1 working"),
+            "expected `1 working` chip for the top-level parent, got: {content:?}"
         );
         // Subagent's Completed must NOT show up as `1 done`.
         assert!(

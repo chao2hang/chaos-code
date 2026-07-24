@@ -1267,6 +1267,8 @@ pub struct AgentView {
     /// per-request — stashing happens on the `empty -> non-empty` transition
     /// and restoring on the `non-empty -> empty` transition.
     pub permission_stashed_prompt: Option<StashedPrompt>,
+    /// Scrollback focus stolen for a permission prompt; restored when the queue empties.
+    pub permission_stashed_pane: Option<AgentPane>,
     /// Active plan approval view (from `exit_plan_mode` ext_method). When `Some`,
     /// the prompt area shows the plan approval overlay and input is modal.
     pub(crate) plan_approval_view: Option<PlanApprovalViewState>,
