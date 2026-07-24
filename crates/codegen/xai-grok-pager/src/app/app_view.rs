@@ -3059,6 +3059,7 @@ fn handle_welcome_input(ev: &Event, ctx: &mut WelcomeInputCtx<'_>) -> InputOutco
             filter_label: (!ctx.chat_mode).then(|| source_filter.label()),
             filter_key_hint: (!ctx.chat_mode).then_some("f"),
             filter_active: !ctx.chat_mode && source_filter.is_active(),
+            header_note: None,
             action_keys: &[],
             disable_search: false,
             compact_bottom_bar: false,
@@ -4040,9 +4041,13 @@ impl AppView {
                             mouse_pos: self.last_mouse_pos,
                             is_zdr_blocked: zdr_blocked_for_draw,
                             session_picker: self.session_picker_entries.as_deref(),
-                            session_picker_loading: self.session_picker_entries.is_none()
-                                && (self.session_picker_loading
-                                    || self.session_picker_lanes.foreign_loading),
+                            session_picker_loading:
+                                crate::views::session_picker::loading_spinner_active(
+                                    self.session_picker_entries.as_deref(),
+                                    self.session_picker_source_filter,
+                                    self.session_picker_loading,
+                                    &self.session_picker_lanes,
+                                ),
                             compact,
                             pending_hint,
                             startup_warnings: &self.startup_warnings,
@@ -4736,7 +4741,14 @@ impl AppView {
         needs_redraw |= self.poll_clipboard_focus_tip();
         if matches!(self.active_view, ActiveView::Welcome) {
             self.welcome_tick = self.welcome_tick.wrapping_add(1);
-            if self.session_picker_content_loading {
+            if self.session_picker_content_loading
+                || crate::views::session_picker::loading_spinner_active(
+                    self.session_picker_entries.as_deref(),
+                    self.session_picker_source_filter,
+                    self.session_picker_loading,
+                    &self.session_picker_lanes,
+                )
+            {
                 needs_redraw = true;
             } else {
                 let frame = crate::views::welcome::shimmer_frame();
@@ -4802,6 +4814,21 @@ impl AppView {
             needs_redraw |= matches!(
                 agent.btw_state,
                 Some(crate::views::btw_overlay::BtwOverlayState::Loading { .. })
+            ) && spinner_frame_tick;
+            needs_redraw |= matches!(
+                agent.active_modal.as_ref(),
+                Some(crate::views::modal::ActiveModal::SessionPicker {
+                    entries,
+                    loading,
+                    lanes,
+                    source_filter,
+                    ..
+                }) if crate::views::session_picker::loading_spinner_active(
+                    entries.as_deref(),
+                    *source_filter,
+                    *loading,
+                    lanes,
+                )
             ) && spinner_frame_tick;
             needs_redraw |= agent.drain_blocked();
             agent.prompt.slash_controller.set_workflows_available(
@@ -5059,7 +5086,14 @@ impl AppView {
         if self.voice_listening() {
             return TickDemand::Fast;
         }
-        if self.session_picker_content_loading {
+        if self.session_picker_content_loading
+            || crate::views::session_picker::loading_spinner_active(
+                self.session_picker_entries.as_deref(),
+                self.session_picker_source_filter,
+                self.session_picker_loading,
+                &self.session_picker_lanes,
+            )
+        {
             return TickDemand::Fast;
         }
         if self.agents.values().any(|agent| {
@@ -5115,6 +5149,21 @@ impl AppView {
                     || agent.video_load_rx.is_some()
                     || agent.mermaid_needs_tick()
                     || !agent.permission_queue.is_empty()
+                    || matches!(
+                        agent.active_modal.as_ref(),
+                        Some(crate::views::modal::ActiveModal::SessionPicker {
+                            entries,
+                            loading,
+                            lanes,
+                            source_filter,
+                            ..
+                        }) if crate::views::session_picker::loading_spinner_active(
+                            entries.as_deref(),
+                            *source_filter,
+                            *loading,
+                            lanes,
+                        )
+                    )
                     || agent.subagent_views.iter().any(|(sid, child)| {
                         child.toast.is_some()
                             || child.ephemeral_tip_needs_tick()
