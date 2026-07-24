@@ -594,26 +594,45 @@ pub fn resolve_local_session_any_cwd(session_id: &str) -> Option<String> {
 }
 
 fn resolve_local_session_any_cwd_in_root(session_id: &str, sessions_root: &Path) -> Option<String> {
-    if !sessions_root.exists() {
-        return None;
+    // Mirror upstream RelocationView::select: a journal-less id that appears
+    // under more than one cwd is ambiguous and must not be addressable by id
+    // (or by the title of either copy). First-match would silently resume the
+    // wrong sandbox profile.
+    match collect_persisted_cwds_for_id(session_id, sessions_root).as_slice() {
+        [only] => Some(only.clone()),
+        _ => None,
     }
-    let entries = std::fs::read_dir(sessions_root).ok()?;
+}
+
+/// Decoded cwds that hold a persisted (`summary.json`) copy of `session_id`.
+fn collect_persisted_cwds_for_id(session_id: &str, sessions_root: &Path) -> Vec<String> {
+    if !sessions_root.exists() {
+        return Vec::new();
+    }
+    let Ok(entries) = std::fs::read_dir(sessions_root) else {
+        return Vec::new();
+    };
+    let mut found = Vec::new();
     for entry in entries.flatten() {
         let path = entry.path();
         if !path.is_dir() {
             continue;
         }
         let session_path = path.join(session_id);
-        if is_persisted_session_dir(&session_path) {
-            // Decode the CWD from the directory name. Skip entries whose
-            // names cannot be decoded — a raw URL-encoded string is not a
-            // usable CWD and returning it would confuse callers.
-            if let Some(decoded) = crate::util::grok_home::decode_cwd_from_dirname(&path) {
-                return Some(decoded);
-            }
+        if is_persisted_session_dir(&session_path)
+            && let Some(decoded) = crate::util::grok_home::decode_cwd_from_dirname(&path)
+        {
+            found.push(decoded);
         }
     }
-    None
+    found
+}
+
+/// True when `session_id` has exactly one persisted copy under `sessions_root`
+/// (any cwd). Used to drop multi-cwd legacy twins from cwd-scoped listings so
+/// they are not title-addressable under an unverified sandbox profile.
+fn is_uniquely_persisted_session_id(session_id: &str, sessions_root: &Path) -> bool {
+    collect_persisted_cwds_for_id(session_id, sessions_root).len() == 1
 }
 
 /// Scan all CWD directories for a session and return its directory path.
@@ -720,6 +739,50 @@ fn most_recent_local_summary_for_cwd_in_root(cwd: &str, sessions_root: &Path) ->
         }
     }
     best
+}
+
+/// Sync, local-only session summaries for `cwd` (hidden sessions filtered).
+/// For startup paths that must resolve a resume target before the
+/// irreversible OS sandbox is applied; async callers use [`list_summaries`].
+///
+/// Listing failures propagate so pre-sandbox callers can fail closed;
+/// individual unreadable summaries are skipped, matching the async path's
+/// tolerance for a single corrupt file.
+pub fn local_summaries_for_cwd_sync(cwd: &str) -> io::Result<Vec<Summary>> {
+    local_summaries_for_cwd_sync_in_root(cwd, &grok_home().join("sessions"))
+}
+
+fn local_summaries_for_cwd_sync_in_root(
+    cwd: &str,
+    sessions_root: &Path,
+) -> io::Result<Vec<Summary>> {
+    let encoded = crate::util::grok_home::encode_cwd_dirname(cwd);
+    let cwd_dir = sessions_root.join(&encoded);
+    if !cwd_dir.exists() {
+        return Ok(Vec::new());
+    }
+    let mut out = Vec::new();
+    let entries = std::fs::read_dir(&cwd_dir)?;
+    for entry in entries.flatten() {
+        let summary_path = entry.path().join("summary.json");
+        let Ok(bytes) = std::fs::read(&summary_path) else {
+            continue;
+        };
+        let Ok(summary) = serde_json::from_slice::<Summary>(&bytes) else {
+            continue;
+        };
+        if summary.is_hidden() {
+            continue;
+        }
+        // Same uniqueness gate as resolve_local_session_any_cwd / upstream
+        // RelocationView::select: multi-cwd journal-less twins are dropped
+        // before the cwd filter, so their titles never reach select_by_title.
+        if !is_uniquely_persisted_session_id(summary.info.id.0.as_ref(), sessions_root) {
+            continue;
+        }
+        out.push(summary);
+    }
+    Ok(out)
 }
 
 /// Best-effort lookup of the sandbox profile persisted with a session that is
@@ -3801,6 +3864,27 @@ mod session_exists_for_cwd_tests {
             resolve_local_session_any_cwd_in_root(session_id, &root).as_deref(),
             Some(cwd_a),
             "must anchor to the real session's cwd, not the stub's"
+        );
+    }
+
+    /// Multi-cwd journal-less twins are ambiguous: never pick one silently.
+    #[test]
+    fn resolve_local_session_any_cwd_drops_duplicate_persisted_ids() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().join("sessions");
+        let session_id = "legacy-twin";
+
+        for cwd in ["/project/alpha", "/project/beta"] {
+            let encoded = crate::util::grok_home::encode_cwd_dirname(cwd);
+            let dir = root.join(&encoded).join(session_id);
+            fs::create_dir_all(&dir).unwrap();
+            fs::write(dir.join("summary.json"), b"{}").unwrap();
+        }
+
+        assert_eq!(
+            resolve_local_session_any_cwd_in_root(session_id, &root),
+            None,
+            "duplicate persisted ids across cwds must stay unresolved"
         );
     }
 }
