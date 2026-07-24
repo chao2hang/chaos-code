@@ -1,6 +1,6 @@
 {
     "name": "chaos-code-darwin-arm64",
-    "version": "0.2.111",
+    "version": "0.2.112",
     "description": "darwin-arm64 binary for chaos-code. Do not install directly; install chaos-code instead.",
     "license": "Apache-2.0",
     "files": [
