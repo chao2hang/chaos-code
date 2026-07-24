@@ -45,16 +45,38 @@ pub fn desired_item_rows(items: &[SuggestionRow], items_width: u16) -> u16 {
     flat_line_count(items, items_width as usize, MAX_DROPDOWN_ROWS as usize) as u16
 }
 
+/// The rendered `" [tag]"` suffix for a row, or `None` when untagged.
+fn tag_suffix(row: &SuggestionRow) -> Option<String> {
+    row.tag.as_ref().map(|t| format!(" [{t}]"))
+}
+
+/// Rendered width of a row's `" [tag]"` suffix (0 when untagged). Measured
+/// without allocating: space + `[` + tag + `]` = tag width + 3. The tag shares
+/// the label column so descriptions stay aligned across tagged/untagged rows.
+fn tag_suffix_width(row: &SuggestionRow) -> usize {
+    row.tag.as_ref().map(|t| t.width() + 3).unwrap_or(0)
+}
+
 /// Compute the aligned label column width from all visible items.
 ///
 /// The label column gets up to 60% of the available width (capped at `LABEL_CAP`).
-/// This prioritises showing the full command name over the description.
+/// This prioritises showing the full command name over the description. The tag
+/// suffix is folded in so a `/cmd [tag]` row and a plain `/cmd` row share the
+/// same description column. Untagged rows keep origin/main behavior (overlong
+/// commands are ignored); tagged rows always contribute a `LABEL_CAP`-clamped
+/// width so a long tag can never zero out the column.
 fn compute_label_column_w(items: &[SuggestionRow], content_w: usize) -> usize {
     let budget = (content_w * 3 / 5).min(LABEL_CAP);
     let max_display_w = items
         .iter()
-        .map(|r| r.display.width())
-        .filter(|&w| w <= LABEL_CAP)
+        .filter_map(|r| {
+            let base = r.display.width();
+            if r.tag.is_none() {
+                (base <= LABEL_CAP).then_some(base)
+            } else {
+                Some((base + tag_suffix_width(r)).min(LABEL_CAP))
+            }
+        })
         .max()
         .unwrap_or(0);
     max_display_w.min(budget)
@@ -291,6 +313,7 @@ fn build_item_lines(
     let match_style = Style::default().fg(match_fg).bg(row_bg).add_modifier(bold);
     let desc_style = Style::default().fg(desc_fg).bg(row_bg);
     let bg_style = Style::default().bg(row_bg);
+    let tag_style = Style::default().fg(theme.accent_system).bg(row_bg);
 
     // 1. Build prefix + label spans with fuzzy match highlighting.
     let prefix = if is_selected {
@@ -303,14 +326,22 @@ fn build_item_lines(
         if is_selected { normal_style } else { bg_style },
     );
 
-    let label = truncate_str(&item.display, label_col_w);
+    // Optional " [tag]" suffix, right-aligned at the end of the label column
+    // (just left of the description). Truncated/reserved so the name never
+    // overruns it at narrow widths. Leading space in the suffix separates
+    // label and tag when padding is 0 (longest command+tag row).
+    let tag_text = tag_suffix(item).map(|s| truncate_str(&s, label_col_w));
+    let tag_w = tag_text.as_deref().map(|s| s.width()).unwrap_or(0);
+
+    let label = truncate_str(&item.display, label_col_w.saturating_sub(tag_w));
     let label_w = label.width();
-    let padding = label_col_w.saturating_sub(label_w);
+    let padding = label_col_w.saturating_sub(label_w + tag_w);
 
     // Build per-character spans for the label with fuzzy highlight.
     let label_spans = build_highlighted_spans(&label, &item.indices, normal_style, match_style);
 
-    // Description column indent (prefix + label + gap).
+    // Description column indent (prefix + label + gap). `label_col_w` already
+    // includes the tag suffix, so descriptions align across tagged/untagged rows.
     let desc_indent = PREFIX_W + label_col_w + LABEL_DESC_GAP;
     let desc_w = total_w.saturating_sub(desc_indent).max(1);
 
@@ -321,12 +352,17 @@ fn build_item_lines(
         simple_word_wrap(&item.description, desc_w)
     };
 
-    // 2. First line: prefix + label(padded) + gap + first desc line.
+    // 2. First line: prefix + label + padding + [tag] + gap + first desc line.
+    // Padding comes before the tag so the tag is right-aligned at the end of
+    // the label column (`]` sits just left of the description gap).
     {
         let mut spans = vec![prefix_span];
         spans.extend(label_spans);
         if padding > 0 {
             spans.push(Span::styled(" ".repeat(padding), bg_style));
+        }
+        if let Some(tag_text) = tag_text {
+            spans.push(Span::styled(tag_text, tag_style));
         }
         if let Some(first_desc) = desc_lines.first() {
             spans.push(Span::styled(" ".to_string(), bg_style));
@@ -466,6 +502,7 @@ mod tests {
                 description: String::new(),
                 insert_text: format!("/cmd{i}"),
                 indices: vec![],
+                tag: None,
             })
             .collect();
         assert_eq!(desired_item_rows(&matches, 80), MAX_DROPDOWN_ROWS);
@@ -486,6 +523,7 @@ mod tests {
                 description: format!("description for command {i}"),
                 insert_text: format!("/cmd{i}"),
                 indices: vec![],
+                tag: None,
             })
             .collect();
         let snap = SlashSnapshot {
@@ -509,6 +547,7 @@ mod tests {
             description: description.into(),
             insert_text: display.into(),
             indices: vec![],
+            tag: None,
         }
     }
 

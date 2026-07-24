@@ -1411,6 +1411,17 @@ impl DashboardState {
         self.peek_reply.adopt_slash_mru(mru);
     }
 
+    /// Adopt the shared per-command tag map (owned by `AppView`) into both the
+    /// dispatch input and the peek-reply input so dashboard slash completion
+    /// renders the same tags as agent prompts.
+    pub(crate) fn adopt_command_tags(
+        &mut self,
+        command_tags: std::rc::Rc<std::cell::RefCell<std::collections::HashMap<String, String>>>,
+    ) {
+        self.dispatch.adopt_command_tags(command_tags.clone());
+        self.peek_reply.adopt_command_tags(command_tags);
+    }
+
     pub(crate) fn set_screen_mode(&mut self, mode: crate::app::ScreenMode) {
         self.dispatch.set_screen_mode(mode);
         self.peek_reply.set_screen_mode(mode);

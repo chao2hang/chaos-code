@@ -204,6 +204,7 @@ pub(in crate::app::dispatch) fn dispatch_fork_resolved(
             .expect("just-inserted agent missing");
         agent.prompt.set_compact(app.appearance.prompt.compact);
         agent.prompt.adopt_slash_mru(app.slash_mru.clone());
+        agent.prompt.adopt_command_tags(app.command_tags.clone());
         agent
             .prompt
             .set_contextual_hints(app.contextual_hints.undo, app.contextual_hints.plan_mode);
@@ -414,6 +415,7 @@ fn build_fork_placeholder(
             bg_tool_call_to_task: std::collections::HashMap::new(),
             scheduled_tasks: std::collections::HashMap::new(),
             in_flight_prompt: None,
+            compact_held_prompt: None,
             current_prompt_id: None,
             created_via_new: false,
         },
