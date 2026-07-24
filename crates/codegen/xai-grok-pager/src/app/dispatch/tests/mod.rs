@@ -227,6 +227,7 @@ fn test_app() -> AppView {
         relaunch: None,
         import_claude_modal: None,
         welcome_doc_viewer: None,
+        tutorial: None,
         screen_mode: crate::app::ScreenMode::Inline,
         pending_effects: Vec::new(),
         pending_editor: None,

@@ -94,7 +94,7 @@ use super::settings::ui::{
     dispatch_toggle_timestamps, dispatch_toggle_vim_mode,
 };
 use super::status::{
-    dispatch_copy_session_id, dispatch_manage_billing, dispatch_open_gboom, dispatch_share_session,
+    dispatch_copy_session_id, dispatch_manage_billing, dispatch_open_gboom, dispatch_open_tutorial, dispatch_share_session,
     dispatch_show_context_info, dispatch_show_privacy_info, dispatch_show_queue,
     dispatch_show_release_notes, dispatch_show_session_info, dispatch_show_tasks,
     dispatch_show_usage, set_coding_data_sharing,
@@ -1182,6 +1182,7 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
             vec![]
         }
         Action::OpenGboom => dispatch_open_gboom(app),
+        Action::OpenTutorial => dispatch_open_tutorial(app),
         Action::SuspendForEditor {
             path,
             refresh_agents_modal,

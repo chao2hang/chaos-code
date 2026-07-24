@@ -62,6 +62,7 @@ pub mod timeline;
 pub mod timestamps;
 pub mod toggle_mouse_reporting;
 pub mod transcript;
+pub mod tutorial;
 pub mod usage;
 pub mod view_plan;
 pub mod vim_mode;
@@ -122,6 +123,7 @@ pub fn builtin_commands() -> Vec<Arc<dyn SlashCommand>> {
         Arc::new(recap::RecapCommand),
         
         Arc::new(doctor::DoctorCommand),
+        Arc::new(tutorial::TutorialCommand),
         Arc::new(voice::VoiceCommand),
         Arc::new(loop_cmd::LoopCommand),
         Arc::new(imagine::ImagineCommand),

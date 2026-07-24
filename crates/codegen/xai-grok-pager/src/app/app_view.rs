@@ -1107,6 +1107,9 @@ pub struct AppView {
     pub import_claude_modal: Option<crate::views::import_claude_modal::ImportClaudeModalState>,
     /// Doc viewer overlay for the welcome screen (release notes via Ctrl+L).
     pub welcome_doc_viewer: Option<crate::views::modal::ActiveModal>,
+    /// Onboarding tutorial overlay (`/tutorial`). Top-level so it works over
+    /// welcome and agent sessions.
+    pub tutorial: Option<crate::views::tutorial::TutorialState>,
     /// Whether the pager uses fullscreen (alt-screen) or inline mode.
     /// Set from the resolved terminal state at startup.
     pub(crate) screen_mode: super::ScreenMode,
@@ -1422,6 +1425,7 @@ impl AppView {
             has_claude_import: false,
             import_claude_modal: None,
             welcome_doc_viewer: None,
+            tutorial: None,
             screen_mode: ScreenMode::Inline,
             show_resolved_model: true,
             sharing_enabled: false,
@@ -2224,6 +2228,17 @@ impl AppView {
                     | MouseEventKind::Moved
             );
             if is_mouse_action {}
+        }
+        if let Some(tutorial) = self.tutorial.as_mut()
+            && matches!(ev, Event::Key(_) | Event::Mouse(_) | Event::Paste(_))
+        {
+            match crate::views::tutorial::handle_tutorial_input(ev, tutorial) {
+                crate::views::tutorial::TutorialOutcome::Closed => {
+                    self.tutorial = None;
+                }
+                crate::views::tutorial::TutorialOutcome::Consumed => {}
+            }
+            return InputOutcome::Changed;
         }
         let zdr_blocked = self.is_zdr_blocked();
         let has_access = self.has_access();
@@ -4134,6 +4149,14 @@ impl AppView {
                                 &theme,
                             );
                         }
+                        if let Some(tutorial) = self.tutorial.as_mut() {
+                            crate::views::tutorial::render_tutorial(
+                                f.buffer_mut(),
+                                view_area,
+                                tutorial,
+                                compact,
+                            );
+                        }
                         if !has_access && !self.access_gate_shown_logged {
                             self.access_gate_shown_logged = true;
                             xai_grok_telemetry::session_ctx::log_event(
@@ -4154,7 +4177,7 @@ impl AppView {
                             panel.render(full_area, f.buffer_mut());
                         }
                         let has_cloud_modal = false;
-                        let cursor = if has_cloud_modal {
+                        let cursor = if has_cloud_modal || self.tutorial.is_some() {
                             None
                         } else {
                             result.cursor_pos
@@ -4304,6 +4327,14 @@ impl AppView {
                                     compact,
                                 );
                             }
+                            if let Some(tutorial) = self.tutorial.as_mut() {
+                                crate::views::tutorial::render_tutorial(
+                                    f.buffer_mut(),
+                                    view_area,
+                                    tutorial,
+                                    compact,
+                                );
+                            }
                             if let Some(fps) = &fps_overlay {
                                 fps.render(full_area, f.buffer_mut());
                             }
@@ -4312,10 +4343,17 @@ impl AppView {
                             }
                             let (cursor_pos, post_flush) = result;
                             let has_cloud = false;
-                            if has_cloud || self.import_claude_modal.is_some() {
+                            if has_cloud
+                                || self.import_claude_modal.is_some()
+                                || self.tutorial.is_some()
+                            {
                                 link_spans.clear();
                             }
-                            let cursor = if has_cloud { None } else { cursor_pos };
+                            let cursor = if has_cloud || self.tutorial.is_some() {
+                                None
+                            } else {
+                                cursor_pos
+                            };
                             return (cursor, Self::merge_escapes(notif_escapes, post_flush));
                         }
                     }
@@ -4411,13 +4449,24 @@ impl AppView {
                                 Self::dashboard_stale_image_clears(agents, drawn_popup_agent);
                             let popup_post_flush =
                                 Self::merge_post_flush(stale_clears, popup_post_flush);
+                            let tutorial_open = self.tutorial.is_some();
+                            if let Some(tutorial) = self.tutorial.as_mut() {
+                                crate::views::tutorial::render_tutorial(
+                                    f.buffer_mut(),
+                                    view_area,
+                                    tutorial,
+                                    compact,
+                                );
+                            }
                             if let Some(fps) = &fps_overlay {
                                 fps.render(full_area, f.buffer_mut());
                             }
                             if let Some(panel) = &scroll_debug_panel {
                                 panel.render(full_area, f.buffer_mut());
                             }
-                            let cursor = if dashboard.attached_agent.is_some() {
+                            let cursor = if tutorial_open {
+                                None
+                            } else if dashboard.attached_agent.is_some() {
                                 popup_cursor
                             } else {
                                 dash_cursor
@@ -4549,6 +4598,7 @@ impl AppView {
         ) || self.import_claude_modal.is_some()
             || self.new_worktree_dialog.is_some()
             || self.welcome_doc_viewer.is_some()
+            || self.tutorial.is_some()
             || matches!(
                 self.active_view, ActiveView::AgentDashboard if self.dashboard.as_ref()
                 .is_some_and(| d | d.shortcuts_modal.is_some())
@@ -5501,6 +5551,7 @@ pub(crate) mod tests {
             has_claude_import: false,
             import_claude_modal: None,
             welcome_doc_viewer: None,
+            tutorial: None,
             screen_mode: ScreenMode::Inline,
             pending_effects: Vec::new(),
             pending_editor: None,
