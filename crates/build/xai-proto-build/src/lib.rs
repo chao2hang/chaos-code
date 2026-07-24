@@ -3,7 +3,48 @@ pub mod find_protoc;
 use anyhow::Context;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::{fs, iter};
+use std::fs;
+
+/// Strip the makefile target prefix from a protoc `--dependency_out` file.
+///
+/// Expected form: `<desc_path>: <deps...>` (deps may continue on later lines).
+/// Windows paths contain `:` after the drive letter, so we cannot split on the
+/// first colon alone.
+fn strip_makefile_target<'a>(dep_file: &'a str, desc_path: &Path) -> Option<&'a str> {
+    let mut candidates = vec![
+        desc_path.to_string_lossy().into_owned(),
+        desc_path.display().to_string(),
+    ];
+    let slash = desc_path.to_string_lossy().replace('\\', "/");
+    let backslash = desc_path.to_string_lossy().replace('/', "\\");
+    if slash != candidates[0] {
+        candidates.push(slash);
+    }
+    if backslash != candidates[0] {
+        candidates.push(backslash);
+    }
+    for target in &candidates {
+        let prefix = format!("{target}:");
+        if let Some(rest) = dep_file.strip_prefix(&prefix) {
+            return Some(rest);
+        }
+    }
+
+    // Fallback: first `: ` that is not a Windows drive letter (`C:`).
+    // e.g. `C:\tmp\out.pb: dep1` or `/tmp/out.pb: dep1`
+    let bytes = dep_file.as_bytes();
+    let mut i = 0;
+    while i + 1 < bytes.len() {
+        if bytes[i] == b':' && bytes[i + 1].is_ascii_whitespace() {
+            let is_drive = i == 1 && bytes[0].is_ascii_alphabetic();
+            if !is_drive {
+                return Some(&dep_file[i + 1..]);
+            }
+        }
+        i += 1;
+    }
+    None
+}
 
 /// Find the protoc well-known types include directory.
 ///
@@ -113,11 +154,26 @@ impl XaiProtoBuilder {
         }
 
         // Can only process one input file when using --dependency_out=FILE.
+        // Use real temp files (not /dev/stdout or /dev/null) so this works on
+        // Windows CI runners where those Unix paths do not exist.
         for proto in protos {
+            let temp_dir = tempfile::TempDir::new().context("create temp dir for protoc deps")?;
+            let dep_path = temp_dir.path().join("deps.d");
+            let desc_path = temp_dir.path().join("out.pb");
+
             let mut command = Command::new(protoc.unwrap_or(Path::new("protoc")));
             command
-                .arg("--dependency_out=/dev/stdout")
-                .arg("--descriptor_set_out=/dev/null");
+                .arg(format!(
+                    "--dependency_out={}",
+                    dep_path.to_str().context("dep path not UTF-8")?
+                ))
+                .arg(format!(
+                    "--descriptor_set_out={}",
+                    desc_path.to_str().context("desc path not UTF-8")?
+                ))
+                // Keep in sync with configure(); required for protoc < 3.15 when
+                // proto files use proto3 optional fields.
+                .arg("--experimental_allow_proto3_optional");
 
             // Add protoc's well-known types include directory first (if found).
             // This is needed for Bazel sandboxed builds where protoc and its
@@ -138,27 +194,38 @@ impl XaiProtoBuilder {
             command.stdin(Stdio::null());
             command.stderr(Stdio::inherit());
 
-            let output = command.output().context("protoc command failed")?;
-            if !output.status.success() {
+            let status = command.status().context("protoc command failed")?;
+            if !status.success() {
                 return Err(anyhow::anyhow!("protoc command failed"));
             }
 
-            let output =
-                String::from_utf8(output.stdout).context("protoc command output not UTF-8")?;
+            let dep_file =
+                fs::read_to_string(&dep_path).context("failed to read protoc dependency file")?;
 
-            let mut lines = output.lines();
-            let first_line = lines.next().context("protoc command output is empty")?;
-            let prefix = "/dev/null:";
-            let rem = first_line.strip_prefix(prefix).with_context(|| {
-                format!("protoc command output must start with /dev/null: {output:?}")
+            // Makefile-style: `<desc_path>: <dep1> <dep2> ...` possibly split
+            // across lines with trailing `\`. On Windows `desc_path` contains a
+            // drive letter (`C:\...`), so do not split on the first `:` alone —
+            // strip the known descriptor path prefix instead.
+            let rem = strip_makefile_target(&dep_file, &desc_path).with_context(|| {
+                format!(
+                    "protoc dependency file must start with descriptor path {}: {dep_file:?}",
+                    desc_path.display()
+                )
             })?;
-            for line in iter::once(rem).chain(lines) {
+            for line in rem.lines() {
                 let line = line.trim();
-                let line = line.strip_suffix("\\").unwrap_or(line);
+                let line = line.strip_suffix('\\').unwrap_or(line).trim();
+                if line.is_empty() {
+                    continue;
+                }
                 // Depending on absolute paths like
                 // /Users/user/homebrew/Cellar/protobuf/29.1/include/google/protobuf/timestamp.proto
                 // is valid, but we want to have output more deterministic.
-                if line.contains("/include/google/protobuf/") {
+                // Also skip Windows-style well-known include paths.
+                let normalized = line.replace('\\', "/");
+                if normalized.contains("/include/google/protobuf/")
+                    || normalized.contains("/google/protobuf/")
+                {
                     continue;
                 }
 
