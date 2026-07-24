@@ -18,7 +18,56 @@ crate 仍保留 `xai-grok-*` 命名以利同步上游。`SOURCE_REV` 记录当�
 
 ## 安装
 
-### npm（推荐，预编译二进制）
+### 一键安装（推荐：GitHub Release 二进制）
+
+从 [GitHub Releases](https://github.com/chao2hang/chaos-code/releases) 下载预编译
+`chaos`，安装到 `~/.chaos/bin`（或已有 `~/.grok/bin`），并**自动写入 PATH**。
+
+**macOS / Linux：**
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.sh | bash
+chaos --version
+```
+
+指定版本 / 强制覆盖：
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.sh | bash -s -- --version 0.2.110
+curl -fsSL https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.sh | bash -s -- --force
+```
+
+**Windows（PowerShell）：**
+
+```powershell
+irm https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.ps1 | iex
+chaos --version
+```
+
+指定版本：
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.ps1))) -Version 0.2.110
+```
+
+脚本行为：
+
+| 项 | 说明 |
+|----|------|
+| 下载源 | `https://github.com/chao2hang/chaos-code/releases` 对应平台资产 |
+| 安装目录 | `$CHAOS_HOME/bin` → `$GROK_HOME/bin` → `~/.chaos/bin`（Windows：`%USERPROFILE%\.chaos\bin`） |
+| PATH | Unix：写入 `~/.zshrc` / `~/.bashrc` 等；Windows：写入**用户** PATH（需新开终端） |
+| 不改 PATH | `bash install.sh --no-path` / `install.ps1 -NoPath` |
+
+本地已有仓库时：
+
+```sh
+./scripts/install.sh --version 0.2.110
+# Windows:
+# .\scripts\install.ps1 -Version 0.2.110
+```
+
+### npm（可选）
 
 ```sh
 npm i -g chaos-code
@@ -29,12 +78,18 @@ chaos --version
 （如 `chaos-code-linux-x64`），`postinstall` 将二进制解压到
 `~/.chaos/bin/chaos`（若已有 `~/.grok` 则沿用其 `bin/`）。
 
-**发布**：
+> [!NOTE]
+> Windows 上若出现 `no platform binary installed for win32-x64`，说明 npm 平台包
+> （`chaos-code-win32-*`）尚未上架或被 registry 拦截。请改用上方 **一键安装**
+> 或手动从
+> [Releases](https://github.com/chao2hang/chaos-code/releases/latest)
+> 下载 `chaos-win32-x64.exe`。
 
-- **现在没有 Actions / 加不了 `NPM_TOKEN`**：本机 `npm login` 后  
-  `./scripts/ci/local-publish-host.sh --publish`（只发当前平台）。  
-- **有 CI 之后**：push `.github/workflows`，在  
-  Settings → Secrets → Actions 加 `NPM_TOKEN`，再打 `v*` tag。  
+**发布（维护者）**：
+
+- **本机**：`npm login` 后 `./scripts/ci/local-publish-host.sh --publish`（当前平台）。  
+- **CI**：Settings → Secrets → Actions 配置 `NPM_TOKEN`，打 `v*` tag 触发
+  [Release workflow](.github/workflows/release.yml)。  
 
 详见
 [`npm/PUBLISH.md`](crates/codegen/xai-grok-pager/npm/PUBLISH.md)。
