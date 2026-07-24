@@ -516,6 +516,10 @@ struct LocalTerminalActor {
     /// a subagent reusing this backend can't clobber the parent's shadows.
     search_shadows: SearchShadowConfig,
 
+    /// Optional `[shell_environment_policy]` from config.toml, applied when
+    /// spawning child shells. `None` inherits the full process environment.
+    shell_env_policy: Option<crate::util::ShellEnvironmentPolicy>,
+
     /// Persistent shell state (env vars, cwd, functions, aliases).
     /// Lazily initialized on first command when `persistent_shell` is true.
     #[cfg(unix)]
@@ -538,6 +542,7 @@ impl LocalTerminalActor {
         persistent_shell: bool,
         login_shell_capture: bool,
         search_shadows: SearchShadowConfig,
+        shell_env_policy: Option<crate::util::ShellEnvironmentPolicy>,
         completed_task_ttl: Duration,
         foreground_block_budget: Duration,
         output_file_cap: u64,
@@ -558,6 +563,7 @@ impl LocalTerminalActor {
             persistent_shell,
             login_shell_capture,
             search_shadows,
+            shell_env_policy,
             #[cfg(unix)]
             shell_state: None,
             #[cfg(unix)]
@@ -599,7 +605,7 @@ impl LocalTerminalActor {
         let login_env: Option<&HashMap<String, String>> = None;
 
         let (child, process_group) =
-            spawn_shell_command(command, cwd, env, login_env, self.search_shadows)?;
+            spawn_shell_command(command, cwd, env, login_env, self.search_shadows, self.shell_env_policy.as_ref())?;
         Ok(SpawnResult {
             child,
             process_group,
@@ -658,22 +664,22 @@ impl LocalTerminalActor {
             .stderr(Stdio::piped())
             .kill_on_drop(true);
 
-        if let Some(login) = self.login_env.as_ref() {
-            for (key, value) in login {
-                if key != "PATH" && std::env::var_os(key).is_none() {
-                    cmd.env(key, value);
-                }
+        #[cfg(unix)]
+        apply_child_env(
+            &mut cmd,
+            self.shell_env_policy.as_ref(),
+            self.login_env.as_ref(),
+            env,
+        );
+        #[cfg(not(unix))]
+        {
+            cmd.envs(shell_state::shell_env_overrides());
+            for (key, value) in env {
+                cmd.env(key, value);
             }
+            cmd.envs(crate::util::pager_env());
+            crate::util::apply_grok_agent_marker(&mut cmd);
         }
-        cmd.envs(shell_state::shell_env_overrides());
-        for (key, value) in env {
-            cmd.env(key, value);
-        }
-        cmd.envs(crate::util::pager_env());
-        if let Some(path) = self.login_env.as_ref().and_then(|l| l.get("PATH")) {
-            cmd.env("PATH", path);
-        }
-        crate::util::apply_grok_agent_marker(&mut cmd);
 
         cmd.fd_mappings(prep.fd_mappings)
             .map_err(|e| ComputerError::io(format!("fd mapping: {e}")))?;
@@ -722,7 +728,7 @@ impl LocalTerminalActor {
             return;
         }
         let shell = shell_state::ShellKind::detect();
-        match shell_state::ShellState::init(shell, cwd).await {
+        match shell_state::ShellState::init(shell, cwd, self.shell_env_policy.as_ref()).await {
             Ok(state) => self.shell_state = Some(state),
             Err(e) => {
                 tracing::warn!("persistent shell init failed, using empty state: {e}");
@@ -791,17 +797,19 @@ impl LocalTerminalActor {
             .stderr(Stdio::piped())
             .kill_on_drop(true);
 
-        // Apply SHELL_ENV_OVERRIDES (TERM=dumb, NO_COLOR, GROK_AGENT=1, etc.)
-        // + request env + pager env. Agent marker is re-applied last so request
-        // env cannot clear it.
-        cmd.envs(shell_state::shell_env_overrides());
-
-        for (key, value) in env {
-            cmd.env(key, value);
+        // Policy base + request env + pager + marker. Persistent shell has no
+        // login_env layer (login state lives in the replay snapshot).
+        #[cfg(unix)]
+        apply_child_env(&mut cmd, self.shell_env_policy.as_ref(), None, env);
+        #[cfg(not(unix))]
+        {
+            cmd.envs(shell_state::shell_env_overrides());
+            for (key, value) in env {
+                cmd.env(key, value);
+            }
+            cmd.envs(crate::util::pager_env());
+            crate::util::apply_grok_agent_marker(&mut cmd);
         }
-
-        cmd.envs(crate::util::pager_env());
-        crate::util::apply_grok_agent_marker(&mut cmd);
 
         cmd.fd_mappings(prep.fd_mappings)
             .map_err(|e| ComputerError::io(format!("fd mapping: {e}")))?;
@@ -2134,7 +2142,7 @@ impl LocalTerminalBackend {
     /// If `memory_config` is provided, a cgroupv2 memory limit is enforced on
     /// all spawned commands (Linux only; silently degrades to no-op elsewhere).
     pub fn new() -> Self {
-        Self::new_inner(None, false, false, true, SearchShadowConfig::default())
+        Self::new_inner(None, false, false, true, SearchShadowConfig::default(), None)
     }
 
     /// Create a new LocalTerminalBackend with persistent shell state.
@@ -2143,7 +2151,7 @@ impl LocalTerminalBackend {
     /// and shell options persist across command invocations. The user's login shell
     /// (bash or zsh) is detected and its rc files are loaded once on first command.
     pub fn with_persistent_shell() -> Self {
-        Self::new_inner(None, false, true, true, SearchShadowConfig::default())
+        Self::new_inner(None, false, true, true, SearchShadowConfig::default(), None)
     }
 
     /// Create a new LocalTerminalBackend with cgroup memory limits.
@@ -2156,6 +2164,7 @@ impl LocalTerminalBackend {
             false,
             true,
             SearchShadowConfig::default(),
+            None,
         )
     }
 
@@ -2167,6 +2176,7 @@ impl LocalTerminalBackend {
             true,
             true,
             SearchShadowConfig::default(),
+            None,
         )
     }
 
@@ -2175,22 +2185,33 @@ impl LocalTerminalBackend {
     /// `search_shadows` is the host-resolved `find`→`bfs` / `grep`→`ugrep` enable
     /// state, baked into this backend (see [`SearchShadowConfig`]).
     pub fn new_local(search_shadows: SearchShadowConfig) -> Self {
-        Self::new_inner(None, true, false, true, search_shadows)
+        Self::new_inner(None, true, false, true, search_shadows, None)
     }
 
     pub fn new_local_with_login_shell_capture(
         search_shadows: SearchShadowConfig,
         login_shell_capture: bool,
+        shell_env_policy: Option<crate::util::ShellEnvironmentPolicy>,
     ) -> Self {
-        Self::new_inner(None, true, false, login_shell_capture, search_shadows)
+        Self::new_inner(
+            None,
+            true,
+            false,
+            login_shell_capture,
+            search_shadows,
+            shell_env_policy,
+        )
     }
 
     /// Create a new LocalTerminalBackend using spawn_local with persistent shell.
     ///
     /// `search_shadows` is the host-resolved `find`→`bfs` / `grep`→`ugrep` enable
     /// state, baked into this backend (see [`SearchShadowConfig`]).
-    pub fn new_local_with_persistent_shell(search_shadows: SearchShadowConfig) -> Self {
-        Self::new_inner(None, true, true, true, search_shadows)
+    pub fn new_local_with_persistent_shell(
+        search_shadows: SearchShadowConfig,
+        shell_env_policy: Option<crate::util::ShellEnvironmentPolicy>,
+    ) -> Self {
+        Self::new_inner(None, true, true, true, search_shadows, shell_env_policy)
     }
 
     /// Create a new LocalTerminalBackend using spawn_local with memory limits.
@@ -2201,6 +2222,7 @@ impl LocalTerminalBackend {
             false,
             true,
             SearchShadowConfig::default(),
+            None,
         )
     }
 
@@ -2218,6 +2240,7 @@ impl LocalTerminalBackend {
             false,
             true,
             search_shadows,
+            None,
             COMPLETED_TASK_TTL,
             FOREGROUND_BLOCK_BUDGET,
             MAX_OUTPUT_FILE_BYTES,
@@ -2234,6 +2257,7 @@ impl LocalTerminalBackend {
             false,
             true,
             SearchShadowConfig::default(),
+            None,
             ttl,
             FOREGROUND_BLOCK_BUDGET,
             MAX_OUTPUT_FILE_BYTES,
@@ -2250,6 +2274,7 @@ impl LocalTerminalBackend {
             false,
             true,
             SearchShadowConfig::default(),
+            None,
             COMPLETED_TASK_TTL,
             budget,
             MAX_OUTPUT_FILE_BYTES,
@@ -2266,6 +2291,7 @@ impl LocalTerminalBackend {
             false,
             true,
             SearchShadowConfig::default(),
+            None,
             COMPLETED_TASK_TTL,
             FOREGROUND_BLOCK_BUDGET,
             output_file_cap,
@@ -2279,6 +2305,7 @@ impl LocalTerminalBackend {
         persistent_shell: bool,
         login_shell_capture: bool,
         search_shadows: SearchShadowConfig,
+        shell_env_policy: Option<crate::util::ShellEnvironmentPolicy>,
     ) -> Self {
         Self::new_with_ttl(
             memory_config,
@@ -2286,6 +2313,7 @@ impl LocalTerminalBackend {
             persistent_shell,
             login_shell_capture,
             search_shadows,
+            shell_env_policy,
             COMPLETED_TASK_TTL,
             foreground_block_budget_from_env(),
             output_file_cap_from_env(),
@@ -2299,6 +2327,7 @@ impl LocalTerminalBackend {
         persistent_shell: bool,
         login_shell_capture: bool,
         search_shadows: SearchShadowConfig,
+        shell_env_policy: Option<crate::util::ShellEnvironmentPolicy>,
         completed_task_ttl: Duration,
         foreground_block_budget: Duration,
         output_file_cap: u64,
@@ -2325,6 +2354,7 @@ impl LocalTerminalBackend {
                 persistent_shell,
                 login_shell_capture,
                 search_shadows,
+                shell_env_policy,
                 completed_task_ttl,
                 foreground_block_budget,
                 output_file_cap,
@@ -2920,6 +2950,73 @@ async fn capture_login_env() -> HashMap<String, String> {
     }
 }
 
+
+/// Layer login-shell captured vars (except `PATH`) onto `cmd`, dropping those the
+/// active policy filters out and those already set in grok's own environment.
+#[cfg(unix)]
+fn layer_login_env_vars(
+    cmd: &mut tokio::process::Command,
+    login_env: Option<&HashMap<String, String>>,
+    active_policy: Option<&crate::util::ShellEnvironmentPolicy>,
+) {
+    if let Some(login) = login_env {
+        for (key, value) in login {
+            if key != "PATH"
+                && std::env::var_os(key).is_none()
+                && active_policy.is_none_or(|p| p.allows_with_inherit(key))
+            {
+                cmd.env(key, value);
+            }
+        }
+    }
+}
+
+/// Layer per-request env onto `cmd`, dropping names the active policy excludes.
+fn layer_request_env(
+    cmd: &mut tokio::process::Command,
+    env: &HashMap<String, String>,
+    active_policy: Option<&crate::util::ShellEnvironmentPolicy>,
+) {
+    for (key, value) in env {
+        if active_policy.is_none_or(|p| p.allows(key)) {
+            cmd.env(key, value);
+        }
+    }
+}
+
+/// Re-inject the login-shell `PATH` last unless the active policy filters it out.
+#[cfg(unix)]
+fn layer_login_path(
+    cmd: &mut tokio::process::Command,
+    login_env: Option<&HashMap<String, String>>,
+    active_policy: Option<&crate::util::ShellEnvironmentPolicy>,
+) {
+    if let Some(path) = login_env.and_then(|l| l.get("PATH"))
+        && active_policy.is_none_or(|p| p.allows_with_inherit("PATH"))
+    {
+        cmd.env("PATH", path);
+    }
+}
+
+/// Compose the child environment: policy base, login capture, control vars,
+/// request env, pager, login PATH, agent marker.
+#[cfg(unix)]
+fn apply_child_env(
+    cmd: &mut tokio::process::Command,
+    policy: Option<&crate::util::ShellEnvironmentPolicy>,
+    login_env: Option<&HashMap<String, String>>,
+    request_env: &HashMap<String, String>,
+) {
+    let active_policy = policy.filter(|p| !p.is_noop());
+    crate::util::shell_env_policy::install_policy_base_env(cmd, active_policy);
+    layer_login_env_vars(cmd, login_env, active_policy);
+    cmd.envs(shell_state::shell_env_overrides());
+    layer_request_env(cmd, request_env, active_policy);
+    cmd.envs(crate::util::pager_env());
+    layer_login_path(cmd, login_env, active_policy);
+    crate::util::apply_grok_agent_marker(cmd);
+}
+
 /// Spawn the shell command and attach the child to a [`ProcessGroup`].
 ///
 /// The returned `ProcessGroup` is what the teardown helpers
@@ -2933,11 +3030,12 @@ fn spawn_shell_command(
     env: &HashMap<String, String>,
     login_env: Option<&HashMap<String, String>>,
     search_shadows: SearchShadowConfig,
+    shell_env_policy: Option<&crate::util::ShellEnvironmentPolicy>,
 ) -> std::io::Result<(tokio::process::Child, crate::util::ProcessGroup)> {
-    // `login_env` and `search_shadows` are only consumed by the `#[cfg(unix)]`
+    // `login_env` / `search_shadows` / policy are only consumed by the `#[cfg(unix)]`
     // shell wrapper below; keep them live on Windows to avoid unused-arg warnings.
     #[cfg(not(unix))]
-    let _ = (&login_env, &search_shadows);
+    let _ = (&login_env, &search_shadows, &shell_env_policy);
     #[cfg(unix)]
     let mut cmd = {
         let shell = shell_state::ShellKind::detect();
@@ -2966,30 +3064,7 @@ fn spawn_shell_command(
             // detach_from_tty() handles both session and process group creation.
             .kill_on_drop(true);
 
-        if let Some(login) = login_env {
-            for (key, value) in login {
-                if key != "PATH" && std::env::var_os(key).is_none() {
-                    cmd.env(key, value);
-                }
-            }
-        }
-        // Apply env vars from the request (e.g., .envrc, color vars, ACP-provided vars).
-        cmd.envs(shell_state::shell_env_overrides());
-        for (key, value) in env {
-            cmd.env(key, value);
-        }
-        cmd.envs(crate::util::pager_env());
-
-        // Inject the user's login-shell PATH LAST so tools installed via rc
-        // files (.bashrc, .zshrc, virtualenvs) are always discoverable. The
-        // request env often carries a copy of the parent process's PATH which
-        // doesn't include rc-file additions — applying login PATH after the
-        // request env ensures those additions aren't clobbered.
-        if let Some(path) = login_env.and_then(|l| l.get("PATH")) {
-            cmd.env("PATH", path);
-        }
-        // Agent marker must win over request/login env.
-        crate::util::apply_grok_agent_marker(&mut cmd);
+        apply_child_env(&mut cmd, shell_env_policy, login_env, env);
 
         // Detach from the controlling terminal so subprocesses cannot open
         // /dev/tty and compete with the TUI for terminal input.
@@ -3168,6 +3243,80 @@ mod tests {
             }
             tokio::time::sleep(Duration::from_millis(25)).await;
         }
+    }
+
+
+    #[test]
+    fn layer_request_env_drops_names_the_policy_excludes() {
+        use crate::util::{EnvironmentVariablePattern, ShellEnvironmentPolicy};
+
+        let glob = EnvironmentVariablePattern::new_case_insensitive;
+        let policy = ShellEnvironmentPolicy {
+            exclude: vec![glob("AWS_*")],
+            include_only: vec![glob("PATH"), glob("SAFE_*")],
+            ..Default::default()
+        };
+        let env = HashMap::from([
+            ("PATH".to_string(), "/bin".to_string()),
+            ("SAFE_FLAG".to_string(), "1".to_string()),
+            ("AWS_SECRET".to_string(), "leak".to_string()),
+            ("OTHER".to_string(), "x".to_string()),
+        ]);
+
+        let mut cmd = tokio::process::Command::new("true");
+        layer_request_env(&mut cmd, &env, Some(&policy));
+        let applied: HashMap<String, String> = cmd
+            .as_std()
+            .get_envs()
+            .filter_map(|(k, v)| Some((k.to_str()?.to_string(), v?.to_str()?.to_string())))
+            .collect();
+
+        assert_eq!(applied.get("PATH").map(String::as_str), Some("/bin"));
+        assert_eq!(applied.get("SAFE_FLAG").map(String::as_str), Some("1"));
+        assert!(!applied.contains_key("AWS_SECRET"));
+        assert!(!applied.contains_key("OTHER"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn apply_child_env_layers_in_fixed_order() {
+        use crate::util::{EnvironmentVariablePattern, ShellEnvironmentPolicy};
+
+        let policy = ShellEnvironmentPolicy {
+            exclude: vec![EnvironmentVariablePattern::new_case_insensitive("*SECRET*")],
+            set: HashMap::from([("GROK_TEST_BASE".to_string(), "1".to_string())]),
+            ..Default::default()
+        };
+        let login = HashMap::from([
+            ("GROK_TEST_LOGIN".to_string(), "l".to_string()),
+            ("PATH".to_string(), "/login/bin".to_string()),
+        ]);
+        let request = HashMap::from([
+            ("GROK_TEST_REQ".to_string(), "r".to_string()),
+            ("PATH".to_string(), "/req/bin".to_string()),
+            ("GROK_TEST_SECRET".to_string(), "s".to_string()),
+        ]);
+
+        let mut cmd = tokio::process::Command::new("true");
+        apply_child_env(&mut cmd, Some(&policy), Some(&login), &request);
+        let env: HashMap<String, String> = cmd
+            .as_std()
+            .get_envs()
+            .filter_map(|(k, v)| Some((k.to_str()?.to_string(), v?.to_str()?.to_string())))
+            .collect();
+
+        assert_eq!(env.get("GROK_TEST_BASE").map(String::as_str), Some("1"));
+        assert_eq!(env.get("GROK_TEST_LOGIN").map(String::as_str), Some("l"));
+        assert_eq!(env.get("GROK_TEST_REQ").map(String::as_str), Some("r"));
+        // Request env is filtered by the policy.
+        assert!(!env.contains_key("GROK_TEST_SECRET"));
+        // Login PATH is applied last and wins over the request PATH.
+        assert_eq!(env.get("PATH").map(String::as_str), Some("/login/bin"));
+        // The agent marker wins over every layer.
+        assert_eq!(
+            env.get(crate::util::GROK_AGENT_ENV).map(String::as_str),
+            Some(crate::util::GROK_AGENT_ENV_VALUE)
+        );
     }
 
     #[tokio::test]
