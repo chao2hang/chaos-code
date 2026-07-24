@@ -1405,7 +1405,7 @@ pub(super) fn dispatch_action_result(
                             session_id,
                             action: xai_hooks_plugins_types::PluginsAction::Reload,
                         });
-                    } else if agent.extensions_modal.is_some() {
+                    } else if let Some(modal) = agent.extensions_modal.as_mut() {
                         effects.push(Effect::FetchHooksList {
                             agent_id,
                             session_id: session_id.clone(),
@@ -1414,10 +1414,12 @@ pub(super) fn dispatch_action_result(
                             agent_id,
                             session_id: session_id.clone(),
                         });
-                        effects.push(Effect::FetchMarketplaceList {
+                        crate::app::dispatch::transcript::push_marketplace_fetch(
+                            modal,
+                            &mut effects,
                             agent_id,
-                            session_id: session_id.clone(),
-                        });
+                            session_id.clone(),
+                        );
                         effects.push(Effect::FetchMcpsList {
                             agent_id,
                             session_id,

@@ -880,8 +880,11 @@ pub(in crate::app::dispatch) fn handle_session_created(
                 mode_id: acp::SessionModeId::new(mode.as_id()),
             });
         }
-        if std::mem::take(&mut agent.pending_extensions_fetch) && agent.extensions_modal.is_some() {
+        if std::mem::take(&mut agent.pending_extensions_fetch)
+            && let Some(modal) = agent.extensions_modal.as_mut()
+        {
             effects.extend(extensions_modal_tab_fetches(
+                modal,
                 agent_id,
                 session_id_clone.clone(),
             ));
@@ -1044,8 +1047,11 @@ pub(in crate::app::dispatch) fn handle_worktree_session_created(
                 mode_id: acp::SessionModeId::new(mode.as_id()),
             });
         }
-        if std::mem::take(&mut agent.pending_extensions_fetch) && agent.extensions_modal.is_some() {
+        if std::mem::take(&mut agent.pending_extensions_fetch)
+            && let Some(modal) = agent.extensions_modal.as_mut()
+        {
             effects.extend(extensions_modal_tab_fetches(
+                modal,
                 agent_id,
                 session_id_clone.clone(),
             ));
