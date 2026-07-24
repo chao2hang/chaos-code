@@ -67,6 +67,26 @@ chaos --version
 # .\scripts\install.ps1 -Version 0.2.110
 ```
 
+### 自更新（`chaos update`）
+
+安装后可用自己的 GitHub Release 渠道更新（**不依赖** xAI / `@xai-official/grok`）：
+
+```sh
+chaos update
+# 固定版本：
+chaos update --version 0.2.110
+```
+
+默认 installer 为 `gh-release`：从
+`https://github.com/chao2hang/chaos-code/releases` 下载当前平台资产
+（如 `chaos-linux-x64`、`chaos-win32-x64.exe`），写入 `~/.chaos/bin`（或
+`~/.grok/bin`）。也可用环境变量强制渠道：
+
+```sh
+GROK_INSTALLER=gh-release chaos update   # 默认
+GROK_INSTALLER=npm chaos update          # 改走 npm i -g chaos-code（需平台包齐全）
+```
+
 ### npm（可选）
 
 ```sh
