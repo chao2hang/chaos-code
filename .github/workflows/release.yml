@@ -335,6 +335,10 @@ jobs:
       - name: Publish to npmjs
         id: npm
         if: needs.resolve-version.outputs.publish_npm == 'true'
+        # Soft-fail so a bad/mis-scoped NPM_TOKEN does not block GitHub Release.
+        # First-time package names need a token that can *create* packages
+        # (npm often returns 404 for that case instead of 403).
+        continue-on-error: true
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -350,7 +354,11 @@ jobs:
           chmod +x scripts/ci/publish-npm.sh
           # Publish only packages that have bin/ contents
           export PUBLISH_EXISTING_ONLY=1
-          scripts/ci/publish-npm.sh
+          if ! scripts/ci/publish-npm.sh; then
+            echo "::error::npm publish failed. Common causes: NPM_TOKEN lacks create/publish for chaos-code* packages (E404 on first publish), 2FA, or wrong registry. Binaries still ship via GitHub Release."
+            echo "skipped=false" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
           echo "skipped=false" >> "$GITHUB_OUTPUT"
 
       - name: Upload assembled npm artifact
@@ -366,8 +374,13 @@ jobs:
           retention-days: 7
           if-no-files-found: warn
 
+      # Keep GH Release independent of npm: a missing/mis-scoped NPM_TOKEN
+      # (or first-publish E404) must not skip attaching the built binaries.
       - name: Create GitHub Release
-        if: needs.resolve-version.outputs.create_github_release == 'true'
+        if: >-
+          always()
+          && needs.resolve-version.outputs.create_github_release == 'true'
+          && steps.layout.outcome == 'success'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.resolve-version.outputs.tag }}
