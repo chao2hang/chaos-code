@@ -515,6 +515,17 @@ pub struct PagerArgs {
         conflicts_with_all = ["continue_last_session"]
     )]
     pub load_session: Option<String>,
+    /// Set by [`Self::pin_local_resume_target`]: the resume target was
+    /// resolved (or definitively missed) before the OS sandbox, so
+    /// materialization must not re-run local title selection.
+    #[clap(skip)]
+    pub resume_target_pinned: bool,
+    /// Sandbox profile of the title-pinned session, captured at pin time from
+    /// the selected summary (outer `None` = no title pin happened). The
+    /// id-based peek cannot re-derive it: a legacy id duplicated across cwd
+    /// dirs makes that lookup ambiguous.
+    #[clap(skip)]
+    pub(crate) pinned_resume_profile: Option<Option<String>>,
     /// 继续当前工作目录中最近的会话。
     #[arg(
         short = 'c',
@@ -806,13 +817,69 @@ impl PagerArgs {
         let explicit = self.sandbox.as_deref().filter(|s| !s.is_empty());
         Self::resolve_startup_sandbox(explicit, saved.map(String::from))
     }
+    /// Pin an explicit non-UUID, non-chat resume/load target to its canonical
+    /// local session id, before the (irreversible) OS sandbox is applied.
+    ///
+    /// Resolving once — recorded via `resume_target_pinned` so materialization
+    /// never re-runs local title selection — makes the saved-profile peek and
+    /// materialization consume the same immutable target; re-selecting after
+    /// the sandbox would race a concurrent rename/create. Listing failures
+    /// and ambiguity are hard errors here (fail closed / surfaced before the
+    /// sandbox); a definitive no-match keeps the raw arg for the legacy
+    /// remote/worktree id path.
+    pub fn pin_local_resume_target(&mut self) -> anyhow::Result<()> {
+        let cwd_buf = std::env::current_dir().ok();
+        let cwd_str = cwd_buf.as_deref().map(|p| p.to_string_lossy());
+        self.pin_local_resume_target_for_cwd(cwd_str.as_deref())
+    }
+    /// Same as [`Self::pin_local_resume_target`] with an explicit cwd, so
+    /// tests never mutate the process cwd.
+    pub fn pin_local_resume_target_for_cwd(&mut self, cwd: Option<&str>) -> anyhow::Result<()> {
+        if self.chat() {
+            return Ok(());
+        }
+        let Some(target) = self.session_to_resume().map(str::to_owned) else {
+            return Ok(());
+        };
+        use crate::app::session_title_resolve::{PinnedResumeTarget, presandbox_resume_target};
+        let pinned = presandbox_resume_target(&target, cwd)?;
+        self.resume_target_pinned = true;
+        if let PinnedResumeTarget::Title {
+            ref id,
+            ref sandbox_profile,
+        } = pinned
+        {
+            eprintln!("Resuming session {} (matched by title)", id);
+            self.pinned_resume_profile = Some(sandbox_profile.clone());
+        }
+        let Some(id) = pinned.id() else {
+            return Ok(());
+        };
+        if self
+            .resume_session
+            .as_deref()
+            .is_some_and(|s| !s.is_empty())
+        {
+            self.resume_session = Some(id);
+        } else if self.load_session.as_deref().is_some_and(|s| !s.is_empty()) {
+            self.load_session = Some(id);
+        }
+        Ok(())
+    }
     /// The sandbox profile persisted with the session being resumed, if any.
     /// Local, best-effort; `None` when not resuming or nothing is found. Read once
     /// for the profile resume resolution.
     pub fn saved_resume_profile(&self) -> Option<String> {
         let cwd_buf = std::env::current_dir().ok();
         let cwd_str = cwd_buf.as_deref().map(|p| p.to_string_lossy());
-        let cwd = cwd_str.as_deref();
+        self.saved_resume_profile_for_cwd(cwd_str.as_deref())
+    }
+    /// Same as [`Self::saved_resume_profile`] with an explicit cwd, so tests
+    /// never mutate the process cwd.
+    pub fn saved_resume_profile_for_cwd(&self, cwd: Option<&str>) -> Option<String> {
+        if let Some(pinned) = &self.pinned_resume_profile {
+            return pinned.clone();
+        }
         match self.resume_target() {
             ResumeTarget::SessionId(id) => {
                 xai_grok_shell::session::persistence::resumed_session_sandbox_profile(

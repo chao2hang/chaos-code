@@ -28,6 +28,7 @@ mod dispatch;
 mod display_refresh_startup;
 mod effects;
 pub mod roster;
+pub(crate) mod session_title_resolve;
 pub mod session_startup;
 pub mod status_blocks;
 pub mod subagent;
