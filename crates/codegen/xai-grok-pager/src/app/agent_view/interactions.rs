@@ -271,8 +271,7 @@ impl AgentView {
                     return InputOutcome::Changed;
                 }
                 if key!('y', CONTROL).matches(key) {
-                    self.dismiss_question_view();
-                    return InputOutcome::Changed;
+                    return self.dismiss_question_view();
                 }
                 if key!('c', CONTROL).matches(key) {
                     qv.focus = QuestionFocus::Navigation;
@@ -333,8 +332,7 @@ impl AgentView {
             }
             QuestionFocus::Navigation => {
                 if key!('y', CONTROL).matches(key) {
-                    self.dismiss_question_view();
-                    return InputOutcome::Changed;
+                    return self.dismiss_question_view();
                 }
                 if key!('c', CONTROL).matches(key) {
                     return self.submit_question_answers(true);
@@ -1036,7 +1034,19 @@ impl AgentView {
     /// Restores the original prompt text that was stashed when the question
     /// view opened, so typed "additional context" doesn't leak into the
     /// main prompt. Also clears any stashed (tab-hidden) question view.
-    fn dismiss_question_view(&mut self) {
+    ///
+    /// `/doctor fix` questions cancel via the normal submit path so the
+    /// dispatch layer can deliver a "Fix cancelled." system message.
+    fn dismiss_question_view(&mut self) -> InputOutcome {
+        let is_doctor_fix = self.question_view.as_ref().is_some_and(|qv| {
+            matches!(
+                qv.local_kind,
+                Some(crate::views::question_view::LocalQuestionKind::DoctorFix { .. })
+            )
+        });
+        if is_doctor_fix {
+            return self.submit_question_answers(true);
+        }
         if let Some(qv) = self.question_view.take() {
             self.turn_paused_duration += qv.opened_at.elapsed();
             self.prompt.restore(qv.stashed_prompt);
@@ -1044,6 +1054,7 @@ impl AgentView {
         self.hovered_question_item = None;
         self.inline_prompt_area = None;
         self.last_question_click = None;
+        InputOutcome::Changed
     }
     /// Retract an interaction modal (permission / question / plan-approval) that
     /// another connected client already resolved.
@@ -1063,7 +1074,7 @@ impl AgentView {
             .as_ref()
             .is_some_and(|qv| qv.tool_call_id == tool_call_id)
         {
-            self.dismiss_question_view();
+            let _ = self.dismiss_question_view();
             return true;
         }
         if self
@@ -1114,7 +1125,19 @@ impl AgentView {
         };
         self.turn_paused_duration += qv.opened_at.elapsed();
         if let Some(kind) = qv.local_kind.take() {
-            let outcome = translate_local_submit(&qv, kind, skipped);
+            let is_doctor_fix = matches!(
+                kind,
+                crate::views::question_view::LocalQuestionKind::DoctorFix { .. }
+            );
+            let outcome = if skipped && is_doctor_fix {
+                let crate::views::question_view::LocalQuestionKind::DoctorFix { target, .. } = kind
+                else {
+                    unreachable!("doctor fix checked above")
+                };
+                InputOutcome::Action(Action::DoctorFixCancelled(target))
+            } else {
+                translate_local_submit(&qv, kind, skipped)
+            };
             self.prompt.restore(qv.stashed_prompt);
             self.cleanup_question_state();
             return outcome;
@@ -1281,6 +1304,7 @@ mod cancel_turn_mouse_tests {
                 bg_tool_call_to_task: std::collections::HashMap::new(),
                 scheduled_tasks: std::collections::HashMap::new(),
                 in_flight_prompt: None,
+                compact_held_prompt: None,
                 current_prompt_id: None,
                 created_via_new: false,
             },

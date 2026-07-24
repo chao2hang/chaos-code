@@ -415,6 +415,7 @@ impl SessionContextFactory for WorkspaceSessionContextFactory {
                                 image_gen_enabled: true,
                                 image_edit_enabled: true,
                                 model_override: None,
+                                edit_model_override: None,
                                 tier_restricted: false,
                             },
                             VideoGenConfig::Enabled {

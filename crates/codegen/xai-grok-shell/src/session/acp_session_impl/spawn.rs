@@ -563,19 +563,6 @@ pub(crate) async fn spawn_session_actor(
         },
     );
     let tool_context_for_handle = tool_context.clone();
-    let resolve_search_shadows = || {
-        let user_cfg = crate::config::load_effective_config().ok();
-        let requirements = crate::config::load_merged_requirements();
-        let (find_bfs, grep_ugrep) = crate::util::config::resolve_search_tools_enabled(
-            requirements.as_ref(),
-            user_cfg.as_ref(),
-            None,
-        );
-        xai_grok_tools::computer::local::SearchShadowConfig {
-            find_bfs,
-            grep_ugrep,
-        }
-    };
     let cursor_harness = false;
     let terminal_backend_kind = select_terminal_backend_kind(
         startup_hints.is_subagent,
@@ -584,6 +571,25 @@ pub(crate) async fn spawn_session_actor(
         tool_context.gateway.is_some(),
         cursor_harness,
     );
+    let effective_cfg = matches!(
+        terminal_backend_kind,
+        TerminalBackendKind::LocalPersistent | TerminalBackendKind::LocalNonPersistent
+    )
+    .then(crate::config::load_effective_config)
+    .and_then(Result::ok);
+    let resolve_search_shadows = || {
+        let requirements = crate::config::load_merged_requirements();
+        let (find_bfs, grep_ugrep) = crate::util::config::resolve_search_tools_enabled(
+            requirements.as_ref(),
+            effective_cfg.as_ref(),
+            None,
+        );
+        xai_grok_tools::computer::local::SearchShadowConfig {
+            find_bfs,
+            grep_ugrep,
+        }
+    };
+    let resolve_policy = || crate::util::config::resolve_shell_env_policy(effective_cfg.as_ref());
     let terminal_backend: std::sync::Arc<dyn xai_grok_tools::computer::types::TerminalBackend> =
         match terminal_backend_kind {
             TerminalBackendKind::ReuseParent => parent_terminal_backend
@@ -595,9 +601,12 @@ pub(crate) async fn spawn_session_actor(
                 ))
                     as std::sync::Arc<dyn xai_grok_tools::computer::types::TerminalBackend>
             }
-            TerminalBackendKind::LocalPersistent => std::sync::Arc::new(
-                LocalTerminalBackend::new_local_with_persistent_shell(resolve_search_shadows()),
-            ),
+            TerminalBackendKind::LocalPersistent => {
+                std::sync::Arc::new(LocalTerminalBackend::new_local_with_persistent_shell(
+                    resolve_search_shadows(),
+                    resolve_policy(),
+                ))
+            }
             TerminalBackendKind::LocalNonPersistent => {
                 let login_shell_capture = crate::util::config::resolve_login_shell_capture(
                     remote_settings.as_ref().and_then(|r| r.login_shell_capture),
@@ -605,6 +614,7 @@ pub(crate) async fn spawn_session_actor(
                 std::sync::Arc::new(LocalTerminalBackend::new_local_with_login_shell_capture(
                     resolve_search_shadows(),
                     login_shell_capture,
+                    resolve_policy(),
                 ))
             }
         };

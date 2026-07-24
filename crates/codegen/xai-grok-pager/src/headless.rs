@@ -802,6 +802,7 @@ fn headless_materialize_ctx(has_worktree: bool) -> crate::app::session_startup::
         allow_remote_restore:
             crate::app::session_startup::MaterializeCtx::default_allow_remote_restore(),
         chat_mode: false,
+        title_resolution: crate::app::session_startup::TitleResolution::Allowed,
     }
 }
 

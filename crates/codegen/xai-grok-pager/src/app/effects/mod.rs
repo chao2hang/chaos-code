@@ -7,6 +7,7 @@
 //! back through dispatch.
 mod helpers;
 use super::actions;
+use super::session_title_resolve::worktree_resume_failure_message;
 #[allow(unused_imports)]
 use super::{agent, dispatch};
 pub use helpers::ConversationsPartial;
@@ -247,6 +248,7 @@ pub(crate) fn execute(
                     .insert("sessionId".into(), serde_json::json!(sid));
             }
             let restore_code = session_flags.restore_code;
+            let resume_local_miss = session_flags.resume_local_miss.clone();
             tracing::info!(
                 ? restore_code, ? load_session_id, ? git_ref,
                 "CreateWorktreeSession: restore_code, load_session_id, git_ref"
@@ -254,6 +256,9 @@ pub(crate) fn execute(
             tasks
                 .spawn(async move {
                     if let Some(sid) = load_session_id {
+                        let local_miss = resume_local_miss
+                            .as_deref()
+                            .filter(|t| *t == sid);
                         let resume_started = std::time::Instant::now();
                         let wt_type = xai_grok_shell::util::config::worktree_type();
                         let copy_mode = if git_ref.is_some() {
@@ -294,8 +299,9 @@ pub(crate) fn execute(
                                 );
                                 return TaskResult::WorktreeSessionFailed {
                                     agent_id,
-                                    error: sanitize_user_error(
-                                        &format!("couldn't resume worktree session: {e}"),
+                                    error: worktree_resume_failure_message(
+                                        local_miss,
+                                        &sanitize_user_error(&e.to_string()),
                                     ),
                                 };
                             }
@@ -307,8 +313,9 @@ pub(crate) fn execute(
                             Err(e) => {
                                 return TaskResult::WorktreeSessionFailed {
                                     agent_id,
-                                    error: sanitize_user_error(
-                                        &format!("couldn't resume worktree session: {e}"),
+                                    error: worktree_resume_failure_message(
+                                        local_miss,
+                                        &sanitize_user_error(&e.to_string()),
                                     ),
                                 };
                             }
@@ -323,8 +330,9 @@ pub(crate) fn execute(
                                 .unwrap_or_else(|| err.to_string());
                             return TaskResult::WorktreeSessionFailed {
                                 agent_id,
-                                error: sanitize_user_error(
-                                    &format!("couldn't resume worktree session: {msg}"),
+                                error: worktree_resume_failure_message(
+                                    local_miss,
+                                    &sanitize_user_error(&msg),
                                 ),
                             };
                         }
@@ -1819,6 +1827,52 @@ pub(crate) fn execute(
                     }
                     TaskResult::PromptImagePreviewPrepared
                 });
+        }
+        Effect::PlanDoctorFix {
+            target,
+            report,
+            terminal,
+            request,
+        } => {
+            tasks.spawn(async move {
+                let result = tokio::task::spawn_blocking(move || match request {
+                    crate::slash::command::DoctorRequest::ListFixes => {
+                        Ok(actions::DoctorPlanningOutcome::Listing(
+                            crate::diagnostics::format_applicable_automatic_fixes(
+                                &report, &terminal,
+                            ),
+                        ))
+                    }
+                    crate::slash::command::DoctorRequest::Fix(id) => {
+                        match crate::diagnostics::select_fix_plan(id, &report, &terminal) {
+                            Ok(Some(plan)) => {
+                                Ok(actions::DoctorPlanningOutcome::Plan(Box::new(plan)))
+                            }
+                            Ok(None) => Ok(actions::DoctorPlanningOutcome::RunLocally(
+                                crate::diagnostics::human_fix_command(id)
+                                    .unwrap_or_else(|| id.to_string()),
+                            )),
+                            Err(error) => Err(error.to_string()),
+                        }
+                    }
+                    crate::slash::command::DoctorRequest::Report => {
+                        unreachable!("report does not enter the planning effect")
+                    }
+                })
+                .await
+                .map_err(|error| format!("Could not prepare the fix: {error}"))
+                .and_then(|result| result);
+                TaskResult::DoctorFixPlanned { target, result }
+            });
+        }
+        Effect::ApplyDoctorFix { target, plan } => {
+            tasks.spawn(async move {
+                let result = tokio::task::spawn_blocking(move || crate::diagnostics::apply_fix(*plan))
+                    .await
+                    .map_err(|error| format!("Could not apply the fix: {error}"))
+                    .and_then(|result| result.map_err(|error| error.to_string()));
+                TaskResult::DoctorFixApplied { target, result }
+            });
         }
         Effect::FetchChangelog => {
             tasks

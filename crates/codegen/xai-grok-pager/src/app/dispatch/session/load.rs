@@ -174,6 +174,7 @@ fn dispatch_load_session_ungated(
             bg_tool_call_to_task: std::collections::HashMap::new(),
             scheduled_tasks: std::collections::HashMap::new(),
             in_flight_prompt: None,
+            compact_held_prompt: None,
             current_prompt_id: None,
             created_via_new: false,
         },
@@ -186,6 +187,9 @@ fn dispatch_load_session_ungated(
     agent_mut.loading_placeholder_id = Some(loading_placeholder_id);
     agent_mut.prompt.set_compact(app.appearance.prompt.compact);
     agent_mut.prompt.adopt_slash_mru(app.slash_mru.clone());
+    agent_mut
+        .prompt
+        .adopt_command_tags(app.command_tags.clone());
     agent_mut
         .prompt
         .set_contextual_hints(app.contextual_hints.undo, app.contextual_hints.plan_mode);
@@ -822,6 +826,7 @@ pub(in crate::app::dispatch) fn dispatch_load_session_with_restore(
             bg_tool_call_to_task: std::collections::HashMap::new(),
             scheduled_tasks: std::collections::HashMap::new(),
             in_flight_prompt: None,
+            compact_held_prompt: None,
             current_prompt_id: None,
             created_via_new: false,
         },
@@ -834,6 +839,7 @@ pub(in crate::app::dispatch) fn dispatch_load_session_with_restore(
         agent.begin_replay_window();
         agent.prompt.set_compact(app.appearance.prompt.compact);
         agent.prompt.adopt_slash_mru(app.slash_mru.clone());
+        agent.prompt.adopt_command_tags(app.command_tags.clone());
         agent
             .prompt
             .set_contextual_hints(app.contextual_hints.undo, app.contextual_hints.plan_mode);
@@ -984,8 +990,14 @@ pub(in crate::app::dispatch) fn handle_session_loaded(
                 prev_model_id: None,
             });
         }
-        if std::mem::take(&mut agent.pending_extensions_fetch) && agent.extensions_modal.is_some() {
-            effects.extend(extensions_modal_tab_fetches(agent_id, hydrate_sid.clone()));
+        if std::mem::take(&mut agent.pending_extensions_fetch)
+            && let Some(modal) = agent.extensions_modal.as_mut()
+        {
+            effects.extend(extensions_modal_tab_fetches(
+                modal,
+                agent_id,
+                hydrate_sid.clone(),
+            ));
         }
         effects.push(Effect::RegisterActiveSession {
             session_id: hydrate_sid,

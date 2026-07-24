@@ -12046,6 +12046,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "wildmatch"
+version = "2.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "29333c3ea1ba8b17211763463ff24ee84e41c78224c16b001cd907e663a38c68"
+
+[[package]]
 name = "winapi"
 version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -13387,7 +13393,7 @@ dependencies = [
 
 [[package]]
 name = "xai-grok-pager"
-version = "0.2.109"
+version = "0.2.110"
 dependencies = [
  "agent-client-protocol",
  "ansi-to-tui",
@@ -13477,7 +13483,7 @@ dependencies = [
 
 [[package]]
 name = "xai-grok-pager-bin"
-version = "0.2.109"
+version = "0.2.110"
 dependencies = [
  "anyhow",
  "clap",
@@ -13739,7 +13745,7 @@ dependencies = [
 
 [[package]]
 name = "xai-grok-shell"
-version = "0.2.109"
+version = "0.2.110"
 dependencies = [
  "agent-client-protocol",
  "anyhow",
@@ -14072,6 +14078,7 @@ dependencies = [
  "url",
  "uuid",
  "which",
+ "wildmatch",
  "windows 0.61.3",
  "wiremock",
  "xai-computer-hub-core",
@@ -14132,7 +14139,7 @@ dependencies = [
 
 [[package]]
 name = "xai-grok-version"
-version = "0.2.109"
+version = "0.2.110"
 dependencies = [
  "semver",
 ]

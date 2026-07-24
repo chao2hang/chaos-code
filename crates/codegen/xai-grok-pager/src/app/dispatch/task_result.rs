@@ -31,8 +31,8 @@ use super::session::fork::{
     handle_fork_session_failed, handle_fork_session_ready, handle_worktree_forked,
 };
 use super::session::lifecycle::{
-    dispatch_exit_session, handle_session_created, handle_switch_model_complete,
-    handle_worktree_session_created, handle_worktree_session_failed,
+    dispatch_exit_session, handle_session_created, handle_session_failed,
+    handle_switch_model_complete, handle_worktree_session_created, handle_worktree_session_failed,
 };
 use super::session::load::{
     handle_card_detail_loaded, handle_deep_search_results, handle_session_load_failed,
@@ -51,8 +51,10 @@ use super::transcript::{
 use super::turn::handle_bg_task_killed;
 use crate::app::actions::{
     ClipboardPasteCompletion, ClipboardPasteContext, ClipboardPasteFailure, ClipboardPasteTarget,
-    Effect, ProbedAttachment, SubagentKillOutcome, TaskResult,
+    DoctorFixTarget, DoctorPlanningOutcome, Effect, ProbedAttachment, SubagentKillOutcome,
+    TaskResult,
 };
+use crate::app::agent::AgentId;
 use crate::app::app_view::{ActiveView, AppView, AuthState};
 use crate::scrollback::block::RenderBlock;
 use agent_client_protocol as acp;
@@ -76,6 +78,53 @@ pub(super) fn unregister_all_active_sessions(app: &AppView) -> Vec<Effect> {
         .collect()
 }
 pub(super) const X11_PRIMARY_PASTE_HINT: &str = "Try Shift+Insert to paste selected text";
+
+/// Re-validate a `/doctor fix` target against the live agent so a late
+/// plan/apply cannot hit a rebound session or different cwd.
+///
+/// Chaos omits `session_binding_epoch` tracking on [`AgentView`]; targets
+/// always carry epoch `0` and matching only keys on agent / session / cwd.
+pub(crate) fn current_doctor_target(
+    app: &AppView,
+    target: &DoctorFixTarget,
+) -> Option<DoctorFixTarget> {
+    let agent = app.agents.get(&target.agent_id)?;
+    if agent.session.cwd != target.cwd {
+        return None;
+    }
+    match (&target.session_id, &agent.session.session_id) {
+        (Some(expected), Some(current)) if expected == current => Some(target.clone()),
+        (None, Some(current)) => Some(DoctorFixTarget {
+            session_id: Some(current.clone()),
+            ..target.clone()
+        }),
+        (None, None) => Some(target.clone()),
+        _ => None,
+    }
+}
+
+pub(crate) fn deliver_doctor_message(app: &mut AppView, preferred: AgentId, message: String) {
+    let destination = app
+        .agents
+        .contains_key(&preferred)
+        .then_some(preferred)
+        .or_else(|| match app.active_view {
+            ActiveView::Agent(id) if app.agents.contains_key(&id) => Some(id),
+            _ => app.agents.keys().next().copied(),
+        });
+    if let Some(destination) = destination
+        && let Some(agent) = app.agents.get_mut(&destination)
+    {
+        agent.scrollback.push_block(RenderBlock::system(message));
+        return;
+    }
+    app.startup_warnings.push(crate::startup::StartupWarning {
+        severity: crate::startup::WarningSeverity::Info,
+        message,
+        action: None,
+    });
+}
+
 fn show_clipboard_toast(target: &ClipboardPasteTarget, message: &str, app: &mut AppView) {
     match target {
         ClipboardPasteTarget::AgentPrompt { agent_id, .. } => {
@@ -193,14 +242,7 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
             models: new_models,
         } => handle_session_created(app, agent_id, session_id, new_models),
         TaskResult::SessionFailed { agent_id, error } => {
-            tracing::error!(
-                agent = ? agent_id, error = % error, "Session creation failed"
-            );
-            if let Some(agent) = app.agents.get_mut(&agent_id) {
-                agent.pending_extensions_fetch = false;
-                agent.session.prompt_history_loading = false;
-            }
-            vec![]
+            handle_session_failed(app, agent_id, error)
         }
         TaskResult::WorktreeSessionCreated {
             agent_id,
@@ -543,6 +585,53 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
             effects
         }
         TaskResult::PromptImagePreviewPrepared => vec![],
+        TaskResult::DoctorFixPlanned { target, result } => {
+            let Some(target) = current_doctor_target(app, &target) else {
+                deliver_doctor_message(
+                    app,
+                    target.agent_id,
+                    "This fix was cancelled because the session changed. Run `/doctor fix` again."
+                        .to_owned(),
+                );
+                return vec![];
+            };
+            match result {
+                Ok(DoctorPlanningOutcome::Listing(listing)) => {
+                    deliver_doctor_message(app, target.agent_id, listing);
+                }
+                Ok(DoctorPlanningOutcome::Plan(plan)) => {
+                    super::prompt::open_doctor_fix_question(app, target, plan);
+                }
+                Ok(DoctorPlanningOutcome::RunLocally(command)) => {
+                    deliver_doctor_message(
+                        app,
+                        target.agent_id,
+                        format!(
+                            "This fix configures your local computer, not this SSH session.\nOn your local computer, run: {command}"
+                        ),
+                    );
+                }
+                Err(error) => deliver_doctor_message(
+                    app,
+                    target.agent_id,
+                    if error.starts_with("Could not prepare the fix:") {
+                        error
+                    } else {
+                        format!("Could not prepare the fix: {error}")
+                    },
+                ),
+            }
+            vec![]
+        }
+        TaskResult::DoctorFixApplied { target, result } => {
+            let message = match result {
+                Ok(outcome) => crate::diagnostics::format_fix_success(&outcome),
+                Err(error) if error.starts_with("Could not apply the fix:") => error,
+                Err(error) => format!("Could not apply the fix: {error}"),
+            };
+            deliver_doctor_message(app, target.agent_id, message);
+            vec![]
+        }
         TaskResult::AnnouncementsHiddenPersisted { result } => {
             if let Err(e) = result {
                 tracing::warn!("Failed to persist announcements hidden state: {}", e);

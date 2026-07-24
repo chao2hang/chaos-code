@@ -1165,8 +1165,7 @@ pub fn render_doc_viewer_overlay(
     compact: bool,
     theme: &Theme,
 ) {
-    use ratatui::widgets::{Paragraph, Widget, Wrap};
-    let doc_shortcuts = vec![
+    let doc_shortcuts = [
         super::modal_window::Shortcut {
             label: "\u{2191}/\u{2193} scroll",
             clickable: false,
@@ -1178,10 +1177,40 @@ pub fn render_doc_viewer_overlay(
             id: 0,
         },
     ];
+    render_doc_viewer_overlay_with_shortcuts(
+        buf,
+        area,
+        window,
+        title,
+        content,
+        scroll,
+        cached_lines,
+        compact,
+        theme,
+        &doc_shortcuts,
+    );
+}
+
+/// Like [`render_doc_viewer_overlay`] but with caller-supplied footer shortcuts
+/// (e.g. tutorial topic pages with next/prev and "go deeper" hints).
+#[allow(clippy::too_many_arguments)]
+pub fn render_doc_viewer_overlay_with_shortcuts(
+    buf: &mut ratatui::buffer::Buffer,
+    area: Rect,
+    window: &mut super::modal_window::ModalWindowState,
+    title: &str,
+    content: &str,
+    scroll: &mut u16,
+    cached_lines: &mut Option<(u16, Vec<ratatui::text::Line<'static>>)>,
+    compact: bool,
+    theme: &Theme,
+    shortcuts: &[super::modal_window::Shortcut<'_>],
+) {
+    use ratatui::widgets::{Paragraph, Widget, Wrap};
     let modal_config = super::modal_window::ModalWindowConfig {
         title,
         tabs: None,
-        shortcuts: &doc_shortcuts,
+        shortcuts,
         sizing: super::modal_window::ModalSizing {
             width_pct: 0.80,
             max_width: 120,
