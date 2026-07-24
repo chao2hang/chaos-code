@@ -1313,6 +1313,21 @@ pub struct PermissionKnownKeys {
     /// Verbose `[[permission.rules]]` form.
     pub rules: Option<toml::Value>,
 }
+
+/// `[shell_environment_policy]` known keys, for the unrecognized-key scan only;
+/// the value is parsed at spawn by [`crate::util::config::resolve_shell_env_policy`].
+/// `Option<toml::Value>` (no `deny_unknown_fields`) keeps a typo a warning, not a
+/// load failure, like [`PermissionKnownKeys`].
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct ShellEnvironmentPolicyKnownKeys {
+    pub inherit: Option<toml::Value>,
+    pub ignore_default_excludes: Option<toml::Value>,
+    pub exclude: Option<toml::Value>,
+    pub set: Option<toml::Value>,
+    pub include_only: Option<toml::Value>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Config {
     pub features: Features,
@@ -1354,6 +1369,9 @@ pub struct Config {
     pub ui: UiConfig,
     #[serde(default)]
     pub toolset: ShellToolsetConfig,
+    /// Validation only; the value is parsed at spawn by `resolve_shell_env_policy`.
+    #[serde(default, skip_serializing)]
+    pub shell_environment_policy: ShellEnvironmentPolicyKnownKeys,
     #[serde(default)]
     pub endpoints: EndpointsConfig,
     #[serde(default)]
@@ -1778,6 +1796,7 @@ impl Default for Config {
             hints: None,
             ui: UiConfig::default(),
             toolset: ShellToolsetConfig::default(),
+            shell_environment_policy: ShellEnvironmentPolicyKnownKeys::default(),
             endpoints,
             telemetry: TelemetryConfig::default(),
             session: SessionConfig::default(),
@@ -6007,6 +6026,38 @@ if n == name && f.as_deref() == field
             cfg.config_warnings
         );
     }
+
+    #[test]
+    fn shell_environment_policy_typo_does_not_fail_config() {
+        let cfg: toml::Value = toml::from_str(
+            r#"
+            [shell_environment_policy]
+            inhert = "core"
+            exclude = 123
+            "#,
+        )
+        .unwrap();
+        Config::new_from_toml_cfg(&cfg).expect("a policy typo must not fail the config");
+    }
+
+    #[test]
+    fn shell_environment_policy_known_keys_track_the_policy_struct() {
+        let xai_grok_tools::util::ShellEnvironmentPolicy {
+            inherit: _,
+            ignore_default_excludes: _,
+            exclude: _,
+            set: _,
+            include_only: _,
+        } = xai_grok_tools::util::ShellEnvironmentPolicy::default();
+        let ShellEnvironmentPolicyKnownKeys {
+            inherit: _,
+            ignore_default_excludes: _,
+            exclude: _,
+            set: _,
+            include_only: _,
+        } = ShellEnvironmentPolicyKnownKeys::default();
+    }
+
     #[test]
     fn web_search_disable_api_key_auth_swaps_first_party_key_for_session() {
         let endpoints = EndpointsConfig::default();
