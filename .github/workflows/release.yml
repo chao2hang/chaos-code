@@ -152,16 +152,15 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential pkg-config libssl-dev protobuf-compiler ca-certificates
+            build-essential pkg-config libssl-dev ca-certificates
 
-      - name: Install protoc (macOS)
-        if: runner.os == 'macOS'
-        run: brew install protobuf
-
-      - name: Install protoc (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: choco install protoc -y
+      # apt's protobuf-compiler on ubuntu-22.04 is 3.12 and is too old for
+      # proto3 optional without extra flags; pin the same major as bin/protoc.
+      - name: Install protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          version: "29.3"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
