@@ -11,6 +11,7 @@ mod config_toml_edit;
 pub mod diagnostics;
 pub mod diff;
 pub mod docs;
+pub mod tutorial_docs;
 pub mod doctor_cmd;
 pub mod export_cmd;
 pub mod git_info;

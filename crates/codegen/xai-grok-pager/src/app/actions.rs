@@ -955,6 +955,8 @@ pub enum Action {
     OpenMemoryModal,
     /// Open the hidden `/gboom` easter egg (DOOM-style raycaster modal).
     OpenGboom,
+    /// Open the onboarding tutorial overlay (`/tutorial` or the command palette).
+    OpenTutorial,
     /// Suspend the TUI and open a configuration file in `$EDITOR`.
     SuspendForEditor {
         path: std::path::PathBuf,
