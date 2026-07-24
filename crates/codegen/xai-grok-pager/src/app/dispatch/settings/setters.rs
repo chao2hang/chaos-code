@@ -1568,7 +1568,7 @@ pub(in crate::app::dispatch) fn set_default_model_inner(
     let ActiveView::Agent(aid) = app.active_view else {
         return false;
     };
-    {
+    let session_catalog = {
         let Some(agent) = app.agents.get_mut(&aid) else {
             return false;
         };
@@ -1581,13 +1581,22 @@ pub(in crate::app::dispatch) fn set_default_model_inner(
         // ACP roundtrip.
         //
         // `set_current(_, None)` resets `reasoning_effort` to model default.
+        let catalog = agent.session.models.available.clone();
         agent.session.models.set_current(id.clone(), None);
-    }
+        catalog
+    };
     // Mirror the new default into the app-level model state too. A later `/new`
     // or `/clear` creates a fresh session by cloning `app.models`
     // (`dispatch_new_session_inner_with_id`), so without this the new session —
     // and the welcome card it commits — would show the previous default until
     // the next `x.ai/models/update` roundtrip.
+    //
+    // Provider hub may have just injected BYOK keys into the *session*
+    // catalog only; merge them into `app.models` so `/model` and new sessions
+    // see the full list on an otherwise empty Chaos catalog.
+    for (mid, info) in session_catalog {
+        app.models.available.entry(mid).or_insert(info);
+    }
     if app.models.available.contains_key(id) {
         app.models.set_current(id.clone(), None);
     }

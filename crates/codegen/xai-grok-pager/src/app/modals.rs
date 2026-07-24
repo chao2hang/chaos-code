@@ -2444,7 +2444,12 @@ impl AgentView {
             } else if let modal::ActiveModal::ProviderModal { state: provider_state } =
                 active_modal
             {
-                crate::views::provider_modal::render_provider_modal(buf, area, provider_state);
+                crate::views::provider_modal::render_provider_modal(
+                    buf,
+                    area,
+                    provider_state,
+                    compact,
+                );
             }
         }
     }
