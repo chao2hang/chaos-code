@@ -1441,14 +1441,18 @@ pub(super) fn dispatch_action_result(
                         action
                     });
                     if let Some(action) = confirmed_action {
+                        let pending_entry_index = modal
+                            .pending_entry_index
+                            .or(Some(modal.picker_state.selected));
                         modal.modal_message =
                             Some(crate::views::extensions_modal::ModalMessage::Confirmation {
-                                message: format!(
-                                    "{} Press y to confirm, Esc to cancel.",
-                                    outcome.message
+                                message: outcome.message,
+                                action: crate::views::extensions_modal::ConfirmationAction::Plugins(
+                                    action,
                                 ),
-                                action,
+                                pending_entry_index,
                             });
+                        modal.picker_state.link_band = None;
                     } else {
                         modal.modal_message = Some(
                             crate::views::extensions_modal::ModalMessage::Error(outcome.message),
@@ -1462,6 +1466,8 @@ pub(super) fn dispatch_action_result(
             | OutcomeStatus::InternalError
             | OutcomeStatus::Unsupported => {
                 if let Some(ref mut modal) = agent.extensions_modal {
+                    modal.pending_action = None;
+                    modal.pending_entry_index = None;
                     modal.modal_message = Some(
                         crate::views::extensions_modal::ModalMessage::Error(outcome.message),
                     );
