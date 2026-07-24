@@ -13,7 +13,19 @@ const TTL_SECONDS_BEFORE_AUTO_UPDATE: Duration = Duration::from_secs(60 * 30);
 const NPM_PACKAGE: &str = "chaos-code";
 pub const GH_RELEASE_REPO: &str = "chao2hang/chaos-code";
 
+/// Direct download base for release assets (no `gh` CLI required).
+pub const GH_RELEASE_DOWNLOAD_BASE: &str =
+    "https://github.com/chao2hang/chaos-code/releases/download";
+
+/// GitHub REST API for listing releases (public, unauthenticated OK with User-Agent).
+const GH_RELEASE_API_LATEST: &str =
+    "https://api.github.com/repos/chao2hang/chaos-code/releases/latest";
+const GH_RELEASE_API_LIST: &str =
+    "https://api.github.com/repos/chao2hang/chaos-code/releases?per_page=10";
+
 /// Primary CLI base URL: GitHub Releases for Chaos updates.
+/// Note: these are not GCS channel-pointer URLs; `internal` installer is
+/// retained for tests / legacy, while production defaults to `gh-release`.
 pub(crate) const CLI_BASE_URL_PRIMARY: &str =
     "https://github.com/chao2hang/chaos-code/releases";
 
@@ -170,57 +182,125 @@ async fn fetch_npm_tag(tag: &str, npm_registry: Option<&str>) -> Result<String> 
     }
 }
 
-/// Fetch the latest version from GitHub Releases using `gh release list`.
-/// For alpha channel, fetches both pre-release and stable-only, returns the
-/// semver-greater — `gh release list --limit 1` orders by publication date,
-/// not semver, so we need both to guarantee correctness.
+/// Fetch the latest version from GitHub Releases (HTTP API — no `gh` CLI).
+///
+/// Stable channel uses `/releases/latest` (non-prerelease). Alpha channel
+/// lists recent releases (including prereleases) and returns the
+/// semver-greater of the newest prerelease-capable tag and the stable tip.
 #[doc(hidden)]
 pub async fn fetch_gh_release_version(channel: &str) -> Result<String> {
     if channel == "alpha" {
         let (with_pre, stable_only) = tokio::try_join!(
-            fetch_gh_release_latest(false),
-            fetch_gh_release_latest(true),
+            fetch_gh_release_latest_http(false),
+            fetch_gh_release_latest_http(true),
         )?;
         return semver_max(&with_pre, &stable_only);
     }
-    fetch_gh_release_latest(true).await
+    fetch_gh_release_latest_http(true).await
 }
 
-async fn fetch_gh_release_latest(exclude_pre: bool) -> Result<String> {
-    let mut args = vec![
-        "release",
-        "list",
-        "--repo",
-        GH_RELEASE_REPO,
-        "--limit",
-        "1",
-        "--exclude-drafts",
-        "--json",
-        "tagName",
-        "--jq",
-        ".[0].tagName",
-    ];
-    if exclude_pre {
-        args.push("--exclude-pre-releases");
+fn tag_to_version(tag: &str) -> Option<String> {
+    let version = tag.trim().strip_prefix('v').unwrap_or(tag.trim()).to_string();
+    if version.is_empty() || semver::Version::parse(&version).is_err() {
+        return None;
     }
-    let mut cmd = Command::new("gh");
-    cmd.args(&args).stdin(std::process::Stdio::null());
-    xai_grok_tools::util::detach_command(&mut cmd);
-    cmd.envs(xai_grok_tools::util::pager_env());
-    let output = cmd.output().await?;
+    Some(version)
+}
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("gh release list failed: {}", stderr.trim());
+async fn fetch_gh_release_latest_http(stable_only: bool) -> Result<String> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(15))
+        .user_agent(format!(
+            "chaos-code-updater/{} (+https://github.com/{})",
+            xai_grok_version::VERSION,
+            GH_RELEASE_REPO
+        ))
+        .build()?;
+
+    if stable_only {
+        let resp = client.get(GH_RELEASE_API_LATEST).send().await?;
+        if !resp.status().is_success() {
+            anyhow::bail!(
+                "GitHub releases/latest failed: HTTP {} for {}",
+                resp.status(),
+                GH_RELEASE_REPO
+            );
+        }
+        let body: Value = resp.json().await?;
+        let tag = body
+            .get("tag_name")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("releases/latest missing tag_name"))?;
+        return tag_to_version(tag)
+            .ok_or_else(|| anyhow::anyhow!("invalid release tag: {tag}"));
     }
 
-    let tag = String::from_utf8(output.stdout)?.trim().to_string();
-    // Tags are formatted as "v0.1.141", strip the leading "v"
-    let version = tag.strip_prefix('v').unwrap_or(&tag).to_string();
-    if version.is_empty() {
-        anyhow::bail!("No releases found in {}", GH_RELEASE_REPO);
+    // Include prereleases: walk recent releases, pick highest semver.
+    let resp = client.get(GH_RELEASE_API_LIST).send().await?;
+    if !resp.status().is_success() {
+        anyhow::bail!(
+            "GitHub releases list failed: HTTP {} for {}",
+            resp.status(),
+            GH_RELEASE_REPO
+        );
     }
-    Ok(version)
+    let body: Value = resp.json().await?;
+    let releases = body
+        .as_array()
+        .ok_or_else(|| anyhow::anyhow!("releases list is not an array"))?;
+    let mut best: Option<semver::Version> = None;
+    for rel in releases {
+        if rel.get("draft").and_then(|d| d.as_bool()).unwrap_or(false) {
+            continue;
+        }
+        let Some(tag) = rel.get("tag_name").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let Some(ver_str) = tag_to_version(tag) else {
+            continue;
+        };
+        let Ok(ver) = semver::Version::parse(&ver_str) else {
+            continue;
+        };
+        best = Some(match best {
+            Some(b) if b >= ver => b,
+            _ => ver,
+        });
+    }
+    best.map(|v| v.to_string())
+        .ok_or_else(|| anyhow::anyhow!("No releases found in {}", GH_RELEASE_REPO))
+}
+
+/// Map `(os, arch)` from [`crate::auto_update::detect_platform`] to the
+/// GitHub Release asset stem published by `.github/workflows/release.yml`.
+///
+/// Examples: `chaos-linux-x64`, `chaos-darwin-arm64`, `chaos-win32-x64.exe`.
+pub fn gh_release_asset_name(os: &str, arch: &str) -> Result<String> {
+    let os_part = match os {
+        "linux" => "linux",
+        "macos" | "darwin" => "darwin",
+        "windows" | "win32" => "win32",
+        other => anyhow::bail!("unsupported OS for GH release asset: {other}"),
+    };
+    let arch_part = match arch {
+        "x86_64" | "x64" | "amd64" => "x64",
+        "aarch64" | "arm64" => "arm64",
+        other => anyhow::bail!("unsupported arch for GH release asset: {other}"),
+    };
+    let base = format!("chaos-{os_part}-{arch_part}");
+    if os_part == "win32" {
+        Ok(format!("{base}.exe"))
+    } else {
+        Ok(base)
+    }
+}
+
+/// Direct HTTPS URL for a release asset (follows GitHub CDN redirects).
+pub fn gh_release_asset_url(version: &str, asset_name: &str) -> String {
+    let version = version.strip_prefix('v').unwrap_or(version);
+    format!(
+        "{GH_RELEASE_DOWNLOAD_BASE}/v{version}/{asset_name}"
+    )
 }
 
 /// Fetch the latest version from a public CLI channel pointer.
@@ -390,9 +470,9 @@ pub async fn write_version_cache(version: &str, stable_version: Option<&str>) {
 ///
 /// Each installer is fully independent — no cross-installer fallback.
 ///
-/// - `"npm"` — uses `npm view` against the public registry.
-/// - `"internal"` — reads the channel pointer from the public GCS bucket.
-/// - `"gh-release"` — uses `gh release list` against GitHub Releases.
+/// - `"npm"` — uses `npm view` against the public registry (`chaos-code`).
+/// - `"internal"` — legacy channel-pointer fetch (tests / rare).
+/// - `"gh-release"` — GitHub Releases HTTP API for `chao2hang/chaos-code`.
 pub async fn get_latest_version(installer: &str, config: &UpdateConfig) -> Result<String> {
     let version = fetch_latest_version(installer, config).await?;
     let stable_ptr = try_fetch_stable_pointer().await;
@@ -619,6 +699,57 @@ mod tests {
             version_from_versioned_binary_name("grok-pager-0.1.5-darwin-arm64", "grok-pager")
                 .as_deref(),
             Some("0.1.5")
+        );
+
+        // Chaos managed install names.
+        assert_eq!(
+            version_from_versioned_binary_name("chaos-0.2.110-linux-x86_64", "chaos").as_deref(),
+            Some("0.2.110")
+        );
+        assert_eq!(
+            version_from_versioned_binary_name("chaos-0.2.110-windows-x86_64.exe", "chaos")
+                .as_deref(),
+            Some("0.2.110")
+        );
+    }
+
+    #[test]
+    fn test_gh_release_asset_name_matches_ci() {
+        assert_eq!(
+            gh_release_asset_name("linux", "x86_64").unwrap(),
+            "chaos-linux-x64"
+        );
+        assert_eq!(
+            gh_release_asset_name("linux", "aarch64").unwrap(),
+            "chaos-linux-arm64"
+        );
+        assert_eq!(
+            gh_release_asset_name("macos", "aarch64").unwrap(),
+            "chaos-darwin-arm64"
+        );
+        assert_eq!(
+            gh_release_asset_name("macos", "x86_64").unwrap(),
+            "chaos-darwin-x64"
+        );
+        assert_eq!(
+            gh_release_asset_name("windows", "x86_64").unwrap(),
+            "chaos-win32-x64.exe"
+        );
+        assert_eq!(
+            gh_release_asset_name("windows", "aarch64").unwrap(),
+            "chaos-win32-arm64.exe"
+        );
+    }
+
+    #[test]
+    fn test_gh_release_asset_url() {
+        assert_eq!(
+            gh_release_asset_url("0.2.110", "chaos-linux-x64"),
+            "https://github.com/chao2hang/chaos-code/releases/download/v0.2.110/chaos-linux-x64"
+        );
+        assert_eq!(
+            gh_release_asset_url("v0.2.110", "chaos-win32-x64.exe"),
+            "https://github.com/chao2hang/chaos-code/releases/download/v0.2.110/chaos-win32-x64.exe"
         );
     }
 
