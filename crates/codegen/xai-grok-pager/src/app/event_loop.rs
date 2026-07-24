@@ -1108,7 +1108,9 @@ pub(crate) async fn run(
     }
 
     {
-        use xai_grok_shell::util::config::{resolve_announcements, resolve_tips};
+        use xai_grok_shell::util::config::{
+            resolve_announcements, resolve_slash_command_tags, resolve_tips,
+        };
 
         let remote_announcements = remote_settings
             .as_ref()
@@ -1139,6 +1141,15 @@ pub(crate) async fn run(
             let grok_home = xai_grok_tools::util::grok_home::grok_home();
             app.tip = xai_grok_shell::util::tips::pick_and_advance(&app.tips, &grok_home);
         }
+
+        // Slash-command dropdown tags: remote base, local [slash_command_tags]
+        // wins per key. Mutate the shared map in place so every adopter sees it.
+        let remote_slash_tags = remote_settings
+            .as_ref()
+            .and_then(|s| s.slash_command_tags.as_ref());
+        let empty_toml = toml::Value::Table(Default::default());
+        let tags_config = effective_config.as_ref().unwrap_or(&empty_toml);
+        *app.command_tags.borrow_mut() = resolve_slash_command_tags(tags_config, remote_slash_tags);
     }
 
     let hints = xai_grok_shell::util::config::resolve_hints(

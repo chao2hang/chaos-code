@@ -358,6 +358,7 @@ pub(super) fn handle_session_notification(notif: &acp::ExtNotification, app: &mu
                 user_model_preference: None,
                 deferred_model_switch: None,
                 in_flight_prompt: None,
+                compact_held_prompt: None,
                 current_prompt_id: None,
                 created_via_new: false,
             };
@@ -1110,6 +1111,9 @@ pub(super) fn apply_session_event(
     match update {
         XaiSessionUpdate::AutoCompactStarted { percentage, .. } => {
             tracing::info!("Auto-compact started: {percentage}% context used");
+            if session.compact_held_prompt.is_none() {
+                session.compact_held_prompt = session.in_flight_prompt.clone();
+            }
             session.in_flight_prompt = None;
             session.set_compaction_activity(Some(TurnActivity::AutoCompacting));
             scrollback.push_block(RenderBlock::session_event(
@@ -1127,6 +1131,7 @@ pub(super) fn apply_session_event(
         } => {
             tracing::info!("Auto-compact completed: {tokens_after} tokens after");
             session.set_compaction_activity(None);
+            session.compact_held_prompt = None;
             if session.loading_replay {
                 scrollback.push_block(RenderBlock::session_event(
                     SessionEvent::CompactionCompleted {
@@ -1151,6 +1156,7 @@ pub(super) fn apply_session_event(
         XaiSessionUpdate::AutoCompactCancelled { .. } => {
             tracing::info!("Auto-compact cancelled");
             session.set_compaction_activity(None);
+            session.compact_held_prompt = None;
             scrollback.push_block(RenderBlock::session_event(
                 SessionEvent::CompactionCancelled,
             ));

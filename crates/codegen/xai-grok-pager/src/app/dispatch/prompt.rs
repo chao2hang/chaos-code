@@ -1154,11 +1154,18 @@ pub(super) fn handle_prompt_response(
             agent.credit_limit_stashed_prompt = agent.session.in_flight_prompt.clone();
         }
         // Likewise, stash the prompt from a turn that failed on an
-        // expired login (401 / re-auth). The AuthComplete handler
-        // auto-resubmits it after a successful mid-session re-auth.
-        // A non-rewindable turn (None) must not clobber an earlier stash.
-        if reauth_prompted && let Some(prompt) = agent.session.in_flight_prompt.as_ref() {
-            agent.reauth_stashed_prompt = Some(prompt.clone());
+        // expired login (401 / re-auth). Prefer in_flight, else
+        // compact_held (cleared for cancel-rewind during auto-compact). Skip if both None.
+        // The AuthComplete handler auto-resubmits it after a successful mid-session re-auth.
+        if reauth_prompted {
+            let held = agent
+                .session
+                .in_flight_prompt
+                .clone()
+                .or_else(|| agent.session.compact_held_prompt.clone());
+            if let Some(prompt) = held {
+                agent.reauth_stashed_prompt = Some(prompt);
+            }
         }
 
         // qtrace: turn end on this client. This clears current_prompt_id

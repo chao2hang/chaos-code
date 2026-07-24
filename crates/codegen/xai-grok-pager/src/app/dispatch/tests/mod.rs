@@ -176,6 +176,7 @@ fn test_app() -> AppView {
         slash_mru: std::rc::Rc::new(std::cell::RefCell::new(
             crate::slash::mru::SlashMru::new_in_memory(),
         )),
+        command_tags: std::rc::Rc::new(std::cell::RefCell::new(std::collections::HashMap::new())),
         welcome_prompt_focused: false,
         welcome_tip_typing_dismissed: false,
         welcome_menu_index: None,
@@ -303,6 +304,7 @@ fn make_test_agent_session(app: &AppView, id: AgentId, sid: &str) -> AgentSessio
         bg_tool_call_to_task: std::collections::HashMap::new(),
         scheduled_tasks: std::collections::HashMap::new(),
         in_flight_prompt: None,
+        compact_held_prompt: None,
         current_prompt_id: None,
         created_via_new: false,
     }
@@ -549,6 +551,7 @@ fn insert_placeholder_agent(app: &mut AppView, id: AgentId) {
             bg_tool_call_to_task: std::collections::HashMap::new(),
             scheduled_tasks: std::collections::HashMap::new(),
             in_flight_prompt: None,
+            compact_held_prompt: None,
             current_prompt_id: None,
             created_via_new: false,
         },
@@ -687,6 +690,7 @@ fn two_agent_app_with_bg_task() -> AppView {
             bg_tool_call_to_task: std::collections::HashMap::new(),
             scheduled_tasks: std::collections::HashMap::new(),
             in_flight_prompt: None,
+            compact_held_prompt: None,
             current_prompt_id: None,
             created_via_new: false,
         },

@@ -770,6 +770,11 @@ pub struct AppView {
     /// [`PromptWidget::adopt_slash_mru`] so command recency is shared across
     /// surfaces (single-threaded UI; no process-global singleton).
     pub(crate) slash_mru: std::rc::Rc<std::cell::RefCell<crate::slash::mru::SlashMru>>,
+    /// Resolved per-command slash-dropdown tags (canonical name → free-form
+    /// tag). Owned here and injected via [`PromptWidget::adopt_command_tags`] so
+    /// slash-dropdown tags are shared across agent prompts and the dashboard.
+    pub(crate) command_tags:
+        std::rc::Rc<std::cell::RefCell<std::collections::HashMap<String, String>>>,
     /// Whether the welcome screen prompt is currently capturing focus (user typed in it).
     /// When true, menu shortcuts like n/w/q are disabled and Escape unfocuses the prompt.
     pub welcome_prompt_focused: bool,
@@ -1254,8 +1259,11 @@ impl AppView {
     ) -> Self {
         let slash_mru =
             std::rc::Rc::new(std::cell::RefCell::new(crate::slash::mru::SlashMru::new()));
+        let command_tags =
+            std::rc::Rc::new(std::cell::RefCell::new(std::collections::HashMap::new()));
         let mut welcome_prompt = PromptWidget::new();
         welcome_prompt.adopt_slash_mru(slash_mru.clone());
+        welcome_prompt.adopt_command_tags(command_tags.clone());
         Self {
             active_view: ActiveView::Welcome,
             auth_return_view: None,
@@ -1296,6 +1304,7 @@ impl AppView {
             tip: None,
             welcome_prompt,
             slash_mru,
+            command_tags,
             welcome_prompt_focused: true,
             welcome_tip_typing_dismissed: false,
             pending_effects: Vec::new(),
@@ -5389,6 +5398,9 @@ pub(crate) mod tests {
             slash_mru: std::rc::Rc::new(std::cell::RefCell::new(
                 crate::slash::mru::SlashMru::new_in_memory(),
             )),
+            command_tags: std::rc::Rc::new(std::cell::RefCell::new(
+                std::collections::HashMap::new(),
+            )),
             welcome_prompt_focused: false,
             welcome_tip_typing_dismissed: false,
             welcome_menu_index: None,
@@ -5513,6 +5525,7 @@ pub(crate) mod tests {
                 bg_tool_call_to_task: std::collections::HashMap::new(),
                 scheduled_tasks: std::collections::HashMap::new(),
                 in_flight_prompt: None,
+                compact_held_prompt: None,
                 current_prompt_id: None,
                 created_via_new: false,
             },
@@ -5705,6 +5718,7 @@ pub(crate) mod tests {
             bg_tool_call_to_task: std::collections::HashMap::new(),
             scheduled_tasks: std::collections::HashMap::new(),
             in_flight_prompt: None,
+            compact_held_prompt: None,
             current_prompt_id: None,
             created_via_new: false,
         };
