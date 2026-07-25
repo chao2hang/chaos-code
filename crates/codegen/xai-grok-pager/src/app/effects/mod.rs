@@ -1860,7 +1860,7 @@ pub(crate) fn execute(
                     }
                 })
                 .await
-                .map_err(|error| format!("Could not prepare the fix: {error}"))
+                .map_err(|error| format!("无法准备修复：{error}"))
                 .and_then(|result| result);
                 TaskResult::DoctorFixPlanned { target, result }
             });
@@ -1869,7 +1869,7 @@ pub(crate) fn execute(
             tasks.spawn(async move {
                 let result = tokio::task::spawn_blocking(move || crate::diagnostics::apply_fix(*plan))
                     .await
-                    .map_err(|error| format!("Could not apply the fix: {error}"))
+                    .map_err(|error| format!("无法应用修复：{error}"))
                     .and_then(|result| result.map_err(|error| error.to_string()));
                 TaskResult::DoctorFixApplied { target, result }
             });

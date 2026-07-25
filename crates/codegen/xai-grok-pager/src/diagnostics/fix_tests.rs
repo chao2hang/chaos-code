@@ -47,7 +47,7 @@ pub(super) fn report() -> DiagnosticReport {
     report.findings.push(DiagnosticFinding {
         id: SSH_WRAP_ID,
         disposition: FindingDisposition::Recommendation,
-        message: "Use local SSH wrapping".to_owned(),
+        message: "设置本地 SSH 包装".to_owned(),
         remediation: Some(ManualRemediation {
             fix: SSH_WRAP_ONE_OFF.to_owned(),
             config_path: None,
@@ -265,8 +265,8 @@ fn tmux_specs_plan_exact_independent_managed_items() {
         );
         assert!(!plan.change().block.contains("terminal.ssh-wrap"));
         let preview = format_fix_preview(&plan);
-        assert!(preview.contains("does not reload or modify the live tmux server"));
-        assert!(preview.contains("Run /doctor again to verify the live setting"));
+        assert!(preview.contains("不会重载或修改正在运行的 tmux server"));
+        assert!(preview.contains("请再次运行 /doctor 以验证生效设置"));
     }
 }
 
@@ -295,11 +295,11 @@ fn safe_absolute_directory_rejects_hostile_home_and_byobu_values() {
 fn reload_instruction_shell_quotes_and_markdown_escapes_paths() {
     assert_eq!(
         reload_instruction(Path::new("/tmp/a b/q'v.conf")),
-        "Reload tmux with `tmux source-file '/tmp/a b/q'\\''v.conf'`, or detach and reattach."
+        "请用 `tmux source-file '/tmp/a b/q'\\''v.conf'` 重载 tmux，或先 detach 再 reattach。"
     );
     assert_eq!(
         reload_instruction(Path::new("/tmp/a`b.conf")),
-        "Reload tmux with ``tmux source-file '/tmp/a`b.conf'``, or detach and reattach."
+        "请用 ``tmux source-file '/tmp/a`b.conf'`` 重载 tmux，或先 detach 再 reattach。"
     );
     assert_eq!(
         shell_quote_path(Path::new("/tmp/a`b.conf")).unwrap(),
@@ -307,7 +307,7 @@ fn reload_instruction_shell_quotes_and_markdown_escapes_paths() {
     );
     assert_eq!(
         reload_instruction(Path::new("/tmp/bad\npath")),
-        "Detach and reattach to activate the persistent tmux setting."
+        "请 detach 再 reattach 以启用持久的 tmux 设置。"
     );
     assert_eq!(markdown_code_path(Path::new("/tmp/a`b")), "``/tmp/a`b``");
 }
@@ -333,9 +333,9 @@ fn full_preview_safely_renders_backtick_requested_symlink_target_and_backup_path
     )
     .unwrap();
     let preview = format_fix_preview(&plan);
-    assert!(preview.contains("File: ``"), "{preview}");
-    assert!(preview.contains("Actual file: ``"), "{preview}");
-    assert!(preview.contains("Backup will be saved to: ``"), "{preview}");
+    assert!(preview.contains("文件：``"), "{preview}");
+    assert!(preview.contains("实际文件：``"), "{preview}");
+    assert!(preview.contains("备份将保存到：``"), "{preview}");
     assert!(preview.contains("home`dir/.tmux.conf"), "{preview}");
     assert!(preview.contains("tmux`target.conf"), "{preview}");
 }
@@ -416,7 +416,7 @@ fn tmux_managed_items_coexist_and_each_apply_is_one_transaction() {
         let outcome = apply_fix(plan).unwrap();
         assert_eq!(outcome.activation(), FixActivation::RequiresReload);
         assert_eq!(outcome.changed_path(), path);
-        assert!(format_fix_success(&outcome).contains("Run /doctor again"));
+        assert!(format_fix_success(&outcome).contains("请再次运行 /doctor"));
         assert!(std::fs::read_to_string(&path).unwrap().contains(line));
     }
     let content = std::fs::read_to_string(&path).unwrap();
@@ -578,7 +578,7 @@ fn healthy_direct_does_not_suppress_repair_of_noncanonical_managed_item() {
             &tmux_terminal(false),
         )
         .unwrap();
-        assert!(format_fix_preview(&plan).contains("Text to add:\n"));
+        assert!(format_fix_preview(&plan).contains("将添加的文本：\n"));
         let outcome = apply_fix(plan).unwrap();
         assert_eq!(outcome.status(), FixStatus::Applied);
         assert!(
@@ -662,8 +662,8 @@ fn tmux_stale_plan_and_idempotence_reuse_managed_writer_safety() {
     )
     .unwrap();
     let preview = format_fix_preview(&plan);
-    assert!(preview.contains("Text to add: None"), "{preview}");
-    assert!(!preview.contains("Backup will be saved"), "{preview}");
+    assert!(preview.contains("将添加的文本：无"), "{preview}");
+    assert!(!preview.contains("备份将保存"), "{preview}");
     let outcome = apply_fix(plan).unwrap();
     assert_eq!(outcome.status(), FixStatus::AlreadyConfigured);
     assert!(verify_persistent_fix(&outcome));

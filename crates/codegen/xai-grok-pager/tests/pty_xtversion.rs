@@ -194,7 +194,7 @@ async fn unknown_brand_no_reply_starts_cleanly() {
     // /doctor must omit the xtversion line entirely.
     harness.inject_keys(b"/doctor\r").expect("run /doctor");
     harness
-        .wait_for_text("Environment", Duration::from_secs(10))
+        .wait_for_text("环境", Duration::from_secs(10))
         .expect("doctor output");
     assert!(
         !harness.contains_text("xtversion"),
@@ -231,7 +231,7 @@ async fn unknown_brand_malformed_reply_is_discarded() {
 
     harness.inject_keys(b"/doctor\r").expect("run /doctor");
     harness
-        .wait_for_text("Environment", Duration::from_secs(10))
+        .wait_for_text("环境", Duration::from_secs(10))
         .expect("doctor output");
     assert!(
         !harness.contains_text("xtversion"),

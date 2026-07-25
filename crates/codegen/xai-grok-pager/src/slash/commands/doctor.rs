@@ -1,14 +1,14 @@
-//! `/doctor` — diagnose terminal, color/theme, clipboard, and voice input.
+//! `/doctor` — 诊断终端、配色/主题、剪贴板与语音输入。
 //!
-//! Runs the shared TUI probe and diagnostics path, including live runtime
-//! evidence that the standalone command cannot observe.
+//! 走共享的 TUI 探测与诊断路径，包含独立 `doctor` 子命令观察不到的
+//! 运行时现场证据。
 
 use crate::slash::command::{
     AppCtx, ArgItem, CommandExecCtx, CommandResult, DoctorRequest, SlashCommand,
 };
 
 const USAGE: &str =
-    "Usage: /doctor [fix [ssh-wrap|tmux-clipboard|dcs-passthrough|tmux-extended-keys]]";
+    "用法: /doctor [fix [ssh-wrap|tmux-clipboard|dcs-passthrough|tmux-extended-keys]]";
 
 pub struct DoctorCommand;
 
@@ -51,7 +51,7 @@ impl SlashCommand for DoctorCommand {
     }
 
     fn description(&self) -> &str {
-        "Check this session and show available fixes"
+        "检查当前会话并显示可用修复"
     }
 
     fn usage(&self) -> &str {
@@ -93,7 +93,7 @@ impl SlashCommand for DoctorCommand {
             display: "fix".into(),
             match_text: "fix".into(),
             insert_text: "fix".into(),
-            description: "Show automatic fixes available here".into(),
+            description: "显示此处可用的自动修复".into(),
         }])
     }
 

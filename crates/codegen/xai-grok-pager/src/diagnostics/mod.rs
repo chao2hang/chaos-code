@@ -17,8 +17,6 @@ pub mod probes;
 mod view;
 
 pub use doctor_format::format_doctor;
-#[cfg(test)]
-pub(crate) use fix::test_fix_plan;
 pub use fix::{
     AutomaticRemediation, DCS_PASSTHROUGH_ID, FixActivation, FixError, FixOutcome, FixPlan,
     FixRequest, FixStatus, PlannedChange, SSH_WRAP_FIX_COMMAND, SSH_WRAP_ID, SSH_WRAP_ONE_OFF,
@@ -80,14 +78,13 @@ fn voice_missing_finding(error: String) -> DiagnosticFinding {
     DiagnosticFinding {
         id: VOICE_NO_INPUT_DEVICE_ID,
         disposition: FindingDisposition::Issue,
-        message: format!("Voice dictation is unavailable: {error}"),
+        message: format!("语音听写不可用：{error}"),
         remediation: None,
         automatic_remediation: None,
         note: Some(
-            "Connect or select a microphone in your system sound settings. On Linux, install a \
-             supported audio recorder if none was found on PATH. Then run `/doctor` or `grok \
-             doctor` again. Doctor can't detect denied macOS microphone access when the system \
-             returns silence; follow the message shown when dictation fails."
+            "请在系统声音设置中连接或选择麦克风。在 Linux 上，若 PATH 中没有受支持的录音工具，请安装后再运行 \
+             `/doctor` 或 `chaos doctor`。当系统返回静音时，Doctor 无法判断 macOS 麦克风权限是否被拒绝；\
+             请按听写失败时的提示处理。"
                 .to_owned(),
         ),
     }
@@ -213,7 +210,7 @@ fn actionable_warning_summary(
         .filter_map(|warning| view::id_for(warning.category));
     Some(crate::startup::ActionableStartupWarning::new(
         crate::startup::WarningSeverity::Warning,
-        "Clipboard may be unreachable.",
+        "剪贴板可能无法使用。",
         ids,
     ))
 }
@@ -243,14 +240,13 @@ pub(crate) fn collect_startup_warnings_from(
     if ctx.brand == TerminalName::AppleTerminal && ctx.is_ssh {
         let mut warning = TerminalWarning::new(
             WarningCategory::UnsupportedTerminal,
-            "Apple Terminal doesn't support OSC 52, so clipboard copy over SSH is unavailable",
+            "Apple Terminal 不支持 OSC 52，因此 SSH 下无法直接复制到本地剪贴板",
             None,
             None,
         );
         warning.note = Some(
-            "Chaos also saves each copy to the backup file shown in the copy message. To copy \
-             directly, run `chaos wrap ssh <host>` on your local computer or use a terminal that \
-             supports OSC 52. You can also use `/copy <file>` or `/minimal`."
+            "Chaos 仍会把每次复制保存到复制提示中显示的备份文件。若要直接复制，请在本地运行 \
+             `chaos wrap ssh <host>`，或改用支持 OSC 52 的终端。也可使用 `/copy <file>` 或 `/minimal`。"
                 .to_owned(),
         );
         warnings.push(warning);
@@ -260,13 +256,13 @@ pub(crate) fn collect_startup_warnings_from(
     if ctx.byobu == Some(ByobuBackend::Screen) {
         let mut warning = TerminalWarning::new(
             WarningCategory::ByobuScreen,
-            "Byobu is using GNU screen, which has limited clipboard and display support",
+            "Byobu 正在使用 GNU screen，剪贴板与显示支持有限",
             None,
             None,
         );
         warning.note = Some(
-            "Switch Byobu to its tmux backend, then restart or reattach the session. \
-             tmux-specific fixes apply only after you switch backends."
+            "请将 Byobu 切换到 tmux 后端，然后重启或重新附着会话。\
+             仅在切换后端后，tmux 相关修复才会生效。"
                 .to_owned(),
         );
         warnings.push(warning);
@@ -280,14 +276,13 @@ pub(crate) fn collect_startup_warnings_from(
     if ctx.is_tmux_backed() && matches!(tmux.control_mode, probes::TmuxProbeResult::Available(true))
     {
         let message = match fullscreen_active {
-            Some(true) => "Fullscreen may be unreliable in tmux control mode",
-            Some(false) => "Chaos is using inline mode because tmux control mode limits fullscreen",
-            None => "Display may be limited in tmux control mode",
+            Some(true) => "在 tmux control mode 下全屏可能不稳定",
+            Some(false) => "因 tmux control mode 限制全屏，Chaos 正使用内联模式",
+            None => "在 tmux control mode 下显示可能受限",
         };
         let mut warning = TerminalWarning::new(WarningCategory::ControlMode, message, None, None);
         warning.note = Some(
-            "If display problems continue, connect with a regular tmux client instead of \
-             control mode."
+            "若显示问题仍在，请改用普通 tmux 客户端连接，而不是 control mode。"
                 .to_owned(),
         );
         warnings.push(warning);
@@ -309,7 +304,7 @@ pub(crate) fn collect_startup_warnings_from(
     {
         let mut warning = TerminalWarning::new(
             WarningCategory::TmuxExtendedKeysOff,
-            "`extended-keys` is off in tmux, so some shortcuts may not work",
+            "tmux 中 `extended-keys` 已关闭，部分快捷键可能无效",
             Some("set -g extended-keys on"),
             Some(&config_path),
         );
@@ -391,27 +386,25 @@ pub(crate) fn wezterm_kitty_keyboard_warning_from(
     if shape == WezTermShape::SshXtversion {
         let mut warning = TerminalWarning::new(
             WarningCategory::WezTermKittyKeyboardOff,
-            "Shift+Enter can't insert a newline in WezTerm over SSH",
+            "在 SSH 下的 WezTerm 中，Shift+Enter 无法插入换行",
             None,
             None,
         );
         warning.note = Some(
-            "For this session, type `\\` and then press Enter. Chaos can't negotiate the Kitty \
-             keyboard protocol over SSH yet. `enable_kitty_keyboard = true` applies only to \
-             local WezTerm sessions."
+            "本次会话请先输入 `\\` 再按 Enter。Chaos 尚无法在 SSH 上协商 Kitty 键盘协议。\
+             `enable_kitty_keyboard = true` 仅对本地 WezTerm 会话生效。"
                 .to_string(),
         );
         return Some(warning);
     }
     let mut warning = TerminalWarning::new(
         WarningCategory::WezTermKittyKeyboardOff,
-        "Shift+Enter can't insert a newline because WezTerm's Kitty keyboard protocol is off",
+        "WezTerm 的 Kitty 键盘协议未开启，Shift+Enter 无法插入换行",
         Some("config.enable_kitty_keyboard = true"),
         Some("~/.config/wezterm/wezterm.lua"),
     );
     warning.note = Some(
-        "Restart WezTerm after changing this setting. Until then, type `\\` and then press \
-         Enter to insert a newline."
+        "修改该设置后请重启 WezTerm。在此之前，可先输入 `\\` 再按 Enter 来插入换行。"
             .to_string(),
     );
     Some(warning)
@@ -432,15 +425,12 @@ fn sandbox_profile_conflict_warning_from(conflicts: Vec<String>) -> Option<Termi
         .join(", ");
     Some(TerminalWarning {
         category: WarningCategory::SandboxProfileConflict,
-        message: format!(
-            "Project and user sandbox settings define these profiles differently: {profiles}"
-        ),
+        message: format!("项目与用户沙箱设置中以下配置文件定义不一致：{profiles}"),
         fix: None,
         config_path: None,
         note: Some(format!(
-            "Chaos is using the user profile. Compare `.grok/sandbox.toml` with {}, then rename \
-             or remove the conflicting project profile. Project settings can add profile names \
-             but can't redefine a user profile.",
+            "Chaos 正在使用用户侧配置文件。请对比 `.grok/sandbox.toml` 与 {}，然后重命名或删除冲突的项目配置文件。\
+             项目设置可以新增配置文件名，但不能重新定义用户已有的配置文件。",
             crate::util::display_user_grok_path("sandbox.toml")
         )),
     })
@@ -480,13 +470,13 @@ pub fn ssh_wrap_hint(
     }
     let mut warning = TerminalWarning::new(
         WarningCategory::SshWithoutWrap,
-        "Use local SSH wrapping for more reliable clipboard copy and terminal recovery",
+        "建议在本地使用 SSH 包装，以获得更可靠的剪贴板复制与终端恢复",
         Some("chaos wrap ssh <host>"),
         None,
     );
     warning.note = Some(
-        "Run this on your local computer instead of plain `ssh`. It forwards copies to your \
-         local clipboard and restores terminal modes if the connection drops."
+        "请在本地电脑运行，而不是直接使用普通 `ssh`。它会把复制转发到本地剪贴板，\
+         并在连接断开时恢复终端模式。"
             .to_string(),
     );
     Some(warning)
@@ -512,7 +502,7 @@ fn actionable_assembled_warnings(
     if sandbox_profile_warning.is_some() {
         warnings.push(crate::startup::ActionableStartupWarning::new(
             crate::startup::WarningSeverity::Warning,
-            "Project sandbox settings conflict with your settings.",
+            "项目沙箱设置与你的设置冲突。",
             [SANDBOX_PROFILE_CONFLICT_ID],
         ));
     }
@@ -521,7 +511,7 @@ fn actionable_assembled_warnings(
             0,
             crate::startup::ActionableStartupWarning::new(
                 crate::startup::WarningSeverity::Warning,
-                "Copies need this terminal to stay focused.",
+                "复制时请保持此终端获得焦点。",
                 [DiagnosticId::new("terminal", "wayland-data-control")],
             ),
         );
@@ -531,7 +521,7 @@ fn actionable_assembled_warnings(
             0,
             crate::startup::ActionableStartupWarning::new(
                 crate::startup::WarningSeverity::Warning,
-                "Shift+Enter can't insert newlines in WezTerm.",
+                "在 WezTerm 中 Shift+Enter 无法插入换行。",
                 [DiagnosticId::new("terminal", "wezterm-kitty")],
             ),
         );
@@ -600,14 +590,13 @@ pub(crate) fn collect_notification_warnings_with_method(
     {
         let mut warning = TerminalWarning::new(
             WarningCategory::NotificationProtocolFallback,
-            "Chaos is using the terminal bell because the terminal was not recognized",
+            "因未识别终端，Chaos 正使用终端响铃作为通知",
             None,
             None,
         );
         warning.note = Some(format!(
-            "If the bell works for you, no change is needed. Otherwise, set `method` in \
-             `[ui.notifications]` in {} to a protocol your terminal supports. Set it to `none` \
-             to turn off terminal notifications.",
+            "若响铃可用，无需更改。否则请在 {} 的 `[ui.notifications]` 中把 `method` 设为你的终端支持的协议；\
+             设为 `none` 可关闭终端通知。",
             crate::util::display_user_grok_path("config.toml")
         ));
         warnings.push(warning);
@@ -626,7 +615,7 @@ pub(crate) fn collect_notification_warnings_with_method(
         let config_path = ctx.tmux_config_path();
         let mut warning = TerminalWarning::new(
             WarningCategory::DcsPassthrough,
-            "`allow-passthrough` is off in tmux, so terminal notifications are blocked",
+            "tmux 中 `allow-passthrough` 已关闭，终端通知被阻止",
             Some("set -wg allow-passthrough on"),
             Some(&config_path),
         );
@@ -640,13 +629,13 @@ pub(crate) fn collect_notification_warnings_with_method(
     if condition == NotificationCondition::Unfocused && !supports_focus_tracking(ctx.brand) {
         let mut warning = TerminalWarning::new(
             WarningCategory::FocusTrackingUnavailable,
-            "This terminal may not report focus changes, so notifications set to `unfocused` may not appear",
+            "此终端可能不报告焦点变化，因此设为 `unfocused` 的通知可能不会出现",
             Some("condition = \"always\" in [ui.notifications]"),
             Some(&crate::util::display_user_grok_path("config.toml")),
         );
         warning.note = Some(
-            "Use `always` to notify whether or not the terminal is focused. Use `never` or \
-             `method = \"none\"` to turn notifications off."
+            "使用 `always` 可在终端是否获得焦点时都通知。使用 `never` 或 \
+             `method = \"none\"` 可关闭通知。"
                 .to_owned(),
         );
         warnings.push(warning);
@@ -691,8 +680,8 @@ pub(crate) fn merge_tui_runtime_findings(
             if existing.id == DiagnosticId::new("terminal", "dcs-passthrough") {
                 existing.message = runtime_finding.message;
                 existing.note = Some(match existing.note.take() {
-                    Some(note) => format!("{note} OSC terminal notifications are also blocked."),
-                    None => "OSC terminal notifications are also blocked.".to_owned(),
+                    Some(note) => format!("{note} OSC 终端通知也会被阻止。"),
+                    None => "OSC 终端通知也会被阻止。".to_owned(),
                 });
             }
         } else {
@@ -702,7 +691,7 @@ pub(crate) fn merge_tui_runtime_findings(
 }
 
 fn tmux_reload_note(config_path: &str) -> String {
-    format!("Reload tmux with `tmux source-file {config_path}`, or detach and reattach.")
+    format!("请用 `tmux source-file {config_path}` 重载 tmux，或先 detach 再 reattach。")
 }
 
 fn diagnose_clipboard_from_facts(
@@ -762,7 +751,7 @@ pub fn diagnose_clipboard_from_values(
     {
         let mut warning = TerminalWarning::new(
             WarningCategory::Clipboard,
-            "`set-clipboard` is off in tmux, so OSC 52 clipboard copies are blocked",
+            "tmux 中 `set-clipboard` 已关闭，OSC 52 剪贴板复制被阻止",
             Some("set -g set-clipboard on"),
             Some(config_path),
         );
@@ -781,7 +770,7 @@ pub fn diagnose_clipboard_from_values(
     {
         let mut warning = TerminalWarning::new(
             WarningCategory::DcsPassthrough,
-            "`allow-passthrough` is off in tmux, which can block clipboard copies in nested sessions",
+            "tmux 中 `allow-passthrough` 已关闭，嵌套会话中的剪贴板复制可能被阻止",
             Some("set -wg allow-passthrough on"),
             Some(config_path),
         );
@@ -813,13 +802,13 @@ pub fn diagnose_wayland_data_control(
     let fix = (!wl_copy_available).then_some("sudo apt install wl-clipboard");
     let mut warning = TerminalWarning::new(
         WarningCategory::WaylandNoDataControl,
-        "Clipboard copies may fail if you switch away from this Wayland terminal",
+        "若切换离开此 Wayland 终端，剪贴板复制可能失败",
         fix,
         None,
     );
     warning.note = Some(
-        "Keep this terminal focused until the copy message appears. If your distribution does \
-         not use apt, install the `wl-clipboard` package with its package manager."
+        "请保持此终端获得焦点，直到出现复制成功提示。若发行版不使用 apt，请用其包管理器安装 \
+         `wl-clipboard` 包。"
             .to_owned(),
     );
     Some(warning)
@@ -921,7 +910,7 @@ pub fn format_clipboard_diagnostics(input: ClipboardDiagnosticsInput<'_>) -> Cli
     };
     let has_issue = !delivery.is_confirmed();
 
-    let mut out = String::from("Clipboard\n");
+    let mut out = String::from("剪贴板\n");
     out.push_str(&format!("  native       {native}\n"));
     out.push_str(&format!("  tmux         {tmux}\n"));
     out.push_str(&format!("  osc 52       {osc52}\n"));
@@ -938,7 +927,7 @@ pub fn format_clipboard_diagnostics(input: ClipboardDiagnosticsInput<'_>) -> Cli
     }
     out.push_str(&format!("  status       {status}\n"));
     if has_issue {
-        out.push_str("  action       Run /doctor for details and fixes\n");
+        out.push_str("  action       运行 /doctor 查看详情与修复建议\n");
     }
     ClipboardDiagnostics {
         text: out,
@@ -963,11 +952,11 @@ pub fn color_support_warning(
     if level == ColorLevel::None {
         let mut warning = TerminalWarning::new(
             WarningCategory::LimitedColorSupport,
-            "Colors are off because `NO_COLOR` is set",
+            "因设置了 `NO_COLOR`，颜色已关闭",
             None,
             None,
         );
-        warning.note = Some("Unset `NO_COLOR`, then restart Chaos.".to_string());
+        warning.note = Some("请取消设置 `NO_COLOR`，然后重启 Chaos。".to_string());
         return Some(warning);
     }
 
@@ -976,40 +965,37 @@ pub fn color_support_warning(
     if brand == TerminalName::AppleTerminal {
         let mut warning = TerminalWarning::new(
             WarningCategory::LimitedColorSupport,
-            "Apple Terminal supports 256 colors, so truecolor themes are unavailable",
+            "Apple Terminal 仅支持 256 色，因此 truecolor 主题不可用",
             None,
             None,
         );
-        warning.note = Some("Use a terminal that supports truecolor, such as Ghostty.".to_string());
+        warning.note = Some("请使用支持 truecolor 的终端，例如 Ghostty。".to_string());
         return Some(warning);
     }
 
     if is_tmux_backed {
         let mut warning = TerminalWarning::new(
             WarningCategory::LimitedColorSupport,
-            &format!(
-                "This terminal reports {level_label} color, so truecolor themes are unavailable"
-            ),
+            &format!("此终端报告为 {level_label} 色，因此 truecolor 主题不可用"),
             Some("set -as terminal-features \",*:RGB\""),
             Some(tmux_config_path),
         );
         warning.note = Some(format!(
-            "In the same tmux config, also add `set -g default-terminal \"tmux-256color\"`. Add \
-             `export COLORTERM=truecolor` to your shell startup file. Then reload tmux with \
-             `tmux source-file {tmux_config_path}`, or detach and reattach, and restart Chaos."
+            "在同一 tmux 配置中再添加 `set -g default-terminal \"tmux-256color\"`。在 shell 启动文件中添加 \
+             `export COLORTERM=truecolor`。然后用 `tmux source-file {tmux_config_path}` 重载 tmux，\
+             或先 detach 再 reattach，并重启 Chaos。"
         ));
         return Some(warning);
     }
 
     let mut warning = TerminalWarning::new(
         WarningCategory::LimitedColorSupport,
-        &format!("This terminal reports {level_label} color, so truecolor themes are unavailable"),
+        &format!("此终端报告为 {level_label} 色，因此 truecolor 主题不可用"),
         Some("export COLORTERM=truecolor"),
         None,
     );
     warning.note = Some(
-        "Add this export to your shell startup file, such as `~/.zshrc` or `~/.bashrc`, then \
-         restart Chaos."
+        "请将此 export 写入 shell 启动文件（如 `~/.zshrc` 或 `~/.bashrc`），然后重启 Chaos。"
             .to_string(),
     );
     Some(warning)
@@ -1271,13 +1257,13 @@ mod tests {
     fn clipboard_diagnostics_unknown_ssh_is_unverified() {
         let diagnostics = format_clipboard_diagnostics(clipboard_input(TerminalName::Unknown));
         for expected in [
-            "Clipboard",
+            "剪贴板",
             "native       remote (arboard)",
             "tmux         off",
             "osc 52       unknown",
             "wrap         off",
             "status       unverified",
-            "action       Run /doctor for details and fixes",
+            "action       运行 /doctor 查看详情与修复建议",
         ] {
             assert!(
                 diagnostics.text.contains(expected),
@@ -1301,7 +1287,7 @@ mod tests {
         assert!(
             unsupported
                 .text
-                .contains("action       Run /doctor for details and fixes")
+                .contains("action       运行 /doctor 查看详情与修复建议")
         );
         assert!(unsupported.has_issue);
 
@@ -1376,7 +1362,7 @@ mod tests {
         assert!(
             container
                 .text
-                .contains("action       Run /doctor for details and fixes")
+                .contains("action       运行 /doctor 查看详情与修复建议")
         );
 
         let remote_container = format_clipboard_diagnostics(ClipboardDiagnosticsInput {
@@ -1391,7 +1377,7 @@ mod tests {
         assert!(
             remote_container
                 .text
-                .contains("action       Run /doctor for details and fixes")
+                .contains("action       运行 /doctor 查看详情与修复建议")
         );
     }
 
@@ -1489,7 +1475,7 @@ mod tests {
     fn wayland_no_data_control_warns() {
         let w = diagnose_wayland_data_control(true, false, true).expect("must warn");
         assert_eq!(w.category, WarningCategory::WaylandNoDataControl);
-        assert!(w.message.contains("switch away"));
+        assert!(w.message.contains("切换离开"));
         assert!(w.fix.is_none(), "wl-copy present: nothing to install");
     }
 
@@ -1601,7 +1587,7 @@ mod tests {
         assert_eq!(w.len(), 1);
         assert_eq!(w[0].category, WarningCategory::ControlMode);
         assert!(
-            w[0].message.contains("inline mode"),
+            w[0].message.contains("内联模式"),
             "Inline control-mode should mention degraded inline mode"
         );
     }
@@ -1615,11 +1601,11 @@ mod tests {
         assert_eq!(w.len(), 1);
         assert_eq!(w[0].category, WarningCategory::ControlMode);
         assert!(
-            w[0].message.contains("unreliable"),
+            w[0].message.contains("全屏可能不稳定"),
             "Fullscreen control-mode should warn about unreliable fullscreen"
         );
         assert!(
-            !w[0].message.contains("inline mode"),
+            !w[0].message.contains("内联模式"),
             "Fullscreen control-mode should NOT mention degraded inline mode"
         );
     }
@@ -1971,11 +1957,11 @@ mod tests {
             w.fix.is_none(),
             "SSH variant must not advertise a config fix it can't honor"
         );
-        assert!(w.message.contains("over SSH"));
+        assert!(w.message.contains("SSH"));
         assert!(
             w.note
                 .as_deref()
-                .is_some_and(|n| n.starts_with("For this session, type `\\`")),
+                .is_some_and(|n| n.starts_with("本次会话请先输入 `\\`")),
             "SSH note must lead with the backslash+Enter workaround"
         );
     }
@@ -2029,7 +2015,7 @@ mod tests {
     fn clipboard_banner() -> crate::startup::StartupWarning {
         crate::startup::ActionableStartupWarning::new(
             crate::startup::WarningSeverity::Warning,
-            "Clipboard may be unreachable.",
+            "剪贴板可能无法使用。",
             [DiagnosticId::new("terminal", "dcs-passthrough")],
         )
         .into_warning()
@@ -2047,14 +2033,14 @@ mod tests {
             "WezTerm banner must be first, got: {}",
             out[0].message
         );
-        assert!(out[1].message.contains("Clipboard"));
+        assert!(out[1].message.contains("剪贴板"));
     }
 
     #[test]
     fn no_wezterm_warning_leaves_summarized_untouched() {
         let out = assemble_startup_warnings(None, None, None, vec![clipboard_banner()]);
         assert_eq!(out.len(), 1);
-        assert!(out[0].message.contains("Clipboard"));
+        assert!(out[0].message.contains("剪贴板"));
     }
 
     #[test]
@@ -2065,11 +2051,11 @@ mod tests {
         let out = assemble_startup_warnings(None, Some(&w), None, vec![clipboard_banner()]);
         assert_eq!(out.len(), 2);
         assert!(
-            out[0].message.contains("focused"),
+            out[0].message.contains("焦点"),
             "Wayland banner must be first, got: {}",
             out[0].message
         );
-        assert!(out[1].message.contains("Clipboard"));
+        assert!(out[1].message.contains("剪贴板"));
     }
 
     #[test]
@@ -2079,8 +2065,8 @@ mod tests {
         let out = assemble_startup_warnings(Some(&wez), Some(&way), None, vec![clipboard_banner()]);
         assert_eq!(out.len(), 3);
         assert!(out[0].message.contains("WezTerm"));
-        assert!(out[1].message.contains("focused"));
-        assert!(out[2].message.contains("Clipboard"));
+        assert!(out[1].message.contains("焦点"));
+        assert!(out[2].message.contains("剪贴板"));
     }
 
     #[test]
@@ -2091,15 +2077,15 @@ mod tests {
         assert_eq!(w.category, WarningCategory::SandboxProfileConflict);
         assert_eq!(
             w.message,
-            "Project and user sandbox settings define these profiles differently: 'dev'"
+            "项目与用户沙箱设置中以下配置文件定义不一致：'dev'"
         );
         assert!(w.fix.is_none());
         assert!(w.config_path.is_none());
         assert!(w.note.as_deref().is_some_and(|note| {
-            note.contains("rename or remove")
+            note.contains("重命名或删除")
                 && note.contains(".grok/sandbox.toml")
                 && note.contains(&crate::util::display_user_grok_path("sandbox.toml"))
-                && note.contains("can't redefine")
+                && note.contains("不能重新定义")
         }));
     }
 
@@ -2120,10 +2106,10 @@ mod tests {
                 .map(|warning| warning.message.as_str())
                 .collect::<Vec<_>>(),
             [
-                "Shift+Enter can't insert newlines in WezTerm.",
-                "Copies need this terminal to stay focused.",
-                "Project sandbox settings conflict with your settings.",
-                "Clipboard may be unreachable.",
+                "在 WezTerm 中 Shift+Enter 无法插入换行。",
+                "复制时请保持此终端获得焦点。",
+                "项目沙箱设置与你的设置冲突。",
+                "剪贴板可能无法使用。",
             ]
         );
         assert!(
@@ -2176,13 +2162,13 @@ mod tests {
 
         let out = assemble_startup_warnings(None, None, Some(&sandbox), vec![]);
         assert_eq!(out.len(), 1);
-        assert!(out[0].message.contains("sandbox settings"));
+        assert!(out[0].message.contains("沙箱"));
 
         let wez = wezterm_kitty_keyboard_warning(&wezterm_ctx(), false, None).unwrap();
         let out = assemble_startup_warnings(Some(&wez), None, Some(&sandbox), vec![]);
         assert_eq!(out.len(), 2);
         assert!(out[0].message.contains("WezTerm"));
-        assert!(out[1].message.contains("sandbox settings"));
+        assert!(out[1].message.contains("沙箱"));
     }
 
     // -- ssh_wrap_hint: `chaos wrap ssh` recommendation --------------------------
@@ -2200,7 +2186,7 @@ mod tests {
         assert!(
             w.note
                 .as_deref()
-                .is_some_and(|n| n.contains("local computer")),
+                .is_some_and(|n| n.contains("本地电脑")),
             "note must say where to run the command, got: {:?}",
             w.note
         );
@@ -2338,7 +2324,7 @@ mod tests {
         let extended = warnings.first().expect("warning must fire");
         assert_eq!(
             extended.message,
-            "`extended-keys` is off in tmux, so some shortcuts may not work"
+            "tmux 中 `extended-keys` 已关闭，部分快捷键可能无效"
         );
         assert_eq!(extended.fix.as_deref(), Some("set -g extended-keys on"));
         assert_eq!(extended.config_path.as_deref(), Some("~/.tmux.conf"));
@@ -2376,7 +2362,7 @@ mod tests {
         let warnings = collect_extended_keys_warnings(&ctx);
         let summary = summarize_warnings(&warnings, true).expect("welcome banner must surface");
         assert_eq!(summary.severity, crate::startup::WarningSeverity::Warning);
-        assert_eq!(summary.message, "Clipboard may be unreachable.");
+        assert_eq!(summary.message, "剪贴板可能无法使用。");
         assert_eq!(
             summary.action.as_deref(),
             Some(crate::startup::DOCTOR_ACTION)
@@ -2389,7 +2375,7 @@ mod tests {
             diagnose_clipboard_from_values(Some("on"), true, Some("off"), "~/.tmux.conf");
         let summary = summarize_warnings(&warnings, true).expect("welcome banner must surface");
         assert_eq!(summary.severity, crate::startup::WarningSeverity::Warning);
-        assert_eq!(summary.message, "Clipboard may be unreachable.");
+        assert_eq!(summary.message, "剪贴板可能无法使用。");
         assert_eq!(
             summary.action.as_deref(),
             Some(crate::startup::DOCTOR_ACTION)
@@ -2420,7 +2406,7 @@ mod tests {
             "fixture sanity: multiple warnings must fire"
         );
         let summary = summarize_warnings(&warnings, true).expect("surfaces allowed warning");
-        assert_eq!(summary.message, "Clipboard may be unreachable.");
+        assert_eq!(summary.message, "剪贴板可能无法使用。");
     }
 
     #[test]
@@ -2466,7 +2452,7 @@ mod tests {
         );
         assert_eq!(w.len(), 1);
         assert_eq!(w[0].category, WarningCategory::NotificationProtocolFallback);
-        assert!(w[0].message.contains("terminal bell"));
+        assert!(w[0].message.contains("响铃"));
     }
 
     #[test]
@@ -2500,7 +2486,7 @@ mod tests {
             findings[0]
                 .note
                 .as_deref()
-                .is_some_and(|note| note.contains("bell"))
+                .is_some_and(|note| note.contains("响铃"))
         );
         assert!(findings[1].remediation.as_ref().is_some_and(|remediation| {
             remediation.fix.contains("condition = \"always\"")
@@ -2580,9 +2566,9 @@ mod tests {
         assert!(finding.remediation.is_none());
         assert!(finding.automatic_remediation.is_none());
         assert!(finding.note.as_deref().is_some_and(|note| {
-            note.contains("install a supported audio recorder")
+            note.contains("录音工具")
                 && note.contains("chaos doctor")
-                && note.contains("can't detect denied macOS microphone access")
+                && note.contains("麦克风权限")
         }));
     }
 
@@ -2679,7 +2665,7 @@ mod tests {
         );
         assert_eq!(w.len(), 1);
         assert_eq!(w[0].category, WarningCategory::DcsPassthrough);
-        assert!(w[0].message.contains("notification"));
+        assert!(w[0].message.contains("通知"));
         assert_eq!(w[0].fix.as_deref(), Some("set -wg allow-passthrough on"));
     }
 
@@ -2721,12 +2707,12 @@ mod tests {
             .filter(|finding| finding.id == DiagnosticId::new("terminal", "dcs-passthrough"))
             .collect::<Vec<_>>();
         assert_eq!(dcs.len(), 1);
-        assert!(dcs[0].message.contains("notifications are blocked"));
+        assert!(dcs[0].message.contains("终端通知被阻止"));
         assert!(
             dcs[0]
                 .note
                 .as_deref()
-                .is_some_and(|note| note.contains("notifications are also blocked"))
+                .is_some_and(|note| note.contains("OSC 终端通知也会被阻止"))
         );
     }
 
@@ -2780,7 +2766,7 @@ mod tests {
             .filter(|w| w.category == WarningCategory::FocusTrackingUnavailable)
             .collect();
         assert_eq!(focus_warnings.len(), 1);
-        assert!(focus_warnings[0].message.contains("focus changes"));
+        assert!(focus_warnings[0].message.contains("焦点变化"));
         assert!(focus_warnings[0].fix.as_deref().unwrap().contains("always"));
     }
 
@@ -2984,7 +2970,7 @@ mod tests {
         assert!(
             w.note
                 .as_deref()
-                .is_some_and(|n| n.contains("such as Ghostty"))
+                .is_some_and(|n| n.contains("Ghostty"))
         );
     }
 

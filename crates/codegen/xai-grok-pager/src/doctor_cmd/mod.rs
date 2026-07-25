@@ -50,7 +50,7 @@ pub fn run(args: DoctorArgs) -> Result<()> {
 pub fn run_with_writer(args: DoctorArgs, writer: &mut impl Write) -> Result<()> {
     match args.command {
         None => run_report(args.json, writer),
-        Some(_) => anyhow::bail!("Doctor fixes require interactive input and output."),
+        Some(_) => anyhow::bail!("Doctor 修复需要交互式输入与输出。"),
     }
 }
 
@@ -146,15 +146,15 @@ fn apply_fix_plan(
     if !args.yes {
         if !stdin_is_terminal {
             anyhow::bail!(
-                "Cannot apply this fix without confirmation. Run it in an interactive terminal or add `--yes`."
+                "未确认无法应用此修复。请在交互式终端中运行，或添加 `--yes`。"
             );
         }
-        write!(writer, "\nApply this fix? [y/N] ")?;
+        write!(writer, "\n应用此修复？[y/N] ")?;
         writer.flush()?;
         let mut answer = String::new();
         input.read_line(&mut answer)?;
         if !matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes") {
-            writeln!(writer, "Fix cancelled.")?;
+            writeln!(writer, "已取消修复。")?;
             return Ok(());
         }
     }
@@ -173,13 +173,13 @@ fn apply_fix_plan(
             .any(|finding| finding.id == outcome.id())
         {
             anyhow::bail!(
-                "The change was applied, but Doctor still reports `{}`.",
+                "更改已应用，但 Doctor 仍报告 `{}`。",
                 outcome.id()
             );
         }
     } else if !crate::diagnostics::verify_persistent_fix(&outcome) {
         anyhow::bail!(
-            "The change was applied, but Doctor could not verify `{}` in persistent configuration.",
+            "更改已应用，但 Doctor 无法在持久配置中验证 `{}`。",
             outcome.id()
         );
     }
