@@ -70,9 +70,18 @@ function Get-LatestVersion {
         "User-Agent" = "chaos-code-installer"
         "Accept"     = "application/vnd.github+json"
     }
-    $rel = Invoke-RestMethod -Uri $api -Headers $headers
+    try {
+        $rel = Invoke-RestMethod -Uri $api -Headers $headers
+    } catch {
+        $status = $null
+        try { $status = [int]$_.Exception.Response.StatusCode } catch { }
+        if ($status -eq 403) {
+            throw "GitHub API rate limited (HTTP 403) resolving latest release for $Repo. Retry later or pass -Version X.Y.Z."
+        }
+        throw "failed to query latest release for $Repo ($($_.Exception.Message)). Check network/proxy, or pass -Version X.Y.Z."
+    }
     $tag = [string]$rel.tag_name
-    if (-not $tag) { throw "could not resolve latest release for $Repo" }
+    if (-not $tag) { throw "could not resolve latest release for $Repo (empty tag_name). Pass -Version X.Y.Z." }
     return $tag.TrimStart("v")
 }
 
@@ -105,6 +114,9 @@ function Ensure-UserPath {
 if (-not $Version) {
     Write-Host "resolving latest release..."
     $Version = Get-LatestVersion
+}
+if (-not $Version) {
+    throw "could not resolve a version. Pass -Version X.Y.Z explicitly, or check network/proxy/GitHub rate limits."
 }
 $Version = $Version.TrimStart("v")
 
