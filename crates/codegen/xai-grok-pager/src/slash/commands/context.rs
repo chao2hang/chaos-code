@@ -99,23 +99,18 @@ impl SlashCommand for ContextCommand {
             _ => {
                 // Bare size: `/context 128k` as a convenience.
                 if let Ok(tokens) = parse_token_size(sub) {
-                    if !rest.trim().is_empty() {
-                        let rest_trim = rest.trim();
-                        let compact_if_needed =
-                            !(rest_trim == "--no-compact" || rest_trim == "-n");
-                        if compact_if_needed && rest_trim != "" {
+                    let rest_trim = rest.trim();
+                    let compact_if_needed = match rest_trim {
+                        "" | "--no-compact" | "-n" => rest_trim.is_empty(),
+                        _ => {
                             return CommandResult::Error(format!(
                                 "未知参数: {rest_trim}\n用法: /context [set] <size> [--no-compact]"
                             ));
                         }
-                        return CommandResult::Action(Action::SetContextWindow {
-                            tokens,
-                            compact_if_needed,
-                        });
-                    }
+                    };
                     return CommandResult::Action(Action::SetContextWindow {
                         tokens,
-                        compact_if_needed: true,
+                        compact_if_needed,
                     });
                 }
                 CommandResult::Error(format!(

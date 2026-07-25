@@ -3,8 +3,8 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use super::state::{
-    API_BACKENDS, AUTH_SCHEMES, FormStep, ProviderAction, ProviderKeyOutcome, ProviderModalMode,
-    ProviderModalState, ProviderSummary, PROVIDER_PRESETS,
+    API_BACKENDS, AUTH_SCHEMES, FormStep, ModelParamField, ProviderAction, ProviderKeyOutcome,
+    ProviderModalMode, ProviderModalState, PROVIDER_PRESETS,
 };
 
 /// Sanitize text for a single-line provider field.
@@ -62,7 +62,8 @@ pub fn handle_provider_key(state: &mut ProviderModalState, key: &KeyEvent) -> Pr
                         state.go_list();
                     } else if let ProviderModalMode::SetKey(name)
                     | ProviderModalMode::Edit(name)
-                    | ProviderModalMode::ManualModel(name) = &state.mode
+                    | ProviderModalMode::ManualModel(name)
+                    | ProviderModalMode::ConfigureModel(name) = &state.mode
                     {
                         let n = name.clone();
                         state.go_actions(n);
@@ -92,6 +93,7 @@ pub fn handle_provider_key(state: &mut ProviderModalState, key: &KeyEvent) -> Pr
         ProviderModalMode::Models(_) => handle_models(state, key),
         ProviderModalMode::SetModel(_) => handle_set_model(state, key),
         ProviderModalMode::ManualModel(_) => handle_manual_model(state, key),
+        ProviderModalMode::ConfigureModel(_) => handle_configure_model(state, key),
     }
 }
 
@@ -132,13 +134,42 @@ pub fn handle_provider_paste(state: &mut ProviderModalState, text: &str) -> Prov
             ProviderKeyOutcome::Changed
         }
         ProviderModalMode::ManualModel(_) => {
-            if state.manual_model_id.is_empty() {
+            if let Some(field) = state.model_param_field {
+                let slot = state.model_param_value_mut(field);
+                if slot.is_empty() {
+                    *slot = cleaned;
+                } else {
+                    slot.push_str(&cleaned);
+                }
+            } else if state.manual_model_id.is_empty() {
                 state.manual_model_id = cleaned;
             } else {
                 state.manual_model_id.push_str(&cleaned);
             }
             state.error = None;
             ProviderKeyOutcome::Changed
+        }
+        ProviderModalMode::ConfigureModel(_) => {
+            if let Some(field) = state.model_param_field {
+                let slot = state.model_param_value_mut(field);
+                if slot.is_empty() {
+                    *slot = cleaned;
+                } else {
+                    slot.push_str(&cleaned);
+                }
+                state.error = None;
+                ProviderKeyOutcome::Changed
+            } else {
+                // 选择阶段：粘贴进搜索框
+                if state.model_filter.is_empty() {
+                    state.set_model_filter(cleaned);
+                } else {
+                    let mut next = state.model_filter.clone();
+                    next.push_str(&cleaned);
+                    state.set_model_filter(next);
+                }
+                ProviderKeyOutcome::Changed
+            }
         }
         ProviderModalMode::Models(_) | ProviderModalMode::SetModel(_) => {
             // Paste into the model search bar (append when refining query).
@@ -465,8 +496,12 @@ fn handle_edit(state: &mut ProviderModalState, key: &KeyEvent) -> ProviderKeyOut
     }
 }
 
-/// 手动输入模型 ID，Enter 后 SwitchModel。
+/// 手动输入模型 ID，再可选填 max_completion_tokens 等；最后 SwitchModel。
 fn handle_manual_model(state: &mut ProviderModalState, key: &KeyEvent) -> ProviderKeyOutcome {
+    // 参数字段步骤：与 ConfigureModel 共用编辑逻辑。
+    if state.model_param_field.is_some() {
+        return handle_model_param_fields(state, key, /* finalize */ true);
+    }
     match key.code {
         KeyCode::Esc => {
             if state.navigate_back() {
@@ -475,7 +510,8 @@ fn handle_manual_model(state: &mut ProviderModalState, key: &KeyEvent) -> Provid
                 ProviderKeyOutcome::Changed
             }
         }
-        KeyCode::Enter => {
+        // Tab / Enter：校验 ID → 进入参数表单第一步。
+        KeyCode::Tab | KeyCode::Enter => {
             let id = sanitize_provider_field(&state.manual_model_id);
             state.manual_model_id = id.clone();
             if id.is_empty() {
@@ -483,7 +519,8 @@ fn handle_manual_model(state: &mut ProviderModalState, key: &KeyEvent) -> Provid
                 return ProviderKeyOutcome::Changed;
             }
             state.error = None;
-            ProviderKeyOutcome::SwitchModel(id)
+            state.model_param_field = Some(ModelParamField::MaxCompletionTokens);
+            ProviderKeyOutcome::Changed
         }
         KeyCode::Backspace => {
             if state.manual_model_id.pop().is_some() {
@@ -504,6 +541,178 @@ fn handle_manual_model(state: &mut ProviderModalState, key: &KeyEvent) -> Provid
         }
         _ => ProviderKeyOutcome::Unchanged,
     }
+}
+
+/// 配置模型参数：先选模型（列表），再填参数，最后 Commit。
+fn handle_configure_model(state: &mut ProviderModalState, key: &KeyEvent) -> ProviderKeyOutcome {
+    if state.model_param_field.is_some() {
+        return handle_model_param_fields(state, key, /* finalize */ false);
+    }
+    // 列表选择阶段。Enter → 进入参数表单。
+    match key.code {
+        KeyCode::Esc => {
+            if !state.model_filter.is_empty() {
+                state.clear_model_filter();
+                return ProviderKeyOutcome::Changed;
+            }
+            if state.navigate_back() {
+                ProviderKeyOutcome::Close
+            } else {
+                ProviderKeyOutcome::Changed
+            }
+        }
+        KeyCode::Enter => {
+            let Some(id) = state.selected_filtered_model().map(|s| s.to_string()) else {
+                // 无列表时允许手写到 filter 作为 ID
+                let typed = sanitize_provider_field(&state.model_filter);
+                if typed.is_empty() {
+                    state.error = Some("请选择或搜索模型".into());
+                    return ProviderKeyOutcome::Changed;
+                }
+                state.manual_model_id = typed.clone();
+                let provider = match &state.mode {
+                    ProviderModalMode::ConfigureModel(n) => n.clone(),
+                    _ => String::new(),
+                };
+                state.prefill_model_params(&provider, &typed);
+                state.model_param_field = Some(ModelParamField::MaxCompletionTokens);
+                state.error = None;
+                return ProviderKeyOutcome::Changed;
+            };
+            let provider = match &state.mode {
+                ProviderModalMode::ConfigureModel(n) => n.clone(),
+                _ => String::new(),
+            };
+            state.manual_model_id = id.clone();
+            state.prefill_model_params(&provider, &id);
+            state.model_param_field = Some(ModelParamField::MaxCompletionTokens);
+            state.error = None;
+            ProviderKeyOutcome::Changed
+        }
+        // 复用模型列表导航/搜索
+        _ => handle_model_list_keys(state, key, /* allow_enter_switch */ false),
+    }
+}
+
+/// 编辑 max_completion_tokens / context_window / temperature / top_p。
+///
+/// `finalize_as_switch`：true 时最后一步触发 SwitchModel（手动添加）；
+/// false 时最后一步 Commit（仅写参数）。
+fn handle_model_param_fields(
+    state: &mut ProviderModalState,
+    key: &KeyEvent,
+    finalize_as_switch: bool,
+) -> ProviderKeyOutcome {
+    let Some(field) = state.model_param_field else {
+        return ProviderKeyOutcome::Unchanged;
+    };
+    match key.code {
+        KeyCode::Esc => {
+            if state.navigate_back() {
+                ProviderKeyOutcome::Close
+            } else {
+                ProviderKeyOutcome::Changed
+            }
+        }
+        KeyCode::Enter if finalize_as_switch
+            && field == ModelParamField::MaxCompletionTokens
+            && state.model_param_value(field).is_empty() =>
+        {
+            // ManualModel: 第一个参数字段为空时 Enter 直接提交，跳过所有参数。
+            state.model_param_field = None;
+            let id = sanitize_provider_field(&state.manual_model_id);
+            if id.is_empty() {
+                state.error = Some("模型 ID 不能为空".into());
+                return ProviderKeyOutcome::Changed;
+            }
+            ProviderKeyOutcome::SwitchModel(id)
+        }
+        KeyCode::Tab | KeyCode::Enter => {
+            // 轻量校验当前字段，再前进或提交
+            if let Err(e) = validate_param_field(field, state.model_param_value(field)) {
+                state.error = Some(e);
+                return ProviderKeyOutcome::Changed;
+            }
+            state.error = None;
+            if let Some(next) = field.next() {
+                state.model_param_field = Some(next);
+                return ProviderKeyOutcome::Changed;
+            }
+            // 最后一步
+            if finalize_as_switch {
+                let id = sanitize_provider_field(&state.manual_model_id);
+                if id.is_empty() {
+                    state.error = Some("模型 ID 不能为空".into());
+                    return ProviderKeyOutcome::Changed;
+                }
+                ProviderKeyOutcome::SwitchModel(id)
+            } else {
+                ProviderKeyOutcome::Commit
+            }
+        }
+        KeyCode::Backspace => {
+            let slot = state.model_param_value_mut(field);
+            if slot.pop().is_some() {
+                state.error = None;
+                ProviderKeyOutcome::Changed
+            } else {
+                ProviderKeyOutcome::Unchanged
+            }
+        }
+        KeyCode::Char(c)
+            if !key.modifiers.contains(KeyModifiers::CONTROL)
+                && !key.modifiers.contains(KeyModifiers::ALT)
+                && !key.modifiers.contains(KeyModifiers::SUPER) =>
+        {
+            let allow = match field {
+                ModelParamField::MaxCompletionTokens | ModelParamField::ContextWindow => {
+                    c.is_ascii_digit()
+                }
+                ModelParamField::Temperature | ModelParamField::TopP => {
+                    c.is_ascii_digit() || c == '.' || c == '-'
+                }
+            };
+            if !allow {
+                return ProviderKeyOutcome::Unchanged;
+            }
+            state.model_param_value_mut(field).push(c);
+            state.error = None;
+            ProviderKeyOutcome::Changed
+        }
+        _ => ProviderKeyOutcome::Unchanged,
+    }
+}
+
+fn validate_param_field(field: ModelParamField, raw: &str) -> Result<(), String> {
+    let s = raw.trim();
+    if s.is_empty() {
+        return Ok(());
+    }
+    match field {
+        ModelParamField::MaxCompletionTokens => {
+            crate::slash::commands::provider::parse_optional_u32(s, field.label())?;
+        }
+        ModelParamField::ContextWindow => {
+            crate::slash::commands::provider::parse_optional_u64(s, field.label())?;
+        }
+        ModelParamField::Temperature => {
+            let v = crate::slash::commands::provider::parse_optional_f64(s, field.label())?;
+            if let Some(t) = v {
+                if !(0.0..=2.0).contains(&t) {
+                    return Err("temperature 建议范围 0–2".into());
+                }
+            }
+        }
+        ModelParamField::TopP => {
+            let v = crate::slash::commands::provider::parse_optional_f64(s, field.label())?;
+            if let Some(p) = v {
+                if !(0.0..=1.0).contains(&p) {
+                    return Err("top_p 必须在 0–1 之间".into());
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 fn handle_list(state: &mut ProviderModalState, key: &KeyEvent) -> ProviderKeyOutcome {
@@ -584,6 +793,7 @@ fn handle_actions(state: &mut ProviderModalState, key: &KeyEvent) -> ProviderKey
                 ProviderAction::SetKey => state.go_set_key(name),
                 ProviderAction::Models | ProviderAction::Refresh => state.go_models(name),
                 ProviderAction::ManualModel => state.go_manual_model(name),
+                ProviderAction::ConfigureModel => state.go_configure_model(name),
                 ProviderAction::SetModel => state.go_set_model(name),
             }
             ProviderKeyOutcome::Changed
@@ -705,6 +915,7 @@ fn handle_model_list_keys(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::state::ProviderSummary;
 
     #[test]
     fn sanitize_strips_windows_crlf_and_bom() {
@@ -940,7 +1151,7 @@ mod tests {
     }
 
     #[test]
-    fn manual_model_enter_switches() {
+    fn manual_model_enter_enters_params_then_switches() {
         let mut state = ProviderModalState::new(ProviderModalMode::ManualModel("openai".into()));
         state.from_hub = true;
         for c in "gpt-4o".chars() {
@@ -952,6 +1163,32 @@ mod tests {
         }
         assert_eq!(state.manual_model_id, "gpt-4o");
         let enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+        // First Enter → param form (max_completion_tokens)
+        assert!(matches!(
+            handle_provider_key(&mut state, &enter),
+            ProviderKeyOutcome::Changed
+        ));
+        assert_eq!(
+            state.model_param_field,
+            Some(ModelParamField::MaxCompletionTokens)
+        );
+        // Type a value
+        for c in "16384".chars() {
+            let key = KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE);
+            assert!(matches!(
+                handle_provider_key(&mut state, &key),
+                ProviderKeyOutcome::Changed
+            ));
+        }
+        assert_eq!(state.max_completion_tokens, "16384");
+        // Advance through remaining param fields (empty ok)
+        for _ in 0..3 {
+            assert!(matches!(
+                handle_provider_key(&mut state, &enter),
+                ProviderKeyOutcome::Changed
+            ));
+        }
+        // Last Enter → SwitchModel
         match handle_provider_key(&mut state, &enter) {
             ProviderKeyOutcome::SwitchModel(id) => assert_eq!(id, "gpt-4o"),
             other => panic!("expected SwitchModel, got {other:?}"),
@@ -959,9 +1196,10 @@ mod tests {
     }
 
     #[test]
-    fn actions_menu_includes_edit_and_manual() {
+    fn actions_menu_includes_edit_manual_and_configure() {
         assert!(ProviderAction::ALL.contains(&ProviderAction::Edit));
         assert!(ProviderAction::ALL.contains(&ProviderAction::ManualModel));
+        assert!(ProviderAction::ALL.contains(&ProviderAction::ConfigureModel));
         assert_eq!(ProviderAction::ALL[0], ProviderAction::Edit);
     }
 

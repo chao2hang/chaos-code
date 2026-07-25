@@ -172,11 +172,26 @@ fn build_model_items(models: &ModelState) -> Vec<ArgItem> {
             info.name.clone()
         };
 
+        // Fuzzy-match against both the display name and the model id so the
+        // user can search by either (e.g. "deepseek-chat" or "DeepSeek V3").
+        let model_id_str = id.0.as_ref();
+        let match_text = format!("{} {model_id_str}", info.name);
+
+        // Surface the model id in the description column so the user can
+        // distinguish models with similar names. Append the model's own
+        // description when present.
+        let description = match info.description.as_deref() {
+            Some(desc) if !desc.trim().is_empty() => {
+                format!("{model_id_str} · {}", desc.trim())
+            }
+            _ => model_id_str.to_string(),
+        };
+
         items.push(ArgItem {
             display,
-            match_text: info.name.clone(),
+            match_text,
             insert_text,
-            description: info.description.clone().unwrap_or_default(),
+            description,
         });
     }
     items
@@ -289,13 +304,23 @@ mod tests {
         // Enter so the effort sub-menu can render.
         let reasoning = items
             .iter()
-            .find(|i| i.match_text == "Reasoning X")
+            .find(|i| i.display.starts_with("Reasoning X"))
             .unwrap();
         assert_eq!(reasoning.insert_text, "Reasoning X ");
+        // match_text includes both name and model id so the user can
+        // search by either token.
+        assert!(reasoning.match_text.contains("reasoning-x"));
+        // description surfaces the model id for visual identification.
+        assert!(reasoning.description.contains("reasoning-x"));
 
         // Plain model has no trailing space -- Enter commits immediately.
-        let plain = items.iter().find(|i| i.match_text == "Grok 4.5").unwrap();
+        let plain = items
+            .iter()
+            .find(|i| i.display.starts_with("Grok 4.5"))
+            .unwrap();
         assert_eq!(plain.insert_text, "Grok 4.5");
+        assert!(plain.match_text.contains("grok-4.5"));
+        assert!(plain.description.contains("grok-4.5"));
     }
 
     #[test]
@@ -368,6 +393,60 @@ mod tests {
         let items = cmd.suggest_args(&ctx, "Reason").unwrap();
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].insert_text, "Reasoning X ");
+    }
+
+    #[test]
+    fn match_text_includes_model_id_so_id_only_search_finds_model() {
+        // The fuzzy matcher (in SlashController) scores against `match_text`.
+        // Including the model id there means a query that only appears in the
+        // id (not the display name) still surfaces the model.
+        use crate::slash::matcher::FuzzyMatcher;
+
+        let mut state = ModelState::default();
+        // name "DeepSeek V3" has no "chat" substring, but the id does.
+        let (id, info) = plain_model("deepseek/deepseek-chat", "DeepSeek V3");
+        state.available.insert(id, info);
+
+        let cmd = ModelCommand;
+        let ctx = AppCtx {
+            models: &state,
+            cwd: std::path::Path::new("."),
+            has_session_announcements: false,
+            billing_surface_visible: true,
+            workflows_available: true,
+            screen_mode: crate::app::ScreenMode::Fullscreen,
+        };
+        let items = cmd.suggest_args(&ctx, "").unwrap();
+
+        let mut matcher = FuzzyMatcher::new();
+        let hits = matcher.rank(&items, "chat", items.len(), |i| i.match_text.as_str());
+        assert_eq!(
+            hits.len(),
+            1,
+            "searching 'chat' should find the model via its id"
+        );
+    }
+
+    #[test]
+    fn description_shows_model_id_with_existing_description() {
+        let mut state = ModelState::default();
+        let (id, mut info) = plain_model("grok-4.5", "Grok 4.5");
+        info.description = Some("Fast and efficient".into());
+        state.available.insert(id, info);
+
+        let cmd = ModelCommand;
+        let ctx = AppCtx {
+            models: &state,
+            cwd: std::path::Path::new("."),
+            has_session_announcements: false,
+            billing_surface_visible: true,
+            workflows_available: true,
+            screen_mode: crate::app::ScreenMode::Fullscreen,
+        };
+        let items = cmd.suggest_args(&ctx, "").unwrap();
+        let item = &items[0];
+        assert!(item.description.contains("grok-4.5"));
+        assert!(item.description.contains("Fast and efficient"));
     }
 
     #[test]

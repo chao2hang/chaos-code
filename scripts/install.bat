@@ -273,6 +273,8 @@ if not errorlevel 1 (
     "Invoke-WebRequest -Uri '%DL_URL%' -OutFile '%DL_OUT%' -Headers @{ 'User-Agent'='chaos-code-installer' } -UseBasicParsing"
   if not errorlevel 1 if exist "%DL_OUT%" exit /b 0
 )
+rem Last-resort fallback: certutil does not enforce TLS strictness as
+rem strongly as curl/Invoke-WebRequest, but works on locked-down systems.
 where certutil >nul 2>&1
 if not errorlevel 1 (
   certutil -urlcache -split -f "%DL_URL%" "%DL_OUT%" >nul

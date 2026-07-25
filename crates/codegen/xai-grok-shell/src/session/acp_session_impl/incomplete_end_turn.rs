@@ -106,8 +106,47 @@ pub(crate) fn should_retry_incomplete_end_turn(
     None
 }
 
+/// Phrases that indicate the work is already done, not a plan to continue.
+/// When present, suppress the intent-to-continue match to avoid false positives
+/// like "接下来我已完成所有修改".
+const COMPLETION_MARKERS: &[&str] = &[
+    // Chinese
+    "已完成",
+    "已修改",
+    "已更新",
+    "已创建",
+    "已删除",
+    "已写入",
+    "已保存",
+    "成功了",
+    "搞定了",
+    "做完了",
+    // English
+    "done",
+    "finished",
+    "completed",
+    "successfully ",
+    "has been ",
+    "i've updated",
+    "i've modified",
+    "i've created",
+    "i've written",
+];
+
 /// Conservative bilingual intent / plan-only markers.
 fn looks_like_intent_to_continue(text: &str) -> bool {
+    // If the text contains a completion marker, it's likely a summary, not a plan.
+    let lower = text.to_lowercase();
+    if COMPLETION_MARKERS.iter().any(|m| {
+        if m.chars().all(|c| c.is_ascii()) {
+            lower.contains(m)
+        } else {
+            text.contains(m)
+        }
+    }) {
+        return false;
+    }
+
     const MARKERS: &[&str] = &[
         // Chinese
         "接下来",
@@ -132,7 +171,6 @@ fn looks_like_intent_to_continue(text: &str) -> bool {
         "proceed to",
         "continue to",
     ];
-    let lower = text.to_lowercase();
     MARKERS.iter().any(|m| {
         if m.chars().all(|c| c.is_ascii()) {
             lower.contains(m)
@@ -274,6 +312,34 @@ mod tests {
             should_retry_incomplete_end_turn(&input(
                 &tools_no_write,
                 "根据代码，`/doctor` 的 description 仍是英文：Check this session。其它 slash 命令已是中文。若要汉化，需要改 doctor.rs 中的 description 字段。",
+                true,
+                0,
+                1
+            ))
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn completion_marker_suppresses_intent_match() {
+        // "接下来" would normally trigger IntentWithoutWrite, but the
+        // completion marker "已完成" suppresses it.
+        let tools = vec!["grep".into()];
+        assert!(
+            should_retry_incomplete_end_turn(&input(
+                &tools,
+                "接下来我已完成所有修改",
+                true,
+                0,
+                1
+            ))
+            .is_none()
+        );
+        // English completion marker suppresses "I'll" intent.
+        assert!(
+            should_retry_incomplete_end_turn(&input(
+                &tools,
+                "I'll verify the changes - done.",
                 true,
                 0,
                 1

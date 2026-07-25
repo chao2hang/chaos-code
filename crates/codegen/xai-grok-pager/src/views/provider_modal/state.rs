@@ -23,6 +23,8 @@ pub enum ProviderAction {
     Models,
     /// 手动输入模型 ID（不依赖上游 /models 列表）。
     ManualModel,
+    /// 为已有/选中模型设置 max_completion_tokens 等参数。
+    ConfigureModel,
     SetModel,
     Refresh,
 }
@@ -33,6 +35,7 @@ impl ProviderAction {
         ProviderAction::SetKey,
         ProviderAction::Models,
         ProviderAction::ManualModel,
+        ProviderAction::ConfigureModel,
         ProviderAction::SetModel,
         ProviderAction::Refresh,
     ];
@@ -43,6 +46,7 @@ impl ProviderAction {
             Self::SetKey => "设置 API Key",
             Self::Models => "查看可用模型",
             Self::ManualModel => "手动输入模型",
+            Self::ConfigureModel => "配置模型参数",
             Self::SetModel => "切换模型",
             Self::Refresh => "刷新模型列表",
         }
@@ -54,8 +58,65 @@ impl ProviderAction {
             Self::SetKey => "写入/更新密钥",
             Self::Models => "从渠道拉取模型",
             Self::ManualModel => "手写模型 ID 并设为当前",
+            Self::ConfigureModel => "max_tokens / 上下文 / temperature",
             Self::SetModel => "选择并设为当前模型",
             Self::Refresh => "重新拉取模型列表",
+        }
+    }
+}
+
+/// 模型采样/窗口参数表单字段（手动添加模型 或 配置已有模型共用）。
+///
+/// 留空表示不写入（新建）或清除覆盖（配置已有），回退到渠道/全局默认。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModelParamField {
+    MaxCompletionTokens,
+    ContextWindow,
+    Temperature,
+    TopP,
+}
+
+impl ModelParamField {
+    pub const ALL: &[ModelParamField] = &[
+        ModelParamField::MaxCompletionTokens,
+        ModelParamField::ContextWindow,
+        ModelParamField::Temperature,
+        ModelParamField::TopP,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::MaxCompletionTokens => "max_completion_tokens",
+            Self::ContextWindow => "context_window",
+            Self::Temperature => "temperature",
+            Self::TopP => "top_p",
+        }
+    }
+
+    pub fn hint(self) -> &'static str {
+        match self {
+            Self::MaxCompletionTokens => "单次回复上限，如 8192 / 16384（留空=默认）",
+            Self::ContextWindow => "上下文窗口，如 128000 / 200000（留空=默认）",
+            Self::Temperature => "采样温度 0–2，如 0.7（留空=默认）",
+            Self::TopP => "nucleus top_p 0–1，如 0.95（留空=默认）",
+        }
+    }
+
+    pub fn next(self) -> Option<Self> {
+        match self {
+            Self::MaxCompletionTokens => Some(Self::ContextWindow),
+            Self::ContextWindow => Some(Self::Temperature),
+            Self::Temperature => Some(Self::TopP),
+            Self::TopP => None,
+        }
+    }
+
+    pub fn prev(self) -> Option<Self> {
+        match self {
+            Self::MaxCompletionTokens => None,
+            Self::ContextWindow => Some(Self::MaxCompletionTokens),
+            Self::Temperature => Some(Self::ContextWindow),
+            Self::TopP => Some(Self::Temperature),
         }
     }
 }
@@ -146,7 +207,10 @@ pub enum ProviderModalMode {
     /// `/provider set-model <name>` — 选择并设置当前模型。
     SetModel(String),
     /// 手动输入模型 ID 并注册为当前模型（不依赖上游列表）。
+    /// 确认 ID 后进入可选参数步骤（max_completion_tokens 等）。
     ManualModel(String),
+    /// 选择模型后配置详细参数（写入 `[model."provider/id"]`）。
+    ConfigureModel(String),
 }
 
 /// 输入事件的输出。
@@ -189,6 +253,16 @@ pub struct ProviderModalState {
     pub model_filter: String,
     /// `ManualModel` 模式下手写的模型 ID。
     pub manual_model_id: String,
+    /// 模型参数表单：当前字段（`None` = 仍在 ID 输入 / 列表选择阶段）。
+    pub model_param_field: Option<ModelParamField>,
+    /// 单次输出 token 上限（字符串表单；空=不设）。
+    pub max_completion_tokens: String,
+    /// 上下文窗口（字符串表单；空=不设）。
+    pub context_window: String,
+    /// temperature（字符串表单；空=不设）。
+    pub temperature: String,
+    /// top_p（字符串表单；空=不设）。
+    pub top_p: String,
     /// `List` / `Actions` / `Models` / `SetModel` 模式下的选中索引。
     /// 在模型列表中是 **过滤结果** 内的下标，不是 `models` 原始下标。
     pub selected: usize,
@@ -232,6 +306,11 @@ impl ProviderModalState {
             models_loading: false,
             model_filter: String::new(),
             manual_model_id: String::new(),
+            model_param_field: None,
+            max_completion_tokens: String::new(),
+            context_window: String::new(),
+            temperature: String::new(),
+            top_p: String::new(),
             selected: 0,
             scroll_offset: 0,
             list_viewport: 0,
@@ -489,6 +568,83 @@ impl ProviderModalState {
         }
     }
 
+    /// 清空模型参数表单字段。
+    pub fn clear_model_params(&mut self) {
+        self.model_param_field = None;
+        self.max_completion_tokens.clear();
+        self.context_window.clear();
+        self.temperature.clear();
+        self.top_p.clear();
+    }
+
+    /// 当前参数字段对应的可编辑字符串。
+    pub fn model_param_value_mut(&mut self, field: ModelParamField) -> &mut String {
+        match field {
+            ModelParamField::MaxCompletionTokens => &mut self.max_completion_tokens,
+            ModelParamField::ContextWindow => &mut self.context_window,
+            ModelParamField::Temperature => &mut self.temperature,
+            ModelParamField::TopP => &mut self.top_p,
+        }
+    }
+
+    pub fn model_param_value(&self, field: ModelParamField) -> &str {
+        match field {
+            ModelParamField::MaxCompletionTokens => self.max_completion_tokens.as_str(),
+            ModelParamField::ContextWindow => self.context_window.as_str(),
+            ModelParamField::Temperature => self.temperature.as_str(),
+            ModelParamField::TopP => self.top_p.as_str(),
+        }
+    }
+
+    /// 从 config 预填某模型已有参数（配置模型参数用）。
+    pub fn prefill_model_params(&mut self, provider: &str, model_id: &str) {
+        self.clear_model_params();
+        let catalog_key =
+            crate::slash::commands::provider::provider_model_catalog_key(provider, model_id);
+        let Ok(doc) = crate::slash::commands::provider::load_config() else {
+            tracing::warn!("prefill_model_params: failed to load config");
+            return;
+        };
+        let Some(table) = doc
+            .get("model")
+            .and_then(|v| v.as_table())
+            .and_then(|t| t.get(catalog_key.as_str()))
+            .and_then(|v| v.as_table())
+        else {
+            return;
+        };
+        if let Some(v) = table.get("max_completion_tokens").and_then(|i| {
+            i.as_integer()
+                .map(|n| n.to_string())
+                .or_else(|| i.as_str().map(|s| s.to_string()))
+        }) {
+            self.max_completion_tokens = v;
+        }
+        if let Some(v) = table.get("context_window").and_then(|i| {
+            i.as_integer()
+                .map(|n| n.to_string())
+                .or_else(|| i.as_str().map(|s| s.to_string()))
+        }) {
+            self.context_window = v;
+        }
+        if let Some(v) = table.get("temperature").and_then(|i| {
+            i.as_float()
+                .map(|n| format_float_trim(n))
+                .or_else(|| i.as_integer().map(|n| n.to_string()))
+                .or_else(|| i.as_str().map(|s| s.to_string()))
+        }) {
+            self.temperature = v;
+        }
+        if let Some(v) = table.get("top_p").and_then(|i| {
+            i.as_float()
+                .map(|n| format_float_trim(n))
+                .or_else(|| i.as_integer().map(|n| n.to_string()))
+                .or_else(|| i.as_str().map(|s| s.to_string()))
+        }) {
+            self.top_p = v;
+        }
+    }
+
     /// 导航回渠道列表 hub。
     pub fn go_list(&mut self) {
         self.from_hub = true;
@@ -498,6 +654,7 @@ impl ProviderModalState {
         self.models.clear();
         self.model_filter.clear();
         self.manual_model_id.clear();
+        self.clear_model_params();
         self.edit_had_key = false;
         self.models_loading = false;
         self.current_step = FormStep::Preset;
@@ -517,6 +674,8 @@ impl ProviderModalState {
         self.api_key.clear();
         self.models.clear();
         self.model_filter.clear();
+        self.manual_model_id.clear();
+        self.clear_model_params();
         self.models_loading = false;
         self.selected = 0;
         self.scroll_offset = 0;
@@ -536,42 +695,43 @@ impl ProviderModalState {
         self.selected = 0;
     }
 
+    /// 从 config.toml 预填编辑表单字段（base_url / auth_scheme / api_backend /
+    /// edit_had_key）。公共逻辑，供 `go_edit` 和深链 `dispatch_open_provider_modal`
+    /// 复用，避免两份拷贝不同步。
+    pub fn prefill_edit_fields(&mut self, name: &str) -> Result<(), String> {
+        let doc = crate::slash::commands::provider::load_config()?;
+        self.name = name.to_string();
+        self.base_url = crate::slash::commands::provider::provider_field(&doc, name, "base_url")
+            .unwrap_or_default();
+        let auth =
+            crate::slash::commands::provider::provider_field(&doc, name, "auth_scheme")
+                .unwrap_or_else(|| "bearer".into());
+        self.auth_scheme_idx = AUTH_SCHEMES
+            .iter()
+            .position(|&s| s == auth)
+            .unwrap_or(0);
+        let backend =
+            crate::slash::commands::provider::provider_field(&doc, name, "api_backend")
+                .unwrap_or_else(|| "chat_completions".into());
+        self.api_backend_idx = API_BACKENDS
+            .iter()
+            .position(|&s| s == backend)
+            .unwrap_or(1);
+        self.edit_had_key =
+            crate::slash::commands::provider::provider_field(&doc, name, "api_key").is_some();
+        self.current_step = FormStep::BaseUrl;
+        Ok(())
+    }
+
     /// 打开编辑表单，预填已有配置。
     pub fn go_edit(&mut self, name: String) {
         self.clear_messages();
         self.api_key.clear();
         self.manual_model_id.clear();
-        self.edit_had_key = false;
-        self.current_step = FormStep::BaseUrl;
         self.selected = 0;
 
-        match crate::slash::commands::provider::load_config() {
-            Ok(doc) => {
-                self.name = name.clone();
-                self.base_url = crate::slash::commands::provider::provider_field(
-                    &doc, &name, "base_url",
-                )
-                .unwrap_or_default();
-                let auth = crate::slash::commands::provider::provider_field(
-                    &doc, &name, "auth_scheme",
-                )
-                .unwrap_or_else(|| "bearer".into());
-                self.auth_scheme_idx = AUTH_SCHEMES
-                    .iter()
-                    .position(|&s| s == auth)
-                    .unwrap_or(0);
-                let backend = crate::slash::commands::provider::provider_field(
-                    &doc, &name, "api_backend",
-                )
-                .unwrap_or_else(|| "chat_completions".into());
-                self.api_backend_idx = API_BACKENDS
-                    .iter()
-                    .position(|&s| s == backend)
-                    .unwrap_or(1);
-                self.edit_had_key = crate::slash::commands::provider::provider_field(
-                    &doc, &name, "api_key",
-                )
-                .is_some();
+        match self.prefill_edit_fields(&name) {
+            Ok(()) => {
                 self.mode = ProviderModalMode::Edit(name);
             }
             Err(e) => {
@@ -608,7 +768,17 @@ impl ProviderModalState {
         self.mode = ProviderModalMode::ManualModel(name);
         self.clear_messages();
         self.manual_model_id.clear();
+        self.clear_model_params();
         self.selected = 0;
+    }
+
+    /// 打开「配置模型参数」：先选/搜模型，再填参数。
+    pub fn go_configure_model(&mut self, name: String) {
+        self.mode = ProviderModalMode::ConfigureModel(name.clone());
+        self.clear_messages();
+        self.clear_model_params();
+        self.manual_model_id.clear();
+        self.load_models_for(&name);
     }
 
     /// Esc 逐级返回；返回 true 表示应关闭模态框。
@@ -692,10 +862,45 @@ impl ProviderModalState {
                     true
                 }
             }
+            ProviderModalMode::ManualModel(name) => {
+                // 参数步骤内回退字段；回到 ID 输入；再退出模式。
+                if let Some(field) = self.model_param_field {
+                    if let Some(prev) = field.prev() {
+                        self.model_param_field = Some(prev);
+                    } else {
+                        self.model_param_field = None;
+                    }
+                    self.error = None;
+                    return false;
+                }
+                if self.from_hub {
+                    self.go_actions(name);
+                    false
+                } else {
+                    true
+                }
+            }
+            ProviderModalMode::ConfigureModel(name) => {
+                if let Some(field) = self.model_param_field {
+                    if let Some(prev) = field.prev() {
+                        self.model_param_field = Some(prev);
+                    } else {
+                        // 离开参数表单，回到模型选择（保留已选 model id）
+                        self.model_param_field = None;
+                    }
+                    self.error = None;
+                    return false;
+                }
+                if self.from_hub {
+                    self.go_actions(name);
+                    false
+                } else {
+                    true
+                }
+            }
             ProviderModalMode::SetKey(name)
             | ProviderModalMode::Models(name)
-            | ProviderModalMode::SetModel(name)
-            | ProviderModalMode::ManualModel(name) => {
+            | ProviderModalMode::SetModel(name) => {
                 if self.from_hub {
                     self.go_actions(name);
                     false
@@ -704,5 +909,14 @@ impl ProviderModalState {
                 }
             }
         }
+    }
+}
+
+fn format_float_trim(n: f64) -> String {
+    let s = format!("{n}");
+    if s.contains('.') {
+        s.trim_end_matches('0').trim_end_matches('.').to_string()
+    } else {
+        s
     }
 }
