@@ -17,9 +17,11 @@
 //! Env/vendor only require `is_file()` as a lenient hint (no `--version` probe).
 //! This memoized path is only a *hint*: the injected shadow re-resolves at
 //! **call time** — it uses the hint when it's still *executable* (`[ -x ]`), else
-//! `command -v {bin}` on the live shell `PATH` (which includes login/rc additions
-//! the agent process may lack), else falls back to the OS `{name}`. So a removed
-//! or non-executable binary self-heals to OS `find`/`grep`, and a binary
+//! `builtin command -v {bin}` on the live shell `PATH` (which includes login/rc
+//! additions the agent process may lack), else falls back to the OS `{name}` via
+//! `builtin command {name}`. Using `builtin` avoids re-entering a user/snapshot
+//! `command` function (issue #7: zsh SIGSEGV under nested `getoutput` / prefork).
+//! A removed or non-executable binary self-heals to OS `find`/`grep`, and a binary
 //! reachable only through the login shell is still found.
 //!
 //! Inject is **always** non-empty on Unix callers: either install a shadow
@@ -252,12 +254,16 @@ fn bash_safe_quote(s: &str) -> String {
 /// Oneline `name() { … }` for `-c` inject — a *self-resolving* shadow.
 ///
 /// At call time it picks the binary: the host-resolved `preferred` path
-/// (bundled/env/vendor/which) when that file still exists, else `command -v
-/// {bin_name}` on the live shell `PATH` (which carries login/rc additions the
-/// agent process may not have), else it falls back to the OS `{name}`. This keeps
-/// the fast hard-coded path for the common case while self-healing when the
-/// binary was removed (revalidation) or is only reachable through the shell's
-/// richer `PATH`.
+/// (bundled/env/vendor/which) when that file is still executable, else
+/// `builtin command -v {bin_name}` on the live shell `PATH` (which carries
+/// login/rc additions the agent process may not have), else it falls back to
+/// the OS `{name}` via `builtin command {name}`. This keeps the fast hard-coded
+/// path for the common case while self-healing when the binary was removed
+/// (revalidation) or is only reachable through the shell's richer `PATH`.
+///
+/// All lookups use **`builtin command`** so a snapshot-defined `command`
+/// function (common under large zsh/oh-my-zsh snaps) cannot re-enter shell
+/// function frames through `getoutput`/`prefork` and crash zsh (issue #7).
 ///
 /// `exec -a` runs inside a subshell so a top-level call can't replace the wrapper
 /// shell (it must survive to dump state); a call already inside a subshell
@@ -288,18 +294,18 @@ fn shell_function(
     // only when it's *executable* (`[ -x ]`, not just `[ -f ]`): the resolver
     // accepts any regular file as a hint, but `exec` needs `+x`, so a non-exec
     // hint must fall through rather than hard-fail with no OS fallback. Then
-    // `command -v` on the live shell PATH (returns an executable), else the OS
-    // binary. `|| __grok_bin=''` keeps the lookup `set -e`-safe (a failed
-    // `command -v` would otherwise abort the function under errexit). The OS
-    // fallback uses `command {name}` to bypass this function. `{prepend}` is
-    // empty for find, the ugrep default flags for grep (and is omitted from the
-    // OS fallback, which gets the original args).
+    // `builtin command -v` on the live shell PATH (returns an executable), else
+    // the OS binary. `|| __grok_bin=''` keeps the lookup `set -e`-safe (a failed
+    // lookup would otherwise abort the function under errexit). The OS fallback
+    // uses `builtin command {name}` to bypass this function *and* any user
+    // `command` wrapper. `{prepend}` is empty for find, the ugrep default flags
+    // for grep (and is omitted from the OS fallback, which gets the original args).
     format!(
         "unalias {name} 2>/dev/null || true; \
          {name}() {{ \
            local __grok_bin={qpref}; \
-           [ -x \"$__grok_bin\" ] || __grok_bin=$(command -v {bin_name} 2>/dev/null) || __grok_bin=''; \
-           if [ -z \"$__grok_bin\" ]; then command {name} \"$@\"; return; fi; \
+           [ -x \"$__grok_bin\" ] || __grok_bin=$(builtin command -v {bin_name} 2>/dev/null) || __grok_bin=''; \
+           if [ -z \"$__grok_bin\" ]; then builtin command {name} \"$@\"; return; fi; \
            if [[ -z ${{ZSH_VERSION-}} ]] && (( BASH_SUBSHELL > 0 )); then \
              exec -a {name} \"$__grok_bin\" {prepend}\"$@\"; \
            else \
@@ -333,9 +339,12 @@ mod tests {
         // non-exec hint falls through instead of hard-failing exec.
         assert!(fn_body.contains("[ -x \"$__grok_bin\" ]"));
         assert!(!fn_body.contains("[ -f \"$__grok_bin\" ]"));
-        // Self-heal: live-PATH lookup + OS fallback.
-        assert!(fn_body.contains("command -v bfs"));
-        assert!(fn_body.contains("command find \"$@\""));
+        // Self-heal: live-PATH lookup + OS fallback via builtin (issue #7).
+        assert!(fn_body.contains("builtin command -v bfs"));
+        assert!(fn_body.contains("builtin command find \"$@\""));
+        // Must not use bare `command` (snapshot `command` functions re-enter).
+        assert!(!fn_body.contains("$(command -v"));
+        assert!(!fn_body.contains("then command find"));
         assert!(fn_body.contains("BASH_SUBSHELL > 0"));
         assert!(fn_body.contains("(exec -a find"));
         // Marker so `restore_command` only removes our own shadow.
@@ -347,11 +356,11 @@ mod tests {
 
     #[test]
     fn shell_function_unresolved_uses_empty_hint() {
-        // No host-resolved path → empty hint, relies on live-PATH `command -v`.
+        // No host-resolved path → empty hint, relies on live-PATH `builtin command -v`.
         let fn_body = shell_function("find", "bfs", None, &[]);
         assert!(fn_body.contains("local __grok_bin=''"));
-        assert!(fn_body.contains("command -v bfs"));
-        assert!(fn_body.contains("command find \"$@\""));
+        assert!(fn_body.contains("builtin command -v bfs"));
+        assert!(fn_body.contains("builtin command find \"$@\""));
     }
 
     #[test]
@@ -365,7 +374,7 @@ mod tests {
         assert!(fn_body.contains("local __grok_bin=/tmp/ugrep"));
         assert!(fn_body.contains("\"$__grok_bin\" -G --ignore-files --hidden -I"));
         assert!(fn_body.contains("--exclude-dir=.git"));
-        assert!(fn_body.contains("command -v ugrep"));
+        assert!(fn_body.contains("builtin command -v ugrep"));
     }
 
     #[test]
@@ -421,7 +430,7 @@ mod tests {
     #[test]
     fn build_injection_enabled_unresolved_still_self_heals() {
         // Enabled but no host-resolved path → still install a self-resolving
-        // shadow (live-PATH `command -v` + OS fallback), never a bare restore.
+        // shadow (live-PATH `builtin command -v` + OS fallback), never a bare restore.
         let tools = ResolvedTools {
             bfs: None,
             ugrep: None,
@@ -429,10 +438,10 @@ mod tests {
         let inject = build_injection(true, true, &tools);
         assert!(inject.contains("find()"));
         assert!(inject.contains("grep()"));
-        assert!(inject.contains("command -v bfs"));
-        assert!(inject.contains("command -v ugrep"));
+        assert!(inject.contains("builtin command -v bfs"));
+        assert!(inject.contains("builtin command -v ugrep"));
         // OS fallback present; not a marker-gated restore.
-        assert!(inject.contains("command find \"$@\""));
+        assert!(inject.contains("builtin command find \"$@\""));
         assert!(!inject.contains("if [ -n \"${__grok_shadow_find-}\" ]"));
     }
 
@@ -680,7 +689,7 @@ mod tests {
     }
 
     /// #1 + #4: the host hint points at a missing file, but the binary is on the
-    /// live shell `PATH` — the shadow re-resolves via `command -v` at call time.
+    /// live shell `PATH` — the shadow re-resolves via `builtin command -v` at call time.
     #[test]
     fn shadow_self_heals_via_path_lookup() {
         let Ok(bash) = which::which("bash") else {
@@ -722,8 +731,8 @@ mod tests {
         assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "SELFHEAL X");
     }
 
-    /// #1 fallback: neither the hint nor `command -v` resolves → the OS binary
-    /// runs (via `command find`), so the shadow never breaks `find`.
+    /// #1 fallback: neither the hint nor `builtin command -v` resolves → the OS
+    /// binary runs (via `builtin command find`), so the shadow never breaks `find`.
     #[test]
     fn shadow_falls_back_to_os_when_binary_absent() {
         let Ok(bash) = which::which("bash") else {
@@ -800,6 +809,123 @@ mod tests {
         assert!(
             !stdout.contains("SHOULD_NOT_RUN"),
             "non-exec hint was run: {stdout:?}"
+        );
+    }
+
+    /// Issue #7: a snapshot-defined `command` function must not re-enter when
+    /// the shadow looks up `ugrep`/`bfs` or falls back to OS `grep`/`find`.
+    /// Bare `command -v` would call the user function and can stack-overflow or
+    /// SIGSEGV under zsh; `builtin command` must bypass it.
+    #[test]
+    fn shadow_survives_user_command_function_bash() {
+        let Ok(bash) = which::which("bash") else {
+            return;
+        };
+        let inject = shell_function("grep", "ugrep", None, &[]);
+        // User `command` that would recurse if the shadow called bare `command`.
+        let script = format!(
+            "set -euo pipefail; \
+             command() {{ echo REENTERED >&2; return 1; }}; \
+             {inject}; \
+             printf 'hello\\nworld\\n' | grep hello"
+        );
+        let out = std::process::Command::new(&bash)
+            .args(["-c", &script])
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "shadow must use builtin command: {:?}\nstderr: {}",
+            out.status,
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "hello");
+        assert!(
+            !String::from_utf8_lossy(&out.stderr).contains("REENTERED"),
+            "bare command was used: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    /// Issue #7: nested command substitution + pipeline through shadow grep
+    /// under zsh must exit normally (not SIGSEGV / status 139).
+    #[test]
+    fn shadow_nested_grep_under_zsh_no_segv() {
+        let Ok(zsh) = which::which("zsh") else {
+            return;
+        };
+        let inject = shell_function("grep", "ugrep", None, &[]);
+        let script = format!(
+            "setopt nounset errexit pipefail; \
+             {inject}; \
+             content=$(printf 'alpha\\nbeta\\ngamma\\n'); \
+             echo \"$content\" | grep -q beta; \
+             out=$(echo \"$content\" | grep -n beta); \
+             printf '%s' \"$out\""
+        );
+        let out = std::process::Command::new(&zsh)
+            .args(["-c", &script])
+            .output()
+            .unwrap();
+        // 139 = 128 + SIGSEGV; also reject any signal termination.
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::ExitStatusExt;
+            assert!(
+                out.status.signal() != Some(11),
+                "zsh SIGSEGV under shadow grep (issue #7): {:?}",
+                out.status
+            );
+        }
+        assert!(
+            out.status.success(),
+            "zsh nested grep failed: {:?}\nstderr: {}",
+            out.status,
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&out.stdout).contains("beta"),
+            "stdout: {}",
+            String::from_utf8_lossy(&out.stdout)
+        );
+    }
+
+    /// Issue #7: even with a malicious zsh `command` function, shadow must not
+    /// re-enter (builtin path).
+    #[test]
+    fn shadow_survives_user_command_function_zsh() {
+        let Ok(zsh) = which::which("zsh") else {
+            return;
+        };
+        let inject = shell_function("find", "bfs", None, &[]);
+        let script = format!(
+            "setopt nounset errexit pipefail; \
+             command() {{ echo REENTERED >&2; return 1; }}; \
+             {inject}; \
+             find /dev/null"
+        );
+        let out = std::process::Command::new(&zsh)
+            .args(["-c", &script])
+            .output()
+            .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::ExitStatusExt;
+            assert!(
+                out.status.signal() != Some(11),
+                "zsh SIGSEGV with user command(): {:?}",
+                out.status
+            );
+        }
+        assert!(
+            out.status.success(),
+            "stderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "/dev/null");
+        assert!(
+            !String::from_utf8_lossy(&out.stderr).contains("REENTERED"),
+            "bare command was used under zsh"
         );
     }
 }
