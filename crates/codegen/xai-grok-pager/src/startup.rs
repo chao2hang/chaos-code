@@ -3,7 +3,7 @@
 //! Any subsystem (terminal diagnostics, auth, config migration, etc.) can
 //! produce [`StartupWarning`]s.
 
-pub(crate) const DOCTOR_ACTION: &str = "Run /doctor for details and fixes.";
+pub(crate) const DOCTOR_ACTION: &str = "运行 /doctor 查看详情与修复建议。";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ActionableStartupWarning {
@@ -53,7 +53,7 @@ pub struct StartupWarning {
     pub severity: WarningSeverity,
     /// Short, user-facing message (fits in ~60 columns).
     pub message: String,
-    /// Optional action hint (e.g. "Run /doctor for details and fixes.").
+    /// Optional action hint (e.g. "运行 /doctor 查看详情与修复建议。").
     pub action: Option<String>,
 }
 

@@ -1668,7 +1668,7 @@ fn dashboard_does_not_advertise_or_dispatch_doctor() {
     let mut app = three_agent_app();
     open_dashboard(&mut app);
     let expected = format!(
-        "{} /doctor only works in a session",
+        "{} 请先打开会话再运行 /doctor。",
         crate::glyphs::ballot_x()
     );
     for name in [

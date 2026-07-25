@@ -590,7 +590,7 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
                 deliver_doctor_message(
                     app,
                     target.agent_id,
-                    "This fix was cancelled because the session changed. Run `/doctor fix` again."
+                    "此修复已取消，因为会话已变更。请重新运行 `/doctor fix`。"
                         .to_owned(),
                 );
                 return vec![];
@@ -607,17 +607,17 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
                         app,
                         target.agent_id,
                         format!(
-                            "This fix configures your local computer, not this SSH session.\nOn your local computer, run: {command}"
+                            "此修复配置的是你的本地电脑，而不是当前 SSH 会话。\n请在本地电脑运行：{command}"
                         ),
                     );
                 }
                 Err(error) => deliver_doctor_message(
                     app,
                     target.agent_id,
-                    if error.starts_with("Could not prepare the fix:") {
+                    if error.starts_with("无法准备修复：") {
                         error
                     } else {
-                        format!("Could not prepare the fix: {error}")
+                        format!("无法准备修复：{error}")
                     },
                 ),
             }
@@ -626,8 +626,8 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
         TaskResult::DoctorFixApplied { target, result } => {
             let message = match result {
                 Ok(outcome) => crate::diagnostics::format_fix_success(&outcome),
-                Err(error) if error.starts_with("Could not apply the fix:") => error,
-                Err(error) => format!("Could not apply the fix: {error}"),
+                Err(error) if error.starts_with("无法应用修复：") => error,
+                Err(error) => format!("无法应用修复：{error}"),
             };
             deliver_doctor_message(app, target.agent_id, message);
             vec![]

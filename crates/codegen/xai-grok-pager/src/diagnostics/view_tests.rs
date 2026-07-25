@@ -340,7 +340,7 @@ fn unavailable_runtime_evidence_is_honest_and_fail_open() {
         .expect("control-mode finding");
     assert_eq!(
         control_mode.message,
-        "Display may be limited in tmux control mode"
+        "在 tmux control mode 下显示可能受限"
     );
     assert_eq!(
         report
@@ -674,7 +674,7 @@ fn available_wezterm_evidence_retains_finding_and_backslash_note() {
         finding
             .note
             .as_deref()
-            .is_some_and(|note| note.contains("type `\\` and then press Enter"))
+            .is_some_and(|note| note.contains("输入 `\\` 再按 Enter"))
     );
 }
 
@@ -706,7 +706,7 @@ fn keyboard_fact_and_formatter_use_snapshot_host() {
     let output = crate::diagnostics::format_doctor(&report);
     if snapshot_host == crate::host::HostOs::Macos {
         assert_eq!(keyboard.map(|fact| fact.os), Some(snapshot_host));
-        assert!(output.contains("(OS rescue active)"));
+        assert!(output.contains("(系统救援已启用)"));
     } else {
         assert!(keyboard.is_none());
         assert!(!output.contains("  keyboard     "));

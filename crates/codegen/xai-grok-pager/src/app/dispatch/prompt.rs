@@ -138,23 +138,23 @@ pub(super) fn open_doctor_fix_question(
     };
     if agent.question_view.is_some() {
         agent.scrollback.push_block(RenderBlock::system(
-            "Close the current question before applying this fix.",
+            "请先关闭当前问题，再应用此修复。",
         ));
         return;
     }
     let preview = crate::diagnostics::format_fix_preview(&plan);
     let question = Question {
-        question: "Apply this fix?".to_owned(),
+        question: "应用此修复？".to_owned(),
         options: vec![
             QuestionOption {
-                label: "Apply".to_owned(),
-                description: "Make the changes shown above.".to_owned(),
+                label: "应用".to_owned(),
+                description: "按上方所示进行更改。".to_owned(),
                 preview: Some(preview),
                 id: None,
             },
             QuestionOption {
-                label: "Cancel".to_owned(),
-                description: "Do not change the configuration.".to_owned(),
+                label: "取消".to_owned(),
+                description: "不修改配置。".to_owned(),
                 preview: None,
                 id: None,
             },
