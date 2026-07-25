@@ -1,5 +1,9 @@
 # Install Chaos CLI from GitHub Releases and put it on user PATH.
 #
+# Preferred on Windows when iex is unavailable: scripts\install.bat
+#   install.bat
+#   install.bat --version 0.2.113
+#
 # One-liner (PowerShell, latest):
 #   irm https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.ps1 | iex
 #

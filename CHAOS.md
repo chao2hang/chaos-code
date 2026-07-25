@@ -5,20 +5,22 @@ Chaos 是终端 AI 编码助手。它不使用 Grok 登录，也不会在启动�
 
 ## 安装与启动
 
-### npm（预编译二进制）
+**推荐：GitHub Release 预编译二进制**（不依赖 Node / npm）。完整说明与 Windows
+`install.bat`（无需 `iex`）见根目录 [README.md](README.md#安装)。
 
 ```sh
-npm i -g chaos-code
-chaos
+# macOS / Linux
+curl -fsSL https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.sh | bash
 chaos --version
+
+# Windows cmd（无需 iex）
+# curl -L -o "%TEMP%\install-chaos.bat" https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.bat && "%TEMP%\install-chaos.bat"
 ```
 
-Node.js ≥ 20。包名是 **`chaos-code`**（不要用已被 npm 占位的 `chaos-cli`）。
+更新：`chaos update`（默认从本仓库 Releases 拉取）。
 
-维护者发版：**CI 构建六平台二进制 → 发布 npmjs**（不要只靠本机手工 publish）。
-推送 tag `v0.2.x` 或跑 Actions **Release**；说明见
-[`npm/PUBLISH.md`](crates/codegen/xai-grok-pager/npm/PUBLISH.md) 与
-[`.github/workflows/release.yml`](.github/workflows/release.yml)。
+npm（可选，包名 **`chaos-code`**）：`npm i -g chaos-code`。装不上请用 Release。
+维护者发版见 [`npm/PUBLISH.md`](crates/codegen/xai-grok-pager/npm/PUBLISH.md)。
 
 ### 从源码构建
 
