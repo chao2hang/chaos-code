@@ -94,6 +94,7 @@ pub fn handle_provider_key(state: &mut ProviderModalState, key: &KeyEvent) -> Pr
         ProviderModalMode::SetModel(_) => handle_set_model(state, key),
         ProviderModalMode::ManualModel(_) => handle_manual_model(state, key),
         ProviderModalMode::ConfigureModel(_) => handle_configure_model(state, key),
+        ProviderModalMode::ConfirmingDelete(_) => handle_confirm_delete(state, key),
     }
 }
 
@@ -795,8 +796,39 @@ fn handle_actions(state: &mut ProviderModalState, key: &KeyEvent) -> ProviderKey
                 ProviderAction::ManualModel => state.go_manual_model(name),
                 ProviderAction::ConfigureModel => state.go_configure_model(name),
                 ProviderAction::SetModel => state.go_set_model(name),
+                ProviderAction::Delete => state.go_confirm_delete(name),
             }
             ProviderKeyOutcome::Changed
+        }
+        _ => ProviderKeyOutcome::Unchanged,
+    }
+}
+
+/// 「确认删除渠道」对话框的按键处理。
+///
+/// - `y` / `Y` / `Enter`：执行删除
+/// - `n` / `N` / `Esc`：取消（Esc 走 `navigate_back` 已回到 Actions，这里仅显式 n 走同一路径）
+/// - 其它键：忽略
+fn handle_confirm_delete(state: &mut ProviderModalState, key: &KeyEvent) -> ProviderKeyOutcome {
+    match key.code {
+        KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+            state.apply_confirm_delete();
+            ProviderKeyOutcome::Changed
+        }
+        KeyCode::Char('n') | KeyCode::Char('N') => {
+            if let ProviderModalMode::ConfirmingDelete(name) = state.mode.clone() {
+                state.go_actions(name);
+            }
+            ProviderKeyOutcome::Changed
+        }
+        // Esc 已由 `handle_provider_key` 顶部在 success 之外的通用回退里走
+        // `navigate_back` —— 这里只对 navigate_back 的返回值翻译成 outcome。
+        KeyCode::Esc => {
+            if state.navigate_back() {
+                ProviderKeyOutcome::Close
+            } else {
+                ProviderKeyOutcome::Changed
+            }
         }
         _ => ProviderKeyOutcome::Unchanged,
     }

@@ -27,6 +27,10 @@ pub enum ProviderAction {
     ConfigureModel,
     SetModel,
     Refresh,
+    /// 删除渠道（连同 `[model."provider/id"]` 目录条目），需二次确认。
+    ///
+    /// Issue #13：之前完全没有路径清理已废渠道，只能手改 config.toml。
+    Delete,
 }
 
 impl ProviderAction {
@@ -38,6 +42,7 @@ impl ProviderAction {
         ProviderAction::ConfigureModel,
         ProviderAction::SetModel,
         ProviderAction::Refresh,
+        ProviderAction::Delete,
     ];
 
     pub fn label(self) -> &'static str {
@@ -49,6 +54,7 @@ impl ProviderAction {
             Self::ConfigureModel => "配置模型参数",
             Self::SetModel => "切换模型",
             Self::Refresh => "刷新模型列表",
+            Self::Delete => "删除渠道",
         }
     }
 
@@ -61,6 +67,7 @@ impl ProviderAction {
             Self::ConfigureModel => "max_tokens / 上下文 / temperature",
             Self::SetModel => "选择并设为当前模型",
             Self::Refresh => "重新拉取模型列表",
+            Self::Delete => "删除渠道及其所有模型条目（不可恢复）",
         }
     }
 }
@@ -211,6 +218,8 @@ pub enum ProviderModalMode {
     ManualModel(String),
     /// 选择模型后配置详细参数（写入 `[model."provider/id"]`）。
     ConfigureModel(String),
+    /// 二次确认删除某个渠道。Issue #13。
+    ConfirmingDelete(String),
 }
 
 /// 输入事件的输出。
@@ -781,6 +790,54 @@ impl ProviderModalState {
         self.load_models_for(&name);
     }
 
+    /// 打开「确认删除渠道」对话框。
+    ///
+    /// Issue #13：危险操作必须显式确认，否则回到操作菜单不丢上下文。
+    pub fn go_confirm_delete(&mut self, name: String) {
+        self.mode = ProviderModalMode::ConfirmingDelete(name);
+        self.clear_messages();
+    }
+
+    /// 在确认对话框按下 `y` / `Enter` 后真正执行删除。
+    ///
+    /// 返回 `true` 表示应关闭模态框（成功删除且该渠道是最后/仅有的）。
+    /// 调用方处理 `navigate_back` 时应根据返回值决定下一步。
+    pub fn apply_confirm_delete(&mut self) -> bool {
+        let name = match &self.mode {
+            ProviderModalMode::ConfirmingDelete(name) => name.clone(),
+            _ => return false,
+        };
+
+        match crate::slash::commands::provider::delete_provider(&name) {
+            Ok(outcome) => {
+                let msg = if outcome.removed_model_keys.is_empty() {
+                    format!("已删除渠道 \"{name}\"")
+                } else {
+                    format!(
+                        "已删除渠道 \"{name}\"（含 {} 个模型条目）",
+                        outcome.removed_model_keys.len()
+                    )
+                };
+                if outcome.cleared_default {
+                    self.success = Some(format!(
+                        "{msg}。默认模型已被清空，请用 /model 重新选择。"
+                    ));
+                } else {
+                    self.success = Some(msg);
+                }
+                self.mode = ProviderModalMode::List;
+                self.providers.clear();
+                self.reload_providers();
+                false
+            }
+            Err(e) => {
+                self.error = Some(format!("删除失败: {e}"));
+                // 留在 ConfirmingDelete 让用户重试或 Esc 取消
+                false
+            }
+        }
+    }
+
     /// Esc 逐级返回；返回 true 表示应关闭模态框。
     ///
     /// 多步表单内始终先退一步（不依赖 `from_hub`）。仅在该层级的「根」
@@ -907,6 +964,11 @@ impl ProviderModalState {
                 } else {
                     true
                 }
+            }
+            // 确认删除对话框：Esc 一律回到操作菜单（避免误关整个模态）。
+            ProviderModalMode::ConfirmingDelete(name) => {
+                self.go_actions(name);
+                false
             }
         }
     }
