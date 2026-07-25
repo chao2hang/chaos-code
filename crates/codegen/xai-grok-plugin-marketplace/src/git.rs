@@ -4,16 +4,20 @@
 //! Cache root: `~/.grok/marketplace-cache/<url-hash>/`
 
 use std::fs::{File, OpenOptions};
-use std::io;
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use fs2::FileExt;
+use wait_timeout::ChildExt;
 
 /// Default TTL for marketplace cache freshness (5 minutes).
 const CACHE_TTL: Duration = Duration::from_secs(5 * 60);
 const LOCK_TIMEOUT: Duration = Duration::from_secs(30);
 const LOCK_POLL_INTERVAL: Duration = Duration::from_millis(100);
+/// Hard cap for clone/fetch so a bad marketplace URL cannot hang list/refresh.
+const NETWORK_OP_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SyncMode {
@@ -281,6 +285,79 @@ fn clone_cli_command(url: &str, branch: Option<&str>, dest: &Path) -> std::proce
     }
     cmd.arg("--").arg(url).arg(dest.as_os_str());
     cmd
+}
+
+/// Probe whether `url` is a reachable git repository via a timed
+/// `git ls-remote`, without touching any cache. Used to reject non-git URLs
+/// (e.g. MCP endpoints) at add time instead of persisting a source that
+/// fails on every scan.
+pub fn probe_git_remote(url: &str) -> Result<(), String> {
+    let url = xai_grok_agent::plugins::git_install::validate_git_url(url)?;
+    let mut cmd = git_command();
+    cmd.args(["ls-remote", "--", url, "HEAD"]);
+    run_git_timed(&mut cmd, "ls-remote", NETWORK_OP_TIMEOUT)
+}
+
+/// Run a git command, wait up to `timeout`, kill+reap on hang. Errors on
+/// timeout or non-zero exit; `what` names the operation in error messages.
+fn run_git_timed(cmd: &mut Command, what: &str, timeout: Duration) -> Result<(), String> {
+    cmd.stdout(Stdio::null());
+    cmd.stderr(Stdio::piped());
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("failed to run git {what}: {e}"))?;
+    match child.wait_timeout(timeout) {
+        Ok(Some(status)) => {
+            let mut stderr = Vec::new();
+            if let Some(mut err) = child.stderr.take() {
+                let _ = err.read_to_end(&mut stderr);
+            }
+            if status.success() {
+                Ok(())
+            } else {
+                let stderr = String::from_utf8_lossy(&stderr);
+                tracing::debug!("git {what} stderr: {stderr}");
+                Err(git_failure_message(what, &stderr))
+            }
+        }
+        Ok(None) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            Err(format!("git {what} timed out after {}s", timeout.as_secs()))
+        }
+        Err(e) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            Err(format!("failed to wait for git {what}: {e}"))
+        }
+    }
+}
+
+/// Condense git stderr into a user-facing failure message.
+fn git_failure_message(what: &str, stderr: &str) -> String {
+    const AUTH_PATTERNS: [&str; 3] = [
+        "could not read Username",
+        "could not read Password",
+        "Authentication failed",
+    ];
+    if AUTH_PATTERNS.iter().any(|p| stderr.contains(p)) {
+        return format!(
+            "git {what} failed: authentication required or not a git repository (check the URL)"
+        );
+    }
+    let detail: String = stderr
+        .lines()
+        .filter(|line| {
+            let lower = line.to_ascii_lowercase();
+            lower.contains("fatal:") || lower.contains("error:")
+        })
+        .collect::<Vec<_>>()
+        .join("; ");
+    if detail.is_empty() {
+        format!("git {what} failed")
+    } else {
+        format!("git {what} failed: {detail}")
+    }
 }
 
 fn clone_with_cli(url: &str, branch: Option<&str>, dest: &Path) -> Result<(), String> {

@@ -193,9 +193,9 @@ fn discover_auto_sources(cwd: &str, skills: &[SkillInfo]) -> Vec<(String, usize)
     // [paths] extra_skill_dirs in config.toml (written by /import-claude).
     let imported = crate::claude_import::is_claude_import_marked();
     let local_dir_names: &[&str] = if imported {
-        &[".grok", ".chaos", ".agents"]
+        &[".grok", ".agents"]
     } else {
-        &[".grok", ".chaos", ".agents", ".claude"]
+        &[".grok", ".agents", ".claude"]
     };
 
     let mut sources: Vec<(String, usize)> = Vec::new();
@@ -248,7 +248,7 @@ fn discover_auto_sources(cwd: &str, skills: &[SkillInfo]) -> Vec<(String, usize)
     // scan locations. Used both standalone and as the migration target after
     // /import-claude when the runtime .claude/skills/ scan is disabled.
     for dir in extra_skill_dirs_from_config() {
-        let path = crate::claude_import::expand_home(&dir);
+        let path = crate::util::expand_home(&dir);
         if path.is_dir()
             && !sources
                 .iter()

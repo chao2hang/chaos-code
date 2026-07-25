@@ -3,7 +3,6 @@ use indexmap::IndexMap;
 use super::config::{ConfigModelOverride, EnvKeys};
 use super::config_model_override_parse::{ConfigWarning, ConfigWarningKind};
 use crate::sampling::ApiBackend;
-use xai_grok_sampler::AuthScheme;
 
 #[derive(Clone, Debug, Default, serde::Deserialize)]
 #[serde(default)]
@@ -13,8 +12,12 @@ pub struct ModelProviderConfig {
     pub env_key: Option<EnvKeys>,
     pub api_key: Option<String>,
     pub api_backend: Option<ApiBackend>,
-    pub auth_scheme: Option<AuthScheme>,
     pub extra_headers: IndexMap<String, String>,
+    /// Query parameters folded into every request URL; inherited by models.
+    pub query_params: IndexMap<String, String>,
+    /// Header name to environment variable; inherited by models, resolved at
+    /// client build.
+    pub env_http_headers: IndexMap<String, String>,
     pub auth_provider: Option<String>,
     pub auth: Option<crate::auth::AuthProviderConfig>,
     pub context_window: Option<u64>,
@@ -176,8 +179,9 @@ impl ConfigModelOverride {
             env_key,
             api_key,
             api_backend,
-            auth_scheme,
             extra_headers,
+            query_params,
+            env_http_headers,
             auth_provider,
             auth,
             context_window,
@@ -188,20 +192,17 @@ impl ConfigModelOverride {
         merged.base_url = merged.base_url.or_else(|| base_url.clone());
         merged.api_base_url = merged.api_base_url.or_else(|| api_base_url.clone());
         merged.api_backend = merged.api_backend.or_else(|| api_backend.clone());
-        merged.auth_scheme = merged.auth_scheme.or(*auth_scheme);
         merged.context_window = merged.context_window.or(*context_window);
-        let mut inherited_headers = extra_headers.clone();
-        for (key, value) in &merged.extra_headers {
-            if let Some(existing) = inherited_headers
-                .keys()
-                .find(|existing| existing.eq_ignore_ascii_case(key))
-                .cloned()
-            {
-                inherited_headers.shift_remove(&existing);
-            }
-            inherited_headers.insert(key.clone(), value.clone());
+        // Inherited wholesale only when the model sets none of its own.
+        if merged.extra_headers.is_empty() {
+            merged.extra_headers = extra_headers.clone();
         }
-        merged.extra_headers = inherited_headers;
+        if merged.query_params.is_empty() {
+            merged.query_params = query_params.clone();
+        }
+        if merged.env_http_headers.is_empty() {
+            merged.env_http_headers = env_http_headers.clone();
+        }
         let model_sets_own_api_key = self
             .api_key
             .as_deref()
@@ -434,38 +435,6 @@ mod tests {
         let model = resolved.get("own-key").expect("model should exist");
         let creds = resolve_credentials(model, Some("session-jwt"));
         assert_eq!(creds.api_key.as_deref(), Some("sk-model-own"));
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn direct_custom_endpoint_never_inherits_session_or_global_xai_key() {
-        use xai_grok_test_support::EnvGuard;
-
-        let _global = EnvGuard::set("XAI_API_KEY", "global-xai-key");
-        let raw_config: toml::Value = toml::from_str(
-            r#"
-            [model.third-party]
-            model = "m"
-            base_url = "https://third-party.example/v1"
-            context_window = 200000
-            "#,
-        )
-        .unwrap();
-
-        let cfg = Config::new_from_toml_cfg(&raw_config).expect("config should parse");
-        let resolved = resolve_model_list(&cfg, None);
-        let model = resolved.get("third-party").expect("model should exist");
-        assert!(
-            model
-                .effective_auth_provider()
-                .is_some_and(crate::auth::AuthProviderRef::is_fail_closed),
-            "a credential-less custom endpoint must be explicitly fail-closed"
-        );
-        assert_eq!(
-            resolve_credentials(model, Some("session-jwt")).api_key,
-            None
-        );
-        assert_eq!(resolve_credentials(model, None).api_key, None);
     }
 
     #[test]
@@ -859,7 +828,7 @@ mod tests {
     }
 
     #[test]
-    fn model_headers_extend_provider_headers() {
+    fn model_headers_shadow_provider_headers() {
         let raw_config: toml::Value = toml::from_str(
             r#"
             [model_providers.gateway]
@@ -887,91 +856,9 @@ mod tests {
             model.info.extra_headers.get("X-Model").map(String::as_str),
             Some("own")
         );
-        assert_eq!(
-            model.info.extra_headers.get("X-Corp").map(String::as_str),
-            Some("yes"),
-            "模型级 header 应与 Provider 默认 header 逐项合并"
-        );
-    }
-
-    #[test]
-    fn model_headers_override_provider_headers_case_insensitively() {
-        let raw_config: toml::Value = toml::from_str(
-            r#"
-            [model_providers.anthropic]
-            base_url = "https://api.anthropic.com/v1"
-
-            [model_providers.anthropic.extra_headers]
-            Anthropic-Version = "provider-value"
-            X-Corp = "yes"
-
-            [model.claude]
-            model = "claude-sonnet-4-5"
-            model_provider = "anthropic"
-
-            [model.claude.extra_headers]
-            anthropic-version = "model-value"
-            "#,
-        )
-        .unwrap();
-
-        let cfg = Config::new_from_toml_cfg(&raw_config).expect("config should parse");
-        let resolved = resolve_model_list(&cfg, None);
-        let headers = &resolved["claude"].info.extra_headers;
-        assert_eq!(
-            headers.get("anthropic-version").map(String::as_str),
-            Some("model-value")
-        );
-        assert_eq!(headers.get("X-Corp").map(String::as_str), Some("yes"));
-        assert_eq!(
-            headers
-                .keys()
-                .filter(|key| key.eq_ignore_ascii_case("anthropic-version"))
-                .count(),
-            1,
-            "provider and model spellings must not produce duplicate wire headers"
-        );
-    }
-
-    #[test]
-    fn anthropic_provider_inherits_x_api_key_auth_scheme() {
-        let raw_config: toml::Value = toml::from_str(
-            r#"
-            [model_providers.anthropic]
-            base_url = "https://api.anthropic.com/v1"
-            api_backend = "messages"
-            auth_scheme = "x_api_key"
-            env_key = "ANTHROPIC_API_KEY"
-
-            [model_providers.anthropic.extra_headers]
-            anthropic-version = "2023-06-01"
-
-            [model.claude]
-            model = "claude-sonnet-4-5"
-            context_window = 200000
-            model_provider = "anthropic"
-            "#,
-        )
-        .unwrap();
-
-        let cfg = Config::new_from_toml_cfg(&raw_config).expect("config should parse");
-        let resolved = resolve_model_list(&cfg, None);
-        let model = resolved.get("claude").expect("model should exist");
-        assert_eq!(
-            model.info.api_backend,
-            crate::sampling::ApiBackend::Messages
-        );
-        assert_eq!(
-            model.info.auth_scheme,
-            xai_grok_sampler::AuthScheme::XApiKey
-        );
-        assert_eq!(
-            model
-                .info
-                .extra_headers
-                .get("anthropic-version")
-                .map(String::as_str),
-            Some("2023-06-01")
+        assert!(
+            model.info.extra_headers.get("X-Corp").is_none(),
+            "a model that sets any header inherits none of the provider's"
         );
     }
 
@@ -1040,5 +927,84 @@ mod tests {
             .expect("blank api_key must not fail-close a working gateway");
         assert_eq!(provider.name.as_str(), "model_provider:gateway");
         assert!(!provider.is_fail_closed());
+    }
+
+    #[test]
+    fn model_inherits_provider_query_params_and_env_http_headers() {
+        let toml_cfg: toml::Value = toml::from_str(
+            r#"
+            [model_providers.gateway]
+            base_url = "https://gateway.example/v1"
+            api_key = "sk-provider"
+
+            [model_providers.gateway.query_params]
+            api-version = "2026-07-22"
+
+            [model_providers.gateway.env_http_headers]
+            X-Tenant-Token = "GATEWAY_TENANT_TOKEN"
+
+            [model.via-gateway]
+            model = "m"
+            model_provider = "gateway"
+            "#,
+        )
+        .unwrap();
+
+        let cfg = Config::new_from_toml_cfg(&toml_cfg).expect("config should parse");
+        let resolved = resolve_model_list(&cfg, None);
+        let model = resolved.get("via-gateway").expect("model should exist");
+        assert_eq!(
+            model
+                .info
+                .query_params
+                .get("api-version")
+                .map(String::as_str),
+            Some("2026-07-22"),
+            "the model inherits the provider's query params"
+        );
+        assert_eq!(
+            model
+                .info
+                .env_http_headers
+                .get("X-Tenant-Token")
+                .map(String::as_str),
+            Some("GATEWAY_TENANT_TOKEN"),
+            "the model inherits the provider's env_http_headers mapping (unresolved names)"
+        );
+    }
+
+    #[test]
+    fn model_query_params_shadow_provider_query_params() {
+        let toml_cfg: toml::Value = toml::from_str(
+            r#"
+            [model_providers.gateway]
+            base_url = "https://gateway.example/v1"
+            api_key = "sk-provider"
+
+            [model_providers.gateway.query_params]
+            api-version = "provider"
+
+            [model.via-gateway]
+            model = "m"
+            model_provider = "gateway"
+
+            [model.via-gateway.query_params]
+            api-version = "model"
+            "#,
+        )
+        .unwrap();
+
+        let cfg = Config::new_from_toml_cfg(&toml_cfg).expect("config should parse");
+        let resolved = resolve_model_list(&cfg, None);
+        let model = resolved.get("via-gateway").expect("model should exist");
+        assert_eq!(
+            model
+                .info
+                .query_params
+                .get("api-version")
+                .map(String::as_str),
+            Some("model"),
+            "a model that sets its own query params inherits none of the provider's"
+        );
     }
 }

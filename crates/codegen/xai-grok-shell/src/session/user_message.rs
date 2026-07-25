@@ -55,11 +55,14 @@ pub fn construct_user_message_minimal(
 OS Version: {os}
 Shell: {shell}
 Workspace Path: {cwd}
-Today's date: {today}
+{USER_INFO_DATE_MARKER} {today}
 Note: Prefer using relative paths over absolute paths as tool call args when possible.
 </user_info>"#,
     )
 }
+
+/// Date label in the `<user_info>` prefix; `spawn::resumed_prefix_carries_fallback_date` scans for it.
+pub(crate) const USER_INFO_DATE_MARKER: &str = "Today's date:";
 
 /// Resolve a display string for the user's shell.
 ///

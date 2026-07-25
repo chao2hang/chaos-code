@@ -52,6 +52,20 @@ impl Drop for AbortOnDrop {
     }
 }
 
+/// Expand a leading `~` to the home directory; other paths pass through.
+pub(crate) fn expand_home(s: &str) -> std::path::PathBuf {
+    if let Some(stripped) = s.strip_prefix("~/") {
+        if let Some(home) = dirs::home_dir() {
+            return home.join(stripped);
+        }
+    } else if s == "~"
+        && let Some(home) = dirs::home_dir()
+    {
+        return home;
+    }
+    std::path::PathBuf::from(s)
+}
+
 #[cfg(test)]
 mod is_user_instruction_path_tests {
     use super::is_user_instruction_path;

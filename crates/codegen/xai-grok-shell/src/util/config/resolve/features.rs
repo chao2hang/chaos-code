@@ -24,20 +24,15 @@ pub fn resolve_zdr_access_enabled(
 }
 
 /// Whether model-catalog (`/v1/models`) and remote-settings (`/v1/settings`)
-/// fetches from backends are allowed, including the deployment-config sync
+/// fetches from xAI backends are allowed, including the deployment-config sync
 /// bundled into the startup prefetch (the background managed-config sync has
 /// its own `[features] managed_config` gate).
 ///
 /// Precedence: requirements (MDM > system > user) > managed
 /// (`managed_config.toml` > system managed) > user `config.toml` > default
-/// (**false** for Chaos BYOK). Callable before an `AgentConfig` exists
-/// (startup prefetch runs pre-agent), so it re-reads the config layers like
+/// (true). Callable before an `AgentConfig` exists (startup prefetch runs
+/// pre-agent), so it re-reads the config layers like
 /// `managed_config::is_fetch_enabled`.
-///
-/// Chaos ships an empty bundled catalog and does not auto-pull xAI product
-/// models. Set `[features] remote_fetch = true` only when you intentionally
-/// want online catalog/settings fetches (e.g. a self-hosted `/v1/models`
-/// endpoint configured under `[endpoints]`).
 ///
 /// Deliberately no env var and no remote tier: remote settings are exactly
 /// what is unreachable when this knob is needed (firewalled / air-gapped
@@ -49,7 +44,7 @@ pub fn resolve_remote_fetch_enabled() -> bool {
         // independently (requirements soft-fail per layer; the managed loaders
         // are the same ones ConfigLayers::load uses) — a corrupt user-writable
         // config.toml must not disarm a requirements or managed-layer pin.
-        // Fail closed when policy is genuinely absent (Chaos default: off).
+        // Fail open only when policy is genuinely absent.
         Err(_) => remote_fetch_enabled_from_policy_layers(
             crate::config::load_merged_requirements().as_ref(),
             crate::config::load_managed_config().ok().as_ref(),
@@ -93,16 +88,16 @@ fn remote_fetch_enabled_from_layers(layers: &crate::config::ConfigLayers) -> boo
     .into_iter()
     .flatten()
     .find_map(remote_fetch_value)
-    // Chaos BYOK: no remote catalog until the user (or policy) opts in.
-    .unwrap_or(false)
+    .unwrap_or(true)
 }
 
 /// Err-arm fallback for [`resolve_remote_fetch_enabled`]: the independently
 /// loadable policy tiers in Ok-arm walk order — merged requirements
 /// (`load_merged_requirements` merges user, system, MDM with last-wins,
 /// matching the walk), then the managed tiers — so a root-owned or synced
-/// managed-only pin also survives a corrupt user layer. Absent policy fails
-/// closed (same as the Ok-arm default: remote fetch off).
+/// managed-only pin also survives a corrupt user layer. The user `config.toml`
+/// tier stays fail-open: it is a preference, not deployment policy. Mirrors
+/// the `auto_permission_mode_enabled_from_disk` soft-fail precedent.
 fn remote_fetch_enabled_from_policy_layers(
     merged_requirements: Option<&TomlValue>,
     managed: Option<&TomlValue>,
@@ -112,7 +107,7 @@ fn remote_fetch_enabled_from_policy_layers(
         .into_iter()
         .flatten()
         .find_map(remote_fetch_value)
-        .unwrap_or(false)
+        .unwrap_or(true)
 }
 
 #[cfg(test)]
@@ -137,9 +132,8 @@ mod tests {
     }
 
     #[test]
-    fn remote_fetch_defaults_to_false_when_absent() {
-        // Chaos BYOK: empty catalog until the user adds [model.*] or opts in.
-        assert!(!remote_fetch_enabled_from_layers(&empty_layers()));
+    fn remote_fetch_defaults_to_true_when_absent() {
+        assert!(remote_fetch_enabled_from_layers(&empty_layers()));
     }
 
     #[test]
@@ -221,7 +215,7 @@ mod tests {
     /// The all-or-nothing layer load failing (corrupt user config.toml, IO
     /// error) must not disarm a policy pin — the Err arm still consults the
     /// merged requirements and both managed tiers, in Ok-arm walk order, and
-    /// fails closed with no policy at all (Chaos default: remote_fetch off).
+    /// fails open only with no policy at all.
     #[test]
     fn remote_fetch_layer_load_failure_still_honors_policy_pins() {
         let off = features_remote_fetch(false);
@@ -261,8 +255,8 @@ mod tests {
             Some(&on)
         ));
         assert!(
-            !remote_fetch_enabled_from_policy_layers(None, None, None),
-            "genuinely absent policy fails closed (Chaos default: remote_fetch off)"
+            remote_fetch_enabled_from_policy_layers(None, None, None),
+            "genuinely absent policy fails open"
         );
     }
 }

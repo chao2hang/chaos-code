@@ -129,6 +129,17 @@ impl Drop for BlockingWaitGuard {
         }
     }
 }
+
+/// Build a foreground-wait callback that raises/lowers [`BlockingWaitState`] while
+/// a parent session awaits a blocking subagent/task.
+pub(crate) fn subagent_foreground_wait(
+    state: Arc<BlockingWaitState>,
+) -> xai_grok_tools::implementations::grok_build::task::types::SubagentForegroundWait {
+    xai_grok_tools::implementations::grok_build::task::types::SubagentForegroundWait::new(
+        move || Box::new(BlockingWaitGuard::enter(Arc::clone(&state))),
+    )
+}
+
 /// Session-level context. NOT used for tool execution (bridge handles that).
 /// Holds ACP gateway, cwd, hunk tracker, etc. for session infrastructure.
 #[derive(Clone)]

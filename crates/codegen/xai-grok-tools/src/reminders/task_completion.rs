@@ -643,11 +643,13 @@ impl Reminder for TaskCompletionReminder {
             .chain(&reserved_ids)
             .cloned()
             .collect::<Vec<_>>();
-        let (terminal, event_sender) = {
+        let (terminal, event_sender, parent_session_id) = {
             let res = resources.lock().await;
             (
                 res.get::<Terminal>().map(|t| t.0.clone()),
                 res.get::<SubagentEventSender>().cloned(),
+                res.get::<crate::types::resources::OwnerSessionId>()
+                    .map(|owner| owner.0.clone()),
             )
         };
         let mut reminders = Vec::new();
@@ -730,6 +732,7 @@ impl Reminder for TaskCompletionReminder {
             if sender
                 .0
                 .send(SubagentEvent::Completions(SubagentCompletionsRequest {
+                    parent_session_id,
                     suppress_ids,
                     respond_to: tx,
                 }))
@@ -1886,7 +1889,6 @@ mod tests {
                 "<monitor-event description=\"{desc}\" task_id=\"{task}\">\n{text}\n</monitor-event>"
             ),
             owner_session_id: None,
-            description: None,
         };
         assert_eq!(format_monitor_events(&[], Some("get_task_output")), None);
         let single = format_monitor_events(
@@ -1902,7 +1904,6 @@ mod tests {
             task_id: "task-9".into(),
             event_text: "bare text, no wrapper".into(),
             owner_session_id: None,
-            description: None,
         };
         let single_bare =
             format_monitor_events(std::slice::from_ref(&bare), None).expect("bare event formats");
@@ -1927,8 +1928,9 @@ mod tests {
             "batch must lead with event + monitor counts and default tool hint: {batched}"
         );
         assert!(
-            batched
-            .contains("<monitor description=\"alpha\" task_id=\"task-0\">\n[1] a first\n[2] a second\n</monitor>"),
+            batched.contains(
+                "<monitor description=\"alpha\" task_id=\"task-0\">\n[1] a first\n[2] a second\n</monitor>"
+            ),
             "task-0 group: description once on the tag, ordinal tick labels: {batched}"
         );
         assert!(
@@ -1993,7 +1995,6 @@ mod tests {
                 "<monitor-event description=\"{desc}\" task_id=\"{task}\">\n{text}\n</monitor-event>"
             ),
             owner_session_id: None,
-            description: None,
         };
         let single = format_monitor_events(&[event("t-1", "журнал 🚨", "строка №1 ✓")], None)
             .expect("single formats");

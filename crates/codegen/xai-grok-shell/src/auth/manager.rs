@@ -2335,6 +2335,11 @@ impl AuthManager {
         let key = key.map(|k| k.trim().to_string()).filter(|k| !k.is_empty());
         *self.process_static_api_key.write() = key;
     }
+
+    /// Resolved static API key for out-of-band export (e.g. ext methods).
+    pub(crate) fn static_api_key_for_export(&self) -> Option<String> {
+        resolve_static_api_key(self)
+    }
 }
 
 fn non_empty_key(key: Option<String>) -> Option<String> {

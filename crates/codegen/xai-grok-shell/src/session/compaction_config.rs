@@ -17,13 +17,12 @@ pub(crate) const SUPPRESS_TURN: u8 = 1;
 /// cleared only when the context budget changes — a successful compaction, a
 /// rewind (context shrank), or a model switch (a larger window may now fit).
 pub(crate) const SUPPRESS_STICKY: u8 = 2;
-/// Account-state failure (credit block / non-refreshable auth): re-sending fails
-/// identically every turn until the user acts (adds credits, re-authenticates), so
-/// per-turn clearing just re-fires the doomed compaction once per turn. It is not
-/// budget-related either, so a context change can't fix it. Survives turn
-/// boundaries; cleared only when a model call actually succeeds — a `200` proves
-/// the account can sample again (see the `ModelResponseReceived` site in `turn.rs`).
+/// Credit block: suppress until a model `200` (credits aren't client-observable).
+/// Survives turns; context changes can't fix it. Token refresh must not clear this.
 pub(crate) const SUPPRESS_UNTIL_SUCCESS: u8 = 3;
+/// Auth-expired auto-compact: suppress until login/token refresh, not until 200
+/// (waiting for a sample deadlocks when context is already over the window).
+pub(crate) const SUPPRESS_AUTH: u8 = 4;
 
 /// Model slug and context window from the previous turn.
 #[derive(Clone, Debug)]
@@ -137,13 +136,8 @@ pub struct CompactionConfig {
     /// Auto-compaction suppression state (`SUPPRESS_*`) after a deterministic
     /// failure; the gates early-return unless `SUPPRESS_NONE`. Manual `/compact` ignores it.
     pub auto_compact_suppressed: AtomicU8,
-    /// Locks the context window: set from `GROK_DEBUG_CONTEXT_WINDOW` at spawn,
-    /// or at runtime via `/context set` / `x.ai/session/set_context_window`.
-    ///
-    /// `Cell` so the session can update without `&mut self` (same pattern as
-    /// `threshold_percent`). When `Some`, model-switch / response-header
-    /// upgrades must not overwrite the locked value.
-    pub context_window_override: Cell<Option<std::num::NonZeroU64>>,
+    /// Locks the context window when `GROK_DEBUG_CONTEXT_WINDOW` is set.
+    pub context_window_override: Option<std::num::NonZeroU64>,
     pub count: AtomicU64,
     /// Set at turn end; consumed at next turn start for model-switch compaction.
     /// `Cell` because `SessionActor` is `!Send`.
@@ -158,10 +152,6 @@ pub struct CompactionConfig {
     pub prefire: PrefireState,
     /// Sticky once a forked session releases its inherited prefix under compaction pressure (see `run_compact_inner`), so it stops re-pinning it.
     pub prefix_released: AtomicBool,
-    /// 动态上下文裁剪配置（三层提醒、自动策略、受保护内容）。
-    pub dcp: super::dcp_config::DcpConfig,
-    /// DCP 运行时跟踪状态（提醒频率、用户轮次间隔）。
-    pub dcp_runtime: super::dcp_config::DcpRuntimeState,
 }
 
 #[cfg(test)]

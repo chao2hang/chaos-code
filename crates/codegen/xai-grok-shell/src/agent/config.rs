@@ -46,9 +46,11 @@ pub fn default_agent_type() -> String {
     DEFAULT_AGENT_TYPE.to_owned()
 }
 /// Default base URL for the cli chat proxy.
-pub const CLI_CHAT_PROXY_BASE_URL_DEFAULT: &str = "";
-pub const XAI_API_BASE_URL_DEFAULT: &str = "";
-pub const ASSET_SERVER_URL_DEFAULT: &str = "";
+pub const CLI_CHAT_PROXY_BASE_URL_DEFAULT: &str = "https://cli-chat-proxy.grok.com/v1";
+/// Default base URL for the public xAI API.
+pub const XAI_API_BASE_URL_DEFAULT: &str = "https://api.x.ai/v1";
+/// Default base URL for the asset server (profile images, etc.).
+pub const ASSET_SERVER_URL_DEFAULT: &str = "https://assets.grok.com";
 /// One or more environment variable names that may hold a model API key.
 ///
 /// Serde `untagged`: accepts a string or an array in TOML/JSON.
@@ -442,7 +444,8 @@ impl EndpointsConfig {
                 std::fs::read_to_string(path)
                     .inspect_err(|e| {
                         tracing::warn!(
-                            path = % path, error = % e,
+                            path = %path,
+                            error = %e,
                             "Failed to read trace upload credentials file"
                         );
                     })
@@ -480,7 +483,7 @@ impl EndpointsConfig {
             });
         }
         tracing::warn!(
-            bucket = % bucket_url,
+            bucket = %bucket_url,
             "trace_upload_bucket has unrecognized scheme (expected gs:// or s3://), ignoring"
         );
         None
@@ -999,10 +1002,20 @@ pub struct CliConfig {
     pub worktree_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_registry: Option<bool>,
-    /// User-layer value; use [`crate::util::config::resolve_minimum_version`]
-    /// for enforcement (semver-max across layers; managed floors can't be lowered).
+    /// Env `GROK_MINIMUM_VERSION`. See [`crate::util::config::VersionPolicy`] for
+    /// the version-policy knobs. (Unrelated to
+    /// `version_overrides[].maximum_version`, which gates config patches.)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub minimum_version: Option<String>,
+    /// Env `GROK_MAXIMUM_VERSION`. See [`crate::util::config::VersionPolicy`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub maximum_version: Option<String>,
+    /// Env `GROK_REQUIRED_MINIMUM_VERSION`. See [`crate::util::config::VersionPolicy`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub required_minimum_version: Option<String>,
+    /// Env `GROK_REQUIRED_MAXIMUM_VERSION`. See [`crate::util::config::VersionPolicy`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub required_maximum_version: Option<String>,
     /// Group sessions by repo in the picker and CLI listings.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_picker_grouped: Option<bool>,
@@ -1097,6 +1110,7 @@ pub struct HarnessConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub upload_flush_timeout_secs: Option<u64>,
 }
+impl HarnessConfig {}
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct RelayConfig {
@@ -1313,7 +1327,6 @@ pub struct PermissionKnownKeys {
     /// Verbose `[[permission.rules]]` form.
     pub rules: Option<toml::Value>,
 }
-
 /// `[shell_environment_policy]` known keys, for the unrecognized-key scan only;
 /// the value is parsed at spawn by [`crate::util::config::resolve_shell_env_policy`].
 /// `Option<toml::Value>` (no `deny_unknown_fields`) keeps a typo a warning, not a
@@ -1327,7 +1340,6 @@ pub struct ShellEnvironmentPolicyKnownKeys {
     pub set: Option<toml::Value>,
     pub include_only: Option<toml::Value>,
 }
-
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Config {
     pub features: Features,
@@ -1757,31 +1769,6 @@ pub struct SessionConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auto_retry_incomplete_end_turn_max: Option<u8>,
 }
-
-/// Resolved incomplete-`end_turn` auto-retry policy (session spawn).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct IncompleteEndTurnRetryPolicy {
-    pub enabled: bool,
-    /// Max retries per user prompt (1..=HARD_MAX).
-    pub max: u8,
-}
-
-impl IncompleteEndTurnRetryPolicy {
-    pub const DEFAULT_MAX: u8 = 1;
-    pub const HARD_MAX: u8 = 3;
-
-    pub const DISABLED: Self = Self {
-        enabled: false,
-        max: Self::DEFAULT_MAX,
-    };
-}
-
-impl Default for IncompleteEndTurnRetryPolicy {
-    fn default() -> Self {
-        Self::DISABLED
-    }
-}
-
 /// Configuration for change-archive deduplication.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -1979,6 +1966,19 @@ fn parse_auth_providers(
     (providers, warnings)
 }
 impl Config {
+    pub fn resolve_auto_retry_incomplete_end_turn(&self) -> IncompleteEndTurnRetryPolicy {
+        let enabled = xai_grok_config::env_bool("CHAOS_AUTO_RETRY_INCOMPLETE_END_TURN")
+            .or_else(|| xai_grok_config::env_bool("GROK_AUTO_RETRY_INCOMPLETE_END_TURN"))
+            .or(self.session.auto_retry_incomplete_end_turn)
+            .unwrap_or(false);
+        let max = self
+            .session
+            .auto_retry_incomplete_end_turn_max
+            .unwrap_or(IncompleteEndTurnRetryPolicy::DEFAULT_MAX)
+            .clamp(1, IncompleteEndTurnRetryPolicy::HARD_MAX);
+        IncompleteEndTurnRetryPolicy { enabled, max }
+    }
+
     /// Reject invalid glob patterns in the model-filter lists at config load, so
     /// a typo fails loudly instead of silently changing availability.
     pub fn validate_model_filters(&self) -> Result<(), String> {
@@ -2048,10 +2048,10 @@ impl Config {
                                 Some("auth"),
                                 super::config_model_override_parse::ConfigWarningKind::ConflictingFields,
                                 format!(
-                                    "inline auth overwrites a hand-written \
+                                "inline auth overwrites a hand-written \
                                  [auth_provider.\"{synthetic}\"]; the `model_provider:` prefix is \
                                  a reserved namespace"
-                                ),
+                            ),
                             ),
                         );
                 }
@@ -2400,19 +2400,23 @@ impl Config {
         let telemetry = self.resolve_telemetry_mode();
         let trace_upload = self.resolve_trace_upload();
         let req = &self.requirements.trace_upload;
-        serde_json::json!(
-            { "trace_upload" : trace_upload.value, "trace_upload_source" : trace_upload
-            .source.to_string(), "telemetry_mode" : telemetry.value.to_string(),
-            "telemetry_source" : telemetry.source.to_string(), "in_requirement_pin" : req
-            .pinned(), "in_requirement_src" : req.source().map(| s | s.to_string()),
-            "in_env_trace_upload" : std::env::var("GROK_TELEMETRY_TRACE_UPLOAD").ok(),
-            "in_env_telemetry_enabled" : std::env::var("GROK_TELEMETRY_ENABLED").ok(),
-            "in_cfg_telemetry_trace_upload" : self.telemetry.trace_upload,
-            "in_cfg_features_telemetry" : self.features.telemetry.map(| m | m
-            .to_string()), "in_remote_trace_upload_enabled" : self.remote_settings
-            .as_ref().and_then(| s | s.trace_upload_enabled), "has_remote_settings" :
-            self.remote_settings.is_some(), }
-        )
+        serde_json::json!({
+            "trace_upload": trace_upload.value,
+            "trace_upload_source": trace_upload.source.to_string(),
+            "telemetry_mode": telemetry.value.to_string(),
+            "telemetry_source": telemetry.source.to_string(),
+            "in_requirement_pin": req.pinned(),
+            "in_requirement_src": req.source().map(|s| s.to_string()),
+            "in_env_trace_upload": std::env::var("GROK_TELEMETRY_TRACE_UPLOAD").ok(),
+            "in_env_telemetry_enabled": std::env::var("GROK_TELEMETRY_ENABLED").ok(),
+            "in_cfg_telemetry_trace_upload": self.telemetry.trace_upload,
+            "in_cfg_features_telemetry": self.features.telemetry.map(|m| m.to_string()),
+            "in_remote_trace_upload_enabled": self
+                .remote_settings
+                .as_ref()
+                .and_then(|s| s.trace_upload_enabled),
+            "has_remote_settings": self.remote_settings.is_some(),
+        })
     }
     pub(crate) fn resolve_feedback(&self) -> Resolved<bool> {
         let ff = self
@@ -2476,24 +2480,6 @@ impl Config {
                 .map_or(Policy::DEFAULT_MAX_RETRIES, Policy::clamp_max_retries),
         })
     }
-
-    /// Incomplete `end_turn` auto-retry: env > `[session]` TOML > default off.
-    ///
-    /// Env (first set wins): `CHAOS_AUTO_RETRY_INCOMPLETE_END_TURN`, then
-    /// `GROK_AUTO_RETRY_INCOMPLETE_END_TURN`.
-    pub fn resolve_auto_retry_incomplete_end_turn(&self) -> IncompleteEndTurnRetryPolicy {
-        let enabled = xai_grok_config::env_bool("CHAOS_AUTO_RETRY_INCOMPLETE_END_TURN")
-            .or_else(|| xai_grok_config::env_bool("GROK_AUTO_RETRY_INCOMPLETE_END_TURN"))
-            .or(self.session.auto_retry_incomplete_end_turn)
-            .unwrap_or(false);
-        let max = self
-            .session
-            .auto_retry_incomplete_end_turn_max
-            .unwrap_or(IncompleteEndTurnRetryPolicy::DEFAULT_MAX)
-            .clamp(1, IncompleteEndTurnRetryPolicy::HARD_MAX);
-        IncompleteEndTurnRetryPolicy { enabled, max }
-    }
-
     /// Automatic worktree GC policy. Precedence: env kill/dry-run >
     /// `[worktree.auto_gc]` TOML > remote `worktree_auto_gc` > defaults.
     /// Platform age-expiry (non-Linux dead-only) is enforced inside
@@ -2586,8 +2572,11 @@ impl Config {
             .default(true)
             .resolve()
     }
-    /// `image_gen` tool gate. Default on; gated only by the `GROK_IMAGE_GEN`
-    /// env var and managed-config requirement pin.
+    /// `image_gen` (+ `/imagine`). Default on.
+    ///
+    /// `imagine_tools_disabled` is a remote force-off (env/config cannot
+    /// re-enable). Otherwise: requirement > env > `[features]` > remote >
+    /// default.
     pub(crate) fn resolve_image_gen(&self) -> Resolved<bool> {
         use xai_grok_tools::implementations::grok_build::IMAGE_GEN_TOOL_NAME;
         if let Some(pinned) = self.requirements.image_gen.pinned() {
@@ -2670,9 +2659,6 @@ impl Config {
         )
         .map(|r| r.value)
     }
-    /// Optional Imagine model override for `image_edit`.
-    /// Precedence: env `GROK_IMAGE_EDIT_MODEL_OVERRIDE` > `[features]
-    /// image_edit_model_override` > remote settings.
     pub(crate) fn resolve_image_edit_model_override(&self) -> Option<String> {
         resolve_string_flag(
             None,
@@ -2699,6 +2685,10 @@ impl Config {
             .default(true)
             .resolve()
     }
+    /// Background workflows (`workflow` tool, `.grok/workflows/*.rhai`,
+    /// `/deep-research`, host-owned `/goal` driver). Default ON: deployments
+    /// that never receive remote settings still get workflows; `Some(false)`
+    /// remote / config / env remains a kill-switch.
     pub(crate) fn resolve_workflows(&self) -> Resolved<bool> {
         let ff = self
             .remote_settings
@@ -2710,7 +2700,7 @@ impl Config {
         BoolFlag::env("GROK_WORKFLOWS")
             .config(self.workflows.enabled)
             .feature_flag(ff)
-            .default(false)
+            .default(true)
             .resolve()
     }
     /// Classifier, planner, and summary all default to goal mode itself: when
@@ -3001,19 +2991,16 @@ impl Config {
             .default(true)
             .resolve()
     }
-    /// Resolve whether to use the default OAuth2 path (xAI auth.x.ai).
+    /// Resolve whether to use grok's default OAuth2 (xAI auth.x.ai).
     ///
-    /// Chaos is BYOK-first: this defaults **off**. Enterprise OIDC (`oidc` in
-    /// config.toml) always wins when configured. The only call site is the ACP
-    /// `authenticate` handler for an explicit OIDC method id — Chaos does not
-    /// advertise that method in `auth_methods`, so the path is gated above.
+    /// Enterprise OIDC (`oidc` in config.toml) always wins — this only gates
+    /// the default xAI OAuth2 fallback when no enterprise OIDC is configured.
     ///
-    /// Priority: `--oauth` / ACP `use_oauth` > `GROK_OAUTH_ENABLED` env >
-    /// default (`false` = no xAI OAuth fallback).
+    /// Priority: `--oauth` > GROK_OAUTH_ENABLED env > default (true = OAuth).
     pub fn resolve_grok_oauth(&self, cli_oidc: Option<bool>) -> Resolved<bool> {
         BoolFlag::env("GROK_OAUTH_ENABLED")
             .cli(cli_oidc)
-            .default(false)
+            .default(true)
             .resolve()
     }
     /// Resolve whether to spawn the per-`Ready`-client transport
@@ -3515,8 +3502,8 @@ pub fn resolve_model_list(
     let mut resolved: IndexMap<String, ModelEntry> = IndexMap::new();
     if cfg.endpoints.has_custom_endpoint() {
         tracing::info!(
-            models_base_url = ? cfg.endpoints.models_base_url, models_list_url = ? cfg
-            .endpoints.models_list_url,
+            models_base_url = ?cfg.endpoints.models_base_url,
+            models_list_url = ?cfg.endpoints.models_list_url,
             "custom models endpoint active, skipping built-in defaults",
         );
     } else {
@@ -3534,9 +3521,11 @@ pub fn resolve_model_list(
                     && donor.info.context_window.get() != default_cw
                 {
                     tracing::debug!(
-                        model_key = % key, model = % entry.info.model, client_default =
-                        default_cw, inherited = donor.info.context_window.get(),
-                        donor_model = % donor.info.model,
+                        model_key = %key,
+                        model = %entry.info.model,
+                        client_default = default_cw,
+                        inherited = donor.info.context_window.get(),
+                        donor_model = %donor.info.model,
                         "prefetched model missing context_window, inheriting from hardcoded default"
                     );
                     entry.info.context_window = donor.info.context_window;
@@ -3549,9 +3538,7 @@ pub fn resolve_model_list(
                 }
             }
             if resolved.contains_key(key) {
-                tracing::debug!(
-                    model_key = % key, "prefetched model overriding default"
-                );
+                tracing::debug!(model_key = %key, "prefetched model overriding default");
             }
         }
         resolved = prefetched;
@@ -3560,13 +3547,11 @@ pub fn resolve_model_list(
         let had_base = resolved.contains_key(key);
         let base = resolved.shift_remove(key);
         if !had_base {
-            tracing::debug!(
-                model_key = % key,
-                "config model adding new entry (not in defaults/prefetched)"
-            );
+            tracing::debug!(model_key = %key, "config model adding new entry (not in defaults/prefetched)");
             if model_override.context_window.is_none() {
                 tracing::debug!(
-                    model_key = % key, default = 200_000,
+                    model_key = %key,
+                    default = 200_000,
                     "new model missing context_window, defaulting to 200000 — set context_window in [model.{}] to override",
                     key,
                 );
@@ -3585,21 +3570,22 @@ pub fn resolve_model_list(
                 .api_base_url
                 .as_deref()
                 .is_some_and(|url| !crate::util::is_xai_api_bearer_url(url));
-        if entry.auth_provider.is_none() && session_bearer_unsafe {
-            let source = model_override
-                .model_provider
-                .as_deref()
-                .map(|pid| format!("model_provider:{pid}"))
-                .unwrap_or_else(|| format!("model:{key}"));
+        if let Some(pid) = model_override.model_provider.as_deref()
+            && entry.auth_provider.is_none()
+            && session_bearer_unsafe
+        {
             entry.auth_provider = Some(crate::auth::AuthProviderRef::fail_closed(format!(
-                "{source} (fail-closed)"
+                "model_provider:{pid} (fail-closed)"
             )));
         }
         tracing::debug!(
-            model_key = % key, base_url = % entry.info.base_url, has_api_key = entry
-            .api_key.is_some(), env_key = ? entry.env_key, auth_provider = entry
-            .auth_provider.as_ref().map(| p | p.name.as_str()), model_provider =
-            model_override.model_provider.as_deref(), had_base,
+            model_key = %key,
+            base_url = %entry.info.base_url,
+            has_api_key = entry.api_key.is_some(),
+            env_key = ?entry.env_key,
+            auth_provider = entry.auth_provider.as_ref().map(|p| p.name.as_str()),
+            model_provider = model_override.model_provider.as_deref(),
+            had_base,
             "config model override applied"
         );
         resolved.insert(key.clone(), entry);
@@ -3612,7 +3598,8 @@ pub fn resolve_model_list(
             let config = cfg.auth_providers.get(&provider.name);
             if config.is_none() {
                 tracing::debug!(
-                    model_key = % key, provider = % provider.name,
+                    model_key = %key,
+                    provider = %provider.name,
                     "provider ref has no trusted config; failing closed with an empty command"
                 );
             }
@@ -3636,8 +3623,9 @@ pub fn resolve_model_list(
             if let Some((donor_cw, donor_backend)) = donors.get(&entry.info.model) {
                 if entry.info.context_window.get() == default_cw {
                     tracing::debug!(
-                        model = % entry.info.model, from = default_cw, to = donor_cw
-                        .get(),
+                        model = %entry.info.model,
+                        from = default_cw,
+                        to = donor_cw.get(),
                         "slug-match: inheriting context_window from sibling catalog entry"
                     );
                     entry.info.context_window = *donor_cw;
@@ -3652,7 +3640,7 @@ pub fn resolve_model_list(
     }
     if let Some(ref global_agent_type) = cfg.models.agent_type {
         tracing::warn!(
-            global_agent_type = % global_agent_type,
+            global_agent_type = %global_agent_type,
             "[models] agent_type is deprecated. Set agent_type on each [model.X] entry instead."
         );
         for entry in resolved.values_mut() {
@@ -3678,8 +3666,9 @@ fn apply_global_extra_headers(resolved: &mut IndexMap<String, ModelEntry>, model
         return;
     }
     tracing::debug!(
-        header_keys = ? models.extra_headers.keys().collect::< Vec < _ >> (), model_count
-        = resolved.len(), "applying global [models].extra_headers default to all models"
+        header_keys = ?models.extra_headers.keys().collect::<Vec<_>>(),
+        model_count = resolved.len(),
+        "applying global [models].extra_headers default to all models"
     );
     for entry in resolved.values_mut() {
         for (k, v) in &models.extra_headers {
@@ -4010,9 +3999,12 @@ pub struct ConfigModelOverride {
     pub temperature: Option<f32>,
     pub top_p: Option<f32>,
     pub api_backend: Option<ApiBackend>,
-    pub auth_scheme: Option<AuthScheme>,
     #[serde(default)]
     pub extra_headers: IndexMap<String, String>,
+    #[serde(default)]
+    pub query_params: IndexMap<String, String>,
+    #[serde(default)]
+    pub env_http_headers: IndexMap<String, String>,
     pub context_window: Option<u64>,
     /// Per-model auto-compact threshold override (0-100) from `[model.<id>]`.
     /// Read directly by `resolve_auto_compact_threshold_percent`; intentionally
@@ -4074,11 +4066,14 @@ impl ConfigModelOverride {
         if let Some(ref v) = self.api_backend {
             entry.info.api_backend = v.clone();
         }
-        if let Some(v) = self.auth_scheme {
-            entry.info.auth_scheme = v;
-        }
         if !self.extra_headers.is_empty() {
             entry.info.extra_headers = self.extra_headers.clone();
+        }
+        if !self.query_params.is_empty() {
+            entry.info.query_params = self.query_params.clone();
+        }
+        if !self.env_http_headers.is_empty() {
+            entry.info.env_http_headers = self.env_http_headers.clone();
         }
         if let Some(cw) = self.context_window.and_then(NonZeroU64::new) {
             entry.info.context_window = cw;
@@ -4171,6 +4166,10 @@ pub struct ModelInfo {
     pub api_backend: ApiBackend,
     pub auth_scheme: AuthScheme,
     pub extra_headers: IndexMap<String, String>,
+    #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
+    pub query_params: IndexMap<String, String>,
+    #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
+    pub env_http_headers: IndexMap<String, String>,
     pub context_window: NonZeroU64,
     /// Per-model auto-compact threshold (0-100). `None` defers to the
     /// global / default tiers in `resolve_auto_compact_threshold_percent`.
@@ -4236,6 +4235,8 @@ impl ModelInfo {
             api_backend: ApiBackend::default(),
             auth_scheme: Default::default(),
             extra_headers: IndexMap::new(),
+            query_params: IndexMap::new(),
+            env_http_headers: IndexMap::new(),
             context_window: NonZeroU64::new(200_000).unwrap(),
             auto_compact_threshold_percent: None,
             system_prompt_label: None,
@@ -4271,6 +4272,8 @@ impl ModelInfo {
             api_backend: entry.api_backend.clone(),
             auth_scheme: entry.auth_scheme.unwrap_or_default(),
             extra_headers: entry.extra_headers.clone(),
+            query_params: IndexMap::new(),
+            env_http_headers: IndexMap::new(),
             context_window: entry.context_window,
             auto_compact_threshold_percent: entry.auto_compact_threshold_percent,
             system_prompt_label: entry.system_prompt_label.clone(),
@@ -4456,11 +4459,7 @@ where
     let value = Option::<toml::Value>::deserialize(deserializer)?;
     Ok(value.and_then(|v| {
         v.try_into()
-            .map_err(|e| {
-                tracing::warn!(
-                    error = % e, "[goal] role model: dropped malformed value"
-                )
-            })
+            .map_err(|e| tracing::warn!(error = %e, "[goal] role model: dropped malformed value"))
             .ok()
     }))
 }
@@ -4480,9 +4479,7 @@ where
             .filter_map(|v| {
                 v.try_into()
                     .map_err(|e| {
-                        tracing::warn!(
-                            error = % e, "[goal] skeptic model: dropped malformed entry"
-                        );
+                        tracing::warn!(error = %e, "[goal] skeptic model: dropped malformed entry");
                     })
                     .ok()
             })
@@ -4539,6 +4536,31 @@ pub struct WorkflowsConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
 }
+/// Chaos opt-in policy for auto-retrying incomplete `end_turn` sampler finishes.
+/// Resolved at session spawn via [`Config::resolve_auto_retry_incomplete_end_turn`].
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct IncompleteEndTurnRetryPolicy {
+    pub enabled: bool,
+    /// Max retries per user prompt (1..=HARD_MAX).
+    pub max: u8,
+}
+
+impl IncompleteEndTurnRetryPolicy {
+    pub const DEFAULT_MAX: u8 = 1;
+    pub const HARD_MAX: u8 = 3;
+
+    pub const DISABLED: Self = Self {
+        enabled: false,
+        max: Self::DEFAULT_MAX,
+    };
+}
+
+impl Default for IncompleteEndTurnRetryPolicy {
+    fn default() -> Self {
+        Self::DISABLED
+    }
+}
+
 /// `[auto_mode]` section: server-side configuration for Auto permission mode.
 /// ONE struct serves both the local `[auto_mode]` TOML table and the remote
 /// remote settings `auto_mode` JSON object (coerced via `serde_json::from_value`), so
@@ -4562,6 +4584,9 @@ pub struct AutoModeConfig {
     /// session model. Resolved via `resolve_aux_model_sampling_config`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub classifier_model: Option<String>,
+    /// Classifier side-query duration in milliseconds; resolved with bounded defaults.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub classify_timeout_ms: Option<u64>,
     /// Classifier reasoning effort. Applies on BOTH the routed-model path and the
     /// inherited session-model path; `None` ⇒ the wire fn's built-in default
     /// (`low` if the effective model supports reasoning effort, else unset).
@@ -4622,7 +4647,7 @@ pub struct Features {
     /// `image_gen` / `/imagine`. `None` = env / remote / default (`true`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image_gen: Option<bool>,
-    /// Video generation tool. `None` = defer to remote settings / env / default (false).
+    /// Video tools / `/imagine-video`. `None` = env / remote / default (`true`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub video_gen: Option<bool>,
     /// `image_gen` Imagine model override. `None`/empty = defer to remote settings
@@ -4801,7 +4826,8 @@ pub fn resolve_credentials(model: &ModelEntry, session_key: Option<&str>) -> Res
             && !env_keys.is_empty()
         {
             tracing::warn!(
-                model = % info.model, env_key = % env_keys,
+                model = %info.model,
+                env_key = %env_keys,
                 "model has env_key configured but none of the environment variables are set — \
                  requests will have no API key",
             );
@@ -4814,7 +4840,9 @@ pub fn resolve_credentials(model: &ModelEntry, session_key: Option<&str>) -> Res
     };
     let auth_scheme = info.auth_scheme;
     tracing::debug!(
-        model = % info.model, auth_type = ? auth_type, "resolved credentials"
+        model = %info.model,
+        auth_type = ?auth_type,
+        "resolved credentials"
     );
     ResolvedCredentials {
         api_key,
@@ -4840,10 +4868,10 @@ pub fn enforce_disable_api_key_auth(
         xai_grok_telemetry::unified_log::debug(
             "auth: kill switch blocked a first-party API key at the credential seam",
             None,
-            Some(serde_json::json!(
-                { "replaced_with_session" : session_key.is_some(), "base_url" : creds
-                .base_url, }
-            )),
+            Some(serde_json::json!({
+                "replaced_with_session": session_key.is_some(),
+                "base_url": creds.base_url,
+            })),
         );
     }
 }
@@ -4869,10 +4897,10 @@ pub fn try_resolve_model_credentials(
     session_key: Option<&str>,
 ) -> Option<ResolvedCredentials> {
     let raw = crate::config::load_effective_config()
-        .map_err(|e| tracing::warn!(error = % e, "config load failed for credential resolution"))
+        .map_err(|e| tracing::warn!(error = %e, "config load failed for credential resolution"))
         .ok()?;
     let cfg = Config::new_from_toml_cfg(&raw)
-        .map_err(|e| tracing::warn!(error = % e, "config parse failed for credential resolution"))
+        .map_err(|e| tracing::warn!(error = %e, "config parse failed for credential resolution"))
         .ok()?;
     let models = resolve_model_list(&cfg, None);
     let entry = find_model_by_id(&models, model_id)?;
@@ -4941,13 +4969,13 @@ enum ModelLookup<'a> {
 /// stay conservative on a transient config failure.
 fn with_resolved_model<T>(model_id: &str, f: impl FnOnce(ModelLookup) -> T) -> T {
     let Some(raw) = crate::config::load_effective_config()
-        .map_err(|e| tracing::warn!(error = % e, "config load failed for model auth lookup"))
+        .map_err(|e| tracing::warn!(error = %e, "config load failed for model auth lookup"))
         .ok()
     else {
         return f(ModelLookup::ConfigUnavailable);
     };
     let Some(cfg) = Config::new_from_toml_cfg(&raw)
-        .map_err(|e| tracing::warn!(error = % e, "config parse failed for model auth lookup"))
+        .map_err(|e| tracing::warn!(error = %e, "config parse failed for model auth lookup"))
         .ok()
     else {
         return f(ModelLookup::ConfigUnavailable);
@@ -4984,7 +5012,7 @@ pub fn resolve_aux_model_sampling_config(
         }
         if entry.effective_auth_provider().is_some() {
             tracing::warn!(
-                model = % model_id,
+                model = %model_id,
                 "aux model uses an auth provider with no cached token; the caller falls back to its session default"
             );
             return None;
@@ -5011,6 +5039,8 @@ pub fn resolve_aux_model_sampling_config(
                 api_backend: ApiBackend::Responses,
                 auth_scheme: Default::default(),
                 extra_headers: IndexMap::new(),
+                query_params: IndexMap::new(),
+                env_http_headers: IndexMap::new(),
                 context_window: NonZeroU64::new(200_000).unwrap(),
                 auto_compact_threshold_percent: None,
                 system_prompt_label: None,
@@ -5047,7 +5077,7 @@ pub fn resolve_aux_model_sampling_config(
         return Some(sampler);
     }
     tracing::warn!(
-        aux_model = % model_id,
+        aux_model = %model_id,
         "no credentials for auxiliary model; falling back to active model",
     );
     None
@@ -5146,6 +5176,8 @@ pub fn sampling_config_for_model(
         api_backend,
         auth_scheme: credentials.auth_scheme,
         extra_headers,
+        query_params: info.query_params.clone(),
+        env_http_headers: info.env_http_headers.clone(),
         context_window: info.context_window.get(),
         client_version,
         reasoning_effort: info.reasoning_effort,
@@ -5240,6 +5272,8 @@ fn resolve_hidden_default_web_search_sampling_config(
             api_backend: ApiBackend::Responses,
             auth_scheme: Default::default(),
             extra_headers: IndexMap::new(),
+            query_params: IndexMap::new(),
+            env_http_headers: IndexMap::new(),
             context_window: NonZeroU64::new(200_000).unwrap(),
             auto_compact_threshold_percent: None,
             system_prompt_label: None,
@@ -5288,7 +5322,7 @@ pub fn resolve_web_search_sampling_config(
         let credentials = resolve_credentials_enforced(&entry, session_key, disable_api_key_auth);
         if credentials.api_key.is_none() && entry.effective_auth_provider().is_some() {
             tracing::warn!(
-                web_search_model = % model_id,
+                web_search_model = %model_id,
                 "web search model uses an auth provider with no cached token; disabling web search"
             );
             return None;
@@ -5315,7 +5349,7 @@ pub fn resolve_web_search_sampling_config(
     };
     if resolved.is_none() {
         tracing::warn!(
-            web_search_model = % model_id,
+            web_search_model = %model_id,
             "configured web_search model not found; disabling web search"
         );
     }
@@ -5453,14 +5487,22 @@ mod tests {
 enabled = true
 prompt_type = "no_user_tool_prefix"
 classifier_model = "grok-4.5"
+classify_timeout_ms = 45000
 reasoning_effort = "low"
 "#;
         let from_toml: AutoModeConfig = toml::from_str(toml_src).unwrap();
-        let json = serde_json::json!(
-            { "enabled" : true, "prompt_type" : "no_user_tool_prefix", "classifier_model"
-            : "grok-4.5", "reasoning_effort" : "low" }
-        );
+        let json = serde_json::json!({
+            "enabled": true,
+            "prompt_type": "no_user_tool_prefix",
+            "classifier_model": "grok-4.5",
+            "classify_timeout_ms": 45000,
+            "reasoning_effort": "low"
+        });
         let from_json: AutoModeConfig = serde_json::from_value(json).unwrap();
+        assert_eq!(
+            serde_json::to_value(&from_toml).unwrap(),
+            serde_json::to_value(&from_json).unwrap()
+        );
         for cfg in [&from_toml, &from_json] {
             assert_eq!(cfg.enabled, Some(true));
             assert_eq!(
@@ -5468,11 +5510,11 @@ reasoning_effort = "low"
                 Some(ClassifierPromptType::NoUserToolPrefix)
             );
             assert_eq!(cfg.classifier_model.as_deref(), Some("grok-4.5"));
+            assert_eq!(cfg.classify_timeout_ms, Some(45_000));
             assert_eq!(cfg.reasoning_effort, Some(ReasoningEffort::Low));
         }
         let empty: AutoModeConfig = toml::from_str("").unwrap();
-        assert!(empty.enabled.is_none() && empty.prompt_type.is_none());
-        assert!(empty.classifier_model.is_none() && empty.reasoning_effort.is_none());
+        assert_eq!(serde_json::to_value(&empty).unwrap(), serde_json::json!({}));
     }
     /// `prompt_type` wire values are the snake_case `ClassifierPromptType` names.
     #[test]
@@ -5505,10 +5547,11 @@ reasoning_effort = "low"
     }
     #[test]
     fn laziness_detector_absent_block_deserializes_to_default() {
-        let json = serde_json::json!(
-            { "model" : "test", "base_url" : "https://test.api/v1", "context_window" :
-            200_000, }
-        );
+        let json = serde_json::json!({
+            "model": "test",
+            "base_url": "https://test.api/v1",
+            "context_window": 200_000,
+        });
         let entry: ModelEntryConfig =
             serde_json::from_value(json).expect("ModelEntryConfig deserializes without detector");
         assert_eq!(
@@ -5530,10 +5573,13 @@ reasoning_effort = "low"
     }
     #[test]
     fn laziness_detector_block_round_trips_through_serde() {
-        let json = serde_json::json!(
-            { "enabled" : true, "max_nudges_per_session" : 3, "idle_threshold_ms" :
-            15_000, "min_confidence" : 0.8, "include_reasoning" : false, }
-        );
+        let json = serde_json::json!({
+            "enabled": true,
+            "max_nudges_per_session": 3,
+            "idle_threshold_ms": 15_000,
+            "min_confidence": 0.8,
+            "include_reasoning": false,
+        });
         let cfg: LazinessDetectorPerModelConfig =
             serde_json::from_value(json).expect("deserialize populated block");
         assert!(cfg.enabled);
@@ -5550,11 +5596,11 @@ reasoning_effort = "low"
     #[test]
     fn laziness_detector_include_reasoning_serde_states() {
         let some_true: LazinessDetectorPerModelConfig =
-            serde_json::from_value(serde_json::json!({ "include_reasoning" : true }))
+            serde_json::from_value(serde_json::json!({ "include_reasoning": true }))
                 .expect("Some(true)");
         assert_eq!(some_true.include_reasoning, Some(true));
         let some_false: LazinessDetectorPerModelConfig =
-            serde_json::from_value(serde_json::json!({ "include_reasoning" : false }))
+            serde_json::from_value(serde_json::json!({ "include_reasoning": false }))
                 .expect("Some(false)");
         assert_eq!(some_false.include_reasoning, Some(false));
         let absent: LazinessDetectorPerModelConfig =
@@ -5844,6 +5890,7 @@ reasoning_effort = "low"
                 args: None,
                 token_ttl_secs: Some(3600),
                 timeout_secs: None,
+                cwd: None,
             },
         );
         let mut entry = test_model_entry("m", "https://litellm.example/v1", None, None, None);
@@ -5924,6 +5971,7 @@ reasoning_effort = "low"
                 args: None,
                 token_ttl_secs: Some(3600),
                 timeout_secs: None,
+                cwd: None,
             },
         );
         let mut entry = test_model_entry("m", "https://litellm.example/v1", None, None, None);
@@ -6008,9 +6056,9 @@ reasoning_effort = "low"
             cfg.config_warnings.iter().any(|w| {
                 w.kind == kind
                     && matches!(
-                        & w.target, WarningTarget::AuthProvider { name : n, field : f
-                        }
-if n == name && f.as_deref() == field
+                        &w.target,
+                        WarningTarget::AuthProvider { name: n, field: f }
+                            if n == name && f.as_deref() == field
                     )
             })
         };
@@ -6048,10 +6096,8 @@ if n == name && f.as_deref() == field
             cfg.config_warnings
                 .iter()
                 .find(|w| {
-                    matches!(
-                        & w.target, WarningTarget::AuthProvider { name : n, field : f }
-                        if n == name && f.as_deref() == Some("timeout_secs")
-                    )
+                    matches!(&w.target, WarningTarget::AuthProvider { name: n, field: f }
+                        if n == name && f.as_deref() == Some("timeout_secs"))
                 })
                 .map(|w| w.reason.as_str())
                 .unwrap_or_default()
@@ -6062,8 +6108,10 @@ if n == name && f.as_deref() == field
         assert!(
             cfg.config_warnings.iter().any(|w| {
                 w.kind == ConfigWarningKind::InvalidValue
-                    && matches!(& w.target, WarningTarget::Model
-            { field, .. } if field.as_deref() == Some("auth_provider"))
+                    && matches!(
+                        &w.target,
+                        WarningTarget::Model { field, .. } if field.as_deref() == Some("auth_provider")
+                    )
             }),
             "undefined reference warns at parse time: {:?}",
             cfg.config_warnings
@@ -6081,7 +6129,6 @@ if n == name && f.as_deref() == field
             cfg.config_warnings
         );
     }
-
     #[test]
     fn shell_environment_policy_typo_does_not_fail_config() {
         let cfg: toml::Value = toml::from_str(
@@ -6094,7 +6141,6 @@ if n == name && f.as_deref() == field
         .unwrap();
         Config::new_from_toml_cfg(&cfg).expect("a policy typo must not fail the config");
     }
-
     #[test]
     fn shell_environment_policy_known_keys_track_the_policy_struct() {
         let xai_grok_tools::util::ShellEnvironmentPolicy {
@@ -6112,7 +6158,6 @@ if n == name && f.as_deref() == field
             include_only: _,
         } = ShellEnvironmentPolicyKnownKeys::default();
     }
-
     #[test]
     fn web_search_disable_api_key_auth_swaps_first_party_key_for_session() {
         let endpoints = EndpointsConfig::default();
@@ -6188,6 +6233,7 @@ if n == name && f.as_deref() == field
                 args: Some(vec!["--scope".into(), "corp".into()]),
                 token_ttl_secs: Some(3600),
                 timeout_secs: Some(10),
+                cwd: None,
             })
         );
         let resolved = resolve_model_list(&cfg, None);
@@ -6279,6 +6325,7 @@ if n == name && f.as_deref() == field
                 args: None,
                 token_ttl_secs: Some(3600),
                 timeout_secs: None,
+                cwd: None,
             },
         );
         model.auth_provider = Some(provider.clone());
@@ -6305,6 +6352,7 @@ if n == name && f.as_deref() == field
                 args: None,
                 token_ttl_secs: Some(3600),
                 timeout_secs: None,
+                cwd: None,
             },
         );
         model.auth_provider = Some(provider.clone());
@@ -6349,6 +6397,7 @@ if n == name && f.as_deref() == field
                 args: None,
                 token_ttl_secs: None,
                 timeout_secs: None,
+                cwd: None,
             },
         );
         let resolved = resolve_model_list(&cfg, Some(prefetched));
@@ -6402,6 +6451,8 @@ if n == name && f.as_deref() == field
                 api_backend: ApiBackend::default(),
                 auth_scheme: Default::default(),
                 extra_headers: IndexMap::new(),
+                query_params: IndexMap::new(),
+                env_http_headers: IndexMap::new(),
                 context_window: NonZeroU64::new(200_000).unwrap(),
                 auto_compact_threshold_percent: None,
                 system_prompt_label: None,
@@ -7123,48 +7174,6 @@ if n == name && f.as_deref() == field
         .unwrap();
         let cfg = Config::new_from_toml_cfg(&raw_config).expect("config should parse");
         assert_eq!(cfg.session.auto_compact_threshold_percent, Some(75));
-    }
-    #[test]
-    fn default_auto_retry_incomplete_end_turn_is_off() {
-        let cfg = Config::default();
-        assert_eq!(cfg.session.auto_retry_incomplete_end_turn, None);
-        assert_eq!(cfg.session.auto_retry_incomplete_end_turn_max, None);
-        let policy = cfg.resolve_auto_retry_incomplete_end_turn();
-        assert!(!policy.enabled);
-        assert_eq!(policy.max, IncompleteEndTurnRetryPolicy::DEFAULT_MAX);
-    }
-    #[test]
-    fn parses_auto_retry_incomplete_end_turn() {
-        let raw_config: toml::Value = toml::from_str(
-            r#"
-            [session]
-            auto_retry_incomplete_end_turn = true
-            auto_retry_incomplete_end_turn_max = 2
-            "#,
-        )
-        .unwrap();
-        let cfg = Config::new_from_toml_cfg(&raw_config).expect("config should parse");
-        assert_eq!(cfg.session.auto_retry_incomplete_end_turn, Some(true));
-        assert_eq!(cfg.session.auto_retry_incomplete_end_turn_max, Some(2));
-        let policy = cfg.resolve_auto_retry_incomplete_end_turn();
-        assert!(policy.enabled);
-        assert_eq!(policy.max, 2);
-    }
-    #[test]
-    fn auto_retry_incomplete_end_turn_max_clamps() {
-        let raw_config: toml::Value = toml::from_str(
-            r#"
-            [session]
-            auto_retry_incomplete_end_turn = true
-            auto_retry_incomplete_end_turn_max = 99
-            "#,
-        )
-        .unwrap();
-        let cfg = Config::new_from_toml_cfg(&raw_config).expect("config should parse");
-        assert_eq!(
-            cfg.resolve_auto_retry_incomplete_end_turn().max,
-            IncompleteEndTurnRetryPolicy::HARD_MAX
-        );
     }
     #[test]
     fn compaction_mode_precedence_env_over_config_over_remote_over_default() {
@@ -8437,42 +8446,29 @@ if n == name && f.as_deref() == field
     }
     #[test]
     fn e2e_default_model_with_session_routes_to_proxy() {
-        // Chaos ships no bundled Grok catalog; build the dual-endpoint shape
-        // that upstream defaults used (proxy + api.x.ai).
-        let endpoints = EndpointsConfig::default();
-        let dm = crate::models::default_model();
-        let model = test_model_entry(
-            dm,
-            &endpoints.resolve_inference_base_url(),
-            None,
-            None,
-            Some(&endpoints.xai_api_base_url),
-        );
-        let sampling = resolve_sampling(&model, Some("session-token-123"));
+        let (_, models) = resolve_models_from_toml("", None);
+        let model = models
+            .get(crate::models::default_model())
+            .expect("default model should exist");
+        let sampling = resolve_sampling(model, Some("session-token-123"));
         assert_eq!(sampling.api_key.as_deref(), Some("session-token-123"));
         assert_eq!(
-            sampling.base_url,
-            endpoints.resolve_inference_base_url(),
+            sampling.base_url, "https://cli-chat-proxy.grok.com/v1",
             "session auth should route to cli-chat-proxy, not api.x.ai"
         );
     }
     #[test]
     #[serial]
     fn e2e_default_model_with_external_api_key_routes_to_api_xai() {
-        let endpoints = EndpointsConfig::default();
-        let dm = crate::models::default_model();
-        let model = test_model_entry(
-            dm,
-            &endpoints.resolve_inference_base_url(),
-            None,
-            None,
-            Some(&endpoints.xai_api_base_url),
-        );
+        let (_, models) = resolve_models_from_toml("", None);
+        let model = models
+            .get(crate::models::default_model())
+            .expect("default model should exist");
         unsafe { std::env::set_var("XAI_API_KEY", "xai-external-key") };
-        let sampling = resolve_sampling(&model, None);
+        let sampling = resolve_sampling(model, None);
         assert_eq!(sampling.api_key.as_deref(), Some("xai-external-key"));
         assert_eq!(
-            sampling.base_url, endpoints.xai_api_base_url,
+            sampling.base_url, "https://api.x.ai/v1",
             "external API key should route to api.x.ai via api_base_url"
         );
         unsafe { std::env::remove_var("XAI_API_KEY") };
@@ -8629,20 +8625,10 @@ if n == name && f.as_deref() == field
     fn e2e_default_endpoint_still_injects_defaults() {
         let cfg = Config::default();
         let resolved = resolve_model_list(&cfg, None);
-        // Chaos ships an empty bundled catalog (BYOK). Upstream injects Grok
-        // defaults; we only require that resolve does not invent remote models.
-        let bundled = default_model_entries(&EndpointsConfig::default());
-        if bundled.is_empty() {
-            assert!(
-                resolved.is_empty(),
-                "empty default_models.json must not inject catalog entries"
-            );
-        } else {
-            assert!(
-                resolved.contains_key(crate::models::default_model()),
-                "default model should be present when using default endpoint"
-            );
-        }
+        assert!(
+            resolved.contains_key(crate::models::default_model()),
+            "default model should be present when using default endpoint"
+        );
     }
     #[test]
     fn e2e_acp_model_info_no_dedup_on_model_field() {
@@ -8721,20 +8707,17 @@ if n == name && f.as_deref() == field
     }
     #[test]
     fn e2e_enterprise_endpoints_only_no_model_override() {
-        // Bundled defaults inherit endpoints; Chaos catalog is empty, so build
-        // the same dual-endpoint entry via test helper + enterprise endpoints.
-        let mut endpoints = EndpointsConfig::default();
-        endpoints.cli_chat_proxy_base_url =
-            Some("https://enterprise-proxy.acme.com/v1".to_string());
-        endpoints.xai_api_base_url = "https://enterprise-api.acme.com/v1".into();
-        let dm = crate::models::default_model();
-        let model = test_model_entry(
-            dm,
-            &endpoints.resolve_inference_base_url(),
+        let (_, models) = resolve_models_from_toml(
+            r#"
+            [endpoints]
+            cli_chat_proxy_base_url = "https://enterprise-proxy.acme.com/v1"
+            xai_api_base_url = "https://enterprise-api.acme.com/v1"
+            "#,
             None,
-            None,
-            Some(endpoints.xai_api_base_url.as_str()),
         );
+        let model = models
+            .get(crate::models::default_model())
+            .expect("model should exist");
         assert_eq!(
             model.info.base_url, "https://enterprise-proxy.acme.com/v1",
             "default model should use enterprise cli_chat_proxy_base_url"
@@ -9365,15 +9348,17 @@ if n == name && f.as_deref() == field
     }
     #[test]
     #[serial]
-    fn background_workflows_default_off_without_affecting_goal() {
+    fn background_workflows_default_on_without_affecting_goal() {
         unsafe { std::env::remove_var("GROK_WORKFLOWS") };
         let cfg = Config::default();
-        assert!(!cfg.resolve_workflows().value);
+        let r = cfg.resolve_workflows();
+        assert!(r.value);
+        assert_eq!(r.source, ConfigSource::Default);
         assert!(cfg.resolve_goal().value);
     }
     #[test]
     #[serial]
-    fn resolve_workflows_remote_settings_opt_in() {
+    fn resolve_workflows_remote_settings_enables() {
         unsafe { std::env::remove_var("GROK_WORKFLOWS") };
         let cfg = Config {
             remote_settings: Some(crate::util::config::RemoteSettings {
@@ -9404,11 +9389,14 @@ if n == name && f.as_deref() == field
     #[test]
     #[serial]
     fn resolve_workflows_env_wins() {
-        unsafe { std::env::set_var("GROK_WORKFLOWS", "1") };
+        unsafe { std::env::set_var("GROK_WORKFLOWS", "0") };
         let cfg = Config::default();
         let r = cfg.resolve_workflows();
         assert_eq!(r.source, ConfigSource::Env);
-        assert!(r.value);
+        assert!(
+            !r.value,
+            "env must be able to kill the default-on workflows"
+        );
         unsafe { std::env::remove_var("GROK_WORKFLOWS") };
     }
     #[test]
@@ -9510,6 +9498,40 @@ if n == name && f.as_deref() == field
     }
     #[test]
     #[serial]
+    fn resolve_image_edit_model_override_remote_settings_or_config() {
+        unsafe { std::env::remove_var("GROK_IMAGE_EDIT_MODEL_OVERRIDE") };
+        let with = |config: Option<&str>, gb: Option<&str>| Config {
+            features: Features {
+                image_edit_model_override: config.map(String::from),
+                ..Default::default()
+            },
+            remote_settings: Some(crate::util::config::RemoteSettings {
+                image_edit_model_override: gb.map(String::from),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert_eq!(Config::default().resolve_image_edit_model_override(), None);
+        assert_eq!(
+            with(None, Some("grok-imagine-image")).resolve_image_edit_model_override(),
+            Some("grok-imagine-image".to_owned())
+        );
+        assert_eq!(
+            with(Some("grok-imagine-image-pro"), Some("grok-imagine-image"))
+                .resolve_image_edit_model_override(),
+            Some("grok-imagine-image-pro".to_owned())
+        );
+        let gen_only = Config {
+            remote_settings: Some(crate::util::config::RemoteSettings {
+                image_gen_model_override: Some("grok-imagine-image".to_owned()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert_eq!(gen_only.resolve_image_edit_model_override(), None);
+    }
+    #[test]
+    #[serial]
     fn imagine_tools_disabled_gates_image_edit() {
         unsafe { std::env::remove_var("GROK_IMAGE_EDIT") };
         let with_list = |tools: Vec<&str>| Config {
@@ -9526,6 +9548,85 @@ if n == name && f.as_deref() == field
         unsafe { std::env::remove_var("GROK_IMAGE_EDIT") };
         assert!(with_list(vec!["image_to_video"]).resolve_image_edit().value);
         assert!(Config::default().resolve_image_edit().value);
+    }
+    #[test]
+    #[serial]
+    fn resolve_image_gen_gates() {
+        unsafe { std::env::remove_var("GROK_IMAGE_GEN") };
+        assert!(Config::default().resolve_image_gen().value);
+        assert!(
+            !Config {
+                features: Features {
+                    image_gen: Some(false),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+            .resolve_image_gen()
+            .value
+        );
+        assert!(
+            !Config {
+                remote_settings: Some(crate::util::config::RemoteSettings {
+                    image_gen_enabled: Some(false),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }
+            .resolve_image_gen()
+            .value
+        );
+        unsafe { std::env::set_var("GROK_IMAGE_GEN", "1") };
+        let denied = Config {
+            remote_settings: Some(crate::util::config::RemoteSettings {
+                imagine_tools_disabled: Some(vec!["image_gen".into()]),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+        .resolve_image_gen();
+        assert!(!denied.value);
+        assert_eq!(denied.source, ConfigSource::Remote);
+        unsafe { std::env::remove_var("GROK_IMAGE_GEN") };
+    }
+    #[test]
+    #[serial]
+    fn resolve_video_gen_gates() {
+        unsafe { std::env::remove_var("GROK_VIDEO_GEN") };
+        assert!(Config::default().resolve_video_gen().value);
+        assert!(
+            !Config {
+                features: Features {
+                    video_gen: Some(false),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+            .resolve_video_gen()
+            .value
+        );
+        assert!(
+            !Config {
+                remote_settings: Some(crate::util::config::RemoteSettings {
+                    video_gen_enabled: Some(false),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }
+            .resolve_video_gen()
+            .value
+        );
+        assert!(
+            !Config {
+                remote_settings: Some(crate::util::config::RemoteSettings {
+                    imagine_tools_disabled: Some(vec!["image_to_video".into()]),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }
+            .resolve_video_gen()
+            .value
+        );
     }
     /// Clear every env var the goal/companion resolvers read so tests
     /// start from a known baseline regardless of run order.
@@ -11752,6 +11853,8 @@ default = "grok-4.5"
                 api_backend,
                 auth_scheme: Default::default(),
                 extra_headers: IndexMap::new(),
+                query_params: IndexMap::new(),
+                env_http_headers: IndexMap::new(),
                 context_window: NonZeroU64::new(context_window).unwrap(),
                 use_concise: false,
                 agent_type: default_agent_type(),
@@ -12117,14 +12220,6 @@ default = "grok-4.5"
         let cfg = Config::default();
         let dm = crate::models::default_model();
         let mut defs = default_model_entries(&EndpointsConfig::default());
-        // Chaos: empty bundled catalog — only assert empty/no-leak behavior.
-        if defs.is_empty() {
-            let no_p = resolve_model_list(&cfg, None);
-            assert!(no_p.is_empty());
-            let resolved = resolve_model_list(&cfg, Some(IndexMap::new()));
-            assert!(resolved.is_empty());
-            return;
-        }
         let mut p = IndexMap::new();
         if let Some(e) = defs.shift_remove(dm) {
             p.insert(dm.to_string(), e);
@@ -12140,19 +12235,7 @@ default = "grok-4.5"
         let dm = crate::models::default_model();
         let mut defs = default_model_entries(&EndpointsConfig::default());
         let mut p = IndexMap::new();
-        if defs.is_empty() {
-            // Seed one visible dual-auth entry when Chaos has no bundled models.
-            p.insert(
-                dm.to_string(),
-                test_model_entry(
-                    dm,
-                    "https://cli-chat-proxy.grok.com/v1",
-                    None,
-                    None,
-                    Some("https://api.x.ai/v1"),
-                ),
-            );
-        } else if let Some(e) = defs.shift_remove(dm) {
+        if let Some(e) = defs.shift_remove(dm) {
             p.insert(dm.to_string(), e);
         }
         let resolved = resolve_model_list(&cfg, Some(p));
