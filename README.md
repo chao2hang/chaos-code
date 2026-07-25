@@ -50,6 +50,9 @@ curl -fsSL https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/i
 
 #### 方式 A：cmd 一键（推荐，无需 `iex`）
 
+> [!IMPORTANT]
+> 以下命令是 **cmd.exe** 语法（`&&`、`%TEMP%`）。**请勿粘贴到 PowerShell**——Windows PowerShell 5.1 不支持 `&&`（会报 `The token '&&' is not a valid statement separator`）。PowerShell 用户请用[方式 B](#方式-bpowershell)，或本节末尾的 PowerShell 等价写法。
+
 ```bat
 curl -L -o "%TEMP%\install-chaos.bat" https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.bat && "%TEMP%\install-chaos.bat"
 ```
@@ -69,6 +72,13 @@ scripts\install.bat --version 0.2.113 --force
 ```
 
 `install.bat` 会优先调用同目录的 `install.ps1`；若无 PowerShell 或脚本失败，则回退为直接下载 `chaos.exe` 并写入用户 PATH。
+
+在 **PowerShell** 里想走 bat 安装器，用原生等价写法（`;` 分隔、`$env:TEMP` 变量、`curl.exe` 避开别名）：
+
+```powershell
+$bat = "$env:TEMP\install-chaos.bat"
+curl.exe -L -o $bat https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.bat; & $bat
+```
 
 #### 方式 B：PowerShell
 
