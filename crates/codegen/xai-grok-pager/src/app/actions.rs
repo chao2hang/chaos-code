@@ -465,6 +465,7 @@ pub enum Action {
     /// Toggle the ask_user_question timeout. SHELL-owned; persisted to
     /// `[toolset.ask_user_question].timeout_enabled`. Applies to new sessions.
     SetAskUserQuestionTimeoutEnabled(bool),
+    /// Toggle incomplete `end_turn` auto-retry. SHELL-owned; persisted to
     /// SHELL-owned `keep_text_selection` (`flash` | `hold`); cache + persist.
     SetKeepTextSelection(crate::appearance::TextSelection),
     /// Set the mouse-wheel scroll speed multiplier (1-100). Pager-owned
@@ -662,6 +663,13 @@ pub enum Action {
     },
     /// Show detailed context usage (progress bar, token breakdown, stats).
     ShowContextInfo,
+    /// Dynamically set the current session's context window (tokens).
+    /// When shrinking, the shell may compact history to fit.
+    SetContextWindow {
+        tokens: u64,
+        /// When true (default), compact if usage exceeds the new budget.
+        compact_if_needed: bool,
+    },
     /// `/usage` — session token/cost, plus consumer credits when visible.
     ShowUsage,
     /// `/usage manage` — open consumer billing (no-op if surface hidden).
@@ -1882,6 +1890,13 @@ pub enum Effect {
         agent_id: AgentId,
         session_id: acp::SessionId,
     },
+    /// Set session context window via `x.ai/session/set_context_window`.
+    SetContextWindow {
+        agent_id: AgentId,
+        session_id: acp::SessionId,
+        tokens: u64,
+        compact_if_needed: bool,
+    },
     /// Fetch current bundle cache status via `x.ai/bundle/status`.
     FetchBundleStatus,
     /// Fetch a bundled entry's raw content via `x.ai/bundle/entry/get`.
@@ -2152,6 +2167,16 @@ pub enum McpAuthTriggerOutcome {
     Authenticated,
     SetupRequired(crate::views::mcps_modal::McpSetupConfig),
 }
+/// Outcome of a successful `x.ai/session/set_context_window` call.
+#[derive(Debug, Clone)]
+pub struct SetContextWindowOutcome {
+    pub previous_tokens: u64,
+    pub tokens: u64,
+    pub tokens_used: u64,
+    pub usage_percent: u8,
+    pub compacted: bool,
+}
+
 /// Result from a completed async [`Effect`].
 ///
 /// Wrapped in `Action::TaskComplete` and dispatched synchronously.
@@ -2585,6 +2610,11 @@ pub enum TaskResult {
     ContextInfoFailed {
         agent_id: AgentId,
         error: String,
+    },
+    /// Dynamic context-window resize finished.
+    SetContextWindowComplete {
+        agent_id: AgentId,
+        result: Result<SetContextWindowOutcome, String>,
     },
     /// `/usage` session ledger fetched. Drop if `session_id` no longer matches.
     SessionUsageComplete {

@@ -42,7 +42,8 @@ use super::session::load::{
 use super::settings::ui::apply_setting_rollback;
 use super::status::{
     commit_session_usage_block, handle_coding_data_sharing_failed,
-    handle_coding_data_sharing_updated, handle_context_info_complete, scrub_error_for_toast,
+    handle_coding_data_sharing_updated, handle_context_info_complete,
+    handle_set_context_window_complete, scrub_error_for_toast,
 };
 use super::transcript::{
     handle_hooks_list_loaded, handle_marketplace_list_loaded, handle_marketplace_updates_available,
@@ -909,6 +910,9 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
                     )));
             }
             vec![]
+        }
+        TaskResult::SetContextWindowComplete { agent_id, result } => {
+            handle_set_context_window_complete(app, agent_id, result)
         }
         TaskResult::SessionUsageComplete {
             agent_id,

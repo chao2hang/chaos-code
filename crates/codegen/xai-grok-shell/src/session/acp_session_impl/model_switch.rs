@@ -11,7 +11,7 @@ impl SessionActor {
         auto_compact_threshold_percent: u8,
     ) -> Result<acp::ModelId, acp::Error> {
         let model_id = acp::ModelId::new(sampling_config.model.clone());
-        let new_context_window = self.compaction.context_window_override.unwrap_or_else(|| {
+        let new_context_window = self.compaction.context_window_override.get().unwrap_or_else(|| {
             std::num::NonZeroU64::new(sampling_config.context_window).unwrap_or_else(|| {
                 std::num::NonZeroU64::new(DEFAULT_CONTEXT_WINDOW)
                     .expect("DEFAULT_CONTEXT_WINDOW is non-zero")
@@ -115,6 +115,105 @@ impl SessionActor {
             });
         Ok(model_id)
     }
+
+    /// Handle [`SessionCommand::SetContextWindow`].
+    ///
+    /// Locks the session context window, updates sampling config + signals, and
+    /// optionally runs compaction when usage is over the new budget / threshold.
+    pub(super) async fn handle_set_context_window(
+        self: &std::sync::Arc<Self>,
+        tokens: std::num::NonZeroU64,
+        compact_if_needed: bool,
+    ) -> Result<crate::session::commands::SetContextWindowResult, acp::Error> {
+        let previous_tokens = self
+            .chat_state_handle
+            .get_sampling_config()
+            .await
+            .map(|c| c.context_window.get())
+            .unwrap_or(DEFAULT_CONTEXT_WINDOW);
+
+        // Lock so model-switch / response-header upgrades cannot overwrite.
+        self.compaction.context_window_override.set(Some(tokens));
+
+        if let Some(mut cfg) = self.chat_state_handle.get_sampling_config().await {
+            cfg.context_window = tokens;
+            self.chat_state_handle.update_sampling_config(cfg);
+        }
+
+        let tokens_used = self.chat_state_handle.get_estimated_total_tokens().await;
+        let cw = tokens.get();
+        self.signals_handle()
+            .update_context_usage(tokens_used, cw);
+        let usage_percent = xai_token_estimation::usage_percentage_u8(tokens_used, cw);
+
+        // Sticky auto-compact suppression was often set because the old window
+        // was "too full"; a user-requested budget change should re-open the gate.
+        self.compaction.auto_compact_suppressed.store(
+            super::super::compaction_config::SUPPRESS_NONE,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+
+        let mut compacted = false;
+        if compact_if_needed {
+            let over_window = tokens_used > cw;
+            let over_threshold = self
+                .should_auto_compact(tokens_used, tokens)
+                .is_some();
+            // Shrinking (or any set where usage already exceeds threshold)
+            // should compact immediately so the next turn fits.
+            if over_window || over_threshold {
+                tracing::info!(
+                    session_id = %self.session_info.id.0,
+                    previous_tokens,
+                    new_tokens = cw,
+                    tokens_used,
+                    usage_percent,
+                    over_window,
+                    over_threshold,
+                    "SetContextWindow: compacting to fit new budget"
+                );
+                if let Err(e) = self
+                    .run_compact(Some(
+                        "User reduced the context window; compress history to fit."
+                            .to_string(),
+                    ))
+                    .await
+                {
+                    tracing::warn!(
+                        session_id = %self.session_info.id.0,
+                        error = %e,
+                        "SetContextWindow: compaction failed; window still updated"
+                    );
+                } else {
+                    compacted = true;
+                }
+            }
+        }
+
+        let tokens_used = self.chat_state_handle.get_estimated_total_tokens().await;
+        let usage_percent = xai_token_estimation::usage_percentage_u8(tokens_used, cw);
+        self.signals_handle()
+            .update_context_usage(tokens_used, cw);
+
+        tracing::info!(
+            session_id = %self.session_info.id.0,
+            previous_tokens,
+            new_tokens = cw,
+            tokens_used,
+            usage_percent,
+            compacted,
+            "SetContextWindow applied"
+        );
+
+        Ok(crate::session::commands::SetContextWindowResult {
+            previous_tokens,
+            tokens: cw,
+            tokens_used,
+            usage_percent,
+            compacted,
+        })
+    }
+
     /// Handle [`SessionCommand::RebuildAgentForDefinition`].
     ///
     /// Builds a fresh [`xai_grok_agent::Agent`] from the cached
