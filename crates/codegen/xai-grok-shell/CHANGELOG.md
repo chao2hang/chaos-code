@@ -1,5 +1,26 @@
 # Changelog
 
+# 0.2.114 – 2026-07-25
+
+## Features
+
+- **Provider modal**：可在 TUI 内编辑 provider channel、手动输入模型条目；保留 provider modal 与 incomplete end_turn 的 Chaos-only WIP。
+- **incomplete end_turn 自动重试**：当 provider 返回 incomplete end_turn 时，可选择自动重试（opt-in）。
+- **`/context` 动态设置**：支持可选 compact 的动态 `/context set`。
+- **Windows 安装器**：新增 `install.bat` / `install.ps1`，Release 优先文档。
+- **Doctor 中文诊断**：doctor 诊断、CLI 与修复提示本地化为中文；补充 session-required 类 toast。
+
+## Bug Fixes
+
+- **zsh 兼容**：search/find shadows 下使用 builtin 命令，避免 zsh 别名冲突 (#7)。
+- **VersionPolicy**：API 改名后正确解析 min floor。
+- **TaskSnapshot**：测试 fixture 补齐上游新增的 `description` 字段。
+- **ListCommandsResponse**：修正可见性，使其与 `respond_to` 字段一致。
+
+## Internal
+
+- **上游同步**：path-limited 移植上游批次 13–16（changelogs 0.2.110/0.2.111、terminal exit/output recorder、task coordinator stack、hooks/journal/gate preflight）；`SOURCE_REV` bump 至 `9b8d35b`。
+
 # 0.2.111 — 2026-07-22
 
 ## Features
