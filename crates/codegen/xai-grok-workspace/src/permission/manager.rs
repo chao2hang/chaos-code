@@ -15,6 +15,7 @@ use crate::permission::exec_risk::{
     AmbientScanPlan, ambient_exec_risk_from_plan, ambient_scan_plan_from_segments,
     script_may_invoke_git, segment_exec_facts,
 };
+use crate::permission::gate_preflight::GatePreflight;
 use crate::permission::policy::{CompiledPolicy, ShellWord, shell_dash_c_script};
 use crate::permission::prompter::{AcpPrompter, PromptOutcome};
 use crate::permission::shell_access::{
@@ -34,11 +35,13 @@ use xai_grok_tools::types::resources::resolve_model_path;
 
 /// Canonical `decision_reason` triggers for the uploaded artifact. Single source
 /// so the emit sites can't drift or misspell (the field doc lists these values).
-mod reasons {
+pub(crate) mod reasons {
     pub const YOLO: &str = "yolo";
     pub const POLICY_ALLOW: &str = "policy_allow";
     pub const POLICY_DENY: &str = "policy_deny";
     pub const POLICY_ASK: &str = "policy_ask";
+    pub const BASH_COMMAND_GATE_ASK: &str = "bash_command_gate_ask";
+    pub const SHELL_FILE_GATE_ASK: &str = "shell_file_gate_ask";
     pub const AUTO_FAST_PATH: &str = "auto_fast_path";
     pub const AUTO_CLASSIFIER_ALLOW: &str = "auto_classifier_allow";
     pub const AUTO_CLASSIFIER_BLOCK: &str = "auto_classifier_block";
@@ -1503,32 +1506,20 @@ fn spawn_permission_manager_with_pin(
 
                     // Evaluate managed policy (direct access + per-segment Bash command
                     // rules + Bash shell-file args) up front so the YOLO/sandbox fast
-                    // paths below honor a deny or forced prompt.
-                    let direct_decision = compiled_policy
-                        .as_ref()
-                        .and_then(|policy| policy.evaluate(&access));
-                    let shell_command_decision = match (&compiled_policy, &access) {
-                        (Some(policy), AccessKind::Bash(cmd)) => {
-                            policy.evaluate_bash_command_policy(cmd)
-                        }
-                        _ => None,
-                    };
-                    let shell_file_decision = match (&compiled_policy, &access) {
-                        (Some(policy), AccessKind::Bash(cmd)) => {
-                            policy.evaluate_shell_file_access(cmd, cwd.as_path())
-                        }
-                        _ => None,
-                    };
-                    let shell_file_forced_prompt =
-                        matches!(shell_file_decision, Some(Decision::Ask));
-                    // An `Ask` from either bash gate must block the YOLO/auto fast paths.
-                    let shell_forced_prompt = shell_file_forced_prompt
-                        || matches!(shell_command_decision, Some(Decision::Ask));
-                    let policy_decision = combine_decisions(
-                        combine_decisions(direct_decision, shell_command_decision),
-                        shell_file_decision,
+                    // paths below honor a deny or forced prompt. The preflight also
+                    // resolves the auto-mode disposition of a fail-closed gate Ask:
+                    // defer to the classifier or stay prompt-binding on a rule match.
+                    let preflight = GatePreflight::evaluate(
+                        compiled_policy.as_ref(),
+                        &access,
+                        cwd.as_path(),
+                        auto_mode,
                     );
-                    let policy_forced_prompt = matches!(policy_decision, Some(Decision::Ask));
+                    let policy_decision = preflight.policy_decision();
+                    let policy_forced_prompt = preflight.policy_forced_prompt();
+                    // An `Ask` from either bash gate must block the YOLO/auto fast paths.
+                    let shell_forced_prompt = preflight.shell_forced_prompt();
+                    let shell_file_forced_prompt = preflight.shell_file_forced_prompt();
                     // Set when auto mode decides to prompt (needs-user fast path or
                     // classifier block). Prevents the sandbox bash auto-approve and the
                     // allowlist pre-decision below from silently overriding it.

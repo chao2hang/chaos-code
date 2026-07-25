@@ -2,6 +2,7 @@ pub mod auto_mode;
 pub mod bash_command_splitting;
 pub mod claude_settings;
 mod exec_risk;
+mod gate_preflight;
 mod hub_permission;
 mod manager;
 mod policy;
