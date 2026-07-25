@@ -1,0 +1,17 @@
+[
+  {
+    "category": "features",
+    "description": "**扩展弹窗** 删除 MCP 服务器、插件或 hook 源时会要求确认（按 y 继续）。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "**会话创建失败**（含磁盘满）会显示错误信息，而不再卡在「正在启动会话…」。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "**自动压缩** 因凭证过期失败时，可重新配置凭证并自动重试压缩与原提示。",
+    "breaking_change": false
+  }
+]

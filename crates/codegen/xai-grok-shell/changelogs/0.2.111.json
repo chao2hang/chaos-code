@@ -1,0 +1,97 @@
+[
+  {
+    "category": "features",
+    "description": "可通过 `config.toml` 或环境变量关闭图片生成与视频生成工具（及其斜杠命令）。",
+    "breaking_change": false
+  },
+  {
+    "category": "features",
+    "description": "`/session-info` 会显示当前会话使用的认证方式（API Key / 自定义 provider 等）与管理入口。",
+    "breaking_change": false
+  },
+  {
+    "category": "features",
+    "description": "可在 TUI 内直接运行 `doctor fix` 类修复命令，不必只走 CLI。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "**插件子 Agent** 默认继承父会话已连接的 MCP 服务器（`mcpInheritance: all`），`search_tool` / `use_tool` 行为与本地 Agent 一致。插件 Agent 仍不能自行声明 MCP、hooks 或提升权限模式。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "**`!cmd` 命令** 超时上限提升至一小时。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "**npm 包** 将原生二进制安装到 `$GROK_HOME/bin`（与 Rust CLI 相同的覆盖约定）。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "**启动警告** 会引导使用 `/doctor` 查看详情与修复。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "**Dashboard** 宽屏模式下悬停与点击不再漏掉条目间隙。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "编辑队列提示时 **Shift/Alt+Enter** 可插入换行。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "**合并队列模式** 下编辑排队提示不再因过早释放 hold 而丢改动。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "对使用过压缩的会话做 fork 后，后续 rewind 不再因缺失 checkpoint 失败。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "在回看滚动缓冲时出现权限提示，焦点会正确落到提示上以便作答。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "按一次 Esc 可取消当前 Agent 回合（全屏 vim 滚动模式除外）。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "连续多次发起完全相同的工具调用时，会自动停止该回合（doom-loop 防护）。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "工作区 teleport 禁用标志的两种拼写均可正确加载与保存。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "多会话并存时，后台子 Agent 完成消息不再泄漏到无关会话。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "自动权限分类器超时或失败时，改为弹出正常权限提示，而不再静默拒绝。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "**托管 MCP 工具** 在 Notion 更新等慢操作上不再过早超时。",
+    "breaking_change": false
+  },
+  {
+    "category": "performance",
+    "description": "macOS 语音听写通过临时 helper 进程采集音频，降低内存占用。",
+    "breaking_change": false
+  }
+]

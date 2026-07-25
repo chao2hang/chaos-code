@@ -1,0 +1,257 @@
+//! CreditLimitBlock — scrollback card shown when a max-tier user exhausts credits.
+//!
+//! Replaces the Q&A question modal for users already at the highest billing tier.
+//! Instead of offering upgrade + PAYG / buy-credits options in the question
+//! overlay, this block renders an inline card with a descriptive message and
+//! an optional link to the Provider usage/billing page (may be empty on Chaos).
+
+use ratatui::style::{Modifier, Style};
+use ratatui::text::{Line, Span};
+
+use crate::scrollback::block::BlockContent;
+use crate::scrollback::types::{AccentStyle, BlockContext, BlockLine, BlockOutput, DisplayMode};
+use crate::theme::Theme;
+
+/// Which continue-path the max-tier credit-limit card recommends.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CreditLimitCardAction {
+    /// Legacy on-demand: PAYG not enabled yet.
+    EnablePayg,
+    /// Legacy on-demand: PAYG on but at spending cap.
+    IncreasePaygLimit,
+    /// Unified usage billing: purchase prepaid credits.
+    PurchaseCredits,
+}
+
+/// Inline scrollback card for credit-limit exhaustion on max-tier accounts.
+#[derive(Debug, Clone)]
+pub struct CreditLimitBlock {
+    /// Card heading (e.g. "You've hit your free credits limit.").
+    pub heading: String,
+    /// Continue-path body copy selector.
+    pub action: CreditLimitCardAction,
+    /// URL to the usage/billing page.
+    pub url: String,
+}
+
+impl CreditLimitBlock {
+    /// Create a new credit-limit card.
+    pub fn new(
+        heading: impl Into<String>,
+        action: CreditLimitCardAction,
+        url: impl Into<String>,
+    ) -> Self {
+        Self {
+            heading: heading.into(),
+            action,
+            url: url.into(),
+        }
+    }
+}
+
+impl BlockContent for CreditLimitBlock {
+    fn output(&self, _ctx: &BlockContext) -> BlockOutput {
+        let theme = Theme::current();
+
+        // Heading in bold warning color (amber/yellow).
+        let heading_style = Style::default()
+            .fg(theme.warning)
+            .add_modifier(Modifier::BOLD);
+        let heading = Line::from(Span::styled(self.heading.clone(), heading_style));
+
+        // Body copy — contextual message based on billing mode.
+        let muted = theme.muted();
+        let body = match self.action {
+            CreditLimitCardAction::IncreasePaygLimit => "可通过提高消费限额继续使用。",
+            CreditLimitCardAction::EnablePayg => "可通过启用按量付费继续使用。",
+            CreditLimitCardAction::PurchaseCredits => "可通过购买更多额度继续使用。",
+        };
+        let body_line = Line::from(Span::styled(body.to_string(), muted));
+
+        let mut lines = vec![
+            BlockLine::styled(heading).with_selection_range(Some(0)),
+            BlockLine::separator(Line::from("")),
+            BlockLine::styled(body_line).with_selection_range(Some(0)),
+        ];
+        // Optional billing/usage URL — Chaos often leaves this empty (BYOK).
+        if !self.url.trim().is_empty() {
+            let link_style = theme.link_style();
+            let link_line = Line::from(vec![Span::styled(self.url.clone(), link_style)]);
+            lines.push(BlockLine::styled(link_line).with_selection_range(Some(0)));
+        }
+
+        BlockOutput { lines }
+    }
+
+    fn accent(&self, _ctx: &BlockContext) -> Option<AccentStyle> {
+        let theme = Theme::current();
+        Some(AccentStyle::static_color(theme.warning))
+    }
+
+    fn has_vpad(&self, _ctx: &BlockContext) -> bool {
+        true
+    }
+
+    fn has_raw_mode(&self) -> bool {
+        false
+    }
+
+    fn is_foldable(&self) -> bool {
+        false
+    }
+
+    fn default_display_mode(&self) -> DisplayMode {
+        DisplayMode::Expanded
+    }
+
+    fn is_selectable(&self) -> bool {
+        true
+    }
+
+    fn is_groupable(&self) -> bool {
+        false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::appearance::AppearanceConfig;
+
+    fn ctx() -> BlockContext {
+        BlockContext {
+            mode: DisplayMode::Expanded,
+            is_running: false,
+            width: 80,
+            raw: false,
+            max_lines: None,
+            appearance: AppearanceConfig::default(),
+            is_selected: false,
+            cwd: None,
+        }
+    }
+
+    #[test]
+    fn output_payg_off_mentions_enabling() {
+        let block = CreditLimitBlock::new(
+            "已达到额度上限。",
+            CreditLimitCardAction::EnablePayg,
+            "https://example.com/usage",
+        );
+        let output = block.output(&ctx());
+        let all_text: String = output
+            .lines
+            .iter()
+            .flat_map(|l| l.content.spans.iter().map(|s| s.content.as_ref()))
+            .collect();
+        assert!(all_text.contains("额度上限"));
+        assert!(all_text.contains("按量付费"));
+        assert!(all_text.contains("example.com/usage"));
+    }
+
+    #[test]
+    fn output_payg_on_mentions_increasing() {
+        let block = CreditLimitBlock::new(
+            "已达到消费上限。",
+            CreditLimitCardAction::IncreasePaygLimit,
+            "https://example.com/usage",
+        );
+        let output = block.output(&ctx());
+        let all_text: String = output
+            .lines
+            .iter()
+            .flat_map(|l| l.content.spans.iter().map(|s| s.content.as_ref()))
+            .collect();
+        assert!(all_text.contains("消费上限"));
+        assert!(all_text.contains("消费限额"));
+        assert!(all_text.contains("example.com/usage"));
+    }
+
+    #[test]
+    fn output_unified_mentions_purchasing_credits() {
+        let block = CreditLimitBlock::new(
+            "已达到本周用量上限。",
+            CreditLimitCardAction::PurchaseCredits,
+            "https://example.com/usage",
+        );
+        let output = block.output(&ctx());
+        let all_text: String = output
+            .lines
+            .iter()
+            .flat_map(|l| l.content.spans.iter().map(|s| s.content.as_ref()))
+            .collect();
+        assert!(all_text.contains("购买更多额度"));
+        assert!(all_text.contains("example.com/usage"));
+    }
+
+    #[test]
+    fn has_warning_accent() {
+        let block = CreditLimitBlock::new("heading", CreditLimitCardAction::EnablePayg, "url");
+        let accent = block.accent(&ctx());
+        let theme = Theme::current();
+        assert!(accent.is_some());
+        assert_eq!(accent.unwrap().color, theme.warning);
+    }
+
+    #[test]
+    fn block_content_contract() {
+        let block = CreditLimitBlock::new("heading", CreditLimitCardAction::EnablePayg, "url");
+        let c = ctx();
+        assert!(!block.is_foldable());
+        assert!(block.is_selectable());
+        assert!(!block.is_groupable());
+        assert!(matches!(
+            block.default_display_mode(),
+            DisplayMode::Expanded
+        ));
+        assert!(block.has_vpad(&c));
+        assert!(!block.has_raw_mode());
+    }
+
+    #[test]
+    fn output_structure_and_content() {
+        let url = "https://example.com/usage";
+        let block = CreditLimitBlock::new("Test heading", CreditLimitCardAction::EnablePayg, url);
+        let output = block.output(&ctx());
+
+        // heading, separator, body, link = 4 lines
+        assert_eq!(output.lines.len(), 4);
+
+        let all_text: String = output
+            .lines
+            .iter()
+            .flat_map(|l| l.content.spans.iter().map(|s| s.content.as_ref()))
+            .collect();
+        assert!(all_text.contains(url));
+        assert!(!all_text.contains("grok.com"));
+
+        // Heading uses bold modifier.
+        assert!(
+            output.lines[0]
+                .content
+                .spans
+                .iter()
+                .any(|s| s.style.add_modifier.contains(Modifier::BOLD))
+        );
+    }
+
+    #[test]
+    fn output_omits_link_when_url_empty() {
+        let block = CreditLimitBlock::new("Test heading", CreditLimitCardAction::EnablePayg, "");
+        let output = block.output(&ctx());
+        // heading, separator, body — no link line
+        assert_eq!(output.lines.len(), 3);
+    }
+
+    #[test]
+    fn new_stores_fields_correctly() {
+        let block = CreditLimitBlock::new(
+            "my heading",
+            CreditLimitCardAction::IncreasePaygLimit,
+            "https://example.com",
+        );
+        assert_eq!(block.heading, "my heading");
+        assert_eq!(block.action, CreditLimitCardAction::IncreasePaygLimit);
+        assert_eq!(block.url, "https://example.com");
+    }
+}
