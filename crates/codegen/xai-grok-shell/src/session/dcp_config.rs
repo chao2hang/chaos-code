@@ -8,6 +8,32 @@ use std::sync::atomic::AtomicUsize;
 
 use serde::{Deserialize, Serialize};
 
+/// 压缩策略选择。控制百分比阈值全量替换与 DCP 动态裁剪之间的组合。
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CompactionStrategy {
+    /// 仅百分比阈值自动压缩（全量替换）。当前默认行为，向后兼容。
+    #[default]
+    Threshold,
+    /// 仅 DCP 动态裁剪：模型驱动 compress 工具 + 提醒 + 自动策略，
+    /// 不触发百分比阈值全量替换。
+    Dynamic,
+    /// 两者共存：DCP 做精细裁剪，阈值做兜底安全网。
+    Both,
+}
+
+impl CompactionStrategy {
+    /// 是否启用 DCP 动态裁剪子系统（compress 工具 + 提醒 + 自动策略）。
+    pub fn dcp_active(self) -> bool {
+        matches!(self, Self::Dynamic | Self::Both)
+    }
+
+    /// 是否保留百分比阈值自动压缩（全量替换）。
+    pub fn threshold_active(self) -> bool {
+        matches!(self, Self::Threshold | Self::Both)
+    }
+}
+
 /// 受保护内容配置。受保护的会话条目不会被自动策略或模型驱动的
 /// `compress` 工具压缩。
 #[derive(Debug, Clone, Serialize, Deserialize)]

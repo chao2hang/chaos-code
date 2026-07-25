@@ -1021,6 +1021,8 @@ pub(crate) async fn run_shell_child(
         xai_chat_state::CompactionMode::Summary,
         ctx.resolve_compaction_verbatim_input(),
         ctx.resolve_compaction_tool_choice(),
+        ctx.resolve_compaction_strategy(),
+        ctx.resolve_dcp_config(),
         false,
         None,
         None,

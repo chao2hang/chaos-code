@@ -960,6 +960,41 @@ impl SessionActor {
                     .await;
                 ok_end_turn(0, None)
             }
+            BuiltinAction::ToggleDynamicCompact => {
+                use crate::session::dcp_config::CompactionStrategy;
+                let current = self.compaction.strategy.get();
+                let next = if current.dcp_active() {
+                    CompactionStrategy::Threshold
+                } else {
+                    CompactionStrategy::Dynamic
+                };
+                self.compaction.strategy.set(next);
+                let was_dcp = current.dcp_active();
+                let is_dcp = next.dcp_active();
+                let msg = match next {
+                    CompactionStrategy::Threshold => {
+                        "动态上下文裁剪：已关闭（仅阈值压缩模式）。\n\
+                         compress 工具已注销；百分比阈值自动压缩已启用。"
+                    }
+                    CompactionStrategy::Dynamic => {
+                        "动态上下文裁剪：已开启（模型驱动 compress 工具 + 提醒）。\n\
+                         compress 工具已注册给模型使用；百分比阈值自动压缩已禁用。\n\
+                         再次使用 /dynamic-compact 可关闭。"
+                    }
+                    CompactionStrategy::Both => unreachable!(),
+                };
+                tracing::info!(
+                    session_id = %self.session_info.id.0,
+                    from = ?current,
+                    to = ?next,
+                    "DCP 策略已通过 /dynamic-compact 切换"
+                );
+                if !was_dcp && is_dcp {
+                    self.maybe_inject_selective_compaction_nudge().await;
+                }
+                self.send_host_turn_slash_command_output(msg).await;
+                ok_end_turn(0, None)
+            }
         }
     }
 

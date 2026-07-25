@@ -3312,6 +3312,8 @@ impl MvpAgent {
             .borrow()
             .resolve_compaction_verbatim_input();
         let compaction_tool_choice = self.cfg.borrow().resolve_compaction_tool_choice();
+        let compaction_strategy = self.cfg.borrow().resolve_compaction_strategy();
+        let dcp_config = self.cfg.borrow().resolve_dcp_config();
         let two_pass_enabled = self.cfg.borrow().is_two_pass_compaction_enabled();
         let auto_update = self.cfg.borrow().cli.auto_update;
         let client_type = *self.client_type.borrow();
@@ -3697,6 +3699,8 @@ impl MvpAgent {
                     compaction_mode,
                     compaction_verbatim_input,
                     compaction_tool_choice,
+                    compaction_strategy,
+                    dcp_config,
                     two_pass_enabled,
                     buffering_settings,
                     origin_client.clone(),

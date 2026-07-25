@@ -371,6 +371,22 @@ impl SubagentSpawnContext {
                 .and_then(|r| r.compaction_tool_choice.as_deref()),
         )
     }
+    /// 子代理压缩策略，镜像 `Config::resolve_compaction_strategy`。
+    pub fn resolve_compaction_strategy(
+        &self,
+    ) -> crate::session::dcp_config::CompactionStrategy {
+        self.agent_config
+            .as_ref()
+            .and_then(|c| c.compaction.strategy)
+            .unwrap_or_default()
+    }
+    /// 子代理 DCP 配置，镜像 `Config::resolve_dcp_config`。
+    pub fn resolve_dcp_config(&self) -> crate::session::dcp_config::DcpConfig {
+        self.agent_config
+            .as_ref()
+            .and_then(|c| c.compaction.dcp.clone())
+            .unwrap_or_default()
+    }
     /// Whether a completed subagent's worktree is snapshotted into a durable ref
     /// and its directory deleted. Resolution mirrors the other subagent gates
     /// (env > config > remote settings > default). Default `false` so it ships dark;
