@@ -244,6 +244,15 @@ fn assert_set_bool_action(outcome: SettingsKeyOutcome, key: &str, expected: bool
                 "SetAskUserQuestionTimeoutEnabled value differs from expected"
             )
         }
+        (
+            "session.auto_retry_incomplete_end_turn",
+            Action::SetAutoRetryIncompleteEndTurn(b),
+        ) => {
+            assert_eq!(
+                b, expected,
+                "SetAutoRetryIncompleteEndTurn value differs from expected"
+            )
+        }
 
         ("show_tips", Action::SetShowTips(b)) => {
             assert_eq!(b, expected, "SetShowTips value differs from expected")
@@ -2044,6 +2053,7 @@ fn settings_value_payload_matches_kind() {
             | SettingsKeyOutcome::Action(Action::SetVimMode(_))
             | SettingsKeyOutcome::Action(Action::SetRememberToolApprovals(_))
             | SettingsKeyOutcome::Action(Action::SetAskUserQuestionTimeoutEnabled(_))
+            | SettingsKeyOutcome::Action(Action::SetAutoRetryIncompleteEndTurn(_))
             | SettingsKeyOutcome::Action(Action::SetShowTips(_))
             | SettingsKeyOutcome::Action(Action::SetAutoUpdate(_))
             | SettingsKeyOutcome::Action(Action::SetRespectManualFolds(_))

@@ -276,6 +276,9 @@ pub struct PagerLocalSnapshot {
     /// `[toolset.ask_user_question].timeout_enabled` mirror (effective TOML
     /// merge, like `show_tips`). `None` = unset in TOML → default `true`.
     pub ask_user_question_timeout_enabled: Option<bool>,
+    /// `[session].auto_retry_incomplete_end_turn` mirror. `None` = unset in
+    /// TOML → default `false` (opt-in).
+    pub auto_retry_incomplete_end_turn: Option<bool>,
     /// Live `voice_config.language` at snapshot time. Lets the modal show the
     /// language actually in effect when `[ui].voice_stt_language` is unset but
     /// an explicit `[voice].language` applies.
@@ -302,6 +305,7 @@ impl Default for PagerLocalSnapshot {
             respect_manual_folds: crate::appearance::ScrollConfig::default().respect_manual_folds,
             auto_mode_gate: false,
             ask_user_question_timeout_enabled: None,
+            auto_retry_incomplete_end_turn: None,
             voice_stt_language: xai_grok_voice::STT_LANGUAGE_DEFAULT.to_string(),
         }
     }
@@ -632,6 +636,10 @@ pub fn current_value_for(
                 .ask_user_question_timeout_enabled
                 .unwrap_or(ask_user_question::DEFAULT_ASK_USER_QUESTION_TIMEOUT_ENABLED),
         )),
+        // incomplete end_turn auto-retry: user-config layer; None → off.
+        "session.auto_retry_incomplete_end_turn" => Some(SettingValue::Bool(
+            pager.auto_retry_incomplete_end_turn.unwrap_or(false),
+        )),
         // default_selected_permission: maps `[ui].default_selected_permission`
         // onto one of the four registry canonicals. `None` / unrecognised on
         // disk → `always_allow_all_sessions` (the effective default — the
@@ -935,6 +943,13 @@ mod tests {
                         ask_user_question::DEFAULT_ASK_USER_QUESTION_TIMEOUT_ENABLED,
                         "toolset.ask_user_question.timeout_enabled default drifts from the \
                          shared resolver const in xai-grok-tools"
+                    );
+                }
+                // incomplete end_turn auto-retry: lives under `[session]`; default off.
+                ("session.auto_retry_incomplete_end_turn", SettingKind::Bool { default }) => {
+                    assert!(
+                        !*default,
+                        "session.auto_retry_incomplete_end_turn default must stay off (opt-in)"
                     );
                 }
                 // show_thinking_blocks: Option<bool>; None → true (client default).

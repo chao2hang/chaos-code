@@ -1030,6 +1030,18 @@ pub(crate) async fn persist_setting(
                 .await
                 .map_err(|e| e.to_string())
         }
+        "session.auto_retry_incomplete_end_turn" => {
+            let SettingValue::Bool(b) = value else {
+                return Err(kind_mismatch(
+                    "session.auto_retry_incomplete_end_turn",
+                    "Bool",
+                    &value,
+                ));
+            };
+            xai_grok_shell::util::config::set_auto_retry_incomplete_end_turn(b)
+                .await
+                .map_err(|e| e.to_string())
+        }
         "show_thinking_blocks" => {
             let SettingValue::Bool(b) = value else {
                 return Err(kind_mismatch("show_thinking_blocks", "Bool", &value));

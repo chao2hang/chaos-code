@@ -1361,6 +1361,7 @@ pub(crate) async fn run(
     app.show_tips = config_session_bools.show_tips;
     app.auto_update = config_session_bools.auto_update;
     app.ask_user_question_timeout_enabled = config_session_bools.ask_user_question_timeout_enabled;
+    app.auto_retry_incomplete_end_turn = config_session_bools.auto_retry_incomplete_end_turn;
     // Prime thread-local caches so first render doesn't hit disk.
     crate::appearance::cache::prime(&app.current_ui);
     // Re-derive the render-value compact flag from the hydrated `current_ui`:
@@ -2752,6 +2753,7 @@ struct InitialConfigSessionBools {
     show_tips: Option<bool>,
     auto_update: Option<bool>,
     ask_user_question_timeout_enabled: Option<bool>,
+    auto_retry_incomplete_end_turn: Option<bool>,
 }
 
 fn load_initial_config_session_bools() -> InitialConfigSessionBools {
@@ -2759,6 +2761,7 @@ fn load_initial_config_session_bools() -> InitialConfigSessionBools {
         return InitialConfigSessionBools::default();
     };
     let cli_bool = |key: &str| -> Option<bool> { root.get("cli")?.get(key)?.as_bool() };
+    let session_bool = |key: &str| -> Option<bool> { root.get("session")?.get(key)?.as_bool() };
     InitialConfigSessionBools {
         show_tips: cli_bool("show_tips"),
         auto_update: cli_bool("auto_update"),
@@ -2767,6 +2770,7 @@ fn load_initial_config_session_bools() -> InitialConfigSessionBools {
             .and_then(|t| t.get("ask_user_question"))
             .and_then(|a| a.get("timeout_enabled"))
             .and_then(|v| v.as_bool()),
+        auto_retry_incomplete_end_turn: session_bool("auto_retry_incomplete_end_turn"),
     }
 }
 

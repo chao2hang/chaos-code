@@ -1049,6 +1049,9 @@ pub struct AppView {
     /// from the effective TOML merge like `show_tips`. `None` = unset in TOML
     /// (default `true`); toggles write the user layer.
     pub ask_user_question_timeout_enabled: Option<bool>,
+    /// Persisted `[session].auto_retry_incomplete_end_turn` mirror. `None` =
+    /// unset in TOML (default `false`); toggles write the user layer.
+    pub auto_retry_incomplete_end_turn: Option<bool>,
     /// Whether ZDR users are allowed to use the product.
     /// Server-controlled via RemoteSettings (remote settings). Default `false` (blocked) during beta.
     pub zdr_access_enabled: bool,
@@ -1403,6 +1406,7 @@ impl AppView {
             show_tips: None,
             auto_update: None,
             ask_user_question_timeout_enabled: None,
+            auto_retry_incomplete_end_turn: None,
             zdr_access_enabled: false,
             usage_billing_redirect_url: None,
             access_gate_shown_logged: false,
@@ -5479,6 +5483,7 @@ pub(crate) mod tests {
             show_tips: None,
             auto_update: None,
             ask_user_question_timeout_enabled: None,
+            auto_retry_incomplete_end_turn: None,
             zdr_access_enabled: false,
             usage_billing_redirect_url: None,
             access_gate_shown_logged: false,

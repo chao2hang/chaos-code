@@ -1297,6 +1297,7 @@ pub(super) fn dispatch_dashboard_dispatch_slash(app: &mut AppView, text: String)
     let respect_manual_folds_from_app = app.appearance.scrollback.scroll.respect_manual_folds;
     let auto_mode_gate_from_app = app.auto_mode_gate;
     let ask_user_question_timeout_enabled_from_app = app.ask_user_question_timeout_enabled;
+    let auto_retry_incomplete_end_turn_from_app = app.auto_retry_incomplete_end_turn;
     let voice_stt_language_from_app = app.voice_config.language.clone();
 
     // Build the execution context from app-wide state. The dashboard
@@ -1404,6 +1405,7 @@ pub(super) fn dispatch_dashboard_dispatch_slash(app: &mut AppView, text: String)
                 respect_manual_folds: respect_manual_folds_from_app,
                 auto_mode_gate: auto_mode_gate_from_app,
                 ask_user_question_timeout_enabled: ask_user_question_timeout_enabled_from_app,
+                auto_retry_incomplete_end_turn: auto_retry_incomplete_end_turn_from_app,
                 voice_stt_language: voice_stt_language_from_app,
             },
         };

@@ -665,6 +665,8 @@ fn rows_contain_categories_and_settings_through_pr_14() {
             // SHELL-owned ask_user_question timeout (Agent category,
             // registered directly above plan_mode).
             "toolset.ask_user_question.timeout_enabled",
+            // SHELL-owned incomplete end_turn auto-retry (Agent category).
+            "session.auto_retry_incomplete_end_turn",
             // PAGER-owned plan_mode (Agent category).
             "plan_mode",
             // SHELL-owned coding_data_sharing (Privacy category).

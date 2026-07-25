@@ -1214,6 +1214,34 @@ pub fn default_settings() -> Vec<SettingMeta> {
             restart_required: true,
             hidden_in_minimal: false,
         },
+        // SHELL-owned `[session].auto_retry_incomplete_end_turn`. Opt-in
+        // recovery when the model ends a turn with a plan-only message after
+        // tools but no writes (issue #6). Default off; applies to new sessions.
+        SettingMeta {
+            key: "session.auto_retry_incomplete_end_turn",
+            category: SettingCategory::Agent,
+            owner: SettingOwner::Shell,
+            label: "未完成回合自动重试",
+            description: "模型在调用工具后仅输出计划、未真正改文件就结束回合时，自动注入提醒并再采样一次。默认关闭；开启可能增加模型调用。",
+            keywords: &[
+                "retry",
+                "auto",
+                "incomplete",
+                "end_turn",
+                "end turn",
+                "premature",
+                "interrupted",
+                "recovery",
+                "plan only",
+                "重试",
+                "中断",
+                "未完成",
+                "自动",
+            ],
+            kind: SettingKind::Bool { default: false },
+            restart_required: true,
+            hidden_in_minimal: false,
+        },
         // PAGER-owned, ACP-mediated. Reads from
         // `PagerLocalSnapshot.plan_mode_active`. Default "off" matches
         // `AgentView::new`'s `plan_mode_active = false`.

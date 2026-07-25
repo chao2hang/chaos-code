@@ -828,6 +828,10 @@ impl SessionActor {
             let mut round_trace = trace_gcs_config;
             let mut round_artifact = artifact_tracker;
             let mut stop_continuations_this_turn: u32 = 0;
+            let mut incomplete_end_turn_retries: u8 = 0;
+            // Accumulate tools across outer-loop rounds (stop-hook / incomplete retry)
+            // so write detection sees the full user-prompt tool history.
+            let mut prompt_tools_called: Vec<String> = Vec::new();
             loop {
                 if self.goal_harness_enabled() {
                     let goal_loop_active = self.goal_tracker.lock().status()
@@ -860,6 +864,12 @@ impl SessionActor {
                     .await;
                     break round;
                 }
+                if let Ok(TurnOutcome::Completed {
+                    ref tools_called, ..
+                }) = round
+                {
+                    prompt_tools_called.extend(tools_called.iter().cloned());
+                }
                 let goal_active = laziness_injection_active(
                     self.goal_harness_enabled(),
                     self.goal_tracker.lock().status(),
@@ -872,6 +882,50 @@ impl SessionActor {
                     };
                     if let GoalRoundDecision::Continue(directive) = decision {
                         self.inject_goal_continuation_message(directive).await;
+                        continue;
+                    }
+                }
+                // Incomplete end_turn auto-retry (opt-in): after tools but no
+                // writes, model ends with a plan-only message → inject recovery
+                // and sample again. Runs before stop-hook so hooks still see a
+                // final stop after retries are exhausted.
+                {
+                    let policy = self.incomplete_end_turn_retry;
+                    let last_text = {
+                        let conv = self.chat_state_handle.get_conversation().await;
+                        last_assistant_text_from_conversation(&conv)
+                    };
+                    if let Some(reason) = should_retry_incomplete_end_turn(&IncompleteEndTurnInput {
+                        enabled: policy.enabled,
+                        retries_so_far: incomplete_end_turn_retries,
+                        max_retries: policy.max,
+                        tools_called: &prompt_tools_called,
+                        last_assistant_text: &last_text,
+                    }) {
+                        incomplete_end_turn_retries =
+                            incomplete_end_turn_retries.saturating_add(1);
+                        tracing::info!(
+                            prompt_id = %prompt_id,
+                            reason = reason.as_str(),
+                            retries = incomplete_end_turn_retries,
+                            max = policy.max,
+                            tools = prompt_tools_called.len(),
+                            "incomplete end_turn: auto-retrying with recovery prompt"
+                        );
+                        xai_grok_telemetry::unified_log::info(
+                            "shell.incomplete_end_turn_retry",
+                            Some(self.session_info.id.0.as_ref()),
+                            Some(serde_json::json!({
+                                "prompt_id": prompt_id,
+                                "reason": reason.as_str(),
+                                "retries": incomplete_end_turn_retries,
+                                "max": policy.max,
+                                "tool_count": prompt_tools_called.len(),
+                            })),
+                        );
+                        self.chat_state_handle.push_user_message(
+                            ConversationItem::auto_recovery(INCOMPLETE_END_TURN_RECOVERY_PROMPT),
+                        );
                         continue;
                     }
                 }
