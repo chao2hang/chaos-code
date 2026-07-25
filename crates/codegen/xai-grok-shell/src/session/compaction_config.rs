@@ -137,8 +137,13 @@ pub struct CompactionConfig {
     /// Auto-compaction suppression state (`SUPPRESS_*`) after a deterministic
     /// failure; the gates early-return unless `SUPPRESS_NONE`. Manual `/compact` ignores it.
     pub auto_compact_suppressed: AtomicU8,
-    /// Locks the context window when `GROK_DEBUG_CONTEXT_WINDOW` is set.
-    pub context_window_override: Option<std::num::NonZeroU64>,
+    /// Locks the context window: set from `GROK_DEBUG_CONTEXT_WINDOW` at spawn,
+    /// or at runtime via `/context set` / `x.ai/session/set_context_window`.
+    ///
+    /// `Cell` so the session can update without `&mut self` (same pattern as
+    /// `threshold_percent`). When `Some`, model-switch / response-header
+    /// upgrades must not overwrite the locked value.
+    pub context_window_override: Cell<Option<std::num::NonZeroU64>>,
     pub count: AtomicU64,
     /// Set at turn end; consumed at next turn start for model-switch compaction.
     /// `Cell` because `SessionActor` is `!Send`.

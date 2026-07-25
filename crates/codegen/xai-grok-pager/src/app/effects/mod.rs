@@ -3330,6 +3330,67 @@ pub(crate) fn execute(
                     }
                 });
         }
+        Effect::SetContextWindow {
+            agent_id,
+            session_id,
+            tokens,
+            compact_if_needed,
+        } => {
+            let tx = acp_tx.clone();
+            tasks.spawn(async move {
+                let params = serde_json::json!({
+                    "sessionId": session_id.0.to_string(),
+                    "tokens": tokens,
+                    "compactIfNeeded": compact_if_needed,
+                });
+                let req = acp::ExtRequest::new(
+                    "x.ai/session/set_context_window",
+                    serde_json::value::to_raw_value(&params)
+                        .expect("serialize set_context_window params")
+                        .into(),
+                );
+                let result = match acp_send(req, &tx).await {
+                    Ok(resp) => {
+                        let value: serde_json::Value =
+                            serde_json::from_str(resp.0.get()).unwrap_or_default();
+                        // Response may be raw or wrapped in ExtMethodResult.
+                        let body = value
+                            .get("result")
+                            .cloned()
+                            .unwrap_or(value);
+                        let previous_tokens = body
+                            .get("previousTokens")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0);
+                        let tokens = body
+                            .get("tokens")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(tokens);
+                        let tokens_used = body
+                            .get("tokensUsed")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0);
+                        let usage_percent = body
+                            .get("usagePercent")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0) as u8;
+                        let compacted = body
+                            .get("compacted")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+                        Ok(crate::app::actions::SetContextWindowOutcome {
+                            previous_tokens,
+                            tokens,
+                            tokens_used,
+                            usage_percent,
+                            compacted,
+                        })
+                    }
+                    Err(e) => Err(sanitize_user_error(&e.to_string())),
+                };
+                TaskResult::SetContextWindowComplete { agent_id, result }
+            });
+        }
         Effect::FetchSessionUsage { agent_id, session_id } => {
             let tx = acp_tx.clone();
             tasks

@@ -3274,6 +3274,9 @@ impl acp::Agent for MvpAgent {
                 let ops = self.resolve_workspace_ops()?;
                 crate::extensions::git::handle(self, &ops, &args).await
             }
+            "x.ai/session/set_context_window" => {
+                crate::extensions::memory::handle(self, &args).await
+            }
             s if s.starts_with("x.ai/compact_conversation") => {
                 crate::extensions::memory::handle(self, &args).await
             }

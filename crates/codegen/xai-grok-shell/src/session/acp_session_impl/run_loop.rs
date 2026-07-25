@@ -431,7 +431,7 @@ if let Some(ref tp)
             "OVERRIDE_MODEL: changing model name in sampling config"); session
             .signals_handle().set_primary_model(& model_name); cfg.model = model_name
             .clone(); cfg.extra_headers.extend(extra_headers); if let Some(cw) =
-            context_window && session.compaction.context_window_override.is_none() { cfg
+            context_window && session.compaction.context_window_override.get().is_none() { cfg
             .context_window = cw; } session.chat_state_handle
             .update_sampling_config(cfg); let existing = session.chat_state_handle
             .get_credentials(). await; if let Some(r) = crate
@@ -540,7 +540,12 @@ if let Some(ref tp)
             .clone(),). await; } } SessionCommand::CompactSession { user_context,
             respond_to } => { let s = session.clone(); tokio::task::spawn_local(async
             move { let compact_session = s.run_compact(user_context). await; let _ =
-            respond_to.send(compact_session); }); } SessionCommand::ReloadPlugins {
+            respond_to.send(compact_session); }); }
+            SessionCommand::SetContextWindow { tokens, compact_if_needed, respond_to } => {
+            let s = session.clone(); tokio::task::spawn_local(async move {
+            let result = s.handle_set_context_window(tokens, compact_if_needed).await;
+            let _ = respond_to.send(result); }); }
+            SessionCommand::ReloadPlugins {
             registry } => { if ! session.startup_hints.is_subagent { let registry =
             session.preserve_session_plugin_dirs(registry); session
             .apply_plugin_registry_snapshot(registry). await; } }
