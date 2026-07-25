@@ -8,6 +8,8 @@ use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::ApiBackend;
+
 pub type Result<T> = std::result::Result<T, SamplingError>;
 
 /// Why the model's response was classified as "empty" by [`ConversationResponse::empty_reason`].
@@ -411,6 +413,36 @@ pub fn user_facing_api_error_message(status: StatusCode, bytes: &[u8]) -> String
     structured_error_message(bytes).unwrap_or_else(|| status_user_message(status))
 }
 
+/// User-facing message for a failed API call, with backend context.
+///
+/// Like [`user_facing_api_error_message`], but appends an actionable hint
+/// when the failure is the canonical symptom of a protocol mismatch the
+/// user can actually fix. Today this covers the Responses backend
+/// receiving 400/404 from a gateway that only implements Chat Completions
+/// (Ollama, vLLM, some OpenRouter models, corporate proxies). The user
+/// can resolve this by changing `api_backend` to `chat_completions`
+/// instead of debugging a request body.
+///
+/// Closes #12.
+pub fn user_facing_api_error_message_with_backend(
+    status: StatusCode,
+    bytes: &[u8],
+    backend: ApiBackend,
+) -> String {
+    let base = user_facing_api_error_message(status, bytes);
+    if matches!(backend, ApiBackend::Responses) && matches!(status.as_u16(), 400 | 404) {
+        let mut out = base;
+        out.push('\n');
+        out.push_str(
+            "Hint: this endpoint likely only supports Chat Completions (e.g. Ollama, vLLM, some OpenRouter models). \
+             Set `api_backend = \"chat_completions\"` in your model config and retry.",
+        );
+        out
+    } else {
+        base
+    }
+}
+
 pub fn try_parse_stream_error(data: &str) -> Option<SamplingError> {
     let (error_type, message) = try_parse_error(data)?;
     tracing::warn!(error_type, message, "Server-side stream error");
@@ -620,6 +652,71 @@ mod tests {
         let bytes = br#"{"error":{"message":"rate limit exceeded","type":"rate_limit_error"}}"#;
         let msg = user_facing_api_error_message(StatusCode::TOO_MANY_REQUESTS, bytes);
         assert_eq!(msg, "rate_limit_error: rate limit exceeded");
+    }
+
+    #[test]
+    fn user_facing_with_backend_responses_400_appends_hint() {
+        // Issue #12: Responses backend receiving 400/404 from a gateway that
+        // doesn't implement /v1/responses must get an actionable hint.
+        let bytes = br#"{"error":"Not implemented"}"#;
+        let msg = user_facing_api_error_message_with_backend(
+            StatusCode::BAD_REQUEST,
+            bytes,
+            ApiBackend::Responses,
+        );
+        assert!(msg.contains("Chat Completions"), "hint missing: {msg}");
+        assert!(msg.contains("api_backend"), "hint missing: {msg}");
+    }
+
+    #[test]
+    fn user_facing_with_backend_responses_404_appends_hint() {
+        let bytes = b"404 page not found";
+        let msg = user_facing_api_error_message_with_backend(
+            StatusCode::NOT_FOUND,
+            bytes,
+            ApiBackend::Responses,
+        );
+        assert!(msg.contains("Chat Completions"), "hint missing: {msg}");
+    }
+
+    #[test]
+    fn user_facing_with_backend_responses_500_does_not_append_hint() {
+        // 5xx is a server problem, not a protocol mismatch — no hint.
+        let msg = user_facing_api_error_message_with_backend(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            b"oops",
+            ApiBackend::Responses,
+        );
+        assert!(!msg.contains("Hint:"), "5xx must not get the hint: {msg}");
+    }
+
+    #[test]
+    fn user_facing_with_backend_chat_400_does_not_append_hint() {
+        // Hint is Responses-specific.
+        let msg = user_facing_api_error_message_with_backend(
+            StatusCode::BAD_REQUEST,
+            br#"{"error":{"message":"bad request","type":"invalid_request_error"}}"#,
+            ApiBackend::ChatCompletions,
+        );
+        assert!(
+            !msg.contains("Hint:"),
+            "Chat 400 must not get the hint: {msg}"
+        );
+    }
+
+    #[test]
+    fn user_facing_with_backend_messages_400_does_not_append_hint() {
+        // Hint is Responses-specific; Messages is handled by issue #11 fix
+        // (anthropic-version auto-injection), not by error-message rewrites.
+        let msg = user_facing_api_error_message_with_backend(
+            StatusCode::BAD_REQUEST,
+            br#"{"error":{"message":"missing anthropic-version","type":"invalid_request_error"}}"#,
+            ApiBackend::Messages,
+        );
+        assert!(
+            !msg.contains("Hint:"),
+            "Messages 400 must not get the hint: {msg}"
+        );
     }
 
     #[test]
