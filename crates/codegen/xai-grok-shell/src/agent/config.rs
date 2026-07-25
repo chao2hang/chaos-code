@@ -4009,6 +4009,8 @@ pub struct ConfigModelOverride {
     pub auth_provider: Option<String>,
     pub model_provider: Option<String>,
     pub api_base_url: Option<String>,
+    /// 认证方案：`bearer`（默认）或 `x_api_key`。从 provider 继承。
+    pub auth_scheme: Option<xai_grok_sampler::AuthScheme>,
     pub max_completion_tokens: Option<u32>,
     pub temperature: Option<f32>,
     pub top_p: Option<f32>,
@@ -4116,8 +4118,21 @@ impl ConfigModelOverride {
         if let Some(v) = self.supports_reasoning_effort {
             entry.info.supports_reasoning_effort = v;
         } else if !entry.info.supports_reasoning_effort
-            && matches!(entry.info.api_backend, ApiBackend::Messages)
+            && matches!(
+                entry.info.api_backend,
+                ApiBackend::Messages
+                    | ApiBackend::ChatCompletions
+                    | ApiBackend::Responses
+            )
         {
+            // Issue #14：之前只对 `messages` (Anthropic) 后端自动默认
+            // `supports_reasoning_effort = true`，但 OpenAI 兼容
+            // (chat_completions) 和 Responses 端点同样是 reasoning 工作流
+            // 的常见目标（gpt-5、o1、deepseek-reasoner 等）。BYOK 用户在
+            // 这两类后端上必须手写字段才能看到 /effort 下拉，体验割裂。
+            //
+            // 扩展到全部已知 backend（仍保留 per-model 显式覆盖权）。如果
+            // 真的不支持，用户传错等级时 sampler 会回 400，跟原行为一致。
             entry.info.supports_reasoning_effort = true;
         }
         if !self.reasoning_efforts.is_empty() {
@@ -4143,6 +4158,9 @@ impl ConfigModelOverride {
         }
         if self.env_key.is_some() {
             entry.env_key.clone_from(&self.env_key);
+        }
+        if let Some(v) = self.auth_scheme {
+            entry.info.auth_scheme = v;
         }
         if let Some(ref name) = self.auth_provider {
             entry.auth_provider = Some(crate::auth::AuthProviderRef::unresolved(name.clone()));

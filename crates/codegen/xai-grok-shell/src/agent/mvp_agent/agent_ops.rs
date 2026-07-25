@@ -1314,6 +1314,18 @@ impl MvpAgent {
         if let Ok(model) = self.resolve_model_id(model_id) {
             self.prepare_sampling_config_for_model(&model, origin_client.clone())
         } else {
+            tracing::warn!(
+                model_id = %model_id.0,
+                "模型未在目录中找到，回退到全局默认配置。\
+                 这可能导致 base_url 和 api_key 错误（如发到 cli-chat-proxy 而非自定义 provider）。\
+                 请检查 config.toml 中 [model.\"{}\"] 和对应的 [model_providers.*] 配置。",
+                model_id.0
+            );
+            xai_grok_telemetry::unified_log::warn(
+                "模型未在目录中找到，回退到全局默认配置",
+                None,
+                Some(serde_json::json!({ "model_id": model_id.0.as_ref() })),
+            );
             let mut c = self.sampling_config.borrow().clone();
             c.origin_client = origin_client;
             c
