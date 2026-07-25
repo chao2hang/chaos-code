@@ -160,10 +160,17 @@ pub(crate) fn apply_floor(target: &str) -> Result<String, MinimumVersionError> {
     apply_floor_inner(target, floor.as_deref())
 }
 
-/// Adapts `config::resolve_minimum_version`'s error shape into ours.
+/// Soft/hard floors from layered config (`VersionPolicy`). Invalid bounds are
+/// already filtered fail-open inside the policy resolver, so this never errors
+/// on parse — the old `resolve_minimum_version` tuple-error path is gone.
 fn resolve_floor_or_error() -> Result<Option<String>, MinimumVersionError> {
-    config::resolve_minimum_version()
-        .map_err(|(value, source)| MinimumVersionError::InvalidMinimum { value, source })
+    let policy = config::VersionPolicy::resolve();
+    // Hard required_minimum wins; soft minimum is the fallback pin for updates.
+    Ok(policy
+        .required_minimum
+        .as_ref()
+        .or(policy.minimum.as_ref())
+        .map(|v| v.to_string()))
 }
 
 fn apply_floor_inner(target: &str, floor: Option<&str>) -> Result<String, MinimumVersionError> {
