@@ -1,0 +1,47 @@
+[
+  {
+    "category": "features",
+    "description": "**中文界面**：设置、扩展、快捷键帮助、斜杠命令说明等用户可见文案全面中文化。",
+    "breaking_change": false
+  },
+  {
+    "category": "features",
+    "description": "**欢迎页 Logo**：首屏改为块阴影风格的 **CHAOS** 字符画（完整版与紧凑版随窗口高度切换）。",
+    "breaking_change": false
+  },
+  {
+    "category": "features",
+    "description": "**Chaos 改造**：移除对 Grok 登录链路的硬依赖，支持用户自带模型凭证接入。",
+    "breaking_change": false
+  },
+  {
+    "category": "features",
+    "description": "**/usage** 可查看当前会话的 Token 用量与费用。",
+    "breaking_change": false
+  },
+  {
+    "category": "features",
+    "description": "**/doctor** 作为终端、tmux、剪贴板与键盘诊断的主入口。",
+    "breaking_change": false
+  },
+  {
+    "category": "features",
+    "description": "**推理强度** 在模型支持时接受独立档位 `max`（高于 `xhigh`）。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "**语音听写** 会区分麦克风仅收到静音（如 macOS 权限）与未检测到语音。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "停靠回合期间后台任务延迟时，不再堆叠重复的「Worked for」标记。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "空闲状态行在仍有子 Agent 运行时显示更清晰的文案。",
+    "breaking_change": false
+  }
+]

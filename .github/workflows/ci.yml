@@ -1,0 +1,67 @@
+# Lightweight checks on main / PRs (not a full multi-platform release).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  npm-scripts:
+    name: npm package scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: postinstall unit tests
+        working-directory: crates/codegen/xai-grok-pager/npm/chaos
+        run: node scripts/test-postinstall.js
+
+      - name: stamp-version dry run
+        run: |
+          set -euo pipefail
+          node scripts/ci/stamp-npm-version.mjs 0.0.0-ci
+          # restore so the job workspace stays clean for later steps
+          git checkout -- crates/codegen/xai-grok-pager/npm || true
+
+      - name: assemble script syntax (node -c via load)
+        run: |
+          node --check crates/codegen/xai-grok-pager/npm/chaos/scripts/assemble-platform-packages.js
+          node --check crates/codegen/xai-grok-pager/npm/chaos/bin/postinstall.js
+          node --check crates/codegen/xai-grok-pager/npm/chaos/bin/chaos
+
+      - name: publish-npm.sh dry-run guard
+        run: |
+          set -euo pipefail
+          # Without bin/ contents and without token, should fail fast (not hang)
+          if DRY_RUN=1 bash scripts/ci/publish-npm.sh 2>/dev/null; then
+            echo "expected failure without assembled bins" >&2
+            exit 1
+          fi
+          echo "publish-npm correctly refuses empty packages"
+
+  workflows-present:
+    name: workflows present
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: require release + ci workflows
+        run: |
+          test -f .github/workflows/release.yml
+          test -f .github/workflows/ci.yml
+          # basic structure checks
+          grep -q 'name: Release' .github/workflows/release.yml
+          grep -q 'xai-grok-pager-bin' .github/workflows/release.yml
+          grep -q 'chaos-code' crates/codegen/xai-grok-pager/npm/chaos/package.json

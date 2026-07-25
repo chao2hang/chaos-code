@@ -1,0 +1,357 @@
+pub mod find_protoc;
+
+use anyhow::Context;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::fs;
+
+/// Strip the makefile target prefix from a protoc `--dependency_out` file.
+///
+/// Expected form: `<desc_path>: <deps...>` (deps may continue on later lines).
+/// Windows paths contain `:` after the drive letter, so we cannot split on the
+/// first colon alone.
+fn strip_makefile_target<'a>(dep_file: &'a str, desc_path: &Path) -> Option<&'a str> {
+    let mut candidates = vec![
+        desc_path.to_string_lossy().into_owned(),
+        desc_path.display().to_string(),
+    ];
+    let slash = desc_path.to_string_lossy().replace('\\', "/");
+    let backslash = desc_path.to_string_lossy().replace('/', "\\");
+    if slash != candidates[0] {
+        candidates.push(slash);
+    }
+    if backslash != candidates[0] {
+        candidates.push(backslash);
+    }
+    for target in &candidates {
+        let prefix = format!("{target}:");
+        if let Some(rest) = dep_file.strip_prefix(&prefix) {
+            return Some(rest);
+        }
+    }
+
+    // Fallback: first `: ` that is not a Windows drive letter (`C:`).
+    // e.g. `C:\tmp\out.pb: dep1` or `/tmp/out.pb: dep1`
+    let bytes = dep_file.as_bytes();
+    let mut i = 0;
+    while i + 1 < bytes.len() {
+        if bytes[i] == b':' && bytes[i + 1].is_ascii_whitespace() {
+            let is_drive = i == 1 && bytes[0].is_ascii_alphabetic();
+            if !is_drive {
+                return Some(&dep_file[i + 1..]);
+            }
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Find the protoc well-known types include directory.
+///
+/// When PROTOC is set (e.g., in Bazel), the include directory is typically
+/// at `../include` relative to the `bin/protoc` binary. For example:
+/// - PROTOC = `/path/to/external/protoc_linux_x86_64/bin/protoc`
+/// - Include = `/path/to/external/protoc_linux_x86_64/include`
+///
+/// This is needed because Bazel places the protoc binary and include files
+/// in separate locations within the sandbox, and protoc doesn't automatically
+/// find them without an explicit -I flag.
+fn find_protoc_include_dir(protoc: Option<&Path>) -> Option<PathBuf> {
+    let protoc = protoc?;
+
+    // protoc is typically at .../bin/protoc, so include is at .../include
+    let parent = protoc.parent()?; // .../bin
+    let grandparent = parent.parent()?; // .../
+    let include_dir = grandparent.join("include");
+
+    if include_dir.is_dir() {
+        Some(include_dir)
+    } else {
+        None
+    }
+}
+
+pub struct XaiProtoBuilder {
+    builder: tonic_prost_build::Builder,
+    file_descriptor_set_path: Option<PathBuf>,
+    gen_pbjson: bool,
+    pbjson_ignore_unknown_fields: bool,
+    pbjson_preserve_proto_field_names: bool,
+}
+
+impl XaiProtoBuilder {
+    fn map_builder(
+        self,
+        f: impl FnOnce(tonic_prost_build::Builder) -> tonic_prost_build::Builder,
+    ) -> Self {
+        Self {
+            builder: f(self.builder),
+            ..self
+        }
+    }
+
+    pub fn bytes<S: AsRef<str>>(self, paths: impl IntoIterator<Item = S>) -> Self {
+        self.map_builder(|b| paths.into_iter().fold(b, |b, path| b.bytes(path)))
+    }
+
+    pub fn extern_path(self, proto_path: impl AsRef<str>, rust_path: impl AsRef<str>) -> Self {
+        self.map_builder(|b| b.extern_path(proto_path, rust_path))
+    }
+
+    pub fn file_descriptor_set_path(mut self, path: impl AsRef<Path>) -> Self {
+        self.file_descriptor_set_path = Some(path.as_ref().to_path_buf());
+        self.map_builder(|b| b.file_descriptor_set_path(path))
+    }
+
+    pub fn gen_pbjson(mut self) -> Self {
+        self.gen_pbjson = true;
+        self
+    }
+
+    pub fn pbjson_ignore_unknown_fields(mut self) -> Self {
+        self.pbjson_ignore_unknown_fields = true;
+        self
+    }
+
+    /// Serialize JSON using the original proto field names (snake_case) instead
+    /// of the proto3-JSON default (camelCase). Deserialization still accepts
+    /// both casings, so this is backward-compatible with already-stored
+    /// camelCase documents.
+    pub fn pbjson_preserve_proto_field_names(mut self) -> Self {
+        self.pbjson_preserve_proto_field_names = true;
+        self
+    }
+
+    pub fn generate_default_stubs(self, enable: bool) -> Self {
+        self.map_builder(|b| b.generate_default_stubs(enable))
+    }
+
+    pub fn type_attribute(self, path: impl AsRef<str>, attr: impl AsRef<str>) -> Self {
+        self.map_builder(|b| b.type_attribute(path, attr))
+    }
+
+    pub fn field_attribute(self, path: impl AsRef<str>, attr: impl AsRef<str>) -> Self {
+        self.map_builder(|b| b.field_attribute(path, attr))
+    }
+
+    // tonic-build generation of `rerun-if-changed` is lazy and incorrect.
+    // - everything is invalidated when anything inside include directories is changed
+    // - also they compute paths incorrectly: assuming paths are relative to current directory
+    //   rather than
+    fn emit_rerun_if_changed<'a>(
+        protoc: Option<&Path>,
+        protoc_include_dir: Option<&Path>,
+        protos: impl IntoIterator<Item = &'a Path>,
+        includes: impl IntoIterator<Item = &'a Path>,
+    ) -> anyhow::Result<()> {
+        let includes = Vec::from_iter(includes);
+
+        if let Some(protoc) = protoc {
+            println!(
+                "cargo:rerun-if-changed={}",
+                protoc.to_str().context("protoc path not UTF-8")?
+            );
+        }
+
+        // Can only process one input file when using --dependency_out=FILE.
+        // Use real temp files (not /dev/stdout or /dev/null) so this works on
+        // Windows CI runners where those Unix paths do not exist.
+        for proto in protos {
+            let temp_dir = tempfile::TempDir::new().context("create temp dir for protoc deps")?;
+            let dep_path = temp_dir.path().join("deps.d");
+            let desc_path = temp_dir.path().join("out.pb");
+
+            let mut command = Command::new(protoc.unwrap_or(Path::new("protoc")));
+            command
+                .arg(format!(
+                    "--dependency_out={}",
+                    dep_path.to_str().context("dep path not UTF-8")?
+                ))
+                .arg(format!(
+                    "--descriptor_set_out={}",
+                    desc_path.to_str().context("desc path not UTF-8")?
+                ))
+                // Keep in sync with configure(); required for protoc < 3.15 when
+                // proto files use proto3 optional fields.
+                .arg("--experimental_allow_proto3_optional");
+
+            // Add protoc's well-known types include directory first (if found).
+            // This is needed for Bazel sandboxed builds where protoc and its
+            // include files are in different locations.
+            if let Some(include_dir) = protoc_include_dir {
+                command.arg(format!(
+                    "-I{}",
+                    include_dir.to_str().context("include path not UTF-8")?
+                ));
+            }
+
+            for include in &includes {
+                command.arg(format!("-I{}", include.to_str().context("path not UTF-8")?));
+            }
+
+            command.arg(proto);
+
+            command.stdin(Stdio::null());
+            command.stderr(Stdio::inherit());
+
+            let status = command.status().context("protoc command failed")?;
+            if !status.success() {
+                return Err(anyhow::anyhow!("protoc command failed"));
+            }
+
+            let dep_file =
+                fs::read_to_string(&dep_path).context("failed to read protoc dependency file")?;
+
+            // Makefile-style: `<desc_path>: <dep1> <dep2> ...` possibly split
+            // across lines with trailing `\`. On Windows `desc_path` contains a
+            // drive letter (`C:\...`), so do not split on the first `:` alone —
+            // strip the known descriptor path prefix instead.
+            let rem = strip_makefile_target(&dep_file, &desc_path).with_context(|| {
+                format!(
+                    "protoc dependency file must start with descriptor path {}: {dep_file:?}",
+                    desc_path.display()
+                )
+            })?;
+            for line in rem.lines() {
+                let line = line.trim();
+                let line = line.strip_suffix('\\').unwrap_or(line).trim();
+                if line.is_empty() {
+                    continue;
+                }
+                // Depending on absolute paths like
+                // /Users/user/homebrew/Cellar/protobuf/29.1/include/google/protobuf/timestamp.proto
+                // is valid, but we want to have output more deterministic.
+                // Also skip Windows-style well-known include paths.
+                let normalized = line.replace('\\', "/");
+                if normalized.contains("/include/google/protobuf/")
+                    || normalized.contains("/google/protobuf/")
+                {
+                    continue;
+                }
+
+                if !fs::exists(line)? {
+                    return Err(anyhow::anyhow!("dependency file not found: {line}"));
+                }
+
+                println!("cargo:rerun-if-changed={line}");
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn compile_protos(
+        self,
+        protos: &[impl AsRef<Path>],
+        includes: &[impl AsRef<Path>],
+    ) -> anyhow::Result<()> {
+        for proto in protos {
+            let proto = proto.as_ref();
+            if proto.is_absolute() {
+                return Err(anyhow::anyhow!(
+                    "Absolute paths are not allowed: {}",
+                    proto.display()
+                ));
+            }
+        }
+
+        let XaiProtoBuilder {
+            builder,
+            gen_pbjson,
+            file_descriptor_set_path,
+            pbjson_ignore_unknown_fields,
+            pbjson_preserve_proto_field_names,
+        } = self;
+        let mut config = prost_build::Config::new();
+        config.enable_type_names();
+
+        let protoc = find_protoc::find_protoc()?;
+
+        // Use fixed version of `protoc` binary.
+        if let Some(protoc) = &protoc {
+            config.protoc_executable(protoc);
+        }
+
+        // Find the protoc's well-known types include directory.
+        // This is needed for Bazel sandboxed builds where protoc and its
+        // include files are placed in different sandbox locations.
+        let protoc_include_dir = find_protoc_include_dir(protoc.as_deref());
+
+        let mut builder = builder.emit_rerun_if_changed(false);
+        Self::emit_rerun_if_changed(
+            protoc.as_deref(),
+            protoc_include_dir.as_deref(),
+            protos.iter().map(|p| p.as_ref()),
+            includes.iter().map(|i| i.as_ref()),
+        )?;
+
+        let tempfile;
+
+        let file_descriptor_set_path: Option<PathBuf> =
+            if let Some(file_descriptor_set_path) = file_descriptor_set_path {
+                Some(file_descriptor_set_path)
+            } else if gen_pbjson {
+                tempfile = tempfile::TempDir::new()?;
+                let file_descriptor_set_path = tempfile.path().join("xai-proto-build.pbbin");
+                builder = builder.file_descriptor_set_path(&file_descriptor_set_path);
+                Some(file_descriptor_set_path)
+            } else {
+                None
+            };
+
+        // Build the full includes list, prepending the protoc include directory
+        // if found (for well-known types like google/protobuf/timestamp.proto).
+        let all_includes: Vec<&Path> = protoc_include_dir
+            .as_deref()
+            .into_iter()
+            .chain(includes.iter().map(|i| i.as_ref()))
+            .collect();
+
+        let protos: Vec<&Path> = protos.iter().map(|p| p.as_ref()).collect();
+
+        builder
+            .compile_with_config(config, &protos, &all_includes)
+            .context("tonic_build failed")?;
+
+        if gen_pbjson {
+            let file_descriptor_set_path =
+                file_descriptor_set_path.context("fds must be set at this moment")?;
+            let descriptor_set = fs::read(&file_descriptor_set_path).with_context(|| {
+                format!(
+                    "Failed to read file descriptor set {}",
+                    file_descriptor_set_path.display()
+                )
+            })?;
+            let mut builder = pbjson_build::Builder::new();
+            builder
+                .register_descriptors(&descriptor_set)
+                .context("Failed to register descriptors in pbjson_build")?;
+            if pbjson_ignore_unknown_fields {
+                builder.ignore_unknown_fields();
+            }
+            if pbjson_preserve_proto_field_names {
+                builder.preserve_proto_field_names();
+            }
+            builder
+                .build(&["."])
+                .context("Failed to build descriptor set")?;
+        }
+
+        Ok(())
+    }
+}
+
+pub fn configure() -> XaiProtoBuilder {
+    let builder = tonic_prost_build::configure()
+        .compile_well_known_types(true)
+        .extern_path(".google.protobuf", "::pbjson_types")
+        .extern_path(".google.protobuf.Empty", "()")
+        .protoc_arg("--experimental_allow_proto3_optional");
+    XaiProtoBuilder {
+        builder,
+        gen_pbjson: false,
+        pbjson_ignore_unknown_fields: false,
+        pbjson_preserve_proto_field_names: false,
+        file_descriptor_set_path: None,
+    }
+}

@@ -1,0 +1,398 @@
+# Build multi-platform `chaos` binaries → GitHub Release → optional npm publish.
+#
+# Triggers:
+#   - push tag v*                 → build + GH Release + npm (if NPM_TOKEN set)
+#   - workflow_dispatch           → same; toggles below
+#
+# Secrets (optional until you want npm):
+#   NPM_TOKEN  — npm Automation token with publish on chaos-code / chaos-code-*
+#                Without it: binaries + GitHub Release still work; npm step is skipped.
+#
+# Jobs:
+#   resolve-version → build (matrix) → package (assemble + GH Release + npm)
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Semver without leading v (e.g. 0.2.110). Empty = tag or package.json."
+        required: false
+        type: string
+      publish_npm:
+        description: "Publish to registry.npmjs.org (requires NPM_TOKEN secret)"
+        required: false
+        type: boolean
+        default: true
+      create_github_release:
+        description: "Create/update GitHub Release with binaries"
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: "1"
+  # Keep in sync with rust-toolchain.toml channel
+  RUST_TOOLCHAIN: "1.92.0"
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────────────
+  resolve-version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      tag: ${{ steps.v.outputs.tag }}
+      publish_npm: ${{ steps.v.outputs.publish_npm }}
+      create_github_release: ${{ steps.v.outputs.create_github_release }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version + flags
+        id: v
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ -n "${{ inputs.version || '' }}" ]]; then
+            VER="${{ inputs.version }}"
+          elif [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            VER="${GITHUB_REF_NAME#v}"
+          else
+            VER="$(node -p "require('./crates/codegen/xai-grok-pager/npm/chaos/package.json').version")"
+          fi
+          VER="${VER#v}"
+
+          if [[ ! "$VER" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.+-].+)?$ ]]; then
+            echo "invalid version: $VER" >&2
+            exit 1
+          fi
+
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VER" >> "$GITHUB_OUTPUT"
+
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            echo "publish_npm=true" >> "$GITHUB_OUTPUT"
+            echo "create_github_release=true" >> "$GITHUB_OUTPUT"
+          else
+            # workflow_dispatch — honor checkboxes (default true)
+            echo "publish_npm=${{ inputs.publish_npm }}" >> "$GITHUB_OUTPUT"
+            echo "create_github_release=${{ inputs.create_github_release }}" >> "$GITHUB_OUTPUT"
+          fi
+
+          echo "Resolved version=$VER tag=v$VER"
+
+  # ─────────────────────────────────────────────────────────────────────────
+  build:
+    needs: resolve-version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux — native runners (no cross)
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-22.04
+            artifact: chaos-linux-x64
+            bin: chaos
+            required: true
+
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-22.04-arm
+            artifact: chaos-linux-arm64
+            bin: chaos
+            required: true
+
+          # macOS — arm host; x64 via Apple cross target on same runner
+          - target: aarch64-apple-darwin
+            os: macos-14
+            artifact: chaos-darwin-arm64
+            bin: chaos
+            required: true
+
+          - target: x86_64-apple-darwin
+            os: macos-14
+            artifact: chaos-darwin-x64
+            bin: chaos
+            required: true
+
+          # Windows x64
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            artifact: chaos-win32-x64
+            bin: chaos.exe
+            required: true
+
+          # Windows arm64 — not all accounts have this runner; non-blocking
+          - target: aarch64-pc-windows-msvc
+            os: windows-11-arm
+            artifact: chaos-win32-arm64
+            bin: chaos.exe
+            required: false
+
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.required == false }}
+    env:
+      GROK_VERSION: ${{ needs.resolve-version.outputs.version }}
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config libssl-dev ca-certificates
+
+      # apt's protobuf-compiler on ubuntu-22.04 is 3.12 and is too old for
+      # proto3 optional without extra flags; pin the same major as bin/protoc.
+      - name: Install protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          version: "29.3"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: chaos-release
+          key: ${{ matrix.target }}
+          cache-targets: true
+
+      - name: Build
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Building ${{ matrix.target }} version=${GROK_VERSION}"
+          cargo build \
+            -p xai-grok-pager-bin \
+            --profile release-dist \
+            --target "${{ matrix.target }}"
+
+          OUT="target/${{ matrix.target }}/release-dist/${{ matrix.bin }}"
+          if [[ ! -f "$OUT" ]]; then
+            echo "missing binary: $OUT" >&2
+            ls -la "target/${{ matrix.target }}/release-dist/" >&2 || true
+            exit 1
+          fi
+
+          mkdir -p dist
+          cp "$OUT" "dist/${{ matrix.bin }}"
+
+          if [[ "${{ runner.os }}" != "Windows" ]]; then
+            strip "dist/${{ matrix.bin }}" 2>/dev/null || true
+            chmod +x "dist/${{ matrix.bin }}"
+          fi
+
+          # Stable name for the package job
+          if [[ "${{ matrix.bin }}" == *.exe ]]; then
+            cp "dist/${{ matrix.bin }}" "dist/${{ matrix.artifact }}.exe"
+          else
+            cp "dist/${{ matrix.bin }}" "dist/${{ matrix.artifact }}"
+          fi
+
+          ls -lh dist/
+          file dist/* 2>/dev/null || true
+
+      - name: Smoke --version
+        if: runner.os != 'Windows'
+        shell: bash
+        run: ./dist/${{ matrix.bin }} --version
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bin-${{ matrix.artifact }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+  # ─────────────────────────────────────────────────────────────────────────
+  package:
+    needs: [resolve-version, build]
+    # Run even if optional matrix legs failed (e.g. windows-11-arm unavailable)
+    if: always() && needs.resolve-version.result == 'success' && needs.build.result != 'cancelled'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Download binary artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: bin-*
+          merge-multiple: false
+
+      - name: Layout release-bins
+        id: layout
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-bins
+          echo "=== downloaded artifacts ==="
+          find artifacts -type f | sort || true
+
+          copy_one() {
+            local art="$1"   # chaos-linux-x64
+            local prefer="$2" # chaos or chaos.exe
+            local dest="$3"  # release-bins path basename
+            local dir="artifacts/bin-${art}"
+            if [[ -f "${dir}/${prefer}" ]]; then
+              cp "${dir}/${prefer}" "release-bins/${dest}"
+            elif [[ -f "${dir}/${dest}" ]]; then
+              cp "${dir}/${dest}" "release-bins/${dest}"
+            elif [[ -f "${dir}/${art}" ]]; then
+              cp "${dir}/${art}" "release-bins/${dest}"
+            elif [[ -f "${dir}/${art}.exe" ]]; then
+              cp "${dir}/${art}.exe" "release-bins/${dest}"
+            else
+              echo "SKIP missing: ${art}" >&2
+              return 1
+            fi
+            chmod +x "release-bins/${dest}" 2>/dev/null || true
+            ls -lh "release-bins/${dest}"
+            return 0
+          }
+
+          HAVE=()
+          copy_one chaos-linux-x64    chaos     chaos-linux-x64    && HAVE+=(linux-x64)    || true
+          copy_one chaos-linux-arm64  chaos     chaos-linux-arm64  && HAVE+=(linux-arm64)  || true
+          copy_one chaos-darwin-arm64 chaos     chaos-darwin-arm64 && HAVE+=(darwin-arm64) || true
+          copy_one chaos-darwin-x64   chaos     chaos-darwin-x64   && HAVE+=(darwin-x64)   || true
+          copy_one chaos-win32-x64    chaos.exe chaos-win32-x64.exe && HAVE+=(win32-x64)   || true
+          copy_one chaos-win32-arm64  chaos.exe chaos-win32-arm64.exe && HAVE+=(win32-arm64) || true
+
+          echo "platforms=${HAVE[*]}" >> "$GITHUB_OUTPUT"
+          echo "count=${#HAVE[@]}" >> "$GITHUB_OUTPUT"
+          echo "Built platforms: ${HAVE[*]:-none} (${#HAVE[@]})"
+
+          # Require at least linux-x64 for a useful release
+          if [[ ! -f release-bins/chaos-linux-x64 ]]; then
+            echo "error: chaos-linux-x64 is required but missing" >&2
+            exit 1
+          fi
+
+      - name: Stamp npm versions
+        run: node scripts/ci/stamp-npm-version.mjs "${{ needs.resolve-version.outputs.version }}"
+
+      - name: Assemble npm packages (available platforms only)
+        shell: bash
+        env:
+          VERSION: ${{ needs.resolve-version.outputs.version }}
+        run: |
+          set -euo pipefail
+          # Point env vars only for binaries that exist so assemble can run
+          # with ONLY those targets via a thin wrapper.
+          export CHAOS_ROOT="${GITHUB_WORKSPACE}"
+
+          ARGS=()
+          [[ -f release-bins/chaos-linux-x64 ]]       && export CHAOS_LINUX_X64="$PWD/release-bins/chaos-linux-x64"             && ARGS+=(linux-x64)
+          [[ -f release-bins/chaos-linux-arm64 ]]     && export CHAOS_LINUX_ARM64="$PWD/release-bins/chaos-linux-arm64"         && ARGS+=(linux-arm64)
+          [[ -f release-bins/chaos-darwin-arm64 ]]    && export CHAOS_DARWIN_ARM64="$PWD/release-bins/chaos-darwin-arm64"       && ARGS+=(darwin-arm64)
+          [[ -f release-bins/chaos-darwin-x64 ]]      && export CHAOS_DARWIN_X64="$PWD/release-bins/chaos-darwin-x64"           && ARGS+=(darwin-x64)
+          [[ -f release-bins/chaos-win32-x64.exe ]]   && export CHAOS_WIN32_X64="$PWD/release-bins/chaos-win32-x64.exe"         && ARGS+=(win32-x64)
+          [[ -f release-bins/chaos-win32-arm64.exe ]] && export CHAOS_WIN32_ARM64="$PWD/release-bins/chaos-win32-arm64.exe"     && ARGS+=(win32-arm64)
+
+          echo "Assembling: ${ARGS[*]}"
+          # ONLY_PLATFORMS selects subset (see assemble script)
+          export ONLY_PLATFORMS="${ARGS[*]}"
+          node crates/codegen/xai-grok-pager/npm/chaos/scripts/assemble-platform-packages.js
+
+      - name: npm pack dry-run
+        working-directory: crates/codegen/xai-grok-pager/npm
+        shell: bash
+        run: |
+          set -euo pipefail
+          for p in chaos-linux-x64 chaos; do
+            if [[ -d "$p" ]]; then
+              echo "== $p =="
+              (cd "$p" && npm pack --dry-run 2>&1 | tail -20)
+            fi
+          done
+
+      - name: Publish to npmjs
+        id: npm
+        if: needs.resolve-version.outputs.publish_npm == 'true'
+        # Soft-fail so a bad/mis-scoped NPM_TOKEN does not block GitHub Release.
+        # First-time package names need a token that can *create* packages
+        # (npm often returns 404 for that case instead of 403).
+        continue-on-error: true
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${NPM_TOKEN:-}" ]]; then
+            echo "::warning::NPM_TOKEN secret not configured — skipping npm publish."
+            echo "Add repo secret NPM_TOKEN (npm Automation token), then re-run or tag again."
+            echo "skipped=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          chmod +x scripts/ci/publish-npm.sh
+          # Publish only packages that have bin/ contents
+          export PUBLISH_EXISTING_ONLY=1
+          if ! scripts/ci/publish-npm.sh; then
+            echo "::error::npm publish failed. Common causes: NPM_TOKEN lacks create/publish for chaos-code* packages (E404 on first publish), 2FA, or wrong registry. Binaries still ship via GitHub Release."
+            echo "skipped=false" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          echo "skipped=false" >> "$GITHUB_OUTPUT"
+
+      - name: Upload assembled npm artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-assembled-${{ needs.resolve-version.outputs.version }}
+          path: |
+            crates/codegen/xai-grok-pager/npm/chaos/package.json
+            crates/codegen/xai-grok-pager/npm/chaos-*/package.json
+            crates/codegen/xai-grok-pager/npm/chaos-*/bin/
+            crates/codegen/xai-grok-pager/npm/chaos-*/THIRD_PARTY_NOTICES.md
+          retention-days: 7
+          if-no-files-found: warn
+
+      # Keep GH Release independent of npm: a missing/mis-scoped NPM_TOKEN
+      # (or first-publish E404) must not skip attaching the built binaries.
+      - name: Create GitHub Release
+        if: >-
+          always()
+          && needs.resolve-version.outputs.create_github_release == 'true'
+          && steps.layout.outcome == 'success'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.resolve-version.outputs.tag }}
+          name: Chaos ${{ needs.resolve-version.outputs.version }}
+          generate_release_notes: true
+          fail_on_unmatched_files: false
+          files: |
+            release-bins/chaos-linux-x64
+            release-bins/chaos-linux-arm64
+            release-bins/chaos-darwin-arm64
+            release-bins/chaos-darwin-x64
+            release-bins/chaos-win32-x64.exe
+            release-bins/chaos-win32-arm64.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
