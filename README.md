@@ -1,208 +1,237 @@
 # Chaos
 
-**Chaos** 是终端 AI 编码助手（二进制名 `chaos`）。它**不使用 Grok / xAI 登录**；
-模型、接口地址与密钥均由用户自行配置（BYOK）。完整产品说明见
-[CHAOS.md](CHAOS.md)。
+**Chaos** 是终端 AI 编码助手（二进制名 `chaos`）。**不使用 Grok / xAI 登录**；模型、接口与密钥由用户自行配置（BYOK）。产品说明见 [CHAOS.md](CHAOS.md)。
 
-本仓库基于 [Grok Build](https://github.com/xai-org/grok-build) 上游源码改造；内部
-crate 仍保留 `xai-grok-*` 命名以利同步上游。`SOURCE_REV` 记录当前对齐的 monorepo
-提交 SHA。
+本仓库基于 [Grok Build](https://github.com/xai-org/grok-build) 改造；crate 仍保留 `xai-grok-*` 命名以便同步上游。`SOURCE_REV` 记录对齐的 monorepo 提交。
 
-[安装](#安装) ·
-[从源码构建](#从源码构建) ·
-[配置](#配置) ·
-[文档](#文档) ·
-[仓库结构](#仓库结构)
+[安装](#安装) · [更新](#更新) · [配置](#配置) · [从源码构建](#从源码构建) · [文档](#文档) · [开发](#开发)
 
 ---
 
 ## 安装
 
-### 一键安装（推荐：GitHub Release 二进制）
+**推荐主渠道：GitHub Release 预编译二进制**（不依赖 Node / npm）。  
+发布页：[Releases](https://github.com/chao2hang/chaos-code/releases)
 
-从 [GitHub Releases](https://github.com/chao2hang/chaos-code/releases) 下载预编译
-`chaos`，安装到 `~/.chaos/bin`（或已有 `~/.grok/bin`），并**自动写入 PATH**。
+| 平台 | 推荐方式 |
+|------|----------|
+| macOS / Linux | `install.sh` 一键安装 |
+| Windows（cmd） | `install.bat`（**不需要** `iex`） |
+| Windows（PowerShell） | `install.ps1`，或同上 bat |
+| 受限环境 | 浏览器手动下载对应资产 |
 
-**macOS / Linux：**
+默认安装目录：`~/.chaos/bin`（Windows：`%USERPROFILE%\.chaos\bin`）。若已有 `~/.grok` 或设置了 `CHAOS_HOME` / `GROK_HOME`，则沿用其 `bin/`。
+
+**不要**运行上游 `https://x.ai/cli/install.sh`（那是官方 `grok`，不是 Chaos）。
+
+### macOS / Linux
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.sh | bash
 chaos --version
 ```
 
-指定版本 / 强制覆盖：
+固定版本 / 强制覆盖：
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.sh | bash -s -- --version 0.2.113
 curl -fsSL https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.sh | bash -s -- --force
 ```
 
-**Windows（PowerShell）：**
+本地仓库：
+
+```sh
+./scripts/install.sh --version 0.2.113
+```
+
+### Windows
+
+任选其一即可。装好后**新开一个终端**再执行 `chaos --version`（用户 PATH 更新后需新会话）。
+
+#### 方式 A：cmd 一键（推荐，无需 `iex`）
+
+```bat
+curl -L -o "%TEMP%\install-chaos.bat" https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.bat && "%TEMP%\install-chaos.bat"
+```
+
+固定版本 / 强制覆盖：
+
+```bat
+"%TEMP%\install-chaos.bat" --version 0.2.113
+"%TEMP%\install-chaos.bat" --force
+```
+
+本地仓库：
+
+```bat
+scripts\install.bat
+scripts\install.bat --version 0.2.113 --force
+```
+
+`install.bat` 会优先调用同目录的 `install.ps1`；若无 PowerShell 或脚本失败，则回退为直接下载 `chaos.exe` 并写入用户 PATH。
+
+#### 方式 B：PowerShell
 
 ```powershell
 irm https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.ps1 | iex
-chaos --version
 ```
 
-指定版本：
+固定版本（管道 `iex` 不便传参时）：
 
 ```powershell
 & ([scriptblock]::Create((irm https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.ps1))) -Version 0.2.113
 ```
 
-脚本行为：
+先下载再执行（组策略限制管道时更稳）：
+
+```powershell
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.ps1" -OutFile "$env:TEMP\install-chaos.ps1"
+powershell -ExecutionPolicy Bypass -File "$env:TEMP\install-chaos.ps1"
+```
+
+#### 方式 C：手动下载 exe
+
+1. 打开 [Releases](https://github.com/chao2hang/chaos-code/releases/latest)
+2. 下载 `chaos-win32-x64.exe`（ARM 机用 `chaos-win32-arm64.exe`）
+3. 重命名为 `chaos.exe`，放到 `%USERPROFILE%\.chaos\bin\`
+4. 把该目录加入**用户** PATH，新开终端验证：`chaos --version`
+
+cmd 示例：
+
+```bat
+mkdir "%USERPROFILE%\.chaos\bin" 2>nul
+curl -L -o "%USERPROFILE%\.chaos\bin\chaos.exe" https://github.com/chao2hang/chaos-code/releases/latest/download/chaos-win32-x64.exe
+rem Prefer install.bat for PATH. Manual setx: read *user* Path only (do not use %%Path%%).
+for /f "tokens=2*" %%A in ('reg query "HKCU\Environment" /v Path 2^>nul') do setx Path "%%B;%USERPROFILE%\.chaos\bin"
+```
+
+### 安装脚本说明
 
 | 项 | 说明 |
 |----|------|
 | 下载源 | `https://github.com/chao2hang/chaos-code/releases` 对应平台资产 |
-| 安装目录 | `$CHAOS_HOME/bin` → `$GROK_HOME/bin` → `~/.chaos/bin`（Windows：`%USERPROFILE%\.chaos\bin`） |
-| PATH | Unix：写入 `~/.zshrc` / `~/.bashrc` 等；Windows：写入**用户** PATH（需新开终端） |
-| 不改 PATH | `bash install.sh --no-path` / `install.ps1 -NoPath` |
+| 安装目录 | `$CHAOS_HOME/bin` → `$GROK_HOME/bin` → 已有 `~/.chaos` / `~/.grok` → 默认 `~/.chaos/bin` |
+| PATH | Unix 写入 shell rc；Windows 写**用户** PATH（需新终端） |
+| 不改 PATH | `install.sh --no-path` / `install.ps1 -NoPath` / `install.bat --no-path` |
 
-本地已有仓库时：
+| 脚本 | 用途 |
+|------|------|
+| [`scripts/install.sh`](scripts/install.sh) | macOS / Linux |
+| [`scripts/install.bat`](scripts/install.bat) | Windows cmd（无 iex） |
+| [`scripts/install.ps1`](scripts/install.ps1) | Windows PowerShell |
 
-```sh
-./scripts/install.sh --version 0.2.113
-# Windows:
-# .\scripts\install.ps1 -Version 0.2.113
-```
+---
 
-### 自更新（`chaos update`）
+## 更新
 
-安装后可用自己的 GitHub Release 渠道更新（**不依赖** xAI / `@xai-official/grok`）：
+安装后用内置更新（默认 **GitHub Release**，不依赖 xAI / npm）：
 
 ```sh
 chaos update
-# 固定版本：
 chaos update --version 0.2.113
 ```
 
-默认 installer 为 `gh-release`：从
-`https://github.com/chao2hang/chaos-code/releases` 下载当前平台资产
-（如 `chaos-linux-x64`、`chaos-win32-x64.exe`），写入 `~/.chaos/bin`（或
-`~/.grok/bin`）。也可用环境变量强制渠道：
+强制渠道（一般不必改）：
 
 ```sh
 GROK_INSTALLER=gh-release chaos update   # 默认
-GROK_INSTALLER=npm chaos update          # 改走 npm i -g chaos-code（需平台包齐全）
+GROK_INSTALLER=npm chaos update          # 改走 npm（需平台包齐全）
 ```
 
-### npm（可选）
+---
+
+## 其他安装方式（可选）
+
+### npm
+
+需要 Node.js ≥ 20。适合已有 Node 环境的用户；**不是**推荐主渠道，Windows 平台包可能缺失或被 registry 拦截。
 
 ```sh
 npm i -g chaos-code
 chaos --version
 ```
 
-需要 Node.js ≥ 20。npm 会安装元包 + 当前平台的 optional 依赖包
-（如 `chaos-code-linux-x64`），`postinstall` 将二进制解压到
-`~/.chaos/bin/chaos`（若已有 `~/.grok` 则沿用其 `bin/`）。
-
-> [!NOTE]
-> Windows 上若出现 `no platform binary installed for win32-x64`，说明 npm 平台包
-> （`chaos-code-win32-*`）尚未上架或被 registry 拦截。请改用上方 **一键安装**
-> 或手动从
-> [Releases](https://github.com/chao2hang/chaos-code/releases/latest)
-> 下载 `chaos-win32-x64.exe`。
-
-**发布（维护者）**：
-
-- **本机**：`npm login` 后 `./scripts/ci/local-publish-host.sh --publish`（当前平台）。  
-- **CI**：Settings → Secrets → Actions 配置 `NPM_TOKEN`，打 `v*` tag 触发
-  [Release workflow](.github/workflows/release.yml)。  
-
-详见
+装不上时请改用上文 **GitHub Release** 安装。维护者发布说明见
 [`npm/PUBLISH.md`](crates/codegen/xai-grok-pager/npm/PUBLISH.md)。
 
 ### 从源码构建
 
-环境要求：
+环境：
 
-- **Rust** — 工具链由 [`rust-toolchain.toml`](rust-toolchain.toml) 固定；
-  `rustup` 首次构建时会自动安装。
-- **[DotSlash](https://dotslash-cli.com)** — 供 [`bin/`](bin/) 下 hermetic 工具
-  （尤其是 [`bin/protoc`](bin/protoc)）下载运行。构建前请确保 `dotslash` 在
-  `PATH` 中：
-
-  ```sh
-  cargo install dotslash
-  # 或预编译包：https://dotslash-cli.com/docs/installation/
-  /usr/bin/env dotslash --help
-  ```
-
-- **protoc** — 通过 DotSlash 解析 `bin/protoc`，或使用 `PATH` / `$PROTOC` 中的
-  `protoc`。
-- 支持 macOS / Linux 构建主机；Windows 为 best-effort。
+- **Rust** — [`rust-toolchain.toml`](rust-toolchain.toml)（`rustup` 会自动安装）
+- **[DotSlash](https://dotslash-cli.com)** — 供 [`bin/protoc`](bin/protoc) 等 hermetic 工具
+- **protoc** — 经 DotSlash，或 `PATH` / `$PROTOC`
 
 ```sh
-cargo run -p xai-grok-pager-bin              # 构建并启动 TUI（二进制名 chaos）
-cargo build -p xai-grok-pager-bin --release  # 产物：target/release/chaos
-cargo check -p xai-grok-pager-bin            # 快速校验
+cargo install dotslash   # 若尚未安装
+cargo build -p xai-grok-pager-bin --release
 ./target/release/chaos --version
+
+cargo run -p xai-grok-pager-bin   # 开发：构建并启动 TUI
 ```
 
-**不要**运行上游的 `https://x.ai/cli/install.sh`：那会安装官方 `grok`，不是 Chaos。
+支持 macOS / Linux 构建主机；Windows 为 best-effort。
+
+---
 
 ## 配置
 
-用户配置目录双读（不覆盖任一侧）：
+用户配置目录解析顺序（**不覆盖**任一侧已有文件）：
 
-1. `$CHAOS_HOME` → 2. `$GROK_HOME` → 3. 已有 `~/.chaos` → 4. 已有 `~/.grok` →
-5. 默认新建 `~/.chaos`
+1. `$CHAOS_HOME` → 2. `$GROK_HOME` → 3. 已有 `~/.chaos` → 4. 已有 `~/.grok` → 5. 默认新建 `~/.chaos`
 
-项目级 `.chaos/` 与 `.grok/` 同样双读。模型与 Provider 示例见
-[CHAOS.md](CHAOS.md)。密钥请用环境变量，勿提交到 Git。
+项目级 `.chaos/` 与 `.grok/` 同样双读。模型与 Provider 示例见 [CHAOS.md](CHAOS.md)。密钥请用环境变量，勿提交到 Git。
+
+---
 
 ## 文档
 
-- 产品入口与 BYOK 说明：[CHAOS.md](CHAOS.md)
-- 用户指南（随 pager 发布）：
-  [`crates/codegen/xai-grok-pager/docs/user-guide/`](crates/codegen/xai-grok-pager/docs/user-guide/)
-  （部分章节仍写上游路径名；以 CHAOS.md 与双读策略为准）
+- 产品与 BYOK：[CHAOS.md](CHAOS.md)
+- 用户指南：[`crates/codegen/xai-grok-pager/docs/user-guide/`](crates/codegen/xai-grok-pager/docs/user-guide/)（部分章节仍为上游路径名，以 CHAOS.md 与双读策略为准）
+
+---
 
 ## 仓库结构
 
-| Path | Contents |
-|------|----------|
+| 路径 | 内容 |
+|------|------|
 | `crates/codegen/xai-grok-pager-bin` | 组合根包；产出 `chaos` 二进制 |
-| `crates/codegen/xai-grok-pager` | TUI：scrollback、prompt、模态、渲染 |
-| `crates/codegen/xai-grok-shell` | Agent 运行时 + leader/stdio/headless |
-| `crates/codegen/xai-grok-tools` | 工具实现（终端、编辑、搜索等） |
-| `crates/codegen/xai-grok-workspace` | 主机文件系统、VCS、执行、检查点 |
-| `crates/codegen/...` | 其余 CLI 依赖闭包（config、MCP、markdown、sandbox 等） |
-| `crates/common/`、`crates/build/`、`prod/mc/` | 闭包用到的共享叶子 crate |
-| `third_party/` | 上游 vendored 源码（Mermaid 等） |
+| `crates/codegen/xai-grok-pager` | TUI |
+| `crates/codegen/xai-grok-shell` | Agent 运行时 |
+| `crates/codegen/xai-grok-tools` | 工具实现 |
+| `crates/codegen/xai-grok-workspace` | 文件系统、VCS、执行、检查点 |
+| `crates/codegen/...` | 其余 CLI 依赖（config、MCP、markdown、sandbox 等） |
+| `crates/common/`、`crates/build/`、`prod/mc/` | 共享叶子 crate |
+| `third_party/` | vendored 源码（Mermaid 等） |
+| `scripts/` | 安装与发版脚本 |
 
 > [!IMPORTANT]
-> The root `Cargo.toml` (workspace members, dependency versions, lints,
-> profiles) is **generated** — treat it as read-only. Prefer editing per-crate
-> `Cargo.toml` files.
+> 根目录 `Cargo.toml`（workspace members、依赖版本、lints、profiles）为**生成文件**，请只改各 crate 内的 `Cargo.toml`。
 
-## Development
+---
+
+## 开发
 
 ```sh
-cargo check -p <crate>        # always target specific crates; full-workspace builds are slow
-cargo test -p xai-grok-config # per-crate tests
-cargo clippy -p <crate>       # lint config: clippy.toml at the repo root
-cargo fmt --all               # rustfmt.toml at the repo root
+cargo check -p <crate>        # 指定 crate；全 workspace 很慢
+cargo test -p xai-grok-config
+cargo clippy -p <crate>
+cargo fmt --all
 ```
+
+---
 
 ## Contributing
 
 > [!NOTE]
-> External contributions are not accepted. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
+> 不接受外部贡献。见 [`CONTRIBUTING.md`](CONTRIBUTING.md)。
 
 ## License
 
-First-party code in this repository is licensed under the **Apache License,
-Version 2.0** — see [`LICENSE`](LICENSE).
+本仓库第一方代码为 **Apache License 2.0**，见 [`LICENSE`](LICENSE)。
 
-Third-party and vendored code remains under its original licenses. See:
+第三方与 vendored 代码保留原许可证：
 
-- [`THIRD-PARTY-NOTICES`](THIRD-PARTY-NOTICES) — crates.io / git dependencies,
-  bundled UI themes, and **in-tree source ports** (including openai/codex and
-  sst/opencode tool implementations)
+- [`THIRD-PARTY-NOTICES`](THIRD-PARTY-NOTICES)
 - [`crates/codegen/xai-grok-tools/THIRD_PARTY_NOTICES.md`](crates/codegen/xai-grok-tools/THIRD_PARTY_NOTICES.md)
-  — crate-local notice for the codex and opencode ports (license texts +
-  Apache §4(b) change notice)
-- [`third_party/NOTICE`](third_party/NOTICE) — vendored Mermaid-stack index
+- [`third_party/NOTICE`](third_party/NOTICE)
