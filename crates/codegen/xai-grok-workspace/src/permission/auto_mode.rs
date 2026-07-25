@@ -27,6 +27,51 @@ pub enum ClassifierVerdict {
     Unavailable,
 }
 
+/// Stable source categories written to classifier telemetry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClassifierSource {
+    Llm,
+    Heuristic,
+    Timeout,
+    TransportError,
+}
+
+impl ClassifierSource {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Llm => "llm",
+            Self::Heuristic => "heuristic",
+            Self::Timeout => "timeout",
+            Self::TransportError => "transport_error",
+        }
+    }
+}
+
+/// Typed side-query failures carried by unavailable outcomes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ClassifierFailure {
+    Timeout,
+    TransportError(String),
+}
+
+impl ClassifierFailure {
+    pub const fn source(&self) -> ClassifierSource {
+        match self {
+            Self::Timeout => ClassifierSource::Timeout,
+            Self::TransportError(_) => ClassifierSource::TransportError,
+        }
+    }
+}
+
+impl std::fmt::Display for ClassifierFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Timeout => f.write_str("permission auto classifier timed out"),
+            Self::TransportError(reason) => f.write_str(reason),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClassifierOutcome {
     pub verdict: ClassifierVerdict,
@@ -1279,7 +1324,9 @@ pub fn parse_classifier_model_output(text: &str) -> ClassifierOutcome {
 /// `!Send` sampling is wired via [`ClassifyTextChannel`] instead of capturing
 /// `SessionActor` directly.
 pub type ClassifyTextFn = Arc<
-    dyn Fn(Vec<ClassifierMessage>) -> Pin<Box<dyn Future<Output = Result<String, String>> + Send>>
+    dyn Fn(
+            Vec<ClassifierMessage>,
+        ) -> Pin<Box<dyn Future<Output = Result<String, ClassifierFailure>> + Send>>
         + Send
         + Sync,
 >;
@@ -1289,7 +1336,7 @@ pub type ClassifyTextFn = Arc<
 /// `prepare_chat_completion` + `conversation_collect` and replies.
 pub type ClassifyTextChannel = tokio::sync::mpsc::UnboundedSender<(
     Vec<ClassifierMessage>,
-    tokio::sync::oneshot::Sender<Result<String, String>>,
+    tokio::sync::oneshot::Sender<Result<String, ClassifierFailure>>,
 )>;
 
 /// Production auto-mode classifier. Order of decision:
@@ -2378,7 +2425,7 @@ mod tests {
     async fn side_query_error_and_unparseable_fall_back_to_heuristic() {
         let err_clf = LlmPermissionClassifier {
             classify_text: Some(Arc::new(|_m: Vec<ClassifierMessage>| {
-                Box::pin(async { Err("timeout".into()) })
+                Box::pin(async { Err(ClassifierFailure::Timeout) })
             })),
             classify_channel: None,
             fallback: HeuristicPermissionClassifier,
@@ -2433,7 +2480,7 @@ mod tests {
     async fn classify_channel_closed_falls_back_to_heuristic() {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<(
             Vec<ClassifierMessage>,
-            tokio::sync::oneshot::Sender<Result<String, String>>,
+            tokio::sync::oneshot::Sender<Result<String, ClassifierFailure>>,
         )>();
         drop(rx); // closed channel
         let clf = LlmPermissionClassifier::with_channel(tx, ClassifierPromptType::Full);

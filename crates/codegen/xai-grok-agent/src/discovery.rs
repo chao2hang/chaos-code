@@ -14,11 +14,10 @@ use crate::config::{AgentDefinition, AgentScope, BuiltinAgentName};
 use crate::error::AgentBuildError;
 use crate::prompt::context::TemplateOverride;
 
-/// Project-level agent directories to scan (`.grok` / `.chaos` + `.claude` compat).
-/// Order is merge priority within a depth: legacy first, Chaos second (wins).
-const PROJECT_AGENT_SUBDIRS: &[&str] = &[".grok/agents", ".chaos/agents", ".claude/agents"];
+/// Project-level agent directories to scan (`.grok/agents/` + `.claude/agents/` compat).
+const PROJECT_AGENT_SUBDIRS: &[&str] = &[".grok/agents", ".claude/agents"];
 
-/// Existing project-level agent dirs (`.grok` / `.chaos` / `.claude`), walked
+/// Existing project-level agent dirs (`.grok/agents` / `.claude/agents`), walked
 /// from `cwd` up to the git worktree root (inclusive). Returns
 /// `(existing dirs, git_root)`. Mirrors [`crate::plugins::project_plugin_dirs`].
 pub fn project_agent_dirs(cwd: Option<&Path>) -> (Vec<PathBuf>, Option<PathBuf>) {
@@ -29,8 +28,8 @@ pub fn project_agent_dirs(cwd: Option<&Path>) -> (Vec<PathBuf>, Option<PathBuf>)
     (project_agent_dirs_in(&chain.dirs), chain.git_root)
 }
 
-/// Existing project agent dirs under each dir of a precomputed cwd→git-root
-/// chain ([`crate::repo::RepoDirChain`]).
+/// Existing project agent dirs (`.grok/agents` / `.claude/agents`) under each
+/// dir of a precomputed cwd→git-root chain ([`crate::repo::RepoDirChain`]).
 ///
 /// Single source of the `PROJECT_AGENT_SUBDIRS` walk: the folder-trust detector
 /// (`repo_configs_present`) reuses its one shared chain here so detection can

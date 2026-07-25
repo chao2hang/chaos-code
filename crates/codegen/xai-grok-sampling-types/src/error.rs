@@ -219,8 +219,7 @@ impl SamplingError {
                 status: StatusCode::BAD_REQUEST,
                 message,
                 ..
-            }
-if message.contains("encrypted_content")
+            } if message.contains("encrypted_content")
         )
     }
 
@@ -234,8 +233,7 @@ if message.contains("encrypted_content")
                 status,
                 message,
                 ..
-            }
-if matches!(status.as_u16(), 400 | 500) && message.contains("Could not process image")
+            } if matches!(status.as_u16(), 400 | 500) && message.contains("Could not process image")
         )
     }
 
@@ -246,14 +244,7 @@ if matches!(status.as_u16(), 400 | 500) && message.contains("Could not process i
             SamplingError::Http(err) => is_retryable_reqwest(err),
             SamplingError::Serialization(_) => false,
             SamplingError::Api { status, .. } => {
-                // 429 rate-limit; 5xx server errors; Cloudflare edge 520–524
-                // (origin down / connect fail / timeout / …). CF 521–524 were
-                // previously omitted so a 524 would surface immediately with
-                // no exponential backoff — include the full 52x range.
-                matches!(
-                    status.as_u16(),
-                    429 | 500 | 502 | 503 | 504 | 520..=524
-                )
+                matches!(status.as_u16(), 429 | 500 | 502 | 503 | 504 | 520)
             }
             SamplingError::EventStreamError(_) => true,
             SamplingError::StreamError { .. } => true,
@@ -363,19 +354,19 @@ pub const MAX_USER_ERROR_BODY_CHARS: usize = 280;
 pub fn status_user_message(status: StatusCode) -> String {
     match status.as_u16() {
         code @ 502..=504 => {
-            format!("服务暂时不可用，请稍后重试。(HTTP {code})")
+            format!("Grok is temporarily unavailable. Please try again in a moment. (HTTP {code}).")
         }
         // Cloudflare edge codes (origin down / connect fail / timeout / …).
         code @ 520..=524 => {
             format!(
-                "连接超时或中断，请重试。(HTTP {code})"
+                "Connection to Grok timed out or was interrupted. Please try again. (HTTP {code})."
             )
         }
         code if status.is_server_error() => {
-            format!("服务器内部错误。(HTTP {code})")
+            format!("Something went wrong on the server (HTTP {code}).")
         }
-        code if status.is_client_error() => format!("请求失败。(HTTP {code})"),
-        code => format!("请求失败。(HTTP {code})"),
+        code if status.is_client_error() => format!("Request failed (HTTP {code})."),
+        code => format!("Request failed (HTTP {code})."),
     }
 }
 
@@ -697,23 +688,6 @@ mod tests {
         assert!(err.is_retryable(), "429 should be retryable");
         assert!(!err.is_auth_error());
         assert!(!err.is_payload_too_large());
-    }
-
-    #[test]
-    fn cloudflare_52x_edge_errors_are_retryable() {
-        for code in [520u16, 521, 522, 523, 524] {
-            let err = SamplingError::Api {
-                status: StatusCode::from_u16(code).unwrap(),
-                message: format!("CF edge {code}"),
-                model_metadata: None,
-                retry_after_secs: None,
-                should_retry: None,
-            };
-            assert!(
-                err.is_retryable(),
-                "Cloudflare HTTP {code} must be retryable (transient edge/origin)"
-            );
-        }
     }
 
     #[test]

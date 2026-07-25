@@ -11,7 +11,7 @@ impl SessionActor {
         auto_compact_threshold_percent: u8,
     ) -> Result<acp::ModelId, acp::Error> {
         let model_id = acp::ModelId::new(sampling_config.model.clone());
-        let new_context_window = self.compaction.context_window_override.get().unwrap_or_else(|| {
+        let new_context_window = self.compaction.context_window_override.unwrap_or_else(|| {
             std::num::NonZeroU64::new(sampling_config.context_window).unwrap_or_else(|| {
                 std::num::NonZeroU64::new(DEFAULT_CONTEXT_WINDOW)
                     .expect("DEFAULT_CONTEXT_WINDOW is non-zero")
@@ -20,9 +20,10 @@ impl SessionActor {
         let prev_threshold = self.compaction.threshold_percent.get();
         if prev_threshold != auto_compact_threshold_percent {
             tracing::info!(
-                session_id = % self.session_info.id.0, new_model = % sampling_config
-                .model, old_threshold = prev_threshold, new_threshold =
-                auto_compact_threshold_percent,
+                session_id = %self.session_info.id.0,
+                new_model = %sampling_config.model,
+                old_threshold = prev_threshold,
+                new_threshold = auto_compact_threshold_percent,
                 "auto_compact_threshold_percent updated for model switch"
             );
         }
@@ -38,12 +39,11 @@ impl SessionActor {
         xai_grok_telemetry::unified_log::info(
             "backend_search: model switch",
             Some(self.session_info.id.0.as_ref()),
-            Some(serde_json::json!(
-                { "new_model" : & sampling_config.model, "api_backend" :
-                format!("{:?}", sampling_config.api_backend),
-                "supports_backend_search" : sampling_config.supports_backend_search,
-                }
-            )),
+            Some(serde_json::json!({
+                "new_model": &sampling_config.model,
+                "api_backend": format!("{:?}", sampling_config.api_backend),
+                "supports_backend_search": sampling_config.supports_backend_search,
+            })),
         );
         self.chat_state_handle
             .update_sampling_config(xai_grok_sampling_types::SamplingConfig {
@@ -54,6 +54,8 @@ impl SessionActor {
                 top_p: sampling_config.top_p,
                 api_backend: sampling_config.api_backend.clone(),
                 extra_headers: sampling_config.extra_headers.clone(),
+                query_params: sampling_config.query_params.clone(),
+                env_http_headers: sampling_config.env_http_headers.clone(),
                 context_window: new_context_window,
                 reasoning_effort: sampling_config.reasoning_effort,
                 stream_tool_calls: Some(sampling_config.stream_tool_calls),
@@ -95,12 +97,14 @@ impl SessionActor {
             self.chat_state_handle.replace_conversation(conversation);
         } else if !apply_prompt_override {
             tracing::info!(
-                session_id = % self.session_info.id.0, model_id = % model_id.0,
+                session_id = %self.session_info.id.0,
+                model_id = %model_id.0,
                 "handle_set_session_model: skipping prompt override (apply_prompt_override=false)"
             );
         } else {
             tracing::info!(
-                session_id = % self.session_info.id.0, model_id = % model_id.0,
+                session_id = %self.session_info.id.0,
+                model_id = %model_id.0,
                 "handle_set_session_model: skipping prompt rewrite (just rebuilt harness)"
             );
         }
@@ -115,105 +119,6 @@ impl SessionActor {
             });
         Ok(model_id)
     }
-
-    /// Handle [`SessionCommand::SetContextWindow`].
-    ///
-    /// Locks the session context window, updates sampling config + signals, and
-    /// optionally runs compaction when usage is over the new budget / threshold.
-    pub(super) async fn handle_set_context_window(
-        self: &std::sync::Arc<Self>,
-        tokens: std::num::NonZeroU64,
-        compact_if_needed: bool,
-    ) -> Result<crate::session::commands::SetContextWindowResult, acp::Error> {
-        let previous_tokens = self
-            .chat_state_handle
-            .get_sampling_config()
-            .await
-            .map(|c| c.context_window.get())
-            .unwrap_or(DEFAULT_CONTEXT_WINDOW);
-
-        // Lock so model-switch / response-header upgrades cannot overwrite.
-        self.compaction.context_window_override.set(Some(tokens));
-
-        if let Some(mut cfg) = self.chat_state_handle.get_sampling_config().await {
-            cfg.context_window = tokens;
-            self.chat_state_handle.update_sampling_config(cfg);
-        }
-
-        let tokens_used = self.chat_state_handle.get_estimated_total_tokens().await;
-        let cw = tokens.get();
-        self.signals_handle()
-            .update_context_usage(tokens_used, cw);
-        let usage_percent = xai_token_estimation::usage_percentage_u8(tokens_used, cw);
-
-        // Sticky auto-compact suppression was often set because the old window
-        // was "too full"; a user-requested budget change should re-open the gate.
-        self.compaction.auto_compact_suppressed.store(
-            super::super::compaction_config::SUPPRESS_NONE,
-            std::sync::atomic::Ordering::Relaxed,
-        );
-
-        let mut compacted = false;
-        if compact_if_needed {
-            let over_window = tokens_used > cw;
-            let over_threshold = self
-                .should_auto_compact(tokens_used, tokens)
-                .is_some();
-            // Shrinking (or any set where usage already exceeds threshold)
-            // should compact immediately so the next turn fits.
-            if over_window || over_threshold {
-                tracing::info!(
-                    session_id = %self.session_info.id.0,
-                    previous_tokens,
-                    new_tokens = cw,
-                    tokens_used,
-                    usage_percent,
-                    over_window,
-                    over_threshold,
-                    "SetContextWindow: compacting to fit new budget"
-                );
-                if let Err(e) = self
-                    .run_compact(Some(
-                        "User reduced the context window; compress history to fit."
-                            .to_string(),
-                    ))
-                    .await
-                {
-                    tracing::warn!(
-                        session_id = %self.session_info.id.0,
-                        error = %e,
-                        "SetContextWindow: compaction failed; window still updated"
-                    );
-                } else {
-                    compacted = true;
-                }
-            }
-        }
-
-        let tokens_used = self.chat_state_handle.get_estimated_total_tokens().await;
-        let usage_percent = xai_token_estimation::usage_percentage_u8(tokens_used, cw);
-        self.signals_handle()
-            .update_context_usage(tokens_used, cw);
-
-        tracing::info!(
-            session_id = %self.session_info.id.0,
-            previous_tokens,
-            new_tokens = cw,
-            tokens_used,
-            usage_percent,
-            compacted,
-            "SetContextWindow applied"
-        );
-
-        Ok(crate::session::commands::SetContextWindowResult {
-            previous_tokens,
-            tokens: cw,
-            tokens_used,
-            usage_percent,
-            compacted,
-        })
-    }
-
     /// Handle [`SessionCommand::RebuildAgentForDefinition`].
     ///
     /// Builds a fresh [`xai_grok_agent::Agent`] from the cached
@@ -234,8 +139,8 @@ impl SessionActor {
             let state = self.state.lock().await;
             if state.running_task.is_some() {
                 tracing::warn!(
-                    session_id = % self.session_info.id.0, new_agent_type = % definition
-                    .name,
+                    session_id = %self.session_info.id.0,
+                    new_agent_type = %definition.name,
                     "handle_rebuild_agent_for_definition: turn in flight, rejecting rebuild"
                 );
                 return Err(acp::Error::internal_error()
@@ -244,7 +149,8 @@ impl SessionActor {
         }
         let new_agent_name = definition.name.clone();
         tracing::info!(
-            session_id = % self.session_info.id.0, new_agent_type = % new_agent_name,
+            session_id = %self.session_info.id.0,
+            new_agent_type = %new_agent_name,
             "handle_rebuild_agent_for_definition: rebuilding harness"
         );
         let new_agent = self
@@ -253,8 +159,9 @@ impl SessionActor {
             .await
             .map_err(|e| {
                 tracing::error!(
-                    session_id = % self.session_info.id.0, new_agent_type = %
-                    new_agent_name, error = % e,
+                    session_id = %self.session_info.id.0,
+                    new_agent_type = %new_agent_name,
+                    error = %e,
                     "handle_rebuild_agent_for_definition: AgentBuilder::build failed"
                 );
                 acp::Error::internal_error().data(format!(
@@ -272,6 +179,7 @@ impl SessionActor {
         self.compaction.prefire.clear();
         *self.agent.borrow_mut() = new_agent;
         *self.active_agent_type.lock() = Some(new_agent_name.clone());
+        self.emit_resolved_tool_overrides();
         self.queue_exit_reminder_on_approved_exit.store(
             self.is_cursor_harness(),
             std::sync::atomic::Ordering::Relaxed,
@@ -283,9 +191,7 @@ impl SessionActor {
             self.agent.borrow().tool_bridge().toolset(),
             None,
         ) {
-            tracing::warn!(
-                error = % e, "failed to rebind local session toolset after agent rebuild"
-            );
+            tracing::warn!(error = %e, "failed to rebind local session toolset after agent rebuild");
         }
         {
             let bridge = self.agent.borrow().tool_bridge().clone();
@@ -342,9 +248,12 @@ impl SessionActor {
             if needs_wait {
                 const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
                 tokio::select! {
-                    () = & mut notified => {} () = tokio::time::sleep(TIMEOUT) => {
-                    tracing::warn!(session_id = % self.session_info.id.0,
-                    "handle_rebuild_agent_for_definition: timed out waiting for MCP handshakes");
+                    () = &mut notified => {}
+                    () = tokio::time::sleep(TIMEOUT) => {
+                        tracing::warn!(
+                            session_id = %self.session_info.id.0,
+                            "handle_rebuild_agent_for_definition: timed out waiting for MCP handshakes"
+                        );
                     }
                 }
             }
@@ -383,7 +292,8 @@ impl SessionActor {
             .store(true, std::sync::atomic::Ordering::Relaxed);
         self.send_available_commands_update().await;
         tracing::info!(
-            session_id = % self.session_info.id.0, new_agent_type = % new_agent_name,
+            session_id = %self.session_info.id.0,
+            new_agent_type = %new_agent_name,
             "handle_rebuild_agent_for_definition: harness rebuild complete"
         );
         Ok(())
@@ -399,7 +309,7 @@ impl SessionActor {
     pub(super) async fn handle_replace_system_prompt(&self, system_prompt: String) {
         if self.startup_hints.preserve_inherited_system {
             tracing::debug!(
-                session_id = % self.session_info.id.0,
+                session_id = %self.session_info.id.0,
                 "handle_replace_system_prompt: skipped (preserve_inherited_system)"
             );
             return;
@@ -410,7 +320,7 @@ impl SessionActor {
             .await
         else {
             tracing::error!(
-                session_id = % self.session_info.id.0,
+                session_id = %self.session_info.id.0,
                 "handle_replace_system_prompt: chat-state actor unavailable; override not applied"
             );
             return;
@@ -418,12 +328,13 @@ impl SessionActor {
         save_system_prompt(&self.session_info, &system_prompt);
         if changed {
             tracing::info!(
-                session_id = % self.session_info.id.0, prompt_len = system_prompt.len(),
+                session_id = %self.session_info.id.0,
+                prompt_len = system_prompt.len(),
                 "handle_replace_system_prompt: client override applied"
             );
         } else {
             tracing::debug!(
-                session_id = % self.session_info.id.0,
+                session_id = %self.session_info.id.0,
                 "handle_replace_system_prompt: head already matches, no-op"
             );
         }

@@ -117,6 +117,14 @@ pub async fn set_default_model(value: String) -> Result<()> {
     .await
 }
 
+/// Persist `[privacy].privacy_banner_acked` (RFC 3339 UTC dismiss time).
+pub async fn set_privacy_banner_acked(acked_at_rfc3339: String) -> Result<()> {
+    update_config(|cfg| {
+        cfg.privacy.privacy_banner_acked = Some(acked_at_rfc3339);
+    })
+    .await
+}
+
 /// Persist `[ui].fork_secondary_model` via `update_config`.
 ///
 /// Caller must validate against the model catalog. Empty string
@@ -191,11 +199,6 @@ pub async fn set_remember_tool_approvals(value: bool) -> Result<()> {
     update_config(|cfg| cfg.ui.remember_tool_approvals = Some(value)).await
 }
 
-/// Persist `[session].auto_retry_incomplete_end_turn` via `update_config`.
-pub async fn set_auto_retry_incomplete_end_turn(value: bool) -> Result<()> {
-    update_config(|cfg| cfg.session.auto_retry_incomplete_end_turn = Some(value)).await
-}
-
 /// Persist `[ui].show_thinking_blocks` via `update_config`.
 pub async fn set_show_thinking_blocks(value: bool) -> Result<()> {
     update_config(|cfg| cfg.ui.show_thinking_blocks = Some(value)).await
@@ -262,6 +265,12 @@ pub async fn set_voice_stt_language(value: String) -> Result<()> {
     update_config(|cfg| cfg.ui.voice_stt_language = Some(value)).await
 }
 
+/// Persist `[ui].voice_keybind_enabled` via `update_config`. When `false` the
+/// Ctrl+Space / F8 voice chord is ignored (`/voice` still works).
+pub async fn set_voice_keybind_enabled(value: bool) -> Result<()> {
+    update_config(|cfg| cfg.ui.voice_keybind_enabled = Some(value)).await
+}
+
 /// Persist `[ui].default_selected_permission` via `update_config`. Value is
 /// one of the canonical strings from `DEFAULT_SELECTED_PERMISSION_CHOICES`
 /// (`default` | `allow_once` | `allow_always` | `reject`); `default` is the
@@ -298,4 +307,9 @@ pub async fn set_show_tips(value: bool) -> Result<()> {
 /// Restart-required: auto-update check fires once on startup.
 pub async fn set_auto_update(value: bool) -> Result<()> {
     update_config(|cfg| cfg.cli.auto_update = Some(value)).await
+}
+
+/// Persist `[session].auto_retry_incomplete_end_turn` via `update_config`.
+pub async fn set_auto_retry_incomplete_end_turn(value: bool) -> Result<()> {
+    update_config(|cfg| cfg.session.auto_retry_incomplete_end_turn = Some(value)).await
 }

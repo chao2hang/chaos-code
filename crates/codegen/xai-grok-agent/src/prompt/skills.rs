@@ -2439,18 +2439,17 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let cwd = tmp.path();
         // Not a git repo → falls to the cwd-only branch (no upward walk).
-        for name in [".grok", ".chaos", ".agents", ".claude", ".cursor"] {
+        for name in [".grok", ".agents", ".claude", ".cursor"] {
             fs::create_dir_all(cwd.join(name)).unwrap();
         }
 
         let ends_with = |dirs: &[PathBuf], suffix: &str| dirs.iter().any(|d| d.ends_with(suffix));
 
-        // All on → both vendor dirs + dual-read chaos present.
+        // All on → both vendor dirs present (byte-for-byte legacy behavior).
         let all =
             collect_skill_config_dirs(Some(cwd), None, tmp.path(), &[], CompatConfig::default());
         assert!(ends_with(&all, ".claude"), "claude missing: {all:?}");
         assert!(ends_with(&all, ".cursor"), "cursor missing: {all:?}");
-        assert!(ends_with(&all, ".chaos"), "chaos missing: {all:?}");
 
         // cursor.skills off → .cursor dropped, .claude kept.
         let mut compat = CompatConfig::default();
@@ -2462,7 +2461,6 @@ mod tests {
         );
         assert!(ends_with(&dirs, ".claude"), "claude must remain: {dirs:?}");
         assert!(ends_with(&dirs, ".grok"), "grok must remain: {dirs:?}");
-        assert!(ends_with(&dirs, ".chaos"), "chaos must remain: {dirs:?}");
     }
 
     // ── Same-scope frontmatter-name collisions (copied skill dirs) ──────

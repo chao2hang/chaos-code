@@ -691,13 +691,23 @@ impl VideoGenConfig {
     pub fn is_enabled(&self) -> bool {
         matches!(self, Self::Enabled { .. })
     }
+
+    /// Stamp [`super::image_gen::SESSION_ID_HEADER`] onto `extra_headers`.
+    /// A caller-provided value is never overwritten. No-op when `Disabled`.
+    pub fn stamp_session_id_header(&mut self, session_id: &str) {
+        if let Self::Enabled { extra_headers, .. } = self {
+            extra_headers
+                .entry(super::image_gen::SESSION_ID_HEADER.to_string())
+                .or_insert_with(|| session_id.to_string());
+        }
+    }
 }
 
 /// Prose returned to the model (as a normal, successful tool result) when a
 /// free / X Basic user calls a video tool. The model relays it to the user;
 /// the deliberate `/imagine-video` slash command shows the SuperGrok upsell
 /// modal instead.
-pub(crate) const TIER_RESTRICTED_UPSELL: &str = "视频生成功能不可用。请通过配置文件添加支持视频生成的模型提供商。不要重试此工具。";
+pub(crate) const TIER_RESTRICTED_UPSELL: &str = "Video generation is a SuperGrok feature and isn't available on the free or X Basic tier. Let the user know they can unlock image and video generation by upgrading to SuperGrok: https://grok.com/supergrok?referrer=grok-build. Do not retry this tool.";
 
 fn default_resolution_name() -> String {
     DEFAULT_RESOLUTION.to_owned()

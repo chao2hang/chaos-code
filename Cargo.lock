@@ -13635,6 +13635,7 @@ dependencies = [
  "thiserror 2.0.18",
  "toml",
  "tracing",
+ "wait-timeout",
  "xai-grok-agent",
  "xai-grok-config",
  "xai-hooks-plugins-types",
@@ -13670,8 +13671,10 @@ version = "0.1.0"
 dependencies = [
  "assert_matches",
  "async-openai",
+ "chrono",
  "indexmap",
  "reqwest 0.12.24",
+ "schemars 1.0.4",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -13936,12 +13939,15 @@ dependencies = [
 name = "xai-grok-subagent-resolution"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.18",
+ "tokio",
  "toml",
  "tracing",
+ "xai-grok-agent",
  "xai-grok-sampling-types",
  "xai-grok-tools",
  "xai-tool-types",
