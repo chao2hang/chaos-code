@@ -1514,7 +1514,7 @@ pub(super) fn dispatch_dashboard_dispatch_slash(app: &mut AppView, text: String)
         CommandResult::Doctor(_) => {
             if let Some(d) = app.dashboard.as_mut() {
                 d.dispatch.set_text("");
-                d.set_error_toast("Open a session to run /doctor.");
+                d.set_error_toast("请先打开会话再运行 /doctor。");
             }
             vec![]
         }

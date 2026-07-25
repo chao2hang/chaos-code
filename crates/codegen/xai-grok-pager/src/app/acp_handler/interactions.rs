@@ -87,7 +87,7 @@ pub(crate) fn handle_ask_user_question(
                 LocalQuestionKind::DoctorFix { .. } => "/doctor fix",
             };
             let message = if matches!(kind, LocalQuestionKind::DoctorFix { .. }) {
-                "/doctor fix was cancelled because another question opened.".to_owned()
+                "/doctor fix 已取消，因为打开了另一个问题。".to_owned()
             } else {
                 format!("{cmd} cancelled because another question opened.")
             };
