@@ -19,6 +19,7 @@
 pub mod campaigns;
 pub mod config_override;
 pub mod fs_atomic;
+pub mod global_hook_sources;
 mod loader;
 mod macos_managed;
 mod managed_cache;
@@ -33,6 +34,17 @@ pub mod version_overrides;
 // reachable via the `pub mod` paths for in-crate use without widening the API.
 pub use campaigns::{
     CampaignEntry, CampaignOverrides, filter_active_campaigns, ids_touching_paths,
+};
+pub use global_hook_sources::{
+    GlobalHookSource, GlobalHookSourceError, GlobalHookSourceKind, ResolvedGlobalHookSources,
+    ensure_grok_hook_slots, existing_ancestor_chain, is_direct_hook_json_name,
+    list_direct_hook_json_files, missing_configured_sources, path_has_symlink_component,
+    resolve_global_hook_sources, unique_ancestors_rootward,
+};
+
+#[cfg(unix)]
+pub use global_hook_sources::{
+    validate_direct_hook_json_file, validated_hook_json_files_for_sources,
 };
 pub use loader::{
     CampaignsState, ConfigLayers, MANAGED_CONFIG_FILENAME, ManagedConfigLayer,

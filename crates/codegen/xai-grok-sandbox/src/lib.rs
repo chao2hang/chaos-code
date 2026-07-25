@@ -28,11 +28,13 @@
 //! ```
 pub mod child_net;
 mod deny;
+mod hook_write_deny;
 mod logging;
 mod network_policy;
 mod paths;
 mod profiles;
 mod types;
+pub use hook_write_deny::{profile_enforces_hook_write_deny, verify_hook_write_deny_enforced};
 pub use logging::SandboxLogger;
 pub use network_policy::{
     ChildNetworkPolicy, NETWORK_POLICY_SNAPSHOT_VERSION, NetworkPolicySnapshot,
@@ -49,6 +51,21 @@ use std::path::PathBuf;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 pub use types::{SandboxEvent, SandboxEventType, SandboxMetrics};
+/// Whether this profile requires direct-hook write protection (non-devbox
+/// enforcing profiles). Shell fails closed when protection cannot be applied.
+pub fn requires_hook_write_deny(profile: &ProfileName, workspace: &Path) -> bool {
+    if !profile_enforces_hook_write_deny(profile) || *profile == ProfileName::Off {
+        return false;
+    }
+    let config = profiles::load_sandbox_config(workspace);
+    match profile {
+        ProfileName::Custom(name) => {
+            config.profiles.get(name).and_then(|p| p.extends.as_deref()) != Some("devbox")
+        }
+        ProfileName::Devbox => false,
+        _ => true,
+    }
+}
 static SANDBOX: OnceLock<GlobalSandboxState> = OnceLock::new();
 static CONFIGURED_PROFILE: OnceLock<String> = OnceLock::new();
 static AUTO_ALLOW_BASH: AtomicBool = AtomicBool::new(false);
@@ -150,6 +167,12 @@ impl SandboxManager {
             tracing::info!("Sandbox disabled (profile: off)");
             return Ok(());
         }
+        if requires_hook_write_deny(&self.profile, workspace) {
+            xai_grok_config::ensure_grok_hook_slots(paths::grok_home().as_path())
+                .map_err(|e| anyhow::anyhow!("hook write-deny ensure failed: {e}"))?;
+            hook_write_deny::maybe_install_namespace_lockdown_inside_bwrap(&self.profile)
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+        }
         let config = profiles::load_sandbox_config(workspace);
         let mut resolved = self.profile.resolve_profile(workspace, &config)?;
         self.net_restricted = resolved.restrict_network;
@@ -250,33 +273,53 @@ pub fn bwrap_reexec_command(
     deny_write: &[&str],
     deny_read: &[&str],
 ) -> Option<std::process::Command> {
+    #[cfg(target_os = "linux")]
+    {
+        bwrap_reexec_command_ex(deny_write, None, deny_read)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (deny_write, deny_read);
+        None
+    }
+}
+/// Like [`bwrap_reexec_command`] plus optional hook plan (via `append_hook_plan_binds`).
+#[cfg(target_os = "linux")]
+pub(crate) fn bwrap_reexec_command_ex(
+    deny_write_optional: &[&str],
+    hook_plan: Option<&hook_write_deny::HookWriteDenyBwrapPlan>,
+    deny_read: &[&str],
+) -> Option<std::process::Command> {
     if is_inside_bwrap() {
         return None;
     }
     let self_exe = std::env::current_exe().ok()?;
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut cmd = std::process::Command::new("bwrap");
+    cmd.arg("--cap-drop").arg("ALL");
     cmd.arg("--bind").arg("/").arg("/");
-    for path in deny_write {
+    for path in deny_write_optional {
         if Path::new(path).exists() {
             cmd.arg("--ro-bind").arg(path).arg(path);
         }
     }
-    #[cfg(target_os = "linux")]
+    if let Some(plan) = hook_plan
+        && let Err(e) = hook_write_deny::append_hook_plan_binds(&mut cmd, plan)
+    {
+        eprintln!("error: hook write-deny plan materialization failed: {e}");
+        return None;
+    }
     if !deny_read.is_empty() {
         for path in deny_read {
             let Some(blocked) = bwrap_blocked_source_for_path(Path::new(path)) else {
                 eprintln!(
-                    "error: could not create bwrap placeholder for read-deny path {path}; \
-                     refusing to start with a partial sandbox"
+                    "error: could not create bwrap placeholder for read-deny path {path};                      refusing to start with a partial sandbox"
                 );
                 return None;
             };
             cmd.arg("--ro-bind").arg(&blocked).arg(path);
         }
     }
-    #[cfg(not(target_os = "linux"))]
-    let _ = deny_read;
     cmd.arg("--dev-bind").arg("/dev").arg("/dev");
     cmd.arg("--proc").arg("/proc");
     cmd.env(BWRAP_ENV_VAR, "1");
@@ -389,6 +432,7 @@ pub fn requires_read_deny(_profile: &ProfileName, _workspace: &Path) -> bool {
 #[cfg(target_os = "linux")]
 struct BwrapDenyPlan {
     deny_write: Vec<String>,
+    hook_plan: Option<hook_write_deny::HookWriteDenyBwrapPlan>,
     deny_read: Vec<String>,
     has_globs: bool,
 }
@@ -409,22 +453,47 @@ fn bwrap_deny_plan(profile: &ProfileName, workspace: &Path) -> Option<BwrapDenyP
     } else {
         Vec::new()
     };
-    let entries = if *profile == ProfileName::Off {
-        Vec::new()
+    let resolved = if *profile == ProfileName::Off {
+        None
     } else {
-        profile
-            .resolve_profile(workspace, &config)
-            .map(|r| r.deny)
-            .unwrap_or_default()
+        match profile.resolve_profile(workspace, &config) {
+            Ok(r) => Some(r),
+            Err(e) => {
+                if requires_hook_write_deny(profile, workspace) {
+                    eprintln!("error: sandbox profile resolve failed: {e}");
+                    return None;
+                }
+                None
+            }
+        }
     };
+    let entries = resolved
+        .as_ref()
+        .map(|r| r.deny.clone())
+        .unwrap_or_default();
+    let needs_hooks = requires_hook_write_deny(profile, workspace);
+    let hook_plan = if needs_hooks {
+        match hook_write_deny::prepare_hook_write_deny(profile) {
+            Ok(hook_write_deny::HookWriteDenyPrepare::NotRequired) => None,
+            Ok(hook_write_deny::HookWriteDenyPrepare::Plan(plan)) => Some(plan),
+            Err(e) => {
+                eprintln!("error: hook write-deny plan failed: {e}");
+                return None;
+            }
+        }
+    } else {
+        None
+    };
+    if needs_hooks && hook_plan.is_none() {
+        return None;
+    }
     let (exact, globs) = deny::partition_deny_entries(&entries);
     let mut deny_read = deny::exact_deny_path_strings(workspace, &exact);
     let has_globs = !globs.is_empty();
     if has_globs {
         tracing::warn!(
             count = globs.len(),
-            "sandbox deny globs are enforced best-effort on Linux (expanded at launch); \
-             files matching them that are created later are NOT covered"
+            "sandbox deny globs are enforced best-effort on Linux (expanded at launch);              files matching them that are created later are NOT covered"
         );
         deny_read.extend(deny::expand_deny_globs(
             workspace,
@@ -436,6 +505,7 @@ fn bwrap_deny_plan(profile: &ProfileName, workspace: &Path) -> Option<BwrapDenyP
     }
     Some(BwrapDenyPlan {
         deny_write,
+        hook_plan,
         deny_read,
         has_globs,
     })
@@ -451,8 +521,21 @@ fn bwrap_deny_plan(profile: &ProfileName, workspace: &Path) -> Option<BwrapDenyP
     } else {
         Vec::new()
     };
+    let hook_plan = if requires_hook_write_deny(profile, workspace) {
+        match hook_write_deny::prepare_hook_write_deny(profile) {
+            Ok(hook_write_deny::HookWriteDenyPrepare::NotRequired) => None,
+            Ok(hook_write_deny::HookWriteDenyPrepare::Plan(plan)) => Some(plan),
+            Err(e) => {
+                eprintln!("error: hook write-deny plan failed: {e}");
+                return None;
+            }
+        }
+    } else {
+        None
+    };
     Some(BwrapDenyPlan {
         deny_write,
+        hook_plan,
         deny_read: Vec::new(),
         has_globs: false,
     })
@@ -475,15 +558,24 @@ pub fn bwrap_reexec_for_profile(
 ) -> Option<std::process::Command> {
     let BwrapDenyPlan {
         deny_write,
+        hook_plan,
         deny_read,
         has_globs,
     } = bwrap_deny_plan(profile, workspace)?;
-    if deny_write.is_empty() && deny_read.is_empty() && !has_globs {
+    if deny_write.is_empty() && deny_read.is_empty() && !has_globs && hook_plan.is_none() {
         return None;
     }
     let write_refs: Vec<&str> = deny_write.iter().map(String::as_str).collect();
     let read_refs: Vec<&str> = deny_read.iter().map(String::as_str).collect();
-    bwrap_reexec_command(&write_refs, &read_refs)
+    #[cfg(target_os = "linux")]
+    {
+        bwrap_reexec_command_ex(&write_refs, hook_plan.as_ref(), &read_refs)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = hook_plan;
+        bwrap_reexec_command(&write_refs, &read_refs)
+    }
 }
 #[cfg(test)]
 mod tests {
