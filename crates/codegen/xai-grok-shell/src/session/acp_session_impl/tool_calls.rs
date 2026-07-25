@@ -320,6 +320,11 @@ impl SessionActor {
                     .push_tool_result(ConversationItem::tool_result(call.id.clone(), message));
                 continue;
             }
+            // DCP：拦截 compress 工具，直接调用会话级处理器，绕过 workspace 分发。
+            if call.function.name == super::selective_compaction::COMPRESS_TOOL_NAME {
+                self.execute_compress_tool(&call).await?;
+                continue;
+            }
             self.emit_event(crate::session::events::Event::ToolStarted {
                 tool_name: call.function.name.clone(),
             });

@@ -63,6 +63,14 @@ pub(super) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         },
     },
     BuiltinCommand {
+        name: "dynamic-compact",
+        description: "切换动态上下文裁剪（模型驱动 compress 工具 + 提醒）",
+        argument_hint: Some("on|off|status（默认：切换）"),
+        aliases: &["dcp"],
+        gate: BuiltinGate::AlwaysOn,
+        resolve: |_args| BuiltinAction::ToggleDynamicCompact,
+    },
+    BuiltinCommand {
         name: "always-approve",
         description: "Toggle always-approve mode (skip all permission prompts)",
         argument_hint: Some("on|off"),
@@ -875,6 +883,8 @@ pub(super) enum BuiltinAction {
         name: String,
         input: String,
     },
+    /// 切换动态上下文裁剪（DCP）开关。
+    ToggleDynamicCompact,
 }
 
 impl BuiltinAction {
@@ -910,6 +920,7 @@ impl BuiltinAction {
             BuiltinAction::DeepResearch { .. } => "deep-research",
             BuiltinAction::WorkflowManage { .. } => "workflow",
             BuiltinAction::WorkflowLaunch { .. } => "workflow",
+            BuiltinAction::ToggleDynamicCompact => "dynamic-compact",
         }
     }
 
@@ -945,6 +956,7 @@ impl BuiltinAction {
             BuiltinAction::DeepResearch { .. } => true,
             BuiltinAction::WorkflowManage { .. } => true,
             BuiltinAction::WorkflowLaunch { input, .. } => !input.is_empty(),
+            BuiltinAction::ToggleDynamicCompact => false,
         }
     }
 }

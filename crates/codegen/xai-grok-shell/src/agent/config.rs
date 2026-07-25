@@ -980,6 +980,10 @@ pub struct FeedbackUserConfig {
 pub struct CompactionConfig {
     pub memory_flush: Option<crate::config::MemoryFlushConfig>,
     pub pruning: Option<crate::config::PruningConfig>,
+    /// 压缩策略：`"threshold"`（默认）、`"dynamic"` 或 `"both"`。
+    pub strategy: Option<crate::session::dcp_config::CompactionStrategy>,
+    /// DCP（动态上下文裁剪）配置。仅当 `strategy` 包含 `dynamic` 时生效。
+    pub dcp: Option<crate::session::dcp_config::DcpConfig>,
 }
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -2966,6 +2970,16 @@ impl Config {
                 .as_ref()
                 .and_then(|r| r.compaction_tool_choice.as_deref()),
         )
+    }
+    /// 解析压缩策略：`[compaction].strategy` > 默认（Threshold）。
+    pub(crate) fn resolve_compaction_strategy(
+        &self,
+    ) -> crate::session::dcp_config::CompactionStrategy {
+        self.compaction.strategy.unwrap_or_default()
+    }
+    /// 解析 DCP 配置：`[compaction].dcp` > 默认。
+    pub(crate) fn resolve_dcp_config(&self) -> crate::session::dcp_config::DcpConfig {
+        self.compaction.dcp.clone().unwrap_or_default()
     }
     /// Precedence: env `GROK_COMPACTION_DETAIL`, then config
     /// `features.compaction_detail`, then remote settings

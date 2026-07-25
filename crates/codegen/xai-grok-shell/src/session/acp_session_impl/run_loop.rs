@@ -424,6 +424,10 @@ pub(super) async fn run_session(
                     session
                         .handle_turn_end(turn_succeeded, suppress_goal_continuation)
                         .await;
+                    // DCP：当动态策略启用时，在轮次之间注入压缩提醒。
+                    if session.compaction.strategy.get().dcp_active() {
+                        session.maybe_inject_selective_compaction_nudge().await;
+                    }
                     // Interjections that raced past the turn's final drain
                     // (arrived during turn-end bookkeeping) have no turn left
                     // to merge into — convert them to front-of-queue prompt
