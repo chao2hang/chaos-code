@@ -1676,6 +1676,7 @@ impl MvpAgent {
                 block_waited: false,
                 explicitly_killed: false,
                 owner_session_id: None,
+                description: None,
             };
             let notification = crate::extensions::notification::SessionNotification {
                 session_id: session_id.clone(),

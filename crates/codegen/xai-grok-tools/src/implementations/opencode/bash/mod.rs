@@ -395,6 +395,7 @@ impl xai_tool_runtime::Tool for BashTool {
             foreground_block_budget: None,
             kind: crate::computer::types::TaskKind::Bash,
             owner_session_id: None, // OpenCode doesn't use shared terminal backends
+            description: None,
         };
 
         let result = match backend.run(request).await {

@@ -303,6 +303,8 @@ struct ProcessState {
     /// Session that owns this process. Used to scope kill operations so
     /// subagent teardown only kills the subagent's own tasks.
     owner_session_id: Option<String>,
+    /// Model-supplied label for task UI / snapshots.
+    description: Option<String>,
 }
 
 impl ProcessState {
@@ -442,6 +444,7 @@ impl ProcessState {
             explicitly_killed: self.explicitly_killed,
             kind: self.kind,
             owner_session_id: self.owner_session_id.clone(),
+            description: self.description.clone(),
         }
     }
 }
@@ -1103,6 +1106,7 @@ impl LocalTerminalActor {
             explicitly_killed: false,
             state_dump_handle,
             owner_session_id: request.owner_session_id.clone(),
+            description: request.description.filter(|d| !d.trim().is_empty()),
         };
 
         // Send an initial empty notification so the TUI shows the execution
@@ -1246,6 +1250,7 @@ impl LocalTerminalActor {
                 None
             },
             owner_session_id: request.owner_session_id.clone(),
+            description: request.description.filter(|d| !d.trim().is_empty()),
         };
 
         // Store under task_id — this is the key that get_task/kill_task will use
@@ -1626,6 +1631,7 @@ impl LocalTerminalActor {
                     block_waited: p.block_waited,
                     explicitly_killed: p.explicitly_killed,
                     owner_session_id: p.owner_session_id.clone(),
+                    description: p.description.clone(),
                 };
                 self.completed_task_snapshots.insert(id.clone(), snapshot);
             }
@@ -3217,6 +3223,7 @@ mod tests {
             foreground_block_budget: None,
             kind: TaskKind::Bash,
             owner_session_id: None,
+            description: None,
         }
     }
 
@@ -3369,6 +3376,7 @@ mod tests {
             foreground_block_budget: None,
             kind: TaskKind::Bash,
             owner_session_id: None,
+            description: None,
         };
 
         let result = backend.run(request).await.unwrap();
@@ -3400,6 +3408,7 @@ mod tests {
             foreground_block_budget: None,
             kind: TaskKind::Bash,
             owner_session_id: None,
+            description: None,
         };
 
         let result = backend.run(request).await.unwrap();
@@ -3463,6 +3472,7 @@ mod tests {
             foreground_block_budget: None,
             kind: TaskKind::Bash,
             owner_session_id: None,
+            description: None,
         };
 
         let start = Instant::now();
@@ -3534,6 +3544,7 @@ mod tests {
             foreground_block_budget: None,
             kind: TaskKind::Bash,
             owner_session_id: None,
+            description: None,
         };
 
         let result = backend.run(request).await.unwrap();
@@ -3580,6 +3591,7 @@ mod tests {
             foreground_block_budget: Some(Duration::from_millis(300)),
             kind: TaskKind::Bash,
             owner_session_id: None,
+            description: None,
         };
 
         let start = Instant::now();
@@ -3631,6 +3643,7 @@ mod tests {
             foreground_block_budget: Some(Duration::MAX),
             kind: TaskKind::Bash,
             owner_session_id: None,
+            description: None,
         };
 
         let start = Instant::now();
@@ -3682,6 +3695,7 @@ mod tests {
             foreground_block_budget: None,
             kind: TaskKind::Bash,
             owner_session_id: None,
+            description: None,
         };
 
         let result = backend.run(request).await.unwrap();
@@ -3740,6 +3754,7 @@ mod tests {
             foreground_block_budget: None,
             kind: TaskKind::Bash,
             owner_session_id: None,
+            description: None,
         };
 
         let result = backend.run(request).await.unwrap();
@@ -3776,6 +3791,7 @@ mod tests {
             foreground_block_budget: None,
             kind: TaskKind::Bash,
             owner_session_id: None,
+            description: None,
         };
 
         // Start background task
@@ -3816,6 +3832,7 @@ mod tests {
             foreground_block_budget: None,
             kind: TaskKind::Bash,
             owner_session_id: None,
+            description: None,
         };
 
         let handle = backend.run_background(request).await.unwrap();
@@ -3856,6 +3873,7 @@ mod tests {
             foreground_block_budget: None,
             kind: TaskKind::Bash,
             owner_session_id: None,
+            description: None,
         };
 
         let result = backend.run(request).await.unwrap();
@@ -3931,6 +3949,7 @@ mod tests {
             foreground_block_budget: None,
             kind: TaskKind::Bash,
             owner_session_id: None,
+            description: None,
         };
 
         let result = backend.run(request).await.unwrap();
@@ -3997,6 +4016,7 @@ mod tests {
             foreground_block_budget: None,
             kind: TaskKind::Bash,
             owner_session_id: None,
+            description: None,
         };
 
         let result = backend.run(request).await.unwrap();
@@ -4032,6 +4052,7 @@ mod tests {
             foreground_block_budget: None,
             kind: TaskKind::Bash,
             owner_session_id: None,
+            description: None,
         };
 
         let result = backend.run(request).await.unwrap();
@@ -4066,6 +4087,7 @@ mod tests {
             foreground_block_budget: None,
             kind: TaskKind::Bash,
             owner_session_id: None,
+            description: None,
         };
 
         let result = backend.run(request).await.unwrap();
@@ -4096,6 +4118,7 @@ mod tests {
             foreground_block_budget: None,
             kind: TaskKind::Bash,
             owner_session_id: None,
+            description: None,
         };
 
         backend.run(request).await.unwrap();
@@ -4135,6 +4158,7 @@ mod tests {
             foreground_block_budget: None,
             kind: TaskKind::Bash,
             owner_session_id: None,
+            description: None,
         };
 
         backend.run(request).await.unwrap();
@@ -4183,6 +4207,7 @@ mod tests {
             foreground_block_budget: None,
             kind: TaskKind::Bash,
             owner_session_id: None,
+            description: None,
         };
 
         let result = backend.run(request).await.unwrap();
@@ -4216,6 +4241,7 @@ mod tests {
             foreground_block_budget: None,
             kind: TaskKind::Bash,
             owner_session_id: None,
+            description: None,
         };
 
         let handle = backend.run_background(request).await.unwrap();
@@ -4260,6 +4286,7 @@ mod tests {
             foreground_block_budget: None,
             kind: TaskKind::Bash,
             owner_session_id: None,
+            description: None,
         };
 
         let result = backend.run(request).await.unwrap();
@@ -4292,6 +4319,7 @@ mod tests {
             foreground_block_budget: None,
             kind: TaskKind::Bash,
             owner_session_id: None,
+            description: None,
         };
 
         let start = Instant::now();

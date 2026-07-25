@@ -798,6 +798,7 @@ mod tests {
             block_waited: false,
             explicitly_killed: false,
             owner_session_id: None,
+            description: None,
         };
         let msg = format_bash_completion(&task, Some("get_command_or_subagent_output"), None);
         assert!(msg.contains("abc-123"));
@@ -824,6 +825,7 @@ mod tests {
             block_waited: false,
             explicitly_killed: false,
             owner_session_id: None,
+            description: None,
         };
         let msg = format_monitor_completion(&task, Some("get_command_or_subagent_output"));
         assert!(
@@ -856,6 +858,7 @@ mod tests {
             block_waited: false,
             explicitly_killed: false,
             owner_session_id: None,
+            description: None,
         };
         let msg = format_monitor_completion(&task, None);
         assert!(
@@ -883,6 +886,7 @@ mod tests {
             block_waited: false,
             explicitly_killed: false,
             owner_session_id: None,
+            description: None,
         };
         let msg = format_bash_completion(&task, Some("get_command_or_subagent_output"), None);
         assert!(msg.contains("cargo test"));
@@ -907,6 +911,7 @@ mod tests {
             block_waited: false,
             explicitly_killed: false,
             owner_session_id: None,
+            description: None,
         };
         let msg = format_bash_completion(&task, Some("get_command_or_subagent_output"), None);
         assert!(msg.contains("exit code: unknown"));
@@ -934,6 +939,7 @@ mod tests {
             block_waited: false,
             explicitly_killed: false,
             owner_session_id: None,
+            description: None,
         };
         let msg = format_bash_completion(&task, Some("get_command_or_subagent_output"), None);
         assert!(
@@ -972,6 +978,7 @@ mod tests {
             block_waited: false,
             explicitly_killed: false,
             owner_session_id: None,
+            description: None,
         };
         let msg = format_bash_completion(&task, Some("get_command_or_subagent_output"), None);
         assert!(
@@ -1009,6 +1016,7 @@ mod tests {
             block_waited: false,
             explicitly_killed: false,
             owner_session_id: None,
+            description: None,
         };
         let msg = format_bash_completion(&task, Some("get_command_or_subagent_output"), None);
         assert!(msg.contains("exit code: 0"));
@@ -1169,6 +1177,7 @@ mod tests {
             block_waited: false,
             explicitly_killed: false,
             owner_session_id: None,
+            description: None,
         }
     }
     fn make_running(id: &str) -> TaskSnapshot {
@@ -1189,6 +1198,7 @@ mod tests {
             block_waited: false,
             explicitly_killed: false,
             owner_session_id: None,
+            description: None,
         }
     }
     fn make_bg_started(id: &str) -> crate::types::output::BackgroundTaskStarted {
@@ -1876,6 +1886,7 @@ mod tests {
                 "<monitor-event description=\"{desc}\" task_id=\"{task}\">\n{text}\n</monitor-event>"
             ),
             owner_session_id: None,
+            description: None,
         };
         assert_eq!(format_monitor_events(&[], Some("get_task_output")), None);
         let single = format_monitor_events(
@@ -1891,6 +1902,7 @@ mod tests {
             task_id: "task-9".into(),
             event_text: "bare text, no wrapper".into(),
             owner_session_id: None,
+            description: None,
         };
         let single_bare =
             format_monitor_events(std::slice::from_ref(&bare), None).expect("bare event formats");
@@ -1981,6 +1993,7 @@ mod tests {
                 "<monitor-event description=\"{desc}\" task_id=\"{task}\">\n{text}\n</monitor-event>"
             ),
             owner_session_id: None,
+            description: None,
         };
         let single = format_monitor_events(&[event("t-1", "журнал 🚨", "строка №1 ✓")], None)
             .expect("single formats");

@@ -2028,6 +2028,7 @@ impl xai_tool_runtime::Tool for BashTool {
                 foreground_block_budget: None,
                 kind: crate::computer::types::TaskKind::Bash,
                 owner_session_id: owner_session_id.clone(),
+                description: None,
             };
 
             let handle = match backend.run_background(request).await {
@@ -2124,6 +2125,7 @@ impl xai_tool_runtime::Tool for BashTool {
                 foreground_block_budget: Self::effective_foreground_block_budget(&params),
                 kind: crate::computer::types::TaskKind::Bash,
                 owner_session_id: owner_session_id.clone(),
+                description: None,
             };
 
             let result = match backend.run(request).await {
