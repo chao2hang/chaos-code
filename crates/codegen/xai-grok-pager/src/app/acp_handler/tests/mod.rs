@@ -1790,6 +1790,7 @@ pub(super) fn task_completed_notif(
             task_snapshot: TaskSnapshot {
                 task_id: task_id.into(),
                 command: command.into(),
+                description: None,
                 display_command: None,
                 cwd: "/tmp".into(),
                 start_time: std::time::SystemTime::now(),
