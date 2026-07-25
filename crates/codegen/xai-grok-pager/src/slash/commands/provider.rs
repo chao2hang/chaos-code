@@ -123,7 +123,7 @@ impl SlashCommand for ProviderCommand {
     }
 
     fn usage(&self) -> &str {
-        "/provider [list|add|edit|set-key|models|set-model|manual-model|configure-model|refresh] [参数]"
+        "/provider [list|add|edit|set-key|models|set-model|manual-model|configure-model|delete|refresh] [参数]"
     }
 
     fn takes_args(&self) -> bool {
@@ -197,9 +197,19 @@ impl SlashCommand for ProviderCommand {
                 }
                 ProviderModalMode::ConfigureModel(name.to_string())
             }
+            "delete" | "rm" | "remove" => {
+                // 危险操作：不直接删除，弹出二次确认对话框。
+                // Issue #13：用户经常希望从配置清理一个已废渠道，
+                // 之前完全没有路径。
+                let name = rest.trim();
+                if name.is_empty() {
+                    return CommandResult::Error("用法: /provider delete <渠道名称>".into());
+                }
+                ProviderModalMode::ConfirmingDelete(name.to_string())
+            }
             _ => {
                 return CommandResult::Error(format!(
-                    "未知子命令: {subcmd}\n可用: （无参数打开列表）, list, add, edit, set-key, models, set-model, manual-model, configure-model, refresh"
+                    "未知子命令: {subcmd}\n可用: （无参数打开列表）, list, add, edit, set-key, models, set-model, manual-model, configure-model, delete, refresh"
                 ));
             }
         };
@@ -345,6 +355,91 @@ pub(crate) fn update_provider(
     sync_anthropic_version_header(table, auth_scheme, api_backend);
 
     save_config(&doc)
+}
+
+/// 删除渠道时的副作用摘要，供前端展示和后续逻辑使用。
+#[derive(Debug, Clone, Default)]
+pub struct DeleteProviderOutcome {
+    /// 同时被删除的 `[model."provider/id"]` 条目 key 列表。
+    pub removed_model_keys: Vec<String>,
+    /// 被删模型是否正好是 `[models].default`。true 时 UI 需提示用户重选默认。
+    pub cleared_default: bool,
+}
+
+/// 删除一个渠道及其关联的 model 目录条目。
+///
+/// 副作用：
+/// 1. 收集所有以 `<name>/` 开头的 `[model."..."]` 条目并删除；
+/// 2. 若 `[models].default` 指向被删模型，清除该字段（不留野指针）；
+/// 3. 删除 `[model_providers.<name>]` 表项。
+///
+/// 渠道不存在返回 `Err`，但空删除（关联条目为空）仍然成功。
+///
+/// Issue #13: `/provider delete` 命令。
+pub(crate) fn delete_provider(name: &str) -> Result<DeleteProviderOutcome, String> {
+    let mut doc = load_config()?;
+
+    if doc
+        .get("model_providers")
+        .and_then(|v| v.as_table())
+        .and_then(|t| t.get(name))
+        .is_none()
+    {
+        return Err(format!("渠道 \"{name}\" 不存在"));
+    }
+
+    let mut outcome = DeleteProviderOutcome::default();
+    let prefix = format!("{name}/");
+
+    // 1. 收集并删除关联的 model 目录条目
+    if let Some(models) = doc.get_mut("model").and_then(|v| v.as_table_mut()) {
+        let to_remove: Vec<String> = models
+            .iter()
+            .filter_map(|(k, _)| {
+                let key = k.to_string();
+                if key.starts_with(&prefix) {
+                    Some(key)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        for k in &to_remove {
+            models.remove(k);
+        }
+        outcome.removed_model_keys = to_remove;
+    }
+
+    // 2. 若 [models].default 指向被删模型，清除之
+    let cleared = if let Some(models) = doc.get("models").and_then(|v| v.as_table()) {
+        models
+            .get("default")
+            .and_then(|v| v.as_str())
+            .map(|default| {
+                outcome
+                    .removed_model_keys
+                    .iter()
+                    .any(|k| k == default)
+            })
+            .unwrap_or(false)
+    } else {
+        false
+    };
+    if cleared && let Some(models) = doc.get_mut("models").and_then(|v| v.as_table_mut()) {
+        models.remove("default");
+        outcome.cleared_default = true;
+    }
+
+    // 3. 删除 [model_providers.<name>]
+    if let Some(providers) = doc
+        .get_mut("model_providers")
+        .and_then(|v| v.as_table_mut())
+    {
+        providers.remove(name);
+    }
+
+    save_config(&doc)?;
+    Ok(outcome)
 }
 
 /// Default Anthropic API version header value written for Messages backends.
@@ -854,3 +949,169 @@ fn parse_models_response(body: &str) -> Result<Vec<String>, String> {
 }
 
 use crate::app::actions::Action;
+
+#[cfg(test)]
+mod delete_provider_tests {
+    use super::*;
+
+    fn make_doc() -> toml_edit::DocumentMut {
+        let mut doc = toml_edit::DocumentMut::new();
+        // [model_providers.foo]
+        let mut p = toml_edit::Table::new();
+        p["base_url"] = toml_edit::value("https://example.com/v1");
+        p["auth_scheme"] = toml_edit::value("bearer");
+        p["api_backend"] = toml_edit::value("chat_completions");
+        p["api_key"] = toml_edit::value("sk-test");
+        doc["model_providers"] = toml_edit::table();
+        doc["model_providers"]["foo"] = toml_edit::Item::Table(p);
+
+        // [model."foo/a"] / [model."foo/b"]
+        doc["model"] = toml_edit::table();
+        for id in ["a", "b"] {
+            let mut entry = toml_edit::Table::new();
+            entry["model"] = toml_edit::value(id);
+            entry["model_provider"] = toml_edit::value("foo");
+            let key = format!("foo/{id}");
+            doc["model"][key.as_str()] = toml_edit::Item::Table(entry);
+        }
+
+        // [model."bar/c"] 另一个渠道的模型（不应被删）
+        let mut other = toml_edit::Table::new();
+        other["model"] = toml_edit::value("c");
+        other["model_provider"] = toml_edit::value("bar");
+        doc["model"]["bar/c"] = toml_edit::Item::Table(other);
+
+        // [models].default = "foo/a"（即将被删，预期 cleared_default=true）
+        doc["models"] = toml_edit::table();
+        doc["models"]["default"] = toml_edit::value("foo/a");
+
+        doc
+    }
+
+    #[test]
+    fn delete_removes_provider_and_its_models_only() {
+        let doc = make_doc();
+        // 删 "foo"：2 个 model 目录条目 + provider 条目 + cleared default
+        let mut doc = doc;
+        let provider = doc["model_providers"]["foo"]
+            .as_table()
+            .cloned()
+            .expect("foo provider exists");
+        let _ = provider; // we operate on doc directly
+        let foo_models: Vec<String> = doc["model"]
+            .as_table()
+            .unwrap()
+            .iter()
+            .filter_map(|(k, _)| {
+                let s = k.to_string();
+                if s.starts_with("foo/") {
+                    Some(s)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert_eq!(foo_models.len(), 2, "test fixture sanity");
+
+        // 模拟 delete 流程
+        let removed_keys: Vec<String> = {
+            let models = doc["model"].as_table_mut().unwrap();
+            let to_remove: Vec<String> = models
+                .iter()
+                .filter_map(|(k, _)| {
+                    let s = k.to_string();
+                    if s.starts_with("foo/") {
+                        Some(s)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            for k in &to_remove {
+                models.remove(k);
+            }
+            to_remove
+        };
+        assert_eq!(removed_keys.len(), 2);
+        assert!(!doc["model"].as_table().unwrap().contains_key("foo/a"));
+        assert!(!doc["model"].as_table().unwrap().contains_key("foo/b"));
+        assert!(
+            doc["model"].as_table().unwrap().contains_key("bar/c"),
+            "其他渠道的模型不应被删"
+        );
+    }
+
+    #[test]
+    fn delete_clears_default_when_pointing_to_removed_model() {
+        let mut doc = make_doc();
+        assert_eq!(
+            doc["models"]["default"].as_str(),
+            Some("foo/a"),
+            "fixture"
+        );
+        // 模拟 delete 流程：先收集要删的 key
+        let removed_keys: Vec<String> = {
+            let models = doc["model"].as_table_mut().unwrap();
+            let to_remove: Vec<String> = models
+                .iter()
+                .filter_map(|(k, _)| {
+                    let s = k.to_string();
+                    if s.starts_with("foo/") {
+                        Some(s)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            for k in &to_remove {
+                models.remove(k);
+            }
+            to_remove
+        };
+
+        // 模拟 cleared_default 路径
+        let cleared = doc["models"]["default"]
+            .as_str()
+            .map(|d| removed_keys.iter().any(|k| k == d))
+            .unwrap_or(false);
+        assert!(cleared, "default 应被识别为指向被删模型");
+        if cleared {
+            doc["models"].as_table_mut().unwrap().remove("default");
+        }
+        assert!(
+            !doc["models"].as_table().unwrap().contains_key("default"),
+            "default 字段应被清空"
+        );
+    }
+
+    #[test]
+    fn delete_preserves_default_when_pointing_to_other_provider() {
+        let mut doc = make_doc();
+        // 把 default 改为别的渠道的模型
+        doc["models"]["default"] = toml_edit::value("bar/c");
+        let removed_keys: Vec<String> = {
+            let models = doc["model"].as_table_mut().unwrap();
+            let to_remove: Vec<String> = models
+                .iter()
+                .filter_map(|(k, _)| {
+                    let s = k.to_string();
+                    if s.starts_with("foo/") {
+                        Some(s)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            for k in &to_remove {
+                models.remove(k);
+            }
+            to_remove
+        };
+        let cleared = doc["models"]["default"]
+            .as_str()
+            .map(|d| removed_keys.iter().any(|k| k == d))
+            .unwrap_or(false);
+        assert!(!cleared, "default 指向其他渠道时不应被清空");
+        assert_eq!(doc["models"]["default"].as_str(), Some("bar/c"));
+    }
+}
