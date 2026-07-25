@@ -3,9 +3,11 @@
 //! - 裸 `/provider`（无参数）→ 渠道列表 hub：↑↓ 选择，Enter 进操作菜单，末行「+ 添加渠道」
 //! - `/provider list` — 同裸命令
 //! - `/provider add` — 交互式多步表单添加渠道
+//! - `/provider edit <name>` — 编辑已有渠道（URL / 认证 / 后端 / 密钥）
 //! - `/provider set-key <name>` — 交互式输入 API Key
 //! - `/provider models <name>` — 获取渠道可用模型列表
 //! - `/provider set-model <name>` — 交互式选择并设置当前模型
+//! - `/provider manual-model <name>` — 手动输入模型 ID 并设为当前
 //! - `/provider refresh <name>` — 刷新渠道可用模型（同 models）
 //!
 //! 所有入口均通过 `Action::OpenProviderModal` 触发 TUI 模态框，
@@ -120,7 +122,7 @@ impl SlashCommand for ProviderCommand {
     }
 
     fn usage(&self) -> &str {
-        "/provider [list|add|set-key|models|set-model|refresh] [参数]"
+        "/provider [list|add|edit|set-key|models|set-model|manual-model|refresh] [参数]"
     }
 
     fn takes_args(&self) -> bool {
@@ -150,6 +152,13 @@ impl SlashCommand for ProviderCommand {
         let mode = match subcmd {
             "list" => ProviderModalMode::List,
             "add" => ProviderModalMode::Add,
+            "edit" => {
+                let name = rest.trim();
+                if name.is_empty() {
+                    return CommandResult::Error("用法: /provider edit <渠道名称>".into());
+                }
+                ProviderModalMode::Edit(name.to_string())
+            }
             "set-key" => {
                 let name = rest.trim();
                 if name.is_empty() {
@@ -171,9 +180,16 @@ impl SlashCommand for ProviderCommand {
                 }
                 ProviderModalMode::SetModel(name.to_string())
             }
+            "manual-model" | "manual" => {
+                let name = rest.trim();
+                if name.is_empty() {
+                    return CommandResult::Error("用法: /provider manual-model <渠道名称>".into());
+                }
+                ProviderModalMode::ManualModel(name.to_string())
+            }
             _ => {
                 return CommandResult::Error(format!(
-                    "未知子命令: {subcmd}\n可用: （无参数打开列表）, list, add, set-key, models, set-model, refresh"
+                    "未知子命令: {subcmd}\n可用: （无参数打开列表）, list, add, edit, set-key, models, set-model, manual-model, refresh"
                 ));
             }
         };
@@ -236,11 +252,9 @@ pub(crate) fn add_provider(
         provider_table["env_key"] = toml_edit::value(env_key);
     }
 
-    if auth_scheme == "x_api_key" && name == "anthropic" {
-        let mut headers = toml_edit::Table::new();
-        headers["anthropic-version"] = toml_edit::value("2023-06-01");
-        provider_table["extra_headers"] = toml_edit::Item::Table(headers);
-    }
+    // Anthropic Messages-style backends need anthropic-version; detect by
+    // auth_scheme + api_backend (not provider name — custom proxies qualify).
+    sync_anthropic_version_header(provider_table, auth_scheme, api_backend);
 
     save_config(&doc)
 }
@@ -270,6 +284,122 @@ pub(crate) fn set_provider_key(name: &str, key: &str) -> Result<(), String> {
     table["api_key"] = toml_edit::value(key.as_str());
 
     save_config(&doc)
+}
+
+/// 更新已有渠道的连接参数。供 `views/provider_modal` 编辑流程调用。
+///
+/// - `api_key` 为空时保留原密钥，不覆盖。
+/// - 渠道名称不可改（catalog key 以 provider 名为前缀）。
+pub(crate) fn update_provider(
+    name: &str,
+    base_url: &str,
+    auth_scheme: &str,
+    api_backend: &str,
+    api_key: &str,
+) -> Result<(), String> {
+    let name = name.trim();
+    let base_url = base_url.trim().trim_end_matches(['\r', '\n']);
+    let api_key = crate::views::provider_modal::sanitize_provider_field(api_key);
+    if name.is_empty() {
+        return Err("渠道名称不能为空".into());
+    }
+    if base_url.is_empty() {
+        return Err("Base URL 不能为空".into());
+    }
+
+    let mut doc = load_config()?;
+
+    if doc
+        .get("model_providers")
+        .and_then(|v| v.as_table())
+        .and_then(|t| t.get(name))
+        .is_none()
+    {
+        return Err(format!("渠道 \"{name}\" 不存在。使用 /provider add 添加。"));
+    }
+
+    let provider_table = &mut doc["model_providers"][name];
+    let Some(table) = provider_table.as_table_mut() else {
+        return Err(format!("渠道 \"{name}\" 配置格式错误"));
+    };
+    table["base_url"] = toml_edit::value(base_url);
+    table["auth_scheme"] = toml_edit::value(auth_scheme);
+    table["api_backend"] = toml_edit::value(api_backend);
+
+    if !api_key.is_empty() {
+        table["api_key"] = toml_edit::value(api_key.as_str());
+    }
+
+    // Anthropic Messages-style backends need anthropic-version. When switching
+    // away, only drop that managed key — never wipe user custom headers.
+    sync_anthropic_version_header(table, auth_scheme, api_backend);
+
+    save_config(&doc)
+}
+
+/// Default Anthropic API version header value written for Messages backends.
+const ANTHROPIC_VERSION_HEADER: &str = "anthropic-version";
+const ANTHROPIC_VERSION_VALUE: &str = "2023-06-01";
+
+/// Whether this provider config looks like Anthropic Messages protocol
+/// (`auth_scheme = x_api_key` + `api_backend = messages`).
+///
+/// Prefer scheme/backend over provider name so custom proxies / renames still
+/// get the required `anthropic-version` header.
+pub(crate) fn is_anthropic_messages_style(auth_scheme: &str, api_backend: &str) -> bool {
+    auth_scheme == "x_api_key" && api_backend == "messages"
+}
+
+/// Ensure or drop the managed `anthropic-version` entry in `extra_headers`.
+///
+/// - When switching **to** Messages + x_api_key: ensure the header exists
+///   (insert default if missing; leave an existing user value alone).
+/// - When switching **away**: remove only `anthropic-version`. Other custom
+///   headers are preserved. If the table becomes empty, drop `extra_headers`.
+fn sync_anthropic_version_header(
+    table: &mut toml_edit::Table,
+    auth_scheme: &str,
+    api_backend: &str,
+) {
+    if is_anthropic_messages_style(auth_scheme, api_backend) {
+        ensure_anthropic_version_header(table);
+    } else {
+        remove_managed_anthropic_version_header(table);
+    }
+}
+
+fn ensure_anthropic_version_header(table: &mut toml_edit::Table) {
+    let headers = table.entry("extra_headers").or_insert_with(toml_edit::table);
+    let Some(headers) = headers.as_table_mut() else {
+        // Malformed non-table — replace with a clean headers table.
+        let mut new_headers = toml_edit::Table::new();
+        new_headers[ANTHROPIC_VERSION_HEADER] = toml_edit::value(ANTHROPIC_VERSION_VALUE);
+        table["extra_headers"] = toml_edit::Item::Table(new_headers);
+        return;
+    };
+    // Preserve an existing user-supplied version string.
+    if headers
+        .get(ANTHROPIC_VERSION_HEADER)
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .is_none()
+    {
+        headers[ANTHROPIC_VERSION_HEADER] = toml_edit::value(ANTHROPIC_VERSION_VALUE);
+    }
+}
+
+fn remove_managed_anthropic_version_header(table: &mut toml_edit::Table) {
+    let Some(headers_item) = table.get_mut("extra_headers") else {
+        return;
+    };
+    let Some(headers) = headers_item.as_table_mut() else {
+        return;
+    };
+    headers.remove(ANTHROPIC_VERSION_HEADER);
+    if headers.is_empty() {
+        table.remove("extra_headers");
+    }
 }
 
 /// 单次写入 catalog 的模型数上限（防止异常大列表拖垮 config.toml）。
