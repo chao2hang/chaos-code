@@ -369,6 +369,41 @@ pub(in crate::app::dispatch) fn set_ask_user_question_timeout_enabled(
     }]
 }
 
+/// Mirror the just-written TOML value in `app` so the modal reflects it.
+pub(super) fn set_auto_retry_incomplete_end_turn_inner(app: &mut AppView, new: bool) {
+    app.auto_retry_incomplete_end_turn = Some(new);
+}
+
+/// SHELL-owned setter for incomplete `end_turn` auto-retry; persists via
+/// `Effect::PersistSetting`. Applies to new sessions (restart-required).
+pub(in crate::app::dispatch) fn set_auto_retry_incomplete_end_turn(
+    app: &mut AppView,
+    new: bool,
+) -> Vec<Effect> {
+    let prev_state = app.auto_retry_incomplete_end_turn;
+    let prev_effective = prev_state.unwrap_or(false);
+    if prev_effective == new && prev_state.is_some() {
+        return vec![];
+    }
+    set_auto_retry_incomplete_end_turn_inner(app, new);
+    refresh_open_settings_modals(app);
+    tracing::info!(
+        target: "settings",
+        key = "session.auto_retry_incomplete_end_turn",
+        value = new,
+        "setting changed",
+    );
+    app.show_toast(&format!(
+        "{} (restart to apply)",
+        save_success_toast("Incomplete end-turn auto-retry", new),
+    ));
+    vec![Effect::PersistSetting {
+        key: "session.auto_retry_incomplete_end_turn",
+        value: crate::settings::SettingValue::Bool(new),
+        rollback_value: crate::settings::SettingValue::Bool(prev_effective),
+    }]
+}
+
 pub(super) fn set_show_thinking_blocks_inner(app: &mut AppView, new: bool) {
     crate::appearance::cache::set_show_thinking_blocks(new);
     // Thinking visibility reshapes verb-group runs (shown thoughts claim
@@ -1961,7 +1996,7 @@ pub(in crate::app::dispatch) fn set_max_thoughts_width(app: &mut AppView, new: i
 // ---------------------------------------------------------------------------
 
 /// Effective-default lookup for the `Option<bool>` AppView mirrors
-/// (`show_tips`, `auto_update`, ask_user_question timeout).
+/// (`show_tips`, `auto_update`, ask_user_question timeout, incomplete end_turn retry).
 /// Matches the consumer's `.unwrap_or(...)` fallback.
 pub(super) fn pr13_effective_default(key: &str) -> Option<bool> {
     use xai_grok_tools::implementations::grok_build::ask_user_question;
@@ -1971,6 +2006,7 @@ pub(super) fn pr13_effective_default(key: &str) -> Option<bool> {
         "toolset.ask_user_question.timeout_enabled" => {
             Some(ask_user_question::DEFAULT_ASK_USER_QUESTION_TIMEOUT_ENABLED)
         }
+        "session.auto_retry_incomplete_end_turn" => Some(false),
         _ => None,
     }
 }

@@ -1744,7 +1744,44 @@ pub struct SessionConfig {
     /// round-trips as absent on disk (managed config wins over default).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub load_envrc: Option<bool>,
+    /// When the model ends a turn with only a plan/intent message (no further
+    /// tools) after earlier tool use and no write/edit tools were called,
+    /// inject an auto-recovery reminder and sample again.
+    ///
+    /// Default off (`None` / false). Opt-in: can burn extra model calls.
+    /// Resolved at session spawn via [`Config::resolve_auto_retry_incomplete_end_turn`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_retry_incomplete_end_turn: Option<bool>,
+    /// Max automatic incomplete-`end_turn` retries per user prompt.
+    /// `None` → default 1. Clamped to 1..=3 at resolve time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_retry_incomplete_end_turn_max: Option<u8>,
 }
+
+/// Resolved incomplete-`end_turn` auto-retry policy (session spawn).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IncompleteEndTurnRetryPolicy {
+    pub enabled: bool,
+    /// Max retries per user prompt (1..=HARD_MAX).
+    pub max: u8,
+}
+
+impl IncompleteEndTurnRetryPolicy {
+    pub const DEFAULT_MAX: u8 = 1;
+    pub const HARD_MAX: u8 = 3;
+
+    pub const DISABLED: Self = Self {
+        enabled: false,
+        max: Self::DEFAULT_MAX,
+    };
+}
+
+impl Default for IncompleteEndTurnRetryPolicy {
+    fn default() -> Self {
+        Self::DISABLED
+    }
+}
+
 /// Configuration for change-archive deduplication.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -2439,6 +2476,24 @@ impl Config {
                 .map_or(Policy::DEFAULT_MAX_RETRIES, Policy::clamp_max_retries),
         })
     }
+
+    /// Incomplete `end_turn` auto-retry: env > `[session]` TOML > default off.
+    ///
+    /// Env (first set wins): `CHAOS_AUTO_RETRY_INCOMPLETE_END_TURN`, then
+    /// `GROK_AUTO_RETRY_INCOMPLETE_END_TURN`.
+    pub fn resolve_auto_retry_incomplete_end_turn(&self) -> IncompleteEndTurnRetryPolicy {
+        let enabled = xai_grok_config::env_bool("CHAOS_AUTO_RETRY_INCOMPLETE_END_TURN")
+            .or_else(|| xai_grok_config::env_bool("GROK_AUTO_RETRY_INCOMPLETE_END_TURN"))
+            .or(self.session.auto_retry_incomplete_end_turn)
+            .unwrap_or(false);
+        let max = self
+            .session
+            .auto_retry_incomplete_end_turn_max
+            .unwrap_or(IncompleteEndTurnRetryPolicy::DEFAULT_MAX)
+            .clamp(1, IncompleteEndTurnRetryPolicy::HARD_MAX);
+        IncompleteEndTurnRetryPolicy { enabled, max }
+    }
+
     /// Automatic worktree GC policy. Precedence: env kill/dry-run >
     /// `[worktree.auto_gc]` TOML > remote `worktree_auto_gc` > defaults.
     /// Platform age-expiry (non-Linux dead-only) is enforced inside
@@ -7068,6 +7123,48 @@ if n == name && f.as_deref() == field
         .unwrap();
         let cfg = Config::new_from_toml_cfg(&raw_config).expect("config should parse");
         assert_eq!(cfg.session.auto_compact_threshold_percent, Some(75));
+    }
+    #[test]
+    fn default_auto_retry_incomplete_end_turn_is_off() {
+        let cfg = Config::default();
+        assert_eq!(cfg.session.auto_retry_incomplete_end_turn, None);
+        assert_eq!(cfg.session.auto_retry_incomplete_end_turn_max, None);
+        let policy = cfg.resolve_auto_retry_incomplete_end_turn();
+        assert!(!policy.enabled);
+        assert_eq!(policy.max, IncompleteEndTurnRetryPolicy::DEFAULT_MAX);
+    }
+    #[test]
+    fn parses_auto_retry_incomplete_end_turn() {
+        let raw_config: toml::Value = toml::from_str(
+            r#"
+            [session]
+            auto_retry_incomplete_end_turn = true
+            auto_retry_incomplete_end_turn_max = 2
+            "#,
+        )
+        .unwrap();
+        let cfg = Config::new_from_toml_cfg(&raw_config).expect("config should parse");
+        assert_eq!(cfg.session.auto_retry_incomplete_end_turn, Some(true));
+        assert_eq!(cfg.session.auto_retry_incomplete_end_turn_max, Some(2));
+        let policy = cfg.resolve_auto_retry_incomplete_end_turn();
+        assert!(policy.enabled);
+        assert_eq!(policy.max, 2);
+    }
+    #[test]
+    fn auto_retry_incomplete_end_turn_max_clamps() {
+        let raw_config: toml::Value = toml::from_str(
+            r#"
+            [session]
+            auto_retry_incomplete_end_turn = true
+            auto_retry_incomplete_end_turn_max = 99
+            "#,
+        )
+        .unwrap();
+        let cfg = Config::new_from_toml_cfg(&raw_config).expect("config should parse");
+        assert_eq!(
+            cfg.resolve_auto_retry_incomplete_end_turn().max,
+            IncompleteEndTurnRetryPolicy::HARD_MAX
+        );
     }
     #[test]
     fn compaction_mode_precedence_env_over_config_over_remote_over_default() {

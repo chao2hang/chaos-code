@@ -1,7 +1,8 @@
 //! Settings UI: command palette, settings modal, toggles, resets, and rollback.
 
 use super::setters::{
-    pr13_effective_default, set_ask_user_question_timeout_enabled_inner, set_auto_dark_theme_inner,
+    pr13_effective_default, set_ask_user_question_timeout_enabled_inner,
+    set_auto_retry_incomplete_end_turn_inner, set_auto_dark_theme_inner,
     set_auto_light_theme_inner, set_auto_update_inner, set_collapsed_edit_blocks_inner,
     set_combine_queued_prompts_inner, set_compact_mode, set_compact_mode_inner,
     set_contextual_hint_inner, set_default_model_inner, set_default_selected_permission_inner,
@@ -52,6 +53,7 @@ pub(crate) fn refresh_open_settings_modals(app: &mut AppView) {
     let respect_manual_folds_from_app = app.appearance.scrollback.scroll.respect_manual_folds;
     let auto_mode_gate_from_app = app.auto_mode_gate;
     let ask_user_question_timeout_enabled_from_app = app.ask_user_question_timeout_enabled;
+    let auto_retry_incomplete_end_turn_from_app = app.auto_retry_incomplete_end_turn;
     let voice_stt_language_from_app = app.voice_config.language.clone();
     for agent in app.agents.values_mut() {
         // Walk both `Settings` and `ResetSettingsConfirm` — the
@@ -89,6 +91,7 @@ pub(crate) fn refresh_open_settings_modals(app: &mut AppView) {
                 respect_manual_folds: respect_manual_folds_from_app,
                 auto_mode_gate: auto_mode_gate_from_app,
                 ask_user_question_timeout_enabled: ask_user_question_timeout_enabled_from_app,
+                auto_retry_incomplete_end_turn: auto_retry_incomplete_end_turn_from_app,
                 voice_stt_language: voice_stt_language_from_app.clone(),
             };
         }
@@ -162,6 +165,7 @@ pub(in crate::app::dispatch) fn dispatch_open_settings(app: &mut AppView) -> Vec
     let respect_manual_folds_from_app = app.appearance.scrollback.scroll.respect_manual_folds;
     let auto_mode_gate_from_app = app.auto_mode_gate;
     let ask_user_question_timeout_enabled_from_app = app.ask_user_question_timeout_enabled;
+    let auto_retry_incomplete_end_turn_from_app = app.auto_retry_incomplete_end_turn;
     let voice_stt_language_from_app = app.voice_config.language.clone();
 
     let Some(agent) = app.agents.get_mut(&id) else {
@@ -205,6 +209,7 @@ pub(in crate::app::dispatch) fn dispatch_open_settings(app: &mut AppView) -> Vec
         respect_manual_folds: respect_manual_folds_from_app,
         auto_mode_gate: auto_mode_gate_from_app,
         ask_user_question_timeout_enabled: ask_user_question_timeout_enabled_from_app,
+        auto_retry_incomplete_end_turn: auto_retry_incomplete_end_turn_from_app,
         voice_stt_language: voice_stt_language_from_app,
     };
     let state = Box::new(SettingsModalState::new(
@@ -790,6 +795,7 @@ pub(crate) fn build_pager_snapshot(app: &AppView) -> crate::settings::PagerLocal
         respect_manual_folds: app.appearance.scrollback.scroll.respect_manual_folds,
         auto_mode_gate: app.auto_mode_gate,
         ask_user_question_timeout_enabled: app.ask_user_question_timeout_enabled,
+        auto_retry_incomplete_end_turn: app.auto_retry_incomplete_end_turn,
         voice_stt_language: app.voice_config.language.clone(),
     }
 }
@@ -841,6 +847,9 @@ pub(in crate::app::dispatch) fn action_for_reset(
         }
         ("toolset.ask_user_question.timeout_enabled", SettingValue::Bool(b)) => {
             Some(Action::SetAskUserQuestionTimeoutEnabled(*b))
+        }
+        ("session.auto_retry_incomplete_end_turn", SettingValue::Bool(b)) => {
+            Some(Action::SetAutoRetryIncompleteEndTurn(*b))
         }
         ("keep_text_selection", SettingValue::Enum(s)) => {
             crate::appearance::TextSelection::from_canonical(s).map(Action::SetKeepTextSelection)
@@ -1185,6 +1194,13 @@ pub(in crate::app::dispatch) fn apply_setting_rollback(
                 app.ask_user_question_timeout_enabled = None;
             } else {
                 set_ask_user_question_timeout_enabled_inner(app, *b);
+            }
+        }
+        ("session.auto_retry_incomplete_end_turn", SettingValue::Bool(b)) => {
+            if Some(*b) == pr13_effective_default("session.auto_retry_incomplete_end_turn") {
+                app.auto_retry_incomplete_end_turn = None;
+            } else {
+                set_auto_retry_incomplete_end_turn_inner(app, *b);
             }
         }
         ("show_thinking_blocks", SettingValue::Bool(b)) => set_show_thinking_blocks_inner(app, *b),

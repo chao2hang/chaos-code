@@ -158,6 +158,7 @@ fn test_app() -> AppView {
         show_tips: None,
         auto_update: None,
         ask_user_question_timeout_enabled: None,
+        auto_retry_incomplete_end_turn: None,
         zdr_access_enabled: false,
         usage_billing_redirect_url: None,
         access_gate_shown_logged: false,
