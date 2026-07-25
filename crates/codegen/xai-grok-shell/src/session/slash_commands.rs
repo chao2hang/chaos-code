@@ -727,8 +727,12 @@ pub(crate) struct ListCommandsRequest {
     pub cwd: Option<String>,
 }
 
+/// Reply payload for [`crate::session::SessionCommand::ListAvailableCommands`].
+///
+/// Public because `SessionCommand` is public and carries this type in a
+/// oneshot channel; keeping it `pub(crate)` trips `private_interfaces`.
 #[derive(Default, serde::Serialize)]
-pub(crate) struct ListCommandsResponse {
+pub struct ListCommandsResponse {
     pub commands: Vec<acp::AvailableCommand>,
     /// Live-session tool names (`None` = unknown / pre-session). Same set as
     /// `AvailableCommandsUpdate.meta.tools`.
