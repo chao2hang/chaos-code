@@ -1983,47 +1983,99 @@ pub(super) fn apply_provider_outcome(
             // Chaos ships an empty bundled catalog: only `[model."provider/id"]`
             // entries appear in `/model`. Register the full fetched list so the
             // picker is usable, and set the selected model as `[models].default`.
-            // ManualModel 只有手写 ID，没有上游列表，单独注册一条即可。
-            let (provider_name, fetched_models) =
+            // ManualModel 只有手写 ID，没有上游列表，单独注册一条即可；
+            // 若表单填了 max_completion_tokens 等，一并写入。
+            let (provider_name, fetched_models, param_form) =
                 if let Some(crate::views::modal::ActiveModal::ProviderModal { state }) =
                     &agent.active_modal
                 {
                     let name = match &state.mode {
                         crate::views::provider_modal::ProviderModalMode::SetModel(name)
                         | crate::views::provider_modal::ProviderModalMode::Models(name)
-                        | crate::views::provider_modal::ProviderModalMode::ManualModel(name) => {
+                        | crate::views::provider_modal::ProviderModalMode::ManualModel(name)
+                        | crate::views::provider_modal::ProviderModalMode::ConfigureModel(name) => {
                             Some(name.clone())
                         }
                         _ => None,
                     };
-                    (name, state.models.clone())
+                    let params = (
+                        state.max_completion_tokens.clone(),
+                        state.context_window.clone(),
+                        state.temperature.clone(),
+                        state.top_p.clone(),
+                        matches!(
+                            state.mode,
+                            crate::views::provider_modal::ProviderModalMode::ManualModel(_)
+                        ),
+                    );
+                    (name, state.models.clone(), params)
                 } else {
-                    (None, Vec::new())
+                    (
+                        None,
+                        Vec::new(),
+                        (
+                            String::new(),
+                            String::new(),
+                            String::new(),
+                            String::new(),
+                            false,
+                        ),
+                    )
                 };
             agent.active_modal = None;
 
             let catalog_key = if let Some(name) = &provider_name {
-                let mut ids = fetched_models;
-                if !ids.iter().any(|m| m == &model_id) {
-                    ids.push(model_id.clone());
-                }
                 let expected =
                     crate::slash::commands::provider::provider_model_catalog_key(name, &model_id);
-                match crate::slash::commands::provider::register_provider_models(
-                    name,
-                    &ids,
-                    Some(&model_id),
-                ) {
-                    Ok(keys) => keys.into_iter().find(|k| k == &expected).unwrap_or(expected),
-                    Err(e) => {
-                        tracing::error!(error = %e, "register_provider_models failed");
-                        match crate::slash::commands::provider::register_and_set_model(
-                            name, &model_id,
+                // ManualModel: write params on the selected entry; still register
+                // siblings from an empty list if none were fetched.
+                let (mct, cw, temp, tp, is_manual) = param_form;
+                if is_manual {
+                    let overrides =
+                        match crate::slash::commands::provider::model_params_from_form(
+                            &mct, &cw, &temp, &tp, false,
                         ) {
-                            Ok(key) => key,
-                            Err(e2) => {
-                                tracing::error!(error = %e2, "register_and_set_model failed");
-                                expected
+                            Ok(o) => o,
+                            Err(e) => {
+                                tracing::error!(error = %e, "model params parse failed");
+                                crate::slash::commands::provider::ModelParamOverrides::default()
+                            }
+                        };
+                    match crate::slash::commands::provider::register_model_with_params(
+                        name,
+                        &model_id,
+                        &overrides,
+                        true,
+                    ) {
+                        Ok(key) => key,
+                        Err(e) => {
+                            tracing::error!(error = %e, "register_model_with_params failed");
+                            expected
+                        }
+                    }
+                } else {
+                    let mut ids = fetched_models;
+                    if !ids.iter().any(|m| m == &model_id) {
+                        ids.push(model_id.clone());
+                    }
+                    match crate::slash::commands::provider::register_provider_models(
+                        name,
+                        &ids,
+                        Some(&model_id),
+                    ) {
+                        Ok(keys) => {
+                            keys.into_iter().find(|k| k == &expected).unwrap_or(expected)
+                        }
+                        Err(e) => {
+                            tracing::error!(error = %e, "register_provider_models failed");
+                            match crate::slash::commands::provider::register_and_set_model(
+                                name, &model_id,
+                            ) {
+                                Ok(key) => key,
+                                Err(e2) => {
+                                    tracing::error!(error = %e2, "register_and_set_model failed");
+                                    expected
+                                }
                             }
                         }
                     }
@@ -2141,6 +2193,38 @@ fn try_commit_provider_form(state: &mut crate::views::provider_modal::ProviderMo
             match result {
                 Ok(()) => {
                     state.success = Some(format!("渠道 \"{name}\" 的 API Key 已设置"));
+                }
+                Err(e) => {
+                    state.error = Some(e);
+                }
+            }
+        }
+        ProviderModalMode::ConfigureModel(name)
+            if state.model_param_field
+                == Some(crate::views::provider_modal::ModelParamField::TopP)
+                && !state.manual_model_id.is_empty() =>
+        {
+            // clear_when_empty=true：留空清除覆盖，回退全局/默认
+            match crate::slash::commands::provider::model_params_from_form(
+                &state.max_completion_tokens,
+                &state.context_window,
+                &state.temperature,
+                &state.top_p,
+                true,
+            ) {
+                Ok(params) => {
+                    match crate::slash::commands::provider::update_model_params(
+                        name,
+                        &state.manual_model_id,
+                        &params,
+                    ) {
+                        Ok(key) => {
+                            state.success = Some(format!("已保存模型参数: {key}"));
+                        }
+                        Err(e) => {
+                            state.error = Some(e);
+                        }
+                    }
                 }
                 Err(e) => {
                     state.error = Some(e);

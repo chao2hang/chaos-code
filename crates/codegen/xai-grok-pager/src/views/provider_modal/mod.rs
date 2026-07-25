@@ -6,6 +6,7 @@
 //! - `/provider add` — 多步表单
 //! - `/provider edit` — 编辑已有渠道连接参数
 //! - `/provider manual-model` — 手写模型 ID（不依赖上游 /models）
+//! - `/provider configure-model` — 为模型设置 max_completion_tokens 等参数
 //!
 //! 配置读写复用 `slash/commands/provider.rs` 中的函数，
 //! 通过 `Action::OpenProviderModal` 触发打开。
@@ -19,6 +20,6 @@ pub use input::{handle_provider_key, handle_provider_paste};
 pub(crate) use input::sanitize_provider_field;
 pub use render::render_provider_modal;
 pub use state::{
-    API_BACKENDS, AUTH_SCHEMES, MODAL_TITLE, FormStep, ProviderAction, ProviderKeyOutcome,
-    ProviderModalMode, ProviderModalState, ProviderSummary,
+    API_BACKENDS, AUTH_SCHEMES, MODAL_TITLE, FormStep, ModelParamField, ProviderAction,
+    ProviderKeyOutcome, ProviderModalMode, ProviderModalState, ProviderSummary,
 };

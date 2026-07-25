@@ -8,6 +8,7 @@
 //! - `/provider models <name>` — 获取渠道可用模型列表
 //! - `/provider set-model <name>` — 交互式选择并设置当前模型
 //! - `/provider manual-model <name>` — 手动输入模型 ID 并设为当前
+//! - `/provider configure-model <name>` — 配置模型 max_completion_tokens 等参数
 //! - `/provider refresh <name>` — 刷新渠道可用模型（同 models）
 //!
 //! 所有入口均通过 `Action::OpenProviderModal` 触发 TUI 模态框，
@@ -122,7 +123,7 @@ impl SlashCommand for ProviderCommand {
     }
 
     fn usage(&self) -> &str {
-        "/provider [list|add|edit|set-key|models|set-model|manual-model|refresh] [参数]"
+        "/provider [list|add|edit|set-key|models|set-model|manual-model|configure-model|refresh] [参数]"
     }
 
     fn takes_args(&self) -> bool {
@@ -187,9 +188,18 @@ impl SlashCommand for ProviderCommand {
                 }
                 ProviderModalMode::ManualModel(name.to_string())
             }
+            "configure-model" | "configure" | "model-params" => {
+                let name = rest.trim();
+                if name.is_empty() {
+                    return CommandResult::Error(
+                        "用法: /provider configure-model <渠道名称>".into(),
+                    );
+                }
+                ProviderModalMode::ConfigureModel(name.to_string())
+            }
             _ => {
                 return CommandResult::Error(format!(
-                    "未知子命令: {subcmd}\n可用: （无参数打开列表）, list, add, edit, set-key, models, set-model, manual-model, refresh"
+                    "未知子命令: {subcmd}\n可用: （无参数打开列表）, list, add, edit, set-key, models, set-model, manual-model, configure-model, refresh"
                 ));
             }
         };
@@ -508,6 +518,199 @@ fn upsert_provider_model_entry(
     entry["model_provider"] = toml_edit::value(provider);
     entry["name"] = toml_edit::value(format!("{provider}/{model_id}"));
     catalog_key
+}
+
+/// 可选的 per-model 采样/窗口参数（UI 表单解析结果）。
+///
+/// - `Some(v)`：写入该值
+/// - `None`：删除该键（清除覆盖，回退全局/`[models]` 默认）
+///
+/// 调用方在「新建且字段留空」时应传「不调用 setter」或仅对用户填过的字段
+/// 使用 `Some`；配置已有模型时留空 → `None` 以清除。
+#[derive(Debug, Clone, Default)]
+pub(crate) struct ModelParamOverrides {
+    pub max_completion_tokens: Option<Option<u32>>,
+    pub context_window: Option<Option<u64>>,
+    pub temperature: Option<Option<f64>>,
+    pub top_p: Option<Option<f64>>,
+}
+
+/// 解析 UI 字符串为整数参数；空串 → Ok(None)。
+pub(crate) fn parse_optional_u32(raw: &str, field: &str) -> Result<Option<u32>, String> {
+    let s = raw.trim();
+    if s.is_empty() {
+        return Ok(None);
+    }
+    s.parse::<u32>()
+        .map(Some)
+        .map_err(|_| format!("{field} 必须是正整数，例如 8192"))
+}
+
+/// 解析 UI 字符串为 u64；空串 → Ok(None)。
+pub(crate) fn parse_optional_u64(raw: &str, field: &str) -> Result<Option<u64>, String> {
+    let s = raw.trim();
+    if s.is_empty() {
+        return Ok(None);
+    }
+    s.parse::<u64>()
+        .map(Some)
+        .map_err(|_| format!("{field} 必须是正整数，例如 128000"))
+}
+
+/// 解析 UI 字符串为浮点；空串 → Ok(None)。
+pub(crate) fn parse_optional_f64(raw: &str, field: &str) -> Result<Option<f64>, String> {
+    let s = raw.trim();
+    if s.is_empty() {
+        return Ok(None);
+    }
+    let v = s
+        .parse::<f64>()
+        .map_err(|_| format!("{field} 必须是数字，例如 0.7"))?;
+    if !v.is_finite() {
+        return Err(format!("{field} 必须是有限数字"));
+    }
+    Ok(Some(v))
+}
+
+/// 从 UI 表单字符串构建 overrides。
+///
+/// `clear_when_empty`：true 时，空字段表示清除配置键；false 时空字段表示不改动。
+pub(crate) fn model_params_from_form(
+    max_completion_tokens: &str,
+    context_window: &str,
+    temperature: &str,
+    top_p: &str,
+    clear_when_empty: bool,
+) -> Result<ModelParamOverrides, String> {
+    let mct = parse_optional_u32(max_completion_tokens, "max_completion_tokens")?;
+    let cw = parse_optional_u64(context_window, "context_window")?;
+    let temp = parse_optional_f64(temperature, "temperature")?;
+    if let Some(t) = temp {
+        if !(0.0..=2.0).contains(&t) {
+            return Err("temperature 建议范围 0–2".into());
+        }
+    }
+    let tp = parse_optional_f64(top_p, "top_p")?;
+    if let Some(p) = tp {
+        if !(0.0..=1.0).contains(&p) {
+            return Err("top_p 必须在 0–1 之间".into());
+        }
+    }
+
+    fn wrap<T>(opt: Option<T>, clear_when_empty: bool) -> Option<Option<T>> {
+        if opt.is_some() {
+            Some(opt)
+        } else if clear_when_empty {
+            Some(None)
+        } else {
+            None
+        }
+    }
+
+    Ok(ModelParamOverrides {
+        max_completion_tokens: wrap(mct, clear_when_empty),
+        context_window: wrap(cw, clear_when_empty),
+        temperature: wrap(temp, clear_when_empty),
+        top_p: wrap(tp, clear_when_empty),
+    })
+}
+
+fn apply_model_param_overrides(entry: &mut toml_edit::Table, params: &ModelParamOverrides) {
+    if let Some(opt) = params.max_completion_tokens {
+        match opt {
+            Some(v) => entry["max_completion_tokens"] = toml_edit::value(i64::from(v)),
+            None => {
+                entry.remove("max_completion_tokens");
+            }
+        }
+    }
+    if let Some(opt) = params.context_window {
+        match opt {
+            Some(v) => {
+                if v == 0 {
+                    entry.remove("context_window");
+                } else {
+                    entry["context_window"] = toml_edit::value(v as i64);
+                }
+            }
+            None => {
+                entry.remove("context_window");
+            }
+        }
+    }
+    if let Some(opt) = params.temperature {
+        match opt {
+            Some(v) => entry["temperature"] = toml_edit::value(v),
+            None => {
+                entry.remove("temperature");
+            }
+        }
+    }
+    if let Some(opt) = params.top_p {
+        match opt {
+            Some(v) => entry["top_p"] = toml_edit::value(v),
+            None => {
+                entry.remove("top_p");
+            }
+        }
+    }
+}
+
+/// 注册模型并可选写入采样参数，再设为默认。
+///
+/// `params` 中仅 `Some(...)` 的字段会写入；空表单应使用
+/// `model_params_from_form(..., clear_when_empty=false)`。
+pub(crate) fn register_model_with_params(
+    provider: &str,
+    model_id: &str,
+    params: &ModelParamOverrides,
+    set_default: bool,
+) -> Result<String, String> {
+    let model_id = model_id.trim();
+    if model_id.is_empty() {
+        return Err("模型 ID 不能为空".into());
+    }
+
+    let mut doc = load_config()?;
+    // Check provider exists in the same doc we'll write to (single read).
+    let provider_missing = doc
+        .get("model_providers")
+        .and_then(|v| v.as_table())
+        .and_then(|t| t.get(provider))
+        .is_none();
+    if provider_missing {
+        return Err(format!(
+            "渠道 \"{provider}\" 不存在。使用 /provider add 添加。"
+        ));
+    }
+
+    ensure_model_table(&mut doc);
+    let catalog_key = upsert_provider_model_entry(&mut doc, provider, model_id);
+    let entry = doc["model"][catalog_key.as_str()]
+        .as_table_mut()
+        .expect("model entry is table");
+    apply_model_param_overrides(entry, params);
+
+    if set_default {
+        if !doc.contains_key("models") {
+            doc["models"] = toml_edit::table();
+        }
+        if let Some(models) = doc["models"].as_table_mut() {
+            models["default"] = toml_edit::value(catalog_key.as_str());
+        }
+    }
+
+    save_config(&doc)?;
+    Ok(catalog_key)
+}
+
+/// 仅更新已有（或新建）模型的参数字段，不强制改 default。
+pub(crate) fn update_model_params(
+    provider: &str,
+    model_id: &str,
+    params: &ModelParamOverrides,
+) -> Result<String, String> {
+    register_model_with_params(provider, model_id, params, false)
 }
 
 /// Catalog key 形如 `provider/model_id`，保证跨渠道不冲突。

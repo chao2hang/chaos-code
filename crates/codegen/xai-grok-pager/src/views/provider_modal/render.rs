@@ -16,8 +16,8 @@ use crate::theme::Theme;
 use crate::views::modal_window::{self as mw, ModalWindowConfig, ModalSizing};
 
 use super::state::{
-    API_BACKENDS, AUTH_SCHEMES, FormStep, ProviderAction, ProviderModalMode, ProviderModalState,
-    PROVIDER_PRESETS,
+    API_BACKENDS, AUTH_SCHEMES, FormStep, ModelParamField, ProviderAction, ProviderModalMode,
+    ProviderModalState, PROVIDER_PRESETS,
 };
 
 /// Same footprint as the settings modal: ~70% width, max 110 cols.
@@ -93,6 +93,9 @@ pub fn render_provider_modal(
         ProviderModalMode::SetKey(name) => render_set_key(buf, area, state, name, &theme, compact),
         ProviderModalMode::ManualModel(name) => {
             render_manual_model(buf, area, state, name, &theme, compact)
+        }
+        ProviderModalMode::ConfigureModel(name) => {
+            render_configure_model(buf, area, state, name, &theme, compact)
         }
         ProviderModalMode::Models(name) => render_models(buf, area, state, name, &theme, compact),
         ProviderModalMode::SetModel(name) => {
@@ -452,7 +455,7 @@ fn render_edit_form(buf: &mut Buffer, area: Rect, state: &ProviderModalState, th
     }
 }
 
-// ── 手动输入模型 ID ────────────────────────────────────────────────────────
+// ── 手动输入模型 ID + 可选参数 ─────────────────────────────────────────────
 
 fn render_manual_model(
     buf: &mut Buffer,
@@ -468,9 +471,18 @@ fn render_manual_model(
     } else {
         "Esc 取消"
     };
+    let enter_label = if state.model_param_field.is_some() {
+        if state.model_param_field == Some(ModelParamField::TopP) {
+            "Enter 完成并切换"
+        } else {
+            "Enter 下一步"
+        }
+    } else {
+        "Enter 下一步"
+    };
     let shortcuts: &[mw::Shortcut<'static>] = &[
         mw::Shortcut {
-            label: "Enter 确认",
+            label: enter_label,
             clickable: false,
             id: 0,
         },
@@ -497,6 +509,9 @@ fn render_manual_model(
     let label_style = Style::default().fg(theme.gray_bright);
     let value_style = Style::default().fg(theme.text_primary);
     let dim_style = Style::default().fg(theme.gray_dim);
+    let active_label_style = Style::default()
+        .fg(theme.accent_user)
+        .add_modifier(Modifier::BOLD);
 
     let name_line = Line::from(vec![
         Span::styled("渠道: ", label_style),
@@ -505,53 +520,294 @@ fn render_manual_model(
     name_line.render(Rect::new(content.x, y, content.width, 1), buf);
     y += 1;
 
+    if state.model_param_field.is_none() {
+        if y < content.y + content.height {
+            let hint = Line::from(Span::styled(
+                "输入上游模型 ID（如 gpt-4o）；确认后可设 max_tokens 等",
+                dim_style,
+            ));
+            hint.render(Rect::new(content.x, y, content.width, 1), buf);
+            y += 1;
+        }
+
+        let key_label = "模型 ID: ";
+        let id = state.manual_model_id.as_str();
+        let key_line = Line::from(vec![
+            Span::styled(key_label, active_label_style),
+            Span::styled(id, value_style),
+        ]);
+        key_line.render(Rect::new(content.x, y, content.width, 1), buf);
+
+        let prefix_w = key_label.width() as u16;
+        let field_w = id.width() as u16;
+        let cursor_x = content.x + prefix_w + field_w;
+        if cursor_x < content.x + content.width {
+            if let Some(cell) = buf.cell_mut((cursor_x, y)) {
+                cell.set_style(Style::default().fg(theme.bg_dark).bg(theme.text_primary));
+            }
+        }
+        y += 1;
+    } else {
+        // 已选定 ID：展示 + 参数表单
+        if y < content.y + content.height {
+            let id_line = Line::from(vec![
+                Span::styled("模型 ID: ", label_style),
+                Span::styled(state.manual_model_id.as_str(), value_style),
+            ]);
+            id_line.render(Rect::new(content.x, y, content.width, 1), buf);
+            y += 1;
+        }
+        if y < content.y + content.height {
+            let hint = Line::from(Span::styled(
+                "可选参数（留空=不写入，使用默认）",
+                dim_style,
+            ));
+            hint.render(Rect::new(content.x, y, content.width, 1), buf);
+            y += 1;
+        }
+        y = render_model_param_form(buf, content, state, theme, y);
+    }
+
+    y = render_error_success(buf, content, state, theme, y);
+    let _ = y;
+}
+
+// ── 配置模型参数 ───────────────────────────────────────────────────────────
+
+fn render_configure_model(
+    buf: &mut Buffer,
+    area: Rect,
+    state: &mut ProviderModalState,
+    name: &str,
+    theme: &Theme,
+    compact: bool,
+) {
+    if state.model_param_field.is_some() {
+        render_configure_model_params(buf, area, state, name, theme, compact);
+        return;
+    }
+    let sizing = provider_sizing(compact);
+    let back = if state.from_hub {
+        "Esc 返回"
+    } else {
+        "Esc 取消"
+    };
+    let shortcuts: &[mw::Shortcut<'static>] = &[
+        mw::Shortcut {
+            label: "输入筛选",
+            clickable: false,
+            id: 0,
+        },
+        mw::Shortcut {
+            label: "↑↓ 滚动",
+            clickable: false,
+            id: 1,
+        },
+        mw::Shortcut {
+            label: "Enter 配置",
+            clickable: false,
+            id: 2,
+        },
+        mw::Shortcut {
+            label: back,
+            clickable: false,
+            id: 3,
+        },
+    ];
+    let title = format!("配置模型参数 · {name}");
+    let config = ModalWindowConfig {
+        title: &title,
+        tabs: None,
+        shortcuts,
+        sizing,
+        fold_info: None,
+    };
+
+    let Some(mca) = mw::render_modal_window(buf, area, &mut state.window, &config, theme) else {
+        return;
+    };
+    // 列表为空时仍显示提示（可手写 filter 作 ID）
+    if !state.models_loading && state.error.is_none() && state.models.is_empty() {
+        let content = mca.content;
+        let mut y = content.y;
+        let dim = Style::default().fg(theme.gray_dim);
+        let line = Line::from(Span::styled(
+            "未能拉取模型列表。可在搜索框输入模型 ID 后 Enter。",
+            dim,
+        ));
+        line.render(Rect::new(content.x, y, content.width, 1), buf);
+        y += 1;
+        if y < content.y + content.height {
+            render_model_search_bar(buf, content.x, y, content.width, state, theme);
+        }
+        return;
+    }
+    render_model_list_body(buf, mca.content, state, theme);
+}
+
+fn render_configure_model_params(
+    buf: &mut Buffer,
+    area: Rect,
+    state: &mut ProviderModalState,
+    name: &str,
+    theme: &Theme,
+    compact: bool,
+) {
+    let sizing = provider_sizing(compact);
+    let back = if state.from_hub {
+        "Esc 返回"
+    } else {
+        "Esc 取消"
+    };
+    let enter_label = if state.model_param_field == Some(ModelParamField::TopP) {
+        "Enter 保存"
+    } else {
+        "Enter 下一步"
+    };
+    let shortcuts: &[mw::Shortcut<'static>] = &[
+        mw::Shortcut {
+            label: enter_label,
+            clickable: false,
+            id: 0,
+        },
+        mw::Shortcut {
+            label: back,
+            clickable: false,
+            id: 1,
+        },
+    ];
+    let config = ModalWindowConfig {
+        title: "配置模型参数",
+        tabs: None,
+        shortcuts,
+        sizing,
+        fold_info: None,
+    };
+
+    let Some(mca) = mw::render_modal_window(buf, area, &mut state.window, &config, theme) else {
+        return;
+    };
+    let content = mca.content;
+    let mut y = content.y;
+
+    let label_style = Style::default().fg(theme.gray_bright);
+    let value_style = Style::default().fg(theme.text_primary);
+    let dim_style = Style::default().fg(theme.gray_dim);
+
+    if y < content.y + content.height {
+        let line = Line::from(vec![
+            Span::styled("渠道: ", label_style),
+            Span::styled(name, value_style),
+            Span::styled("  模型: ", label_style),
+            Span::styled(state.manual_model_id.as_str(), value_style),
+        ]);
+        line.render(Rect::new(content.x, y, content.width, 1), buf);
+        y += 1;
+    }
     if y < content.y + content.height {
         let hint = Line::from(Span::styled(
-            "输入上游模型 ID（如 gpt-4o、claude-sonnet-4-20250514）",
+            "留空表示清除覆盖并回退默认；填写则写入 [model.\"…\"]",
             dim_style,
         ));
         hint.render(Rect::new(content.x, y, content.width, 1), buf);
         y += 1;
     }
+    y = render_model_param_form(buf, content, state, theme, y);
+    let _ = render_error_success(buf, content, state, theme, y);
+}
 
-    let key_label = "模型 ID: ";
-    let id = state.manual_model_id.as_str();
-    let key_line = Line::from(vec![
-        Span::styled(key_label, label_style),
-        Span::styled(id, value_style),
-    ]);
-    key_line.render(Rect::new(content.x, y, content.width, 1), buf);
+/// 绘制四个参数字段；当前字段加粗 + 光标。返回下一行 y。
+fn render_model_param_form(
+    buf: &mut Buffer,
+    area: Rect,
+    state: &ProviderModalState,
+    theme: &Theme,
+    mut y: u16,
+) -> u16 {
+    let label_style = Style::default().fg(theme.gray_bright);
+    let value_style = Style::default().fg(theme.text_primary);
+    let dim_style = Style::default().fg(theme.gray_dim);
+    let active_label_style = Style::default()
+        .fg(theme.accent_user)
+        .add_modifier(Modifier::BOLD);
 
-    let prefix_w = key_label.width() as u16;
-    let field_w = id.width() as u16;
-    let cursor_x = content.x + prefix_w + field_w;
-    if cursor_x < content.x + content.width {
-        if let Some(cell) = buf.cell_mut((cursor_x, y)) {
-            cell.set_style(Style::default().fg(theme.bg_dark).bg(theme.text_primary));
+    for field in ModelParamField::ALL {
+        if y >= area.y + area.height {
+            break;
+        }
+        let is_current = state.model_param_field == Some(*field);
+        let lbl = if is_current {
+            active_label_style
+        } else {
+            label_style
+        };
+        let raw = state.model_param_value(*field);
+        let display = if raw.is_empty() {
+            "（默认）".to_string()
+        } else {
+            raw.to_string()
+        };
+        let prefix = format!("{}: ", field.label());
+        let prefix_w = prefix.width() as u16;
+        let val_style = if raw.is_empty() { dim_style } else { value_style };
+        let line = Line::from(vec![
+            Span::styled(prefix, lbl),
+            Span::styled(display.clone(), val_style),
+        ]);
+        line.render(Rect::new(area.x, y, area.width, 1), buf);
+
+        if is_current {
+            let field_w = if raw.is_empty() {
+                "（默认）".width()
+            } else {
+                raw.width()
+            } as u16;
+            let cursor_x = area.x + prefix_w + field_w;
+            if cursor_x < area.x + area.width {
+                if let Some(cell) = buf.cell_mut((cursor_x, y)) {
+                    cell.set_style(Style::default().fg(theme.bg_dark).bg(theme.text_primary));
+                }
+            }
+        }
+        y += 1;
+        // 当前字段下方显示 hint
+        if is_current && y < area.y + area.height {
+            let hint = Line::from(Span::styled(format!("  {}", field.hint()), dim_style));
+            hint.render(Rect::new(area.x, y, area.width, 1), buf);
+            y += 1;
         }
     }
-    y += 1;
+    y
+}
 
+fn render_error_success(
+    buf: &mut Buffer,
+    area: Rect,
+    state: &ProviderModalState,
+    theme: &Theme,
+    mut y: u16,
+) -> u16 {
     if let Some(err) = &state.error {
-        if y < content.y + content.height {
+        if y < area.y + area.height {
             let err_line = Line::from(Span::styled(
                 format!("✗ {err}"),
                 Style::default().fg(theme.accent_error),
             ));
-            err_line.render(Rect::new(content.x, y, content.width, 1), buf);
+            err_line.render(Rect::new(area.x, y, area.width, 1), buf);
             y += 1;
         }
     }
-
     if let Some(succ) = &state.success {
-        if y < content.y + content.height {
+        if y < area.y + area.height {
             let succ_line = Line::from(Span::styled(
                 format!("✓ {succ}"),
                 Style::default().fg(theme.accent_success),
             ));
-            succ_line.render(Rect::new(content.x, y, content.width, 1), buf);
+            succ_line.render(Rect::new(area.x, y, area.width, 1), buf);
+            y += 1;
         }
     }
+    y
 }
 
 // ── /provider set-key <name> ───────────────────────────────────────────────
