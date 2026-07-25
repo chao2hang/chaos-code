@@ -132,6 +132,7 @@ impl xai_tool_runtime::Tool for MonitorTool {
                 foreground_block_budget: None,
                 kind: crate::computer::types::TaskKind::Monitor,
                 owner_session_id,
+                description: Some(input.description.clone()),
             })
             .await
             .map_err(|e| xai_tool_runtime::ToolError::custom("process_manager", e.to_string()))?;
@@ -449,6 +450,7 @@ mod tests {
                 foreground_block_budget: None,
                 kind: TaskKind::Monitor,
                 owner_session_id: Some("session-A".to_string()),
+                description: Some("tick".to_string()),
             })
             .await
             .expect("spawn monitor");
@@ -525,6 +527,7 @@ mod tests {
                 foreground_block_budget: None,
                 kind: TaskKind::Monitor,
                 owner_session_id: Some("session-A".to_string()),
+                description: None,
             })
             .await
             .expect("spawn monitor");
@@ -594,6 +597,7 @@ mod tests {
                 foreground_block_budget: None,
                 kind: TaskKind::Monitor,
                 owner_session_id: Some("child-session".to_string()),
+                description: None,
             })
             .await
             .expect("spawn monitor");

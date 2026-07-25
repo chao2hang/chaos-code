@@ -916,6 +916,7 @@ mod tests {
             block_waited: false,
             explicitly_killed: false,
             owner_session_id: None,
+            description: None,
         }
     }
     #[tokio::test]
@@ -2202,6 +2203,7 @@ mod tests {
             block_waited: false,
             explicitly_killed: false,
             owner_session_id: None,
+            description: None,
         }
     }
     /// Extract the auto-wake prompt text emitted on the session command channel.
