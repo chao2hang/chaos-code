@@ -91,14 +91,24 @@ pub fn render_provider_modal(
     let mode = state.mode.clone();
     match &mode {
         ProviderModalMode::SetKey(name) => render_set_key(buf, area, state, name, &theme, compact),
+        ProviderModalMode::ManualModel(name) => {
+            render_manual_model(buf, area, state, name, &theme, compact)
+        }
         ProviderModalMode::Models(name) => render_models(buf, area, state, name, &theme, compact),
         ProviderModalMode::SetModel(name) => {
             render_set_model(buf, area, state, name, &theme, compact)
         }
         ProviderModalMode::Actions(name) => render_actions(buf, area, state, name, &theme, compact),
-        ProviderModalMode::List | ProviderModalMode::Add => {
+        ProviderModalMode::List | ProviderModalMode::Add | ProviderModalMode::Edit(_) => {
             let title = match &mode {
                 ProviderModalMode::Add => "添加渠道",
+                ProviderModalMode::Edit(name) => {
+                    // title is &'static in ModalWindowConfig — use stack buffer via leak-free path:
+                    // render_edit uses its own window; here we still need a static-ish title.
+                    // Use a fixed label; name shown in form body.
+                    let _ = name;
+                    "编辑渠道"
+                }
                 _ => "渠道管理",
             };
             let sizing = provider_sizing(compact);
@@ -149,6 +159,7 @@ pub fn render_provider_modal(
             let content = mca.content;
             match &state.mode {
                 ProviderModalMode::Add => render_add_form(buf, content, state, &theme),
+                ProviderModalMode::Edit(_) => render_edit_form(buf, content, state, &theme),
                 ProviderModalMode::List => render_list_content(buf, content, state, &theme),
                 _ => {}
             }
@@ -300,6 +311,245 @@ fn render_add_form(buf: &mut Buffer, area: Rect, state: &ProviderModalState, the
                 Style::default().fg(theme.accent_success),
             ));
             succ_line.render(Rect::new(area.x, y, area.width, 1), buf);
+        }
+    }
+}
+
+// ── 编辑渠道表单 ───────────────────────────────────────────────────────────
+
+fn render_edit_form(buf: &mut Buffer, area: Rect, state: &ProviderModalState, theme: &Theme) {
+    let label_style = Style::default().fg(theme.gray_bright);
+    let value_style = Style::default().fg(theme.text_primary);
+    let active_label_style = Style::default()
+        .fg(theme.accent_user)
+        .add_modifier(Modifier::BOLD);
+    let dim_style = Style::default().fg(theme.gray_dim);
+
+    let mut y = area.y;
+
+    // 渠道名只读展示
+    if y < area.y + area.height {
+        let line = Line::from(vec![
+            Span::styled("名称: ", label_style),
+            Span::styled(state.name.as_str(), value_style),
+            Span::styled("  (不可改)", dim_style),
+        ]);
+        line.render(Rect::new(area.x, y, area.width, 1), buf);
+        y += 1;
+    }
+
+    let steps = [
+        FormStep::BaseUrl,
+        FormStep::AuthScheme,
+        FormStep::ApiBackend,
+        FormStep::ApiKey,
+    ];
+
+    for step in &steps {
+        if y >= area.y + area.height {
+            break;
+        }
+        let is_current = *step == state.current_step;
+        let lbl_style = if is_current {
+            active_label_style
+        } else {
+            label_style
+        };
+
+        let (label, value): (&str, String) = match step {
+            FormStep::BaseUrl => ("Base URL", state.base_url.clone()),
+            FormStep::AuthScheme => ("认证方式", AUTH_SCHEMES[state.auth_scheme_idx].into()),
+            FormStep::ApiBackend => ("API 后端", API_BACKENDS[state.api_backend_idx].into()),
+            FormStep::ApiKey => {
+                let display = if state.api_key.is_empty() {
+                    if state.edit_had_key {
+                        "（留空保留原密钥）".into()
+                    } else {
+                        String::new()
+                    }
+                } else {
+                    mask_key(&state.api_key)
+                };
+                ("API Key", display)
+            }
+            FormStep::Preset | FormStep::Name => continue,
+        };
+
+        let prefix = format!("{label}: ");
+        let prefix_w = prefix.width() as u16;
+        let line = Line::from(vec![
+            Span::styled(prefix, lbl_style),
+            Span::styled(
+                value.clone(),
+                if state.api_key.is_empty()
+                    && *step == FormStep::ApiKey
+                    && state.edit_had_key
+                    && !is_current
+                {
+                    dim_style
+                } else if state.api_key.is_empty()
+                    && *step == FormStep::ApiKey
+                    && state.edit_had_key
+                {
+                    dim_style
+                } else {
+                    value_style
+                },
+            ),
+        ]);
+        line.render(Rect::new(area.x, y, area.width, 1), buf);
+
+        if is_current {
+            let field_len = match step {
+                FormStep::BaseUrl => state.base_url.width(),
+                FormStep::AuthScheme => AUTH_SCHEMES[state.auth_scheme_idx].width(),
+                FormStep::ApiBackend => API_BACKENDS[state.api_backend_idx].width(),
+                FormStep::ApiKey => {
+                    if state.api_key.is_empty() && state.edit_had_key {
+                        "（留空保留原密钥）".width()
+                    } else {
+                        mask_key(&state.api_key).width()
+                    }
+                }
+                FormStep::Preset | FormStep::Name => 0,
+            };
+            let cursor_x = area.x + prefix_w + field_len as u16;
+            if cursor_x < area.x + area.width {
+                if let Some(cell) = buf.cell_mut((cursor_x, y)) {
+                    cell.set_style(Style::default().fg(theme.bg_dark).bg(theme.text_primary));
+                }
+            }
+            if matches!(step, FormStep::AuthScheme | FormStep::ApiBackend) {
+                let hint = "  ←/→ 或 ↑/↓ 切换";
+                let hint_x = area.x + prefix_w + field_len as u16 + 2;
+                if hint_x + hint.width() as u16 <= area.x + area.width {
+                    buf.set_string(hint_x, y, hint, dim_style);
+                }
+            }
+        }
+        y += 1;
+    }
+
+    if let Some(err) = &state.error {
+        if y < area.y + area.height {
+            let err_line = Line::from(Span::styled(
+                format!("✗ {err}"),
+                Style::default().fg(theme.accent_error),
+            ));
+            err_line.render(Rect::new(area.x, y, area.width, 1), buf);
+            y += 1;
+        }
+    }
+
+    if let Some(succ) = &state.success {
+        if y < area.y + area.height {
+            let succ_line = Line::from(Span::styled(
+                format!("✓ {succ}"),
+                Style::default().fg(theme.accent_success),
+            ));
+            succ_line.render(Rect::new(area.x, y, area.width, 1), buf);
+        }
+    }
+}
+
+// ── 手动输入模型 ID ────────────────────────────────────────────────────────
+
+fn render_manual_model(
+    buf: &mut Buffer,
+    area: Rect,
+    state: &mut ProviderModalState,
+    name: &str,
+    theme: &Theme,
+    compact: bool,
+) {
+    let sizing = provider_sizing(compact);
+    let back = if state.from_hub {
+        "Esc 返回"
+    } else {
+        "Esc 取消"
+    };
+    let shortcuts: &[mw::Shortcut<'static>] = &[
+        mw::Shortcut {
+            label: "Enter 确认",
+            clickable: false,
+            id: 0,
+        },
+        mw::Shortcut {
+            label: back,
+            clickable: false,
+            id: 1,
+        },
+    ];
+    let config = ModalWindowConfig {
+        title: "手动输入模型",
+        tabs: None,
+        shortcuts,
+        sizing,
+        fold_info: None,
+    };
+
+    let Some(mca) = mw::render_modal_window(buf, area, &mut state.window, &config, theme) else {
+        return;
+    };
+    let content = mca.content;
+    let mut y = content.y;
+
+    let label_style = Style::default().fg(theme.gray_bright);
+    let value_style = Style::default().fg(theme.text_primary);
+    let dim_style = Style::default().fg(theme.gray_dim);
+
+    let name_line = Line::from(vec![
+        Span::styled("渠道: ", label_style),
+        Span::styled(name, value_style),
+    ]);
+    name_line.render(Rect::new(content.x, y, content.width, 1), buf);
+    y += 1;
+
+    if y < content.y + content.height {
+        let hint = Line::from(Span::styled(
+            "输入上游模型 ID（如 gpt-4o、claude-sonnet-4-20250514）",
+            dim_style,
+        ));
+        hint.render(Rect::new(content.x, y, content.width, 1), buf);
+        y += 1;
+    }
+
+    let key_label = "模型 ID: ";
+    let id = state.manual_model_id.as_str();
+    let key_line = Line::from(vec![
+        Span::styled(key_label, label_style),
+        Span::styled(id, value_style),
+    ]);
+    key_line.render(Rect::new(content.x, y, content.width, 1), buf);
+
+    let prefix_w = key_label.width() as u16;
+    let field_w = id.width() as u16;
+    let cursor_x = content.x + prefix_w + field_w;
+    if cursor_x < content.x + content.width {
+        if let Some(cell) = buf.cell_mut((cursor_x, y)) {
+            cell.set_style(Style::default().fg(theme.bg_dark).bg(theme.text_primary));
+        }
+    }
+    y += 1;
+
+    if let Some(err) = &state.error {
+        if y < content.y + content.height {
+            let err_line = Line::from(Span::styled(
+                format!("✗ {err}"),
+                Style::default().fg(theme.accent_error),
+            ));
+            err_line.render(Rect::new(content.x, y, content.width, 1), buf);
+            y += 1;
+        }
+    }
+
+    if let Some(succ) = &state.success {
+        if y < content.y + content.height {
+            let succ_line = Line::from(Span::styled(
+                format!("✓ {succ}"),
+                Style::default().fg(theme.accent_success),
+            ));
+            succ_line.render(Rect::new(content.x, y, content.width, 1), buf);
         }
     }
 }

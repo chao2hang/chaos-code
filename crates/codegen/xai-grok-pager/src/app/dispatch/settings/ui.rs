@@ -277,6 +277,42 @@ pub(in crate::app::dispatch) fn dispatch_open_provider_modal(
                 }
             }
         }
+        crate::views::provider_modal::ProviderModalMode::Edit(name) => {
+            // 深链 `/provider edit <name>`：预填字段（与 go_edit 一致）。
+            match crate::slash::commands::provider::load_config() {
+                Ok(doc) => {
+                    state.name = name.clone();
+                    state.base_url = crate::slash::commands::provider::provider_field(
+                        &doc, name, "base_url",
+                    )
+                    .unwrap_or_default();
+                    let auth = crate::slash::commands::provider::provider_field(
+                        &doc, name, "auth_scheme",
+                    )
+                    .unwrap_or_else(|| "bearer".into());
+                    state.auth_scheme_idx = crate::views::provider_modal::AUTH_SCHEMES
+                        .iter()
+                        .position(|&s| s == auth)
+                        .unwrap_or(0);
+                    let backend = crate::slash::commands::provider::provider_field(
+                        &doc, name, "api_backend",
+                    )
+                    .unwrap_or_else(|| "chat_completions".into());
+                    state.api_backend_idx = crate::views::provider_modal::API_BACKENDS
+                        .iter()
+                        .position(|&s| s == backend)
+                        .unwrap_or(1);
+                    state.edit_had_key = crate::slash::commands::provider::provider_field(
+                        &doc, name, "api_key",
+                    )
+                    .is_some();
+                    state.current_step = crate::views::provider_modal::FormStep::BaseUrl;
+                }
+                Err(e) => {
+                    state.error = Some(e);
+                }
+            }
+        }
         _ => {}
     }
 

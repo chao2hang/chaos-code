@@ -17,24 +17,32 @@ pub const API_BACKENDS: &[&str] = &["responses", "chat_completions", "messages"]
 /// 渠道操作菜单项（二级菜单）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProviderAction {
+    /// 编辑 base_url / 认证 / 后端 / API Key。
+    Edit,
     SetKey,
     Models,
+    /// 手动输入模型 ID（不依赖上游 /models 列表）。
+    ManualModel,
     SetModel,
     Refresh,
 }
 
 impl ProviderAction {
     pub const ALL: &[ProviderAction] = &[
+        ProviderAction::Edit,
         ProviderAction::SetKey,
         ProviderAction::Models,
+        ProviderAction::ManualModel,
         ProviderAction::SetModel,
         ProviderAction::Refresh,
     ];
 
     pub fn label(self) -> &'static str {
         match self {
+            Self::Edit => "编辑渠道",
             Self::SetKey => "设置 API Key",
             Self::Models => "查看可用模型",
+            Self::ManualModel => "手动输入模型",
             Self::SetModel => "切换模型",
             Self::Refresh => "刷新模型列表",
         }
@@ -42,8 +50,10 @@ impl ProviderAction {
 
     pub fn hint(self) -> &'static str {
         match self {
+            Self::Edit => "修改 URL / 认证 / 后端 / 密钥",
             Self::SetKey => "写入/更新密钥",
             Self::Models => "从渠道拉取模型",
+            Self::ManualModel => "手写模型 ID 并设为当前",
             Self::SetModel => "选择并设为当前模型",
             Self::Refresh => "重新拉取模型列表",
         }
@@ -91,12 +101,12 @@ pub const PROVIDER_PRESETS: &[ProviderPreset] = &[
     },
 ];
 
-/// 多步表单的当前步骤（仅 `Add` 模式使用）。
+/// 多步表单的当前步骤（`Add` / `Edit` 模式使用）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FormStep {
-    /// 预设选择（第一步）。
+    /// 预设选择（第一步，仅 `Add`）。
     Preset,
-    /// 渠道名称（仅自定义预设时出现）。
+    /// 渠道名称（仅自定义预设添加时出现；`Edit` 不改名）。
     Name,
     BaseUrl,
     AuthScheme,
@@ -127,12 +137,16 @@ pub enum ProviderModalMode {
     Actions(String),
     /// `/provider add` — 多步表单：name → base_url → auth_scheme → api_backend → api_key。
     Add,
+    /// 编辑已有渠道：base_url → auth_scheme → api_backend → api_key（可空保留原密钥）。
+    Edit(String),
     /// `/provider set-key <name>` — 单步输入 API Key。
     SetKey(String),
     /// `/provider models <name>` — 展示渠道可用模型列表。
     Models(String),
     /// `/provider set-model <name>` — 选择并设置当前模型。
     SetModel(String),
+    /// 手动输入模型 ID 并注册为当前模型（不依赖上游列表）。
+    ManualModel(String),
 }
 
 /// 输入事件的输出。
@@ -153,13 +167,15 @@ pub struct ProviderModalState {
     pub mode: ProviderModalMode,
     /// 是否从 hub 进入（裸 `/provider` / 列表导航）。为 true 时 Esc 逐级返回而非直接关闭。
     pub from_hub: bool,
-    // ── Add 模式的表单字段 ──
+    // ── Add / Edit 模式的表单字段 ──
     pub name: String,
     pub base_url: String,
     pub auth_scheme_idx: usize,
     pub api_backend_idx: usize,
     pub api_key: String,
     pub current_step: FormStep,
+    /// 编辑时是否已有密钥（用于 UI 提示「留空保留」）。
+    pub edit_had_key: bool,
     // ── 通用状态 ──
     /// 错误消息（红色显示）。
     pub error: Option<String>,
@@ -171,6 +187,8 @@ pub struct ProviderModalState {
     pub models_loading: bool,
     /// 模型列表顶部搜索框内容（子串匹配，不区分大小写）。
     pub model_filter: String,
+    /// `ManualModel` 模式下手写的模型 ID。
+    pub manual_model_id: String,
     /// `List` / `Actions` / `Models` / `SetModel` 模式下的选中索引。
     /// 在模型列表中是 **过滤结果** 内的下标，不是 `models` 原始下标。
     pub selected: usize,
@@ -207,11 +225,13 @@ impl ProviderModalState {
             api_backend_idx: 1, // 默认 chat_completions
             api_key: String::new(),
             current_step: FormStep::Preset,
+            edit_had_key: false,
             error: None,
             success: None,
             models: Vec::new(),
             models_loading: false,
             model_filter: String::new(),
+            manual_model_id: String::new(),
             selected: 0,
             scroll_offset: 0,
             list_viewport: 0,
@@ -477,6 +497,8 @@ impl ProviderModalState {
         self.api_key.clear();
         self.models.clear();
         self.model_filter.clear();
+        self.manual_model_id.clear();
+        self.edit_had_key = false;
         self.models_loading = false;
         self.current_step = FormStep::Preset;
         self.selected = self.selected.min(self.list_row_count().saturating_sub(1));
@@ -509,8 +531,54 @@ impl ProviderModalState {
         self.api_key.clear();
         self.auth_scheme_idx = 0;
         self.api_backend_idx = 1;
+        self.edit_had_key = false;
         self.current_step = FormStep::Preset;
         self.selected = 0;
+    }
+
+    /// 打开编辑表单，预填已有配置。
+    pub fn go_edit(&mut self, name: String) {
+        self.clear_messages();
+        self.api_key.clear();
+        self.manual_model_id.clear();
+        self.edit_had_key = false;
+        self.current_step = FormStep::BaseUrl;
+        self.selected = 0;
+
+        match crate::slash::commands::provider::load_config() {
+            Ok(doc) => {
+                self.name = name.clone();
+                self.base_url = crate::slash::commands::provider::provider_field(
+                    &doc, &name, "base_url",
+                )
+                .unwrap_or_default();
+                let auth = crate::slash::commands::provider::provider_field(
+                    &doc, &name, "auth_scheme",
+                )
+                .unwrap_or_else(|| "bearer".into());
+                self.auth_scheme_idx = AUTH_SCHEMES
+                    .iter()
+                    .position(|&s| s == auth)
+                    .unwrap_or(0);
+                let backend = crate::slash::commands::provider::provider_field(
+                    &doc, &name, "api_backend",
+                )
+                .unwrap_or_else(|| "chat_completions".into());
+                self.api_backend_idx = API_BACKENDS
+                    .iter()
+                    .position(|&s| s == backend)
+                    .unwrap_or(1);
+                self.edit_had_key = crate::slash::commands::provider::provider_field(
+                    &doc, &name, "api_key",
+                )
+                .is_some();
+                self.mode = ProviderModalMode::Edit(name);
+            }
+            Err(e) => {
+                self.error = Some(e);
+                self.mode = ProviderModalMode::Actions(name);
+            }
+        }
     }
 
     /// 打开设 Key（保留 from_hub）。
@@ -535,7 +603,18 @@ impl ProviderModalState {
         self.load_models_for(&name);
     }
 
+    /// 打开手动输入模型 ID。
+    pub fn go_manual_model(&mut self, name: String) {
+        self.mode = ProviderModalMode::ManualModel(name);
+        self.clear_messages();
+        self.manual_model_id.clear();
+        self.selected = 0;
+    }
+
     /// Esc 逐级返回；返回 true 表示应关闭模态框。
+    ///
+    /// 多步表单内始终先退一步（不依赖 `from_hub`）。仅在该层级的「根」
+    /// 再根据 `from_hub` 决定：回列表/操作菜单，或关闭整个模态。
     pub fn navigate_back(&mut self) -> bool {
         if self.success.is_some() {
             self.success = None;
@@ -543,6 +622,9 @@ impl ProviderModalState {
         match self.mode.clone() {
             ProviderModalMode::List => true,
             ProviderModalMode::Actions(name) => {
+                if !self.from_hub {
+                    return true;
+                }
                 let keep = self
                     .providers
                     .iter()
@@ -555,10 +637,9 @@ impl ProviderModalState {
                 false
             }
             ProviderModalMode::Add => {
-                if !self.from_hub {
-                    return true;
-                }
                 if self.current_step != FormStep::Preset {
+                    // 预设快捷路径：选预设后跳过 Name/… 直达 ApiKey 时，
+                    // 从 ApiKey 一键回到预设列表。
                     let from_preset = PROVIDER_PRESETS.iter().any(|p| p.name == self.name)
                         && !self.base_url.is_empty()
                         && self.current_step == FormStep::ApiKey;
@@ -577,12 +658,44 @@ impl ProviderModalState {
                     self.error = None;
                     return false;
                 }
-                self.go_list();
-                false
+                if self.from_hub {
+                    self.go_list();
+                    false
+                } else {
+                    true
+                }
+            }
+            ProviderModalMode::Edit(name) => {
+                // 编辑步骤内逐级回退；首步再决定回操作菜单或关闭。
+                match self.current_step {
+                    FormStep::AuthScheme => {
+                        self.current_step = FormStep::BaseUrl;
+                        self.error = None;
+                        return false;
+                    }
+                    FormStep::ApiBackend => {
+                        self.current_step = FormStep::AuthScheme;
+                        self.error = None;
+                        return false;
+                    }
+                    FormStep::ApiKey => {
+                        self.current_step = FormStep::ApiBackend;
+                        self.error = None;
+                        return false;
+                    }
+                    _ => {}
+                }
+                if self.from_hub {
+                    self.go_actions(name);
+                    false
+                } else {
+                    true
+                }
             }
             ProviderModalMode::SetKey(name)
             | ProviderModalMode::Models(name)
-            | ProviderModalMode::SetModel(name) => {
+            | ProviderModalMode::SetModel(name)
+            | ProviderModalMode::ManualModel(name) => {
                 if self.from_hub {
                     self.go_actions(name);
                     false

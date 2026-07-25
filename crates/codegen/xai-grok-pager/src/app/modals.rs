@@ -437,6 +437,20 @@ impl AgentView {
 
         // ProviderModal: route through ModalWindow chrome, then delegate.
         if let ActiveModal::ProviderModal { state } = modal {
+            // Nested levels own Esc (and all keys): walk back via
+            // `navigate_back` instead of chrome closing the whole modal.
+            // Mirror Settings sub-mode short-circuit. Root hub (`List`)
+            // still lets chrome treat Esc as close.
+            // Success banners also need provider Esc (dismiss → list/actions).
+            if state.success.is_some()
+                || !matches!(
+                    state.mode,
+                    crate::views::provider_modal::ProviderModalMode::List
+                )
+            {
+                let out = crate::views::provider_modal::handle_provider_key(state, key);
+                return apply_provider_outcome(self, out);
+            }
             let chrome_cfg = mw::ModalWindowConfig {
                 title: "",
                 tabs: None,

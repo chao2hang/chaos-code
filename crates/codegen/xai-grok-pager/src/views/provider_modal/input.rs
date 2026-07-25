@@ -4,7 +4,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use super::state::{
     API_BACKENDS, AUTH_SCHEMES, FormStep, ProviderAction, ProviderKeyOutcome, ProviderModalMode,
-    ProviderModalState, PROVIDER_PRESETS,
+    ProviderModalState, ProviderSummary, PROVIDER_PRESETS,
 };
 
 /// Sanitize text for a single-line provider field.
@@ -57,10 +57,13 @@ pub fn handle_provider_key(state: &mut ProviderModalState, key: &KeyEvent) -> Pr
                 let msg = state.success.take();
                 // Hub：成功后回到列表；深链：关闭
                 if state.from_hub {
-                    // 添加成功后回到列表；设 key 后回到操作菜单
+                    // 添加成功后回到列表；编辑 / 设 key 后回到操作菜单
                     if matches!(state.mode, ProviderModalMode::Add) {
                         state.go_list();
-                    } else if let ProviderModalMode::SetKey(name) = &state.mode {
+                    } else if let ProviderModalMode::SetKey(name)
+                    | ProviderModalMode::Edit(name)
+                    | ProviderModalMode::ManualModel(name) = &state.mode
+                    {
                         let n = name.clone();
                         state.go_actions(n);
                         if let Some(m) = msg {
@@ -84,9 +87,11 @@ pub fn handle_provider_key(state: &mut ProviderModalState, key: &KeyEvent) -> Pr
         ProviderModalMode::List => handle_list(state, key),
         ProviderModalMode::Actions(_) => handle_actions(state, key),
         ProviderModalMode::Add => handle_add(state, key),
+        ProviderModalMode::Edit(_) => handle_edit(state, key),
         ProviderModalMode::SetKey(_) => handle_set_key(state, key),
         ProviderModalMode::Models(_) => handle_models(state, key),
         ProviderModalMode::SetModel(_) => handle_set_model(state, key),
+        ProviderModalMode::ManualModel(_) => handle_manual_model(state, key),
     }
 }
 
@@ -100,7 +105,7 @@ pub fn handle_provider_paste(state: &mut ProviderModalState, text: &str) -> Prov
         return ProviderKeyOutcome::Unchanged;
     }
     match &state.mode {
-        ProviderModalMode::Add => {
+        ProviderModalMode::Add | ProviderModalMode::Edit(_) => {
             let field = match state.current_step {
                 FormStep::Name => &mut state.name,
                 FormStep::BaseUrl => &mut state.base_url,
@@ -122,6 +127,15 @@ pub fn handle_provider_paste(state: &mut ProviderModalState, text: &str) -> Prov
                 state.api_key = cleaned;
             } else {
                 state.api_key.push_str(&cleaned);
+            }
+            state.error = None;
+            ProviderKeyOutcome::Changed
+        }
+        ProviderModalMode::ManualModel(_) => {
+            if state.manual_model_id.is_empty() {
+                state.manual_model_id = cleaned;
+            } else {
+                state.manual_model_id.push_str(&cleaned);
             }
             state.error = None;
             ProviderKeyOutcome::Changed
@@ -367,6 +381,131 @@ fn handle_set_key(state: &mut ProviderModalState, key: &KeyEvent) -> ProviderKey
     }
 }
 
+/// 编辑已有渠道：BaseUrl → AuthScheme → ApiBackend → ApiKey（可空保留原密钥）。
+fn handle_edit(state: &mut ProviderModalState, key: &KeyEvent) -> ProviderKeyOutcome {
+    match key.code {
+        KeyCode::Esc => {
+            if state.navigate_back() {
+                ProviderKeyOutcome::Close
+            } else {
+                ProviderKeyOutcome::Changed
+            }
+        }
+        KeyCode::Up | KeyCode::Down => {
+            if matches!(
+                state.current_step,
+                FormStep::AuthScheme | FormStep::ApiBackend
+            ) {
+                handle_select_key(state, key)
+            } else {
+                ProviderKeyOutcome::Unchanged
+            }
+        }
+        KeyCode::Tab | KeyCode::Enter => match state.current_step {
+            FormStep::BaseUrl => {
+                if state.base_url.trim().is_empty() {
+                    state.error = Some("不能为空".into());
+                    return ProviderKeyOutcome::Changed;
+                }
+                state.error = None;
+                state.current_step = FormStep::AuthScheme;
+                ProviderKeyOutcome::Changed
+            }
+            FormStep::AuthScheme => {
+                state.current_step = FormStep::ApiBackend;
+                ProviderKeyOutcome::Changed
+            }
+            FormStep::ApiBackend => {
+                state.current_step = FormStep::ApiKey;
+                ProviderKeyOutcome::Changed
+            }
+            FormStep::ApiKey => {
+                state.api_key = sanitize_provider_field(&state.api_key);
+                // 允许留空：保留原密钥。若原本也没有密钥则提示。
+                if state.api_key.is_empty() && !state.edit_had_key {
+                    state.error = Some("尚未设置 API Key，请输入".into());
+                    return ProviderKeyOutcome::Changed;
+                }
+                state.error = None;
+                ProviderKeyOutcome::Commit
+            }
+            // Edit 不走 Preset/Name
+            FormStep::Preset | FormStep::Name => ProviderKeyOutcome::Unchanged,
+        },
+        KeyCode::Backspace => {
+            let field = match state.current_step {
+                FormStep::BaseUrl => &mut state.base_url,
+                FormStep::ApiKey => &mut state.api_key,
+                _ => return ProviderKeyOutcome::Unchanged,
+            };
+            if field.pop().is_some() {
+                state.error = None;
+                ProviderKeyOutcome::Changed
+            } else {
+                ProviderKeyOutcome::Unchanged
+            }
+        }
+        KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+            match state.current_step {
+                FormStep::BaseUrl => {
+                    state.base_url.push(c);
+                    state.error = None;
+                    ProviderKeyOutcome::Changed
+                }
+                FormStep::ApiKey => {
+                    state.api_key.push(c);
+                    state.error = None;
+                    ProviderKeyOutcome::Changed
+                }
+                FormStep::AuthScheme | FormStep::ApiBackend => handle_select_key(state, key),
+                _ => ProviderKeyOutcome::Unchanged,
+            }
+        }
+        _ => ProviderKeyOutcome::Unchanged,
+    }
+}
+
+/// 手动输入模型 ID，Enter 后 SwitchModel。
+fn handle_manual_model(state: &mut ProviderModalState, key: &KeyEvent) -> ProviderKeyOutcome {
+    match key.code {
+        KeyCode::Esc => {
+            if state.navigate_back() {
+                ProviderKeyOutcome::Close
+            } else {
+                ProviderKeyOutcome::Changed
+            }
+        }
+        KeyCode::Enter => {
+            let id = sanitize_provider_field(&state.manual_model_id);
+            state.manual_model_id = id.clone();
+            if id.is_empty() {
+                state.error = Some("模型 ID 不能为空".into());
+                return ProviderKeyOutcome::Changed;
+            }
+            state.error = None;
+            ProviderKeyOutcome::SwitchModel(id)
+        }
+        KeyCode::Backspace => {
+            if state.manual_model_id.pop().is_some() {
+                state.error = None;
+                ProviderKeyOutcome::Changed
+            } else {
+                ProviderKeyOutcome::Unchanged
+            }
+        }
+        KeyCode::Char(c)
+            if !key.modifiers.contains(KeyModifiers::CONTROL)
+                && !key.modifiers.contains(KeyModifiers::ALT)
+                && !key.modifiers.contains(KeyModifiers::SUPER) =>
+        {
+            state.manual_model_id.push(c);
+            state.error = None;
+            ProviderKeyOutcome::Changed
+        }
+        _ => ProviderKeyOutcome::Unchanged,
+    }
+}
+
 fn handle_list(state: &mut ProviderModalState, key: &KeyEvent) -> ProviderKeyOutcome {
     let len = state.list_row_count();
     match key.code {
@@ -439,10 +578,12 @@ fn handle_actions(state: &mut ProviderModalState, key: &KeyEvent) -> ProviderKey
             let action = ProviderAction::ALL
                 .get(state.selected)
                 .copied()
-                .unwrap_or(ProviderAction::SetKey);
+                .unwrap_or(ProviderAction::Edit);
             match action {
+                ProviderAction::Edit => state.go_edit(name),
                 ProviderAction::SetKey => state.go_set_key(name),
                 ProviderAction::Models | ProviderAction::Refresh => state.go_models(name),
+                ProviderAction::ManualModel => state.go_manual_model(name),
                 ProviderAction::SetModel => state.go_set_model(name),
             }
             ProviderKeyOutcome::Changed
@@ -762,5 +903,152 @@ mod tests {
             ProviderKeyOutcome::Changed
         ));
         assert!(matches!(state.mode, ProviderModalMode::Actions(_)));
+    }
+
+    #[test]
+    fn edit_mode_steps_and_commit_allows_empty_key_when_had_key() {
+        let mut state = ProviderModalState::new(ProviderModalMode::Edit("openai".into()));
+        state.from_hub = true;
+        state.name = "openai".into();
+        state.base_url = "https://api.openai.com/v1".into();
+        state.edit_had_key = true;
+        state.current_step = FormStep::BaseUrl;
+
+        // Enter advances BaseUrl → AuthScheme → ApiBackend → ApiKey
+        let enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+        assert!(matches!(
+            handle_provider_key(&mut state, &enter),
+            ProviderKeyOutcome::Changed
+        ));
+        assert_eq!(state.current_step, FormStep::AuthScheme);
+        assert!(matches!(
+            handle_provider_key(&mut state, &enter),
+            ProviderKeyOutcome::Changed
+        ));
+        assert_eq!(state.current_step, FormStep::ApiBackend);
+        assert!(matches!(
+            handle_provider_key(&mut state, &enter),
+            ProviderKeyOutcome::Changed
+        ));
+        assert_eq!(state.current_step, FormStep::ApiKey);
+
+        // Empty key + had key → Commit
+        match handle_provider_key(&mut state, &enter) {
+            ProviderKeyOutcome::Commit => {}
+            other => panic!("expected Commit, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn manual_model_enter_switches() {
+        let mut state = ProviderModalState::new(ProviderModalMode::ManualModel("openai".into()));
+        state.from_hub = true;
+        for c in "gpt-4o".chars() {
+            let key = KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE);
+            assert!(matches!(
+                handle_provider_key(&mut state, &key),
+                ProviderKeyOutcome::Changed
+            ));
+        }
+        assert_eq!(state.manual_model_id, "gpt-4o");
+        let enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+        match handle_provider_key(&mut state, &enter) {
+            ProviderKeyOutcome::SwitchModel(id) => assert_eq!(id, "gpt-4o"),
+            other => panic!("expected SwitchModel, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn actions_menu_includes_edit_and_manual() {
+        assert!(ProviderAction::ALL.contains(&ProviderAction::Edit));
+        assert!(ProviderAction::ALL.contains(&ProviderAction::ManualModel));
+        assert_eq!(ProviderAction::ALL[0], ProviderAction::Edit);
+    }
+
+    #[test]
+    fn hub_esc_walks_back_actions_to_list() {
+        let mut state = ProviderModalState::new(ProviderModalMode::List);
+        state.providers = vec![ProviderSummary {
+            name: "openai".into(),
+            base_url: "https://api.openai.com/v1".into(),
+            auth_scheme: "bearer".into(),
+            api_backend: "chat_completions".into(),
+            has_key: true,
+            is_current: true,
+        }];
+        state.go_actions("openai".into());
+        assert!(matches!(state.mode, ProviderModalMode::Actions(_)));
+
+        let esc = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
+        assert!(matches!(
+            handle_provider_key(&mut state, &esc),
+            ProviderKeyOutcome::Changed
+        ));
+        assert!(matches!(state.mode, ProviderModalMode::List));
+    }
+
+    #[test]
+    fn hub_esc_walks_back_edit_steps_then_actions() {
+        let mut state = ProviderModalState::new(ProviderModalMode::List);
+        state.from_hub = true;
+        state.mode = ProviderModalMode::Edit("openai".into());
+        state.name = "openai".into();
+        state.base_url = "https://api.openai.com/v1".into();
+        state.edit_had_key = true;
+        state.current_step = FormStep::ApiKey;
+
+        let esc = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
+        assert!(matches!(
+            handle_provider_key(&mut state, &esc),
+            ProviderKeyOutcome::Changed
+        ));
+        assert_eq!(state.current_step, FormStep::ApiBackend);
+        assert!(matches!(
+            handle_provider_key(&mut state, &esc),
+            ProviderKeyOutcome::Changed
+        ));
+        assert_eq!(state.current_step, FormStep::AuthScheme);
+        assert!(matches!(
+            handle_provider_key(&mut state, &esc),
+            ProviderKeyOutcome::Changed
+        ));
+        assert_eq!(state.current_step, FormStep::BaseUrl);
+        // First step of edit → back to actions menu (hub).
+        assert!(matches!(
+            handle_provider_key(&mut state, &esc),
+            ProviderKeyOutcome::Changed
+        ));
+        assert!(matches!(state.mode, ProviderModalMode::Actions(_)));
+    }
+
+    #[test]
+    fn add_form_esc_steps_back_even_without_from_hub() {
+        let mut state = ProviderModalState::new(ProviderModalMode::Add);
+        assert!(!state.from_hub);
+        state.current_step = FormStep::ApiKey;
+        state.name = "custom".into();
+        state.base_url = "https://example.com".into();
+
+        let esc = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
+        assert!(matches!(
+            handle_provider_key(&mut state, &esc),
+            ProviderKeyOutcome::Changed
+        ));
+        assert_eq!(state.current_step, FormStep::ApiBackend);
+        assert!(matches!(
+            handle_provider_key(&mut state, &esc),
+            ProviderKeyOutcome::Changed
+        ));
+        assert_eq!(state.current_step, FormStep::AuthScheme);
+    }
+
+    #[test]
+    fn list_esc_still_closes() {
+        let mut state = ProviderModalState::new(ProviderModalMode::List);
+        let esc = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
+        assert!(matches!(
+            handle_provider_key(&mut state, &esc),
+            ProviderKeyOutcome::Close
+        ));
     }
 }

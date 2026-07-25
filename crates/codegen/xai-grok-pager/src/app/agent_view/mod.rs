@@ -1983,13 +1983,15 @@ pub(super) fn apply_provider_outcome(
             // Chaos ships an empty bundled catalog: only `[model."provider/id"]`
             // entries appear in `/model`. Register the full fetched list so the
             // picker is usable, and set the selected model as `[models].default`.
+            // ManualModel 只有手写 ID，没有上游列表，单独注册一条即可。
             let (provider_name, fetched_models) =
                 if let Some(crate::views::modal::ActiveModal::ProviderModal { state }) =
                     &agent.active_modal
                 {
                     let name = match &state.mode {
                         crate::views::provider_modal::ProviderModalMode::SetModel(name)
-                        | crate::views::provider_modal::ProviderModalMode::Models(name) => {
+                        | crate::views::provider_modal::ProviderModalMode::Models(name)
+                        | crate::views::provider_modal::ProviderModalMode::ManualModel(name) => {
                             Some(name.clone())
                         }
                         _ => None,
@@ -2109,6 +2111,25 @@ fn try_commit_provider_form(state: &mut crate::views::provider_modal::ProviderMo
             match result {
                 Ok(()) => {
                     state.success = Some(format!("渠道 \"{}\" 已添加", state.name));
+                }
+                Err(e) => {
+                    state.error = Some(e);
+                }
+            }
+        }
+        ProviderModalMode::Edit(name)
+            if state.current_step == FormStep::ApiKey && !state.base_url.is_empty() =>
+        {
+            let result = crate::slash::commands::provider::update_provider(
+                name,
+                &state.base_url,
+                state.auth_scheme(),
+                state.api_backend(),
+                &state.api_key,
+            );
+            match result {
+                Ok(()) => {
+                    state.success = Some(format!("渠道 \"{name}\" 已更新"));
                 }
                 Err(e) => {
                     state.error = Some(e);
