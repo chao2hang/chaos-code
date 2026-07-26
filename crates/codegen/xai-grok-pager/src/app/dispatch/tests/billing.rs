@@ -508,6 +508,7 @@ fn complete_session_usage(
 ) -> Vec<Effect> {
     dispatch(
         Action::TaskComplete(TaskResult::SessionUsageComplete {
+            for_overlay: false,
             agent_id: AgentId(0),
             session_id: session_id.to_string().into(),
             usage: Box::new(usage),
@@ -519,12 +520,116 @@ fn complete_session_usage(
 fn fail_session_usage(app: &mut AppView, session_id: &str, error: &str) -> Vec<Effect> {
     dispatch(
         Action::TaskComplete(TaskResult::SessionUsageFailed {
+            for_overlay: false,
             agent_id: AgentId(0),
             session_id: session_id.to_string().into(),
             error: error.into(),
         }),
         app,
     )
+}
+
+// ── Token-chip usage overlay ────────────────────────────────────────
+
+/// Deliver a ledger to the overlay (`for_overlay: true`).
+fn complete_overlay_usage(
+    app: &mut AppView,
+    session_id: &str,
+    usage: xai_grok_shell::extensions::notification::PromptUsage,
+) -> Vec<Effect> {
+    dispatch(
+        Action::TaskComplete(TaskResult::SessionUsageComplete {
+            for_overlay: true,
+            agent_id: AgentId(0),
+            session_id: session_id.to_string().into(),
+            usage: Box::new(usage),
+        }),
+        app,
+    )
+}
+
+fn agent_usage_detail(app: &AppView) -> Option<&crate::views::usage_detail::UsageDetail> {
+    app.agents.get(&AgentId(0)).unwrap().usage_detail.as_ref()
+}
+
+/// Clicking the chip opens the overlay in `Loading` immediately (so the click
+/// is acknowledged on the next frame) and schedules an overlay-routed fetch.
+#[test]
+fn show_usage_detail_opens_overlay_and_fetches() {
+    use crate::views::usage_detail::UsageDetail;
+
+    let mut app = test_app_with_agent();
+    let effects = dispatch(Action::ShowUsageDetail, &mut app);
+    assert!(
+        matches!(
+            effects.as_slice(),
+            [Effect::FetchSessionUsage { agent_id, for_overlay: true, .. }]
+                if *agent_id == AgentId(0)
+        ),
+        "expected an overlay-routed session usage fetch, got {effects:?}"
+    );
+    assert_eq!(agent_usage_detail(&app), Some(&UsageDetail::Loading));
+
+    let before = agent_scrollback_len(&app);
+    complete_overlay_usage(
+        &mut app,
+        "test-session",
+        xai_grok_shell::extensions::notification::PromptUsage::default(),
+    );
+    assert!(matches!(
+        agent_usage_detail(&app),
+        Some(UsageDetail::Ready(_))
+    ));
+    assert_eq!(
+        agent_scrollback_len(&app),
+        before,
+        "the overlay path must not also commit a /usage scrollback block"
+    );
+}
+
+/// A second dispatch toggles the overlay shut rather than stacking a fetch.
+#[test]
+fn show_usage_detail_toggles_closed() {
+    let mut app = test_app_with_agent();
+    dispatch(Action::ShowUsageDetail, &mut app);
+    let effects = dispatch(Action::ShowUsageDetail, &mut app);
+    assert!(effects.is_empty());
+    assert_eq!(agent_usage_detail(&app), None);
+}
+
+/// A ledger that lands after the user dismissed the overlay is dropped — a
+/// late result must never re-open a popup the user closed.
+#[test]
+fn late_usage_result_does_not_reopen_closed_overlay() {
+    let mut app = test_app_with_agent();
+    dispatch(Action::ShowUsageDetail, &mut app);
+    app.agents
+        .get_mut(&AgentId(0))
+        .unwrap()
+        .close_usage_detail();
+
+    let before = agent_scrollback_len(&app);
+    complete_overlay_usage(
+        &mut app,
+        "test-session",
+        xai_grok_shell::extensions::notification::PromptUsage::default(),
+    );
+    assert_eq!(agent_usage_detail(&app), None);
+    assert_eq!(agent_scrollback_len(&app), before);
+}
+
+/// `/usage` keeps its scrollback behaviour — the overlay must not hijack it.
+#[test]
+fn plain_usage_still_commits_a_scrollback_block() {
+    let mut app = test_app_with_agent();
+    let before = agent_scrollback_len(&app);
+    complete_session_usage(
+        &mut app,
+        "test-session",
+        xai_grok_shell::extensions::notification::PromptUsage::default(),
+    );
+    assert_eq!(agent_scrollback_len(&app), before + 1);
+    assert_eq!(agent_usage_detail(&app), None);
 }
 
 #[test]

@@ -96,11 +96,11 @@ mod dedup {
         ranges.sort_by_key(|r| r.start);
         let mut merged: Vec<CompressionRange> = Vec::with_capacity(ranges.len());
         for range in ranges {
-            if let Some(last) = merged.last_mut() {
-                if range.start <= last.end {
-                    last.end = last.end.max(range.end);
-                    continue;
-                }
+            if let Some(last) = merged.last_mut()
+                && range.start <= last.end
+            {
+                last.end = last.end.max(range.end);
+                continue;
             }
             merged.push(range);
         }

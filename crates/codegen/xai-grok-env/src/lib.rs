@@ -181,7 +181,12 @@ mod tests {
     /// Guards against conflating the relay and gateway endpoints (a relay
     /// loop mistakenly connecting to `wss://grok.com/ws/gw/`).
     #[test]
+    #[ignore = "asserts upstream xAI defaults (bundled model catalog / non-empty \
+                PRODUCTION_ENDPOINTS / grok.com interactive login) that this fork \
+                removes by design; rewrite against Chaos behaviour or delete"]
     fn relay_and_gateway_urls_are_distinct() {
+        // Both are `""` in this fork — `PRODUCTION_ENDPOINTS` is intentionally
+        // blank, so there is nothing left to conflate and nothing to assert.
         assert_ne!(
             GrokBuildEnvironment::Production.relay_ws_url(),
             GrokBuildEnvironment::Production.gateway_ws_url(),

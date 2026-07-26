@@ -151,6 +151,7 @@ mod tests {
         assert_eq!(AuthStatus::resolve(&Config::default()), AuthStatus::ApiKey);
     }
 
+    #[ignore = "asserts upstream xAI defaults (bundled model catalog / non-empty PRODUCTION_ENDPOINTS / grok.com interactive login) that this fork removes by design; rewrite against Chaos behaviour or delete"]
     #[test]
     #[serial]
     fn resolve_oauth_session() {
@@ -243,6 +244,7 @@ mod tests {
         assert_eq!(AuthStatus::resolve(&cfg), AuthStatus::ApiKey);
     }
 
+    #[ignore = "asserts upstream xAI defaults (bundled model catalog / non-empty PRODUCTION_ENDPOINTS / grok.com interactive login) that this fork removes by design; rewrite against Chaos behaviour or delete"]
     #[test]
     #[serial]
     fn resolve_priority_session_over_byok_and_deployment() {

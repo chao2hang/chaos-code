@@ -1694,6 +1694,13 @@ mod tests {
     /// but load returns None for each.
     #[test]
     fn discovery_with_no_settings_files() {
+        // `find_claude_settings_paths` includes the user tier via
+        // `dirs::home_dir()`, so without pinning $HOME to an empty tempdir this
+        // test loads the developer's real `~/.claude/settings.json` and fails.
+        // Serialize with the other $HOME-mutating tests in this module.
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let home = tempfile::tempdir().unwrap();
+        let _home_guard = EnvVarGuard::set("HOME", home.path());
         let tmp = tempfile::tempdir().unwrap();
         let cwd = tmp.path();
 

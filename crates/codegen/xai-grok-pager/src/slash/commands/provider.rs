@@ -764,16 +764,16 @@ pub(crate) fn model_params_from_form(
     let mct = parse_optional_u32(max_completion_tokens, "max_completion_tokens")?;
     let cw = parse_optional_u64(context_window, "context_window")?;
     let temp = parse_optional_f64(temperature, "temperature")?;
-    if let Some(t) = temp {
-        if !(0.0..=2.0).contains(&t) {
-            return Err("temperature 建议范围 0–2".into());
-        }
+    if let Some(t) = temp
+        && !(0.0..=2.0).contains(&t)
+    {
+        return Err("temperature 建议范围 0–2".into());
     }
     let tp = parse_optional_f64(top_p, "top_p")?;
-    if let Some(p) = tp {
-        if !(0.0..=1.0).contains(&p) {
-            return Err("top_p 必须在 0–1 之间".into());
-        }
+    if let Some(p) = tp
+        && !(0.0..=1.0).contains(&p)
+    {
+        return Err("top_p 必须在 0–1 之间".into());
     }
 
     fn wrap<T>(opt: Option<T>, clear_when_empty: bool) -> Option<Option<T>> {
@@ -1107,8 +1107,6 @@ use crate::app::actions::Action;
 
 #[cfg(test)]
 mod delete_provider_tests {
-    use super::*;
-
     fn make_doc() -> toml_edit::DocumentMut {
         let mut doc = toml_edit::DocumentMut::new();
         // [model_providers.foo]

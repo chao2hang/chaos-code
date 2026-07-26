@@ -834,9 +834,20 @@ mod tests {
             "ws-empty",
             "[profiles.wsempty]\nextends = \"workspace\"\n",
         );
+        // A non-devbox custom profile still re-execs — `requires_hook_write_deny`
+        // covers every non-devbox profile — but it must NOT inherit devbox's
+        // `/data` write-deny. That non-inheritance is what this leg pins.
+        let ws_cmd = bwrap_reexec_for_profile(&ProfileName::Custom("wsempty".to_string()), &ws_ws)
+            .expect("non-devbox custom re-execs for hook write-deny");
+        let ws_args: Vec<String> = ws_cmd
+            .get_args()
+            .map(|a| a.to_string_lossy().to_string())
+            .collect();
         assert!(
-            bwrap_reexec_for_profile(&ProfileName::Custom("wsempty".to_string()), &ws_ws).is_none(),
-            "non-devbox custom with no deny needs no re-exec"
+            !ws_args
+                .windows(3)
+                .any(|w| w == ["--ro-bind", "/data", "/data"]),
+            "non-devbox custom must not inherit devbox /data write-deny, got args: {ws_args:?}"
         );
         let _ = std::fs::remove_dir_all(&ws_ws);
     }

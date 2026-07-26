@@ -203,6 +203,48 @@ if defined SZ if !SZ! LSS 1048576 (
   )
 )
 
+rem Integrity: verify against the release's published SHA256SUMS before the
+rem binary is copied into place. Set CHAOS_SKIP_CHECKSUM=1 to bypass.
+if "%CHAOS_SKIP_CHECKSUM%"=="1" (
+  echo warning: checksum verification skipped ^(CHAOS_SKIP_CHECKSUM=1^)
+) else (
+  set "SUMS=%TEMP%\chaos-sums-%RANDOM%%RANDOM%.txt"
+  call :download "https://github.com/%REPO%/releases/download/v%VERSION%/SHA256SUMS" "!SUMS!"
+  if errorlevel 1 (
+    del /f /q "%TMP%" >nul 2>&1
+    echo error: could not fetch SHA256SUMS for v%VERSION%.
+    echo   This release may predate checksum publishing. To install anyway,
+    echo   set CHAOS_SKIP_CHECKSUM=1 ^(you are then trusting the download^).
+    exit /b 1
+  )
+
+  set "EXPECTED="
+  for /f "tokens=1,2" %%A in ('type "!SUMS!"') do (
+    if /I "%%B"=="%ASSET%" set "EXPECTED=%%A"
+  )
+  set "ACTUAL="
+  for /f "skip=1 tokens=* delims=" %%H in ('certutil -hashfile "%TMP%" SHA256') do (
+    if not defined ACTUAL set "ACTUAL=%%H"
+  )
+  set "ACTUAL=!ACTUAL: =!"
+  del /f /q "!SUMS!" >nul 2>&1
+
+  if not defined EXPECTED (
+    del /f /q "%TMP%" >nul 2>&1
+    echo error: SHA256SUMS has no entry for %ASSET%
+    exit /b 1
+  )
+  if /I not "!ACTUAL!"=="!EXPECTED!" (
+    del /f /q "%TMP%" >nul 2>&1
+    echo error: checksum mismatch for %ASSET%
+    echo   expected: !EXPECTED!
+    echo   actual:   !ACTUAL!
+    echo   Refusing to install. This download may be corrupt or tampered with.
+    exit /b 1
+  )
+  echo checksum OK ^(!ACTUAL!^)
+)
+
 copy /y "%TMP%" "%DEST%" >nul
 del /f /q "%TMP%" >nul 2>&1
 if not exist "%DEST%" (

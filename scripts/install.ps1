@@ -165,6 +165,42 @@ try {
         }
     }
 
+    # Integrity: verify against the release's published SHA256SUMS before the
+    # binary is moved into place or executed. Set CHAOS_SKIP_CHECKSUM=1 only if
+    # you have verified the download some other way.
+    if ($env:CHAOS_SKIP_CHECKSUM -eq "1") {
+        Write-Warning "checksum verification skipped (CHAOS_SKIP_CHECKSUM=1)"
+    } else {
+        $sumsUrl = "https://github.com/$Repo/releases/download/v$Version/SHA256SUMS"
+        $sums = $null
+        try {
+            $sums = (Invoke-WebRequest -Uri $sumsUrl -Headers $headers -UseBasicParsing).Content
+        } catch { }
+
+        if (-not $sums) {
+            throw ("could not fetch SHA256SUMS for v$Version. This release may predate " +
+                   "checksum publishing. To install anyway, set CHAOS_SKIP_CHECKSUM=1 " +
+                   "(you are then trusting the download).")
+        }
+
+        $expected = $null
+        foreach ($line in ($sums -split "`n")) {
+            $parts = ($line.Trim() -split '\s+', 2)
+            if ($parts.Count -eq 2 -and $parts[1].TrimStart('*') -eq $asset) {
+                $expected = $parts[0].ToLower()
+                break
+            }
+        }
+        if (-not $expected) { throw "SHA256SUMS has no entry for $asset" }
+
+        $actual = (Get-FileHash -LiteralPath $tmp -Algorithm SHA256).Hash.ToLower()
+        if ($actual -ne $expected) {
+            throw ("checksum mismatch for ${asset}: expected $expected, got $actual. " +
+                   "Refusing to install. This download may be corrupt or tampered with.")
+        }
+        Write-Host "checksum OK ($actual)"
+    }
+
     Move-Item -Force -LiteralPath $tmp -Destination $dest
 } finally {
     if (Test-Path -LiteralPath $tmp) { Remove-Item -Force -LiteralPath $tmp -ErrorAction SilentlyContinue }

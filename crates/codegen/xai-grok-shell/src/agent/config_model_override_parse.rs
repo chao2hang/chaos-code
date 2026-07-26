@@ -700,6 +700,8 @@ mod tests {
             extra_headers: [("x-team".to_owned(), "codegen".to_owned())]
                 .into_iter()
                 .collect(),
+            query_params: Default::default(),
+            env_http_headers: Default::default(),
             context_window: Some(200_000),
             auto_compact_threshold_percent: Some(80),
             system_prompt_label: Some("label".into()),

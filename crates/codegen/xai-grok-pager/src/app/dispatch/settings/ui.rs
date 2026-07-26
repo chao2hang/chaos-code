@@ -286,44 +286,10 @@ pub(in crate::app::dispatch) fn dispatch_open_provider_modal(
         crate::views::provider_modal::ProviderModalMode::Models(name)
         | crate::views::provider_modal::ProviderModalMode::SetModel(name)
         | crate::views::provider_modal::ProviderModalMode::ConfigureModel(name) => {
-            state.models_loading = true;
-            match crate::slash::commands::provider::fetch_provider_models(name) {
-                Ok(entries) => {
-                    // Register into catalog when deep-linked (same as go_models).
-                    let need_default = crate::slash::commands::provider::load_config()
-                        .map(|doc| {
-                            crate::slash::commands::provider::configured_default_model(&doc)
-                                .is_none()
-                        })
-                        .unwrap_or(false);
-                    let first_id = entries.first().map(|e| e.id.clone());
-                    let registered = crate::slash::commands::provider::register_provider_models(
-                        name,
-                        &entries,
-                        if need_default {
-                            first_id.as_deref()
-                        } else {
-                            None
-                        },
-                    );
-                    state.models = entries.iter().map(|e| e.id.clone()).collect();
-                    state.models_meta = entries.into_iter().map(|e| e.meta).collect();
-                    state.models_loading = false;
-                    state.models_need_catalog_sync = registered.is_ok();
-                }
-                Err(e) => {
-                    // ConfigureModel 允许手写 ID，错误不阻断进入
-                    if matches!(
-                        mode,
-                        crate::views::provider_modal::ProviderModalMode::ConfigureModel(_)
-                    ) {
-                        state.models.clear();
-                    } else {
-                        state.error = Some(e);
-                    }
-                    state.models_loading = false;
-                }
-            }
+            // 后台拉取（与 hub 内 go_models 同一路径）：结果由渲染层
+            // poll_models_fetch 收割并写入 config / 会话 catalog，
+            // 打开模态不再同步阻塞 UI 最多 15 秒。
+            state.load_models_for(name);
         }
         crate::views::provider_modal::ProviderModalMode::Edit(name) => {
             // 深链 `/provider edit <name>`：预填字段（与 go_edit 一致）。

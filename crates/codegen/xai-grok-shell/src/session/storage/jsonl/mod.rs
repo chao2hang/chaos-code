@@ -662,21 +662,37 @@ impl JsonlStorageAdapter {
             }
             Err(error) => return Err(error),
         };
+        // Sort BEFORE capping, and cap on *accepted* runs rather than on raw
+        // directory entries. `read_dir` yields entries in arbitrary
+        // filesystem order, so the previous take()/truncate()-then-sort made
+        // the surviving set nondeterministic, and let any rejected entry
+        // (symlink, stale dir, invalid manifest) burn one of the slots — a
+        // few junk directories could silently evict real runs from restore.
+        // `MAX_SCANNED_WORKFLOW_ENTRIES` keeps the scan itself bounded so a
+        // huge workflows/ directory still cannot stall startup.
+        const MAX_SCANNED_WORKFLOW_ENTRIES: usize = MAX_RESTORED_WORKFLOW_RUNS * 8;
         let mut entries: Vec<_> = std::fs::read_dir(&workflows_dir)?
             .filter_map(Result::ok)
-            .take(MAX_RESTORED_WORKFLOW_RUNS.saturating_add(1))
+            .take(MAX_SCANNED_WORKFLOW_ENTRIES.saturating_add(1))
             .collect();
-        let entries_truncated = entries.len() > MAX_RESTORED_WORKFLOW_RUNS;
-        entries.truncate(MAX_RESTORED_WORKFLOW_RUNS);
+        let entries_truncated = entries.len() > MAX_SCANNED_WORKFLOW_ENTRIES;
+        entries.truncate(MAX_SCANNED_WORKFLOW_ENTRIES);
         entries.sort_by_key(|entry| entry.file_name());
         if entries_truncated {
             tracing::warn!(
-                path = % workflows_dir.display(), limit = MAX_RESTORED_WORKFLOW_RUNS,
-                "workflow restore run-count cap reached; ignoring remaining entries"
+                path = % workflows_dir.display(), limit = MAX_SCANNED_WORKFLOW_ENTRIES,
+                "workflow restore entry-scan cap reached; ignoring remaining entries"
             );
         }
         let mut restored = Vec::new();
         for entry in entries {
+            if restored.len() >= MAX_RESTORED_WORKFLOW_RUNS {
+                tracing::warn!(
+                    path = % workflows_dir.display(), limit = MAX_RESTORED_WORKFLOW_RUNS,
+                    "workflow restore run-count cap reached; ignoring remaining entries"
+                );
+                break;
+            }
             let run_dir = entry.path();
             let Ok(run_meta) = std::fs::symlink_metadata(&run_dir) else {
                 continue;

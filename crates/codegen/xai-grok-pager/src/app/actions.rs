@@ -674,6 +674,10 @@ pub enum Action {
     },
     /// `/usage` — session token/cost, plus consumer credits when visible.
     ShowUsage,
+    /// Open the token-usage detail overlay (click on the accumulated-token
+    /// status chip). Same ledger as [`Action::ShowUsage`], rendered as a
+    /// dismissable popup instead of a scrollback block.
+    ShowUsageDetail,
     /// `/usage manage` — open consumer billing (no-op if surface hidden).
     ManageBilling,
     /// Commit a read-only list of the queued prompts as a system block
@@ -2075,6 +2079,11 @@ pub enum Effect {
     FetchSessionUsage {
         agent_id: AgentId,
         session_id: acp::SessionId,
+        /// Route the result to the token-usage detail overlay instead of the
+        /// `/usage` scrollback block. Rides on the effect so a click and a
+        /// `/usage` in flight at the same time can't steal each other's
+        /// destination.
+        for_overlay: bool,
     },
     /// Re-fetch remote settings to check subscription gate.
     RefreshGate,
@@ -2623,12 +2632,18 @@ pub enum TaskResult {
         agent_id: AgentId,
         session_id: acp::SessionId,
         usage: Box<xai_grok_shell::extensions::notification::PromptUsage>,
+        /// Echoed from [`Effect::FetchSessionUsage`]: fill the detail overlay
+        /// rather than commit a scrollback block.
+        for_overlay: bool,
     },
     /// `/usage` session ledger fetch failed. Drop if `session_id` no longer matches.
     SessionUsageFailed {
         agent_id: AgentId,
         session_id: acp::SessionId,
         error: String,
+        /// Echoed from [`Effect::FetchSessionUsage`]. See
+        /// [`TaskResult::SessionUsageComplete`].
+        for_overlay: bool,
     },
     /// Feedback submitted successfully (fire-and-forget).
     FeedbackComplete {

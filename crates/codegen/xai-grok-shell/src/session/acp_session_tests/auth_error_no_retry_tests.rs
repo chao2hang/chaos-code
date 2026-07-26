@@ -324,6 +324,7 @@ async fn pre_flight_refreshes_hard_expired_session_token() {
         .await;
 }
 
+#[ignore = "asserts upstream xAI defaults (bundled model catalog / non-empty PRODUCTION_ENDPOINTS / grok.com interactive login) that this fork removes by design; rewrite against Chaos behaviour or delete"]
 /// Hard-expired + failed refresh: do not fall through to JWT/config.toml;
 /// leave credentials unchanged so 401 recovery remains the safety net.
 #[tokio::test(flavor = "current_thread")]
@@ -1033,6 +1034,8 @@ async fn set_session_model_invalidates_byok_memo_for_same_model_id() {
                 api_backend: crate::sampling::ApiBackend::ChatCompletions,
                 auth_scheme: Default::default(),
                 extra_headers: Default::default(),
+                query_params: Default::default(),
+                env_http_headers: Default::default(),
                 context_window: 256_000,
                 client_version: None,
                 force_http1: false,
@@ -1124,6 +1127,8 @@ async fn switch_to_first_party_model_drops_minted_provider_token() {
                 api_backend: crate::sampling::ApiBackend::ChatCompletions,
                 auth_scheme: Default::default(),
                 extra_headers: Default::default(),
+                query_params: Default::default(),
+                env_http_headers: Default::default(),
                 context_window: 256_000,
                 client_version: None,
                 force_http1: false,

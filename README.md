@@ -44,6 +44,19 @@ curl -fsSL https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/i
 ./scripts/install.sh --version 0.2.113
 ```
 
+#### 完整性校验
+
+三个安装脚本都会在写入二进制前，用 Release 附带的 `SHA256SUMS` 校验下载内容；
+校验失败会中止安装。若安装的是尚未发布 `SHA256SUMS` 的旧版本，可设置
+`CHAOS_SKIP_CHECKSUM=1` 跳过（此时你需要自行确认下载来源可信）。
+
+手动核对：
+
+```sh
+curl -fsSLO https://github.com/chao2hang/chaos-code/releases/latest/download/SHA256SUMS
+sha256sum -c SHA256SUMS --ignore-missing
+```
+
 ### Windows
 
 任选其一即可。装好后**新开一个终端**再执行 `chaos --version`（用户 PATH 更新后需新会话）。

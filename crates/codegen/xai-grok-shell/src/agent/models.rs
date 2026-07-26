@@ -2406,7 +2406,12 @@ mod tests {
             Some(ReasoningEffort::Xhigh),
             "derived default = marked-default option value"
         );
-        assert!(!catalog["plain"].info.supports_reasoning_effort);
+        // `plain` carries no menu, so it derives no options and no wire default.
+        // It still reads as *supporting* effort: since issue #14 every known
+        // backend (here the default `chat_completions`) auto-defaults the
+        // support flag. The empty-list path is pinned by the two asserts below,
+        // which are what this leg actually cares about.
+        assert!(catalog["plain"].info.reasoning_efforts.is_empty());
         assert_eq!(catalog["plain"].info.reasoning_effort, None);
 
         // The internal getters read those derived fields.
@@ -2425,7 +2430,9 @@ mod tests {
             Some(ReasoningEffort::Xhigh)
         );
         assert_eq!(mgr.model_reasoning_efforts("menu-only").len(), 2);
-        assert!(!mgr.model_supports_reasoning_effort("plain"));
+        // See the catalog asserts above: `plain` is backend-auto-defaulted to
+        // "supports effort" since issue #14, but derives no menu and no default.
+        assert!(mgr.model_reasoning_efforts("plain").is_empty());
         assert_eq!(mgr.model_default_reasoning_effort("plain"), None);
     }
 

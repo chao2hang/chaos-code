@@ -1298,7 +1298,11 @@ impl AgentView {
         if total_tokens > 0 {
             status.push(
                 "total_tokens",
-                crate::views::agent_status::total_tokens_line(total_tokens, &theme),
+                crate::views::agent_status::total_tokens_line(
+                    total_tokens,
+                    self.hit_total_tokens.hovered,
+                    &theme,
+                ),
             );
         }
         let running = self.session.current_prompt_id.as_deref();
@@ -1335,6 +1339,7 @@ impl AgentView {
         self.hit_bg_status.rect = areas.get("bg_tasks").copied();
         self.hit_goal_status.rect = areas.get("goal").copied();
         self.hit_context.rect = areas.get("context").copied();
+        self.hit_total_tokens.rect = areas.get("total_tokens").copied();
         self.hit_credits.rect = areas.get("credits").copied();
         self.hit_plan_button.rect = areas.get("计划").copied();
         self.hit_queue_badge.rect = areas.get("queue").copied();
@@ -4138,6 +4143,17 @@ impl AgentView {
                 self.hit_goal_close.hovered,
             );
             self.hit_goal_close.rect = close_rect;
+            self.frame_occluder_rects.push(overlay_rect);
+        }
+        if let Some(ref usage) = self.usage_detail {
+            let overlay_rect = crate::views::usage_detail::usage_detail_area(area, usage);
+            let close_rect = crate::views::usage_detail::render_usage_detail(
+                buf,
+                overlay_rect,
+                usage,
+                self.hit_usage_close.hovered,
+            );
+            self.hit_usage_close.rect = close_rect;
             self.frame_occluder_rects.push(overlay_rect);
         }
         if self.show_workflows {

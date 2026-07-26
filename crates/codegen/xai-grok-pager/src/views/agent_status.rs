@@ -18,7 +18,7 @@ use std::collections::HashMap;
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::Style;
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
 use super::context_bar::SEPARATOR;
@@ -299,8 +299,18 @@ pub fn goal_status_line(
 /// Format: `Token 12.5k` — the label is fixed-width and the count uses the
 /// same compact formatter as the context bar so the chip stays small in the
 /// already-crowded top-right corner.
-pub fn total_tokens_line(total_tokens: u64, theme: &Theme) -> Line<'static> {
-    let style = Style::default().fg(theme.gray_dim).bg(theme.bg_base);
+///
+/// The chip is clickable (opens the token-usage detail overlay), so `hovered`
+/// brightens it the same way the other clickable chips signal affordance.
+pub fn total_tokens_line(total_tokens: u64, hovered: bool, theme: &Theme) -> Line<'static> {
+    let style = if hovered {
+        Style::default()
+            .fg(theme.text_primary)
+            .bg(theme.bg_base)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(theme.gray_dim).bg(theme.bg_base)
+    };
     Line::from(vec![
         Span::styled("Token ", style),
         Span::styled(crate::views::context_bar::fmt_tokens(total_tokens), style),
@@ -923,11 +933,11 @@ mod tests {
     #[test]
     fn total_tokens_line_formats_compact_counts() {
         let theme = Theme::current();
-        let line = total_tokens_line(12_345, &theme);
+        let line = total_tokens_line(12_345, false, &theme);
         let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
         assert_eq!(text, "Token 12K");
 
-        let line = total_tokens_line(1_234, &theme);
+        let line = total_tokens_line(1_234, false, &theme);
         let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
         assert_eq!(text, "Token 1.2K");
     }
@@ -935,10 +945,22 @@ mod tests {
     #[test]
     fn total_tokens_line_uses_dim_style() {
         let theme = Theme::groknight();
-        let line = total_tokens_line(500, &theme);
+        let line = total_tokens_line(500, false, &theme);
         for span in &line.spans {
             assert_eq!(span.style.fg, Some(theme.gray_dim));
             assert_eq!(span.style.bg, Some(theme.bg_base));
+        }
+    }
+
+    /// The chip is clickable, so hover must signal the affordance — same
+    /// brighten-and-bold treatment the other clickable chips use.
+    #[test]
+    fn total_tokens_line_brightens_on_hover() {
+        let theme = Theme::groknight();
+        let line = total_tokens_line(500, true, &theme);
+        for span in &line.spans {
+            assert_eq!(span.style.fg, Some(theme.text_primary));
+            assert!(span.style.add_modifier.contains(Modifier::BOLD));
         }
     }
 }

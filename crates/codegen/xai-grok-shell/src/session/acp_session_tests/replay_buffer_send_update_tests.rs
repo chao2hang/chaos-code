@@ -103,6 +103,9 @@ pub(super) async fn make_replay_send_update_fixture() -> ReplaySendUpdateFixture
         compactions_remaining: std::cell::Cell::new(None),
         compaction_at_tokens: std::cell::Cell::new(None),
         doom_loop_recovery: None,
+        tool_overrides: std::cell::RefCell::new(None),
+        resolved_tool_overrides: std::sync::Arc::new(arc_swap::ArcSwapOption::empty()),
+        prefix_carries_fallback_date: std::cell::Cell::new(false),
         incomplete_end_turn_retry: Default::default(),
         doom_loop_turn_tally: Default::default(),
         file_state_tracker: Arc::new(FileStateTracker::new()),
@@ -112,7 +115,7 @@ pub(super) async fn make_replay_send_update_fixture() -> ReplaySendUpdateFixture
         compaction: crate::session::compaction_config::CompactionConfig {
             threshold_percent: std::cell::Cell::new(85),
             force_compact: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
-            context_window_override: std::cell::Cell::new(None),
+            context_window_override: None,
             count: std::sync::atomic::AtomicU64::new(0),
             auto_compact_suppressed: std::sync::atomic::AtomicU8::new(0),
             previous_model: std::cell::Cell::new(None),

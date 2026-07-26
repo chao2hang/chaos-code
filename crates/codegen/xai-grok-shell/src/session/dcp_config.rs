@@ -90,13 +90,13 @@ pub struct DcpConfig {
     /// 每隔多少轮触发一次提醒层提醒。
     #[serde(default = "default_nudge_frequency")]
     pub nudge_frequency: usize,
-    /// 是否强制注入提醒（忽略去重检查）。
+    /// 是否强制注入提醒（忽略轮次限流检查）。
     #[serde(default)]
     pub nudge_force: bool,
     /// 是否启用自动策略（去重 + 错误清除）。
     #[serde(default = "default_true")]
     pub strategies_enabled: bool,
-    /// 错误结果经过多少轮后可被清除策略移除。
+    /// 错误结果之后经过多少个会话条目才可被清除策略移除（近似轮次）。
     #[serde(default = "default_purge_errors_turns")]
     pub purge_errors_turns: usize,
     /// 受保护内容配置。

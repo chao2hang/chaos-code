@@ -510,6 +510,11 @@ impl AgentView {
         if self.show_goal_detail {
             return;
         }
+        // The usage overlay is sized to its content and never scrolls; swallow
+        // the wheel so it can't scroll the scrollback behind it.
+        if self.usage_detail.is_some() {
+            return;
+        }
         if let Some(ref mut modal) = self.active_modal {
             use crate::views::modal::ActiveModal;
             match modal {

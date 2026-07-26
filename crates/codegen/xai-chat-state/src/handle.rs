@@ -226,7 +226,7 @@ impl ChatStateHandle {
             }
         })
         .await
-        .unwrap_or_else(|| {
+        .unwrap_or({
             Err(
                 xai_grok_compaction::selective::SelectiveError::InvalidRange {
                     start: 0,
