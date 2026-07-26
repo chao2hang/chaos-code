@@ -182,10 +182,7 @@ impl SessionEvent {
                 // Older shells don't send tokens_before — keep the legacy format.
                 let body = match tokens_before {
                     Some(before) if *before > 0 => {
-                        format!(
-                            "上下文已压缩：{} → {after} tokens",
-                            format_tokens(*before)
-                        )
+                        format!("上下文已压缩：{} → {after} tokens", format_tokens(*before))
                     }
                     _ => format!("上下文已压缩 → {after} tokens"),
                 };
@@ -206,8 +203,7 @@ impl SessionEvent {
             SessionEvent::CompactionCancelled => "压缩已取消。".to_string(),
             SessionEvent::RetryFailed { error, error_type } => {
                 if error_type.as_deref() == Some("encrypted_content_mismatch") {
-                    "此会话的对话历史与当前模型不兼容。请开始新会话。"
-                        .to_string()
+                    "此会话的对话历史与当前模型不兼容。请开始新会话。".to_string()
                 } else {
                     format!("重试失败：{error}")
                 }
@@ -250,10 +246,7 @@ impl SessionEvent {
                 format!("记忆已保存（{trigger}） \u{2192} {short_path}  \u{00b7}  用 /memory 查看")
             }
             SessionEvent::GoalCompleted { elapsed } => {
-                format!(
-                    "目标完成 \u{2014} 端到端 {}。",
-                    format_duration(*elapsed)
-                )
+                format!("目标完成 \u{2014} 端到端 {}。", format_duration(*elapsed))
             }
             SessionEvent::Recap { summary, auto: _ } => {
                 // Always "回顾 —" (manual `/recap` and auto return-from-away).
@@ -787,7 +780,10 @@ mod tests {
             msg.contains("api_key/env_key") && msg.contains("base_url"),
             "must point at provider credentials and endpoint: {msg}"
         );
-        assert!(!msg.contains("/login"), "removed login command must not be suggested");
+        assert!(
+            !msg.contains("/login"),
+            "removed login command must not be suggested"
+        );
     }
 
     #[test]
@@ -1200,10 +1196,7 @@ mod tests {
             "only the marker text span is selectable: {:?}",
             out.lines[0].selectable
         );
-        assert_eq!(
-            out.lines[0].selection_text.as_deref(),
-            Some("耗时 5.0s")
-        );
+        assert_eq!(out.lines[0].selection_text.as_deref(), Some("耗时 5.0s"));
     }
 
     #[test]

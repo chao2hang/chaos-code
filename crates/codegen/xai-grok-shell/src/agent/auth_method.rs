@@ -367,8 +367,7 @@ pub const PREFERRED_API_KEY_UNAVAILABLE: &str =
     "未配置 Provider API Key；请设置模型或 model_providers 的 api_key/env_key。";
 
 /// Error when `preferred_method=oidc` but the session path cannot proceed.
-pub const PREFERRED_OIDC_UNAVAILABLE: &str =
-    "Chaos 不支持 OIDC 登录；请改用 Provider API Key。";
+pub const PREFERRED_OIDC_UNAVAILABLE: &str = "Chaos 不支持 OIDC 登录；请改用 Provider API Key。";
 
 pub const XAI_API_KEY_METHOD_ID: &str = "xai.api_key";
 pub fn xai_api_key_auth_method() -> acp::AuthMethod {

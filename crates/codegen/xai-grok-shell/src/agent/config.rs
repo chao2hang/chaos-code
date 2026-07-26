@@ -4120,9 +4120,7 @@ impl ConfigModelOverride {
         } else if !entry.info.supports_reasoning_effort
             && matches!(
                 entry.info.api_backend,
-                ApiBackend::Messages
-                    | ApiBackend::ChatCompletions
-                    | ApiBackend::Responses
+                ApiBackend::Messages | ApiBackend::ChatCompletions | ApiBackend::Responses
             )
         {
             // Issue #14：之前只对 `messages` (Anthropic) 后端自动默认

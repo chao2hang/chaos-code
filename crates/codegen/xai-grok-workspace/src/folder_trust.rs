@@ -328,8 +328,7 @@ fn collect_repo_config_kinds(cwd: &Path, first_only: bool) -> Vec<&'static str> 
         }
     }
     // Project `.chaos/lsp.json` or legacy `.grok/lsp.json`.
-    if cwd.join(".chaos").join("lsp.json").is_file()
-        || cwd.join(".grok").join("lsp.json").is_file()
+    if cwd.join(".chaos").join("lsp.json").is_file() || cwd.join(".grok").join("lsp.json").is_file()
     {
         hit!("lsp");
     }

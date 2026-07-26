@@ -40,10 +40,10 @@ fn contextual_hints_group_sub_sheet_flow() {
         .expect("group row present");
     assert!(
         !s.rows.iter().any(|r| matches!(
-            r,
-            RowEntry::Setting { key, .. }
-if key.starts_with("contextual_hints.")
-        )),
+                    r,
+                    RowEntry::Setting { key, .. }
+        if key.starts_with("contextual_hints.")
+                )),
         "child rows must be hidden from the top-level list",
     );
 
@@ -4193,7 +4193,6 @@ fn rendered_row_no_phantom(buf: &Buffer, y: u16, width: u16) -> String {
     buf_row_text(buf, y, 0, width)
 }
 
-
 /// Find the absolute column index where `needle` begins on row
 /// `y` of `buf`, scanning from `x_start` to `x_end - 1`. Walks
 /// cells one at a time and compares each cell's symbol so the
@@ -5040,8 +5039,7 @@ fn footer_total_height_grows_when_hints_wrap() {
     // also fire if both renders had the same wrap count OR the
     // narrow case wrapped further, which would be a silent test
     // bug).
-    let narrow_first_hint =
-        find_row_y(&buf_narrow, narrow_area, "输入筛选").expect("first hint");
+    let narrow_first_hint = find_row_y(&buf_narrow, narrow_area, "输入筛选").expect("first hint");
     let narrow_last_hint = find_row_y(&buf_narrow, narrow_area, "Esc 清除").expect("last hint");
     assert_eq!(
         narrow_last_hint,
@@ -6579,7 +6577,11 @@ fn max_thoughts_width_preview_title_is_bold_italic_lowercase() {
     let cell = buf
         .cell((area.x, preview_y))
         .expect("preview title cell at column 0");
-    assert_eq!(cell.symbol(), "预", "expected first CJK glyph of 预览 at title column 0");
+    assert_eq!(
+        cell.symbol(),
+        "预",
+        "expected first CJK glyph of 预览 at title column 0"
+    );
     assert!(
         cell.modifier.contains(Modifier::BOLD),
         "title cell must carry Modifier::BOLD; got {:?}",
@@ -6904,7 +6906,11 @@ fn clamped_preview_renders_note_below_content() {
     let cell = buf
         .cell((area.x, note_y))
         .expect("note cell at column 0 must exist");
-    assert_eq!(cell.symbol(), "说", "expected first CJK glyph of 说明 at note column 0");
+    assert_eq!(
+        cell.symbol(),
+        "说",
+        "expected first CJK glyph of 说明 at note column 0"
+    );
     assert_eq!(
         cell.fg, theme.text_secondary,
         "note fg must be theme.text_secondary; got {:?}",

@@ -21,7 +21,11 @@ pub fn deduplication_strategy(entries: &[StrategyEntry], topic: &str) -> Vec<Com
 
     for entry in entries {
         match &entry.kind {
-            StrategyEntryKind::ToolCall { id, name, arguments } => {
+            StrategyEntryKind::ToolCall {
+                id,
+                name,
+                arguments,
+            } => {
                 call_positions
                     .entry((name.clone(), arguments.clone()))
                     .or_default()

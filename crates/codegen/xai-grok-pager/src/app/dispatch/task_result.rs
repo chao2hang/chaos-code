@@ -591,8 +591,7 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
                 deliver_doctor_message(
                     app,
                     target.agent_id,
-                    "此修复已取消，因为会话已变更。请重新运行 `/doctor fix`。"
-                        .to_owned(),
+                    "此修复已取消，因为会话已变更。请重新运行 `/doctor fix`。".to_owned(),
                 );
                 return vec![];
             };

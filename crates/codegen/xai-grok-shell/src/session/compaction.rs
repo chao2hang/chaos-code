@@ -2332,7 +2332,9 @@ mod inline_auto_compact_flow_tests {
                 tool_choice: crate::util::config::CompactionToolChoice::Auto,
                 prefire: crate::session::compaction_config::PrefireState::default(),
                 prefix_released: std::sync::atomic::AtomicBool::new(false),
-                strategy: std::cell::Cell::new(crate::session::dcp_config::CompactionStrategy::default()),
+                strategy: std::cell::Cell::new(
+                    crate::session::dcp_config::CompactionStrategy::default(),
+                ),
                 dcp: crate::session::dcp_config::DcpConfig::default(),
                 dcp_runtime: crate::session::dcp_config::DcpRuntimeState::default(),
             },

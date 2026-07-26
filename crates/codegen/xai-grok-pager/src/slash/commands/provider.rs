@@ -75,8 +75,7 @@ pub(crate) fn load_config() -> Result<toml_edit::DocumentMut, String> {
     if !path.exists() {
         return Ok(toml_edit::DocumentMut::new());
     }
-    let content = fs::read_to_string(&path)
-        .map_err(|e| format!("读取配置文件失败: {e}"))?;
+    let content = fs::read_to_string(&path).map_err(|e| format!("读取配置文件失败: {e}"))?;
     content
         .parse::<toml_edit::DocumentMut>()
         .map_err(|e| format!("解析配置文件失败: {e}"))
@@ -86,11 +85,9 @@ pub(crate) fn load_config() -> Result<toml_edit::DocumentMut, String> {
 pub(crate) fn save_config(doc: &toml_edit::DocumentMut) -> Result<(), String> {
     let path = config_path();
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("创建配置目录失败: {e}"))?;
+        fs::create_dir_all(parent).map_err(|e| format!("创建配置目录失败: {e}"))?;
     }
-    fs::write(&path, doc.to_string())
-        .map_err(|e| format!("写入配置文件失败: {e}"))
+    fs::write(&path, doc.to_string()).map_err(|e| format!("写入配置文件失败: {e}"))
 }
 
 /// 从配置中获取所有渠道名称
@@ -134,7 +131,11 @@ pub(crate) fn needs_provider_setup() -> bool {
 }
 
 /// 获取渠道的某个字段值
-pub(crate) fn provider_field(doc: &toml_edit::DocumentMut, provider: &str, field: &str) -> Option<String> {
+pub(crate) fn provider_field(
+    doc: &toml_edit::DocumentMut,
+    provider: &str,
+    field: &str,
+) -> Option<String> {
     doc.get("model_providers")
         .and_then(|v| v.as_table())
         .and_then(|t| t.get(provider))
@@ -453,12 +454,7 @@ pub(crate) fn delete_provider(name: &str) -> Result<DeleteProviderOutcome, Strin
         models
             .get("default")
             .and_then(|v| v.as_str())
-            .map(|default| {
-                outcome
-                    .removed_model_keys
-                    .iter()
-                    .any(|k| k == default)
-            })
+            .map(|default| outcome.removed_model_keys.iter().any(|k| k == default))
             .unwrap_or(false)
     } else {
         false
@@ -512,7 +508,9 @@ fn sync_anthropic_version_header(
 }
 
 fn ensure_anthropic_version_header(table: &mut toml_edit::Table) {
-    let headers = table.entry("extra_headers").or_insert_with(toml_edit::table);
+    let headers = table
+        .entry("extra_headers")
+        .or_insert_with(toml_edit::table);
     let Some(headers) = headers.as_table_mut() else {
         // Malformed non-table — replace with a clean headers table.
         let mut new_headers = toml_edit::Table::new();
@@ -569,7 +567,9 @@ pub(crate) fn register_and_set_model(provider: &str, model_id: &str) -> Result<S
         meta: ReasoningMeta::default(),
     };
     let keys = register_provider_models(provider, std::slice::from_ref(&entry), Some(model_id))?;
-    keys.into_iter().next().ok_or_else(|| "注册模型失败：空结果".into())
+    keys.into_iter()
+        .next()
+        .ok_or_else(|| "注册模型失败：空结果".into())
 }
 
 /// 将渠道拉取到的模型批量写入 `[model."provider/id"]`，供 `/model` 与会话 catalog 使用。
@@ -864,7 +864,8 @@ pub(crate) fn register_model_with_params(
     }
 
     ensure_model_table(&mut doc);
-    let catalog_key = upsert_provider_model_entry(&mut doc, provider, model_id, &ReasoningMeta::default());
+    let catalog_key =
+        upsert_provider_model_entry(&mut doc, provider, model_id, &ReasoningMeta::default());
     let entry = doc["model"][catalog_key.as_str()]
         .as_table_mut()
         .expect("model entry is table");
@@ -927,7 +928,6 @@ pub(crate) fn current_provider_name(doc: &toml_edit::DocumentMut) -> Option<Stri
                 .map(|s| s.to_string())
         })
 }
-
 
 /// 获取渠道可用模型列表（含 reasoning 元数据）。供 `views/provider_modal` 调用。
 ///
@@ -1159,11 +1159,7 @@ mod delete_provider_tests {
             .iter()
             .filter_map(|(k, _)| {
                 let s = k.to_string();
-                if s.starts_with("foo/") {
-                    Some(s)
-                } else {
-                    None
-                }
+                if s.starts_with("foo/") { Some(s) } else { None }
             })
             .collect();
         assert_eq!(foo_models.len(), 2, "test fixture sanity");
@@ -1175,11 +1171,7 @@ mod delete_provider_tests {
                 .iter()
                 .filter_map(|(k, _)| {
                     let s = k.to_string();
-                    if s.starts_with("foo/") {
-                        Some(s)
-                    } else {
-                        None
-                    }
+                    if s.starts_with("foo/") { Some(s) } else { None }
                 })
                 .collect();
             for k in &to_remove {
@@ -1199,11 +1191,7 @@ mod delete_provider_tests {
     #[test]
     fn delete_clears_default_when_pointing_to_removed_model() {
         let mut doc = make_doc();
-        assert_eq!(
-            doc["models"]["default"].as_str(),
-            Some("foo/a"),
-            "fixture"
-        );
+        assert_eq!(doc["models"]["default"].as_str(), Some("foo/a"), "fixture");
         // 模拟 delete 流程：先收集要删的 key
         let removed_keys: Vec<String> = {
             let models = doc["model"].as_table_mut().unwrap();
@@ -1211,11 +1199,7 @@ mod delete_provider_tests {
                 .iter()
                 .filter_map(|(k, _)| {
                     let s = k.to_string();
-                    if s.starts_with("foo/") {
-                        Some(s)
-                    } else {
-                        None
-                    }
+                    if s.starts_with("foo/") { Some(s) } else { None }
                 })
                 .collect();
             for k in &to_remove {
@@ -1250,11 +1234,7 @@ mod delete_provider_tests {
                 .iter()
                 .filter_map(|(k, _)| {
                     let s = k.to_string();
-                    if s.starts_with("foo/") {
-                        Some(s)
-                    } else {
-                        None
-                    }
+                    if s.starts_with("foo/") { Some(s) } else { None }
                 })
                 .collect();
             for k in &to_remove {
@@ -1338,14 +1318,20 @@ mod parse_models_response_tests {
     fn accepts_bare_array_envelope() {
         let body = r#"[{"id":"a"},{"id":"b"}]"#;
         let entries = parse_models_response(body).expect("parse ok");
-        assert_eq!(entries.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(), vec!["a", "b"]);
+        assert_eq!(
+            entries.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(),
+            vec!["a", "b"]
+        );
     }
 
     #[test]
     fn accepts_models_envelope() {
         let body = r#"{"models":["a","b"]}"#;
         let entries = parse_models_response(body).expect("parse ok");
-        assert_eq!(entries.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(), vec!["a", "b"]);
+        assert_eq!(
+            entries.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(),
+            vec!["a", "b"]
+        );
     }
 
     #[test]
@@ -1358,20 +1344,26 @@ mod parse_models_response_tests {
     #[test]
     fn reasoning_meta_is_meaningful_only_with_real_values() {
         assert!(!ReasoningMeta::default().is_meaningful());
-        assert!(ReasoningMeta {
-            reasoning_efforts: vec!["low".into()],
-            ..Default::default()
-        }
-        .is_meaningful());
-        assert!(ReasoningMeta {
-            reasoning_effort: Some("high".into()),
-            ..Default::default()
-        }
-        .is_meaningful());
-        assert!(ReasoningMeta {
-            supports_reasoning_effort: true,
-            ..Default::default()
-        }
-        .is_meaningful());
+        assert!(
+            ReasoningMeta {
+                reasoning_efforts: vec!["low".into()],
+                ..Default::default()
+            }
+            .is_meaningful()
+        );
+        assert!(
+            ReasoningMeta {
+                reasoning_effort: Some("high".into()),
+                ..Default::default()
+            }
+            .is_meaningful()
+        );
+        assert!(
+            ReasoningMeta {
+                supports_reasoning_effort: true,
+                ..Default::default()
+            }
+            .is_meaningful()
+        );
     }
 }

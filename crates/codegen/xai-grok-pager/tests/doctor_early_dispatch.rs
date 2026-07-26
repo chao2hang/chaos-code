@@ -439,10 +439,7 @@ fn doctor_tmux_fix_yes_writes_only_actual_home_tmux_config() {
         stdout.contains("已在") && stdout.contains("添加 `set -g set-clipboard on`"),
         "{stdout}"
     );
-    assert!(
-        stdout.contains("请用 `tmux source-file"),
-        "{stdout}"
-    );
+    assert!(stdout.contains("请用 `tmux source-file"), "{stdout}");
     assert!(
         stdout.contains("请再次运行 /doctor 以验证生效设置"),
         "{stdout}"
@@ -535,10 +532,7 @@ fn doctor_fix_safety_boundaries_are_process_isolated() {
     );
     assert_eq!(output.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&output.stdout).contains("修复：terminal.ssh-wrap"));
-    assert!(
-        String::from_utf8_lossy(&output.stderr)
-            .contains("未确认无法应用此修复")
-    );
+    assert!(String::from_utf8_lossy(&output.stderr).contains("未确认无法应用此修复"));
     assert!(!conflict.exists());
 
     let output = run_pager(
@@ -550,9 +544,7 @@ fn doctor_fix_safety_boundaries_are_process_isolated() {
         &[("SSH_CONNECTION", "1 2 3 4")],
     );
     assert_eq!(output.status.code(), Some(1));
-    assert!(
-        String::from_utf8_lossy(&output.stderr).contains("请在本地电脑运行此修复")
-    );
+    assert!(String::from_utf8_lossy(&output.stderr).contains("请在本地电脑运行此修复"));
     assert!(!conflict.exists());
 }
 

@@ -821,7 +821,10 @@ async fn replace_conversation_persists_and_emits_reset() {
     let records = h.drain_persistence();
     assert_eq!(records.len(), 2);
     assert!(matches!(&records[0], PersistenceRecord::ReplaceHistory(_)));
-    assert!(matches!(&records[1], PersistenceRecord::SelectiveCompaction(_)));
+    assert!(matches!(
+        &records[1],
+        PersistenceRecord::SelectiveCompaction(_)
+    ));
 }
 
 #[tokio::test]

@@ -50,6 +50,7 @@ pub(super) fn refresh_context_used(view: &mut AgentView, used: u64) {
 pub(super) fn confirm_context_used(view: &mut AgentView, used: u64) {
     refresh_context_used(view, used);
     view.session.note_context_used(used);
+    view.max_total_tokens_seen = view.max_total_tokens_seen.max(used);
 }
 /// Replay gate shared by the ACP and xAI session-update paths. Returns `true`
 /// when the update must be dropped.

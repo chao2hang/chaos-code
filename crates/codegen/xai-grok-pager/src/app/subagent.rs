@@ -1031,10 +1031,7 @@ mod tests {
     #[test]
     fn activity_label_responding() {
         use crate::acp::tracker::TurnActivity;
-        assert_eq!(
-            format_activity_label(&TurnActivity::Responding),
-            "回复中",
-        );
+        assert_eq!(format_activity_label(&TurnActivity::Responding), "回复中",);
     }
     #[test]
     fn activity_label_auto_compacting() {

@@ -30,6 +30,7 @@ impl AgentView {
             self.last_seen_event_id = None;
             self.last_applied_event_seq = None;
             self.last_applied_xai_event_seq = None;
+            self.max_total_tokens_seen = 0;
             self.clear_minimal_btw_lifecycle();
         }
         self.session.session_id = Some(session_id);
@@ -39,6 +40,18 @@ impl AgentView {
         if self.session.session_id.take().is_some() {
             self.clear_minimal_btw_lifecycle();
         }
+    }
+    /// Maximum `totalTokens` seen for this session plus all tracked subagent
+    /// sessions (recursively, so sub-subagents are included).
+    ///
+    /// Uses saturating arithmetic because the displayed value is a UI hint;
+    /// wrapping on implausibly large counts would be worse than clamping.
+    pub(crate) fn total_tokens_with_subagents(&self) -> u64 {
+        let mut total = self.max_total_tokens_seen;
+        for child in self.subagent_views.values() {
+            total = total.saturating_add(child.total_tokens_with_subagents());
+        }
+        total
     }
     /// Record a prompt id this client originated (sent to the agent as the turn
     /// driver). Used by the ACP gate to keep `attached_as_viewer` per-turn
@@ -111,6 +124,7 @@ impl AgentView {
             modal_buttons: Vec::new(),
             modal_hovered_key: None,
             context_state: None,
+            max_total_tokens_seen: 0,
             chat_kind: false,
             app_chat_mode: false,
             credit_balance: None,
@@ -971,6 +985,52 @@ mod resolve_turn_activity_tests {
         view.session.state = AgentState::TurnRunning;
         view
     }
+
+    #[test]
+    fn bind_session_id_resets_max_total_tokens() {
+        let mut view = test_agent_view(Some("s1"), std::path::PathBuf::from("/tmp"));
+        view.max_total_tokens_seen = 99_999;
+        view.bind_session_id(agent_client_protocol::SessionId::new("s2"));
+        assert_eq!(view.max_total_tokens_seen, 0);
+    }
+
+    #[test]
+    fn bind_session_id_keeps_max_total_tokens_for_same_session() {
+        let mut view = test_agent_view(Some("s1"), std::path::PathBuf::from("/tmp"));
+        view.max_total_tokens_seen = 99_999;
+        view.bind_session_id(agent_client_protocol::SessionId::new("s1"));
+        assert_eq!(view.max_total_tokens_seen, 99_999);
+    }
+
+    #[test]
+    fn total_tokens_with_subagents_sums_children() {
+        let mut parent = test_agent_view(Some("parent"), std::path::PathBuf::from("/tmp"));
+        parent.max_total_tokens_seen = 1_000;
+        let mut child = test_agent_view(Some("child"), std::path::PathBuf::from("/tmp"));
+        child.max_total_tokens_seen = 2_500;
+        parent
+            .subagent_views
+            .insert("child".into(), Box::new(child));
+        assert_eq!(parent.total_tokens_with_subagents(), 3_500);
+    }
+
+    #[test]
+    fn total_tokens_with_subagents_sums_nested_subagents() {
+        let mut parent = test_agent_view(Some("parent"), std::path::PathBuf::from("/tmp"));
+        parent.max_total_tokens_seen = 1_000;
+        let mut child = test_agent_view(Some("child"), std::path::PathBuf::from("/tmp"));
+        child.max_total_tokens_seen = 2_000;
+        let mut grandchild = test_agent_view(Some("grandchild"), std::path::PathBuf::from("/tmp"));
+        grandchild.max_total_tokens_seen = 500;
+        child
+            .subagent_views
+            .insert("grandchild".into(), Box::new(grandchild));
+        parent
+            .subagent_views
+            .insert("child".into(), Box::new(child));
+        assert_eq!(parent.total_tokens_with_subagents(), 3_500);
+    }
+
     #[test]
     fn idle_turn_has_no_activity() {
         let view = test_agent_view(Some("s1"), std::path::PathBuf::from("/tmp"));

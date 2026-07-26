@@ -420,9 +420,7 @@ async fn run_workspace_mgmt(args: WorkspaceMgmtArgs) -> Result<()> {
     match workspace_command_gate(env_override, remote_settings.as_ref()) {
         WorkspaceGate::Enabled => {}
         WorkspaceGate::Disabled => {
-            anyhow::bail!(
-                "`chaos workspace` 未对本账号启用（服务端功能开关当前为关闭）。"
-            )
+            anyhow::bail!("`chaos workspace` 未对本账号启用（服务端功能开关当前为关闭）。")
         }
         WorkspaceGate::Unknown => {
             anyhow::bail!(

@@ -3889,6 +3889,23 @@ impl AppView {
             }
             return;
         }
+        // Sync the AppView's cached terminal height with the real backend size before
+        // each draw. The height cached at startup (or carried from a resize event) can
+        // drift from the actual terminal size on some terminals / multiplexers, and a
+        // stale value causes auto-compact and related layout decisions to be wrong.
+        let _ = terminal.autoresize();
+        if let Ok(size) = terminal.size() {
+            let screen_rows = size.height;
+            if self.last_known_terminal_rows != screen_rows {
+                tracing::info!(
+                    old_rows = self.last_known_terminal_rows,
+                    new_rows = screen_rows,
+                    "syncing terminal height before draw"
+                );
+                self.last_known_terminal_rows = screen_rows;
+                self.apply_effective_compact();
+            }
+        }
         if self.welcome_on_auth_url
             && !matches!(
                 (&self.active_view, &self.auth_state),

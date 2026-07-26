@@ -534,11 +534,9 @@ fn fix_preview_contains_exact_change_and_caveats() {
     let preview = String::from_utf8(preview).unwrap();
     assert_eq!(preview, crate::diagnostics::format_fix_preview(&plan));
     assert!(preview.contains("文件："));
-    assert!(
-        preview.contains(
-            "# >>> chaos doctor >>>\n# >>> terminal.ssh-wrap >>>\nalias ssh='chaos wrap ssh'"
-        )
-    );
+    assert!(preview.contains(
+        "# >>> chaos doctor >>>\n# >>> terminal.ssh-wrap >>>\nalias ssh='chaos wrap ssh'"
+    ));
     assert!(preview.contains("若只想临时使用且不改配置：`chaos wrap ssh <host>`"));
     assert!(preview.contains("使用 `command ssh ...` 可绕过别名。"));
     assert!(preview.contains("ssh -f"));
@@ -600,11 +598,7 @@ fn non_tty_without_yes_fails_safely_before_write() {
         plan,
     )
     .unwrap_err();
-    assert!(
-        error
-            .to_string()
-            .contains("未确认无法应用此修复")
-    );
+    assert!(error.to_string().contains("未确认无法应用此修复"));
     assert!(!temp.path().join(".bashrc").exists());
 }
 

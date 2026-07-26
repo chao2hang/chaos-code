@@ -607,8 +607,14 @@ impl LocalTerminalActor {
         #[cfg(not(unix))]
         let login_env: Option<&HashMap<String, String>> = None;
 
-        let (child, process_group) =
-            spawn_shell_command(command, cwd, env, login_env, self.search_shadows, self.shell_env_policy.as_ref())?;
+        let (child, process_group) = spawn_shell_command(
+            command,
+            cwd,
+            env,
+            login_env,
+            self.search_shadows,
+            self.shell_env_policy.as_ref(),
+        )?;
         Ok(SpawnResult {
             child,
             process_group,
@@ -2148,7 +2154,14 @@ impl LocalTerminalBackend {
     /// If `memory_config` is provided, a cgroupv2 memory limit is enforced on
     /// all spawned commands (Linux only; silently degrades to no-op elsewhere).
     pub fn new() -> Self {
-        Self::new_inner(None, false, false, true, SearchShadowConfig::default(), None)
+        Self::new_inner(
+            None,
+            false,
+            false,
+            true,
+            SearchShadowConfig::default(),
+            None,
+        )
     }
 
     /// Create a new LocalTerminalBackend with persistent shell state.
@@ -2956,7 +2969,6 @@ async fn capture_login_env() -> HashMap<String, String> {
     }
 }
 
-
 /// Layer login-shell captured vars (except `PATH`) onto `cmd`, dropping those the
 /// active policy filters out and those already set in grok's own environment.
 #[cfg(unix)]
@@ -3251,7 +3263,6 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(25)).await;
         }
     }
-
 
     #[test]
     fn layer_request_env_drops_names_the_policy_excludes() {

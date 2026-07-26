@@ -42,8 +42,8 @@ pub mod new;
 pub mod personas;
 pub mod plan;
 pub mod plugin;
-pub mod provider;
 pub mod privacy;
+pub mod provider;
 pub mod queue;
 pub mod recap;
 pub mod release_notes;
@@ -81,7 +81,6 @@ pub fn builtin_commands() -> Vec<Arc<dyn SlashCommand>> {
         Arc::new(docs::DocsCommand),
         Arc::new(home::HomeCommand),
         Arc::new(new::NewCommand),
-        
         Arc::new(fork::ForkCommand),
         Arc::new(compact::CompactCommand),
         Arc::new(copy::CopyCommand),
@@ -121,7 +120,6 @@ pub fn builtin_commands() -> Vec<Arc<dyn SlashCommand>> {
         Arc::new(workflows::WorkflowsCommand),
         Arc::new(btw::BtwCommand),
         Arc::new(recap::RecapCommand),
-        
         Arc::new(doctor::DoctorCommand),
         Arc::new(tutorial::TutorialCommand),
         Arc::new(voice::VoiceCommand),

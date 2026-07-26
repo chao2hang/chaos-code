@@ -372,9 +372,7 @@ impl SubagentSpawnContext {
         )
     }
     /// 子代理压缩策略，镜像 `Config::resolve_compaction_strategy`。
-    pub fn resolve_compaction_strategy(
-        &self,
-    ) -> crate::session::dcp_config::CompactionStrategy {
+    pub fn resolve_compaction_strategy(&self) -> crate::session::dcp_config::CompactionStrategy {
         self.agent_config
             .as_ref()
             .and_then(|c| c.compaction.strategy)

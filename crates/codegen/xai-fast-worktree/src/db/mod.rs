@@ -396,8 +396,7 @@ pub fn resolve_grok_home() -> Result<PathBuf> {
         return Ok(PathBuf::from(v));
     }
     let home = PathBuf::from(
-        std::env::var("HOME")
-            .context("neither $CHAOS_HOME, $GROK_HOME, nor $HOME is set")?,
+        std::env::var("HOME").context("neither $CHAOS_HOME, $GROK_HOME, nor $HOME is set")?,
     );
     // Canonicalize the home dir so worktree paths share the same physical
     // config tree as trust/hooks even when it is symlinked. Dunce

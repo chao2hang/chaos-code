@@ -137,9 +137,9 @@ pub(super) fn open_doctor_fix_question(
         return;
     };
     if agent.question_view.is_some() {
-        agent.scrollback.push_block(RenderBlock::system(
-            "请先关闭当前问题，再应用此修复。",
-        ));
+        agent
+            .scrollback
+            .push_block(RenderBlock::system("请先关闭当前问题，再应用此修复。"));
         return;
     }
     let preview = crate::diagnostics::format_fix_preview(&plan);

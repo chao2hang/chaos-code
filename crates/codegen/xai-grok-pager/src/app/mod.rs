@@ -678,6 +678,17 @@ pub async fn run(
         writer_sync,
         cursor_blink,
     )?;
+    let init_size = terminal.size().unwrap_or(ratatui::layout::Size {
+        width: 0,
+        height: 0,
+    });
+    tracing::info!(
+        cols = init_size.width,
+        rows = init_size.height,
+        viewport = ?terminal.viewport_area(),
+        ?screen_mode,
+        "terminal initialized"
+    );
     MINIMAL_SHOW_SWITCH_BACK_TO_FULLSCREEN.store(
         relaunched_into_minimal && screen_mode.is_minimal(),
         Ordering::Release,
@@ -1172,6 +1183,15 @@ fn init_terminal(
             } else {
                 rows
             };
+            // Full-height inline mode stands in for the alternate screen; the inline
+            // viewport probe uses the current cursor position to compute its y offset.
+            // Pin the cursor to the last row first so an unstable cursor right after
+            // raw-mode setup cannot place the whole UI off-screen.
+            if !want_minimal {
+                xai_grok_shell::util::with_locked_stderr(|stderr| {
+                    execute!(stderr, cursor::MoveTo(0, rows.saturating_sub(1)))
+                })?;
+            }
             let probe_backend = CrosstermBackend::new(
                 crate::render::draw::TermWriter::new(frame_tx.clone(), writer_sync.clone())
                     .map_err(io::Error::other)?,

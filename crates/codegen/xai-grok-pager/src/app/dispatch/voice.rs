@@ -59,7 +59,9 @@ fn open_voice_tier_upsell(app: &mut AppView) -> Vec<Effect> {
         ActiveView::AgentDashboard => {
             if let Some(d) = app.dashboard.as_mut() {
                 // Chaos is BYOK: no SuperGrok upgrade URL.
-                d.set_error_toast("/voice 当前不可用 — 请配置支持语音的 Provider，或使用 /provider");
+                d.set_error_toast(
+                    "/voice 当前不可用 — 请配置支持语音的 Provider，或使用 /provider",
+                );
             }
         }
         _ => {}

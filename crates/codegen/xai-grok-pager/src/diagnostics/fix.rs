@@ -619,10 +619,7 @@ pub(crate) fn format_fix_preview(plan: &FixPlan) -> String {
             output.push_str(
                 "\n改动说明：\n  在新的交互式 shell 中，`ssh ...` 会以 `chaos wrap ssh ...` 运行。\n",
             );
-            let _ = writeln!(
-                output,
-                "  若只想临时使用且不改配置：`{SSH_WRAP_ONE_OFF}`。"
-            );
+            let _ = writeln!(output, "  若只想临时使用且不改配置：`{SSH_WRAP_ONE_OFF}`。");
         }
         FixPayload::TmuxOption(payload) => {
             let instruction = reload_instruction(&plan.change.requested_path);

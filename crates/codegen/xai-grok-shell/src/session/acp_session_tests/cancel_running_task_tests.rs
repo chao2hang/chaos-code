@@ -163,9 +163,9 @@ async fn persist_ack_waits_for_disk_flush_before_success() {
                     tool_choice: crate::util::config::CompactionToolChoice::Auto,
                     prefire: crate::session::compaction_config::PrefireState::default(),
                     prefix_released: std::sync::atomic::AtomicBool::new(false),
-            strategy: Default::default(),
-            dcp: Default::default(),
-            dcp_runtime: Default::default(),
+                    strategy: Default::default(),
+                    dcp: Default::default(),
+                    dcp_runtime: Default::default(),
                 },
                 memory: crate::session::memory_state::SessionMemory {
                     flush_config: crate::config::MemoryFlushConfig::default(),
@@ -625,9 +625,9 @@ async fn first_turn_memory_injection_disabled_does_not_persist_to_chat_history()
                     tool_choice: crate::util::config::CompactionToolChoice::Auto,
                     prefire: crate::session::compaction_config::PrefireState::default(),
                     prefix_released: std::sync::atomic::AtomicBool::new(false),
-            strategy: Default::default(),
-            dcp: Default::default(),
-            dcp_runtime: Default::default(),
+                    strategy: Default::default(),
+                    dcp: Default::default(),
+                    dcp_runtime: Default::default(),
                 },
                 memory: crate::session::memory_state::SessionMemory {
                     flush_config: crate::config::MemoryFlushConfig::default(),
@@ -2362,11 +2362,11 @@ async fn skill_reminder_deferred_while_turn_running_flushed_when_idle() {
             .iter()
             .filter(|item| {
                 matches!(
-                    item, ConversationItem::User(u) if u.content.iter().any(| p |
-                    matches!(p, xai_grok_sampling_types::ContentPart::Text { text }
-if
-                    text.contains("pdf-tools")))
-                )
+                                    item, ConversationItem::User(u) if u.content.iter().any(| p |
+                                    matches!(p, xai_grok_sampling_types::ContentPart::Text { text }
+                if
+                                    text.contains("pdf-tools")))
+                                )
             })
             .count()
     }

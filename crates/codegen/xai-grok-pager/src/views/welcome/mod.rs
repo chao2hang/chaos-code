@@ -765,10 +765,7 @@ pub fn render_welcome(
             let (menu_rects, post_flush_escapes) = render_welcome_blocked(
                 content_area,
                 buf,
-                Some((
-                    "Chaos 暂不可用于此账户。",
-                    theme.gray_bright,
-                )),
+                Some(("Chaos 暂不可用于此账户。", theme.gray_bright)),
                 &menu,
                 params.selected,
                 None,
@@ -2910,10 +2907,7 @@ mod tests {
                     let mut line = String::new();
                     let mut x = 0u16;
                     while x < area.width {
-                        let symbol = buf
-                            .cell((x, y))
-                            .map(|c| c.symbol())
-                            .unwrap_or(" ");
+                        let symbol = buf.cell((x, y)).map(|c| c.symbol()).unwrap_or(" ");
                         line.push_str(symbol);
                         x = x.saturating_add(UnicodeWidthStr::width(symbol).max(1) as u16);
                     }

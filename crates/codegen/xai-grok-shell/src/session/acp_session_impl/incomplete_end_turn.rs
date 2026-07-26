@@ -191,7 +191,10 @@ pub(crate) fn last_assistant_text_from_conversation(
             continue;
         }
         // Prefer pure Assistant text; skip reasoning-only siblings already handled by role.
-        if matches!(item, ConversationItem::Reasoning(_) | ConversationItem::BackendToolCall(_)) {
+        if matches!(
+            item,
+            ConversationItem::Reasoning(_) | ConversationItem::BackendToolCall(_)
+        ) {
             continue;
         }
         let text = item.text_content();
@@ -226,28 +229,15 @@ mod tests {
     fn disabled_never_retries() {
         let tools = vec!["grep".into()];
         assert!(
-            should_retry_incomplete_end_turn(&input(
-                &tools,
-                "接下来把说明改成中文",
-                false,
-                0,
-                1
-            ))
-            .is_none()
+            should_retry_incomplete_end_turn(&input(&tools, "接下来把说明改成中文", false, 0, 1))
+                .is_none()
         );
     }
 
     #[test]
     fn no_tools_never_retries() {
         assert!(
-            should_retry_incomplete_end_turn(&input(
-                &[],
-                "接下来改代码",
-                true,
-                0,
-                1
-            ))
-            .is_none()
+            should_retry_incomplete_end_turn(&input(&[], "接下来改代码", true, 0, 1)).is_none()
         );
     }
 
@@ -255,20 +245,18 @@ mod tests {
     fn write_tool_blocks_retry() {
         let tools = vec!["grep".into(), "search_replace".into()];
         assert!(
-            should_retry_incomplete_end_turn(&input(
-                &tools,
-                "接下来再检查一下",
-                true,
-                0,
-                1
-            ))
-            .is_none()
+            should_retry_incomplete_end_turn(&input(&tools, "接下来再检查一下", true, 0, 1))
+                .is_none()
         );
     }
 
     #[test]
     fn issue6_chinese_intent_retries() {
-        let tools = vec!["grep".into(), "read_file".into(), "run_terminal_command".into()];
+        let tools = vec![
+            "grep".into(),
+            "read_file".into(),
+            "run_terminal_command".into(),
+        ];
         let reason = should_retry_incomplete_end_turn(&input(
             &tools,
             "把 `/doctor` 的 slash 说明和补全文案改成中文，与其它命令一致。",
@@ -326,14 +314,8 @@ mod tests {
         // completion marker "已完成" suppresses it.
         let tools = vec!["grep".into()];
         assert!(
-            should_retry_incomplete_end_turn(&input(
-                &tools,
-                "接下来我已完成所有修改",
-                true,
-                0,
-                1
-            ))
-            .is_none()
+            should_retry_incomplete_end_turn(&input(&tools, "接下来我已完成所有修改", true, 0, 1))
+                .is_none()
         );
         // English completion marker suppresses "I'll" intent.
         assert!(
@@ -351,13 +333,8 @@ mod tests {
     #[test]
     fn short_after_multiple_tools_retries() {
         let tools = vec!["grep".into(), "read_file".into()];
-        let reason = should_retry_incomplete_end_turn(&input(
-            &tools,
-            "好的，准备动手。",
-            true,
-            0,
-            1,
-        ));
+        let reason =
+            should_retry_incomplete_end_turn(&input(&tools, "好的，准备动手。", true, 0, 1));
         assert_eq!(reason, Some(IncompleteEndTurnReason::ShortAfterTools));
     }
 
@@ -365,14 +342,8 @@ mod tests {
     fn max_retries_respected() {
         let tools = vec!["grep".into()];
         assert!(
-            should_retry_incomplete_end_turn(&input(
-                &tools,
-                "Let me fix it.",
-                true,
-                1,
-                1
-            ))
-            .is_none()
+            should_retry_incomplete_end_turn(&input(&tools, "Let me fix it.", true, 1, 1))
+                .is_none()
         );
     }
 

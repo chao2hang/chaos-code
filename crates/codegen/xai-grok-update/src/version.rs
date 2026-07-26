@@ -26,12 +26,10 @@ const GH_RELEASE_API_LIST: &str =
 /// Primary CLI base URL: GitHub Releases for Chaos updates.
 /// Note: these are not GCS channel-pointer URLs; `internal` installer is
 /// retained for tests / legacy, while production defaults to `gh-release`.
-pub(crate) const CLI_BASE_URL_PRIMARY: &str =
-    "https://github.com/chao2hang/chaos-code/releases";
+pub(crate) const CLI_BASE_URL_PRIMARY: &str = "https://github.com/chao2hang/chaos-code/releases";
 
 /// Fallback CLI base URL: same as primary (single source for now).
-pub(crate) const CLI_BASE_URL_FALLBACK: &str =
-    "https://github.com/chao2hang/chaos-code/releases";
+pub(crate) const CLI_BASE_URL_FALLBACK: &str = "https://github.com/chao2hang/chaos-code/releases";
 
 /// CLI base URLs in preference order. Callers (channel-pointer fetch, binary
 /// download, in-app updater) try each in turn and stop at the first success.
@@ -200,7 +198,11 @@ pub async fn fetch_gh_release_version(channel: &str) -> Result<String> {
 }
 
 fn tag_to_version(tag: &str) -> Option<String> {
-    let version = tag.trim().strip_prefix('v').unwrap_or(tag.trim()).to_string();
+    let version = tag
+        .trim()
+        .strip_prefix('v')
+        .unwrap_or(tag.trim())
+        .to_string();
     if version.is_empty() || semver::Version::parse(&version).is_err() {
         return None;
     }
@@ -231,8 +233,7 @@ async fn fetch_gh_release_latest_http(stable_only: bool) -> Result<String> {
             .get("tag_name")
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("releases/latest missing tag_name"))?;
-        return tag_to_version(tag)
-            .ok_or_else(|| anyhow::anyhow!("invalid release tag: {tag}"));
+        return tag_to_version(tag).ok_or_else(|| anyhow::anyhow!("invalid release tag: {tag}"));
     }
 
     // Include prereleases: walk recent releases, pick highest semver.
@@ -298,9 +299,7 @@ pub fn gh_release_asset_name(os: &str, arch: &str) -> Result<String> {
 /// Direct HTTPS URL for a release asset (follows GitHub CDN redirects).
 pub fn gh_release_asset_url(version: &str, asset_name: &str) -> String {
     let version = version.strip_prefix('v').unwrap_or(version);
-    format!(
-        "{GH_RELEASE_DOWNLOAD_BASE}/v{version}/{asset_name}"
-    )
+    format!("{GH_RELEASE_DOWNLOAD_BASE}/v{version}/{asset_name}")
 }
 
 /// Fetch the latest version from a public CLI channel pointer.

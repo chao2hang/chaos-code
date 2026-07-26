@@ -1684,7 +1684,9 @@ mod tests {
     fn name_ambiguous_error_lists_candidates_and_pin_hint() {
         let err = MarketplaceInstallError::NameAmbiguous {
             name: "sentry".into(),
-            candidates: vec!["Official Marketplace (pin: sentry@xai-org/plugin-marketplace)".into()],
+            candidates: vec![
+                "Official Marketplace (pin: sentry@xai-org/plugin-marketplace)".into(),
+            ],
         };
         let msg = err.to_string();
         assert!(

@@ -126,7 +126,9 @@ mod tests {
         std::fs::write(project.join(".chaos/config.toml"), "# chaos\n").unwrap();
         let found = find_project_configs(&project);
         assert_eq!(found.len(), 2);
-        assert!(found[0].ends_with(".grok/config.toml") || found[0].ends_with(".grok\\config.toml"));
+        assert!(
+            found[0].ends_with(".grok/config.toml") || found[0].ends_with(".grok\\config.toml")
+        );
         assert!(
             found[1].ends_with(".chaos/config.toml") || found[1].ends_with(".chaos\\config.toml")
         );

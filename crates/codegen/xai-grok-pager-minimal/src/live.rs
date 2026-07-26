@@ -952,31 +952,19 @@ mod tests {
             !compact(&text).contains("计划"),
             "normal shows no flag: {text:?}"
         );
-        assert!(
-            !compact(&text).contains("总是批准"),
-            "normal: {text:?}"
-        );
+        assert!(!compact(&text).contains("总是批准"), "normal: {text:?}");
         minimal_api::set_plan_mode_pending(&mut a, Some(true));
         let text = render(&a);
-        assert!(
-            compact(&text).contains("计划"),
-            "plan flag: {text:?}"
-        );
+        assert!(compact(&text).contains("计划"), "plan flag: {text:?}");
         minimal_api::set_plan_mode_pending(&mut a, None);
         minimal_api::set_plan_mode_active(&mut a, false);
         minimal_api::set_yolo_mode_for_test(&mut a.session, true);
         minimal_api::set_auto_mode_for_test(&mut a.session, true);
         let text = render(&a);
-        assert!(
-            compact(&text).contains("总是批准"),
-            "yolo flag: {text:?}"
-        );
+        assert!(compact(&text).contains("总是批准"), "yolo flag: {text:?}");
         minimal_api::set_yolo_mode_for_test(&mut a.session, false);
         let text = render(&a);
-        assert!(
-            compact(&text).contains("自动"),
-            "auto flag: {text:?}"
-        );
+        assert!(compact(&text).contains("自动"), "auto flag: {text:?}");
     }
     #[test]
     fn pending_hint_formats_press_again() {

@@ -31,7 +31,11 @@ pub fn purge_errors_strategy(
 
     let mut ranges = Vec::new();
     for entry in entries {
-        let StrategyEntryKind::ToolResult { call_id, is_error: true } = &entry.kind else {
+        let StrategyEntryKind::ToolResult {
+            call_id,
+            is_error: true,
+        } = &entry.kind
+        else {
             continue;
         };
         let result_index = entry.index;
@@ -44,10 +48,7 @@ pub fn purge_errors_strategy(
         // 统计结果之后的用户轮次（Other 条目中由宿主标记为用户消息的）。
         // 宿主通过在 entries 中将用户消息标记为 Other 来参与计数；
         // 此处用 result_index 之后的条目数作为近似轮次间隔。
-        let turns_after = entries
-            .iter()
-            .filter(|e| e.index > result_index)
-            .count();
+        let turns_after = entries.iter().filter(|e| e.index > result_index).count();
         if turns_after < min_turns_after {
             continue;
         }
@@ -135,10 +136,7 @@ mod tests {
 
     #[test]
     fn recent_error_not_purged() {
-        let entries = vec![
-            tool_call(0, "a", "write"),
-            tool_result(1, "a", true),
-        ];
+        let entries = vec![tool_call(0, "a", "write"), tool_result(1, "a", true)];
         let ranges = purge_errors_strategy(&entries, 5, "错误清除");
         assert!(ranges.is_empty());
     }
@@ -161,10 +159,7 @@ mod tests {
 
     #[test]
     fn zero_min_turns_returns_empty() {
-        let entries = vec![
-            tool_call(0, "a", "write"),
-            tool_result(1, "a", true),
-        ];
+        let entries = vec![tool_call(0, "a", "write"), tool_result(1, "a", true)];
         let ranges = purge_errors_strategy(&entries, 0, "错误清除");
         assert!(ranges.is_empty());
     }

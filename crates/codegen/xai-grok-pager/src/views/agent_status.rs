@@ -294,6 +294,19 @@ pub fn goal_status_line(
 // MCP connecting indicator
 // ---------------------------------------------------------------------------
 
+/// Build a compact accumulated-token chip for the agent status bar.
+///
+/// Format: `Token 12.5k` — the label is fixed-width and the count uses the
+/// same compact formatter as the context bar so the chip stays small in the
+/// already-crowded top-right corner.
+pub fn total_tokens_line(total_tokens: u64, theme: &Theme) -> Line<'static> {
+    let style = Style::default().fg(theme.gray_dim).bg(theme.bg_base);
+    Line::from(vec![
+        Span::styled("Token ", style),
+        Span::styled(crate::views::context_bar::fmt_tokens(total_tokens), style),
+    ])
+}
+
 /// Build the compact MCP-connecting indicator for the agent status bar.
 ///
 /// Format: `⠋ MCP (1/4)` — a braille spinner (driven by `tick`, same cadence as
@@ -905,5 +918,27 @@ mod tests {
         let row: String = (0..area.width).map(|x| buf[(x, 0)].symbol()).collect();
         assert_eq!(row.trim(), "XX");
         assert!(!row.contains(SEPARATOR));
+    }
+
+    #[test]
+    fn total_tokens_line_formats_compact_counts() {
+        let theme = Theme::current();
+        let line = total_tokens_line(12_345, &theme);
+        let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(text, "Token 12K");
+
+        let line = total_tokens_line(1_234, &theme);
+        let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(text, "Token 1.2K");
+    }
+
+    #[test]
+    fn total_tokens_line_uses_dim_style() {
+        let theme = Theme::groknight();
+        let line = total_tokens_line(500, &theme);
+        for span in &line.spans {
+            assert_eq!(span.style.fg, Some(theme.gray_dim));
+            assert_eq!(span.style.bg, Some(theme.bg_base));
+        }
     }
 }

@@ -580,7 +580,9 @@ fn runtime_findings_merge_before_single_formatter_orders_issues_before_recommend
         },
     );
 
-    let issue = output.find("因未识别终端，Chaos 正使用终端响铃作为通知").unwrap();
+    let issue = output
+        .find("因未识别终端，Chaos 正使用终端响铃作为通知")
+        .unwrap();
     let recommendation = output.find("建议").unwrap();
     assert!(issue < recommendation);
     assert!(!output.contains("未发现问题。"));

@@ -173,9 +173,7 @@ pub(super) fn format(report: &DiagnosticReport) -> String {
     let issues = report.issue_count();
     let recommendations = report.recommendation_count();
     out.push('\n');
-    out.push_str(&format!(
-        "{issues} 个问题，{recommendations} 条建议\n"
-    ));
+    out.push_str(&format!("{issues} 个问题，{recommendations} 条建议\n"));
     out
 }
 
@@ -227,9 +225,7 @@ fn format_newline(newline: &NewlineFact) -> String {
         NewlineFact::Vte {
             version: Some(version),
         } => format!("VTE {version}；Shift+Enter 需 >= 8200"),
-        NewlineFact::Vte { version: None } => {
-            "旧版 VTE；Shift+Enter 需 VTE >= 0.82".to_owned()
-        }
+        NewlineFact::Vte { version: None } => "旧版 VTE；Shift+Enter 需 VTE >= 0.82".to_owned(),
         NewlineFact::XtermJs { terminal } => {
             format!("{terminal}：xterm.js 无法区分 Shift+Enter")
         }

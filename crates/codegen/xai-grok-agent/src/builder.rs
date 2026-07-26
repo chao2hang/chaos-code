@@ -205,7 +205,7 @@ impl AgentBuilder {
             fs_backend: Arc::new(xai_grok_tools::computer::local::LocalFs),
             notification_handle,
             owner_session_id: None,
-                    parent_scheduler_handle: None,
+            parent_scheduler_handle: None,
             definition: None,
             persona_summaries: Vec::new(),
             prompt_audience: crate::prompt::context::PromptAudience::Primary,

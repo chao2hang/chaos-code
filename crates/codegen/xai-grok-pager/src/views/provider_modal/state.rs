@@ -511,17 +511,20 @@ impl ProviderModalState {
                         )
                         .unwrap_or_default();
                         let auth_scheme = crate::slash::commands::provider::provider_field(
-                            &doc, name, "auth_scheme",
+                            &doc,
+                            name,
+                            "auth_scheme",
                         )
                         .unwrap_or_default();
                         let api_backend = crate::slash::commands::provider::provider_field(
-                            &doc, name, "api_backend",
+                            &doc,
+                            name,
+                            "api_backend",
                         )
                         .unwrap_or_default();
-                        let has_key = crate::slash::commands::provider::provider_field(
-                            &doc, name, "api_key",
-                        )
-                        .is_some();
+                        let has_key =
+                            crate::slash::commands::provider::provider_field(&doc, name, "api_key")
+                                .is_some();
                         let is_current = current_provider.as_deref() == Some(name.as_str());
                         ProviderSummary {
                             name: name.clone(),
@@ -737,20 +740,12 @@ impl ProviderModalState {
         self.name = name.to_string();
         self.base_url = crate::slash::commands::provider::provider_field(&doc, name, "base_url")
             .unwrap_or_default();
-        let auth =
-            crate::slash::commands::provider::provider_field(&doc, name, "auth_scheme")
-                .unwrap_or_else(|| "bearer".into());
-        self.auth_scheme_idx = AUTH_SCHEMES
-            .iter()
-            .position(|&s| s == auth)
-            .unwrap_or(0);
-        let backend =
-            crate::slash::commands::provider::provider_field(&doc, name, "api_backend")
-                .unwrap_or_else(|| "chat_completions".into());
-        self.api_backend_idx = API_BACKENDS
-            .iter()
-            .position(|&s| s == backend)
-            .unwrap_or(1);
+        let auth = crate::slash::commands::provider::provider_field(&doc, name, "auth_scheme")
+            .unwrap_or_else(|| "bearer".into());
+        self.auth_scheme_idx = AUTH_SCHEMES.iter().position(|&s| s == auth).unwrap_or(0);
+        let backend = crate::slash::commands::provider::provider_field(&doc, name, "api_backend")
+            .unwrap_or_else(|| "chat_completions".into());
+        self.api_backend_idx = API_BACKENDS.iter().position(|&s| s == backend).unwrap_or(1);
         self.edit_had_key =
             crate::slash::commands::provider::provider_field(&doc, name, "api_key").is_some();
         self.current_step = FormStep::BaseUrl;
@@ -844,9 +839,7 @@ impl ProviderModalState {
                     )
                 };
                 if outcome.cleared_default {
-                    self.success = Some(format!(
-                        "{msg}。默认模型已被清空，请用 /model 重新选择。"
-                    ));
+                    self.success = Some(format!("{msg}。默认模型已被清空，请用 /model 重新选择。"));
                 } else {
                     self.success = Some(msg);
                 }
