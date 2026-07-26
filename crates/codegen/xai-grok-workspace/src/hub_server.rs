@@ -580,6 +580,9 @@ impl WorkspaceRpcHandler {
                 );
                 Ok(Value::Array(plugins))
             }
+            <ExportGithubReq as WorkspaceRpc>::METHOD => {
+                dispatch_op::<ExportGithubReq>(params, &self.workspace, None).await
+            }
             <HookRegistryReq as WorkspaceRpc>::METHOD => {
                 dispatch_op::<HookRegistryReq>(params, &self.workspace, None).await
             }

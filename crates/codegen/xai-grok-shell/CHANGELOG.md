@@ -21,6 +21,28 @@
 
 - **上游同步**：path-limited 移植上游批次 13–16（changelogs 0.2.110/0.2.111、terminal exit/output recorder、task coordinator stack、hooks/journal/gate preflight）；`SOURCE_REV` bump 至 `9b8d35b`。
 
+# 0.2.112 — 2026-07-24
+
+> 回填条目：0.2.112 的代码此前已并入本 fork，但未补更新日志。
+> 「导出到 GitHub」在 2026-07-26 的上游同步中才完成移植。
+
+## Features
+
+- **导出到 GitHub**：新增 `workspace.export_github` RPC，可把工作区项目目录推送到 GitHub 仓库（自动初始化 git、创建分支与提交）。
+- **`tool_overrides` 配置**：可为内置搜索工具设置日期截止与域名白名单。
+- **自定义 provider 增强**：`model_providers` 支持 `query_params` 与 `env_http_headers`。
+- **新增 `/tutorial`**、hooks 可写在 `config.toml`、工作流覆盖层实时进度与失败恢复。
+
+## Bug Fixes
+
+- 后台 shell 命令上报真实退出码；文件附件在恢复/重放时正确显示；插件子 Agent 与父会话看到相同 MCP 工具；Linux 并发启动挂起修复。
+
+完整条目见 [`changelogs/0.2.112.md`](changelogs/0.2.112.md)。
+
+## Internal
+
+- **上游同步**：对齐上游 `47348d13`（`SOURCE_REV` `d02693a8`）。移植 `export_github`（types + workspace op + hub_server 路由 + client 方法）与 `util/limits.rs`。上游在同一批次中下线了 `deploy`，本 fork 保留 `DeployError` 并与 `ExportGithub` 并存。
+
 # 0.2.111 — 2026-07-22
 
 ## Features
