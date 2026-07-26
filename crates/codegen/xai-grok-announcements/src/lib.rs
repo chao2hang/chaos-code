@@ -308,7 +308,10 @@ mod tests {
         .unwrap();
         let cta = full.cta.as_ref().expect("cta present");
         assert_eq!(cta.label.as_deref(), Some("升级"));
-        assert_eq!(cta.url.as_deref(), Some("https://github.com/chaos-code/chaos"));
+        assert_eq!(
+            cta.url.as_deref(),
+            Some("https://github.com/chaos-code/chaos")
+        );
         assert_eq!(cta.caption.as_deref(), Some("按 Ctrl+O"));
 
         let partial: RemoteAnnouncement =

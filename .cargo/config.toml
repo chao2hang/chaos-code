@@ -34,8 +34,14 @@ rustflags = [
 [target.x86_64-unknown-linux-gnu]
 rustflags = ["-C", "force-unwind-tables=yes"]
 
+# PORTABILITY: keep this at `generic`. `neoverse-v2` is ARMv9-A and enables
+# sve/sve2/bf16/i8mm, which SIGILL on the hardware most users actually run:
+# Graviton2/3 and Ampere Altra (Neoverse N1), Raspberry Pi, and Docker Desktop
+# on Apple Silicon. Release binaries for this target ship as `chaos-linux-arm64`,
+# and the CI smoke test runs on a runner new enough to hide the fault.
+# Matches the `aarch64-unknown-linux-musl` block below.
 [target.aarch64-unknown-linux-gnu]
-rustflags = ["-C", "target-cpu=neoverse-v2", "-C", "force-unwind-tables=yes"]
+rustflags = ["-C", "target-cpu=generic", "-C", "force-unwind-tables=yes"]
 
 [target.x86_64-unknown-linux-musl]
 rustflags = [

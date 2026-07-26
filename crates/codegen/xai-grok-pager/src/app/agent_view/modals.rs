@@ -2920,7 +2920,6 @@ mod editor_paste_routing_tests {
     }
 }
 
-
 #[cfg(test)]
 mod extensions_modal_confirmation_tests {
     use crate::app::actions::Action;

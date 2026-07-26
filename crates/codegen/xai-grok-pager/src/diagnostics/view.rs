@@ -473,8 +473,10 @@ fn newline_finding(facts: &DiagnosticFacts) -> Option<DiagnosticFinding> {
                     "请使用 Alt+Enter 插入换行。此终端报告 VTE {version}。\
                      升级到 VTE 0.82 或更高版本后可使用 Shift+Enter。"
                 ),
-                None => "请使用 Alt+Enter 插入换行。升级到 VTE 0.82 或更高版本后可使用 Shift+Enter。"
-                    .to_owned(),
+                None => {
+                    "请使用 Alt+Enter 插入换行。升级到 VTE 0.82 或更高版本后可使用 Shift+Enter。"
+                        .to_owned()
+                }
             },
         ),
         NewlineFact::XtermJs { terminal } => (
@@ -485,8 +487,7 @@ fn newline_finding(facts: &DiagnosticFacts) -> Option<DiagnosticFinding> {
         ),
         NewlineFact::NoKittyKeyboardProtocol => (
             "因键盘协议不可用，Shift+Enter 无法插入换行",
-            "请使用 Alt+Enter 插入换行。若终端支持 Kitty 键盘协议，请启用后重启 Chaos。"
-                .to_owned(),
+            "请使用 Alt+Enter 插入换行。若终端支持 Kitty 键盘协议，请启用后重启 Chaos。".to_owned(),
         ),
     };
     Some(manual_finding(

@@ -9,12 +9,9 @@ use xai_grok_compaction::strategies::{StrategyEntry, StrategyEntryKind};
 pub(super) const COMPRESS_TOOL_NAME: &str = "compress";
 const DCP_NUDGE_MARKER: &str = "[chaos-dcp]";
 
-const NUDGE_EMERGENCY: &str =
-    "⚠️ 上下文即将耗尽，请立即使用 compress 工具压缩对话历史。";
-const NUDGE_REMINDER: &str =
-    "💡 上下文使用率较高，建议使用 compress 工具压缩不再需要的内容。";
-const NUDGE_ITERATION: &str =
-    "📝 已进行多轮对话，考虑使用 compress 工具压缩历史以保持性能。";
+const NUDGE_EMERGENCY: &str = "⚠️ 上下文即将耗尽，请立即使用 compress 工具压缩对话历史。";
+const NUDGE_REMINDER: &str = "💡 上下文使用率较高，建议使用 compress 工具压缩不再需要的内容。";
+const NUDGE_ITERATION: &str = "📝 已进行多轮对话，考虑使用 compress 工具压缩历史以保持性能。";
 
 #[derive(Debug, Deserialize)]
 struct CompressArgs {
@@ -237,7 +234,11 @@ fn compute_protected_indices(
     }
 
     let recent_start = real_user_indices
-        .get(real_user_indices.len().saturating_sub(config.turn_protection))
+        .get(
+            real_user_indices
+                .len()
+                .saturating_sub(config.turn_protection),
+        )
         .copied()
         .unwrap_or(conversation.len());
     for index in recent_start..conversation.len() {
@@ -363,7 +364,11 @@ impl SessionActor {
             })
             .collect();
         let recent_start = real_users
-            .get(real_users.len().saturating_sub(config.protected.turn_protection))
+            .get(
+                real_users
+                    .len()
+                    .saturating_sub(config.protected.turn_protection),
+            )
             .copied()
             .unwrap_or(conversation.len());
 
@@ -421,8 +426,7 @@ impl SessionActor {
         if ranges.is_empty() {
             return;
         }
-        let protected =
-            compute_protected_indices(conversation, &config.protected);
+        let protected = compute_protected_indices(conversation, &config.protected);
         let _ = self
             .chat_state_handle
             .apply_selective_compression(ranges, protected)
@@ -481,10 +485,7 @@ impl SessionActor {
                     .handle_tool_not_executed(
                         &call.id,
                         &tool_call_id,
-                        format!(
-                            "compress 区间起始边界无法解析：{:?}",
-                            range.start
-                        ),
+                        format!("compress 区间起始边界无法解析：{:?}", range.start),
                     )
                     .await;
             };
@@ -493,10 +494,7 @@ impl SessionActor {
                     .handle_tool_not_executed(
                         &call.id,
                         &tool_call_id,
-                        format!(
-                            "compress 区间结束边界无法解析：{:?}",
-                            range.end
-                        ),
+                        format!("compress 区间结束边界无法解析：{:?}", range.end),
                     )
                     .await;
             };
@@ -510,10 +508,7 @@ impl SessionActor {
             });
         }
 
-        let protected = compute_protected_indices(
-            &conversation,
-            &self.compaction.dcp.protected,
-        );
+        let protected = compute_protected_indices(&conversation, &self.compaction.dcp.protected);
         let result = self
             .chat_state_handle
             .apply_selective_compression(ranges, protected)

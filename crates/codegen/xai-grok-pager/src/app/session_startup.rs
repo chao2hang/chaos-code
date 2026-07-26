@@ -700,9 +700,7 @@ async fn restore_session_from_remote(
     use xai_grok_shell::session::restore::restore_session_with_storage;
     let deployment_key = agent_config.endpoints.deployment_key.clone();
     if deployment_key.is_none() {
-        anyhow::bail!(
-            "远程会话恢复需要显式 deployment_key；Chaos 不读取第三方登录缓存。"
-        );
+        anyhow::bail!("远程会话恢复需要显式 deployment_key；Chaos 不读取第三方登录缓存。");
     }
     let registry_client =
         SessionRegistryClient::new(agent_config.endpoints.proxy_url(), String::new())

@@ -17,6 +17,20 @@
                 .map(|c| c.used),
             Some(12_345),
         );
+        assert_eq!(
+            app.agents.get(&AgentId(0)).unwrap().max_total_tokens_seen,
+            12_345,
+        );
+    }
+
+    #[test]
+    fn max_total_tokens_seen_never_regresses() {
+        let mut app = make_app_with_agent("sess-1");
+
+        let _ = handle(make_token_notification_message("sess-1", 12_345), &mut app);
+        let _ = handle(make_token_notification_message("sess-1", 5_000), &mut app);
+
+        assert_eq!(app.agents.get(&AgentId(0)).unwrap().max_total_tokens_seen, 12_345);
     }
 
     #[test]

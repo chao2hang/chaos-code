@@ -13,11 +13,11 @@ use ratatui::widgets::Widget;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::theme::Theme;
-use crate::views::modal_window::{self as mw, ModalWindowConfig, ModalSizing};
+use crate::views::modal_window::{self as mw, ModalSizing, ModalWindowConfig};
 
 use super::state::{
-    API_BACKENDS, AUTH_SCHEMES, FormStep, ModelParamField, ProviderAction, ProviderModalMode,
-    ProviderModalState, PROVIDER_PRESETS,
+    API_BACKENDS, AUTH_SCHEMES, FormStep, ModelParamField, PROVIDER_PRESETS, ProviderAction,
+    ProviderModalMode, ProviderModalState,
 };
 
 /// Same footprint as the settings modal: ~70% width, max 110 cols.
@@ -56,7 +56,14 @@ fn list_row_bg(theme: &Theme, selected: bool) -> Color {
 
 /// Paint a selectable list row with full-width bg + bold primary text.
 /// Selection is the band, not a `▸` glyph (matches import-claude / picker).
-fn paint_list_row(buf: &mut Buffer, area: Rect, y: u16, selected: bool, theme: &Theme, spans: Vec<Span<'_>>) {
+fn paint_list_row(
+    buf: &mut Buffer,
+    area: Rect,
+    y: u16,
+    selected: bool,
+    theme: &Theme,
+    spans: Vec<Span<'_>>,
+) {
     let bg = list_row_bg(theme, selected);
     let row = Rect {
         x: area.x,
@@ -210,7 +217,10 @@ fn render_add_form(buf: &mut Buffer, area: Rect, state: &ProviderModalState, the
                         format!("  {}", p.display),
                         Style::default().fg(theme.text_primary),
                     ),
-                    Span::styled(format!("  ({})", p.base_url), Style::default().fg(theme.gray_dim)),
+                    Span::styled(
+                        format!("  ({})", p.base_url),
+                        Style::default().fg(theme.gray_dim),
+                    ),
                 ],
             );
             y += 1;
@@ -561,10 +571,7 @@ fn render_manual_model(
             y += 1;
         }
         if y < content.y + content.height {
-            let hint = Line::from(Span::styled(
-                "可选参数（留空=不写入，使用默认）",
-                dim_style,
-            ));
+            let hint = Line::from(Span::styled("可选参数（留空=不写入，使用默认）", dim_style));
             hint.render(Rect::new(content.x, y, content.width, 1), buf);
             y += 1;
         }
@@ -752,7 +759,11 @@ fn render_model_param_form(
         };
         let prefix = format!("{}: ", field.label());
         let prefix_w = prefix.width() as u16;
-        let val_style = if raw.is_empty() { dim_style } else { value_style };
+        let val_style = if raw.is_empty() {
+            dim_style
+        } else {
+            value_style
+        };
         let line = Line::from(vec![
             Span::styled(prefix, lbl),
             Span::styled(display.clone(), val_style),
@@ -1000,10 +1011,7 @@ fn render_list_content(buf: &mut Buffer, area: Rect, state: &ProviderModalState,
             selected,
             theme,
             vec![
-                Span::styled(
-                    "  + 添加渠道",
-                    Style::default().fg(theme.text_primary),
-                ),
+                Span::styled("  + 添加渠道", Style::default().fg(theme.text_primary)),
                 Span::styled("  (a)", Style::default().fg(theme.gray_dim)),
             ],
         );
@@ -1438,10 +1446,7 @@ fn render_model_list_body(
                 catalog_total
             )
         };
-        let line = Line::from(Span::styled(
-            status,
-            Style::default().fg(theme.gray_dim),
-        ));
+        let line = Line::from(Span::styled(status, Style::default().fg(theme.gray_dim)));
         line.render(Rect::new(content.x, y, content.width, 1), buf);
     }
 }

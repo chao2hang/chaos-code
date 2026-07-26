@@ -803,8 +803,7 @@ impl EditToolCallBlock {
     }
 
     pub fn with_prefix(mut self, prefix: &'static str) -> Self {
-        self.prefix = if self.display_name.is_some()
-            && (prefix == "Creating " || prefix == "创建 ")
+        self.prefix = if self.display_name.is_some() && (prefix == "Creating " || prefix == "创建 ")
         {
             "创建工作流 "
         } else if prefix == "Creating " {

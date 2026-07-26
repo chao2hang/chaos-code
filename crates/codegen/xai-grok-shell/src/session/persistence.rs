@@ -636,7 +636,9 @@ fn is_uniquely_persisted_session_id(session_id: &str, sessions_root: &Path) -> b
     collect_persisted_cwds_for_id(session_id, sessions_root).len() == 1
 }
 
-fn storage_view(sessions_root: &Path) -> crate::session::storage::relocation::Result<RelocationView> {
+fn storage_view(
+    sessions_root: &Path,
+) -> crate::session::storage::relocation::Result<RelocationView> {
     RelocationView::load_for_sessions_root(sessions_root)
 }
 
@@ -725,7 +727,9 @@ pub(crate) fn find_summary_by_session_id_in_root(
     read_summary_from_dir(&path).ok()
 }
 
-fn read_summary_from_dir(session_dir: &Path) -> crate::session::storage::relocation::Result<Summary> {
+fn read_summary_from_dir(
+    session_dir: &Path,
+) -> crate::session::storage::relocation::Result<Summary> {
     let path = session_dir.join("summary.json");
     let bytes = std::fs::read(&path).map_err(|error| RelocationError::Io {
         operation: "read",

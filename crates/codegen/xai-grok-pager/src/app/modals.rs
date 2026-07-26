@@ -2455,8 +2455,9 @@ impl AgentView {
                         Some(&overlay),
                     );
                 }
-            } else if let modal::ActiveModal::ProviderModal { state: provider_state } =
-                active_modal
+            } else if let modal::ActiveModal::ProviderModal {
+                state: provider_state,
+            } = active_modal
             {
                 crate::views::provider_modal::render_provider_modal(
                     buf,

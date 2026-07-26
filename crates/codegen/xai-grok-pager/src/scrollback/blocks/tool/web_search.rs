@@ -111,11 +111,7 @@ impl WebSearchToolCallBlock {
             theme.fg(theme.command)
         };
 
-        let prefix = self
-            .label
-            .as_deref()
-            .unwrap_or("网页搜索 ")
-            .to_owned();
+        let prefix = self.label.as_deref().unwrap_or("网页搜索 ").to_owned();
 
         match max_width {
             Some(w) => {

@@ -1010,8 +1010,7 @@ pub fn build_hints(
             }
             if prompt.prompt_suggestion_visible() {
                 hints.push(
-                    HintItem::paired(crate::key!(Tab), crate::key!(Right), "接受建议")
-                        .pinned(),
+                    HintItem::paired(crate::key!(Tab), crate::key!(Right), "接受建议").pinned(),
                 );
             }
             hints.push(HintItem::new(crate::key!(BackTab), "模式"));

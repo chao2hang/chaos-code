@@ -145,9 +145,7 @@ fn apply_fix_plan(
 
     if !args.yes {
         if !stdin_is_terminal {
-            anyhow::bail!(
-                "未确认无法应用此修复。请在交互式终端中运行，或添加 `--yes`。"
-            );
+            anyhow::bail!("未确认无法应用此修复。请在交互式终端中运行，或添加 `--yes`。");
         }
         write!(writer, "\n应用此修复？[y/N] ")?;
         writer.flush()?;
@@ -172,10 +170,7 @@ fn apply_fix_plan(
             .iter()
             .any(|finding| finding.id == outcome.id())
         {
-            anyhow::bail!(
-                "更改已应用，但 Doctor 仍报告 `{}`。",
-                outcome.id()
-            );
+            anyhow::bail!("更改已应用，但 Doctor 仍报告 `{}`。", outcome.id());
         }
     } else if !crate::diagnostics::verify_persistent_fix(&outcome) {
         anyhow::bail!(

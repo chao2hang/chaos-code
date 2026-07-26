@@ -1119,12 +1119,7 @@ pub fn action_key_display(ch: char) -> &'static str {
 /// [`action_key_cheatsheet_desc`].
 pub fn extensions_action_keys(tab: ExtensionsTab) -> Vec<(char, &'static str)> {
     match tab {
-        ExtensionsTab::Hooks => vec![
-            ('r', "重载"),
-            ('a', "添加"),
-            (' ', "toggle"),
-            ('x', "移除"),
-        ],
+        ExtensionsTab::Hooks => vec![('r', "重载"), ('a', "添加"), (' ', "toggle"), ('x', "移除")],
         ExtensionsTab::Plugins => vec![
             ('r', "重载"),
             ('u', "更新"),
@@ -4091,12 +4086,7 @@ mod tests {
         let expected: &[(ExtensionsTab, &[(char, &str)])] = &[
             (
                 ExtensionsTab::Hooks,
-                &[
-                    ('r', "重载"),
-                    ('a', "添加"),
-                    (' ', "toggle"),
-                    ('x', "移除"),
-                ],
+                &[('r', "重载"), ('a', "添加"), (' ', "toggle"), ('x', "移除")],
             ),
             (
                 ExtensionsTab::Plugins,
@@ -4953,10 +4943,7 @@ mod tests {
     #[test]
     fn space_footer_desc_is_contextual_enable_or_disable() {
         let mut state = ExtensionsModalState::new(ExtensionsTab::Plugins);
-        assert_eq!(
-            action_key_footer_desc(' ', "toggle", &state),
-            "启用/禁用"
-        );
+        assert_eq!(action_key_footer_desc(' ', "toggle", &state), "启用/禁用");
         assert_eq!(action_key_cheatsheet_desc(' ', "toggle"), "启用/禁用");
 
         state.entry_data_indices = vec![Some(0), Some(1)];

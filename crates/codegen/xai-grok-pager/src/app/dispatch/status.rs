@@ -270,12 +270,12 @@ pub(super) fn dispatch_set_context_window(
     let Some(session_id) = agent.session.session_id.clone() else {
         // No live session: still update local UI override so status bar reflects it.
         agent.session.models.override_context_window(tokens);
-        agent.scrollback.push_block(
-            crate::scrollback::block::RenderBlock::system(format!(
+        agent
+            .scrollback
+            .push_block(crate::scrollback::block::RenderBlock::system(format!(
                 "上下文窗口已设为 {}（本地预览；会话建立后生效并可能压缩）",
                 format_token_count(tokens)
-            )),
-        );
+            )));
         return vec![];
     };
 
@@ -312,10 +312,7 @@ pub(super) fn handle_set_context_window_complete(
     };
     match result {
         Ok(outcome) => {
-            agent
-                .session
-                .models
-                .override_context_window(outcome.tokens);
+            agent.session.models.override_context_window(outcome.tokens);
             let mut msg = format!(
                 "上下文窗口: {} → {} · 已用 {} ({}%)",
                 format_token_count(outcome.previous_tokens),
@@ -423,10 +420,7 @@ pub(super) fn dispatch_manage_billing(app: &mut AppView) -> Vec<Effect> {
     if !app.usage_visible {
         return vec![];
     }
-    super::router::dispatch(
-        crate::app::actions::Action::OpenUrl(String::new()),
-        app,
-    )
+    super::router::dispatch(crate::app::actions::Action::OpenUrl(String::new()), app)
 }
 
 /// Commit a one-line "update available" notice into the active agent's

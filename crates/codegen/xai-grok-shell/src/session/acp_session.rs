@@ -176,14 +176,14 @@ mod recap;
 mod rewind;
 #[path = "acp_session_impl/run_loop.rs"]
 mod run_loop;
+#[path = "acp_session_impl/selective_compaction.rs"]
+mod selective_compaction;
 #[path = "acp_session_impl/session_setup.rs"]
 mod session_setup;
 #[path = "acp_session_impl/turn_end.rs"]
 mod turn_end;
 #[path = "acp_session_impl/updates.rs"]
 mod updates;
-#[path = "acp_session_impl/selective_compaction.rs"]
-mod selective_compaction;
 use run_loop::*;
 #[path = "acp_session_impl/spawn.rs"]
 mod spawn;
@@ -665,8 +665,7 @@ pub(crate) struct SessionActor {
     pub(crate) doom_loop_recovery: Option<xai_grok_sampling_types::DoomLoopRecoveryPolicy>,
     /// Incomplete `end_turn` auto-retry (opt-in). Resolved at spawn from
     /// `[session] auto_retry_incomplete_end_turn` / env.
-    pub(crate) incomplete_end_turn_retry:
-        crate::agent::config::IncompleteEndTurnRetryPolicy,
+    pub(crate) incomplete_end_turn_retry: crate::agent::config::IncompleteEndTurnRetryPolicy,
     /// Telemetry-only per-turn doom-loop recovery tally (attempts, whether a
     /// budget-spent accept happened, tightest trigger label). Accumulated by
     /// the event drainer, taken at turn end for the per-turn analytics event.

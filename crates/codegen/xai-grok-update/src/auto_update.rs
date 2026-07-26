@@ -38,8 +38,11 @@ fn manual_install_cmd() -> &'static str {
 /// Build a reinstall hint for a known installer type.
 fn reinstall_hint(installer: &str) -> String {
     match installer {
-        "npm" => "请通过 npm 重新安装:\n  npm i -g chaos-code\n\n或使用 GitHub Release 一键安装:\n  ".to_string()
-            + manual_install_cmd(),
+        "npm" => {
+            "请通过 npm 重新安装:\n  npm i -g chaos-code\n\n或使用 GitHub Release 一键安装:\n  "
+                .to_string()
+                + manual_install_cmd()
+        }
         // gh-release / internal / unknown all point at our install script.
         _ => format!(
             "请通过 GitHub Releases 重新安装:\n  {}",
@@ -69,10 +72,7 @@ pub fn print_update_status(status: &UpdateStatus, json: bool) -> anyhow::Result<
     }
 
     if let Some(error) = status.error.as_deref() {
-        println!(
-            "Chaos - v{} [{}]",
-            status.current_version, status.channel
-        );
+        println!("Chaos - v{} [{}]", status.current_version, status.channel);
         println!("更新检查失败: {error}");
         return Ok(());
     }
@@ -1281,7 +1281,10 @@ async fn regenerate_completions(binary: &std::path::Path, grok_home: &std::path:
     let completions: &[(&str, std::path::PathBuf)] = &[
         ("bash", grok_home.join("completions/bash/chaos.bash")),
         ("zsh", grok_home.join("completions/zsh/_chaos")),
-        ("fish", user_home.join(".config/fish/completions/chaos.fish")),
+        (
+            "fish",
+            user_home.join(".config/fish/completions/chaos.fish"),
+        ),
     ];
 
     for (shell, dest) in completions {
@@ -2404,10 +2407,7 @@ pub async fn run_update(
         );
         &effective_current
     } else {
-        eprintln!(
-            "Updating Chaos {} → {}",
-            effective_current, install_target
-        );
+        eprintln!("Updating Chaos {} → {}", effective_current, install_target);
         &install_target
     };
 
@@ -3458,7 +3458,9 @@ mod tests {
     fn test_reinstall_hint_gh_release_mentions_install_script() {
         let hint = reinstall_hint("gh-release");
         assert!(
-            hint.contains("chao2hang/chaos-code") || hint.contains("install.sh") || hint.contains("install.ps1"),
+            hint.contains("chao2hang/chaos-code")
+                || hint.contains("install.sh")
+                || hint.contains("install.ps1"),
             "should suggest Chaos install script / repo: {hint}"
         );
     }
@@ -4193,10 +4195,7 @@ mod tests {
             MSG_AUTO_UPDATE_BACKGROUND,
             "Auto-update running in background."
         );
-        assert_eq!(
-            MSG_RUN_UPDATE_MANUAL,
-            "运行 `chaos update` 获取最新版本。"
-        );
+        assert_eq!(MSG_RUN_UPDATE_MANUAL, "运行 `chaos update` 获取最新版本。");
     }
 
     // ──────────────────────────────────────────────────────────────────────

@@ -1365,9 +1365,7 @@ mod tests {
             workflows: 0,
         });
         assert!(
-            text.contains(
-                "1 个命令 · 2 个监控 · 1 个循环 · 3 个子代理 仍在运行"
-            ),
+            text.contains("1 个命令 · 2 个监控 · 1 个循环 · 3 个子代理 仍在运行"),
             "all kinds must be listed in one cue, got: {text:?}"
         );
     }
@@ -1529,10 +1527,7 @@ mod tests {
                 subagents: 2,
                 workflows: 0,
             }),
-            Some(
-                "1 个命令 · 1 个监控 · 1 个循环 · 2 个子代理 仍在运行"
-                    .into()
-            )
+            Some("1 个命令 · 1 个监控 · 1 个循环 · 2 个子代理 仍在运行".into())
         );
         assert_eq!(still_running_label(Watchers::default()), None);
     }

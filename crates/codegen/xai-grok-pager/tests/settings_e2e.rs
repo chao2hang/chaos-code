@@ -244,10 +244,7 @@ fn assert_set_bool_action(outcome: SettingsKeyOutcome, key: &str, expected: bool
                 "SetAskUserQuestionTimeoutEnabled value differs from expected"
             )
         }
-        (
-            "session.auto_retry_incomplete_end_turn",
-            Action::SetAutoRetryIncompleteEndTurn(b),
-        ) => {
+        ("session.auto_retry_incomplete_end_turn", Action::SetAutoRetryIncompleteEndTurn(b)) => {
             assert_eq!(
                 b, expected,
                 "SetAutoRetryIncompleteEndTurn value differs from expected"

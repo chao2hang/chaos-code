@@ -1294,6 +1294,13 @@ impl AgentView {
         ) {
             status.push("context", ctx_line);
         }
+        let total_tokens = self.total_tokens_with_subagents();
+        if total_tokens > 0 {
+            status.push(
+                "total_tokens",
+                crate::views::agent_status::total_tokens_line(total_tokens, &theme),
+            );
+        }
         let running = self.session.current_prompt_id.as_deref();
         let queue_len = self.session.queue_len()
             + self

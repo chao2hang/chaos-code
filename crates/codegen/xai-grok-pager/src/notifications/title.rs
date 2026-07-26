@@ -844,10 +844,7 @@ mod tests {
             ..idle_state()
         };
         mgr.update(&state);
-        assert_eq!(
-            mgr.last_title,
-            "思考中 - proj - grok-3 - workspace - grok"
-        );
+        assert_eq!(mgr.last_title, "思考中 - proj - grok-3 - workspace - grok");
     }
 
     #[test]

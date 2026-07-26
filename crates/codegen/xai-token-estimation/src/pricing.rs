@@ -30,22 +30,88 @@ impl ModelPricing {
 /// 定价表条目：模型前缀 + 定价
 const PRICING_TABLE: &[(&str, ModelPricing)] = &[
     // === OpenAI 模型 ===
-    ("o4-mini", ModelPricing { input_price_per_mtok: 1.10, output_price_per_mtok: 4.40, cached_read_price_per_mtok: 0.275 }),
-    ("o3-mini", ModelPricing { input_price_per_mtok: 1.10, output_price_per_mtok: 4.40, cached_read_price_per_mtok: 0.55 }),
-    ("o3", ModelPricing { input_price_per_mtok: 10.0, output_price_per_mtok: 40.0, cached_read_price_per_mtok: 2.50 }),
-    ("o1-pro", ModelPricing { input_price_per_mtok: 60.0, output_price_per_mtok: 240.0, cached_read_price_per_mtok: 6.0 }),
-    ("o1-mini", ModelPricing { input_price_per_mtok: 1.10, output_price_per_mtok: 4.40, cached_read_price_per_mtok: 0.55 }),
-    ("o1", ModelPricing { input_price_per_mtok: 15.0, output_price_per_mtok: 60.0, cached_read_price_per_mtok: 7.50 }),
-    ("gpt-4o-mini", ModelPricing { input_price_per_mtok: 0.15, output_price_per_mtok: 0.60, cached_read_price_per_mtok: 0.075 }),
-    ("gpt-4o", ModelPricing { input_price_per_mtok: 2.50, output_price_per_mtok: 10.0, cached_read_price_per_mtok: 1.25 }),
-    ("gpt-4-turbo", ModelPricing { input_price_per_mtok: 10.0, output_price_per_mtok: 30.0, cached_read_price_per_mtok: 1.0 }),
+    (
+        "o4-mini",
+        ModelPricing {
+            input_price_per_mtok: 1.10,
+            output_price_per_mtok: 4.40,
+            cached_read_price_per_mtok: 0.275,
+        },
+    ),
+    (
+        "o3-mini",
+        ModelPricing {
+            input_price_per_mtok: 1.10,
+            output_price_per_mtok: 4.40,
+            cached_read_price_per_mtok: 0.55,
+        },
+    ),
+    (
+        "o3",
+        ModelPricing {
+            input_price_per_mtok: 10.0,
+            output_price_per_mtok: 40.0,
+            cached_read_price_per_mtok: 2.50,
+        },
+    ),
+    (
+        "o1-pro",
+        ModelPricing {
+            input_price_per_mtok: 60.0,
+            output_price_per_mtok: 240.0,
+            cached_read_price_per_mtok: 6.0,
+        },
+    ),
+    (
+        "o1-mini",
+        ModelPricing {
+            input_price_per_mtok: 1.10,
+            output_price_per_mtok: 4.40,
+            cached_read_price_per_mtok: 0.55,
+        },
+    ),
+    (
+        "o1",
+        ModelPricing {
+            input_price_per_mtok: 15.0,
+            output_price_per_mtok: 60.0,
+            cached_read_price_per_mtok: 7.50,
+        },
+    ),
+    (
+        "gpt-4o-mini",
+        ModelPricing {
+            input_price_per_mtok: 0.15,
+            output_price_per_mtok: 0.60,
+            cached_read_price_per_mtok: 0.075,
+        },
+    ),
+    (
+        "gpt-4o",
+        ModelPricing {
+            input_price_per_mtok: 2.50,
+            output_price_per_mtok: 10.0,
+            cached_read_price_per_mtok: 1.25,
+        },
+    ),
+    (
+        "gpt-4-turbo",
+        ModelPricing {
+            input_price_per_mtok: 10.0,
+            output_price_per_mtok: 30.0,
+            cached_read_price_per_mtok: 1.0,
+        },
+    ),
     ("gpt-4", ModelPricing::with_cache_0_1x(30.0, 60.0)),
     ("gpt-3.5", ModelPricing::with_cache_0_1x(0.50, 1.50)),
     // === Anthropic 模型 ===
     ("claude-opus-4", ModelPricing::with_cache_0_1x(15.0, 75.0)),
     ("claude-sonnet-4", ModelPricing::with_cache_0_1x(3.0, 15.0)),
     ("claude-haiku-4", ModelPricing::with_cache_0_1x(0.80, 4.0)),
-    ("claude-3-5-sonnet", ModelPricing::with_cache_0_1x(3.0, 15.0)),
+    (
+        "claude-3-5-sonnet",
+        ModelPricing::with_cache_0_1x(3.0, 15.0),
+    ),
     ("claude-3-5-haiku", ModelPricing::with_cache_0_1x(0.80, 4.0)),
     ("claude-3-opus", ModelPricing::with_cache_0_1x(15.0, 75.0)),
     ("claude-3-sonnet", ModelPricing::with_cache_0_1x(3.0, 15.0)),
@@ -55,7 +121,10 @@ const PRICING_TABLE: &[(&str, ModelPricing)] = &[
     ("grok-3", ModelPricing::with_cache_0_1x(3.0, 15.0)),
     // === DeepSeek 模型 ===
     ("deepseek-chat", ModelPricing::with_cache_0_1x(0.27, 1.10)),
-    ("deepseek-reasoner", ModelPricing::with_cache_0_1x(0.55, 2.19)),
+    (
+        "deepseek-reasoner",
+        ModelPricing::with_cache_0_1x(0.55, 2.19),
+    ),
     // === 通义千问 模型 ===
     ("qwen-max", ModelPricing::with_cache_0_1x(2.88, 11.52)),
     ("qwen-plus", ModelPricing::with_cache_0_1x(0.36, 1.44)),
@@ -106,11 +175,7 @@ pub fn estimate_cost_usd_ticks(
         / 1_000_000.0;
 
     let ticks = (cost_usd * COST_TICKS_PER_USD).round() as i64;
-    if ticks > 0 {
-        Some(ticks)
-    } else {
-        None
-    }
+    if ticks > 0 { Some(ticks) } else { None }
 }
 
 #[cfg(test)]

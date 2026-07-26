@@ -843,10 +843,7 @@ pub(crate) fn build_content_header_label(
     if content_loading {
         let spinner_frames = crate::glyphs::dot_spinner_frames();
         let frame_idx = (tick / 4) as usize % spinner_frames.len();
-        format!(
-            "{} 正在搜索会话内容\u{2026}",
-            spinner_frames[frame_idx]
-        )
+        format!("{} 正在搜索会话内容\u{2026}", spinner_frames[frame_idx])
     } else if has_content_rows {
         "Extended search results (remote and local sessions)".to_string()
     } else {
@@ -870,9 +867,7 @@ pub(crate) fn hidden_external_hint(
         .iter()
         .filter(|entry| crate::app::is_foreign_picker_source(&entry.source))
         .count();
-    (hidden > 0).then(|| {
-        format!("{hidden} 个外部会话已隐藏 \u{b7} f 显示")
-    })
+    (hidden > 0).then(|| format!("{hidden} 个外部会话已隐藏 \u{b7} f 显示"))
 }
 
 // ---------------------------------------------------------------------------

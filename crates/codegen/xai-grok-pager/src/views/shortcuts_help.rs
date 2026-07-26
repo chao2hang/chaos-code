@@ -1678,10 +1678,10 @@ mod tests {
         let entries = build_entries(&all_contexts(), &registry, true);
         let has_row = entries.iter().any(|e| {
             matches!(
-                e,
-                ShortcutsHelpEntry::Hint { item, .. }
-if item.label == "鼠标上报"
-            )
+                            e,
+                            ShortcutsHelpEntry::Hint { item, .. }
+            if item.label == "鼠标上报"
+                        )
         });
         assert!(
             !has_row,
@@ -1697,10 +1697,7 @@ if item.label == "鼠标上报"
             .expect("ToggleMouseCapture action must be registered when config-enabled");
         assert_eq!(def.category, Category::Panels);
         assert_eq!(def.label, "鼠标上报");
-        assert_eq!(
-            def.description,
-            "切换鼠标上报（原生复制/粘贴）",
-        );
+        assert_eq!(def.description, "切换鼠标上报（原生复制/粘贴）",);
 
         let entries = build_entries(&all_contexts(), &registry, true);
         let mut in_panels = false;
@@ -1798,8 +1795,7 @@ if item.label == "鼠标上报"
                         item,
                         action_id: Some(id),
                         ..
-                    }
-if item.keys.contains(&crate::key!('g', CONTROL))
+                    } if item.keys.contains(&crate::key!('g', CONTROL))
                         && registry
                             .find(*id)
                             .is_some_and(|def| def.context == When::AgentScreen) =>
@@ -1840,24 +1836,24 @@ if item.keys.contains(&crate::key!('g', CONTROL))
 
         let has_todos = entries.iter().any(|e| {
             matches!(
-                e,
-                ShortcutsHelpEntry::Hint { item, .. }
-if item.label == "待办"
-            )
+                            e,
+                            ShortcutsHelpEntry::Hint { item, .. }
+            if item.label == "待办"
+                        )
         });
         let has_sessions = entries.iter().any(|e| {
             matches!(
-                e,
-                ShortcutsHelpEntry::Hint { item, .. }
-if item.label == "会话"
-            )
+                            e,
+                            ShortcutsHelpEntry::Hint { item, .. }
+            if item.label == "会话"
+                        )
         });
         let has_queue = entries.iter().any(|e| {
             matches!(
-                e,
-                ShortcutsHelpEntry::Hint { item, .. }
-if item.label == "队列"
-            )
+                            e,
+                            ShortcutsHelpEntry::Hint { item, .. }
+            if item.label == "队列"
+                        )
         });
         assert!(has_todos, "should include toggle todos");
         assert!(has_sessions, "should include open sessions");
@@ -1902,14 +1898,14 @@ if item.label == "队列"
             .iter()
             .find(|e| {
                 matches!(
-                    e,
-                    ShortcutsHelpEntry::Hint {
-                        item,
-                        action_id: None,
-                        ..
-                    }
-if item.label == "粘贴"
-                )
+                                    e,
+                                    ShortcutsHelpEntry::Hint {
+                                        item,
+                                        action_id: None,
+                                        ..
+                                    }
+                if item.label == "粘贴"
+                                )
             })
             .expect("cheatsheet should list paste");
         let ShortcutsHelpEntry::Hint {
@@ -1990,10 +1986,10 @@ if item.label == "粘贴"
 
         let nav_dimmed = entries.iter().any(|e| {
             matches!(
-                e,
-                ShortcutsHelpEntry::Hint { item, dimmed: true, .. }
-if item.label == "导航"
-            )
+                            e,
+                            ShortcutsHelpEntry::Hint { item, dimmed: true, .. }
+            if item.label == "导航"
+                        )
         });
         assert!(
             nav_dimmed,
@@ -2002,19 +1998,19 @@ if item.label == "导航"
 
         let quit_bright = entries.iter().any(|e| {
             matches!(
-                e,
-                ShortcutsHelpEntry::Hint { item, dimmed: false, .. }
-if item.label == "退出"
-            )
+                            e,
+                            ShortcutsHelpEntry::Hint { item, dimmed: false, .. }
+            if item.label == "退出"
+                        )
         });
         assert!(quit_bright, "quit should not be dimmed (When::Always)");
 
         let cancel_bright = entries.iter().any(|e| {
             matches!(
-                e,
-                ShortcutsHelpEntry::Hint { item, dimmed: false, .. }
-if item.label == "取消"
-            )
+                            e,
+                            ShortcutsHelpEntry::Hint { item, dimmed: false, .. }
+            if item.label == "取消"
+                        )
         });
         assert!(
             cancel_bright,
@@ -2030,10 +2026,10 @@ if item.label == "取消"
 
         let send_dimmed = entries.iter().any(|e| {
             matches!(
-                e,
-                ShortcutsHelpEntry::Hint { item, dimmed: true, .. }
-if item.label == "发送"
-            )
+                            e,
+                            ShortcutsHelpEntry::Hint { item, dimmed: true, .. }
+            if item.label == "发送"
+                        )
         });
         assert!(
             send_dimmed,
@@ -2042,10 +2038,10 @@ if item.label == "发送"
 
         let nav_dimmed = entries.iter().any(|e| {
             matches!(
-                e,
-                ShortcutsHelpEntry::Hint { item, dimmed: true, .. }
-if item.label == "导航"
-            )
+                            e,
+                            ShortcutsHelpEntry::Hint { item, dimmed: true, .. }
+            if item.label == "导航"
+                        )
         });
         assert!(
             nav_dimmed,
@@ -2175,10 +2171,7 @@ if item.label == "导航"
         );
         assert_eq!(
             stop_rows(&overlay),
-            vec![(
-                "停止 Agent、关闭会话（返回仪表盘）".to_string(),
-                false
-            )],
+            vec![("停止 Agent、关闭会话（返回仪表盘）".to_string(), false)],
             "the overlay must show exactly the overlay `stop`, lit",
         );
         assert_eq!(
@@ -2711,15 +2704,15 @@ if item.label == "导航"
             .iter()
             .position(|e| {
                 matches!(
-                    e,
-                    ShortcutsHelpEntry::Hint {
-                        item,
-                        action_id: None,
-                        long_help: Some(_),
-                        ..
-                    }
-if item.label == "粘贴"
-                )
+                                    e,
+                                    ShortcutsHelpEntry::Hint {
+                                        item,
+                                        action_id: None,
+                                        long_help: Some(_),
+                                        ..
+                                    }
+                if item.label == "粘贴"
+                                )
             })
             .expect("paste pseudo-row with long_help");
         assert_eq!(
@@ -3098,10 +3091,10 @@ if item.label == "粘贴"
         for label in ["top", "btm", "copy", "copy cmd"] {
             let present = entries.iter().any(|e| {
                 matches!(
-                    e,
-                    ShortcutsHelpEntry::Hint { item, .. }
-if item.label == label
-                )
+                                    e,
+                                    ShortcutsHelpEntry::Hint { item, .. }
+                if item.label == label
+                                )
             });
             assert!(
                 !present,
@@ -3390,15 +3383,15 @@ if item.label == label
             .iter()
             .position(|e| {
                 matches!(
-                    e,
-                    ShortcutsHelpEntry::Hint {
-                        item,
-                        action_id: None,
-                        long_help: Some(_),
-                        ..
-                    }
-if item.label == "粘贴"
-                )
+                                    e,
+                                    ShortcutsHelpEntry::Hint {
+                                        item,
+                                        action_id: None,
+                                        long_help: Some(_),
+                                        ..
+                                    }
+                if item.label == "粘贴"
+                                )
             })
             .expect("paste pseudo-row with long_help");
         let key_id = ExpandKey::Pseudo("粘贴");

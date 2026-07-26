@@ -582,7 +582,10 @@ fn manage_billing_gates_on_consumer_billing_surface() {
     // Chaos is BYOK: manage-billing opens an empty URL (no grok.com console).
     // Empty scheme is rejected silently — no browser open, no scrollback spam.
     let opened = std::fs::read_to_string(&out).unwrap_or_default();
-    assert!(opened.is_empty(), "must not open a billing URL; got: {opened}");
+    assert!(
+        opened.is_empty(),
+        "must not open a billing URL; got: {opened}"
+    );
     assert!(!opened.contains("grok.com"), "got: {opened}");
     assert_eq!(agent_scrollback_len(&app), before);
     let _ = std::fs::remove_file(&out);
@@ -615,8 +618,7 @@ fn session_usage_complete_pushes_block_and_chains_billing() {
     assert_eq!(agent_scrollback_len(&app), before + 1);
     let text = last_system_text(&app, AgentId(0));
     assert!(
-        (text.contains("Session usage") || text.contains("会话用量"))
-            && text.contains("$0.5000"),
+        (text.contains("Session usage") || text.contains("会话用量")) && text.contains("$0.5000"),
         "{text}"
     );
     assert!(is_nonsilent_billing(&effects));

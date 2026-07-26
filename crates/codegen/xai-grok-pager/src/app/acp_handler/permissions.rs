@@ -154,8 +154,7 @@ fn enqueue_permission(
         && agent.active_pane == crate::app::agent_view::AgentPane::Scrollback
         && agent.permission_stashed_pane.is_none()
     {
-        agent.permission_stashed_pane =
-            Some(crate::app::agent_view::AgentPane::Scrollback);
+        agent.permission_stashed_pane = Some(crate::app::agent_view::AgentPane::Scrollback);
         agent.set_active_pane(crate::app::agent_view::AgentPane::Prompt, true);
     }
 

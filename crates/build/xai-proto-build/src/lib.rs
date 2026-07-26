@@ -1,9 +1,9 @@
 pub mod find_protoc;
 
 use anyhow::Context;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::fs;
 
 /// Strip the makefile target prefix from a protoc `--dependency_out` file.
 ///

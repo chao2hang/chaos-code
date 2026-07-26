@@ -312,10 +312,7 @@ pub(super) fn render_auth(buf: &mut Buffer, area: Rect, theme: &Theme, hint: &Mi
                 area,
                 y,
                 bottom,
-                Line::from(Span::styled(
-                    "Chaos 可能在此目录中运行或修改内容，",
-                    gray,
-                )),
+                Line::from(Span::styled("Chaos 可能在此目录中运行或修改内容，", gray)),
             );
             y = put_line(
                 buf,
@@ -489,10 +486,7 @@ mod tests {
         assert!(text.contains("登录 Chaos"), "header: {text:?}");
         assert!(text.contains("accounts.x.ai/device"), "url: {text:?}");
         assert!(text.contains("ABCD-EFGH"), "device code: {text:?}");
-        assert!(
-            text.contains("等待批准"),
-            "waiting line: {text:?}"
-        );
+        assert!(text.contains("等待批准"), "waiting line: {text:?}");
     }
 
     #[test]

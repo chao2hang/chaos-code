@@ -79,11 +79,7 @@ async fn fetch_npm_tag_alpha_appends_at_alpha_suffix() {
     assert_eq!(v, "0.1.181-alpha.1");
 
     let log = g.args_log();
-    assert!(
-        log[0].contains("chaos-code@alpha"),
-        "args: {}",
-        log[0]
-    );
+    assert!(log[0].contains("chaos-code@alpha"), "args: {}", log[0]);
 }
 
 #[tokio::test]
@@ -411,11 +407,7 @@ async fn fetch_gh_release_passes_repo_flag() {
     let _ = fetch_gh_release_version("stable").await.unwrap();
     let log = g.args_log();
     assert!(log[0].contains("--repo"), "args: {}", log[0]);
-    assert!(
-        log[0].contains("chao2hang/chaos-code"),
-        "args: {}",
-        log[0]
-    );
+    assert!(log[0].contains("chao2hang/chaos-code"), "args: {}", log[0]);
 }
 
 #[tokio::test]

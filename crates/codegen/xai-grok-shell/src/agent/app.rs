@@ -563,10 +563,7 @@ async fn run_headless_inner(
         if !did_browser_flow && !no_browser {
             // Print to stderr (not logger) so user sees it
             eprintln!();
-            eprintln!(
-                "打开 Chaos: {} (按回车键在浏览器中打开)",
-                grok_code_url
-            );
+            eprintln!("打开 Chaos: {} (按回车键在浏览器中打开)", grok_code_url);
             eprintln!();
             let url_for_open = grok_code_url.clone();
             std::thread::spawn(move || {
