@@ -422,6 +422,7 @@ mod tests {
     use crate::auth::GrokComConfig;
     use crate::auth::manager::AuthManager;
     use chrono::{Duration as ChronoDuration, Utc};
+    use serial_test::serial;
     use std::sync::Mutex;
     use xai_grok_auth::AuthCredentialProvider;
     /// Serializes tests that pin `GROK_AUTH_EARLY_INVALIDATION_SECS`, since
@@ -479,6 +480,7 @@ mod tests {
     /// `apply()` and `snapshot()` agree (snapshot==wire invariant) when the
     /// in-memory token is fresh.
     #[test]
+    #[serial]
     fn apply_and_snapshot_agree_on_live_token() {
         let _guard = EarlyInvalidationGuard::pin_to_default();
         let dir = tempfile::tempdir().unwrap();
@@ -498,6 +500,7 @@ mod tests {
     /// instead of nothing -- which is the fix for the bulk of the
     /// `POST /v1/storage` 401s observed in production.
     #[test]
+    #[serial]
     fn falls_back_to_expired_auth_during_buffer_window() {
         let _guard = EarlyInvalidationGuard::pin_to_default();
         let dir = tempfile::tempdir().unwrap();
@@ -520,6 +523,7 @@ mod tests {
     /// or otherwise), `snapshot()` returns `None` for the user-token branch.
     /// `apply()` would then send no Authorization header.
     #[test]
+    #[serial]
     fn no_token_when_auth_manager_is_empty() {
         let _guard = EarlyInvalidationGuard::pin_to_default();
         let dir = tempfile::tempdir().unwrap();
@@ -535,6 +539,7 @@ mod tests {
     /// 401 recovery routes through `unauthorized_recovery` (pre-fix
     /// it no-oped because the refresher arg was hardcoded `None`).
     #[tokio::test]
+    #[serial]
     async fn refresh_after_unauthorized_drives_recovery_state_machine() {
         let _guard = EarlyInvalidationGuard::pin_to_default();
         let dir = tempfile::tempdir().unwrap();
@@ -587,6 +592,7 @@ mod tests {
         );
     }
     #[test]
+    #[serial]
     fn embedding_session_credentials_scopes_to_first_party() {
         let _guard = EarlyInvalidationGuard::pin_to_default();
         let dir = tempfile::tempdir().unwrap();
@@ -613,6 +619,7 @@ mod tests {
     }
     /// Deployment-key path has no recovery (operator owns the bearer).
     #[tokio::test]
+    #[serial]
     async fn refresh_after_unauthorized_is_noop_for_deployment_key() {
         let _guard = EarlyInvalidationGuard::pin_to_default();
         let dir = tempfile::tempdir().unwrap();
@@ -622,6 +629,7 @@ mod tests {
         assert!(!provider.refresh_after_unauthorized().await);
     }
     #[test]
+    #[serial]
     fn snapshot_populates_tenant_id_per_auth_mode() {
         use xai_grok_telemetry::config::deployment_id_from_key;
         let _guard = EarlyInvalidationGuard::pin_to_default();
@@ -664,6 +672,7 @@ mod tests {
     /// Bootstrap mode: `snapshot()` re-reads disk so sibling-rotated
     /// tokens are picked up without a live AuthManager.
     #[test]
+    #[serial]
     fn otel_bootstrap_snapshot_picks_up_disk_writes() {
         let _guard = EarlyInvalidationGuard::pin_to_default();
         let dir = tempfile::tempdir().unwrap();
@@ -694,6 +703,7 @@ mod tests {
     /// in-memory cache (no disk re-read) and `refresh_after_unauthorized()`
     /// drives the recovery state machine.
     #[tokio::test]
+    #[serial]
     async fn otel_live_mode_uses_shared_auth_manager() {
         let _guard = EarlyInvalidationGuard::pin_to_default();
         let bootstrap_dir = tempfile::tempdir().unwrap();
@@ -721,6 +731,7 @@ mod tests {
     }
     /// `refresh_after_unauthorized` drives recovery when live.
     #[tokio::test]
+    #[serial]
     async fn otel_live_refresh_after_unauthorized_drives_recovery() {
         let _guard = EarlyInvalidationGuard::pin_to_default();
         let bootstrap_dir = tempfile::tempdir().unwrap();
@@ -767,6 +778,7 @@ mod tests {
         assert_eq!(live_mgr.current().unwrap().key, "refreshed");
     }
     #[test]
+    #[serial]
     fn otel_deployment_key_sent_when_no_oidc_token() {
         let _guard = EarlyInvalidationGuard::pin_to_default();
         let dir = tempfile::tempdir().unwrap();
@@ -781,6 +793,7 @@ mod tests {
         );
     }
     #[test]
+    #[serial]
     fn otel_deployment_key_wins_over_oidc_token() {
         let _guard = EarlyInvalidationGuard::pin_to_default();
         let dir = tempfile::tempdir().unwrap();
@@ -799,6 +812,7 @@ mod tests {
         assert!(snap.user_id.is_none());
     }
     #[test]
+    #[serial]
     fn has_usable_credential_reflects_auth_state() {
         let _guard = EarlyInvalidationGuard::pin_to_default();
         let dir = tempfile::tempdir().unwrap();
@@ -846,6 +860,7 @@ mod tests {
     /// The export gate must therefore keep it usable even though `current()`
     /// reports `None`. Regression for the buffer-window export drop.
     #[test]
+    #[serial]
     fn has_usable_credential_true_inside_early_invalidation_buffer() {
         let _guard = EarlyInvalidationGuard::pin_to_default();
         let dir = tempfile::tempdir().unwrap();
@@ -868,6 +883,7 @@ mod tests {
     /// The snapshot must report the deployment key (not the user token) so
     /// the 401-attribution prefix matches the wire bytes.
     #[test]
+    #[serial]
     fn deployment_key_wins_over_resolved_user_token() {
         let _guard = EarlyInvalidationGuard::pin_to_default();
         let dir = tempfile::tempdir().unwrap();
