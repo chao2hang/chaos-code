@@ -1692,6 +1692,7 @@ mod tests {
             names,
             [
                 "compact",
+                "dynamic-compact",
                 "always-approve",
                 "flush",
                 "dream",

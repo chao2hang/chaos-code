@@ -14,7 +14,61 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  RUST_TOOLCHAIN: "1.92.0"
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
 jobs:
+  # Compiles and tests the Rust workspace. Without this job, test-target
+  # breakage is invisible: `release.yml` only runs `cargo build`, which does
+  # not compile `#[cfg(test)]` code, so test code can drift out of sync with
+  # production structs indefinitely.
+  rust:
+    name: rust check / clippy / test
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config libssl-dev ca-certificates
+
+      # apt's protobuf-compiler on ubuntu is too old for proto3 optional;
+      # pin the same major as bin/protoc and release.yml.
+      - name: Install protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          version: "29.3"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: chaos-ci
+
+      - name: cargo fmt
+        run: cargo fmt --all -- --check
+
+      # --all-targets is the point of this step: it compiles tests, benches and
+      # examples, which a plain `cargo check` skips.
+      - name: cargo check (all targets)
+        run: cargo check --workspace --all-targets --locked
+
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - name: cargo test
+        run: cargo test --workspace --locked
+
   npm-scripts:
     name: npm package scripts
     runs-on: ubuntu-latest

@@ -879,6 +879,12 @@ pub struct AgentView {
     /// Toggled by `Action::ToggleGoalDetail`. Only shown when
     /// `goal_state` is `Some`.
     pub show_goal_detail: bool,
+    /// Token-usage detail overlay, opened by clicking the accumulated-token
+    /// chip in the status bar. `None` = closed. The ledger arrives
+    /// asynchronously, so this holds `Loading` while the fetch is in flight —
+    /// which is also what routes the result to the overlay instead of the
+    /// `/usage` scrollback block.
+    pub usage_detail: Option<crate::views::usage_detail::UsageDetail>,
     /// UTC ms when the current turn started (`turnStartMs` from notification meta).
     /// Used for turn elapsed display.
     pub turn_start_ms: Option<i64>,
@@ -1040,6 +1046,10 @@ pub struct AgentView {
     pub hit_bg_status: HitArea,
     pub hit_goal_status: HitArea,
     pub hit_goal_close: HitArea,
+    /// Accumulated-token chip in the status bar (click opens `usage_detail`).
+    pub hit_total_tokens: HitArea,
+    /// `[✗]` close button on the token-usage detail overlay.
+    pub hit_usage_close: HitArea,
     pub hit_bg_button: HitArea,
     #[allow(dead_code)]
     pub(crate) last_bg_click: Option<Instant>,

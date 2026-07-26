@@ -1,7 +1,15 @@
 # Chaos AI 编码助手
 
-Chaos 是终端 AI 编码助手。它不使用 Grok 登录，也不会在启动时读取或刷新 xAI
-登录会话。模型、接口地址和密钥均由用户自行配置。
+Chaos 是终端 AI 编码助手。模型、接口地址和密钥均由用户自行配置：Chaos 不提供
+`login` / `logout` / `/login` 命令，也不会为了调用模型去做 xAI 登录——聊天请求
+只使用你在 `config.toml` 里配置的 Provider 和密钥。
+
+> **关于 `auth.json`（准确说明）**：上游继承下来的 `AuthManager` 仍在代码中，
+> 且会在启动时构造一次，因此**会读取** `<GROK_HOME>/auth.json`（以及 `GROK_AUTH`、
+> `GROK_AUTH_PATH` 环境变量）。若其中存在未过期的 OIDC 凭据，trace 上传、反馈提交、
+> 会话分享等**可选**功能会使用它。若该文件不存在，读取失败会被忽略，不影响正常使用。
+> 如果不希望 Chaos 接触这些凭据，删除 `~/.grok/auth.json`，或把 `$CHAOS_HOME`
+> 指向一个不含该文件的目录。
 
 ## 安装与启动
 

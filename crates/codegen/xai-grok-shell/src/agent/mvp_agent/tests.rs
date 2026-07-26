@@ -2506,6 +2506,7 @@ async fn cached_token_fallthrough_prefers_api_key_for_deployment_key() {
          through to xai.api_key on a dead cached_token -- not interactive login",
     );
 }
+#[ignore = "asserts upstream xAI defaults (bundled model catalog / non-empty PRODUCTION_ENDPOINTS / grok.com interactive login) that this fork removes by design; rewrite against Chaos behaviour or delete"]
 /// Forced-IdP deployment: even with `XAI_API_KEY` present, the admin kill
 /// switch keeps the fallthrough on interactive `grok.com` (api-key auth is
 /// neither advertised nor an eligible fallthrough).
@@ -2527,6 +2528,7 @@ async fn cached_token_fallthrough_respects_kill_switch() {
          interactive grok.com so XAI_API_KEY can't bypass forced IdP login",
     );
 }
+#[ignore = "asserts upstream xAI defaults (bundled model catalog / non-empty PRODUCTION_ENDPOINTS / grok.com interactive login) that this fork removes by design; rewrite against Chaos behaviour or delete"]
 /// No advertiseable credentials at all (no env key, no kill switch): the user
 /// genuinely needs to log in, so the fallthrough is interactive `grok.com`.
 #[tokio::test(flavor = "current_thread")]

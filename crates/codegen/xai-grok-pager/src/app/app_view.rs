@@ -342,10 +342,12 @@ impl VoiceState {
     /// Whether a hold-press owns the current session (so its key release ends
     /// it). `/voice` and toggle-style starts leave this false.
     pub(crate) fn hold(&self) -> bool {
-        matches!(
-            self, Self::ColdStart { hold, .. } | Self::Recording { hold, .. }
-if * hold
-        )
+        // Written as a `match` rather than `matches!` with a guard: rustfmt does
+        // not format inside that macro form and reindents it to garbage.
+        match self {
+            Self::ColdStart { hold, .. } | Self::Recording { hold, .. } => *hold,
+            _ => false,
+        }
     }
 }
 /// Entry in the session picker list on the welcome screen.
@@ -5234,6 +5236,13 @@ impl AppView {
                             *loading,
                             lanes,
                         )
+                    )
+                    // Provider 模态后台拉取模型期间保持重绘，让渲染层的
+                    // poll_models_fetch 能收割结果（否则空闲时无 tick）。
+                    || matches!(
+                        agent.active_modal.as_ref(),
+                        Some(crate::views::modal::ActiveModal::ProviderModal { state })
+                            if state.models_loading
                     )
                     || agent.subagent_views.iter().any(|(sid, child)| {
                         child.toast.is_some()

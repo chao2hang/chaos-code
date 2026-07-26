@@ -1,0 +1,28 @@
+# Normalize line endings so the repo stops showing thousands of phantom
+# modifications. Before this file existed, 2370 of 2928 tracked files were
+# committed with CRLF and no core.autocrlf was set, so a checkout on any
+# LF-normalizing tool produced a 206k-line diff hiding ~1k real changes.
+#
+# After adding this file, run once and commit the result on its own:
+#   git add --renormalize .
+* text=auto eol=lf
+
+# Windows-only scripts must keep CRLF: cmd.exe can mis-parse labels and
+# `goto` targets in LF-only batch files.
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+
+# Binary — never touch.
+*.ttf binary
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.gz  binary
+
+# Generated / vendored: keep out of language stats and collapse in diffs.
+Cargo.lock          -diff linguist-generated
+THIRD-PARTY-NOTICES -diff linguist-generated
+third_party/**      linguist-vendored

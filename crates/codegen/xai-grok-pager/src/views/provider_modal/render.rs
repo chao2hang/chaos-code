@@ -94,6 +94,8 @@ pub fn render_provider_modal(
     state: &mut ProviderModalState,
     compact: bool,
 ) {
+    // 收割后台模型拉取结果（loading 期间由 tick_demand 驱动重绘）。
+    state.poll_models_fetch();
     let theme = Theme::current();
     let mode = state.mode.clone();
     match &mode {
@@ -128,7 +130,7 @@ pub fn render_provider_modal(
             let shortcuts: &[mw::Shortcut<'static>] = match &mode {
                 ProviderModalMode::List => &[
                     mw::Shortcut {
-                        label: "Enter 选择",
+                        label: "Enter 打开",
                         clickable: false,
                         id: 0,
                     },
@@ -138,9 +140,29 @@ pub fn render_provider_modal(
                         id: 1,
                     },
                     mw::Shortcut {
-                        label: "Esc 关闭",
+                        label: "e 编辑",
                         clickable: false,
                         id: 2,
+                    },
+                    mw::Shortcut {
+                        label: "m 换模型",
+                        clickable: false,
+                        id: 3,
+                    },
+                    mw::Shortcut {
+                        label: "s 密钥",
+                        clickable: false,
+                        id: 4,
+                    },
+                    mw::Shortcut {
+                        label: "d 删除",
+                        clickable: false,
+                        id: 5,
+                    },
+                    mw::Shortcut {
+                        label: "Esc 关闭",
+                        clickable: false,
+                        id: 6,
                     },
                 ],
                 _ => &[
@@ -150,9 +172,14 @@ pub fn render_provider_modal(
                         id: 0,
                     },
                     mw::Shortcut {
-                        label: "Esc 返回",
+                        label: "Shift+Tab 上一步",
                         clickable: false,
                         id: 1,
+                    },
+                    mw::Shortcut {
+                        label: "Esc 返回",
+                        clickable: false,
+                        id: 2,
                     },
                 ],
             };
@@ -181,6 +208,50 @@ pub fn render_provider_modal(
 }
 
 // ── /provider add 表单 ──────────────────────────────────────────────────────
+
+/// 表单标签列宽（对齐值起始列；CJK 标签按 2 列计）。
+const FORM_LABEL_WIDTH: usize = 9;
+
+/// 步骤面包屑：`✓ 已完成 › ● 当前 › ○ 待填`。返回下一行 y（含一行留白）。
+fn render_step_breadcrumb(
+    buf: &mut Buffer,
+    area: Rect,
+    y: u16,
+    steps: &[FormStep],
+    current: FormStep,
+    theme: &Theme,
+) -> u16 {
+    if y >= area.y + area.height {
+        return y;
+    }
+    let cur_pos = steps.iter().position(|s| *s == current).unwrap_or(0);
+    let mut spans = Vec::new();
+    for (i, s) in steps.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::styled(" › ", Style::default().fg(theme.gray_dim)));
+        }
+        let style = if i < cur_pos {
+            Style::default().fg(theme.accent_success)
+        } else if i == cur_pos {
+            Style::default()
+                .fg(theme.accent_user)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(theme.gray_dim)
+        };
+        let glyph = if i < cur_pos {
+            "✓ "
+        } else if i == cur_pos {
+            "● "
+        } else {
+            "○ "
+        };
+        spans.push(Span::styled(glyph, style));
+        spans.push(Span::styled(s.label(), style));
+    }
+    Line::from(spans).render(Rect::new(area.x, y, area.width, 1), buf);
+    y + 2
+}
 
 fn render_add_form(buf: &mut Buffer, area: Rect, state: &ProviderModalState, theme: &Theme) {
     let label_style = Style::default().fg(theme.gray_bright);
@@ -251,6 +322,7 @@ fn render_add_form(buf: &mut Buffer, area: Rect, state: &ProviderModalState, the
             FormStep::ApiBackend,
             FormStep::ApiKey,
         ];
+        y = render_step_breadcrumb(buf, area, y, &steps, state.current_step, theme);
 
         for step in &steps {
             if y >= area.y + area.height {
@@ -272,7 +344,7 @@ fn render_add_form(buf: &mut Buffer, area: Rect, state: &ProviderModalState, the
                 FormStep::Preset => continue,
             };
 
-            let prefix = format!("{}: ", label);
+            let prefix = format!("{}: ", pad_to_width(label, FORM_LABEL_WIDTH));
             let prefix_w = prefix.width() as u16;
             let line = Line::from(vec![
                 Span::styled(prefix, lbl_style),
@@ -290,10 +362,10 @@ fn render_add_form(buf: &mut Buffer, area: Rect, state: &ProviderModalState, the
                     FormStep::Preset => 0,
                 };
                 let cursor_x = area.x + prefix_w + field_len as u16;
-                if cursor_x < area.x + area.width {
-                    if let Some(cell) = buf.cell_mut((cursor_x, y)) {
-                        cell.set_style(Style::default().fg(theme.bg_dark).bg(theme.text_primary));
-                    }
+                if cursor_x < area.x + area.width
+                    && let Some(cell) = buf.cell_mut((cursor_x, y))
+                {
+                    cell.set_style(Style::default().fg(theme.bg_dark).bg(theme.text_primary));
                 }
                 if matches!(step, FormStep::AuthScheme | FormStep::ApiBackend) {
                     let hint = "  ←/→ 或 ↑/↓ 切换";
@@ -308,26 +380,26 @@ fn render_add_form(buf: &mut Buffer, area: Rect, state: &ProviderModalState, the
     }
 
     // 错误消息
-    if let Some(err) = &state.error {
-        if y < area.y + area.height {
-            let err_line = Line::from(Span::styled(
-                format!("✗ {err}"),
-                Style::default().fg(theme.accent_error),
-            ));
-            err_line.render(Rect::new(area.x, y, area.width, 1), buf);
-            y += 1;
-        }
+    if let Some(err) = &state.error
+        && y < area.y + area.height
+    {
+        let err_line = Line::from(Span::styled(
+            format!("✗ {err}"),
+            Style::default().fg(theme.accent_error),
+        ));
+        err_line.render(Rect::new(area.x, y, area.width, 1), buf);
+        y += 1;
     }
 
     // 成功消息
-    if let Some(succ) = &state.success {
-        if y < area.y + area.height {
-            let succ_line = Line::from(Span::styled(
-                format!("✓ {succ}"),
-                Style::default().fg(theme.accent_success),
-            ));
-            succ_line.render(Rect::new(area.x, y, area.width, 1), buf);
-        }
+    if let Some(succ) = &state.success
+        && y < area.y + area.height
+    {
+        let succ_line = Line::from(Span::styled(
+            format!("✓ {succ}"),
+            Style::default().fg(theme.accent_success),
+        ));
+        succ_line.render(Rect::new(area.x, y, area.width, 1), buf);
     }
 }
 
@@ -346,7 +418,10 @@ fn render_edit_form(buf: &mut Buffer, area: Rect, state: &ProviderModalState, th
     // 渠道名只读展示
     if y < area.y + area.height {
         let line = Line::from(vec![
-            Span::styled("名称: ", label_style),
+            Span::styled(
+                format!("{}: ", pad_to_width("名称", FORM_LABEL_WIDTH)),
+                label_style,
+            ),
             Span::styled(state.name.as_str(), value_style),
             Span::styled("  (不可改)", dim_style),
         ]);
@@ -360,6 +435,7 @@ fn render_edit_form(buf: &mut Buffer, area: Rect, state: &ProviderModalState, th
         FormStep::ApiBackend,
         FormStep::ApiKey,
     ];
+    y = render_step_breadcrumb(buf, area, y, &steps, state.current_step, theme);
 
     for step in &steps {
         if y >= area.y + area.height {
@@ -391,22 +467,16 @@ fn render_edit_form(buf: &mut Buffer, area: Rect, state: &ProviderModalState, th
             FormStep::Preset | FormStep::Name => continue,
         };
 
-        let prefix = format!("{label}: ");
+        let prefix = format!("{}: ", pad_to_width(label, FORM_LABEL_WIDTH));
         let prefix_w = prefix.width() as u16;
         let line = Line::from(vec![
             Span::styled(prefix, lbl_style),
             Span::styled(
                 value.clone(),
-                if state.api_key.is_empty()
-                    && *step == FormStep::ApiKey
-                    && state.edit_had_key
-                    && !is_current
-                {
-                    dim_style
-                } else if state.api_key.is_empty()
-                    && *step == FormStep::ApiKey
-                    && state.edit_had_key
-                {
+                // `is_current` used to select a distinct style here; both arms
+                // now resolve to `dim_style`, so the placeholder is dimmed
+                // whenever an existing key is being masked on the ApiKey step.
+                if state.api_key.is_empty() && *step == FormStep::ApiKey && state.edit_had_key {
                     dim_style
                 } else {
                     value_style
@@ -430,10 +500,10 @@ fn render_edit_form(buf: &mut Buffer, area: Rect, state: &ProviderModalState, th
                 FormStep::Preset | FormStep::Name => 0,
             };
             let cursor_x = area.x + prefix_w + field_len as u16;
-            if cursor_x < area.x + area.width {
-                if let Some(cell) = buf.cell_mut((cursor_x, y)) {
-                    cell.set_style(Style::default().fg(theme.bg_dark).bg(theme.text_primary));
-                }
+            if cursor_x < area.x + area.width
+                && let Some(cell) = buf.cell_mut((cursor_x, y))
+            {
+                cell.set_style(Style::default().fg(theme.bg_dark).bg(theme.text_primary));
             }
             if matches!(step, FormStep::AuthScheme | FormStep::ApiBackend) {
                 let hint = "  ←/→ 或 ↑/↓ 切换";
@@ -446,25 +516,25 @@ fn render_edit_form(buf: &mut Buffer, area: Rect, state: &ProviderModalState, th
         y += 1;
     }
 
-    if let Some(err) = &state.error {
-        if y < area.y + area.height {
-            let err_line = Line::from(Span::styled(
-                format!("✗ {err}"),
-                Style::default().fg(theme.accent_error),
-            ));
-            err_line.render(Rect::new(area.x, y, area.width, 1), buf);
-            y += 1;
-        }
+    if let Some(err) = &state.error
+        && y < area.y + area.height
+    {
+        let err_line = Line::from(Span::styled(
+            format!("✗ {err}"),
+            Style::default().fg(theme.accent_error),
+        ));
+        err_line.render(Rect::new(area.x, y, area.width, 1), buf);
+        y += 1;
     }
 
-    if let Some(succ) = &state.success {
-        if y < area.y + area.height {
-            let succ_line = Line::from(Span::styled(
-                format!("✓ {succ}"),
-                Style::default().fg(theme.accent_success),
-            ));
-            succ_line.render(Rect::new(area.x, y, area.width, 1), buf);
-        }
+    if let Some(succ) = &state.success
+        && y < area.y + area.height
+    {
+        let succ_line = Line::from(Span::styled(
+            format!("✓ {succ}"),
+            Style::default().fg(theme.accent_success),
+        ));
+        succ_line.render(Rect::new(area.x, y, area.width, 1), buf);
     }
 }
 
@@ -554,10 +624,10 @@ fn render_manual_model(
         let prefix_w = key_label.width() as u16;
         let field_w = id.width() as u16;
         let cursor_x = content.x + prefix_w + field_w;
-        if cursor_x < content.x + content.width {
-            if let Some(cell) = buf.cell_mut((cursor_x, y)) {
-                cell.set_style(Style::default().fg(theme.bg_dark).bg(theme.text_primary));
-            }
+        if cursor_x < content.x + content.width
+            && let Some(cell) = buf.cell_mut((cursor_x, y))
+        {
+            cell.set_style(Style::default().fg(theme.bg_dark).bg(theme.text_primary));
         }
         y += 1;
     } else {
@@ -777,10 +847,10 @@ fn render_model_param_form(
                 raw.width()
             } as u16;
             let cursor_x = area.x + prefix_w + field_w;
-            if cursor_x < area.x + area.width {
-                if let Some(cell) = buf.cell_mut((cursor_x, y)) {
-                    cell.set_style(Style::default().fg(theme.bg_dark).bg(theme.text_primary));
-                }
+            if cursor_x < area.x + area.width
+                && let Some(cell) = buf.cell_mut((cursor_x, y))
+            {
+                cell.set_style(Style::default().fg(theme.bg_dark).bg(theme.text_primary));
             }
         }
         y += 1;
@@ -801,25 +871,25 @@ fn render_error_success(
     theme: &Theme,
     mut y: u16,
 ) -> u16 {
-    if let Some(err) = &state.error {
-        if y < area.y + area.height {
-            let err_line = Line::from(Span::styled(
-                format!("✗ {err}"),
-                Style::default().fg(theme.accent_error),
-            ));
-            err_line.render(Rect::new(area.x, y, area.width, 1), buf);
-            y += 1;
-        }
+    if let Some(err) = &state.error
+        && y < area.y + area.height
+    {
+        let err_line = Line::from(Span::styled(
+            format!("✗ {err}"),
+            Style::default().fg(theme.accent_error),
+        ));
+        err_line.render(Rect::new(area.x, y, area.width, 1), buf);
+        y += 1;
     }
-    if let Some(succ) = &state.success {
-        if y < area.y + area.height {
-            let succ_line = Line::from(Span::styled(
-                format!("✓ {succ}"),
-                Style::default().fg(theme.accent_success),
-            ));
-            succ_line.render(Rect::new(area.x, y, area.width, 1), buf);
-            y += 1;
-        }
+    if let Some(succ) = &state.success
+        && y < area.y + area.height
+    {
+        let succ_line = Line::from(Span::styled(
+            format!("✓ {succ}"),
+            Style::default().fg(theme.accent_success),
+        ));
+        succ_line.render(Rect::new(area.x, y, area.width, 1), buf);
+        y += 1;
     }
     y
 }
@@ -888,32 +958,32 @@ fn render_set_key(
     let prefix_w = key_label.width() as u16;
     let field_w = masked.width() as u16;
     let cursor_x = content.x + prefix_w + field_w;
-    if cursor_x < content.x + content.width {
-        if let Some(cell) = buf.cell_mut((cursor_x, y)) {
-            cell.set_style(Style::default().fg(theme.bg_dark).bg(theme.text_primary));
-        }
+    if cursor_x < content.x + content.width
+        && let Some(cell) = buf.cell_mut((cursor_x, y))
+    {
+        cell.set_style(Style::default().fg(theme.bg_dark).bg(theme.text_primary));
     }
     y += 1;
 
-    if let Some(err) = &state.error {
-        if y < content.y + content.height {
-            let err_line = Line::from(Span::styled(
-                format!("✗ {err}"),
-                Style::default().fg(theme.accent_error),
-            ));
-            err_line.render(Rect::new(content.x, y, content.width, 1), buf);
-            y += 1;
-        }
+    if let Some(err) = &state.error
+        && y < content.y + content.height
+    {
+        let err_line = Line::from(Span::styled(
+            format!("✗ {err}"),
+            Style::default().fg(theme.accent_error),
+        ));
+        err_line.render(Rect::new(content.x, y, content.width, 1), buf);
+        y += 1;
     }
 
-    if let Some(succ) = &state.success {
-        if y < content.y + content.height {
-            let succ_line = Line::from(Span::styled(
-                format!("✓ {succ}"),
-                Style::default().fg(theme.accent_success),
-            ));
-            succ_line.render(Rect::new(content.x, y, content.width, 1), buf);
-        }
+    if let Some(succ) = &state.success
+        && y < content.y + content.height
+    {
+        let succ_line = Line::from(Span::styled(
+            format!("✓ {succ}"),
+            Style::default().fg(theme.accent_success),
+        ));
+        succ_line.render(Rect::new(content.x, y, content.width, 1), buf);
     }
 }
 
@@ -935,15 +1005,31 @@ fn render_list_content(buf: &mut Buffer, area: Rect, state: &ProviderModalState,
         line.render(Rect::new(area.x, y, area.width, 1), buf);
         y += 2;
     } else {
+        // 列宽：名称列自适应（8–20），认证/后端固定，URL 占余量。
+        // 行首 2 列 = 当前渠道标记（●）。
+        let name_w = state
+            .providers
+            .iter()
+            .map(|p| p.name.width())
+            .max()
+            .unwrap_or(8)
+            .clamp(8, 20);
+        let auth_w = 9; // "x_api_key"
+        let backend_w = 16; // "chat_completions"
+        let key_w = 6; // "✓ 密钥"
+        let fixed = 2 + name_w + 2 + 2 + auth_w + 2 + backend_w + 2 + key_w;
+        let url_w = (area.width as usize).saturating_sub(fixed).clamp(12, 40);
+
         // 表头（非可选行，不铺选中底）
         let header = Line::from(vec![
-            Span::styled("  名称", header_style),
             Span::styled("  ", header_style),
-            Span::styled("Base URL", header_style),
+            Span::styled(pad_to_width("名称", name_w), header_style),
             Span::styled("  ", header_style),
-            Span::styled("认证", header_style),
+            Span::styled(pad_to_width("Base URL", url_w), header_style),
             Span::styled("  ", header_style),
-            Span::styled("后端", header_style),
+            Span::styled(pad_to_width("认证", auth_w), header_style),
+            Span::styled("  ", header_style),
+            Span::styled(pad_to_width("后端", backend_w), header_style),
             Span::styled("  ", header_style),
             Span::styled("密钥", header_style),
         ]);
@@ -962,8 +1048,12 @@ fn render_list_content(buf: &mut Buffer, area: Rect, state: &ProviderModalState,
                 break;
             }
             let selected = i == state.selected;
-            let marker = if p.is_current { " *" } else { "  " };
-            let key_status = if p.has_key { "✓" } else { "✗" };
+            let (key_status, key_color) = if p.has_key {
+                ("✓ 密钥", theme.accent_success)
+            } else {
+                ("✗ 无", theme.accent_error)
+            };
+            let marker_style = Style::default().fg(theme.accent_user);
             paint_list_row(
                 buf,
                 area,
@@ -971,30 +1061,39 @@ fn render_list_content(buf: &mut Buffer, area: Rect, state: &ProviderModalState,
                 selected,
                 theme,
                 vec![
+                    Span::styled(if p.is_current { "● " } else { "  " }, marker_style),
                     Span::styled(
-                        format!("  {}{}", p.name, marker),
+                        pad_to_width(&p.name, name_w),
                         Style::default().fg(theme.text_primary),
                     ),
                     Span::styled("  ", Style::default()),
                     Span::styled(
-                        truncate_str(&p.base_url, 28),
+                        pad_to_width(&p.base_url, url_w),
                         Style::default().fg(theme.text_primary),
                     ),
                     Span::styled("  ", Style::default()),
-                    Span::styled(p.auth_scheme.as_str(), Style::default().fg(theme.gray)),
-                    Span::styled("  ", Style::default()),
-                    Span::styled(p.api_backend.as_str(), Style::default().fg(theme.gray)),
+                    Span::styled(
+                        pad_to_width(&p.auth_scheme, auth_w),
+                        Style::default().fg(theme.gray),
+                    ),
                     Span::styled("  ", Style::default()),
                     Span::styled(
-                        key_status,
-                        Style::default().fg(if p.has_key {
-                            theme.accent_success
-                        } else {
-                            theme.accent_error
-                        }),
+                        pad_to_width(&p.api_backend, backend_w),
+                        Style::default().fg(theme.gray),
                     ),
+                    Span::styled("  ", Style::default()),
+                    Span::styled(key_status, Style::default().fg(key_color)),
                 ],
             );
+            y += 1;
+        }
+        // 图例：● = 当前使用的渠道
+        if state.providers.iter().any(|p| p.is_current) && y < area.y + area.height {
+            let legend = Line::from(vec![
+                Span::styled("  ● ", Style::default().fg(theme.accent_user)),
+                Span::styled("当前渠道", dim_style),
+            ]);
+            legend.render(Rect::new(area.x, y, area.width, 1), buf);
             y += 1;
         }
         y += 1;
@@ -1018,14 +1117,14 @@ fn render_list_content(buf: &mut Buffer, area: Rect, state: &ProviderModalState,
         y += 1;
     }
 
-    if let Some(err) = &state.error {
-        if y < area.y + area.height {
-            let err_line = Line::from(Span::styled(
-                format!("✗ {err}"),
-                Style::default().fg(theme.accent_error),
-            ));
-            err_line.render(Rect::new(area.x, y, area.width, 1), buf);
-        }
+    if let Some(err) = &state.error
+        && y < area.y + area.height
+    {
+        let err_line = Line::from(Span::styled(
+            format!("✗ {err}"),
+            Style::default().fg(theme.accent_error),
+        ));
+        err_line.render(Rect::new(area.x, y, area.width, 1), buf);
     }
 }
 
@@ -1068,17 +1167,30 @@ fn render_actions(
 
     let mut y = content.y;
     let hint = Line::from(Span::styled(
-        "选择操作:",
+        "选择操作（数字键直达）:",
         Style::default().fg(theme.gray_dim),
     ));
     hint.render(Rect::new(content.x, y, content.width, 1), buf);
     y += 1;
 
+    // 标签列对齐：取最宽标签 + 2 空隙。
+    let label_w = ProviderAction::ALL
+        .iter()
+        .map(|a| a.label().width())
+        .max()
+        .unwrap_or(12)
+        + 2;
     for (i, action) in ProviderAction::ALL.iter().enumerate() {
         if y >= content.y + content.height {
             break;
         }
         let selected = i == state.selected;
+        let danger = matches!(action, ProviderAction::Delete);
+        let label_color = if danger {
+            theme.accent_error
+        } else {
+            theme.text_primary
+        };
         paint_list_row(
             buf,
             content,
@@ -1086,28 +1198,26 @@ fn render_actions(
             selected,
             theme,
             vec![
+                Span::styled(format!("  {} ", i + 1), Style::default().fg(theme.gray_dim)),
                 Span::styled(
-                    format!("  {}", action.label()),
-                    Style::default().fg(theme.text_primary),
+                    pad_to_width(action.label(), label_w),
+                    Style::default().fg(label_color),
                 ),
-                Span::styled(
-                    format!("  {}", action.hint()),
-                    Style::default().fg(theme.gray_dim),
-                ),
+                Span::styled(action.hint(), Style::default().fg(theme.gray_dim)),
             ],
         );
         y += 1;
     }
 
-    if let Some(succ) = &state.success {
-        if y + 1 < content.y + content.height {
-            y += 1;
-            let succ_line = Line::from(Span::styled(
-                format!("✓ {succ}"),
-                Style::default().fg(theme.accent_success),
-            ));
-            succ_line.render(Rect::new(content.x, y, content.width, 1), buf);
-        }
+    if let Some(succ) = &state.success
+        && y + 1 < content.y + content.height
+    {
+        y += 1;
+        let succ_line = Line::from(Span::styled(
+            format!("✓ {succ}"),
+            Style::default().fg(theme.accent_success),
+        ));
+        succ_line.render(Rect::new(content.x, y, content.width, 1), buf);
     }
 }
 
@@ -1186,15 +1296,15 @@ fn render_confirm_delete(
     }
 
     // 3. 错误（如有）
-    if let Some(err) = &state.error {
-        if y < content.y + content.height {
-            let line = Line::from(Span::styled(
-                format!("⚠ {err}"),
-                Style::default().fg(theme.warning),
-            ));
-            line.render(Rect::new(content.x, y, content.width, 1), buf);
-            y += 1;
-        }
+    if let Some(err) = &state.error
+        && y < content.y + content.height
+    {
+        let line = Line::from(Span::styled(
+            format!("⚠ {err}"),
+            Style::default().fg(theme.warning),
+        ));
+        line.render(Rect::new(content.x, y, content.width, 1), buf);
+        y += 1;
     }
 
     // 4. 提示行
@@ -1337,7 +1447,7 @@ fn render_model_list_body(
 ) {
     if state.models_loading {
         let line = Line::from(Span::styled(
-            "正在获取模型列表…",
+            "⏳ 正在后台获取模型列表（最长 15 秒）… Esc 可返回",
             Style::default().fg(theme.gray),
         ));
         line.render(content, buf);
@@ -1409,11 +1519,11 @@ fn render_model_list_body(
     let end = (start + list_h).min(filtered_len);
     let filtered = state.filtered_models();
 
-    for i in start..end {
+    for (i, m) in filtered.iter().enumerate().take(end).skip(start) {
         if y >= bottom {
             break;
         }
-        let m = filtered[i];
+        let m = *m;
         let selected = i == state.selected;
         paint_list_row(
             buf,
@@ -1499,10 +1609,10 @@ fn render_model_search_bar(
         let disp = truncate_str(query, input_w.saturating_sub(1) as usize);
         buf.set_string(input_x, y, &disp, query_style.bg(bg));
         let cursor_x = input_x + disp.width() as u16;
-        if cursor_x < x + width {
-            if let Some(cell) = buf.cell_mut((cursor_x, y)) {
-                cell.set_style(Style::default().fg(theme.bg_dark).bg(theme.text_primary));
-            }
+        if cursor_x < x + width
+            && let Some(cell) = buf.cell_mut((cursor_x, y))
+        {
+            cell.set_style(Style::default().fg(theme.bg_dark).bg(theme.text_primary));
         }
     }
 }
@@ -1510,15 +1620,33 @@ fn render_model_search_bar(
 // ── 工具函数 ────────────────────────────────────────────────────────────────
 
 /// 用 • 遮蔽 API Key 内容（保留后 4 位用于确认）。
+///
+/// 按字符计数而非字节：误粘贴多字节字符时，字节切片会在 UTF-8
+/// 边界上 panic。
 fn mask_key(key: &str) -> String {
-    if key.is_empty() {
+    let total = key.chars().count();
+    if total == 0 {
         return String::new();
     }
-    if key.len() <= 4 {
-        return "•".repeat(key.len());
+    if total <= 4 {
+        return "•".repeat(total);
     }
-    let tail = &key[key.len() - 4..];
-    format!("{}{}", "•".repeat(key.len() - 4), tail)
+    let tail: String = key.chars().skip(total - 4).collect();
+    format!("{}{}", "•".repeat(total - 4), tail)
+}
+
+/// 填充/截断到固定显示宽度（东亚宽字符按 2 列计）。
+fn pad_to_width(s: &str, width: usize) -> String {
+    let w = s.width();
+    if w == width {
+        return s.to_string();
+    }
+    if w < width {
+        return format!("{s}{}", " ".repeat(width - w));
+    }
+    let truncated = truncate_str(s, width);
+    let tw = truncated.width();
+    format!("{truncated}{}", " ".repeat(width.saturating_sub(tw)))
 }
 
 /// 截断字符串到指定显示宽度。

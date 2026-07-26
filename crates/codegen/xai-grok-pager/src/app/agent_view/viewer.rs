@@ -329,6 +329,18 @@ impl AgentView {
         self.casual_editing_comment_id = None;
     }
 
+    /// Close the token-usage detail overlay.
+    ///
+    /// Single close path for every dismissal (Esc, `q`, the `[✗]` button, a
+    /// second click on the status chip, and the dispatcher's toggle) so the
+    /// stale close-button hit-rect can never outlive the popup. A fetch still
+    /// in flight is not cancelled — `fill_usage_detail` drops its result once
+    /// `usage_detail` is `None`.
+    pub(crate) fn close_usage_detail(&mut self) {
+        self.usage_detail = None;
+        self.hit_usage_close.clear();
+    }
+
     /// Dismiss the /btw panel. If Done, flush response to scrollback first.
     pub(super) fn dismiss_btw_panel(&mut self) -> InputOutcome {
         use crate::scrollback::block::RenderBlock;

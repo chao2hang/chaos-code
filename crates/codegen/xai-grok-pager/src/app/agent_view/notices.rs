@@ -171,6 +171,10 @@ impl AgentView {
             // modals and line_viewer) since a tip during goal reading is
             // unwanted regardless.
             || (self.show_goal_detail && self.goal_state.is_some())
+            // Token-usage overlay: same reasoning as goal detail — a
+            // vertically-centered popup the user is reading, so refuse the tip
+            // unconditionally rather than reason about its exact height.
+            || self.usage_detail.is_some()
             || self.show_workflows
             // Prompt dropdowns (@/slash/completion/history) render in the
             // row directly above the prompt — the banner row — clearing it.

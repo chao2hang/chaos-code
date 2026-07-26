@@ -67,7 +67,7 @@ pub(crate) fn tools_include_write(tools: &[String]) -> bool {
 }
 
 pub(crate) fn is_write_tool_name(name: &str) -> bool {
-    WRITE_TOOL_NAMES.iter().any(|w| *w == name)
+    WRITE_TOOL_NAMES.contains(&name)
 }
 
 /// Pure decision: should the outer loop inject recovery and sample again?
@@ -138,7 +138,7 @@ fn looks_like_intent_to_continue(text: &str) -> bool {
     // If the text contains a completion marker, it's likely a summary, not a plan.
     let lower = text.to_lowercase();
     if COMPLETION_MARKERS.iter().any(|m| {
-        if m.chars().all(|c| c.is_ascii()) {
+        if m.is_ascii() {
             lower.contains(m)
         } else {
             text.contains(m)
@@ -172,7 +172,7 @@ fn looks_like_intent_to_continue(text: &str) -> bool {
         "continue to",
     ];
     MARKERS.iter().any(|m| {
-        if m.chars().all(|c| c.is_ascii()) {
+        if m.is_ascii() {
             lower.contains(m)
         } else {
             text.contains(m)

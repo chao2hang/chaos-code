@@ -98,7 +98,8 @@ use super::status::{
     dispatch_copy_session_id, dispatch_manage_billing, dispatch_open_gboom, dispatch_open_tutorial,
     dispatch_set_context_window, dispatch_share_session, dispatch_show_context_info,
     dispatch_show_privacy_info, dispatch_show_queue, dispatch_show_release_notes,
-    dispatch_show_session_info, dispatch_show_tasks, dispatch_show_usage, set_coding_data_sharing,
+    dispatch_show_session_info, dispatch_show_tasks, dispatch_show_usage,
+    dispatch_show_usage_detail, set_coding_data_sharing,
 };
 use super::task_result::{dispatch_task_result, unregister_all_active_sessions};
 use super::transcript::{
@@ -937,6 +938,7 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
             compact_if_needed,
         } => dispatch_set_context_window(app, tokens, compact_if_needed),
         Action::ShowUsage => dispatch_show_usage(app),
+        Action::ShowUsageDetail => dispatch_show_usage_detail(app),
         Action::ManageBilling => dispatch_manage_billing(app),
         Action::ShowQueue => dispatch_show_queue(app),
         Action::ShowTasks => dispatch_show_tasks(app),

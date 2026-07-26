@@ -11,12 +11,6 @@ use crate::app::app_view::{ActiveView, AppView};
 use crate::notifications::{NotificationEvent, NotificationEventKind};
 use crate::scrollback::block::RenderBlock;
 
-/// Toggle YOLO mode (auto-approve all permissions).
-///
-/// When turning ON: auto-approve all currently queued permissions and
-/// restore the stashed prompt. Future incoming permissions will be
-/// auto-approved in `handle_permission_request`.
-///
 /// Share the current session via a public URL.
 ///
 /// Produces Effect::ShareSession which spawns an async ACP ext request.
@@ -291,9 +285,9 @@ pub(super) fn dispatch_set_context_window(
 }
 
 fn format_token_count(n: u64) -> String {
-    if n >= 1_000_000 && n % 1_000_000 == 0 {
+    if n >= 1_000_000 && n.is_multiple_of(1_000_000) {
         format!("{}M", n / 1_000_000)
-    } else if n >= 1_000 && n % 1_000 == 0 {
+    } else if n >= 1_000 && n.is_multiple_of(1_000) {
         format!("{}K", n / 1_000)
     } else if n >= 10_000 {
         format!("{:.0}K", n as f64 / 1000.0)
@@ -358,6 +352,7 @@ pub(super) fn dispatch_show_usage(app: &mut AppView) -> Vec<Effect> {
         Some(session_id) => vec![Effect::FetchSessionUsage {
             agent_id: id,
             session_id,
+            for_overlay: false,
         }],
         None => {
             if let Some(agent) = app.agents.get_mut(&id) {
@@ -368,6 +363,38 @@ pub(super) fn dispatch_show_usage(app: &mut AppView) -> Vec<Effect> {
             append_consumer_billing_surface(app, id)
         }
     }
+}
+
+/// Click on the accumulated-token status chip — open the usage detail overlay
+/// and fetch the ledger into it.
+///
+/// The overlay opens immediately in `Loading` so the click is acknowledged on
+/// the next frame rather than after the round-trip. A second click while the
+/// overlay is open closes it (the chip is a toggle, like the goal chip), and
+/// any in-flight fetch then lands on a closed overlay and is dropped.
+pub(super) fn dispatch_show_usage_detail(app: &mut AppView) -> Vec<Effect> {
+    use crate::views::usage_detail::UsageDetail;
+
+    let ActiveView::Agent(id) = app.active_view else {
+        return vec![];
+    };
+    let Some(agent) = app.agents.get_mut(&id) else {
+        return vec![];
+    };
+    if agent.usage_detail.is_some() {
+        agent.close_usage_detail();
+        return vec![];
+    }
+    let Some(session_id) = agent.session.session_id.clone() else {
+        agent.usage_detail = Some(UsageDetail::Failed("会话尚未启动，暂无用量。".to_string()));
+        return vec![];
+    };
+    agent.usage_detail = Some(UsageDetail::Loading);
+    vec![Effect::FetchSessionUsage {
+        agent_id: id,
+        session_id,
+        for_overlay: true,
+    }]
 }
 
 /// Commit a session-usage block if still on `session_id`, then consumer credits.
@@ -385,6 +412,32 @@ pub(super) fn commit_session_usage_block(
     }
     agent.scrollback.push_block(RenderBlock::system(text));
     append_consumer_billing_surface(app, agent_id)
+}
+
+/// Fill the token-usage detail overlay with a fetched ledger (or its error).
+///
+/// Dropped when the agent is gone, the session was rebound under the fetch, or
+/// the user already dismissed the overlay — a late result must never re-open a
+/// popup the user closed. Unlike [`commit_session_usage_block`] this does not
+/// chain the consumer billing surface: the overlay is a token/cost read-out,
+/// not the `/usage` command flow.
+pub(super) fn fill_usage_detail(
+    app: &mut AppView,
+    agent_id: AgentId,
+    session_id: &acp::SessionId,
+    detail: crate::views::usage_detail::UsageDetail,
+) -> Vec<Effect> {
+    let Some(agent) = app.agents.get_mut(&agent_id) else {
+        return vec![];
+    };
+    if agent.session.session_id.as_ref() != Some(session_id) {
+        return vec![];
+    }
+    if agent.usage_detail.is_none() {
+        return vec![];
+    }
+    agent.usage_detail = Some(detail);
+    vec![]
 }
 
 /// Consumer credit follow-up for `/usage` (redirect or non-silent billing fetch).
@@ -499,11 +552,6 @@ pub(super) fn dispatch_open_gboom(app: &mut AppView) -> Vec<Effect> {
     vec![]
 }
 
-/// Emit a `SessionReady` notification for the given agent.
-///
-/// Takes `&NotificationService` separately from `&AgentView` to avoid
-/// borrow-checker conflicts when `agent` is borrowed from `app.agents`.
-
 /// Open the onboarding tutorial overlay (top-level modal — works over both
 /// the welcome screen and an agent session). Toggles: dispatching while
 /// open closes instead of stacking.
@@ -521,6 +569,10 @@ pub(super) fn dispatch_open_tutorial(app: &mut AppView) -> Vec<Effect> {
     vec![]
 }
 
+/// Emit a `SessionReady` notification for the given agent.
+///
+/// Takes `&NotificationService` separately from `&AgentView` to avoid
+/// borrow-checker conflicts when `agent` is borrowed from `app.agents`.
 pub(super) fn notify_session_ready(
     notification_service: &crate::notifications::NotificationService,
     agent: &AgentView,

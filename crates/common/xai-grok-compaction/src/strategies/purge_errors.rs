@@ -10,7 +10,8 @@ use super::{StrategyEntry, StrategyEntryKind};
 
 /// 对给定条目序列执行错误清除策略，返回可批量提交的压缩区间。
 ///
-/// `min_turns_after` 指定错误结果之后至少需要经过多少个用户轮次才可清除。
+/// `min_turns_after` 指定错误结果之后至少需要经过多少个**条目**才可清除
+/// （以条目数近似轮次间隔，并非真实用户轮次）。
 /// `topic` 用作所有生成区间的主题标签。区间按 `start` 升序排列且互不重叠。
 /// `tokens_before` / `tokens_after` 置零，由宿主在提交前填充实际估值。
 pub fn purge_errors_strategy(
@@ -30,7 +31,7 @@ pub fn purge_errors_strategy(
     }
 
     let mut ranges = Vec::new();
-    for entry in entries {
+    for (position, entry) in entries.iter().enumerate() {
         let StrategyEntryKind::ToolResult {
             call_id,
             is_error: true,
@@ -45,10 +46,8 @@ pub fn purge_errors_strategy(
         if call_index >= result_index {
             continue;
         }
-        // 统计结果之后的用户轮次（Other 条目中由宿主标记为用户消息的）。
-        // 宿主通过在 entries 中将用户消息标记为 Other 来参与计数；
-        // 此处用 result_index 之后的条目数作为近似轮次间隔。
-        let turns_after = entries.iter().filter(|e| e.index > result_index).count();
+        // 以结果之后的条目数近似轮次间隔（entries 按 index 升序）。
+        let turns_after = entries.len() - position - 1;
         if turns_after < min_turns_after {
             continue;
         }
@@ -78,11 +77,11 @@ fn merge_overlapping(mut ranges: Vec<CompressionRange>) -> Vec<CompressionRange>
     ranges.sort_by_key(|r| r.start);
     let mut merged: Vec<CompressionRange> = Vec::with_capacity(ranges.len());
     for range in ranges {
-        if let Some(last) = merged.last_mut() {
-            if range.start <= last.end {
-                last.end = last.end.max(range.end);
-                continue;
-            }
+        if let Some(last) = merged.last_mut()
+            && range.start <= last.end
+        {
+            last.end = last.end.max(range.end);
+            continue;
         }
         merged.push(range);
     }

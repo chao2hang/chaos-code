@@ -294,6 +294,19 @@ jobs:
             exit 1
           fi
 
+      # Publish checksums so `install.sh` / `install.ps1` / `install.bat` can
+      # verify what they download instead of executing an unverified binary.
+      # Format is plain `sha256sum`/`shasum -a 256` output so the installers can
+      # check it with stock tooling on every platform.
+      - name: Generate SHA256SUMS
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd release-bins
+          sha256sum chaos-* > SHA256SUMS
+          echo "=== SHA256SUMS ==="
+          cat SHA256SUMS
+
       - name: Stamp npm versions
         run: node scripts/ci/stamp-npm-version.mjs "${{ needs.resolve-version.outputs.version }}"
 
@@ -388,6 +401,7 @@ jobs:
           generate_release_notes: true
           fail_on_unmatched_files: false
           files: |
+            release-bins/SHA256SUMS
             release-bins/chaos-linux-x64
             release-bins/chaos-linux-arm64
             release-bins/chaos-darwin-arm64

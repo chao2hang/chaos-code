@@ -41,7 +41,7 @@ use super::session::load::{
 };
 use super::settings::ui::apply_setting_rollback;
 use super::status::{
-    commit_session_usage_block, handle_coding_data_sharing_failed,
+    commit_session_usage_block, fill_usage_detail, handle_coding_data_sharing_failed,
     handle_coding_data_sharing_updated, handle_context_info_complete,
     handle_set_context_window_complete, scrub_error_for_toast,
 };
@@ -917,22 +917,46 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
             agent_id,
             session_id,
             usage,
-        } => commit_session_usage_block(
-            app,
-            agent_id,
-            &session_id,
-            crate::app::status_blocks::session_usage_block_text(&usage),
-        ),
+            for_overlay,
+        } => {
+            if for_overlay {
+                fill_usage_detail(
+                    app,
+                    agent_id,
+                    &session_id,
+                    crate::views::usage_detail::UsageDetail::Ready(usage),
+                )
+            } else {
+                commit_session_usage_block(
+                    app,
+                    agent_id,
+                    &session_id,
+                    crate::app::status_blocks::session_usage_block_text(&usage),
+                )
+            }
+        }
         TaskResult::SessionUsageFailed {
             agent_id,
             session_id,
             error,
-        } => commit_session_usage_block(
-            app,
-            agent_id,
-            &session_id,
-            format!("Couldn't load session usage: {error}"),
-        ),
+            for_overlay,
+        } => {
+            if for_overlay {
+                fill_usage_detail(
+                    app,
+                    agent_id,
+                    &session_id,
+                    crate::views::usage_detail::UsageDetail::Failed(error),
+                )
+            } else {
+                commit_session_usage_block(
+                    app,
+                    agent_id,
+                    &session_id,
+                    format!("Couldn't load session usage: {error}"),
+                )
+            }
+        }
         TaskResult::FeedbackComplete { .. } => vec![],
         TaskResult::FeedbackFailed { agent_id, error } => {
             if let Some(agent) = app.agents.get_mut(&agent_id) {

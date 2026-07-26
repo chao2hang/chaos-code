@@ -24,7 +24,26 @@ MODIFY_PATH=1
 FORCE=0
 
 usage() {
-  sed -n '2,18p' "$0" | sed 's/^# \?//'
+  # Under `curl ... | bash -s -- --help` there is no script file to read
+  # ($0 is "bash"), so only self-read when $0 is a real file.
+  if [[ -f "$0" ]]; then
+    sed -n '2,18p' "$0" | sed 's/^# \?//'
+  else
+    cat <<'EOF'
+Install Chaos CLI from GitHub Releases and put it on PATH.
+
+Options:
+  --version X.Y.Z   Release version without leading v (default: latest)
+  --dir DIR         Install directory (default: ~/.chaos/bin or $CHAOS_HOME/bin)
+  --no-path         Do not modify shell rc / PATH
+  --force           Overwrite existing binary
+  -h, --help        Show help
+
+Environment:
+  CHAOS_VERSION         Pin a version (same as --version)
+  CHAOS_SKIP_CHECKSUM=1 Skip SHA256 verification (not recommended)
+EOF
+  fi
   exit 0
 }
 
@@ -74,6 +93,17 @@ need_cmd() {
 need_cmd curl
 need_cmd uname
 need_cmd mktemp
+
+# SHA256 helper: coreutils on Linux, `shasum` on macOS. Emits the bare hex digest.
+sha256_of() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | awk '{print $1}'
+  else
+    return 1
+  fi
+}
 
 # Prefer CHAOS_HOME / existing layout, same dual-read idea as the npm postinstall.
 resolve_home() {
@@ -261,6 +291,47 @@ if head -c 16 "$TMP" | grep -qi '<!DOCTYPE\|<html'; then
   echo "error: download looks like HTML, not a binary: ${URL}" >&2
   exit 1
 fi
+
+# Integrity: verify against the release's published SHA256SUMS BEFORE the binary
+# is ever made executable or run. Set CHAOS_SKIP_CHECKSUM=1 only if you have
+# verified the download some other way.
+verify_checksum() {
+  if [[ "${CHAOS_SKIP_CHECKSUM:-0}" == "1" ]]; then
+    echo "warning: checksum verification skipped (CHAOS_SKIP_CHECKSUM=1)" >&2
+    return 0
+  fi
+
+  local sums expected actual
+  sums="$(curl -fsSL "https://github.com/${REPO}/releases/download/v${VERSION}/SHA256SUMS" 2>/dev/null)" || true
+  if [[ -z "$sums" ]]; then
+    echo "error: could not fetch SHA256SUMS for v${VERSION}." >&2
+    echo "  This release may predate checksum publishing. To install anyway," >&2
+    echo "  re-run with CHAOS_SKIP_CHECKSUM=1 (you are then trusting the download)." >&2
+    exit 1
+  fi
+
+  expected="$(printf '%s\n' "$sums" | awk -v f="$ASSET" '$2 == f || $2 == "*" f {print $1; exit}')"
+  if [[ -z "$expected" ]]; then
+    echo "error: SHA256SUMS has no entry for ${ASSET}" >&2
+    exit 1
+  fi
+
+  actual="$(sha256_of "$TMP")" || {
+    echo "error: no sha256sum/shasum available to verify the download" >&2
+    echo "  install coreutils, or re-run with CHAOS_SKIP_CHECKSUM=1" >&2
+    exit 1
+  }
+
+  if [[ "$actual" != "$expected" ]]; then
+    echo "error: checksum mismatch for ${ASSET}" >&2
+    echo "  expected: ${expected}" >&2
+    echo "  actual:   ${actual}" >&2
+    echo "  Refusing to install. This download may be corrupt or tampered with." >&2
+    exit 1
+  fi
+  echo "checksum OK (${actual})"
+}
+verify_checksum
 
 chmod +x "$TMP"
 # Smoke before replace
