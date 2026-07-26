@@ -36,6 +36,9 @@ pub use xai_grok_workspace_types::rpc::code_nav::{
     CodeFindDefinitionsReq, CodeFindReferencesReq, CodeGotoDefinitionReq, CodeGotoReferencesReq,
     CodeIndexStats, CodeIndexStatusReq, CodeIndexStatusResponse, CodeNavLocation, CodeNavResponse,
 };
+pub use xai_grok_workspace_types::rpc::export_github::{
+    ExportGithubError, ExportGithubReq, ExportGithubResponse,
+};
 pub use xai_grok_workspace_types::rpc::fs::{
     ClientFsListNode, ClientFsListReq, ClientFsListRes, ClientFsReadFileReq, ClientFsReadFileRes,
     ClientFsStatReq, ClientFsStatRes, GetFileEntry, GetFileResult, GetFilesReq, GetFilesRes,
@@ -233,6 +236,38 @@ fn git_op_cwd(
         None => ws.root_cwd(),
     }
 }
+#[async_trait]
+impl WorkspaceOp for xai_grok_workspace_types::rpc::export_github::ExportGithubReq {
+    async fn execute(
+        &self,
+        ws: &WorkspaceHandle,
+        _session_id: Option<&str>,
+    ) -> WorkspaceResult<Self::Response> {
+        if std::path::Path::new(&self.project_dir).is_absolute() {
+            return Err(WorkspaceError::HubError(
+                "project_dir must be relative to the workspace root".into(),
+            ));
+        }
+        let canonical_root = ws.canonical_root().await?;
+        let project_dir = ws
+            .resolve_service_path(&self.project_dir, &canonical_root)
+            .await?;
+        crate::export_github::run_export(crate::export_github::ExportGithubParams {
+            project_dir: &project_dir,
+            repo_full_name: self.repo_full_name.as_deref(),
+            remote_url_base: "https://github.com",
+            web_url_base: "https://github.com",
+            branch: self.branch.as_deref(),
+            commit_message: self.commit_message.as_deref(),
+        })
+        .await
+        .map_err(|failure| WorkspaceError::ExportGithub {
+            kind: failure.kind,
+            message: failure.message,
+        })
+    }
+}
+
 #[async_trait]
 impl WorkspaceOp for GitStatusExtReq {
     async fn execute(
