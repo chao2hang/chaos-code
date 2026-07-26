@@ -1,0 +1,17 @@
+[
+  {
+    "category": "features",
+    "description": "新增 `workspace.export_github` RPC，可把工作区项目目录推送到 GitHub 仓库（自动初始化 git、创建分支与提交）。移植自上游 0.2.112。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "上传队列清理不再残留已过期的临时文件：清理过程改为先对所有条目取龄再删除，结果不再取决于文件系统的目录遍历顺序。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "认证相关测试的环境变量隔离改用全局串行组，避免并发修改进程环境时相互干扰。",
+    "breaking_change": false
+  }
+]
