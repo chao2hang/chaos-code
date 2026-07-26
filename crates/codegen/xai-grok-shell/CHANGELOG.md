@@ -1,5 +1,21 @@
 # Changelog
 
+# 0.2.117 — 2026-07-27
+
+## Features
+
+- **导出到 GitHub**：新增 `workspace.export_github` RPC，可把工作区项目目录推送到 GitHub 仓库（自动初始化 git、创建分支与提交）。移植自上游 0.2.112。
+
+## Bug Fixes
+
+- **上传队列清理**：已过期的临时文件不再残留。清理过程原先边遍历边删除，而 sidecar 与其临时文件同时过期；若目录遍历先返回 sidecar，sidecar 被删后临时文件便无法再读取它，退回使用自身（较新的）mtime 从而被保留。是否发生取决于文件系统的遍历顺序。现在先对所有条目取龄，再执行删除。
+- **认证测试隔离**：`credential_provider` 的环境变量守卫改用全局串行组，避免与其它测试并发修改进程环境时相互干扰。
+
+## Internal
+
+- **上游同步**：对齐上游 `47348d13`（`SOURCE_REV` `d02693a8`）；回填 0.2.112 更新日志。上游在该批次中下线了 `deploy`，本 fork 保留 `DeployError` 并与 `ExportGithub` 并存。
+- **CI**：新增 Rust 作业（fmt / check --all-targets / clippy -D warnings / test）。测试步骤暂时排除 7 个存在历史失败的 crate，该清单为待偿还的技术债，不应用于掩盖新的回归。
+
 # 0.2.114 – 2026-07-25
 
 ## Features

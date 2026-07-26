@@ -1,6 +1,6 @@
 {
     "name": "chaos-code-win32-x64",
-    "version": "0.2.116",
+    "version": "0.2.117",
     "description": "win32-x64 binary for chaos-code. Do not install directly; install chaos-code instead.",
     "license": "Apache-2.0",
     "files": [
