@@ -35,6 +35,7 @@ pub fn error_code(err: &WorkspaceError) -> &'static str {
         WorkspaceError::HunkActionFailed(_) => "hunk_action_failed",
         WorkspaceError::HubError(_) => "hub_error",
         WorkspaceError::DeployError { kind, .. } => kind.wire_code(),
+        WorkspaceError::ExportGithub { kind, .. } => kind.wire_code(),
         WorkspaceError::ShuttingDown => "shutting_down",
         WorkspaceError::ToolsetExternallyOwned(_) => "toolset_externally_owned",
     }
@@ -62,6 +63,14 @@ pub fn rpc_error_to_workspace(err: RpcError) -> WorkspaceError {
         xai_grok_workspace_types::rpc::deploy::DeployError::from_wire_code(&err.code)
     {
         return WorkspaceError::DeployError {
+            kind,
+            message: err.message,
+        };
+    }
+    if let Some(kind) =
+        xai_grok_workspace_types::rpc::export_github::ExportGithubError::from_wire_code(&err.code)
+    {
+        return WorkspaceError::ExportGithub {
             kind,
             message: err.message,
         };

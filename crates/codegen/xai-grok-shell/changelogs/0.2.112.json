@@ -1,0 +1,92 @@
+[
+  {
+    "category": "features",
+    "description": "新增 `tool_overrides` 配置：可为内置搜索工具设置日期截止与域名白名单，会话级与配置级均可指定。",
+    "breaking_change": false
+  },
+  {
+    "category": "features",
+    "description": "`model_providers` 支持追加 URL 查询参数（`query_params`）与环境变量注入的请求头（`env_http_headers`），便于对接需要签名参数的网关。",
+    "breaking_change": false
+  },
+  {
+    "category": "features",
+    "description": "新增配置项限定哪些环境变量会传递给 shell 工具。",
+    "breaking_change": false
+  },
+  {
+    "category": "features",
+    "description": "新增 `/tutorial` 斜杠命令：可选的分主题上手引导。",
+    "breaking_change": false
+  },
+  {
+    "category": "features",
+    "description": "hooks 可写在 `config.toml` 中，不再只能用独立 JSON 文件。",
+    "breaking_change": false
+  },
+  {
+    "category": "features",
+    "description": "工作流覆盖层显示各 Agent 的实时进度并自动跟随当前阶段；失败的工作流运行可恢复，草稿文件上限提高。",
+    "breaking_change": false
+  },
+  {
+    "category": "features",
+    "description": "排队提示除「立即发送」与取消外，新增 `[edit]` 鼠标按钮。",
+    "breaking_change": false
+  },
+  {
+    "category": "features",
+    "description": "`/resume` 默认只列出原生会话，隐藏外部会话时给出提示；`--resume` 可按标题恢复。",
+    "breaking_change": false
+  },
+  {
+    "category": "features",
+    "description": "新增 `workspace.export_github` RPC，可把工作区项目目录推送到 GitHub 仓库（自动初始化 git、创建分支与提交）。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "后台 shell 命令上报真实退出码，不再固定显示 -1。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "文件附件在恢复或重放会话时正确显示。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "远端客户端的终端输出会被记录，read-file 提示与监视器因此能正常工作。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "后台任务托盘正确清除已终止的任务，并在重连后保留任务描述。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "重复的相同工具调用静默结束回合，不再弹出停止横幅。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "插件子 Agent 与父会话看到相同的 MCP 工具。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "MCP 工具在注册或更新托管服务后无需重启即可出现。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "并发启动或快速重启后的 Linux 启动挂起已修复。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "停泊回合不再在转录中重复输出「Worked for」标记。",
+    "breaking_change": false
+  }
+]
