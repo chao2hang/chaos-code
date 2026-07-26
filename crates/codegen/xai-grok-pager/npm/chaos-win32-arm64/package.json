@@ -1,6 +1,6 @@
 {
     "name": "chaos-code-win32-arm64",
-    "version": "0.2.115",
+    "version": "0.2.116",
     "description": "win32-arm64 binary for chaos-code. Do not install directly; install chaos-code instead.",
     "license": "Apache-2.0",
     "files": [
