@@ -2306,10 +2306,38 @@ fn cleanup_queue_dir(queue_dir: &Path, max_age: Duration, stats: Option<&UploadQ
     let all_names: HashSet<std::ffi::OsString> = entries.iter().map(|e| e.file_name()).collect();
     let mut cleaned = 0u64;
     let mut cleaned_bytes = 0u64;
-    for entry in &entries {
-        let Ok(metadata) = entry.metadata() else {
-            continue;
-        };
+
+    // Age every entry BEFORE deleting anything. `pair_age` reads the sidecar off
+    // disk, and a sidecar is itself expired whenever its temp file is, so
+    // deleting inside the visit loop let `read_dir` order decide the outcome: if
+    // the sidecar was visited first it was removed, and the temp file's own
+    // lookup then failed and silently fell back to its (fresh) mtime, leaking
+    // the expired temp. Snapshotting ages keeps the pair verdict order-independent,
+    // matching the guarantee the `all_names` snapshot already gives pairing.
+    let aged: Vec<(&std::fs::DirEntry, std::fs::Metadata, Duration)> = entries
+        .iter()
+        .filter_map(|entry| {
+            let metadata = entry.metadata().ok()?;
+            let path = entry.path();
+            let name = entry.file_name();
+            if metadata.is_dir() && name == "scratch" {
+                // Scratch roots are aged per-subdir by `cleanup_scratch_subdirs`.
+                return Some((entry, metadata, Duration::ZERO));
+            }
+            let age = pair_age(&path, &name, &all_names).unwrap_or_else(|| {
+                metadata
+                    .modified()
+                    .ok()
+                    .and_then(|m| m.elapsed().ok())
+                    .unwrap_or(Duration::MAX)
+            });
+            Some((entry, metadata, age))
+        })
+        .collect();
+
+    for (entry, metadata, age) in &aged {
+        let metadata = metadata.clone();
+        let age = *age;
         let path = entry.path();
         let name = entry.file_name();
         let is_scratch_root = metadata.is_dir() && name == "scratch";
@@ -2319,13 +2347,6 @@ fn cleanup_queue_dir(queue_dir: &Path, max_age: Duration, stats: Option<&UploadQ
             cleaned_bytes += sub_bytes;
             continue;
         }
-        let age = pair_age(&path, &name, &all_names).unwrap_or_else(|| {
-            metadata
-                .modified()
-                .ok()
-                .and_then(|m| m.elapsed().ok())
-                .unwrap_or(Duration::MAX)
-        });
         if age <= max_age {
             continue;
         }
@@ -6388,6 +6409,58 @@ mod tests {
         assert!(keep_sc.exists(), "fresh-by-sidecar sidecar kept");
         assert!(!drop_tmp.exists(), "expired-by-sidecar temp removed");
         assert!(!drop_sc.exists(), "expired-by-sidecar sidecar removed");
+    }
+
+    /// The pair verdict must not depend on `read_dir` order.
+    ///
+    /// A sidecar is expired exactly when its temp file is, so a cleanup that
+    /// deleted during the visit loop could remove the sidecar first and then
+    /// fail to age the temp file, falling back to its fresh mtime and leaking
+    /// it. With one pair that reproduced only where `read_dir` happened to
+    /// yield the sidecar first — green on ext4, red on the CI runner. Many
+    /// pairs scatter across the directory's hash order, so at least some land
+    /// sidecar-first on any filesystem and the leak shows up as a partial
+    /// cleanup instead of a clean sweep.
+    #[test]
+    fn cleanup_orphans_pair_verdict_is_readdir_order_independent() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let queue_dir = temp.path().join("upload_queue");
+        std::fs::create_dir_all(&queue_dir).unwrap();
+
+        let mut temps = Vec::new();
+        for i in 0..32 {
+            // All expired by sidecar (3h > 2h TTL) while their mtime stays fresh,
+            // so surviving can only mean the sidecar lookup was lost.
+            let tmp = queue_dir.join(format!("q{i:02}_turn1_a.tar.gz_{i}_0"));
+            std::fs::write(&tmp, b"bytes").unwrap();
+            let sidecar = QueueItemSidecar {
+                schema_version: 1,
+                session_id: "s".to_string(),
+                turn_number: 1,
+                gcs_path: format!("s/turn_1/a{i}"),
+                content_type: "application/gzip".to_string(),
+                artifact_name: format!("a{i}"),
+                enqueued_at: (chrono::Utc::now() - chrono::Duration::hours(3)).to_rfc3339(),
+                sha256: "0".repeat(64),
+            };
+            std::fs::write(
+                sidecar_path_for(&tmp),
+                serde_json::to_vec(&sidecar).unwrap(),
+            )
+            .unwrap();
+            temps.push(tmp);
+        }
+
+        cleanup_queue_dir(&queue_dir, Duration::from_secs(2 * 3600), None);
+
+        let leaked: Vec<_> = temps.iter().filter(|p| p.exists()).collect();
+        assert!(
+            leaked.is_empty(),
+            "every expired-by-sidecar temp must be removed regardless of visit \
+             order; {} of {} leaked: {leaked:?}",
+            leaked.len(),
+            temps.len()
+        );
     }
     /// `remove_owned_source` deletes both variants — both are queue-owned (a
     /// working-tree source is snapshotted, never enqueued directly).

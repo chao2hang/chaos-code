@@ -67,6 +67,18 @@ pub enum WorkspaceError {
         message: String,
     },
 
+    /// GitHub-export failure tagged with its typed class; see
+    /// [`ExportGithubError`] for how the class crosses the workspace RPC
+    /// boundary. Ported from upstream 0.2.112 alongside `DeployError`, which
+    /// upstream retired in the same sync but this fork still uses.
+    ///
+    /// [`ExportGithubError`]: xai_grok_workspace_types::rpc::export_github::ExportGithubError
+    #[error("github export error: {message}")]
+    ExportGithub {
+        kind: xai_grok_workspace_types::rpc::export_github::ExportGithubError,
+        message: String,
+    },
+
     /// The workspace is draining/shutting down and is no longer accepting new
     /// sessions. Surfaced when a `bind`/create races a terminal drain so the
     /// shared upload queue is never torn down out from under a fresh session.
