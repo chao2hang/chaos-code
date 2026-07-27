@@ -23,6 +23,13 @@
 #
 # Existing installs are upgraded in place when the resolved version differs.
 # Same-version installs are skipped (use --force to re-fetch).
+#
+# Download acceleration (China / restricted networks):
+#   CHAOS_GITHUB_MIRROR=https://ghfast.top   # custom prefix; tried first
+#   CHAOS_CN=1                               # prefer public mirrors before origin
+#   CHAOS_MIRROR_FIRST=1                     # same as CHAOS_CN=1
+# Mirrors rewrite https://github.com/... → ${mirror}/https://github.com/...
+# Checksums still verify the binary; a bad mirror cannot install silently.
 set -euo pipefail
 
 REPO="${CHAOS_REPO:-chao2hang/chaos-code}"
@@ -32,11 +39,19 @@ INSTALL_DIR=""
 MODIFY_PATH=1
 FORCE=0
 
+# Public ghproxy-style mirrors (prefix + full origin URL). Order is a best-effort
+# default; any may go offline. Users should set CHAOS_GITHUB_MIRROR when possible.
+DEFAULT_GITHUB_MIRRORS=(
+  "https://ghfast.top"
+  "https://ghproxy.net"
+  "https://mirror.ghproxy.com"
+)
+
 usage() {
   # Under `curl ... | bash -s -- --help` there is no script file to read
   # ($0 is "bash"), so only self-read when $0 is a real file.
   if [[ -f "$0" ]]; then
-    sed -n '2,18p' "$0" | sed 's/^# \?//'
+    sed -n '2,30p' "$0" | sed 's/^# \?//'
   else
     cat <<'EOF'
 Install Chaos CLI from GitHub Releases and put it on PATH.
@@ -51,8 +66,11 @@ Options:
 Existing installs are upgraded in place when the version differs.
 
 Environment:
-  CHAOS_VERSION         Pin a version (same as --version)
-  CHAOS_SKIP_CHECKSUM=1 Skip SHA256 verification (not recommended)
+  CHAOS_VERSION           Pin a version (same as --version)
+  CHAOS_SKIP_CHECKSUM=1   Skip SHA256 verification (not recommended)
+  CHAOS_GITHUB_MIRROR     Mirror prefix, e.g. https://ghfast.top (tried first)
+  CHAOS_CN=1              Prefer public GitHub mirrors (for slow/blocked GitHub)
+  CHAOS_MIRROR_FIRST=1    Same as CHAOS_CN=1
 EOF
   fi
   exit 0
@@ -195,27 +213,139 @@ atomic_symlink() {
   mv -f "$tmp" "$dest"
 }
 
+# Prefix-style mirror: https://ghfast.top/ + https://github.com/...
+apply_url_mirror() {
+  local mirror="$1"
+  local url="$2"
+  mirror="${mirror%/}"
+  echo "${mirror}/${url}"
+}
+
+# Emit candidate download URLs for a github.com or api.github.com origin URL.
+# Order: user mirror → (optional public mirrors) → origin → remaining mirrors.
+_push_cand() {
+  # args: cand; uses outer `seen` / `out` via nameref-style globals set by caller
+  local c="$1"
+  [[ -n "$c" ]] || return 0
+  case "$seen" in
+    *"|${c}|"*) return 0 ;;
+  esac
+  seen="${seen}${c}|"
+  out+=("$c")
+}
+
+github_url_candidates() {
+  local origin_url="$1"
+  local prefer_mirrors=0
+  local m
+  # `seen` / `out` intentionally non-local so _push_cand can append.
+  seen="|"
+  out=()
+
+  if [[ "${CHAOS_CN:-0}" == "1" || "${CHAOS_MIRROR_FIRST:-0}" == "1" ]]; then
+    prefer_mirrors=1
+  fi
+
+  if [[ -n "${CHAOS_GITHUB_MIRROR:-}" ]]; then
+    _push_cand "$(apply_url_mirror "${CHAOS_GITHUB_MIRROR}" "$origin_url")"
+  fi
+
+  if [[ "$prefer_mirrors" -eq 1 ]]; then
+    for m in "${DEFAULT_GITHUB_MIRRORS[@]}"; do
+      _push_cand "$(apply_url_mirror "$m" "$origin_url")"
+    done
+    _push_cand "$origin_url"
+  else
+    _push_cand "$origin_url"
+    for m in "${DEFAULT_GITHUB_MIRRORS[@]}"; do
+      _push_cand "$(apply_url_mirror "$m" "$origin_url")"
+    done
+  fi
+
+  printf '%s\n' "${out[@]}"
+}
+
+# Download origin_url to dest, trying mirrors on failure. Prints the URL that
+# succeeded to stdout on success (caller may ignore). Connect timeout is short
+# so a blocked github.com fails over quickly.
+download_github() {
+  local origin_url="$1"
+  local dest="$2"
+  local connect_timeout="${3:-12}"
+  local max_time="${4:-0}"
+  local cand http_code curl_args=()
+  local last_err=""
+
+  curl_args=(-fL --retry 2 --retry-delay 1 --connect-timeout "$connect_timeout")
+  if [[ "$max_time" -gt 0 ]]; then
+    curl_args+=(--max-time "$max_time")
+  fi
+
+  while IFS= read -r cand; do
+    [[ -n "$cand" ]] || continue
+    rm -f "$dest"
+    echo "  try: ${cand}" >&2
+    http_code="$(
+      curl "${curl_args[@]}" -o "$dest" -w '%{http_code}' "$cand" 2>/dev/null
+    )" || http_code="000"
+    if [[ "$http_code" == "200" && -s "$dest" ]]; then
+      # Reject tiny HTML error pages from broken proxies
+      if head -c 16 "$dest" 2>/dev/null | grep -qi '<!DOCTYPE\|<html'; then
+        last_err="HTML response from ${cand}"
+        rm -f "$dest"
+        continue
+      fi
+      echo "$cand"
+      return 0
+    fi
+    last_err="HTTP ${http_code} from ${cand}"
+    rm -f "$dest"
+  done < <(github_url_candidates "$origin_url")
+
+  echo "error: download failed for ${origin_url}" >&2
+  echo "  last: ${last_err}" >&2
+  echo "  tip: set CHAOS_GITHUB_MIRROR=https://ghfast.top  or  CHAOS_CN=1" >&2
+  return 1
+}
+
 latest_version() {
   # Prefer the latest non-draft release tag via GitHub API; fall back to releases/latest redirect.
-  local tag
-  tag="$(
-    curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" \
-      | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
-      | head -1
-  )" || true
-  if [[ -z "$tag" ]]; then
+  # Tries mirrors when origin is slow/blocked (same candidate list as downloads).
+  local tag cand body tmp
+  tmp="$(mktemp)"
+  while IFS= read -r cand; do
+    [[ -n "$cand" ]] || continue
+    if curl -fsSL --connect-timeout 10 --max-time 30 -o "$tmp" "$cand" 2>/dev/null; then
+      tag="$(
+        sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$tmp" | head -1
+      )"
+      if [[ -n "$tag" ]]; then
+        rm -f "$tmp"
+        echo "${tag#v}"
+        return 0
+      fi
+    fi
+  done < <(github_url_candidates "https://api.github.com/repos/${REPO}/releases/latest")
+
+  while IFS= read -r cand; do
+    [[ -n "$cand" ]] || continue
     tag="$(
-      curl -fsSLI "https://github.com/${REPO}/releases/latest" \
+      curl -fsSLI --connect-timeout 10 --max-time 30 "$cand" 2>/dev/null \
         | tr -d '\r' \
         | sed -n 's|^[Ll]ocation: .*tag/\([^/]*\)$|\1|p' \
         | head -1
     )" || true
-  fi
-  if [[ -z "$tag" ]]; then
-    echo "error: could not resolve latest release for ${REPO}" >&2
-    exit 1
-  fi
-  echo "${tag#v}"
+    if [[ -n "$tag" ]]; then
+      rm -f "$tmp"
+      echo "${tag#v}"
+      return 0
+    fi
+  done < <(github_url_candidates "https://github.com/${REPO}/releases/latest")
+
+  rm -f "$tmp"
+  echo "error: could not resolve latest release for ${REPO}" >&2
+  echo "  tip: pass --version X.Y.Z, or set CHAOS_CN=1 / CHAOS_GITHUB_MIRROR=..." >&2
+  exit 1
 }
 
 append_path_line() {
@@ -285,7 +415,8 @@ DOWNLOAD_DIR="${CHAOS_HOME}/downloads"
 STORED_NAME="chaos-${VERSION}-${PLATFORM}"
 STORED_PATH="${DOWNLOAD_DIR}/${STORED_NAME}"
 
-URL="https://github.com/${REPO}/releases/download/v${VERSION}/${ASSET}"
+ORIGIN_URL="https://github.com/${REPO}/releases/download/v${VERSION}/${ASSET}"
+SUMS_ORIGIN="https://github.com/${REPO}/releases/download/v${VERSION}/SHA256SUMS"
 DEST="${INSTALL_DIR}/${BIN_NAME}"
 AGENT_DEST="${INSTALL_DIR}/agent"
 
@@ -295,7 +426,14 @@ echo "  version: ${VERSION}"
 echo "  asset:   ${ASSET}"
 echo "  store:   ${STORED_PATH}"
 echo "  dest:    ${DEST} -> ../downloads/${STORED_NAME}"
-echo "  url:     ${URL}"
+echo "  origin:  ${ORIGIN_URL}"
+if [[ -n "${CHAOS_GITHUB_MIRROR:-}" ]]; then
+  echo "  mirror:  ${CHAOS_GITHUB_MIRROR} (CHAOS_GITHUB_MIRROR)"
+elif [[ "${CHAOS_CN:-0}" == "1" || "${CHAOS_MIRROR_FIRST:-0}" == "1" ]]; then
+  echo "  mirror:  public list first (CHAOS_CN/CHAOS_MIRROR_FIRST)"
+else
+  echo "  mirror:  origin first, then public fallbacks"
+fi
 
 # Default is upgrade-in-place. --force re-downloads even when the target
 # version is already installed (useful after a corrupt download).
@@ -328,23 +466,10 @@ cleanup() { rm -f "$TMP"; }
 trap cleanup EXIT
 
 echo "downloading..."
-HTTP_CODE="$(
-  curl -fL --retry 3 --retry-delay 1 \
-    -o "$TMP" \
-    -w '%{http_code}' \
-    "$URL"
-)"
-if [[ "$HTTP_CODE" != "200" ]]; then
-  echo "error: download failed (HTTP ${HTTP_CODE}): ${URL}" >&2
-  echo "  check releases: https://github.com/${REPO}/releases" >&2
-  exit 1
-fi
-
-# Basic sanity: not an HTML error page
-if head -c 16 "$TMP" | grep -qi '<!DOCTYPE\|<html'; then
-  echo "error: download looks like HTML, not a binary: ${URL}" >&2
-  exit 1
-fi
+# Large binary: short connect timeout for failover; no overall max-time once
+# the transfer is moving (140MB+ assets).
+USED_URL="$(download_github "$ORIGIN_URL" "$TMP" 12 0)" || exit 1
+echo "  from: ${USED_URL}"
 
 # Integrity: verify against the release's published SHA256SUMS BEFORE the binary
 # is ever made executable or run. Set CHAOS_SKIP_CHECKSUM=1 only if you have
@@ -355,14 +480,17 @@ verify_checksum() {
     return 0
   fi
 
-  local sums expected actual
-  sums="$(curl -fsSL "https://github.com/${REPO}/releases/download/v${VERSION}/SHA256SUMS" 2>/dev/null)" || true
-  if [[ -z "$sums" ]]; then
+  local sums expected actual sums_tmp
+  sums_tmp="$(mktemp)"
+  if ! download_github "$SUMS_ORIGIN" "$sums_tmp" 10 30 >/dev/null; then
+    rm -f "$sums_tmp"
     echo "error: could not fetch SHA256SUMS for v${VERSION}." >&2
     echo "  This release may predate checksum publishing. To install anyway," >&2
     echo "  re-run with CHAOS_SKIP_CHECKSUM=1 (you are then trusting the download)." >&2
     exit 1
   fi
+  sums="$(cat "$sums_tmp")"
+  rm -f "$sums_tmp"
 
   expected="$(printf '%s\n' "$sums" | awk -v f="$ASSET" '$2 == f || $2 == "*" f {print $1; exit}')"
   if [[ -z "$expected" ]]; then

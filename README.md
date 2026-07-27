@@ -169,12 +169,53 @@ for /f "tokens=2*" %%A in ('reg query "HKCU\Environment" /v Path 2^>nul') do set
 | 已装旧版本 | **自动升级**（无需 `--force`） |
 | 强制重下 | `install.sh --force` / `install.ps1 -Force` / `install.bat --force` |
 | 不改 PATH | `install.sh --no-path` / `install.ps1 -NoPath` / `install.bat --no-path` |
+| 国内加速 | `CHAOS_CN=1` 或 `CHAOS_GITHUB_MIRROR=https://ghfast.top`（见下） |
 
 | 脚本 | 用途 |
 |------|------|
 | [`scripts/install.sh`](scripts/install.sh) | macOS / Linux |
 | [`scripts/install.ps1`](scripts/install.ps1) | Windows PowerShell |
 | [`scripts/install.bat`](scripts/install.bat) | Windows cmd（无 iex） |
+
+### 国内 / 受限网络加速
+
+Release 二进制约 **100–150MB**，直连 `github.com` 在国内常很慢或超时。安装脚本支持 **GitHub 镜像前缀**（`ghproxy` 风格：`镜像/https://github.com/...`）：
+
+| 变量 / 参数 | 作用 |
+|-------------|------|
+| `CHAOS_GITHUB_MIRROR` / `-Mirror` / `--mirror` | 自定义镜像，**优先**使用 |
+| `CHAOS_CN=1` / `-Cn` / `--cn` | 先试内置公共镜像，再回退官方 |
+| （默认） | 先官方，失败后再试公共镜像 |
+
+内置公共镜像（可能变动，仅作回退）：`ghfast.top`、`ghproxy.net`、`mirror.ghproxy.com`。  
+下载后仍会用 **SHA256SUMS** 校验，镜像篡改无法静默安装。
+
+**macOS / Linux（推荐国内一键）：**
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.sh | CHAOS_CN=1 bash
+# 或指定镜像：
+curl -fsSL https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.sh | CHAOS_GITHUB_MIRROR=https://ghfast.top bash
+export PATH="$HOME/.chaos/bin:$PATH"
+chaos --version
+```
+
+**Windows PowerShell：**
+
+```powershell
+$env:CHAOS_CN = "1"
+# 或: $env:CHAOS_GITHUB_MIRROR = "https://ghfast.top"
+irm https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.ps1 | iex
+```
+
+**Windows cmd：**
+
+```bat
+set CHAOS_CN=1
+curl -L -o "%TEMP%\install-chaos.bat" https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.bat && "%TEMP%\install-chaos.bat" --cn
+```
+
+若公共镜像也不可用，可自建/换其它 ghproxy 兼容前缀，只改 `CHAOS_GITHUB_MIRROR` 即可。
 
 ---
 

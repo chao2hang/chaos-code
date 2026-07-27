@@ -26,8 +26,15 @@
 #   -NoPath    Do not modify user PATH
 #   -Force     Re-download even if the target version is already installed
 #   -Repo      GitHub owner/repo (default: chao2hang/chaos-code)
+#   -Mirror    GitHub mirror prefix (e.g. https://ghfast.top); also CHAOS_GITHUB_MIRROR
+#   -Cn        Prefer public mirrors first (also CHAOS_CN=1 / CHAOS_MIRROR_FIRST=1)
 #
 # Existing installs are upgraded in place when the resolved version differs.
+#
+# Download acceleration (China / restricted networks):
+#   $env:CHAOS_GITHUB_MIRROR = "https://ghfast.top"
+#   $env:CHAOS_CN = "1"
+# Binary is still verified against SHA256SUMS after download.
 
 [CmdletBinding()]
 param(
@@ -35,7 +42,9 @@ param(
     [string]$Dir = "",
     [switch]$NoPath,
     [switch]$Force,
-    [string]$Repo = $(if ($env:CHAOS_REPO) { $env:CHAOS_REPO } else { "chao2hang/chaos-code" })
+    [string]$Repo = $(if ($env:CHAOS_REPO) { $env:CHAOS_REPO } else { "chao2hang/chaos-code" }),
+    [string]$Mirror = $(if ($env:CHAOS_GITHUB_MIRROR) { $env:CHAOS_GITHUB_MIRROR } else { "" }),
+    [switch]$Cn
 )
 
 $ErrorActionPreference = "Stop"
@@ -175,32 +184,36 @@ function Get-LatestVersion {
         "Accept"     = "application/vnd.github+json"
     }
 
-    # 1) GitHub API /releases/latest
-    $api = "https://api.github.com/repos/$Repo/releases/latest"
+    # 1) GitHub API /releases/latest — try origin + mirrors (same list as downloads)
+    $apiOrigin = "https://api.github.com/repos/$Repo/releases/latest"
+    $apiCandidates = Get-GitHubUrlCandidates -OriginUrl $apiOrigin
+    $tmpJson = Join-Path $env:TEMP ("chaos-rel-" + [guid]::NewGuid().ToString("n") + ".json")
     try {
-        $rel = Invoke-RestMethod -Uri $api -Headers $headers
-        $tagName = $null
-        if ($null -ne $rel) {
-            # PSCustomObject, hashtable, or (rarely) raw string JSON
-            if ($rel -is [string]) {
-                if ($rel -match '"tag_name"\s*:\s*"([^"]+)"') { $tagName = $Matches[1] }
-            } elseif ($rel.PSObject -and $rel.PSObject.Properties['tag_name']) {
-                $tagName = [string]$rel.tag_name
-            } elseif ($rel -is [hashtable] -and $rel.ContainsKey('tag_name')) {
-                $tagName = [string]$rel['tag_name']
+        foreach ($api in $apiCandidates) {
+            try {
+                Write-Host "  resolve: $api"
+                Invoke-WebRequest -Uri $api -OutFile $tmpJson -Headers $headers -UseBasicParsing
+                if (-not (Test-Path -LiteralPath $tmpJson)) { continue }
+                $raw = [System.IO.File]::ReadAllText($tmpJson, [System.Text.Encoding]::UTF8)
+                $tagName = $null
+                if ($raw -match '"tag_name"\s*:\s*"([^"]+)"') {
+                    $tagName = $Matches[1]
+                }
+                if (-not [string]::IsNullOrWhiteSpace($tagName)) {
+                    return (Strip-LeadingV -Tag $tagName)
+                }
+            } catch {
+                $status = Get-HttpStatusCode $_
+                if ($status -eq 403 -and $api -eq $apiOrigin) {
+                    Write-Warning "GitHub API rate limited (HTTP 403); trying mirrors / redirect."
+                }
             }
         }
-        if (-not [string]::IsNullOrWhiteSpace($tagName)) {
-            return (Strip-LeadingV -Tag $tagName)
+        Write-Warning "GitHub API latest failed for all candidates; trying redirect fallback."
+    } finally {
+        if (Test-Path -LiteralPath $tmpJson) {
+            Remove-Item -Force -LiteralPath $tmpJson -ErrorAction SilentlyContinue
         }
-        Write-Warning "GitHub API returned no tag_name for $Repo; trying redirect fallback."
-    } catch {
-        $status = Get-HttpStatusCode $_
-        $msg = if ($_.Exception) { $_.Exception.Message } else { "$_" }
-        if ($status -eq 403) {
-            throw "GitHub API rate limited (HTTP 403) resolving latest release for $Repo. Retry later or pass -Version X.Y.Z."
-        }
-        Write-Warning "GitHub API latest failed ($msg); trying redirect fallback."
     }
 
     # 2) releases/latest redirect → .../tag/vX.Y.Z (no API quota)
@@ -209,7 +222,8 @@ function Get-LatestVersion {
         return $viaRedirect
     }
 
-    throw "could not resolve latest release for $Repo. Pass -Version X.Y.Z explicitly, or check network/proxy/GitHub rate limits."
+    throw ("could not resolve latest release for $Repo. Pass -Version X.Y.Z explicitly, " +
+           "or set `$env:CHAOS_CN='1' / `$env:CHAOS_GITHUB_MIRROR='https://ghfast.top'.")
 }
 
 function Ensure-UserPath {
@@ -237,6 +251,101 @@ function Ensure-UserPath {
     }
 }
 
+# Public ghproxy-style mirrors (prefix + full origin URL).
+$script:DefaultGitHubMirrors = @(
+    "https://ghfast.top",
+    "https://ghproxy.net",
+    "https://mirror.ghproxy.com"
+)
+
+function Apply-UrlMirror {
+    param([string]$MirrorPrefix, [string]$Url)
+    $m = $MirrorPrefix.TrimEnd("/")
+    return "$m/$Url"
+}
+
+function Get-GitHubUrlCandidates {
+    param([string]$OriginUrl)
+
+    $preferMirrors = $false
+    if ($Cn) { $preferMirrors = $true }
+    if ($env:CHAOS_CN -eq "1") { $preferMirrors = $true }
+    if ($env:CHAOS_MIRROR_FIRST -eq "1") { $preferMirrors = $true }
+
+    $list = New-Object System.Collections.Generic.List[string]
+    $seen = @{}
+
+    $ordered = New-Object System.Collections.Generic.List[string]
+    if (-not [string]::IsNullOrWhiteSpace($Mirror)) {
+        [void]$ordered.Add((Apply-UrlMirror -MirrorPrefix $Mirror -Url $OriginUrl))
+    }
+    if ($preferMirrors) {
+        foreach ($m in $script:DefaultGitHubMirrors) {
+            [void]$ordered.Add((Apply-UrlMirror -MirrorPrefix $m -Url $OriginUrl))
+        }
+        [void]$ordered.Add($OriginUrl)
+    } else {
+        [void]$ordered.Add($OriginUrl)
+        foreach ($m in $script:DefaultGitHubMirrors) {
+            [void]$ordered.Add((Apply-UrlMirror -MirrorPrefix $m -Url $OriginUrl))
+        }
+    }
+
+    foreach ($c in $ordered) {
+        if ([string]::IsNullOrWhiteSpace($c)) { continue }
+        if ($seen.ContainsKey($c)) { continue }
+        $seen[$c] = $true
+        [void]$list.Add($c)
+    }
+
+    return ,$list.ToArray()
+}
+
+function Download-GitHubFile {
+    param(
+        [string]$OriginUrl,
+        [string]$OutFile,
+        [hashtable]$Headers,
+        [int]$MinBytes = 16
+    )
+
+    $candidates = Get-GitHubUrlCandidates -OriginUrl $OriginUrl
+    $lastErr = $null
+    foreach ($cand in $candidates) {
+        try {
+            if (Test-Path -LiteralPath $OutFile) {
+                Remove-Item -Force -LiteralPath $OutFile -ErrorAction SilentlyContinue
+            }
+            Write-Host "  try: $cand"
+            Invoke-WebRequest -Uri $cand -OutFile $OutFile -Headers $Headers -UseBasicParsing
+            if (-not (Test-Path -LiteralPath $OutFile)) { continue }
+            $len = (Get-Item -LiteralPath $OutFile).Length
+            if ($len -lt $MinBytes) {
+                $lastErr = "too small ($len bytes) from $cand"
+                Remove-Item -Force -LiteralPath $OutFile -ErrorAction SilentlyContinue
+                continue
+            }
+            # Reject HTML error pages when we expected a binary/text asset
+            if ($len -lt 1MB) {
+                $head = Get-Content -LiteralPath $OutFile -TotalCount 1 -ErrorAction SilentlyContinue
+                if ($head -match "<!DOCTYPE|<html") {
+                    $lastErr = "HTML response from $cand"
+                    Remove-Item -Force -LiteralPath $OutFile -ErrorAction SilentlyContinue
+                    continue
+                }
+            }
+            return $cand
+        } catch {
+            $lastErr = $_.Exception.Message
+            if (Test-Path -LiteralPath $OutFile) {
+                Remove-Item -Force -LiteralPath $OutFile -ErrorAction SilentlyContinue
+            }
+        }
+    }
+    throw ("download failed for $OriginUrl. last error: $lastErr. " +
+           "Tip: set `$env:CHAOS_GITHUB_MIRROR='https://ghfast.top' or `$env:CHAOS_CN='1'")
+}
+
 # --- main ---
 if ([string]::IsNullOrWhiteSpace($Version)) {
     Write-Host "resolving latest release..."
@@ -252,7 +361,8 @@ if (-not $Dir) {
 }
 
 $asset = Get-AssetName
-$url = "https://github.com/$Repo/releases/download/v$Version/$asset"
+$originUrl = "https://github.com/$Repo/releases/download/v$Version/$asset"
+$sumsOrigin = "https://github.com/$Repo/releases/download/v$Version/SHA256SUMS"
 $dest = Join-Path $Dir $BinName
 
 Write-Host "Chaos installer"
@@ -260,7 +370,14 @@ Write-Host "  repo:    $Repo"
 Write-Host "  version: $Version"
 Write-Host "  asset:   $asset"
 Write-Host "  dest:    $dest"
-Write-Host "  url:     $url"
+Write-Host "  origin:  $originUrl"
+if (-not [string]::IsNullOrWhiteSpace($Mirror)) {
+    Write-Host "  mirror:  $Mirror (CHAOS_GITHUB_MIRROR / -Mirror)"
+} elseif ($Cn -or $env:CHAOS_CN -eq "1" -or $env:CHAOS_MIRROR_FIRST -eq "1") {
+    Write-Host "  mirror:  public list first (CHAOS_CN / -Cn)"
+} else {
+    Write-Host "  mirror:  origin first, then public fallbacks"
+}
 
 # Default is upgrade-in-place. -Force re-downloads even when already on target.
 if ((Test-Path -LiteralPath $dest) -and -not $Force) {
@@ -289,16 +406,8 @@ $tmp = Join-Path $env:TEMP ("chaos-install-" + [guid]::NewGuid().ToString("n") +
 try {
     Write-Host "downloading..."
     $headers = @{ "User-Agent" = "chaos-code-installer" }
-    Invoke-WebRequest -Uri $url -OutFile $tmp -Headers $headers -UseBasicParsing
-
-    # Reject tiny HTML error pages
-    $len = (Get-Item -LiteralPath $tmp).Length
-    if ($len -lt 1MB) {
-        $head = Get-Content -LiteralPath $tmp -TotalCount 1 -ErrorAction SilentlyContinue
-        if ($head -match "<!DOCTYPE|<html") {
-            throw "download looks like HTML, not a binary: $url"
-        }
-    }
+    $usedUrl = Download-GitHubFile -OriginUrl $originUrl -OutFile $tmp -Headers $headers -MinBytes 1MB
+    Write-Host "  from: $usedUrl"
 
     # Integrity: verify against the release's published SHA256SUMS before the
     # binary is moved into place or executed. Set CHAOS_SKIP_CHECKSUM=1 only if
@@ -310,20 +419,15 @@ try {
     if ($env:CHAOS_SKIP_CHECKSUM -eq "1") {
         Write-Warning "checksum verification skipped (CHAOS_SKIP_CHECKSUM=1)"
     } else {
-        $sumsUrl = "https://github.com/$Repo/releases/download/v$Version/SHA256SUMS"
         $sumsFile = Join-Path $env:TEMP ("chaos-sums-" + [guid]::NewGuid().ToString("n") + ".txt")
         $expected = $null
         try {
             try {
-                Invoke-WebRequest -Uri $sumsUrl -OutFile $sumsFile -Headers $headers -UseBasicParsing
+                [void](Download-GitHubFile -OriginUrl $sumsOrigin -OutFile $sumsFile -Headers $headers -MinBytes 16)
             } catch {
                 throw ("could not fetch SHA256SUMS for v$Version. This release may predate " +
                        "checksum publishing. To install anyway, set CHAOS_SKIP_CHECKSUM=1 " +
                        "(you are then trusting the download).")
-            }
-            if (-not (Test-Path -LiteralPath $sumsFile) -or (Get-Item -LiteralPath $sumsFile).Length -lt 16) {
-                throw ("could not fetch SHA256SUMS for v$Version (empty response). " +
-                       "To install anyway, set CHAOS_SKIP_CHECKSUM=1.")
             }
 
             # Read as text bytes → UTF-8. Avoid Get-Content default encoding quirks.

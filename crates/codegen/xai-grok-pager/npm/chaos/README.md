@@ -14,6 +14,8 @@ Works when npm platform packages are incomplete (e.g. Windows `win32-x64` missin
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.sh | bash
+# China / slow GitHub:
+# curl -fsSL .../install.sh | CHAOS_CN=1 bash
 export PATH="$HOME/.chaos/bin:$PATH"   # current shell only; new terminals auto-pick PATH
 chaos --version
 ```
@@ -21,13 +23,15 @@ chaos --version
 **Windows (PowerShell):**
 
 ```powershell
+# China / slow GitHub: $env:CHAOS_CN = "1"
 irm https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.ps1 | iex
 # then open a NEW terminal, or: $env:Path = "$env:USERPROFILE\.chaos\bin;$env:Path"
 chaos --version
 ```
 
 Pin a version: `bash -s -- --version 0.2.118` / `-Version 0.2.118`.  
-Scripts install under `~/.chaos/bin` (or `~/.grok/bin`), upgrade existing installs in place, and configure PATH.
+Scripts install under `~/.chaos/bin` (or `~/.grok/bin`), upgrade existing installs in place, and configure PATH.  
+Optional: `CHAOS_GITHUB_MIRROR=https://ghfast.top` or `CHAOS_CN=1` for GitHub release acceleration (SHA256 still verified).
 
 ### npm
 
