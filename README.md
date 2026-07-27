@@ -61,10 +61,33 @@ sha256sum -c SHA256SUMS --ignore-missing
 
 任选其一即可。装好后**新开一个终端**再执行 `chaos --version`（用户 PATH 更新后需新会话）。
 
-#### 方式 A：cmd 一键（推荐，无需 `iex`）
+#### 方式 A：PowerShell 一键（推荐）
+
+在 **Windows PowerShell** 或 **PowerShell 7** 里执行：
+
+```powershell
+irm https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.ps1 | iex
+```
+
+固定版本（跳过 GitHub “latest” API，网络/限流时更稳）：
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.ps1))) -Version 0.2.117
+```
+
+先下载再执行（组策略限制管道时更稳）：
+
+```powershell
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.ps1" -OutFile "$env:TEMP\install-chaos.ps1"
+powershell -ExecutionPolicy Bypass -File "$env:TEMP\install-chaos.ps1" -Version 0.2.117
+```
+
+#### 方式 B：cmd 一键（无需 `iex`）
 
 > [!IMPORTANT]
-> 以下命令是 **cmd.exe** 语法（`&&`、`%TEMP%`）。**请勿粘贴到 PowerShell**——Windows PowerShell 5.1 不支持 `&&`（会报 `The token '&&' is not a valid statement separator`）。PowerShell 用户请用[方式 B](#方式-bpowershell)，或本节末尾的 PowerShell 等价写法。
+> 以下命令是 **cmd.exe** 语法（`&&`、`%TEMP%`）。**请勿粘贴到 PowerShell**——Windows PowerShell 5.1 不支持 `&&`（会报 `The token '&&' is not a valid statement separator`）。你当前若是 `PS C:\Users\...>` 提示符，请用[方式 A](#方式-apowershell-一键推荐)，或下面的 PowerShell 等价写法。
+
+**cmd.exe**（开始菜单搜 “命令提示符”）：
 
 ```bat
 curl -L -o "%TEMP%\install-chaos.bat" https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.bat && "%TEMP%\install-chaos.bat"
@@ -73,7 +96,7 @@ curl -L -o "%TEMP%\install-chaos.bat" https://raw.githubusercontent.com/chao2han
 固定版本 / 强制覆盖：
 
 ```bat
-"%TEMP%\install-chaos.bat" --version 0.2.113
+"%TEMP%\install-chaos.bat" --version 0.2.117
 "%TEMP%\install-chaos.bat" --force
 ```
 
@@ -81,35 +104,16 @@ curl -L -o "%TEMP%\install-chaos.bat" https://raw.githubusercontent.com/chao2han
 
 ```bat
 scripts\install.bat
-scripts\install.bat --version 0.2.113 --force
+scripts\install.bat --version 0.2.117 --force
 ```
 
 `install.bat` 会优先调用同目录的 `install.ps1`；若无 PowerShell 或脚本失败，则回退为直接下载 `chaos.exe` 并写入用户 PATH。
 
-在 **PowerShell** 里想走 bat 安装器，用原生等价写法（`;` 分隔、`$env:TEMP` 变量、`curl.exe` 避开别名）：
+在 **PowerShell** 里想走 bat 安装器，用 `;` 而不是 `&&`，并用 `curl.exe` 避开 `curl` 别名：
 
 ```powershell
 $bat = "$env:TEMP\install-chaos.bat"
 curl.exe -L -o $bat https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.bat; & $bat
-```
-
-#### 方式 B：PowerShell
-
-```powershell
-irm https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.ps1 | iex
-```
-
-固定版本（管道 `iex` 不便传参时）：
-
-```powershell
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.ps1))) -Version 0.2.113
-```
-
-先下载再执行（组策略限制管道时更稳）：
-
-```powershell
-Invoke-WebRequest -Uri "https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.ps1" -OutFile "$env:TEMP\install-chaos.ps1"
-powershell -ExecutionPolicy Bypass -File "$env:TEMP\install-chaos.ps1"
 ```
 
 #### 方式 C：手动下载 exe
