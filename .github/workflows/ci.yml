@@ -68,11 +68,14 @@ jobs:
 
       # Scoped, not `--workspace`. The excluded crates carry ~209 pre-existing
       # test failures that predate this job: CI ran no cargo step at all until
-      # now, so nothing had ever executed them. They are tracked separately —
-      # do NOT widen this list to hide a new regression, and remove entries as
-      # each crate is repaired. `check --all-targets` and `clippy` above still
-      # cover every crate, which is what stops test code drifting out of sync
-      # with production structs again.
+      # now, so nothing had ever executed them.
+      #
+      # This list is append-never, remove-only. Adding a crate here is NOT an
+      # accepted way to make CI green — see docs/ci-test-debt.md for the ledger,
+      # the repair order, and what risk the gap leaves open.
+      #
+      # `check --all-targets` and `clippy` above still cover every crate, which
+      # is what stops test code drifting out of sync with production structs.
       - name: cargo test
         run: |
           cargo test --workspace --locked --no-fail-fast \
@@ -83,6 +86,17 @@ jobs:
             --exclude xai-grok-shell-base \
             --exclude xai-grok-tools \
             --exclude xai-grok-update
+
+  # Local hooks are opt-in per clone (scripts/install-hooks.sh), so this job is
+  # what actually enforces the rule. e9d8fa9 pushed 24 environment dumps with
+  # live API keys to the public remote; nothing in CI would have noticed.
+  secret-scan:
+    name: secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: scan tracked files
+        run: ./scripts/ci/secret-scan.sh
 
   npm-scripts:
     name: npm package scripts

@@ -1,0 +1,42 @@
+[
+  {
+    "category": "fixes",
+    "description": "移除 0.2.115 误提交进 `xai-grok-pager` 的 24 个 Windows 环境变量转储文件。其中包含真实凭据，相关 token / API key 需要轮换：转储仍存在于历史提交对象中。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "`aarch64-unknown-linux-gnu` 不再以 `target-cpu=neoverse-v2` 构建，改用 `generic`，修复 Graviton2 / Ampere Altra / 树莓派 / Apple Silicon Docker 上的 SIGILL。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "`scripts/install.sh` 以 CRLF 提交导致 `curl | bash` 立即失败；已全仓归一化行尾。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "工作流恢复改为先排序再按已接受的运行数截断，恢复结果不再取决于文件系统的 readdir 顺序。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "`gcloud-storage` 统一到 `jwt-rust-crypto`，消除 `jsonwebtoken` 双加密后端导致的约 23 个认证测试随机失败。",
+    "breaking_change": false
+  },
+  {
+    "category": "features",
+    "description": "TUI 新增累计 token 状态条（`totalTokens` 高水位，含嵌套子代理，会话重绑时重置）。",
+    "breaking_change": false
+  },
+  {
+    "category": "features",
+    "description": "Release 发布 `SHA256SUMS`，安装脚本在运行二进制前先校验；`CHAOS_SKIP_CHECKSUM=1` 可跳过。",
+    "breaking_change": false
+  },
+  {
+    "category": "internal",
+    "description": "修复 96 个测试编译错误（约 7.4k 测试恢复可运行），新增 Rust CI 作业（fmt / check --all-targets / clippy -D warnings / test）。",
+    "breaking_change": false
+  }
+]

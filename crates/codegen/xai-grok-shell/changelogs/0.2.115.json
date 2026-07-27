@@ -1,0 +1,12 @@
+[
+  {
+    "category": "fixes",
+    "description": "`install.ps1` 版本查询失败时给出可操作的错误信息（限流 / 网络），不再抛出 null 表达式异常。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "README 标注 cmd 安装单行命令仅适用于 cmd.exe，并补充原生 PowerShell 写法。",
+    "breaking_change": false
+  }
+]

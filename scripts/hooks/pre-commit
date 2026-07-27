@@ -1,0 +1,40 @@
+#!/bin/sh
+# Refuse commits that carry credential material or local-machine artifacts.
+#
+# Why this exists: e9d8fa9 committed 24 Windows process environment dumps
+# (BRAVE_API_KEY, CONTEXT7_API_KEY, CODEBUDDY_GATEWAY_PASSWORD, an MCP
+# `Authorization: Bearer`, WORKBUDDY_PAC_RPC_TOKEN) into the pager crate and
+# pushed them to a public remote. .gitignore now blocks those path shapes, but
+# it is bypassed by `git add -f` and does nothing for already-tracked files, so
+# the content scan is the real backstop.
+#
+# Patterns live in scripts/ci/secret-scan.sh so this hook and the CI job cannot
+# drift apart. Install with scripts/install-hooks.sh.
+#
+# Escape hatch for intentional fixtures with fake keys:
+#   CHAOS_ALLOW_SECRET=1 git commit ...
+# Prefer fixing the fixture.
+
+set -eu
+
+if [ "${CHAOS_ALLOW_SECRET:-0}" = "1" ]; then
+    echo "pre-commit: secret scan skipped (CHAOS_ALLOW_SECRET=1)" >&2
+    exit 0
+fi
+
+repo_root=$(git rev-parse --show-toplevel)
+scanner="$repo_root/scripts/ci/secret-scan.sh"
+
+# A missing scanner must not silently disable the check.
+if [ ! -x "$scanner" ]; then
+    echo "pre-commit: $scanner missing or not executable; cannot scan" >&2
+    exit 1
+fi
+
+if ! "$scanner" --staged; then
+    echo >&2
+    echo "Commit blocked. Revoke first if this already reached a remote." >&2
+    exit 1
+fi
+
+exit 0

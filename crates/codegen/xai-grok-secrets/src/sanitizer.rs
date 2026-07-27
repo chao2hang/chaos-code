@@ -360,6 +360,7 @@ mod tests {
                 "aws access key",
             ),
             (
+                // secret-scan:allow — fake JWT fixture for the redaction test
                 fixture(&["Authorization: Bearer eyJhbGciOiJIUzI1NiJ9", ".foo.bar.baz"]),
                 "bearer token",
             ),
@@ -441,6 +442,7 @@ mod tests {
 
     #[test]
     fn redacts_pem_private_key_block() {
+        // secret-scan:allow — synthetic PEM body, not a real key
         let input = "key:\n-----BEGIN PRIVATE KEY-----\nMIIabc123def456\nMIIxyz789\n-----END PRIVATE KEY-----\ndone";
         let out = redact_secrets(input);
         assert!(out.contains(REDACTED), "PEM not redacted: {out}");
