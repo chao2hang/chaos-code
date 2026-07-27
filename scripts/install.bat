@@ -8,12 +8,16 @@ rem   install.bat
 rem   install.bat --version 0.2.113
 rem   install.bat --force
 rem   install.bat --no-path
+rem   install.bat --cn
+rem   install.bat --mirror https://ghfast.top
 rem
 rem One-liner (download then run):
 rem   curl -L -o "%TEMP%\install-chaos.bat" https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.bat && "%TEMP%\install-chaos.bat"
 rem
 rem Prefer local scripts\install.ps1 when present; otherwise download it.
 rem If PowerShell is unavailable, fall back to curl/certutil + setx PATH.
+rem
+rem China / slow GitHub: set CHAOS_CN=1 or CHAOS_GITHUB_MIRROR=https://ghfast.top
 
 set "REPO=chao2hang/chaos-code"
 if defined CHAOS_REPO set "REPO=%CHAOS_REPO%"
@@ -24,6 +28,11 @@ if defined CHAOS_VERSION set "VERSION=%CHAOS_VERSION%"
 set "FORCE=0"
 set "NO_PATH=0"
 set "DIR="
+set "CN=0"
+if defined CHAOS_CN if "%CHAOS_CN%"=="1" set "CN=1"
+if defined CHAOS_MIRROR_FIRST if "%CHAOS_MIRROR_FIRST%"=="1" set "CN=1"
+set "MIRROR="
+if defined CHAOS_GITHUB_MIRROR set "MIRROR=%CHAOS_GITHUB_MIRROR%"
 
 :parse_args
 if "%~1"=="" goto args_done
@@ -71,6 +80,28 @@ if /I "%~1"=="-NoPath" (
   shift
   goto parse_args
 )
+if /I "%~1"=="--cn" (
+  set "CN=1"
+  shift
+  goto parse_args
+)
+if /I "%~1"=="-Cn" (
+  set "CN=1"
+  shift
+  goto parse_args
+)
+if /I "%~1"=="--mirror" (
+  set "MIRROR=%~2"
+  shift
+  shift
+  goto parse_args
+)
+if /I "%~1"=="-Mirror" (
+  set "MIRROR=%~2"
+  shift
+  shift
+  goto parse_args
+)
 if /I "%~1"=="-h" goto usage
 if /I "%~1"=="--help" goto usage
 if /I "%~1"=="/?" goto usage
@@ -111,6 +142,11 @@ if defined DIR set PS_EXTRA=!PS_EXTRA! -Dir "%DIR%"
 if "%FORCE%"=="1" set "PS_EXTRA=!PS_EXTRA! -Force"
 if "%NO_PATH%"=="1" set "PS_EXTRA=!PS_EXTRA! -NoPath"
 if defined CHAOS_REPO set "PS_EXTRA=!PS_EXTRA! -Repo %REPO%"
+if defined MIRROR set PS_EXTRA=!PS_EXTRA! -Mirror "%MIRROR%"
+if "%CN%"=="1" set "PS_EXTRA=!PS_EXTRA! -Cn"
+rem Also export env so downloaded install.ps1 sees them even without -File args.
+if defined MIRROR set "CHAOS_GITHUB_MIRROR=%MIRROR%"
+if "%CN%"=="1" set "CHAOS_CN=1"
 
 echo Running PowerShell installer...
 powershell -NoProfile -ExecutionPolicy Bypass -File "%PS1%" !PS_EXTRA!
@@ -148,9 +184,10 @@ if /I "%PROCESSOR_ARCHITEW6432%"=="ARM64" set "ASSET=chaos-win32-arm64.exe"
 if not defined VERSION (
   echo Resolving latest release tag...
   set "API_JSON=%TEMP%\chaos-rel-%RANDOM%%RANDOM%.json"
-  call :download "https://api.github.com/repos/%REPO%/releases/latest" "!API_JSON!"
+  call :download_github "https://api.github.com/repos/%REPO%/releases/latest" "!API_JSON!"
   if errorlevel 1 (
     echo error: could not fetch latest release. Pass --version X.Y.Z explicitly.
+    echo   tip: set CHAOS_CN=1 or CHAOS_GITHUB_MIRROR=https://ghfast.top
     exit /b 1
   )
   rem First matching tag_name line only (no labels inside parentheses).
@@ -170,6 +207,7 @@ if not defined VERSION (
 )
 
 set "URL=https://github.com/%REPO%/releases/download/v%VERSION%/%ASSET%"
+set "SUMS_URL=https://github.com/%REPO%/releases/download/v%VERSION%/SHA256SUMS"
 set "DEST=%INSTALL_DIR%\chaos.exe"
 
 echo Chaos installer ^(direct^)
@@ -177,7 +215,9 @@ echo   repo:    %REPO%
 echo   version: %VERSION%
 echo   asset:   %ASSET%
 echo   dest:    %DEST%
-echo   url:     %URL%
+echo   origin:  %URL%
+if defined MIRROR echo   mirror:  %MIRROR%
+if "%CN%"=="1" if not defined MIRROR echo   mirror:  public list first ^(CHAOS_CN^)
 
 rem Default is upgrade-in-place. --force re-downloads even when already on target.
 if exist "%DEST%" if not "%FORCE%"=="1" (
@@ -201,9 +241,10 @@ if exist "%DEST%" if not "%FORCE%"=="1" (
 
 if not exist "%INSTALL_DIR%" mkdir "%INSTALL_DIR%" 2>nul
 set "TMP=%TEMP%\chaos-bin-%RANDOM%%RANDOM%.exe"
-call :download "%URL%" "%TMP%"
+call :download_github "%URL%" "%TMP%"
 if errorlevel 1 (
   echo error: download failed: %URL%
+  echo   tip: set CHAOS_CN=1 or CHAOS_GITHUB_MIRROR=https://ghfast.top
   exit /b 1
 )
 
@@ -224,7 +265,7 @@ if "%CHAOS_SKIP_CHECKSUM%"=="1" (
   echo warning: checksum verification skipped ^(CHAOS_SKIP_CHECKSUM=1^)
 ) else (
   set "SUMS=%TEMP%\chaos-sums-%RANDOM%%RANDOM%.txt"
-  call :download "https://github.com/%REPO%/releases/download/v%VERSION%/SHA256SUMS" "!SUMS!"
+  call :download_github "%SUMS_URL%" "!SUMS!"
   if errorlevel 1 (
     del /f /q "%TMP%" >nul 2>&1
     echo error: could not fetch SHA256SUMS for v%VERSION%.
@@ -321,7 +362,7 @@ set "DL_URL=%~1"
 set "DL_OUT=%~2"
 where curl >nul 2>&1
 if not errorlevel 1 (
-  curl -fsSL -A "chaos-code-installer" -o "%DL_OUT%" "%DL_URL%"
+  curl -fsSL --connect-timeout 12 -A "chaos-code-installer" -o "%DL_OUT%" "%DL_URL%"
   if not errorlevel 1 if exist "%DL_OUT%" exit /b 0
 )
 where powershell >nul 2>&1
@@ -339,6 +380,36 @@ if not errorlevel 1 (
 )
 exit /b 1
 
+rem Try origin + public ghproxy-style mirrors for github.com / api.github.com URLs.
+:download_github
+set "GH_ORIGIN=%~1"
+set "GH_OUT=%~2"
+set "GH_CAND="
+if defined MIRROR (
+  call :download "!MIRROR!/!GH_ORIGIN!" "!GH_OUT!"
+  if not errorlevel 1 exit /b 0
+)
+if "%CN%"=="1" (
+  call :download "https://ghfast.top/!GH_ORIGIN!" "!GH_OUT!"
+  if not errorlevel 1 exit /b 0
+  call :download "https://ghproxy.net/!GH_ORIGIN!" "!GH_OUT!"
+  if not errorlevel 1 exit /b 0
+  call :download "https://mirror.ghproxy.com/!GH_ORIGIN!" "!GH_OUT!"
+  if not errorlevel 1 exit /b 0
+  call :download "!GH_ORIGIN!" "!GH_OUT!"
+  if not errorlevel 1 exit /b 0
+) else (
+  call :download "!GH_ORIGIN!" "!GH_OUT!"
+  if not errorlevel 1 exit /b 0
+  call :download "https://ghfast.top/!GH_ORIGIN!" "!GH_OUT!"
+  if not errorlevel 1 exit /b 0
+  call :download "https://ghproxy.net/!GH_ORIGIN!" "!GH_OUT!"
+  if not errorlevel 1 exit /b 0
+  call :download "https://mirror.ghproxy.com/!GH_ORIGIN!" "!GH_OUT!"
+  if not errorlevel 1 exit /b 0
+)
+exit /b 1
+
 :usage
 echo.
 echo Install Chaos from GitHub Releases ^(cmd, no iex^).
@@ -348,12 +419,16 @@ echo   install.bat
 echo   install.bat --version 0.2.113
 echo   install.bat --force
 echo   install.bat --no-path
+echo   install.bat --cn
+echo   install.bat --mirror https://ghfast.top
 echo   install.bat --dir "C:\tools\chaos\bin"
 echo.
 echo Environment:
-echo   CHAOS_VERSION   Same as --version
-echo   CHAOS_HOME      Install under %%CHAOS_HOME%%\bin
-echo   CHAOS_REPO      owner/repo ^(default chao2hang/chaos-code^)
+echo   CHAOS_VERSION         Same as --version
+echo   CHAOS_HOME            Install under %%CHAOS_HOME%%\bin
+echo   CHAOS_REPO            owner/repo ^(default chao2hang/chaos-code^)
+echo   CHAOS_CN=1            Prefer public GitHub mirrors
+echo   CHAOS_GITHUB_MIRROR   Mirror prefix, e.g. https://ghfast.top
 echo.
 echo One-liner:
 echo   curl -L -o "%%TEMP%%\install-chaos.bat" https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.bat ^&^& "%%TEMP%%\install-chaos.bat"
