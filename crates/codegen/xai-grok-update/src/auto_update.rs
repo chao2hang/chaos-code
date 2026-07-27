@@ -2749,14 +2749,20 @@ mod tests {
         assert!(chaos.is_symlink(), "chaos must become a symlink");
         assert_eq!(std::fs::read_to_string(&chaos).unwrap(), "v0.2.117");
         assert!(bin.join("agent").is_symlink());
-        assert_eq!(std::fs::read_to_string(bin.join("agent")).unwrap(), "v0.2.117");
+        assert_eq!(
+            std::fs::read_to_string(bin.join("agent")).unwrap(),
+            "v0.2.117"
+        );
         // No leftover .rollback.bak after successful swap.
         let leftovers: Vec<_> = std::fs::read_dir(&bin)
             .unwrap()
             .filter_map(|e| e.ok())
             .filter(|e| e.file_name().to_string_lossy().contains("rollback.bak"))
             .collect();
-        assert!(leftovers.is_empty(), "rollback.bak must be cleaned up: {leftovers:?}");
+        assert!(
+            leftovers.is_empty(),
+            "rollback.bak must be cleaned up: {leftovers:?}"
+        );
     }
 
     #[cfg(unix)]

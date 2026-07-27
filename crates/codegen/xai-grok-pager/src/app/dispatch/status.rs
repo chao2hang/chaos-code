@@ -447,7 +447,10 @@ pub(super) fn fill_session_usage_detail(
         return vec![];
     }
     match agent.usage_detail.take() {
-        Some(crate::views::usage_detail::UsageDetail::Ready { session: _, aggregate }) => {
+        Some(crate::views::usage_detail::UsageDetail::Ready {
+            session: _,
+            aggregate,
+        }) => {
             agent.usage_detail = Some(crate::views::usage_detail::UsageDetail::Ready {
                 session: Box::new(usage),
                 aggregate,
@@ -502,7 +505,10 @@ pub(super) fn fill_aggregate_usage_detail(
         return vec![];
     }
     match agent.usage_detail.take() {
-        Some(crate::views::usage_detail::UsageDetail::Ready { session, aggregate: _ }) => {
+        Some(crate::views::usage_detail::UsageDetail::Ready {
+            session,
+            aggregate: _,
+        }) => {
             agent.usage_detail = Some(crate::views::usage_detail::UsageDetail::Ready {
                 session,
                 aggregate: Box::new(usage),

@@ -80,8 +80,7 @@ impl UsageDetail {
                     // 5 totals rows + note + per-model section (always shown
                     // for aggregate because the user explicitly wants the
                     // breakdown).
-                    5 + u16::from(aggregate.usage_is_incomplete)
-                        + forced_per_model_rows(aggregate)
+                    5 + u16::from(aggregate.usage_is_incomplete) + forced_per_model_rows(aggregate)
                 };
                 // Section header rows: "本次会话" + blank + "累计使用 Chaos 以来".
                 let headers = 3;
@@ -300,130 +299,132 @@ pub fn render_usage_detail(
     // Render the totals + per-model breakdown for one usage ledger.
     // `force_model_breakdown` renders the per-model table even for a single
     // model, which is what the aggregate section wants.
-    let render_section = |buf: &mut Buffer,
-                          y: &mut u16,
-                          usage: &PromptUsage,
-                          force_model_breakdown: bool| {
-        if is_empty_ledger(usage) {
-            let msg = if usage.usage_is_incomplete {
-                "尚无记录，但统计不完整，实际用量可能更高。"
-            } else {
-                "暂无记录。"
-            };
-            push(buf, y, Line::from(Span::styled(msg, dim_style)));
-            return;
-        }
-
-        let t = &usage.totals;
-        let row = |label: &str, value: String, note: Option<String>| {
-            // Pad by DISPLAY width, not char count: `模型调用` is 4 chars
-            // but 8 columns, so `{:<14}` would push its value 4 columns
-            // past the ASCII rows' values.
-            let mut spans = vec![
-                Span::styled(pad_right(label, TOTALS_LABEL_W), label_style),
-                Span::styled(value, value_style),
-            ];
-            if let Some(note) = note {
-                spans.push(Span::styled(note, dim_style));
+    let render_section =
+        |buf: &mut Buffer, y: &mut u16, usage: &PromptUsage, force_model_breakdown: bool| {
+            if is_empty_ledger(usage) {
+                let msg = if usage.usage_is_incomplete {
+                    "尚无记录，但统计不完整，实际用量可能更高。"
+                } else {
+                    "暂无记录。"
+                };
+                push(buf, y, Line::from(Span::styled(msg, dim_style)));
+                return;
             }
-            Line::from(spans)
-        };
-        push(
-            buf,
-            y,
-            row(
-                "输入 Token",
-                group_thousands(t.input_tokens),
-                Some(format!(
-                    "（缓存命中 {}）",
-                    group_thousands(t.cached_read_tokens)
-                )),
-            ),
-        );
-        push(
-            buf,
-            y,
-            row(
-                "输出 Token",
-                group_thousands(t.output_tokens),
-                Some(format!("（推理 {}）", group_thousands(t.reasoning_tokens))),
-            ),
-        );
-        push(buf, y, row("Token 总计", group_thousands(t.total_tokens), None));
-        push(
-            buf,
-            y,
-            row(
-                "模型调用",
-                format!("{} 次", group_thousands(t.model_calls)),
-                Some(format!(
-                    " · API 耗时 {}",
-                    format_duration(std::time::Duration::from_millis(t.api_duration_ms))
-                )),
-            ),
-        );
-        push(buf, y, row("费用", format_cost(t), None));
 
-        let show_models = force_model_breakdown || per_model_section_rows(usage) > 0;
-        if show_models {
-            push(buf, y, Line::from(""));
+            let t = &usage.totals;
+            let row = |label: &str, value: String, note: Option<String>| {
+                // Pad by DISPLAY width, not char count: `模型调用` is 4 chars
+                // but 8 columns, so `{:<14}` would push its value 4 columns
+                // past the ASCII rows' values.
+                let mut spans = vec![
+                    Span::styled(pad_right(label, TOTALS_LABEL_W), label_style),
+                    Span::styled(value, value_style),
+                ];
+                if let Some(note) = note {
+                    spans.push(Span::styled(note, dim_style));
+                }
+                Line::from(spans)
+            };
             push(
                 buf,
                 y,
-                Line::from(Span::styled(
-                    "按模型：",
-                    Style::default()
-                        .fg(theme.text_primary)
-                        .bg(theme.bg_base)
-                        .add_modifier(Modifier::BOLD),
-                )),
+                row(
+                    "输入 Token",
+                    group_thousands(t.input_tokens),
+                    Some(format!(
+                        "（缓存命中 {}）",
+                        group_thousands(t.cached_read_tokens)
+                    )),
+                ),
             );
             push(
                 buf,
                 y,
-                Line::from(Span::styled(
-                    table_row("模型", "输入", "输出", Some("调用"), "费用", w as usize),
-                    label_style,
-                )),
+                row(
+                    "输出 Token",
+                    group_thousands(t.output_tokens),
+                    Some(format!("（推理 {}）", group_thousands(t.reasoning_tokens))),
+                ),
             );
-            for (model, m) in usage.model_usage.iter().take(MAX_MODEL_ROWS) {
+            push(
+                buf,
+                y,
+                row("Token 总计", group_thousands(t.total_tokens), None),
+            );
+            push(
+                buf,
+                y,
+                row(
+                    "模型调用",
+                    format!("{} 次", group_thousands(t.model_calls)),
+                    Some(format!(
+                        " · API 耗时 {}",
+                        format_duration(std::time::Duration::from_millis(t.api_duration_ms))
+                    )),
+                ),
+            );
+            push(buf, y, row("费用", format_cost(t), None));
+
+            let show_models = force_model_breakdown || per_model_section_rows(usage) > 0;
+            if show_models {
+                push(buf, y, Line::from(""));
                 push(
                     buf,
                     y,
                     Line::from(Span::styled(
-                        table_row(
-                            model,
-                            &group_thousands(m.input_tokens),
-                            &group_thousands(m.output_tokens),
-                            Some(&group_thousands(m.model_calls)),
-                            &format_cost(m),
-                            w as usize,
-                        ),
-                        value_style,
+                        "按模型：",
+                        Style::default()
+                            .fg(theme.text_primary)
+                            .bg(theme.bg_base)
+                            .add_modifier(Modifier::BOLD),
                     )),
                 );
-            }
-            if usage.model_usage.len() > MAX_MODEL_ROWS {
-                let more = usage.model_usage.len() - MAX_MODEL_ROWS;
                 push(
                     buf,
                     y,
-                    Line::from(Span::styled(format!("+{more} 个其他模型"), dim_style)),
+                    Line::from(Span::styled(
+                        table_row("模型", "输入", "输出", Some("调用"), "费用", w as usize),
+                        label_style,
+                    )),
+                );
+                for (model, m) in usage.model_usage.iter().take(MAX_MODEL_ROWS) {
+                    push(
+                        buf,
+                        y,
+                        Line::from(Span::styled(
+                            table_row(
+                                model,
+                                &group_thousands(m.input_tokens),
+                                &group_thousands(m.output_tokens),
+                                Some(&group_thousands(m.model_calls)),
+                                &format_cost(m),
+                                w as usize,
+                            ),
+                            value_style,
+                        )),
+                    );
+                }
+                if usage.model_usage.len() > MAX_MODEL_ROWS {
+                    let more = usage.model_usage.len() - MAX_MODEL_ROWS;
+                    push(
+                        buf,
+                        y,
+                        Line::from(Span::styled(format!("+{more} 个其他模型"), dim_style)),
+                    );
+                }
+            }
+
+            if usage.usage_is_incomplete {
+                push(
+                    buf,
+                    y,
+                    Line::from(Span::styled(
+                        "注意：用量统计不完整，实际用量可能更高。",
+                        Style::default().fg(theme.warning).bg(theme.bg_base),
+                    )),
                 );
             }
-        }
-
-        if usage.usage_is_incomplete {
-            push(
-                buf,
-                y,
-                Line::from(Span::styled(
-                    "注意：用量统计不完整，实际用量可能更高。",
-                    Style::default().fg(theme.warning).bg(theme.bg_base),
-                )),
-            );
-        }
-    };
+        };
 
     match detail {
         UsageDetail::Loading => {

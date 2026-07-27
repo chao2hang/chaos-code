@@ -82,9 +82,9 @@ async fn handle_session_usage(agent: &MvpAgent, args: &acp::ExtRequest) -> ExtRe
 async fn handle_aggregate_usage() -> ExtResult {
     let store = UsageStore::open_default()
         .map_err(|e| acp::Error::internal_error().data(format!("usage store unavailable: {e}")))?;
-    let usage = store
-        .aggregate_prompt_usage()
-        .map_err(|e| acp::Error::internal_error().data(format!("failed to read aggregate usage: {e}")))?;
+    let usage = store.aggregate_prompt_usage().map_err(|e| {
+        acp::Error::internal_error().data(format!("failed to read aggregate usage: {e}"))
+    })?;
     to_raw_response(&SessionUsageResponse { usage })
 }
 
@@ -153,8 +153,7 @@ mod tests {
     fn aggregate_usage_extension_returns_stored_totals() {
         let tmp = tempfile::tempdir().unwrap();
         let db_path = tmp.path().join("usage.sqlite");
-        let _guard =
-            xai_grok_test_support::env::EnvGuard::set("GROK_USAGE_STORE_PATH", &db_path);
+        let _guard = xai_grok_test_support::env::EnvGuard::set("GROK_USAGE_STORE_PATH", &db_path);
 
         let store = crate::session::usage_store::UsageStore::open_or_create(&db_path).unwrap();
         let usage = PromptUsage {
