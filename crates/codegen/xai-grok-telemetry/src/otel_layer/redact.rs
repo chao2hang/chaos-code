@@ -296,6 +296,7 @@ mod tests {
     #[test]
     fn redact_value_scrubs_secret_string() {
         let mut v = Value::String(StringValue::from(
+            // secret-scan:allow — fake JWT fixture
             "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.foo.bar.baz".to_string(),
         ));
         redact_value(&mut v);
