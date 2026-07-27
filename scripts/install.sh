@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 # Install Chaos CLI from GitHub Releases and put it on PATH.
 #
+# Layout matches `chaos update` (auto_update::install_gh_release):
+#   ~/.chaos/downloads/chaos-<ver>-<platform>   # versioned binary
+#   ~/.chaos/bin/chaos  -> ../downloads/...     # relative symlink
+#   ~/.chaos/bin/agent  -> ../downloads/...     # alias
+#   ~/.chaos/downloads/chaos-latest -> versioned name
+#
 # One-liner (latest):
 #   curl -fsSL https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.sh | bash
 #
@@ -12,7 +18,7 @@
 #   --version X.Y.Z   Release version without leading v (default: latest)
 #   --dir DIR         Install directory (default: ~/.chaos/bin or $CHAOS_HOME/bin)
 #   --no-path         Do not modify shell rc / PATH
-#   --force           Overwrite existing binary
+#   --force           Overwrite existing binary / symlink
 #   -h, --help        Show help
 set -euo pipefail
 
@@ -129,13 +135,16 @@ resolve_home() {
   fi
 }
 
-detect_asset() {
+# Populate OS_KEY / ARCH_KEY / PLATFORM / ASSET for this host.
+# ASSET matches GitHub release names (chaos-linux-x64).
+# PLATFORM matches auto-update storage names (linux-x86_64).
+detect_platform() {
   local os arch
   os="$(uname -s | tr '[:upper:]' '[:lower:]')"
   arch="$(uname -m)"
   case "$os" in
-    linux) os=linux ;;
-    darwin) os=darwin ;;
+    linux) OS_KEY=linux ;;
+    darwin) OS_KEY=darwin ;;
     mingw*|msys*|cygwin*)
       echo "error: use PowerShell scripts/install.ps1 on Windows" >&2
       exit 1
@@ -146,14 +155,39 @@ detect_asset() {
       ;;
   esac
   case "$arch" in
-    x86_64|amd64) arch=x64 ;;
-    aarch64|arm64) arch=arm64 ;;
+    x86_64|amd64)
+      ARCH_KEY=x64
+      ARCH_STORAGE=x86_64
+      ;;
+    aarch64|arm64)
+      ARCH_KEY=arm64
+      ARCH_STORAGE=aarch64
+      ;;
     *)
       echo "error: unsupported arch: $arch" >&2
       exit 1
       ;;
   esac
-  echo "chaos-${os}-${arch}"
+  # auto-update stores downloads as chaos-<ver>-macos-aarch64 on Darwin.
+  if [[ "$OS_KEY" == "darwin" ]]; then
+    PLATFORM="macos-${ARCH_STORAGE}"
+  else
+    PLATFORM="${OS_KEY}-${ARCH_STORAGE}"
+  fi
+  ASSET="chaos-${OS_KEY}-${ARCH_KEY}"
+}
+
+# Atomic-ish symlink replace: write temp link then mv over DEST.
+# Works when DEST is missing, a symlink, or a regular file (install.sh
+# historically left a bare binary; chaos update expects a symlink).
+atomic_symlink() {
+  local target="$1"
+  local dest="$2"
+  local tmp
+  tmp="$(mktemp "${dest}.XXXXXX.tmp-link")"
+  rm -f "$tmp"
+  ln -s "$target" "$tmp"
+  mv -f "$tmp" "$dest"
 }
 
 latest_version() {
@@ -232,24 +266,30 @@ configure_path() {
   esac
 }
 
-ASSET="$(detect_asset)"
+detect_platform
 if [[ -z "$VERSION" ]]; then
   VERSION="$(latest_version)"
 fi
 VERSION="${VERSION#v}"
 
+CHAOS_HOME="$(resolve_home)"
 if [[ -z "$INSTALL_DIR" ]]; then
-  INSTALL_DIR="$(resolve_home)/bin"
+  INSTALL_DIR="${CHAOS_HOME}/bin"
 fi
+DOWNLOAD_DIR="${CHAOS_HOME}/downloads"
+STORED_NAME="chaos-${VERSION}-${PLATFORM}"
+STORED_PATH="${DOWNLOAD_DIR}/${STORED_NAME}"
 
 URL="https://github.com/${REPO}/releases/download/v${VERSION}/${ASSET}"
 DEST="${INSTALL_DIR}/${BIN_NAME}"
+AGENT_DEST="${INSTALL_DIR}/agent"
 
 echo "Chaos installer"
 echo "  repo:    ${REPO}"
 echo "  version: ${VERSION}"
 echo "  asset:   ${ASSET}"
-echo "  dest:    ${DEST}"
+echo "  store:   ${STORED_PATH}"
+echo "  dest:    ${DEST} -> ../downloads/${STORED_NAME}"
 echo "  url:     ${URL}"
 
 if [[ -e "$DEST" && "$FORCE" -ne 1 ]]; then
@@ -268,8 +308,8 @@ if [[ -e "$DEST" && "$FORCE" -ne 1 ]]; then
   exit 1
 fi
 
-mkdir -p "$INSTALL_DIR"
-TMP="$(mktemp "${TMPDIR:-/tmp}/chaos-install.XXXXXX")"
+mkdir -p "$INSTALL_DIR" "$DOWNLOAD_DIR"
+TMP="$(mktemp "${DOWNLOAD_DIR}/${STORED_NAME}.XXXXXX.tmp")"
 cleanup() { rm -f "$TMP"; }
 trap cleanup EXIT
 
@@ -342,11 +382,19 @@ if ! "$TMP" --version >/dev/null 2>&1; then
   fi
 fi
 
-mv -f "$TMP" "$DEST"
-chmod +x "$DEST"
+# Publish into downloads/ under the versioned name auto-update expects, then
+# point bin/{chaos,agent} at it via relative symlinks. Relative targets survive
+# Docker bind-mounts that remap $HOME (same rationale as chaos update).
+mv -f "$TMP" "$STORED_PATH"
+chmod +x "$STORED_PATH"
 trap - EXIT
 
-echo "installed: $DEST"
+REL_TARGET="../downloads/${STORED_NAME}"
+atomic_symlink "$REL_TARGET" "$DEST"
+atomic_symlink "$REL_TARGET" "$AGENT_DEST"
+atomic_symlink "${STORED_NAME}" "${DOWNLOAD_DIR}/chaos-latest"
+
+echo "installed: $DEST -> ${REL_TARGET}"
 if "$DEST" --version 2>/dev/null; then
   :
 else
