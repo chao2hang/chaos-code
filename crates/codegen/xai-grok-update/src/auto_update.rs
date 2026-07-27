@@ -1347,13 +1347,13 @@ fn relative_symlink_target(target: &std::path::Path, link: &std::path::Path) -> 
 /// Unix: atomic symlink swap with relative target (survives Docker
 /// bind-mounts of `~/.chaos/` / `~/.grok/`). Windows: [`windows_replace_exe`].
 ///
-/// **All-or-nothing.** Each link's prior state is captured (Unix: prior
-/// symlink target; Windows: `.rollback.bak`; or `Absent` marker via
-/// `symlink_metadata`) before the swap, and any earlier successful swaps
-/// are rolled back if a later one fails — including *removing* a link that
-/// didn't exist before. Restore failures go to `tracing::warn!`; the swap
-/// error itself propagates unwrapped so the caller's `reinstall_hint` wrap
-/// stays the user-visible message.
+/// **All-or-nothing.** Each link's prior state is captured before the swap:
+/// Unix symlink → prior target in memory; Unix regular file / Windows exe →
+/// `.rollback.bak` sibling; or `Absent` via `symlink_metadata`. Earlier
+/// successful swaps are rolled back if a later one fails — including
+/// *removing* a link that didn't exist before. Restore failures go to
+/// `tracing::warn!`; the swap error itself propagates unwrapped so the
+/// caller's `reinstall_hint` wrap stays the user-visible message.
 async fn swap_managed_bin_links(
     binary_path: &std::path::Path,
     bin_dir: &std::path::Path,
@@ -1371,7 +1371,7 @@ async fn swap_managed_bin_links(
         match LinkRollback::capture(path).await {
             Ok(rb) => captured.push(rb),
             Err(e) => {
-                // Nothing swapped yet; drop any Windows .rollback.bak files.
+                // Nothing swapped yet; drop any .rollback.bak siblings.
                 for prior in &captured {
                     prior.cleanup().await;
                 }
@@ -1402,7 +1402,7 @@ async fn swap_managed_bin_links(
             Err(e) => {
                 // Restore each successful swap in reverse. On restore
                 // failure keep the .rollback.bak as a recovery artifact
-                // (Windows only) and warn!; the swap error propagates so
+                // and warn!; the swap error propagates so
                 // `reinstall_hint` is the user-visible message.
                 for prior in completed.iter().rev() {
                     if let Err(restore_err) = prior.restore().await {
@@ -1419,7 +1419,7 @@ async fn swap_managed_bin_links(
                 }
                 // Failed swap had no active state to restore; drop its backup.
                 rollback.cleanup().await;
-                // Drop backups for never-attempted later captures (Windows orphans).
+                // Drop backups for never-attempted later captures.
                 for later in &captured[i + 1..] {
                     later.cleanup().await;
                 }
@@ -1435,20 +1435,28 @@ async fn swap_managed_bin_links(
 }
 
 /// Snapshot of a managed-bin link's prior state for rollback in
-/// [`swap_managed_bin_links`]. `Absent` vs `Present` is discriminated up
+/// [`swap_managed_bin_links`]. `Absent` vs present is discriminated up
 /// front via `symlink_metadata` so capture errors never get misread as
 /// "link was absent".
+///
+/// On Unix the managed layout is a symlink into `downloads/`, but
+/// `scripts/install.sh` historically (and intentionally for a simple
+/// bootstrap) may leave a **regular file** at `bin/chaos`. Capture must
+/// handle both: `read_link` on a regular file returns `EINVAL` (os error
+/// 22) and used to abort every auto-update after an install.sh install.
 enum LinkRollback {
     /// Link was absent before the swap; rollback removes the one we created.
     Absent { link_path: std::path::PathBuf },
-    /// Link existed before the swap; rollback restores its prior contents.
-    Present {
+    /// Unix managed layout: prior was a symlink (target kept in memory).
+    #[cfg(unix)]
+    PresentSymlink {
         link_path: std::path::PathBuf,
-        /// Unix: prior symlink target (relative or absolute).
-        #[cfg(unix)]
         prior_target: std::path::PathBuf,
-        /// Windows: `.rollback.bak` copy of the previous binary.
-        #[cfg(windows)]
+    },
+    /// Prior was a regular file (`install.sh` layout, or Windows exe).
+    /// Restored from an on-disk `.rollback.bak` sibling.
+    PresentFile {
+        link_path: std::path::PathBuf,
         backup_path: std::path::PathBuf,
     },
 }
@@ -1460,63 +1468,70 @@ impl LinkRollback {
         // `symlink_metadata` (lstat) handles valid symlinks, broken
         // symlinks, and regular files alike. Any IO error other than
         // NotFound aborts the swap before mutation.
-        match tokio::fs::symlink_metadata(&lp).await {
-            Ok(_) => {}
+        let meta = match tokio::fs::symlink_metadata(&lp).await {
+            Ok(m) => m,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 return Ok(LinkRollback::Absent { link_path: lp });
             }
             Err(e) => {
                 return Err(e).with_context(|| format!("stat {} before swap", lp.display()));
             }
-        }
+        };
 
         #[cfg(unix)]
         {
-            let prior_target = tokio::fs::read_link(&lp)
-                .await
-                .with_context(|| format!("reading prior symlink target {}", lp.display()))?;
-            Ok(LinkRollback::Present {
-                link_path: lp,
-                prior_target,
-            })
+            if meta.file_type().is_symlink() {
+                let prior_target = tokio::fs::read_link(&lp)
+                    .await
+                    .with_context(|| format!("reading prior symlink target {}", lp.display()))?;
+                return Ok(LinkRollback::PresentSymlink {
+                    link_path: lp,
+                    prior_target,
+                });
+            }
+            // Regular file (or other non-symlink node): back up bytes so a
+            // failed swap can restore the install.sh-style binary.
+            Self::capture_file_backup(lp).await
         }
         #[cfg(windows)]
         {
-            // Per-process+sequence backup name via `unique_temp_sibling`
-            // so concurrent updaters can't clobber each other's backups.
-            let backup_path = unique_temp_sibling(&lp, "rollback.bak");
-            tokio::fs::copy(&lp, &backup_path).await.with_context(|| {
-                format!(
-                    "backing up {} to {} before swap",
-                    lp.display(),
-                    backup_path.display(),
-                )
-            })?;
-            Ok(LinkRollback::Present {
-                link_path: lp,
-                backup_path,
-            })
+            let _ = meta;
+            Self::capture_file_backup(lp).await
         }
+    }
+
+    async fn capture_file_backup(lp: std::path::PathBuf) -> Result<Self> {
+        // Per-process+sequence backup name via `unique_temp_sibling`
+        // so concurrent updaters can't clobber each other's backups.
+        let backup_path = unique_temp_sibling(&lp, "rollback.bak");
+        tokio::fs::copy(&lp, &backup_path).await.with_context(|| {
+            format!(
+                "backing up {} to {} before swap",
+                lp.display(),
+                backup_path.display(),
+            )
+        })?;
+        Ok(LinkRollback::PresentFile {
+            link_path: lp,
+            backup_path,
+        })
     }
 
     fn link_path(&self) -> &std::path::Path {
         match self {
             LinkRollback::Absent { link_path } => link_path,
-            LinkRollback::Present { link_path, .. } => link_path,
+            #[cfg(unix)]
+            LinkRollback::PresentSymlink { link_path, .. } => link_path,
+            LinkRollback::PresentFile { link_path, .. } => link_path,
         }
     }
 
-    /// Path to the on-disk backup (Windows only — Unix is in-memory).
-    #[cfg(windows)]
+    /// Path to the on-disk backup, when capture wrote one.
     fn backup_path(&self) -> Option<&std::path::Path> {
         match self {
-            LinkRollback::Present { backup_path, .. } => Some(backup_path),
-            LinkRollback::Absent { .. } => None,
+            LinkRollback::PresentFile { backup_path, .. } => Some(backup_path),
+            _ => None,
         }
-    }
-    #[cfg(unix)]
-    fn backup_path(&self) -> Option<&std::path::Path> {
-        None
     }
 
     async fn restore(&self) -> Result<()> {
@@ -1533,7 +1548,7 @@ impl LinkRollback {
                 }
             }
             #[cfg(unix)]
-            LinkRollback::Present {
+            LinkRollback::PresentSymlink {
                 link_path,
                 prior_target,
             } => atomic_symlink_swap(prior_target, link_path)
@@ -1541,8 +1556,26 @@ impl LinkRollback {
                 .with_context(|| {
                     format!("restoring prior symlink target for {}", link_path.display())
                 }),
+            #[cfg(unix)]
+            LinkRollback::PresentFile {
+                link_path,
+                backup_path,
+            } => {
+                // Rename the backed-up regular file over whatever the
+                // failed swap left (usually a symlink). `rename` replaces
+                // non-directory destinations atomically on Unix.
+                tokio::fs::rename(backup_path, link_path)
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "restoring regular file {} from {}",
+                            link_path.display(),
+                            backup_path.display()
+                        )
+                    })
+            }
             #[cfg(windows)]
-            LinkRollback::Present {
+            LinkRollback::PresentFile {
                 link_path,
                 backup_path,
             } => {
@@ -1563,12 +1596,9 @@ impl LinkRollback {
     }
 
     async fn cleanup(&self) {
-        #[cfg(windows)]
-        if let LinkRollback::Present { backup_path, .. } = self {
+        if let LinkRollback::PresentFile { backup_path, .. } = self {
             let _ = tokio::fs::remove_file(backup_path).await;
         }
-        #[cfg(unix)]
-        let _ = self; // no on-disk backup on Unix
     }
 }
 
@@ -2652,6 +2682,102 @@ mod tests {
 
         assert!(link.is_symlink());
         assert_eq!(std::fs::read_to_string(&link).unwrap(), "v2");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_link_rollback_captures_regular_file() {
+        // install.sh leaves a regular file at bin/chaos; capture must not
+        // fail with EINVAL from read_link (the bug that blocked auto-update).
+        let dir = tempfile::tempdir().unwrap();
+        let link = dir.path().join("chaos");
+        std::fs::write(&link, "install.sh-binary").unwrap();
+
+        let rb = LinkRollback::capture(&link).await.unwrap();
+        let backup = rb
+            .backup_path()
+            .expect("PresentFile must expose backup_path")
+            .to_path_buf();
+        assert!(backup.exists());
+        assert_eq!(
+            std::fs::read_to_string(&backup).unwrap(),
+            "install.sh-binary"
+        );
+        rb.cleanup().await;
+        assert!(
+            !backup.exists(),
+            "cleanup must remove the .rollback.bak sibling"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_link_rollback_captures_symlink() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("binary-v1");
+        std::fs::write(&target, "v1").unwrap();
+        let link = dir.path().join("chaos");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        let rb = LinkRollback::capture(&link).await.unwrap();
+        match &rb {
+            LinkRollback::PresentSymlink { prior_target, .. } => {
+                assert_eq!(prior_target, &target);
+            }
+            other => panic!("expected PresentSymlink, got {:?}", other.link_path()),
+        }
+        assert!(rb.backup_path().is_none());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_swap_managed_bin_links_from_regular_file() {
+        // Full path: install.sh-style regular file at bin/chaos must be
+        // replaceable by the managed symlink layout.
+        let (_dir, bin, downloads) = managed_layout();
+        let old = bin.join("chaos");
+        std::fs::write(&old, "old-install-sh-binary").unwrap();
+        // agent may also be a regular file or missing.
+        std::fs::write(bin.join("agent"), "old-agent").unwrap();
+
+        let new_bin = downloads.join("chaos-0.2.117-linux-x86_64");
+        std::fs::write(&new_bin, "v0.2.117").unwrap();
+
+        swap_managed_bin_links(&new_bin, &bin).await.unwrap();
+
+        let chaos = bin.join("chaos");
+        assert!(chaos.is_symlink(), "chaos must become a symlink");
+        assert_eq!(std::fs::read_to_string(&chaos).unwrap(), "v0.2.117");
+        assert!(bin.join("agent").is_symlink());
+        assert_eq!(std::fs::read_to_string(bin.join("agent")).unwrap(), "v0.2.117");
+        // No leftover .rollback.bak after successful swap.
+        let leftovers: Vec<_> = std::fs::read_dir(&bin)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().contains("rollback.bak"))
+            .collect();
+        assert!(leftovers.is_empty(), "rollback.bak must be cleaned up: {leftovers:?}");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_link_rollback_restores_regular_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let link = dir.path().join("chaos");
+        std::fs::write(&link, "original-bytes").unwrap();
+
+        let rb = LinkRollback::capture(&link).await.unwrap();
+        // Simulate a successful swap that replaced the regular file with a symlink.
+        let target = dir.path().join("new-binary");
+        std::fs::write(&target, "new").unwrap();
+        atomic_symlink_swap(&target, &link).await.unwrap();
+        assert!(link.is_symlink());
+
+        // Rollback must put the regular file back.
+        rb.restore().await.unwrap();
+        assert!(!link.is_symlink(), "must restore a regular file");
+        assert_eq!(std::fs::read_to_string(&link).unwrap(), "original-bytes");
+        rb.cleanup().await;
     }
 
     #[cfg(unix)]
