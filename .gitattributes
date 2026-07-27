@@ -7,10 +7,14 @@
 #   git add --renormalize .
 * text=auto eol=lf
 
-# Windows-only scripts must keep CRLF: cmd.exe can mis-parse labels and
-# `goto` targets in LF-only batch files.
+# Windows-only scripts: keep CRLF in the *working tree* for local edits.
+# `text eol=crlf` normalizes the *blob* to LF — that breaks cmd.exe when users
+# `curl` the file from raw.githubusercontent.com (GitHub serves the blob as-is).
+# So install.bat must be stored with real CRLF bytes (-text = no conversion).
+# PowerShell accepts LF, so install.ps1 can stay text/eol=crlf.
 *.bat text eol=crlf
 *.ps1 text eol=crlf
+scripts/install.bat -text
 
 # Binary — never touch.
 *.ttf binary

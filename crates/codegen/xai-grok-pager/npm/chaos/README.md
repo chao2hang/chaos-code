@@ -14,16 +14,20 @@ Works when npm platform packages are incomplete (e.g. Windows `win32-x64` missin
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.sh | bash
+export PATH="$HOME/.chaos/bin:$PATH"   # current shell only; new terminals auto-pick PATH
+chaos --version
 ```
 
 **Windows (PowerShell):**
 
 ```powershell
 irm https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.ps1 | iex
+# then open a NEW terminal, or: $env:Path = "$env:USERPROFILE\.chaos\bin;$env:Path"
+chaos --version
 ```
 
-Pin a version: `bash -s -- --version 0.2.113` / `-Version 0.2.113`.  
-Scripts install under `~/.chaos/bin` (or `~/.grok/bin`) and configure PATH.
+Pin a version: `bash -s -- --version 0.2.118` / `-Version 0.2.118`.  
+Scripts install under `~/.chaos/bin` (or `~/.grok/bin`), upgrade existing installs in place, and configure PATH.
 
 ### npm
 

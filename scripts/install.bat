@@ -179,9 +179,24 @@ echo   asset:   %ASSET%
 echo   dest:    %DEST%
 echo   url:     %URL%
 
+rem Default is upgrade-in-place. --force re-downloads even when already on target.
 if exist "%DEST%" if not "%FORCE%"=="1" (
-  echo error: %DEST% already exists. Use --force to overwrite.
-  exit /b 1
+  set "CUR_VER="
+  for /f "usebackq delims=" %%V in (`"%DEST%" --version 2^>nul`) do (
+    if not defined CUR_VER set "CUR_VER=%%V"
+  )
+  if defined CUR_VER (
+    echo !CUR_VER! | findstr /C:"%VERSION%" >nul 2>&1
+    if not errorlevel 1 (
+      echo already installed: !CUR_VER!
+      if not "%NO_PATH%"=="1" call :ensure_user_path "%INSTALL_DIR%"
+      echo done. open a NEW terminal if chaos is not found.
+      exit /b 0
+    )
+    echo upgrading existing install: !CUR_VER! -^> %VERSION%
+  ) else (
+    echo replacing existing binary at %DEST%
+  )
 )
 
 if not exist "%INSTALL_DIR%" mkdir "%INSTALL_DIR%" 2>nul
@@ -260,10 +275,10 @@ if not "%NO_PATH%"=="1" (
 )
 
 echo.
-echo OK. Run: chaos --version
-echo If command not found, open a NEW terminal ^(user PATH was updated^).
-echo Or for this session only:
+echo OK. Verify ^(open a NEW terminal, or refresh PATH in this session^):
 echo   set "PATH=%INSTALL_DIR%;%%PATH%%"
+echo   chaos --version
+echo Or: "%DEST%" --version
 exit /b 0
 
 :ensure_user_path
