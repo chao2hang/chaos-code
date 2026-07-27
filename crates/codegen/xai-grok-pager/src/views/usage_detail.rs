@@ -45,12 +45,20 @@ const TOTALS_LABEL_W: usize = 14;
 /// [`UsageDetail::Loading`] and is filled in when the task result lands. It
 /// stays open across that transition so a slow fetch never looks like a
 /// dropped click.
+///
+/// The overlay now displays both the current session's usage and the user's
+/// all-time aggregate usage across every Chaos session.
 #[derive(Debug, Clone, PartialEq)]
 pub enum UsageDetail {
     /// Fetch in flight.
     Loading,
-    /// Ledger received.
-    Ready(Box<PromptUsage>),
+    /// Ledgers received.
+    Ready {
+        /// Usage for the active session.
+        session: Box<PromptUsage>,
+        /// All-time aggregate usage across sessions.
+        aggregate: Box<PromptUsage>,
+    },
     /// Fetch failed; the string is already user-safe (sanitized upstream).
     Failed(String),
 }
@@ -60,15 +68,24 @@ impl UsageDetail {
     fn body_rows(&self) -> u16 {
         match self {
             UsageDetail::Loading | UsageDetail::Failed(_) => 1,
-            UsageDetail::Ready(usage) => {
-                if is_empty_ledger(usage) {
-                    return 1;
-                }
-                // 5 totals rows + note, plus the per-model section when the
-                // breakdown carries more than the single model the totals
-                // already show.
-                let note = u16::from(usage.usage_is_incomplete);
-                5 + note + per_model_section_rows(usage)
+            UsageDetail::Ready { session, aggregate } => {
+                let session_rows = if is_empty_ledger(session) {
+                    1
+                } else {
+                    5 + u16::from(session.usage_is_incomplete) + per_model_section_rows(session)
+                };
+                let aggregate_rows = if is_empty_ledger(aggregate) {
+                    1
+                } else {
+                    // 5 totals rows + note + per-model section (always shown
+                    // for aggregate because the user explicitly wants the
+                    // breakdown).
+                    5 + u16::from(aggregate.usage_is_incomplete)
+                        + forced_per_model_rows(aggregate)
+                };
+                // Section header rows: "本次会话" + blank + "累计使用 Chaos 以来".
+                let headers = 3;
+                session_rows + aggregate_rows + headers
             }
         }
     }
@@ -86,6 +103,15 @@ fn is_empty_ledger(usage: &PromptUsage) -> bool {
 /// Shared by the height calc and the render loop so they stay in lockstep.
 fn per_model_section_rows(usage: &PromptUsage) -> u16 {
     if usage.model_usage.len() < 2 {
+        return 0;
+    }
+    forced_per_model_rows(usage)
+}
+
+/// Rows for a per-model table that is forced to render even with a single
+/// model. Zero when there are no models at all.
+fn forced_per_model_rows(usage: &PromptUsage) -> u16 {
+    if usage.model_usage.is_empty() {
         return 0;
     }
     let shown = usage.model_usage.len().min(MAX_MODEL_ROWS);
@@ -227,7 +253,7 @@ pub fn render_usage_detail(
     buf.set_span_safe(
         area.x + 2,
         area.y,
-        &Span::styled(" Token 用量 ", title_style),
+        &Span::styled(" Token 用量统计 ", title_style),
         title_cols,
     );
 
@@ -259,11 +285,143 @@ pub fn render_usage_detail(
     let label_style = Style::default().fg(theme.gray).bg(theme.bg_base);
     let value_style = Style::default().fg(theme.text_primary).bg(theme.bg_base);
     let dim_style = Style::default().fg(theme.gray_dim).bg(theme.bg_base);
+    let section_style = Style::default()
+        .fg(theme.accent_plan)
+        .bg(theme.bg_base)
+        .add_modifier(Modifier::BOLD);
 
     let push = |buf: &mut Buffer, y: &mut u16, line: Line<'static>| {
         if *y < body_bottom {
             buf.set_line_safe(x, *y, &line, w);
             *y += 1;
+        }
+    };
+
+    // Render the totals + per-model breakdown for one usage ledger.
+    // `force_model_breakdown` renders the per-model table even for a single
+    // model, which is what the aggregate section wants.
+    let render_section = |buf: &mut Buffer,
+                          y: &mut u16,
+                          usage: &PromptUsage,
+                          force_model_breakdown: bool| {
+        if is_empty_ledger(usage) {
+            let msg = if usage.usage_is_incomplete {
+                "尚无记录，但统计不完整，实际用量可能更高。"
+            } else {
+                "暂无记录。"
+            };
+            push(buf, y, Line::from(Span::styled(msg, dim_style)));
+            return;
+        }
+
+        let t = &usage.totals;
+        let row = |label: &str, value: String, note: Option<String>| {
+            // Pad by DISPLAY width, not char count: `模型调用` is 4 chars
+            // but 8 columns, so `{:<14}` would push its value 4 columns
+            // past the ASCII rows' values.
+            let mut spans = vec![
+                Span::styled(pad_right(label, TOTALS_LABEL_W), label_style),
+                Span::styled(value, value_style),
+            ];
+            if let Some(note) = note {
+                spans.push(Span::styled(note, dim_style));
+            }
+            Line::from(spans)
+        };
+        push(
+            buf,
+            y,
+            row(
+                "输入 Token",
+                group_thousands(t.input_tokens),
+                Some(format!(
+                    "（缓存命中 {}）",
+                    group_thousands(t.cached_read_tokens)
+                )),
+            ),
+        );
+        push(
+            buf,
+            y,
+            row(
+                "输出 Token",
+                group_thousands(t.output_tokens),
+                Some(format!("（推理 {}）", group_thousands(t.reasoning_tokens))),
+            ),
+        );
+        push(buf, y, row("Token 总计", group_thousands(t.total_tokens), None));
+        push(
+            buf,
+            y,
+            row(
+                "模型调用",
+                format!("{} 次", group_thousands(t.model_calls)),
+                Some(format!(
+                    " · API 耗时 {}",
+                    format_duration(std::time::Duration::from_millis(t.api_duration_ms))
+                )),
+            ),
+        );
+        push(buf, y, row("费用", format_cost(t), None));
+
+        let show_models = force_model_breakdown || per_model_section_rows(usage) > 0;
+        if show_models {
+            push(buf, y, Line::from(""));
+            push(
+                buf,
+                y,
+                Line::from(Span::styled(
+                    "按模型：",
+                    Style::default()
+                        .fg(theme.text_primary)
+                        .bg(theme.bg_base)
+                        .add_modifier(Modifier::BOLD),
+                )),
+            );
+            push(
+                buf,
+                y,
+                Line::from(Span::styled(
+                    table_row("模型", "输入", "输出", Some("调用"), "费用", w as usize),
+                    label_style,
+                )),
+            );
+            for (model, m) in usage.model_usage.iter().take(MAX_MODEL_ROWS) {
+                push(
+                    buf,
+                    y,
+                    Line::from(Span::styled(
+                        table_row(
+                            model,
+                            &group_thousands(m.input_tokens),
+                            &group_thousands(m.output_tokens),
+                            Some(&group_thousands(m.model_calls)),
+                            &format_cost(m),
+                            w as usize,
+                        ),
+                        value_style,
+                    )),
+                );
+            }
+            if usage.model_usage.len() > MAX_MODEL_ROWS {
+                let more = usage.model_usage.len() - MAX_MODEL_ROWS;
+                push(
+                    buf,
+                    y,
+                    Line::from(Span::styled(format!("+{more} 个其他模型"), dim_style)),
+                );
+            }
+        }
+
+        if usage.usage_is_incomplete {
+            push(
+                buf,
+                y,
+                Line::from(Span::styled(
+                    "注意：用量统计不完整，实际用量可能更高。",
+                    Style::default().fg(theme.warning).bg(theme.bg_base),
+                )),
+            );
         }
     };
 
@@ -285,127 +443,21 @@ pub fn render_usage_detail(
                 )),
             );
         }
-        UsageDetail::Ready(usage) if is_empty_ledger(usage) => {
-            let msg = if usage.usage_is_incomplete {
-                "尚无记录，但统计不完整，实际用量可能更高。"
-            } else {
-                "本次会话尚未调用模型。"
-            };
-            push(buf, &mut y, Line::from(Span::styled(msg, dim_style)));
-        }
-        UsageDetail::Ready(usage) => {
-            let t = &usage.totals;
-            let row = |label: &str, value: String, note: Option<String>| {
-                // Pad by DISPLAY width, not char count: `模型调用` is 4 chars
-                // but 8 columns, so `{:<14}` would push its value 4 columns
-                // past the ASCII rows' values.
-                let mut spans = vec![
-                    Span::styled(pad_right(label, TOTALS_LABEL_W), label_style),
-                    Span::styled(value, value_style),
-                ];
-                if let Some(note) = note {
-                    spans.push(Span::styled(note, dim_style));
-                }
-                Line::from(spans)
-            };
+        UsageDetail::Ready { session, aggregate } => {
             push(
                 buf,
                 &mut y,
-                row(
-                    "输入 Token",
-                    group_thousands(t.input_tokens),
-                    Some(format!(
-                        "（缓存命中 {}）",
-                        group_thousands(t.cached_read_tokens)
-                    )),
-                ),
+                Line::from(Span::styled("本次会话", section_style)),
             );
-            push(
-                buf,
-                &mut y,
-                row(
-                    "输出 Token",
-                    group_thousands(t.output_tokens),
-                    Some(format!("（推理 {}）", group_thousands(t.reasoning_tokens))),
-                ),
-            );
-            push(
-                buf,
-                &mut y,
-                row("Token 总计", group_thousands(t.total_tokens), None),
-            );
-            push(
-                buf,
-                &mut y,
-                row(
-                    "模型调用",
-                    format!("{} 次", group_thousands(t.model_calls)),
-                    Some(format!(
-                        " · API 耗时 {}",
-                        format_duration(std::time::Duration::from_millis(t.api_duration_ms))
-                    )),
-                ),
-            );
-            push(buf, &mut y, row("费用", format_cost(t), None));
+            render_section(buf, &mut y, session, false);
 
-            if per_model_section_rows(usage) > 0 {
-                push(buf, &mut y, Line::from(""));
-                push(
-                    buf,
-                    &mut y,
-                    Line::from(Span::styled(
-                        "按模型：",
-                        Style::default()
-                            .fg(theme.text_primary)
-                            .bg(theme.bg_base)
-                            .add_modifier(Modifier::BOLD),
-                    )),
-                );
-                push(
-                    buf,
-                    &mut y,
-                    Line::from(Span::styled(
-                        table_row("模型", "输入", "输出", Some("调用"), "费用", w as usize),
-                        label_style,
-                    )),
-                );
-                for (model, m) in usage.model_usage.iter().take(MAX_MODEL_ROWS) {
-                    push(
-                        buf,
-                        &mut y,
-                        Line::from(Span::styled(
-                            table_row(
-                                model,
-                                &group_thousands(m.input_tokens),
-                                &group_thousands(m.output_tokens),
-                                Some(&group_thousands(m.model_calls)),
-                                &format_cost(m),
-                                w as usize,
-                            ),
-                            value_style,
-                        )),
-                    );
-                }
-                if usage.model_usage.len() > MAX_MODEL_ROWS {
-                    let more = usage.model_usage.len() - MAX_MODEL_ROWS;
-                    push(
-                        buf,
-                        &mut y,
-                        Line::from(Span::styled(format!("+{more} 个其他模型"), dim_style)),
-                    );
-                }
-            }
-
-            if usage.usage_is_incomplete {
-                push(
-                    buf,
-                    &mut y,
-                    Line::from(Span::styled(
-                        "注意：用量统计不完整，实际用量可能更高。",
-                        Style::default().fg(theme.warning).bg(theme.bg_base),
-                    )),
-                );
-            }
+            push(buf, &mut y, Line::from(""));
+            push(
+                buf,
+                &mut y,
+                Line::from(Span::styled("累计使用 Chaos 以来", section_style)),
+            );
+            render_section(buf, &mut y, aggregate, true);
         }
     }
 
@@ -494,13 +546,23 @@ mod tests {
         (buf, close)
     }
 
+    /// Build a `Ready` detail with the same ledger used for both session and
+    /// aggregate. Most render tests only care about one shape; this keeps the
+    /// assertions focused.
+    fn ready(usage: PromptUsage) -> UsageDetail {
+        UsageDetail::Ready {
+            session: Box::new(usage.clone()),
+            aggregate: Box::new(usage),
+        }
+    }
+
     #[test]
     fn loading_state_renders_placeholder_and_hint() {
         let (buf, close) = render(&UsageDetail::Loading, Rect::new(0, 0, 100, 30));
         let text = buffer_text(&buf);
         assert!(contains(&buf, "正在加载用量…"), "{text}");
         assert!(contains(&buf, "Esc: 关闭"), "{text}");
-        assert!(contains(&buf, "Token 用量"), "{text}");
+        assert!(contains(&buf, "Token用量统计"), "{text}");
         assert!(close.is_some());
     }
 
@@ -514,9 +576,9 @@ mod tests {
 
     #[test]
     fn empty_ledger_reads_as_no_calls() {
-        let detail = UsageDetail::Ready(Box::default());
+        let detail = ready(PromptUsage::default());
         let (buf, _) = render(&detail, Rect::new(0, 0, 100, 30));
-        assert!(contains(&buf, "本次会话尚未调用模型。"));
+        assert!(contains(&buf, "暂无记录。"));
     }
 
     #[test]
@@ -528,7 +590,7 @@ mod tests {
                 model(200_000, 5_000, 12, Some(1_000_000_000)),
             ),
         ]);
-        let detail = UsageDetail::Ready(Box::new(usage));
+        let detail = ready(usage);
         let (buf, _) = render(&detail, Rect::new(0, 0, 100, 30));
         let text = buffer_text(&buf);
         assert!(contains(&buf, "按模型："), "{text}");
@@ -538,14 +600,17 @@ mod tests {
         assert!(text.contains("$0.9000"), "{text}");
     }
 
-    /// A single-model ledger collapses to the totals — repeating the same
-    /// numbers under a "按模型" header would be pure noise.
+    /// A single-model session ledger collapses to the totals — repeating the same
+    /// numbers under a "按模型" header would be pure noise. The aggregate section
+    /// still forces the breakdown.
     #[test]
-    fn single_model_suppresses_breakdown() {
+    fn single_model_suppresses_session_breakdown_but_shows_aggregate() {
         let usage = usage_with_models(&[("grok-4", model(1_000, 100, 2, Some(1)))]);
-        let detail = UsageDetail::Ready(Box::new(usage));
+        let detail = ready(usage);
         let (buf, _) = render(&detail, Rect::new(0, 0, 100, 30));
-        assert!(!contains(&buf, "按模型："));
+        // Session section has one model → no "按模型" there.
+        // Aggregate section always shows the per-model table.
+        assert!(contains(&buf, "按模型："));
     }
 
     #[test]
@@ -556,7 +621,7 @@ mod tests {
         let borrowed: Vec<(&str, PromptUsageModel)> =
             rows.iter().map(|(n, m)| (n.as_str(), m.clone())).collect();
         let usage = usage_with_models(&borrowed);
-        let detail = UsageDetail::Ready(Box::new(usage));
+        let detail = ready(usage);
         let (buf, _) = render(&detail, Rect::new(0, 0, 120, 40));
         let text = buffer_text(&buf);
         assert!(contains(&buf, "+3 个其他模型"), "{text}");
@@ -568,7 +633,7 @@ mod tests {
         let mut usage = usage_with_models(&[("grok-4", model(1_000, 100, 2, None))]);
         usage.usage_is_incomplete = true;
         usage.totals.cost_usd_ticks = None;
-        let detail = UsageDetail::Ready(Box::new(usage));
+        let detail = ready(usage);
         let (buf, _) = render(&detail, Rect::new(0, 0, 100, 30));
         assert!(contains(&buf, "用量统计不完整"));
     }
@@ -592,14 +657,14 @@ mod tests {
             ("grok-4", model(1_000_000, 30_000, 40, Some(1))),
             ("grok-4-fast", model(200_000, 5_000, 12, Some(1))),
         ]);
-        let detail = UsageDetail::Ready(Box::new(usage));
+        let detail = ready(usage);
         let screen = Rect::new(0, 0, 100, 30);
         let area = usage_detail_area(screen, &detail);
         let mut buf = Buffer::empty(screen);
         render_usage_detail(&mut buf, area, &detail, false);
 
-        // The five totals rows sit directly under the top border.
-        let value_cols: Vec<u16> = (area.y + 1..area.y + 6)
+        // The five totals rows sit directly under the "本次会话" section title.
+        let value_cols: Vec<u16> = (area.y + 2..area.y + 7)
             .map(|y| {
                 (area.x..area.x + area.width)
                     .find(|&x| {
@@ -628,7 +693,7 @@ mod tests {
             ("grok-4-fast", model(200_000, 5_000, 12, Some(1))),
             ("grok-3", model(50_000, 1_000, 3, Some(1))),
         ]);
-        let detail = UsageDetail::Ready(Box::new(usage));
+        let detail = ready(usage);
         let screen = Rect::new(0, 0, 100, 40);
         let area = usage_detail_area(screen, &detail);
         // 2 border + body + blank + footer

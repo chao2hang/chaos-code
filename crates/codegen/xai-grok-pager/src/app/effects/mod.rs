@@ -3415,6 +3415,24 @@ pub(crate) fn execute(
                     }
                 });
         }
+        Effect::FetchAggregateUsage { agent_id, for_overlay } => {
+            let tx = acp_tx.clone();
+            tasks
+                .spawn(async move {
+                    match fetch_aggregate_usage(&tx).await {
+                        Ok(usage) => TaskResult::AggregateUsageComplete {
+                            agent_id,
+                            usage: Box::new(usage),
+                            for_overlay,
+                        },
+                        Err(error) => TaskResult::AggregateUsageFailed {
+                            agent_id,
+                            error,
+                            for_overlay,
+                        },
+                    }
+                });
+        }
         Effect::SendFeedback { agent_id, session_id, feedback_text } => {
             use xai_grok_shell::session::ClientType;
             use xai_grok_shell::session::acp_types::ClientFeedbackInput;
@@ -4465,6 +4483,34 @@ async fn fetch_session_usage(
         .map_err(|e| {
             tracing::debug!("session usage deser failed: {e}");
             "invalid session usage response".to_string()
+        })?;
+    Ok(parsed.usage)
+}
+/// `x.ai/usage/aggregate` → [`PromptUsage`] (bare response, no envelope).
+async fn fetch_aggregate_usage(
+    tx: &AcpAgentTx,
+) -> Result<xai_grok_shell::extensions::notification::PromptUsage, String> {
+    let request = acp::ExtRequest::new(
+        "x.ai/usage/aggregate",
+        serde_json::value::to_raw_value(&serde_json::json!({}))
+            .expect("serialize aggregate usage params")
+            .into(),
+    );
+    let resp = acp_send(request, tx)
+        .await
+        .map_err(|e| {
+            if i32::from(e.code) == i32::from(acp::Error::method_not_found().code) {
+                "aggregate usage not supported by this agent version".to_string()
+            } else {
+                sanitize_user_error(&e.to_string())
+            }
+        })?;
+    let parsed: xai_grok_shell::extensions::usage::SessionUsageResponse = serde_json::from_str(
+            resp.0.get(),
+        )
+        .map_err(|e| {
+            tracing::debug!("aggregate usage deser failed: {e}");
+            "invalid aggregate usage response".to_string()
         })?;
     Ok(parsed.usage)
 }

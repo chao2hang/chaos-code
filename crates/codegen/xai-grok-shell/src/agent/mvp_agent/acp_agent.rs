@@ -1187,6 +1187,7 @@ impl acp::Agent for MvpAgent {
                         session_yolo_mode,
                         session_auto_mode: session_auto_mode && !session_yolo_mode,
                         prompt_display_cwd: None,
+                        session_kind: None,
                     }
             };
             self.spawn_and_register_session(init, spawn_opts).await
@@ -1748,6 +1749,7 @@ impl acp::Agent for MvpAgent {
                         session_yolo_mode,
                         session_auto_mode: session_auto_mode && !session_yolo_mode,
                         prompt_display_cwd,
+                        session_kind: summary.session_kind.clone(),
                     },
                 )
                 .await?;
@@ -3412,7 +3414,9 @@ impl acp::Agent for MvpAgent {
                 crate::extensions::session_admin::handle(self, &args).await
             }
             "x.ai/session/repair" => crate::extensions::repair::handle(self, &args).await,
-            "x.ai/session/usage" => crate::extensions::usage::handle(self, &args).await,
+            "x.ai/session/usage" | "x.ai/usage/aggregate" => {
+                crate::extensions::usage::handle(self, &args).await
+            }
             "x.ai/memory/flush" | "x.ai/memory/rewrite" => {
                 crate::extensions::memory::handle(self, &args).await
             }

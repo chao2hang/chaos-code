@@ -216,6 +216,10 @@ pub(crate) struct SessionSpawnOptions<'a> {
     pub session_yolo_mode: bool,
     pub session_auto_mode: bool,
     pub prompt_display_cwd: Option<String>,
+    /// `Summary::session_kind` for loaded sessions, or `None` for new
+    /// top-level sessions. Propagated onto the `SessionHandle` so the
+    /// aggregate usage store can skip subagent sessions.
+    pub session_kind: Option<String>,
 }
 #[derive(Clone, Copy)]
 #[allow(dead_code)]
@@ -353,6 +357,7 @@ pub(crate) fn chat_session_spawn_options<'a>(
         session_yolo_mode,
         session_auto_mode: false,
         prompt_display_cwd: None,
+        session_kind: None,
     }
 }
 /// `_meta.noReplay` → skip gateway replay (client already has the transcript).

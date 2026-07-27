@@ -1190,6 +1190,7 @@ fn make_test_handle(
         terminal_backend: None,
         tools_notification_handle: None,
         scheduler_handle: None,
+        session_kind: None,
     }
 }
 /// lookup_session_model returns the per-session model for each session.

@@ -2085,6 +2085,12 @@ pub enum Effect {
         /// destination.
         for_overlay: bool,
     },
+    /// Fetch all-time aggregate token/cost via `x.ai/usage/aggregate`.
+    FetchAggregateUsage {
+        agent_id: AgentId,
+        /// Route the result to the token-usage detail overlay.
+        for_overlay: bool,
+    },
     /// Re-fetch remote settings to check subscription gate.
     RefreshGate,
     /// Spawn a debounce sleep task for shell suggestions. `agent_id` rides
@@ -2643,6 +2649,20 @@ pub enum TaskResult {
         error: String,
         /// Echoed from [`Effect::FetchSessionUsage`]. See
         /// [`TaskResult::SessionUsageComplete`].
+        for_overlay: bool,
+    },
+    /// Aggregate usage ledger fetched.
+    AggregateUsageComplete {
+        agent_id: AgentId,
+        usage: Box<xai_grok_shell::extensions::notification::PromptUsage>,
+        /// Echoed from [`Effect::FetchAggregateUsage`]: fill the detail overlay.
+        for_overlay: bool,
+    },
+    /// Aggregate usage ledger fetch failed.
+    AggregateUsageFailed {
+        agent_id: AgentId,
+        error: String,
+        /// Echoed from [`Effect::FetchAggregateUsage`].
         for_overlay: bool,
     },
     /// Feedback submitted successfully (fire-and-forget).

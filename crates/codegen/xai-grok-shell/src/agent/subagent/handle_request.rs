@@ -1135,7 +1135,7 @@ pub(crate) async fn run_shell_child(
         },
     )
     .await;
-    let (child_handle, mut permission_rx, _system_prompt, child_thread) = match spawn_result {
+    let (mut child_handle, mut permission_rx, _system_prompt, child_thread) = match spawn_result {
         Ok(r) => r,
         Err(e) => {
             let msg = format!("Failed to spawn child session: {e}");
@@ -1150,6 +1150,10 @@ pub(crate) async fn run_shell_child(
             return child_run_output(result, completion_data, None);
         }
     };
+    // Mark the child handle so the aggregate usage store skips it — subagent
+    // spend is already folded into the parent session's ledger, so persisting
+    // it separately would double-count.
+    child_handle.session_kind = Some("subagent".to_string());
     let promoted = reporter
         .started(StartedChild {
             child_session_id: child_session_id.0.to_string(),
