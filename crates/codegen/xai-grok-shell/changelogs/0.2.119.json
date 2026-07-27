@@ -1,0 +1,7 @@
+[
+  {
+    "category": "features",
+    "description": "Token 用量统计覆盖层新增累计用量区块：跨所有本地会话聚合 token/成本总计与各模型分项，持久化在 sessions/usage.sqlite；subagent 会话因消耗已折叠进父会话而跳过，避免重复计数。",
+    "breaking_change": false
+  }
+]

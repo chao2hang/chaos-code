@@ -553,7 +553,8 @@ fn agent_usage_detail(app: &AppView) -> Option<&crate::views::usage_detail::Usag
 }
 
 /// Clicking the chip opens the overlay in `Loading` immediately (so the click
-/// is acknowledged on the next frame) and schedules an overlay-routed fetch.
+/// is acknowledged on the next frame) and schedules overlay-routed fetches for
+/// both the current session and the all-time aggregate.
 #[test]
 fn show_usage_detail_opens_overlay_and_fetches() {
     use crate::views::usage_detail::UsageDetail;
@@ -561,12 +562,18 @@ fn show_usage_detail_opens_overlay_and_fetches() {
     let mut app = test_app_with_agent();
     let effects = dispatch(Action::ShowUsageDetail, &mut app);
     assert!(
-        matches!(
-            effects.as_slice(),
-            [Effect::FetchSessionUsage { agent_id, for_overlay: true, .. }]
-                if *agent_id == AgentId(0)
-        ),
+        effects.iter().any(|e| matches!(
+            e,
+            Effect::FetchSessionUsage { agent_id, for_overlay: true, .. } if *agent_id == AgentId(0)
+        )),
         "expected an overlay-routed session usage fetch, got {effects:?}"
+    );
+    assert!(
+        effects.iter().any(|e| matches!(
+            e,
+            Effect::FetchAggregateUsage { agent_id, for_overlay: true } if *agent_id == AgentId(0)
+        )),
+        "expected an overlay-routed aggregate usage fetch, got {effects:?}"
     );
     assert_eq!(agent_usage_detail(&app), Some(&UsageDetail::Loading));
 
@@ -578,7 +585,7 @@ fn show_usage_detail_opens_overlay_and_fetches() {
     );
     assert!(matches!(
         agent_usage_detail(&app),
-        Some(UsageDetail::Ready(_))
+        Some(UsageDetail::Ready { .. })
     ));
     assert_eq!(
         agent_scrollback_len(&app),

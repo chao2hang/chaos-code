@@ -1,5 +1,11 @@
 # Changelog
 
+# 0.2.119 — 2026-07-27
+
+## Features
+
+- **Token 用量统计覆盖层支持累计用量**：右上角 token 统计点开后，除本次会话消耗外，新增「累计使用 Chaos 以来」区块，展示所有本地会话的 token/成本总计与各模型分项。数据持久化在 `<grok_home>/sessions/usage.sqlite`，每次读取会话用量时增量 upsert。subagent 会话的消耗已折叠进父会话账本，聚合时跳过以避免重复计数。
+
 # 0.2.118 — 2026-07-27
 
 ## Bug Fixes

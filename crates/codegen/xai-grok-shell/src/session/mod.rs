@@ -357,6 +357,7 @@ pub(crate) mod streaming_capture;
 pub(crate) mod summary;
 pub(crate) mod telemetry;
 pub mod tool_index;
+pub mod usage_store;
 pub(crate) mod turn_completion;
 pub mod unified_list;
 mod user_message;

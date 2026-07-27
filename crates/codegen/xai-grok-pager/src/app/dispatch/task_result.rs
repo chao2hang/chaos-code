@@ -41,7 +41,9 @@ use super::session::load::{
 };
 use super::settings::ui::apply_setting_rollback;
 use super::status::{
-    commit_session_usage_block, fill_usage_detail, handle_coding_data_sharing_failed,
+    commit_session_usage_block, fill_aggregate_usage_detail,
+    fill_aggregate_usage_detail_failed, fill_session_usage_detail,
+    fill_session_usage_detail_failed, handle_coding_data_sharing_failed,
     handle_coding_data_sharing_updated, handle_context_info_complete,
     handle_set_context_window_complete, scrub_error_for_toast,
 };
@@ -920,12 +922,7 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
             for_overlay,
         } => {
             if for_overlay {
-                fill_usage_detail(
-                    app,
-                    agent_id,
-                    &session_id,
-                    crate::views::usage_detail::UsageDetail::Ready(usage),
-                )
+                fill_session_usage_detail(app, agent_id, &session_id, *usage)
             } else {
                 commit_session_usage_block(
                     app,
@@ -942,12 +939,7 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
             for_overlay,
         } => {
             if for_overlay {
-                fill_usage_detail(
-                    app,
-                    agent_id,
-                    &session_id,
-                    crate::views::usage_detail::UsageDetail::Failed(error),
-                )
+                fill_session_usage_detail_failed(app, agent_id, &session_id, error)
             } else {
                 commit_session_usage_block(
                     app,
@@ -955,6 +947,29 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
                     &session_id,
                     format!("Couldn't load session usage: {error}"),
                 )
+            }
+        }
+        TaskResult::AggregateUsageComplete {
+            agent_id,
+            usage,
+            for_overlay,
+        } => {
+            if for_overlay {
+                fill_aggregate_usage_detail(app, agent_id, *usage)
+            } else {
+                // Aggregate usage is only displayed in the overlay today.
+                vec![]
+            }
+        }
+        TaskResult::AggregateUsageFailed {
+            agent_id,
+            error,
+            for_overlay,
+        } => {
+            if for_overlay {
+                fill_aggregate_usage_detail_failed(app, agent_id, error)
+            } else {
+                vec![]
             }
         }
         TaskResult::FeedbackComplete { .. } => vec![],

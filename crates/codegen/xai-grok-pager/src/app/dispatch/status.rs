@@ -366,12 +366,17 @@ pub(super) fn dispatch_show_usage(app: &mut AppView) -> Vec<Effect> {
 }
 
 /// Click on the accumulated-token status chip — open the usage detail overlay
-/// and fetch the ledger into it.
+/// and fetch the ledgers into it.
 ///
 /// The overlay opens immediately in `Loading` so the click is acknowledged on
 /// the next frame rather than after the round-trip. A second click while the
 /// overlay is open closes it (the chip is a toggle, like the goal chip), and
 /// any in-flight fetch then lands on a closed overlay and is dropped.
+///
+/// Two ledgers are fetched in parallel:
+///   - the current session's usage (`x.ai/session/usage`)
+///   - the all-time aggregate usage across every Chaos session
+///     (`x.ai/usage/aggregate`)
 pub(super) fn dispatch_show_usage_detail(app: &mut AppView) -> Vec<Effect> {
     use crate::views::usage_detail::UsageDetail;
 
@@ -385,16 +390,21 @@ pub(super) fn dispatch_show_usage_detail(app: &mut AppView) -> Vec<Effect> {
         agent.close_usage_detail();
         return vec![];
     }
-    let Some(session_id) = agent.session.session_id.clone() else {
-        agent.usage_detail = Some(UsageDetail::Failed("会话尚未启动，暂无用量。".to_string()));
-        return vec![];
-    };
+
     agent.usage_detail = Some(UsageDetail::Loading);
-    vec![Effect::FetchSessionUsage {
+
+    let mut effects = vec![Effect::FetchAggregateUsage {
         agent_id: id,
-        session_id,
         for_overlay: true,
-    }]
+    }];
+    if let Some(session_id) = agent.session.session_id.clone() {
+        effects.push(Effect::FetchSessionUsage {
+            agent_id: id,
+            session_id,
+            for_overlay: true,
+        });
+    }
+    effects
 }
 
 /// Commit a session-usage block if still on `session_id`, then consumer credits.
@@ -414,18 +424,18 @@ pub(super) fn commit_session_usage_block(
     append_consumer_billing_surface(app, agent_id)
 }
 
-/// Fill the token-usage detail overlay with a fetched ledger (or its error).
+/// Merge a fetched session ledger into the usage detail overlay.
 ///
 /// Dropped when the agent is gone, the session was rebound under the fetch, or
 /// the user already dismissed the overlay — a late result must never re-open a
 /// popup the user closed. Unlike [`commit_session_usage_block`] this does not
 /// chain the consumer billing surface: the overlay is a token/cost read-out,
 /// not the `/usage` command flow.
-pub(super) fn fill_usage_detail(
+pub(super) fn fill_session_usage_detail(
     app: &mut AppView,
     agent_id: AgentId,
     session_id: &acp::SessionId,
-    detail: crate::views::usage_detail::UsageDetail,
+    usage: xai_grok_shell::extensions::notification::PromptUsage,
 ) -> Vec<Effect> {
     let Some(agent) = app.agents.get_mut(&agent_id) else {
         return vec![];
@@ -436,7 +446,95 @@ pub(super) fn fill_usage_detail(
     if agent.usage_detail.is_none() {
         return vec![];
     }
-    agent.usage_detail = Some(detail);
+    match agent.usage_detail.take() {
+        Some(crate::views::usage_detail::UsageDetail::Ready { session: _, aggregate }) => {
+            agent.usage_detail = Some(crate::views::usage_detail::UsageDetail::Ready {
+                session: Box::new(usage),
+                aggregate,
+            });
+        }
+        Some(crate::views::usage_detail::UsageDetail::Loading) => {
+            agent.usage_detail = Some(crate::views::usage_detail::UsageDetail::Ready {
+                session: Box::new(usage.clone()),
+                aggregate: Box::new(usage),
+            });
+        }
+        Some(failed @ crate::views::usage_detail::UsageDetail::Failed(_)) => {
+            // If the aggregate fetch already failed, keep the error rather
+            // than hiding it behind partial data.
+            agent.usage_detail = Some(failed);
+        }
+        None => unreachable!("is_none guard above prevents this"),
+    }
+    vec![]
+}
+
+/// Mark the session-ledger portion of the overlay as failed.
+pub(super) fn fill_session_usage_detail_failed(
+    app: &mut AppView,
+    agent_id: AgentId,
+    session_id: &acp::SessionId,
+    error: String,
+) -> Vec<Effect> {
+    let Some(agent) = app.agents.get_mut(&agent_id) else {
+        return vec![];
+    };
+    if agent.session.session_id.as_ref() != Some(session_id) {
+        return vec![];
+    }
+    if agent.usage_detail.is_none() {
+        return vec![];
+    }
+    agent.usage_detail = Some(crate::views::usage_detail::UsageDetail::Failed(error));
+    vec![]
+}
+
+/// Merge the all-time aggregate ledger into the usage detail overlay.
+pub(super) fn fill_aggregate_usage_detail(
+    app: &mut AppView,
+    agent_id: AgentId,
+    usage: xai_grok_shell::extensions::notification::PromptUsage,
+) -> Vec<Effect> {
+    let Some(agent) = app.agents.get_mut(&agent_id) else {
+        return vec![];
+    };
+    if agent.usage_detail.is_none() {
+        return vec![];
+    }
+    match agent.usage_detail.take() {
+        Some(crate::views::usage_detail::UsageDetail::Ready { session, aggregate: _ }) => {
+            agent.usage_detail = Some(crate::views::usage_detail::UsageDetail::Ready {
+                session,
+                aggregate: Box::new(usage),
+            });
+        }
+        Some(crate::views::usage_detail::UsageDetail::Loading) => {
+            agent.usage_detail = Some(crate::views::usage_detail::UsageDetail::Ready {
+                session: Box::new(usage.clone()),
+                aggregate: Box::new(usage),
+            });
+        }
+        Some(failed @ crate::views::usage_detail::UsageDetail::Failed(_)) => {
+            agent.usage_detail = Some(failed);
+        }
+        None => unreachable!("is_none guard above prevents this"),
+    }
+    vec![]
+}
+
+/// Mark the aggregate-ledger portion of the overlay as failed.
+pub(super) fn fill_aggregate_usage_detail_failed(
+    app: &mut AppView,
+    agent_id: AgentId,
+    error: String,
+) -> Vec<Effect> {
+    let Some(agent) = app.agents.get_mut(&agent_id) else {
+        return vec![];
+    };
+    if agent.usage_detail.is_none() {
+        return vec![];
+    }
+    agent.usage_detail = Some(crate::views::usage_detail::UsageDetail::Failed(error));
     vec![]
 }
 

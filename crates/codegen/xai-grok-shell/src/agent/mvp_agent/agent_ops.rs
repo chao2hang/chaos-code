@@ -3058,6 +3058,7 @@ impl MvpAgent {
             session_yolo_mode,
             session_auto_mode,
             prompt_display_cwd,
+            session_kind,
         } = spec;
         let _timer = crate::instrumentation_timer!("session.spawn_and_register");
         reject_direct_hub_cloud_meta(session_meta)?;
@@ -3812,6 +3813,7 @@ impl MvpAgent {
                 )
                 .await?
         };
+        handle.session_kind = session_kind;
         self.session_threads
             .borrow_mut()
             .insert(session_info.id.clone(), session_thread);

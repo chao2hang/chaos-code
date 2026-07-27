@@ -2005,6 +2005,7 @@ pub(crate) async fn spawn_session_actor(
             terminal_backend: Some(terminal_backend.clone()),
             tools_notification_handle: Some(tools_notification_handle.clone()),
             scheduler_handle: scheduler_handle_for_handle,
+            session_kind: None,
         },
         permission_events_rx,
         system_prompt,
