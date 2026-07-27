@@ -146,7 +146,13 @@ impl UsageStore {
             // Edge case: a session with no per-model breakdown but non-zero
             // totals. Fall back to a single "unknown" model row so the spend
             // is not lost from the aggregate.
-            self.upsert_session_model_usage(session_id, "unknown", recorded_at, usage, &usage.totals)?;
+            self.upsert_session_model_usage(
+                session_id,
+                "unknown",
+                recorded_at,
+                usage,
+                &usage.totals,
+            )?;
         } else {
             for (model, m) in &usage.model_usage {
                 self.upsert_session_model_usage(session_id, model, recorded_at, usage, m)?;
@@ -355,7 +361,9 @@ pub fn default_db_path() -> PathBuf {
     if let Ok(path) = std::env::var("GROK_USAGE_STORE_PATH") {
         return PathBuf::from(path);
     }
-    crate::util::grok_home::grok_home().join("sessions").join("usage.sqlite")
+    crate::util::grok_home::grok_home()
+        .join("sessions")
+        .join("usage.sqlite")
 }
 
 #[cfg(test)]

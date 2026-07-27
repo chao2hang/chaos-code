@@ -3007,10 +3007,7 @@ mod tests {
 
         let client = SamplingClient::new(cfg).expect("client builds");
         assert!(
-            client
-                .default_headers
-                .get("anthropic-version")
-                .is_none(),
+            client.default_headers.get("anthropic-version").is_none(),
             "Chat Completions must not receive anthropic-version"
         );
     }
