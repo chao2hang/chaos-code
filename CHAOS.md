@@ -19,7 +19,13 @@ Chaos 是终端 AI 编码助手。模型、接口地址和密钥均由用户自�
 ```sh
 # macOS / Linux
 curl -fsSL https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.sh | bash
+# 当前会话需先把 bin 放进 PATH（curl|bash 不会改父 shell）
+export PATH="$HOME/.chaos/bin:$PATH"
 chaos --version
+# 或: ~/.chaos/bin/chaos --version
+
+# Windows PowerShell
+# irm https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.ps1 | iex
 
 # Windows cmd（无需 iex）
 # curl -L -o "%TEMP%\install-chaos.bat" https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.bat && "%TEMP%\install-chaos.bat"

@@ -18,8 +18,11 @@
 #   --version X.Y.Z   Release version without leading v (default: latest)
 #   --dir DIR         Install directory (default: ~/.chaos/bin or $CHAOS_HOME/bin)
 #   --no-path         Do not modify shell rc / PATH
-#   --force           Overwrite existing binary / symlink
+#   --force           Re-download even if the target version is already installed
 #   -h, --help        Show help
+#
+# Existing installs are upgraded in place when the resolved version differs.
+# Same-version installs are skipped (use --force to re-fetch).
 set -euo pipefail
 
 REPO="${CHAOS_REPO:-chao2hang/chaos-code}"
@@ -42,8 +45,10 @@ Options:
   --version X.Y.Z   Release version without leading v (default: latest)
   --dir DIR         Install directory (default: ~/.chaos/bin or $CHAOS_HOME/bin)
   --no-path         Do not modify shell rc / PATH
-  --force           Overwrite existing binary
+  --force           Re-download even if already on the target version
   -h, --help        Show help
+
+Existing installs are upgraded in place when the version differs.
 
 Environment:
   CHAOS_VERSION         Pin a version (same as --version)
@@ -292,20 +297,29 @@ echo "  store:   ${STORED_PATH}"
 echo "  dest:    ${DEST} -> ../downloads/${STORED_NAME}"
 echo "  url:     ${URL}"
 
+# Default is upgrade-in-place. --force re-downloads even when the target
+# version is already installed (useful after a corrupt download).
 if [[ -e "$DEST" && "$FORCE" -ne 1 ]]; then
   if [[ -x "$DEST" ]]; then
     cur="$("$DEST" --version 2>/dev/null || true)"
-    if [[ "$cur" == *"${VERSION}"* ]]; then
+    if [[ -n "$cur" && "$cur" == *"${VERSION}"* ]]; then
       echo "already installed: $cur"
       if [[ "$MODIFY_PATH" -eq 1 ]]; then
         configure_path "$INSTALL_DIR"
       fi
-      echo "done. open a new terminal or: export PATH=\"${INSTALL_DIR}:\$PATH\""
+      echo "done. open a new terminal, or in this session:"
+      echo "  export PATH=\"${INSTALL_DIR}:\$PATH\""
+      echo "  chaos --version"
       exit 0
     fi
+    if [[ -n "$cur" ]]; then
+      echo "upgrading existing install: ${cur} -> ${VERSION}"
+    else
+      echo "replacing existing binary at ${DEST}"
+    fi
+  else
+    echo "replacing existing path at ${DEST}"
   fi
-  echo "error: ${DEST} exists (use --force to overwrite)" >&2
-  exit 1
 fi
 
 mkdir -p "$INSTALL_DIR" "$DOWNLOAD_DIR"
@@ -406,6 +420,8 @@ if [[ "$MODIFY_PATH" -eq 1 ]]; then
 fi
 
 echo
-echo "OK. Run: chaos --version"
-echo "If command not found, open a new terminal or:"
+echo "OK. Verify (this session may need PATH first — curl|bash does not update the parent shell):"
 echo "  export PATH=\"${INSTALL_DIR}:\$PATH\""
+echo "  chaos --version"
+echo "Or use the full path: ${DEST} --version"
+echo "New terminals pick up PATH from your shell rc automatically."

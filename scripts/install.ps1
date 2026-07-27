@@ -24,8 +24,10 @@
 #   -Version   Semver without leading v (default: latest GitHub release)
 #   -Dir       Install directory (default: %USERPROFILE%\.chaos\bin or $env:CHAOS_HOME\bin)
 #   -NoPath    Do not modify user PATH
-#   -Force     Overwrite existing chaos.exe
+#   -Force     Re-download even if the target version is already installed
 #   -Repo      GitHub owner/repo (default: chao2hang/chaos-code)
+#
+# Existing installs are upgraded in place when the resolved version differs.
 
 [CmdletBinding()]
 param(
@@ -260,17 +262,25 @@ Write-Host "  asset:   $asset"
 Write-Host "  dest:    $dest"
 Write-Host "  url:     $url"
 
+# Default is upgrade-in-place. -Force re-downloads even when already on target.
 if ((Test-Path -LiteralPath $dest) -and -not $Force) {
     try {
         $cur = & $dest --version 2>$null
-        if ($cur -match [regex]::Escape($Version)) {
+        if ($cur -and ($cur -match [regex]::Escape($Version))) {
             Write-Host "already installed: $cur"
             if (-not $NoPath) { Ensure-UserPath -InstallDir $Dir }
-            Write-Host "done. open a new terminal if chaos is not found."
+            Write-Host "done. open a NEW terminal if chaos is not found, or for this session:"
+            Write-Host "  `$env:Path = `"$Dir;`$env:Path`""
             return
         }
-    } catch { }
-    throw "$dest exists (use -Force to overwrite)"
+        if ($cur) {
+            Write-Host "upgrading existing install: $cur -> $Version"
+        } else {
+            Write-Host "replacing existing binary at $dest"
+        }
+    } catch {
+        Write-Host "replacing existing binary at $dest"
+    }
 }
 
 New-Item -ItemType Directory -Force -Path $Dir | Out-Null
@@ -293,37 +303,54 @@ try {
     # Integrity: verify against the release's published SHA256SUMS before the
     # binary is moved into place or executed. Set CHAOS_SKIP_CHECKSUM=1 only if
     # you have verified the download some other way.
+    #
+    # IMPORTANT (WinPS 5.1): GitHub serves SHA256SUMS as application/octet-stream,
+    # so Invoke-WebRequest .Content is often a [byte[]] — never -split that. Always
+    # download to a file and read as UTF-8 text.
     if ($env:CHAOS_SKIP_CHECKSUM -eq "1") {
         Write-Warning "checksum verification skipped (CHAOS_SKIP_CHECKSUM=1)"
     } else {
         $sumsUrl = "https://github.com/$Repo/releases/download/v$Version/SHA256SUMS"
-        $sums = $null
-        try {
-            $sums = (Invoke-WebRequest -Uri $sumsUrl -Headers $headers -UseBasicParsing).Content
-        } catch { }
-
-        if (-not $sums) {
-            throw ("could not fetch SHA256SUMS for v$Version. This release may predate " +
-                   "checksum publishing. To install anyway, set CHAOS_SKIP_CHECKSUM=1 " +
-                   "(you are then trusting the download).")
-        }
-
+        $sumsFile = Join-Path $env:TEMP ("chaos-sums-" + [guid]::NewGuid().ToString("n") + ".txt")
         $expected = $null
-        foreach ($line in ($sums -split "`n")) {
-            $parts = ($line.Trim() -split '\s+', 2)
-            if ($parts.Count -eq 2 -and $parts[1].TrimStart('*') -eq $asset) {
-                $expected = $parts[0].ToLower()
-                break
+        try {
+            try {
+                Invoke-WebRequest -Uri $sumsUrl -OutFile $sumsFile -Headers $headers -UseBasicParsing
+            } catch {
+                throw ("could not fetch SHA256SUMS for v$Version. This release may predate " +
+                       "checksum publishing. To install anyway, set CHAOS_SKIP_CHECKSUM=1 " +
+                       "(you are then trusting the download).")
+            }
+            if (-not (Test-Path -LiteralPath $sumsFile) -or (Get-Item -LiteralPath $sumsFile).Length -lt 16) {
+                throw ("could not fetch SHA256SUMS for v$Version (empty response). " +
+                       "To install anyway, set CHAOS_SKIP_CHECKSUM=1.")
+            }
+
+            # Read as text bytes → UTF-8. Avoid Get-Content default encoding quirks.
+            $sumsText = [System.IO.File]::ReadAllText($sumsFile, [System.Text.Encoding]::UTF8)
+            foreach ($line in ($sumsText -split "`r?`n")) {
+                $m = [regex]::Match($line.Trim(), '^(?<hash>[A-Fa-f0-9]{64})\s+\*?(?<name>\S+)\s*$')
+                if ($m.Success -and ($m.Groups['name'].Value -eq $asset)) {
+                    $expected = $m.Groups['hash'].Value.ToLowerInvariant()
+                    break
+                }
+            }
+            if (-not $expected) {
+                $preview = ($sumsText -split "`r?`n" | Select-Object -First 8) -join "; "
+                throw ("SHA256SUMS has no entry for $asset. First lines: $preview")
+            }
+
+            $actual = (Get-FileHash -LiteralPath $tmp -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actual -ne $expected) {
+                throw ("checksum mismatch for ${asset}: expected $expected, got $actual. " +
+                       "Refusing to install. This download may be corrupt or tampered with.")
+            }
+            Write-Host "checksum OK ($actual)"
+        } finally {
+            if (Test-Path -LiteralPath $sumsFile) {
+                Remove-Item -Force -LiteralPath $sumsFile -ErrorAction SilentlyContinue
             }
         }
-        if (-not $expected) { throw "SHA256SUMS has no entry for $asset" }
-
-        $actual = (Get-FileHash -LiteralPath $tmp -Algorithm SHA256).Hash.ToLower()
-        if ($actual -ne $expected) {
-            throw ("checksum mismatch for ${asset}: expected $expected, got $actual. " +
-                   "Refusing to install. This download may be corrupt or tampered with.")
-        }
-        Write-Host "checksum OK ($actual)"
     }
 
     Move-Item -Force -LiteralPath $tmp -Destination $dest
@@ -343,7 +370,7 @@ if (-not $NoPath) {
 }
 
 Write-Host ""
-Write-Host "OK. Run: chaos --version"
-Write-Host "If command not found, open a NEW terminal (user PATH was updated)."
-Write-Host "Or for this session only:"
+Write-Host "OK. Verify (open a NEW terminal, or refresh PATH in this session):"
 Write-Host "  `$env:Path = `"$Dir;`$env:Path`""
+Write-Host "  chaos --version"
+Write-Host "Or: & `"$dest`" --version"
