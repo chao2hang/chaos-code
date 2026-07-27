@@ -1,5 +1,11 @@
 # Changelog
 
+# 0.2.118 — 2026-07-27
+
+## Bug Fixes
+
+- **`chaos update` 在 install.sh 安装后失败**：`install.sh` 曾把二进制直接写成 `~/.chaos/bin/chaos` 普通文件，而自动更新在替换前会 `read_link` 捕获回滚状态，对普通文件得到 `EINVAL`（os error 22）并中止。现在对普通文件改为 `.rollback.bak` 备份；`install.sh` 与 `chaos update` 统一为 `downloads/` 版本化文件 + `bin/{chaos,agent}` 相对 symlink 布局。
+
 # 0.2.117 — 2026-07-27
 
 ## Features

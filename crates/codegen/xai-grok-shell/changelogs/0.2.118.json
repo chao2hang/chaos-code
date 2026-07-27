@@ -1,0 +1,7 @@
+[
+  {
+    "category": "fixes",
+    "description": "`chaos update` 可正确处理 install.sh 留下的普通文件入口：Unix 回滚捕获对非 symlink 改用 `.rollback.bak`，不再因 read_link 的 EINVAL 失败；install.sh 改为 downloads/ + 相对 symlink 布局，与自动更新一致。",
+    "breaking_change": false
+  }
+]
