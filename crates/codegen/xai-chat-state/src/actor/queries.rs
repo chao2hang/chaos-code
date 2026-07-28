@@ -59,7 +59,7 @@ impl ChatStateActor {
         }
 
         if let Some(start) = real_user_indices
-            .get(real_user_indices.len().saturating_sub(3))
+            .get(real_user_indices.len().saturating_sub(1))
             .copied()
         {
             protected.extend(start..self.state.conversation.len());
