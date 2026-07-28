@@ -9,9 +9,12 @@ use xai_grok_compaction::strategies::{StrategyEntry, StrategyEntryKind};
 pub(super) const COMPRESS_TOOL_NAME: &str = "compress";
 const DCP_NUDGE_MARKER: &str = "[chaos-dcp]";
 
-const NUDGE_EMERGENCY: &str = "⚠️ 上下文即将耗尽，请立即使用 compress 工具压缩对话历史。";
-const NUDGE_REMINDER: &str = "💡 上下文使用率较高，建议使用 compress 工具压缩不再需要的内容。";
-const NUDGE_ITERATION: &str = "📝 已进行多轮对话，考虑使用 compress 工具压缩历史以保持性能。";
+/// 紧急层：上下文接近耗尽，必须立刻压缩。
+const NUDGE_EMERGENCY: &str = "⚠️ 上下文即将耗尽。请立刻调用 compress 工具，压缩所有 m0001–m9999 中已完成、不再需要的旧工具调用区间（从最早的开始往前）。一次提交多个有序区间即可。";
+/// 提醒层：上下文使用率较高，建议压缩。
+const NUDGE_REMINDER: &str = "💡 上下文使用率较高。请用 compress 工具压缩已闭合的旧区间（如已结束的 read/grep/glob 批、已修复的错误工具调用）。选择范围时优先压缩重复且不再需要的输出，保留最近 N 轮与所有 write/edit/task 工具调用及其结果。";
+/// 迭代层：轮次较多，提示模型主动压缩。
+const NUDGE_ITERATION: &str = "📝 已进行多轮对话。请用 compress 工具压缩早期已完成的任务（如一次性的环境探索、已完成的重构）。一次提交多个有序区间，逐层降低上下文负担。";
 
 #[derive(Debug, Deserialize)]
 struct CompressArgs {
@@ -48,7 +51,24 @@ pub(super) fn compress_tool_definition() -> ToolDefinition {
     ToolDefinition::function(
         COMPRESS_TOOL_NAME,
         Some(
-            "压缩较早且已完成的上下文区间。仅替换发送给模型的请求视图，不修改会话原始记录。区间使用系统提醒中给出的零基历史索引或消息 ID（m0001 格式）；必须完整覆盖工具调用及其结果，且不得包含受保护项。",
+            "压缩较早且已完成的上下文区间。仅替换发送给模型的请求视图，不修改会话原始记录。\n\
+\n\
+**何时调用**：\n\
+- 对话变长但你不再需要旧工具结果时（例如一次性的 read/grep、已修复的错误、已完成的重构）。\n\
+- 收到 `[chaos-dcp]` 系统提醒时，按提醒中给出的范围建议调用。\n\
+- 与当前任务无关的旧轮次占据了上下文空间时。\n\
+\n\
+**如何使用**：\n\
+- 区间用系统提醒中给出的零基历史索引或消息 ID（m0001 格式）。一次提交多个有序区间。\n\
+- 必须完整覆盖工具调用及其结果，且不得包含受保护项（用户消息、当前目标、近期轮次、write/edit/task 工具调用）。\n\
+- 每个区间写一个自包含摘要：保留决策、文件路径、符号名、错误信息、未完成事项。\n\
+- topic 是该区间的简短主题；summary 是详细摘要。\n\
+\n\
+**示例**：压缩索引 5–12 的旧读取/搜索批，保留索引 13 之后的内容：\n\
+```json\n\
+{\"topic\": \"旧探索任务\", \"ranges\": [{\"start\": 5, \"end\": 12, \"summary\": \"读取了 src/foo.rs、src/bar.rs，搜索了 'TODO' 标记。已确认无需修改。\"}]}\n\
+```\n\
+",
         ),
         serde_json::json!({
             "type": "object",
@@ -65,18 +85,20 @@ pub(super) fn compress_tool_definition() -> ToolDefinition {
                         "required": ["start", "end", "summary"],
                         "properties": {
                             "start": {
+                                "description": "区间起始索引（整数或 m0001 格式消息 ID）",
                                 "oneOf": [
                                     { "type": "integer", "minimum": 0 },
                                     { "type": "string", "pattern": "^m[0-9]{4}$" }
                                 ]
                             },
                             "end": {
+                                "description": "区间结束索引（包含），与 start 一起决定压缩范围",
                                 "oneOf": [
                                     { "type": "integer", "minimum": 0 },
                                     { "type": "string", "pattern": "^m[0-9]{4}$" }
                                 ]
                             },
-                            "topic": { "type": "string" },
+                            "topic": { "type": "string", "description": "该区间的主题（覆盖总主题）" },
                             "summary": { "type": "string", "description": "保留决策、文件、符号、错误、结果和未完成事项的自包含摘要" }
                         }
                     }
@@ -84,6 +106,86 @@ pub(super) fn compress_tool_definition() -> ToolDefinition {
             }
         }),
     )
+}
+
+/// 识别可压缩的旧助手+结果配对。返回最多 5 个候选区间，格式为
+/// "m0007–m0012 (read_file×3 + grep×2)"。跳过包含保护工具（write/edit/task/skill/todo）
+/// 的助手条目，让提醒直接指向安全的压缩起点。
+fn suggest_compressible_spans(
+    conversation: &[ConversationItem],
+    recent_start: usize,
+) -> Vec<String> {
+    const PROTECTED_TOOL_NAMES: &[&str] = &[
+        "write", "write_file", "edit", "edit_file", "apply_patch", "search_replace",
+        "task", "spawn_subagent", "skill", "todo", "todo_write", "todowrite",
+        "update_plan", "update_goal", "compress",
+    ];
+
+    let mut suggestions: Vec<String> = Vec::new();
+    let mut i = 0;
+    while i < recent_start {
+        let span_start = i;
+        let mut end = span_start;
+        let mut tool_counts: std::collections::BTreeMap<&str, usize> =
+            std::collections::BTreeMap::new();
+        let mut has_protected = false;
+
+        // 收集一段连续的助手+结果配对；遇到用户/系统或保护工具则停止。
+        while end < recent_start {
+            match &conversation[end] {
+                ConversationItem::Assistant(assistant) => {
+                    if assistant.tool_calls.is_empty() {
+                        end += 1;
+                        continue;
+                    }
+                    for call in &assistant.tool_calls {
+                        let lower = call.name.to_ascii_lowercase();
+                        if PROTECTED_TOOL_NAMES.iter().any(|p| *p == lower) {
+                            has_protected = true;
+                            break;
+                        }
+                        *tool_counts.entry(call.name.as_str()).or_insert(0) += 1;
+                    }
+                    if has_protected {
+                        break;
+                    }
+                    end += 1;
+                }
+                ConversationItem::ToolResult(_) => {
+                    end += 1;
+                }
+                ConversationItem::User(_) | ConversationItem::System(_)
+                | ConversationItem::BackendToolCall(_) | ConversationItem::Reasoning(_) => {
+                    break;
+                }
+            }
+        }
+
+        if !has_protected && !tool_counts.is_empty() && end > span_start {
+            let span_end = end - 1;
+            let start_id = super::super::dcp_config::MessageId::from_index(span_start)
+                .as_str()
+                .to_owned();
+            let end_id = super::super::dcp_config::MessageId::from_index(span_end)
+                .as_str()
+                .to_owned();
+            let tools: Vec<String> = tool_counts
+                .iter()
+                .map(|(name, count)| format!("{name}×{count}"))
+                .collect();
+            suggestions.push(format!(
+                "{start_id}–{end_id} ({})",
+                tools.join(", ")
+            ));
+            i = end;
+            if suggestions.len() >= 5 {
+                break;
+            }
+        } else {
+            i = span_start + 1;
+        }
+    }
+    suggestions
 }
 
 fn item_outline(index: usize, item: &ConversationItem) -> String {
@@ -394,12 +496,24 @@ impl SessionActor {
             .collect::<Vec<_>>()
             .join("\n");
 
-        if outline.is_empty() && !matches!(tier, NudgeTier::Emergency) {
+        // 识别可压缩的旧助手+结果配对，提示模型哪些是低风险起点。
+        let suggestions = suggest_compressible_spans(conversation, recent_start);
+
+        if outline.is_empty() && suggestions.is_empty() && !matches!(tier, NudgeTier::Emergency) {
             return;
         }
 
+        let suggestion_block = if suggestions.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "\n\n建议优先压缩的旧区间（助手+结果配对，索引格式 m0001）：\n{}",
+                suggestions.join("\n")
+            )
+        };
+
         self.push_system_reminder(&format!(
-            "{DCP_NUDGE_MARKER} {message}\n\n可用消息 ID 与历史概览：\n{outline}"
+            "{DCP_NUDGE_MARKER} {message}\n\n可用消息 ID 与历史概览：\n{outline}{suggestion_block}"
         ));
 
         self.compaction
@@ -622,6 +736,52 @@ mod dcp_helper_tests {
         assert!(!tool_result_looks_like_error(
             "grep found 3 matches for 'error' in src/lib.rs"
         ));
+    }
+
+    #[test]
+    fn suggest_compressible_spans_finds_read_only_tool_runs() {
+        use xai_grok_sampling_types::ToolCall;
+        let conversation = vec![
+            ConversationItem::user("看一下 src/lib.rs"),
+            ConversationItem::assistant_tool_calls(vec![ToolCall {
+                id: "r1".into(),
+                name: "read_file".into(),
+                arguments: "{}".into(),
+            }]),
+            ConversationItem::tool_result("r1", "文件内容".repeat(200)),
+            ConversationItem::assistant_tool_calls(vec![ToolCall {
+                id: "g1".into(),
+                name: "grep".into(),
+                arguments: "{}".into(),
+            }]),
+            ConversationItem::tool_result("g1", "匹配结果"),
+            ConversationItem::user("接下来修复 bug"),
+        ];
+        // recent_start 在最近一轮用户消息（索引 5）处，
+        // 所以工具调用区间 1–4 应被识别为可压缩。
+        let suggestions = suggest_compressible_spans(&conversation, 5);
+        assert_eq!(suggestions.len(), 1);
+        assert!(suggestions[0].starts_with("m0001–m0004"));
+        assert!(suggestions[0].contains("read_file×1"));
+        assert!(suggestions[0].contains("grep×1"));
+    }
+
+    #[test]
+    fn suggest_compressible_spans_skips_protected_tool_calls() {
+        use xai_grok_sampling_types::ToolCall;
+        let conversation = vec![
+            ConversationItem::user("改一下文件"),
+            ConversationItem::assistant_tool_calls(vec![ToolCall {
+                id: "w1".into(),
+                name: "write".into(),
+                arguments: "{}".into(),
+            }]),
+            ConversationItem::tool_result("w1", "ok"),
+            ConversationItem::user("再看一遍"),
+        ];
+        let suggestions = suggest_compressible_spans(&conversation, 3);
+        // write 属于受保护工具，整段助手+结果不应作为建议。
+        assert!(suggestions.is_empty());
     }
 }
 
