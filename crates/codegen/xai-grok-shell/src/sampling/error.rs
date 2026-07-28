@@ -324,6 +324,7 @@ mod tests {
                 cached_prompt_tokens: 0,
             },
             None,
+            None,
             Some(10),
         );
         let usage = crate::extensions::notification::PromptUsage::from(&ledger);

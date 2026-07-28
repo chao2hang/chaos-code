@@ -121,7 +121,7 @@ mod tests {
     #[test]
     fn response_serializes_ledger_as_prompt_usage_wire_shape() {
         let mut ledger = UsageLedger::default();
-        ledger.record_main_loop_call("grok-build", &usage(100, 10), Some(50), Some(20_000_000));
+        ledger.record_main_loop_call("grok-build", &usage(100, 10), Some(50), None, Some(20_000_000));
         let v = serde_json::to_value(&SessionUsageResponse {
             usage: PromptUsage::from(&ledger),
         })
@@ -138,8 +138,8 @@ mod tests {
     #[test]
     fn response_scrubs_partial_costs() {
         let mut ledger = UsageLedger::default();
-        ledger.record_main_loop_call("a", &usage(100, 10), None, Some(70));
-        ledger.record_main_loop_call("a", &usage(50, 5), None, None);
+        ledger.record_main_loop_call("a", &usage(100, 10), None, None, Some(70));
+        ledger.record_main_loop_call("a", &usage(50, 5), None, None, None);
         let v = serde_json::to_value(&SessionUsageResponse {
             usage: PromptUsage::from(&ledger),
         })

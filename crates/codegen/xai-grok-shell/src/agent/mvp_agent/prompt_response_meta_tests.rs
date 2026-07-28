@@ -92,6 +92,7 @@ fn usage_object_lands_on_meta() {
         },
         None,
         None,
+        None,
     );
     let meta = build_prompt_response_meta(PromptResponseMetaArgs {
         prompt_usage: Some(crate::extensions::notification::PromptUsage::from(&ledger)),
