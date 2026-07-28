@@ -390,6 +390,8 @@ mod tests {
             reasoning_tokens: output / 4,
             model_calls: calls,
             api_duration_ms: 1_000,
+            decode_duration_ms: 0,
+            decode_tokens_per_sec: None,
             cost_usd_ticks: ticks,
             cost_is_partial: partial,
             cost_missing_calls: 0,
