@@ -1,0 +1,22 @@
+[
+  {
+    "category": "fixes",
+    "description": "对齐上游 tok/s 埋点：补齐 7 处 record_main_loop_call 与 PromptUsageModel 的 decode_duration_ms / decode_tokens_per_sec 字段，恢复 workspace 构建。",
+    "breaking_change": false
+  },
+  {
+    "category": "upstream_sync",
+    "description": "移植上游终端检测：Herdr 复用器识别、TermVersion 对外导出、TERM_PROGRAM_VERSION→LC_TERMINAL_VERSION 兜底；遥测事件新增 term_version / term_version_source。",
+    "breaking_change": false
+  },
+  {
+    "category": "upstream_sync",
+    "description": "移植上游 plan-mode 批处理屏障：exit_plan_mode 与 plan.md 写入同批次时先落文件再切模式，避免快照/plan 错位；tool_calls.rs 抽出批处理辅助函数，Chaos DCP compress 拦截路径已保留。",
+    "breaking_change": false
+  },
+  {
+    "category": "docs",
+    "description": "归档 WSL2 p9io AcceptAsync 停机排障与草拟的 microsoft/WSL 上游 issue（本地存档，未对外发布）。",
+    "breaking_change": false
+  }
+]

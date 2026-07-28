@@ -1,6 +1,6 @@
 {
     "name": "chaos-code-linux-arm64",
-    "version": "0.2.119",
+    "version": "0.2.120",
     "description": "linux-arm64 binary for chaos-code. Do not install directly; install chaos-code instead.",
     "license": "Apache-2.0",
     "files": [

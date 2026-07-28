@@ -1,5 +1,20 @@
 # Changelog
 
+# 0.2.120 — 2026-07-28
+
+## Fixes
+
+- **对齐上游 tok/s 埋点，修复内部 8 处编译错误**：上一版随合入 336551e 引入了 `decode_duration_ms` / `decode_tokens_per_sec` 两个新字段，但 Chaos 侧的若干调用点未同步。本版把 `record_main_loop_call` 的 7 处调用与 `PromptUsageModel` 字面量补齐，恢复 `cargo build --workspace` 通过。用户可见效果：`/usage`、`/context` 及状态栏的解码速率显示不再因数据缺失而落空。
+
+## Upstream Sync
+
+- **移植终端检测（terminal detection）**：新增 Herdr 复用器识别、`TermVersion` / `TermVersionSource` 结构对外导出，以及 `TERM_PROGRAM_VERSION → LC_TERMINAL_VERSION` 的兜底解析。终端遥测事件（`TerminalTelemetry`）随之携带 `term_version` / `term_version_source`，为后续按终端做兼容性适配提供数据。
+- **移植 plan-mode 批处理屏障（plan_exit_batch_barrier）**：`exit_plan_mode` 与 `plan.md` 写入被安排在同一 tool-call 批次时，新的屏障逻辑会先落文件再切换模式，避免快照与 plan 内容错位。Chaos DCP 的 `compress` 工具拦截路径在合并时被完整保留。
+
+## Docs
+
+- **归档 WSL2 p9io AcceptAsync 停机排障**：本地新增 `docs/known-issues/wsl-p9io-crash-20260728.md` 与 `docs/known-issues/wsl-p9io-issue-draft.md`（提交 microsoft/WSL 前的草稿，待人工审后再对外发布）。
+
 # 0.2.119 — 2026-07-27
 
 ## Features
