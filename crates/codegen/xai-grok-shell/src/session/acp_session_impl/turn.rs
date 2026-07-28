@@ -2275,7 +2275,19 @@ impl SessionActor {
                     },
                 );
             }
-            self.record_response_token_usage(&response, Some(model_duration_ms));
+            // 用 sampler 提供的 `latency` 提取剔除首字后的解码时长；
+            // 未采样到 ttft 或首字之后立即结束时 `decode_duration_ms` 为 None，
+            // ledger 会保持 0 以便展示层显示「不可用」。
+            let decode_duration_ms = latency.time_to_first_token_ms.and_then(|ttft| {
+                model_duration_ms
+                    .checked_sub(ttft)
+                    .filter(|decode| *decode > 0)
+            });
+            self.record_response_token_usage(
+                &response,
+                Some(model_duration_ms),
+                decode_duration_ms,
+            );
             if let Some(pt) = prompt_timing.take() {
                 let mcp_count = self.mcp_state.lock().await.configs.len() as u32;
                 let mcp_tools = self

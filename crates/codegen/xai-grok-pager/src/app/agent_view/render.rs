@@ -1305,6 +1305,16 @@ impl AgentView {
                 ),
             );
         }
+        // 状态栏的 tok/s 芯片：只在会话真的采样到速率时才出现，
+        // 缺数据一律省略而非渲染 `0 tok/s`。数据从 chat-state 的 session ledger
+        // 走 ContextInfo 一路带过来（见 `session_setup.rs`）。
+        if let Some(tps_line) = self
+            .context_state
+            .as_ref()
+            .and_then(|c| crate::views::agent_status::tokens_per_sec_line(c, &theme))
+        {
+            status.push("tps", tps_line);
+        }
         let running = self.session.current_prompt_id.as_deref();
         let queue_len = self.session.queue_len()
             + self

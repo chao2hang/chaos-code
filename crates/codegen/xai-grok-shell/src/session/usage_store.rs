@@ -268,6 +268,8 @@ impl UsageStore {
                 cost_usd_ticks: cost_sum,
                 cost_is_partial: cost_is_partial_flag.unwrap_or(0) != 0,
                 cost_missing_calls: 0,
+                decode_duration_ms: 0,
+                decode_tokens_per_sec: None,
             };
             usage.usage_is_incomplete = usage_is_incomplete_flag.unwrap_or(0) != 0;
             usage.session_count = session_count;
@@ -333,6 +335,8 @@ impl UsageStore {
                     cost_is_partial: cost_is_partial_flag.unwrap_or(0) != 0
                         || usage_is_incomplete_flag.unwrap_or(0) != 0,
                     cost_missing_calls: 0,
+                    decode_duration_ms: 0,
+                    decode_tokens_per_sec: None,
                 },
             );
         }

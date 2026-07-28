@@ -515,6 +515,8 @@ mod tests {
             cost_usd_ticks: ticks,
             cost_is_partial: false,
             cost_missing_calls: 0,
+            decode_duration_ms: 0,
+            decode_tokens_per_sec: None,
         }
     }
 

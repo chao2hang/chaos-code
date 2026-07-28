@@ -223,6 +223,30 @@ pub fn classifier_attempts_label(goal: &GoalDisplayState) -> String {
     format!("{attempt}/{max}")
 }
 
+/// 状态栏 tok/s 芯片：给 `ContextInfo` 里已经带出来的两个速率口径拼一行紧凑显示。
+///
+/// 展示优先级：稳态解码速率 > 平均输出速率；两个都缺时返回 `None`，
+/// 让调用方直接省略这个 chip 而不是渲染 `0 tok/s`。
+pub fn tokens_per_sec_line(
+    ctx: &xai_grok_shell::session::ContextInfo,
+    theme: &Theme,
+) -> Option<Line<'static>> {
+    let tps = ctx
+        .decode_tokens_per_sec
+        .filter(|v| v.is_finite() && *v > 0.0)
+        .or_else(|| {
+            ctx.avg_output_tokens_per_sec
+                .filter(|v| v.is_finite() && *v > 0.0)
+        })?;
+    let rendered = if f64::from(tps) < 1.0 {
+        format!("⚡ {tps:.1} tok/s")
+    } else {
+        format!("⚡ {} tok/s", f64::from(tps).round() as u64)
+    };
+    let style = Style::default().fg(theme.gray_dim).bg(theme.bg_base);
+    Some(Line::from(Span::styled(rendered, style)))
+}
+
 /// Build a compact goal status `Line` for the agent status bar.
 ///
 /// Format: `[Goal: {label}]  {tokens}  {elapsed}`
@@ -962,5 +986,37 @@ mod tests {
             assert_eq!(span.style.fg, Some(theme.text_primary));
             assert!(span.style.add_modifier.contains(Modifier::BOLD));
         }
+    }
+
+    /// 状态栏 tok/s 芯片：有稳态或平均速率时渲染，缺样本时返回 None，
+    /// 保证状态栏不会出现「⚡ 0 tok/s」的噪音行。
+    #[test]
+    fn tokens_per_sec_line_hides_when_absent() {
+        let theme = Theme::default();
+        let ctx = xai_grok_shell::session::ContextInfo::default();
+        assert!(tokens_per_sec_line(&ctx, &theme).is_none());
+    }
+
+    #[test]
+    fn tokens_per_sec_line_prefers_decode_over_average() {
+        let theme = Theme::default();
+        let mut ctx = xai_grok_shell::session::ContextInfo::default();
+        ctx.avg_output_tokens_per_sec = Some(100.0);
+        ctx.decode_tokens_per_sec = Some(240.0);
+        let line = tokens_per_sec_line(&ctx, &theme).expect("line should exist");
+        let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(text, "\u{26a1} 240 tok/s");
+    }
+
+    #[test]
+    fn tokens_per_sec_line_falls_back_to_average() {
+        let theme = Theme::default();
+        let mut ctx = xai_grok_shell::session::ContextInfo::default();
+        ctx.avg_output_tokens_per_sec = Some(0.6);
+        // decode 为 0 或 NaN 都视为不可用。
+        ctx.decode_tokens_per_sec = Some(0.0);
+        let line = tokens_per_sec_line(&ctx, &theme).expect("line should exist");
+        let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(text, "\u{26a1} 0.6 tok/s");
     }
 }
