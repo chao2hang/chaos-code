@@ -577,6 +577,22 @@ impl SessionActor {
         let usage_categories = self.usage_categories().await;
         let free_tokens = xai_token_estimation::free_tokens(context_window, total_tokens);
         let usage_pct = xai_token_estimation::usage_percentage_u8(total_tokens, context_window);
+        // 从 session ledger 里取会话累计的两种速率口径（缺样本时保留 None，让
+        // 展示层显示「不可用」而非 0 tok/s）。
+        let (session_avg_tps, session_decode_tps) =
+            match self.chat_state_handle.try_get_session_usage().await {
+                Ok(ledger) => {
+                    let avg = (ledger.totals.output_tokens > 0
+                        && ledger.totals.api_duration_ms > 0)
+                        .then(|| {
+                            ledger.totals.output_tokens as f32 * 1000.0
+                                / ledger.totals.api_duration_ms as f32
+                        });
+                    let decode = ledger.totals.decode_tokens_per_sec().map(|v| v as f32);
+                    (avg, decode)
+                }
+                Err(_) => (None, None),
+            };
         let api_backend = config.as_ref().map(|c| format!("{:?}", c.api_backend));
         let agent_name = self.agent.borrow().definition().name.clone();
         let show_model_fingerprint = model
@@ -611,6 +627,8 @@ impl SessionActor {
                 usage_pct,
                 auto_compact_threshold_percent: self.compaction.threshold_percent.get(),
                 usage_categories,
+                decode_tokens_per_sec: session_decode_tps,
+                avg_output_tokens_per_sec: session_avg_tps,
             },
         }
     }

@@ -1570,6 +1570,8 @@ mod searchable_text_tests {
             usage_pct: 10,
             auto_compact_threshold_percent: 85,
             usage_categories: vec![],
+            decode_tokens_per_sec: None,
+            avg_output_tokens_per_sec: None,
         };
         let block = RenderBlock::context_info(snapshot, "grok-4.5");
         // Only the model name is source text; the rest is a numeric breakdown.

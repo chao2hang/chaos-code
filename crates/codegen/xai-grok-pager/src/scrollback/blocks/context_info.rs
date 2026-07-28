@@ -534,6 +534,21 @@ impl ContextInfoBlock {
             muted,
         )));
 
+        // 输出速率：只在拿到会话累计数据时才出现，绝不显示 0 tok/s。
+        // 数据来源是 chat-state session ledger；见 `session_setup.rs`。
+        let avg = snapshot.avg_output_tokens_per_sec;
+        let decode = snapshot.decode_tokens_per_sec;
+        if avg.is_some() || decode.is_some() {
+            let avg_txt = fmt_speed_cell(avg);
+            let decode_txt = fmt_speed_cell(decode);
+            lines.push(Line::from(Span::styled(
+                format!(
+                    "速度：平均 {avg_txt} \u{00b7} 解码 {decode_txt}（剔除首字）"
+                ),
+                muted,
+            )));
+        }
+
         // Approaching-auto-compact tip: only show in the gap between the
         // "getting close" mark (80%) and the actual auto-compact threshold.
         // Above the threshold the "Auto-compact triggers next turn" line
@@ -593,6 +608,33 @@ fn fmt_tok_big(n: u64) -> String {
         format!("{:.1}m", n as f64 / 1_000_000.0)
     } else {
         fmt_tok(n)
+    }
+}
+
+/// 展示会话累计 tok/s。缺样本（`None`）时返回「不可用」而非 `0 tok/s`；
+/// 亚 1 tok/s 用一位小数，否则整数并加千位分隔。
+fn fmt_speed_cell(tps: Option<f32>) -> String {
+    match tps {
+        Some(v) if v > 0.0 => {
+            let v = f64::from(v);
+            if v < 1.0 {
+                format!("{v:.1} tok/s")
+            } else {
+                let mut s = format!("{}", v.round() as u64);
+                // 千位分隔。
+                let bytes = s.as_bytes().to_vec();
+                s.clear();
+                for (i, ch) in bytes.iter().rev().enumerate() {
+                    if i > 0 && i % 3 == 0 {
+                        s.push(',');
+                    }
+                    s.push(*ch as char);
+                }
+                let s: String = s.chars().rev().collect();
+                format!("{s} tok/s")
+            }
+        }
+        _ => "不可用".to_string(),
     }
 }
 
@@ -701,6 +743,8 @@ mod tests {
             usage_pct: 4,
             auto_compact_threshold_percent: 85,
             usage_categories: vec![],
+            decode_tokens_per_sec: None,
+            avg_output_tokens_per_sec: None,
         }
     }
 
@@ -1064,6 +1108,8 @@ mod tests {
             usage_pct: 20,
             auto_compact_threshold_percent: 65,
             usage_categories: vec![],
+            decode_tokens_per_sec: None,
+            avg_output_tokens_per_sec: None,
         };
         let block = ContextInfoBlock::new(snap, "grok-build");
         let theme = test_theme();
@@ -1391,32 +1437,70 @@ mod tests {
         );
     }
 
+    /// `/context` 里的速度行必须遵守「缺数据不显示 0 tok/s」：
+    ///   - 快照两个字段都为 `None` 时，整个「速度：...」行不出现；
+    ///   - 只要有其中一个字段就显示；缺的那一半渲染成「不可用」。
     #[test]
-    fn wide_legend_remains_single_line_per_category() {
+    fn context_info_speed_row_hidden_without_data() {
         let block = ContextInfoBlock::new(snapshot(), "grok-4");
         let theme = test_theme();
         let lines = block.build_lines(&theme, BarLayout::WIDE);
-        let row_text =
-            |i: usize| -> String { lines[i].spans.iter().map(|s| s.content.as_ref()).collect() };
-        let l11 = row_text(11);
+        let all: String = lines
+            .iter()
+            .map(|l| {
+                l.spans
+                    .iter()
+                    .map(|s| s.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(!all.contains("速度："), "should not render speed row when None: {all}");
+    }
+
+    #[test]
+    fn context_info_speed_row_shows_when_present() {
+        let mut snap = snapshot();
+        snap.avg_output_tokens_per_sec = Some(180.0);
+        snap.decode_tokens_per_sec = Some(240.0);
+        let block = ContextInfoBlock::new(snap, "grok-4");
+        let theme = test_theme();
+        let lines = block.build_lines(&theme, BarLayout::WIDE);
+        let all: String = lines
+            .iter()
+            .map(|l| {
+                l.spans
+                    .iter()
+                    .map(|s| s.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
         assert!(
-            l11.contains("系统提示词") && l11.contains("1.2k"),
-            "wide legend should keep label + tokens on one line, got: {l11:?}"
+            all.contains("速度：平均 180 tok/s · 解码 240 tok/s"),
+            "expected populated speed row, got: {all}"
         );
-        let l12 = row_text(12);
-        assert!(
-            l12.contains("会话消息") && l12.contains("29.9k"),
-            "wide legend should keep label + tokens on one line, got: {l12:?}"
-        );
-        let l13 = row_text(13);
-        assert!(
-            l13.contains("推理及其他开销") && l13.contains("5.6k"),
-            "wide legend should show reasoning/overhead on one line, got: {l13:?}"
-        );
-        let l14 = row_text(14);
-        assert!(
-            l14.contains("可用空间") && l14.contains("963k"),
-            "wide legend should keep label + tokens on one line, got: {l14:?}"
-        );
+    }
+
+    #[test]
+    fn context_info_speed_row_uses_unknown_when_partial() {
+        let mut snap = snapshot();
+        // 只采样到平均速率，没采样到 ttft → decode 缺失。
+        snap.avg_output_tokens_per_sec = Some(100.0);
+        snap.decode_tokens_per_sec = None;
+        let block = ContextInfoBlock::new(snap, "grok-4");
+        let theme = test_theme();
+        let lines = block.build_lines(&theme, BarLayout::WIDE);
+        let all: String = lines
+            .iter()
+            .map(|l| {
+                l.spans
+                    .iter()
+                    .map(|s| s.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(all.contains("速度：平均 100 tok/s · 解码 不可用"), "{all}");
     }
 }

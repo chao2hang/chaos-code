@@ -611,9 +611,9 @@ async fn prompt_usage_ledger_via_handle_resets_and_clears() {
 
     let h = TestHarness::new();
     h.handle
-        .record_model_call_usage(Some("m".into()), call.clone(), None, None);
+        .record_model_call_usage(Some("m".into()), call.clone(), None, None, None);
     h.handle
-        .record_model_call_usage(None, call.clone(), None, None);
+        .record_model_call_usage(None, call.clone(), None, None, None);
     assert_eq!(
         h.handle
             .try_get_prompt_usage()
@@ -644,7 +644,7 @@ async fn prompt_usage_ledger_via_handle_resets_and_clears() {
     );
 
     h.handle
-        .record_model_call_usage(Some("m".into()), call.clone(), None, None);
+        .record_model_call_usage(Some("m".into()), call.clone(), None, None, None);
     let snap = h.handle.snapshot().await.unwrap();
     h.handle.restore_snapshot(snap);
     assert!(
@@ -657,7 +657,7 @@ async fn prompt_usage_ledger_via_handle_resets_and_clears() {
     );
 
     h.handle
-        .record_model_call_usage(Some("m".into()), call, None, None);
+        .record_model_call_usage(Some("m".into()), call, None, None, None);
     h.handle.truncate_to_prompt_index(0).await;
     assert!(
         h.handle

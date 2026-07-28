@@ -153,6 +153,8 @@ impl PromptUsage {
             reasoning_tokens: _, // subset of output_tokens
             model_calls,
             api_duration_ms: _, // timing, not tokens
+            decode_duration_ms: _, // timing, not tokens
+            decode_tokens_per_sec: _, // derived rate
             cost_usd_ticks: _,  // cost without usage cannot occur
             cost_is_partial: _,
             cost_missing_calls: _,
@@ -184,6 +186,17 @@ pub struct PromptUsageModel {
     pub model_calls: u64,
     #[serde(default)]
     pub api_duration_ms: u64,
+    /// 剔除首字延迟后的解码时长累计 (ms)，Σ(model_elapsed − ttft)。
+    /// 未采样到 ttft 或首字后立即结束时保持 0。`decodeTokensPerSec`
+    /// 由此字段与 `output_tokens` 计算得到；未采样时上游会输出为 `None`。
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    pub decode_duration_ms: u64,
+    /// 稳态解码速率（tok/s），`output_tokens × 1000 / decode_duration_ms`。
+    /// 分母为 0 或输出为 0 时是 `None`——展示层据此显示「不可用」而非
+    /// 0 tok/s。字段是派生的（可由客户端自行重算），但为方便下游
+    /// 消费者以及跨版本 round-trip 稳定性，wire 上也直接带一份。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decode_tokens_per_sec: Option<f32>,
     /// Server cost in USD ticks (`USD_TICKS_PER_USD` = 1e10 ticks per $1).
     /// Absent when scrubbed, missing, or zero on the wire. Headless projects
     /// the totals as float `total_cost_usd` (plus exact `total_cost_usd_ticks`)
@@ -202,6 +215,10 @@ pub struct PromptUsageModel {
     pub cost_missing_calls: u64,
 }
 
+fn is_zero_u64(v: &u64) -> bool {
+    *v == 0
+}
+
 impl From<&xai_chat_state::UsageTotals> for PromptUsageModel {
     fn from(t: &xai_chat_state::UsageTotals) -> Self {
         // Exhaustive destructure: a new ledger field cannot silently miss the
@@ -213,6 +230,7 @@ impl From<&xai_chat_state::UsageTotals> for PromptUsageModel {
             reasoning_tokens,
             model_calls,
             api_duration_ms,
+            decode_duration_ms,
             cost_usd_ticks,
             cost_missing_calls,
         } = *t;
@@ -224,6 +242,8 @@ impl From<&xai_chat_state::UsageTotals> for PromptUsageModel {
             reasoning_tokens,
             model_calls,
             api_duration_ms,
+            decode_duration_ms,
+            decode_tokens_per_sec: t.decode_tokens_per_sec().map(|v| v as f32),
             cost_usd_ticks,
             cost_is_partial: t.cost_is_partial(),
             cost_missing_calls,
@@ -284,6 +304,8 @@ pub fn project_result_usage(result: &mut serde_json::Value, usage: &PromptUsage)
         reasoning_tokens,
         model_calls: _,     // totals-level; headless carries num_turns instead
         api_duration_ms: _, // dropped: not part of the frozen headless shape
+        decode_duration_ms: _, // dropped: not part of the frozen headless shape
+        decode_tokens_per_sec: _, // dropped: derived timing rate
         cost_usd_ticks,
         cost_is_partial,
         cost_missing_calls: _, // internal partiality count; the flag suffices
@@ -324,6 +346,8 @@ pub fn project_result_usage(result: &mut serde_json::Value, usage: &PromptUsage)
                 cost_usd_ticks,
                 cost_is_partial,
                 cost_missing_calls: _,
+                decode_duration_ms: _,
+                decode_tokens_per_sec: _,
             } = *m;
             let mut entry = serde_json::json!({
                 "inputTokens": uncached_input_tokens(input_tokens, cached_read_tokens),
@@ -2385,5 +2409,52 @@ mod tests {
         assert!(serde_json::from_str::<SessionUpdate>(missing_prompt_id).is_err());
         let missing_stop_reason = r#"{"sessionUpdate": "turn_completed", "prompt_id": "p-1"}"#;
         assert!(serde_json::from_str::<SessionUpdate>(missing_stop_reason).is_err());
+    }
+
+    /// 新增的 decode_duration_ms / decode_tokens_per_sec 字段在 ledger → PromptUsage
+    /// 投影时正确映射，并在 JSON round-trip 时对旧消费者保持缺省兼容
+    /// （`decodeTokensPerSec` / `decodeDurationMs` 使用 skip_none / skip_zero 语义）。
+    #[test]
+    fn prompt_usage_carries_decode_rate_from_ledger_and_roundtrips() {
+        use xai_grok_sampling_types::TokenUsage;
+        let mut ledger = xai_chat_state::UsageLedger::default();
+        let usage = TokenUsage {
+            prompt_tokens: 50,
+            completion_tokens: 200,
+            total_tokens: 250,
+            reasoning_tokens: 0,
+            cached_prompt_tokens: 0,
+        };
+        // 首字 200ms，模型总耗时 1200ms，解码时长 = 1000ms → 200 tok/s。
+        ledger.record_main_loop_call("m", &usage, Some(1_200), Some(1_000), None);
+        let projected = PromptUsage::from(&ledger);
+        assert_eq!(projected.totals.decode_duration_ms, 1_000);
+        let steady = projected
+            .totals
+            .decode_tokens_per_sec
+            .expect("decode rate should be Some when decode_duration is non-zero");
+        assert!((steady - 200.0).abs() < 1e-3, "got {steady}");
+
+        // JSON round-trip：wire 字段名分别是 decodeDurationMs / decodeTokensPerSec。
+        let s = serde_json::to_string(&projected).unwrap();
+        assert!(s.contains("\"decodeDurationMs\":1000"), "{s}");
+        assert!(s.contains("\"decodeTokensPerSec\":"), "{s}");
+        let back: PromptUsage = serde_json::from_str(&s).unwrap();
+        assert_eq!(back.totals.decode_duration_ms, 1_000);
+        assert!(back.totals.decode_tokens_per_sec.is_some());
+
+        // 未采样场景：ledger 里 decode_duration_ms=0，wire 上两个字段都不出现，
+        // 老消费者的反序列化仍然成功。
+        let mut ledger2 = xai_chat_state::UsageLedger::default();
+        ledger2.record_main_loop_call("m", &usage, Some(1_200), None, None);
+        let projected2 = PromptUsage::from(&ledger2);
+        assert_eq!(projected2.totals.decode_duration_ms, 0);
+        assert!(projected2.totals.decode_tokens_per_sec.is_none());
+        let s2 = serde_json::to_string(&projected2).unwrap();
+        assert!(!s2.contains("decodeDurationMs"), "{s2}");
+        assert!(!s2.contains("decodeTokensPerSec"), "{s2}");
+        let back2: PromptUsage = serde_json::from_str(&s2).unwrap();
+        assert_eq!(back2.totals.decode_duration_ms, 0);
+        assert!(back2.totals.decode_tokens_per_sec.is_none());
     }
 }
