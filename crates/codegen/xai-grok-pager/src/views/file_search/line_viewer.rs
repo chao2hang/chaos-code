@@ -1494,7 +1494,7 @@ pub fn render_line_viewer(
         let approve_hovered = viewer.plan_ref().is_some_and(|p| p.approve_hovered);
         let is_approval = viewer.feedback_active();
 
-        let comment_spans = build_shortcut_button('c', "comment", comment_hovered, theme);
+        let comment_spans = build_shortcut_button('c', "批注", comment_hovered, theme);
         let comment_w: u16 = comment_spans.iter().map(|s| s.width() as u16).sum();
 
         // In approval mode, always show `a approve`. When there are
@@ -1505,17 +1505,17 @@ pub fn render_line_viewer(
         let (_action_label, action_w, action_spans): (&str, u16, Option<Vec<Span>>) = if is_approval
         {
             let label = if comment_count > 0 {
-                "approve w/ comments"
+                "批准（带批注）"
             } else {
-                "approve"
+                "批准"
             };
             let spans = build_shortcut_button('a', label, approve_hovered, theme);
             let w: u16 = spans.iter().map(|s| s.width() as u16).sum();
             (label, w, Some(spans))
         } else if comment_count > 0 {
-            let spans = build_shortcut_button('s', "send", approve_hovered, theme);
+            let spans = build_shortcut_button('s', "发送", approve_hovered, theme);
             let w: u16 = spans.iter().map(|s| s.width() as u16).sum();
-            ("send", w, Some(spans))
+            ("发送", w, Some(spans))
         } else {
             ("", 0, None)
         };
@@ -1524,7 +1524,7 @@ pub fn render_line_viewer(
         // user can request changes (switches to prompt for revision notes).
         let (revise_w, revise_spans): (u16, Option<Vec<Span>>) = if is_approval {
             let send_hovered = viewer.plan_ref().is_some_and(|p| p.send_hovered);
-            let spans = build_shortcut_button('s', "request changes", send_hovered, theme);
+            let spans = build_shortcut_button('s', "请求修改", send_hovered, theme);
             let w: u16 = spans.iter().map(|s| s.width() as u16).sum();
             (w, Some(spans))
         } else {
@@ -1533,7 +1533,7 @@ pub fn render_line_viewer(
 
         // Quit button only renders in approval mode (casual closes via X).
         let quit_spans = if is_approval {
-            let s = build_shortcut_button('q', "quit plan", abandon_hovered, theme);
+            let s = build_shortcut_button('q', "放弃计划", abandon_hovered, theme);
             let w: u16 = s.iter().map(|s| s.width() as u16).sum();
             Some((s, w))
         } else {
