@@ -358,6 +358,7 @@ impl ChatStateActor {
         model_id: Option<String>,
         usage: &xai_grok_sampling_types::TokenUsage,
         api_duration_ms: Option<u64>,
+        decode_duration_ms: Option<u64>,
         cost_usd_ticks: Option<i64>,
     ) {
         let model_key = match model_id.as_deref() {
@@ -368,11 +369,18 @@ impl ChatStateActor {
         self.state
             .prompt_usage
             .get_or_insert_default()
-            .record_main_loop_call(&model_key, usage, api_duration_ms, cost_usd_ticks);
+            .record_main_loop_call(
+                &model_key,
+                usage,
+                api_duration_ms,
+                decode_duration_ms,
+                cost_usd_ticks,
+            );
         self.state.session_usage.record_main_loop_call(
             &model_key,
             usage,
             api_duration_ms,
+            decode_duration_ms,
             cost_usd_ticks,
         );
     }
