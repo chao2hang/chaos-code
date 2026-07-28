@@ -165,6 +165,7 @@ fn project_from_ledger_never_drops_incomplete_flag() {
         },
         None,
         None,
+        None,
     );
     let complete = PromptUsage::project_from_ledger(Some(&ledger), false).unwrap();
     assert!(!complete.usage_is_incomplete);
@@ -227,6 +228,7 @@ fn for_error_path_shared_policy() {
             reasoning_tokens: 0,
             cached_prompt_tokens: 0,
         },
+        None,
         None,
         None,
     );
