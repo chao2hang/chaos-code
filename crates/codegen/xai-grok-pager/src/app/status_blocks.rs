@@ -203,16 +203,26 @@ pub(crate) fn session_usage_block_text(
         group_thousands(t.model_calls),
         format_duration(std::time::Duration::from_millis(t.api_duration_ms)),
     ));
+    rows.push(format!(
+        "  输出速率：      {}（按 API 耗时平均）",
+        format_output_rate(t.output_tokens, t.api_duration_ms),
+    ));
+    rows.push(format!(
+        "  解码速率：      {}（剔除首字延迟）",
+        format_decode_rate(t.decode_tokens_per_sec, t.decode_duration_ms),
+    ));
     rows.push(format!("  费用：          {}", format_cost(t)));
 
     if usage.model_usage.len() > 1 {
         rows.push("  按模型：".to_string());
         for (model, m) in &usage.model_usage {
             rows.push(format!(
-                "    {model}：输入 {} / 输出 {} · {}",
+                "    {model}：输入 {} / 输出 {} · {} · {} · 解码 {}",
                 group_thousands(m.input_tokens),
                 group_thousands(m.output_tokens),
                 format_cost(m),
+                format_output_rate(m.output_tokens, m.api_duration_ms),
+                format_decode_rate(m.decode_tokens_per_sec, m.decode_duration_ms),
             ));
         }
     }
@@ -231,6 +241,44 @@ fn format_cost(m: &xai_grok_shell::extensions::notification::PromptUsageModel) -
         Some(ticks) => format!("${:.4}", ticks_to_usd(ticks)),
         None if m.cost_is_partial => "不可用（部分调用未返回价格）".to_string(),
         None => "不可用（提供商未返回价格）".to_string(),
+    }
+}
+
+/// 输出速率单元格。基于 `output_tokens / api_duration_ms` 的会话平均值。
+///
+/// - `api_duration_ms == 0` 或输出为 0 时显示「不可用」，避免除零；
+/// - 小于 1 token/s 时用一位小数（`0.7 tok/s`），其余用整数；
+/// - 使用千位分隔与其他 token 数字保持一致。
+fn format_output_rate(output_tokens: u64, api_duration_ms: u64) -> String {
+    if output_tokens == 0 || api_duration_ms == 0 {
+        return "速率不可用".to_string();
+    }
+    let tps = output_tokens as f64 * 1000.0 / api_duration_ms as f64;
+    if tps < 1.0 {
+        format!("{tps:.1} tok/s")
+    } else {
+        format!("{} tok/s", group_thousands(tps.round() as u64))
+    }
+}
+
+/// 解码速率单元格：稳态口径，剔除首字延迟。
+///
+/// - 优先使用 wire 上带来的 `decode_tokens_per_sec`（老消费者 / 未采样时为 None）；
+/// - 兜底根据 `decode_duration_ms` 现场重算；两者都缺时显示「不可用」。
+///   与 `format_output_rate` 一样，绝不把「缺数据」渲染成 `0 tok/s`。
+pub(crate) fn format_decode_rate(
+    decode_tokens_per_sec: Option<f32>,
+    decode_duration_ms: u64,
+) -> String {
+    let tps = match decode_tokens_per_sec {
+        Some(v) if v > 0.0 => Some(f64::from(v)),
+        _ if decode_duration_ms > 0 => None, // 保留给上层补算，但当前入参不含 output → 视作 None
+        _ => None,
+    };
+    match tps {
+        Some(v) if v < 1.0 => format!("{v:.1} tok/s"),
+        Some(v) => format!("{} tok/s", group_thousands(v.round() as u64)),
+        None => "速率不可用".to_string(),
     }
 }
 
@@ -280,6 +328,8 @@ mod tests {
             reasoning_tokens: 0,
             model_calls: 1,
             api_duration_ms: 1_000,
+            decode_duration_ms: 0,
+            decode_tokens_per_sec: None,
             cost_usd_ticks: ticks,
             cost_is_partial: false,
             cost_missing_calls: 0,
@@ -345,6 +395,39 @@ mod tests {
         assert!(text.contains("按模型："), "{text}");
         assert!(text.contains("grok-build：输入 100 / 输出 10"), "{text}");
         assert!(text.contains("grok-4：输入 50 / 输出 5"), "{text}");
+        // 每一行末尾要带 tok/s（这两个 model_row 都是 output=10 / 1000ms 或 5/1000ms）。
+        assert!(text.contains("· 10 tok/s"), "{text}");
+        assert!(text.contains("· 5 tok/s"), "{text}");
+        // 且带解码速率明细占位（未采样时是「不可用」）。
+        assert!(text.contains("解码 速率不可用"), "{text}");
+    }
+
+    /// 有 wire 侧稳态速率时，「解码速率」行显示真实数字；总计一行 + 多模型明细都要带上。
+    #[test]
+    fn session_usage_block_shows_decode_rate_when_present() {
+        let mut totals = model_row(100, 200, None);
+        totals.api_duration_ms = 1_200;
+        totals.decode_duration_ms = 1_000;
+        totals.decode_tokens_per_sec = Some(200.0);
+        let mut usage = PromptUsage {
+            totals: totals.clone(),
+            ..Default::default()
+        };
+        let mut m1 = totals.clone();
+        m1.decode_tokens_per_sec = Some(150.0);
+        m1.decode_duration_ms = 1_000;
+        usage.model_usage.insert("grok-4".into(), m1);
+        let mut m2 = model_row(50, 5, None);
+        m2.decode_tokens_per_sec = Some(400.0);
+        m2.decode_duration_ms = 12;
+        usage.model_usage.insert("grok-build".into(), m2);
+        let text = session_usage_block_text(&usage);
+        assert!(
+            text.contains("解码速率：      200 tok/s（剔除首字延迟）"),
+            "{text}"
+        );
+        assert!(text.contains("解码 150 tok/s"), "{text}");
+        assert!(text.contains("解码 400 tok/s"), "{text}");
     }
 
     #[test]
@@ -379,6 +462,35 @@ mod tests {
         assert_eq!(group_thousands(999), "999");
         assert_eq!(group_thousands(1_000), "1,000");
         assert_eq!(group_thousands(1_234_567), "1,234,567");
+    }
+
+    #[test]
+    fn format_output_rate_covers_edge_cases() {
+        // 缺条件时不能读作 0 tok/s。
+        assert_eq!(format_output_rate(0, 1_000), "速率不可用");
+        assert_eq!(format_output_rate(100, 0), "速率不可用");
+        // 亚 1 tok/s 用一位小数，避免四舍五入到 0。
+        assert_eq!(format_output_rate(1, 2_000), "0.5 tok/s");
+        // 常见范围：45,678 / 192s ≈ 238 tok/s。
+        assert_eq!(format_output_rate(45_678, 192_000), "238 tok/s");
+        // 大速率仍带千位分隔符，风格跟 token 数字一致。
+        assert_eq!(format_output_rate(12_000_000, 1_000), "12,000,000 tok/s");
+    }
+
+    #[test]
+    fn format_decode_rate_covers_edge_cases() {
+        // 没有 wire 值 + decode_duration_ms 也没数据 → 不可用。
+        assert_eq!(format_decode_rate(None, 0), "速率不可用");
+        // 有 wire 稳态速率：正常渲染。
+        assert_eq!(format_decode_rate(Some(200.0), 1_000), "200 tok/s");
+        assert_eq!(format_decode_rate(Some(0.5), 2_000), "0.5 tok/s");
+        assert_eq!(
+            format_decode_rate(Some(12_500.0), 1_000),
+            "12,500 tok/s"
+        );
+        // wire 值 <= 0 视为不可用（避免 f32 溢出/负数噪音）。
+        assert_eq!(format_decode_rate(Some(0.0), 1_000), "速率不可用");
+        assert_eq!(format_decode_rate(Some(-1.0), 1_000), "速率不可用");
     }
 
     #[test]

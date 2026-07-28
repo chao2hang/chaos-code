@@ -116,12 +116,14 @@ impl ChatStateHandle {
         model_id: Option<String>,
         usage: TokenUsage,
         api_duration_ms: Option<u64>,
+        decode_duration_ms: Option<u64>,
         cost_usd_ticks: Option<i64>,
     ) {
         let _ = self.cmd_tx.send(ChatStateCommand::RecordModelCallUsage {
             model_id,
             usage,
             api_duration_ms,
+            decode_duration_ms,
             cost_usd_ticks,
         });
     }

@@ -96,6 +96,7 @@ pub enum ChatStateCommand {
         model_id: Option<String>,
         usage: TokenUsage,
         api_duration_ms: Option<u64>,
+        decode_duration_ms: Option<u64>,
         cost_usd_ticks: Option<i64>,
     },
 
