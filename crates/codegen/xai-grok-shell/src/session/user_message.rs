@@ -46,9 +46,6 @@ pub fn construct_user_message_minimal(
             )
         }
     };
-    // Local-timezone date, captured when the prefix is built. Re-stamped on
-    // compaction and on resume (build_user_message_prefix), so it stays current
-    // across long sessions.
     let today = chrono::Local::now().format("%Y-%m-%d");
     format!(
         r#"<user_info>
