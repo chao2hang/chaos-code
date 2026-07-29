@@ -30,6 +30,42 @@ use std::sync::OnceLock;
 
 use xai_grok_workspace::permission::ClientType;
 
+/// Per-attempt ceiling for a startup `/settings` or `/v1/models` fetch; raising
+/// it delays how soon the background refresh gives up and retries.
+pub const STARTUP_FETCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+/// Cap on non-interactive boot auth (token refresh or cold-start mint); a mint
+/// that exceeds it leaves the leader session-less and is retried off the
+/// readiness path.
+pub const STARTUP_AUTH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+/// Ceiling on a single startup token-refresh round trip, kept separate from
+/// `STARTUP_FETCH_TIMEOUT` so the two tune independently; on timeout the caller
+/// proceeds with cached or no credentials and re-auths later.
+pub const STARTUP_AUTH_REFRESH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+/// Outer bound on a single settings-reapply task, which drives up to
+/// `SETTINGS_FETCH_MAX_ATTEMPTS` fetches.
+pub const SETTINGS_REAPPLY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+/// Attempt budget for the background settings fetch; bounds proxy load while
+/// still covering a brief blip.
+pub const SETTINGS_FETCH_MAX_ATTEMPTS: u32 = 3;
+// A `401` self-heal may add one more bounded fetch beyond this cap; that fetch
+// is cut off fail-closed and retried later, so the cap only needs to cover the
+// common path.
+const _: () = assert!(
+    SETTINGS_REAPPLY_TIMEOUT.as_millis()
+        > STARTUP_FETCH_TIMEOUT.as_millis() * (1 + SETTINGS_FETCH_MAX_ATTEMPTS as u128),
+    "SETTINGS_REAPPLY_TIMEOUT must exceed STARTUP_FETCH_TIMEOUT * (1 + MAX_ATTEMPTS)"
+);
+
+/// Lower bound for a client's leader-connect timeout: a slow-but-valid boot
+/// (bounded startup auth plus the rest of leader startup and the connect
+/// handshake) must never be aborted. The pager bounds its connect by this value,
+/// reached via the shell's `http` re-export.
+pub const MIN_CLIENT_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+const _: () = assert!(
+    MIN_CLIENT_CONNECT_TIMEOUT.as_millis() >= 2 * STARTUP_AUTH_TIMEOUT.as_millis(),
+    "MIN_CLIENT_CONNECT_TIMEOUT must stay >= 2x STARTUP_AUTH_TIMEOUT"
+);
+
 /// Startup span timer, local to this crate.
 ///
 /// Replaces `xai_grok_shell::instrumentation_timer!`, which cannot be referenced
