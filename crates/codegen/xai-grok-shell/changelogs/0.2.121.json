@@ -15,6 +15,16 @@
     "breaking_change": false
   },
   {
+    "category": "fixes",
+    "description": "修复 clippy -D warnings 违规（Rust 1.92）：extensions/usage.rs 折叠嵌套 if；views/agent_status.rs 测试改为结构体字面量初始化。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "消除 daemonize::take_over_acquires_cleanly_when_predecessor_releases 在慢速 CI 上的 flake：spawn_predecessor 现等待 /proc/<pid>/cmdline 反映 execve(sleep) 后再返回，避免 takeover 名字匹配竞态。",
+    "breaking_change": false
+  },
+  {
     "category": "ui",
     "description": "终端标签页标题品牌由 grok 改为 Chaos Code（含会话名后缀、空标题回退与重置路径）；用户配置中的 title.items 无需迁移。",
     "breaking_change": false
