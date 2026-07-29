@@ -1157,9 +1157,19 @@ mod tests {
 
     /// Collect the symbols from a row range in the buffer into a String.
     fn collect_row_symbols(buf: &Buffer, y: u16, x_start: u16, x_end: u16) -> String {
-        (x_start..x_end)
-            .filter_map(|x| buf.cell((x, y)).map(|c| c.symbol().to_string()))
-            .collect()
+        use unicode_width::UnicodeWidthStr;
+        let mut out = String::new();
+        let mut x = x_start;
+        while x < x_end {
+            if let Some(cell) = buf.cell((x, y)) {
+                let s = cell.symbol();
+                out.push_str(s);
+                x = x.saturating_add(UnicodeWidthStr::width(s).max(1) as u16);
+            } else {
+                x = x.saturating_add(1);
+            }
+        }
+        out
     }
 
     /// The reserved timestamp gutter (rightmost `ts_reserved` content columns)
@@ -1170,12 +1180,16 @@ mod tests {
         (content_right - renderer.timestamp_reserved())..content_right
     }
 
-    /// Check that a right-aligned timestamp ending with "AM" or "PM" exists on a row.
+    /// Check that a right-aligned timestamp exists on a row.
     /// Only scans the rightmost 16 columns to avoid false positives from content text.
     fn has_ampm_timestamp(buf: &Buffer, y: u16, x_end: u16) -> bool {
         let x_start = x_end.saturating_sub(16);
         let text = collect_row_symbols(buf, y, x_start, x_end);
-        text.contains("AM") || text.contains("PM")
+        // 24-hour format: look for a digit-colon-digit pattern (e.g. "15:05").
+        text.chars()
+            .collect::<Vec<_>>()
+            .windows(3)
+            .any(|w| w[0].is_ascii_digit() && w[1] == ':' && w[2].is_ascii_digit())
     }
 
     #[test]
@@ -1252,13 +1266,15 @@ mod tests {
             .unwrap()
             .format("%H:%M:%S | %-m 月 %-d 日")
             .to_string();
-        let ts_width = expected.len() as u16;
-        let ts_x = width - 2 - ts_width;
 
-        let rendered = collect_row_symbols(&buf, 0, ts_x, ts_x + ts_width);
-        assert_eq!(
-            rendered, expected,
-            "Mouse-hovered timestamp should show expanded format '{expected}'"
+        // CJK chars (月, 日) are 3 bytes but 2 display columns, so
+        // byte-length-based positioning misaligns with the renderer's
+        // display-width-based right alignment. Collect the full row and
+        // check containment instead of exact-position equality.
+        let full_row = collect_row_symbols(&buf, 0, 0, width);
+        assert!(
+            full_row.contains(&expected),
+            "Mouse-hovered timestamp should show expanded format '{expected}'\nrow: {full_row:?}"
         );
     }
 

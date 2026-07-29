@@ -1148,7 +1148,7 @@ mod tests {
         info.activity_label = None;
         assert_eq!(
             subagent_activity(&info, RowState::Working).as_deref(),
-            Some("Running: bash")
+            Some("运行: bash")
         );
     }
     /// Edge case 7: subagent rows never reach `NeedsInput` in v1.

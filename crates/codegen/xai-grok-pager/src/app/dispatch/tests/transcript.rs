@@ -66,7 +66,7 @@ fn open_block_viewer_on_group_header_toggles_group() {
         agent.scrollback.set_selected(Some(0));
         assert_eq!(
             agent.scrollback.selected_group_header_fold_label(),
-            Some("collapse"),
+            Some("折叠"),
             "entry 0 should now be the expanded group's collapse header"
         );
     }
@@ -79,7 +79,7 @@ fn open_block_viewer_on_group_header_toggles_group() {
         agent.scrollback.prepare_layout(80, 40);
         assert_eq!(
             agent.scrollback.selected_group_header_fold_label(),
-            Some("expand"),
+            Some("展开"),
             "group should be truncated again ('N more' header)"
         );
     }

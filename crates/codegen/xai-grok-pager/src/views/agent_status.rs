@@ -175,10 +175,10 @@ fn goal_phase_label(goal: &GoalDisplayState) -> String {
         | GoalDisplayStatus::NoProgressPaused
         | GoalDisplayStatus::InfraPaused
         | GoalDisplayStatus::Blocked => goal.status.pause_label().into(),
-        GoalDisplayStatus::Failed => "Failed".into(),
-        GoalDisplayStatus::Interrupted => "Interrupted".into(),
-        GoalDisplayStatus::BudgetLimited => "Budget".into(),
-        GoalDisplayStatus::Complete => "Done".into(),
+        GoalDisplayStatus::Failed => "失败".into(),
+        GoalDisplayStatus::Interrupted => "已中断".into(),
+        GoalDisplayStatus::BudgetLimited => "预算".into(),
+        GoalDisplayStatus::Complete => "完成".into(),
         GoalDisplayStatus::Active => active_phase_label(goal),
     }
 }
@@ -191,20 +191,20 @@ pub fn active_phase_label(goal: &GoalDisplayState) -> String {
     if goal.verifying_completion {
         let attempts = classifier_attempts_label(goal);
         // Omit the "(n/m)" suffix until the first counter arrives so the
-        // chip reads "Verifying" instead of a confusing "Verifying (0/0)".
+        // chip reads "校验中" instead of a confusing "校验中 (0/0)".
         return if attempts.is_empty() {
-            "Verifying".into()
+            "校验中".into()
         } else {
-            format!("Verifying ({attempts})")
+            format!("校验中（{attempts}）")
         };
     }
     if goal.planning {
-        return "Planning".into();
+        return "规划中".into();
     }
     match goal.phase {
-        GoalDisplayPhase::Idle => "Idle".into(),
-        GoalDisplayPhase::Planning => "Planning".into(),
-        GoalDisplayPhase::Executing => "Executing".into(),
+        GoalDisplayPhase::Idle => "空闲".into(),
+        GoalDisplayPhase::Planning => "规划中".into(),
+        GoalDisplayPhase::Executing => "执行中".into(),
     }
 }
 
@@ -297,13 +297,13 @@ pub fn goal_status_line(
 
     let is_active = matches!(goal.status, GoalDisplayStatus::Active);
 
-    let chip_name = "Goal";
+    let chip_name = "目标";
     let goal_text = if is_active {
         let frames = crate::glyphs::dot_spinner_frames();
         let frame = frames[(tick / 4) % frames.len()];
-        format!("{frame} {chip_name}: {label}")
+        format!("{frame} {chip_name}：{label}")
     } else {
-        format!("{chip_name}: {label}")
+        format!("{chip_name}：{label}")
     };
 
     Line::from(vec![
@@ -481,7 +481,7 @@ mod tests {
             0,
             0,
         );
-        assert_eq!(goal_phase_label(&g), "Executing");
+        assert_eq!(goal_phase_label(&g), "执行中");
     }
 
     #[test]
@@ -493,17 +493,17 @@ mod tests {
             0,
             0,
         );
-        assert_eq!(goal_phase_label(&g), "Planning");
+        assert_eq!(goal_phase_label(&g), "规划中");
     }
 
     #[test]
     fn phase_label_paused_variants() {
         for (status, expected) in [
-            (GoalDisplayStatus::UserPaused, "Paused"),
-            (GoalDisplayStatus::BackOffPaused, "Paused (back-off)"),
-            (GoalDisplayStatus::NoProgressPaused, "Paused (no progress)"),
-            (GoalDisplayStatus::InfraPaused, "Paused (error)"),
-            (GoalDisplayStatus::Blocked, "Paused (verification blocked)"),
+            (GoalDisplayStatus::UserPaused, "已暂停"),
+            (GoalDisplayStatus::BackOffPaused, "已暂停（退避中）"),
+            (GoalDisplayStatus::NoProgressPaused, "已暂停（无进展）"),
+            (GoalDisplayStatus::InfraPaused, "已暂停（错误）"),
+            (GoalDisplayStatus::Blocked, "已暂停（校验受阻）"),
         ] {
             let g = make_goal(status, GoalDisplayPhase::Executing, Some(0), 2, 0);
             assert_eq!(goal_phase_label(&g), expected, "for {status:?}");
@@ -522,7 +522,7 @@ mod tests {
         let t = Theme::current();
         let line = goal_status_line(&g, &t, false, 0, None, 0);
         let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
-        assert!(text.contains("Paused (error)"));
+        assert!(text.contains("已暂停（错误）"));
     }
 
     #[test]
@@ -541,12 +541,12 @@ mod tests {
         g.verifying_completion = true;
         g.classifier_runs_attempted = Some(2);
         g.classifier_max_runs = Some(3);
-        assert_eq!(goal_phase_label(&g), "Verifying (2/3)");
+        assert_eq!(goal_phase_label(&g), "校验中（2/3）");
 
         let t = Theme::current();
         let line = goal_status_line(&g, &t, false, 0, None, 0);
         let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
-        assert!(text.contains("Verifying (2/3)"));
+        assert!(text.contains("校验中（2/3）"));
     }
 
     #[test]
@@ -563,7 +563,7 @@ mod tests {
         g.verifying_completion = true;
         g.classifier_runs_attempted = None;
         g.classifier_max_runs = None;
-        assert_eq!(goal_phase_label(&g), "Verifying");
+        assert_eq!(goal_phase_label(&g), "校验中");
     }
 
     #[test]
@@ -632,12 +632,12 @@ mod tests {
             0,
         );
         g.planning = true;
-        assert_eq!(goal_phase_label(&g), "Planning");
+        assert_eq!(goal_phase_label(&g), "规划中");
 
         let t = Theme::current();
         let line = goal_status_line(&g, &t, false, 0, None, 0);
         let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
-        assert!(text.contains("Planning"));
+        assert!(text.contains("规划中"));
     }
 
     #[test]
@@ -655,7 +655,7 @@ mod tests {
         g.verifying_completion = true;
         g.classifier_runs_attempted = Some(1);
         g.classifier_max_runs = Some(2);
-        assert_eq!(goal_phase_label(&g), "Verifying (1/2)");
+        assert_eq!(goal_phase_label(&g), "校验中（1/2）");
     }
 
     #[test]
@@ -671,7 +671,7 @@ mod tests {
             0,
         );
         g.planning = true;
-        assert_eq!(goal_phase_label(&g), "Paused");
+        assert_eq!(goal_phase_label(&g), "已暂停");
     }
 
     #[test]
@@ -688,7 +688,7 @@ mod tests {
             0,
         );
         g.verifying_completion = true;
-        assert_eq!(goal_phase_label(&g), "Paused");
+        assert_eq!(goal_phase_label(&g), "已暂停");
     }
 
     #[test]
@@ -711,11 +711,11 @@ mod tests {
         );
         let t = Theme::groknight();
         let line = goal_status_line(&g, &t, false, 0, None, 0);
-        // The label span is the one whose content starts with "Goal:".
+        // The label span is the one whose content starts with "目标：".
         let label_span = line
             .spans
             .iter()
-            .find(|s| s.content.contains("Goal:"))
+            .find(|s| s.content.contains("目标："))
             .expect("label span with `Goal:` prefix");
         assert_eq!(label_span.style.bg, Some(t.warning));
         assert_ne!(label_span.style.bg, Some(t.bg_base));
@@ -737,7 +737,7 @@ mod tests {
         let label_span = line
             .spans
             .iter()
-            .find(|s| s.content.contains("Goal:"))
+            .find(|s| s.content.contains("目标："))
             .expect("label span with `Goal:` prefix");
         assert_eq!(label_span.style.bg, Some(t.bg_base));
         assert_ne!(label_span.style.bg, Some(t.warning));
@@ -752,7 +752,7 @@ mod tests {
             0,
             0,
         );
-        assert_eq!(goal_phase_label(&g), "Failed");
+        assert_eq!(goal_phase_label(&g), "失败");
     }
 
     #[test]
@@ -764,7 +764,7 @@ mod tests {
             2,
             0,
         );
-        assert_eq!(goal_phase_label(&g), "Budget");
+        assert_eq!(goal_phase_label(&g), "预算");
     }
 
     #[test]
@@ -776,7 +776,7 @@ mod tests {
             3,
             3,
         );
-        assert_eq!(goal_phase_label(&g), "Done");
+        assert_eq!(goal_phase_label(&g), "完成");
     }
 
     #[test]
@@ -788,7 +788,7 @@ mod tests {
             0,
             0,
         );
-        assert_eq!(goal_phase_label(&g), "Idle");
+        assert_eq!(goal_phase_label(&g), "空闲");
     }
 
     #[test]
@@ -800,7 +800,7 @@ mod tests {
             4,
             2,
         );
-        assert_eq!(goal_phase_label(&g), "Executing");
+        assert_eq!(goal_phase_label(&g), "执行中");
     }
 
     // The old deliverable-index parity test is removed because deliverables
@@ -818,7 +818,7 @@ mod tests {
         let t = Theme::current();
         let line = goal_status_line(&g, &t, false, 0, None, 0);
         let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
-        assert!(text.contains("Goal: Exec"));
+        assert!(text.contains("目标：执行"));
         assert!(text.contains("12.3k/50k tokens"));
         assert!(text.contains("3m"));
     }

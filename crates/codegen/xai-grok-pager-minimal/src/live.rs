@@ -839,7 +839,8 @@ mod tests {
             &theme,
         );
         let text = read(&buf);
-        assert!(text.contains("Responding"), "rich activity: {text:?}");
+        let compact: String = text.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(compact.contains("回复中"), "rich activity: {text:?}");
         let mut buf = Buffer::empty(area);
         render_minimal_status(
             &mut buf,
@@ -853,7 +854,9 @@ mod tests {
             None,
             &theme,
         );
-        assert!(read(&buf).contains("Retrying"), "retry: {:?}", read(&buf));
+        let retry_text = read(&buf);
+        let retry_compact: String = retry_text.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(retry_compact.contains("重试中"), "retry: {retry_text:?}");
     }
     #[test]
     fn minimal_status_shows_idle_watching_cue() {
@@ -883,8 +886,9 @@ mod tests {
         let mut buf = Buffer::empty(area);
         render_minimal_status(&mut buf, area, &a, &None, None, &theme);
         let text = read(&buf);
+        let compact: String = text.chars().filter(|c| !c.is_whitespace()).collect();
         assert!(
-            text.contains("1 loop still running"),
+            compact.contains("1个循环仍在运行"),
             "watching cue: {text:?}"
         );
         assert!(!text.contains("/help"), "not the idle hint: {text:?}");

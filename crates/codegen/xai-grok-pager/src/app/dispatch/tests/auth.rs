@@ -433,7 +433,7 @@ fn login_with_empty_auth_methods_fails_closed() {
         matches!(
             &app.auth_state,
             AuthState::Pending { error: Some(msg) }
-                if msg.contains("preferred_method=api_key")
+                if msg.contains("未配置 Provider API Key")
         ),
         "must surface pin-unavailable error, got {:?}",
         app.auth_state

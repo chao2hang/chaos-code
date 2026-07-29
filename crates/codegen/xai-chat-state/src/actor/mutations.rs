@@ -361,9 +361,21 @@ impl ChatStateActor {
         decode_duration_ms: Option<u64>,
         cost_usd_ticks: Option<i64>,
     ) {
-        let model_key = match model_id.as_deref() {
-            Some(id) if !id.is_empty() => id,
-            _ => self.state.sampling_config.model.as_str(),
+        // Chaos: some OpenAI-compatible gateways (notably Volcengine Ark's
+        // `/api/coding/v3`) echo a routing sentinel like `"auto"` in
+        // `chunk.model` rather than the real requested id. Treating those
+        // sentinels as "unknown wire id" and falling back to the configured
+        // model keeps `ark-code-latest` (etc.) from being buried under a
+        // single `auto` row in `/usage`.
+        fn is_wire_sentinel(id: &str) -> bool {
+            matches!(id, "auto" | "default" | "")
+        }
+        let wire = model_id.as_deref().unwrap_or("");
+        let configured = self.state.sampling_config.model.as_str();
+        let model_key = if is_wire_sentinel(wire) && !configured.is_empty() {
+            configured
+        } else {
+            wire
         }
         .to_owned();
         self.state

@@ -46,7 +46,7 @@ pub(in crate::app::dispatch) fn dispatch_fork(
     args: crate::slash::commands::fork::ForkArgs,
 ) -> Vec<Effect> {
     let ActiveView::Agent(parent_id) = app.active_view else {
-        app.show_toast("/fork only works inside a session");
+        app.show_toast("/fork 仅在会话内可用");
         return vec![];
     };
     let (has_session, in_git_repo) = app

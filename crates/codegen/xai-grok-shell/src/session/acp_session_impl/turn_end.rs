@@ -327,6 +327,42 @@ impl SessionActor {
         usage: Option<crate::extensions::notification::PromptUsage>,
         cancel_trigger: Option<&str>,
     ) {
+        // Chaos: mirror the aggregate-usage upsert that `/usage` and the
+        // token-overlay perform on demand. Without this, sessions where the
+        // user never opens either panel are silently absent from
+        // `sessions/usage.sqlite` — the whole reason ark-code-latest sessions
+        // never showed up in the cumulative view.
+        //
+        // Runs off the actor thread (best-effort, no error surfacing) and
+        // skips subagent sessions to match the on-demand handler's dedup
+        // rule (their spend is already folded into the parent ledger).
+        if !self.startup_hints.is_subagent
+            && let Some(u) = usage.as_ref()
+        {
+            let session_id = self.session_info.id.0.to_string();
+            let usage_snapshot = u.clone();
+            tokio::task::spawn_blocking(move || {
+                match crate::session::usage_store::UsageStore::open_default() {
+                    Ok(store) => {
+                        if let Err(e) = store.record_session_usage(&session_id, &usage_snapshot) {
+                            tracing::warn!(
+                                session_id = %session_id,
+                                error = %e,
+                                "auto-persist session usage failed"
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            session_id = %session_id,
+                            error = %e,
+                            "auto-persist session usage: store unavailable"
+                        );
+                    }
+                }
+            });
+        }
+
         let (stop_reason, agent_result) = crate::sampling::error::prompt_complete_fields(mapped);
         let extra_meta = cancel_trigger.map(|t| {
             [("cancelTrigger".to_string(), serde_json::json!(t))]
