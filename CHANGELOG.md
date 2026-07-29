@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.2.123
+
+### #15 `--disallowed-tools` TUI 支持
+
+- 从 headless-only 警告列表中移除 `--disallowed-tools` 和 `--tools`，现在 TUI 模式也生效。
+- CLI 传入的 `--disallowed-tools` 和 `--tools` 接入 `ConnectFlags` → `CliAgentOverrides`，TUI 会话中内置工具按列表过滤。
+- Leader 模式下两个 flag 会被识别为 unsupported 并发出警告。
+
+### #16 配置模型参数不再发起 HTTP 请求
+
+- `go_configure_model` 移除了 `load_models_for` 调用，打开「配置模型参数」界面不再冻结 UI 等待远端模型列表拉取。
+- 用户直接手动输入模型 ID 即可配置参数。
+
+### `/fallback` 命令
+
+- 新增 `/fallback` 斜杠命令，管理备用模型链。
+- 子命令：`set`（替换整链）/ `add`（追加）/ `remove`（移除）/ `clear`（清空）。
+- 持久化到 `~/.grok/config.toml` `[fallback].models`。
+- Agent 配置新增 `FallbackConfig` 结构体，sampler 层可读取备用模型列表。
+
+### `/adhd` 命令
+
+- 新增 `/adhd` 斜杠命令，切换 ADHD 技能集成。
+- 用法：`/adhd`（切换）/ `/adhd on` / `/adhd off`。
+- 开启后自动将 ADHD 辅助规则注入每个会话的系统提示词。
+- 规则来源：https://github.com/uditakhourii/adhd
+- 持久化到 `~/.grok/config.toml` `[adhd].enabled`。
+
 ## 0.2.122
 
 ### Token 用量修复

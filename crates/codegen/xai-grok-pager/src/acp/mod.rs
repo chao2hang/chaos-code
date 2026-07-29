@@ -97,6 +97,23 @@ pub struct AcpConnection {
     pub auth_manager: std::sync::Arc<xai_grok_shell::auth::AuthManager>,
 }
 
+/// ADHD skill rules injected into the system prompt when `/adhd` is enabled.
+///
+/// Source: https://github.com/uditakhourii/adhd
+/// These rules help users with ADHD stay focused and productive by encouraging
+/// task decomposition, visible progress tracking, and reduced cognitive load.
+const ADHD_SKILL_RULES: &str = "\
+## ADHD 辅助规则
+
+- 将大任务拆解为小的、可操作的步骤，每步不超过 5 分钟。
+- 使用待办清单跟踪进度，完成一项立即标记。
+- 一次只专注一个任务，避免多任务并行。
+- 用简洁、直接的语言沟通，避免冗长解释。
+- 频繁提供具体反馈，而非笼统评价。
+- 设置时间盒（time-box），每 25 分钟休息 5 分钟。
+- 庆祝小胜利，保持正反馈循环。
+- 遇到困难时主动提出简化方案或替代路径。";
+
 /// CLI flags that affect agent configuration, threaded from PagerArgs.
 #[derive(Debug, Clone, Default)]
 pub struct ConnectFlags {
@@ -138,6 +155,10 @@ pub struct ConnectFlags {
     /// CLI permission rules from --allow / --deny flags.
     /// Not supported in leader mode (agent config is set at leader startup).
     pub permission_rules: Vec<xai_grok_workspace::permission::types::PermissionRule>,
+    /// CLI `--tools` allowlist (comma-separated tool names).
+    pub cli_tools: Option<Vec<String>>,
+    /// CLI `--disallowed-tools` denylist (comma-separated tool names).
+    pub cli_disallowed_tools: Option<Vec<String>>,
     /// Seed agent sessions with always-approve (YOLO) permission mode.
     pub default_yolo_mode: bool,
     /// Seed agent sessions with auto (classifier) permission mode.
@@ -149,7 +170,7 @@ pub struct ConnectFlags {
 ///
 /// This is the main entry point for establishing an ACP connection.
 /// After this returns, the agent is ready to create sessions and receive prompts.
-pub async fn connect(cancel: &CancellationToken, flags: ConnectFlags) -> Result<AcpConnection> {
+pub async fn connect(cancel: &CancellationToken, mut flags: ConnectFlags) -> Result<AcpConnection> {
     // Load agent config from disk
     let raw_config = xai_grok_shell::config::load_effective_config()
         .map_err(|e| anyhow::anyhow!("Failed to load config: {}", e))?;
@@ -183,6 +204,23 @@ pub async fn connect(cancel: &CancellationToken, flags: ConnectFlags) -> Result<
 
     if !flags.permission_rules.is_empty() {
         agent_config.cli_agent_overrides.permission_rules = flags.permission_rules.clone();
+    }
+    if let Some(ref tools) = flags.cli_tools {
+        agent_config.cli_agent_overrides.tools = Some(tools.clone());
+    }
+    if let Some(ref dt) = flags.cli_disallowed_tools {
+        agent_config.cli_agent_overrides.disallowed_tools = Some(dt.clone());
+    }
+
+    // ADHD skill integration: when enabled in config, inject ADHD-friendly
+    // rules into the system prompt via the `rules` metadata field.
+    if agent_config.adhd.enabled {
+        let adhd_rules = ADHD_SKILL_RULES;
+        flags.rules = match flags.rules.take() {
+            Some(existing) => Some(format!("{existing}\n\n{adhd_rules}")),
+            None => Some(adhd_rules.to_string()),
+        };
+        tracing::info!("ADHD skill integration enabled; rules injected");
     }
 
     apply_config_writes(&flags);
@@ -400,6 +438,12 @@ fn unsupported_leader_flags(flags: &ConnectFlags) -> Vec<&'static str> {
     }
     if !flags.permission_rules.is_empty() {
         out.push("--allow/--deny permission rules");
+    }
+    if flags.cli_tools.is_some() {
+        out.push("--tools");
+    }
+    if flags.cli_disallowed_tools.is_some() {
+        out.push("--disallowed-tools");
     }
     out
 }

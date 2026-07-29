@@ -3,6 +3,7 @@
 //! Each command lives in its own submodule. This module re-exports
 //! command structs and provides `builtin_commands()` for registry
 //! construction.
+pub mod adhd;
 pub mod always_approve;
 pub mod announcements;
 pub mod auto;
@@ -23,6 +24,7 @@ pub mod effort_levels;
 pub mod exit;
 pub mod expand;
 pub mod export;
+pub mod fallback;
 pub mod feedback;
 pub mod find;
 pub mod fork;
@@ -141,6 +143,8 @@ pub fn builtin_commands() -> Vec<Arc<dyn SlashCommand>> {
         Arc::new(config_agents::ConfigAgentsCommand),
         Arc::new(personas::PersonasCommand),
         Arc::new(provider::ProviderCommand),
+        Arc::new(fallback::FallbackCommand),
+        Arc::new(adhd::AdhdCommand),
         Arc::new(gboom::GboomCommand),
         Arc::new(scroll_debug::ScrollDebugCommand),
         Arc::new(debug::DebugCommand),

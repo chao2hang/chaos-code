@@ -605,6 +605,10 @@ pub async fn run(
             &args.allow_rules,
             &args.deny_rules,
         ),
+        cli_tools: crate::headless::parse_comma_list(args.cli_tools.as_deref()),
+        cli_disallowed_tools: crate::headless::parse_comma_list(
+            args.cli_disallowed_tools.as_deref(),
+        ),
         default_yolo_mode: launch_yolo.yolo,
         default_auto_mode: launch_auto && !launch_yolo.yolo,
     };
