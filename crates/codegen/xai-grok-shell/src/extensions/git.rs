@@ -539,6 +539,14 @@ pub async fn handle(
                 signoff: req.signoff,
                 push: req.push,
                 sync: req.sync,
+                // Chaos-fork: three new upstream knobs (stage_all,
+                // seed_default_excludes, expected_branch) that the ACP-side
+                // `GitCommitRequest` does not yet expose. Default to
+                // "unchanged behavior": don't stage-all, don't seed excludes,
+                // don't gate on a specific branch. The ACP shape can gain
+                // these later without a wire-break, since RPC uses
+                // `#[serde(default)]`.
+                ..Default::default()
             };
             let commit_result = ops
                 .dispatch(&op, None)
