@@ -1040,6 +1040,8 @@ mod tests {
             explicitly_killed: false,
             owner_session_id: None,
             description: None,
+            // Chaos-fork: upstream added bg_status tracking; we keep the flag as a stub.
+            is_backgrounded: false,
         })
     }
     fn started_id(n: &ToolNotification) -> &str {
