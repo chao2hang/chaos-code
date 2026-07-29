@@ -100,6 +100,9 @@ impl TrackedTask {
             kind: self.kind,
             owner_session_id: self.owner_session_id.clone(),
             description: self.description.clone(),
+            // Chaos-fork: no bg_status tracking on this adapter; report false.
+            // Field is `#[serde(default)]`, so wire remains compatible.
+            is_backgrounded: false,
         }
     }
 }

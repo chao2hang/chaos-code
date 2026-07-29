@@ -814,7 +814,16 @@ impl ToolOutput {
                     lines.push(String::new());
                     lines.push("=== Output ===".to_string());
                     if r.output.is_empty() {
-                        lines.push("(no output yet)".to_string());
+                        // Chaos-fork: distinguish still-running (no output *yet*)
+                        // from terminal states where the output really is empty,
+                        // matching upstream's behavior — the running phrasing
+                        // implies more may arrive, which is misleading for
+                        // completed / timed_out / failed / cancelled tasks.
+                        if r.status == "running" {
+                            lines.push("(no output yet)".to_string());
+                        } else {
+                            lines.push("(no output)".to_string());
+                        }
                     } else {
                         lines.push(r.output.clone());
                     }

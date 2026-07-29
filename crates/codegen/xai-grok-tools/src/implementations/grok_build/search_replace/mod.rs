@@ -89,7 +89,7 @@ fn default_true() -> bool {
 /// Configuration for the search_replace tool, stored as `Params<SearchReplaceParams>` in Resources.
 ///
 /// Replaces the old `SearchReplaceOptions` that was stored via `tool_options_as()`.
-#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SearchReplaceParams {
     /// Deprecated runtime no-op, kept so configs still sending it deserialize under
@@ -115,6 +115,21 @@ pub struct SearchReplaceParams {
     /// Default: `true`.
     #[serde(default = "default_true")]
     pub include_user_edit_hint: bool,
+}
+// Chaos-fork: mirror upstream's manual `Default` so `include_user_edit_hint`
+// defaults to `true` — matches the `#[serde(default = "default_true")]` on the
+// field. Deriving `Default` would silently set it to `false` (Rust bool default)
+// and diverge from the JSON-deserialized default, breaking the
+// `search_replace_only_edit_tool_template_rendering` test.
+impl Default for SearchReplaceParams {
+    fn default() -> Self {
+        Self {
+            skip_read_before_edit: false,
+            empty_old_string_does_not_override: false,
+            unicode_normalized_fallback: false,
+            include_user_edit_hint: true,
+        }
+    }
 }
 register_resource!("grok_build", "SearchReplace", SearchReplaceParams);
 /// SearchReplace tool — new architecture.
