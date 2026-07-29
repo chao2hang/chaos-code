@@ -263,6 +263,7 @@ async fn tasks_snapshot(toolset: &FinalizedToolset) -> TasksSnapshotResponse {
                         TaskKind::Monitor => "monitor".to_owned(),
                     },
                     started_at: DateTime::<Utc>::from(t.start_time).to_rfc3339(),
+                    description: t.description,
                 }
             })
             .collect(),
