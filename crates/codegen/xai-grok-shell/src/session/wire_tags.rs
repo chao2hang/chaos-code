@@ -82,8 +82,6 @@ pub(crate) static TASK_COMPLETED: LazyLock<String> = LazyLock::new(|| {
             explicitly_killed: false,
             owner_session_id: None,
             description: None,
-            // Chaos-fork: this is a canonical zero-value snapshot used only
-            // to derive the tagged-discriminant string. Backend-agnostic.
             is_backgrounded: false,
         },
         will_wake: false,
