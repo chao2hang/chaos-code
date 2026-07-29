@@ -1167,6 +1167,7 @@ fn make_test_handle(
             std::sync::Arc::new(crate::terminal::LocalTerminalRunner),
         ),
         model_id: acp::ModelId::new(model),
+        scheduler_background_loops: true,
         reasoning_effort: None,
         yolo_mode: yolo,
         origin_client: client_id.map(|s| crate::http::OriginClientInfo {
