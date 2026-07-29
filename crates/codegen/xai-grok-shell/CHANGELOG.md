@@ -7,6 +7,8 @@
 - **修复 0.2.120 发版流水线编译失败**：上游终端检测移植引入的 `MultiplexerKind::Herdr` 变体未在 `doctor --json` 输出的 `multiplexer()` 匹配中覆盖（E0004 非穷尽匹配），导致全平台 release build 全部失败。本版补齐 `Herdr => "herdr"` 分支与测试断言，并为测试构造补上同期新增的 `TerminalContext::env_term_version` 字段，恢复 `cargo check --workspace --all-targets` 通过。
 - **Doctor 测试不再依赖宿主机麦克风**：`fake_standalone_facts_compose_through_shared_view` 此前会把 `apply_voice_probe` 在无麦克风机器（含 CI 容器）上追加的 `voice/no-input-device` finding 计入 `issue_count`，导致环境相关性失败。断言前现按 `voice` 域过滤。
 - **修复 `cargo fmt --check` 违规**：0.2.120 带入的若干格式漂移（`status_blocks.rs`、`context_info.rs`、`selective_compaction.rs` 等 7 个文件）已统一整理，恢复 CI `cargo fmt` 步骤通过。
+- **修复 clippy `-D warnings` 违规（Rust 1.92）**：`extensions/usage.rs` 折叠 `collapsible_if`；`views/agent_status.rs` 两个测试改用结构体字面量初始化（`field_reassign_with_default`）。
+- **消除 `daemonize::take_over_acquires_cleanly_when_predecessor_releases` CI flake**：`spawn_predecessor` 现自旋等 `/proc/<pid>/cmdline` 反映 `execve(sleep)` 后再返回，避免慢速 CI 上 takeover 名字匹配竞态导致 child 未被终止的断言失败。
 
 ## UI
 
