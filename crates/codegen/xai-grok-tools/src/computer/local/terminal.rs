@@ -445,6 +445,11 @@ impl ProcessState {
             kind: self.kind,
             owner_session_id: self.owner_session_id.clone(),
             description: self.description.clone(),
+            // Chaos-fork: this backend does not track a `bg_status` state
+            // (upstream's separate Foreground/Backgrounded machine). Report
+            // `false` — the field is `#[serde(default)]` on the wire, so
+            // older clients aren't affected.
+            is_backgrounded: false,
         }
     }
 }
@@ -1638,6 +1643,9 @@ impl LocalTerminalActor {
                     explicitly_killed: p.explicitly_killed,
                     owner_session_id: p.owner_session_id.clone(),
                     description: p.description.clone(),
+                    // Chaos-fork: see the other constructor above — no
+                    // `bg_status` tracking on this backend, report `false`.
+                    is_backgrounded: false,
                 };
                 self.completed_task_snapshots.insert(id.clone(), snapshot);
             }

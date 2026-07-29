@@ -1265,11 +1265,17 @@ fn build_loop_prompt_blocks(args: &str) -> Vec<acp::ContentBlock> {
     use xai_grok_tools::implementations::grok_build::{
         loop_schedule_instruction, loop_usage_message,
     };
+    use xai_grok_tools::implementations::grok_build::LoopFireMode;
 
     let text = if args.trim().is_empty() {
         loop_usage_message().to_string()
     } else {
-        loop_schedule_instruction(args)
+        // Chaos-fork: upstream added a `LoopFireMode` arg (Detached vs
+        // InSession) plumbed through the pager's `/loop` command. Shell's
+        // slash handler hasn't gained the argument yet, so we pin the
+        // fork's default to `Detached` — it matches the upstream default
+        // and the doc-comment above ("no host-side interval default").
+        loop_schedule_instruction(args, LoopFireMode::Detached)
     };
 
     vec![acp::ContentBlock::Text(acp::TextContent::new(text))]

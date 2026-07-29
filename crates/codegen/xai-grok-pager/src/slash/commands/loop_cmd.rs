@@ -1,6 +1,6 @@
 use agent_client_protocol as acp;
 use xai_grok_tools::implementations::grok_build::{
-    SCHEDULER_CREATE_TOOL_NAME, loop_schedule_instruction, loop_usage_message,
+    LoopFireMode, SCHEDULER_CREATE_TOOL_NAME, loop_schedule_instruction, loop_usage_message,
 };
 
 use crate::slash::command::{CommandExecCtx, CommandResult, ScheduledTaskPreview, SlashCommand};
@@ -127,7 +127,7 @@ impl SlashCommand for LoopCommand {
         CommandResult::InjectSkill {
             display_text: format!("/loop {args}"),
             prompt_blocks: vec![acp::ContentBlock::Text(acp::TextContent::new(
-                loop_schedule_instruction(args),
+                loop_schedule_instruction(args, LoopFireMode::Detached),
             ))],
             display_as_skill: false,
             scheduled_task_preview: Some(ScheduledTaskPreview {
@@ -358,7 +358,7 @@ mod tests {
                 let acp::ContentBlock::Text(text) = &prompt_blocks[0] else {
                     panic!("expected a text prompt block");
                 };
-                assert_eq!(text.text, loop_schedule_instruction(args));
+                assert_eq!(text.text, loop_schedule_instruction(args, LoopFireMode::Detached));
             }
             other => panic!("expected InjectSkill, got {other:?}"),
         }

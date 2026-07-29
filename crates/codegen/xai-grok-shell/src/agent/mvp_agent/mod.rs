@@ -1693,6 +1693,10 @@ impl MvpAgent {
                 explicitly_killed: false,
                 owner_session_id: None,
                 description: None,
+                // Chaos-fork: orphan-notification synthesized snapshot;
+                // Chaos backend doesn't track bg_status. See TaskSnapshot
+                // is_backgrounded field (added upstream, wire-default false).
+                is_backgrounded: false,
             };
             let notification = crate::extensions::notification::SessionNotification {
                 session_id: session_id.clone(),
