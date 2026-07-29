@@ -152,10 +152,10 @@ impl PromptUsage {
             cached_read_tokens,
             reasoning_tokens: _, // subset of output_tokens
             model_calls,
-            api_duration_ms: _, // timing, not tokens
-            decode_duration_ms: _, // timing, not tokens
+            api_duration_ms: _,       // timing, not tokens
+            decode_duration_ms: _,    // timing, not tokens
             decode_tokens_per_sec: _, // derived rate
-            cost_usd_ticks: _,  // cost without usage cannot occur
+            cost_usd_ticks: _,        // cost without usage cannot occur
             cost_is_partial: _,
             cost_missing_calls: _,
         } = self.totals;
@@ -302,9 +302,9 @@ pub fn project_result_usage(result: &mut serde_json::Value, usage: &PromptUsage)
         total_tokens,
         cached_read_tokens,
         reasoning_tokens,
-        model_calls: _,     // totals-level; headless carries num_turns instead
-        api_duration_ms: _, // dropped: not part of the frozen headless shape
-        decode_duration_ms: _, // dropped: not part of the frozen headless shape
+        model_calls: _,           // totals-level; headless carries num_turns instead
+        api_duration_ms: _,       // dropped: not part of the frozen headless shape
+        decode_duration_ms: _,    // dropped: not part of the frozen headless shape
         decode_tokens_per_sec: _, // dropped: derived timing rate
         cost_usd_ticks,
         cost_is_partial,

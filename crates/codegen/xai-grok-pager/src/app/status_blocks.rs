@@ -484,10 +484,7 @@ mod tests {
         // 有 wire 稳态速率：正常渲染。
         assert_eq!(format_decode_rate(Some(200.0), 1_000), "200 tok/s");
         assert_eq!(format_decode_rate(Some(0.5), 2_000), "0.5 tok/s");
-        assert_eq!(
-            format_decode_rate(Some(12_500.0), 1_000),
-            "12,500 tok/s"
-        );
+        assert_eq!(format_decode_rate(Some(12_500.0), 1_000), "12,500 tok/s");
         // wire 值 <= 0 视为不可用（避免 f32 溢出/负数噪音）。
         assert_eq!(format_decode_rate(Some(0.0), 1_000), "速率不可用");
         assert_eq!(format_decode_rate(Some(-1.0), 1_000), "速率不可用");

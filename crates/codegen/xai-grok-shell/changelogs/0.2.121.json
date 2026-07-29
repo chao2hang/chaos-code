@@ -1,0 +1,27 @@
+[
+  {
+    "category": "fixes",
+    "description": "修复 0.2.120 发版流水线：补齐 MultiplexerKind::Herdr 在 doctor JSON 输出中的匹配分支与 env_term_version 测试构造字段，恢复全平台 release build。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "Doctor 测试按 voice 域过滤环境相关 finding，不再依赖宿主机麦克风/录音工具，消除 CI 容器中的环境相关性失败。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "修复 cargo fmt --check 违规（status_blocks、context_info、selective_compaction 等 7 个文件），恢复 CI fmt 步骤通过。",
+    "breaking_change": false
+  },
+  {
+    "category": "ui",
+    "description": "终端标签页标题品牌由 grok 改为 Chaos Code（含会话名后缀、空标题回退与重置路径）；用户配置中的 title.items 无需迁移。",
+    "breaking_change": false
+  },
+  {
+    "category": "ui",
+    "description": "计划审批弹窗底部按钮中文化：批准 / 批准（带批注）/ 请求修改 / 批注 / 发送 / 放弃计划，与快捷键提示栏风格一致。",
+    "breaking_change": false
+  }
+]

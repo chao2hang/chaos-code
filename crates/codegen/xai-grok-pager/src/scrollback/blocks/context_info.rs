@@ -542,9 +542,7 @@ impl ContextInfoBlock {
             let avg_txt = fmt_speed_cell(avg);
             let decode_txt = fmt_speed_cell(decode);
             lines.push(Line::from(Span::styled(
-                format!(
-                    "速度：平均 {avg_txt} \u{00b7} 解码 {decode_txt}（剔除首字）"
-                ),
+                format!("速度：平均 {avg_txt} \u{00b7} 解码 {decode_txt}（剔除首字）"),
                 muted,
             )));
         }
@@ -1455,7 +1453,10 @@ mod tests {
             })
             .collect::<Vec<_>>()
             .join("\n");
-        assert!(!all.contains("速度："), "should not render speed row when None: {all}");
+        assert!(
+            !all.contains("速度："),
+            "should not render speed row when None: {all}"
+        );
     }
 
     #[test]
