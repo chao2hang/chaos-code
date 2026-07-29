@@ -1365,7 +1365,7 @@ pub(super) fn dispatch_dashboard_dispatch_slash(app: &mut AppView, text: String)
             let name = command.name();
             if let Some(d) = app.dashboard.as_mut() {
                 d.dispatch.set_text("");
-                d.set_error_toast(&format!("/{name} only works in a session"));
+                d.set_error_toast(&format!("请先打开会话再运行 /{name}。"));
             }
             return vec![];
         }

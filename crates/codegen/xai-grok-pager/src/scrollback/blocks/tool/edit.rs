@@ -1587,7 +1587,7 @@ mod tests {
             None,
         );
         let text: String = header.spans.iter().map(|s| s.content.as_ref()).collect();
-        assert_eq!(text, "Editing workflow cc-deep-research");
+        assert_eq!(text, "编辑工作流 cc-deep-research");
         assert!(
             block
                 .path_link_target(Some(Path::new("/repo")))

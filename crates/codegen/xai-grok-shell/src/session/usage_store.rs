@@ -139,6 +139,16 @@ impl UsageStore {
     ) -> Result<(), rusqlite::Error> {
         let recorded_at = chrono::Utc::now().timestamp();
 
+        // Chaos: the ledger snapshot is authoritative (not incremental),
+        // so purge any stale rows first. Otherwise, a session that first
+        // logged spend under a wire sentinel like `"auto"` (Volcengine Ark)
+        // and later got relabeled to the configured id (`ark-code-latest`)
+        // would double-count in the aggregate view.
+        self.db.execute(
+            "DELETE FROM session_model_usage WHERE session_id = ?1",
+            params![session_id],
+        )?;
+
         // For the session-level per-model rows we use the breakdown carried
         // by `usage.model_usage`. When only one model is present we still
         // store that single row so the aggregate-by-model query is uniform.
@@ -493,5 +503,37 @@ mod tests {
         let agg = store.aggregate_prompt_usage().unwrap();
         assert!(agg.usage_is_incomplete);
         assert!(agg.totals.cost_usd_ticks.is_none());
+    }
+
+    /// Chaos: when a session first records under a wire sentinel like
+    /// `"auto"` (Volcengine Ark) and later gets relabeled to the configured
+    /// model (`ark-code-latest`), the second write must fully replace the
+    /// first — no ghost `auto` row left behind.
+    #[test]
+    fn recording_replaces_prior_session_rows() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = UsageStore::open_or_create(&tmp.path().join("usage.sqlite")).unwrap();
+
+        let sentinel = usage_with_models(&[("auto", model(1_000, 100, 1, Some(10), false))], false);
+        store
+            .record_session_usage("session-ark", &sentinel)
+            .unwrap();
+
+        let relabeled = usage_with_models(
+            &[("ark-code-latest", model(1_000, 100, 1, Some(10), false))],
+            false,
+        );
+        store
+            .record_session_usage("session-ark", &relabeled)
+            .unwrap();
+
+        let agg = store.aggregate_prompt_usage().unwrap();
+        assert_eq!(agg.model_usage.len(), 1);
+        assert!(agg.model_usage.contains_key("ark-code-latest"));
+        assert!(!agg.model_usage.contains_key("auto"));
+        // Totals must match the second write, not the sum of both.
+        assert_eq!(agg.totals.input_tokens, 1_000);
+        assert_eq!(agg.totals.output_tokens, 100);
+        assert_eq!(agg.totals.model_calls, 1);
     }
 }

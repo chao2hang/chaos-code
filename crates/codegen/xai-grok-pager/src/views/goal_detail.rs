@@ -80,16 +80,16 @@ pub(crate) fn format_elapsed(ms: u64) -> String {
 fn status_label(goal: &GoalDisplayState) -> (&'static str, Color, String) {
     let theme = Theme::current();
     match goal.status {
-        GoalDisplayStatus::Active => ("Active", theme.accent_success, active_phase_label(goal)),
+        GoalDisplayStatus::Active => ("进行中", theme.accent_success, active_phase_label(goal)),
         GoalDisplayStatus::UserPaused
         | GoalDisplayStatus::BackOffPaused
         | GoalDisplayStatus::NoProgressPaused
         | GoalDisplayStatus::InfraPaused
         | GoalDisplayStatus::Blocked => (goal.status.pause_label(), theme.warning, String::new()),
-        GoalDisplayStatus::Failed => ("Failed", theme.accent_error, String::new()),
-        GoalDisplayStatus::Interrupted => ("Interrupted", theme.accent_error, String::new()),
-        GoalDisplayStatus::BudgetLimited => ("Budget Limited", theme.accent_error, String::new()),
-        GoalDisplayStatus::Complete => ("Complete", theme.accent_success, String::new()),
+        GoalDisplayStatus::Failed => ("失败", theme.accent_error, String::new()),
+        GoalDisplayStatus::Interrupted => ("已中断", theme.accent_error, String::new()),
+        GoalDisplayStatus::BudgetLimited => ("预算受限", theme.accent_error, String::new()),
+        GoalDisplayStatus::Complete => ("已完成", theme.accent_success, String::new()),
     }
 }
 
@@ -246,7 +246,7 @@ fn sanitize_title(s: &str) -> String {
 /// them for multi-line block reasons and they never reach a rendered row).
 /// Shared by the height calc and the render so they wrap identical text.
 fn format_pause_reason(msg: &str) -> String {
-    format!("Reason: {}", strip_control_chars(msg, true))
+    format!("原因：{}", strip_control_chars(msg, true))
 }
 
 // ---------------------------------------------------------------------------
@@ -255,7 +255,7 @@ fn format_pause_reason(msg: &str) -> String {
 
 /// True when the goal carries at least one signal from the
 /// completion classifier — gates rendering of the modal's
-/// "Completion review" section so a goal that has never been
+/// "完成度评估" section so a goal that has never been
 /// classified shows nothing extra.
 fn has_classifier_activity(goal: &GoalDisplayState) -> bool {
     goal.classifier_runs_attempted.is_some()
@@ -272,7 +272,7 @@ fn has_classifier_activity(goal: &GoalDisplayState) -> bool {
 fn classifier_details_display(path: Option<&str>, exists: bool) -> &str {
     match path {
         Some(p) if exists => p,
-        Some(_) => "(unavailable)",
+        Some(_) => "（不可用）",
         None => "\u{2014}",
     }
 }
@@ -282,9 +282,9 @@ fn classifier_details_display(path: Option<&str>, exists: bool) -> &str {
 /// of every render site.
 fn classifier_verdict_label(verdict: Option<GoalClassifierVerdict>) -> &'static str {
     match verdict {
-        Some(GoalClassifierVerdict::Achieved) => "Achieved",
-        Some(GoalClassifierVerdict::NotAchieved) => "Not Achieved",
-        None => "Not yet evaluated",
+        Some(GoalClassifierVerdict::Achieved) => "已达成",
+        Some(GoalClassifierVerdict::NotAchieved) => "未达成",
+        None => "尚未评估",
     }
 }
 
@@ -299,26 +299,26 @@ fn humanize_goal_event(event: &str, detail: Option<&str>) -> String {
     // can't leak control bytes; the fixed labels below are `&'static`.
     let phrase = |d: Option<&str>| d.map(|s| strip_control_chars(&s.replace('_', " "), false));
     match event {
-        "goal_created" => "Goal created".into(),
-        "planning_started" => "Planning started".into(),
-        "planning_completed" => "Planning completed".into(),
-        "planning_failed" => "Planning failed".into(),
-        "worker_started" => "Worker started".into(),
-        "worker_completed" => "Worker completed".into(),
-        "worker_failed" => "Worker failed".into(),
-        "context_rotated" => "Context rotated".into(),
+        "goal_created" => "已创建目标".into(),
+        "planning_started" => "开始规划".into(),
+        "planning_completed" => "规划完成".into(),
+        "planning_failed" => "规划失败".into(),
+        "worker_started" => "Worker 启动".into(),
+        "worker_completed" => "Worker 完成".into(),
+        "worker_failed" => "Worker 失败".into(),
+        "context_rotated" => "上下文已轮换".into(),
         // A plain user pause has no extra cause worth showing.
         "goal_paused" => match phrase(detail).filter(|d| d != "user") {
-            Some(d) => format!("Paused: {d}"),
-            None => "Paused".into(),
+            Some(d) => format!("已暂停：{d}"),
+            None => "已暂停".into(),
         },
-        "goal_resumed" => "Resumed".into(),
-        "goal_completed" => "Completed".into(),
-        "goal_cleared" => "Cleared".into(),
-        "budget_exceeded" => "Budget exceeded".into(),
+        "goal_resumed" => "已恢复".into(),
+        "goal_completed" => "已完成".into(),
+        "goal_cleared" => "已清除".into(),
+        "budget_exceeded" => "预算超支".into(),
         "premature_stop_detected" => match phrase(detail) {
-            Some(d) => format!("Stopped early: {d}"),
-            None => "Stopped early".into(),
+            Some(d) => format!("提前停止：{d}"),
+            None => "提前停止".into(),
         },
         other => {
             let mut s = strip_control_chars(&other.replace('_', " "), false);
@@ -346,9 +346,9 @@ fn humanize_event_timestamp(ts: &str) -> String {
         .max(0) as u64;
     let ago = crate::util::format_time_ago(std::time::Duration::from_secs(secs));
     if ago == "just now" {
-        ago
+        "刚刚".to_string()
     } else {
-        format!("{ago} ago")
+        format!("{ago} 前")
     }
 }
 
@@ -456,7 +456,7 @@ pub fn goal_detail_area(screen: Rect, goal: &GoalDisplayState, todos: &[TodoItem
     } else {
         0
     };
-    // "Completion review" section: blank + header + 3 content lines.
+    // "完成度评估" section: blank + header + 3 content lines.
     // Rendered only when the goal has at least one classifier signal.
     let completion_review_lines = if has_classifier_activity(goal) {
         5u16
@@ -561,7 +561,7 @@ pub fn render_goal_detail(
         .saturating_sub(2); // leading + trailing space
     let cleaned = sanitize_title(&goal.objective);
     let objective = if cleaned.is_empty() {
-        "Active Goal".to_owned()
+        "当前目标".to_owned()
     } else {
         truncate_to_width(&cleaned, objective_budget)
     };
@@ -600,7 +600,7 @@ pub fn render_goal_detail(
     // ── Status line ──
     let (status_text, status_color, phase_text) = status_label(goal);
     let mut status_spans = vec![
-        Span::styled("Status: ", Style::default().fg(theme.gray)),
+        Span::styled("状态：", Style::default().fg(theme.gray)),
         Span::styled(
             status_text,
             Style::default()
@@ -624,7 +624,7 @@ pub fn render_goal_detail(
 
     if goal.status.is_paused() {
         let hint = format!(
-            "Status: {} \u{2014} type /goal resume to continue",
+            "状态：{} \u{2014} 输入 /goal resume 继续",
             goal.status.pause_label()
         );
         buf.set_line_safe(
@@ -639,11 +639,11 @@ pub fn render_goal_detail(
         GoalDisplayStatus::Failed | GoalDisplayStatus::Interrupted
     ) {
         let label = if goal.status == GoalDisplayStatus::Interrupted {
-            "Interrupted"
+            "已中断"
         } else {
-            "Failed"
+            "失败"
         };
-        let hint = format!("Status: {label} \u{2014} type /goal clear, then start a new goal");
+        let hint = format!("状态：{label} \u{2014} 输入 /goal clear 后再开启新目标");
         buf.set_line_safe(
             x,
             y,
@@ -696,9 +696,9 @@ pub fn render_goal_detail(
     let has_budget = goal.token_budget.is_some_and(|b| b > 0);
     let budget_label = if has_budget {
         let pct_display = format!(" ({:.0}%)", pct * 100.0);
-        format!("Budget: {budget_display}{pct_display}  Elapsed: {elapsed_str}")
+        format!("预算：{budget_display}{pct_display}  用时：{elapsed_str}")
     } else {
-        format!("Tokens: {budget_display}  Elapsed: {elapsed_str}")
+        format!("Token：{budget_display}  用时：{elapsed_str}")
     };
     buf.set_line_safe(
         x,
@@ -750,7 +750,7 @@ pub fn render_goal_detail(
             x,
             y,
             &Line::from(Span::styled(
-                "No progress items yet",
+                "暂无进度条目",
                 Style::default().fg(theme.gray),
             )),
             w,
@@ -761,7 +761,7 @@ pub fn render_goal_detail(
             x,
             y,
             &Line::from(Span::styled(
-                "Progress:",
+                "进度：",
                 Style::default()
                     .fg(theme.text_primary)
                     .add_modifier(Modifier::BOLD),
@@ -800,7 +800,7 @@ pub fn render_goal_detail(
                 x,
                 y,
                 &Line::from(Span::styled(
-                    format!("  +{remaining} more"),
+                    format!("  还有 {remaining} 项"),
                     Style::default().fg(theme.gray),
                 )),
                 w,
@@ -821,7 +821,7 @@ pub fn render_goal_detail(
             return Some(close_rect);
         }
         let mut subagent_spans = vec![
-            Span::styled("Active Subagent: ", Style::default().fg(theme.gray)),
+            Span::styled("活跃子代理：", Style::default().fg(theme.gray)),
             Span::styled(
                 role.as_str(),
                 Style::default()
@@ -832,7 +832,7 @@ pub fn render_goal_detail(
         let rounds = goal.total_worker_rounds + goal.total_verify_rounds;
         if rounds > 0 {
             subagent_spans.push(Span::styled(
-                format!(" (round {rounds})"),
+                format!("（第 {rounds} 轮）"),
                 Style::default().fg(theme.gray),
             ));
         }
@@ -844,18 +844,18 @@ pub fn render_goal_detail(
             let mut detail_parts: Vec<String> = Vec::new();
             if let Some(tok) = goal.live_subagent_tokens {
                 detail_parts.push(format!(
-                    "Tokens: {}",
+                    "Token：{}",
                     format_tokens_compact(tok.min(i64::MAX as u64) as i64)
                 ));
             }
             if let Some(ctx) = goal.live_context_pct {
-                detail_parts.push(format!("Context: {ctx}%"));
+                detail_parts.push(format!("上下文：{ctx}%"));
             }
             if let Some(turns) = goal.live_turn_count {
-                detail_parts.push(format!("Turns: {turns}"));
+                detail_parts.push(format!("轮次：{turns}"));
             }
             if let Some(tools) = goal.live_tool_call_count {
-                detail_parts.push(format!("Tools: {tools}"));
+                detail_parts.push(format!("工具：{tools}"));
             }
             if !detail_parts.is_empty() {
                 let detail = format!("  {}", detail_parts.join("  "));
@@ -902,7 +902,7 @@ pub fn render_goal_detail(
                     x,
                     y,
                     &Line::from(Span::styled(
-                        format!("  +{remaining} more"),
+                        format!("  还有 {remaining} 项"),
                         Style::default().fg(theme.gray),
                     )),
                     w,
@@ -928,7 +928,7 @@ pub fn render_goal_detail(
             x,
             y,
             &Line::from(Span::styled(
-                "Completion review:",
+                "完成度评估：",
                 Style::default()
                     .fg(theme.text_primary)
                     .add_modifier(Modifier::BOLD),
@@ -943,7 +943,7 @@ pub fn render_goal_detail(
                 x,
                 y,
                 &Line::from(vec![
-                    Span::styled("  Last verdict: ", Style::default().fg(theme.gray)),
+                    Span::styled("  最新判定：", Style::default().fg(theme.gray)),
                     Span::styled(verdict_label, Style::default().fg(theme.text_secondary)),
                 ]),
                 w,
@@ -964,7 +964,7 @@ pub fn render_goal_detail(
                 x,
                 y,
                 &Line::from(vec![
-                    Span::styled("  Attempts: ", Style::default().fg(theme.gray)),
+                    Span::styled("  尝试次数：", Style::default().fg(theme.gray)),
                     Span::styled(attempts_display, Style::default().fg(theme.text_secondary)),
                 ]),
                 w,
@@ -981,7 +981,7 @@ pub fn render_goal_detail(
                 x,
                 y,
                 &Line::from(vec![
-                    Span::styled("  Details: ", Style::default().fg(theme.gray)),
+                    Span::styled("  详情：", Style::default().fg(theme.gray)),
                     Span::styled(
                         path_display.to_owned(),
                         Style::default().fg(theme.text_secondary),
@@ -1008,7 +1008,7 @@ pub fn render_goal_detail(
             x,
             y,
             &Line::from(Span::styled(
-                "Recent History:",
+                "最近历史：",
                 Style::default()
                     .fg(theme.text_primary)
                     .add_modifier(Modifier::BOLD),
@@ -1048,9 +1048,9 @@ pub fn render_goal_detail(
             goal.status,
             GoalDisplayStatus::Failed | GoalDisplayStatus::Interrupted
         ) {
-            "Esc: close  /goal clear, then start a new goal"
+            "Esc：关闭  /goal clear 后再开启新目标"
         } else {
-            "Esc: close  /goal resume | pause | status | clear"
+            "Esc：关闭  /goal resume | pause | status | clear"
         };
         buf.set_line_safe(x, y, &Line::from(Span::styled(hint, hint_style)), w);
     }
@@ -1180,22 +1180,13 @@ mod tests {
         let mut buf = ratatui::buffer::Buffer::empty(screen);
         let area = goal_detail_area(screen, goal, &[]);
         render_goal_detail(&mut buf, area, goal, &[], 0, None, 0, false);
-        let mut s = String::new();
-        for y in 0..screen.height {
-            for x in 0..screen.width {
-                if let Some(cell) = buf.cell(ratatui::layout::Position::new(x, y)) {
-                    s.push_str(cell.symbol());
-                }
-            }
-            s.push('\n');
-        }
-        s
+        buffer_text(&buf)
     }
 
     #[test]
     fn goal_detail_renders_completion_review_section_when_classifier_ran() {
         // Completion-review section: when the goal carries at least one
-        // classifier signal, the modal shows a "Completion review"
+        // classifier signal, the modal shows a "完成度评估"
         // block with the verdict, attempts counter, and details path.
         // Existence is the cached `last_classifier_details_exists` bool
         // (resolved on receipt), so set it true to render the path.
@@ -1208,19 +1199,19 @@ mod tests {
 
         let text = render_to_text(&goal);
         assert!(
-            text.contains("Completion review:"),
+            text.contains("完成度评估："),
             "expected header, got:\n{text}"
         );
         assert!(
-            text.contains("Last verdict: Not Achieved"),
+            text.contains("最新判定：未达成"),
             "expected verdict line, got:\n{text}"
         );
         assert!(
-            text.contains("Attempts: 1/3"),
+            text.contains("尝试次数：1/3"),
             "expected attempts line, got:\n{text}"
         );
         assert!(
-            text.contains("/tmp/goal-details.md") && !text.contains("(unavailable)"),
+            text.contains("/tmp/goal-details.md") && !text.contains("（不可用）"),
             "expected existing details path to render, got:\n{text}"
         );
     }
@@ -1236,7 +1227,7 @@ mod tests {
 
         let text = render_to_text(&goal);
         assert!(
-            text.contains("Last verdict: Achieved"),
+            text.contains("最新判定：已达成"),
             "expected Achieved verdict line, got:\n{text}"
         );
     }
@@ -1255,11 +1246,11 @@ mod tests {
 
         let text = render_to_text(&goal);
         assert!(
-            !text.contains("Completion review"),
+            !text.contains("完成度评估"),
             "section header must be absent, got:\n{text}"
         );
         assert!(
-            !text.contains("Last verdict"),
+            !text.contains("最新判定"),
             "verdict line must be absent, got:\n{text}"
         );
     }
@@ -1273,10 +1264,10 @@ mod tests {
         goal.classifier_max_runs = Some(3);
 
         let text = render_to_text(&goal);
-        assert!(text.contains("Completion review:"));
-        assert!(text.contains("Last verdict: Not yet evaluated"));
-        assert!(text.contains("Attempts: 0/3"));
-        assert!(text.contains("Details: \u{2014}"));
+        assert!(text.contains("完成度评估："));
+        assert!(text.contains("最新判定：尚未评估"));
+        assert!(text.contains("尝试次数：0/3"));
+        assert!(text.contains("详情：\u{2014}"));
     }
 
     #[test]
@@ -1290,11 +1281,11 @@ mod tests {
 
         let text = render_to_text(&goal);
         assert!(
-            text.contains("Active \u{2014} Verifying (2/3)"),
+            text.contains("进行中 \u{2014} 校验中（2/3）"),
             "status line must show the verifying overlay with counter, got:\n{text}"
         );
         assert!(
-            !text.contains("Executing"),
+            !text.contains("执行中"),
             "verifying overlay must replace the Executing phase, got:\n{text}"
         );
     }
@@ -1306,7 +1297,7 @@ mod tests {
 
         let text = render_to_text(&goal);
         assert!(
-            text.contains("Active \u{2014} Planning"),
+            text.contains("进行中 \u{2014} 规划中"),
             "status line must show the planning overlay, got:\n{text}"
         );
     }
@@ -1322,11 +1313,11 @@ mod tests {
 
         let text = render_to_text(&goal);
         assert!(
-            text.contains("Verifying (1/3)"),
+            text.contains("校验中（1/3）"),
             "verifying overlay must win over planning, got:\n{text}"
         );
         assert!(
-            !text.contains("\u{2014} Planning"),
+            !text.contains("\u{2014} 规划中"),
             "planning must not render when verifying is also set, got:\n{text}"
         );
     }
@@ -1339,7 +1330,7 @@ mod tests {
 
         let text = render_to_text(&goal);
         assert!(
-            text.contains("Active \u{2014} Executing"),
+            text.contains("进行中 \u{2014} 执行中"),
             "steady-state status line must show Executing, got:\n{text}"
         );
     }
@@ -1524,7 +1515,7 @@ mod tests {
         // still renders its single tokens line, and zero per-model rows are
         // emitted for a single-model goal.
         assert!(
-            rows_containing(&goal, "Active Subagent:") >= 1,
+            rows_containing(&goal, "活跃子代理：") >= 1,
             "metrics block must still render"
         );
         assert_eq!(
@@ -1585,7 +1576,7 @@ mod tests {
             !text.contains(&format!("model-{:02}", MAX_MODEL_DISPLAY)),
             "capped model must NOT render:\n{text}"
         );
-        assert!(text.contains("+2 more"), "overflow row renders:\n{text}");
+        assert!(text.contains("还有 2 项"), "overflow row renders:\n{text}");
     }
 
     #[test]
@@ -1654,15 +1645,15 @@ mod tests {
         goal.status = GoalDisplayStatus::Active;
         goal.phase = GoalDisplayPhase::Executing;
         let (s, _, p) = status_label(&goal);
-        assert_eq!(s, "Active");
-        assert_eq!(p, "Executing");
+        assert_eq!(s, "进行中");
+        assert_eq!(p, "执行中");
 
         for (status, expected_label) in [
-            (GoalDisplayStatus::UserPaused, "Paused"),
-            (GoalDisplayStatus::BackOffPaused, "Paused (back-off)"),
-            (GoalDisplayStatus::NoProgressPaused, "Paused (no progress)"),
-            (GoalDisplayStatus::InfraPaused, "Paused (error)"),
-            (GoalDisplayStatus::Blocked, "Paused (verification blocked)"),
+            (GoalDisplayStatus::UserPaused, "已暂停"),
+            (GoalDisplayStatus::BackOffPaused, "已暂停（退避中）"),
+            (GoalDisplayStatus::NoProgressPaused, "已暂停（无进展）"),
+            (GoalDisplayStatus::InfraPaused, "已暂停（错误）"),
+            (GoalDisplayStatus::Blocked, "已暂停（校验受阻）"),
         ] {
             goal.status = status;
             let (s, c, p) = status_label(&goal);
@@ -1673,28 +1664,42 @@ mod tests {
 
         goal.status = GoalDisplayStatus::Failed;
         let (s, color, _) = status_label(&goal);
-        assert_eq!(s, "Failed");
+        assert_eq!(s, "失败");
         assert_eq!(color, theme.accent_error);
 
         goal.status = GoalDisplayStatus::BudgetLimited;
         let (s, _, _) = status_label(&goal);
-        assert_eq!(s, "Budget Limited");
+        assert_eq!(s, "预算受限");
 
         goal.status = GoalDisplayStatus::Complete;
         let (s, _, _) = status_label(&goal);
-        assert_eq!(s, "Complete");
+        assert_eq!(s, "已完成");
     }
 
     /// Walk the buffer and collect every cell's symbol into a single string,
     /// joining rows with `\n`. Used to assert that rendered text contains
     /// specific user-visible substrings.
+    ///
+    /// Wide (2-column) glyphs occupy two buffer cells; the second cell is
+    /// padding (either "" or " "). We skip that padding cell so CJK reads
+    /// as "回复中" instead of "回 复 中" in `.contains(...)` assertions.
     fn buffer_text(buf: &ratatui::buffer::Buffer) -> String {
+        use unicode_width::UnicodeWidthStr;
         let area = buf.area;
         let mut out = String::new();
         for y in area.y..area.y + area.height {
+            let mut skip_next = false;
             for x in area.x..area.x + area.width {
+                if skip_next {
+                    skip_next = false;
+                    continue;
+                }
                 if let Some(cell) = buf.cell(ratatui::layout::Position::new(x, y)) {
-                    out.push_str(cell.symbol());
+                    let sym = cell.symbol();
+                    out.push_str(sym);
+                    if UnicodeWidthStr::width(sym) == 2 {
+                        skip_next = true;
+                    }
                 }
             }
             out.push('\n');
@@ -1712,7 +1717,7 @@ mod tests {
         render_goal_detail(&mut buf, area, &goal, &[], 0, None, 0, false);
 
         let text = buffer_text(&buf);
-        assert!(text.contains("type /goal resume to continue"));
+        assert!(text.contains("输入 /goal resume 继续"));
     }
 
     #[test]
@@ -1724,7 +1729,7 @@ mod tests {
         render_goal_detail(&mut buf, area, &goal, &[], 0, None, 0, false);
 
         let text = buffer_text(&buf);
-        assert!(!text.contains("type /goal resume to continue"));
+        assert!(!text.contains("输入 /goal resume 继续"));
     }
 
     #[test]
@@ -1754,15 +1759,15 @@ mod tests {
 
         let text = buffer_text(&buf);
         assert!(
-            text.contains("Paused (error)"),
+            text.contains("已暂停（错误）"),
             "modal must show the InfraPaused status label, got:\n{text}"
         );
         assert!(
-            text.contains("Reason: Turn failed: upstream unavailable"),
+            text.contains("原因：Turn failed: upstream unavailable"),
             "modal must render the pause_message text, got:\n{text}"
         );
         assert!(
-            text.contains("type /goal resume to continue"),
+            text.contains("输入 /goal resume 继续"),
             "InfraPaused is paused so the resume hint must render, got:\n{text}"
         );
     }
@@ -1779,15 +1784,15 @@ mod tests {
 
         let text = buffer_text(&buf);
         assert!(
-            text.contains("Paused (verification blocked)"),
+            text.contains("已暂停（校验受阻）"),
             "modal must show the Blocked status label, got:\n{text}"
         );
         assert!(
-            text.contains("Reason: no windows sdk"),
+            text.contains("原因：no windows sdk"),
             "modal must render the pause_message text, got:\n{text}"
         );
         assert!(
-            text.contains("type /goal resume to continue"),
+            text.contains("输入 /goal resume 继续"),
             "Blocked is paused so the resume hint must render, got:\n{text}"
         );
     }
@@ -1807,7 +1812,7 @@ mod tests {
 
         let text = buffer_text(&buf);
         assert!(
-            !text.contains("Reason:"),
+            !text.contains("原因："),
             "no pause_message means no Reason line, got:\n{text}"
         );
     }
@@ -1834,7 +1839,7 @@ mod tests {
 
             let text = buffer_text(&buf);
             assert!(
-                !text.contains("Reason:"),
+                !text.contains("原因："),
                 "non-paused status {status:?} must never render a Reason: line even with a stale pause_message, got:\n{text}"
             );
         }
@@ -1856,10 +1861,10 @@ mod tests {
 
         let text = buffer_text(&buf);
         let hint_pos = text
-            .find("type /goal resume to continue")
+            .find("输入 /goal resume 继续")
             .expect("pause hint must render");
         let reason_pos = text
-            .find("Reason: no windows sdk")
+            .find("原因：no windows sdk")
             .expect("reason line must render");
         assert!(
             reason_pos > hint_pos,
@@ -2020,7 +2025,7 @@ mod tests {
         render_goal_detail(&mut buf, area, &goal, &todos, 0, None, 0, false);
 
         let text = buffer_text(&buf);
-        assert!(text.contains("Progress:"), "must render progress header");
+        assert!(text.contains("进度："), "must render progress header");
         assert!(
             text.contains("Setup project"),
             "must render todo content, got:\n{text}"
@@ -2063,7 +2068,7 @@ mod tests {
 
         let text = buffer_text(&buf);
         assert!(
-            text.contains("+5 more"),
+            text.contains("还有 5 项"),
             "must show overflow for 20 items (cap=15), got:\n{text}"
         );
     }
@@ -2115,7 +2120,7 @@ mod tests {
             "title must show the objective, got:\n{text}"
         );
         assert!(
-            !text.contains("Active Goal"),
+            !text.contains("当前目标"),
             "static placeholder title must be replaced by the objective, got:\n{text}"
         );
     }
@@ -2188,7 +2193,7 @@ mod tests {
         render_goal_detail(&mut buf, area, &goal, &[], 0, None, 0, false);
         let text = buffer_text(&buf);
         assert!(
-            text.contains("Esc: close"),
+            text.contains("Esc：关闭"),
             "commands hint must render (not clipped) with no subagent/history, got:\n{text}"
         );
     }
@@ -2202,7 +2207,7 @@ mod tests {
         assert_eq!(classifier_details_display(None, false), "\u{2014}");
         assert_eq!(
             classifier_details_display(Some("/no/such/path/zzz-details.md"), false),
-            "(unavailable)"
+            "（不可用）"
         );
         assert_eq!(
             classifier_details_display(Some("/tmp/exists.md"), true),
@@ -2219,7 +2224,7 @@ mod tests {
         goal.last_classifier_details_path = Some("/no/such/path/zzz-details.md".into());
         let text = render_to_text(&goal);
         assert!(
-            text.contains("Details: (unavailable)"),
+            text.contains("详情：（不可用）"),
             "missing details file must render (unavailable), got:\n{text}"
         );
         assert!(
@@ -2240,11 +2245,11 @@ mod tests {
         goal.last_classifier_verdict = Some(GoalClassifierVerdict::NotAchieved);
         let text = render_to_text(&goal);
         assert!(
-            text.contains("Completion review:"),
+            text.contains("完成度评估："),
             "section must render, got:\n{text}"
         );
         assert!(
-            text.contains("Attempts: \u{2014}"),
+            text.contains("尝试次数：\u{2014}"),
             "empty counter must fall back to an em-dash, got:\n{text}"
         );
     }
@@ -2255,20 +2260,17 @@ mod tests {
     fn humanize_goal_event_maps_wire_vocabulary() {
         assert_eq!(
             humanize_goal_event("goal_paused", Some("back_off")),
-            "Paused: back off"
+            "已暂停：back off"
         );
         // A plain user pause shows no redundant cause.
-        assert_eq!(humanize_goal_event("goal_paused", Some("user")), "Paused");
-        assert_eq!(humanize_goal_event("goal_paused", None), "Paused");
+        assert_eq!(humanize_goal_event("goal_paused", Some("user")), "已暂停");
+        assert_eq!(humanize_goal_event("goal_paused", None), "已暂停");
         assert_eq!(
             humanize_goal_event("premature_stop_detected", Some("giving_up")),
-            "Stopped early: giving up"
+            "提前停止：giving up"
         );
-        assert_eq!(humanize_goal_event("goal_completed", None), "Completed");
-        assert_eq!(
-            humanize_goal_event("budget_exceeded", None),
-            "Budget exceeded"
-        );
+        assert_eq!(humanize_goal_event("goal_completed", None), "已完成");
+        assert_eq!(humanize_goal_event("budget_exceeded", None), "预算超支");
         // Forward-compat: an unmapped event de-snakes + capitalizes.
         assert_eq!(
             humanize_goal_event("some_future_event", None),
@@ -2281,11 +2283,11 @@ mod tests {
         assert_eq!(humanize_event_timestamp(""), "");
         // Non-RFC3339 (legacy / fixture) returned verbatim.
         assert_eq!(humanize_event_timestamp("1m ago"), "1m ago");
-        // A fresh RFC3339 stamp → "just now"; ~2h ago → "2h ago".
+        // A fresh RFC3339 stamp → "刚刚"; ~2h ago → "2h 前".
         let now = chrono::Utc::now().to_rfc3339();
-        assert_eq!(humanize_event_timestamp(&now), "just now");
+        assert_eq!(humanize_event_timestamp(&now), "刚刚");
         let past = (chrono::Utc::now() - chrono::Duration::hours(2)).to_rfc3339();
-        assert_eq!(humanize_event_timestamp(&past), "2h ago");
+        assert_eq!(humanize_event_timestamp(&past), "2h 前");
     }
 
     #[test]
@@ -2299,10 +2301,10 @@ mod tests {
             Some((chrono::Utc::now() - chrono::Duration::minutes(2)).to_rfc3339());
         let text = render_to_text(&goal);
         assert!(
-            text.contains("Paused: back off"),
+            text.contains("已暂停：back off"),
             "humanized event label, got:\n{text}"
         );
-        assert!(text.contains("2m ago"), "relative time, got:\n{text}");
+        assert!(text.contains("2m 前"), "relative time, got:\n{text}");
         assert!(
             !text.contains("goal_paused"),
             "raw event name must not render, got:\n{text}"
@@ -2399,7 +2401,7 @@ mod tests {
         goal.objective = "  \n\t  ".into(); // whitespace/control only
         let text = render_to_text(&goal);
         assert!(
-            text.contains("Active Goal"),
+            text.contains("当前目标"),
             "a blank objective must fall back to the placeholder, got:\n{text}"
         );
     }
@@ -2452,7 +2454,7 @@ mod tests {
         let mut buf = ratatui::buffer::Buffer::empty(screen);
         render_goal_detail(&mut buf, area, &goal, &[], 0, None, 0, false);
         assert!(
-            buffer_text(&buf).contains("Esc: close"),
+            buffer_text(&buf).contains("Esc：关闭"),
             "commands hint must render for a just-spawned subagent"
         );
     }
@@ -2477,6 +2479,6 @@ mod tests {
         let mut buf = ratatui::buffer::Buffer::empty(screen);
         render_goal_detail(&mut buf, area, &goal, &[], 0, None, 0, false);
         let t = buffer_text(&buf);
-        assert!(t.contains("Completion review:") && t.contains("Esc: close"));
+        assert!(t.contains("完成度评估：") && t.contains("Esc：关闭"));
     }
 }

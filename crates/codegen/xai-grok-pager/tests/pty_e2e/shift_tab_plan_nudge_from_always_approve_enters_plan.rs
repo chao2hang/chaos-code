@@ -45,7 +45,7 @@ async fn shift_tab_plan_nudge_from_always_approve_enters_plan() {
         .inject_keys(b"plan the refactor")
         .expect("type planning keyword");
     harness
-        .wait_for_text("plan mode via", Duration::from_secs(10))
+        .wait_for_text("计划模式", Duration::from_secs(10))
         .unwrap_or_else(|e| {
             panic!(
                 "plan nudge must show; {e}\nscreen:\n{}",

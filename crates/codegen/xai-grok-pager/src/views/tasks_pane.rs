@@ -2802,7 +2802,7 @@ mod tests {
             } => styled.spans.iter().map(|s| s.content.as_ref()).collect(),
             _ => panic!("expected Watchers header first"),
         };
-        assert!(header_text.contains("Watchers"), "got: {header_text}");
+        assert!(header_text.contains("监视器"), "got: {header_text}");
         assert!(header_text.contains('2'), "combined count: {header_text}");
         assert!(matches!(
             &pane.entries[1],
@@ -3430,7 +3430,7 @@ mod tests {
 
         let labels: Vec<&str> = pane.entries.iter().map(|e| e.search_text()).collect();
         assert!(
-            labels.contains(&"Workflows"),
+            labels.contains(&"工作流"),
             "missing Workflows header: {labels:?}"
         );
         assert!(labels.iter().any(|l| l.contains("pii-purge")), "{labels:?}");

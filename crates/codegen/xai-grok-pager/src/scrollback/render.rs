@@ -1517,7 +1517,7 @@ mod tests {
 
         let header_row = buffer_row_text(&buf, viewport.height - 1);
         assert!(
-            header_row.contains("Read 50 files · 2 failed"),
+            header_row.contains("读取 50 个文件 · 2 失败"),
             "header label must aggregate the full off-screen run: {header_row:?}"
         );
     }
@@ -1585,7 +1585,7 @@ mod tests {
 
         let header_row = buffer_row_text(&buf, viewport.height - 1);
         assert!(
-            header_row.contains("Ran 3 commands"),
+            header_row.contains("运行 3 个命令"),
             "label must cover the full off-screen hidden prefix: {header_row:?}"
         );
     }
@@ -1924,7 +1924,7 @@ mod tests {
 
         let labeled = truncation_header_row(&state, viewport, true);
         assert!(
-            labeled.contains("Ran 3 commands"),
+            labeled.contains("运行 3 个命令"),
             "spans feed the hidden-prefix bucket label: {labeled:?}"
         );
         let plain = truncation_header_row(&state, viewport, false);
@@ -1992,7 +1992,7 @@ mod tests {
 
         let labeled = truncation_header_row(&state, viewport, true);
         assert!(
-            labeled.contains("Ran 6 commands"),
+            labeled.contains("运行 6 个命令"),
             "expanded header must describe the whole run: {labeled:?}"
         );
         let plain = truncation_header_row(&state, viewport, false);
@@ -2050,17 +2050,32 @@ mod tests {
         let model = &result.selection_model;
         let header = model.range(0, GROUP_HEADER_RANGE_ID).expect("header range");
         assert_eq!(header.lines.len(), 1);
-        assert_eq!(header.lines[0].text, "Ran 3 commands");
+        assert_eq!(header.lines[0].text, "运行 3 个命令");
         assert_eq!(header.lines[0].screen_y, 0);
         // Pin the hitbox to the DRAWN glyphs, not just to the chrome helper:
         // the frame's own cells must spell the label starting at screen_x, so
         // a chrome edit that misaligned highlight from paint would fail here.
         let screen_x = header.lines[0].screen_x;
-        let drawn: String = (screen_x..screen_x + header.lines[0].selectable_cols.end)
-            .map(|x| buf[(x, 0)].symbol())
-            .collect();
+        // CJK-aware extraction: wide glyphs occupy two cells; the second
+        // cell is padding (a space). Skip it so "运行 3 个命令" reads
+        // correctly instead of "运 行 3 个 命 令".
+        let mut drawn = String::new();
+        {
+            use unicode_width::UnicodeWidthStr;
+            let mut x = screen_x;
+            let end = screen_x + header.lines[0].selectable_cols.end;
+            while x < end {
+                let sym = buf[(x, 0)].symbol();
+                drawn.push_str(sym);
+                if UnicodeWidthStr::width(sym) == 2 {
+                    x += 2;
+                } else {
+                    x += 1;
+                }
+            }
+        }
         assert_eq!(
-            drawn, "Ran 3 commands",
+            drawn, "运行 3 个命令",
             "synthetic hitbox must start exactly where the drawn label starts"
         );
         let expected_x = HorizontalLayout::ACCENT
@@ -2072,7 +2087,7 @@ mod tests {
         );
         let copy = reconstruct_selection_text(model, &full_row_drag(&header.lines[0]))
             .expect("header copy");
-        assert_eq!(copy, "Ran 3 commands");
+        assert_eq!(copy, "运行 3 个命令");
 
         // Expanded: the collapse header describes the whole run and copies it.
         state.set_selected(Some(0));
@@ -2083,10 +2098,10 @@ mod tests {
         let header = model
             .range(0, GROUP_HEADER_RANGE_ID)
             .expect("expanded header range");
-        assert_eq!(header.lines[0].text, "Ran 6 commands");
+        assert_eq!(header.lines[0].text, "运行 6 个命令");
         let copy = reconstruct_selection_text(model, &full_row_drag(&header.lines[0]))
             .expect("expanded header copy");
-        assert_eq!(copy, "Ran 6 commands");
+        assert_eq!(copy, "运行 6 个命令");
     }
 
     /// With the vocabulary gate off, a span-fed truncation header keeps the
@@ -2171,7 +2186,7 @@ mod tests {
             "verb header must render its label: {rows:?}"
         );
         assert!(
-            rows.iter().any(|r| r.contains("Ran 3 commands")),
+            rows.iter().any(|r| r.contains("运行 3 个命令")),
             "truncation header must render its label: {rows:?}"
         );
 
@@ -2183,7 +2198,7 @@ mod tests {
         let trunc = model
             .range(2, GROUP_HEADER_RANGE_ID)
             .expect("truncation header range");
-        assert_eq!(trunc.lines[0].text, "Ran 3 commands");
+        assert_eq!(trunc.lines[0].text, "运行 3 个命令");
     }
 
     #[test]

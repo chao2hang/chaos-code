@@ -1526,7 +1526,7 @@ fn truncation_indicator_line(theme: &Theme) -> Line<'static> {
             "Ctrl-F",
             Style::default().fg(theme.accent_user).bg(theme.bg_light),
         ),
-        Span::styled(" to expand", style),
+        Span::styled(" 展开", style),
     ])
 }
 
@@ -1736,7 +1736,7 @@ fn build_reject_once_line<'a>(
     } else {
         // Placeholder.
         (
-            "No, reject (type to add feedback)".to_string(),
+            "拒绝（输入以补充说明）".to_string(),
             Style::default().fg(theme.gray).bg(row_bg),
         )
     };
@@ -1838,13 +1838,13 @@ mod tests {
 
     fn allow_always_mcp_option(tool: &str, server: Option<&str>) -> acp::PermissionOption {
         let perm = McpToolPermission {
-            prompt_prefix: "Always allow:".to_owned(),
+            prompt_prefix: "始终允许：".to_owned(),
             tool_name: tool.to_owned(),
             server_prefix: server.map(|s| s.to_owned()),
         };
         acp::PermissionOption::new(
             acp::PermissionOptionId::new(Arc::from("allow-always-mcp")),
-            format!("Always allow: {}", tool),
+            format!("始终允许：{}", tool),
             acp::PermissionOptionKind::AllowAlways,
         )
         .meta(
@@ -2000,7 +2000,7 @@ mod tests {
         let opt = allow_always_mcp_option("linear__list", Some("linear"));
         let scope = mcp_state("linear__list", Some("linear"), McpScope::Server);
         let (prefix, scope_text) = dynamic_option_label(&opt, None, Some(&scope));
-        assert_eq!(prefix, "Always allow: ");
+        assert_eq!(prefix, "始终允许： ");
         assert_eq!(scope_text.as_deref(), Some("all tools from Linear"));
     }
 
@@ -2011,7 +2011,7 @@ mod tests {
         let opt = allow_always_mcp_option("linear__list_issues", Some("linear"));
         let scope = mcp_state("linear__list_issues", Some("linear"), McpScope::Tool);
         let (prefix, scope_text) = dynamic_option_label(&opt, None, Some(&scope));
-        assert_eq!(prefix, "Always allow: ");
+        assert_eq!(prefix, "始终允许： ");
         assert_eq!(scope_text.as_deref(), Some("(Linear) List Issues"));
     }
 
@@ -2266,15 +2266,25 @@ mod tests {
     }
 
     fn render_to_text(state: &PermissionViewState, area: Rect) -> String {
+        use unicode_width::UnicodeWidthStr;
         let theme = Theme::current();
         let mut buf = Buffer::empty(area);
         let _ = render_permission_view(&mut buf, area, state, "", None, &theme, true);
         (0..area.height)
             .map(|row| {
-                (area.x..area.x + area.width)
-                    .map(|col| buf[(col, row)].symbol().to_string())
-                    .collect::<String>()
-                    + "\n"
+                let mut out = String::new();
+                let mut col = area.x;
+                let end = area.x + area.width;
+                while col < end {
+                    if let Some(cell) = buf.cell((col, row)) {
+                        let s = cell.symbol();
+                        out.push_str(s);
+                        col = col.saturating_add(UnicodeWidthStr::width(s).max(1) as u16);
+                    } else {
+                        col = col.saturating_add(1);
+                    }
+                }
+                out + "\n"
             })
             .collect()
     }
@@ -2290,7 +2300,7 @@ mod tests {
             "5th row must be the indicator:\n{text}"
         );
         assert!(
-            text.contains("... Ctrl-F to expand"),
+            text.contains("... Ctrl-F 展开"),
             "indicator missing:\n{text}"
         );
         assert!(text.contains("Yes"), "options row missing:\n{text}");
@@ -2304,7 +2314,7 @@ mod tests {
         state.args_expanded = true;
         let text = render_to_text(&state, Rect::new(0, 0, 80, 12));
         assert!(
-            !text.contains("Ctrl-F to expand"),
+            !text.contains("Ctrl-F 展开"),
             "no indicator when expanded:\n{text}"
         );
         assert!(text.contains("Yes"), "options row missing:\n{text}");
@@ -2365,7 +2375,7 @@ mod tests {
         let opt = allow_always_mcp_option("linear__list", Some("linear"));
         let scope = mcp_state("linear__list", Some("linear"), McpScope::Tool);
         let (prefix, scope_text) = dynamic_option_label(&opt, None, Some(&scope));
-        assert_eq!(prefix, "Always allow: ");
+        assert_eq!(prefix, "始终允许： ");
         assert_eq!(scope_text.as_deref(), Some("(Linear) List"));
     }
 
@@ -2374,7 +2384,7 @@ mod tests {
         let opt = allow_always_mcp_option("linear__list", Some("linear"));
         let scope = mcp_state("linear__list", Some("linear"), McpScope::Server);
         let (prefix, scope_text) = dynamic_option_label(&opt, None, Some(&scope));
-        assert_eq!(prefix, "Always allow: ");
+        assert_eq!(prefix, "始终允许： ");
         assert_eq!(scope_text.as_deref(), Some("all tools from Linear"));
     }
 
@@ -2394,11 +2404,11 @@ mod tests {
         // When mcp_scope is None but selected_words is Some and the meta
         // is BashCommandPermission, the bash branch still works.
         let bash_perm = BashCommandPermission {
-            prompt_prefix: "Always allow:".to_owned(),
+            prompt_prefix: "始终允许：".to_owned(),
         };
         let opt = acp::PermissionOption::new(
             acp::PermissionOptionId::new(Arc::from("allow-always-command")),
-            "Always allow: cargo test".to_owned(),
+            "始终允许：cargo test".to_owned(),
             acp::PermissionOptionKind::AllowAlways,
         )
         .meta(
@@ -2407,20 +2417,20 @@ mod tests {
                 .and_then(|v| v.as_object().cloned()),
         );
         let (prefix, scope_text) = dynamic_option_label(&opt, Some("cargo test"), None);
-        assert_eq!(prefix, "Always allow: ");
+        assert_eq!(prefix, "始终允许： ");
         assert_eq!(scope_text.as_deref(), Some("cargo test"));
     }
 
     #[test]
     fn dynamic_option_label_rebuilds_reject_always_bash_row() {
-        // The "Never allow:" row shares the ←/→ word-scope selection with the
+        // The "始终拒绝：" row shares the ←/→ word-scope selection with the
         // allow row, so its label must rebuild from selected_words too.
         let bash_perm = BashCommandPermission {
-            prompt_prefix: "Never allow:".to_owned(),
+            prompt_prefix: "始终拒绝：".to_owned(),
         };
         let opt = acp::PermissionOption::new(
             acp::PermissionOptionId::new(Arc::from("reject-always-command")),
-            "Never allow: cargo test --workspace".to_owned(),
+            "始终拒绝：cargo test --workspace".to_owned(),
             acp::PermissionOptionKind::RejectAlways,
         )
         .meta(
@@ -2429,7 +2439,7 @@ mod tests {
                 .and_then(|v| v.as_object().cloned()),
         );
         let (prefix, scope_text) = dynamic_option_label(&opt, Some("cargo test"), None);
-        assert_eq!(prefix, "Never allow: ");
+        assert_eq!(prefix, "始终拒绝： ");
         assert_eq!(scope_text.as_deref(), Some("cargo test"));
     }
 
@@ -2439,19 +2449,19 @@ mod tests {
         // words the dispatch meta will persist, not the static full name.
         let opt = acp::PermissionOption::new(
             acp::PermissionOptionId::new(Arc::from("reject-always-command")),
-            "Never allow: cargo test --workspace".to_owned(),
+            "始终拒绝：cargo test --workspace".to_owned(),
             acp::PermissionOptionKind::RejectAlways,
         )
         .meta(
             serde_json::to_value(BashCommandPermission {
-                prompt_prefix: "Never allow:".to_owned(),
+                prompt_prefix: "始终拒绝：".to_owned(),
             })
             .ok()
             .and_then(|v| v.as_object().cloned()),
         );
         assert_eq!(
             option_label_for_selection(&opt, Some("cargo"), None),
-            "Never allow: cargo"
+            "始终拒绝： cargo"
         );
         // Options without scope meta keep their static name.
         let plain = acp::PermissionOption::new(

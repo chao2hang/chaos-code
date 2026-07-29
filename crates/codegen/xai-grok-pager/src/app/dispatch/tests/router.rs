@@ -2082,12 +2082,12 @@ fn show_tasks_lists_a_scheduled_task() {
     let effects = dispatch(Action::ShowTasks, &mut app);
     assert!(effects.is_empty(), "got: {effects:?}");
     let text = last_system_text(&app, AgentId(0));
-    assert!(text.contains("Task (1):"), "got: {text:?}");
+    assert!(text.contains("任务（1）："), "got: {text:?}");
     assert!(
         text.contains("loop · every 5m · check CI status"),
         "got: {text:?}"
     );
-    assert!(text.contains("scheduled"), "got: {text:?}");
+    assert!(text.contains("已调度"), "got: {text:?}");
 }
 #[test]
 fn show_tasks_no_active_agent_is_noop() {
@@ -2242,17 +2242,17 @@ fn peek_label_reflects_last_response_type() {
     agent
         .scrollback
         .push_block(RenderBlock::agent_message("hi"));
-    assert_eq!(extract_last_response_type(agent), "Response");
+    assert_eq!(extract_last_response_type(agent), "回复");
     agent
         .scrollback
         .push_block(RenderBlock::tool_call("edit", "src/x.rs", true));
-    assert_eq!(extract_last_response_type(agent), "Edit");
+    assert_eq!(extract_last_response_type(agent), "编辑");
     agent.scrollback.push_block(RenderBlock::thinking("hmm"));
-    assert_eq!(extract_last_response_type(agent), "Thought");
+    assert_eq!(extract_last_response_type(agent), "思考");
     agent
         .scrollback
         .push_block(RenderBlock::user_prompt("do it"));
-    assert_eq!(extract_last_response_type(agent), "Idle");
+    assert_eq!(extract_last_response_type(agent), "空闲");
 }
 /// agent.question_view.is_some() → NeedsInput.
 #[test]

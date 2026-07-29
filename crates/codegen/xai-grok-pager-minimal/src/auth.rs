@@ -293,10 +293,7 @@ pub(super) fn render_auth(buf: &mut Buffer, area: Rect, theme: &Theme, hint: &Mi
                 area,
                 y,
                 bottom,
-                Line::from(Span::styled(
-                    "Do you trust the contents of this directory?",
-                    bold,
-                )),
+                Line::from(Span::styled("是否信任该目录下的内容？", bold)),
             );
             y = render_url(
                 buf,
@@ -319,7 +316,7 @@ pub(super) fn render_auth(buf: &mut Buffer, area: Rect, theme: &Theme, hint: &Mi
                 area,
                 y,
                 bottom,
-                Line::from(Span::styled("posing security risks.", gray)),
+                Line::from(Span::styled("存在安全风险。", gray)),
             );
             y = put_line(buf, area, y, bottom, Line::default());
             y = put_line(
@@ -329,7 +326,7 @@ pub(super) fn render_auth(buf: &mut Buffer, area: Rect, theme: &Theme, hint: &Mi
                 bottom,
                 Line::from(vec![
                     Span::styled("y", bold),
-                    Span::styled("  Yes, proceed", gray),
+                    Span::styled("  允许，继续", gray),
                 ]),
             );
             y = put_line(
@@ -339,7 +336,7 @@ pub(super) fn render_auth(buf: &mut Buffer, area: Rect, theme: &Theme, hint: &Mi
                 bottom,
                 Line::from(vec![
                     Span::styled("n", bold),
-                    Span::styled("  No, quit", gray),
+                    Span::styled("  拒绝，退出", gray),
                 ]),
             );
             y = put_line(buf, area, y, bottom, Line::default());
@@ -349,7 +346,7 @@ pub(super) fn render_auth(buf: &mut Buffer, area: Rect, theme: &Theme, hint: &Mi
                 y,
                 bottom,
                 Line::from(Span::styled(
-                    "Enter or y to trust \u{00b7} n or Esc to quit",
+                    "回车或 y 表示信任 \u{00b7} n 或 Esc 表示退出",
                     gray,
                 )),
             );
@@ -500,17 +497,17 @@ mod tests {
         render_auth(&mut buf, area, &theme, &hint);
         let text = buffer_text(&buf, area);
         assert!(
-            text.contains("Do you trust the contents of this directory?"),
+            text.contains("是否信任该目录下的内容？"),
             "question: {text:?}"
         );
         assert!(
             text.contains("/home/agent/project"),
             "workspace path: {text:?}"
         );
-        assert!(text.contains("Yes, proceed"), "yes option: {text:?}");
-        assert!(text.contains("No, quit"), "no option: {text:?}");
-        assert!(text.contains("Enter or y to trust"), "hint line: {text:?}");
-        assert!(text.contains("posing security risks"), "warning: {text:?}");
+        assert!(text.contains("允许，继续"), "yes option: {text:?}");
+        assert!(text.contains("拒绝，退出"), "no option: {text:?}");
+        assert!(text.contains("回车或 y 表示信任"), "hint line: {text:?}");
+        assert!(text.contains("存在安全风险"), "warning: {text:?}");
     }
 
     #[test]
@@ -525,11 +522,25 @@ mod tests {
     }
 
     fn buffer_text(buf: &Buffer, area: Rect) -> String {
+        use unicode_width::UnicodeWidthStr;
         let mut text = String::new();
         for y in 0..area.height {
+            let mut skip_next = false;
             for x in 0..area.width {
+                if skip_next {
+                    skip_next = false;
+                    continue;
+                }
                 if let Some(c) = buf.cell((x, y)) {
-                    text.push_str(c.symbol());
+                    let sym = c.symbol();
+                    text.push_str(sym);
+                    // A wide (double-width) glyph occupies two cells; the
+                    // second cell is padding (either "" or " " depending
+                    // on the ratatui version). Skip it so CJK reads as
+                    // "登录" instead of "登 录".
+                    if UnicodeWidthStr::width(sym) == 2 {
+                        skip_next = true;
+                    }
                 }
             }
             text.push('\n');

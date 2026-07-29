@@ -523,7 +523,7 @@ mod tests {
         ];
         entries[1].is_running = true;
         let l = label(&entries);
-        assert_eq!(l.text, "Reading 1 file, Searching 1 pattern");
+        assert_eq!(l.text, "读取中 1 个文件, 搜索中 1 个模式");
         assert!(l.running);
 
         entries[1].is_running = false;
@@ -546,7 +546,7 @@ mod tests {
             searched("pager", &["https://b.com", "https://c.com"]),
         ];
         let l = label(&entries);
-        assert_eq!(l.text, "Searched 3 websites");
+        assert_eq!(l.text, "搜索 3 个网站");
 
         // No citations yet (still running / no results): fall back to call count.
         let entries = vec![
@@ -554,7 +554,7 @@ mod tests {
             entry(ToolCallBlock::WebSearch(WebSearchToolCallBlock::new("b"))),
         ];
         let l = label(&entries);
-        assert_eq!(l.text, "Searched 2 websites");
+        assert_eq!(l.text, "搜索 2 个网站");
     }
 
     #[test]
@@ -637,7 +637,7 @@ mod tests {
         // but the label stays tools-only.
         let entries = vec![execute(), thought(), execute(), thought(), execute()];
         let l = trunc_label(&entries, None).expect("commands bucket");
-        assert_eq!(l.text, "Ran 3 commands");
+        assert_eq!(l.text, "运行 3 个命令");
     }
 
     #[test]
@@ -646,7 +646,7 @@ mod tests {
         // participant slot without appearing in the label.
         let entries = vec![execute(), thought(), execute(), execute(), execute()];
         let l = trunc_label(&entries, Some(3)).expect("prefix buckets");
-        assert_eq!(l.text, "Ran 2 commands");
+        assert_eq!(l.text, "运行 2 个命令");
     }
 
     #[test]
@@ -687,7 +687,7 @@ mod tests {
                 .with_display_mode(DisplayMode::Collapsed),
         ];
         let l = trunc_label(&entries, Some(1)).expect("prefix buckets");
-        assert_eq!(l.text, "Ran 1 command");
+        assert_eq!(l.text, "运行 1 个命令");
     }
 
     #[test]
@@ -712,7 +712,7 @@ mod tests {
         // participant — both commands fit in a limit of 2.
         let l = truncation_header_label(&refs, 0..refs.len(), Some(2), false, &Theme::current())
             .expect("buckets");
-        assert_eq!(l.text, "Ran 2 commands");
+        assert_eq!(l.text, "运行 2 个命令");
     }
 
     #[test]
@@ -727,7 +727,7 @@ mod tests {
             sub_completed("child-A"),
         ];
         let l = label(&entries);
-        assert_eq!(l.text, "读取 2 个文件, Ran 1 subagent");
+        assert_eq!(l.text, "读取 2 个文件, 运行 1 个子代理");
         assert!(!l.failed);
     }
 
@@ -735,7 +735,7 @@ mod tests {
     fn subagent_completion_burst_counts_each_subagent() {
         let entries = vec![sub_completed("child-A"), sub_completed("child-B")];
         let l = label(&entries);
-        assert_eq!(l.text, "Ran 2 subagents");
+        assert_eq!(l.text, "运行 2 个子代理");
     }
 
     #[test]

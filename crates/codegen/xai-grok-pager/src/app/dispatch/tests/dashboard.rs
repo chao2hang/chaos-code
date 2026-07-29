@@ -1710,7 +1710,7 @@ fn dashboard_slash_fork_does_not_spawn() {
         .as_deref()
         .expect("error toast for not-offered session command");
     assert!(
-        toast.contains("/fork only works in a session"),
+        toast.contains("请先打开会话再运行 /fork。"),
         "unexpected toast: {toast}"
     );
 }
@@ -1734,7 +1734,7 @@ fn dashboard_slash_compact_does_not_spawn() {
         .as_deref()
         .expect("error toast for not-offered session command");
     assert!(
-        toast.contains("/compact only works in a session"),
+        toast.contains("请先打开会话再运行 /compact。"),
         "unexpected toast: {toast}"
     );
 }
@@ -1843,9 +1843,9 @@ fn extract_response_type_running_no_activity_is_working() {
         .push_block(RenderBlock::agent_message("prior response"));
     agent.session.state = AgentState::TurnRunning;
     assert!(agent.session.turn_activity().is_none());
-    assert_eq!(extract_last_response_type(agent), "Working");
+    assert_eq!(extract_last_response_type(agent), "运行中");
     agent.session.state = AgentState::Idle;
-    assert_eq!(extract_last_response_type(agent), "Response");
+    assert_eq!(extract_last_response_type(agent), "回复");
     let chunk = acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
         acp::ContentBlock::Text(acp::TextContent::new("streaming…".to_string())),
     ));
@@ -1857,7 +1857,7 @@ fn extract_response_type_running_no_activity_is_working() {
         agent.session.turn_activity(),
         Some(crate::acp::tracker::TurnActivity::Responding)
     ));
-    assert_eq!(extract_last_response_type(agent), "Response");
+    assert_eq!(extract_last_response_type(agent), "回复");
 }
 /// Peek status: when a tool is actively running (`turn_activity()` is
 /// `ToolRunning`) the live activity overrides the scrollback scan — even a
@@ -1898,7 +1898,7 @@ fn extract_response_type_tool_running_overrides_stale_response() {
         .scrollback
         .push_block(RenderBlock::agent_message("streaming reply"));
     agent.scrollback.set_last_running(true);
-    assert_eq!(extract_last_response_type(agent), "Working");
+    assert_eq!(extract_last_response_type(agent), "运行中");
 }
 /// Always-Approve mode makes the next spawned agent auto-approve.
 #[serial_test::serial(GROK_AGENT_DASHBOARD)]

@@ -26,22 +26,22 @@ mock:
 steps:
   # 1. The trust question renders before any session exists.
   - action: wait_for_text
-    text: "Do you trust the contents of this directory"
+    text: "您信任此目录的内容吗"
     timeout_ms: 20000
   - action: assert_not_contains
     text: panicked
   # The decline affordance is on screen (keyboard-driven y/N answer; n = quit).
   - action: assert_contains
-    text: "No, quit"
+    text: "否，退出"
   # 2. Accept the folder.
   - action: keys
     keys: "y"
   # 3. The question is gone and the normal welcome / prompt is ready.
   - action: wait_for_text
-    text: Quit
+    text: 退出
     timeout_ms: 20000
   - action: assert_not_contains
-    text: "Do you trust the contents of this directory"
+    text: "您信任此目录的内容吗"
   # 4. Submit a prompt — the session must now start (gate answered).
   - action: type_text
     text: "summarize the trusted repo"
