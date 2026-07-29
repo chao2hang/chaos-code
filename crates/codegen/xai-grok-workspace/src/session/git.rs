@@ -2278,6 +2278,10 @@ pub async fn commit(
             output: Some(combined_output),
         },
         warning,
+        // Chaos-fork: this backend does not yet emit a structured outcome.
+        // `None` matches the RPC contract for servers predating the field —
+        // machine callers fall back to `data`/`warning`.
+        outcome: None,
     })
 }
 pub async fn stage_content(git_root: &Path, path: &str, content: &str) -> Result<()> {
