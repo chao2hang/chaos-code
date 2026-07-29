@@ -238,8 +238,13 @@ fn fake_standalone_facts_compose_through_shared_view() {
         false,
         RuntimeEvidence::Available(ColorLevel::TrueColor),
     );
-    let report = collect_report_with(snapshot);
+    let mut report = collect_report_with(snapshot);
 
+    // The voice probe is host-dependent: machines without a microphone (or
+    // CI containers without a recorder on PATH) gain an extra
+    // `voice/no-input-device` finding. It is unrelated to the standalone
+    // facts under test, so drop it before counting.
+    report.findings.retain(|f| f.id.domain != "voice");
     assert_eq!(report.issue_count(), 1);
     assert!(
         report

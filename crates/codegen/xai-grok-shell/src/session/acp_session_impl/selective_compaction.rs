@@ -116,9 +116,21 @@ fn suggest_compressible_spans(
     recent_start: usize,
 ) -> Vec<String> {
     const PROTECTED_TOOL_NAMES: &[&str] = &[
-        "write", "write_file", "edit", "edit_file", "apply_patch", "search_replace",
-        "task", "spawn_subagent", "skill", "todo", "todo_write", "todowrite",
-        "update_plan", "update_goal", "compress",
+        "write",
+        "write_file",
+        "edit",
+        "edit_file",
+        "apply_patch",
+        "search_replace",
+        "task",
+        "spawn_subagent",
+        "skill",
+        "todo",
+        "todo_write",
+        "todowrite",
+        "update_plan",
+        "update_goal",
+        "compress",
     ];
 
     let mut suggestions: Vec<String> = Vec::new();
@@ -154,8 +166,10 @@ fn suggest_compressible_spans(
                 ConversationItem::ToolResult(_) => {
                     end += 1;
                 }
-                ConversationItem::User(_) | ConversationItem::System(_)
-                | ConversationItem::BackendToolCall(_) | ConversationItem::Reasoning(_) => {
+                ConversationItem::User(_)
+                | ConversationItem::System(_)
+                | ConversationItem::BackendToolCall(_)
+                | ConversationItem::Reasoning(_) => {
                     break;
                 }
             }
@@ -173,10 +187,7 @@ fn suggest_compressible_spans(
                 .iter()
                 .map(|(name, count)| format!("{name}×{count}"))
                 .collect();
-            suggestions.push(format!(
-                "{start_id}–{end_id} ({})",
-                tools.join(", ")
-            ));
+            suggestions.push(format!("{start_id}–{end_id} ({})", tools.join(", ")));
             i = end;
             if suggestions.len() >= 5 {
                 break;

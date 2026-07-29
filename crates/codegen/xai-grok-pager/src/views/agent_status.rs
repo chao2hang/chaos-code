@@ -1000,9 +1000,11 @@ mod tests {
     #[test]
     fn tokens_per_sec_line_prefers_decode_over_average() {
         let theme = Theme::default();
-        let mut ctx = xai_grok_shell::session::ContextInfo::default();
-        ctx.avg_output_tokens_per_sec = Some(100.0);
-        ctx.decode_tokens_per_sec = Some(240.0);
+        let ctx = xai_grok_shell::session::ContextInfo {
+            avg_output_tokens_per_sec: Some(100.0),
+            decode_tokens_per_sec: Some(240.0),
+            ..Default::default()
+        };
         let line = tokens_per_sec_line(&ctx, &theme).expect("line should exist");
         let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
         assert_eq!(text, "\u{26a1} 240 tok/s");
@@ -1011,10 +1013,12 @@ mod tests {
     #[test]
     fn tokens_per_sec_line_falls_back_to_average() {
         let theme = Theme::default();
-        let mut ctx = xai_grok_shell::session::ContextInfo::default();
-        ctx.avg_output_tokens_per_sec = Some(0.6);
         // decode 为 0 或 NaN 都视为不可用。
-        ctx.decode_tokens_per_sec = Some(0.0);
+        let ctx = xai_grok_shell::session::ContextInfo {
+            avg_output_tokens_per_sec: Some(0.6),
+            decode_tokens_per_sec: Some(0.0),
+            ..Default::default()
+        };
         let line = tokens_per_sec_line(&ctx, &theme).expect("line should exist");
         let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
         assert_eq!(text, "\u{26a1} 0.6 tok/s");

@@ -66,14 +66,12 @@ async fn handle_session_usage(agent: &MvpAgent, args: &acp::ExtRequest) -> ExtRe
     // into the parent session's ledger, so persisting them separately would
     // double-count in the all-time aggregate.
     let is_subagent = session_kind_is_subagent(handle.session_kind.as_deref());
-    if !is_subagent {
-        if let Err(e) = persist_session_usage(&session_id.0, &usage) {
-            tracing::warn!(
-                session_id = %session_id.0,
-                error = %e,
-                "failed to persist session usage to aggregate store"
-            );
-        }
+    if !is_subagent && let Err(e) = persist_session_usage(&session_id.0, &usage) {
+        tracing::warn!(
+            session_id = %session_id.0,
+            error = %e,
+            "failed to persist session usage to aggregate store"
+        );
     }
 
     to_raw_response(&SessionUsageResponse { usage })
@@ -121,7 +119,13 @@ mod tests {
     #[test]
     fn response_serializes_ledger_as_prompt_usage_wire_shape() {
         let mut ledger = UsageLedger::default();
-        ledger.record_main_loop_call("grok-build", &usage(100, 10), Some(50), None, Some(20_000_000));
+        ledger.record_main_loop_call(
+            "grok-build",
+            &usage(100, 10),
+            Some(50),
+            None,
+            Some(20_000_000),
+        );
         let v = serde_json::to_value(&SessionUsageResponse {
             usage: PromptUsage::from(&ledger),
         })
