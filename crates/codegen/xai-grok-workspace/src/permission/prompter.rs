@@ -12,7 +12,7 @@ use xai_file_utils::events::{Event, EventWriter, PermissionDecision};
 use xai_grok_mcp::servers::parse_mcp_qualified_name;
 use xai_grok_tools::implementations::grok_build::web_fetch::domain_from_url;
 
-const REJECT_ONCE_LABEL: &str = "拒绝，并告诉 Grok 改怎么做";
+const REJECT_ONCE_LABEL: &str = "No, and tell Grok what to do differently";
 
 /// Stable option id for the edit prompt's "Yes, allow all edits during this
 /// session" choice. Distinct from the generic `"always-allow"` id (used by
@@ -59,7 +59,8 @@ pub const ENABLE_ALWAYS_APPROVE_OPTION_ID: &str = "enable-always-approve";
 /// User-facing label for the "enable always-approve mode" option. Kept
 /// here (not at each construction site) so the label is identical across
 /// every permission prompt — edit, bash, MCP, web_fetch, fallback.
-const ENABLE_ALWAYS_APPROVE_LABEL: &str = "允许，并在本会话不再询问（自动批准模式）";
+const ENABLE_ALWAYS_APPROVE_LABEL: &str =
+    "Yes, and don't ask again for anything (always-approve mode)";
 
 /// Build the "enable always-approve mode" option that is prepended to
 /// every TUI/Pager/Desktop permission prompt. See
@@ -242,7 +243,7 @@ pub fn mcp_pretty_name_if_qualified(name: &str) -> String {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct McpToolPermission {
     /// Static label prefix shown before the dynamic scope text,
-    /// e.g. `"始终允许："`. Mirrors `BashCommandPermission::prompt_prefix`.
+    /// e.g. `"Always allow:"`. Mirrors `BashCommandPermission::prompt_prefix`.
     pub prompt_prefix: String,
     /// Full tool name as the agent called it
     /// (e.g. `"grok_com_notion__notion-fetch"`).
@@ -375,7 +376,7 @@ impl AcpPrompter {
             acp::PermissionOptionId::new(ALLOW_EDITS_SESSION_OPTION_ID),
             acp::PermissionOption::new(
                 ALLOW_EDITS_SESSION_OPTION_ID,
-                "允许，本会话内的所有编辑".to_owned(),
+                "Yes, allow all edits during this session".to_owned(),
                 acp::PermissionOptionKind::AllowAlways,
             ),
         );
@@ -383,7 +384,7 @@ impl AcpPrompter {
             acp::PermissionOptionId::new("allow-once"),
             acp::PermissionOption::new(
                 "allow-once",
-                "允许".to_owned(),
+                "Yes".to_owned(),
                 acp::PermissionOptionKind::AllowOnce,
             ),
         );
@@ -403,7 +404,7 @@ impl AcpPrompter {
             acp::PermissionOptionId::new("allow-once"),
             acp::PermissionOption::new(
                 "allow-once",
-                "允许".to_owned(),
+                "Yes, proceed".to_owned(),
                 acp::PermissionOptionKind::AllowOnce,
             ),
         );
@@ -423,7 +424,7 @@ impl AcpPrompter {
             acp::PermissionOptionId::new("always-allow"),
             acp::PermissionOption::new(
                 "always-allow",
-                "允许，并在本会话不再询问 bash 命令".to_owned(),
+                "Yes, and don't ask again for bash commands".to_owned(),
                 acp::PermissionOptionKind::AllowAlways,
             ),
         );
@@ -431,7 +432,7 @@ impl AcpPrompter {
             acp::PermissionOptionId::new("allow-once"),
             acp::PermissionOption::new(
                 "allow-once",
-                "允许".to_owned(),
+                "Yes, proceed".to_owned(),
                 acp::PermissionOptionKind::AllowOnce,
             ),
         );
@@ -447,7 +448,7 @@ impl AcpPrompter {
             acp::PermissionOptionId::new("reject-always"),
             acp::PermissionOption::new(
                 "reject-always",
-                "拒绝，并停止运行 bash 命令".to_owned(),
+                "No, and don't run bash commands".to_owned(),
                 acp::PermissionOptionKind::RejectAlways,
             ),
         );
@@ -458,7 +459,7 @@ impl AcpPrompter {
             acp::PermissionOptionId::new("always-allow"),
             acp::PermissionOption::new(
                 "always-allow",
-                "始终允许".to_owned(),
+                "always allow".to_owned(),
                 acp::PermissionOptionKind::AllowAlways,
             ),
         );
@@ -466,7 +467,7 @@ impl AcpPrompter {
             acp::PermissionOptionId::new("allow-once"),
             acp::PermissionOption::new(
                 "allow-once",
-                "允许一次".to_owned(),
+                "allow once".to_owned(),
                 acp::PermissionOptionKind::AllowOnce,
             ),
         );
@@ -474,7 +475,7 @@ impl AcpPrompter {
             acp::PermissionOptionId::new("reject-once"),
             acp::PermissionOption::new(
                 "reject-once",
-                "拒绝一次".to_owned(),
+                "reject once".to_owned(),
                 acp::PermissionOptionKind::RejectOnce,
             ),
         );
@@ -564,6 +565,22 @@ impl AcpPrompter {
         }
     }
 
+    /// Request `_meta`: bash selection scope, or protected-edit description for Edit.
+    fn permission_request_meta(
+        &self,
+        access: &AccessKind,
+        protected_edit: Option<crate::permission::ProtectedEditReason>,
+    ) -> Option<acp::Meta> {
+        if let Some(bash) = self.bash_selection_meta(access) {
+            return Some(bash);
+        }
+        let reason = protected_edit?;
+        let payload = crate::permission::ProtectedEditPermission::from_reason(reason);
+        serde_json::to_value(payload)
+            .ok()
+            .and_then(|v| v.as_object().cloned())
+    }
+
     /// Build the per-access-kind option map WITHOUT the
     /// "enable always-approve mode" prepend. Kept as a separate inner
     /// fn so `build_options` can wrap the result with one prepend call
@@ -590,7 +607,7 @@ impl AcpPrompter {
                         if let Some(primary_command) = &primary_command {
                             let (id, option) = bash_scope_option(
                                 "allow-always-command",
-                                "始终允许：",
+                                "Always allow:",
                                 acp::PermissionOptionKind::AllowAlways,
                                 primary_command,
                             );
@@ -602,7 +619,7 @@ impl AcpPrompter {
                         if let Some(primary_command) = &primary_command {
                             let (id, option) = bash_scope_option(
                                 "reject-always-command",
-                                "始终拒绝：",
+                                "Never allow:",
                                 acp::PermissionOptionKind::RejectAlways,
                                 primary_command,
                             );
@@ -631,7 +648,7 @@ impl AcpPrompter {
                     acp::PermissionOptionId::new("allow-always-domain"),
                     acp::PermissionOption::new(
                         "allow-always-domain",
-                        format!("允许，本会话内始终允许 {domain}"),
+                        format!("Yes, always allow {domain} this session"),
                         acp::PermissionOptionKind::AllowAlways,
                     ),
                 );
@@ -639,7 +656,7 @@ impl AcpPrompter {
                     acp::PermissionOptionId::new("allow-once"),
                     acp::PermissionOption::new(
                         "allow-once",
-                        "允许一次".to_owned(),
+                        "Yes, allow once".to_owned(),
                         acp::PermissionOptionKind::AllowOnce,
                     ),
                 );
@@ -673,12 +690,12 @@ impl AcpPrompter {
                             acp::PermissionOptionId::new("allow-always-mcp"),
                             acp::PermissionOption::new(
                                 "allow-always-mcp",
-                                format!("始终允许：{}", tool_name),
+                                format!("Always allow: {}", tool_name),
                                 acp::PermissionOptionKind::AllowAlways,
                             )
                             .meta(
                                 serde_json::to_value(McpToolPermission {
-                                    prompt_prefix: "始终允许：".to_owned(),
+                                    prompt_prefix: "Always allow:".to_owned(),
                                     tool_name: tool_name.clone(),
                                     server_prefix,
                                 })
@@ -690,7 +707,7 @@ impl AcpPrompter {
                             acp::PermissionOptionId::new("allow-once"),
                             acp::PermissionOption::new(
                                 "allow-once",
-                                "允许".to_owned(),
+                                "Yes".to_owned(),
                                 acp::PermissionOptionKind::AllowOnce,
                             ),
                         );
@@ -718,6 +735,7 @@ impl AcpPrompter {
         &self,
         access: &AccessKind,
         tool_call_update: &acp::ToolCallUpdate,
+        protected_edit: Option<crate::permission::ProtectedEditReason>,
     ) -> PromptOutcome {
         let tool_name = tool_name_for_access(access);
         // events.jsonl: `PermissionRequested` at prompt-start. The `Instant`
@@ -752,7 +770,7 @@ impl AcpPrompter {
                     tool_call_update.clone(),
                     permission_options.values().cloned().collect(),
                 )
-                .meta(self.bash_selection_meta(access));
+                .meta(self.permission_request_meta(access, protected_edit));
                 match self.gateway.request_permission(req).await {
                     Ok(resp) => match resp.outcome {
                         acp::RequestPermissionOutcome::Cancelled => PromptOutcome::Cancelled,
@@ -1184,7 +1202,7 @@ mod tests {
                 serde_json::from_value(serde_json::Value::Object(meta)).unwrap();
             assert_eq!(perm.tool_name, name);
             assert_eq!(perm.server_prefix.as_deref(), Some(server));
-            assert_eq!(perm.prompt_prefix, "始终允许：");
+            assert_eq!(perm.prompt_prefix, "Always allow:");
         }
     }
 
@@ -1624,7 +1642,7 @@ mod tests {
             acp::ToolCallUpdateFields::default(),
         );
 
-        let outcome = prompter.request(&access, &tool_call_update).await;
+        let outcome = prompter.request(&access, &tool_call_update, None).await;
         assert!(
             matches!(outcome, PromptOutcome::Error(_)),
             "dropped gateway receiver should yield PromptOutcome::Error"
@@ -1674,7 +1692,7 @@ mod tests {
             acp::ToolCallId::new(Arc::from("tc-2")),
             acp::ToolCallUpdateFields::default(),
         );
-        let outcome = prompter.request(&access, &tool_call_update).await;
+        let outcome = prompter.request(&access, &tool_call_update, None).await;
         assert!(matches!(outcome, PromptOutcome::Error(_)));
     }
 }
