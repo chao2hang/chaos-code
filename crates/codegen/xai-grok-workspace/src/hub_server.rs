@@ -593,7 +593,7 @@ impl WorkspaceRpcHandler {
             }
             <LoadPermissionsReq as WorkspaceRpc>::METHOD => {
                 let cwd = self.workspace.root_cwd()?;
-                Ok(crate::discovery::load_permissions(&cwd).await)
+                Ok(crate::discovery::load_permissions(&cwd, true).await)
             }
             <LoadEnvrcReq as WorkspaceRpc>::METHOD => {
                 let cwd = self.workspace.root_cwd()?;
