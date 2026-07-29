@@ -197,6 +197,24 @@ mod tests {
 
     /// Verify unknown codes degrade to HubError.
     #[test]
+    fn export_github_codes_round_trip_typed() {
+        for kind in xai_grok_workspace_types::rpc::export_github::ExportGithubError::ALL {
+            let err = WorkspaceError::ExportGithub {
+                kind,
+                message: "boom".into(),
+            };
+            let rpc_err = RpcError {
+                code: error_code(&err).into(),
+                message: "boom".into(),
+            };
+            let recovered = rpc_error_to_workspace(rpc_err);
+            assert!(
+                matches!(recovered, WorkspaceError::ExportGithub { kind: k, .. } if k == kind),
+                "lost typed export error for {kind:?}: {recovered:?}"
+            );
+        }
+    }
+    #[test]
     fn unknown_code_degrades_to_hub_error() {
         let rpc_err = RpcError {
             code: "future_new_variant".into(),
