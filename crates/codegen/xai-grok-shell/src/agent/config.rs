@@ -1643,6 +1643,39 @@ pub struct Config {
     /// `ModelOverrideConfig::resolve`.
     #[serde(skip)]
     pub prompt_suggest_model_pin: crate::config::PromptSuggestModelPin,
+    /// `[fallback]` section: fallback model chain for when the primary model
+    /// fails after all retries. See [`FallbackConfig`].
+    #[serde(default)]
+    pub fallback: FallbackConfig,
+    /// `[adhd]` section: ADHD skill integration toggle.
+    /// When enabled, ADHD辅助规则 are injected into the system prompt.
+    #[serde(default)]
+    pub adhd: AdhdConfig,
+}
+
+/// `[fallback]` config section.
+///
+/// Persisted by the `/fallback` slash command. The sampler reads this list
+/// and tries each model in order when the primary model fails fatally
+/// (all retries exhausted).
+#[derive(Debug, Clone, Default, serde::Deserialize, serde::Serialize)]
+pub struct FallbackConfig {
+    /// Ordered list of model IDs to try when the primary model fails.
+    /// Empty = no fallback (default).
+    #[serde(default)]
+    pub models: Vec<String>,
+}
+
+/// `[adhd]` config section.
+///
+/// Persisted by the `/adhd` slash command. When enabled, the ADHD skill's
+/// system-prompt rules (from https://github.com/uditakhourii/adhd) are
+/// injected into every agent session.
+#[derive(Debug, Clone, Default, serde::Deserialize, serde::Serialize)]
+pub struct AdhdConfig {
+    /// Whether ADHD skill integration is enabled. Default `false`.
+    #[serde(default)]
+    pub enabled: bool,
 }
 #[derive(Debug, Clone, Default)]
 pub struct CliAgentOverrides {
@@ -1898,6 +1931,8 @@ impl Default for Config {
             session_summary_model: None,
             image_description_model: None,
             prompt_suggest_model_pin: crate::config::PromptSuggestModelPin::Unpinned,
+            fallback: FallbackConfig::default(),
+            adhd: AdhdConfig::default(),
         };
         cfg.apply_env_overrides();
         cfg

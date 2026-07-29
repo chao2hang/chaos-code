@@ -195,7 +195,7 @@ pub struct HeadlessOptions {
 // ── CLI flag helpers ─────────────────────────────────────────────────────
 
 /// Parse a comma-separated list into a vec, or None if empty.
-fn parse_comma_list(s: Option<&str>) -> Option<Vec<String>> {
+pub fn parse_comma_list(s: Option<&str>) -> Option<Vec<String>> {
     s.and_then(|s| {
         let v: Vec<String> = s
             .split(',')

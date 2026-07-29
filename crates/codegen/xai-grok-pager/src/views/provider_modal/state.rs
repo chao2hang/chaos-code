@@ -853,12 +853,14 @@ impl ProviderModalState {
     }
 
     /// 打开「配置模型参数」：先选/搜模型，再填参数。
+    ///
+    /// Issue #16：不再调用 `load_models_for` 发起 HTTP 拉取——配置参数
+    /// 只需手动输入模型 ID 即可，无需先列出远端模型。
     pub fn go_configure_model(&mut self, name: String) {
         self.mode = ProviderModalMode::ConfigureModel(name.clone());
         self.clear_messages();
         self.clear_model_params();
         self.manual_model_id.clear();
-        self.load_models_for(&name);
     }
 
     /// 打开「确认删除渠道」对话框。
