@@ -8,7 +8,11 @@ edition.workspace = true
 default = []
 unstable = []
 dhat-heap = ["dep:dhat"]
-default-bazel = []
+# Session synthesis + in-process e2e harness (`session::testkit`) for soak,
+# load, and bench tests. Off by default; the tests/benches that use it declare
+# it via `required-features`.
+test-support = []
+default-bazel = ["test-support"]
 
 [dependencies]
 dunce = { workspace = true }
