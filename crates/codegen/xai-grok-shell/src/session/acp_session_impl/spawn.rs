@@ -238,10 +238,10 @@ pub(crate) async fn spawn_session_actor(
         };
         let project_trusted =
             crate::agent::folder_trust::project_scope_allowed(tool_context.cwd.as_path());
-        let _project_trusted = project_trusted;
         let mut permission_config =
             xai_grok_workspace::permission::resolution::resolve_permission_config_with_fallback(
                 tool_context.cwd.as_path(),
+                project_trusted,
             )
             .await;
         let yolo_pin = xai_grok_workspace::permission::resolution::yolo_disabled_by_policy();

@@ -49,9 +49,9 @@ pub use xai_grok_workspace_types::rpc::git::{
     DiffStatsSummary, GitBranchesReq, GitCheckoutCommitReq, GitCheckoutReq, GitCollectChangesReq,
     GitCollectChangesResponse, GitCommitReq, GitCurrentCommitReq, GitDiffReq, GitDiscardReq,
     GitFilesReq, GitInfoReq, GitResolveRootReq, GitStageContentReq, GitStageReq, GitStashReq,
-    GitStatusExtReq, GitStatusExtResponse, GitStatusFormat, GitStatusReq, GitUnstageReq,
-    IdentityData, PublicBaseData, RepoInfo, UNTRACKED_CONTENT_THRESHOLD, UncommittedChangesData,
-    UntrackedFileData,
+    GitStatusExtReq, GitStatusExtResponse, GitStatusFormat, GitStatusReq, GitSyncBaseReq,
+    GitUnstageReq, IdentityData, PublicBaseData, RepoInfo, UNTRACKED_CONTENT_THRESHOLD,
+    UncommittedChangesData, UntrackedFileData,
 };
 pub use xai_grok_workspace_types::rpc::hooks::{
     HookEventNameWire, HookRegistryReq, HookRegistryWire, HookSpecWire,
@@ -392,13 +392,24 @@ impl WorkspaceOp for GitCommitReq {
         _session_id: Option<&str>,
     ) -> WorkspaceResult<Self::Response> {
         let cwd = git_op_cwd(ws, &self.git_root)?;
-        crate::session::git::commit(
+        crate::session::git::commit(&cwd, self)
+            .await
+            .map_err(|e| WorkspaceError::HubError(e.to_string()))
+    }
+}
+#[async_trait]
+impl WorkspaceOp for GitSyncBaseReq {
+    async fn execute(
+        &self,
+        ws: &WorkspaceHandle,
+        _session_id: Option<&str>,
+    ) -> WorkspaceResult<Self::Response> {
+        let cwd = git_op_cwd(ws, &self.git_root)?;
+        crate::session::git::sync_base(
             &cwd,
-            &self.message,
-            self.amend,
-            self.signoff,
-            self.push,
-            self.sync,
+            self.base_ref.as_deref(),
+            self.abort,
+            self.expected_branch.as_deref(),
         )
         .await
         .map_err(|e| WorkspaceError::HubError(e.to_string()))
@@ -908,7 +919,31 @@ fn hook_registry_to_wire(
 fn wire_to_hook_registry(
     wire: &HookRegistryWire,
 ) -> WorkspaceResult<xai_grok_hooks::discovery::HookRegistry> {
-    let value = serde_json::to_value(wire).map_err(|e| WorkspaceError::HubError(e.to_string()))?;
+    let dropped: Vec<&str> = wire
+        .hooks
+        .keys()
+        .filter_map(|event| match event {
+            HookEventNameWire::Unknown(name) => Some(name.as_str()),
+            _ => None,
+        })
+        .collect();
+    if !dropped.is_empty() {
+        tracing::debug!(
+            dropped_count = dropped.len(),
+            dropped_events = ?dropped,
+            "dropping unknown hook event keys from peer wire registry"
+        );
+    }
+    let known = HookRegistryWire {
+        hooks: wire
+            .hooks
+            .iter()
+            .filter(|(event, _)| !matches!(event, HookEventNameWire::Unknown(_)))
+            .map(|(event, specs)| (event.clone(), specs.clone()))
+            .collect(),
+    };
+    let value =
+        serde_json::to_value(&known).map_err(|e| WorkspaceError::HubError(e.to_string()))?;
     let mut registry: xai_grok_hooks::discovery::HookRegistry =
         serde_json::from_value(value).map_err(|e| WorkspaceError::HubError(e.to_string()))?;
     registry.recompile_matchers();
