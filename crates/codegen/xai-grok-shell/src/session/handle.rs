@@ -178,6 +178,15 @@ pub struct SessionHandle {
     /// handle so scheduled tasks survive the subagent's exit.
     pub scheduler_handle:
         Option<xai_grok_tools::implementations::grok_build::scheduler::types::SchedulerHandle>,
+    /// What created this session: `"subagent"`, `"subagent_fork"`,
+    /// `"subagent_resume"`, `"fork"`, `"worktree"`, or `None` for a normal
+    /// top-level session. Mirrors `Summary::session_kind` for sessions loaded
+    /// from disk and is set explicitly at subagent spawn time. Used by the
+    /// aggregate usage store to skip subagent sessions (their spend is already
+    /// folded into the parent ledger, so persisting them would double-count).
+    /// Chaos-fork: upstream removed this field; Chaos keeps it for the
+    /// aggregate usage accounting in `extensions/usage.rs`.
+    pub(crate) session_kind: Option<String>,
 }
 impl SessionHandle {
     /// Last assistant `model_id` / `model_fingerprint` in conversation (global, not turn-scoped).
