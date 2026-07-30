@@ -2443,7 +2443,9 @@ impl Config {
             .requirement(self.requirements.feedback.pinned())
             .config(self.features.feedback)
             .feature_flag(ff)
-            .default(true)
+            // Chaos-fork: default false — feedback posts to cli-chat-proxy.grok.com
+            // which is irrelevant for custom model providers.
+            .default(false)
             .resolve()
     }
     pub(crate) fn resolve_two_pass_compaction(&self) -> Resolved<bool> {
@@ -8952,12 +8954,14 @@ reasoning_effort = "low"
     }
     #[test]
     #[serial]
-    fn resolve_feedback_defaults_to_true_when_unset() {
+    fn resolve_feedback_defaults_to_false_when_unset() {
+        // Chaos-fork: feedback defaults to false to avoid hitting
+        // cli-chat-proxy.grok.com when custom models are configured.
         unsafe { std::env::remove_var("GROK_FEEDBACK_ENABLED") };
         unsafe { std::env::remove_var("GROK_TELEMETRY_ENABLED") };
         let cfg = Config::default();
         let r = cfg.resolve_feedback();
-        assert!(r.value, "feedback should be true by default");
+        assert!(!r.value, "feedback should be false by default");
         assert_eq!(r.source, ConfigSource::Default);
     }
     #[test]

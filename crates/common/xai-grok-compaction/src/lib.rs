@@ -46,6 +46,7 @@ pub mod prompt;
 pub mod reminder;
 pub mod sampler;
 pub mod select;
+pub mod selective;
 pub mod steps;
 pub mod token;
 
