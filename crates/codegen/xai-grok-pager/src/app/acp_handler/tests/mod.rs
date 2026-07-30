@@ -1805,6 +1805,8 @@ pub(super) fn task_completed_notif(
                 block_waited: false,
                 explicitly_killed: false,
                 owner_session_id: None,
+                // Chaos-fork: upstream added bg_status tracking; we keep the flag as a stub.
+                is_backgrounded: false,
             },
             will_wake,
         },
