@@ -448,8 +448,6 @@ pub struct ContextInfo {
     pub tool_definitions_count: u64,
     pub tool_definitions_tokens: u64,
     pub compaction_count: u64,
-    /// Net tokens removed from the current request by selective compaction.
-    pub selective_compaction_tokens_saved: u64,
     pub turn_count: u64,
     pub tool_call_count: u64,
     /// Total conversation items (system + user + assistant + tool responses).
@@ -469,13 +467,6 @@ pub struct ContextInfo {
     /// partial snapshots.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub usage_categories: Vec<TokenUsageCategory>,
-    /// 会话累计的稳态解码速率（tok/s，剔除首字延迟）。
-    /// 未采样到时为 `None`；展示层据此显示「不可用」而非 `0 tok/s`。
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub decode_tokens_per_sec: Option<f32>,
-    /// 会话累计的平均输出速率（tok/s，按 API 耗时算）。
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub avg_output_tokens_per_sec: Option<f32>,
 }
 
 impl ContextInfo {

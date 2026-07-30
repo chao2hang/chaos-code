@@ -211,12 +211,7 @@ impl SessionActor {
         let bridge = self.agent.borrow().tool_bridge().clone();
         let defs = bridge.tool_definitions_builtins_only().await;
         let plan_active = self.plan_mode.lock().is_active();
-        let mut defs = filter_cursor_tools_by_plan_mode(defs, plan_active);
-        // DCP：当动态策略启用时注册 compress 工具。
-        if self.compaction.strategy.get().dcp_active() {
-            defs.push(super::selective_compaction::compress_tool_definition());
-        }
-        defs
+        filter_cursor_tools_by_plan_mode(defs, plan_active)
     }
     pub(super) fn model_auth_facts(&self, model_id: &str) -> crate::agent::config::ModelAuthFacts {
         self.model_auth_state(model_id).0
@@ -1351,7 +1346,6 @@ impl SessionActor {
         &self,
         response: &ConversationResponse,
         api_duration_ms: Option<u64>,
-        decode_duration_ms: Option<u64>,
     ) {
         if let Some(ref u) = response.usage {
             self.tool_context
@@ -1363,7 +1357,6 @@ impl SessionActor {
                 response.assistant().and_then(|a| a.model_id.clone()),
                 u.clone(),
                 api_duration_ms,
-                decode_duration_ms,
                 response.cost_usd_ticks,
             );
             self.signals_handle()

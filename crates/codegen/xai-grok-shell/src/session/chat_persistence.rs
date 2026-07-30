@@ -63,15 +63,6 @@ impl ChatPersistence for ChannelChatPersistence {
             .send(PersistenceMsg::ReplaceChatHistory(items.to_vec()));
     }
 
-    fn persist_selective_compaction(
-        &mut self,
-        state: &xai_grok_compaction::selective::SelectiveState,
-    ) {
-        let _ = self
-            .tx
-            .send(PersistenceMsg::SelectiveCompaction(state.clone()));
-    }
-
     fn flush(&mut self) {
         let _ = self.tx.send(PersistenceMsg::Flush);
     }

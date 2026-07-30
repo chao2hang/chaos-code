@@ -165,10 +165,6 @@ mod hook_dispatch;
 use hook_dispatch::*;
 #[path = "acp_session_impl/stop_gate.rs"]
 mod stop_gate;
-
-#[path = "acp_session_impl/incomplete_end_turn.rs"]
-mod incomplete_end_turn;
-use incomplete_end_turn::*;
 pub use stop_gate::MAX_STOP_HOOK_CONTINUATIONS_PER_TURN;
 #[path = "acp_session_impl/recap.rs"]
 mod recap;
@@ -176,8 +172,6 @@ mod recap;
 mod rewind;
 #[path = "acp_session_impl/run_loop.rs"]
 mod run_loop;
-#[path = "acp_session_impl/selective_compaction.rs"]
-mod selective_compaction;
 #[path = "acp_session_impl/session_setup.rs"]
 mod session_setup;
 #[path = "acp_session_impl/turn_end.rs"]
@@ -663,9 +657,6 @@ pub(crate) struct SessionActor {
     /// `reconstruct_full_config` threads it into the sampler config, and the
     /// sampler itself sends the matching `x-grok-doom-loop-check` header.
     pub(crate) doom_loop_recovery: Option<xai_grok_sampling_types::DoomLoopRecoveryPolicy>,
-    /// Incomplete `end_turn` auto-retry (opt-in). Resolved at spawn from
-    /// `[session] auto_retry_incomplete_end_turn` / env.
-    pub(crate) incomplete_end_turn_retry: crate::agent::config::IncompleteEndTurnRetryPolicy,
     /// Telemetry-only per-turn doom-loop recovery tally (attempts, whether a
     /// budget-spent accept happened, tightest trigger label). Accumulated by
     /// the event drainer, taken at turn end for the per-turn analytics event.
@@ -1830,6 +1821,9 @@ mod build_tool_parse_error_message_tests;
 #[cfg(test)]
 #[path = "acp_session_tests/cancel_running_task_tests.rs"]
 mod cancel_running_task_tests;
+#[cfg(test)]
+#[path = "acp_session_tests/turn/chat_history_integrity_tests.rs"]
+mod chat_history_integrity_tests;
 #[cfg(test)]
 #[path = "acp_session_tests/feedback_turn_lookup_tests.rs"]
 mod feedback_turn_lookup_tests;

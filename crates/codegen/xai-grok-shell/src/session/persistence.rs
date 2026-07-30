@@ -355,8 +355,6 @@ pub enum PersistenceMsg {
     },
     /// Persist a compaction checkpoint file to `compaction_checkpoints/{id}.json`.
     CompactionCheckpoint(crate::extensions::notification::CompactionCheckpointFile),
-    /// Persist request-only dynamic context pruning metadata.
-    SelectiveCompaction(xai_grok_compaction::selective::SelectiveState),
     /// Persist a compaction request+response artifact to
     /// `compaction_requests/{request_id}.json`. Used for offline prompt
     /// iteration — captures the exact ConversationItem list sent to the
@@ -374,6 +372,11 @@ pub enum PersistenceMsg {
     /// Routed back through the persistence channel so the storage write
     /// stays sequential with other summary.json mutations.
     GeneratedTitle(String),
+    /// Enable remote writeback for a session created `Local` before remote
+    /// settings resolved (non-blocking startup); backfills its local history.
+    UpgradeToWriteback {
+        auth_manager: Arc<crate::auth::AuthManager>,
+    },
     Flush,
     /// Flush all pending writes, then signal the caller once the flush is complete.
     /// Unlike `Flush` (fire-and-forget), this is a **sync barrier**: the caller's
@@ -390,6 +393,13 @@ pub enum PersistenceMsg {
 
 pub use xai_grok_shared::session::session_dir;
 
+type RelocationResult<T> = crate::session::storage::relocation::Result<T>;
+type SummaryReader = fn(&Path) -> RelocationResult<Summary>;
+
+fn storage_view(sessions_root: &Path) -> RelocationResult<RelocationView> {
+    RelocationView::load_for_sessions_root(sessions_root)
+}
+
 /// Check if a session exists locally under the given cwd.
 ///
 /// This is the correct check for the `-r` resume path: a session is only
@@ -403,8 +413,8 @@ pub fn session_exists_for_cwd(session_id: &str, cwd: &str) -> bool {
 
 /// A directory is a resumable session only if it has a `summary.json`; this
 /// skips `images/`-only stubs that would otherwise hijack `--resume`. Used by
-/// the resume/restore resolution path; `session_exists_by_id` and
-/// `find_session_dir_by_id` intentionally stay dir-only (non-resume uses).
+/// the resume/restore resolution path; `find_session_dir_by_id` intentionally
+/// stays dir-only for non-resume compatibility.
 fn is_persisted_session_dir(session_path: &Path) -> bool {
     session_path.join("summary.json").is_file()
 }
@@ -590,82 +600,40 @@ fn find_local_child_for_remote_in_root(
 /// This is used by the pager's `--resume` to find sessions that were created
 /// in a different CWD (e.g., a worktree) than the one the user is currently in.
 pub fn resolve_local_session_any_cwd(session_id: &str) -> Option<String> {
-    let sessions_root = crate::util::grok_home::grok_home().join("sessions");
-    resolve_local_session_any_cwd_in_root(session_id, &sessions_root)
-}
-
-fn resolve_local_session_any_cwd_in_root(session_id: &str, sessions_root: &Path) -> Option<String> {
-    // Mirror upstream RelocationView::select: a journal-less id that appears
-    // under more than one cwd is ambiguous and must not be addressable by id
-    // (or by the title of either copy). First-match would silently resume the
-    // wrong sandbox profile.
-    match collect_persisted_cwds_for_id(session_id, sessions_root).as_slice() {
-        [only] => Some(only.clone()),
-        _ => None,
-    }
-}
-
-/// Decoded cwds that hold a persisted (`summary.json`) copy of `session_id`.
-fn collect_persisted_cwds_for_id(session_id: &str, sessions_root: &Path) -> Vec<String> {
-    if !sessions_root.exists() {
-        return Vec::new();
-    }
-    let Ok(entries) = std::fs::read_dir(sessions_root) else {
-        return Vec::new();
-    };
-    let mut found = Vec::new();
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if !path.is_dir() {
-            continue;
-        }
-        let session_path = path.join(session_id);
-        if is_persisted_session_dir(&session_path)
-            && let Some(decoded) = crate::util::grok_home::decode_cwd_from_dirname(&path)
-        {
-            found.push(decoded);
-        }
-    }
-    found
-}
-
-/// True when `session_id` has exactly one persisted copy under `sessions_root`
-/// (any cwd). Used to drop multi-cwd legacy twins from cwd-scoped listings so
-/// they are not title-addressable under an unverified sandbox profile.
-fn is_uniquely_persisted_session_id(session_id: &str, sessions_root: &Path) -> bool {
-    collect_persisted_cwds_for_id(session_id, sessions_root).len() == 1
-}
-
-fn storage_view(
-    sessions_root: &Path,
-) -> crate::session::storage::relocation::Result<RelocationView> {
-    RelocationView::load_for_sessions_root(sessions_root)
-}
-
-/// Scan all CWD directories for a session and return its directory path.
-///
-/// Uses [`RelocationView`] authority when a relocation journal exists so
-/// incomplete moves fail closed instead of returning a stale path.
-pub fn find_session_dir_by_id(session_id: &str) -> Option<PathBuf> {
-    find_any_session_dir_by_id_result(session_id).ok().flatten()
-}
-
-/// Scan all CWD directories under `sessions_root` for a session directory.
-pub fn find_session_dir_by_id_in_root(session_id: &str, sessions_root: &Path) -> Option<PathBuf> {
-    storage_view(sessions_root)
-        .and_then(|view| view.find_any_session_dir(session_id))
+    resolve_local_session_any_cwd_result(session_id)
         .ok()
         .flatten()
 }
 
-/// Resume/export path: require a persisted summary and journal authority.
+pub fn resolve_local_session_any_cwd_result(session_id: &str) -> io::Result<Option<String>> {
+    resolve_local_session_any_cwd_in_root(session_id, &grok_home().join("sessions"))
+        .map_err(io::Error::other)
+}
+
+fn resolve_local_session_any_cwd_in_root(
+    session_id: &str,
+    sessions_root: &Path,
+) -> Result<Option<String>, crate::session::storage::relocation::RelocationError> {
+    let Some(session_path) = storage_view(sessions_root)?.find_persisted_session_dir(session_id)?
+    else {
+        return Ok(None);
+    };
+    Ok(session_path
+        .parent()
+        .and_then(crate::util::grok_home::decode_cwd_from_dirname))
+}
+
+/// Scan all CWD directories for a session and return its directory path.
+pub fn find_session_dir_by_id(session_id: &str) -> Option<PathBuf> {
+    find_any_session_dir_by_id_result(session_id).ok().flatten()
+}
+
 pub(crate) fn find_persisted_session_dir_by_id_result(
     session_id: &str,
 ) -> io::Result<Option<PathBuf>> {
     find_persisted_session_dir_by_id_in_root_result(session_id, &grok_home().join("sessions"))
 }
 
-/// Like [`find_persisted_session_dir_by_id_result`] with an injectable sessions root.
 pub(crate) fn find_persisted_session_dir_by_id_in_root_result(
     session_id: &str,
     sessions_root: &Path,
@@ -681,29 +649,10 @@ pub(crate) fn find_any_session_dir_by_id_result(session_id: &str) -> io::Result<
         .map_err(io::Error::other)
 }
 
-pub fn session_exists_by_id(session_id: &str) -> bool {
-    let sessions_root = crate::util::grok_home::grok_home().join("sessions");
-    session_exists_in_root(session_id, &sessions_root)
-}
-
-/// Inner implementation of `session_exists_by_id` that accepts a custom root.
-/// Separated so tests can use a tempdir without touching the real grok home.
+#[cfg(test)]
 fn session_exists_in_root(session_id: &str, sessions_root: &Path) -> bool {
-    if !sessions_root.exists() {
-        return false;
-    }
-    if let Ok(entries) = std::fs::read_dir(sessions_root) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                let session_path = path.join(session_id);
-                if session_path.exists() && session_path.is_dir() {
-                    return true;
-                }
-            }
-        }
-    }
-    false
+    find_persisted_session_dir_by_id_in_root_result(session_id, sessions_root)
+        .is_ok_and(|path| path.is_some())
 }
 
 /// Find and read a session summary given only its ID (scans all CWD directories).
@@ -716,9 +665,6 @@ pub(crate) fn find_summary_by_session_id_in_root(
     session_id: &str,
     sessions_root: &Path,
 ) -> Option<Summary> {
-    if session_id.contains('/') || session_id.contains('\\') || session_id.contains("..") {
-        return None;
-    }
     let path = storage_view(sessions_root)
         .ok()?
         .find_persisted_session_dir(session_id)
@@ -727,9 +673,7 @@ pub(crate) fn find_summary_by_session_id_in_root(
     read_summary_from_dir(&path).ok()
 }
 
-fn read_summary_from_dir(
-    session_dir: &Path,
-) -> crate::session::storage::relocation::Result<Summary> {
+fn read_summary_from_dir(session_dir: &Path) -> RelocationResult<Summary> {
     let path = session_dir.join("summary.json");
     let bytes = std::fs::read(&path).map_err(|error| RelocationError::Io {
         operation: "read",
@@ -744,31 +688,43 @@ fn read_summary_from_dir(
 /// for that cwd. Sync and local-only — suitable for the startup path that must
 /// resolve the sandbox profile before the (irreversible) OS sandbox is applied.
 fn most_recent_local_summary_for_cwd_in_root(cwd: &str, sessions_root: &Path) -> Option<Summary> {
-    let encoded = crate::util::grok_home::encode_cwd_dirname(cwd);
-    let cwd_dir = sessions_root.join(&encoded);
+    most_recent_local_summary_for_cwd_in_view(
+        cwd,
+        &storage_view(sessions_root).ok()?,
+        read_summary_from_dir,
+    )
+    .ok()
+    .flatten()
+}
+
+fn most_recent_local_summary_for_cwd_in_view(
+    cwd: &str,
+    view: &RelocationView,
+    read_summary: SummaryReader,
+) -> RelocationResult<Option<Summary>> {
     let mut best: Option<Summary> = None;
-    for entry in std::fs::read_dir(&cwd_dir).ok()?.flatten() {
-        let summary_path = entry.path().join("summary.json");
-        let Ok(bytes) = std::fs::read(&summary_path) else {
-            continue;
+    for session_dir in view.session_dirs(Some(cwd))? {
+        let summary = match read_summary(&session_dir) {
+            Ok(summary) => summary,
+            Err(RelocationError::Json { .. }) => continue,
+            Err(RelocationError::Io { source, .. }) if source.kind() == io::ErrorKind::NotFound => {
+                continue;
+            }
+            Err(error) => return Err(error),
         };
-        let Ok(summary) = serde_json::from_slice::<Summary>(&bytes) else {
-            continue;
-        };
-        // Match `list_sessions`: skip hidden/subagent sessions so the peek reads
-        // the same session a `-c` / bare `--resume` actually resumes.
         if summary.is_hidden() {
             continue;
         }
-        if best.as_ref().is_none_or(|b| {
-            let st = summary.last_active_at.unwrap_or(summary.updated_at);
-            let bt = b.last_active_at.unwrap_or(b.updated_at);
-            st > bt || (st == bt && summary.info.id.0.as_ref() < b.info.id.0.as_ref())
+        if best.as_ref().is_none_or(|current| {
+            let time = summary.last_active_at.unwrap_or(summary.updated_at);
+            let current_time = current.last_active_at.unwrap_or(current.updated_at);
+            time > current_time
+                || (time == current_time && summary.info.id.0.as_ref() < current.info.id.0.as_ref())
         }) {
             best = Some(summary);
         }
     }
-    best
+    Ok(best)
 }
 
 /// Sync, local-only session summaries for `cwd` (hidden sessions filtered).
@@ -786,33 +742,13 @@ fn local_summaries_for_cwd_sync_in_root(
     cwd: &str,
     sessions_root: &Path,
 ) -> io::Result<Vec<Summary>> {
-    let encoded = crate::util::grok_home::encode_cwd_dirname(cwd);
-    let cwd_dir = sessions_root.join(&encoded);
-    if !cwd_dir.exists() {
-        return Ok(Vec::new());
-    }
-    let mut out = Vec::new();
-    let entries = std::fs::read_dir(&cwd_dir)?;
-    for entry in entries.flatten() {
-        let summary_path = entry.path().join("summary.json");
-        let Ok(bytes) = std::fs::read(&summary_path) else {
-            continue;
-        };
-        let Ok(summary) = serde_json::from_slice::<Summary>(&bytes) else {
-            continue;
-        };
-        if summary.is_hidden() {
-            continue;
-        }
-        // Same uniqueness gate as resolve_local_session_any_cwd / upstream
-        // RelocationView::select: multi-cwd journal-less twins are dropped
-        // before the cwd filter, so their titles never reach select_by_title.
-        if !is_uniquely_persisted_session_id(summary.info.id.0.as_ref(), sessions_root) {
-            continue;
-        }
-        out.push(summary);
-    }
-    Ok(out)
+    let view = storage_view(sessions_root).map_err(io::Error::other)?;
+    let dirs = view.session_dirs(Some(cwd)).map_err(io::Error::other)?;
+    Ok(dirs
+        .iter()
+        .filter_map(|dir| read_summary_from_dir(dir).ok())
+        .filter(|s| !s.is_hidden())
+        .collect())
 }
 
 /// Best-effort lookup of the sandbox profile persisted with a session that is
@@ -1660,6 +1596,9 @@ struct SessionPersistence {
     pending_notification: Option<acp::SessionNotification>,
     rx: mpsc::UnboundedReceiver<PersistenceMsg>,
     remote_sync: Option<RemoteSync>,
+    /// True only for sessions created this run (not resumed); gates the
+    /// writeback backfill so a resumed, already-synced session isn't re-sent.
+    created_fresh: bool,
     /// WebSocket-based relay sync for real-time session sharing.
     /// This streams updates to the relay backend in addition to local persistence.
     relay_sync: Option<crate::relay::RelaySync>,
@@ -1779,6 +1718,53 @@ impl SessionPersistence {
         }
     }
 
+    /// Enable writeback for a session created `Local` before settings resolved:
+    /// build the sync and (for a fresh session) backfill its local-only history.
+    /// No-op once syncing, so a repeat upgrade is harmless.
+    async fn upgrade_to_writeback(&mut self, auth_manager: Arc<crate::auth::AuthManager>) {
+        if self.remote_sync.is_some() {
+            return;
+        }
+        // Flush the merge-pending notification so the backfill re-reads it.
+        self.flush_pending().await;
+        let persisted = match self.storage.load_session(&self.info).await {
+            Ok(persisted) => persisted,
+            Err(error) => {
+                tracing::warn!(%error, "writeback upgrade: failed to load session for backfill");
+                return;
+            }
+        };
+        let remote_sync = match init_remote_sync(
+            &persisted.summary,
+            StorageMode::Writeback,
+            Some(auth_manager),
+        ) {
+            Ok(Some(remote_sync)) => remote_sync,
+            // ZDR team, or nothing to do: leave the session local-only.
+            Ok(None) => return,
+            Err(error) => {
+                tracing::warn!(%error, "writeback upgrade: remote sync init failed");
+                return;
+            }
+        };
+        // Fresh-only backfill; see `backfill_updates_to_sync`.
+        let backfilled =
+            backfill_updates_to_sync(self.created_fresh, persisted.updates, &remote_sync);
+        if self.created_fresh {
+            tracing::info!(
+                session_id = %self.info.id,
+                backfilled,
+                "writeback enabled after settings arrival; backfilled local-only history",
+            );
+        } else {
+            tracing::info!(
+                session_id = %self.info.id,
+                "writeback enabled for resumed session; forward-only, no backfill",
+            );
+        }
+        self.remote_sync = Some(remote_sync);
+    }
+
     fn finish_pending_append(
         notification: acp::SessionNotification,
         result: Result<(), crate::session::storage::AppendUpdateError>,
@@ -1875,6 +1861,9 @@ impl SessionPersistence {
                 spawn_worktree_touch(&self.info);
             }
             match msg {
+                PersistenceMsg::UpgradeToWriteback { auth_manager } => {
+                    self.upgrade_to_writeback(auth_manager).await;
+                }
                 PersistenceMsg::Flush => {
                     self.flush_pending().await;
                 }
@@ -2191,21 +2180,6 @@ impl SessionPersistence {
                         tracing::warn!(?e, "failed to write compaction checkpoint file");
                     }
                 }
-                PersistenceMsg::SelectiveCompaction(state) => {
-                    let dir = session_dir(&self.info);
-                    let path = dir.join("selective_compaction.json");
-                    let temp = dir.join("selective_compaction.json.tmp");
-                    let result = async {
-                        tokio::fs::create_dir_all(&dir).await?;
-                        let bytes = serde_json::to_vec_pretty(&state).map_err(io::Error::other)?;
-                        tokio::fs::write(&temp, bytes).await?;
-                        tokio::fs::rename(&temp, &path).await
-                    }
-                    .await;
-                    if let Err(error) = result {
-                        tracing::warn!(?error, "failed to persist selective compaction state");
-                    }
-                }
                 PersistenceMsg::CompactionRequest(request) => {
                     if let Err(e) = self
                         .storage
@@ -2323,6 +2297,29 @@ fn collect_session_files_recursive(base: &Path, dir: &Path, files: &mut Vec<Copi
     }
 }
 
+/// Queue a fresh session's local-only ACP history to `remote_sync` (xAI updates
+/// are never synced), returning the count. Resumed sessions are forward-only:
+/// their prior history may already be on the backend (which appends by content,
+/// no per-message id), so re-sending would duplicate.
+fn backfill_updates_to_sync(
+    created_fresh: bool,
+    updates: Vec<SessionUpdate>,
+    remote_sync: &RemoteSync,
+) -> usize {
+    if !created_fresh {
+        return 0;
+    }
+    let mut backfilled = 0usize;
+    for update in updates {
+        if let SessionUpdate::Acp(notification) = update {
+            remote_sync.queue(*notification);
+            backfilled += 1;
+        }
+    }
+    remote_sync.flush();
+    backfilled
+}
+
 fn init_remote_sync(
     summary: &Summary,
     storage_mode: StorageMode,
@@ -2392,23 +2389,21 @@ async fn try_pull_from_remote(info: &Info, client: &crate::remote::BackendClient
 /// Map a persistence `io::Error` into an `acp::Error` with a human-friendly
 /// `message` and a stable `data.code` for log aggregation.
 pub(crate) fn io_error_to_acp(e: &io::Error) -> acp::Error {
-    // Unix: ENOSPC / EDQUOT. Windows: ERROR_DISK_FULL (112). Hardcoded on
-    // Windows so we don't pull libc in just for two integer literals.
+    // Unix: ENOSPC / EDQUOT. Windows: ERROR_DISK_FULL (112). Also accept
+    // `ErrorKind::StorageFull` when no raw OS code is present.
     #[cfg(unix)]
-    let is_disk_full = matches!(
+    let is_disk_full_os = matches!(
         e.raw_os_error(),
         Some(raw) if raw == libc::ENOSPC || raw == libc::EDQUOT
     );
     #[cfg(windows)]
     const ERROR_DISK_FULL: i32 = 112;
     #[cfg(windows)]
-    let is_disk_full = matches!(e.raw_os_error(), Some(ERROR_DISK_FULL));
+    let is_disk_full_os = matches!(e.raw_os_error(), Some(ERROR_DISK_FULL));
+    let is_disk_full = is_disk_full_os || e.kind() == io::ErrorKind::StorageFull;
 
     let (message, code) = if is_disk_full {
-        (
-            "Disk quota exceeded or out of space.",
-            "FS_DISK_QUOTA_EXCEEDED",
-        )
+        ("No space left on device", "FS_DISK_QUOTA_EXCEEDED")
     } else {
         match e.kind() {
             io::ErrorKind::NotFound => ("Path not found.", "FS_NOT_FOUND"),
@@ -2425,6 +2420,19 @@ pub(crate) fn io_error_to_acp(e: &io::Error) -> acp::Error {
             "detail": e.to_string(),
         }),
     ))
+}
+
+#[cfg(test)]
+mod io_error_to_acp_tests {
+    use super::io_error_to_acp;
+    use std::io;
+
+    #[test]
+    fn storage_full_maps_to_no_space_left() {
+        let acp_err = io_error_to_acp(&io::Error::from(io::ErrorKind::StorageFull));
+        assert_eq!(acp_err.message, "No space left on device");
+        assert_eq!(acp_err.data.unwrap()["code"], "FS_DISK_QUOTA_EXCEEDED");
+    }
 }
 
 /// Best-effort worktree liveness touch: stamp `last_accessed_at` on the
@@ -2505,6 +2513,7 @@ pub(crate) async fn new(
             pending_notification: None,
             rx,
             remote_sync: remote_sync.clone(),
+            created_fresh: true,
             relay_sync,
             summary: crate::session::summary::SummaryGenerator::new(
                 crate::session::summary::SummaryConfig {
@@ -2575,6 +2584,7 @@ pub async fn new_with_explicit_dir(
             pending_notification: None,
             rx,
             remote_sync: None,
+            created_fresh: false,
             relay_sync: None,
             summary: crate::session::summary::SummaryGenerator::new(
                 crate::session::summary::SummaryConfig {
@@ -2703,6 +2713,7 @@ pub(crate) async fn load(
             pending_notification: None,
             rx,
             remote_sync: remote_sync.clone(),
+            created_fresh: false,
             relay_sync,
             summary: summary_gen,
             registry_title_sync,
@@ -2789,6 +2800,7 @@ pub(crate) async fn load_light(
             pending_notification: None,
             rx,
             remote_sync: remote_sync.clone(),
+            created_fresh: false,
             relay_sync,
             summary: summary_gen,
             registry_title_sync,
@@ -2802,8 +2814,17 @@ pub(crate) async fn load_light(
 
 /// List session summaries, optionally filtered by cwd (absolute path string).
 /// Returns summaries sorted by `last_active_at` (else `updated_at`) descending.
+fn recover_session_relocations_in(root: &Path) -> crate::session::storage::relocation::Result<()> {
+    crate::session::storage::relocation::RelocationStorage::new(root.into()).recover_all()
+}
+
 pub async fn list_summaries(cwd: Option<&str>) -> io::Result<Vec<Summary>> {
     let root_dir = crate::util::grok_home::grok_home();
+    let recovery_root = root_dir.clone();
+    tokio::task::spawn_blocking(move || recover_session_relocations_in(&recovery_root))
+        .await
+        .map_err(io::Error::other)?
+        .map_err(io::Error::other)?;
     let storage: Box<dyn StorageAdapter> = Box::new(JsonlStorageAdapter::with_root(root_dir));
     storage.list_sessions(cwd).await
 }
@@ -2870,7 +2891,7 @@ pub async fn delete_session_history(
     session_id: &str,
     cwd: Option<&str>,
     needs_remote: bool,
-    auth_manager: Option<Arc<crate::auth::AuthManager>>,
+    auth_manager: Arc<crate::auth::AuthManager>,
 ) -> Result<SessionDeletion, DeleteSessionError> {
     let sid = acp::SessionId::new(Arc::from(session_id));
 
@@ -2890,8 +2911,6 @@ pub async fn delete_session_history(
     // reappear; a `404` means the copy is already gone, so deletion stays
     // idempotent and falls through to local cleanup.
     let remote_removed = if needs_remote {
-        let auth_manager = auth_manager
-            .expect("remote session deletion requires an authenticated session manager");
         let result = crate::remote::client::BackendClient::new()
             .with_auth_manager(auth_manager)
             .delete_session_data(session_id)
@@ -3010,6 +3029,11 @@ mod delete_session_history_tests {
 /// summary file on disk; final order uses `last_active_at` else `updated_at`.
 pub async fn list_recent_summaries(limit: usize) -> io::Result<Vec<Summary>> {
     let root_dir = crate::util::grok_home::grok_home();
+    let recovery_root = root_dir.clone();
+    tokio::task::spawn_blocking(move || recover_session_relocations_in(&recovery_root))
+        .await
+        .map_err(io::Error::other)?
+        .map_err(io::Error::other)?;
     let storage = JsonlStorageAdapter::with_root(root_dir);
     storage.list_sessions_recent(limit).await
 }
@@ -3032,7 +3056,19 @@ const DEFAULT_CLEANUP_TTL_DAYS: u32 = 30;
 pub fn cleanup_stale_sessions(skip_session_dir: Option<&Path>) {
     CLEANUP_SESSIONS_ONCE.call_once(|| {
         let ttl_days = resolve_cleanup_ttl_days();
-        let sessions_root = grok_home().join("sessions");
+        let root = grok_home();
+        if let Err(error) = recover_session_relocations_in(&root) {
+            tracing::error!(%error, "session relocation recovery failed before TTL cleanup");
+            return;
+        }
+        let sessions_root = root.join("sessions");
+        let relocation_view = match storage_view(&sessions_root) {
+            Ok(view) => view,
+            Err(error) => {
+                tracing::error!(%error, "session relocation snapshot failed before TTL cleanup");
+                return;
+            }
+        };
 
         tracing::info!(
             target: "xai_grok_shell::session::persistence",
@@ -3042,7 +3078,14 @@ pub fn cleanup_stale_sessions(skip_session_dir: Option<&Path>) {
             "SESSION_CLEANUP_START: scanning for stale session files"
         );
 
-        let stats = cleanup_stale_sessions_inner(&sessions_root, ttl_days, skip_session_dir);
+        let stats = cleanup_stale_sessions_inner(
+            &sessions_root,
+            ttl_days,
+            skip_session_dir,
+            &relocation_view,
+            &root,
+            CleanupLevel::SessionsRoot,
+        );
 
         tracing::info!(
             target: "xai_grok_shell::session::persistence",
@@ -3078,10 +3121,30 @@ struct CleanupStats {
     errors: u32,
 }
 
+#[derive(Clone, Copy)]
+enum CleanupLevel {
+    SessionsRoot,
+    Cwd,
+    Session,
+}
+
 /// Recursive cleanup: delete stale files, then rmdir empty dirs (post-order).
-fn cleanup_stale_sessions_inner(root: &Path, ttl_days: u32, skip: Option<&Path>) -> CleanupStats {
+fn cleanup_stale_sessions_inner(
+    root: &Path,
+    ttl_days: u32,
+    skip: Option<&Path>,
+    relocation_view: &crate::session::storage::relocation::RelocationView,
+    grok_home: &Path,
+    level: CleanupLevel,
+) -> CleanupStats {
     let mut stats = CleanupStats::default();
 
+    if root
+        .file_name()
+        .is_some_and(|name| name.to_string_lossy().starts_with('.'))
+    {
+        return stats;
+    }
     if let Some(skip_dir) = skip
         && root == skip_dir
     {
@@ -3113,8 +3176,84 @@ fn cleanup_stale_sessions_inner(root: &Path, ttl_days: u32, skip: Option<&Path>)
             continue;
         }
 
-        if path.is_dir() {
-            let child_stats = cleanup_stale_sessions_inner(&path, ttl_days, skip);
+        let metadata = match std::fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(_) => {
+                stats.errors += 1;
+                continue;
+            }
+        };
+        if metadata.file_type().is_dir() && !metadata.file_type().is_symlink() {
+            if matches!(level, CleanupLevel::SessionsRoot)
+                && relocation_view.protects_cwd_dir(&path)
+            {
+                continue;
+            }
+            let lease = if matches!(level, CleanupLevel::Cwd) {
+                let summary = path.join("summary.json");
+                let summary_type = match std::fs::symlink_metadata(&summary) {
+                    Ok(metadata) => metadata,
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                        let child_stats = cleanup_stale_sessions_inner(
+                            &path,
+                            ttl_days,
+                            skip,
+                            relocation_view,
+                            grok_home,
+                            CleanupLevel::Session,
+                        );
+                        stats.files_deleted += child_stats.files_deleted;
+                        stats.dirs_removed += child_stats.dirs_removed;
+                        stats.errors += child_stats.errors;
+                        if child_stats.files_deleted > 0 && std::fs::remove_dir(&path).is_ok() {
+                            stats.dirs_removed += 1;
+                        }
+                        continue;
+                    }
+                    Err(error) => {
+                        stats.errors += 1;
+                        tracing::debug!(
+                            target: "xai_grok_shell::session::persistence",
+                            path = %summary.display(),
+                            %error,
+                            "SESSION_CLEANUP_METADATA_ERROR"
+                        );
+                        continue;
+                    }
+                };
+                if !summary_type.file_type().is_file() || summary_type.file_type().is_symlink() {
+                    continue;
+                }
+                let Some(id) = path.file_name().and_then(|name| name.to_str()) else {
+                    continue;
+                };
+                let storage = crate::session::storage::relocation::RelocationStorage::new(
+                    grok_home.to_path_buf(),
+                );
+                let Ok(lease) = storage.acquire(id) else {
+                    continue;
+                };
+                match storage.read_journal(id) {
+                    Err(crate::session::storage::relocation::RelocationError::JournalMissing(
+                        _,
+                    )) => Some(lease),
+                    _ => continue,
+                }
+            } else {
+                None
+            };
+            let next = match level {
+                CleanupLevel::SessionsRoot => CleanupLevel::Cwd,
+                CleanupLevel::Cwd | CleanupLevel::Session => CleanupLevel::Session,
+            };
+            let child_stats = cleanup_stale_sessions_inner(
+                &path,
+                ttl_days,
+                skip,
+                relocation_view,
+                grok_home,
+                next,
+            );
             stats.files_deleted += child_stats.files_deleted;
             stats.dirs_removed += child_stats.dirs_removed;
             stats.errors += child_stats.errors;
@@ -3130,8 +3269,8 @@ fn cleanup_stale_sessions_inner(root: &Path, ttl_days: u32, skip: Option<&Path>)
                     "SESSION_CLEANUP_RMDIR"
                 );
             }
-        } else if let Ok(meta) = std::fs::metadata(&path)
-            && let Ok(mtime) = meta.modified()
+            drop(lease);
+        } else if let Ok(mtime) = metadata.modified()
             && is_stale(mtime, ttl_days)
         {
             if std::fs::remove_file(&path).is_ok() {
@@ -3271,13 +3410,13 @@ mod agent_name_persistence_tests {
             "num_chat_messages": 5,
             "current_model_id": "cursor-model",
             "agent_name": "cursor",
-            "generated_title": "Fix cursor mode",
+            "generated_title": "Fix editor mode",
             "head_branch": "main"
         }"#;
         let summary: Summary = serde_json::from_str(json).unwrap();
         assert_eq!(summary.agent_name.as_deref(), Some("cursor"));
         assert_eq!(summary.current_model_id.0.as_ref(), "cursor-model");
-        assert_eq!(summary.generated_title.as_deref(), Some("Fix cursor mode"));
+        assert_eq!(summary.generated_title.as_deref(), Some("Fix editor mode"));
     }
 }
 
@@ -3407,6 +3546,7 @@ mod session_exists_tests {
         // Simulate sessions/<encoded-cwd>/<session-id>/
         let session_dir = root.join("some_cwd_dir").join("my-session-id");
         fs::create_dir_all(&session_dir).unwrap();
+        fs::write(session_dir.join("summary.json"), b"{}").unwrap();
 
         assert!(session_exists_in_root("my-session-id", &root));
     }
@@ -3437,9 +3577,13 @@ mod session_exists_tests {
     fn finds_session_across_multiple_cwd_dirs() {
         let tmp = make_root();
         let root = tmp.path().join("sessions");
-        // Two different cwd directories
-        fs::create_dir_all(root.join("cwd1").join("other-session")).unwrap();
-        fs::create_dir_all(root.join("cwd2").join("target-session")).unwrap();
+        // Two persisted sessions under different cwd directories.
+        let other = root.join("cwd1").join("other-session");
+        let target = root.join("cwd2").join("target-session");
+        fs::create_dir_all(&other).unwrap();
+        fs::create_dir_all(&target).unwrap();
+        fs::write(other.join("summary.json"), b"{}").unwrap();
+        fs::write(target.join("summary.json"), b"{}").unwrap();
 
         assert!(session_exists_in_root("target-session", &root));
         assert!(!session_exists_in_root("missing-session", &root));
@@ -3519,9 +3663,11 @@ mod find_summary_by_session_id_tests {
 #[cfg(test)]
 mod resumed_sandbox_profile_tests {
     use super::{
-        most_recent_local_summary_for_cwd_in_root, resumed_session_sandbox_profile_in_root,
+        RelocationError, RelocationView, most_recent_local_summary_for_cwd_in_root,
+        most_recent_local_summary_for_cwd_in_view, read_summary_from_dir,
+        resumed_session_sandbox_profile_in_root,
     };
-    use std::fs;
+    use std::{fs, io};
     use tempfile::TempDir;
 
     /// Write a session summary under the *encoded* cwd dir (matching how the
@@ -3685,6 +3831,115 @@ mod resumed_sandbox_profile_tests {
             resumed_session_sandbox_profile_in_root(None, Some(cwd), &root),
             Some("off".to_string())
         );
+    }
+
+    #[test]
+    fn most_recent_cwd_skips_corrupt_summary() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().join("sessions");
+        let cwd = "/work/proj";
+        write_session(
+            &root,
+            cwd,
+            "valid",
+            "2026-06-01T00:00:00Z",
+            None,
+            Some("workspace"),
+            false,
+        );
+        let corrupt_dir = root
+            .join(crate::util::grok_home::encode_cwd_dirname(cwd))
+            .join("corrupt");
+        fs::create_dir_all(&corrupt_dir).unwrap();
+        fs::write(corrupt_dir.join("summary.json"), b"not-json").unwrap();
+
+        let picked = most_recent_local_summary_for_cwd_in_root(cwd, &root).unwrap();
+        assert_eq!(picked.info.id.0.as_ref(), "valid");
+    }
+
+    #[test]
+    fn most_recent_cwd_skips_raced_not_found() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().join("sessions");
+        let cwd = "/work/proj";
+        write_session(
+            &root,
+            cwd,
+            "valid",
+            "2026-06-01T00:00:00Z",
+            None,
+            Some("workspace"),
+            false,
+        );
+        write_session(
+            &root,
+            cwd,
+            "removed",
+            "2026-07-01T00:00:00Z",
+            None,
+            Some("strict"),
+            false,
+        );
+        let view = RelocationView::load_for_sessions_root(&root).unwrap();
+
+        let picked = most_recent_local_summary_for_cwd_in_view(cwd, &view, |session_dir| {
+            if session_dir.ends_with("removed") {
+                Err(RelocationError::Io {
+                    operation: "read",
+                    path: session_dir.join("summary.json"),
+                    source: io::Error::new(io::ErrorKind::NotFound, "injected"),
+                })
+            } else {
+                read_summary_from_dir(session_dir)
+            }
+        })
+        .unwrap()
+        .unwrap();
+        assert_eq!(picked.info.id.0.as_ref(), "valid");
+    }
+
+    #[test]
+    fn most_recent_cwd_propagates_non_not_found_io_errors() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().join("sessions");
+        let cwd = "/work/proj";
+        write_session(
+            &root,
+            cwd,
+            "older",
+            "2026-01-01T00:00:00Z",
+            None,
+            Some("workspace"),
+            false,
+        );
+        write_session(
+            &root,
+            cwd,
+            "unreadable-newer",
+            "2026-06-01T00:00:00Z",
+            None,
+            Some("strict"),
+            false,
+        );
+        let view = RelocationView::load_for_sessions_root(&root).unwrap();
+
+        let error = most_recent_local_summary_for_cwd_in_view(cwd, &view, |session_dir| {
+            if session_dir.ends_with("unreadable-newer") {
+                Err(RelocationError::Io {
+                    operation: "read",
+                    path: session_dir.join("summary.json"),
+                    source: io::Error::new(io::ErrorKind::PermissionDenied, "injected"),
+                })
+            } else {
+                read_summary_from_dir(session_dir)
+            }
+        })
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            RelocationError::Io { source, .. }
+                if source.kind() == io::ErrorKind::PermissionDenied
+        ));
     }
 
     #[test]
@@ -3891,30 +4146,11 @@ mod session_exists_for_cwd_tests {
         fs::write(images_b.join("image-1.png"), b"png").unwrap();
 
         assert_eq!(
-            resolve_local_session_any_cwd_in_root(session_id, &root).as_deref(),
+            resolve_local_session_any_cwd_in_root(session_id, &root)
+                .unwrap()
+                .as_deref(),
             Some(cwd_a),
             "must anchor to the real session's cwd, not the stub's"
-        );
-    }
-
-    /// Multi-cwd journal-less twins are ambiguous: never pick one silently.
-    #[test]
-    fn resolve_local_session_any_cwd_drops_duplicate_persisted_ids() {
-        let tmp = TempDir::new().unwrap();
-        let root = tmp.path().join("sessions");
-        let session_id = "legacy-twin";
-
-        for cwd in ["/project/alpha", "/project/beta"] {
-            let encoded = crate::util::grok_home::encode_cwd_dirname(cwd);
-            let dir = root.join(&encoded).join(session_id);
-            fs::create_dir_all(&dir).unwrap();
-            fs::write(dir.join("summary.json"), b"{}").unwrap();
-        }
-
-        assert_eq!(
-            resolve_local_session_any_cwd_in_root(session_id, &root),
-            None,
-            "duplicate persisted ids across cwds must stay unresolved"
         );
     }
 }

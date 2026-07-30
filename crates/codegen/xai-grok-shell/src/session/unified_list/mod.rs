@@ -833,7 +833,7 @@ mod tests {
         }
         {
             let _on = xai_grok_test_support::EnvGuard::set("GROK_SESSION_LIST_CONVERSATIONS", "1");
-            assert!(!conversations_lane_enabled());
+            assert_eq!(conversations_lane_enabled(), false);
         }
         {
             let _off = xai_grok_test_support::EnvGuard::set("GROK_SESSION_LIST_CONVERSATIONS", "0");
@@ -856,12 +856,13 @@ mod tests {
         {
             let _desktop =
                 xai_grok_test_support::EnvGuard::set("GROK_SESSION_LIST_CONVERSATIONS", "1");
-            assert!(!conversations_lane_active());
+            assert_eq!(conversations_lane_active(), false);
         }
         {
             let _chat = xai_grok_test_support::EnvGuard::set(GROK_CHAT_MODE_ENV, "1");
-            assert!(
-                !conversations_lane_active(),
+            assert_eq!(
+                conversations_lane_active(),
+                false,
                 "process chat mode must enable the lane (chat feature only)"
             );
         }

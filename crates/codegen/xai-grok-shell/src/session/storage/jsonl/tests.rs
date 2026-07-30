@@ -226,10 +226,6 @@ async fn workflow_run_manifest_round_trips_and_clear_tombstone_wins() {
 }
 #[cfg(unix)]
 #[tokio::test]
-#[ignore = "Chaos: upstream test is flaky on `read_dir` ordering — when the injected `wf_symlink` \
-sorts inside the first `MAX_RESTORED_WORKFLOW_RUNS+1` entries returned by the OS, one legitimate \
-run gets truncated (127 vs 128). Same off-by-one exists upstream but hasn't fired in their CI \
-due to different directory ordering. Filed as tech-debt against B7."]
 async fn workflow_restore_rejects_symlinks_and_caps_run_count() {
     use std::os::unix::fs::symlink;
     use crate::session::workflow::store::{
