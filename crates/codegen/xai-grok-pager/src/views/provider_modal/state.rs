@@ -258,6 +258,15 @@ pub struct ProviderModalState {
     pub models: Vec<String>,
     /// 模型列表是否正在加载。
     pub models_loading: bool,
+    /// 与 `models` 平行的 reasoning 元数据（下标对齐）。
+    ///
+    /// Issue #14：保留上游 `/v1/models` 返回的 `reasoningEfforts` 等元数据，
+    /// 写入 config 后由 agent 注入会话 catalog；SwitchModel 重注册时复用，
+    /// 避免再次丢 meta。UI 本身不渲染 badge，字段仍是 source 缓存。
+    pub models_meta: Vec<crate::slash::commands::provider::ReasoningMeta>,
+    /// `load_models_for` 成功写入 config 后置位；`apply_provider_outcome`
+    /// 消费后清零，把 reasoning meta 同步进会话 catalog（避免每次按键重读）。
+    pub models_need_catalog_sync: bool,
     /// 模型列表顶部搜索框内容（子串匹配，不区分大小写）。
     pub model_filter: String,
     /// `ManualModel` 模式下手写的模型 ID。
@@ -313,6 +322,8 @@ impl ProviderModalState {
             success: None,
             models: Vec::new(),
             models_loading: false,
+            models_meta: Vec::new(),
+            models_need_catalog_sync: false,
             model_filter: String::new(),
             manual_model_id: String::new(),
             model_param_field: None,
@@ -538,12 +549,14 @@ impl ProviderModalState {
     pub fn load_models_for(&mut self, name: &str) {
         self.models_loading = true;
         self.models.clear();
+        self.models_meta.clear();
+        self.models_need_catalog_sync = false;
         self.model_filter.clear();
         self.error = None;
         self.selected = 0;
         self.scroll_offset = 0;
         match crate::slash::commands::provider::fetch_provider_models(name) {
-            Ok(models) => {
+            Ok(entries) => {
                 // Register into catalog while we have the list. Failures are
                 // non-fatal for the modal (user can still browse the in-memory list).
                 let need_default = crate::slash::commands::provider::load_config()
@@ -551,24 +564,32 @@ impl ProviderModalState {
                         crate::slash::commands::provider::configured_default_model(&doc).is_none()
                     })
                     .unwrap_or(false);
-                let first = models.first().cloned();
-                if let Err(e) = crate::slash::commands::provider::register_provider_models(
+                let first_id = entries.first().map(|e| e.id.clone());
+                let registered = crate::slash::commands::provider::register_provider_models(
                     name,
-                    &models,
+                    &entries,
                     if need_default {
-                        first.as_deref()
+                        first_id.as_deref()
                     } else {
                         None
                     },
-                ) {
+                );
+                if let Err(e) = &registered {
                     tracing::warn!(
                         provider = %name,
                         error = %e,
                         "failed to register provider models into catalog"
                     );
                 }
-                self.models = models;
+                // 把 entries 拆开存：models 是 id 列表（保留旧 UI 形状），
+                // models_meta 是平行 meta 数组，下标对齐。
+                // Issue #14：保留上游 reasoning 元数据；SwitchModel 重注册与
+                // 会话 catalog 注入都复用，避免只写 id 再丢 meta。
+                self.models = entries.iter().map(|e| e.id.clone()).collect();
+                self.models_meta = entries.into_iter().map(|e| e.meta).collect();
                 self.models_loading = false;
+                // 仅在 config 写入成功时请求会话 catalog 同步。
+                self.models_need_catalog_sync = registered.is_ok();
             }
             Err(e) => {
                 self.error = Some(e);
@@ -661,6 +682,8 @@ impl ProviderModalState {
         self.clear_messages();
         self.api_key.clear();
         self.models.clear();
+        self.models_meta.clear();
+        self.models_need_catalog_sync = false;
         self.model_filter.clear();
         self.manual_model_id.clear();
         self.clear_model_params();
@@ -682,6 +705,8 @@ impl ProviderModalState {
         self.clear_messages();
         self.api_key.clear();
         self.models.clear();
+        self.models_meta.clear();
+        self.models_need_catalog_sync = false;
         self.model_filter.clear();
         self.manual_model_id.clear();
         self.clear_model_params();

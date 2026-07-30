@@ -218,7 +218,16 @@ impl SessionEvent {
                     .to_string()
             }
             SessionEvent::ContextTooLarge => {
-                "此对话已超出模型的上下文窗口。请使用 /new 开始新会话。"
+                // Defaults: ModelInfo::fallback uses context_window=200_000 when
+                // [model.*] omits it; max_completion_tokens stays unset (provider).
+                // Use ASCII `-` list markers (not U+2022) for broader terminal
+                // glyph coverage.
+                "此对话已超出模型的上下文窗口（未配置时本地默认 200k）。\n\
+                 处理建议：\n\
+                 - /compact — 压缩当前会话后重试\n\
+                 - /context set 128k — 按上游真实上限调整本会话窗口（可触发压缩）\n\
+                 - 在 config.toml 的 [model.…] 中设置 context_window / max_completion_tokens\n\
+                 - 若仍过大：/new 开新会话"
                     .to_string()
             }
             SessionEvent::CompactCompleted { elapsed } => {
@@ -803,6 +812,14 @@ mod tests {
         assert!(
             msg.contains("/new"),
             "must offer /new as the recovery action: {msg}"
+        );
+        assert!(
+            msg.contains("/compact") || msg.contains("/context"),
+            "must offer compact/context recovery paths: {msg}"
+        );
+        assert!(
+            msg.contains("200k") || msg.contains("context_window"),
+            "must mention default window or config field: {msg}"
         );
     }
 

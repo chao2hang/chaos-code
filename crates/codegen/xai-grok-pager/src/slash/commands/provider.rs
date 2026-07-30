@@ -21,6 +21,44 @@ use std::process::Command;
 use crate::slash::command::{CommandExecCtx, CommandResult, SlashCommand};
 use crate::views::provider_modal::ProviderModalMode;
 
+/// 从上游 `/v1/models` 响应中解析出的「per-model」reasoning 元数据。
+///
+/// 跨命名空间使用 — provider 后端写入 config，shell / acp 读出去构造
+/// picker / sampler。故意**不**直接复用
+/// `xai_grok_shell::remote::client::parse_remote_model_value` 的解析逻辑：
+/// `parse_remote_model_value` 强依赖 base_url，且只接受单条
+/// `ModelEntryConfig`，跟 `parse_models_response` 的「纯 id + 弱元数据」
+/// 形态不一致。先保持两套实现，后续可以抽 `parse_reasoning_meta(&Value)`
+/// 到 `xai-grok-sampling-types` 共享。
+///
+/// Issue #14：之前 `parse_models_response` 只取 `id`，把 `reasoningEfforts`
+/// 等元数据全部丢弃，导致 `/effort` 对 BYOK 模型永远下拉为空。
+///
+/// 写入 config 的 effort 字符串必须是可反序列化为
+/// [`xai_grok_shell::sampling::types::ReasoningEffort`] /
+/// [`xai_grok_shell::sampling::types::ReasoningEffortOption`] 的规范值；
+/// 上游的非标准 tier（如 `"turbo"`）在解析阶段跳过，避免整条 model 条目
+/// 在 config 加载时失败。
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ReasoningMeta {
+    /// 显式声明的可用 reasoning effort 等级（canonical ids，如 `low`/`medium`/`high`）。
+    pub reasoning_efforts: Vec<String>,
+    /// provider 返回的当前默认 effort（已校验的 canonical id）。
+    pub reasoning_effort: Option<String>,
+    /// provider 显式声明「该模型支持 reasoning effort」。
+    /// 缺省时由 shell 配置层的 backend 启发式补默认（messages 默认 true）。
+    pub supports_reasoning_effort: bool,
+}
+
+impl ReasoningMeta {
+    /// 是否携带任何非默认 reasoning 元数据。
+    pub fn is_meaningful(&self) -> bool {
+        !self.reasoning_efforts.is_empty()
+            || self.reasoning_effort.is_some()
+            || self.supports_reasoning_effort
+    }
+}
+
 /// 用户配置路径：`$CHAOS_HOME| $GROK_HOME | ~/.chaos|~/.grok`/config.toml。
 ///
 /// 必须与 shell / 其它 pager 设置读写同一 home（`xai_grok_config::grok_home`）。
@@ -526,7 +564,11 @@ const MAX_PROVIDER_CATALOG_MODELS: usize = 500;
 /// 返回 catalog key（供 `/model` / `SetDefaultModel` 使用）。
 /// 旧版错误的顶层 `[model] provider/id` 不会再写入（shell 只认 `[model.<key>]`）。
 pub(crate) fn register_and_set_model(provider: &str, model_id: &str) -> Result<String, String> {
-    let keys = register_provider_models(provider, std::slice::from_ref(&model_id.to_string()), Some(model_id))?;
+    let entry = ModelEntry {
+        id: model_id.to_string(),
+        meta: ReasoningMeta::default(),
+    };
+    let keys = register_provider_models(provider, std::slice::from_ref(&entry), Some(model_id))?;
     keys.into_iter().next().ok_or_else(|| "注册模型失败：空结果".into())
 }
 
@@ -536,9 +578,17 @@ pub(crate) fn register_and_set_model(provider: &str, model_id: &str) -> Result<S
 /// - `set_default`：若 `Some(id)`，同时把 `[models].default` 设为该模型的 catalog key
 ///
 /// 返回写入的 catalog keys（与输入顺序一致，去重后）。
+/// 批量注册渠道下的模型到 `[model."provider/id"]` 目录，保留 reasoning 元数据。
+///
+/// `set_default` 为 `Some(id)` 时同步把 `[models].default` 设为该 id 的 catalog key。
+/// `id` 不在本批 entries 中也会被 upsert（meta 为空）。
+///
+/// Issue #14：之前只取 id，丢弃 `reasoningEfforts` 等元数据，导致
+/// `/effort` 对 BYOK 模型永远下拉为空。现在保留 `reasoning_efforts` /
+/// `reasoning_effort` / `supports_reasoning_effort` 三个字段。
 pub(crate) fn register_provider_models(
     provider: &str,
-    model_ids: &[String],
+    entries: &[ModelEntry],
     set_default: Option<&str>,
 ) -> Result<Vec<String>, String> {
     let mut doc = load_config()?;
@@ -558,19 +608,27 @@ pub(crate) fn register_provider_models(
 
     let mut keys = Vec::new();
     let mut seen = std::collections::HashSet::new();
-    for raw in model_ids.iter().take(MAX_PROVIDER_CATALOG_MODELS) {
-        let model_id = raw.trim();
+    for entry in entries.iter().take(MAX_PROVIDER_CATALOG_MODELS) {
+        let model_id = entry.id.trim();
         if model_id.is_empty() || !seen.insert(model_id.to_string()) {
             continue;
         }
-        keys.push(upsert_provider_model_entry(&mut doc, provider, model_id));
+        keys.push(upsert_provider_model_entry(
+            &mut doc,
+            provider,
+            model_id,
+            &entry.meta,
+        ));
     }
 
     if let Some(default_id) = set_default.map(str::trim).filter(|s| !s.is_empty()) {
-        // 确保默认模型条目存在（即使不在本批 model_ids 里）。
+        // 确保默认模型条目存在（即使不在本批 entries 里）。
         if !seen.contains(default_id) {
             keys.push(upsert_provider_model_entry(
-                &mut doc, provider, default_id,
+                &mut doc,
+                provider,
+                default_id,
+                &ReasoningMeta::default(),
             ));
         }
         let default_key = provider_model_catalog_key(provider, default_id);
@@ -598,10 +656,15 @@ fn ensure_model_table(doc: &mut toml_edit::DocumentMut) {
 }
 
 /// 写入/更新单条 `[model."provider/id"]`，返回 catalog key。
+///
+/// `meta` 含上游返回的 reasoning 元数据（issue #14）。仅在携带非默认
+/// 值时写入对应字段，避免污染配置 / 与人工编辑值冲突；重新注册时
+/// 若 meta 已空则保留已有字段不动（不主动清空，让用户控制）。
 fn upsert_provider_model_entry(
     doc: &mut toml_edit::DocumentMut,
     provider: &str,
     model_id: &str,
+    meta: &ReasoningMeta,
 ) -> String {
     let catalog_key = provider_model_catalog_key(provider, model_id);
     let entry = &mut doc["model"][catalog_key.as_str()];
@@ -612,6 +675,27 @@ fn upsert_provider_model_entry(
     entry["model"] = toml_edit::value(model_id);
     entry["model_provider"] = toml_edit::value(provider);
     entry["name"] = toml_edit::value(format!("{provider}/{model_id}"));
+
+    // 写入 reasoning 元数据——只在 provider 显式提供时落盘，避免把空
+    // `reasoning_efforts = []` 之类的占位值刷进 config。
+    // `parse_reasoning_meta` 已过滤非法 effort 值；这里用 `is_meaningful`
+    // 早退，避免对空 meta 反复写表。
+    if meta.is_meaningful() {
+        if meta.supports_reasoning_effort {
+            entry["supports_reasoning_effort"] = toml_edit::value(true);
+        }
+        if let Some(default) = &meta.reasoning_effort {
+            entry["reasoning_effort"] = toml_edit::value(default.as_str());
+        }
+        if !meta.reasoning_efforts.is_empty() {
+            let mut arr = toml_edit::Array::new();
+            for v in &meta.reasoning_efforts {
+                arr.push(v.as_str());
+            }
+            entry["reasoning_efforts"] = toml_edit::value(arr);
+        }
+    }
+
     catalog_key
 }
 
@@ -780,7 +864,7 @@ pub(crate) fn register_model_with_params(
     }
 
     ensure_model_table(&mut doc);
-    let catalog_key = upsert_provider_model_entry(&mut doc, provider, model_id);
+    let catalog_key = upsert_provider_model_entry(&mut doc, provider, model_id, &ReasoningMeta::default());
     let entry = doc["model"][catalog_key.as_str()]
         .as_table_mut()
         .expect("model entry is table");
@@ -845,8 +929,11 @@ pub(crate) fn current_provider_name(doc: &toml_edit::DocumentMut) -> Option<Stri
 }
 
 
-/// 获取渠道可用模型列表。供 `views/provider_modal` 调用。
-pub(crate) fn fetch_provider_models(name: &str) -> Result<Vec<String>, String> {
+/// 获取渠道可用模型列表（含 reasoning 元数据）。供 `views/provider_modal` 调用。
+///
+/// Issue #14：旧版只返回 model id 列表，丢弃 reasoning 元数据，导致
+/// `/effort` 对 BYOK 模型永远下拉为空。
+pub(crate) fn fetch_provider_models(name: &str) -> Result<Vec<ModelEntry>, String> {
     let doc = load_config()?;
 
     let base_url = match provider_field(&doc, name, "base_url") {
@@ -909,43 +996,111 @@ pub(crate) fn fetch_provider_models(name: &str) -> Result<Vec<String>, String> {
     parse_models_response(&body)
 }
 
-/// 解析 /v1/models 响应，提取模型 ID 列表
-fn parse_models_response(body: &str) -> Result<Vec<String>, String> {
+/// `/v1/models` 响应的单条 model 记录：上游 id + 弱 reasoning 元数据。
+#[derive(Debug, Clone, Default)]
+pub struct ModelEntry {
+    pub id: String,
+    pub meta: ReasoningMeta,
+}
+
+/// 解析 /v1/models 响应，提取模型 ID + per-model reasoning 元数据。
+///
+/// 兼容三种常见格式：
+/// - OpenAI 标准 `{ "data": [{ "id": ... }] }`
+/// - 裸数组 `[{ "id": ... }]`
+/// - 一些代理的 `{ "models": [...] }`
+///
+/// Issue #14：之前只取 `id`，把 `reasoningEfforts` 等元数据全部丢弃。
+/// 现在会从每个 item 读取：
+/// - `reasoning_efforts` / `reasoningEfforts` → `Vec<String>`
+/// - `reasoning_effort` / `reasoningEffort` → `Option<String>`
+/// - `supports_reasoning_effort` / `supportsReasoningEffort` → `bool`
+fn parse_models_response(body: &str) -> Result<Vec<ModelEntry>, String> {
     let json: serde_json::Value =
         serde_json::from_str(body).map_err(|e| format!("JSON 解析失败: {e}"))?;
 
-    if let Some(data) = json.get("data").and_then(|v| v.as_array()) {
-        let mut models: Vec<String> = data
-            .iter()
-            .filter_map(|item| item.get("id").and_then(|v| v.as_str()).map(|s| s.to_string()))
-            .collect();
-        models.sort();
-        return Ok(models);
-    }
+    let items: Option<Vec<&serde_json::Value>> = json
+        .get("data")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().collect())
+        .or_else(|| json.as_array().map(|a| a.iter().collect()))
+        .or_else(|| {
+            json.get("models")
+                .and_then(|v| v.as_array())
+                .map(|a| a.iter().collect())
+        });
 
-    if let Some(arr) = json.as_array() {
-        let mut models: Vec<String> = arr
-            .iter()
-            .filter_map(|item| item.get("id").and_then(|v| v.as_str()).map(|s| s.to_string()))
-            .collect();
-        models.sort();
-        return Ok(models);
-    }
+    let items = items.ok_or_else(|| "无法识别的响应格式".to_string())?;
 
-    if let Some(models) = json.get("models").and_then(|v| v.as_array()) {
-        let mut result: Vec<String> = models
-            .iter()
-            .filter_map(|v| {
-                v.as_str()
-                    .map(|s| s.to_string())
-                    .or_else(|| v.get("id").and_then(|v| v.as_str()).map(|s| s.to_string()))
+    let mut entries: Vec<ModelEntry> = items
+        .into_iter()
+        .filter_map(|item| {
+            let id = item
+                .get("id")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .or_else(|| {
+                    // "models" 形态可能直接是字符串
+                    item.as_str().map(|s| s.to_string())
+                })?;
+            Some(ModelEntry {
+                meta: parse_reasoning_meta(item),
+                id,
             })
-            .collect();
-        result.sort();
-        return Ok(result);
-    }
+        })
+        .collect();
+    entries.sort_by(|a, b| a.id.cmp(&b.id));
+    Ok(entries)
+}
 
-    Err("无法识别的响应格式".into())
+/// 从单条 model JSON 读取 reasoning 元数据。缺省字段走空值。
+///
+/// 字段命名同时接受 camelCase（OpenAI / xAI 扩展）和 snake_case，方便代理
+/// 转发时不做重写也能识别。
+///
+/// Effort 列表走与 remote `/models` 相同的
+/// [`xai_grok_shell::sampling::types::parse_reasoning_effort_options`]：
+/// 非法 entry 跳过并 warn，只把 canonical id 写入 config，避免 config 加载
+/// 时 `Vec<ReasoningEffortOption>` / `Option<ReasoningEffort>` 反序列化失败。
+fn parse_reasoning_meta(item: &serde_json::Value) -> ReasoningMeta {
+    use xai_grok_shell::sampling::types::{ReasoningEffort, parse_reasoning_effort_options};
+
+    let get_bool = |k: &str| item.get(k).and_then(|v| v.as_bool()).unwrap_or(false);
+
+    let reasoning_efforts: Vec<String> = item
+        .get("reasoning_efforts")
+        .or_else(|| item.get("reasoningEfforts"))
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            parse_reasoning_effort_options(arr)
+                .into_iter()
+                .map(|opt| opt.value.as_str().to_string())
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let reasoning_effort = item
+        .get("reasoning_effort")
+        .or_else(|| item.get("reasoningEffort"))
+        .and_then(|v| v.as_str())
+        .and_then(|s| match s.parse::<ReasoningEffort>() {
+            Ok(effort) => Some(effort.as_str().to_string()),
+            Err(err) => {
+                tracing::warn!(
+                    value = %s,
+                    error = %err,
+                    "reasoningEffort: skipping invalid default"
+                );
+                None
+            }
+        });
+
+    ReasoningMeta {
+        reasoning_efforts,
+        reasoning_effort,
+        supports_reasoning_effort: get_bool("supports_reasoning_effort")
+            || get_bool("supportsReasoningEffort"),
+    }
 }
 
 use crate::app::actions::Action;
@@ -1113,5 +1268,110 @@ mod delete_provider_tests {
             .unwrap_or(false);
         assert!(!cleared, "default 指向其他渠道时不应被清空");
         assert_eq!(doc["models"]["default"].as_str(), Some("bar/c"));
+    }
+}
+
+#[cfg(test)]
+mod parse_models_response_tests {
+    use super::*;
+
+    #[test]
+    fn parses_openai_data_envelope() {
+        let body = r#"{"data":[
+            {"id": "gpt-5", "reasoningEfforts": ["low", "medium", "high"]},
+            {"id": "gpt-4o"}
+        ]}"#;
+        let entries = parse_models_response(body).expect("parse ok");
+        assert_eq!(entries.len(), 2);
+        let gpt5 = entries.iter().find(|e| e.id == "gpt-5").unwrap();
+        assert_eq!(
+            gpt5.meta.reasoning_efforts,
+            vec!["low".to_string(), "medium".to_string(), "high".to_string()]
+        );
+        assert!(!gpt5.meta.supports_reasoning_effort);
+        assert!(gpt5.meta.reasoning_effort.is_none());
+
+        let gpt4o = entries.iter().find(|e| e.id == "gpt-4o").unwrap();
+        assert!(gpt4o.meta.reasoning_efforts.is_empty());
+    }
+
+    #[test]
+    fn reads_snake_case_keys() {
+        let body = r#"{"data":[
+            {"id": "r1", "supports_reasoning_effort": true, "reasoning_efforts": ["low","high"]}
+        ]}"#;
+        let entries = parse_models_response(body).expect("parse ok");
+        let r1 = &entries[0];
+        assert!(r1.meta.supports_reasoning_effort);
+        assert_eq!(r1.meta.reasoning_efforts, vec!["low", "high"]);
+    }
+
+    #[test]
+    fn reads_reasoning_effort_default() {
+        let body = r#"{"data":[
+            {"id": "r1", "reasoningEffort": "medium"}
+        ]}"#;
+        let entries = parse_models_response(body).expect("parse ok");
+        assert_eq!(entries[0].meta.reasoning_effort.as_deref(), Some("medium"));
+    }
+
+    #[test]
+    fn skips_invalid_reasoning_effort_values() {
+        // Invalid bare strings / defaults must not land in config as-is:
+        // config deserializes them as ReasoningEffort / ReasoningEffortOption.
+        let body = r#"{"data":[
+            {
+                "id": "r1",
+                "supportsReasoningEffort": true,
+                "reasoningEffort": "turbo",
+                "reasoningEfforts": ["low", "turbo", {"value": "high"}, {"value": "super"}]
+            }
+        ]}"#;
+        let entries = parse_models_response(body).expect("parse ok");
+        let r1 = &entries[0];
+        assert!(r1.meta.supports_reasoning_effort);
+        assert!(r1.meta.reasoning_effort.is_none());
+        assert_eq!(r1.meta.reasoning_efforts, vec!["low", "high"]);
+    }
+
+    #[test]
+    fn accepts_bare_array_envelope() {
+        let body = r#"[{"id":"a"},{"id":"b"}]"#;
+        let entries = parse_models_response(body).expect("parse ok");
+        assert_eq!(entries.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(), vec!["a", "b"]);
+    }
+
+    #[test]
+    fn accepts_models_envelope() {
+        let body = r#"{"models":["a","b"]}"#;
+        let entries = parse_models_response(body).expect("parse ok");
+        assert_eq!(entries.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(), vec!["a", "b"]);
+    }
+
+    #[test]
+    fn unknown_envelope_errors() {
+        let body = r#"{"oops":true}"#;
+        let err = parse_models_response(body).unwrap_err();
+        assert!(err.contains("无法识别"), "err={err}");
+    }
+
+    #[test]
+    fn reasoning_meta_is_meaningful_only_with_real_values() {
+        assert!(!ReasoningMeta::default().is_meaningful());
+        assert!(ReasoningMeta {
+            reasoning_efforts: vec!["low".into()],
+            ..Default::default()
+        }
+        .is_meaningful());
+        assert!(ReasoningMeta {
+            reasoning_effort: Some("high".into()),
+            ..Default::default()
+        }
+        .is_meaningful());
+        assert!(ReasoningMeta {
+            supports_reasoning_effort: true,
+            ..Default::default()
+        }
+        .is_meaningful());
     }
 }

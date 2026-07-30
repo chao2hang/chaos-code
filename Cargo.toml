@@ -332,7 +332,19 @@ zbus = { version = "5" }
 zstd = "0.13"
 
 [profile.release]
-incremental = true
+# incremental = true removed — caused LNK1318 (PDB LIMIT) on Windows MSVC:
+# incremental compilation implicitly enables /DEBUG, the PDB accumulates
+# stale module/symbol entries across builds, and eventually exceeds the
+# MSVC PDB API limit. Incremental compilation provides negligible benefit
+# for release builds anyway.
+incremental = false
+# debug = false + strip = "symbols": emit no PDB at all on MSVC, so the
+# linker cannot hit LNK1318 (PDB LIMIT). Without this, Rust 1.92 still
+# emits line-table debuginfo by default in release, which forces /DEBUG
+# and a .pdb; for a binary this large that exceeds the PDB format record
+# limit even on a clean (non-incremental) link.
+debug = false
+strip = "symbols"
 panic = "abort"
 
 # Hardened release profile for shipping to end users (alpha + stable).

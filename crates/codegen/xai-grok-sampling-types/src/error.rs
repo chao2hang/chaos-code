@@ -455,14 +455,14 @@ pub fn try_parse_stream_error(data: &str) -> Option<SamplingError> {
 /// True when an error message indicates a context-window overflow. Backends report
 /// this inconsistently with no stable error code, so we match the message text; it's
 /// deterministic (re-sending the same payload always fails), so callers must not retry.
-pub fn is_context_length_error(message: &str) -> bool {
-    let m = message.to_ascii_lowercase();
-    m.contains("too long for this model")
-        || m.contains("prompt is too long")
-        || m.contains("maximum prompt length")
-        || m.contains("maximum context length")
-        || m.contains("context_length_exceeded")
-}
+///
+/// Covers OpenAI/Anthropic phrasing plus common BYOK / gateway variants such as
+/// `"BadRequest: context window exceeds limit"` (QxyFoods and similar proxies).
+///
+/// Single implementation lives in
+/// [`xai_grok_compaction::code_compaction::is_context_length_error`] so the
+/// sampler retry path and the compaction engine cannot drift.
+pub use xai_grok_compaction::code_compaction::is_context_length_error;
 
 /// Decide whether a [`reqwest::Error`] is worth retrying.
 pub fn is_retryable_reqwest(err: &reqwest::Error) -> bool {
@@ -497,10 +497,24 @@ mod tests {
             "This model's maximum context length is 200000 tokens",
             "invalid_request_error: prompt is too long: 300000 tokens > 200000 maximum",
             "error type: context_length_exceeded",
+            // BYOK / gateway variants (e.g. QxyFoods 400)
+            "API error (status 400 Bad Request): BadRequest: context window exceeds limit",
+            "BadRequest: context window exceeds limit Request id: abc",
+            "context_window_exceeded",
+            "input tokens exceed the model limit",
+            "token limit exceeded for this request",
+            "上下文超出限制",
         ] {
             assert!(is_context_length_error(msg), "should match: {msg}");
         }
-        for msg in ["rate limited", "internal server error", "connection reset"] {
+        for msg in [
+            "rate limited",
+            "internal server error",
+            "connection reset",
+            // Timeout is transient — must not be classified as overflow.
+            "上下文超时",
+            "请求上下文超时，请重试",
+        ] {
             assert!(!is_context_length_error(msg), "should not match: {msg}");
         }
         // The method delegates for the Api/StreamError variants.

@@ -1968,7 +1968,12 @@ pub(super) fn apply_provider_outcome(
             agent.active_modal = None;
             InputOutcome::Changed
         }
-        ProviderKeyOutcome::Changed => InputOutcome::Changed,
+        ProviderKeyOutcome::Changed => {
+            // After `/provider models` registers config, sync reasoning meta
+            // into the live session catalog once (flag set by load_models_for).
+            maybe_sync_provider_models_into_session(agent);
+            InputOutcome::Changed
+        }
         ProviderKeyOutcome::Commit => {
             if let Some(crate::views::modal::ActiveModal::ProviderModal { state }) =
                 &mut agent.active_modal
@@ -1985,7 +1990,7 @@ pub(super) fn apply_provider_outcome(
             // picker is usable, and set the selected model as `[models].default`.
             // ManualModel 只有手写 ID，没有上游列表，单独注册一条即可；
             // 若表单填了 max_completion_tokens 等，一并写入。
-            let (provider_name, fetched_models, param_form) =
+            let (provider_name, fetched_entries, param_form) =
                 if let Some(crate::views::modal::ActiveModal::ProviderModal { state }) =
                     &agent.active_modal
                 {
@@ -2008,7 +2013,22 @@ pub(super) fn apply_provider_outcome(
                             crate::views::provider_modal::ProviderModalMode::ManualModel(_)
                         ),
                     );
-                    (name, state.models.clone(), params)
+                    // Prefer parallel models_meta so re-register keeps reasoning
+                    // fields already fetched from /v1/models (issue #14).
+                    let entries: Vec<crate::slash::commands::provider::ModelEntry> = state
+                        .models
+                        .iter()
+                        .enumerate()
+                        .map(|(i, id)| crate::slash::commands::provider::ModelEntry {
+                            id: id.clone(),
+                            meta: state
+                                .models_meta
+                                .get(i)
+                                .cloned()
+                                .unwrap_or_default(),
+                        })
+                        .collect();
+                    (name, entries, params)
                 } else {
                     (
                         None,
@@ -2054,13 +2074,16 @@ pub(super) fn apply_provider_outcome(
                         }
                     }
                 } else {
-                    let mut ids = fetched_models;
-                    if !ids.iter().any(|m| m == &model_id) {
-                        ids.push(model_id.clone());
+                    let mut entries = fetched_entries;
+                    if !entries.iter().any(|e| e.id == model_id) {
+                        entries.push(crate::slash::commands::provider::ModelEntry {
+                            id: model_id.clone(),
+                            meta: crate::slash::commands::provider::ReasoningMeta::default(),
+                        });
                     }
                     match crate::slash::commands::provider::register_provider_models(
                         name,
-                        &ids,
+                        &entries,
                         Some(&model_id),
                     ) {
                         Ok(keys) => {
@@ -2103,8 +2126,108 @@ pub(super) fn apply_provider_outcome(
     }
 }
 
+/// After `/provider models` registration, sync config `[model."provider/*"]`
+/// (including reasoning meta) into the live session catalog.
+fn maybe_sync_provider_models_into_session(agent: &mut AgentView) {
+    let Some(crate::views::modal::ActiveModal::ProviderModal { state }) = &mut agent.active_modal
+    else {
+        return;
+    };
+    if !state.models_need_catalog_sync || state.models.is_empty() {
+        return;
+    }
+    state.models_need_catalog_sync = false;
+    let provider = match &state.mode {
+        crate::views::provider_modal::ProviderModalMode::SetModel(name)
+        | crate::views::provider_modal::ProviderModalMode::Models(name)
+        | crate::views::provider_modal::ProviderModalMode::ManualModel(name)
+        | crate::views::provider_modal::ProviderModalMode::ConfigureModel(name) => name.clone(),
+        _ => return,
+    };
+    // Use first listed model as the seed key; inject walks the whole prefix.
+    let first = state.models.first().cloned().unwrap_or_default();
+    let catalog_key =
+        crate::slash::commands::provider::provider_model_catalog_key(&provider, &first);
+    inject_provider_models_into_session(agent, &provider, &first, &catalog_key);
+}
+
+/// Build ACP model meta from a `[model.*]` toml table entry (reasoning fields).
+fn model_info_meta_from_config_item(
+    item: &toml_edit::Item,
+) -> Option<serde_json::Map<String, serde_json::Value>> {
+    use xai_grok_shell::sampling::types::{
+        REASONING_EFFORT_META_KEY, REASONING_EFFORTS_META_KEY, SUPPORTS_REASONING_EFFORT_META_KEY,
+        ReasoningEffort, ReasoningEffortOption, reasoning_effort_meta_value,
+        reasoning_efforts_meta_value,
+    };
+
+    let table = item.as_table()?;
+    let mut map = serde_json::Map::new();
+
+    let supports = table
+        .get("supports_reasoning_effort")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    if supports {
+        map.insert(
+            SUPPORTS_REASONING_EFFORT_META_KEY.to_string(),
+            serde_json::Value::Bool(true),
+        );
+    }
+
+    if let Some(effort) = table
+        .get("reasoning_effort")
+        .and_then(|v| v.as_str())
+        .and_then(|s| s.parse::<ReasoningEffort>().ok())
+    {
+        map.insert(
+            REASONING_EFFORT_META_KEY.to_string(),
+            reasoning_effort_meta_value(effort),
+        );
+    }
+
+    if let Some(arr) = table.get("reasoning_efforts").and_then(|v| v.as_array()) {
+        let options: Vec<ReasoningEffortOption> = arr
+            .iter()
+            .filter_map(|el| {
+                // Bare string form written by upsert_provider_model_entry.
+                let s = el.as_str()?;
+                let value = s.parse::<ReasoningEffort>().ok()?;
+                Some(ReasoningEffortOption {
+                    id: value.as_str().to_string(),
+                    value,
+                    label: value.to_string(),
+                    description: None,
+                    default: false,
+                })
+            })
+            .collect();
+        if !options.is_empty() {
+            map.insert(
+                REASONING_EFFORTS_META_KEY.to_string(),
+                reasoning_efforts_meta_value(&options),
+            );
+        }
+    }
+
+    if map.is_empty() { None } else { Some(map) }
+}
+
+/// Public entry for deep-link open: inject `[model."provider/*"]` from config
+/// into the live session catalog (reasoning meta included).
+pub(crate) fn sync_provider_models_from_config(
+    agent: &mut AgentView,
+    provider: &str,
+    model_id: &str,
+) {
+    let catalog_key =
+        crate::slash::commands::provider::provider_model_catalog_key(provider, model_id);
+    inject_provider_models_into_session(agent, provider, model_id, &catalog_key);
+}
+
 /// Inject the selected model and sibling `[model."provider/*"]` entries into
-/// the session catalog (optimistic path before `models/update`).
+/// the session catalog (optimistic path before `models/update`), including
+/// reasoning meta so `/effort` works immediately after `/provider models`.
 fn inject_provider_models_into_session(
     agent: &mut AgentView,
     provider: &str,
@@ -2133,9 +2256,11 @@ fn inject_provider_models_into_session(
                 .and_then(|v| v.as_str())
                 .unwrap_or(key);
             let mid: agent_client_protocol::ModelId = key.to_string().into();
-            agent.session.models.available.entry(mid.clone()).or_insert_with(|| {
-                agent_client_protocol::ModelInfo::new(mid, display.to_string())
-            });
+            let meta = model_info_meta_from_config_item(item);
+            let info = agent_client_protocol::ModelInfo::new(mid.clone(), display.to_string())
+                .meta(meta);
+            // Always refresh meta so a re-fetch of /models updates effort menus.
+            agent.session.models.available.insert(mid, info);
         }
     }
 }

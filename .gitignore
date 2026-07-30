@@ -3,3 +3,11 @@
 .DS_Store
 .claude_consciousness.m8
 .omo/
+
+# Local WSL / probing scripts kept out of history
+.wsl_*.sh
+
+# Windows-path leaked temp artifacts (accidental redirect targets)
+# The colon-looking char is U+F03A (PUA), produced by some Windows shell
+# quirk that replaced ':' when a Windows path became a filename.
+**/CUsers*

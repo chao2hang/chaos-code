@@ -26,6 +26,11 @@ impl FailureKind {
 /// True when an error message indicates a context-window overflow. Backends report
 /// this inconsistently with no stable error code, so we match the message text; it's
 /// deterministic (re-sending the same payload always fails), so callers must not retry.
+///
+/// Canonical classifier for context-window overflow messages.
+///
+/// Re-exported by `xai_grok_sampling_types::is_context_length_error` so the
+/// sampler retry path and this compaction engine share one implementation.
 pub fn is_context_length_error(message: &str) -> bool {
     let m = message.to_ascii_lowercase();
     m.contains("too long for this model")
@@ -33,6 +38,27 @@ pub fn is_context_length_error(message: &str) -> bool {
         || m.contains("maximum prompt length")
         || m.contains("maximum context length")
         || m.contains("context_length_exceeded")
+        // Gateway / MiniMax / Qxy-style 400s:
+        //   "BadRequest: context window exceeds limit"
+        // Prefer shorter stems that cover the longer variants:
+        //   "context window exceeds" ⊂ "context window exceed"
+        //   "context_window_exceeded" ⊂ "context_window_exceed"
+        || m.contains("context window exceed")
+        || m.contains("context_window_exceed")
+        || m.contains("exceeds context")
+        || m.contains("exceed context")
+        || m.contains("input tokens exceed")
+        || m.contains("token limit exceeded")
+        || m.contains("context length exceeded")
+        // Chinese: match overflow phrasings but NOT "上下文超时" (timeout —
+        // transient / retryable). Use explicit overflow stems + window+limit.
+        || m.contains("上下文超限")
+        || m.contains("上下文超出")
+        || m.contains("超出上下文")
+        || (m.contains("上下文超") && !m.contains("超时"))
+        || (m.contains("上下文窗口")
+            && (m.contains("超") || m.contains("限") || m.contains("exceed"))
+            && !m.contains("超时"))
 }
 
 /// Classify an HTTP API failure (status + message) for the compaction retry
@@ -183,6 +209,10 @@ mod tests {
             "exceeds the maximum prompt length",
             "This model's maximum context length is 128000 tokens",
             "error code: context_length_exceeded",
+            "BadRequest: context window exceeds limit",
+            "API error (status 400 Bad Request): BadRequest: context window exceeds limit",
+            "context_window_exceeded",
+            "上下文超出限制",
         ] {
             assert!(is_context_length_error(msg), "should match: {msg}");
         }
@@ -190,6 +220,8 @@ mod tests {
             "internal server error",
             "rate limited",
             "connection reset by peer",
+            "上下文超时",
+            "请求上下文超时，请重试",
         ] {
             assert!(!is_context_length_error(msg), "should not match: {msg}");
         }
