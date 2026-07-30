@@ -180,15 +180,22 @@ Path 级移植步骤见 [`references/port-playbook.md`](references/port-playbook
 
 ### B5. 验证清单（移植后必做）
 
+> **WSL / 低内存机器强制约束：** `cargo` 默认按 `nproc` 起 `rustc`，本 workspace 单个大 crate（`xai-grok-tools`、`xai-grok-workspace`、`xai-grok-pager`）编译峰值 2~4 GB，32 并发直接把 WSL2 的 `vmmem` 打爆，触发 OOM Killer 甚至冻结宿主 Windows。**下面所有 `--workspace` 级命令必须带 `-j 4`**，单 crate 迭代用 `-j 2`。可在 shell 里长期 `export CARGO_BUILD_JOBS=4`。若已经开始卡：`wsl --shutdown` 后在 `~/.wslconfig` 加 `[wsl2]\nmemory=12GB\nswap=8GB\nprocessors=6`。
+
 ```bash
 # 类型检查（快）
-cargo check -p xai-grok-pager-bin
+cargo check -p xai-grok-pager-bin -j 4
 
 # 相关单测（按改动收窄）
-cargo test -p xai-grok-pager --lib -- <module_filters>
+cargo test -p xai-grok-pager --lib -j 2 -- <module_filters>
+
+# 全量自检（仅在必要时；务必带 -j 4）
+cargo check --workspace -j 4
+cargo clippy --workspace -j 4 -- -D warnings
+cargo test  --workspace -j 4
 
 # 正式二进制（用户可跑）
-cargo build -p xai-grok-pager-bin --release
+cargo build -p xai-grok-pager-bin --release -j 4
 ./target/release/chaos --version
 ```
 
