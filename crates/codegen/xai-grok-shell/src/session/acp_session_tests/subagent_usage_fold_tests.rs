@@ -165,7 +165,6 @@ fn project_from_ledger_never_drops_incomplete_flag() {
         },
         None,
         None,
-        None,
     );
     let complete = PromptUsage::project_from_ledger(Some(&ledger), false).unwrap();
     assert!(!complete.usage_is_incomplete);
@@ -230,7 +229,6 @@ fn for_error_path_shared_policy() {
         },
         None,
         None,
-        None,
     );
     let with_ledger = PromptUsage::for_error_path(Some(&ledger), false).unwrap();
     assert!(with_ledger.usage_is_incomplete);
@@ -263,7 +261,6 @@ async fn error_path_marks_incomplete_when_ledger_open() {
                 },
                 None,
                 None,
-                None,
             );
             let usage = actor.error_path_usage_fallback("p-1").await.unwrap();
             assert!(usage.usage_is_incomplete);
@@ -288,7 +285,6 @@ async fn session_only_incomplete_does_not_stain_live_open_prompt() {
                     reasoning_tokens: 0,
                     cached_prompt_tokens: 0,
                 },
-                None,
                 None,
                 None,
             );
@@ -468,7 +464,6 @@ async fn finalize_background_only_flags_report_not_ledgers() {
                 },
                 None,
                 None,
-                None,
             );
             let outcome =
                 UsageDrainOutcome::from_outstanding_reply(Some(&SubagentOutstandingReply {
@@ -521,7 +516,6 @@ async fn apply_miss_mismatched_pin_does_not_stain_live_prompt() {
                 },
                 None,
                 None,
-                None,
             );
             assert!(actor.mark_apply_miss_incomplete(Some("p-stamped")).await);
             let live = actor
@@ -565,7 +559,6 @@ async fn apply_miss_matching_pin_stains_prompt_and_session() {
                 },
                 None,
                 None,
-                None,
             );
             assert!(actor.mark_apply_miss_incomplete(Some("p-1")).await);
             assert!(
@@ -605,7 +598,6 @@ async fn freeze_sticky_only_flags_report_not_ledgers() {
                     reasoning_tokens: 0,
                     cached_prompt_tokens: 0,
                 },
-                None,
                 None,
                 None,
             );
@@ -660,7 +652,6 @@ async fn freeze_completes_when_fold_lands_mid_drain() {
                     reasoning_tokens: 0,
                     cached_prompt_tokens: 0,
                 },
-                None,
                 None,
                 None,
             );

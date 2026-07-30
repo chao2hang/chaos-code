@@ -245,24 +245,12 @@ pub fn stream_chat_completions<'a>(
         }
 
         // ── Build the final response ─────────────────────────────────
-        // Some OpenAI-compat providers (e.g. Volcengine kimi) omit tool
-        // call `id` on stream deltas. Leaving empty ids in history makes
-        // the next turn send multiple `tool_call_id: ""` / `id: ""`
-        // pairs and the provider rejects with 400. Synthesize a stable
-        // id per call so assistant + tool_result stay paired.
         let tool_calls: Vec<ToolCall> = tool_call_acc
             .into_values()
-            .map(|(id, name, arguments)| {
-                let id = if id.trim().is_empty() {
-                    format!("call-{}", uuid::Uuid::new_v4())
-                } else {
-                    id
-                };
-                ToolCall {
-                    id: std::sync::Arc::<str>::from(id),
-                    name,
-                    arguments: std::sync::Arc::<str>::from(arguments),
-                }
+            .map(|(id, name, arguments)| ToolCall {
+                id: std::sync::Arc::<str>::from(id),
+                name,
+                arguments: std::sync::Arc::<str>::from(arguments),
             })
             .collect();
 
@@ -586,85 +574,6 @@ mod tests {
                 assert_eq!(calls[0].name, "do_thing");
                 assert_eq!(calls[0].arguments.as_ref(), "{\"x\":1}");
                 // Tool calls force ToolCalls stop reason.
-                assert_eq!(response.stop_reason, Some(StopReason::ToolCalls));
-            }
-            other => panic!("expected Completed, got {other:?}"),
-        }
-    }
-
-    /// Providers that stream tool calls without an `id` field must still
-    /// produce a non-empty id on the final Assistant item, otherwise the
-    /// next request re-sends empty `tool_call_id`s and gets HTTP 400.
-    #[tokio::test]
-    async fn tool_call_without_provider_id_gets_synthesized_id() {
-        let chunk = make_chunk(vec![ChatChunkDelta {
-            role: None,
-            content: None,
-            reasoning_content: None,
-            tool_calls: vec![ChunkToolCallDelta {
-                index: 0,
-                id: None,
-                kind: Some("function".into()),
-                function: Some(ToolCallFunctionDelta {
-                    name: Some("list_dir".into()),
-                    arguments: Some("{\"target_directory\":\".\"}".into()),
-                }),
-            }],
-            tool_call_id: None,
-        }]);
-        // Explicit empty string is also treated as missing.
-        let chunk_empty_id = make_chunk(vec![ChatChunkDelta {
-            role: None,
-            content: None,
-            reasoning_content: None,
-            tool_calls: vec![ChunkToolCallDelta {
-                index: 1,
-                id: Some("".into()),
-                kind: Some("function".into()),
-                function: Some(ToolCallFunctionDelta {
-                    name: Some("read_file".into()),
-                    arguments: Some("{\"target_file\":\"a\"}".into()),
-                }),
-            }],
-            tool_call_id: None,
-        }]);
-
-        let raw = stream::iter::<Vec<Result<ChatCompletionChunk, SamplingError>>>(vec![
-            Ok(chunk),
-            Ok(chunk_empty_id),
-        ])
-        .boxed();
-        let events = collect(stream_chat_completions(
-            raw,
-            None,
-            rid(),
-            Duration::from_secs(60),
-        ))
-        .await;
-
-        match events.last().unwrap() {
-            SamplingEvent::Completed { response, .. } => {
-                let calls = response.tool_calls();
-                assert_eq!(calls.len(), 2);
-                for call in calls {
-                    assert!(
-                        !call.id.as_ref().trim().is_empty(),
-                        "synthesized tool call id must be non-empty, got {:?}",
-                        call.id
-                    );
-                    assert!(
-                        call.id.as_ref().starts_with("call-"),
-                        "synthesized id should use call- prefix, got {}",
-                        call.id
-                    );
-                }
-                assert_ne!(
-                    calls[0].id.as_ref(),
-                    calls[1].id.as_ref(),
-                    "each missing id must get a distinct synthesized value"
-                );
-                assert_eq!(calls[0].name, "list_dir");
-                assert_eq!(calls[1].name, "read_file");
                 assert_eq!(response.stop_reason, Some(StopReason::ToolCalls));
             }
             other => panic!("expected Completed, got {other:?}"),

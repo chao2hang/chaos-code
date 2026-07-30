@@ -152,16 +152,6 @@ pub struct CompactionConfig {
     pub prefire: PrefireState,
     /// Sticky once a forked session releases its inherited prefix under compaction pressure (see `run_compact_inner`), so it stops re-pinning it.
     pub prefix_released: AtomicBool,
-    /// 压缩策略：仅阈值（默认）、动态（DCP）或两者共存。控制是否注册
-    /// compress 工具、注入提醒、以及是否触发阈值自动压缩。
-    /// 使用 `Cell` 以便通过 `/dynamic-compact` 在运行时切换策略，
-    /// 无需 `&mut self`。`SessionActor` 是 `!Send`，`Cell` 足够。
-    pub strategy: std::cell::Cell<super::dcp_config::CompactionStrategy>,
-    /// DCP（动态上下文裁剪）配置：提醒阈值、自动策略、受保护内容。
-    /// 仅当 `strategy` 包含 dynamic 时读取。
-    pub dcp: super::dcp_config::DcpConfig,
-    /// DCP 运行时状态（非持久化的提醒计数器）。
-    pub dcp_runtime: super::dcp_config::DcpRuntimeState,
 }
 
 #[cfg(test)]

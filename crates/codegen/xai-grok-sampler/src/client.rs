@@ -21,9 +21,7 @@ use reqwest::header::{
 };
 use serde::Serialize;
 
-use xai_grok_sampling_types::error::{
-    try_parse_stream_error, user_facing_api_error_message_with_backend,
-};
+use xai_grok_sampling_types::error::{try_parse_stream_error, user_facing_api_error_message};
 use xai_grok_sampling_types::{
     ChatCompletionChunk, ChatCompletionRequest, ChatCompletionResponse, ConversationRequest,
     ConversationResponse, CreateResponseWrapper, DOOM_LOOP_CHECK_HEADER, MessagesRequestWrapper,
@@ -493,20 +491,6 @@ pub fn user_agent_string_for(origin: &OriginClientInfo) -> String {
 // SamplingClient
 // =============================================================================
 
-/// Case-insensitive header lookup against a [`HeaderMap`].
-///
-/// HTTP header names are case-insensitive, but [`HeaderMap::contains_key`]
-/// requires the exact canonical form. This helper accepts a name in any
-/// case and returns `true` if any existing entry matches. Used by the
-/// Anthropic-version auto-injection in [`SamplingClient::new`] to detect
-/// user-supplied values regardless of how they were cased.
-fn has_header_ci(headers: &HeaderMap, name: &str) -> bool {
-    let needle = name.to_ascii_lowercase();
-    headers
-        .keys()
-        .any(|k| k.as_str().to_ascii_lowercase() == needle)
-}
-
 impl SamplingClient {
     /// Construct a sampling client from a [`SamplerConfig`].
     ///
@@ -558,33 +542,6 @@ impl SamplingClient {
             let header_value = HeaderValue::from_str(value)
                 .map_err(|_| SamplingError::InvalidConfiguration("Invalid extra header value"))?;
             headers.insert(header_name, header_value);
-        }
-
-        // Anthropic Messages-style backends require `anthropic-version`.
-        // The `/provider` slash command injects it for the interactive flow,
-        // but a hand-written `config.toml` (or a future API surface) bypasses
-        // that path. Inject the default here so a missing header never reaches
-        // upstream as a guaranteed 400. User-supplied values are preserved.
-        //
-        // Closes #11.
-        if config.api_backend == ApiBackend::Messages
-            && !has_header_ci(&headers, "anthropic-version")
-        {
-            match HeaderValue::from_str("2023-06-01") {
-                Ok(value) => {
-                    headers.insert(HeaderName::from_static("anthropic-version"), value);
-                    tracing::debug!(
-                        model = %config.model,
-                        "Auto-injected anthropic-version: 2023-06-01 for Messages backend"
-                    );
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        error = %e,
-                        "Failed to construct default anthropic-version header"
-                    );
-                }
-            }
         }
 
         // Resolve here, not into `extra_headers`, so an env-sourced secret stays
@@ -737,7 +694,7 @@ impl SamplingClient {
                 event = "client_post",
                 base_url = %self.base_url,
                 model = %self.defaults.model,
-                api_backend = ?self.defaults.api_backend.clone(),
+                api_backend = ?self.defaults.api_backend,
                 auth_scheme = ?self.defaults.auth_scheme,
                 has_bearer_resolver = self.bearer_resolver.is_some(),
                 has_authorization_header = headers.get(AUTHORIZATION).is_some(),
@@ -895,20 +852,12 @@ impl SamplingClient {
         if !status.is_success() {
             if status == reqwest::StatusCode::UNAUTHORIZED {
                 self.record_401_attribution(crate::attribution::SamplingConsumer::ChatCompletions);
-                let server_message = user_facing_api_error_message_with_backend(
-                    status,
-                    bytes.as_ref(),
-                    self.defaults.api_backend.clone(),
-                );
+                let server_message = user_facing_api_error_message(status, bytes.as_ref());
                 return Err(SamplingError::Auth(format!(
                     "Unauthorized (401): {server_message}"
                 )));
             }
-            let message = user_facing_api_error_message_with_backend(
-                status,
-                bytes.as_ref(),
-                self.defaults.api_backend.clone(),
-            );
+            let message = user_facing_api_error_message(status, bytes.as_ref());
             return Err(SamplingError::Api {
                 status,
                 message,
@@ -1055,22 +1004,14 @@ impl SamplingClient {
                 );
                 let endpoint = self.endpoint("chat/completions");
                 let body = response.bytes().await.unwrap_or_default();
-                let server_message = user_facing_api_error_message_with_backend(
-                    status,
-                    body.as_ref(),
-                    self.defaults.api_backend.clone(),
-                );
+                let server_message = user_facing_api_error_message(status, body.as_ref());
                 return Err(SamplingError::Auth(format!(
                     "Unauthorized (401) from {endpoint}: {server_message}"
                 )));
             }
 
             let bytes = response.bytes().await?;
-            let message = user_facing_api_error_message_with_backend(
-                status,
-                bytes.as_ref(),
-                self.defaults.api_backend.clone(),
-            );
+            let message = user_facing_api_error_message(status, bytes.as_ref());
             span.record("error", message.as_str());
             tracing::error!(
                 status = %status,
@@ -1257,21 +1198,13 @@ impl SamplingClient {
             if status == reqwest::StatusCode::UNAUTHORIZED {
                 self.record_401_attribution(crate::attribution::SamplingConsumer::Responses);
                 let endpoint = self.endpoint("responses");
-                let server_message = user_facing_api_error_message_with_backend(
-                    status,
-                    bytes.as_ref(),
-                    self.defaults.api_backend.clone(),
-                );
+                let server_message = user_facing_api_error_message(status, bytes.as_ref());
                 return Err(SamplingError::Auth(format!(
                     "Unauthorized (401) from {endpoint}: {server_message}"
                 )));
             }
 
-            let message = user_facing_api_error_message_with_backend(
-                status,
-                bytes.as_ref(),
-                self.defaults.api_backend.clone(),
-            );
+            let message = user_facing_api_error_message(status, bytes.as_ref());
             tracing::warn!(
                 status = %status,
                 error_message = %message,
@@ -1425,11 +1358,7 @@ impl SamplingClient {
                 self.record_401_attribution(crate::attribution::SamplingConsumer::ResponsesStream);
                 let endpoint = self.endpoint("responses");
                 let body = response.bytes().await.unwrap_or_default();
-                let server_message = user_facing_api_error_message_with_backend(
-                    status,
-                    body.as_ref(),
-                    self.defaults.api_backend.clone(),
-                );
+                let server_message = user_facing_api_error_message(status, body.as_ref());
                 return Err(SamplingError::Auth(format!(
                     "Unauthorized (401) from {endpoint}: {server_message}"
                 )));
@@ -1438,11 +1367,7 @@ impl SamplingClient {
             let retry_after_secs = extract_retry_after(response.headers());
             let should_retry = extract_should_retry(response.headers());
             let bytes = response.bytes().await?;
-            let message = user_facing_api_error_message_with_backend(
-                status,
-                bytes.as_ref(),
-                self.defaults.api_backend.clone(),
-            );
+            let message = user_facing_api_error_message(status, bytes.as_ref());
             span.record("error", message.as_str());
             tracing::error!(
                 status = %status,
@@ -1612,21 +1537,13 @@ impl SamplingClient {
             if status == reqwest::StatusCode::UNAUTHORIZED {
                 self.record_401_attribution(crate::attribution::SamplingConsumer::Messages);
                 let endpoint = self.endpoint("messages");
-                let server_message = user_facing_api_error_message_with_backend(
-                    status,
-                    bytes.as_ref(),
-                    self.defaults.api_backend.clone(),
-                );
+                let server_message = user_facing_api_error_message(status, bytes.as_ref());
                 return Err(SamplingError::Auth(format!(
                     "Unauthorized (401) from {endpoint}: {server_message}"
                 )));
             }
 
-            let message = user_facing_api_error_message_with_backend(
-                status,
-                bytes.as_ref(),
-                self.defaults.api_backend.clone(),
-            );
+            let message = user_facing_api_error_message(status, bytes.as_ref());
             tracing::warn!(
                 status = %status,
                 error_message = %message,
@@ -1741,11 +1658,7 @@ impl SamplingClient {
                 self.record_401_attribution(crate::attribution::SamplingConsumer::MessagesStream);
                 let endpoint = self.endpoint("messages");
                 let body = response.bytes().await.unwrap_or_default();
-                let server_message = user_facing_api_error_message_with_backend(
-                    status,
-                    body.as_ref(),
-                    self.defaults.api_backend.clone(),
-                );
+                let server_message = user_facing_api_error_message(status, body.as_ref());
                 return Err(SamplingError::Auth(format!(
                     "Unauthorized (401) from {endpoint}: {server_message}"
                 )));
@@ -1754,11 +1667,7 @@ impl SamplingClient {
             let retry_after_secs = extract_retry_after(response.headers());
             let should_retry = extract_should_retry(response.headers());
             let bytes = response.bytes().await?;
-            let message = user_facing_api_error_message_with_backend(
-                status,
-                bytes.as_ref(),
-                self.defaults.api_backend.clone(),
-            );
+            let message = user_facing_api_error_message(status, bytes.as_ref());
             span.record("error", message.as_str());
             tracing::error!(
                 status = %status,
@@ -2940,91 +2849,5 @@ mod tests {
             event,
             rs::ResponseStreamEvent::ResponseOutputTextDelta(_)
         ));
-    }
-
-    // ---- Issue #11: anthropic-version auto-injection ----
-
-    fn messages_config() -> SamplerConfig {
-        let mut cfg = minimal_config();
-        cfg.api_backend = ApiBackend::Messages;
-        cfg
-    }
-
-    #[test]
-    fn has_header_ci_matches_canonical_and_lowercase() {
-        use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
-        let mut h = HeaderMap::new();
-        h.insert(
-            HeaderName::from_static("anthropic-version"),
-            HeaderValue::from_static("2023-06-01"),
-        );
-        assert!(has_header_ci(&h, "anthropic-version"));
-        assert!(has_header_ci(&h, "Anthropic-Version"));
-        assert!(has_header_ci(&h, "ANTHROPIC-VERSION"));
-        assert!(!has_header_ci(&h, "openai-version"));
-    }
-
-    #[test]
-    fn messages_backend_auto_injects_anthropic_version_when_missing() {
-        // Issue #11: hand-written config.toml with api_backend = messages
-        // but no anthropic-version must still get the header injected by
-        // the sampler so the request doesn't 400 upstream.
-        let cfg = messages_config();
-        assert!(cfg.extra_headers.is_empty());
-
-        let client = SamplingClient::new(cfg).expect("client builds");
-        let value = client
-            .default_headers
-            .get("anthropic-version")
-            .expect("anthropic-version must be auto-injected for Messages backend");
-        assert_eq!(value, "2023-06-01");
-    }
-
-    #[test]
-    fn messages_backend_preserves_user_supplied_anthropic_version() {
-        let mut cfg = messages_config();
-        cfg.extra_headers
-            .insert("anthropic-version".to_string(), "2024-01-01".to_string());
-
-        let client = SamplingClient::new(cfg).expect("client builds");
-        let value = client
-            .default_headers
-            .get("anthropic-version")
-            .expect("anthropic-version must be present");
-        assert_eq!(
-            value, "2024-01-01",
-            "user-supplied version must not be overridden"
-        );
-    }
-
-    #[test]
-    fn chat_completions_backend_does_not_inject_anthropic_version() {
-        // The injection is Messages-specific; polluting other backends would
-        // be a silent protocol violation.
-        let cfg = minimal_config();
-        assert!(cfg.extra_headers.is_empty());
-        assert_eq!(cfg.api_backend, ApiBackend::ChatCompletions);
-
-        let client = SamplingClient::new(cfg).expect("client builds");
-        assert!(
-            client.default_headers.get("anthropic-version").is_none(),
-            "Chat Completions must not receive anthropic-version"
-        );
-    }
-
-    #[test]
-    fn messages_backend_recognizes_user_header_in_any_case() {
-        // extra_headers are inserted verbatim (no case folding), so the
-        // auto-injection guard must check case-insensitively.
-        let mut cfg = messages_config();
-        cfg.extra_headers
-            .insert("Anthropic-Version".to_string(), "2024-10-01".to_string());
-
-        let client = SamplingClient::new(cfg).expect("client builds");
-        let value = client
-            .default_headers
-            .get("anthropic-version")
-            .expect("header present");
-        assert_eq!(value, "2024-10-01");
     }
 }

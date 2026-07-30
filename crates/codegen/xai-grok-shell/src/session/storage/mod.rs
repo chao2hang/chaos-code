@@ -1489,10 +1489,10 @@ pub fn load_updates_for_replay(
 /// Like [`load_updates_for_replay`], but resolves the session under a specific
 /// grok home. Typed, materialize-all replay reader: collects every update into
 /// owned `Vec`s. Production forwards replay through [`stream_replay_updates_at`]
-/// to bound peak memory; Chaos-fork exception: the pager's subagent
-/// inherit-replay path (`xai-grok-pager/src/app/subagent.rs`) uses this
-/// materializing reader for an explicit grok home, so it must stay compiled
-/// outside `test-support`.
+/// to bound peak memory, so this has no production caller and is compiled only
+/// for tests: the `testkit_synth_roundtrip` and `session_load_perf` parity
+/// references and the in-crate relocation tests.
+#[cfg(any(test, feature = "test-support"))]
 pub fn load_updates_for_replay_at(
     session_id: &str,
     grok_home: &std::path::Path,

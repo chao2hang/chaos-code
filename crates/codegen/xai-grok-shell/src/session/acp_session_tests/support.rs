@@ -23,6 +23,22 @@ pub(crate) fn noop_observability_bridge() -> xai_computer_hub_sdk::Observability
 pub(crate) async fn test_agent_default() -> xai_grok_agent::Agent {
     test_agent_with_tools(vec![]).await
 }
+#[cfg(test)]
+pub(crate) async fn test_agent_backend_search(
+    hosted_tools: Vec<xai_grok_sampling_types::HostedTool>,
+) -> xai_grok_agent::Agent {
+    let base = test_agent_default().await;
+    xai_grok_agent::Agent::new(
+        base.definition().clone(),
+        xai_grok_agent::PromptContext::default(),
+        String::new(),
+        base.tool_bridge().clone(),
+        xai_grok_agent::ReminderPolicy::default(),
+        xai_grok_agent::CompactionPolicy::default(),
+        hosted_tools,
+        true,
+    )
+}
 /// Like [`test_agent_default`] but registers the `update_goal` tool so
 /// `command_availability().goal` is satisfied and `/goal …` slash commands
 /// resolve to their builtins when a turn is driven through `handle_prompt`.
@@ -65,6 +81,22 @@ pub(crate) async fn test_agent_with_tools(
             behavior_preset: None,
         },
         xai_grok_agent::AgentDefinition::default_grok_build(),
+        std::sync::Arc::new(xai_grok_tools::computer::local::LocalTerminalBackend::new()),
+    )
+    .await
+}
+#[cfg(test)]
+pub(crate) async fn test_agent_with_user_message_template(
+    template: xai_grok_agent::prompt::user_message::UserMessageTemplate,
+) -> xai_grok_agent::Agent {
+    let mut definition = xai_grok_agent::AgentDefinition::default_grok_build();
+    definition.user_message_template = template;
+    test_agent_from_config(
+        xai_grok_tools::registry::types::ToolServerConfig {
+            tools: vec![],
+            behavior_preset: None,
+        },
+        definition,
         std::sync::Arc::new(xai_grok_tools::computer::local::LocalTerminalBackend::new()),
     )
     .await
@@ -228,13 +260,11 @@ pub(crate) async fn create_test_actor_ex(
         )),
         telemetry_enabled: false,
         supports_backend_search: std::cell::Cell::new(false),
+        tool_overrides: std::cell::RefCell::new(None),
+        resolved_tool_overrides: std::sync::Arc::new(arc_swap::ArcSwapOption::empty()),
         compactions_remaining: std::cell::Cell::new(None),
         compaction_at_tokens: std::cell::Cell::new(None),
         doom_loop_recovery: None,
-        tool_overrides: std::cell::RefCell::new(None),
-        resolved_tool_overrides: std::sync::Arc::new(arc_swap::ArcSwapOption::empty()),
-        prefix_carries_fallback_date: std::cell::Cell::new(false),
-        incomplete_end_turn_retry: Default::default(),
         doom_loop_turn_tally: Default::default(),
         file_state_tracker: Arc::new(FileStateTracker::new()),
         rewind_pending_prompt: std::sync::Mutex::new(None),
@@ -252,9 +282,6 @@ pub(crate) async fn create_test_actor_ex(
             tool_choice: crate::util::config::CompactionToolChoice::Auto,
             prefire: crate::session::compaction_config::PrefireState::default(),
             prefix_released: std::sync::atomic::AtomicBool::new(false),
-            strategy: Default::default(),
-            dcp: Default::default(),
-            dcp_runtime: Default::default(),
         },
         memory: crate::session::memory_state::SessionMemory {
             flush_config: crate::config::MemoryFlushConfig::default(),
@@ -352,6 +379,7 @@ pub(crate) async fn create_test_actor_ex(
         deferred_prefix: TaskSlot::new(),
         extension_registry: xai_agent_lifecycle::LocalExtensionRegistry::default(),
         last_announced_local_date: std::cell::Cell::new(chrono::Local::now().date_naive()),
+        prefix_carries_fallback_date: std::cell::Cell::new(false),
         last_search_prompt_index: std::sync::atomic::AtomicI64::new(-1),
         last_api_request_at: std::sync::atomic::AtomicI64::new(0),
         hook_registry: std::cell::RefCell::new(None),

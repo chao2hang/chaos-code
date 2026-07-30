@@ -424,10 +424,6 @@ pub(super) async fn run_session(
                     session
                         .handle_turn_end(turn_succeeded, suppress_goal_continuation)
                         .await;
-                    // DCP：当动态策略启用时，在轮次之间注入压缩提醒。
-                    if session.compaction.strategy.get().dcp_active() {
-                        session.maybe_inject_selective_compaction_nudge().await;
-                    }
                     // Interjections that raced past the turn's final drain
                     // (arrived during turn-end bookkeeping) have no turn left
                     // to merge into — convert them to front-of-queue prompt
@@ -893,7 +889,7 @@ pub(super) async fn run_session(
                                     // Cap to prevent unbounded growth during long tool calls.
                                     const MAX_BUFFER_EVENTS: usize = 50;
                                     buffer.push_capped(
-                                        xai_grok_tools::implementations::grok_build::task::types::MonitorEventNotification {
+                                        xai_grok_tools::implementations::grok_build::monitor::types::MonitorEventNotification {
                                             task_id: task_id.clone(),
                                             event_text,
                                             // Tag with this session's id so the
@@ -1450,11 +1446,16 @@ pub(super) async fn run_session(
 
                             let session_for_mcp = session.clone();
                             let sname = server_name.clone();
+                            let session_cwd = session.session_info.cwd.clone();
                             tokio::task::spawn_local(async move {
                                 session_for_mcp.ensure_mcp_tools_initialized().await;
-                                if let Err(e) = crate::util::config::save_mcp_server_enabled(
-                                    &sname, enabled,
-                                ).await {
+                                if let Err(e) = crate::util::config::save_mcp_server_enabled_in(
+                                    &sname,
+                                    enabled,
+                                    std::path::Path::new(&session_cwd),
+                                )
+                                .await
+                                {
                                     tracing::warn!(
                                         server = sname.as_str(),
                                         error = %e,

@@ -1791,10 +1791,6 @@ impl SessionActor {
         total_tokens: u64,
         context_window: std::num::NonZeroU64,
     ) -> Option<AutoCompactTriggerInfo> {
-        // DCP：当策略为仅动态时，跳过阈值自动压缩。
-        if !self.compaction.strategy.get().threshold_active() {
-            return None;
-        }
         let cw = context_window.get();
         if xai_token_estimation::exceeds_threshold(
             total_tokens,
@@ -2315,7 +2311,6 @@ mod inline_auto_compact_flow_tests {
             compactions_remaining: std::cell::Cell::new(None),
             compaction_at_tokens: std::cell::Cell::new(None),
             doom_loop_recovery: None,
-            incomplete_end_turn_retry: Default::default(),
             doom_loop_turn_tally: Default::default(),
             file_state_tracker: Arc::new(FileStateTracker::new()),
             rewind_pending_prompt: std::sync::Mutex::new(None),
@@ -2333,11 +2328,6 @@ mod inline_auto_compact_flow_tests {
                 tool_choice: crate::util::config::CompactionToolChoice::Auto,
                 prefire: crate::session::compaction_config::PrefireState::default(),
                 prefix_released: std::sync::atomic::AtomicBool::new(false),
-                strategy: std::cell::Cell::new(
-                    crate::session::dcp_config::CompactionStrategy::default(),
-                ),
-                dcp: crate::session::dcp_config::DcpConfig::default(),
-                dcp_runtime: crate::session::dcp_config::DcpRuntimeState::default(),
             },
             memory: crate::session::memory_state::SessionMemory {
                 flush_config: crate::config::MemoryFlushConfig::default(),
