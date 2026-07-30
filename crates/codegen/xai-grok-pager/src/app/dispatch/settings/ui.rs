@@ -273,7 +273,7 @@ pub(in crate::app::dispatch) fn dispatch_open_provider_modal(
         | crate::views::provider_modal::ProviderModalMode::ConfigureModel(name) => {
             state.models_loading = true;
             match crate::slash::commands::provider::fetch_provider_models(name) {
-                Ok(models) => {
+                Ok(entries) => {
                     // Register into catalog when deep-linked (same as go_models).
                     let need_default = crate::slash::commands::provider::load_config()
                         .map(|doc| {
@@ -281,18 +281,20 @@ pub(in crate::app::dispatch) fn dispatch_open_provider_modal(
                                 .is_none()
                         })
                         .unwrap_or(false);
-                    let first = models.first().cloned();
-                    let _ = crate::slash::commands::provider::register_provider_models(
+                    let first_id = entries.first().map(|e| e.id.clone());
+                    let registered = crate::slash::commands::provider::register_provider_models(
                         name,
-                        &models,
+                        &entries,
                         if need_default {
-                            first.as_deref()
+                            first_id.as_deref()
                         } else {
                             None
                         },
                     );
-                    state.models = models;
+                    state.models = entries.iter().map(|e| e.id.clone()).collect();
+                    state.models_meta = entries.into_iter().map(|e| e.meta).collect();
                     state.models_loading = false;
+                    state.models_need_catalog_sync = registered.is_ok();
                 }
                 Err(e) => {
                     // ConfigureModel 允许手写 ID，错误不阻断进入
@@ -326,9 +328,33 @@ pub(in crate::app::dispatch) fn dispatch_open_provider_modal(
         return vec![];
     }
 
+    // Deep-link `/provider models|set-model|…` may have just written config;
+    // inject reasoning meta into the live catalog before the first paint so
+    // bare `/effort` works without waiting for a keypress or model switch.
+    let need_sync = state.models_need_catalog_sync;
+    let sync_provider = if need_sync {
+        match &state.mode {
+            crate::views::provider_modal::ProviderModalMode::SetModel(name)
+            | crate::views::provider_modal::ProviderModalMode::Models(name)
+            | crate::views::provider_modal::ProviderModalMode::ManualModel(name)
+            | crate::views::provider_modal::ProviderModalMode::ConfigureModel(name) => {
+                Some((name.clone(), state.models.first().cloned().unwrap_or_default()))
+            }
+            _ => None,
+        }
+    } else {
+        None
+    };
+    state.models_need_catalog_sync = false;
+
     agent.active_modal = Some(ActiveModal::ProviderModal {
         state: Box::new(state),
     });
+
+    if let Some((provider, first)) = sync_provider.filter(|(_, first)| !first.is_empty()) {
+        crate::app::agent_view::sync_provider_models_from_config(agent, &provider, &first);
+    }
+
     vec![]
 }
 
