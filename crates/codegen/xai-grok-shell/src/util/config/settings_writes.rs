@@ -308,8 +308,3 @@ pub async fn set_show_tips(value: bool) -> Result<()> {
 pub async fn set_auto_update(value: bool) -> Result<()> {
     update_config(|cfg| cfg.cli.auto_update = Some(value)).await
 }
-
-/// Persist `[session].auto_retry_incomplete_end_turn` via `update_config`.
-pub async fn set_auto_retry_incomplete_end_turn(value: bool) -> Result<()> {
-    update_config(|cfg| cfg.session.auto_retry_incomplete_end_turn = Some(value)).await
-}

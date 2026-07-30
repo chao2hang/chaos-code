@@ -51,14 +51,14 @@ pub(crate) fn prefetch_models_and_settings_blocking(
     let settings = match auth {
         Some(auth) if remote_fetch_enabled => {
             let _timer = crate::instrumentation_timer!("startup.early_settings_fetch");
-            // Chaos-fork: `fetch_settings_blocking` returns `Option<RemoteSettings>`
-            // directly here; upstream wraps in a `SettingsFetch` enum with an
-            // `.into_option()` accessor. Keep the plain-Option shape and skip it.
+            // `fetch_settings_blocking` returns `SettingsFetch`; collapse to
+            // `Option<RemoteSettings>` so this match arm agrees with the `_ => None` arm.
             crate::remote::fetch_settings_blocking(
                 &endpoints.proxy_url(),
                 auth,
                 endpoints.alpha_test_key.as_deref(),
             )
+            .into_option()
         }
         _ => None,
     };

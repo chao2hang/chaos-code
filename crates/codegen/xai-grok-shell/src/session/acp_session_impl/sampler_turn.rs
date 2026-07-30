@@ -1357,6 +1357,7 @@ impl SessionActor {
                 response.assistant().and_then(|a| a.model_id.clone()),
                 u.clone(),
                 api_duration_ms,
+                None,
                 response.cost_usd_ticks,
             );
             self.signals_handle()

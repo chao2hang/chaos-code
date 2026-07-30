@@ -142,7 +142,7 @@ pub(crate) async fn single_check(
         })
         .await
         .ok()
-        .flatten()
+        .and_then(|s| s.into_option())
     } else {
         None
     };

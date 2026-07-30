@@ -5,11 +5,11 @@
 //! provides four clients for non-sampling traffic (the first three
 //! public and cached, the last crate-internal and built on demand):
 //!
-//! - `shared_client` -- a `OnceLock`-cached async client for general
+//! - `shared_client`: a `OnceLock`-cached async client for general
 //!   use (telemetry, feedback, settings, etc.).
-//! - `shared_upload_client` -- a `OnceLock`-cached client for GCS
+//! - `shared_upload_client`: a `OnceLock`-cached client for GCS
 //!   uploads with aggressive connection pool eviction.
-//! - `shared_blocking_client` -- a blocking client for the early
+//! - `shared_startup_blocking_client`: a blocking client for the early
 //!   model prefetch (runs before the async runtime is available).
 //! - `fresh_http1_client` -- a crate-internal, on-demand, pool-less
 //!   HTTP/1.1 client used by `send_with_retry_escaping_pool` for the
@@ -383,13 +383,15 @@ pub fn shared_upload_client() -> reqwest::Client {
 /// `pool_max_idle_per_host(0)` + `http1_only()` so each request opens a new connection, and no
 /// connect timeout (callers bound each request with their own total timeout). The retry escape
 /// policy that reaches for this client to dodge a poisoned pool lives on `send_with_retry_escaping_pool`.
-pub(crate) fn fresh_http1_client() -> reqwest::Client {
+///
+/// Fallible: build can fail under fd/TLS pressure; the caller must not
+/// panic on error (fallback policy lives at the call site).
+pub(crate) fn fresh_http1_client() -> reqwest::Result<reqwest::Client> {
     reqwest::Client::builder()
         .http1_only()
         .pool_max_idle_per_host(0)
         .user_agent(process_user_agent_string())
         .build()
-        .expect("failed to build fresh HTTP/1.1 client")
 }
 
 /// Joins an error's `source()` chain into one string. A `reqwest::Error`'s `Display`
@@ -492,7 +494,18 @@ where
         // Only the final attempt of a multi-attempt run escapes onto a fresh pool-less connection; a
         // single-attempt caller keeps the pooled client (there is no prior failure to escape).
         let client = if attempt > 0 && attempt + 1 == max_attempts {
-            fresh.get_or_insert_with(fresh_http1_client).clone()
+            match &fresh {
+                Some(c) => c.clone(),
+                None => match fresh_http1_client() {
+                    Ok(c) => fresh.insert(c).clone(),
+                    // Can't escape the pool (e.g. fd exhaustion); a pooled
+                    // final attempt still beats aborting the process.
+                    Err(e) => {
+                        tracing::warn!(error = %e, "failed to build pool-escape client; final attempt stays on pooled client");
+                        pooled.clone()
+                    }
+                },
+            }
         } else {
             pooled.clone()
         };
@@ -510,7 +523,8 @@ where
     Err(last_err.expect("send_with_retry_escaping_pool ran at least one attempt"))
 }
 
-/// Returns a shared [`reqwest::blocking::Client`], creating it on first call.
+/// Shared blocking client for startup fetches. Carries `STARTUP_FETCH_TIMEOUT`
+/// as the connect+read ceiling; do not reuse for long-lived requests.
 ///
 /// This avoids redundant TLS certificate loading for blocking HTTP calls
 /// (e.g., model prefetching during startup). The blocking client is separate
@@ -524,14 +538,14 @@ where
 /// (~60-100s; 30s is a conservative default) closes it. The HTTP/2 keepalive-ping
 /// setters that `shared_client()` uses are NOT exposed on reqwest's blocking
 /// `ClientBuilder` (0.12), so only the idle/TCP-eviction half applies here.
-pub fn shared_blocking_client() -> reqwest::blocking::Client {
+pub fn shared_startup_blocking_client() -> reqwest::blocking::Client {
     static BLOCKING_CLIENT: OnceLock<reqwest::blocking::Client> = OnceLock::new();
     BLOCKING_CLIENT
         .get_or_init(|| {
             let _timer = startup_timer!("startup.http_blocking_client_build");
             reqwest::blocking::Client::builder()
-                .connect_timeout(std::time::Duration::from_secs(30))
-                .timeout(std::time::Duration::from_secs(30))
+                .connect_timeout(STARTUP_FETCH_TIMEOUT)
+                .timeout(STARTUP_FETCH_TIMEOUT)
                 .user_agent(process_user_agent_string())
                 .pool_idle_timeout(std::time::Duration::from_secs(30))
                 .tcp_keepalive(std::time::Duration::from_secs(30))

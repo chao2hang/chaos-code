@@ -90,9 +90,7 @@ fn remote_fetch_enabled_from_layers(layers: &crate::config::ConfigLayers) -> boo
     .into_iter()
     .flatten()
     .find_map(remote_fetch_value)
-    // Chaos-fork: default false — custom model users should not silently
-    // hit cli-chat-proxy.grok.com for settings / model-list fetches.
-    .unwrap_or(false)
+    .unwrap_or(true)
 }
 
 /// Err-arm fallback for [`resolve_remote_fetch_enabled`]: the independently
@@ -111,8 +109,7 @@ fn remote_fetch_enabled_from_policy_layers(
         .into_iter()
         .flatten()
         .find_map(remote_fetch_value)
-        // Chaos-fork: default false (see remote_fetch_enabled_from_layers).
-        .unwrap_or(false)
+        .unwrap_or(true)
 }
 
 #[cfg(test)]
@@ -137,10 +134,8 @@ mod tests {
     }
 
     #[test]
-    fn remote_fetch_defaults_to_false_when_absent() {
-        // Chaos-fork: default is false to avoid hitting Grok proxy for
-        // settings/model-list fetches when custom models are configured.
-        assert!(!remote_fetch_enabled_from_layers(&empty_layers()));
+    fn remote_fetch_defaults_to_true_when_absent() {
+        assert!(remote_fetch_enabled_from_layers(&empty_layers()));
     }
 
     #[test]

@@ -224,6 +224,9 @@ impl MemoryConfig {
 pub struct SubagentsConfig {
     /// Whether subagent support is enabled.
     pub enabled: bool,
+    /// Raw `[subagents] max_depth` (i64 so out-of-range parses; clamped ≥1 at resolve).
+    #[serde(default)]
+    pub max_depth: Option<i64>,
     /// Per-subagent model ID overrides.
     /// Keys are agent names, values are model IDs that must exist in the
     /// available models registry. Parsed from `[subagents.models]` in config.toml.
@@ -433,6 +436,54 @@ impl SubagentsConfig {
     pub fn discover_roles(&mut self, cwd: &std::path::Path) {
         let roles_dir = cwd.join(".grok").join("roles");
         self.discover_roles_in_dir(&roles_dir);
+    }
+    pub const ENV_MAX_DEPTH: &'static str = "GROK_SUBAGENTS_MAX_DEPTH";
+    pub const DEFAULT_MAX_DEPTH: u32 = 1;
+    /// Clamp to `1..=u32::MAX`. Values below 1 (including 0 / negatives) warn
+    /// and become 1 so nesting is never accidentally disabled.
+    pub fn clamp_max_depth(raw: i64, source: &str) -> u32 {
+        if raw < i64::from(Self::DEFAULT_MAX_DEPTH) {
+            tracing::warn!(
+                source,
+                value = raw,
+                "subagents max_depth < 1; clamping to 1"
+            );
+            Self::DEFAULT_MAX_DEPTH
+        } else if raw > i64::from(u32::MAX) {
+            tracing::warn!(
+                source,
+                value = raw,
+                "subagents max_depth exceeds u32::MAX; clamping"
+            );
+            u32::MAX
+        } else {
+            raw as u32
+        }
+    }
+    /// Precedence: env > TOML > remote > [`Self::DEFAULT_MAX_DEPTH`].
+    ///
+    /// Depth 0 is the top-level session; a child is parent+1. Spawn is rejected
+    /// when `depth >= max`. So `max = 1` allows only top-level spawns; nested
+    /// spawns from a first-level subagent need `max >= 2`.
+    pub fn resolve_max_depth(env: Option<&str>, config: Option<i64>, remote: Option<u32>) -> u32 {
+        if let Some(raw) = env {
+            match raw.trim().parse::<i64>() {
+                Ok(v) => return Self::clamp_max_depth(v, "env"),
+                Err(_) => {
+                    tracing::warn!(
+                        value = %raw,
+                        "invalid GROK_SUBAGENTS_MAX_DEPTH (expected integer); ignoring"
+                    );
+                }
+            }
+        }
+        if let Some(v) = config {
+            return Self::clamp_max_depth(v, "config");
+        }
+        if let Some(v) = remote {
+            return Self::clamp_max_depth(i64::from(v), "remote");
+        }
+        Self::DEFAULT_MAX_DEPTH
     }
     /// Resolve the final subagents config from all sources (in priority order):
     /// 1. CLI flag `--subagents` (absolute highest — always enables)
@@ -847,6 +898,26 @@ impl StorageMode {
     /// Returns true if this mode syncs to the backend.
     pub fn is_writeback(&self) -> bool {
         matches!(self, Self::Writeback)
+    }
+    /// Resolve from remote settings only, gated by xai auth.
+    ///
+    /// Returns `Writeback` when the remote policy enables writeback **and** the
+    /// caller has grok.com (xai) auth; otherwise `Local`. Used by the live
+    /// re-application path (`reapply_storage_mode`) which has already discarded
+    /// CLI/env overrides and only wants to upgrade from `Local` based on freshly
+    /// arrived remote settings.
+    pub fn from_remote_gated(
+        remote: Option<&crate::util::config::RemoteSettings>,
+        has_xai_auth: bool,
+    ) -> Self {
+        if let Some(remote) = remote
+            && remote.writeback_enabled == Some(true)
+            && has_xai_auth
+        {
+            Self::Writeback
+        } else {
+            Self::Local
+        }
     }
 }
 pub use xai_grok_config::ConfigLayers;

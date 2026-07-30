@@ -69,6 +69,8 @@ pub enum WarningTarget {
         #[serde(skip_serializing_if = "Option::is_none")]
         field: Option<String>,
     },
+    /// An unrecognized top-level config key.
+    ConfigKey { key: String },
 }
 
 impl WarningTarget {
@@ -81,6 +83,7 @@ impl WarningTarget {
             Self::AuthProvider { name, .. } => format!("auth_provider.\"{name}\""),
             Self::ModelProviderSection => "model_providers".to_owned(),
             Self::ModelProvider { id, .. } => format!("model_providers.\"{id}\""),
+            Self::ConfigKey { key } => key.clone(),
         }
     }
 
@@ -89,7 +92,8 @@ impl WarningTarget {
             Self::Model { field, .. }
             | Self::AuthProvider { field, .. }
             | Self::ModelProvider { field, .. } => field.as_deref(),
-            Self::ModelSection | Self::AuthProviderSection | Self::ModelProviderSection => None,
+            Self::ModelSection | Self::AuthProviderSection | Self::ModelProviderSection
+            | Self::ConfigKey { .. } => None,
         }
     }
 }
@@ -174,6 +178,18 @@ impl ConfigWarning {
     pub(crate) fn model_provider_section(kind: ConfigWarningKind, reason: String) -> Self {
         Self {
             target: WarningTarget::ModelProviderSection,
+            kind,
+            reason,
+        }
+    }
+
+    pub(crate) fn config_key(
+        key: &str,
+        kind: ConfigWarningKind,
+        reason: String,
+    ) -> Self {
+        Self {
+            target: WarningTarget::ConfigKey { key: key.to_owned() },
             kind,
             reason,
         }

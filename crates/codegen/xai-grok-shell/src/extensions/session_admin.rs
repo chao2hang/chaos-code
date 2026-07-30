@@ -259,7 +259,7 @@ async fn handle_session_delete(agent: &MvpAgent, args: &acp::ExtRequest) -> ExtR
         &req.session_id,
         req.cwd.as_deref(),
         needs_remote,
-        Some(agent.auth_manager.clone()),
+        agent.auth_manager.clone(),
     )
     .await
     .map_err(|e| {

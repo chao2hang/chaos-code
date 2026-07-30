@@ -205,6 +205,15 @@ pub struct AuthManager {
     devbox_override: parking_lot::Mutex<Option<bool>>,
 }
 
+impl std::fmt::Debug for AuthManager {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AuthManager")
+            .field("path", &self.path)
+            .field("scope", &self.scope)
+            .finish_non_exhaustive()
+    }
+}
+
 /// Discriminated outcome of a disk read, for transition logging.
 /// `Ok` = entry present (possibly expired); the rest explain *why*
 /// `read_disk_auth` returned `None`.

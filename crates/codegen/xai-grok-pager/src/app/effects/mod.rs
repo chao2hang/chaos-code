@@ -4249,15 +4249,16 @@ pub(crate) fn execute(
                                     xai_grok_shell::agent::config::CLI_CHAT_PROXY_BASE_URL_DEFAULT
                                         .to_owned()
                                 });
-                            xai_grok_shell::remote::fetch_settings_blocking(
+                            Some(xai_grok_shell::remote::fetch_settings_blocking(
                                 &proxy_base,
                                 &auth,
                                 None,
-                            )
+                            ))
                         })
                         .await
                         .ok()
-                        .flatten();
+                        .flatten()
+                        .and_then(|s| s.into_option());
                     TaskResult::GateRefreshed {
                         settings,
                     }

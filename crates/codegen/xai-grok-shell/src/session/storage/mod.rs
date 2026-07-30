@@ -1492,7 +1492,6 @@ pub fn load_updates_for_replay(
 /// to bound peak memory, so this has no production caller and is compiled only
 /// for tests: the `testkit_synth_roundtrip` and `session_load_perf` parity
 /// references and the in-crate relocation tests.
-#[cfg(any(test, feature = "test-support"))]
 pub fn load_updates_for_replay_at(
     session_id: &str,
     grok_home: &std::path::Path,

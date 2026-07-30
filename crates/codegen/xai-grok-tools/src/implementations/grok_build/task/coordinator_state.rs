@@ -13,7 +13,7 @@ use super::types::{
     SubagentSnapshotStatus, SubagentValidateTypeOutcome,
 };
 
-pub(super) const MAX_COMPLETED_ENTRIES: usize = 1024;
+pub const MAX_COMPLETED_ENTRIES: usize = 1024;
 pub(super) const OUTPUT_UNAVAILABLE_PLACEHOLDER: &str = "[subagent output no longer available]";
 
 pub type LocalBoxFuture<T> = Pin<Box<dyn Future<Output = T> + 'static>>;

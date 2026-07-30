@@ -36,6 +36,7 @@ use xai_file_utils::events::types::CancellationCategory;
 use xai_grok_agent::config::{McpInheritance, ModelOverride, PermissionMode};
 use xai_grok_sampling_types::conversation::ConversationItem;
 use xai_grok_subagent_resolution::ResumeSourceData;
+use xai_grok_tools::implementations::grok_build::monitor::types::MonitorEventBuffer;
 use xai_grok_tools::implementations::grok_build::task::coordinator::{
     ChildCompletion, ChildControl, ChildReporter, ChildRunOutput, LocalBoxFuture, StartedChild,
     SubagentProgress,
@@ -102,6 +103,12 @@ impl AutoCompactThresholdTiers {
 pub(crate) struct SubagentSpawnContext {
     /// Parent's LSP runtime — inherited via ToolContext, same as fs/terminal.
     pub lsp: Option<std::sync::Arc<dyn xai_grok_tools::implementations::lsp::LspBackend>>,
+    /// Root session's process scope, inherited so the subagent's own child
+    /// processes are reaped when the parent session closes. It is the root's
+    /// (not an intermediate parent's) because xai-grok-tools task/coordinator.rs
+    /// `handle_command`'s Spawn arm re-parents nested Spawn requests to the root
+    /// parent, so every subagent resolves back to the root session.
+    pub process_scope: Option<xai_tty_utils::ProcessScope>,
     /// Parent's client-registered hooks, inherited so the subagent's tool calls hit the
     /// same PreToolUse gate and its events fire the same observe hooks over the parent's
     /// connection. Empty when the parent has none. Filled by the coordinator after the
@@ -123,6 +130,7 @@ pub(crate) struct SubagentSpawnContext {
     pub yolo_mode: bool,
     pub subagent_event_tx: mpsc::UnboundedSender<SubagentEvent>,
     pub parent_depth: u32,
+    pub subagents_max_depth: u32,
     /// Inference idle timeout (secs), resolved from the parent's model config at spawn-context creation time.
     pub inference_idle_timeout_secs: u64,
     /// Tier inputs for resolving `auto_compact_threshold_percent` at
@@ -370,20 +378,6 @@ impl SubagentSpawnContext {
                 .as_ref()
                 .and_then(|r| r.compaction_tool_choice.as_deref()),
         )
-    }
-    /// 子代理压缩策略，镜像 `Config::resolve_compaction_strategy`。
-    pub fn resolve_compaction_strategy(&self) -> crate::session::dcp_config::CompactionStrategy {
-        self.agent_config
-            .as_ref()
-            .and_then(|c| c.compaction.strategy)
-            .unwrap_or_default()
-    }
-    /// 子代理 DCP 配置，镜像 `Config::resolve_dcp_config`。
-    pub fn resolve_dcp_config(&self) -> crate::session::dcp_config::DcpConfig {
-        self.agent_config
-            .as_ref()
-            .and_then(|c| c.compaction.dcp.clone())
-            .unwrap_or_default()
     }
     /// Whether a completed subagent's worktree is snapshotted into a durable ref
     /// and its directory deleted. Resolution mirrors the other subagent gates
