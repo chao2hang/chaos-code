@@ -788,29 +788,15 @@ mod tests {
     }
 
     /// Spawn a long-sleeping child to stand in for a predecessor process.
-    ///
-    /// Blocks until `/proc/<pid>/cmdline` reports `sleep` — otherwise on
-    /// slow CI hosts a takeover attempt races the child's `execve(2)` and
-    /// silently declines when `process_name_matches` still sees the parent
-    /// test binary's argv0.
     #[cfg(target_os = "linux")]
     fn spawn_predecessor() -> Child {
-        let child = Command::new("sleep")
+        Command::new("sleep")
             .arg("300")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
-            .expect("spawn sleep");
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while !process_name_matches(child.id(), "sleep") {
-            assert!(
-                Instant::now() < deadline,
-                "sleep child never appeared as `sleep` in /proc/<pid>/cmdline",
-            );
-            thread::sleep(Duration::from_millis(10));
-        }
-        child
+            .expect("spawn sleep")
     }
 
     /// Wait (bounded) for a child to exit; returns true if it did.

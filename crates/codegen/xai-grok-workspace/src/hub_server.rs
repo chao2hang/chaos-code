@@ -1428,9 +1428,6 @@ mod tests {
     /// background task with kind/started_at, plus scheduled tasks (empty when
     /// no scheduler resource exists), and drops the task once killed.
     #[tokio::test]
-    #[ignore = "Chaos: upstream `bg_status` state-machine not ported (TaskSnapshot.is_backgrounded \
-is a stub `false`); test asserts on background-task-list semantics that require the full \
-subsystem. Deferred with blk1/blk2 in CHANGELOG 0.2.124."]
     async fn tasks_snapshot_rpc_lists_outstanding_background_tasks() {
         let handle = make_handle();
         let cfg = background_capable_cfg();
@@ -1532,8 +1529,6 @@ subsystem. Deferred with blk1/blk2 in CHANGELOG 0.2.124."]
     /// FG in-flight out of snapshot; after backgrounding in; completed BG out.
     /// Preconditions ensure a bare `!completed` filter would fail.
     #[tokio::test]
-    #[ignore = "Chaos: same bg_status stub — asserts that a task backgrounded from FG appears in \
-the snapshot; Chaos stubs `is_backgrounded = false` always. Deferred with blk1/blk2."]
     async fn tasks_snapshot_excludes_foreground_and_completed_processes() {
         use crate::handle::tests::terminal_run_request;
         use std::time::{Duration, Instant};

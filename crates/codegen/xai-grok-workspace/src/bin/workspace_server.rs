@@ -443,11 +443,14 @@ async fn run(args: Args, cwd: PathBuf) -> anyhow::Result<()> {
         }
         None => tracing::info!("metric export disabled (not connected)"),
     }
-    // Chaos-fork: upstream 0.2.117 spawns `preview_supervisor::supervise_preview_metrics`
-    // here, but that function depends on `xai_computer_hub_sdk::metric_donate::
-    // active_metrics_sink` — a telemetry-donation surface Chaos strips. The
-    // preview_supervisor addition is skipped in this batch; re-enable when the
-    // donation sink lands.
+    if metric_donation_pump.is_some()
+        && let Some((tx, control_port)) = &preview_shutdown
+    {
+        tokio::spawn(preview_supervisor::supervise_preview_metrics(
+            *control_port,
+            tx.subscribe(),
+        ));
+    }
     tracing::info!(
         server_id = ?server_id,
         "Workspace server connected to hub. Serving tools."
