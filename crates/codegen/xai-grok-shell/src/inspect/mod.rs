@@ -603,7 +603,8 @@ async fn list_permissions(cwd: &Path) -> PermissionsReport {
     }
 
     let project_trusted = crate::agent::folder_trust::project_scope_allowed(cwd);
-    let Some(resolved) = resolution::resolve_permissions_with_provenance(cwd, project_trusted).await
+    let Some(resolved) =
+        resolution::resolve_permissions_with_provenance(cwd, project_trusted).await
     else {
         return PermissionsReport {
             sources: vec![],
