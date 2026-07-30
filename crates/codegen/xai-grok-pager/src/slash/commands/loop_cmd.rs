@@ -358,7 +358,10 @@ mod tests {
                 let acp::ContentBlock::Text(text) = &prompt_blocks[0] else {
                     panic!("expected a text prompt block");
                 };
-                assert_eq!(text.text, loop_schedule_instruction(args, LoopFireMode::Detached));
+                assert_eq!(
+                    text.text,
+                    loop_schedule_instruction(args, LoopFireMode::Detached)
+                );
             }
             other => panic!("expected InjectSkill, got {other:?}"),
         }
