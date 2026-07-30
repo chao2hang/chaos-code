@@ -82,3 +82,9 @@ pub fn env_bool(name: &str) -> Option<bool> {
         _ => None,
     }
 }
+
+/// Chaos-fork: display prefix for the config home directory.
+/// Used in Chinese error messages to refer to the config directory.
+pub fn default_home_display_prefix() -> &'static str {
+    "Chaos"
+}

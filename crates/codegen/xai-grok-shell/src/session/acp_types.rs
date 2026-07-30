@@ -467,6 +467,15 @@ pub struct ContextInfo {
     /// partial snapshots.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub usage_categories: Vec<TokenUsageCategory>,
+    /// Chaos-fork: tokens saved by selective compaction.
+    #[serde(default)]
+    pub selective_compaction_tokens_saved: u64,
+    /// Chaos-fork: average output tokens per second.
+    #[serde(default)]
+    pub avg_output_tokens_per_sec: Option<f32>,
+    /// Chaos-fork: decode tokens per second.
+    #[serde(default)]
+    pub decode_tokens_per_sec: Option<f32>,
 }
 
 impl ContextInfo {

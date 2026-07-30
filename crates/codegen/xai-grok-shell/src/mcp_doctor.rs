@@ -363,14 +363,13 @@ async fn check_server_start(
 ) -> Result<(mcp_servers::McpClient, Check), Check> {
     let start = std::time::Instant::now();
     let noop = xai_file_utils::events::EventWriter::noop();
+    let ctx = mcp_servers::McpSpawnCtx::session_less(&noop);
     match mcp_servers::start_mcp_server(
         acp_server,
-        None,
         Some(cwd),
         None,
         None,
-        &noop,
-        mcp_servers::OauthInteractivity::Interactive,
+        &ctx,
     )
     .await
     {

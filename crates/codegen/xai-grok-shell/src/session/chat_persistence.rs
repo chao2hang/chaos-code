@@ -63,6 +63,14 @@ impl ChatPersistence for ChannelChatPersistence {
             .send(PersistenceMsg::ReplaceChatHistory(items.to_vec()));
     }
 
+    fn persist_selective_compaction(
+        &mut self,
+        _state: &xai_grok_compaction::selective::SelectiveState,
+    ) {
+        // No-op: the session persistence channel does not carry selective
+        // compaction metadata; it is persisted by the chat-state actor.
+    }
+
     fn flush(&mut self) {
         let _ = self.tx.send(PersistenceMsg::Flush);
     }

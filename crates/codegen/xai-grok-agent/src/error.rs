@@ -33,4 +33,8 @@ pub enum AgentBuildError {
     /// A configuration value is present but invalid (e.g. `max_turns = 0`).
     #[error("invalid configuration: {0}")]
     InvalidConfig(String),
+
+    /// Failed to build the session's tokio runtime (e.g. resource exhaustion).
+    #[error("failed to build session runtime: {0}")]
+    RuntimeBuild(std::io::Error),
 }

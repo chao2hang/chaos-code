@@ -65,8 +65,11 @@ async fn handle_session_usage(agent: &MvpAgent, args: &acp::ExtRequest) -> ExtRe
     // Subagent sessions are skipped: their token spend is already folded
     // into the parent session's ledger, so persisting them separately would
     // double-count in the all-time aggregate.
-    let is_subagent = session_kind_is_subagent(handle.session_kind.as_deref());
-    if !is_subagent && let Err(e) = persist_session_usage(&session_id.0, &usage) {
+    //
+    // NOTE: subagent skipping is currently disabled because `SessionHandle`
+    // no longer carries a `session_kind` field after upstream sync. All
+    // sessions are persisted; subagent double-counting is tolerated.
+    if let Err(e) = persist_session_usage(&session_id.0, &usage) {
         tracing::warn!(
             session_id = %session_id.0,
             error = %e,
@@ -96,6 +99,7 @@ fn persist_session_usage(session_id: &str, usage: &PromptUsage) -> Result<(), ru
 /// parent session's ledger (`"subagent"`, `"subagent_fork"`,
 /// `"subagent_resume"`). The aggregate store skips these to avoid
 /// double-counting.
+#[allow(dead_code)] // subagent skipping disabled; retained for tests/future use
 fn session_kind_is_subagent(kind: Option<&str>) -> bool {
     kind.is_some_and(|k| k.starts_with("subagent"))
 }

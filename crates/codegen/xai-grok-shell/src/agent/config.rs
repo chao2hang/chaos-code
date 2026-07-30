@@ -1340,9 +1340,20 @@ pub struct ShellEnvironmentPolicyKnownKeys {
     pub set: Option<toml::Value>,
     pub include_only: Option<toml::Value>,
 }
+
+/// Chaos-fork: ADHD-friendly configuration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AdhdConfig {
+    #[serde(default)]
+    pub enabled: bool,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Config {
     pub features: Features,
+    /// Chaos-fork: `[adhd]` section for ADHD-friendly UI rules.
+    #[serde(default)]
+    pub adhd: AdhdConfig,
     /// `[goal]` section: canonical `/goal` configuration. See [`GoalConfig`].
     #[serde(default)]
     pub goal: GoalConfig,
@@ -1798,6 +1809,7 @@ impl Default for Config {
         let endpoints = EndpointsConfig::default();
         let mut cfg = Self {
             features: Features::default(),
+            adhd: AdhdConfig::default(),
             goal: GoalConfig::default(),
             workflows: WorkflowsConfig::default(),
             doom_loop_recovery: crate::util::config::DoomLoopRecoverySettings::default(),
@@ -2077,7 +2089,7 @@ impl Config {
         for key in unrecognized_keys {
             config.config_warnings.push(
                 super::config_model_override_parse::ConfigWarning::config_key(
-                    key,
+                    &key,
                     super::config_model_override_parse::ConfigWarningKind::UnknownField,
                     "unrecognized config key".to_owned(),
                 ),
@@ -4043,6 +4055,8 @@ pub struct ConfigModelOverride {
     pub temperature: Option<f32>,
     pub top_p: Option<f32>,
     pub api_backend: Option<ApiBackend>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_scheme: Option<AuthScheme>,
     #[serde(default)]
     pub extra_headers: IndexMap<String, String>,
     #[serde(default)]

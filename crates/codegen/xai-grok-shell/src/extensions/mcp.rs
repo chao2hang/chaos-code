@@ -785,16 +785,13 @@ pub async fn init_agent_mcp_pool(mcp_state: &Arc<TokioMutex<McpState>>, cwd: &st
     }
 
     let noop = xai_file_utils::events::EventWriter::noop();
+    let ctx = crate::session::mcp_servers::McpSpawnCtx::session_less(&noop);
     let results = start_mcp_servers(
         configs,
-        None,
         Some(cwd),
         &Default::default(),
         &Default::default(),
-        &noop,
-        // Pass Interactive to preserve prior deferred-OAuth behavior. A session-less SDK agent can
-        // reach this non-interactively; threading real non-interactivity here is a deliberate follow-up.
-        crate::session::mcp_servers::OauthInteractivity::Interactive,
+        &ctx,
     )
     .await;
     let clients: HashMap<McpServerName, Arc<McpClient>> = results

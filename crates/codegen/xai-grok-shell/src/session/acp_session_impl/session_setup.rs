@@ -610,6 +610,9 @@ impl SessionActor {
                 usage_pct,
                 auto_compact_threshold_percent: self.compaction.threshold_percent.get(),
                 usage_categories,
+                selective_compaction_tokens_saved: 0,
+                avg_output_tokens_per_sec: None,
+                decode_tokens_per_sec: None,
             },
         }
     }

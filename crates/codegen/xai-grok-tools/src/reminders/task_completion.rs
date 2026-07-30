@@ -255,11 +255,11 @@ fn split_wrapped_monitor_event(event_text: &str) -> Option<(&str, &str)> {
 /// Buffered `event_text` arrives pre-wrapped (`wrap_monitor_event`); it is
 /// unwrapped via [`split_wrapped_monitor_event`] with verbatim fallback.
 pub fn format_monitor_events(
-    events: &[crate::implementations::grok_build::task::types::MonitorEventNotification],
+    events: &[crate::implementations::grok_build::monitor::types::MonitorEventNotification],
     task_output_name: Option<&str>,
 ) -> Option<String> {
     use std::fmt::Write as _;
-    let tool_hint = task_output_name.unwrap_or("get_command_or_subagent_output");
+    let tool_hint = task_output_name.unwrap_or("get_task_output");
     match events {
         [] => None,
         [event] => {
@@ -278,7 +278,8 @@ pub fn format_monitor_events(
             ))
         }
         _ => {
-            type Event = crate::implementations::grok_build::task::types::MonitorEventNotification;
+            type Event =
+                crate::implementations::grok_build::monitor::types::MonitorEventNotification;
             let mut groups: Vec<(&str, Vec<&Event>)> = Vec::new();
             for event in events {
                 match groups.iter_mut().find(|(id, _)| *id == event.task_id) {
@@ -802,7 +803,6 @@ mod tests {
             explicitly_killed: false,
             owner_session_id: None,
             description: None,
-            // Chaos-fork: upstream added bg_status tracking; we keep the flag as a stub.
             is_backgrounded: false,
         };
         let msg = format_bash_completion(&task, Some("get_command_or_subagent_output"), None);
@@ -831,7 +831,6 @@ mod tests {
             explicitly_killed: false,
             owner_session_id: None,
             description: None,
-            // Chaos-fork: upstream added bg_status tracking; we keep the flag as a stub.
             is_backgrounded: false,
         };
         let msg = format_monitor_completion(&task, Some("get_command_or_subagent_output"));
@@ -866,7 +865,6 @@ mod tests {
             explicitly_killed: false,
             owner_session_id: None,
             description: None,
-            // Chaos-fork: upstream added bg_status tracking; we keep the flag as a stub.
             is_backgrounded: false,
         };
         let msg = format_monitor_completion(&task, None);
@@ -896,7 +894,6 @@ mod tests {
             explicitly_killed: false,
             owner_session_id: None,
             description: None,
-            // Chaos-fork: upstream added bg_status tracking; we keep the flag as a stub.
             is_backgrounded: false,
         };
         let msg = format_bash_completion(&task, Some("get_command_or_subagent_output"), None);
@@ -923,7 +920,6 @@ mod tests {
             explicitly_killed: false,
             owner_session_id: None,
             description: None,
-            // Chaos-fork: upstream added bg_status tracking; we keep the flag as a stub.
             is_backgrounded: false,
         };
         let msg = format_bash_completion(&task, Some("get_command_or_subagent_output"), None);
@@ -953,7 +949,6 @@ mod tests {
             explicitly_killed: false,
             owner_session_id: None,
             description: None,
-            // Chaos-fork: upstream added bg_status tracking; we keep the flag as a stub.
             is_backgrounded: false,
         };
         let msg = format_bash_completion(&task, Some("get_command_or_subagent_output"), None);
@@ -994,7 +989,6 @@ mod tests {
             explicitly_killed: false,
             owner_session_id: None,
             description: None,
-            // Chaos-fork: upstream added bg_status tracking; we keep the flag as a stub.
             is_backgrounded: false,
         };
         let msg = format_bash_completion(&task, Some("get_command_or_subagent_output"), None);
@@ -1034,7 +1028,6 @@ mod tests {
             explicitly_killed: false,
             owner_session_id: None,
             description: None,
-            // Chaos-fork: upstream added bg_status tracking; we keep the flag as a stub.
             is_backgrounded: false,
         };
         let msg = format_bash_completion(&task, Some("get_command_or_subagent_output"), None);
@@ -1197,7 +1190,6 @@ mod tests {
             explicitly_killed: false,
             owner_session_id: None,
             description: None,
-            // Chaos-fork: upstream added bg_status tracking; we keep the flag as a stub.
             is_backgrounded: false,
         }
     }
@@ -1220,7 +1212,6 @@ mod tests {
             explicitly_killed: false,
             owner_session_id: None,
             description: None,
-            // Chaos-fork: upstream added bg_status tracking; we keep the flag as a stub.
             is_backgrounded: false,
         }
     }
@@ -1831,7 +1822,7 @@ mod tests {
     /// reintroduced.
     #[tokio::test]
     async fn reminder_pipeline_ignores_monitor_event_buffer() {
-        use crate::implementations::grok_build::task::types::{
+        use crate::implementations::grok_build::monitor::types::{
             MonitorEventBuffer, MonitorEventNotification,
         };
         use crate::types::resources::Resources;
@@ -1865,7 +1856,7 @@ mod tests {
     /// own + owner-less legacy events; foreign events stay buffered.
     #[test]
     fn drain_owned_partitions_by_session_owner() {
-        use crate::implementations::grok_build::task::types::{
+        use crate::implementations::grok_build::monitor::types::{
             MonitorEventBuffer, MonitorEventNotification, drain_owned,
         };
         let shared_buffer = MonitorEventBuffer::default();
@@ -1902,7 +1893,7 @@ mod tests {
     /// empty => `None`.
     #[test]
     fn format_monitor_events_single_vs_batched() {
-        use crate::implementations::grok_build::task::types::MonitorEventNotification;
+        use crate::implementations::grok_build::monitor::types::MonitorEventNotification;
         let event = |task: &str, desc: &str, text: &str| MonitorEventNotification {
             task_id: task.to_string(),
             event_text: format!(
@@ -1920,7 +1911,7 @@ mod tests {
             single, "<monitor-event task_id=\"task-0\">\n[alpha] line 0\n</monitor-event>",
             "single event must use the lean monitor-event form"
         );
-        let bare = crate::implementations::grok_build::task::types::MonitorEventNotification {
+        let bare = crate::implementations::grok_build::monitor::types::MonitorEventNotification {
             task_id: "task-9".into(),
             event_text: "bare text, no wrapper".into(),
             owner_session_id: None,
@@ -1943,7 +1934,7 @@ mod tests {
         assert!(
             batched.starts_with(
                 "3 monitor events from 2 monitors \
-                 (use get_command_or_subagent_output to identify each monitor):"
+                 (use get_task_output to identify each monitor):"
             ),
             "batch must lead with event + monitor counts and default tool hint: {batched}"
         );
@@ -2008,7 +1999,7 @@ mod tests {
     /// End-to-end multibyte safety through the formatter (single + batch).
     #[test]
     fn format_monitor_events_handles_multibyte_content() {
-        use crate::implementations::grok_build::task::types::MonitorEventNotification;
+        use crate::implementations::grok_build::monitor::types::MonitorEventNotification;
         let event = |task: &str, desc: &str, text: &str| MonitorEventNotification {
             task_id: task.to_string(),
             event_text: format!(
