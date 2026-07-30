@@ -93,12 +93,14 @@ fn persist_adhd_enabled(enabled: bool) -> std::io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn toggle_logic() {
-        // Pure logic test — no filesystem.
-        assert!(!false); // default off
-        assert!(!false == true); // toggle → on
+        // Pure logic test — no filesystem. `adhd_toggle` flips a bool starting from `false`;
+        // asserting that trivial identity here would just re-implement the toggle, so we
+        // only sanity-check that the default is off and toggling once produces on.
+        let mut enabled = false;
+        assert!(!enabled, "default off");
+        enabled = !enabled;
+        assert!(enabled, "toggle → on");
     }
 }
