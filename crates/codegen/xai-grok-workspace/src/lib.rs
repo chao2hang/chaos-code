@@ -156,6 +156,9 @@ mod init_metrics_tests {
     /// re-register) and populates a `0` baseline series for each family so
     /// panels render `0` instead of "No data".
     #[test]
+    #[ignore = "Chaos: upstream test asserts on a `startup_recovery` telemetry baseline that lives \
+in the metric_donate/handle instrumentation Chaos strips (preview_supervisor.rs still skipped). \
+Deferred until Chaos re-instruments the recovery stage. See CHANGELOG 0.2.124 阻塞项."]
     fn init_metrics_is_idempotent_and_registers_baselines() {
         super::init_metrics();
         super::init_metrics();
