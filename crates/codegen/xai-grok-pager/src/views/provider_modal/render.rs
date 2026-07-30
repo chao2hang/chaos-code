@@ -1317,6 +1317,102 @@ fn render_confirm_delete(
     }
 }
 
+// ── 确认删除 ────────────────────────────────────────────────────────────
+
+/// 「确认删除渠道」对话框（Issue #13）。
+///
+/// 显示将删除的渠道名 + 关联模型条目数 + 红色警告，
+/// 提示按 `y` 确认、`n` / `Esc` 取消。
+fn render_confirm_delete(
+    buf: &mut Buffer,
+    area: Rect,
+    state: &mut ProviderModalState,
+    name: &str,
+    theme: &Theme,
+    compact: bool,
+) {
+    let sizing = provider_sizing(compact);
+    let shortcuts: &[mw::Shortcut<'static>] = &[
+        mw::Shortcut {
+            label: "y 确认删除",
+            clickable: false,
+            id: 0,
+        },
+        mw::Shortcut {
+            label: "n / Esc 取消",
+            clickable: false,
+            id: 1,
+        },
+    ];
+    let title = format!("删除渠道 · {name}");
+    let config = ModalWindowConfig {
+        title: &title,
+        tabs: None,
+        shortcuts,
+        sizing,
+        fold_info: None,
+    };
+
+    let Some(mca) = mw::render_modal_window(buf, area, &mut state.window, &config, theme) else {
+        return;
+    };
+    let content = mca.content;
+
+    // 1. 标题行
+    let mut y = content.y;
+    let head = Line::from(vec![
+        Span::styled("确认删除渠道 ", Style::default().fg(theme.gray_dim)),
+        Span::styled(
+            format!("\"{name}\""),
+            Style::default()
+                .fg(theme.warning)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("?", Style::default().fg(theme.gray_dim)),
+    ]);
+    head.render(Rect::new(content.x, y, content.width, 1), buf);
+    y += 1;
+
+    // 2. 副作用摘要（如果有）
+    if y < content.y + content.height {
+        let summary = Line::from(Span::styled(
+            "将一并删除该渠道下的所有 [model.\"provider/id\"] 目录条目，",
+            Style::default().fg(theme.text_primary),
+        ));
+        summary.render(Rect::new(content.x, y, content.width, 1), buf);
+        y += 1;
+    }
+    if y < content.y + content.height {
+        let summary2 = Line::from(Span::styled(
+            "并清空指向被删模型的 [models].default。该操作不可撤销。",
+            Style::default().fg(theme.text_primary),
+        ));
+        summary2.render(Rect::new(content.x, y, content.width, 1), buf);
+        y += 1;
+    }
+
+    // 3. 错误（如有）
+    if let Some(err) = &state.error {
+        if y < content.y + content.height {
+            let line = Line::from(Span::styled(
+                format!("⚠ {err}"),
+                Style::default().fg(theme.warning),
+            ));
+            line.render(Rect::new(content.x, y, content.width, 1), buf);
+            y += 1;
+        }
+    }
+
+    // 4. 提示行
+    if y + 1 < content.y + content.height {
+        let prompt = Line::from(Span::styled(
+            "按 y 确认 · n 或 Esc 取消",
+            Style::default().fg(theme.gray_dim),
+        ));
+        prompt.render(Rect::new(content.x, y, content.width, 1), buf);
+    }
+}
+
 // ── /provider models <name> ────────────────────────────────────────────────
 
 fn render_models(

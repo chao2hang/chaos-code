@@ -833,10 +833,6 @@ pub struct AgentView {
     pub(crate) modal_hovered_key: Option<char>,
     /// Cached server-reported context state.
     pub context_state: Option<xai_grok_shell::session::ContextInfo>,
-    /// Maximum `totalTokens` value seen from server `_meta` so far.
-    /// Treated as the live accumulated token consumption for the session;
-    /// never decreases so compaction does not regress the displayed total.
-    pub max_total_tokens_seen: u64,
     /// Gateway light-frontend session (`kind: "chat"` / `--chat` / conversation
     /// resume). Suppresses Build credits / local sampler context telemetry so the
     /// status bar and prompt never imply remote usage from wrong metrics.
@@ -879,12 +875,6 @@ pub struct AgentView {
     /// Toggled by `Action::ToggleGoalDetail`. Only shown when
     /// `goal_state` is `Some`.
     pub show_goal_detail: bool,
-    /// Token-usage detail overlay, opened by clicking the accumulated-token
-    /// chip in the status bar. `None` = closed. The ledger arrives
-    /// asynchronously, so this holds `Loading` while the fetch is in flight —
-    /// which is also what routes the result to the overlay instead of the
-    /// `/usage` scrollback block.
-    pub usage_detail: Option<crate::views::usage_detail::UsageDetail>,
     /// UTC ms when the current turn started (`turnStartMs` from notification meta).
     /// Used for turn elapsed display.
     pub turn_start_ms: Option<i64>,
@@ -1046,10 +1036,6 @@ pub struct AgentView {
     pub hit_bg_status: HitArea,
     pub hit_goal_status: HitArea,
     pub hit_goal_close: HitArea,
-    /// Accumulated-token chip in the status bar (click opens `usage_detail`).
-    pub hit_total_tokens: HitArea,
-    /// `[✗]` close button on the token-usage detail overlay.
-    pub hit_usage_close: HitArea,
     pub hit_bg_button: HitArea,
     #[allow(dead_code)]
     pub(crate) last_bg_click: Option<Instant>,
@@ -2035,7 +2021,11 @@ pub(super) fn apply_provider_outcome(
                         .enumerate()
                         .map(|(i, id)| crate::slash::commands::provider::ModelEntry {
                             id: id.clone(),
-                            meta: state.models_meta.get(i).cloned().unwrap_or_default(),
+                            meta: state
+                                .models_meta
+                                .get(i)
+                                .cloned()
+                                .unwrap_or_default(),
                         })
                         .collect();
                     (name, entries, params)
@@ -2061,17 +2051,21 @@ pub(super) fn apply_provider_outcome(
                 // siblings from an empty list if none were fetched.
                 let (mct, cw, temp, tp, is_manual) = param_form;
                 if is_manual {
-                    let overrides = match crate::slash::commands::provider::model_params_from_form(
-                        &mct, &cw, &temp, &tp, false,
-                    ) {
-                        Ok(o) => o,
-                        Err(e) => {
-                            tracing::error!(error = %e, "model params parse failed");
-                            crate::slash::commands::provider::ModelParamOverrides::default()
-                        }
-                    };
+                    let overrides =
+                        match crate::slash::commands::provider::model_params_from_form(
+                            &mct, &cw, &temp, &tp, false,
+                        ) {
+                            Ok(o) => o,
+                            Err(e) => {
+                                tracing::error!(error = %e, "model params parse failed");
+                                crate::slash::commands::provider::ModelParamOverrides::default()
+                            }
+                        };
                     match crate::slash::commands::provider::register_model_with_params(
-                        name, &model_id, &overrides, true,
+                        name,
+                        &model_id,
+                        &overrides,
+                        true,
                     ) {
                         Ok(key) => key,
                         Err(e) => {
@@ -2092,10 +2086,9 @@ pub(super) fn apply_provider_outcome(
                         &entries,
                         Some(&model_id),
                     ) {
-                        Ok(keys) => keys
-                            .into_iter()
-                            .find(|k| k == &expected)
-                            .unwrap_or(expected),
+                        Ok(keys) => {
+                            keys.into_iter().find(|k| k == &expected).unwrap_or(expected)
+                        }
                         Err(e) => {
                             tracing::error!(error = %e, "register_provider_models failed");
                             match crate::slash::commands::provider::register_and_set_model(
@@ -2120,14 +2113,9 @@ pub(super) fn apply_provider_outcome(
                 inject_provider_models_into_session(agent, name, &model_id, &catalog_key);
             } else {
                 let mid: agent_client_protocol::ModelId = catalog_key.clone().into();
-                agent
-                    .session
-                    .models
-                    .available
-                    .entry(mid.clone())
-                    .or_insert_with(|| {
-                        agent_client_protocol::ModelInfo::new(mid.clone(), catalog_key.clone())
-                    });
+                agent.session.models.available.entry(mid.clone()).or_insert_with(|| {
+                    agent_client_protocol::ModelInfo::new(mid.clone(), catalog_key.clone())
+                });
             }
 
             let mid: agent_client_protocol::ModelId = catalog_key.into();
@@ -2168,8 +2156,8 @@ fn model_info_meta_from_config_item(
     item: &toml_edit::Item,
 ) -> Option<serde_json::Map<String, serde_json::Value>> {
     use xai_grok_shell::sampling::types::{
-        REASONING_EFFORT_META_KEY, REASONING_EFFORTS_META_KEY, ReasoningEffort,
-        ReasoningEffortOption, SUPPORTS_REASONING_EFFORT_META_KEY, reasoning_effort_meta_value,
+        REASONING_EFFORT_META_KEY, REASONING_EFFORTS_META_KEY, SUPPORTS_REASONING_EFFORT_META_KEY,
+        ReasoningEffort, ReasoningEffortOption, reasoning_effort_meta_value,
         reasoning_efforts_meta_value,
     };
 
@@ -2263,11 +2251,14 @@ fn inject_provider_models_into_session(
             if !key.starts_with(&prefix) || !item.is_table() {
                 continue;
             }
-            let display = item.get("name").and_then(|v| v.as_str()).unwrap_or(key);
+            let display = item
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or(key);
             let mid: agent_client_protocol::ModelId = key.to_string().into();
             let meta = model_info_meta_from_config_item(item);
-            let info =
-                agent_client_protocol::ModelInfo::new(mid.clone(), display.to_string()).meta(meta);
+            let info = agent_client_protocol::ModelInfo::new(mid.clone(), display.to_string())
+                .meta(meta);
             // Always refresh meta so a re-fetch of /models updates effort menus.
             agent.session.models.available.insert(mid, info);
         }
