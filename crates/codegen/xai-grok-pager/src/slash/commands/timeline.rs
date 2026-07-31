@@ -5,6 +5,7 @@
 
 use crate::app::actions::Action;
 use crate::slash::command::{CommandExecCtx, CommandResult, SlashCommand};
+use crate::slash::mode_support::{ModeSupport, Remedy};
 
 pub struct TimelineCommand;
 
@@ -20,6 +21,12 @@ impl SlashCommand for TimelineCommand {
     /// Minimal mode has no interactive scrollback pane for the rail.
     fn available_in_minimal(&self) -> bool {
         false
+    }
+
+    fn mode_support(&self) -> ModeSupport {
+        ModeSupport::FullscreenOnly(Remedy::SwitchMode {
+            why: "the timeline rail needs the interactive scrollback pane",
+        })
     }
 
     fn usage(&self) -> &str {

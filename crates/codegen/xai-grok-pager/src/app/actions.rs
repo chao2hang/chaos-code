@@ -604,6 +604,14 @@ pub enum Action {
     OpenProviderModal {
         mode: crate::views::provider_modal::ProviderModalMode,
     },
+    /// Open the request-client profile picker (`/client`).
+    OpenClientModal {
+        mode: crate::views::client_modal::ClientModalMode,
+    },
+    /// Apply a request-client profile to the active live session.
+    SetClientProfile {
+        profile: xai_grok_shell::agent::client_profiles::ClientProfile,
+    },
     /// Open the command palette (`/help`). The keybinding path (Ctrl+P) opens it
     /// directly in `handle_agent_action`; this lets a slash command reach the
     /// same modal through dispatch.
@@ -1659,6 +1667,12 @@ pub enum Effect {
     },
     /// Toggle plan mode — fire-and-forget signal to the shell.
     TogglePlanMode { session_id: acp::SessionId },
+    /// Apply a request-client identity to a live session via the shell actor.
+    SetClientProfile {
+        agent_id: AgentId,
+        session_id: acp::SessionId,
+        profile: xai_grok_shell::agent::client_profiles::ClientProfile,
+    },
     /// Remove a server-owned queued prompt: fire-and-forget
     /// `x.ai/queue/remove`. The agent re-broadcasts the authoritative queue.
     QueueRemove {
@@ -2438,6 +2452,12 @@ pub enum TaskResult {
         /// Forwarded from `Effect::SwitchModel.prev_model_id` for
         /// rollback on `IncompatibleAgent`.
         prev_model_id: Option<acp::ModelId>,
+    },
+    /// Request-client identity update completed.
+    ClientProfileSet {
+        agent_id: AgentId,
+        profile: xai_grok_shell::agent::client_profiles::ClientProfile,
+        result: Result<(), String>,
     },
     /// Changelog fetched from CDN (both formats).
     ChangelogFetched {

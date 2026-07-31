@@ -395,10 +395,14 @@ inherits = "release-dist"
 [profile.dev]
 panic = "abort"
 # "unpacked" generated 60k+ .dwo files (182GB) for 80 crates × 128 codegen-units.
-# "off" embeds line-tables directly in .o files — far smaller for debug="line-tables-only".
+# Keep split debuginfo disabled; dev builds omit debuginfo below to avoid MSVC PDB limits.
 split-debuginfo = "off"
 codegen-units = 128
-debug = "line-tables-only"
+# Large Windows MSVC workspace binaries exceed the PDB record limit with dev debuginfo.
+debug = false
+# Strip symbols as well; otherwise rustc still asks MSVC to materialize a PDB
+# while processing the stripped debuginfo.
+strip = "symbols"
 opt-level = 0
 lto = false
 # Incremental cache grew to 155GB and never shrank. Disabled to prevent unbounded growth.

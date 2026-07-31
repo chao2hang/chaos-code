@@ -5,6 +5,7 @@
 
 use crate::app::actions::Action;
 use crate::slash::command::{CommandExecCtx, CommandResult, SlashCommand};
+use crate::slash::mode_support::{ModeSupport, Remedy};
 
 /// Open the onboarding tutorial.
 pub struct TutorialCommand;
@@ -30,6 +31,12 @@ impl SlashCommand for TutorialCommand {
     /// host, so the overlay would consume input invisibly. Gated off.
     fn available_in_minimal(&self) -> bool {
         false
+    }
+
+    fn mode_support(&self) -> ModeSupport {
+        ModeSupport::FullscreenOnly(Remedy::SwitchMode {
+            why: "the tutorial overlay needs fullscreen",
+        })
     }
 
     fn run(&self, _ctx: &mut CommandExecCtx, _args: &str) -> CommandResult {

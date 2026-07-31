@@ -3,6 +3,7 @@
 use crate::app::ScreenMode;
 use crate::app::actions::Action;
 use crate::slash::command::{AppCtx, CommandExecCtx, CommandResult, SlashCommand};
+use crate::slash::mode_support::{ModeSupport, Remedy};
 
 /// Reopen the active session in the other screen mode (`/minimal` ⇄ `/fullscreen`).
 pub struct ScreenModeSwitchCommand {
@@ -83,6 +84,14 @@ impl SlashCommand for ScreenModeSwitchCommand {
     /// minimal; `/fullscreen` is the way back out.
     fn available_in_minimal(&self) -> bool {
         !self.to_minimal
+    }
+
+    fn mode_support(&self) -> ModeSupport {
+        if self.to_minimal {
+            ModeSupport::FullscreenOnly(Remedy::AlreadyInMode)
+        } else {
+            ModeSupport::MinimalOnly(Remedy::AlreadyInMode)
+        }
     }
 
     /// Only offered while the mode being switched away from is active.

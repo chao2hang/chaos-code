@@ -618,7 +618,12 @@ pub(super) fn dispatch_send_prompt_inner(
                     });
                 }
                 if let Some(command) = command {
-                    if ctx.screen_mode.is_minimal() && !command.available_in_minimal() {
+                    if let Some(refusal) = command
+                        .mode_support()
+                        .refusal(invocation.token, ctx.screen_mode)
+                    {
+                        CommandResult::Message(refusal)
+                    } else if ctx.screen_mode.is_minimal() && !command.available_in_minimal() {
                         // Central minimal gate: commands that drive the deleted
                         // fullscreen pane / dashboard (/find, /dashboard, …)
                         // have nothing to act on in scrollback-native mode.

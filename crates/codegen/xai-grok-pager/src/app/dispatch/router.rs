@@ -90,7 +90,8 @@ use super::settings::setters::{
 };
 use super::settings::ui::{
     dispatch_confirm_reset_setting, dispatch_open_command_palette, dispatch_open_howto_guides,
-    dispatch_open_provider_modal, dispatch_open_reset_confirm, dispatch_open_settings,
+    dispatch_open_client_modal, dispatch_open_provider_modal, dispatch_open_reset_confirm,
+    dispatch_open_settings, dispatch_set_client_profile,
     dispatch_toggle_compact_mode, dispatch_toggle_mouse_capture, dispatch_toggle_multiline,
     dispatch_toggle_timestamps, dispatch_toggle_vim_mode,
 };
@@ -1048,6 +1049,8 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
         Action::PreviewAutoLightTheme(v) => preview_auto_light_theme(app, v),
         Action::OpenSettings => dispatch_open_settings(app),
         Action::OpenProviderModal { mode } => dispatch_open_provider_modal(app, mode),
+        Action::OpenClientModal { mode } => dispatch_open_client_modal(app, mode),
+        Action::SetClientProfile { profile } => dispatch_set_client_profile(app, profile),
         Action::OpenCommandPalette => dispatch_open_command_palette(app),
         Action::OpenHowtoGuides => dispatch_open_howto_guides(app),
         Action::OpenResetConfirm { key } => dispatch_open_reset_confirm(app, key),

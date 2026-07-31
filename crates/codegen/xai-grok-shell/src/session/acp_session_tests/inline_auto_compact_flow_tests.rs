@@ -162,8 +162,8 @@ async fn create_test_actor(
             tx
         },
         buffering_settings: None,
-        client_identifier: None,
-        origin_client: None,
+        client_identifier: std::cell::RefCell::new(None),
+        origin_client: std::cell::RefCell::new(None),
         feedback_manager: Arc::new(FeedbackManager::local_only("test-session")),
         upload_queue: Arc::new(OnceLock::new()),
         sync_loop_cancel: None,
@@ -616,8 +616,8 @@ async fn create_test_actor_with_memory(
             tx
         },
         buffering_settings: None,
-        client_identifier: None,
-        origin_client: None,
+        client_identifier: std::cell::RefCell::new(None),
+        origin_client: std::cell::RefCell::new(None),
         feedback_manager: Arc::new(FeedbackManager::local_only("test-memory")),
         upload_queue: Arc::new(OnceLock::new()),
         sync_loop_cancel: None,
@@ -1388,8 +1388,8 @@ async fn test_e2e_idle_resume_refreshes_model_metadata() {
                     tx
                 },
                 buffering_settings: None,
-                client_identifier: None,
-                origin_client: None,
+                client_identifier: std::cell::RefCell::new(None),
+                origin_client: std::cell::RefCell::new(None),
                 feedback_manager: Arc::new(FeedbackManager::local_only("test-session")),
                 upload_queue: Arc::new(OnceLock::new()),
                 sync_loop_cancel: None,

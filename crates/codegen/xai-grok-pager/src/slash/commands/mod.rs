@@ -8,6 +8,7 @@ pub mod always_approve;
 pub mod announcements;
 pub mod auto;
 pub mod btw;
+pub mod client;
 pub mod cd;
 pub mod compact;
 pub mod compact_mode;
@@ -143,6 +144,7 @@ pub fn builtin_commands() -> Vec<Arc<dyn SlashCommand>> {
         Arc::new(tasks::TasksCommand),
         Arc::new(release_notes::ReleaseNotesCommand),
         Arc::new(config_agents::ConfigAgentsCommand),
+        Arc::new(client::ClientCommand),
         Arc::new(personas::PersonasCommand),
         Arc::new(provider::ProviderCommand),
         Arc::new(fallback::FallbackCommand),

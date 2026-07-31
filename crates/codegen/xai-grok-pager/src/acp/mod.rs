@@ -29,7 +29,7 @@ pub use model_state::ModelState;
 pub(crate) fn wait_for_exit_not_supported(context: &str) -> acp::Error {
     acp::Error::new(
         acp::ErrorCode::MethodNotFound.into(),
-        format!("{context} does not handle WaitForTerminalExit"),
+        format!("{context}不支持 WaitForTerminalExit"),
     )
 }
 
@@ -60,6 +60,8 @@ pub struct AcpConnection {
     pub auth_methods: Vec<acp::AuthMethod>,
     /// Cancellation token to stop the agent.
     pub cancel: CancellationToken,
+    /// Local ACP worker thread: the in-process agent or the leader IPC bridge.
+    pub worker_thread: Option<std::thread::JoinHandle<anyhow::Result<()>>>,
     /// ACP-advertised slash commands parsed from `InitializeResponse.meta.availableCommands`.
     /// Seeded into every new `AgentSession` so autocomplete has shell builtins
     /// and skills immediately, before any `AvailableCommandsUpdate` arrives.
@@ -229,6 +231,9 @@ pub async fn connect(cancel: &CancellationToken, mut flags: ConnectFlags) -> Res
     let memory_config = agent_config.memory_config.clone();
     let spawned = spawn::spawn_grok_shell(agent_config, cancel, memory_config).await?;
     let auth_manager = spawned.auth_manager.clone();
+    let agent_cancel = spawned.cancel;
+    let agent_guard =
+        spawn::AgentShutdownGuard::new(agent_cancel.clone(), Some(spawned.thread_handle));
     let (tx, rx) = (spawned.channel.tx, spawned.channel.rx);
 
     // Initialize
@@ -264,7 +269,8 @@ pub async fn connect(cancel: &CancellationToken, mut flags: ConnectFlags) -> Res
         models,
         is_grok_shell,
         auth_methods,
-        cancel: spawned.cancel,
+        cancel: agent_cancel,
+        worker_thread: agent_guard.into_thread(),
         available_commands,
         needs_login,
         login_label,
@@ -343,6 +349,9 @@ pub async fn connect_via_leader(
         Some(reconnector),
         ReconnectPolicy::unbounded(),
     )?;
+    let bridge_cancel = bridge.cancel;
+    let bridge_guard =
+        spawn::AgentShutdownGuard::new(bridge_cancel.clone(), Some(bridge.thread_handle));
     let (tx, rx) = (bridge.channel.tx, bridge.channel.rx);
 
     let (
@@ -390,7 +399,8 @@ pub async fn connect_via_leader(
         models,
         is_grok_shell,
         auth_methods,
-        cancel: bridge.cancel,
+        cancel: bridge_cancel,
+        worker_thread: bridge_guard.into_thread(),
         available_commands,
         needs_login,
         login_label,
@@ -487,6 +497,7 @@ fn build_initialize_meta(flags: &ConnectFlags) -> serde_json::Value {
         .unwrap_or(PAGER_CLIENT_TYPE);
     let mut meta = serde_json::json!({
         "clientType": client_type,
+        "clientIdentifier": client_type,
         "clientVersion": PAGER_CLIENT_VERSION,
     });
     if let Some(spo) = &flags.system_prompt_override {
