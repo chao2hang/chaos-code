@@ -95,8 +95,9 @@ fn parse_prompt_json(json_str: &str) -> anyhow::Result<Vec<acp::ContentBlock>> {
         serde_json::from_str(json_str).map_err(|e| anyhow::anyhow!("无效的 JSON：{e}"))?;
 
     let blocks: Vec<acp::ContentBlock> = match value {
-        serde_json::Value::Array(_) => serde_json::from_value(value)
-            .map_err(|e| anyhow::anyhow!("无效的 ACP 内容块：{e}"))?,
+        serde_json::Value::Array(_) => {
+            serde_json::from_value(value).map_err(|e| anyhow::anyhow!("无效的 ACP 内容块：{e}"))?
+        }
 
         serde_json::Value::Object(ref map) => {
             let format_type = map.get("type").and_then(|v| v.as_str()).ok_or_else(|| {
@@ -110,12 +111,9 @@ fn parse_prompt_json(json_str: &str) -> anyhow::Result<Vec<acp::ContentBlock>> {
                 .ok_or_else(|| anyhow::anyhow!("JSON 对象必须包含 \"content\" 字段"))?;
 
             match format_type {
-                "acp" => serde_json::from_value(content.clone()).map_err(|e| {
-                    anyhow::anyhow!("\"content\" 中包含无效的 ACP 内容块：{e}")
-                })?,
-                other => anyhow::bail!(
-                    "不支持的提示词格式类型：\"{other}\"；当前仅支持 \"acp\""
-                ),
+                "acp" => serde_json::from_value(content.clone())
+                    .map_err(|e| anyhow::anyhow!("\"content\" 中包含无效的 ACP 内容块：{e}"))?,
+                other => anyhow::bail!("不支持的提示词格式类型：\"{other}\"；当前仅支持 \"acp\""),
             }
         }
 

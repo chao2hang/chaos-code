@@ -1403,14 +1403,9 @@ mod tests {
             .expect("top-level --client parses");
         assert_eq!(top_level.client.as_deref(), Some("codex"));
 
-        let agent = PagerArgs::try_parse_from([
-            "grok",
-            "agent",
-            "--client",
-            "claude-code",
-            "stdio",
-        ])
-        .expect("agent --client parses");
+        let agent =
+            PagerArgs::try_parse_from(["grok", "agent", "--client", "claude-code", "stdio"])
+                .expect("agent --client parses");
         let Command::Agent(agent) = agent.command.expect("agent subcommand") else {
             panic!("expected agent subcommand");
         };
@@ -1421,6 +1416,9 @@ mod tests {
     fn clients_command_parses_json_flag() {
         let args = PagerArgs::try_parse_from(["grok", "clients", "--json"])
             .expect("clients command parses");
-        assert!(matches!(args.command, Some(Command::Clients { json: true })));
+        assert!(matches!(
+            args.command,
+            Some(Command::Clients { json: true })
+        ));
     }
 }

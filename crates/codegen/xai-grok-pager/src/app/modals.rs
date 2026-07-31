@@ -476,8 +476,10 @@ impl AgentView {
         // Client profile modal: nested forms and delete confirmation own Esc;
         // the root list delegates Esc to the shared modal chrome.
         if let ActiveModal::ClientModal { state } = modal {
-            if !matches!(state.mode, crate::views::client_modal::ClientModalMode::List)
-                || state.success.is_some()
+            if !matches!(
+                state.mode,
+                crate::views::client_modal::ClientModalMode::List
+            ) || state.success.is_some()
             {
                 let out = crate::views::client_modal::handle_client_key(state, key);
                 return apply_client_outcome(self, out);
@@ -1702,12 +1704,8 @@ impl AgentView {
         // Client profile modal: only the shared chrome is mouse-interactive;
         // list/form controls remain keyboard-first to keep editing predictable.
         if let Some(ActiveModal::ClientModal { state }) = &mut self.active_modal {
-            let outcome = mw::handle_modal_mouse(
-                &mut state.window,
-                mouse.kind,
-                mouse.column,
-                mouse.row,
-            );
+            let outcome =
+                mw::handle_modal_mouse(&mut state.window, mouse.kind, mouse.column, mouse.row);
             return match outcome {
                 ModalWindowOutcome::CloseRequested => {
                     self.active_modal = None;

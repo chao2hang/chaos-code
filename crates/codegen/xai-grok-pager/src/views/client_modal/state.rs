@@ -1,5 +1,5 @@
 use crate::views::modal_window::ModalWindowState;
-use xai_grok_shell::agent::client_profiles::{by_id as builtin_profile_by_id, ClientProfile};
+use xai_grok_shell::agent::client_profiles::{ClientProfile, by_id as builtin_profile_by_id};
 
 pub const MODAL_TITLE: &str = "客户端选择";
 pub const PROTOCOLS: &[&str] = &["responses", "chat_completions", "messages"];
@@ -44,23 +44,17 @@ impl ClientFormField {
     }
 
     pub fn next(self, editing: bool) -> Option<Self> {
-        let fields = if editing {
-            &Self::ALL[1..]
-        } else {
-            Self::ALL
-        };
+        let fields = if editing { &Self::ALL[1..] } else { Self::ALL };
         let index = fields.iter().position(|field| *field == self)?;
         fields.get(index + 1).copied()
     }
 
     pub fn previous(self, editing: bool) -> Option<Self> {
-        let fields = if editing {
-            &Self::ALL[1..]
-        } else {
-            Self::ALL
-        };
+        let fields = if editing { &Self::ALL[1..] } else { Self::ALL };
         let index = fields.iter().position(|field| *field == self)?;
-        index.checked_sub(1).and_then(|index| fields.get(index).copied())
+        index
+            .checked_sub(1)
+            .and_then(|index| fields.get(index).copied())
     }
 }
 
@@ -148,7 +142,8 @@ impl ClientModalState {
     }
 
     pub fn selected_is_custom(&self) -> bool {
-        self.selected_profile().is_some_and(|profile| !Self::is_builtin(profile))
+        self.selected_profile()
+            .is_some_and(|profile| !Self::is_builtin(profile))
     }
 
     pub fn ensure_selected_visible(&mut self) {
@@ -174,8 +169,8 @@ impl ClientModalState {
         if self.profiles.is_empty() {
             return;
         }
-        let next = (self.selected as isize + delta)
-            .clamp(0, self.profiles.len() as isize - 1) as usize;
+        let next =
+            (self.selected as isize + delta).clamp(0, self.profiles.len() as isize - 1) as usize;
         self.selected = next;
         self.ensure_selected_visible();
     }

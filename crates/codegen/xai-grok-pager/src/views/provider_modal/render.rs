@@ -1317,7 +1317,6 @@ fn render_confirm_delete(
     }
 }
 
-
 // ── /provider models <name> ────────────────────────────────────────────────
 
 fn render_models(

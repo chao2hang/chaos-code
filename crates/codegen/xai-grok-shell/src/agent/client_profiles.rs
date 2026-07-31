@@ -119,9 +119,7 @@ pub fn profile_for_origin(
     configured: Option<&ClientProfile>,
 ) -> Option<ClientProfile> {
     match origin {
-        Some(origin) if !is_native_client_identifier(&origin.product) => {
-            by_id(&origin.product)
-        }
+        Some(origin) if !is_native_client_identifier(&origin.product) => by_id(&origin.product),
         _ => configured.cloned(),
     }
 }
@@ -197,7 +195,10 @@ mod tests {
 
         assert_eq!(config.client_identifier.as_deref(), Some("external-client"));
         assert_eq!(
-            config.origin_client.as_ref().map(|origin| origin.product.as_str()),
+            config
+                .origin_client
+                .as_ref()
+                .map(|origin| origin.product.as_str()),
             Some("external-client")
         );
     }
@@ -261,8 +262,8 @@ mod tests {
             "#,
         )
         .expect("valid TOML");
-        let config = crate::agent::config::Config::new_from_toml_cfg(&raw)
-            .expect("config should parse");
+        let config =
+            crate::agent::config::Config::new_from_toml_cfg(&raw).expect("config should parse");
         let models = crate::agent::config::resolve_model_list(&config, None);
 
         let model = models.get("claude").expect("model override");
@@ -306,8 +307,8 @@ mod tests {
             "#,
         )
         .expect("valid TOML");
-        let config = crate::agent::config::Config::new_from_toml_cfg(&raw)
-            .expect("config should parse");
+        let config =
+            crate::agent::config::Config::new_from_toml_cfg(&raw).expect("config should parse");
         let models = crate::agent::config::resolve_model_list(&config, None);
         let model = models.get("test").expect("test model");
         let profile = config
