@@ -701,18 +701,18 @@ fn validate_param_field(field: ModelParamField, raw: &str) -> Result<(), String>
         }
         ModelParamField::Temperature => {
             let v = crate::slash::commands::provider::parse_optional_f64(s, field.label())?;
-            if let Some(t) = v {
-                if !(0.0..=2.0).contains(&t) {
-                    return Err("temperature 建议范围 0–2".into());
-                }
+            if let Some(t) = v
+                && !(0.0..=2.0).contains(&t)
+            {
+                return Err("temperature 建议范围 0–2".into());
             }
         }
         ModelParamField::TopP => {
             let v = crate::slash::commands::provider::parse_optional_f64(s, field.label())?;
-            if let Some(p) = v {
-                if !(0.0..=1.0).contains(&p) {
-                    return Err("top_p 必须在 0–1 之间".into());
-                }
+            if let Some(p) = v
+                && !(0.0..=1.0).contains(&p)
+            {
+                return Err("top_p 必须在 0–1 之间".into());
             }
         }
     }

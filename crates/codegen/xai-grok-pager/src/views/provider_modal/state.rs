@@ -662,7 +662,7 @@ impl ProviderModalState {
         }
         if let Some(v) = table.get("temperature").and_then(|i| {
             i.as_float()
-                .map(|n| format_float_trim(n))
+                .map(format_float_trim)
                 .or_else(|| i.as_integer().map(|n| n.to_string()))
                 .or_else(|| i.as_str().map(|s| s.to_string()))
         }) {
@@ -670,7 +670,7 @@ impl ProviderModalState {
         }
         if let Some(v) = table.get("top_p").and_then(|i| {
             i.as_float()
-                .map(|n| format_float_trim(n))
+                .map(format_float_trim)
                 .or_else(|| i.as_integer().map(|n| n.to_string()))
                 .or_else(|| i.as_str().map(|s| s.to_string()))
         }) {

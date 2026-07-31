@@ -856,7 +856,12 @@ mod tests {
         let gc = build_auto_gc_options(&opts, Vec::new());
         assert!(!gc.force, "auto path must never set force=true");
         assert!(gc.skip_kinds.is_empty());
-        assert_eq!(gc.max_age_by_kind.get(&WorktreeKind::Manual), Some(&None));
+        if process_cwd_scan_available() {
+            assert_eq!(gc.max_age_by_kind.get(&WorktreeKind::Manual), Some(&None));
+        } else {
+            assert!(gc.max_age_secs.is_none());
+            assert!(gc.max_age_by_kind.is_empty());
+        }
     }
 
     #[test]
@@ -1148,6 +1153,7 @@ mod tests {
         assert!(report.overlay.is_none() && report.btrfs.is_none());
     }
 
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[test]
     fn force_never_applied_by_auto_path_on_live_pid() {
         let _g = env_guard();
