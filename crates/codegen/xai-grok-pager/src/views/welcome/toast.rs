@@ -12,6 +12,7 @@ use crate::views::goal_detail::truncate_to_width;
 /// Prefer one row above the prompt, right-aligned to it. With no prompt
 /// (login / gate), paint the last row of `area` — stacked welcome layouts
 /// put the version badge there, so the toast may overlay it briefly.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn paint_welcome_toast(
     buf: &mut Buffer,
     area: Rect,

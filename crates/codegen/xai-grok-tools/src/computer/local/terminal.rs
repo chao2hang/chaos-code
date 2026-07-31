@@ -516,6 +516,9 @@ struct LocalTerminalActor {
     /// Whether persistent shell state is enabled.
     persistent_shell: bool,
 
+    // The capture path is Unix-only; retain the setting on Windows so the
+    // cross-platform constructor API stays identical.
+    #[cfg_attr(not(unix), allow(dead_code))]
     login_shell_capture: bool,
 
     /// Per-backend `find`→`bfs` / `grep`→`ugrep` shadow enable state, resolved
@@ -2998,6 +3001,7 @@ fn layer_login_env_vars(
 }
 
 /// Layer per-request env onto `cmd`, dropping names the active policy excludes.
+#[allow(dead_code)]
 fn layer_request_env(
     cmd: &mut tokio::process::Command,
     env: &HashMap<String, String>,
@@ -3111,7 +3115,7 @@ fn spawn_shell_command(
     };
 
     #[cfg(not(unix))]
-    let mut build_cmd = |with_breakaway: bool| {
+    let build_cmd = |with_breakaway: bool| {
         use windows::Win32::System::Threading::{
             CREATE_BREAKAWAY_FROM_JOB, CREATE_NEW_PROCESS_GROUP, CREATE_NO_WINDOW,
         };

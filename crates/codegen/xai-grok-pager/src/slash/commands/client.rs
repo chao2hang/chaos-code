@@ -248,10 +248,9 @@ pub(crate) fn delete_custom_client_from_document(
         .and_then(|clients| clients.get("default"))
         .and_then(|item| item.as_str())
         .is_some_and(|default| default.trim() == id)
+        && let Some(clients) = doc.get_mut("clients").and_then(|item| item.as_table_mut())
     {
-        if let Some(clients) = doc.get_mut("clients").and_then(|item| item.as_table_mut()) {
-            clients.remove("default");
-        }
+        clients.remove("default");
     }
 
     if let Some(models) = doc.get_mut("model").and_then(|item| item.as_table_mut()) {

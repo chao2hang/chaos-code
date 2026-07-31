@@ -243,7 +243,7 @@ mod tests {
         assert!(matches!(
             outcome,
             ClientKeyOutcome::Commit {
-                profile: ref profile,
+                ref profile,
                 editing_id: None,
             } if profile.id == "my-client"
                 && profile.name == "My Client"
