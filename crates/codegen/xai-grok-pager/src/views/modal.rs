@@ -295,6 +295,10 @@ pub enum ActiveModal {
     ProviderModal {
         state: Box<crate::views::provider_modal::ProviderModalState>,
     },
+    /// Request-client profile picker and custom profile manager (`/client`).
+    ClientModal {
+        state: Box<crate::views::client_modal::ClientModalState>,
+    },
     /// Reset-settings confirmation, stacked above Settings.
     ///
     /// The underlying `SettingsModalState` is moved in/out so cancel
@@ -636,6 +640,7 @@ impl ActiveModal {
             | ActiveModal::MemoryBrowser { .. }
             | ActiveModal::Settings { .. }
             | ActiveModal::ProviderModal { .. }
+            | ActiveModal::ClientModal { .. }
             | ActiveModal::RememberNoteReview { .. } => vec![],
         }
     }
@@ -666,6 +671,7 @@ impl ActiveModal {
             ActiveModal::MemoryBrowser { .. } => "记忆",
             ActiveModal::Settings { .. } => crate::views::settings_modal::MODAL_TITLE,
             ActiveModal::ProviderModal { .. } => crate::views::provider_modal::MODAL_TITLE,
+            ActiveModal::ClientModal { .. } => crate::views::client_modal::MODAL_TITLE,
             ActiveModal::ResetSettingsConfirm { .. } => "重置设置？",
             ActiveModal::RememberNoteReview { .. } => "记忆笔记",
         }

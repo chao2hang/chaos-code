@@ -1282,10 +1282,20 @@ impl MvpAgent {
         let cfg = self.cfg.borrow();
         let alpha_test_key = cfg.endpoints.alpha_test_key.clone();
         let client_version = cfg.client_version.clone();
+        let configured_client_profile = cfg.client_profile_for_model(model);
+        let has_explicit_client_profile = cfg.client_profile_override.is_some();
         let deployment_id = crate::managed_config::resolve_deployment_id(
             cfg.endpoints.deployment_key.as_deref(),
         );
         drop(cfg);
+        let client_profile = if has_explicit_client_profile {
+            configured_client_profile
+        } else {
+            crate::agent::client_profiles::profile_for_origin(
+                origin_client.as_ref(),
+                configured_client_profile.as_ref(),
+            )
+        };
         let user_id = self
             .auth_manager
             .current_or_expired()
@@ -1299,7 +1309,22 @@ impl MvpAgent {
             deployment_id,
             user_id,
         );
-        config.origin_client = origin_client;
+        if let Some(profile) = client_profile.as_ref() {
+            profile.apply_to_sampling_config(&mut config);
+        }
+        if has_explicit_client_profile {
+            config.origin_client = client_profile
+                .as_ref()
+                .map(|profile| profile.origin_client());
+        } else {
+            let origin_client = match origin_client {
+                Some(origin)
+                    if crate::agent::client_profiles::is_native_client_identifier(&origin.product)
+                        && client_profile.is_some() => None,
+                other => other,
+            };
+            config.origin_client = origin_client.or(config.origin_client);
+        }
         config
     }
     /// Resolve sampling config for a model by ID, falling back to the global
@@ -3040,7 +3065,7 @@ impl MvpAgent {
             mut chat_history,
             rewind_points_file_path,
             initial_total_tokens,
-            origin_client: _origin_client,
+            origin_client: session_origin_client,
             client_code_nav_enabled,
             client_terminal,
             client_fs_read,
@@ -3287,7 +3312,9 @@ impl MvpAgent {
         tool_ctx.auto_wake_enabled = self.cfg.borrow().auto_wake_enabled;
         let support_permission = self.cfg.borrow().features.support_permission;
         let telemetry_enabled = self.product_analytics_enabled();
-        let origin_client = self.origin_client_info_from_meta(init.meta.as_ref());
+        let origin_client = session_origin_client
+            .clone()
+            .or_else(|| self.origin_client_info_from_meta(init.meta.as_ref()));
         let sampling_config = self
             .resolve_sampling_config_for_model(&session_model_id, origin_client.clone());
         if self.auth_method_id.load().is_none() {
@@ -3514,7 +3541,10 @@ impl MvpAgent {
             .values()
             .find(|entry| entry.info.model == sampling_config.model)
             .and_then(|entry| entry.info.max_retries);
-        let origin_client = self.origin_client_info_from_meta(init.meta.as_ref());
+        // Keep the effective profile identity in the session actor. The
+        // sampler config may have replaced Chaos' transport default with a
+        // configured profile, and the actor uses this value for every turn.
+        let origin_client = sampling_config.origin_client.clone().or(origin_client);
         let web_search_sampling_config = self.prepare_web_search_sampling_config();
         let image_gen_config = self.prepare_image_gen_config();
         let video_gen_config = self.prepare_video_gen_config();

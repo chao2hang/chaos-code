@@ -82,3 +82,15 @@
 - **第 4 天**：缓冲 + 发版
 
 总计约 3-4 个工作日，建议作为 v0.2.127 独立发布。
+
+## 当前验收结果（2026-07-31）
+
+- [x] `xai-grok-pager` headless 模块拆分与模块声明通过 `cargo check`。
+- [x] `xai-grok-pager-bin` CLI 路由通过 `cargo check`；`-p/--print`、`--output-format`、`--json-schema` 已接入 `headless::run_single_turn`。
+- [x] headless 测试集：125 passed，0 failed。
+- [x] slash 模式支持测试：6 passed，0 failed。
+- [x] 用量聚合兼容：保留可选 `cacheCreationTokens`，避免输入/缓存桶重叠。
+- [x] Windows MSVC CLI 构建：通过关闭 dev debuginfo、追加 `/DEBUG:NONE`，并为 CLI 主线程预留 `/STACK:8388608`，不再触发 PDB 限制或栈溢出。
+- [x] CLI 冒烟：`chaos --help` 返回 0；`chaos -p ""` 返回正常参数错误（exit 1），不再触发 `STATUS_STACK_OVERFLOW`。
+
+结论：headless 迁移、Windows CLI 构建和可执行文件级冒烟均已完成；不需要 Linux。

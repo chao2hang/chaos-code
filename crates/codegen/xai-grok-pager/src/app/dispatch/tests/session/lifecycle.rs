@@ -1586,11 +1586,12 @@ fn delete_session_action_emits_delete_effect() {
             source: "local".into(),
             session_id: "s1".into(),
             cwd: "/repo".into(),
+            after: crate::app::actions::AfterSessionDelete::Stay,
         },
         &mut app,
     );
     assert!(
-        matches!(effects.as_slice(), [Effect::DeleteSession { source, session_id, cwd, }]
+        matches!(effects.as_slice(), [Effect::DeleteSession { source, session_id, cwd, .. }]
         if source == "local" && session_id == "s1" && cwd == "/repo"),
         "DeleteSession action must emit exactly one matching DeleteSession effect"
     );

@@ -27,6 +27,12 @@ pub enum Command {
     Memory(crate::memory_cmd::MemoryArgs),
     /// 列出可用模型并退出
     Models,
+    /// 列出可用的请求客户端档案并退出
+    Clients {
+        /// 输出机器可读的 JSON。
+        #[arg(long)]
+        json: bool,
+    },
     /// 列出、搜索或恢复会话
     Sessions(crate::sessions_cmd::SessionsArgs),
     /// 获取并安装托管配置
@@ -228,6 +234,9 @@ pub struct AgentArgs {
     /// 使用的模型 ID
     #[arg(short = 'm', long = "model", value_name = "MODEL")]
     pub model: Option<String>,
+    /// 选择请求客户端档案（claude-code、codex 或 grok-build）。
+    #[arg(long = "client", value_name = "PROFILE")]
+    pub client: Option<String>,
     /// 推理模型的推理强度
     #[clap(
         long = "reasoning-effort",
@@ -462,6 +471,9 @@ pub struct PagerArgs {
     /// 无界面模式的输出格式。
     #[clap(long = "output-format", value_enum, default_value = "plain")]
     pub output_format: OutputFormat,
+    /// 在 `streaming-messages-json` 输出中包含增量文本和思考事件。
+    #[clap(long = "include-partial-messages")]
+    pub include_partial_messages: bool,
     /// 结构化输出的 JSON Schema。设置后，模型将被约束为
     /// 生成匹配此 schema 的 JSON。隐含 --output-format json。
     /// 示例：--json-schema '{"type":"object","properties":{"name":{"type":"string"}}}'
@@ -470,6 +482,9 @@ pub struct PagerArgs {
     /// 要使用的模型 ID。
     #[clap(short = 'm', long = "model", value_name = "MODEL")]
     pub model: Option<String>,
+    /// 选择请求客户端档案（claude-code、codex 或 grok-build）。
+    #[clap(long = "client", value_name = "PROFILE")]
+    pub client: Option<String>,
     /// 推理模型的推理强度
     #[clap(
         long = "reasoning-effort",
@@ -849,7 +864,7 @@ impl PagerArgs {
             ref sandbox_profile,
         } = pinned
         {
-            eprintln!("Resuming session {} (matched by title)", id);
+            eprintln!("正在恢复会话 {}（按标题匹配）", id);
             self.pinned_resume_profile = Some(sandbox_profile.clone());
         }
         let Some(id) = pinned.id() else {
@@ -938,7 +953,26 @@ mod tests {
         assert!(help.contains("用法："), "{help}");
         assert!(help.contains("选项："), "{help}");
         assert!(help.contains("列出可用模型并退出"), "{help}");
+        assert!(help.contains("streaming-messages-json"), "{help}");
+        assert!(help.contains("--include-partial-messages"), "{help}");
         assert!(!help.contains("Grok Build TUI"), "{help}");
+    }
+
+    #[test]
+    fn streaming_messages_json_and_partial_messages_parse() {
+        let args = PagerArgs::try_parse_from([
+            "chaos",
+            "--single",
+            "hello",
+            "--output-format",
+            "streaming-messages-json",
+            "--include-partial-messages",
+        ])
+        .expect("streaming messages headless flags parse");
+
+        assert_eq!(args.output_format, OutputFormat::StreamingMessagesJson);
+        assert!(args.include_partial_messages);
+        assert_eq!(args.single.as_deref(), Some("hello"));
     }
 
     #[test]
@@ -1361,5 +1395,32 @@ mod tests {
             panic!("expected agent subcommand");
         };
         assert_eq!(agent.reasoning_effort.as_deref(), Some("max"));
+    }
+
+    #[test]
+    fn client_profile_flag_parses_for_top_level_and_agent_modes() {
+        let top_level = PagerArgs::try_parse_from(["grok", "--client", "codex"])
+            .expect("top-level --client parses");
+        assert_eq!(top_level.client.as_deref(), Some("codex"));
+
+        let agent = PagerArgs::try_parse_from([
+            "grok",
+            "agent",
+            "--client",
+            "claude-code",
+            "stdio",
+        ])
+        .expect("agent --client parses");
+        let Command::Agent(agent) = agent.command.expect("agent subcommand") else {
+            panic!("expected agent subcommand");
+        };
+        assert_eq!(agent.client.as_deref(), Some("claude-code"));
+    }
+
+    #[test]
+    fn clients_command_parses_json_flag() {
+        let args = PagerArgs::try_parse_from(["grok", "clients", "--json"])
+            .expect("clients command parses");
+        assert!(matches!(args.command, Some(Command::Clients { json: true })));
     }
 }

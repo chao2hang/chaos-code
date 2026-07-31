@@ -10,6 +10,7 @@
 
 use crate::app::actions::Action;
 use crate::slash::command::{CommandExecCtx, CommandResult, SlashCommand};
+use crate::slash::mode_support::{ModeSupport, Remedy};
 
 /// Re-print the last collapsed/truncated block, fully expanded (minimal mode).
 pub struct ExpandCommand;
@@ -29,6 +30,12 @@ impl SlashCommand for ExpandCommand {
 
     fn usage(&self) -> &str {
         "/expand"
+    }
+
+    fn mode_support(&self) -> ModeSupport {
+        ModeSupport::MinimalOnly(Remedy::UseInstead(
+            "press Tab to focus the scrollback, then → on the block",
+        ))
     }
 
     fn run(&self, ctx: &mut CommandExecCtx, _args: &str) -> CommandResult {

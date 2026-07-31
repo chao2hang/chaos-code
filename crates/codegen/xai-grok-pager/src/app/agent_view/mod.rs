@@ -709,6 +709,9 @@ impl ParkedMarkerSlot {
 }
 pub struct AgentView {
     pub session: AgentSession,
+    /// Pager-side mirror of the request-client profile selected for this
+    /// conversation. The shell actor is authoritative for live requests.
+    pub client_profile: Option<xai_grok_shell::agent::client_profiles::ClientProfile>,
     pub scrollback: ScrollbackState,
     pub prompt: PromptWidget,
     /// Sticky: once the user types in the prompt, hide the tip for the session.
@@ -1962,6 +1965,98 @@ pub(super) fn apply_settings_outcome(
         SettingsKeyOutcome::ActionPair(a, b) => InputOutcome::ActionPair(a, b),
         SettingsKeyOutcome::Changed => InputOutcome::Changed,
         SettingsKeyOutcome::Unchanged => InputOutcome::Unchanged,
+    }
+}
+
+/// Apply keyboard outcomes from the `/client` profile manager.
+///
+/// Profile CRUD is local TOML editing and is deliberately performed before
+/// returning to the event loop. Selecting a profile is different: it must be
+/// sent through ACP so the shell actor changes the identity used by future
+/// turns without restarting the session.
+pub(super) fn apply_client_outcome(
+    agent: &mut AgentView,
+    outcome: crate::views::client_modal::ClientKeyOutcome,
+) -> InputOutcome {
+    use crate::views::client_modal::ClientKeyOutcome;
+
+    match outcome {
+        ClientKeyOutcome::Close => {
+            agent.active_modal = None;
+            InputOutcome::Changed
+        }
+        ClientKeyOutcome::Changed => InputOutcome::Changed,
+        ClientKeyOutcome::Unchanged => InputOutcome::Unchanged,
+        ClientKeyOutcome::Select(profile) => {
+            if agent.session.session_id.is_none() {
+                if let Some(crate::views::modal::ActiveModal::ClientModal { state }) =
+                    &mut agent.active_modal
+                {
+                    state.error = Some("当前会话尚未准备好，暂时不能切换客户端".into());
+                }
+                return InputOutcome::Changed;
+            }
+            agent.active_modal = None;
+            InputOutcome::Action(crate::app::actions::Action::SetClientProfile { profile })
+        }
+        ClientKeyOutcome::Commit {
+            profile,
+            editing_id,
+        } => {
+            let result = crate::slash::commands::client::upsert_custom_client(
+                &profile,
+                editing_id.as_deref(),
+            );
+            if let Some(crate::views::modal::ActiveModal::ClientModal { state }) =
+                &mut agent.active_modal
+            {
+                match result {
+                    Ok(saved) => {
+                        state.mode = crate::views::client_modal::ClientModalMode::List;
+                        state.reload_profiles();
+                        state.select_id(&saved.id);
+                        state.success = Some(format!("已保存客户端：{}", saved.name));
+                    }
+                    Err(error) => state.error = Some(error),
+                }
+            }
+            InputOutcome::Changed
+        }
+        ClientKeyOutcome::SetDefault(id) => {
+            let result = crate::slash::commands::client::set_default_client(&id);
+            if let Some(crate::views::modal::ActiveModal::ClientModal { state }) =
+                &mut agent.active_modal
+            {
+                match result {
+                    Ok(_) => {
+                        state.default_id = Some(id.clone());
+                        state.success = Some(format!("已将 {id} 设为默认客户端"));
+                    }
+                    Err(error) => state.error = Some(error),
+                }
+            }
+            InputOutcome::Changed
+        }
+        ClientKeyOutcome::Delete(id) => {
+            let result = crate::slash::commands::client::delete_custom_client(&id);
+            if let Some(crate::views::modal::ActiveModal::ClientModal { state }) =
+                &mut agent.active_modal
+            {
+                match result {
+                    Ok(()) => {
+                        state.mode = crate::views::client_modal::ClientModalMode::List;
+                        state.reload_profiles();
+                        state.selected = state.selected.min(state.profiles.len().saturating_sub(1));
+                        state.success = Some(format!("已删除客户端：{id}"));
+                    }
+                    Err(error) => {
+                        state.mode = crate::views::client_modal::ClientModalMode::List;
+                        state.error = Some(error);
+                    }
+                }
+            }
+            InputOutcome::Changed
+        }
     }
 }
 

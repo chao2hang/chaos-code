@@ -507,6 +507,7 @@ fn external_filter_clears_and_suppresses_native_content_state() {
                 source: "local".into(),
                 session_id: "native".into(),
                 cwd: "/repo".into(),
+                after: crate::app::actions::AfterSessionDelete::Stay,
             },
             &mut app,
         )
@@ -810,6 +811,7 @@ fn colliding_native_and_foreign_ids_use_source_at_initiation() {
                 source: "codex".into(),
                 session_id: "shared-id".into(),
                 cwd: "/repo".into(),
+                after: crate::app::actions::AfterSessionDelete::Stay,
             },
             &mut app,
         )
@@ -821,6 +823,7 @@ fn colliding_native_and_foreign_ids_use_source_at_initiation() {
                 source: "local".into(),
                 session_id: "shared-id".into(),
                 cwd: "/repo".into(),
+                after: crate::app::actions::AfterSessionDelete::Stay,
             },
             &mut app,
         )
@@ -962,6 +965,7 @@ fn foreign_selection_and_mutation_guards_remain_central() {
                 source: "cursor".into(),
                 session_id: "foreign-id".into(),
                 cwd: "/repo".into(),
+                after: crate::app::actions::AfterSessionDelete::Stay,
             },
             &mut app,
         )

@@ -716,10 +716,12 @@ pub(crate) struct SessionActor {
     /// Buffering settings captured at session creation. The concrete ReplayBuffer
     /// is owned by `run_session()`.
     pub(crate) buffering_settings: Option<BufferingSettings>,
-    /// Client identifier for telemetry - passed from the MvpAgent (extracted from initialize meta)
-    pub(crate) client_identifier: Option<String>,
+    /// Client identifier for telemetry - passed from the MvpAgent (extracted from initialize meta).
+    /// RefCell is safe here because the actor runs on a single-threaded LocalSet and
+    /// the identity can be replaced by a session command while the Arc is shared.
+    pub(crate) client_identifier: std::cell::RefCell<Option<String>>,
     /// Origin client for User-Agent on sampling requests.
-    pub(crate) origin_client: Option<crate::http::OriginClientInfo>,
+    pub(crate) origin_client: std::cell::RefCell<Option<crate::http::OriginClientInfo>>,
     /// Feedback manager for signal tracking and feedback request heuristics
     pub(crate) feedback_manager: Arc<FeedbackManager>,
     pub(crate) upload_queue:

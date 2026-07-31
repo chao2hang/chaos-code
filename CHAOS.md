@@ -143,6 +143,41 @@ export ANTHROPIC_API_KEY="你的密钥"
 模型级配置会覆盖 Provider 默认值。`extra_headers` 按 header 名大小写不敏感地逐项合并，
 因此模型增加一个 header 时不会丢失 Provider 的 `anthropic-version`。
 
+### 请求客户端档案
+
+同一个 Chaos 工具可以为不同模型或调用场景标记为不同的请求客户端。查看内置档案：
+
+```sh
+chaos clients
+chaos clients --json
+```
+
+当前提供：`claude-code`（别名 `claude`、`anthropic`）、`codex`（别名 `openai`）和
+`grok-build`（别名 `grok`）。临时选择档案：
+
+```sh
+chaos --client codex --model gpt-5
+chaos -p "分析这个项目" --client claude-code
+chaos agent --client grok-build stdio
+```
+
+也可以在 `config.toml` 设置全局默认值，或按模型设置：
+
+```toml
+[clients]
+default = "codex"
+
+[model.claude-sonnet]
+model = "claude-sonnet-4-5"
+model_provider = "anthropic"
+client = "claude-code"
+```
+
+选择优先级为显式 `--client`、`[model.<id>] client`、`[clients].default`；外部 ACP
+客户端提供的身份会优先于配置默认值。档案目前只修改请求身份（`User-Agent` 和
+`x-grok-client-identifier`），不会自动替换模型的 endpoint、协议或认证密钥；这些仍由
+`[model.*]`、`[model_providers.*]` 和环境变量决定。
+
 ## Token 用量
 
 在交互界面输入：

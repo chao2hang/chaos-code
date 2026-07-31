@@ -358,6 +358,65 @@ pub(in crate::app::dispatch) fn dispatch_open_provider_modal(
     vec![]
 }
 
+/// Open the `/client` request-client profile manager for the active session.
+pub(in crate::app::dispatch) fn dispatch_open_client_modal(
+    app: &mut AppView,
+    mode: crate::views::client_modal::ClientModalMode,
+) -> Vec<Effect> {
+    use crate::views::modal::ActiveModal;
+
+    let ActiveView::Agent(id) = app.active_view else {
+        return vec![];
+    };
+    let Some(agent) = app.agents.get_mut(&id) else {
+        return vec![];
+    };
+    if matches!(&agent.active_modal, Some(ActiveModal::ClientModal { .. })) {
+        agent.active_modal = None;
+        return vec![];
+    }
+
+    let configured_default = crate::slash::commands::provider::load_config()
+        .ok()
+        .and_then(|doc| crate::slash::commands::client::configured_default_client(&doc));
+    let current_id = agent
+        .client_profile
+        .as_ref()
+        .map(|profile| profile.id.clone())
+        .or(configured_default);
+    let mut state = crate::views::client_modal::ClientModalState::new(current_id.clone());
+    state.mode = mode;
+    if let Some(id) = current_id.as_deref() {
+        state.select_id(id);
+    }
+    agent.active_modal = Some(ActiveModal::ClientModal {
+        state: Box::new(state),
+    });
+    vec![]
+}
+
+/// Send a selected request-client profile to the live shell session.
+pub(in crate::app::dispatch) fn dispatch_set_client_profile(
+    app: &mut AppView,
+    profile: xai_grok_shell::agent::client_profiles::ClientProfile,
+) -> Vec<Effect> {
+    let ActiveView::Agent(agent_id) = app.active_view else {
+        return vec![];
+    };
+    let Some(agent) = app.agents.get(&agent_id) else {
+        return vec![];
+    };
+    let Some(session_id) = agent.session.session_id.clone() else {
+        app.show_toast("当前会话尚未准备好，无法切换客户端");
+        return vec![];
+    };
+    vec![Effect::SetClientProfile {
+        agent_id,
+        session_id,
+        profile,
+    }]
+}
+
 /// Open the reset-settings confirmation modal.
 ///
 /// **Modal stack contract.** The current `ActiveModal::Settings`

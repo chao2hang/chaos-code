@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.127
+
+### 多客户端请求档案
+
+- 新增 `/client` 交互窗口，可选择 Claude Code、Codex、Grok Build，并支持自定义客户端的新增、编辑、删除和默认设置。
+- 新增 `--client`、`chaos clients` 与 `chaos clients --json`，支持在同一工具中管理多种请求客户端身份。
+- 客户端配置仅保存公开身份信息和环境变量名，不保存或传递 API Key。
+
 ## 0.2.124
 
 ### 上游同步至 `xai-org/grok-build` `5da6962`

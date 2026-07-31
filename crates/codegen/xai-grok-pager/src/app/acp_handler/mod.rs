@@ -583,7 +583,7 @@ pub(crate) fn handle(msg: AcpClientMessage, app: &mut AppView) -> bool {
         AcpClientMessage::ExtMethod(ext) => handle_ext_method(ext, app),
         AcpClientMessage::WaitForTerminalExit(args) => {
             args.response_tx
-                .send(Err(crate::acp::wait_for_exit_not_supported("pager")))
+                .send(Err(crate::acp::wait_for_exit_not_supported("Pager")))
                 .ok();
             false
         }
