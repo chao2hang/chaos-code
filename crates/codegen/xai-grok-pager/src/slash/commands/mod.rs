@@ -16,6 +16,7 @@ pub mod context;
 pub mod copy;
 pub mod dashboard;
 pub mod debug;
+pub mod delete;
 pub mod docs;
 pub mod doctor;
 pub mod edit_prompt;
@@ -86,6 +87,7 @@ pub fn builtin_commands() -> Vec<Arc<dyn SlashCommand>> {
         Arc::new(fork::ForkCommand),
         Arc::new(compact::CompactCommand),
         Arc::new(copy::CopyCommand),
+        Arc::new(delete::DeleteCommand),
         Arc::new(find::FindCommand),
         Arc::new(history::HistoryCommand),
         Arc::new(export::ExportCommand),

@@ -3190,7 +3190,7 @@ pub(crate) fn execute(
                     }
                 });
         }
-        Effect::DeleteSession { source, session_id, cwd } => {
+        Effect::DeleteSession { source, session_id, cwd, after } => {
             let tx = acp_tx.clone();
             tasks
                 .spawn(async move {
@@ -3234,6 +3234,7 @@ pub(crate) fn execute(
                             TaskResult::DeleteSessionComplete {
                                 source,
                                 session_id,
+                                after,
                             }
                         }
                         Err(e) => {

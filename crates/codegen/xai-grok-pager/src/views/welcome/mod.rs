@@ -22,6 +22,7 @@ mod hero_box;
 pub(crate) mod logo;
 mod menu;
 mod prompt;
+mod toast;
 mod top_bar;
 
 pub(crate) use logo::shimmer_frame;

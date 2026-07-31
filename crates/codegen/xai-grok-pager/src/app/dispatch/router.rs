@@ -195,6 +195,41 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
         Action::NewSession => dispatch_new_session(app),
         Action::ChooseNewSessionMode => open_new_session_question(app),
         Action::ExitSession | Action::ExitSessionConfirmed => dispatch_exit_session(app),
+        Action::DeleteCurrentSession => {
+            // `/delete` — delete current session + return to welcome.
+            match app.active_session_id() {
+                Some(sid) => {
+                    let source = "conversation".to_string();
+                    let cwd = app.cwd.to_string_lossy().into_owned();
+                    vec![Effect::DeleteSession {
+                        source,
+                        session_id: sid.to_string(),
+                        cwd,
+                        after: crate::app::actions::AfterSessionDelete::Welcome,
+                    }]
+                }
+                None => vec![],
+            }
+        }
+        Action::DeleteCurrentSessionAnswered { confirmed } => {
+            if confirmed {
+                match app.active_session_id() {
+                    Some(sid) => {
+                        let source = "conversation".to_string();
+                        let cwd = app.cwd.to_string_lossy().into_owned();
+                        vec![Effect::DeleteSession {
+                            source,
+                            session_id: sid.to_string(),
+                            cwd,
+                            after: crate::app::actions::AfterSessionDelete::Welcome,
+                        }]
+                    }
+                    None => vec![],
+                }
+            } else {
+                vec![]
+            }
+        }
         Action::NewWorktreeSession {
             load_session_id,
             label,
@@ -1105,6 +1140,7 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
             source,
             session_id,
             cwd,
+            after,
         } => {
             if session_picker_external_filter_active(app) {
                 return vec![];
@@ -1127,6 +1163,7 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
                 source,
                 session_id,
                 cwd,
+                after,
             }]
         }
         Action::Fork(args) => dispatch_fork(app, args),
