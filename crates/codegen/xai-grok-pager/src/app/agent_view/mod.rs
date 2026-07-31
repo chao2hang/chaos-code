@@ -1514,6 +1514,13 @@ pub struct AgentView {
         agent_client_protocol::SessionUpdate,
         crate::acp::meta::NotificationMeta,
     )>,
+    /// Accumulated-token chip in the status bar (click opens `usage_detail`).
+    pub hit_total_tokens: HitArea,
+    pub hit_usage_close: HitArea,
+    /// Full-screen usage overlay; `Some` while open.
+    pub usage_detail: Option<crate::views::usage_detail::UsageDetail>,
+    /// Largest total-token count seen across turns (drives the status chip).
+    pub max_total_tokens_seen: u64,
 }
 /// Cap on [`AgentView::self_originated_prompt_ids`]. Only recent ids matter (a
 /// stale post-rewind chunk arrives right after its turn ends), so a small

@@ -98,6 +98,7 @@ impl SessionActor {
         xai_grok_hooks::runner::RunContext {
             session_id: &self.session_info.id.0,
             workspace_root: &self.hook_resolved_workspace_root,
+            process_scope: None,
         }
     }
 

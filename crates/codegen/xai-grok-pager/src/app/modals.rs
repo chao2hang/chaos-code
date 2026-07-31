@@ -1095,6 +1095,7 @@ impl AgentView {
                                     source,
                                     session_id,
                                     cwd,
+                                    after: crate::app::actions::AfterSessionDelete::Stay,
                                 });
                             }
                             return InputOutcome::Changed;

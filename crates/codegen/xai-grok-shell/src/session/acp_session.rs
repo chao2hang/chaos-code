@@ -184,8 +184,6 @@ mod session_setup;
 mod turn_end;
 #[path = "acp_session_impl/updates.rs"]
 mod updates;
-#[path = "acp_session_impl/selective_compaction.rs"]
-mod selective_compaction;
 use run_loop::*;
 #[path = "acp_session_impl/spawn.rs"]
 mod spawn;
