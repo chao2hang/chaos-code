@@ -28,15 +28,10 @@ fn main() {
         std::process::exit(1);
     });
 
-    // Check platform support before applying
-    let support = SandboxManager::support_info();
-    println!(
-        "Platform support: {}",
-        if support.is_supported { "YES" } else { "NO" }
-    );
-    println!("Details: {}", support.details);
+    // Check platform support before applying.
+    let sandbox_supported = print_platform_support();
 
-    if !support.is_supported {
+    if !sandbox_supported {
         println!("\n⚠️  Sandbox not supported on this platform.");
         println!("   On macOS: Seatbelt should be available (10.5+)");
         println!("   On Linux: Landlock requires kernel ≥ 5.13");
@@ -124,14 +119,39 @@ fn main() {
     println!("\n✅ Smoke test complete");
 }
 
+#[cfg(unix)]
+fn print_platform_support() -> bool {
+    let support = SandboxManager::support_info();
+    println!(
+        "Platform support: {}",
+        if support.is_supported { "YES" } else { "NO" }
+    );
+    println!("Details: {}", support.details);
+    support.is_supported
+}
+
+#[cfg(not(unix))]
+fn print_platform_support() -> bool {
+    println!("Platform support: NO");
+    println!("Details: Sandbox enforcement is only available on Unix platforms.");
+    false
+}
+
+#[cfg(unix)]
+fn is_permission_denied(error: &std::io::Error) -> bool {
+    matches!(error.raw_os_error(), Some(code) if code == libc::EACCES || code == libc::EPERM)
+}
+
+#[cfg(not(unix))]
+fn is_permission_denied(error: &std::io::Error) -> bool {
+    error.kind() == std::io::ErrorKind::PermissionDenied
+}
+
 fn test_read(label: &str, path: &Path) {
     if path.is_file() {
         match std::fs::read(path) {
             Ok(_) => println!("  ✅ {label}: OK (read)"),
-            Err(e)
-                if e.raw_os_error() == Some(libc::EACCES)
-                    || e.raw_os_error() == Some(libc::EPERM) =>
-            {
+            Err(e) if is_permission_denied(&e) => {
                 println!("  🔒 {label}: BLOCKED ({e})");
             }
             Err(e) => println!("  ❌ {label}: ERROR ({e})"),
@@ -144,7 +164,7 @@ fn test_read(label: &str, path: &Path) {
             println!("  ✅ {label}: OK ({count} entries)");
         }
         Err(e) => {
-            if e.raw_os_error() == Some(libc::EACCES) || e.raw_os_error() == Some(libc::EPERM) {
+            if is_permission_denied(&e) {
                 println!("  🔒 {label}: BLOCKED ({e})");
             } else {
                 println!("  ❌ {label}: ERROR ({e})");
@@ -159,7 +179,7 @@ fn test_write(label: &str, path: &Path) {
             println!("  ✅ {label}: OK (written)");
         }
         Err(e) => {
-            if e.raw_os_error() == Some(libc::EACCES) || e.raw_os_error() == Some(libc::EPERM) {
+            if is_permission_denied(&e) {
                 println!("  🔒 {label}: BLOCKED ({e})");
             } else {
                 println!("  ❌ {label}: ERROR ({e})");

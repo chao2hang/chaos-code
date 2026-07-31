@@ -218,9 +218,7 @@ fn canonical_client_profile_id(id: &str) -> Result<String> {
         .client_profile_by_id(id)
         .map(|profile| profile.id)
         .ok_or_else(|| {
-            anyhow::anyhow!(
-                "未知的客户端档案 '{id}'；请运行 `chaos clients` 查看可用档案"
-            )
+            anyhow::anyhow!("未知的客户端档案 '{id}'；请运行 `chaos clients` 查看可用档案")
         })
 }
 
@@ -248,11 +246,7 @@ fn print_client_profiles(json: bool) -> Result<()> {
     for profile in &profiles {
         println!(
             "  {:<12} {:<14} protocol={:<16} auth={} env={}",
-            profile.id,
-            profile.name,
-            profile.protocol,
-            profile.auth_scheme,
-            profile.env_key,
+            profile.id, profile.name, profile.protocol, profile.auth_scheme, profile.env_key,
         );
     }
     println!();

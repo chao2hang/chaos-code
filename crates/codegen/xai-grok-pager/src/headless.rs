@@ -31,11 +31,9 @@ use crate::headless::reducer::{
     reducer_for,
 };
 
-
 mod ext_protocol;
 mod reducer;
 use ext_protocol::{ExtEvent, handle_ext_notification};
-
 
 mod cli;
 pub use cli::{HeadlessPrompt, OutputFormat, parse_json_schema, parse_permission_rules_lenient};
@@ -82,7 +80,6 @@ pub struct HeadlessOptions {
     pub background_wait_timeout: Duration,
 }
 
-
 struct HeadlessEmitter {
     format: OutputFormat,
     parse_structured_output: bool,
@@ -100,7 +97,6 @@ struct HeadlessEmitter {
     output_closed: bool,
     /// First hard stdout IO error (not a broken pipe), surfaced so the process exits non-zero.
     write_error: Option<std::io::Error>,
-
 }
 
 impl HeadlessEmitter {
@@ -663,9 +659,7 @@ async fn fork_then_open(
         .ok_or_else(|| anyhow::anyhow!("分叉响应缺少 newSessionId"))?;
     match open_session(acp_tx, &write_cwd, Some(&child), restore_code).await {
         Ok(opened) => Ok(opened),
-        Err(e) => Err(anyhow::anyhow!(
-            "会话已分叉为 {child}，但加载失败：{e}"
-        )),
+        Err(e) => Err(anyhow::anyhow!("会话已分叉为 {child}，但加载失败：{e}")),
     }
 }
 
@@ -771,7 +765,6 @@ fn headless_materialize_ctx(
         } else {
             crate::app::session_startup::TitleResolution::Allowed
         },
-
     }
 }
 
@@ -872,7 +865,6 @@ pub async fn run_single_turn(
     let spawned = match spawn_grok_shell(agent_config, &cancel, memory_config).await {
         Ok(s) => s,
         Err(e) => {
-
             let msg = format!("无法启动会话：{e}");
             emitter.on_error(&msg, None);
 
@@ -897,7 +889,6 @@ pub async fn run_single_turn(
     let init_resp: acp::InitializeResponse = match acp_send(init_req, &acp_tx).await {
         Ok(r) => r,
         Err(e) => {
-
             let msg = format!("初始化失败：{e}");
             emitter.on_error(&msg, None);
 
@@ -989,7 +980,6 @@ pub async fn run_single_turn(
     } = match opened {
         Ok(v) => v,
         Err(e) => {
-
             let msg = format!("无法创建会话：{e}");
             emitter.on_error(&msg, None);
 
@@ -1582,15 +1572,12 @@ fn handle_headless_acp_message(
         }
         AcpClientMessageBox::WaitForTerminalExit(args) => {
             args.response_tx
-                .send(Err(crate::acp::wait_for_exit_not_supported(
-                    "无界面模式",
-                )))
+                .send(Err(crate::acp::wait_for_exit_not_supported("无界面模式")))
                 .ok();
         }
         _ => {}
     }
 }
-
 
 #[cfg(test)]
 #[path = "headless_tests.rs"]

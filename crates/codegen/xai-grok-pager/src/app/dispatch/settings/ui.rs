@@ -1,17 +1,16 @@
 //! Settings UI: command palette, settings modal, toggles, resets, and rollback.
 
 use super::setters::{
-    pr13_effective_default, set_ask_user_question_timeout_enabled_inner,
-    set_auto_retry_incomplete_end_turn_inner, set_auto_dark_theme_inner,
-    set_auto_light_theme_inner, set_auto_update_inner, set_collapsed_edit_blocks_inner,
-    set_combine_queued_prompts_inner, set_compact_mode, set_compact_mode_inner,
-    set_contextual_hint_inner, set_default_model_inner, set_default_selected_permission_inner,
-    set_display_refresh_auto_cadence_inner, set_fork_secondary_model_inner,
-    set_group_tool_verbs_inner, set_hunk_tracker_mode_inner, set_invert_scroll_inner,
-    set_keep_text_selection_inner, set_max_thoughts_width_inner, set_multiline_mode,
-    set_page_flip_on_send_inner, set_prompt_suggestions_inner, set_remember_tool_approvals_inner,
-    set_render_mermaid_inner, set_respect_manual_folds_inner, set_screen_mode_inner,
-    set_scroll_lines_inner, set_scroll_mode_inner, set_scroll_speed_inner,
+    pr13_effective_default, set_ask_user_question_timeout_enabled_inner, set_auto_dark_theme_inner,
+    set_auto_light_theme_inner, set_auto_retry_incomplete_end_turn_inner, set_auto_update_inner,
+    set_collapsed_edit_blocks_inner, set_combine_queued_prompts_inner, set_compact_mode,
+    set_compact_mode_inner, set_contextual_hint_inner, set_default_model_inner,
+    set_default_selected_permission_inner, set_display_refresh_auto_cadence_inner,
+    set_fork_secondary_model_inner, set_group_tool_verbs_inner, set_hunk_tracker_mode_inner,
+    set_invert_scroll_inner, set_keep_text_selection_inner, set_max_thoughts_width_inner,
+    set_multiline_mode, set_page_flip_on_send_inner, set_prompt_suggestions_inner,
+    set_remember_tool_approvals_inner, set_render_mermaid_inner, set_respect_manual_folds_inner,
+    set_screen_mode_inner, set_scroll_lines_inner, set_scroll_mode_inner, set_scroll_speed_inner,
     set_show_thinking_blocks_inner, set_show_tips_inner, set_simple_mode_inner, set_theme_inner,
     set_timeline_inner, set_timestamps, set_timestamps_inner, set_vim_mode_inner,
     set_voice_capture_mode_inner, set_voice_stt_language_inner,
@@ -247,10 +246,26 @@ pub(in crate::app::dispatch) fn dispatch_open_provider_modal(
                     state.providers = providers
                         .iter()
                         .map(|name| {
-                            let base_url = crate::slash::commands::provider::provider_field(&doc, name, "base_url").unwrap_or_default();
-                            let auth_scheme = crate::slash::commands::provider::provider_field(&doc, name, "auth_scheme").unwrap_or_default();
-                            let api_backend = crate::slash::commands::provider::provider_field(&doc, name, "api_backend").unwrap_or_default();
-                            let has_key = crate::slash::commands::provider::provider_field(&doc, name, "api_key").is_some();
+                            let base_url = crate::slash::commands::provider::provider_field(
+                                &doc, name, "base_url",
+                            )
+                            .unwrap_or_default();
+                            let auth_scheme = crate::slash::commands::provider::provider_field(
+                                &doc,
+                                name,
+                                "auth_scheme",
+                            )
+                            .unwrap_or_default();
+                            let api_backend = crate::slash::commands::provider::provider_field(
+                                &doc,
+                                name,
+                                "api_backend",
+                            )
+                            .unwrap_or_default();
+                            let has_key = crate::slash::commands::provider::provider_field(
+                                &doc, name, "api_key",
+                            )
+                            .is_some();
                             let is_current = current_provider.as_deref() == Some(name.as_str());
                             crate::views::provider_modal::ProviderSummary {
                                 name: name.clone(),
@@ -337,9 +352,10 @@ pub(in crate::app::dispatch) fn dispatch_open_provider_modal(
             crate::views::provider_modal::ProviderModalMode::SetModel(name)
             | crate::views::provider_modal::ProviderModalMode::Models(name)
             | crate::views::provider_modal::ProviderModalMode::ManualModel(name)
-            | crate::views::provider_modal::ProviderModalMode::ConfigureModel(name) => {
-                Some((name.clone(), state.models.first().cloned().unwrap_or_default()))
-            }
+            | crate::views::provider_modal::ProviderModalMode::ConfigureModel(name) => Some((
+                name.clone(),
+                state.models.first().cloned().unwrap_or_default(),
+            )),
             _ => None,
         }
     } else {

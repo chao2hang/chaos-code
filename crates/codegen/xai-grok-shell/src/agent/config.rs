@@ -1056,9 +1056,15 @@ pub struct ClientProfilesConfig {
 pub struct CustomClientProfileConfig {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub name: String,
-    #[serde(default = "default_client_protocol", skip_serializing_if = "String::is_empty")]
+    #[serde(
+        default = "default_client_protocol",
+        skip_serializing_if = "String::is_empty"
+    )]
     pub protocol: String,
-    #[serde(default = "default_client_auth_scheme", skip_serializing_if = "String::is_empty")]
+    #[serde(
+        default = "default_client_auth_scheme",
+        skip_serializing_if = "String::is_empty"
+    )]
     pub auth_scheme: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub env_key: String,
@@ -2255,10 +2261,16 @@ impl Config {
         config.client_profile_by_model = config
             .config_models
             .iter()
-            .filter_map(|(key, model)| model.client.as_deref().map(|profile| (key.clone(), profile.to_owned())))
+            .filter_map(|(key, model)| {
+                model
+                    .client
+                    .as_deref()
+                    .map(|profile| (key.clone(), profile.to_owned()))
+            })
             .collect();
         for (key, model) in &config.config_models {
-            if let (Some(route), Some(profile)) = (model.model.as_deref(), model.client.as_deref()) {
+            if let (Some(route), Some(profile)) = (model.model.as_deref(), model.client.as_deref())
+            {
                 config
                     .client_profile_by_model
                     .insert(route.to_owned(), profile.to_owned());

@@ -89,11 +89,11 @@ use super::settings::setters::{
     set_voice_stt_language,
 };
 use super::settings::ui::{
-    dispatch_confirm_reset_setting, dispatch_open_command_palette, dispatch_open_howto_guides,
-    dispatch_open_client_modal, dispatch_open_provider_modal, dispatch_open_reset_confirm,
-    dispatch_open_settings, dispatch_set_client_profile,
-    dispatch_toggle_compact_mode, dispatch_toggle_mouse_capture, dispatch_toggle_multiline,
-    dispatch_toggle_timestamps, dispatch_toggle_vim_mode,
+    dispatch_confirm_reset_setting, dispatch_open_client_modal, dispatch_open_command_palette,
+    dispatch_open_howto_guides, dispatch_open_provider_modal, dispatch_open_reset_confirm,
+    dispatch_open_settings, dispatch_set_client_profile, dispatch_toggle_compact_mode,
+    dispatch_toggle_mouse_capture, dispatch_toggle_multiline, dispatch_toggle_timestamps,
+    dispatch_toggle_vim_mode,
 };
 use super::status::{
     dispatch_copy_session_id, dispatch_manage_billing, dispatch_open_gboom, dispatch_open_tutorial,

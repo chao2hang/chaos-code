@@ -627,10 +627,8 @@ pub async fn run(
         );
         conn
     };
-    let agent_guard = crate::acp::spawn::AgentShutdownGuard::new(
-        cancel.clone(),
-        connection.worker_thread.take(),
-    );
+    let agent_guard =
+        crate::acp::spawn::AgentShutdownGuard::new(cancel.clone(), connection.worker_thread.take());
     let mut config_watcher = crate::appearance::ConfigWatcher::start().await?;
     let alt_screen_config_mode = config_watcher.current().alt_screen;
     let term_ctx = crate::terminal::terminal_context();

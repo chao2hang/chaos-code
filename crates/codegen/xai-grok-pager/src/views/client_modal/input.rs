@@ -1,14 +1,10 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use super::state::{
-    AUTH_SCHEMES, ClientFormField, ClientKeyOutcome, ClientModalMode, ClientModalState,
-    PROTOCOLS,
+    AUTH_SCHEMES, ClientFormField, ClientKeyOutcome, ClientModalMode, ClientModalState, PROTOCOLS,
 };
 
-pub fn handle_client_key(
-    state: &mut ClientModalState,
-    key: &KeyEvent,
-) -> ClientKeyOutcome {
+pub fn handle_client_key(state: &mut ClientModalState, key: &KeyEvent) -> ClientKeyOutcome {
     if key.kind == KeyEventKind::Release {
         return ClientKeyOutcome::Unchanged;
     }
@@ -34,10 +30,7 @@ pub fn handle_client_key(
     }
 }
 
-pub fn handle_client_paste(
-    state: &mut ClientModalState,
-    text: &str,
-) -> ClientKeyOutcome {
+pub fn handle_client_paste(state: &mut ClientModalState, text: &str) -> ClientKeyOutcome {
     if !matches!(state.mode, ClientModalMode::Form { .. }) || state.success.is_some() {
         return ClientKeyOutcome::Unchanged;
     }

@@ -429,9 +429,9 @@ pub fn effective_fork_new_cwd(process_cwd: &str, parent_cwd: Option<&Path>) -> S
 /// Resolve most-recent session id for cwd, or error.
 async fn most_recent_session_id(cwd: &str) -> anyhow::Result<(String, Option<String>)> {
     let summaries = xai_grok_shell::session::persistence::list_summaries(Some(cwd)).await?;
-    let first = summaries.first().ok_or_else(|| {
-        anyhow::anyhow!("当前目录没有可恢复的会话。请运行 `chaos` 启动新会话。")
-    })?;
+    let first = summaries
+        .first()
+        .ok_or_else(|| anyhow::anyhow!("当前目录没有可恢复的会话。请运行 `chaos` 启动新会话。"))?;
     Ok((first.info.id.to_string(), first.display_title_opt()))
 }
 /// `AuthManager` for direct grok.com calls made outside the agent (pre-ACP
@@ -676,10 +676,7 @@ async fn restore_session_from_remote(
     if let Some((false, source)) =
         xai_grok_shell::util::config::session_registry_local_override_sourced(Some(&raw_config))
     {
-        anyhow::bail!(
-            "本地不存在该会话（会话注册表已被 {} 禁用）",
-            source.label()
-        );
+        anyhow::bail!("本地不存在该会话（会话注册表已被 {} 禁用）", source.label());
     }
     eprintln!("本地未找到会话 {session_id:?}，正在从远端恢复...");
     let agent_config = xai_grok_shell::agent::config::Config::new_from_toml_cfg(&raw_config)

@@ -3,8 +3,8 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use super::state::{
-    API_BACKENDS, AUTH_SCHEMES, FormStep, ModelParamField, ProviderAction, ProviderKeyOutcome,
-    ProviderModalMode, ProviderModalState, PROVIDER_PRESETS,
+    API_BACKENDS, AUTH_SCHEMES, FormStep, ModelParamField, PROVIDER_PRESETS, ProviderAction,
+    ProviderKeyOutcome, ProviderModalMode, ProviderModalState,
 };
 
 /// Sanitize text for a single-line provider field.
@@ -23,9 +23,7 @@ pub(crate) fn sanitize_provider_field(text: &str) -> String {
         .unwrap_or("")
         .trim();
     // Defensive: lines() already drops `\n`, but bare `\r` mid-string can remain.
-    line.chars()
-        .filter(|c| !matches!(c, '\r' | '\n'))
-        .collect()
+    line.chars().filter(|c| !matches!(c, '\r' | '\n')).collect()
 }
 
 /// 处理模态框按键事件。
@@ -371,7 +369,11 @@ fn handle_select_key(state: &mut ProviderModalState, key: &KeyEvent) -> Provider
             if choice_count == 0 {
                 return ProviderKeyOutcome::Unchanged;
             }
-            *idx = if *idx == 0 { choice_count - 1 } else { *idx - 1 };
+            *idx = if *idx == 0 {
+                choice_count - 1
+            } else {
+                *idx - 1
+            };
             ProviderKeyOutcome::Changed
         }
         _ => ProviderKeyOutcome::Unchanged,
@@ -615,9 +617,10 @@ fn handle_model_param_fields(
                 ProviderKeyOutcome::Changed
             }
         }
-        KeyCode::Enter if finalize_as_switch
-            && field == ModelParamField::MaxCompletionTokens
-            && state.model_param_value(field).is_empty() =>
+        KeyCode::Enter
+            if finalize_as_switch
+                && field == ModelParamField::MaxCompletionTokens
+                && state.model_param_value(field).is_empty() =>
         {
             // ManualModel: 第一个参数字段为空时 Enter 直接提交，跳过所有参数。
             state.model_param_field = None;
@@ -925,12 +928,10 @@ fn handle_model_list_keys(
             state.clear_model_filter();
             ProviderKeyOutcome::Changed
         }
-        KeyCode::Enter if allow_enter_switch => {
-            match state.selected_filtered_model() {
-                Some(id) => ProviderKeyOutcome::SwitchModel(id.to_string()),
-                None => ProviderKeyOutcome::Unchanged,
-            }
-        }
+        KeyCode::Enter if allow_enter_switch => match state.selected_filtered_model() {
+            Some(id) => ProviderKeyOutcome::SwitchModel(id.to_string()),
+            None => ProviderKeyOutcome::Unchanged,
+        },
         KeyCode::Char(c)
             if !key.modifiers.contains(KeyModifiers::CONTROL)
                 && !key.modifiers.contains(KeyModifiers::ALT)
@@ -946,8 +947,8 @@ fn handle_model_list_keys(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::state::ProviderSummary;
+    use super::*;
 
     #[test]
     fn sanitize_strips_windows_crlf_and_bom() {
@@ -958,10 +959,7 @@ mod tests {
 
     #[test]
     fn sanitize_keeps_first_non_empty_line() {
-        assert_eq!(
-            sanitize_provider_field("sk-first\nsk-second\n"),
-            "sk-first"
-        );
+        assert_eq!(sanitize_provider_field("sk-first\nsk-second\n"), "sk-first");
         assert_eq!(sanitize_provider_field("\r\n\r\nsk-only\r\n"), "sk-only");
     }
 

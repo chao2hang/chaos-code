@@ -8,8 +8,7 @@ use std::collections::HashSet;
 use crate::slash::command::{CommandExecCtx, CommandResult, SlashCommand};
 use crate::views::client_modal::ClientModalMode;
 use xai_grok_shell::agent::client_profiles::{
-    by_id as builtin_profile_by_id, BuiltinClientProfile, ClientProfile,
-    BUILTIN_CLIENT_PROFILES,
+    BUILTIN_CLIENT_PROFILES, BuiltinClientProfile, ClientProfile, by_id as builtin_profile_by_id,
 };
 
 const VALID_PROTOCOLS: &[&str] = &["responses", "chat_completions", "messages"];
@@ -18,9 +17,7 @@ const VALID_AUTH_SCHEMES: &[&str] = &["bearer", "x_api_key", "none"];
 /// Read the `[clients]` section and return built-ins followed by custom
 /// profiles. Invalid custom entries are omitted from the picker rather than
 /// making a malformed optional profile prevent the TUI from opening.
-pub(crate) fn list_client_profiles(
-    doc: &toml_edit::DocumentMut,
-) -> Vec<ClientProfile> {
+pub(crate) fn list_client_profiles(doc: &toml_edit::DocumentMut) -> Vec<ClientProfile> {
     let mut profiles = BUILTIN_CLIENT_PROFILES
         .iter()
         .map(builtin_to_owned)
@@ -60,10 +57,7 @@ fn builtin_to_owned(profile: &BuiltinClientProfile) -> ClientProfile {
 }
 
 /// Resolve a profile from the same document used by the picker.
-pub(crate) fn profile_by_id(
-    doc: &toml_edit::DocumentMut,
-    id: &str,
-) -> Option<ClientProfile> {
+pub(crate) fn profile_by_id(doc: &toml_edit::DocumentMut, id: &str) -> Option<ClientProfile> {
     if let Some(profile) = builtin_profile_by_id(id) {
         return Some(profile);
     }
@@ -106,9 +100,7 @@ fn non_empty_or(value: String, fallback: &str) -> String {
 
 /// Return the canonical configured default, or `None` when it is unset or
 /// points at a profile that no longer exists.
-pub(crate) fn configured_default_client(
-    doc: &toml_edit::DocumentMut,
-) -> Option<String> {
+pub(crate) fn configured_default_client(doc: &toml_edit::DocumentMut) -> Option<String> {
     let id = doc
         .get("clients")
         .and_then(|item| item.as_table())
@@ -120,9 +112,7 @@ pub(crate) fn configured_default_client(
 }
 
 /// Validate and normalize a custom profile before it is written to disk.
-pub(crate) fn validate_custom_profile(
-    profile: &ClientProfile,
-) -> Result<ClientProfile, String> {
+pub(crate) fn validate_custom_profile(profile: &ClientProfile) -> Result<ClientProfile, String> {
     let mut normalized = profile.clone();
     normalized.id = normalized.id.trim().to_owned();
     normalized.name = normalized.name.trim().to_owned();
@@ -149,10 +139,7 @@ pub(crate) fn validate_custom_profile(
         return Err("客户端名称不能包含控制字符".into());
     }
     if !VALID_PROTOCOLS.contains(&normalized.protocol.as_str()) {
-        return Err(format!(
-            "协议必须是 {} 之一",
-            VALID_PROTOCOLS.join("、")
-        ));
+        return Err(format!("协议必须是 {} 之一", VALID_PROTOCOLS.join("、")));
     }
     if !VALID_AUTH_SCHEMES.contains(&normalized.auth_scheme.as_str()) {
         return Err(format!(
@@ -164,9 +151,7 @@ pub(crate) fn validate_custom_profile(
         return Err("环境变量名必须匹配 [A-Z_][A-Z0-9_]*".into());
     }
     if !valid_client_identifier(&normalized.client_identifier) {
-        return Err(
-            "客户端标识只能包含字母、数字、.、_、-，且不能为空（最多 128 个字符）".into(),
-        );
+        return Err("客户端标识只能包含字母、数字、.、_、-，且不能为空（最多 128 个字符）".into());
     }
     if normalized.auth_scheme != "none" && normalized.env_key.is_empty() {
         return Err("非 none 认证方式需要填写 API Key 环境变量名".into());
@@ -288,9 +273,8 @@ pub(crate) fn set_default_client_in_document(
     doc: &mut toml_edit::DocumentMut,
     id: &str,
 ) -> Result<String, String> {
-    let profile = profile_by_id(doc, id).ok_or_else(|| {
-        format!("客户端 \"{}\" 不存在，请先新增或检查配置", id.trim())
-    })?;
+    let profile = profile_by_id(doc, id)
+        .ok_or_else(|| format!("客户端 \"{}\" 不存在，请先新增或检查配置", id.trim()))?;
     if !doc.contains_key("clients") {
         doc["clients"] = toml_edit::table();
     }
@@ -404,10 +388,16 @@ mod tests {
             .unwrap();
         upsert_custom_client_in_document(&mut doc, &profile("my-client"), None).unwrap();
         assert_eq!(doc["title"].as_str(), Some("keep"));
-        assert_eq!(profile_by_id(&doc, "my-client").unwrap().name, "Test Client");
+        assert_eq!(
+            profile_by_id(&doc, "my-client").unwrap().name,
+            "Test Client"
+        );
 
         set_default_client_in_document(&mut doc, "my-client").unwrap();
-        assert_eq!(configured_default_client(&doc).as_deref(), Some("my-client"));
+        assert_eq!(
+            configured_default_client(&doc).as_deref(),
+            Some("my-client")
+        );
         delete_custom_client_from_document(&mut doc, "my-client").unwrap();
         assert!(configured_default_client(&doc).is_none());
         assert!(profile_by_id(&doc, "my-client").is_none());
