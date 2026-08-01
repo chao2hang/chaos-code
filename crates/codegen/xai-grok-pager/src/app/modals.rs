@@ -13,7 +13,8 @@ use ratatui::widgets::Widget;
 
 use super::actions::Action;
 use super::agent_view::{
-    AgentView, active_contexts_for_pane, apply_provider_outcome, apply_settings_outcome,
+    AgentView, active_contexts_for_pane, apply_client_outcome, apply_provider_outcome,
+    apply_settings_outcome,
 };
 use super::app_view::InputOutcome;
 
@@ -472,6 +473,37 @@ impl AgentView {
             }
         }
 
+        // Client profile modal: nested forms and delete confirmation own Esc;
+        // the root list delegates Esc to the shared modal chrome.
+        if let ActiveModal::ClientModal { state } = modal {
+            if !matches!(
+                state.mode,
+                crate::views::client_modal::ClientModalMode::List
+            ) || state.success.is_some()
+            {
+                let out = crate::views::client_modal::handle_client_key(state, key);
+                return apply_client_outcome(self, out);
+            }
+            let chrome_cfg = mw::ModalWindowConfig {
+                title: "",
+                tabs: None,
+                shortcuts: &[],
+                sizing: mw::ModalSizing::default(),
+                fold_info: None,
+            };
+            match mw::handle_modal_key(&mut state.window, key, &chrome_cfg) {
+                ModalWindowOutcome::CloseRequested => {
+                    self.active_modal = None;
+                    return InputOutcome::Changed;
+                }
+                ModalWindowOutcome::Unhandled => {
+                    let out = crate::views::client_modal::handle_client_key(state, key);
+                    return apply_client_outcome(self, out);
+                }
+                _ => return InputOutcome::Changed,
+            }
+        }
+
         // ResetSettingsConfirm: y/n routing. Handled before generic
         // char-match so Esc/F2/Ctrl+, route to Cancel (not modal close).
         if let Some(ActiveModal::ResetSettingsConfirm { modal, .. }) = self.active_modal.as_ref() {
@@ -523,6 +555,7 @@ impl AgentView {
             | ActiveModal::MemoryBrowser { .. }
             | ActiveModal::Settings { .. }
             | ActiveModal::ProviderModal { .. }
+            | ActiveModal::ClientModal { .. }
             | ActiveModal::ResetSettingsConfirm { .. }
             | ActiveModal::RememberNoteReview { .. } => unreachable!(),
         }
@@ -574,6 +607,10 @@ impl AgentView {
         if let Some(ActiveModal::ProviderModal { state }) = self.active_modal.as_mut() {
             let out = crate::views::provider_modal::handle_provider_paste(state, text);
             return apply_provider_outcome(self, out);
+        }
+        if let Some(ActiveModal::ClientModal { state }) = self.active_modal.as_mut() {
+            let out = crate::views::client_modal::handle_client_paste(state, text);
+            return apply_client_outcome(self, out);
         }
         if self.active_modal.is_some() {
             InputOutcome::Changed
@@ -1095,6 +1132,7 @@ impl AgentView {
                                     source,
                                     session_id,
                                     cwd,
+                                    after: crate::app::actions::AfterSessionDelete::Stay,
                                 });
                             }
                             return InputOutcome::Changed;
@@ -1661,6 +1699,21 @@ impl AgentView {
                 }
                 _ => return InputOutcome::Changed,
             }
+        }
+
+        // Client profile modal: only the shared chrome is mouse-interactive;
+        // list/form controls remain keyboard-first to keep editing predictable.
+        if let Some(ActiveModal::ClientModal { state }) = &mut self.active_modal {
+            let outcome =
+                mw::handle_modal_mouse(&mut state.window, mouse.kind, mouse.column, mouse.row);
+            return match outcome {
+                ModalWindowOutcome::CloseRequested => {
+                    self.active_modal = None;
+                    InputOutcome::Changed
+                }
+                ModalWindowOutcome::Handled => InputOutcome::Changed,
+                _ => InputOutcome::Changed,
+            };
         }
 
         // ResetSettingsConfirm: route mouse events through the
@@ -2465,6 +2518,8 @@ impl AgentView {
                     provider_state,
                     compact,
                 );
+            } else if let modal::ActiveModal::ClientModal { state } = active_modal {
+                crate::views::client_modal::render_client_modal(buf, area, state, compact);
             }
         }
     }
@@ -2547,6 +2602,7 @@ mod session_picker_delete_tests {
                     ref source,
                     ref session_id,
                     ref cwd,
+                    ..
                 }) if source == "local" && session_id == "s0" && cwd == "/repo"
             ),
             "y must confirm deletion of the armed session"

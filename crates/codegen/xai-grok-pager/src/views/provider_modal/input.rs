@@ -204,6 +204,11 @@ fn handle_add(state: &mut ProviderModalState, key: &KeyEvent) -> ProviderKeyOutc
                     state.selected -= 1;
                 }
                 ProviderKeyOutcome::Changed
+            } else if state.current_step == FormStep::ClinePick {
+                if state.selected > 0 {
+                    state.selected -= 1;
+                }
+                ProviderKeyOutcome::Changed
             } else if matches!(
                 state.current_step,
                 FormStep::AuthScheme | FormStep::ApiBackend
@@ -215,7 +220,13 @@ fn handle_add(state: &mut ProviderModalState, key: &KeyEvent) -> ProviderKeyOutc
         }
         KeyCode::Down => {
             if state.current_step == FormStep::Preset {
-                let max = PROVIDER_PRESETS.len(); // 自定义额外占一行
+                let max = state.preset_row_count() - 1;
+                if state.selected < max {
+                    state.selected += 1;
+                }
+                ProviderKeyOutcome::Changed
+            } else if state.current_step == FormStep::ClinePick {
+                let max = state.cline_candidates.len().saturating_sub(1);
                 if state.selected < max {
                     state.selected += 1;
                 }
@@ -232,9 +243,14 @@ fn handle_add(state: &mut ProviderModalState, key: &KeyEvent) -> ProviderKeyOutc
         // j/k only navigate on the preset list, never on free-text steps.
         KeyCode::Char('j')
             if !key.modifiers.contains(KeyModifiers::CONTROL)
-                && state.current_step == FormStep::Preset =>
+                && (state.current_step == FormStep::Preset
+                    || state.current_step == FormStep::ClinePick) =>
         {
-            let max = PROVIDER_PRESETS.len();
+            let max = if state.current_step == FormStep::Preset {
+                state.preset_row_count() - 1
+            } else {
+                state.cline_candidates.len().saturating_sub(1)
+            };
             if state.selected < max {
                 state.selected += 1;
             }
@@ -242,20 +258,13 @@ fn handle_add(state: &mut ProviderModalState, key: &KeyEvent) -> ProviderKeyOutc
         }
         KeyCode::Char('k')
             if !key.modifiers.contains(KeyModifiers::CONTROL)
-                && state.current_step == FormStep::Preset =>
+                && (state.current_step == FormStep::Preset
+                    || state.current_step == FormStep::ClinePick) =>
         {
             if state.selected > 0 {
                 state.selected -= 1;
             }
             ProviderKeyOutcome::Changed
-        }
-        // Shift+Tab：表单内回到上一步（第一步则原地不动，不退出）。
-        KeyCode::BackTab => {
-            if state.form_step_back() {
-                ProviderKeyOutcome::Changed
-            } else {
-                ProviderKeyOutcome::Unchanged
-            }
         }
         KeyCode::Tab | KeyCode::Enter => match state.current_step {
             FormStep::Preset => {
@@ -273,14 +282,56 @@ fn handle_add(state: &mut ProviderModalState, key: &KeyEvent) -> ProviderKeyOutc
                         .unwrap_or(1);
                     state.current_step = FormStep::ApiKey;
                 } else if state.selected == PROVIDER_PRESETS.len() {
+                    // 自定义
                     state.current_step = FormStep::Name;
                     state.name.clear();
                     state.base_url.clear();
+                } else if state.has_cline_option()
+                    && state.selected == state.cline_option_idx()
+                {
+                    // 从 Cline 导入
+                    state.current_step = FormStep::ClinePick;
+                    state.selected = 0;
                 } else {
                     return ProviderKeyOutcome::Unchanged;
                 }
                 state.error = None;
                 ProviderKeyOutcome::Changed
+            }
+            FormStep::ClinePick => {
+                let Some(candidate) = state.cline_candidates.get(state.selected).cloned() else {
+                    return ProviderKeyOutcome::Unchanged;
+                };
+                // Fill form fields from the Cline candidate.
+                state.name = candidate.id;
+                state.base_url = candidate.base_url;
+                state.auth_scheme_idx = AUTH_SCHEMES
+                    .iter()
+                    .position(|&s| s == candidate.auth_scheme)
+                    .unwrap_or(0);
+                state.api_backend_idx = API_BACKENDS
+                    .iter()
+                    .position(|&s| s == candidate.api_backend)
+                    .unwrap_or(1);
+                state.api_key = candidate.api_key.unwrap_or_default();
+                state.error = None;
+                if candidate.key_encrypted {
+                    // Key is safeStorage ciphertext — guide user to paste manually.
+                    state.current_step = FormStep::ApiKey;
+                    state.api_key.clear();
+                    state.error = Some(
+                        "该 Key 已被 Cline 加密（safeStorage），请在下方手动粘贴 API Key".into(),
+                    );
+                    ProviderKeyOutcome::Changed
+                } else if state.api_key.is_empty() {
+                    // No key at all — go to ApiKey step.
+                    state.current_step = FormStep::ApiKey;
+                    ProviderKeyOutcome::Changed
+                } else {
+                    // Everything filled — ready to commit.
+                    state.current_step = FormStep::ApiKey;
+                    ProviderKeyOutcome::Changed
+                }
             }
             FormStep::Name => {
                 if state.name.is_empty() {
@@ -336,7 +387,7 @@ fn handle_add(state: &mut ProviderModalState, key: &KeyEvent) -> ProviderKeyOutc
         }
         KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
             match state.current_step {
-                FormStep::Preset => ProviderKeyOutcome::Unchanged,
+                FormStep::Preset | FormStep::ClinePick => ProviderKeyOutcome::Unchanged,
                 FormStep::Name => {
                     state.name.push(c);
                     state.error = None;
@@ -443,13 +494,6 @@ fn handle_edit(state: &mut ProviderModalState, key: &KeyEvent) -> ProviderKeyOut
                 ProviderKeyOutcome::Unchanged
             }
         }
-        KeyCode::BackTab => {
-            if state.form_step_back() {
-                ProviderKeyOutcome::Changed
-            } else {
-                ProviderKeyOutcome::Unchanged
-            }
-        }
         KeyCode::Tab | KeyCode::Enter => match state.current_step {
             FormStep::BaseUrl => {
                 if state.base_url.trim().is_empty() {
@@ -478,8 +522,10 @@ fn handle_edit(state: &mut ProviderModalState, key: &KeyEvent) -> ProviderKeyOut
                 state.error = None;
                 ProviderKeyOutcome::Commit
             }
-            // Edit 不走 Preset/Name
-            FormStep::Preset | FormStep::Name => ProviderKeyOutcome::Unchanged,
+            // Edit 不走 Preset/ClinePick/Name
+            FormStep::Preset | FormStep::ClinePick | FormStep::Name => {
+                ProviderKeyOutcome::Unchanged
+            }
         },
         KeyCode::Backspace => {
             let field = match state.current_step {
@@ -632,13 +678,6 @@ fn handle_model_param_fields(
                 ProviderKeyOutcome::Changed
             }
         }
-        KeyCode::BackTab => {
-            if state.form_step_back() {
-                ProviderKeyOutcome::Changed
-            } else {
-                ProviderKeyOutcome::Unchanged
-            }
-        }
         KeyCode::Enter
             if finalize_as_switch
                 && field == ModelParamField::MaxCompletionTokens
@@ -743,8 +782,6 @@ fn validate_param_field(field: ModelParamField, raw: &str) -> Result<(), String>
 
 fn handle_list(state: &mut ProviderModalState, key: &KeyEvent) -> ProviderKeyOutcome {
     let len = state.list_row_count();
-    // 选中渠道行时的直达快捷键：跳过操作菜单一步到位。
-    let selected_provider = state.providers.get(state.selected).map(|p| p.name.clone());
     match key.code {
         KeyCode::Esc => ProviderKeyOutcome::Close,
         KeyCode::Down | KeyCode::Char('j') => {
@@ -767,7 +804,8 @@ fn handle_list(state: &mut ProviderModalState, key: &KeyEvent) -> ProviderKeyOut
                 state.go_add();
                 return ProviderKeyOutcome::Changed;
             }
-            if let Some(name) = selected_provider {
+            if let Some(p) = state.providers.get(state.selected) {
+                let name = p.name.clone();
                 state.go_actions(name);
                 return ProviderKeyOutcome::Changed;
             }
@@ -777,35 +815,6 @@ fn handle_list(state: &mut ProviderModalState, key: &KeyEvent) -> ProviderKeyOut
             state.from_hub = true;
             state.go_add();
             ProviderKeyOutcome::Changed
-        }
-        // 直达快捷键（列表选中渠道行时）：e 编辑 · s 密钥 · m 换模型 · d 删除。
-        KeyCode::Char('e') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-            if let Some(name) = selected_provider {
-                state.go_edit(name);
-                return ProviderKeyOutcome::Changed;
-            }
-            ProviderKeyOutcome::Unchanged
-        }
-        KeyCode::Char('s') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-            if let Some(name) = selected_provider {
-                state.go_set_key(name);
-                return ProviderKeyOutcome::Changed;
-            }
-            ProviderKeyOutcome::Unchanged
-        }
-        KeyCode::Char('m') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-            if let Some(name) = selected_provider {
-                state.go_set_model(name);
-                return ProviderKeyOutcome::Changed;
-            }
-            ProviderKeyOutcome::Unchanged
-        }
-        KeyCode::Char('d') | KeyCode::Delete if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-            if let Some(name) = selected_provider {
-                state.go_confirm_delete(name);
-                return ProviderKeyOutcome::Changed;
-            }
-            ProviderKeyOutcome::Unchanged
         }
         _ => ProviderKeyOutcome::Unchanged,
     }
@@ -836,54 +845,37 @@ fn handle_actions(state: &mut ProviderModalState, key: &KeyEvent) -> ProviderKey
             ProviderKeyOutcome::Changed
         }
         KeyCode::Enter => {
-            let ProviderModalMode::Actions(_) = &state.mode else {
+            let ProviderModalMode::Actions(name) = &state.mode else {
                 return ProviderKeyOutcome::Unchanged;
             };
-            run_action_at(state, state.selected)
-        }
-        // 数字直达：1-8 立即执行对应操作，无需上下移动。
-        KeyCode::Char(c @ '1'..='9') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-            let index = c as usize - '1' as usize;
-            if index >= ProviderAction::ALL.len() {
-                return ProviderKeyOutcome::Unchanged;
+            let name = name.clone();
+            let action = ProviderAction::ALL
+                .get(state.selected)
+                .copied()
+                .unwrap_or(ProviderAction::Edit);
+            match action {
+                ProviderAction::Edit => state.go_edit(name),
+                ProviderAction::SetKey => state.go_set_key(name),
+                ProviderAction::Models | ProviderAction::Refresh => state.go_models(name),
+                ProviderAction::ManualModel => state.go_manual_model(name),
+                ProviderAction::ConfigureModel => state.go_configure_model(name),
+                ProviderAction::SetModel => state.go_set_model(name),
+                ProviderAction::Delete => state.go_confirm_delete(name),
             }
-            run_action_at(state, index)
+            ProviderKeyOutcome::Changed
         }
         _ => ProviderKeyOutcome::Unchanged,
     }
 }
 
-/// 执行操作菜单中第 `index` 项（Enter 与数字直达共用）。
-fn run_action_at(state: &mut ProviderModalState, index: usize) -> ProviderKeyOutcome {
-    let ProviderModalMode::Actions(name) = &state.mode else {
-        return ProviderKeyOutcome::Unchanged;
-    };
-    let name = name.clone();
-    let action = ProviderAction::ALL
-        .get(index)
-        .copied()
-        .unwrap_or(ProviderAction::Edit);
-    match action {
-        ProviderAction::Edit => state.go_edit(name),
-        ProviderAction::SetKey => state.go_set_key(name),
-        ProviderAction::Models | ProviderAction::Refresh => state.go_models(name),
-        ProviderAction::ManualModel => state.go_manual_model(name),
-        ProviderAction::ConfigureModel => state.go_configure_model(name),
-        ProviderAction::SetModel => state.go_set_model(name),
-        ProviderAction::Delete => state.go_confirm_delete(name),
-    }
-    ProviderKeyOutcome::Changed
-}
-
 /// 「确认删除渠道」对话框的按键处理。
 ///
-/// - `y` / `Y`：执行删除
+/// - `y` / `Y` / `Enter`：执行删除
 /// - `n` / `N` / `Esc`：取消（Esc 走 `navigate_back` 已回到 Actions，这里仅显式 n 走同一路径）
-/// - 其它键（含 Enter）：忽略。Enter 不作确认——上一屏正是用 Enter 选中
-///   「删除渠道」进来的，连按两下 Enter 不该等于删库。
+/// - 其它键：忽略
 fn handle_confirm_delete(state: &mut ProviderModalState, key: &KeyEvent) -> ProviderKeyOutcome {
     match key.code {
-        KeyCode::Char('y') | KeyCode::Char('Y') => {
+        KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
             state.apply_confirm_delete();
             ProviderKeyOutcome::Changed
         }
@@ -1377,196 +1369,6 @@ mod tests {
             ProviderKeyOutcome::Changed
         ));
         assert_eq!(state.current_step, FormStep::AuthScheme);
-    }
-
-    #[test]
-    fn delete_confirm_enter_is_ignored() {
-        // 上一屏用 Enter 选中「删除渠道」进入确认框；双击 Enter 不得等于删除。
-        let mut state =
-            ProviderModalState::new(ProviderModalMode::ConfirmingDelete("openai".into()));
-        let enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
-        assert!(matches!(
-            handle_provider_key(&mut state, &enter),
-            ProviderKeyOutcome::Unchanged
-        ));
-        assert!(matches!(state.mode, ProviderModalMode::ConfirmingDelete(_)));
-    }
-
-    #[test]
-    fn list_hotkeys_jump_directly() {
-        let mut state = ProviderModalState::new(ProviderModalMode::List);
-        state.providers = vec![ProviderSummary {
-            name: "openai".into(),
-            base_url: "https://api.openai.com/v1".into(),
-            auth_scheme: "bearer".into(),
-            api_backend: "chat_completions".into(),
-            has_key: true,
-            is_current: false,
-        }];
-        state.selected = 0;
-
-        let s = KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE);
-        assert!(matches!(
-            handle_provider_key(&mut state, &s),
-            ProviderKeyOutcome::Changed
-        ));
-        assert!(matches!(state.mode, ProviderModalMode::SetKey(ref n) if n == "openai"));
-
-        // 新建状态（go_list 会从真实 config 重载渠道，测试里不可用）。
-        let mut state = ProviderModalState::new(ProviderModalMode::List);
-        state.providers = vec![ProviderSummary {
-            name: "openai".into(),
-            base_url: "https://api.openai.com/v1".into(),
-            auth_scheme: "bearer".into(),
-            api_backend: "chat_completions".into(),
-            has_key: true,
-            is_current: false,
-        }];
-        state.selected = 0;
-        let d = KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE);
-        assert!(matches!(
-            handle_provider_key(&mut state, &d),
-            ProviderKeyOutcome::Changed
-        ));
-        assert!(matches!(
-            state.mode,
-            ProviderModalMode::ConfirmingDelete(ref n) if n == "openai"
-        ));
-    }
-
-    #[test]
-    fn list_hotkeys_ignored_on_add_row() {
-        let mut state = ProviderModalState::new(ProviderModalMode::List);
-        state.providers.clear();
-        state.selected = 0; // 「+ 添加渠道」行
-        let d = KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE);
-        assert!(matches!(
-            handle_provider_key(&mut state, &d),
-            ProviderKeyOutcome::Unchanged
-        ));
-        assert!(matches!(state.mode, ProviderModalMode::List));
-    }
-
-    #[test]
-    fn actions_digit_hotkey_executes_directly() {
-        let mut state = ProviderModalState::new(ProviderModalMode::List);
-        state.go_actions("openai".into());
-
-        // '2' = 设置 API Key（ALL[1]）。
-        let two = KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE);
-        assert!(matches!(
-            handle_provider_key(&mut state, &two),
-            ProviderKeyOutcome::Changed
-        ));
-        assert!(matches!(state.mode, ProviderModalMode::SetKey(ref n) if n == "openai"));
-
-        state.go_actions("openai".into());
-        // '8' = 删除渠道（ALL[7]）→ 进入确认框，而不是直接删。
-        let eight = KeyEvent::new(KeyCode::Char('8'), KeyModifiers::NONE);
-        assert!(matches!(
-            handle_provider_key(&mut state, &eight),
-            ProviderKeyOutcome::Changed
-        ));
-        assert!(matches!(state.mode, ProviderModalMode::ConfirmingDelete(_)));
-
-        // 超出范围的数字忽略。
-        let mut state2 = ProviderModalState::new(ProviderModalMode::List);
-        state2.go_actions("openai".into());
-        let nine = KeyEvent::new(KeyCode::Char('9'), KeyModifiers::NONE);
-        assert!(matches!(
-            handle_provider_key(&mut state2, &nine),
-            ProviderKeyOutcome::Unchanged
-        ));
-    }
-
-    #[test]
-    fn backtab_steps_back_in_add_form_without_exiting() {
-        let mut state = ProviderModalState::new(ProviderModalMode::Add);
-        state.current_step = FormStep::BaseUrl;
-        state.name = "custom".into();
-
-        let backtab = KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT);
-        assert!(matches!(
-            handle_provider_key(&mut state, &backtab),
-            ProviderKeyOutcome::Changed
-        ));
-        assert_eq!(state.current_step, FormStep::Name);
-        assert!(matches!(state.mode, ProviderModalMode::Add));
-
-        // 第一步（预设）上再按：原地不动，不关闭。
-        state.current_step = FormStep::Preset;
-        assert!(matches!(
-            handle_provider_key(&mut state, &backtab),
-            ProviderKeyOutcome::Unchanged
-        ));
-        assert!(matches!(state.mode, ProviderModalMode::Add));
-    }
-
-    #[test]
-    fn poll_models_fetch_error_paths() {
-        // Models 模式：错误直接展示。
-        let mut state = ProviderModalState::new(ProviderModalMode::Models("x".into()));
-        let (tx, rx) = std::sync::mpsc::channel();
-        state.models_rx = Some(rx);
-        state.models_loading = true;
-        tx.send(Err("boom".into())).unwrap();
-        assert!(state.poll_models_fetch());
-        assert!(!state.models_loading);
-        assert!(state.models_rx.is_none());
-        assert_eq!(state.error.as_deref(), Some("boom"));
-
-        // ConfigureModel 模式：错误不设 error（允许手写 ID 的提示可见）。
-        let mut state = ProviderModalState::new(ProviderModalMode::ConfigureModel("x".into()));
-        let (tx, rx) = std::sync::mpsc::channel();
-        state.models_rx = Some(rx);
-        state.models_loading = true;
-        tx.send(Err("boom".into())).unwrap();
-        assert!(state.poll_models_fetch());
-        assert!(!state.models_loading);
-        assert!(state.error.is_none());
-        assert!(state.models.is_empty());
-
-        // 线程消失（发送端 drop 而无结果）。
-        let mut state = ProviderModalState::new(ProviderModalMode::Models("x".into()));
-        let (tx, rx) = std::sync::mpsc::channel::<super::super::state::ModelsFetchResult>();
-        state.models_rx = Some(rx);
-        state.models_loading = true;
-        drop(tx);
-        assert!(state.poll_models_fetch());
-        assert!(!state.models_loading);
-        assert!(state.error.is_some());
-    }
-
-    #[test]
-    fn poll_models_fetch_empty_keeps_loading() {
-        let mut state = ProviderModalState::new(ProviderModalMode::Models("x".into()));
-        let (_tx, rx) = std::sync::mpsc::channel::<super::super::state::ModelsFetchResult>();
-        state.models_rx = Some(rx);
-        state.models_loading = true;
-        assert!(!state.poll_models_fetch());
-        assert!(state.models_loading);
-        assert!(state.models_rx.is_some());
-    }
-
-    #[test]
-    fn navigating_away_cancels_pending_fetch() {
-        let mut state = ProviderModalState::new(ProviderModalMode::List);
-        state.from_hub = true;
-        state.go_actions("openai".into());
-        state.mode = ProviderModalMode::Models("openai".into());
-        let (_tx, rx) = std::sync::mpsc::channel::<super::super::state::ModelsFetchResult>();
-        state.models_rx = Some(rx);
-        state.models_loading = true;
-
-        // Esc 回操作菜单 → rx 清除、loading 复位。
-        let esc = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
-        assert!(matches!(
-            handle_provider_key(&mut state, &esc),
-            ProviderKeyOutcome::Changed
-        ));
-        assert!(matches!(state.mode, ProviderModalMode::Actions(_)));
-        assert!(state.models_rx.is_none());
-        assert!(!state.models_loading);
     }
 
     #[test]

@@ -590,14 +590,18 @@ impl SamplingClient {
             }
         }
 
-        // Always set User-Agent: per-session origin if available, else fallback.
+        // Always set User-Agent: explicit verbatim override wins, then
+        // per-session origin if available, else fallback.
         {
-            let ua_string = match config.origin_client.as_ref() {
-                Some(origin) => user_agent_string_for(origin),
-                None => user_agent_string_for(&OriginClientInfo {
-                    product: AGENT_PRODUCT.to_string(),
-                    version: Some(agent_version()),
-                }),
+            let ua_string = match config.user_agent.as_ref() {
+                Some(ua) => ua.clone(),
+                None => match config.origin_client.as_ref() {
+                    Some(origin) => user_agent_string_for(origin),
+                    None => user_agent_string_for(&OriginClientInfo {
+                        product: AGENT_PRODUCT.to_string(),
+                        version: Some(agent_version()),
+                    }),
+                },
             };
             if let Ok(v) = HeaderValue::from_str(&ua_string) {
                 headers.insert(USER_AGENT, v);
@@ -2043,7 +2047,8 @@ mod tests {
             compaction_at_tokens: None,
             doom_loop_recovery: None,
             header_injector: None,
-        }
+                user_agent: None,
+}
     }
 
     /// Verify the serialized shape of StreamingChatRequest matches the

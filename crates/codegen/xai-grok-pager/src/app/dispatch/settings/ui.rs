@@ -286,10 +286,44 @@ pub(in crate::app::dispatch) fn dispatch_open_provider_modal(
         crate::views::provider_modal::ProviderModalMode::Models(name)
         | crate::views::provider_modal::ProviderModalMode::SetModel(name)
         | crate::views::provider_modal::ProviderModalMode::ConfigureModel(name) => {
-            // 后台拉取（与 hub 内 go_models 同一路径）：结果由渲染层
-            // poll_models_fetch 收割并写入 config / 会话 catalog，
-            // 打开模态不再同步阻塞 UI 最多 15 秒。
-            state.load_models_for(name);
+            state.models_loading = true;
+            match crate::slash::commands::provider::fetch_provider_models(name) {
+                Ok(entries) => {
+                    // Register into catalog when deep-linked (same as go_models).
+                    let need_default = crate::slash::commands::provider::load_config()
+                        .map(|doc| {
+                            crate::slash::commands::provider::configured_default_model(&doc)
+                                .is_none()
+                        })
+                        .unwrap_or(false);
+                    let first_id = entries.first().map(|e| e.id.clone());
+                    let registered = crate::slash::commands::provider::register_provider_models(
+                        name,
+                        &entries,
+                        if need_default {
+                            first_id.as_deref()
+                        } else {
+                            None
+                        },
+                    );
+                    state.models = entries.iter().map(|e| e.id.clone()).collect();
+                    state.models_meta = entries.into_iter().map(|e| e.meta).collect();
+                    state.models_loading = false;
+                    state.models_need_catalog_sync = registered.is_ok();
+                }
+                Err(e) => {
+                    // ConfigureModel 允许手写 ID，错误不阻断进入
+                    if matches!(
+                        mode,
+                        crate::views::provider_modal::ProviderModalMode::ConfigureModel(_)
+                    ) {
+                        state.models.clear();
+                    } else {
+                        state.error = Some(e);
+                    }
+                    state.models_loading = false;
+                }
+            }
         }
         crate::views::provider_modal::ProviderModalMode::Edit(name) => {
             // 深链 `/provider edit <name>`：预填字段（与 go_edit 一致）。
@@ -338,6 +372,65 @@ pub(in crate::app::dispatch) fn dispatch_open_provider_modal(
     }
 
     vec![]
+}
+
+/// Open the `/client` request-client profile manager for the active session.
+pub(in crate::app::dispatch) fn dispatch_open_client_modal(
+    app: &mut AppView,
+    mode: crate::views::client_modal::ClientModalMode,
+) -> Vec<Effect> {
+    use crate::views::modal::ActiveModal;
+
+    let ActiveView::Agent(id) = app.active_view else {
+        return vec![];
+    };
+    let Some(agent) = app.agents.get_mut(&id) else {
+        return vec![];
+    };
+    if matches!(&agent.active_modal, Some(ActiveModal::ClientModal { .. })) {
+        agent.active_modal = None;
+        return vec![];
+    }
+
+    let configured_default = crate::slash::commands::provider::load_config()
+        .ok()
+        .and_then(|doc| crate::slash::commands::client::configured_default_client(&doc));
+    let current_id = agent
+        .client_profile
+        .as_ref()
+        .map(|profile| profile.id.clone())
+        .or(configured_default);
+    let mut state = crate::views::client_modal::ClientModalState::new(current_id.clone());
+    state.mode = mode;
+    if let Some(id) = current_id.as_deref() {
+        state.select_id(id);
+    }
+    agent.active_modal = Some(ActiveModal::ClientModal {
+        state: Box::new(state),
+    });
+    vec![]
+}
+
+/// Send a selected request-client profile to the live shell session.
+pub(in crate::app::dispatch) fn dispatch_set_client_profile(
+    app: &mut AppView,
+    profile: xai_grok_shell::agent::client_profiles::ClientProfile,
+) -> Vec<Effect> {
+    let ActiveView::Agent(agent_id) = app.active_view else {
+        return vec![];
+    };
+    let Some(agent) = app.agents.get(&agent_id) else {
+        return vec![];
+    };
+    let Some(session_id) = agent.session.session_id.clone() else {
+        app.show_toast("当前会话尚未准备好，无法切换客户端");
+        return vec![];
+    };
+    vec![Effect::SetClientProfile {
+        agent_id,
+        session_id,
+        profile,
+    }]
 }
 
 /// Open the reset-settings confirmation modal.

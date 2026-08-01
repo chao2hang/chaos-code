@@ -1282,6 +1282,34 @@ pub(crate) fn execute(
                     TaskResult::CancelComplete
                 });
         }
+        Effect::SetClientProfile {
+            agent_id,
+            session_id,
+            profile,
+        } => {
+            let tx = acp_tx.clone();
+            tasks.spawn(async move {
+                let params = serde_json::json!({
+                    "sessionId": session_id.0.to_string(),
+                    "profile": profile.clone(),
+                });
+                let request = acp::ExtRequest::new(
+                    "x.ai/session/set_client_profile",
+                    serde_json::value::to_raw_value(&params)
+                        .expect("serialize set_client_profile params")
+                        .into(),
+                );
+                let result = acp_send(request, &tx)
+                    .await
+                    .map(|_| ())
+                    .map_err(|error| sanitize_user_error(&error.to_string()));
+                TaskResult::ClientProfileSet {
+                    agent_id,
+                    profile,
+                    result,
+                }
+            });
+        }
         Effect::QueueRemove { session_id, id, expected_version } => {
             let tx = acp_tx.clone();
             tasks
@@ -3190,7 +3218,7 @@ pub(crate) fn execute(
                     }
                 });
         }
-        Effect::DeleteSession { source, session_id, cwd } => {
+        Effect::DeleteSession { source, session_id, cwd, after } => {
             let tx = acp_tx.clone();
             tasks
                 .spawn(async move {
@@ -3234,6 +3262,7 @@ pub(crate) fn execute(
                             TaskResult::DeleteSessionComplete {
                                 source,
                                 session_id,
+                                after,
                             }
                         }
                         Err(e) => {

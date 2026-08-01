@@ -677,6 +677,17 @@ pub(super) async fn run_session(
                             session.handle_session_mode(session_mode).await;
                             let _ = responds_to.send(());
                         }
+                        SessionCommand::SetClientProfile {
+                            client_identifier,
+                            origin_client,
+                            user_agent,
+                            responds_to,
+                        } => {
+                            session.client_identifier.replace(Some(client_identifier));
+                            session.origin_client.replace(Some(origin_client));
+                            session.user_agent.replace(user_agent);
+                            let _ = responds_to.send(Ok(()));
+                        }
                         SessionCommand::SetSessionModel { sampling_config, use_concise, apply_prompt_override, skip_prompt_rewrite, auto_compact_threshold_percent, responds_to } => {
                             let updated_model_id = session.handle_set_session_model(sampling_config, use_concise, apply_prompt_override, skip_prompt_rewrite, auto_compact_threshold_percent).await;
                             let _ = responds_to.send(updated_model_id);

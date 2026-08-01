@@ -208,6 +208,53 @@ async fn run_setup_command(json: bool) {
         }
     }
 }
+
+fn canonical_client_profile_id(id: &str) -> Result<String> {
+    let raw_config = xai_grok_shell::config::load_effective_config_disk_only()
+        .map_err(|e| anyhow::anyhow!("无法加载配置：{e}"))?;
+    let config = AgentConfig::new_from_toml_cfg(&raw_config)
+        .map_err(|e| anyhow::anyhow!("无法创建 Agent 配置：{e}"))?;
+    config
+        .client_profile_by_id(id)
+        .map(|profile| profile.id)
+        .ok_or_else(|| {
+            anyhow::anyhow!("未知的客户端档案 '{id}'；请运行 `chaos clients` 查看可用档案")
+        })
+}
+
+fn print_client_profiles(json: bool) -> Result<()> {
+    let raw_config = xai_grok_shell::config::load_effective_config_disk_only()
+        .map_err(|e| anyhow::anyhow!("无法加载配置：{e}"))?;
+    let config = AgentConfig::new_from_toml_cfg(&raw_config)
+        .map_err(|e| anyhow::anyhow!("无法创建 Agent 配置：{e}"))?;
+    let mut profiles = xai_grok_shell::agent::client_profiles::BUILTIN_CLIENT_PROFILES
+        .iter()
+        .filter_map(|profile| config.client_profile_by_id(profile.id))
+        .collect::<Vec<_>>();
+    for id in config.clients.custom.keys() {
+        if let Some(profile) = config.client_profile_by_id(id)
+            && !profiles.iter().any(|existing| existing.id == profile.id)
+        {
+            profiles.push(profile);
+        }
+    }
+    if json {
+        println!("{}", serde_json::to_string_pretty(&profiles)?);
+        return Ok(());
+    }
+    println!("可用的请求客户端档案：");
+    for profile in &profiles {
+        println!(
+            "  {:<12} {:<14} protocol={:<16} auth={} env={}",
+            profile.id, profile.name, profile.protocol, profile.auth_scheme, profile.env_key,
+        );
+    }
+    println!();
+    println!("示例：chaos --client codex --model gpt-5");
+    println!("配置： [clients] default = \"codex\"，或在 [model.<id>] 中设置 client");
+    Ok(())
+}
+
 async fn run_leader_mgmt(args: LeaderMgmtArgs) -> Result<()> {
     match args.command {
         LeaderMgmtCommand::Kill => kill_leaders().await,
@@ -1048,6 +1095,9 @@ async fn run_agent_command(
         .map_err(|e| anyhow::anyhow!("无法加载配置：{}", e))?;
     let mut agent_config = AgentConfig::new_from_toml_cfg(&raw_config)
         .map_err(|e| anyhow::anyhow!("无法创建 Agent 配置：{}", e))?;
+    agent_config
+        .set_client_profile_override(agent_args.client.as_deref())
+        .map_err(anyhow::Error::msg)?;
     agent_config.default_model_override = agent_args.model.clone();
     agent_config.reasoning_effort_override = agent_args
         .reasoning_effort
@@ -1691,6 +1741,11 @@ fn main() {
 async fn async_main(args: PagerArgs) -> Result<()> {
     let _ = rustls::crypto::ring::default_provider().install_default();
     let mut args = args.apply_cwd()?;
+    if let Some(client) = args.client.as_deref() {
+        let canonical = canonical_client_profile_id(client)?;
+        args.client = Some(canonical.clone());
+        args.client_identifier = Some(canonical);
+    }
     if let Some(ref mode) = args.compaction_mode {
         unsafe { std::env::set_var("GROK_COMPACTION_MODE", mode) };
     }
@@ -1733,9 +1788,9 @@ async fn async_main(args: PagerArgs) -> Result<()> {
         xai_grok_pager::app::cli::SandboxStartup::Apply(profile) => profile,
         xai_grok_pager::app::cli::SandboxStartup::Conflict { requested, saved } => {
             eprintln!(
-                "error: cannot resume this session under sandbox profile '{requested}' — \
-                 it was created with '{saved}'. Omit --sandbox to resume with '{saved}', \
-                 or start a new session to use '{requested}'."
+                "错误：无法在沙箱配置 '{requested}' 下恢复此会话——该会话创建时使用的是 \
+                 '{saved}'。请省略 --sandbox 以使用 '{saved}' 恢复，或新建会话以使用 \
+                 '{requested}'。"
             );
             std::process::exit(1);
         }
@@ -1773,7 +1828,10 @@ async fn async_main(args: PagerArgs) -> Result<()> {
                 }
                 return Ok(());
             }
-            Command::Agent(agent_args) => {
+            Command::Agent(mut agent_args) => {
+                if agent_args.client.is_none() {
+                    agent_args.client = args.client.clone();
+                }
                 if args.leader || args.no_leader {
                     let flag = if args.leader {
                         "--leader"
@@ -1827,6 +1885,10 @@ async fn async_main(args: PagerArgs) -> Result<()> {
                 let agent_config = AgentConfig::new_from_toml_cfg(&config)
                     .map_err(|e| anyhow::anyhow!("Failed to create agent config: {e}"))?;
                 return xai_grok_pager::models::list_available_models(&agent_config).await;
+            }
+            Command::Clients { json } => {
+                init_tracing_simple("cli");
+                return print_client_profiles(json);
             }
             Command::Leader(leader_args) => {
                 init_tracing_simple("cli");
@@ -1949,12 +2011,15 @@ async fn async_main(args: PagerArgs) -> Result<()> {
             xai_grok_pager::headless::HeadlessOptions {
                 session_id: args.session_id.clone(),
                 resume: args.resume_session.or(args.load_session),
+                resume_title_pinned: args.resume_target_pinned,
                 cwd: args.cwd,
                 yolo: launch_yolo.yolo,
                 trust: args.trust,
                 output_format: args.output_format,
+                include_partial_messages: args.include_partial_messages,
                 json_schema,
                 model: args.model,
+                client_identifier: args.client_identifier.clone(),
                 rules: args.rules,
                 system_prompt_override: args.system_prompt_override.clone(),
                 continue_last_session: args.continue_last_session,

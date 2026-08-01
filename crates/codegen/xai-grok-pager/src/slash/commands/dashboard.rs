@@ -18,6 +18,7 @@
 
 use crate::app::actions::Action;
 use crate::slash::command::{AppCtx, CommandExecCtx, CommandResult, SlashCommand};
+use crate::slash::mode_support::{ModeSupport, Remedy};
 
 /// Open the Agent Dashboard view.
 pub struct DashboardCommand;
@@ -51,6 +52,12 @@ impl SlashCommand for DashboardCommand {
     /// (single-session standalone — K14/§6.15). Gated off with a message.
     fn available_in_minimal(&self) -> bool {
         false
+    }
+
+    fn mode_support(&self) -> ModeSupport {
+        ModeSupport::FullscreenOnly(Remedy::SwitchMode {
+            why: "minimal is single-session",
+        })
     }
 
     /// Hidden from the completion dropdown in minimal mode: the dashboard

@@ -9,6 +9,7 @@ pub mod announcements;
 pub mod auto;
 pub mod btw;
 pub mod cd;
+pub mod client;
 pub mod compact;
 pub mod compact_mode;
 pub mod config_agents;
@@ -16,6 +17,7 @@ pub mod context;
 pub mod copy;
 pub mod dashboard;
 pub mod debug;
+pub mod delete;
 pub mod docs;
 pub mod doctor;
 pub mod edit_prompt;
@@ -86,6 +88,7 @@ pub fn builtin_commands() -> Vec<Arc<dyn SlashCommand>> {
         Arc::new(fork::ForkCommand),
         Arc::new(compact::CompactCommand),
         Arc::new(copy::CopyCommand),
+        Arc::new(delete::DeleteCommand),
         Arc::new(find::FindCommand),
         Arc::new(history::HistoryCommand),
         Arc::new(export::ExportCommand),
@@ -141,6 +144,7 @@ pub fn builtin_commands() -> Vec<Arc<dyn SlashCommand>> {
         Arc::new(tasks::TasksCommand),
         Arc::new(release_notes::ReleaseNotesCommand),
         Arc::new(config_agents::ConfigAgentsCommand),
+        Arc::new(client::ClientCommand),
         Arc::new(personas::PersonasCommand),
         Arc::new(provider::ProviderCommand),
         Arc::new(fallback::FallbackCommand),
@@ -265,6 +269,7 @@ mod tests {
             "doctor",
             "edit-prompt",
             "effort",
+            "think",
             "exit",
             "expand",
             "export",

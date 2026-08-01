@@ -522,6 +522,25 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
             result,
             prev_model_id,
         } => handle_switch_model_complete(app, agent_id, model_id, effort, result, prev_model_id),
+        TaskResult::ClientProfileSet {
+            agent_id,
+            profile,
+            result,
+        } => {
+            if let Some(agent) = app.agents.get_mut(&agent_id) {
+                match result {
+                    Ok(()) => {
+                        let name = profile.name.clone();
+                        agent.client_profile = Some(profile);
+                        agent.show_toast(&format!("已切换客户端：{name}"));
+                    }
+                    Err(error) => {
+                        agent.show_toast(&format!("客户端切换失败：{error}"));
+                    }
+                }
+            }
+            vec![]
+        }
         TaskResult::BgTaskKilled {
             session_id,
             task_id,
@@ -881,7 +900,11 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
             }
             vec![]
         }
-        TaskResult::DeleteSessionComplete { source, session_id } => {
+        TaskResult::DeleteSessionComplete {
+            source,
+            session_id,
+            after: _,
+        } => {
             remove_session_from_pickers(app, &source, &session_id);
             app.show_toast("Session deleted");
             vec![]

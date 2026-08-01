@@ -11,6 +11,7 @@
 
 use crate::app::actions::Action;
 use crate::slash::command::{AppCtx, ArgItem, CommandExecCtx, CommandResult, SlashCommand};
+use crate::slash::mode_support::{ModeSupport, Remedy};
 use crate::theme::{Theme, ThemeKind, cache as theme_cache};
 
 /// Switch the pager color theme.
@@ -32,6 +33,12 @@ impl SlashCommand for ThemeCommand {
     /// Minimal has no theming, so there is nothing for `/theme` to switch.
     fn available_in_minimal(&self) -> bool {
         false
+    }
+
+    fn mode_support(&self) -> ModeSupport {
+        ModeSupport::FullscreenOnly(Remedy::SwitchMode {
+            why: "minimal renders with your terminal's own palette",
+        })
     }
 
     fn usage(&self) -> &str {

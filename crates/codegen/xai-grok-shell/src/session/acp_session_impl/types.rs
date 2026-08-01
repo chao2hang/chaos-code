@@ -23,6 +23,10 @@ pub(crate) enum SamplerFailureRecovery {
     /// provider re-mint). The turn loop should resubmit once with the
     /// fresh token.
     RefreshAuthAndResubmit,
+    /// The provider rejected the configured `reasoning_effort`; chat state was
+    /// updated to the next weaker value. Rebuild the request and resubmit
+    /// immediately in the same user turn.
+    ReasoningEffortAndResubmit,
 }
 
 /// Outcome of a single turn attempt via the sampler-based path.
@@ -38,6 +42,8 @@ pub(crate) enum SamplerTurnOutcome {
     CompactAndResubmit,
     /// Auth recovery succeeded; the outer loop should retry once.
     RefreshAuthAndResubmit,
+    /// Reasoning effort was reduced; rebuild and retry without backoff.
+    ReasoningEffortAndResubmit,
 }
 
 /// Outcome of `process_conversation_turn`, distinguishing normal completion from cancellation.

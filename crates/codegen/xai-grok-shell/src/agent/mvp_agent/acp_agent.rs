@@ -55,6 +55,82 @@ fn insert_applied_tool_overrides(
         );
     }
 }
+/// Apply a public request-client identity to a resident session. The live
+/// sampler config is updated through the actor-owned ChatState handle; API
+/// credentials are intentionally not part of this request or command.
+async fn set_client_profile(
+    agent: &MvpAgent,
+    args: &acp::ExtRequest,
+) -> Result<acp::ExtResponse, acp::Error> {
+    #[derive(serde::Deserialize)]
+    struct ProfilePayload {
+        client_identifier: String,
+        #[serde(default)]
+        user_agent: Option<String>,
+    }
+    #[derive(serde::Deserialize)]
+    struct SetClientProfileParams {
+        #[serde(rename = "sessionId")]
+        session_id: String,
+        profile: ProfilePayload,
+    }
+
+    let params: SetClientProfileParams = crate::extensions::parse_params(args)?;
+    let client_identifier = params.profile.client_identifier.trim().to_owned();
+    if client_identifier.is_empty()
+        || client_identifier.len() > 128
+        || !client_identifier
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+    {
+        return Err(acp::Error::invalid_params().data("invalid client profile identifier"));
+    }
+    // The User-Agent is a verbatim HTTP header value: interior spaces are
+    // expected (e.g. "WorkBuddy/5.3.5 WorkBuddy/5.3.5 CLI/2.115.0"). Only
+    // reject characters that cannot appear in a header value at all.
+    let user_agent = params
+        .profile
+        .user_agent
+        .as_deref()
+        .map(str::trim)
+        .filter(|ua| !ua.is_empty())
+        .map(str::to_owned);
+    if let Some(ua) = &user_agent {
+        if ua.chars().count() > 256 || ua.chars().any(|c| c == '\r' || c == '\n' || c == '\0') {
+            return Err(acp::Error::invalid_params().data("invalid user agent"));
+        }
+    }
+
+    let session_id = acp::SessionId::new(params.session_id);
+    let handle = agent
+        .session_handle_waiting_for_load(&session_id)
+        .await
+        .ok_or_else(|| acp::Error::invalid_params().data("session not found"))?;
+    let origin_client = crate::http::OriginClientInfo {
+        product: client_identifier.clone(),
+        version: None,
+    };
+    let (responds_to, response) = oneshot::channel();
+    handle
+        .cmd_tx
+        .send(SessionCommand::SetClientProfile {
+            client_identifier,
+            origin_client: origin_client.clone(),
+            user_agent,
+            responds_to,
+        })
+        .map_err(|_| acp::Error::internal_error().data("session actor unavailable"))?;
+    response
+        .await
+        .map_err(|_| acp::Error::internal_error().data("session actor unavailable"))?
+        .map_err(|error| acp::Error::invalid_params().data(error))?;
+
+    if let Some(stored) = agent.sessions.borrow_mut().get_mut(&session_id) {
+        stored.origin_client = Some(origin_client);
+    }
+    crate::extensions::to_raw_response(&serde_json::json!({ "ok": true }))
+}
+
 #[async_trait::async_trait(?Send)]
 impl acp::Agent for MvpAgent {
     /// In the meta, we provide
@@ -1113,6 +1189,11 @@ impl acp::Agent for MvpAgent {
         {
             session_sampling.reasoning_effort = Some(effort);
         }
+        // A configured request-client profile is a fallback identity for
+        // sessions that did not advertise an ACP client. Carry the resolved
+        // identity into the session actor so model switching and rebuilt
+        // sampler configs keep the same request metadata.
+        let origin_client = session_sampling.origin_client.clone().or(origin_client);
         let (summary_client, summary_model) = self
             .build_summary_client(&session_sampling)?;
         let relay_sync = if let Some(sync) = self
@@ -3377,6 +3458,7 @@ impl acp::Agent for MvpAgent {
         }
         res
     }
+
     #[tracing::instrument(
         name = "agent.ext_method",
         skip_all,
@@ -3397,6 +3479,7 @@ impl acp::Agent for MvpAgent {
         let mut backend_no_bridge_err: Option<acp::Error> = None;
         let method = args.method.clone();
         let result = match method.as_ref() {
+            "x.ai/session/set_client_profile" => set_client_profile(self, &args).await,
             "x.ai/getApiKey" | "x.ai/setApiKey" => {
                 crate::extensions::auth::handle(self, &args).await
             }

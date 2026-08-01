@@ -1,5 +1,6 @@
 use crate::app::actions::Action;
 use crate::slash::command::{CommandExecCtx, CommandResult, SlashCommand};
+use crate::slash::mode_support::{ModeSupport, Remedy};
 
 pub struct WorkflowsCommand;
 
@@ -18,6 +19,12 @@ impl SlashCommand for WorkflowsCommand {
 
     fn visible(&self, _ctx: &crate::slash::command::AppCtx) -> bool {
         true
+    }
+
+    fn mode_support(&self) -> ModeSupport {
+        ModeSupport::FullscreenOnly(Remedy::SwitchMode {
+            why: "the workflow run pane needs fullscreen",
+        })
     }
 
     fn run(&self, _ctx: &mut CommandExecCtx, _args: &str) -> CommandResult {

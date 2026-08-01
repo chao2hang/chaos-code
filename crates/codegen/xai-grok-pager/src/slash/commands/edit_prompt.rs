@@ -2,6 +2,7 @@
 
 use crate::app::actions::Action;
 use crate::slash::command::{AppCtx, CommandExecCtx, CommandResult, SlashCommand};
+use crate::slash::mode_support::{ModeSupport, Remedy};
 
 /// Minimal-only fallback for terminals that reserve `Ctrl+G`.
 pub struct EditPromptCommand;
@@ -25,6 +26,12 @@ impl SlashCommand for EditPromptCommand {
 
     fn visible(&self, ctx: &AppCtx) -> bool {
         ctx.screen_mode.is_minimal()
+    }
+
+    fn mode_support(&self) -> ModeSupport {
+        ModeSupport::MinimalOnly(Remedy::SwitchMode {
+            why: "the full TUI has no external-editor path — Ctrl+G is the tasks pane there",
+        })
     }
 
     fn run(&self, ctx: &mut CommandExecCtx, _args: &str) -> CommandResult {

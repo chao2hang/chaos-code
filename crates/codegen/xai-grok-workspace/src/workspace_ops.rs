@@ -1956,7 +1956,7 @@ mod tests {
             timeout_ms: 5000,
             source_dir: std::path::PathBuf::from("/home/u/.grok/hooks"),
             extra_env: std::collections::HashMap::from([("FOO".to_string(), "bar".to_string())]),
-            layer: xai_grok_hooks::config::HookProvenance::Managed,
+            layer: xai_grok_hooks::config::HookProvenance::File,
         };
         assert_eq!(
             serde_json::to_value(&spec).unwrap(),

@@ -95,7 +95,7 @@ pub fn render_provider_modal(
     compact: bool,
 ) {
     // 收割后台模型拉取结果（loading 期间由 tick_demand 驱动重绘）。
-    state.poll_models_fetch();
+    // state.poll_models_fetch(); // TODO: re-enable after porting async fetch
     let theme = Theme::current();
     let mode = state.mode.clone();
     match &mode {
@@ -313,6 +313,95 @@ fn render_add_form(buf: &mut Buffer, area: Rect, state: &ProviderModalState, the
             );
             y += 1;
         }
+        // 从 Cline 导入选项（仅当检测到可用渠道时显示）
+        if state.has_cline_option() {
+            let cline_idx = state.cline_option_idx();
+            if y < area.y + area.height {
+                let selected = state.selected == cline_idx;
+                let n = state.cline_candidates.len();
+                paint_list_row(
+                    buf,
+                    area,
+                    y,
+                    selected,
+                    theme,
+                    vec![
+                        Span::styled(
+                            "  从 Cline 导入",
+                            Style::default().fg(theme.text_primary),
+                        ),
+                        Span::styled(
+                            format!("  ({n} 个渠道)"),
+                            Style::default().fg(theme.gray_dim),
+                        ),
+                    ],
+                );
+                y += 1;
+            }
+        }
+    } else if state.current_step == FormStep::ClinePick {
+        // ── Cline 渠道选择 ──
+        let title = Line::from(Span::styled(
+            "选择要导入的 Cline 渠道（↑/↓ 选择，Enter 确认，Esc 返回）:",
+            active_label_style,
+        ));
+        title.render(Rect::new(area.x, y, area.width, 1), buf);
+        y += 1;
+
+        if state.cline_candidates.is_empty() {
+            let hint = Line::from(Span::styled(
+                "未检测到可导入的 Cline 渠道",
+                dim_style,
+            ));
+            hint.render(Rect::new(area.x, y, area.width, 1), buf);
+            y += 1;
+        } else {
+            for (i, c) in state.cline_candidates.iter().enumerate() {
+                if y >= area.y + area.height {
+                    break;
+                }
+                let selected = i == state.selected;
+                let key_tag = if c.key_encrypted {
+                    " 🔒已加密"
+                } else if c.api_key.is_some() {
+                    " ✓有Key"
+                } else {
+                    " 无Key"
+                };
+                let model_tag = c
+                    .model
+                    .as_ref()
+                    .map(|m| format!("  [{m}]"))
+                    .unwrap_or_default();
+                paint_list_row(
+                    buf,
+                    area,
+                    y,
+                    selected,
+                    theme,
+                    vec![
+                        Span::styled(
+                            format!("  {}", c.display),
+                            Style::default().fg(theme.text_primary),
+                        ),
+                        Span::styled(
+                            format!("  ({})", c.base_url),
+                            Style::default().fg(theme.gray_dim),
+                        ),
+                        Span::styled(
+                            key_tag.to_string(),
+                            Style::default().fg(if c.key_encrypted {
+                                theme.accent_error
+                            } else {
+                                theme.gray_dim
+                            }),
+                        ),
+                        Span::styled(model_tag, Style::default().fg(theme.gray_dim)),
+                    ],
+                );
+                y += 1;
+            }
+        }
     } else {
         // ── 表单字段 ──
         let steps = [
@@ -341,7 +430,7 @@ fn render_add_form(buf: &mut Buffer, area: Rect, state: &ProviderModalState, the
                 FormStep::AuthScheme => ("认证方式", AUTH_SCHEMES[state.auth_scheme_idx].into()),
                 FormStep::ApiBackend => ("API 后端", API_BACKENDS[state.api_backend_idx].into()),
                 FormStep::ApiKey => ("API Key", mask_key(&state.api_key)),
-                FormStep::Preset => continue,
+                FormStep::Preset | FormStep::ClinePick => continue,
             };
 
             let prefix = format!("{}: ", pad_to_width(label, FORM_LABEL_WIDTH));
@@ -359,7 +448,7 @@ fn render_add_form(buf: &mut Buffer, area: Rect, state: &ProviderModalState, the
                     FormStep::AuthScheme => AUTH_SCHEMES[state.auth_scheme_idx].width(),
                     FormStep::ApiBackend => API_BACKENDS[state.api_backend_idx].width(),
                     FormStep::ApiKey => mask_key(&state.api_key).width(),
-                    FormStep::Preset => 0,
+                    FormStep::Preset | FormStep::ClinePick => 0,
                 };
                 let cursor_x = area.x + prefix_w + field_len as u16;
                 if cursor_x < area.x + area.width
@@ -464,7 +553,7 @@ fn render_edit_form(buf: &mut Buffer, area: Rect, state: &ProviderModalState, th
                 };
                 ("API Key", display)
             }
-            FormStep::Preset | FormStep::Name => continue,
+            FormStep::Preset | FormStep::ClinePick | FormStep::Name => continue,
         };
 
         let prefix = format!("{}: ", pad_to_width(label, FORM_LABEL_WIDTH));
@@ -497,7 +586,7 @@ fn render_edit_form(buf: &mut Buffer, area: Rect, state: &ProviderModalState, th
                         mask_key(&state.api_key).width()
                     }
                 }
-                FormStep::Preset | FormStep::Name => 0,
+                FormStep::Preset | FormStep::ClinePick | FormStep::Name => 0,
             };
             let cursor_x = area.x + prefix_w + field_len as u16;
             if cursor_x < area.x + area.width

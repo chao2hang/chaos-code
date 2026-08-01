@@ -85,6 +85,11 @@ pub struct SamplerConfig {
     pub deployment_id: Option<String>,
     pub user_id: Option<String>,
     pub client_version: Option<String>,
+    /// Verbatim `User-Agent` header override. When set, the client sends it
+    /// as-is (spaces and all) instead of rendering one from `origin_client`.
+    /// Useful for mimicking an existing client environment such as WorkBuddy.
+    #[serde(default)]
+    pub user_agent: Option<String>,
 
     /// Optional hook invoked at every UNAUTHORIZED (401) response
     /// site. The sampler passes the bearer that was actually sent on
@@ -160,6 +165,7 @@ impl Default for SamplerConfig {
             deployment_id: None,
             user_id: None,
             client_version: None,
+            user_agent: None,
             attribution_callback: None,
             bearer_resolver: None,
             supports_backend_search: false,

@@ -1,9 +1,8 @@
 //! `/model` (alias `/m`) — switch model + (optionally) reasoning effort.
-//! Chained autocomplete: pick a reasoning-supported model → trailing space
-//! re-opens the dropdown into a `low|medium|high|xhigh` sub-menu.
+//! Chained autocomplete: pick an effort-capable model → trailing space
+//! re-opens the dropdown into a `max|xhigh|high|medium|low` sub-menu.
 
 use agent_client_protocol as acp;
-use xai_grok_shell::sampling::types::supports_reasoning_effort_meta;
 
 use crate::acp::model_state::ModelState;
 use crate::app::actions::Action;
@@ -84,12 +83,7 @@ impl SlashCommand for ModelCommand {
         // model's offered ids — not "Unknown model: … none".
         if let Some((prefix, token)) = split_trailing_token(trimmed)
             && let Some(id) = resolve_model(ctx.models, prefix)
-            && ctx
-                .models
-                .available
-                .get(&id)
-                .map(supports_reasoning_effort)
-                .unwrap_or(false)
+            && ctx.models.allows_reasoning_effort_for(&id)
         {
             return match ctx.models.resolve_effort_for_model(&id, token) {
                 Ok(effort) => CommandResult::Action(Action::SwitchModel {
@@ -107,10 +101,6 @@ impl SlashCommand for ModelCommand {
 /// Look up a model by case-insensitive display name OR model id match.
 fn resolve_model(models: &ModelState, name: &str) -> Option<acp::ModelId> {
     models.resolve_by_name_or_id(name)
-}
-
-fn supports_reasoning_effort(info: &acp::ModelInfo) -> bool {
-    supports_reasoning_effort_meta(info.meta.as_ref())
 }
 
 /// Split `args` into `(prefix, last_token)` on the final whitespace run.
@@ -131,7 +121,7 @@ fn detect_effort_phase(models: &ModelState, args_query: &str) -> Option<acp::Mod
     let mut candidates: Vec<(&acp::ModelId, &str)> = models
         .available
         .iter()
-        .filter(|(_, info)| supports_reasoning_effort(info))
+        .filter(|(id, _)| models.allows_reasoning_effort_for(id))
         .map(|(id, info)| (id, info.name.as_str()))
         .collect();
     candidates.sort_by_key(|(_, name)| std::cmp::Reverse(name.len()));
@@ -155,7 +145,7 @@ fn build_model_items(models: &ModelState) -> Vec<ArgItem> {
     let mut items: Vec<ArgItem> = Vec::with_capacity(models.available.len());
     for (id, info) in &models.available {
         let is_current = current_id == Some(id);
-        let supports = supports_reasoning_effort(info);
+        let supports = models.allows_reasoning_effort_for(id);
 
         let display = if is_current {
             format!("{} (current)", info.name)
@@ -239,6 +229,16 @@ mod tests {
         (id, info)
     }
 
+    fn disabled_model(id: &str, name: &str) -> (acp::ModelId, acp::ModelInfo) {
+        let id = acp::ModelId::new(Arc::from(id));
+        let info = acp::ModelInfo::new(id.clone(), name.to_string()).meta(
+            serde_json::json!({ "supportsReasoningEffort": false })
+                .as_object()
+                .cloned(),
+        );
+        (id, info)
+    }
+
     static EMPTY_BUNDLE: crate::app::bundle::BundleState = crate::app::bundle::BundleState {
         has_cache: false,
         version: String::new(),
@@ -283,7 +283,7 @@ mod tests {
     fn empty_query_returns_one_row_per_logical_model() {
         let mut state = ModelState::default();
         let (rid, rinfo) = model_with_reasoning("reasoning-x", "Reasoning X");
-        let (pid, pinfo) = plain_model("grok-4.5", "Grok 4.5");
+        let (pid, pinfo) = disabled_model("grok-4.5", "Grok 4.5");
         state.available.insert(rid, rinfo);
         state.available.insert(pid, pinfo);
 
@@ -313,7 +313,8 @@ mod tests {
         // description surfaces the model id for visual identification.
         assert!(reasoning.description.contains("reasoning-x"));
 
-        // Plain model has no trailing space -- Enter commits immediately.
+        // Explicitly disabled model has no trailing space -- Enter commits
+        // immediately.
         let plain = items
             .iter()
             .find(|i| i.display.starts_with("Grok 4.5"))
@@ -339,19 +340,20 @@ mod tests {
             screen_mode: crate::app::ScreenMode::Fullscreen,
         };
         // Args query has a trailing space -> effort phase. Items come out
-        // ordered xhigh -> low (strongest first) per EFFORT_LEVELS.
+        // ordered max -> low (strongest first) per EFFORT_LEVELS.
         let items = cmd.suggest_args(&ctx, "Reasoning X ").unwrap();
-        assert_eq!(items.len(), 4);
-        assert_eq!(items[0].insert_text, "Reasoning X xhigh");
-        assert_eq!(items[1].insert_text, "Reasoning X high");
-        assert_eq!(items[2].insert_text, "Reasoning X medium");
-        assert_eq!(items[3].insert_text, "Reasoning X low");
+        assert_eq!(items.len(), 5);
+        assert_eq!(items[0].insert_text, "Reasoning X max");
+        assert_eq!(items[1].insert_text, "Reasoning X xhigh");
+        assert_eq!(items[2].insert_text, "Reasoning X high");
+        assert_eq!(items[3].insert_text, "Reasoning X medium");
+        assert_eq!(items[4].insert_text, "Reasoning X low");
         // Display is just the level so the user sees a clean column.
-        assert_eq!(items[0].display, "xhigh");
+        assert_eq!(items[0].display, "max");
         // match_text carries the sort-key prefix that forces the matcher's
         // alphabetical tiebreak to render rows in EFFORT_LEVELS order.
         assert!(items[0].match_text.starts_with("a "));
-        assert!(items[3].match_text.starts_with("d "));
+        assert!(items[4].match_text.starts_with("e "));
     }
 
     #[test]
@@ -371,7 +373,7 @@ mod tests {
         };
         // Still in effort phase; matcher upstream narrows to high / xhigh.
         let items = cmd.suggest_args(&ctx, "Reasoning X h").unwrap();
-        assert_eq!(items.len(), 4);
+        assert_eq!(items.len(), 5);
     }
 
     #[test]
@@ -466,6 +468,22 @@ mod tests {
     }
 
     #[test]
+    fn run_accepts_effort_for_model_without_capability_metadata() {
+        let mut state = ModelState::default();
+        let (id, info) = plain_model("custom-x", "Custom X");
+        state.available.insert(id.clone(), info);
+        let mut ctx = dummy_exec_ctx(&state);
+
+        match ModelCommand.run(&mut ctx, "Custom X max") {
+            CommandResult::Action(Action::SwitchModel { model_id, effort }) => {
+                assert_eq!(model_id, id);
+                assert_eq!(effort, Some(ReasoningEffort::Max));
+            }
+            other => panic!("expected unadvertised model effort switch, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn run_rejects_unoffered_effort_with_effort_error_not_unknown_model() {
         // Regression: previously `resolve_effort_token_for` returned None and
         // the handler fell through to `Unknown model: Reasoning X none`.
@@ -520,7 +538,7 @@ mod tests {
     #[test]
     fn run_rejects_effort_for_non_reasoning_model() {
         let mut state = ModelState::default();
-        let (id, info) = plain_model("grok-4.5", "Grok 4.5");
+        let (id, info) = disabled_model("grok-4.5", "Grok 4.5");
         state.available.insert(id, info);
         let mut ctx = dummy_exec_ctx(&state);
         let result = ModelCommand.run(&mut ctx, "Grok 4.5 high");

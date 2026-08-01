@@ -477,6 +477,7 @@ impl<'a> EffectiveCommandCatalog<'a> {
             "docs",
             "doctor",
             "effort",
+            "think",
             "exit",
             "expand",
             "export",

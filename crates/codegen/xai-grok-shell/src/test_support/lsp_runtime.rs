@@ -35,6 +35,8 @@ pub(crate) fn ctx_with_toggle(toggle: HashMap<String, bool>) -> SubagentSpawnCon
     let (tx, _rx) = mpsc::unbounded_channel();
     SubagentSpawnContext {
         lsp: None,
+        process_scope: None,
+        subagents_max_depth: 0,
         parent_max_turns: None,
         client_hooks: Default::default(),
         sampling_config: xai_grok_sampler::SamplerConfig {
@@ -67,7 +69,8 @@ pub(crate) fn ctx_with_toggle(toggle: HashMap<String, bool>) -> SubagentSpawnCon
             compaction_at_tokens: None,
             doom_loop_recovery: None,
             header_injector: None,
-        },
+                user_agent: None,
+},
         alpha_test_key: None,
         auth_method_id: acp::AuthMethodId::new("test"),
         model_id: acp::ModelId::new("test"),

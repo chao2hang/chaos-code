@@ -1118,7 +1118,8 @@ async fn set_session_model_invalidates_byok_memo_for_same_model_id() {
                 compaction_at_tokens: None,
                 doom_loop_recovery: None,
                 header_injector: None,
-            };
+                        user_agent: None,
+};
             let _ = actor
                 .handle_set_session_model(cfg, false, false, true, 85)
                 .await;
@@ -1204,6 +1205,7 @@ async fn switch_to_first_party_model_drops_minted_provider_token() {
                 deployment_id: None,
                 user_id: None,
                 origin_client: None,
+                user_agent: None,
                 attribution_callback: None,
                 bearer_resolver: None,
                 supports_backend_search: false,
