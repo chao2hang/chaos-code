@@ -115,21 +115,14 @@ pub(crate) async fn apply(
     let mut model_sampling =
         agent.prepare_sampling_config_for_model(&model, handle.origin_client.clone());
     if let Some(eff) = effort_override {
-        if agent
-            .models_manager
-            .model_supports_reasoning_effort(model_id.0.as_ref())
-        {
-            tracing::info!(
-                session_id = % session_id.0, effort = % eff,
-                "set_session_model: applying reasoning_effort override from meta"
-            );
-            model_sampling.reasoning_effort = Some(eff);
-        } else {
-            tracing::warn!(
-                session_id = % session_id.0, model_id = % model_id.0, effort = % eff,
-                "set_session_model: ignoring reasoning_effort override — model does not support it"
-            );
-        }
+        // The Pager validates explicit model opt-outs before sending this
+        // request. Once a user has supplied an override, apply it even when
+        // the catalog has no capability declaration (common for BYOK models).
+        tracing::info!(
+            session_id = % session_id.0, effort = % eff,
+            "set_session_model: applying reasoning_effort override from meta"
+        );
+        model_sampling.reasoning_effort = Some(eff);
     }
     let applied_effort = model_sampling.reasoning_effort;
     let gate_closed = !handle

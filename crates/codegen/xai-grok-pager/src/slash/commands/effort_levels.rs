@@ -5,8 +5,10 @@ use xai_grok_shell::sampling::types::{ReasoningEffort, ReasoningEffortOption};
 use crate::slash::command::ArgItem;
 
 /// Effort levels in the built-in fallback menu (strongest first). `none`/`minimal`
-/// are still accepted by `ReasoningEffort::from_str` for power users.
+/// are still accepted by `ReasoningEffort::from_str` for power users, but are
+/// not assumed for a model that does not advertise them.
 pub(crate) const EFFORT_LEVELS: &[ReasoningEffort] = &[
+    ReasoningEffort::Max,
     ReasoningEffort::Xhigh,
     ReasoningEffort::High,
     ReasoningEffort::Medium,
@@ -25,8 +27,8 @@ pub(crate) fn effort_description(level: ReasoningEffort) -> &'static str {
     }
 }
 
-/// The built-in menu used when the server sends no `reasoningEfforts`. Reproduces
-/// the historical rows: labels are the lowercase level (via `Display`),
+/// The built-in menu used when the server sends no `reasoningEfforts`. Labels
+/// are the lowercase level (via `Display`),
 /// descriptions from `effort_description`. The active row is matched by value
 /// against the session effort at render time, so `default` is left unset here.
 pub(crate) fn legacy_effort_options() -> Vec<ReasoningEffortOption> {

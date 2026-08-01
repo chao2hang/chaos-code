@@ -2374,6 +2374,7 @@ mod inline_auto_compact_flow_tests {
             buffering_settings: None,
             client_identifier: std::cell::RefCell::new(None),
             origin_client: std::cell::RefCell::new(None),
+            user_agent: std::cell::RefCell::new(None),
             feedback_manager: Arc::new(FeedbackManager::local_only("test-session")),
             upload_queue: Arc::new(OnceLock::new()),
             sync_loop_cancel: None,

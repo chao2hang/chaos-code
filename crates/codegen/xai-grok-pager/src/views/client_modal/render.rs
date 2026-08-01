@@ -233,6 +233,7 @@ fn render_form(buf: &mut Buffer, area: Rect, state: &ClientModalState, theme: &T
             ClientFormField::ClientIdentifier,
             state.client_identifier.as_str(),
         ),
+        (ClientFormField::UserAgent, state.user_agent.as_str()),
     ];
     let mut y = area.y;
     let intro = if editing {

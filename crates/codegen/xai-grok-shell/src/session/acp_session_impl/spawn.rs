@@ -1539,6 +1539,7 @@ pub(crate) async fn spawn_session_actor(
         buffering_settings,
         client_identifier: std::cell::RefCell::new(session_client_identifier.clone()),
         origin_client: std::cell::RefCell::new(origin_client.clone()),
+        user_agent: std::cell::RefCell::new(None),
         feedback_manager: feedback_manager.clone(),
         upload_queue: upload_queue.clone(),
         sync_loop_cancel: sync_loop_cancel.clone(),

@@ -1656,7 +1656,8 @@ mod reasoning_compaction_regression_tests {
             compaction_at_tokens: None,
             doom_loop_recovery: None,
             header_injector: None,
-        }
+                user_agent: None,
+}
     }
     #[tokio::test]
     async fn chat_completions_compaction_does_not_panic_on_reasoning_sibling() {

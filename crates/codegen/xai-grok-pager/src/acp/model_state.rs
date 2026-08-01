@@ -3,8 +3,8 @@
 use agent_client_protocol as acp;
 use indexmap::IndexMap;
 use xai_grok_shell::sampling::types::{
-    ReasoningEffort, ReasoningEffortOption, parse_reasoning_effort_meta,
-    parse_reasoning_efforts_meta, supports_reasoning_effort_meta,
+    ReasoningEffort, ReasoningEffortOption, SUPPORTS_REASONING_EFFORT_META_KEY,
+    parse_reasoning_effort_meta, parse_reasoning_efforts_meta,
 };
 
 use crate::slash::commands::effort_levels::legacy_effort_options;
@@ -14,7 +14,7 @@ use crate::slash::commands::effort_levels::legacy_effort_options;
 /// the same input identically and differ only in how they surface the error.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum EffortTokenError {
-    /// The target model does not advertise `supportsReasoningEffort`.
+    /// The target model explicitly disables `supportsReasoningEffort`.
     Unsupported,
     /// The token is neither a menu id nor a canonical value offered by this
     /// model's menu. `offered` is the model-specific list of option ids the
@@ -177,9 +177,9 @@ impl ModelState {
         });
     }
 
-    /// The reasoning-effort menu for the current model. Gate-first: an unset or
-    /// unsupported model yields no menu; a supported model uses the server list
-    /// when present, else the built-in fallback.
+    /// The reasoning-effort menu for the current model. A model explicitly
+    /// disabling effort yields no menu; an absent support declaration is treated
+    /// as opt-in-by-use and falls back to the built-in menu.
     pub fn reasoning_effort_options(&self) -> Vec<ReasoningEffortOption> {
         match self.current.as_ref() {
             Some(id) => self.reasoning_effort_options_for(id),
@@ -198,10 +198,19 @@ impl ModelState {
         let Some(info) = self.available.get(id) else {
             return Vec::new();
         };
-        if !supports_reasoning_effort_meta(info.meta.as_ref()) {
+        if explicitly_disables_reasoning_effort(info.meta.as_ref()) {
             return Vec::new();
         }
         parse_reasoning_efforts_meta(info.meta.as_ref()).unwrap_or_else(legacy_effort_options)
+    }
+
+    /// Whether effort can be selected for a catalog model. Missing metadata is
+    /// intentionally allowed so BYOK/custom models remain usable before their
+    /// provider publishes an effort capability declaration.
+    pub(crate) fn allows_reasoning_effort_for(&self, id: &acp::ModelId) -> bool {
+        self.available
+            .get(id)
+            .is_some_and(|info| !explicitly_disables_reasoning_effort(info.meta.as_ref()))
     }
 
     /// Map a typed/selected effort token to its canonical value for the current
@@ -238,7 +247,7 @@ impl ModelState {
             .map(|o| o.value)
     }
 
-    /// Canonical effort-token policy: gate on the model's support flag first,
+    /// Canonical effort-token policy: reject only an explicit model opt-out,
     /// then resolve the token (menu id or canonical level). This is the single
     /// decision shared by `/effort`, the CLI deferred switch, and headless —
     /// each caller only maps the [`EffortTokenError`] to its own surface.
@@ -247,12 +256,7 @@ impl ModelState {
         id: &acp::ModelId,
         token: &str,
     ) -> Result<ReasoningEffort, EffortTokenError> {
-        let supports = self
-            .available
-            .get(id)
-            .map(|info| supports_reasoning_effort_meta(info.meta.as_ref()))
-            .unwrap_or(false);
-        if !supports {
+        if !self.allows_reasoning_effort_for(id) {
             return Err(EffortTokenError::Unsupported);
         }
         self.resolve_effort_token_for(id, token)
@@ -267,7 +271,19 @@ impl ModelState {
                     .collect(),
             })
     }
+}
 
+/// A missing capability declaration is not a negative declaration. Only an
+/// explicit boolean `false` opts a model out of manual effort selection.
+fn explicitly_disables_reasoning_effort(
+    meta: Option<&serde_json::Map<String, serde_json::Value>>,
+) -> bool {
+    meta.and_then(|m| m.get(SUPPORTS_REASONING_EFFORT_META_KEY))
+        .and_then(serde_json::Value::as_bool)
+        == Some(false)
+}
+
+impl ModelState {
     /// Resolve a user-supplied name to a `ModelId` via case-insensitive
     /// ASCII match against the catalog.
     pub fn resolve_by_name_or_id(&self, query: &str) -> Option<acp::ModelId> {
@@ -480,8 +496,9 @@ mod tests {
     fn reasoning_effort_options_gate_first_empty_when_unsupported() {
         // No current model → empty.
         assert!(ModelState::default().reasoning_effort_options().is_empty());
-        // Current model that does not support effort → empty (even with a list).
+        // An explicit opt-out remains empty (even with a list).
         let state = state_with_meta(Some(serde_json::json!({
+            "supportsReasoningEffort": false,
             "reasoningEfforts": [{ "value": "high" }],
         })));
         assert!(state.reasoning_effort_options().is_empty());
@@ -489,7 +506,7 @@ mod tests {
 
     #[test]
     fn reasoning_effort_options_falls_back_to_builtin_menu() {
-        // Supported but no server list → today's four-row built-in menu.
+        // Supported but no server list → the built-in menu.
         let state = state_with_meta(Some(serde_json::json!({
             "supportsReasoningEffort": true,
         })));
@@ -498,7 +515,27 @@ mod tests {
             .into_iter()
             .map(|o| o.id)
             .collect();
-        assert_eq!(ids, ["xhigh", "high", "medium", "low"]);
+        assert_eq!(ids, ["max", "xhigh", "high", "medium", "low"]);
+    }
+
+    #[test]
+    fn unadvertised_model_uses_fallback_menu_and_accepts_max() {
+        let state = state_with_meta(None);
+        let ids: Vec<_> = state
+            .reasoning_effort_options()
+            .into_iter()
+            .map(|o| o.id)
+            .collect();
+        assert_eq!(ids, ["max", "xhigh", "high", "medium", "low"]);
+
+        assert_eq!(
+            state.resolve_effort_token("max"),
+            Some(ReasoningEffort::Max)
+        );
+        assert_eq!(
+            state.resolve_effort_for_model(state.current.as_ref().unwrap(), "max"),
+            Ok(ReasoningEffort::Max)
+        );
     }
 
     #[test]
@@ -518,7 +555,11 @@ mod tests {
                 .into_iter()
                 .map(|o| o.id)
                 .collect();
-            assert_eq!(ids, ["xhigh", "high", "medium", "low"], "for meta {meta}");
+            assert_eq!(
+                ids,
+                ["max", "xhigh", "high", "medium", "low"],
+                "for meta {meta}"
+            );
         }
     }
 
@@ -609,7 +650,7 @@ mod tests {
 
     #[test]
     fn resolve_effort_token_legacy_menu_rejects_none() {
-        // supportsReasoningEffort without a server list → built-in low..xhigh.
+        // supportsReasoningEffort without a server list → built-in max..low.
         let state = state_with_meta(Some(serde_json::json!({
             "supportsReasoningEffort": true,
         })));
@@ -618,6 +659,10 @@ mod tests {
         assert_eq!(
             state.resolve_effort_token("low"),
             Some(ReasoningEffort::Low)
+        );
+        assert_eq!(
+            state.resolve_effort_token("max"),
+            Some(ReasoningEffort::Max)
         );
     }
 

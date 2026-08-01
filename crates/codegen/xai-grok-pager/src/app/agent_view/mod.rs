@@ -2264,14 +2264,13 @@ fn model_info_meta_from_config_item(
     let table = item.as_table()?;
     let mut map = serde_json::Map::new();
 
-    let supports = table
+    if let Some(supports) = table
         .get("supports_reasoning_effort")
         .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    if supports {
+    {
         map.insert(
             SUPPORTS_REASONING_EFFORT_META_KEY.to_string(),
-            serde_json::Value::Bool(true),
+            serde_json::Value::Bool(supports),
         );
     }
 

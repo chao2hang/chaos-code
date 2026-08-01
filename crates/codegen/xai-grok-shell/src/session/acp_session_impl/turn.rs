@@ -2169,6 +2169,10 @@ impl SessionActor {
                     auth_retry_schedule.reset();
                     continue;
                 }
+                Ok(SamplerTurnOutcome::ReasoningEffortAndResubmit) => {
+                    auth_retry_schedule.reset();
+                    continue;
+                }
                 Ok(SamplerTurnOutcome::RefreshAuthAndResubmit) => {
                     if let Some((attempt, delay)) = auth_retry_schedule.next_delay() {
                         let delay_ms = delay.as_millis() as u64;

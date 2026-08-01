@@ -722,6 +722,9 @@ pub(crate) struct SessionActor {
     pub(crate) client_identifier: std::cell::RefCell<Option<String>>,
     /// Origin client for User-Agent on sampling requests.
     pub(crate) origin_client: std::cell::RefCell<Option<crate::http::OriginClientInfo>>,
+    /// Verbatim `User-Agent` override set by the client profile picker.
+    /// Overrides the UA rendered from `origin_client`.
+    pub(crate) user_agent: std::cell::RefCell<Option<String>>,
     /// Feedback manager for signal tracking and feedback request heuristics
     pub(crate) feedback_manager: Arc<FeedbackManager>,
     pub(crate) upload_queue:

@@ -20,6 +20,7 @@ pub enum ClientFormField {
     AuthScheme,
     EnvKey,
     ClientIdentifier,
+    UserAgent,
 }
 
 impl ClientFormField {
@@ -30,6 +31,7 @@ impl ClientFormField {
         Self::AuthScheme,
         Self::EnvKey,
         Self::ClientIdentifier,
+        Self::UserAgent,
     ];
 
     pub fn label(self) -> &'static str {
@@ -40,6 +42,7 @@ impl ClientFormField {
             Self::AuthScheme => "认证",
             Self::EnvKey => "环境变量",
             Self::ClientIdentifier => "请求标识",
+            Self::UserAgent => "User-Agent",
         }
     }
 
@@ -89,6 +92,7 @@ pub struct ClientModalState {
     pub auth_scheme_idx: usize,
     pub env_key: String,
     pub client_identifier: String,
+    pub user_agent: String,
     pub error: Option<String>,
     pub success: Option<String>,
 }
@@ -111,6 +115,7 @@ impl ClientModalState {
             auth_scheme_idx: 0,
             env_key: String::new(),
             client_identifier: String::new(),
+            user_agent: String::new(),
             error: None,
             success: None,
         };
@@ -191,6 +196,7 @@ impl ClientModalState {
         self.auth_scheme_idx = 0;
         self.env_key.clear();
         self.client_identifier.clear();
+        self.user_agent.clear();
         self.error = None;
         self.success = None;
     }
@@ -219,6 +225,7 @@ impl ClientModalState {
             .unwrap_or(0);
         self.env_key = profile.env_key;
         self.client_identifier = profile.client_identifier;
+        self.user_agent = profile.user_agent.clone().unwrap_or_default();
         self.error = None;
         self.success = None;
         true
@@ -247,6 +254,10 @@ impl ClientModalState {
             auth_scheme: self.current_auth_scheme().to_owned(),
             env_key: self.env_key.clone(),
             client_identifier: self.client_identifier.clone(),
+            user_agent: {
+                let ua = self.user_agent.trim();
+                (!ua.is_empty()).then(|| ua.to_owned())
+            },
         }
     }
 
@@ -259,6 +270,7 @@ impl ClientModalState {
             ClientFormField::Name => self.name.push(value),
             ClientFormField::EnvKey => self.env_key.push(value),
             ClientFormField::ClientIdentifier => self.client_identifier.push(value),
+            ClientFormField::UserAgent => self.user_agent.push(value),
             ClientFormField::Protocol | ClientFormField::AuthScheme => {}
         }
         self.error = None;
@@ -270,6 +282,7 @@ impl ClientModalState {
             ClientFormField::Name => &mut self.name,
             ClientFormField::EnvKey => &mut self.env_key,
             ClientFormField::ClientIdentifier => &mut self.client_identifier,
+            ClientFormField::UserAgent => &mut self.user_agent,
             ClientFormField::Protocol | ClientFormField::AuthScheme => return false,
         };
         let changed = field.pop().is_some();
@@ -285,6 +298,7 @@ impl ClientModalState {
             ClientFormField::Name => &mut self.name,
             ClientFormField::EnvKey => &mut self.env_key,
             ClientFormField::ClientIdentifier => &mut self.client_identifier,
+            ClientFormField::UserAgent => &mut self.user_agent,
             ClientFormField::Protocol | ClientFormField::AuthScheme => return false,
         };
         if field.is_empty() {
