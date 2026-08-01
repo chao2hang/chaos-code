@@ -94,7 +94,7 @@ Rename the current session. Alias: `/title`.
 
 ### `/model <name>`
 
-Switch models. Accepts a model ID or display name (case-insensitive), and for reasoning models you can add an effort level as a second argument. Alias: `/m`.
+Switch models. Accepts a model ID or display name (case-insensitive), and you can add an effort level as a second argument. Models without effort metadata use the built-in fallback levels. Alias: `/m`.
 
 ```
 /model grok-build
@@ -102,9 +102,9 @@ Switch models. Accepts a model ID or display name (case-insensitive), and for re
 /model Reasoning X high
 ```
 
-### `/effort <level>`
+### `/effort <level>` (alias `/think`)
 
-Set reasoning effort on the **current** model without reselecting it. Levels are `low`, `medium`, `high`, and `xhigh`, and it only applies when the active model supports reasoning effort.
+Set reasoning effort on the **current** model without reselecting it. The built-in fallback levels are `max`, `xhigh`, `high`, `medium`, and `low`; a provider-supplied `reasoningEfforts` list takes precedence. A missing capability declaration is allowed, while an explicit `supportsReasoningEffort: false` disables the command.
 
 ```
 /effort high

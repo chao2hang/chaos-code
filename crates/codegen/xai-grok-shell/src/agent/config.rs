@@ -1070,6 +1070,10 @@ pub struct CustomClientProfileConfig {
     pub env_key: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub client_identifier: String,
+    /// Verbatim `User-Agent` override (spaces allowed). Empty = render one
+    /// from `client_identifier`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_agent: Option<String>,
 }
 
 fn default_client_protocol() -> String {
@@ -2137,6 +2141,12 @@ impl Config {
             } else {
                 custom.client_identifier.clone()
             },
+            user_agent: custom
+                .user_agent
+                .as_deref()
+                .map(str::trim)
+                .filter(|ua| !ua.is_empty())
+                .map(str::to_owned),
         })
     }
 
@@ -5436,7 +5446,8 @@ pub fn sampling_config_for_model(
         compaction_at_tokens: info.compaction_at_tokens,
         doom_loop_recovery: None,
         header_injector: None,
-    }
+        user_agent: None,
+}
 }
 /// Fold URL-derived headers into `extra_headers`.
 ///

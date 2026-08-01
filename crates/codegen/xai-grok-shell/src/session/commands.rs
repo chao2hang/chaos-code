@@ -190,11 +190,12 @@ pub enum SessionCommand {
         responds_to: oneshot::Sender<()>,
     },
     /// Replace the request-client identity used by subsequent sampler turns.
-    /// The command carries only a public identifier; credentials never cross
-    /// this channel.
+    /// The command carries only a public identifier and an optional verbatim
+    /// User-Agent; credentials never cross this channel.
     SetClientProfile {
         client_identifier: String,
         origin_client: crate::http::OriginClientInfo,
+        user_agent: Option<String>,
         responds_to: oneshot::Sender<Result<(), String>>,
     },
     SetSessionModel {

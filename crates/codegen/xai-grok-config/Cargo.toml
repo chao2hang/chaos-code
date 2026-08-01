@@ -34,6 +34,8 @@ core-foundation = { workspace = true }
 tempfile = { workspace = true }
 
 [features]
+# Enables the key override seam for integration-test fixtures only.
+test-support = []
 
 [lints]
 workspace = true

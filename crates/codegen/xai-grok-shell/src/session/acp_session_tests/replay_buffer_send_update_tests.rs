@@ -167,6 +167,7 @@ pub(super) async fn make_replay_send_update_fixture() -> ReplaySendUpdateFixture
         }),
         client_identifier: None.into(),
         origin_client: None.into(),
+        user_agent: std::cell::RefCell::new(None),
         feedback_manager: Arc::new(FeedbackManager::local_only("test-session")),
         upload_queue: Arc::new(OnceLock::new()),
         sync_loop_cancel: None,

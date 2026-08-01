@@ -269,6 +269,7 @@ mod tests {
             "doctor",
             "edit-prompt",
             "effort",
+            "think",
             "exit",
             "expand",
             "export",

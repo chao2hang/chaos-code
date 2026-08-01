@@ -26,6 +26,10 @@ pub struct ClientProfile {
     pub env_key: String,
     /// Wire value used for `x-grok-client-identifier` and the origin UA token.
     pub client_identifier: String,
+    /// Verbatim `User-Agent` override. `None` renders a UA from
+    /// `client_identifier`; `Some` is sent as-is (spaces allowed) to mimic an
+    /// existing client environment.
+    pub user_agent: Option<String>,
 }
 
 /// Static representation used for the built-in catalog.
@@ -37,6 +41,7 @@ pub struct BuiltinClientProfile {
     pub auth_scheme: &'static str,
     pub env_key: &'static str,
     pub client_identifier: &'static str,
+    pub user_agent: Option<&'static str>,
 }
 
 impl BuiltinClientProfile {
@@ -48,6 +53,7 @@ impl BuiltinClientProfile {
             auth_scheme: self.auth_scheme.to_owned(),
             env_key: self.env_key.to_owned(),
             client_identifier: self.client_identifier.to_owned(),
+            user_agent: self.user_agent.map(str::to_owned),
         }
     }
 }
@@ -63,6 +69,7 @@ pub const BUILTIN_CLIENT_PROFILES: &[BuiltinClientProfile] = &[
         auth_scheme: "x_api_key",
         env_key: "ANTHROPIC_API_KEY",
         client_identifier: "claude-code",
+        user_agent: None,
     },
     BuiltinClientProfile {
         id: "codex",
@@ -71,6 +78,7 @@ pub const BUILTIN_CLIENT_PROFILES: &[BuiltinClientProfile] = &[
         auth_scheme: "bearer",
         env_key: "OPENAI_API_KEY",
         client_identifier: "codex",
+        user_agent: None,
     },
     BuiltinClientProfile {
         id: "grok-build",
@@ -79,6 +87,16 @@ pub const BUILTIN_CLIENT_PROFILES: &[BuiltinClientProfile] = &[
         auth_scheme: "bearer",
         env_key: "XAI_API_KEY",
         client_identifier: "grok-build",
+        user_agent: None,
+    },
+    BuiltinClientProfile {
+        id: "workbuddy",
+        name: "WorkBuddy",
+        protocol: "chat_completions",
+        auth_scheme: "bearer",
+        env_key: "X_AI_API_KEY",
+        client_identifier: "workbuddy",
+        user_agent: Some("WorkBuddy/5.3.5 WorkBuddy/5.3.5 CLI/2.115.0"),
     },
 ];
 
@@ -90,6 +108,7 @@ pub fn by_id(id: &str) -> Option<ClientProfile> {
         "claude" | "anthropic" | "claude-code" => "claude-code",
         "codex" | "openai" => "codex",
         "grok" | "grok-build" => "grok-build",
+        "workbuddy" | "wb" => "workbuddy",
         _ => return None,
     };
     BUILTIN_CLIENT_PROFILES
@@ -144,6 +163,9 @@ impl ClientProfile {
         if config.origin_client.is_none() {
             config.origin_client = Some(self.origin_client());
         }
+        if config.user_agent.is_none() {
+            config.user_agent = self.user_agent.clone();
+        }
     }
 }
 
@@ -158,8 +180,31 @@ mod tests {
                 .iter()
                 .map(|profile| profile.id)
                 .collect::<Vec<_>>(),
-            vec!["claude-code", "codex", "grok-build"]
+            vec!["claude-code", "codex", "grok-build", "workbuddy"]
         );
+    }
+
+    #[test]
+    fn workbuddy_profile_carries_verbatim_user_agent() {
+        let profile = by_id("workbuddy").expect("workbuddy profile");
+        assert_eq!(profile.name, "WorkBuddy");
+        assert_eq!(profile.protocol, "chat_completions");
+        assert_eq!(profile.client_identifier, "workbuddy");
+        let ua = profile.user_agent.expect("workbuddy UA");
+        assert!(ua.contains(' '), "User-Agent may contain spaces");
+        assert!(ua.starts_with("WorkBuddy/"));
+    }
+
+    #[test]
+    fn workbuddy_ua_override_flows_into_sampling_config() {
+        let profile = by_id("workbuddy").expect("workbuddy profile");
+        let mut config = SamplerConfig::default();
+        profile.apply_to_sampling_config(&mut config);
+        assert_eq!(
+            config.user_agent.as_deref(),
+            profile.user_agent.as_deref()
+        );
+        assert_eq!(config.client_identifier.as_deref(), Some("workbuddy"));
     }
 
     #[test]

@@ -240,7 +240,7 @@ pub struct AgentArgs {
     /// 推理模型的推理强度
     #[clap(
         long = "reasoning-effort",
-        visible_alias = "effort",
+        visible_aliases = ["effort", "think"],
         value_name = "EFFORT",
         overrides_with = "reasoning_effort"
     )]
@@ -488,7 +488,7 @@ pub struct PagerArgs {
     /// 推理模型的推理强度
     #[clap(
         long = "reasoning-effort",
-        visible_alias = "effort",
+        visible_aliases = ["effort", "think"],
         value_name = "EFFORT",
         overrides_with = "reasoning_effort"
     )]
@@ -1367,6 +1367,9 @@ mod tests {
         let alias =
             PagerArgs::try_parse_from(["grok", "--effort", "high"]).expect("--effort alias parses");
         assert_eq!(alias.reasoning_effort.as_deref(), Some("high"));
+        let think =
+            PagerArgs::try_parse_from(["grok", "--think", "high"]).expect("--think alias parses");
+        assert_eq!(think.reasoning_effort.as_deref(), Some("high"));
     }
     #[test]
     fn reasoning_effort_accepts_max_and_remapped_ids() {

@@ -53,6 +53,7 @@ fn builtin_to_owned(profile: &BuiltinClientProfile) -> ClientProfile {
         auth_scheme: profile.auth_scheme.to_owned(),
         env_key: profile.env_key.to_owned(),
         client_identifier: profile.client_identifier.to_owned(),
+        user_agent: profile.user_agent.map(str::to_owned),
     }
 }
 
@@ -87,6 +88,10 @@ fn custom_profile_from_item(id: &str, item: &toml_edit::Item) -> Option<ClientPr
         auth_scheme: non_empty_or(text("auth_scheme"), "bearer"),
         env_key: text("env_key"),
         client_identifier: non_empty_or(text("client_identifier"), id),
+        user_agent: {
+            let ua = text("user_agent");
+            (!ua.is_empty()).then_some(ua)
+        },
     })
 }
 
@@ -120,6 +125,12 @@ pub(crate) fn validate_custom_profile(profile: &ClientProfile) -> Result<ClientP
     normalized.auth_scheme = normalized.auth_scheme.trim().to_ascii_lowercase();
     normalized.env_key = normalized.env_key.trim().to_owned();
     normalized.client_identifier = normalized.client_identifier.trim().to_owned();
+    normalized.user_agent = normalized
+        .user_agent
+        .as_deref()
+        .map(str::trim)
+        .filter(|ua| !ua.is_empty())
+        .map(str::to_owned);
 
     if !valid_client_id(&normalized.id) {
         return Err(
@@ -152,6 +163,14 @@ pub(crate) fn validate_custom_profile(profile: &ClientProfile) -> Result<ClientP
     }
     if !valid_client_identifier(&normalized.client_identifier) {
         return Err("客户端标识只能包含字母、数字、.、_、-，且不能为空（最多 128 个字符）".into());
+    }
+    if let Some(ua) = &normalized.user_agent {
+        if ua.chars().count() > 256 {
+            return Err("User-Agent 不能超过 256 个字符".into());
+        }
+        if ua.chars().any(|c| c == '\r' || c == '\n' || c == '\0') {
+            return Err("User-Agent 不能包含换行或空字符".into());
+        }
     }
     if normalized.auth_scheme != "none" && normalized.env_key.is_empty() {
         return Err("非 none 认证方式需要填写 API Key 环境变量名".into());
@@ -217,6 +236,12 @@ pub(crate) fn upsert_custom_client_in_document(
     table["auth_scheme"] = toml_edit::value(profile.auth_scheme.as_str());
     table["env_key"] = toml_edit::value(profile.env_key.as_str());
     table["client_identifier"] = toml_edit::value(profile.client_identifier.as_str());
+    match profile.user_agent.as_deref() {
+        Some(ua) => table["user_agent"] = toml_edit::value(ua),
+        None => {
+            table.remove("user_agent");
+        }
+    }
 
     Ok(profile)
 }
@@ -365,6 +390,7 @@ mod tests {
             auth_scheme: "bearer".into(),
             env_key: "TEST_API_KEY".into(),
             client_identifier: "test-client".into(),
+            user_agent: None,
         }
     }
 
@@ -378,6 +404,33 @@ mod tests {
         no_key.auth_scheme = "none".into();
         no_key.env_key.clear();
         assert!(validate_custom_profile(&no_key).is_ok());
+    }
+
+    #[test]
+    fn user_agent_may_contain_spaces_and_round_trips() {
+        let mut with_ua = profile("ua-client");
+        with_ua.user_agent = Some("WorkBuddy/5.3.5 WorkBuddy/5.3.5 CLI/2.115.0".into());
+        let normalized = validate_custom_profile(&with_ua).unwrap();
+        assert_eq!(
+            normalized.user_agent.as_deref(),
+            Some("WorkBuddy/5.3.5 WorkBuddy/5.3.5 CLI/2.115.0")
+        );
+
+        let mut doc = toml_edit::DocumentMut::new();
+        upsert_custom_client_in_document(&mut doc, &normalized, None).unwrap();
+        let stored = custom_profile_from_item("ua-client", &doc["clients"]["custom"]["ua-client"]);
+        assert_eq!(
+            stored.and_then(|p| p.user_agent).as_deref(),
+            Some("WorkBuddy/5.3.5 WorkBuddy/5.3.5 CLI/2.115.0")
+        );
+    }
+
+    #[test]
+    fn user_agent_rejects_control_characters() {
+        let mut bad = profile("ua-bad");
+        bad.user_agent = Some("WorkBuddy\nX-Evil: 1".into());
+        let error = validate_custom_profile(&bad).unwrap_err();
+        assert!(error.contains("换行"), "error: {error}");
     }
 
     #[test]

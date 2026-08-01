@@ -26,6 +26,47 @@ pub(super) fn is_auth_tool_error(err: &xai_tool_runtime::ToolError) -> bool {
         || lower.contains("invalid api key")
         || lower.contains("invalid_token")
 }
+
+/// Match only provider-side validation failures that explicitly reject the
+/// `reasoning_effort` parameter. A generic 400 must remain terminal: retrying it
+/// with weaker reasoning could hide unrelated malformed-request bugs.
+fn is_reasoning_effort_rejection(error: &xai_grok_sampler::SamplingErrorInfo) -> bool {
+    use xai_grok_sampler::SamplingErrorKind;
+
+    if !matches!(error.kind, SamplingErrorKind::Api) || error.status_code != Some(400) {
+        return false;
+    }
+
+    let message = error.message.to_ascii_lowercase();
+    let names_effort = message.contains("reasoning_effort")
+        || message.contains("reasoning effort")
+        || message.contains("reasoning.effort");
+    let rejects_value = message.contains("invalid")
+        || message.contains("unsupported")
+        || message.contains("not supported")
+        || message.contains("does not support")
+        || message.contains("unknown")
+        || message.contains("not one of");
+
+    names_effort && rejects_value
+}
+
+/// Return the next weaker wire value. The outer `Option` means "a retry is
+/// available"; the inner `Option` is the actual request value, where `None`
+/// means omit `reasoning_effort` entirely.
+fn next_reasoning_effort(
+    current: Option<xai_grok_sampling_types::ReasoningEffort>,
+) -> Option<Option<xai_grok_sampling_types::ReasoningEffort>> {
+    use xai_grok_sampling_types::ReasoningEffort;
+
+    match current? {
+        ReasoningEffort::Max => Some(Some(ReasoningEffort::Xhigh)),
+        ReasoningEffort::Xhigh => Some(Some(ReasoningEffort::High)),
+        ReasoningEffort::High => Some(Some(ReasoningEffort::Medium)),
+        ReasoningEffort::Medium => Some(Some(ReasoningEffort::Low)),
+        ReasoningEffort::Low | ReasoningEffort::Minimal | ReasoningEffort::None => Some(None),
+    }
+}
 /// Gate inputs bundled with the composed decision so the 401-recovery log can
 /// report the components.
 #[derive(Clone, Copy)]
@@ -521,6 +562,7 @@ impl SessionActor {
                 .filter(|a| a.is_xai_auth())
                 .map(|a| a.user_id),
             origin_client: self.origin_client.borrow().clone(),
+            user_agent: self.user_agent.borrow().clone(),
             attribution_callback: self.attribution_callback.clone(),
             bearer_resolver: if use_bearer_resolver {
                 self.auth_manager
@@ -809,6 +851,37 @@ impl SessionActor {
                 &message,
             );
             return Err(acp::Error::internal_error().data(message));
+        }
+        if is_reasoning_effort_rejection(&error)
+            && let Some(config) = self.chat_state_handle.get_sampling_config().await
+            && let Some(next_effort) = next_reasoning_effort(config.reasoning_effort)
+        {
+            let from = config.reasoning_effort.map(|effort| effort.as_str());
+            let to = next_effort.map(|effort| effort.as_str());
+            tracing::warn!(
+                session_id = %self.session_info.id.0,
+                model = %config.model,
+                from = ?from,
+                to = ?to,
+                error = %error.message,
+                "provider rejected reasoning_effort; retrying with weaker value"
+            );
+            xai_grok_telemetry::unified_log::warn(
+                "shell.turn.reasoning_effort_fallback",
+                Some(self.session_info.id.0.as_ref()),
+                Some(serde_json::json!({
+                    "model": config.model,
+                    "from": from,
+                    "to": to,
+                    "status_code": error.status_code,
+                    "error": crate::util::truncate(&error.message, 300),
+                })),
+            );
+            let mut downgraded = config;
+            downgraded.reasoning_effort = next_effort;
+            self.chat_state_handle.update_sampling_config(downgraded);
+            self.prepare_sampler_for_turn().await;
+            return Ok(SamplerFailureRecovery::ReasoningEffortAndResubmit);
         }
         if self.should_compact_on_error(&error).await {
             let cw = error
@@ -1118,6 +1191,8 @@ impl SessionActor {
     ///    ran, the outer turn loop should `continue`.
     /// * `Ok(SamplerTurnOutcome::RefreshAuthAndResubmit)` - auth 401
     ///    recovery succeeded, credentials refreshed, retry once.
+    /// * `Ok(SamplerTurnOutcome::ReasoningEffortAndResubmit)` - provider
+    ///    rejected the current effort, config downgraded, retry immediately.
     /// * `Err(acp::Error)` - terminal failure already reported via
     ///    `send_xai_notification(RetryState::Failed)`.
     pub(crate) async fn run_turn_via_sampler(
@@ -1170,6 +1245,9 @@ impl SessionActor {
                     }
                     SamplerFailureRecovery::RefreshAuthAndResubmit => {
                         Ok(SamplerTurnOutcome::RefreshAuthAndResubmit)
+                    }
+                    SamplerFailureRecovery::ReasoningEffortAndResubmit => {
+                        Ok(SamplerTurnOutcome::ReasoningEffortAndResubmit)
                     }
                 }
             }
@@ -1421,6 +1499,76 @@ fn resolve_configured_cutoff(
         web_search: prefer_non_empty(over_w, seed_w, WebSearchOptions::is_empty),
     }
 }
+#[cfg(test)]
+mod reasoning_effort_fallback_tests {
+    use super::{is_reasoning_effort_rejection, next_reasoning_effort};
+    use xai_grok_sampler::{SamplingErrorInfo, SamplingErrorKind};
+    use xai_grok_sampling_types::ReasoningEffort;
+
+    fn api_error(status_code: u16, message: &str) -> SamplingErrorInfo {
+        SamplingErrorInfo {
+            kind: SamplingErrorKind::Api,
+            status_code: Some(status_code),
+            message: message.to_string(),
+            is_retryable: false,
+            retry_after_secs: None,
+            model_metadata: None,
+            empty_response_context: None,
+            doom_loop_triggers: None,
+            doom_loop_aborted_at_chunk: None,
+        }
+    }
+
+    #[test]
+    fn detects_explicit_reasoning_effort_rejections_only() {
+        for message in [
+            "BadRequest: Invalid reasoning_effort: xhigh",
+            "unsupported reasoning effort value 'high'",
+            "reasoning.effort is not supported by this model",
+            "unknown reasoning_effort",
+        ] {
+            assert!(is_reasoning_effort_rejection(&api_error(400, message)));
+        }
+
+        assert!(!is_reasoning_effort_rejection(&api_error(
+            400,
+            "invalid max_tokens"
+        )));
+        assert!(!is_reasoning_effort_rejection(&api_error(
+            500,
+            "Invalid reasoning_effort: xhigh"
+        )));
+        let mut non_api = api_error(400, "Invalid reasoning_effort: xhigh");
+        non_api.kind = SamplingErrorKind::Http;
+        assert!(!is_reasoning_effort_rejection(&non_api));
+    }
+
+    #[test]
+    fn walks_the_complete_effort_fallback_chain() {
+        assert_eq!(
+            next_reasoning_effort(Some(ReasoningEffort::Max)),
+            Some(Some(ReasoningEffort::Xhigh))
+        );
+        assert_eq!(
+            next_reasoning_effort(Some(ReasoningEffort::Xhigh)),
+            Some(Some(ReasoningEffort::High))
+        );
+        assert_eq!(
+            next_reasoning_effort(Some(ReasoningEffort::High)),
+            Some(Some(ReasoningEffort::Medium))
+        );
+        assert_eq!(
+            next_reasoning_effort(Some(ReasoningEffort::Medium)),
+            Some(Some(ReasoningEffort::Low))
+        );
+        assert_eq!(
+            next_reasoning_effort(Some(ReasoningEffort::Low)),
+            Some(None)
+        );
+        assert_eq!(next_reasoning_effort(None), None);
+    }
+}
+
 #[cfg(test)]
 mod configured_cutoff_tests {
     use xai_grok_sampling_types::{

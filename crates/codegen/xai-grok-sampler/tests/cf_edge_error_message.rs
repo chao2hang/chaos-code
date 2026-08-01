@@ -27,7 +27,7 @@ fn test_config(base_url: &str, api_key: &str) -> SamplerConfig {
         base_url: base_url.to_string(),
         model: "test-model".to_string(),
         ..SamplerConfig::default()
-    }
+}
 }
 
 fn user_request(text: &str) -> ConversationRequest {

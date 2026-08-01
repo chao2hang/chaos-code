@@ -65,6 +65,8 @@ async fn set_client_profile(
     #[derive(serde::Deserialize)]
     struct ProfilePayload {
         client_identifier: String,
+        #[serde(default)]
+        user_agent: Option<String>,
     }
     #[derive(serde::Deserialize)]
     struct SetClientProfileParams {
@@ -83,6 +85,21 @@ async fn set_client_profile(
     {
         return Err(acp::Error::invalid_params().data("invalid client profile identifier"));
     }
+    // The User-Agent is a verbatim HTTP header value: interior spaces are
+    // expected (e.g. "WorkBuddy/5.3.5 WorkBuddy/5.3.5 CLI/2.115.0"). Only
+    // reject characters that cannot appear in a header value at all.
+    let user_agent = params
+        .profile
+        .user_agent
+        .as_deref()
+        .map(str::trim)
+        .filter(|ua| !ua.is_empty())
+        .map(str::to_owned);
+    if let Some(ua) = &user_agent {
+        if ua.chars().count() > 256 || ua.chars().any(|c| c == '\r' || c == '\n' || c == '\0') {
+            return Err(acp::Error::invalid_params().data("invalid user agent"));
+        }
+    }
 
     let session_id = acp::SessionId::new(params.session_id);
     let handle = agent
@@ -99,6 +116,7 @@ async fn set_client_profile(
         .send(SessionCommand::SetClientProfile {
             client_identifier,
             origin_client: origin_client.clone(),
+            user_agent,
             responds_to,
         })
         .map_err(|_| acp::Error::internal_error().data("session actor unavailable"))?;

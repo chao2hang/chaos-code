@@ -47,6 +47,10 @@ fn test_home() -> &'static PathBuf {
             ] {
                 std::env::remove_var(var);
             }
+            // These fixtures intentionally use the legacy unsigned response shape. Keep
+            // production verification armed; only this test dependency opts into the
+            // debug-only key override seam.
+            xai_grok_config::signed_policy::test_seam::set_embedded_keys(Some(&[]));
             // Real exponential backoff would add seconds per retry test.
             std::env::set_var("GROK_DEPLOYMENT_CONFIG_BACKOFF_MS", "10");
         }
