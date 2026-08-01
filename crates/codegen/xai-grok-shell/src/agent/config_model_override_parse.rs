@@ -70,7 +70,9 @@ pub enum WarningTarget {
         field: Option<String>,
     },
     /// An unrecognized top-level config key.
-    ConfigKey { key: String },
+    ConfigKey {
+        key: String,
+    },
 }
 
 impl WarningTarget {
@@ -92,7 +94,9 @@ impl WarningTarget {
             Self::Model { field, .. }
             | Self::AuthProvider { field, .. }
             | Self::ModelProvider { field, .. } => field.as_deref(),
-            Self::ModelSection | Self::AuthProviderSection | Self::ModelProviderSection
+            Self::ModelSection
+            | Self::AuthProviderSection
+            | Self::ModelProviderSection
             | Self::ConfigKey { .. } => None,
         }
     }
@@ -183,13 +187,11 @@ impl ConfigWarning {
         }
     }
 
-    pub(crate) fn config_key(
-        key: &str,
-        kind: ConfigWarningKind,
-        reason: String,
-    ) -> Self {
+    pub(crate) fn config_key(key: &str, kind: ConfigWarningKind, reason: String) -> Self {
         Self {
-            target: WarningTarget::ConfigKey { key: key.to_owned() },
+            target: WarningTarget::ConfigKey {
+                key: key.to_owned(),
+            },
             kind,
             reason,
         }

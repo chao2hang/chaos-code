@@ -110,8 +110,8 @@ mod tests {
             compaction_at_tokens: None,
             doom_loop_recovery: None,
             header_injector: None,
-                user_agent: None,
-}
+            user_agent: None,
+        }
     }
 
     #[test]

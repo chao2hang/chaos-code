@@ -326,10 +326,7 @@ fn render_add_form(buf: &mut Buffer, area: Rect, state: &ProviderModalState, the
                     selected,
                     theme,
                     vec![
-                        Span::styled(
-                            "  从 Cline 导入",
-                            Style::default().fg(theme.text_primary),
-                        ),
+                        Span::styled("  从 Cline 导入", Style::default().fg(theme.text_primary)),
                         Span::styled(
                             format!("  ({n} 个渠道)"),
                             Style::default().fg(theme.gray_dim),
@@ -349,10 +346,7 @@ fn render_add_form(buf: &mut Buffer, area: Rect, state: &ProviderModalState, the
         y += 1;
 
         if state.cline_candidates.is_empty() {
-            let hint = Line::from(Span::styled(
-                "未检测到可导入的 Cline 渠道",
-                dim_style,
-            ));
+            let hint = Line::from(Span::styled("未检测到可导入的 Cline 渠道", dim_style));
             hint.render(Rect::new(area.x, y, area.width, 1), buf);
             y += 1;
         } else {

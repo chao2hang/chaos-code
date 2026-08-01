@@ -155,10 +155,13 @@ pub async fn run(args: SessionsArgs, agent_config: &AgentConfig) -> Result<()> {
             // which workspace it was created in. This command intentionally
             // stays local-only: Chaos does not load cached account auth.
             let deletion = xai_grok_shell::session::persistence::delete_session_history(
-                &id, None, false,
-                std::sync::Arc::new(
-                    xai_grok_shell::auth::AuthManager::new(&grok_home(), Default::default())
-                ),
+                &id,
+                None,
+                false,
+                std::sync::Arc::new(xai_grok_shell::auth::AuthManager::new(
+                    &grok_home(),
+                    Default::default(),
+                )),
             )
             .await?;
 

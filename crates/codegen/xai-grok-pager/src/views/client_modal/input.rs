@@ -244,7 +244,10 @@ mod tests {
         let outcome = handle_client_key(&mut state, &key(KeyCode::Enter));
         assert_eq!(state.env_key, "MY_CLIENT_API_KEY");
         assert_eq!(state.client_identifier, "my-client");
-        assert_eq!(state.user_agent, "WorkBuddy/5.3.5 WorkBuddy/5.3.5 CLI/2.115.0");
+        assert_eq!(
+            state.user_agent,
+            "WorkBuddy/5.3.5 WorkBuddy/5.3.5 CLI/2.115.0"
+        );
         assert!(matches!(
             outcome,
             ClientKeyOutcome::Commit {

@@ -384,6 +384,22 @@ async fn apply_retry_decision(
             emit_retrying(event_tx, request_id, *retry_count, max_retries, err);
             true
         }
+        RetryDecision::RetryWithEffortFallback => {
+            let stripped = request.strip_reasoning_effort();
+            if !stripped {
+                // No effort to strip; upgrade to fatal.
+                emit_failed(event_tx, request_id, err);
+                send_completion(completion_tx, Err(clone_error(err)));
+                return false;
+            }
+            *retry_count += 1;
+            tracing::warn!(
+                target: crate::sampling_log::TARGET,
+                "stripped reasoning_effort before retry (provider rejected the parameter)"
+            );
+            emit_retrying(event_tx, request_id, *retry_count, max_retries, err);
+            true
+        }
         RetryDecision::RetryWithClientRebuild { backoff } => {
             *retry_count += 1;
             emit_retrying(event_tx, request_id, *retry_count, max_retries, err);

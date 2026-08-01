@@ -31,8 +31,8 @@ pub use config::{
 };
 pub(crate) use external_auth::{parse_output, refresh_with_command};
 pub(crate) use flow::{
-    AuthChannels, run_auth_flow, run_auth_flow_with_stderr_bridge,
-    mint_session_noninteractive, try_noninteractive_auth_no_mint,
+    AuthChannels, mint_session_noninteractive, run_auth_flow, run_auth_flow_with_stderr_bridge,
+    try_noninteractive_auth_no_mint,
 };
 pub use flow::{
     AuthUrlInfo, AuthUrlMode, LoginTransportOverride, LogoutResult, ensure_authenticated,

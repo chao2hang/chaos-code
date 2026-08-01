@@ -121,6 +121,11 @@ pub enum RetryDecision {
     /// Payload Too Large or image processing rejection).
     RetryWithImageStrip,
 
+    /// Retry after removing `reasoning_effort` from the request (400
+    /// because the model/provider doesn't support the parameter).
+    /// Only fires once — if the retry still fails, the error is fatal.
+    RetryWithEffortFallback,
+
     /// Retry after rebuilding the HTTP client with HTTP/1.1 (transport
     /// error, first retry only).
     RetryWithClientRebuild { backoff: Duration },
@@ -171,6 +176,14 @@ pub fn classify_error(
     // images and retry, same recovery as 413.
     if err.is_image_processing_error() {
         return RetryDecision::RetryWithImageStrip;
+    }
+
+    // Reasoning-effort rejection (400): the model/provider doesn't support
+    // the `reasoning_effort` parameter. Strip it and retry once instead of
+    // aborting the whole turn. The caller checks if effort was actually
+    // present; if not, upgrade to Fatal.
+    if err.is_reasoning_effort_error() {
+        return RetryDecision::RetryWithEffortFallback;
     }
 
     // Server explicitly said don't retry (x-should-retry: false).
@@ -577,6 +590,48 @@ mod tests {
         assert!(matches!(
             classify_error(&err, 0, 5, RATE_LIMIT_RETRY_THRESHOLD),
             RetryDecision::RetryWithImageStrip
+        ));
+    }
+
+    #[test]
+    fn classify_reasoning_effort_error_strips_effort() {
+        let err = api_err(
+            StatusCode::BAD_REQUEST,
+            "reasoning_effort is not supported for this model",
+        );
+        assert!(matches!(
+            classify_error(&err, 0, 5, RATE_LIMIT_RETRY_THRESHOLD),
+            RetryDecision::RetryWithEffortFallback
+        ));
+    }
+
+    #[test]
+    fn classify_reasoning_effort_error_alternative_message() {
+        let err = api_err(
+            StatusCode::BAD_REQUEST,
+            "unsupported parameter: reasoning.effort",
+        );
+        assert!(matches!(
+            classify_error(&err, 0, 5, RATE_LIMIT_RETRY_THRESHOLD),
+            RetryDecision::RetryWithEffortFallback
+        ));
+    }
+
+    #[test]
+    fn classify_reasoning_effort_error_takes_priority_over_fatal_400() {
+        // A 400 is normally Fatal; verify the effort-fallback guard
+        // intercepts first when the message mentions reasoning_effort.
+        let err = api_err(
+            StatusCode::BAD_REQUEST,
+            "unknown parameter: reasoning_effort",
+        );
+        assert!(
+            !err.is_retryable(),
+            "400 is not retryable without the guard"
+        );
+        assert!(matches!(
+            classify_error(&err, 0, 5, RATE_LIMIT_RETRY_THRESHOLD),
+            RetryDecision::RetryWithEffortFallback
         ));
     }
 

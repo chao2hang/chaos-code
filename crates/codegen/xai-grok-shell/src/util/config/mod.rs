@@ -35,6 +35,8 @@ pub use xai_grok_config_types::{
 };
 
 /// Chaos-fork: no-op stub for auto-retry-incomplete-end-turn setting.
-pub async fn set_auto_retry_incomplete_end_turn(_enabled: bool) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn set_auto_retry_incomplete_end_turn(
+    _enabled: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }

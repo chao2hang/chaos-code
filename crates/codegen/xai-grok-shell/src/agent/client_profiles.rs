@@ -200,10 +200,7 @@ mod tests {
         let profile = by_id("workbuddy").expect("workbuddy profile");
         let mut config = SamplerConfig::default();
         profile.apply_to_sampling_config(&mut config);
-        assert_eq!(
-            config.user_agent.as_deref(),
-            profile.user_agent.as_deref()
-        );
+        assert_eq!(config.user_agent.as_deref(), profile.user_agent.as_deref());
         assert_eq!(config.client_identifier.as_deref(), Some("workbuddy"));
     }
 

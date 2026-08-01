@@ -592,6 +592,19 @@ impl ConversationRequest {
     /// model knows an image was there but the base64 blob is gone. This is
     /// used as a recovery strategy when the downstream API returns 413
     /// "Request Entity Too Large".
+    /// Strip `reasoning_effort` from the request so a retry can proceed
+    /// without the unsupported parameter. Returns `true` if effort was
+    /// present and has been removed, `false` if it was already `None`
+    /// (so the caller knows there's nothing to fall back from).
+    pub fn strip_reasoning_effort(&mut self) -> bool {
+        if self.reasoning_effort.is_some() {
+            self.reasoning_effort = None;
+            true
+        } else {
+            false
+        }
+    }
+
     pub fn strip_images(&mut self) -> usize {
         let mut stripped = 0usize;
         for item in &mut self.items {
