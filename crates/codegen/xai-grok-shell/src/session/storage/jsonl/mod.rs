@@ -666,11 +666,10 @@ impl JsonlStorageAdapter {
         };
         let mut entries: Vec<_> = std::fs::read_dir(&workflows_dir)?
             .filter_map(Result::ok)
-            .take(MAX_RESTORED_WORKFLOW_RUNS.saturating_add(1))
             .collect();
+        entries.sort_by_key(|entry| entry.file_name());
         let entries_truncated = entries.len() > MAX_RESTORED_WORKFLOW_RUNS;
         entries.truncate(MAX_RESTORED_WORKFLOW_RUNS);
-        entries.sort_by_key(|entry| entry.file_name());
         if entries_truncated {
             tracing::warn!(
                 path = %workflows_dir.display(),
