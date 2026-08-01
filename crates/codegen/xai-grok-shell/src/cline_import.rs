@@ -86,7 +86,10 @@ pub fn detect_cline_installs() -> Vec<ClineInstall> {
         .filter_map(|(editor, dir)| {
             let db = dir.join("state.vscdb");
             if db.is_file() {
-                Some(ClineInstall { editor, db_path: db })
+                Some(ClineInstall {
+                    editor,
+                    db_path: db,
+                })
             } else {
                 None
             }
@@ -161,8 +164,6 @@ pub fn read_cline_providers(db: &std::path::Path) -> Result<Vec<ClineProvider>, 
 
     Ok(parse_fields(&fields))
 }
-
-
 
 /// Turn the raw `cline_*` field map into provider channels. `raw` values are the
 /// JSON-encoded globalState bytes.
@@ -380,9 +381,6 @@ mod tests {
 
     #[test]
     fn detected_installs_have_existing_dbs() {
-        assert!(detect_cline_installs()
-            .iter()
-            .all(|i| i.db_path.is_file()));
+        assert!(detect_cline_installs().iter().all(|i| i.db_path.is_file()));
     }
 }
-

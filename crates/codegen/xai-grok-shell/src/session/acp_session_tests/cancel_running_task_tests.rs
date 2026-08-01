@@ -88,8 +88,8 @@ fn persist_ack_waits_for_disk_flush_before_success_inner() {
             compaction_at_tokens: None,
             doom_loop_recovery: None,
             header_injector: None,
-                user_agent: None,
-})
+            user_agent: None,
+        })
         .expect("sampling client should build for persistence actor");
         let persistence = crate::session::persistence::new_with_explicit_dir(
             &crate::session::info::Info {

@@ -223,6 +223,26 @@ impl SamplingError {
         )
     }
 
+    /// The API rejected the request because `reasoning_effort` (or the
+    /// equivalent `thinking` / `reasoning.effort` parameter) is not supported
+    /// by the model or provider. Typically a 400 with a message mentioning
+    /// the parameter name. Used to trigger an automatic fallback retry
+    /// without the effort parameter instead of aborting the whole turn.
+    pub fn is_reasoning_effort_error(&self) -> bool {
+        matches!(
+            self,
+            SamplingError::Api {
+                status: StatusCode::BAD_REQUEST,
+                message,
+                ..
+            } if message.contains("reasoning_effort")
+                || message.contains("reasoning.effort")
+                || message.contains("reasoning_effort is not supported")
+                || message.contains("unsupported parameter: reasoning")
+                || message.contains("unknown parameter: reasoning")
+        )
+    }
+
     /// The API rejected the request because an inline image could not be
     /// processed. Matches both direct 400 and proxy-wrapped 500 responses.
     /// Exact-case match — consistent with `is_encrypted_content_error`.

@@ -286,9 +286,7 @@ fn handle_add(state: &mut ProviderModalState, key: &KeyEvent) -> ProviderKeyOutc
                     state.current_step = FormStep::Name;
                     state.name.clear();
                     state.base_url.clear();
-                } else if state.has_cline_option()
-                    && state.selected == state.cline_option_idx()
-                {
+                } else if state.has_cline_option() && state.selected == state.cline_option_idx() {
                     // 从 Cline 导入
                     state.current_step = FormStep::ClinePick;
                     state.selected = 0;

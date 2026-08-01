@@ -9,6 +9,21 @@
 - Cline 通过 Electron `safeStorage` 加密的 API Key（`v1:` 密文）标记为 🔒已加密，选中后引导用户手动粘贴。
 - 全程只读打开 Cline 数据库（`SQLITE_OPEN_READ_ONLY`），不写回、不日志记录 Key。
 
+### #18 思考等级请求失败时自动回退重试
+
+- 当 provider 返回 400 且错误信息包含 `reasoning_effort` / `reasoning.effort` 时，自动移除 `reasoning_effort` 参数并重试，而不是中止整轮对话。
+- 在 `RetryDecision` 中新增 `RetryWithEffortFallback` 变体，在 `classify_error` 中检测相关 400 错误，在 `apply_retry_decision` 中执行 effort 剥离和重试。
+- 仅触发一次：如果重试仍然失败，则按原有 Fatal 逻辑处理。
+
+### #19 `/think` 作为 `/effort` 的别名
+
+- `/think` 已作为 `/effort` 命令的别名实现，两者行为完全一致。
+
+### #20 系统提示词品牌修正
+
+- 系统提示词模板从 `You are ${{ system_prompt_label }} released by xAI` 改为 `You are ${{ system_prompt_label }}, an AI coding assistant`，不再硬编码 "released by xAI"。
+- `DEFAULT_SYSTEM_PROMPT_LABEL` 从 `"Grok"` 改为 `"Chaos"`，使用非 Grok 模型时助手不再自称 Grok。
+
 ## 0.2.127
 
 ### 多客户端请求档案
