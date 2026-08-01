@@ -95,10 +95,10 @@ async fn set_client_profile(
         .map(str::trim)
         .filter(|ua| !ua.is_empty())
         .map(str::to_owned);
-    if let Some(ua) = &user_agent {
-        if ua.chars().count() > 256 || ua.chars().any(|c| c == '\r' || c == '\n' || c == '\0') {
-            return Err(acp::Error::invalid_params().data("invalid user agent"));
-        }
+    if let Some(ua) = &user_agent
+        && (ua.chars().count() > 256 || ua.chars().any(|c| c == '\r' || c == '\n' || c == '\0'))
+    {
+        return Err(acp::Error::invalid_params().data("invalid user agent"));
     }
 
     let session_id = acp::SessionId::new(params.session_id);

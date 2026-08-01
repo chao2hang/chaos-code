@@ -199,12 +199,7 @@ fn handle_add(state: &mut ProviderModalState, key: &KeyEvent) -> ProviderKeyOutc
         // List-style j/k nav is limited to Preset (and AuthScheme/ApiBackend
         // via handle_select_key on Char).
         KeyCode::Up => {
-            if state.current_step == FormStep::Preset {
-                if state.selected > 0 {
-                    state.selected -= 1;
-                }
-                ProviderKeyOutcome::Changed
-            } else if state.current_step == FormStep::ClinePick {
+            if matches!(state.current_step, FormStep::Preset | FormStep::ClinePick) {
                 if state.selected > 0 {
                     state.selected -= 1;
                 }

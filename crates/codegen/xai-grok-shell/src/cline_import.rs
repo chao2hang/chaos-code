@@ -202,39 +202,38 @@ fn parse_fields(fields: &HashMap<String, String>) -> Vec<ClineProvider> {
 
     // Custom providers defined by the user (array under customApiProviders).
     let mut out: Vec<ClineProvider> = Vec::new();
-    if let Some(custom_raw) = fields.get("customApiProviders") {
-        if let Ok(serde_json::Value::Array(arr)) =
+    if let Some(custom_raw) = fields.get("customApiProviders")
+        && let Ok(serde_json::Value::Array(arr)) =
             serde_json::from_str::<serde_json::Value>(custom_raw)
-        {
-            for item in arr {
-                let name = item
-                    .get("name")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("custom")
-                    .to_string();
-                let base = item
-                    .get("baseUrl")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                let key = item.get("apiKey").and_then(|v| v.as_str());
-                if base.is_empty() {
-                    continue;
-                }
-                let encrypted = key.is_some_and(|k| k.starts_with("v1:"));
-                out.push(ClineProvider {
-                    id: format!("cline-{}", slug(&name)),
-                    display: format!("Cline · {name}"),
-                    base_url: base,
-                    auth_scheme: "bearer".to_string(),
-                    api_backend: "chat_completions".to_string(),
-                    api_key: key
-                        .filter(|k| !k.is_empty() && !k.starts_with("v1:"))
-                        .map(|k| k.to_string()),
-                    model: None,
-                    key_encrypted: encrypted,
-                });
+    {
+        for item in arr {
+            let name = item
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("custom")
+                .to_string();
+            let base = item
+                .get("baseUrl")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let key = item.get("apiKey").and_then(|v| v.as_str());
+            if base.is_empty() {
+                continue;
             }
+            let encrypted = key.is_some_and(|k| k.starts_with("v1:"));
+            out.push(ClineProvider {
+                id: format!("cline-{}", slug(&name)),
+                display: format!("Cline · {name}"),
+                base_url: base,
+                auth_scheme: "bearer".to_string(),
+                api_backend: "chat_completions".to_string(),
+                api_key: key
+                    .filter(|k| !k.is_empty() && !k.starts_with("v1:"))
+                    .map(|k| k.to_string()),
+                model: None,
+                key_encrypted: encrypted,
+            });
         }
     }
 
