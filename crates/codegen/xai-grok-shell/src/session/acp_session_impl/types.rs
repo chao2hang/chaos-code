@@ -15,6 +15,7 @@ pub(crate) enum McpReminderMode {
 /// Recovery decision returned by
 /// `SessionActor::handle_sampling_failure` for the sampler-based
 /// turn loop.
+#[allow(clippy::enum_variant_names)]
 pub(crate) enum SamplerFailureRecovery {
     /// Compaction ran. The turn loop should rebuild the request from
     /// the compacted conversation and resubmit.
