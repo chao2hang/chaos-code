@@ -782,23 +782,26 @@ fn mapping_supplied_session_id_wins_and_sequence_increments() {
 
 #[test]
 fn identity_attrs_attached_when_set_and_blank_ids_never_export() {
-    let stream = build(gates_off());
-    super::set_identity_on(
-        &stream.ext,
-        super::IdentityAttrs {
-            user_id: Some("user-42".into()),
-            organization_id: Some(String::new()), // blank: must not export
-            team_id: None,
-            deployment_id: Some("dep-7".into()),
-        },
-    );
-    emit_event_into(&stream, &sentinel_session_harness());
-    let events = exported_events(&stream);
-    let ev = &events[0];
-    assert_eq!(attr(ev, "user.id").as_deref(), Some("user-42"));
-    assert_eq!(attr(ev, "deployment.id").as_deref(), Some("dep-7"));
-    assert_eq!(attr(ev, "organization.id"), None, "blank ids never export");
-    assert_eq!(attr(ev, "team.id"), None);
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let stream = build(gates_off());
+        super::set_identity_on(
+            &stream.ext,
+            super::IdentityAttrs {
+                user_id: Some("user-42".into()),
+                organization_id: Some(String::new()), // blank: must not export
+                team_id: None,
+                deployment_id: Some("dep-7".into()),
+            },
+        );
+        emit_event_into(&stream, &sentinel_session_harness());
+        let events = exported_events(&stream);
+        let ev = &events[0];
+        assert_eq!(attr(ev, "user.id").as_deref(), Some("user-42"));
+        assert_eq!(attr(ev, "deployment.id").as_deref(), Some("dep-7"));
+        assert_eq!(attr(ev, "organization.id"), None, "blank ids never export");
+        assert_eq!(attr(ev, "team.id"), None);
+    });
 }
 
 #[test]
