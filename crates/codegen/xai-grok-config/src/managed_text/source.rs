@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 use std::fs;
+use std::io;
 use std::path::{Component, Path, PathBuf};
 
 use super::{ManagedConfigError, ManagedConfigPlan};
@@ -60,7 +61,12 @@ impl ParentPlan {
                     }
                     chain.push(PathIdentity {
                         path: current.clone(),
-                        identity: FileIdentity::from_metadata(&metadata),
+                        identity: FileIdentity::from_path(&current).map_err(|source| {
+                            ManagedConfigError::Read {
+                                path: current.clone(),
+                                source,
+                            }
+                        })?,
                     });
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -113,9 +119,11 @@ impl ParentPlan {
         for expected in &self.existing_chain {
             let metadata = fs::symlink_metadata(&expected.path)
                 .map_err(|_| ManagedConfigError::ParentChanged(expected.path.clone()))?;
+            let identity = FileIdentity::from_path(&expected.path)
+                .map_err(|_| ManagedConfigError::ParentChanged(expected.path.clone()))?;
             if metadata.file_type().is_symlink()
                 || !metadata.is_dir()
-                || FileIdentity::from_metadata(&metadata) != expected.identity
+                || identity != expected.identity
             {
                 return Err(ManagedConfigError::ParentChanged(expected.path.clone()));
             }
@@ -127,7 +135,10 @@ impl ParentPlan {
 #[derive(Debug)]
 pub(super) struct ParentAnchor {
     path: PathBuf,
-    identity: FileIdentity,
+    identity: Option<FileIdentity>,
+    // Keep the directory open to pin the validated parent. Unix also uses it
+    // to flush the directory entry after an atomic config update.
+    #[cfg(unix)]
     directory: fs::File,
 }
 
@@ -140,14 +151,19 @@ impl ParentAnchor {
         if metadata.file_type().is_symlink() || !metadata.is_dir() {
             return Err(ManagedConfigError::ParentChanged(path.to_path_buf()));
         }
-        let directory = fs::File::open(path).map_err(|source| ManagedConfigError::Read {
-            path: path.to_path_buf(),
-            source,
-        })?;
+        let identity =
+            FileIdentity::from_path(path).map_err(|source| ManagedConfigError::Read {
+                path: path.to_path_buf(),
+                source,
+            })?;
         Ok(Self {
             path: path.to_path_buf(),
-            identity: FileIdentity::from_metadata(&metadata),
-            directory,
+            identity,
+            #[cfg(unix)]
+            directory: fs::File::open(path).map_err(|source| ManagedConfigError::Read {
+                path: path.to_path_buf(),
+                source,
+            })?,
         })
     }
 
@@ -179,38 +195,34 @@ impl ParentAnchor {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct PathIdentity {
     path: PathBuf,
-    identity: FileIdentity,
+    identity: Option<FileIdentity>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) struct FileIdentity {
-    #[cfg(unix)]
-    dev: u64,
-    #[cfg(unix)]
-    ino: u64,
-    #[cfg(not(unix))]
-    len: u64,
-    #[cfg(not(unix))]
-    modified: Option<std::time::SystemTime>,
-}
+pub(super) struct FileIdentity(file_id::FileId);
 
 impl FileIdentity {
-    fn from_metadata(metadata: &fs::Metadata) -> Self {
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::MetadataExt as _;
-            Self {
-                dev: metadata.dev(),
-                ino: metadata.ino(),
-            }
+    fn from_path(path: &Path) -> io::Result<Option<Self>> {
+        match file_id::get_file_id(path) {
+            Ok(identity) => Ok(Some(Self(identity))),
+            #[cfg(windows)]
+            Err(error) if error.kind() == io::ErrorKind::PermissionDenied => Ok(None),
+            Err(error) => Err(error),
         }
-        #[cfg(not(unix))]
-        {
-            Self {
-                len: metadata.len(),
-                modified: metadata.modified().ok(),
-            }
-        }
+    }
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn directory_identity_ignores_child_entry_updates() {
+        let temp = tempfile::tempdir().unwrap();
+        let before = FileIdentity::from_path(temp.path()).unwrap().unwrap();
+        fs::write(temp.path().join("child"), b"child").unwrap();
+        let after = FileIdentity::from_path(temp.path()).unwrap().unwrap();
+        assert_eq!(before, after);
     }
 }
 
@@ -382,7 +394,10 @@ pub(super) fn read_source(path: &Path) -> Result<SourceState, ManagedConfigError
         hash: blake3::hash(&bytes).to_hex().to_string(),
         bytes: Some(bytes),
         mode: file_mode(&metadata),
-        identity: Some(FileIdentity::from_metadata(&metadata)),
+        identity: FileIdentity::from_path(path).map_err(|source| ManagedConfigError::Read {
+            path: path.to_path_buf(),
+            source,
+        })?,
     })
 }
 

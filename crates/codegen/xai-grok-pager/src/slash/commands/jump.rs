@@ -1,5 +1,6 @@
 use crate::app::actions::Action;
 use crate::slash::command::{CommandExecCtx, CommandResult, SlashCommand};
+use crate::slash::mode_support::{ModeSupport, Remedy};
 
 pub struct JumpCommand;
 
@@ -20,6 +21,12 @@ impl SlashCommand for JumpCommand {
     /// terminal's own scrollback covers it (same gate as `/find`).
     fn available_in_minimal(&self) -> bool {
         false
+    }
+
+    fn mode_support(&self) -> ModeSupport {
+        ModeSupport::FullscreenOnly(Remedy::SwitchMode {
+            why: "minimal scrolls with your terminal's native scrollback",
+        })
     }
 
     fn usage(&self) -> &str {

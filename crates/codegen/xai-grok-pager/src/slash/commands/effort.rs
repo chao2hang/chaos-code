@@ -15,6 +15,10 @@ impl SlashCommand for EffortCommand {
         "effort"
     }
 
+    fn aliases(&self) -> &[&str] {
+        &["think"]
+    }
+
     fn description(&self) -> &str {
         "设置当前模型的推理强度"
     }
@@ -67,8 +71,8 @@ impl SlashCommand for EffortCommand {
             // Issue #14.3：裸 `/effort` 不再回 Usage 错误，改为列出当前
             // 模型可用等级 + 当前值。限制：尚无 popup picker，用户仍需
             // 手动键入 `/effort <level>`（文本引导，非交互选择器）。
-            // Issue #14.4：若模型不支持 reasoning effort，给出可操作的引导
-            // （告知在哪里加 `supports_reasoning_effort = true`）。
+            // Issue #14.4：若模型明确禁用 reasoning effort，给出可操作的
+            // 引导（告知在哪里开启）。缺失声明本身会走内置回退菜单。
             // Issue #14.5：回退菜单（provider 不返回 reasoningEfforts）
             // 附「等级为猜测」风险提示。
             if !ctx.models.available.contains_key(&model_id) {
@@ -85,9 +89,9 @@ impl SlashCommand for EffortCommand {
                 .unwrap_or_default();
 
             if offered.is_empty() {
-                // 模型在 catalog 中但未声明 supportsReasoningEffort。
+                // 模型在 catalog 中且明确禁用了 supportsReasoningEffort。
                 return CommandResult::Error(format!(
-                    "当前模型未声明 reasoning effort 支持。若该模型支持推理强度，请在 [model.<id>] 中设置 supports_reasoning_effort = true（并可选地用 reasoning_efforts = [...] 指定可用等级）。\n模型：{model_id}"
+                    "当前模型明确禁用 reasoning effort。若该模型支持推理强度，请在 [model.<id>] 中设置 supports_reasoning_effort = true（并可选地用 reasoning_efforts = [...] 指定可用等级）。\n模型：{model_id}"
                 ));
             }
 
@@ -204,7 +208,7 @@ mod tests {
             CommandResult::Message(msg) => {
                 assert!(msg.contains("/effort <"), "msg={msg}");
                 // Legacy menu option ids only — not none/minimal.
-                assert!(msg.contains("xhigh|high|medium|low"), "msg={msg}");
+                assert!(msg.contains("max|xhigh|high|medium|low"), "msg={msg}");
                 assert!(msg.contains("current: medium"), "msg={msg}");
                 assert!(!msg.contains("none"), "msg={msg}");
                 assert!(!msg.contains("minimal"), "msg={msg}");
@@ -246,7 +250,12 @@ mod tests {
     fn empty_args_on_unsupported_model_hints_to_enable_flag() {
         // Issue #14.4：不可发现时给引导。
         let mut state = ModelState::default();
-        let (id, info) = plain_model("plain-x", "Plain X");
+        let id = acp::ModelId::new(Arc::from("plain-x"));
+        let info = acp::ModelInfo::new(id.clone(), "Plain X".to_string()).meta(
+            serde_json::json!({ "supportsReasoningEffort": false })
+                .as_object()
+                .cloned(),
+        );
         state.available.insert(id.clone(), info);
         state.current = Some(id);
         let mut ctx = dummy_exec_ctx(&state);
@@ -289,6 +298,11 @@ mod tests {
     }
 
     #[test]
+    fn think_is_an_alias_for_effort() {
+        assert_eq!(EffortCommand.aliases(), &["think"]);
+    }
+
+    #[test]
     fn unknown_level_errors() {
         let mut state = ModelState::default();
         let (id, info) = model_with_reasoning("reasoning-x", "Reasoning X");
@@ -326,8 +340,25 @@ mod tests {
     }
 
     #[test]
+    fn unadvertised_model_accepts_max() {
+        let mut state = ModelState::default();
+        let (id, info) = plain_model("custom-x", "Custom X");
+        state.available.insert(id.clone(), info);
+        state.current = Some(id.clone());
+        let mut ctx = dummy_exec_ctx(&state);
+
+        match EffortCommand.run(&mut ctx, "max") {
+            CommandResult::Action(Action::SwitchModel { model_id, effort }) => {
+                assert_eq!(model_id, id);
+                assert_eq!(effort, Some(ReasoningEffort::Max));
+            }
+            other => panic!("expected unadvertised model to accept max, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn none_and_minimal_rejected_when_model_menu_omits_them() {
-        // Legacy fallback menu is low..xhigh — `none`/`minimal` used to pass
+        // Legacy fallback menu is max..low — `none`/`minimal` used to pass
         // through and 400 on grok-4.5; reject at the TUI instead.
         let mut state = ModelState::default();
         let (id, info) = model_with_reasoning("reasoning-x", "Reasoning X");
@@ -415,7 +446,12 @@ mod tests {
     #[test]
     fn non_reasoning_model_errors() {
         let mut state = ModelState::default();
-        let (id, info) = plain_model("grok-4.5", "Grok 4.5");
+        let id = acp::ModelId::new(Arc::from("grok-4.5"));
+        let info = acp::ModelInfo::new(id.clone(), "Grok 4.5".to_string()).meta(
+            serde_json::json!({ "supportsReasoningEffort": false })
+                .as_object()
+                .cloned(),
+        );
         state.available.insert(id.clone(), info);
         state.current = Some(id);
         let mut ctx = dummy_exec_ctx(&state);
@@ -451,7 +487,12 @@ mod tests {
         assert!(cmd.suggest_args(&ctx, "").is_none());
 
         let mut plain = ModelState::default();
-        let (id, info) = plain_model("grok-4.5", "Grok 4.5");
+        let id = acp::ModelId::new(Arc::from("grok-4.5"));
+        let info = acp::ModelInfo::new(id.clone(), "Grok 4.5".to_string()).meta(
+            serde_json::json!({ "supportsReasoningEffort": false })
+                .as_object()
+                .cloned(),
+        );
         plain.available.insert(id.clone(), info);
         plain.current = Some(id);
         let ctx = AppCtx {
@@ -484,12 +525,13 @@ mod tests {
         };
         let items = cmd.suggest_args(&ctx, "").unwrap();
         assert_eq!(items.len(), EFFORT_LEVELS.len());
-        assert_eq!(items[0].insert_text, "xhigh");
-        assert_eq!(items[1].insert_text, "high");
-        assert_eq!(items[1].display, "high (active)");
-        assert_eq!(items[2].insert_text, "medium");
-        assert_eq!(items[3].insert_text, "low");
+        assert_eq!(items[0].insert_text, "max");
+        assert_eq!(items[1].insert_text, "xhigh");
+        assert_eq!(items[2].insert_text, "high");
+        assert_eq!(items[2].display, "high (active)");
+        assert_eq!(items[3].insert_text, "medium");
+        assert_eq!(items[4].insert_text, "low");
         assert!(items[0].match_text.starts_with("a "));
-        assert!(items[3].match_text.starts_with("d "));
+        assert!(items[4].match_text.starts_with("e "));
     }
 }

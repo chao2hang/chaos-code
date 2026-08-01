@@ -174,6 +174,8 @@ pub const PROVIDER_PRESETS: &[ProviderPreset] = &[
 pub enum FormStep {
     /// 预设选择（第一步，仅 `Add`）。
     Preset,
+    /// 从 Cline 导入：选择检测到的 Cline 渠道（仅 `Add`，有候选时出现）。
+    ClinePick,
     /// 渠道名称（仅自定义预设添加时出现；`Edit` 不改名）。
     Name,
     BaseUrl,
@@ -187,6 +189,7 @@ impl FormStep {
     pub fn label(self) -> &'static str {
         match self {
             Self::Preset => "选择预设",
+            Self::ClinePick => "从 Cline 导入",
             Self::Name => "渠道名称",
             Self::BaseUrl => "Base URL",
             Self::AuthScheme => "认证方式",
@@ -221,9 +224,6 @@ pub enum ProviderModalMode {
     /// 二次确认删除某个渠道。Issue #13。
     ConfirmingDelete(String),
 }
-
-/// 后台模型拉取线程回传的结果。
-pub type ModelsFetchResult = Result<Vec<crate::slash::commands::provider::ModelEntry>, String>;
 
 /// 输入事件的输出。
 #[derive(Debug)]
@@ -293,8 +293,8 @@ pub struct ProviderModalState {
     pub list_viewport: usize,
     /// `List` 模式下读取的渠道条目。
     pub providers: Vec<ProviderSummary>,
-    /// 后台模型拉取线程的接收端；`None` = 无进行中的拉取。
-    pub models_rx: Option<std::sync::mpsc::Receiver<ModelsFetchResult>>,
+    /// `Add` 模式下检测到的 Cline 可导入渠道（空=未安装或无可读配置）。
+    pub cline_candidates: Vec<xai_grok_shell::cline_import::ClineProvider>,
 }
 
 /// `/provider list` 显示的一行渠道摘要。
@@ -312,6 +312,11 @@ impl ProviderModalState {
     /// 构造指定模式的新状态。
     pub fn new(mode: ProviderModalMode) -> Self {
         let from_hub = matches!(mode, ProviderModalMode::List);
+        // Only scan for Cline when entering Add mode — avoids I/O for List/Edit/etc.
+        let cline_candidates = match &mode {
+            ProviderModalMode::Add => xai_grok_shell::cline_import::list_cline_providers(),
+            _ => Vec::new(),
+        };
         Self {
             window: ModalWindowState::new(),
             mode,
@@ -340,7 +345,7 @@ impl ProviderModalState {
             scroll_offset: 0,
             list_viewport: 0,
             providers: Vec::new(),
-            models_rx: None,
+            cline_candidates,
         }
     }
 
@@ -501,6 +506,21 @@ impl ProviderModalState {
         self.selected >= self.providers.len()
     }
 
+    /// 预设列表是否有「从 Cline 导入」选项。
+    pub fn has_cline_option(&self) -> bool {
+        !self.cline_candidates.is_empty()
+    }
+
+    /// 预设列表总行数：预设 + 自定义 + 可选 Cline 项。
+    pub fn preset_row_count(&self) -> usize {
+        PROVIDER_PRESETS.len() + 1 + if self.has_cline_option() { 1 } else { 0 }
+    }
+
+    /// 「从 Cline 导入」在预设列表中的下标（仅当 `has_cline_option` 为 true 时有效）。
+    pub fn cline_option_idx(&self) -> usize {
+        PROVIDER_PRESETS.len() + 1
+    }
+
     /// 重新加载渠道列表（hub 返回时）。
     pub fn reload_providers(&mut self) {
         self.error = None;
@@ -550,13 +570,11 @@ impl ProviderModalState {
         }
     }
 
-    /// 在后台线程拉取模型列表（HTTP 最多 15 秒），不阻塞 UI。
+    /// 拉取并填充模型列表。
     ///
-    /// 旧实现同步执行 `curl`，打开「查看模型 / 切换模型」会冻结整个界面，
-    /// `models_loading` 提示永远渲染不出来。现在：置 loading → 起线程 →
-    /// [`Self::poll_models_fetch`]（每次渲染调用）收结果并落地。
-    /// 结果落地时把整表写入 config 的 `[model."provider/id"]`，这样 `/model`
-    /// 在仅「查看可用模型」后也能列出渠道模型。
+    /// 成功后把整表写入 config 的 `[model."provider/id"]`，这样 `/model` 在
+    /// 仅「查看可用模型」后也能列出渠道模型。若配置尚无默认模型，则把第一项
+    /// 设为 default（用户在「切换模型」里 Enter 仍会覆盖为选中项）。
     pub fn load_models_for(&mut self, name: &str) {
         self.models_loading = true;
         self.models.clear();
@@ -566,43 +584,7 @@ impl ProviderModalState {
         self.error = None;
         self.selected = 0;
         self.scroll_offset = 0;
-        let (tx, rx) = std::sync::mpsc::channel();
-        // 覆盖旧接收端即丢弃过期拉取：晚到的 send 落空，结果被忽略。
-        self.models_rx = Some(rx);
-        let provider = name.to_string();
-        std::thread::spawn(move || {
-            let result = crate::slash::commands::provider::fetch_provider_models(&provider);
-            let _ = tx.send(result);
-        });
-    }
-
-    /// 收割后台模型拉取结果；返回 `true` 表示状态有变化。
-    ///
-    /// 每次渲染调用（模态可见即被渲染；loading 期间由 tick 驱动重绘）。
-    pub fn poll_models_fetch(&mut self) -> bool {
-        let Some(rx) = &self.models_rx else {
-            return false;
-        };
-        let result = match rx.try_recv() {
-            Ok(result) => result,
-            Err(std::sync::mpsc::TryRecvError::Empty) => return false,
-            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                self.models_rx = None;
-                self.models_loading = false;
-                self.error = Some("模型拉取线程异常退出".into());
-                return true;
-            }
-        };
-        self.models_rx = None;
-        self.models_loading = false;
-        let name = match &self.mode {
-            ProviderModalMode::Models(n)
-            | ProviderModalMode::SetModel(n)
-            | ProviderModalMode::ConfigureModel(n) => n.clone(),
-            // 结果到达时已离开模型相关模式（go_* 均清 rx，正常到不了这里）。
-            _ => return true,
-        };
-        match result {
+        match crate::slash::commands::provider::fetch_provider_models(name) {
             Ok(entries) => {
                 // Register into catalog while we have the list. Failures are
                 // non-fatal for the modal (user can still browse the in-memory list).
@@ -613,7 +595,7 @@ impl ProviderModalState {
                     .unwrap_or(false);
                 let first_id = entries.first().map(|e| e.id.clone());
                 let registered = crate::slash::commands::provider::register_provider_models(
-                    &name,
+                    name,
                     &entries,
                     if need_default {
                         first_id.as_deref()
@@ -634,20 +616,15 @@ impl ProviderModalState {
                 // 会话 catalog 注入都复用，避免只写 id 再丢 meta。
                 self.models = entries.iter().map(|e| e.id.clone()).collect();
                 self.models_meta = entries.into_iter().map(|e| e.meta).collect();
+                self.models_loading = false;
                 // 仅在 config 写入成功时请求会话 catalog 同步。
                 self.models_need_catalog_sync = registered.is_ok();
             }
             Err(e) => {
-                // ConfigureModel 允许手写 ID：不设 error，渲染层显示
-                // 「可在搜索框输入模型 ID」的提示。
-                if matches!(self.mode, ProviderModalMode::ConfigureModel(_)) {
-                    self.models.clear();
-                } else {
-                    self.error = Some(e);
-                }
+                self.error = Some(e);
+                self.models_loading = false;
             }
         }
-        true
     }
 
     /// 清空模型参数表单字段。
@@ -741,7 +718,6 @@ impl ProviderModalState {
         self.clear_model_params();
         self.edit_had_key = false;
         self.models_loading = false;
-        self.models_rx = None;
         self.current_step = FormStep::Preset;
         self.selected = self.selected.min(self.list_row_count().saturating_sub(1));
         self.reload_providers();
@@ -764,7 +740,6 @@ impl ProviderModalState {
         self.manual_model_id.clear();
         self.clear_model_params();
         self.models_loading = false;
-        self.models_rx = None;
         self.selected = 0;
         self.scroll_offset = 0;
     }
@@ -781,6 +756,7 @@ impl ProviderModalState {
         self.edit_had_key = false;
         self.current_step = FormStep::Preset;
         self.selected = 0;
+        self.cline_candidates = xai_grok_shell::cline_import::list_cline_providers();
     }
 
     /// 从 config.toml 预填编辑表单字段（base_url / auth_scheme / api_backend /
@@ -853,14 +829,12 @@ impl ProviderModalState {
     }
 
     /// 打开「配置模型参数」：先选/搜模型，再填参数。
-    ///
-    /// Issue #16：不再调用 `load_models_for` 发起 HTTP 拉取——配置参数
-    /// 只需手动输入模型 ID 即可，无需先列出远端模型。
     pub fn go_configure_model(&mut self, name: String) {
         self.mode = ProviderModalMode::ConfigureModel(name.clone());
         self.clear_messages();
         self.clear_model_params();
         self.manual_model_id.clear();
+        self.load_models_for(&name);
     }
 
     /// 打开「确认删除渠道」对话框。
@@ -909,60 +883,6 @@ impl ProviderModalState {
         }
     }
 
-    /// 多步表单内后退一步（Shift+Tab / Esc 共用）。
-    ///
-    /// 返回 `true` 表示确实后退了一步；`false` 表示已在该模式的第一步
-    /// （由调用方决定是回上级菜单还是保持不动）。
-    pub fn form_step_back(&mut self) -> bool {
-        match &self.mode {
-            ProviderModalMode::Add => {
-                if self.current_step == FormStep::Preset {
-                    return false;
-                }
-                // 预设快捷路径：选预设后跳过 Name/… 直达 ApiKey 时，
-                // 从 ApiKey 一键回到预设列表。
-                let from_preset = PROVIDER_PRESETS.iter().any(|p| p.name == self.name)
-                    && !self.base_url.is_empty()
-                    && self.current_step == FormStep::ApiKey;
-                self.current_step = if from_preset {
-                    FormStep::Preset
-                } else {
-                    match self.current_step {
-                        FormStep::Name => FormStep::Preset,
-                        FormStep::BaseUrl => FormStep::Name,
-                        FormStep::AuthScheme => FormStep::BaseUrl,
-                        FormStep::ApiBackend => FormStep::AuthScheme,
-                        FormStep::ApiKey => FormStep::ApiBackend,
-                        FormStep::Preset => FormStep::Preset,
-                    }
-                };
-                self.error = None;
-                true
-            }
-            ProviderModalMode::Edit(_) => {
-                let prev = match self.current_step {
-                    FormStep::AuthScheme => FormStep::BaseUrl,
-                    FormStep::ApiBackend => FormStep::AuthScheme,
-                    FormStep::ApiKey => FormStep::ApiBackend,
-                    _ => return false,
-                };
-                self.current_step = prev;
-                self.error = None;
-                true
-            }
-            ProviderModalMode::ManualModel(_) | ProviderModalMode::ConfigureModel(_) => {
-                // 参数步骤内回退字段；再退回 ID 输入 / 模型选择阶段。
-                let Some(field) = self.model_param_field else {
-                    return false;
-                };
-                self.model_param_field = field.prev();
-                self.error = None;
-                true
-            }
-            _ => false,
-        }
-    }
-
     /// Esc 逐级返回；返回 true 表示应关闭模态框。
     ///
     /// 多步表单内始终先退一步（不依赖 `from_hub`）。仅在该层级的「根」
@@ -970,9 +890,6 @@ impl ProviderModalState {
     pub fn navigate_back(&mut self) -> bool {
         if self.success.is_some() {
             self.success = None;
-        }
-        if self.form_step_back() {
-            return false;
         }
         match self.mode.clone() {
             ProviderModalMode::List => true,
@@ -992,6 +909,35 @@ impl ProviderModalState {
                 false
             }
             ProviderModalMode::Add => {
+                if self.current_step != FormStep::Preset {
+                    // 预设快捷路径：选预设后跳过 Name/… 直达 ApiKey 时，
+                    // 从 ApiKey 一键回到预设列表。
+                    let from_preset = PROVIDER_PRESETS.iter().any(|p| p.name == self.name)
+                        && !self.base_url.is_empty()
+                        && self.current_step == FormStep::ApiKey;
+                    self.current_step = if from_preset {
+                        FormStep::Preset
+                    } else {
+                        match self.current_step {
+                            FormStep::ClinePick => FormStep::Preset,
+                            FormStep::Name => FormStep::Preset,
+                            FormStep::BaseUrl => FormStep::Name,
+                            FormStep::AuthScheme => FormStep::BaseUrl,
+                            FormStep::ApiBackend => FormStep::AuthScheme,
+                            FormStep::ApiKey => FormStep::ApiBackend,
+                            FormStep::Preset => FormStep::Preset,
+                        }
+                    };
+                    self.error = None;
+                    // Returning from ClinePick → reset selection to the Cline row.
+                    if self.current_step == FormStep::Preset {
+                        let cline_idx = PROVIDER_PRESETS.len() + 1;
+                        if !self.cline_candidates.is_empty() && self.selected >= cline_idx {
+                            self.selected = cline_idx;
+                        }
+                    }
+                    return false;
+                }
                 if self.from_hub {
                     self.go_list();
                     false
@@ -999,9 +945,62 @@ impl ProviderModalState {
                     true
                 }
             }
-            ProviderModalMode::Edit(name)
-            | ProviderModalMode::ManualModel(name)
-            | ProviderModalMode::ConfigureModel(name) => {
+            ProviderModalMode::Edit(name) => {
+                // 编辑步骤内逐级回退；首步再决定回操作菜单或关闭。
+                match self.current_step {
+                    FormStep::AuthScheme => {
+                        self.current_step = FormStep::BaseUrl;
+                        self.error = None;
+                        return false;
+                    }
+                    FormStep::ApiBackend => {
+                        self.current_step = FormStep::AuthScheme;
+                        self.error = None;
+                        return false;
+                    }
+                    FormStep::ApiKey => {
+                        self.current_step = FormStep::ApiBackend;
+                        self.error = None;
+                        return false;
+                    }
+                    _ => {}
+                }
+                if self.from_hub {
+                    self.go_actions(name);
+                    false
+                } else {
+                    true
+                }
+            }
+            ProviderModalMode::ManualModel(name) => {
+                // 参数步骤内回退字段；回到 ID 输入；再退出模式。
+                if let Some(field) = self.model_param_field {
+                    if let Some(prev) = field.prev() {
+                        self.model_param_field = Some(prev);
+                    } else {
+                        self.model_param_field = None;
+                    }
+                    self.error = None;
+                    return false;
+                }
+                if self.from_hub {
+                    self.go_actions(name);
+                    false
+                } else {
+                    true
+                }
+            }
+            ProviderModalMode::ConfigureModel(name) => {
+                if let Some(field) = self.model_param_field {
+                    if let Some(prev) = field.prev() {
+                        self.model_param_field = Some(prev);
+                    } else {
+                        // 离开参数表单，回到模型选择（保留已选 model id）
+                        self.model_param_field = None;
+                    }
+                    self.error = None;
+                    return false;
+                }
                 if self.from_hub {
                     self.go_actions(name);
                     false

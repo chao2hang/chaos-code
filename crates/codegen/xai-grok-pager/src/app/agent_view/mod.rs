@@ -709,6 +709,9 @@ impl ParkedMarkerSlot {
 }
 pub struct AgentView {
     pub session: AgentSession,
+    /// Pager-side mirror of the request-client profile selected for this
+    /// conversation. The shell actor is authoritative for live requests.
+    pub client_profile: Option<xai_grok_shell::agent::client_profiles::ClientProfile>,
     pub scrollback: ScrollbackState,
     pub prompt: PromptWidget,
     /// Sticky: once the user types in the prompt, hide the tip for the session.
@@ -833,10 +836,6 @@ pub struct AgentView {
     pub(crate) modal_hovered_key: Option<char>,
     /// Cached server-reported context state.
     pub context_state: Option<xai_grok_shell::session::ContextInfo>,
-    /// Maximum `totalTokens` value seen from server `_meta` so far.
-    /// Treated as the live accumulated token consumption for the session;
-    /// never decreases so compaction does not regress the displayed total.
-    pub max_total_tokens_seen: u64,
     /// Gateway light-frontend session (`kind: "chat"` / `--chat` / conversation
     /// resume). Suppresses Build credits / local sampler context telemetry so the
     /// status bar and prompt never imply remote usage from wrong metrics.
@@ -879,12 +878,6 @@ pub struct AgentView {
     /// Toggled by `Action::ToggleGoalDetail`. Only shown when
     /// `goal_state` is `Some`.
     pub show_goal_detail: bool,
-    /// Token-usage detail overlay, opened by clicking the accumulated-token
-    /// chip in the status bar. `None` = closed. The ledger arrives
-    /// asynchronously, so this holds `Loading` while the fetch is in flight —
-    /// which is also what routes the result to the overlay instead of the
-    /// `/usage` scrollback block.
-    pub usage_detail: Option<crate::views::usage_detail::UsageDetail>,
     /// UTC ms when the current turn started (`turnStartMs` from notification meta).
     /// Used for turn elapsed display.
     pub turn_start_ms: Option<i64>,
@@ -1046,10 +1039,6 @@ pub struct AgentView {
     pub hit_bg_status: HitArea,
     pub hit_goal_status: HitArea,
     pub hit_goal_close: HitArea,
-    /// Accumulated-token chip in the status bar (click opens `usage_detail`).
-    pub hit_total_tokens: HitArea,
-    /// `[✗]` close button on the token-usage detail overlay.
-    pub hit_usage_close: HitArea,
     pub hit_bg_button: HitArea,
     #[allow(dead_code)]
     pub(crate) last_bg_click: Option<Instant>,
@@ -1528,6 +1517,13 @@ pub struct AgentView {
         agent_client_protocol::SessionUpdate,
         crate::acp::meta::NotificationMeta,
     )>,
+    /// Accumulated-token chip in the status bar (click opens `usage_detail`).
+    pub hit_total_tokens: HitArea,
+    pub hit_usage_close: HitArea,
+    /// Full-screen usage overlay; `Some` while open.
+    pub usage_detail: Option<crate::views::usage_detail::UsageDetail>,
+    /// Largest total-token count seen across turns (drives the status chip).
+    pub max_total_tokens_seen: u64,
 }
 /// Cap on [`AgentView::self_originated_prompt_ids`]. Only recent ids matter (a
 /// stale post-rewind chunk arrives right after its turn ends), so a small
@@ -1972,6 +1968,98 @@ pub(super) fn apply_settings_outcome(
     }
 }
 
+/// Apply keyboard outcomes from the `/client` profile manager.
+///
+/// Profile CRUD is local TOML editing and is deliberately performed before
+/// returning to the event loop. Selecting a profile is different: it must be
+/// sent through ACP so the shell actor changes the identity used by future
+/// turns without restarting the session.
+pub(super) fn apply_client_outcome(
+    agent: &mut AgentView,
+    outcome: crate::views::client_modal::ClientKeyOutcome,
+) -> InputOutcome {
+    use crate::views::client_modal::ClientKeyOutcome;
+
+    match outcome {
+        ClientKeyOutcome::Close => {
+            agent.active_modal = None;
+            InputOutcome::Changed
+        }
+        ClientKeyOutcome::Changed => InputOutcome::Changed,
+        ClientKeyOutcome::Unchanged => InputOutcome::Unchanged,
+        ClientKeyOutcome::Select(profile) => {
+            if agent.session.session_id.is_none() {
+                if let Some(crate::views::modal::ActiveModal::ClientModal { state }) =
+                    &mut agent.active_modal
+                {
+                    state.error = Some("当前会话尚未准备好，暂时不能切换客户端".into());
+                }
+                return InputOutcome::Changed;
+            }
+            agent.active_modal = None;
+            InputOutcome::Action(crate::app::actions::Action::SetClientProfile { profile })
+        }
+        ClientKeyOutcome::Commit {
+            profile,
+            editing_id,
+        } => {
+            let result = crate::slash::commands::client::upsert_custom_client(
+                &profile,
+                editing_id.as_deref(),
+            );
+            if let Some(crate::views::modal::ActiveModal::ClientModal { state }) =
+                &mut agent.active_modal
+            {
+                match result {
+                    Ok(saved) => {
+                        state.mode = crate::views::client_modal::ClientModalMode::List;
+                        state.reload_profiles();
+                        state.select_id(&saved.id);
+                        state.success = Some(format!("已保存客户端：{}", saved.name));
+                    }
+                    Err(error) => state.error = Some(error),
+                }
+            }
+            InputOutcome::Changed
+        }
+        ClientKeyOutcome::SetDefault(id) => {
+            let result = crate::slash::commands::client::set_default_client(&id);
+            if let Some(crate::views::modal::ActiveModal::ClientModal { state }) =
+                &mut agent.active_modal
+            {
+                match result {
+                    Ok(_) => {
+                        state.default_id = Some(id.clone());
+                        state.success = Some(format!("已将 {id} 设为默认客户端"));
+                    }
+                    Err(error) => state.error = Some(error),
+                }
+            }
+            InputOutcome::Changed
+        }
+        ClientKeyOutcome::Delete(id) => {
+            let result = crate::slash::commands::client::delete_custom_client(&id);
+            if let Some(crate::views::modal::ActiveModal::ClientModal { state }) =
+                &mut agent.active_modal
+            {
+                match result {
+                    Ok(()) => {
+                        state.mode = crate::views::client_modal::ClientModalMode::List;
+                        state.reload_profiles();
+                        state.selected = state.selected.min(state.profiles.len().saturating_sub(1));
+                        state.success = Some(format!("已删除客户端：{id}"));
+                    }
+                    Err(error) => {
+                        state.mode = crate::views::client_modal::ClientModalMode::List;
+                        state.error = Some(error);
+                    }
+                }
+            }
+            InputOutcome::Changed
+        }
+    }
+}
+
 pub(super) fn apply_provider_outcome(
     agent: &mut AgentView,
     outcome: crate::views::provider_modal::ProviderKeyOutcome,
@@ -2176,14 +2264,13 @@ fn model_info_meta_from_config_item(
     let table = item.as_table()?;
     let mut map = serde_json::Map::new();
 
-    let supports = table
+    if let Some(supports) = table
         .get("supports_reasoning_effort")
         .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    if supports {
+    {
         map.insert(
             SUPPORTS_REASONING_EFFORT_META_KEY.to_string(),
-            serde_json::Value::Bool(true),
+            serde_json::Value::Bool(supports),
         );
     }
 

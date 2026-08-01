@@ -4,12 +4,13 @@ use xai_grok_sampling_types::{ReasoningEffort, ReasoningEffortOption};
 
 use crate::session::unified_list::SessionKind;
 
-pub(crate) const SELECTABLE_REASONING_EFFORTS: [ReasoningEffort; 5] = [
+pub(crate) const SELECTABLE_REASONING_EFFORTS: [ReasoningEffort; 6] = [
     ReasoningEffort::Minimal,
     ReasoningEffort::Low,
     ReasoningEffort::Medium,
     ReasoningEffort::High,
     ReasoningEffort::Xhigh,
+    ReasoningEffort::Max,
 ];
 
 #[derive(Debug, Clone, Serialize)]
@@ -65,7 +66,7 @@ fn effort_label(effort: ReasoningEffort) -> String {
 }
 
 /// The built-in session-picker modes used when the model has no server list.
-/// Reproduces the historical five rows and their labels.
+/// Reproduces the historical rows and adds the `Max` level.
 pub(crate) fn legacy_session_effort_options() -> Vec<ReasoningEffortOption> {
     SELECTABLE_REASONING_EFFORTS
         .iter()

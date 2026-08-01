@@ -4,31 +4,10 @@
 .claude_consciousness.m8
 .omo/
 
-# --- Local-artifact guards -------------------------------------------------
-# e9d8fa9 committed 24 Windows process environment dumps into the pager crate:
-# a WSL-side tool wrote Win32 paths verbatim, so `C:\Users\...\Temp\.tmpXXXX`
-# landed as a *literal filename* in the repo root of that crate and `git add -A`
-# swept it up. The dumps contained live API keys. Block the shape, not the
-# instance — none of these patterns can ever match real source.
-**/C:*
-**/*Temp.tmp*
-**/.tmp[A-Za-z0-9]*
-**/env.txt
-**/*env.txt
+# Local WSL / probing scripts kept out of history
+.wsl_*.sh
 
-# Environment files. .env.example is the documented template and stays tracked.
-.env
-.env.*
-!.env.example
-
-# Credential material. Nothing in this workspace legitimately carries these
-# extensions; a match is an accident, not a build input.
-*.pem
-*.p12
-*.pfx
-*.jks
-id_rsa
-id_ed25519
-credentials.json
-auth.json
-.npmrc
+# Windows-path leaked temp artifacts (accidental redirect targets)
+# The colon-looking char is U+F03A (PUA), produced by some Windows shell
+# quirk that replaced ':' when a Windows path became a filename.
+**/CUsers*

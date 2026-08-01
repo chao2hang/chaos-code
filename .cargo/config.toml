@@ -65,10 +65,32 @@ rustflags = [
 ]
 
 [target.x86_64-pc-windows-msvc]
-rustflags = ["-C", "force-unwind-tables=yes", "-C", "target-feature=+crt-static"]
+# This workspace exceeds the MSVC PDB record limit even with profile debuginfo
+# disabled; keep Windows links from materializing a PDB at all.
+# The async CLI dispatch future also exceeds the default Windows main-thread
+# stack in this workspace; reserve 8 MiB for normal command startup.
+rustflags = [
+    "-C",
+    "force-unwind-tables=yes",
+    "-C",
+    "target-feature=+crt-static",
+    "-C",
+    "link-arg=/DEBUG:NONE",
+    "-C",
+    "link-arg=/STACK:8388608",
+]
 
 [target.aarch64-pc-windows-msvc]
-rustflags = ["-C", "force-unwind-tables=yes", "-C", "target-feature=+crt-static"]
+rustflags = [
+    "-C",
+    "force-unwind-tables=yes",
+    "-C",
+    "target-feature=+crt-static",
+    "-C",
+    "link-arg=/DEBUG:NONE",
+    "-C",
+    "link-arg=/STACK:8388608",
+]
 
 
 # jemalloc page size for Apple Silicon (macOS aarch64 uses 16KB pages = 2^14).

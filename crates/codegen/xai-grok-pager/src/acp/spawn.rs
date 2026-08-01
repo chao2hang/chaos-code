@@ -3,8 +3,10 @@
 //! Simplified to only support GrokShell (in-process) mode.
 //! Subprocess and remote modes can be added later if needed.
 
+use std::io::IsTerminal;
 use std::rc::Rc;
 use std::thread;
+use std::time::Duration;
 
 use anyhow::Result;
 use tokio_util::sync::CancellationToken;
@@ -19,15 +21,138 @@ use xai_grok_shell::{
     util::grok_home::grok_home,
 };
 
+/// Session actors receive this much time to persist SessionEnd hooks and memory.
+const SESSION_FLUSH_GRACE: Duration = Duration::from_secs(10);
+
+/// Extra time for the worker runtime to unwind after the session flush.
+const AGENT_JOIN_SLACK: Duration = Duration::from_secs(2);
+
+/// Keep ordinary fast shutdowns silent, but explain a visibly slow terminal exit.
+const JOIN_NOTICE_AFTER: Duration = Duration::from_millis(1500);
+
 /// Result of spawning a child agent.
 pub struct SpawnedAgent {
-    /// Kept alive so the thread isn't detached. Will be used for graceful shutdown.
-    pub _thread_handle: thread::JoinHandle<Result<()>>,
+    /// Agent worker OS thread. Hand to [`AgentShutdownGuard`] so shutdown can
+    /// cancel and join the worker on every headless exit path.
+    pub thread_handle: thread::JoinHandle<Result<()>>,
     pub channel: AcpClientChannel,
     pub cancel: CancellationToken,
     /// The agent's `AuthManager`, shared so pager-side consumers (e.g. the voice
     /// channel) resolve the same refreshing bearer as chat traffic.
     pub auth_manager: std::sync::Arc<AuthManager>,
+}
+
+/// The single teardown mechanism for a local ACP worker.
+///
+/// Direct agent callers retain this guard after [`spawn_grok_shell`]. Connection
+/// setup also uses it temporarily for either the in-process agent or leader IPC
+/// bridge, then transfers the worker to the successful connection. Normal
+/// returns, `?` exits, and panic unwinds all cancel and join the owned worker.
+pub struct AgentShutdownGuard {
+    cancel: Option<CancellationToken>,
+    thread: Option<thread::JoinHandle<Result<()>>>,
+}
+
+impl AgentShutdownGuard {
+    pub fn new(cancel: CancellationToken, thread: Option<thread::JoinHandle<Result<()>>>) -> Self {
+        Self {
+            cancel: Some(cancel),
+            thread,
+        }
+    }
+
+    /// Transfer the worker to a longer-lived owner without cancelling it.
+    ///
+    /// This is used while constructing an ACP connection: the temporary guard
+    /// protects initialization error paths, then hands the worker to the
+    /// returned connection once initialization succeeds.
+    pub fn into_thread(mut self) -> Option<thread::JoinHandle<Result<()>>> {
+        self.cancel.take();
+        self.thread.take()
+    }
+}
+
+impl Drop for AgentShutdownGuard {
+    fn drop(&mut self) {
+        let Some(cancel) = self.cancel.take() else {
+            return;
+        };
+        cancel.cancel();
+        let Some(handle) = self.thread.take() else {
+            return;
+        };
+        let timeout = SESSION_FLUSH_GRACE + AGENT_JOIN_SLACK;
+        match join_agent_thread(handle, timeout) {
+            JoinOutcome::Joined => {}
+            JoinOutcome::Failed(error) => {
+                tracing::warn!(%error, "agent worker exited with error after cancel");
+            }
+            JoinOutcome::Panicked(panic) => {
+                tracing::warn!(%panic, "agent worker panicked after cancel");
+            }
+            JoinOutcome::TimedOut => {
+                tracing::warn!(
+                    timeout_ms = timeout.as_millis() as u64,
+                    "agent worker did not exit within grace after cancel; session hooks may be incomplete"
+                );
+            }
+            JoinOutcome::HelperLost => {
+                tracing::warn!("agent worker join helper disappeared; proceeding");
+            }
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum JoinOutcome {
+    Joined,
+    Failed(String),
+    Panicked(String),
+    TimedOut,
+    HelperLost,
+}
+
+fn join_agent_thread(handle: thread::JoinHandle<Result<()>>, timeout: Duration) -> JoinOutcome {
+    use std::sync::mpsc::RecvTimeoutError;
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    thread::spawn(move || {
+        let _ = tx.send(handle.join());
+    });
+
+    let quiet = timeout.min(JOIN_NOTICE_AFTER);
+    match rx.recv_timeout(quiet) {
+        Ok(result) => return classify_join(result),
+        Err(RecvTimeoutError::Timeout) => {
+            if std::io::stderr().is_terminal() {
+                eprintln!("正在完成会话收尾...");
+            }
+        }
+        Err(RecvTimeoutError::Disconnected) => return JoinOutcome::HelperLost,
+    }
+    match rx.recv_timeout(timeout.saturating_sub(quiet)) {
+        Ok(result) => classify_join(result),
+        Err(RecvTimeoutError::Timeout) => JoinOutcome::TimedOut,
+        Err(RecvTimeoutError::Disconnected) => JoinOutcome::HelperLost,
+    }
+}
+
+fn classify_join(result: thread::Result<Result<()>>) -> JoinOutcome {
+    match result {
+        Ok(Ok(())) => JoinOutcome::Joined,
+        Ok(Err(error)) => JoinOutcome::Failed(error.to_string()),
+        Err(payload) => JoinOutcome::Panicked(panic_message(payload)),
+    }
+}
+
+fn panic_message(payload: Box<dyn std::any::Any + Send>) -> String {
+    if let Some(message) = payload.downcast_ref::<&'static str>() {
+        (*message).to_string()
+    } else if let Some(message) = payload.downcast_ref::<String>() {
+        message.clone()
+    } else {
+        "non-string panic payload".to_string()
+    }
 }
 
 /// Spawn a GrokShell agent in a background thread.
@@ -72,6 +197,8 @@ pub async fn spawn_grok_shell(
     let auth_manager_for_pager = auth_manager.clone();
 
     let skills_paths = agent_config.skills.paths.clone();
+    let agent_activity = xai_grok_shell::agent::activity::AgentActivity::default();
+    let agent_activity_for_worker = agent_activity.clone();
 
     let spawn_fn: Box<dyn FnOnce(AcpClientTx) -> Result<Rc<MvpAgent>> + Send + 'static> = {
         Box::new(move |client_tx| {
@@ -79,6 +206,7 @@ pub async fn spawn_grok_shell(
 
             let mut agent =
                 MvpAgent::with_models(gateway, &agent_config, auth_manager, models_manager);
+            agent.set_activity(agent_activity);
             if let Some(mc) = memory_config {
                 agent.set_memory_config(mc);
             }
@@ -87,11 +215,16 @@ pub async fn spawn_grok_shell(
     };
 
     // Spawn the agent thread with direct dispatch
-    let handle =
-        spawn_agent_thread_direct(spawn_fn, acp_agent, agent_cancel.clone(), skills_paths)?;
+    let handle = spawn_agent_thread_direct(
+        spawn_fn,
+        acp_agent,
+        agent_cancel.clone(),
+        skills_paths,
+        agent_activity_for_worker,
+    )?;
 
     Ok(SpawnedAgent {
-        _thread_handle: handle,
+        thread_handle: handle,
         channel: acp_client,
         cancel: agent_cancel,
         auth_manager: auth_manager_for_pager,
@@ -107,6 +240,7 @@ fn spawn_agent_thread_direct(
     channel: AcpAgentChannel,
     cancel: CancellationToken,
     skills_paths: Vec<String>,
+    agent_activity: xai_grok_shell::agent::activity::AgentActivity,
 ) -> Result<thread::JoinHandle<Result<()>>> {
     Ok(thread::Builder::new()
         .name("acp-agent-worker".into())
@@ -161,9 +295,79 @@ fn spawn_agent_thread_direct(
                 };
                 tokio::task::yield_now().await;
 
-                // Keep running until cancelled
+                // Keep running until cancelled, then give session actors a
+                // bounded chance to persist SessionEnd hooks and memory.
                 cancel.cancelled().await;
+                agent_activity.flush_all_sessions(SESSION_FLUSH_GRACE).await;
                 anyhow::Result::Ok(())
             })
         })?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn join_reports_clean_worker_exit() {
+        let handle = thread::spawn(|| Ok(()));
+        assert_eq!(
+            join_agent_thread(handle, Duration::from_secs(5)),
+            JoinOutcome::Joined
+        );
+    }
+
+    #[test]
+    fn into_thread_disarms_temporary_guard() {
+        let cancel = CancellationToken::new();
+        let handle = thread::spawn(|| Ok(()));
+        let guard = AgentShutdownGuard::new(cancel.clone(), Some(handle));
+
+        let handle = guard.into_thread().expect("worker handle");
+
+        assert!(!cancel.is_cancelled());
+        assert_eq!(
+            join_agent_thread(handle, Duration::from_secs(5)),
+            JoinOutcome::Joined
+        );
+    }
+
+    #[test]
+    fn join_reports_worker_error() {
+        let handle = thread::spawn(|| Err(anyhow::anyhow!("flush failed")));
+        assert_eq!(
+            join_agent_thread(handle, Duration::from_secs(5)),
+            JoinOutcome::Failed("flush failed".to_string())
+        );
+    }
+
+    #[test]
+    fn join_abandons_wedged_worker_at_budget() {
+        let handle = thread::spawn(|| {
+            thread::sleep(Duration::from_secs(30));
+            Ok(())
+        });
+        let started = std::time::Instant::now();
+        assert_eq!(
+            join_agent_thread(handle, Duration::from_millis(50)),
+            JoinOutcome::TimedOut
+        );
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[test]
+    fn panic_payloads_render_as_text() {
+        assert_eq!(
+            classify_join(Err(Box::new("boom"))),
+            JoinOutcome::Panicked("boom".to_string())
+        );
+        assert_eq!(
+            classify_join(Err(Box::new("boom".to_string()))),
+            JoinOutcome::Panicked("boom".to_string())
+        );
+        assert_eq!(
+            classify_join(Err(Box::new(7u32))),
+            JoinOutcome::Panicked("non-string panic payload".to_string())
+        );
+    }
 }

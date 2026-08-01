@@ -56,6 +56,11 @@ pub enum Action {
     ExitSession,
     /// Exit session without double-press confirmation (e.g., from command palette).
     ExitSessionConfirmed,
+    /// `/delete`: confirm, then delete history and return home.
+    DeleteCurrentSession,
+    DeleteCurrentSessionAnswered {
+        confirmed: bool,
+    },
     /// Open an optional upgrade URL from gate/remote settings (Chaos: often no-op).
     OpenSupergrokUrl,
     /// Re-check subscription status via the shell's `x.ai/auth/check_subscription`.
@@ -599,6 +604,14 @@ pub enum Action {
     OpenProviderModal {
         mode: crate::views::provider_modal::ProviderModalMode,
     },
+    /// Open the request-client profile picker (`/client`).
+    OpenClientModal {
+        mode: crate::views::client_modal::ClientModalMode,
+    },
+    /// Apply a request-client profile to the active live session.
+    SetClientProfile {
+        profile: xai_grok_shell::agent::client_profiles::ClientProfile,
+    },
     /// Open the command palette (`/help`). The keybinding path (Ctrl+P) opens it
     /// directly in `handle_agent_action`; this lets a slash command reach the
     /// same modal through dispatch.
@@ -734,6 +747,7 @@ pub enum Action {
         source: String,
         session_id: String,
         cwd: String,
+        after: AfterSessionDelete,
     },
     /// Trigger a deep content search for sessions matching the picker query.
     TriggerDeepSearch,
@@ -1381,6 +1395,15 @@ pub struct DoctorFixTarget {
     pub cwd: std::path::PathBuf,
 }
 
+/// Aftermath of a successful session delete.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AfterSessionDelete {
+    /// Picker delete — stay put.
+    Stay,
+    /// `/delete` — return to welcome.
+    Welcome,
+}
+
 #[derive(Debug)]
 pub enum Effect {
     /// Create a new ACP session.
@@ -1644,6 +1667,12 @@ pub enum Effect {
     },
     /// Toggle plan mode — fire-and-forget signal to the shell.
     TogglePlanMode { session_id: acp::SessionId },
+    /// Apply a request-client identity to a live session via the shell actor.
+    SetClientProfile {
+        agent_id: AgentId,
+        session_id: acp::SessionId,
+        profile: xai_grok_shell::agent::client_profiles::ClientProfile,
+    },
     /// Remove a server-owned queued prompt: fire-and-forget
     /// `x.ai/queue/remove`. The agent re-broadcasts the authoritative queue.
     QueueRemove {
@@ -2024,6 +2053,7 @@ pub enum Effect {
         source: String,
         session_id: String,
         cwd: String,
+        after: AfterSessionDelete,
     },
     /// Deep-search sessions by content (FTS via ACP).
     DeepSearchSessions { query: String, seq: u64 },
@@ -2423,6 +2453,12 @@ pub enum TaskResult {
         /// rollback on `IncompatibleAgent`.
         prev_model_id: Option<acp::ModelId>,
     },
+    /// Request-client identity update completed.
+    ClientProfileSet {
+        agent_id: AgentId,
+        profile: xai_grok_shell::agent::client_profiles::ClientProfile,
+        result: Result<(), String>,
+    },
     /// Changelog fetched from CDN (both formats).
     ChangelogFetched {
         markdown: Option<String>,
@@ -2611,6 +2647,7 @@ pub enum TaskResult {
     DeleteSessionComplete {
         source: String,
         session_id: String,
+        after: AfterSessionDelete,
     },
     /// Session delete failed.
     DeleteSessionFailed {

@@ -1026,6 +1026,60 @@ pub struct DiagnosticsConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub crash_handler: Option<bool>,
 }
+
+/// Request-client identity defaults.
+///
+/// This section selects a public request identity only. Model endpoints,
+/// protocol shape, and credentials remain owned by `[model.*]` and
+/// `[model_providers.*]`.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ClientProfilesConfig {
+    /// Built-in profile used when the caller does not provide ACP client
+    /// metadata. Values are resolved by `agent::client_profiles`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default: Option<String>,
+    /// User-defined profiles. Built-ins remain available without declaring
+    /// them here; custom entries make it possible to use a local wrapper or
+    /// another CLI identity from the TUI.
+    #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
+    pub custom: IndexMap<String, CustomClientProfileConfig>,
+}
+
+/// A user-defined request-client profile from `[clients.custom.<id>]`.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CustomClientProfileConfig {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub name: String,
+    #[serde(
+        default = "default_client_protocol",
+        skip_serializing_if = "String::is_empty"
+    )]
+    pub protocol: String,
+    #[serde(
+        default = "default_client_auth_scheme",
+        skip_serializing_if = "String::is_empty"
+    )]
+    pub auth_scheme: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub env_key: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub client_identifier: String,
+    /// Verbatim `User-Agent` override (spaces allowed). Empty = render one
+    /// from `client_identifier`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_agent: Option<String>,
+}
+
+fn default_client_protocol() -> String {
+    "responses".to_owned()
+}
+
+fn default_client_auth_scheme() -> String {
+    "bearer".to_owned()
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ModelsConfig {
@@ -1382,6 +1436,12 @@ pub struct Config {
     pub auth_providers: IndexMap<String, crate::auth::AuthProviderConfig>,
     #[serde(skip)]
     pub model_providers: IndexMap<String, ModelProviderConfig>,
+    /// `[clients]` request identity defaults.
+    #[serde(default)]
+    pub clients: ClientProfilesConfig,
+    /// Resolved per-model client profile IDs from `[model.<id>] client`.
+    #[serde(skip)]
+    pub client_profile_by_model: IndexMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shortcuts: Option<toml::Value>,
     /// Written by the client via `config_toml_edit`; absorbed so it isn't
@@ -1496,6 +1556,9 @@ pub struct Config {
     /// CLI override for the default model ID.
     #[serde(skip)]
     pub default_model_override: Option<String>,
+    /// CLI override for the request-client profile.
+    #[serde(skip)]
+    pub client_profile_override: Option<String>,
     /// CLI override for reasoning effort.
     #[serde(skip)]
     pub reasoning_effort_override: Option<ReasoningEffort>,
@@ -1820,6 +1883,8 @@ impl Default for Config {
             grok_com_config: GrokComConfig::default(),
             auth_providers: IndexMap::new(),
             model_providers: IndexMap::new(),
+            clients: ClientProfilesConfig::default(),
+            client_profile_by_model: IndexMap::new(),
             shortcuts: None,
             hints: None,
             ui: UiConfig::default(),
@@ -1862,6 +1927,7 @@ impl Default for Config {
             diagnostics: DiagnosticsConfig::default(),
             storage_mode: StorageMode::resolve(None, None),
             default_model_override: None,
+            client_profile_override: None,
             reasoning_effort_override: None,
             web_search_model_override: None,
             session_summary_model_override: None,
@@ -1977,6 +2043,88 @@ fn parse_auth_providers(
     (providers, warnings)
 }
 impl Config {
+    /// Resolve the request-client profile for a model.
+    ///
+    /// Explicit CLI selection wins, followed by a model-level `client`, then
+    /// `[clients].default`. Unknown IDs are ignored so a typo cannot alter a
+    /// model's endpoint or credentials.
+    pub fn client_profile_for_model(
+        &self,
+        model: &ModelEntry,
+    ) -> Option<crate::agent::client_profiles::ClientProfile> {
+        let profile_id = self
+            .client_profile_override
+            .as_deref()
+            .or_else(|| {
+                model
+                    .info
+                    .id
+                    .as_deref()
+                    .and_then(|id| self.client_profile_by_model.get(id))
+                    .map(String::as_str)
+            })
+            .or_else(|| {
+                self.client_profile_by_model
+                    .get(&model.info.model)
+                    .map(String::as_str)
+            })
+            .or(self.clients.default.as_deref())?;
+        self.client_profile_by_id(profile_id)
+    }
+
+    /// Resolve a built-in or user-defined request-client profile.
+    pub fn client_profile_by_id(
+        &self,
+        profile_id: &str,
+    ) -> Option<crate::agent::client_profiles::ClientProfile> {
+        let profile_id = profile_id.trim();
+        if profile_id.is_empty() {
+            return None;
+        }
+        if let Some(profile) = crate::agent::client_profiles::by_id(profile_id) {
+            return Some(profile);
+        }
+        let custom = self.clients.custom.get(profile_id)?;
+        Some(crate::agent::client_profiles::ClientProfile {
+            id: profile_id.to_owned(),
+            name: if custom.name.trim().is_empty() {
+                profile_id.to_owned()
+            } else {
+                custom.name.clone()
+            },
+            protocol: custom.protocol.clone(),
+            auth_scheme: custom.auth_scheme.clone(),
+            env_key: custom.env_key.clone(),
+            client_identifier: if custom.client_identifier.trim().is_empty() {
+                profile_id.to_owned()
+            } else {
+                custom.client_identifier.clone()
+            },
+            user_agent: custom
+                .user_agent
+                .as_deref()
+                .map(str::trim)
+                .filter(|ua| !ua.is_empty())
+                .map(str::to_owned),
+        })
+    }
+
+    /// Validate and canonicalize a CLI profile selection.
+    pub fn set_client_profile_override(&mut self, profile_id: Option<&str>) -> Result<(), String> {
+        self.client_profile_override = profile_id
+            .map(|id| {
+                self.client_profile_by_id(id)
+                    .map(|profile| profile.id)
+                    .ok_or_else(|| {
+                        format!(
+                            "unknown client profile '{id}'; run `chaos clients` to list profiles"
+                        )
+                    })
+            })
+            .transpose()?;
+        Ok(())
+    }
+
     /// Reject invalid glob patterns in the model-filter lists at config load, so
     /// a typo fails loudly instead of silently changing availability.
     pub fn validate_model_filters(&self) -> Result<(), String> {
@@ -2083,6 +2231,41 @@ impl Config {
         config.config_warnings = config_warnings;
         config.auth_providers = auth_providers;
         config.model_providers = model_providers;
+        config.client_profile_by_model = config
+            .config_models
+            .iter()
+            .filter_map(|(key, model)| {
+                model
+                    .client
+                    .as_deref()
+                    .map(|profile| (key.clone(), profile.to_owned()))
+            })
+            .collect();
+        for (key, model) in &config.config_models {
+            if let (Some(route), Some(profile)) = (model.model.as_deref(), model.client.as_deref())
+            {
+                config
+                    .client_profile_by_model
+                    .insert(route.to_owned(), profile.to_owned());
+            }
+            if let Some(profile) = model.client.as_deref()
+                && config.client_profile_by_id(profile).is_none()
+            {
+                tracing::warn!(
+                    model = %key,
+                    client = %profile,
+                    "unknown request-client profile; model will use the caller or global identity"
+                );
+            }
+        }
+        if let Some(profile) = config.clients.default.as_deref()
+            && config.client_profile_by_id(profile).is_none()
+        {
+            tracing::warn!(
+                client = %profile,
+                "unknown default request-client profile; configured identity will be ignored"
+            );
+        }
         config.config_warnings.extend(auth_provider_warnings);
         config.config_warnings.extend(model_provider_warnings);
         unrecognized_keys.sort();
@@ -4073,6 +4256,8 @@ pub struct ConfigModelOverride {
     pub system_prompt_label: Option<String>,
     pub use_concise: Option<bool>,
     pub agent_type: Option<String>,
+    /// Request-client profile used when no caller-supplied ACP identity exists.
+    pub client: Option<String>,
     pub inference_idle_timeout_secs: Option<u64>,
     pub max_retries: Option<u32>,
     pub hidden: Option<bool>,
@@ -5229,7 +5414,8 @@ pub fn sampling_config_for_model(
         compaction_at_tokens: info.compaction_at_tokens,
         doom_loop_recovery: None,
         header_injector: None,
-    }
+        user_agent: None,
+}
 }
 /// Fold URL-derived headers into `extra_headers`.
 ///
@@ -5923,7 +6109,6 @@ reasoning_effort = "low"
                 args: None,
                 token_ttl_secs: Some(3600),
                 timeout_secs: None,
-                cwd: None,
             },
         );
         let mut entry = test_model_entry("m", "https://litellm.example/v1", None, None, None);
@@ -6004,7 +6189,6 @@ reasoning_effort = "low"
                 args: None,
                 token_ttl_secs: Some(3600),
                 timeout_secs: None,
-                cwd: None,
             },
         );
         let mut entry = test_model_entry("m", "https://litellm.example/v1", None, None, None);
@@ -6305,7 +6489,6 @@ reasoning_effort = "low"
                 args: Some(vec!["--scope".into(), "corp".into()]),
                 token_ttl_secs: Some(3600),
                 timeout_secs: Some(10),
-                cwd: None,
             })
         );
         let resolved = resolve_model_list(&cfg, None);
@@ -6397,7 +6580,6 @@ reasoning_effort = "low"
                 args: None,
                 token_ttl_secs: Some(3600),
                 timeout_secs: None,
-                cwd: None,
             },
         );
         model.auth_provider = Some(provider.clone());
@@ -6424,7 +6606,6 @@ reasoning_effort = "low"
                 args: None,
                 token_ttl_secs: Some(3600),
                 timeout_secs: None,
-                cwd: None,
             },
         );
         model.auth_provider = Some(provider.clone());
@@ -6469,7 +6650,6 @@ reasoning_effort = "low"
                 args: None,
                 token_ttl_secs: None,
                 timeout_secs: None,
-                cwd: None,
             },
         );
         let resolved = resolve_model_list(&cfg, Some(prefetched));

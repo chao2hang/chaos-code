@@ -92,6 +92,7 @@ impl AgentView {
         let prompt = PromptWidget::new_with_cwd(&session.cwd);
         let mut view = Self {
             session,
+            client_profile: None,
             scrollback,
             prompt,
             tip_typing_dismissed: false,

@@ -89,10 +89,11 @@ use super::settings::setters::{
     set_voice_stt_language,
 };
 use super::settings::ui::{
-    dispatch_confirm_reset_setting, dispatch_open_command_palette, dispatch_open_howto_guides,
-    dispatch_open_provider_modal, dispatch_open_reset_confirm, dispatch_open_settings,
-    dispatch_toggle_compact_mode, dispatch_toggle_mouse_capture, dispatch_toggle_multiline,
-    dispatch_toggle_timestamps, dispatch_toggle_vim_mode,
+    dispatch_confirm_reset_setting, dispatch_open_client_modal, dispatch_open_command_palette,
+    dispatch_open_howto_guides, dispatch_open_provider_modal, dispatch_open_reset_confirm,
+    dispatch_open_settings, dispatch_set_client_profile, dispatch_toggle_compact_mode,
+    dispatch_toggle_mouse_capture, dispatch_toggle_multiline, dispatch_toggle_timestamps,
+    dispatch_toggle_vim_mode,
 };
 use super::status::{
     dispatch_copy_session_id, dispatch_manage_billing, dispatch_open_gboom, dispatch_open_tutorial,
@@ -195,6 +196,41 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
         Action::NewSession => dispatch_new_session(app),
         Action::ChooseNewSessionMode => open_new_session_question(app),
         Action::ExitSession | Action::ExitSessionConfirmed => dispatch_exit_session(app),
+        Action::DeleteCurrentSession => {
+            // `/delete` — delete current session + return to welcome.
+            match app.active_session_id() {
+                Some(sid) => {
+                    let source = "conversation".to_string();
+                    let cwd = app.cwd.to_string_lossy().into_owned();
+                    vec![Effect::DeleteSession {
+                        source,
+                        session_id: sid.to_string(),
+                        cwd,
+                        after: crate::app::actions::AfterSessionDelete::Welcome,
+                    }]
+                }
+                None => vec![],
+            }
+        }
+        Action::DeleteCurrentSessionAnswered { confirmed } => {
+            if confirmed {
+                match app.active_session_id() {
+                    Some(sid) => {
+                        let source = "conversation".to_string();
+                        let cwd = app.cwd.to_string_lossy().into_owned();
+                        vec![Effect::DeleteSession {
+                            source,
+                            session_id: sid.to_string(),
+                            cwd,
+                            after: crate::app::actions::AfterSessionDelete::Welcome,
+                        }]
+                    }
+                    None => vec![],
+                }
+            } else {
+                vec![]
+            }
+        }
         Action::NewWorktreeSession {
             load_session_id,
             label,
@@ -1013,6 +1049,8 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
         Action::PreviewAutoLightTheme(v) => preview_auto_light_theme(app, v),
         Action::OpenSettings => dispatch_open_settings(app),
         Action::OpenProviderModal { mode } => dispatch_open_provider_modal(app, mode),
+        Action::OpenClientModal { mode } => dispatch_open_client_modal(app, mode),
+        Action::SetClientProfile { profile } => dispatch_set_client_profile(app, profile),
         Action::OpenCommandPalette => dispatch_open_command_palette(app),
         Action::OpenHowtoGuides => dispatch_open_howto_guides(app),
         Action::OpenResetConfirm { key } => dispatch_open_reset_confirm(app, key),
@@ -1105,6 +1143,7 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
             source,
             session_id,
             cwd,
+            after,
         } => {
             if session_picker_external_filter_active(app) {
                 return vec![];
@@ -1127,6 +1166,7 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
                 source,
                 session_id,
                 cwd,
+                after,
             }]
         }
         Action::Fork(args) => dispatch_fork(app, args),

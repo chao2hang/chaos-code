@@ -54,6 +54,15 @@ pub struct HookSpecWire {
     pub timeout_ms: u64,
     pub source_dir: PathBuf,
     pub extra_env: HashMap<String, String>,
+    /// Hook provenance, serialized as the upstream `HookProvenance` string.
+    /// Older workspace responses omitted this field and are treated as file
+    /// hooks, matching the upstream default.
+    #[serde(default = "default_hook_layer")]
+    pub layer: String,
+}
+
+fn default_hook_layer() -> String {
+    "file".to_string()
 }
 
 /// Wire mirror of `xai_grok_hooks::event::HookEventName`.
@@ -220,7 +229,8 @@ mod tests {
                     "url_raw": null,
                     "timeout_ms": 5000,
                     "source_dir": "/home/u/.grok/hooks",
-                    "extra_env": { "FOO": "bar" }
+                    "extra_env": { "FOO": "bar" },
+                    "layer": "file"
                 }]
             }
         });

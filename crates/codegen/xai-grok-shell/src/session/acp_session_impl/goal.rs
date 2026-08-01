@@ -139,7 +139,7 @@ impl SessionActor {
                         crate::agent::config::stamp_session_local_sampler_fields(
                             &mut config,
                             &active_config,
-                            self.client_identifier.clone(),
+                            self.client_identifier.borrow().clone(),
                             Some(self.max_retries),
                         );
                         let model = config.model.clone();

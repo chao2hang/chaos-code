@@ -678,7 +678,7 @@ impl SessionActor {
             .unwrap_or_default();
         if self.telemetry_enabled || xai_grok_telemetry::external::is_active() {
             let effective_client_identifier =
-                prompt_client_identifier.or_else(|| self.client_identifier.clone());
+                prompt_client_identifier.or_else(|| self.client_identifier.borrow().clone());
             let ev = xai_grok_telemetry::events::PromptSubmitted {
                 prompt_length: user_message.len(),
                 model_id,
@@ -2198,6 +2198,10 @@ impl SessionActor {
                     return Err(error);
                 }
                 Ok(SamplerTurnOutcome::CompactAndResubmit) => {
+                    auth_retry_schedule.reset();
+                    continue;
+                }
+                Ok(SamplerTurnOutcome::ReasoningEffortAndResubmit) => {
                     auth_retry_schedule.reset();
                     continue;
                 }
