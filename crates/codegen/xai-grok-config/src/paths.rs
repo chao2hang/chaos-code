@@ -1,9 +1,14 @@
-//! Filesystem locations for grok config files and binaries.
+//! Filesystem locations for grok/chaos config files and binaries.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 static GROK_HOME: OnceLock<PathBuf> = OnceLock::new();
+
+/// Chaos-native user home directory name (`~/.chaos`).
+pub const CHAOS_HOME_DIRNAME: &str = ".chaos";
+/// Legacy Grok Build user home directory name (`~/.grok`), still dual-read.
+pub const LEGACY_GROK_HOME_DIRNAME: &str = ".grok";
 
 #[cfg(target_os = "macos")]
 const CLAUDE_MANAGED_SETTINGS_PATH: &str =
@@ -11,31 +16,68 @@ const CLAUDE_MANAGED_SETTINGS_PATH: &str =
 #[cfg(target_os = "linux")]
 const CLAUDE_MANAGED_SETTINGS_PATH: &str = "/etc/claude-code/managed-settings.json";
 
-/// The default user grok directory (`~/.grok`, canonicalized) used when
-/// `GROK_HOME` is unset. Exposed so callers (e.g. display helpers) can detect
-/// whether [`grok_home()`] is the default without duplicating the computation.
+/// Canonicalize `$HOME` (or `.` when missing) the same way default homes do.
 ///
 /// Uses [`dunce::canonicalize`] instead of [`std::fs::canonicalize`]: on
 /// Windows, std returns a verbatim path (`\\?\C:\Users\...`) which external
 /// tools choke on — e.g. `git clone` rejects `\\?\` destinations with
 /// "Invalid argument", breaking marketplace cache clones under
-/// `~/.grok/marketplace-cache`. `dunce` strips the prefix whenever the path
-/// is safely representable in legacy form; on non-Windows it is identical to
-/// `std::fs::canonicalize`.
+/// `~/.chaos/marketplace-cache` / `~/.grok/marketplace-cache`. `dunce` strips
+/// the prefix whenever the path is safely representable in legacy form; on
+/// non-Windows it is identical to `std::fs::canonicalize`.
 ///
-/// Keep the dunce canonicalization in sync with the hand-rolled duplicate in
-/// `xai_fast_worktree::db::resolve_grok_home` (deliberately standalone crate).
-pub fn default_grok_home() -> PathBuf {
+/// Keep the dunce canonicalization and dual-home resolution in sync with the
+/// hand-rolled duplicate in `xai_fast_worktree::db::resolve_grok_home`
+/// (deliberately standalone crate).
+fn canonical_user_home() -> PathBuf {
     #[allow(deprecated)]
     let home = std::env::home_dir().unwrap_or_else(|| PathBuf::from("."));
-    dunce::canonicalize(&home).unwrap_or(home).join(".grok")
+    dunce::canonicalize(&home).unwrap_or(home)
 }
 
-/// Per-user config directory: `$GROK_HOME` or `~/.grok`. Created if needed.
+/// Resolve the default config home under a given user home directory.
+///
+/// Dual-read policy (never copies or overwrites either tree):
+/// 1. Prefer existing `user_home/.chaos` when that directory exists.
+/// 2. Else use existing `user_home/.grok` when that directory exists (legacy).
+/// 3. Else default to `user_home/.chaos` for new installs (created later by
+///    [`grok_home()`] if needed).
+///
+/// Exposed for unit tests and any caller that must mirror the policy without
+/// touching process env / OnceLock state.
+pub fn resolve_default_home_under(user_home: &Path) -> PathBuf {
+    let chaos = user_home.join(CHAOS_HOME_DIRNAME);
+    let grok = user_home.join(LEGACY_GROK_HOME_DIRNAME);
+    if chaos.is_dir() {
+        chaos
+    } else if grok.is_dir() {
+        grok
+    } else {
+        chaos
+    }
+}
+
+/// The default user config directory used when neither `CHAOS_HOME` nor
+/// `GROK_HOME` is set. Prefer `~/.chaos` when present or when neither home
+/// exists yet; fall back to an existing `~/.grok` without migrating it.
+///
+/// Exposed so callers (e.g. display helpers) can detect whether
+/// [`grok_home()`] is the default without duplicating the computation.
+pub fn default_grok_home() -> PathBuf {
+    resolve_default_home_under(&canonical_user_home())
+}
+
+/// Per-user config directory: `$CHAOS_HOME`, else `$GROK_HOME`, else
+/// [`default_grok_home()`]. Created if needed.
+///
+/// Env override precedence keeps Chaos first while preserving harnesses and
+/// docs that still inject `GROK_HOME`.
 pub fn grok_home() -> PathBuf {
     GROK_HOME
         .get_or_init(|| {
-            let grok_home = if let Ok(v) = std::env::var("GROK_HOME") {
+            let grok_home = if let Ok(v) = std::env::var("CHAOS_HOME") {
+                PathBuf::from(v)
+            } else if let Ok(v) = std::env::var("GROK_HOME") {
                 PathBuf::from(v)
             } else {
                 default_grok_home()
@@ -46,25 +88,73 @@ pub fn grok_home() -> PathBuf {
         .clone()
 }
 
-/// The user-global grok home, but only when one genuinely resolves: `Some` when
-/// `$GROK_HOME` is set or a home directory is found, `None` otherwise. Unlike
-/// [`grok_home()`], this never falls back to a cwd-relative `.grok`, so callers
-/// that *scan* user-global grok resources (hooks, marketplace sources, ...) don't
-/// mistake a project's `.grok` tree for the user-global one when no home resolves.
+/// The user-global config home, but only when one genuinely resolves: `Some`
+/// when `$CHAOS_HOME` / `$GROK_HOME` is set or a home directory is found,
+/// `None` otherwise. Unlike [`grok_home()`], this never falls back to a
+/// cwd-relative `.grok` / `.chaos`, so callers that *scan* user-global
+/// resources (hooks, marketplace sources, ...) don't mistake a project's
+/// tree for the user-global one when no home resolves.
 pub fn user_grok_home() -> Option<PathBuf> {
     #[allow(deprecated)]
-    let resolvable = std::env::var_os("GROK_HOME").is_some() || std::env::home_dir().is_some();
+    let resolvable = std::env::var_os("CHAOS_HOME").is_some()
+        || std::env::var_os("GROK_HOME").is_some()
+        || std::env::home_dir().is_some();
     resolvable.then(grok_home)
 }
 
-/// Canonical grok application path: `$GROK_HOME/bin/grok` (Unix) or `grok.exe` (Windows).
+/// User-facing label for the resolved default home (`~/.chaos` or `~/.grok`).
+pub fn default_home_display_prefix() -> &'static str {
+    let home = default_grok_home();
+    if home.ends_with(CHAOS_HOME_DIRNAME) {
+        "~/.chaos"
+    } else {
+        "~/.grok"
+    }
+}
+
+/// Project-local config directory names in **merge order** (lower → higher
+/// priority). Legacy `.grok` is listed first so a co-located `.chaos` layer
+/// wins when both exist at the same path depth.
+pub fn project_config_dirnames() -> [&'static str; 2] {
+    [LEGACY_GROK_HOME_DIRNAME, CHAOS_HOME_DIRNAME]
+}
+
+/// Candidate `config.toml` paths under `dir` for both project dirnames,
+/// in merge order (see [`project_config_dirnames`]).
+pub fn project_config_toml_candidates(dir: &Path) -> [PathBuf; 2] {
+    [
+        dir.join(LEGACY_GROK_HOME_DIRNAME).join("config.toml"),
+        dir.join(CHAOS_HOME_DIRNAME).join("config.toml"),
+    ]
+}
+
+/// Resolve which project-local config root to use for **new writes** under
+/// `project_root`: prefer existing `.chaos`, else existing `.grok`, else
+/// default `.chaos`. Same dual-read policy as [`resolve_default_home_under`];
+/// never creates or overwrites either tree.
+pub fn resolve_project_config_dir(project_root: &Path) -> PathBuf {
+    resolve_default_home_under(project_root)
+}
+
+/// Existing project-local config roots under `project_root` (both `.chaos` and
+/// `.grok` when present), in merge order. Empty when neither directory exists.
+pub fn existing_project_config_dirs(project_root: &Path) -> Vec<PathBuf> {
+    project_config_dirnames()
+        .into_iter()
+        .map(|name| project_root.join(name))
+        .filter(|p| p.is_dir())
+        .collect()
+}
+
+/// Canonical Chaos application path: `$CHAOS_HOME/bin/chaos` (or dual-read
+/// `$GROK_HOME` / `~/.chaos` / `~/.grok`), `chaos.exe` on Windows.
 pub fn grok_application() -> PathBuf {
     grok_application_in(&grok_home())
 }
 
-/// [`grok_application`] under an explicit home instead of `$GROK_HOME`.
+/// [`grok_application`] under an explicit home instead of the resolved default.
 pub fn grok_application_in(home: &std::path::Path) -> PathBuf {
-    let name = if cfg!(windows) { "grok.exe" } else { "grok" };
+    let name = if cfg!(windows) { "chaos.exe" } else { "chaos" };
     home.join("bin").join(name)
 }
 
@@ -312,7 +402,60 @@ mod tests {
         // canonicalization must yield a plain path. No-op assertion on Unix.
         let home = default_grok_home();
         assert!(!home.to_string_lossy().starts_with(r"\\?\"));
-        assert!(home.ends_with(".grok"));
+        assert!(
+            home.ends_with(CHAOS_HOME_DIRNAME) || home.ends_with(LEGACY_GROK_HOME_DIRNAME),
+            "default home must be ~/.chaos or legacy ~/.grok, got {}",
+            home.display()
+        );
+    }
+
+    #[test]
+    fn resolve_prefers_existing_chaos_over_legacy_grok() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join(CHAOS_HOME_DIRNAME)).unwrap();
+        std::fs::create_dir_all(root.join(LEGACY_GROK_HOME_DIRNAME)).unwrap();
+        assert_eq!(
+            resolve_default_home_under(root),
+            root.join(CHAOS_HOME_DIRNAME)
+        );
+    }
+
+    #[test]
+    fn resolve_falls_back_to_existing_legacy_grok() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join(LEGACY_GROK_HOME_DIRNAME)).unwrap();
+        assert_eq!(
+            resolve_default_home_under(root),
+            root.join(LEGACY_GROK_HOME_DIRNAME)
+        );
+    }
+
+    #[test]
+    fn resolve_defaults_to_chaos_when_neither_exists() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        assert_eq!(
+            resolve_default_home_under(root),
+            root.join(CHAOS_HOME_DIRNAME)
+        );
+        // Dual-read never creates either tree by itself.
+        assert!(!root.join(CHAOS_HOME_DIRNAME).exists());
+        assert!(!root.join(LEGACY_GROK_HOME_DIRNAME).exists());
+    }
+
+    #[test]
+    fn resolve_ignores_file_named_like_home_dir() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        // A file named `.chaos` is not a home dir; fall through to legacy/new.
+        std::fs::write(root.join(CHAOS_HOME_DIRNAME), b"not a dir").unwrap();
+        std::fs::create_dir_all(root.join(LEGACY_GROK_HOME_DIRNAME)).unwrap();
+        assert_eq!(
+            resolve_default_home_under(root),
+            root.join(LEGACY_GROK_HOME_DIRNAME)
+        );
     }
 
     #[test]

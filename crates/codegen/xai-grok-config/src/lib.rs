@@ -63,8 +63,10 @@ pub use managed_cache::{
 };
 pub use paths::{
     claude_managed_settings_path, claude_managed_settings_probe_path, decode_cwd_from_dirname,
-    default_grok_home, encode_cwd_dirname, ensure_sessions_cwd_dir, grok_application,
-    grok_application_in, grok_home, sessions_cwd_dir, system_config_dir, user_grok_home,
+    default_grok_home, default_home_display_prefix, encode_cwd_dirname, ensure_sessions_cwd_dir,
+    existing_project_config_dirs, grok_application, grok_application_in, grok_home,
+    project_config_dirnames, project_config_toml_candidates, resolve_project_config_dir,
+    sessions_cwd_dir, system_config_dir, user_grok_home,
 };
 pub use validation::{
     RequirementsError, RequirementsLayer, RequirementsSource, load_merged_requirements,
@@ -83,8 +85,4 @@ pub fn env_bool(name: &str) -> Option<bool> {
     }
 }
 
-/// Chaos-fork: display prefix for the config home directory.
-/// Used in Chinese error messages to refer to the config directory.
-pub fn default_home_display_prefix() -> &'static str {
-    "Chaos"
-}
+// default_home_display_prefix is now in paths::default_home_display_prefix
