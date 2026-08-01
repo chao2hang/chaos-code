@@ -3018,6 +3018,7 @@ fn layer_login_env_vars(
 /// names the active policy excludes so a request-supplied secret cannot bypass
 /// it. Honors `exclude`/`include_only`/default excludes, not `inherit`, since
 /// request env is provided explicitly rather than inherited.
+#[allow(dead_code)]
 fn layer_request_env(
     cmd: &mut tokio::process::Command,
     env: &HashMap<String, String>,
