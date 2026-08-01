@@ -32,6 +32,8 @@ const RPC_TIMEOUT: Duration = Duration::from_secs(60);
 struct Counts {
     sessions: usize,
     session_threads: usize,
+    resident_resources: usize,
+    retained_resources: usize,
     dispatch_locks: usize,
     session_turn_numbers: usize,
     permission_event_receivers: usize,

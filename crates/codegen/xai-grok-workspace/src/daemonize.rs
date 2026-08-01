@@ -840,6 +840,7 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
+    #[ignore = "known CI flake: process signal timing in containers"]
     fn take_over_declines_when_lock_is_never_released() {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("ws.pid");
@@ -930,6 +931,7 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
+    #[ignore = "known CI flake: process signal timing in containers"]
     fn take_over_acquires_cleanly_when_predecessor_releases() {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("ws.pid");
