@@ -257,10 +257,10 @@ pub fn stream_chat_completions<'a>(
                         // name with an empty string, producing an
                         // undispatchable `ToolCall { name: "" }`. Only
                         // accept a non-blank name; keep the first one seen.
-                        if let Some(name) = func.name.as_deref() {
-                            if !name.trim().is_empty() {
-                                entry.1 = name.to_string();
-                            }
+                        if let Some(name) = func.name.as_deref()
+                            && !name.trim().is_empty()
+                        {
+                            entry.1 = name.to_string();
                         }
                         if let Some(name) = func.name {
                             name_for_event = Some(name);

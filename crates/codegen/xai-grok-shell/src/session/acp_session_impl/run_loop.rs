@@ -697,39 +697,47 @@ pub(super) async fn run_session(
                             let _ = responds_to.send(outcome);
                         }
                         SessionCommand::OverrideModelName { model_name, extra_headers, context_window } => {
-                            // Hold the same compaction operation lock so a
-                            // concurrent SetContextWindow / response-header
-                            // metadata refresh / sampling-error restore
-                            // cannot interleave its sampling-config write.
-                            let _op_guard = session.compaction.operation_lock.lock();
-                            // Update the actor's SamplingConfig model + headers + context window.
-                            if let Some(mut cfg) = session.chat_state_handle.get_sampling_config().await {
-                                tracing::info!(
-                                    target: SESSION_LOG,
-                                    session_id = %session.session_info.id,
-                                    old_model = %cfg.model,
-                                    new_model = %model_name,
-                                    extra_header_count = extra_headers.len(),
-                                    old_context_window = cfg.context_window.get(),
-                                    new_context_window = ?context_window.map(|cw| cw.get()),
-                                    "OVERRIDE_MODEL: changing model name in sampling config"
-                                );
-                                // Update signals so primaryModelId and modelsUsed
-                                // reflect the model used after the override, not
-                                // the agent-level default (e.g. "grok-4.5").
-                                // set_primary_model also adds to models_used.
-                                session.signals_handle().set_primary_model(&model_name);
-                                cfg.model = model_name.clone();
-                                cfg.extra_headers.extend(extra_headers);
-                                if let Some(cw) = context_window
-                                    && session.compaction.context_window_override.get().is_none()
-                                {
-                                    cfg.context_window = cw;
+                            // Serialize the sampling-config update with user
+                            // context-window changes and metadata refreshes.
+                            // Credentials are unrelated to that config RMW, so
+                            // resolve them after releasing the async gate.
+                            let config_updated = {
+                                let _op_guard = session.compaction.operation_lock.lock().await;
+                                if let Some(mut cfg) = session.chat_state_handle.get_sampling_config().await {
+                                    tracing::info!(
+                                        target: SESSION_LOG,
+                                        session_id = %session.session_info.id,
+                                        old_model = %cfg.model,
+                                        new_model = %model_name,
+                                        extra_header_count = extra_headers.len(),
+                                        old_context_window = cfg.context_window.get(),
+                                        new_context_window = ?context_window.map(|cw| cw.get()),
+                                        "OVERRIDE_MODEL: changing model name in sampling config"
+                                    );
+                                    // Update signals so primaryModelId and modelsUsed
+                                    // reflect the model used after the override, not
+                                    // the agent-level default (e.g. "grok-4.5").
+                                    // set_primary_model also adds to models_used.
+                                    session.signals_handle().set_primary_model(&model_name);
+                                    cfg.model = model_name.clone();
+                                    cfg.extra_headers.extend(extra_headers);
+                                    if let Some(cw) = context_window
+                                        && session.compaction.context_window_override.get().is_none()
+                                    {
+                                        cfg.context_window = cw;
+                                    }
+                                    session.chat_state_handle.update_sampling_config(cfg);
+                                    true
+                                } else {
+                                    false
                                 }
-                                session.chat_state_handle.update_sampling_config(cfg);
-
+                            };
+                            if config_updated {
                                 let existing = session.chat_state_handle.get_credentials().await;
-                                if let Some(r) = crate::agent::config::try_resolve_model_credentials(model_name.as_str(), existing.api_key.as_deref()) {
+                                if let Some(r) = crate::agent::config::try_resolve_model_credentials(
+                                    model_name.as_str(),
+                                    existing.api_key.as_deref(),
+                                ) {
                                     session.chat_state_handle.update_credentials(xai_chat_state::Credentials {
                                         api_key: r.api_key,
                                         auth_type: r.auth_type,

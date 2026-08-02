@@ -156,17 +156,16 @@ pub struct CompactionConfig {
     pub prefire: PrefireState,
     /// Sticky once a forked session releases its inherited prefix under compaction pressure (see `run_compact_inner`), so it stops re-pinning it.
     pub prefix_released: AtomicBool,
-    /// Serializes mutations of `compaction`-owned state from concurrent
-    /// command paths (model switch, `SetContextWindow`, metadata refresh,
-    /// auto-compact triggers). `SessionActor` is `!Send` and runs on a
-    /// single-threaded `LocalSet`, so this `Mutex` only orders cross-task
-    /// acquisition — it is not protecting against threading.
+    /// Serializes async read-modify-write operations on the context-window
+    /// override and sampling config (model switch, `SetContextWindow`, metadata
+    /// refresh, and auto-compact metadata restoration).
     ///
-    /// Held across the **set-lock → sampling-config write → compaction**
-    /// critical section so two `SetContextWindow` (or a model-switch
-    /// racing a resize) cannot interleave their overrides, sampling
-    /// writes, and compaction kicks.
-    pub operation_lock: parking_lot::Mutex<()>,
+    /// `SessionActor` is `!Send` and runs on a single-threaded `LocalSet`, but
+    /// local tasks can interleave at `.await` points. A Tokio mutex yields to
+    /// the lock holder instead of blocking that executor thread. Keep this
+    /// gate scoped to the short config mutation; long-running compaction runs
+    /// after it is released.
+    pub operation_lock: tokio::sync::Mutex<()>,
 }
 
 #[cfg(test)]

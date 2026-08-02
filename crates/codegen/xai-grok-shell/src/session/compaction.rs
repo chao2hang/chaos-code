@@ -2329,7 +2329,7 @@ mod inline_auto_compact_flow_tests {
                 tool_choice: crate::util::config::CompactionToolChoice::Auto,
                 prefire: crate::session::compaction_config::PrefireState::default(),
                 prefix_released: std::sync::atomic::AtomicBool::new(false),
-                operation_lock: parking_lot::Mutex::new(()),
+                operation_lock: tokio::sync::Mutex::new(()),
             },
             memory: crate::session::memory_state::SessionMemory {
                 flush_config: crate::config::MemoryFlushConfig::default(),
@@ -3927,7 +3927,7 @@ mod set_context_window_tests {
                     .handle_set_context_window(new_cw, true)
                     .await
                     .expect_err("must refuse while a turn is running");
-                assert_eq!(err.code, acp::ErrorCode::InvalidRequest.into());
+                assert_eq!(err.code, acp::ErrorCode::InvalidRequest);
                 assert!(
                     actor.compaction.context_window_override.get().is_none(),
                     "refused resize must leave the override untouched"
