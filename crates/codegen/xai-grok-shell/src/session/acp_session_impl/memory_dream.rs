@@ -722,8 +722,13 @@ impl SessionActor {
                     .conversation_stream(request)
                     .await
                     .map_err(|e| format!("rewrite stream failed: {e}"))?;
-                let events =
-                    xai_grok_sampler::stream_chat_completions(raw, meta, request_id, idle_timeout);
+                let events = xai_grok_sampler::stream_chat_completions(
+                    raw,
+                    meta,
+                    request_id,
+                    idle_timeout,
+                    sampling_client.extract_inline_thinking(),
+                );
                 xai_grok_sampler::collect_response(events).await
             }
             crate::sampling::ApiBackend::Responses => {

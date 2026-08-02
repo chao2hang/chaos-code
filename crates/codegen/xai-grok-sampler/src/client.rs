@@ -347,6 +347,7 @@ struct ClientDefaults {
     api_backend: ApiBackend,
     auth_scheme: AuthScheme,
     stream_tool_calls: bool,
+    extract_inline_thinking: bool,
     doom_loop_recovery: Option<xai_grok_sampling_types::DoomLoopRecoveryPolicy>,
 }
 
@@ -639,6 +640,7 @@ impl SamplingClient {
             api_backend: config.api_backend,
             auth_scheme: config.auth_scheme,
             stream_tool_calls: config.stream_tool_calls,
+            extract_inline_thinking: config.extract_inline_thinking,
             doom_loop_recovery: config.doom_loop_recovery,
         };
 
@@ -659,6 +661,14 @@ impl SamplingClient {
     /// The configured API backend for this client.
     pub fn api_backend(&self) -> ApiBackend {
         self.defaults.api_backend.clone()
+    }
+
+    /// Whether the chat-completions stream parser scans `delta.content`
+    /// for inline `think.../think` pseudo-XML tags and routes the
+    /// wrapped text through the reasoning channel. See
+    /// [`crate::stream::stream_chat_completions`].
+    pub fn extract_inline_thinking(&self) -> bool {
+        self.defaults.extract_inline_thinking
     }
 
     /// POST with default headers. When a bearer_resolver is wired it is the
@@ -1979,8 +1989,13 @@ impl SamplingClient {
         let result = match self.api_backend() {
             ApiBackend::ChatCompletions => {
                 let (raw, meta) = self.conversation_stream(request).await?;
-                let events =
-                    crate::stream::stream_chat_completions(raw, meta, request_id, idle_timeout);
+                let events = crate::stream::stream_chat_completions(
+                    raw,
+                    meta,
+                    request_id,
+                    idle_timeout,
+                    self.defaults.extract_inline_thinking,
+                );
                 crate::stream::collect_response(events).await
             }
             ApiBackend::Responses => {
@@ -2033,6 +2048,7 @@ mod tests {
             force_http1: false,
             max_retries: None,
             stream_tool_calls: false,
+            extract_inline_thinking: false,
             idle_timeout_secs: None,
             reasoning_effort: None,
             origin_client: None,

@@ -4078,6 +4078,7 @@ fn default_models(endpoints: &EndpointsConfig) -> IndexMap<String, ModelEntryCon
                 compaction_at_tokens: m.compaction_at_tokens,
                 show_model_fingerprint: m.show_model_fingerprint,
                 stream_tool_calls: None,
+                extract_inline_thinking: None,
                 laziness_detector: LazinessDetectorPerModelConfig::default(),
             };
             (key, config)
@@ -4202,6 +4203,15 @@ pub struct ModelEntryConfig {
     /// the all-disabled state via `#[serde(default)]`.
     #[serde(default, skip_serializing_if = "is_default_laziness_detector")]
     pub laziness_detector: LazinessDetectorPerModelConfig,
+    /// When `Some(true)`, the chat-completions stream parser scans
+    /// `delta.content` for inline `<think>...</think>` pseudo-XML tags
+    /// and routes the wrapped text through the reasoning channel — so
+    /// the TUI renders it as a foldable thought block, identical to
+    /// native `reasoning_content`. Used by Chinese reasoning models
+    /// (DeepSeek-R1, Qwen3-Thinking, GLM-Z1, etc.) when their proxy
+    /// emits reasoning inline in `content`. Default: `None` (off).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extract_inline_thinking: Option<bool>,
 }
 /// True when `cfg` equals the all-disabled default. Derives `PartialEq`
 /// on `f32`, which is fine for the current shape because both `f32`
@@ -4273,6 +4283,14 @@ pub struct ConfigModelOverride {
     pub compaction_at_tokens: Option<CompactionAtTokens>,
     pub show_model_fingerprint: Option<bool>,
     pub stream_tool_calls: Option<bool>,
+    /// When `Some(true)`, the chat-completions stream parser scans
+    /// `delta.content` for inline `<think>...</think>` pseudo-XML tags
+    /// and routes the wrapped text through the reasoning channel —
+    /// Chinese reasoning models (DeepSeek-R1, Qwen3-Thinking, GLM-Z1)
+    /// emit reasoning inline in `content` instead of a structured
+    /// `reasoning_content` field. Default: `None` (off).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extract_inline_thinking: Option<bool>,
 }
 impl ConfigModelOverride {
     pub(crate) fn apply(
@@ -4367,6 +4385,9 @@ impl ConfigModelOverride {
         if self.stream_tool_calls.is_some() {
             entry.info.stream_tool_calls = self.stream_tool_calls;
         }
+        if self.extract_inline_thinking.is_some() {
+            entry.info.extract_inline_thinking = self.extract_inline_thinking;
+        }
         if self.api_key.is_some() {
             entry.api_key.clone_from(&self.api_key);
         }
@@ -4454,6 +4475,15 @@ pub struct ModelInfo {
     pub show_model_fingerprint: bool,
     /// When `Some(true)`, the sampler injects `stream_tool_calls: true`
     pub stream_tool_calls: Option<bool>,
+    /// When `Some(true)`, the chat-completions stream parser scans
+    /// `delta.content` for inline `think.../think` pseudo-XML tags
+    /// and routes the wrapped text through the reasoning channel —
+    /// so the TUI renders it as a foldable thought block, identical
+    /// to native `reasoning_content`. Used by Chinese reasoning models
+    /// (DeepSeek-R1, Qwen3-Thinking, GLM-Z1, etc.) when their proxy
+    /// emits reasoning inline in `content`. Default: `None` (off).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extract_inline_thinking: Option<bool>,
     /// Per-model Layer-3 LazinessDetector configuration. Defaults to
     /// the all-disabled state — the feature is per-model opt-in with a
     /// second-step `max_nudges_per_session > 0` opt-in for actually
@@ -4497,6 +4527,7 @@ impl ModelInfo {
             compaction_at_tokens: None,
             show_model_fingerprint: false,
             stream_tool_calls: None,
+            extract_inline_thinking: None,
             laziness_detector: LazinessDetectorPerModelConfig::default(),
         }
     }
@@ -4534,6 +4565,7 @@ impl ModelInfo {
             compaction_at_tokens: entry.compaction_at_tokens,
             show_model_fingerprint: entry.show_model_fingerprint,
             stream_tool_calls: entry.stream_tool_calls,
+            extract_inline_thinking: entry.extract_inline_thinking,
             laziness_detector: entry.laziness_detector.clone(),
         }
     }
@@ -5276,6 +5308,7 @@ pub fn resolve_aux_model_sampling_config(
                 compaction_at_tokens: None,
                 show_model_fingerprint: false,
                 stream_tool_calls: None,
+                extract_inline_thinking: None,
                 laziness_detector: LazinessDetectorPerModelConfig::default(),
             },
             api_key: Some(bearer),
@@ -5402,6 +5435,7 @@ pub fn sampling_config_for_model(
         force_http1: false,
         max_retries: info.max_retries,
         stream_tool_calls: info.stream_tool_calls.unwrap_or(false),
+        extract_inline_thinking: info.extract_inline_thinking.unwrap_or(false),
         idle_timeout_secs: None,
         client_identifier: None,
         deployment_id,
@@ -5511,6 +5545,7 @@ fn resolve_hidden_default_web_search_sampling_config(
             compaction_at_tokens: None,
             show_model_fingerprint: false,
             stream_tool_calls: None,
+            extract_inline_thinking: None,
             laziness_detector: LazinessDetectorPerModelConfig::default(),
         },
         api_key: None,
@@ -6725,6 +6760,7 @@ reasoning_effort = "low"
                 compaction_at_tokens: None,
                 show_model_fingerprint: false,
                 stream_tool_calls: None,
+                extract_inline_thinking: None,
                 laziness_detector: LazinessDetectorPerModelConfig::default(),
             },
             api_key: api_key.map(|s| s.to_string()),
@@ -7751,6 +7787,7 @@ reasoning_effort = "low"
             compaction_at_tokens: None,
             show_model_fingerprint: false,
             stream_tool_calls: None,
+            extract_inline_thinking: None,
             laziness_detector: LazinessDetectorPerModelConfig::default(),
         };
         let info = ModelInfo::from_config(&entry);
@@ -7910,6 +7947,7 @@ reasoning_effort = "low"
             compaction_at_tokens: None,
             show_model_fingerprint: false,
             stream_tool_calls: None,
+            extract_inline_thinking: None,
             laziness_detector: LazinessDetectorPerModelConfig::default(),
         };
         let info = ModelInfo::from_config(&entry);
@@ -8361,6 +8399,7 @@ reasoning_effort = "low"
             compaction_at_tokens: None,
             show_model_fingerprint: false,
             stream_tool_calls: None,
+            extract_inline_thinking: None,
             laziness_detector: LazinessDetectorPerModelConfig::default(),
         };
         let info = ModelInfo::from_config(&entry);
@@ -12187,6 +12226,7 @@ default = "grok-4.5"
                 compaction_at_tokens: None,
                 show_model_fingerprint: false,
                 stream_tool_calls: None,
+                extract_inline_thinking: None,
                 laziness_detector: LazinessDetectorPerModelConfig::default(),
                 auto_compact_threshold_percent: None,
                 system_prompt_label: None,
@@ -12331,6 +12371,38 @@ default = "grok-4.5"
         assert_eq!(info.inference_idle_timeout_secs, Some(600));
         assert_eq!(info.stream_tool_calls, Some(true));
     }
+    #[test]
+    fn per_model_inline_thinking_override_reaches_sampler_config() {
+        let raw_config: toml::Value = toml::from_str(
+            r#"
+            [model.deepseek-r1]
+            model = "deepseek-reasoner"
+            base_url = "https://api.example.com/v1"
+            context_window = 128000
+            api_backend = "chat_completions"
+            extract_inline_thinking = true
+            "#,
+        )
+        .unwrap();
+        let cfg = Config::new_from_toml_cfg(&raw_config).expect("config should parse");
+        let resolved = resolve_model_list(&cfg, None);
+        let entry = resolved
+            .get("deepseek-r1")
+            .expect("configured model should resolve");
+        assert_eq!(entry.info.extract_inline_thinking, Some(true));
+
+        let sampler = sampling_config_for_model(
+            entry,
+            resolve_credentials(entry, None),
+            None,
+            None,
+            None,
+            None,
+        );
+        assert!(sampler.extract_inline_thinking);
+        assert_eq!(sampler.api_backend, ApiBackend::ChatCompletions);
+    }
+
     #[test]
     fn per_model_value_overrides_global_model_default() {
         let mut cfg = Config::default();
