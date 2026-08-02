@@ -147,6 +147,7 @@ pub(crate) async fn run_request_task(
             request.clone(),
             request_id.clone(),
             idle_timeout,
+            client.extract_inline_thinking(),
             &event_tx,
             &cancel_token,
             doom_check,
@@ -491,6 +492,7 @@ async fn run_one_attempt(
     request: ConversationRequest,
     request_id: RequestId,
     idle_timeout: Duration,
+    extract_inline_thinking: bool,
     event_tx: &mpsc::UnboundedSender<SamplingEvent>,
     cancel_token: &CancellationToken,
     doom_check: Option<xai_grok_sampling_types::DoomLoopRecoveryPolicy>,
@@ -503,7 +505,13 @@ async fn run_one_attempt(
                 Err(e) => return AttemptOutcome::InitFailed { error: e },
             };
             let (teed, captured) = tee_errors(raw);
-            let l2 = stream_chat_completions(teed, metadata, request_id.clone(), idle_timeout);
+            let l2 = stream_chat_completions(
+                teed,
+                metadata,
+                request_id.clone(),
+                idle_timeout,
+                extract_inline_thinking,
+            );
             drive_l2(
                 l2,
                 request_id,

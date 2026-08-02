@@ -1059,6 +1059,19 @@ pub struct SamplingConfig {
     /// API request body so the upstream emits per-chunk argument deltas.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stream_tool_calls: Option<bool>,
+    /// When `Some(true)`, the chat-completions stream parser scans
+    /// `delta.content` for inline `<think>...</think>` pseudo-XML tags
+    /// (used by DeepSeek-R1, Qwen3-Thinking, GLM-Z1, and other Chinese
+    /// reasoning models when their proxy emits reasoning inline in
+    /// `content` instead of a structured `reasoning_content` field) and
+    /// routes the wrapped text through [`SamplingChannel::Reasoning`].
+    /// `None` or `Some(false)` is a no-op (default).
+    ///
+    /// Partial-buffer safe — tags split across SSE chunks are
+    /// re-assembled; an unclosed `<think>` at stream end is flushed as
+    /// reasoning (covers `max_tokens` truncation).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extract_inline_thinking: Option<bool>,
 }
 
 // ============ Responses API wrapper ============

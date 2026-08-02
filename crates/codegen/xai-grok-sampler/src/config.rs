@@ -74,6 +74,21 @@ pub struct SamplerConfig {
     pub force_http1: bool,
     pub max_retries: Option<u32>,
     pub stream_tool_calls: bool,
+    /// When true, the chat-completions stream parser scans
+    /// `delta.content` for inline `<think>...</think>` pseudo-XML tags
+    /// (DeepSeek-R1, Qwen3-Thinking, GLM-Z1 and other Chinese reasoning
+    /// models that emit reasoning inline in `content` instead of via a
+    /// structured `reasoning_content` field) and routes the wrapped
+    /// text through the reasoning channel. The TUI then renders it as
+    /// a foldable thought block, the same as native `reasoning_content`.
+    ///
+    /// Partial-buffer safe: tags split across SSE chunks are
+    /// re-assembled; an unclosed `<think>` at stream end is flushed as
+    /// reasoning (covers `max_tokens` truncation). When false (the
+    /// default), `delta.content` is passed through unchanged — zero
+    /// overhead, zero behavior change.
+    #[serde(default)]
+    pub extract_inline_thinking: bool,
     pub idle_timeout_secs: Option<u64>,
 
     // Reasoning effort
@@ -158,6 +173,7 @@ impl Default for SamplerConfig {
             force_http1: false,
             max_retries: None,
             stream_tool_calls: false,
+            extract_inline_thinking: false,
             idle_timeout_secs: None,
             reasoning_effort: None,
             origin_client: None,

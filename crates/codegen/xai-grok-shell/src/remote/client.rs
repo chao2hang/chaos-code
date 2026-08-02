@@ -973,6 +973,12 @@ pub fn parse_remote_model_value(
             .get("streamToolCalls")
             .or_else(|| obj.get("stream_tool_calls"))
             .and_then(|v| v.as_bool()),
+        extract_inline_thinking: obj
+            .get("extractInlineThinking")
+            .or_else(|| obj.get("extract_inline_thinking"))
+            .or_else(|| meta.and_then(|m| m.get("extractInlineThinking")))
+            .or_else(|| meta.and_then(|m| m.get("extract_inline_thinking")))
+            .and_then(|v| v.as_bool()),
         laziness_detector: get_object(obj, "lazinessDetector")
             .or_else(|| get_object(obj, "laziness_detector"))
             .or_else(|| meta.and_then(|m| get_object(m, "lazinessDetector")))

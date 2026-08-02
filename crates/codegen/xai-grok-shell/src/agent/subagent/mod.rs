@@ -744,6 +744,7 @@ async fn read_parent_sampling_config(
                 force_http1: false,
                 max_retries: None,
                 stream_tool_calls: cfg.stream_tool_calls.unwrap_or(false),
+                extract_inline_thinking: cfg.extract_inline_thinking.unwrap_or(false),
                 idle_timeout_secs: None,
                 client_identifier: ctx.sampling_config.client_identifier.clone(),
                 deployment_id: ctx.sampling_config.deployment_id.clone(),

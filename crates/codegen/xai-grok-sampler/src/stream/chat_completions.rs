@@ -38,6 +38,13 @@ pub fn stream_chat_completions<'a>(
     model_metadata: Option<ResponseModelMetadata>,
     request_id: RequestId,
     idle_timeout: Duration,
+    // When true, `delta.content` is scanned for inline
+    // `<think>...</think>` pseudo-XML tags and the wrapped text is
+    // emitted via `SamplingChannel::Reasoning` instead of `Text`.
+    // See [`InlineThinkParser`] for the partial-buffer handling.
+    // Default-friendly: `false` makes the parser a no-op (zero
+    // overhead, identical to the pre-feature behavior).
+    extract_inline_thinking: bool,
 ) -> impl Stream<Item = SamplingEvent> + Send + 'a {
     async_stream::stream! {
         let stream_start = Instant::now();
@@ -91,6 +98,11 @@ pub fn stream_chat_completions<'a>(
         // timer but make no real progress -- some inference engines
         // do exactly that.
         let mut last_content_chunk_at = Instant::now();
+
+        // State machine for inline `<think>...</think>` extraction,
+        // constructed only when the flag is on so the parser never
+        // allocates in the default-off path.
+        let mut think_parser = extract_inline_thinking.then(InlineThinkParser::new);
 
         let mut stream = raw_stream;
         loop {
@@ -163,15 +175,41 @@ pub fn stream_chat_completions<'a>(
                     }
                     chunk_has_content = true;
                     chunk_timestamps.push(Instant::now());
-                    chunk_index += 1;
-                    message_chunk_count += 1;
-                    content_acc.push_str(&text);
-                    yield SamplingEvent::ChannelToken {
-                        request_id: request_id.clone(),
-                        channel: SamplingChannel::Text,
-                        text,
-                        chunk_index,
-                    };
+
+                    if let Some(parser) = think_parser.as_mut() {
+                        // Split the chunk on inline think tags; each
+                        // emitted piece goes to its appropriate channel.
+                        // The parser persists across chunks so a tag
+                        // straddling two feeds is still recognized.
+                        for (channel, piece) in parser.feed(&text) {
+                            chunk_index += 1;
+                            match channel {
+                                SamplingChannel::Text => {
+                                    message_chunk_count += 1;
+                                    content_acc.push_str(&piece);
+                                }
+                                SamplingChannel::Reasoning => {
+                                    reasoning_acc.push_str(&piece);
+                                }
+                            }
+                            yield SamplingEvent::ChannelToken {
+                                request_id: request_id.clone(),
+                                channel,
+                                text: piece,
+                                chunk_index,
+                            };
+                        }
+                    } else {
+                        chunk_index += 1;
+                        message_chunk_count += 1;
+                        content_acc.push_str(&text);
+                        yield SamplingEvent::ChannelToken {
+                            request_id: request_id.clone(),
+                            channel: SamplingChannel::Text,
+                            text,
+                            chunk_index,
+                        };
+                    }
                 }
 
                 if let Some(thought) = delta.reasoning_content
@@ -293,6 +331,32 @@ pub fn stream_chat_completions<'a>(
             finish_reason = Some(StopReason::ToolCalls);
         }
 
+        // Flush any pending inline-think state before building items.
+        // If the model hit `max_tokens` mid-reasoning, the tail
+        // (e.g. a half-written `</think` tag and any unwrapped
+        // reasoning text) lands in the correct channel instead of
+        // being silently dropped from the persisted response.
+        if let Some(parser) = think_parser.as_mut()
+            && let Some((channel, piece)) = parser.flush()
+        {
+            chunk_index += 1;
+            match channel {
+                SamplingChannel::Text => {
+                    message_chunk_count += 1;
+                    content_acc.push_str(&piece);
+                }
+                SamplingChannel::Reasoning => {
+                    reasoning_acc.push_str(&piece);
+                }
+            }
+            yield SamplingEvent::ChannelToken {
+                request_id: request_id.clone(),
+                channel,
+                text: piece,
+                chunk_index,
+            };
+        }
+
         // Build the trailing Assistant + any reasoning sibling.
         let mut items: Vec<ConversationItem> = Vec::new();
         if first_choice_seen {
@@ -333,6 +397,132 @@ pub fn stream_chat_completions<'a>(
             metrics,
         };
     }
+}
+
+// =============================================================================
+// InlineThinkParser
+// =============================================================================
+
+/// Splits a stream of text chunks on `<think>...</think>` pseudo-XML
+/// tags, routing the wrapped content through
+/// [`SamplingChannel::Reasoning`] and the rest through
+/// [`SamplingChannel::Text`].
+///
+/// Chinese reasoning models (DeepSeek-R1, Qwen3-Thinking, GLM-Z1)
+/// emit reasoning inline in `content` instead of via a structured
+/// `reasoning_content` field; this parser lifts that inline reasoning
+/// into the same channel the TUI already knows how to fold.
+///
+/// # Partial-buffer handling
+///
+/// `<think>` (7 chars) and `</think>` (8 chars) can be split across
+/// SSE chunks. The parser keeps only the longest trailing substring
+/// that is also a prefix of the tag currently being sought. The
+/// buffer is therefore bounded to at most 7 bytes, while an unrelated
+/// `<` is emitted immediately as ordinary content.
+///
+/// # Unclosed `<think>`
+///
+/// If `flush` is called while the parser is in the reasoning half
+/// (e.g. the model hit `max_tokens` mid-reasoning, or the stream was
+/// truncated), the buffered tail is flushed as reasoning. This is
+/// the safer default — surfacing partial reasoning beats dropping it
+/// silently.
+struct InlineThinkParser {
+    in_thinking: bool,
+    /// Pending bytes at the end of the previous feed that could be
+    /// the beginning of the tag currently being sought. This is the
+    /// longest suffix that is also a proper prefix of that tag, so it
+    /// is bounded to at most `CLOSE_TAG.len() - 1` bytes.
+    tail: String,
+}
+
+const OPEN_TAG: &str = "<think>";
+const CLOSE_TAG: &str = "</think>";
+
+impl InlineThinkParser {
+    fn new() -> Self {
+        Self {
+            in_thinking: false,
+            tail: String::new(),
+        }
+    }
+
+    /// Feed a chunk; return a list of (channel, piece) slices in
+    /// arrival order. The tail bytes that didn't yet form a complete
+    /// tag are kept internally for the next feed.
+    fn feed(&mut self, chunk: &str) -> Vec<(SamplingChannel, String)> {
+        // Prepend the tail from the previous feed so a tag split
+        // across two chunks is re-scanned from its start.
+        let mut buf = std::mem::take(&mut self.tail);
+        buf.push_str(chunk);
+
+        let mut out = Vec::new();
+        let mut i = 0;
+        let bytes = buf.as_str();
+        while i < bytes.len() {
+            let needle = if self.in_thinking {
+                CLOSE_TAG
+            } else {
+                OPEN_TAG
+            };
+            if let Some(rel) = bytes[i..].find(needle) {
+                let end = i + rel;
+                if end > i {
+                    out.push((self.current_channel(), bytes[i..end].to_string()));
+                }
+                i = end + needle.len();
+                self.in_thinking = !self.in_thinking;
+            } else {
+                // No complete delimiter remains. Hold back only the
+                // longest suffix that could become the tag currently
+                // being sought on the next feed. For example, `<th`
+                // is retained while `2 < 3` is emitted immediately.
+                let remainder = &bytes[i..];
+                let tail_len = longest_tag_prefix_suffix(remainder, needle);
+                let emit_end = bytes.len() - tail_len;
+                if emit_end > i {
+                    out.push((self.current_channel(), bytes[i..emit_end].to_string()));
+                }
+                self.tail = bytes[emit_end..].to_string();
+                i = bytes.len();
+            }
+        }
+        out
+    }
+
+    /// Drain any remaining buffered text. Emits as the current channel
+    /// (Text if outside `<think>`, Reasoning if inside). Called at
+    /// stream end so an unclosed `<think>` is preserved rather than
+    /// silently dropped.
+    fn flush(&mut self) -> Option<(SamplingChannel, String)> {
+        if self.tail.is_empty() {
+            None
+        } else {
+            let channel = self.current_channel();
+            let text = std::mem::take(&mut self.tail);
+            Some((channel, text))
+        }
+    }
+
+    fn current_channel(&self) -> SamplingChannel {
+        if self.in_thinking {
+            SamplingChannel::Reasoning
+        } else {
+            SamplingChannel::Text
+        }
+    }
+}
+
+/// Length of the longest suffix of `text` that is also a proper
+/// prefix of `tag`. A full tag is never returned because callers only
+/// invoke this after proving that no complete tag remains.
+fn longest_tag_prefix_suffix(text: &str, tag: &str) -> usize {
+    let max_len = text.len().min(tag.len().saturating_sub(1));
+    (1..=max_len)
+        .rev()
+        .find(|&len| text.ends_with(&tag[..len]))
+        .unwrap_or(0)
 }
 
 #[cfg(test)]
@@ -402,6 +592,7 @@ mod tests {
             None,
             rid(),
             Duration::from_secs(60),
+            false,
         ))
         .await;
 
@@ -428,6 +619,7 @@ mod tests {
             None,
             rid(),
             Duration::from_secs(60),
+            false,
         ))
         .await;
 
@@ -482,6 +674,7 @@ mod tests {
             None,
             rid(),
             Duration::from_secs(60),
+            false,
         ))
         .await;
 
@@ -568,6 +761,7 @@ mod tests {
             None,
             rid(),
             Duration::from_secs(60),
+            false,
         ))
         .await;
 
@@ -642,6 +836,7 @@ mod tests {
             None,
             rid(),
             Duration::from_secs(60),
+            false,
         ))
         .await;
 
@@ -652,7 +847,10 @@ mod tests {
                 _ => None,
             })
             .expect("expected a Failed event");
-        assert_eq!(failed.kind, crate::events::SamplingErrorKind::MalformedToolCall);
+        assert_eq!(
+            failed.kind,
+            crate::events::SamplingErrorKind::MalformedToolCall
+        );
         assert!(!failed.is_retryable, "malformed tool call must not retry");
         assert!(failed.message.contains("call_xyz"));
         assert!(
@@ -711,6 +909,7 @@ mod tests {
             None,
             rid(),
             Duration::from_secs(60),
+            false,
         ))
         .await;
 
@@ -738,6 +937,7 @@ mod tests {
             None,
             rid(),
             Duration::from_secs(60),
+            false,
         ))
         .await;
 
@@ -764,6 +964,7 @@ mod tests {
             None,
             rid(),
             Duration::from_millis(100),
+            false,
         ))
         .await;
 
@@ -790,6 +991,7 @@ mod tests {
             Some(metadata.clone()),
             rid(),
             Duration::from_secs(60),
+            false,
         ))
         .await;
 
@@ -826,6 +1028,7 @@ mod tests {
             None,
             rid(),
             Duration::from_secs(60),
+            false,
         ))
         .await;
 
@@ -865,6 +1068,7 @@ mod tests {
                 None,
                 rid(),
                 Duration::from_secs(60),
+                false,
             ))
             .await;
             match events.last().unwrap() {
@@ -908,11 +1112,388 @@ mod tests {
             None,
             rid(),
             Duration::from_secs(60),
+            false,
         ))
         .await;
         match events.last().unwrap() {
             SamplingEvent::Completed { response, .. } => {
                 assert_eq!(response.cost_usd_ticks, Some(99));
+            }
+            other => panic!("expected Completed, got {other:?}"),
+        }
+    }
+
+    // ---- InlineThinkParser unit tests ----
+
+    fn collect_chunks(
+        p: &mut InlineThinkParser,
+        chunks: &[&str],
+    ) -> Vec<(SamplingChannel, String)> {
+        let mut out = Vec::new();
+        for chunk in chunks {
+            out.extend(p.feed(chunk));
+        }
+        // Mirror the stream-level call: end-of-stream flushes the
+        // remaining tail so an unclosed partial tag is preserved as
+        // the current channel's content.
+        out.extend(p.flush());
+        out
+    }
+
+    #[test]
+    fn inline_think_disabled_when_flag_off() {
+        // When extract_inline_thinking is false the stream function never
+        // constructs a parser; verify the helper struct itself stays
+        // trivially correct as a smoke test.
+        let mut p = InlineThinkParser::new();
+        let out = collect_chunks(&mut p, &["<think>hello</think>world"]);
+        assert_eq!(
+            out,
+            vec![
+                (SamplingChannel::Reasoning, "hello".to_string()),
+                (SamplingChannel::Text, "world".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn inline_think_simple_block_splits() {
+        let mut p = InlineThinkParser::new();
+        let out = p.feed("<think>foo</think>bar");
+        assert_eq!(
+            out,
+            vec![
+                (SamplingChannel::Reasoning, "foo".to_string()),
+                (SamplingChannel::Text, "bar".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn inline_think_text_around_block() {
+        let mut p = InlineThinkParser::new();
+        let out = p.feed("before<think>middle</think>after");
+        assert_eq!(
+            out,
+            vec![
+                (SamplingChannel::Text, "before".to_string()),
+                (SamplingChannel::Reasoning, "middle".to_string()),
+                (SamplingChannel::Text, "after".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn inline_think_open_tag_split_across_chunks() {
+        // The opening tag's last byte lands in the second chunk.
+        let mut p = InlineThinkParser::new();
+        let out = collect_chunks(&mut p, &["<th", "ink>foo</think>rest"]);
+        assert_eq!(
+            out,
+            vec![
+                (SamplingChannel::Reasoning, "foo".to_string()),
+                (SamplingChannel::Text, "rest".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn inline_think_close_tag_split_across_chunks() {
+        // The closing tag's last byte lands in the second chunk.
+        let mut p = InlineThinkParser::new();
+        let out = collect_chunks(&mut p, &["<think>foo</thin", "k>rest"]);
+        assert_eq!(
+            out,
+            vec![
+                (SamplingChannel::Reasoning, "foo".to_string()),
+                (SamplingChannel::Text, "rest".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn inline_think_unclosed_reasoning_emitted_inline() {
+        // The `<think>` tag is recognized at the start of the feed,
+        // so the parser emits the reasoning body as it goes. The
+        // final tail is empty because nothing before the trailing
+        // position is a partial tag.
+        let mut p = InlineThinkParser::new();
+        let out = p.feed("<think>reasoning without close");
+        assert_eq!(
+            out,
+            vec![(
+                SamplingChannel::Reasoning,
+                "reasoning without close".to_string()
+            )]
+        );
+        assert!(p.flush().is_none());
+    }
+
+    #[test]
+    fn inline_think_partial_tag_at_end_flushes_as_reasoning() {
+        // Feed ends with a partial close tag (`</thin`) — the bytes
+        // before it are emitted, the `<` onwards is held in tail.
+        // On flush, that held `<…` becomes Reasoning (we're inside
+        // `<think>`) rather than Text, so the user's reasoning text
+        // isn't accidentally promoted to a visible message.
+        let mut p = InlineThinkParser::new();
+        let out = p.feed("<think>start</thin");
+        assert_eq!(out, vec![(SamplingChannel::Reasoning, "start".to_string())]);
+        let flushed = p.flush().expect("partial tag must flush");
+        assert_eq!(flushed.0, SamplingChannel::Reasoning);
+        assert_eq!(flushed.1, "</thin");
+    }
+
+    #[test]
+    fn inline_think_open_tag_buffered_when_chunk_boundary_holds_partial() {
+        // The chunk ends with `<th` and the next chunk continues with
+        // `ink>rest`; the parser must NOT emit `<th` as Text — it's
+        // the start of the open tag. Once the tag is confirmed, the
+        // following content (`rest`) lands in Reasoning.
+        let mut p = InlineThinkParser::new();
+        let out1 = p.feed("foo<th");
+        assert_eq!(out1, vec![(SamplingChannel::Text, "foo".to_string())]);
+        let out2 = p.feed("ink>rest");
+        assert_eq!(out2, vec![(SamplingChannel::Reasoning, "rest".to_string())]);
+    }
+
+    #[test]
+    fn inline_think_nested_open_inside_thinking_is_treated_as_text() {
+        // `<think>a<think>b</think>c`:
+        //   outer `<think>` opens reasoning; `a<think>b` is reasoning
+        //   text (the inner `<think>` is just literal text, not a
+        //   nested open because we're already in reasoning and only
+        //   look for `</think>`); `</think>` closes reasoning; `c`
+        //   is back in text mode. So the inner `<think>` is correctly
+        //   left as reasoning content rather than toggling the mode
+        //   a second time.
+        let mut p = InlineThinkParser::new();
+        let out = p.feed("<think>a<think>b</think>c");
+        assert_eq!(
+            out,
+            vec![
+                (SamplingChannel::Reasoning, "a<think>b".to_string()),
+                (SamplingChannel::Text, "c".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn inline_think_unrelated_less_than_is_emitted_without_buffering() {
+        let mut p = InlineThinkParser::new();
+        let out = p.feed("2 < 3 and <tag>literal</tag>");
+        assert_eq!(
+            out,
+            vec![(
+                SamplingChannel::Text,
+                "2 < 3 and <tag>literal</tag>".to_string()
+            )]
+        );
+        assert!(p.flush().is_none());
+    }
+
+    #[test]
+    fn inline_think_keeps_only_longest_delimiter_prefix() {
+        let mut p = InlineThinkParser::new();
+        assert_eq!(
+            p.feed("visible<<thi"),
+            vec![(SamplingChannel::Text, "visible<".to_string())]
+        );
+        assert_eq!(
+            p.feed("nk>reasoning</think>answer"),
+            vec![
+                (SamplingChannel::Reasoning, "reasoning".to_string()),
+                (SamplingChannel::Text, "answer".to_string()),
+            ]
+        );
+        assert!(p.flush().is_none());
+    }
+
+    #[test]
+    fn inline_think_flush_with_empty_tail_returns_none() {
+        let mut p = InlineThinkParser::new();
+        // No feed → tail is empty; flush is a no-op.
+        assert!(p.flush().is_none());
+    }
+
+    #[test]
+    fn inline_think_flush_after_complete_block_returns_none() {
+        // Tail is empty after a complete tag (no partial bytes left).
+        let mut p = InlineThinkParser::new();
+        let _ = p.feed("<think>foo</think>");
+        assert!(p.flush().is_none());
+    }
+
+    // ---- stream_chat_completions integration tests for extract_inline_thinking ----
+
+    /// Helper that builds a stream of text chunks containing the
+    /// given payload, split at byte boundaries that exercise partial
+    /// tag detection. The default splits at the worst possible point
+    /// (mid-tag) — callers can override `chunk_size` to control.
+    fn split_text(text: &str) -> Vec<Result<ChatCompletionChunk, SamplingError>> {
+        // For tests that don't need a specific split, feed the entire
+        // string as one chunk — that's the common case for real models.
+        vec![Ok(text_chunk(text)), Ok(final_chunk(FinishReason::Stop))]
+    }
+
+    /// Helper for partial-buffer tests: feed the text in two chunks
+    /// with the split landing mid-tag.
+    fn split_text_at(text: &str, mid: usize) -> Vec<Result<ChatCompletionChunk, SamplingError>> {
+        let (a, b) = text.split_at(mid);
+        vec![
+            Ok(text_chunk(a)),
+            Ok(text_chunk(b)),
+            Ok(final_chunk(FinishReason::Stop)),
+        ]
+    }
+
+    fn collect_channels(events: &[SamplingEvent]) -> Vec<(SamplingChannel, String)> {
+        events
+            .iter()
+            .filter_map(|e| match e {
+                SamplingEvent::ChannelToken { channel, text, .. } => {
+                    Some((channel.clone(), text.clone()))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn stream_extract_inline_thinking_disabled_passes_through_as_text() {
+        // Default-off: even if the response contains tags, they flow
+        // as Text — preserves pre-feature behavior exactly.
+        let raw = stream::iter(split_text("<think>foo</think>bar")).boxed();
+        let events = collect(stream_chat_completions(
+            raw,
+            None,
+            rid(),
+            Duration::from_secs(60),
+            false,
+        ))
+        .await;
+        let channels = collect_channels(&events);
+        // Whole text arrives as a single Text token (no splitting).
+        assert_eq!(
+            channels,
+            vec![(SamplingChannel::Text, "<think>foo</think>bar".to_string())]
+        );
+    }
+
+    #[tokio::test]
+    async fn stream_extract_inline_thinking_splits_simple_block() {
+        let raw = stream::iter(split_text("<think>foo</think>bar")).boxed();
+        let events = collect(stream_chat_completions(
+            raw,
+            None,
+            rid(),
+            Duration::from_secs(60),
+            true,
+        ))
+        .await;
+        let channels = collect_channels(&events);
+        assert_eq!(
+            channels,
+            vec![
+                (SamplingChannel::Reasoning, "foo".to_string()),
+                (SamplingChannel::Text, "bar".to_string()),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn stream_extract_inline_thinking_handles_split_open_tag() {
+        // Split the chunk so the closing `>` of `<think>` lands in the
+        // second chunk — exercises the partial-buffer path. The body
+        // text `deep reasoning` lands entirely in the second chunk so
+        // it's not fragmented by the boundary (otherwise the parser
+        // would have to wait for the next feed to confirm the body's
+        // `n` isn't part of a tag — a real chunk boundary inside a
+        // body word would be unusual but the parser would still emit
+        // it correctly, just in two pieces).
+        let payload = "<think>deep reasoning</think>answer";
+        // Split after `<th` — first chunk = `<th`, second = `ink>deep
+        // reasoning</think>answer`. The body lands in the second
+        // chunk as a single Reasoning piece.
+        let split_at = 3;
+        let raw = stream::iter(split_text_at(payload, split_at)).boxed();
+        let events = collect(stream_chat_completions(
+            raw,
+            None,
+            rid(),
+            Duration::from_secs(60),
+            true,
+        ))
+        .await;
+        let channels = collect_channels(&events);
+        assert_eq!(
+            channels,
+            vec![
+                (SamplingChannel::Reasoning, "deep reasoning".to_string()),
+                (SamplingChannel::Text, "answer".to_string()),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn stream_extract_inline_thinking_unclosed_reasoning_emitted() {
+        // Model hit `max_tokens` mid-reasoning — no closing tag.
+        // The opening tag is recognized on the first chunk; the body
+        // is emitted inline as Reasoning. No tail remains because
+        // the body has no trailing partial tag.
+        let raw = stream::iter(split_text("<think>partial reasoning")).boxed();
+        let events = collect(stream_chat_completions(
+            raw,
+            None,
+            rid(),
+            Duration::from_secs(60),
+            true,
+        ))
+        .await;
+        let channels = collect_channels(&events);
+        assert_eq!(
+            channels,
+            vec![(SamplingChannel::Reasoning, "partial reasoning".to_string())]
+        );
+    }
+
+    #[tokio::test]
+    async fn stream_extract_inline_thinking_assistant_and_reasoning_items_correct() {
+        // Verify the persisted ConversationResponse items reflect the
+        // split: a Reasoning sibling + an Assistant with content stripped
+        // of the think block.
+        let raw = stream::iter(split_text("<think>r</think>visible")).boxed();
+        let events = collect(stream_chat_completions(
+            raw,
+            None,
+            rid(),
+            Duration::from_secs(60),
+            true,
+        ))
+        .await;
+        match events.last().unwrap() {
+            SamplingEvent::Completed { response, .. } => {
+                // Expect: Reasoning("r"), Assistant("visible")
+                assert_eq!(response.items.len(), 2);
+                match &response.items[0] {
+                    xai_grok_sampling_types::ConversationItem::Reasoning(item) => {
+                        // The text of a Reasoning item carries the raw
+                        // reasoning; verify it equals "r".
+                        assert_eq!(
+                            xai_grok_sampling_types::reasoning_item_text(item),
+                            "r",
+                            "first item should be reasoning"
+                        );
+                    }
+                    other => panic!("expected Reasoning, got {other:?}"),
+                }
+                match &response.items[1] {
+                    xai_grok_sampling_types::ConversationItem::Assistant(a) => {
+                        assert_eq!(a.content.as_ref(), "visible");
+                        assert!(a.tool_calls.is_empty());
+                    }
+                    other => panic!("expected Assistant, got {other:?}"),
+                }
             }
             other => panic!("expected Completed, got {other:?}"),
         }
