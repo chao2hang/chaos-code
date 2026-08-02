@@ -275,7 +275,13 @@ impl SamplingError {
             SamplingError::Http(err) => is_retryable_reqwest(err),
             SamplingError::Serialization(_) => false,
             SamplingError::Api { status, .. } => {
-                matches!(status.as_u16(), 429 | 500 | 502 | 503 | 504 | 520)
+                // 429 rate-limit + 5xx server errors. Includes the full
+                // Cloudflare 52x range (520..=524) — origin down / connect
+                // fail / timeout — so transient edge timeouts enter the
+                // exponential-backoff path instead of surfacing immediately.
+                // The user-facing message map at [`status_user_message`] also
+                // covers 520..=524; keep the two ranges in lockstep.
+                matches!(status.as_u16(), 429 | 500..=504 | 520..=524)
             }
             SamplingError::EventStreamError(_) => true,
             SamplingError::StreamError { .. } => true,
@@ -896,5 +902,50 @@ mod tests {
             !err.is_retryable(),
             "direct 400 must not be retryable by is_retryable()"
         );
+    }
+
+    /// Cloudflare edge error range (520..=524) must all be retryable so a
+    /// transient origin timeout enters the exponential-backoff path instead
+    /// of surfacing immediately. Regression guard for the 0.2.128 port —
+    /// upstream `is_retryable()` only listed `520` and the local 521..=524
+    /// extension got dropped during `port: batch 3 - sampler,
+    /// sampling-types, session module`.
+    #[test]
+    fn cloudflare_edge_52x_is_retryable() {
+        for code in [520u16, 521, 522, 523, 524] {
+            let err = SamplingError::Api {
+                status: StatusCode::from_u16(code).unwrap(),
+                message: format!("CF edge {code}"),
+                model_metadata: None,
+                retry_after_secs: None,
+                should_retry: None,
+            };
+            assert!(
+                err.is_retryable(),
+                "Cloudflare edge {code} must be retryable; \
+                 otherwise a transient origin timeout would surface immediately \
+                 instead of entering the exponential-backoff path"
+            );
+        }
+    }
+
+    /// `is_rate_limited()` should NOT classify Cloudflare 52x as
+    /// rate-limited — they're transient server errors, not 429s. The 429
+    /// path has a separate retry-budget cap (`RATE_LIMIT_RETRY_THRESHOLD`).
+    #[test]
+    fn cloudflare_edge_52x_is_not_rate_limited() {
+        for code in [520u16, 521, 522, 523, 524] {
+            let err = SamplingError::Api {
+                status: StatusCode::from_u16(code).unwrap(),
+                message: "".into(),
+                model_metadata: None,
+                retry_after_secs: None,
+                should_retry: None,
+            };
+            assert!(
+                !err.is_rate_limited(),
+                "{code} must not be classified as rate-limited"
+            );
+        }
     }
 }

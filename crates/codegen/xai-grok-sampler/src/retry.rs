@@ -446,11 +446,9 @@ pub(crate) fn clone_error(err: &SamplingError) -> SamplingError {
             context: context.clone(),
         },
         SamplingError::MaxTokensTruncation => SamplingError::MaxTokensTruncation,
-        SamplingError::MalformedToolCall { tool_call_id } => {
-            SamplingError::MalformedToolCall {
-                tool_call_id: tool_call_id.clone(),
-            }
-        }
+        SamplingError::MalformedToolCall { tool_call_id } => SamplingError::MalformedToolCall {
+            tool_call_id: tool_call_id.clone(),
+        },
         SamplingError::DoomLoopDetected {
             triggers,
             aborted_at_chunk,
@@ -765,6 +763,45 @@ mod tests {
         match classify_error(&err, 0, 5, RATE_LIMIT_RETRY_THRESHOLD) {
             RetryDecision::RetryWithClientRebuild { .. } => {}
             other => panic!("expected RetryWithClientRebuild for StreamError, got {other:?}"),
+        }
+    }
+
+    /// Cloudflare edge codes 520..=524 (origin down / connect fail /
+    /// timeout) must enter the exponential-backoff path so transient
+    /// edge timeouts don't surface immediately. Regression guard for the
+    /// 0.2.128 port — `port: batch 3` dropped the local 521..=524
+    /// extension that c9fa7f8 added.
+    #[test]
+    fn classify_cloudflare_52x_enters_backoff_path() {
+        for code in [520u16, 521, 522, 523, 524] {
+            let err = api_err(StatusCode::from_u16(code).unwrap(), "CF edge");
+            // First failure: rebuild client (HTTP/1.1 escape) with backoff.
+            match classify_error(&err, 0, 5, RATE_LIMIT_RETRY_THRESHOLD) {
+                RetryDecision::RetryWithClientRebuild { backoff } => {
+                    assert!(
+                        backoff >= Duration::from_millis(1600),
+                        "first retry backoff for {code} should be >= 1.6s (exp), got {backoff:?}"
+                    );
+                }
+                other => panic!("{code}: expected RetryWithClientRebuild, got {other:?}"),
+            }
+            // Subsequent failures: plain Retry with longer backoff.
+            match classify_error(&err, 1, 5, RATE_LIMIT_RETRY_THRESHOLD) {
+                RetryDecision::Retry { backoff } => {
+                    assert!(
+                        backoff >= Duration::from_millis(3200),
+                        "second retry backoff for {code} should be >= 3.2s, got {backoff:?}"
+                    );
+                }
+                other => panic!("{code}: expected Retry on 2nd attempt, got {other:?}"),
+            }
+            // Budget exhausted: Fatal preserving the original 52x status.
+            match classify_error(&err, 4, 5, RATE_LIMIT_RETRY_THRESHOLD) {
+                RetryDecision::Fatal(SamplingError::Api { status, .. }) => {
+                    assert_eq!(status.as_u16(), code);
+                }
+                other => panic!("{code}: expected Fatal after budget, got {other:?}"),
+            }
         }
     }
 
