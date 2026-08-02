@@ -18,7 +18,7 @@ use std::collections::HashMap;
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
 use super::context_bar::SEPARATOR;
@@ -227,6 +227,9 @@ pub fn classifier_attempts_label(goal: &GoalDisplayState) -> String {
 ///
 /// 展示优先级：稳态解码速率 > 平均输出速率；两个都缺时返回 `None`，
 /// 让调用方直接省略这个 chip 而不是渲染 `0 tok/s`。
+///
+/// 表情 / 颜色按 [`speed_tier`] 的 7 档映射：低速红乌龟到高速绿飞船，
+/// 让用户一眼就能看出当前推理速度落在哪个量级。
 pub fn tokens_per_sec_line(
     ctx: &xai_grok_shell::session::ContextInfo,
     theme: &Theme,
@@ -238,13 +241,49 @@ pub fn tokens_per_sec_line(
             ctx.avg_output_tokens_per_sec
                 .filter(|v| v.is_finite() && *v > 0.0)
         })?;
+    let (emoji, color) = speed_tier(tps, theme);
     let rendered = if f64::from(tps) < 1.0 {
-        format!("⚡ {tps:.1} tok/s")
+        format!("{emoji} {tps:.1} tok/s")
     } else {
-        format!("⚡ {} tok/s", f64::from(tps).round() as u64)
+        format!("{emoji} {} tok/s", f64::from(tps).round() as u64)
     };
-    let style = Style::default().fg(theme.gray_dim).bg(theme.bg_base);
+    let style = Style::default().fg(color).bg(theme.bg_base);
     Some(Line::from(Span::styled(rendered, style)))
+}
+
+/// 把一个 token/s 速率映射到 7 档 (emoji, fg color) 中的某一档。
+///
+/// 阈值采用「保守（低阈）」档位 — 对慢速本地模型更宽容；
+/// 从 `< 2` 的 🐢 开始，逐档提升到 `≥ 150` 的 🛸。
+///
+/// | tok/s 范围 | emoji | 含义      | 颜色           |
+/// |------------|-------|-----------|----------------|
+/// | `< 2`      | 🐢    | 龟速      | `accent_error` |
+/// | `< 5`      | 🚲    | 自行车    | `accent_error` |
+/// | `< 15`     | 🚗    | 汽车      | `warning`      |
+/// | `< 40`     | 🚂    | 火车      | `warning`      |
+/// | `< 80`     | ✈️    | 飞机      | `command`      |
+/// | `< 150`    | 🚀    | 火箭      | `accent_success` |
+/// | `≥ 150`    | 🛸    | 飞船      | `accent_success` |
+///
+/// 调用方需要保证 `tps` 已经是有限正数（[`tokens_per_sec_line`] 已经过滤过）。
+pub fn speed_tier(tps: f32, theme: &Theme) -> (&'static str, Color) {
+    let t = f64::from(tps);
+    if t < 2.0 {
+        ("🐢", theme.accent_error)
+    } else if t < 5.0 {
+        ("🚲", theme.accent_error)
+    } else if t < 15.0 {
+        ("🚗", theme.warning)
+    } else if t < 40.0 {
+        ("🚂", theme.warning)
+    } else if t < 80.0 {
+        ("✈️", theme.command)
+    } else if t < 150.0 {
+        ("🚀", theme.accent_success)
+    } else {
+        ("🛸", theme.accent_success)
+    }
 }
 
 /// Build a compact goal status `Line` for the agent status bar.
@@ -989,7 +1028,7 @@ mod tests {
     }
 
     /// 状态栏 tok/s 芯片：有稳态或平均速率时渲染，缺样本时返回 None，
-    /// 保证状态栏不会出现「⚡ 0 tok/s」的噪音行。
+    /// 保证状态栏不会出现「🐢 0 tok/s」的噪音行。
     #[test]
     fn tokens_per_sec_line_hides_when_absent() {
         let theme = Theme::default();
@@ -1007,7 +1046,8 @@ mod tests {
         };
         let line = tokens_per_sec_line(&ctx, &theme).expect("line should exist");
         let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
-        assert_eq!(text, "\u{26a1} 240 tok/s");
+        // 240 tok/s → 🛸 (≥ 150)
+        assert_eq!(text, "\u{1f6f8} 240 tok/s");
     }
 
     #[test]
@@ -1021,6 +1061,116 @@ mod tests {
         };
         let line = tokens_per_sec_line(&ctx, &theme).expect("line should exist");
         let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
-        assert_eq!(text, "\u{26a1} 0.6 tok/s");
+        // 0.6 tok/s → 🐢 (< 2)
+        assert_eq!(text, "\u{1f422} 0.6 tok/s");
+    }
+
+    // ---- speed_tier 映射表 ----
+    //
+    // 每档都跑一次确保阈值正确；边界用 `.prev`/`.next` 浮点贴近以防 off-by-one。
+
+    fn tier_for(tps: f32) -> &'static str {
+        speed_tier(tps, &Theme::default()).0
+    }
+
+    fn color_for(tps: f32) -> Color {
+        speed_tier(tps, &Theme::default()).1
+    }
+
+    #[test]
+    fn speed_tier_turtle_under_two() {
+        assert_eq!(tier_for(0.0), "\u{1f422}"); // 守卫在 tokens_per_sec_line 里，不在这里测
+        assert_eq!(tier_for(0.1), "\u{1f422}");
+        assert_eq!(tier_for(1.0), "\u{1f422}");
+        assert_eq!(tier_for(1.99), "\u{1f422}");
+    }
+
+    #[test]
+    fn speed_tier_bicycle_under_five() {
+        assert_eq!(tier_for(2.0), "\u{1f6b2}");
+        assert_eq!(tier_for(3.5), "\u{1f6b2}");
+        assert_eq!(tier_for(4.99), "\u{1f6b2}");
+    }
+
+    #[test]
+    fn speed_tier_car_under_fifteen() {
+        assert_eq!(tier_for(5.0), "\u{1f697}");
+        assert_eq!(tier_for(10.0), "\u{1f697}");
+        assert_eq!(tier_for(14.99), "\u{1f697}");
+    }
+
+    #[test]
+    fn speed_tier_train_under_forty() {
+        assert_eq!(tier_for(15.0), "\u{1f682}");
+        assert_eq!(tier_for(25.0), "\u{1f682}");
+        assert_eq!(tier_for(39.99), "\u{1f682}");
+    }
+
+    #[test]
+    fn speed_tier_airplane_under_eighty() {
+        assert_eq!(tier_for(40.0), "\u{2708}\u{fe0f}");
+        assert_eq!(tier_for(60.0), "\u{2708}\u{fe0f}");
+        assert_eq!(tier_for(79.99), "\u{2708}\u{fe0f}");
+    }
+
+    #[test]
+    fn speed_tier_rocket_under_one_fifty() {
+        assert_eq!(tier_for(80.0), "\u{1f680}");
+        assert_eq!(tier_for(100.0), "\u{1f680}");
+        assert_eq!(tier_for(149.99), "\u{1f680}");
+    }
+
+    #[test]
+    fn speed_tier_spaceship_at_or_above_one_fifty() {
+        assert_eq!(tier_for(150.0), "\u{1f6f8}");
+        assert_eq!(tier_for(240.0), "\u{1f6f8}");
+        assert_eq!(tier_for(1_000.0), "\u{1f6f8}");
+        assert_eq!(tier_for(f32::INFINITY), "\u{1f6f8}");
+    }
+
+    #[test]
+    fn speed_tier_colors_go_red_to_green() {
+        let theme = Theme::default();
+        // 慢速 → accent_error (red)
+        assert_eq!(color_for(0.5), theme.accent_error);
+        assert_eq!(color_for(3.0), theme.accent_error);
+        // 中速 → warning (orange/amber)
+        assert_eq!(color_for(10.0), theme.warning);
+        assert_eq!(color_for(25.0), theme.warning);
+        // 中高速 → command (yellow)
+        assert_eq!(color_for(60.0), theme.command);
+        // 高速 → accent_success (green)
+        assert_eq!(color_for(100.0), theme.accent_success);
+        assert_eq!(color_for(500.0), theme.accent_success);
+    }
+
+    /// 跨档位显示的完整 Line：解析出的 emoji 应该是该档对应的那个。
+    #[test]
+    fn tokens_per_sec_line_emoji_matches_tier() {
+        let theme = Theme::default();
+        for (tps, expected_emoji) in [
+            (0.5_f32, "\u{1f422}"),
+            (3.0, "\u{1f6b2}"),
+            (10.0, "\u{1f697}"),
+            (25.0, "\u{1f682}"),
+            (60.0, "\u{2708}\u{fe0f}"),
+            (100.0, "\u{1f680}"),
+            (240.0, "\u{1f6f8}"),
+        ] {
+            let ctx = xai_grok_shell::session::ContextInfo {
+                decode_tokens_per_sec: Some(tps),
+                ..Default::default()
+            };
+            let line = tokens_per_sec_line(&ctx, &theme).expect("line should exist");
+            let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+            assert!(
+                text.starts_with(expected_emoji),
+                "tps={tps}: expected leading emoji {expected_emoji:?} in {text:?}"
+            );
+            // 颜色也按档：取第一个 span 的 fg 验证
+            let fg = line.spans[0].style.fg.expect("fg should be set");
+            let expected_fg = speed_tier(tps, &theme).1;
+            assert_eq!(fg, expected_fg, "tps={tps} fg mismatch");
+        }
     }
 }
