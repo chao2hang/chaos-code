@@ -1,5 +1,18 @@
 # Changelog
 
+# 0.2.129 — 2026-08-02
+
+## Features
+
+- **Inline `<think>` 抽取为 reasoning 通道（issue #21）**：Chat Completions 后端的流式响应里，将 `<think>...</think>` 片段提取为 `SamplingChannel::Reasoning`，而非与正文混杂在 `Text`。`extract_inline_thinking` 默认关闭，仅对在 `[model.<name>]` 配置中显式打开的模型生效（例：`deepseek-reasoner`）。Reasoning 片段持久化为独立的 `ConversationItem::Reasoning`，与最终的 Assistant 内容分开入库。下游所有 `consumer`（reasoning usage、turn capture、scrollback 折叠）直接看到真正的 reasoning 而无需自己再解析。
+- **右上角 token/s 速率档位（状态栏）**：状态栏新增实时速率芯片，根据 `decode_tokens_per_sec` / `avg_output_tokens_per_sec` 渲染为 7 档：`< 2` 🐢、`< 5` 🚲、`< 15` 🚗、`< 40` 🚂、`< 80` ✈️、`< 150` 🚀、`≥ 150` 🛸。颜色从低速红乌龟渐变到高速绿飞船。数据为空时该 chip 隐藏，不会出现「0 tok/s」噪音。
+- **`x.ai/session/set_context_window` 扩展**：客户端可动态调整会话的 context window 上限（`tokens` 字段）。缩小到低于当前用量时立即触发 compaction；其余情况保留锁值、刷新 usage 信号。所有写路径（model switch / response-header 元数据刷新 / 采样错误自动恢复 / `set_context_window`）共用 `compaction.operation_lock`，避免锁值与采样配置被并发写覆盖；活跃轮次中的 resize 会被 `InvalidRequest` 拒绝，保护正在进行的请求。
+
+## Fixes
+
+- **OpenAI 兼容流式 tool call 名称覆盖**：部分 Chat Completions 提供商在首个有效 `function.name` 之后会发送空字符串 `delta`，旧实现会把已经正确的工具名覆盖成空字符串，导致整轮失败。`chat_completions` 解析器现在只在 delta 非空时更新 `function.name`，且对完全空名称的 delta 上报 `MalformedToolCall`。
+- **Cloudflare 5xx 边缘码重试**：之前的 `is_retryable()` 只覆盖 520，而 521–524 在 0.2.128 端口被漏掉，导致 origin down / connect fail / timeout 直接 surface 而不走指数退避。现已扩展到 `520..=524`，新增 sampling-types 与 retry 两组回归测试。
+
 # 0.2.121 — 2026-07-29
 
 ## Fixes
