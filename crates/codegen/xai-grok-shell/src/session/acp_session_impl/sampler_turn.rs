@@ -892,7 +892,7 @@ impl SessionActor {
             // header refresh / model-override write cannot race the
             // context-window restore.
             let trigger_info = {
-                let _op_guard = self.compaction.operation_lock.lock();
+                let _op_guard = self.compaction.operation_lock.lock().await;
                 let total_tokens = self.chat_state_handle.get_estimated_total_tokens().await;
                 let percentage = xai_token_estimation::usage_percentage_u8(total_tokens, cw);
                 if let Some(mut cfg) = self.chat_state_handle.get_sampling_config().await

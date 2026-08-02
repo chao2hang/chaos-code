@@ -11,60 +11,69 @@ impl SessionActor {
         auto_compact_threshold_percent: u8,
     ) -> Result<acp::ModelId, acp::Error> {
         let model_id = acp::ModelId::new(sampling_config.model.clone());
-        let new_context_window = self
-            .compaction
-            .context_window_override
-            .get()
-            .unwrap_or_else(|| {
-                std::num::NonZeroU64::new(sampling_config.context_window).unwrap_or_else(|| {
-                    std::num::NonZeroU64::new(DEFAULT_CONTEXT_WINDOW)
-                        .expect("DEFAULT_CONTEXT_WINDOW is non-zero")
-                })
-            });
-        let prev_threshold = self.compaction.threshold_percent.get();
-        if prev_threshold != auto_compact_threshold_percent {
-            tracing::info!(
-                session_id = %self.session_info.id.0,
-                new_model = %sampling_config.model,
-                old_threshold = prev_threshold,
-                new_threshold = auto_compact_threshold_percent,
-                "auto_compact_threshold_percent updated for model switch"
+        {
+            // Model switches replace the full sampling config, so serialize the
+            // override read and config write with user window changes and
+            // metadata refreshes. Credentials and prompt work happen after
+            // this short gate.
+            let _op_guard = self.compaction.operation_lock.lock().await;
+            let new_context_window = self
+                .compaction
+                .context_window_override
+                .get()
+                .unwrap_or_else(|| {
+                    std::num::NonZeroU64::new(sampling_config.context_window).unwrap_or_else(|| {
+                        std::num::NonZeroU64::new(DEFAULT_CONTEXT_WINDOW)
+                            .expect("DEFAULT_CONTEXT_WINDOW is non-zero")
+                    })
+                });
+            let prev_threshold = self.compaction.threshold_percent.get();
+            if prev_threshold != auto_compact_threshold_percent {
+                tracing::info!(
+                    session_id = %self.session_info.id.0,
+                    new_model = %sampling_config.model,
+                    old_threshold = prev_threshold,
+                    new_threshold = auto_compact_threshold_percent,
+                    "auto_compact_threshold_percent updated for model switch"
+                );
+            }
+            self.compaction
+                .threshold_percent
+                .set(auto_compact_threshold_percent);
+            self.supports_backend_search
+                .set(sampling_config.supports_backend_search);
+            self.compactions_remaining
+                .set(sampling_config.compactions_remaining);
+            self.compaction_at_tokens
+                .set(sampling_config.compaction_at_tokens);
+            xai_grok_telemetry::unified_log::info(
+                "backend_search: model switch",
+                Some(self.session_info.id.0.as_ref()),
+                Some(serde_json::json!({
+                    "new_model": &sampling_config.model,
+                    "api_backend": format!("{:?}", sampling_config.api_backend),
+                    "supports_backend_search": sampling_config.supports_backend_search,
+                })),
+            );
+            self.chat_state_handle.update_sampling_config(
+                xai_grok_sampling_types::SamplingConfig {
+                    base_url: sampling_config.base_url.clone(),
+                    model: sampling_config.model.clone(),
+                    max_completion_tokens: sampling_config.max_completion_tokens,
+                    temperature: sampling_config.temperature,
+                    top_p: sampling_config.top_p,
+                    api_backend: sampling_config.api_backend.clone(),
+                    extra_headers: sampling_config.extra_headers.clone(),
+                    query_params: sampling_config.query_params.clone(),
+                    env_http_headers: sampling_config.env_http_headers.clone(),
+                    context_window: new_context_window,
+                    reasoning_effort: sampling_config.reasoning_effort,
+                    stream_tool_calls: Some(sampling_config.stream_tool_calls),
+                    extract_inline_thinking: Some(sampling_config.extract_inline_thinking),
+                },
             );
         }
-        self.compaction
-            .threshold_percent
-            .set(auto_compact_threshold_percent);
-        self.supports_backend_search
-            .set(sampling_config.supports_backend_search);
-        self.compactions_remaining
-            .set(sampling_config.compactions_remaining);
-        self.compaction_at_tokens
-            .set(sampling_config.compaction_at_tokens);
-        xai_grok_telemetry::unified_log::info(
-            "backend_search: model switch",
-            Some(self.session_info.id.0.as_ref()),
-            Some(serde_json::json!({
-                "new_model": &sampling_config.model,
-                "api_backend": format!("{:?}", sampling_config.api_backend),
-                "supports_backend_search": sampling_config.supports_backend_search,
-            })),
-        );
-        self.chat_state_handle
-            .update_sampling_config(xai_grok_sampling_types::SamplingConfig {
-                base_url: sampling_config.base_url.clone(),
-                model: sampling_config.model.clone(),
-                max_completion_tokens: sampling_config.max_completion_tokens,
-                temperature: sampling_config.temperature,
-                top_p: sampling_config.top_p,
-                api_backend: sampling_config.api_backend.clone(),
-                extra_headers: sampling_config.extra_headers.clone(),
-                query_params: sampling_config.query_params.clone(),
-                env_http_headers: sampling_config.env_http_headers.clone(),
-                context_window: new_context_window,
-                reasoning_effort: sampling_config.reasoning_effort,
-                stream_tool_calls: Some(sampling_config.stream_tool_calls),
-                extract_inline_thinking: Some(sampling_config.extract_inline_thinking),
-            });
+
         let existing = self.chat_state_handle.get_credentials().await;
         let session_key = self
             .auth_manager
@@ -127,15 +136,13 @@ impl SessionActor {
 
     /// Handle [`SessionCommand::SetContextWindow`].
     ///
-    /// Locks the session context window, updates sampling config + signals, and
-    /// optionally runs compaction when usage is over the new budget / threshold.
+    /// Serializes the short sampling-config update with other context-window
+    /// mutations, then optionally runs compaction when usage is over the new
+    /// budget or threshold.
     ///
-    /// All session-affecting commands funnel through the same
-    /// `compaction.operation_lock` so concurrent resizes cannot interleave
-    /// their override/sampling-config/compaction updates. This handler
-    /// also refuses to start if a turn is currently in flight — turning
-    /// the window under an active sampling call would invalidate the
-    /// in-progress request and burn the turn.
+    /// All context-window sampling-config mutations share
+    /// `compaction.operation_lock`, so concurrent resizes and metadata/model
+    /// updates cannot interleave their reads and writes.
     pub(super) async fn handle_set_context_window(
         self: &std::sync::Arc<Self>,
         tokens: std::num::NonZeroU64,
@@ -143,14 +150,11 @@ impl SessionActor {
     ) -> Result<crate::session::commands::SetContextWindowResult, acp::Error> {
         use crate::remote::DEFAULT_CONTEXT_WINDOW;
 
-        // Phase 1 — held under the operation lock: busy check, override
-        // lock, sampling-config write, signals refresh, suppression reset.
-        // We exit the lock before any long-running compaction so the
-        // `parking_lot::Mutex` guard never crosses an `.await` boundary
-        // (parking_lot is blocking — holding it across an await would
-        // deadlock any sibling task).
+        // Phase 1 — held under the async operation lock: busy check,
+        // override write, sampling-config write, signals refresh, and
+        // suppression reset. We exit the gate before long-running compaction.
         let (previous_tokens, tokens_used, usage_percent, should_compact_now) = {
-            let _op_guard = self.compaction.operation_lock.lock();
+            let _op_guard = self.compaction.operation_lock.lock().await;
 
             {
                 let state = self.state.lock().await;

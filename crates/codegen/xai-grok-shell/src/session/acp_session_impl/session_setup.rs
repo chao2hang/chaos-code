@@ -441,7 +441,7 @@ impl SessionActor {
         // metadata write. Re-read the sampling config inside the lock so we
         // do not overwrite a fresh write that happened between the earlier
         // `get_sampling_config` snapshot and this metadata refresh.
-        let _op_guard = self.compaction.operation_lock.lock();
+        let _op_guard = self.compaction.operation_lock.lock().await;
         let Some(current_config) = self.chat_state_handle.get_sampling_config().await else {
             return;
         };
@@ -487,7 +487,7 @@ impl SessionActor {
         // its write. The path runs from live response headers, so without
         // this lock we'd race the user's lock-window request and silently
         // clobber it.
-        let _op_guard = self.compaction.operation_lock.lock();
+        let _op_guard = self.compaction.operation_lock.lock().await;
         let current_config = match self.chat_state_handle.get_sampling_config().await {
             Some(cfg) => cfg,
             None => return,
