@@ -3851,6 +3851,7 @@ mod inline_auto_compact_flow_tests {
 // override, mocking out compaction. The compaction path is exercised through
 // the existing `run_compact` integration tests.
 
+#[cfg(test)]
 mod set_context_window_tests {
     use crate::session::acp_session::support::create_test_actor;
     use crate::session::acp_session::{AgentTask, SessionActor};
