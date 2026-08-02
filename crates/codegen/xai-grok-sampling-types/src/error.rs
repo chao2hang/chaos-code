@@ -118,6 +118,17 @@ pub enum SamplingError {
     EmptyResponse { context: EmptyResponseContext },
     #[error("response truncated by max_tokens")]
     MaxTokensTruncation,
+    /// The model emitted a tool call that is missing its name (or the name
+    /// is blank). Some third-party OpenAI-compatible providers stream a
+    /// `tool_calls` delta carrying only arguments and an id, but never a
+    /// `function.name`. A blank name can never be dispatched, so this is a
+    /// deterministic failure — NOT retryable, since replaying the same
+    /// request would produce the same malformed tool call.
+    #[error(
+        "model returned a tool call without a name (tool_call id={tool_call_id:?}); \
+         the provider's function-calling output is malformed — try a different model"
+    )]
+    MalformedToolCall { tool_call_id: String },
     /// A confident server-reported doom loop on the attempt (mid-stream or
     /// on the completed response). Retryable on the recovery loop's own
     /// budget, separate from the transport budget. Carries the raw trigger
@@ -271,6 +282,7 @@ impl SamplingError {
             SamplingError::IdleTimeout { .. } => false,
             SamplingError::EmptyResponse { .. } => true,
             SamplingError::MaxTokensTruncation => false,
+            SamplingError::MalformedToolCall { .. } => false,
             SamplingError::DoomLoopDetected { .. } => true,
         }
     }

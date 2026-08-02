@@ -206,12 +206,25 @@ pub fn stream_chat_completions<'a>(
                     let mut args_for_event: Option<String> = None;
 
                     if let Some(id) = tc_delta.id {
-                        entry.0 = id.clone();
+                        if !id.is_empty() {
+                            entry.0 = id.clone();
+                        }
                         id_for_event = Some(id);
                     }
                     if let Some(func) = tc_delta.function {
+                        // Some OpenAI-compatible providers emit the tool
+                        // name only in the first delta and then re-send
+                        // `function.name: ""` in every subsequent argument
+                        // delta. Blindly overwriting would clobber the real
+                        // name with an empty string, producing an
+                        // undispatchable `ToolCall { name: "" }`. Only
+                        // accept a non-blank name; keep the first one seen.
+                        if let Some(name) = func.name.as_deref() {
+                            if !name.trim().is_empty() {
+                                entry.1 = name.to_string();
+                            }
+                        }
                         if let Some(name) = func.name {
-                            entry.1 = name.clone();
                             name_for_event = Some(name);
                         }
                         if let Some(args) = func.arguments {
@@ -245,6 +258,26 @@ pub fn stream_chat_completions<'a>(
         }
 
         // ── Build the final response ─────────────────────────────────
+        // Some OpenAI-compatible providers stream a `tool_calls` delta that
+        // carries arguments (and sometimes an id) but never a
+        // `function.name`. A tool call with a blank name cannot be
+        // dispatched, and the malformed output is deterministic on replay,
+        // so fail fast with a dedicated non-retryable error instead of
+        // emitting a `ToolCall { name: "" }` that later dies with a
+        // confusing "Tool not found: " at the dispatch layer.
+        for (tc_id, tc_name, _tc_args) in tool_call_acc.values() {
+            if tc_name.trim().is_empty() {
+                let err = SamplingError::MalformedToolCall {
+                    tool_call_id: tc_id.clone(),
+                };
+                yield SamplingEvent::Failed {
+                    request_id: request_id.clone(),
+                    error: SamplingErrorInfo::from(&err),
+                };
+                return;
+            }
+        }
+
         let tool_calls: Vec<ToolCall> = tool_call_acc
             .into_values()
             .map(|(id, name, arguments)| ToolCall {
@@ -575,6 +608,119 @@ mod tests {
                 assert_eq!(calls[0].arguments.as_ref(), "{\"x\":1}");
                 // Tool calls force ToolCalls stop reason.
                 assert_eq!(response.stop_reason, Some(StopReason::ToolCalls));
+            }
+            other => panic!("expected Completed, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn tool_call_without_name_yields_malformed_tool_call_failure() {
+        // Some providers stream a tool call with an id and arguments but
+        // never a `function.name`. Such a call cannot be dispatched, so the
+        // stream must fail with a non-retryable MalformedToolCall error and
+        // must NOT produce a Completed event.
+        let chunk = make_chunk(vec![ChatChunkDelta {
+            role: None,
+            content: None,
+            reasoning_content: None,
+            tool_calls: vec![ChunkToolCallDelta {
+                index: 0,
+                id: Some("call_xyz".into()),
+                kind: Some("function".into()),
+                function: Some(ToolCallFunctionDelta {
+                    name: None,
+                    arguments: Some("{\"command\":\"memory_pressure\"}".into()),
+                }),
+            }],
+            tool_call_id: None,
+        }]);
+
+        let raw = stream::iter::<Vec<Result<ChatCompletionChunk, SamplingError>>>(vec![Ok(chunk)])
+            .boxed();
+        let events = collect(stream_chat_completions(
+            raw,
+            None,
+            rid(),
+            Duration::from_secs(60),
+        ))
+        .await;
+
+        let failed = events
+            .iter()
+            .find_map(|e| match e {
+                SamplingEvent::Failed { error, .. } => Some(error),
+                _ => None,
+            })
+            .expect("expected a Failed event");
+        assert_eq!(failed.kind, crate::events::SamplingErrorKind::MalformedToolCall);
+        assert!(!failed.is_retryable, "malformed tool call must not retry");
+        assert!(failed.message.contains("call_xyz"));
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, SamplingEvent::Completed { .. })),
+            "must not emit Completed for a malformed tool call"
+        );
+    }
+
+    #[tokio::test]
+    async fn tool_call_preserves_name_when_later_deltas_send_blank_name() {
+        // Regression: some OpenAI-compatible providers (e.g. z1c) send the
+        // tool `name` in the first delta and then re-send
+        // `function.name: ""` in every subsequent argument delta. The
+        // accumulator must keep the first non-blank name instead of
+        // clobbering it with the empty string.
+        let chunk_name = make_chunk(vec![ChatChunkDelta {
+            role: None,
+            content: None,
+            reasoning_content: None,
+            tool_calls: vec![ChunkToolCallDelta {
+                index: 0,
+                id: Some("call_abc".into()),
+                kind: Some("function".into()),
+                function: Some(ToolCallFunctionDelta {
+                    name: Some("get_weather".into()),
+                    arguments: Some(String::new()),
+                }),
+            }],
+            tool_call_id: None,
+        }]);
+        let chunk_arg = make_chunk(vec![ChatChunkDelta {
+            role: None,
+            content: None,
+            reasoning_content: None,
+            tool_calls: vec![ChunkToolCallDelta {
+                index: 0,
+                id: None,
+                kind: None,
+                function: Some(ToolCallFunctionDelta {
+                    name: Some(String::new()),
+                    arguments: Some("{\"city\":\"Paris\"}".into()),
+                }),
+            }],
+            tool_call_id: None,
+        }]);
+
+        let raw = stream::iter::<Vec<Result<ChatCompletionChunk, SamplingError>>>(vec![
+            Ok(chunk_name),
+            Ok(chunk_arg),
+        ])
+        .boxed();
+        let events = collect(stream_chat_completions(
+            raw,
+            None,
+            rid(),
+            Duration::from_secs(60),
+        ))
+        .await;
+
+        match events.last().unwrap() {
+            SamplingEvent::Completed { response, .. } => {
+                let calls = response.tool_calls();
+                assert_eq!(calls.len(), 1);
+                assert_eq!(calls[0].id.as_ref(), "call_abc");
+                assert_eq!(calls[0].name, "get_weather");
+                assert_eq!(calls[0].arguments.as_ref(), "{\"city\":\"Paris\"}");
             }
             other => panic!("expected Completed, got {other:?}"),
         }

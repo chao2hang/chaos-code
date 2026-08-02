@@ -75,6 +75,7 @@ fn classify_sampling_error(err: SamplingError) -> CompactFailure {
         | SamplingError::EventStreamError(_)
         | SamplingError::StreamError { .. }
         | SamplingError::EmptyResponse { .. }
+        | SamplingError::MalformedToolCall { .. }
         | SamplingError::DoomLoopDetected { .. } => false,
     };
     if deterministic {

@@ -164,6 +164,13 @@ pub fn map_sampling_err_to_acp(err: SamplingError) -> acp::Error {
                 xai_grok_sampler::SamplingErrorKind::MaxTokensTruncation,
             ))
         }
+        SamplingError::MalformedToolCall { .. } => {
+            acp::Error::internal_error().data(terminal_error_data(
+                err.to_string(),
+                None,
+                xai_grok_sampler::SamplingErrorKind::MalformedToolCall,
+            ))
+        }
         SamplingError::IdleTimeout { elapsed_secs } => acp::Error::internal_error().data(format!(
             "No response from model for {elapsed_secs}s — the model may be stuck"
         )),
