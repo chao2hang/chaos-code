@@ -886,29 +886,35 @@ impl SessionActor {
                 .as_ref()
                 .and_then(|m| m.context_window)
                 .expect("should_compact_on_error guarantees context_window");
-            {
+            // Capture the metadata-write decision under the operation lock,
+            // then drop the guard before running compaction (which yields).
+            // The lock ensures a concurrent SetContextWindow / response
+            // header refresh / model-override write cannot race the
+            // context-window restore.
+            let trigger_info = {
+                let _op_guard = self.compaction.operation_lock.lock();
                 let total_tokens = self.chat_state_handle.get_estimated_total_tokens().await;
                 let percentage = xai_token_estimation::usage_percentage_u8(total_tokens, cw);
                 if let Some(mut cfg) = self.chat_state_handle.get_sampling_config().await
                     && let Some(new_cw) = std::num::NonZeroU64::new(cw)
-                    && self.compaction.context_window_override.is_none()
+                    && self.compaction.context_window_override.get().is_none()
                 {
                     cfg.context_window = new_cw;
                     self.chat_state_handle.update_sampling_config(cfg);
                 }
-                let trigger_info = compaction::AutoCompactTriggerInfo {
+                compaction::AutoCompactTriggerInfo {
                     tokens_used: total_tokens,
                     context_window: cw,
                     percentage,
-                };
-                if let Err(e) = self.run_compact_only(trigger_info).await {
-                    if Self::is_auth_compact_error(&e) {
-                        return Err(self.surface_compact_auth_failure(e).await);
-                    }
-                    return Err(e);
                 }
-                return Ok(SamplerFailureRecovery::CompactAndResubmit);
+            };
+            if let Err(e) = self.run_compact_only(trigger_info).await {
+                if Self::is_auth_compact_error(&e) {
+                    return Err(self.surface_compact_auth_failure(e).await);
+                }
+                return Err(e);
             }
+            return Ok(SamplerFailureRecovery::CompactAndResubmit);
         }
         let detailed_message = error.message.clone();
         if matches!(error.kind, SamplingErrorKind::Api)

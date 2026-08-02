@@ -1,7 +1,9 @@
-//! `x.ai/memory/flush`, `x.ai/memory/rewrite`, and `x.ai/compact_conversation`
-//! extension handlers.
+//! `x.ai/memory/flush`, `x.ai/memory/rewrite`, `x.ai/compact_conversation`,
+//! and `x.ai/session/set_context_window` extension handlers.
 //!
 //! - `compact_conversation`: trigger an on-demand compaction for a session.
+//! - `session/set_context_window`: dynamically resize the session context
+//!   window; shrinks may compact immediately when usage is over budget.
 //! - `memory/flush`: trigger an on-demand memory flush for a session.
 //! - `memory/rewrite`: rewrite a raw memory note into structured markdown via
 //!   a one-shot LLM call.
@@ -18,10 +20,57 @@ use crate::session::{CompactConversationRequest, CompactConversationResponse, Se
 pub async fn handle(agent: &MvpAgent, args: &acp::ExtRequest) -> ExtResult {
     match args.method.as_ref() {
         m if m.starts_with("x.ai/compact_conversation") => handle_compact(agent, args).await,
+        "x.ai/session/set_context_window" => handle_set_context_window(agent, args).await,
         "x.ai/memory/flush" => handle_flush(agent, args).await,
         "x.ai/memory/rewrite" => handle_rewrite(agent, args).await,
         _ => Err(acp::Error::method_not_found()),
     }
+}
+
+async fn handle_set_context_window(agent: &MvpAgent, args: &acp::ExtRequest) -> ExtResult {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct SetContextWindowRequest {
+        session_id: String,
+        /// Target context window in tokens (or with k/m suffix handled client-side).
+        tokens: u64,
+        /// Default true: compact when usage exceeds the new budget / threshold.
+        #[serde(default = "default_true")]
+        compact_if_needed: bool,
+    }
+    fn default_true() -> bool {
+        true
+    }
+
+    let req: SetContextWindowRequest = parse_params(args)?;
+    let tokens = std::num::NonZeroU64::new(req.tokens).ok_or_else(|| {
+        acp::Error::invalid_params().data("tokens must be a positive integer".to_string())
+    })?;
+    // Soft upper bound to catch typos (e.g. missing unit → 2000000000).
+    if tokens.get() > 10_000_000 {
+        return Err(acp::Error::invalid_params()
+            .data("tokens exceeds 10M; check the value (supports 128k, 200000, …)".to_string()));
+    }
+
+    let not_found_err = format!("session not found: {}", req.session_id);
+    let session_handle = {
+        let sessions = agent.sessions.borrow();
+        sessions.get(&req.session_id.into()).cloned()
+    };
+    let Some(session) = session_handle else {
+        return Err(acp::Error::invalid_params().data(not_found_err));
+    };
+    let (tx, rx) = oneshot::channel();
+    let _ = session.cmd_tx.send(SessionCommand::SetContextWindow {
+        tokens,
+        compact_if_needed: req.compact_if_needed,
+        respond_to: tx,
+    });
+    let result = rx
+        .await
+        .map_err(|_| acp::Error::internal_error().data("session failed to respond"))?
+        .map_err(|e| acp::Error::internal_error().data(format!("Internal error: {e:?}")))?;
+    to_raw_response(&result)
 }
 
 async fn handle_compact(agent: &MvpAgent, args: &acp::ExtRequest) -> ExtResult {

@@ -46,6 +46,23 @@ pub enum PromptCompletionKind {
     /// `MvpAgent::prompt`'s short-circuit and `respond_removed_prompt`.
     RemovedFromQueue,
 }
+
+/// Result of [`SessionCommand::SetContextWindow`].
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetContextWindowResult {
+    /// Previous effective context window (tokens).
+    pub previous_tokens: u64,
+    /// New locked context window (tokens).
+    pub tokens: u64,
+    /// Estimated tokens currently in the conversation.
+    pub tokens_used: u64,
+    /// Usage percentage under the new window (0–100).
+    pub usage_percent: u8,
+    /// Whether compaction was run as part of this request.
+    pub compacted: bool,
+}
+
 /// Successful prompt/turn payload returned to the ACP layer and trace uploaders.
 #[derive(Debug, Clone)]
 pub struct PromptTurnOk {
@@ -276,6 +293,18 @@ pub enum SessionCommand {
         /// Optional user-provided context to guide the compaction
         user_context: Option<String>,
         respond_to: oneshot::Sender<acp::Result<()>>,
+    },
+    /// Dynamically set the session context window size (tokens).
+    ///
+    /// Locks `compaction.context_window_override` and updates sampling config.
+    /// When the new window is smaller and current usage is at/above the
+    /// auto-compact threshold (or already over the window), runs compaction
+    /// immediately so the conversation fits the new budget.
+    SetContextWindow {
+        tokens: std::num::NonZeroU64,
+        /// When `false`, only update the window (no immediate compact).
+        compact_if_needed: bool,
+        respond_to: oneshot::Sender<acp::Result<SetContextWindowResult>>,
     },
     /// Reload plugin hooks and registry mid-session.
     ReloadPlugins {
