@@ -740,6 +740,18 @@ fn synthesize_from_info(info: &SamplingErrorInfo) -> SamplingError {
             }
         }
         SamplingErrorKind::MaxTokensTruncation => SamplingError::MaxTokensTruncation,
+        SamplingErrorKind::MalformedToolCall => {
+            // Recover the tool call id from the rendered message if present;
+            // the round-tripped kind is enough to classify it as fatal.
+            let tool_call_id = info
+                .message
+                .split("tool_call id=")
+                .nth(1)
+                .and_then(|rest| rest.split(')').next())
+                .map(|s| s.trim_matches('"').to_string())
+                .unwrap_or_default();
+            SamplingError::MalformedToolCall { tool_call_id }
+        }
         SamplingErrorKind::DoomLoopDetected => SamplingError::DoomLoopDetected {
             triggers: info.doom_loop_triggers.clone().unwrap_or_default(),
             aborted_at_chunk: info.doom_loop_aborted_at_chunk,

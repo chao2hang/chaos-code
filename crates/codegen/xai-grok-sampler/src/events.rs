@@ -158,6 +158,7 @@ pub enum SamplingErrorKind {
     RateLimited,
     EmptyResponse,
     MaxTokensTruncation,
+    MalformedToolCall,
     DoomLoopDetected,
 }
 
@@ -177,6 +178,7 @@ impl SamplingErrorKind {
             SamplingErrorKind::RateLimited => "rate_limited",
             SamplingErrorKind::EmptyResponse => "empty_response",
             SamplingErrorKind::MaxTokensTruncation => "max_tokens_truncation",
+            SamplingErrorKind::MalformedToolCall => "malformed_tool_call",
             SamplingErrorKind::DoomLoopDetected => "doom_loop_detected",
         }
     }
@@ -218,6 +220,9 @@ impl From<&SamplingError> for SamplingErrorInfo {
             }
             SamplingError::MaxTokensTruncation => {
                 (SamplingErrorKind::MaxTokensTruncation, None, None, None)
+            }
+            SamplingError::MalformedToolCall { .. } => {
+                (SamplingErrorKind::MalformedToolCall, None, None, None)
             }
             SamplingError::DoomLoopDetected { .. } => {
                 (SamplingErrorKind::DoomLoopDetected, None, None, None)

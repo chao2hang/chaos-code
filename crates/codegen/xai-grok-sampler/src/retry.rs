@@ -379,6 +379,9 @@ pub fn format_sampling_error(err: &SamplingError, retry_count: Option<u32>) -> S
         SamplingError::MaxTokensTruncation => {
             format!("{}Response truncated by max_tokens.", retry_prefix)
         }
+        SamplingError::MalformedToolCall { .. } => {
+            format!("{}{}", retry_prefix, err)
+        }
         SamplingError::DoomLoopDetected { triggers, .. } => {
             format!(
                 "{}Server detected a reasoning loop ({}); resampling the response.",
@@ -443,6 +446,11 @@ pub(crate) fn clone_error(err: &SamplingError) -> SamplingError {
             context: context.clone(),
         },
         SamplingError::MaxTokensTruncation => SamplingError::MaxTokensTruncation,
+        SamplingError::MalformedToolCall { tool_call_id } => {
+            SamplingError::MalformedToolCall {
+                tool_call_id: tool_call_id.clone(),
+            }
+        }
         SamplingError::DoomLoopDetected {
             triggers,
             aborted_at_chunk,
