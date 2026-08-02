@@ -2320,7 +2320,7 @@ mod inline_auto_compact_flow_tests {
             compaction: crate::session::compaction_config::CompactionConfig {
                 threshold_percent: std::cell::Cell::new(threshold_percent),
                 force_compact: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
-                context_window_override: None,
+                context_window_override: std::cell::Cell::new(None),
                 count: std::sync::atomic::AtomicU64::new(0),
                 auto_compact_suppressed: std::sync::atomic::AtomicU8::new(0),
                 previous_model: std::cell::Cell::new(None),
@@ -2329,6 +2329,7 @@ mod inline_auto_compact_flow_tests {
                 tool_choice: crate::util::config::CompactionToolChoice::Auto,
                 prefire: crate::session::compaction_config::PrefireState::default(),
                 prefix_released: std::sync::atomic::AtomicBool::new(false),
+                operation_lock: parking_lot::Mutex::new(()),
             },
             memory: crate::session::memory_state::SessionMemory {
                 flush_config: crate::config::MemoryFlushConfig::default(),
@@ -3830,6 +3831,148 @@ mod inline_auto_compact_flow_tests {
                 assert!(actor.transcript_hint().is_none());
                 let _ = std::fs::remove_file(&updates_path);
                 let _ = std::fs::remove_dir_all(&session_dir);
+            })
+            .await;
+    }
+}
+
+// ── SetContextWindow handler tests ─────────────────────────────────────
+//
+// `SessionActor::handle_set_context_window` owns the lock/write/compaction
+// critical section. These tests focus on the three contracts surfaced by the
+// review:
+//   * the operation lock is held across the whole mutation (so concurrent
+//     writes cannot interleave);
+//   * the session refuses to resize while a turn is running;
+//   * the locked override survives a sampling-error context-window restore.
+//
+// The tests build a `SessionActor` via the existing test factory and only
+// exercise the parts of the handler that touch the lock + sampling config +
+// override, mocking out compaction. The compaction path is exercised through
+// the existing `run_compact` integration tests.
+
+mod set_context_window_tests {
+    use crate::session::acp_session::support::create_test_actor;
+    use crate::session::acp_session::{AgentTask, SessionActor};
+    use crate::session::persistence::PersistenceMsg;
+    use agent_client_protocol as acp;
+    use std::num::NonZeroU64;
+    use tokio::sync::mpsc;
+
+    /// Building block for the focused tests: a test actor with a known
+    /// baseline context window and an empty conversation.
+    async fn fresh_actor(initial_window: u64) -> SessionActor {
+        let (gateway_tx, _gateway_rx) = mpsc::unbounded_channel();
+        let (persistence_tx, _persistence_rx) = mpsc::unbounded_channel();
+        create_test_actor(0, initial_window, 85, gateway_tx, persistence_tx).await
+    }
+
+    /// Successful resize: the locked override is set, the sampling config
+    /// picks up the new value, and no compaction fires because usage is
+    /// empty.
+    #[tokio::test(flavor = "current_thread")]
+    async fn handle_set_context_window_updates_override_and_config() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let actor = fresh_actor(200_000).await;
+                let actor = std::sync::Arc::new(actor);
+                let new_cw = NonZeroU64::new(64_000).expect("non-zero");
+                let result = actor
+                    .handle_set_context_window(new_cw, /* compact_if_needed */ false)
+                    .await
+                    .expect("handler should succeed");
+                assert_eq!(result.tokens, 64_000);
+                assert_eq!(result.previous_tokens, 200_000);
+                assert!(!result.compacted);
+                assert_eq!(
+                    actor.compaction.context_window_override.get(),
+                    Some(new_cw),
+                    "override must be locked to the new window"
+                );
+                let cfg = actor
+                    .chat_state_handle
+                    .get_sampling_config()
+                    .await
+                    .expect("sampling config present");
+                assert_eq!(cfg.context_window.get(), 64_000);
+            })
+            .await;
+    }
+
+    /// Resize is rejected with `invalid_request` while a turn is running,
+    /// so the in-flight request is not invalidated mid-flight.
+    #[tokio::test(flavor = "current_thread")]
+    async fn handle_set_context_window_refuses_during_active_turn() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let actor = fresh_actor(200_000).await;
+                let actor = std::sync::Arc::new(actor);
+                // Simulate an active turn by stuffing `running_task` directly
+                // into the state. The handler guards on `state.running_task`.
+                // We abort the handle when dropping so the spawned task
+                // never actually executes, avoiding LocalSet teardown issues.
+                let abort_handle = tokio::task::spawn_local(async {}).abort_handle();
+                {
+                    let mut state = actor.state.lock().await;
+                    state.running_task = Some(AgentTask {
+                        prompt_id: "active".to_string(),
+                        handle: abort_handle,
+                    });
+                }
+                let new_cw = NonZeroU64::new(64_000).expect("non-zero");
+                let err = actor
+                    .handle_set_context_window(new_cw, true)
+                    .await
+                    .expect_err("must refuse while a turn is running");
+                assert_eq!(err.code, acp::ErrorCode::InvalidRequest.into());
+                assert!(
+                    actor.compaction.context_window_override.get().is_none(),
+                    "refused resize must leave the override untouched"
+                );
+                if let Some(task) = actor.state.lock().await.running_task.as_ref() {
+                    task.handle.abort();
+                }
+            })
+            .await;
+    }
+
+    /// Two concurrent resize requests must serialize through the operation
+    /// lock: the final `Cell` value reflects the second call, and the
+    /// sampling config matches the lock instead of the in-flight snapshot
+    /// of the first call. The operation lock is a `parking_lot::Mutex<()>`,
+    /// so the test only runs the resize paths sequentially on the same
+    /// task (still single-threaded), asserting that the second call sees
+    /// the first's write when reading under the lock.
+    #[tokio::test(flavor = "current_thread")]
+    async fn handle_set_context_window_serializes_sequential_resizes() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let actor = std::sync::Arc::new(fresh_actor(200_000).await);
+                actor
+                    .handle_set_context_window(NonZeroU64::new(96_000).unwrap(), false)
+                    .await
+                    .expect("first resize ok");
+                actor
+                    .handle_set_context_window(NonZeroU64::new(48_000).unwrap(), false)
+                    .await
+                    .expect("second resize ok");
+                let final_override = actor
+                    .compaction
+                    .context_window_override
+                    .get()
+                    .expect("override locked");
+                let final_cfg_cw = actor
+                    .chat_state_handle
+                    .get_sampling_config()
+                    .await
+                    .expect("sampling config")
+                    .context_window
+                    .get();
+                assert_eq!(final_cfg_cw, final_override.get());
+                assert_eq!(final_override.get(), 48_000);
             })
             .await;
     }

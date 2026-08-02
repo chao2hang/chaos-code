@@ -697,6 +697,11 @@ pub(super) async fn run_session(
                             let _ = responds_to.send(outcome);
                         }
                         SessionCommand::OverrideModelName { model_name, extra_headers, context_window } => {
+                            // Hold the same compaction operation lock so a
+                            // concurrent SetContextWindow / response-header
+                            // metadata refresh / sampling-error restore
+                            // cannot interleave its sampling-config write.
+                            let _op_guard = session.compaction.operation_lock.lock();
                             // Update the actor's SamplingConfig model + headers + context window.
                             if let Some(mut cfg) = session.chat_state_handle.get_sampling_config().await {
                                 tracing::info!(
@@ -717,7 +722,7 @@ pub(super) async fn run_session(
                                 cfg.model = model_name.clone();
                                 cfg.extra_headers.extend(extra_headers);
                                 if let Some(cw) = context_window
-                                    && session.compaction.context_window_override.is_none()
+                                    && session.compaction.context_window_override.get().is_none()
                                 {
                                     cfg.context_window = cw;
                                 }
@@ -1027,6 +1032,13 @@ pub(super) async fn run_session(
                             tokio::task::spawn_local(async move {
                                 let compact_session = s.run_compact(user_context).await;
                                 let _ = respond_to.send(compact_session);
+                            });
+                        }
+                        SessionCommand::SetContextWindow { tokens, compact_if_needed, respond_to } => {
+                            let s = session.clone();
+                            tokio::task::spawn_local(async move {
+                                let result = s.handle_set_context_window(tokens, compact_if_needed).await;
+                                let _ = respond_to.send(result);
                             });
                         }
                         SessionCommand::ReloadPlugins { registry } => {

@@ -436,10 +436,19 @@ impl SessionActor {
             tracing::debug!("Model metadata refresh: no update or fetch failed");
             return;
         };
+        // Hold the operation lock so a concurrent SetContextWindow / model
+        // override / sampling-error context-window restore cannot race our
+        // metadata write. Re-read the sampling config inside the lock so we
+        // do not overwrite a fresh write that happened between the earlier
+        // `get_sampling_config` snapshot and this metadata refresh.
+        let _op_guard = self.compaction.operation_lock.lock();
+        let Some(current_config) = self.chat_state_handle.get_sampling_config().await else {
+            return;
+        };
         let mut config_changed = false;
         let mut updated_config = current_config.clone();
         if current_config.context_window != new_context_window
-            && self.compaction.context_window_override.is_none()
+            && self.compaction.context_window_override.get().is_none()
         {
             tracing::info!(
                 old_context_window = current_config.context_window.get(),
@@ -473,6 +482,12 @@ impl SessionActor {
         if let Some(ref etag) = metadata.models_etag {
             self.models_manager.refresh_if_new_etag(etag.clone()).await;
         }
+        // Hold the operation lock so a concurrent SetContextWindow / model
+        // override / sampling-error context-window restore cannot interleave
+        // its write. The path runs from live response headers, so without
+        // this lock we'd race the user's lock-window request and silently
+        // clobber it.
+        let _op_guard = self.compaction.operation_lock.lock();
         let current_config = match self.chat_state_handle.get_sampling_config().await {
             Some(cfg) => cfg,
             None => return,
@@ -482,7 +497,7 @@ impl SessionActor {
         let mut new_max_completion_tokens = current_config.max_completion_tokens;
         if let Some(new_cw) = metadata.context_window.and_then(std::num::NonZeroU64::new)
             && current_config.context_window != new_cw
-            && self.compaction.context_window_override.is_none()
+            && self.compaction.context_window_override.get().is_none()
         {
             if new_cw < current_config.context_window {
                 tracing::warn!(

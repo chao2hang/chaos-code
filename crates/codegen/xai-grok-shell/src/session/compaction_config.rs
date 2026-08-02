@@ -7,7 +7,6 @@ use std::sync::atomic::AtomicBool;
 use std::sync::atomic::AtomicU8;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
-
 /// Auto-compaction is gated whenever `auto_compact_suppressed` is not [`SUPPRESS_NONE`].
 pub(crate) const SUPPRESS_NONE: u8 = 0;
 /// Resolvable failure (`other`): suppressed for the current turn, then
@@ -136,8 +135,13 @@ pub struct CompactionConfig {
     /// Auto-compaction suppression state (`SUPPRESS_*`) after a deterministic
     /// failure; the gates early-return unless `SUPPRESS_NONE`. Manual `/compact` ignores it.
     pub auto_compact_suppressed: AtomicU8,
-    /// Locks the context window when `GROK_DEBUG_CONTEXT_WINDOW` is set.
-    pub context_window_override: Option<std::num::NonZeroU64>,
+    /// Locks the context window: set from `GROK_DEBUG_CONTEXT_WINDOW` at spawn,
+    /// or at runtime via `/context set` / `x.ai/session/set_context_window`.
+    ///
+    /// `Cell` so the session can update without `&mut self` (same pattern as
+    /// `threshold_percent`). When `Some`, model-switch / response-header
+    /// upgrades must not overwrite the locked value.
+    pub context_window_override: Cell<Option<std::num::NonZeroU64>>,
     pub count: AtomicU64,
     /// Set at turn end; consumed at next turn start for model-switch compaction.
     /// `Cell` because `SessionActor` is `!Send`.
@@ -152,6 +156,17 @@ pub struct CompactionConfig {
     pub prefire: PrefireState,
     /// Sticky once a forked session releases its inherited prefix under compaction pressure (see `run_compact_inner`), so it stops re-pinning it.
     pub prefix_released: AtomicBool,
+    /// Serializes mutations of `compaction`-owned state from concurrent
+    /// command paths (model switch, `SetContextWindow`, metadata refresh,
+    /// auto-compact triggers). `SessionActor` is `!Send` and runs on a
+    /// single-threaded `LocalSet`, so this `Mutex` only orders cross-task
+    /// acquisition — it is not protecting against threading.
+    ///
+    /// Held across the **set-lock → sampling-config write → compaction**
+    /// critical section so two `SetContextWindow` (or a model-switch
+    /// racing a resize) cannot interleave their overrides, sampling
+    /// writes, and compaction kicks.
+    pub operation_lock: parking_lot::Mutex<()>,
 }
 
 #[cfg(test)]

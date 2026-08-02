@@ -3505,6 +3505,9 @@ impl acp::Agent for MvpAgent {
             "x.ai/session/search" => {
                 crate::extensions::session_search::handle(&args).await
             }
+            "x.ai/session/set_context_window" => {
+                crate::extensions::memory::handle(self, &args).await
+            }
             "x.ai/session/resolve_local_for_worktree_resume"
             | "x.ai/session/rehydrate" => {
                 let ops = self.resolve_workspace_ops()?;
