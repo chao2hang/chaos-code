@@ -1,5 +1,11 @@
 # Changelog
 
+# 0.2.130 — 2026-08-02
+
+## Fixes
+
+- **恢复严格 CI 构建与会话配置安全性**：Chat Completions 的流式工具名解析改为满足 Rust 1.92 严格 Clippy 的 let-chain 写法；`SetContextWindow`、模型切换和响应元数据刷新的异步配置互斥改用 Tokio mutex，避免在单线程 `LocalSet` 上用阻塞锁跨越 `.await`，同时继续串行化上下文窗口与采样配置更新。
+
 # 0.2.129 — 2026-08-02
 
 ## Features
