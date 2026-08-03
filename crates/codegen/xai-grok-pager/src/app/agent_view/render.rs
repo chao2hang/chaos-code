@@ -1305,15 +1305,18 @@ impl AgentView {
                 ),
             );
         }
-        // 状态栏的 tok/s 芯片：只在会话真的采样到速率时才出现，
-        // 缺数据一律省略而非渲染 `0 tok/s`。数据从 chat-state 的 session ledger
-        // 走 ContextInfo 一路带过来（见 `session_setup.rs`）。
-        if let Some(tps_line) = self
-            .context_state
-            .as_ref()
-            .and_then(|c| crate::views::agent_status::tokens_per_sec_line(c, &theme))
-        {
-            status.push("tps", tps_line);
+        // 状态栏只显示速度：有正数 live 样本时显示真实速度；live 尚未
+        // 形成或静默衰减为 0 时显示对话累计平均速度，并用 📊 平均 标识。
+        // 速率数据全缺时才省略 chip；上下文比例由相邻 context bar 展示。
+        //
+        // `live` 与 `context_state` 是独立输入：当 context metadata 尚未返回时，
+        // 仍必须用默认 ContextInfo 渲染实时速度。
+        let live = self.session.tracker.streaming_rate();
+        let fallback_context = xai_grok_shell::session::ContextInfo::default();
+        let context = self.context_state.as_ref().unwrap_or(&fallback_context);
+        let line = crate::views::agent_status::tokens_per_sec_line(context, live, &theme);
+        if let Some(line) = line {
+            status.push("tps", line);
         }
         let running = self.session.current_prompt_id.as_deref();
         let queue_len = self.session.queue_len()

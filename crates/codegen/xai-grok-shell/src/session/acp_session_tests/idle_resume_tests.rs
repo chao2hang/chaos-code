@@ -116,6 +116,8 @@ async fn test_e2e_idle_resume_refreshes_model_metadata() {
                     reasoning_effort: None,
                     stream_tool_calls: None,
                     extract_inline_thinking: None,
+
+                    is_workbuddy: false,
                 },
                 Box::new(xai_chat_state::NullChatPersistence),
                 chat_event_tx,
@@ -327,6 +329,9 @@ async fn test_e2e_idle_resume_refreshes_model_metadata() {
                 subagent_token_records: parking_lot::Mutex::new(HashMap::new()),
                 workspace_ops: xai_grok_workspace::WorkspaceOps::for_test(),
                 trace_config_template: std::cell::RefCell::new(None),
+
+                workbuddy_conversation_id: String::new(),
+                workbuddy_acp_connection_id: String::new(),
             };
             let eleven_minutes_ago_ms = chrono::Utc::now().timestamp_millis() - (11 * 60 * 1000);
             actor

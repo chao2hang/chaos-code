@@ -2114,12 +2114,18 @@ pub enum Effect {
         /// `/usage` in flight at the same time can't steal each other's
         /// destination.
         for_overlay: bool,
+        /// Overlay request generation. `None` for the `/usage` scrollback path;
+        /// `Some` lets dispatch reject results from an overlay that was closed
+        /// and reopened while the request was in flight.
+        overlay_generation: Option<u64>,
     },
     /// Fetch all-time aggregate token/cost via `x.ai/usage/aggregate`.
     FetchAggregateUsage {
         agent_id: AgentId,
         /// Route the result to the token-usage detail overlay.
         for_overlay: bool,
+        /// Overlay request generation; see the session-usage effect above.
+        overlay_generation: Option<u64>,
     },
     /// Re-fetch remote settings to check subscription gate.
     RefreshGate,
@@ -2678,6 +2684,8 @@ pub enum TaskResult {
         /// Echoed from [`Effect::FetchSessionUsage`]: fill the detail overlay
         /// rather than commit a scrollback block.
         for_overlay: bool,
+        /// Echoed request generation for stale-overlay rejection.
+        overlay_generation: Option<u64>,
     },
     /// `/usage` session ledger fetch failed. Drop if `session_id` no longer matches.
     SessionUsageFailed {
@@ -2687,6 +2695,8 @@ pub enum TaskResult {
         /// Echoed from [`Effect::FetchSessionUsage`]. See
         /// [`TaskResult::SessionUsageComplete`].
         for_overlay: bool,
+        /// Echoed request generation for stale-overlay rejection.
+        overlay_generation: Option<u64>,
     },
     /// Aggregate usage ledger fetched.
     AggregateUsageComplete {
@@ -2694,6 +2704,8 @@ pub enum TaskResult {
         usage: Box<xai_grok_shell::extensions::notification::PromptUsage>,
         /// Echoed from [`Effect::FetchAggregateUsage`]: fill the detail overlay.
         for_overlay: bool,
+        /// Echoed request generation for stale-overlay rejection.
+        overlay_generation: Option<u64>,
     },
     /// Aggregate usage ledger fetch failed.
     AggregateUsageFailed {
@@ -2701,6 +2713,8 @@ pub enum TaskResult {
         error: String,
         /// Echoed from [`Effect::FetchAggregateUsage`].
         for_overlay: bool,
+        /// Echoed request generation for stale-overlay rejection.
+        overlay_generation: Option<u64>,
     },
     /// Feedback submitted successfully (fire-and-forget).
     FeedbackComplete {

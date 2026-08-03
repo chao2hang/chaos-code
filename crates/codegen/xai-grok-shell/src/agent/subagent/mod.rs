@@ -718,7 +718,9 @@ async fn read_parent_sampling_config(
         if let Some(cfg) = chat_state.get_sampling_config().await {
             let creds = chat_state.get_credentials().await;
             let mut extra_headers = cfg.extra_headers;
-            let is_workbuddy = extra_headers.iter().any(|(k, _)| k.eq_ignore_ascii_case("x-codebuddy-request"));
+            let is_workbuddy = extra_headers
+                .iter()
+                .any(|(k, _)| k.eq_ignore_ascii_case("x-codebuddy-request"));
             crate::agent::config::inject_url_derived_headers(
                 &mut extra_headers,
                 creds.alpha_test_key.as_deref(),

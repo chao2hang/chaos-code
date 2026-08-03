@@ -142,6 +142,7 @@ impl AgentView {
             last_cleared_goal_id: None,
             show_goal_detail: false,
             usage_detail: None,
+            usage_detail_generation: 0,
             turn_start_ms: None,
             turn_started_at: None,
             first_activity_logged_for: None,

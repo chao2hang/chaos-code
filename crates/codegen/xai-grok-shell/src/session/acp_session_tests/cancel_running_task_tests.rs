@@ -90,6 +90,8 @@ fn persist_ack_waits_for_disk_flush_before_success_inner() {
             doom_loop_recovery: None,
             header_injector: None,
             user_agent: None,
+
+            is_workbuddy: false,
         })
         .expect("sampling client should build for persistence actor");
         let persistence = crate::session::persistence::new_with_explicit_dir(
@@ -124,6 +126,8 @@ fn persist_ack_waits_for_disk_flush_before_success_inner() {
                 reasoning_effort: None,
                 stream_tool_calls: None,
                 extract_inline_thinking: None,
+
+                is_workbuddy: false,
             },
             Box::new(
                 crate::session::chat_persistence::ChannelChatPersistence::new(
@@ -322,6 +326,9 @@ fn persist_ack_waits_for_disk_flush_before_success_inner() {
             subagent_token_records: parking_lot::Mutex::new(HashMap::new()),
             workspace_ops: xai_grok_workspace::WorkspaceOps::for_test(),
             trace_config_template: std::cell::RefCell::new(None),
+
+            workbuddy_conversation_id: String::new(),
+            workbuddy_acp_connection_id: String::new(),
         });
         let prompt_blocks = vec![acp::ContentBlock::Text(acp::TextContent::new(
             "hello persist".to_string(),
@@ -404,6 +411,8 @@ async fn first_turn_memory_injection_persists_to_chat_history() {
                 doom_loop_recovery: None,
                 header_injector: None,
                 user_agent: None,
+
+                is_workbuddy: false,
             })
             .expect("sampling client should build for persistence actor");
             let persistence = crate::session::persistence::new_with_explicit_dir(
@@ -439,6 +448,8 @@ async fn first_turn_memory_injection_persists_to_chat_history() {
                     reasoning_effort: None,
                     stream_tool_calls: None,
                     extract_inline_thinking: None,
+
+                    is_workbuddy: false,
                 },
                 Box::new(
                     crate::session::chat_persistence::ChannelChatPersistence::new(
@@ -545,6 +556,8 @@ async fn first_turn_memory_injection_disabled_does_not_persist_to_chat_history()
                 doom_loop_recovery: None,
                 header_injector: None,
                 user_agent: None,
+
+                is_workbuddy: false,
             })
             .expect("sampling client should build for persistence actor");
             let persistence = crate::session::persistence::new_with_explicit_dir(
@@ -584,6 +597,8 @@ async fn first_turn_memory_injection_disabled_does_not_persist_to_chat_history()
                     reasoning_effort: None,
                     stream_tool_calls: None,
                     extract_inline_thinking: None,
+
+                    is_workbuddy: false,
                 },
                 Box::new(
                     crate::session::chat_persistence::ChannelChatPersistence::new(
@@ -802,6 +817,9 @@ async fn first_turn_memory_injection_disabled_does_not_persist_to_chat_history()
                 subagent_token_records: parking_lot::Mutex::new(HashMap::new()),
                 workspace_ops: xai_grok_workspace::WorkspaceOps::for_test(),
                 trace_config_template: std::cell::RefCell::new(None),
+
+                workbuddy_conversation_id: String::new(),
+                workbuddy_acp_connection_id: String::new(),
             });
             let _ = actor
                 .process_conversation_turn_with_recovery("disabled-memory", None, None, None)
@@ -1104,7 +1122,8 @@ async fn cancel_running_task_teardown_clears_running_and_pending_work() {
                 subagent_token_records: parking_lot::Mutex::new(HashMap::new()),
                 workspace_ops: xai_grok_workspace::WorkspaceOps::for_test(),
                 trace_config_template: std::cell::RefCell::new(None),
-            };
+                workbuddy_conversation_id: String::new(),
+                workbuddy_acp_connection_id: String::new(),};
             let (tx, rx) = tokio::sync::oneshot::channel();
             let bridge = actor.agent.borrow().tool_bridge().clone();
             {
@@ -2084,6 +2103,7 @@ async fn cancel_propagates_to_sampler_handle_so_no_further_emission() {
                 doom_loop_recovery: None,
                 header_injector: None,
                 user_agent: None,
+                is_workbuddy: false,
             };
             let (sampler_event_tx, _sampler_event_rx) = tokio::sync::mpsc::unbounded_channel::<
                 xai_grok_sampler::SamplingEvent,
@@ -2353,7 +2373,8 @@ async fn cancel_propagates_to_sampler_handle_so_no_further_emission() {
                 subagent_token_records: parking_lot::Mutex::new(HashMap::new()),
                 workspace_ops: xai_grok_workspace::WorkspaceOps::for_test(),
                 trace_config_template: std::cell::RefCell::new(None),
-            };
+                workbuddy_conversation_id: String::new(),
+                workbuddy_acp_connection_id: String::new(),};
             let request_id = xai_grok_sampler::RequestId::random();
             let request_id_for_task = request_id.clone();
             let sampler_for_task = sampler_handle.clone();

@@ -2136,6 +2136,7 @@ fn test_sampling_config(model_slug: &str) -> xai_grok_sampling_types::SamplingCo
         reasoning_effort: None,
         stream_tool_calls: None,
         extract_inline_thinking: None,
+        is_workbuddy: false,
     }
 }
 fn spawn_test_parent_chat_state(model_slug: &str) -> xai_chat_state::ChatStateHandle {

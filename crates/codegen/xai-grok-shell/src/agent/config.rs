@@ -5532,7 +5532,9 @@ pub fn sampling_config_for_model(
     let temperature = info.temperature;
     let top_p = info.top_p;
     let mut extra_headers = info.extra_headers.clone();
-    let is_workbuddy = extra_headers.iter().any(|(k, _)| k.eq_ignore_ascii_case("x-codebuddy-request"));
+    let is_workbuddy = extra_headers
+        .iter()
+        .any(|(k, _)| k.eq_ignore_ascii_case("x-codebuddy-request"));
     inject_url_derived_headers(
         &mut extra_headers,
         alpha_test_key.as_deref(),
@@ -6012,7 +6014,12 @@ reasoning_effort = "low"
     #[ignore = "asserts upstream xAI defaults removed by Chaos fork"]
     fn inject_url_derived_headers_adds_proxy_headers_for_cli_chat_proxy_url() {
         let mut headers = IndexMap::new();
-        inject_url_derived_headers(&mut headers, None, crate::env::PROD_CLI_CHAT_PROXY_BASE_URL);
+        inject_url_derived_headers(
+            &mut headers,
+            None,
+            crate::env::PROD_CLI_CHAT_PROXY_BASE_URL,
+            false,
+        );
         assert_eq!(
             headers.get("X-XAI-Token-Auth").map(String::as_str),
             Some("xai-grok-cli")
@@ -6025,7 +6032,7 @@ reasoning_effort = "low"
     #[test]
     fn inject_url_derived_headers_skips_proxy_headers_for_external_url() {
         let mut headers = IndexMap::new();
-        inject_url_derived_headers(&mut headers, None, "https://api.x.ai/v1");
+        inject_url_derived_headers(&mut headers, None, "https://api.x.ai/v1", false);
         assert!(headers.get("X-XAI-Token-Auth").is_none());
         assert!(headers.get("x-authenticateresponse").is_none());
     }
@@ -6034,7 +6041,12 @@ reasoning_effort = "low"
     fn inject_url_derived_headers_preserves_caller_extra_headers() {
         let mut headers = IndexMap::new();
         headers.insert("x-custom-byok".to_string(), "value".to_string());
-        inject_url_derived_headers(&mut headers, None, crate::env::PROD_CLI_CHAT_PROXY_BASE_URL);
+        inject_url_derived_headers(
+            &mut headers,
+            None,
+            crate::env::PROD_CLI_CHAT_PROXY_BASE_URL,
+            false,
+        );
         assert_eq!(
             headers.get("x-custom-byok").map(String::as_str),
             Some("value")
@@ -6048,7 +6060,12 @@ reasoning_effort = "low"
     fn inject_url_derived_headers_does_not_overwrite_existing_entries() {
         let mut headers = IndexMap::new();
         headers.insert("X-XAI-Token-Auth".to_string(), "caller-set".to_string());
-        inject_url_derived_headers(&mut headers, None, crate::env::PROD_CLI_CHAT_PROXY_BASE_URL);
+        inject_url_derived_headers(
+            &mut headers,
+            None,
+            crate::env::PROD_CLI_CHAT_PROXY_BASE_URL,
+            false,
+        );
         assert_eq!(
             headers.get("X-XAI-Token-Auth").map(String::as_str),
             Some("caller-set"),

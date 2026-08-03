@@ -437,10 +437,6 @@ impl SessionActor {
     /// URL-derived headers (cli-chat-proxy auth, the staging auth header)
     /// so the sampler crate stays URL-agnostic.
     pub(super) async fn reconstruct_full_config(&self) -> SamplingConfig {
-        let is_workbuddy_local = {
-            let cid = self.client_identifier.borrow();
-            cid.as_ref().map_or(false, |s| s.eq_ignore_ascii_case("workbuddy"))
-        };
         #[allow(clippy::items_after_statements)]
         #[derive(Debug)]
         struct TraceContextInjector(bool);
@@ -514,8 +510,11 @@ impl SessionActor {
         // Now we have all possible x-codebuddy-request header!
         let is_workbuddy = {
             let cid = self.client_identifier.borrow();
-            cid.as_ref().map_or(false, |s| s.eq_ignore_ascii_case("workbuddy"))
-        } || extra_headers.iter().any(|(k, _)| k.eq_ignore_ascii_case("x-codebuddy-request"));
+            cid.as_ref()
+                .map_or(false, |s| s.eq_ignore_ascii_case("workbuddy"))
+        } || extra_headers
+            .iter()
+            .any(|(k, _)| k.eq_ignore_ascii_case("x-codebuddy-request"));
         crate::agent::config::inject_url_derived_headers(
             &mut extra_headers,
             creds.alpha_test_key.as_deref(),
@@ -527,8 +526,7 @@ impl SessionActor {
             // allowlist helper so the two workbuddy entry points stay in
             // sync; fall back to the inline filter if the helper ever
             // disappears.
-            let workbuddy_profile =
-                crate::agent::client_profiles::by_id("workbuddy");
+            let workbuddy_profile = crate::agent::client_profiles::by_id("workbuddy");
             if let Some(profile) = workbuddy_profile {
                 profile.strip_non_workbuddy_headers(&mut extra_headers);
             } else {
@@ -577,8 +575,7 @@ impl SessionActor {
             // Also clean env_http_headers — keep the same allowlist as the
             // profile header helper so workbuddy headers stay consistent
             // across both prepare-time and reconstruct-time paths.
-            let workbuddy_profile =
-                crate::agent::client_profiles::by_id("workbuddy");
+            let workbuddy_profile = crate::agent::client_profiles::by_id("workbuddy");
             if let Some(profile) = workbuddy_profile {
                 profile.strip_non_workbuddy_headers(&mut env_http_headers);
             } else {

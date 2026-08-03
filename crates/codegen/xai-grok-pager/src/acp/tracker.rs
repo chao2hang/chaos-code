@@ -3,6 +3,9 @@
 //! This is a stateful streaming machine: it tracks which entries are currently
 //! being streamed to (agent message, thinking) and which tool calls are pending.
 //! Each `handle_update()` call processes one event and mutates the scrollback.
+use std::sync::Arc;
+use std::time::Instant;
+
 use crate::acp::meta::{NotificationMeta, user_message_chunk_meta, user_prompt_meta};
 use crate::scrollback::block::RenderBlock;
 use crate::scrollback::blocks::SessionEvent;
@@ -210,7 +213,7 @@ pub struct PendingCompaction {
 ///
 /// Converts ACP `SessionUpdate` variants into scrollback entry mutations.
 /// Does nothing else — no UI, no networking, just data transformation.
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct AcpUpdateTracker {
     /// Entry currently receiving AgentMessageChunk deltas.
     /// None between turns or before first message chunk.
@@ -301,7 +304,145 @@ pub struct AcpUpdateTracker {
     pending_acp_tools: Option<Vec<String>>,
     /// Live Edit completions awaiting full-file HL (drained via [`Self::take_pending_edit_hl`]).
     pending_edit_hl: Vec<EntryId>,
+    /// Live streaming state for the right-corner tok/s chip. Seeded on the
+    /// first agent message chunk of a turn with `Instant::now()`; each
+    /// subsequent chunk adds its tiktoken BPE token count to `total_tokens`.
+    /// Cleared on `finish_turn` so the chip falls back to the post-hoc
+    /// `ContextInfo.decode_tokens_per_sec` once streaming ends. Replay chunks
+    /// do not advance the counter (we want the live value, not a baked
+    /// historical one).
+    streaming_rate: Option<LiveStreamingRate>,
+    /// Cached cl100k_base BPE encoder, lazy-initialized on the first chunk
+    /// so startup cost is flat. `None` until the first chunk arrives; if
+    /// the encoder fails to build, we fall back to `chars / 4` (this is the
+    /// best we can do without BPE — keeps the chip functional on hosts that
+    /// block embedded data blobs).
+    ///
+    /// Held in an `Arc` (rather than the bare `CoreBPE`) so the encoder can
+    /// be cloned cheaply into worker threads if we ever move streaming
+    /// tokenization off the main thread.
+    token_encoder: Option<Arc<tiktoken_rs::CoreBPE>>,
+    /// Prevent repeated encoder initialization attempts and warning spam when
+    /// the embedded vocabulary cannot be loaded on a host.
+    token_encoder_init_attempted: bool,
 }
+
+/// Manual `Debug` impl so the `tiktoken_rs::CoreBPE` field (which doesn't
+/// impl `Debug`) doesn't break `#[derive(Debug)]` on the struct. The
+/// encoder is intentionally opaque — the only thing we ever log is "is it
+/// Some or None".
+impl std::fmt::Debug for AcpUpdateTracker {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AcpUpdateTracker")
+            .field("current_agent_msg", &self.current_agent_msg)
+            .field("current_thinking", &self.current_thinking)
+            .field(
+                "pending_tools",
+                &self.pending_tools.keys().collect::<Vec<_>>(),
+            )
+            .field(
+                "orphan_updates",
+                &self.orphan_updates.keys().collect::<Vec<_>>(),
+            )
+            .field("streaming_rate", &self.streaming_rate)
+            .field("token_encoder_loaded", &self.token_encoder.is_some())
+            .field(
+                "token_encoder_init_attempted",
+                &self.token_encoder_init_attempted,
+            )
+            .finish()
+    }
+}
+
+/// Live output rate measured at the tracker level.
+///
+/// Two views of the rate, each answering a different user question:
+///
+/// * `total_tokens / elapsed` — **"how much have I produced so far?"**
+///   Used as a sanity check that tokens are being credited at all.
+/// * `smoothed_rate` — **"is the model generating fast right now?"**
+///   Exponentially smoothed over per-chunk intervals (`alpha = 0.3`). This
+///   is what the chip actually displays, because it doesn't decay when
+///   chunks arrive in bursts followed by silence (the user complained
+///   that "0.几 tok/s" lingered long after the burst ended).
+///
+/// `total_tokens` accumulates BPE token counts for chunk text **plus** any
+/// tokens credited via [`AcpUpdateTracker::credit_subagent_tokens`] when
+/// subagent tasks complete — so subagent output contributes to the
+/// parent turn's rate instead of being invisible.
+#[derive(Debug, Clone, Copy)]
+pub struct LiveStreamingRate {
+    /// When the current turn's first chunk landed.
+    pub started_at: Instant,
+    /// Cumulative tokens for the current turn. Includes main-agent chunks
+    /// and any subagent completions credited via
+    /// [`AcpUpdateTracker::credit_subagent_tokens`].
+    pub total_tokens: u64,
+    /// When the most recent chunk (or subagent credit) landed. `None`
+    /// until the first event of the turn.
+    pub last_event_at: Option<Instant>,
+    /// Exponentially smoothed per-chunk instantaneous rate
+    /// (`alpha = 0.3`). Initialised from the first sample, then blended
+    /// with subsequent ones — bursts are visible as fast, silence decays
+    /// smoothly toward zero.
+    pub smoothed_rate: f32,
+}
+
+/// Smoothing factor for [`LiveStreamingRate::smoothed_rate`]. Higher = more
+/// reactive to recent samples, lower = smoother but slower to react.
+const RATE_EMA_ALPHA: f32 = 0.3;
+
+impl LiveStreamingRate {
+    pub fn new(started_at: Instant) -> Self {
+        Self {
+            started_at,
+            total_tokens: 0,
+            last_event_at: None,
+            smoothed_rate: 0.0,
+        }
+    }
+
+    /// **Mean rate since the first chunk.** Cumulative — gets diluted by
+    /// long silences. Useful for "how fast on average am I producing
+    /// tokens this turn?", but **not** what the chip displays.
+    pub fn mean_tokens_per_sec(&self) -> f32 {
+        let elapsed = self.started_at.elapsed();
+        if elapsed.as_secs_f32() < 0.001 {
+            return 0.0;
+        }
+        self.total_tokens as f32 / elapsed.as_secs_f32()
+    }
+
+    /// **Live smoothed rate** — the value the chip actually displays.
+    ///
+    /// Two-stage filter:
+    ///
+    /// 1. If the last event was more than [`RATE_DECAY_SECS`] ago, the
+    ///    model has gone quiet — return 0. This is what the user
+    ///    asked for ("停止后就显示0"). Pure EMA alone doesn't decay
+    ///    during silence (no samples means no updates), so we have to
+    ///    gate the display value off staleness.
+    /// 2. Otherwise return the EMA-blended instantaneous rate.
+    ///
+    /// The EMA itself is computed at event time in `handle_agent_chunk`
+    /// and `credit_subagent_tokens`, so this is a cheap read on the
+    /// render path.
+    pub fn tokens_per_sec(&self) -> f32 {
+        let Some(last) = self.last_event_at else {
+            return 0.0;
+        };
+        if last.elapsed().as_secs_f32() > RATE_DECAY_SECS {
+            return 0.0;
+        }
+        self.smoothed_rate
+    }
+}
+
+/// Silence threshold for [`LiveStreamingRate::tokens_per_sec`]. After
+/// this many seconds without an event, the live chip shows 0 even if
+/// `smoothed_rate` is still non-zero — otherwise bursts linger as a
+/// stale value long after generation has stopped.
+const RATE_DECAY_SECS: f32 = 1.0;
 /// A tool call that's been started but not yet completed.
 #[derive(Debug)]
 struct PendingTool {
@@ -379,6 +520,11 @@ impl AcpUpdateTracker {
     /// Current boundary for visible live parent-agent output.
     pub(crate) fn agent_output_epoch(&self) -> u64 {
         self.agent_output_epoch
+    }
+    /// Current live streaming rate, if a turn is currently streaming text.
+    /// `None` between turns or before the first chunk of a new turn.
+    pub fn streaming_rate(&self) -> Option<LiveStreamingRate> {
+        self.streaming_rate
     }
     fn bump_agent_output_epoch(&mut self) {
         self.agent_output_epoch = self.agent_output_epoch.wrapping_add(1);
@@ -850,6 +996,68 @@ impl AcpUpdateTracker {
         self.blocking_waits.clear();
         self.orphan_updates.clear();
         self.skip_next_skill_body = false;
+        // Streaming turn is over: the right-corner tok/s chip falls back
+        // to the post-hoc `ContextInfo.decode_tokens_per_sec` until the
+        // next turn starts streaming again.
+        self.streaming_rate = None;
+    }
+
+    /// Credit **output** tokens generated by a subagent task to this turn's
+    /// live rate so subagent output contributes to the parent chip.
+    /// Callers must pass generated-output tokens, not cumulative context usage.
+    ///
+    /// Subagent streaming happens on a separate session with its own
+    /// `AcpUpdateTracker` — its `AgentMessageChunk` events never reach
+    /// this parent tracker. Without this hook the parent chip would
+    /// freeze at whatever rate the parent's own chunks produced, and
+    /// the (often much larger) subagent output would be invisible.
+    ///
+    /// `tokens` should be the BPE-equivalent count for the subagent's
+    /// final output (callers should tokenize the completion text, because
+    /// the wire's `tokens_used` value is cumulative context occupancy).
+    /// `output_tokens_per_sec` is the child's own measured decode rate when
+    /// available, or a duration-based estimate supplied by the caller. It
+    /// must never be derived from the interval since the parent's last event:
+    /// that interval includes delegation, tools, and unrelated parent work.
+    ///
+    /// `turn_active` is supplied by the owning [`AgentSession`], because the
+    /// tracker itself does not own the session lifecycle. When a live parent
+    /// turn has produced no parent text yet, a subagent completion seeds both
+    /// token accounting and a displayable rate. Outside an active turn the
+    /// credit remains a no-op and cannot leave zombie state behind.
+    pub fn credit_subagent_tokens(
+        &mut self,
+        tokens: u64,
+        output_tokens_per_sec: Option<f32>,
+        turn_active: bool,
+    ) {
+        if tokens == 0 || !turn_active {
+            return;
+        }
+        let sample_rate = output_tokens_per_sec.filter(|rate| rate.is_finite() && *rate > 0.0);
+        let now = Instant::now();
+        if self.streaming_rate.is_none() {
+            self.streaming_rate = Some(LiveStreamingRate {
+                started_at: now,
+                total_tokens: tokens,
+                last_event_at: Some(now),
+                smoothed_rate: sample_rate.unwrap_or(0.0),
+            });
+            return;
+        }
+        let rate = self
+            .streaming_rate
+            .as_mut()
+            .expect("streaming rate seeded above");
+        if let Some(sample_rate) = sample_rate {
+            rate.smoothed_rate = if rate.smoothed_rate > 0.0 {
+                RATE_EMA_ALPHA * sample_rate + (1.0 - RATE_EMA_ALPHA) * rate.smoothed_rate
+            } else {
+                sample_rate
+            };
+        }
+        rate.total_tokens = rate.total_tokens.saturating_add(tokens);
+        rate.last_event_at = Some(now);
     }
     /// Finish the current thinking block, passing elapsed time to the entry.
     ///
@@ -936,10 +1144,87 @@ impl AcpUpdateTracker {
         {
             entry.created_at = Some(utc_ms_to_local(ts_ms));
         }
+        // Live tok/s chip: feed the chunk text into the rate's exponential
+        // moving average. On the first chunk we seed `started_at` and
+        // credit that chunk's tokens; on subsequent chunks we accumulate
+        // and blend the instantaneous per-chunk rate into the smoothed
+        // value (`alpha = 0.3`). Skip on replay — historical replay
+        // must not skew the live rate.
+        if !meta.is_replay {
+            let added_tokens = self.count_tokens(&text);
+            let now = Instant::now();
+            match self.streaming_rate.as_mut() {
+                None => {
+                    // First chunk: seed the clock and credit this chunk's
+                    // tokens. We can't compute a rate yet — no time has
+                    // elapsed since `started_at` — so the chip displays
+                    // 0 until the second chunk lands. That's the right
+                    // behaviour: one chunk isn't a rate.
+                    self.streaming_rate = Some(LiveStreamingRate {
+                        started_at: now,
+                        total_tokens: added_tokens,
+                        last_event_at: Some(now),
+                        smoothed_rate: 0.0,
+                    });
+                }
+                Some(rate) => {
+                    rate.total_tokens = rate.total_tokens.saturating_add(added_tokens);
+                    // Instantaneous rate = added tokens / chunk interval.
+                    let instant = match rate.last_event_at {
+                        Some(prev) => {
+                            let dt = now.duration_since(prev).as_secs_f32();
+                            if dt >= 0.001 {
+                                added_tokens as f32 / dt
+                            } else {
+                                rate.smoothed_rate
+                            }
+                        }
+                        None => 0.0,
+                    };
+                    // Blend: smoothed' = α·instant + (1-α)·smoothed.
+                    // First sample after seeding seeds the EMA; later
+                    // samples blend in. Bursts are visible as fast;
+                    // silence decays toward zero (rate already low →
+                    // EMA stays low; we don't get a fake "fast" reading
+                    // from accumulated silence).
+                    rate.smoothed_rate = if rate.last_event_at.is_none() {
+                        instant
+                    } else {
+                        RATE_EMA_ALPHA * instant + (1.0 - RATE_EMA_ALPHA) * rate.smoothed_rate
+                    };
+                    rate.last_event_at = Some(now);
+                }
+            }
+        }
         if meta.is_replay {
             scrollback.push_chunk_to_agent_deferred(id, &text)
         } else {
             scrollback.push_chunk_to_agent(id, &text)
+        }
+    }
+    /// Token count for a single chunk's text. Lazily initialises the
+    /// cl100k_base encoder on first call; on init failure (e.g. embedded
+    /// data blob blocked on host), falls back to `chars / 4` and stops
+    /// retrying for this tracker instance, so a streaming response cannot
+    /// repeatedly perform the same failed initialization or spam warnings.
+    pub(crate) fn count_tokens(&mut self, text: &str) -> u64 {
+        if !self.token_encoder_init_attempted {
+            self.token_encoder_init_attempted = true;
+            match tiktoken_rs::cl100k_base() {
+                Ok(bpe) => {
+                    self.token_encoder = Some(Arc::new(bpe));
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        "tiktoken cl100k_base failed to load; falling back to chars/4 for live rate"
+                    );
+                }
+            }
+        }
+        match self.token_encoder.as_ref() {
+            Some(bpe) => bpe.encode_ordinary(text).len() as u64,
+            None => (text.chars().count() as u64) / 4 + 1,
         }
     }
     /// Handle an agent thought chunk (streaming thinking).
@@ -6653,6 +6938,230 @@ mod tests {
                 .contains("图片生成"),
             "upsell text must be shown in the card body, got: {:?}",
             block.output
+        );
+    }
+
+    // ---- live streaming rate ----
+
+    /// Regression: the first chunk's tokens were silently dropped when
+    /// `streaming_rate` was None. When the model dumps its answer in a
+    /// single big chunk (think→answer pattern) plus a tiny tail-chunk,
+    /// the rate would collapse to "0.几 tok/s" because total_tokens was
+    /// stuck near zero while elapsed kept growing.
+    #[test]
+    fn first_chunk_tokens_are_credited_not_dropped() {
+        use std::time::Duration;
+        let mut sb = ScrollbackState::new();
+        let mut tracker = AcpUpdateTracker::new();
+        assert!(tracker.streaming_rate().is_none());
+        // Single ~50 token payload.
+        let big = "Hello world this is a meaningful first chunk that should \
+                   count toward the rate, not silently disappear.";
+        tracker.handle_update(agent_chunk(big), &meta(), &mut sb);
+        let rate = tracker
+            .streaming_rate()
+            .expect("first chunk must seed rate");
+        assert!(
+            rate.total_tokens >= 10,
+            "first chunk must seed total_tokens, got {}",
+            rate.total_tokens
+        );
+        // A single event has no interval, so it must not invent an
+        // instantaneous rate. The first chunk still counts toward the turn's
+        // cumulative mean and the next event's EMA sample.
+        std::thread::sleep(Duration::from_millis(20));
+        let rate = tracker.streaming_rate().unwrap();
+        assert_eq!(
+            rate.tokens_per_sec(),
+            0.0,
+            "one chunk is not enough to derive an instantaneous rate"
+        );
+        assert!(
+            rate.mean_tokens_per_sec() > 0.0,
+            "first chunk must contribute to the cumulative mean"
+        );
+    }
+
+    /// Multi-chunk accumulation still works after the first-chunk fix.
+    #[test]
+    fn multi_chunk_accumulation_increases_total_tokens() {
+        let mut sb = ScrollbackState::new();
+        let mut tracker = AcpUpdateTracker::new();
+        tracker.handle_update(agent_chunk("first chunk"), &meta(), &mut sb);
+        let after_first = tracker.streaming_rate().unwrap().total_tokens;
+        tracker.handle_update(agent_chunk("second"), &meta(), &mut sb);
+        let after_second = tracker.streaming_rate().unwrap().total_tokens;
+        tracker.handle_update(agent_chunk("third chunk"), &meta(), &mut sb);
+        let after_third = tracker.streaming_rate().unwrap().total_tokens;
+        assert!(
+            after_second > after_first,
+            "second chunk must accumulate: {after_first} → {after_second}"
+        );
+        assert!(
+            after_third > after_second,
+            "third chunk must accumulate: {after_second} → {after_third}"
+        );
+        // started_at is preserved across chunks within the same turn.
+        let started = tracker.streaming_rate().unwrap().started_at;
+        assert!(
+            tracker.streaming_rate().unwrap().started_at == started,
+            "started_at must not be reset on subsequent chunks"
+        );
+    }
+
+    /// `is_replay` chunks must NOT advance the counter — a historical
+    /// replay of the transcript would otherwise inflate the rate a user
+    /// sees right now.
+    #[test]
+    fn replay_chunks_do_not_advance_streaming_rate() {
+        let mut sb = ScrollbackState::new();
+        let mut tracker = AcpUpdateTracker::new();
+        tracker.handle_update(agent_chunk("live"), &meta(), &mut sb);
+        let after_live = tracker.streaming_rate().expect("live must seed");
+        let replay_meta = NotificationMeta {
+            is_replay: true,
+            ..NotificationMeta::default()
+        };
+        tracker.handle_update(agent_chunk("historical"), &replay_meta, &mut sb);
+        let after_replay = tracker.streaming_rate().unwrap();
+        assert_eq!(
+            after_replay.total_tokens, after_live.total_tokens,
+            "replay must not credit tokens"
+        );
+    }
+
+    /// `finish_turn` resets the counter so the next turn's first chunk
+    /// re-seeds cleanly.
+    #[test]
+    fn finish_turn_clears_streaming_rate() {
+        let mut sb = ScrollbackState::new();
+        let mut tracker = AcpUpdateTracker::new();
+        tracker.handle_update(agent_chunk("hello"), &meta(), &mut sb);
+        assert!(tracker.streaming_rate().is_some());
+        tracker.finish_turn(&mut sb);
+        assert!(
+            tracker.streaming_rate().is_none(),
+            "finish_turn must drop streaming_rate so the next turn re-seeds"
+        );
+    }
+
+    /// EMA: bursts are visible as fast rates. The chip should reflect
+    /// recent chunk activity (instant rate) rather than a long-run
+    /// cumulative average that gets diluted by silence. The decay gate
+    /// (`RATE_DECAY_SECS = 1.0`) ensures the chip drops to 0 once
+    /// the model has been quiet for > 1s.
+    #[test]
+    fn ema_reflects_burst_not_cumulative() {
+        use std::time::Duration;
+        let mut sb = ScrollbackState::new();
+        let mut tracker = AcpUpdateTracker::new();
+        // First chunk seeds; smoothed stays 0 because we have no
+        // interval yet.
+        tracker.handle_update(
+            agent_chunk("initial chunk to seed the rate"),
+            &meta(),
+            &mut sb,
+        );
+        assert_eq!(tracker.streaming_rate().unwrap().smoothed_rate, 0.0);
+        // Two rapid chunks should produce a non-zero smoothed rate
+        // proportional to the burst.
+        std::thread::sleep(Duration::from_millis(20));
+        tracker.handle_update(
+            agent_chunk("a moderately sized chunk that should tokenize to about ten tokens"),
+            &meta(),
+            &mut sb,
+        );
+        let after_burst = tracker.streaming_rate().unwrap();
+        assert!(
+            after_burst.smoothed_rate > 0.0,
+            "second chunk should produce a non-zero smoothed rate: got {}",
+            after_burst.smoothed_rate
+        );
+        // The EMA reflects only the *recent* interval; it doesn't have
+        // to beat the cumulative mean (which gets diluted by the seed
+        // chunk's 20ms), but it must not be pinned at zero — that's
+        // the bug we just fixed.
+        assert!(
+            after_burst.smoothed_rate > 1.0,
+            "smoothed_rate must reflect the burst, not be stuck at zero: got {}",
+            after_burst.smoothed_rate
+        );
+    }
+
+    /// Decay gate: after silence > RATE_DECAY_SECS, the live rate
+    /// drops to 0 even though `smoothed_rate` is still non-zero (the
+    /// EMA field doesn't decay on its own; the gate enforces it).
+    #[test]
+    fn ema_decays_to_zero_after_silence() {
+        use std::time::Duration;
+        let mut sb = ScrollbackState::new();
+        let mut tracker = AcpUpdateTracker::new();
+        tracker.handle_update(agent_chunk("burst one"), &meta(), &mut sb);
+        std::thread::sleep(Duration::from_millis(20));
+        tracker.handle_update(agent_chunk("burst two"), &meta(), &mut sb);
+        assert!(tracker.streaming_rate().unwrap().smoothed_rate > 0.0);
+        // Wait past the decay window (1s) without sending more chunks.
+        std::thread::sleep(Duration::from_millis(1100));
+        assert_eq!(
+            tracker.streaming_rate().unwrap().tokens_per_sec(),
+            0.0,
+            "live rate must drop to 0 after silence > RATE_DECAY_SECS"
+        );
+        // But the underlying smoothed_rate (raw EMA value) is preserved
+        // so a new burst can pick up from where it was.
+        assert!(
+            tracker.streaming_rate().unwrap().smoothed_rate > 0.0,
+            "smoothed_rate must NOT decay — only the displayed rate does"
+        );
+    }
+
+    /// `credit_subagent_tokens` adds to `total_tokens` and blends the child's
+    /// own output-rate sample into the parent EMA.
+    #[test]
+    fn credit_subagent_tokens_blends_child_rate() {
+        use std::time::Duration;
+        let mut sb = ScrollbackState::new();
+        let mut tracker = AcpUpdateTracker::new();
+        tracker.handle_update(agent_chunk("first"), &meta(), &mut sb);
+        std::thread::sleep(Duration::from_millis(20));
+        tracker.handle_update(agent_chunk("second"), &meta(), &mut sb);
+        let before = tracker.streaming_rate().unwrap().smoothed_rate;
+        let before_total = tracker.streaming_rate().unwrap().total_tokens;
+
+        let child_rate = before * 4.0 + 100.0;
+        tracker.credit_subagent_tokens(10_000, Some(child_rate), true);
+        let after = tracker.streaming_rate().unwrap();
+        assert_eq!(after.total_tokens, before_total + 10_000);
+        assert!(
+            after.smoothed_rate > before,
+            "child decode rate should raise the parent EMA: before={}, after={}",
+            before,
+            after.smoothed_rate
+        );
+    }
+
+    /// A subagent-only parent turn has no parent message chunk to seed the
+    /// tracker. The completion credit must establish both accounting and a
+    /// displayable child-derived speed sample itself.
+    #[test]
+    fn credit_subagent_tokens_seeds_active_subagent_only_turn() {
+        let mut tracker = AcpUpdateTracker::new();
+        tracker.credit_subagent_tokens(100, Some(25.0), true);
+        let rate = tracker.streaming_rate().expect("active turn must seed");
+        assert_eq!(rate.total_tokens, 100);
+        assert_eq!(rate.tokens_per_sec(), 25.0);
+    }
+
+    /// `credit_subagent_tokens` is a no-op outside a live parent turn — no
+    /// zombie `streaming_rate` is left behind between turns.
+    #[test]
+    fn credit_subagent_tokens_noop_outside_turn() {
+        let mut tracker = AcpUpdateTracker::new();
+        assert!(tracker.streaming_rate().is_none());
+        tracker.credit_subagent_tokens(100, Some(25.0), false);
+        assert!(
+            tracker.streaming_rate().is_none(),
+            "crediting without an active turn must not seed streaming_rate"
         );
     }
 }

@@ -3420,47 +3420,54 @@ pub(crate) fn execute(
                 TaskResult::SetContextWindowComplete { agent_id, result }
             });
         }
-        Effect::FetchSessionUsage { agent_id, session_id, for_overlay } => {
+        Effect::FetchSessionUsage {
+            agent_id,
+            session_id,
+            for_overlay,
+            overlay_generation,
+        } => {
             let tx = acp_tx.clone();
-            tasks
-                .spawn(async move {
-                    match fetch_session_usage(&session_id, &tx).await {
-                        Ok(usage) => {
-                            TaskResult::SessionUsageComplete {
-                                agent_id,
-                                session_id,
-                                usage: Box::new(usage),
-                                for_overlay,
-                            }
-                        }
-                        Err(error) => {
-                            TaskResult::SessionUsageFailed {
-                                agent_id,
-                                session_id,
-                                error,
-                                for_overlay,
-                            }
-                        }
-                    }
-                });
+            tasks.spawn(async move {
+                match fetch_session_usage(&session_id, &tx).await {
+                    Ok(usage) => TaskResult::SessionUsageComplete {
+                        agent_id,
+                        session_id,
+                        usage: Box::new(usage),
+                        for_overlay,
+                        overlay_generation,
+                    },
+                    Err(error) => TaskResult::SessionUsageFailed {
+                        agent_id,
+                        session_id,
+                        error,
+                        for_overlay,
+                        overlay_generation,
+                    },
+                }
+            });
         }
-        Effect::FetchAggregateUsage { agent_id, for_overlay } => {
+        Effect::FetchAggregateUsage {
+            agent_id,
+            for_overlay,
+            overlay_generation,
+        } => {
             let tx = acp_tx.clone();
-            tasks
-                .spawn(async move {
-                    match fetch_aggregate_usage(&tx).await {
-                        Ok(usage) => TaskResult::AggregateUsageComplete {
-                            agent_id,
-                            usage: Box::new(usage),
-                            for_overlay,
-                        },
-                        Err(error) => TaskResult::AggregateUsageFailed {
-                            agent_id,
-                            error,
-                            for_overlay,
-                        },
-                    }
-                });
+            tasks.spawn(async move {
+                match fetch_aggregate_usage(&tx).await {
+                    Ok(usage) => TaskResult::AggregateUsageComplete {
+                        agent_id,
+                        usage: Box::new(usage),
+                        for_overlay,
+                        overlay_generation,
+                    },
+                    Err(error) => TaskResult::AggregateUsageFailed {
+                        agent_id,
+                        error,
+                        for_overlay,
+                        overlay_generation,
+                    },
+                }
+            });
         }
         Effect::SendFeedback { agent_id, session_id, feedback_text } => {
             use xai_grok_shell::session::ClientType;
