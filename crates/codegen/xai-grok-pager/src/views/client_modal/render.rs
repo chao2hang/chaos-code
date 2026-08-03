@@ -7,7 +7,7 @@ use ratatui::widgets::Widget;
 use crate::theme::Theme;
 use crate::views::modal_window::{self as mw, ModalSizing, ModalWindowConfig};
 
-use super::state::{ClientFormField, ClientModalMode, ClientModalState};
+use super::state::{ClientFormField, ClientModalMode, ClientModalState, HeaderFocus};
 
 const MAX_WIDTH: u16 = 112;
 
@@ -106,6 +106,36 @@ pub fn render_client_modal(
                 },
             ],
         ),
+        ClientModalMode::Headers { .. } => (
+            "编辑请求头",
+            &[
+                mw::Shortcut {
+                    label: "↑↓ 切换行",
+                    clickable: false,
+                    id: 0,
+                },
+                mw::Shortcut {
+                    label: "Tab 键值切换",
+                    clickable: false,
+                    id: 1,
+                },
+                mw::Shortcut {
+                    label: "a 新增 d 删除",
+                    clickable: false,
+                    id: 2,
+                },
+                mw::Shortcut {
+                    label: "e 切换环境变量",
+                    clickable: false,
+                    id: 3,
+                },
+                mw::Shortcut {
+                    label: "Esc 返回",
+                    clickable: false,
+                    id: 4,
+                },
+            ],
+        ),
         ClientModalMode::ConfirmDelete(_) => (
             "删除客户端",
             &[
@@ -136,6 +166,9 @@ pub fn render_client_modal(
     match &state.mode {
         ClientModalMode::List => render_list(buf, content.content, state, &theme),
         ClientModalMode::Form { .. } => render_form(buf, content.content, state, &theme),
+        ClientModalMode::Headers { row, focus, .. } => {
+            render_headers(buf, content.content, state, *row, *focus, &theme)
+        }
         ClientModalMode::ConfirmDelete(id) => {
             render_confirm(buf, content.content, state, id, &theme)
         }
@@ -221,6 +254,88 @@ fn render_list(buf: &mut Buffer, area: Rect, state: &mut ClientModalState, theme
     render_message(buf, area, state, theme);
 }
 
+#[allow(clippy::cast_possible_truncation)]
+fn render_headers(
+    buf: &mut Buffer,
+    area: Rect,
+    state: &ClientModalState,
+    active_row: usize,
+    focus: HeaderFocus,
+    theme: &Theme,
+) {
+    let mut y = area.y;
+    Line::from(Span::styled(
+        "额外请求头（Enter/Tab 切换键值，a 新增，d 删除，e 切换环境变量值）",
+        Style::default().fg(theme.gray_bright),
+    ))
+    .render(Rect::new(area.x, y, area.width, 1), buf);
+    y += 1;
+    let key_w = 28u16;
+    let value_w = area.width.saturating_sub(key_w + 4);
+    for (idx, (name, value)) in state.headers.iter().enumerate() {
+        if y >= area.y + area.height {
+            break;
+        }
+        let active = idx == active_row;
+        let key_active = active && focus == HeaderFocus::Key;
+        let val_active = active && focus == HeaderFocus::Value;
+        let is_env = state.headers_env.get(idx).copied().unwrap_or(false);
+        let marker = if is_env { " [env]" } else { "" };
+        let key_style = if key_active {
+            Style::default()
+                .fg(theme.accent_user)
+                .add_modifier(Modifier::BOLD)
+        } else if active {
+            Style::default()
+                .fg(theme.text_primary)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(theme.gray_bright)
+        };
+        let val_style = if val_active {
+            Style::default()
+                .fg(theme.accent_user)
+                .add_modifier(Modifier::BOLD)
+        } else if active {
+            Style::default().fg(theme.text_primary)
+        } else {
+            Style::default().fg(theme.text_primary)
+        };
+        let key_text = if name.is_empty() {
+            "<新键>".to_owned()
+        } else {
+            name.clone()
+        };
+        let val_text = if value.is_empty() {
+            "<值/环境变量>".to_owned()
+        } else {
+            value.clone()
+        };
+        let key_suffix = if key_active { "▌" } else { "" };
+        let val_suffix = if val_active { "▌" } else { "" };
+        Line::from(vec![
+            Span::styled(
+                format!("{:width$}", key_text, width = key_w as usize),
+                key_style,
+            ),
+            Span::styled(
+                format!(
+                    " {}{}{}",
+                    val_text,
+                    if is_env { marker } else { "" },
+                    val_suffix
+                ),
+                val_style,
+            ),
+            Span::styled(key_suffix.to_string(), key_style),
+        ])
+        .render(Rect::new(area.x, y, area.width, 1), buf);
+        y += 1;
+    }
+    let _ = value_w;
+    render_message(buf, area, state, theme);
+}
+
 fn render_form(buf: &mut Buffer, area: Rect, state: &ClientModalState, theme: &Theme) {
     let editing = state.editing_id().is_some();
     let fields = [
@@ -235,6 +350,11 @@ fn render_form(buf: &mut Buffer, area: Rect, state: &ClientModalState, theme: &T
         ),
         (ClientFormField::UserAgent, state.user_agent.as_str()),
     ];
+    let header_count = state
+        .headers
+        .iter()
+        .filter(|(k, v)| !k.trim().is_empty() && !v.trim().is_empty())
+        .count();
     let mut y = area.y;
     let intro = if editing {
         "修改自定义客户端（ID 保持不变）"
@@ -274,6 +394,39 @@ fn render_form(buf: &mut Buffer, area: Rect, state: &ClientModalState, theme: &T
                 ),
                 value_style,
             ),
+        ])
+        .render(Rect::new(area.x, y, area.width, 1), buf);
+        y += 1;
+    }
+    // Headers field: shows count and opens the row editor on Enter.
+    {
+        let active = state.form_field == ClientFormField::Headers;
+        let label_style = if active {
+            Style::default()
+                .fg(theme.accent_user)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(theme.gray_bright)
+        };
+        let value_style = if active {
+            Style::default()
+                .fg(theme.text_primary)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(theme.text_primary)
+        };
+        let suffix = if active { "▌" } else { "" };
+        let value = if header_count == 0 {
+            "<空，按 Enter 添加>".to_owned()
+        } else {
+            format!("{header_count} 项（按 Enter 编辑{suffix}）")
+        };
+        Line::from(vec![
+            Span::styled(
+                format!("{: <10}", ClientFormField::Headers.label()),
+                label_style,
+            ),
+            Span::styled(value, value_style),
         ])
         .render(Rect::new(area.x, y, area.width, 1), buf);
         y += 1;

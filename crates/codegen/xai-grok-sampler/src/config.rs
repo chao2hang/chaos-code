@@ -151,6 +151,11 @@ pub struct SamplerConfig {
     /// Per-request header injector (e.g. OTel traceparent). Called in `post()`.
     #[serde(skip)]
     pub header_injector: Option<SharedHeaderInjector>,
+
+    /// When true, no x-grok-* headers are added, and only the WorkBuddy
+    /// headers from `extra_headers`/`env_http_headers` are sent.
+    #[serde(default)]
+    pub is_workbuddy: bool,
 }
 
 impl Default for SamplerConfig {
@@ -189,6 +194,7 @@ impl Default for SamplerConfig {
             compaction_at_tokens: None,
             doom_loop_recovery: None,
             header_injector: None,
+            is_workbuddy: false,
         }
     }
 }

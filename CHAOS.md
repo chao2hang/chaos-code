@@ -152,8 +152,8 @@ chaos clients
 chaos clients --json
 ```
 
-当前提供：`claude-code`（别名 `claude`、`anthropic`）、`codex`（别名 `openai`）和
-`grok-build`（别名 `grok`）。临时选择档案：
+当前提供：`claude-code`（别名 `claude`、`anthropic`）、`codex`（别名 `openai`）、
+`grok-build`（别名 `grok`）和 `workbuddy`（别名 `wb`）。临时选择档案：
 
 ```sh
 chaos --client codex --model gpt-5
@@ -174,9 +174,66 @@ client = "claude-code"
 ```
 
 选择优先级为显式 `--client`、`[model.<id>] client`、`[clients].default`；外部 ACP
-客户端提供的身份会优先于配置默认值。档案目前只修改请求身份（`User-Agent` 和
-`x-grok-client-identifier`），不会自动替换模型的 endpoint、协议或认证密钥；这些仍由
-`[model.*]`、`[model_providers.*]` 和环境变量决定。
+客户端提供的身份会优先于配置默认值。档案修改请求身份（`User-Agent` 和
+`x-grok-client-identifier`）以及任意附加请求头，但不会自动替换模型的 endpoint、协议或
+认证密钥；这些仍由 `[model.*]`、`[model_providers.*]` 和环境变量决定。
+
+#### 附加请求头
+
+每个档案都可以携带任意请求头（包括密钥类头），有两种写法：
+
+- `extra_headers`：静态头，值原样写入每个请求。
+- `env_http_headers`：值为环境变量名，在构建请求时读取该环境变量再注入，避免把密钥落盘。
+
+自定义档案写在 `[clients.custom.<id>]`：
+
+```toml
+[clients.custom.my-workbuddy]
+name = "My WorkBuddy"
+protocol = "chat_completions"
+auth_scheme = "bearer"
+env_key = "X_AI_API_KEY"
+client_identifier = "workbuddy"
+user_agent = "WorkBuddy/5.3.5 WorkBuddy/5.3.5 CLI/2.115.0"
+
+[clients.custom.my-workbuddy.extra_headers]
+"x-ide-name" = "WorkBuddy"
+"x-domain" = "www.codebuddy.cn"
+"x-codebuddy-request" = "1"
+
+[clients.custom.my-workbuddy.env_http_headers]
+"authorization" = "WORKBUDDY_TOKEN"
+```
+
+内置档案也可以用 `[clients.overrides.<id>]` 增量覆盖或追加头。例如让内置 `workbuddy`
+带上真实的 CodeBuddy 静态头，并从环境变量注入令牌：
+
+```toml
+[clients.overrides.workbuddy.extra_headers]
+"x-ide-name" = "WorkBuddy"
+"x-ide-type" = "WorkBuddy"
+"x-ide-version" = "5.3.5"
+"x-stainless-lang" = "js"
+"x-stainless-runtime" = "node"
+"x-stainless-runtime-version" = "v22.21.1"
+"x-stainless-os" = "Windows"
+"x-stainless-arch" = "x64"
+"x-stainless-package-version" = "6.25.0"
+"x-domain" = "www.codebuddy.cn"
+"x-product" = "SaaS"
+"x-requested-with" = "XMLHttpRequest"
+"x-codebuddy-request" = "1"
+
+[clients.overrides.workbuddy.env_http_headers]
+"cookie" = "WORKBUDDY_COOKIE"
+```
+
+> 注：内置 `workbuddy` 已默认内置上述 `x-ide-*` / `x-stainless-*` / `x-domain` 等静态头，
+> 这里的覆盖写法用于按需修改或补充（例如密钥、cookie 等敏感头建议放到 `env_http_headers`）。
+> 同名头以档案显式配置为准，逐键覆盖模型/Provider 的同名头。
+
+在交互界面输入 `/client` 也可以打开客户端弹窗，选中档案后在「请求头」一栏逐条
+新增、编辑或删除静态头与环境变量头（按 `a` 新增、`d` 删除、`e` 切换静态/环境变量）。
 
 ## Token 用量
 

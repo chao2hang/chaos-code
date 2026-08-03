@@ -1,4 +1,5 @@
 use crate::views::modal_window::ModalWindowState;
+use indexmap::IndexMap;
 use xai_grok_shell::agent::client_profiles::{ClientProfile, by_id as builtin_profile_by_id};
 
 pub const MODAL_TITLE: &str = "客户端选择";
@@ -8,8 +9,24 @@ pub const AUTH_SCHEMES: &[&str] = &["bearer", "x_api_key", "none"];
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ClientModalMode {
     List,
-    Form { editing_id: Option<String> },
+    Form {
+        editing_id: Option<String>,
+    },
+    /// Editing the header table of a profile currently in the form.
+    Headers {
+        editing_id: Option<String>,
+        /// Index of the focused header row (may point one past the end,
+        /// representing the "add new" row).
+        row: usize,
+        focus: HeaderFocus,
+    },
     ConfirmDelete(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HeaderFocus {
+    Key,
+    Value,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -21,6 +38,8 @@ pub enum ClientFormField {
     EnvKey,
     ClientIdentifier,
     UserAgent,
+    /// Opens the header editor (not a scalar text field).
+    Headers,
 }
 
 impl ClientFormField {
@@ -32,6 +51,7 @@ impl ClientFormField {
         Self::EnvKey,
         Self::ClientIdentifier,
         Self::UserAgent,
+        Self::Headers,
     ];
 
     pub fn label(self) -> &'static str {
@@ -43,6 +63,7 @@ impl ClientFormField {
             Self::EnvKey => "环境变量",
             Self::ClientIdentifier => "请求标识",
             Self::UserAgent => "User-Agent",
+            Self::Headers => "请求头",
         }
     }
 
@@ -93,6 +114,12 @@ pub struct ClientModalState {
     pub env_key: String,
     pub client_identifier: String,
     pub user_agent: String,
+    /// Header rows being edited in the form. `(name, value)` pairs; empty
+    /// trailing row represents the "add new" slot and is dropped on commit.
+    pub headers: Vec<(String, String)>,
+    /// Whether a header row value should be treated as an env-var name
+    /// (`env_http_headers`) instead of a static value (`extra_headers`).
+    pub headers_env: Vec<bool>,
     pub error: Option<String>,
     pub success: Option<String>,
 }
@@ -116,6 +143,8 @@ impl ClientModalState {
             env_key: String::new(),
             client_identifier: String::new(),
             user_agent: String::new(),
+            headers: Vec::new(),
+            headers_env: Vec::new(),
             error: None,
             success: None,
         };
@@ -197,6 +226,8 @@ impl ClientModalState {
         self.env_key.clear();
         self.client_identifier.clear();
         self.user_agent.clear();
+        self.headers = vec![(String::new(), String::new())];
+        self.headers_env = vec![false];
         self.error = None;
         self.success = None;
     }
@@ -226,6 +257,20 @@ impl ClientModalState {
         self.env_key = profile.env_key;
         self.client_identifier = profile.client_identifier;
         self.user_agent = profile.user_agent.clone().unwrap_or_default();
+        self.headers = profile
+            .extra_headers
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        self.headers_env = vec![false; self.headers.len()];
+        for (name, value) in &profile.env_http_headers {
+            self.headers.push((name.clone(), value.clone()));
+            self.headers_env.push(true);
+        }
+        if self.headers.is_empty() {
+            self.headers.push((String::new(), String::new()));
+            self.headers_env.push(false);
+        }
         self.error = None;
         self.success = None;
         true
@@ -247,6 +292,20 @@ impl ClientModalState {
     }
 
     pub fn build_profile(&self) -> ClientProfile {
+        let mut extra_headers = IndexMap::new();
+        let mut env_http_headers = IndexMap::new();
+        for (idx, (name, value)) in self.headers.iter().enumerate() {
+            let name = name.trim();
+            let value = value.trim();
+            if name.is_empty() || value.is_empty() {
+                continue;
+            }
+            if self.headers_env.get(idx).copied().unwrap_or(false) {
+                env_http_headers.insert(name.to_owned(), value.to_owned());
+            } else {
+                extra_headers.insert(name.to_owned(), value.to_owned());
+            }
+        }
         ClientProfile {
             id: self.id.clone(),
             name: self.name.clone(),
@@ -258,6 +317,8 @@ impl ClientModalState {
                 let ua = self.user_agent.trim();
                 (!ua.is_empty()).then(|| ua.to_owned())
             },
+            extra_headers,
+            env_http_headers,
         }
     }
 
@@ -271,7 +332,7 @@ impl ClientModalState {
             ClientFormField::EnvKey => self.env_key.push(value),
             ClientFormField::ClientIdentifier => self.client_identifier.push(value),
             ClientFormField::UserAgent => self.user_agent.push(value),
-            ClientFormField::Protocol | ClientFormField::AuthScheme => {}
+            ClientFormField::Protocol | ClientFormField::AuthScheme | ClientFormField::Headers => {}
         }
         self.error = None;
     }
@@ -283,7 +344,9 @@ impl ClientModalState {
             ClientFormField::EnvKey => &mut self.env_key,
             ClientFormField::ClientIdentifier => &mut self.client_identifier,
             ClientFormField::UserAgent => &mut self.user_agent,
-            ClientFormField::Protocol | ClientFormField::AuthScheme => return false,
+            ClientFormField::Protocol | ClientFormField::AuthScheme | ClientFormField::Headers => {
+                return false;
+            }
         };
         let changed = field.pop().is_some();
         if changed {
@@ -299,7 +362,9 @@ impl ClientModalState {
             ClientFormField::EnvKey => &mut self.env_key,
             ClientFormField::ClientIdentifier => &mut self.client_identifier,
             ClientFormField::UserAgent => &mut self.user_agent,
-            ClientFormField::Protocol | ClientFormField::AuthScheme => return false,
+            ClientFormField::Protocol | ClientFormField::AuthScheme | ClientFormField::Headers => {
+                return false;
+            }
         };
         if field.is_empty() {
             *field = value;

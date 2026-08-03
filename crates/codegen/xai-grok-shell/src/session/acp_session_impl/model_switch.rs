@@ -70,6 +70,7 @@ impl SessionActor {
                     reasoning_effort: sampling_config.reasoning_effort,
                     stream_tool_calls: Some(sampling_config.stream_tool_calls),
                     extract_inline_thinking: Some(sampling_config.extract_inline_thinking),
+                    is_workbuddy: sampling_config.is_workbuddy,
                 },
             );
         }

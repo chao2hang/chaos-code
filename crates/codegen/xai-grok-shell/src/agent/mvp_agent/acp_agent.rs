@@ -67,6 +67,10 @@ async fn set_client_profile(
         client_identifier: String,
         #[serde(default)]
         user_agent: Option<String>,
+        #[serde(default)]
+        extra_headers: indexmap::IndexMap<String, String>,
+        #[serde(default)]
+        env_http_headers: indexmap::IndexMap<String, String>,
     }
     #[derive(serde::Deserialize)]
     struct SetClientProfileParams {
@@ -101,6 +105,22 @@ async fn set_client_profile(
         return Err(acp::Error::invalid_params().data("invalid user agent"));
     }
 
+    let extra_headers = params.profile.extra_headers;
+    let env_http_headers = params.profile.env_http_headers;
+    for (name, value) in extra_headers.iter().chain(env_http_headers.iter()) {
+        if name.is_empty()
+            || name.len() > 128
+            || !name
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '!' | '#' | '$' | '%' | '&' | '\'' | '*' | '+' | '-' | '.' | '^' | '_' | '`' | '|' | '~'))
+        {
+            return Err(acp::Error::invalid_params().data("invalid header name"));
+        }
+        if value.chars().any(|c| c == '\r' || c == '\n' || c == '\0') {
+            return Err(acp::Error::invalid_params().data("invalid header value"));
+        }
+    }
+
     let session_id = acp::SessionId::new(params.session_id);
     let handle = agent
         .session_handle_waiting_for_load(&session_id)
@@ -117,6 +137,8 @@ async fn set_client_profile(
             client_identifier,
             origin_client: origin_client.clone(),
             user_agent,
+            extra_headers,
+            env_http_headers,
             responds_to,
         })
         .map_err(|_| acp::Error::internal_error().data("session actor unavailable"))?;

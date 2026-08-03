@@ -248,10 +248,28 @@ fn print_client_profiles(json: bool) -> Result<()> {
             "  {:<12} {:<14} protocol={:<16} auth={} env={}",
             profile.id, profile.name, profile.protocol, profile.auth_scheme, profile.env_key,
         );
+        if !profile.client_identifier.is_empty() {
+            println!(
+                "               x-grok-client-identifier: {}",
+                profile.client_identifier
+            );
+        }
+        if let Some(ref ua) = profile.user_agent
+            && !ua.is_empty()
+        {
+            println!("               user-agent: {ua}");
+        }
+        for (name, value) in &profile.extra_headers {
+            println!("               header: {name}: {value}");
+        }
+        for (name, value) in &profile.env_http_headers {
+            println!("               header (env): {name}: ${{{value}}}");
+        }
     }
     println!();
     println!("示例：chaos --client codex --model gpt-5");
     println!("配置： [clients] default = \"codex\"，或在 [model.<id>] 中设置 client");
+    println!("内置档案追加请求头： [clients.overrides.<id>] 中的 extra_headers / env_http_headers");
     Ok(())
 }
 

@@ -531,6 +531,7 @@ pub(crate) async fn spawn_session_actor(
         reasoning_effort: sampling_config.reasoning_effort,
         stream_tool_calls: Some(sampling_config.stream_tool_calls),
         extract_inline_thinking: Some(sampling_config.extract_inline_thinking),
+        is_workbuddy: sampling_config.is_workbuddy,
     };
     let actor_pruning_config = xai_chat_state::PruningConfig {
         enabled: session_pruning_config.enabled,
@@ -1642,9 +1643,21 @@ pub(crate) async fn spawn_session_actor(
         ),
         event_tx,
         buffering_settings,
-        client_identifier: std::cell::RefCell::new(session_client_identifier.clone()),
-        origin_client: std::cell::RefCell::new(origin_client.clone()),
-        user_agent: std::cell::RefCell::new(None),
+        client_identifier: std::cell::RefCell::new(
+            session_client_identifier
+                .clone()
+                .or_else(|| sampling_config.client_identifier.clone()),
+        ),
+        workbuddy_conversation_id: uuid::Uuid::new_v4().to_string(),
+        workbuddy_acp_connection_id: uuid::Uuid::new_v4().to_string(),
+        origin_client: std::cell::RefCell::new(
+            origin_client
+                .clone()
+                .or_else(|| sampling_config.origin_client.clone()),
+        ),
+        user_agent: std::cell::RefCell::new(sampling_config.user_agent.clone()),
+        client_extra_headers: std::cell::RefCell::new(sampling_config.extra_headers.clone()),
+        client_env_http_headers: std::cell::RefCell::new(sampling_config.env_http_headers.clone()),
         feedback_manager: feedback_manager.clone(),
         upload_queue: upload_queue.clone(),
         sync_loop_cancel: sync_loop_cancel.clone(),

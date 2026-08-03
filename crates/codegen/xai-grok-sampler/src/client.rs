@@ -322,6 +322,9 @@ pub struct SamplingClient {
     header_injector: Option<crate::config::SharedHeaderInjector>,
     /// Endpoint URL builder, resolved once from `base_url` + `query_params`.
     endpoint: EndpointTemplate,
+    /// When true, no x-grok-* headers are added, and only the WorkBuddy
+    /// headers from `extra_headers`/`env_http_headers` are sent.
+    is_workbuddy: bool,
 }
 
 impl std::fmt::Debug for SamplingClient {
@@ -493,6 +496,17 @@ pub fn user_agent_string_for(origin: &OriginClientInfo) -> String {
 // =============================================================================
 
 impl SamplingClient {
+    /// `Accept` header value for streaming requests. The real WorkBuddy
+    /// client advertises `application/json` even when consuming SSE; other
+    /// clients use `text/event-stream`.
+    fn streaming_accept_value(&self) -> HeaderValue {
+        if self.is_workbuddy {
+            HeaderValue::from_static("application/json")
+        } else {
+            HeaderValue::from_static("text/event-stream")
+        }
+    }
+
     /// Construct a sampling client from a [`SamplerConfig`].
     ///
     /// Grabs the process-wide shared `reqwest::Client` (HTTP/2 by
@@ -530,6 +544,15 @@ impl SamplingClient {
                         )
                     })?;
                     headers.insert(AUTHORIZATION, header_value);
+                    // The real WorkBuddy client authenticates with both
+                    // `Authorization: Bearer <key>` and `X-API-Key: <key>`;
+                    // the gateway rejects requests that only carry Bearer
+                    // with `unsupported_client`.
+                    if config.is_workbuddy
+                        && let Ok(api_key_value) = HeaderValue::from_str(api_key)
+                    {
+                        headers.insert(HeaderName::from_static("x-api-key"), api_key_value);
+                    }
                 }
             }
         }
@@ -553,41 +576,43 @@ impl SamplingClient {
             &mut headers,
         );
 
-        // Add x-grok-client-version header for version gating at the proxy.
-        if let Some(client_version) = config.client_version.as_ref()
-            && let Ok(header_value) = HeaderValue::from_str(client_version)
-        {
-            headers.insert(
-                HeaderName::from_static("x-grok-client-version"),
-                header_value,
-            );
-        }
-
-        if let Some(deployment_id) = config.deployment_id.as_ref()
-            && let Ok(header_value) = HeaderValue::from_str(deployment_id)
-        {
-            headers.insert(
-                HeaderName::from_static("x-grok-deployment-id"),
-                header_value,
-            );
-        }
-
-        if let Some(user_id) = config.user_id.as_ref()
-            && let Ok(header_value) = HeaderValue::from_str(user_id)
-        {
-            headers.insert(HeaderName::from_static("x-grok-user-id"), header_value);
-        }
-
-        {
-            let client_id = config
-                .client_identifier
-                .clone()
-                .unwrap_or_else(|| DEFAULT_CLIENT_IDENTIFIER.to_string());
-            if let Ok(header_value) = HeaderValue::from_str(&client_id) {
+        if !config.is_workbuddy {
+            // Add x-grok-client-version header for version gating at the proxy.
+            if let Some(client_version) = config.client_version.as_ref()
+                && let Ok(header_value) = HeaderValue::from_str(client_version)
+            {
                 headers.insert(
-                    HeaderName::from_static("x-grok-client-identifier"),
+                    HeaderName::from_static("x-grok-client-version"),
                     header_value,
                 );
+            }
+
+            if let Some(deployment_id) = config.deployment_id.as_ref()
+                && let Ok(header_value) = HeaderValue::from_str(deployment_id)
+            {
+                headers.insert(
+                    HeaderName::from_static("x-grok-deployment-id"),
+                    header_value,
+                );
+            }
+
+            if let Some(user_id) = config.user_id.as_ref()
+                && let Ok(header_value) = HeaderValue::from_str(user_id)
+            {
+                headers.insert(HeaderName::from_static("x-grok-user-id"), header_value);
+            }
+
+            {
+                let client_id = config
+                    .client_identifier
+                    .clone()
+                    .unwrap_or_else(|| DEFAULT_CLIENT_IDENTIFIER.to_string());
+                if let Ok(header_value) = HeaderValue::from_str(&client_id) {
+                    headers.insert(
+                        HeaderName::from_static("x-grok-client-identifier"),
+                        header_value,
+                    );
+                }
             }
         }
 
@@ -655,6 +680,7 @@ impl SamplingClient {
             bearer_resolver: config.bearer_resolver,
             header_injector: config.header_injector,
             endpoint,
+            is_workbuddy: config.is_workbuddy,
         })
     }
 
@@ -922,9 +948,11 @@ impl SamplingClient {
             deployment_id: payload.x_grok_deployment_id.as_deref(),
             user_id: payload.x_grok_user_id.as_deref(),
         };
-        let http_request = grok_headers
-            .apply(self.post(self.endpoint("chat/completions")))
-            .json(&payload);
+        let mut http_request = self.post(self.endpoint("chat/completions"));
+        if !self.is_workbuddy {
+            http_request = grok_headers.apply(http_request);
+        }
+        let http_request = http_request.json(&payload);
 
         let response = http_request.send().await.map_err(|e| {
             // Log at debug level; errors are surfaced to the caller.
@@ -980,9 +1008,13 @@ impl SamplingClient {
             deployment_id: payload.x_grok_deployment_id.as_deref(),
             user_id: payload.x_grok_user_id.as_deref(),
         };
-        let http_request = grok_headers
-            .apply(self.post(self.endpoint("chat/completions")))
-            .header(ACCEPT, HeaderValue::from_static("text/event-stream"))
+        let mut http_request = self.post(self.endpoint("chat/completions"));
+        if !self.is_workbuddy {
+            http_request = grok_headers.apply(http_request);
+        }
+        let accept_value = self.streaming_accept_value();
+        let http_request = http_request
+            .header(ACCEPT, accept_value)
             .json(&streaming_request);
 
         let built_request = http_request.build().map_err(|e| {
@@ -1193,9 +1225,11 @@ impl SamplingClient {
         // it in post-serialize. This is the last surviving piece of the
         // old raw_output machinery.
         xai_grok_sampling_types::patch_reasoning_text_types(&mut request_body);
-        let http_request = grok_headers
-            .apply(self.post(self.endpoint("responses")))
-            .json(&request_body);
+        let mut http_request = self.post(self.endpoint("responses"));
+        if !self.is_workbuddy {
+            http_request = grok_headers.apply(http_request);
+        }
+        let http_request = http_request.json(&request_body);
 
         let response = http_request.send().await.map_err(|e| {
             tracing::debug!("HTTP request failed: {}", e);
@@ -1335,10 +1369,13 @@ impl SamplingClient {
             .defaults
             .doom_loop_recovery
             .map(crate::doom_loop::DoomLoopSignalCollector::new);
-        let mut http_request = grok_headers
-            .apply(self.post(self.endpoint("responses")))
-            .header(ACCEPT, HeaderValue::from_static("text/event-stream"));
-        if doom_loop.is_some() {
+        let mut http_request = self.post(self.endpoint("responses"));
+        if !self.is_workbuddy {
+            http_request = grok_headers.apply(http_request);
+        }
+        let accept_value = self.streaming_accept_value();
+        let mut http_request = http_request.header(ACCEPT, accept_value);
+        if !self.is_workbuddy && doom_loop.is_some() {
             // Presence opts in; the server ignores the value.
             http_request = http_request.header(DOOM_LOOP_CHECK_HEADER, "true");
         }
@@ -1532,9 +1569,11 @@ impl SamplingClient {
             deployment_id: request.x_grok_deployment_id.as_deref(),
             user_id: request.x_grok_user_id.as_deref(),
         };
-        let http_request = grok_headers
-            .apply(self.post(self.endpoint("messages")))
-            .json(&request.inner);
+        let mut http_request = self.post(self.endpoint("messages"));
+        if !self.is_workbuddy {
+            http_request = grok_headers.apply(http_request);
+        }
+        let http_request = http_request.json(&request.inner);
 
         let response = http_request.send().await.map_err(|e| {
             tracing::debug!("HTTP request failed: {}", e);
@@ -1639,9 +1678,13 @@ impl SamplingClient {
             deployment_id: request.x_grok_deployment_id.as_deref(),
             user_id: request.x_grok_user_id.as_deref(),
         };
-        let http_request = grok_headers
-            .apply(self.post(self.endpoint("messages")))
-            .header(ACCEPT, HeaderValue::from_static("text/event-stream"))
+        let mut http_request = self.post(self.endpoint("messages"));
+        if !self.is_workbuddy {
+            http_request = grok_headers.apply(http_request);
+        }
+        let accept_value = self.streaming_accept_value();
+        let http_request = http_request
+            .header(ACCEPT, accept_value)
             .json(&request.inner);
 
         let built_request = http_request.build().map_err(|e| {

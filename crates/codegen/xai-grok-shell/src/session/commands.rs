@@ -213,6 +213,8 @@ pub enum SessionCommand {
         client_identifier: String,
         origin_client: crate::http::OriginClientInfo,
         user_agent: Option<String>,
+        extra_headers: indexmap::IndexMap<String, String>,
+        env_http_headers: indexmap::IndexMap<String, String>,
         responds_to: oneshot::Sender<Result<(), String>>,
     },
     SetSessionModel {

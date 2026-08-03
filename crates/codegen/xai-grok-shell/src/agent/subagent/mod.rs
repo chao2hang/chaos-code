@@ -718,10 +718,12 @@ async fn read_parent_sampling_config(
         if let Some(cfg) = chat_state.get_sampling_config().await {
             let creds = chat_state.get_credentials().await;
             let mut extra_headers = cfg.extra_headers;
+            let is_workbuddy = extra_headers.iter().any(|(k, _)| k.eq_ignore_ascii_case("x-codebuddy-request"));
             crate::agent::config::inject_url_derived_headers(
                 &mut extra_headers,
                 creds.alpha_test_key.as_deref(),
                 &cfg.base_url,
+                is_workbuddy,
             );
             let auth_scheme = crate::agent::config::try_resolve_model_credentials(&cfg.model, None)
                 .map(|r| r.auth_scheme)
@@ -764,6 +766,7 @@ async fn read_parent_sampling_config(
                 doom_loop_recovery: ctx.sampling_config.doom_loop_recovery,
                 header_injector: ctx.sampling_config.header_injector.clone(),
                 user_agent: None,
+                is_workbuddy,
             };
             let model_id = ctx.model_id.clone();
             let global_model_id = ctx.models_manager.current_model_id();

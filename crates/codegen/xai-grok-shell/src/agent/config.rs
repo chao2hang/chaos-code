@@ -1044,32 +1044,95 @@ pub struct ClientProfilesConfig {
     /// another CLI identity from the TUI.
     #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
     pub custom: IndexMap<String, CustomClientProfileConfig>,
+    /// Overlays for built-in profiles (`[clients.overrides.<builtin-id>]`).
+    /// Used to add extra headers or a User-Agent/env_key to a built-in
+    /// profile (e.g. workbuddy) without redeclaring it as custom. Merged per
+    /// key on top of the built-in defaults.
+    #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
+    pub overrides: IndexMap<String, CustomClientProfileConfig>,
 }
 
-/// A user-defined request-client profile from `[clients.custom.<id>]`.
+/// Layer non-empty fields from a `[clients.overrides.<id>]` entry onto a
+/// built-in profile. Header maps are merged per key (override wins).
+fn apply_builtin_profile_overrides(
+    profile: &mut crate::agent::client_profiles::ClientProfile,
+    over: &CustomClientProfileConfig,
+) {
+    if let Some(value) = over.name.as_deref()
+        && !value.trim().is_empty()
+    {
+        profile.name = value.trim().to_owned();
+    }
+    if let Some(value) = over.protocol.as_deref()
+        && !value.trim().is_empty()
+    {
+        profile.protocol = value.trim().to_owned();
+    }
+    if let Some(value) = over.auth_scheme.as_deref()
+        && !value.trim().is_empty()
+    {
+        profile.auth_scheme = value.trim().to_owned();
+    }
+    if let Some(value) = over.env_key.as_deref()
+        && !value.trim().is_empty()
+    {
+        profile.env_key = value.trim().to_owned();
+    }
+    if let Some(value) = over.client_identifier.as_deref()
+        && !value.trim().is_empty()
+    {
+        profile.client_identifier = value.trim().to_owned();
+    }
+    if over.user_agent.is_some() {
+        profile.user_agent = over
+            .user_agent
+            .as_deref()
+            .map(str::trim)
+            .filter(|ua| !ua.is_empty())
+            .map(str::to_owned);
+    }
+    for (k, v) in &over.extra_headers {
+        profile.extra_headers.insert(k.clone(), v.clone());
+    }
+    for (k, v) in &over.env_http_headers {
+        profile.env_http_headers.insert(k.clone(), v.clone());
+    }
+}
+
+/// A user-defined request-client profile from `[clients.custom.<id>]`, or an
+/// incremental override layered onto a built-in profile via
+/// `[clients.overrides.<id>]`.
+///
+/// Scalar identity fields are `Option` so an override table that only sets
+/// headers (for example) does not clobber the built-in profile's protocol or
+/// env key with serde defaults. For fully custom profiles, absent scalars fall
+/// back to sensible defaults at resolution time.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct CustomClientProfileConfig {
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub name: String,
-    #[serde(
-        default = "default_client_protocol",
-        skip_serializing_if = "String::is_empty"
-    )]
-    pub protocol: String,
-    #[serde(
-        default = "default_client_auth_scheme",
-        skip_serializing_if = "String::is_empty"
-    )]
-    pub auth_scheme: String,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub env_key: String,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub client_identifier: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub protocol: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_scheme: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub env_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_identifier: Option<String>,
     /// Verbatim `User-Agent` override (spaces allowed). Empty = render one
     /// from `client_identifier`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub user_agent: Option<String>,
+    /// Static extra headers attached to every request for this profile.
+    /// Profile headers take precedence over model/provider headers of the
+    /// same name. Values are sent verbatim; use `env_http_headers` to source
+    /// sensitive values from the environment instead.
+    #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
+    pub extra_headers: IndexMap<String, String>,
+    /// Header name to environment variable; resolved at request-build time.
+    #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
+    pub env_http_headers: IndexMap<String, String>,
 }
 
 fn default_client_protocol() -> String {
@@ -2081,31 +2144,58 @@ impl Config {
         if profile_id.is_empty() {
             return None;
         }
-        if let Some(profile) = crate::agent::client_profiles::by_id(profile_id) {
+        if let Some(mut profile) = crate::agent::client_profiles::by_id(profile_id) {
+            if let Some(overrides) = self.clients.overrides.get(profile_id) {
+                apply_builtin_profile_overrides(&mut profile, overrides);
+            }
             return Some(profile);
         }
         let custom = self.clients.custom.get(profile_id)?;
         Some(crate::agent::client_profiles::ClientProfile {
             id: profile_id.to_owned(),
-            name: if custom.name.trim().is_empty() {
-                profile_id.to_owned()
-            } else {
-                custom.name.clone()
-            },
-            protocol: custom.protocol.clone(),
-            auth_scheme: custom.auth_scheme.clone(),
-            env_key: custom.env_key.clone(),
-            client_identifier: if custom.client_identifier.trim().is_empty() {
-                profile_id.to_owned()
-            } else {
-                custom.client_identifier.clone()
-            },
+            name: custom
+                .name
+                .as_deref()
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+                .map(str::to_owned)
+                .unwrap_or_else(|| profile_id.to_owned()),
+            protocol: custom
+                .protocol
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_owned)
+                .unwrap_or_else(default_client_protocol),
+            auth_scheme: custom
+                .auth_scheme
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_owned)
+                .unwrap_or_else(default_client_auth_scheme),
+            env_key: custom
+                .env_key
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_owned)
+                .unwrap_or_default(),
+            client_identifier: custom
+                .client_identifier
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_owned)
+                .unwrap_or_else(|| profile_id.to_owned()),
             user_agent: custom
                 .user_agent
                 .as_deref()
                 .map(str::trim)
                 .filter(|ua| !ua.is_empty())
                 .map(str::to_owned),
+            extra_headers: custom.extra_headers.clone(),
+            env_http_headers: custom.env_http_headers.clone(),
         })
     }
 
@@ -5338,6 +5428,14 @@ pub fn resolve_aux_model_sampling_config(
 /// helper model keeps the session's auth/attribution. Shared by image-describe
 /// and the auto-mode classifier so the two can't drift.
 ///
+/// When the active session is impersonating the WorkBuddy client we also
+/// propagate the workbuddy transport flags, header maps, and dynamic header
+/// injector. Otherwise the first request the session fires (the
+/// session-title side-call, or an image-describe) goes out with the
+/// session's `Authorization` but without the `X-Conversation-ID`,
+/// `X-B3-*`, and other dynamic WorkBuddy identity headers, and the
+/// workbuddy gateway responds with `403 unsupported_client`.
+///
 /// The resolver gate is host-based, stricter than `session_token_auth_gate`:
 /// a session-token deployment on a custom `models_base_url` loses aux-sampler
 /// refresh, rather than risk the session bearer on a third-party endpoint.
@@ -5353,6 +5451,29 @@ pub fn stamp_session_local_sampler_fields(
         cfg.bearer_resolver = active_session_config.bearer_resolver.clone();
     }
     cfg.max_retries = max_retries;
+    if active_session_config.is_workbuddy {
+        cfg.is_workbuddy = true;
+        cfg.force_http1 = true;
+        cfg.user_agent = active_session_config.user_agent.clone();
+        cfg.origin_client = active_session_config.origin_client.clone();
+        // Profile headers take precedence on a per-key basis over aux model
+        // defaults; otherwise the aux sampler loses the `x-ide-*` /
+        // `x-stainless-*` / `x-codebuddy-request` markers that the gateway
+        // checks for.
+        for (k, v) in &active_session_config.extra_headers {
+            cfg.extra_headers.insert(k.clone(), v.clone());
+        }
+        for (k, v) in &active_session_config.env_http_headers {
+            cfg.env_http_headers.insert(k.clone(), v.clone());
+        }
+        // The dynamic per-request WorkBuddy headers (`X-Conversation-ID`,
+        // `X-B3-*`, `acp-connection-id`, …) are produced by a session-scoped
+        // injector. Reuse the same one so the side-call is indistinguishable
+        // from a normal WorkBuddy turn to the gateway.
+        if let Some(injector) = active_session_config.header_injector.clone() {
+            cfg.header_injector = Some(injector);
+        }
+    }
 }
 /// Finalize image-describe model + sampler config for user attachments.
 /// Shared so the aux resolve happy path and the `None` fallback cannot
@@ -5411,10 +5532,12 @@ pub fn sampling_config_for_model(
     let temperature = info.temperature;
     let top_p = info.top_p;
     let mut extra_headers = info.extra_headers.clone();
+    let is_workbuddy = extra_headers.iter().any(|(k, _)| k.eq_ignore_ascii_case("x-codebuddy-request"));
     inject_url_derived_headers(
         &mut extra_headers,
         alpha_test_key.as_deref(),
         &credentials.base_url,
+        is_workbuddy,
     );
     let api_backend = info.api_backend.clone();
     SamplerConfig {
@@ -5449,6 +5572,7 @@ pub fn sampling_config_for_model(
         doom_loop_recovery: None,
         header_injector: None,
         user_agent: None,
+        is_workbuddy,
     }
 }
 /// Fold URL-derived headers into `extra_headers`.
@@ -5469,8 +5593,9 @@ pub fn inject_url_derived_headers(
     headers: &mut IndexMap<String, String>,
     alpha_test_key: Option<&str>,
     base_url: &str,
+    is_workbuddy: bool,
 ) {
-    if crate::util::is_cli_chat_proxy_url(base_url) {
+    if !is_workbuddy && crate::util::is_cli_chat_proxy_url(base_url) {
         headers
             .entry("X-XAI-Token-Auth".to_string())
             .or_insert_with(|| "xai-grok-cli".to_string());

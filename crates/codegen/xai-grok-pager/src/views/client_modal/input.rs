@@ -1,7 +1,8 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use super::state::{
-    AUTH_SCHEMES, ClientFormField, ClientKeyOutcome, ClientModalMode, ClientModalState, PROTOCOLS,
+    AUTH_SCHEMES, ClientFormField, ClientKeyOutcome, ClientModalMode, ClientModalState,
+    HeaderFocus, PROTOCOLS,
 };
 
 pub fn handle_client_key(state: &mut ClientModalState, key: &KeyEvent) -> ClientKeyOutcome {
@@ -26,6 +27,11 @@ pub fn handle_client_key(state: &mut ClientModalState, key: &KeyEvent) -> Client
     match state.mode.clone() {
         ClientModalMode::List => handle_list(state, key),
         ClientModalMode::Form { editing_id } => handle_form(state, key, editing_id),
+        ClientModalMode::Headers {
+            editing_id,
+            row,
+            focus,
+        } => handle_headers(state, key, editing_id, row, focus),
         ClientModalMode::ConfirmDelete(id) => handle_confirm_delete(state, key, id),
     }
 }
@@ -126,6 +132,11 @@ fn handle_form(
             ClientKeyOutcome::Changed
         }
         KeyCode::Tab | KeyCode::Enter => {
+            // Enter the header editor from the Headers field; plain Tab advances
+            // only when not on Headers (Enter edits headers, Tab moves on).
+            if key.code == KeyCode::Enter && state.form_field == ClientFormField::Headers {
+                return enter_headers(state, editing_id);
+            }
             if let Some(next) = state.form_field.next(editing) {
                 state.form_field = next;
                 return ClientKeyOutcome::Changed;
@@ -134,6 +145,9 @@ fn handle_form(
                 profile: state.build_profile(),
                 editing_id,
             }
+        }
+        KeyCode::Right if state.form_field == ClientFormField::Headers => {
+            enter_headers(state, editing_id)
         }
         KeyCode::Up | KeyCode::Left => cycle_choice(state, -1),
         KeyCode::Down | KeyCode::Right => cycle_choice(state, 1),
@@ -164,6 +178,145 @@ fn cycle_index(index: usize, len: usize, delta: isize) -> usize {
         return 0;
     }
     (index as isize + delta).rem_euclid(len as isize) as usize
+}
+
+fn enter_headers(state: &mut ClientModalState, editing_id: Option<String>) -> ClientKeyOutcome {
+    if state.headers.is_empty() {
+        state.headers.push((String::new(), String::new()));
+        state.headers_env.push(false);
+    }
+    let row = state
+        .headers
+        .iter()
+        .position(|(k, v)| k.trim().is_empty() || v.trim().is_empty())
+        .unwrap_or(state.headers.len() - 1);
+    state.mode = ClientModalMode::Headers {
+        editing_id,
+        row,
+        focus: HeaderFocus::Key,
+    };
+    ClientKeyOutcome::Changed
+}
+
+#[allow(clippy::too_many_lines)]
+fn handle_headers(
+    state: &mut ClientModalState,
+    key: &KeyEvent,
+    editing_id: Option<String>,
+    row: usize,
+    focus: HeaderFocus,
+) -> ClientKeyOutcome {
+    match key.code {
+        KeyCode::Esc | KeyCode::Left => {
+            state.mode = ClientModalMode::Form { editing_id };
+            state.form_field = ClientFormField::Headers;
+            ClientKeyOutcome::Changed
+        }
+        KeyCode::Up => {
+            if row > 0 {
+                state.mode = ClientModalMode::Headers {
+                    editing_id,
+                    row: row - 1,
+                    focus,
+                };
+            }
+            ClientKeyOutcome::Changed
+        }
+        KeyCode::Down => {
+            let max = state.headers.len().saturating_sub(1);
+            if row < max {
+                state.mode = ClientModalMode::Headers {
+                    editing_id,
+                    row: row + 1,
+                    focus,
+                };
+            }
+            ClientKeyOutcome::Changed
+        }
+        KeyCode::Tab | KeyCode::Enter => {
+            // Toggle key <-> value on the current row; Enter on a value moves
+            // to the next row (or appends one).
+            match focus {
+                HeaderFocus::Key => {
+                    state.mode = ClientModalMode::Headers {
+                        editing_id,
+                        row,
+                        focus: HeaderFocus::Value,
+                    };
+                }
+                HeaderFocus::Value => {
+                    let next = if row + 1 >= state.headers.len() {
+                        state.headers.push((String::new(), String::new()));
+                        state.headers_env.push(false);
+                        row + 1
+                    } else {
+                        row + 1
+                    };
+                    state.mode = ClientModalMode::Headers {
+                        editing_id,
+                        row: next,
+                        focus: HeaderFocus::Key,
+                    };
+                }
+            }
+            ClientKeyOutcome::Changed
+        }
+        KeyCode::Char('a') if key.modifiers.is_empty() => {
+            state.headers.push((String::new(), String::new()));
+            state.headers_env.push(false);
+            state.mode = ClientModalMode::Headers {
+                editing_id,
+                row: state.headers.len() - 1,
+                focus: HeaderFocus::Key,
+            };
+            ClientKeyOutcome::Changed
+        }
+        KeyCode::Char('d') if key.modifiers.is_empty() && state.headers.len() > 1 => {
+            state.headers.remove(row);
+            state.headers_env.remove(row);
+            let new_row = row.min(state.headers.len() - 1);
+            state.mode = ClientModalMode::Headers {
+                editing_id,
+                row: new_row,
+                focus,
+            };
+            ClientKeyOutcome::Changed
+        }
+        KeyCode::Char('e') if key.modifiers.is_empty() => {
+            // Toggle between a static value and an env-var sourced value.
+            if let Some(flag) = state.headers_env.get_mut(row) {
+                *flag = !*flag;
+            }
+            ClientKeyOutcome::Changed
+        }
+        KeyCode::Backspace => {
+            if let Some((k, v)) = state.headers.get_mut(row) {
+                let changed = match focus {
+                    HeaderFocus::Key => k.pop().is_some(),
+                    HeaderFocus::Value => v.pop().is_some(),
+                };
+                return if changed {
+                    ClientKeyOutcome::Changed
+                } else {
+                    ClientKeyOutcome::Unchanged
+                };
+            }
+            ClientKeyOutcome::Unchanged
+        }
+        KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+            if c.is_control() {
+                return ClientKeyOutcome::Unchanged;
+            }
+            if let Some((k, v)) = state.headers.get_mut(row) {
+                match focus {
+                    HeaderFocus::Key => k.push(c),
+                    HeaderFocus::Value => v.push(c),
+                }
+            }
+            ClientKeyOutcome::Changed
+        }
+        _ => ClientKeyOutcome::Unchanged,
+    }
 }
 
 fn handle_confirm_delete(
