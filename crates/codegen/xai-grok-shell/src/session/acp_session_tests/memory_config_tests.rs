@@ -111,6 +111,8 @@ async fn create_test_actor_with_memory(
             reasoning_effort: None,
             stream_tool_calls: None,
             extract_inline_thinking: None,
+
+            is_workbuddy: false,
         },
         Box::new(xai_chat_state::NullChatPersistence),
         chat_event_tx,
@@ -308,6 +310,9 @@ async fn create_test_actor_with_memory(
         subagent_token_records: parking_lot::Mutex::new(HashMap::new()),
         workspace_ops: xai_grok_workspace::WorkspaceOps::for_test(),
         trace_config_template: std::cell::RefCell::new(None),
+
+        workbuddy_conversation_id: String::new(),
+        workbuddy_acp_connection_id: String::new(),
     }
 }
 #[tokio::test(flavor = "current_thread")]

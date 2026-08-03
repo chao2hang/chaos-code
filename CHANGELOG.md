@@ -1,5 +1,55 @@
 # Changelog
 
+## 0.2.131 - 2026-08-03
+
+### Bug fixes
+
+- 修：`build_session_info()` 不再丢弃 `decode_tokens_per_sec` / `avg_output_tokens_per_sec`，
+  让 chat-state ledger 的速率数据能传到 pager 状态栏 chip（之前 `acp_session_impl::session_setup.rs`
+  里硬编码为 `None`，导致右上角 tok/s chip 永远不显示）。
+- 修：`cargo test` 因 `ClientProfile` 缺 `extra_headers` / `env_http_headers` 字段而编译失败
+  （workbuddy 提交给结构体加了字段但测试 fixture 没跟上）。
+- 修：`/context set` 报错信息从 `Internal error: ErrorCode(InvalidRequest) { … }` 改为透传结构化
+  `acp::Error`，UI 现在显示「Cannot change the context window while a turn is in flight;
+  try again after the turn finishes.」类中文消息。
+- 修：`Token 用量统计` overlay 报 `aggregate usage not supported by this agent version` —
+  `MvpAgent::ext_method` 顶层 dispatcher 漏掉 `x.ai/usage/aggregate` 路由。补上后请求能真正到达
+  usage handler，overlay 双栏（本次会话 + 累计）正常填充，并用生产分发链回归测试锁定。
+
+### Features
+
+- 实时 tok/s chip：streaming 中按 `cl100k_base` BPE 累加 token 数（编码器不可用时回退
+  `chars/4`），并以 chunk 间隔 EMA 展示当前生成速率；静默超过 1 秒后不再显示旧速率。
+  Post-hoc `decode_tokens_per_sec` 仍负责响应结束后的速率显示。
+- Token 用量 overlay 降级：单边 fetch 失败时保留另一边数据 + dim 部分失败提示，
+  pending 侧显示加载中；仅两边都明确失败时才进入 `Failed(error)`。每次打开携带请求代次，
+  关闭后重开不会被上一轮 late result 污染；会话尚未建立时明确显示会话侧不可用。
+- 子 Agent 完成后按实际 `output` 文本计入父 turn 的实时输出速率；累计上下文
+  `tokens_used` 只用于任务用量展示，replay 和重复终态不会重复计费。速率优先复用子 Agent
+  tracker 的真实 decode rate，缺失时以 `output_tokens / duration` 估算；父 Agent 尚未输出文本的
+  subagent-only turn 也能立即显示正数 tok/s。无实时样本或静默衰减为 0 时显示 `📊 平均 N tok/s`
+  对话累计平均值，不再重复显示上下文剩余百分比。
+
+### Refactors
+
+- `UsageDetail::Ready` 枚举新增 `partial_failure: Option<String>` 字段；`session` / `aggregate`
+  改成 `Option<Box<PromptUsage>>` 以支持半数据状态。`UsageDetail::Failed` 仅在两边都失败时
+  使用，合并错误信息。
+- `LiveStreamingRate` 字段从 `total_chars: u64` 改为 `total_tokens: u64`（BPE token 数），
+  配套 `AcpUpdateTracker.token_encoder: Option<Arc<tiktoken_rs::CoreBPE>>` 懒加载字段。
+
+### Tests
+
+- 新增 `usage_partial_failure` 状态机和 overlay 渲染/竞态测试，覆盖双请求成功/失败乱序、
+  单边 pending、late success、关闭后重开、无 session 与带分号错误文本的精确清理。
+- 新增实时 tok/s 测试，覆盖 BPE 累加、EMA/静默衰减、live 零值不回退旧速率，
+  以及子 Agent output 的 context/replay/重复终态/subagent-only turn 隔离和状态栏可见性。
+
+### Dependencies
+
+- 新增 `tiktoken-rs = "0.7"` 到 `xai-grok-pager/Cargo.toml`。cl100k_base 表~1.5MB，
+  lazy-init 在第一个 chunk 到达时加载（启动开销零）。
+
 ## 0.2.128
 
 ### `/provider` 添加渠道支持从 Cline 导入

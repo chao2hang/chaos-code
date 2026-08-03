@@ -242,6 +242,199 @@
         );
     }
 
+    /// `tokens_used` is cumulative context occupancy, while `output` is the
+    /// generated text. Only the latter may contribute to the parent's live
+    /// output rate.
+    #[test]
+    fn subagent_finish_credits_output_text_not_context_usage() {
+        let mut app = make_app_with_agent("sess-parent");
+        let child_sid = "child-rate";
+        let _ = handle(
+            make_ext_session_notification(
+                "sess-parent",
+                test_subagent_spawned("sess-parent", child_sid),
+            ),
+            &mut app,
+        );
+        let _ = handle(make_agent_chunk_message("sess-parent", "parent seed"), &mut app);
+        let before = app.agents[&AgentId(0)]
+            .session
+            .tracker
+            .streaming_rate()
+            .expect("parent chunk must start live accounting")
+            .total_tokens;
+
+        let _ = handle(
+            make_ext_session_notification(
+                "sess-parent",
+                test_subagent_finished_with_usage(child_sid, 50_000, Some("short answer")),
+            ),
+            &mut app,
+        );
+
+        let agent = &app.agents[&AgentId(0)];
+        let after = agent
+            .session
+            .tracker
+            .streaming_rate()
+            .expect("subagent completion must preserve live accounting")
+            .total_tokens;
+        let credited = after - before;
+        assert!(credited > 0, "non-empty output must credit generated tokens");
+        assert!(
+            credited < 100,
+            "short output must not credit 50k context tokens; credited {credited}"
+        );
+        assert_eq!(
+            agent.subagent_sessions[child_sid].tokens_used,
+            Some(50_000),
+            "context usage remains available for the tasks UI"
+        );
+    }
+
+    /// A parent turn may delegate immediately without emitting any parent
+    /// text. The subagent completion must seed live accounting rather than be
+    /// dropped merely because `streaming_rate` was not initialized yet.
+    #[test]
+    fn subagent_only_turn_seeds_parent_output_accounting() {
+        let mut app = make_app_with_agent("sess-parent");
+        let child_sid = "child-only-rate";
+        let _ = handle(
+            make_ext_session_notification(
+                "sess-parent",
+                test_subagent_spawned("sess-parent", child_sid),
+            ),
+            &mut app,
+        );
+        assert!(
+            app.agents[&AgentId(0)]
+                .session
+                .tracker
+                .streaming_rate()
+                .is_none()
+        );
+        app.agents.get_mut(&AgentId(0)).unwrap().session.state = AgentState::TurnRunning;
+
+        let _ = handle(
+            make_ext_session_notification(
+                "sess-parent",
+                test_subagent_finished_with_usage(child_sid, 50_000, Some("delegated answer")),
+            ),
+            &mut app,
+        );
+
+        let rate = app.agents[&AgentId(0)]
+            .session
+            .tracker
+            .streaming_rate()
+            .expect("live parent turn must be seeded by subagent output");
+        assert!(rate.total_tokens > 0 && rate.total_tokens < 100);
+        assert!(
+            rate.tokens_per_sec() > 0.0,
+            "subagent-only completion must produce a displayable speed"
+        );
+        let context = xai_grok_shell::session::ContextInfo::default();
+        let theme = crate::theme::Theme::default();
+        assert!(
+            crate::views::agent_status::tokens_per_sec_line(&context, Some(rate), &theme).is_some(),
+            "the parent status chip must render the subagent-derived rate"
+        );
+    }
+
+    /// Duplicate terminal notifications are possible around reconnect races;
+    /// they must update terminal metadata idempotently without crediting the
+    /// same output twice.
+    #[test]
+    fn duplicate_subagent_finish_does_not_double_credit_output() {
+        let mut app = make_app_with_agent("sess-parent");
+        let child_sid = "child-duplicate-rate";
+        let _ = handle(
+            make_ext_session_notification(
+                "sess-parent",
+                test_subagent_spawned("sess-parent", child_sid),
+            ),
+            &mut app,
+        );
+        let _ = handle(make_agent_chunk_message("sess-parent", "parent seed"), &mut app);
+        let finish = || {
+            make_ext_session_notification(
+                "sess-parent",
+                test_subagent_finished_with_usage(child_sid, 10_000, Some("same output")),
+            )
+        };
+        let _ = handle(finish(), &mut app);
+        let after_first = app.agents[&AgentId(0)]
+            .session
+            .tracker
+            .streaming_rate()
+            .unwrap()
+            .total_tokens;
+        let _ = handle(finish(), &mut app);
+        let after_duplicate = app.agents[&AgentId(0)]
+            .session
+            .tracker
+            .streaming_rate()
+            .unwrap()
+            .total_tokens;
+        assert_eq!(after_duplicate, after_first);
+    }
+
+    /// Resume replay reconstructs terminal subagent rows but is historical
+    /// data, so replayed output must never alter the current live speed chip.
+    #[test]
+    fn replayed_subagent_finish_does_not_credit_output() {
+        let mut app = make_app_with_agent("sess-parent");
+        let child_sid = "child-replay-rate";
+        let _ = handle(make_agent_chunk_message("sess-parent", "parent seed"), &mut app);
+        let before = app.agents[&AgentId(0)]
+            .session
+            .tracker
+            .streaming_rate()
+            .unwrap()
+            .total_tokens;
+        app.agents
+            .get_mut(&AgentId(0))
+            .unwrap()
+            .session
+            .loading_replay = true;
+        let spawned = subagent_ext_replay(
+            "sess-parent",
+            serde_json::json!({
+                "sessionUpdate": "subagent_spawned",
+                "subagent_id": child_sid,
+                "parent_session_id": "sess-parent",
+                "child_session_id": child_sid,
+                "subagent_type": "general-purpose",
+                "description": "replayed child",
+            }),
+            "replay-rate-1",
+        );
+        handle_ext_notification(&spawned, &mut app);
+        let finished = subagent_ext_replay(
+            "sess-parent",
+            serde_json::json!({
+                "sessionUpdate": "subagent_finished",
+                "subagent_id": child_sid,
+                "child_session_id": child_sid,
+                "status": "completed",
+                "tool_calls": 1,
+                "turns": 1,
+                "duration_ms": 100,
+                "tokens_used": 40_000,
+                "output": "historical output",
+                "will_wake": false,
+            }),
+            "replay-rate-2",
+        );
+        handle_ext_notification(&finished, &mut app);
+        let agent = &app.agents[&AgentId(0)];
+        assert_eq!(
+            agent.session.tracker.streaming_rate().unwrap().total_tokens,
+            before
+        );
+        assert!(agent.subagent_sessions[child_sid].finished);
+    }
+
     /// The live activity label fans out to `SubagentInfo` (tasks pane /
     /// dashboard rows) alongside the scrollback block — from both the child
     /// session/update path and the `SubagentProgress` path — and

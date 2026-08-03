@@ -1522,6 +1522,10 @@ pub struct AgentView {
     pub hit_usage_close: HitArea,
     /// Full-screen usage overlay; `Some` while open.
     pub usage_detail: Option<crate::views::usage_detail::UsageDetail>,
+    /// Monotonic request generation for the usage overlay. Incremented on
+    /// every open so a late result from a previously closed overlay cannot
+    /// populate a newly opened one.
+    pub(crate) usage_detail_generation: u64,
     /// Largest total-token count seen across turns (drives the status chip).
     pub max_total_tokens_seen: u64,
 }

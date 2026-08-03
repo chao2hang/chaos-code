@@ -1709,6 +1709,32 @@ fn session_usage_request(session_id: &str) -> acp::ExtRequest {
             .into(),
     )
 }
+
+#[tokio::test(flavor = "current_thread")]
+#[serial_test::serial]
+async fn aggregate_usage_routes_through_top_level_ext_dispatch() {
+    use acp::Agent as _;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let db_path = tmp.path().join("usage.sqlite");
+    let _guard = xai_grok_test_support::env::EnvGuard::set("GROK_USAGE_STORE_PATH", &db_path);
+    let agent = build_minimal_agent_for_tests();
+    let request = acp::ExtRequest::new(
+        "x.ai/usage/aggregate",
+        serde_json::value::to_raw_value(&serde_json::json!({}))
+            .unwrap()
+            .into(),
+    );
+
+    let response = agent
+        .ext_method(request)
+        .await
+        .expect("aggregate usage must be routed by the production dispatcher");
+    let parsed: crate::extensions::usage::SessionUsageResponse =
+        serde_json::from_str(response.0.get()).expect("valid aggregate usage response");
+    assert_eq!(parsed.usage.totals.input_tokens, 0);
+    assert_eq!(parsed.usage.totals.output_tokens, 0);
+}
 #[tokio::test(flavor = "current_thread")]
 async fn session_usage_unknown_session_is_resource_not_found() {
     let agent = build_minimal_agent_for_tests();

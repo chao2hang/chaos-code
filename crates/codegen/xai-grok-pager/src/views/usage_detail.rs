@@ -52,12 +52,22 @@ const TOTALS_LABEL_W: usize = 14;
 pub enum UsageDetail {
     /// Fetch in flight.
     Loading,
-    /// Ledgers received.
+    /// At least one side has resolved. Either side may be `None` while its
+    /// fetch is still pending or after it failed; `partial_failure` records
+    /// which missing side actually failed. This keeps the two independent
+    /// requests distinct without fabricating one ledger into both sections.
     Ready {
-        /// Usage for the active session.
-        session: Box<PromptUsage>,
-        /// All-time aggregate usage across sessions.
-        aggregate: Box<PromptUsage>,
+        /// Usage for the active session. `None` while pending or after
+        /// failure; `partial_failure` distinguishes the failed case.
+        session: Option<Box<PromptUsage>>,
+        /// All-time aggregate usage across sessions. `None` while pending or
+        /// after failure (e.g. older shell, OIDC stripped); `partial_failure`
+        /// distinguishes the failed case and carries the user-safe reason.
+        aggregate: Option<Box<PromptUsage>>,
+        /// Single-line note shown at the top of the overlay when only one
+        /// side of the dual-fetch succeeded. `None` when both succeeded or
+        /// both failed (the latter is `Failed`).
+        partial_failure: Option<String>,
     },
     /// Fetch failed; the string is already user-safe (sanitized upstream).
     Failed(String),
@@ -68,23 +78,38 @@ impl UsageDetail {
     fn body_rows(&self) -> u16 {
         match self {
             UsageDetail::Loading | UsageDetail::Failed(_) => 1,
-            UsageDetail::Ready { session, aggregate } => {
-                let session_rows = if is_empty_ledger(session) {
-                    1
-                } else {
-                    5 + u16::from(session.usage_is_incomplete) + per_model_section_rows(session)
+            UsageDetail::Ready {
+                session,
+                aggregate,
+                partial_failure,
+            } => {
+                // 1 row for the dim partial-failure note when present.
+                let note_rows = u16::from(partial_failure.is_some());
+                // A missing ledger collapses to 1 row ("本次会话用量暂不可用：…")
+                // rather than expanding into the full 5+ model section.
+                let section_rows = |usage: &Option<Box<PromptUsage>>| -> u16 {
+                    match usage {
+                        None => 1,
+                        Some(s) if is_empty_ledger(s) => 1,
+                        Some(s) => 5 + u16::from(s.usage_is_incomplete) + per_model_section_rows(s),
+                    }
                 };
-                let aggregate_rows = if is_empty_ledger(aggregate) {
-                    1
-                } else {
-                    // 5 totals rows + note + per-model section (always shown
-                    // for aggregate because the user explicitly wants the
-                    // breakdown).
-                    5 + u16::from(aggregate.usage_is_incomplete) + forced_per_model_rows(aggregate)
+                let session_rows = section_rows(session);
+                let aggregate_rows = match aggregate {
+                    None => 1,
+                    Some(s) if is_empty_ledger(s) => 1,
+                    Some(s) => {
+                        // 5 totals rows + note + per-model section (always shown
+                        // for aggregate because the user explicitly wants the
+                        // breakdown).
+                        5 + u16::from(s.usage_is_incomplete) + forced_per_model_rows(s)
+                    }
                 };
                 // Section header rows: "本次会话" + blank + "累计使用 Chaos 以来".
+                // Missing-side headers still render so the dim placeholder row
+                // has somewhere to live.
                 let headers = 3;
-                session_rows + aggregate_rows + headers
+                session_rows + aggregate_rows + headers + note_rows
             }
         }
     }
@@ -289,12 +314,24 @@ pub fn render_usage_detail(
         .bg(theme.bg_base)
         .add_modifier(Modifier::BOLD);
 
-    let push = |buf: &mut Buffer, y: &mut u16, line: Line<'static>| {
-        if *y < body_bottom {
-            buf.set_line_safe(x, *y, &line, w);
-            *y += 1;
-        }
-    };
+    // Macro that emulates the `push` helper. Used in place of a closure because
+    // the body below also declares `render_section` as a closure, and nested
+    // closures interacting with the outer `&UsageDetail` lifetime trigger a
+    // spurious `'1: 'static` requirement under HRTB inference. A macro sidesteps
+    // the issue entirely — the borrow checker sees straight-line code.
+    //
+    // `$y:expr` (rather than `:ident`) so both `y` (inside the inner closure
+    // where it's already `&mut u16`) and `&mut y` (the outer call sites where
+    // we pass a fresh borrow of the local) work.
+    macro_rules! push {
+        ($buf:ident, $y:expr, $line:expr) => {{
+            let __y: &mut u16 = $y;
+            if *__y < body_bottom {
+                $buf.set_line_safe(x, *__y, &$line, w);
+                *__y += 1;
+            }
+        }};
+    }
 
     // Render the totals + per-model breakdown for one usage ledger.
     // `force_model_breakdown` renders the per-model table even for a single
@@ -307,7 +344,7 @@ pub fn render_usage_detail(
                 } else {
                     "暂无记录。"
                 };
-                push(buf, y, Line::from(Span::styled(msg, dim_style)));
+                push!(buf, y, Line::from(Span::styled(msg, dim_style)));
                 return;
             }
 
@@ -325,7 +362,7 @@ pub fn render_usage_detail(
                 }
                 Line::from(spans)
             };
-            push(
+            push!(
                 buf,
                 y,
                 row(
@@ -335,23 +372,23 @@ pub fn render_usage_detail(
                         "（缓存命中 {}）",
                         group_thousands(t.cached_read_tokens)
                     )),
-                ),
+                )
             );
-            push(
+            push!(
                 buf,
                 y,
                 row(
                     "输出 Token",
                     group_thousands(t.output_tokens),
                     Some(format!("（推理 {}）", group_thousands(t.reasoning_tokens))),
-                ),
+                )
             );
-            push(
+            push!(
                 buf,
                 y,
-                row("Token 总计", group_thousands(t.total_tokens), None),
+                row("Token 总计", group_thousands(t.total_tokens), None)
             );
-            push(
+            push!(
                 buf,
                 y,
                 row(
@@ -361,14 +398,14 @@ pub fn render_usage_detail(
                         " · API 耗时 {}",
                         format_duration(std::time::Duration::from_millis(t.api_duration_ms))
                     )),
-                ),
+                )
             );
-            push(buf, y, row("费用", format_cost(t), None));
+            push!(buf, y, row("费用", format_cost(t), None));
 
             let show_models = force_model_breakdown || per_model_section_rows(usage) > 0;
             if show_models {
-                push(buf, y, Line::from(""));
-                push(
+                push!(buf, y, Line::from(""));
+                push!(
                     buf,
                     y,
                     Line::from(Span::styled(
@@ -377,18 +414,18 @@ pub fn render_usage_detail(
                             .fg(theme.text_primary)
                             .bg(theme.bg_base)
                             .add_modifier(Modifier::BOLD),
-                    )),
+                    ))
                 );
-                push(
+                push!(
                     buf,
                     y,
                     Line::from(Span::styled(
                         table_row("模型", "输入", "输出", Some("调用"), "费用", w as usize),
                         label_style,
-                    )),
+                    ))
                 );
                 for (model, m) in usage.model_usage.iter().take(MAX_MODEL_ROWS) {
-                    push(
+                    push!(
                         buf,
                         y,
                         Line::from(Span::styled(
@@ -401,64 +438,115 @@ pub fn render_usage_detail(
                                 w as usize,
                             ),
                             value_style,
-                        )),
+                        ))
                     );
                 }
                 if usage.model_usage.len() > MAX_MODEL_ROWS {
                     let more = usage.model_usage.len() - MAX_MODEL_ROWS;
-                    push(
+                    push!(
                         buf,
                         y,
-                        Line::from(Span::styled(format!("+{more} 个其他模型"), dim_style)),
+                        Line::from(Span::styled(format!("+{more} 个其他模型"), dim_style))
                     );
                 }
             }
 
             if usage.usage_is_incomplete {
-                push(
+                push!(
                     buf,
                     y,
                     Line::from(Span::styled(
                         "注意：用量统计不完整，实际用量可能更高。",
                         Style::default().fg(theme.warning).bg(theme.bg_base),
-                    )),
+                    ))
                 );
             }
         };
 
     match detail {
         UsageDetail::Loading => {
-            push(
+            push!(
                 buf,
                 &mut y,
-                Line::from(Span::styled("正在加载用量…", dim_style)),
+                Line::from(Span::styled("正在加载用量…", dim_style))
             );
         }
         UsageDetail::Failed(error) => {
-            push(
+            push!(
                 buf,
                 &mut y,
                 Line::from(Span::styled(
                     format!("加载用量失败：{error}"),
                     Style::default().fg(theme.accent_error).bg(theme.bg_base),
-                )),
+                ))
             );
         }
-        UsageDetail::Ready { session, aggregate } => {
-            push(
+        UsageDetail::Ready {
+            session,
+            aggregate,
+            partial_failure,
+        } => {
+            // Single-line note at the very top so the user sees we partially
+            // succeeded before scanning the sections below.
+            if let Some(note) = partial_failure {
+                push!(buf, &mut y, Line::from(Span::styled(note, dim_style)));
+            }
+            push!(
                 buf,
                 &mut y,
-                Line::from(Span::styled("本次会话", section_style)),
+                Line::from(Span::styled("本次会话", section_style))
             );
-            render_section(buf, &mut y, session, false);
+            match session {
+                Some(usage) => render_section(buf, &mut y, usage, false),
+                None => {
+                    let failed = partial_failure.as_deref().is_some_and(|note| {
+                        note.starts_with("本次会话用量加载失败：")
+                            || note.contains("; 本次会话用量加载失败：")
+                    });
+                    let (message, color) = if failed {
+                        ("本次会话用量暂不可用。", theme.accent_error)
+                    } else {
+                        ("本次会话用量加载中…", theme.gray)
+                    };
+                    push!(
+                        buf,
+                        &mut y,
+                        Line::from(Span::styled(
+                            message,
+                            Style::default().fg(color).bg(theme.bg_base),
+                        ))
+                    );
+                }
+            }
 
-            push(buf, &mut y, Line::from(""));
-            push(
+            push!(buf, &mut y, Line::from(""));
+            push!(
                 buf,
                 &mut y,
-                Line::from(Span::styled("累计使用 Chaos 以来", section_style)),
+                Line::from(Span::styled("累计使用 Chaos 以来", section_style))
             );
-            render_section(buf, &mut y, aggregate, true);
+            match aggregate {
+                Some(usage) => render_section(buf, &mut y, usage, true),
+                None => {
+                    let failed = partial_failure.as_deref().is_some_and(|note| {
+                        note.starts_with("累计用量加载失败：")
+                            || note.contains("; 累计用量加载失败：")
+                    });
+                    let (message, color) = if failed {
+                        ("累计用量暂不可用。", theme.accent_error)
+                    } else {
+                        ("累计用量加载中…", theme.gray)
+                    };
+                    push!(
+                        buf,
+                        &mut y,
+                        Line::from(Span::styled(
+                            message,
+                            Style::default().fg(color).bg(theme.bg_base),
+                        ))
+                    );
+                }
+            }
         }
     }
 
@@ -554,8 +642,9 @@ mod tests {
     /// assertions focused.
     fn ready(usage: PromptUsage) -> UsageDetail {
         UsageDetail::Ready {
-            session: Box::new(usage.clone()),
-            aggregate: Box::new(usage),
+            session: Some(Box::new(usage.clone())),
+            aggregate: Some(Box::new(usage)),
+            partial_failure: None,
         }
     }
 
@@ -575,6 +664,32 @@ mod tests {
         let (buf, _) = render(&detail, Rect::new(0, 0, 100, 30));
         let text = buffer_text(&buf);
         assert!(contains(&buf, "加载用量失败：connectionreset"), "{text}");
+    }
+
+    #[test]
+    fn missing_side_without_failure_note_renders_loading() {
+        let detail = UsageDetail::Ready {
+            session: Some(Box::new(PromptUsage::default())),
+            aggregate: None,
+            partial_failure: None,
+        };
+        let (buf, _) = render(&detail, Rect::new(0, 0, 100, 30));
+        let text = buffer_text(&buf);
+        assert!(contains(&buf, "累计用量加载中…"), "{text}");
+        assert!(!contains(&buf, "累计用量暂不可用。"), "{text}");
+    }
+
+    #[test]
+    fn missing_side_with_matching_failure_note_renders_unavailable() {
+        let detail = UsageDetail::Ready {
+            session: None,
+            aggregate: Some(Box::new(PromptUsage::default())),
+            partial_failure: Some("本次会话用量加载失败：会话尚未开始".to_string()),
+        };
+        let (buf, _) = render(&detail, Rect::new(0, 0, 100, 30));
+        let text = buffer_text(&buf);
+        assert!(contains(&buf, "本次会话用量暂不可用。"), "{text}");
+        assert!(!contains(&buf, "本次会话用量加载中…"), "{text}");
     }
 
     #[test]

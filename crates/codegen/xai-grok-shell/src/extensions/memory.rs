@@ -66,11 +66,20 @@ async fn handle_set_context_window(agent: &MvpAgent, args: &acp::ExtRequest) -> 
         compact_if_needed: req.compact_if_needed,
         respond_to: tx,
     });
+    // Forward the structured ACP error unchanged: the inner handler
+    // distinguishes "turn in flight" (InvalidRequest) from "internal"
+    // (InternalError) and surfaces user-safe Chinese messages. Wrapping it
+    // here with `internal_error().data(format!("{:?}", ...))` previously
+    // flattened every failure to "Internal error: ErrorCode(InvalidRequest)
+    // { code: -32600, message: ..., data: None }", which leaked Rust
+    // internals into the TUI toast.
     let result = rx
         .await
-        .map_err(|_| acp::Error::internal_error().data("session failed to respond"))?
-        .map_err(|e| acp::Error::internal_error().data(format!("Internal error: {e:?}")))?;
-    to_raw_response(&result)
+        .map_err(|_| acp::Error::internal_error().data("session failed to respond"))?;
+    match result {
+        Ok(payload) => to_raw_response(&payload),
+        Err(err) => Err(err),
+    }
 }
 
 async fn handle_compact(agent: &MvpAgent, args: &acp::ExtRequest) -> ExtResult {

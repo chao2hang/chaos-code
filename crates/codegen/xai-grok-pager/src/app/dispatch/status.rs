@@ -353,6 +353,7 @@ pub(super) fn dispatch_show_usage(app: &mut AppView) -> Vec<Effect> {
             agent_id: id,
             session_id,
             for_overlay: false,
+            overlay_generation: None,
         }],
         None => {
             if let Some(agent) = app.agents.get_mut(&id) {
@@ -391,17 +392,29 @@ pub(super) fn dispatch_show_usage_detail(app: &mut AppView) -> Vec<Effect> {
         return vec![];
     }
 
-    agent.usage_detail = Some(UsageDetail::Loading);
+    agent.usage_detail_generation = agent.usage_detail_generation.wrapping_add(1);
+    let generation = agent.usage_detail_generation;
+    agent.usage_detail = if agent.session.session_id.is_some() {
+        Some(UsageDetail::Loading)
+    } else {
+        Some(UsageDetail::Ready {
+            session: None,
+            aggregate: None,
+            partial_failure: Some("本次会话用量加载失败：会话尚未开始".to_string()),
+        })
+    };
 
     let mut effects = vec![Effect::FetchAggregateUsage {
         agent_id: id,
         for_overlay: true,
+        overlay_generation: Some(generation),
     }];
     if let Some(session_id) = agent.session.session_id.clone() {
         effects.push(Effect::FetchSessionUsage {
             agent_id: id,
             session_id,
             for_overlay: true,
+            overlay_generation: Some(generation),
         });
     }
     effects
@@ -431,6 +444,24 @@ pub(super) fn commit_session_usage_block(
 /// popup the user closed. Unlike [`commit_session_usage_block`] this does not
 /// chain the consumer billing surface: the overlay is a token/cost read-out,
 /// not the `/usage` command flow.
+///
+/// Single-side success overwrites `session`, drops the matching part of the
+/// partial-failure note, and preserves the aggregate side intact. If it is
+/// the first result to arrive, the aggregate side remains `None` until its
+/// own request completes; we never duplicate one ledger into both columns.
+pub(super) fn usage_overlay_generation_is_current(
+    app: &AppView,
+    agent_id: AgentId,
+    generation: Option<u64>,
+) -> bool {
+    let Some(generation) = generation else {
+        return false;
+    };
+    app.agents.get(&agent_id).is_some_and(|agent| {
+        agent.usage_detail.is_some() && agent.usage_detail_generation == generation
+    })
+}
+
 pub(super) fn fill_session_usage_detail(
     app: &mut AppView,
     agent_id: AgentId,
@@ -448,23 +479,29 @@ pub(super) fn fill_session_usage_detail(
     }
     match agent.usage_detail.take() {
         Some(crate::views::usage_detail::UsageDetail::Ready {
-            session: _,
             aggregate,
+            partial_failure,
+            ..
         }) => {
+            // Session arrived; clear any "session failed" portion of the
+            // partial note (it was the leading segment), keep the rest.
+            let trimmed = partial_failure.and_then(strip_session_failure_note);
             agent.usage_detail = Some(crate::views::usage_detail::UsageDetail::Ready {
-                session: Box::new(usage),
+                session: Some(Box::new(usage)),
                 aggregate,
+                partial_failure: trimmed,
             });
         }
         Some(crate::views::usage_detail::UsageDetail::Loading) => {
             agent.usage_detail = Some(crate::views::usage_detail::UsageDetail::Ready {
-                session: Box::new(usage.clone()),
-                aggregate: Box::new(usage),
+                session: Some(Box::new(usage)),
+                aggregate: None,
+                partial_failure: None,
             });
         }
         Some(failed @ crate::views::usage_detail::UsageDetail::Failed(_)) => {
-            // If the aggregate fetch already failed, keep the error rather
-            // than hiding it behind partial data.
+            // Don't recover a Failed overlay with a late single-side success:
+            // both sides were already untrustworthy.
             agent.usage_detail = Some(failed);
         }
         None => unreachable!("is_none guard above prevents this"),
@@ -473,6 +510,11 @@ pub(super) fn fill_session_usage_detail(
 }
 
 /// Mark the session-ledger portion of the overlay as failed.
+///
+/// If the aggregate ledger is still pending or already arrived, we degrade
+/// to `Ready { session: None, ... }` with a single-line `partial_failure`
+/// note instead of blanking the whole popup. We only fall back to
+/// `Failed(error)` when the aggregate side had already failed before us.
 pub(super) fn fill_session_usage_detail_failed(
     app: &mut AppView,
     agent_id: AgentId,
@@ -488,11 +530,51 @@ pub(super) fn fill_session_usage_detail_failed(
     if agent.usage_detail.is_none() {
         return vec![];
     }
-    agent.usage_detail = Some(crate::views::usage_detail::UsageDetail::Failed(error));
+    match agent.usage_detail.take() {
+        Some(crate::views::usage_detail::UsageDetail::Ready {
+            aggregate,
+            partial_failure,
+            ..
+        }) => {
+            let aggregate_failed = partial_failure
+                .as_deref()
+                .is_some_and(|note| failure_note_has_side(note, Side::Aggregate));
+            let new_note = merge_partial_failure(partial_failure, Side::Session, &error);
+            if aggregate_failed {
+                // The aggregate side already failed, so this is the second
+                // independent failure and the overlay can collapse.
+                agent.usage_detail =
+                    Some(crate::views::usage_detail::UsageDetail::Failed(new_note));
+            } else {
+                // Aggregate is either ready or still pending. Keep the partial
+                // overlay open rather than treating `None` as a failure.
+                agent.usage_detail = Some(crate::views::usage_detail::UsageDetail::Ready {
+                    session: None,
+                    aggregate,
+                    partial_failure: Some(new_note),
+                });
+            }
+        }
+        Some(crate::views::usage_detail::UsageDetail::Loading) => {
+            // Session failed while aggregate still pending: stash a partial
+            // note so a later aggregate success can replace it cleanly.
+            agent.usage_detail = Some(crate::views::usage_detail::UsageDetail::Ready {
+                session: None,
+                aggregate: None,
+                partial_failure: Some(format!("本次会话用量加载失败：{error}")),
+            });
+        }
+        Some(failed @ crate::views::usage_detail::UsageDetail::Failed(_)) => {
+            agent.usage_detail = Some(failed);
+        }
+        None => unreachable!("is_none guard above prevents this"),
+    }
     vec![]
 }
 
 /// Merge the all-time aggregate ledger into the usage detail overlay.
+///
+/// Mirror of [`fill_session_usage_detail`] for the aggregate side.
 pub(super) fn fill_aggregate_usage_detail(
     app: &mut AppView,
     agent_id: AgentId,
@@ -507,17 +589,21 @@ pub(super) fn fill_aggregate_usage_detail(
     match agent.usage_detail.take() {
         Some(crate::views::usage_detail::UsageDetail::Ready {
             session,
-            aggregate: _,
+            partial_failure,
+            ..
         }) => {
+            let trimmed = partial_failure.and_then(strip_aggregate_failure_note);
             agent.usage_detail = Some(crate::views::usage_detail::UsageDetail::Ready {
                 session,
-                aggregate: Box::new(usage),
+                aggregate: Some(Box::new(usage)),
+                partial_failure: trimmed,
             });
         }
         Some(crate::views::usage_detail::UsageDetail::Loading) => {
             agent.usage_detail = Some(crate::views::usage_detail::UsageDetail::Ready {
-                session: Box::new(usage.clone()),
-                aggregate: Box::new(usage),
+                session: None,
+                aggregate: Some(Box::new(usage)),
+                partial_failure: None,
             });
         }
         Some(failed @ crate::views::usage_detail::UsageDetail::Failed(_)) => {
@@ -529,6 +615,8 @@ pub(super) fn fill_aggregate_usage_detail(
 }
 
 /// Mark the aggregate-ledger portion of the overlay as failed.
+///
+/// Mirror of [`fill_session_usage_detail_failed`] for the aggregate side.
 pub(super) fn fill_aggregate_usage_detail_failed(
     app: &mut AppView,
     agent_id: AgentId,
@@ -540,8 +628,123 @@ pub(super) fn fill_aggregate_usage_detail_failed(
     if agent.usage_detail.is_none() {
         return vec![];
     }
-    agent.usage_detail = Some(crate::views::usage_detail::UsageDetail::Failed(error));
+    match agent.usage_detail.take() {
+        Some(crate::views::usage_detail::UsageDetail::Ready {
+            session,
+            partial_failure,
+            ..
+        }) => {
+            let session_failed = partial_failure
+                .as_deref()
+                .is_some_and(|note| failure_note_has_side(note, Side::Session));
+            let new_note = merge_partial_failure(partial_failure, Side::Aggregate, &error);
+            if session_failed {
+                agent.usage_detail =
+                    Some(crate::views::usage_detail::UsageDetail::Failed(new_note));
+            } else {
+                // Session is either ready or still pending; a missing value by
+                // itself is not evidence that the request failed.
+                agent.usage_detail = Some(crate::views::usage_detail::UsageDetail::Ready {
+                    session,
+                    aggregate: None,
+                    partial_failure: Some(new_note),
+                });
+            }
+        }
+        Some(crate::views::usage_detail::UsageDetail::Loading) => {
+            agent.usage_detail = Some(crate::views::usage_detail::UsageDetail::Ready {
+                session: None,
+                aggregate: None,
+                partial_failure: Some(format!("累计用量加载失败：{error}")),
+            });
+        }
+        Some(failed @ crate::views::usage_detail::UsageDetail::Failed(_)) => {
+            agent.usage_detail = Some(failed);
+        }
+        None => unreachable!("is_none guard above prevents this"),
+    }
     vec![]
+}
+
+/// Which side a partial-failure note refers to.
+#[derive(Debug, Clone, Copy)]
+enum Side {
+    Session,
+    Aggregate,
+}
+
+impl Side {
+    fn label(self) -> &'static str {
+        match self {
+            Side::Session => "本次会话",
+            Side::Aggregate => "累计",
+        }
+    }
+}
+
+fn failure_note_has_side(note: &str, side: Side) -> bool {
+    let prefix = format!("{}用量加载失败：", side.label());
+    note.starts_with(&prefix) || note.contains(&format!("; {prefix}"))
+}
+
+/// Append `prefix: <error>` to `existing`. The caller already decided which
+/// side this note is for, so we just build the single-side message.
+fn merge_partial_failure(existing: Option<String>, side: Side, error: &str) -> String {
+    let mine = format!("{}用量加载失败：{}", side.label(), error);
+    let other = match side {
+        Side::Session => Side::Aggregate,
+        Side::Aggregate => Side::Session,
+    };
+    match existing.and_then(|note| strip_side_failure_note(note, side)) {
+        Some(prev) if prev.starts_with(&format!("{}用量加载失败：", other.label())) => {
+            match side {
+                Side::Session => format!("{mine}; {prev}"),
+                Side::Aggregate => format!("{prev}; {mine}"),
+            }
+        }
+        _ => mine,
+    }
+}
+
+/// Drop the leading "本次会话用量加载失败：…" segment from a partial note
+/// so a successful session-arrival call clears just the session portion.
+fn strip_session_failure_note(note: String) -> Option<String> {
+    strip_side_failure_note(note, Side::Session)
+}
+
+/// Drop the leading "累计用量加载失败：…" segment.
+fn strip_aggregate_failure_note(note: String) -> Option<String> {
+    strip_side_failure_note(note, Side::Aggregate)
+}
+
+/// Strip the leading `<side>用量加载失败：<err>` segment. Returns:
+///   * `None` if the note was *only* the session-side segment (so clearing
+///     that side leaves the overlay note-free);
+///   * `Some(rest)` if a trailing aggregate-side segment survives, or the
+///     note didn't start with the side's prefix at all (we pass it through
+///     unchanged — clearing a side that didn't own the prefix is a no-op
+///     but shouldn't drop unrelated notes).
+fn strip_side_failure_note(note: String, side: Side) -> Option<String> {
+    let prefix = format!("{}用量加载失败：", side.label());
+    let other = match side {
+        Side::Session => Side::Aggregate,
+        Side::Aggregate => Side::Session,
+    };
+    let other_prefix = format!("{}用量加载失败：", other.label());
+    let side_marker = format!("; {prefix}");
+    let other_marker = format!("; {other_prefix}");
+
+    if note.starts_with(&prefix) {
+        return note
+            .find(&other_marker)
+            .map(|idx| note[idx + 2..].to_string());
+    }
+    if note.starts_with(&other_prefix)
+        && let Some(idx) = note.find(&side_marker)
+    {
+        return Some(note[..idx].to_string());
+    }
+    Some(note)
 }
 
 /// Consumer credit follow-up for `/usage` (redirect or non-silent billing fetch).

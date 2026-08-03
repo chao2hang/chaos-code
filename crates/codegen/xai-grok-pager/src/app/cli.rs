@@ -234,7 +234,7 @@ pub struct AgentArgs {
     /// 使用的模型 ID
     #[arg(short = 'm', long = "model", value_name = "MODEL")]
     pub model: Option<String>,
-    /// 选择请求客户端档案（claude-code、codex 或 grok-build）。
+    /// 选择请求客户端档案（claude-code、codex、grok-build 或 workbuddy）。
     #[arg(long = "client", value_name = "PROFILE")]
     pub client: Option<String>,
     /// 推理模型的推理强度
@@ -482,7 +482,7 @@ pub struct PagerArgs {
     /// 要使用的模型 ID。
     #[clap(short = 'm', long = "model", value_name = "MODEL")]
     pub model: Option<String>,
-    /// 选择请求客户端档案（claude-code、codex 或 grok-build）。
+    /// 选择请求客户端档案（claude-code、codex、grok-build 或 workbuddy）。
     #[clap(long = "client", value_name = "PROFILE")]
     pub client: Option<String>,
     /// 推理模型的推理强度

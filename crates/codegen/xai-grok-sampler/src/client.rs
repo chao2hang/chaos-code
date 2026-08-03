@@ -414,10 +414,21 @@ impl EndpointTemplate {
     }
 
     fn url_for_path(&self, path: &str) -> String {
-        let path = path.trim_start_matches('/');
+        let path = path.trim_matches('/');
+        let append_unless_complete = |base: &str| {
+            let normalized = base.trim_end_matches('/');
+            if normalized.ends_with(&format!("/{path}")) {
+                normalized.to_string()
+            } else {
+                format!("{normalized}/{path}")
+            }
+        };
+
         match self {
-            Self::Plain(base) => format!("{base}/{path}"),
-            Self::WithQuery { prefix, suffix } => format!("{prefix}/{path}{suffix}"),
+            Self::Plain(base) => append_unless_complete(base),
+            Self::WithQuery { prefix, suffix } => {
+                format!("{}{suffix}", append_unless_complete(prefix))
+            }
         }
     }
 }
@@ -715,6 +726,11 @@ impl SamplingClient {
                     AuthScheme::Bearer => {
                         if let Ok(v) = HeaderValue::from_str(&format!("Bearer {fresh}")) {
                             headers.insert(AUTHORIZATION, v);
+                        }
+                        if self.is_workbuddy
+                            && let Ok(v) = HeaderValue::from_str(&fresh)
+                        {
+                            headers.insert(HeaderName::from_static("x-api-key"), v);
                         }
                     }
                 }
@@ -2107,6 +2123,7 @@ mod tests {
             doom_loop_recovery: None,
             header_injector: None,
             user_agent: None,
+            is_workbuddy: false,
         }
     }
 
@@ -2309,6 +2326,33 @@ mod tests {
         );
         assert!(url.contains("api-version=x"), "url: {url}");
         assert!(!url.contains("x/responses"), "url: {url}");
+    }
+
+    #[test]
+    fn endpoint_accepts_a_complete_chat_completions_url_without_duplication() {
+        let template = EndpointTemplate::new(
+            "https://gateway.example/v1/chat/completions",
+            &IndexMap::new(),
+        );
+        assert_eq!(
+            template.url_for_path("chat/completions"),
+            "https://gateway.example/v1/chat/completions"
+        );
+    }
+
+    #[test]
+    fn endpoint_accepts_a_complete_url_with_query_params_without_duplication() {
+        let template = EndpointTemplate::new(
+            "https://gateway.example/v1/chat/completions?api-version=x",
+            &IndexMap::new(),
+        );
+        let url = template.url_for_path("chat/completions");
+        assert!(
+            url.starts_with("https://gateway.example/v1/chat/completions?"),
+            "url: {url}"
+        );
+        assert!(!url.contains("chat/completions/chat/completions"));
+        assert!(url.contains("api-version=x"));
     }
 
     #[test]
@@ -2523,6 +2567,37 @@ mod tests {
     /// wire. The pre-fix code used `RequestBuilder::header(AUTHORIZATION, ...)`
     /// which appends rather than replaces, causing two identical
     /// `Authorization` headers and a 400 from cli-chat-proxy.
+    #[test]
+    fn workbuddy_live_bearer_resolver_preserves_dual_auth() {
+        let cfg = SamplerConfig {
+            api_key: Some("stale-bearer".to_string()),
+            api_backend: ApiBackend::ChatCompletions,
+            auth_scheme: AuthScheme::Bearer,
+            is_workbuddy: true,
+            bearer_resolver: Some(std::sync::Arc::new(StaticBearerResolver("fresh-bearer"))),
+            ..minimal_config()
+        };
+        let client = SamplingClient::new(cfg).expect("client should build");
+        let request = client
+            .post("https://example.test/v1/chat/completions")
+            .build()
+            .expect("request should build");
+        assert_eq!(
+            request
+                .headers()
+                .get(AUTHORIZATION)
+                .and_then(|v| v.to_str().ok()),
+            Some("Bearer fresh-bearer")
+        );
+        assert_eq!(
+            request
+                .headers()
+                .get("x-api-key")
+                .and_then(|v| v.to_str().ok()),
+            Some("fresh-bearer")
+        );
+    }
+
     #[test]
     fn post_emits_single_authorization_with_api_key_and_bearer_resolver() {
         let cfg = SamplerConfig {

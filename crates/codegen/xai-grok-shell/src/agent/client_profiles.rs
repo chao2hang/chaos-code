@@ -147,11 +147,11 @@ pub const BUILTIN_CLIENT_PROFILES: &[BuiltinClientProfile] = &[
             ("x-codebuddy-request", "1"),
             ("X-Agent-Intent", "craft"),
             ("X-Agent-Purpose", "conversation"),
-            ("X-User-Id", "160eab12-4fe2-4079-9824-087331efa1c5")
         ],
         env_http_headers: &[
-            ("X-API-Key", "X_AI_API_KEY")
-        ]
+            ("X-API-Key", "X_AI_API_KEY"),
+            ("X-User-Id", "WORKBUDDY_USER_ID"),
+        ],
     },
 ];
 
@@ -232,11 +232,7 @@ impl HeaderInjector for WorkBuddyHeaderInjector {
         let span_id = format!("{:016x}", rand::random::<u64>());
 
         Self::put(headers, "X-Conversation-ID", self.conversation_id.clone());
-        Self::put(
-            headers,
-            "X-Conversation-Message-ID",
-            message_id.clone(),
-        );
+        Self::put(headers, "X-Conversation-Message-ID", message_id.clone());
         Self::put(headers, "X-Conversation-Request-ID", request_id);
         // Real client mirrors the message id here.
         Self::put(headers, "X-Request-ID", message_id);

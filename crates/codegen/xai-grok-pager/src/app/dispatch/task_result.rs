@@ -942,9 +942,18 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
             session_id,
             usage,
             for_overlay,
+            overlay_generation,
         } => {
             if for_overlay {
-                fill_session_usage_detail(app, agent_id, &session_id, *usage)
+                if super::status::usage_overlay_generation_is_current(
+                    app,
+                    agent_id,
+                    overlay_generation,
+                ) {
+                    fill_session_usage_detail(app, agent_id, &session_id, *usage)
+                } else {
+                    vec![]
+                }
             } else {
                 commit_session_usage_block(
                     app,
@@ -959,9 +968,18 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
             session_id,
             error,
             for_overlay,
+            overlay_generation,
         } => {
             if for_overlay {
-                fill_session_usage_detail_failed(app, agent_id, &session_id, error)
+                if super::status::usage_overlay_generation_is_current(
+                    app,
+                    agent_id,
+                    overlay_generation,
+                ) {
+                    fill_session_usage_detail_failed(app, agent_id, &session_id, error)
+                } else {
+                    vec![]
+                }
             } else {
                 commit_session_usage_block(
                     app,
@@ -975,9 +993,18 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
             agent_id,
             usage,
             for_overlay,
+            overlay_generation,
         } => {
             if for_overlay {
-                fill_aggregate_usage_detail(app, agent_id, *usage)
+                if super::status::usage_overlay_generation_is_current(
+                    app,
+                    agent_id,
+                    overlay_generation,
+                ) {
+                    fill_aggregate_usage_detail(app, agent_id, *usage)
+                } else {
+                    vec![]
+                }
             } else {
                 // Aggregate usage is only displayed in the overlay today.
                 vec![]
@@ -987,9 +1014,18 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
             agent_id,
             error,
             for_overlay,
+            overlay_generation,
         } => {
             if for_overlay {
-                fill_aggregate_usage_detail_failed(app, agent_id, error)
+                if super::status::usage_overlay_generation_is_current(
+                    app,
+                    agent_id,
+                    overlay_generation,
+                ) {
+                    fill_aggregate_usage_detail_failed(app, agent_id, error)
+                } else {
+                    vec![]
+                }
             } else {
                 vec![]
             }

@@ -225,27 +225,42 @@ pub fn classifier_attempts_label(goal: &GoalDisplayState) -> String {
 
 /// 状态栏 tok/s 芯片：给 `ContextInfo` 里已经带出来的两个速率口径拼一行紧凑显示。
 ///
-/// 展示优先级：稳态解码速率 > 平均输出速率；两个都缺时返回 `None`，
-/// 让调用方直接省略这个 chip 而不是渲染 `0 tok/s`。
+/// 展示优先级：
+/// 1. **实时流式速率**：来自 tracker 的 `LiveStreamingRate`，使用
+///    `cl100k_base` BPE 计数并按 chunk 间隔计算 EMA；有正数样本时使用
+///    [`speed_tier`] 的速度档位表情；
+/// 2. **对话平均输出速率**：实时样本尚未形成、静默衰减为 0 或 turn 已结束时，
+///    回退到 `ContextInfo.avg_output_tokens_per_sec`，以 `📊 平均` 明确区分；
+/// 3. **稳态解码速率**：旧 agent 尚未提供对话平均值时，才使用
+///    `ContextInfo.decode_tokens_per_sec` 作为兼容兜底，同样按平均态显示。
 ///
-/// 表情 / 颜色按 [`speed_tier`] 的 7 档映射：低速红乌龟到高速绿飞船，
-/// 让用户一眼就能看出当前推理速度落在哪个量级。
+/// 所有速率都缺失时才返回 `None`。不再显示与 context bar 重复的剩余百分比。
 pub fn tokens_per_sec_line(
     ctx: &xai_grok_shell::session::ContextInfo,
+    streaming: Option<crate::acp::tracker::LiveStreamingRate>,
     theme: &Theme,
 ) -> Option<Line<'static>> {
-    let tps = ctx
-        .decode_tokens_per_sec
-        .filter(|v| v.is_finite() && *v > 0.0)
+    let live_tps = streaming
+        .map(|rate| rate.tokens_per_sec())
+        .filter(|tps| tps.is_finite() && *tps > 0.0);
+    let average_tps = ctx
+        .avg_output_tokens_per_sec
+        .filter(|tps| tps.is_finite() && *tps > 0.0)
         .or_else(|| {
-            ctx.avg_output_tokens_per_sec
-                .filter(|v| v.is_finite() && *v > 0.0)
-        })?;
-    let (emoji, color) = speed_tier(tps, theme);
-    let rendered = if f64::from(tps) < 1.0 {
-        format!("{emoji} {tps:.1} tok/s")
+            ctx.decode_tokens_per_sec
+                .filter(|tps| tps.is_finite() && *tps > 0.0)
+        });
+
+    let (tps, emoji, label, color) = if let Some(tps) = live_tps {
+        let (emoji, color) = speed_tier(tps, theme);
+        (tps, emoji, "", color)
     } else {
-        format!("{emoji} {} tok/s", f64::from(tps).round() as u64)
+        (average_tps?, "📊", "平均 ", theme.gray)
+    };
+    let rendered = if f64::from(tps) < 1.0 {
+        format!("{emoji} {label}{tps:.1} tok/s")
+    } else {
+        format!("{emoji} {label}{} tok/s", f64::from(tps).round() as u64)
     };
     let style = Style::default().fg(color).bg(theme.bg_base);
     Some(Line::from(Span::styled(rendered, style)))
@@ -1033,36 +1048,133 @@ mod tests {
     fn tokens_per_sec_line_hides_when_absent() {
         let theme = Theme::default();
         let ctx = xai_grok_shell::session::ContextInfo::default();
-        assert!(tokens_per_sec_line(&ctx, &theme).is_none());
+        assert!(tokens_per_sec_line(&ctx, None, &theme).is_none());
     }
 
     #[test]
-    fn tokens_per_sec_line_prefers_decode_over_average() {
+    fn tokens_per_sec_line_prefers_conversation_average_when_idle() {
         let theme = Theme::default();
         let ctx = xai_grok_shell::session::ContextInfo {
             avg_output_tokens_per_sec: Some(100.0),
             decode_tokens_per_sec: Some(240.0),
             ..Default::default()
         };
-        let line = tokens_per_sec_line(&ctx, &theme).expect("line should exist");
+        let line = tokens_per_sec_line(&ctx, None, &theme).expect("line should exist");
         let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
-        // 240 tok/s → 🛸 (≥ 150)
-        assert_eq!(text, "\u{1f6f8} 240 tok/s");
+        assert_eq!(text, "📊 平均 100 tok/s");
     }
 
     #[test]
-    fn tokens_per_sec_line_falls_back_to_average() {
+    fn tokens_per_sec_line_uses_average_emoji_for_fractional_rate() {
         let theme = Theme::default();
-        // decode 为 0 或 NaN 都视为不可用。
         let ctx = xai_grok_shell::session::ContextInfo {
             avg_output_tokens_per_sec: Some(0.6),
             decode_tokens_per_sec: Some(0.0),
             ..Default::default()
         };
-        let line = tokens_per_sec_line(&ctx, &theme).expect("line should exist");
+        let line = tokens_per_sec_line(&ctx, None, &theme).expect("line should exist");
         let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
-        // 0.6 tok/s → 🐢 (< 2)
-        assert_eq!(text, "\u{1f422} 0.6 tok/s");
+        assert_eq!(text, "📊 平均 0.6 tok/s");
+    }
+
+    #[test]
+    fn tokens_per_sec_line_uses_decode_as_legacy_average_fallback() {
+        let theme = Theme::default();
+        let ctx = xai_grok_shell::session::ContextInfo {
+            avg_output_tokens_per_sec: None,
+            decode_tokens_per_sec: Some(42.0),
+            ..Default::default()
+        };
+        let line = tokens_per_sec_line(&ctx, None, &theme).expect("line should exist");
+        let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(text, "📊 平均 42 tok/s");
+    }
+
+    /// Live streaming rate takes priority over both `decode_tokens_per_sec`
+    /// and `avg_output_tokens_per_sec`. We mock the rate by constructing a
+    /// `LiveStreamingRate` directly and feeding it in — the chip should
+    /// reflect it instead of the stale post-hoc numbers.
+    #[test]
+    fn tokens_per_sec_line_prefers_live_over_post_hoc() {
+        use crate::acp::tracker::LiveStreamingRate;
+        use std::time::{Duration, Instant};
+
+        let theme = Theme::default();
+        // Post-hoc says 240 tok/s (post-response); live says 50 tok/s.
+        // Live should win.
+        let ctx = xai_grok_shell::session::ContextInfo {
+            avg_output_tokens_per_sec: Some(100.0),
+            decode_tokens_per_sec: Some(240.0),
+            ..Default::default()
+        };
+        let started = Instant::now() - Duration::from_millis(200);
+        // Live rate is now BPE-token based (tiktoken-rs). With 50 tokens
+        // accumulated over 200ms the rate is 250 tok/s — rounds to 250
+        // (≥ 150 → 🛸).
+        let live = LiveStreamingRate {
+            started_at: started,
+            total_tokens: 50,
+            last_event_at: Some(started),
+            smoothed_rate: 250.0,
+        };
+        let line = tokens_per_sec_line(&ctx, Some(live), &theme).expect("line should exist");
+        let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(text.contains("tok/s"), "expected tok/s suffix in {text:?}");
+        assert!(
+            !text.contains("240 tok/s"),
+            "post-hoc rate must be hidden when live is present: {text:?}"
+        );
+    }
+
+    /// When the current live sample has decayed to zero, keep the chip useful by
+    /// showing the conversation-wide average with an explicit average marker.
+    #[test]
+    fn live_zero_falls_back_to_conversation_average() {
+        use crate::acp::tracker::LiveStreamingRate;
+        use std::time::{Duration, Instant};
+
+        let theme = Theme::default();
+        let ctx = xai_grok_shell::session::ContextInfo {
+            decode_tokens_per_sec: Some(240.0),
+            avg_output_tokens_per_sec: Some(100.0),
+            ..Default::default()
+        };
+        let stale = Instant::now() - Duration::from_secs(2);
+        let live = LiveStreamingRate {
+            started_at: stale,
+            total_tokens: 50,
+            last_event_at: Some(stale),
+            smoothed_rate: 250.0,
+        };
+        let line = tokens_per_sec_line(&ctx, Some(live), &theme)
+            .expect("quiet live state should fall back to conversation average");
+        let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(text, "📊 平均 100 tok/s");
+    }
+
+    #[test]
+    fn tokens_per_sec_line_renders_live_with_default_context() {
+        use crate::acp::tracker::LiveStreamingRate;
+        use std::time::{Duration, Instant};
+
+        let theme = Theme::default();
+        // No model bound, no post-hoc data: ContextInfo::default().
+        let ctx = xai_grok_shell::session::ContextInfo::default();
+        let started = Instant::now() - Duration::from_millis(100);
+        // 20 tokens in 100ms → 200 tok/s.
+        let live = LiveStreamingRate {
+            started_at: started,
+            total_tokens: 20,
+            last_event_at: Some(started),
+            smoothed_rate: 200.0,
+        };
+        let line = tokens_per_sec_line(&ctx, Some(live), &theme)
+            .expect("live must render even when context is default");
+        let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(
+            text.contains("200 tok/s"),
+            "expected live rate to render: {text:?}"
+        );
     }
 
     // ---- speed_tier 映射表 ----
@@ -1144,9 +1256,12 @@ mod tests {
         assert_eq!(color_for(500.0), theme.accent_success);
     }
 
-    /// 跨档位显示的完整 Line：解析出的 emoji 应该是该档对应的那个。
+    /// 跨档位显示的完整 live Line：真实速率使用对应速度档位表情。
     #[test]
-    fn tokens_per_sec_line_emoji_matches_tier() {
+    fn tokens_per_sec_line_live_emoji_matches_tier() {
+        use crate::acp::tracker::LiveStreamingRate;
+        use std::time::Instant;
+
         let theme = Theme::default();
         for (tps, expected_emoji) in [
             (0.5_f32, "\u{1f422}"),
@@ -1157,17 +1272,24 @@ mod tests {
             (100.0, "\u{1f680}"),
             (240.0, "\u{1f6f8}"),
         ] {
-            let ctx = xai_grok_shell::session::ContextInfo {
-                decode_tokens_per_sec: Some(tps),
-                ..Default::default()
+            let now = Instant::now();
+            let live = LiveStreamingRate {
+                started_at: now,
+                total_tokens: 1,
+                last_event_at: Some(now),
+                smoothed_rate: tps,
             };
-            let line = tokens_per_sec_line(&ctx, &theme).expect("line should exist");
+            let line = tokens_per_sec_line(
+                &xai_grok_shell::session::ContextInfo::default(),
+                Some(live),
+                &theme,
+            )
+            .expect("live line should exist");
             let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
             assert!(
                 text.starts_with(expected_emoji),
                 "tps={tps}: expected leading emoji {expected_emoji:?} in {text:?}"
             );
-            // 颜色也按档：取第一个 span 的 fg 验证
             let fg = line.spans[0].style.fg.expect("fg should be set");
             let expected_fg = speed_tier(tps, &theme).1;
             assert_eq!(fg, expected_fg, "tps={tps} fg mismatch");

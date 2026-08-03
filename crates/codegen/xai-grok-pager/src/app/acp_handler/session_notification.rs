@@ -507,6 +507,7 @@ pub(super) fn handle_session_notification(notif: &acp::ExtNotification, app: &mu
             turns,
             duration_ms,
             tokens_used,
+            output,
             ..
         } => {
             tracing::info!(
@@ -570,6 +571,59 @@ pub(super) fn handle_session_notification(notif: &acp::ExtNotification, app: &mu
                     }
                 }
                 entry.invalidate_cache();
+            }
+            // The wire's `tokens_used` field is cumulative context usage,
+            // not generated output. The speed chip measures output throughput,
+            // so credit only the completion text using the same tokenizer as
+            // parent-agent chunks. Replay and duplicate terminal events must
+            // not credit the same output again.
+            let already_finished = agent
+                .subagent_sessions
+                .get(&child_session_id)
+                .is_some_and(|info| info.finished);
+            if !meta.is_replay
+                && !agent.session.loading_replay
+                && !already_finished
+                && let Some(output) = output.as_deref().filter(|text| !text.is_empty())
+            {
+                let output_tokens = agent.session.tracker.count_tokens(output);
+                let child_rate = agent
+                    .subagent_views
+                    .get(&child_session_id)
+                    .and_then(|child| {
+                        child
+                            .session
+                            .tracker
+                            .streaming_rate()
+                            .map(|rate| rate.tokens_per_sec())
+                            .filter(|rate| rate.is_finite() && *rate > 0.0)
+                            .or_else(|| {
+                                child.context_state.as_ref().and_then(|context| {
+                                    context
+                                        .decode_tokens_per_sec
+                                        .filter(|rate| rate.is_finite() && *rate > 0.0)
+                                        .or_else(|| {
+                                            context
+                                                .avg_output_tokens_per_sec
+                                                .filter(|rate| rate.is_finite() && *rate > 0.0)
+                                        })
+                                })
+                            })
+                    })
+                    .or_else(|| {
+                        (duration_ms > 0).then_some(
+                            output_tokens as f32
+                                / std::time::Duration::from_millis(duration_ms).as_secs_f32(),
+                        )
+                    });
+                let turn_active = agent.session.state.is_turn_running()
+                    || agent.session.state.is_cancelling()
+                    || agent.session.tracker.streaming_rate().is_some();
+                agent.session.tracker.credit_subagent_tokens(
+                    output_tokens,
+                    child_rate,
+                    turn_active,
+                );
             }
             if let Some(info) = agent.subagent_sessions.get_mut(&child_session_id) {
                 info.finished = true;

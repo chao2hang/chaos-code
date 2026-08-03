@@ -1659,6 +1659,8 @@ mod reasoning_compaction_regression_tests {
             doom_loop_recovery: None,
             header_injector: None,
             user_agent: None,
+
+            is_workbuddy: false,
         }
     }
     #[tokio::test]

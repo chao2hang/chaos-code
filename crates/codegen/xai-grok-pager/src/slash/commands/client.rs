@@ -559,6 +559,8 @@ mod tests {
             env_key: "TEST_API_KEY".into(),
             client_identifier: "test-client".into(),
             user_agent: None,
+            extra_headers: IndexMap::new(),
+            env_http_headers: IndexMap::new(),
         }
     }
 

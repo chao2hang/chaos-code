@@ -509,6 +509,7 @@ fn complete_session_usage(
     dispatch(
         Action::TaskComplete(TaskResult::SessionUsageComplete {
             for_overlay: false,
+            overlay_generation: None,
             agent_id: AgentId(0),
             session_id: session_id.to_string().into(),
             usage: Box::new(usage),
@@ -521,6 +522,7 @@ fn fail_session_usage(app: &mut AppView, session_id: &str, error: &str) -> Vec<E
     dispatch(
         Action::TaskComplete(TaskResult::SessionUsageFailed {
             for_overlay: false,
+            overlay_generation: None,
             agent_id: AgentId(0),
             session_id: session_id.to_string().into(),
             error: error.into(),
@@ -537,9 +539,11 @@ fn complete_overlay_usage(
     session_id: &str,
     usage: xai_grok_shell::extensions::notification::PromptUsage,
 ) -> Vec<Effect> {
+    let generation = app.agents[&AgentId(0)].usage_detail_generation;
     dispatch(
         Action::TaskComplete(TaskResult::SessionUsageComplete {
             for_overlay: true,
+            overlay_generation: Some(generation),
             agent_id: AgentId(0),
             session_id: session_id.to_string().into(),
             usage: Box::new(usage),
@@ -571,7 +575,7 @@ fn show_usage_detail_opens_overlay_and_fetches() {
     assert!(
         effects.iter().any(|e| matches!(
             e,
-            Effect::FetchAggregateUsage { agent_id, for_overlay: true } if *agent_id == AgentId(0)
+            Effect::FetchAggregateUsage { agent_id, for_overlay: true, .. } if *agent_id == AgentId(0)
         )),
         "expected an overlay-routed aggregate usage fetch, got {effects:?}"
     );
@@ -623,6 +627,63 @@ fn late_usage_result_does_not_reopen_closed_overlay() {
     );
     assert_eq!(agent_usage_detail(&app), None);
     assert_eq!(agent_scrollback_len(&app), before);
+}
+
+/// Closing and reopening creates a new request generation. A result from the
+/// first overlay must not populate the second overlay merely because both
+/// target the same agent and session.
+#[test]
+fn stale_usage_result_does_not_pollute_reopened_overlay() {
+    let mut app = test_app_with_agent();
+    dispatch(Action::ShowUsageDetail, &mut app);
+    let stale_generation = app.agents[&AgentId(0)].usage_detail_generation;
+    dispatch(Action::ShowUsageDetail, &mut app); // close
+    dispatch(Action::ShowUsageDetail, &mut app); // reopen
+    let current_generation = app.agents[&AgentId(0)].usage_detail_generation;
+    assert_ne!(stale_generation, current_generation);
+
+    dispatch(
+        Action::TaskComplete(TaskResult::SessionUsageComplete {
+            for_overlay: true,
+            overlay_generation: Some(stale_generation),
+            agent_id: AgentId(0),
+            session_id: "test-session".to_string().into(),
+            usage: Box::new(xai_grok_shell::extensions::notification::PromptUsage::default()),
+        }),
+        &mut app,
+    );
+    assert_eq!(
+        agent_usage_detail(&app),
+        Some(&crate::views::usage_detail::UsageDetail::Loading),
+        "stale result must leave the newly opened overlay untouched"
+    );
+}
+
+/// An agent view can exist before the ACP session is bound. In that state the
+/// aggregate request still works, but the absent session side is an explicit
+/// unavailable state rather than a spinner that can never resolve.
+#[test]
+fn usage_overlay_without_session_marks_session_side_unavailable() {
+    let mut app = test_app_with_agent();
+    app.agents.get_mut(&AgentId(0)).unwrap().session.session_id = None;
+
+    let effects = dispatch(Action::ShowUsageDetail, &mut app);
+    assert_eq!(effects.len(), 1);
+    assert!(matches!(
+        effects.as_slice(),
+        [Effect::FetchAggregateUsage {
+            for_overlay: true,
+            ..
+        }]
+    ));
+    assert!(matches!(
+        agent_usage_detail(&app),
+        Some(crate::views::usage_detail::UsageDetail::Ready {
+            session: None,
+            aggregate: None,
+            partial_failure: Some(note),
+        }) if note.contains("会话尚未开始")
+    ));
 }
 
 /// `/usage` keeps its scrollback behaviour — the overlay must not hijack it.

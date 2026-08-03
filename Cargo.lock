@@ -3140,6 +3140,17 @@ dependencies = [
 
 [[package]]
 name = "fancy-regex"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "531e46835a22af56d1e3b66f04844bed63158bc094a628bec1d321d9b4c44bf2"
+dependencies = [
+ "bit-set 0.5.3",
+ "regex-automata",
+ "regex-syntax",
+]
+
+[[package]]
+name = "fancy-regex"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6e24cb5a94bcae1e5408b0effca5cd7172ea3c5755049c5f3af4cd283a165298"
@@ -10444,6 +10455,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "tiktoken-rs"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "25563eeba904d770acf527e8b370fe9a5547bacd20ff84a0b6c3bc41288e5625"
+dependencies = [
+ "anyhow",
+ "base64",
+ "bstr",
+ "fancy-regex 0.13.0",
+ "lazy_static",
+ "regex",
+ "rustc-hash 1.1.0",
+]
+
+[[package]]
 name = "tikv-jemalloc-ctl"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -13417,7 +13443,7 @@ dependencies = [
 
 [[package]]
 name = "xai-grok-pager"
-version = "0.2.130"
+version = "0.2.131"
 dependencies = [
  "agent-client-protocol",
  "ansi-to-tui",
@@ -13463,6 +13489,7 @@ dependencies = [
  "tar",
  "tempfile",
  "textwrap",
+ "tiktoken-rs",
  "tokio",
  "tokio-util",
  "toml",
@@ -13507,7 +13534,7 @@ dependencies = [
 
 [[package]]
 name = "xai-grok-pager-bin"
-version = "0.2.130"
+version = "0.2.131"
 dependencies = [
  "anyhow",
  "clap",
@@ -13773,7 +13800,7 @@ dependencies = [
 
 [[package]]
 name = "xai-grok-shell"
-version = "0.2.130"
+version = "0.2.131"
 dependencies = [
  "agent-client-protocol",
  "anyhow",
@@ -14174,7 +14201,7 @@ dependencies = [
 
 [[package]]
 name = "xai-grok-version"
-version = "0.2.130"
+version = "0.2.131"
 dependencies = [
  "semver",
 ]
