@@ -250,6 +250,7 @@ impl ShellToolsetConfig {
             doom_loop_recovery: None,
             header_injector: None,
             user_agent: None,
+            is_workbuddy: false,
         };
         let mut toolset = base.unwrap_or_else(|| Self {
             bash: BashToolConfig::default(),

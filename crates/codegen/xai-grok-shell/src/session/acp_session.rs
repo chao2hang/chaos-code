@@ -711,11 +711,23 @@ pub(crate) struct SessionActor {
     /// RefCell is safe here because the actor runs on a single-threaded LocalSet and
     /// the identity can be replaced by a session command while the Arc is shared.
     pub(crate) client_identifier: std::cell::RefCell<Option<String>>,
+    /// Stable per-session UUID used as `X-Conversation-ID` when impersonating
+    /// the WorkBuddy client. Generated once at session start.
+    pub(crate) workbuddy_conversation_id: String,
+    /// Stable per-session UUID used as `acp-connection-id` when impersonating
+    /// the WorkBuddy client. Generated once at session start.
+    pub(crate) workbuddy_acp_connection_id: String,
     /// Origin client for User-Agent on sampling requests.
     pub(crate) origin_client: std::cell::RefCell<Option<crate::http::OriginClientInfo>>,
     /// Verbatim `User-Agent` override set by the client profile picker.
     /// Overrides the UA rendered from `origin_client`.
     pub(crate) user_agent: std::cell::RefCell<Option<String>>,
+    /// Extra static headers injected by the selected client profile at runtime
+    /// (via `/client`). Merged on top of model/provider/profile headers on
+    /// every turn.
+    pub(crate) client_extra_headers: std::cell::RefCell<indexmap::IndexMap<String, String>>,
+    /// Header-name to env-var mappings injected by the selected profile.
+    pub(crate) client_env_http_headers: std::cell::RefCell<indexmap::IndexMap<String, String>>,
     /// Feedback manager for signal tracking and feedback request heuristics
     pub(crate) feedback_manager: Arc<FeedbackManager>,
     pub(crate) upload_queue:

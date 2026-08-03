@@ -1577,6 +1577,21 @@ impl MvpAgent {
         );
         if let Some(profile) = client_profile.as_ref() {
             profile.apply_to_sampling_config(&mut config);
+            // The WorkBuddy profile is responsible for which transport flags
+            // and headers reach the gateway: a model that pre-decorates the
+            // config with `x-grok-*`/`traceparent`/staging headers would
+            // otherwise leak through and trigger the same 403 the profile
+            // is meant to avoid.
+            profile.strip_non_workbuddy_headers(&mut config.extra_headers);
+            profile.strip_non_workbuddy_headers(&mut config.env_http_headers);
+            // Install the per-request dynamic WorkBuddy injector so every
+            // sampler built from this config — including the session-title
+            // side-call that fires before any session-stable identifier is
+            // available — sends `X-Conversation-ID`, `X-B3-*`, etc.
+            if config.is_workbuddy && config.header_injector.is_none() {
+                config.header_injector =
+                    Some(crate::agent::client_profiles::workbuddy_header_injector());
+            }
         }
         if has_explicit_client_profile {
             config.origin_client = client_profile

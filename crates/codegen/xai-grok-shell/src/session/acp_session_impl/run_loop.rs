@@ -681,11 +681,19 @@ pub(super) async fn run_session(
                             client_identifier,
                             origin_client,
                             user_agent,
+                            extra_headers,
+                            env_http_headers,
                             responds_to,
                         } => {
                             session.client_identifier.replace(Some(client_identifier));
                             session.origin_client.replace(Some(origin_client));
                             session.user_agent.replace(user_agent);
+                            session
+                                .client_extra_headers
+                                .replace(extra_headers);
+                            session
+                                .client_env_http_headers
+                                .replace(env_http_headers);
                             let _ = responds_to.send(Ok(()));
                         }
                         SessionCommand::SetSessionModel { sampling_config, use_concise, apply_prompt_override, skip_prompt_rewrite, auto_compact_threshold_percent, responds_to } => {

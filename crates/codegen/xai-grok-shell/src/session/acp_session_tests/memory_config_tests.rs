@@ -219,6 +219,8 @@ async fn create_test_actor_with_memory(
         client_identifier: std::cell::RefCell::new(None),
         origin_client: std::cell::RefCell::new(None),
         user_agent: std::cell::RefCell::new(None),
+        client_extra_headers: std::cell::RefCell::new(indexmap::IndexMap::new()),
+        client_env_http_headers: std::cell::RefCell::new(indexmap::IndexMap::new()),
         feedback_manager: Arc::new(FeedbackManager::local_only("test-memory")),
         upload_queue: Arc::new(OnceLock::new()),
         sync_loop_cancel: None,

@@ -437,15 +437,21 @@ impl SessionActor {
     /// URL-derived headers (cli-chat-proxy auth, the staging auth header)
     /// so the sampler crate stays URL-agnostic.
     pub(super) async fn reconstruct_full_config(&self) -> SamplingConfig {
+        let is_workbuddy_local = {
+            let cid = self.client_identifier.borrow();
+            cid.as_ref().map_or(false, |s| s.eq_ignore_ascii_case("workbuddy"))
+        };
         #[allow(clippy::items_after_statements)]
         #[derive(Debug)]
-        struct TraceContextInjector;
+        struct TraceContextInjector(bool);
         impl xai_grok_sampler::HeaderInjector for TraceContextInjector {
             fn inject(&self, headers: &mut reqwest::header::HeaderMap) {
-                if let Some(tp) = xai_file_utils::trace_context::current_traceparent()
-                    && let Ok(v) = reqwest::header::HeaderValue::from_str(&tp)
-                {
-                    headers.insert("traceparent", v);
+                if !self.0 {
+                    if let Some(tp) = xai_file_utils::trace_context::current_traceparent()
+                        && let Ok(v) = reqwest::header::HeaderValue::from_str(&tp)
+                    {
+                        headers.insert("traceparent", v);
+                    }
                 }
             }
         }
@@ -479,6 +485,7 @@ impl SessionActor {
                 reasoning_effort: None,
                 stream_tool_calls: None,
                 extract_inline_thinking: None,
+                is_workbuddy: false,
             });
         let creds = self.chat_state_handle.get_credentials().await;
         let model_facts = self.model_auth_facts(cfg.model.as_str());
@@ -499,14 +506,45 @@ impl SessionActor {
         };
         let auth_scheme = model_facts.auth_scheme;
         let mut extra_headers = cfg.extra_headers;
+        // Runtime `/client` overrides win on a per-key basis over the
+        // model/provider and configured profile headers.
+        for (name, value) in self.client_extra_headers.borrow().iter() {
+            extra_headers.insert(name.clone(), value.clone());
+        }
+        // Now we have all possible x-codebuddy-request header!
+        let is_workbuddy = {
+            let cid = self.client_identifier.borrow();
+            cid.as_ref().map_or(false, |s| s.eq_ignore_ascii_case("workbuddy"))
+        } || extra_headers.iter().any(|(k, _)| k.eq_ignore_ascii_case("x-codebuddy-request"));
         crate::agent::config::inject_url_derived_headers(
             &mut extra_headers,
             creds.alpha_test_key.as_deref(),
             &cfg.base_url,
+            is_workbuddy,
         );
+        if is_workbuddy {
+            // Remove all non-workbuddy headers. Use the profile's own
+            // allowlist helper so the two workbuddy entry points stay in
+            // sync; fall back to the inline filter if the helper ever
+            // disappears.
+            let workbuddy_profile =
+                crate::agent::client_profiles::by_id("workbuddy");
+            if let Some(profile) = workbuddy_profile {
+                profile.strip_non_workbuddy_headers(&mut extra_headers);
+            } else {
+                extra_headers.retain(|k, _| {
+                    !k.to_lowercase().starts_with("x-grok-")
+                        && !k.eq_ignore_ascii_case("traceparent")
+                        && !k.eq_ignore_ascii_case("x-xai-token-auth")
+                        && !k.eq_ignore_ascii_case("x-authenticateresponse")
+                });
+            }
+            tracing::info!("WorkBuddy mode: extra_headers={:?}", extra_headers);
+        }
+        let mut extra_headers = extra_headers;
         let compaction_at_tokens = self.compaction_at_tokens.get();
         let compactions_remaining = self.compactions_remaining.get();
-        if compactions_remaining.is_some() || compaction_at_tokens.is_some() {
+        if !is_workbuddy && (compactions_remaining.is_some() || compaction_at_tokens.is_some()) {
             let has_compaction_summary = self
                 .chat_state_handle
                 .get_last_compaction_prompt_index()
@@ -528,6 +566,31 @@ impl SessionActor {
                 extra_headers.insert("x-compaction-at".to_string(), value.to_string());
             }
         }
+        let mut env_http_headers = {
+            let mut merged = cfg.env_http_headers;
+            for (name, value) in self.client_env_http_headers.borrow().iter() {
+                merged.insert(name.clone(), value.clone());
+            }
+            merged
+        };
+        if is_workbuddy {
+            // Also clean env_http_headers — keep the same allowlist as the
+            // profile header helper so workbuddy headers stay consistent
+            // across both prepare-time and reconstruct-time paths.
+            let workbuddy_profile =
+                crate::agent::client_profiles::by_id("workbuddy");
+            if let Some(profile) = workbuddy_profile {
+                profile.strip_non_workbuddy_headers(&mut env_http_headers);
+            } else {
+                env_http_headers.retain(|k, _| {
+                    !k.to_lowercase().starts_with("x-grok-")
+                        && !k.eq_ignore_ascii_case("traceparent")
+                        && !k.eq_ignore_ascii_case("x-xai-token-auth")
+                        && !k.eq_ignore_ascii_case("x-authenticateresponse")
+                });
+            }
+            tracing::info!("WorkBuddy mode: env_http_headers={:?}", env_http_headers);
+        }
         SamplingConfig {
             api_key,
             base_url: cfg.base_url,
@@ -539,11 +602,14 @@ impl SessionActor {
             auth_scheme,
             extra_headers,
             query_params: cfg.query_params.clone(),
-            env_http_headers: cfg.env_http_headers.clone(),
+            env_http_headers,
             context_window: cfg.context_window.get(),
             client_version: creds.client_version,
             reasoning_effort: cfg.reasoning_effort,
-            force_http1: false,
+            // The real WorkBuddy client is Node.js and speaks HTTP/1.1; the
+            // gateway's `unsupported_client` gate appears to fingerprint the
+            // ALPN/HTTP version, so match the real client on HTTP/1.1.
+            force_http1: is_workbuddy,
             max_retries: Some(self.max_retries),
             stream_tool_calls: cfg.stream_tool_calls.unwrap_or(false),
             extract_inline_thinking: cfg.extract_inline_thinking.unwrap_or(false),
@@ -574,7 +640,17 @@ impl SessionActor {
             compactions_remaining: self.compactions_remaining.get(),
             compaction_at_tokens: self.compaction_at_tokens.get(),
             doom_loop_recovery: self.doom_loop_recovery,
-            header_injector: Some(std::sync::Arc::new(TraceContextInjector)),
+            header_injector: if is_workbuddy {
+                Some(std::sync::Arc::new(
+                    crate::agent::client_profiles::WorkBuddyHeaderInjector::new(
+                        self.workbuddy_conversation_id.clone(),
+                        self.workbuddy_acp_connection_id.clone(),
+                    ),
+                ))
+            } else {
+                Some(std::sync::Arc::new(TraceContextInjector(false)))
+            },
+            is_workbuddy,
         }
     }
     /// Install auto-mode permission classifier with a live LLM side-query

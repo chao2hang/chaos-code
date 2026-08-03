@@ -5,6 +5,8 @@
 
 use std::collections::HashSet;
 
+use indexmap::IndexMap;
+
 use crate::slash::command::{CommandExecCtx, CommandResult, SlashCommand};
 use crate::views::client_modal::ClientModalMode;
 use xai_grok_shell::agent::client_profiles::{
@@ -22,6 +24,12 @@ pub(crate) fn list_client_profiles(doc: &toml_edit::DocumentMut) -> Vec<ClientPr
         .iter()
         .map(builtin_to_owned)
         .collect::<Vec<_>>();
+
+    for profile in &mut profiles {
+        if let Some(overrides) = override_table(doc, &profile.id) {
+            apply_overrides(profile, overrides);
+        }
+    }
 
     let builtin_ids: HashSet<&str> = BUILTIN_CLIENT_PROFILES.iter().map(|p| p.id).collect();
     let mut custom = Vec::new();
@@ -54,12 +62,26 @@ fn builtin_to_owned(profile: &BuiltinClientProfile) -> ClientProfile {
         env_key: profile.env_key.to_owned(),
         client_identifier: profile.client_identifier.to_owned(),
         user_agent: profile.user_agent.map(str::to_owned),
+        extra_headers: profile
+            .extra_headers
+            .iter()
+            .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+            .collect(),
+        env_http_headers: profile
+            .env_http_headers
+            .iter()
+            .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+            .collect(),
     }
 }
 
 /// Resolve a profile from the same document used by the picker.
 pub(crate) fn profile_by_id(doc: &toml_edit::DocumentMut, id: &str) -> Option<ClientProfile> {
-    if let Some(profile) = builtin_profile_by_id(id) {
+    let id = id.trim();
+    if let Some(mut profile) = builtin_profile_by_id(id) {
+        if let Some(overrides) = override_table(doc, id) {
+            apply_overrides(&mut profile, overrides);
+        }
         return Some(profile);
     }
     let item = doc
@@ -67,8 +89,56 @@ pub(crate) fn profile_by_id(doc: &toml_edit::DocumentMut, id: &str) -> Option<Cl
         .and_then(|item| item.as_table())
         .and_then(|clients| clients.get("custom"))
         .and_then(|item| item.as_table())
-        .and_then(|custom| custom.get(id.trim()))?;
-    custom_profile_from_item(id.trim(), item)
+        .and_then(|custom| custom.get(id))?;
+    custom_profile_from_item(id, item)
+}
+
+/// Fetch `[clients.overrides.<id>]`, used to layer headers/UA/env_key onto a
+/// built-in profile without redeclaring it as a custom profile.
+fn override_table<'a>(doc: &'a toml_edit::DocumentMut, id: &str) -> Option<&'a toml_edit::Table> {
+    doc.get("clients")?
+        .as_table()?
+        .get("overrides")?
+        .as_table()?
+        .get(id)?
+        .as_table()
+}
+
+/// Apply non-empty override fields from `[clients.overrides.<id>]` onto a
+/// built-in profile. `extra_headers`/`env_http_headers` are merged per key.
+fn apply_overrides(profile: &mut ClientProfile, table: &toml_edit::Table) {
+    let text = |key: &str| {
+        table
+            .get(key)
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned)
+    };
+    if let Some(name) = text("name") {
+        profile.name = name;
+    }
+    if let Some(protocol) = text("protocol") {
+        profile.protocol = protocol;
+    }
+    if let Some(auth_scheme) = text("auth_scheme") {
+        profile.auth_scheme = auth_scheme;
+    }
+    if let Some(env_key) = text("env_key") {
+        profile.env_key = env_key;
+    }
+    if let Some(client_identifier) = text("client_identifier") {
+        profile.client_identifier = client_identifier;
+    }
+    if table.contains_key("user_agent") {
+        profile.user_agent = text("user_agent");
+    }
+    for (name, value) in header_table(table, "extra_headers") {
+        profile.extra_headers.insert(name, value);
+    }
+    for (name, value) in header_table(table, "env_http_headers") {
+        profile.env_http_headers.insert(name, value);
+    }
 }
 
 fn custom_profile_from_item(id: &str, item: &toml_edit::Item) -> Option<ClientProfile> {
@@ -92,7 +162,22 @@ fn custom_profile_from_item(id: &str, item: &toml_edit::Item) -> Option<ClientPr
             let ua = text("user_agent");
             (!ua.is_empty()).then_some(ua)
         },
+        extra_headers: header_table(table, "extra_headers"),
+        env_http_headers: header_table(table, "env_http_headers"),
     })
+}
+
+/// Read a `[header]` TOML sub-table as an ordered string map.
+fn header_table(table: &toml_edit::Table, key: &str) -> IndexMap<String, String> {
+    let Some(sub) = table.get(key).and_then(|item| item.as_table()) else {
+        return IndexMap::new();
+    };
+    sub.iter()
+        .filter_map(|(name, value)| {
+            let v = value.as_str()?.trim();
+            (!v.is_empty()).then(|| (name.trim().to_owned(), v.to_owned()))
+        })
+        .collect()
 }
 
 fn non_empty_or(value: String, fallback: &str) -> String {
@@ -175,8 +260,67 @@ pub(crate) fn validate_custom_profile(profile: &ClientProfile) -> Result<ClientP
     if normalized.auth_scheme != "none" && normalized.env_key.is_empty() {
         return Err("非 none 认证方式需要填写 API Key 环境变量名".into());
     }
+    validate_header_map("extra_headers", &normalized.extra_headers, false)?;
+    validate_header_map("env_http_headers", &normalized.env_http_headers, true)?;
 
     Ok(normalized)
+}
+
+/// Validate a set of configured headers: names must be valid HTTP header
+/// names, static values must not contain line breaks (header injection), and
+/// `env_http_headers` values must look like environment variable names.
+fn validate_header_map(
+    field: &str,
+    headers: &IndexMap<String, String>,
+    value_is_env_var: bool,
+) -> Result<(), String> {
+    for (name, value) in headers {
+        let trimmed_name = name.trim();
+        if trimmed_name.is_empty() {
+            return Err(format!("{field} 中存在空的请求头名称"));
+        }
+        if trimmed_name.len() > 128 {
+            return Err(format!("请求头名称过长：{trimmed_name}"));
+        }
+        if !is_valid_header_name(trimmed_name) {
+            return Err(format!("非法请求头名称：{trimmed_name}"));
+        }
+        if value_is_env_var {
+            if !valid_env_key(value) {
+                return Err(format!(
+                    "{field} 的 {trimmed_name} 必须是合法环境变量名（[A-Z_][A-Z0-9_]*）"
+                ));
+            }
+        } else if value.chars().any(|c| c == '\r' || c == '\n' || c == '\0') {
+            return Err(format!("请求头 {trimmed_name} 的值不能包含换行或空字符"));
+        }
+    }
+    Ok(())
+}
+
+/// RFC 7230 token: visible ASCII without separators/control chars.
+fn is_valid_header_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.chars().all(|c| {
+            c.is_ascii_alphanumeric()
+                || matches!(
+                    c,
+                    '!' | '#'
+                        | '$'
+                        | '%'
+                        | '&'
+                        | '\''
+                        | '*'
+                        | '+'
+                        | '-'
+                        | '.'
+                        | '^'
+                        | '_'
+                        | '`'
+                        | '|'
+                        | '~'
+                )
+        })
 }
 
 fn valid_client_id(value: &str) -> bool {
@@ -242,8 +386,32 @@ pub(crate) fn upsert_custom_client_in_document(
             table.remove("user_agent");
         }
     }
+    write_header_table(table, "extra_headers", &profile.extra_headers);
+    write_header_table(table, "env_http_headers", &profile.env_http_headers);
 
     Ok(profile)
+}
+
+/// Write (or remove) a `[headers]` sub-table under a profile table.
+fn write_header_table(table: &mut toml_edit::Table, key: &str, headers: &IndexMap<String, String>) {
+    if headers.is_empty() {
+        table.remove(key);
+        return;
+    }
+    if !table.contains_key(key) || !table[key].is_table() {
+        table[key] = toml_edit::table();
+    }
+    let sub = table[key].as_table_mut().expect("header sub-table");
+    // Drop entries no longer present.
+    let existing: Vec<String> = sub.iter().map(|(k, _)| k.to_owned()).collect();
+    for name in existing {
+        if !headers.contains_key(name.as_str()) {
+            sub.remove(&name);
+        }
+    }
+    for (name, value) in headers {
+        sub[name.as_str()] = toml_edit::value(value.as_str());
+    }
 }
 
 /// Delete a custom profile and clear dangling default/model references.

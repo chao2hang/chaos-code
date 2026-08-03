@@ -1072,6 +1072,11 @@ pub struct SamplingConfig {
     /// reasoning (covers `max_tokens` truncation).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub extract_inline_thinking: Option<bool>,
+
+    /// When true, no x-grok-* headers are added, and only the WorkBuddy
+    /// headers from `extra_headers`/`env_http_headers` are sent.
+    #[serde(default)]
+    pub is_workbuddy: bool,
 }
 
 // ============ Responses API wrapper ============

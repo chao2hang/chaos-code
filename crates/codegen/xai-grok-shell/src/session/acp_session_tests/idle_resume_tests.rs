@@ -233,6 +233,8 @@ async fn test_e2e_idle_resume_refreshes_model_metadata() {
                 client_identifier: std::cell::RefCell::new(None),
                 origin_client: std::cell::RefCell::new(None),
                 user_agent: std::cell::RefCell::new(None),
+                client_extra_headers: std::cell::RefCell::new(indexmap::IndexMap::new()),
+                client_env_http_headers: std::cell::RefCell::new(indexmap::IndexMap::new()),
                 feedback_manager: Arc::new(FeedbackManager::local_only("test-session")),
                 upload_queue: Arc::new(OnceLock::new()),
                 sync_loop_cancel: None,
