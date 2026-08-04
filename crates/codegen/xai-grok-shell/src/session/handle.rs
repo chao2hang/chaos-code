@@ -59,6 +59,12 @@ pub struct SessionHandle {
     pub pending_interactions: crate::session::pending_interaction::PendingInteractions,
     /// Session info (id, cwd) - cached for quick access without querying persistence
     pub info: crate::session::info::Info,
+    /// Whether this actor was spawned as a subagent child.
+    ///
+    /// This is copied from [`StartupHints`](crate::session::StartupHints) at spawn time so
+    /// extension handlers can make identity-sensitive decisions without guessing from a
+    /// session id, agent name, or asynchronously persisted summary metadata.
+    pub is_subagent: bool,
     /// Resolved turn limit for this session; lets a spawned subagent inherit
     /// the parent's limit. `None` = unlimited.
     pub max_turns: Option<usize>,

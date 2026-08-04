@@ -1156,6 +1156,7 @@ fn make_test_handle(
             id: acp::SessionId::new("test"),
             cwd: "/tmp".to_string(),
         },
+        is_subagent: false,
         max_turns: None,
         resolved_tool_overrides: std::sync::Arc::new(arc_swap::ArcSwapOption::empty()),
         hunk_tracker_handle,
@@ -1746,6 +1747,83 @@ async fn session_usage_unknown_session_is_resource_not_found() {
         acp::Error::resource_not_found(None::<String>).code
     );
 }
+fn live_usage_chat_state(input_tokens: u32) -> xai_chat_state::ChatStateHandle {
+    let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
+    let handle = xai_chat_state::ChatStateActor::spawn(
+        vec![],
+        xai_grok_sampling_types::SamplingConfig {
+            base_url: "https://api.example.com".to_string(),
+            model: "test-model".to_string(),
+            max_completion_tokens: None,
+            temperature: None,
+            top_p: None,
+            api_backend: Default::default(),
+            extra_headers: Default::default(),
+            query_params: Default::default(),
+            env_http_headers: Default::default(),
+            context_window: std::num::NonZeroU64::new(128_000).unwrap(),
+            reasoning_effort: None,
+            stream_tool_calls: None,
+            extract_inline_thinking: None,
+            is_workbuddy: false,
+        },
+        Box::new(xai_chat_state::NullChatPersistence),
+        event_tx,
+        tokio_util::sync::CancellationToken::new(),
+    );
+    handle.record_model_call_usage(
+        Some("test-model".to_string()),
+        xai_grok_sampling_types::TokenUsage {
+            prompt_tokens: input_tokens,
+            completion_tokens: 10,
+            total_tokens: input_tokens + 10,
+            reasoning_tokens: 0,
+            cached_prompt_tokens: 0,
+        },
+        None,
+        None,
+        None,
+    );
+    handle
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[serial_test::serial]
+async fn session_usage_persists_main_but_not_subagent_snapshots() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db_path = tmp.path().join("usage.sqlite");
+    let _guard = xai_grok_test_support::env::EnvGuard::set("GROK_USAGE_STORE_PATH", &db_path);
+    let agent = build_minimal_agent_for_tests();
+
+    for (session_id, input_tokens, is_subagent) in [
+        ("main-session", 100, false),
+        ("subagent-session", 200, true),
+        ("subagent-fork-session", 300, true),
+    ] {
+        let sid = acp::SessionId::new(session_id);
+        let mut handle = make_test_handle("test-model", false, None);
+        handle.info.id = sid.clone();
+        handle.is_subagent = is_subagent;
+        handle.chat_state_handle = live_usage_chat_state(input_tokens);
+        agent.sessions.borrow_mut().insert(sid, handle);
+
+        let response = crate::extensions::usage::handle(&agent, &session_usage_request(session_id))
+            .await
+            .expect("session usage endpoint remains available");
+        let parsed: crate::extensions::usage::SessionUsageResponse =
+            serde_json::from_str(response.0.get()).expect("valid session usage response");
+        assert_eq!(parsed.usage.totals.input_tokens, u64::from(input_tokens));
+    }
+
+    let aggregate = crate::session::usage_store::UsageStore::open_or_create(&db_path)
+        .unwrap()
+        .aggregate_prompt_usage()
+        .unwrap();
+    assert_eq!(aggregate.totals.input_tokens, 100);
+    assert_eq!(aggregate.totals.output_tokens, 10);
+    assert_eq!(aggregate.totals.model_calls, 1);
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn session_usage_dead_chat_state_actor_fails_closed() {
     let agent = build_minimal_agent_for_tests();
