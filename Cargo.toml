@@ -14,6 +14,7 @@ members = [
     "crates/codegen/ptyctl-cli",
     "crates/codegen/xai-acp-lib",
     "crates/codegen/xai-agent-lifecycle",
+    "crates/codegen/xai-catpaw",
     "crates/codegen/xai-chat-state",
     "crates/codegen/xai-codebase-graph",
     "crates/codegen/xai-crash-handler",
@@ -96,6 +97,7 @@ edition = "2024"
 license = "Apache-2.0"
 
 [workspace.dependencies]
+aes = "0.9"
 agent-client-protocol = { version = "0.10.4", features = ["unstable"] }
 alacritty_terminal = "0.26.0"
 ansi-to-tui = "7.0.0"
@@ -224,6 +226,7 @@ rhai = { version = "1.25", features = ["serde"] }
 ring = "0.17"
 rsa = "0.9"
 runfiles = "0.1"
+rusqlite = { version = "0.37", features = ["bundled"] }
 rustc-hash = "2"
 schemars = "1"
 scraper = "0.23"
@@ -233,6 +236,7 @@ serde_json = "1"
 serde_path_to_error = "0.1"
 serde_yaml = "0.9"
 serial_test = "3"
+sha1 = "0.10"
 sha2 = { version = "0.10", features = ["force-soft"] }
 shlex = "1"
 signal-hook = "0.3"
@@ -289,6 +293,7 @@ wiremock = "0.6"
 wl-clipboard-rs = "0.9"
 xai-acp-lib = { path = "crates/codegen/xai-acp-lib" }
 xai-agent-lifecycle = { path = "crates/codegen/xai-agent-lifecycle" }
+xai-catpaw = { path = "crates/codegen/xai-catpaw" }
 xai-circuit-breaker = { path = "crates/common/xai-circuit-breaker" }
 xai-computer-hub-core = { path = "crates/common/xai-computer-hub-core" }
 xai-computer-hub-sdk = { path = "crates/common/xai-computer-hub-sdk" }
