@@ -162,14 +162,16 @@ pub fn clear_last_bootstrap_at(db_path: &Path) -> io::Result<()> {
 /// - The local DB file doesn't exist, or
 /// - There is no `last_bootstrap_at` in the meta table, or
 /// - `last_bootstrap_at` is more than [`STALENESS_THRESHOLD`] old compared
-///   to `remote_timestamp_unix` (0 if unknown — always stale).
+///   to `remote_timestamp_unix`, or
+/// - The remote timestamp is unknown (`0`). In that case downloading is the
+///   conservative choice: trusting the local marker can leave an updated remote
+///   index undiscovered forever.
 pub fn is_local_stale(db_path: &Path, remote_timestamp_unix: i64) -> bool {
     let Some(local_ts) = read_last_bootstrap_at(db_path) else {
         return true; // no local timestamp → stale
     };
     if remote_timestamp_unix == 0 {
-        // Remote timestamp unknown; if we have a local bootstrap, trust it.
-        return false;
+        return true;
     }
     (remote_timestamp_unix - local_ts) > STALENESS_THRESHOLD.as_secs() as i64
 }
@@ -269,6 +271,56 @@ async fn upload_index_inner(
 
 // Download (on startup, if stale)
 
+fn parse_remote_updated(body: &serde_json::Value) -> io::Result<i64> {
+    let updated = body
+        .get("updated")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| io::Error::other("GCS object metadata omitted `updated`"))?;
+    chrono::DateTime::parse_from_rfc3339(updated)
+        .map(|timestamp| timestamp.timestamp())
+        .map_err(|error| io::Error::other(format!("invalid GCS `updated` timestamp: {error}")))
+}
+
+/// Fetch the GCS object's authoritative update time. `None` means the object
+/// does not exist (or no bucket was compiled in); transport and malformed
+/// metadata failures are returned so the caller can choose a safe fallback.
+async fn remote_index_timestamp(
+    object_path: &str,
+    gcs_config: &xai_file_utils::TraceExportConfig,
+    auth_manager: Option<std::sync::Arc<crate::auth::AuthManager>>,
+) -> io::Result<Option<i64>> {
+    let Some(bucket) = SEARCH_INDEX_BUCKET else {
+        return Ok(None);
+    };
+    let metadata_url = format!(
+        "https://storage.googleapis.com/storage/v1/b/{}/o/{}?fields=updated,generation,etag",
+        bucket,
+        urlencoding::encode(object_path),
+    );
+    let client = crate::upload::gcs::WithAuth::with_auth(gcs_config, auth_manager)
+        .proxy_http_client()
+        .unwrap_or_default();
+    let response = client
+        .get(metadata_url)
+        .send()
+        .await
+        .map_err(|error| io::Error::other(format!("GCS metadata request failed: {error}")))?;
+    if response.status() == reqwest::StatusCode::NOT_FOUND {
+        return Ok(None);
+    }
+    if !response.status().is_success() {
+        return Err(io::Error::other(format!(
+            "GCS metadata returned HTTP {}",
+            response.status()
+        )));
+    }
+    let body = response
+        .json::<serde_json::Value>()
+        .await
+        .map_err(|error| io::Error::other(format!("GCS metadata decode failed: {error}")))?;
+    parse_remote_updated(&body).map(Some)
+}
+
 /// Check the remote index and download it if the local copy is stale.
 ///
 /// Called before bootstrap when remote sync is enabled. If the remote
@@ -302,15 +354,21 @@ async fn download_index_inner(
 ) -> io::Result<bool> {
     let object_path = gcs_object_path(config);
 
-    // TODO: Implement GCS object metadata check (HEAD request) to get
-    // the remote object's last-modified timestamp. For now, use 0 which
-    // means "unknown" — `is_local_stale` will return false if we have a
-    // local bootstrap timestamp.
-    //
-    // When implemented, this should use the GCS JSON API:
-    // GET https://storage.googleapis.com/storage/v1/b/{bucket}/o/{object}
-    // to retrieve the `updated` field as the remote timestamp.
-    let remote_timestamp: i64 = 0;
+    // Read the object's `updated` metadata before downloading. The storage
+    // helpers currently expose upload/existence primitives, but not object
+    // metadata; the GCS JSON API is the stable read-only metadata endpoint.
+    // If metadata is unavailable, keep the timestamp at 0. `is_local_stale`
+    // deliberately treats that as stale so an unknown value cannot suppress
+    // a refresh indefinitely.
+    let remote_timestamp =
+        match remote_index_timestamp(&object_path, gcs_config, auth_manager.clone()).await {
+            Ok(Some(timestamp)) => timestamp,
+            Ok(None) => 0,
+            Err(error) => {
+                tracing::debug!(%error, "GCS metadata probe failed; downloading conservatively");
+                0
+            }
+        };
 
     if !is_local_stale(db_path, remote_timestamp) {
         tracing::debug!("local search index is fresh, skipping remote download");
@@ -556,8 +614,24 @@ mod tests {
             .set_meta(META_KEY_LAST_BOOTSTRAP, &now.to_string())
             .unwrap();
 
-        // Remote timestamp 0 (unknown) with local bootstrap → not stale
-        assert!(!is_local_stale(&db_path, 0));
+        // Unknown remote metadata must not permanently suppress refreshes.
+        assert!(is_local_stale(&db_path, 0));
+    }
+
+    #[test]
+    fn test_parse_remote_updated() {
+        let metadata = serde_json::json!({
+            "generation": "1742",
+            "etag": "CKih1bKv9IcDEAE=",
+            "updated": "2026-08-04T12:34:56.789Z"
+        });
+        assert_eq!(parse_remote_updated(&metadata).unwrap(), 1_785_846_896);
+    }
+
+    #[test]
+    fn test_parse_remote_updated_rejects_missing_or_invalid_value() {
+        assert!(parse_remote_updated(&serde_json::json!({"generation": "1"})).is_err());
+        assert!(parse_remote_updated(&serde_json::json!({"updated": "not-a-time"})).is_err());
     }
 
     #[test]
