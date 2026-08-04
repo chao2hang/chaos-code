@@ -296,8 +296,6 @@ fn render_headers(
             Style::default()
                 .fg(theme.accent_user)
                 .add_modifier(Modifier::BOLD)
-        } else if active {
-            Style::default().fg(theme.text_primary)
         } else {
             Style::default().fg(theme.text_primary)
         };

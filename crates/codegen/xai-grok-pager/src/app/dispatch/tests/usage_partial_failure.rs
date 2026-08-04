@@ -18,12 +18,13 @@ fn empty_usage() -> PromptUsage {
 }
 
 fn usage_with_calls(n: u64) -> PromptUsage {
-    let mut u = PromptUsage::default();
-    u.totals = PromptUsageModel {
-        model_calls: n,
-        ..PromptUsageModel::default()
-    };
-    u
+    PromptUsage {
+        totals: PromptUsageModel {
+            model_calls: n,
+            ..PromptUsageModel::default()
+        },
+        ..PromptUsage::default()
+    }
 }
 
 fn ready_both(session: PromptUsage, aggregate: PromptUsage) -> UsageDetail {

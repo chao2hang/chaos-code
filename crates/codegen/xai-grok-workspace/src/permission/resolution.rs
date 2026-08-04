@@ -1716,6 +1716,15 @@ mod tests {
     /// but load returns None for each.
     #[test]
     fn discovery_with_no_settings_files() {
+        // Guard HOME so the test is not contaminated by a real
+        // `~/.claude/settings.json` on the developer machine or CI runner.
+        // Without this, `global_claude_settings_paths()` will surface the
+        // user's real settings file and the assertion below flips from
+        // empty to populated, breaking CI intermittently.
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let home = tempfile::tempdir().unwrap();
+        let _home_guard = EnvVarGuard::set("HOME", home.path());
+
         let tmp = tempfile::tempdir().unwrap();
         let cwd = tmp.path();
 
