@@ -139,6 +139,7 @@ xai-grok-sampler = { path = "../xai-grok-sampler" }
 xai-sqlite-journal = { workspace = true }
 xai-token-estimation = { workspace = true }
 xai-grok-sampling-types = { path = "../xai-grok-sampling-types" }
+xai-catpaw = { path = "../xai-catpaw" }
 xai-grok-tools = { path = "../xai-grok-tools" }
 xai-tty-utils = { workspace = true }
 xai-workflow = { path = "../xai-workflow" }
