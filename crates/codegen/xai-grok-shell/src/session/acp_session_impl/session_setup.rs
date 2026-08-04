@@ -590,6 +590,26 @@ impl SessionActor {
         let message_count = self.chat_state_handle.get_conversation_len().await;
         let message_tokens = self.chat_state_handle.get_estimated_messages_tokens().await;
         let usage_categories = self.usage_categories().await;
+        let selective_compaction_tokens_saved = self
+            .chat_state_handle
+            .get_selective_compaction()
+            .await
+            .total_tokens_saved();
+        // SessionInfo is also the source for the Pager's post-hoc status chip.
+        // Read the same ledger used by `/usage` so rate data survives after
+        // the live streaming tracker is cleared at turn end.
+        let usage_ledger = self.chat_state_handle.try_get_session_usage().await.ok();
+        let (avg_output_tokens_per_sec, decode_tokens_per_sec) = usage_ledger
+            .as_ref()
+            .map(|ledger| {
+                let totals = &ledger.totals;
+                let avg = (totals.api_duration_ms > 0 && totals.output_tokens > 0).then(|| {
+                    (totals.output_tokens as f64 * 1000.0 / totals.api_duration_ms as f64) as f32
+                });
+                let decode = totals.decode_tokens_per_sec().map(|rate| rate as f32);
+                (avg, decode)
+            })
+            .unwrap_or((None, None));
         let free_tokens = xai_token_estimation::free_tokens(context_window, total_tokens);
         let usage_pct = xai_token_estimation::usage_percentage_u8(total_tokens, context_window);
         let api_backend = config.as_ref().map(|c| format!("{:?}", c.api_backend));
@@ -625,9 +645,9 @@ impl SessionActor {
                 usage_pct,
                 auto_compact_threshold_percent: self.compaction.threshold_percent.get(),
                 usage_categories,
-                selective_compaction_tokens_saved: 0,
-                avg_output_tokens_per_sec: None,
-                decode_tokens_per_sec: None,
+                selective_compaction_tokens_saved,
+                avg_output_tokens_per_sec,
+                decode_tokens_per_sec,
             },
         }
     }

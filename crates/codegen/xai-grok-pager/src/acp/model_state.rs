@@ -128,6 +128,14 @@ impl ModelState {
             .or_else(|| self.current_context_window_tokens())
     }
 
+    /// Return only the explicit runtime override, without falling back to the
+    /// model catalog. This lets callers prefer a `/context set` value over a
+    /// stale SessionInfo snapshot while still allowing fresh server-reported
+    /// SessionInfo totals to outrank static catalog metadata.
+    pub fn context_window_override(&self) -> Option<u64> {
+        self.context_window_override
+    }
+
     /// Override the context window size.
     ///
     /// Used for subagent views where the actual context window is reported
@@ -349,13 +357,29 @@ mod tests {
     use super::*;
     use std::sync::Arc;
 
+    #[test]
+    fn explicit_context_window_override_is_distinct_from_catalog_fallback() {
+        let mut state = sample_models();
+        assert_eq!(state.context_window_override(), None);
+        assert!(state.get_context_window().is_some());
+
+        state.override_context_window(64_000);
+        assert_eq!(state.context_window_override(), Some(64_000));
+        assert_eq!(state.get_context_window(), Some(64_000));
+    }
+
     fn sample_models() -> ModelState {
         let mut state = ModelState::default();
         let id_a = acp::ModelId::new(Arc::from("model-a"));
         let id_b = acp::ModelId::new(Arc::from("model-b"));
         state.available.insert(
             id_a.clone(),
-            acp::ModelInfo::new(id_a.clone(), "Model A".to_string()),
+            acp::ModelInfo::new(id_a.clone(), "Model A".to_string()).meta(
+                serde_json::json!({ "totalContextTokens": 128_000 })
+                    .as_object()
+                    .cloned()
+                    .unwrap(),
+            ),
         );
         state.available.insert(
             id_b.clone(),
