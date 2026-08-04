@@ -2103,6 +2103,12 @@ impl SessionActor {
                 if Self::is_auth_compact_error(&e) {
                     return Err(self.surface_compact_auth_failure(e).await);
                 }
+                // Do not send the original request after compaction failed: the
+                // very condition that triggered compaction means this request is
+                // already at (or beyond) the safe context budget. Continuing here
+                // made auto-compaction failures look like auto-compaction had
+                // silently disappeared and could produce another context error.
+                return Err(e);
             }
             let backend_search_active = self.backend_search_active();
             tracing::debug!(
@@ -2620,6 +2626,10 @@ impl SessionActor {
                     if Self::is_auth_compact_error(&e) {
                         return Err(self.surface_compact_auth_failure(e).await);
                     }
+                    // The next request cannot be safe after an overflow
+                    // compaction failure. Surface the failure instead of
+                    // continuing with the oversized conversation.
+                    return Err(e);
                 }
                 continue;
             }

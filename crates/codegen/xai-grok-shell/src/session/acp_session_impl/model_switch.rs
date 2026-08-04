@@ -187,8 +187,14 @@ impl SessionActor {
 
             let tokens_used = self.chat_state_handle.get_estimated_total_tokens().await;
             let cw = tokens.get();
-            if let Some(cfg) = updated_config.take() {
-                self.chat_state_handle.update_sampling_config(cfg);
+            if let Some(cfg) = updated_config.take()
+                && !self
+                    .chat_state_handle
+                    .update_sampling_config_and_wait(cfg)
+                    .await
+            {
+                return Err(acp::Error::internal_error()
+                    .data("session state stopped before applying context window".to_string()));
             }
             self.signals_handle().update_context_usage(tokens_used, cw);
             let usage_percent = xai_token_estimation::usage_percentage_u8(tokens_used, cw);

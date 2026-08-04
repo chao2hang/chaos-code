@@ -273,9 +273,9 @@ pub(super) fn dispatch_set_context_window(
         return vec![];
     };
 
-    // Optimistic UI update so status bar /context shows the new window immediately.
-    agent.session.models.override_context_window(tokens);
-
+    // Apply the runtime override only after the server confirms the resize.
+    // Otherwise an active-turn rejection would leave the UI showing a window
+    // that the session never accepted.
     vec![Effect::SetContextWindow {
         agent_id: id,
         session_id,
@@ -307,6 +307,7 @@ pub(super) fn handle_set_context_window_complete(
     match result {
         Ok(outcome) => {
             agent.session.models.override_context_window(outcome.tokens);
+            agent.apply_context_used(outcome.tokens_used, outcome.tokens);
             let mut msg = format!(
                 "上下文窗口: {} → {} · 已用 {} ({}%)",
                 format_token_count(outcome.previous_tokens),

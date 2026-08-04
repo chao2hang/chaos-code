@@ -172,6 +172,20 @@ impl ChatStateHandle {
             .send(ChatStateCommand::UpdateSamplingConfig { config });
     }
 
+    /// Update sampling config and wait until the actor has consumed the write.
+    /// The follow-up query uses the same command channel, so FIFO ordering makes
+    /// its response an acknowledgement without adding a second command shape.
+    pub async fn update_sampling_config_and_wait(&self, config: SamplingConfig) -> bool {
+        if self
+            .cmd_tx
+            .send(ChatStateCommand::UpdateSamplingConfig { config })
+            .is_err()
+        {
+            return false;
+        }
+        self.get_sampling_config().await.is_some()
+    }
+
     /// Track that the agent edited a file path.
     pub fn record_agent_edited_path(&self, path: String) {
         let _ = self

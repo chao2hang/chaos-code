@@ -1279,12 +1279,20 @@ impl AgentView {
             status.push("mcp", mcp_line);
         }
         let ctx_used = self.context_state.as_ref().map(|c| c.used);
-        let model_window = self.session.models.get_context_window();
+        // A local `/context set` override is authoritative immediately; the
+        // last SessionInfo snapshot may still contain the old model window.
+        // Without an override, prefer the server-reported total over static
+        // model-catalog metadata (response headers may have upgraded it).
         let ctx_total = self
-            .context_state
-            .as_ref()
-            .and_then(|c| (c.total > 0).then_some(c.total))
-            .or(model_window);
+            .session
+            .models
+            .context_window_override()
+            .or_else(|| {
+                self.context_state
+                    .as_ref()
+                    .and_then(|c| (c.total > 0).then_some(c.total))
+            })
+            .or_else(|| self.session.models.get_context_window());
         if let Some(ctx_line) = context_bar::context_bar_line_for_session(
             ctx_used,
             ctx_total,
