@@ -362,7 +362,10 @@ fn parse_model_override_table(
 /// `(canonical, legacy)` key pairs that serde rejects as duplicate fields
 /// when both appear in one table. Keep in sync with the `#[serde(alias)]`
 /// attributes on [`ConfigModelOverride`].
-const ALIASES: &[(&str, &str)] = &[("compactions_remaining", "send_compactions_remaining")];
+const ALIASES: &[(&str, &str)] = &[
+    ("compactions_remaining", "send_compactions_remaining"),
+    ("extract_inline_thinking", "extractInlineThinking"),
+];
 
 /// Removes one key of each [`ALIASES`] pair that appears twice in `table`.
 /// The canonical key wins; when its value doesn't parse, the legacy key is

@@ -258,6 +258,19 @@ mod tests {
         );
     }
 
+    #[test]
+    fn inline_thinking_is_default_off_for_old_and_default_configs() {
+        assert!(!SamplerConfig::default().extract_inline_thinking);
+
+        let mut serialized = serde_json::to_value(SamplerConfig::default()).unwrap();
+        serialized
+            .as_object_mut()
+            .unwrap()
+            .remove("extract_inline_thinking");
+        let config: SamplerConfig = serde_json::from_value(serialized).unwrap();
+        assert!(!config.extract_inline_thinking);
+    }
+
     /// Configs serialized before the field existed must keep deserializing.
     #[test]
     fn config_without_doom_loop_recovery_deserializes_to_none() {

@@ -1756,6 +1756,21 @@ context_window = 256000               # Total context window in tokens (for auto
 
 The `context_window` parameter is used to calculate when auto-compact should trigger. If not specified, Grok falls back to built-in defaults for known models.
 
+### Inline `<think>` Reasoning
+
+Some OpenAI-compatible reasoning models return thought text inside `content` as `<think>...</think>` instead of using `reasoning_content`. Enable per-model extraction to route those spans through the foldable reasoning channel:
+
+```toml
+[model.deepseek-r1]
+model = "deepseek-reasoner"
+base_url = "https://api.example.com/v1"
+api_backend = "chat_completions"
+context_window = 128000
+extract_inline_thinking = true
+```
+
+The option is off by default and only affects Chat Completions for that model. Tags may cross streaming chunks; if a `<think>` block is truncated without `</think>`, its remaining text stays reasoning. `extractInlineThinking` is also accepted for parity with remote model metadata, though snake case is canonical in `config.toml`.
+
 ### Overriding Built-in Models
 
 You can override specific fields of built-in models without redefining everything. Only specify the fields you want to change:

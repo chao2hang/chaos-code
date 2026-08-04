@@ -1555,6 +1555,76 @@ mod tests {
         assert!(result.reasoning_effort.is_none());
     }
     #[test]
+    fn parse_inline_thinking_camel_and_snake_reach_sampler_config() {
+        for (label, value) in [
+            (
+                "top-level camelCase",
+                serde_json::json!({
+                    "model": "deepseek-r1",
+                    "contextWindow": 128_000,
+                    "apiBackend": "chat_completions",
+                    "extractInlineThinking": true,
+                }),
+            ),
+            (
+                "top-level snake_case",
+                serde_json::json!({
+                    "model": "deepseek-r1",
+                    "context_window": 128_000,
+                    "api_backend": "chat_completions",
+                    "extract_inline_thinking": true,
+                }),
+            ),
+            (
+                "metadata camelCase",
+                serde_json::json!({
+                    "model": "deepseek-r1",
+                    "context_window": 128_000,
+                    "api_backend": "chat_completions",
+                    "_meta": { "extractInlineThinking": true },
+                }),
+            ),
+            (
+                "metadata snake_case",
+                serde_json::json!({
+                    "model": "deepseek-r1",
+                    "context_window": 128_000,
+                    "api_backend": "chat_completions",
+                    "_meta": { "extract_inline_thinking": true },
+                }),
+            ),
+        ] {
+            let parsed = parse_remote_model_value(&value, "https://default.url")
+                .unwrap_or_else(|| panic!("{label} should parse"));
+            assert_eq!(parsed.extract_inline_thinking, Some(true), "{label}");
+
+            let entry = crate::agent::config::ModelEntry::from_config_entry(&parsed);
+            assert_eq!(entry.info.extract_inline_thinking, Some(true), "{label}");
+            let sampler = crate::agent::config::sampling_config_for_model(
+                &entry,
+                crate::agent::config::resolve_credentials(&entry, None),
+                None,
+                None,
+                None,
+                None,
+            );
+            assert!(sampler.extract_inline_thinking, "{label}");
+        }
+    }
+
+    #[test]
+    fn parse_inline_thinking_top_level_value_wins_over_metadata() {
+        let value = serde_json::json!({
+            "model": "deepseek-r1",
+            "context_window": 128_000,
+            "extract_inline_thinking": false,
+            "_meta": { "extractInlineThinking": true },
+        });
+        let result = parse_remote_model_value(&value, "https://default.url").unwrap();
+        assert_eq!(result.extract_inline_thinking, Some(false));
+    }
+
+    #[test]
     fn parse_reads_reasoning_efforts_list() {
         use xai_grok_sampling_types::ReasoningEffort;
         let value = serde_json::json!({

@@ -4379,6 +4379,7 @@ pub struct ConfigModelOverride {
     /// Chinese reasoning models (DeepSeek-R1, Qwen3-Thinking, GLM-Z1)
     /// emit reasoning inline in `content` instead of a structured
     /// `reasoning_content` field. Default: `None` (off).
+    #[serde(alias = "extractInlineThinking")]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub extract_inline_thinking: Option<bool>,
 }
@@ -12514,35 +12515,52 @@ default = "grok-4.5"
         assert_eq!(info.stream_tool_calls, Some(true));
     }
     #[test]
-    fn per_model_inline_thinking_override_reaches_sampler_config() {
-        let raw_config: toml::Value = toml::from_str(
-            r#"
-            [model.deepseek-r1]
-            model = "deepseek-reasoner"
-            base_url = "https://api.example.com/v1"
-            context_window = 128000
-            api_backend = "chat_completions"
-            extract_inline_thinking = true
-            "#,
-        )
-        .unwrap();
-        let cfg = Config::new_from_toml_cfg(&raw_config).expect("config should parse");
-        let resolved = resolve_model_list(&cfg, None);
-        let entry = resolved
-            .get("deepseek-r1")
-            .expect("configured model should resolve");
-        assert_eq!(entry.info.extract_inline_thinking, Some(true));
+    fn per_model_inline_thinking_camel_and_snake_overrides_reach_sampler_config() {
+        for field in ["extract_inline_thinking", "extractInlineThinking"] {
+            let raw_config: toml::Value = toml::from_str(&format!(
+                r#"
+                [model.deepseek-r1]
+                model = "deepseek-reasoner"
+                base_url = "https://api.example.com/v1"
+                context_window = 128000
+                api_backend = "chat_completions"
+                {field} = true
+                "#,
+            ))
+            .unwrap();
+            let cfg = Config::new_from_toml_cfg(&raw_config).expect("config should parse");
+            let resolved = resolve_model_list(&cfg, None);
+            let entry = resolved
+                .get("deepseek-r1")
+                .expect("configured model should resolve");
+            assert_eq!(entry.info.extract_inline_thinking, Some(true), "{field}");
 
+            let sampler = sampling_config_for_model(
+                entry,
+                resolve_credentials(entry, None),
+                None,
+                None,
+                None,
+                None,
+            );
+            assert!(sampler.extract_inline_thinking, "{field}");
+            assert_eq!(sampler.api_backend, ApiBackend::ChatCompletions);
+        }
+    }
+
+    #[test]
+    fn per_model_inline_thinking_omitted_stays_off_in_sampler_config() {
+        let entry = prefetch_model_entry("remote-only-model", 200_000, ApiBackend::ChatCompletions);
+        assert_eq!(entry.info.extract_inline_thinking, None);
         let sampler = sampling_config_for_model(
-            entry,
-            resolve_credentials(entry, None),
+            &entry,
+            resolve_credentials(&entry, None),
             None,
             None,
             None,
             None,
         );
-        assert!(sampler.extract_inline_thinking);
-        assert_eq!(sampler.api_backend, ApiBackend::ChatCompletions);
+        assert!(!sampler.extract_inline_thinking);
     }
 
     #[test]
