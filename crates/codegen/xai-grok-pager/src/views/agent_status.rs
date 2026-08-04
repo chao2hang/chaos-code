@@ -1116,6 +1116,8 @@ mod tests {
             total_tokens: 50,
             last_event_at: Some(started),
             smoothed_rate: 250.0,
+            rate_window_started_at: started,
+            rate_window_tokens: 0,
         };
         let line = tokens_per_sec_line(&ctx, Some(live), &theme).expect("line should exist");
         let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
@@ -1145,6 +1147,8 @@ mod tests {
             total_tokens: 50,
             last_event_at: Some(stale),
             smoothed_rate: 250.0,
+            rate_window_started_at: stale,
+            rate_window_tokens: 0,
         };
         let line = tokens_per_sec_line(&ctx, Some(live), &theme)
             .expect("quiet live state should fall back to conversation average");
@@ -1167,6 +1171,8 @@ mod tests {
             total_tokens: 20,
             last_event_at: Some(started),
             smoothed_rate: 200.0,
+            rate_window_started_at: started,
+            rate_window_tokens: 0,
         };
         let line = tokens_per_sec_line(&ctx, Some(live), &theme)
             .expect("live must render even when context is default");
@@ -1278,6 +1284,8 @@ mod tests {
                 total_tokens: 1,
                 last_event_at: Some(now),
                 smoothed_rate: tps,
+                rate_window_started_at: now,
+                rate_window_tokens: 0,
             };
             let line = tokens_per_sec_line(
                 &xai_grok_shell::session::ContextInfo::default(),
