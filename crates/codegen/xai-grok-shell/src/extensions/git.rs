@@ -278,6 +278,32 @@ async fn resolve_git_root(
     }
     Err(acp::Error::invalid_params().data("either gitRoot or sessionId is required"))
 }
+
+/// Whether workspace operations should retain their legacy cwd auto-discovery.
+fn should_auto_detect_git_root(
+    git_root: Option<&str>,
+    session_id: Option<&acp::SessionId>,
+) -> bool {
+    git_root.is_none() && session_id.is_none()
+}
+
+/// Resolve an explicitly supplied repository selector while preserving the
+/// workspace operation's legacy auto-discovery when neither selector is set.
+async fn resolve_optional_git_root(
+    agent: &MvpAgent,
+    ops: &xai_grok_workspace::WorkspaceOps,
+    git_root: Option<String>,
+    session_id: Option<&acp::SessionId>,
+) -> Result<Option<PathBuf>, acp::Error> {
+    if should_auto_detect_git_root(git_root.as_deref(), session_id) {
+        return Ok(None);
+    }
+
+    resolve_git_root(agent, ops, git_root, session_id)
+        .await
+        .map(Some)
+}
+
 /// Try to extract a git_root from the request params (best-effort, for jj routing).
 async fn try_resolve_git_root(
     agent: &MvpAgent,
@@ -348,9 +374,9 @@ pub async fn handle(
             let include_stats = req.include_stats.unwrap_or(false);
             let ignore_submodules = req.ignore_submodules.unwrap_or(true);
             let include_patches = req.include_patches.unwrap_or(false);
-            let git_root = resolve_git_root(agent, ops, req.git_root, req.session_id.as_ref())
-                .await
-                .ok();
+            let git_root =
+                resolve_optional_git_root(agent, ops, req.git_root, req.session_id.as_ref())
+                    .await?;
             if let Some(ref git_root) = git_root {
                 let current_commit = ops
                     .dispatch(
@@ -412,9 +438,9 @@ pub async fn handle(
         }
         "x.ai/git/files" => {
             let req = parse_params::<GitFilesRequest>(args)?;
-            let git_root = resolve_git_root(agent, ops, req.git_root, req.session_id.as_ref())
-                .await
-                .ok();
+            let git_root =
+                resolve_optional_git_root(agent, ops, req.git_root, req.session_id.as_ref())
+                    .await?;
             let op = GitFilesReq {
                 git_root,
                 paths: req.paths.clone(),
@@ -430,9 +456,9 @@ pub async fn handle(
             let req = parse_params::<GitDiffsRequest>(args)?;
             let max_bytes = req.max_patch_bytes;
             let max_lines = req.max_patch_lines;
-            let git_root = resolve_git_root(agent, ops, req.git_root, req.session_id.as_ref())
-                .await
-                .ok();
+            let git_root =
+                resolve_optional_git_root(agent, ops, req.git_root, req.session_id.as_ref())
+                    .await?;
             let op = GitDiffReq {
                 git_root,
                 paths: req.paths.clone(),
@@ -457,9 +483,9 @@ pub async fn handle(
         }
         "x.ai/git/stage" => {
             let req = parse_params::<GitStageRequest>(args)?;
-            let git_root = resolve_git_root(agent, ops, req.git_root, req.session_id.as_ref())
-                .await
-                .ok();
+            let git_root =
+                resolve_optional_git_root(agent, ops, req.git_root, req.session_id.as_ref())
+                    .await?;
             let op = GitStageReq {
                 git_root: git_root.clone(),
                 paths: req.paths,
@@ -475,9 +501,9 @@ pub async fn handle(
         }
         "x.ai/git/stage/content" => {
             let req = parse_params::<GitStageContentRequest>(args)?;
-            let git_root = resolve_git_root(agent, ops, req.git_root, req.session_id.as_ref())
-                .await
-                .ok();
+            let git_root =
+                resolve_optional_git_root(agent, ops, req.git_root, req.session_id.as_ref())
+                    .await?;
             let op = GitStageContentReq {
                 git_root: git_root.clone(),
                 path: req.path.clone(),
@@ -493,9 +519,9 @@ pub async fn handle(
         }
         "x.ai/git/unstage" => {
             let req = parse_params::<GitUnstageRequest>(args)?;
-            let git_root = resolve_git_root(agent, ops, req.git_root, req.session_id.as_ref())
-                .await
-                .ok();
+            let git_root =
+                resolve_optional_git_root(agent, ops, req.git_root, req.session_id.as_ref())
+                    .await?;
             let op = GitUnstageReq {
                 git_root: git_root.clone(),
                 paths: req.paths,
@@ -510,9 +536,9 @@ pub async fn handle(
         }
         "x.ai/git/discard" => {
             let req = parse_params::<GitDiscardRequest>(args)?;
-            let git_root = resolve_git_root(agent, ops, req.git_root, req.session_id.as_ref())
-                .await
-                .ok();
+            let git_root =
+                resolve_optional_git_root(agent, ops, req.git_root, req.session_id.as_ref())
+                    .await?;
             let op = GitDiscardReq {
                 git_root: git_root.clone(),
                 paths: req.paths,
@@ -529,9 +555,9 @@ pub async fn handle(
         }
         "x.ai/git/commit" => {
             let req = parse_params::<GitCommitRequest>(args)?;
-            let git_root = resolve_git_root(agent, ops, req.git_root, req.session_id.as_ref())
-                .await
-                .ok();
+            let git_root =
+                resolve_optional_git_root(agent, ops, req.git_root, req.session_id.as_ref())
+                    .await?;
             let op = GitCommitReq {
                 git_root: git_root.clone(),
                 message: req.message.clone(),
@@ -559,9 +585,9 @@ pub async fn handle(
         }
         "x.ai/git/checkout" => {
             let req = parse_params::<GitCheckoutRequest>(args)?;
-            let git_root = resolve_git_root(agent, ops, req.git_root, req.session_id.as_ref())
-                .await
-                .ok();
+            let git_root =
+                resolve_optional_git_root(agent, ops, req.git_root, req.session_id.as_ref())
+                    .await?;
             let op = GitCheckoutReq {
                 git_root: git_root.clone(),
                 branch: req.branch.clone(),
@@ -577,9 +603,9 @@ pub async fn handle(
         }
         "x.ai/git/stash" => {
             let req = parse_params::<GitStashRequest>(args)?;
-            let git_root = resolve_git_root(agent, ops, req.git_root, req.session_id.as_ref())
-                .await
-                .ok();
+            let git_root =
+                resolve_optional_git_root(agent, ops, req.git_root, req.session_id.as_ref())
+                    .await?;
             let op = GitStashReq {
                 git_root: git_root.clone(),
                 include_untracked: req.include_untracked,
@@ -594,9 +620,9 @@ pub async fn handle(
         }
         "x.ai/git/info" => {
             let req = parse_params::<GitInfoRequest>(args)?;
-            let git_root = resolve_git_root(agent, ops, req.git_root, req.session_id.as_ref())
-                .await
-                .ok();
+            let git_root =
+                resolve_optional_git_root(agent, ops, req.git_root, req.session_id.as_ref())
+                    .await?;
             let result = ops
                 .dispatch(&GitInfoReq { git_root }, None)
                 .await
@@ -605,9 +631,9 @@ pub async fn handle(
         }
         "x.ai/git/branches" => {
             let req = parse_params::<GitBranchesRequest>(args)?;
-            let git_root = resolve_git_root(agent, ops, req.git_root, req.session_id.as_ref())
-                .await
-                .ok();
+            let git_root =
+                resolve_optional_git_root(agent, ops, req.git_root, req.session_id.as_ref())
+                    .await?;
             let result = ops
                 .dispatch(&GitBranchesReq { git_root }, None)
                 .await
@@ -616,16 +642,16 @@ pub async fn handle(
         }
         "x.ai/git/current_commit" => {
             let req = parse_params::<GitCurrentCommitRequest>(args)?;
-            let result = match resolve_git_root(agent, ops, req.git_root, req.session_id.as_ref())
-                .await
-                .ok()
-            {
-                Some(git_root) => ops
-                    .dispatch(&GitCurrentCommitReq { git_root }, None)
-                    .await
-                    .map_err(|e| acp::Error::internal_error().data(e.to_string()))?,
-                None => None,
-            };
+            let result =
+                match resolve_optional_git_root(agent, ops, req.git_root, req.session_id.as_ref())
+                    .await?
+                {
+                    Some(git_root) => ops
+                        .dispatch(&GitCurrentCommitReq { git_root }, None)
+                        .await
+                        .map_err(|e| acp::Error::internal_error().data(e.to_string()))?,
+                    None => None,
+                };
             to_ext_response(Ok(result))
         }
         "x.ai/git/checkout_session_head" => {
@@ -706,5 +732,26 @@ pub async fn handle(
             super::to_raw_response(&result)
         }
         _ => Err(acp::Error::method_not_found()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn omitted_repo_selector_preserves_auto_detection() {
+        assert!(should_auto_detect_git_root(None, None));
+    }
+
+    #[test]
+    fn explicit_repo_selector_disables_fallback() {
+        assert!(!should_auto_detect_git_root(Some("/repo"), None));
+    }
+
+    #[test]
+    fn session_repo_selector_disables_fallback() {
+        let session_id = acp::SessionId::new("missing-session");
+        assert!(!should_auto_detect_git_root(None, Some(&session_id)));
     }
 }

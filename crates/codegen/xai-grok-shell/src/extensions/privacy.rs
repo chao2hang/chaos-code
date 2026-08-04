@@ -1,7 +1,8 @@
 //! `x.ai/privacy/setCodingDataRetention` extension handler.
 //!
 //! PUTs the new opt-out flag to cli-chat-proxy and updates local auth state
-//! to match. The local update is fire-and-forget (best-effort cache refresh).
+//! to match. A local persistence failure after the remote update is reported
+//! explicitly as a partial-application error.
 
 use agent_client_protocol as acp;
 use serde::Deserialize;
@@ -83,9 +84,35 @@ async fn handle_set(agent: &MvpAgent, args: &acp::ExtRequest) -> ExtResult {
     // and overwrite the opt-out flag back to its previous value.
     let mut updated = auth.clone();
     updated.coding_data_retention_opt_out = params.coding_data_retention_opt_out;
-    let _ = agent.auth_manager.save_without_enrichment(updated).await;
+    agent
+        .auth_manager
+        .save_without_enrichment(updated)
+        .await
+        .map_err(|e| local_save_partial_error(&e))?;
 
     to_raw_response(&serde_json::json!({
         "codingDataRetentionOptOut": params.coding_data_retention_opt_out,
     }))
+}
+
+fn local_save_partial_error(error: &std::io::Error) -> acp::Error {
+    tracing::error!(error = %error, "privacy: remote update succeeded but local auth save failed");
+    acp::Error::internal_error().data(format!(
+        "Privacy setting was updated remotely, but saving it locally failed; the change was only partially applied: {error}"
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn local_save_failure_is_an_explicit_partial_application_error() {
+        let error = local_save_partial_error(&std::io::Error::other("read-only filesystem"));
+        let rendered = format!("{error:?}");
+
+        assert!(rendered.contains("updated remotely"));
+        assert!(rendered.contains("partially applied"));
+        assert!(rendered.contains("read-only filesystem"));
+    }
 }
