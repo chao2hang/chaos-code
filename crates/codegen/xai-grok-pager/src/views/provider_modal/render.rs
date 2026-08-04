@@ -94,8 +94,6 @@ pub fn render_provider_modal(
     state: &mut ProviderModalState,
     compact: bool,
 ) {
-    // 收割后台模型拉取结果（loading 期间由 tick_demand 驱动重绘）。
-    // state.poll_models_fetch(); // TODO: re-enable after porting async fetch
     let theme = Theme::current();
     let mode = state.mode.clone();
     match &mode {
@@ -789,8 +787,8 @@ fn render_configure_model(
     let Some(mca) = mw::render_modal_window(buf, area, &mut state.window, &config, theme) else {
         return;
     };
-    // 列表为空时仍显示提示（可手写 filter 作 ID）
-    if !state.models_loading && state.error.is_none() && state.models.is_empty() {
+    // ConfigureModel 不发起同步 HTTP；空列表时搜索框就是模型 ID 输入框。
+    if state.error.is_none() && state.models.is_empty() {
         let content = mca.content;
         let mut y = content.y;
         let dim = Style::default().fg(theme.gray_dim);
@@ -1528,15 +1526,6 @@ fn render_model_list_body(
     state: &mut ProviderModalState,
     theme: &Theme,
 ) {
-    if state.models_loading {
-        let line = Line::from(Span::styled(
-            "⏳ 正在后台获取模型列表（最长 15 秒）… Esc 可返回",
-            Style::default().fg(theme.gray),
-        ));
-        line.render(content, buf);
-        return;
-    }
-
     if let Some(err) = &state.error {
         let line = Line::from(Span::styled(
             format!("✗ {err}"),

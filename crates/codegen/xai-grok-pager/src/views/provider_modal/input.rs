@@ -1280,6 +1280,31 @@ mod tests {
     }
 
     #[test]
+    fn configure_model_starts_with_manual_id_without_loading_or_stale_models() {
+        let mut state = ProviderModalState::new(ProviderModalMode::Actions("openai".into()));
+        state.models = vec!["stale-model".into()];
+        state.models_meta = vec![Default::default()];
+        state.models_need_catalog_sync = true;
+        state.model_filter = "stale".into();
+        state.selected = 4;
+        state.scroll_offset = 2;
+
+        state.go_configure_model("openai".into());
+
+        assert!(matches!(
+            state.mode,
+            ProviderModalMode::ConfigureModel(ref name) if name == "openai"
+        ));
+        assert!(state.models.is_empty());
+        assert!(state.models_meta.is_empty());
+        assert!(!state.models_need_catalog_sync);
+        assert!(state.model_filter.is_empty());
+        assert!(state.manual_model_id.is_empty());
+        assert_eq!(state.selected, 0);
+        assert_eq!(state.scroll_offset, 0);
+    }
+
+    #[test]
     fn actions_menu_includes_edit_manual_and_configure() {
         assert!(ProviderAction::ALL.contains(&ProviderAction::Edit));
         assert!(ProviderAction::ALL.contains(&ProviderAction::ManualModel));

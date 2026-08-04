@@ -5237,13 +5237,6 @@ impl AppView {
                             lanes,
                         )
                     )
-                    // Provider 模态后台拉取模型期间保持重绘，让渲染层的
-                    // poll_models_fetch 能收割结果（否则空闲时无 tick）。
-                    || matches!(
-                        agent.active_modal.as_ref(),
-                        Some(crate::views::modal::ActiveModal::ProviderModal { state })
-                            if state.models_loading
-                    )
                     || agent.subagent_views.iter().any(|(sid, child)| {
                         child.toast.is_some()
                             || child.ephemeral_tip_needs_tick()

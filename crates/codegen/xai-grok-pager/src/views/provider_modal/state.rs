@@ -259,8 +259,6 @@ pub struct ProviderModalState {
     pub success: Option<String>,
     /// `Models` / `SetModel` 模式下从 API 获取的模型列表。
     pub models: Vec<String>,
-    /// 模型列表是否正在加载。
-    pub models_loading: bool,
     /// 与 `models` 平行的 reasoning 元数据（下标对齐）。
     ///
     /// Issue #14：保留上游 `/v1/models` 返回的 `reasoningEfforts` 等元数据，
@@ -331,7 +329,6 @@ impl ProviderModalState {
             error: None,
             success: None,
             models: Vec::new(),
-            models_loading: false,
             models_meta: Vec::new(),
             models_need_catalog_sync: false,
             model_filter: String::new(),
@@ -576,7 +573,6 @@ impl ProviderModalState {
     /// 仅「查看可用模型」后也能列出渠道模型。若配置尚无默认模型，则把第一项
     /// 设为 default（用户在「切换模型」里 Enter 仍会覆盖为选中项）。
     pub fn load_models_for(&mut self, name: &str) {
-        self.models_loading = true;
         self.models.clear();
         self.models_meta.clear();
         self.models_need_catalog_sync = false;
@@ -616,13 +612,11 @@ impl ProviderModalState {
                 // 会话 catalog 注入都复用，避免只写 id 再丢 meta。
                 self.models = entries.iter().map(|e| e.id.clone()).collect();
                 self.models_meta = entries.into_iter().map(|e| e.meta).collect();
-                self.models_loading = false;
                 // 仅在 config 写入成功时请求会话 catalog 同步。
                 self.models_need_catalog_sync = registered.is_ok();
             }
             Err(e) => {
                 self.error = Some(e);
-                self.models_loading = false;
             }
         }
     }
@@ -717,7 +711,6 @@ impl ProviderModalState {
         self.manual_model_id.clear();
         self.clear_model_params();
         self.edit_had_key = false;
-        self.models_loading = false;
         self.current_step = FormStep::Preset;
         self.selected = self.selected.min(self.list_row_count().saturating_sub(1));
         self.reload_providers();
@@ -739,7 +732,6 @@ impl ProviderModalState {
         self.model_filter.clear();
         self.manual_model_id.clear();
         self.clear_model_params();
-        self.models_loading = false;
         self.selected = 0;
         self.scroll_offset = 0;
     }
@@ -828,13 +820,21 @@ impl ProviderModalState {
         self.selected = 0;
     }
 
-    /// 打开「配置模型参数」：先选/搜模型，再填参数。
+    /// 打开「配置模型参数」：手动输入模型 ID，再填参数。
+    ///
+    /// 此入口不得拉取远端模型列表；`load_models_for` 是同步实现，会阻塞
+    /// TUI 输入与渲染。需要浏览远端列表时应使用 Models / SetModel。
     pub fn go_configure_model(&mut self, name: String) {
-        self.mode = ProviderModalMode::ConfigureModel(name.clone());
+        self.mode = ProviderModalMode::ConfigureModel(name);
         self.clear_messages();
+        self.models.clear();
+        self.models_meta.clear();
+        self.models_need_catalog_sync = false;
+        self.model_filter.clear();
         self.clear_model_params();
         self.manual_model_id.clear();
-        self.load_models_for(&name);
+        self.selected = 0;
+        self.scroll_offset = 0;
     }
 
     /// 打开「确认删除渠道」对话框。

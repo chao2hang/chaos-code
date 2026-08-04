@@ -284,9 +284,7 @@ pub(in crate::app::dispatch) fn dispatch_open_provider_modal(
             }
         }
         crate::views::provider_modal::ProviderModalMode::Models(name)
-        | crate::views::provider_modal::ProviderModalMode::SetModel(name)
-        | crate::views::provider_modal::ProviderModalMode::ConfigureModel(name) => {
-            state.models_loading = true;
+        | crate::views::provider_modal::ProviderModalMode::SetModel(name) => {
             match crate::slash::commands::provider::fetch_provider_models(name) {
                 Ok(entries) => {
                     // Register into catalog when deep-linked (same as go_models).
@@ -308,20 +306,10 @@ pub(in crate::app::dispatch) fn dispatch_open_provider_modal(
                     );
                     state.models = entries.iter().map(|e| e.id.clone()).collect();
                     state.models_meta = entries.into_iter().map(|e| e.meta).collect();
-                    state.models_loading = false;
                     state.models_need_catalog_sync = registered.is_ok();
                 }
                 Err(e) => {
-                    // ConfigureModel 允许手写 ID，错误不阻断进入
-                    if matches!(
-                        mode,
-                        crate::views::provider_modal::ProviderModalMode::ConfigureModel(_)
-                    ) {
-                        state.models.clear();
-                    } else {
-                        state.error = Some(e);
-                    }
-                    state.models_loading = false;
+                    state.error = Some(e);
                 }
             }
         }
