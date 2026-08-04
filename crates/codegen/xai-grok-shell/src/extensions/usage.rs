@@ -66,10 +66,9 @@ async fn handle_session_usage(agent: &MvpAgent, args: &acp::ExtRequest) -> ExtRe
     // into the parent session's ledger, so persisting them separately would
     // double-count in the all-time aggregate.
     //
-    // NOTE: subagent skipping is currently disabled because `SessionHandle`
-    // no longer carries a `session_kind` field after upstream sync. All
-    // sessions are persisted; subagent double-counting is tolerated.
-    if let Err(e) = persist_session_usage(&session_id.0, &usage) {
+    if !handle.is_subagent
+        && let Err(e) = persist_session_usage(&session_id.0, &usage)
+    {
         tracing::warn!(
             session_id = %session_id.0,
             error = %e,
@@ -93,15 +92,6 @@ async fn handle_aggregate_usage() -> ExtResult {
 fn persist_session_usage(session_id: &str, usage: &PromptUsage) -> Result<(), rusqlite::Error> {
     let store = UsageStore::open_default()?;
     store.record_session_usage(session_id, usage)
-}
-
-/// Returns `true` for session kinds whose spend is already folded into a
-/// parent session's ledger (`"subagent"`, `"subagent_fork"`,
-/// `"subagent_resume"`). The aggregate store skips these to avoid
-/// double-counting.
-#[allow(dead_code)] // subagent skipping disabled; retained for tests/future use
-fn session_kind_is_subagent(kind: Option<&str>) -> bool {
-    kind.is_some_and(|k| k.starts_with("subagent"))
 }
 
 #[cfg(test)]
@@ -200,16 +190,5 @@ mod tests {
         assert_eq!(parsed.usage.totals.output_tokens, 100);
         assert_eq!(parsed.usage.model_usage.len(), 1);
         assert_eq!(parsed.usage.model_usage["grok-4"].input_tokens, 1_000);
-    }
-
-    #[test]
-    fn session_kind_is_subagent_detects_subagent_variants() {
-        assert!(session_kind_is_subagent(Some("subagent")));
-        assert!(session_kind_is_subagent(Some("subagent_fork")));
-        assert!(session_kind_is_subagent(Some("subagent_resume")));
-        assert!(!session_kind_is_subagent(None));
-        assert!(!session_kind_is_subagent(Some("fork")));
-        assert!(!session_kind_is_subagent(Some("worktree")));
-        assert!(!session_kind_is_subagent(Some("")));
     }
 }

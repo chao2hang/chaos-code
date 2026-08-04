@@ -1542,6 +1542,7 @@ pub(crate) async fn spawn_session_actor(
     let resolved_tool_overrides: std::sync::Arc<
         arc_swap::ArcSwapOption<xai_grok_sampling_types::ToolOverrides>,
     > = std::sync::Arc::new(arc_swap::ArcSwapOption::empty());
+    let is_subagent = startup_hints.is_subagent;
     let session = Arc::new_cyclic(|weak: &std::sync::Weak<SessionActor>| SessionActor {
         session_info: session_info.clone(),
         auth_method_id,
@@ -2093,6 +2094,7 @@ pub(crate) async fn spawn_session_actor(
             current_prompt_id,
             pending_interactions,
             info: session_info,
+            is_subagent,
             max_turns,
             resolved_tool_overrides,
             hunk_tracker_handle,
