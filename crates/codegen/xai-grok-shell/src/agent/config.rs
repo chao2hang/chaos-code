@@ -5543,6 +5543,11 @@ pub fn sampling_config_for_model(
         is_workbuddy,
     );
     let api_backend = info.api_backend.clone();
+    let catpaw = if api_backend == ApiBackend::CatPaw {
+        build_catpaw_sampler_config(model)
+    } else {
+        None
+    };
     SamplerConfig {
         api_key: credentials.api_key,
         model: model_name,
@@ -5576,7 +5581,39 @@ pub fn sampling_config_for_model(
         header_injector: None,
         user_agent: None,
         is_workbuddy,
+        catpaw,
     }
+}
+
+/// Build the CatPaw channel config for a `CatPaw`-backend model. The account
+/// token is resolved per request from the encrypted account store (LRU among
+/// healthy accounts); nothing secret is carried in the config.
+fn build_catpaw_sampler_config(
+    model: &ModelEntry,
+) -> Option<xai_grok_sampler::config::CatPawSamplerConfig> {
+    use xai_grok_sampler::config::{CatPawAccountResolver, CatPawSamplerConfig};
+
+    #[derive(Debug)]
+    struct CatPawStoreAccountResolver;
+    impl CatPawAccountResolver for CatPawStoreAccountResolver {
+        fn resolve(&self) -> Option<(String, String)> {
+            let account = crate::catpaw::select_lru_account().ok().flatten()?;
+            Some((
+                account.tokens.access_token.clone(),
+                account.tokens.mis_id.clone().unwrap_or_default(),
+            ))
+        }
+    }
+
+    Some(CatPawSamplerConfig {
+        provider: model
+            .info
+            .id
+            .clone()
+            .unwrap_or_else(|| model.info.model.clone()),
+        model_type_code: 0,
+        account_resolver: Some(std::sync::Arc::new(CatPawStoreAccountResolver)),
+    })
 }
 /// Fold URL-derived headers into `extra_headers`.
 ///

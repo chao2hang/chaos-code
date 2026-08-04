@@ -727,6 +727,15 @@ pub(crate) async fn generate_session_compact(
                 itl_max_ms: timing.itl_max_ms(),
             }
         }
+        ApiBackend::CatPaw => {
+            // The CatPaw channel does not expose the OpenAI / Responses /
+            // Anthropic-compatible wire formats that the rest of the
+            // compaction paths speak, so report a deterministic failure
+            // instead of panicking on an unhandled enum variant.
+            return Err(CompactFailure::Deterministic(
+                acp::Error::internal_error().data("compact unsupported on CatPaw channel"),
+            ));
+        }
     };
     if output.content.is_empty() {
         Err(CompactFailure::Transient(
@@ -1661,6 +1670,7 @@ mod reasoning_compaction_regression_tests {
             user_agent: None,
 
             is_workbuddy: false,
+            catpaw: None,
         }
     }
     #[tokio::test]

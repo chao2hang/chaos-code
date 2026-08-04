@@ -156,6 +156,46 @@ pub struct SamplerConfig {
     /// headers from `extra_headers`/`env_http_headers` are sent.
     #[serde(default)]
     pub is_workbuddy: bool,
+
+    /// Native CatPaw channel settings. When set (and `api_backend == CatPaw`),
+    /// requests go through the encrypted CatPaw protocol. The account token
+    /// is resolved per request via [`CatPawSamplerConfig::account_resolver`]
+    /// and never persisted here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub catpaw: Option<CatPawSamplerConfig>,
+}
+
+/// Native CatPaw channel settings carried on [`SamplerConfig`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CatPawSamplerConfig {
+    /// Provider label (for account-pool correlation).
+    pub provider: String,
+    /// `userModelTypeCode` from the CatPaw model catalog.
+    pub model_type_code: i32,
+    /// Per-request account resolution; never serialized (tokens live in the
+    /// encrypted account store, resolved fresh for every request).
+    #[serde(skip)]
+    pub account_resolver: Option<SharedCatPawAccountResolver>,
+}
+
+/// Resolves a live CatPaw account credential per request. Returns
+/// `(access_token, mis_id)`.
+pub trait CatPawAccountResolver: Send + Sync + std::fmt::Debug {
+    fn resolve(&self) -> Option<(String, String)>;
+}
+
+pub type SharedCatPawAccountResolver = std::sync::Arc<dyn CatPawAccountResolver>;
+
+/// Default resolver that never produces a credential. Used when a CatPaw
+/// config is built without a live account resolver; requests fail with a
+/// clear "no account" error instead of sending an empty token.
+#[derive(Debug)]
+pub struct NoCatPawAccountResolver;
+
+impl CatPawAccountResolver for NoCatPawAccountResolver {
+    fn resolve(&self) -> Option<(String, String)> {
+        None
+    }
 }
 
 impl Default for SamplerConfig {
@@ -195,6 +235,7 @@ impl Default for SamplerConfig {
             doom_loop_recovery: None,
             header_injector: None,
             is_workbuddy: false,
+            catpaw: None,
         }
     }
 }
