@@ -12,10 +12,12 @@ pub mod catpaw;
 pub mod chat_completions;
 pub mod collect;
 pub mod messages;
+pub mod remote_agent;
 pub mod responses;
 
 pub use catpaw::stream_catpaw;
 pub use chat_completions::stream_chat_completions;
 pub use collect::collect_response;
 pub use messages::stream_messages;
+pub use remote_agent::stream_remote_agent;
 pub use responses::stream_responses;

@@ -74,6 +74,7 @@ pub(crate) fn ctx_with_toggle(toggle: HashMap<String, bool>) -> SubagentSpawnCon
 
             is_workbuddy: false,
             catpaw: None,
+            remote_agent: None,
         },
         alpha_test_key: None,
         auth_method_id: acp::AuthMethodId::new("test"),

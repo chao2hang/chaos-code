@@ -770,6 +770,7 @@ async fn read_parent_sampling_config(
                 user_agent: None,
                 is_workbuddy,
                 catpaw: ctx.sampling_config.catpaw.clone(),
+                remote_agent: ctx.sampling_config.remote_agent.clone(),
             };
             let model_id = ctx.model_id.clone();
             let global_model_id = ctx.models_manager.current_model_id();

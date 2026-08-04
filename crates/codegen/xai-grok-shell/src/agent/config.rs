@@ -4101,6 +4101,12 @@ struct DefaultModelJson {
     #[serde(default)]
     supports_backend_search: bool,
     #[serde(default)]
+    git_repo_url: Option<String>,
+    #[serde(default)]
+    git_base_branch: Option<String>,
+    #[serde(default)]
+    git_checkout_branch: Option<String>,
+    #[serde(default)]
     compactions_remaining: Option<CompactionsRemaining>,
     #[serde(default)]
     compaction_at_tokens: Option<CompactionAtTokens>,
@@ -4164,6 +4170,9 @@ fn default_models(endpoints: &EndpointsConfig) -> IndexMap<String, ModelEntryCon
                 supports_reasoning_effort: m.supports_reasoning_effort,
                 reasoning_efforts: m.reasoning_efforts,
                 supports_backend_search: m.supports_backend_search,
+                git_repo_url: m.git_repo_url,
+                git_base_branch: m.git_base_branch,
+                git_checkout_branch: m.git_checkout_branch,
                 compactions_remaining: m.compactions_remaining,
                 compaction_at_tokens: m.compaction_at_tokens,
                 show_model_fingerprint: m.show_model_fingerprint,
@@ -4272,6 +4281,16 @@ pub struct ModelEntryConfig {
     pub supported_in_api: bool,
     #[serde(default, skip_serializing_if = "is_false")]
     pub supports_backend_search: bool,
+    /// CatPaw Remote Agent: git repository URL. Only meaningful when the
+    /// model's `api_backend` is `RemoteAgent`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub git_repo_url: Option<String>,
+    /// CatPaw Remote Agent: base branch the agent diffs against.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub git_base_branch: Option<String>,
+    /// CatPaw Remote Agent: checkout branch the agent operates on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub git_checkout_branch: Option<String>,
     /// Per-model config for the `x-compactions-remaining` header; `None` disables it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compactions_remaining: Option<CompactionsRemaining>,
@@ -4563,6 +4582,18 @@ pub struct ModelInfo {
     pub compactions_remaining: Option<CompactionsRemaining>,
     /// Per-model config for the `x-compaction-at` header; `None` disables it.
     pub compaction_at_tokens: Option<CompactionAtTokens>,
+    /// CatPaw Remote Agent: git repository URL. Only meaningful for
+    /// models whose `api_backend == RemoteAgent`; the sampler
+    /// rejects empty values so the channel cannot accidentally
+    /// point at an unconfigured repo.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub git_repo_url: Option<String>,
+    /// CatPaw Remote Agent: base branch the agent diffs against.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub git_base_branch: Option<String>,
+    /// CatPaw Remote Agent: checkout branch the agent operates on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub git_checkout_branch: Option<String>,
     pub show_model_fingerprint: bool,
     /// When `Some(true)`, the sampler injects `stream_tool_calls: true`
     pub stream_tool_calls: Option<bool>,
@@ -4616,6 +4647,9 @@ impl ModelInfo {
             supports_backend_search: false,
             compactions_remaining: None,
             compaction_at_tokens: None,
+            git_repo_url: None,
+            git_base_branch: None,
+            git_checkout_branch: None,
             show_model_fingerprint: false,
             stream_tool_calls: None,
             extract_inline_thinking: None,
@@ -4652,6 +4686,9 @@ impl ModelInfo {
             supports_reasoning_effort: entry.supports_reasoning_effort,
             reasoning_efforts: entry.reasoning_efforts.clone(),
             supports_backend_search: entry.supports_backend_search,
+            git_repo_url: entry.git_repo_url.clone(),
+            git_base_branch: entry.git_base_branch.clone(),
+            git_checkout_branch: entry.git_checkout_branch.clone(),
             compactions_remaining: entry.compactions_remaining,
             compaction_at_tokens: entry.compaction_at_tokens,
             show_model_fingerprint: entry.show_model_fingerprint,
@@ -5397,6 +5434,9 @@ pub fn resolve_aux_model_sampling_config(
                 supports_backend_search: false,
                 compactions_remaining: None,
                 compaction_at_tokens: None,
+                git_repo_url: None,
+                git_base_branch: None,
+                git_checkout_branch: None,
                 show_model_fingerprint: false,
                 stream_tool_calls: None,
                 extract_inline_thinking: None,
@@ -5548,6 +5588,11 @@ pub fn sampling_config_for_model(
     } else {
         None
     };
+    let remote_agent = if api_backend == ApiBackend::RemoteAgent {
+        build_remote_agent_sampler_config(model)
+    } else {
+        None
+    };
     SamplerConfig {
         api_key: credentials.api_key,
         model: model_name,
@@ -5582,7 +5627,61 @@ pub fn sampling_config_for_model(
         user_agent: None,
         is_workbuddy,
         catpaw,
+        remote_agent,
     }
+}
+
+/// Build the CatPaw Remote Agent config for a `RemoteAgent`-backend
+/// model. The repository fields come from the model entry's provider
+/// (`[model_providers.<id>]`), which is the same source the user
+/// configures for the agent channel. The account resolver and
+/// conversation-state handle are sourced from the shell-side
+/// [`crate::catpaw`] glue, so the sampler reuses the same encrypted
+/// account pool as the chat channel and persists the upstream
+/// `conversationId` across turns in the chat-state snapshot.
+fn build_remote_agent_sampler_config(
+    model: &ModelEntry,
+) -> Option<xai_grok_sampler::config::RemoteAgentSamplerConfig> {
+    use xai_grok_sampler::config::{RemoteAgentAccountResolver, RemoteAgentSamplerConfig};
+
+    let git_repo_url = model.info.git_repo_url.clone().unwrap_or_default();
+    let git_base_branch = model
+        .info
+        .git_base_branch
+        .clone()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "master".to_string());
+    let git_checkout_branch = model.info.git_checkout_branch.clone().unwrap_or_default();
+
+    #[derive(Debug)]
+    struct CatPawRemoteAgentAccountResolver;
+    impl RemoteAgentAccountResolver for CatPawRemoteAgentAccountResolver {
+        fn resolve(&self) -> Option<(String, String)> {
+            let account = crate::catpaw::select_lru_account().ok().flatten()?;
+            Some((
+                account.tokens.access_token.clone(),
+                account.tokens.mis_id.clone().unwrap_or_default(),
+            ))
+        }
+    }
+
+    if git_repo_url.is_empty() {
+        return None;
+    }
+
+    Some(RemoteAgentSamplerConfig {
+        provider: model
+            .info
+            .id
+            .clone()
+            .unwrap_or_else(|| model.info.model.clone()),
+        model_type_code: 0,
+        git_repo_url,
+        git_base_branch,
+        git_checkout_branch,
+        account_resolver: Some(std::sync::Arc::new(CatPawRemoteAgentAccountResolver)),
+        conversation_state: None,
+    })
 }
 
 /// Build the CatPaw channel config for a `CatPaw`-backend model. The account
@@ -5708,6 +5807,9 @@ fn resolve_hidden_default_web_search_sampling_config(
             supports_backend_search: false,
             compactions_remaining: None,
             compaction_at_tokens: None,
+            git_repo_url: None,
+            git_base_branch: None,
+            git_checkout_branch: None,
             show_model_fingerprint: false,
             stream_tool_calls: None,
             extract_inline_thinking: None,
@@ -6938,6 +7040,9 @@ reasoning_effort = "low"
                 supports_backend_search: false,
                 compactions_remaining: None,
                 compaction_at_tokens: None,
+                git_repo_url: None,
+                git_base_branch: None,
+                git_checkout_branch: None,
                 show_model_fingerprint: false,
                 stream_tool_calls: None,
                 extract_inline_thinking: None,
@@ -7965,6 +8070,9 @@ reasoning_effort = "low"
             supports_backend_search: false,
             compactions_remaining: None,
             compaction_at_tokens: None,
+            git_repo_url: None,
+            git_base_branch: None,
+            git_checkout_branch: None,
             show_model_fingerprint: false,
             stream_tool_calls: None,
             extract_inline_thinking: None,
@@ -8125,6 +8233,9 @@ reasoning_effort = "low"
             supports_backend_search: false,
             compactions_remaining: None,
             compaction_at_tokens: None,
+            git_repo_url: None,
+            git_base_branch: None,
+            git_checkout_branch: None,
             show_model_fingerprint: false,
             stream_tool_calls: None,
             extract_inline_thinking: None,
@@ -8577,6 +8688,9 @@ reasoning_effort = "low"
             supports_backend_search: false,
             compactions_remaining: None,
             compaction_at_tokens: None,
+            git_repo_url: None,
+            git_base_branch: None,
+            git_checkout_branch: None,
             show_model_fingerprint: false,
             stream_tool_calls: None,
             extract_inline_thinking: None,
@@ -12404,6 +12518,9 @@ default = "grok-4.5"
                 supports_backend_search: false,
                 compactions_remaining: None,
                 compaction_at_tokens: None,
+                git_repo_url: None,
+                git_base_branch: None,
+                git_checkout_branch: None,
                 show_model_fingerprint: false,
                 stream_tool_calls: None,
                 extract_inline_thinking: None,

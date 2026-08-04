@@ -327,6 +327,9 @@ pub struct SamplingClient {
     is_workbuddy: bool,
     /// Native CatPaw channel state (set when `api_backend == CatPaw`).
     catpaw: Option<CatPawClientState>,
+    /// Native CatPaw Remote Agent state (set when
+    /// `api_backend == RemoteAgent`).
+    remote_agent: Option<RemoteAgentClientState>,
 }
 
 /// State for the native CatPaw channel held by [`SamplingClient`].
@@ -338,6 +341,25 @@ struct CatPawClientState {
     provider: String,
     model_type_code: i32,
     account_resolver: crate::config::SharedCatPawAccountResolver,
+}
+
+/// State for the native CatPaw Remote Agent channel held by
+/// [`SamplingClient`]. Shares the encrypted transport and account
+/// resolver with `CatPawClientState` but additionally tracks the
+/// upstream `conversationId` so multi-turn sessions can call
+/// `continue_agent` rather than spawning a fresh conversation per turn.
+#[derive(Clone)]
+struct RemoteAgentClientState {
+    client: xai_catpaw::Client,
+    /// Provider label, kept for account-pool correlation on 401 refresh.
+    #[allow(dead_code)]
+    provider: String,
+    model_type_code: i32,
+    git_repo_url: String,
+    git_base_branch: String,
+    git_checkout_branch: String,
+    account_resolver: crate::config::SharedRemoteAgentAccountResolver,
+    conversation_state: crate::config::SharedRemoteAgentConversationState,
 }
 
 impl std::fmt::Debug for SamplingClient {
@@ -712,6 +734,30 @@ impl SamplingClient {
             None => None,
         };
 
+        let remote_agent = match &config.remote_agent {
+            Some(ra) => {
+                let client = xai_catpaw::Client::new().map_err(|e| {
+                    SamplingError::EventStreamError(format!("remote_agent client init failed: {e}"))
+                })?;
+                Some(RemoteAgentClientState {
+                    client,
+                    provider: ra.provider.clone(),
+                    model_type_code: ra.model_type_code,
+                    git_repo_url: ra.git_repo_url.clone(),
+                    git_base_branch: ra.git_base_branch.clone(),
+                    git_checkout_branch: ra.git_checkout_branch.clone(),
+                    account_resolver: ra.account_resolver.clone().unwrap_or_else(|| {
+                        std::sync::Arc::new(crate::config::NoRemoteAgentAccountResolver)
+                    }),
+                    conversation_state: ra
+                        .conversation_state
+                        .clone()
+                        .unwrap_or_else(crate::config::RemoteAgentConversationState::new_shared),
+                })
+            }
+            None => None,
+        };
+
         Ok(Self {
             http,
             default_headers: headers,
@@ -723,6 +769,7 @@ impl SamplingClient {
             endpoint,
             is_workbuddy: config.is_workbuddy,
             catpaw,
+            remote_agent,
         })
     }
 
@@ -2237,6 +2284,184 @@ impl SamplingClient {
         })
     }
 
+    /// Open a CatPaw Remote Agent stream for `request`. If the session has
+    /// not yet created an upstream conversation, this method calls
+    /// `create_agent` first and caches the returned id in
+    /// `RemoteAgentSamplerConfig::conversation_state`. Subsequent calls
+    /// invoke `continue_agent` with the cached id, so multi-turn
+    /// sessions stay on the same upstream conversation.
+    ///
+    /// Tool / hosted-tool / tool-choice / tool-result items are
+    /// rejected: Remote Agent runs the agent loop server-side and
+    /// returns only the final assistant text plus internal tool
+    /// traces (exposed via [`crate::stream::stream_remote_agent`]).
+    pub async fn conversation_stream_remote_agent(
+        &self,
+        mut request: ConversationRequest,
+    ) -> Result<(
+        BoxStream<'static, Result<serde_json::Value>>,
+        Option<ResponseModelMetadata>,
+    )> {
+        self.apply_conversation_defaults(&mut request)?;
+
+        let Some(remote_state) = &self.remote_agent else {
+            return Err(SamplingError::InvalidConfiguration(
+                "RemoteAgent backend requires SamplerConfig.remote_agent",
+            ));
+        };
+
+        if !request.tools.is_empty()
+            || !request.hosted_tools.is_empty()
+            || request.tool_choice.is_some()
+        {
+            return Err(SamplingError::InvalidConfiguration(
+                "Remote Agent does not accept client tools; tools run upstream",
+            ));
+        }
+
+        let (access_token, mis_id) = remote_state.account_resolver.resolve().ok_or_else(|| {
+            SamplingError::InvalidConfiguration("CatPaw 渠道未登录：请先在渠道管理中扫码登录")
+        })?;
+        let headers = xai_catpaw::headers::UpstreamHeaders::new(access_token, mis_id);
+
+        // Pull the latest user prompt from the request items; the
+        // upstream Agent protocol accepts a single prompt per
+        // create/continue call, not a multi-message transcript.
+        let prompt = latest_user_prompt(&request).ok_or_else(|| {
+            SamplingError::InvalidConfiguration("Remote Agent requires a non-empty user prompt")
+        })?;
+
+        let existing_conversation_id = remote_state.conversation_state.get();
+        let conversation_id = if let Some(id) = existing_conversation_id {
+            // Continue an existing conversation.
+            let continue_req = xai_catpaw::agent::AgentContinueRequest::new(
+                &agent_config_ref(remote_state),
+                &xai_catpaw::agent::AgentRepoOverride::default(),
+                id.clone(),
+                remote_state.model_type_code,
+                prompt,
+            );
+            let _value = remote_state
+                .client
+                .continue_agent(&continue_req, &headers)
+                .await
+                .map_err(|e| {
+                    SamplingError::EventStreamError(format!(
+                        "catpaw remote_agent continue failed: {e}"
+                    ))
+                })?;
+            // The continue endpoint returns either an empty 200 or a
+            // metadata payload; the actual stream comes from
+            // connect_agent. Some installed clients skip the continue
+            // call entirely and re-use connect_agent with the cached
+            // conversation_id, so we do the same.
+            id
+        } else {
+            // First turn: create the conversation.
+            let create_req = xai_catpaw::agent::AgentCreateRequest::new(
+                &agent_config_ref(remote_state),
+                &xai_catpaw::agent::AgentRepoOverride::default(),
+                remote_state.model_type_code,
+                prompt,
+            );
+            let resp = remote_state
+                .client
+                .create_agent(&create_req, &headers)
+                .await
+                .map_err(|e| {
+                    SamplingError::EventStreamError(format!(
+                        "catpaw remote_agent create failed: {e}"
+                    ))
+                })?;
+            let id = resp.conversation_id;
+            remote_state.conversation_state.set(id.clone());
+            id
+        };
+
+        let connect_req = xai_catpaw::agent::AgentConnectRequest::new(conversation_id);
+        let response = remote_state
+            .client
+            .connect_agent(&connect_req, &headers)
+            .await
+            .map_err(|e| {
+                SamplingError::EventStreamError(format!("catpaw remote_agent connect failed: {e}"))
+            })?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let bytes = response.bytes().await.unwrap_or_default();
+            let message = format!(
+                "CatPaw Remote Agent connect error {status}: {}",
+                String::from_utf8_lossy(&bytes)
+            );
+            return Err(SamplingError::Api {
+                status,
+                message,
+                model_metadata: None,
+                retry_after_secs: None,
+                should_retry: None,
+            });
+        }
+
+        // The Remote Agent stream is newline-delimited JSON (each line is a
+        // standalone `Value`). Buffer bytes between newlines and emit one
+        // `Value` per complete line so the stream adapter can accumulate
+        // tool traces and assistant deltas.
+        let mut is_first = true;
+        let byte_stream = response.bytes_stream().map(move |result| {
+            result.map(|bytes| {
+                if is_first {
+                    is_first = false;
+                    if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
+                        return bytes.slice(3..);
+                    }
+                }
+                bytes
+            })
+        });
+        use futures_util::StreamExt;
+        let mut buffer: Vec<u8> = Vec::new();
+        let values = byte_stream
+            .flat_map(move |chunk_res| {
+                let mut items: Vec<std::result::Result<serde_json::Value, SamplingError>> =
+                    Vec::new();
+                match chunk_res {
+                    Ok(bytes) => {
+                        buffer.extend_from_slice(&bytes);
+                        while let Some(pos) = buffer.iter().position(|b| *b == b'\n') {
+                            let line: Vec<u8> = buffer.drain(..=pos).collect();
+                            // Strip the trailing '\n'.
+                            let mut trimmed = line;
+                            trimmed.pop();
+                            let stripped = trimmed
+                                .iter()
+                                .position(|b| !b.is_ascii_whitespace())
+                                .map(|p| trimmed[p..].to_vec())
+                                .unwrap_or_default();
+                            if stripped.is_empty() {
+                                continue;
+                            }
+                            match serde_json::from_slice::<serde_json::Value>(&stripped) {
+                                Ok(value) => items.push(Ok(value)),
+                                Err(e) => items.push(Err(SamplingError::StreamError {
+                                    error_type: "remote_agent_decode".into(),
+                                    message: format!("Remote Agent JSON decode error: {e}"),
+                                })),
+                            }
+                        }
+                    }
+                    Err(e) => items.push(Err(SamplingError::StreamError {
+                        error_type: "remote_agent_transport".into(),
+                        message: format!("Remote Agent transport error: {e}"),
+                    })),
+                }
+                futures_util::stream::iter(items)
+            })
+            .boxed();
+
+        Ok((values, None))
+    }
+
     /// Backend-aware streaming call that collects the full response.
     pub async fn conversation_collect(
         &self,
@@ -2272,6 +2497,12 @@ impl SamplingClient {
                 let events = crate::stream::stream_catpaw(raw, meta, request_id, idle_timeout);
                 crate::stream::collect_response(events).await
             }
+            ApiBackend::RemoteAgent => {
+                let (raw, meta) = self.conversation_stream_remote_agent(request).await?;
+                let events =
+                    crate::stream::stream_remote_agent(raw, meta, request_id, idle_timeout);
+                crate::stream::collect_response(events).await
+            }
         };
         result
             .map(|(response, _metrics)| response)
@@ -2285,6 +2516,44 @@ impl SamplingClient {
                 retry_after_secs: info.retry_after_secs,
                 should_retry: None,
             })
+    }
+}
+
+/// Extract the latest user-authored prompt text from a
+/// `ConversationRequest`. The CatPaw Remote Agent protocol accepts a
+/// single string prompt per create/continue call, so multi-turn shell
+/// transcripts must collapse to the most recent user turn.
+fn latest_user_prompt(request: &ConversationRequest) -> Option<String> {
+    use xai_grok_sampling_types::{ContentPart, ConversationItem};
+    for item in request.items.iter().rev() {
+        if let ConversationItem::User(user) = item {
+            let mut out = String::new();
+            for part in &user.content {
+                if let ContentPart::Text { text } = part {
+                    if !out.is_empty() {
+                        out.push('\n');
+                    }
+                    out.push_str(&text);
+                }
+            }
+            if !out.is_empty() {
+                return Some(out);
+            }
+        }
+    }
+    None
+}
+
+/// Build a short-lived `AgentConfig` snapshot for one request from
+/// the long-lived `RemoteAgentClientState`. The snapshot is what the
+/// upstream `AgentCreateRequest::new` / `AgentContinueRequest::new`
+/// helpers consume (they expect a config with the repository fields).
+fn agent_config_ref(state: &RemoteAgentClientState) -> xai_catpaw::agent::AgentConfig {
+    xai_catpaw::agent::AgentConfig {
+        enabled: true,
+        git_repo_url: state.git_repo_url.clone(),
+        git_base_branch: state.git_base_branch.clone(),
+        git_checkout_branch: state.git_checkout_branch.clone(),
     }
 }
 
@@ -2329,6 +2598,7 @@ mod tests {
             user_agent: None,
             is_workbuddy: false,
             catpaw: None,
+            remote_agent: None,
         }
     }
 

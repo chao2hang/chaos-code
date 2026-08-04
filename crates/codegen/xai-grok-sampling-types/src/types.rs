@@ -1020,6 +1020,10 @@ pub enum ApiBackend {
     Messages,
     /// Native CatPaw protocol (encrypted envelope, cumulative SSE).
     CatPaw,
+    /// CatPaw Remote Agent (encrypted envelope, agent SSE stream).
+    /// Targets a specific repository; first-turn creates a
+    /// conversation, subsequent turns continue it.
+    RemoteAgent,
 }
 
 impl ApiBackend {

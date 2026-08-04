@@ -736,6 +736,16 @@ pub(crate) async fn generate_session_compact(
                 acp::Error::internal_error().data("compact unsupported on CatPaw channel"),
             ));
         }
+        ApiBackend::RemoteAgent => {
+            // Same as CatPaw: the Remote Agent protocol does not expose
+            // a wire format compatible with the in-process compaction
+            // path, so surface a deterministic failure rather than
+            // silently dropping the request.
+            return Err(CompactFailure::Deterministic(
+                acp::Error::internal_error()
+                    .data("compact unsupported on CatPaw Remote Agent channel"),
+            ));
+        }
     };
     if output.content.is_empty() {
         Err(CompactFailure::Transient(
@@ -1671,6 +1681,7 @@ mod reasoning_compaction_regression_tests {
 
             is_workbuddy: false,
             catpaw: None,
+            remote_agent: None,
         }
     }
     #[tokio::test]
