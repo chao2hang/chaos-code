@@ -356,20 +356,17 @@ impl std::fmt::Debug for AcpUpdateTracker {
 
 /// Live output rate measured at the tracker level.
 ///
-/// Two views of the rate, each answering a different user question:
+/// `total_tokens` tracks the whole turn, while the displayed sample is
+/// published from completed one-second windows. Streaming transports often
+/// deliver several chunks in a burst; using the interval between two chunks
+/// makes the reported rate jump by orders of magnitude. A one-second bucket
+/// keeps the chip stable and gives the value an intuitive "tokens in the last
+/// measured second" meaning.
 ///
-/// * `total_tokens / elapsed` — **"how much have I produced so far?"**
-///   Used as a sanity check that tokens are being credited at all.
-/// * `smoothed_rate` — **"is the model generating fast right now?"**
-///   Exponentially smoothed over per-chunk intervals (`alpha = 0.3`). This
-///   is what the chip actually displays, because it doesn't decay when
-///   chunks arrive in bursts followed by silence (the user complained
-///   that "0.几 tok/s" lingered long after the burst ended).
-///
-/// `total_tokens` accumulates BPE token counts for chunk text **plus** any
-/// tokens credited via [`AcpUpdateTracker::credit_subagent_tokens`] when
-/// subagent tasks complete — so subagent output contributes to the
-/// parent turn's rate instead of being invisible.
+/// Subagent completions are credited to `total_tokens` too. When the child
+/// reports its own duration-based decode rate, that complete sample is
+/// published directly instead of pretending the parent's idle/delegation time
+/// was decode time.
 #[derive(Debug, Clone, Copy)]
 pub struct LiveStreamingRate {
     /// When the current turn's first chunk landed.
@@ -381,16 +378,14 @@ pub struct LiveStreamingRate {
     /// When the most recent chunk (or subagent credit) landed. `None`
     /// until the first event of the turn.
     pub last_event_at: Option<Instant>,
-    /// Exponentially smoothed per-chunk instantaneous rate
-    /// (`alpha = 0.3`). Initialised from the first sample, then blended
-    /// with subsequent ones — bursts are visible as fast, silence decays
-    /// smoothly toward zero.
+    /// Last completed one-second sample. The field name is retained for source
+    /// compatibility with status rendering and existing diagnostics.
     pub smoothed_rate: f32,
+    /// Start of the currently accumulating one-second sample.
+    pub rate_window_started_at: Instant,
+    /// Tokens received since `rate_window_started_at`.
+    pub rate_window_tokens: u64,
 }
-
-/// Smoothing factor for [`LiveStreamingRate::smoothed_rate`]. Higher = more
-/// reactive to recent samples, lower = smoother but slower to react.
-const RATE_EMA_ALPHA: f32 = 0.3;
 
 impl LiveStreamingRate {
     pub fn new(started_at: Instant) -> Self {
@@ -399,6 +394,8 @@ impl LiveStreamingRate {
             total_tokens: 0,
             last_event_at: None,
             smoothed_rate: 0.0,
+            rate_window_started_at: started_at,
+            rate_window_tokens: 0,
         }
     }
 
@@ -413,36 +410,39 @@ impl LiveStreamingRate {
         self.total_tokens as f32 / elapsed.as_secs_f32()
     }
 
-    /// **Live smoothed rate** — the value the chip actually displays.
+    /// **Per-second rate** — the value the chip displays.
     ///
-    /// Two-stage filter:
-    ///
-    /// 1. If the last event was more than [`RATE_DECAY_SECS`] ago, the
-    ///    model has gone quiet — return 0. This is what the user
-    ///    asked for ("停止后就显示0"). Pure EMA alone doesn't decay
-    ///    during silence (no samples means no updates), so we have to
-    ///    gate the display value off staleness.
-    /// 2. Otherwise return the EMA-blended instantaneous rate.
-    ///
-    /// The EMA itself is computed at event time in `handle_agent_chunk`
-    /// and `credit_subagent_tokens`, so this is a cheap read on the
-    /// render path.
+    /// Tokens are accumulated in a wall-clock one-second bucket and the
+    /// published value changes only when a bucket closes. This avoids dividing
+    /// by tiny inter-chunk intervals while still dropping to zero after the
+    /// stream has been quiet for one second.
     pub fn tokens_per_sec(&self) -> f32 {
         let Some(last) = self.last_event_at else {
             return 0.0;
         };
-        if last.elapsed().as_secs_f32() > RATE_DECAY_SECS {
+        if last.elapsed() > std::time::Duration::from_secs(1) {
             return 0.0;
         }
         self.smoothed_rate
     }
+
+    fn record_window_tokens(&mut self, now: Instant, tokens: u64) {
+        let elapsed = now.duration_since(self.rate_window_started_at);
+        if elapsed >= std::time::Duration::from_secs(1) {
+            let seconds = elapsed.as_secs_f32();
+            self.smoothed_rate = if seconds > 0.0 {
+                self.rate_window_tokens as f32 / seconds
+            } else {
+                0.0
+            };
+            self.rate_window_started_at = now;
+            self.rate_window_tokens = tokens;
+        } else {
+            self.rate_window_tokens = self.rate_window_tokens.saturating_add(tokens);
+        }
+    }
 }
 
-/// Silence threshold for [`LiveStreamingRate::tokens_per_sec`]. After
-/// this many seconds without an event, the live chip shows 0 even if
-/// `smoothed_rate` is still non-zero — otherwise bursts linger as a
-/// stale value long after generation has stopped.
-const RATE_DECAY_SECS: f32 = 1.0;
 /// A tool call that's been started but not yet completed.
 #[derive(Debug)]
 struct PendingTool {
@@ -1042,6 +1042,8 @@ impl AcpUpdateTracker {
                 total_tokens: tokens,
                 last_event_at: Some(now),
                 smoothed_rate: sample_rate.unwrap_or(0.0),
+                rate_window_started_at: now,
+                rate_window_tokens: 0,
             });
             return;
         }
@@ -1049,14 +1051,18 @@ impl AcpUpdateTracker {
             .streaming_rate
             .as_mut()
             .expect("streaming rate seeded above");
-        if let Some(sample_rate) = sample_rate {
-            rate.smoothed_rate = if rate.smoothed_rate > 0.0 {
-                RATE_EMA_ALPHA * sample_rate + (1.0 - RATE_EMA_ALPHA) * rate.smoothed_rate
-            } else {
-                sample_rate
-            };
-        }
+        // A completed child task already supplies a duration-based per-second
+        // rate. Use it until this parent closes its next full accounting window.
         rate.total_tokens = rate.total_tokens.saturating_add(tokens);
+        if let Some(sample_rate) = sample_rate {
+            // This is a complete child-side measurement; do not mix the
+            // parent's delegation wait into its denominator.
+            rate.smoothed_rate = sample_rate;
+            rate.rate_window_started_at = now;
+            rate.rate_window_tokens = 0;
+        } else {
+            rate.record_window_tokens(now, tokens);
+        }
         rate.last_event_at = Some(now);
     }
     /// Finish the current thinking block, passing elapsed time to the entry.
@@ -1144,12 +1150,13 @@ impl AcpUpdateTracker {
         {
             entry.created_at = Some(utc_ms_to_local(ts_ms));
         }
-        // Live tok/s chip: feed the chunk text into the rate's exponential
-        // moving average. On the first chunk we seed `started_at` and
-        // credit that chunk's tokens; on subsequent chunks we accumulate
-        // and blend the instantaneous per-chunk rate into the smoothed
-        // value (`alpha = 0.3`). Skip on replay — historical replay
-        // must not skew the live rate.
+        // Live tok/s chip: accumulate chunk tokens into a wall-clock
+        // one-second window. On the first chunk we seed `started_at` and
+        // credit that chunk's tokens into the opening window; on
+        // subsequent chunks the window accumulates until it closes, at
+        // which point `smoothed_rate` is published as the completed
+        // second's rate. Skip on replay — historical replay must not
+        // skew the live rate.
         if !meta.is_replay {
             let added_tokens = self.count_tokens(&text);
             let now = Instant::now();
@@ -1165,33 +1172,13 @@ impl AcpUpdateTracker {
                         total_tokens: added_tokens,
                         last_event_at: Some(now),
                         smoothed_rate: 0.0,
+                        rate_window_started_at: now,
+                        rate_window_tokens: added_tokens,
                     });
                 }
                 Some(rate) => {
                     rate.total_tokens = rate.total_tokens.saturating_add(added_tokens);
-                    // Instantaneous rate = added tokens / chunk interval.
-                    let instant = match rate.last_event_at {
-                        Some(prev) => {
-                            let dt = now.duration_since(prev).as_secs_f32();
-                            if dt >= 0.001 {
-                                added_tokens as f32 / dt
-                            } else {
-                                rate.smoothed_rate
-                            }
-                        }
-                        None => 0.0,
-                    };
-                    // Blend: smoothed' = α·instant + (1-α)·smoothed.
-                    // First sample after seeding seeds the EMA; later
-                    // samples blend in. Bursts are visible as fast;
-                    // silence decays toward zero (rate already low →
-                    // EMA stays low; we don't get a fake "fast" reading
-                    // from accumulated silence).
-                    rate.smoothed_rate = if rate.last_event_at.is_none() {
-                        instant
-                    } else {
-                        RATE_EMA_ALPHA * instant + (1.0 - RATE_EMA_ALPHA) * rate.smoothed_rate
-                    };
+                    rate.record_window_tokens(now, added_tokens);
                     rate.last_event_at = Some(now);
                 }
             }
@@ -6968,7 +6955,7 @@ mod tests {
         );
         // A single event has no interval, so it must not invent an
         // instantaneous rate. The first chunk still counts toward the turn's
-        // cumulative mean and the next event's EMA sample.
+        // cumulative mean and the next event's rate window.
         std::thread::sleep(Duration::from_millis(20));
         let rate = tracker.streaming_rate().unwrap();
         assert_eq!(
@@ -7045,78 +7032,115 @@ mod tests {
         );
     }
 
-    /// EMA: bursts are visible as fast rates. The chip should reflect
-    /// recent chunk activity (instant rate) rather than a long-run
-    /// cumulative average that gets diluted by silence. The decay gate
-    /// (`RATE_DECAY_SECS = 1.0`) ensures the chip drops to 0 once
-    /// the model has been quiet for > 1s.
+    /// Per-second windows: chunks landing inside the same second accumulate
+    /// in the window and must not publish a rate until the window closes.
+    /// The chip stays stable for a full second instead of bouncing on every
+    /// chunk.
     #[test]
-    fn ema_reflects_burst_not_cumulative() {
+    fn window_holds_rate_until_second_elapses() {
         use std::time::Duration;
         let mut sb = ScrollbackState::new();
         let mut tracker = AcpUpdateTracker::new();
-        // First chunk seeds; smoothed stays 0 because we have no
-        // interval yet.
+        // First chunk seeds; the opening window absorbs its tokens and
+        // `smoothed_rate` stays 0 until the window closes.
         tracker.handle_update(
             agent_chunk("initial chunk to seed the rate"),
             &meta(),
             &mut sb,
         );
         assert_eq!(tracker.streaming_rate().unwrap().smoothed_rate, 0.0);
-        // Two rapid chunks should produce a non-zero smoothed rate
-        // proportional to the burst.
+        // A second chunk 20ms later lands in the same window: it must NOT
+        // publish a rate on its own — that is the old per-chunk jitter.
         std::thread::sleep(Duration::from_millis(20));
         tracker.handle_update(
             agent_chunk("a moderately sized chunk that should tokenize to about ten tokens"),
             &meta(),
             &mut sb,
         );
-        let after_burst = tracker.streaming_rate().unwrap();
-        assert!(
-            after_burst.smoothed_rate > 0.0,
-            "second chunk should produce a non-zero smoothed rate: got {}",
-            after_burst.smoothed_rate
+        assert_eq!(
+            tracker.streaming_rate().unwrap().smoothed_rate,
+            0.0,
+            "second chunk inside the same second must not publish a rate"
         );
-        // The EMA reflects only the *recent* interval; it doesn't have
-        // to beat the cumulative mean (which gets diluted by the seed
-        // chunk's 20ms), but it must not be pinned at zero — that's
-        // the bug we just fixed.
+        // A chunk after the window closes publishes the completed second's
+        // rate: accumulated tokens / elapsed seconds.
+        std::thread::sleep(Duration::from_millis(1100));
+        tracker.handle_update(agent_chunk("next chunk"), &meta(), &mut sb);
+        let after = tracker.streaming_rate().unwrap();
         assert!(
-            after_burst.smoothed_rate > 1.0,
-            "smoothed_rate must reflect the burst, not be stuck at zero: got {}",
-            after_burst.smoothed_rate
+            after.smoothed_rate > 1.0,
+            "closed window must publish a per-second rate: got {}",
+            after.smoothed_rate
         );
     }
 
-    /// Decay gate: after silence > RATE_DECAY_SECS, the live rate
-    /// drops to 0 even though `smoothed_rate` is still non-zero (the
-    /// EMA field doesn't decay on its own; the gate enforces it).
+    /// Decay gate: after silence > 1s, the live rate drops to 0 even though
+    /// the last published window sample is retained (a new burst can pick up
+    /// where it left off).
     #[test]
-    fn ema_decays_to_zero_after_silence() {
-        use std::time::Duration;
-        let mut sb = ScrollbackState::new();
-        let mut tracker = AcpUpdateTracker::new();
-        tracker.handle_update(agent_chunk("burst one"), &meta(), &mut sb);
-        std::thread::sleep(Duration::from_millis(20));
-        tracker.handle_update(agent_chunk("burst two"), &meta(), &mut sb);
-        assert!(tracker.streaming_rate().unwrap().smoothed_rate > 0.0);
-        // Wait past the decay window (1s) without sending more chunks.
-        std::thread::sleep(Duration::from_millis(1100));
-        assert_eq!(
-            tracker.streaming_rate().unwrap().tokens_per_sec(),
-            0.0,
-            "live rate must drop to 0 after silence > RATE_DECAY_SECS"
-        );
-        // But the underlying smoothed_rate (raw EMA value) is preserved
-        // so a new burst can pick up from where it was.
+    fn window_rate_decays_to_zero_after_silence() {
+        use std::time::{Duration, Instant};
+        let now = Instant::now();
+        let mut rate = LiveStreamingRate::new(now);
+        // Open a window with 50 tokens and close it ~1s later.
+        rate.record_window_tokens(now, 50);
+        rate.record_window_tokens(now + Duration::from_millis(1000), 0);
         assert!(
-            tracker.streaming_rate().unwrap().smoothed_rate > 0.0,
+            rate.smoothed_rate > 0.0,
+            "closed window must publish a rate: got {}",
+            rate.smoothed_rate
+        );
+        // Freshly closed: the displayed rate is still live.
+        rate.last_event_at = Some(Instant::now());
+        assert!(rate.tokens_per_sec() > 0.0);
+        // After a quiet second the displayed rate drops to 0...
+        rate.last_event_at = Some(Instant::now() - Duration::from_secs(2));
+        assert_eq!(
+            rate.tokens_per_sec(),
+            0.0,
+            "live rate must drop to 0 after silence > 1s"
+        );
+        // ...but the published window sample is preserved so a new burst
+        // can continue from it.
+        assert!(
+            rate.smoothed_rate > 0.0,
             "smoothed_rate must NOT decay — only the displayed rate does"
         );
     }
 
-    /// `credit_subagent_tokens` adds to `total_tokens` and blends the child's
-    /// own output-rate sample into the parent EMA.
+    /// Direct window-accounting unit test: tokens accumulate inside a window
+    /// and the published rate divides by the closed window's elapsed seconds.
+    #[test]
+    fn window_accumulates_tokens_then_publishes_rate() {
+        use std::time::{Duration, Instant};
+        let start = Instant::now();
+        let mut rate = LiveStreamingRate::new(start);
+        rate.record_window_tokens(start, 20);
+        rate.record_window_tokens(start + Duration::from_millis(100), 30);
+        rate.record_window_tokens(start + Duration::from_millis(200), 50);
+        // All three land inside the first second → 100 tokens buffered.
+        assert_eq!(rate.rate_window_tokens, 100);
+        assert_eq!(
+            rate.smoothed_rate, 0.0,
+            "window not closed yet, no rate published"
+        );
+        // Closing the window at ~1.2s: 100 tokens / 1.2s ≈ 83 tok/s.
+        rate.record_window_tokens(start + Duration::from_millis(1200), 0);
+        assert!(
+            rate.smoothed_rate > 70.0 && rate.smoothed_rate < 90.0,
+            "published rate should be ~83 tok/s, got {}",
+            rate.smoothed_rate
+        );
+        // The next window starts fresh at the close instant.
+        assert_eq!(
+            rate.rate_window_started_at,
+            start + Duration::from_millis(1200)
+        );
+        assert_eq!(rate.rate_window_tokens, 0);
+    }
+
+    /// `credit_subagent_tokens` adds to `total_tokens` and publishes the
+    /// child's own output-rate sample as the live rate.
     #[test]
     fn credit_subagent_tokens_blends_child_rate() {
         use std::time::Duration;
@@ -7134,7 +7158,7 @@ mod tests {
         assert_eq!(after.total_tokens, before_total + 10_000);
         assert!(
             after.smoothed_rate > before,
-            "child decode rate should raise the parent EMA: before={}, after={}",
+            "child decode rate should become the live rate: before={}, after={}",
             before,
             after.smoothed_rate
         );
