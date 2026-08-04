@@ -149,6 +149,9 @@ pub struct ProviderPreset {
     pub base_url: &'static str,
     pub auth_scheme: &'static str,
     pub api_backend: &'static str,
+    /// 渠道 kind：`catpaw` 表示原生 CatPaw 渠道（扫码登录，不填 Key）。
+    /// 普通预设为空字符串。
+    pub kind: &'static str,
 }
 
 /// 内置预设渠道列表。
@@ -159,6 +162,7 @@ pub const PROVIDER_PRESETS: &[ProviderPreset] = &[
         base_url: "https://api.openai.com/v1",
         auth_scheme: "bearer",
         api_backend: "chat_completions",
+        kind: "",
     },
     ProviderPreset {
         name: "anthropic",
@@ -166,6 +170,7 @@ pub const PROVIDER_PRESETS: &[ProviderPreset] = &[
         base_url: "https://api.anthropic.com",
         auth_scheme: "x_api_key",
         api_backend: "messages",
+        kind: "",
     },
     ProviderPreset {
         name: "deepseek",
@@ -173,6 +178,7 @@ pub const PROVIDER_PRESETS: &[ProviderPreset] = &[
         base_url: "https://api.deepseek.com/v1",
         auth_scheme: "bearer",
         api_backend: "chat_completions",
+        kind: "",
     },
     ProviderPreset {
         name: "xai",
@@ -180,6 +186,15 @@ pub const PROVIDER_PRESETS: &[ProviderPreset] = &[
         base_url: "https://api.x.ai/v1",
         auth_scheme: "bearer",
         api_backend: "chat_completions",
+        kind: "",
+    },
+    ProviderPreset {
+        name: "catpaw",
+        display: "CatPaw (美团)",
+        base_url: "",
+        auth_scheme: "bearer",
+        api_backend: "chat_completions",
+        kind: "catpaw",
     },
 ];
 

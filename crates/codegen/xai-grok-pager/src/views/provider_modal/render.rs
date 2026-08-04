@@ -278,6 +278,11 @@ fn render_add_form(buf: &mut Buffer, area: Rect, state: &ProviderModalState, the
                 break;
             }
             let selected = i == state.selected;
+            let sub = if p.kind == "catpaw" {
+                "  手机扫码登录".to_string()
+            } else {
+                format!("  ({})", p.base_url)
+            };
             paint_list_row(
                 buf,
                 area,
@@ -289,10 +294,7 @@ fn render_add_form(buf: &mut Buffer, area: Rect, state: &ProviderModalState, the
                         format!("  {}", p.display),
                         Style::default().fg(theme.text_primary),
                     ),
-                    Span::styled(
-                        format!("  ({})", p.base_url),
-                        Style::default().fg(theme.gray_dim),
-                    ),
+                    Span::styled(sub, Style::default().fg(theme.gray_dim)),
                 ],
             );
             y += 1;
