@@ -257,7 +257,16 @@ impl SessionActor {
         let usage_percent = xai_token_estimation::usage_percentage_u8(tokens_used, cw);
         self.signals_handle().update_context_usage(tokens_used, cw);
 
-        if let Some(err) = compaction_error {
+        self.send_xai_notification(
+            crate::extensions::notification::SessionUpdate::ContextUsageUpdated {
+                tokens_used,
+                context_window: cw,
+            },
+        )
+        .await;
+
+        let compaction_error = compaction_error.map(|err| err.to_string());
+        if let Some(ref err) = compaction_error {
             tracing::info!(
                 session_id = %self.session_info.id.0,
                 previous_tokens,
@@ -265,15 +274,9 @@ impl SessionActor {
                 tokens_used,
                 usage_percent,
                 compacted,
-                "SetContextWindow applied (compaction failed; caller will see error)"
+                error = %err,
+                "SetContextWindow applied with partial success"
             );
-            // Surface the compaction failure so the caller can distinguish
-            // "no compact needed" from "compact attempted and failed". The
-            // window update itself succeeded, so we keep the success shape
-            // but include a structured error code via the message.
-            return Err(acp::Error::internal_error().data(format!(
-                "Context window updated to {cw} tokens; immediate compaction failed: {err}"
-            )));
         }
 
         tracing::info!(
@@ -292,6 +295,7 @@ impl SessionActor {
             tokens_used,
             usage_percent,
             compacted,
+            compaction_error,
         })
     }
 

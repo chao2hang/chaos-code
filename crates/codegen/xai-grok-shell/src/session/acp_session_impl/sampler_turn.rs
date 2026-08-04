@@ -1505,6 +1505,7 @@ impl SessionActor {
         &self,
         response: &ConversationResponse,
         api_duration_ms: Option<u64>,
+        decode_duration_ms: Option<u64>,
     ) {
         if let Some(ref u) = response.usage {
             self.tool_context
@@ -1516,7 +1517,7 @@ impl SessionActor {
                 response.assistant().and_then(|a| a.model_id.clone()),
                 u.clone(),
                 api_duration_ms,
-                None,
+                decode_duration_ms,
                 response.cost_usd_ticks,
             );
             self.signals_handle()

@@ -2046,6 +2046,8 @@ impl SessionActor {
                 let span = tracing::Span::current();
                 span.record("post_tokens", tokens_after as i64);
                 span.record("success", true);
+                self.signals_handle()
+                    .update_context_usage(tokens_after, trigger_info.context_window);
                 self.send_xai_notification(XaiSessionUpdate::AutoCompactCompleted {
                     tokens_before: Some(trigger_info.tokens_used),
                     tokens_after,
@@ -3893,6 +3895,7 @@ mod set_context_window_tests {
                 assert_eq!(result.tokens, 64_000);
                 assert_eq!(result.previous_tokens, 200_000);
                 assert!(!result.compacted);
+                assert!(result.compaction_error.is_none());
                 assert_eq!(
                     actor.compaction.context_window_override.get(),
                     Some(new_cw),

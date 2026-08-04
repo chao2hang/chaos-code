@@ -2323,7 +2323,16 @@ impl SessionActor {
                     },
                 );
             }
-            self.record_response_token_usage(&response, Some(model_duration_ms));
+            let decode_duration_ms = latency
+                .time_to_first_token_ms
+                .filter(|ttft| model_duration_ms > *ttft)
+                .map(|ttft| model_duration_ms - ttft)
+                .or(Some(model_duration_ms));
+            self.record_response_token_usage(
+                &response,
+                Some(model_duration_ms),
+                decode_duration_ms,
+            );
             if let Some(pt) = prompt_timing.take() {
                 let mcp_count = self.mcp_state.lock().await.configs.len() as u32;
                 let mcp_tools = self

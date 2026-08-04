@@ -2228,6 +2228,7 @@ pub struct SetContextWindowOutcome {
     pub tokens_used: u64,
     pub usage_percent: u8,
     pub compacted: bool,
+    pub compaction_error: Option<String>,
 }
 
 /// Result from a completed async [`Effect`].

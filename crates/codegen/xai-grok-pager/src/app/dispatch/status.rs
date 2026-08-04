@@ -317,6 +317,8 @@ pub(super) fn handle_set_context_window_complete(
             );
             if outcome.compacted {
                 msg.push_str(" · 已压缩对话以适配新窗口");
+            } else if let Some(error) = outcome.compaction_error {
+                msg.push_str(&format!(" · 窗口已生效，但压缩失败: {error}"));
             } else if outcome.tokens < outcome.previous_tokens
                 && outcome.tokens_used > outcome.tokens * 85 / 100
             {
