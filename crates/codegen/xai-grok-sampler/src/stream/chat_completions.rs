@@ -27,12 +27,12 @@ use crate::types::RequestId;
 /// consume past the terminal event (the implementation `return`s after
 /// yielding it).
 ///
-/// `idle_timeout` covers two cases:
-/// 1. The transport stops yielding chunks at all (`tokio::time::timeout`).
-/// 2. The transport keeps yielding empty / keepalive chunks but no
-///    meaningful content (separate `last_content_chunk_at` timer).
+/// `idle_timeout` is measured from the last meaningful output: a channel
+/// token, tool-call delta, or finish frame. One deadline therefore covers
+/// both a stalled transport and a transport that keeps yielding empty /
+/// parser-buffered chunks without producing output.
 ///
-/// Both produce `SamplingEvent::Failed { kind: IdleTimeout }`.
+/// Either case produces `SamplingEvent::Failed { kind: IdleTimeout }`.
 pub fn stream_chat_completions<'a>(
     raw_stream: BoxStream<'a, Result<ChatCompletionChunk, SamplingError>>,
     model_metadata: Option<ResponseModelMetadata>,
@@ -90,14 +90,12 @@ pub fn stream_chat_completions<'a>(
         // downstream can detect lost-streaming-events scenarios.
         let mut message_chunk_count: u64 = 0;
 
-        // Content-aware idle timer: the outer
-        // `tokio::time::timeout(idle_timeout, stream.next())` already
-        // catches "transport stops yielding chunks". This second timer
-        // catches the more subtle case where the model keeps emitting
-        // keepalive / empty-delta SSE events that satisfy the outer
-        // timer but make no real progress -- some inference engines
-        // do exactly that.
-        let mut last_content_chunk_at = Instant::now();
+        // Content-aware idle deadline. It advances only after this
+        // transform emits real output (a channel token or structured tool /
+        // finish progress), not merely when the transport yields a raw chunk.
+        // In particular, a partial inline-think delimiter held by the parser
+        // must not postpone the deadline before any token reaches consumers.
+        let mut last_output_at = tokio::time::Instant::now();
 
         // State machine for inline `<think>...</think>` extraction,
         // constructed only when the flag is on so the parser never
@@ -106,7 +104,8 @@ pub fn stream_chat_completions<'a>(
 
         let mut stream = raw_stream;
         loop {
-            let next = match tokio::time::timeout(idle_timeout, stream.next()).await {
+            let idle_remaining = idle_timeout.saturating_sub(last_output_at.elapsed());
+            let next = match tokio::time::timeout(idle_remaining, stream.next()).await {
                 Ok(Some(next)) => next,
                 Ok(None) => break, // stream ended normally
                 Err(_elapsed) => {
@@ -151,15 +150,13 @@ pub fn stream_chat_completions<'a>(
                 usage = Some(u.into());
             }
 
-            // Track whether this chunk carried meaningful content.
-            // Set inside the choices loop and checked at the end.
-            let mut chunk_has_content = false;
-
             for choice in chunk.choices.into_iter() {
                 first_choice_seen = true;
                 if let Some(fr) = choice.finish_reason {
                     finish_reason = Some(fr.into());
-                    chunk_has_content = true;
+                    // A terminal model frame is structured progress even
+                    // though it does not carry a channel token.
+                    last_output_at = tokio::time::Instant::now();
                 }
 
                 let delta = choice.delta;
@@ -167,21 +164,24 @@ pub fn stream_chat_completions<'a>(
                 if let Some(text) = delta.content
                     && !text.is_empty()
                 {
-                    if !first_token_emitted {
-                        first_token_emitted = true;
-                        yield SamplingEvent::FirstToken {
-                            request_id: request_id.clone(),
-                        };
-                    }
-                    chunk_has_content = true;
-                    chunk_timestamps.push(Instant::now());
-
                     if let Some(parser) = think_parser.as_mut() {
                         // Split the chunk on inline think tags; each
                         // emitted piece goes to its appropriate channel.
                         // The parser persists across chunks so a tag
                         // straddling two feeds is still recognized.
+                        let mut content_emitted = false;
                         for (channel, piece) in parser.feed(&text) {
+                            if !content_emitted {
+                                content_emitted = true;
+                                chunk_timestamps.push(Instant::now());
+                            }
+                            if !first_token_emitted {
+                                first_token_emitted = true;
+                                yield SamplingEvent::FirstToken {
+                                    request_id: request_id.clone(),
+                                };
+                            }
+                            last_output_at = tokio::time::Instant::now();
                             chunk_index += 1;
                             match channel {
                                 SamplingChannel::Text => {
@@ -200,6 +200,14 @@ pub fn stream_chat_completions<'a>(
                             };
                         }
                     } else {
+                        if !first_token_emitted {
+                            first_token_emitted = true;
+                            yield SamplingEvent::FirstToken {
+                                request_id: request_id.clone(),
+                            };
+                        }
+                        last_output_at = tokio::time::Instant::now();
+                        chunk_timestamps.push(Instant::now());
                         chunk_index += 1;
                         message_chunk_count += 1;
                         content_acc.push_str(&text);
@@ -221,7 +229,7 @@ pub fn stream_chat_completions<'a>(
                             request_id: request_id.clone(),
                         };
                     }
-                    chunk_has_content = true;
+                    last_output_at = tokio::time::Instant::now();
                     chunk_index += 1;
                     reasoning_acc.push_str(&thought);
                     yield SamplingEvent::ChannelToken {
@@ -233,7 +241,9 @@ pub fn stream_chat_completions<'a>(
                 }
 
                 for tc_delta in delta.tool_calls.into_iter() {
-                    chunk_has_content = true;
+                    // Tool-call deltas are structured output progress even
+                    // though they are not channel tokens.
+                    last_output_at = tokio::time::Instant::now();
 
                     let entry = tool_call_acc
                         .entry(tc_delta.index)
@@ -281,9 +291,7 @@ pub fn stream_chat_completions<'a>(
                 }
             }
 
-            if chunk_has_content {
-                last_content_chunk_at = Instant::now();
-            } else if last_content_chunk_at.elapsed() > idle_timeout {
+            if last_output_at.elapsed() >= idle_timeout {
                 let err = SamplingError::IdleTimeout {
                     elapsed_secs: idle_timeout.as_secs(),
                 };
@@ -339,6 +347,12 @@ pub fn stream_chat_completions<'a>(
         if let Some(parser) = think_parser.as_mut()
             && let Some((channel, piece)) = parser.flush()
         {
+            if !first_token_emitted {
+                yield SamplingEvent::FirstToken {
+                    request_id: request_id.clone(),
+                };
+            }
+            chunk_timestamps.push(Instant::now());
             chunk_index += 1;
             match channel {
                 SamplingChannel::Text => {
@@ -569,6 +583,16 @@ mod tests {
         }])
     }
 
+    fn reasoning_chunk(text: &str) -> ChatCompletionChunk {
+        make_chunk(vec![ChatChunkDelta {
+            role: Some(Role::Assistant),
+            content: None,
+            reasoning_content: Some(text.to_string()),
+            tool_calls: vec![],
+            tool_call_id: None,
+        }])
+    }
+
     fn final_chunk(reason: FinishReason) -> ChatCompletionChunk {
         let mut chunk = make_chunk(vec![ChatChunkDelta::default()]);
         chunk.choices[0].finish_reason = Some(reason);
@@ -654,17 +678,8 @@ mod tests {
 
     #[tokio::test]
     async fn reasoning_chunk_emits_reasoning_channel_and_first_token_once() {
-        let mut reasoning_chunk = make_chunk(vec![ChatChunkDelta {
-            role: Some(Role::Assistant),
-            content: None,
-            reasoning_content: Some("thinking...".into()),
-            tool_calls: vec![],
-            tool_call_id: None,
-        }]);
-        reasoning_chunk.choices[0].finish_reason = None;
-
         let chunks: Vec<Result<ChatCompletionChunk, SamplingError>> = vec![
-            Ok(reasoning_chunk),
+            Ok(reasoning_chunk("thinking...")),
             Ok(text_chunk("done")),
             Ok(final_chunk(FinishReason::Stop)),
         ];
@@ -1402,6 +1417,52 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn stream_native_and_inline_reasoning_merge_into_one_sibling() {
+        let chunks: Vec<Result<ChatCompletionChunk, SamplingError>> = vec![
+            Ok(reasoning_chunk("native;")),
+            Ok(text_chunk("<think>inline</think>answer")),
+            Ok(final_chunk(FinishReason::Stop)),
+        ];
+        let events = collect(stream_chat_completions(
+            stream::iter(chunks).boxed(),
+            None,
+            rid(),
+            Duration::from_secs(60),
+            true,
+        ))
+        .await;
+
+        assert_eq!(
+            collect_channels(&events),
+            vec![
+                (SamplingChannel::Reasoning, "native;".to_string()),
+                (SamplingChannel::Reasoning, "inline".to_string()),
+                (SamplingChannel::Text, "answer".to_string()),
+            ]
+        );
+        match events.last().unwrap() {
+            SamplingEvent::Completed { response, .. } => {
+                assert_eq!(response.items.len(), 2, "expected one sibling per channel");
+                let reasoning: Vec<_> = response.reasoning_items().collect();
+                assert_eq!(reasoning.len(), 1);
+                assert_eq!(
+                    xai_grok_sampling_types::reasoning_item_text(reasoning[0]),
+                    "native;inline"
+                );
+                assert_eq!(
+                    response
+                        .assistant()
+                        .expect("assistant sibling")
+                        .content
+                        .as_ref(),
+                    "answer"
+                );
+            }
+            other => panic!("expected Completed, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
     async fn stream_extract_inline_thinking_handles_split_open_tag() {
         // Split the chunk so the closing `>` of `<think>` lands in the
         // second chunk — exercises the partial-buffer path. The body
@@ -1455,6 +1516,139 @@ mod tests {
             channels,
             vec![(SamplingChannel::Reasoning, "partial reasoning".to_string())]
         );
+        match events.last().unwrap() {
+            SamplingEvent::Completed { response, .. } => {
+                assert_eq!(response.assistant().unwrap().content.as_ref(), "");
+                assert_eq!(
+                    xai_grok_sampling_types::reasoning_item_text(
+                        response.reasoning_items().next().unwrap()
+                    ),
+                    "partial reasoning"
+                );
+            }
+            other => panic!("expected Completed, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn stream_extract_inline_thinking_partial_open_tag_at_eof_is_text() {
+        // A partial opening delimiter outside a thinking block is literal
+        // text at EOF, and its flush must produce the first actual token.
+        let events = collect(stream_chat_completions(
+            stream::iter(split_text("<thi")).boxed(),
+            None,
+            rid(),
+            Duration::from_secs(60),
+            true,
+        ))
+        .await;
+        assert_eq!(
+            collect_channels(&events),
+            vec![(SamplingChannel::Text, "<thi".to_string())]
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(event, SamplingEvent::FirstToken { .. }))
+                .count(),
+            1
+        );
+        let response = match events.last().unwrap() {
+            SamplingEvent::Completed { response, .. } => response,
+            other => panic!("expected Completed, got {other:?}"),
+        };
+        assert!(response.reasoning_items().next().is_none());
+        assert_eq!(response.assistant().unwrap().content.as_ref(), "<thi");
+    }
+
+    #[tokio::test]
+    async fn stream_extract_inline_thinking_partial_close_at_eof_stays_reasoning() {
+        let events = collect(stream_chat_completions(
+            stream::iter(split_text("<think>reason</thin")).boxed(),
+            None,
+            rid(),
+            Duration::from_secs(60),
+            true,
+        ))
+        .await;
+        assert_eq!(
+            collect_channels(&events),
+            vec![
+                (SamplingChannel::Reasoning, "reason".to_string()),
+                (SamplingChannel::Reasoning, "</thin".to_string()),
+            ]
+        );
+        let response = match events.last().unwrap() {
+            SamplingEvent::Completed { response, .. } => response,
+            other => panic!("expected Completed, got {other:?}"),
+        };
+        assert_eq!(response.assistant().unwrap().content.as_ref(), "");
+        assert_eq!(
+            xai_grok_sampling_types::reasoning_item_text(
+                response.reasoning_items().next().unwrap()
+            ),
+            "reason</thin"
+        );
+    }
+
+    #[tokio::test]
+    async fn stream_extract_inline_thinking_tag_only_emits_no_first_token() {
+        // Complete tags with an empty body do not create a ChannelToken;
+        // FirstToken must not be emitted for the raw delimiters themselves.
+        let events = collect(stream_chat_completions(
+            stream::iter(split_text("<think></think>")).boxed(),
+            None,
+            rid(),
+            Duration::from_secs(60),
+            true,
+        ))
+        .await;
+        assert!(collect_channels(&events).is_empty());
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, SamplingEvent::FirstToken { .. }))
+        );
+        let response = match events.last().unwrap() {
+            SamplingEvent::Completed { response, .. } => response,
+            other => panic!("expected Completed, got {other:?}"),
+        };
+        assert!(response.reasoning_items().next().is_none());
+        assert_eq!(response.assistant().unwrap().content.as_ref(), "");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn stream_extract_inline_thinking_buffered_chunks_do_not_reset_idle_timer() {
+        // These chunks keep extending a partial opening tag, but no channel
+        // token is emitted. The second delay crosses the 100ms deadline;
+        // keepalive-like parser input must not keep the request alive.
+        let raw = async_stream::stream! {
+            yield Ok(text_chunk("<thi"));
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            yield Ok(text_chunk("nk"));
+            tokio::time::sleep(Duration::from_millis(60)).await;
+            yield Ok(final_chunk(FinishReason::Stop));
+        }
+        .boxed();
+        let events = collect(stream_chat_completions(
+            raw,
+            None,
+            rid(),
+            Duration::from_millis(100),
+            true,
+        ))
+        .await;
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, SamplingEvent::Failed { error, .. } if error.kind == crate::events::SamplingErrorKind::IdleTimeout))
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, SamplingEvent::Completed { .. }))
+        );
+        assert!(collect_channels(&events).is_empty());
     }
 
     #[tokio::test]
