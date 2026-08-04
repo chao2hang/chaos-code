@@ -167,27 +167,34 @@ pub(crate) mod hydrate {
         dir: &Path,
         messages: &[LoadedMessage],
     ) -> Result<(), BackendError> {
-        use std::io::Write;
-
         let path = dir.join(UPDATES_FILE);
-        let file = std::fs::File::create(&path).map_err(|e| io_err(&path, e))?;
-        let mut w = std::io::BufWriter::new(file);
+        let mut temp = tempfile::NamedTempFile::new_in(dir).map_err(|e| io_err(&path, e))?;
+        write_updates_to(&mut temp, messages).map_err(|e| io_err(&path, e))?;
+        temp.as_file_mut()
+            .sync_all()
+            .map_err(|e| io_err(&path, e))?;
+        temp.persist(&path).map_err(|e| io_err(&path, e.error))?;
+        Ok(())
+    }
 
+    pub(super) fn write_updates_to(
+        writer: &mut impl std::io::Write,
+        messages: &[LoadedMessage],
+    ) -> std::io::Result<()> {
         for msg in messages {
             let parsed = match serde_json::from_str::<serde_json::Value>(&msg.content) {
-                Ok(v) => v,
+                Ok(value) => value,
                 Err(_) => continue,
             };
             if !is_session_update(&parsed) {
                 continue;
             }
-            if let Some(line) = to_envelope_line(&parsed) {
-                let _ = w.write_all(line.as_bytes());
-                let _ = w.write_all(b"\n");
+            if let Some(line) = to_envelope_line(&parsed, msg.timestamp.as_deref()) {
+                writer.write_all(line.as_bytes())?;
+                writer.write_all(b"\n")?;
             }
         }
-
-        w.flush().map_err(|e| io_err(&path, e))
+        writer.flush()
     }
 
     fn write_remote_origin_marker(dir: &Path) {
@@ -207,12 +214,19 @@ pub(crate) mod hydrate {
             .is_some_and(|m| REPLAYABLE_METHODS.contains(&m))
     }
 
-    fn to_envelope_line(json_rpc: &serde_json::Value) -> Option<String> {
+    fn to_envelope_line(
+        json_rpc: &serde_json::Value,
+        remote_timestamp: Option<&str>,
+    ) -> Option<String> {
         let method = json_rpc.get("method").and_then(|v| v.as_str())?;
         let params = json_rpc.get("params").cloned().unwrap_or_default();
+        let timestamp = remote_timestamp
+            .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
+            .and_then(|value| u64::try_from(value.timestamp()).ok())
+            .unwrap_or(0);
 
         serde_json::to_string(&serde_json::json!({
-            "timestamp": 0u64,
+            "timestamp": timestamp,
             "method": method,
             "params": params,
         }))
@@ -233,6 +247,73 @@ pub(crate) mod hydrate {
 #[cfg(test)]
 mod tests {
     use crate::remote::client::LoadedMessage;
+
+    #[test]
+    fn write_updates_propagates_write_errors() {
+        struct FailingWriter {
+            remaining: usize,
+        }
+
+        impl std::io::Write for FailingWriter {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                if self.remaining == 0 {
+                    return Err(std::io::Error::other("injected write failure"));
+                }
+                let written = bytes.len().min(self.remaining);
+                self.remaining -= written;
+                Ok(written)
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let messages = vec![LoadedMessage {
+            id: "1".into(),
+            content: r#"{"method":"session/update","params":{"update":"hello"}}"#.into(),
+            timestamp: None,
+        }];
+        let error =
+            super::hydrate::write_updates_to(&mut FailingWriter { remaining: 5 }, &messages)
+                .unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::Other);
+    }
+
+    #[test]
+    fn hydrate_replaces_updates_atomically_and_cleans_temp_file() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().join("updates.jsonl");
+        std::fs::write(&path, "old contents\n").unwrap();
+        let messages = vec![LoadedMessage {
+            id: "1".into(),
+            content: r#"{"method":"session/update","params":{"update":"new"}}"#.into(),
+            timestamp: None,
+        }];
+
+        super::hydrate::write_updates(tmp.path(), &messages).unwrap();
+
+        let content = std::fs::read_to_string(path).unwrap();
+        assert!(content.contains(r#""update":"new""#));
+        assert!(!content.contains("old contents"));
+        assert_eq!(std::fs::read_dir(tmp.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn hydrate_uses_remote_message_timestamp_when_available() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let messages = vec![LoadedMessage {
+            id: "1".into(),
+            content: r#"{"method":"session/update","params":{}}"#.into(),
+            timestamp: Some("2026-08-04T12:34:56.789Z".into()),
+        }];
+
+        super::hydrate::write_updates(tmp.path(), &messages).unwrap();
+
+        let content = std::fs::read_to_string(tmp.path().join("updates.jsonl")).unwrap();
+        let value: serde_json::Value = serde_json::from_str(content.trim()).unwrap();
+        assert_eq!(value["timestamp"], 1_785_846_896u64);
+    }
 
     #[test]
     fn hydrate_writes_valid_updates_jsonl() {
