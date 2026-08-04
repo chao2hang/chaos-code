@@ -145,6 +145,14 @@ pub(crate) fn provider_field(
         .map(|s| s.to_string())
 }
 
+/// 该渠道是否为原生 CatPaw 渠道（`kind = "catpaw"`）。
+pub(crate) fn provider_is_catpaw(provider: &str) -> bool {
+    match load_config() {
+        Ok(doc) => provider_field(&doc, provider, "kind").as_deref() == Some("catpaw"),
+        Err(_) => false,
+    }
+}
+
 /// 渠道管理命令
 pub struct ProviderCommand;
 
@@ -315,6 +323,25 @@ pub(crate) fn add_provider(
     // auth_scheme + api_backend (not provider name — custom proxies qualify).
     sync_anthropic_version_header(provider_table, auth_scheme, api_backend);
 
+    save_config(&doc)
+}
+
+/// 创建原生 CatPaw 渠道（`kind = "catpaw"`）。不写 API Key——凭据只存在于
+/// 加密账号池，绝不落入 config.toml。
+pub(crate) fn add_catpaw_provider(name: &str) -> Result<(), String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("渠道名称不能为空".into());
+    }
+    let mut doc = load_config()?;
+    if !doc.contains_key("model_providers") {
+        doc["model_providers"] = toml_edit::table();
+    }
+    let provider_table = &mut doc["model_providers"][name];
+    *provider_table = toml_edit::table();
+    let provider_table = provider_table.as_table_mut().unwrap();
+    provider_table["kind"] = toml_edit::value("catpaw");
+    provider_table["mode"] = toml_edit::value("chat");
     save_config(&doc)
 }
 

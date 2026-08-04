@@ -288,6 +288,18 @@ fn handle_add(state: &mut ProviderModalState, key: &KeyEvent) -> ProviderKeyOutc
             FormStep::Preset => {
                 if state.selected < PROVIDER_PRESETS.len() {
                     let p = &PROVIDER_PRESETS[state.selected];
+                    if p.kind == "catpaw" {
+                        // CatPaw 预设：写入渠道配置后直接进入扫码登录。
+                        match crate::slash::commands::provider::add_catpaw_provider(p.name) {
+                            Ok(()) => {
+                                state.go_catpaw_login(p.name.to_string());
+                            }
+                            Err(e) => {
+                                state.error = Some(e);
+                            }
+                        }
+                        return ProviderKeyOutcome::Changed;
+                    }
                     state.name = p.name.to_string();
                     state.base_url = p.base_url.to_string();
                     state.auth_scheme_idx = AUTH_SCHEMES
