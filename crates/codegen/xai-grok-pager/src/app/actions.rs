@@ -604,6 +604,17 @@ pub enum Action {
     OpenProviderModal {
         mode: crate::views::provider_modal::ProviderModalMode,
     },
+    /// Start a CatPaw QR login for a `kind = "catpaw"` provider. Maps to
+    /// [`Effect::CatPawStartQrLogin`].
+    CatPawStartQrLogin {
+        provider: String,
+    },
+    /// Poll a CatPaw QR login (3s cadence, single-flight). Maps to
+    /// [`Effect::CatPawPollQrLogin`].
+    CatPawPollQrLogin {
+        provider: String,
+        code: String,
+    },
     /// Open the request-client profile picker (`/client`).
     OpenClientModal {
         mode: crate::views::client_modal::ClientModalMode,
@@ -2190,6 +2201,13 @@ pub enum Effect {
         target: DoctorFixTarget,
         plan: Box<crate::diagnostics::FixPlan>,
     },
+    /// Start a CatPaw QR login: fetch the QR start payload (code + image URL)
+    /// off the event-loop thread. The result lands in
+    /// [`TaskResult::CatPawQrStarted`].
+    CatPawStartQrLogin { provider: String },
+    /// Poll a CatPaw QR login state (3s cadence, single-flight). The result
+    /// lands in [`TaskResult::CatPawQrPolled`].
+    CatPawPollQrLogin { provider: String, code: String },
 }
 
 /// Outcome of planning a doctor automatic fix.
@@ -2967,6 +2985,23 @@ pub enum TaskResult {
     DoctorFixApplied {
         target: DoctorFixTarget,
         result: Result<crate::diagnostics::FixOutcome, String>,
+    },
+    /// CatPaw QR login started — QR code and expiry ready for display and
+    /// the 3s polling loop.
+    CatPawQrStarted {
+        provider: String,
+        qr: xai_grok_shell::catpaw::QrStart,
+    },
+    /// CatPaw QR login polled — a state transition (pending/scanned/ok/
+    /// expired) for the login UI.
+    CatPawQrPolled {
+        provider: String,
+        poll: xai_grok_shell::catpaw::QrPoll,
+    },
+    /// CatPaw QR login or poll failed (network/parse/protocol error).
+    CatPawLoginFailed {
+        provider: String,
+        error: String,
     },
 }
 #[cfg(test)]

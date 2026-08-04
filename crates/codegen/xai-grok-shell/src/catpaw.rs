@@ -12,13 +12,23 @@
 
 use std::path::PathBuf;
 
-use xai_catpaw::store::{Account, AccountStore};
-use xai_catpaw::tokens::TokenSet;
 use xai_catpaw::Result;
+use xai_catpaw::store::{Account, AccountStore};
+
+pub use xai_catpaw::Client as CatPawClient;
+/// Re-export the CatPaw client and QR wire types so the TUI/sampling layers
+/// can drive login without depending on the core crate directly.
+pub use xai_catpaw::qr::{QrPoll, QrStart, QrStatus};
+pub use xai_catpaw::tokens::TokenSet;
 
 /// Directory holding CatPaw account state: `<grok_home>/catpaw/`.
 pub fn catpaw_home() -> PathBuf {
     xai_grok_shell_base::util::grok_home::grok_home().join("catpaw")
+}
+
+/// A fresh CatPaw client for QR login / refresh / model / chat calls.
+pub fn login_client() -> Result<CatPawClient> {
+    CatPawClient::new()
 }
 
 /// Open (creating on first use) the encrypted account store and its

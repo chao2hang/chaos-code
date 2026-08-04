@@ -1902,6 +1902,42 @@ pub(crate) fn execute(
                 TaskResult::DoctorFixApplied { target, result }
             });
         }
+        Effect::CatPawStartQrLogin { provider } => {
+            tasks.spawn(async move {
+                let outcome = match xai_grok_shell::catpaw::login_client() {
+                    Ok(client) => match client.start_qr_login().await {
+                        Ok(qr) => TaskResult::CatPawQrStarted { provider, qr },
+                        Err(e) => TaskResult::CatPawLoginFailed {
+                            provider,
+                            error: e.to_string(),
+                        },
+                    },
+                    Err(e) => TaskResult::CatPawLoginFailed {
+                        provider,
+                        error: e.to_string(),
+                    },
+                };
+                outcome
+            });
+        }
+        Effect::CatPawPollQrLogin { provider, code } => {
+            tasks.spawn(async move {
+                let outcome = match xai_grok_shell::catpaw::login_client() {
+                    Ok(client) => match client.poll_qr_login(&code).await {
+                        Ok(poll) => TaskResult::CatPawQrPolled { provider, poll },
+                        Err(e) => TaskResult::CatPawLoginFailed {
+                            provider,
+                            error: e.to_string(),
+                        },
+                    },
+                    Err(e) => TaskResult::CatPawLoginFailed {
+                        provider,
+                        error: e.to_string(),
+                    },
+                };
+                outcome
+            });
+        }
         Effect::FetchChangelog => {
             tasks
                 .spawn(async move {

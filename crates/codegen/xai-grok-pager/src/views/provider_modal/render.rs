@@ -112,6 +112,9 @@ pub fn render_provider_modal(
         ProviderModalMode::ConfirmingDelete(name) => {
             render_confirm_delete(buf, area, state, name, &theme, compact)
         }
+        ProviderModalMode::CatPawLogin(name) => {
+            render_catpaw_login(buf, area, state, name, &theme, compact)
+        }
         ProviderModalMode::List | ProviderModalMode::Add | ProviderModalMode::Edit(_) => {
             let title = match &mode {
                 ProviderModalMode::Add => "添加渠道",
@@ -1255,13 +1258,14 @@ fn render_actions(
     y += 1;
 
     // 标签列对齐：取最宽标签 + 2 空隙。
-    let label_w = ProviderAction::ALL
+    let actions = ProviderAction::visible_for(state.current_provider_is_catpaw);
+    let label_w = actions
         .iter()
         .map(|a| a.label().width())
         .max()
         .unwrap_or(12)
         + 2;
-    for (i, action) in ProviderAction::ALL.iter().enumerate() {
+    for (i, action) in actions.iter().enumerate() {
         if y >= content.y + content.height {
             break;
         }
@@ -1738,4 +1742,130 @@ fn truncate_str(s: &str, max_width: usize) -> String {
         w += cw;
     }
     result
+}
+
+/// CatPaw 扫码登录视图。
+fn render_catpaw_login(
+    buf: &mut Buffer,
+    area: Rect,
+    state: &mut ProviderModalState,
+    name: &str,
+    theme: &Theme,
+    compact: bool,
+) {
+    use super::state::CatPawLoginPhase;
+
+    let sizing = provider_sizing(compact);
+    let shortcuts: &[mw::Shortcut<'static>] = &[
+        mw::Shortcut {
+            label: "r 刷新",
+            clickable: false,
+            id: 0,
+        },
+        mw::Shortcut {
+            label: "Enter 轮询",
+            clickable: false,
+            id: 1,
+        },
+        mw::Shortcut {
+            label: "Esc 取消",
+            clickable: false,
+            id: 2,
+        },
+    ];
+    let title = format!("CatPaw 扫码登录 · {name}");
+    let config = ModalWindowConfig {
+        title: &title,
+        tabs: None,
+        shortcuts,
+        sizing,
+        fold_info: None,
+    };
+
+    let Some(mca) = mw::render_modal_window(buf, area, &mut state.window, &config, theme) else {
+        return;
+    };
+    let content = mca.content;
+    let mut y = content.y;
+
+    let label_style = Style::default().fg(theme.gray_bright);
+    let value_style = Style::default().fg(theme.text_primary);
+
+    match &state.catpaw_login {
+        Some(CatPawLoginPhase::Loading) | None => {
+            let line = Line::from(Span::styled(
+                "正在请求二维码…",
+                Style::default().fg(theme.text_primary),
+            ));
+            line.render(Rect::new(content.x, y, content.width, 1), buf);
+        }
+        Some(CatPawLoginPhase::ShowQr {
+            code,
+            image_url,
+            expire_time,
+        }) => {
+            if y < content.y + content.height {
+                let line = Line::from(Span::styled(
+                    "请用手机微信扫码登录（扫码后自动确认）",
+                    Style::default().fg(theme.text_primary),
+                ));
+                line.render(Rect::new(content.x, y, content.width, 1), buf);
+                y += 1;
+            }
+            if y < content.y + content.height {
+                let line = Line::from(vec![
+                    Span::styled("二维码: ", label_style),
+                    Span::styled(
+                        truncate_str(image_url, content.width as usize - 8),
+                        value_style,
+                    ),
+                ]);
+                line.render(Rect::new(content.x, y, content.width, 1), buf);
+                y += 1;
+            }
+            if y < content.y + content.height {
+                let line = Line::from(vec![
+                    Span::styled("登录码: ", label_style),
+                    Span::styled(code, value_style),
+                ]);
+                line.render(Rect::new(content.x, y, content.width, 1), buf);
+                y += 1;
+            }
+            if y < content.y + content.height {
+                let line = Line::from(vec![
+                    Span::styled("有效秒数: ", label_style),
+                    Span::styled(expire_time.to_string(), value_style),
+                ]);
+                line.render(Rect::new(content.x, y, content.width, 1), buf);
+            }
+        }
+        Some(CatPawLoginPhase::Scanned) => {
+            let line = Line::from(Span::styled(
+                "已扫码，请在手机上确认登录…",
+                Style::default().fg(theme.warning),
+            ));
+            line.render(Rect::new(content.x, y, content.width, 1), buf);
+        }
+        Some(CatPawLoginPhase::Success) => {
+            let line = Line::from(Span::styled(
+                "登录成功！",
+                Style::default().fg(theme.accent_success),
+            ));
+            line.render(Rect::new(content.x, y, content.width, 1), buf);
+        }
+        Some(CatPawLoginPhase::Expired) => {
+            let line = Line::from(Span::styled(
+                "二维码已过期，按 r 刷新",
+                Style::default().fg(theme.warning),
+            ));
+            line.render(Rect::new(content.x, y, content.width, 1), buf);
+        }
+        Some(CatPawLoginPhase::Error(err)) => {
+            let line = Line::from(Span::styled(
+                format!("登录失败: {err}"),
+                Style::default().fg(theme.accent_error),
+            ));
+            line.render(Rect::new(content.x, y, content.width, 1), buf);
+        }
+    }
 }
