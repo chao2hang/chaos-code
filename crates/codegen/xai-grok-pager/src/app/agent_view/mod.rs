@@ -2086,15 +2086,13 @@ pub(super) fn apply_provider_outcome(
                     state.catpaw_login,
                     Some(crate::views::provider_modal::CatPawLoginPhase::Loading)
                 )
-            {
-                if let crate::views::provider_modal::ProviderModalMode::CatPawLogin(name) =
+                && let crate::views::provider_modal::ProviderModalMode::CatPawLogin(name) =
                     &state.mode
-                {
-                    let provider = name.clone();
-                    return InputOutcome::Action(crate::app::actions::Action::CatPawStartQrLogin {
-                        provider,
-                    });
-                }
+            {
+                let provider = name.clone();
+                return InputOutcome::Action(crate::app::actions::Action::CatPawStartQrLogin {
+                    provider,
+                });
             }
             InputOutcome::Changed
         }

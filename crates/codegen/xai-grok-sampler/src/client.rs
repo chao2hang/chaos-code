@@ -2533,7 +2533,7 @@ fn latest_user_prompt(request: &ConversationRequest) -> Option<String> {
                     if !out.is_empty() {
                         out.push('\n');
                     }
-                    out.push_str(&text);
+                    out.push_str(text);
                 }
             }
             if !out.is_empty() {

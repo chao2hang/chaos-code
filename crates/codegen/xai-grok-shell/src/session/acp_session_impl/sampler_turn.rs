@@ -442,12 +442,11 @@ impl SessionActor {
         struct TraceContextInjector(bool);
         impl xai_grok_sampler::HeaderInjector for TraceContextInjector {
             fn inject(&self, headers: &mut reqwest::header::HeaderMap) {
-                if !self.0 {
-                    if let Some(tp) = xai_file_utils::trace_context::current_traceparent()
-                        && let Ok(v) = reqwest::header::HeaderValue::from_str(&tp)
-                    {
-                        headers.insert("traceparent", v);
-                    }
+                if !self.0
+                    && let Some(tp) = xai_file_utils::trace_context::current_traceparent()
+                    && let Ok(v) = reqwest::header::HeaderValue::from_str(&tp)
+                {
+                    headers.insert("traceparent", v);
                 }
             }
         }
@@ -511,7 +510,7 @@ impl SessionActor {
         let is_workbuddy = {
             let cid = self.client_identifier.borrow();
             cid.as_ref()
-                .map_or(false, |s| s.eq_ignore_ascii_case("workbuddy"))
+                .is_some_and(|s| s.eq_ignore_ascii_case("workbuddy"))
         } || extra_headers
             .iter()
             .any(|(k, _)| k.eq_ignore_ascii_case("x-codebuddy-request"));
