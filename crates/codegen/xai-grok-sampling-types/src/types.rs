@@ -1018,6 +1018,8 @@ pub enum ApiBackend {
     Responses,
     /// Use the Anthropic Messages API (/v1/messages)
     Messages,
+    /// Native CatPaw protocol (encrypted envelope, cumulative SSE).
+    CatPaw,
 }
 
 impl ApiBackend {

@@ -103,6 +103,7 @@ fn test_config(base_url: String, model: &str) -> SamplerConfig {
         header_injector: None,
         user_agent: None,
         is_workbuddy: false,
+        catpaw: None,
     }
 }
 

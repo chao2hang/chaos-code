@@ -325,6 +325,19 @@ pub struct SamplingClient {
     /// When true, no x-grok-* headers are added, and only the WorkBuddy
     /// headers from `extra_headers`/`env_http_headers` are sent.
     is_workbuddy: bool,
+    /// Native CatPaw channel state (set when `api_backend == CatPaw`).
+    catpaw: Option<CatPawClientState>,
+}
+
+/// State for the native CatPaw channel held by [`SamplingClient`].
+#[derive(Clone)]
+struct CatPawClientState {
+    client: xai_catpaw::Client,
+    /// Provider label, kept for account-pool correlation on 401 refresh.
+    #[allow(dead_code)]
+    provider: String,
+    model_type_code: i32,
+    account_resolver: crate::config::SharedCatPawAccountResolver,
 }
 
 impl std::fmt::Debug for SamplingClient {
@@ -682,6 +695,23 @@ impl SamplingClient {
 
         let endpoint = EndpointTemplate::new(&config.base_url, &config.query_params);
 
+        let catpaw = match &config.catpaw {
+            Some(cp) => {
+                let client = xai_catpaw::Client::new().map_err(|e| {
+                    SamplingError::EventStreamError(format!("catpaw client init failed: {e}"))
+                })?;
+                Some(CatPawClientState {
+                    client,
+                    provider: cp.provider.clone(),
+                    model_type_code: cp.model_type_code,
+                    account_resolver: cp.account_resolver.clone().unwrap_or_else(|| {
+                        std::sync::Arc::new(crate::config::NoCatPawAccountResolver)
+                    }),
+                })
+            }
+            None => None,
+        };
+
         Ok(Self {
             http,
             default_headers: headers,
@@ -692,6 +722,7 @@ impl SamplingClient {
             header_injector: config.header_injector,
             endpoint,
             is_workbuddy: config.is_workbuddy,
+            catpaw,
         })
     }
 
@@ -2038,6 +2069,174 @@ impl SamplingClient {
         self.create_message(wrapper).await
     }
 
+    /// Send a conversation request using the native CatPaw Chat protocol
+    /// (encrypted envelope, cumulative SSE). The returned stream yields
+    /// parsed JSON events ready for [`crate::stream::stream_catpaw`].
+    ///
+    /// CatPaw Chat does not support client-side tools: a request carrying
+    /// tools/tool_choice is rejected with a clear error.
+    pub async fn conversation_stream_catpaw(
+        &self,
+        mut request: ConversationRequest,
+    ) -> Result<(
+        BoxStream<'static, Result<serde_json::Value>>,
+        Option<ResponseModelMetadata>,
+    )> {
+        self.apply_conversation_defaults(&mut request)?;
+
+        let Some(catpaw_state) = &self.catpaw else {
+            return Err(SamplingError::InvalidConfiguration(
+                "CatPaw backend requires SamplerConfig.catpaw",
+            ));
+        };
+
+        if !request.tools.is_empty()
+            || !request.hosted_tools.is_empty()
+            || request.tool_choice.is_some()
+        {
+            return Err(SamplingError::InvalidConfiguration(
+                "CatPaw Chat does not support tools; use a tool-capable provider \
+                 or switch the CatPaw channel to Remote Agent mode",
+            ));
+        }
+
+        let (access_token, mis_id) = catpaw_state.account_resolver.resolve().ok_or_else(|| {
+            SamplingError::InvalidConfiguration("CatPaw 渠道未登录：请先在渠道管理中扫码登录")
+        })?;
+        let headers = xai_catpaw::headers::UpstreamHeaders::new(access_token, mis_id);
+
+        let chat_request = self.to_catpaw_chat_request(&request, catpaw_state)?;
+        let response = catpaw_state
+            .client
+            .chat_stream(&chat_request, &headers)
+            .await
+            .map_err(|e| SamplingError::EventStreamError(e.to_string()))?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let bytes = response.bytes().await.unwrap_or_default();
+            let message = format!(
+                "CatPaw Chat API error {status}: {}",
+                String::from_utf8_lossy(&bytes)
+            );
+            return Err(SamplingError::Api {
+                status,
+                message,
+                model_metadata: None,
+                retry_after_secs: None,
+                should_retry: None,
+            });
+        }
+
+        // Strip UTF-8 BOM and turn raw bytes into SSE JSON events.
+        let mut is_first = true;
+        let byte_stream = response.bytes_stream().map(move |result| {
+            result.map(|bytes| {
+                if is_first {
+                    is_first = false;
+                    if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
+                        return bytes.slice(3..);
+                    }
+                }
+                bytes
+            })
+        });
+        let events = byte_stream.eventsource();
+        let values = events.scan(false, |had_error, event_res| {
+            if *had_error {
+                return std::future::ready(None);
+            }
+            let item = match event_res {
+                Ok(event) => {
+                    let data = &event.data;
+                    if data.trim() == "[DONE]" {
+                        return std::future::ready(None);
+                    }
+                    match serde_json::from_str::<serde_json::Value>(data) {
+                        Ok(value) => Some(Ok(value)),
+                        Err(e) => Some(Err(SamplingError::StreamError {
+                            error_type: "catpaw_decode".into(),
+                            message: format!("CatPaw SSE decode error: {e}"),
+                        })),
+                    }
+                }
+                Err(e) => {
+                    *had_error = true;
+                    Some(Err(SamplingError::StreamError {
+                        error_type: "catpaw_transport".into(),
+                        message: format!("CatPaw SSE transport error: {e}"),
+                    }))
+                }
+            };
+            std::future::ready(item)
+        });
+
+        Ok((Box::pin(values), None))
+    }
+
+    /// Convert a `ConversationRequest` into a CatPaw Chat wire request.
+    fn to_catpaw_chat_request(
+        &self,
+        request: &ConversationRequest,
+        catpaw_state: &CatPawClientState,
+    ) -> Result<xai_catpaw::chat::ChatRequest> {
+        use xai_catpaw::chat::ChatMessage;
+        use xai_grok_sampling_types::{ContentPart, ConversationItem};
+
+        let mut messages = Vec::new();
+        for item in &request.items {
+            match item {
+                ConversationItem::System(s) => {
+                    messages.push(ChatMessage {
+                        role: "system".into(),
+                        content: s.content.to_string(),
+                    });
+                }
+                ConversationItem::User(u) => {
+                    let text = u
+                        .content
+                        .iter()
+                        .filter_map(|part| match part {
+                            ContentPart::Text { text } => Some(text.to_string()),
+                            ContentPart::Image { .. } => None,
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    messages.push(ChatMessage {
+                        role: "user".into(),
+                        content: text,
+                    });
+                }
+                ConversationItem::Assistant(a) => {
+                    messages.push(ChatMessage {
+                        role: "assistant".into(),
+                        content: a.content.to_string(),
+                    });
+                }
+                ConversationItem::ToolResult(t) => {
+                    return Err(SamplingError::EventStreamError(format!(
+                        "CatPaw Chat cannot carry tool results (tool_call_id={}); \
+                         switch the CatPaw channel to Remote Agent mode or use a \
+                         tool-capable provider",
+                        t.tool_call_id
+                    )));
+                }
+                // Reasoning / backend tool calls are not replayed to CatPaw.
+                _ => {}
+            }
+        }
+
+        Ok(xai_catpaw::chat::ChatRequest {
+            messages,
+            user_model_type_code: catpaw_state.model_type_code,
+            stream: Some(true),
+            temperature: request.temperature.or(self.defaults.temperature),
+            max_tokens: request.max_output_tokens.map(|v| v as i32),
+            top_p: request.top_p.or(self.defaults.top_p),
+            response_format: None,
+        })
+    }
+
     /// Backend-aware streaming call that collects the full response.
     pub async fn conversation_collect(
         &self,
@@ -2066,6 +2265,11 @@ impl SamplingClient {
             ApiBackend::Messages => {
                 let (raw, meta) = self.conversation_stream_messages(request).await?;
                 let events = crate::stream::stream_messages(raw, meta, request_id, idle_timeout);
+                crate::stream::collect_response(events).await
+            }
+            ApiBackend::CatPaw => {
+                let (raw, meta) = self.conversation_stream_catpaw(request).await?;
+                let events = crate::stream::stream_catpaw(raw, meta, request_id, idle_timeout);
                 crate::stream::collect_response(events).await
             }
         };
@@ -2124,6 +2328,7 @@ mod tests {
             header_injector: None,
             user_agent: None,
             is_workbuddy: false,
+            catpaw: None,
         }
     }
 

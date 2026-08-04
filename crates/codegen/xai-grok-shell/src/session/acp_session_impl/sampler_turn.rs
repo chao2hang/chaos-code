@@ -648,6 +648,15 @@ impl SessionActor {
                 Some(std::sync::Arc::new(TraceContextInjector(false)))
             },
             is_workbuddy,
+            // TODO(catpaw): `chat_state_handle.get_sampling_config()` returns the
+            // `xai_grok_sampling_types::SamplingConfig` (the wire-facing, no-credential
+            // form), which does not carry the CatPaw channel config built by
+            // `sampling_config_for_model`. Re-plumbing the `catpaw` config (and the
+            // account resolver) through this reconstruct path is required for live
+            // CatPaw-backed chat sessions; for now the non-shell-direct paths (chat
+            // actor, agent turns) build the full `SamplerConfig` directly and pass
+            // it through, so they are unaffected.
+            catpaw: None,
         }
     }
     /// Install auto-mode permission classifier with a live LLM side-query

@@ -8,11 +8,13 @@
 //! matching `SamplingClient::conversation_stream*` method before
 //! handing the result to the corresponding transform here.
 
+pub mod catpaw;
 pub mod chat_completions;
 pub mod collect;
 pub mod messages;
 pub mod responses;
 
+pub use catpaw::stream_catpaw;
 pub use chat_completions::stream_chat_completions;
 pub use collect::collect_response;
 pub use messages::stream_messages;

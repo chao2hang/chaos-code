@@ -32,6 +32,7 @@ fn test_config_with_window(context_window: u64) -> SamplingConfig {
         reasoning_effort: None,
         stream_tool_calls: None,
         extract_inline_thinking: None,
+        is_workbuddy: false,
     }
 }
 
@@ -1286,6 +1287,7 @@ async fn update_sampling_config_is_queryable() {
         reasoning_effort: None,
         stream_tool_calls: None,
         extract_inline_thinking: None,
+        is_workbuddy: false,
     };
     h.handle.update_sampling_config(new_config.clone());
 
@@ -1674,6 +1676,7 @@ async fn build_request_uses_sampling_config() {
         reasoning_effort: None,
         stream_tool_calls: None,
         extract_inline_thinking: None,
+        is_workbuddy: false,
     };
     let h = TestHarness::with_config(vec![ConversationItem::user("hi")], config);
 
@@ -3818,6 +3821,7 @@ async fn sampling_config_survives_compaction_replacement() {
         reasoning_effort: None,
         stream_tool_calls: None,
         extract_inline_thinking: None,
+        is_workbuddy: false,
     };
 
     let h = TestHarness::with_config(
@@ -3904,6 +3908,7 @@ async fn model_metadata_lost_after_compaction_then_recovered_on_next_turn() {
         reasoning_effort: None,
         stream_tool_calls: None,
         extract_inline_thinking: None,
+        is_workbuddy: false,
     };
 
     let h = TestHarness::with_config(
@@ -3995,6 +4000,7 @@ async fn context_window_downgrade_triggers_auto_compact() {
         reasoning_effort: None,
         stream_tool_calls: None,
         extract_inline_thinking: None,
+        is_workbuddy: false,
     };
 
     let h = TestHarness::with_config(vec![], config);

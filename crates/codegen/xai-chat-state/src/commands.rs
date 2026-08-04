@@ -432,6 +432,7 @@ mod tests {
                 reasoning_effort: None,
                 stream_tool_calls: None,
                 extract_inline_thinking: None,
+                is_workbuddy: false,
             },
         };
         let _ = ChatStateCommand::RecordAgentEditedPath {

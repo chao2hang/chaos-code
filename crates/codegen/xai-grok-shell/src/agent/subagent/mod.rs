@@ -769,6 +769,7 @@ async fn read_parent_sampling_config(
                 header_injector: ctx.sampling_config.header_injector.clone(),
                 user_agent: None,
                 is_workbuddy,
+                catpaw: ctx.sampling_config.catpaw.clone(),
             };
             let model_id = ctx.model_id.clone();
             let global_model_id = ctx.models_manager.current_model_id();
