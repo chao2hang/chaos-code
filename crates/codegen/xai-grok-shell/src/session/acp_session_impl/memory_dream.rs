@@ -759,6 +759,12 @@ impl SessionActor {
                 // path so callers degrade gracefully instead of panicking.
                 return Err("memory rewrite unsupported on CatPaw channel".to_string());
             }
+            crate::sampling::ApiBackend::RemoteAgent => {
+                // CatPaw Remote Agent runs the agent loop server-side
+                // and returns the final assistant text only, so there is
+                // nothing to rewrite here either; report a clean error.
+                return Err("memory rewrite unsupported on CatPaw Remote Agent channel".to_string());
+            }
         };
 
         match result {

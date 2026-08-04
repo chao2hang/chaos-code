@@ -252,6 +252,7 @@ impl ShellToolsetConfig {
             user_agent: None,
             is_workbuddy: false,
             catpaw: None,
+            remote_agent: None,
         };
         let mut toolset = base.unwrap_or_else(|| Self {
             bash: BashToolConfig::default(),

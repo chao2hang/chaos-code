@@ -163,6 +163,14 @@ pub struct SamplerConfig {
     /// and never persisted here.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub catpaw: Option<CatPawSamplerConfig>,
+
+    /// CatPaw Remote Agent settings. When set (and `api_backend ==
+    /// RemoteAgent`), requests go through the encrypted Remote Agent
+    /// protocol with repository-scoped execution. Conversation ids
+    /// are persisted across turns via
+    /// [`RemoteAgentSamplerConfig::conversation_state`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_agent: Option<RemoteAgentSamplerConfig>,
 }
 
 /// Native CatPaw channel settings carried on [`SamplerConfig`].
@@ -197,6 +205,120 @@ impl CatPawAccountResolver for NoCatPawAccountResolver {
         None
     }
 }
+
+/// Native CatPaw Remote Agent settings carried on [`SamplerConfig`].
+///
+/// The Remote Agent protocol drives repository-scoped execution through
+/// the encrypted CatPaw transport. Conversation state (the upstream
+/// `conversationId` returned by `create_agent`) is shared across
+/// turns via [`SharedRemoteAgentConversationState`] so subsequent turns
+/// call `continue_agent` rather than spawning a fresh conversation
+/// every request.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RemoteAgentSamplerConfig {
+    /// Provider label (for account-pool correlation).
+    pub provider: String,
+    /// `userModelTypeCode` from the CatPaw model catalog.
+    pub model_type_code: i32,
+    /// Git repository URL (must be on the allowed internal host).
+    pub git_repo_url: String,
+    /// Base branch the agent diffs against.
+    pub git_base_branch: String,
+    /// Checkout branch the agent operates on.
+    #[serde(default)]
+    pub git_checkout_branch: String,
+    /// Per-request account resolution; never serialized (tokens live in the
+    /// encrypted account store, resolved fresh for every request).
+    #[serde(skip)]
+    pub account_resolver: Option<SharedRemoteAgentAccountResolver>,
+    /// Per-session conversation id state; never serialized. Shared with
+    /// the shell session store so turns within the same session reuse
+    /// the upstream `conversationId`.
+    #[serde(skip)]
+    pub conversation_state: Option<SharedRemoteAgentConversationState>,
+}
+
+impl Default for RemoteAgentSamplerConfig {
+    fn default() -> Self {
+        Self {
+            provider: String::new(),
+            model_type_code: 0,
+            git_repo_url: String::new(),
+            git_base_branch: "master".to_string(),
+            git_checkout_branch: String::new(),
+            account_resolver: None,
+            conversation_state: None,
+        }
+    }
+}
+
+/// Resolves a live CatPaw account credential per request. Returns
+/// `(access_token, mis_id)`. Reused by the Remote Agent path because
+/// the same encrypted account store signs both protocols.
+pub trait RemoteAgentAccountResolver: Send + Sync + std::fmt::Debug {
+    fn resolve(&self) -> Option<(String, String)>;
+}
+
+pub type SharedRemoteAgentAccountResolver = std::sync::Arc<dyn RemoteAgentAccountResolver>;
+
+/// Default resolver that never produces a credential.
+#[derive(Debug)]
+pub struct NoRemoteAgentAccountResolver;
+
+impl RemoteAgentAccountResolver for NoRemoteAgentAccountResolver {
+    fn resolve(&self) -> Option<(String, String)> {
+        None
+    }
+}
+
+/// Mutable, `Send + Sync` handle to the per-session CatPaw Remote Agent
+/// conversation id. The shell session sets the id after the first
+/// create_agent response; subsequent turns call `continue_agent` with
+/// that id instead of opening a new conversation.
+///
+/// `None` means "no conversation yet" (first turn or after an explicit
+/// reset); the sampler treats this as "call create_agent". A `Some(_)
+/// id` means "call continue_agent with this id".
+#[derive(Debug, Default)]
+pub struct RemoteAgentConversationState {
+    inner: std::sync::Mutex<Option<String>>,
+}
+
+impl RemoteAgentConversationState {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Convenience wrapper that returns an `Arc<Self>` for direct use
+    /// as a `SharedRemoteAgentConversationState` without the caller
+    /// having to wrap manually.
+    pub fn new_shared() -> std::sync::Arc<Self> {
+        std::sync::Arc::new(Self::new())
+    }
+
+    /// Read the cached conversation id, if any.
+    pub fn get(&self) -> Option<String> {
+        self.inner.lock().ok().and_then(|guard| guard.clone())
+    }
+
+    /// Cache the conversation id returned by the upstream `create_agent`
+    /// response so subsequent turns reuse it.
+    pub fn set(&self, id: impl Into<String>) {
+        if let Ok(mut guard) = self.inner.lock() {
+            *guard = Some(id.into());
+        }
+    }
+
+    /// Drop the cached conversation id (e.g. on auth failure or explicit
+    /// session reset).
+    pub fn clear(&self) {
+        if let Ok(mut guard) = self.inner.lock() {
+            *guard = None;
+        }
+    }
+}
+
+pub type SharedRemoteAgentConversationState = std::sync::Arc<RemoteAgentConversationState>;
 
 impl Default for SamplerConfig {
     /// Empty defaults so callers can use `..Default::default()` and
@@ -236,6 +358,7 @@ impl Default for SamplerConfig {
             header_injector: None,
             is_workbuddy: false,
             catpaw: None,
+            remote_agent: None,
         }
     }
 }

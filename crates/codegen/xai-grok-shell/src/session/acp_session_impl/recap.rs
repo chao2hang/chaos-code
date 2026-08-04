@@ -569,6 +569,13 @@ impl SessionActor {
                 // fall back to the heuristic tab-complete path.
                 return None;
             }
+            crate::sampling::ApiBackend::RemoteAgent => {
+                // CatPaw Remote Agent runs the agent loop server-side;
+                // there is no in-process transcript to rewrite. Return
+                // `None` so the caller falls back to heuristic
+                // tab-complete text.
+                return None;
+            }
         };
 
         match result {

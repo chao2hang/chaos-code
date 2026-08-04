@@ -655,8 +655,10 @@ impl SessionActor {
             // account resolver) through this reconstruct path is required for live
             // CatPaw-backed chat sessions; for now the non-shell-direct paths (chat
             // actor, agent turns) build the full `SamplerConfig` directly and pass
-            // it through, so they are unaffected.
+            // it through, so they are unaffected. The same caveat applies to
+            // `remote_agent` below.
             catpaw: None,
+            remote_agent: None,
         }
     }
     /// Install auto-mode permission classifier with a live LLM side-query

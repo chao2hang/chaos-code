@@ -946,6 +946,15 @@ pub fn parse_remote_model_value(
             .or_else(|| meta.and_then(|m| m.get("supportsBackendSearch")))
             .and_then(|v| v.as_bool())
             .unwrap_or(false),
+        git_repo_url: get_string(obj, "gitRepoUrl")
+            .or_else(|| get_string(obj, "git_repo_url"))
+            .filter(|s| !s.trim().is_empty()),
+        git_base_branch: get_string(obj, "gitBaseBranch")
+            .or_else(|| get_string(obj, "git_base_branch"))
+            .filter(|s| !s.trim().is_empty()),
+        git_checkout_branch: get_string(obj, "gitCheckoutBranch")
+            .or_else(|| get_string(obj, "git_checkout_branch"))
+            .filter(|s| !s.trim().is_empty()),
         compactions_remaining: obj
             .get("compactionsRemaining")
             .or_else(|| obj.get("compactions_remaining"))
