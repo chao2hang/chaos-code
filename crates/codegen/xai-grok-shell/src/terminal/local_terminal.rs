@@ -11,10 +11,19 @@ use crate::terminal::runner::{
 
 pub struct LocalTerminalRunner;
 
-async fn read_stream(mut stream: impl AsyncReadExt + Unpin) -> Vec<u8> {
+async fn read_stream(mut stream: impl AsyncReadExt + Unpin) -> std::io::Result<Vec<u8>> {
     let mut buffer = Vec::new();
-    let _ = stream.read_to_end(&mut buffer).await;
-    buffer
+    stream.read_to_end(&mut buffer).await?;
+    Ok(buffer)
+}
+
+async fn join_stream(
+    name: &str,
+    task: tokio::task::JoinHandle<std::io::Result<Vec<u8>>>,
+) -> Result<Vec<u8>, TerminalError> {
+    task.await
+        .map_err(|e| TerminalError::Other(format!("Failed to join {name} reader task: {e}")))?
+        .map_err(|e| TerminalError::Other(format!("Failed to read {name}: {e}")))
 }
 
 /// Truncate buffer to keep only the last `limit` bytes (drops oldest bytes).
@@ -105,8 +114,8 @@ impl AsyncTerminalRunner for LocalTerminalRunner {
             }
         };
 
-        let stdout_result = stdout_task.await.unwrap_or_else(|_| Vec::new());
-        let stderr_result = stderr_task.await.unwrap_or_else(|_| Vec::new());
+        let stdout_result = join_stream("stdout", stdout_task).await?;
+        let stderr_result = join_stream("stderr", stderr_task).await?;
 
         // Combine stdout and stderr, then truncate if needed
         let mut combined = stdout_result;
@@ -185,5 +194,32 @@ mod tests {
 
         assert_eq!(result.combined_output.trim(), "hello");
         assert_eq!(result.exit_code, Some(0));
+    }
+
+    #[tokio::test]
+    async fn stream_read_error_is_propagated() {
+        let task = tokio::spawn(async { Err(std::io::Error::other("injected read failure")) });
+
+        let error = join_stream("stdout", task).await.unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "Failed to read stdout: injected read failure"
+        );
+    }
+
+    #[tokio::test]
+    async fn stream_reader_join_error_is_propagated() {
+        let task = tokio::spawn(async {
+            panic!("injected reader panic");
+            #[allow(unreachable_code)]
+            Ok(Vec::new())
+        });
+
+        let error = join_stream("stderr", task).await.unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .starts_with("Failed to join stderr reader task:")
+        );
     }
 }
