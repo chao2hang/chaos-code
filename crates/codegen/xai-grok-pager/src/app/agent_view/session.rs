@@ -814,6 +814,16 @@ impl AgentView {
             self.context_state = None;
             return;
         }
+        if let Some(current) = self.context_state.as_ref()
+            && next.used < current.used
+        {
+            tracing::debug!(
+                current_used = current.used,
+                snapshot_used = next.used,
+                "Ignoring stale session/info context snapshot"
+            );
+            return;
+        }
         self.context_state = Some(next);
     }
     /// Update context state from a streaming notification carrying only
@@ -1005,6 +1015,32 @@ mod resolve_turn_activity_tests {
         view.max_total_tokens_seen = 99_999;
         view.bind_session_id(agent_client_protocol::SessionId::new("s1"));
         assert_eq!(view.max_total_tokens_seen, 99_999);
+    }
+
+    #[test]
+    fn stale_full_context_snapshot_does_not_replace_streaming_usage() {
+        let mut view = test_agent_view(Some("s1"), std::path::PathBuf::from("/tmp"));
+        view.apply_context_used(90_000, 200_000);
+        view.apply_full_context_info(xai_grok_shell::session::ContextInfo::from_notification(
+            80_000, 200_000,
+        ));
+        assert_eq!(
+            view.context_state.as_ref().map(|ctx| ctx.used),
+            Some(90_000)
+        );
+    }
+
+    #[test]
+    fn full_context_snapshot_can_advance_streaming_usage() {
+        let mut view = test_agent_view(Some("s1"), std::path::PathBuf::from("/tmp"));
+        view.apply_context_used(80_000, 200_000);
+        view.apply_full_context_info(xai_grok_shell::session::ContextInfo::from_notification(
+            90_000, 200_000,
+        ));
+        assert_eq!(
+            view.context_state.as_ref().map(|ctx| ctx.used),
+            Some(90_000)
+        );
     }
 
     #[test]

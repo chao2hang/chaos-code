@@ -3407,12 +3407,17 @@ pub(crate) fn execute(
                             .get("compacted")
                             .and_then(|v| v.as_bool())
                             .unwrap_or(false);
+                        let compaction_error = body
+                            .get("compactionError")
+                            .and_then(|v| v.as_str())
+                            .map(str::to_owned);
                         Ok(crate::app::actions::SetContextWindowOutcome {
                             previous_tokens,
                             tokens,
                             tokens_used,
                             usage_percent,
                             compacted,
+                            compaction_error,
                         })
                     }
                     Err(e) => Err(sanitize_user_error(&e.to_string())),

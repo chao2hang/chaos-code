@@ -61,6 +61,9 @@ pub struct SetContextWindowResult {
     pub usage_percent: u8,
     /// Whether compaction was run as part of this request.
     pub compacted: bool,
+    /// Compaction error when the window was applied but immediate compaction failed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compaction_error: Option<String>,
 }
 
 /// Successful prompt/turn payload returned to the ACP layer and trace uploaders.

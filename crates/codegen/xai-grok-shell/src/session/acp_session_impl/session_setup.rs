@@ -470,8 +470,19 @@ impl SessionActor {
             config_changed = true;
         }
         if config_changed {
+            let context_window = updated_config.context_window.get();
             self.chat_state_handle
                 .update_sampling_config(updated_config);
+            let tokens_used = self.chat_state_handle.get_estimated_total_tokens().await;
+            self.signals_handle()
+                .update_context_usage(tokens_used, context_window);
+            self.send_xai_notification(
+                crate::extensions::notification::SessionUpdate::ContextUsageUpdated {
+                    tokens_used,
+                    context_window,
+                },
+            )
+            .await;
         }
     }
     /// Update cached sampling config if model metadata changed (from response headers).
@@ -536,6 +547,17 @@ impl SessionActor {
         };
         self.chat_state_handle
             .update_sampling_config(updated_config);
+        let tokens_used = self.chat_state_handle.get_estimated_total_tokens().await;
+        let context_window = new_context_window.get();
+        self.signals_handle()
+            .update_context_usage(tokens_used, context_window);
+        self.send_xai_notification(
+            crate::extensions::notification::SessionUpdate::ContextUsageUpdated {
+                tokens_used,
+                context_window,
+            },
+        )
+        .await;
     }
     /// Inject the actor's managed Read-deny globs into the current ToolBridge so
     /// the Grep tool excludes policy-forbidden paths. No-op when empty. Called on

@@ -188,6 +188,14 @@ pub(super) fn handle_session_notification(notif: &acp::ExtNotification, app: &mu
     let mut terminal_outcome: Option<super::super::turn_completion::TerminalApply> = None;
     let root_session_id: &str = session_notif.session_id.0.as_ref();
     let changed = match session_notif.update {
+        XaiSessionUpdate::ContextUsageUpdated {
+            tokens_used,
+            context_window,
+        } => {
+            agent.session.models.override_context_window(context_window);
+            agent.apply_context_used(tokens_used, context_window);
+            true
+        }
         ref update @ (XaiSessionUpdate::AutoCompactStarted { .. }
         | XaiSessionUpdate::AutoCompactCompleted { .. }
         | XaiSessionUpdate::AutoCompactFailed { .. }
