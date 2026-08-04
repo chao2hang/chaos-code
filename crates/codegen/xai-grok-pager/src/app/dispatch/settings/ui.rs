@@ -319,6 +319,10 @@ pub(in crate::app::dispatch) fn dispatch_open_provider_modal(
                 state.error = Some(e);
             }
         }
+        crate::views::provider_modal::ProviderModalMode::CatPawLogin(_) => {
+            // 深链打开扫码登录：进入 Loading，等待按键/轮询触发 QR 请求。
+            state.catpaw_login = Some(crate::views::provider_modal::CatPawLoginPhase::Loading);
+        }
         _ => {}
     }
 

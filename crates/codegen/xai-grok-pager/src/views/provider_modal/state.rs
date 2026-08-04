@@ -19,6 +19,8 @@ pub const API_BACKENDS: &[&str] = &["responses", "chat_completions", "messages"]
 pub enum ProviderAction {
     /// 编辑 base_url / 认证 / 后端 / API Key。
     Edit,
+    /// CatPaw 渠道扫码登录（仅 `kind = "catpaw"` 渠道显示）。
+    CatpawLogin,
     SetKey,
     Models,
     /// 手动输入模型 ID（不依赖上游 /models 列表）。
@@ -36,6 +38,7 @@ pub enum ProviderAction {
 impl ProviderAction {
     pub const ALL: &[ProviderAction] = &[
         ProviderAction::Edit,
+        ProviderAction::CatpawLogin,
         ProviderAction::SetKey,
         ProviderAction::Models,
         ProviderAction::ManualModel,
@@ -45,9 +48,19 @@ impl ProviderAction {
         ProviderAction::Delete,
     ];
 
+    /// 某个渠道操作菜单可见的动作（CatPaw 渠道显示扫码登录，普通渠道不显示）。
+    pub fn visible_for(provider_is_catpaw: bool) -> Vec<ProviderAction> {
+        Self::ALL
+            .iter()
+            .copied()
+            .filter(|a| !matches!(a, ProviderAction::CatpawLogin) || provider_is_catpaw)
+            .collect()
+    }
+
     pub fn label(self) -> &'static str {
         match self {
             Self::Edit => "编辑渠道",
+            Self::CatpawLogin => "CatPaw 扫码登录",
             Self::SetKey => "设置 API Key",
             Self::Models => "查看可用模型",
             Self::ManualModel => "手动输入模型",
@@ -61,6 +74,7 @@ impl ProviderAction {
     pub fn hint(self) -> &'static str {
         match self {
             Self::Edit => "修改 URL / 认证 / 后端 / 密钥",
+            Self::CatpawLogin => "手机扫码登录 CatPaw 账号",
             Self::SetKey => "写入/更新密钥",
             Self::Models => "从渠道拉取模型",
             Self::ManualModel => "手写模型 ID 并设为当前",
@@ -223,6 +237,29 @@ pub enum ProviderModalMode {
     ConfigureModel(String),
     /// 二次确认删除某个渠道。Issue #13。
     ConfirmingDelete(String),
+    /// CatPaw 渠道扫码登录（`kind = "catpaw"` 的渠道进入该模式）。
+    CatPawLogin(String),
+}
+
+/// CatPaw 扫码登录子状态。
+#[derive(Debug, Clone)]
+pub enum CatPawLoginPhase {
+    /// 正在请求二维码。
+    Loading,
+    /// 二维码已就绪，等待扫码。
+    ShowQr {
+        code: String,
+        expire_time: i64,
+        image_url: String,
+    },
+    /// 已扫码，等待确认。
+    Scanned,
+    /// 登录成功（已写入加密账号池）。
+    Success,
+    /// 二维码过期，需刷新。
+    Expired,
+    /// 出错（网络 / 协议 / 解析）。
+    Error(String),
 }
 
 /// 输入事件的输出。
@@ -235,6 +272,12 @@ pub enum ProviderKeyOutcome {
     Commit,
     /// 切换到指定模型（触发 `Action::SetDefaultModel`）。
     SwitchModel(String),
+    /// CatPaw 扫码登录：刷新二维码（触发 `Action::CatPawStartQrLogin`）。
+    CatPawRefresh,
+    /// CatPaw 扫码登录：立即轮询一次（触发 `Action::CatPawPollQrLogin`）。
+    CatPawPoll {
+        code: String,
+    },
 }
 
 /// Provider 模态框状态。
@@ -293,6 +336,10 @@ pub struct ProviderModalState {
     pub providers: Vec<ProviderSummary>,
     /// `Add` 模式下检测到的 Cline 可导入渠道（空=未安装或无可读配置）。
     pub cline_candidates: Vec<xai_grok_shell::cline_import::ClineProvider>,
+    /// `CatPawLogin` 模式下的扫码登录子状态。
+    pub catpaw_login: Option<CatPawLoginPhase>,
+    /// 当前操作菜单所属渠道是否为 CatPaw（决定是否显示「扫码登录」动作）。
+    pub current_provider_is_catpaw: bool,
 }
 
 /// `/provider list` 显示的一行渠道摘要。
@@ -343,6 +390,8 @@ impl ProviderModalState {
             list_viewport: 0,
             providers: Vec::new(),
             cline_candidates,
+            catpaw_login: None,
+            current_provider_is_catpaw: false,
         }
     }
 
@@ -712,6 +761,7 @@ impl ProviderModalState {
         self.clear_model_params();
         self.edit_had_key = false;
         self.current_step = FormStep::Preset;
+        self.catpaw_login = None;
         self.selected = self.selected.min(self.list_row_count().saturating_sub(1));
         self.reload_providers();
         let max = self.list_row_count().saturating_sub(1);
@@ -723,7 +773,7 @@ impl ProviderModalState {
     /// 打开某渠道的操作菜单。
     pub fn go_actions(&mut self, name: String) {
         self.from_hub = true;
-        self.mode = ProviderModalMode::Actions(name);
+        self.mode = ProviderModalMode::Actions(name.clone());
         self.clear_messages();
         self.api_key.clear();
         self.models.clear();
@@ -732,6 +782,19 @@ impl ProviderModalState {
         self.model_filter.clear();
         self.manual_model_id.clear();
         self.clear_model_params();
+        self.catpaw_login = None;
+        // 检测 CatPaw 渠道（`kind = "catpaw"`），决定是否显示「扫码登录」。
+        self.current_provider_is_catpaw =
+            crate::slash::commands::provider::provider_is_catpaw(&name);
+        self.selected = 0;
+        self.scroll_offset = 0;
+    }
+
+    /// 打开 CatPaw 扫码登录（`kind = "catpaw"` 渠道）。
+    pub fn go_catpaw_login(&mut self, name: String) {
+        self.mode = ProviderModalMode::CatPawLogin(name);
+        self.clear_messages();
+        self.catpaw_login = Some(CatPawLoginPhase::Loading);
         self.selected = 0;
         self.scroll_offset = 0;
     }
@@ -893,6 +956,14 @@ impl ProviderModalState {
         }
         match self.mode.clone() {
             ProviderModalMode::List => true,
+            ProviderModalMode::CatPawLogin(name) => {
+                if self.from_hub {
+                    self.go_actions(name);
+                    false
+                } else {
+                    true
+                }
+            }
             ProviderModalMode::Actions(name) => {
                 if !self.from_hub {
                     return true;
@@ -1033,5 +1104,44 @@ fn format_float_trim(n: f64) -> String {
         s.trim_end_matches('0').trim_end_matches('.').to_string()
     } else {
         s
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn catpaw_login_action_only_visible_for_catpaw_provider() {
+        let catpaw = ProviderAction::visible_for(true);
+        assert!(
+            catpaw.contains(&ProviderAction::CatpawLogin),
+            "CatPaw provider must show the QR login action"
+        );
+        let ordinary = ProviderAction::visible_for(false);
+        assert!(
+            !ordinary.contains(&ProviderAction::CatpawLogin),
+            "ordinary provider must not show the QR login action"
+        );
+        assert_eq!(
+            ordinary.len(),
+            ProviderAction::ALL.len() - 1,
+            "ordinary provider hides exactly the CatPaw action"
+        );
+    }
+
+    #[test]
+    fn catpaw_login_esc_returns_to_actions_from_hub() {
+        let mut state = ProviderModalState::new(ProviderModalMode::List);
+        state.from_hub = true;
+        state.go_catpaw_login("catpaw".into());
+        assert!(matches!(state.mode, ProviderModalMode::CatPawLogin(_)));
+        assert!(matches!(
+            state.catpaw_login,
+            Some(CatPawLoginPhase::Loading)
+        ));
+        // 从 hub 进入时 Esc 应回到操作菜单而非关闭。
+        assert!(!state.navigate_back());
+        assert!(matches!(state.mode, ProviderModalMode::Actions(_)));
     }
 }
