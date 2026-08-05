@@ -955,6 +955,9 @@ pub fn parse_remote_model_value(
         git_checkout_branch: get_string(obj, "gitCheckoutBranch")
             .or_else(|| get_string(obj, "git_checkout_branch"))
             .filter(|s| !s.trim().is_empty()),
+        catpaw_model_type_code: get_u64(obj, "catpawModelTypeCode")
+            .or_else(|| get_u64(obj, "catpaw_model_type_code"))
+            .and_then(|v| i32::try_from(v).ok()),
         compactions_remaining: obj
             .get("compactionsRemaining")
             .or_else(|| obj.get("compactions_remaining"))
