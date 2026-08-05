@@ -802,13 +802,15 @@ fn render_configure_model(
     let Some(mca) = mw::render_modal_window(buf, area, &mut state.window, &config, theme) else {
         return;
     };
-    // ConfigureModel 不发起同步 HTTP；空列表时搜索框就是模型 ID 输入框。
+    // ConfigureModel 不发起同步 HTTP；列表来自 config 中已注册的模型目录
+    // （「查看可用模型」拉取的结果）。为空说明该渠道还没有注册任何模型，
+    // 此时搜索框就是模型 ID 输入框，可手写 ID 后 Enter。
     if state.error.is_none() && state.models.is_empty() {
         let content = mca.content;
         let mut y = content.y;
         let dim = Style::default().fg(theme.gray_dim);
         let line = Line::from(Span::styled(
-            "未能拉取模型列表。可在搜索框输入模型 ID 后 Enter。",
+            "该渠道还没有已注册的模型。可在搜索框输入模型 ID 后 Enter，或先用「查看可用模型」拉取。",
             dim,
         ));
         line.render(Rect::new(content.x, y, content.width, 1), buf);

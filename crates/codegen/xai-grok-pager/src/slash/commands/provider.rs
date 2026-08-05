@@ -955,6 +955,84 @@ pub(crate) fn provider_model_catalog_key(provider: &str, model_id: &str) -> Stri
     format!("{provider}/{model_id}")
 }
 
+/// 列出渠道已注册到 config 的模型（`[model."provider/<id>"]` 目录条目）。
+///
+/// 「配置模型参数」用此复用「查看可用模型 / 刷新」已拉取并落盘的模型，
+/// 让用户直接点选而不是手写 ID。拉取结果与 agent catalog 共用同一份
+/// config 文件，读本地文件不发起网络请求，不会阻塞 TUI 渲染。
+pub(crate) fn list_provider_model_entries(provider: &str) -> Vec<ModelEntry> {
+    match load_config() {
+        Ok(doc) => provider_model_entries_from_doc(&doc, provider),
+        Err(_) => Vec::new(),
+    }
+}
+
+/// 从已解析的 config 文档提取某渠道的模型目录条目（纯函数，供测试）。
+fn provider_model_entries_from_doc(
+    doc: &toml_edit::DocumentMut,
+    provider: &str,
+) -> Vec<ModelEntry> {
+    let prefix = format!("{provider}/");
+    let mut entries: Vec<ModelEntry> = doc
+        .get("model")
+        .and_then(|v| v.as_table())
+        .map(|table| {
+            table
+                .iter()
+                .filter_map(|(key, item)| {
+                    let rest = key.strip_prefix(&prefix)?;
+                    let entry = item.as_table()?;
+                    // id 以条目内的 `model` 字段为准，缺省回退到 catalog
+                    // key 的 `provider/` 前缀之后的部分。
+                    let id = entry
+                        .get("model")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or_else(|| rest.to_string());
+                    if id.is_empty() {
+                        return None;
+                    }
+                    Some(ModelEntry {
+                        id,
+                        meta: reasoning_meta_from_config_item(entry),
+                        catpaw_model_type_code: entry
+                            .get("catpaw_model_type_code")
+                            .and_then(|v| v.as_integer())
+                            .and_then(|n| i32::try_from(n).ok()),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    entries.sort_by(|a, b| a.id.cmp(&b.id));
+    entries
+}
+
+/// 从 `[model."provider/id"]` 条目表恢复 reasoning 元数据（拉取 `/v1/models`
+/// 时落盘的字段），供配置模型参数 / 重新注册时复用。
+fn reasoning_meta_from_config_item(table: &toml_edit::Table) -> ReasoningMeta {
+    ReasoningMeta {
+        reasoning_efforts: table
+            .get("reasoning_efforts")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|el| el.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        reasoning_effort: table
+            .get("reasoning_effort")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        supports_reasoning_effort: table
+            .get("supports_reasoning_effort")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+    }
+}
+
 /// 从配置解析当前默认模型所属渠道（用于 list 的 * 标记）。
 pub(crate) fn current_provider_name(doc: &toml_edit::DocumentMut) -> Option<String> {
     let default = doc
@@ -1473,5 +1551,75 @@ mod parse_models_response_tests {
             }
             .is_meaningful()
         );
+    }
+}
+
+#[cfg(test)]
+mod provider_model_entries_tests {
+    use super::*;
+
+    /// 构造一份带 `[model."foo/*"]` 与无关渠道条目的 config 文档。
+    fn make_doc() -> toml_edit::DocumentMut {
+        let mut doc = toml_edit::DocumentMut::new();
+        doc["model"] = toml_edit::table();
+        let model = doc["model"].as_table_mut().unwrap();
+
+        let mut a = toml_edit::Table::new();
+        a["model"] = toml_edit::value("alpha");
+        a["model_provider"] = toml_edit::value("foo");
+        a["supports_reasoning_effort"] = toml_edit::value(true);
+        a["reasoning_effort"] = toml_edit::value("medium");
+        let mut efforts = toml_edit::Array::new();
+        efforts.push("low");
+        efforts.push("high");
+        a["reasoning_efforts"] = toml_edit::value(efforts);
+        model["foo/alpha"] = toml_edit::Item::Table(a);
+
+        // 无 `model` 字段 → 回退到 key 后缀 "beta"。
+        let mut b = toml_edit::Table::new();
+        b["model_provider"] = toml_edit::value("foo");
+        b["catpaw_model_type_code"] = toml_edit::value(7i64);
+        model["foo/beta"] = toml_edit::Item::Table(b);
+
+        // 其它渠道的条目，不应被列出。
+        let mut other = toml_edit::Table::new();
+        other["model"] = toml_edit::value("gamma");
+        other["model_provider"] = toml_edit::value("bar");
+        model["bar/gamma"] = toml_edit::Item::Table(other);
+
+        doc
+    }
+
+    #[test]
+    fn lists_only_this_providers_entries_sorted() {
+        let doc = make_doc();
+        let entries = provider_model_entries_from_doc(&doc, "foo");
+        let ids: Vec<&str> = entries.iter().map(|e| e.id.as_str()).collect();
+        assert_eq!(ids, vec!["alpha", "beta"], "按 id 排序且不含其它渠道");
+    }
+
+    #[test]
+    fn parses_reasoning_meta_from_config_item() {
+        let doc = make_doc();
+        let entries = provider_model_entries_from_doc(&doc, "foo");
+        let alpha = entries.iter().find(|e| e.id == "alpha").unwrap();
+        assert!(alpha.meta.supports_reasoning_effort);
+        assert_eq!(alpha.meta.reasoning_effort.as_deref(), Some("medium"));
+        assert_eq!(alpha.meta.reasoning_efforts, vec!["low", "high"]);
+    }
+
+    #[test]
+    fn falls_back_to_key_suffix_and_keeps_catpaw_code() {
+        let doc = make_doc();
+        let entries = provider_model_entries_from_doc(&doc, "foo");
+        let beta = entries.iter().find(|e| e.id == "beta").unwrap();
+        assert!(!beta.meta.is_meaningful());
+        assert_eq!(beta.catpaw_model_type_code, Some(7));
+    }
+
+    #[test]
+    fn unknown_provider_yields_empty() {
+        let doc = make_doc();
+        assert!(provider_model_entries_from_doc(&doc, "nope").is_empty());
     }
 }

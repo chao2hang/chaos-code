@@ -955,6 +955,24 @@ impl ProviderModalState {
         self.scroll_offset = 0;
     }
 
+    /// 「配置模型参数」从本地 config 载入渠道已注册的模型（复用
+    /// 「查看可用模型 / 刷新」拉取后落盘的 `[model."provider/*"]` 目录），
+    /// 让用户直接点选而不是手写 ID。本地文件读取，不发起网络请求。
+    ///
+    /// 在 `go_configure_model` **之后**调用（后者会清空 models）。
+    pub fn load_provider_models_from_config(&mut self, provider: &str) {
+        let entries = crate::slash::commands::provider::list_provider_model_entries(provider);
+        self.models = entries.iter().map(|e| e.id.clone()).collect();
+        self.models_catpaw_codes = entries.iter().map(|e| e.catpaw_model_type_code).collect();
+        self.models_meta = entries.into_iter().map(|e| e.meta).collect();
+        // 条目已在 config 中；置位后由 apply_provider_outcome 在首次按键
+        // 时把 reasoning meta 同步进会话 catalog（幂等）。
+        self.models_need_catalog_sync = !self.models.is_empty();
+        self.model_filter.clear();
+        self.selected = 0;
+        self.scroll_offset = 0;
+    }
+
     /// 打开「确认删除渠道」对话框。
     ///
     /// Issue #13：危险操作必须显式确认，否则回到操作菜单不丢上下文。

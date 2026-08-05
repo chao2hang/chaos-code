@@ -1766,6 +1766,8 @@ fn live_usage_chat_state(input_tokens: u32) -> xai_chat_state::ChatStateHandle {
             stream_tool_calls: None,
             extract_inline_thinking: None,
 is_workbuddy: false,
+        catpaw: None,
+        remote_agent: None,
         },
         Box::new(xai_chat_state::NullChatPersistence),
         event_tx,

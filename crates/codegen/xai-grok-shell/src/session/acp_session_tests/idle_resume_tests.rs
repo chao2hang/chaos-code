@@ -118,6 +118,8 @@ async fn test_e2e_idle_resume_refreshes_model_metadata() {
                     extract_inline_thinking: None,
 
                     is_workbuddy: false,
+        catpaw: None,
+        remote_agent: None,
                 },
                 Box::new(xai_chat_state::NullChatPersistence),
                 chat_event_tx,

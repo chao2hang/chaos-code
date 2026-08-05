@@ -32,6 +32,9 @@ impl AgentView {
             self.last_applied_xai_event_seq = None;
             self.max_total_tokens_seen = 0;
             self.clear_minimal_btw_lifecycle();
+            // A different session's output history must not leak into the new
+            // session's top-right chip mean.
+            self.session.tracker.reset_session_rate();
         }
         self.session.session_id = Some(session_id);
     }
@@ -46,12 +49,66 @@ impl AgentView {
     ///
     /// Uses saturating arithmetic because the displayed value is a UI hint;
     /// wrapping on implausibly large counts would be worse than clamping.
+    ///
+    /// Per child, the view-side `max_total_tokens_seen` (driven by the child
+    /// session's `totalTokens` snapshots) is cross-checked against the
+    /// parent-side `tokens_used` the shell reports via `SubagentProgress` /
+    /// `SubagentFinished`. Both are the same cumulative-context metric, and
+    /// the reported value is always present for running children — taking
+    /// the max prevents under-counting a child whose updates never carry
+    /// `totalTokens` (the multi-agent token chip previously showed only the
+    /// parent's count in that case).
     pub(crate) fn total_tokens_with_subagents(&self) -> u64 {
         let mut total = self.max_total_tokens_seen;
-        for child in self.subagent_views.values() {
-            total = total.saturating_add(child.total_tokens_with_subagents());
+        for (child_sid, child) in &self.subagent_views {
+            let child_total = child.total_tokens_with_subagents();
+            let reported = self
+                .subagent_sessions
+                .get(child_sid)
+                .and_then(|info| info.tokens_used)
+                .unwrap_or(0);
+            total = total.saturating_add(child_total.max(reported));
         }
         total
+    }
+
+    /// Live rate for the top-right tok/s chip.
+    ///
+    /// Priority:
+    /// 1. This agent's own live streaming rate (when freshly positive).
+    /// 2. The fastest active subagent's live rate — when this agent is
+    ///    delegating (its own stream is quiet) but a child IS generating,
+    ///    so the chip stays visible during multi-agent turns.
+    /// 3. This agent's own (quiet) turn rate, so `tokens_per_sec_line` can
+    ///    render the turn mean while thinking / running tools.
+    /// 4. The session-lifetime rate accumulator — survives `finish_turn`, so
+    ///    once the session has produced any output the chip never disappears
+    ///    (even between turns, without shell context metadata).
+    ///
+    /// `tokens_per_sec()` decays to 0 after ~1s of quiet, so finished or idle
+    /// children are naturally excluded without an explicit running check.
+    pub(crate) fn live_rate_for_chip(&self) -> Option<crate::acp::tracker::LiveStreamingRate> {
+        let own = self.session.tracker.streaming_rate();
+        if own.is_some_and(|rate| rate.tokens_per_sec() > 0.0) {
+            return own;
+        }
+        let mut best: Option<crate::acp::tracker::LiveStreamingRate> = None;
+        for child in self.subagent_views.values() {
+            let Some(rate) = child.session.tracker.streaming_rate() else {
+                continue;
+            };
+            if rate.tokens_per_sec() <= 0.0 {
+                continue;
+            }
+            let take = match best {
+                None => true,
+                Some(current) => rate.tokens_per_sec() > current.tokens_per_sec(),
+            };
+            if take {
+                best = Some(rate);
+            }
+        }
+        best.or(own).or_else(|| self.session.tracker.session_streaming_rate())
     }
     /// Record a prompt id this client originated (sent to the agent as the turn
     /// driver). Used by the ACP gate to keep `attached_as_viewer` per-turn
@@ -1070,6 +1127,155 @@ mod resolve_turn_activity_tests {
             .subagent_views
             .insert("child".into(), Box::new(child));
         assert_eq!(parent.total_tokens_with_subagents(), 3_500);
+    }
+
+    /// 子 agent 视图侧可能收不到 totalTokens 快照（max_total_tokens_seen 为
+    /// 0），但父侧 SubagentProgress/Finished 总是上报累计 context tokens_used。
+    /// 两者同口径取大，避免多 agent 场景下 token 数漏计子任务。
+    #[test]
+    fn total_tokens_with_subagents_covers_reported_child_usage() {
+        use crate::app::subagent::SubagentInfo;
+        use std::sync::Arc;
+        use std::time::Instant;
+
+        let mut parent = test_agent_view(Some("parent"), std::path::PathBuf::from("/tmp"));
+        parent.max_total_tokens_seen = 1_000;
+        // 子视图从未收到 totalTokens → max_total_tokens_seen 为 0。
+        let child = test_agent_view(Some("child"), std::path::PathBuf::from("/tmp"));
+        parent.subagent_views.insert("child".into(), Box::new(child));
+        let now = Instant::now();
+        parent.subagent_sessions.insert(
+            "child".into(),
+            SubagentInfo {
+                subagent_id: Arc::from("sub"),
+                child_session_id: Arc::from("child"),
+                description: Arc::from("d"),
+                subagent_type: Arc::from("general-purpose"),
+                persona: None,
+                role: None,
+                model: None,
+                context_source: None,
+                resumed_from: None,
+                capability_mode: None,
+                workflow_run_id: None,
+                context_normalized: false,
+                parent_prompt_id: None,
+                started_at: now,
+                last_progress_at: now,
+                finished: true,
+                status: Some(Arc::from("completed")),
+                error: None,
+                duration_ms: Some(1000),
+                tool_calls: None,
+                turns: None,
+                turn_count: None,
+                tool_call_count: None,
+                tokens_used: Some(12_000),
+                context_window_tokens: None,
+                context_usage_pct: None,
+                tools_used: vec![],
+                error_count: None,
+                activity_label: None,
+                is_background: true,
+                pending_kill: false,
+                kill_requested_at: None,
+                scrollback_entry_id: None,
+                prompt: None,
+                child_cwd: None,
+                worktree_path: None,
+                child_updates_replayed: false,
+            },
+        );
+        assert_eq!(
+            parent.total_tokens_with_subagents(),
+            1_000 + 12_000,
+            "reported tokens_used must cover a child with no view-side totalTokens"
+        );
+    }
+
+    /// 父在委派时自身无流式速率，但运行中的子 agent 正在生成：右上角 chip
+    /// 应回退到子 agent 的实时速率，而不是消失。
+    #[test]
+    fn live_rate_for_chip_surfaces_active_subagent_rate() {
+        let mut parent = test_agent_view(Some("parent"), std::path::PathBuf::from("/tmp"));
+        assert!(parent.live_rate_for_chip().is_none(), "fresh parent: no rate");
+
+        let mut child = test_agent_view(Some("child"), std::path::PathBuf::from("/tmp"));
+        child.session.tracker.credit_subagent_tokens(100, Some(50.0), true);
+        parent
+            .subagent_views
+            .insert("child".into(), Box::new(child));
+
+        let got = parent
+            .live_rate_for_chip()
+            .expect("active subagent rate must be surfaced");
+        assert_eq!(got.tokens_per_sec(), 50.0);
+    }
+
+    /// 父自己的实时速率为正时优先（子 agent 的速率只作兜底）。
+    #[test]
+    fn live_rate_for_chip_prefers_own_fresh_rate() {
+        let mut parent = test_agent_view(Some("parent"), std::path::PathBuf::from("/tmp"));
+        parent.session.tracker.credit_subagent_tokens(100, Some(80.0), true);
+        let mut child = test_agent_view(Some("child"), std::path::PathBuf::from("/tmp"));
+        child.session.tracker.credit_subagent_tokens(100, Some(50.0), true);
+        parent
+            .subagent_views
+            .insert("child".into(), Box::new(child));
+
+        let got = parent.live_rate_for_chip().expect("own rate present");
+        assert_eq!(got.tokens_per_sec(), 80.0, "own fresh rate must win");
+    }
+
+    /// 父的速率已静默衰减为 0（tokens_per_sec()==0）时仍回退到子 agent。
+    #[test]
+    fn live_rate_for_chip_falls_through_when_own_rate_quiet() {
+        let mut parent = test_agent_view(Some("parent"), std::path::PathBuf::from("/tmp"));
+        // credit 一个无速率样本的 token 量：种子 smoothed_rate=0，
+        // last_event_at 为 now，tokens_per_sec()==0 → 视为「安静」。
+        parent.session.tracker.credit_subagent_tokens(100, None, true);
+        assert_eq!(
+            parent.session.tracker.streaming_rate().unwrap().tokens_per_sec(),
+            0.0
+        );
+        let mut child = test_agent_view(Some("child"), std::path::PathBuf::from("/tmp"));
+        child.session.tracker.credit_subagent_tokens(100, Some(60.0), true);
+        parent
+            .subagent_views
+            .insert("child".into(), Box::new(child));
+
+        let got = parent
+            .live_rate_for_chip()
+            .expect("quiet own rate must fall through to child");
+        assert_eq!(got.tokens_per_sec(), 60.0);
+    }
+
+    /// turn 结束后 streaming_rate 被清空，但会话级累计速率仍在：chip 应回退
+    /// 到会话均值，保持常驻（不依赖 /context 提供的对话平均数据）。
+    #[test]
+    fn live_rate_for_chip_falls_back_to_session_mean_after_turn() {
+        let mut parent = test_agent_view(Some("parent"), std::path::PathBuf::from("/tmp"));
+        parent.session.tracker.credit_subagent_tokens(100, Some(80.0), true);
+        assert!(
+            parent.live_rate_for_chip().is_some(),
+            "fresh turn rate must be preferred"
+        );
+        parent.session.tracker.finish_turn(&mut parent.scrollback);
+        assert!(
+            parent.session.tracker.streaming_rate().is_none(),
+            "finish_turn clears the turn rate"
+        );
+        let got = parent
+            .live_rate_for_chip()
+            .expect("session mean must keep the chip resident after the turn");
+        assert_eq!(
+            got.total_tokens, 100,
+            "the session accumulator must still carry the produced output"
+        );
+        assert!(
+            got.started_at.elapsed() >= std::time::Duration::ZERO,
+            "session rate carries a valid clock"
+        );
     }
 
     #[test]
