@@ -1,7 +1,7 @@
 ---
 name: chaos-upstream-sync
 version: 1.0.0
-description: "跟踪 GitHub 上 xai-org/grok-build（Grok Build）的更新，并安全移植到本仓库 chaos-code（Chaos 分支）。当用户说「同步上游」「看 grok build 更新」「移植上游改动」「merge grok」「对齐 SOURCE_REV」「上游有没有新版本」时使用。覆盖：查 releases/tags/commits/changelog、对照本地 SOURCE_REV 与版本号、分流可移植 vs Chaos 专属冲突、分批 cherry-pick/merge、编译与单测、更新日志。"
+description: "跟踪 GitHub 上 xai-org/grok-build（Grok Build）的更新，并安全移植到本仓库 chaos-code（Chaos 分支）。**仅当用户明确提到「上游 / grok-build / upstream」时才触发**；否则不触发。触发词：当用户说「同步上游」「看 grok build 更新」「移植上游改动」「merge grok」「对齐 SOURCE_REV」「上游有没有新版本」时使用。覆盖：查 releases/tags/commits/changelog、对照本地 SOURCE_REV 与版本号、分流可移植 vs Chaos 专属冲突、分批 cherry-pick/merge、编译与单测、更新日志。"
 metadata:
   requires:
     bins: ["git", "gh", "cargo"]
@@ -23,6 +23,7 @@ metadata:
 | 某上游 PR/文件在 Chaos 里有没有 | **对照路径** |
 | 同步后编译挂了 | **排障**（见 references） |
 
+**不要**在用户只是说「拉取更新」「pull」「同步」时触发本 skill——那通常指从本仓库自己的 `origin`（`chao2hang/chaos-code`）拉取，跑 `git pull` 即可，与上游无关。
 **不要**在用户只是问「Chaos 怎么配模型」时触发本 skill（那是 `CHAOS.md`）。
 
 ## 固定事实（本仓库）
