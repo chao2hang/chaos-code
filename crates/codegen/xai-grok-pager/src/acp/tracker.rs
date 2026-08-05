@@ -312,6 +312,12 @@ pub struct AcpUpdateTracker {
     /// do not advance the counter (we want the live value, not a baked
     /// historical one).
     streaming_rate: Option<LiveStreamingRate>,
+    /// Session-lifetime output accumulator for the same chip. Unlike
+    /// `streaming_rate` it survives `finish_turn`, so once the session has
+    /// generated *any* output the top-right chip always has a mean rate to
+    /// show — even between turns or before the shell reports context
+    /// metadata (`/context`). Cleared on a session rebind.
+    session_rate: Option<LiveStreamingRate>,
     /// Cached cl100k_base BPE encoder, lazy-initialized on the first chunk
     /// so startup cost is flat. `None` until the first chunk arrives; if
     /// the encoder fails to build, we fall back to `chars / 4` (this is the
@@ -345,6 +351,7 @@ impl std::fmt::Debug for AcpUpdateTracker {
                 &self.orphan_updates.keys().collect::<Vec<_>>(),
             )
             .field("streaming_rate", &self.streaming_rate)
+            .field("session_rate", &self.session_rate)
             .field("token_encoder_loaded", &self.token_encoder.is_some())
             .field(
                 "token_encoder_init_attempted",
@@ -525,6 +532,17 @@ impl AcpUpdateTracker {
     /// `None` between turns or before the first chunk of a new turn.
     pub fn streaming_rate(&self) -> Option<LiveStreamingRate> {
         self.streaming_rate
+    }
+    /// Session-lifetime output rate accumulator (survives `finish_turn`).
+    /// `None` until the session produces its first output token; used as a
+    /// last-resort mean for the top-right chip so it stays resident without
+    /// shell context metadata.
+    pub fn session_streaming_rate(&self) -> Option<LiveStreamingRate> {
+        self.session_rate
+    }
+    /// Reset the session-lifetime rate accumulator (session rebind).
+    pub fn reset_session_rate(&mut self) {
+        self.session_rate = None;
     }
     fn bump_agent_output_epoch(&mut self) {
         self.agent_output_epoch = self.agent_output_epoch.wrapping_add(1);
@@ -1045,25 +1063,50 @@ impl AcpUpdateTracker {
                 rate_window_started_at: now,
                 rate_window_tokens: 0,
             });
-            return;
-        }
-        let rate = self
-            .streaming_rate
-            .as_mut()
-            .expect("streaming rate seeded above");
-        // A completed child task already supplies a duration-based per-second
-        // rate. Use it until this parent closes its next full accounting window.
-        rate.total_tokens = rate.total_tokens.saturating_add(tokens);
-        if let Some(sample_rate) = sample_rate {
-            // This is a complete child-side measurement; do not mix the
-            // parent's delegation wait into its denominator.
-            rate.smoothed_rate = sample_rate;
-            rate.rate_window_started_at = now;
-            rate.rate_window_tokens = 0;
         } else {
-            rate.record_window_tokens(now, tokens);
+            let rate = self
+                .streaming_rate
+                .as_mut()
+                .expect("streaming rate seeded above");
+            // A completed child task already supplies a duration-based per-second
+            // rate. Use it until this parent closes its next full accounting window.
+            rate.total_tokens = rate.total_tokens.saturating_add(tokens);
+            if let Some(sample_rate) = sample_rate {
+                // This is a complete child-side measurement; do not mix the
+                // parent's delegation wait into its denominator.
+                rate.smoothed_rate = sample_rate;
+                rate.rate_window_started_at = now;
+                rate.rate_window_tokens = 0;
+            } else {
+                rate.record_window_tokens(now, tokens);
+            }
+            rate.last_event_at = Some(now);
         }
-        rate.last_event_at = Some(now);
+        // Keep the session-lifetime accumulator in sync so subagent output
+        // stays visible in the chip's mean fallback after the turn ends.
+        Self::accumulate_rate(&mut self.session_rate, now, tokens);
+    }
+
+    /// Accumulate `tokens` into a live-rate window, seeding `started_at` on
+    /// the first event. Shared by the turn-rate and session-rate counters.
+    fn accumulate_rate(target: &mut Option<LiveStreamingRate>, now: Instant, tokens: u64) {
+        match target.as_mut() {
+            None => {
+                *target = Some(LiveStreamingRate {
+                    started_at: now,
+                    total_tokens: tokens,
+                    last_event_at: Some(now),
+                    smoothed_rate: 0.0,
+                    rate_window_started_at: now,
+                    rate_window_tokens: tokens,
+                });
+            }
+            Some(rate) => {
+                rate.total_tokens = rate.total_tokens.saturating_add(tokens);
+                rate.record_window_tokens(now, tokens);
+                rate.last_event_at = Some(now);
+            }
+        }
     }
     /// Finish the current thinking block, passing elapsed time to the entry.
     ///
@@ -1160,28 +1203,11 @@ impl AcpUpdateTracker {
         if !meta.is_replay {
             let added_tokens = self.count_tokens(&text);
             let now = Instant::now();
-            match self.streaming_rate.as_mut() {
-                None => {
-                    // First chunk: seed the clock and credit this chunk's
-                    // tokens. We can't compute a rate yet — no time has
-                    // elapsed since `started_at` — so the chip displays
-                    // 0 until the second chunk lands. That's the right
-                    // behaviour: one chunk isn't a rate.
-                    self.streaming_rate = Some(LiveStreamingRate {
-                        started_at: now,
-                        total_tokens: added_tokens,
-                        last_event_at: Some(now),
-                        smoothed_rate: 0.0,
-                        rate_window_started_at: now,
-                        rate_window_tokens: added_tokens,
-                    });
-                }
-                Some(rate) => {
-                    rate.total_tokens = rate.total_tokens.saturating_add(added_tokens);
-                    rate.record_window_tokens(now, added_tokens);
-                    rate.last_event_at = Some(now);
-                }
-            }
+            Self::accumulate_rate(&mut self.streaming_rate, now, added_tokens);
+            // The session-lifetime accumulator feeds the same window logic
+            // but survives `finish_turn`, keeping the chip resident between
+            // turns without shell context metadata.
+            Self::accumulate_rate(&mut self.session_rate, now, added_tokens);
         }
         if meta.is_replay {
             scrollback.push_chunk_to_agent_deferred(id, &text)
@@ -7030,6 +7056,32 @@ mod tests {
             tracker.streaming_rate().is_none(),
             "finish_turn must drop streaming_rate so the next turn re-seeds"
         );
+    }
+
+    /// The session-lifetime accumulator survives `finish_turn` and keeps
+    /// accumulating across turns, so the top-right chip has a mean rate to
+    /// show even between turns (no shell context metadata needed).
+    #[test]
+    fn session_rate_survives_turn_boundary_and_accumulates() {
+        let mut sb = ScrollbackState::new();
+        let mut tracker = AcpUpdateTracker::new();
+        assert!(tracker.session_streaming_rate().is_none());
+        tracker.handle_update(agent_chunk("hello"), &meta(), &mut sb);
+        let first = tracker.session_streaming_rate().expect("session seeded");
+        assert!(first.total_tokens > 0);
+        tracker.finish_turn(&mut sb);
+        let after_turn = tracker.session_streaming_rate().expect("survives finish_turn");
+        assert_eq!(after_turn.total_tokens, first.total_tokens);
+        // 第二个 turn 继续累积。
+        tracker.handle_update(agent_chunk("world"), &meta(), &mut sb);
+        let second = tracker.session_streaming_rate().unwrap();
+        assert!(
+            second.total_tokens > after_turn.total_tokens,
+            "session rate must keep accumulating across turns"
+        );
+        // reset_session_rate 清空（会话切换）。
+        tracker.reset_session_rate();
+        assert!(tracker.session_streaming_rate().is_none());
     }
 
     /// Per-second windows: chunks landing inside the same second accumulate

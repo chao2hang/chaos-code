@@ -130,6 +130,8 @@ fn persist_ack_waits_for_disk_flush_before_success_inner() {
                 extract_inline_thinking: None,
 
                 is_workbuddy: false,
+        catpaw: None,
+        remote_agent: None,
             },
             Box::new(
                 crate::session::chat_persistence::ChannelChatPersistence::new(
@@ -454,6 +456,8 @@ async fn first_turn_memory_injection_persists_to_chat_history() {
                     extract_inline_thinking: None,
 
                     is_workbuddy: false,
+        catpaw: None,
+        remote_agent: None,
                 },
                 Box::new(
                     crate::session::chat_persistence::ChannelChatPersistence::new(
@@ -606,6 +610,8 @@ async fn first_turn_memory_injection_disabled_does_not_persist_to_chat_history()
                     extract_inline_thinking: None,
 
                     is_workbuddy: false,
+        catpaw: None,
+        remote_agent: None,
                 },
                 Box::new(
                     crate::session::chat_persistence::ChannelChatPersistence::new(

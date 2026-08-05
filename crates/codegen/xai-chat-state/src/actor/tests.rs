@@ -33,6 +33,8 @@ fn test_config_with_window(context_window: u64) -> SamplingConfig {
         stream_tool_calls: None,
         extract_inline_thinking: None,
         is_workbuddy: false,
+        catpaw: None,
+        remote_agent: None,
     }
 }
 
@@ -1288,6 +1290,8 @@ async fn update_sampling_config_is_queryable() {
         stream_tool_calls: None,
         extract_inline_thinking: None,
         is_workbuddy: false,
+                            catpaw: None,
+                            remote_agent: None,
     };
     h.handle.update_sampling_config(new_config.clone());
 
@@ -1677,6 +1681,8 @@ async fn build_request_uses_sampling_config() {
         stream_tool_calls: None,
         extract_inline_thinking: None,
         is_workbuddy: false,
+                        catpaw: None,
+                        remote_agent: None,
     };
     let h = TestHarness::with_config(vec![ConversationItem::user("hi")], config);
 
@@ -3822,6 +3828,8 @@ async fn sampling_config_survives_compaction_replacement() {
         stream_tool_calls: None,
         extract_inline_thinking: None,
         is_workbuddy: false,
+                        catpaw: None,
+                        remote_agent: None,
     };
 
     let h = TestHarness::with_config(
@@ -3909,6 +3917,8 @@ async fn model_metadata_lost_after_compaction_then_recovered_on_next_turn() {
         stream_tool_calls: None,
         extract_inline_thinking: None,
         is_workbuddy: false,
+                        catpaw: None,
+                        remote_agent: None,
     };
 
     let h = TestHarness::with_config(
@@ -4001,6 +4011,8 @@ async fn context_window_downgrade_triggers_auto_compact() {
         stream_tool_calls: None,
         extract_inline_thinking: None,
         is_workbuddy: false,
+                        catpaw: None,
+                        remote_agent: None,
     };
 
     let h = TestHarness::with_config(vec![], config);

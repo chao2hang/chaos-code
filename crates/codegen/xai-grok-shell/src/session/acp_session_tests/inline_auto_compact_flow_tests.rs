@@ -63,6 +63,8 @@ async fn create_test_actor(
             extract_inline_thinking: None,
 
             is_workbuddy: false,
+        catpaw: None,
+        remote_agent: None,
         },
         Box::new(xai_chat_state::NullChatPersistence),
         event_tx,
@@ -512,6 +514,8 @@ async fn create_test_actor_with_memory(
             extract_inline_thinking: None,
 
             is_workbuddy: false,
+        catpaw: None,
+        remote_agent: None,
         },
         Box::new(xai_chat_state::NullChatPersistence),
         event_tx,
@@ -1286,6 +1290,8 @@ async fn test_e2e_idle_resume_refreshes_model_metadata() {
                     extract_inline_thinking: None,
 
                     is_workbuddy: false,
+        catpaw: None,
+        remote_agent: None,
                 },
                 Box::new(xai_chat_state::NullChatPersistence),
                 event_tx,

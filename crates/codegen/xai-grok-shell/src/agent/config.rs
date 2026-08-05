@@ -5680,7 +5680,7 @@ pub fn sampling_config_for_model(
 fn build_remote_agent_sampler_config(
     model: &ModelEntry,
 ) -> Option<xai_grok_sampler::config::RemoteAgentSamplerConfig> {
-    use xai_grok_sampler::config::{RemoteAgentAccountResolver, RemoteAgentSamplerConfig};
+    use xai_grok_sampler::config::RemoteAgentSamplerConfig;
 
     let git_repo_url = model.info.git_repo_url.clone().unwrap_or_default();
     let git_base_branch = model
@@ -5690,18 +5690,6 @@ fn build_remote_agent_sampler_config(
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "master".to_string());
     let git_checkout_branch = model.info.git_checkout_branch.clone().unwrap_or_default();
-
-    #[derive(Debug)]
-    struct CatPawRemoteAgentAccountResolver;
-    impl RemoteAgentAccountResolver for CatPawRemoteAgentAccountResolver {
-        fn resolve(&self) -> Option<(String, String)> {
-            let account = crate::catpaw::select_lru_account().ok().flatten()?;
-            Some((
-                account.tokens.access_token.clone(),
-                account.tokens.mis_id.clone().unwrap_or_default(),
-            ))
-        }
-    }
 
     if git_repo_url.is_empty() {
         return None;
@@ -5728,19 +5716,7 @@ fn build_remote_agent_sampler_config(
 fn build_catpaw_sampler_config(
     model: &ModelEntry,
 ) -> Option<xai_grok_sampler::config::CatPawSamplerConfig> {
-    use xai_grok_sampler::config::{CatPawAccountResolver, CatPawSamplerConfig};
-
-    #[derive(Debug)]
-    struct CatPawStoreAccountResolver;
-    impl CatPawAccountResolver for CatPawStoreAccountResolver {
-        fn resolve(&self) -> Option<(String, String)> {
-            let account = crate::catpaw::select_lru_account().ok().flatten()?;
-            Some((
-                account.tokens.access_token.clone(),
-                account.tokens.mis_id.clone().unwrap_or_default(),
-            ))
-        }
-    }
+    use xai_grok_sampler::config::CatPawSamplerConfig;
 
     Some(CatPawSamplerConfig {
         provider: model
@@ -5751,6 +5727,68 @@ fn build_catpaw_sampler_config(
         model_type_code: model.info.catpaw_model_type_code.unwrap_or(0),
         account_resolver: Some(std::sync::Arc::new(CatPawStoreAccountResolver)),
     })
+}
+
+/// Rebuild a `CatPawSamplerConfig` from the channel metadata persisted in
+/// chat state ([`xai_grok_sampling_types::SamplingConfig::catpaw`]),
+/// re-attaching the shell's account resolver.
+///
+/// `reconstruct_full_config` uses this so live CatPaw Chat sessions keep a
+/// working sampler across every turn — the wire-facing chat-state config
+/// cannot carry the `dyn` account resolver, only the static channel data.
+pub(crate) fn catpaw_sampler_config_from_channel(
+    channel: &xai_grok_sampling_types::CatPawChannelConfig,
+) -> xai_grok_sampler::config::CatPawSamplerConfig {
+    use xai_grok_sampler::config::CatPawSamplerConfig;
+    CatPawSamplerConfig {
+        provider: channel.provider.clone(),
+        model_type_code: channel.model_type_code,
+        account_resolver: Some(std::sync::Arc::new(CatPawStoreAccountResolver)),
+    }
+}
+
+/// Rebuild a `RemoteAgentSamplerConfig` from the channel metadata persisted
+/// in chat state ([`xai_grok_sampling_types::SamplingConfig::remote_agent`]).
+pub(crate) fn remote_agent_sampler_config_from_channel(
+    channel: &xai_grok_sampling_types::RemoteAgentChannelConfig,
+) -> xai_grok_sampler::config::RemoteAgentSamplerConfig {
+    use xai_grok_sampler::config::RemoteAgentSamplerConfig;
+    RemoteAgentSamplerConfig {
+        provider: channel.provider.clone(),
+        model_type_code: channel.model_type_code,
+        git_repo_url: channel.git_repo_url.clone(),
+        git_base_branch: channel.git_base_branch.clone(),
+        git_checkout_branch: channel.git_checkout_branch.clone(),
+        account_resolver: Some(std::sync::Arc::new(CatPawRemoteAgentAccountResolver)),
+        conversation_state: None,
+    }
+}
+
+/// CatPaw account resolver backed by the encrypted account store (LRU among
+/// healthy accounts). Shared by both the Chat and Remote Agent sampler
+/// configs so every reconstruct path re-attaches the same resolver.
+#[derive(Debug)]
+pub(crate) struct CatPawStoreAccountResolver;
+impl xai_grok_sampler::config::CatPawAccountResolver for CatPawStoreAccountResolver {
+    fn resolve(&self) -> Option<(String, String)> {
+        let account = crate::catpaw::select_lru_account().ok().flatten()?;
+        Some((
+            account.tokens.access_token.clone(),
+            account.tokens.mis_id.clone().unwrap_or_default(),
+        ))
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct CatPawRemoteAgentAccountResolver;
+impl xai_grok_sampler::config::RemoteAgentAccountResolver for CatPawRemoteAgentAccountResolver {
+    fn resolve(&self) -> Option<(String, String)> {
+        let account = crate::catpaw::select_lru_account().ok().flatten()?;
+        Some((
+            account.tokens.access_token.clone(),
+            account.tokens.mis_id.clone().unwrap_or_default(),
+        ))
+    }
 }
 /// Fold URL-derived headers into `extra_headers`.
 ///

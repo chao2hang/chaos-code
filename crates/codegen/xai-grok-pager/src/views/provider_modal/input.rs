@@ -889,7 +889,12 @@ fn handle_actions(state: &mut ProviderModalState, key: &KeyEvent) -> ProviderKey
                 ProviderAction::SetKey => state.go_set_key(name),
                 ProviderAction::Models | ProviderAction::Refresh => state.go_models(name),
                 ProviderAction::ManualModel => state.go_manual_model(name),
-                ProviderAction::ConfigureModel => state.go_configure_model(name),
+                ProviderAction::ConfigureModel => {
+                    state.go_configure_model(name.clone());
+                    // 复用「查看可用模型」已写入 config 的模型目录，让用户
+                    // 直接点选而不是手写 ID。
+                    state.load_provider_models_from_config(&name);
+                }
                 ProviderAction::SetModel => state.go_set_model(name),
                 ProviderAction::Delete => state.go_confirm_delete(name),
             }

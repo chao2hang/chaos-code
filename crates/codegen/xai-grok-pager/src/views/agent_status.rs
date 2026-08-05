@@ -233,6 +233,9 @@ pub fn classifier_attempts_label(goal: &GoalDisplayState) -> String {
 ///    回退到 `ContextInfo.avg_output_tokens_per_sec`，以 `📊 平均` 明确区分；
 /// 3. **稳态解码速率**：旧 agent 尚未提供对话平均值时，才使用
 ///    `ContextInfo.decode_tokens_per_sec` 作为兼容兜底，同样按平均态显示。
+/// 4. **回合平均速率**：以上都没有、但当前 turn 已运行 ≥2 秒并产出过 token
+///    （思考 / 工具 / 委派阶段 live 静默）时，用本回合累计均值兜底，让右上角
+///    chip 在 turn 运行期间保持常驻，而不是凭空消失。
 ///
 /// 所有速率都缺失时才返回 `None`。不再显示与 context bar 重复的剩余百分比。
 pub fn tokens_per_sec_line(
@@ -250,12 +253,22 @@ pub fn tokens_per_sec_line(
             ctx.decode_tokens_per_sec
                 .filter(|tps| tps.is_finite() && *tps > 0.0)
         });
+    // 回合累计平均：live 静默但本回合已产出 token 时兜底。≥2s 门限避免
+    // 首个 chunk 之后（elapsed 极小）把「total/elapsed」放大成尖峰。
+    let turn_mean_tps = streaming
+        .filter(|rate| rate.started_at.elapsed() >= std::time::Duration::from_secs(2))
+        .map(|rate| rate.mean_tokens_per_sec())
+        .filter(|tps| tps.is_finite() && *tps > 0.0);
 
     let (tps, emoji, label, color) = if let Some(tps) = live_tps {
         let (emoji, color) = speed_tier(tps, theme);
         (tps, emoji, "", color)
+    } else if let Some(tps) = average_tps {
+        (tps, "📊", "平均 ", theme.gray)
+    } else if let Some(tps) = turn_mean_tps {
+        (tps, "📊", "回合均 ", theme.gray)
     } else {
-        (average_tps?, "📊", "平均 ", theme.gray)
+        return None;
     };
     let rendered = if f64::from(tps) < 1.0 {
         format!("{emoji} {label}{tps:.1} tok/s")
@@ -1181,6 +1194,38 @@ mod tests {
             text.contains("200 tok/s"),
             "expected live rate to render: {text:?}"
         );
+    }
+
+    /// 没有对话平均数据、live 已静默但本回合产出过 token（思考 / 工具 /
+    /// 委派阶段）时，用回合累计均值兜底，让 chip 保持常驻而不是消失。
+    #[test]
+    fn turn_mean_keeps_chip_resident_without_conversation_average() {
+        use crate::acp::tracker::LiveStreamingRate;
+        use std::time::{Duration, Instant};
+
+        let theme = Theme::default();
+        let ctx = xai_grok_shell::session::ContextInfo::default();
+        let started = Instant::now() - Duration::from_secs(5);
+        let quiet = Instant::now() - Duration::from_secs(3);
+        let live = LiveStreamingRate {
+            started_at: started,
+            total_tokens: 100,
+            last_event_at: Some(quiet),
+            smoothed_rate: 250.0,
+            rate_window_started_at: started,
+            rate_window_tokens: 0,
+        };
+        // live 静默 3s → tokens_per_sec()==0；无对话平均。
+        assert_eq!(live.tokens_per_sec(), 0.0);
+        let line = tokens_per_sec_line(&ctx, Some(live), &theme)
+            .expect("chip must stay resident via turn mean");
+        let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(
+            text.contains("回合均"),
+            "expected turn-mean marker in {text:?}"
+        );
+        // 100 tokens / 5s = 20 tok/s
+        assert!(text.contains("20 tok/s"), "expected ~20 tok/s in {text:?}");
     }
 
     // ---- speed_tier 映射表 ----

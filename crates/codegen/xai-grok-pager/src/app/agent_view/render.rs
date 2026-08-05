@@ -1319,7 +1319,11 @@ impl AgentView {
         //
         // `live` 与 `context_state` 是独立输入：当 context metadata 尚未返回时，
         // 仍必须用默认 ContextInfo 渲染实时速度。
-        let live = self.session.tracker.streaming_rate();
+        //
+        // 多 agent：当前 agent 自己在委派/等待时没有输出，但其运行中的子
+        // agent 可能正在生成。`live_rate_for_chip` 会回退到最快子 agent 的
+        // 实时速率，让右上角 chip 在子任务执行期间保持可见。
+        let live = self.live_rate_for_chip();
         let fallback_context = xai_grok_shell::session::ContextInfo::default();
         let context = self.context_state.as_ref().unwrap_or(&fallback_context);
         let line = crate::views::agent_status::tokens_per_sec_line(context, live, &theme);
