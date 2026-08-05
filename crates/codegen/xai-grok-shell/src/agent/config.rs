@@ -5516,11 +5516,38 @@ pub fn stamp_session_local_sampler_fields(
         }
     }
 }
+/// Finalize an auxiliary model sampler without letting an unresolved helper
+/// slug replace the active model. On successful catalog resolution, stamp the
+/// session-local identity fields onto the helper config. Otherwise preserve the
+/// active model and its complete transport/auth configuration.
+pub fn finalize_aux_model_sampler_config(
+    resolved_aux: Option<SamplerConfig>,
+    active_session_config: &SamplerConfig,
+    client_identifier: Option<String>,
+    max_retries: Option<u32>,
+) -> (String, SamplerConfig) {
+    match resolved_aux {
+        Some(mut aux_cfg) => {
+            stamp_session_local_sampler_fields(
+                &mut aux_cfg,
+                active_session_config,
+                client_identifier,
+                max_retries,
+            );
+            let model = aux_cfg.model.clone();
+            (model, aux_cfg)
+        }
+        None => {
+            let model = active_session_config.model.clone();
+            (model, active_session_config.clone())
+        }
+    }
+}
+
 /// Finalize image-describe model + sampler config for user attachments.
 /// Shared so the aux resolve happy path and the `None` fallback cannot
 /// diverge between those entry points.
 ///
-/// On aux resolve `Some`, stamp session-local fields onto the helper config.
 /// On `None`, fall back to the active session model and full config (not
 /// forcing `image_description_model` onto the agent endpoint, which 404s on
 /// BYOK / non-proxy routes for internal slugs like `grok-build`).
@@ -5530,22 +5557,12 @@ pub fn finalize_image_describe_sampler_config(
     client_identifier: Option<String>,
     max_retries: Option<u32>,
 ) -> (String, SamplerConfig) {
-    match resolved_aux {
-        Some(mut describe_cfg) => {
-            stamp_session_local_sampler_fields(
-                &mut describe_cfg,
-                active_session_config,
-                client_identifier,
-                max_retries,
-            );
-            let model = describe_cfg.model.clone();
-            (model, describe_cfg)
-        }
-        None => {
-            let model = active_session_config.model.clone();
-            (model, active_session_config.clone())
-        }
-    }
+    finalize_aux_model_sampler_config(
+        resolved_aux,
+        active_session_config,
+        client_identifier,
+        max_retries,
+    )
 }
 /// Re-derive `auth_type` from the model's own credentials so BYOK env-key
 /// models stay on `ApiKey` even when a session token is present. Falls
@@ -6359,6 +6376,26 @@ reasoning_effort = "low"
             Some("session-token"),
             "hidden default should still use normal credential resolution"
         );
+    }
+    #[test]
+    fn unresolved_aux_model_preserves_active_session_model_and_identity() {
+        let active = SamplerConfig {
+            model: "gpt-5.6-sol".into(),
+            client_identifier: Some("workbuddy".into()),
+            is_workbuddy: true,
+            ..Default::default()
+        };
+        let (model, cfg) = finalize_aux_model_sampler_config(
+            None,
+            &active,
+            active.client_identifier.clone(),
+            Some(3),
+        );
+        assert_eq!(model, "gpt-5.6-sol");
+        assert_eq!(cfg.model, "gpt-5.6-sol");
+        assert_eq!(cfg.client_identifier.as_deref(), Some("workbuddy"));
+        assert!(cfg.is_workbuddy);
+        assert_ne!(cfg.model, "custom");
     }
     #[test]
     fn finalize_image_describe_sampler_none_uses_active_session_model_not_forced_helper() {
