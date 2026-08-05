@@ -1715,6 +1715,7 @@ fn make_entry_config_with_id(
         git_repo_url: None,
         git_base_branch: None,
         git_checkout_branch: None,
+        catpaw_model_type_code: None,
         compactions_remaining: None,
         compaction_at_tokens: None,
         show_model_fingerprint: false,

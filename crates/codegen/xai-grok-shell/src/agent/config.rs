@@ -4107,6 +4107,8 @@ struct DefaultModelJson {
     #[serde(default)]
     git_checkout_branch: Option<String>,
     #[serde(default)]
+    catpaw_model_type_code: Option<i32>,
+    #[serde(default)]
     compactions_remaining: Option<CompactionsRemaining>,
     #[serde(default)]
     compaction_at_tokens: Option<CompactionAtTokens>,
@@ -4173,6 +4175,7 @@ fn default_models(endpoints: &EndpointsConfig) -> IndexMap<String, ModelEntryCon
                 git_repo_url: m.git_repo_url,
                 git_base_branch: m.git_base_branch,
                 git_checkout_branch: m.git_checkout_branch,
+                catpaw_model_type_code: m.catpaw_model_type_code,
                 compactions_remaining: m.compactions_remaining,
                 compaction_at_tokens: m.compaction_at_tokens,
                 show_model_fingerprint: m.show_model_fingerprint,
@@ -4291,6 +4294,11 @@ pub struct ModelEntryConfig {
     /// CatPaw Remote Agent: checkout branch the agent operates on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub git_checkout_branch: Option<String>,
+    /// Native CatPaw `userModelTypeCode` from the CatPaw model catalog.
+    /// Written by the pager when registering a `kind = "catpaw"` provider's
+    /// models; the sampler sends it on the wire to route to the right model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub catpaw_model_type_code: Option<i32>,
     /// Per-model config for the `x-compactions-remaining` header; `None` disables it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compactions_remaining: Option<CompactionsRemaining>,
@@ -4389,6 +4397,9 @@ pub struct ConfigModelOverride {
     /// serde rejects a table that contains both spellings otherwise.
     #[serde(alias = "send_compactions_remaining")]
     pub compactions_remaining: Option<CompactionsRemaining>,
+    #[serde(alias = "catpawModelTypeCode")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub catpaw_model_type_code: Option<i32>,
     pub compaction_at_tokens: Option<CompactionAtTokens>,
     pub show_model_fingerprint: Option<bool>,
     pub stream_tool_calls: Option<bool>,
@@ -4498,6 +4509,9 @@ impl ConfigModelOverride {
         if self.extract_inline_thinking.is_some() {
             entry.info.extract_inline_thinking = self.extract_inline_thinking;
         }
+        if self.catpaw_model_type_code.is_some() {
+            entry.info.catpaw_model_type_code = self.catpaw_model_type_code;
+        }
         if self.api_key.is_some() {
             entry.api_key.clone_from(&self.api_key);
         }
@@ -4594,6 +4608,10 @@ pub struct ModelInfo {
     /// CatPaw Remote Agent: checkout branch the agent operates on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub git_checkout_branch: Option<String>,
+    /// Native CatPaw `userModelTypeCode` from the CatPaw model catalog;
+    /// `None` means the sampler falls back to the upstream default (0).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub catpaw_model_type_code: Option<i32>,
     pub show_model_fingerprint: bool,
     /// When `Some(true)`, the sampler injects `stream_tool_calls: true`
     pub stream_tool_calls: Option<bool>,
@@ -4650,6 +4668,7 @@ impl ModelInfo {
             git_repo_url: None,
             git_base_branch: None,
             git_checkout_branch: None,
+            catpaw_model_type_code: None,
             show_model_fingerprint: false,
             stream_tool_calls: None,
             extract_inline_thinking: None,
@@ -4689,6 +4708,7 @@ impl ModelInfo {
             git_repo_url: entry.git_repo_url.clone(),
             git_base_branch: entry.git_base_branch.clone(),
             git_checkout_branch: entry.git_checkout_branch.clone(),
+            catpaw_model_type_code: entry.catpaw_model_type_code,
             compactions_remaining: entry.compactions_remaining,
             compaction_at_tokens: entry.compaction_at_tokens,
             show_model_fingerprint: entry.show_model_fingerprint,
@@ -5437,6 +5457,7 @@ pub fn resolve_aux_model_sampling_config(
                 git_repo_url: None,
                 git_base_branch: None,
                 git_checkout_branch: None,
+                catpaw_model_type_code: None,
                 show_model_fingerprint: false,
                 stream_tool_calls: None,
                 extract_inline_thinking: None,
@@ -5692,7 +5713,7 @@ fn build_remote_agent_sampler_config(
             .id
             .clone()
             .unwrap_or_else(|| model.info.model.clone()),
-        model_type_code: 0,
+        model_type_code: model.info.catpaw_model_type_code.unwrap_or(0),
         git_repo_url,
         git_base_branch,
         git_checkout_branch,
@@ -5727,7 +5748,7 @@ fn build_catpaw_sampler_config(
             .id
             .clone()
             .unwrap_or_else(|| model.info.model.clone()),
-        model_type_code: 0,
+        model_type_code: model.info.catpaw_model_type_code.unwrap_or(0),
         account_resolver: Some(std::sync::Arc::new(CatPawStoreAccountResolver)),
     })
 }
@@ -5827,6 +5848,7 @@ fn resolve_hidden_default_web_search_sampling_config(
             git_repo_url: None,
             git_base_branch: None,
             git_checkout_branch: None,
+            catpaw_model_type_code: None,
             show_model_fingerprint: false,
             stream_tool_calls: None,
             extract_inline_thinking: None,
@@ -7080,6 +7102,7 @@ reasoning_effort = "low"
                 git_repo_url: None,
                 git_base_branch: None,
                 git_checkout_branch: None,
+                catpaw_model_type_code: None,
                 show_model_fingerprint: false,
                 stream_tool_calls: None,
                 extract_inline_thinking: None,
@@ -8110,6 +8133,7 @@ reasoning_effort = "low"
             git_repo_url: None,
             git_base_branch: None,
             git_checkout_branch: None,
+            catpaw_model_type_code: None,
             show_model_fingerprint: false,
             stream_tool_calls: None,
             extract_inline_thinking: None,
@@ -8273,6 +8297,7 @@ reasoning_effort = "low"
             git_repo_url: None,
             git_base_branch: None,
             git_checkout_branch: None,
+            catpaw_model_type_code: None,
             show_model_fingerprint: false,
             stream_tool_calls: None,
             extract_inline_thinking: None,
@@ -8728,6 +8753,7 @@ reasoning_effort = "low"
             git_repo_url: None,
             git_base_branch: None,
             git_checkout_branch: None,
+            catpaw_model_type_code: None,
             show_model_fingerprint: false,
             stream_tool_calls: None,
             extract_inline_thinking: None,
@@ -12558,6 +12584,7 @@ default = "grok-4.5"
                 git_repo_url: None,
                 git_base_branch: None,
                 git_checkout_branch: None,
+                catpaw_model_type_code: None,
                 show_model_fingerprint: false,
                 stream_tool_calls: None,
                 extract_inline_thinking: None,

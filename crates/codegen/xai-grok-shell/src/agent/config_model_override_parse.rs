@@ -365,6 +365,7 @@ fn parse_model_override_table(
 const ALIASES: &[(&str, &str)] = &[
     ("compactions_remaining", "send_compactions_remaining"),
     ("extract_inline_thinking", "extractInlineThinking"),
+    ("catpaw_model_type_code", "catpawModelTypeCode"),
 ];
 
 /// Removes one key of each [`ALIASES`] pair that appears twice in `table`.
@@ -746,6 +747,7 @@ mod tests {
             compactions_remaining: Some(CompactionsRemaining::Fixed(1)),
             compaction_at_tokens: Some(CompactionAtTokens::Fixed(100_000)),
             show_model_fingerprint: Some(true),
+            catpaw_model_type_code: Some(75),
             stream_tool_calls: Some(false),
             extract_inline_thinking: Some(true),
         }

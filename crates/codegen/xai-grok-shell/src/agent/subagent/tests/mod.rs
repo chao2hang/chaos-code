@@ -1851,6 +1851,7 @@ fn test_model_entry(model_id: &str) -> crate::agent::config::ModelEntry {
             git_repo_url: None,
             git_base_branch: None,
             git_checkout_branch: None,
+            catpaw_model_type_code: None,
             show_model_fingerprint: false,
             stream_tool_calls: None,
             extract_inline_thinking: None,
