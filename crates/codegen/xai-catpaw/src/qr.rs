@@ -13,6 +13,12 @@ pub struct QrStart {
     pub expire_time: i64,
     #[serde(default)]
     pub qr_code_image_url: String,
+    /// QR modules extracted from `qr_code_image_url` for terminal rendering.
+    /// `true` means a dark module. This is intentionally not serialized onto
+    /// the wire; it is populated by `Client::start_qr_login` after fetching the
+    /// upstream image.
+    #[serde(skip)]
+    pub qr_modules: Vec<Vec<bool>>,
 }
 
 impl QrStart {
@@ -31,6 +37,7 @@ impl QrStart {
                 &["qrCodeImageUrl", "qr_code_image_url", "imageUrl", "url"],
             )
             .unwrap_or_default(),
+            qr_modules: Vec::new(),
         })
     }
 }

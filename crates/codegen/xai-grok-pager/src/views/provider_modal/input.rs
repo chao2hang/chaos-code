@@ -885,6 +885,7 @@ fn handle_actions(state: &mut ProviderModalState, key: &KeyEvent) -> ProviderKey
             match action {
                 ProviderAction::Edit => state.go_edit(name),
                 ProviderAction::CatpawLogin => state.go_catpaw_login(name),
+                ProviderAction::CatpawQuota => state.load_catpaw_quota(&name),
                 ProviderAction::SetKey => state.go_set_key(name),
                 ProviderAction::Models | ProviderAction::Refresh => state.go_models(name),
                 ProviderAction::ManualModel => state.go_manual_model(name),
@@ -1444,6 +1445,7 @@ mod tests {
             code: "qr-code".into(),
             expire_time: 60,
             image_url: "https://example/qr.png".into(),
+            qr_modules: Vec::new(),
         });
 
         // Enter 立即轮询一次。

@@ -18,7 +18,9 @@ use xai_catpaw::store::{Account, AccountStore};
 pub use xai_catpaw::Client as CatPawClient;
 /// Re-export the CatPaw client and QR wire types so the TUI/sampling layers
 /// can drive login without depending on the core crate directly.
+pub use xai_catpaw::models::{ModelInfo as CatPawModelInfo, ModelMap as CatPawModelMap};
 pub use xai_catpaw::qr::{QrPoll, QrStart, QrStatus};
+pub use xai_catpaw::quota::QuotaInfo as CatPawQuotaInfo;
 pub use xai_catpaw::tokens::TokenSet;
 
 /// Directory holding CatPaw account state: `<grok_home>/catpaw/`.
@@ -54,6 +56,32 @@ pub fn insert_account(label: &str, mobile: Option<&str>, tokens: &TokenSet) -> R
 /// Atomically select and touch the least-recently-used healthy account.
 pub fn select_lru_account() -> Result<Option<Account>> {
     open_account_store()?.select_lru()
+}
+
+/// Fetch the native CatPaw model catalog using a credential from the encrypted
+/// account pool. The provider label is kept for API symmetry and diagnostics;
+/// account selection currently remains global LRU because stored accounts are
+/// CatPaw-native rather than tied to one OpenAI-compatible endpoint.
+pub async fn fetch_models(_provider: &str) -> Result<CatPawModelMap> {
+    let account = select_lru_account()?
+        .ok_or_else(|| xai_catpaw::Error::Auth("CatPaw 渠道未登录：请先扫码登录".into()))?;
+    let headers = xai_catpaw::headers::UpstreamHeaders::new(
+        &account.tokens.access_token,
+        account.tokens.mis_id.as_deref().unwrap_or_default(),
+    );
+    login_client()?.models(&headers).await
+}
+
+/// Fetch the current CatPaw account's model quota using the same encrypted
+/// credential pool as inference and model discovery.
+pub async fn fetch_quota(_provider: &str) -> Result<CatPawQuotaInfo> {
+    let account = select_lru_account()?
+        .ok_or_else(|| xai_catpaw::Error::Auth("CatPaw 渠道未登录：请先扫码登录".into()))?;
+    let headers = xai_catpaw::headers::UpstreamHeaders::new(
+        &account.tokens.access_token,
+        account.tokens.mis_id.as_deref().unwrap_or_default(),
+    );
+    login_client()?.quota(&headers).await
 }
 
 /// Rotate a stored account's tokens after a refresh.

@@ -15,6 +15,7 @@ pub mod error;
 pub mod headers;
 pub mod models;
 pub mod qr;
+pub mod quota;
 pub mod store;
 pub mod tokens;
 

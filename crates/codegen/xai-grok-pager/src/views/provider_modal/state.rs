@@ -14,6 +14,10 @@ pub const AUTH_SCHEMES: &[&str] = &["bearer", "x_api_key"];
 /// API 后端选项。
 pub const API_BACKENDS: &[&str] = &["responses", "chat_completions", "messages"];
 
+/// CatPaw native API origin. It is persisted for diagnostics and inherited by
+/// registered models; requests still use the native CatPaw client paths.
+pub const CATPAW_BASE_URL: &str = "https://catpaw.meituan.com";
+
 /// 渠道操作菜单项（二级菜单）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProviderAction {
@@ -21,6 +25,8 @@ pub enum ProviderAction {
     Edit,
     /// CatPaw 渠道扫码登录（仅 `kind = "catpaw"` 渠道显示）。
     CatpawLogin,
+    /// CatPaw 账号额度查询（仅 `kind = "catpaw"` 渠道显示）。
+    CatpawQuota,
     SetKey,
     Models,
     /// 手动输入模型 ID（不依赖上游 /models 列表）。
@@ -39,6 +45,7 @@ impl ProviderAction {
     pub const ALL: &[ProviderAction] = &[
         ProviderAction::Edit,
         ProviderAction::CatpawLogin,
+        ProviderAction::CatpawQuota,
         ProviderAction::SetKey,
         ProviderAction::Models,
         ProviderAction::ManualModel,
@@ -53,7 +60,12 @@ impl ProviderAction {
         Self::ALL
             .iter()
             .copied()
-            .filter(|a| !matches!(a, ProviderAction::CatpawLogin) || provider_is_catpaw)
+            .filter(|a| {
+                !matches!(
+                    a,
+                    ProviderAction::CatpawLogin | ProviderAction::CatpawQuota
+                ) || provider_is_catpaw
+            })
             .collect()
     }
 
@@ -61,6 +73,7 @@ impl ProviderAction {
         match self {
             Self::Edit => "编辑渠道",
             Self::CatpawLogin => "CatPaw 扫码登录",
+            Self::CatpawQuota => "查看账号额度",
             Self::SetKey => "设置 API Key",
             Self::Models => "查看可用模型",
             Self::ManualModel => "手动输入模型",
@@ -75,6 +88,7 @@ impl ProviderAction {
         match self {
             Self::Edit => "修改 URL / 认证 / 后端 / 密钥",
             Self::CatpawLogin => "手机扫码登录 CatPaw 账号",
+            Self::CatpawQuota => "查询各模型已用/剩余额度",
             Self::SetKey => "写入/更新密钥",
             Self::Models => "从渠道拉取模型",
             Self::ManualModel => "手写模型 ID 并设为当前",
@@ -191,9 +205,9 @@ pub const PROVIDER_PRESETS: &[ProviderPreset] = &[
     ProviderPreset {
         name: "catpaw",
         display: "CatPaw (美团)",
-        base_url: "",
+        base_url: "https://catpaw.meituan.com",
         auth_scheme: "bearer",
-        api_backend: "chat_completions",
+        api_backend: "catpaw",
         kind: "catpaw",
     },
 ];
@@ -266,6 +280,8 @@ pub enum CatPawLoginPhase {
         code: String,
         expire_time: i64,
         image_url: String,
+        /// Terminal QR modules, row-major, where `true` means dark.
+        qr_modules: Vec<Vec<bool>>,
     },
     /// 已扫码，等待确认。
     Scanned,
@@ -323,6 +339,11 @@ pub struct ProviderModalState {
     /// 写入 config 后由 agent 注入会话 catalog；SwitchModel 重注册时复用，
     /// 避免再次丢 meta。UI 本身不渲染 badge，字段仍是 source 缓存。
     pub models_meta: Vec<crate::slash::commands::provider::ReasoningMeta>,
+    /// 与 `models` 平行的原生 CatPaw `modelType` 码（下标对齐）。
+    ///
+    /// CatPaw 原生协议按数字 `userModelTypeCode` 而非模型名路由请求，重新注册
+    /// 模型时必须带上，否则渠道拿不到可用模型。非 CatPaw 渠道恒为 `None`。
+    pub models_catpaw_codes: Vec<Option<i32>>,
     /// `load_models_for` 成功写入 config 后置位；`apply_provider_outcome`
     /// 消费后清零，把 reasoning meta 同步进会话 catalog（避免每次按键重读）。
     pub models_need_catalog_sync: bool,
@@ -392,6 +413,7 @@ impl ProviderModalState {
             success: None,
             models: Vec::new(),
             models_meta: Vec::new(),
+            models_catpaw_codes: Vec::new(),
             models_need_catalog_sync: false,
             model_filter: String::new(),
             manual_model_id: String::new(),
@@ -639,6 +661,7 @@ impl ProviderModalState {
     pub fn load_models_for(&mut self, name: &str) {
         self.models.clear();
         self.models_meta.clear();
+        self.models_catpaw_codes.clear();
         self.models_need_catalog_sync = false;
         self.model_filter.clear();
         self.error = None;
@@ -675,6 +698,8 @@ impl ProviderModalState {
                 // Issue #14：保留上游 reasoning 元数据；SwitchModel 重注册与
                 // 会话 catalog 注入都复用，避免只写 id 再丢 meta。
                 self.models = entries.iter().map(|e| e.id.clone()).collect();
+                self.models_catpaw_codes =
+                    entries.iter().map(|e| e.catpaw_model_type_code).collect();
                 self.models_meta = entries.into_iter().map(|e| e.meta).collect();
                 // 仅在 config 写入成功时请求会话 catalog 同步。
                 self.models_need_catalog_sync = registered.is_ok();
@@ -770,6 +795,7 @@ impl ProviderModalState {
         self.api_key.clear();
         self.models.clear();
         self.models_meta.clear();
+        self.models_catpaw_codes.clear();
         self.models_need_catalog_sync = false;
         self.model_filter.clear();
         self.manual_model_id.clear();
@@ -793,6 +819,7 @@ impl ProviderModalState {
         self.api_key.clear();
         self.models.clear();
         self.models_meta.clear();
+        self.models_catpaw_codes.clear();
         self.models_need_catalog_sync = false;
         self.model_filter.clear();
         self.manual_model_id.clear();
@@ -803,6 +830,18 @@ impl ProviderModalState {
             crate::slash::commands::provider::provider_is_catpaw(&name);
         self.selected = 0;
         self.scroll_offset = 0;
+    }
+
+    /// 查询 CatPaw 账号额度，结果以状态消息展示在操作菜单上。
+    ///
+    /// 同步阻塞查询：额度接口是单次轻量调用，沿用 `/provider models` 相同的
+    /// 桥接方式，避免为一条信息展示引入额外的任务通道。
+    pub fn load_catpaw_quota(&mut self, name: &str) {
+        self.clear_messages();
+        match crate::slash::commands::provider::fetch_catpaw_quota_summary(name) {
+            Ok(summary) => self.success = Some(summary),
+            Err(error) => self.error = Some(error),
+        }
     }
 
     /// 打开 CatPaw 扫码登录（`kind = "catpaw"` 渠道）。
@@ -907,6 +946,7 @@ impl ProviderModalState {
         self.clear_messages();
         self.models.clear();
         self.models_meta.clear();
+        self.models_catpaw_codes.clear();
         self.models_need_catalog_sync = false;
         self.model_filter.clear();
         self.clear_model_params();
@@ -1133,15 +1173,23 @@ mod tests {
             catpaw.contains(&ProviderAction::CatpawLogin),
             "CatPaw provider must show the QR login action"
         );
+        assert!(
+            catpaw.contains(&ProviderAction::CatpawQuota),
+            "CatPaw provider must show the quota action"
+        );
         let ordinary = ProviderAction::visible_for(false);
         assert!(
             !ordinary.contains(&ProviderAction::CatpawLogin),
             "ordinary provider must not show the QR login action"
         );
+        assert!(
+            !ordinary.contains(&ProviderAction::CatpawQuota),
+            "ordinary provider must not show the quota action"
+        );
         assert_eq!(
             ordinary.len(),
-            ProviderAction::ALL.len() - 1,
-            "ordinary provider hides exactly the CatPaw action"
+            ProviderAction::ALL.len() - 2,
+            "ordinary provider hides exactly the two CatPaw actions"
         );
     }
 
