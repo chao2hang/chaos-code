@@ -1337,6 +1337,7 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
                         code: qr.code.clone(),
                         expire_time: qr.expire_time,
                         image_url: qr.qr_code_image_url.clone(),
+                        qr_modules: qr.qr_modules.clone(),
                     });
                     break;
                 }
@@ -1377,10 +1378,18 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
                             };
                             match xai_grok_shell::catpaw::insert_account(&provider, None, &tokens) {
                                 Ok(_) => {
-                                    state.catpaw_login = Some(CatPawLoginPhase::Success);
-                                    state.success =
-                                        Some(format!("CatPaw 渠道「{provider}」登录成功"));
-                                    close_modal = true;
+                                    // Ensure base_url/auth_scheme/api_backend are present.
+                                    if let Err(e) = crate::slash::commands::provider::ensure_catpaw_provider_config(&provider) {
+                                        state.catpaw_login =
+                                            Some(CatPawLoginPhase::Error(format!(
+                                                "登录成功但配置补全失败：{e}"
+                                            )));
+                                    } else {
+                                        state.catpaw_login = Some(CatPawLoginPhase::Success);
+                                        state.success =
+                                            Some(format!("CatPaw 渠道「{provider}」登录成功"));
+                                        close_modal = true;
+                                    }
                                 }
                                 Err(e) => {
                                     state.catpaw_login =

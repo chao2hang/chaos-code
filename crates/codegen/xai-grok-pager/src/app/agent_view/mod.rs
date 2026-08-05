@@ -2173,6 +2173,11 @@ pub(super) fn apply_provider_outcome(
                         .map(|(i, id)| crate::slash::commands::provider::ModelEntry {
                             id: id.clone(),
                             meta: state.models_meta.get(i).cloned().unwrap_or_default(),
+                            catpaw_model_type_code: state
+                                .models_catpaw_codes
+                                .get(i)
+                                .copied()
+                                .flatten(),
                         })
                         .collect();
                     (name, entries, params)
@@ -2222,6 +2227,7 @@ pub(super) fn apply_provider_outcome(
                         entries.push(crate::slash::commands::provider::ModelEntry {
                             id: model_id.clone(),
                             meta: crate::slash::commands::provider::ReasoningMeta::default(),
+                            catpaw_model_type_code: None,
                         });
                     }
                     match crate::slash::commands::provider::register_provider_models(
