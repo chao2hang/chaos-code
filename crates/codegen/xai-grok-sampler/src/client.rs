@@ -553,6 +553,26 @@ impl SamplingClient {
         }
     }
 
+    /// Add actionable context when a provider rejects one model route even
+    /// though the request is already using the WorkBuddy transport profile.
+    /// The upstream error text otherwise sends users back to `--client`, which
+    /// is misleading once the profile-specific headers and HTTP mode are live.
+    fn api_error_message(&self, status: reqwest::StatusCode, bytes: &[u8]) -> String {
+        let message = user_facing_api_error_message(status, bytes);
+        let lower = message.to_ascii_lowercase();
+        if self.is_workbuddy
+            && status == reqwest::StatusCode::FORBIDDEN
+            && (lower.contains("unsupported_client")
+                || lower.contains("only be used with the workbuddy client"))
+        {
+            format!(
+                "{message} WorkBuddy profile is active; the upstream provider rejected the selected model route. Verify provider-side access for this model."
+            )
+        } else {
+            message
+        }
+    }
+
     /// Construct a sampling client from a [`SamplerConfig`].
     ///
     /// Grabs the process-wide shared `reqwest::Client` (HTTP/2 by
@@ -986,12 +1006,12 @@ impl SamplingClient {
         if !status.is_success() {
             if status == reqwest::StatusCode::UNAUTHORIZED {
                 self.record_401_attribution(crate::attribution::SamplingConsumer::ChatCompletions);
-                let server_message = user_facing_api_error_message(status, bytes.as_ref());
+                let server_message = self.api_error_message(status, bytes.as_ref());
                 return Err(SamplingError::Auth(format!(
                     "Unauthorized (401): {server_message}"
                 )));
             }
-            let message = user_facing_api_error_message(status, bytes.as_ref());
+            let message = self.api_error_message(status, bytes.as_ref());
             return Err(SamplingError::Api {
                 status,
                 message,
@@ -1144,14 +1164,14 @@ impl SamplingClient {
                 );
                 let endpoint = self.endpoint("chat/completions");
                 let body = response.bytes().await.unwrap_or_default();
-                let server_message = user_facing_api_error_message(status, body.as_ref());
+                let server_message = self.api_error_message(status, body.as_ref());
                 return Err(SamplingError::Auth(format!(
                     "Unauthorized (401) from {endpoint}: {server_message}"
                 )));
             }
 
             let bytes = response.bytes().await?;
-            let message = user_facing_api_error_message(status, bytes.as_ref());
+            let message = self.api_error_message(status, bytes.as_ref());
             span.record("error", message.as_str());
             tracing::error!(
                 status = %status,
@@ -1340,13 +1360,13 @@ impl SamplingClient {
             if status == reqwest::StatusCode::UNAUTHORIZED {
                 self.record_401_attribution(crate::attribution::SamplingConsumer::Responses);
                 let endpoint = self.endpoint("responses");
-                let server_message = user_facing_api_error_message(status, bytes.as_ref());
+                let server_message = self.api_error_message(status, bytes.as_ref());
                 return Err(SamplingError::Auth(format!(
                     "Unauthorized (401) from {endpoint}: {server_message}"
                 )));
             }
 
-            let message = user_facing_api_error_message(status, bytes.as_ref());
+            let message = self.api_error_message(status, bytes.as_ref());
             tracing::warn!(
                 status = %status,
                 error_message = %message,
@@ -1503,7 +1523,7 @@ impl SamplingClient {
                 self.record_401_attribution(crate::attribution::SamplingConsumer::ResponsesStream);
                 let endpoint = self.endpoint("responses");
                 let body = response.bytes().await.unwrap_or_default();
-                let server_message = user_facing_api_error_message(status, body.as_ref());
+                let server_message = self.api_error_message(status, body.as_ref());
                 return Err(SamplingError::Auth(format!(
                     "Unauthorized (401) from {endpoint}: {server_message}"
                 )));
@@ -1512,7 +1532,7 @@ impl SamplingClient {
             let retry_after_secs = extract_retry_after(response.headers());
             let should_retry = extract_should_retry(response.headers());
             let bytes = response.bytes().await?;
-            let message = user_facing_api_error_message(status, bytes.as_ref());
+            let message = self.api_error_message(status, bytes.as_ref());
             span.record("error", message.as_str());
             tracing::error!(
                 status = %status,
@@ -1684,13 +1704,13 @@ impl SamplingClient {
             if status == reqwest::StatusCode::UNAUTHORIZED {
                 self.record_401_attribution(crate::attribution::SamplingConsumer::Messages);
                 let endpoint = self.endpoint("messages");
-                let server_message = user_facing_api_error_message(status, bytes.as_ref());
+                let server_message = self.api_error_message(status, bytes.as_ref());
                 return Err(SamplingError::Auth(format!(
                     "Unauthorized (401) from {endpoint}: {server_message}"
                 )));
             }
 
-            let message = user_facing_api_error_message(status, bytes.as_ref());
+            let message = self.api_error_message(status, bytes.as_ref());
             tracing::warn!(
                 status = %status,
                 error_message = %message,
@@ -1809,7 +1829,7 @@ impl SamplingClient {
                 self.record_401_attribution(crate::attribution::SamplingConsumer::MessagesStream);
                 let endpoint = self.endpoint("messages");
                 let body = response.bytes().await.unwrap_or_default();
-                let server_message = user_facing_api_error_message(status, body.as_ref());
+                let server_message = self.api_error_message(status, body.as_ref());
                 return Err(SamplingError::Auth(format!(
                     "Unauthorized (401) from {endpoint}: {server_message}"
                 )));
@@ -1818,7 +1838,7 @@ impl SamplingClient {
             let retry_after_secs = extract_retry_after(response.headers());
             let should_retry = extract_should_retry(response.headers());
             let bytes = response.bytes().await?;
-            let message = user_facing_api_error_message(status, bytes.as_ref());
+            let message = self.api_error_message(status, bytes.as_ref());
             span.record("error", message.as_str());
             tracing::error!(
                 status = %status,
@@ -2741,6 +2761,34 @@ mod tests {
     fn new_with_minimal_config_succeeds() {
         let client = SamplingClient::new(minimal_config()).expect("client should construct");
         assert_eq!(client.api_backend(), ApiBackend::ChatCompletions);
+    }
+
+    #[test]
+    fn workbuddy_unsupported_client_error_explains_upstream_model_route() {
+        let client = SamplingClient::new(SamplerConfig {
+            is_workbuddy: true,
+            ..minimal_config()
+        })
+        .expect("client should construct");
+        let body = br#"{"error":{"message":"This API can only be used with the WorkBuddy client.","type":"invalid_request_error","code":"unsupported_client"}}"#;
+
+        let message = client.api_error_message(reqwest::StatusCode::FORBIDDEN, body);
+
+        assert!(message.contains("WorkBuddy profile is active"));
+        assert!(message.contains("upstream provider rejected the selected model route"));
+    }
+
+    #[test]
+    fn non_workbuddy_unsupported_client_error_stays_verbatim() {
+        let client = SamplingClient::new(minimal_config()).expect("client should construct");
+        let body = br#"{"error":{"message":"This API can only be used with the WorkBuddy client.","type":"invalid_request_error","code":"unsupported_client"}}"#;
+
+        let message = client.api_error_message(reqwest::StatusCode::FORBIDDEN, body);
+
+        assert_eq!(
+            message,
+            "invalid_request_error: This API can only be used with the WorkBuddy client."
+        );
     }
 
     #[test]
