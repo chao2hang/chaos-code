@@ -129,11 +129,11 @@ pub const BUILTIN_CLIENT_PROFILES: &[BuiltinClientProfile] = &[
         auth_scheme: "bearer",
         env_key: "X_AI_API_KEY",
         client_identifier: "workbuddy",
-        user_agent: Some("WorkBuddy/5.3.5 WorkBuddy/5.3.5 CLI/2.115.0"),
+        user_agent: Some("WorkBuddy/5.3.8 WorkBuddy/5.3.8 CLI/2.115.0"),
         extra_headers: &[
             ("x-ide-name", "WorkBuddy"),
             ("x-ide-type", "WorkBuddy"),
-            ("x-ide-version", "5.3.5"),
+            ("x-ide-version", "5.3.8"),
             ("x-stainless-lang", "js"),
             ("x-stainless-runtime", "node"),
             ("x-stainless-runtime-version", "v22.21.1"),
@@ -375,8 +375,14 @@ mod tests {
         assert_eq!(profile.protocol, "chat_completions");
         assert_eq!(profile.client_identifier, "workbuddy");
         let ua = profile.user_agent.expect("workbuddy UA");
-        assert!(ua.contains(' '), "User-Agent may contain spaces");
-        assert!(ua.starts_with("WorkBuddy/"));
+        assert_eq!(ua, "WorkBuddy/5.3.8 WorkBuddy/5.3.8 CLI/2.115.0");
+        assert_eq!(
+            profile
+                .extra_headers
+                .get("x-ide-version")
+                .map(String::as_str),
+            Some("5.3.8")
+        );
     }
 
     #[test]
