@@ -1848,10 +1848,6 @@ fn test_model_entry(model_id: &str) -> crate::agent::config::ModelEntry {
             supports_backend_search: false,
             compactions_remaining: None,
             compaction_at_tokens: None,
-            git_repo_url: None,
-            git_base_branch: None,
-            git_checkout_branch: None,
-            catpaw_model_type_code: None,
             show_model_fingerprint: false,
             stream_tool_calls: None,
             extract_inline_thinking: None,
@@ -2140,9 +2136,7 @@ fn test_sampling_config(model_slug: &str) -> xai_grok_sampling_types::SamplingCo
         reasoning_effort: None,
         stream_tool_calls: None,
         extract_inline_thinking: None,
-is_workbuddy: false,
-        catpaw: None,
-        remote_agent: None,
+        is_workbuddy: false,
     }
 }
 fn spawn_test_parent_chat_state(model_slug: &str) -> xai_chat_state::ChatStateHandle {

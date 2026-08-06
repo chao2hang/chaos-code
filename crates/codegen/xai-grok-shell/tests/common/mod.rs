@@ -65,7 +65,5 @@ pub fn test_sampler_config(
         header_injector: None,
         user_agent: None,
         is_workbuddy: false,
-        catpaw: None,
-        remote_agent: None,
     }
 }

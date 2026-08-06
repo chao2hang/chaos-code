@@ -1839,9 +1839,6 @@ mod build_tool_parse_error_message_tests;
 #[path = "acp_session_tests/cancel_running_task_tests.rs"]
 mod cancel_running_task_tests;
 #[cfg(test)]
-#[path = "acp_session_tests/catpaw_sampler_config_tests.rs"]
-mod catpaw_sampler_config_tests;
-#[cfg(test)]
 #[path = "acp_session_tests/turn/chat_history_integrity_tests.rs"]
 mod chat_history_integrity_tests;
 #[cfg(test)]

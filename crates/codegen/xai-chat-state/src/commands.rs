@@ -433,8 +433,6 @@ mod tests {
                 stream_tool_calls: None,
                 extract_inline_thinking: None,
                 is_workbuddy: false,
-                           catpaw: None,
-                           remote_agent: None,
             },
         };
         let _ = ChatStateCommand::RecordAgentEditedPath {

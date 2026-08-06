@@ -20,7 +20,6 @@ pub use input::{handle_provider_key, handle_provider_paste};
 pub(crate) use input::sanitize_provider_field;
 pub use render::render_provider_modal;
 pub use state::{
-    API_BACKENDS, AUTH_SCHEMES, CATPAW_BASE_URL, CatPawLoginPhase, FormStep, MODAL_TITLE,
-    ModelParamField, ProviderAction, ProviderKeyOutcome, ProviderModalMode, ProviderModalState,
-    ProviderSummary,
+    API_BACKENDS, AUTH_SCHEMES, FormStep, MODAL_TITLE, ModelParamField, ProviderAction,
+    ProviderKeyOutcome, ProviderModalMode, ProviderModalState, ProviderSummary,
 };

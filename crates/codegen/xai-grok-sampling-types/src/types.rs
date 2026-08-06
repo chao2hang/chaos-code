@@ -1018,14 +1018,6 @@ pub enum ApiBackend {
     Responses,
     /// Use the Anthropic Messages API (/v1/messages)
     Messages,
-    /// Native CatPaw protocol (encrypted envelope, cumulative SSE).
-    #[serde(alias = "catpaw")]
-    CatPaw,
-    /// CatPaw Remote Agent (encrypted envelope, agent SSE stream).
-    /// Targets a specific repository; first-turn creates a
-    /// conversation, subsequent turns continue it.
-    #[serde(alias = "remoteagent")]
-    RemoteAgent,
 }
 
 impl ApiBackend {
@@ -1035,39 +1027,6 @@ impl ApiBackend {
     pub fn supports_native_schema(&self) -> bool {
         matches!(self, Self::ChatCompletions | Self::Responses)
     }
-}
-
-/// Native CatPaw Chat channel metadata.
-///
-/// Persisted on [`SamplingConfig`] (chat state) so the shell can rebuild the
-/// sampler's runtime `catpaw` config on every turn — the wire-facing
-/// `SamplingConfig` cannot carry the sampler's account resolver (a `dyn`
-/// trait object resolved fresh per request from the encrypted account store),
-/// so only the static channel data lives here and the shell re-attaches the
-/// resolver at reconstruct time.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct CatPawChannelConfig {
-    /// Provider label (for account-pool correlation).
-    pub provider: String,
-    /// `userModelTypeCode` from the CatPaw model catalog.
-    pub model_type_code: i32,
-}
-
-/// Native CatPaw Remote Agent channel metadata (same rationale as
-/// [`CatPawChannelConfig`]).
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct RemoteAgentChannelConfig {
-    /// Provider label (for account-pool correlation).
-    pub provider: String,
-    /// `userModelTypeCode` from the CatPaw model catalog.
-    pub model_type_code: i32,
-    /// Git repository URL (must be on the allowed internal host).
-    pub git_repo_url: String,
-    /// Base branch the agent diffs against.
-    pub git_base_branch: String,
-    /// Checkout branch the agent operates on.
-    #[serde(default)]
-    pub git_checkout_branch: String,
 }
 
 /// Sampling client configuration (API key excluded — that stays in the client).
@@ -1118,18 +1077,6 @@ pub struct SamplingConfig {
     /// headers from `extra_headers`/`env_http_headers` are sent.
     #[serde(default)]
     pub is_workbuddy: bool,
-
-    /// Native CatPaw Chat channel metadata. Only set when
-    /// `api_backend == ApiBackend::CatPaw`; the sampler-side account
-    /// resolver is re-attached by the shell when reconstructing the full
-    /// sampler config.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub catpaw: Option<CatPawChannelConfig>,
-
-    /// CatPaw Remote Agent channel metadata. Only set when
-    /// `api_backend == ApiBackend::RemoteAgent`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub remote_agent: Option<RemoteAgentChannelConfig>,
 }
 
 // ============ Responses API wrapper ============
@@ -1275,73 +1222,6 @@ impl From<crate::messages::MessagesRequest> for MessagesRequestWrapper {
 mod tests {
     use super::*;
     use serde_json::json;
-
-    #[test]
-    fn api_backend_accepts_legacy_catpaw_spellings() {
-        // The pager writes `api_backend = "catpaw"` / `"remoteagent"` into
-        // `[model_providers.*]`; snake_case serde alone would reject them and
-        // silently drop the whole provider, so both spellings must parse.
-        assert_eq!(
-            serde_json::from_str::<ApiBackend>("\"catpaw\"").unwrap(),
-            ApiBackend::CatPaw
-        );
-        assert_eq!(
-            serde_json::from_str::<ApiBackend>("\"cat_paw\"").unwrap(),
-            ApiBackend::CatPaw
-        );
-        assert_eq!(
-            serde_json::from_str::<ApiBackend>("\"remoteagent\"").unwrap(),
-            ApiBackend::RemoteAgent
-        );
-        assert_eq!(
-            serde_json::from_str::<ApiBackend>("\"remote_agent\"").unwrap(),
-            ApiBackend::RemoteAgent
-        );
-        // Canonical serialization stays snake_case.
-        assert_eq!(
-            serde_json::to_string(&ApiBackend::CatPaw).unwrap(),
-            "\"cat_paw\""
-        );
-    }
-
-    #[test]
-    fn sampling_config_round_trips_catpaw_channel_metadata() {
-        let cfg = SamplingConfig {
-            base_url: "https://catpaw.example".to_string(),
-            model: "glm-5.2".to_string(),
-            max_completion_tokens: None,
-            temperature: None,
-            top_p: None,
-            api_backend: ApiBackend::CatPaw,
-            extra_headers: Default::default(),
-            query_params: Default::default(),
-            env_http_headers: Default::default(),
-            context_window: std::num::NonZeroU64::new(256_000).unwrap(),
-            reasoning_effort: None,
-            stream_tool_calls: None,
-            extract_inline_thinking: None,
-            is_workbuddy: false,
-            catpaw: Some(CatPawChannelConfig {
-                provider: "catpaw".to_string(),
-                model_type_code: 75,
-            }),
-            remote_agent: None,
-        };
-        let json = serde_json::to_string(&cfg).unwrap();
-        let back: SamplingConfig = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.catpaw.as_ref().map(|c| c.model_type_code), Some(75));
-        assert_eq!(back.catpaw.as_ref().map(|c| c.provider.as_str()), Some("catpaw"));
-        assert!(back.remote_agent.is_none());
-        // 旧格式（无 catpaw 字段）必须仍能反序列化。
-        let legacy = serde_json::json!({
-            "base_url": "https://x.ai/v1",
-            "model": "grok",
-            "context_window": 131072,
-        });
-        let parsed: SamplingConfig = serde_json::from_value(legacy).unwrap();
-        assert!(parsed.catpaw.is_none());
-        assert!(parsed.remote_agent.is_none());
-    }
 
     #[test]
     fn reasoning_effort_serde_lowercase_round_trip() {

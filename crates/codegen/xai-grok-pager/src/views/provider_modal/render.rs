@@ -37,16 +37,6 @@ fn provider_sizing(compact: bool) -> ModalSizing {
     .with_compact(compact)
 }
 
-/// CatPaw's QR is a tall terminal surface. Give it the full terminal height
-/// so the real QR matrix is not clipped on a normal 24-row terminal.
-fn catpaw_sizing(compact: bool) -> ModalSizing {
-    let mut sizing = provider_sizing(compact);
-    sizing.v_margin = 0;
-    sizing.v_pad = 0;
-    sizing.footer_lines = 0;
-    sizing
-}
-
 /// Row background: selected → `bg_visual` (DarkGray on terminal-native),
 /// otherwise modal base. Mirrors settings_list_row_bg / picker rows.
 fn list_row_bg(theme: &Theme, selected: bool) -> Color {
@@ -121,9 +111,6 @@ pub fn render_provider_modal(
         ProviderModalMode::Actions(name) => render_actions(buf, area, state, name, &theme, compact),
         ProviderModalMode::ConfirmingDelete(name) => {
             render_confirm_delete(buf, area, state, name, &theme, compact)
-        }
-        ProviderModalMode::CatPawLogin(name) => {
-            render_catpaw_login(buf, area, state, name, &theme, compact)
         }
         ProviderModalMode::List | ProviderModalMode::Add | ProviderModalMode::Edit(_) => {
             let title = match &mode {
@@ -288,11 +275,7 @@ fn render_add_form(buf: &mut Buffer, area: Rect, state: &ProviderModalState, the
                 break;
             }
             let selected = i == state.selected;
-            let sub = if p.kind == "catpaw" {
-                "  手机扫码登录".to_string()
-            } else {
-                format!("  ({})", p.base_url)
-            };
+            let sub = format!("  ({})", p.base_url);
             paint_list_row(
                 buf,
                 area,
@@ -1272,7 +1255,7 @@ fn render_actions(
     y += 1;
 
     // 标签列对齐：取最宽标签 + 2 空隙。
-    let actions = ProviderAction::visible_for(state.current_provider_is_catpaw);
+    let actions = ProviderAction::visible_for();
     let label_w = actions
         .iter()
         .map(|a| a.label().width())
@@ -1758,274 +1741,3 @@ fn truncate_str(s: &str, max_width: usize) -> String {
     result
 }
 
-/// Render a QR module matrix as half-block characters. One terminal column is
-/// one QR module and one terminal row carries two module rows, preserving the
-/// near-square geometry scanners expect despite terminal cell proportions.
-fn render_terminal_qr(buf: &mut Buffer, area: Rect, modules: &[Vec<bool>]) -> u16 {
-    let size = modules.len();
-    if size == 0
-        || modules.iter().any(|row| row.len() != size)
-        || size > area.width as usize
-        || size.div_ceil(2) > area.height as usize
-    {
-        return 0;
-    }
-
-    // Prefer the QR-standard four-module quiet zone when the terminal has
-    // room. Narrow terminals still receive the complete QR matrix rather than
-    // a cropped, unscannable image.
-    let horizontal_margin = ((area.width as usize).saturating_sub(size) / 2).min(4);
-    let vertical_margin = ((area.height as usize * 2).saturating_sub(size) / 2).min(4);
-    let total_size = size + vertical_margin * 2;
-    let rendered_height = total_size.div_ceil(2) as u16;
-    let rendered_width = (size + horizontal_margin * 2) as u16;
-    let start_x = area.x + area.width.saturating_sub(rendered_width) / 2;
-
-    let module = |y: usize, x: usize| -> bool {
-        if y < vertical_margin
-            || x < horizontal_margin
-            || y >= vertical_margin + size
-            || x >= horizontal_margin + size
-        {
-            false
-        } else {
-            modules[y - vertical_margin][x - horizontal_margin]
-        }
-    };
-    let canvas_width = size + horizontal_margin * 2;
-    for terminal_row in 0..rendered_height as usize {
-        let top_y = terminal_row * 2;
-        let bottom_y = top_y + 1;
-        for x in 0..canvas_width {
-            let top = module(top_y, x);
-            let bottom = bottom_y < total_size && module(bottom_y, x);
-            let symbol = match (top, bottom) {
-                (false, false) => " ",
-                (true, false) => "▀",
-                (false, true) => "▄",
-                (true, true) => "█",
-            };
-            buf[(start_x + x as u16, area.y + terminal_row as u16)]
-                .set_symbol(symbol)
-                .set_fg(Color::Black)
-                .set_bg(Color::White);
-        }
-    }
-    rendered_height
-}
-
-fn format_expiry(expire_time: i64) -> String {
-    let now_ms = chrono::Utc::now().timestamp_millis();
-    if expire_time > now_ms {
-        format!("约 {} 秒后过期", (expire_time - now_ms + 999) / 1000)
-    } else if expire_time > 0 && expire_time < 86_400 {
-        format!("有效 {expire_time} 秒")
-    } else {
-        "即将过期".to_string()
-    }
-}
-
-/// CatPaw 扫码登录视图。
-fn render_catpaw_login(
-    buf: &mut Buffer,
-    area: Rect,
-    state: &mut ProviderModalState,
-    name: &str,
-    theme: &Theme,
-    compact: bool,
-) {
-    use super::state::CatPawLoginPhase;
-
-    let sizing = catpaw_sizing(compact);
-    let full_shortcuts: &[mw::Shortcut<'static>] = &[
-        mw::Shortcut {
-            label: "r 刷新",
-            clickable: false,
-            id: 0,
-        },
-        mw::Shortcut {
-            label: "Enter 轮询",
-            clickable: false,
-            id: 1,
-        },
-        mw::Shortcut {
-            label: "Esc 取消",
-            clickable: false,
-            id: 2,
-        },
-    ];
-    let shortcuts = if matches!(state.catpaw_login, Some(CatPawLoginPhase::ShowQr { .. })) {
-        &[][..]
-    } else {
-        full_shortcuts
-    };
-    let title = format!("CatPaw 扫码登录 · {name}");
-    let config = ModalWindowConfig {
-        title: &title,
-        tabs: None,
-        shortcuts,
-        sizing,
-        fold_info: None,
-    };
-
-    let Some(mca) = mw::render_modal_window(buf, area, &mut state.window, &config, theme) else {
-        return;
-    };
-    let content = mca.content;
-    let mut y = content.y;
-
-    let label_style = Style::default().fg(theme.gray_bright);
-    let value_style = Style::default().fg(theme.text_primary);
-
-    match &state.catpaw_login {
-        Some(CatPawLoginPhase::Loading) | None => {
-            let line = Line::from(Span::styled(
-                "正在请求二维码…",
-                Style::default().fg(theme.text_primary),
-            ));
-            line.render(Rect::new(content.x, y, content.width, 1), buf);
-        }
-        Some(CatPawLoginPhase::ShowQr {
-            code,
-            image_url,
-            expire_time,
-            qr_modules,
-        }) => {
-            let needed_qr_rows = qr_modules.len().div_ceil(2) as u16;
-            let available_rows = (content.y + content.height).saturating_sub(y);
-            if available_rows >= needed_qr_rows + 4 {
-                let line = Line::from(Span::styled(
-                    "请用手机微信扫码登录（扫码后自动确认）",
-                    Style::default().fg(theme.text_primary),
-                ));
-                line.render(Rect::new(content.x, y, content.width, 1), buf);
-                y += 1;
-            }
-
-            let qr_height = render_terminal_qr(
-                buf,
-                Rect::new(
-                    content.x,
-                    y,
-                    content.width,
-                    (content.y + content.height).saturating_sub(y),
-                ),
-                qr_modules,
-            );
-            if qr_height > 0 {
-                y = y.saturating_add(qr_height + 1);
-            } else if y < content.y + content.height {
-                let line = Line::from(vec![
-                    Span::styled("二维码链接: ", label_style),
-                    Span::styled(
-                        truncate_str(image_url, content.width.saturating_sub(10) as usize),
-                        value_style,
-                    ),
-                ]);
-                line.render(Rect::new(content.x, y, content.width, 1), buf);
-                y += 2;
-            }
-
-            if y < content.y + content.height {
-                let expires = format_expiry(*expire_time);
-                let line = Line::from(vec![
-                    Span::styled("状态: ", label_style),
-                    Span::styled("等待扫码", value_style),
-                    Span::styled("  ·  ", label_style),
-                    Span::styled(expires, label_style),
-                ]);
-                line.render(Rect::new(content.x, y, content.width, 1), buf);
-            }
-
-            // The poll code is deliberately not shown or encoded as a QR: it
-            // identifies the pending login but is not the WeChat scan payload.
-            let _ = code;
-        }
-        Some(CatPawLoginPhase::Scanned) => {
-            let line = Line::from(Span::styled(
-                "已扫码，请在手机上确认登录…",
-                Style::default().fg(theme.warning),
-            ));
-            line.render(Rect::new(content.x, y, content.width, 1), buf);
-        }
-        Some(CatPawLoginPhase::Success) => {
-            let line = Line::from(Span::styled(
-                "登录成功！",
-                Style::default().fg(theme.accent_success),
-            ));
-            line.render(Rect::new(content.x, y, content.width, 1), buf);
-        }
-        Some(CatPawLoginPhase::Expired) => {
-            let line = Line::from(Span::styled(
-                "二维码已过期，按 r 刷新",
-                Style::default().fg(theme.warning),
-            ));
-            line.render(Rect::new(content.x, y, content.width, 1), buf);
-        }
-        Some(CatPawLoginPhase::Error(err)) => {
-            let line = Line::from(Span::styled(
-                format!("登录失败: {err}"),
-                Style::default().fg(theme.accent_error),
-            ));
-            line.render(Rect::new(content.x, y, content.width, 1), buf);
-        }
-    }
-}
-
-#[cfg(test)]
-mod catpaw_qr_tests {
-    use super::*;
-
-    #[test]
-    fn terminal_qr_uses_half_blocks_and_preserves_dark_modules() {
-        let modules = vec![
-            vec![true, false, true],
-            vec![false, true, false],
-            vec![true, true, false],
-        ];
-        let area = Rect::new(0, 0, 3, 2);
-        let mut buf = Buffer::empty(area);
-
-        assert_eq!(render_terminal_qr(&mut buf, area, &modules), 2);
-        assert_eq!(buf[(0, 0)].symbol(), "▀");
-        assert_eq!(buf[(1, 0)].symbol(), "▄");
-        assert_eq!(buf[(2, 0)].symbol(), "▀");
-        assert_eq!(buf[(0, 1)].symbol(), "▀");
-        assert_eq!(buf[(1, 1)].symbol(), "▀");
-        assert_eq!(buf[(2, 1)].symbol(), " ");
-    }
-
-    #[test]
-    fn terminal_qr_uses_available_space_for_a_quiet_zone() {
-        let modules = vec![vec![false; 37]; 37];
-        let area = Rect::new(0, 0, 45, 22);
-        let mut buf = Buffer::empty(area);
-
-        assert_eq!(render_terminal_qr(&mut buf, area, &modules), 22);
-        assert_eq!(buf[(0, 0)].symbol(), " ");
-        assert_eq!(buf[(44, 21)].symbol(), " ");
-        assert_eq!(buf[(4, 1)].bg, Color::White);
-        assert_eq!(buf[(40, 20)].bg, Color::White);
-    }
-
-    #[test]
-    fn terminal_qr_rejects_invalid_or_clipped_matrices() {
-        let mut buf = Buffer::empty(Rect::new(0, 0, 4, 2));
-        assert_eq!(
-            render_terminal_qr(
-                &mut buf,
-                Rect::new(0, 0, 4, 2),
-                &[vec![true, false], vec![true]],
-            ),
-            0
-        );
-        assert_eq!(
-            render_terminal_qr(
-                &mut buf,
-                Rect::new(0, 0, 1, 1),
-                &[vec![true, false], vec![false, true]],
-            ),
-            0
-        );
-    }
-}

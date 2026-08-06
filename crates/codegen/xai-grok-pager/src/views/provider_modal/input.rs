@@ -93,29 +93,6 @@ pub fn handle_provider_key(state: &mut ProviderModalState, key: &KeyEvent) -> Pr
         ProviderModalMode::ManualModel(_) => handle_manual_model(state, key),
         ProviderModalMode::ConfigureModel(_) => handle_configure_model(state, key),
         ProviderModalMode::ConfirmingDelete(_) => handle_confirm_delete(state, key),
-        ProviderModalMode::CatPawLogin(_) => handle_catpaw_login(state, key),
-    }
-}
-
-/// CatPaw 扫码登录：`r` 刷新二维码，`Enter` 立即轮询，`Esc` 取消。
-fn handle_catpaw_login(state: &mut ProviderModalState, key: &KeyEvent) -> ProviderKeyOutcome {
-    use super::state::CatPawLoginPhase;
-    match key.code {
-        KeyCode::Char('r') | KeyCode::Char('R') => {
-            // 刷新二维码：回到 Loading 并重新请求。
-            state.catpaw_login = Some(CatPawLoginPhase::Loading);
-            ProviderKeyOutcome::CatPawRefresh
-        }
-        KeyCode::Enter => {
-            // 手动立即轮询一次（ShowQr 有 code 时）。
-            if let Some(CatPawLoginPhase::ShowQr { code, .. }) = &state.catpaw_login {
-                ProviderKeyOutcome::CatPawPoll { code: code.clone() }
-            } else {
-                ProviderKeyOutcome::Unchanged
-            }
-        }
-        KeyCode::Esc => ProviderKeyOutcome::Close,
-        _ => ProviderKeyOutcome::Unchanged,
     }
 }
 
@@ -288,18 +265,6 @@ fn handle_add(state: &mut ProviderModalState, key: &KeyEvent) -> ProviderKeyOutc
             FormStep::Preset => {
                 if state.selected < PROVIDER_PRESETS.len() {
                     let p = &PROVIDER_PRESETS[state.selected];
-                    if p.kind == "catpaw" {
-                        // CatPaw 预设：写入渠道配置后直接进入扫码登录。
-                        match crate::slash::commands::provider::add_catpaw_provider(p.name) {
-                            Ok(()) => {
-                                state.go_catpaw_login(p.name.to_string());
-                            }
-                            Err(e) => {
-                                state.error = Some(e);
-                            }
-                        }
-                        return ProviderKeyOutcome::Changed;
-                    }
                     state.name = p.name.to_string();
                     state.base_url = p.base_url.to_string();
                     state.auth_scheme_idx = AUTH_SCHEMES
@@ -849,7 +814,7 @@ fn handle_list(state: &mut ProviderModalState, key: &KeyEvent) -> ProviderKeyOut
 }
 
 fn handle_actions(state: &mut ProviderModalState, key: &KeyEvent) -> ProviderKeyOutcome {
-    let actions = ProviderAction::visible_for(state.current_provider_is_catpaw);
+    let actions = ProviderAction::visible_for();
     let len = actions.len();
     match key.code {
         KeyCode::Esc => {
@@ -884,8 +849,6 @@ fn handle_actions(state: &mut ProviderModalState, key: &KeyEvent) -> ProviderKey
                 .unwrap_or(ProviderAction::Edit);
             match action {
                 ProviderAction::Edit => state.go_edit(name),
-                ProviderAction::CatpawLogin => state.go_catpaw_login(name),
-                ProviderAction::CatpawQuota => state.load_catpaw_quota(&name),
                 ProviderAction::SetKey => state.go_set_key(name),
                 ProviderAction::Models | ProviderAction::Refresh => state.go_models(name),
                 ProviderAction::ManualModel => state.go_manual_model(name),
@@ -1439,53 +1402,6 @@ mod tests {
         assert!(matches!(
             handle_provider_key(&mut state, &esc),
             ProviderKeyOutcome::Close
-        ));
-    }
-
-    #[test]
-    fn catpaw_login_r_refreshes_and_enter_polls() {
-        use super::super::state::CatPawLoginPhase;
-        let mut state = ProviderModalState::new(ProviderModalMode::CatPawLogin("catpaw".into()));
-        state.catpaw_login = Some(CatPawLoginPhase::ShowQr {
-            code: "qr-code".into(),
-            expire_time: 60,
-            image_url: "https://example/qr.png".into(),
-            qr_modules: Vec::new(),
-        });
-
-        // Enter 立即轮询一次。
-        let enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
-        assert!(matches!(
-            handle_provider_key(&mut state, &enter),
-            ProviderKeyOutcome::CatPawPoll { code } if code == "qr-code"
-        ));
-
-        // r 刷新二维码 → 回到 Loading。
-        let r = KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE);
-        assert!(matches!(
-            handle_provider_key(&mut state, &r),
-            ProviderKeyOutcome::CatPawRefresh
-        ));
-        assert!(matches!(
-            state.catpaw_login,
-            Some(CatPawLoginPhase::Loading)
-        ));
-
-        // Esc 取消。
-        let esc = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
-        assert!(matches!(
-            handle_provider_key(&mut state, &esc),
-            ProviderKeyOutcome::Close
-        ));
-    }
-
-    #[test]
-    fn catpaw_login_ignores_enter_without_show_qr() {
-        let mut state = ProviderModalState::new(ProviderModalMode::CatPawLogin("catpaw".into()));
-        let enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
-        assert!(matches!(
-            handle_provider_key(&mut state, &enter),
-            ProviderKeyOutcome::Unchanged
         ));
     }
 }

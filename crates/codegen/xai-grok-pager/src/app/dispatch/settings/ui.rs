@@ -324,10 +324,6 @@ pub(in crate::app::dispatch) fn dispatch_open_provider_modal(
             // 模型目录（「查看可用模型」拉取的结果），可直接点选。
             state.load_provider_models_from_config(name);
         }
-        crate::views::provider_modal::ProviderModalMode::CatPawLogin(_) => {
-            // 深链打开扫码登录：进入 Loading，等待按键/轮询触发 QR 请求。
-            state.catpaw_login = Some(crate::views::provider_modal::CatPawLoginPhase::Loading);
-        }
         _ => {}
     }
 

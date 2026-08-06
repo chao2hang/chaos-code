@@ -872,7 +872,6 @@ pub fn parse_remote_model_value(
             "responses" => Some(crate::sampling::ApiBackend::Responses),
             "chat_completions" => Some(crate::sampling::ApiBackend::ChatCompletions),
             "messages" => Some(crate::sampling::ApiBackend::Messages),
-            "catpaw" => Some(crate::sampling::ApiBackend::CatPaw),
             _ => None,
         })
         .unwrap_or_default();
@@ -946,18 +945,6 @@ pub fn parse_remote_model_value(
             .or_else(|| meta.and_then(|m| m.get("supportsBackendSearch")))
             .and_then(|v| v.as_bool())
             .unwrap_or(false),
-        git_repo_url: get_string(obj, "gitRepoUrl")
-            .or_else(|| get_string(obj, "git_repo_url"))
-            .filter(|s| !s.trim().is_empty()),
-        git_base_branch: get_string(obj, "gitBaseBranch")
-            .or_else(|| get_string(obj, "git_base_branch"))
-            .filter(|s| !s.trim().is_empty()),
-        git_checkout_branch: get_string(obj, "gitCheckoutBranch")
-            .or_else(|| get_string(obj, "git_checkout_branch"))
-            .filter(|s| !s.trim().is_empty()),
-        catpaw_model_type_code: get_u64(obj, "catpawModelTypeCode")
-            .or_else(|| get_u64(obj, "catpaw_model_type_code"))
-            .and_then(|v| i32::try_from(v).ok()),
         compactions_remaining: obj
             .get("compactionsRemaining")
             .or_else(|| obj.get("compactions_remaining"))
