@@ -293,6 +293,49 @@ mod tests {
     }
 
     #[test]
+    fn catpaw_provider_legacy_backend_spelling_parses_and_inherits() {
+        // Regression: the pager writes `api_backend = "catpaw"` into
+        // `[model_providers.catpaw]`; before the serde alias this failed to
+        // parse, the whole provider was skipped, and catpaw models silently
+        // fell back to the default ChatCompletions backend + proxy base URL.
+        let raw_config: toml::Value = toml::from_str(
+            r#"
+            [model_providers.catpaw]
+            kind = "catpaw"
+            base_url = "https://catpaw.meituan.com"
+            auth_scheme = "bearer"
+            api_backend = "catpaw"
+
+            [model."catpaw/glm-5.2"]
+            model = "glm-5.2"
+            model_provider = "catpaw"
+            catpaw_model_type_code = 75
+            context_window = 200000
+            "#,
+        )
+        .unwrap();
+
+        let cfg = Config::new_from_toml_cfg(&raw_config).expect("config should parse");
+        assert!(
+            cfg.model_providers.contains_key("catpaw"),
+            "catpaw provider must survive parsing"
+        );
+        let resolved = resolve_model_list(&cfg, None);
+        let model = resolved.get("catpaw/glm-5.2").expect("model should exist");
+        assert_eq!(
+            model.info.api_backend,
+            crate::sampling::ApiBackend::CatPaw,
+            "model must inherit the CatPaw backend from its provider"
+        );
+        assert_eq!(model.info.base_url, "https://catpaw.meituan.com");
+        assert_eq!(
+            model.info.catpaw_model_type_code,
+            Some(75),
+            "the pager-written userModelTypeCode must round-trip into the model entry"
+        );
+    }
+
+    #[test]
     fn model_fields_override_provider_defaults() {
         let raw_config: toml::Value = toml::from_str(
             r#"

@@ -1019,10 +1019,12 @@ pub enum ApiBackend {
     /// Use the Anthropic Messages API (/v1/messages)
     Messages,
     /// Native CatPaw protocol (encrypted envelope, cumulative SSE).
+    #[serde(alias = "catpaw")]
     CatPaw,
     /// CatPaw Remote Agent (encrypted envelope, agent SSE stream).
     /// Targets a specific repository; first-turn creates a
     /// conversation, subsequent turns continue it.
+    #[serde(alias = "remoteagent")]
     RemoteAgent,
 }
 
@@ -1228,6 +1230,34 @@ impl From<crate::messages::MessagesRequest> for MessagesRequestWrapper {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn api_backend_accepts_legacy_catpaw_spellings() {
+        // The pager writes `api_backend = "catpaw"` / `"remoteagent"` into
+        // `[model_providers.*]`; snake_case serde alone would reject them and
+        // silently drop the whole provider, so both spellings must parse.
+        assert_eq!(
+            serde_json::from_str::<ApiBackend>("\"catpaw\"").unwrap(),
+            ApiBackend::CatPaw
+        );
+        assert_eq!(
+            serde_json::from_str::<ApiBackend>("\"cat_paw\"").unwrap(),
+            ApiBackend::CatPaw
+        );
+        assert_eq!(
+            serde_json::from_str::<ApiBackend>("\"remoteagent\"").unwrap(),
+            ApiBackend::RemoteAgent
+        );
+        assert_eq!(
+            serde_json::from_str::<ApiBackend>("\"remote_agent\"").unwrap(),
+            ApiBackend::RemoteAgent
+        );
+        // Canonical serialization stays snake_case.
+        assert_eq!(
+            serde_json::to_string(&ApiBackend::CatPaw).unwrap(),
+            "\"cat_paw\""
+        );
+    }
 
     #[test]
     fn reasoning_effort_serde_lowercase_round_trip() {

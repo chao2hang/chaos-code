@@ -2360,6 +2360,7 @@ fn find_model_by_id_prefers_key_then_falls_back_to_slug() {
             git_repo_url: None,
             git_base_branch: None,
             git_checkout_branch: None,
+            catpaw_model_type_code: None,
             show_model_fingerprint: false,
             stream_tool_calls: None,
             extract_inline_thinking: None,

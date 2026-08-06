@@ -1,0 +1,10 @@
+
+[package]
+name = "run-mock-server"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
+xai-grok-test-support = { path = "./crates/codegen/xai-grok-test-support" }
