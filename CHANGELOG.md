@@ -1,5 +1,46 @@
 # Changelog
 
+## 0.2.133 - 2026-08-06
+
+### Bug fixes
+
+- 修：`--client workbuddy` 走 freemodel 网关（work.freemodel.dev）时 403
+  `unsupported_client` 的问题。逆向真实 WorkBuddy 客户端（header dump + 对线上网关
+  的消融实验）确认校验点在 body 而非 headers：
+  - `messages[0]` 必须是 system 消息且以精确的 31 字符前缀 `This conversation is powered by`
+    开头（大小写敏感）；未命中时自动注入 marker system 消息。
+  - body 中不得出现指纹子串 `You are Chaos`（网关据此识别 Chaos 客户端并拒绝，即使
+    marker 前缀正确）；现于每个文本块（字符串与 blocks 两种形态）中将其替换为
+    `You are the Chaos`。
+  验证：`chaos --single ping --client workbuddy --model gpt-5.6-sol` 由 403 变为返回
+  `pong`；非 WorkBuddy 请求不受影响。
+- 修：pager 写入用户配置的 catpaw provider（`api_backend = "catpaw"` 与
+  `catpaw_model_type_code`）从未真正生效——`ApiBackend` 只接受 snake_case `cat_paw`
+  导致整表反序列化失败、模型代码未透传、wire 字段用了 snake_case 而 CatPaw API 期待
+  camelCase。补 serde alias 并贯穿 model_type_code。
+- 修：`--client workbuddy` 403 时错误文案补充「WorkBuddy profile is active」引导，避免
+  用户误以为 `--client` 未生效。
+
+### Features
+
+- CatPaw 登录渲染真实二维码矩阵，并支持查询账户配额。
+
+### Refactors
+
+- 共享 aux-model sampler finalizer（session summary / 标题等辅助请求复用同一构造路径）。
+
+### Chores
+
+- WorkBuddy client profile 更新至 5.3.8。
+
+### Tests / Tooling
+
+- 新增 mock 推理服务器（`mock_server.py` / `single_mock_server.py` / `run_mock_server.*`，
+  含 xai-grok-test-support 的 mock_server bin）与 WorkBuddy 请求 header 捕获脚本
+  （`test_workbuddy_headers*.py` / `test_simple_wb.py` / `capture_listener.py`），
+  用于本地复现与验证 WorkBuddy API 路径。
+- `chaos-upstream-sync` skill 触发范围收窄。
+
 ## 0.2.131 - 2026-08-03
 
 ### Bug fixes
