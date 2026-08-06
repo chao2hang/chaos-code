@@ -2078,52 +2078,7 @@ pub(super) fn apply_provider_outcome(
             // After `/provider models` registers config, sync reasoning meta
             // into the live session catalog once (flag set by load_models_for).
             maybe_sync_provider_models_into_session(agent);
-            // A freshly opened CatPaw login view (Loading phase) kicks off the
-            // QR request through the async effect loop.
-            if let Some(crate::views::modal::ActiveModal::ProviderModal { state }) =
-                &agent.active_modal
-                && matches!(
-                    state.catpaw_login,
-                    Some(crate::views::provider_modal::CatPawLoginPhase::Loading)
-                )
-                && let crate::views::provider_modal::ProviderModalMode::CatPawLogin(name) =
-                    &state.mode
-            {
-                let provider = name.clone();
-                return InputOutcome::Action(crate::app::actions::Action::CatPawStartQrLogin {
-                    provider,
-                });
-            }
             InputOutcome::Changed
-        }
-        ProviderKeyOutcome::CatPawRefresh => {
-            // Re-request the QR code (`r` in the CatPaw login view).
-            let provider = match &agent.active_modal {
-                Some(crate::views::modal::ActiveModal::ProviderModal { state }) => {
-                    match &state.mode {
-                        crate::views::provider_modal::ProviderModalMode::CatPawLogin(name) => {
-                            name.clone()
-                        }
-                        _ => return InputOutcome::Unchanged,
-                    }
-                }
-                _ => return InputOutcome::Unchanged,
-            };
-            InputOutcome::Action(crate::app::actions::Action::CatPawStartQrLogin { provider })
-        }
-        ProviderKeyOutcome::CatPawPoll { code } => {
-            let provider = match &agent.active_modal {
-                Some(crate::views::modal::ActiveModal::ProviderModal { state }) => {
-                    match &state.mode {
-                        crate::views::provider_modal::ProviderModalMode::CatPawLogin(name) => {
-                            name.clone()
-                        }
-                        _ => return InputOutcome::Unchanged,
-                    }
-                }
-                _ => return InputOutcome::Unchanged,
-            };
-            InputOutcome::Action(crate::app::actions::Action::CatPawPollQrLogin { provider, code })
         }
         ProviderKeyOutcome::Commit => {
             if let Some(crate::views::modal::ActiveModal::ProviderModal { state }) =
@@ -2173,11 +2128,6 @@ pub(super) fn apply_provider_outcome(
                         .map(|(i, id)| crate::slash::commands::provider::ModelEntry {
                             id: id.clone(),
                             meta: state.models_meta.get(i).cloned().unwrap_or_default(),
-                            catpaw_model_type_code: state
-                                .models_catpaw_codes
-                                .get(i)
-                                .copied()
-                                .flatten(),
                         })
                         .collect();
                     (name, entries, params)
@@ -2227,7 +2177,6 @@ pub(super) fn apply_provider_outcome(
                         entries.push(crate::slash::commands::provider::ModelEntry {
                             id: model_id.clone(),
                             meta: crate::slash::commands::provider::ReasoningMeta::default(),
-                            catpaw_model_type_code: None,
                         });
                     }
                     match crate::slash::commands::provider::register_provider_models(

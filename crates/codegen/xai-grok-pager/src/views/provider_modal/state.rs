@@ -14,19 +14,11 @@ pub const AUTH_SCHEMES: &[&str] = &["bearer", "x_api_key"];
 /// API 后端选项。
 pub const API_BACKENDS: &[&str] = &["responses", "chat_completions", "messages"];
 
-/// CatPaw native API origin. It is persisted for diagnostics and inherited by
-/// registered models; requests still use the native CatPaw client paths.
-pub const CATPAW_BASE_URL: &str = "https://catpaw.meituan.com";
-
 /// 渠道操作菜单项（二级菜单）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProviderAction {
     /// 编辑 base_url / 认证 / 后端 / API Key。
     Edit,
-    /// CatPaw 渠道扫码登录（仅 `kind = "catpaw"` 渠道显示）。
-    CatpawLogin,
-    /// CatPaw 账号额度查询（仅 `kind = "catpaw"` 渠道显示）。
-    CatpawQuota,
     SetKey,
     Models,
     /// 手动输入模型 ID（不依赖上游 /models 列表）。
@@ -44,8 +36,6 @@ pub enum ProviderAction {
 impl ProviderAction {
     pub const ALL: &[ProviderAction] = &[
         ProviderAction::Edit,
-        ProviderAction::CatpawLogin,
-        ProviderAction::CatpawQuota,
         ProviderAction::SetKey,
         ProviderAction::Models,
         ProviderAction::ManualModel,
@@ -55,25 +45,14 @@ impl ProviderAction {
         ProviderAction::Delete,
     ];
 
-    /// 某个渠道操作菜单可见的动作（CatPaw 渠道显示扫码登录，普通渠道不显示）。
-    pub fn visible_for(provider_is_catpaw: bool) -> Vec<ProviderAction> {
-        Self::ALL
-            .iter()
-            .copied()
-            .filter(|a| {
-                !matches!(
-                    a,
-                    ProviderAction::CatpawLogin | ProviderAction::CatpawQuota
-                ) || provider_is_catpaw
-            })
-            .collect()
+    /// 某个渠道操作菜单可见的动作。
+    pub fn visible_for() -> Vec<ProviderAction> {
+        Self::ALL.to_vec()
     }
 
     pub fn label(self) -> &'static str {
         match self {
             Self::Edit => "编辑渠道",
-            Self::CatpawLogin => "CatPaw 扫码登录",
-            Self::CatpawQuota => "查看账号额度",
             Self::SetKey => "设置 API Key",
             Self::Models => "查看可用模型",
             Self::ManualModel => "手动输入模型",
@@ -87,8 +66,6 @@ impl ProviderAction {
     pub fn hint(self) -> &'static str {
         match self {
             Self::Edit => "修改 URL / 认证 / 后端 / 密钥",
-            Self::CatpawLogin => "手机扫码登录 CatPaw 账号",
-            Self::CatpawQuota => "查询各模型已用/剩余额度",
             Self::SetKey => "写入/更新密钥",
             Self::Models => "从渠道拉取模型",
             Self::ManualModel => "手写模型 ID 并设为当前",
@@ -163,9 +140,6 @@ pub struct ProviderPreset {
     pub base_url: &'static str,
     pub auth_scheme: &'static str,
     pub api_backend: &'static str,
-    /// 渠道 kind：`catpaw` 表示原生 CatPaw 渠道（扫码登录，不填 Key）。
-    /// 普通预设为空字符串。
-    pub kind: &'static str,
 }
 
 /// 内置预设渠道列表。
@@ -176,7 +150,6 @@ pub const PROVIDER_PRESETS: &[ProviderPreset] = &[
         base_url: "https://api.openai.com/v1",
         auth_scheme: "bearer",
         api_backend: "chat_completions",
-        kind: "",
     },
     ProviderPreset {
         name: "anthropic",
@@ -184,7 +157,6 @@ pub const PROVIDER_PRESETS: &[ProviderPreset] = &[
         base_url: "https://api.anthropic.com",
         auth_scheme: "x_api_key",
         api_backend: "messages",
-        kind: "",
     },
     ProviderPreset {
         name: "deepseek",
@@ -192,7 +164,6 @@ pub const PROVIDER_PRESETS: &[ProviderPreset] = &[
         base_url: "https://api.deepseek.com/v1",
         auth_scheme: "bearer",
         api_backend: "chat_completions",
-        kind: "",
     },
     ProviderPreset {
         name: "xai",
@@ -200,15 +171,6 @@ pub const PROVIDER_PRESETS: &[ProviderPreset] = &[
         base_url: "https://api.x.ai/v1",
         auth_scheme: "bearer",
         api_backend: "chat_completions",
-        kind: "",
-    },
-    ProviderPreset {
-        name: "catpaw",
-        display: "CatPaw (美团)",
-        base_url: "https://catpaw.meituan.com",
-        auth_scheme: "bearer",
-        api_backend: "catpaw",
-        kind: "catpaw",
     },
 ];
 
@@ -266,31 +228,6 @@ pub enum ProviderModalMode {
     ConfigureModel(String),
     /// 二次确认删除某个渠道。Issue #13。
     ConfirmingDelete(String),
-    /// CatPaw 渠道扫码登录（`kind = "catpaw"` 的渠道进入该模式）。
-    CatPawLogin(String),
-}
-
-/// CatPaw 扫码登录子状态。
-#[derive(Debug, Clone)]
-pub enum CatPawLoginPhase {
-    /// 正在请求二维码。
-    Loading,
-    /// 二维码已就绪，等待扫码。
-    ShowQr {
-        code: String,
-        expire_time: i64,
-        image_url: String,
-        /// Terminal QR modules, row-major, where `true` means dark.
-        qr_modules: Vec<Vec<bool>>,
-    },
-    /// 已扫码，等待确认。
-    Scanned,
-    /// 登录成功（已写入加密账号池）。
-    Success,
-    /// 二维码过期，需刷新。
-    Expired,
-    /// 出错（网络 / 协议 / 解析）。
-    Error(String),
 }
 
 /// 输入事件的输出。
@@ -303,12 +240,6 @@ pub enum ProviderKeyOutcome {
     Commit,
     /// 切换到指定模型（触发 `Action::SetDefaultModel`）。
     SwitchModel(String),
-    /// CatPaw 扫码登录：刷新二维码（触发 `Action::CatPawStartQrLogin`）。
-    CatPawRefresh,
-    /// CatPaw 扫码登录：立即轮询一次（触发 `Action::CatPawPollQrLogin`）。
-    CatPawPoll {
-        code: String,
-    },
 }
 
 /// Provider 模态框状态。
@@ -339,11 +270,6 @@ pub struct ProviderModalState {
     /// 写入 config 后由 agent 注入会话 catalog；SwitchModel 重注册时复用，
     /// 避免再次丢 meta。UI 本身不渲染 badge，字段仍是 source 缓存。
     pub models_meta: Vec<crate::slash::commands::provider::ReasoningMeta>,
-    /// 与 `models` 平行的原生 CatPaw `modelType` 码（下标对齐）。
-    ///
-    /// CatPaw 原生协议按数字 `userModelTypeCode` 而非模型名路由请求，重新注册
-    /// 模型时必须带上，否则渠道拿不到可用模型。非 CatPaw 渠道恒为 `None`。
-    pub models_catpaw_codes: Vec<Option<i32>>,
     /// `load_models_for` 成功写入 config 后置位；`apply_provider_outcome`
     /// 消费后清零，把 reasoning meta 同步进会话 catalog（避免每次按键重读）。
     pub models_need_catalog_sync: bool,
@@ -372,10 +298,6 @@ pub struct ProviderModalState {
     pub providers: Vec<ProviderSummary>,
     /// `Add` 模式下检测到的 Cline 可导入渠道（空=未安装或无可读配置）。
     pub cline_candidates: Vec<xai_grok_shell::cline_import::ClineProvider>,
-    /// `CatPawLogin` 模式下的扫码登录子状态。
-    pub catpaw_login: Option<CatPawLoginPhase>,
-    /// 当前操作菜单所属渠道是否为 CatPaw（决定是否显示「扫码登录」动作）。
-    pub current_provider_is_catpaw: bool,
 }
 
 /// `/provider list` 显示的一行渠道摘要。
@@ -413,7 +335,6 @@ impl ProviderModalState {
             success: None,
             models: Vec::new(),
             models_meta: Vec::new(),
-            models_catpaw_codes: Vec::new(),
             models_need_catalog_sync: false,
             model_filter: String::new(),
             manual_model_id: String::new(),
@@ -427,8 +348,6 @@ impl ProviderModalState {
             list_viewport: 0,
             providers: Vec::new(),
             cline_candidates,
-            catpaw_login: None,
-            current_provider_is_catpaw: false,
         }
     }
 
@@ -661,7 +580,6 @@ impl ProviderModalState {
     pub fn load_models_for(&mut self, name: &str) {
         self.models.clear();
         self.models_meta.clear();
-        self.models_catpaw_codes.clear();
         self.models_need_catalog_sync = false;
         self.model_filter.clear();
         self.error = None;
@@ -698,8 +616,6 @@ impl ProviderModalState {
                 // Issue #14：保留上游 reasoning 元数据；SwitchModel 重注册与
                 // 会话 catalog 注入都复用，避免只写 id 再丢 meta。
                 self.models = entries.iter().map(|e| e.id.clone()).collect();
-                self.models_catpaw_codes =
-                    entries.iter().map(|e| e.catpaw_model_type_code).collect();
                 self.models_meta = entries.into_iter().map(|e| e.meta).collect();
                 // 仅在 config 写入成功时请求会话 catalog 同步。
                 self.models_need_catalog_sync = registered.is_ok();
@@ -795,14 +711,12 @@ impl ProviderModalState {
         self.api_key.clear();
         self.models.clear();
         self.models_meta.clear();
-        self.models_catpaw_codes.clear();
         self.models_need_catalog_sync = false;
         self.model_filter.clear();
         self.manual_model_id.clear();
         self.clear_model_params();
         self.edit_had_key = false;
         self.current_step = FormStep::Preset;
-        self.catpaw_login = None;
         self.selected = self.selected.min(self.list_row_count().saturating_sub(1));
         self.reload_providers();
         let max = self.list_row_count().saturating_sub(1);
@@ -819,36 +733,10 @@ impl ProviderModalState {
         self.api_key.clear();
         self.models.clear();
         self.models_meta.clear();
-        self.models_catpaw_codes.clear();
         self.models_need_catalog_sync = false;
         self.model_filter.clear();
         self.manual_model_id.clear();
         self.clear_model_params();
-        self.catpaw_login = None;
-        // 检测 CatPaw 渠道（`kind = "catpaw"`），决定是否显示「扫码登录」。
-        self.current_provider_is_catpaw =
-            crate::slash::commands::provider::provider_is_catpaw(&name);
-        self.selected = 0;
-        self.scroll_offset = 0;
-    }
-
-    /// 查询 CatPaw 账号额度，结果以状态消息展示在操作菜单上。
-    ///
-    /// 同步阻塞查询：额度接口是单次轻量调用，沿用 `/provider models` 相同的
-    /// 桥接方式，避免为一条信息展示引入额外的任务通道。
-    pub fn load_catpaw_quota(&mut self, name: &str) {
-        self.clear_messages();
-        match crate::slash::commands::provider::fetch_catpaw_quota_summary(name) {
-            Ok(summary) => self.success = Some(summary),
-            Err(error) => self.error = Some(error),
-        }
-    }
-
-    /// 打开 CatPaw 扫码登录（`kind = "catpaw"` 渠道）。
-    pub fn go_catpaw_login(&mut self, name: String) {
-        self.mode = ProviderModalMode::CatPawLogin(name);
-        self.clear_messages();
-        self.catpaw_login = Some(CatPawLoginPhase::Loading);
         self.selected = 0;
         self.scroll_offset = 0;
     }
@@ -946,7 +834,6 @@ impl ProviderModalState {
         self.clear_messages();
         self.models.clear();
         self.models_meta.clear();
-        self.models_catpaw_codes.clear();
         self.models_need_catalog_sync = false;
         self.model_filter.clear();
         self.clear_model_params();
@@ -963,7 +850,6 @@ impl ProviderModalState {
     pub fn load_provider_models_from_config(&mut self, provider: &str) {
         let entries = crate::slash::commands::provider::list_provider_model_entries(provider);
         self.models = entries.iter().map(|e| e.id.clone()).collect();
-        self.models_catpaw_codes = entries.iter().map(|e| e.catpaw_model_type_code).collect();
         self.models_meta = entries.into_iter().map(|e| e.meta).collect();
         // 条目已在 config 中；置位后由 apply_provider_outcome 在首次按键
         // 时把 reasoning meta 同步进会话 catalog（幂等）。
@@ -1029,14 +915,6 @@ impl ProviderModalState {
         }
         match self.mode.clone() {
             ProviderModalMode::List => true,
-            ProviderModalMode::CatPawLogin(name) => {
-                if self.from_hub {
-                    self.go_actions(name);
-                    false
-                } else {
-                    true
-                }
-            }
             ProviderModalMode::Actions(name) => {
                 if !self.from_hub {
                     return true;
@@ -1185,44 +1063,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn catpaw_login_action_only_visible_for_catpaw_provider() {
-        let catpaw = ProviderAction::visible_for(true);
-        assert!(
-            catpaw.contains(&ProviderAction::CatpawLogin),
-            "CatPaw provider must show the QR login action"
-        );
-        assert!(
-            catpaw.contains(&ProviderAction::CatpawQuota),
-            "CatPaw provider must show the quota action"
-        );
-        let ordinary = ProviderAction::visible_for(false);
-        assert!(
-            !ordinary.contains(&ProviderAction::CatpawLogin),
-            "ordinary provider must not show the QR login action"
-        );
-        assert!(
-            !ordinary.contains(&ProviderAction::CatpawQuota),
-            "ordinary provider must not show the quota action"
-        );
-        assert_eq!(
-            ordinary.len(),
-            ProviderAction::ALL.len() - 2,
-            "ordinary provider hides exactly the two CatPaw actions"
-        );
-    }
-
-    #[test]
-    fn catpaw_login_esc_returns_to_actions_from_hub() {
-        let mut state = ProviderModalState::new(ProviderModalMode::List);
-        state.from_hub = true;
-        state.go_catpaw_login("catpaw".into());
-        assert!(matches!(state.mode, ProviderModalMode::CatPawLogin(_)));
-        assert!(matches!(
-            state.catpaw_login,
-            Some(CatPawLoginPhase::Loading)
-        ));
-        // 从 hub 进入时 Esc 应回到操作菜单而非关闭。
-        assert!(!state.navigate_back());
-        assert!(matches!(state.mode, ProviderModalMode::Actions(_)));
+    fn actions_visible_for_all_providers() {
+        let visible = ProviderAction::visible_for();
+        assert_eq!(visible, ProviderAction::ALL.to_vec());
     }
 }

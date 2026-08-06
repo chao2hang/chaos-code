@@ -237,7 +237,9 @@ pub fn classifier_attempts_label(goal: &GoalDisplayState) -> String {
 ///    （思考 / 工具 / 委派阶段 live 静默）时，用本回合累计均值兜底，让右上角
 ///    chip 在 turn 运行期间保持常驻，而不是凭空消失。
 ///
-/// 所有速率都缺失时才返回 `None`。不再显示与 context bar 重复的剩余百分比。
+/// 所有速率都缺失时显示暗淡的 `🐢 0 tok/s` 占位，保证右上角 chip **默认常驻**
+/// ——速率数据从无到有的过程中芯片不再凭空消失。不再显示与 context bar
+/// 重复的剩余百分比。
 pub fn tokens_per_sec_line(
     ctx: &xai_grok_shell::session::ContextInfo,
     streaming: Option<crate::acp::tracker::LiveStreamingRate>,
@@ -268,7 +270,11 @@ pub fn tokens_per_sec_line(
     } else if let Some(tps) = turn_mean_tps {
         (tps, "📊", "回合均 ", theme.gray)
     } else {
-        return None;
+        // 无任何速率样本：显示占位，保证芯片默认常驻而不是凭空消失。
+        return Some(Line::from(Span::styled(
+            "🐢 0 tok/s",
+            Style::default().fg(theme.gray_dim).bg(theme.bg_base),
+        )));
     };
     let rendered = if f64::from(tps) < 1.0 {
         format!("{emoji} {label}{tps:.1} tok/s")
@@ -1055,13 +1061,15 @@ mod tests {
         }
     }
 
-    /// 状态栏 tok/s 芯片：有稳态或平均速率时渲染，缺样本时返回 None，
-    /// 保证状态栏不会出现「🐢 0 tok/s」的噪音行。
+    /// 状态栏 tok/s 芯片：即使没有任何速率样本也渲染暗淡的 `0 tok/s` 占位，
+    /// 保证右上角芯片默认常驻、不会凭空消失。
     #[test]
-    fn tokens_per_sec_line_hides_when_absent() {
+    fn tokens_per_sec_line_shows_zero_placeholder_when_absent() {
         let theme = Theme::default();
         let ctx = xai_grok_shell::session::ContextInfo::default();
-        assert!(tokens_per_sec_line(&ctx, None, &theme).is_none());
+        let line = tokens_per_sec_line(&ctx, None, &theme).expect("placeholder must render");
+        let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(text, "🐢 0 tok/s");
     }
 
     #[test]

@@ -113,8 +113,6 @@ async fn create_test_actor_with_memory(
             extract_inline_thinking: None,
 
             is_workbuddy: false,
-        catpaw: None,
-        remote_agent: None,
         },
         Box::new(xai_chat_state::NullChatPersistence),
         chat_event_tx,

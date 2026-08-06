@@ -1122,8 +1122,6 @@ async fn set_session_model_invalidates_byok_memo_for_same_model_id() {
                 user_agent: None,
 
                 is_workbuddy: false,
-                catpaw: None,
-                remote_agent: None,
             };
             let _ = actor
                 .handle_set_session_model(cfg, false, false, true, 85)
@@ -1221,8 +1219,6 @@ async fn switch_to_first_party_model_drops_minted_provider_token() {
                 header_injector: None,
 
                 is_workbuddy: false,
-                catpaw: None,
-                remote_agent: None,
             };
             let _ = actor
                 .handle_set_session_model(cfg, false, false, true, 85)

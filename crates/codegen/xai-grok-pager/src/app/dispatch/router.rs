@@ -1049,12 +1049,6 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
         Action::PreviewAutoLightTheme(v) => preview_auto_light_theme(app, v),
         Action::OpenSettings => dispatch_open_settings(app),
         Action::OpenProviderModal { mode } => dispatch_open_provider_modal(app, mode),
-        Action::CatPawStartQrLogin { provider } => {
-            vec![Effect::CatPawStartQrLogin { provider }]
-        }
-        Action::CatPawPollQrLogin { provider, code } => {
-            vec![Effect::CatPawPollQrLogin { provider, code }]
-        }
         Action::OpenClientModal { mode } => dispatch_open_client_modal(app, mode),
         Action::SetClientProfile { profile } => dispatch_set_client_profile(app, profile),
         Action::OpenCommandPalette => dispatch_open_command_palette(app),

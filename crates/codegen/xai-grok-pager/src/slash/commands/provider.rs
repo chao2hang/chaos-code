@@ -145,14 +145,6 @@ pub(crate) fn provider_field(
         .map(|s| s.to_string())
 }
 
-/// 该渠道是否为原生 CatPaw 渠道（`kind = "catpaw"`）。
-pub(crate) fn provider_is_catpaw(provider: &str) -> bool {
-    match load_config() {
-        Ok(doc) => provider_field(&doc, provider, "kind").as_deref() == Some("catpaw"),
-        Err(_) => false,
-    }
-}
-
 /// 渠道管理命令
 pub struct ProviderCommand;
 
@@ -323,45 +315,6 @@ pub(crate) fn add_provider(
     // auth_scheme + api_backend (not provider name — custom proxies qualify).
     sync_anthropic_version_header(provider_table, auth_scheme, api_backend);
 
-    save_config(&doc)
-}
-
-/// 创建原生 CatPaw 渠道（`kind = "catpaw"`）。不写 API Key——凭据只存在于
-/// 加密账号池，绝不落入 config.toml。
-pub(crate) fn add_catpaw_provider(name: &str) -> Result<(), String> {
-    let name = name.trim();
-    if name.is_empty() {
-        return Err("渠道名称不能为空".into());
-    }
-    let mut doc = load_config()?;
-    if !doc.contains_key("model_providers") {
-        doc["model_providers"] = toml_edit::table();
-    }
-    let provider_table = &mut doc["model_providers"][name];
-    *provider_table = toml_edit::table();
-    let provider_table = provider_table.as_table_mut().unwrap();
-    provider_table["kind"] = toml_edit::value("catpaw");
-    provider_table["mode"] = toml_edit::value("chat");
-    provider_table["base_url"] = toml_edit::value(crate::views::provider_modal::CATPAW_BASE_URL);
-    provider_table["auth_scheme"] = toml_edit::value("bearer");
-    provider_table["api_backend"] = toml_edit::value("catpaw");
-    save_config(&doc)
-}
-
-pub(crate) fn ensure_catpaw_provider_config(name: &str) -> Result<(), String> {
-    let mut doc = load_config()?;
-    if provider_field(&doc, name, "kind").as_deref() != Some("catpaw") {
-        return Err(format!("渠道 \"{name}\" 不是 CatPaw 渠道"));
-    }
-    let table = doc["model_providers"][name]
-        .as_table_mut()
-        .ok_or_else(|| format!("渠道 \"{name}\" 配置格式错误"))?;
-    table["base_url"] = toml_edit::value(crate::views::provider_modal::CATPAW_BASE_URL);
-    table["auth_scheme"] = toml_edit::value("bearer");
-    table["api_backend"] = toml_edit::value("catpaw");
-    if table.get("mode").and_then(|value| value.as_str()).is_none() {
-        table["mode"] = toml_edit::value("chat");
-    }
     save_config(&doc)
 }
 
@@ -612,7 +565,6 @@ pub(crate) fn register_and_set_model(provider: &str, model_id: &str) -> Result<S
     let entry = ModelEntry {
         id: model_id.to_string(),
         meta: ReasoningMeta::default(),
-        catpaw_model_type_code: None,
     };
     let keys = register_provider_models(provider, std::slice::from_ref(&entry), Some(model_id))?;
     keys.into_iter()
@@ -666,7 +618,6 @@ pub(crate) fn register_provider_models(
             provider,
             model_id,
             &entry.meta,
-            entry.catpaw_model_type_code,
         ));
     }
 
@@ -678,7 +629,6 @@ pub(crate) fn register_provider_models(
                 provider,
                 default_id,
                 &ReasoningMeta::default(),
-                None,
             ));
         }
         let default_key = provider_model_catalog_key(provider, default_id);
@@ -715,7 +665,6 @@ fn upsert_provider_model_entry(
     provider: &str,
     model_id: &str,
     meta: &ReasoningMeta,
-    catpaw_model_type_code: Option<i32>,
 ) -> String {
     let catalog_key = provider_model_catalog_key(provider, model_id);
     let entry = &mut doc["model"][catalog_key.as_str()];
@@ -745,12 +694,6 @@ fn upsert_provider_model_entry(
             }
             entry["reasoning_efforts"] = toml_edit::value(arr);
         }
-    }
-
-    // CatPaw 原生协议按数字 `userModelTypeCode` 路由，模型名只是展示用；
-    // 不落盘的话推理时拿不到路由码，渠道等同不可用。
-    if let Some(code) = catpaw_model_type_code {
-        entry["catpaw_model_type_code"] = toml_edit::value(i64::from(code));
     }
 
     catalog_key
@@ -922,7 +865,7 @@ pub(crate) fn register_model_with_params(
 
     ensure_model_table(&mut doc);
     let catalog_key =
-        upsert_provider_model_entry(&mut doc, provider, model_id, &ReasoningMeta::default(), None);
+        upsert_provider_model_entry(&mut doc, provider, model_id, &ReasoningMeta::default());
     let entry = doc["model"][catalog_key.as_str()]
         .as_table_mut()
         .expect("model entry is table");
@@ -996,10 +939,6 @@ fn provider_model_entries_from_doc(
                     Some(ModelEntry {
                         id,
                         meta: reasoning_meta_from_config_item(entry),
-                        catpaw_model_type_code: entry
-                            .get("catpaw_model_type_code")
-                            .and_then(|v| v.as_integer())
-                            .and_then(|n| i32::try_from(n).ok()),
                     })
                 })
                 .collect()
@@ -1071,12 +1010,6 @@ pub(crate) fn current_provider_name(doc: &toml_edit::DocumentMut) -> Option<Stri
 pub(crate) fn fetch_provider_models(name: &str) -> Result<Vec<ModelEntry>, String> {
     let doc = load_config()?;
 
-    // CatPaw channels have no OpenAI-compatible `/models` endpoint and no API
-    // key: the catalog comes from the native client using a scanned account.
-    if provider_field(&doc, name, "kind").as_deref() == Some("catpaw") {
-        return fetch_catpaw_models(name);
-    }
-
     let base_url = match provider_field(&doc, name, "base_url") {
         Some(u) => u,
         None => return Err(format!("渠道 \"{name}\" 不存在或未设置 base_url")),
@@ -1137,53 +1070,11 @@ pub(crate) fn fetch_provider_models(name: &str) -> Result<Vec<ModelEntry>, Strin
     parse_models_response(&body)
 }
 
-/// 从原生 CatPaw 客户端获取模型列表（`kind = "catpaw"`）。
-///
-/// CatPaw 没有 OpenAI 兼容的 `/models`，也不使用 API Key：目录来自扫码登录后
-/// 存入加密账号池的凭据。这里沿用 dispatch 层既有的 `block_in_place` 桥接，
-/// 把异步原生客户端接到同步的模态框调用点上。
-fn fetch_catpaw_models(name: &str) -> Result<Vec<ModelEntry>, String> {
-    let models = tokio::task::block_in_place(|| {
-        tokio::runtime::Handle::current().block_on(xai_grok_shell::catpaw::fetch_models(name))
-    })
-    .map_err(|e| format!("获取 CatPaw 模型列表失败: {e}"))?;
-
-    let entries: Vec<ModelEntry> = models
-        .list()
-        .into_iter()
-        .map(|model| ModelEntry {
-            id: model.id.clone(),
-            meta: ReasoningMeta::default(),
-            catpaw_model_type_code: Some(model.user_model_type_code),
-        })
-        .collect();
-
-    if entries.is_empty() {
-        return Err("CatPaw 可用模型列表为空".into());
-    }
-    Ok(entries)
-}
-
-/// 从 CatPaw 原生客户端查询账号额度并返回人类可读的摘要文本。
-///
-/// 与 [`fetch_catpaw_models`] 一样走加密账号池里的扫码凭据，因此未登录时会
-/// 返回明确的「请先扫码登录」提示而不是空结果。
-pub(crate) fn fetch_catpaw_quota_summary(name: &str) -> Result<String, String> {
-    let quota = tokio::task::block_in_place(|| {
-        tokio::runtime::Handle::current().block_on(xai_grok_shell::catpaw::fetch_quota(name))
-    })
-    .map_err(|e| format!("查询 CatPaw 账号额度失败: {e}"))?;
-
-    Ok(quota.summary())
-}
-
 /// `/v1/models` 响应的单条 model 记录：上游 id + 弱 reasoning 元数据。
 #[derive(Debug, Clone, Default)]
 pub struct ModelEntry {
     pub id: String,
     pub meta: ReasoningMeta,
-    /// Native CatPaw `modelType` / `userModelTypeCode` used on the wire.
-    pub catpaw_model_type_code: Option<i32>,
 }
 
 /// 解析 /v1/models 响应，提取模型 ID + per-model reasoning 元数据。
@@ -1229,11 +1120,6 @@ fn parse_models_response(body: &str) -> Result<Vec<ModelEntry>, String> {
             Some(ModelEntry {
                 meta: parse_reasoning_meta(item),
                 id,
-                catpaw_model_type_code: item
-                    .get("modelType")
-                    .or_else(|| item.get("modelTypeCode"))
-                    .and_then(serde_json::Value::as_i64)
-                    .and_then(|value| i32::try_from(value).ok()),
             })
         })
         .collect();
@@ -1578,7 +1464,6 @@ mod provider_model_entries_tests {
         // 无 `model` 字段 → 回退到 key 后缀 "beta"。
         let mut b = toml_edit::Table::new();
         b["model_provider"] = toml_edit::value("foo");
-        b["catpaw_model_type_code"] = toml_edit::value(7i64);
         model["foo/beta"] = toml_edit::Item::Table(b);
 
         // 其它渠道的条目，不应被列出。
@@ -1609,12 +1494,11 @@ mod provider_model_entries_tests {
     }
 
     #[test]
-    fn falls_back_to_key_suffix_and_keeps_catpaw_code() {
+    fn falls_back_to_key_suffix() {
         let doc = make_doc();
         let entries = provider_model_entries_from_doc(&doc, "foo");
         let beta = entries.iter().find(|e| e.id == "beta").unwrap();
         assert!(!beta.meta.is_meaningful());
-        assert_eq!(beta.catpaw_model_type_code, Some(7));
     }
 
     #[test]

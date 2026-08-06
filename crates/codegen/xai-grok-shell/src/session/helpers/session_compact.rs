@@ -727,25 +727,6 @@ pub(crate) async fn generate_session_compact(
                 itl_max_ms: timing.itl_max_ms(),
             }
         }
-        ApiBackend::CatPaw => {
-            // The CatPaw channel does not expose the OpenAI / Responses /
-            // Anthropic-compatible wire formats that the rest of the
-            // compaction paths speak, so report a deterministic failure
-            // instead of panicking on an unhandled enum variant.
-            return Err(CompactFailure::Deterministic(
-                acp::Error::internal_error().data("compact unsupported on CatPaw channel"),
-            ));
-        }
-        ApiBackend::RemoteAgent => {
-            // Same as CatPaw: the Remote Agent protocol does not expose
-            // a wire format compatible with the in-process compaction
-            // path, so surface a deterministic failure rather than
-            // silently dropping the request.
-            return Err(CompactFailure::Deterministic(
-                acp::Error::internal_error()
-                    .data("compact unsupported on CatPaw Remote Agent channel"),
-            ));
-        }
     };
     if output.content.is_empty() {
         Err(CompactFailure::Transient(
@@ -1680,8 +1661,6 @@ mod reasoning_compaction_regression_tests {
             user_agent: None,
 
             is_workbuddy: false,
-            catpaw: None,
-            remote_agent: None,
         }
     }
     #[tokio::test]

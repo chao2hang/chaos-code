@@ -14,16 +14,8 @@
     `You are the Chaos`。
   验证：`chaos --single ping --client workbuddy --model gpt-5.6-sol` 由 403 变为返回
   `pong`；非 WorkBuddy 请求不受影响。
-- 修：pager 写入用户配置的 catpaw provider（`api_backend = "catpaw"` 与
-  `catpaw_model_type_code`）从未真正生效——`ApiBackend` 只接受 snake_case `cat_paw`
-  导致整表反序列化失败、模型代码未透传、wire 字段用了 snake_case 而 CatPaw API 期待
-  camelCase。补 serde alias 并贯穿 model_type_code。
 - 修：`--client workbuddy` 403 时错误文案补充「WorkBuddy profile is active」引导，避免
   用户误以为 `--client` 未生效。
-
-### Features
-
-- CatPaw 登录渲染真实二维码矩阵，并支持查询账户配额。
 
 ### Refactors
 

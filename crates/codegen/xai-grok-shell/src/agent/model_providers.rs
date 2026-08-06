@@ -13,14 +13,6 @@ pub struct ModelProviderConfig {
     pub env_key: Option<EnvKeys>,
     pub api_key: Option<String>,
     pub api_backend: Option<ApiBackend>,
-    /// Provider kind. Ordinary providers leave it unset (defaults to
-    /// `openai_compatible`); a native CatPaw channel sets `kind = "catpaw"`.
-    /// CatPaw does not use `api_key` — credentials live in the encrypted
-    /// account store, never in the config file.
-    pub kind: Option<String>,
-    /// CatPaw channel mode: `"chat"` (default) or `"remote_agent"`.
-    /// Only meaningful for `kind = "catpaw"` providers; ignored otherwise.
-    pub mode: Option<String>,
     /// 认证方案：`bearer`（默认）或 `x_api_key`。
     /// 继承给未设置自身 `auth_scheme` 的模型。
     pub auth_scheme: Option<AuthScheme>,
@@ -33,13 +25,6 @@ pub struct ModelProviderConfig {
     pub auth_provider: Option<String>,
     pub auth: Option<crate::auth::AuthProviderConfig>,
     pub context_window: Option<u64>,
-}
-
-impl ModelProviderConfig {
-    /// Whether this provider is a native CatPaw channel (`kind = "catpaw"`).
-    pub fn is_catpaw(&self) -> bool {
-        self.kind.as_deref() == Some("catpaw")
-    }
 }
 
 pub(crate) fn model_provider_auth_name(provider_id: &str) -> String {
@@ -198,8 +183,6 @@ impl ConfigModelOverride {
             env_key,
             api_key,
             api_backend,
-            kind: _,
-            mode: _,
             auth_scheme,
             extra_headers,
             query_params,
@@ -289,49 +272,6 @@ mod tests {
             resolve_credentials(model, Some("session-jwt")).api_key,
             None,
             "the session token must not leak to the provider's custom endpoint"
-        );
-    }
-
-    #[test]
-    fn catpaw_provider_legacy_backend_spelling_parses_and_inherits() {
-        // Regression: the pager writes `api_backend = "catpaw"` into
-        // `[model_providers.catpaw]`; before the serde alias this failed to
-        // parse, the whole provider was skipped, and catpaw models silently
-        // fell back to the default ChatCompletions backend + proxy base URL.
-        let raw_config: toml::Value = toml::from_str(
-            r#"
-            [model_providers.catpaw]
-            kind = "catpaw"
-            base_url = "https://catpaw.meituan.com"
-            auth_scheme = "bearer"
-            api_backend = "catpaw"
-
-            [model."catpaw/glm-5.2"]
-            model = "glm-5.2"
-            model_provider = "catpaw"
-            catpaw_model_type_code = 75
-            context_window = 200000
-            "#,
-        )
-        .unwrap();
-
-        let cfg = Config::new_from_toml_cfg(&raw_config).expect("config should parse");
-        assert!(
-            cfg.model_providers.contains_key("catpaw"),
-            "catpaw provider must survive parsing"
-        );
-        let resolved = resolve_model_list(&cfg, None);
-        let model = resolved.get("catpaw/glm-5.2").expect("model should exist");
-        assert_eq!(
-            model.info.api_backend,
-            crate::sampling::ApiBackend::CatPaw,
-            "model must inherit the CatPaw backend from its provider"
-        );
-        assert_eq!(model.info.base_url, "https://catpaw.meituan.com");
-        assert_eq!(
-            model.info.catpaw_model_type_code,
-            Some(75),
-            "the pager-written userModelTypeCode must round-trip into the model entry"
         );
     }
 
@@ -1075,60 +1015,25 @@ mod tests {
     }
 
     #[test]
-    fn catpaw_provider_parses_kind_without_api_key() {
-        let raw_config: toml::Value = toml::from_str(
-            r#"
-            [model_providers.catpaw]
-            kind = "catpaw"
-            mode = "chat"
-
-            [model.via-catpaw]
-            model = "catpaw/grok-4"
-            model_provider = "catpaw"
-            "#,
-        )
-        .unwrap();
-
-        let cfg = Config::new_from_toml_cfg(&raw_config).expect("config should parse");
-        let provider = cfg
-            .model_providers
-            .get("catpaw")
-            .expect("catpaw provider must exist");
-        assert!(provider.is_catpaw(), "kind = \"catpaw\" must be recognized");
-        assert!(
-            provider.api_key.is_none(),
-            "CatPaw stores credentials in the account store, never api_key"
-        );
-        // connection fields still inherit normally.
-        let resolved = resolve_model_list(&cfg, None);
-        assert!(
-            resolved.contains_key("via-catpaw"),
-            "model inheriting a catpaw provider must resolve"
-        );
-    }
-
-    #[test]
-    fn ordinary_provider_defaults_to_non_catpaw() {
+    fn model_with_provider_and_own_endpoint_keeps_byok_credentials() {
         let raw_config: toml::Value = toml::from_str(
             r#"
             [model_providers.gateway]
             base_url = "https://gateway.example/v1"
+            context_window = 100000
 
-            [model.via-gateway]
+            [model.override-url]
             model = "m"
             model_provider = "gateway"
+            base_url = "https://model-specific.example/v1"
+            context_window = 200000
             "#,
         )
         .unwrap();
 
         let cfg = Config::new_from_toml_cfg(&raw_config).expect("config should parse");
-        let provider = cfg
-            .model_providers
-            .get("gateway")
-            .expect("gateway provider must exist");
-        assert!(
-            !provider.is_catpaw(),
-            "a provider without kind must not be treated as CatPaw"
-        );
+        let resolved = resolve_model_list(&cfg, None);
+        let model = resolved.get("override-url").expect("model should exist");
+        assert_eq!(model.info.base_url, "https://model-specific.example/v1");
     }
 }

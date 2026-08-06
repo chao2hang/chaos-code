@@ -753,18 +753,6 @@ impl SessionActor {
                 let events = xai_grok_sampler::stream_messages(raw, meta, request_id, idle_timeout);
                 xai_grok_sampler::collect_response(events).await
             }
-            crate::sampling::ApiBackend::CatPaw => {
-                // CatPaw channels do not currently participate in the
-                // side-channel rewrite path; fall back to the empty-result
-                // path so callers degrade gracefully instead of panicking.
-                return Err("memory rewrite unsupported on CatPaw channel".to_string());
-            }
-            crate::sampling::ApiBackend::RemoteAgent => {
-                // CatPaw Remote Agent runs the agent loop server-side
-                // and returns the final assistant text only, so there is
-                // nothing to rewrite here either; report a clean error.
-                return Err("memory rewrite unsupported on CatPaw Remote Agent channel".to_string());
-            }
         };
 
         match result {

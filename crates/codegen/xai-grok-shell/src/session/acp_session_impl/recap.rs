@@ -563,19 +563,6 @@ impl SessionActor {
                 let events = xai_grok_sampler::stream_messages(raw, meta, request_id, idle_timeout);
                 xai_grok_sampler::collect_response(events).await
             }
-            crate::sampling::ApiBackend::CatPaw => {
-                // CatPaw channels do not currently participate in the
-                // side-channel rewrite path; return `None` so callers
-                // fall back to the heuristic tab-complete path.
-                return None;
-            }
-            crate::sampling::ApiBackend::RemoteAgent => {
-                // CatPaw Remote Agent runs the agent loop server-side;
-                // there is no in-process transcript to rewrite. Return
-                // `None` so the caller falls back to heuristic
-                // tab-complete text.
-                return None;
-            }
         };
 
         match result {

@@ -71,25 +71,6 @@ impl SessionActor {
                     stream_tool_calls: Some(sampling_config.stream_tool_calls),
                     extract_inline_thinking: Some(sampling_config.extract_inline_thinking),
                     is_workbuddy: sampling_config.is_workbuddy,
-                    // Persist the CatPaw channel metadata so
-                    // `reconstruct_full_config` can re-attach the account
-                    // resolver on later turns (chat-state config is the
-                    // wire-facing form and cannot carry the `dyn` resolver).
-                    catpaw: sampling_config.catpaw.as_ref().map(|cp| {
-                        xai_grok_sampling_types::CatPawChannelConfig {
-                            provider: cp.provider.clone(),
-                            model_type_code: cp.model_type_code,
-                        }
-                    }),
-                    remote_agent: sampling_config.remote_agent.as_ref().map(|ra| {
-                        xai_grok_sampling_types::RemoteAgentChannelConfig {
-                            provider: ra.provider.clone(),
-                            model_type_code: ra.model_type_code,
-                            git_repo_url: ra.git_repo_url.clone(),
-                            git_base_branch: ra.git_base_branch.clone(),
-                            git_checkout_branch: ra.git_checkout_branch.clone(),
-                        }
-                    }),
                 },
             );
         }

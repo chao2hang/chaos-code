@@ -481,8 +481,6 @@ impl SessionActor {
                 stream_tool_calls: None,
                 extract_inline_thinking: None,
                 is_workbuddy: false,
-                catpaw: None,
-                remote_agent: None,
             });
         let creds = self.chat_state_handle.get_credentials().await;
         let model_facts = self.model_auth_facts(cfg.model.as_str());
@@ -649,18 +647,6 @@ impl SessionActor {
                 Some(std::sync::Arc::new(TraceContextInjector(false)))
             },
             is_workbuddy,
-            // CatPaw channel metadata was persisted into chat state at model
-            // switch time (`SamplingConfig.catpaw` / `.remote_agent`); the
-            // `dyn` account resolver cannot cross that boundary, so re-attach
-            // the shell-side store-backed resolver here. Without this a live
-            // CatPaw-backed turn fails with "CatPaw backend requires
-            // SamplerConfig.catpaw".
-            catpaw: cfg.catpaw.as_ref().map(|channel| {
-                crate::agent::config::catpaw_sampler_config_from_channel(channel)
-            }),
-            remote_agent: cfg.remote_agent.as_ref().map(|channel| {
-                crate::agent::config::remote_agent_sampler_config_from_channel(channel)
-            }),
         }
     }
     /// Install auto-mode permission classifier with a live LLM side-query

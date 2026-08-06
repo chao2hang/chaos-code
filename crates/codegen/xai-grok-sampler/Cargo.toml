@@ -8,7 +8,6 @@ description = "Actor-based sampling/inference layer for xAI grok (HTTP streaming
 [dependencies]
 # Internal
 xai-grok-sampling-types = { path = "../xai-grok-sampling-types" }
-xai-catpaw = { path = "../xai-catpaw" }
 xai-grok-version = { workspace = true }
 
 # External
