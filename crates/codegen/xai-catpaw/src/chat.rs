@@ -12,6 +12,7 @@ pub struct ChatMessage {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct ChatRequest {
     pub messages: Vec<ChatMessage>,
     pub user_model_type_code: i32,
@@ -116,6 +117,28 @@ impl ChatAccumulator {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn chat_request_serializes_camel_case_wire_fields() {
+        let request = ChatRequest {
+            messages: vec![ChatMessage {
+                role: "user".into(),
+                content: "hi".into(),
+            }],
+            user_model_type_code: 75,
+            stream: Some(true),
+            temperature: None,
+            max_tokens: Some(4096),
+            top_p: None,
+            response_format: None,
+        };
+        let value = serde_json::to_value(&request).unwrap();
+        assert_eq!(value["userModelTypeCode"], 75);
+        assert_eq!(value["maxTokens"], 4096);
+        assert_eq!(value["stream"], true);
+        assert!(value.get("user_model_type_code").is_none());
+        assert!(value.get("max_tokens").is_none());
+    }
 
     #[test]
     fn cumulative_snapshots_emit_only_suffix_and_finish() {
