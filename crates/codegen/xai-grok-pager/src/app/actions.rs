@@ -616,6 +616,10 @@ pub enum Action {
     /// directly in `handle_agent_action`; this lets a slash command reach the
     /// same modal through dispatch.
     OpenCommandPalette,
+    /// Privacy banner `[Opt in]` (ack only after ACP success).
+    PrivacyBannerOptIn,
+    /// Privacy banner `[Opt out]` (ack now, then record the decline).
+    PrivacyBannerOptOut,
     /// Open the in-TUI How-to Guides doc picker (`/docs`, palette "How-to Guides").
     OpenHowtoGuides,
     /// Open the reset-settings confirmation dialog for a specific key.
@@ -841,6 +845,8 @@ pub enum Action {
     /// Stop / kill the selected row (top-level: cancel turn → close;
     /// subagent: kill). Double-press protected for top-level rows.
     DashboardStop,
+    /// Confirm permanent delete of the armed dashboard row.
+    DashboardDelete,
     /// Cycle the dispatch input's mode for the next spawned agent
     /// (Normal → Plan → Always-Approve → Normal). Bound to Shift+Tab.
     DashboardCycleMode,
@@ -1182,6 +1188,9 @@ pub enum CancelTrigger {
     CtrlC,
     /// The on-screen cancel button was clicked.
     Mouse,
+    /// The dashboard's stop key (Ctrl+X), from the overlay or a busy row,
+    /// downgraded to a turn cancel.
+    DashboardStop,
 }
 impl CancelTrigger {
     /// Snake_case wire string sent as `_meta.cancelTrigger`.
@@ -1190,6 +1199,7 @@ impl CancelTrigger {
             Self::Esc => "esc",
             Self::CtrlC => "ctrl_c",
             Self::Mouse => "mouse",
+            Self::DashboardStop => "dashboard_stop",
         }
     }
 }
@@ -1400,8 +1410,10 @@ pub struct DoctorFixTarget {
 pub enum AfterSessionDelete {
     /// Picker delete — stay put.
     Stay,
-    /// `/delete` — return to welcome.
+    /// `/delete` from a standalone agent — return to welcome.
     Welcome,
+    /// `/delete` from a dashboard-attached agent, or dashboard row delete.
+    Dashboard,
 }
 
 #[derive(Debug)]
@@ -1493,6 +1505,10 @@ pub enum Effect {
         /// the response is dropped when no longer current, so out-of-order
         /// completions can't clobber newer results.
         seq: u64,
+        /// Welcome history kind filter (`Some` under `--chat` welcome to
+        /// scope the list to the active workspace mode; `None` = no filter).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        kind_filter: Option<Vec<String>>,
     },
     /// Coalesce picker search keystrokes: fires
     /// [`TaskResult::SessionSearchDebounceExpired`] after a short sleep; the
@@ -1561,7 +1577,7 @@ pub enum Effect {
         /// matches the UI. Without it the shell keeps the prompt plus an
         /// interruption marker, and a later resend pairs the kept copy with the
         /// resend — the send+Ctrl+C double-prompt bug.
-        rewind_if_pristine: bool,
+        rewind_if_no_output: bool,
     },
     /// Run a manual `/compact` command.
     Compact {

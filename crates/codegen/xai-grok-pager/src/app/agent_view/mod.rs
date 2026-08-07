@@ -707,6 +707,50 @@ impl ParkedMarkerSlot {
         }
     }
 }
+
+/// The wake turn currently streaming (a `task-completed-…` synthetic prompt).
+#[derive(Debug)]
+pub(crate) struct RunningWakeTurn {
+    /// The wake turn's synthetic prompt id (`task-completed-…` family).
+    pub prompt_id: String,
+    /// True once a cancel was sent for it: the status row reads Cancelling
+    /// and the cancel-resend reconcile stays armed until the terminal lands.
+    pub cancel_sent: bool,
+}
+
+/// A cancel sent while the pane is in a cancelling state, awaiting proof the
+/// shell received it. See [`AgentView::pending_cancel_resend`].
+#[derive(Debug, Clone)]
+pub(crate) struct PendingCancelResend {
+    /// The turn the cancel targeted (the wake prompt id or the adopted
+    /// prompt id; `None` for cancels with no adopted prompt, such as
+    /// `/compact`); a record from another target is never reused.
+    pub prompt_id: Option<String>,
+    /// When the cancel was (last) sent.
+    pub sent_at: std::time::Instant,
+    /// Sends so far, capped at [`crate::app::dispatch::turn::CANCEL_RESEND_MAX_ATTEMPTS`].
+    pub attempts: u8,
+    /// The turn-end broadcast arrived, proving the cancel landed: the
+    /// auto-resend stops, but the record stays so a manual retry can reuse
+    /// the recorded subagent choice.
+    pub confirmed: bool,
+    /// The first cancel's subagent decision; retries replay it instead of
+    /// escalating past a one-shot "Continue to run".
+    pub cancel_subagents: bool,
+    /// Replayed so a resend still arms the shell's task-wake barrier.
+    pub trigger: crate::app::actions::CancelTrigger,
+}
+
+/// Privacy upsell banner state: slot ownership + click targets.
+#[derive(Debug, Default)]
+pub struct PrivacyBannerState {
+    pub(crate) active: bool,
+    pub(crate) hit_opt_in: HitArea,
+    pub(crate) hit_opt_out: HitArea,
+    pub(crate) hit_terms: HitArea,
+    pub(crate) hit_policy: HitArea,
+}
+
 pub struct AgentView {
     pub session: AgentSession,
     /// Pager-side mirror of the request-client profile selected for this
@@ -1528,6 +1572,51 @@ pub struct AgentView {
     pub(crate) usage_detail_generation: u64,
     /// Largest total-token count seen across turns (drives the status chip).
     pub max_total_tokens_seen: u64,
+    /// The wake turn currently streaming, if any. See [`RunningWakeTurn`].
+    pub(crate) running_wake_turn: Option<RunningWakeTurn>,
+    /// Wake prompts whose terminals landed; a late delta for one must not
+    /// revive the stop affordance. Cleared at replay-window entry.
+    pub(crate) finished_wake_prompts: std::collections::HashSet<String>,
+    /// Wake prompt id whose failure marker already rendered — a re-delivered
+    /// errored wake terminal must not stack a second "Turn failed" row.
+    pub(crate) failed_wake_marker_for: Option<String>,
+    /// Armed whenever `Effect::CancelTurn` leaves the pane cancelling.
+    pub(crate) pending_cancel_resend: Option<PendingCancelResend>,
+    /// Free-form "Always allow" pattern editor buffer for the front request.
+    pub permission_pattern_edit: Option<crate::views::permission_view::PatternEditState>,
+    /// Privacy upsell banner state: slot ownership + click targets.
+    pub privacy_banner: PrivacyBannerState,
+    /// Post-cancel grace deadline for the Esc rewind-ARM hold.
+    pub(crate) rewind_suppress_deadline: Option<std::time::Instant>,
+    /// Ultra-short summary of the most recent successful turn (dashboard row).
+    pub last_turn_summary: Option<String>,
+    /// Bumped on every live mutation of [`Self::last_turn_summary`].
+    pub last_turn_summary_gen: u64,
+    /// Whether THIS session's scheduled fires run as detached background
+    /// subagents, as resolved by the shell on `session/new`.
+    pub scheduler_background_loops: Option<bool>,
+    /// Whether `/usage` is offered. Mirrors `!AppView::has_external_auth_provider`.
+    pub usage_command_visible: bool,
+    /// One-time Ctrl+G toast already fired for a watching-cue click.
+    pub(crate) watching_cue_toast_shown: bool,
+    /// Whether that overlay's cycle order holds more than one agent.
+    pub(crate) overlay_can_cycle: bool,
+    /// Cleared at turn start; set on the first live non-echo update.
+    pub(crate) front_message_committed: bool,
+    /// Session binding epoch (disk hydration staleness guard).
+    pub(crate) session_binding_epoch: u32,
+    /// Wall-clock twin of `turn_paused_duration` (keeps counting through suspend).
+    pub turn_paused_wall: std::time::Duration,
+    /// Prompt id the stored `turn_start_ms` belongs to.
+    pub turn_start_ms_prompt: Option<String>,
+    /// ▲ jump-to-response-top indicator in the sticky header's gap row.
+    pub hit_response_top_indicator: HitArea,
+    /// Still-running watcher cue on the turn-status row.
+    pub hit_watching_cue: HitArea,
+    /// Welcome history source mode for `--chat` sessions.
+    pub workspace_mode: crate::views::welcome::WelcomeWorkspaceMode,
+    /// Whether the workspace mode was CLI-pinned (not user-switchable).
+    pub workspace_mode_cli_locked: bool,
 }
 /// Cap on [`AgentView::self_originated_prompt_ids`]. Only recent ids matter (a
 /// stale post-rewind chunk arrives right after its turn ends), so a small

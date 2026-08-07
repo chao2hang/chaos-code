@@ -46,6 +46,7 @@ pub mod personas;
 pub mod provider;
 pub mod plan;
 pub mod plugin;
+pub mod client;
 pub mod privacy;
 pub mod queue;
 pub mod recap;

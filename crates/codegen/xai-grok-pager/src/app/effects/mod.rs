@@ -1216,7 +1216,7 @@ pub(crate) fn execute(
             session_id,
             cancel_subagents,
             trigger,
-            rewind_if_pristine,
+            rewind_if_no_output,
         } => {
             let tx = acp_tx.clone();
             let trigger_str = trigger.map(|t| t.as_wire_str());
@@ -1228,7 +1228,7 @@ pub(crate) fn execute(
                         Some(
                             serde_json::json!(
                                 { "cancel_subagents" : cancel_subagents, "trigger" :
-                                trigger_str, "rewind_if_pristine" : rewind_if_pristine, }
+                                trigger_str, "rewind_if_no_output" : rewind_if_no_output, }
                             ),
                         ),
                     );
@@ -1239,7 +1239,7 @@ pub(crate) fn execute(
                     if let Some(t) = trigger_str {
                         meta["cancelTrigger"] = t.into();
                     }
-                    if rewind_if_pristine {
+                    if rewind_if_no_output {
                         meta["rewindIfPristine"] = true.into();
                     }
                     let req = acp::CancelNotification::new(session_id.clone())
