@@ -43,6 +43,7 @@ pub mod model;
 pub mod multiline;
 pub mod new;
 pub mod personas;
+pub mod provider;
 pub mod plan;
 pub mod plugin;
 pub mod privacy;
@@ -146,6 +147,7 @@ pub fn builtin_commands() -> Vec<Arc<dyn SlashCommand>> {
         Arc::new(tutorial::TutorialCommand),
         Arc::new(config_agents::ConfigAgentsCommand),
         Arc::new(personas::PersonasCommand),
+        Arc::new(provider::ProviderCommand),
         // Hidden easter egg: never listed, runs on bare `/gboom`.
         Arc::new(gboom::GboomCommand),
         // Hidden diagnostic: never listed, toggles the scroll-debug HUD.

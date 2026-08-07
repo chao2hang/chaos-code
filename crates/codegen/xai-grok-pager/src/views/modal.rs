@@ -316,6 +316,14 @@ pub enum ActiveModal {
         /// different note's review modal.
         rewrite_nonce: u64,
     },
+    /// Provider management modal (`/provider`).
+    ProviderModal {
+        state: Box<crate::views::provider_modal::ProviderModalState>,
+    },
+    /// Request-client profile picker (`/client`).
+    ClientModal {
+        state: Box<crate::views::client_modal::ClientModalState>,
+    },
 }
 /// Snapshot of the command palette state, saved when opening an arg picker
 /// and restored on Esc.
