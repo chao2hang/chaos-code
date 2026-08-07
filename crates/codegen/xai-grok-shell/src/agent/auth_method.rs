@@ -64,10 +64,25 @@ pub fn should_advertise_xai_api_key<'a, I>(disable_api_key_auth: bool, models: I
 where
     I: IntoIterator<Item = &'a ModelEntry>,
 {
+    should_advertise_xai_api_key_with_env_ok(disable_api_key_auth, models, true)
+}
+
+/// Variant of [`should_advertise_xai_api_key`] with the caller's probe of
+/// whether a first-party env key is acceptable, instead of always trusting
+/// `XAI_API_KEY`.
+pub(crate) fn should_advertise_xai_api_key_with_env_ok<'a, I>(
+    disable_api_key_auth: bool,
+    models: I,
+    first_party_env_ok: bool,
+) -> bool
+where
+    I: IntoIterator<Item = &'a ModelEntry>,
+{
     if disable_api_key_auth {
         return false;
     }
-    has_xai_api_key_env() || models.into_iter().any(ModelEntry::has_own_credentials)
+    let has_byok = models.into_iter().any(ModelEntry::has_own_credentials);
+    has_byok || (has_xai_api_key_env() && first_party_env_ok)
 }
 
 /// Inputs to [`build_auth_methods`].

@@ -237,6 +237,7 @@ impl From<&xai_chat_state::UsageTotals> for PromptUsageModel {
             reasoning_tokens,
             model_calls,
             api_duration_ms,
+            decode_duration_ms,
             cost_usd_ticks,
             cost_missing_calls,
         } = *t;
