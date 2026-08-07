@@ -956,12 +956,6 @@ impl SamplingClient {
 
         if self.is_workbuddy {
             // The freemodel gateway (work.freemodel.dev) rejects requests whose
-<<<<<<< HEAD
-            // `messages[0]` is not a system message starting with the exact
-            // marker "This conversation is powered by" (31 chars, case-sensitive).
-            // Verified against the real WorkBuddy client: the marker prefix is
-            // the gateway's client check, not the HTTP headers.
-=======
             // `messages[0]` is not a system message starting with the exact marker
             // "This conversation is powered by" (31 chars, case-sensitive). This was
             // verified by reverse-engineering the real WorkBuddy client: the marker
@@ -975,7 +969,6 @@ impl SamplingClient {
             // carries a self-written WorkBuddy-branded signature (~957 chars)
             // which clears the similarity threshold without copying WorkBuddy's
             // private prompt text.
->>>>>>> main
             let marker = WORKBUDDY_GATEWAY_MARKER;
             let has_valid_marker = request
                 .messages
