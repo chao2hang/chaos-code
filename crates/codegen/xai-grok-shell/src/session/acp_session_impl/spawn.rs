@@ -540,6 +540,8 @@ pub(crate) async fn spawn_session_actor(
         context_window: context_window_override.unwrap_or(baseline_context_window),
         reasoning_effort: sampling_config.reasoning_effort,
         stream_tool_calls: Some(sampling_config.stream_tool_calls),
+        extract_inline_thinking: Some(sampling_config.extract_inline_thinking),
+        is_workbuddy: sampling_config.is_workbuddy,
     };
     let actor_pruning_config = xai_chat_state::PruningConfig {
         enabled: session_pruning_config.enabled,
@@ -1658,6 +1660,9 @@ pub(crate) async fn spawn_session_actor(
         buffering_settings,
         client_identifier: session_client_identifier.clone(),
         origin_client: origin_client.clone(),
+        user_agent: std::cell::RefCell::new(None),
+        client_extra_headers: std::cell::RefCell::new(indexmap::IndexMap::new()),
+        client_env_http_headers: std::cell::RefCell::new(indexmap::IndexMap::new()),
         feedback_manager: feedback_manager.clone(),
         upload_queue: upload_queue.clone(),
         sync_loop_cancel: sync_loop_cancel.clone(),
@@ -2097,6 +2102,7 @@ pub(crate) async fn spawn_session_actor(
             pending_interactions,
             info: session_info,
             max_turns,
+            is_subagent: false,
             resolved_tool_overrides,
             hunk_tracker_handle,
             chat_state_handle: chat_state_handle_for_handle,

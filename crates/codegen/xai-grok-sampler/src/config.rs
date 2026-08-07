@@ -145,6 +145,10 @@ pub struct SamplerConfig {
     /// `reasoning_content` field).
     #[serde(default)]
     pub extract_inline_thinking: bool,
+
+    /// Override for the `User-Agent` header (per-session client profile).
+    #[serde(default)]
+    pub user_agent: Option<String>,
 }
 
 impl Default for SamplerConfig {
@@ -183,6 +187,7 @@ impl Default for SamplerConfig {
             header_injector: None,
             is_workbuddy: false,
             extract_inline_thinking: false,
+            user_agent: None,
         }
     }
 }

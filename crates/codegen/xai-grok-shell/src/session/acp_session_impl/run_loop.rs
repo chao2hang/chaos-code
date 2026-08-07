@@ -697,6 +697,28 @@ pub(super) async fn run_session(
                             let updated_model_id = session.handle_set_session_model(sampling_config, use_concise, apply_prompt_override, skip_prompt_rewrite, auto_compact_threshold_percent).await;
                             let _ = responds_to.send(updated_model_id);
                         }
+                        SessionCommand::SetClientProfile {
+                            client_identifier,
+                            origin_client,
+                            user_agent,
+                            extra_headers,
+                            env_http_headers,
+                            responds_to,
+                        } => {
+                            session.client_identifier = Some(client_identifier);
+                            session.origin_client = Some(origin_client);
+                            session.user_agent.replace(user_agent);
+                            session.client_extra_headers.replace(extra_headers);
+                            session.client_env_http_headers.replace(env_http_headers);
+                            let _ = responds_to.send(Ok(()));
+                        }
+                        SessionCommand::SetContextWindow { tokens, compact_if_needed, respond_to } => {
+                            let s = session.clone();
+                            tokio::task::spawn_local(async move {
+                                let result = s.handle_set_context_window(tokens, compact_if_needed).await;
+                                let _ = respond_to.send(result);
+                            });
+                        }
                         SessionCommand::RebuildAgentForDefinition { definition, responds_to } => {
                             let outcome = session.handle_rebuild_agent_for_definition(definition).await;
                             let _ = responds_to.send(outcome);

@@ -1397,6 +1397,14 @@ pub(crate) struct OrphanedTask {
     cwd: String,
 }
 impl MvpAgent {
+    /// Look up a resident session's hosted handle by id (for extensions that
+    /// need to drive a session directly, e.g. `/memory set-context-window`).
+    pub(crate) fn resident_session_handle(
+        &self,
+        id: &acp::SessionId,
+    ) -> Option<SessionHandle> {
+        self.session_registry.resident_handle(id)
+    }
     /// Replay updates from disk and drain completions.
     /// Returns `(initial_total_tokens, end_offset)`.
     pub(super) async fn replay_session_updates(

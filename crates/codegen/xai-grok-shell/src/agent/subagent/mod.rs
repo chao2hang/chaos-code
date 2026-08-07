@@ -771,6 +771,7 @@ async fn read_parent_sampling_config(
                 &mut extra_headers,
                 creds.alpha_test_key.as_deref(),
                 &cfg.base_url,
+                cfg.is_workbuddy,
             );
             let auth_scheme = crate::agent::config::try_resolve_model_credentials(&cfg.model, None)
                 .map(|r| r.auth_scheme)
@@ -817,6 +818,9 @@ async fn read_parent_sampling_config(
                     .model_compaction_at_tokens(ctx.model_id.0.as_ref()),
                 doom_loop_recovery: ctx.sampling_config.doom_loop_recovery,
                 header_injector: ctx.sampling_config.header_injector.clone(),
+                is_workbuddy: cfg.is_workbuddy,
+                extract_inline_thinking: cfg.extract_inline_thinking.unwrap_or(false),
+                user_agent: ctx.sampling_config.user_agent.clone(),
             };
             let model_id = ctx.model_id.clone();
             let global_model_id = ctx.models_manager.current_model_id();

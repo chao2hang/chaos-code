@@ -425,6 +425,8 @@ impl SessionActor {
                 context_window: std::num::NonZeroU64::new(256_000).unwrap(),
                 reasoning_effort: None,
                 stream_tool_calls: None,
+                extract_inline_thinking: None,
+                is_workbuddy: false,
             });
         let creds = self.chat_state_handle.get_credentials().await;
         let model_facts = self.model_auth_facts(cfg.model.as_str());
@@ -449,6 +451,7 @@ impl SessionActor {
             &mut extra_headers,
             creds.alpha_test_key.as_deref(),
             &cfg.base_url,
+            cfg.is_workbuddy,
         );
         let compaction_at_tokens = self.compaction_at_tokens.get();
         let compactions_remaining = self.compactions_remaining.get();
@@ -517,6 +520,9 @@ impl SessionActor {
             compaction_at_tokens: self.compaction_at_tokens.get(),
             doom_loop_recovery: self.doom_loop_recovery,
             header_injector: Some(std::sync::Arc::new(TraceContextInjector)),
+            is_workbuddy: cfg.is_workbuddy,
+            extract_inline_thinking: cfg.extract_inline_thinking.unwrap_or(false),
+            user_agent: self.user_agent.borrow().clone(),
         }
     }
     /// Install auto-mode permission classifier with a live LLM side-query
@@ -1381,6 +1387,7 @@ impl SessionActor {
                 response.assistant().and_then(|a| a.model_id.clone()),
                 u.clone(),
                 api_duration_ms,
+                None,
                 response.cost_usd_ticks,
             );
             self.signals_handle()
