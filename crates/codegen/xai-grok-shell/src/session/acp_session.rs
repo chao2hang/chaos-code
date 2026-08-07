@@ -730,9 +730,9 @@ pub(crate) struct SessionActor {
     /// is owned by `run_session()`.
     pub(crate) buffering_settings: Option<BufferingSettings>,
     /// Client identifier for telemetry - passed from the MvpAgent (extracted from initialize meta)
-    pub(crate) client_identifier: Option<String>,
+    pub(crate) client_identifier: std::cell::RefCell<Option<String>>,
     /// Origin client for User-Agent on sampling requests.
-    pub(crate) origin_client: Option<crate::http::OriginClientInfo>,
+    pub(crate) origin_client: std::cell::RefCell<Option<crate::http::OriginClientInfo>>,
     /// Per-session User-Agent override (client profile / `/client`).
     pub(crate) user_agent: std::cell::RefCell<Option<String>>,
     /// Extra headers injected into sampling requests (client profile).

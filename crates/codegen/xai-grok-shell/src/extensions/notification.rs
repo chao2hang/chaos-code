@@ -157,6 +157,8 @@ impl PromptUsage {
             cost_usd_ticks: _,  // cost without usage cannot occur
             cost_is_partial: _,
             cost_missing_calls: _,
+            decode_duration_ms: _, // timing, not tokens
+            decode_tokens_per_sec: _, // derived rate, not tokens
         } = self.totals;
         model_calls == 0
             && input_tokens == 0
@@ -190,6 +192,13 @@ pub struct PromptUsageModel {
     pub model_calls: u64,
     #[serde(default)]
     pub api_duration_ms: u64,
+    /// Cumulative decode duration (ms) = Σ(model_elapsed − ttft); 0 = unsampled.
+    /// Feed for the per-model decode-token-rate display.
+    #[serde(default)]
+    pub decode_duration_ms: u64,
+    /// Steady-state decode rate (tok/s), when sampled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decode_tokens_per_sec: Option<f32>,
     /// Server cost in USD ticks (`USD_TICKS_PER_USD` = 1e10 ticks per $1).
     /// Absent when scrubbed, missing, or zero on the wire. Headless projects
     /// the totals as float `total_cost_usd` (plus exact `total_cost_usd_ticks`)
@@ -249,10 +258,12 @@ impl From<&xai_chat_state::UsageTotals> for PromptUsageModel {
             cache_creation_tokens,
             reasoning_tokens,
             model_calls,
+            decode_duration_ms,
             api_duration_ms,
             cost_usd_ticks,
             cost_is_partial: t.cost_is_partial(),
             cost_missing_calls,
+            decode_tokens_per_sec: None,
         }
     }
 }
@@ -315,6 +326,8 @@ pub(crate) fn project_result_usage(result: &mut serde_json::Value, usage: &Promp
         cost_usd_ticks,
         cost_is_partial,
         cost_missing_calls: _, // internal partiality count; the flag suffices
+        decode_duration_ms: _,   // timing; not part of the headless shape
+        decode_tokens_per_sec: _, // derived rate; dropped
     } = usage.totals;
     result["usage"] = serde_json::json!({
         "input_tokens": uncached_input_tokens(input_tokens, cached_read_tokens)
@@ -350,6 +363,8 @@ pub(crate) fn project_result_usage(result: &mut serde_json::Value, usage: &Promp
                 cached_read_tokens,
                 cache_creation_tokens,
                 reasoning_tokens: _, // dropped: reduced per-model schema
+                decode_duration_ms: _,
+                decode_tokens_per_sec: _,
                 model_calls,
                 api_duration_ms: _, // dropped: reduced per-model schema
                 cost_usd_ticks,

@@ -705,8 +705,8 @@ pub(super) async fn run_session(
                             env_http_headers,
                             responds_to,
                         } => {
-                            session.client_identifier = Some(client_identifier);
-                            session.origin_client = Some(origin_client);
+                            session.client_identifier.replace(Some(client_identifier));
+                            session.origin_client.replace(Some(origin_client));
                             session.user_agent.replace(user_agent);
                             session.client_extra_headers.replace(extra_headers);
                             session.client_env_http_headers.replace(env_http_headers);
