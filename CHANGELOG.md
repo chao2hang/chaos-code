@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.2.134 - 2026-08-07
+
+### Removed
+
+- 移除整个 CatPaw 渠道：`xai-catpaw` 原生协议 crate、扫码登录、Remote Agent
+  （pod）通道及相关配置/UI/测试全部删除，`ApiBackend` 与 `SamplingConfig`
+  不再携带 CatPaw / Remote Agent 通道类型。`[model_providers.catpaw]` 与
+  `[model."catpaw/*"]` 用户配置需手动清理（本机配置已清理，备份见
+  `config.toml.bak-catpaw-*`）。
+
+### Bug fixes
+
+- 修：右上角实时速率（tok/s chip）默认不显示——没有任何速率样本时芯片整体
+  隐藏。现改为渲染暗淡的 `🐢 0 tok/s` 占位，保证实时速率默认常驻，速率从无到有
+  的过程中不再凭空消失。
+
 ## 0.2.133 - 2026-08-06
 
 ### Bug fixes
