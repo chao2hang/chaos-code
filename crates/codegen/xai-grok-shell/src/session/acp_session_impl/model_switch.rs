@@ -2,6 +2,67 @@ use super::*;
 use crate::remote::DEFAULT_CONTEXT_WINDOW;
 use xai_chat_state::conversation_util::replace_or_insert_system_head;
 impl SessionActor {
+    /// Set the session's context window (the `/memory set-context-window`
+    /// extension path). Refuses while a turn is in flight; applies the new
+    /// window to the override + chat-state config and refreshes usage signals.
+    pub(super) async fn handle_set_context_window(
+        self: &std::sync::Arc<Self>,
+        tokens: std::num::NonZeroU64,
+        compact_if_needed: bool,
+    ) -> Result<crate::session::commands::SetContextWindowResult, acp::Error> {
+        use crate::remote::DEFAULT_CONTEXT_WINDOW;
+
+        {
+            let state = self.state.lock().await;
+            if state.running_task.is_some() {
+                return Err(acp::Error::invalid_request().data(
+                    "Cannot change the context window while a turn is in flight; \
+                     try again after the turn finishes."
+                        .to_string(),
+                ));
+            }
+        }
+
+        let mut updated_config = self.chat_state_handle.get_sampling_config().await;
+        let previous_tokens = updated_config
+            .as_ref()
+            .map(|c| c.context_window.get())
+            .unwrap_or(DEFAULT_CONTEXT_WINDOW);
+
+        if let Some(cfg) = updated_config.as_mut() {
+            cfg.context_window = tokens;
+        }
+
+        let tokens_used = self.chat_state_handle.get_estimated_total_tokens().await;
+        let cw = tokens.get();
+        if let Some(cfg) = updated_config.take()
+            && !self
+                .chat_state_handle
+                .update_sampling_config_and_wait(cfg)
+                .await
+        {
+            return Err(acp::Error::internal_error()
+                .data("session state stopped before applying context window".to_string()));
+        }
+        self.signals_handle().update_context_usage(tokens_used, cw);
+        let usage_percent = xai_token_estimation::usage_percentage_u8(tokens_used, cw);
+
+        // Sticky auto-compact suppression was often set because the old window
+        // was "too full"; a user-requested budget change should re-open the gate.
+        self.compaction.auto_compact_suppressed.store(
+            super::super::compaction_config::SUPPRESS_NONE,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+
+        Ok(crate::session::commands::SetContextWindowResult {
+            previous_tokens,
+            tokens: cw,
+            tokens_used,
+            usage_percent,
+            compacted: false,
+            compaction_error: None,
+        })
+    }
     pub(super) async fn handle_set_session_model(
         &self,
         sampling_config: xai_grok_sampler::SamplerConfig,
@@ -136,8 +197,7 @@ impl SessionActor {
     pub(super) async fn handle_rebuild_agent_for_definition(
         &self,
         definition: xai_grok_agent::AgentDefinition,
-    ) -> Result<(), acp::Error> {
-        {
+    ) -> Result<(), acp::Error> {        {
             let state = self.state.lock().await;
             if state.running_task.is_some() {
                 tracing::warn!(

@@ -496,7 +496,7 @@ impl SessionActor {
             max_retries: Some(self.max_retries),
             stream_tool_calls: cfg.stream_tool_calls.unwrap_or(false),
             idle_timeout_secs: None,
-            client_identifier: self.client_identifier.clone(),
+            client_identifier: self.client_identifier.borrow().clone(),
             deployment_id: crate::managed_config::resolve_deployment_id(
                 crate::managed_config::resolve_deployment_key().as_deref(),
             ),
@@ -506,7 +506,7 @@ impl SessionActor {
                 .and_then(|am| am.current_or_expired())
                 .filter(|a| a.is_xai_auth())
                 .map(|a| a.user_id),
-            origin_client: self.origin_client.clone(),
+            origin_client: self.origin_client.borrow().clone(),
             attribution_callback: self.attribution_callback.clone(),
             bearer_resolver: if use_bearer_resolver {
                 self.auth_manager.as_ref().map(|am| {
@@ -696,7 +696,7 @@ impl SessionActor {
         crate::agent::config::stamp_session_local_sampler_fields(
             &mut cfg,
             &active_session_config,
-            self.client_identifier.clone(),
+            self.client_identifier.borrow().clone(),
             Some(self.max_retries),
         );
         let model = cfg.model.clone();
