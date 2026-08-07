@@ -620,6 +620,11 @@ pub struct AppView {
     /// Whether the cwd is inside a git repository (any ancestor has `.git`).
     /// Pre-computed at startup so dispatch stays free of filesystem I/O.
     pub cwd_has_git_ancestor: bool,
+    /// Whether the project picker question has already been shown this session.
+    pub project_picker_shown: bool,
+    /// "Don't ask me again" opt-out from [`xai_grok_shell::util::config::resolve_hints`];
+    /// TUI writes to user `config.toml` only.
+    pub project_picker_disabled: bool,
     /// ACP channel for sending requests (shared resource, cloned into agents).
     pub acp_tx: AcpAgentTx,
     /// Local cache of bundle sync/status state from the shell.
@@ -1113,6 +1118,9 @@ pub struct AppView {
     /// from the effective TOML merge like `show_tips`. `None` = unset in TOML
     /// (default `true`); toggles write the user layer.
     pub ask_user_question_timeout_enabled: Option<bool>,
+    /// Persisted `[session].auto_retry_incomplete_end_turn` mirror. `None` =
+    /// unset in TOML (default `false`); toggles write the user layer.
+    pub auto_retry_incomplete_end_turn: Option<bool>,
     /// Whether ZDR users are allowed to use the product.
     /// Server-controlled via RemoteSettings (remote settings). Default `false` (blocked) during beta.
     pub zdr_access_enabled: bool,
@@ -1418,6 +1426,8 @@ impl AppView {
             cwd_has_git_ancestor: std::env::current_dir()
                 .ok()
                 .is_some_and(|c| c.ancestors().any(|p| p.join(".git").exists())),
+            project_picker_shown: false,
+            project_picker_disabled: false,
             acp_tx,
             bundle_state: BundleState::default(),
             scratch: ScratchBuffer::new(),
@@ -1566,6 +1576,7 @@ impl AppView {
             show_tips: None,
             auto_update: None,
             ask_user_question_timeout_enabled: None,
+            auto_retry_incomplete_end_turn: None,
             zdr_access_enabled: false,
             usage_billing_redirect_url: None,
             access_gate_shown_logged: false,
@@ -1994,6 +2005,10 @@ impl AppView {
     /// [`WELCOME_TOAST_DURATION`].
     ///
     /// Reconnect success copy is skipped when a leader version-mismatch toast
+    pub fn mark_project_picker_done(&mut self) {
+        self.project_picker_shown = true;
+    }
+
     /// is already showing: registration (and thus the mismatch notif) finishes
     /// during reconnect, and the later "Reconnected." / "Session restored…"
     /// line would hide a still-true skew. Restore-failed and connection-failed
@@ -5953,6 +5968,8 @@ pub(crate) mod tests {
             current_ui: xai_grok_shell::agent::config::UiConfig::default(),
             cwd: std::path::PathBuf::from("/tmp"),
             cwd_has_git_ancestor: false,
+            project_picker_shown: false,
+            project_picker_disabled: false,
             acp_tx: tx,
             scratch: crate::scrollback::render::ScratchBuffer::new(),
             cursor: CursorState::new(),
@@ -6038,6 +6055,7 @@ pub(crate) mod tests {
             show_tips: None,
             auto_update: None,
             ask_user_question_timeout_enabled: None,
+            auto_retry_incomplete_end_turn: None,
             zdr_access_enabled: false,
             usage_billing_redirect_url: None,
             access_gate_shown_logged: false,
@@ -7600,7 +7618,7 @@ pub(crate) mod tests {
     fn apply_auth_meta_clears_gate_on_subscription() {
         let mut app = test_app();
         app.gate = Some(xai_grok_shell::auth::GateInfo {
-            message: "Subscribe to use Grok Build".into(),
+            message: "Subscribe to use Chaos".into(),
             url: Some("https://grok.com/supergrok?referrer=grok-build".into()),
             label: None,
         });

@@ -180,6 +180,77 @@ type GroupedPlugins<'a> = std::collections::BTreeMap<
     Vec<(usize, &'a xai_hooks_plugins_types::PluginInfo)>,
 >;
 
+/// Collapse key for the Workflows block on the Skills tab.
+const SKILLS_WORKFLOWS_GROUP_KEY: &str = "Workflows";
+
+/// Group header for a skill scope/source.
+#[derive(Debug, Clone)]
+struct SkillGroup {
+    rank: u8,
+    label: String,
+}
+
+/// Project → User → Plugin → Bundled → Server → Config.
+fn skill_group(skill: &SkillInfo) -> SkillGroup {
+    use xai_grok_tools::implementations::skills::types::SkillScope;
+    use xai_grok_tools::types::config_source::ConfigSource;
+
+    if let Some(ref cs) = skill.config_source {
+        return match cs {
+            ConfigSource::Project { .. } => SkillGroup {
+                rank: 0,
+                label: "Project".into(),
+            },
+            ConfigSource::User { .. } => SkillGroup {
+                rank: 1,
+                label: "User".into(),
+            },
+            ConfigSource::Plugin { .. } => SkillGroup {
+                rank: 2,
+                label: "Plugin".into(),
+            },
+            ConfigSource::Bundled { .. } | ConfigSource::Builtin => SkillGroup {
+                rank: 3,
+                label: "Bundled".into(),
+            },
+            ConfigSource::Server { .. } => SkillGroup {
+                rank: 4,
+                label: "Server".into(),
+            },
+            ConfigSource::ConfigToml { .. }
+            | ConfigSource::ClaudeJson { .. }
+            | ConfigSource::McpJson { .. }
+            | ConfigSource::Cli { .. }
+            | ConfigSource::Managed { .. } => SkillGroup {
+                rank: 5,
+                label: "Config".into(),
+            },
+        };
+    }
+    match skill.scope {
+        SkillScope::Local | SkillScope::Repo => SkillGroup {
+            rank: 0,
+            label: "Project".into(),
+        },
+        SkillScope::User => SkillGroup {
+            rank: 1,
+            label: "User".into(),
+        },
+        SkillScope::Plugin => SkillGroup {
+            rank: 2,
+            label: "Plugin".into(),
+        },
+        SkillScope::Bundled => SkillGroup {
+            rank: 3,
+            label: "Bundled".into(),
+        },
+        SkillScope::Server => SkillGroup {
+            rank: 4,
+            label: "Server".into(),
+        },
+    }
+}
+
 /// Header count suffix: `1 plugin`, `2 plugins`.
 fn plugin_count_label(n: usize) -> String {
     if n == 1 {
@@ -1766,6 +1837,12 @@ pub struct ExtensionsModalState {
     pub plugins_collapsed_groups: std::collections::HashSet<String>,
     /// See [`Self::seed_plugin_groups_once`].
     pub plugins_groups_seeded: bool,
+    /// Collapsed skill source groups (by [`SkillGroup::label`] / Workflows key).
+    pub skills_collapsed_groups: std::collections::HashSet<String>,
+    /// See [`Self::seed_skills_groups_once`].
+    pub skills_groups_seeded: bool,
+    /// See [`Self::seed_workflows_group_once`].
+    pub workflows_group_seeded: bool,
     /// Collapsed marketplace entries (by flat plugin index). Default collapsed.
     pub marketplace_collapsed: std::collections::HashSet<usize>,
     /// Collapsed marketplace sources (by source index). Default collapsed.
@@ -1851,6 +1928,9 @@ impl ExtensionsModalState {
             hooks_collapsed_groups: std::collections::HashSet::new(),
             plugins_collapsed_groups: std::collections::HashSet::new(),
             plugins_groups_seeded: false,
+            skills_collapsed_groups: std::collections::HashSet::new(),
+            skills_groups_seeded: false,
+            workflows_group_seeded: false,
             marketplace_collapsed: std::collections::HashSet::new(),
             marketplace_collapsed_sources: std::collections::HashSet::new(),
             plugins_filter: StatusFilter::default(),
@@ -1923,6 +2003,32 @@ impl ExtensionsModalState {
         }
         self.plugins_collapsed_groups = plugins.iter().map(|p| plugin_group(p).key).collect();
         self.plugins_groups_seeded = true;
+    }
+
+    /// Seed default-collapsed skill source groups exactly once.
+    ///
+    /// Unions [`SkillGroup::label`] keys into `skills_collapsed_groups` so a
+    /// prior Workflows expand/collapse (seeded independently) is preserved.
+    /// Later reloads leave the set alone.
+    pub fn seed_skills_groups_once(&mut self, skills: &[SkillInfo]) {
+        if self.skills_groups_seeded {
+            return;
+        }
+        for skill in skills {
+            self.skills_collapsed_groups
+                .insert(skill_group(skill).label);
+        }
+        self.skills_groups_seeded = true;
+    }
+
+    /// Seed default-collapsed Workflows header once (independent of skills load).
+    pub fn seed_workflows_group_once(&mut self) {
+        if self.workflows_group_seeded {
+            return;
+        }
+        self.skills_collapsed_groups
+            .insert(SKILLS_WORKFLOWS_GROUP_KEY.to_string());
+        self.workflows_group_seeded = true;
     }
 
     /// `hooks_collapsed_groups`, Marketplace uses
@@ -3570,6 +3676,7 @@ pub fn render_extensions_modal(
             &non_selectable_clickable,
             Some(theme.bg_base),
             loading,
+            0,
             inner_x + inner_width - 1,
         );
         (content_hit.item_rects, content_hit.entry_indices)

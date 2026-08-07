@@ -1330,6 +1330,24 @@ pub(super) fn test_subagent_finished(child_sid: &str) -> XaiSessionUpdate {
         will_wake: false,
     }
 }
+pub(super) fn test_subagent_finished_with_usage(
+    child_sid: &str,
+    tokens_used: u64,
+    output: Option<&str>,
+) -> XaiSessionUpdate {
+    XaiSessionUpdate::SubagentFinished {
+        subagent_id: child_sid.into(),
+        child_session_id: child_sid.into(),
+        status: "completed".into(),
+        error: None,
+        tool_calls: 2,
+        turns: 1,
+        duration_ms: 500,
+        tokens_used,
+        output: output.map(str::to_owned),
+        will_wake: false,
+    }
+}
 pub(super) fn test_subagent_progress(
     parent_sid: &str,
     child_sid: &str,

@@ -205,6 +205,8 @@ impl Theme {
 
             accent_verify: q(self.accent_verify),
 
+            accent_feedback: q(self.accent_feedback),
+
             accent_remember: q(self.accent_remember),
 
             selection_border: q(self.selection_border),
@@ -600,7 +602,9 @@ impl Theme {
             accent_skill: blue,
             fuzzy_accent: blue,
             // Cyan family: model name and the legacy `running` indicator (distinct from the magenta `accent_running` used for subagents).
-            // ANSI16 has no separate teal slot, so the truecolor teal model accent folds onto cyan here.
+            // ANSI16 has no separate teal slot, so the truecolor teal accents
+            // (feedback, model) fold onto cyan here.
+            accent_feedback: cyan,
             accent_model: cyan,
             running: cyan,
             // Yellow family — warning text, plan-mode gold, shell

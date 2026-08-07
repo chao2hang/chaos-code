@@ -3,7 +3,7 @@ use super::lifecycle::{dispatch_new_session_inner_with_id, refuse_chat_mode_buil
 use crate::acp::tracker::AcpUpdateTracker;
 use crate::app::actions::Effect;
 use crate::app::agent::{AgentCommand, AgentId, AgentSession, AgentState};
-use crate::app::agent_view::AgentView;
+use crate::app::agent_view::{AgentView, McpInitProgress};
 use crate::app::app_view::{ActiveView, AppView};
 use crate::app::dispatch::ctx::{SwitchCause, switch_to_agent};
 use crate::app::dispatch::modes::inherit_auto_mode;
@@ -39,6 +39,68 @@ use std::time::Instant;
 ///   return. Both rejections are deliberate -- queueing the fork until
 ///   `SessionLoaded` would require persisting `ForkArgs` across the
 ///   `TaskResult` and is deferred to v2.
+/// User resolved the project-directory picker (shown on the first prompt from
+/// a non-project directory). Sets the working directory, persists the
+/// "don't ask again" opt-out when chosen, and proceeds to create the session
+/// + send the stashed prompt.
+pub(in crate::app::dispatch) fn dispatch_project_selected(
+    app: &mut AppView,
+    path: std::path::PathBuf,
+    stashed_prompt: String,
+    disable_picker: bool,
+) -> Vec<Effect> {
+    app.mark_project_picker_done();
+    let mut effects = Vec::new();
+    if disable_picker {
+        app.project_picker_disabled = true;
+        app.show_toast("Won't ask about project directory again (reset in config.toml)");
+        effects.push(Effect::PersistProjectPickerDisabled { disabled: true });
+    }
+    let path = if path.is_dir() {
+        path
+    } else {
+        app.show_toast("Directory not found, continuing in current directory");
+        app.cwd.clone()
+    };
+    app.cwd = path.clone();
+    crate::git_info::populate_from_cwd_async(path.clone());
+    effects.push(Effect::SetWorkingDir { path: path.clone() });
+    let ActiveView::Agent(id) = app.active_view else {
+        effects.extend(crate::app::dispatch::prompt::dispatch_send_prompt(app, stashed_prompt));
+        return effects;
+    };
+    if let Some(agent) = app.agents.get_mut(&id) {
+        let changed = agent.session.cwd != path;
+        agent.session.cwd = path.clone();
+        if changed {
+            agent.show_toast(&format!("Updated working directory to {}", path.display()));
+        }
+    }
+    if let Some(agent) = app.agents.get_mut(&id) {
+        agent.mcp_init_progress = Some(McpInitProgress {
+            total: 0,
+            connected: 0,
+            started_at: Instant::now(),
+        });
+        agent.session.prompt_history_loading = true;
+    }
+    let preferred_session_id = app.deferred_startup.preferred_session_id.take();
+    let chat_kind = crate::app::dispatch::prompt::consume_chat_kind(app);
+    if let Some(agent) = app.agents.get_mut(&id) {
+        agent.chat_kind = chat_kind;
+        agent.apply_credit_balance(app.credit_balance.clone(), app.auto_topup.clone());
+    }
+    effects.push(Effect::CreateSession {
+        agent_id: id,
+        cwd: path,
+        model_id: None,
+        preferred_session_id,
+        chat_kind,
+    });
+    effects.extend(crate::app::dispatch::prompt::dispatch_send_prompt(app, stashed_prompt));
+    effects
+}
+
 pub(in crate::app::dispatch) fn dispatch_fork(
     app: &mut AppView,
     args: crate::slash::commands::fork::ForkArgs,

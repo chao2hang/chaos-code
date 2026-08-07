@@ -2554,7 +2554,6 @@ fn delete_session_refuses_conversation_row() {
             source: "conversation".into(),
             session_id: "conv-del-1".into(),
             cwd: String::new(),
-            after: crate::app::actions::AfterSessionDelete::Stay,
         },
         &mut app,
     );

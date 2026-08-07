@@ -2100,6 +2100,18 @@ async fn async_main(args: PagerArgs) -> Result<()> {
                 init_tracing_simple("cli");
                 return print_client_profiles(json);
             }
+            Command::Logout => {
+                init_tracing_simple("cli");
+                // Chaos is BYOK-only: no product session to sign out of.
+                println!("Chaos 使用自带模型凭证（config.toml），没有需要登出的会话。");
+                return Ok(());
+            }
+            Command::Login { .. } => {
+                init_tracing_simple("cli");
+                // Chaos is BYOK-only: never offer browser login.
+                println!("Chaos 使用自带模型凭证；请通过 /provider 或 config.toml 配置。");
+                return Ok(());
+            }
             Command::Leader(leader_args) => {
                 init_tracing_simple("cli");
                 let _otel_guard = xai_grok_telemetry::otel_layer::otel_guard();

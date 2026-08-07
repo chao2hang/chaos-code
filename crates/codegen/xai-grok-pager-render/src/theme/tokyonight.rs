@@ -94,6 +94,7 @@ pub struct Theme {
     pub accent_verify: Color, // Violet accent, distinct from plan gold
 
     // Remember mode
+    pub accent_feedback: Color, // Teal/green accent for feedback mode
     pub accent_remember: Color, // Green accent for # remember mode
 
     // Selection
@@ -189,6 +190,7 @@ impl Theme {
 
             accent_verify: MAGENTA, // #bb9af7: violet (distinct from plan)
 
+            accent_feedback: GREEN1, // #73daca — warm teal/green
             accent_remember: Color::Rgb(139, 195, 74), // #8BC34A — Material Design light green
 
             selection_border: rgb(58, 72, 115), // #3A4873 — muted tokyonight blue
