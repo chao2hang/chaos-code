@@ -80,10 +80,6 @@ Projects opened in WorkBuddy keep their project-related data inside the .workbud
 The WorkBuddy client stores user profile information in memory layers: a cloud memory with auto-injected profiles, a user-level local memory file, and a workspace memory directory.\n\
 When users ask about WorkBuddy features or how to configure components such as MCP servers or hooks, the assistant should consult the official WorkBuddy documentation.";
 
-/// Product identifier baked into User-Agent strings.
-const AGENT_PRODUCT: &str = "grok-shell";
-const ANTHROPIC_DEFAULT_MAX_TOKENS: u32 = 128_000;
-
 /// Per-request `x-grok-*` headers. Optional fields are skipped when empty/`None`.
 struct GrokRequestHeaders<'a> {
     conv_id: &'a str,
