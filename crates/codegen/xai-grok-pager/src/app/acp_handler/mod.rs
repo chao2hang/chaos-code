@@ -34,7 +34,7 @@ use crate::views::permission_view::{
 };
 use crate::views::plan_approval_view::PlanReviewSource;
 
-use super::agent_view::{AgentView, InputMode};
+use super::agent_view::{AgentPane, AgentView, InputMode};
 use super::app_view::{ActiveView, AppView};
 
 mod background;
@@ -52,7 +52,10 @@ mod workflow_ingest;
 
 #[cfg(test)]
 use permissions::{MCP_ARGS_MAX_LINE_CHARS, MCP_ARGS_MAX_LINES, mcp_args_lines};
-use permissions::{apply_recap_block, handle_permission_request, should_drop_late_auto_recap};
+use permissions::{
+    apply_recap_block, handle_permission_request, should_drop_duplicate_auto_recap,
+    should_drop_late_auto_recap,
+};
 
 // Hub + child modules (via `use super::*`) need sibling symbols in this scope.
 use routing::{
@@ -62,7 +65,8 @@ use routing::{
 
 use prompt_origin::{finish_wake_turn, viewer_turn_anchor};
 pub(crate) use prompt_origin::{
-    is_server_initiated_prompt, is_wake_prompt, should_adopt_running_prompt,
+    is_scheduler_fired_prompt, is_server_initiated_prompt, is_wake_prompt,
+    should_adopt_running_prompt,
 };
 
 pub(crate) use subagent_activity::finalize_killed_subagent;
@@ -145,13 +149,9 @@ pub(crate) fn handle(msg: AcpClientMessage, app: &mut AppView) -> bool {
         AcpClientMessage::SessionNotification(notif) => {
             let mut meta = NotificationMeta::from_json(notif.request.meta.as_ref());
 
-            // Wait-state bookkeeping after the agent borrow ends (parked marker).
-            let mut wait_state_agent: Option<AgentId> = None;
-
             let affected = match find_session_match(app, &notif.request.session_id) {
                 Some(SessionMatch::Root(id)) => {
                     let is_active = is_matched_agent_active(app, id);
-                    wait_state_agent = Some(id);
                     // Read before the agent borrow below.
                     let stashed_adoption_pid = app
                         .pending_running_adoptions
@@ -250,6 +250,7 @@ pub(crate) fn handle(msg: AcpClientMessage, app: &mut AppView) -> bool {
                         }
                         if let Some(ts) = meta.turn_start_ms {
                             agent.turn_start_ms = Some(ts);
+                            agent.turn_start_ms_prompt = meta.prompt_id.clone();
                         }
                     }
 
@@ -389,16 +390,36 @@ pub(crate) fn handle(msg: AcpClientMessage, app: &mut AppView) -> bool {
                             // the turn is current.
                             agent.flush_pending_follow_ups(notif_pid);
                         }
+                        // A live delta for a wake prompt id: record the
+                        // streaming wake turn so the stop affordance can offer
+                        // a cancel for it. Lifecycle on
+                        // `note_streaming_wake_turn`.
+                        if !meta.is_replay
+                            && let Some(notif_pid) = meta.prompt_id.as_deref()
+                            && is_wake_prompt(notif_pid)
+                        {
+                            agent.note_streaming_wake_turn(notif_pid);
+                        }
+
                         // Detect plan mode transitions from tool call completions.
                         plan_mode_modal_refresh_needed |=
                             detect_plan_mode_change(&notif.request.update, agent);
 
                         let had_activity_before = agent.session.tracker.activity().is_some();
-                        agent.session.handle_update(
-                            notif.request.update,
-                            &meta,
-                            &mut agent.scrollback,
-                        );
+                        let update = notif.request.update;
+                        let user_echo = matches!(update, acp::SessionUpdate::UserMessageChunk(_));
+                        agent
+                            .session
+                            .handle_update(update, &meta, &mut agent.scrollback);
+                        // Skip user echo: shell broadcasts it before history commit.
+                        if !user_echo
+                            && !meta.is_replay
+                            && !agent.session.loading_replay
+                            && meta.prompt_id.as_deref()
+                                == agent.session.current_prompt_id.as_deref()
+                        {
+                            agent.front_message_committed = true;
+                        }
                         // Once the server has emitted any activity (chunk, tool,
                         // retry, etc.), the in-flight prompt can no longer be
                         // "rewound" by Ctrl+C. Clear the stash on the transition.
@@ -565,12 +586,6 @@ pub(crate) fn handle(msg: AcpClientMessage, app: &mut AppView) -> bool {
                     false
                 }
             };
-            if let Some(aid) = wait_state_agent {
-                // Parked marker (any tab — the update that created the wait state stamps the park time).
-                if let Some(agent) = app.agents.get_mut(&aid) {
-                    agent.maybe_push_parked_marker();
-                }
-            }
             notif.response_tx.send(Ok(())).ok();
             affected
         }
@@ -583,7 +598,7 @@ pub(crate) fn handle(msg: AcpClientMessage, app: &mut AppView) -> bool {
         AcpClientMessage::ExtMethod(ext) => handle_ext_method(ext, app),
         AcpClientMessage::WaitForTerminalExit(args) => {
             args.response_tx
-                .send(Err(crate::acp::wait_for_exit_not_supported("Pager")))
+                .send(Err(crate::acp::wait_for_exit_not_supported("pager")))
                 .ok();
             false
         }
@@ -654,13 +669,12 @@ fn queue_open_workflows_modal_refresh(app: &mut AppView, agent_id: AgentId) {
     };
     let already_pending = app.pending_effects.iter().any(|effect| {
         matches!(
-                    effect,
-                    Effect::FetchWorkflowsList {
-                        agent_id: pending_id,
-                        ..
-                    }
-        if *pending_id == agent_id
-                )
+            effect,
+            Effect::FetchWorkflowsList {
+                agent_id: pending_id,
+                ..
+            } if *pending_id == agent_id
+        )
     });
     if !already_pending {
         app.pending_effects.push(Effect::FetchWorkflowsList {
@@ -693,6 +707,7 @@ fn handle_ext_notification(notif: &acp::ExtNotification, app: &mut AppView) -> b
         "x.ai/scheduled_task_inject_prompt" => handle_scheduled_task_inject_prompt(notif, app),
         "x.ai/announcements/update" => handle_announcements_update(notif, app),
         "x.ai/git_head_changed" => handle_git_head_changed(notif, app),
+        "x.ai/leader/version_mismatch" => handle_version_mismatch(notif, app),
         "x.ai/mcp/init_progress" => handle_mcp_init_progress(notif, app),
         "x.ai/mcp/tools_changed" | "x.ai/mcp_initialized" => handle_mcp_tools_changed(notif, app),
         "x.ai/mcp/server_status" if push_server_status_enabled() => {
@@ -701,6 +716,15 @@ fn handle_ext_notification(notif: &acp::ExtNotification, app: &mut AppView) -> b
         "x.ai/mcp/servers_updated" => handle_mcp_servers_updated(notif, app),
         _ => false,
     }
+}
+
+fn handle_version_mismatch(notif: &acp::ExtNotification, app: &mut AppView) -> bool {
+    let Some(banner) = crate::acp::version_mismatch_banner(notif.params.get()) else {
+        tracing::warn!("ignoring x.ai/leader/version_mismatch without usable versions");
+        return false;
+    };
+    app.show_toast(&banner);
+    true
 }
 
 /// Handle `x.ai/session/interjection` — the leader broadcasts this
@@ -749,11 +773,6 @@ fn handle_interjection(notif: &acp::ExtNotification, app: &mut AppView) -> bool 
     agent
         .scrollback
         .push_block(RenderBlock::interjection_prompt(text));
-    // Interjecting into a parked wait continues the turn below this block —
-    // the withheld "Worked for …" marker must not fire late beneath it
-    // (shared-queue interjects render only via this broadcast, and the shell
-    // emits the queue-emptying `x.ai/queue/changed` right after it).
-    agent.suppress_parked_marker_on_interject();
     is_active
 }
 

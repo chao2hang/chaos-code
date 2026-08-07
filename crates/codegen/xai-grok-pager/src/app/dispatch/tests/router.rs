@@ -32,7 +32,6 @@ fn external_prompt_editor_arms_typed_request_and_preserves_composer_modes() {
     for mode in [
         PromptInputMode::Normal,
         PromptInputMode::Bash,
-        PromptInputMode::Feedback,
         PromptInputMode::Remember,
     ] {
         let mut app = test_app_with_agent();
@@ -306,10 +305,13 @@ fn config_editor_action_still_uses_typed_request() {
         },
         &mut app,
     );
-    assert!(matches!(app.pending_editor, Some(crate
-        ::app::external_editor::PendingEditorRequest::ConfigFile { path : ref queued,
-        refresh_agents_modal : Some(crate ::views::agents_modal::AgentsTab::Agents), })
-        if queued == & path));
+    assert!(matches!(
+        app.pending_editor,
+        Some(crate::app::external_editor::PendingEditorRequest::ConfigFile {
+            path: ref queued,
+            refresh_agents_modal: Some(crate::views::agents_modal::AgentsTab::Agents),
+        }) if queued == &path
+    ));
 }
 fn seed_foreign_resume_hint(
     app: &mut AppView,
@@ -478,8 +480,7 @@ fn follow_up_chip_does_not_execute_slash_command() {
         "a /always-approve chip must NOT flip YOLO mode"
     );
     assert!(
-        matches!(& effects[..], [Effect::SendPrompt { text, .. }] if text ==
-        "/always-approve"),
+        matches!(&effects[..], [Effect::SendPrompt { text, .. }] if text == "/always-approve"),
         "chip text must be submitted literally, got {effects:?}"
     );
 }
@@ -488,7 +489,7 @@ fn follow_up_chip_does_not_execute_exit_alias() {
     let mut app = test_app_with_agent();
     let effects = dispatch(Action::SubmitFollowUp("quit".into()), &mut app);
     assert!(
-        matches!(& effects[..], [Effect::SendPrompt { text, .. }] if text == "quit"),
+        matches!(&effects[..], [Effect::SendPrompt { text, .. }] if text == "quit"),
         "bare 'quit' chip must be a literal prompt, got {effects:?}"
     );
 }
@@ -504,8 +505,7 @@ fn chip_submit_while_running_clears_follow_up_chips() {
     }
     let effects = dispatch(Action::SubmitFollowUp("Summarize".into()), &mut app);
     assert!(
-        matches!(& effects[..], [Effect::SendPrompt { text, .. }] if text ==
-        "Summarize"),
+        matches!(&effects[..], [Effect::SendPrompt { text, .. }] if text == "Summarize"),
         "chip must immediate-send while running, got {effects:?}"
     );
     assert_eq!(app.agents[&id].session.queue_len(), 0);
@@ -537,8 +537,7 @@ fn chip_submit_while_reconnect_pending_keeps_chips_and_does_not_send() {
     app.agents.get_mut(&id).unwrap().session.state = AgentState::TurnRunning;
     let effects2 = dispatch(Action::SubmitFollowUp("Summarize".into()), &mut app);
     assert!(
-        matches!(& effects2[..], [Effect::SendPrompt { text, .. }] if text ==
-        "Summarize"),
+        matches!(&effects2[..], [Effect::SendPrompt { text, .. }] if text == "Summarize"),
         "after reconnect clears, the chip must submit, got {effects2:?}"
     );
     assert!(
@@ -787,12 +786,11 @@ fn dispatch_send_prompt_announcements_via_registry() {
     app.active_announcements = vec![critical_announcement("crit-a")];
     let effects = dispatch(Action::SendPrompt("/announcements hide".into()), &mut app);
     assert!(
-        effects
-            .iter()
-            .any(|e| matches!(e, Effect::PersistAnnouncementsHidden {
-        hidden_ids } if hidden_ids.contains("crit-a"))),
-        "expected persist effect carrying the hidden id, got {effects:?}"
-    );
+            effects.iter().any(
+                |e| matches!(e, Effect::PersistAnnouncementsHidden { hidden_ids } if hidden_ids.contains("crit-a"))
+            ),
+            "expected persist effect carrying the hidden id, got {effects:?}"
+        );
     assert!(app.hidden_announcement_ids.contains("crit-a"));
     assert_eq!(shown_banner_id(&app), None, "hidden critical closes banner");
     assert!(app.agents[&agent_id].prompt.text().is_empty());
@@ -851,12 +849,11 @@ fn announcements_show_clears_visible_critical_ids_only() {
     assert_eq!(shown_banner_id(&app), None);
     let effects = dispatch(Action::AnnouncementsShow, &mut app);
     assert!(
-        effects
-            .iter()
-            .any(|e| matches!(e, Effect::PersistAnnouncementsHidden {
-        hidden_ids } if ! hidden_ids.contains("outage-a"))),
-        "expected persist effect without the un-hidden id, got {effects:?}"
-    );
+            effects.iter().any(
+                |e| matches!(e, Effect::PersistAnnouncementsHidden { hidden_ids } if !hidden_ids.contains("outage-a"))
+            ),
+            "expected persist effect without the un-hidden id, got {effects:?}"
+        );
     assert_eq!(shown_banner_id(&app).as_deref(), Some("outage-a"));
     assert!(
         app.hidden_announcement_ids.contains("unrelated"),
@@ -943,10 +940,9 @@ fn announcements_show_clears_hidden_promo_ids() {
     assert_eq!(shown_banner_id(&app), None);
     let effects = dispatch(Action::AnnouncementsShow, &mut app);
     assert!(
-        effects
-            .iter()
-            .any(|e| matches!(e, Effect::PersistAnnouncementsHidden {
-        hidden_ids } if ! hidden_ids.contains("promo-a"))),
+        effects.iter().any(
+            |e| matches!(e, Effect::PersistAnnouncementsHidden { hidden_ids } if !hidden_ids.contains("promo-a"))
+        ),
         "expected persist effect without the un-hidden promo id, got {effects:?}"
     );
     assert_eq!(shown_banner_id(&app).as_deref(), Some("promo-a"));
@@ -969,11 +965,7 @@ fn switch_model_dispatch_produces_effect_and_sets_pending() {
         &mut app,
     );
     assert_eq!(effects.len(), 1);
-    assert!(
-        matches!(& effects[0], Effect::SwitchModel { model_id : mid, .. }
-if mid == &
-        model_id)
-    );
+    assert!(matches!(&effects[0], Effect::SwitchModel { model_id: mid, .. } if mid == &model_id));
     assert!(app.agents[&id].session.model_switch_pending);
     assert!(app.agents[&id].session.state.is_idle());
 }
@@ -991,11 +983,7 @@ fn switch_model_allowed_when_agent_chat_kind() {
         &mut app,
     );
     assert_eq!(effects.len(), 1);
-    assert!(
-        matches!(& effects[0], Effect::SwitchModel { model_id : mid, .. }
-if mid == &
-        model_id)
-    );
+    assert!(matches!(&effects[0], Effect::SwitchModel { model_id: mid, .. } if mid == &model_id));
     assert!(app.agents[&id].session.model_switch_pending);
 }
 #[test]
@@ -1012,11 +1000,7 @@ fn switch_model_allowed_when_app_chat_mode() {
         &mut app,
     );
     assert_eq!(effects.len(), 1);
-    assert!(
-        matches!(& effects[0], Effect::SwitchModel { model_id : mid, .. }
-if mid == &
-        model_id)
-    );
+    assert!(matches!(&effects[0], Effect::SwitchModel { model_id: mid, .. } if mid == &model_id));
     assert!(app.agents[&id].session.model_switch_pending);
 }
 #[test]
@@ -1065,7 +1049,11 @@ fn agent_type_mismatch_with_effort_stashes_deferred_switch() {
         let agent = &app.agents[&new_aid];
         assert_eq!(
             agent.session.deferred_model_switch,
-            Some((model_id, effort)),
+            Some(crate::app::agent::DeferredModelSwitch {
+                model_id,
+                effort,
+                prev_model_id: None,
+            }),
             "effort override must be stashed for the shell via deferred_model_switch",
         );
     } else {
@@ -1081,7 +1069,11 @@ fn deferred_model_switch_still_works_for_cli_override() {
     let id = AgentId(0);
     assert_eq!(
         app.agents[&id].session.deferred_model_switch,
-        Some((cli_model, None)),
+        Some(crate::app::agent::DeferredModelSwitch {
+            model_id: cli_model,
+            effort: None,
+            prev_model_id: None,
+        }),
         "CLI -m override must still populate deferred_model_switch",
     );
 }
@@ -1234,7 +1226,7 @@ fn acp_bootstrap_command_executes_as_passthrough() {
     let effects = dispatch(Action::SendPrompt("/flush".into()), &mut app);
     assert_eq!(effects.len(), 1);
     assert!(
-        matches!(& effects[0], Effect::SendPrompt { text, .. } if text == "/flush"),
+        matches!(&effects[0], Effect::SendPrompt { text, .. } if text == "/flush"),
         "ACP command should passthrough, got: {effects:?}"
     );
 }
@@ -1369,9 +1361,7 @@ fn acp_command_with_args_passthrough_includes_args() {
     let effects = dispatch(Action::SendPrompt("/search find bugs".into()), &mut app);
     assert_eq!(effects.len(), 1);
     assert!(
-        matches!(& effects[0], Effect::SendPrompt { text, .. }
-if text ==
-        "/search find bugs"),
+        matches!(&effects[0], Effect::SendPrompt { text, .. } if text == "/search find bugs"),
         "ACP passthrough should preserve args, got: {effects:?}"
     );
 }
@@ -1412,9 +1402,10 @@ fn tick_propagates_available_commands_to_bootstrap() {
     dispatch(Action::NewSession, &mut app);
     let id = AgentId(0);
     app.active_view = crate::app::app_view::ActiveView::Agent(id);
-    let skill_meta = serde_json::json!(
-        { "scope" : "user", "path" : "/home/user/.grok/skills/pick-best/SKILL.md", }
-    );
+    let skill_meta = serde_json::json!({
+        "scope": "user",
+        "path": "/home/user/.grok/skills/pick-best/SKILL.md",
+    });
     app.agents.get_mut(&id).unwrap().session.available_commands = vec![
         acp::AvailableCommand::new("compact".to_string(), "Builtin".to_string()),
         acp::AvailableCommand::new("pick-best".to_string(), "Parallel tournament".to_string())
@@ -1498,7 +1489,7 @@ fn deferred_switch_overwritten_by_second_switch() {
     app.agents.get_mut(&id).unwrap().session.session_id = None;
     dispatch(
         Action::SwitchModel {
-            model_id: model_a,
+            model_id: model_a.clone(),
             effort: None,
         },
         &mut app,
@@ -1512,7 +1503,93 @@ fn deferred_switch_overwritten_by_second_switch() {
     );
     assert_eq!(
         app.agents[&id].session.deferred_model_switch,
-        Some((model_b, None))
+        Some(crate::app::agent::DeferredModelSwitch {
+            model_id: model_b.clone(),
+            effort: None,
+            prev_model_id: Some(model_a),
+        })
+    );
+}
+#[test]
+fn pick_over_cli_seed_keeps_display_as_rollback_target() {
+    let mut app = test_app_with_agent();
+    let id = AgentId(0);
+    let displayed = acp::ModelId::new(std::sync::Arc::from("displayed-model"));
+    let cli_model = acp::ModelId::new(std::sync::Arc::from("cli-model"));
+    let picked = acp::ModelId::new(std::sync::Arc::from("picked-model"));
+    let agent = app.agents.get_mut(&id).unwrap();
+    agent.session.session_id = None;
+    agent.session.models.current = Some(displayed.clone());
+    agent.session.deferred_model_switch = Some(crate::app::agent::DeferredModelSwitch {
+        model_id: cli_model,
+        effort: None,
+        prev_model_id: None,
+    });
+    dispatch(
+        Action::SwitchModel {
+            model_id: picked.clone(),
+            effort: None,
+        },
+        &mut app,
+    );
+    assert_eq!(
+        app.agents[&id].session.deferred_model_switch,
+        Some(crate::app::agent::DeferredModelSwitch {
+            model_id: picked,
+            effort: None,
+            prev_model_id: Some(displayed),
+        })
+    );
+}
+#[test]
+fn deferred_switch_updates_display_and_persists() {
+    let mut app = test_app_with_agent();
+    let id = AgentId(0);
+    let model_id = acp::ModelId::new(std::sync::Arc::from("model-b"));
+    app.agents.get_mut(&id).unwrap().session.session_id = None;
+    let effects = dispatch(
+        Action::SwitchModel {
+            model_id: model_id.clone(),
+            effort: None,
+        },
+        &mut app,
+    );
+    let agent = &app.agents[&id];
+    assert_eq!(
+        agent.session.models.current,
+        Some(model_id.clone()),
+        "pre-session pick must update the displayed model immediately"
+    );
+    assert_eq!(
+        agent.session.deferred_model_switch,
+        Some(crate::app::agent::DeferredModelSwitch {
+            model_id: model_id.clone(),
+            effort: None,
+            prev_model_id: None,
+        }),
+        "switch must still round-trip once the session exists"
+    );
+    assert!(
+        !agent.session.model_switch_pending,
+        "nothing is in flight yet — the queue must not be blocked"
+    );
+    assert!(
+        matches!(
+            &effects[..],
+            [Effect::PersistPreferredModel { model_id: m, .. }] if m == &model_id
+        ),
+        "expected a single PersistPreferredModel effect, got {effects:?}"
+    );
+    let effects = dispatch(
+        Action::SwitchModel {
+            model_id: model_id.clone(),
+            effort: None,
+        },
+        &mut app,
+    );
+    assert!(
+        effects.is_empty(),
+        "unchanged pre-session pick must not re-persist, got {effects:?}"
     );
 }
 #[test]
@@ -1528,10 +1605,14 @@ fn request_bundle_status_emits_effect() {
 fn conversation_entry_load_sets_chat_kind_bit() {
     let mut app = test_app();
     let effects = dispatch(Action::LoadSession("conv-id".into(), None, true), &mut app);
-    assert!(
-        matches!(& effects[..], [Effect::LoadSession { session_id, chat_kind : true, ..
-        }] if session_id == "conv-id")
-    );
+    assert!(matches!(
+        &effects[..],
+        [Effect::LoadSession {
+            session_id,
+            chat_kind: true,
+            ..
+        }] if session_id == "conv-id"
+    ));
     let agent = app.agents.values().next().expect("agent");
     assert!(agent.chat_kind, "conversation entry → agent chat_kind");
 }
@@ -1545,10 +1626,14 @@ fn chat_mode_resume_without_local_disk_loads_as_chat() {
         Action::LoadSession("remote-conv-only".into(), None, false),
         &mut app,
     );
-    assert!(
-        matches!(& effects[..], [Effect::LoadSession { session_id, chat_kind : false, ..
-        }] if session_id == "remote-conv-only")
-    );
+    assert!(matches!(
+        &effects[..],
+        [Effect::LoadSession {
+            session_id,
+            chat_kind: false,
+            ..
+        }] if session_id == "remote-conv-only"
+    ));
     let agent = app.agents.values().next().expect("agent");
     assert!(
         agent.chat_kind,
@@ -1612,11 +1697,11 @@ fn view_catalog_entry_emits_fetch_effect() {
         &mut app,
     );
     assert_eq!(effects.len(), 1);
-    assert!(
-        matches!(& effects[0], Effect::FetchCatalogEntry { kind, name }
-if kind ==
-        "persona" && name == "researcher")
-    );
+    assert!(matches!(
+        &effects[0],
+        Effect::FetchCatalogEntry { kind, name }
+        if kind == "persona" && name == "researcher"
+    ));
 }
 /// End-to-end regression test for the "always re-asks" requirement.
 ///

@@ -31,7 +31,13 @@ fn messages_response_completed_stamps_assistant_frame() {
         r.reduce(StreamEvent::ResponseCompleted {
             message_id: Some("msg_real".into()),
             stop_reason: Some("end_turn".into()),
-            usage: Some(response_usage(12, 7, 3, 0)),
+            usage: Some(ResponseUsage {
+                input_tokens: 12,
+                output_tokens: 7,
+                cache_read_input_tokens: 3,
+                cache_creation_input_tokens: 0,
+                ..Default::default()
+            }),
             signature: Some("sig-abc".into()),
             stop_sequence: None,
         })
@@ -354,7 +360,11 @@ fn messages_late_response_completed_for_flushed_response_is_dropped() {
     out.extend(r.reduce(StreamEvent::ResponseCompleted {
         message_id: Some("msg_a".into()),
         stop_reason: Some("end_turn".into()),
-        usage: Some(response_usage(99, 99, 0, 0)),
+        usage: Some(ResponseUsage {
+            input_tokens: 99,
+            output_tokens: 99,
+            ..Default::default()
+        }),
         signature: None,
         stop_sequence: None,
     }));

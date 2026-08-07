@@ -1,4 +1,4 @@
-//! Headless single-turn mode (`chaos -p "prompt"`).
+//! Headless single-turn mode (`grok -p "prompt"`).
 //!
 //! Runs the agent in-process via `spawn_grok_shell`, drives the ACP lifecycle
 //! (init, auth, session, prompt), streams to stdout, and exits via `CancellationToken`.
@@ -37,8 +37,8 @@ use ext_protocol::{ExtEvent, handle_ext_notification};
 
 mod cli;
 pub use cli::{HeadlessPrompt, OutputFormat, parse_json_schema, parse_permission_rules_lenient};
-pub(crate) use cli::{ResolvedAgent, parse_comma_list, resolve_agent_arg};
-use cli::{apply_agent_flag, parse_cli_agents, parse_permission_rules_strict};
+pub(crate) use cli::{ResolvedAgent, resolve_agent_arg};
+use cli::{apply_agent_flag, parse_cli_agents, parse_comma_list, parse_permission_rules_strict};
 
 #[derive(Debug, Clone)]
 pub struct HeadlessOptions {
@@ -54,8 +54,6 @@ pub struct HeadlessOptions {
     pub include_partial_messages: bool,
     pub json_schema: Option<serde_json::Value>,
     pub model: Option<String>,
-    /// Canonical request-client profile ID to advertise to the agent.
-    pub client_identifier: Option<String>,
     pub rules: Option<String>,
     pub system_prompt_override: Option<String>,
     pub continue_last_session: bool,
@@ -216,7 +214,7 @@ impl HeadlessEmitter {
         Some(
             self.structured_output
                 .clone()
-                .unwrap_or_else(|| Err("模型未生成结构化输出".to_string())),
+                .unwrap_or_else(|| Err("model did not produce structured output".to_string())),
         )
     }
 
@@ -276,7 +274,7 @@ impl HeadlessEmitter {
         let result = self
             .structured_output
             .clone()
-            .unwrap_or_else(|| Err("模型未生成结构化输出".to_string()));
+            .unwrap_or_else(|| Err("model did not produce structured output".to_string()));
         crate::headless::reducer::attach_structured_output(target, Some(result));
     }
 
@@ -342,7 +340,7 @@ impl HeadlessEmitter {
     /// Emit the max turns marker for the active format.
     fn on_max_turns(&mut self) {
         match self.format {
-            OutputFormat::Plain => eprintln!("已达到最大轮次"),
+            OutputFormat::Plain => eprintln!("Max turns reached"),
             // Conveyed by `stopReason` in the terminal JSON and result.
             OutputFormat::Json => {}
             OutputFormat::StreamingJson | OutputFormat::StreamingMessagesJson => {
@@ -381,40 +379,6 @@ impl HeadlessEmitter {
 
 pub(crate) fn attach_result_usage(result: &mut serde_json::Value, usage: &serde_json::Value) {
     xai_grok_shell::extensions::notification::attach_result_usage_fail_closed(result, usage);
-
-    // Some Messages-compatible callers include cache-write tokens in the raw
-    // aggregate even though the shell's shared PromptUsage schema folds them
-    // into `input_tokens`. Preserve that optional field for headless output and
-    // keep the four input buckets disjoint when it is available.
-    let cache_creation_tokens = [
-        "cacheCreationTokens",
-        "cacheCreationInputTokens",
-        "cache_creation_input_tokens",
-    ]
-    .iter()
-    .find_map(|key| usage.get(*key).and_then(serde_json::Value::as_u64))
-    .unwrap_or(0);
-    if cache_creation_tokens == 0 {
-        return;
-    }
-    let Some(projected_usage) = result
-        .get_mut("usage")
-        .and_then(serde_json::Value::as_object_mut)
-    else {
-        return;
-    };
-    let input_tokens = projected_usage
-        .get("input_tokens")
-        .and_then(serde_json::Value::as_u64)
-        .unwrap_or(0);
-    projected_usage.insert(
-        "input_tokens".to_string(),
-        serde_json::Value::from(input_tokens.saturating_sub(cache_creation_tokens)),
-    );
-    projected_usage.insert(
-        "cache_creation_input_tokens".to_string(),
-        serde_json::Value::from(cache_creation_tokens),
-    );
 }
 
 /// Snake_case wire token for an ACP stop reason.
@@ -476,10 +440,19 @@ fn auto_respond_to_permissions(
     None
 }
 
-/// Provider configuration error used by both interactive and headless sessions.
-fn auth_required_message(_interactive: bool) -> String {
-    "模型认证失败。请检查当前模型的 api_key/env_key、base_url、api_backend 和 auth_scheme 配置。"
-        .to_string()
+/// "Not signed in" error message, tailored to the session type.
+fn auth_required_message(interactive: bool) -> String {
+    if interactive {
+        "Not signed in. Run `grok login` to authenticate \
+         (or `grok login --device-code` if no browser is available)."
+            .to_string()
+    } else {
+        "Not signed in. To authenticate without a browser, run:\n  \
+         grok login --device-code\n\n\
+         Alternatively, set the XAI_API_KEY environment variable \
+         or run `grok login` on a machine with a browser."
+            .to_string()
+    }
 }
 
 /// Authenticate via the agent's `defaultAuthMethodId`, failing closed when none is available.
@@ -517,12 +490,9 @@ async fn authenticate(
 fn build_headless_init_request(
     rules: Option<&str>,
     system_prompt_override: Option<&str>,
-    client_identifier: Option<&str>,
 ) -> acp::InitializeRequest {
-    let client_identifier = client_identifier.unwrap_or(HEADLESS_CLIENT_TYPE);
     let mut meta = serde_json::json!({
-        "clientType": client_identifier,
-        "clientIdentifier": client_identifier,
+        "clientType": HEADLESS_CLIENT_TYPE,
         "clientVersion": PAGER_CLIENT_VERSION,
     });
     if let Some(rules) = rules {
@@ -570,8 +540,8 @@ async fn open_session(
                 .meta({
                     let mut m = acp::Meta::new();
                     m.insert("noReplay".into(), serde_json::Value::Bool(true));
-                    if let Some(true) = restore_code {
-                        m.insert("x.ai/restore_code".into(), serde_json::Value::Bool(true));
+                    if let Some(rc) = restore_code {
+                        m.insert("x.ai/restore_code".into(), serde_json::Value::Bool(rc));
                     }
                     Some(m)
                 }),
@@ -585,7 +555,7 @@ async fn open_session(
                 cwd: cwd.to_path_buf(),
             });
         }
-        anyhow::bail!("会话不存在");
+        anyhow::bail!("Session does not exist");
     }
 
     let new_resp: acp::NewSessionResponse = acp_send(
@@ -649,17 +619,19 @@ async fn fork_then_open(
     let parent_is_worktree = parent_session_is_worktree(parent_id, &write_cwd);
     let payload = fork_session_params(parent_id, &write_cwd, new_id, parent_is_worktree);
     let fork_params = serde_json::value::to_raw_value(&payload)
-        .map_err(|e| anyhow::anyhow!("序列化分叉参数失败：{e}"))?;
+        .map_err(|e| anyhow::anyhow!("serialize fork params: {e}"))?;
     let req = acp::ExtRequest::new("x.ai/session/fork", fork_params.into());
     let resp = acp_send(req, acp_tx).await?;
     if let Some(err) = fork_response_error(resp.0.get()) {
-        anyhow::bail!("分叉会话失败：{err}");
+        anyhow::bail!("fork failed: {err}");
     }
     let child = fork_response_new_session_id(resp.0.get())
-        .ok_or_else(|| anyhow::anyhow!("分叉响应缺少 newSessionId"))?;
+        .ok_or_else(|| anyhow::anyhow!("fork response missing newSessionId"))?;
     match open_session(acp_tx, &write_cwd, Some(&child), restore_code).await {
         Ok(opened) => Ok(opened),
-        Err(e) => Err(anyhow::anyhow!("会话已分叉为 {child}，但加载失败：{e}")),
+        Err(e) => Err(anyhow::anyhow!(
+            "fork succeeded as {child} but load failed: {e}"
+        )),
     }
 }
 
@@ -682,7 +654,7 @@ async fn apply_headless_model_and_effort(
             .unwrap_or_else(|| acp::ModelId::new(name))
     } else {
         models.current.clone().ok_or_else(|| {
-            anyhow::anyhow!("--effort/--reasoning-effort：没有可应用推理强度的当前模型")
+            anyhow::anyhow!("--effort/--reasoning-effort: no active model to apply effort to")
         })?
     };
 
@@ -692,8 +664,8 @@ async fn apply_headless_model_and_effort(
         Some(token) if models.available.is_empty() => {
             if parse_canonical_effort_token(token).is_none() {
                 anyhow::bail!(
-                    "--effort/--reasoning-effort：未知的推理强度级别 '{token}'\
-                     （模型目录不可用；重映射菜单 ID 需要已加载的模型目录）"
+                    "--effort/--reasoning-effort: unknown effort level '{token}' \
+                     (model catalog unavailable; remapped menu ids require a loaded catalog)"
                 );
             }
             None
@@ -708,7 +680,7 @@ async fn apply_headless_model_and_effort(
                 );
                 None
             }
-            Err(err) => anyhow::bail!("--effort/--reasoning-effort：{}", err.message()),
+            Err(err) => anyhow::bail!("--effort/--reasoning-effort: {}", err.message()),
         },
     };
 
@@ -733,12 +705,12 @@ async fn apply_headless_model_and_effort(
     .map_err(|e| {
         if let Some(name) = model_name {
             anyhow::anyhow!(
-                "无法设置模型 '{}'：{}。运行 `chaos models` 查看可用模型。",
+                "Couldn't set model '{}': {}. Run 'grok models' to see available models.",
                 name,
                 e
             )
         } else {
-            anyhow::anyhow!("无法应用推理强度：{e}")
+            anyhow::anyhow!("Couldn't apply reasoning effort: {e}")
         }
     })?;
     tracing::debug!(
@@ -750,21 +722,24 @@ async fn apply_headless_model_and_effort(
 }
 
 /// Startup-materialization context for headless (`-p`) runs; never chat mode.
+/// `--worktree` is ignored here: headless never creates a worktree, so remote
+/// miss must not take `DeferToWorktree`.
 fn headless_materialize_ctx(
-    has_worktree: bool,
     resume_title_pinned: bool,
+    restore_code: bool,
 ) -> crate::app::session_startup::MaterializeCtx {
     crate::app::session_startup::MaterializeCtx {
-        has_worktree,
+        has_worktree: false,
         allow_remote_restore:
             crate::app::session_startup::MaterializeCtx::default_allow_remote_restore(),
         chat_mode: false,
-
         title_resolution: if resume_title_pinned {
             crate::app::session_startup::TitleResolution::PinnedPreSandbox
         } else {
             crate::app::session_startup::TitleResolution::Allowed
         },
+        restore_code,
+        restore_progress_on_stdout: false,
     }
 }
 
@@ -788,18 +763,15 @@ pub async fn run_single_turn(
         && options.output_format != OutputFormat::StreamingMessagesJson
     {
         eprintln!(
-            "警告：--include-partial-messages 仅对 --output-format streaming-messages-json 生效，已忽略该参数"
+            "warning: --include-partial-messages only affects --output-format streaming-messages-json; ignoring it"
         );
     }
 
     let t_spawn = Instant::now();
     let raw_config = xai_grok_shell::config::load_effective_config()
-        .map_err(|e| anyhow::anyhow!("无法加载配置：{e}"))?;
+        .map_err(|e| anyhow::anyhow!("Failed to load config: {e}"))?;
     let mut agent_config = AgentConfig::new_from_toml_cfg(&raw_config)
-        .map_err(|e| anyhow::anyhow!("无法创建 Agent 配置：{e}"))?;
-    agent_config
-        .set_client_profile_override(options.client_identifier.as_deref())
-        .map_err(anyhow::Error::msg)?;
+        .map_err(|e| anyhow::anyhow!("Failed to create agent config: {e}"))?;
 
     // Canonical-only early stamp; remaps need the post-session catalog resolve below.
     if let Some(ref token) = options.reasoning_effort
@@ -851,7 +823,7 @@ pub async fn run_single_turn(
             .as_deref()
             .map(|s| {
                 serde_json::from_value(serde_json::Value::String(s.to_string()))
-                    .map_err(|e| anyhow::anyhow!("--permission-mode：无效值：{e}"))
+                    .map_err(|e| anyhow::anyhow!("--permission-mode: invalid value: {e}"))
             })
             .transpose()?,
     };
@@ -862,12 +834,22 @@ pub async fn run_single_turn(
 
     let cancel = CancellationToken::new();
     let memory_config = agent_config.memory_config.clone();
+    let timer = xai_grok_telemetry::startup::begin(crate::acp::Owner::Client);
+    let report_startup_failure = |timer: &crate::acp::StartupTimer| {
+        timer.emit_telemetry(
+            crate::acp::AgentKind::Embedded,
+            crate::acp::StartupOutcome::Error,
+            None,
+            false,
+        );
+        xai_grok_telemetry::startup::report_total(crate::acp::StartupOutcome::Error);
+    };
     let spawned = match spawn_grok_shell(agent_config, &cancel, memory_config).await {
         Ok(s) => s,
         Err(e) => {
-            let msg = format!("无法启动会话：{e}");
+            report_startup_failure(&timer);
+            let msg = format!("Couldn't start session: {e}");
             emitter.on_error(&msg, None);
-
             anyhow::bail!("{msg}");
         }
     };
@@ -884,14 +866,14 @@ pub async fn run_single_turn(
     let init_req = build_headless_init_request(
         options.rules.as_deref(),
         options.system_prompt_override.as_deref(),
-        options.client_identifier.as_deref(),
     );
+    xai_grok_telemetry::startup::enter(crate::acp::StartupPhase::AcpInitialize);
     let init_resp: acp::InitializeResponse = match acp_send(init_req, &acp_tx).await {
         Ok(r) => r,
         Err(e) => {
-            let msg = format!("初始化失败：{e}");
+            report_startup_failure(&timer);
+            let msg = format!("Couldn't initialize: {e}");
             emitter.on_error(&msg, None);
-
             anyhow::bail!("{msg}");
         }
     };
@@ -901,6 +883,7 @@ pub async fn run_single_turn(
     );
 
     let t_auth = Instant::now();
+    xai_grok_telemetry::startup::enter(crate::acp::StartupPhase::EagerAuth);
     let default_auth_method_id = crate::acp::parse_default_auth_method_id(init_resp.meta.as_ref());
     let is_api_key_auth = match authenticate(
         &acp_tx,
@@ -911,6 +894,7 @@ pub async fn run_single_turn(
     {
         Ok(is_api_key) => is_api_key,
         Err(e) => {
+            report_startup_failure(&timer);
             emitter.on_error(&e.to_string(), None);
             return Err(e);
         }
@@ -918,6 +902,13 @@ pub async fn run_single_turn(
     tracing::debug!(
         elapsed_ms = t_auth.elapsed().as_millis() as u64,
         "headless: authenticate complete"
+    );
+    // Connect ends here; session phases stay out of the phase histogram.
+    timer.emit_telemetry(
+        crate::acp::AgentKind::Embedded,
+        crate::acp::StartupOutcome::Ok,
+        None,
+        false,
     );
 
     use crate::app::session_startup::{self, MaterializedStartup, SessionStartupFlags};
@@ -929,20 +920,35 @@ pub async fn run_single_turn(
         resume_most_recent,
         continue_last_session: options.continue_last_session,
         fork_session: options.fork_session,
-        has_worktree: options.worktree.is_some(),
+        // Headless never creates a worktree from `-w`.
+        has_worktree: false,
     })
     .map_err(|e| anyhow::anyhow!("{e}"))?;
 
     let cwd_str = cwd.to_string_lossy().to_string();
     let materialized = session_startup::materialize_startup_for_cwd(
-        headless_materialize_ctx(options.worktree.is_some(), options.resume_title_pinned),
+        headless_materialize_ctx(options.resume_title_pinned, options.restore_code),
         intent,
         &cwd_str,
     )
-    .await?;
+    .await
+    .inspect_err(|_| {
+        xai_grok_telemetry::startup::report_total(crate::acp::StartupOutcome::Error)
+    })?;
 
-    let restore_code = options.restore_code.then_some(true);
+    let restore_code = match &materialized {
+        MaterializedStartup::Resume {
+            suppress_code_restore: true,
+            ..
+        }
+        | MaterializedStartup::Fork {
+            suppress_code_restore: true,
+            ..
+        } => Some(false),
+        _ => options.restore_code.then_some(true),
+    };
     let t_session = Instant::now();
+    xai_grok_telemetry::startup::enter(crate::acp::StartupPhase::SessionCreate);
     let opened = match materialized {
         MaterializedStartup::NewAuto => open_session(&acp_tx, &cwd, None, None).await,
         MaterializedStartup::NewWithId { session_id } => {
@@ -980,12 +986,13 @@ pub async fn run_single_turn(
     } = match opened {
         Ok(v) => v,
         Err(e) => {
-            let msg = format!("无法创建会话：{e}");
+            xai_grok_telemetry::startup::report_total(crate::acp::StartupOutcome::Error);
+            let msg = format!("Couldn't create session: {e}");
             emitter.on_error(&msg, None);
-
             anyhow::bail!("{msg}");
         }
     };
+    xai_grok_telemetry::startup::report_total(crate::acp::StartupOutcome::Ok);
     tracing::debug!(
         elapsed_ms = t_session.elapsed().as_millis() as u64,
         session_id = %session_id.0,
@@ -1126,7 +1133,7 @@ pub async fn run_single_turn(
             biased;
             msg = acp_rx.recv() => {
                 let Some(msg) = msg else {
-                    emitter.on_error("连接意外关闭", None);
+                    emitter.on_error("Connection closed unexpectedly", None);
                     connection_closed = true;
                     break;
                 };
@@ -1204,7 +1211,7 @@ pub async fn run_single_turn(
     }
     // A mid-turn ACP close already reaped above; return that error before the normal outcome.
     if connection_closed {
-        anyhow::bail!("连接意外关闭");
+        anyhow::bail!("Connection closed unexpectedly");
     }
     let outcome: Result<()> = match prompt_result {
         Some(Ok(resp)) => {
@@ -1243,7 +1250,7 @@ pub async fn run_single_turn(
             if is_max_turns {
                 emitter.on_max_turns();
                 emitter.on_end(&stop_reason, sid, rid);
-                Err(anyhow::anyhow!("已达到最大轮次"))
+                Err(anyhow::anyhow!("max turns reached"))
             } else {
                 emitter.on_end(&stop_reason, sid, rid);
                 Ok(())
@@ -1280,7 +1287,7 @@ pub async fn run_single_turn(
 
     // A hard stdout write error outranks the normal outcome: output is dead, so exit non-zero.
     if let Some(err) = emitter.take_output_error() {
-        return Err(anyhow::Error::new(err).context("无界面模式：写入标准输出失败"));
+        return Err(anyhow::Error::new(err).context("headless: stdout write failed"));
     }
     outcome
 }
@@ -1572,7 +1579,9 @@ fn handle_headless_acp_message(
         }
         AcpClientMessageBox::WaitForTerminalExit(args) => {
             args.response_tx
-                .send(Err(crate::acp::wait_for_exit_not_supported("无界面模式")))
+                .send(Err(crate::acp::wait_for_exit_not_supported(
+                    "headless mode",
+                )))
                 .ok();
         }
         _ => {}

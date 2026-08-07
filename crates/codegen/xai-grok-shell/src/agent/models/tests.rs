@@ -749,12 +749,7 @@ fn config_menu_only_model_derives_support_and_default() {
         Some(ReasoningEffort::Xhigh),
         "derived default = marked-default option value"
     );
-    // Chaos issue #14: `plain` carries no menu, so it derives no options and
-    // no wire default. It still reads as *supporting* effort — every known
-    // backend (here the default `chat_completions`) auto-defaults the support
-    // flag. The empty-list path is what this leg actually cares about; the
-    // support-flag assertion has been dropped upstream-side.
-    assert!(catalog["plain"].info.reasoning_efforts.is_empty());
+    assert!(!catalog["plain"].info.supports_reasoning_effort);
     assert_eq!(catalog["plain"].info.reasoning_effort, None);
 
     let tmp = std::env::temp_dir().join("grok-test-models-manager-menu-only");
@@ -772,9 +767,7 @@ fn config_menu_only_model_derives_support_and_default() {
         Some(ReasoningEffort::Xhigh)
     );
     assert_eq!(mgr.model_reasoning_efforts("menu-only").len(), 2);
-    // See catalog asserts above: `plain` is backend-auto-defaulted to
-    // "supports effort" since Chaos issue #14, but derives no menu and no default.
-    assert!(mgr.model_reasoning_efforts("plain").is_empty());
+    assert!(!mgr.model_supports_reasoning_effort("plain"));
     assert_eq!(mgr.model_default_reasoning_effort("plain"), None);
 }
 
@@ -870,20 +863,7 @@ fn spawn_background_refresh_is_noop_when_real_catalog_present() {
 fn from_config_without_prefetch_produces_usable_catalog() {
     let tmp = tempfile::TempDir::new().unwrap();
     let auth_manager = Arc::new(AuthManager::new(tmp.path(), GrokComConfig::default()));
-    // Chaos-fork: `default_models.json` ships an empty `models` array — the
-    // fork removes xAI's hardcoded catalog and expects the user to bring their
-    // own via `[model.*]` / `model_providers`. So we seed a single config-model
-    // override to prove the zero-network path still assembles a usable catalog
-    // from `config_models` alone (upstream relied on `default_models.json`).
-    let mut cfg = config::Config::default();
-    let override_ = config::ConfigModelOverride {
-        model: Some("grok-4".to_string()),
-        base_url: Some("https://test.api/v1".to_string()),
-        context_window: Some(200_000),
-        ..Default::default()
-    };
-    cfg.config_models.insert("grok-4".to_string(), override_);
-    cfg.models.default = Some("grok-4".to_string());
+    let cfg = config::Config::default();
 
     let mgr = ModelsManager::from_config(&cfg, None, auth_manager).unwrap();
 
@@ -891,7 +871,7 @@ fn from_config_without_prefetch_produces_usable_catalog() {
     let catalog = &cat.models;
     assert!(
         !catalog.is_empty(),
-        "zero-network boot with a configured model must produce a non-empty catalog"
+        "zero-network boot must produce at least one model in the internal catalog"
     );
     let default = mgr.current_model_id();
     assert!(
@@ -1716,7 +1696,6 @@ fn make_entry_config_with_id(
         compaction_at_tokens: None,
         show_model_fingerprint: false,
         stream_tool_calls: None,
-        extract_inline_thinking: None,
         laziness_detector: config::LazinessDetectorPerModelConfig::default(),
     }
 }

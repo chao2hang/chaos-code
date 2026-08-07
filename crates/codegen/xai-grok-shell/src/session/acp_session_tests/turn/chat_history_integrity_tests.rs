@@ -67,7 +67,7 @@ fn drain_persistence(mut rx: tokio::sync::mpsc::UnboundedReceiver<PersistenceMsg
     tokio::task::spawn_local(async move {
         while let Some(msg) = rx.recv().await {
             if let PersistenceMsg::FlushAndAck { respond_to } = msg {
-                let _ = respond_to.send(());
+                let _ = respond_to.send(Ok(()));
             }
         }
     });
@@ -96,7 +96,6 @@ fn tool_results_by_call_id(conv: &[ConversationItem]) -> HashMap<String, Vec<Str
 /// was committed and before `execute_tool_calls`, so integrity repair wrote
 /// a cancel result and the real result landed beside it under the same id.
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "pre-existing: stack overflow from deep async recursion in turn loop; needs investigation"]
 async fn mid_turn_user_injection_must_not_duplicate_tool_results_for_one_tool_use_id() {
     let local = tokio::task::LocalSet::new();
     local

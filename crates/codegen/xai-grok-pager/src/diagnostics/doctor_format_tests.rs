@@ -43,6 +43,7 @@ fn unavailable_tmux() -> TmuxProbeFacts {
         allow_passthrough_support: TmuxProbeResult::Unavailable,
         allow_passthrough: TmuxProbeResult::Unavailable,
         control_mode: TmuxProbeResult::Unavailable,
+        client_features: TmuxProbeResult::Unavailable,
     }
 }
 
@@ -132,21 +133,21 @@ fn healthy_local_output_is_stable() {
     assert_eq!(
         output,
         concat!(
-            "环境\n",
+            "Environment\n",
             "  terminal     Ghostty\n",
             "  multiplexer  None detected\n",
             "  ssh          no\n",
             "  color        truecolor\n",
             "  themes       all\n",
             "\n",
-            "剪贴板\n",
+            "Clipboard\n",
             "  native       local (pbcopy)\n",
             "  tmux         off\n",
             "  osc 52       off\n",
             "  wrap         off\n",
             "  status       confirmed\n",
             "\n",
-            "未发现问题。\n",
+            "No issues found.\n",
         )
     );
 }
@@ -171,6 +172,7 @@ fn tmux_config_and_reload_notes_output_is_stable() {
             allow_passthrough_support: TmuxProbeResult::Available(()),
             allow_passthrough: TmuxProbeResult::Available("off".to_owned()),
             control_mode: TmuxProbeResult::Available(false),
+            client_features: TmuxProbeResult::Unavailable,
         },
         &TMUX_ROUTE,
         "pbcopy",
@@ -182,7 +184,7 @@ fn tmux_config_and_reload_notes_output_is_stable() {
     assert_eq!(
         output,
         concat!(
-            "环境\n",
+            "Environment\n",
             "  terminal     iTerm2\n",
             "  multiplexer  tmux\n",
             "  byobu        tmux\n",
@@ -190,29 +192,29 @@ fn tmux_config_and_reload_notes_output_is_stable() {
             "  color        truecolor\n",
             "  themes       all\n",
             "\n",
-            "剪贴板\n",
+            "Clipboard\n",
             "  native       local (pbcopy)\n",
             "  tmux         on\n",
             "  osc 52       supported\n",
             "  wrap         off\n",
             "  status       confirmed\n",
             "\n",
-            "问题 (3)\n",
+            "Issues (3)\n",
             "\n",
-            "  ! terminal.tmux-clipboard  tmux 中 `set-clipboard` 已关闭，OSC 52 剪贴板复制被阻止\n",
-            "      自动修复：`chaos doctor fix tmux-clipboard`\n",
-            "      在 ~/.byobu/.tmux.conf 中添加 `set -g set-clipboard on`\n",
-            "      说明：请用 `tmux source-file ~/.byobu/.tmux.conf` 重载 tmux，或先 detach 再 reattach。\n",
+            "  ! terminal.tmux-clipboard  `set-clipboard` is off in tmux, so OSC 52 clipboard copies are blocked\n",
+            "      Automatic setup: `grok doctor fix tmux-clipboard`\n",
+            "      Add `set -g set-clipboard on` to ~/.byobu/.tmux.conf\n",
+            "      Note: Reload tmux with `tmux source-file ~/.byobu/.tmux.conf`, or restart the tmux server.\n",
             "\n",
-            "  ! terminal.dcs-passthrough  tmux 中 `allow-passthrough` 已关闭，嵌套会话中的剪贴板复制可能被阻止\n",
-            "      自动修复：`chaos doctor fix dcs-passthrough`\n",
-            "      在 ~/.byobu/.tmux.conf 中添加 `set -wg allow-passthrough on`\n",
-            "      说明：请用 `tmux source-file ~/.byobu/.tmux.conf` 重载 tmux，或先 detach 再 reattach。\n",
+            "  ! terminal.dcs-passthrough  `allow-passthrough` is off in tmux, which can block clipboard copies in nested sessions\n",
+            "      Automatic setup: `grok doctor fix dcs-passthrough`\n",
+            "      Add `set -wg allow-passthrough on` to ~/.byobu/.tmux.conf\n",
+            "      Note: Reload tmux with `tmux source-file ~/.byobu/.tmux.conf`, or restart the tmux server.\n",
             "\n",
-            "  ! terminal.tmux-extended-keys  tmux 中 `extended-keys` 已关闭，部分快捷键可能无效\n",
-            "      自动修复：`chaos doctor fix tmux-extended-keys`\n",
-            "      在 ~/.byobu/.tmux.conf 中添加 `set -g extended-keys on`\n",
-            "      说明：请用 `tmux source-file ~/.byobu/.tmux.conf` 重载 tmux，或先 detach 再 reattach。\n",
+            "  ! terminal.tmux-extended-keys  `extended-keys` is off in tmux, so some shortcuts may not work\n",
+            "      Automatic setup: `grok doctor fix tmux-extended-keys`\n",
+            "      Add `set -g extended-keys on` to ~/.byobu/.tmux.conf\n",
+            "      Note: Reload tmux with `tmux source-file ~/.byobu/.tmux.conf`, or restart the tmux server.\n",
         )
     );
 }
@@ -233,25 +235,25 @@ fn limited_color_output_is_stable() {
     assert_eq!(
         output,
         concat!(
-            "环境\n",
+            "Environment\n",
             "  terminal     Ghostty\n",
             "  multiplexer  None detected\n",
             "  ssh          no\n",
             "  color        256\n",
             "  themes       2/5: groknight, grokday\n",
             "\n",
-            "剪贴板\n",
+            "Clipboard\n",
             "  native       local (pbcopy)\n",
             "  tmux         off\n",
             "  osc 52       off\n",
             "  wrap         off\n",
             "  status       confirmed\n",
             "\n",
-            "问题 (1)\n",
+            "Issues (1)\n",
             "\n",
-            "  ! terminal.limited-color  此终端报告为 256 色，因此 truecolor 主题不可用\n",
-            "      运行：`export COLORTERM=truecolor`\n",
-            "      说明：请将此 export 写入 shell 启动文件（如 `~/.zshrc` 或 `~/.bashrc`），然后重启 Chaos。\n",
+            "  ! terminal.limited-color  This terminal reports 256 color, so truecolor themes are unavailable\n",
+            "      Run: `export COLORTERM=truecolor`\n",
+            "      Note: Add this export to your shell startup file, such as `~/.zshrc` or `~/.bashrc`, then restart Grok.\n",
         )
     );
 }
@@ -272,28 +274,28 @@ fn unwrapped_ssh_recommendation_with_no_issues_output_is_stable() {
     assert_eq!(
         output,
         concat!(
-            "环境\n",
+            "Environment\n",
             "  terminal     Ghostty\n",
             "  multiplexer  None detected\n",
             "  ssh          yes\n",
             "  color        truecolor\n",
             "  themes       all\n",
             "\n",
-            "剪贴板\n",
+            "Clipboard\n",
             "  native       remote (pbcopy)\n",
             "  tmux         off\n",
             "  osc 52       supported\n",
             "  wrap         off\n",
             "  status       confirmed\n",
             "\n",
-            "未发现问题。\n",
+            "No issues found.\n",
             "\n",
-            "建议\n",
+            "Recommendations\n",
             "\n",
-            "  i terminal.ssh-wrap  建议在本地使用 SSH 包装，以获得更可靠的剪贴板复制与终端恢复\n",
-            "      自动修复：`chaos doctor fix ssh-wrap`\n",
-            "      一次性：`chaos wrap ssh <host>`\n",
-            "      说明：请在本地电脑运行，而不是直接使用普通 `ssh`。它会把复制转发到本地剪贴板，并在连接断开时恢复终端模式。\n",
+            "  i terminal.ssh-wrap  Use local SSH wrapping for more reliable clipboard copy and terminal recovery\n",
+            "      Automatic setup: `grok doctor fix ssh-wrap`\n",
+            "      One-off: `grok wrap ssh <host>`\n",
+            "      Note: Run this on your local computer instead of plain `ssh`. It forwards copies to your local clipboard and restores terminal modes if the connection drops.\n",
         )
     );
 }
@@ -314,21 +316,21 @@ fn wrapped_ssh_output_has_no_recommendation() {
     assert_eq!(
         output,
         concat!(
-            "环境\n",
+            "Environment\n",
             "  terminal     Ghostty\n",
             "  multiplexer  None detected\n",
             "  ssh          yes\n",
             "  color        truecolor\n",
             "  themes       all\n",
             "\n",
-            "剪贴板\n",
+            "Clipboard\n",
             "  native       remote (pbcopy)\n",
             "  tmux         off\n",
             "  osc 52       supported\n",
             "  wrap         on\n",
             "  status       confirmed\n",
             "\n",
-            "未发现问题。\n",
+            "No issues found.\n",
         )
     );
 }
@@ -352,7 +354,7 @@ fn wezterm_xtversion_runtime_evidence_output_is_stable() {
     assert_eq!(
         output,
         concat!(
-            "环境\n",
+            "Environment\n",
             "  terminal     Unknown\n",
             "  xtversion    WezTerm 20240203-110809\n",
             "  multiplexer  None detected\n",
@@ -360,17 +362,17 @@ fn wezterm_xtversion_runtime_evidence_output_is_stable() {
             "  color        truecolor\n",
             "  themes       all\n",
             "\n",
-            "剪贴板\n",
+            "Clipboard\n",
             "  native       remote (pbcopy)\n",
             "  tmux         off\n",
             "  osc 52       supported\n",
             "  wrap         on\n",
             "  status       confirmed\n",
             "\n",
-            "问题 (1)\n",
+            "Issues (1)\n",
             "\n",
-            "  ! terminal.wezterm-kitty  在 SSH 下的 WezTerm 中，Shift+Enter 无法插入换行\n",
-            "      说明：本次会话请先输入 `\\` 再按 Enter。Chaos 尚无法在 SSH 上协商 Kitty 键盘协议。`enable_kitty_keyboard = true` 仅对本地 WezTerm 会话生效。\n",
+            "  ! terminal.wezterm-kitty  Shift+Enter can't insert a newline in WezTerm over SSH\n",
+            "      Note: For this session, type `\\` and then press Enter. Grok can't negotiate the Kitty keyboard protocol over SSH yet. `enable_kitty_keyboard = true` applies only to local WezTerm sessions.\n",
         )
     );
 }
@@ -393,6 +395,7 @@ fn unavailable_and_error_probes_do_not_create_false_issues() {
             allow_passthrough_support: TmuxProbeResult::Unavailable,
             allow_passthrough: TmuxProbeResult::Error("query failed".to_owned()),
             control_mode: TmuxProbeResult::Unavailable,
+            client_features: TmuxProbeResult::Unavailable,
         },
         &TMUX_ROUTE,
         "pbcopy",
@@ -404,21 +407,21 @@ fn unavailable_and_error_probes_do_not_create_false_issues() {
     assert_eq!(
         output,
         concat!(
-            "环境\n",
+            "Environment\n",
             "  terminal     iTerm2\n",
             "  multiplexer  tmux\n",
             "  ssh          no\n",
             "  color        truecolor\n",
             "  themes       all\n",
             "\n",
-            "剪贴板\n",
+            "Clipboard\n",
             "  native       local (pbcopy)\n",
             "  tmux         on\n",
             "  osc 52       supported\n",
             "  wrap         off\n",
             "  status       confirmed\n",
             "\n",
-            "未发现问题。\n",
+            "No issues found.\n",
         )
     );
 }
@@ -443,27 +446,27 @@ fn vscode_newline_output_is_platform_neutral() {
     assert_eq!(
         output,
         concat!(
-            "环境\n",
+            "Environment\n",
             "  terminal     VS Code\n",
             "  multiplexer  None detected\n",
             "  ssh          no\n",
             "  color        truecolor\n",
             "  themes       all\n",
-            "  newline      Alt+Enter（VS Code：xterm.js 无法区分 Shift+Enter）\n",
+            "  newline      Alt+Enter (VS Code: xterm.js can't distinguish Shift+Enter)\n",
             "\n",
-            "剪贴板\n",
+            "Clipboard\n",
             "  native       local (pbcopy)\n",
             "  tmux         off\n",
             "  osc 52       off\n",
             "  wrap         off\n",
             "  status       confirmed\n",
             "\n",
-            "未发现问题。\n",
+            "No issues found.\n",
             "\n",
-            "建议\n",
+            "Recommendations\n",
             "\n",
-            "  i terminal.newline-fallback  在此 xterm.js 终端中，Shift+Enter 无法插入换行\n",
-            "      说明：在 VS Code 中请使用 Alt+Enter 插入换行。在此环境下 xterm.js 会把 Shift+Enter 当作 Enter 发送。\n",
+            "  i terminal.newline-fallback  Shift+Enter can't insert a newline in this xterm.js terminal\n",
+            "      Note: Use Alt+Enter to insert a newline in VS Code. xterm.js sends Shift+Enter as Enter in this setup.\n",
         )
     );
 }
@@ -488,6 +491,7 @@ fn runtime_merge_does_not_duplicate_view_findings() {
                 allow_passthrough_support: TmuxProbeResult::Available(()),
                 allow_passthrough: TmuxProbeResult::Available("off".to_owned()),
                 control_mode: TmuxProbeResult::Available(false),
+                client_features: TmuxProbeResult::Unavailable,
             },
             &TMUX_ROUTE,
             "pbcopy",
@@ -511,7 +515,7 @@ fn runtime_merge_does_not_duplicate_view_findings() {
     ] {
         assert_eq!(output.matches(id).count(), 1, "{id}:\n{output}");
     }
-    assert!(output.contains("问题 (4)"), "{output}");
+    assert!(output.contains("Issues (4)"), "{output}");
 }
 
 #[test]
@@ -536,9 +540,9 @@ fn runtime_startup_findings_are_visible_with_useful_doctor_content() {
         },
     );
 
-    assert!(output.contains("因未识别终端，Chaos 正使用终端响铃作为通知"));
-    assert!(output.contains("若响铃可用"));
-    assert!(output.contains("此终端可能不报告焦点变化"));
+    assert!(output.contains("Grok is using the terminal bell"));
+    assert!(output.contains("If the bell works for you"));
+    assert!(output.contains("may not report focus changes"));
     assert!(output.contains(&crate::util::display_user_grok_path("config.toml")));
     assert_eq!(output.matches("notifications.protocol-fallback").count(), 1);
     assert_eq!(
@@ -547,10 +551,10 @@ fn runtime_startup_findings_are_visible_with_useful_doctor_content() {
             .count(),
         1
     );
-    assert!(!output.contains("未发现问题。"));
-    assert!(output.contains("问题 (2)"));
+    assert!(!output.contains("No issues found."));
+    assert!(output.contains("Issues (2)"));
     assert!(output.contains("terminal.newline-fallback"));
-    assert!(output.contains("建议"));
+    assert!(output.contains("Recommendations"));
 }
 
 #[test]
@@ -580,13 +584,11 @@ fn runtime_findings_merge_before_single_formatter_orders_issues_before_recommend
         },
     );
 
-    let issue = output
-        .find("因未识别终端，Chaos 正使用终端响铃作为通知")
-        .unwrap();
-    let recommendation = output.find("建议").unwrap();
+    let issue = output.find("Grok is using the terminal bell").unwrap();
+    let recommendation = output.find("Recommendations").unwrap();
     assert!(issue < recommendation);
-    assert!(!output.contains("未发现问题。"));
-    assert_eq!(output.matches("问题 (").count(), 1);
+    assert!(!output.contains("No issues found."));
+    assert_eq!(output.matches("Issues (").count(), 1);
 }
 
 #[test]
@@ -604,8 +606,8 @@ fn legacy_fact_only_clipboard_issue_never_claims_no_issues() {
     report.facts.clipboard.delivery = crate::clipboard::ClipboardDelivery::Failed;
     assert_eq!(report.issue_count(), 1);
     let output = format_doctor(&report);
-    assert!(output.contains("问题已显示在上方剪贴板状态中。"));
-    assert!(!output.contains("未发现问题。"));
+    assert!(output.contains("An issue is shown in the Clipboard status above."));
+    assert!(!output.contains("No issues found."));
 }
 
 #[test]
@@ -622,6 +624,7 @@ fn keyboard_fact_formats_from_explicit_target_evidence() {
                 set_clipboard: crate::diagnostics::TmuxOptionFact::Unavailable,
                 allow_passthrough_support: crate::diagnostics::TmuxSupportFact::Unavailable,
                 allow_passthrough: crate::diagnostics::TmuxOptionFact::Unavailable,
+                color_passthrough: crate::diagnostics::TmuxColorPassthrough::Unknown,
             },
             color: ColorFacts {
                 level: RuntimeFact::Available(ColorLevel::TrueColor),
@@ -659,22 +662,22 @@ fn keyboard_fact_formats_from_explicit_target_evidence() {
     assert_eq!(
         format_doctor(&report),
         concat!(
-            "环境\n",
+            "Environment\n",
             "  terminal     WezTerm\n",
             "  multiplexer  None detected\n",
             "  ssh          no\n",
             "  color        truecolor\n",
             "  themes       all\n",
-            "  keyboard     cmd=dropped, opt=native (系统救援已启用)\n",
+            "  keyboard     cmd=dropped, opt=native (OS rescue active)\n",
             "\n",
-            "剪贴板\n",
+            "Clipboard\n",
             "  native       local (pbcopy)\n",
             "  tmux         off\n",
             "  osc 52       off\n",
             "  wrap         off\n",
             "  status       confirmed\n",
             "\n",
-            "未发现问题。\n",
+            "No issues found.\n",
         )
     );
 }

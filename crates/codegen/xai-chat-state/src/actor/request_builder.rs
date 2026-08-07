@@ -1,6 +1,5 @@
 //! ConversationRequest assembly — image compaction, pruning, repair, memory injection.
 
-use xai_grok_compaction::CompactionItemFactory;
 use xai_grok_sampling_types::{
     ContentPart, ConversationItem, ConversationRequest, ToolSpec, TraceContext,
 };
@@ -72,30 +71,12 @@ impl ChatStateActor {
         let body_bytes = conversation_body_bytes(&self.state.conversation);
         let inline_images = inline_image_count(&self.state.conversation);
         let needs_image_compaction = body_bytes >= IMAGE_COMPACT_TRIGGER_BYTES;
-        let needs_selective_projection = self
-            .state
-            .selective_compaction
-            .active_blocks()
-            .next()
-            .is_some();
-        let needs_mutation = needs_prune
-            || memory_reminder.is_some()
-            || needs_image_compaction
-            || needs_selective_projection;
+        let needs_mutation = needs_prune || memory_reminder.is_some() || needs_image_compaction;
 
         // Only allocate the mutable working copy when a mutation path is taken.
         let mut eviction: Option<ImageEvictionOutcome> = None;
         let items = if needs_mutation {
             let mut items = self.state.conversation.clone();
-
-            if needs_selective_projection {
-                items = self.state.selective_compaction.project(&items, |block| {
-                    ConversationItem::new_user_meta(format!(
-                        "<context-summary id=\"b{}\" topic=\"{}\">\n{}\n</context-summary>",
-                        block.id.0, block.topic, block.summary
-                    ))
-                });
-            }
 
             // Step 1: When the body nears the 50 MB ceiling, evict oldest
             // images down to the low-water mark (not just under the trigger).
@@ -618,13 +599,12 @@ mod tests {
 
     fn has_placeholder(item: &ConversationItem) -> bool {
         matches!(
-                    item,
-                    ConversationItem::User(u) if u.content.iter().any(|p| matches!(
-                        p,
-                        ContentPart::Text { text }
-        if text.as_ref() == IMAGE_COMPACT_PLACEHOLDER
-                    ))
-                )
+            item,
+            ConversationItem::User(u) if u.content.iter().any(|p| matches!(
+                p,
+                ContentPart::Text { text } if text.as_ref() == IMAGE_COMPACT_PLACEHOLDER
+            ))
+        )
     }
 
     // Images are sized ~100 KB so the ~235 B placeholder that replaces an

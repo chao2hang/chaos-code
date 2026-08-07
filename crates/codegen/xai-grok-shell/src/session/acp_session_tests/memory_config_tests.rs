@@ -90,6 +90,7 @@ async fn create_test_actor_with_memory(
         pending_notifications: Vec::new(),
         notifications_suppressed: false,
         rewindable: false,
+        front_message_committed: false,
         nudges_used_this_session: 0,
     });
     let (chat_event_tx, _chat_event_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -110,9 +111,6 @@ async fn create_test_actor_with_memory(
                 .expect("test context_window must be non-zero"),
             reasoning_effort: None,
             stream_tool_calls: None,
-            extract_inline_thinking: None,
-
-            is_workbuddy: false,
         },
         Box::new(xai_chat_state::NullChatPersistence),
         chat_event_tx,
@@ -132,11 +130,13 @@ async fn create_test_actor_with_memory(
         model_auth_memo: std::cell::RefCell::new(None),
         attribution_callback: None,
         auth_manager: None,
+        is_chat_kind: false,
         state,
         notifications: NotificationSender {
             gateway: GatewaySender::new(gateway_tx),
             gateway_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
             persistence_tx,
+            disk_full: crate::session::notifications::idle_disk_full_rx(),
         },
         permissions: PermissionHandle::allow_all(),
         tool_context,
@@ -164,7 +164,7 @@ async fn create_test_actor_with_memory(
         compaction: crate::session::compaction_config::CompactionConfig {
             threshold_percent: std::cell::Cell::new(threshold_percent),
             force_compact: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
-            context_window_override: std::cell::Cell::new(None),
+            context_window_override: None,
             count: std::sync::atomic::AtomicU64::new(0),
             auto_compact_suppressed: std::sync::atomic::AtomicU8::new(0),
             previous_model: std::cell::Cell::new(None),
@@ -173,7 +173,7 @@ async fn create_test_actor_with_memory(
             tool_choice: crate::util::config::CompactionToolChoice::Auto,
             prefire: crate::session::compaction_config::PrefireState::default(),
             prefix_released: std::sync::atomic::AtomicBool::new(false),
-            operation_lock: tokio::sync::Mutex::new(()),
+            cancel: Default::default(),
         },
         memory: crate::session::memory_state::SessionMemory {
             flush_config: memory_config
@@ -218,11 +218,8 @@ async fn create_test_actor_with_memory(
         last_idle_flush_conversation_len: std::sync::atomic::AtomicUsize::new(0),
         event_tx,
         buffering_settings: None,
-        client_identifier: std::cell::RefCell::new(None),
-        origin_client: std::cell::RefCell::new(None),
-        user_agent: std::cell::RefCell::new(None),
-        client_extra_headers: std::cell::RefCell::new(indexmap::IndexMap::new()),
-        client_env_http_headers: std::cell::RefCell::new(indexmap::IndexMap::new()),
+        client_identifier: None,
+        origin_client: None,
         feedback_manager: Arc::new(FeedbackManager::local_only("test-memory")),
         upload_queue: Arc::new(OnceLock::new()),
         sync_loop_cancel: None,
@@ -300,6 +297,9 @@ async fn create_test_actor_with_memory(
         last_recap_main_turn: std::cell::Cell::new(0),
         recap_in_flight: std::cell::Cell::new(false),
         recap_epoch: std::cell::Cell::new(0),
+        turn_summary_task: std::cell::RefCell::new(None),
+        turn_summary_generation: std::cell::Cell::new(0),
+        turn_summary_enabled: false,
         session_turn_active: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         streaming_turn_capture: parking_lot::Mutex::new(StreamingTurnCapture::default()),
         turn_stream_drained: parking_lot::Mutex::new(None),
@@ -310,9 +310,6 @@ async fn create_test_actor_with_memory(
         subagent_token_records: parking_lot::Mutex::new(HashMap::new()),
         workspace_ops: xai_grok_workspace::WorkspaceOps::for_test(),
         trace_config_template: std::cell::RefCell::new(None),
-
-        workbuddy_conversation_id: String::new(),
-        workbuddy_acp_connection_id: String::new(),
     }
 }
 #[tokio::test(flavor = "current_thread")]

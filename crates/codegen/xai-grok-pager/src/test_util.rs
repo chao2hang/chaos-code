@@ -47,6 +47,53 @@ pub fn make_agent_view(session_id: Option<&str>, cwd: &str) -> crate::app::agent
         crate::scrollback::state::ScrollbackState::new(),
     )
 }
+pub fn make_worktree_record(
+    id: &str,
+    path: &std::path::Path,
+    label: &str,
+) -> xai_fast_worktree::WorktreeRecord {
+    use xai_fast_worktree::{WorktreeKind, WorktreeRecord, WorktreeStatus};
+    WorktreeRecord {
+        id: id.to_owned(),
+        path: path.to_path_buf(),
+        source_repo: "/repo".into(),
+        repo_name: "repo".into(),
+        kind: WorktreeKind::Session,
+        creation_mode: "linked".into(),
+        git_ref: None,
+        head_commit: None,
+        session_id: None,
+        creator_pid: None,
+        created_at: 0,
+        last_accessed_at: None,
+        status: WorktreeStatus::Alive,
+        metadata: Some(serde_json::json!({ "label": label })),
+    }
+}
+/// Every row containing `row_marker` starts its PATH cell at the header's
+/// PATH column, measured in display width so CJK regressions fail.
+pub fn assert_path_column_aligned(text: &str, row_marker: &str) {
+    use unicode_width::UnicodeWidthStr;
+    let lines: Vec<&str> = text.lines().collect();
+    let header = lines
+        .iter()
+        .find(|l| l.ends_with("PATH"))
+        .unwrap_or_else(|| panic!("no PATH header in: {text}"));
+    let path_col = header.width() - "PATH".width();
+    let mut rows = 0;
+    for line in lines.iter().filter(|l| l.contains(row_marker)) {
+        let (_, path) = line
+            .rsplit_once(' ')
+            .expect("rows end in a space-free test path (PATH is the last cell)");
+        assert_eq!(
+            line.width() - path.width(),
+            path_col,
+            "path column must stay width-aligned: {line:?}"
+        );
+        rows += 1;
+    }
+    assert!(rows > 0, "no table rows matched {row_marker:?} in: {text}");
+}
 /// RAII guard for temporarily overriding an environment variable.
 ///
 /// Captures the original value on construction and restores it on drop.
@@ -78,8 +125,14 @@ impl Drop for EnvVarGuard {
         }
     }
 }
-
-/// RAII fixture: temp `GROK_HOME` + cwd for resume-by-title / pin tests.
+/// Shared GROK_HOME boundary fixture for the resume-by-title startup and
+/// pre-sandbox tests.
+///
+/// `grok_home()` is OnceLock-cached process-wide, so summaries land under the
+/// *resolved* home (possibly the real `~/.grok` when another test pinned the
+/// cache first); cwd-encoded dirnames are tempdir-unique, and cleanup runs on
+/// drop so it survives assertion panics. Callers must hold
+/// `#[serial_test::serial(GROK_HOME)]`.
 pub struct GrokHomeFixture {
     _home: tempfile::TempDir,
     cwd: tempfile::TempDir,
@@ -113,7 +166,9 @@ impl GrokHomeFixture {
     /// through the explicit `*_for_cwd` seams; the process cwd is never
     /// mutated.
     pub fn cwd_str(&self) -> String {
-        dunce::canonicalize(self.cwd.path())
+        self.cwd
+            .path()
+            .canonicalize()
             .expect("canonicalize cwd")
             .to_string_lossy()
             .to_string()
