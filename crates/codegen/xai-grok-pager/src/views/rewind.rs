@@ -54,6 +54,31 @@ pub struct RewindConflictInfo {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RewindMode {
+    All,
+    ConversationOnly,
+    FilesOnly,
+}
+
+impl RewindMode {
+    pub fn wire_value(&self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::ConversationOnly => "conversation_only",
+            Self::FilesOnly => "files_only",
+        }
+    }
+
+    pub fn display(&self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::ConversationOnly => "conversation only",
+            Self::FilesOnly => "files only",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RewindPhase {
     Loading,
     Picker {

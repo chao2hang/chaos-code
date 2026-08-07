@@ -21,7 +21,6 @@ use super::prompt::{
 };
 use super::rewind::{
     dispatch_rewind_success, handle_rewind_execute_failed, handle_rewind_points_loaded,
-    handle_rewind_preview_complete, handle_rewind_preview_failed,
 };
 use super::router::{dispatch, dispatch_action_result};
 use super::session::foreign::{
@@ -39,12 +38,11 @@ use super::session::load::{
     handle_session_loaded, handle_session_restore_failed, handle_session_restored,
     handle_session_search_debounce_expired, remove_session_from_pickers,
 };
+use super::session::modal::remove_agent_and_cleanup;
 use super::settings::ui::apply_setting_rollback;
 use super::status::{
-    commit_session_usage_block, fill_aggregate_usage_detail, fill_aggregate_usage_detail_failed,
-    fill_session_usage_detail, fill_session_usage_detail_failed, handle_coding_data_sharing_failed,
-    handle_coding_data_sharing_updated, handle_context_info_complete,
-    handle_set_context_window_complete, scrub_error_for_toast,
+    commit_session_usage_block, handle_coding_data_sharing_failed,
+    handle_coding_data_sharing_updated, handle_context_info_complete, scrub_error_for_toast,
 };
 use super::transcript::{
     handle_hooks_list_loaded, handle_marketplace_list_loaded, handle_marketplace_updates_available,
@@ -80,53 +78,6 @@ pub(super) fn unregister_all_active_sessions(app: &AppView) -> Vec<Effect> {
         .collect()
 }
 pub(super) const X11_PRIMARY_PASTE_HINT: &str = "Try Shift+Insert to paste selected text";
-
-/// Re-validate a `/doctor fix` target against the live agent so a late
-/// plan/apply cannot hit a rebound session or different cwd.
-///
-/// Chaos omits `session_binding_epoch` tracking on [`AgentView`]; targets
-/// always carry epoch `0` and matching only keys on agent / session / cwd.
-pub(crate) fn current_doctor_target(
-    app: &AppView,
-    target: &DoctorFixTarget,
-) -> Option<DoctorFixTarget> {
-    let agent = app.agents.get(&target.agent_id)?;
-    if agent.session.cwd != target.cwd {
-        return None;
-    }
-    match (&target.session_id, &agent.session.session_id) {
-        (Some(expected), Some(current)) if expected == current => Some(target.clone()),
-        (None, Some(current)) => Some(DoctorFixTarget {
-            session_id: Some(current.clone()),
-            ..target.clone()
-        }),
-        (None, None) => Some(target.clone()),
-        _ => None,
-    }
-}
-
-pub(crate) fn deliver_doctor_message(app: &mut AppView, preferred: AgentId, message: String) {
-    let destination = app
-        .agents
-        .contains_key(&preferred)
-        .then_some(preferred)
-        .or_else(|| match app.active_view {
-            ActiveView::Agent(id) if app.agents.contains_key(&id) => Some(id),
-            _ => app.agents.keys().next().copied(),
-        });
-    if let Some(destination) = destination
-        && let Some(agent) = app.agents.get_mut(&destination)
-    {
-        agent.scrollback.push_block(RenderBlock::system(message));
-        return;
-    }
-    app.startup_warnings.push(crate::startup::StartupWarning {
-        severity: crate::startup::WarningSeverity::Info,
-        message,
-        action: None,
-    });
-}
-
 fn show_clipboard_toast(target: &ClipboardPasteTarget, message: &str, app: &mut AppView) {
     match target {
         ClipboardPasteTarget::AgentPrompt { agent_id, .. } => {
@@ -235,6 +186,57 @@ fn drain_clipboard_target(target: &ClipboardPasteTarget, app: &mut AppView) -> V
         }
     }
 }
+pub(crate) fn current_doctor_target(
+    app: &AppView,
+    target: &DoctorFixTarget,
+) -> Option<DoctorFixTarget> {
+    let agent = app.agents.get(&target.agent_id)?;
+    if agent.session.cwd != target.cwd {
+        return None;
+    }
+    match (&target.session_id, &agent.session.session_id) {
+        (Some(expected), Some(current))
+            if expected == current
+                && target.session_binding_epoch == agent.session_binding_epoch =>
+        {
+            Some(target.clone())
+        }
+        (None, Some(current))
+            if agent.session_binding_epoch == target.session_binding_epoch.wrapping_add(1) =>
+        {
+            Some(DoctorFixTarget {
+                session_id: Some(current.clone()),
+                session_binding_epoch: agent.session_binding_epoch,
+                ..target.clone()
+            })
+        }
+        (None, None) if target.session_binding_epoch == agent.session_binding_epoch => {
+            Some(target.clone())
+        }
+        _ => None,
+    }
+}
+pub(crate) fn deliver_doctor_message(app: &mut AppView, preferred: AgentId, message: String) {
+    let destination = app
+        .agents
+        .contains_key(&preferred)
+        .then_some(preferred)
+        .or_else(|| match app.active_view {
+            ActiveView::Agent(id) if app.agents.contains_key(&id) => Some(id),
+            _ => app.agents.keys().next().copied(),
+        });
+    if let Some(destination) = destination
+        && let Some(agent) = app.agents.get_mut(&destination)
+    {
+        agent.scrollback.push_block(RenderBlock::system(message));
+        return;
+    }
+    app.startup_warnings.push(crate::startup::StartupWarning {
+        severity: crate::startup::WarningSeverity::Info,
+        message,
+        action: None,
+    });
+}
 /// Handle a completed async task result.
 pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec<Effect> {
     match result {
@@ -242,7 +244,14 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
             agent_id,
             session_id,
             models: new_models,
-        } => handle_session_created(app, agent_id, session_id, new_models),
+            scheduler_background_loops,
+        } => handle_session_created(
+            app,
+            agent_id,
+            session_id,
+            new_models,
+            scheduler_background_loops,
+        ),
         TaskResult::SessionFailed { agent_id, error } => {
             handle_session_failed(app, agent_id, error)
         }
@@ -252,6 +261,7 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
             worktree_path,
             session_cwd,
             models: new_models,
+            scheduler_background_loops,
         } => handle_worktree_session_created(
             app,
             agent_id,
@@ -259,6 +269,7 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
             worktree_path,
             session_cwd,
             new_models,
+            scheduler_background_loops,
         ),
         TaskResult::WorktreeForked {
             agent_id,
@@ -268,6 +279,7 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
             code_restored,
             restore_summary,
             restore_degree,
+            resume_session_id,
         } => handle_worktree_forked(
             app,
             agent_id,
@@ -277,6 +289,7 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
             code_restored,
             restore_summary,
             restore_degree,
+            resume_session_id,
         ),
         TaskResult::WorktreeSessionFailed { agent_id, error } => {
             handle_worktree_session_failed(app, agent_id, error)
@@ -285,7 +298,8 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
             agent_id,
             new_session_id,
             cwd,
-        } => handle_fork_session_ready(app, agent_id, new_session_id, cwd),
+            parent_session_id,
+        } => handle_fork_session_ready(app, agent_id, new_session_id, cwd, parent_session_id),
         TaskResult::ForkSessionFailed { agent_id, error } => {
             handle_fork_session_failed(app, agent_id, error)
         }
@@ -324,6 +338,7 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
             restore_summary,
             restore_degree,
             running_prompt_id,
+            scheduler_background_loops,
         } => handle_session_loaded(
             app,
             agent_id,
@@ -333,15 +348,26 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
             restore_summary,
             restore_degree,
             running_prompt_id,
+            scheduler_background_loops,
         ),
-        TaskResult::SessionTitleFromDisk { agent_id, title } => {
-            if let Some(agent) = app.agents.get_mut(&agent_id)
-                && let Some((t, is_manual)) = title.filter(|(s, _)| !s.trim().is_empty())
-            {
-                if is_manual && agent.display_name.is_none() {
-                    agent.display_name = Some(t.clone());
+        TaskResult::SessionMetaFromDisk {
+            agent_id,
+            title,
+            last_turn_summary,
+            last_turn_summary_gen,
+        } => {
+            if let Some(agent) = app.agents.get_mut(&agent_id) {
+                if let Some((t, is_manual)) = title.filter(|(s, _)| !s.trim().is_empty()) {
+                    if is_manual && agent.display_name.is_none() {
+                        agent.display_name = Some(t.clone());
+                    }
+                    agent.generated_session_title = Some(t);
                 }
-                agent.generated_session_title = Some(t);
+                if agent.last_turn_summary_gen == last_turn_summary_gen
+                    && agent.last_turn_summary.is_none()
+                {
+                    agent.last_turn_summary = last_turn_summary;
+                }
             }
             vec![]
         }
@@ -399,7 +425,7 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
             vec![]
         }
         TaskResult::RosterFailed { error } => {
-            tracing::debug!(error = % error, "leader roster fetch failed");
+            tracing::debug!(error = %error, "leader roster fetch failed");
             app.dashboard_sessions_loading = false;
             vec![]
         }
@@ -522,25 +548,6 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
             result,
             prev_model_id,
         } => handle_switch_model_complete(app, agent_id, model_id, effort, result, prev_model_id),
-        TaskResult::ClientProfileSet {
-            agent_id,
-            profile,
-            result,
-        } => {
-            if let Some(agent) = app.agents.get_mut(&agent_id) {
-                match result {
-                    Ok(()) => {
-                        let name = profile.name.clone();
-                        agent.client_profile = Some(profile);
-                        agent.show_toast(&format!("已切换客户端：{name}"));
-                    }
-                    Err(error) => {
-                        agent.show_toast(&format!("客户端切换失败：{error}"));
-                    }
-                }
-            }
-            vec![]
-        }
         TaskResult::BgTaskKilled {
             session_id,
             task_id,
@@ -551,9 +558,7 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
             task_id,
             error,
         } => {
-            tracing::warn!(
-                task_id = % task_id, error = % error, "Failed to kill bg task"
-            );
+            tracing::warn!(task_id = %task_id, error = %error, "Failed to kill bg task");
             if let Some(agent) = find_agent_by_session_id(&mut app.agents, &session_id)
                 && let Some(task) = agent.session.bg_tasks.get_mut(&task_id)
             {
@@ -611,7 +616,8 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
                 deliver_doctor_message(
                     app,
                     target.agent_id,
-                    "此修复已取消，因为会话已变更。请重新运行 `/doctor fix`。".to_owned(),
+                    "This fix was cancelled because the session changed. Run `/doctor fix` again."
+                        .to_owned(),
                 );
                 return vec![];
             };
@@ -627,17 +633,17 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
                         app,
                         target.agent_id,
                         format!(
-                            "此修复配置的是你的本地电脑，而不是当前 SSH 会话。\n请在本地电脑运行：{command}"
+                            "This fix configures your local computer, not this SSH session.\nOn your local computer, run: {command}"
                         ),
                     );
                 }
                 Err(error) => deliver_doctor_message(
                     app,
                     target.agent_id,
-                    if error.starts_with("无法准备修复：") {
+                    if error.starts_with("Could not prepare the fix:") {
                         error
                     } else {
-                        format!("无法准备修复：{error}")
+                        format!("Could not prepare the fix: {error}")
                     },
                 ),
             }
@@ -646,8 +652,8 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
         TaskResult::DoctorFixApplied { target, result } => {
             let message = match result {
                 Ok(outcome) => crate::diagnostics::format_fix_success(&outcome),
-                Err(error) if error.starts_with("无法应用修复：") => error,
-                Err(error) => format!("无法应用修复：{error}"),
+                Err(error) if error.starts_with("Could not apply the fix:") => error,
+                Err(error) => format!("Could not apply the fix: {error}"),
             };
             deliver_doctor_message(app, target.agent_id, message);
             vec![]
@@ -781,7 +787,10 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
                 && let Some(ref mut modal) = agent.extensions_modal
             {
                 modal.skills_data = match result {
-                    Ok(skills) => TabDataState::Loaded(skills),
+                    Ok(skills) => {
+                        modal.seed_skills_groups_once(&skills);
+                        TabDataState::Loaded(skills)
+                    }
                     Err(e) => TabDataState::Error(e),
                 };
                 modal.pending_action = None;
@@ -799,6 +808,7 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
                 && agent.session.session_id.as_ref() == Some(&session_id)
                 && let Some(ref mut modal) = agent.extensions_modal
             {
+                modal.seed_workflows_group_once();
                 modal.workflows_data = match result {
                     Ok(workflows) => TabDataState::Loaded(workflows),
                     Err(e) => TabDataState::Error(e),
@@ -871,14 +881,17 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
             }
             vec![]
         }
-        TaskResult::CodingDataSharingUpdated { agent_id, opted_in } => {
-            handle_coding_data_sharing_updated(app, agent_id, opted_in)
-        }
+        TaskResult::CodingDataSharingUpdated {
+            agent_id,
+            opted_in,
+            seq,
+        } => handle_coding_data_sharing_updated(app, agent_id, opted_in, seq),
         TaskResult::CodingDataSharingFailed {
             agent_id,
             error,
             rollback_to_opted_in,
-        } => handle_coding_data_sharing_failed(app, agent_id, error, rollback_to_opted_in),
+            seq,
+        } => handle_coding_data_sharing_failed(app, agent_id, error, rollback_to_opted_in, seq),
         TaskResult::RenameSessionComplete { agent_id, title } => {
             if let Some(agent) = app.agents.get_mut(&agent_id) {
                 let safe = crate::views::session_title::sanitize_display_text(&title);
@@ -903,21 +916,94 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
         TaskResult::DeleteSessionComplete {
             source,
             session_id,
-            after: _,
+            after,
         } => {
-            remove_session_from_pickers(app, &source, &session_id);
+            use crate::app::actions::AfterSessionDelete;
+            remove_session_from_pickers(
+                app,
+                &source,
+                &session_id,
+                after != AfterSessionDelete::Stay,
+            );
+            if after == AfterSessionDelete::Stay {
+                app.dashboard_local_sessions
+                    .retain(|entry| entry.session_id != session_id);
+                app.leader_roster
+                    .retain(|entry| entry.session_id != session_id);
+                app.show_toast("Session deleted");
+                return vec![];
+            }
+            let sid = acp::SessionId::new(session_id.clone());
+            let to_remove: Vec<_> = app
+                .agents
+                .iter()
+                .filter(|(_, agent)| agent.session.session_id.as_ref() == Some(&sid))
+                .map(|(id, _)| *id)
+                .collect();
+            let foreground =
+                matches!(app.active_view, ActiveView::Agent(id) if to_remove.contains(&id));
+            let roster_row = crate::views::dashboard::DashboardRowId::Roster {
+                session_id: session_id.clone(),
+            };
+            let closed_rows: Vec<_> = to_remove
+                .iter()
+                .copied()
+                .map(crate::views::dashboard::DashboardRowId::TopLevel)
+                .chain(std::iter::once(roster_row))
+                .collect();
+            let selected = app.dashboard.as_ref().and_then(|d| d.selected.clone());
+            let neighbor = if after == AfterSessionDelete::Dashboard
+                && let Some(sel) = selected.as_ref().filter(|sel| closed_rows.contains(sel))
+            {
+                super::dashboard::dashboard_neighbor_row(app, sel)
+            } else {
+                None
+            };
+            app.dashboard_local_sessions
+                .retain(|entry| entry.session_id != session_id);
+            app.leader_roster
+                .retain(|entry| entry.session_id != session_id);
+            let attached_was_removed = app
+                .dashboard
+                .as_ref()
+                .and_then(|d| d.attached_agent)
+                .is_some_and(|id| to_remove.contains(&id));
+            for id in to_remove {
+                remove_agent_and_cleanup(app, id);
+            }
+            let mut effects = unregister_session_effect(Some(sid));
+            if after == AfterSessionDelete::Dashboard {
+                if let Some(d) = app.dashboard.as_mut() {
+                    d.delete_confirm = None;
+                    if attached_was_removed {
+                        d.close_popup();
+                    }
+                    let selected_closed = d
+                        .selected
+                        .as_ref()
+                        .is_some_and(|sel| closed_rows.contains(sel));
+                    match (selected_closed, neighbor) {
+                        (true, Some(n)) => d.focus_row(n),
+                        (true, None) => d.focus_new_agent_button(),
+                        _ => {}
+                    }
+                }
+                if foreground {
+                    super::dashboard::ensure_dashboard_state(app);
+                    app.active_view = ActiveView::AgentDashboard;
+                }
+            } else if foreground && after == AfterSessionDelete::Welcome {
+                effects.extend(dispatch_exit_session(app));
+            }
             app.show_toast("Session deleted");
-            vec![]
+            effects
         }
         TaskResult::DeleteSessionFailed {
             source,
             session_id,
             error,
         } => {
-            tracing::warn!(
-                source, session_id = % session_id, error = % error,
-                "session delete failed"
-            );
+            tracing::warn!(source, session_id = %session_id, error = %error, "session delete failed");
             app.show_toast(&format!("Couldn't delete session: {error}"));
             vec![]
         }
@@ -934,102 +1020,26 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
             }
             vec![]
         }
-        TaskResult::SetContextWindowComplete { agent_id, result } => {
-            handle_set_context_window_complete(app, agent_id, result)
-        }
         TaskResult::SessionUsageComplete {
             agent_id,
             session_id,
             usage,
-            for_overlay,
-            overlay_generation,
-        } => {
-            if for_overlay {
-                if super::status::usage_overlay_generation_is_current(
-                    app,
-                    agent_id,
-                    overlay_generation,
-                ) {
-                    fill_session_usage_detail(app, agent_id, &session_id, *usage)
-                } else {
-                    vec![]
-                }
-            } else {
-                commit_session_usage_block(
-                    app,
-                    agent_id,
-                    &session_id,
-                    crate::app::status_blocks::session_usage_block_text(&usage),
-                )
-            }
-        }
+        } => commit_session_usage_block(
+            app,
+            agent_id,
+            &session_id,
+            crate::app::status_blocks::session_usage_block_text(&usage),
+        ),
         TaskResult::SessionUsageFailed {
             agent_id,
             session_id,
             error,
-            for_overlay,
-            overlay_generation,
-        } => {
-            if for_overlay {
-                if super::status::usage_overlay_generation_is_current(
-                    app,
-                    agent_id,
-                    overlay_generation,
-                ) {
-                    fill_session_usage_detail_failed(app, agent_id, &session_id, error)
-                } else {
-                    vec![]
-                }
-            } else {
-                commit_session_usage_block(
-                    app,
-                    agent_id,
-                    &session_id,
-                    format!("Couldn't load session usage: {error}"),
-                )
-            }
-        }
-        TaskResult::AggregateUsageComplete {
+        } => commit_session_usage_block(
+            app,
             agent_id,
-            usage,
-            for_overlay,
-            overlay_generation,
-        } => {
-            if for_overlay {
-                if super::status::usage_overlay_generation_is_current(
-                    app,
-                    agent_id,
-                    overlay_generation,
-                ) {
-                    fill_aggregate_usage_detail(app, agent_id, *usage)
-                } else {
-                    vec![]
-                }
-            } else {
-                // Aggregate usage is only displayed in the overlay today.
-                vec![]
-            }
-        }
-        TaskResult::AggregateUsageFailed {
-            agent_id,
-            error,
-            for_overlay,
-            overlay_generation,
-        } => {
-            if for_overlay {
-                if super::status::usage_overlay_generation_is_current(
-                    app,
-                    agent_id,
-                    overlay_generation,
-                ) {
-                    fill_aggregate_usage_detail_failed(app, agent_id, error)
-                } else {
-                    vec![]
-                }
-            } else {
-                vec![]
-            }
-        }
+            &session_id,
+            format!("Couldn't load session usage: {error}"),
+        ),
         TaskResult::FeedbackComplete { .. } => vec![],
         TaskResult::FeedbackFailed { agent_id, error } => {
             if let Some(agent) = app.agents.get_mut(&agent_id) {
@@ -1085,7 +1095,7 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
             vec![]
         }
         TaskResult::BundleStatusFailed { error } => {
-            tracing::warn!(error = % error, "bundle status fetch failed");
+            tracing::warn!(error = %error, "bundle status fetch failed");
             vec![]
         }
         TaskResult::CatalogEntryReady {
@@ -1104,7 +1114,7 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
             vec![]
         }
         TaskResult::CatalogEntryFailed { error } => {
-            tracing::warn!(error = % error, "catalog entry fetch failed");
+            tracing::warn!(error = %error, "catalog entry fetch failed");
             if let ActiveView::Agent(id) = app.active_view
                 && let Some(agent) = app.agents.get_mut(&id)
             {
@@ -1126,7 +1136,7 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
             error,
         } => {
             if let Some(error) = error {
-                tracing::debug!(% error, "recap request failed");
+                tracing::debug!(%error, "recap request failed");
                 if !auto
                     && let Some(agent) = find_agent_by_session_id(&mut app.agents, &session_id.0)
                     && let Some(pending_id) = agent.pending_recap_entry.take()
@@ -1232,15 +1242,6 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
             app.show_toast(&format!("Undo failed: {error}"));
             vec![]
         }
-        TaskResult::RewindPreviewComplete {
-            agent_id,
-            response,
-            target_prompt_index,
-            mode,
-        } => handle_rewind_preview_complete(app, agent_id, response, target_prompt_index, mode),
-        TaskResult::RewindPreviewFailed { agent_id, error } => {
-            handle_rewind_preview_failed(app, agent_id, error)
-        }
         TaskResult::RewindExecuteComplete { agent_id, response } => {
             dispatch_rewind_success(app, agent_id, response)
         }
@@ -1296,7 +1297,7 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
             vec![]
         }
         TaskResult::SettingPersisted { key, value } => {
-            tracing::trace!(target : "settings", ? key, ? value, "setting persisted");
+            tracing::trace!(target: "settings", ?key, ?value, "setting persisted");
             vec![]
         }
         TaskResult::SettingPersistFailed {
@@ -1305,17 +1306,15 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
             error,
         } => {
             let rollback_effects = apply_setting_rollback(app, key, &rollback_value);
-            tracing::warn!(
-                target : "settings", ? key, ? rollback_value, % error,
-                "setting persist failed; rolled back"
-            );
+            tracing::warn!(target: "settings", ?key, ?rollback_value, %error, "setting persist failed; rolled back");
             let scrubbed = scrub_error_for_toast(&error);
             app.show_toast(&format!("\u{2717} Could not save {key}: {scrubbed}"));
             rollback_effects
         }
         TaskResult::SettingPersistFailedBestEffort { key, error } => {
             tracing::warn!(
-                target : "settings", ? key, % error,
+                target: "settings",
+                ?key, %error,
                 "setting persist failed (best-effort); in-memory state stays at optimistic value",
             );
             let scrubbed = scrub_error_for_toast(&error);
