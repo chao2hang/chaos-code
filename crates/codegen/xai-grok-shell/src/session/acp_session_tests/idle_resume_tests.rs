@@ -96,6 +96,7 @@ async fn test_e2e_idle_resume_refreshes_model_metadata() {
                 pending_notifications: Vec::new(),
                 notifications_suppressed: false,
                 rewindable: false,
+                front_message_committed: false,
                 nudges_used_this_session: 0,
             });
             let (chat_event_tx, _) = tokio::sync::mpsc::unbounded_channel();
@@ -115,9 +116,6 @@ async fn test_e2e_idle_resume_refreshes_model_metadata() {
                     context_window: std::num::NonZeroU64::new(200_000).unwrap(),
                     reasoning_effort: None,
                     stream_tool_calls: None,
-                    extract_inline_thinking: None,
-
-                    is_workbuddy: false,
                 },
                 Box::new(xai_chat_state::NullChatPersistence),
                 chat_event_tx,
@@ -153,11 +151,13 @@ async fn test_e2e_idle_resume_refreshes_model_metadata() {
                     std::mem::forget(dir);
                     Some(mgr)
                 },
+                is_chat_kind: false,
                 state,
                 notifications: NotificationSender {
                     gateway: GatewaySender::new(gateway_tx),
                     gateway_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
                     persistence_tx,
+                    disk_full: crate::session::notifications::idle_disk_full_rx(),
                 },
                 permissions: xai_grok_workspace::permission::PermissionHandle::allow_all(),
                 tool_context,
@@ -188,7 +188,7 @@ async fn test_e2e_idle_resume_refreshes_model_metadata() {
                 compaction: crate::session::compaction_config::CompactionConfig {
                     threshold_percent: std::cell::Cell::new(85),
                     force_compact: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
-                    context_window_override: std::cell::Cell::new(None),
+                    context_window_override: None,
                     count: std::sync::atomic::AtomicU64::new(0),
                     auto_compact_suppressed: std::sync::atomic::AtomicU8::new(0),
                     previous_model: std::cell::Cell::new(None),
@@ -197,7 +197,7 @@ async fn test_e2e_idle_resume_refreshes_model_metadata() {
                     tool_choice: crate::util::config::CompactionToolChoice::Auto,
                     prefire: crate::session::compaction_config::PrefireState::default(),
                     prefix_released: std::sync::atomic::AtomicBool::new(false),
-                    operation_lock: tokio::sync::Mutex::new(()),
+                    cancel: Default::default(),
                 },
                 memory: crate::session::memory_state::SessionMemory {
                     flush_config: crate::config::MemoryFlushConfig::default(),
@@ -232,11 +232,8 @@ async fn test_e2e_idle_resume_refreshes_model_metadata() {
                 last_idle_flush_conversation_len: std::sync::atomic::AtomicUsize::new(0),
                 event_tx,
                 buffering_settings: None,
-                client_identifier: std::cell::RefCell::new(None),
-                origin_client: std::cell::RefCell::new(None),
-                user_agent: std::cell::RefCell::new(None),
-                client_extra_headers: std::cell::RefCell::new(indexmap::IndexMap::new()),
-                client_env_http_headers: std::cell::RefCell::new(indexmap::IndexMap::new()),
+                client_identifier: None,
+                origin_client: None,
                 feedback_manager: Arc::new(FeedbackManager::local_only("test-session")),
                 upload_queue: Arc::new(OnceLock::new()),
                 sync_loop_cancel: None,
@@ -317,6 +314,9 @@ async fn test_e2e_idle_resume_refreshes_model_metadata() {
                 last_recap_main_turn: std::cell::Cell::new(0),
                 recap_in_flight: std::cell::Cell::new(false),
                 recap_epoch: std::cell::Cell::new(0),
+                turn_summary_task: std::cell::RefCell::new(None),
+                turn_summary_generation: std::cell::Cell::new(0),
+                turn_summary_enabled: false,
                 session_turn_active: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
                 streaming_turn_capture: parking_lot::Mutex::new(StreamingTurnCapture::default()),
                 turn_stream_drained: parking_lot::Mutex::new(None),
@@ -329,9 +329,6 @@ async fn test_e2e_idle_resume_refreshes_model_metadata() {
                 subagent_token_records: parking_lot::Mutex::new(HashMap::new()),
                 workspace_ops: xai_grok_workspace::WorkspaceOps::for_test(),
                 trace_config_template: std::cell::RefCell::new(None),
-
-                workbuddy_conversation_id: String::new(),
-                workbuddy_acp_connection_id: String::new(),
             };
             let eleven_minutes_ago_ms = chrono::Utc::now().timestamp_millis() - (11 * 60 * 1000);
             actor

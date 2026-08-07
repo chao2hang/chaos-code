@@ -7,8 +7,8 @@ use crate::diagnostics::probes::{
 use crate::diagnostics::{
     ClipboardFacts, ColorFacts, DataControlFact, DiagnosticFacts, DiagnosticFinding, DiagnosticId,
     DiagnosticReport, FindingDisposition, KeyboardFact, ManualRemediation, NewlineFact, ProbeNote,
-    ProbeStatus, RuntimeFact, TerminalWarning, TmuxFacts, TmuxOptionFact, TmuxSupportFact,
-    WarningCategory,
+    ProbeStatus, RuntimeFact, TerminalWarning, TmuxColorPassthrough, TmuxFacts, TmuxOptionFact,
+    TmuxSupportFact, WarningCategory,
 };
 use crate::terminal::TerminalName;
 
@@ -103,14 +103,13 @@ pub fn view(snapshot: DiagnosticSnapshot<'_>) -> DiagnosticReport {
         &snapshot.common,
     ));
     warnings.extend(wezterm_warning);
-    if let RuntimeEvidence::Available(color_level) = snapshot.color_level {
-        warnings.extend(super::color_support_warning(
-            color_level,
-            ctx.brand,
-            ctx.is_tmux_backed(),
-            &ctx.tmux_config_path(),
-        ));
-    }
+    warnings.extend(super::color_support_warning(
+        snapshot.color_level,
+        ctx.brand,
+        tmux_color_passthrough(&snapshot.common.tmux.client_features),
+        ctx.is_tmux_backed(),
+        &ctx.tmux_config_path(),
+    ));
 
     let (facts, clipboard_recovery) = facts(&snapshot, suppress_newline);
     let mut findings = warnings
@@ -235,6 +234,7 @@ fn facts(
                     &snapshot.common.tmux.allow_passthrough_support,
                 ),
                 allow_passthrough: tmux_option_fact(&snapshot.common.tmux.allow_passthrough),
+                color_passthrough: tmux_color_passthrough(&snapshot.common.tmux.client_features),
             },
             color: ColorFacts {
                 level: match snapshot.color_level {
@@ -282,12 +282,12 @@ impl ClipboardRecovery {
         match self {
             Self::Confirmed => None,
             Self::UnverifiedSsh | Self::UnavailableSsh => {
-                Some("chaos wrap <ssh command> or /minimal")
+                Some("grok wrap <ssh command> or /minimal")
             }
             Self::UnverifiedContainer | Self::UnavailableContainer => {
-                Some("chaos wrap <command> or /minimal")
+                Some("grok wrap <command> or /minimal")
             }
-            Self::UnverifiedOther => Some("chaos wrap or /minimal"),
+            Self::UnverifiedOther => Some("grok wrap or /minimal"),
             Self::UnavailableLocal => Some("/minimal"),
         }
     }
@@ -388,46 +388,52 @@ fn clipboard_findings(
         ClipboardRecovery::UnverifiedSsh => findings.push(manual_finding(
             crate::diagnostics::CLIPBOARD_DELIVERY_UNVERIFIED_ID,
             FindingDisposition::Issue,
-            "Chaos 无法跨远程边界验证此剪贴板路径",
-            "复制时 Chaos 会发送 OSC 52，但无法确认外层终端是否接受。每次复制也会保存到备份文件；\
-             复制提示中会显示路径。若粘贴失败，请在本地运行 `chaos wrap ssh <host>`，或使用 `/minimal`。\
-             若经常 SSH，可在本地运行 `chaos doctor fix ssh-wrap`。",
+            "Grok can't verify this clipboard route across the remote boundary",
+            "When you copy, Grok sends OSC 52 but can't confirm that the outer terminal accepted \
+             it. Each copy is also saved to a backup file; the copy message shows the path. If \
+             paste fails, run `grok wrap ssh <host>` on your local computer or use `/minimal`. \
+             For repeated SSH sessions, run `grok doctor fix ssh-wrap` on your local computer.",
         )),
         ClipboardRecovery::UnverifiedContainer => findings.push(manual_finding(
             crate::diagnostics::CLIPBOARD_DELIVERY_UNVERIFIED_ID,
             FindingDisposition::Issue,
-            "Chaos 无法跨容器边界验证此剪贴板路径",
-            "复制时 Chaos 会发送 OSC 52，但无法确认外层终端是否接受。每次复制也会保存到备份文件；\
-             复制提示中会显示路径。若粘贴失败，请用本地 `chaos wrap <command>` 启动容器命令，或使用 `/minimal`。",
+            "Grok can't verify this clipboard route across the container boundary",
+            "When you copy, Grok sends OSC 52 but can't confirm that the outer terminal accepted \
+             it. Each copy is also saved to a backup file; the copy message shows the path. If \
+             paste fails, start the container command with local `grok wrap <command>`, or use \
+             `/minimal`.",
         )),
         ClipboardRecovery::UnverifiedOther => findings.push(manual_finding(
             crate::diagnostics::CLIPBOARD_DELIVERY_UNVERIFIED_ID,
             FindingDisposition::Issue,
-            "Chaos 无法验证此剪贴板路径",
-            "每次复制也会保存到备份文件；复制提示中会显示路径。对远程或容器命令，请使用本地 \
-             `chaos wrap <command>`。也可使用 `/minimal` 在终端中选择文本。",
+            "Grok can't verify this clipboard route",
+            "Each copy is also saved to a backup file; the copy message shows the path. For a \
+             remote or container command, use local `grok wrap <command>`. You can also use \
+             `/minimal` to select text in the terminal.",
         )),
         ClipboardRecovery::UnavailableSsh => findings.push(manual_finding(
             crate::diagnostics::CLIPBOARD_DELIVERY_UNAVAILABLE_ID,
             FindingDisposition::Issue,
-            "此剪贴板路径无法到达目标剪贴板",
-            "复制时 Chaos 会把文本保存到复制提示中显示的备份文件。若要直接复制，请在本地运行 \
-             `chaos wrap ssh <host>`。若经常 SSH，可在本地运行 `chaos doctor fix ssh-wrap`。\
-             也可使用 `/copy <file>` 或 `/minimal`。",
+            "This clipboard route can't reach the target clipboard",
+            "When you copy, Grok saves the text to the backup file shown in the copy message. To \
+             copy directly, run `grok wrap ssh <host>` on your local computer. For repeated SSH \
+             sessions, run `grok doctor fix ssh-wrap` there. You can also use `/copy <file>` or \
+             `/minimal`.",
         )),
         ClipboardRecovery::UnavailableContainer => findings.push(manual_finding(
             crate::diagnostics::CLIPBOARD_DELIVERY_UNAVAILABLE_ID,
             FindingDisposition::Issue,
-            "此剪贴板路径无法到达目标剪贴板",
-            "复制时 Chaos 会把文本保存到复制提示中显示的备份文件。请用本地 `chaos wrap <command>` \
-             启动容器命令，或使用 `/copy <file>` / `/minimal`。",
+            "This clipboard route can't reach the target clipboard",
+            "When you copy, Grok saves the text to the backup file shown in the copy message. \
+             Start the container command with local `grok wrap <command>`, use `/copy <file>`, or \
+             use `/minimal`.",
         )),
         ClipboardRecovery::UnavailableLocal => findings.push(manual_finding(
             crate::diagnostics::CLIPBOARD_DELIVERY_UNAVAILABLE_ID,
             FindingDisposition::Issue,
-            "此剪贴板路径无法到达目标剪贴板",
-            "复制时 Chaos 会把文本保存到复制提示中显示的备份文件。请使用 `/copy <file>` 或 `/minimal`，\
-             并检查上方列出的本地剪贴板工具。",
+            "This clipboard route can't reach the target clipboard",
+            "When you copy, Grok saves the text to the backup file shown in the copy message. Use \
+             `/copy <file>` or `/minimal`, then check the native clipboard tool listed above.",
         )),
     }
 
@@ -439,9 +445,9 @@ fn clipboard_findings(
         findings.push(manual_finding(
             crate::diagnostics::VSCODE_SSH_NON_ASCII_ID,
             FindingDisposition::Recommendation,
-            "此远程编辑器可能改写经 OSC 52 复制的非 ASCII 文本",
-            "若粘贴后的非 ASCII 文本不正确，请使用 `/minimal` 并在终端中选择文本。\
-             ASCII 复制以及复制后显示的备份文件仍然可用。",
+            "This remote editor may change non-ASCII text copied with OSC 52",
+            "If pasted non-ASCII text is incorrect, use `/minimal` and select text in the \
+             terminal. ASCII copy and the backup file shown after the copy remain available.",
         ));
     }
 
@@ -455,9 +461,10 @@ fn clipboard_findings(
         findings.push(manual_finding(
             crate::diagnostics::ITERM2_CLIPBOARD_PERMISSION_ID,
             FindingDisposition::Recommendation,
-            "iTerm2 可能阻止 OSC 52 剪贴板访问",
-            "在 iTerm2 中打开 Settings → General → Selection，开启 “Applications in \
-             terminal may access clipboard.” Chaos 无法读取该设置，因此若复制后无法粘贴，请在那里检查。",
+            "iTerm2 may block OSC 52 clipboard access",
+            "In iTerm2, open Settings → General → Selection and turn on “Applications in \
+             terminal may access clipboard.” Grok can't read this setting, so check it there if \
+             copies don't paste.",
         ));
     }
     findings
@@ -467,27 +474,29 @@ fn newline_finding(facts: &DiagnosticFacts) -> Option<DiagnosticFinding> {
     let newline = facts.newline.as_ref()?;
     let (message, note) = match newline {
         NewlineFact::Vte { version } => (
-            "在此 VTE 终端中，Shift+Enter 无法插入换行",
+            "Shift+Enter can't insert a newline in this VTE terminal",
             match version {
                 Some(version) => format!(
-                    "请使用 Alt+Enter 插入换行。此终端报告 VTE {version}。\
-                     升级到 VTE 0.82 或更高版本后可使用 Shift+Enter。"
+                    "Use Alt+Enter to insert a newline. This terminal reports VTE {version}. \
+                     Upgrade to VTE 0.82 or later to use Shift+Enter."
                 ),
-                None => {
-                    "请使用 Alt+Enter 插入换行。升级到 VTE 0.82 或更高版本后可使用 Shift+Enter。"
-                        .to_owned()
-                }
+                None => "Use Alt+Enter to insert a newline. Upgrade to VTE 0.82 or later to use \
+                         Shift+Enter."
+                    .to_owned(),
             },
         ),
         NewlineFact::XtermJs { terminal } => (
-            "在此 xterm.js 终端中，Shift+Enter 无法插入换行",
+            "Shift+Enter can't insert a newline in this xterm.js terminal",
             format!(
-                "在 {terminal} 中请使用 Alt+Enter 插入换行。在此环境下 xterm.js 会把 Shift+Enter 当作 Enter 发送。"
+                "Use Alt+Enter to insert a newline in {terminal}. xterm.js sends Shift+Enter as \
+                 Enter in this setup."
             ),
         ),
         NewlineFact::NoKittyKeyboardProtocol => (
-            "因键盘协议不可用，Shift+Enter 无法插入换行",
-            "请使用 Alt+Enter 插入换行。若终端支持 Kitty 键盘协议，请启用后重启 Chaos。".to_owned(),
+            "Shift+Enter can't insert a newline because the keyboard protocol is unavailable",
+            "Use Alt+Enter to insert a newline. If your terminal supports the Kitty keyboard \
+             protocol, enable it and restart Grok."
+                .to_owned(),
         ),
     };
     Some(manual_finding(
@@ -524,6 +533,7 @@ pub(crate) const fn id_for(category: WarningCategory) -> Option<DiagnosticId> {
         WarningCategory::WaylandNoDataControl => "wayland-data-control",
         WarningCategory::WezTermKittyKeyboardOff => "wezterm-kitty",
         WarningCategory::LimitedColorSupport => "limited-color",
+        WarningCategory::TmuxColorReduced => "tmux-truecolor",
         WarningCategory::SshWithoutWrap => "ssh-wrap",
         WarningCategory::NotificationProtocolFallback => {
             return Some(crate::diagnostics::NOTIFICATION_PROTOCOL_FALLBACK_ID);
@@ -572,6 +582,11 @@ fn probe_notes(snapshot: &DiagnosticSnapshot<'_>) -> Vec<ProbeNote> {
             "tmux.control-mode",
             &snapshot.common.tmux.control_mode,
         );
+        probe_note(
+            &mut notes,
+            "tmux.client-features",
+            &snapshot.common.tmux.client_features,
+        );
     }
     runtime_probe_note(
         &mut notes,
@@ -601,6 +616,26 @@ fn tmux_option_fact(result: &TmuxProbeResult<String>) -> TmuxOptionFact {
         TmuxProbeResult::Unsupported => TmuxOptionFact::Unsupported,
         TmuxProbeResult::Unavailable => TmuxOptionFact::Unavailable,
         TmuxProbeResult::Error(_) => TmuxOptionFact::Error,
+    }
+}
+
+/// tmux marks a client `RGB` when the outer terminfo declares `RGB`/`Tc` or
+/// `terminal-features` adds it; either way the feature list is the single
+/// authoritative signal, and a missing answer is not evidence of clamping.
+fn tmux_color_passthrough(result: &TmuxProbeResult<String>) -> TmuxColorPassthrough {
+    let TmuxProbeResult::Available(features) = result else {
+        return TmuxColorPassthrough::Unknown;
+    };
+    if features.trim().is_empty() {
+        return TmuxColorPassthrough::Unknown;
+    }
+    if features
+        .split(',')
+        .any(|feature| feature.trim().eq_ignore_ascii_case("RGB"))
+    {
+        TmuxColorPassthrough::Forwarded
+    } else {
+        TmuxColorPassthrough::Reduced
     }
 }
 

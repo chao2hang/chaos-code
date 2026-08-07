@@ -502,7 +502,10 @@ fn set_yolo_mode_on_under_plan_uses_plan_aware_toast() {
         .as_ref()
         .map(|(s, _)| s.clone())
         .expect("toast must be set");
-    assert_eq!(toast, "\u{26A0} 总是批准已开启：所有工具操作将自动执行");
+    assert_eq!(
+        toast,
+        "\u{26A0} Always-approve ON: all tool actions auto-run"
+    );
 }
 
 /// The settings-modal path (`SetPermissionMode(AlwaysApprove)`) gets the same
@@ -1065,7 +1068,10 @@ fn set_yolo_mode_toast_format() {
         .as_ref()
         .map(|(s, _)| s.clone())
         .expect("toast must be set");
-    assert_eq!(toast, "\u{26A0} 总是批准已开启：所有工具操作将自动执行");
+    assert_eq!(
+        toast,
+        "\u{26A0} Always-approve ON: all tool actions auto-run"
+    );
 
     let _ = dispatch(Action::SetYoloMode(false), &mut app);
     let toast = app.agents[&AgentId(0)]
@@ -1073,7 +1079,7 @@ fn set_yolo_mode_toast_format() {
         .as_ref()
         .map(|(s, _)| s.clone())
         .expect("toast must be set");
-    assert_eq!(toast, "\u{2713} 总是批准：关");
+    assert_eq!(toast, "\u{2713} Always-approve: off");
 }
 
 #[test]
@@ -1335,13 +1341,6 @@ fn cycle_mode_pre_session_always_approve_to_normal_persists_ask() {
         "pre-session Always-Approve → Normal must persist 'ask' \
          (stale config.toml relaunches yolo), got {effects:?}"
     );
-    // Welcome-screen Shift+Tab still kicks off session creation.
-    assert!(
-        effects
-            .iter()
-            .any(|e| matches!(e, Effect::CreateSession { .. })),
-        "expected CreateSession alongside the persist, got {effects:?}"
-    );
 }
 
 /// Negative control for the pre-session persist: Normal → Plan changes the
@@ -1529,7 +1528,7 @@ fn set_permission_mode_default_overrides_canonical_to_default() {
         .map(|(s, _)| s.clone())
         .expect("toast must be set");
     assert_eq!(
-        toast, "\u{2713} 权限模式：默认",
+        toast, "\u{2713} Permission mode: Default",
         "PR 11 R1 G-3 #12: Default toast is value-neutral; no parenthetical that lies \
              about runtime equivalence",
     );
@@ -1593,7 +1592,7 @@ fn set_permission_mode_always_approve_from_default_captures_prev_canonical() {
         .map(|(s, _)| s.clone())
         .expect("toast must be set");
     assert_eq!(
-        toast, "\u{26A0} 总是批准已开启：所有工具操作将自动执行",
+        toast, "\u{26A0} Always-approve ON: all tool actions auto-run",
         "AlwaysApprove arm preserves the destructive yolo_toast(true) — the warning \
              weight is correct for the YOLO transition",
     );
@@ -1649,17 +1648,17 @@ fn permission_mode_toast_returns_brand_consistent_strings() {
     use crate::app::actions::PermissionModeKind;
     assert_eq!(
         permission_mode_toast(PermissionModeKind::Default),
-        "\u{2713} 权限模式：默认",
+        "\u{2713} Permission mode: Default",
     );
     assert_eq!(
         permission_mode_toast(PermissionModeKind::Ask),
-        "\u{2713} 权限模式：询问",
+        "\u{2713} Permission mode: Ask",
     );
     // AlwaysApprove still goes through `yolo_toast(true)` —
     // destructive variant.
     assert_eq!(
         permission_mode_toast(PermissionModeKind::AlwaysApprove),
-        "\u{26A0} 总是批准已开启：所有工具操作将自动执行",
+        "\u{26A0} Always-approve ON: all tool actions auto-run",
     );
 }
 
@@ -1926,10 +1925,9 @@ fn cycle_always_approve_with_nudge_jumps_to_plan() {
     );
     assert!(
         effects.iter().any(|e| matches!(
-                    e,
-                    Effect::SetSessionMode { mode_id, .. }
-        if &*mode_id.0 == "plan"
-                )),
+            e,
+            Effect::SetSessionMode { mode_id, .. } if &*mode_id.0 == "plan"
+        )),
         "expected SetSessionMode(plan), got {effects:?}"
     );
     assert!(
@@ -1983,10 +1981,9 @@ fn cycle_auto_with_nudge_jumps_to_plan() {
     );
     assert!(
         effects.iter().any(|e| matches!(
-                    e,
-                    Effect::SetSessionMode { mode_id, .. }
-        if &*mode_id.0 == "plan"
-                )),
+            e,
+            Effect::SetSessionMode { mode_id, .. } if &*mode_id.0 == "plan"
+        )),
         "expected SetSessionMode(plan), got {effects:?}"
     );
     assert!(
@@ -2174,12 +2171,12 @@ fn set_plan_mode_idempotent_on() {
 
     let toast = read_toast(&app);
     assert!(
-        toast.contains("计划模式"),
+        toast.contains("Plan mode"),
         "idempotent ON must still toast (slash command users typing `/plan` while \
              already in plan mode need confirmation): {toast}",
     );
     assert!(
-        toast.contains('开'),
+        toast.contains("on"),
         "idempotent ON toast must surface the value: {toast}",
     );
     assert!(
@@ -2216,12 +2213,15 @@ fn set_plan_mode_idempotent_off() {
     assert!(!agent.plan_mode_active);
 
     let toast = read_toast(&app);
-    assert!(toast.contains("计划模式"));
-    assert!(toast.contains('关'));
+    assert!(toast.contains("Plan mode"));
+    assert!(toast.contains("off"));
     assert!(toast.contains('\u{2713}'));
 }
 
-/// Toast format contract: both directions produce `"✓ 计划模式：开|关"`.
+/// Toast format contract: both directions
+/// produce `"✓ Plan mode: <on|off>"`. Mirrors `set_compact_mode_toast_format`.
+/// A regression to capital "On"/"Off" or
+/// missing the ✓ glyph would fail this test.
 #[test]
 fn plan_mode_toast_format() {
     let mut app = test_app_with_agent();
@@ -2230,10 +2230,14 @@ fn plan_mode_toast_format() {
         &mut app,
     );
     let toast = read_toast(&app);
-    assert!(toast.contains("计划模式"));
+    assert!(toast.contains("Plan mode"));
     assert!(
-        toast.contains("：开"),
-        "ON toast must use Chinese 开: {toast}",
+        toast.contains(": on"),
+        "ON toast must use lowercase 'on' (consistency with multiline/compact toasts): {toast}",
+    );
+    assert!(
+        !toast.contains(": On"),
+        "ON toast must NOT use capital 'On' (PR 10 R1 G-3 #1 fix): {toast}",
     );
     assert!(toast.contains('\u{2713}'));
 
@@ -2246,10 +2250,14 @@ fn plan_mode_toast_format() {
         &mut app,
     );
     let toast = read_toast(&app);
-    assert!(toast.contains("计划模式"));
+    assert!(toast.contains("Plan mode"));
     assert!(
-        toast.contains("：关"),
-        "OFF toast must use Chinese 关: {toast}",
+        toast.contains(": off"),
+        "OFF toast must use lowercase 'off': {toast}",
+    );
+    assert!(
+        !toast.contains(": Off"),
+        "OFF toast must NOT use capital 'Off': {toast}",
     );
 }
 

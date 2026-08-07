@@ -9,7 +9,7 @@ use crate::host::{DisplayServer, HostOs};
 pub fn format_doctor(report: &DiagnosticReport) -> String {
     let facts = &report.facts;
     let mut out = String::new();
-    out.push_str("环境\n");
+    out.push_str("Environment\n");
     out.push_str(&format!("  terminal     {}\n", facts.terminal));
     if let RuntimeFact::Available(xtversion) = &facts.xtversion {
         out.push_str(&format!("  xtversion    {xtversion}\n"));
@@ -47,9 +47,9 @@ pub fn format_doctor(report: &DiagnosticReport) -> String {
     }
     if let Some(keyboard) = &facts.keyboard {
         let rescue = if keyboard.os == HostOs::Macos {
-            "系统救援已启用"
+            "OS rescue active"
         } else {
-            "当前平台无系统救援"
+            "OS rescue unavailable on this platform"
         };
         out.push_str(&format!(
             "  keyboard     {} ({rescue})\n",
@@ -60,16 +60,18 @@ pub fn format_doctor(report: &DiagnosticReport) -> String {
         let detail = match newline {
             NewlineFact::Vte {
                 version: Some(version),
-            } => format!("VTE {version}；Shift+Enter 需 >= 8200"),
-            NewlineFact::Vte { version: None } => "旧版 VTE；Shift+Enter 需 VTE >= 0.82".to_owned(),
+            } => format!("VTE {version}; need >= 8200 for Shift+Enter"),
+            NewlineFact::Vte { version: None } => {
+                "legacy VTE; need VTE >= 0.82 for Shift+Enter".to_owned()
+            }
             NewlineFact::XtermJs { terminal } => {
-                format!("{terminal}：xterm.js 无法区分 Shift+Enter")
+                format!("{terminal}: xterm.js can't distinguish Shift+Enter")
             }
             NewlineFact::NoKittyKeyboardProtocol => {
-                "无 Kitty 键盘协议；Shift+Enter 等同 Enter".to_owned()
+                "no Kitty keyboard protocol; Shift+Enter == Enter".to_owned()
             }
         };
-        out.push_str(&format!("  newline      Alt+Enter（{detail}）\n"));
+        out.push_str(&format!("  newline      Alt+Enter ({detail})\n"));
     }
 
     let clipboard = &facts.clipboard;
@@ -86,7 +88,7 @@ pub fn format_doctor(report: &DiagnosticReport) -> String {
         NativeClipboardPreflight::Unavailable => "unavailable".to_owned(),
         NativeClipboardPreflight::Disabled => "off".to_owned(),
     };
-    out.push_str("\n剪贴板\n");
+    out.push_str("\nClipboard\n");
     out.push_str(&format!("  native       {native}\n"));
     out.push_str(&format!(
         "  tmux         {}\n",
@@ -122,13 +124,13 @@ pub fn format_doctor(report: &DiagnosticReport) -> String {
     out.push_str(&format!("  status       {status}\n"));
 
     if let Some(voice) = &facts.voice {
-        out.push_str("\n语音\n");
+        out.push_str("\nVoice\n");
         match voice {
             VoiceFacts::Device { name, detail } => {
                 out.push_str(&format!("  microphone   {name} ({detail})\n"));
             }
             VoiceFacts::Missing { .. } => {
-                out.push_str("  microphone   未检测到\n");
+                out.push_str("  microphone   none detected\n");
             }
         }
     }
@@ -145,12 +147,12 @@ fn format_findings(report: &DiagnosticReport, out: &mut String) {
         .collect::<Vec<_>>();
     if issues.is_empty() {
         if report.issue_count() == 0 {
-            out.push_str("\n未发现问题。\n");
+            out.push_str("\nNo issues found.\n");
         } else {
-            out.push_str("\n问题已显示在上方剪贴板状态中。\n");
+            out.push_str("\nAn issue is shown in the Clipboard status above.\n");
         }
     } else {
-        out.push_str(&format!("\n问题 ({})\n", issues.len()));
+        out.push_str(&format!("\nIssues ({})\n", issues.len()));
         for finding in issues {
             format_finding(out, finding);
         }
@@ -162,7 +164,7 @@ fn format_findings(report: &DiagnosticReport, out: &mut String) {
         .filter(|finding| finding.disposition == FindingDisposition::Recommendation)
         .collect::<Vec<_>>();
     if !recommendations.is_empty() {
-        out.push_str("\n建议\n");
+        out.push_str("\nRecommendations\n");
         for finding in recommendations {
             format_finding(out, finding);
         }
@@ -181,23 +183,23 @@ fn format_finding(out: &mut String, finding: &super::DiagnosticFinding) {
     if let Some(automatic) = finding.automatic_remediation {
         let command = super::human_fix_command(automatic.fix_id)
             .unwrap_or_else(|| automatic.command.to_owned());
-        out.push_str(&format!("      自动修复：`{command}`\n"));
+        out.push_str(&format!("      Automatic setup: `{command}`\n"));
     }
     if let Some(remediation) = &finding.remediation {
         match (&remediation.config_path, &finding.automatic_remediation) {
             (Some(path), _) => {
-                out.push_str(&format!("      在 {path} 中添加 `{}`\n", remediation.fix));
+                out.push_str(&format!("      Add `{}` to {path}\n", remediation.fix));
             }
             (None, Some(_)) => {
-                out.push_str(&format!("      一次性：`{}`\n", remediation.fix));
+                out.push_str(&format!("      One-off: `{}`\n", remediation.fix));
             }
             (None, None) => {
-                out.push_str(&format!("      运行：`{}`\n", remediation.fix));
+                out.push_str(&format!("      Run: `{}`\n", remediation.fix));
             }
         }
     }
     if let Some(note) = &finding.note {
-        out.push_str(&format!("      说明：{note}\n"));
+        out.push_str(&format!("      Note: {note}\n"));
     }
 }
 

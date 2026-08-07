@@ -13,7 +13,7 @@ mod messages;
 
 use self::acp::AcpReducer;
 use self::messages::MessagesReducer;
-use xai_grok_shell::sampling::rs::ResponseUsage;
+use xai_grok_shell::extensions::notification::ResponseUsage;
 
 /// Serialize a wire line, degrading to an `error` line rather than panicking.
 pub(crate) fn to_line<T: Serialize>(value: &T) -> Value {
@@ -51,11 +51,7 @@ pub(crate) enum StreamEvent {
         skills: Vec<String>,
     },
     Lifecycle(Lifecycle),
-    /// Compatibility event for producers that expose per-response boundaries.
-    ///
-    /// The current local Chaos shell emits standard ACP chunks plus a durable
-    /// `turn_completed` aggregate instead; reducers therefore must keep their
-    /// no-`ResponseStarted` fallback path.
+    /// One model response opened (Messages backend); carries real id, model, and input-side token counts.
     ResponseStarted {
         message_id: Option<String>,
         model: Option<String>,
@@ -63,13 +59,11 @@ pub(crate) enum StreamEvent {
         cache_read_input_tokens: u64,
         cache_creation_input_tokens: u64,
     },
-    /// Compatibility event carrying a completed reasoning signature when a
-    /// producer exposes one separately from ACP thought chunks.
+    /// One reasoning block finished (Messages backend); carries its signature for in-order `signature_delta`.
     ReasoningCompleted {
         signature: Option<String>,
     },
-    /// Compatibility event carrying per-response terminal metadata. The local
-    /// shell currently supplies aggregate turn usage at prompt completion.
+    /// One model response finished; carries its stop reason, id, usage, signature, and stop sequence.
     ResponseCompleted {
         message_id: Option<String>,
         stop_reason: Option<String>,
@@ -115,15 +109,15 @@ impl Lifecycle {
     pub(crate) fn plain_message(&self) -> String {
         match self {
             Lifecycle::CompactStarted { percentage } => {
-                format!("正在自动压缩会话（上下文已使用 {percentage}%）...")
+                format!("Auto-compacting conversation ({percentage}% full)...")
             }
-            Lifecycle::CompactCompleted { .. } => "会话压缩完成。".to_string(),
+            Lifecycle::CompactCompleted { .. } => "Conversation compacted.".to_string(),
             Lifecycle::CompactFailed { error } if error.trim().is_empty() => {
-                "自动压缩失败。".to_string()
+                "Auto-compact failed.".to_string()
             }
-            Lifecycle::CompactFailed { error } => format!("自动压缩失败：{error}"),
-            Lifecycle::CompactCancelled => "已取消自动压缩。".to_string(),
-            Lifecycle::AutoContinue { .. } => "压缩完成，已继续执行。".to_string(),
+            Lifecycle::CompactFailed { error } => format!("Auto-compact failed: {error}"),
+            Lifecycle::CompactCancelled => "Auto-compact cancelled.".to_string(),
+            Lifecycle::AutoContinue { .. } => "Resumed after compaction.".to_string(),
             Lifecycle::ImageCompressed { message } => message.clone(),
         }
     }

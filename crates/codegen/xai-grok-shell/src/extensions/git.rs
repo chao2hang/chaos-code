@@ -60,7 +60,7 @@ fn default_working() -> String {
 }
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct GitStatusRequest {
+pub(crate) struct GitStatusRequest {
     #[serde(default)]
     pub session_id: Option<acp::SessionId>,
     #[serde(default)]
@@ -72,7 +72,7 @@ pub struct GitStatusRequest {
 }
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct GitFilesRequest {
+pub(crate) struct GitFilesRequest {
     #[serde(default)]
     pub session_id: Option<acp::SessionId>,
     #[serde(default)]
@@ -83,7 +83,7 @@ pub struct GitFilesRequest {
 }
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct GitDiffsRequest {
+pub(crate) struct GitDiffsRequest {
     #[serde(default)]
     pub session_id: Option<acp::SessionId>,
     #[serde(default)]
@@ -107,7 +107,7 @@ pub struct GitDiffsRequest {
 }
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct GitStageRequest {
+pub(crate) struct GitStageRequest {
     #[serde(default)]
     pub session_id: Option<acp::SessionId>,
     #[serde(default)]
@@ -116,7 +116,7 @@ pub struct GitStageRequest {
 }
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct GitStageContentRequest {
+pub(crate) struct GitStageContentRequest {
     #[serde(default)]
     pub session_id: Option<acp::SessionId>,
     #[serde(default)]
@@ -126,7 +126,7 @@ pub struct GitStageContentRequest {
 }
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct GitUnstageRequest {
+pub(crate) struct GitUnstageRequest {
     #[serde(default)]
     pub session_id: Option<acp::SessionId>,
     #[serde(default)]
@@ -152,7 +152,7 @@ impl From<GitDiscardScope> for DiscardScope {
 }
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct GitDiscardRequest {
+pub(crate) struct GitDiscardRequest {
     #[serde(default)]
     pub session_id: Option<acp::SessionId>,
     #[serde(default)]
@@ -165,7 +165,7 @@ pub struct GitDiscardRequest {
 }
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct GitCommitRequest {
+pub(crate) struct GitCommitRequest {
     #[serde(default)]
     pub session_id: Option<acp::SessionId>,
     #[serde(default)]
@@ -182,7 +182,7 @@ pub struct GitCommitRequest {
 }
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct GitStashRequest {
+pub(crate) struct GitStashRequest {
     #[serde(default)]
     pub session_id: Option<acp::SessionId>,
     #[serde(default)]
@@ -192,7 +192,7 @@ pub struct GitStashRequest {
 }
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct GitCheckoutRequest {
+pub(crate) struct GitCheckoutRequest {
     #[serde(default)]
     pub session_id: Option<acp::SessionId>,
     #[serde(default)]
@@ -212,7 +212,7 @@ struct CheckoutSessionHeadRequest {
 }
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct GitInfoRequest {
+pub(crate) struct GitInfoRequest {
     #[serde(default)]
     pub session_id: Option<acp::SessionId>,
     #[serde(default)]
@@ -220,7 +220,7 @@ pub struct GitInfoRequest {
 }
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct GitBranchesRequest {
+pub(crate) struct GitBranchesRequest {
     #[serde(default)]
     pub session_id: Option<acp::SessionId>,
     #[serde(default)]
@@ -228,7 +228,7 @@ pub struct GitBranchesRequest {
 }
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct GitCurrentCommitRequest {
+pub(crate) struct GitCurrentCommitRequest {
     #[serde(default)]
     pub session_id: Option<acp::SessionId>,
     #[serde(default)]
@@ -237,7 +237,7 @@ pub struct GitCurrentCommitRequest {
 /// Request for x.ai/git/checkout_commit extension method.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct GitCheckoutCommitRequest {
+pub(crate) struct GitCheckoutCommitRequest {
     #[serde(default)]
     pub session_id: Option<acp::SessionId>,
     #[serde(default)]
@@ -278,32 +278,6 @@ async fn resolve_git_root(
     }
     Err(acp::Error::invalid_params().data("either gitRoot or sessionId is required"))
 }
-
-/// Whether workspace operations should retain their legacy cwd auto-discovery.
-fn should_auto_detect_git_root(
-    git_root: Option<&str>,
-    session_id: Option<&acp::SessionId>,
-) -> bool {
-    git_root.is_none() && session_id.is_none()
-}
-
-/// Resolve an explicitly supplied repository selector while preserving the
-/// workspace operation's legacy auto-discovery when neither selector is set.
-async fn resolve_optional_git_root(
-    agent: &MvpAgent,
-    ops: &xai_grok_workspace::WorkspaceOps,
-    git_root: Option<String>,
-    session_id: Option<&acp::SessionId>,
-) -> Result<Option<PathBuf>, acp::Error> {
-    if should_auto_detect_git_root(git_root.as_deref(), session_id) {
-        return Ok(None);
-    }
-
-    resolve_git_root(agent, ops, git_root, session_id)
-        .await
-        .map(Some)
-}
-
 /// Try to extract a git_root from the request params (best-effort, for jj routing).
 async fn try_resolve_git_root(
     agent: &MvpAgent,
@@ -374,9 +348,9 @@ pub async fn handle(
             let include_stats = req.include_stats.unwrap_or(false);
             let ignore_submodules = req.ignore_submodules.unwrap_or(true);
             let include_patches = req.include_patches.unwrap_or(false);
-            let git_root =
-                resolve_optional_git_root(agent, ops, req.git_root, req.session_id.as_ref())
-                    .await?;
+            let git_root = resolve_git_root(agent, ops, req.git_root, req.session_id.as_ref())
+                .await
+                .ok();
             if let Some(ref git_root) = git_root {
                 let current_commit = ops
                     .dispatch(
@@ -438,9 +412,9 @@ pub async fn handle(
         }
         "x.ai/git/files" => {
             let req = parse_params::<GitFilesRequest>(args)?;
-            let git_root =
-                resolve_optional_git_root(agent, ops, req.git_root, req.session_id.as_ref())
-                    .await?;
+            let git_root = resolve_git_root(agent, ops, req.git_root, req.session_id.as_ref())
+                .await
+                .ok();
             let op = GitFilesReq {
                 git_root,
                 paths: req.paths.clone(),
@@ -456,9 +430,9 @@ pub async fn handle(
             let req = parse_params::<GitDiffsRequest>(args)?;
             let max_bytes = req.max_patch_bytes;
             let max_lines = req.max_patch_lines;
-            let git_root =
-                resolve_optional_git_root(agent, ops, req.git_root, req.session_id.as_ref())
-                    .await?;
+            let git_root = resolve_git_root(agent, ops, req.git_root, req.session_id.as_ref())
+                .await
+                .ok();
             let op = GitDiffReq {
                 git_root,
                 paths: req.paths.clone(),
@@ -483,9 +457,9 @@ pub async fn handle(
         }
         "x.ai/git/stage" => {
             let req = parse_params::<GitStageRequest>(args)?;
-            let git_root =
-                resolve_optional_git_root(agent, ops, req.git_root, req.session_id.as_ref())
-                    .await?;
+            let git_root = resolve_git_root(agent, ops, req.git_root, req.session_id.as_ref())
+                .await
+                .ok();
             let op = GitStageReq {
                 git_root: git_root.clone(),
                 paths: req.paths,
@@ -501,9 +475,9 @@ pub async fn handle(
         }
         "x.ai/git/stage/content" => {
             let req = parse_params::<GitStageContentRequest>(args)?;
-            let git_root =
-                resolve_optional_git_root(agent, ops, req.git_root, req.session_id.as_ref())
-                    .await?;
+            let git_root = resolve_git_root(agent, ops, req.git_root, req.session_id.as_ref())
+                .await
+                .ok();
             let op = GitStageContentReq {
                 git_root: git_root.clone(),
                 path: req.path.clone(),
@@ -519,9 +493,9 @@ pub async fn handle(
         }
         "x.ai/git/unstage" => {
             let req = parse_params::<GitUnstageRequest>(args)?;
-            let git_root =
-                resolve_optional_git_root(agent, ops, req.git_root, req.session_id.as_ref())
-                    .await?;
+            let git_root = resolve_git_root(agent, ops, req.git_root, req.session_id.as_ref())
+                .await
+                .ok();
             let op = GitUnstageReq {
                 git_root: git_root.clone(),
                 paths: req.paths,
@@ -536,9 +510,9 @@ pub async fn handle(
         }
         "x.ai/git/discard" => {
             let req = parse_params::<GitDiscardRequest>(args)?;
-            let git_root =
-                resolve_optional_git_root(agent, ops, req.git_root, req.session_id.as_ref())
-                    .await?;
+            let git_root = resolve_git_root(agent, ops, req.git_root, req.session_id.as_ref())
+                .await
+                .ok();
             let op = GitDiscardReq {
                 git_root: git_root.clone(),
                 paths: req.paths,
@@ -555,9 +529,9 @@ pub async fn handle(
         }
         "x.ai/git/commit" => {
             let req = parse_params::<GitCommitRequest>(args)?;
-            let git_root =
-                resolve_optional_git_root(agent, ops, req.git_root, req.session_id.as_ref())
-                    .await?;
+            let git_root = resolve_git_root(agent, ops, req.git_root, req.session_id.as_ref())
+                .await
+                .ok();
             let op = GitCommitReq {
                 git_root: git_root.clone(),
                 message: req.message.clone(),
@@ -565,13 +539,6 @@ pub async fn handle(
                 signoff: req.signoff,
                 push: req.push,
                 sync: req.sync,
-                // Chaos-fork: three new upstream knobs (stage_all,
-                // seed_default_excludes, expected_branch) that the ACP-side
-                // `GitCommitRequest` does not yet expose. Default to
-                // "unchanged behavior": don't stage-all, don't seed excludes,
-                // don't gate on a specific branch. The ACP shape can gain
-                // these later without a wire-break, since RPC uses
-                // `#[serde(default)]`.
                 ..Default::default()
             };
             let commit_result = ops
@@ -585,9 +552,9 @@ pub async fn handle(
         }
         "x.ai/git/checkout" => {
             let req = parse_params::<GitCheckoutRequest>(args)?;
-            let git_root =
-                resolve_optional_git_root(agent, ops, req.git_root, req.session_id.as_ref())
-                    .await?;
+            let git_root = resolve_git_root(agent, ops, req.git_root, req.session_id.as_ref())
+                .await
+                .ok();
             let op = GitCheckoutReq {
                 git_root: git_root.clone(),
                 branch: req.branch.clone(),
@@ -603,9 +570,9 @@ pub async fn handle(
         }
         "x.ai/git/stash" => {
             let req = parse_params::<GitStashRequest>(args)?;
-            let git_root =
-                resolve_optional_git_root(agent, ops, req.git_root, req.session_id.as_ref())
-                    .await?;
+            let git_root = resolve_git_root(agent, ops, req.git_root, req.session_id.as_ref())
+                .await
+                .ok();
             let op = GitStashReq {
                 git_root: git_root.clone(),
                 include_untracked: req.include_untracked,
@@ -620,9 +587,9 @@ pub async fn handle(
         }
         "x.ai/git/info" => {
             let req = parse_params::<GitInfoRequest>(args)?;
-            let git_root =
-                resolve_optional_git_root(agent, ops, req.git_root, req.session_id.as_ref())
-                    .await?;
+            let git_root = resolve_git_root(agent, ops, req.git_root, req.session_id.as_ref())
+                .await
+                .ok();
             let result = ops
                 .dispatch(&GitInfoReq { git_root }, None)
                 .await
@@ -631,9 +598,9 @@ pub async fn handle(
         }
         "x.ai/git/branches" => {
             let req = parse_params::<GitBranchesRequest>(args)?;
-            let git_root =
-                resolve_optional_git_root(agent, ops, req.git_root, req.session_id.as_ref())
-                    .await?;
+            let git_root = resolve_git_root(agent, ops, req.git_root, req.session_id.as_ref())
+                .await
+                .ok();
             let result = ops
                 .dispatch(&GitBranchesReq { git_root }, None)
                 .await
@@ -642,16 +609,16 @@ pub async fn handle(
         }
         "x.ai/git/current_commit" => {
             let req = parse_params::<GitCurrentCommitRequest>(args)?;
-            let result =
-                match resolve_optional_git_root(agent, ops, req.git_root, req.session_id.as_ref())
-                    .await?
-                {
-                    Some(git_root) => ops
-                        .dispatch(&GitCurrentCommitReq { git_root }, None)
-                        .await
-                        .map_err(|e| acp::Error::internal_error().data(e.to_string()))?,
-                    None => None,
-                };
+            let result = match resolve_git_root(agent, ops, req.git_root, req.session_id.as_ref())
+                .await
+                .ok()
+            {
+                Some(git_root) => ops
+                    .dispatch(&GitCurrentCommitReq { git_root }, None)
+                    .await
+                    .map_err(|e| acp::Error::internal_error().data(e.to_string()))?,
+                None => None,
+            };
             to_ext_response(Ok(result))
         }
         "x.ai/git/checkout_session_head" => {
@@ -732,26 +699,5 @@ pub async fn handle(
             super::to_raw_response(&result)
         }
         _ => Err(acp::Error::method_not_found()),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn omitted_repo_selector_preserves_auto_detection() {
-        assert!(should_auto_detect_git_root(None, None));
-    }
-
-    #[test]
-    fn explicit_repo_selector_disables_fallback() {
-        assert!(!should_auto_detect_git_root(Some("/repo"), None));
-    }
-
-    #[test]
-    fn session_repo_selector_disables_fallback() {
-        let session_id = acp::SessionId::new("missing-session");
-        assert!(!should_auto_detect_git_root(None, Some(&session_id)));
     }
 }

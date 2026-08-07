@@ -17,6 +17,7 @@ pub(super) fn report() -> DiagnosticReport {
                 set_clipboard: crate::diagnostics::TmuxOptionFact::Unavailable,
                 allow_passthrough_support: crate::diagnostics::TmuxSupportFact::Unavailable,
                 allow_passthrough: crate::diagnostics::TmuxOptionFact::Unavailable,
+                color_passthrough: crate::diagnostics::TmuxColorPassthrough::Unknown,
             },
             color: crate::diagnostics::ColorFacts {
                 level: crate::diagnostics::RuntimeFact::Unavailable,
@@ -47,7 +48,7 @@ pub(super) fn report() -> DiagnosticReport {
     report.findings.push(DiagnosticFinding {
         id: SSH_WRAP_ID,
         disposition: FindingDisposition::Recommendation,
-        message: "设置本地 SSH 包装".to_owned(),
+        message: "Use local SSH wrapping".to_owned(),
         remediation: Some(ManualRemediation {
             fix: SSH_WRAP_ONE_OFF.to_owned(),
             config_path: None,
@@ -85,9 +86,9 @@ pub(super) fn request(home: &Path, shell: &str) -> FixRequest {
 fn canonical_and_short_ids_resolve_to_canonical_id() {
     assert_eq!(resolve_fix_id("terminal.ssh-wrap").unwrap(), SSH_WRAP_ID);
     let command = human_fix_command(SSH_WRAP_ID).expect("SSH fix command");
-    assert_eq!(command, "chaos doctor fix ssh-wrap");
+    assert_eq!(command, "grok doctor fix ssh-wrap");
     assert_eq!(
-        resolve_fix_id(command.strip_prefix("chaos doctor fix ").unwrap()).unwrap(),
+        resolve_fix_id(command.strip_prefix("grok doctor fix ").unwrap()).unwrap(),
         SSH_WRAP_ID
     );
     assert!(human_fix_command(DiagnosticId::new("terminal", "unknown")).is_none());
@@ -177,6 +178,11 @@ fn tmux_report(id: DiagnosticId, evidence: TmuxEvidence) -> DiagnosticReport {
             }
             .to_owned(),
         ),
+        color_passthrough: if evidence == TmuxEvidence::ColorPassthrough {
+            crate::diagnostics::TmuxColorPassthrough::Reduced
+        } else {
+            crate::diagnostics::TmuxColorPassthrough::Forwarded
+        },
     };
     report.findings.push(DiagnosticFinding {
         id,
@@ -200,7 +206,7 @@ fn tmux_fix_registry_resolves_every_short_and_canonical_id() {
         assert_eq!(resolve_fix_id(&id.to_string()).unwrap(), id);
         assert_eq!(
             human_fix_command(id).unwrap(),
-            format!("chaos doctor fix {handle}")
+            format!("grok doctor fix {handle}")
         );
     }
 }
@@ -251,6 +257,11 @@ fn tmux_specs_plan_exact_independent_managed_items() {
             TmuxEvidence::ExtendedKeys,
             "set -g extended-keys on",
         ),
+        (
+            TMUX_TRUECOLOR_ID,
+            TmuxEvidence::ColorPassthrough,
+            "set -as terminal-features \",*:RGB\"",
+        ),
     ] {
         let plan = plan_fix(
             tmux_request(temp.path(), id),
@@ -266,8 +277,8 @@ fn tmux_specs_plan_exact_independent_managed_items() {
         );
         assert!(!plan.change().block.contains("terminal.ssh-wrap"));
         let preview = format_fix_preview(&plan);
-        assert!(preview.contains("不会重载或修改正在运行的 tmux server"));
-        assert!(preview.contains("请再次运行 /doctor 以验证生效设置"));
+        assert!(preview.contains("does not reload or modify the live tmux server"));
+        assert!(preview.contains("Run /doctor again to verify the live setting"));
     }
 }
 
@@ -296,11 +307,11 @@ fn safe_absolute_directory_rejects_hostile_home_and_byobu_values() {
 fn reload_instruction_shell_quotes_and_markdown_escapes_paths() {
     assert_eq!(
         reload_instruction(Path::new("/tmp/a b/q'v.conf")),
-        "请用 `tmux source-file '/tmp/a b/q'\\''v.conf'` 重载 tmux，或先 detach 再 reattach。"
+        "Reload tmux with `tmux source-file '/tmp/a b/q'\\''v.conf'`, or restart the tmux server."
     );
     assert_eq!(
         reload_instruction(Path::new("/tmp/a`b.conf")),
-        "请用 ``tmux source-file '/tmp/a`b.conf'`` 重载 tmux，或先 detach 再 reattach。"
+        "Reload tmux with ``tmux source-file '/tmp/a`b.conf'``, or restart the tmux server."
     );
     assert_eq!(
         shell_quote_path(Path::new("/tmp/a`b.conf")).unwrap(),
@@ -308,7 +319,7 @@ fn reload_instruction_shell_quotes_and_markdown_escapes_paths() {
     );
     assert_eq!(
         reload_instruction(Path::new("/tmp/bad\npath")),
-        "请 detach 再 reattach 以启用持久的 tmux 设置。"
+        "Reload your tmux config, or restart the tmux server, to activate the persistent setting."
     );
     assert_eq!(markdown_code_path(Path::new("/tmp/a`b")), "``/tmp/a`b``");
 }
@@ -319,7 +330,7 @@ fn full_preview_safely_renders_backtick_requested_symlink_target_and_backup_path
     use std::os::unix::fs::symlink;
 
     let temp = tempfile::tempdir().unwrap();
-    let root = dunce::canonicalize(temp.path()).unwrap();
+    let root = temp.path().canonicalize().unwrap();
     let home = root.join("home`dir");
     let target_dir = root.join("target`dir");
     std::fs::create_dir_all(&home).unwrap();
@@ -334,9 +345,9 @@ fn full_preview_safely_renders_backtick_requested_symlink_target_and_backup_path
     )
     .unwrap();
     let preview = format_fix_preview(&plan);
-    assert!(preview.contains("文件：``"), "{preview}");
-    assert!(preview.contains("实际文件：``"), "{preview}");
-    assert!(preview.contains("备份将保存到：``"), "{preview}");
+    assert!(preview.contains("File: ``"), "{preview}");
+    assert!(preview.contains("Actual file: ``"), "{preview}");
+    assert!(preview.contains("Backup will be saved to: ``"), "{preview}");
     assert!(preview.contains("home`dir/.tmux.conf"), "{preview}");
     assert!(preview.contains("tmux`target.conf"), "{preview}");
 }
@@ -407,6 +418,11 @@ fn tmux_managed_items_coexist_and_each_apply_is_one_transaction() {
             TmuxEvidence::ExtendedKeys,
             "set -g extended-keys on",
         ),
+        (
+            TMUX_TRUECOLOR_ID,
+            TmuxEvidence::ColorPassthrough,
+            "set -as terminal-features \",*:RGB\"",
+        ),
     ] {
         let plan = plan_fix(
             tmux_request(temp.path(), id),
@@ -417,12 +433,17 @@ fn tmux_managed_items_coexist_and_each_apply_is_one_transaction() {
         let outcome = apply_fix(plan).unwrap();
         assert_eq!(outcome.activation(), FixActivation::RequiresReload);
         assert_eq!(outcome.changed_path(), path);
-        assert!(format_fix_success(&outcome).contains("请再次运行 /doctor"));
+        assert!(format_fix_success(&outcome).contains("Run /doctor again"));
         assert!(std::fs::read_to_string(&path).unwrap().contains(line));
     }
     let content = std::fs::read_to_string(&path).unwrap();
-    assert_eq!(content.matches("# >>> chaos doctor >>>").count(), 1);
-    for id in [TMUX_CLIPBOARD_ID, DCS_PASSTHROUGH_ID, TMUX_EXTENDED_KEYS_ID] {
+    assert_eq!(content.matches("# >>> grok doctor >>>").count(), 1);
+    for id in [
+        TMUX_CLIPBOARD_ID,
+        DCS_PASSTHROUGH_ID,
+        TMUX_EXTENDED_KEYS_ID,
+        TMUX_TRUECOLOR_ID,
+    ] {
         assert_eq!(content.matches(&format!("# >>> {id} >>>")).count(), 1);
     }
 }
@@ -552,7 +573,7 @@ fn conflicting_direct_form_after_managed_block_fails_persistent_verification() {
         std::fs::write(
             &path,
             format!(
-                "# >>> chaos doctor >>>\n# >>> terminal.tmux-clipboard >>>\nset -g set-clipboard on\n# <<< terminal.tmux-clipboard <<<\n# <<< chaos doctor <<<\n{conflict}\n"
+                "# >>> grok doctor >>>\n# >>> terminal.tmux-clipboard >>>\nset -g set-clipboard on\n# <<< terminal.tmux-clipboard <<<\n# <<< grok doctor <<<\n{conflict}\n"
             ),
         )
         .unwrap();
@@ -569,8 +590,8 @@ fn healthy_direct_does_not_suppress_repair_of_noncanonical_managed_item() {
     let path = temp.path().join(".tmux.conf");
     let report = tmux_report(TMUX_CLIPBOARD_ID, TmuxEvidence::Clipboard);
     for content in [
-        "set -g set-clipboard on\n# >>> chaos doctor >>>\n# >>> terminal.tmux-clipboard >>>\nset -g set-clipboard off\n# <<< terminal.tmux-clipboard <<<\n# <<< chaos doctor <<<\n",
-        "# >>> chaos doctor >>>\n# >>> terminal.tmux-clipboard >>>\nset -g set-clipboard off\n# <<< terminal.tmux-clipboard <<<\n# <<< chaos doctor <<<\nset -g set-clipboard on\n",
+        "set -g set-clipboard on\n# >>> grok doctor >>>\n# >>> terminal.tmux-clipboard >>>\nset -g set-clipboard off\n# <<< terminal.tmux-clipboard <<<\n# <<< grok doctor <<<\n",
+        "# >>> grok doctor >>>\n# >>> terminal.tmux-clipboard >>>\nset -g set-clipboard off\n# <<< terminal.tmux-clipboard <<<\n# <<< grok doctor <<<\nset -g set-clipboard on\n",
     ] {
         std::fs::write(&path, content).unwrap();
         let plan = plan_fix(
@@ -579,7 +600,7 @@ fn healthy_direct_does_not_suppress_repair_of_noncanonical_managed_item() {
             &tmux_terminal(false),
         )
         .unwrap();
-        assert!(format_fix_preview(&plan).contains("将添加的文本：\n"));
+        assert!(format_fix_preview(&plan).contains("Text to add:\n"));
         let outcome = apply_fix(plan).unwrap();
         assert_eq!(outcome.status(), FixStatus::Applied);
         assert!(
@@ -663,8 +684,8 @@ fn tmux_stale_plan_and_idempotence_reuse_managed_writer_safety() {
     )
     .unwrap();
     let preview = format_fix_preview(&plan);
-    assert!(preview.contains("将添加的文本：无"), "{preview}");
-    assert!(!preview.contains("备份将保存"), "{preview}");
+    assert!(preview.contains("Text to add: None"), "{preview}");
+    assert!(!preview.contains("Backup will be saved"), "{preview}");
     let outcome = apply_fix(plan).unwrap();
     assert_eq!(outcome.status(), FixStatus::AlreadyConfigured);
     assert!(verify_persistent_fix(&outcome));
@@ -692,12 +713,12 @@ fn tmux_stale_plan_and_idempotence_reuse_managed_writer_safety() {
 fn bash_zsh_and_fish_plans_use_exact_paths_and_aliases() {
     let temp = tempfile::tempdir().unwrap();
     for (shell, relative, alias) in [
-        ("/bin/bash", ".bashrc", "alias ssh='chaos wrap ssh'"),
-        ("/bin/zsh", ".zshrc", "alias ssh='chaos wrap ssh'"),
+        ("/bin/bash", ".bashrc", "alias ssh='grok wrap ssh'"),
+        ("/bin/zsh", ".zshrc", "alias ssh='grok wrap ssh'"),
         (
             "/usr/local/bin/fish",
             ".config/fish/config.fish",
-            "alias ssh 'chaos wrap ssh'",
+            "alias ssh 'grok wrap ssh'",
         ),
     ] {
         let plan = plan_fix(request(temp.path(), shell), &report(), &terminal()).unwrap();
@@ -706,7 +727,7 @@ fn bash_zsh_and_fish_plans_use_exact_paths_and_aliases() {
         assert_eq!(
             plan.change().block,
             format!(
-                "# >>> chaos doctor >>>\n# >>> terminal.ssh-wrap >>>\n{alias}\n# <<< terminal.ssh-wrap <<<\n# <<< chaos doctor <<<"
+                "# >>> grok doctor >>>\n# >>> terminal.ssh-wrap >>>\n{alias}\n# <<< terminal.ssh-wrap <<<\n# <<< grok doctor <<<"
             )
         );
         assert!(
@@ -922,7 +943,7 @@ fn comments_and_managed_alias_do_not_create_false_conflicts() {
     let path = temp.path().join(".zshrc");
     std::fs::write(
         &path,
-        "# alias ssh='ssh -A'\n# >>> chaos doctor >>>\n# >>> terminal.ssh-wrap >>>\nalias ssh='chaos wrap ssh'\n# <<< terminal.ssh-wrap <<<\n# <<< chaos doctor <<<\n",
+        "# alias ssh='ssh -A'\n# >>> grok doctor >>>\n# >>> terminal.ssh-wrap >>>\nalias ssh='grok wrap ssh'\n# <<< terminal.ssh-wrap <<<\n# <<< grok doctor <<<\n",
     )
     .unwrap();
     let plan = plan_fix(request(temp.path(), "/bin/zsh"), &report(), &terminal()).unwrap();
@@ -936,11 +957,11 @@ fn managed_alias_with_later_unmanaged_conflict_is_not_configured() {
     let cases = [
         (
             ShellKind::Bash,
-            "# >>> chaos doctor >>>\n# >>> terminal.ssh-wrap >>>\nalias ssh='chaos wrap ssh'\n# <<< terminal.ssh-wrap <<<\n# <<< chaos doctor <<<\nalias ssh='ssh -A'\n",
+            "# >>> grok doctor >>>\n# >>> terminal.ssh-wrap >>>\nalias ssh='grok wrap ssh'\n# <<< terminal.ssh-wrap <<<\n# <<< grok doctor <<<\nalias ssh='ssh -A'\n",
         ),
         (
             ShellKind::Fish,
-            "# >>> chaos doctor >>>\n# >>> terminal.ssh-wrap >>>\nalias ssh 'chaos wrap ssh'\n# <<< terminal.ssh-wrap <<<\n# <<< chaos doctor <<<\nfunction ssh\n  command ssh -A $argv\nend\n",
+            "# >>> grok doctor >>>\n# >>> terminal.ssh-wrap >>>\nalias ssh 'grok wrap ssh'\n# <<< terminal.ssh-wrap <<<\n# <<< grok doctor <<<\nfunction ssh\n  command ssh -A $argv\nend\n",
         ),
     ];
     for (shell, content) in cases {
@@ -1041,10 +1062,9 @@ fn configured_report_reaches_pass_state_only_for_exact_managed_alias() {
 fn shell_aliases_expand_to_exact_argv_and_bypass_is_explicit() {
     let temp = tempfile::tempdir().unwrap();
     let capture = temp.path().join("capture");
-    // Fake Chaos binary on PATH so `alias ssh='chaos wrap ssh'` expands correctly.
-    let chaos = temp.path().join("chaos");
+    let grok = temp.path().join("grok");
     std::fs::write(
-        &chaos,
+        &grok,
         format!(
             "#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\n",
             capture.display()
@@ -1052,11 +1072,11 @@ fn shell_aliases_expand_to_exact_argv_and_bypass_is_explicit() {
     )
     .unwrap();
     use std::os::unix::fs::PermissionsExt as _;
-    std::fs::set_permissions(&chaos, std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::set_permissions(&grok, std::fs::Permissions::from_mode(0o755)).unwrap();
 
     if let Some(bash) = find_on_path("bash") {
         let rc = temp.path().join("bashrc");
-        std::fs::write(&rc, "alias ssh='chaos wrap ssh'\n").unwrap();
+        std::fs::write(&rc, "alias ssh='grok wrap ssh'\n").unwrap();
         let command = format!(
             "source '{}'; source '{}'; eval 'ssh -p 2222 host'",
             rc.display(),
@@ -1087,7 +1107,7 @@ fn shell_aliases_expand_to_exact_argv_and_bypass_is_explicit() {
     }
     if let Some(zsh) = find_on_path("zsh") {
         let rc = temp.path().join("zshrc");
-        std::fs::write(&rc, "alias ssh='chaos wrap ssh'\n").unwrap();
+        std::fs::write(&rc, "alias ssh='grok wrap ssh'\n").unwrap();
         let command = format!(
             "source '{}'; source '{}'; eval 'ssh -p 2222 host'",
             rc.display(),
@@ -1127,7 +1147,7 @@ fn shell_aliases_expand_to_exact_argv_and_bypass_is_explicit() {
     };
     let mut shell = std::process::Command::new(bash);
     shell
-        .args(["-ic", "alias ssh='chaos wrap ssh'; command ssh host"])
+        .args(["-ic", "alias ssh='grok wrap ssh'; command ssh host"])
         .env("CAPTURE", &capture)
         .env(
             "PATH",
@@ -1149,18 +1169,18 @@ fn shell_aliases_expand_to_exact_argv_and_bypass_is_explicit() {
 
     if let Some(fish) = find_on_path("fish") {
         let fish_capture = temp.path().join("fish-capture");
-        let fish_chaos = temp.path().join("fish-chaos");
+        let fish_grok = temp.path().join("fish-grok");
         std::fs::write(
-            &fish_chaos,
+            &fish_grok,
             format!(
                 "#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\n",
                 fish_capture.display()
             ),
         )
         .unwrap();
-        std::fs::set_permissions(&fish_chaos, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::set_permissions(&fish_grok, std::fs::Permissions::from_mode(0o755)).unwrap();
         let rc = temp.path().join("config.fish");
-        std::fs::write(&rc, "alias ssh 'fish-chaos wrap ssh'\n").unwrap();
+        std::fs::write(&rc, "alias ssh 'fish-grok wrap ssh'\n").unwrap();
         let command = format!(
             "source '{}'; source '{}'; ssh -p 2222 host; env | string match -rq '^ssh='; and exit 9; or exit 0",
             rc.display(),
@@ -1190,4 +1210,46 @@ fn shell_aliases_expand_to_exact_argv_and_bypass_is_explicit() {
     } else {
         eprintln!("fish unavailable; fish runtime alias test skipped explicitly");
     }
+}
+
+/// An accumulating remedy is additive, so a user's own `terminal-features`
+/// lines are not a conflict: tmux applies Grok's managed block last and the
+/// features merge. A direct-assignment remedy would refuse to touch the file.
+#[test]
+fn tmux_truecolor_fix_appends_alongside_existing_terminal_features() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join(".tmux.conf");
+    std::fs::write(
+        &path,
+        "set -g mouse on\nset -as terminal-features \",xterm-256color:RGB\"\n",
+    )
+    .unwrap();
+
+    let plan = plan_fix(
+        tmux_request(temp.path(), TMUX_TRUECOLOR_ID),
+        &tmux_report(TMUX_TRUECOLOR_ID, TmuxEvidence::ColorPassthrough),
+        &tmux_terminal(false),
+    )
+    .unwrap();
+    let outcome = apply_fix(plan).unwrap();
+
+    assert_eq!(outcome.status(), FixStatus::Applied);
+    let content = std::fs::read_to_string(&path).unwrap();
+    assert!(content.contains("set -as terminal-features \",xterm-256color:RGB\""));
+    assert!(content.contains("set -as terminal-features \",*:RGB\""));
+}
+
+#[test]
+fn tmux_truecolor_fix_requires_a_reducing_client() {
+    let temp = tempfile::tempdir().unwrap();
+    let report = tmux_report(TMUX_TRUECOLOR_ID, TmuxEvidence::Clipboard);
+
+    assert!(matches!(
+        plan_fix(
+            tmux_request(temp.path(), TMUX_TRUECOLOR_ID),
+            &report,
+            &tmux_terminal(false)
+        ),
+        Err(FixError::TmuxNotApplicable)
+    ));
 }

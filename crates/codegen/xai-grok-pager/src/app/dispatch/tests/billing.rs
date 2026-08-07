@@ -145,9 +145,9 @@ fn upsell_non_max_shows_qa_with_two_options() {
     );
     let q = &agent_qv(&app).questions[0];
     assert_eq!(q.options.len(), 2);
-    assert_eq!(q.options[0].label, "调整 Provider 配额");
+    assert_eq!(q.options[0].label, "Upgrade tier");
     assert_eq!(q.options[0].id.as_deref(), Some(UPSELL_URL_UPGRADE));
-    assert_eq!(q.options[1].label, "按量付费");
+    assert_eq!(q.options[1].label, "Pay as you go");
     assert_eq!(q.options[1].id.as_deref(), Some(UPSELL_URL_PAYG));
 }
 
@@ -160,7 +160,7 @@ fn upsell_non_max_payg_on_shows_increase_label() {
     );
     let q = &agent_qv(&app).questions[0];
     assert_eq!(q.options.len(), 2);
-    assert_eq!(q.options[1].label, "提高限额");
+    assert_eq!(q.options[1].label, "Increase limit");
 }
 
 #[test]
@@ -172,8 +172,8 @@ fn upsell_non_max_qa_heading_is_credit_limit_when_payg_off() {
     );
     let heading = &agent_qv(&app).questions[0].question;
     assert!(
-        heading.contains("额度上限"),
-        "expected '额度上限' in heading, got: {heading}"
+        heading.contains("credit limit"),
+        "expected 'credit limit' in heading, got: {heading}"
     );
 }
 
@@ -186,14 +186,13 @@ fn upsell_non_max_qa_heading_is_spending_cap_when_payg_on() {
     );
     let heading = &agent_qv(&app).questions[0].question;
     assert!(
-        heading.contains("消费上限"),
-        "expected '消费上限' in heading, got: {heading}"
+        heading.contains("spending cap"),
+        "expected 'spending cap' in heading, got: {heading}"
     );
 }
 
 #[test]
-fn upsell_non_max_upgrade_url_is_empty_for_byok() {
-    // Chaos is BYOK: no SuperGrok / grok.com upgrade links.
+fn upsell_non_max_upgrade_url_is_supergrok() {
     let mut app = test_app_with_agent();
     open_upsell_qa(
         &mut app,
@@ -203,14 +202,12 @@ fn upsell_non_max_upgrade_url_is_empty_for_byok() {
         .id
         .as_deref()
         .unwrap();
-    assert_eq!(url, UPSELL_URL_UPGRADE);
-    assert!(url.is_empty(), "got: {url}");
-    assert!(!url.contains("supergrok"), "got: {url}");
-    assert!(!url.contains("grok.com"), "got: {url}");
+    assert!(url.contains("supergrok"), "got: {url}");
+    assert!(url.contains("referrer=grok-build"), "got: {url}");
 }
 
 #[test]
-fn upsell_non_max_payg_url_is_empty_for_byok() {
+fn upsell_non_max_payg_url_is_usage() {
     let mut app = test_app_with_agent();
     open_upsell_qa(
         &mut app,
@@ -220,9 +217,7 @@ fn upsell_non_max_payg_url_is_empty_for_byok() {
         .id
         .as_deref()
         .unwrap();
-    assert_eq!(url, UPSELL_URL_PAYG);
-    assert!(url.is_empty(), "got: {url}");
-    assert!(!url.contains("grok.com"), "got: {url}");
+    assert!(url.contains("_s=usage"), "got: {url}");
 }
 
 #[test]
@@ -234,7 +229,7 @@ fn upsell_non_max_payg_on_description_mentions_spending_cap() {
     );
     assert_eq!(
         agent_qv(&app).questions[0].options[1].description,
-        "提高按量付费消费上限"
+        "Raise your pay-as-you-go spending cap"
     );
 }
 
@@ -247,7 +242,7 @@ fn upsell_non_max_payg_off_description_mentions_on_demand() {
     );
     assert_eq!(
         agent_qv(&app).questions[0].options[1].description,
-        "启用按量付费额度以便按需使用"
+        "Enable pay-as-you-go credits for on-demand usage"
     );
 }
 
@@ -256,13 +251,16 @@ fn upsell_non_max_unified_shows_buy_credits() {
     let mut app = test_app_with_agent();
     open_upsell_qa(&mut app, CreditLimitUpsellMode::UnifiedCredits);
     let q = &agent_qv(&app).questions[0];
-    assert!(q.question.contains("本周用量上限"));
+    assert!(q.question.contains("weekly limit"));
     assert_eq!(
         q.options[0].description,
-        "请在 Provider 控制台提高配额或更换模型"
+        "Upgrade to a higher tier for more usage"
     );
-    assert_eq!(q.options[1].label, "购买额度");
-    assert_eq!(q.options[1].description, "购买额度以继续使用 Chaos");
+    assert_eq!(q.options[1].label, "Buy more credits");
+    assert_eq!(
+        q.options[1].description,
+        "Purchase credits to keep using Grok Build"
+    );
 }
 
 #[test]
@@ -275,7 +273,7 @@ fn upsell_max_unified_card_mentions_purchasing() {
         blk.action,
         crate::scrollback::blocks::CreditLimitCardAction::PurchaseCredits
     );
-    assert!(blk.heading.contains("本周用量上限"));
+    assert!(blk.heading.contains("weekly limit"));
 }
 
 #[test]
@@ -413,7 +411,7 @@ fn upsell_max_tier_pushes_scrollback_card_payg_off() {
     );
     assert_eq!(agent_scrollback_len(&app), before + 1);
     let blk = last_credit_limit_block(&app, before);
-    assert!(blk.heading.contains("额度上限"));
+    assert!(blk.heading.contains("credit limit"));
     assert_eq!(
         blk.action,
         crate::scrollback::blocks::CreditLimitCardAction::EnablePayg
@@ -432,7 +430,7 @@ fn upsell_max_tier_pushes_scrollback_card_payg_on() {
     assert!(app.agents.get(&AgentId(0)).unwrap().question_view.is_none());
     assert_eq!(agent_scrollback_len(&app), before + 1);
     let blk = last_credit_limit_block(&app, before);
-    assert!(blk.heading.contains("消费上限"));
+    assert!(blk.heading.contains("spending cap"));
     assert_eq!(
         blk.action,
         crate::scrollback::blocks::CreditLimitCardAction::IncreasePaygLimit
@@ -508,8 +506,6 @@ fn complete_session_usage(
 ) -> Vec<Effect> {
     dispatch(
         Action::TaskComplete(TaskResult::SessionUsageComplete {
-            for_overlay: false,
-            overlay_generation: None,
             agent_id: AgentId(0),
             session_id: session_id.to_string().into(),
             usage: Box::new(usage),
@@ -521,183 +517,12 @@ fn complete_session_usage(
 fn fail_session_usage(app: &mut AppView, session_id: &str, error: &str) -> Vec<Effect> {
     dispatch(
         Action::TaskComplete(TaskResult::SessionUsageFailed {
-            for_overlay: false,
-            overlay_generation: None,
             agent_id: AgentId(0),
             session_id: session_id.to_string().into(),
             error: error.into(),
         }),
         app,
     )
-}
-
-// ── Token-chip usage overlay ────────────────────────────────────────
-
-/// Deliver a ledger to the overlay (`for_overlay: true`).
-fn complete_overlay_usage(
-    app: &mut AppView,
-    session_id: &str,
-    usage: xai_grok_shell::extensions::notification::PromptUsage,
-) -> Vec<Effect> {
-    let generation = app.agents[&AgentId(0)].usage_detail_generation;
-    dispatch(
-        Action::TaskComplete(TaskResult::SessionUsageComplete {
-            for_overlay: true,
-            overlay_generation: Some(generation),
-            agent_id: AgentId(0),
-            session_id: session_id.to_string().into(),
-            usage: Box::new(usage),
-        }),
-        app,
-    )
-}
-
-fn agent_usage_detail(app: &AppView) -> Option<&crate::views::usage_detail::UsageDetail> {
-    app.agents.get(&AgentId(0)).unwrap().usage_detail.as_ref()
-}
-
-/// Clicking the chip opens the overlay in `Loading` immediately (so the click
-/// is acknowledged on the next frame) and schedules overlay-routed fetches for
-/// both the current session and the all-time aggregate.
-#[test]
-fn show_usage_detail_opens_overlay_and_fetches() {
-    use crate::views::usage_detail::UsageDetail;
-
-    let mut app = test_app_with_agent();
-    let effects = dispatch(Action::ShowUsageDetail, &mut app);
-    assert!(
-        effects.iter().any(|e| matches!(
-            e,
-            Effect::FetchSessionUsage { agent_id, for_overlay: true, .. } if *agent_id == AgentId(0)
-        )),
-        "expected an overlay-routed session usage fetch, got {effects:?}"
-    );
-    assert!(
-        effects.iter().any(|e| matches!(
-            e,
-            Effect::FetchAggregateUsage { agent_id, for_overlay: true, .. } if *agent_id == AgentId(0)
-        )),
-        "expected an overlay-routed aggregate usage fetch, got {effects:?}"
-    );
-    assert_eq!(agent_usage_detail(&app), Some(&UsageDetail::Loading));
-
-    let before = agent_scrollback_len(&app);
-    complete_overlay_usage(
-        &mut app,
-        "test-session",
-        xai_grok_shell::extensions::notification::PromptUsage::default(),
-    );
-    assert!(matches!(
-        agent_usage_detail(&app),
-        Some(UsageDetail::Ready { .. })
-    ));
-    assert_eq!(
-        agent_scrollback_len(&app),
-        before,
-        "the overlay path must not also commit a /usage scrollback block"
-    );
-}
-
-/// A second dispatch toggles the overlay shut rather than stacking a fetch.
-#[test]
-fn show_usage_detail_toggles_closed() {
-    let mut app = test_app_with_agent();
-    dispatch(Action::ShowUsageDetail, &mut app);
-    let effects = dispatch(Action::ShowUsageDetail, &mut app);
-    assert!(effects.is_empty());
-    assert_eq!(agent_usage_detail(&app), None);
-}
-
-/// A ledger that lands after the user dismissed the overlay is dropped — a
-/// late result must never re-open a popup the user closed.
-#[test]
-fn late_usage_result_does_not_reopen_closed_overlay() {
-    let mut app = test_app_with_agent();
-    dispatch(Action::ShowUsageDetail, &mut app);
-    app.agents
-        .get_mut(&AgentId(0))
-        .unwrap()
-        .close_usage_detail();
-
-    let before = agent_scrollback_len(&app);
-    complete_overlay_usage(
-        &mut app,
-        "test-session",
-        xai_grok_shell::extensions::notification::PromptUsage::default(),
-    );
-    assert_eq!(agent_usage_detail(&app), None);
-    assert_eq!(agent_scrollback_len(&app), before);
-}
-
-/// Closing and reopening creates a new request generation. A result from the
-/// first overlay must not populate the second overlay merely because both
-/// target the same agent and session.
-#[test]
-fn stale_usage_result_does_not_pollute_reopened_overlay() {
-    let mut app = test_app_with_agent();
-    dispatch(Action::ShowUsageDetail, &mut app);
-    let stale_generation = app.agents[&AgentId(0)].usage_detail_generation;
-    dispatch(Action::ShowUsageDetail, &mut app); // close
-    dispatch(Action::ShowUsageDetail, &mut app); // reopen
-    let current_generation = app.agents[&AgentId(0)].usage_detail_generation;
-    assert_ne!(stale_generation, current_generation);
-
-    dispatch(
-        Action::TaskComplete(TaskResult::SessionUsageComplete {
-            for_overlay: true,
-            overlay_generation: Some(stale_generation),
-            agent_id: AgentId(0),
-            session_id: "test-session".to_string().into(),
-            usage: Box::new(xai_grok_shell::extensions::notification::PromptUsage::default()),
-        }),
-        &mut app,
-    );
-    assert_eq!(
-        agent_usage_detail(&app),
-        Some(&crate::views::usage_detail::UsageDetail::Loading),
-        "stale result must leave the newly opened overlay untouched"
-    );
-}
-
-/// An agent view can exist before the ACP session is bound. In that state the
-/// aggregate request still works, but the absent session side is an explicit
-/// unavailable state rather than a spinner that can never resolve.
-#[test]
-fn usage_overlay_without_session_marks_session_side_unavailable() {
-    let mut app = test_app_with_agent();
-    app.agents.get_mut(&AgentId(0)).unwrap().session.session_id = None;
-
-    let effects = dispatch(Action::ShowUsageDetail, &mut app);
-    assert_eq!(effects.len(), 1);
-    assert!(matches!(
-        effects.as_slice(),
-        [Effect::FetchAggregateUsage {
-            for_overlay: true,
-            ..
-        }]
-    ));
-    assert!(matches!(
-        agent_usage_detail(&app),
-        Some(crate::views::usage_detail::UsageDetail::Ready {
-            session: None,
-            aggregate: None,
-            partial_failure: Some(note),
-        }) if note.contains("会话尚未开始")
-    ));
-}
-
-/// `/usage` keeps its scrollback behaviour — the overlay must not hijack it.
-#[test]
-fn plain_usage_still_commits_a_scrollback_block() {
-    let mut app = test_app_with_agent();
-    let before = agent_scrollback_len(&app);
-    complete_session_usage(
-        &mut app,
-        "test-session",
-        xai_grok_shell::extensions::notification::PromptUsage::default(),
-    );
-    assert_eq!(agent_scrollback_len(&app), before + 1);
-    assert_eq!(agent_usage_detail(&app), None);
 }
 
 #[test]
@@ -750,17 +575,9 @@ fn manage_billing_gates_on_consumer_billing_surface() {
     // SAFETY: serialized via `serial_test` so no other test races the env var.
     unsafe { std::env::set_var("GROK_TEST_OPEN_URL_FILE", &out) };
     let mut app = test_app_with_agent();
-    let before = agent_scrollback_len(&app);
     dispatch(Action::ManageBilling, &mut app);
-    // Chaos is BYOK: manage-billing opens an empty URL (no grok.com console).
-    // Empty scheme is rejected silently — no browser open, no scrollback spam.
     let opened = std::fs::read_to_string(&out).unwrap_or_default();
-    assert!(
-        opened.is_empty(),
-        "must not open a billing URL; got: {opened}"
-    );
-    assert!(!opened.contains("grok.com"), "got: {opened}");
-    assert_eq!(agent_scrollback_len(&app), before);
+    assert!(opened.contains("grok.com/?_s=usage"), "got: {opened}");
     let _ = std::fs::remove_file(&out);
 
     // Non-consumer: silent no-op (slash command never offers manage).
@@ -769,7 +586,6 @@ fn manage_billing_gates_on_consumer_billing_surface() {
     let before = agent_scrollback_len(&app);
     assert!(dispatch(Action::ManageBilling, &mut app).is_empty());
     assert_eq!(agent_scrollback_len(&app), before);
-    unsafe { std::env::remove_var("GROK_TEST_OPEN_URL_FILE") };
 }
 
 #[test]
@@ -791,7 +607,7 @@ fn session_usage_complete_pushes_block_and_chains_billing() {
     assert_eq!(agent_scrollback_len(&app), before + 1);
     let text = last_system_text(&app, AgentId(0));
     assert!(
-        (text.contains("Session usage") || text.contains("会话用量")) && text.contains("$0.5000"),
+        text.contains("Session usage") && text.contains("$0.5000"),
         "{text}"
     );
     assert!(is_nonsilent_billing(&effects));
@@ -1191,16 +1007,16 @@ fn free_usage_upsell_shows_two_options_with_exact_labels() {
         )
     ));
     let q = &qv.questions[0];
-    assert_eq!(q.question, "当前免费额度已用尽。");
+    assert_eq!(q.question, "You hit your free usage limit.");
     let expected = [
         (
-            "配置 Provider",
-            "设置模型、接口地址与 API 密钥（/provider）",
+            "Upgrade to SuperGrok",
+            "For everyday coding and productivity tasks",
             Some(UPSELL_URL_UPGRADE),
         ),
         (
-            "查看用量说明",
-            "额度与限流由你的 Provider 决定，与 Chaos 订阅无关。",
+            "Upgrade to SuperGrok Heavy",
+            "Get the most out of Grok Build. Highest usage limits.",
             Some(UPSELL_URL_UPGRADE),
         ),
     ];
@@ -1300,7 +1116,7 @@ fn free_usage_translate_local_submit_maps_options() {
 
 // ── Restricted-command upsell tests ─────────────────────────────────
 
-/// Submitting a tier-restricted command opens the two-option Provider
+/// Submitting a tier-restricted command opens the two-option SuperGrok
 /// upsell and neither runs the command nor leaks the text to the model.
 #[test]
 fn restricted_command_submit_opens_two_option_upsell() {
@@ -1334,11 +1150,11 @@ fn restricted_command_submit_opens_two_option_upsell() {
         )
     ));
     let q = &qv.questions[0];
-    assert_eq!(q.question, "此功能需要可用的 Provider 配置。");
+    assert_eq!(q.question, "Unlock all features with SuperGrok.");
     assert_eq!(q.options.len(), 2);
-    assert_eq!(q.options[0].label, "配置 Provider");
+    assert_eq!(q.options[0].label, "Upgrade to SuperGrok");
     assert_eq!(q.options[0].id.as_deref(), Some(UPSELL_URL_UPGRADE));
-    assert_eq!(q.options[1].label, "查看用量说明");
+    assert_eq!(q.options[1].label, "Upgrade to SuperGrok Heavy");
     assert_eq!(q.options[1].id.as_deref(), Some(UPSELL_URL_UPGRADE));
 }
 
@@ -1429,27 +1245,10 @@ fn unknown_non_restricted_command_still_passes_through() {
 
 // ── Browser-unavailable URL fallback ────────────────────────────────
 
-/// Chaos BYOK keeps upsell URLs empty; empty OpenUrl is scheme-rejected
-/// and must not push scrollback spam.
-#[test]
-fn empty_upsell_url_open_is_silent_noop() {
-    let mut app = test_app_with_agent();
-    let before = agent_scrollback_len(&app);
-    assert!(UPSELL_URL_UPGRADE.is_empty());
-    assert!(UPSELL_URL_PAYG.is_empty());
-    let effects = dispatch(Action::OpenUrl(UPSELL_URL_UPGRADE.to_string()), &mut app);
-    assert!(effects.is_empty());
-    assert_eq!(
-        agent_scrollback_len(&app),
-        before,
-        "empty URL must not push fallback scrollback"
-    );
-}
-
 /// When the OS browser opener cannot run (simulated via a broken
-/// `GROK_TEST_OPEN_URL_FILE` seam), `Action::OpenUrl` for a non-empty URL
+/// `GROK_TEST_OPEN_URL_FILE` seam), `Action::OpenUrl` for a billing CTA
 /// must push a scrollback system message that includes the full URL —
-/// the headless-VM fix for silent open no-ops.
+/// the headless-VM fix for silent Upgrade / Buy-more-credits no-ops.
 #[serial_test::serial(GROK_TEST_OPEN_URL_FILE)]
 #[test]
 fn open_url_shows_manual_url_when_browser_unavailable() {
@@ -1464,8 +1263,7 @@ fn open_url_shows_manual_url_when_browser_unavailable() {
 
     let mut app = test_app_with_agent();
     let before = agent_scrollback_len(&app);
-    // Use a stand-in URL — Chaos production upsell URLs are empty.
-    let url = "https://example.com/billing";
+    let url = UPSELL_URL_UPGRADE;
     let effects = dispatch(Action::OpenUrl(url.to_string()), &mut app);
     assert!(effects.is_empty());
 
@@ -1475,13 +1273,9 @@ fn open_url_shows_manual_url_when_browser_unavailable() {
         "must push a system message with the URL"
     );
     let text = last_system_text(&app, AgentId(0));
-    assert!(
-        text.contains("Could not open a browser"),
-        "fallback copy missing: {text}"
-    );
-    assert!(
-        text.contains(url),
-        "full URL must be visible for copy: {text}"
+    assert_eq!(
+        text,
+        crate::app::link_opener::browser_unavailable_message(url)
     );
     let toast = app.agents[&AgentId(0)]
         .toast
@@ -1505,8 +1299,7 @@ fn open_url_does_not_show_fallback_when_opener_succeeds() {
 
     let mut app = test_app_with_agent();
     let before = agent_scrollback_len(&app);
-    // Use a stand-in URL — Chaos production upsell URLs are empty.
-    let url = "https://example.com/usage";
+    let url = UPSELL_URL_PAYG;
     let _ = dispatch(Action::OpenUrl(url.to_string()), &mut app);
 
     assert_eq!(
@@ -1525,13 +1318,80 @@ fn open_url_does_not_show_fallback_when_opener_succeeds() {
     let _ = std::fs::remove_file(&url_file);
 }
 
-/// Credit-limit upsell Q&A submit still routes through OpenUrl, but Chaos
-/// BYOK leaves the option URL empty so the open is a silent no-op.
+/// Welcome has no scrollback: browser-unavailable OpenUrl must put a
+/// single-line toast that includes the full URL (no `\n` — the welcome
+/// painter is one row). Privacy-banner Terms/Policy clicks hit this path.
+#[serial_test::serial(GROK_TEST_OPEN_URL_FILE)]
 #[test]
-fn credit_limit_upsell_submit_empty_url_is_silent() {
+fn open_url_welcome_toasts_single_line_url_when_browser_unavailable() {
+    let bad = std::env::temp_dir().join(format!(
+        "grok-open-url-welcome-missing-{}/out.txt",
+        std::process::id()
+    ));
+    // SAFETY: serialized via `serial_test` so no other test races the env var.
+    unsafe { std::env::set_var("GROK_TEST_OPEN_URL_FILE", &bad) };
+
+    let mut app = test_app();
+    assert!(
+        matches!(app.active_view, ActiveView::Welcome),
+        "fixture must start on welcome"
+    );
+
+    use crate::app::link_opener::browser_unavailable_line;
+
+    let terms = crate::views::privacy_banner::PRIVACY_BANNER_TERMS_URL;
+    let effects = dispatch(Action::OpenUrl(terms.to_string()), &mut app);
+    assert!(effects.is_empty());
+    let toast = app
+        .welcome_toast
+        .as_ref()
+        .map(|(m, _)| m.as_str())
+        .unwrap_or("");
+    // Structure only: clipboard delivery varies by host, so do not lock the
+    // exact "copied" phrase here (constructor unit tests cover both arms).
+    assert!(toast.starts_with(terms), "{toast}");
+    assert!(!toast.contains('\n'), "{toast}");
+    assert!(
+        toast == browser_unavailable_line(terms, true)
+            || toast == browser_unavailable_line(terms, false),
+        "welcome toast must match a delivery-honest line form: {toast}"
+    );
+
+    // Policy URL is shorter than terms (compile-time constants); second toast
+    // replaces the first in welcome toast state.
+    let policy = crate::views::privacy_banner::PRIVACY_BANNER_POLICY_URL;
+    let _ = dispatch(Action::OpenUrl(policy.to_string()), &mut app);
+    let toast = app
+        .welcome_toast
+        .as_ref()
+        .map(|(m, _)| m.as_str())
+        .unwrap_or("");
+    assert!(toast.starts_with(policy), "{toast}");
+    assert!(
+        toast == browser_unavailable_line(policy, true)
+            || toast == browser_unavailable_line(policy, false),
+        "second welcome toast must match a delivery-honest line form: {toast}"
+    );
+
+    // SAFETY: serialized via `serial_test`; restore the env for other tests.
+    unsafe { std::env::remove_var("GROK_TEST_OPEN_URL_FILE") };
+}
+
+/// Credit-limit upsell Q&A submit routes through OpenUrl; when the browser
+/// is unavailable the full option URL must land in scrollback.
+#[serial_test::serial(GROK_TEST_OPEN_URL_FILE)]
+#[test]
+fn credit_limit_upsell_submit_shows_url_when_browser_unavailable() {
     use crate::app::agent_view::translate_local_submit_for_test;
     use crate::app::app_view::InputOutcome;
     use crate::views::question_view::{LocalQuestionKind, QuestionSelection};
+
+    let bad = std::env::temp_dir().join(format!(
+        "grok-open-url-upsell-missing-{}/out.txt",
+        std::process::id()
+    ));
+    // SAFETY: serialized via `serial_test`.
+    unsafe { std::env::set_var("GROK_TEST_OPEN_URL_FILE", &bad) };
 
     let mut app = test_app_with_agent();
     open_upsell_qa(&mut app, CreditLimitUpsellMode::UnifiedCredits);
@@ -1542,7 +1402,7 @@ fn credit_limit_upsell_submit_empty_url_is_silent() {
         .question_view
         .take()
         .expect("expected credit-limit upsell modal");
-    // Select option 1 = "购买额度" (PAYG / usage URL id).
+    // Select option 1 = "Buy more credits" (credits / usage URL).
     qv.selections[0] = QuestionSelection::Single(Some(1));
     let kind = LocalQuestionKind::CreditLimitUpsell {
         choices: vec![
@@ -1556,13 +1416,16 @@ fn credit_limit_upsell_submit_empty_url_is_silent() {
         panic!("expected OpenUrl from upsell submit");
     };
     assert_eq!(url, UPSELL_URL_PAYG);
-    assert!(url.is_empty());
 
     let before = agent_scrollback_len(&app);
-    let _ = dispatch(Action::OpenUrl(url), &mut app);
-    assert_eq!(
-        agent_scrollback_len(&app),
-        before,
-        "empty upsell URL must not push fallback scrollback"
+    let _ = dispatch(Action::OpenUrl(url.clone()), &mut app);
+    let text = last_system_text(&app, AgentId(0));
+    assert_eq!(agent_scrollback_len(&app), before + 1);
+    assert!(
+        text.contains(&url),
+        "upsell URL missing from fallback: {text}"
     );
+
+    // SAFETY: serialized via `serial_test`.
+    unsafe { std::env::remove_var("GROK_TEST_OPEN_URL_FILE") };
 }

@@ -51,8 +51,6 @@ pub(crate) fn prefetch_models_and_settings_blocking(
     let settings = match auth {
         Some(auth) if remote_fetch_enabled => {
             let _timer = crate::instrumentation_timer!("startup.early_settings_fetch");
-            // `fetch_settings_blocking` returns `SettingsFetch`; collapse to
-            // `Option<RemoteSettings>` so this match arm agrees with the `_ => None` arm.
             crate::remote::fetch_settings_blocking(
                 &endpoints.proxy_url(),
                 auth,
@@ -160,14 +158,22 @@ pub(crate) fn resolve_prefetch_env_from_parts(
 }
 
 /// Start model + settings prefetch on a background thread using pre-resolved auth.
-///
-/// Chaos-fork: the upstream `sync_managed` gate and the sibling
-/// `start_early_prefetch_settings_only` API are dropped here — Chaos does not
-/// run the managed-config kill-switch path, so there is no on-disk policy to
-/// heal and nothing to fail closed against on cold start.
 pub fn start_early_prefetch_with_auth(auth: Option<GrokAuth>) -> Option<EarlyPrefetchHandle> {
+    start_early_prefetch_with_auth_gated(auth, true)
+}
+
+/// `sync_managed = false` skips the managed-config sync, so a remote kill-switch
+/// can apply on cold start before the fail-closed managed-policy gate without an
+/// online sync healing a tampered on-disk policy first.
+fn start_early_prefetch_with_auth_gated(
+    auth: Option<GrokAuth>,
+    sync_managed: bool,
+) -> Option<EarlyPrefetchHandle> {
     let _timer = crate::instrumentation_timer!("startup.early_prefetch_launch");
     let endpoints = resolve_startup_endpoints();
+    if sync_managed {
+        spawn_managed_config_sync_if_stale(&endpoints);
+    }
     let env = resolve_prefetch_env_from_parts(
         auth,
         endpoints,
@@ -178,9 +184,24 @@ pub fn start_early_prefetch_with_auth(auth: Option<GrokAuth>) -> Option<EarlyPre
 
 /// Start model + settings prefetch on a background thread.
 pub fn start_early_prefetch(grok_com_config: Option<GrokComConfig>) -> Option<EarlyPrefetchHandle> {
+    start_early_prefetch_impl(grok_com_config, true)
+}
+
+/// Prefetch models + remote settings only — no managed-config sync. Used before
+/// the managed-policy gate (see `start_early_prefetch_with_auth_gated`).
+pub fn start_early_prefetch_settings_only(
+    grok_com_config: Option<GrokComConfig>,
+) -> Option<EarlyPrefetchHandle> {
+    start_early_prefetch_impl(grok_com_config, false)
+}
+
+fn start_early_prefetch_impl(
+    grok_com_config: Option<GrokComConfig>,
+    sync_managed: bool,
+) -> Option<EarlyPrefetchHandle> {
     let grok_home = crate::util::grok_home::grok_home();
     let auth = AuthManager::new(&grok_home, grok_com_config.unwrap_or_default()).current();
-    start_early_prefetch_with_auth(auth)
+    start_early_prefetch_with_auth_gated(auth, sync_managed)
 }
 
 fn spawn_prefetch_thread(env: PrefetchEnv) -> EarlyPrefetchHandle {
@@ -195,4 +216,34 @@ fn spawn_prefetch_thread(env: PrefetchEnv) -> EarlyPrefetchHandle {
         );
         EarlyPrefetchResult { models, settings }
     })
+}
+
+/// Best-effort, bounded managed-config sync on a detached thread, off the readiness path (syncs at launch; the interval task covers steady state).
+fn spawn_managed_config_sync_if_stale(endpoints: &config::EndpointsConfig) {
+    let should_sync = (endpoints.deployment_key.is_some()
+        || crate::managed_config::has_active_team_auth())
+        && crate::config::is_managed_config_stale_for(
+            &crate::managed_config::current_serving_identity(),
+        )
+        && crate::managed_config::is_fetch_enabled();
+    if !should_sync {
+        return;
+    }
+    std::thread::spawn(|| {
+        let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        else {
+            return;
+        };
+        crate::managed_config::clear_orphan();
+        // tokio timer outside a runtime context panics ("no reactor running").
+        let _ = rt.block_on(async {
+            tokio::time::timeout(
+                crate::http::STARTUP_FETCH_TIMEOUT,
+                crate::managed_config::sync(),
+            )
+            .await
+        });
+    });
 }

@@ -54,12 +54,12 @@ impl EditConfirmResult {
     /// Dynamic label based on whether the agent is waiting to drain.
     pub fn label(&self, drain_blocked: bool) -> &'static str {
         match (self, drain_blocked) {
-            (Self::Save, false) => "保存",
-            (Self::Save, true) => "保存并发送",
-            (Self::Discard, false) => "放弃更改",
-            (Self::Discard, true) => "放弃并发送",
-            (Self::Delete, _) => "删除提示",
-            (Self::Cancel, _) => "取消",
+            (Self::Save, false) => "save",
+            (Self::Save, true) => "save & send",
+            (Self::Discard, false) => "discard changes",
+            (Self::Discard, true) => "discard & send",
+            (Self::Delete, _) => "delete prompt",
+            (Self::Cancel, _) => "cancel",
         }
     }
 }
@@ -100,8 +100,8 @@ impl ResetSettingsResult {
     /// Label for the y/n buttons rendered in the modal footer.
     pub fn label(self) -> &'static str {
         match self {
-            Self::Reset => "重置",
-            Self::Cancel => "取消",
+            Self::Reset => "reset",
+            Self::Cancel => "cancel",
         }
     }
 }
@@ -142,10 +142,10 @@ impl CancelTurnChoice {
     ];
     pub fn label(&self) -> &'static str {
         match self {
-            Self::StopRunning => "停止运行",
-            Self::ContinueToRun => "继续运行",
-            Self::AlwaysStop => "总是停止",
-            Self::AlwaysContinue => "总是继续",
+            Self::StopRunning => "Stop running",
+            Self::ContinueToRun => "Continue to run",
+            Self::AlwaysStop => "Always stop",
+            Self::AlwaysContinue => "Always continue",
         }
     }
 }
@@ -229,11 +229,9 @@ pub enum ActiveModal {
         entries_query: Option<String>,
         /// Source filter for the modal session picker.
         source_filter: crate::views::session_picker::SourceFilter,
-        /// Session armed for delete, captured as `(source, session_id, cwd)` when
-        /// `d` is pressed so the `y` confirm always has a valid cwd even if
-        /// the picker lists change underneath it. `Some` only while the
-        /// focused row is armed; cleared on cancel / completion.
-        pending_delete: Option<(String, String, String)>,
+        /// Session armed for delete via `d` (see
+        /// [`crate::views::session_picker::PendingDelete`]).
+        pending_delete: Option<crate::views::session_picker::PendingDelete>,
     },
     /// How-to documentation list modal (wider picker style).
     DocPicker {
@@ -289,15 +287,6 @@ pub enum ActiveModal {
     /// Settings modal (F2, /settings, palette). Boxed — large state.
     Settings {
         state: Box<crate::views::settings_modal::SettingsModalState>,
-    },
-    /// Provider management modal (/provider add|list|set-key|models|set-model).
-    /// Boxed to keep the enum variant small.
-    ProviderModal {
-        state: Box<crate::views::provider_modal::ProviderModalState>,
-    },
-    /// Request-client profile picker and custom profile manager (`/client`).
-    ClientModal {
-        state: Box<crate::views::client_modal::ClientModalState>,
     },
     /// Reset-settings confirmation, stacked above Settings.
     ///
@@ -374,176 +363,184 @@ pub enum PaletteCommand {
     OpenAgentsModal,
 }
 /// Build the default set of palette entries with section grouping.
-///
-/// `sharing_enabled` controls whether `/share` is included. `screen_mode`
-/// exposes the draft-preserving external-editor row only in minimal mode.
 pub(crate) fn default_palette_entries(
     sharing_enabled: bool,
-    screen_mode: crate::app::ScreenMode,
+    slash: &crate::slash::SlashController,
 ) -> Vec<PaletteEntry> {
+    let screen_mode = slash.screen_mode();
     let mut entries = vec![
+        // ── Session ──
         PaletteEntry {
-            label: "会话".into(),
+            label: "Session".into(),
             shortcut: String::new(),
-            command: PaletteCommand::SectionHeader("会话".into()),
+            command: PaletteCommand::SectionHeader("Session".into()),
         },
         PaletteEntry {
-            label: "新建会话".into(),
+            label: "New Session".into(),
             shortcut: "Ctrl+N".into(),
             command: PaletteCommand::NewSession,
         },
         PaletteEntry {
-            label: "在工作树中新建会话".into(),
+            label: "New Session in Worktree".into(),
             shortcut: "Ctrl+P → worktree".into(),
             command: PaletteCommand::NewSessionInWorktree,
         },
         PaletteEntry {
-            label: "Agent 仪表盘".into(),
+            label: "Agent Dashboard".into(),
             shortcut: "/dashboard".into(),
             command: PaletteCommand::SlashCommand("/dashboard".into()),
         },
         PaletteEntry {
-            label: "返回主页".into(),
+            label: "Back to Home".into(),
             shortcut: "/home".into(),
             command: PaletteCommand::Home,
         },
         PaletteEntry {
-            label: "恢复会话".into(),
+            label: "Delete This Session".into(),
+            shortcut: "/delete".into(),
+            command: PaletteCommand::SlashCommand("/delete".into()),
+        },
+        PaletteEntry {
+            label: "Resume Session".into(),
             shortcut: "/resume".into(),
             command: PaletteCommand::SlashCommand("/resume".into()),
         },
         PaletteEntry {
-            label: "分享会话".into(),
+            label: "Share Session".into(),
             shortcut: "/share".into(),
             command: PaletteCommand::SlashCommand("/share".into()),
         },
         PaletteEntry {
-            label: "重命名会话".into(),
+            label: "Rename Session".into(),
             shortcut: "/rename ".into(),
             command: PaletteCommand::SlashCommand("/rename ".into()),
         },
         PaletteEntry {
-            label: "会话信息".into(),
+            label: "Session Info".into(),
             shortcut: "/session-info".into(),
             command: PaletteCommand::SlashCommand("/session-info".into()),
         },
         PaletteEntry {
-            label: "发送反馈".into(),
+            label: "Send Feedback".into(),
             shortcut: "/feedback".into(),
             command: PaletteCommand::SlashCommand("/feedback ".into()),
         },
+        // ── Context ──
         PaletteEntry {
-            label: "上下文".into(),
+            label: "Context".into(),
             shortcut: String::new(),
-            command: PaletteCommand::SectionHeader("上下文".into()),
+            command: PaletteCommand::SectionHeader("Context".into()),
         },
         PaletteEntry {
-            label: "压缩历史".into(),
+            label: "Compact History".into(),
             shortcut: "/compact".into(),
             command: PaletteCommand::SlashCommand("/compact".into()),
         },
         PaletteEntry {
-            label: "上下文用量".into(),
+            label: "Context Usage".into(),
             shortcut: "/context".into(),
             command: PaletteCommand::SlashCommand("/context".into()),
         },
         PaletteEntry {
-            label: "查看计划".into(),
+            label: "View Plan".into(),
             shortcut: "/view-plan".into(),
             command: PaletteCommand::SlashCommand("/view-plan".into()),
         },
         PaletteEntry {
-            label: "记忆".into(),
+            label: "Memory".into(),
             shortcut: "/memory".into(),
             command: PaletteCommand::Memory,
         },
+        // ── Model & Input ──
         PaletteEntry {
-            label: "模型与输入".into(),
+            label: "Model & Input".into(),
             shortcut: String::new(),
-            command: PaletteCommand::SectionHeader("模型与输入".into()),
+            command: PaletteCommand::SectionHeader("Model & Input".into()),
         },
         PaletteEntry {
-            label: "切换模型".into(),
+            label: "Switch Model".into(),
             shortcut: "/model".into(),
             command: PaletteCommand::SlashCommand("/model ".into()),
         },
         PaletteEntry {
-            label: "总是批准模式".into(),
+            label: "Always Approve Mode".into(),
             shortcut: "/always-approve".into(),
             command: PaletteCommand::SlashCommand("/always-approve".into()),
         },
         PaletteEntry {
-            label: "多行输入".into(),
+            label: "Multiline Input".into(),
             shortcut: "/multiline".into(),
             command: PaletteCommand::SlashCommand("/multiline".into()),
         },
         PaletteEntry {
-            label: "在外部编辑器中编辑提示".into(),
+            label: "Edit Prompt in External Editor".into(),
             shortcut: "Ctrl+G".into(),
             command: PaletteCommand::EditPromptExternal,
         },
+        // ── Tools ──
         PaletteEntry {
-            label: "工具".into(),
+            label: "Tools".into(),
             shortcut: String::new(),
-            command: PaletteCommand::SectionHeader("工具".into()),
+            command: PaletteCommand::SectionHeader("Tools".into()),
         },
         PaletteEntry {
-            label: "钩子".into(),
+            label: "Hooks".into(),
             shortcut: "/hooks".into(),
             command: PaletteCommand::OpenExtensionsTab(
                 crate::views::extensions_modal::ExtensionsTab::Hooks,
             ),
         },
         PaletteEntry {
-            label: "插件".into(),
+            label: "Plugins".into(),
             shortcut: "/plugins".into(),
             command: PaletteCommand::OpenExtensionsTab(
                 crate::views::extensions_modal::ExtensionsTab::Plugins,
             ),
         },
         PaletteEntry {
-            label: "市场".into(),
+            label: "Marketplace".into(),
             shortcut: "/marketplace".into(),
             command: PaletteCommand::OpenExtensionsTab(
                 crate::views::extensions_modal::ExtensionsTab::Marketplace,
             ),
         },
         PaletteEntry {
-            label: "技能".into(),
+            label: "Skills".into(),
             shortcut: "/skills".into(),
             command: PaletteCommand::OpenExtensionsTab(
                 crate::views::extensions_modal::ExtensionsTab::Skills,
             ),
         },
         PaletteEntry {
-            label: "MCP 服务器".into(),
+            label: "MCP Servers".into(),
             shortcut: "/mcps".into(),
             command: PaletteCommand::OpenExtensionsTab(
                 crate::views::extensions_modal::ExtensionsTab::McpServers,
             ),
         },
         PaletteEntry {
-            label: "管理 Agent".into(),
+            label: "Manage Agents".into(),
             shortcut: "/config-agents".into(),
             command: PaletteCommand::OpenAgentsModal,
         },
+        // ── Other ──
         PaletteEntry {
-            label: "其他".into(),
+            label: "Other".into(),
             shortcut: String::new(),
-            command: PaletteCommand::SectionHeader("其他".into()),
+            command: PaletteCommand::SectionHeader("Other".into()),
         },
         PaletteEntry {
-            label: "切换主题".into(),
+            label: "Switch Theme".into(),
             shortcut: "/theme".into(),
             command: PaletteCommand::SlashCommand("/theme ".into()),
         },
         PaletteEntry {
-            label: "设置".into(),
+            label: "Settings".into(),
             shortcut: "F2".into(),
             command: PaletteCommand::OpenSettings,
         },
         PaletteEntry {
-            label: "键盘快捷键".into(),
+            label: "Keyboard Shortcuts".into(),
             shortcut: if crate::actions::ctrl_dot_unreliable() {
                 "Ctrl+X".into()
             } else {
@@ -552,22 +549,33 @@ pub(crate) fn default_palette_entries(
             command: PaletteCommand::KeyboardShortcuts,
         },
         PaletteEntry {
-            label: "使用指南".into(),
+            label: "How-to Guides".into(),
             shortcut: "/docs".into(),
             command: PaletteCommand::HowTo,
         },
         PaletteEntry {
-            label: "退出".into(),
+            label: "Tutorial".into(),
+            shortcut: "/tutorial".into(),
+            command: PaletteCommand::SlashCommand("/tutorial".into()),
+        },
+        PaletteEntry {
+            label: "Quit".into(),
             shortcut: "Ctrl+Q".into(),
             command: PaletteCommand::Quit,
         },
     ];
     entries.retain(|entry| {
         if !sharing_enabled
-            && matches!(
-                & entry.command, PaletteCommand::SlashCommand(s) if s.trim() ==
-                "/share"
-            )
+            && matches!(&entry.command, PaletteCommand::SlashCommand(s) if s.trim() == "/share")
+        {
+            return false;
+        }
+        if let PaletteCommand::SlashCommand(text) = &entry.command
+            && let Some(invocation) = crate::slash::parse_invocation(text.trim())
+            && !slash
+                .registry()
+                .mode_support(invocation.token)
+                .supports(screen_mode)
         {
             return false;
         }
@@ -580,9 +588,9 @@ pub(crate) fn default_palette_entries(
 pub(crate) fn filter_palette_entries(
     query: &str,
     sharing_enabled: bool,
-    screen_mode: crate::app::ScreenMode,
+    slash: &crate::slash::SlashController,
 ) -> Vec<PaletteEntry> {
-    let all = default_palette_entries(sharing_enabled, screen_mode);
+    let all = default_palette_entries(sharing_enabled, slash);
     let query_lower = query.to_lowercase();
     if query_lower.is_empty() {
         return all;
@@ -639,8 +647,6 @@ impl ActiveModal {
             | ActiveModal::ShortcutsHelp { .. }
             | ActiveModal::MemoryBrowser { .. }
             | ActiveModal::Settings { .. }
-            | ActiveModal::ProviderModal { .. }
-            | ActiveModal::ClientModal { .. }
             | ActiveModal::RememberNoteReview { .. } => vec![],
         }
     }
@@ -648,32 +654,30 @@ impl ActiveModal {
         match self {
             ActiveModal::EditConfirm { .. } => {
                 if drain_blocked {
-                    "保存并发送？"
+                    "Save and send?"
                 } else {
-                    "保存更改？"
+                    "Save changes?"
                 }
             }
-            ActiveModal::CommandPalette { .. } => "命令",
-            ActiveModal::SessionPicker { .. } => "恢复会话",
+            ActiveModal::CommandPalette { .. } => "Commands",
+            ActiveModal::SessionPicker { .. } => "Resume session",
             ActiveModal::ArgPicker {
                 command,
                 args_query,
                 ..
             } => match command.as_str() {
-                "model" | "m" if !args_query.is_empty() => "选择推理强度",
-                "model" | "m" => "选择模型",
-                "theme" | "t" => "选择主题",
-                _ => "选择选项",
+                "model" | "m" if !args_query.is_empty() => "Pick reasoning effort",
+                "model" | "m" => "Pick model",
+                "theme" | "t" => "Pick theme",
+                _ => "Pick option",
             },
-            ActiveModal::DocPicker { .. } => "使用指南",
+            ActiveModal::DocPicker { .. } => "How-to Guides",
             ActiveModal::DocViewer { title, .. } => title.as_str(),
-            ActiveModal::ShortcutsHelp { .. } => "键盘快捷键",
-            ActiveModal::MemoryBrowser { .. } => "记忆",
+            ActiveModal::ShortcutsHelp { .. } => "Keyboard Shortcuts",
+            ActiveModal::MemoryBrowser { .. } => "Memory",
             ActiveModal::Settings { .. } => crate::views::settings_modal::MODAL_TITLE,
-            ActiveModal::ProviderModal { .. } => crate::views::provider_modal::MODAL_TITLE,
-            ActiveModal::ClientModal { .. } => crate::views::client_modal::MODAL_TITLE,
-            ActiveModal::ResetSettingsConfirm { .. } => "重置设置？",
-            ActiveModal::RememberNoteReview { .. } => "记忆笔记",
+            ActiveModal::ResetSettingsConfirm { .. } => "Reset setting?",
+            ActiveModal::RememberNoteReview { .. } => "Memory Note",
         }
     }
 }
@@ -1196,9 +1200,8 @@ pub fn render_doc_viewer_overlay(
         &doc_shortcuts,
     );
 }
-
-/// Like [`render_doc_viewer_overlay`] but with caller-supplied footer shortcuts
-/// (e.g. tutorial topic pages with next/prev and "go deeper" hints).
+/// [`render_doc_viewer_overlay`] with caller-supplied footer shortcuts (the
+/// tutorial adds a next-topic hint).
 #[allow(clippy::too_many_arguments)]
 pub fn render_doc_viewer_overlay_with_shortcuts(
     buf: &mut ratatui::buffer::Buffer,
@@ -1303,15 +1306,19 @@ mod doc_viewer_scroll_tests {
 mod palette_sharing_tests {
     use super::*;
     fn has_share(entries: &[PaletteEntry]) -> bool {
-        entries.iter().any(|e| {
-            matches!(
-                & e.command, PaletteCommand::SlashCommand(s) if s.trim() == "/share"
-            )
-        })
+        entries
+            .iter()
+            .any(|e| matches!(&e.command, PaletteCommand::SlashCommand(s) if s.trim() == "/share"))
+    }
+    fn slash(mode: crate::app::ScreenMode) -> crate::slash::SlashController {
+        let mut controller =
+            crate::slash::SlashController::with_builtins(std::path::PathBuf::from("."));
+        controller.set_screen_mode(mode);
+        controller
     }
     #[test]
     fn default_palette_includes_share_when_enabled() {
-        let entries = default_palette_entries(true, crate::app::ScreenMode::Fullscreen);
+        let entries = default_palette_entries(true, &slash(crate::app::ScreenMode::Fullscreen));
         assert!(
             has_share(&entries),
             "/share should be present when sharing_enabled=true"
@@ -1319,29 +1326,71 @@ mod palette_sharing_tests {
     }
     #[test]
     fn default_palette_includes_dashboard() {
-        let entries = default_palette_entries(true, crate::app::ScreenMode::Fullscreen);
-        let has_dashboard = entries.iter().any(|e| {
-            matches!(
-                & e.command, PaletteCommand::SlashCommand(s) if s.trim() ==
-                "/dashboard"
-            )
-        });
+        let entries = default_palette_entries(true, &slash(crate::app::ScreenMode::Fullscreen));
+        let has_dashboard = entries.iter().any(
+            |e| matches!(&e.command, PaletteCommand::SlashCommand(s) if s.trim() == "/dashboard"),
+        );
         assert!(
             has_dashboard,
             "/dashboard entry must be present in the palette so users can switch between agents"
         );
-        let labelled = entries.iter().any(|e| e.label == "Agent 仪表盘");
-        assert!(labelled, "palette entry must use the 'Agent 仪表盘' label");
+        let labelled = entries.iter().any(|e| e.label == "Agent Dashboard");
+        assert!(
+            labelled,
+            "palette entry must use the 'Agent Dashboard' label"
+        );
+    }
+    fn slash_rows(mode: crate::app::ScreenMode) -> Vec<String> {
+        default_palette_entries(true, &slash(mode))
+            .into_iter()
+            .filter_map(|entry| match entry.command {
+                PaletteCommand::SlashCommand(text) => Some(text.trim().to_string()),
+                _ => None,
+            })
+            .collect()
+    }
+    #[test]
+    fn palette_drops_slash_rows_the_mode_cannot_run() {
+        let minimal = slash_rows(crate::app::ScreenMode::Minimal);
+        for gated in ["/theme", "/dashboard", "/tutorial"] {
+            assert!(!minimal.contains(&gated.to_string()), "{gated} in minimal");
+        }
+        assert!(
+            minimal.contains(&"/compact".to_string()),
+            "mode-agnostic rows stay: {minimal:?}"
+        );
+        let fullscreen = slash_rows(crate::app::ScreenMode::Fullscreen);
+        for offered in ["/theme", "/dashboard", "/tutorial"] {
+            assert!(
+                fullscreen.contains(&offered.to_string()),
+                "{offered} missing in fullscreen"
+            );
+        }
+    }
+    #[test]
+    fn every_palette_slash_row_resolves_to_a_registered_command() {
+        let builtins = crate::slash::commands::builtin_commands();
+        for row in slash_rows(crate::app::ScreenMode::Fullscreen) {
+            let invocation = crate::slash::parse_invocation(&row)
+                .unwrap_or_else(|| panic!("palette row {row:?} is not a slash invocation"));
+            assert!(
+                builtins
+                    .iter()
+                    .any(|command| command.name() == invocation.token
+                        || command.aliases().contains(&invocation.token)),
+                "palette row {row:?} names no builtin command"
+            );
+        }
     }
     #[test]
     fn edit_prompt_palette_entry_is_minimal_only() {
-        let minimal = default_palette_entries(true, crate::app::ScreenMode::Minimal);
+        let minimal = default_palette_entries(true, &slash(crate::app::ScreenMode::Minimal));
         assert!(
             minimal
                 .iter()
                 .any(|entry| matches!(entry.command, PaletteCommand::EditPromptExternal))
         );
-        let fullscreen = default_palette_entries(true, crate::app::ScreenMode::Fullscreen);
+        let fullscreen = default_palette_entries(true, &slash(crate::app::ScreenMode::Fullscreen));
         assert!(
             !fullscreen
                 .iter()
@@ -1350,7 +1399,7 @@ mod palette_sharing_tests {
     }
     #[test]
     fn default_palette_omits_share_when_disabled() {
-        let entries = default_palette_entries(false, crate::app::ScreenMode::Fullscreen);
+        let entries = default_palette_entries(false, &slash(crate::app::ScreenMode::Fullscreen));
         assert!(
             !has_share(&entries),
             "/share must not appear in palette when sharing_enabled=false"
@@ -1358,12 +1407,13 @@ mod palette_sharing_tests {
     }
     #[test]
     fn filter_palette_omits_share_when_disabled() {
-        let entries = filter_palette_entries("", false, crate::app::ScreenMode::Fullscreen);
+        let entries = filter_palette_entries("", false, &slash(crate::app::ScreenMode::Fullscreen));
         assert!(
             !has_share(&entries),
             "/share must not appear in unfiltered palette when sharing_enabled=false"
         );
-        let entries = filter_palette_entries("share", false, crate::app::ScreenMode::Fullscreen);
+        let entries =
+            filter_palette_entries("share", false, &slash(crate::app::ScreenMode::Fullscreen));
         assert!(
             !has_share(&entries),
             "/share must not appear when filtering for 'share' with sharing_enabled=false"
@@ -1371,7 +1421,8 @@ mod palette_sharing_tests {
     }
     #[test]
     fn filter_palette_includes_share_when_enabled_and_matched() {
-        let entries = filter_palette_entries("share", true, crate::app::ScreenMode::Fullscreen);
+        let entries =
+            filter_palette_entries("share", true, &slash(crate::app::ScreenMode::Fullscreen));
         assert!(
             has_share(&entries),
             "/share should match a 'share' query when sharing_enabled=true"
@@ -1380,21 +1431,23 @@ mod palette_sharing_tests {
     #[test]
     fn palette_tools_section_routes_each_tab_to_itself() {
         use crate::views::extensions_modal::ExtensionsTab;
-        let entries = default_palette_entries(true, crate::app::ScreenMode::Fullscreen);
+        let entries = default_palette_entries(true, &slash(crate::app::ScreenMode::Fullscreen));
         for (label, expected) in [
-            ("钩子", ExtensionsTab::Hooks),
-            ("插件", ExtensionsTab::Plugins),
-            ("市场", ExtensionsTab::Marketplace),
-            ("技能", ExtensionsTab::Skills),
-            ("MCP 服务器", ExtensionsTab::McpServers),
+            ("Hooks", ExtensionsTab::Hooks),
+            ("Plugins", ExtensionsTab::Plugins),
+            ("Marketplace", ExtensionsTab::Marketplace),
+            ("Skills", ExtensionsTab::Skills),
+            ("MCP Servers", ExtensionsTab::McpServers),
         ] {
             let entry = entries
                 .iter()
                 .find(|e| e.label == label)
                 .unwrap_or_else(|| panic!("Tools entry {label:?} missing from palette"));
             assert!(
-                matches!(& entry.command, PaletteCommand::OpenExtensionsTab(t) if * t ==
-                expected,),
+                matches!(
+                    &entry.command,
+                    PaletteCommand::OpenExtensionsTab(t) if *t == expected,
+                ),
                 "Tools entry {label:?} dispatches to the wrong tab",
             );
         }

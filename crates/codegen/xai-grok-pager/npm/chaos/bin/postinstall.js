@@ -1,17 +1,14 @@
 #!/usr/bin/env node
-// Runs once after npm install/update. Reads the chaos binary from the
-// matching per-platform optional dependency (chaos-code-<platform>)
-// and installs it to ~/.chaos/bin/ using versioned filenames:
+// Runs once after npm install/update. Reads the grok binary from the
+// matching per-platform optional dependency (@xai-official/grok-<platform>)
+// and installs it to ~/.grok/bin/ using versioned filenames:
 //
-//   Unix:    chaos-<version>  +  chaos  (symlink)
-//   Windows: chaos-<version>.exe  +  chaos.exe  (copy)
+//   Unix:    grok-<version>  +  grok  (symlink)
+//   Windows: grok-<version>.exe  +  grok.exe  (copy)
 //
 // Versioned files ensure running processes are never disrupted on macOS
 // (replacing a binary that a running process has mmap'd causes SIGKILL
 // because the kernel can no longer verify the code signature).
-//
-// If ~/.chaos does not exist but ~/.grok does (legacy dual-read home),
-// install under ~/.grok/bin so config and binary share one tree.
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -19,26 +16,15 @@ const zlib = require('zlib');
 const { execSync } = require('child_process');
 const TOML = require('@iarna/toml');
 
-const META_PKG = 'chaos-code';
-const BIN_STEM = 'chaos';
-
-function resolveCanonicalHome() {
-    if (process.env.CHAOS_HOME) return process.env.CHAOS_HOME;
-    if (process.env.GROK_HOME) return process.env.GROK_HOME;
+// $GROK_HOME (else ~/.grok), matching the Rust grok_home() including its
+// canonicalized-home default. Lets fleets relocate the binary off a slow $HOME
+// (NFS); old code hardcoded os.homedir().
+function defaultGrokHome() {
     const home = os.homedir();
-    const chaos = path.join(home, '.chaos');
-    const grok = path.join(home, '.grok');
-    try {
-        if (fs.statSync(chaos).isDirectory()) return chaos;
-    } catch {}
-    try {
-        if (fs.statSync(grok).isDirectory()) return grok;
-    } catch {}
-    return chaos;
+    try { return path.join(fs.realpathSync(home), '.grok'); } catch { return path.join(home, '.grok'); }
 }
-
-const CANONICAL_HOME = resolveCanonicalHome();
-const CANONICAL_DIR = path.join(CANONICAL_HOME, 'bin');
+const GROK_HOME = process.env.GROK_HOME ?? defaultGrokHome();
+const CANONICAL_DIR = path.join(GROK_HOME, 'bin');
 
 const key = `${process.platform}-${process.arch}`;
 const SUPPORTED = new Set([
@@ -50,7 +36,7 @@ const SUPPORTED = new Set([
     'win32-arm64',
 ]);
 if (!SUPPORTED.has(key)) {
-    console.error(`${META_PKG}: unsupported platform ${key}`);
+    console.error(`@xai-official/grok: unsupported platform ${key}`);
     process.exit(0);
 }
 
@@ -59,7 +45,7 @@ if (!SUPPORTED.has(key)) {
 // other five are silently skipped. If the matching one is missing, npm was
 // likely invoked with --no-optional or the platform is unsupported.
 function resolvePlatformPackageDir() {
-    const platformPkg = `${META_PKG}-${key}`;
+    const platformPkg = `@xai-official/grok-${key}`;
     try {
         return path.dirname(require.resolve(`${platformPkg}/package.json`));
     } catch {
@@ -70,7 +56,7 @@ function resolvePlatformPackageDir() {
 let version;
 try { version = require('../package.json').version; } catch {}
 if (!version) {
-    console.error(`${META_PKG}: unable to determine version`);
+    console.error('@xai-official/grok: unable to determine version');
     process.exit(0);
 }
 
@@ -79,43 +65,39 @@ const EXE = IS_WINDOWS ? '.exe' : '';
 
 fs.mkdirSync(CANONICAL_DIR, { recursive: true });
 
-// Install a vendored binary: versioned filename + symlink (Unix) or copy (Windows).
-// Binaries are shipped brotli-compressed in the per-platform npm tarball to keep
-// each sub-package well under npm's ~200 MB tarball limit. This function
-// decompresses them before installing into the canonical layout.
+function writeVendorBinary(brPath, rawPath, destPath) {
+    const tmp = destPath + `.tmp.${process.pid}`;
+    try {
+        if (fs.existsSync(brPath)) {
+            fs.writeFileSync(tmp, zlib.brotliDecompressSync(fs.readFileSync(brPath)));
+        } else if (fs.existsSync(rawPath)) {
+            fs.copyFileSync(rawPath, tmp);
+        } else {
+            return false;
+        }
+        if (!IS_WINDOWS) fs.chmodSync(tmp, 0o755);
+        fs.renameSync(tmp, destPath);
+        return true;
+    } catch {
+        return false;
+    } finally {
+        try { fs.unlinkSync(tmp); } catch {}
+    }
+}
+
 function installBinary(binName, sourceDir, vendorSubpath) {
     const brPath = path.join(sourceDir, 'bin', vendorSubpath + '.br');
     const rawPath = path.join(sourceDir, 'bin', vendorSubpath);
-    let vendoredBinPath;
-    if (fs.existsSync(brPath)) {
-        const compressed = fs.readFileSync(brPath);
-        const decompressed = zlib.brotliDecompressSync(compressed);
-        vendoredBinPath = rawPath;
-        fs.writeFileSync(vendoredBinPath, decompressed);
-        if (!IS_WINDOWS) fs.chmodSync(vendoredBinPath, 0o755);
-        try { fs.unlinkSync(brPath); } catch {}
-    } else if (fs.existsSync(rawPath)) {
-        vendoredBinPath = rawPath;
-    } else {
-        console.error(`${META_PKG}: missing binary at ${brPath}`);
-        return false;
-    }
 
     const versionedName = `${binName}-${version}${EXE}`;
     const versionedPath = path.join(CANONICAL_DIR, versionedName);
     const canonicalName = `${binName}${EXE}`;
     const canonicalPath = path.join(CANONICAL_DIR, canonicalName);
 
-    // Only copy if this exact version isn't already installed.
-    if (!fs.existsSync(versionedPath)) {
-        const tmpPath = versionedPath + `.tmp.${process.pid}`;
-        try {
-            fs.copyFileSync(vendoredBinPath, tmpPath);
-            if (!IS_WINDOWS) fs.chmodSync(tmpPath, 0o755);
-            fs.renameSync(tmpPath, versionedPath);
-        } finally {
-            try { fs.unlinkSync(tmpPath); } catch {}
-        }
+    // Skip if this exact version is already installed.
+    if (!fs.existsSync(versionedPath) && !writeVendorBinary(brPath, rawPath, versionedPath)) {
+        console.error(`@xai-official/grok: missing binary at ${brPath}`);
+        return false;
     }
 
     if (IS_WINDOWS) {
@@ -137,8 +119,8 @@ function installBinary(binName, sourceDir, vendorSubpath) {
                     throw copyErr;
                 }
             } catch (e2) {
-                console.error(`${META_PKG}: failed to update ${canonicalPath}: ${e2.message}`);
-                console.error('Close all running chaos processes and try again.');
+                console.error(`@xai-official/grok: failed to update ${canonicalPath}: ${e2.message}`);
+                console.error('Close all running grok processes and try again.');
                 return false;
             }
         }
@@ -150,14 +132,32 @@ function installBinary(binName, sourceDir, vendorSubpath) {
         fs.renameSync(tmpLink, canonicalPath);
     }
 
+    // Don't report a broken wire-up as success.
+    if (!fs.existsSync(canonicalPath)) {
+        console.error(`@xai-official/grok: ${canonicalName} did not resolve after install`);
+        return false;
+    }
+
     console.log(`${binName} ${version} installed to ${canonicalPath} -> ${versionedName}`);
     return true;
+}
+
+// Comparator: sort "<prefix>X.Y.Z" filenames by version, newest first.
+function byVersionDescending(prefix) {
+    return (a, b) => {
+        const pa = a.slice(prefix.length).split('.').map(Number);
+        const pb = b.slice(prefix.length).split('.').map(Number);
+        for (let i = 0; i < 3; i++) {
+            if ((pa[i] || 0) !== (pb[i] || 0)) return (pb[i] || 0) - (pa[i] || 0);
+        }
+        return 0;
+    };
 }
 
 // Best-effort cleanup of old versioned binaries for a given binary name.
 // Keeps the current version and the previous one (in case a process is still
 // running the old binary and hasn't fully loaded all pages yet).
-// Uses an exact prefix match + hyphen + digit to avoid chaos-* matching chaos-pager-*.
+// Uses an exact prefix match + hyphen + digit to avoid grok-* matching grok-pager-*.
 function cleanupOldVersions(binName) {
     try {
         const prefix = `${binName}-`;
@@ -171,14 +171,7 @@ function cleanupOldVersions(binName) {
                 const suffix = e.slice(prefix.length);
                 return /^\d/.test(suffix);
             })
-            .sort((a, b) => {
-                const pa = a.slice(prefix.length).split('.').map(Number);
-                const pb = b.slice(prefix.length).split('.').map(Number);
-                for (let i = 0; i < 3; i++) {
-                    if ((pa[i] || 0) !== (pb[i] || 0)) return (pb[i] || 0) - (pa[i] || 0);
-                }
-                return 0;
-            });
+            .sort(byVersionDescending(prefix));
         for (const old of versionedBinaries.slice(1)) {
             try { fs.unlinkSync(path.join(CANONICAL_DIR, old)); } catch {}
         }
@@ -187,29 +180,30 @@ function cleanupOldVersions(binName) {
 
 const platformDir = resolvePlatformPackageDir();
 if (!platformDir) {
-    console.error(`${META_PKG}: platform package ${META_PKG}-${key} not installed.`);
+    console.error(`@xai-official/grok: platform package @xai-official/grok-${key} not installed.`);
     console.error('  This usually means npm was invoked with --no-optional, or the install failed.');
-    console.error(`  Try: npm install -g ${META_PKG}`);
+    console.error('  Try: npm install -g @xai-official/grok');
     process.exit(0);
 }
 
-installBinary(BIN_STEM, platformDir, `${BIN_STEM}${EXE}`);
-cleanupOldVersions(BIN_STEM);
+installBinary('grok', platformDir, `grok${EXE}`);
+cleanupOldVersions('grok');
+cleanupOldVersions('grok-pager');
 
-// Write installer config (do not overwrite unrelated settings).
-const configPath = path.join(CANONICAL_HOME, 'config.toml');
+// Write installer config
+const configDir = GROK_HOME;
+const configPath = path.join(configDir, 'config.toml');
 let obj = {};
 try { obj = TOML.parse(fs.readFileSync(configPath, 'utf8')); } catch { }
 obj.cli ??= {};
 obj.cli.installer = 'npm';
 
-// Persist the npm registry so `chaos update` and the trampoline use the same one.
+// Persist the npm registry so `grok update` and the trampoline use the same one.
 const npmRegistry = process.env.GROK_NPM_REGISTRY
-    || process.env.CHAOS_NPM_REGISTRY
     || (() => {
         try {
             const resolved = execSync(
-                'npm config get registry',
+                'npm config get @xai-official:registry',
                 { encoding: 'utf8', timeout: 5000 }
             ).trim();
             if (resolved && resolved !== 'undefined') return resolved;
@@ -221,27 +215,26 @@ if (npmRegistry) {
     obj.cli.npm_registry = npmRegistry;
 }
 
-fs.mkdirSync(CANONICAL_HOME, { recursive: true });
 fs.writeFileSync(configPath, TOML.stringify(obj), 'utf8');
 
 // Shell completions: print setup hints (no silent shell config mutation).
-// Set CHAOS_INSTALL_COMPLETIONS=1 to auto-generate to <home>/completions.
-const CHAOS_PATH = path.join(CANONICAL_DIR, `${BIN_STEM}${EXE}`);
-if (process.env.CHAOS_INSTALL_COMPLETIONS === '1' && !IS_WINDOWS) {
+// Set GROK_INSTALL_COMPLETIONS=1 to auto-generate to ~/.grok/completions.
+const GROK_PATH = path.join(CANONICAL_DIR, `grok${EXE}`);
+if (process.env.GROK_INSTALL_COMPLETIONS === '1' && !IS_WINDOWS) {
     try {
         const { spawnSync } = require('child_process');
-        const completionsDir = path.join(CANONICAL_HOME, 'completions');
-        const bashPath = path.join(completionsDir, 'bash', 'chaos.bash');
-        const zshPath = path.join(completionsDir, 'zsh', '_chaos');
+        const completionsDir = path.join(GROK_HOME, 'completions');
+        const bashPath = path.join(completionsDir, 'bash', 'grok.bash');
+        const zshPath = path.join(completionsDir, 'zsh', '_grok');
         fs.mkdirSync(path.dirname(bashPath), { recursive: true });
         fs.mkdirSync(path.dirname(zshPath), { recursive: true });
-        const bashRes = spawnSync(CHAOS_PATH, ['completions', 'bash'], { encoding: 'utf8' });
+        const bashRes = spawnSync(GROK_PATH, ['completions', 'bash'], { encoding: 'utf8' });
         if (bashRes.status === 0) fs.writeFileSync(bashPath, bashRes.stdout);
-        const zshRes = spawnSync(CHAOS_PATH, ['completions', 'zsh'], { encoding: 'utf8' });
+        const zshRes = spawnSync(GROK_PATH, ['completions', 'zsh'], { encoding: 'utf8' });
         if (zshRes.status === 0) fs.writeFileSync(zshPath, zshRes.stdout);
-        console.log(`Completions generated to ${completionsDir} (bash/zsh)`);
+        console.log('Completions generated to ~/.grok/completions (bash/zsh)');
     } catch {}
 } else if (!IS_WINDOWS) {
-    console.log('Tip: chaos completions bash > ~/.local/share/bash-completion/completions/chaos');
-    console.log('     chaos completions zsh  > ~/.zsh/completions/_chaos');
+    console.log('Tip: grok completions bash > ~/.local/share/bash-completion/completions/grok');
+    console.log('     grok completions zsh  > ~/.zsh/completions/_grok');
 }

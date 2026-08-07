@@ -202,13 +202,37 @@ impl SessionActor {
         }
         skill_count
     }
+    /// Skills used for slash resolve, mid-turn interjection expansion, and
+    /// prompt skill listings. Same source as ACU: product REST for chat-kind
+    /// (TTL-cached; never disk), `SkillManager` for Build.
+    pub(crate) async fn slash_skills_for_resolve(
+        &self,
+    ) -> Vec<xai_grok_tools::implementations::skills::types::SkillInfo> {
+        match slash_commands::acu_skill_source(self.is_chat_kind) {
+            slash_commands::AcuSkillSource::Product => Vec::new(),
+            slash_commands::AcuSkillSource::Disk => {
+                let bridge = self.tool_bridge_handle();
+                bridge.slash_skills().await
+            }
+        }
+    }
     /// Send `AvailableCommandsUpdate` to the client.
     ///
-    /// Reads the current slash-command skill list from the tools layer
-    /// (`SkillManager`), NOT from `PromptContext`.
+    /// Chat-kind sessions advertise the product Skills REST catalog (same
+    /// source as `list_commands(kind=chat)`). Build sessions read disk skills
+    /// from the tools layer (`SkillManager`). Chat never falls back to disk.
+    /// Product REST failure (or missing auth) reuses the shared last-successful
+    /// product catalog (same as `list_commands(kind=chat)`); if none exists yet,
+    /// advertises builtins only (never invents product skill names, never disk).
+    /// Empty product success still advertises builtins.
     pub(super) async fn send_available_commands_update(&self) {
         let bridge = self.agent.borrow().tool_bridge().clone();
-        let skills = bridge.slash_skills().await;
+        let skills = match slash_commands::acu_skill_source(self.is_chat_kind) {
+            slash_commands::AcuSkillSource::Product => {
+                return;
+            }
+            slash_commands::AcuSkillSource::Disk => bridge.slash_skills().await,
+        };
         let tool_names: Vec<String> = bridge
             .tool_definitions()
             .await
@@ -220,14 +244,12 @@ impl SessionActor {
         self.maybe_reconcile_active_goal_without_plan().await;
         let (_, workflows) = self.named_workflow_snapshot();
         let commands = slash_commands::available_commands(&skills, availability, &workflows);
-        if commands.is_empty() {
-            return;
-        }
         let meta = Some(slash_commands::build_tools_meta(&tool_names));
         tracing::info!(
             session_id = %self.session_info.id.0,
             command_count = commands.len(),
             tool_count = tool_names.len(),
+            is_chat_kind = self.is_chat_kind,
             "Advertising available slash commands",
         );
         self.send_update(
@@ -366,7 +388,6 @@ impl SessionActor {
             threshold_secs = Self::IDLE_REFRESH_THRESHOLD_SECS,
             "Session resumed after idle — refreshing model metadata from cli-chat-proxy"
         );
-        let creds = self.chat_state_handle.get_credentials().await;
         let Some(ref am) = self.auth_manager else {
             tracing::debug!("No auth manager available for model metadata refresh");
             return;
@@ -403,20 +424,28 @@ impl SessionActor {
                 crate::http::process_client_mode(),
             )
             .timeout(std::time::Duration::from_secs(5));
-        let response = match request.send().await {
+        let built = match request.build() {
             Ok(r) => r,
             Err(e) => {
-                tracing::warn!(error = %e, "Failed to fetch models for idle refresh");
+                tracing::warn!(error = %e, "Failed to build idle-refresh models request");
                 return;
             }
         };
+        let (response, stamp) =
+            match xai_grok_auth::execute_with_stamp(&middleware_client, built).await {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::warn!(error = %e, "Failed to fetch models for idle refresh");
+                    return;
+                }
+            };
         if response.status() == reqwest::StatusCode::UNAUTHORIZED {
             crate::auth::attribution::record_consumer_401(
                 am,
                 None,
                 crate::auth::attribution::ConsumerKind::IdleResumeModelRefresh,
                 "",
-                creds.api_key.as_deref(),
+                stamp.as_ref().map(|s| s.0.as_str()),
             );
         }
         let result = if !response.status().is_success() {
@@ -436,19 +465,10 @@ impl SessionActor {
             tracing::debug!("Model metadata refresh: no update or fetch failed");
             return;
         };
-        // Hold the operation lock so a concurrent SetContextWindow / model
-        // override / sampling-error context-window restore cannot race our
-        // metadata write. Re-read the sampling config inside the lock so we
-        // do not overwrite a fresh write that happened between the earlier
-        // `get_sampling_config` snapshot and this metadata refresh.
-        let _op_guard = self.compaction.operation_lock.lock().await;
-        let Some(current_config) = self.chat_state_handle.get_sampling_config().await else {
-            return;
-        };
         let mut config_changed = false;
         let mut updated_config = current_config.clone();
         if current_config.context_window != new_context_window
-            && self.compaction.context_window_override.get().is_none()
+            && self.compaction.context_window_override.is_none()
         {
             tracing::info!(
                 old_context_window = current_config.context_window.get(),
@@ -470,19 +490,8 @@ impl SessionActor {
             config_changed = true;
         }
         if config_changed {
-            let context_window = updated_config.context_window.get();
             self.chat_state_handle
                 .update_sampling_config(updated_config);
-            let tokens_used = self.chat_state_handle.get_estimated_total_tokens().await;
-            self.signals_handle()
-                .update_context_usage(tokens_used, context_window);
-            self.send_xai_notification(
-                crate::extensions::notification::SessionUpdate::ContextUsageUpdated {
-                    tokens_used,
-                    context_window,
-                },
-            )
-            .await;
         }
     }
     /// Update cached sampling config if model metadata changed (from response headers).
@@ -493,12 +502,6 @@ impl SessionActor {
         if let Some(ref etag) = metadata.models_etag {
             self.models_manager.refresh_if_new_etag(etag.clone()).await;
         }
-        // Hold the operation lock so a concurrent SetContextWindow / model
-        // override / sampling-error context-window restore cannot interleave
-        // its write. The path runs from live response headers, so without
-        // this lock we'd race the user's lock-window request and silently
-        // clobber it.
-        let _op_guard = self.compaction.operation_lock.lock().await;
         let current_config = match self.chat_state_handle.get_sampling_config().await {
             Some(cfg) => cfg,
             None => return,
@@ -508,7 +511,7 @@ impl SessionActor {
         let mut new_max_completion_tokens = current_config.max_completion_tokens;
         if let Some(new_cw) = metadata.context_window.and_then(std::num::NonZeroU64::new)
             && current_config.context_window != new_cw
-            && self.compaction.context_window_override.get().is_none()
+            && self.compaction.context_window_override.is_none()
         {
             if new_cw < current_config.context_window {
                 tracing::warn!(
@@ -547,17 +550,6 @@ impl SessionActor {
         };
         self.chat_state_handle
             .update_sampling_config(updated_config);
-        let tokens_used = self.chat_state_handle.get_estimated_total_tokens().await;
-        let context_window = new_context_window.get();
-        self.signals_handle()
-            .update_context_usage(tokens_used, context_window);
-        self.send_xai_notification(
-            crate::extensions::notification::SessionUpdate::ContextUsageUpdated {
-                tokens_used,
-                context_window,
-            },
-        )
-        .await;
     }
     /// Inject the actor's managed Read-deny globs into the current ToolBridge so
     /// the Grep tool excludes policy-forbidden paths. No-op when empty. Called on
@@ -612,26 +604,6 @@ impl SessionActor {
         let message_count = self.chat_state_handle.get_conversation_len().await;
         let message_tokens = self.chat_state_handle.get_estimated_messages_tokens().await;
         let usage_categories = self.usage_categories().await;
-        let selective_compaction_tokens_saved = self
-            .chat_state_handle
-            .get_selective_compaction()
-            .await
-            .total_tokens_saved();
-        // SessionInfo is also the source for the Pager's post-hoc status chip.
-        // Read the same ledger used by `/usage` so rate data survives after
-        // the live streaming tracker is cleared at turn end.
-        let usage_ledger = self.chat_state_handle.try_get_session_usage().await.ok();
-        let (avg_output_tokens_per_sec, decode_tokens_per_sec) = usage_ledger
-            .as_ref()
-            .map(|ledger| {
-                let totals = &ledger.totals;
-                let avg = (totals.api_duration_ms > 0 && totals.output_tokens > 0).then(|| {
-                    (totals.output_tokens as f64 * 1000.0 / totals.api_duration_ms as f64) as f32
-                });
-                let decode = totals.decode_tokens_per_sec().map(|rate| rate as f32);
-                (avg, decode)
-            })
-            .unwrap_or((None, None));
         let free_tokens = xai_token_estimation::free_tokens(context_window, total_tokens);
         let usage_pct = xai_token_estimation::usage_percentage_u8(total_tokens, context_window);
         let api_backend = config.as_ref().map(|c| format!("{:?}", c.api_backend));
@@ -667,9 +639,6 @@ impl SessionActor {
                 usage_pct,
                 auto_compact_threshold_percent: self.compaction.threshold_percent.get(),
                 usage_categories,
-                selective_compaction_tokens_saved,
-                avg_output_tokens_per_sec,
-                decode_tokens_per_sec,
             },
         }
     }

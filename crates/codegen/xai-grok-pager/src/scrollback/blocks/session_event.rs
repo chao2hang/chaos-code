@@ -11,6 +11,7 @@ use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
 
 use super::tool::HookRunEntry;
+use crate::appearance::AppearanceConfig;
 use crate::render::wrapping::word_wrap_lines;
 use crate::scrollback::block::BlockContent;
 use crate::scrollback::types::{
@@ -85,9 +86,20 @@ pub enum SessionEvent {
         /// Used to match known error patterns without fragile string matching.
         error_type: Option<String>,
     },
+    /// A non-success API / HTTP response (or similar terminal request error).
+    /// Rendered like [`SessionEvent::ReAuthRequired`]: warning color + accent,
+    /// no JSON dump.
+    RequestFailed {
+        /// HTTP status when known. `None` for transport / idle-timeout / etc.
+        status: Option<u16>,
+        /// Short headline, e.g. `"Server error (500)"`.
+        headline: String,
+        /// Sanitized one-line detail (server message or fallback guidance).
+        detail: String,
+    },
     /// The server rejected the credentials (401 / auth error) and automatic
     /// recovery was exhausted. Rendered as a prominent call-to-action that
-    /// points the user at Provider API-key configuration, replacing the raw
+    /// points the user at `/login` to re-authenticate, replacing the raw
     /// "Retry failed: Unauthorized (401) …" dump.
     ReAuthRequired,
     /// Terminal context overflow — ideally unreachable, since auto-compaction should
@@ -95,6 +107,8 @@ pub enum SessionEvent {
     /// vs the server's max_prompt_length, or compaction suppressed/failed). One actionable
     /// prompt, replacing the CompactionFailed + RetryFailed + TurnFailed stack.
     ContextTooLarge,
+    /// Session disk is full.
+    DiskFull,
     /// Manual `/compact` command completed.
     CompactCompleted {
         /// Wall-clock elapsed time for the command.
@@ -122,7 +136,7 @@ pub enum SessionEvent {
     },
     /// A `/goal` finished (status → Complete). Carries the goal's total
     /// elapsed time across all its turns, distinct from the per-turn
-    /// "耗时" marker.
+    /// "Worked for" marker.
     GoalCompleted {
         /// Goal end-to-end elapsed time (`GoalUpdated.elapsed_ms`).
         elapsed: Duration,
@@ -146,15 +160,15 @@ impl SessionEvent {
             SessionEvent::TurnCompleted {
                 elapsed: Some(elapsed),
             } => {
-                format!("耗时 {}", format_duration(*elapsed))
+                format!("Worked for {}", format_duration(*elapsed))
             }
-            SessionEvent::TurnCompleted { elapsed: None } => "本轮已完成。".to_string(),
+            SessionEvent::TurnCompleted { elapsed: None } => "Turn completed.".to_string(),
             SessionEvent::TurnCancelled { elapsed } => {
-                format!("用户在 {} 后取消了本轮。", format_duration(*elapsed))
+                format!("Turn cancelled by user in {}.", format_duration(*elapsed))
             }
             SessionEvent::TurnHalted { elapsed } => {
                 format!(
-                    "Agent 无法继续推进 \u{2014} 本轮在 {} 后结束。",
+                    "Agent was unable to make progress \u{2014} turn ended in {}.",
                     format_duration(*elapsed)
                 )
             }
@@ -162,16 +176,16 @@ impl SessionEvent {
                 error,
                 elapsed: Some(elapsed),
             } => {
-                format!("本轮在 {} 后失败：{error}", format_duration(*elapsed))
+                format!("Turn failed in {}: {error}", format_duration(*elapsed))
             }
             SessionEvent::TurnFailed {
                 error,
                 elapsed: None,
             } => {
-                format!("本轮失败：{error}")
+                format!("Turn failed: {error}")
             }
             SessionEvent::CompactionStarted { percentage } => {
-                format!("上下文已占用 {percentage}%。正在压缩…")
+                format!("Context {percentage}% full. Compacting…")
             }
             SessionEvent::CompactionCompleted {
                 tokens_before,
@@ -182,9 +196,12 @@ impl SessionEvent {
                 // Older shells don't send tokens_before — keep the legacy format.
                 let body = match tokens_before {
                     Some(before) if *before > 0 => {
-                        format!("上下文已压缩：{} → {after} tokens", format_tokens(*before))
+                        format!(
+                            "Context compacted: {} → {after} tokens",
+                            format_tokens(*before)
+                        )
                     }
-                    _ => format!("上下文已压缩 → {after} tokens"),
+                    _ => format!("Context compacted → {after} tokens"),
                 };
                 if let Some(ms) = elapsed_ms {
                     let secs = *ms as f64 / 1000.0;
@@ -195,39 +212,43 @@ impl SessionEvent {
             }
             SessionEvent::CompactionFailed { error } => {
                 if error.trim().is_empty() {
-                    "压缩失败。".to_string()
+                    "Compaction failed.".to_string()
                 } else {
-                    format!("压缩失败：{error}")
+                    format!("Compaction failed: {error}")
                 }
             }
-            SessionEvent::CompactionCancelled => "压缩已取消。".to_string(),
+            SessionEvent::CompactionCancelled => "Compaction cancelled.".to_string(),
             SessionEvent::RetryFailed { error, error_type } => {
-                if error_type.as_deref() == Some("encrypted_content_mismatch") {
-                    "此会话的对话历史与当前模型不兼容。请开始新会话。".to_string()
+                use crate::app::error_display::WireErrorType;
+                if WireErrorType::parse(error_type.as_deref())
+                    == WireErrorType::EncryptedContentMismatch
+                {
+                    "This session's conversation history is incompatible with the \
+                     current model. Please start a new session."
+                        .to_string()
                 } else {
-                    format!("重试失败：{error}")
+                    format!("Retry failed: {error}")
                 }
             }
+            SessionEvent::RequestFailed {
+                headline, detail, ..
+            } => crate::app::error_display::banner_message(headline, detail),
             SessionEvent::ReAuthRequired => {
-                "模型认证失败：凭证缺失或被提供商拒绝。请检查当前模型的 \
-                 api_key/env_key、base_url 和 auth_scheme，然后重新发送消息。"
+                "Authentication required \u{2014} your session has expired or your \
+                 credentials were rejected. Run /login to re-authenticate, then resend \
+                 your message."
                     .to_string()
             }
             SessionEvent::ContextTooLarge => {
-                // Defaults: ModelInfo::fallback uses context_window=200_000 when
-                // [model.*] omits it; max_completion_tokens stays unset (provider).
-                // Use ASCII `-` list markers (not U+2022) for broader terminal
-                // glyph coverage.
-                "此对话已超出模型的上下文窗口（未配置时本地默认 200k）。\n\
-                 处理建议：\n\
-                 - /compact — 压缩当前会话后重试\n\
-                 - /context set 128k — 按上游真实上限调整本会话窗口（可触发压缩）\n\
-                 - 在 config.toml 的 [model.…] 中设置 context_window / max_completion_tokens\n\
-                 - 若仍过大：/new 开新会话"
+                "This conversation is too large for the model's context window. \
+                 Use /new to start a new session."
                     .to_string()
             }
+            SessionEvent::DiskFull => {
+                xai_grok_shell::extensions::notification::DISK_FULL_USER_MESSAGE.to_string()
+            }
             SessionEvent::CompactCompleted { elapsed } => {
-                format!("压缩在 {} 内完成。", format_duration(*elapsed))
+                format!("Compaction completed in {}.", format_duration(*elapsed))
             }
             SessionEvent::HookAnnotation { message } => message.clone(),
             SessionEvent::ModelUnavailable {
@@ -238,19 +259,22 @@ impl SessionEvent {
                 if new_model_id.is_empty() {
                     reason.clone()
                 } else {
-                    format!("{reason} 已切换到 \"{new_model_id}\"。")
+                    format!("{reason} Switched to \"{new_model_id}\".")
                 }
             }
             SessionEvent::MemorySaved { path, trigger } => {
                 let short_path = crate::util::abbreviate_path(path);
-                format!("记忆已保存（{trigger}） \u{2192} {short_path}  \u{00b7}  用 /memory 查看")
+                format!("Memory saved ({trigger}) \u{2192} {short_path}  \u{00b7}  /memory to view")
             }
             SessionEvent::GoalCompleted { elapsed } => {
-                format!("目标完成 \u{2014} 端到端 {}。", format_duration(*elapsed))
+                format!(
+                    "Goal complete \u{2014} {} end-to-end.",
+                    format_duration(*elapsed)
+                )
             }
             SessionEvent::Recap { summary, auto: _ } => {
-                // Always "回顾 —" (manual `/recap` and auto return-from-away).
-                format!("回顾 \u{2014} {summary}")
+                // Always "Recap —" (manual `/recap` and auto return-from-away).
+                format!("Recap \u{2014} {summary}")
             }
         }
     }
@@ -268,12 +292,29 @@ impl SessionEvent {
         }
     }
 
+    /// Failures and actionable prompts stand out (warning color + accent bar).
+    fn is_warning_banner(&self) -> bool {
+        matches!(
+            self,
+            SessionEvent::ReAuthRequired
+                | SessionEvent::ContextTooLarge
+                | SessionEvent::DiskFull
+                | SessionEvent::CompactionFailed { .. }
+                | SessionEvent::RequestFailed { .. }
+                | SessionEvent::RetryFailed { .. }
+                | SessionEvent::TurnFailed { .. }
+        )
+    }
+
     /// Whether this event marks the end of an agent turn (the "Turn
     /// completed/cancelled/failed" markers). These are the only events that
-    /// can carry the turn's stop/stop_failure hook runs inline — but a
-    /// parked marker renders mid-turn while the turn is still running
-    /// shell-side, before any Stop hook fires, so hook eligibility is the
-    /// block-level [`SessionEventBlock::accepts_stop_hooks`].
+    /// can carry the turn's stop/stop_failure hook runs inline.
+    ///
+    /// [`SessionEvent::RequestFailed`] is intentionally excluded — same as
+    /// [`SessionEvent::ReAuthRequired`]. RetryState may push it before
+    /// PromptResponse; treating it as terminal would change stop-hook
+    /// attribution. Dedicated banners skip the TurnFailed marker and flush
+    /// hooks standalone.
     pub fn is_turn_terminal(&self) -> bool {
         matches!(
             self,
@@ -311,12 +352,6 @@ pub struct SessionEventBlock {
     /// The prompt turn a terminal marker belongs to, when known. Gates
     /// which stop-hook batches may merge into it.
     pub prompt_id: Option<String>,
-    /// The marker was pushed at park time (user-interruptible blocking
-    /// wait): the turn is still running shell-side, so it must never accept
-    /// stop hooks. Rendering is unchanged — a parked wait reads as stopped.
-    /// Cleared when the completion folds into the uncommitted tail marker;
-    /// a committed tail (minimal print-once) gets a fresh row instead.
-    pub parked: bool,
 }
 
 impl SessionEventBlock {
@@ -326,7 +361,6 @@ impl SessionEventBlock {
             event,
             stop_hooks: Vec::new(),
             prompt_id: None,
-            parked: false,
         }
     }
 
@@ -341,15 +375,7 @@ impl SessionEventBlock {
             event,
             stop_hooks,
             prompt_id,
-            parked: false,
         }
-    }
-
-    /// Whether this marker may carry/accept stop-hook runs: a turn-terminal
-    /// event that is not a parked line (which renders while the turn is
-    /// still running shell-side, before any Stop hook fires).
-    pub fn accepts_stop_hooks(&self) -> bool {
-        self.event.is_turn_terminal() && !self.parked
     }
 
     /// Whether any attached stop hook actually ran (non-skipped). Gates the
@@ -465,7 +491,7 @@ impl SessionEventBlock {
         let header_style = header_text_style.add_modifier(Modifier::BOLD);
         // Non-selectable chrome (same as Thinking / tool label prefixes).
         let header_line =
-            || BlockLine::separator(Line::from(Span::styled("回顾".to_string(), header_style)));
+            || BlockLine::separator(Line::from(Span::styled("Recap".to_string(), header_style)));
 
         // Loading: header only; the animated gray sidebar is the feedback.
         if ctx.is_running {
@@ -476,7 +502,7 @@ impl SessionEventBlock {
 
         match ctx.mode {
             DisplayMode::Collapsed => {
-                let mut spans = vec![Span::styled("回顾".to_string(), header_style)];
+                let mut spans = vec![Span::styled("Recap".to_string(), header_style)];
                 let preview = summary.lines().next().unwrap_or(summary).trim();
                 if !preview.is_empty() {
                     spans.push(Span::styled(format!("  {preview}"), theme.muted()));
@@ -535,12 +561,7 @@ impl BlockContent for SessionEventBlock {
         let theme = Theme::current();
         // Failures and re-auth / context-overflow prompts are actionable, not
         // informational — render them in the warning color, not muted noise.
-        let style = if matches!(
-            self.event,
-            SessionEvent::ReAuthRequired
-                | SessionEvent::ContextTooLarge
-                | SessionEvent::CompactionFailed { .. }
-        ) {
+        let style = if self.event.is_warning_banner() {
             ratatui::style::Style::default().fg(theme.warning)
         } else {
             theme.muted()
@@ -583,12 +604,7 @@ impl BlockContent for SessionEventBlock {
             return (ctx.mode != DisplayMode::Collapsed)
                 .then(|| AccentStyle::static_color(theme.accent_tool));
         }
-        if matches!(
-            self.event,
-            SessionEvent::ReAuthRequired
-                | SessionEvent::ContextTooLarge
-                | SessionEvent::CompactionFailed { .. }
-        ) {
+        if self.event.is_warning_banner() {
             Some(AccentStyle::static_color(theme.warning))
         } else {
             None
@@ -607,7 +623,7 @@ impl BlockContent for SessionEventBlock {
         self.accent(ctx)
     }
 
-    fn has_vpad(&self, _ctx: &BlockContext) -> bool {
+    fn has_vpad_for(&self, _appearance: &AppearanceConfig) -> bool {
         false // Compact like SystemMessageBlock
     }
 
@@ -668,7 +684,7 @@ mod tests {
         let event = SessionEvent::TurnCompleted {
             elapsed: Some(Duration::from_secs(125)),
         };
-        assert_eq!(event.message(), "耗时 2m5s");
+        assert_eq!(event.message(), "Worked for 2m5s");
     }
 
     #[test]
@@ -676,7 +692,7 @@ mod tests {
         let event = SessionEvent::TurnCancelled {
             elapsed: Duration::from_secs(10),
         };
-        assert_eq!(event.message(), "用户在 10s 后取消了本轮。");
+        assert_eq!(event.message(), "Turn cancelled by user in 10s.");
     }
 
     #[test]
@@ -684,7 +700,7 @@ mod tests {
         let event = SessionEvent::GoalCompleted {
             elapsed: Duration::from_secs(619),
         };
-        assert_eq!(event.message(), "目标完成 \u{2014} 端到端 10m19s。");
+        assert_eq!(event.message(), "Goal complete \u{2014} 10m19s end-to-end.");
     }
 
     #[test]
@@ -694,7 +710,7 @@ mod tests {
         };
         assert_eq!(
             event.message(),
-            "Agent 无法继续推进 \u{2014} 本轮在 45s 后结束。"
+            "Agent was unable to make progress \u{2014} turn ended in 45s."
         );
     }
 
@@ -704,7 +720,7 @@ mod tests {
             error: "connection reset".into(),
             elapsed: Some(Duration::from_secs(3)),
         };
-        assert_eq!(event.message(), "本轮在 3.0s 后失败：connection reset");
+        assert_eq!(event.message(), "Turn failed in 3.0s: connection reset");
     }
 
     #[test]
@@ -713,7 +729,7 @@ mod tests {
             error: "auth error".into(),
             elapsed: None,
         };
-        assert_eq!(event.message(), "本轮失败：auth error");
+        assert_eq!(event.message(), "Turn failed: auth error");
     }
 
     #[test]
@@ -725,7 +741,7 @@ mod tests {
         };
         assert_eq!(
             event.message(),
-            "Model \"grok-4.5\" is no longer available. 已切换到 \"grok-build\"。"
+            "Model \"grok-4.5\" is no longer available. Switched to \"grok-build\"."
         );
     }
 
@@ -749,7 +765,7 @@ mod tests {
             error: "connection timeout".into(),
             error_type: None,
         };
-        assert_eq!(event.message(), "重试失败：connection timeout");
+        assert_eq!(event.message(), "Retry failed: connection timeout");
     }
 
     #[test]
@@ -760,7 +776,8 @@ mod tests {
         };
         assert_eq!(
             event.message(),
-            "此会话的对话历史与当前模型不兼容。请开始新会话。"
+            "This session's conversation history is incompatible with the \
+             current model. Please start a new session."
         );
     }
 
@@ -770,19 +787,17 @@ mod tests {
             error: "bad request".into(),
             error_type: Some("api_400".into()),
         };
-        assert_eq!(event.message(), "重试失败：bad request");
+        assert_eq!(event.message(), "Retry failed: bad request");
     }
 
     #[test]
-    fn reauth_required_message_points_at_provider_config() {
+    fn reauth_required_message_points_at_login() {
         let msg = SessionEvent::ReAuthRequired.message();
+        assert!(msg.contains("/login"), "must tell the user to run /login");
         assert!(
-            msg.contains("api_key/env_key") && msg.contains("base_url"),
-            "must point at provider credentials and endpoint: {msg}"
-        );
-        assert!(
-            !msg.contains("/login"),
-            "removed login command must not be suggested"
+            msg.to_lowercase().contains("authentication")
+                || msg.to_lowercase().contains("credentials"),
+            "must explain it is an auth problem: {msg}"
         );
     }
 
@@ -799,23 +814,35 @@ mod tests {
     }
 
     #[test]
+    fn request_failed_message_and_warning_accent() {
+        let event = SessionEvent::RequestFailed {
+            status: Some(500),
+            headline: "Server error (500)".into(),
+            detail: "upstream exploded".into(),
+        };
+        assert_eq!(
+            event.message(),
+            "Server error (500) \u{2014} upstream exploded"
+        );
+        let block = SessionEventBlock::new(event);
+        let theme = Theme::current();
+        assert_eq!(
+            block.accent(&ctx()).map(|a| a.color),
+            Some(theme.warning),
+            "request-failed banner must stand out like re-auth"
+        );
+    }
+
+    #[test]
     fn context_too_large_message_is_actionable() {
         let msg = SessionEvent::ContextTooLarge.message();
         assert!(
-            msg.contains("超出") || msg.contains("上下文"),
+            msg.to_lowercase().contains("too large"),
             "must explain the conversation is too large: {msg}"
         );
         assert!(
             msg.contains("/new"),
             "must offer /new as the recovery action: {msg}"
-        );
-        assert!(
-            msg.contains("/compact") || msg.contains("/context"),
-            "must offer compact/context recovery paths: {msg}"
-        );
-        assert!(
-            msg.contains("200k") || msg.contains("context_window"),
-            "must mention default window or config field: {msg}"
         );
     }
 
@@ -840,7 +867,7 @@ mod tests {
         };
         assert_eq!(
             event.message(),
-            "上下文已压缩：48.8k → 27.1k tokens (21.0s)"
+            "Context compacted: 48.8k → 27.1k tokens (21.0s)"
         );
     }
 
@@ -851,7 +878,7 @@ mod tests {
             tokens_after: 27_100,
             elapsed_ms: None,
         };
-        assert_eq!(event.message(), "上下文已压缩 → 27.1k tokens");
+        assert_eq!(event.message(), "Context compacted → 27.1k tokens");
     }
 
     #[test]
@@ -859,7 +886,7 @@ mod tests {
         let event = SessionEvent::CompactionFailed {
             error: String::new(),
         };
-        assert_eq!(event.message(), "压缩失败。");
+        assert_eq!(event.message(), "Compaction failed.");
     }
 
     #[test]
@@ -869,7 +896,7 @@ mod tests {
         };
         assert_eq!(
             event.message(),
-            "压缩失败：out of credits or over your spending limit. Add credits and retry."
+            "Compaction failed: out of credits or over your spending limit. Add credits and retry."
         );
     }
 
@@ -906,8 +933,8 @@ mod tests {
             trigger: "flush".into(),
         };
         let msg = event.message();
-        assert!(msg.starts_with("记忆已保存（flush）"));
-        assert!(msg.contains("/memory"));
+        assert!(msg.starts_with("Memory saved (flush)"));
+        assert!(msg.contains("/memory to view"));
     }
 
     #[test]
@@ -916,13 +943,13 @@ mod tests {
             summary: "refactored the parser".into(),
             auto: false,
         };
-        assert_eq!(manual.message(), "回顾 \u{2014} refactored the parser");
+        assert_eq!(manual.message(), "Recap \u{2014} refactored the parser");
 
         let auto = SessionEvent::Recap {
             summary: "refactored the parser".into(),
             auto: true,
         };
-        assert_eq!(auto.message(), "回顾 \u{2014} refactored the parser");
+        assert_eq!(auto.message(), "Recap \u{2014} refactored the parser");
     }
 
     /// `ctx()` with an overridden display mode / selection state.
@@ -955,8 +982,8 @@ mod tests {
         let out = block.output(&recap_ctx(DisplayMode::Expanded, false));
         assert_eq!(
             plain(&out.lines[0]),
-            "回顾",
-            "header line is the '回顾' label"
+            "Recap",
+            "header line is the 'Recap' label"
         );
         let body = out.lines.iter().map(plain).collect::<Vec<_>>().join("\n");
         assert!(
@@ -1025,7 +1052,7 @@ mod tests {
         // Header only — no blank line or body while still generating.
         let out = block.output(&rc);
         assert_eq!(out.lines.len(), 1, "loading recap is just the header");
-        assert_eq!(plain(&out.lines[0]), "回顾");
+        assert_eq!(plain(&out.lines[0]), "Recap");
 
         // The sidebar + bullet animate in gray (the feedback) — not the magenta
         // running color used for active tool turns.
@@ -1048,7 +1075,7 @@ mod tests {
         let out = block.output(&recap_ctx(DisplayMode::Collapsed, false));
         assert_eq!(out.lines.len(), 1, "collapsed recap is a single line");
         let text = plain(&out.lines[0]);
-        assert!(text.starts_with("回顾"), "starts with the header: {text}");
+        assert!(text.starts_with("Recap"), "starts with the header: {text}");
         assert!(
             text.contains("First line of recap."),
             "shows a preview: {text}"
@@ -1178,7 +1205,7 @@ mod tests {
         assert_eq!(out.lines.len(), 1, "collapsed marker stays a single line");
         let text = plain(&out.lines[0]);
         assert!(
-            text.starts_with("耗时 5.0s"),
+            text.starts_with("Worked for 5.0s"),
             "marker text keeps the left edge: {text}"
         );
         assert!(
@@ -1196,17 +1223,20 @@ mod tests {
             "only the marker text span is selectable: {:?}",
             out.lines[0].selectable
         );
-        assert_eq!(out.lines[0].selection_text.as_deref(), Some("耗时 5.0s"));
+        assert_eq!(
+            out.lines[0].selection_text.as_deref(),
+            Some("Worked for 5.0s")
+        );
     }
 
     #[test]
     fn stop_hooks_summary_wraps_to_own_line_when_narrow() {
         let block = completed_with_stop_hooks();
-        // "耗时 5.0s" is 9 display cols; the summary is 16 — no room
-        // at width 24, so the summary right-justifies on its own line.
+        // "Worked for 5.0s" is 15 cols; the summary is 16 — no room
+        // at width 30, so the summary right-justifies on its own line.
         let out = block.output(&BlockContext {
             mode: DisplayMode::Collapsed,
-            width: 24,
+            width: 30,
             ..ctx()
         });
         assert_eq!(out.lines.len(), 2);
@@ -1214,7 +1244,7 @@ mod tests {
         assert!(summary_line.ends_with("stop  [hooks: 1]"));
         assert_eq!(
             unicode_width::UnicodeWidthStr::width(summary_line.as_str()),
-            24
+            30
         );
         assert!(
             matches!(out.lines[1].selectable, Selectable::None),
@@ -1313,7 +1343,7 @@ mod tests {
             mode: DisplayMode::Collapsed,
             ..ctx()
         });
-        assert_eq!(plain(&out.lines[0]), "耗时 5.0s");
+        assert_eq!(plain(&out.lines[0]), "Worked for 5.0s");
     }
 
     #[test]
@@ -1349,44 +1379,16 @@ mod tests {
         );
     }
 
-    /// A parked marker block — the shape `maybe_push_parked_marker` pushes.
-    fn parked_marker() -> SessionEventBlock {
-        SessionEventBlock {
-            event: SessionEvent::TurnCompleted {
-                elapsed: Some(Duration::from_secs(24)),
-            },
-            stop_hooks: Vec::new(),
-            prompt_id: None,
-            parked: true,
-        }
-    }
-
     #[test]
-    fn parked_markers_never_accept_stop_hooks() {
-        // A parked marker renders mid-turn, before any Stop hook fires.
-        let block = parked_marker();
-        assert!(!block.accepts_stop_hooks(), "parked marker refuses hooks");
-
-        // The real terminal marker accepts.
+    fn only_turn_terminal_events_accept_stop_hooks() {
         let settled = SessionEventBlock::new(SessionEvent::TurnCompleted {
             elapsed: Some(Duration::from_secs(24)),
         });
-        assert!(settled.accepts_stop_hooks());
-        // Non-terminal events never accept, parked or not.
+        assert!(settled.event.is_turn_terminal());
         let recap = SessionEventBlock::new(SessionEvent::Recap {
             summary: "did stuff".into(),
             auto: false,
         });
-        assert!(!recap.accepts_stop_hooks());
-    }
-
-    #[test]
-    fn parked_marker_output_reads_as_plain_completed_marker() {
-        // The parked marker renders the plain event text — still-running
-        // background work is the status row's "… still running" cue, never a
-        // transcript suffix.
-        let block = parked_marker();
-        let out = block.output(&ctx());
-        assert_eq!(plain(&out.lines[0]), "耗时 24s");
+        assert!(!recap.event.is_turn_terminal());
     }
 }
