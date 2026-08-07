@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased (上游同步 sync/upstream-20260807)
+
+### 移植自上游
+
+- 手建仓库（无 `origin/HEAD`）时，默认分支回退到唯一存在的
+  `origin/main` / `origin/master`，再回退 `init.defaultBranch`；两者同时存在
+  时不猜测。
+- Markdown 表格在窄面板内改为单元格内换行/硬切，右边界 `│` 不再被裁掉
+  （grapheme 硬切 + 带样式链接保留）。
+
 ## 0.2.134 - 2026-08-07
 
 ### Removed
