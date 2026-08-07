@@ -12,7 +12,7 @@
 - SQLite 会话存储加固：`open`/`open_readonly` 内部改用带截止时间的
   `SQLITE_BUSY` 重试预算（10s，共享 deadline 不叠加），网络挂载更稳。
 
-## 0.2.134 - 2026-08-07
+## 0.2.135 - 2026-08-07
 
 ### Removed
 
