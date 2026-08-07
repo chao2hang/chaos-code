@@ -1321,6 +1321,7 @@ pub fn render_modal(
         &[],
         Some(theme.bg_base),
         false,
+        0,
         inner_x + inner_width - 1,
     );
     state.hit_areas = Some(PickerHitAreas {

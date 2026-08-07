@@ -72,6 +72,8 @@ pub struct HeadlessOptions {
     pub permission_mode_flag: Option<String>,
     /// Effort token (`--reasoning-effort` / `--effort`); resolved like `/effort` after models load.
     pub reasoning_effort: Option<String>,
+    /// Canonical request-client profile ID to advertise to the agent.
+    pub client_identifier: Option<String>,
     /// Wait for background tasks to report `task_completed` before exiting (default true).
     pub wait_for_background: bool,
     /// Max time to wait for background quiescence after the first turn ends.
@@ -490,9 +492,12 @@ async fn authenticate(
 fn build_headless_init_request(
     rules: Option<&str>,
     system_prompt_override: Option<&str>,
+    client_identifier: Option<&str>,
 ) -> acp::InitializeRequest {
+    let client_identifier = client_identifier.unwrap_or(HEADLESS_CLIENT_TYPE);
     let mut meta = serde_json::json!({
-        "clientType": HEADLESS_CLIENT_TYPE,
+        "clientType": client_identifier,
+        "clientIdentifier": client_identifier,
         "clientVersion": PAGER_CLIENT_VERSION,
     });
     if let Some(rules) = rules {
@@ -866,6 +871,7 @@ pub async fn run_single_turn(
     let init_req = build_headless_init_request(
         options.rules.as_deref(),
         options.system_prompt_override.as_deref(),
+        options.client_identifier.as_deref(),
     );
     xai_grok_telemetry::startup::enter(crate::acp::StartupPhase::AcpInitialize);
     let init_resp: acp::InitializeResponse = match acp_send(init_req, &acp_tx).await {

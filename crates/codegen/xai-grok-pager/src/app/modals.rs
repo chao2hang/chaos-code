@@ -485,7 +485,9 @@ impl AgentView {
             | ActiveModal::MemoryBrowser { .. }
             | ActiveModal::Settings { .. }
             | ActiveModal::ResetSettingsConfirm { .. }
-            | ActiveModal::RememberNoteReview { .. } => unreachable!(),
+            | ActiveModal::RememberNoteReview { .. }
+            | ActiveModal::ProviderModal { .. }
+            | ActiveModal::ClientModal { .. } => unreachable!(),
         }
     }
 

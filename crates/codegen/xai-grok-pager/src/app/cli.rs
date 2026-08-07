@@ -52,6 +52,12 @@ pub enum Command {
     Memory(crate::memory_cmd::MemoryArgs),
     /// List available models and exit
     Models,
+    /// List available request-client profiles and exit
+    Clients {
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
     /// List, search, or restore sessions
     Sessions(crate::sessions_cmd::SessionsArgs),
     /// Fetch and install managed configuration
@@ -265,6 +271,9 @@ pub struct AgentArgs {
     /// Model ID to use
     #[arg(short = 'm', long = "model", value_name = "MODEL")]
     pub model: Option<String>,
+    /// Select the request-client profile (claude-code, codex, grok-build or workbuddy).
+    #[arg(long = "client", value_name = "PROFILE")]
+    pub client: Option<String>,
     /// Reasoning effort for reasoning models
     #[clap(
         long = "reasoning-effort",
@@ -403,7 +412,7 @@ pub struct LeaderArgs {
 #[command(
     name = "grok",
     version = env!("VERSION_WITH_COMMIT"),
-    about = "Grok Build TUI",
+    about = "Chaos AI 编码助手",
     disable_version_flag = true,
     next_display_order = None,
     help_template = "\
@@ -517,6 +526,9 @@ pub struct PagerArgs {
     /// Model ID to use.
     #[clap(short = 'm', long = "model", value_name = "MODEL")]
     pub model: Option<String>,
+    /// Select the request-client profile (claude-code, codex, grok-build or workbuddy).
+    #[clap(long = "client", value_name = "PROFILE")]
+    pub client: Option<String>,
     /// Reasoning effort for reasoning models
     #[clap(
         long = "reasoning-effort",

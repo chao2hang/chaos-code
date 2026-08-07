@@ -100,6 +100,19 @@ impl AgentView {
                 .as_ref()
                 .is_some_and(|wake| wake.cancel_sent)
     }
+    /// Status-row chrome for a wake turn, or `None` when a local turn owns it.
+    pub(crate) fn wake_display_state(&self) -> Option<&'static crate::app::agent::AgentState> {
+        if !self.session.state.is_idle() {
+            return None;
+        }
+        self.running_wake_turn.as_ref().map(|wake| {
+            if wake.cancel_sent {
+                &crate::app::agent::AgentState::TurnCancelling
+            } else {
+                &crate::app::agent::AgentState::TurnRunning
+            }
+        })
+    }
     /// Single setter for [`super::RunningWakeTurn`]. No-op unless the pane is
     /// idle and not replaying; keeps an in-flight cancel marker for the same id.
     pub(crate) fn note_streaming_wake_turn(&mut self, prompt_id: &str) {
@@ -276,9 +289,11 @@ impl AgentView {
             session_binding_epoch: 0,
             turn_paused_wall: std::time::Duration::ZERO,
             turn_start_ms_prompt: None,
-            hit_response_top_indicator: HitArea::default(),
-            hit_watching_cue: HitArea::default(),
+            hit_response_top_indicator: Default::default(),
+            hit_watching_cue: Default::default(),
+            #[cfg(feature = "local-workspace")]
             workspace_mode: crate::views::welcome::WelcomeWorkspaceMode::Sandbox,
+            #[cfg(feature = "local-workspace")]
             workspace_mode_cli_locked: false,
             chat_kind: false,
             app_chat_mode: false,
@@ -1092,6 +1107,14 @@ impl AgentView {
             .slash_controller
             .set_billing_surface_visible(visible);
     }
+    /// Set [`Self::usage_command_visible`] (see the field doc) and mirror it
+    /// into this agent's slash controller, so the two can't drift.
+    pub fn set_usage_command_visible(&mut self, visible: bool) {
+        self.usage_command_visible = visible;
+        self.prompt
+            .slash_controller
+            .set_usage_command_visible(visible);
+    }
     /// Replace the restricted slash-command deny list in this agent's
     /// registry (e.g. `/usage` denied on the free / X Basic tiers). Deny
     /// wins over every `set_*_visible` gate.
@@ -1119,6 +1142,7 @@ impl AgentView {
         &mut self,
         sharing_enabled: bool,
         billing_surface_visible: bool,
+        usage_command_visible: bool,
         chat_mode: bool,
         screen_mode: crate::app::ScreenMode,
         announcements: &[xai_grok_announcements::RemoteAnnouncement],
@@ -1126,6 +1150,7 @@ impl AgentView {
     ) {
         self.set_sharing_enabled(sharing_enabled);
         self.set_billing_surface_visible(billing_surface_visible);
+        self.set_usage_command_visible(usage_command_visible);
         self.app_chat_mode = chat_mode;
         self.prompt.set_screen_mode(screen_mode);
         self.set_dashboard_visible(crate::views::dashboard::dashboard_enabled());

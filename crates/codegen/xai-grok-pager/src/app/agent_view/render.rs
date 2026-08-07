@@ -1,9 +1,9 @@
 //! Frame rendering for [`AgentView`]: the `draw` entry point plus shortcut
 //! hints and the subagent fullscreen view.
 use super::{
-    ActivePane, AgentPane, AgentView, AgentViewLayout, CtaPhase, InlineMediaHitAreas,
-    MODE_BANNER_FADE_TICKS, PromptMode, collect_citation_links, dropdown_items_width,
-    record_dot_pulse, render_dropdown_chrome, supports_osc22,
+    ActivePane, AgentPane, AgentView, AgentViewLayout, BlockingCard, CtaPhase,
+    InlineMediaHitAreas, MODE_BANNER_FADE_TICKS, PromptMode, collect_citation_links,
+    dropdown_items_width, record_dot_pulse, render_dropdown_chrome, supports_osc22,
 };
 use crate::actions::{ActionId, ActionRegistry};
 use crate::key;
@@ -20,7 +20,7 @@ use crate::theme::Theme;
 use crate::views::btw_overlay::BTW_OVERLAY_ENTRY_IDX;
 use crate::views::modal;
 use crate::views::plan_approval_view::PlanApprovalFocus;
-use crate::views::prompt_widget::{PromptFlag, PromptInfo, PromptStyle};
+use crate::views::prompt_widget::{PromptBg, PromptFlag, PromptInfo, PromptStyle};
 use crate::views::question_view::QUESTION_VIEW_HPAD;
 use crate::views::shortcuts_bar::{HintItem, PendingHint, ShortcutsBar};
 use crate::views::{agent, turn_status};
@@ -31,6 +31,26 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Widget;
 use std::collections::HashSet;
 use std::time::Instant;
+
+/// App-level inputs to [`AgentView::draw`] that are not part of the banner
+/// slot or the frame geometry.
+#[derive(Default)]
+pub struct AppRenderParams<'a> {
+    /// Voice feature available (shows the mic affordances).
+    pub voice_available: bool,
+    /// Mic open and streaming on the active surface — drives the recording
+    /// row and the prompt voice overlay.
+    pub voice_listening: bool,
+    /// Interim transcript for the prompt overlay while dictating.
+    pub voice_interim: Option<&'a str>,
+    /// App-level Esc ownership snapshot — single producer
+    /// `AppView::esc_owned_before_agent` (voice listening / cold-start,
+    /// focused dev tracing pane, cloud / import-Claude modals, dashboard
+    /// attached-agent popup). Feeds the hint path so the bar never
+    /// advertises `Esc cancel` while an app-level owner would consume it.
+    pub esc_owned_before_agent: bool,
+}
+
 impl AgentView {
     pub(crate) fn update_scrollback_selection_state(
         &mut self,
@@ -157,6 +177,12 @@ impl AgentView {
                         hints.push(HintItem::new(key!('o', CONTROL), "总是批准"));
                         hints.push(HintItem::new(key!('c', CONTROL), "取消"));
                         hints
+                    }
+                    PermissionFocus::PatternEdit => {
+                        vec![
+                            HintItem::new(key!(Enter), "保存"),
+                            HintItem::new(key!(Esc), "取消"),
+                        ]
                     }
                 }
             } else {
@@ -336,6 +362,8 @@ impl AgentView {
         let selected_is_credit_limit = selected_entry.is_some_and(|e| e.block.is_credit_limit());
         let mut hints = agent::build_hints(
             self.active_pane,
+            self.parked_card()
+                .map_or_else(agent::prompt_focus_hint, BlockingCard::focus_hint),
             &self.prompt,
             registry,
             is_editing,
@@ -355,7 +383,9 @@ impl AgentView {
             self.multiline_mode,
             self.vim_mode,
             self.is_subagent_view,
-            self.session.state.is_turn_running() && !self.renders_parked(),
+            (self.session.state.is_turn_running() || self.wake_turn_active())
+                && !self.renders_parked(),
+            self.esc_would_cancel_turn(false),
             !self.visible_queue_is_empty(),
             selected_is_user_prompt,
             selected_is_agent_message,
@@ -615,16 +645,17 @@ impl AgentView {
                 scratch,
                 None,
                 false,
-                0,
-                &[],
-                &std::collections::BTreeSet::new(),
-                None,
+                crate::app::agent_view::BannerSlotParams::none(),
                 bundle_state,
                 false,
+                self.overlay_can_cycle,
                 &mut Vec::new(),
-                false,
-                false,
-                None,
+                AppRenderParams {
+                    voice_available: false,
+                    voice_listening: false,
+                    voice_interim: None,
+                    esc_owned_before_agent: false,
+                },
             );
             child_post_flush = post_flush;
         }
@@ -653,21 +684,32 @@ impl AgentView {
         scratch: &mut ScratchBuffer,
         pending_hint: Option<PendingHint>,
         overlay_focused: bool,
-        banner_height: u16,
-        banner_announcements: &[xai_grok_announcements::RemoteAnnouncement],
-        hidden_announcement_ids: &std::collections::BTreeSet<String>,
-        tip: Option<&str>,
+        banner: super::BannerSlotParams<'_>,
         bundle_state: &crate::app::bundle::BundleState,
         in_dashboard_overlay: bool,
+        overlay_can_cycle: bool,
         link_spans_out: &mut Vec<xai_ratatui_inline::LinkSpan>,
-        voice_available: bool,
-        voice_listening: bool,
-        voice_interim: Option<&str>,
+        app_params: AppRenderParams<'_>,
     ) -> (
         Option<(u16, u16)>,
         Option<crate::terminal::overlay::PostFlush>,
     ) {
+        let AppRenderParams {
+            voice_available,
+            voice_listening,
+            voice_interim,
+            esc_owned_before_agent,
+        } = app_params;
         self.in_dashboard_overlay = in_dashboard_overlay;
+        self.overlay_can_cycle = overlay_can_cycle;
+        let super::BannerSlotParams {
+            height: banner_height,
+            announcements: banner_announcements,
+            hidden_ids: hidden_announcement_ids,
+            privacy_banner,
+            mouse_pos,
+            tip,
+        } = banner;
         self.session_banner_active = crate::views::announcements::first_session_announcement(
             banner_announcements,
             hidden_announcement_ids,
@@ -762,6 +804,7 @@ impl AgentView {
             chrome: true,
             chrome_pad_left: layout_cfg.block_pad_left,
             chrome_pad_right: layout_cfg.block_pad_right,
+            bg: PromptBg::Default,
             bg_override: None,
             accent_color_override: if let Some(c) = self.prompt_input_mode.accent_color(&theme) {
                 Some(c)
@@ -809,6 +852,7 @@ impl AgentView {
             } else {
                 None
             },
+            placeholder_when_focused: false,
             show_accent_line: false,
             show_borders: true,
             title: self.display_name.clone(),
@@ -904,11 +948,13 @@ impl AgentView {
             chrome: false,
             chrome_pad_left: 0,
             chrome_pad_right: 0,
+            bg: PromptBg::Default,
             bg_override: Some(theme.bg_visual),
             accent_color_override: None,
             border_color_override: None,
             prefix_override: None,
             placeholder_override: None,
+            placeholder_when_focused: false,
             compact: false,
             show_accent_line: false,
             show_borders: false,
@@ -939,11 +985,13 @@ impl AgentView {
                 chrome: false,
                 chrome_pad_left: 0,
                 chrome_pad_right: 0,
+                bg: PromptBg::Default,
                 bg_override: Some(theme.bg_visual),
                 accent_color_override: None,
                 border_color_override: None,
                 prefix_override: None,
                 placeholder_override: None,
+                placeholder_when_focused: false,
                 compact: false,
                 show_accent_line: false,
                 show_borders: false,
@@ -2018,27 +2066,30 @@ impl AgentView {
                 let turn_output = turn_status::render_turn_status(
                     buf,
                     turn_area,
-                    &self.session.state,
-                    &activity,
-                    self.turn_elapsed(),
-                    self.activity_started_at,
-                    tick,
-                    drain_blocked,
-                    Some(turn_status::MouseButtons {
-                        cancel_hovered: self.hit_cancel_button.hovered,
-                        bg_hovered: self.hit_bg_button.hovered,
-                    }),
-                    has_running_execute,
-                    self.context_state.as_ref().map(|c| c.used),
-                    self.mcp_init_progress.as_ref(),
-                    self.bash_turn,
-                    is_pending_user_input,
-                    goal_verifying,
-                    watchers,
-                    parked,
-                    false,
-                    held_queue,
-                    held_queue_top_sendable,
+                    turn_status::TurnStatusArgs {
+                        state: &self.session.state,
+                        activity: &activity,
+                        turn_elapsed: self.turn_elapsed(),
+                        activity_started_at: self.activity_started_at,
+                        tick,
+                        drain_blocked,
+                        buttons: Some(turn_status::MouseButtons {
+                            cancel_hovered: self.hit_cancel_button.hovered,
+                            bg_hovered: self.hit_bg_button.hovered,
+                            watching_hovered: self.hit_watching_cue.hovered,
+                        }),
+                        has_running_execute,
+                        total_tokens: self.context_state.as_ref().map(|c| c.used),
+                        mcp_init_progress: self.mcp_init_progress.as_ref(),
+                        is_bash_turn: self.bash_turn,
+                        is_pending_user_input,
+                        goal_verifying,
+                        watchers,
+                        parked,
+                        flat_background: false,
+                        held_queue,
+                        held_queue_top_sendable,
+                    },
                 );
                 self.hit_cancel_button
                     .set_unless_dropdown(turn_output.cancel_button, dropdown_open);
@@ -2280,6 +2331,7 @@ impl AgentView {
                     perm_area,
                     perm,
                     followup_text,
+                    self.permission_pattern_edit.as_ref(),
                     self.hovered_permission_item,
                     &theme,
                     prompt_focused,
@@ -2294,11 +2346,13 @@ impl AgentView {
                         chrome: false,
                         chrome_pad_left: 0,
                         chrome_pad_right: 0,
+                        bg: PromptBg::Default,
                         bg_override: Some(row_bg),
                         accent_color_override: None,
                         border_color_override: None,
                         prefix_override: None,
                         placeholder_override: None,
+                        placeholder_when_focused: false,
                         compact: false,
                         show_accent_line: false,
                         show_borders: false,
@@ -2702,7 +2756,6 @@ impl AgentView {
             };
             let voice_overlay = if voice_available && (voice_listening || voice_interim.is_some()) {
                 Some(crate::views::prompt_widget::VoicePromptOverlay {
-                    listening: voice_listening,
                     interim: voice_interim,
                     color: theme.accent_running,
                 })
@@ -3128,6 +3181,12 @@ impl AgentView {
                         hints.push(HintItem::new(key!('o', CONTROL), "总是批准"));
                         hints.push(HintItem::new(key!('c', CONTROL), "取消"));
                         hints
+                    }
+                    PermissionFocus::PatternEdit => {
+                        vec![
+                            HintItem::new(key!(Enter), "保存"),
+                            HintItem::new(key!(Esc), "取消"),
+                        ]
                     }
                 }
             } else {
@@ -4186,8 +4245,23 @@ impl AgentView {
             let mut view = self.workflows_view.clone();
             view.normalize(&runs);
             let tick = self.tasks.tick_count() as usize;
+            let live: crate::views::workflows::WorkflowAgentLiveMap = self
+                .subagent_sessions
+                .iter()
+                .filter(|(_, info)| info.workflow_run_id.is_some() && info.is_running())
+                .map(|(id, info)| {
+                    (
+                        id.clone(),
+                        crate::views::workflows::WorkflowAgentLiveStatus {
+                            activity: info.activity_label.clone(),
+                            tokens_used: info.tokens_used,
+                            elapsed_ms: Some(info.display_elapsed().as_millis() as u64),
+                        },
+                    )
+                })
+                .collect();
             let popup =
-                crate::views::workflows::render_workflows(buf, area, &runs, &mut view, tick);
+                crate::views::workflows::render_workflows(buf, area, &runs, &mut view, tick, &live);
             self.workflows_view = view;
             if let Some(popup) = popup {
                 self.frame_occluder_rects.push(popup);
@@ -4335,8 +4409,7 @@ mod selection_state_tests {
 }
 #[cfg(test)]
 mod voice_recording_overlay_tests {
-    use super::super::paste::paste_key_tests::make_plan_approval_view_state;
-    use super::super::test_fixtures::make_agent;
+    use super::super::test_fixtures::{make_agent, make_plan_approval_view_state};
     use super::AgentView;
     use crate::actions::ActionRegistry;
     use crate::app::bundle::BundleState;
@@ -4364,16 +4437,17 @@ mod voice_recording_overlay_tests {
             &mut scratch,
             None,
             false,
-            0,
-            &[],
-            &std::collections::BTreeSet::new(),
-            None,
+            crate::app::agent_view::BannerSlotParams::none(),
             &BundleState::default(),
             false,
+            false,
             &mut Vec::new(),
-            listening,
-            listening,
-            None,
+            super::AppRenderParams {
+                voice_available: listening,
+                voice_listening: listening,
+                voice_interim: None,
+                esc_owned_before_agent: false,
+            },
         );
         (0..area.height)
             .map(|y| {
@@ -4429,16 +4503,12 @@ mod overlay_post_flush_tests {
                 &mut scratch,
                 None,
                 false,
-                0,
-                &[],
-                &std::collections::BTreeSet::new(),
-                None,
+                crate::app::agent_view::BannerSlotParams::none(),
                 &BundleState::default(),
                 false,
+                false,
                 &mut Vec::new(),
-                false,
-                false,
-                None,
+                super::AppRenderParams::default(),
             )
             .1
     }

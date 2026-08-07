@@ -557,6 +557,7 @@ pub(super) fn dispatch_send_prompt_inner(
                     respect_manual_folds: respect_manual_folds_from_app,
                     auto_mode_gate: auto_mode_gate_from_app,
                     ask_user_question_timeout_enabled: ask_user_question_timeout_enabled_from_app,
+                    auto_retry_incomplete_end_turn: app.auto_retry_incomplete_end_turn,
                     voice_stt_language: voice_stt_language_from_app,
                     // This session's own value (what its fires will actually
                     // do), seed only until the session response lands.

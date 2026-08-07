@@ -463,6 +463,13 @@ pub enum SessionUpdate {
     },
     /// Notification that a retry is in progress due to a transient error.
     RetryState(RetryState),
+    /// Context usage/window changed outside the streaming token path.
+    ContextUsageUpdated {
+        /// Current estimated tokens used.
+        tokens_used: u64,
+        /// Effective context window size.
+        context_window: u64,
+    },
     /// Auto-compact is starting due to context window threshold
     AutoCompactStarted {
         /// Current token usage

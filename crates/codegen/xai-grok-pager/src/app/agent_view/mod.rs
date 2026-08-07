@@ -153,6 +153,7 @@ mod input;
 pub(crate) use input::ExternalPromptEditorAccess;
 mod interactions;
 mod jump;
+mod key_owner;
 mod links;
 mod media;
 mod modals;
@@ -169,6 +170,9 @@ mod session;
 mod shell_completion;
 mod viewer;
 mod workflows_overlay;
+
+pub(crate) use key_owner::{BlockingCard, EscStep, KeyOwner};
+pub use render::AppRenderParams;
 use super::actions;
 use super::dispatch;
 pub(super) fn active_contexts_for_pane(pane: ActivePane) -> Vec<crate::actions::When> {
@@ -288,6 +292,35 @@ impl HitArea {
     pub fn clear(&mut self) {
         self.rect = None;
         self.hovered = false;
+    }
+}
+/// Banner-slot inputs to [`AgentView::draw`]. Slot precedence is computed
+/// by the caller (`AppView::draw`).
+pub struct BannerSlotParams<'a> {
+    /// Reserved slot height (0 = no slot this frame).
+    pub(crate) height: u16,
+    pub(crate) announcements: &'a [xai_grok_announcements::RemoteAnnouncement],
+    pub(crate) hidden_ids: &'a std::collections::BTreeSet<String>,
+    /// Privacy upsell banner owns the slot (highest banner precedence
+    /// below critical announcements; gated by the caller).
+    pub(crate) privacy_banner: bool,
+    /// Last mouse position, for mouse-pos-driven hover styling.
+    pub(crate) mouse_pos: Option<(u16, u16)>,
+    /// Session tip, only when it owns the slot.
+    pub(crate) tip: Option<&'a str>,
+}
+impl BannerSlotParams<'static> {
+    /// No banner slot this frame.
+    pub fn none() -> Self {
+        static EMPTY_IDS: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        Self {
+            height: 0,
+            announcements: &[],
+            hidden_ids: &EMPTY_IDS,
+            privacy_banner: false,
+            mouse_pos: None,
+            tip: None,
+        }
     }
 }
 pub use super::queue_edit::PromptMode;
@@ -1614,8 +1647,10 @@ pub struct AgentView {
     /// Still-running watcher cue on the turn-status row.
     pub hit_watching_cue: HitArea,
     /// Welcome history source mode for `--chat` sessions.
+    #[cfg(feature = "local-workspace")]
     pub workspace_mode: crate::views::welcome::WelcomeWorkspaceMode,
     /// Whether the workspace mode was CLI-pinned (not user-switchable).
+    #[cfg(feature = "local-workspace")]
     pub workspace_mode_cli_locked: bool,
 }
 /// Cap on [`AgentView::self_originated_prompt_ids`]. Only recent ids matter (a
@@ -1775,6 +1810,14 @@ fn translate_local_submit(
             }
         }
         LocalQuestionKind::ProjectSelect { .. } => unreachable!(),
+        LocalQuestionKind::DeleteCurrentSession => {
+            InputOutcome::Action(Action::DeleteCurrentSessionAnswered {
+                confirmed: *idx == 0,
+            })
+        }
+        LocalQuestionKind::Feedback => {
+            unreachable!("feedback submits through submit_feedback_pane, which returns first")
+        }
     }
 }
 fn translate_project_select(
@@ -2056,6 +2099,10 @@ pub(super) fn apply_settings_outcome(
         }
         SettingsKeyOutcome::Action(a) => InputOutcome::Action(a),
         SettingsKeyOutcome::ActionPair(a, b) => InputOutcome::ActionPair(a, b),
+        SettingsKeyOutcome::ActionThenClose(a) => {
+            agent.active_modal = None;
+            InputOutcome::Action(a)
+        }
         SettingsKeyOutcome::Changed => InputOutcome::Changed,
         SettingsKeyOutcome::Unchanged => InputOutcome::Unchanged,
     }
@@ -2745,6 +2792,76 @@ pub(crate) mod test_fixtures {
     use crate::scrollback::state::ScrollbackState;
     use agent_client_protocol as acp;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    pub(crate) fn make_followup_permission_state()
+    -> crate::views::permission_view::PermissionViewState {
+        let (response_tx, _rx) = tokio::sync::oneshot::channel();
+        let request = agent_client_protocol::RequestPermissionRequest::new(
+            agent_client_protocol::SessionId::new(std::sync::Arc::from("test")),
+            agent_client_protocol::ToolCallUpdate::new(
+                agent_client_protocol::ToolCallId::new(std::sync::Arc::from("call-1")),
+                agent_client_protocol::ToolCallUpdateFields::default(),
+            ),
+            vec![],
+        );
+        let perm = xai_acp_lib::AcpArgs {
+            request,
+            response_tx,
+        };
+        crate::views::permission_view::PermissionViewState {
+            request: perm,
+            id: 0,
+            focus: crate::views::permission_view::PermissionFocus::FollowupInput,
+            options: vec![],
+            active_idx: 0,
+            bash_highlights: None,
+            bash_selection_count: 0,
+            bash_command_raw: None,
+            mcp_scope: None,
+            title: String::new(),
+            description: vec![],
+            args_expanded: false,
+            desc_scroll: 0,
+            subagent_label: None,
+            options_area_height: 0,
+            options_scroll_offset: 0,
+        }
+    }
+    pub(crate) fn make_plan_approval_view_state()
+    -> crate::views::plan_approval_view::PlanApprovalViewState {
+        let (tx, _rx) = tokio::sync::oneshot::channel();
+        let request = crate::views::plan_approval_view::ExitPlanModeExtRequest {
+            session_id: "test-session".into(),
+            tool_call_id: "call-1".into(),
+            plan_content: Some("# Plan\n\n## Step 1\nDo something".into()),
+        };
+        crate::views::plan_approval_view::PlanApprovalViewState::new(
+            request,
+            crate::views::prompt_widget::StashedPrompt {
+                text: String::new(),
+                cursor: 0,
+                images: Vec::new(),
+                chip_elements: Vec::new(),
+                image_counter: 0,
+                image_undo_stash: Vec::new(),
+            },
+            tx,
+        )
+    }
+    /// Count of "Worked for X" (`TurnCompleted`) marker blocks in the
+    /// agent's scrollback.
+    pub fn count_turn_markers(agent: &AgentView) -> usize {
+        use crate::scrollback::block::RenderBlock;
+        use crate::scrollback::blocks::SessionEvent;
+        (0..agent.scrollback.len())
+            .filter(|i| {
+                matches!(
+                    agent.scrollback.get(*i).map(|e| &e.block),
+                    Some(RenderBlock::SessionEvent(b))
+                        if matches!(b.event, SessionEvent::TurnCompleted { .. })
+                )
+            })
+            .count()
+    }
     /// Drive the agent's tracker into a task-output wait via the real update
     /// path. `timeout_ms > 0` advertises a blocking (sendable/parked) wait;
     /// `0` is an instant poll that must NOT advertise one.

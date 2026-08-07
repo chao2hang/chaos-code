@@ -895,6 +895,7 @@ fn inline_input_style(theme: &Theme) -> PromptStyle {
         chrome_pad_left: 0,
         chrome_pad_right: 0,
         bg: PromptBg::Panel(theme.bg_visual),
+        bg_override: None,
         accent_color_override: None,
         border_color_override: None,
         prefix_override: None,

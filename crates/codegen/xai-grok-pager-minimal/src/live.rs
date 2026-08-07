@@ -82,6 +82,7 @@ pub(super) fn prompt_style(
         chrome_pad_left: live_left_inset(appearance),
         chrome_pad_right: 0,
         bg: PromptBg::Canvas(Color::Reset),
+        bg_override: None,
         accent_color_override: input_mode.accent_color(theme),
         border_color_override: None,
         prefix_override: input_mode.prefix_override(theme),

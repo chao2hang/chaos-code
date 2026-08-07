@@ -55,7 +55,7 @@ use super::rewind::{
 };
 use super::session::foreign::dispatch_fetch_session_list;
 use super::session::fork::{
-    apply_persist_worktree_mode, dispatch_fork, dispatch_fork_resolved,
+    apply_persist_worktree_mode, dispatch_fork, dispatch_fork_resolved, dispatch_project_selected,
     dispatch_startup_fork_session,
 };
 use super::session::lifecycle::{
@@ -75,7 +75,8 @@ use super::session::modal::dispatch_rename_session;
 use super::settings::setters::{
     clear_default_model, clear_fork_secondary_model, preview_auto_dark_theme,
     preview_auto_light_theme, preview_theme, set_ask_user_question_timeout_enabled,
-    set_auto_dark_theme, set_auto_light_theme, set_auto_update, set_collapsed_edit_blocks,
+    set_auto_dark_theme, set_auto_light_theme, set_auto_retry_incomplete_end_turn,
+    set_auto_update, set_collapsed_edit_blocks,
     set_combine_queued_prompts, set_compact_mode, set_confirm_before_rewind,
     set_contextual_hint_image_input, set_contextual_hint_plan_mode, set_contextual_hint_send_now,
     set_contextual_hint_small_screen, set_contextual_hint_ssh_wrap, set_contextual_hint_undo,
@@ -91,15 +92,16 @@ use super::settings::setters::{
 use super::settings::ui::{
     dispatch_confirm_reset_setting, dispatch_open_client_modal, dispatch_open_command_palette,
     dispatch_open_howto_guides, dispatch_open_provider_modal, dispatch_open_reset_confirm,
-    dispatch_open_settings, dispatch_toggle_compact_mode,
+    dispatch_open_settings, dispatch_set_client_profile, dispatch_toggle_compact_mode,
     dispatch_toggle_mouse_capture, dispatch_toggle_multiline, dispatch_toggle_timestamps,
     dispatch_toggle_vim_mode,
 };
 use super::status::{
     dispatch_copy_session_id, dispatch_manage_billing, dispatch_open_gboom, dispatch_open_tutorial,
     dispatch_privacy_banner_opt_in, dispatch_privacy_banner_opt_out, dispatch_share_session,
-    dispatch_show_context_info, dispatch_show_queue, dispatch_show_release_notes,
-    dispatch_show_session_info, dispatch_show_tasks, dispatch_show_usage, set_coding_data_sharing,
+    dispatch_set_context_window, dispatch_show_context_info, dispatch_show_queue,
+    dispatch_show_release_notes, dispatch_show_session_info, dispatch_show_tasks,
+    dispatch_show_usage, set_coding_data_sharing,
 };
 use super::task_result::{dispatch_task_result, unregister_all_active_sessions};
 use super::transcript::{
@@ -1013,6 +1015,10 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
         Action::OpenTutorial => dispatch_open_tutorial(app),
         Action::RenameSession { title } => dispatch_rename_session(app, title),
         Action::ShowContextInfo => dispatch_show_context_info(app),
+        Action::SetContextWindow {
+            tokens,
+            compact_if_needed,
+        } => dispatch_set_context_window(app, tokens, compact_if_needed),
         Action::ShowUsage => dispatch_show_usage(app),
         Action::ManageBilling => dispatch_manage_billing(app),
         Action::ShowQueue => dispatch_show_queue(app),
@@ -1041,6 +1047,7 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
         Action::SetAskUserQuestionTimeoutEnabled(v) => {
             set_ask_user_question_timeout_enabled(app, v)
         }
+        Action::SetAutoRetryIncompleteEndTurn(v) => set_auto_retry_incomplete_end_turn(app, v),
         Action::SetKeepTextSelection(v) => set_keep_text_selection(app, v),
         Action::SetScrollSpeed(v) => set_scroll_speed(app, v),
         Action::SetScrollMode(v) => set_scroll_mode(app, v),
@@ -1098,6 +1105,7 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
         Action::OpenHowtoGuides => dispatch_open_howto_guides(app),
         Action::OpenProviderModal { mode } => dispatch_open_provider_modal(app, mode),
         Action::OpenClientModal { mode } => dispatch_open_client_modal(app, mode),
+        Action::SetClientProfile { profile } => dispatch_set_client_profile(app, profile),
         Action::OpenResetConfirm { key } => dispatch_open_reset_confirm(app, key),
         Action::ConfirmResetSetting { choice } => dispatch_confirm_reset_setting(app, choice),
         Action::DumpInputLog => dispatch_dump_input_log(app),
@@ -1222,6 +1230,11 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
             );
             effects
         }
+        Action::ProjectSelected {
+            path,
+            stashed_prompt,
+            disable_picker,
+        } => dispatch_project_selected(app, path, stashed_prompt, disable_picker),
         Action::NewSessionAnswered {
             worktree,
             persist_mode,

@@ -1355,6 +1355,33 @@ pub struct PlanSubmit {
     pub action: String,
 }
 
+/// Which option the user chose in the project-directory picker (shown on the
+/// first prompt when Chaos is launched from a non-project directory).
+#[derive(Debug, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectPickerOutcome {
+    RecentProject,
+    CustomPath,
+    CurrentDir,
+    DontAskAgain,
+    Dismissed,
+}
+
+impl ProjectPickerOutcome {
+    pub fn picked_project(self) -> bool {
+        matches!(self, Self::RecentProject | Self::CustomPath)
+    }
+}
+
+/// User resolved the project-directory picker. `picked_project` is the headline
+/// signal: did they actually choose a project directory?
+#[derive(Serialize)]
+pub struct ProjectPickerSelected {
+    pub outcome: ProjectPickerOutcome,
+    pub picked_project: bool,
+    pub project_dir_options: usize,
+}
+
 // ---------------------------------------------------------------------------
 // SuperGrok upsell
 // ---------------------------------------------------------------------------
@@ -2106,6 +2133,9 @@ telemetry_event!(
     crate::session_metrics::TraceUploadFailed,
     "trace_upload_failed"
 );
+
+// Project-directory picker (fork feature)
+telemetry_event!(ProjectPickerSelected, "project_picker_selected");
 
 // Memory subsystem (structs in memory_telemetry)
 telemetry_event!(

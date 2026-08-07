@@ -158,6 +158,10 @@ pub struct PromptStyle {
     /// Only used when `chrome` is true.
     pub chrome_pad_left: u16,
     pub chrome_pad_right: u16,
+    /// Override the background color. When `Some`, the prompt uses this bg
+    /// instead of computing one from focus state. Useful for rendering the
+    /// prompt inline within another widget (e.g., question view).
+    pub bg_override: Option<ratatui::style::Color>,
     /// Background surface for the prompt; see [`PromptBg`].
     pub bg: PromptBg,
     /// Override the accent line color. When `Some`, uses this color instead
@@ -231,6 +235,7 @@ impl Default for PromptStyle {
             chrome: true,
             chrome_pad_left: 2,
             chrome_pad_right: 1,
+            bg_override: None,
             bg: PromptBg::Default,
             accent_color_override: None,
             border_color_override: None,
@@ -266,6 +271,7 @@ impl PromptStyle {
             chrome: false,
             chrome_pad_left: 0,
             chrome_pad_right: 0,
+            bg_override: None,
             bg: PromptBg::Panel(bg),
             accent_color_override: None,
             border_color_override: None,
@@ -2911,7 +2917,9 @@ impl PromptWidget {
         }
 
         let theme = Theme::current();
-        let bg = style.bg.color(theme.bg_base);
+        let bg = style
+            .bg_override
+            .unwrap_or_else(|| style.bg.color(theme.bg_base));
 
         let border_color = style.border_color_override.unwrap_or(if style.focused {
             theme.prompt_border_active

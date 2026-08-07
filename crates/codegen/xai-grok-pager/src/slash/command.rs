@@ -305,14 +305,6 @@ pub trait SlashCommand: Send + Sync {
         ModeSupport::Both
     }
 
-    /// Describe the screen modes in which this command is useful. The
-    /// default is intentionally permissive; commands that depend on a
-    /// particular surface override this and the dispatcher turns the
-    /// description into a user-facing refusal.
-    fn mode_support(&self) -> crate::slash::mode_support::ModeSupport {
-        crate::slash::mode_support::ModeSupport::Both
-    }
-
     /// Placeholder text shown in the prompt when args are empty.
     /// E.g., `"[context]"` for `/compact`.
     fn arg_placeholder(&self) -> Option<&str> {

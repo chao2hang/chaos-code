@@ -397,6 +397,95 @@ pub(super) fn handle_coding_data_sharing_updated(
     effects
 }
 
+fn format_token_count(n: u64) -> String {
+    if n >= 1_000_000 && n.is_multiple_of(1_000_000) {
+        format!("{}M", n / 1_000_000)
+    } else if n >= 1_000 && n.is_multiple_of(1_000) {
+        format!("{}K", n / 1_000)
+    } else if n >= 10_000 {
+        format!("{:.0}K", n as f64 / 1000.0)
+    } else {
+        n.to_string()
+    }
+}
+
+pub(super) fn dispatch_set_context_window(
+    app: &mut AppView,
+    tokens: u64,
+    compact_if_needed: bool,
+) -> Vec<Effect> {
+    let ActiveView::Agent(id) = app.active_view else {
+        return vec![];
+    };
+    let Some(agent) = app.agents.get_mut(&id) else {
+        return vec![];
+    };
+    let Some(session_id) = agent.session.session_id.clone() else {
+        // No live session: still update local UI override so status bar reflects it.
+        agent.session.models.override_context_window(tokens);
+        agent
+            .scrollback
+            .push_block(crate::scrollback::block::RenderBlock::system(format!(
+                "上下文窗口已设为 {}（本地预览；会话建立后生效并可能压缩）",
+                format_token_count(tokens)
+            )));
+        return vec![];
+    };
+
+    // Apply the runtime override only after the server confirms the resize.
+    // Otherwise an active-turn rejection would leave the UI showing a window
+    // that the session never accepted.
+    vec![Effect::SetContextWindow {
+        agent_id: id,
+        session_id,
+        tokens,
+        compact_if_needed,
+    }]
+}
+
+pub(super) fn handle_set_context_window_complete(
+    app: &mut AppView,
+    agent_id: AgentId,
+    result: Result<crate::app::actions::SetContextWindowOutcome, String>,
+) -> Vec<Effect> {
+    let Some(agent) = app.agents.get_mut(&agent_id) else {
+        return vec![];
+    };
+    match result {
+        Ok(outcome) => {
+            agent.session.models.override_context_window(outcome.tokens);
+            agent.apply_context_used(outcome.tokens_used, outcome.tokens);
+            let mut msg = format!(
+                "上下文窗口: {} → {} · 已用 {} ({}%)",
+                format_token_count(outcome.previous_tokens),
+                format_token_count(outcome.tokens),
+                format_token_count(outcome.tokens_used),
+                outcome.usage_percent,
+            );
+            if outcome.compacted {
+                msg.push_str(" · 已压缩对话以适配新窗口");
+            } else if let Some(error) = outcome.compaction_error {
+                msg.push_str(&format!(" · 窗口已生效，但压缩失败: {error}"));
+            } else if outcome.tokens < outcome.previous_tokens
+                && outcome.tokens_used > outcome.tokens * 85 / 100
+            {
+                msg.push_str(" · 用量仍较高，可手动 /compact");
+            }
+            agent
+                .scrollback
+                .push_block(crate::scrollback::block::RenderBlock::system(msg));
+        }
+        Err(error) => {
+            agent
+                .scrollback
+                .push_block(crate::scrollback::block::RenderBlock::system(format!(
+                    "设置上下文窗口失败: {error}"
+                )));
+        }
+    }
+    vec![]
+}
+
 pub(super) fn handle_coding_data_sharing_failed(
     app: &mut AppView,
     agent_id: AgentId,
