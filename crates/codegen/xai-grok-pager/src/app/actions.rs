@@ -588,6 +588,10 @@ pub enum Action {
     /// Commit `[ui.display_refresh].auto_cadence_enabled`. Restart-required —
     /// cadence is pinned once at startup.
     SetDisplayRefreshAutoCadence(bool),
+    /// Toggle voice keybind visibility.
+    SetVoiceKeybindEnabled(bool),
+    /// Toggle confirm-before-rewind guard.
+    SetConfirmBeforeRewind(bool),
     /// Preview a theme without persisting — updates the live display
     /// only. Used by the picker on Up/Down and Esc (revert).
     PreviewTheme(String),
@@ -622,6 +626,8 @@ pub enum Action {
     PrivacyBannerOptOut,
     /// Open the in-TUI How-to Guides doc picker (`/docs`, palette "How-to Guides").
     OpenHowtoGuides,
+    /// Open the `/feedback` report pane.
+    OpenFeedbackPane,
     /// Open the reset-settings confirmation dialog for a specific key.
     /// Moves the Settings modal state into `ResetSettingsConfirm` so
     /// the underlying modal survives the confirm dialog.
@@ -1014,6 +1020,8 @@ pub enum Action {
     RewindPickerSelect(usize),
     RewindSelectMode(crate::views::rewind::RewindMode, usize),
     RewindConfirm(usize, crate::views::rewind::RewindMode),
+    /// Don't ask for rewind confirmation for the next N rewinds.
+    RewindConfirmNeverAsk(usize),
     RewindConversationOnlyConfirm(usize),
     RewindCancelOffer,
     RewindDismiss,
