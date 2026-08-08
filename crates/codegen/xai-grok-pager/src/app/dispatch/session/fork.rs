@@ -39,6 +39,59 @@ use std::time::Instant;
 ///   return. Both rejections are deliberate -- queueing the fork until
 ///   `SessionLoaded` would require persisting `ForkArgs` across the
 ///   `TaskResult` and is deferred to v2.
+/// First-prompt project picker: build the project question from recent
+/// directories and show it, or fall straight through to
+/// [`dispatch_project_selected`] when there is only the current directory.
+pub(in crate::app::dispatch) fn open_project_question(
+    app: &mut AppView,
+    prompt_text: String,
+) -> Vec<Effect> {
+    use crate::views::question_view::{LocalQuestionKind, QuestionViewState};
+    let ActiveView::Agent(id) = app.active_view else {
+        return vec![];
+    };
+    let Some(agent) = app.agents.get_mut(&id) else {
+        return vec![];
+    };
+    if agent.question_view.is_some() {
+        return vec![];
+    }
+    // Collect recent project directories. Outside a Tokio runtime (unit
+    // tests, startup before the async runtime spins up) fall back to the
+    // current directory so the picker never panics on `block_on`.
+    let recent_dirs = match tokio::runtime::Handle::try_current() {
+        Ok(handle) => {
+            tokio::task::block_in_place(|| {
+                handle.block_on(crate::project_picker::sources::collect_recent_dirs(10))
+            })
+        }
+        Err(_) => Vec::new(),
+    };
+    let pq = crate::project_picker::build_project_question(&recent_dirs, &app.cwd);
+    if pq.resolved_paths.len() <= 1 {
+        return dispatch_project_selected(app, app.cwd.clone(), prompt_text, false);
+    }
+    let stashed = agent.prompt.stash();
+    let state = QuestionViewState::new(
+        format!("project-select-{}", uuid::Uuid::new_v4()),
+        vec![pq.question],
+        stashed,
+    )
+    .with_local_kind(LocalQuestionKind::ProjectSelect {
+        resolved_paths: pq.resolved_paths,
+        original_cwd: app.cwd.clone(),
+        stashed_prompt: prompt_text,
+        dont_ask_index: pq.dont_ask_index,
+    });
+    let Some(agent) = app.agents.get_mut(&id) else {
+        return vec![];
+    };
+    agent.question_view = Some(state);
+    agent.prompt.set_text("");
+    crate::unified_log::info("project_picker.opened", None, None);
+    vec![]
+}
+
 /// User resolved the project-directory picker (shown on the first prompt from
 /// a non-project directory). Sets the working directory, persists the
 /// "don't ask again" opt-out when chosen, and proceeds to create the session

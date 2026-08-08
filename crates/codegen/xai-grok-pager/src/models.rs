@@ -1,4 +1,4 @@
-//! `grok models` subcommand.
+//! `chaos models` 子命令。
 
 use anyhow::Result;
 use tokio_util::sync::CancellationToken;
@@ -9,13 +9,13 @@ use crate::client_identity::{PAGER_CLIENT_TYPE, PAGER_CLIENT_VERSION};
 
 pub async fn list_available_models(agent_config: &AgentConfig) -> Result<()> {
     match AuthStatus::resolve(agent_config) {
-        AuthStatus::ApiKey => println!("You are using XAI_API_KEY."),
-        AuthStatus::LoggedIn(host) => println!("You are logged in with {}.", host),
+        AuthStatus::ApiKey => println!("当前使用 XAI_API_KEY。"),
+        AuthStatus::LoggedIn(host) => println!("已登录到 {host}。"),
         AuthStatus::ModelCredentials(model) => {
-            println!("Model '{model}' is using its own API key.");
+            println!("模型 '{model}' 正在使用独立 API Key。");
         }
-        AuthStatus::DeploymentKey => println!("You are authenticated via deployment key."),
-        AuthStatus::NotAuthenticated => println!("You are not authenticated."),
+        AuthStatus::DeploymentKey => println!("当前使用部署密钥认证。"),
+        AuthStatus::NotAuthenticated => println!("当前未认证。"),
     }
     println!();
 
@@ -29,12 +29,12 @@ pub async fn list_available_models(agent_config: &AgentConfig) -> Result<()> {
 
     let state = list_models(&spawned.channel.tx, PAGER_CLIENT_TYPE, PAGER_CLIENT_VERSION).await?;
 
-    println!("Default model: {}", state.current_model_id.0);
+    println!("默认模型：{}", state.current_model_id.0);
     println!();
-    println!("Available models:");
+    println!("可用模型：");
     for m in state.available_models {
         if m.model_id == state.current_model_id {
-            println!("  * {} (default)", m.model_id.0);
+            println!("  * {}（默认）", m.model_id.0);
         } else {
             println!("  - {}", m.model_id.0);
         }

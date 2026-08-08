@@ -83,7 +83,7 @@ fn test_app() -> AppView {
         current_ui: xai_grok_shell::agent::config::UiConfig::default(),
         cwd: PathBuf::from("/tmp"),
         cwd_has_git_ancestor: false,
-        project_picker_shown: false,
+        project_picker_shown: true,
         project_picker_disabled: false,
         acp_tx: tx,
         scratch: crate::scrollback::render::ScratchBuffer::new(),

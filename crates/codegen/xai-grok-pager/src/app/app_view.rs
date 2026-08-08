@@ -2009,6 +2009,13 @@ impl AppView {
         self.project_picker_shown = true;
     }
 
+    /// Whether the project picker should intercept the next prompt.
+    pub fn needs_project_picker(&self) -> bool {
+        !self.project_picker_shown
+            && !self.project_picker_disabled
+            && !crate::project_picker::detection::is_project_dir(&self.cwd)
+    }
+
     /// is already showing: registration (and thus the mismatch notif) finishes
     /// during reconnect, and the later "Reconnected." / "Session restored…"
     /// line would hide a still-true skew. Restore-failed and connection-failed

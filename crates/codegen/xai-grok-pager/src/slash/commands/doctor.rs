@@ -51,7 +51,7 @@ impl SlashCommand for DoctorCommand {
     }
 
     fn description(&self) -> &str {
-        "Check this session and show available fixes"
+        "检查当前会话并显示可用修复"
     }
 
     fn usage(&self) -> &str {

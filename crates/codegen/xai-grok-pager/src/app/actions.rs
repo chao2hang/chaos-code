@@ -902,7 +902,7 @@ pub enum Action {
     DashboardToggleAutoApprove,
     /// Toggle worktree-dispatch mode: when on, the next agent dispatched
     /// from the dashboard spawns in a fresh git worktree (and the `[+ New
-    /// Agent]` button reads `[+ New Worktree]`). Bound to Ctrl+W. Gated on
+    /// Agent]` button reads `[+ 新建 Worktree]`). Bound to Ctrl+W. Gated on
     /// the cwd being a git repo — worktrees require one, so the toggle is a
     /// no-op (with an explanatory toast) outside a repo.
     DashboardToggleWorktree,
@@ -917,7 +917,7 @@ pub enum Action {
     /// from the modal-chrome `CloseRequested` outcome and from
     /// Esc when the modal is open.
     DashboardCloseShortcutsHelp,
-    /// Focus the header's `[+ New Agent]` button. Mirrors a
+    /// Focus the header's `[+ 新建会话]` button. Mirrors a
     /// row-selection action — the button becomes the cursor
     /// target, the previous row selection (if any) clears, and
     /// the dispatch input's placeholder flips back to the

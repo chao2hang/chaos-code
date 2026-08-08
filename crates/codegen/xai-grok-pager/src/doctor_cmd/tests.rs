@@ -21,7 +21,7 @@ fn ssh_wrap_report() -> DiagnosticReport {
     report.findings.push(DiagnosticFinding {
         id: crate::diagnostics::SSH_WRAP_ID,
         disposition: FindingDisposition::Recommendation,
-        message: "Use local SSH wrapping".to_owned(),
+        message: "设置本地 SSH 包装".to_owned(),
         remediation: Some(ManualRemediation {
             fix: crate::diagnostics::SSH_WRAP_ONE_OFF.to_owned(),
             config_path: None,
@@ -170,14 +170,14 @@ fn mixed_report() -> DiagnosticReport {
             automatic_remediation: crate::diagnostics::automatic_remediation_for(
                 DiagnosticId::new("terminal", "tmux-clipboard"),
             ),
-            note: Some("Reload tmux after editing.".to_owned()),
+            note: Some("编辑后请重载 tmux。".to_owned()),
         },
         DiagnosticFinding {
             id: DiagnosticId::new("terminal", "ssh-wrap"),
             disposition: FindingDisposition::Recommendation,
-            message: "Use local SSH wrapping".to_owned(),
+            message: "设置本地 SSH 包装".to_owned(),
             remediation: Some(ManualRemediation {
-                fix: "grok wrap ssh <host>".to_owned(),
+                fix: "chaos wrap ssh <host>".to_owned(),
                 config_path: None,
             }),
             automatic_remediation: Some(crate::diagnostics::ssh_wrap_automatic_remediation()),
@@ -343,9 +343,9 @@ fn human_wayland_error_includes_detail_once() {
     assert_eq!(
         human::format(&report),
         concat!(
-            "Grok Doctor\n",
+            "Chaos Doctor\n",
             "\n",
-            "Environment\n",
+            "环境\n",
             "  · terminal                     Ghostty\n",
             "  ? terminal version             no reply\n",
             "  · multiplexer                  None detected\n",
@@ -353,7 +353,7 @@ fn human_wayland_error_includes_detail_once() {
             "  · color                        truecolor\n",
             "  · themes                       all\n",
             "\n",
-            "Clipboard\n",
+            "剪贴板\n",
             "  · native                       unavailable\n",
             "  · tmux                         off\n",
             "  · osc 52                       off\n",
@@ -361,11 +361,11 @@ fn human_wayland_error_includes_detail_once() {
             "  ? data-control                 error: probe worker died\n",
             "  · status                       unavailable\n",
             "\n",
-            "Findings\n",
+            "发现\n",
             "  ! clipboard.delivery-unavailable No configured clipboard route can reach the intended clipboard\n",
             "      Each in-app copy is also written to the backup path shown by the operation. Use `/copy <file>` for an explicit file or `/minimal` for terminal-native selection, then check the native clipboard tool reported above.\n",
             "\n",
-            "1 issue, 0 recommendations\n",
+            "1 个问题，0 条建议\n",
         )
     );
 }
@@ -452,9 +452,9 @@ fn human_healthy_fixture_is_exact() {
     assert_eq!(
         human::format(&healthy_report()),
         concat!(
-            "Grok Doctor\n",
+            "Chaos Doctor\n",
             "\n",
-            "Environment\n",
+            "环境\n",
             "  · terminal                     Ghostty\n",
             "  ? terminal version             no reply\n",
             "  · multiplexer                  None detected\n",
@@ -462,14 +462,14 @@ fn human_healthy_fixture_is_exact() {
             "  · color                        truecolor\n",
             "  · themes                       all\n",
             "\n",
-            "Clipboard\n",
+            "剪贴板\n",
             "  · native                       local (pbcopy)\n",
             "  · tmux                         off\n",
             "  · osc 52                       off\n",
             "  · SSH wrap                     off\n",
             "  · status                       confirmed\n",
             "\n",
-            "0 issues, 0 recommendations\n",
+            "0 个问题，0 条建议\n",
         )
     );
 }
@@ -479,9 +479,9 @@ fn human_mixed_fixture_is_exact() {
     assert_eq!(
         human::format(&mixed_report()),
         concat!(
-            "Grok Doctor\n",
+            "Chaos Doctor\n",
             "\n",
-            "Environment\n",
+            "环境\n",
             "  · terminal                     Ghostty\n",
             "  · terminal version             Ghostty 1.2.3\n",
             "  · multiplexer                  tmux\n",
@@ -489,36 +489,36 @@ fn human_mixed_fixture_is_exact() {
             "  · ssh                          yes\n",
             "  · color                        256\n",
             "  · themes                       2/5: groknight, grokday\n",
-            "  · keyboard                     cmd=dropped, opt=native (OS rescue active)\n",
-            "  · newline                      Alt+Enter (Cursor: xterm.js cannot distinguish Shift+Enter)\n",
+            "  · keyboard                     cmd=dropped, opt=native (系统救援已启用)\n",
+            "  · newline                      Alt+Enter（Cursor：xterm.js 无法区分 Shift+Enter）\n",
             "\n",
-            "Clipboard\n",
+            "剪贴板\n",
             "  · native                       local (pbcopy)\n",
             "  · tmux                         on\n",
             "  · osc 52                       supported\n",
             "  · SSH wrap                     off\n",
             "  · status                       confirmed\n",
             "\n",
-            "Findings\n",
+            "发现\n",
             "  ! terminal.tmux-clipboard      OSC 52 clipboard passthrough is disabled\n",
-            "    → Automatic setup: `grok doctor fix tmux-clipboard`\n",
-            "    → Add `set -g set-clipboard on` to ~/.tmux.conf\n",
-            "      Reload tmux after editing.\n",
-            "  i terminal.ssh-wrap            Use local SSH wrapping\n",
-            "    → Automatic setup: `grok doctor fix ssh-wrap`\n",
-            "    → One-off: `grok wrap ssh <host>`\n",
+            "    → 自动修复：`chaos doctor fix tmux-clipboard`\n",
+            "    → 在 ~/.tmux.conf 中添加 `set -g set-clipboard on`\n",
+            "      编辑后请重载 tmux。\n",
+            "  i terminal.ssh-wrap            设置本地 SSH 包装\n",
+            "    → 自动修复：`chaos doctor fix ssh-wrap`\n",
+            "    → 一次性：`chaos wrap ssh <host>`\n",
             "\n",
-            "Checks not completed\n",
+            "未完成检查\n",
             "  ? tmux.version                 unavailable\n",
             "  ? tmux.extended-keys           unavailable\n",
             "  ? tmux.allow-passthrough-support unsupported\n",
             "  ? runtime.fullscreen-active    unavailable\n",
             "  ? tmux.control-mode            error: server unavailable\n",
             "\n",
-            "Needs a running session\n",
-            "  Some checks only run in Grok. Start Grok and run /doctor.\n",
+            "需要运行中的会话\n",
+            "  部分检查仅在 Chaos 内运行。请启动 Chaos 并执行 /doctor。\n",
             "\n",
-            "1 issue, 1 recommendation\n",
+            "1 个问题，1 条建议\n",
         )
     );
 }
@@ -537,14 +537,14 @@ fn fix_preview_contains_exact_change_and_caveats() {
     write_fix_preview(&plan, &mut preview).unwrap();
     let preview = String::from_utf8(preview).unwrap();
     assert_eq!(preview, crate::diagnostics::format_fix_preview(&plan));
-    assert!(preview.contains("File: "));
+    assert!(preview.contains("文件："));
     assert!(
         preview.contains(
-            "# >>> grok doctor >>>\n# >>> terminal.ssh-wrap >>>\nalias ssh='grok wrap ssh'"
+            "# >>> chaos doctor >>>\n# >>> terminal.ssh-wrap >>>\nalias ssh='chaos wrap ssh'"
         )
     );
-    assert!(preview.contains("To use once without changing config: `grok wrap ssh <host>`"));
-    assert!(preview.contains("Use `command ssh ...` to bypass the alias."));
+    assert!(preview.contains("若只想临时使用且不改配置：`chaos wrap ssh <host>`"));
+    assert!(preview.contains("使用 `command ssh ...` 可绕过别名。"));
     assert!(preview.contains("ssh -f"));
     assert!(preview.contains("ControlPersist"));
     assert!(preview.contains("~^Z"));
@@ -577,7 +577,7 @@ fn decline_is_success_and_does_not_write() {
     assert!(
         String::from_utf8(output)
             .unwrap()
-            .ends_with("Fix cancelled.\n")
+            .ends_with("已取消修复。\n")
     );
     assert!(!temp.path().join(".bashrc").exists());
 }
@@ -607,7 +607,7 @@ fn non_tty_without_yes_fails_safely_before_write() {
     assert!(
         error
             .to_string()
-            .contains("Cannot apply this fix without confirmation")
+            .contains("未确认无法应用此修复")
     );
     assert!(!temp.path().join(".bashrc").exists());
 }
@@ -639,9 +639,9 @@ fn human_incomplete_fixture_is_exact_without_duplicate_probe_rows() {
     assert_eq!(
         human::format(&report),
         concat!(
-            "Grok Doctor\n",
+            "Chaos Doctor\n",
             "\n",
-            "Environment\n",
+            "环境\n",
             "  · terminal                     Ghostty\n",
             "  ? terminal version             unavailable\n",
             "  · multiplexer                  None detected\n",
@@ -649,17 +649,17 @@ fn human_incomplete_fixture_is_exact_without_duplicate_probe_rows() {
             "  ? color                        unavailable\n",
             "  ? themes                       unavailable\n",
             "\n",
-            "Clipboard\n",
+            "剪贴板\n",
             "  · native                       local (pbcopy)\n",
             "  · tmux                         off\n",
             "  · osc 52                       off\n",
             "  · SSH wrap                     off\n",
             "  · status                       confirmed\n",
             "\n",
-            "Needs a running session\n",
-            "  Some checks only run in Grok. Start Grok and run /doctor.\n",
+            "需要运行中的会话\n",
+            "  部分检查仅在 Chaos 内运行。请启动 Chaos 并执行 /doctor。\n",
             "\n",
-            "0 issues, 0 recommendations\n",
+            "0 个问题，0 条建议\n",
         )
     );
 }
@@ -766,18 +766,18 @@ fn json_contract_is_structural_stable_ordered_and_ansi_free() {
                     },
                     "automaticRemediation": {
                         "fixId": "terminal.tmux-clipboard",
-                        "command": "grok doctor fix terminal.tmux-clipboard"
+                        "command": "chaos doctor fix terminal.tmux-clipboard"
                     },
-                    "note": "Reload tmux after editing."
+                    "note": "编辑后请重载 tmux。"
                 },
                 {
                     "id": "terminal.ssh-wrap",
                     "disposition": "recommendation",
-                    "message": "Use local SSH wrapping",
-                    "remediation": {"fix": "grok wrap ssh <host>", "configPath": null},
+                    "message": "设置本地 SSH 包装",
+                    "remediation": {"fix": "chaos wrap ssh <host>", "configPath": null},
                     "automaticRemediation": {
                         "fixId": "terminal.ssh-wrap",
-                        "command": "grok doctor fix terminal.ssh-wrap"
+                        "command": "chaos doctor fix terminal.ssh-wrap"
                     },
                     "note": null
                 }
@@ -805,7 +805,7 @@ fn json_contract_is_structural_stable_ordered_and_ansi_free() {
     assert!(issue < recommendation);
     assert!(version < extended && extended < unsupported && unsupported < unavailable);
     assert!(!text.contains("\u{1b}"));
-    assert!(!text.contains("Grok Doctor"));
+    assert!(!text.contains("Chaos Doctor"));
 }
 
 #[test]
@@ -1008,14 +1008,14 @@ fn clipboard_issue_count_preserves_legacy_reports_without_double_counting_named_
 fn new_named_findings_extend_json_without_schema_changes() {
     let mut report = healthy_report();
     report.facts.clipboard.delivery = ClipboardDelivery::Unverified;
-    report.facts.clipboard.fix = Some("grok wrap <ssh command> or /minimal".to_owned());
+    report.facts.clipboard.fix = Some("chaos wrap <ssh command> or /minimal".to_owned());
     report.findings.push(DiagnosticFinding {
         id: crate::diagnostics::CLIPBOARD_DELIVERY_UNVERIFIED_ID,
         disposition: FindingDisposition::Issue,
-        message: "Clipboard delivery could not be verified across this remote boundary".to_owned(),
+        message: "Chaos 无法跨远程边界验证此剪贴板路径".to_owned(),
         remediation: None,
         automatic_remediation: None,
-        note: Some("Run /doctor guidance".to_owned()),
+        note: Some("运行 /doctor 获取指引".to_owned()),
     });
 
     let mut output = Vec::new();
@@ -1025,7 +1025,7 @@ fn new_named_findings_extend_json_without_schema_changes() {
     assert_eq!(json["facts"]["clipboard"]["delivery"], "unverified");
     assert_eq!(
         json["facts"]["clipboard"]["fix"],
-        "grok wrap <ssh command> or /minimal"
+        "chaos wrap <ssh command> or /minimal"
     );
     assert_eq!(json["findings"][0]["id"], "clipboard.delivery-unverified");
     assert_eq!(json["counts"]["issues"], 1);

@@ -660,10 +660,10 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
                 Err(error) => deliver_doctor_message(
                     app,
                     target.agent_id,
-                    if error.starts_with("Could not prepare the fix:") {
+                    if error.starts_with("无法准备修复：") {
                         error
                     } else {
-                        format!("Could not prepare the fix: {error}")
+                        format!("无法准备修复：{error}")
                     },
                 ),
             }
@@ -672,8 +672,8 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
         TaskResult::DoctorFixApplied { target, result } => {
             let message = match result {
                 Ok(outcome) => crate::diagnostics::format_fix_success(&outcome),
-                Err(error) if error.starts_with("Could not apply the fix:") => error,
-                Err(error) => format!("Could not apply the fix: {error}"),
+                Err(error) if error.starts_with("无法应用修复：") => error,
+                Err(error) => format!("无法应用修复：{error}"),
             };
             deliver_doctor_message(app, target.agent_id, message);
             vec![]

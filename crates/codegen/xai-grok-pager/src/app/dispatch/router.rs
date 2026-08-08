@@ -1257,7 +1257,7 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
                 super::task_result::deliver_doctor_message(
                     app,
                     target.agent_id,
-                    "This fix was cancelled because the session changed. Run `/doctor fix` again."
+                    "此修复已取消，因为会话已变更。请重新运行 `/doctor fix`。"
                         .to_owned(),
                 );
                 return vec![];

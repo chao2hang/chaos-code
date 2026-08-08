@@ -282,12 +282,12 @@ impl ClipboardRecovery {
         match self {
             Self::Confirmed => None,
             Self::UnverifiedSsh | Self::UnavailableSsh => {
-                Some("grok wrap <ssh command> or /minimal")
+                Some("chaos wrap <ssh command> or /minimal")
             }
             Self::UnverifiedContainer | Self::UnavailableContainer => {
-                Some("grok wrap <command> or /minimal")
+                Some("chaos wrap <command> or /minimal")
             }
-            Self::UnverifiedOther => Some("grok wrap or /minimal"),
+            Self::UnverifiedOther => Some("chaos wrap or /minimal"),
             Self::UnavailableLocal => Some("/minimal"),
         }
     }
@@ -388,52 +388,46 @@ fn clipboard_findings(
         ClipboardRecovery::UnverifiedSsh => findings.push(manual_finding(
             crate::diagnostics::CLIPBOARD_DELIVERY_UNVERIFIED_ID,
             FindingDisposition::Issue,
-            "Grok can't verify this clipboard route across the remote boundary",
-            "When you copy, Grok sends OSC 52 but can't confirm that the outer terminal accepted \
-             it. Each copy is also saved to a backup file; the copy message shows the path. If \
-             paste fails, run `grok wrap ssh <host>` on your local computer or use `/minimal`. \
-             For repeated SSH sessions, run `grok doctor fix ssh-wrap` on your local computer.",
+            "Chaos 无法跨远程边界验证此剪贴板路径",
+            "复制时 Chaos 会发送 OSC 52，但无法确认外层终端是否接受。每次复制也会保存到备份文件；\
+             复制提示中会显示路径。若粘贴失败，请在本地运行 `chaos wrap ssh <host>`，或使用 `/minimal`。\
+             若经常 SSH，可在本地运行 `chaos doctor fix ssh-wrap`。",
         )),
         ClipboardRecovery::UnverifiedContainer => findings.push(manual_finding(
             crate::diagnostics::CLIPBOARD_DELIVERY_UNVERIFIED_ID,
             FindingDisposition::Issue,
-            "Grok can't verify this clipboard route across the container boundary",
-            "When you copy, Grok sends OSC 52 but can't confirm that the outer terminal accepted \
-             it. Each copy is also saved to a backup file; the copy message shows the path. If \
-             paste fails, start the container command with local `grok wrap <command>`, or use \
-             `/minimal`.",
+            "Chaos 无法跨容器边界验证此剪贴板路径",
+            "复制时 Chaos 会发送 OSC 52，但无法确认外层终端是否接受。每次复制也会保存到备份文件；\
+             复制提示中会显示路径。若粘贴失败，请用本地 `chaos wrap <command>` 启动容器命令，或使用 `/minimal`。",
         )),
         ClipboardRecovery::UnverifiedOther => findings.push(manual_finding(
             crate::diagnostics::CLIPBOARD_DELIVERY_UNVERIFIED_ID,
             FindingDisposition::Issue,
-            "Grok can't verify this clipboard route",
-            "Each copy is also saved to a backup file; the copy message shows the path. For a \
-             remote or container command, use local `grok wrap <command>`. You can also use \
-             `/minimal` to select text in the terminal.",
+            "Chaos 无法验证此剪贴板路径",
+            "每次复制也会保存到备份文件；复制提示中会显示路径。对远程或容器命令，请使用本地 \
+             `chaos wrap <command>`。也可使用 `/minimal` 在终端中选择文本。",
         )),
         ClipboardRecovery::UnavailableSsh => findings.push(manual_finding(
             crate::diagnostics::CLIPBOARD_DELIVERY_UNAVAILABLE_ID,
             FindingDisposition::Issue,
-            "This clipboard route can't reach the target clipboard",
-            "When you copy, Grok saves the text to the backup file shown in the copy message. To \
-             copy directly, run `grok wrap ssh <host>` on your local computer. For repeated SSH \
-             sessions, run `grok doctor fix ssh-wrap` there. You can also use `/copy <file>` or \
-             `/minimal`.",
+            "此剪贴板路径无法到达目标剪贴板",
+            "复制时 Chaos 会把文本保存到复制提示中显示的备份文件。若要直接复制，请在本地运行 \
+             `chaos wrap ssh <host>`。若经常 SSH，可在本地运行 `chaos doctor fix ssh-wrap`。\
+             也可使用 `/copy <file>` 或 `/minimal`。",
         )),
         ClipboardRecovery::UnavailableContainer => findings.push(manual_finding(
             crate::diagnostics::CLIPBOARD_DELIVERY_UNAVAILABLE_ID,
             FindingDisposition::Issue,
-            "This clipboard route can't reach the target clipboard",
-            "When you copy, Grok saves the text to the backup file shown in the copy message. \
-             Start the container command with local `grok wrap <command>`, use `/copy <file>`, or \
-             use `/minimal`.",
+            "此剪贴板路径无法到达目标剪贴板",
+            "复制时 Chaos 会把文本保存到复制提示中显示的备份文件。请用本地 `chaos wrap <command>` \
+             启动容器命令，或使用 `/copy <file>` / `/minimal`。",
         )),
         ClipboardRecovery::UnavailableLocal => findings.push(manual_finding(
             crate::diagnostics::CLIPBOARD_DELIVERY_UNAVAILABLE_ID,
             FindingDisposition::Issue,
-            "This clipboard route can't reach the target clipboard",
-            "When you copy, Grok saves the text to the backup file shown in the copy message. Use \
-             `/copy <file>` or `/minimal`, then check the native clipboard tool listed above.",
+            "此剪贴板路径无法到达目标剪贴板",
+            "复制时 Chaos 会把文本保存到复制提示中显示的备份文件。请使用 `/copy <file>` 或 `/minimal`，\
+             并检查上方列出的本地剪贴板工具。",
         )),
     }
 
@@ -445,9 +439,9 @@ fn clipboard_findings(
         findings.push(manual_finding(
             crate::diagnostics::VSCODE_SSH_NON_ASCII_ID,
             FindingDisposition::Recommendation,
-            "This remote editor may change non-ASCII text copied with OSC 52",
-            "If pasted non-ASCII text is incorrect, use `/minimal` and select text in the \
-             terminal. ASCII copy and the backup file shown after the copy remain available.",
+            "此远程编辑器可能改写经 OSC 52 复制的非 ASCII 文本",
+            "若粘贴后的非 ASCII 文本不正确，请使用 `/minimal` 并在终端中选择文本。\
+             ASCII 复制以及复制后显示的备份文件仍然可用。",
         ));
     }
 
@@ -461,10 +455,9 @@ fn clipboard_findings(
         findings.push(manual_finding(
             crate::diagnostics::ITERM2_CLIPBOARD_PERMISSION_ID,
             FindingDisposition::Recommendation,
-            "iTerm2 may block OSC 52 clipboard access",
-            "In iTerm2, open Settings → General → Selection and turn on “Applications in \
-             terminal may access clipboard.” Grok can't read this setting, so check it there if \
-             copies don't paste.",
+            "iTerm2 可能阻止 OSC 52 剪贴板访问",
+            "在 iTerm2 中打开 Settings → General → Selection，开启 “Applications in \
+             terminal may access clipboard.” Chaos 无法读取该设置，因此若复制后无法粘贴，请在那里检查。",
         ));
     }
     findings
@@ -474,28 +467,26 @@ fn newline_finding(facts: &DiagnosticFacts) -> Option<DiagnosticFinding> {
     let newline = facts.newline.as_ref()?;
     let (message, note) = match newline {
         NewlineFact::Vte { version } => (
-            "Shift+Enter can't insert a newline in this VTE terminal",
+            "在此 VTE 终端中，Shift+Enter 无法插入换行",
             match version {
                 Some(version) => format!(
-                    "Use Alt+Enter to insert a newline. This terminal reports VTE {version}. \
-                     Upgrade to VTE 0.82 or later to use Shift+Enter."
+                    "请使用 Alt+Enter 插入换行。此终端报告 VTE {version}。\
+                     升级到 VTE 0.82 或更高版本后可使用 Shift+Enter。"
                 ),
-                None => "Use Alt+Enter to insert a newline. Upgrade to VTE 0.82 or later to use \
-                         Shift+Enter."
+                None => "请使用 Alt+Enter 插入换行。升级到 VTE 0.82 或更高版本后可使用 \
+                         Shift+Enter。"
                     .to_owned(),
             },
         ),
         NewlineFact::XtermJs { terminal } => (
-            "Shift+Enter can't insert a newline in this xterm.js terminal",
+            "在此 xterm.js 终端中，Shift+Enter 无法插入换行",
             format!(
-                "Use Alt+Enter to insert a newline in {terminal}. xterm.js sends Shift+Enter as \
-                 Enter in this setup."
+                "在 {terminal} 中请使用 Alt+Enter 插入换行。在此环境下 xterm.js 会把 Shift+Enter 当作 Enter 发送。"
             ),
         ),
         NewlineFact::NoKittyKeyboardProtocol => (
-            "Shift+Enter can't insert a newline because the keyboard protocol is unavailable",
-            "Use Alt+Enter to insert a newline. If your terminal supports the Kitty keyboard \
-             protocol, enable it and restart Grok."
+            "因键盘协议不可用，Shift+Enter 无法插入换行",
+            "请使用 Alt+Enter 插入换行。若终端支持 Kitty 键盘协议，请启用后重启 Chaos。"
                 .to_owned(),
         ),
     };

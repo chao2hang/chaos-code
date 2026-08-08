@@ -48,7 +48,7 @@ pub(super) fn report() -> DiagnosticReport {
     report.findings.push(DiagnosticFinding {
         id: SSH_WRAP_ID,
         disposition: FindingDisposition::Recommendation,
-        message: "Use local SSH wrapping".to_owned(),
+        message: "设置本地 SSH 包装".to_owned(),
         remediation: Some(ManualRemediation {
             fix: SSH_WRAP_ONE_OFF.to_owned(),
             config_path: None,
@@ -86,9 +86,9 @@ pub(super) fn request(home: &Path, shell: &str) -> FixRequest {
 fn canonical_and_short_ids_resolve_to_canonical_id() {
     assert_eq!(resolve_fix_id("terminal.ssh-wrap").unwrap(), SSH_WRAP_ID);
     let command = human_fix_command(SSH_WRAP_ID).expect("SSH fix command");
-    assert_eq!(command, "grok doctor fix ssh-wrap");
+    assert_eq!(command, "chaos doctor fix ssh-wrap");
     assert_eq!(
-        resolve_fix_id(command.strip_prefix("grok doctor fix ").unwrap()).unwrap(),
+        resolve_fix_id(command.strip_prefix("chaos doctor fix ").unwrap()).unwrap(),
         SSH_WRAP_ID
     );
     assert!(human_fix_command(DiagnosticId::new("terminal", "unknown")).is_none());
@@ -206,7 +206,7 @@ fn tmux_fix_registry_resolves_every_short_and_canonical_id() {
         assert_eq!(resolve_fix_id(&id.to_string()).unwrap(), id);
         assert_eq!(
             human_fix_command(id).unwrap(),
-            format!("grok doctor fix {handle}")
+            format!("chaos doctor fix {handle}")
         );
     }
 }
@@ -277,8 +277,8 @@ fn tmux_specs_plan_exact_independent_managed_items() {
         );
         assert!(!plan.change().block.contains("terminal.ssh-wrap"));
         let preview = format_fix_preview(&plan);
-        assert!(preview.contains("does not reload or modify the live tmux server"));
-        assert!(preview.contains("Run /doctor again to verify the live setting"));
+        assert!(preview.contains("不会重载或修改正在运行的 tmux server"));
+        assert!(preview.contains("请再次运行 /doctor 以验证生效设置"));
     }
 }
 
@@ -307,11 +307,11 @@ fn safe_absolute_directory_rejects_hostile_home_and_byobu_values() {
 fn reload_instruction_shell_quotes_and_markdown_escapes_paths() {
     assert_eq!(
         reload_instruction(Path::new("/tmp/a b/q'v.conf")),
-        "Reload tmux with `tmux source-file '/tmp/a b/q'\\''v.conf'`, or restart the tmux server."
+        "请用 `tmux source-file '/tmp/a b/q'\\''v.conf'` 重载 tmux，或先 detach 再 reattach。"
     );
     assert_eq!(
         reload_instruction(Path::new("/tmp/a`b.conf")),
-        "Reload tmux with ``tmux source-file '/tmp/a`b.conf'``, or restart the tmux server."
+        "请用 ``tmux source-file '/tmp/a`b.conf'`` 重载 tmux，或先 detach 再 reattach。"
     );
     assert_eq!(
         shell_quote_path(Path::new("/tmp/a`b.conf")).unwrap(),
@@ -319,7 +319,7 @@ fn reload_instruction_shell_quotes_and_markdown_escapes_paths() {
     );
     assert_eq!(
         reload_instruction(Path::new("/tmp/bad\npath")),
-        "Reload your tmux config, or restart the tmux server, to activate the persistent setting."
+        "请 detach 再 reattach 以启用持久的 tmux 设置。"
     );
     assert_eq!(markdown_code_path(Path::new("/tmp/a`b")), "``/tmp/a`b``");
 }
@@ -345,9 +345,9 @@ fn full_preview_safely_renders_backtick_requested_symlink_target_and_backup_path
     )
     .unwrap();
     let preview = format_fix_preview(&plan);
-    assert!(preview.contains("File: ``"), "{preview}");
-    assert!(preview.contains("Actual file: ``"), "{preview}");
-    assert!(preview.contains("Backup will be saved to: ``"), "{preview}");
+    assert!(preview.contains("文件：``"), "{preview}");
+    assert!(preview.contains("实际文件：``"), "{preview}");
+    assert!(preview.contains("备份将保存到：``"), "{preview}");
     assert!(preview.contains("home`dir/.tmux.conf"), "{preview}");
     assert!(preview.contains("tmux`target.conf"), "{preview}");
 }
@@ -433,11 +433,11 @@ fn tmux_managed_items_coexist_and_each_apply_is_one_transaction() {
         let outcome = apply_fix(plan).unwrap();
         assert_eq!(outcome.activation(), FixActivation::RequiresReload);
         assert_eq!(outcome.changed_path(), path);
-        assert!(format_fix_success(&outcome).contains("Run /doctor again"));
+        assert!(format_fix_success(&outcome).contains("请再次运行 /doctor"));
         assert!(std::fs::read_to_string(&path).unwrap().contains(line));
     }
     let content = std::fs::read_to_string(&path).unwrap();
-    assert_eq!(content.matches("# >>> grok doctor >>>").count(), 1);
+    assert_eq!(content.matches("# >>> chaos doctor >>>").count(), 1);
     for id in [
         TMUX_CLIPBOARD_ID,
         DCS_PASSTHROUGH_ID,
@@ -573,7 +573,7 @@ fn conflicting_direct_form_after_managed_block_fails_persistent_verification() {
         std::fs::write(
             &path,
             format!(
-                "# >>> grok doctor >>>\n# >>> terminal.tmux-clipboard >>>\nset -g set-clipboard on\n# <<< terminal.tmux-clipboard <<<\n# <<< grok doctor <<<\n{conflict}\n"
+                "# >>> chaos doctor >>>\n# >>> terminal.tmux-clipboard >>>\nset -g set-clipboard on\n# <<< terminal.tmux-clipboard <<<\n# <<< chaos doctor <<<\n{conflict}\n"
             ),
         )
         .unwrap();
@@ -590,8 +590,8 @@ fn healthy_direct_does_not_suppress_repair_of_noncanonical_managed_item() {
     let path = temp.path().join(".tmux.conf");
     let report = tmux_report(TMUX_CLIPBOARD_ID, TmuxEvidence::Clipboard);
     for content in [
-        "set -g set-clipboard on\n# >>> grok doctor >>>\n# >>> terminal.tmux-clipboard >>>\nset -g set-clipboard off\n# <<< terminal.tmux-clipboard <<<\n# <<< grok doctor <<<\n",
-        "# >>> grok doctor >>>\n# >>> terminal.tmux-clipboard >>>\nset -g set-clipboard off\n# <<< terminal.tmux-clipboard <<<\n# <<< grok doctor <<<\nset -g set-clipboard on\n",
+        "set -g set-clipboard on\n# >>> chaos doctor >>>\n# >>> terminal.tmux-clipboard >>>\nset -g set-clipboard off\n# <<< terminal.tmux-clipboard <<<\n# <<< chaos doctor <<<\n",
+        "# >>> chaos doctor >>>\n# >>> terminal.tmux-clipboard >>>\nset -g set-clipboard off\n# <<< terminal.tmux-clipboard <<<\n# <<< chaos doctor <<<\nset -g set-clipboard on\n",
     ] {
         std::fs::write(&path, content).unwrap();
         let plan = plan_fix(
@@ -600,7 +600,7 @@ fn healthy_direct_does_not_suppress_repair_of_noncanonical_managed_item() {
             &tmux_terminal(false),
         )
         .unwrap();
-        assert!(format_fix_preview(&plan).contains("Text to add:\n"));
+        assert!(format_fix_preview(&plan).contains("将添加的文本：\n"));
         let outcome = apply_fix(plan).unwrap();
         assert_eq!(outcome.status(), FixStatus::Applied);
         assert!(
@@ -684,8 +684,8 @@ fn tmux_stale_plan_and_idempotence_reuse_managed_writer_safety() {
     )
     .unwrap();
     let preview = format_fix_preview(&plan);
-    assert!(preview.contains("Text to add: None"), "{preview}");
-    assert!(!preview.contains("Backup will be saved"), "{preview}");
+    assert!(preview.contains("将添加的文本：无"), "{preview}");
+    assert!(!preview.contains("备份将保存"), "{preview}");
     let outcome = apply_fix(plan).unwrap();
     assert_eq!(outcome.status(), FixStatus::AlreadyConfigured);
     assert!(verify_persistent_fix(&outcome));
@@ -713,12 +713,12 @@ fn tmux_stale_plan_and_idempotence_reuse_managed_writer_safety() {
 fn bash_zsh_and_fish_plans_use_exact_paths_and_aliases() {
     let temp = tempfile::tempdir().unwrap();
     for (shell, relative, alias) in [
-        ("/bin/bash", ".bashrc", "alias ssh='grok wrap ssh'"),
-        ("/bin/zsh", ".zshrc", "alias ssh='grok wrap ssh'"),
+        ("/bin/bash", ".bashrc", "alias ssh='chaos wrap ssh'"),
+        ("/bin/zsh", ".zshrc", "alias ssh='chaos wrap ssh'"),
         (
             "/usr/local/bin/fish",
             ".config/fish/config.fish",
-            "alias ssh 'grok wrap ssh'",
+            "alias ssh 'chaos wrap ssh'",
         ),
     ] {
         let plan = plan_fix(request(temp.path(), shell), &report(), &terminal()).unwrap();
@@ -727,7 +727,7 @@ fn bash_zsh_and_fish_plans_use_exact_paths_and_aliases() {
         assert_eq!(
             plan.change().block,
             format!(
-                "# >>> grok doctor >>>\n# >>> terminal.ssh-wrap >>>\n{alias}\n# <<< terminal.ssh-wrap <<<\n# <<< grok doctor <<<"
+                "# >>> chaos doctor >>>\n# >>> terminal.ssh-wrap >>>\n{alias}\n# <<< terminal.ssh-wrap <<<\n# <<< chaos doctor <<<"
             )
         );
         assert!(
@@ -943,7 +943,7 @@ fn comments_and_managed_alias_do_not_create_false_conflicts() {
     let path = temp.path().join(".zshrc");
     std::fs::write(
         &path,
-        "# alias ssh='ssh -A'\n# >>> grok doctor >>>\n# >>> terminal.ssh-wrap >>>\nalias ssh='grok wrap ssh'\n# <<< terminal.ssh-wrap <<<\n# <<< grok doctor <<<\n",
+        "# alias ssh='ssh -A'\n# >>> chaos doctor >>>\n# >>> terminal.ssh-wrap >>>\nalias ssh='chaos wrap ssh'\n# <<< terminal.ssh-wrap <<<\n# <<< chaos doctor <<<\n",
     )
     .unwrap();
     let plan = plan_fix(request(temp.path(), "/bin/zsh"), &report(), &terminal()).unwrap();
@@ -957,11 +957,11 @@ fn managed_alias_with_later_unmanaged_conflict_is_not_configured() {
     let cases = [
         (
             ShellKind::Bash,
-            "# >>> grok doctor >>>\n# >>> terminal.ssh-wrap >>>\nalias ssh='grok wrap ssh'\n# <<< terminal.ssh-wrap <<<\n# <<< grok doctor <<<\nalias ssh='ssh -A'\n",
+            "# >>> chaos doctor >>>\n# >>> terminal.ssh-wrap >>>\nalias ssh='chaos wrap ssh'\n# <<< terminal.ssh-wrap <<<\n# <<< chaos doctor <<<\nalias ssh='ssh -A'\n",
         ),
         (
             ShellKind::Fish,
-            "# >>> grok doctor >>>\n# >>> terminal.ssh-wrap >>>\nalias ssh 'grok wrap ssh'\n# <<< terminal.ssh-wrap <<<\n# <<< grok doctor <<<\nfunction ssh\n  command ssh -A $argv\nend\n",
+            "# >>> chaos doctor >>>\n# >>> terminal.ssh-wrap >>>\nalias ssh 'chaos wrap ssh'\n# <<< terminal.ssh-wrap <<<\n# <<< chaos doctor <<<\nfunction ssh\n  command ssh -A $argv\nend\n",
         ),
     ];
     for (shell, content) in cases {
@@ -1062,7 +1062,8 @@ fn configured_report_reaches_pass_state_only_for_exact_managed_alias() {
 fn shell_aliases_expand_to_exact_argv_and_bypass_is_explicit() {
     let temp = tempfile::tempdir().unwrap();
     let capture = temp.path().join("capture");
-    let grok = temp.path().join("grok");
+    // Fake Chaos binary on PATH so `alias ssh='chaos wrap ssh'` expands correctly.
+    let grok = temp.path().join("chaos");
     std::fs::write(
         &grok,
         format!(
@@ -1076,7 +1077,7 @@ fn shell_aliases_expand_to_exact_argv_and_bypass_is_explicit() {
 
     if let Some(bash) = find_on_path("bash") {
         let rc = temp.path().join("bashrc");
-        std::fs::write(&rc, "alias ssh='grok wrap ssh'\n").unwrap();
+        std::fs::write(&rc, "alias ssh='chaos wrap ssh'\n").unwrap();
         let command = format!(
             "source '{}'; source '{}'; eval 'ssh -p 2222 host'",
             rc.display(),
@@ -1107,7 +1108,7 @@ fn shell_aliases_expand_to_exact_argv_and_bypass_is_explicit() {
     }
     if let Some(zsh) = find_on_path("zsh") {
         let rc = temp.path().join("zshrc");
-        std::fs::write(&rc, "alias ssh='grok wrap ssh'\n").unwrap();
+        std::fs::write(&rc, "alias ssh='chaos wrap ssh'\n").unwrap();
         let command = format!(
             "source '{}'; source '{}'; eval 'ssh -p 2222 host'",
             rc.display(),
@@ -1147,7 +1148,7 @@ fn shell_aliases_expand_to_exact_argv_and_bypass_is_explicit() {
     };
     let mut shell = std::process::Command::new(bash);
     shell
-        .args(["-ic", "alias ssh='grok wrap ssh'; command ssh host"])
+        .args(["-ic", "alias ssh='chaos wrap ssh'; command ssh host"])
         .env("CAPTURE", &capture)
         .env(
             "PATH",
@@ -1169,7 +1170,7 @@ fn shell_aliases_expand_to_exact_argv_and_bypass_is_explicit() {
 
     if let Some(fish) = find_on_path("fish") {
         let fish_capture = temp.path().join("fish-capture");
-        let fish_grok = temp.path().join("fish-grok");
+        let fish_grok = temp.path().join("fish-chaos");
         std::fs::write(
             &fish_grok,
             format!(
@@ -1180,7 +1181,7 @@ fn shell_aliases_expand_to_exact_argv_and_bypass_is_explicit() {
         .unwrap();
         std::fs::set_permissions(&fish_grok, std::fs::Permissions::from_mode(0o755)).unwrap();
         let rc = temp.path().join("config.fish");
-        std::fs::write(&rc, "alias ssh 'fish-grok wrap ssh'\n").unwrap();
+        std::fs::write(&rc, "alias ssh 'fish-chaos wrap ssh'\n").unwrap();
         let command = format!(
             "source '{}'; source '{}'; ssh -p 2222 host; env | string match -rq '^ssh='; and exit 9; or exit 0",
             rc.display(),

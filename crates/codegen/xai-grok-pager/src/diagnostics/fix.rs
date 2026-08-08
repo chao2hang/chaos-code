@@ -18,13 +18,13 @@ pub const TMUX_CLIPBOARD_ID: DiagnosticId = DiagnosticId::new("terminal", "tmux-
 pub const DCS_PASSTHROUGH_ID: DiagnosticId = DiagnosticId::new("terminal", "dcs-passthrough");
 pub const TMUX_EXTENDED_KEYS_ID: DiagnosticId = DiagnosticId::new("terminal", "tmux-extended-keys");
 pub const TMUX_TRUECOLOR_ID: DiagnosticId = DiagnosticId::new("terminal", "tmux-truecolor");
-pub const SSH_WRAP_FIX_COMMAND: &str = "grok doctor fix terminal.ssh-wrap";
-pub const SSH_WRAP_ONE_OFF: &str = "grok wrap ssh <host>";
+pub const SSH_WRAP_FIX_COMMAND: &str = "chaos doctor fix terminal.ssh-wrap";
+pub const SSH_WRAP_ONE_OFF: &str = "chaos wrap ssh <host>";
 
-const MANAGED_NAMESPACE: &str = "grok doctor";
-const SSH_WRAP_ALIAS_POSIX: &str = "alias ssh='grok wrap ssh'";
-const SSH_WRAP_ALIAS_FISH: &str = "alias ssh 'grok wrap ssh'";
-const TMUX_SCANNER_CAVEAT: &str = "Grok checks this file for direct global assignments of this option. Review sourced files, conditionals, plugins, and generated tmux setup yourself.";
+const MANAGED_NAMESPACE: &str = "chaos doctor";
+const SSH_WRAP_ALIAS_POSIX: &str = "alias ssh='chaos wrap ssh'";
+const SSH_WRAP_ALIAS_FISH: &str = "alias ssh 'chaos wrap ssh'";
+const TMUX_SCANNER_CAVEAT: &str = "Chaos 会检查此文件中该选项的直接全局赋值。请自行检查被 source 的文件、条件语句、插件与生成的 tmux 配置。";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct AutomaticRemediation {
@@ -311,29 +311,29 @@ impl std::fmt::Display for FixError {
         match self {
             Self::UnknownId(id) => write!(
                 formatter,
-                "`{id}` is not an available Doctor fix. Run `grok doctor fix` to list available fixes."
+                "`{id}` 不是可用的 Doctor 修复项。运行 `chaos doctor fix` 查看可用修复。"
             ),
             Self::PlatformUnsupported => write!(
                 formatter,
-                "Automatic SSH setup is not available on Windows. Run `{SSH_WRAP_ONE_OFF}` when needed."
+                "Windows 上不支持自动 SSH 设置。需要时请运行 `{SSH_WRAP_ONE_OFF}`。"
             ),
-            Self::HomeUnavailable => formatter.write_str("Grok could not find your home directory."),
+            Self::HomeUnavailable => formatter.write_str("Chaos 找不到你的主目录。"),
             Self::NotApplicable => formatter
-                .write_str("This fix does not apply to VS Code Remote sessions."),
+                .write_str("此修复不适用于 VS Code Remote 会话。"),
             Self::TmuxNotApplicable => formatter
-                .write_str("This fix is not applicable to the current report."),
+                .write_str("此修复不适用于当前报告。"),
             Self::RemoteSession => formatter
-                .write_str("Run this fix on your local computer, not in the SSH session."),
+                .write_str("请在本地电脑运行此修复，而不是在 SSH 会话中。"),
             Self::UnsupportedShell => write!(
                 formatter,
-                "Automatic setup supports Bash, zsh, and fish. For another shell, run `{SSH_WRAP_ONE_OFF}` when needed."
+                "自动设置支持 Bash、zsh 和 fish。其他 shell 需要时请运行 `{SSH_WRAP_ONE_OFF}`。"
             ),
             Self::ByobuConfigUnavailable => formatter.write_str(
-                "Grok could not determine Byobu's effective config directory. Keep `BYOBU_CONFIG_DIR` set in this session, then run the fix again.",
+                "Chaos 无法确定 Byobu 的有效配置目录。请在本会话保持 `BYOBU_CONFIG_DIR` 已设置，然后重新运行修复。",
             ),
             Self::UnsafeDirectory { label, path } => write!(
                 formatter,
-                "Grok refused unsafe {label} `{}`. Use a non-root absolute directory without control characters, `~`, `.` or `..` components.",
+                "Chaos 拒绝了不安全的 {label} `{}`。请使用不含控制字符、`~`、`.` 或 `..` 组件的非 root 绝对路径。",
                 path.display()
             ),
             Self::ExistingCustomization { path, detail }
@@ -342,26 +342,26 @@ impl std::fmt::Display for FixError {
             {
                 write!(
                     formatter,
-                    "Grok found an existing SSH alias or function in {} and did not change it: {detail}",
+                    "Chaos 在 {} 中发现已有 SSH 别名或函数，未做修改：{detail}",
                     path.display()
                 )
             }
             Self::ExistingCustomization { path, detail } => write!(
                 formatter,
-                "Grok found an existing customization in {} and did not change it: {detail}",
+                "Chaos 在 {} 中发现已有自定义配置，未做修改：{detail}",
                 path.display()
             ),
             Self::Managed(error) => write!(
                 formatter,
-                "Could not update your shell configuration: {error}"
+                "无法更新 shell 配置：{error}"
             ),
             Self::TmuxManaged(error) => {
-                write!(formatter, "Could not update your tmux configuration: {error}")
+                write!(formatter, "无法更新 tmux 配置：{error}")
             }
             Self::PostconditionFailed => formatter
-                .write_str("The configuration changed, but Grok could not verify the SSH alias."),
+                .write_str("配置已更改，但 Chaos 无法验证 SSH 别名。"),
             Self::TmuxPostconditionFailed => formatter.write_str(
-                "The configuration changed, but Grok could not verify the managed tmux option.",
+                "配置已更改，但 Chaos 无法验证托管的 tmux 选项。",
             ),
         }
     }
@@ -446,7 +446,7 @@ const TMUX_CLIPBOARD_SPEC: TmuxOptionSpec = TmuxOptionSpec {
     remedy: TmuxRemedy::Assignment,
     evidence: TmuxEvidence::Clipboard,
     scope: TmuxOptionScope::Server,
-    label: "Enable tmux clipboard forwarding",
+    label: "启用 tmux 剪贴板转发",
 };
 const DCS_PASSTHROUGH_SPEC: TmuxOptionSpec = TmuxOptionSpec {
     id: DCS_PASSTHROUGH_ID,
@@ -456,7 +456,7 @@ const DCS_PASSTHROUGH_SPEC: TmuxOptionSpec = TmuxOptionSpec {
     remedy: TmuxRemedy::Assignment,
     evidence: TmuxEvidence::DcsPassthrough,
     scope: TmuxOptionScope::Window,
-    label: "Enable tmux DCS passthrough",
+    label: "启用 tmux DCS 透传",
 };
 const TMUX_EXTENDED_KEYS_SPEC: TmuxOptionSpec = TmuxOptionSpec {
     id: TMUX_EXTENDED_KEYS_ID,
@@ -466,7 +466,7 @@ const TMUX_EXTENDED_KEYS_SPEC: TmuxOptionSpec = TmuxOptionSpec {
     remedy: TmuxRemedy::Assignment,
     evidence: TmuxEvidence::ExtendedKeys,
     scope: TmuxOptionScope::Server,
-    label: "Enable tmux extended keys",
+    label: "启用 tmux 扩展按键",
 };
 
 const TMUX_TRUECOLOR_SPEC: TmuxOptionSpec = TmuxOptionSpec {
@@ -484,7 +484,7 @@ const FIX_REGISTRY: &[FixSpec] = &[
     FixSpec {
         id: SSH_WRAP_ID,
         handle: "ssh-wrap",
-        label: "Set up local SSH wrapping",
+        label: "设置本地 SSH 包装",
         command: SSH_WRAP_FIX_COMMAND,
         kind: FixKind::SshWrap,
     },
@@ -492,21 +492,21 @@ const FIX_REGISTRY: &[FixSpec] = &[
         id: TMUX_CLIPBOARD_ID,
         handle: "tmux-clipboard",
         label: TMUX_CLIPBOARD_SPEC.label,
-        command: "grok doctor fix terminal.tmux-clipboard",
+        command: "chaos doctor fix terminal.tmux-clipboard",
         kind: FixKind::TmuxOption(&TMUX_CLIPBOARD_SPEC),
     },
     FixSpec {
         id: DCS_PASSTHROUGH_ID,
         handle: "dcs-passthrough",
         label: DCS_PASSTHROUGH_SPEC.label,
-        command: "grok doctor fix terminal.dcs-passthrough",
+        command: "chaos doctor fix terminal.dcs-passthrough",
         kind: FixKind::TmuxOption(&DCS_PASSTHROUGH_SPEC),
     },
     FixSpec {
         id: TMUX_EXTENDED_KEYS_ID,
         handle: "tmux-extended-keys",
         label: TMUX_EXTENDED_KEYS_SPEC.label,
-        command: "grok doctor fix terminal.tmux-extended-keys",
+        command: "chaos doctor fix terminal.tmux-extended-keys",
         kind: FixKind::TmuxOption(&TMUX_EXTENDED_KEYS_SPEC),
     },
     FixSpec {
@@ -531,7 +531,7 @@ pub fn resolve_fix_id(value: &str) -> Result<DiagnosticId, FixError> {
 }
 
 pub(crate) fn human_fix_command(id: DiagnosticId) -> Option<String> {
-    fix_spec(id).map(|spec| format!("grok doctor fix {}", spec.handle))
+    fix_spec(id).map(|spec| format!("chaos doctor fix {}", spec.handle))
 }
 
 pub(crate) fn automatic_fix_choices()
@@ -603,19 +603,19 @@ pub(crate) fn format_applicable_automatic_fixes(
 ) -> String {
     let fixes = applicable_automatic_fixes(report, terminal);
     if fixes.is_empty() {
-        return "No automatic fixes are available here.\n".to_owned();
+        return "此处没有可用的自动修复。\n".to_owned();
     }
 
-    let mut output = String::from("Automatic fixes:\n");
+    let mut output = String::from("自动修复：\n");
     for (id, handle, availability) in fixes {
-        let label = fix_spec(id).map_or("Apply automatic fix", |spec| spec.label);
+        let label = fix_spec(id).map_or("应用自动修复", |spec| spec.label);
         output.push_str(&format!("  {handle:<20} {label}\n"));
         match availability {
             AutomaticFixAvailability::Here => output.push_str(&format!(
-                "    Run: grok doctor fix {handle}\n    In Grok: /doctor fix {handle}\n"
+                "    运行：chaos doctor fix {handle}\n    在 Chaos 中：/doctor fix {handle}\n"
             )),
             AutomaticFixAvailability::RunLocally => output.push_str(&format!(
-                "    On your local computer, run: grok doctor fix {handle}\n"
+                "    请在本地电脑运行：chaos doctor fix {handle}\n"
             )),
         }
     }
@@ -625,43 +625,43 @@ pub(crate) fn format_applicable_automatic_fixes(
 pub(crate) fn format_fix_preview(plan: &FixPlan) -> String {
     use std::fmt::Write as _;
 
-    let mut output = String::from("Doctor Fix\n\n");
-    let _ = writeln!(output, "Fix: {}", plan.id);
+    let mut output = String::from("Doctor 修复\n\n");
+    let _ = writeln!(output, "修复：{}", plan.id);
     if let FixPayload::SshWrap(payload) = &plan.payload {
-        let _ = writeln!(output, "Shell: {}", payload.shell.name());
+        let _ = writeln!(output, "Shell：{}", payload.shell.name());
     }
     let change = &plan.change;
-    let _ = writeln!(output, "File: {}", preview_path(&change.requested_path));
+    let _ = writeln!(output, "文件：{}", preview_path(&change.requested_path));
     if change.target_path != change.requested_path {
         let _ = writeln!(
             output,
-            "Actual file: {} (symlink target)",
+            "实际文件：{}（符号链接目标）",
             preview_path(&change.target_path)
         );
     }
     if change.will_write {
-        let _ = writeln!(output, "\nText to add:\n{}", change.block);
+        let _ = writeln!(output, "\n将添加的文本：\n{}", change.block);
     } else {
-        output.push_str("\nText to add: None. The requested setting is already configured.\n");
+        output.push_str("\n将添加的文本：无。请求的设置已配置。\n");
     }
     match &change.backup_path_hint {
         Some(path) => {
             let _ = writeln!(
                 output,
-                "\nBackup will be saved to: {}\nIf that file exists, Grok will choose a unique name.",
+                "\n备份将保存到：{}\n若该文件已存在，Chaos 会选择唯一文件名。",
                 preview_path(path)
             );
         }
-        None => output.push_str("\nBackup: None. The file is new or no changes are needed.\n"),
+        None => output.push_str("\n备份：无。文件是新的或无需更改。\n"),
     }
     match &plan.payload {
         FixPayload::SshWrap(_) => {
             output.push_str(
-                "\nWhat this changes:\n  In new interactive shells, `ssh ...` runs as `grok wrap ssh ...`.\n",
+                "\n改动说明：\n  在新的交互式 shell 中，`ssh ...` 会以 `chaos wrap ssh ...` 运行。\n",
             );
             let _ = writeln!(
                 output,
-                "  To use once without changing config: `{SSH_WRAP_ONE_OFF}`."
+                "  若只想临时使用且不改配置：`{SSH_WRAP_ONE_OFF}`。"
             );
         }
         FixPayload::TmuxOption(payload) => {
@@ -669,12 +669,12 @@ pub(crate) fn format_fix_preview(plan: &FixPlan) -> String {
                 tmux_activation_instruction(payload.spec, &plan.change.requested_path);
             let _ = writeln!(
                 output,
-                "\nWhat this changes:\n  Persists `{}`.\n  Grok does not reload or modify the live tmux server.\n  After applying, {instruction}\n  Run /doctor again to verify the live setting.",
+                "\n改动说明：\n  持久化 `{}`。\n  Chaos 不会重载或修改正在运行的 tmux server。\n  应用后，{instruction}\n  请再次运行 /doctor 以验证生效设置。",
                 payload.spec.line,
             );
         }
     }
-    output.push_str("Caveats:\n");
+    output.push_str("注意：\n");
     for caveat in &plan.caveats {
         let _ = writeln!(output, "  - {caveat}");
     }
@@ -732,11 +732,11 @@ fn plan_ssh_wrap(
         id: request.id,
         change,
         caveats: vec![
-            "The alias loads only in new interactive shells.",
-            "Use `command ssh ...` to bypass the alias.",
-            "For manually entered `ssh -f`, ControlPersist workflows, or OpenSSH `~^Z` local suspend, use `command ssh ...`. Wrapping does not fully preserve those behaviors.",
-            "`grok wrap` starts the SSH process directly, so the alias does not loop.",
-            "Grok checks this file for direct SSH aliases and functions. Review sourced files, plugins, and generated shell setup yourself.",
+            "别名仅在新的交互式 shell 中生效。",
+            "使用 `command ssh ...` 可绕过别名。",
+            "对手动输入的 `ssh -f`、ControlPersist 工作流或 OpenSSH `~^Z` 本地挂起，请使用 `command ssh ...`。包装不会完整保留这些行为。",
+            "`chaos wrap` 直接启动 SSH 进程，因此别名不会循环。",
+            "Chaos 会检查此文件中的直接 SSH 别名与函数。请自行检查被 source 的文件、插件与生成的 shell 配置。",
         ],
         payload: FixPayload::SshWrap(SshWrapPlan { shell, managed }),
     })
@@ -806,7 +806,7 @@ fn plan_tmux_option(
 fn tmux_caveats(remedy: TmuxRemedy) -> Vec<&'static str> {
     match remedy {
         TmuxRemedy::Assignment => vec![
-            "The live tmux server is unchanged until you reload this config or restart it.",
+            "在重载此配置或 detach 再 reattach 之前，正在运行的 tmux server 不会改变。",
             TMUX_SCANNER_CAVEAT,
         ],
         // Reloading is not enough on its own: tmux fixes a client's feature set
@@ -951,30 +951,30 @@ fn fix_outcome(
 pub(crate) fn format_fix_success(outcome: &FixOutcome) -> String {
     let path = markdown_code_path(outcome.changed_path());
     let Some(kind) = fix_spec(outcome.id).map(|spec| spec.kind) else {
-        return "Applied the Doctor fix.".to_owned();
+        return "已应用 Doctor 修复。".to_owned();
     };
     let status = match (kind, outcome.status) {
-        (FixKind::SshWrap, FixStatus::Applied) => format!("Set up SSH wrapping in {path}."),
+        (FixKind::SshWrap, FixStatus::Applied) => format!("已在 {path} 中设置 SSH 包装。"),
         (FixKind::SshWrap, FixStatus::AlreadyConfigured) => {
-            format!("SSH wrapping is already set up in {path}.")
+            format!("SSH 包装已在 {path} 中配置。")
         }
         (FixKind::TmuxOption(tmux), FixStatus::Applied) => {
-            format!("Added `{}` to {path}.", tmux.line)
+            format!("已在 {path} 中添加 `{}`。", tmux.line)
         }
         (FixKind::TmuxOption(tmux), FixStatus::AlreadyConfigured) => {
-            format!("`{}` is already configured in {path}.", tmux.line)
+            format!("`{}` 已在 {path} 中配置。", tmux.line)
         }
     };
     let backup = outcome
         .backup_path()
-        .map(|path| format!("\nBackup: {}", path.display()))
+        .map(|path| format!("\n备份：{}", path.display()))
         .unwrap_or_default();
     let activation = match (kind, outcome.activation) {
         (FixKind::SshWrap, FixActivation::SatisfiedNow) => {
-            "\nStart a new shell to use the alias.".to_owned()
+            "\n请启动新的 shell 以使用该别名。".to_owned()
         }
         (FixKind::TmuxOption(tmux), FixActivation::RequiresReload) => format!(
-            "\n{}\nRun /doctor again to verify the live setting.",
+            "\n{}\n请再次运行 /doctor 以验证生效设置。",
             tmux_activation_instruction(tmux, outcome.changed_path())
         ),
         _ => String::new(),
@@ -996,13 +996,13 @@ fn preview_path(path: &Path) -> String {
     path.to_str()
         .filter(|value| !value.chars().any(char::is_control))
         .map(commonmark_code_span)
-        .unwrap_or_else(|| "[path cannot be rendered safely]".to_owned())
+        .unwrap_or_else(|| "[路径无法安全渲染]".to_owned())
 }
 
 fn markdown_code_path(path: &Path) -> String {
     path.to_str()
         .map(commonmark_code_span)
-        .unwrap_or_else(|| "the configured tmux file".to_owned())
+        .unwrap_or_else(|| "已配置的 tmux 文件".to_owned())
 }
 
 fn commonmark_code_span(value: &str) -> String {
@@ -1048,11 +1048,11 @@ fn tmux_activation_instruction(spec: &TmuxOptionSpec, path: &Path) -> String {
 
 fn reload_instruction(path: &Path) -> String {
     let Some(shell_path) = shell_quote_path(path) else {
-        return "Reload your tmux config, or restart the tmux server, to activate the persistent setting.".to_owned();
+        return "请 detach 再 reattach 以启用持久的 tmux 设置。".to_owned();
     };
     let command = format!("tmux source-file {shell_path}");
     format!(
-        "Reload tmux with {}, or restart the tmux server.",
+        "请用 {} 重载 tmux，或先 detach 再 reattach。",
         commonmark_code_span(&command)
     )
 }

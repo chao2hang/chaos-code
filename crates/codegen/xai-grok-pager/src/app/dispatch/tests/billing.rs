@@ -1007,16 +1007,16 @@ fn free_usage_upsell_shows_two_options_with_exact_labels() {
         )
     ));
     let q = &qv.questions[0];
-    assert_eq!(q.question, "You hit your free usage limit.");
+    assert_eq!(q.question, "当前免费额度已用尽。");
     let expected = [
         (
-            "Upgrade to SuperGrok",
-            "For everyday coding and productivity tasks",
+            "配置 Provider",
+            "设置模型、接口地址与 API 密钥（/provider）",
             Some(UPSELL_URL_UPGRADE),
         ),
         (
-            "Upgrade to SuperGrok Heavy",
-            "Get the most out of Grok Build. Highest usage limits.",
+            "查看用量说明",
+            "额度与限流由你的 Provider 决定，与 Chaos 订阅无关。",
             Some(UPSELL_URL_UPGRADE),
         ),
     ];
@@ -1150,11 +1150,11 @@ fn restricted_command_submit_opens_two_option_upsell() {
         )
     ));
     let q = &qv.questions[0];
-    assert_eq!(q.question, "Unlock all features with SuperGrok.");
+    assert_eq!(q.question, "此功能需要可用的 Provider 配置。");
     assert_eq!(q.options.len(), 2);
-    assert_eq!(q.options[0].label, "Upgrade to SuperGrok");
+    assert_eq!(q.options[0].label, "配置 Provider");
     assert_eq!(q.options[0].id.as_deref(), Some(UPSELL_URL_UPGRADE));
-    assert_eq!(q.options[1].label, "Upgrade to SuperGrok Heavy");
+    assert_eq!(q.options[1].label, "查看用量说明");
     assert_eq!(q.options[1].id.as_deref(), Some(UPSELL_URL_UPGRADE));
 }
 
