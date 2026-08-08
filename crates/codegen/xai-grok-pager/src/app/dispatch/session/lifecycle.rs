@@ -1288,7 +1288,7 @@ pub(in crate::app::dispatch) fn handle_session_failed(
     error: String,
 ) -> Vec<Effect> {
     tracing::error!(agent = ?agent_id, error = %error, "Session creation failed");
-    let msg = format!("Session creation failed: {error}");
+    let msg = format!("会话创建失败：{error}");
     let is_orphan = app
         .agents
         .get(&agent_id)
