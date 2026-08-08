@@ -127,7 +127,7 @@ fn doctor_fix_confirm_rejects_changed_session_or_cwd() {
         assert!(effects.is_empty(), "{mutate}");
         assert_eq!(app.agents[&id].prompt.text(), "draft", "{mutate}");
         assert!(
-            last_system_text(&app, id).contains("session changed"),
+            last_system_text(&app, id).contains("会话已变更"),
             "{mutate}"
         );
     }
@@ -210,7 +210,7 @@ fn doctor_fix_none_target_rejects_cwd_change() {
     };
     app.agents.get_mut(&id).unwrap().session.cwd = std::path::PathBuf::from("/changed");
     assert!(dispatch(action, &mut app).is_empty());
-    assert!(last_system_text(&app, id).contains("session changed"));
+    assert!(last_system_text(&app, id).contains("会话已变更"));
 }
 
 #[test]

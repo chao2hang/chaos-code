@@ -492,12 +492,12 @@ fn parse_json_schema_rejects_non_objects_and_invalid_json() {
         super::parse_json_schema(r#"[1,2,3]"#)
             .unwrap_err()
             .to_string()
-            .contains("must be a JSON object")
+            .contains("必须是描述 JSON Schema 的 JSON 对象")
     );
     assert!(
         super::parse_json_schema(r#"{not json"#)
             .unwrap_err()
             .to_string()
-            .contains("invalid JSON")
+            .contains("无效的 JSON")
     );
 }

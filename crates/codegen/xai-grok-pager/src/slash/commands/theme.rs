@@ -27,7 +27,7 @@ impl SlashCommand for ThemeCommand {
     }
 
     fn description(&self) -> &str {
-        "Switch the color theme"
+        "切换配色主题"
     }
 
     fn mode_support(&self) -> ModeSupport {

@@ -74,8 +74,8 @@ pub(super) fn handle_permission_request(
     {
         app.notification_service.notify(NotificationEvent {
             kind: NotificationEventKind::ApprovalRequired,
-            title: "Grok".into(),
-            body: NotificationEventKind::ApprovalRequired.as_str().into(),
+            title: "Chaos".into(),
+            body: "需要批准系统操作".into(),
             session_id: Some(perm.request.session_id.0.to_string()),
         });
         app.notification_service.mark_permission_notified();
@@ -277,8 +277,8 @@ fn build_permission_display(
             .map(|t| t.to_string())
             .unwrap_or_else(
                 || match bash_highlights.and_then(|h| h.highlighted_words.first()) {
-                    Some(bin) => format!("Allow `{bin}`?"),
-                    None => "Allow Execute?".to_string(),
+                    Some(bin) => format!("允许执行 `{bin}` 吗？"),
+                    None => "允许执行命令吗？".to_string(),
                 },
             )
     } else if is_edit_permission(req) {
@@ -290,26 +290,26 @@ fn build_permission_display(
             .and_then(|v| v.get("file_path"))
             .and_then(|v| v.as_str());
         if let Some(path) = file_path {
-            format!("Allow Edit to {}?", path)
+            format!("允许编辑 {} 吗？", path)
         } else if let Some(ref t) = req.tool_call.fields.title {
             format!(
-                "Allow {}?",
+                "允许执行 {} 吗？",
                 xai_grok_workspace::permission::mcp_pretty_name_if_qualified(t)
             )
         } else {
-            "Allow Edit?".to_string()
+            "允许编辑文件吗？".to_string()
         }
     } else if let Some(ref t) = req.tool_call.fields.title {
         format!(
-            "Allow {}?",
+            "允许执行 {} 吗？",
             xai_grok_workspace::permission::mcp_pretty_name_if_qualified(t)
         )
     } else {
         match req.tool_call.fields.kind {
-            Some(acp::ToolKind::Edit) => "Allow Edit?".to_string(),
-            Some(acp::ToolKind::Execute) => "Allow Execute?".to_string(),
-            Some(acp::ToolKind::Delete) => "Allow Delete?".to_string(),
-            _ => "Allow?".to_string(),
+            Some(acp::ToolKind::Edit) => "允许编辑文件吗？".to_string(),
+            Some(acp::ToolKind::Execute) => "允许执行命令吗？".to_string(),
+            Some(acp::ToolKind::Delete) => "允许删除吗？".to_string(),
+            _ => "允许执行此操作吗？".to_string(),
         }
     };
 

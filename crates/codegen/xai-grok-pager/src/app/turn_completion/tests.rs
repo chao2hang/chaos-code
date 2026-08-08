@@ -475,7 +475,7 @@ fn real_end_marker_stays_plain_with_running_work() {
 
     let block = last_marker_block(&agent);
     assert_eq!(block.prompt_id.as_deref(), Some("p1"));
-    assert_eq!(block.event.message(), "Worked for 2.0s");
+    assert_eq!(block.event.message(), "耗时 2.0s");
     assert_eq!(
         agent.watchers().commands,
         1,
@@ -496,7 +496,7 @@ fn workless_marker_renders_legacy_text() {
     );
 
     let block = last_marker_block(&agent);
-    assert_eq!(block.event.message(), "Worked for 2.0s");
+    assert_eq!(block.event.message(), "耗时 2.0s");
 }
 
 // ── Send-now cancel marker suppression (viewer finalize rail) ────────
@@ -596,5 +596,5 @@ fn turn_end_after_park_pushes_single_marker() {
         1,
         "the real turn end pushes exactly one marker"
     );
-    assert_eq!(last_marker_block(&agent).event.message(), "Worked for 5.0s");
+    assert_eq!(last_marker_block(&agent).event.message(), "耗时 5.0s");
 }

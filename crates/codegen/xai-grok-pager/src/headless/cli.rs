@@ -20,9 +20,9 @@ pub enum OutputFormat {
 
 pub fn parse_json_schema(input: &str) -> anyhow::Result<serde_json::Value> {
     let schema: serde_json::Value = serde_json::from_str(input)
-        .map_err(|e| anyhow::anyhow!("--json-schema: invalid JSON: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("--json-schema：无效的 JSON：{e}"))?;
     if !schema.is_object() {
-        anyhow::bail!("--json-schema: must be a JSON object describing a JSON Schema");
+        anyhow::bail!("--json-schema：必须是描述 JSON Schema 的 JSON 对象");
     }
     Ok(schema)
 }
@@ -58,7 +58,7 @@ impl HeadlessPrompt {
     /// `.json` files are parsed as content blocks, everything else as text.
     pub fn from_file(path: &Path) -> anyhow::Result<Self> {
         let content = std::fs::read_to_string(path)
-            .map_err(|e| anyhow::anyhow!("Failed to read '{}': {e}", path.display()))?;
+            .map_err(|e| anyhow::anyhow!("无法读取 '{}'：{e}", path.display()))?;
 
         let context = |e| anyhow::anyhow!("'{}': {e}", path.display());
         if path.extension().and_then(|e| e.to_str()) == Some("json") {
@@ -71,7 +71,7 @@ impl HeadlessPrompt {
     fn from_text(text: &str) -> anyhow::Result<Self> {
         let trimmed = text.trim();
         if trimmed.is_empty() {
-            anyhow::bail!("prompt is empty");
+            anyhow::bail!("提示词不能为空");
         }
         Ok(Self::Text(trimmed.to_string()))
     }
@@ -92,40 +92,40 @@ impl HeadlessPrompt {
 /// Parse ACP content blocks from an array (`[...]`) or typed wrapper (`{"type":"acp","content":[...]}`).
 fn parse_prompt_json(json_str: &str) -> anyhow::Result<Vec<acp::ContentBlock>> {
     let value: serde_json::Value =
-        serde_json::from_str(json_str).map_err(|e| anyhow::anyhow!("Invalid JSON: {e}"))?;
+        serde_json::from_str(json_str).map_err(|e| anyhow::anyhow!("无效的 JSON：{e}"))?;
 
     let blocks: Vec<acp::ContentBlock> = match value {
         serde_json::Value::Array(_) => serde_json::from_value(value)
-            .map_err(|e| anyhow::anyhow!("Invalid ACP content blocks: {e}"))?,
+            .map_err(|e| anyhow::anyhow!("无效的 ACP 内容块：{e}"))?,
 
         serde_json::Value::Object(ref map) => {
             let format_type = map.get("type").and_then(|v| v.as_str()).ok_or_else(|| {
                 anyhow::anyhow!(
-                    "JSON object must have a \"type\" field \
-                         (e.g., {{\"type\": \"acp\", \"content\": [...]}})"
+                    "JSON 对象必须包含 \"type\" 字段 \
+                         （例如 {{\"type\": \"acp\", \"content\": [...]}}）"
                 )
             })?;
             let content = map
                 .get("content")
-                .ok_or_else(|| anyhow::anyhow!("JSON object must have a \"content\" field"))?;
+                .ok_or_else(|| anyhow::anyhow!("JSON 对象必须包含 \"content\" 字段"))?;
 
             match format_type {
                 "acp" => serde_json::from_value(content.clone()).map_err(|e| {
-                    anyhow::anyhow!("Invalid ACP content blocks in \"content\": {e}")
+                    anyhow::anyhow!("\"content\" 中包含无效的 ACP 内容块：{e}")
                 })?,
                 other => anyhow::bail!(
-                    "Unsupported prompt format type: \"{other}\". Supported types: \"acp\""
+                    "不支持的提示词格式类型：\"{other}\"；当前仅支持 \"acp\""
                 ),
             }
         }
 
         _ => {
-            anyhow::bail!("Expected JSON array or {{\"type\": \"...\", \"content\": [...]}} object")
+            anyhow::bail!("应提供 JSON 数组或 {{\"type\": \"...\", \"content\": [...]}} 对象")
         }
     };
 
     if blocks.is_empty() {
-        anyhow::bail!("content blocks array is empty");
+        anyhow::bail!("内容块数组不能为空");
     }
     Ok(blocks)
 }
@@ -163,7 +163,7 @@ pub fn parse_permission_rules_lenient(
 ) -> Vec<xai_grok_workspace::permission::types::PermissionRule> {
     let (rules, errors) = parse_permission_rules_inner(allow, deny);
     for (flag, rule, err) in errors {
-        eprintln!("warning: {flag} \"{rule}\": {err}, skipping");
+        eprintln!("警告：{flag} \"{rule}\"：{err}，已跳过");
     }
     rules
 }
@@ -214,7 +214,7 @@ pub(crate) fn parse_cli_agents(
     json: &str,
 ) -> anyhow::Result<Vec<xai_grok_shell::agent::config::AgentDefinition>> {
     let map: std::collections::HashMap<String, serde_json::Value> =
-        serde_json::from_str(json).map_err(|e| anyhow::anyhow!("--agents: invalid JSON: {e}"))?;
+        serde_json::from_str(json).map_err(|e| anyhow::anyhow!("--agents：无效的 JSON：{e}"))?;
     let mut agents = Vec::with_capacity(map.len());
     for (name, mut value) in map {
         if let serde_json::Value::Object(ref mut obj) = value {
@@ -229,7 +229,7 @@ pub(crate) fn parse_cli_agents(
                 .or_insert_with(|| serde_json::Value::String(name.clone()));
         }
         let mut def = xai_grok_shell::agent::config::AgentDefinition::from_json(&value)
-            .map_err(|e| anyhow::anyhow!("--agents: failed to parse '{name}': {e}"))?;
+            .map_err(|e| anyhow::anyhow!("--agents：解析 '{name}' 失败：{e}"))?;
         def.name = name;
         agents.push(def);
     }

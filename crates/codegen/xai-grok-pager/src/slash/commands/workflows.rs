@@ -10,7 +10,7 @@ impl SlashCommand for WorkflowsCommand {
     }
 
     fn description(&self) -> &str {
-        "Show workflow runs (phases, agents, progress)"
+        "显示工作流运行（阶段、Agent、进度）"
     }
 
     fn usage(&self) -> &str {

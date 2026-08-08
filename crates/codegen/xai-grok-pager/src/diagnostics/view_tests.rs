@@ -267,15 +267,15 @@ fn all_tmux_finding_metadata_uses_stable_automatic_fix_ids_without_schema_change
         [
             (
                 crate::diagnostics::TMUX_CLIPBOARD_ID,
-                "grok doctor fix terminal.tmux-clipboard",
+                "chaos doctor fix terminal.tmux-clipboard",
             ),
             (
                 crate::diagnostics::DCS_PASSTHROUGH_ID,
-                "grok doctor fix terminal.dcs-passthrough",
+                "chaos doctor fix terminal.dcs-passthrough",
             ),
             (
                 crate::diagnostics::TMUX_EXTENDED_KEYS_ID,
-                "grok doctor fix terminal.tmux-extended-keys",
+                "chaos doctor fix terminal.tmux-extended-keys",
             ),
         ]
     );
@@ -344,7 +344,7 @@ fn unavailable_runtime_evidence_is_honest_and_fail_open() {
         .expect("control-mode finding");
     assert_eq!(
         control_mode.message,
-        "Display may be limited in tmux control mode"
+        "在 tmux control mode 下显示可能受限"
     );
     assert_eq!(
         report
@@ -521,7 +521,7 @@ fn clipboard_delivery_findings_own_remediation_while_fix_fact_stays_compatible()
             },
             crate::clipboard::ClipboardDelivery::Unverified,
             crate::diagnostics::CLIPBOARD_DELIVERY_UNVERIFIED_ID,
-            "grok wrap <ssh command> or /minimal",
+            "chaos wrap <ssh command> or /minimal",
         ),
         (
             TerminalContext {
@@ -681,7 +681,7 @@ fn available_wezterm_evidence_retains_finding_and_backslash_note() {
         finding
             .note
             .as_deref()
-            .is_some_and(|note| note.contains("type `\\` and then press Enter"))
+            .is_some_and(|note| note.contains("输入 `\\` 再按 Enter"))
     );
 }
 
@@ -713,7 +713,7 @@ fn keyboard_fact_and_formatter_use_snapshot_host() {
     let output = crate::diagnostics::format_doctor(&report);
     if snapshot_host == crate::host::HostOs::Macos {
         assert_eq!(keyboard.map(|fact| fact.os), Some(snapshot_host));
-        assert!(output.contains("(OS rescue active)"));
+        assert!(output.contains("(系统救援已启用)"));
     } else {
         assert!(keyboard.is_none());
         assert!(!output.contains("  keyboard     "));

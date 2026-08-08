@@ -15,7 +15,7 @@ impl SlashCommand for TimelineCommand {
     }
 
     fn description(&self) -> &str {
-        "Toggle the timeline sidebar"
+        "切换时间线侧栏"
     }
 
     fn mode_support(&self) -> ModeSupport {

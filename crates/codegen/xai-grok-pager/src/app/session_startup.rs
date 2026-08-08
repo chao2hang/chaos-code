@@ -766,8 +766,7 @@ async fn most_recent_session_id(cwd: &str) -> anyhow::Result<(String, Option<Str
     let summaries = xai_grok_shell::session::persistence::list_summaries(Some(cwd)).await?;
     let first = summaries.first().ok_or_else(|| {
         anyhow::anyhow!(
-            "No session found for current directory. \
-             Use 'grok' to start a new session."
+            "当前目录没有可恢复的会话。请运行 `chaos` 启动新会话。"
         )
     })?;
     Ok((first.info.id.to_string(), first.display_title_opt()))
@@ -804,10 +803,10 @@ pub(crate) const WORKTREE_NO_RESTORE_CODE_NOTICE: &str =
 /// CLI users get a clear error before ACP.
 pub fn ensure_session_id_available(session_id: &str, cwd: &str) -> anyhow::Result<()> {
     if uuid::Uuid::try_parse(session_id).is_err() {
-        anyhow::bail!("Error: --session-id must be a valid UUID (got '{session_id}').");
+        anyhow::bail!("错误：--session-id 必须是有效 UUID（收到 '{session_id}'）。");
     }
     if xai_grok_shell::session::persistence::session_exists_for_cwd(session_id, cwd) {
-        anyhow::bail!("Error: Session ID {session_id} is already in use.");
+        anyhow::bail!("错误：会话 ID {session_id} 已被使用。");
     }
     Ok(())
 }
@@ -817,7 +816,7 @@ pub async fn materialize_startup(
     intent: SessionStartupIntent,
 ) -> anyhow::Result<MaterializedStartup> {
     let cwd = std::env::current_dir()
-        .map_err(|e| anyhow::anyhow!("Failed to get cwd: {e}"))?
+        .map_err(|e| anyhow::anyhow!("无法获取当前工作目录：{e}"))?
         .to_string_lossy()
         .to_string();
     materialize_startup_for_cwd(ctx, intent, &cwd).await
@@ -837,7 +836,7 @@ pub async fn materialize_startup_for_cwd(
             if !ctx.has_worktree {
                 ensure_session_id_available(&session_id, cwd)?;
             } else if uuid::Uuid::try_parse(&session_id).is_err() {
-                anyhow::bail!("Error: --session-id must be a valid UUID (got '{session_id}').");
+                anyhow::bail!("错误：--session-id 必须是有效 UUID（收到 '{session_id}'）。");
             }
             Ok(MaterializedStartup::NewWithId { session_id })
         }
@@ -972,7 +971,7 @@ async fn resolve_existing_session(
             "Session found locally under different CWD"
         );
         eprintln!(
-            "Session {} found locally (originally in {})",
+            "已在本地找到会话 {}（原工作目录：{}）",
             session_id, original_cwd
         );
         return Ok(ResolvedExisting {
@@ -1000,7 +999,7 @@ async fn resolve_existing_session(
                 "Session not found locally; deferring restore to worktree resume handler"
             );
             eprintln!(
-                "Session {:?} not found locally; it will be restored into the new worktree.",
+                "本地未找到会话 {:?}；将在新 worktree 中恢复。",
                 session_id
             );
             if !ctx.restore_code {
@@ -1026,11 +1025,11 @@ async fn resolve_existing_session(
         RemoteMissPlan::NotFound { title_miss_hint } => {
             if title_miss_hint {
                 anyhow::bail!(
-                    "Session does not exist: {}",
+                    "会话不存在：{}",
                     super::session_title_resolve::title_miss_hint(session_id)
                 );
             }
-            anyhow::bail!("Session does not exist")
+            anyhow::bail!("会话不存在")
         }
         RemoteMissPlan::RestoreConversation => {
             let restored =
@@ -1111,24 +1110,24 @@ async fn restore_session_from_remote(
     progress_on_stdout: bool,
 ) -> anyhow::Result<ResolvedExisting> {
     let raw_config = xai_grok_shell::config::load_effective_config()
-        .map_err(|e| anyhow::anyhow!("Failed to load config: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("无法加载配置：{}", e))?;
     if let Some((false, source)) =
         xai_grok_shell::util::config::session_registry_local_override_sourced(Some(&raw_config))
     {
         anyhow::bail!(
-            "Session does not exist locally (session registry is disabled by {})",
+            "本地不存在该会话（会话注册表已被 {} 禁用）",
             source.label()
         );
     }
     emit_pre_tui_restore_line(
         progress_on_stdout,
         &format!(
-            "Session {:?} not found locally, restoring conversation from remote...",
+            "本地未找到会话 {:?}，正在从远端恢复...",
             session_id
         ),
     );
     let agent_config = xai_grok_shell::agent::config::Config::new_from_toml_cfg(&raw_config)
-        .map_err(|e| anyhow::anyhow!("Failed to create agent config: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("无法创建 Agent 配置：{}", e))?;
     use xai_grok_shell::agent::session_registry_client::SessionRegistryClient;
     use xai_grok_shell::auth::{AuthManager, ensure_authenticated_or_noninteractive};
     use xai_grok_shell::session::restore::{RestoreSessionOpts, restore_session_with_storage};
@@ -1198,7 +1197,7 @@ async fn restore_session_from_remote(
         RemoteRestoreOutcome::Restored { local_session_id } => {
             emit_pre_tui_restore_line(
                 progress_on_stdout,
-                &format!("  Restored conversation as local session {local_session_id}"),
+                &format!("  已恢复为本地会话 {local_session_id}"),
             );
             Ok(ResolvedExisting {
                 id: local_session_id,
@@ -1274,7 +1273,7 @@ pub(crate) fn classify_remote_restore(
         ));
     }
     if let Some(e) = restore_err {
-        return RemoteRestoreOutcome::Failed(format!("Failed to restore session from remote: {e}"));
+        return RemoteRestoreOutcome::Failed(format!("从远端恢复会话失败：{e:#}"));
     }
     RemoteRestoreOutcome::Failed(
         "Failed to restore session from remote: conversation history was unavailable.".to_string(),
@@ -1296,7 +1295,7 @@ async fn resolve_session_by_title(
     };
     let id = chosen.info.id.to_string();
     tracing::info!(session_id = %id, "Session resolved by title");
-    eprintln!("Resuming session {} (matched by title)", id);
+    eprintln!("正在恢复会话 {}（按标题匹配）", id);
     Ok(Some(ResolvedExisting {
         id,
         original_cwd: None,
@@ -1455,8 +1454,8 @@ mod tests {
         let err = ensure_session_id_available("my-run-1", "/tmp/does-not-matter").unwrap_err();
         let msg = err.to_string();
         assert!(
-            msg.contains("must be a valid UUID"),
-            "unexpected message: {msg}"
+            msg.contains("必须是有效 UUID"),
+            "非预期错误：{msg}"
         );
     }
     #[test]
@@ -1698,7 +1697,7 @@ mod tests {
         }
         match classify_remote_restore(false, None, Some("registry 404"), None) {
             RemoteRestoreOutcome::Failed(msg) => {
-                assert!(msg.contains("Failed to restore"), "{msg}");
+                assert!(msg.contains("从远端恢复会话失败"), "{msg}");
                 assert!(msg.contains("registry 404"), "{msg}");
             }
             other => panic!("expected Failed, got {other:?}"),
@@ -1899,7 +1898,7 @@ mod tests {
         .await
         .unwrap_err();
         assert!(
-            err.to_string().contains("does not exist"),
+            err.to_string().contains("会话不存在"),
             "unexpected error: {err}"
         );
     }

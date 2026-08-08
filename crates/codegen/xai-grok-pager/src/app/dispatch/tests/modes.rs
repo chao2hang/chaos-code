@@ -502,10 +502,7 @@ fn set_yolo_mode_on_under_plan_uses_plan_aware_toast() {
         .as_ref()
         .map(|(s, _)| s.clone())
         .expect("toast must be set");
-    assert_eq!(
-        toast,
-        "\u{26A0} Always-approve ON: all tool actions auto-run"
-    );
+    assert_eq!(toast, "\u{26A0} 总是批准已开启：所有工具操作将自动执行");
 }
 
 /// The settings-modal path (`SetPermissionMode(AlwaysApprove)`) gets the same
@@ -1070,7 +1067,7 @@ fn set_yolo_mode_toast_format() {
         .expect("toast must be set");
     assert_eq!(
         toast,
-        "\u{26A0} Always-approve ON: all tool actions auto-run"
+        "\u{26A0} 总是批准已开启：所有工具操作将自动执行"
     );
 
     let _ = dispatch(Action::SetYoloMode(false), &mut app);
@@ -1079,7 +1076,7 @@ fn set_yolo_mode_toast_format() {
         .as_ref()
         .map(|(s, _)| s.clone())
         .expect("toast must be set");
-    assert_eq!(toast, "\u{2713} Always-approve: off");
+    assert_eq!(toast, "\u{2713} 总是批准：关");
 }
 
 #[test]
@@ -1528,7 +1525,7 @@ fn set_permission_mode_default_overrides_canonical_to_default() {
         .map(|(s, _)| s.clone())
         .expect("toast must be set");
     assert_eq!(
-        toast, "\u{2713} Permission mode: Default",
+        toast, "\u{2713} 权限模式：默认",
         "PR 11 R1 G-3 #12: Default toast is value-neutral; no parenthetical that lies \
              about runtime equivalence",
     );
@@ -1592,7 +1589,7 @@ fn set_permission_mode_always_approve_from_default_captures_prev_canonical() {
         .map(|(s, _)| s.clone())
         .expect("toast must be set");
     assert_eq!(
-        toast, "\u{26A0} Always-approve ON: all tool actions auto-run",
+        toast, "\u{26A0} 总是批准已开启：所有工具操作将自动执行",
         "AlwaysApprove arm preserves the destructive yolo_toast(true) — the warning \
              weight is correct for the YOLO transition",
     );
@@ -1648,17 +1645,17 @@ fn permission_mode_toast_returns_brand_consistent_strings() {
     use crate::app::actions::PermissionModeKind;
     assert_eq!(
         permission_mode_toast(PermissionModeKind::Default),
-        "\u{2713} Permission mode: Default",
+        "\u{2713} 权限模式：默认",
     );
     assert_eq!(
         permission_mode_toast(PermissionModeKind::Ask),
-        "\u{2713} Permission mode: Ask",
+        "\u{2713} 权限模式：询问",
     );
     // AlwaysApprove still goes through `yolo_toast(true)` —
     // destructive variant.
     assert_eq!(
         permission_mode_toast(PermissionModeKind::AlwaysApprove),
-        "\u{26A0} Always-approve ON: all tool actions auto-run",
+        "\u{26A0} 总是批准已开启：所有工具操作将自动执行",
     );
 }
 
@@ -2171,12 +2168,12 @@ fn set_plan_mode_idempotent_on() {
 
     let toast = read_toast(&app);
     assert!(
-        toast.contains("Plan mode"),
+        toast.contains("计划模式"),
         "idempotent ON must still toast (slash command users typing `/plan` while \
              already in plan mode need confirmation): {toast}",
     );
     assert!(
-        toast.contains("on"),
+        toast.contains('开'),
         "idempotent ON toast must surface the value: {toast}",
     );
     assert!(
@@ -2213,15 +2210,12 @@ fn set_plan_mode_idempotent_off() {
     assert!(!agent.plan_mode_active);
 
     let toast = read_toast(&app);
-    assert!(toast.contains("Plan mode"));
-    assert!(toast.contains("off"));
+    assert!(toast.contains("计划模式"));
+    assert!(toast.contains('关'));
     assert!(toast.contains('\u{2713}'));
 }
 
-/// Toast format contract: both directions
-/// produce `"✓ Plan mode: <on|off>"`. Mirrors `set_compact_mode_toast_format`.
-/// A regression to capital "On"/"Off" or
-/// missing the ✓ glyph would fail this test.
+/// Toast format contract: both directions produce `"✓ 计划模式：开|关"`.
 #[test]
 fn plan_mode_toast_format() {
     let mut app = test_app_with_agent();
@@ -2230,14 +2224,10 @@ fn plan_mode_toast_format() {
         &mut app,
     );
     let toast = read_toast(&app);
-    assert!(toast.contains("Plan mode"));
+    assert!(toast.contains("计划模式"));
     assert!(
-        toast.contains(": on"),
-        "ON toast must use lowercase 'on' (consistency with multiline/compact toasts): {toast}",
-    );
-    assert!(
-        !toast.contains(": On"),
-        "ON toast must NOT use capital 'On' (PR 10 R1 G-3 #1 fix): {toast}",
+        toast.contains("：开"),
+        "ON toast must use Chinese 开: {toast}",
     );
     assert!(toast.contains('\u{2713}'));
 
@@ -2250,14 +2240,10 @@ fn plan_mode_toast_format() {
         &mut app,
     );
     let toast = read_toast(&app);
-    assert!(toast.contains("Plan mode"));
+    assert!(toast.contains("计划模式"));
     assert!(
-        toast.contains(": off"),
-        "OFF toast must use lowercase 'off': {toast}",
-    );
-    assert!(
-        !toast.contains(": Off"),
-        "OFF toast must NOT use capital 'Off': {toast}",
+        toast.contains("：关"),
+        "OFF toast must use Chinese 关: {toast}",
     );
 }
 

@@ -85,7 +85,7 @@ impl SlashCommand for LoopCommand {
     }
 
     fn description(&self) -> &str {
-        "Run a prompt on a recurring interval"
+        "按固定间隔循环运行提示"
     }
 
     fn usage(&self) -> &str {

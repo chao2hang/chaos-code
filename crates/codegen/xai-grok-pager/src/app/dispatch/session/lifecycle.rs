@@ -468,13 +468,18 @@ pub(in crate::app::dispatch) fn dispatch_new_session_inner_with_id(
         agent.session.prompt_history_loading = true;
     }
     let preferred_session_id = app.deferred_startup.preferred_session_id.take();
-    effects.push(Effect::CreateSession {
-        agent_id,
-        cwd: effective_cwd,
-        model_id,
-        preferred_session_id,
-        chat_kind,
-    });
+    // First prompt from a non-project directory defers session creation to the
+    // project picker: the user picks a directory, and `dispatch_project_selected`
+    // then creates the session + sends the stashed prompt.
+    if !app.needs_project_picker() {
+        effects.push(Effect::CreateSession {
+            agent_id,
+            cwd: effective_cwd,
+            model_id,
+            preferred_session_id,
+            chat_kind,
+        });
+    }
     (agent_id, effects)
 }
 /// Exit the current session and return to the welcome screen.

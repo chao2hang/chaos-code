@@ -20,7 +20,7 @@ impl SlashCommand for TutorialCommand {
     }
 
     fn description(&self) -> &str {
-        "Quick tips to get the most out of Grok Build"
+        "快速上手 Chaos"
     }
 
     fn usage(&self) -> &str {

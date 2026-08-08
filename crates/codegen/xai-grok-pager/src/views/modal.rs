@@ -54,12 +54,12 @@ impl EditConfirmResult {
     /// Dynamic label based on whether the agent is waiting to drain.
     pub fn label(&self, drain_blocked: bool) -> &'static str {
         match (self, drain_blocked) {
-            (Self::Save, false) => "save",
-            (Self::Save, true) => "save & send",
-            (Self::Discard, false) => "discard changes",
-            (Self::Discard, true) => "discard & send",
-            (Self::Delete, _) => "delete prompt",
-            (Self::Cancel, _) => "cancel",
+            (Self::Save, false) => "保存",
+            (Self::Save, true) => "保存并发送",
+            (Self::Discard, false) => "放弃更改",
+            (Self::Discard, true) => "放弃并发送",
+            (Self::Delete, _) => "删除提示",
+            (Self::Cancel, _) => "取消",
         }
     }
 }
@@ -100,8 +100,8 @@ impl ResetSettingsResult {
     /// Label for the y/n buttons rendered in the modal footer.
     pub fn label(self) -> &'static str {
         match self {
-            Self::Reset => "reset",
-            Self::Cancel => "cancel",
+            Self::Reset => "重置",
+            Self::Cancel => "取消",
         }
     }
 }
@@ -142,10 +142,10 @@ impl CancelTurnChoice {
     ];
     pub fn label(&self) -> &'static str {
         match self {
-            Self::StopRunning => "Stop running",
-            Self::ContinueToRun => "Continue to run",
-            Self::AlwaysStop => "Always stop",
-            Self::AlwaysContinue => "Always continue",
+            Self::StopRunning => "停止运行",
+            Self::ContinueToRun => "继续运行",
+            Self::AlwaysStop => "总是停止",
+            Self::AlwaysContinue => "总是继续",
         }
     }
 }
@@ -379,27 +379,27 @@ pub(crate) fn default_palette_entries(
     let mut entries = vec![
         // ── Session ──
         PaletteEntry {
-            label: "Session".into(),
+            label: "会话".into(),
             shortcut: String::new(),
-            command: PaletteCommand::SectionHeader("Session".into()),
+            command: PaletteCommand::SectionHeader("会话".into()),
         },
         PaletteEntry {
-            label: "New Session".into(),
+            label: "新建会话".into(),
             shortcut: "Ctrl+N".into(),
             command: PaletteCommand::NewSession,
         },
         PaletteEntry {
-            label: "New Session in Worktree".into(),
+            label: "在工作树中新建会话".into(),
             shortcut: "Ctrl+P → worktree".into(),
             command: PaletteCommand::NewSessionInWorktree,
         },
         PaletteEntry {
-            label: "Agent Dashboard".into(),
+            label: "Agent 仪表盘".into(),
             shortcut: "/dashboard".into(),
             command: PaletteCommand::SlashCommand("/dashboard".into()),
         },
         PaletteEntry {
-            label: "Back to Home".into(),
+            label: "返回主页".into(),
             shortcut: "/home".into(),
             command: PaletteCommand::Home,
         },
@@ -409,146 +409,146 @@ pub(crate) fn default_palette_entries(
             command: PaletteCommand::SlashCommand("/delete".into()),
         },
         PaletteEntry {
-            label: "Resume Session".into(),
+            label: "恢复会话".into(),
             shortcut: "/resume".into(),
             command: PaletteCommand::SlashCommand("/resume".into()),
         },
         PaletteEntry {
-            label: "Share Session".into(),
+            label: "分享会话".into(),
             shortcut: "/share".into(),
             command: PaletteCommand::SlashCommand("/share".into()),
         },
         PaletteEntry {
-            label: "Rename Session".into(),
+            label: "重命名会话".into(),
             shortcut: "/rename ".into(),
             command: PaletteCommand::SlashCommand("/rename ".into()),
         },
         PaletteEntry {
-            label: "Session Info".into(),
+            label: "会话信息".into(),
             shortcut: "/session-info".into(),
             command: PaletteCommand::SlashCommand("/session-info".into()),
         },
         PaletteEntry {
-            label: "Send Feedback".into(),
+            label: "发送反馈".into(),
             shortcut: "/feedback".into(),
             command: PaletteCommand::SlashCommand("/feedback ".into()),
         },
         // ── Context ──
         PaletteEntry {
-            label: "Context".into(),
+            label: "上下文".into(),
             shortcut: String::new(),
-            command: PaletteCommand::SectionHeader("Context".into()),
+            command: PaletteCommand::SectionHeader("上下文".into()),
         },
         PaletteEntry {
-            label: "Compact History".into(),
+            label: "压缩历史".into(),
             shortcut: "/compact".into(),
             command: PaletteCommand::SlashCommand("/compact".into()),
         },
         PaletteEntry {
-            label: "Context Usage".into(),
+            label: "上下文用量".into(),
             shortcut: "/context".into(),
             command: PaletteCommand::SlashCommand("/context".into()),
         },
         PaletteEntry {
-            label: "View Plan".into(),
+            label: "查看计划".into(),
             shortcut: "/view-plan".into(),
             command: PaletteCommand::SlashCommand("/view-plan".into()),
         },
         PaletteEntry {
-            label: "Memory".into(),
+            label: "记忆".into(),
             shortcut: "/memory".into(),
             command: PaletteCommand::Memory,
         },
         // ── Model & Input ──
         PaletteEntry {
-            label: "Model & Input".into(),
+            label: "模型与输入".into(),
             shortcut: String::new(),
-            command: PaletteCommand::SectionHeader("Model & Input".into()),
+            command: PaletteCommand::SectionHeader("模型与输入".into()),
         },
         PaletteEntry {
-            label: "Switch Model".into(),
+            label: "切换模型".into(),
             shortcut: "/model".into(),
             command: PaletteCommand::SlashCommand("/model ".into()),
         },
         PaletteEntry {
-            label: "Always Approve Mode".into(),
+            label: "总是批准模式".into(),
             shortcut: "/always-approve".into(),
             command: PaletteCommand::SlashCommand("/always-approve".into()),
         },
         PaletteEntry {
-            label: "Multiline Input".into(),
+            label: "多行输入".into(),
             shortcut: "/multiline".into(),
             command: PaletteCommand::SlashCommand("/multiline".into()),
         },
         PaletteEntry {
-            label: "Edit Prompt in External Editor".into(),
+            label: "在外部编辑器中编辑提示".into(),
             shortcut: "Ctrl+G".into(),
             command: PaletteCommand::EditPromptExternal,
         },
         // ── Tools ──
         PaletteEntry {
-            label: "Tools".into(),
+            label: "工具".into(),
             shortcut: String::new(),
-            command: PaletteCommand::SectionHeader("Tools".into()),
+            command: PaletteCommand::SectionHeader("工具".into()),
         },
         PaletteEntry {
-            label: "Hooks".into(),
+            label: "钩子".into(),
             shortcut: "/hooks".into(),
             command: PaletteCommand::OpenExtensionsTab(
                 crate::views::extensions_modal::ExtensionsTab::Hooks,
             ),
         },
         PaletteEntry {
-            label: "Plugins".into(),
+            label: "插件".into(),
             shortcut: "/plugins".into(),
             command: PaletteCommand::OpenExtensionsTab(
                 crate::views::extensions_modal::ExtensionsTab::Plugins,
             ),
         },
         PaletteEntry {
-            label: "Marketplace".into(),
+            label: "市场".into(),
             shortcut: "/marketplace".into(),
             command: PaletteCommand::OpenExtensionsTab(
                 crate::views::extensions_modal::ExtensionsTab::Marketplace,
             ),
         },
         PaletteEntry {
-            label: "Skills".into(),
+            label: "技能".into(),
             shortcut: "/skills".into(),
             command: PaletteCommand::OpenExtensionsTab(
                 crate::views::extensions_modal::ExtensionsTab::Skills,
             ),
         },
         PaletteEntry {
-            label: "MCP Servers".into(),
+            label: "MCP 服务器".into(),
             shortcut: "/mcps".into(),
             command: PaletteCommand::OpenExtensionsTab(
                 crate::views::extensions_modal::ExtensionsTab::McpServers,
             ),
         },
         PaletteEntry {
-            label: "Manage Agents".into(),
+            label: "管理 Agent".into(),
             shortcut: "/config-agents".into(),
             command: PaletteCommand::OpenAgentsModal,
         },
         // ── Other ──
         PaletteEntry {
-            label: "Other".into(),
+            label: "其他".into(),
             shortcut: String::new(),
-            command: PaletteCommand::SectionHeader("Other".into()),
+            command: PaletteCommand::SectionHeader("其他".into()),
         },
         PaletteEntry {
-            label: "Switch Theme".into(),
+            label: "切换主题".into(),
             shortcut: "/theme".into(),
             command: PaletteCommand::SlashCommand("/theme ".into()),
         },
         PaletteEntry {
-            label: "Settings".into(),
+            label: "设置".into(),
             shortcut: "F2".into(),
             command: PaletteCommand::OpenSettings,
         },
         PaletteEntry {
-            label: "Keyboard Shortcuts".into(),
+            label: "键盘快捷键".into(),
             shortcut: if crate::actions::ctrl_dot_unreliable() {
                 "Ctrl+X".into()
             } else {
@@ -557,7 +557,7 @@ pub(crate) fn default_palette_entries(
             command: PaletteCommand::KeyboardShortcuts,
         },
         PaletteEntry {
-            label: "How-to Guides".into(),
+            label: "使用指南".into(),
             shortcut: "/docs".into(),
             command: PaletteCommand::HowTo,
         },
@@ -567,7 +567,7 @@ pub(crate) fn default_palette_entries(
             command: PaletteCommand::SlashCommand("/tutorial".into()),
         },
         PaletteEntry {
-            label: "Quit".into(),
+            label: "退出".into(),
             shortcut: "Ctrl+Q".into(),
             command: PaletteCommand::Quit,
         },
@@ -664,32 +664,32 @@ impl ActiveModal {
         match self {
             ActiveModal::EditConfirm { .. } => {
                 if drain_blocked {
-                    "Save and send?"
+                    "保存并发送？"
                 } else {
-                    "Save changes?"
+                    "保存更改？"
                 }
             }
-            ActiveModal::CommandPalette { .. } => "Commands",
-            ActiveModal::SessionPicker { .. } => "Resume session",
+            ActiveModal::CommandPalette { .. } => "命令",
+            ActiveModal::SessionPicker { .. } => "恢复会话",
             ActiveModal::ArgPicker {
                 command,
                 args_query,
                 ..
             } => match command.as_str() {
-                "model" | "m" if !args_query.is_empty() => "Pick reasoning effort",
-                "model" | "m" => "Pick model",
-                "theme" | "t" => "Pick theme",
-                _ => "Pick option",
+                "model" | "m" if !args_query.is_empty() => "选择推理强度",
+                "model" | "m" => "选择模型",
+                "theme" | "t" => "选择主题",
+                _ => "选择选项",
             },
-            ActiveModal::DocPicker { .. } => "How-to Guides",
+            ActiveModal::DocPicker { .. } => "使用指南",
             ActiveModal::DocViewer { title, .. } => title.as_str(),
-            ActiveModal::ShortcutsHelp { .. } => "Keyboard Shortcuts",
-            ActiveModal::MemoryBrowser { .. } => "Memory",
+            ActiveModal::ShortcutsHelp { .. } => "键盘快捷键",
+            ActiveModal::MemoryBrowser { .. } => "记忆",
             ActiveModal::Settings { .. } => crate::views::settings_modal::MODAL_TITLE,
-            ActiveModal::ResetSettingsConfirm { .. } => "Reset setting?",
-            ActiveModal::RememberNoteReview { .. } => "Memory Note",
-            ActiveModal::ProviderModal { .. } => "Provider",
-            ActiveModal::ClientModal { .. } => "Client",
+            ActiveModal::ResetSettingsConfirm { .. } => "重置设置？",
+            ActiveModal::RememberNoteReview { .. } => "记忆笔记",
+            ActiveModal::ProviderModal { .. } => "渠道管理",
+            ActiveModal::ClientModal { .. } => "客户端选择",
         }
     }
 }
@@ -1346,10 +1346,10 @@ mod palette_sharing_tests {
             has_dashboard,
             "/dashboard entry must be present in the palette so users can switch between agents"
         );
-        let labelled = entries.iter().any(|e| e.label == "Agent Dashboard");
+        let labelled = entries.iter().any(|e| e.label == "Agent 仪表盘");
         assert!(
             labelled,
-            "palette entry must use the 'Agent Dashboard' label"
+            "palette entry must use the 'Agent 仪表盘' label"
         );
     }
     fn slash_rows(mode: crate::app::ScreenMode) -> Vec<String> {
@@ -1445,11 +1445,11 @@ mod palette_sharing_tests {
         use crate::views::extensions_modal::ExtensionsTab;
         let entries = default_palette_entries(true, &slash(crate::app::ScreenMode::Fullscreen));
         for (label, expected) in [
-            ("Hooks", ExtensionsTab::Hooks),
-            ("Plugins", ExtensionsTab::Plugins),
-            ("Marketplace", ExtensionsTab::Marketplace),
-            ("Skills", ExtensionsTab::Skills),
-            ("MCP Servers", ExtensionsTab::McpServers),
+            ("钩子", ExtensionsTab::Hooks),
+            ("插件", ExtensionsTab::Plugins),
+            ("市场", ExtensionsTab::Marketplace),
+            ("技能", ExtensionsTab::Skills),
+            ("MCP 服务器", ExtensionsTab::McpServers),
         ] {
             let entry = entries
                 .iter()

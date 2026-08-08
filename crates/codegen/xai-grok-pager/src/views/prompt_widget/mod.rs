@@ -175,7 +175,7 @@ pub struct PromptStyle {
     /// Used for bash mode (`"! "` in yellow).
     pub prefix_override: Option<(&'static str, ratatui::style::Color)>,
     /// Override the placeholder text shown when the textarea is empty (e.g. remember mode).
-    /// When `Some(text)`, uses this instead of the default `"Build anything"`.
+    /// When `Some(text)`, uses this instead of the default `"开始构建"`.
     pub placeholder_override: Option<&'static str>,
     /// The main composer hides the empty-textarea placeholder on focus; the feedback box keeps it visible.
     pub placeholder_when_focused: bool,
@@ -3208,7 +3208,7 @@ impl PromptWidget {
             && (!style.focused || style.placeholder_when_focused)
             && !voice_interim_shown
         {
-            let placeholder = style.placeholder_override.unwrap_or("Build anything");
+            let placeholder = style.placeholder_override.unwrap_or("开始构建");
             // `set_string` clips at the buffer edge, not at the textarea, so a placeholder longer than the box would paint over its border.
             let truncated =
                 crate::render::line_utils::truncate_str(placeholder, ta_area.width as usize);

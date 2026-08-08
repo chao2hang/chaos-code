@@ -135,23 +135,23 @@ pub(super) fn open_doctor_fix_question(
     };
     if agent.question_view.is_some() {
         agent.scrollback.push_block(RenderBlock::system(
-            "Close the current question before applying this fix.",
+            "请先关闭当前问题，再应用此修复。",
         ));
         return;
     }
     let preview = crate::diagnostics::format_fix_preview(&plan);
     let question = Question {
-        question: "Apply this fix?".to_owned(),
+        question: "应用此修复？".to_owned(),
         options: vec![
             QuestionOption {
-                label: "Apply".to_owned(),
-                description: "Make the changes shown above.".to_owned(),
+                label: "应用".to_owned(),
+                description: "按上方所示进行更改。".to_owned(),
                 preview: Some(preview),
                 id: None,
             },
             QuestionOption {
-                label: "Cancel".to_owned(),
-                description: "Do not change the configuration.".to_owned(),
+                label: "取消".to_owned(),
+                description: "不修改配置。".to_owned(),
                 preview: None,
                 id: None,
             },
@@ -413,6 +413,17 @@ fn maybe_show_send_now_tip(app: &mut AppView) {
 ///
 /// `literal = true` (follow-up chip click) submits `text` straight to the
 /// model: the slash-command and exit-alias branches are skipped so server/model-controlled chip text can never execute a command.
+/// Whether a prompt text could trigger the first-prompt project picker.
+/// Slash commands, bang commands, exit/quit aliases, and empty input never
+/// send a prompt to the agent, so they must pass through untouched.
+pub(super) fn input_can_trigger_project_picker(text: &str) -> bool {
+    let t = text.trim();
+    !t.is_empty()
+        && !t.starts_with('/')
+        && !t.starts_with('!')
+        && !matches!(t, "exit" | "quit" | ":q" | ":q!" | ":wq" | ":wq!")
+}
+
 pub(super) fn dispatch_send_prompt_inner(
     app: &mut AppView,
     text: String,
@@ -440,6 +451,14 @@ pub(super) fn dispatch_send_prompt_inner(
     if app.reconnect_pending {
         app.show_toast("Reconnecting, please wait...");
         return vec![];
+    }
+
+    // The picker intercepts only real, user-authored prompts; slash commands,
+    // exit aliases, empty input, and literal chip submissions pass through so
+    // they never spawn it (a chip is a model suggestion for an already-running
+    // session, not the first-prompt project choice).
+    if !literal && input_can_trigger_project_picker(&text) && app.needs_project_picker() {
+        return crate::app::dispatch::session::fork::open_project_question(app, text);
     }
 
     let ActiveView::Agent(id) = app.active_view else {

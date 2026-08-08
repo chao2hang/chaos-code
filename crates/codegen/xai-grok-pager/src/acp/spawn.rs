@@ -36,7 +36,7 @@ const JOIN_NOTICE_AFTER: Duration = Duration::from_millis(1500);
 /// Stderr notice after a slow join. Covers the whole SessionEnd pipeline
 /// (hooks, telemetry sync, upload drain, memory, optional dream) — not
 /// hooks alone, so the copy is intentionally not "session hooks".
-const JOIN_NOTICE: &str = "Finishing session…";
+const JOIN_NOTICE: &str = "正在完成会话收尾...";
 
 /// Result of spawning a child agent.
 pub struct SpawnedAgent {

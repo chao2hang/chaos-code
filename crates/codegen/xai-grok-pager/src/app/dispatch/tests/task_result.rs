@@ -119,7 +119,7 @@ fn doctor_planning_opens_refuses_remote_and_rejects_stale_identity() {
         question.options[0]
             .preview
             .as_deref()
-            .is_some_and(|preview| preview.contains("Doctor Fix")),
+            .is_some_and(|preview| preview.contains("Doctor 修复")),
         "the modal must retain the exact fix preview"
     );
     app.agents.get_mut(&id).unwrap().question_view = None;
@@ -128,14 +128,14 @@ fn doctor_planning_opens_refuses_remote_and_rejects_stale_identity() {
         TaskResult::DoctorFixPlanned {
             target: target.clone(),
             result: Ok(crate::app::actions::DoctorPlanningOutcome::RunLocally(
-                "grok doctor fix ssh-wrap".to_owned(),
+                "chaos doctor fix ssh-wrap".to_owned(),
             )),
         },
         &mut app,
     );
     assert!(
         last_system_text(&app, id)
-            .contains("On your local computer, run: grok doctor fix ssh-wrap")
+            .contains("请在本地电脑运行：chaos doctor fix ssh-wrap")
     );
 
     app.agents
@@ -172,7 +172,7 @@ fn doctor_apply_completion_prefers_initiator_then_active_and_welcome_fallback() 
     );
     assert_eq!(
         last_system_text(&app, initiator),
-        "Could not apply the fix: stale plan"
+        "无法应用修复：stale plan"
     );
 
     app.agents.shift_remove(&initiator);
@@ -185,7 +185,7 @@ fn doctor_apply_completion_prefers_initiator_then_active_and_welcome_fallback() 
     );
     assert_eq!(
         last_system_text(&app, active),
-        "Could not apply the fix: apply failed"
+        "无法应用修复：apply failed"
     );
 
     app.agents.clear();
@@ -199,7 +199,7 @@ fn doctor_apply_completion_prefers_initiator_then_active_and_welcome_fallback() 
     );
     assert_eq!(
         app.startup_warnings.last().unwrap().message,
-        "Could not apply the fix: validator failed"
+        "无法应用修复：validator failed"
     );
 }
 
@@ -2573,7 +2573,7 @@ fn rollback_to_always_approve_blocked_by_policy_pin() {
 /// A degraded conversations lane surfaces an actionable notice instead of
 /// the misleading "No sessions found" toast.
 #[test]
-fn session_list_partial_no_oauth_surfaces_login_hint() {
+fn session_list_partial_no_oauth_surfaces_deployment_hint() {
     let mut app = test_app_with_agent();
     open_session_picker_with(&mut app, vec![]);
     let _ = dispatch(
@@ -2587,8 +2587,8 @@ fn session_list_partial_no_oauth_surfaces_login_hint() {
         &mut app,
     );
     assert!(
-        read_toast(&app).contains("/login"),
-        "no_oauth must point at /login"
+        read_toast(&app).contains("deployment key"),
+        "no_oauth must point at deployment-key configuration"
     );
 }
 
