@@ -216,7 +216,7 @@ impl HeadlessEmitter {
         Some(
             self.structured_output
                 .clone()
-                .unwrap_or_else(|| Err("model did not produce structured output".to_string())),
+                .unwrap_or_else(|| Err("模型未生成结构化输出".to_string())),
         )
     }
 
@@ -276,7 +276,7 @@ impl HeadlessEmitter {
         let result = self
             .structured_output
             .clone()
-            .unwrap_or_else(|| Err("model did not produce structured output".to_string()));
+            .unwrap_or_else(|| Err("模型未生成结构化输出".to_string()));
         crate::headless::reducer::attach_structured_output(target, Some(result));
     }
 
@@ -342,7 +342,7 @@ impl HeadlessEmitter {
     /// Emit the max turns marker for the active format.
     fn on_max_turns(&mut self) {
         match self.format {
-            OutputFormat::Plain => eprintln!("Max turns reached"),
+            OutputFormat::Plain => eprintln!("已达到最大轮次"),
             // Conveyed by `stopReason` in the terminal JSON and result.
             OutputFormat::Json => {}
             OutputFormat::StreamingJson | OutputFormat::StreamingMessagesJson => {

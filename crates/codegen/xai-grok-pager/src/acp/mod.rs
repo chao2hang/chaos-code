@@ -12,6 +12,23 @@ mod version_mismatch;
 
 pub(crate) use version_mismatch::{is_version_mismatch_banner, version_mismatch_banner};
 
+/// ADHD skill rules injected into the system prompt when `/adhd` is enabled.
+///
+/// Source: https://github.com/uditakhourii/adhd
+/// These rules help users with ADHD stay focused and productive by encouraging
+/// task decomposition, visible progress tracking, and reduced cognitive load.
+const ADHD_SKILL_RULES: &str = "\
+## ADHD 辅助规则
+
+- 将大任务拆解为小的、可操作的步骤，每步不超过 5 分钟。
+- 使用待办清单跟踪进度，完成一项立即标记。
+- 一次只专注一个任务，避免多任务并行。
+- 用简洁、直接的语言沟通，避免冗长解释。
+- 频繁提供具体反馈，而非笼统评价。
+- 设置时间盒（time-box），每 25 分钟休息 5 分钟。
+- 庆祝小胜利，保持正反馈循环。
+- 遇到困难时主动提出简化方案或替代路径。";
+
 use xai_grok_telemetry::startup;
 pub use xai_grok_telemetry::startup::{
     AgentKind, Owner, StartupOutcome, StartupPhase, StartupTimer,
@@ -157,7 +174,7 @@ pub struct ConnectFlags {
 }
 
 /// Connect to an agent: spawn, initialize, authenticate.
-pub async fn connect(cancel: &CancellationToken, flags: ConnectFlags) -> Result<AcpConnection> {
+pub async fn connect(cancel: &CancellationToken, mut flags: ConnectFlags) -> Result<AcpConnection> {
     startup::enter(StartupPhase::LoadConfig);
     let raw_config = xai_grok_shell::config::load_effective_config()
         .map_err(|e| anyhow::anyhow!("Failed to load config: {}", e))?;
@@ -191,6 +208,17 @@ pub async fn connect(cancel: &CancellationToken, flags: ConnectFlags) -> Result<
 
     if !flags.permission_rules.is_empty() {
         agent_config.cli_agent_overrides.permission_rules = flags.permission_rules.clone();
+    }
+
+    // ADHD skill integration: when enabled in config, inject ADHD-friendly
+    // rules into the system prompt via the `rules` metadata field.
+    if agent_config.adhd.enabled {
+        let adhd_rules = ADHD_SKILL_RULES;
+        flags.rules = match flags.rules.take() {
+            Some(existing) => Some(format!("{existing}\n\n{adhd_rules}")),
+            None => Some(adhd_rules.to_string()),
+        };
+        tracing::info!("ADHD skill integration enabled; rules injected");
     }
 
     apply_config_writes(&flags);
