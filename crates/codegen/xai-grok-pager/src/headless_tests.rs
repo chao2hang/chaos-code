@@ -388,7 +388,7 @@ fn structured_output_without_meta_errors_never_parses_text() {
     assert!(result["structuredOutput"].is_null());
     assert_eq!(
         result["structuredOutputError"],
-        "model did not produce structured output"
+        "模型未生成结构化输出"
     );
 }
 

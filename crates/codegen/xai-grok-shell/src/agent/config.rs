@@ -6393,6 +6393,7 @@ reasoning_effort = "low"
                 args: None,
                 token_ttl_secs: Some(3600),
                 timeout_secs: None,
+                cwd: None,
             },
         );
         let mut entry = test_model_entry("m", "https://litellm.example/v1", None, None, None);
@@ -6474,6 +6475,7 @@ reasoning_effort = "low"
                 args: None,
                 token_ttl_secs: Some(3600),
                 timeout_secs: None,
+                cwd: None,
             },
         );
         let mut entry = test_model_entry("m", "https://litellm.example/v1", None, None, None);
@@ -6774,6 +6776,7 @@ reasoning_effort = "low"
                 args: Some(vec!["--scope".into(), "corp".into()]),
                 token_ttl_secs: Some(3600),
                 timeout_secs: Some(10),
+                cwd: None,
             })
         );
         let resolved = resolve_model_list(&cfg, None);
@@ -6865,6 +6868,7 @@ reasoning_effort = "low"
                 args: None,
                 token_ttl_secs: Some(3600),
                 timeout_secs: None,
+                cwd: None,
             },
         );
         model.auth_provider = Some(provider.clone());
@@ -6891,6 +6895,7 @@ reasoning_effort = "low"
                 args: None,
                 token_ttl_secs: Some(3600),
                 timeout_secs: None,
+                cwd: None,
             },
         );
         model.auth_provider = Some(provider.clone());
@@ -6935,6 +6940,7 @@ reasoning_effort = "low"
                 args: None,
                 token_ttl_secs: None,
                 timeout_secs: None,
+                cwd: None,
             },
         );
         let resolved = resolve_model_list(&cfg, Some(prefetched));
