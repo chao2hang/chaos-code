@@ -134,7 +134,7 @@ async fn test_fetch_settings_blocking_round_trip() {
         .await
         .unwrap();
         assert!(
-            result.into_option().is_none(),
+            result.is_none(),
             "Expected None when settings not configured"
         );
 
@@ -151,7 +151,6 @@ async fn test_fetch_settings_blocking_round_trip() {
         .await
         .unwrap();
         let settings = result
-            .into_option()
             .expect("Expected Some when settings are configured");
         assert_eq!(settings.tips, Some(vec!["fetched_tip".into()]));
     })

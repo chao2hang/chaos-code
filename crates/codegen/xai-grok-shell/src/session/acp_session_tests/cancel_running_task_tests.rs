@@ -68,6 +68,9 @@ async fn persist_ack_waits_for_disk_flush_before_success() {
                 compaction_at_tokens: None,
                 doom_loop_recovery: None,
                 header_injector: None,
+                is_workbuddy: false,
+                extract_inline_thinking: false,
+                user_agent: None,
             })
             .expect("sampling client should build for persistence actor");
             let persistence = crate::session::persistence::new_with_explicit_dir(
@@ -101,6 +104,8 @@ async fn persist_ack_waits_for_disk_flush_before_success() {
                     context_window: std::num::NonZeroU64::new(100_000).unwrap(),
                     reasoning_effort: None,
                     stream_tool_calls: None,
+                    extract_inline_thinking: None,
+                    is_workbuddy: false,
                 },
                 Box::new(
                     crate::session::chat_persistence::ChannelChatPersistence::new(
@@ -137,7 +142,9 @@ async fn persist_ack_waits_for_disk_flush_before_success() {
                 tool_context,
                 deny_read_globs: Vec::new(),
                 mcp_state: Arc::new(TokioMutex::new(McpState::new(vec![]))),
-                mcp_strategy: McpInitStrategy::Blocking,
+                mcp_strategy: std::cell::Cell::new(McpInitStrategy::Blocking),
+                delivery_tools: std::cell::RefCell::new(Vec::new()),
+                attach_non_interactive: std::cell::Cell::new(false),
                 chat_state_handle,
                 unattributed_background_usage: std::sync::atomic::AtomicBool::new(false),
                 current_prompt_id: std::sync::Arc::new(std::sync::Mutex::new(None)),
@@ -206,8 +213,11 @@ async fn persist_ack_waits_for_disk_flush_before_success() {
                 last_idle_flush_conversation_len: std::sync::atomic::AtomicUsize::new(0),
                 event_tx,
                 buffering_settings: None,
-                client_identifier: None,
-                origin_client: None,
+                client_identifier: std::cell::RefCell::new(None),
+                origin_client: std::cell::RefCell::new(None),
+                user_agent: std::cell::RefCell::new(None),
+                client_extra_headers: std::cell::RefCell::new(indexmap::IndexMap::new()),
+                client_env_http_headers: std::cell::RefCell::new(indexmap::IndexMap::new()),
                 feedback_manager: Arc::new(FeedbackManager::local_only("test-session")),
                 upload_queue: Arc::new(OnceLock::new()),
                 sync_loop_cancel: None,
@@ -385,6 +395,9 @@ async fn first_turn_memory_injection_persists_to_chat_history() {
                     compaction_at_tokens: None,
                     doom_loop_recovery: None,
                     header_injector: None,
+                is_workbuddy: false,
+                extract_inline_thinking: false,
+                user_agent: None,
                 })
                 .expect("sampling client should build for persistence actor");
             let persistence = crate::session::persistence::new_with_explicit_dir(
@@ -421,6 +434,8 @@ async fn first_turn_memory_injection_persists_to_chat_history() {
                     context_window: std::num::NonZeroU64::new(100_000).unwrap(),
                     reasoning_effort: None,
                     stream_tool_calls: None,
+                    extract_inline_thinking: None,
+                    is_workbuddy: false,
                 },
                 Box::new(
                     crate::session::chat_persistence::ChannelChatPersistence::new(
@@ -519,6 +534,9 @@ async fn first_turn_memory_injection_disabled_does_not_persist_to_chat_history()
                 compaction_at_tokens: None,
                 doom_loop_recovery: None,
                 header_injector: None,
+                is_workbuddy: false,
+                extract_inline_thinking: false,
+                user_agent: None,
             })
             .expect("sampling client should build for persistence actor");
             let persistence = crate::session::persistence::new_with_explicit_dir(
@@ -557,6 +575,8 @@ async fn first_turn_memory_injection_disabled_does_not_persist_to_chat_history()
                     context_window: std::num::NonZeroU64::new(100_000).unwrap(),
                     reasoning_effort: None,
                     stream_tool_calls: None,
+                    extract_inline_thinking: None,
+                    is_workbuddy: false,
                 },
                 Box::new(
                     crate::session::chat_persistence::ChannelChatPersistence::new(
@@ -609,7 +629,9 @@ async fn first_turn_memory_injection_disabled_does_not_persist_to_chat_history()
                 tool_context,
                 deny_read_globs: Vec::new(),
                 mcp_state: Arc::new(TokioMutex::new(McpState::new(vec![]))),
-                mcp_strategy: McpInitStrategy::Blocking,
+                mcp_strategy: std::cell::Cell::new(McpInitStrategy::Blocking),
+                delivery_tools: std::cell::RefCell::new(Vec::new()),
+                attach_non_interactive: std::cell::Cell::new(false),
                 chat_state_handle,
                 unattributed_background_usage: std::sync::atomic::AtomicBool::new(false),
                 current_prompt_id: std::sync::Arc::new(std::sync::Mutex::new(None)),
@@ -681,8 +703,11 @@ async fn first_turn_memory_injection_disabled_does_not_persist_to_chat_history()
                 last_idle_flush_conversation_len: std::sync::atomic::AtomicUsize::new(0),
                 event_tx,
                 buffering_settings: None,
-                client_identifier: None,
-                origin_client: None,
+                client_identifier: std::cell::RefCell::new(None),
+                origin_client: std::cell::RefCell::new(None),
+                user_agent: std::cell::RefCell::new(None),
+                client_extra_headers: std::cell::RefCell::new(indexmap::IndexMap::new()),
+                client_env_http_headers: std::cell::RefCell::new(indexmap::IndexMap::new()),
                 feedback_manager: Arc::new(FeedbackManager::local_only("test-session")),
                 upload_queue: Arc::new(OnceLock::new()),
                 sync_loop_cancel: None,
@@ -892,7 +917,9 @@ async fn cancel_running_task_teardown_clears_running_and_pending_work() {
                 tool_context,
                 deny_read_globs: Vec::new(),
                 mcp_state: Arc::new(TokioMutex::new(McpState::new(vec![]))),
-                mcp_strategy: McpInitStrategy::Blocking,
+                mcp_strategy: std::cell::Cell::new(McpInitStrategy::Blocking),
+                delivery_tools: std::cell::RefCell::new(Vec::new()),
+                attach_non_interactive: std::cell::Cell::new(false),
                 chat_state_handle: xai_chat_state::ChatStateHandle::noop(),
                 unattributed_background_usage: std::sync::atomic::AtomicBool::new(false),
                 current_prompt_id: std::sync::Arc::new(
@@ -971,8 +998,11 @@ async fn cancel_running_task_teardown_clears_running_and_pending_work() {
                 last_idle_flush_conversation_len: std::sync::atomic::AtomicUsize::new(0),
                 event_tx,
                 buffering_settings: None,
-                client_identifier: None,
-                origin_client: None,
+                client_identifier: std::cell::RefCell::new(None),
+                origin_client: std::cell::RefCell::new(None),
+                user_agent: std::cell::RefCell::new(None),
+                client_extra_headers: std::cell::RefCell::new(indexmap::IndexMap::new()),
+                client_env_http_headers: std::cell::RefCell::new(indexmap::IndexMap::new()),
                 feedback_manager: Arc::new(FeedbackManager::local_only("test-session")),
                 upload_queue: Arc::new(OnceLock::new()),
                 sync_loop_cancel: None,
@@ -2244,6 +2274,9 @@ async fn cancel_propagates_to_sampler_handle_so_no_further_emission() {
                 compaction_at_tokens: None,
                 doom_loop_recovery: None,
                 header_injector: None,
+                is_workbuddy: false,
+                extract_inline_thinking: false,
+                user_agent: None,
             };
             let (sampler_event_tx, _sampler_event_rx) = tokio::sync::mpsc::unbounded_channel::<
                 xai_grok_sampler::SamplingEvent,
@@ -2325,7 +2358,9 @@ async fn cancel_propagates_to_sampler_handle_so_no_further_emission() {
                 tool_context,
                 deny_read_globs: Vec::new(),
                 mcp_state: Arc::new(TokioMutex::new(McpState::new(vec![]))),
-                mcp_strategy: McpInitStrategy::Blocking,
+                mcp_strategy: std::cell::Cell::new(McpInitStrategy::Blocking),
+                delivery_tools: std::cell::RefCell::new(Vec::new()),
+                attach_non_interactive: std::cell::Cell::new(false),
                 chat_state_handle: xai_chat_state::ChatStateHandle::noop(),
                 unattributed_background_usage: std::sync::atomic::AtomicBool::new(false),
                 current_prompt_id: std::sync::Arc::new(
@@ -2404,8 +2439,11 @@ async fn cancel_propagates_to_sampler_handle_so_no_further_emission() {
                 last_idle_flush_conversation_len: std::sync::atomic::AtomicUsize::new(0),
                 event_tx,
                 buffering_settings: None,
-                client_identifier: None,
-                origin_client: None,
+                client_identifier: std::cell::RefCell::new(None),
+                origin_client: std::cell::RefCell::new(None),
+                user_agent: std::cell::RefCell::new(None),
+                client_extra_headers: std::cell::RefCell::new(indexmap::IndexMap::new()),
+                client_env_http_headers: std::cell::RefCell::new(indexmap::IndexMap::new()),
                 feedback_manager: Arc::new(FeedbackManager::local_only("test-session")),
                 upload_queue: Arc::new(OnceLock::new()),
                 sync_loop_cancel: None,
