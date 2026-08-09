@@ -157,6 +157,7 @@ pub(crate) fn test_plugin_info(
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PluginGroup {
     /// Ordering bucket (lower renders first; groups with the same rank sort by label).
+    #[allow(dead_code)]
     pub rank: u8,
     /// Stable collapse key (stored in `entry_group_keys` and `plugins_collapsed_groups`).
     pub key: String,
@@ -186,6 +187,9 @@ const SKILLS_WORKFLOWS_GROUP_KEY: &str = "Workflows";
 /// Group header for a skill scope/source.
 #[derive(Debug, Clone)]
 struct SkillGroup {
+    /// Ordering bucket kept for future sorting; groups currently render in
+    /// discovery order.
+    #[allow(dead_code)]
     rank: u8,
     label: String,
 }

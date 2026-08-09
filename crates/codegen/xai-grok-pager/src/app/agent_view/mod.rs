@@ -303,8 +303,10 @@ pub struct BannerSlotParams<'a> {
     pub(crate) hidden_ids: &'a std::collections::BTreeSet<String>,
     /// Privacy upsell banner owns the slot (highest banner precedence
     /// below critical announcements; gated by the caller).
+    #[allow(dead_code)]
     pub(crate) privacy_banner: bool,
     /// Last mouse position, for mouse-pos-driven hover styling.
+    #[allow(dead_code)]
     pub(crate) mouse_pos: Option<(u16, u16)>,
     /// Session tip, only when it owns the slot.
     pub(crate) tip: Option<&'a str>,
@@ -718,6 +720,10 @@ pub(crate) enum AgentDeferredSend {
 /// interjection continued the parked turn) is final — a later "耗时"
 /// line would land below the interjected message, flipping the transcript.
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// Slot is written by the fork's parked-marker flow; variants are matched in
+/// tests. Kept for the marker UI even though the write path is currently
+/// dormant.
+#[allow(dead_code)]
 pub(crate) enum ParkedMarkerSlot {
     /// A "Worked for X" marker block was pushed.
     Rendered {
@@ -732,6 +738,7 @@ pub(crate) enum ParkedMarkerSlot {
 }
 impl ParkedMarkerSlot {
     /// The prompt id the slot was consumed for, regardless of variant.
+    #[allow(dead_code)]
     pub(crate) fn prompt_id(&self) -> &str {
         match self {
             ParkedMarkerSlot::Rendered { prompt_id, .. } | ParkedMarkerSlot::Forgone(prompt_id) => {
@@ -944,6 +951,7 @@ pub struct AgentView {
     /// The consumed parked-wait marker slot for the current turn, if any.
     /// Keyed by prompt id: a new turn naturally invalidates the slot with no
     /// explicit clear site. See [`ParkedMarkerSlot`].
+    #[allow(dead_code)]
     pub(crate) parked_wait_marker_for: Option<ParkedMarkerSlot>,
     /// Live `stop`/`stop_failure` hook runs held for the turn's terminal
     /// marker (driver order: the hooks arrive before the `PromptResponse`
@@ -1607,6 +1615,7 @@ pub struct AgentView {
     /// Monotonic request generation for the usage overlay. Incremented on
     /// every open so a late result from a previously closed overlay cannot
     /// populate a newly opened one.
+    #[allow(dead_code)]
     pub(crate) usage_detail_generation: u64,
     /// Largest total-token count seen across turns (drives the status chip).
     pub max_total_tokens_seen: u64,
@@ -3057,6 +3066,7 @@ pub(crate) mod test_fixtures {
     }
     /// Count of parked ("Worked for X") marker blocks in the agent's
     /// scrollback.
+    #[allow(dead_code)]
     pub fn count_parked(agent: &AgentView) -> usize {
         use crate::scrollback::block::RenderBlock;
         (0..agent.scrollback.len())

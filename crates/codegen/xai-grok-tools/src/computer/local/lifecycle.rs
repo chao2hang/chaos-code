@@ -178,6 +178,9 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn a_collection_claim_requires_the_child_to_have_been_waited_on() {
+        // The child is waited on below (line: `child.wait()`), which the
+        // disallowed-methods rule permits with an explicit reason.
+        #[allow(clippy::disallowed_methods)]
         let mut child = tokio::process::Command::new("true")
             .spawn()
             .expect("spawn `true`");

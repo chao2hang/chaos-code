@@ -188,6 +188,9 @@ pub fn set_voice_mode_enabled_for_test(on: bool) {
 /// updated live by the settings setter; unlike [`VOICE_MODE_ENABLED`] it only
 /// silences the keybinding — `/voice` and the other voice surfaces stay up.
 pub(crate) static VOICE_KEYBIND_ENABLED: AtomicBool = AtomicBool::new(true);
+/// Accessor kept for call sites that gate on the process-global flag;
+/// currently read via [`VOICE_KEYBIND_ENABLED`] directly.
+#[allow(dead_code)]
 pub(crate) fn voice_keybind_enabled() -> bool {
     VOICE_KEYBIND_ENABLED.load(Ordering::Acquire)
 }

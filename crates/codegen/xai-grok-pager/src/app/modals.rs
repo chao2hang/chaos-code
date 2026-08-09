@@ -12,7 +12,10 @@ use ratatui::text::Line;
 use ratatui::widgets::Widget;
 
 use super::actions::Action;
-use super::agent_view::{AgentView, active_contexts_for_pane, apply_settings_outcome};
+use super::agent_view::{
+    AgentView, active_contexts_for_pane, apply_client_outcome, apply_provider_outcome,
+    apply_settings_outcome,
+};
 use super::app_view::InputOutcome;
 
 use crate::theme::Theme;
@@ -112,6 +115,30 @@ impl AgentView {
     ) -> InputOutcome {
         use crate::views::modal::ActiveModal;
         use crate::views::modal_window::{self as mw, ModalWindowOutcome};
+
+        // Provider / client configuration modals: delegate keys to the modal's
+        // own input handler, then apply the resulting outcome to agent state.
+        // These branches were orphaned (falling through to `unreachable!()`
+        // below); restored so the `/provider` and `/client` flows can navigate
+        // and commit changes again.
+        let provider_outcome = match self.active_modal.as_mut() {
+            Some(ActiveModal::ProviderModal { state }) => Some(
+                crate::views::provider_modal::input::handle_provider_key(state, key),
+            ),
+            _ => None,
+        };
+        if let Some(outcome) = provider_outcome {
+            return apply_provider_outcome(self, outcome);
+        }
+        let client_outcome = match self.active_modal.as_mut() {
+            Some(ActiveModal::ClientModal { state }) => Some(
+                crate::views::client_modal::input::handle_client_key(state, key),
+            ),
+            _ => None,
+        };
+        if let Some(outcome) = client_outcome {
+            return apply_client_outcome(self, outcome);
+        }
 
         // Peek at the modal type to decide dispatch strategy.
         let Some(ref mut modal) = self.active_modal else {
@@ -562,6 +589,24 @@ impl AgentView {
         };
         if let Some(outcome) = settings_outcome {
             return apply_settings_outcome(self, outcome);
+        }
+        let provider_paste = match self.active_modal.as_mut() {
+            Some(ActiveModal::ProviderModal { state }) => Some(
+                crate::views::provider_modal::input::handle_provider_paste(state, text),
+            ),
+            _ => None,
+        };
+        if let Some(outcome) = provider_paste {
+            return apply_provider_outcome(self, outcome);
+        }
+        let client_paste = match self.active_modal.as_mut() {
+            Some(ActiveModal::ClientModal { state }) => Some(
+                crate::views::client_modal::input::handle_client_paste(state, text),
+            ),
+            _ => None,
+        };
+        if let Some(outcome) = client_paste {
+            return apply_client_outcome(self, outcome);
         }
         if self.active_modal.is_some() {
             InputOutcome::Changed

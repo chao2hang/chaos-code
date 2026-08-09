@@ -1065,20 +1065,7 @@ impl AcpUpdateTracker {
         }
         let sample_rate = output_tokens_per_sec.filter(|rate| rate.is_finite() && *rate > 0.0);
         let now = Instant::now();
-        if self.streaming_rate.is_none() {
-            self.streaming_rate = Some(LiveStreamingRate {
-                started_at: now,
-                total_tokens: tokens,
-                last_event_at: Some(now),
-                smoothed_rate: sample_rate.unwrap_or(0.0),
-                rate_window_started_at: now,
-                rate_window_tokens: 0,
-            });
-        } else {
-            let rate = self
-                .streaming_rate
-                .as_mut()
-                .expect("streaming rate seeded above");
+        if let Some(rate) = self.streaming_rate.as_mut() {
             // A completed child task already supplies a duration-based per-second
             // rate. Use it until this parent closes its next full accounting window.
             rate.total_tokens = rate.total_tokens.saturating_add(tokens);
@@ -1092,6 +1079,15 @@ impl AcpUpdateTracker {
                 rate.record_window_tokens(now, tokens);
             }
             rate.last_event_at = Some(now);
+        } else {
+            self.streaming_rate = Some(LiveStreamingRate {
+                started_at: now,
+                total_tokens: tokens,
+                last_event_at: Some(now),
+                smoothed_rate: sample_rate.unwrap_or(0.0),
+                rate_window_started_at: now,
+                rate_window_tokens: 0,
+            });
         }
         // Keep the session-lifetime accumulator in sync so subagent output
         // stays visible in the chip's mean fallback after the turn ends.
