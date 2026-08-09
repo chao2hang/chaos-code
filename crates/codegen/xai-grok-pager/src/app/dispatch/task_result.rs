@@ -43,9 +43,8 @@ use super::session::modal::remove_agent_and_cleanup;
 use super::settings::ui::apply_setting_rollback;
 use super::status::{
     commit_session_usage_block, handle_coding_data_sharing_failed,
-    handle_coding_data_sharing_updated, handle_context_info_complete,
-    handle_session_usage_result, handle_set_context_window_complete, scrub_error_for_toast,
-    usage_modal_state_mut,
+    handle_coding_data_sharing_updated, handle_context_info_complete, handle_session_usage_result,
+    handle_set_context_window_complete, scrub_error_for_toast, usage_modal_state_mut,
 };
 use super::transcript::{
     handle_hooks_list_loaded, handle_marketplace_list_loaded, handle_marketplace_updates_available,

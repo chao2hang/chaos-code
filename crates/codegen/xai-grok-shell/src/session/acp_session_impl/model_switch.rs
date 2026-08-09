@@ -197,7 +197,8 @@ impl SessionActor {
     pub(super) async fn handle_rebuild_agent_for_definition(
         &self,
         definition: xai_grok_agent::AgentDefinition,
-    ) -> Result<(), acp::Error> {        {
+    ) -> Result<(), acp::Error> {
+        {
             let state = self.state.lock().await;
             if state.running_task.is_some() {
                 tracing::warn!(

@@ -2497,8 +2497,7 @@ impl Config {
             sa.max_concurrent,
             remote_concurrent,
         );
-        let env_limit =
-            std::env::var(crate::config::SubagentsConfig::ENV_LIMIT_BEHAVIOR).ok();
+        let env_limit = std::env::var(crate::config::SubagentsConfig::ENV_LIMIT_BEHAVIOR).ok();
         let remote_limit = self
             .remote_settings
             .as_ref()
@@ -2508,7 +2507,8 @@ impl Config {
             sa.limit_behavior.as_deref(),
             remote_limit,
         );
-        let env_wf = std::env::var(crate::config::SubagentsConfig::ENV_WORKFLOW_MAX_CONCURRENT).ok();
+        let env_wf =
+            std::env::var(crate::config::SubagentsConfig::ENV_WORKFLOW_MAX_CONCURRENT).ok();
         let remote_wf = self
             .remote_settings
             .as_ref()
