@@ -772,11 +772,9 @@ pub fn effective_fork_new_cwd(process_cwd: &str, parent_cwd: Option<&Path>) -> S
 /// Resolve most-recent session id for cwd, or error.
 async fn most_recent_session_id(cwd: &str) -> anyhow::Result<(String, Option<String>)> {
     let summaries = xai_grok_shell::session::persistence::list_summaries(Some(cwd)).await?;
-    let first = summaries.first().ok_or_else(|| {
-        anyhow::anyhow!(
-            "当前目录没有可恢复的会话。请运行 `chaos` 启动新会话。"
-        )
-    })?;
+    let first = summaries
+        .first()
+        .ok_or_else(|| anyhow::anyhow!("当前目录没有可恢复的会话。请运行 `chaos` 启动新会话。"))?;
     Ok((first.info.id.to_string(), first.display_title_opt()))
 }
 /// `AuthManager` for direct grok.com calls made outside the agent (pre-ACP
@@ -1006,10 +1004,7 @@ async fn resolve_existing_session(
                 restore_code = ctx.restore_code,
                 "Session not found locally; deferring restore to worktree resume handler"
             );
-            eprintln!(
-                "本地未找到会话 {:?}；将在新 worktree 中恢复。",
-                session_id
-            );
+            eprintln!("本地未找到会话 {:?}；将在新 worktree 中恢复。", session_id);
             if !ctx.restore_code {
                 eprintln!("{WORKTREE_NO_RESTORE_CODE_NOTICE}");
             }
@@ -1122,17 +1117,11 @@ async fn restore_session_from_remote(
     if let Some((false, source)) =
         xai_grok_shell::util::config::session_registry_local_override_sourced(Some(&raw_config))
     {
-        anyhow::bail!(
-            "本地不存在该会话（会话注册表已被 {} 禁用）",
-            source.label()
-        );
+        anyhow::bail!("本地不存在该会话（会话注册表已被 {} 禁用）", source.label());
     }
     emit_pre_tui_restore_line(
         progress_on_stdout,
-        &format!(
-            "本地未找到会话 {:?}，正在从远端恢复...",
-            session_id
-        ),
+        &format!("本地未找到会话 {:?}，正在从远端恢复...", session_id),
     );
     let agent_config = xai_grok_shell::agent::config::Config::new_from_toml_cfg(&raw_config)
         .map_err(|e| anyhow::anyhow!("无法创建 Agent 配置：{}", e))?;
@@ -1566,10 +1555,7 @@ mod tests {
     fn ensure_rejects_non_uuid() {
         let err = ensure_session_id_available("my-run-1", "/tmp/does-not-matter").unwrap_err();
         let msg = err.to_string();
-        assert!(
-            msg.contains("必须是有效 UUID"),
-            "非预期错误：{msg}"
-        );
+        assert!(msg.contains("必须是有效 UUID"), "非预期错误：{msg}");
     }
     #[test]
     fn effective_fork_new_cwd_prefers_parent() {
@@ -1659,10 +1645,7 @@ mod tests {
     /// hardcoded `false` here once disabled it everywhere.
     #[test]
     fn remote_restore_follows_compiled_restore_stack() {
-        assert_eq!(
-            MaterializeCtx::from_pager_args(&parse(&["grok"])).allow_remote_restore,
-            false
-        );
+        assert!(!MaterializeCtx::from_pager_args(&parse(&["grok"])).allow_remote_restore);
     }
     #[test]
     fn from_pager_args_does_not_probe_tty_for_progress() {

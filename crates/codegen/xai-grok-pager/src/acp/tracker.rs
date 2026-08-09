@@ -1065,20 +1065,7 @@ impl AcpUpdateTracker {
         }
         let sample_rate = output_tokens_per_sec.filter(|rate| rate.is_finite() && *rate > 0.0);
         let now = Instant::now();
-        if self.streaming_rate.is_none() {
-            self.streaming_rate = Some(LiveStreamingRate {
-                started_at: now,
-                total_tokens: tokens,
-                last_event_at: Some(now),
-                smoothed_rate: sample_rate.unwrap_or(0.0),
-                rate_window_started_at: now,
-                rate_window_tokens: 0,
-            });
-        } else {
-            let rate = self
-                .streaming_rate
-                .as_mut()
-                .expect("streaming rate seeded above");
+        if let Some(rate) = self.streaming_rate.as_mut() {
             // A completed child task already supplies a duration-based per-second
             // rate. Use it until this parent closes its next full accounting window.
             rate.total_tokens = rate.total_tokens.saturating_add(tokens);
@@ -1092,6 +1079,15 @@ impl AcpUpdateTracker {
                 rate.record_window_tokens(now, tokens);
             }
             rate.last_event_at = Some(now);
+        } else {
+            self.streaming_rate = Some(LiveStreamingRate {
+                started_at: now,
+                total_tokens: tokens,
+                last_event_at: Some(now),
+                smoothed_rate: sample_rate.unwrap_or(0.0),
+                rate_window_started_at: now,
+                rate_window_tokens: 0,
+            });
         }
         // Keep the session-lifetime accumulator in sync so subagent output
         // stays visible in the chip's mean fallback after the turn ends.
@@ -7122,7 +7118,9 @@ mod tests {
         let first = tracker.session_streaming_rate().expect("session seeded");
         assert!(first.total_tokens > 0);
         tracker.finish_turn(&mut sb);
-        let after_turn = tracker.session_streaming_rate().expect("survives finish_turn");
+        let after_turn = tracker
+            .session_streaming_rate()
+            .expect("survives finish_turn");
         assert_eq!(after_turn.total_tokens, first.total_tokens);
         // 第二个 turn 继续累积。
         tracker.handle_update(agent_chunk("world"), &meta(), &mut sb);

@@ -157,7 +157,7 @@ impl PromptUsage {
             cost_usd_ticks: _,  // cost without usage cannot occur
             cost_is_partial: _,
             cost_missing_calls: _,
-            decode_duration_ms: _, // timing, not tokens
+            decode_duration_ms: _,    // timing, not tokens
             decode_tokens_per_sec: _, // derived rate, not tokens
         } = self.totals;
         model_calls == 0
@@ -326,7 +326,7 @@ pub(crate) fn project_result_usage(result: &mut serde_json::Value, usage: &Promp
         cost_usd_ticks,
         cost_is_partial,
         cost_missing_calls: _, // internal partiality count; the flag suffices
-        decode_duration_ms: _,   // timing; not part of the headless shape
+        decode_duration_ms: _, // timing; not part of the headless shape
         decode_tokens_per_sec: _, // derived rate; dropped
     } = usage.totals;
     result["usage"] = serde_json::json!({

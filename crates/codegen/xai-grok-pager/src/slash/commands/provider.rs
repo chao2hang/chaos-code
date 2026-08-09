@@ -117,6 +117,7 @@ pub(crate) fn configured_default_model(doc: &toml_edit::DocumentMut) -> Option<S
 ///
 /// Chaos 内置 catalog 为空：无 `[model_providers]` 或无 `[models].default`
 /// 时，发送真实 prompt 应引导用户打开渠道设置，而不是把请求打到占位模型。
+#[allow(dead_code)]
 pub(crate) fn needs_provider_setup() -> bool {
     match load_config() {
         Ok(doc) => {

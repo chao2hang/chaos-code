@@ -386,10 +386,7 @@ fn structured_output_without_meta_errors_never_parses_text() {
     emitter.set_structured_output_from_meta(serde_json::json!({}).as_object());
     let result = emitter.build_json_result("EndTurn", "sess-1", "req-1");
     assert!(result["structuredOutput"].is_null());
-    assert_eq!(
-        result["structuredOutputError"],
-        "模型未生成结构化输出"
-    );
+    assert_eq!(result["structuredOutputError"], "模型未生成结构化输出");
 }
 
 #[test]

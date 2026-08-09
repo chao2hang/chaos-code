@@ -160,6 +160,7 @@ pub(super) enum SettingsMode {
 }
 
 /// Is the open sub-pane a [`crate::settings::is_consent_chooser`] pane?
+#[allow(dead_code)]
 pub(super) fn mode_is_consent_chooser(mode: &SettingsMode) -> bool {
     matches!(
         mode,

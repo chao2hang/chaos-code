@@ -2314,6 +2314,9 @@ mod tests {
             compaction_at_tokens: None,
             doom_loop_recovery: None,
             header_injector: None,
+            extract_inline_thinking: false,
+            is_workbuddy: false,
+            user_agent: None,
         }
     }
 

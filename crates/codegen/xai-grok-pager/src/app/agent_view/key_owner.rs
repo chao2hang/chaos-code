@@ -97,6 +97,7 @@ pub(crate) enum EscStep {
 }
 
 impl EscStep {
+    #[allow(dead_code)]
     pub(crate) fn label(self) -> &'static str {
         match self {
             Self::DismissFileSearch => "dismiss",
@@ -178,12 +179,14 @@ impl AgentView {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn focused_permission(&self) -> Option<&PermissionViewState> {
         self.permission_queue
             .front()
             .filter(|_| self.focused_card() == Some(BlockingCard::Permission))
     }
 
+    #[allow(dead_code)]
     pub(crate) fn focused_question(&self) -> Option<&QuestionViewState> {
         self.question_view
             .as_ref()

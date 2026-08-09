@@ -224,11 +224,19 @@ pub unsafe fn install_namespace_lockdown_filter() -> std::io::Result<()> {
 }
 
 #[cfg(not(target_os = "linux"))]
+/// Non-Linux stub: network filtering is a no-op outside Linux.
+///
+/// # Safety
+/// No-op on this platform; safe to call.
 pub unsafe fn install_child_network_filter() -> std::io::Result<()> {
     Ok(())
 }
 
 #[cfg(not(target_os = "linux"))]
+/// Non-Linux stub: namespace lockdown is a no-op outside Linux.
+///
+/// # Safety
+/// No-op on this platform; safe to call.
 pub unsafe fn install_namespace_lockdown_filter() -> std::io::Result<()> {
     Ok(())
 }

@@ -169,7 +169,6 @@ pub fn resolve_slash_command_tags(
     resolve_slash_command_tags_with_env(effective_config, remote, slash_command_tags_from_env())
 }
 
-
 /// Read `[cli] channel` from config.toml.
 /// Returns `None` when absent (falls through to remote settings).
 pub fn channel_from_toml_opt(root: &TomlValue) -> Option<String> {

@@ -287,9 +287,8 @@ pub(crate) fn collect_startup_warnings_from(
             None => "在 tmux control mode 下显示可能受限",
         };
         let mut warning = TerminalWarning::new(WarningCategory::ControlMode, message, None, None);
-        warning.note = Some(
-            "若显示问题仍在，请改用普通 tmux 客户端连接，而不是 control mode。".to_owned(),
-        );
+        warning.note =
+            Some("若显示问题仍在，请改用普通 tmux 客户端连接，而不是 control mode。".to_owned());
         warnings.push(warning);
     }
 
@@ -2219,9 +2218,7 @@ mod tests {
             "fix is a command, not a config line"
         );
         assert!(
-            w.note
-                .as_deref()
-                .is_some_and(|n| n.contains("本地电脑")),
+            w.note.as_deref().is_some_and(|n| n.contains("本地电脑")),
             "note must say where to run the command, got: {:?}",
             w.note
         );
@@ -3008,11 +3005,7 @@ mod tests {
         assert_eq!(w.category, WarningCategory::LimitedColorSupport);
         assert!(w.message.contains("Apple Terminal"));
         assert!(w.fix.is_none());
-        assert!(
-            w.note
-                .as_deref()
-                .is_some_and(|n| n.contains("Ghostty"))
-        );
+        assert!(w.note.as_deref().is_some_and(|n| n.contains("Ghostty")));
     }
 
     #[test]
