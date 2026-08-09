@@ -7122,7 +7122,9 @@ mod tests {
         let first = tracker.session_streaming_rate().expect("session seeded");
         assert!(first.total_tokens > 0);
         tracker.finish_turn(&mut sb);
-        let after_turn = tracker.session_streaming_rate().expect("survives finish_turn");
+        let after_turn = tracker
+            .session_streaming_rate()
+            .expect("survives finish_turn");
         assert_eq!(after_turn.total_tokens, first.total_tokens);
         // 第二个 turn 继续累积。
         tracker.handle_update(agent_chunk("world"), &meta(), &mut sb);

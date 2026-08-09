@@ -1376,8 +1376,7 @@ mod tests {
         let compact = |s: &str| -> String { s.chars().filter(|c| !c.is_whitespace()).collect() };
 
         // Summary mode → model + always-approve on the bottom border.
-        let mut panel =
-            PeekPanelState::new(DashboardRowId::TopLevel(AgentId(0)), fields("回复"));
+        let mut panel = PeekPanelState::new(DashboardRowId::TopLevel(AgentId(0)), fields("回复"));
         panel.model_name = Some("Grok 4 Fast".to_string());
         panel.auto_approve = true;
         let bottom = badge_row(&panel, 6);
@@ -1407,8 +1406,7 @@ mod tests {
         );
 
         // No always-approve flag when the agent isn't in yolo mode.
-        let mut plain =
-            PeekPanelState::new(DashboardRowId::TopLevel(AgentId(0)), fields("回复"));
+        let mut plain = PeekPanelState::new(DashboardRowId::TopLevel(AgentId(0)), fields("回复"));
         plain.model_name = Some("Grok 4 Fast".to_string());
         plain.auto_approve = false;
         let plain_bottom = badge_row(&plain, 6);
@@ -1419,8 +1417,7 @@ mod tests {
 
         // Plan mode → a `plan` flag (so all three Shift+Tab cycle states
         // are visible on the badge).
-        let mut planp =
-            PeekPanelState::new(DashboardRowId::TopLevel(AgentId(0)), fields("回复"));
+        let mut planp = PeekPanelState::new(DashboardRowId::TopLevel(AgentId(0)), fields("回复"));
         planp.model_name = Some("Grok 4 Fast".to_string());
         planp.plan_mode = true;
         let plan_bottom = badge_row(&planp, 6);

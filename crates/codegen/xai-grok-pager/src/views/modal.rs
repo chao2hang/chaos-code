@@ -1354,10 +1354,7 @@ mod palette_sharing_tests {
             "/dashboard entry must be present in the palette so users can switch between agents"
         );
         let labelled = entries.iter().any(|e| e.label == "Agent 仪表盘");
-        assert!(
-            labelled,
-            "palette entry must use the 'Agent 仪表盘' label"
-        );
+        assert!(labelled, "palette entry must use the 'Agent 仪表盘' label");
     }
     fn slash_rows(mode: crate::app::ScreenMode) -> Vec<String> {
         default_palette_entries(true, &slash(mode))

@@ -947,7 +947,11 @@ pub fn build_hints(
             let mut hints = Vec::new();
             hints.push(HintItem::new(
                 crate::key!('h'),
-                if show_done { "隐藏已完成" } else { "显示已完成" },
+                if show_done {
+                    "隐藏已完成"
+                } else {
+                    "显示已完成"
+                },
             ));
             hints
         }
@@ -1016,8 +1020,7 @@ pub fn build_hints(
             }
             if prompt.prompt_suggestion_visible() {
                 hints.push(
-                    HintItem::paired(crate::key!(Tab), crate::key!(Right), "接受建议")
-                        .pinned(),
+                    HintItem::paired(crate::key!(Tab), crate::key!(Right), "接受建议").pinned(),
                 );
             }
             hints.push(HintItem::new(crate::key!(BackTab), "模式"));
@@ -1048,7 +1051,11 @@ pub fn build_hints(
             }
             hints.push(HintItem::new(
                 crate::key!('h'),
-                if show_done { "隐藏已完成" } else { "显示已完成" },
+                if show_done {
+                    "隐藏已完成"
+                } else {
+                    "显示已完成"
+                },
             ));
             hints
         }

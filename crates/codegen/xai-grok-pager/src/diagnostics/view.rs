@@ -486,8 +486,7 @@ fn newline_finding(facts: &DiagnosticFacts) -> Option<DiagnosticFinding> {
         ),
         NewlineFact::NoKittyKeyboardProtocol => (
             "因键盘协议不可用，Shift+Enter 无法插入换行",
-            "请使用 Alt+Enter 插入换行。若终端支持 Kitty 键盘协议，请启用后重启 Chaos。"
-                .to_owned(),
+            "请使用 Alt+Enter 插入换行。若终端支持 Kitty 键盘协议，请启用后重启 Chaos。".to_owned(),
         ),
     };
     Some(manual_finding(
