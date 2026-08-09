@@ -29,6 +29,13 @@ const ADHD_SKILL_RULES: &str = "\
 - 庆祝小胜利，保持正反馈循环。
 - 遇到困难时主动提出简化方案或替代路径。";
 
+/// Ext methods that carry a session-scoped update and may stamp `isReplay`.
+/// Shared by TUI/headless dispatch and the session-load ACP barrier so a new
+/// method cannot be handled in one path and classified `Unrelated` in the other.
+pub(crate) fn is_session_update_ext_method(method: &str) -> bool {
+    matches!(method, "x.ai/session_notification" | "x.ai/session/update")
+}
+
 use xai_grok_telemetry::startup;
 pub use xai_grok_telemetry::startup::{
     AgentKind, Owner, StartupOutcome, StartupPhase, StartupTimer,
@@ -848,6 +855,14 @@ pub fn select_eager_auth_method(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn is_session_update_ext_method_covers_both_carriers() {
+        assert!(is_session_update_ext_method("x.ai/session_notification"));
+        assert!(is_session_update_ext_method("x.ai/session/update"));
+        assert!(!is_session_update_ext_method("x.ai/task_completed"));
+        assert!(!is_session_update_ext_method("session/update"));
+    }
 
     #[test]
     fn parse_available_commands_from_meta() {
