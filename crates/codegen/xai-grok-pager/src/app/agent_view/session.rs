@@ -197,7 +197,8 @@ impl AgentView {
                 best = Some(rate);
             }
         }
-        best.or(own).or_else(|| self.session.tracker.session_streaming_rate())
+        best.or(own)
+            .or_else(|| self.session.tracker.session_streaming_rate())
     }
     /// Record a prompt id this client originated (sent to the agent as the turn
     /// driver). Used by the ACP gate to keep `attached_as_viewer` per-turn
@@ -1282,7 +1283,9 @@ mod resolve_turn_activity_tests {
         parent.max_total_tokens_seen = 1_000;
         // 子视图从未收到 totalTokens → max_total_tokens_seen 为 0。
         let child = test_agent_view(Some("child"), std::path::PathBuf::from("/tmp"));
-        parent.subagent_views.insert("child".into(), Box::new(child));
+        parent
+            .subagent_views
+            .insert("child".into(), Box::new(child));
         let now = Instant::now();
         parent.subagent_sessions.insert(
             "child".into(),
@@ -1338,10 +1341,16 @@ mod resolve_turn_activity_tests {
     #[test]
     fn live_rate_for_chip_surfaces_active_subagent_rate() {
         let mut parent = test_agent_view(Some("parent"), std::path::PathBuf::from("/tmp"));
-        assert!(parent.live_rate_for_chip().is_none(), "fresh parent: no rate");
+        assert!(
+            parent.live_rate_for_chip().is_none(),
+            "fresh parent: no rate"
+        );
 
         let mut child = test_agent_view(Some("child"), std::path::PathBuf::from("/tmp"));
-        child.session.tracker.credit_subagent_tokens(100, Some(50.0), true);
+        child
+            .session
+            .tracker
+            .credit_subagent_tokens(100, Some(50.0), true);
         parent
             .subagent_views
             .insert("child".into(), Box::new(child));
@@ -1356,9 +1365,15 @@ mod resolve_turn_activity_tests {
     #[test]
     fn live_rate_for_chip_prefers_own_fresh_rate() {
         let mut parent = test_agent_view(Some("parent"), std::path::PathBuf::from("/tmp"));
-        parent.session.tracker.credit_subagent_tokens(100, Some(80.0), true);
+        parent
+            .session
+            .tracker
+            .credit_subagent_tokens(100, Some(80.0), true);
         let mut child = test_agent_view(Some("child"), std::path::PathBuf::from("/tmp"));
-        child.session.tracker.credit_subagent_tokens(100, Some(50.0), true);
+        child
+            .session
+            .tracker
+            .credit_subagent_tokens(100, Some(50.0), true);
         parent
             .subagent_views
             .insert("child".into(), Box::new(child));
@@ -1373,13 +1388,24 @@ mod resolve_turn_activity_tests {
         let mut parent = test_agent_view(Some("parent"), std::path::PathBuf::from("/tmp"));
         // credit 一个无速率样本的 token 量：种子 smoothed_rate=0，
         // last_event_at 为 now，tokens_per_sec()==0 → 视为「安静」。
-        parent.session.tracker.credit_subagent_tokens(100, None, true);
+        parent
+            .session
+            .tracker
+            .credit_subagent_tokens(100, None, true);
         assert_eq!(
-            parent.session.tracker.streaming_rate().unwrap().tokens_per_sec(),
+            parent
+                .session
+                .tracker
+                .streaming_rate()
+                .unwrap()
+                .tokens_per_sec(),
             0.0
         );
         let mut child = test_agent_view(Some("child"), std::path::PathBuf::from("/tmp"));
-        child.session.tracker.credit_subagent_tokens(100, Some(60.0), true);
+        child
+            .session
+            .tracker
+            .credit_subagent_tokens(100, Some(60.0), true);
         parent
             .subagent_views
             .insert("child".into(), Box::new(child));
@@ -1395,7 +1421,10 @@ mod resolve_turn_activity_tests {
     #[test]
     fn live_rate_for_chip_falls_back_to_session_mean_after_turn() {
         let mut parent = test_agent_view(Some("parent"), std::path::PathBuf::from("/tmp"));
-        parent.session.tracker.credit_subagent_tokens(100, Some(80.0), true);
+        parent
+            .session
+            .tracker
+            .credit_subagent_tokens(100, Some(80.0), true);
         assert!(
             parent.live_rate_for_chip().is_some(),
             "fresh turn rate must be preferred"

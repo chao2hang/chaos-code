@@ -342,10 +342,7 @@ fn unavailable_runtime_evidence_is_honest_and_fail_open() {
         .iter()
         .find(|finding| finding.id == DiagnosticId::new("terminal", "control-mode"))
         .expect("control-mode finding");
-    assert_eq!(
-        control_mode.message,
-        "在 tmux control mode 下显示可能受限"
-    );
+    assert_eq!(control_mode.message, "在 tmux control mode 下显示可能受限");
     assert_eq!(
         report
             .probe_notes
