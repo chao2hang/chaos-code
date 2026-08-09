@@ -3638,6 +3638,9 @@ mod tests {
             };
             db.register(&record).unwrap();
 
+            // Deliberately park an un-enrolled child so the GC scan observes
+            // its live cwd. Test-only; the child is intentionally detached.
+            #[allow(clippy::disallowed_methods)]
             let mut child = std::process::Command::new("sleep")
                 .arg("30")
                 .current_dir(&nested)

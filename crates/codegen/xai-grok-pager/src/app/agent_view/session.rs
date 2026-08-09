@@ -101,6 +101,7 @@ impl AgentView {
                 .is_some_and(|wake| wake.cancel_sent)
     }
     /// Status-row chrome for a wake turn, or `None` when a local turn owns it.
+    #[allow(dead_code)]
     pub(crate) fn wake_display_state(&self) -> Option<&'static crate::app::agent::AgentState> {
         if !self.session.state.is_idle() {
             return None;

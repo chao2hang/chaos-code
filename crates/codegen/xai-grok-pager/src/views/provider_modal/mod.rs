@@ -11,7 +11,7 @@
 //! 配置读写复用 `slash/commands/provider.rs` 中的函数，
 //! 通过 `Action::OpenProviderModal` 触发打开。
 
-mod input;
+pub(crate) mod input;
 mod render;
 mod state;
 

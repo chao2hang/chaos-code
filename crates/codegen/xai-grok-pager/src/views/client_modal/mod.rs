@@ -1,7 +1,7 @@
 //! `/client` modal: choose the request-client identity for the current
 //! conversation and manage user-defined profiles.
 
-mod input;
+pub(crate) mod input;
 mod render;
 mod state;
 
