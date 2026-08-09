@@ -173,7 +173,13 @@ pub(super) fn format(report: &DiagnosticReport) -> String {
     let issues = report.issue_count();
     let recommendations = report.recommendation_count();
     out.push('\n');
-    out.push_str(&format!("{issues} 个问题，{recommendations} 条建议\n"));
+    out.push_str(&format!(
+        "{} {}，{} {}\n",
+        issues,
+        plural(issues, "个问题", "个问题"),
+        recommendations,
+        plural(recommendations, "条建议", "条建议")
+    ));
     out
 }
 
@@ -234,6 +240,10 @@ fn format_newline(newline: &NewlineFact) -> String {
         }
     };
     format!("Alt+Enter（{detail}）")
+}
+
+fn plural<'a>(count: usize, singular: &'a str, plural: &'a str) -> &'a str {
+    if count == 1 { singular } else { plural }
 }
 
 fn probe_status(status: ProbeStatus) -> &'static str {

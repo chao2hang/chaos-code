@@ -10,22 +10,7 @@ use crate::headless::reducer::acp::AcpReducer;
 use crate::headless::reducer::{McpServer, skill_names, tool_call_event};
 use serde::Serialize;
 use serde_json::{Value, json};
-use xai_grok_shell::sampling::rs::{InputTokenDetails, OutputTokenDetails, ResponseUsage};
-
-fn response_usage(
-    input_tokens: u32,
-    output_tokens: u32,
-    cached_tokens: u32,
-    reasoning_tokens: u32,
-) -> ResponseUsage {
-    ResponseUsage {
-        input_tokens,
-        input_tokens_details: InputTokenDetails { cached_tokens },
-        output_tokens,
-        output_tokens_details: OutputTokenDetails { reasoning_tokens },
-        total_tokens: input_tokens.saturating_add(output_tokens),
-    }
-}
+use xai_grok_shell::extensions::notification::ResponseUsage;
 
 fn tool_call_ev() -> ToolCallEvent {
     ToolCallEvent {

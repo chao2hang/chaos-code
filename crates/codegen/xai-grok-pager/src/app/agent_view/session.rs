@@ -27,6 +27,7 @@ impl AgentView {
     /// outright).
     pub(crate) fn bind_session_id(&mut self, session_id: agent_client_protocol::SessionId) {
         if self.session.session_id.as_ref() != Some(&session_id) {
+            self.session_binding_epoch = self.session_binding_epoch.wrapping_add(1);
             self.last_seen_event_id = None;
             self.last_applied_event_seq = None;
             self.last_applied_xai_event_seq = None;
@@ -87,6 +88,94 @@ impl AgentView {
     ///
     /// `tokens_per_sec()` decays to 0 after ~1s of quiet, so finished or idle
     /// children are naturally excluded without an explicit running check.
+    /// Whether a wake turn is currently streaming (pane idle + wake armed).
+    pub(crate) fn wake_turn_active(&self) -> bool {
+        self.session.state.is_idle() && self.running_wake_turn.is_some()
+    }
+    /// Wake cancel sent and still waiting on its terminal. Pane stays idle.
+    pub(crate) fn wake_turn_cancelling(&self) -> bool {
+        self.session.state.is_idle()
+            && self
+                .running_wake_turn
+                .as_ref()
+                .is_some_and(|wake| wake.cancel_sent)
+    }
+    /// Status-row chrome for a wake turn, or `None` when a local turn owns it.
+    pub(crate) fn wake_display_state(&self) -> Option<&'static crate::app::agent::AgentState> {
+        if !self.session.state.is_idle() {
+            return None;
+        }
+        self.running_wake_turn.as_ref().map(|wake| {
+            if wake.cancel_sent {
+                &crate::app::agent::AgentState::TurnCancelling
+            } else {
+                &crate::app::agent::AgentState::TurnRunning
+            }
+        })
+    }
+    /// Single setter for [`super::RunningWakeTurn`]. No-op unless the pane is
+    /// idle and not replaying; keeps an in-flight cancel marker for the same id.
+    pub(crate) fn note_streaming_wake_turn(&mut self, prompt_id: &str) {
+        if !self.session.state.is_idle() || self.session.loading_replay {
+            return;
+        }
+        if self.finished_wake_prompts.contains(prompt_id) {
+            return;
+        }
+        if self
+            .running_wake_turn
+            .as_ref()
+            .is_some_and(|wake| wake.prompt_id == prompt_id)
+        {
+            return;
+        }
+        self.running_wake_turn = Some(super::RunningWakeTurn {
+            prompt_id: prompt_id.to_string(),
+            cancel_sent: false,
+        });
+    }
+    /// Local turn, running `/compact`, or streaming wake not yet asked to stop.
+    pub(crate) fn stoppable_activity_running(&self) -> bool {
+        self.session.state.is_turn_running()
+            || self.session.state.is_compact_running()
+            || (self.wake_turn_active() && !self.wake_turn_cancelling())
+    }
+    /// Local or wake cancel still in flight.
+    pub(crate) fn any_cancel_pending(&self) -> bool {
+        self.session.state.is_cancelling() || self.wake_turn_cancelling()
+    }
+    /// Mark the wake cancel sent. No-op without a wake turn.
+    pub(crate) fn mark_wake_cancel_sent(&mut self) {
+        if let Some(wake) = self.running_wake_turn.as_mut() {
+            wake.cancel_sent = true;
+        }
+    }
+    /// Overlay stop: stamp the dashboard trigger if something stoppable is running.
+    pub(crate) fn arm_dashboard_stop(&mut self) -> bool {
+        if self.stoppable_activity_running() {
+            self.cancel_trigger_hint = Some(crate::app::actions::CancelTrigger::DashboardStop);
+            true
+        } else {
+            false
+        }
+    }
+    /// Live mutation of the turn-summary display field. Always bumps
+    /// [`Self::last_turn_summary_gen`] so a concurrent disk hydrate that
+    /// captured an older generation cannot overwrite this write.
+    pub(crate) fn set_last_turn_summary(&mut self, summary: Option<String>) {
+        self.last_turn_summary = summary;
+        self.last_turn_summary_gen = self.last_turn_summary_gen.wrapping_add(1);
+    }
+    /// Absorb a closing/replaced question view's open span into the turn's
+    /// pause totals, on both clocks.
+    pub(crate) fn record_question_pause(
+        &mut self,
+        qv: &crate::views::question_view::QuestionViewState,
+    ) {
+        self.turn_paused_duration += qv.opened_at.elapsed();
+        self.turn_paused_wall +=
+            wall_since_ms(qv.opened_at_wall_ms, chrono::Utc::now().timestamp_millis());
+    }
     pub(crate) fn live_rate_for_chip(&self) -> Option<crate::acp::tracker::LiveStreamingRate> {
         let own = self.session.tracker.streaming_rate();
         if own.is_some_and(|rate| rate.tokens_per_sec() > 0.0) {
@@ -183,6 +272,29 @@ impl AgentView {
             modal_hovered_key: None,
             context_state: None,
             max_total_tokens_seen: 0,
+            running_wake_turn: None,
+            finished_wake_prompts: std::collections::HashSet::new(),
+            failed_wake_marker_for: None,
+            pending_cancel_resend: None,
+            permission_pattern_edit: None,
+            privacy_banner: Default::default(),
+            rewind_suppress_deadline: None,
+            last_turn_summary: None,
+            last_turn_summary_gen: 0,
+            scheduler_background_loops: None,
+            usage_command_visible: true,
+            watching_cue_toast_shown: false,
+            overlay_can_cycle: false,
+            front_message_committed: true,
+            session_binding_epoch: 0,
+            turn_paused_wall: std::time::Duration::ZERO,
+            turn_start_ms_prompt: None,
+            hit_response_top_indicator: Default::default(),
+            hit_watching_cue: Default::default(),
+            #[cfg(feature = "local-workspace")]
+            workspace_mode: crate::views::welcome::WelcomeWorkspaceMode::Sandbox,
+            #[cfg(feature = "local-workspace")]
+            workspace_mode_cli_locked: false,
             chat_kind: false,
             app_chat_mode: false,
             credit_balance: None,
@@ -995,6 +1107,14 @@ impl AgentView {
             .slash_controller
             .set_billing_surface_visible(visible);
     }
+    /// Set [`Self::usage_command_visible`] (see the field doc) and mirror it
+    /// into this agent's slash controller, so the two can't drift.
+    pub fn set_usage_command_visible(&mut self, visible: bool) {
+        self.usage_command_visible = visible;
+        self.prompt
+            .slash_controller
+            .set_usage_command_visible(visible);
+    }
     /// Replace the restricted slash-command deny list in this agent's
     /// registry (e.g. `/usage` denied on the free / X Basic tiers). Deny
     /// wins over every `set_*_visible` gate.
@@ -1022,6 +1142,7 @@ impl AgentView {
         &mut self,
         sharing_enabled: bool,
         billing_surface_visible: bool,
+        usage_command_visible: bool,
         chat_mode: bool,
         screen_mode: crate::app::ScreenMode,
         announcements: &[xai_grok_announcements::RemoteAnnouncement],
@@ -1029,6 +1150,7 @@ impl AgentView {
     ) {
         self.set_sharing_enabled(sharing_enabled);
         self.set_billing_surface_visible(billing_surface_visible);
+        self.set_usage_command_visible(usage_command_visible);
         self.app_chat_mode = chat_mode;
         self.prompt.set_screen_mode(screen_mode);
         self.set_dashboard_visible(crate::views::dashboard::dashboard_enabled());
@@ -1046,6 +1168,11 @@ impl AgentView {
     pub fn set_voice_mode_available(&mut self, available: bool) {
         self.prompt.set_voice_visible(available);
     }
+}
+
+/// Wall-clock span between `start_ms` and `now_ms`, saturated at zero.
+fn wall_since_ms(start_ms: i64, now_ms: i64) -> std::time::Duration {
+    std::time::Duration::from_millis(u64::try_from(now_ms.saturating_sub(start_ms)).unwrap_or(0))
 }
 #[cfg(test)]
 mod resolve_turn_activity_tests {

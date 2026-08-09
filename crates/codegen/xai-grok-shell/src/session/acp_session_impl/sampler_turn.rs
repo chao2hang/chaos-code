@@ -26,47 +26,6 @@ pub(super) fn is_auth_tool_error(err: &xai_tool_runtime::ToolError) -> bool {
         || lower.contains("invalid api key")
         || lower.contains("invalid_token")
 }
-
-/// Match only provider-side validation failures that explicitly reject the
-/// `reasoning_effort` parameter. A generic 400 must remain terminal: retrying it
-/// with weaker reasoning could hide unrelated malformed-request bugs.
-fn is_reasoning_effort_rejection(error: &xai_grok_sampler::SamplingErrorInfo) -> bool {
-    use xai_grok_sampler::SamplingErrorKind;
-
-    if !matches!(error.kind, SamplingErrorKind::Api) || error.status_code != Some(400) {
-        return false;
-    }
-
-    let message = error.message.to_ascii_lowercase();
-    let names_effort = message.contains("reasoning_effort")
-        || message.contains("reasoning effort")
-        || message.contains("reasoning.effort");
-    let rejects_value = message.contains("invalid")
-        || message.contains("unsupported")
-        || message.contains("not supported")
-        || message.contains("does not support")
-        || message.contains("unknown")
-        || message.contains("not one of");
-
-    names_effort && rejects_value
-}
-
-/// Return the next weaker wire value. The outer `Option` means "a retry is
-/// available"; the inner `Option` is the actual request value, where `None`
-/// means omit `reasoning_effort` entirely.
-fn next_reasoning_effort(
-    current: Option<xai_grok_sampling_types::ReasoningEffort>,
-) -> Option<Option<xai_grok_sampling_types::ReasoningEffort>> {
-    use xai_grok_sampling_types::ReasoningEffort;
-
-    match current? {
-        ReasoningEffort::Max => Some(Some(ReasoningEffort::Xhigh)),
-        ReasoningEffort::Xhigh => Some(Some(ReasoningEffort::High)),
-        ReasoningEffort::High => Some(Some(ReasoningEffort::Medium)),
-        ReasoningEffort::Medium => Some(Some(ReasoningEffort::Low)),
-        ReasoningEffort::Low | ReasoningEffort::Minimal | ReasoningEffort::None => Some(None),
-    }
-}
 /// Gate inputs bundled with the composed decision so the 401-recovery log can
 /// report the components.
 #[derive(Clone, Copy)]
@@ -151,7 +110,7 @@ where
 impl SessionActor {
     pub(super) async fn prepare_tool_definitions_timed(&self) -> (Vec<ToolDefinition>, u64) {
         let mcp_wait_start = std::time::Instant::now();
-        match self.mcp_strategy {
+        match self.mcp_strategy.get() {
             McpInitStrategy::Blocking => {
                 if !self.mcp_state.lock().await.is_initialized() {
                     tracing::info!(
@@ -439,27 +398,14 @@ impl SessionActor {
     pub(super) async fn reconstruct_full_config(&self) -> SamplingConfig {
         #[allow(clippy::items_after_statements)]
         #[derive(Debug)]
-        struct TraceContextInjector(bool);
+        struct TraceContextInjector;
         impl xai_grok_sampler::HeaderInjector for TraceContextInjector {
             fn inject(&self, headers: &mut reqwest::header::HeaderMap) {
-                if !self.0
-                    && let Some(tp) = xai_file_utils::trace_context::current_traceparent()
+                if let Some(tp) = xai_file_utils::trace_context::current_traceparent()
                     && let Ok(v) = reqwest::header::HeaderValue::from_str(&tp)
                 {
                     headers.insert("traceparent", v);
                 }
-            }
-        }
-        #[allow(clippy::items_after_statements)]
-        struct AuthManagerBearerResolver(std::sync::Arc<crate::auth::AuthManager>);
-        impl std::fmt::Debug for AuthManagerBearerResolver {
-            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                f.debug_struct("AuthManagerBearerResolver").finish()
-            }
-        }
-        impl xai_grok_sampler::BearerResolver for AuthManagerBearerResolver {
-            fn current_bearer(&self) -> Option<String> {
-                self.0.current_wire_valid().map(|a| a.key)
             }
         }
         let cfg = self
@@ -501,47 +447,15 @@ impl SessionActor {
         };
         let auth_scheme = model_facts.auth_scheme;
         let mut extra_headers = cfg.extra_headers;
-        // Runtime `/client` overrides win on a per-key basis over the
-        // model/provider and configured profile headers.
-        for (name, value) in self.client_extra_headers.borrow().iter() {
-            extra_headers.insert(name.clone(), value.clone());
-        }
-        // Now we have all possible x-codebuddy-request header!
-        let is_workbuddy = {
-            let cid = self.client_identifier.borrow();
-            cid.as_ref()
-                .is_some_and(|s| s.eq_ignore_ascii_case("workbuddy"))
-        } || extra_headers
-            .iter()
-            .any(|(k, _)| k.eq_ignore_ascii_case("x-codebuddy-request"));
         crate::agent::config::inject_url_derived_headers(
             &mut extra_headers,
             creds.alpha_test_key.as_deref(),
             &cfg.base_url,
-            is_workbuddy,
+            cfg.is_workbuddy,
         );
-        if is_workbuddy {
-            // Remove all non-workbuddy headers. Use the profile's own
-            // allowlist helper so the two workbuddy entry points stay in
-            // sync; fall back to the inline filter if the helper ever
-            // disappears.
-            let workbuddy_profile = crate::agent::client_profiles::by_id("workbuddy");
-            if let Some(profile) = workbuddy_profile {
-                profile.strip_non_workbuddy_headers(&mut extra_headers);
-            } else {
-                extra_headers.retain(|k, _| {
-                    !k.to_lowercase().starts_with("x-grok-")
-                        && !k.eq_ignore_ascii_case("traceparent")
-                        && !k.eq_ignore_ascii_case("x-xai-token-auth")
-                        && !k.eq_ignore_ascii_case("x-authenticateresponse")
-                });
-            }
-            tracing::info!("WorkBuddy mode: extra_headers={:?}", extra_headers);
-        }
-        let mut extra_headers = extra_headers;
         let compaction_at_tokens = self.compaction_at_tokens.get();
         let compactions_remaining = self.compactions_remaining.get();
-        if !is_workbuddy && (compactions_remaining.is_some() || compaction_at_tokens.is_some()) {
+        if compactions_remaining.is_some() || compaction_at_tokens.is_some() {
             let has_compaction_summary = self
                 .chat_state_handle
                 .get_last_compaction_prompt_index()
@@ -563,30 +477,6 @@ impl SessionActor {
                 extra_headers.insert("x-compaction-at".to_string(), value.to_string());
             }
         }
-        let mut env_http_headers = {
-            let mut merged = cfg.env_http_headers;
-            for (name, value) in self.client_env_http_headers.borrow().iter() {
-                merged.insert(name.clone(), value.clone());
-            }
-            merged
-        };
-        if is_workbuddy {
-            // Also clean env_http_headers — keep the same allowlist as the
-            // profile header helper so workbuddy headers stay consistent
-            // across both prepare-time and reconstruct-time paths.
-            let workbuddy_profile = crate::agent::client_profiles::by_id("workbuddy");
-            if let Some(profile) = workbuddy_profile {
-                profile.strip_non_workbuddy_headers(&mut env_http_headers);
-            } else {
-                env_http_headers.retain(|k, _| {
-                    !k.to_lowercase().starts_with("x-grok-")
-                        && !k.eq_ignore_ascii_case("traceparent")
-                        && !k.eq_ignore_ascii_case("x-xai-token-auth")
-                        && !k.eq_ignore_ascii_case("x-authenticateresponse")
-                });
-            }
-            tracing::info!("WorkBuddy mode: env_http_headers={:?}", env_http_headers);
-        }
         SamplingConfig {
             api_key,
             base_url: cfg.base_url,
@@ -598,17 +488,13 @@ impl SessionActor {
             auth_scheme,
             extra_headers,
             query_params: cfg.query_params.clone(),
-            env_http_headers,
+            env_http_headers: cfg.env_http_headers.clone(),
             context_window: cfg.context_window.get(),
             client_version: creds.client_version,
             reasoning_effort: cfg.reasoning_effort,
-            // The real WorkBuddy client is Node.js and speaks HTTP/1.1; the
-            // gateway's `unsupported_client` gate appears to fingerprint the
-            // ALPN/HTTP version, so match the real client on HTTP/1.1.
-            force_http1: is_workbuddy,
+            force_http1: false,
             max_retries: Some(self.max_retries),
             stream_tool_calls: cfg.stream_tool_calls.unwrap_or(false),
-            extract_inline_thinking: cfg.extract_inline_thinking.unwrap_or(false),
             idle_timeout_secs: None,
             client_identifier: self.client_identifier.borrow().clone(),
             deployment_id: crate::managed_config::resolve_deployment_id(
@@ -621,14 +507,11 @@ impl SessionActor {
                 .filter(|a| a.is_xai_auth())
                 .map(|a| a.user_id),
             origin_client: self.origin_client.borrow().clone(),
-            user_agent: self.user_agent.borrow().clone(),
             attribution_callback: self.attribution_callback.clone(),
             bearer_resolver: if use_bearer_resolver {
-                self.auth_manager
-                    .as_ref()
-                    .map(|am| -> xai_grok_sampler::SharedBearerResolver {
-                        std::sync::Arc::new(AuthManagerBearerResolver(am.clone()))
-                    })
+                self.auth_manager.as_ref().map(|am| {
+                    crate::auth::credential_provider::WireValidBearerResolver::shared(am.clone())
+                })
             } else {
                 None
             },
@@ -636,17 +519,10 @@ impl SessionActor {
             compactions_remaining: self.compactions_remaining.get(),
             compaction_at_tokens: self.compaction_at_tokens.get(),
             doom_loop_recovery: self.doom_loop_recovery,
-            header_injector: if is_workbuddy {
-                Some(std::sync::Arc::new(
-                    crate::agent::client_profiles::WorkBuddyHeaderInjector::new(
-                        self.workbuddy_conversation_id.clone(),
-                        self.workbuddy_acp_connection_id.clone(),
-                    ),
-                ))
-            } else {
-                Some(std::sync::Arc::new(TraceContextInjector(false)))
-            },
-            is_workbuddy,
+            header_injector: Some(std::sync::Arc::new(TraceContextInjector)),
+            is_workbuddy: cfg.is_workbuddy,
+            extract_inline_thinking: cfg.extract_inline_thinking.unwrap_or(false),
+            user_agent: self.user_agent.borrow().clone(),
         }
     }
     /// Install auto-mode permission classifier with a live LLM side-query
@@ -820,7 +696,7 @@ impl SessionActor {
         crate::agent::config::stamp_session_local_sampler_fields(
             &mut cfg,
             &active_session_config,
-            active_session_config.client_identifier.clone(),
+            self.client_identifier.borrow().clone(),
             Some(self.max_retries),
         );
         let model = cfg.model.clone();
@@ -869,6 +745,58 @@ impl SessionActor {
         sampler_config.idle_timeout_secs = Some(self.inference_idle_timeout.as_secs());
         self.sampler_handle.update_config(sampler_config);
     }
+    /// Fold an auth remedy into a turn failure: its advice becomes the tail of
+    /// the message, and its `turn_error_type` the classification the client
+    /// keys its re-auth prompt off.
+    fn apply_auth_remedy(
+        &self,
+        remedy: &crate::auth::AuthRemedy,
+        message: String,
+        status_code: Option<u16>,
+    ) -> (&'static str, String) {
+        xai_grok_telemetry::unified_log::info(
+            "auth: turn failure classified",
+            Some(self.session_info.id.0.as_ref()),
+            Some(serde_json::json!({
+                "status_code": status_code,
+                "remedy": format!("{remedy:?}"),
+            })),
+        );
+        let message = match remedy.advice() {
+            Some(advice) => format!("{message}\n\n{advice}"),
+            None => message,
+        };
+        (remedy.turn_error_type(), message)
+    }
+    /// Terminal failure for a turn the auth-retry budget gave up on — the one
+    /// terminal path that lives outside [`Self::handle_sampling_failure`].
+    ///
+    /// Every terminal path owes the client one `RetryState::Failed`: it is
+    /// what raises the pager's re-auth prompt and its turn-failed block. This
+    /// arm used to return its `acp::Error` without one, so a turn that died on
+    /// repeated 401s ended in silence.
+    pub(crate) async fn fail_turn_auth_budget_exhausted(&self, message: String) -> acp::Error {
+        const STATUS: Option<u16> = Some(401);
+        let (error_type, message) = match self.auth_manager.as_ref() {
+            Some(auth_manager) => self.apply_auth_remedy(
+                &auth_manager.auth_remedy().after_retries_exhausted(),
+                message,
+                STATUS,
+            ),
+            None => ("auth", message),
+        };
+        self.log_terminal_failure(error_type, STATUS, &message);
+        self.send_xai_notification(XaiSessionUpdate::RetryState(
+            crate::extensions::notification::RetryState::Failed {
+                error_type: error_type.to_owned(),
+                message: message.clone(),
+            },
+        ))
+        .await;
+        acp::Error::internal_error().data(crate::sampling::error::error_data_with_status(
+            message, STATUS,
+        ))
+    }
     fn log_terminal_failure(&self, error_type: &str, status_code: Option<u16>, message: &str) {
         let auth = self
             .auth_manager
@@ -883,7 +811,7 @@ impl SessionActor {
                 "status_code": status_code,
                 "reauthable": reauthable,
                 "auth_mode": auth.as_ref().map(|a| format!("{:?}", a.auth_mode)),
-                "key_prefix": auth.as_ref().map(|a| crate::auth::token_suffix(&a.key).to_owned()),
+                "key_prefix": auth.as_ref().map(|a| xai_grok_auth::bearer_suffix(&a.key).to_owned()),
                 "expires_at": auth
                     .as_ref()
                     .and_then(|a| a.expires_at.map(|e| e.to_rfc3339())),
@@ -921,72 +849,35 @@ impl SessionActor {
             );
             return Err(acp::Error::internal_error().data(message));
         }
-        if is_reasoning_effort_rejection(&error)
-            && let Some(config) = self.chat_state_handle.get_sampling_config().await
-            && let Some(next_effort) = next_reasoning_effort(config.reasoning_effort)
-        {
-            let from = config.reasoning_effort.map(|effort| effort.as_str());
-            let to = next_effort.map(|effort| effort.as_str());
-            tracing::warn!(
-                session_id = %self.session_info.id.0,
-                model = %config.model,
-                from = ?from,
-                to = ?to,
-                error = %error.message,
-                "provider rejected reasoning_effort; retrying with weaker value"
-            );
-            xai_grok_telemetry::unified_log::warn(
-                "shell.turn.reasoning_effort_fallback",
-                Some(self.session_info.id.0.as_ref()),
-                Some(serde_json::json!({
-                    "model": config.model,
-                    "from": from,
-                    "to": to,
-                    "status_code": error.status_code,
-                    "error": crate::util::truncate(&error.message, 300),
-                })),
-            );
-            let mut downgraded = config;
-            downgraded.reasoning_effort = next_effort;
-            self.chat_state_handle.update_sampling_config(downgraded);
-            self.prepare_sampler_for_turn().await;
-            return Ok(SamplerFailureRecovery::ReasoningEffortAndResubmit);
-        }
         if self.should_compact_on_error(&error).await {
             let cw = error
                 .model_metadata
                 .as_ref()
                 .and_then(|m| m.context_window)
                 .expect("should_compact_on_error guarantees context_window");
-            // Capture the metadata-write decision under the operation lock,
-            // then drop the guard before running compaction (which yields).
-            // The lock ensures a concurrent SetContextWindow / response
-            // header refresh / model-override write cannot race the
-            // context-window restore.
-            let trigger_info = {
-                let _op_guard = self.compaction.operation_lock.lock().await;
+            {
                 let total_tokens = self.chat_state_handle.get_estimated_total_tokens().await;
                 let percentage = xai_token_estimation::usage_percentage_u8(total_tokens, cw);
                 if let Some(mut cfg) = self.chat_state_handle.get_sampling_config().await
                     && let Some(new_cw) = std::num::NonZeroU64::new(cw)
-                    && self.compaction.context_window_override.get().is_none()
+                    && self.compaction.context_window_override.is_none()
                 {
                     cfg.context_window = new_cw;
                     self.chat_state_handle.update_sampling_config(cfg);
                 }
-                compaction::AutoCompactTriggerInfo {
+                let trigger_info = compaction::AutoCompactTriggerInfo {
                     tokens_used: total_tokens,
                     context_window: cw,
                     percentage,
+                };
+                if let Err(e) = self.run_compact_only(trigger_info).await {
+                    if Self::is_auth_compact_error(&e) {
+                        return Err(self.surface_compact_auth_failure(e).await);
+                    }
+                    return Err(e);
                 }
-            };
-            if let Err(e) = self.run_compact_only(trigger_info).await {
-                if Self::is_auth_compact_error(&e) {
-                    return Err(self.surface_compact_auth_failure(e).await);
-                }
-                return Err(e);
+                return Ok(SamplerFailureRecovery::CompactAndResubmit);
             }
-            return Ok(SamplerFailureRecovery::CompactAndResubmit);
         }
         let detailed_message = error.message.clone();
         if matches!(error.kind, SamplingErrorKind::Api)
@@ -1080,34 +971,6 @@ impl SessionActor {
                 })),
             );
         }
-        if auth_recovery_eligible
-            && crate::auth::devbox_login::is_devbox_environment()
-            && let Some(ref am) = self.auth_manager
-        {
-            match am.try_devbox_recovery().await {
-                Ok(auth) => {
-                    tracing::info!(
-                        session_id = %self.session_info.id.0,
-                        user_id = %auth.user_id,
-                        "auth recovery: sampler 401, devbox re-mint, retrying"
-                    );
-                    self.prepare_sampler_for_turn().await;
-                    return Ok(SamplerFailureRecovery::RefreshAuthAndResubmit);
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        session_id = %self.session_info.id.0,
-                        error = %e,
-                        "auth recovery: sampler 401, devbox re-mint failed"
-                    );
-                    xai_grok_telemetry::unified_log::warn(
-                        "auth recovery: sampler 401, devbox re-mint failed",
-                        Some(self.session_info.id.0.as_ref()),
-                        Some(serde_json::json!({ "error": format!("{e}") })),
-                    );
-                }
-            }
-        }
         if auth_recovery_eligible && let Some(ref am) = self.auth_manager {
             if am
                 .try_recover_unauthorized(crate::auth::recovery::RecoverySource::Turn)
@@ -1120,7 +983,10 @@ impl SessionActor {
                     None,
                 );
                 self.prepare_sampler_for_turn().await;
-                return Ok(SamplerFailureRecovery::RefreshAuthAndResubmit);
+                return Ok(SamplerFailureRecovery::RefreshAuthAndResubmit {
+                    credential: error.credential,
+                    store: RecoveredStore::SessionToken,
+                });
             }
             tracing::warn!(session_id = %self.session_info.id.0, "auth recovery: sampler 401, refresh failed");
             xai_grok_telemetry::unified_log::warn(
@@ -1133,7 +999,10 @@ impl SessionActor {
             && self.try_provider_401_recovery(provider).await
         {
             self.prepare_sampler_for_turn().await;
-            return Ok(SamplerFailureRecovery::RefreshAuthAndResubmit);
+            return Ok(SamplerFailureRecovery::RefreshAuthAndResubmit {
+                credential: error.credential,
+                store: RecoveredStore::AuthProvider,
+            });
         }
         if matches!(error.kind, SamplingErrorKind::IdleTimeout) {
             self.signals_handle().record_idle_timeout();
@@ -1167,7 +1036,7 @@ impl SessionActor {
         let auth_mode = self
             .auth_manager
             .as_ref()
-            .and_then(|am| am.current())
+            .and_then(|am| am.current_or_expired())
             .map(|a| a.auth_mode)
             .unwrap_or(crate::auth::AuthMode::ApiKey);
         let auth_mode_str = format!("{auth_mode:?}");
@@ -1177,7 +1046,7 @@ impl SessionActor {
                 "{detailed_message}\n\n\
                  You are using a deprecated authentication method (WebLogin).\n\
                  This auth method is no longer supported and will cause errors.\n\n\
-                 To fix: run `grok logout` then `grok login` to re-authenticate with OAuth2.\n\n\
+                 To fix: run `grok update`, then `grok logout`, then `grok login` to re-authenticate with OAuth2.\n\n\
                  Version: {client_version}"
             );
             self.log_terminal_failure("legacy_auth", error.status_code, &msg);
@@ -1240,6 +1109,14 @@ impl SessionActor {
         } else {
             error.kind.as_str()
         };
+        let (error_type, detailed_message) = match self.auth_manager.as_ref() {
+            Some(auth_manager) if error_type == "auth" => self.apply_auth_remedy(
+                &auth_manager.auth_remedy(),
+                detailed_message,
+                error.status_code,
+            ),
+            _ => (error_type, detailed_message),
+        };
         self.log_terminal_failure(error_type, error.status_code, &detailed_message);
         self.send_xai_notification(XaiSessionUpdate::RetryState(
             crate::extensions::notification::RetryState::Failed {
@@ -1266,8 +1143,6 @@ impl SessionActor {
     ///    ran, the outer turn loop should `continue`.
     /// * `Ok(SamplerTurnOutcome::RefreshAuthAndResubmit)` - auth 401
     ///    recovery succeeded, credentials refreshed, retry once.
-    /// * `Ok(SamplerTurnOutcome::ReasoningEffortAndResubmit)` - provider
-    ///    rejected the current effort, config downgraded, retry immediately.
     /// * `Err(acp::Error)` - terminal failure already reported via
     ///    `send_xai_notification(RetryState::Failed)`.
     pub(crate) async fn run_turn_via_sampler(
@@ -1318,11 +1193,8 @@ impl SessionActor {
                     SamplerFailureRecovery::CompactAndResubmit => {
                         Ok(SamplerTurnOutcome::CompactAndResubmit)
                     }
-                    SamplerFailureRecovery::RefreshAuthAndResubmit => {
-                        Ok(SamplerTurnOutcome::RefreshAuthAndResubmit)
-                    }
-                    SamplerFailureRecovery::ReasoningEffortAndResubmit => {
-                        Ok(SamplerTurnOutcome::ReasoningEffortAndResubmit)
+                    SamplerFailureRecovery::RefreshAuthAndResubmit { credential, store } => {
+                        Ok(SamplerTurnOutcome::RefreshAuthAndResubmit { credential, store })
                     }
                 }
             }
@@ -1504,7 +1376,6 @@ impl SessionActor {
         &self,
         response: &ConversationResponse,
         api_duration_ms: Option<u64>,
-        decode_duration_ms: Option<u64>,
     ) {
         if let Some(ref u) = response.usage {
             self.tool_context
@@ -1516,7 +1387,7 @@ impl SessionActor {
                 response.assistant().and_then(|a| a.model_id.clone()),
                 u.clone(),
                 api_duration_ms,
-                decode_duration_ms,
+                None,
                 response.cost_usd_ticks,
             );
             self.signals_handle()
@@ -1574,76 +1445,6 @@ fn resolve_configured_cutoff(
         web_search: prefer_non_empty(over_w, seed_w, WebSearchOptions::is_empty),
     }
 }
-#[cfg(test)]
-mod reasoning_effort_fallback_tests {
-    use super::{is_reasoning_effort_rejection, next_reasoning_effort};
-    use xai_grok_sampler::{SamplingErrorInfo, SamplingErrorKind};
-    use xai_grok_sampling_types::ReasoningEffort;
-
-    fn api_error(status_code: u16, message: &str) -> SamplingErrorInfo {
-        SamplingErrorInfo {
-            kind: SamplingErrorKind::Api,
-            status_code: Some(status_code),
-            message: message.to_string(),
-            is_retryable: false,
-            retry_after_secs: None,
-            model_metadata: None,
-            empty_response_context: None,
-            doom_loop_triggers: None,
-            doom_loop_aborted_at_chunk: None,
-        }
-    }
-
-    #[test]
-    fn detects_explicit_reasoning_effort_rejections_only() {
-        for message in [
-            "BadRequest: Invalid reasoning_effort: xhigh",
-            "unsupported reasoning effort value 'high'",
-            "reasoning.effort is not supported by this model",
-            "unknown reasoning_effort",
-        ] {
-            assert!(is_reasoning_effort_rejection(&api_error(400, message)));
-        }
-
-        assert!(!is_reasoning_effort_rejection(&api_error(
-            400,
-            "invalid max_tokens"
-        )));
-        assert!(!is_reasoning_effort_rejection(&api_error(
-            500,
-            "Invalid reasoning_effort: xhigh"
-        )));
-        let mut non_api = api_error(400, "Invalid reasoning_effort: xhigh");
-        non_api.kind = SamplingErrorKind::Http;
-        assert!(!is_reasoning_effort_rejection(&non_api));
-    }
-
-    #[test]
-    fn walks_the_complete_effort_fallback_chain() {
-        assert_eq!(
-            next_reasoning_effort(Some(ReasoningEffort::Max)),
-            Some(Some(ReasoningEffort::Xhigh))
-        );
-        assert_eq!(
-            next_reasoning_effort(Some(ReasoningEffort::Xhigh)),
-            Some(Some(ReasoningEffort::High))
-        );
-        assert_eq!(
-            next_reasoning_effort(Some(ReasoningEffort::High)),
-            Some(Some(ReasoningEffort::Medium))
-        );
-        assert_eq!(
-            next_reasoning_effort(Some(ReasoningEffort::Medium)),
-            Some(Some(ReasoningEffort::Low))
-        );
-        assert_eq!(
-            next_reasoning_effort(Some(ReasoningEffort::Low)),
-            Some(None)
-        );
-        assert_eq!(next_reasoning_effort(None), None);
-    }
-}
-
 #[cfg(test)]
 mod configured_cutoff_tests {
     use xai_grok_sampling_types::{

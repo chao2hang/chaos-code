@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::headless::reducer::McpServer;
-use xai_grok_shell::sampling::rs::ResponseUsage;
+use xai_grok_shell::extensions::notification::ResponseUsage;
 
 pub(super) fn new_uuid() -> String {
     uuid::Uuid::new_v4().to_string()
@@ -86,11 +86,10 @@ impl From<&ResponseUsage> for MessageUsage {
     /// Project the shell's per-response usage onto the four `message.usage` fields.
     fn from(u: &ResponseUsage) -> Self {
         Self {
-            input_tokens: u64::from(u.input_tokens),
-            output_tokens: u64::from(u.output_tokens),
-            cache_read_input_tokens: u64::from(u.input_tokens_details.cached_tokens),
-            // The Responses API schema used by Chaos does not expose cache-write tokens.
-            cache_creation_input_tokens: 0,
+            input_tokens: u.input_tokens,
+            output_tokens: u.output_tokens,
+            cache_read_input_tokens: u.cache_read_input_tokens,
+            cache_creation_input_tokens: u.cache_creation_input_tokens,
             // Server-tool counts ride the terminal `result` usage only.
             server_tool_use: None,
         }

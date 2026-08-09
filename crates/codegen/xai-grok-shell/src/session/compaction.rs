@@ -189,6 +189,7 @@ impl SessionActor {
             .compaction_policy()
             .wall_clock_budget_secs;
         let hosted_tools = self.hosted_tools_for_turn();
+        let (cancel, _cancel_scope) = self.compaction.cancel.enter();
         match generate_session_compact(
             history,
             tools,
@@ -199,6 +200,7 @@ impl SessionActor {
             self.inference_idle_timeout,
             wall_clock_budget_secs,
             self.compaction.tool_choice,
+            &cancel,
         )
         .await
         {
@@ -601,6 +603,7 @@ impl SessionActor {
         self: &Arc<Self>,
         user_context: Option<String>,
     ) -> Result<(), acp::Error> {
+        let (_cancel, _cancel_scope) = self.compaction.cancel.enter();
         self.record_compaction_variant();
         let total_tokens = self.chat_state_handle.get_total_tokens().await;
         tracing::Span::current().record("pre_tokens", total_tokens as i64);
@@ -637,6 +640,16 @@ impl SessionActor {
         })
         .await;
         Ok(())
+    }
+    async fn emit_compact_cancelled(&self, auto_trigger: bool) -> Result<(), acp::Error> {
+        if auto_trigger {
+            use crate::extensions::notification::SessionUpdate as XaiSessionUpdate;
+            self.send_xai_notification(XaiSessionUpdate::AutoCompactCancelled {
+                reason: crate::extensions::notification::AutoCompactCancelReason::UserCancelled,
+            })
+            .await;
+        }
+        Err(crate::session::helpers::session_compact::CompactFailure::cancelled_error())
     }
     /// Suppress AUTO compaction after a deterministic failure. Scope depends on
     /// the reason (see [`SuppressReason::suppress_state`]): size/schema sticky,
@@ -891,6 +904,7 @@ impl SessionActor {
         auto_continue: Option<crate::extensions::notification::AutoContinueInfo>,
         trigger: xai_grok_telemetry::events::CompactionTrigger,
     ) -> Result<(), acp::Error> {
+        let (cancel, _cancel_scope) = self.compaction.cancel.enter();
         let tokens_before = self.chat_state_handle.get_total_tokens().await;
         tracing::Span::current().record("compaction_tokens_before", tokens_before as i64);
         self.signals_handle().record_compaction(tokens_before);
@@ -1075,6 +1089,7 @@ impl SessionActor {
             self.inference_idle_timeout,
             wall_clock_budget_secs,
             self.compaction.tool_choice,
+            cancel.clone(),
         );
         let observer =
             crate::session::helpers::full_replace_compaction::ShellFullReplaceObserver::new(
@@ -1135,6 +1150,13 @@ impl SessionActor {
                     deterministic,
                     context_overflow,
                 }) => {
+                    if cancel.is_cancelled()
+                        || message.contains(
+                            crate::session::helpers::session_compact::COMPACT_CANCELLED_MSG,
+                        )
+                    {
+                        return self.emit_compact_cancelled(auto_trigger).await;
+                    }
                     if context_overflow {
                         let next_stage = match input_stage {
                             InputStage::Verbatim => Some(InputStage::VerbatimFitted),
@@ -1297,8 +1319,7 @@ impl SessionActor {
                     .await
                     .into_iter()
                     .collect();
-                let bridge_for_skills = self.agent.borrow().tool_bridge().clone();
-                let skills = bridge_for_skills.slash_skills().await;
+                let skills = self.slash_skills_for_resolve().await;
                 let edited_paths = self.chat_state_handle.get_agent_edited_paths().await;
                 let ctx = {
                     let bridge_tasks = self
@@ -1576,7 +1597,6 @@ impl SessionActor {
         let agents_md_reminder = self.agent.borrow().agents_md_user_reminder();
         let compaction_context = state_context.for_compaction();
         let compaction_state_context: &CompactionStateContext = &compaction_context;
-        self.persist_compaction_segment(&segment_messages, &generate_session_compact);
         let transcript_hint = self.transcript_hint();
         let summary_count = self
             .compaction
@@ -1621,7 +1641,7 @@ impl SessionActor {
                 user_message_prefix,
                 agents_md_reminder,
                 state_context: &state_context.for_compaction(),
-                compaction_summary: generate_session_compact,
+                compaction_summary: generate_session_compact.clone(),
                 system_reminder,
                 summary_before_recent: use_short_prompt,
                 transcript_hint,
@@ -1629,8 +1649,6 @@ impl SessionActor {
             })
         };
         let prompt_index_at_compaction = self.chat_state_handle.get_prompt_index().await;
-        self.chat_state_handle
-            .record_compaction_at(prompt_index_at_compaction);
         let original_user_info = self
             .chat_state_handle
             .get_conversation_item_at(1)
@@ -1646,6 +1664,12 @@ impl SessionActor {
                 }
                 _ => None,
             });
+        if cancel.is_cancelled() {
+            return self.emit_compact_cancelled(auto_trigger).await;
+        }
+        self.persist_compaction_segment(&segment_messages, &generate_session_compact);
+        self.chat_state_handle
+            .record_compaction_at(prompt_index_at_compaction);
         self.persist_compaction_checkpoint(
             &compacted_history,
             prompt_index_at_compaction,
@@ -2009,6 +2033,7 @@ impl SessionActor {
         trigger_info: AutoCompactTriggerInfo,
     ) -> Result<(), acp::Error> {
         use crate::extensions::notification::SessionUpdate as XaiSessionUpdate;
+        let (_cancel, _cancel_scope) = self.compaction.cancel.enter();
         self.record_compaction_variant();
         let tokens_before = self.chat_state_handle.get_total_tokens().await;
         tracing::Span::current().record("pre_tokens", tokens_before as i64);
@@ -2046,8 +2071,6 @@ impl SessionActor {
                 let span = tracing::Span::current();
                 span.record("post_tokens", tokens_after as i64);
                 span.record("success", true);
-                self.signals_handle()
-                    .update_context_usage(tokens_after, trigger_info.context_window);
                 self.send_xai_notification(XaiSessionUpdate::AutoCompactCompleted {
                     tokens_before: Some(trigger_info.tokens_used),
                     tokens_after,
@@ -2061,11 +2084,16 @@ impl SessionActor {
                 let span = tracing::Span::current();
                 span.record("success", false);
                 span.record("error", e.to_string().as_str());
-                if self
-                    .compaction
-                    .auto_compact_suppressed
-                    .load(std::sync::atomic::Ordering::Relaxed)
-                    == SUPPRESS_NONE
+                let cancelled = self.compaction.cancel.is_cancelled()
+                    || e.data.as_ref().and_then(|d| d.as_str()).is_some_and(|s| {
+                        s.contains(crate::session::helpers::session_compact::COMPACT_CANCELLED_MSG)
+                    });
+                if !cancelled
+                    && self
+                        .compaction
+                        .auto_compact_suppressed
+                        .load(std::sync::atomic::Ordering::Relaxed)
+                        == SUPPRESS_NONE
                 {
                     self.send_xai_notification(XaiSessionUpdate::AutoCompactFailed {
                         error: String::new(),
@@ -2253,6 +2281,7 @@ mod inline_auto_compact_flow_tests {
             pending_notifications: Vec::new(),
             notifications_suppressed: false,
             rewindable: false,
+            front_message_committed: false,
             nudges_used_this_session: 0,
         });
         let (chat_event_tx, _chat_event_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -2275,7 +2304,6 @@ mod inline_auto_compact_flow_tests {
                 reasoning_effort: None,
                 stream_tool_calls: None,
                 extract_inline_thinking: None,
-
                 is_workbuddy: false,
             },
             Box::new(xai_chat_state::NullChatPersistence),
@@ -2293,17 +2321,21 @@ mod inline_auto_compact_flow_tests {
             model_auth_memo: std::cell::RefCell::new(None),
             attribution_callback: None,
             auth_manager: None,
+            is_chat_kind: false,
             state,
             notifications: NotificationSender {
                 gateway: GatewaySender::new(gateway_tx),
                 gateway_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
                 persistence_tx,
+                disk_full: crate::session::notifications::idle_disk_full_rx(),
             },
             permissions: PermissionHandle::allow_all(),
             tool_context,
             deny_read_globs: Vec::new(),
             mcp_state: Arc::new(TokioMutex::new(McpState::new(vec![]))),
-            mcp_strategy: McpInitStrategy::Blocking,
+            mcp_strategy: std::cell::Cell::new(McpInitStrategy::Blocking),
+            delivery_tools: std::cell::RefCell::new(Vec::new()),
+            attach_non_interactive: std::cell::Cell::new(false),
             chat_state_handle,
             current_prompt_id: std::sync::Arc::new(std::sync::Mutex::new(None)),
             pending_interactions: std::sync::Arc::new(std::sync::Mutex::new(
@@ -2324,7 +2356,7 @@ mod inline_auto_compact_flow_tests {
             compaction: crate::session::compaction_config::CompactionConfig {
                 threshold_percent: std::cell::Cell::new(threshold_percent),
                 force_compact: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
-                context_window_override: std::cell::Cell::new(None),
+                context_window_override: None,
                 count: std::sync::atomic::AtomicU64::new(0),
                 auto_compact_suppressed: std::sync::atomic::AtomicU8::new(0),
                 previous_model: std::cell::Cell::new(None),
@@ -2333,7 +2365,7 @@ mod inline_auto_compact_flow_tests {
                 tool_choice: crate::util::config::CompactionToolChoice::Auto,
                 prefire: crate::session::compaction_config::PrefireState::default(),
                 prefix_released: std::sync::atomic::AtomicBool::new(false),
-                operation_lock: tokio::sync::Mutex::new(()),
+                cancel: Default::default(),
             },
             memory: crate::session::memory_state::SessionMemory {
                 flush_config: crate::config::MemoryFlushConfig::default(),
@@ -2455,6 +2487,9 @@ mod inline_auto_compact_flow_tests {
             last_recap_main_turn: std::cell::Cell::new(0),
             recap_in_flight: std::cell::Cell::new(false),
             recap_epoch: std::cell::Cell::new(0),
+            turn_summary_task: std::cell::RefCell::new(None),
+            turn_summary_generation: std::cell::Cell::new(0),
+            turn_summary_enabled: false,
             session_turn_active: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             streaming_turn_capture: parking_lot::Mutex::new(
                 crate::session::acp_session::StreamingTurnCapture::default(),
@@ -2469,9 +2504,6 @@ mod inline_auto_compact_flow_tests {
             subagent_token_records: parking_lot::Mutex::new(std::collections::HashMap::new()),
             workspace_ops: xai_grok_workspace::WorkspaceOps::for_test(),
             trace_config_template: std::cell::RefCell::new(None),
-
-            workbuddy_conversation_id: String::new(),
-            workbuddy_acp_connection_id: String::new(),
         }
     }
     /// Test check_auto_compact_needed uses state values.
@@ -3687,6 +3719,7 @@ mod inline_auto_compact_flow_tests {
             message: "prompt is too long".to_string(),
             is_retryable: false,
             retry_after_secs: None,
+            should_retry: None,
             model_metadata: Some(crate::sampling::ResponseModelMetadata {
                 context_window: Some(context_window),
                 max_completion_tokens: None,
@@ -3695,6 +3728,7 @@ mod inline_auto_compact_flow_tests {
             empty_response_context: None,
             doom_loop_triggers: None,
             doom_loop_aborted_at_chunk: None,
+            credential: xai_grok_sampling_types::SentCredential::Unknown,
         }
     }
     /// Primary scenario: remote settings shrinks the context window mid-session.
@@ -3747,10 +3781,12 @@ mod inline_auto_compact_flow_tests {
                     message: "prompt is too long".to_string(),
                     is_retryable: false,
                     retry_after_secs: None,
+                    should_retry: None,
                     model_metadata: None,
                     empty_response_context: None,
                     doom_loop_triggers: None,
                     doom_loop_aborted_at_chunk: None,
+                    credential: xai_grok_sampling_types::SentCredential::Unknown,
                 };
                 assert!(!actor.should_compact_on_error(&err).await);
             })
@@ -3840,150 +3876,6 @@ mod inline_auto_compact_flow_tests {
                 assert!(actor.transcript_hint().is_none());
                 let _ = std::fs::remove_file(&updates_path);
                 let _ = std::fs::remove_dir_all(&session_dir);
-            })
-            .await;
-    }
-}
-
-// ── SetContextWindow handler tests ─────────────────────────────────────
-//
-// `SessionActor::handle_set_context_window` owns the lock/write/compaction
-// critical section. These tests focus on the three contracts surfaced by the
-// review:
-//   * the operation lock is held across the whole mutation (so concurrent
-//     writes cannot interleave);
-//   * the session refuses to resize while a turn is running;
-//   * the locked override survives a sampling-error context-window restore.
-//
-// The tests build a `SessionActor` via the existing test factory and only
-// exercise the parts of the handler that touch the lock + sampling config +
-// override, mocking out compaction. The compaction path is exercised through
-// the existing `run_compact` integration tests.
-
-#[cfg(test)]
-mod set_context_window_tests {
-    use crate::session::acp_session::support::create_test_actor;
-    use crate::session::acp_session::{AgentTask, SessionActor};
-    use crate::session::persistence::PersistenceMsg;
-    use agent_client_protocol as acp;
-    use std::num::NonZeroU64;
-    use tokio::sync::mpsc;
-
-    /// Building block for the focused tests: a test actor with a known
-    /// baseline context window and an empty conversation.
-    async fn fresh_actor(initial_window: u64) -> SessionActor {
-        let (gateway_tx, _gateway_rx) = mpsc::unbounded_channel();
-        let (persistence_tx, _persistence_rx) = mpsc::unbounded_channel();
-        create_test_actor(0, initial_window, 85, gateway_tx, persistence_tx).await
-    }
-
-    /// Successful resize: the locked override is set, the sampling config
-    /// picks up the new value, and no compaction fires because usage is
-    /// empty.
-    #[tokio::test(flavor = "current_thread")]
-    async fn handle_set_context_window_updates_override_and_config() {
-        let local = tokio::task::LocalSet::new();
-        local
-            .run_until(async {
-                let actor = fresh_actor(200_000).await;
-                let actor = std::sync::Arc::new(actor);
-                let new_cw = NonZeroU64::new(64_000).expect("non-zero");
-                let result = actor
-                    .handle_set_context_window(new_cw, /* compact_if_needed */ false)
-                    .await
-                    .expect("handler should succeed");
-                assert_eq!(result.tokens, 64_000);
-                assert_eq!(result.previous_tokens, 200_000);
-                assert!(!result.compacted);
-                assert!(result.compaction_error.is_none());
-                assert_eq!(
-                    actor.compaction.context_window_override.get(),
-                    Some(new_cw),
-                    "override must be locked to the new window"
-                );
-                let cfg = actor
-                    .chat_state_handle
-                    .get_sampling_config()
-                    .await
-                    .expect("sampling config present");
-                assert_eq!(cfg.context_window.get(), 64_000);
-            })
-            .await;
-    }
-
-    /// Resize is rejected with `invalid_request` while a turn is running,
-    /// so the in-flight request is not invalidated mid-flight.
-    #[tokio::test(flavor = "current_thread")]
-    async fn handle_set_context_window_refuses_during_active_turn() {
-        let local = tokio::task::LocalSet::new();
-        local
-            .run_until(async {
-                let actor = fresh_actor(200_000).await;
-                let actor = std::sync::Arc::new(actor);
-                // Simulate an active turn by stuffing `running_task` directly
-                // into the state. The handler guards on `state.running_task`.
-                // We abort the handle when dropping so the spawned task
-                // never actually executes, avoiding LocalSet teardown issues.
-                let abort_handle = tokio::task::spawn_local(async {}).abort_handle();
-                {
-                    let mut state = actor.state.lock().await;
-                    state.running_task = Some(AgentTask {
-                        prompt_id: "active".to_string(),
-                        handle: abort_handle,
-                    });
-                }
-                let new_cw = NonZeroU64::new(64_000).expect("non-zero");
-                let err = actor
-                    .handle_set_context_window(new_cw, true)
-                    .await
-                    .expect_err("must refuse while a turn is running");
-                assert_eq!(err.code, acp::ErrorCode::InvalidRequest);
-                assert!(
-                    actor.compaction.context_window_override.get().is_none(),
-                    "refused resize must leave the override untouched"
-                );
-                if let Some(task) = actor.state.lock().await.running_task.as_ref() {
-                    task.handle.abort();
-                }
-            })
-            .await;
-    }
-
-    /// Two concurrent resize requests must serialize through the operation
-    /// lock: the final `Cell` value reflects the second call, and the
-    /// sampling config matches the lock instead of the in-flight snapshot
-    /// of the first call. The operation lock is a `parking_lot::Mutex<()>`,
-    /// so the test only runs the resize paths sequentially on the same
-    /// task (still single-threaded), asserting that the second call sees
-    /// the first's write when reading under the lock.
-    #[tokio::test(flavor = "current_thread")]
-    async fn handle_set_context_window_serializes_sequential_resizes() {
-        let local = tokio::task::LocalSet::new();
-        local
-            .run_until(async {
-                let actor = std::sync::Arc::new(fresh_actor(200_000).await);
-                actor
-                    .handle_set_context_window(NonZeroU64::new(96_000).unwrap(), false)
-                    .await
-                    .expect("first resize ok");
-                actor
-                    .handle_set_context_window(NonZeroU64::new(48_000).unwrap(), false)
-                    .await
-                    .expect("second resize ok");
-                let final_override = actor
-                    .compaction
-                    .context_window_override
-                    .get()
-                    .expect("override locked");
-                let final_cfg_cw = actor
-                    .chat_state_handle
-                    .get_sampling_config()
-                    .await
-                    .expect("sampling config")
-                    .context_window
-                    .get();
-                assert_eq!(final_cfg_cw, final_override.get());
-                assert_eq!(final_override.get(), 48_000);
             })
             .await;
     }

@@ -1679,6 +1679,19 @@ pub struct Config {
     /// [`crate::config::SubagentsConfig::resolve_max_depth`]).
     #[serde(skip)]
     pub subagents_max_depth: u32,
+    /// Resolved max concurrent subagents (see
+    /// [`crate::config::SubagentsConfig::resolve_max_concurrent`]).
+    #[serde(skip)]
+    pub subagents_max_concurrent: usize,
+    /// Resolved limit behavior when concurrency is exhausted (see
+    /// [`crate::config::SubagentsConfig::resolve_limit_behavior`]).
+    #[serde(skip)]
+    pub subagents_limit_behavior:
+        xai_grok_tools::implementations::grok_build::task::admission::LimitBehavior,
+    /// Resolved max concurrent workflow agents (see
+    /// [`crate::config::SubagentsConfig::resolve_workflow_max_concurrent`]).
+    #[serde(skip)]
+    pub workflow_max_concurrent_agents: usize,
     /// Per-subagent model ID overrides from `[subagents.models]` in config.toml.
     /// Keys are agent names, values are model IDs. Set alongside `subagents_enabled`
     /// from `SubagentsConfig::resolve()`.
@@ -2004,6 +2017,11 @@ impl Default for Config {
             cli_agent_overrides: CliAgentOverrides::default(),
             subagents_enabled: true,
             subagents_max_depth: crate::config::SubagentsConfig::DEFAULT_MAX_DEPTH,
+            subagents_max_concurrent:
+                xai_grok_tools::implementations::grok_build::task::admission::DEFAULT_MAX_CONCURRENT,
+            subagents_limit_behavior: Default::default(),
+            workflow_max_concurrent_agents:
+                crate::session::workflow::host_service::DEFAULT_WORKFLOW_MAX_CONCURRENT_AGENTS,
             subagent_model_overrides: std::collections::HashMap::new(),
             subagent_toggle: std::collections::HashMap::new(),
             subagent_roles: std::collections::HashMap::new(),
@@ -2469,6 +2487,38 @@ impl Config {
             .and_then(|r| r.subagents_max_depth);
         self.subagents_max_depth =
             crate::config::SubagentsConfig::resolve_max_depth(env.as_deref(), sa.max_depth, remote);
+        let env_concurrent = std::env::var(crate::config::SubagentsConfig::ENV_MAX_CONCURRENT).ok();
+        let remote_concurrent = self
+            .remote_settings
+            .as_ref()
+            .and_then(|r| r.subagents_max_concurrent);
+        self.subagents_max_concurrent = crate::config::SubagentsConfig::resolve_max_concurrent(
+            env_concurrent.as_deref(),
+            sa.max_concurrent,
+            remote_concurrent,
+        );
+        let env_limit =
+            std::env::var(crate::config::SubagentsConfig::ENV_LIMIT_BEHAVIOR).ok();
+        let remote_limit = self
+            .remote_settings
+            .as_ref()
+            .and_then(|r| r.subagents_limit_behavior.as_deref());
+        self.subagents_limit_behavior = crate::config::SubagentsConfig::resolve_limit_behavior(
+            env_limit.as_deref(),
+            sa.limit_behavior.as_deref(),
+            remote_limit,
+        );
+        let env_wf = std::env::var(crate::config::SubagentsConfig::ENV_WORKFLOW_MAX_CONCURRENT).ok();
+        let remote_wf = self
+            .remote_settings
+            .as_ref()
+            .and_then(|r| r.workflow_max_concurrent_agents);
+        self.workflow_max_concurrent_agents =
+            crate::config::SubagentsConfig::resolve_workflow_max_concurrent(
+                env_wf.as_deref(),
+                sa.workflow_max_concurrent,
+                remote_wf,
+            );
     }
     /// Resolve all `#[serde(skip)]` runtime fields that have resolver functions.
     ///
@@ -2742,6 +2792,18 @@ impl Config {
             .config(self.features.two_pass_compaction)
             .feature_flag(ff)
             .default(false)
+            .resolve()
+    }
+    /// Per-turn summary reminders gate. Default on.
+    pub(crate) fn is_turn_summary_enabled(&self) -> bool {
+        self.resolve_turn_summary().value
+    }
+    pub(crate) fn resolve_turn_summary(&self) -> Resolved<bool> {
+        let ff = self.remote_settings.as_ref().and_then(|s| s.turn_summary);
+        BoolFlag::env("GROK_TURN_SUMMARY")
+            .config(self.features.turn_summary)
+            .feature_flag(ff)
+            .default(true)
             .resolve()
     }
     /// Server-side doom-loop check policy (the `x-grok-doom-loop-check`
@@ -4985,6 +5047,10 @@ pub struct Features {
     /// compaction. `None` = defer to remote settings / env / default (`false`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub two_pass_compaction: Option<bool>,
+    /// Per-turn summary reminders. `None` = defer to remote settings / env /
+    /// default (`true`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_summary: Option<bool>,
     /// `image_gen` / `/imagine`. `None` = env / remote / default (`true`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image_gen: Option<bool>,
@@ -6327,6 +6393,7 @@ reasoning_effort = "low"
                 args: None,
                 token_ttl_secs: Some(3600),
                 timeout_secs: None,
+                cwd: None,
             },
         );
         let mut entry = test_model_entry("m", "https://litellm.example/v1", None, None, None);
@@ -6408,6 +6475,7 @@ reasoning_effort = "low"
                 args: None,
                 token_ttl_secs: Some(3600),
                 timeout_secs: None,
+                cwd: None,
             },
         );
         let mut entry = test_model_entry("m", "https://litellm.example/v1", None, None, None);
@@ -6708,6 +6776,7 @@ reasoning_effort = "low"
                 args: Some(vec!["--scope".into(), "corp".into()]),
                 token_ttl_secs: Some(3600),
                 timeout_secs: Some(10),
+                cwd: None,
             })
         );
         let resolved = resolve_model_list(&cfg, None);
@@ -6799,6 +6868,7 @@ reasoning_effort = "low"
                 args: None,
                 token_ttl_secs: Some(3600),
                 timeout_secs: None,
+                cwd: None,
             },
         );
         model.auth_provider = Some(provider.clone());
@@ -6825,6 +6895,7 @@ reasoning_effort = "low"
                 args: None,
                 token_ttl_secs: Some(3600),
                 timeout_secs: None,
+                cwd: None,
             },
         );
         model.auth_provider = Some(provider.clone());
@@ -6869,6 +6940,7 @@ reasoning_effort = "low"
                 args: None,
                 token_ttl_secs: None,
                 timeout_secs: None,
+                cwd: None,
             },
         );
         let resolved = resolve_model_list(&cfg, Some(prefetched));

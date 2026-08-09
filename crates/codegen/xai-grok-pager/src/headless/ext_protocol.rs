@@ -54,6 +54,15 @@ pub(crate) fn handle_ext_notification(
         "x.ai/session_notification" | "x.ai/session/update" => {
             decode_session_notification(method, params)
         }
+        "x.ai/leader/version_mismatch" => {
+            match crate::acp::version_mismatch_banner(params) {
+                Some(banner) => tracing::warn!(%banner, "x.ai/leader/version_mismatch"),
+                None => {
+                    tracing::warn!("ignoring x.ai/leader/version_mismatch without usable versions")
+                }
+            }
+            ExtEvent::None
+        }
         _ => ExtEvent::None,
     }
 }
@@ -156,10 +165,6 @@ fn decode_task_completed(method: &str, params: &str) -> ExtEvent {
     }
 }
 
-/// Decode both the current shell's lifecycle updates and optional
-/// per-response events understood by newer/alternate producers. The local
-/// shell does not currently emit `response_started`, `reasoning_completed`, or
-/// `response_completed`; reducers intentionally support operation without them.
 fn decode_session_notification(method: &str, params: &str) -> ExtEvent {
     #[derive(serde::Deserialize)]
     #[serde(rename_all = "snake_case", tag = "sessionUpdate")]
@@ -209,7 +214,7 @@ fn decode_session_notification(method: &str, params: &str) -> ExtEvent {
             #[serde(default)]
             stop_reason: Option<String>,
             #[serde(default)]
-            usage: Option<xai_grok_shell::sampling::rs::ResponseUsage>,
+            usage: Option<xai_grok_shell::extensions::notification::ResponseUsage>,
             #[serde(default)]
             signature: Option<String>,
             #[serde(default)]

@@ -1,14 +1,10 @@
 use crate::agent::subagent::SubagentSpawnContext;
-use crate::session::SessionCommand;
 use agent_client_protocol as acp;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::mpsc;
 use xai_acp_lib::AcpAgentGatewaySender as GatewaySender;
-use xai_grok_tools::implementations::grok_build::task::types::{
-    SubagentOwner, SubagentRequest, SubagentResult, SubagentSpawnRequest,
-};
 pub(crate) type GatewayOut = <acp::AgentSide as xai_acp_lib::AcpSide>::OutMessage;
 pub(crate) fn test_gateway() -> GatewaySender {
     let (tx, _rx) = mpsc::unbounded_channel();
@@ -19,24 +15,11 @@ pub(crate) fn test_gateway_with_receiver() -> (GatewaySender, mpsc::UnboundedRec
     let (tx, rx) = mpsc::unbounded_channel();
     (GatewaySender::new(tx), rx)
 }
-/// `ctx_with_toggle` with a wired `parent_cmd_tx`.
-pub(crate) fn ctx_with_toggle_and_cmd_tx(
-    toggle: HashMap<String, bool>,
-) -> (
-    SubagentSpawnContext,
-    mpsc::UnboundedReceiver<SessionCommand>,
-) {
-    let mut ctx = ctx_with_toggle(toggle);
-    let (tx, rx) = mpsc::unbounded_channel();
-    ctx.parent_cmd_tx = Some(tx);
-    (ctx, rx)
-}
 pub(crate) fn ctx_with_toggle(toggle: HashMap<String, bool>) -> SubagentSpawnContext {
     let (tx, _rx) = mpsc::unbounded_channel();
     SubagentSpawnContext {
         lsp: None,
         process_scope: None,
-        subagents_max_depth: 0,
         parent_max_turns: None,
         client_hooks: Default::default(),
         sampling_config: xai_grok_sampler::SamplerConfig {
@@ -56,7 +39,6 @@ pub(crate) fn ctx_with_toggle(toggle: HashMap<String, bool>) -> SubagentSpawnCon
             force_http1: false,
             max_retries: None,
             stream_tool_calls: false,
-            extract_inline_thinking: false,
             idle_timeout_secs: None,
             client_identifier: None,
             reasoning_effort: None,
@@ -70,9 +52,9 @@ pub(crate) fn ctx_with_toggle(toggle: HashMap<String, bool>) -> SubagentSpawnCon
             compaction_at_tokens: None,
             doom_loop_recovery: None,
             header_injector: None,
-            user_agent: None,
-
             is_workbuddy: false,
+            extract_inline_thinking: false,
+            user_agent: None,
         },
         alpha_test_key: None,
         auth_method_id: acp::AuthMethodId::new("test"),
@@ -126,6 +108,9 @@ pub(crate) fn ctx_with_toggle(toggle: HashMap<String, bool>) -> SubagentSpawnCon
         gcs_upload_method: None,
         hook_registry: None,
         parent_depth: 0,
+        subagents_max_depth: xai_grok_tools::implementations::grok_build::task::MAX_SUBAGENT_DEPTH,
+        workflow_max_concurrent_agents:
+            crate::session::workflow::host_service::DEFAULT_WORKFLOW_MAX_CONCURRENT_AGENTS,
         inference_idle_timeout_secs: 600,
         auto_compact_threshold_tiers: crate::agent::subagent::AutoCompactThresholdTiers::default(),
         permission_handle: None,
@@ -159,35 +144,6 @@ pub(crate) fn ctx_with_toggle(toggle: HashMap<String, bool>) -> SubagentSpawnCon
         parent_notification_handle: None,
         parent_scheduler_handle: None,
     }
-}
-pub(crate) fn make_request(
-    subagent_type: &str,
-) -> (SubagentSpawnRequest, oneshot::Receiver<SubagentResult>) {
-    let (tx, rx) = oneshot::channel();
-    let req = SubagentRequest {
-        id: uuid::Uuid::now_v7().to_string(),
-        prompt: "do something".into(),
-        description: "test task".into(),
-        subagent_type: subagent_type.into(),
-        parent_session_id: "test-parent".into(),
-        parent_prompt_id: Some("parent-prompt".into()),
-        resume_from: None,
-        cwd: None,
-        runtime_overrides: Default::default(),
-        run_in_background: false,
-        surface_completion: true,
-        await_to_completion: false,
-        fork_context: false,
-        owner: SubagentOwner::Task,
-        cancel_token: tokio_util::sync::CancellationToken::new(),
-    };
-    (
-        SubagentSpawnRequest {
-            request: Box::new(req),
-            result_tx: tx,
-        },
-        rx,
-    )
 }
 #[derive(Default)]
 pub(crate) struct DummyLspDispatch;

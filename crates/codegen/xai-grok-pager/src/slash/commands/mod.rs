@@ -3,13 +3,11 @@
 //! Each command lives in its own submodule. This module re-exports
 //! command structs and provides `builtin_commands()` for registry
 //! construction.
-pub mod adhd;
 pub mod always_approve;
 pub mod announcements;
 pub mod auto;
 pub mod btw;
 pub mod cd;
-pub mod client;
 pub mod compact;
 pub mod compact_mode;
 pub mod config_agents;
@@ -26,7 +24,6 @@ pub mod effort_levels;
 pub mod exit;
 pub mod expand;
 pub mod export;
-pub mod fallback;
 pub mod feedback;
 pub mod find;
 pub mod fork;
@@ -38,16 +35,19 @@ pub mod imagine;
 pub mod imagine_video;
 pub mod import_claude;
 pub mod jump;
+pub mod login;
+pub mod logout;
 pub mod loop_cmd;
 pub mod mcps;
 pub mod model;
 pub mod multiline;
 pub mod new;
 pub mod personas;
+pub mod provider;
 pub mod plan;
 pub mod plugin;
+pub mod client;
 pub mod privacy;
-pub mod provider;
 pub mod queue;
 pub mod recap;
 pub mod release_notes;
@@ -84,11 +84,11 @@ pub fn builtin_commands() -> Vec<Arc<dyn SlashCommand>> {
         Arc::new(help::HelpCommand),
         Arc::new(docs::DocsCommand),
         Arc::new(home::HomeCommand),
+        Arc::new(delete::DeleteCommand),
         Arc::new(new::NewCommand),
         Arc::new(fork::ForkCommand),
         Arc::new(compact::CompactCommand),
         Arc::new(copy::CopyCommand),
-        Arc::new(delete::DeleteCommand),
         Arc::new(find::FindCommand),
         Arc::new(history::HistoryCommand),
         Arc::new(export::ExportCommand),
@@ -96,6 +96,7 @@ pub fn builtin_commands() -> Vec<Arc<dyn SlashCommand>> {
         Arc::new(edit_prompt::EditPromptCommand),
         Arc::new(expand::ExpandCommand),
         Arc::new(context::ContextCommand),
+        // Screen-mode switchers: visible only in the opposite mode.
         Arc::new(screen_mode_switch::ScreenModeSwitchCommand::minimal()),
         Arc::new(screen_mode_switch::ScreenModeSwitchCommand::fullscreen()),
         Arc::new(model::ModelCommand),
@@ -126,7 +127,6 @@ pub fn builtin_commands() -> Vec<Arc<dyn SlashCommand>> {
         Arc::new(btw::BtwCommand),
         Arc::new(recap::RecapCommand),
         Arc::new(doctor::DoctorCommand),
-        Arc::new(tutorial::TutorialCommand),
         Arc::new(voice::VoiceCommand),
         Arc::new(loop_cmd::LoopCommand),
         Arc::new(imagine::ImagineCommand),
@@ -138,19 +138,22 @@ pub fn builtin_commands() -> Vec<Arc<dyn SlashCommand>> {
         Arc::new(privacy::PrivacyCommand),
         Arc::new(rewind::RewindCommand),
         Arc::new(jump::JumpCommand),
+        Arc::new(login::LoginCommand),
+        Arc::new(logout::LogoutCommand),
         Arc::new(import_claude::ImportClaudeCommand),
         Arc::new(usage::UsageCommand),
         Arc::new(queue::QueueCommand),
         Arc::new(tasks::TasksCommand),
         Arc::new(release_notes::ReleaseNotesCommand),
+        Arc::new(tutorial::TutorialCommand),
         Arc::new(config_agents::ConfigAgentsCommand),
-        Arc::new(client::ClientCommand),
         Arc::new(personas::PersonasCommand),
         Arc::new(provider::ProviderCommand),
-        Arc::new(fallback::FallbackCommand),
-        Arc::new(adhd::AdhdCommand),
+        // Hidden easter egg: never listed, runs on bare `/gboom`.
         Arc::new(gboom::GboomCommand),
+        // Hidden diagnostic: never listed, toggles the scroll-debug HUD.
         Arc::new(scroll_debug::ScrollDebugCommand),
+        // Debug toggles: always registered, listed only on debug binaries.
         Arc::new(debug::DebugCommand),
     ]
 }
@@ -159,7 +162,7 @@ mod tests {
     use super::*;
     use crate::acp::model_state::ModelState;
     use crate::app::actions::Action;
-    use crate::slash::command::{CommandExecCtx, CommandResult};
+    use crate::slash::command::{CommandExecCtx, CommandResult, SlashCommand};
     use crate::slash::registry::CommandRegistry;
     use agent_client_protocol as acp;
     /// Build a ModelState with two models for testing.
@@ -196,6 +199,7 @@ mod tests {
             bundle_state: &DEFAULT_BUNDLE_STATE,
             screen_mode: crate::app::ScreenMode::Inline,
             billing_surface_visible: true,
+            usage_command_visible: true,
             pager_state: crate::settings::PagerLocalSnapshot {
                 multiline_mode: false,
                 yolo_mode: false,
@@ -243,114 +247,6 @@ mod tests {
         assert!(reg.get("loop").is_some());
     }
     #[test]
-    fn shell_collision_contract_covers_every_pager_command_and_alias() {
-        const SHELL_RESERVED: &[&str] = &[
-            "agents",
-            "agents-dashboard",
-            "always-approve",
-            "announcements",
-            "auto",
-            "btw",
-            "cd",
-            "changelog",
-            "chat",
-            "clear",
-            "cloud",
-            "compact",
-            "compact-mode",
-            "config",
-            "config-agents",
-            "context",
-            "copy",
-            "cost",
-            "dashboard",
-            "debug",
-            "docs",
-            "doctor",
-            "edit-prompt",
-            "effort",
-            "think",
-            "exit",
-            "expand",
-            "export",
-            "feedback",
-            "find",
-            "fork",
-            "full",
-            "fullscreen",
-            "gboom",
-            "guides",
-            "help",
-            "history",
-            "home",
-            "hooks",
-            "howto",
-            "imagine",
-            "imagine-video",
-            "import-claude",
-            "jump",
-            "log",
-            "loop",
-            "m",
-            "marketplace",
-            "mcps",
-            "minimal",
-            "ml",
-            "model",
-            "multiline",
-            "new",
-            "personas",
-            "plan",
-            "plan-view",
-            "plugins",
-            "preferences",
-            "prefs",
-            "privacy",
-            "p",
-            "provider",
-            "providers",
-            "queue",
-            "quit",
-            "recap",
-            "release-notes",
-            "remember",
-            "rename",
-            "resume",
-            "rewind",
-            "scroll-debug",
-            "session-info",
-            "sessions",
-            "settings",
-            "share",
-            "show-plan",
-            "skills",
-            "summarize",
-            "tasks",
-            "terminal-check",
-            "terminal-info",
-            "terminal-setup",
-            "theme",
-            "timeline",
-            "timestamps",
-            "title",
-            "toggle-mouse-reporting",
-            "transcript",
-            "t",
-            "usage",
-            "view-plan",
-            "vim-mode",
-            "voice",
-            "welcome",
-            "workflows",
-            "yolo",
-        ];
-        for command in builtin_commands() {
-            for key in std::iter::once(command.name()).chain(command.aliases().iter().copied()) {
-                assert!(SHELL_RESERVED.contains(&key), "unreserved pager key {key}");
-            }
-        }
-    }
-    #[test]
     fn builtin_registry_lookup_by_alias() {
         let reg = CommandRegistry::new(builtin_commands());
         assert!(reg.get("exit").is_some());
@@ -359,6 +255,7 @@ mod tests {
         assert!(reg.get("welcome").is_some());
         assert!(reg.get("show-plan").is_some());
         assert!(reg.get("plan-view").is_some());
+        assert!(reg.get("undo").is_some());
     }
     #[test]
     fn aliases_resolve_to_same_command() {
@@ -367,11 +264,14 @@ mod tests {
         let quit_cmd = reg.get("quit").unwrap();
         assert_eq!(exit_cmd.name(), quit_cmd.name());
         let doctor = reg.get("doctor").unwrap();
-        assert_eq!(doctor.usage(), "/doctor");
+        assert_eq!(doctor.usage(), "/doctor [fix [FIX]]");
         for alias in ["terminal-setup", "terminal-check", "terminal-info"] {
             assert_eq!(reg.get(alias).unwrap().name(), doctor.name());
             assert_eq!(reg.get(alias).unwrap().usage(), doctor.usage());
         }
+        let rewind = reg.get("rewind").unwrap();
+        assert_eq!(reg.get("undo").unwrap().name(), rewind.name());
+        assert_eq!(reg.get("undo").unwrap().usage(), rewind.usage());
     }
     #[test]
     fn exit_returns_quit_action() {
@@ -396,6 +296,19 @@ mod tests {
         let cmd = home::HomeCommand;
         let result = cmd.run(&mut ctx, "");
         assert!(matches!(result, CommandResult::Action(Action::ExitSession)));
+    }
+    #[test]
+    fn delete_requires_session_and_dispatches() {
+        let models = ModelState::default();
+        let cmd = delete::DeleteCommand;
+        let mut ctx = make_ctx(&models);
+        assert!(matches!(cmd.run(&mut ctx, ""), CommandResult::Error(_)));
+        let session_id = acp::SessionId::new("sess-delete");
+        ctx.session_id = Some(&session_id);
+        assert!(matches!(
+            cmd.run(&mut ctx, ""),
+            CommandResult::Action(Action::DeleteCurrentSession)
+        ));
     }
     #[test]
     fn view_plan_returns_show_plan_action() {
@@ -521,6 +434,7 @@ mod tests {
             cwd: std::path::Path::new("."),
             has_session_announcements: false,
             billing_surface_visible: true,
+            usage_command_visible: true,
             workflows_available: true,
             screen_mode: crate::app::ScreenMode::Fullscreen,
         };
@@ -546,6 +460,7 @@ mod tests {
             cwd: std::path::Path::new("."),
             has_session_announcements: false,
             billing_surface_visible: true,
+            usage_command_visible: true,
             workflows_available: true,
             screen_mode: crate::app::ScreenMode::Fullscreen,
         };
@@ -588,9 +503,13 @@ mod tests {
         ));
     }
     fn run_usage(args: &str, billing: bool) -> CommandResult {
+        run_usage_gated(args, billing, true)
+    }
+    fn run_usage_gated(args: &str, billing: bool, usage_cmd: bool) -> CommandResult {
         let models = ModelState::default();
         let mut ctx = make_ctx(&models);
         ctx.billing_surface_visible = billing;
+        ctx.usage_command_visible = usage_cmd;
         usage::UsageCommand.run(&mut ctx, args)
     }
     #[test]
@@ -629,6 +548,7 @@ mod tests {
             cwd: std::path::Path::new("."),
             has_session_announcements: false,
             billing_surface_visible: true,
+            usage_command_visible: true,
             workflows_available: true,
             screen_mode: crate::app::ScreenMode::Fullscreen,
         };
@@ -645,6 +565,7 @@ mod tests {
             cwd: std::path::Path::new("."),
             has_session_announcements: false,
             billing_surface_visible: true,
+            usage_command_visible: true,
             workflows_available: false,
             screen_mode: crate::app::ScreenMode::Fullscreen,
         };
@@ -663,6 +584,26 @@ mod tests {
                 .get("usage")
                 .is_some()
         );
+    }
+    #[test]
+    fn usage_hidden_when_command_not_visible() {
+        let models = ModelState::default();
+        let ctx = crate::slash::command::AppCtx {
+            models: &models,
+            cwd: std::path::Path::new("."),
+            has_session_announcements: false,
+            billing_surface_visible: true,
+            usage_command_visible: false,
+            workflows_available: false,
+            screen_mode: crate::app::ScreenMode::Fullscreen,
+        };
+        assert!(!usage::UsageCommand.visible(&ctx));
+        assert!(!usage::UsageCommand.takes_args_now(&ctx));
+        assert!(usage::UsageCommand.suggest_args(&ctx, "").is_none());
+        assert!(matches!(
+            run_usage_gated("", true, false),
+            CommandResult::Error(msg) if msg.contains("not available")
+        ));
     }
     #[test]
     fn cd_registered_in_builtin_commands() {
@@ -711,6 +652,7 @@ mod tests {
             cwd: std::path::Path::new("."),
             has_session_announcements: false,
             billing_surface_visible: true,
+            usage_command_visible: true,
             workflows_available: true,
             screen_mode: crate::app::ScreenMode::Fullscreen,
         };
@@ -798,5 +740,47 @@ mod tests {
         assert!(reg.get("voice").is_some());
         reg.set_voice_visible(false);
         assert!(reg.get("voice").is_none());
+    }
+    /// Every pager builtin trigger key must appear in the shell's
+    /// `PAGER_COMMAND_KEYS`. Add new names there when adding a pager builtin.
+    #[test]
+    fn pager_builtin_triggers_are_reserved_in_shell() {
+        let reserved: std::collections::HashSet<&str> = xai_grok_shell::session::PAGER_COMMAND_KEYS
+            .iter()
+            .copied()
+            .collect();
+        let missing: Vec<String> = builtin_commands()
+            .iter()
+            .flat_map(|cmd| {
+                std::iter::once(cmd.name().to_string())
+                    .chain(cmd.aliases().iter().map(|a| a.to_string()))
+            })
+            .filter(|key| !reserved.contains(key.as_str()))
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "pager builtin trigger keys missing from the shell's \
+             PAGER_COMMAND_KEYS (xai-grok-shell/src/session/slash_commands.rs); \
+             a skill with one of these names would shadow or be shadowed by \
+             the pager builtin: {missing:?}"
+        );
+    }
+    #[test]
+    fn pager_blocked_acp_names_are_reserved_in_shell() {
+        let reserved: std::collections::HashSet<&str> = xai_grok_shell::session::PAGER_COMMAND_KEYS
+            .iter()
+            .copied()
+            .collect();
+        let missing: Vec<&str> = crate::slash::registry::BLOCKED_ACP_NAMES
+            .iter()
+            .copied()
+            .filter(|name| !reserved.contains(name))
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "pager BLOCKED_ACP_NAMES missing from PAGER_COMMAND_KEYS; \
+             a skill with one of these names is advertised bare and then \
+             dropped: {missing:?}"
+        );
     }
 }

@@ -508,6 +508,7 @@ fn render_list(buf: &mut Buffer, area: Rect, st: &mut TutorialState, compact: bo
         &[],
         Some(theme.bg_base),
         false,
+        0,
         mca.inner_x + mca.inner_width.saturating_sub(1),
     );
     st.picker.hit_areas = Some(PickerHitAreas {

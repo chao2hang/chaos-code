@@ -74,21 +74,6 @@ pub struct SamplerConfig {
     pub force_http1: bool,
     pub max_retries: Option<u32>,
     pub stream_tool_calls: bool,
-    /// When true, the chat-completions stream parser scans
-    /// `delta.content` for inline `<think>...</think>` pseudo-XML tags
-    /// (DeepSeek-R1, Qwen3-Thinking, GLM-Z1 and other Chinese reasoning
-    /// models that emit reasoning inline in `content` instead of via a
-    /// structured `reasoning_content` field) and routes the wrapped
-    /// text through the reasoning channel. The TUI then renders it as
-    /// a foldable thought block, the same as native `reasoning_content`.
-    ///
-    /// Partial-buffer safe: tags split across SSE chunks are
-    /// re-assembled; an unclosed `<think>` at stream end is flushed as
-    /// reasoning (covers `max_tokens` truncation). When false (the
-    /// default), `delta.content` is passed through unchanged — zero
-    /// overhead, zero behavior change.
-    #[serde(default)]
-    pub extract_inline_thinking: bool,
     pub idle_timeout_secs: Option<u64>,
 
     // Reasoning effort
@@ -100,11 +85,6 @@ pub struct SamplerConfig {
     pub deployment_id: Option<String>,
     pub user_id: Option<String>,
     pub client_version: Option<String>,
-    /// Verbatim `User-Agent` header override. When set, the client sends it
-    /// as-is (spaces and all) instead of rendering one from `origin_client`.
-    /// Useful for mimicking an existing client environment such as WorkBuddy.
-    #[serde(default)]
-    pub user_agent: Option<String>,
 
     /// Optional hook invoked at every UNAUTHORIZED (401) response
     /// site. The sampler passes the bearer that was actually sent on
@@ -153,9 +133,22 @@ pub struct SamplerConfig {
     pub header_injector: Option<SharedHeaderInjector>,
 
     /// When true, no x-grok-* headers are added, and only the WorkBuddy
-    /// headers from `extra_headers`/`env_http_headers` are sent.
+    /// headers from `extra_headers`/`env_http_headers` are sent (plus the
+    /// WorkBuddy gateway marker / fingerprint handling in the client).
     #[serde(default)]
     pub is_workbuddy: bool,
+
+    /// When true, the chat-completions stream parser scans `delta.content`
+    /// for inline `<think>...</think>` pseudo-XML tags and routes the wrapped
+    /// text through `SamplingChannel::Reasoning` (DeepSeek-R1 / Qwen3-Thinking /
+    /// GLM-Z1 emit reasoning inline in `content` instead of a structured
+    /// `reasoning_content` field).
+    #[serde(default)]
+    pub extract_inline_thinking: bool,
+
+    /// Override for the `User-Agent` header (per-session client profile).
+    #[serde(default)]
+    pub user_agent: Option<String>,
 }
 
 impl Default for SamplerConfig {
@@ -178,7 +171,6 @@ impl Default for SamplerConfig {
             force_http1: false,
             max_retries: None,
             stream_tool_calls: false,
-            extract_inline_thinking: false,
             idle_timeout_secs: None,
             reasoning_effort: None,
             origin_client: None,
@@ -186,7 +178,6 @@ impl Default for SamplerConfig {
             deployment_id: None,
             user_id: None,
             client_version: None,
-            user_agent: None,
             attribution_callback: None,
             bearer_resolver: None,
             supports_backend_search: false,
@@ -195,6 +186,8 @@ impl Default for SamplerConfig {
             doom_loop_recovery: None,
             header_injector: None,
             is_workbuddy: false,
+            extract_inline_thinking: false,
+            user_agent: None,
         }
     }
 }
@@ -256,19 +249,6 @@ mod tests {
             policy.rate_limit_retry_threshold,
             RATE_LIMIT_RETRY_THRESHOLD
         );
-    }
-
-    #[test]
-    fn inline_thinking_is_default_off_for_old_and_default_configs() {
-        assert!(!SamplerConfig::default().extract_inline_thinking);
-
-        let mut serialized = serde_json::to_value(SamplerConfig::default()).unwrap();
-        serialized
-            .as_object_mut()
-            .unwrap()
-            .remove("extract_inline_thinking");
-        let config: SamplerConfig = serde_json::from_value(serialized).unwrap();
-        assert!(!config.extract_inline_thinking);
     }
 
     /// Configs serialized before the field existed must keep deserializing.

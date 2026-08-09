@@ -73,9 +73,8 @@ const fn const_str_eq(a: &str, b: &str) -> bool {
     true
 }
 
-/// Debug-only key override for tests; never enabled by default in a release build.
-#[cfg(any(all(test, debug_assertions), feature = "test-support"))]
-#[doc(hidden)]
+/// Debug-only key override for tests (`test` or `test-signing-seam`); never release.
+#[cfg(all(test, debug_assertions))]
 pub mod test_seam {
     use std::cell::RefCell;
     use std::sync::RwLock;
@@ -136,7 +135,7 @@ pub mod test_seam {
 }
 
 fn with_embedded_keys<R>(f: impl FnOnce(&[(&str, &[u8])]) -> R) -> R {
-    #[cfg(any(all(test, debug_assertions), feature = "test-support"))]
+    #[cfg(all(test, debug_assertions))]
     {
         test_seam::with_override(|overridden| match overridden {
             Some(keys) => {
@@ -149,7 +148,7 @@ fn with_embedded_keys<R>(f: impl FnOnce(&[(&str, &[u8])]) -> R) -> R {
             None => f(EMBEDDED_DEPLOYMENT_CONFIG_PUBKEYS),
         })
     }
-    #[cfg(not(any(all(test, debug_assertions), feature = "test-support")))]
+    #[cfg(not(all(test, debug_assertions)))]
     {
         f(EMBEDDED_DEPLOYMENT_CONFIG_PUBKEYS)
     }

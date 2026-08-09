@@ -107,7 +107,7 @@ fn doctor_fix_without_id_lists_tmux_fixes_from_current_probe_evidence() {
     for handle in ["tmux-clipboard", "dcs-passthrough"] {
         assert!(stdout.contains(handle), "{stdout}");
     }
-    assert!(!stdout.contains("设置本地 SSH 包装"), "{stdout}");
+    assert!(!stdout.contains("Set up local SSH wrapping"), "{stdout}");
 }
 
 #[test]
@@ -152,7 +152,7 @@ fn doctor_tmux_fix_probes_are_bounded_and_never_write_on_timeout() {
         assert!(started.elapsed() < std::time::Duration::from_secs(12));
         if actual.len() == 2 {
             assert!(output.status.success());
-            assert_eq!(output.stdout, "此处没有可用的自动修复。\n".as_bytes());
+            assert_eq!(output.stdout, b"No automatic fixes are available here.\n");
         } else {
             assert_eq!(output.status.code(), Some(1));
         }
@@ -315,9 +315,10 @@ fn doctor_irrelevant_unsafe_byobu_does_not_break_ssh_or_plain_tmux() {
 #[test]
 #[ignore = "spawns the real pager binary; CI/Bazel provides PAGER_BINARY"]
 fn doctor_hostile_home_and_byobu_create_no_config_files() {
-    let binary =
-        dunce::canonicalize(pager_binary().expect("real pager binary is required when selected"))
-            .unwrap();
+    let binary = pager_binary()
+        .expect("real pager binary is required when selected")
+        .canonicalize()
+        .unwrap();
     let temp = tempfile::tempdir().unwrap();
     let home = temp.path().join("home");
     let grok_home = temp.path().join("qhome");
@@ -364,7 +365,7 @@ fn doctor_fix_without_id_lists_only_applicable_automatic_fixes() {
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(
-        stdout.contains("请在本地电脑运行：chaos doctor fix ssh-wrap"),
+        stdout.contains("On your local computer, run: grok doctor fix ssh-wrap"),
         "{stdout}"
     );
     assert!(!home.join(".bashrc").exists());
@@ -389,7 +390,7 @@ fn doctor_fix_without_id_lists_only_applicable_automatic_fixes() {
     assert!(output.status.success());
     assert_eq!(
         String::from_utf8(output.stdout).unwrap(),
-        "此处没有可用的自动修复。\n"
+        "No automatic fixes are available here.\n"
     );
 }
 
@@ -435,17 +436,20 @@ fn doctor_tmux_fix_yes_writes_only_actual_home_tmux_config() {
     );
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(
-        stdout.contains("已在") && stdout.contains("添加 `set -g set-clipboard on`"),
+        stdout.contains("Added `set -g set-clipboard on`"),
         "{stdout}"
     );
-    assert!(stdout.contains("请用 `tmux source-file"), "{stdout}");
     assert!(
-        stdout.contains("请再次运行 /doctor 以验证生效设置"),
+        stdout.contains("Reload tmux with `tmux source-file"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("Run /doctor again to verify the live setting"),
         "{stdout}"
     );
     assert_eq!(
         std::fs::read_to_string(home.join(".tmux.conf")).unwrap(),
-        "# >>> chaos doctor >>>\n# >>> terminal.tmux-clipboard >>>\nset -g set-clipboard on\n# <<< terminal.tmux-clipboard <<<\n# <<< chaos doctor <<<"
+        "# >>> grok doctor >>>\n# >>> terminal.tmux-clipboard >>>\nset -g set-clipboard on\n# <<< terminal.tmux-clipboard <<<\n# <<< grok doctor <<<"
     );
     assert!(!grok_home.join(".tmux.conf").exists());
 }
@@ -476,14 +480,14 @@ fn doctor_fix_yes_writes_only_actual_home_shell_rc() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.contains("修复：terminal.ssh-wrap"));
+    assert!(stdout.contains("Fix: terminal.ssh-wrap"));
     assert!(stdout.contains("ssh -f"));
     assert!(stdout.contains("ControlPersist"));
     assert!(stdout.contains("~^Z"));
     assert!(stdout.contains("command ssh"));
     assert_eq!(
         std::fs::read_to_string(home.join(".bashrc")).unwrap(),
-        "# >>> chaos doctor >>>\n# >>> terminal.ssh-wrap >>>\nalias ssh='chaos wrap ssh'\n# <<< terminal.ssh-wrap <<<\n# <<< chaos doctor <<<"
+        "# >>> grok doctor >>>\n# >>> terminal.ssh-wrap >>>\nalias ssh='grok wrap ssh'\n# <<< terminal.ssh-wrap <<<\n# <<< grok doctor <<<"
     );
     assert!(!grok_home.join(".bashrc").exists());
 }
@@ -511,7 +515,7 @@ fn doctor_fix_safety_boundaries_are_process_isolated() {
     assert_eq!(output.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("发现已有 SSH 别名或函数")
+        stderr.contains("Grok found an existing SSH alias or function")
             && stderr.contains(&conflict.display().to_string()),
         "{stderr}"
     );
@@ -530,8 +534,11 @@ fn doctor_fix_safety_boundaries_are_process_isolated() {
         &[],
     );
     assert_eq!(output.status.code(), Some(1));
-    assert!(String::from_utf8_lossy(&output.stdout).contains("修复：terminal.ssh-wrap"));
-    assert!(String::from_utf8_lossy(&output.stderr).contains("未确认无法应用此修复"));
+    assert!(String::from_utf8_lossy(&output.stdout).contains("Fix: terminal.ssh-wrap"));
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("Cannot apply this fix without confirmation")
+    );
     assert!(!conflict.exists());
 
     let output = run_pager(
@@ -543,7 +550,9 @@ fn doctor_fix_safety_boundaries_are_process_isolated() {
         &[("SSH_CONNECTION", "1 2 3 4")],
     );
     assert_eq!(output.status.code(), Some(1));
-    assert!(String::from_utf8_lossy(&output.stderr).contains("请在本地电脑运行此修复"));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("Run this fix on your local computer")
+    );
     assert!(!conflict.exists());
 }
 

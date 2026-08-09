@@ -56,7 +56,11 @@ fn acp_response_completed_emits_usage_line() {
     let out = r.reduce(StreamEvent::ResponseCompleted {
         message_id: Some("msg_1".into()),
         stop_reason: Some("tool_use".into()),
-        usage: Some(response_usage(5, 2, 0, 0)),
+        usage: Some(ResponseUsage {
+            input_tokens: 5,
+            output_tokens: 2,
+            ..Default::default()
+        }),
         signature: Some("sig".into()),
         stop_sequence: None,
     });

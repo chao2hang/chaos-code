@@ -47,6 +47,7 @@ pub(crate) fn refresh_open_settings_modals(app: &mut AppView) {
     let ui_snapshot = app.current_ui.clone();
     // Capture app-level fields before the mut-borrow loop.
     let coding_data_sharing_opt_out_from_app = app.coding_data_retention_opt_out;
+    let coding_data_sharing_lock_from_app = app.coding_data_sharing_lock();
     let show_tips_from_app = app.show_tips;
     let auto_update_from_app = app.auto_update;
     let respect_manual_folds_from_app = app.appearance.scrollback.scroll.respect_manual_folds;
@@ -81,6 +82,7 @@ pub(crate) fn refresh_open_settings_modals(app: &mut AppView) {
                     .map(|(id, info)| (info.name.clone(), id.clone()))
                     .collect(),
                 coding_data_sharing_opt_out: coding_data_sharing_opt_out_from_app,
+                coding_data_sharing_lock: coding_data_sharing_lock_from_app,
                 // Prefer optimistic pending over confirmed active.
                 plan_mode_active: agent.plan_mode_pending.unwrap_or(agent.plan_mode_active),
                 show_tips: show_tips_from_app,
@@ -92,6 +94,9 @@ pub(crate) fn refresh_open_settings_modals(app: &mut AppView) {
                 ask_user_question_timeout_enabled: ask_user_question_timeout_enabled_from_app,
                 auto_retry_incomplete_end_turn: auto_retry_incomplete_end_turn_from_app,
                 voice_stt_language: voice_stt_language_from_app.clone(),
+                scheduler_background_loops: agent
+                    .scheduler_background_loops
+                    .unwrap_or(app.scheduler_background_loops_seed),
             };
         }
     }
@@ -118,7 +123,7 @@ pub(in crate::app::dispatch) fn dispatch_open_command_palette(app: &mut AppView)
     agent.active_modal = Some(ActiveModal::CommandPalette {
         entries: crate::views::modal::default_palette_entries(
             agent.sharing_enabled,
-            agent.prompt.slash_controller.screen_mode(),
+            &agent.prompt.slash_controller,
         ),
         // Type-to-find: open in input mode (matches Ctrl+P).
         state: crate::views::picker::PickerState::input_active(),
@@ -146,12 +151,33 @@ pub(in crate::app::dispatch) fn dispatch_open_howto_guides(app: &mut AppView) ->
 
 /// Open the settings modal. Reads the live `UiConfig` snapshot
 /// (sans-IO). Single-instance: `debug_assert!` catches routing bugs.
-pub(in crate::app::dispatch) fn dispatch_open_settings(app: &mut AppView) -> Vec<Effect> {
+pub(in crate::app::dispatch) fn dispatch_open_settings(
+    app: &mut AppView,
+    focus_key: Option<&'static str>,
+) -> Vec<Effect> {
     use crate::views::modal::ActiveModal;
     use crate::views::settings_modal::SettingsModalState;
 
-    let ActiveView::Agent(id) = app.active_view else {
-        return vec![];
+    let mut effects = vec![];
+    let id = match app.active_view {
+        ActiveView::Agent(id) => id,
+        _ => {
+            if let Some(existing) = app.agents.keys().next().copied() {
+                crate::app::dispatch::ctx::switch_to_agent(
+                    app,
+                    existing,
+                    crate::app::dispatch::ctx::SwitchCause::Picker,
+                );
+                existing
+            } else {
+                let (new_id, create_effects) =
+                    crate::app::dispatch::session::lifecycle::dispatch_new_session_inner_with_id(
+                        app, None,
+                    );
+                effects.extend(create_effects);
+                new_id
+            }
+        }
     };
     // Snapshot the registry + UiConfig + pager-local state BEFORE the
     // mutable borrow on `agent` so the borrow checker is happy.
@@ -159,6 +185,7 @@ pub(in crate::app::dispatch) fn dispatch_open_settings(app: &mut AppView) -> Vec
     let ui_snapshot = app.current_ui.clone();
     // Capture app-level fields before the mut-borrow on the agent.
     let coding_data_sharing_opt_out_from_app = app.coding_data_retention_opt_out;
+    let coding_data_sharing_lock_from_app = app.coding_data_sharing_lock();
     let show_tips_from_app = app.show_tips;
     let auto_update_from_app = app.auto_update;
     let respect_manual_folds_from_app = app.appearance.scrollback.scroll.respect_manual_folds;
@@ -166,22 +193,26 @@ pub(in crate::app::dispatch) fn dispatch_open_settings(app: &mut AppView) -> Vec
     let ask_user_question_timeout_enabled_from_app = app.ask_user_question_timeout_enabled;
     let auto_retry_incomplete_end_turn_from_app = app.auto_retry_incomplete_end_turn;
     let voice_stt_language_from_app = app.voice_config.language.clone();
+    let scheduler_background_loops_seed = app.scheduler_background_loops_seed;
 
     let Some(agent) = app.agents.get_mut(&id) else {
-        return vec![];
+        return effects;
     };
 
-    debug_assert!(
-        !matches!(&agent.active_modal, Some(ActiveModal::Settings { .. })),
-        "OpenSettings dispatched while settings modal is already open — input routing bug"
-    );
-    // Defensive close in release builds: silent no-op risk is higher
-    // than the cost of a single extra branch on a hot path that isn't
-    // hot. Mirrors the shortcuts-cheatsheet precedent at
-    // `views/shortcuts_help.rs:336-340`.
     if matches!(&agent.active_modal, Some(ActiveModal::Settings { .. })) {
+        if focus_key.is_none() {
+            debug_assert!(
+                false,
+                "OpenSettings dispatched while settings modal is already open — input routing bug"
+            );
+            // Defensive close in release builds: silent no-op risk is higher
+            // than the cost of a single extra branch on a hot path that isn't
+            // hot. Mirrors the shortcuts-cheatsheet precedent at
+            // `views/shortcuts_help.rs:336-340`.
+            agent.active_modal = None;
+            return effects;
+        }
         agent.active_modal = None;
-        return vec![];
     }
 
     tracing::info!(target: "settings", "opened modal");
@@ -199,6 +230,7 @@ pub(in crate::app::dispatch) fn dispatch_open_settings(app: &mut AppView) -> Vec
             .map(|(id, info)| (info.name.clone(), id.clone()))
             .collect(),
         coding_data_sharing_opt_out: coding_data_sharing_opt_out_from_app,
+        coding_data_sharing_lock: coding_data_sharing_lock_from_app,
         // Prefer optimistic pending over confirmed active.
         plan_mode_active: agent.plan_mode_pending.unwrap_or(agent.plan_mode_active),
         show_tips: show_tips_from_app,
@@ -210,14 +242,26 @@ pub(in crate::app::dispatch) fn dispatch_open_settings(app: &mut AppView) -> Vec
         ask_user_question_timeout_enabled: ask_user_question_timeout_enabled_from_app,
         auto_retry_incomplete_end_turn: auto_retry_incomplete_end_turn_from_app,
         voice_stt_language: voice_stt_language_from_app,
+        scheduler_background_loops: agent
+            .scheduler_background_loops
+            .unwrap_or(scheduler_background_loops_seed),
     };
-    let state = Box::new(SettingsModalState::new(
+    let mut state = Box::new(SettingsModalState::new(
         registry,
         ui_snapshot,
         pager_snapshot,
     ));
+    if let Some(key) = focus_key
+        && state.focus_key(key)
+    {
+        // Try the chooser; a locked row keeps Browse (`try_enter_picking_enum`
+        // refuses when `row_lock` is set).
+        if state.try_enter_picking_enum() {
+            state.close_on_picker_exit = true;
+        }
+    }
     agent.active_modal = Some(ActiveModal::Settings { state });
-    vec![]
+    effects
 }
 
 /// Open the provider management modal (`/provider` subcommands).
@@ -799,6 +843,19 @@ fn agent_multiline_mode(app: &AppView) -> bool {
     false
 }
 
+/// The scheduler-background-loops value the shell pinned for that session,
+/// falling back to the startup seed while the session response is still in
+/// flight (or with no agent at all).
+fn agent_scheduler_background_loops(app: &AppView) -> bool {
+    if let ActiveView::Agent(id) = app.active_view
+        && let Some(agent) = app.agents.get(&id)
+        && let Some(value) = agent.scheduler_background_loops
+    {
+        return value;
+    }
+    app.scheduler_background_loops_seed
+}
+
 /// Helper to read the active agent's `yolo_mode`. See
 /// [`agent_multiline_mode`] for the no-agent fallback rationale.
 fn agent_yolo_mode(app: &AppView) -> bool {
@@ -877,6 +934,7 @@ pub(crate) fn build_pager_snapshot(app: &AppView) -> crate::settings::PagerLocal
         current_model_name: agent_current_model_name(app),
         available_models: agent_available_models(app),
         coding_data_sharing_opt_out: app.coding_data_retention_opt_out,
+        coding_data_sharing_lock: app.coding_data_sharing_lock(),
         plan_mode_active: agent_plan_mode(app),
         show_tips: app.show_tips,
         auto_update: app.auto_update,
@@ -887,6 +945,7 @@ pub(crate) fn build_pager_snapshot(app: &AppView) -> crate::settings::PagerLocal
         ask_user_question_timeout_enabled: app.ask_user_question_timeout_enabled,
         auto_retry_incomplete_end_turn: app.auto_retry_incomplete_end_turn,
         voice_stt_language: app.voice_config.language.clone(),
+        scheduler_background_loops: agent_scheduler_background_loops(app),
     }
 }
 

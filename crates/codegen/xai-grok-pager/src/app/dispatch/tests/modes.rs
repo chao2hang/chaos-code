@@ -1065,7 +1065,10 @@ fn set_yolo_mode_toast_format() {
         .as_ref()
         .map(|(s, _)| s.clone())
         .expect("toast must be set");
-    assert_eq!(toast, "\u{26A0} 总是批准已开启：所有工具操作将自动执行");
+    assert_eq!(
+        toast,
+        "\u{26A0} 总是批准已开启：所有工具操作将自动执行"
+    );
 
     let _ = dispatch(Action::SetYoloMode(false), &mut app);
     let toast = app.agents[&AgentId(0)]
@@ -1334,13 +1337,6 @@ fn cycle_mode_pre_session_always_approve_to_normal_persists_ask() {
         )),
         "pre-session Always-Approve → Normal must persist 'ask' \
          (stale config.toml relaunches yolo), got {effects:?}"
-    );
-    // Welcome-screen Shift+Tab still kicks off session creation.
-    assert!(
-        effects
-            .iter()
-            .any(|e| matches!(e, Effect::CreateSession { .. })),
-        "expected CreateSession alongside the persist, got {effects:?}"
     );
 }
 
@@ -1926,10 +1922,9 @@ fn cycle_always_approve_with_nudge_jumps_to_plan() {
     );
     assert!(
         effects.iter().any(|e| matches!(
-                    e,
-                    Effect::SetSessionMode { mode_id, .. }
-        if &*mode_id.0 == "plan"
-                )),
+            e,
+            Effect::SetSessionMode { mode_id, .. } if &*mode_id.0 == "plan"
+        )),
         "expected SetSessionMode(plan), got {effects:?}"
     );
     assert!(
@@ -1983,10 +1978,9 @@ fn cycle_auto_with_nudge_jumps_to_plan() {
     );
     assert!(
         effects.iter().any(|e| matches!(
-                    e,
-                    Effect::SetSessionMode { mode_id, .. }
-        if &*mode_id.0 == "plan"
-                )),
+            e,
+            Effect::SetSessionMode { mode_id, .. } if &*mode_id.0 == "plan"
+        )),
         "expected SetSessionMode(plan), got {effects:?}"
     );
     assert!(

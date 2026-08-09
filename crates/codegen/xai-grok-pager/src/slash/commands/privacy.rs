@@ -35,7 +35,11 @@ impl SlashCommand for PrivacyCommand {
     fn run(&self, _ctx: &mut CommandExecCtx, args: &str) -> CommandResult {
         let arg = args.trim();
         if arg.is_empty() {
-            return CommandResult::Action(Action::ShowPrivacyInfo);
+            // Chaos: `/privacy` opens the coding-data-sharing setting page
+            // (upstream's `ShowPrivacyInfo` no longer exists).
+            return CommandResult::Action(Action::OpenSettingsFocus {
+                key: "coding_data_sharing",
+            });
         }
         match parse_privacy_arg(arg) {
             Some(opted_in) => CommandResult::Action(Action::SetCodingDataSharing { opted_in }),
@@ -185,6 +189,7 @@ mod tests {
             bundle_state: &bundle,
             screen_mode: crate::app::ScreenMode::Inline,
             billing_surface_visible: true,
+            usage_command_visible: true,
             pager_state: crate::settings::PagerLocalSnapshot::default(),
         };
         let result = cmd.run(&mut ctx, "garbage-input");

@@ -43,6 +43,7 @@ fn unavailable_tmux() -> TmuxProbeFacts {
         allow_passthrough_support: TmuxProbeResult::Unavailable,
         allow_passthrough: TmuxProbeResult::Unavailable,
         control_mode: TmuxProbeResult::Unavailable,
+        client_features: TmuxProbeResult::Unavailable,
     }
 }
 
@@ -171,6 +172,7 @@ fn tmux_config_and_reload_notes_output_is_stable() {
             allow_passthrough_support: TmuxProbeResult::Available(()),
             allow_passthrough: TmuxProbeResult::Available("off".to_owned()),
             control_mode: TmuxProbeResult::Available(false),
+            client_features: TmuxProbeResult::Unavailable,
         },
         &TMUX_ROUTE,
         "pbcopy",
@@ -393,6 +395,7 @@ fn unavailable_and_error_probes_do_not_create_false_issues() {
             allow_passthrough_support: TmuxProbeResult::Unavailable,
             allow_passthrough: TmuxProbeResult::Error("query failed".to_owned()),
             control_mode: TmuxProbeResult::Unavailable,
+            client_features: TmuxProbeResult::Unavailable,
         },
         &TMUX_ROUTE,
         "pbcopy",
@@ -488,6 +491,7 @@ fn runtime_merge_does_not_duplicate_view_findings() {
                 allow_passthrough_support: TmuxProbeResult::Available(()),
                 allow_passthrough: TmuxProbeResult::Available("off".to_owned()),
                 control_mode: TmuxProbeResult::Available(false),
+                client_features: TmuxProbeResult::Unavailable,
             },
             &TMUX_ROUTE,
             "pbcopy",
@@ -580,9 +584,7 @@ fn runtime_findings_merge_before_single_formatter_orders_issues_before_recommend
         },
     );
 
-    let issue = output
-        .find("因未识别终端，Chaos 正使用终端响铃作为通知")
-        .unwrap();
+    let issue = output.find("因未识别终端，Chaos 正使用终端响铃作为通知").unwrap();
     let recommendation = output.find("建议").unwrap();
     assert!(issue < recommendation);
     assert!(!output.contains("未发现问题。"));
@@ -622,6 +624,7 @@ fn keyboard_fact_formats_from_explicit_target_evidence() {
                 set_clipboard: crate::diagnostics::TmuxOptionFact::Unavailable,
                 allow_passthrough_support: crate::diagnostics::TmuxSupportFact::Unavailable,
                 allow_passthrough: crate::diagnostics::TmuxOptionFact::Unavailable,
+                color_passthrough: crate::diagnostics::TmuxColorPassthrough::Unknown,
             },
             color: ColorFacts {
                 level: RuntimeFact::Available(ColorLevel::TrueColor),

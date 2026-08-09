@@ -17,12 +17,14 @@ pub mod probes;
 mod view;
 
 pub use doctor_format::format_doctor;
+#[cfg(test)]
+pub(crate) use fix::test_fix_plan;
 pub use fix::{
     AutomaticRemediation, DCS_PASSTHROUGH_ID, FixActivation, FixError, FixOutcome, FixPlan,
     FixRequest, FixStatus, PlannedChange, SSH_WRAP_FIX_COMMAND, SSH_WRAP_ID, SSH_WRAP_ONE_OFF,
-    ShellKind, TMUX_CLIPBOARD_ID, TMUX_EXTENDED_KEYS_ID, apply_fix, configured_report,
-    managed_alias_configured, plan_fix, resolve_fix_id, ssh_wrap_automatic_remediation,
-    verify_persistent_fix,
+    ShellKind, TMUX_CLIPBOARD_ID, TMUX_EXTENDED_KEYS_ID, TMUX_TRUECOLOR_ID, apply_fix,
+    configured_report, managed_alias_configured, plan_fix, resolve_fix_id,
+    ssh_wrap_automatic_remediation, verify_persistent_fix,
 };
 pub(crate) use fix::{
     automatic_fix_choices, automatic_remediation_for, format_applicable_automatic_fixes,
@@ -38,11 +40,12 @@ pub(crate) use model::{
 pub use model::{
     ClipboardFacts, ColorFacts, DataControlFact, DiagnosticFacts, DiagnosticFinding, DiagnosticId,
     DiagnosticReport, FindingDisposition, KeyboardFact, ManualRemediation, NewlineFact, ProbeNote,
-    ProbeStatus, RuntimeFact, TmuxFacts, TmuxOptionFact, TmuxSupportFact, VoiceFacts,
+    ProbeStatus, RuntimeFact, TmuxColorPassthrough, TmuxFacts, TmuxOptionFact, TmuxSupportFact,
+    VoiceFacts,
 };
 pub use view::{DiagnosticSnapshot, view};
 
-/// Passive input-device probe for `chaos doctor` / `/doctor`.
+/// Passive input-device probe for `grok doctor` / `/doctor`.
 ///
 /// Does not open a capture stream (no macOS mic-permission prompt). When
 /// `emit_missing_issue` is true and no device exists, appends an issue finding.
@@ -127,8 +130,11 @@ pub enum WarningCategory {
     WaylandNoDataControl,
     /// Below truecolor: truecolor themes hidden. Explicit `/doctor` only.
     LimitedColorSupport,
+    /// tmux is attached to a client it believes cannot render 24-bit color, so
+    /// it rewrites every truecolor cell to the client terminfo's palette.
+    TmuxColorReduced,
     SandboxProfileConflict,
-    /// The session runs over SSH without `chaos wrap` on the local end, so
+    /// The session runs over SSH without `grok wrap` on the local end, so
     /// clipboard forwarding and terminal-mode restore on dropped connections
     /// are not guaranteed. Informational recommendation, not a breakage.
     SshWithoutWrap,
@@ -281,8 +287,9 @@ pub(crate) fn collect_startup_warnings_from(
             None => "在 tmux control mode 下显示可能受限",
         };
         let mut warning = TerminalWarning::new(WarningCategory::ControlMode, message, None, None);
-        warning.note =
-            Some("若显示问题仍在，请改用普通 tmux 客户端连接，而不是 control mode。".to_owned());
+        warning.note = Some(
+            "若显示问题仍在，请改用普通 tmux 客户端连接，而不是 control mode。".to_owned(),
+        );
         warnings.push(warning);
     }
 
@@ -433,8 +440,8 @@ fn sandbox_profile_conflict_warning_from(conflicts: Vec<String>) -> Option<Termi
     })
 }
 
-/// Pure SSH `chaos wrap` recommendation — suggests launching the session
-/// through `chaos wrap ssh <host>` on the user's local machine, which gives a
+/// Pure SSH `grok wrap` recommendation — suggests launching the session
+/// through `grok wrap ssh <host>` on the user's local machine, which gives a
 /// remote session reliable clipboard forwarding plus terminal-mode restore
 /// when the connection drops.
 ///
@@ -937,16 +944,13 @@ pub fn format_clipboard_diagnostics(input: ClipboardDiagnosticsInput<'_>) -> Cli
 /// Not in `collect_startup_warnings` — limited color is normal on some
 /// emulators and would spam the welcome banner.
 pub fn color_support_warning(
-    level: ColorLevel,
+    level: probes::RuntimeEvidence<ColorLevel>,
     brand: TerminalName,
+    color_passthrough: TmuxColorPassthrough,
     is_tmux_backed: bool,
     tmux_config_path: &str,
 ) -> Option<TerminalWarning> {
-    if level.has_truecolor() {
-        return None;
-    }
-
-    if level == ColorLevel::None {
+    if level == probes::RuntimeEvidence::Available(ColorLevel::None) {
         let mut warning = TerminalWarning::new(
             WarningCategory::LimitedColorSupport,
             "因设置了 `NO_COLOR`，颜色已关闭",
@@ -955,6 +959,35 @@ pub fn color_support_warning(
         );
         warning.note = Some("请取消设置 `NO_COLOR`，然后重启 Chaos。".to_string());
         return Some(warning);
+    }
+
+    // Checked before the detected level is consulted at all: the level says
+    // what Grok emits, which is a different question from what survives tmux.
+    // A truecolor detection is not evidence that truecolor reaches the
+    // terminal, and a session with no color evidence (piped `grok doctor`)
+    // still has a clamping client worth reporting.
+    if color_passthrough == TmuxColorPassthrough::Reduced {
+        let mut warning = TerminalWarning::new(
+            WarningCategory::TmuxColorReduced,
+            "tmux is reducing 24-bit color to this client's palette, so themes look washed out",
+            Some("set -as terminal-features \",*:RGB\""),
+            Some(tmux_config_path),
+        );
+        warning.note = Some(format!(
+            "Run `tmux source-file {tmux_config_path}`, then detach and reattach: the server \
+             reads the option only on reload, and a client fixes its color depth only at attach. \
+             If Grok still reports less than truecolor afterwards, also add `set -g \
+             default-terminal \"tmux-256color\"` and `export COLORTERM=truecolor` to your shell \
+             startup file."
+        ));
+        return Some(warning);
+    }
+
+    let probes::RuntimeEvidence::Available(level) = level else {
+        return None;
+    };
+    if level.has_truecolor() {
+        return None;
     }
 
     let level_label = level.as_str();
@@ -1044,6 +1077,10 @@ mod tests {
     }
 
     impl probes::TmuxOptionQuery for FakeTmuxQuery {
+        fn client_features(&self) -> probes::TmuxProbeResult<String> {
+            probes::TmuxProbeResult::Unavailable
+        }
+
         fn show_option(&self, option: &str) -> probes::TmuxProbeResult<String> {
             if let Some(error) = &self.error {
                 return probes::TmuxProbeResult::Error(error.clone());
@@ -1101,6 +1138,7 @@ mod tests {
                 allow_passthrough_support: query.option_support("allow-passthrough"),
                 allow_passthrough: query.show_option("allow-passthrough"),
                 control_mode: probes::TmuxProbeResult::Available(control_mode),
+                client_features: probes::TmuxProbeResult::Unavailable,
             },
             wayland: probes::WaylandProbeFacts {
                 is_wayland: false,
@@ -2181,7 +2219,9 @@ mod tests {
             "fix is a command, not a config line"
         );
         assert!(
-            w.note.as_deref().is_some_and(|n| n.contains("本地电脑")),
+            w.note
+                .as_deref()
+                .is_some_and(|n| n.contains("本地电脑")),
             "note must say where to run the command, got: {:?}",
             w.note
         );
@@ -2195,7 +2235,7 @@ mod tests {
     #[test]
     fn ssh_wrap_hint_suppressed_when_sink_active() {
         // An active OSC 52 sink means the session already runs under
-        // `chaos wrap` — adoption silences the hint by itself.
+        // `grok wrap` — adoption silences the hint by itself.
         assert!(ssh_wrap_hint(true, true, false).is_none());
     }
 
@@ -2502,14 +2542,16 @@ mod tests {
             allow_passthrough_support: probes::TmuxProbeResult::Available(()),
             allow_passthrough: probes::TmuxProbeResult::Available("off".to_owned()),
             control_mode: probes::TmuxProbeResult::Available(true),
+            client_features: probes::TmuxProbeResult::Unavailable,
         };
         let mut warnings = collect_startup_warnings_from(&terminal, &tmux, Some(false));
         warnings.push(wezterm_kitty_keyboard_warning_from(&wezterm_ctx(), false, None).unwrap());
         warnings.push(diagnose_wayland_data_control(true, false, false).unwrap());
         warnings.push(
             color_support_warning(
-                ColorLevel::Ansi256,
+                probes::RuntimeEvidence::Available(ColorLevel::Ansi256),
                 TerminalName::Unknown,
+                TmuxColorPassthrough::Unknown,
                 true,
                 config_path,
             )
@@ -2927,8 +2969,9 @@ mod tests {
     fn color_support_warning_none_on_truecolor() {
         assert!(
             color_support_warning(
-                ColorLevel::TrueColor,
+                probes::RuntimeEvidence::Available(ColorLevel::TrueColor),
                 TerminalName::Ghostty,
+                TmuxColorPassthrough::Unknown,
                 false,
                 "~/.tmux.conf"
             )
@@ -2936,11 +2979,13 @@ mod tests {
         );
     }
 
+    /// `NO_COLOR` outranks a tmux clamp: there is no color to forward.
     #[test]
     fn color_support_warning_no_color() {
         let w = color_support_warning(
-            ColorLevel::None,
+            probes::RuntimeEvidence::Available(ColorLevel::None),
             TerminalName::Ghostty,
+            TmuxColorPassthrough::Reduced,
             false,
             "~/.tmux.conf",
         )
@@ -2953,8 +2998,9 @@ mod tests {
     #[test]
     fn color_support_warning_apple_terminal() {
         let w = color_support_warning(
-            ColorLevel::Ansi256,
+            probes::RuntimeEvidence::Available(ColorLevel::Ansi256),
             TerminalName::AppleTerminal,
+            TmuxColorPassthrough::Unknown,
             false,
             "~/.tmux.conf",
         )
@@ -2962,14 +3008,19 @@ mod tests {
         assert_eq!(w.category, WarningCategory::LimitedColorSupport);
         assert!(w.message.contains("Apple Terminal"));
         assert!(w.fix.is_none());
-        assert!(w.note.as_deref().is_some_and(|n| n.contains("Ghostty")));
+        assert!(
+            w.note
+                .as_deref()
+                .is_some_and(|n| n.contains("Ghostty"))
+        );
     }
 
     #[test]
     fn color_support_warning_tmux() {
         let w = color_support_warning(
-            ColorLevel::Ansi256,
+            probes::RuntimeEvidence::Available(ColorLevel::Ansi256),
             TerminalName::Unknown,
+            TmuxColorPassthrough::Unknown,
             true,
             "~/.byobu/.tmux.conf",
         )
@@ -2987,8 +3038,9 @@ mod tests {
     #[test]
     fn color_support_warning_colorterm() {
         let w = color_support_warning(
-            ColorLevel::Basic,
+            probes::RuntimeEvidence::Available(ColorLevel::Basic),
             TerminalName::Unknown,
+            TmuxColorPassthrough::Unknown,
             false,
             "~/.tmux.conf",
         )
@@ -2997,11 +3049,81 @@ mod tests {
         assert!(w.config_path.is_none());
     }
 
+    /// Regression: a tmux client that reduces color used to be invisible to
+    /// Doctor whenever Grok's own detection reported truecolor, so a session
+    /// with washed-out themes was reported completely healthy.
+    #[test]
+    fn color_support_warning_reports_tmux_clamp_at_truecolor() {
+        let w = color_support_warning(
+            probes::RuntimeEvidence::Available(ColorLevel::TrueColor),
+            TerminalName::Ghostty,
+            TmuxColorPassthrough::Reduced,
+            true,
+            "~/.tmux.conf",
+        )
+        .expect("warn");
+        assert_eq!(w.category, WarningCategory::TmuxColorReduced);
+        assert_eq!(
+            w.fix.as_deref(),
+            Some("set -as terminal-features \",*:RGB\"")
+        );
+        assert_eq!(w.config_path.as_deref(), Some("~/.tmux.conf"));
+        assert!(
+            w.note
+                .as_deref()
+                .is_some_and(|note| note.contains("detach and reattach"))
+        );
+    }
+
+    /// Piped `grok doctor` has no color evidence, but the tmux client is still
+    /// measurable, and `doctor fix` needs the finding to plan against.
+    #[test]
+    fn color_support_warning_reports_tmux_clamp_without_color_evidence() {
+        let w = color_support_warning(
+            probes::RuntimeEvidence::Unavailable,
+            TerminalName::Unknown,
+            TmuxColorPassthrough::Reduced,
+            true,
+            "~/.tmux.conf",
+        )
+        .expect("warn");
+        assert_eq!(w.category, WarningCategory::TmuxColorReduced);
+    }
+
+    #[test]
+    fn color_support_warning_unknown_color_evidence_is_silent() {
+        assert!(
+            color_support_warning(
+                probes::RuntimeEvidence::Unavailable,
+                TerminalName::Unknown,
+                TmuxColorPassthrough::Unknown,
+                true,
+                "~/.tmux.conf"
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn color_support_warning_forwarded_tmux_color_is_silent() {
+        assert!(
+            color_support_warning(
+                probes::RuntimeEvidence::Available(ColorLevel::TrueColor),
+                TerminalName::Ghostty,
+                TmuxColorPassthrough::Forwarded,
+                true,
+                "~/.tmux.conf"
+            )
+            .is_none()
+        );
+    }
+
     #[test]
     fn summarize_warnings_suppresses_limited_color_support() {
         let w = color_support_warning(
-            ColorLevel::Ansi256,
+            probes::RuntimeEvidence::Available(ColorLevel::Ansi256),
             TerminalName::Unknown,
+            TmuxColorPassthrough::Unknown,
             false,
             "~/.tmux.conf",
         )

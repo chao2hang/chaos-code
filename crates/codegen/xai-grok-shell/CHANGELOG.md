@@ -1,5 +1,21 @@
 # Changelog
 
+# 0.2.135 — 2026-08-08
+
+## Features
+
+- **用量三栏弹窗（`/usage`）**：新增 tabbed 用量 / 会话信息弹窗，由 `/usage`、`/session-info`、`/context` 及上下文栏点击打开，分「上下文用量 / 用量限额 / 会话信息」三栏展示；数据由任务结果处理器异步填充。
+- **MCP 连接中提醒**：MCP 服务器仍在初始化时，等待轮次会提示「连接中」，并保留从声明工具通道交付的能力；只有在 attachment 策略实际变化时才重新武装提醒。
+
+## Performance
+
+- **进程级 git 状态门控**：libgit2 `statuses()`/diff 对大仓的 ODB pack 预读在进程级去重——相同在途工作被合并，短 TTL 快照复用，避免并发 git 扫描打满 CPU 与数十 GB 内存；失效风暴下最多重试一次、绝不让 `run()` 无界循环。
+
+## Fixes
+
+- **`extract_inline_thinking` / `is_workbuddy` 等 fork 专属字段补齐**：同步上游后，`#[cfg(test)]` 侧对 `SamplingConfig`、`SamplerConfig`、`SessionActor` 等新增字段的初始化缺失已补齐，shell lib 测试恢复可编译。
+- **自动更新错误路径统一前缀**：`install_gh_release` 的冒烟失败改由 `run_install_script` 统一附加「Auto-update failed:」前缀，不再双重嵌套。
+
 # 0.2.130 — 2026-08-02
 
 ## Fixes
