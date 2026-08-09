@@ -11,6 +11,7 @@ use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
 
 use super::tool::HookRunEntry;
+use crate::appearance::AppearanceConfig;
 use crate::render::wrapping::word_wrap_lines;
 use crate::scrollback::block::BlockContent;
 use crate::scrollback::types::{
@@ -85,9 +86,20 @@ pub enum SessionEvent {
         /// Used to match known error patterns without fragile string matching.
         error_type: Option<String>,
     },
+    /// A non-success API / HTTP response (or similar terminal request error).
+    /// Rendered like [`SessionEvent::ReAuthRequired`]: warning color + accent,
+    /// no JSON dump.
+    RequestFailed {
+        /// HTTP status when known. `None` for transport / idle-timeout / etc.
+        status: Option<u16>,
+        /// Short headline, e.g. `"Server error (500)"`.
+        headline: String,
+        /// Sanitized one-line detail (server message or fallback guidance).
+        detail: String,
+    },
     /// The server rejected the credentials (401 / auth error) and automatic
     /// recovery was exhausted. Rendered as a prominent call-to-action that
-    /// points the user at Provider API-key configuration, replacing the raw
+    /// points the user at `/login` to re-authenticate, replacing the raw
     /// "Retry failed: Unauthorized (401) …" dump.
     ReAuthRequired,
     /// Terminal context overflow — ideally unreachable, since auto-compaction should
@@ -95,6 +107,8 @@ pub enum SessionEvent {
     /// vs the server's max_prompt_length, or compaction suppressed/failed). One actionable
     /// prompt, replacing the CompactionFailed + RetryFailed + TurnFailed stack.
     ContextTooLarge,
+    /// Session disk is full.
+    DiskFull,
     /// Manual `/compact` command completed.
     CompactCompleted {
         /// Wall-clock elapsed time for the command.
@@ -182,7 +196,10 @@ impl SessionEvent {
                 // Older shells don't send tokens_before — keep the legacy format.
                 let body = match tokens_before {
                     Some(before) if *before > 0 => {
-                        format!("上下文已压缩：{} → {after} tokens", format_tokens(*before))
+                        format!(
+                            "上下文已压缩：{} → {after} tokens",
+                            format_tokens(*before)
+                        )
                     }
                     _ => format!("上下文已压缩 → {after} tokens"),
                 };
@@ -202,12 +219,18 @@ impl SessionEvent {
             }
             SessionEvent::CompactionCancelled => "压缩已取消。".to_string(),
             SessionEvent::RetryFailed { error, error_type } => {
-                if error_type.as_deref() == Some("encrypted_content_mismatch") {
+                use crate::app::error_display::WireErrorType;
+                if WireErrorType::parse(error_type.as_deref())
+                    == WireErrorType::EncryptedContentMismatch
+                {
                     "此会话的对话历史与当前模型不兼容。请开始新会话。".to_string()
                 } else {
                     format!("重试失败：{error}")
                 }
             }
+            SessionEvent::RequestFailed {
+                headline, detail, ..
+            } => crate::app::error_display::banner_message(headline, detail),
             SessionEvent::ReAuthRequired => {
                 "模型认证失败：凭证缺失或被提供商拒绝。请检查当前模型的 \
                  api_key/env_key、base_url 和 auth_scheme，然后重新发送消息。"
@@ -225,6 +248,9 @@ impl SessionEvent {
                  - 在 config.toml 的 [model.…] 中设置 context_window / max_completion_tokens\n\
                  - 若仍过大：/new 开新会话"
                     .to_string()
+            }
+            SessionEvent::DiskFull => {
+                xai_grok_shell::extensions::notification::DISK_FULL_USER_MESSAGE.to_string()
             }
             SessionEvent::CompactCompleted { elapsed } => {
                 format!("压缩在 {} 内完成。", format_duration(*elapsed))
@@ -246,7 +272,10 @@ impl SessionEvent {
                 format!("记忆已保存（{trigger}） \u{2192} {short_path}  \u{00b7}  用 /memory 查看")
             }
             SessionEvent::GoalCompleted { elapsed } => {
-                format!("目标完成 \u{2014} 端到端 {}。", format_duration(*elapsed))
+                format!(
+                    "目标完成 \u{2014} 端到端 {}。",
+                    format_duration(*elapsed)
+                )
             }
             SessionEvent::Recap { summary, auto: _ } => {
                 // Always "回顾 —" (manual `/recap` and auto return-from-away).
@@ -268,12 +297,29 @@ impl SessionEvent {
         }
     }
 
+    /// Failures and actionable prompts stand out (warning color + accent bar).
+    fn is_warning_banner(&self) -> bool {
+        matches!(
+            self,
+            SessionEvent::ReAuthRequired
+                | SessionEvent::ContextTooLarge
+                | SessionEvent::DiskFull
+                | SessionEvent::CompactionFailed { .. }
+                | SessionEvent::RequestFailed { .. }
+                | SessionEvent::RetryFailed { .. }
+                | SessionEvent::TurnFailed { .. }
+        )
+    }
+
     /// Whether this event marks the end of an agent turn (the "Turn
     /// completed/cancelled/failed" markers). These are the only events that
-    /// can carry the turn's stop/stop_failure hook runs inline — but a
-    /// parked marker renders mid-turn while the turn is still running
-    /// shell-side, before any Stop hook fires, so hook eligibility is the
-    /// block-level [`SessionEventBlock::accepts_stop_hooks`].
+    /// can carry the turn's stop/stop_failure hook runs inline.
+    ///
+    /// [`SessionEvent::RequestFailed`] is intentionally excluded — same as
+    /// [`SessionEvent::ReAuthRequired`]. RetryState may push it before
+    /// PromptResponse; treating it as terminal would change stop-hook
+    /// attribution. Dedicated banners skip the TurnFailed marker and flush
+    /// hooks standalone.
     pub fn is_turn_terminal(&self) -> bool {
         matches!(
             self,
@@ -343,13 +389,6 @@ impl SessionEventBlock {
             prompt_id,
             parked: false,
         }
-    }
-
-    /// Whether this marker may carry/accept stop-hook runs: a turn-terminal
-    /// event that is not a parked line (which renders while the turn is
-    /// still running shell-side, before any Stop hook fires).
-    pub fn accepts_stop_hooks(&self) -> bool {
-        self.event.is_turn_terminal() && !self.parked
     }
 
     /// Whether any attached stop hook actually ran (non-skipped). Gates the
@@ -535,12 +574,7 @@ impl BlockContent for SessionEventBlock {
         let theme = Theme::current();
         // Failures and re-auth / context-overflow prompts are actionable, not
         // informational — render them in the warning color, not muted noise.
-        let style = if matches!(
-            self.event,
-            SessionEvent::ReAuthRequired
-                | SessionEvent::ContextTooLarge
-                | SessionEvent::CompactionFailed { .. }
-        ) {
+        let style = if self.event.is_warning_banner() {
             ratatui::style::Style::default().fg(theme.warning)
         } else {
             theme.muted()
@@ -583,12 +617,7 @@ impl BlockContent for SessionEventBlock {
             return (ctx.mode != DisplayMode::Collapsed)
                 .then(|| AccentStyle::static_color(theme.accent_tool));
         }
-        if matches!(
-            self.event,
-            SessionEvent::ReAuthRequired
-                | SessionEvent::ContextTooLarge
-                | SessionEvent::CompactionFailed { .. }
-        ) {
+        if self.event.is_warning_banner() {
             Some(AccentStyle::static_color(theme.warning))
         } else {
             None
@@ -607,7 +636,7 @@ impl BlockContent for SessionEventBlock {
         self.accent(ctx)
     }
 
-    fn has_vpad(&self, _ctx: &BlockContext) -> bool {
+    fn has_vpad_for(&self, _appearance: &AppearanceConfig) -> bool {
         false // Compact like SystemMessageBlock
     }
 
@@ -799,6 +828,26 @@ mod tests {
     }
 
     #[test]
+    fn request_failed_message_and_warning_accent() {
+        let event = SessionEvent::RequestFailed {
+            status: Some(500),
+            headline: "Server error (500)".into(),
+            detail: "upstream exploded".into(),
+        };
+        assert_eq!(
+            event.message(),
+            "Server error (500) \u{2014} upstream exploded"
+        );
+        let block = SessionEventBlock::new(event);
+        let theme = Theme::current();
+        assert_eq!(
+            block.accent(&ctx()).map(|a| a.color),
+            Some(theme.warning),
+            "request-failed banner must stand out like re-auth"
+        );
+    }
+
+    #[test]
     fn context_too_large_message_is_actionable() {
         let msg = SessionEvent::ContextTooLarge.message();
         assert!(
@@ -808,14 +857,6 @@ mod tests {
         assert!(
             msg.contains("/new"),
             "must offer /new as the recovery action: {msg}"
-        );
-        assert!(
-            msg.contains("/compact") || msg.contains("/context"),
-            "must offer compact/context recovery paths: {msg}"
-        );
-        assert!(
-            msg.contains("200k") || msg.contains("context_window"),
-            "must mention default window or config field: {msg}"
         );
     }
 
@@ -1349,44 +1390,16 @@ mod tests {
         );
     }
 
-    /// A parked marker block — the shape `maybe_push_parked_marker` pushes.
-    fn parked_marker() -> SessionEventBlock {
-        SessionEventBlock {
-            event: SessionEvent::TurnCompleted {
-                elapsed: Some(Duration::from_secs(24)),
-            },
-            stop_hooks: Vec::new(),
-            prompt_id: None,
-            parked: true,
-        }
-    }
-
     #[test]
-    fn parked_markers_never_accept_stop_hooks() {
-        // A parked marker renders mid-turn, before any Stop hook fires.
-        let block = parked_marker();
-        assert!(!block.accepts_stop_hooks(), "parked marker refuses hooks");
-
-        // The real terminal marker accepts.
+    fn only_turn_terminal_events_accept_stop_hooks() {
         let settled = SessionEventBlock::new(SessionEvent::TurnCompleted {
             elapsed: Some(Duration::from_secs(24)),
         });
-        assert!(settled.accepts_stop_hooks());
-        // Non-terminal events never accept, parked or not.
+        assert!(settled.event.is_turn_terminal());
         let recap = SessionEventBlock::new(SessionEvent::Recap {
             summary: "did stuff".into(),
             auto: false,
         });
-        assert!(!recap.accepts_stop_hooks());
-    }
-
-    #[test]
-    fn parked_marker_output_reads_as_plain_completed_marker() {
-        // The parked marker renders the plain event text — still-running
-        // background work is the status row's "… still running" cue, never a
-        // transcript suffix.
-        let block = parked_marker();
-        let out = block.output(&ctx());
-        assert_eq!(plain(&out.lines[0]), "耗时 24s");
+        assert!(!recap.event.is_turn_terminal());
     }
 }

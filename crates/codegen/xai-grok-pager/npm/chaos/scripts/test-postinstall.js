@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Tests for the versioned-binary + symlink installation logic used by
-// postinstall.js and the bin/chaos trampoline.
+// postinstall.js and the bin/grok trampoline.
 //
 // Run with:  node scripts/test-postinstall.js
 //
@@ -9,6 +9,7 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const zlib = require('zlib');
 const assert = require('assert');
 
 let passed = 0;
@@ -27,32 +28,33 @@ function test(name, fn) {
 }
 
 function makeTmpDir() {
-    return fs.mkdtempSync(path.join(os.tmpdir(), 'chaos-test-'));
+    return fs.mkdtempSync(path.join(os.tmpdir(), 'grok-test-'));
 }
 
 function cleanup(dir) {
     fs.rmSync(dir, { recursive: true, force: true });
 }
 
-// ─── Extracted logic (mirrors postinstall.js and bin/chaos exactly) ─────
+// ─── Extracted logic (mirrors postinstall.js and bin/grok exactly) ─────
 
-/** Semver-aware descending sort for "chaos-X.Y.Z" filenames. */
-function semverSortDescending(a, b) {
-    // "chaos-" prefix is 6 chars (was 5 for "grok-").
-    const pa = a.slice(6).split('.').map(Number);
-    const pb = b.slice(6).split('.').map(Number);
-    for (let i = 0; i < 3; i++) {
-        if ((pa[i] || 0) !== (pb[i] || 0)) return (pb[i] || 0) - (pa[i] || 0);
-    }
-    return 0;
+/** Comparator: sort "<prefix>X.Y.Z" filenames by version, newest first. */
+function byVersionDescending(prefix) {
+    return (a, b) => {
+        const pa = a.slice(prefix.length).split('.').map(Number);
+        const pb = b.slice(prefix.length).split('.').map(Number);
+        for (let i = 0; i < 3; i++) {
+            if ((pa[i] || 0) !== (pb[i] || 0)) return (pb[i] || 0) - (pa[i] || 0);
+        }
+        return 0;
+    };
 }
 
 /** Install a versioned binary + atomic symlink (same as postinstall.js). */
 function installVersionedBinary(vendoredBinPath, version, canonicalDir) {
-    const canonicalPath = path.join(canonicalDir, 'chaos');
+    const canonicalPath = path.join(canonicalDir, 'grok');
     fs.mkdirSync(canonicalDir, { recursive: true });
 
-    const versionedName = `chaos-${version}`;
+    const versionedName = `grok-${version}`;
     const versionedPath = path.join(canonicalDir, versionedName);
 
     if (!fs.existsSync(versionedPath)) {
@@ -78,8 +80,8 @@ function installVersionedBinary(vendoredBinPath, version, canonicalDir) {
 function cleanupOldVersions(canonicalDir, currentVersionedName) {
     const entries = fs.readdirSync(canonicalDir);
     const versionedBinaries = entries
-        .filter(e => e.startsWith('chaos-') && !e.includes('.tmp.') && !e.includes('.link.') && e !== currentVersionedName)
-        .sort(semverSortDescending);
+        .filter(e => e.startsWith('grok-') && !e.includes('.tmp.') && !e.includes('.link.') && e !== currentVersionedName)
+        .sort(byVersionDescending('grok-'));
     // Keep the most recent old version, remove anything older.
     for (const old of versionedBinaries.slice(1)) {
         try { fs.unlinkSync(path.join(canonicalDir, old)); } catch {}
@@ -87,12 +89,66 @@ function cleanupOldVersions(canonicalDir, currentVersionedName) {
     return versionedBinaries;
 }
 
-/** Bootstrap canonical from vendored (same as bin/chaos trampoline). */
+/** Grok bin dir resolution (mirrors postinstall.js and bin/grok). */
+function resolveGrokBinDir(env, homedir) {
+    const grokHome = env.GROK_HOME ?? path.join(homedir, '.grok');
+    return path.join(grokHome, 'bin');
+}
+
+/** Materialize the vendored binary at destPath (mirrors writeVendorBinary). */
+function writeVendorBinary(brPath, rawPath, destPath) {
+    const tmp = destPath + `.tmp.${process.pid}`;
+    try {
+        if (fs.existsSync(brPath)) {
+            fs.writeFileSync(tmp, zlib.brotliDecompressSync(fs.readFileSync(brPath)));
+        } else if (fs.existsSync(rawPath)) {
+            fs.copyFileSync(rawPath, tmp);
+        } else {
+            return false;
+        }
+        fs.chmodSync(tmp, 0o755);
+        fs.renameSync(tmp, destPath);
+        return true;
+    } catch {
+        return false;
+    } finally {
+        try { fs.unlinkSync(tmp); } catch {}
+    }
+}
+
+/** Decompress a brotli payload into the canonical dir (mirrors installBinary). */
+function installBinaryFromBrotli(brPath, version, canonicalDir) {
+    fs.mkdirSync(canonicalDir, { recursive: true });
+    const versionedName = `grok-${version}`;
+    const versionedPath = path.join(canonicalDir, versionedName);
+    const canonicalPath = path.join(canonicalDir, 'grok');
+
+    if (!fs.existsSync(versionedPath)) {
+        const tmpPath = versionedPath + `.tmp.${process.pid}`;
+        try {
+            const decompressed = zlib.brotliDecompressSync(fs.readFileSync(brPath));
+            fs.writeFileSync(tmpPath, decompressed);
+            fs.chmodSync(tmpPath, 0o755);
+            fs.renameSync(tmpPath, versionedPath);
+        } finally {
+            try { fs.unlinkSync(tmpPath); } catch {}
+        }
+    }
+
+    const tmpLink = canonicalPath + `.link.${process.pid}`;
+    try { fs.unlinkSync(tmpLink); } catch {}
+    fs.symlinkSync(versionedName, tmpLink);
+    fs.renameSync(tmpLink, canonicalPath);
+
+    return { canonicalPath, versionedPath, versionedName };
+}
+
+/** Bootstrap canonical from vendored (same as bin/grok trampoline). */
 function bootstrapCanonical(vendoredBinPath, version, canonicalDir) {
-    const canonicalPath = path.join(canonicalDir, 'chaos');
+    const canonicalPath = path.join(canonicalDir, 'grok');
     try {
         fs.mkdirSync(canonicalDir, { recursive: true });
-        const versionedName = `chaos-${version}`;
+        const versionedName = `grok-${version}`;
         const versionedPath = path.join(canonicalDir, versionedName);
         if (!fs.existsSync(versionedPath)) {
             const tmpPath = versionedPath + `.tmp.${process.pid}`;
@@ -119,7 +175,7 @@ console.log('install + symlink tests\n');
 test('creates versioned binary and symlink on fresh install', () => {
     const dir = makeTmpDir();
     try {
-        const vendored = path.join(dir, 'vendored-chaos');
+        const vendored = path.join(dir, 'vendored-grok');
         fs.writeFileSync(vendored, 'binary-content-v1');
 
         const binDir = path.join(dir, 'bin');
@@ -135,7 +191,7 @@ test('creates versioned binary and symlink on fresh install', () => {
 
         // Symlink should point to the versioned name (relative)
         const target = fs.readlinkSync(result.canonicalPath);
-        assert.strictEqual(target, 'chaos-0.1.140');
+        assert.strictEqual(target, 'grok-0.1.140');
 
         // Reading through the symlink should return the binary content
         assert.strictEqual(fs.readFileSync(result.canonicalPath, 'utf8'), 'binary-content-v1');
@@ -160,11 +216,11 @@ test('upgrade swaps symlink and preserves old binary', () => {
         const result = installVersionedBinary(vendored_v2, '0.1.141', binDir);
 
         // Symlink now points to v2
-        assert.strictEqual(fs.readlinkSync(result.canonicalPath), 'chaos-0.1.141');
+        assert.strictEqual(fs.readlinkSync(result.canonicalPath), 'grok-0.1.141');
         assert.strictEqual(fs.readFileSync(result.canonicalPath, 'utf8'), 'v2-content');
 
         // Old v1 binary MUST still exist on disk (this is the key safety property)
-        const oldBinary = path.join(binDir, 'chaos-0.1.140');
+        const oldBinary = path.join(binDir, 'grok-0.1.140');
         assert.ok(fs.existsSync(oldBinary), 'old versioned binary must not be deleted');
         assert.strictEqual(fs.readFileSync(oldBinary, 'utf8'), 'v1-content');
     } finally {
@@ -188,7 +244,7 @@ test('idempotent: reinstalling same version does not re-copy', () => {
         installVersionedBinary(vendored, '0.1.140', binDir);
 
         // Versioned binary should NOT have been replaced (existsSync guard)
-        const versionedPath = path.join(binDir, 'chaos-0.1.140');
+        const versionedPath = path.join(binDir, 'grok-0.1.140');
         assert.strictEqual(fs.readFileSync(versionedPath, 'utf8'), 'original');
     } finally {
         cleanup(dir);
@@ -199,7 +255,7 @@ test('symlink swap is atomic (no intermediate missing state)', () => {
     const dir = makeTmpDir();
     try {
         const binDir = path.join(dir, 'bin');
-        const canonicalPath = path.join(binDir, 'chaos');
+        const canonicalPath = path.join(binDir, 'grok');
 
         const vendored = path.join(dir, 'vendored');
         fs.writeFileSync(vendored, 'v1');
@@ -224,10 +280,10 @@ test('handles upgrade from old-style regular file to versioned symlink', () => {
     const dir = makeTmpDir();
     try {
         const binDir = path.join(dir, 'bin');
-        const canonicalPath = path.join(binDir, 'chaos');
+        const canonicalPath = path.join(binDir, 'grok');
         fs.mkdirSync(binDir, { recursive: true });
 
-        // Simulate old installation: chaos is a regular file
+        // Simulate old installation: grok is a regular file
         fs.writeFileSync(canonicalPath, 'old-style-binary');
         assert.ok(!fs.lstatSync(canonicalPath).isSymbolicLink(), 'should be regular file initially');
 
@@ -251,8 +307,8 @@ test('handles broken symlink (target deleted externally)', () => {
         fs.mkdirSync(binDir, { recursive: true });
 
         // Create a broken symlink (points to a file that doesn't exist)
-        const canonicalPath = path.join(binDir, 'chaos');
-        fs.symlinkSync('chaos-0.1.99', canonicalPath);
+        const canonicalPath = path.join(binDir, 'grok');
+        fs.symlinkSync('grok-0.1.99', canonicalPath);
         assert.ok(!fs.existsSync(canonicalPath), 'broken symlink should not "exist"');
 
         // Install should work and fix the broken symlink
@@ -283,12 +339,12 @@ test('three sequential upgrades: v1 -> v2 -> v3 all coexist', () => {
         installVersionedBinary(vendored, '0.1.3', binDir);
 
         // Symlink points to latest
-        assert.strictEqual(fs.readlinkSync(path.join(binDir, 'chaos')), 'chaos-0.1.3');
+        assert.strictEqual(fs.readlinkSync(path.join(binDir, 'grok')), 'grok-0.1.3');
 
         // All three versioned binaries still exist (no cleanup yet)
-        assert.ok(fs.existsSync(path.join(binDir, 'chaos-0.1.1')));
-        assert.ok(fs.existsSync(path.join(binDir, 'chaos-0.1.2')));
-        assert.ok(fs.existsSync(path.join(binDir, 'chaos-0.1.3')));
+        assert.ok(fs.existsSync(path.join(binDir, 'grok-0.1.1')));
+        assert.ok(fs.existsSync(path.join(binDir, 'grok-0.1.2')));
+        assert.ok(fs.existsSync(path.join(binDir, 'grok-0.1.3')));
     } finally {
         cleanup(dir);
     }
@@ -323,18 +379,18 @@ test('cleanup keeps N-1 version and removes older ones', () => {
         fs.mkdirSync(binDir, { recursive: true });
 
         // Create three old versioned binaries
-        fs.writeFileSync(path.join(binDir, 'chaos-0.1.138'), 'v138');
-        fs.writeFileSync(path.join(binDir, 'chaos-0.1.139'), 'v139');
-        fs.writeFileSync(path.join(binDir, 'chaos-0.1.140'), 'v140');
-        // chaos-0.1.141 is the current version (excluded from cleanup)
-        fs.writeFileSync(path.join(binDir, 'chaos-0.1.141'), 'v141');
+        fs.writeFileSync(path.join(binDir, 'grok-0.1.138'), 'v138');
+        fs.writeFileSync(path.join(binDir, 'grok-0.1.139'), 'v139');
+        fs.writeFileSync(path.join(binDir, 'grok-0.1.140'), 'v140');
+        // grok-0.1.141 is the current version (excluded from cleanup)
+        fs.writeFileSync(path.join(binDir, 'grok-0.1.141'), 'v141');
 
-        cleanupOldVersions(binDir, 'chaos-0.1.141');
+        cleanupOldVersions(binDir, 'grok-0.1.141');
 
-        assert.ok(fs.existsSync(path.join(binDir, 'chaos-0.1.141')), 'current should exist');
-        assert.ok(fs.existsSync(path.join(binDir, 'chaos-0.1.140')), 'N-1 should be kept');
-        assert.ok(!fs.existsSync(path.join(binDir, 'chaos-0.1.139')), 'N-2 should be removed');
-        assert.ok(!fs.existsSync(path.join(binDir, 'chaos-0.1.138')), 'N-3 should be removed');
+        assert.ok(fs.existsSync(path.join(binDir, 'grok-0.1.141')), 'current should exist');
+        assert.ok(fs.existsSync(path.join(binDir, 'grok-0.1.140')), 'N-1 should be kept');
+        assert.ok(!fs.existsSync(path.join(binDir, 'grok-0.1.139')), 'N-2 should be removed');
+        assert.ok(!fs.existsSync(path.join(binDir, 'grok-0.1.138')), 'N-3 should be removed');
     } finally {
         cleanup(dir);
     }
@@ -346,13 +402,13 @@ test('cleanup with only one old version keeps it', () => {
         const binDir = path.join(dir, 'bin');
         fs.mkdirSync(binDir, { recursive: true });
 
-        fs.writeFileSync(path.join(binDir, 'chaos-0.1.140'), 'v140');
-        fs.writeFileSync(path.join(binDir, 'chaos-0.1.141'), 'v141');
+        fs.writeFileSync(path.join(binDir, 'grok-0.1.140'), 'v140');
+        fs.writeFileSync(path.join(binDir, 'grok-0.1.141'), 'v141');
 
-        cleanupOldVersions(binDir, 'chaos-0.1.141');
+        cleanupOldVersions(binDir, 'grok-0.1.141');
 
-        assert.ok(fs.existsSync(path.join(binDir, 'chaos-0.1.140')), 'single old version should be kept');
-        assert.ok(fs.existsSync(path.join(binDir, 'chaos-0.1.141')), 'current should exist');
+        assert.ok(fs.existsSync(path.join(binDir, 'grok-0.1.140')), 'single old version should be kept');
+        assert.ok(fs.existsSync(path.join(binDir, 'grok-0.1.141')), 'current should exist');
     } finally {
         cleanup(dir);
     }
@@ -365,12 +421,12 @@ test('cleanup with no old versions is a no-op', () => {
         fs.mkdirSync(binDir, { recursive: true });
 
         // Only the current version exists
-        fs.writeFileSync(path.join(binDir, 'chaos-0.1.141'), 'v141');
+        fs.writeFileSync(path.join(binDir, 'grok-0.1.141'), 'v141');
 
-        cleanupOldVersions(binDir, 'chaos-0.1.141');
+        cleanupOldVersions(binDir, 'grok-0.1.141');
 
-        assert.ok(fs.existsSync(path.join(binDir, 'chaos-0.1.141')), 'current should still exist');
-        const entries = fs.readdirSync(binDir).filter(e => e.startsWith('chaos-'));
+        assert.ok(fs.existsSync(path.join(binDir, 'grok-0.1.141')), 'current should still exist');
+        const entries = fs.readdirSync(binDir).filter(e => e.startsWith('grok-'));
         assert.strictEqual(entries.length, 1, 'should only have current version');
     } finally {
         cleanup(dir);
@@ -383,16 +439,16 @@ test('cleanup ignores .tmp. and .link. files', () => {
         const binDir = path.join(dir, 'bin');
         fs.mkdirSync(binDir, { recursive: true });
 
-        fs.writeFileSync(path.join(binDir, 'chaos-0.1.141'), 'current');
+        fs.writeFileSync(path.join(binDir, 'grok-0.1.141'), 'current');
         // Leftover temp files from a crashed install
-        fs.writeFileSync(path.join(binDir, 'chaos-0.1.140.tmp.12345'), 'crashed-tmp');
-        fs.writeFileSync(path.join(binDir, 'chaos.link.12345'), 'crashed-link');
+        fs.writeFileSync(path.join(binDir, 'grok-0.1.140.tmp.12345'), 'crashed-tmp');
+        fs.writeFileSync(path.join(binDir, 'grok.link.12345'), 'crashed-link');
 
-        cleanupOldVersions(binDir, 'chaos-0.1.141');
+        cleanupOldVersions(binDir, 'grok-0.1.141');
 
         // Temp files should not be touched by cleanup (they're filtered out)
-        assert.ok(fs.existsSync(path.join(binDir, 'chaos-0.1.140.tmp.12345')), 'tmp file should not be touched');
-        assert.ok(fs.existsSync(path.join(binDir, 'chaos.link.12345')), 'link file should not be touched');
+        assert.ok(fs.existsSync(path.join(binDir, 'grok-0.1.140.tmp.12345')), 'tmp file should not be touched');
+        assert.ok(fs.existsSync(path.join(binDir, 'grok.link.12345')), 'link file should not be touched');
     } finally {
         cleanup(dir);
     }
@@ -405,17 +461,17 @@ test('semver sort: 0.1.9 vs 0.1.10 (digit boundary)', () => {
         const binDir = path.join(dir, 'bin');
         fs.mkdirSync(binDir, { recursive: true });
 
-        fs.writeFileSync(path.join(binDir, 'chaos-0.1.8'), 'v8');
-        fs.writeFileSync(path.join(binDir, 'chaos-0.1.9'), 'v9');
-        fs.writeFileSync(path.join(binDir, 'chaos-0.1.10'), 'v10');
-        fs.writeFileSync(path.join(binDir, 'chaos-0.1.11'), 'v11');
+        fs.writeFileSync(path.join(binDir, 'grok-0.1.8'), 'v8');
+        fs.writeFileSync(path.join(binDir, 'grok-0.1.9'), 'v9');
+        fs.writeFileSync(path.join(binDir, 'grok-0.1.10'), 'v10');
+        fs.writeFileSync(path.join(binDir, 'grok-0.1.11'), 'v11');
 
-        cleanupOldVersions(binDir, 'chaos-0.1.11');
+        cleanupOldVersions(binDir, 'grok-0.1.11');
 
-        assert.ok(fs.existsSync(path.join(binDir, 'chaos-0.1.11')), 'current should exist');
-        assert.ok(fs.existsSync(path.join(binDir, 'chaos-0.1.10')), '0.1.10 should be kept (N-1)');
-        assert.ok(!fs.existsSync(path.join(binDir, 'chaos-0.1.9')), '0.1.9 should be removed');
-        assert.ok(!fs.existsSync(path.join(binDir, 'chaos-0.1.8')), '0.1.8 should be removed');
+        assert.ok(fs.existsSync(path.join(binDir, 'grok-0.1.11')), 'current should exist');
+        assert.ok(fs.existsSync(path.join(binDir, 'grok-0.1.10')), '0.1.10 should be kept (N-1)');
+        assert.ok(!fs.existsSync(path.join(binDir, 'grok-0.1.9')), '0.1.9 should be removed');
+        assert.ok(!fs.existsSync(path.join(binDir, 'grok-0.1.8')), '0.1.8 should be removed');
     } finally {
         cleanup(dir);
     }
@@ -427,14 +483,14 @@ test('semver sort: major version boundary (0.x vs 1.x)', () => {
         const binDir = path.join(dir, 'bin');
         fs.mkdirSync(binDir, { recursive: true });
 
-        fs.writeFileSync(path.join(binDir, 'chaos-0.9.99'), 'old');
-        fs.writeFileSync(path.join(binDir, 'chaos-1.0.0'), 'v1');
-        fs.writeFileSync(path.join(binDir, 'chaos-1.0.1'), 'current');
+        fs.writeFileSync(path.join(binDir, 'grok-0.9.99'), 'old');
+        fs.writeFileSync(path.join(binDir, 'grok-1.0.0'), 'v1');
+        fs.writeFileSync(path.join(binDir, 'grok-1.0.1'), 'current');
 
-        cleanupOldVersions(binDir, 'chaos-1.0.1');
+        cleanupOldVersions(binDir, 'grok-1.0.1');
 
-        assert.ok(fs.existsSync(path.join(binDir, 'chaos-1.0.0')), '1.0.0 should be kept (N-1)');
-        assert.ok(!fs.existsSync(path.join(binDir, 'chaos-0.9.99')), '0.9.99 should be removed');
+        assert.ok(fs.existsSync(path.join(binDir, 'grok-1.0.0')), '1.0.0 should be kept (N-1)');
+        assert.ok(!fs.existsSync(path.join(binDir, 'grok-0.9.99')), '0.9.99 should be removed');
     } finally {
         cleanup(dir);
     }
@@ -446,28 +502,28 @@ test('semver sort: minor version boundary (0.1.x vs 0.2.x)', () => {
         const binDir = path.join(dir, 'bin');
         fs.mkdirSync(binDir, { recursive: true });
 
-        fs.writeFileSync(path.join(binDir, 'chaos-0.1.999'), 'old');
-        fs.writeFileSync(path.join(binDir, 'chaos-0.2.0'), 'v2');
-        fs.writeFileSync(path.join(binDir, 'chaos-0.2.1'), 'current');
+        fs.writeFileSync(path.join(binDir, 'grok-0.1.999'), 'old');
+        fs.writeFileSync(path.join(binDir, 'grok-0.2.0'), 'v2');
+        fs.writeFileSync(path.join(binDir, 'grok-0.2.1'), 'current');
 
-        cleanupOldVersions(binDir, 'chaos-0.2.1');
+        cleanupOldVersions(binDir, 'grok-0.2.1');
 
-        assert.ok(fs.existsSync(path.join(binDir, 'chaos-0.2.0')), '0.2.0 should be kept (N-1)');
-        assert.ok(!fs.existsSync(path.join(binDir, 'chaos-0.1.999')), '0.1.999 should be removed');
+        assert.ok(fs.existsSync(path.join(binDir, 'grok-0.2.0')), '0.2.0 should be kept (N-1)');
+        assert.ok(!fs.existsSync(path.join(binDir, 'grok-0.1.999')), '0.1.999 should be removed');
     } finally {
         cleanup(dir);
     }
 });
 
-test('semverSortDescending: unit test comparator directly', () => {
-    const input = ['chaos-0.1.9', 'chaos-0.1.10', 'chaos-0.1.2', 'chaos-1.0.0', 'chaos-0.2.0'];
-    const sorted = [...input].sort(semverSortDescending);
+test('byVersionDescending: unit test comparator directly', () => {
+    const input = ['grok-0.1.9', 'grok-0.1.10', 'grok-0.1.2', 'grok-1.0.0', 'grok-0.2.0'];
+    const sorted = [...input].sort(byVersionDescending('grok-'));
     assert.deepStrictEqual(sorted, [
-        'chaos-1.0.0',
-        'chaos-0.2.0',
-        'chaos-0.1.10',
-        'chaos-0.1.9',
-        'chaos-0.1.2',
+        'grok-1.0.0',
+        'grok-0.2.0',
+        'grok-0.1.10',
+        'grok-0.1.9',
+        'grok-0.1.2',
     ]);
 });
 
@@ -481,13 +537,13 @@ test('bootstrapCanonical creates versioned binary from vendored', () => {
     const dir = makeTmpDir();
     try {
         const binDir = path.join(dir, 'bin');
-        const vendored = path.join(dir, 'vendored-chaos');
+        const vendored = path.join(dir, 'vendored-grok');
         fs.writeFileSync(vendored, 'vendored-content');
 
         const result = bootstrapCanonical(vendored, '0.1.140', binDir);
 
-        assert.strictEqual(result, path.join(binDir, 'chaos'));
-        assert.ok(fs.existsSync(path.join(binDir, 'chaos-0.1.140')), 'versioned binary should exist');
+        assert.strictEqual(result, path.join(binDir, 'grok'));
+        assert.ok(fs.existsSync(path.join(binDir, 'grok-0.1.140')), 'versioned binary should exist');
         assert.ok(fs.lstatSync(result).isSymbolicLink(), 'canonical should be symlink');
         assert.strictEqual(fs.readFileSync(result, 'utf8'), 'vendored-content');
     } finally {
@@ -499,7 +555,7 @@ test('bootstrapCanonical is idempotent', () => {
     const dir = makeTmpDir();
     try {
         const binDir = path.join(dir, 'bin');
-        const vendored = path.join(dir, 'vendored-chaos');
+        const vendored = path.join(dir, 'vendored-grok');
         fs.writeFileSync(vendored, 'original-content');
 
         bootstrapCanonical(vendored, '0.1.140', binDir);
@@ -511,7 +567,7 @@ test('bootstrapCanonical is idempotent', () => {
         const result = bootstrapCanonical(vendored, '0.1.140', binDir);
 
         assert.strictEqual(
-            fs.readFileSync(path.join(binDir, 'chaos-0.1.140'), 'utf8'),
+            fs.readFileSync(path.join(binDir, 'grok-0.1.140'), 'utf8'),
             'original-content',
             'should keep original, not npm-replaced version'
         );
@@ -556,11 +612,11 @@ test('bootstrapCanonical works when canonical already exists (different version)
         fs.writeFileSync(vendored2, 'v2');
         const result = bootstrapCanonical(vendored2, '0.1.141', binDir);
 
-        assert.strictEqual(result, path.join(binDir, 'chaos'));
+        assert.strictEqual(result, path.join(binDir, 'grok'));
         // Symlink should now point to v2
-        assert.strictEqual(fs.readlinkSync(result), 'chaos-0.1.141');
+        assert.strictEqual(fs.readlinkSync(result), 'grok-0.1.141');
         // v1 should still exist
-        assert.ok(fs.existsSync(path.join(binDir, 'chaos-0.1.140')), 'old version should still exist');
+        assert.ok(fs.existsSync(path.join(binDir, 'grok-0.1.140')), 'old version should still exist');
     } finally {
         cleanup(dir);
     }
@@ -589,16 +645,16 @@ test('full lifecycle: install, upgrade, cleanup', () => {
         // v3: another upgrade
         fs.writeFileSync(vendored, 'v3');
         installVersionedBinary(vendored, '0.1.142', binDir);
-        cleanupOldVersions(binDir, 'chaos-0.1.142');
+        cleanupOldVersions(binDir, 'grok-0.1.142');
 
         // Current (v3) + N-1 (v2) should exist; v1 removed
-        assert.ok(fs.existsSync(path.join(binDir, 'chaos-0.1.142')), 'v3 should exist');
-        assert.ok(fs.existsSync(path.join(binDir, 'chaos-0.1.141')), 'v2 should be kept (N-1)');
-        assert.ok(!fs.existsSync(path.join(binDir, 'chaos-0.1.140')), 'v1 should be removed');
+        assert.ok(fs.existsSync(path.join(binDir, 'grok-0.1.142')), 'v3 should exist');
+        assert.ok(fs.existsSync(path.join(binDir, 'grok-0.1.141')), 'v2 should be kept (N-1)');
+        assert.ok(!fs.existsSync(path.join(binDir, 'grok-0.1.140')), 'v1 should be removed');
 
         // Canonical symlink points to v3
-        assert.strictEqual(fs.readlinkSync(path.join(binDir, 'chaos')), 'chaos-0.1.142');
-        assert.strictEqual(fs.readFileSync(path.join(binDir, 'chaos'), 'utf8'), 'v3');
+        assert.strictEqual(fs.readlinkSync(path.join(binDir, 'grok')), 'grok-0.1.142');
+        assert.strictEqual(fs.readFileSync(path.join(binDir, 'grok'), 'utf8'), 'v3');
     } finally {
         cleanup(dir);
     }
@@ -619,49 +675,49 @@ test('downgrade: installing older version than current', () => {
         installVersionedBinary(vendored, '0.1.140', binDir);
 
         // Symlink should now point to v1
-        assert.strictEqual(fs.readlinkSync(path.join(binDir, 'chaos')), 'chaos-0.1.140');
-        assert.strictEqual(fs.readFileSync(path.join(binDir, 'chaos'), 'utf8'), 'v1');
+        assert.strictEqual(fs.readlinkSync(path.join(binDir, 'grok')), 'grok-0.1.140');
+        assert.strictEqual(fs.readFileSync(path.join(binDir, 'grok'), 'utf8'), 'v1');
 
         // v2 should still exist (never delete old binaries during install)
-        assert.ok(fs.existsSync(path.join(binDir, 'chaos-0.1.141')), 'v2 should still exist');
+        assert.ok(fs.existsSync(path.join(binDir, 'grok-0.1.141')), 'v2 should still exist');
     } finally {
         cleanup(dir);
     }
 });
 
-test('non-chaos files in bin dir are not touched by cleanup', () => {
+test('non-grok files in bin dir are not touched by cleanup', () => {
     const dir = makeTmpDir();
     try {
         const binDir = path.join(dir, 'bin');
         fs.mkdirSync(binDir, { recursive: true });
 
-        // Non-chaos files
+        // Non-grok files
         fs.writeFileSync(path.join(binDir, 'other-tool'), 'should-stay');
         fs.writeFileSync(path.join(binDir, 'README.md'), 'should-stay');
 
-        // Chaos versions
-        fs.writeFileSync(path.join(binDir, 'chaos-0.1.138'), 'old1');
-        fs.writeFileSync(path.join(binDir, 'chaos-0.1.139'), 'old2');
-        fs.writeFileSync(path.join(binDir, 'chaos-0.1.140'), 'current');
+        // Grok versions
+        fs.writeFileSync(path.join(binDir, 'grok-0.1.138'), 'old1');
+        fs.writeFileSync(path.join(binDir, 'grok-0.1.139'), 'old2');
+        fs.writeFileSync(path.join(binDir, 'grok-0.1.140'), 'current');
 
-        cleanupOldVersions(binDir, 'chaos-0.1.140');
+        cleanupOldVersions(binDir, 'grok-0.1.140');
 
-        assert.ok(fs.existsSync(path.join(binDir, 'other-tool')), 'non-chaos file should not be touched');
-        assert.ok(fs.existsSync(path.join(binDir, 'README.md')), 'non-chaos file should not be touched');
+        assert.ok(fs.existsSync(path.join(binDir, 'other-tool')), 'non-grok file should not be touched');
+        assert.ok(fs.existsSync(path.join(binDir, 'README.md')), 'non-grok file should not be touched');
     } finally {
         cleanup(dir);
     }
 });
 
 // ═══════════════════════════════════════════════════════════════════════
-// chaos vs chaos-pager Isolation Tests
+// grok vs grok-pager Isolation Tests
 // ═══════════════════════════════════════════════════════════════════════
 
-console.log('\nchaos vs chaos-pager isolation tests\n');
+console.log('\ngrok vs grok-pager isolation tests\n');
 
 /**
  * Cleanup for a named binary (mirrors postinstall.js cleanupOldVersions).
- * Uses prefix + leading digit to avoid chaos-* matching chaos-pager-*.
+ * Uses prefix + leading digit to avoid grok-* matching grok-pager-*.
  */
 function cleanupOldVersionsNamed(canonicalDir, binName, version) {
     const prefix = `${binName}-`;
@@ -675,14 +731,7 @@ function cleanupOldVersionsNamed(canonicalDir, binName, version) {
             const suffix = e.slice(prefix.length);
             return /^\d/.test(suffix);
         })
-        .sort((a, b) => {
-            const pa = a.slice(prefix.length).split('.').map(Number);
-            const pb = b.slice(prefix.length).split('.').map(Number);
-            for (let i = 0; i < 3; i++) {
-                if ((pa[i] || 0) !== (pb[i] || 0)) return (pb[i] || 0) - (pa[i] || 0);
-            }
-            return 0;
-        });
+        .sort(byVersionDescending(prefix));
     for (const old of versionedBinaries.slice(1)) {
         try { fs.unlinkSync(path.join(canonicalDir, old)); } catch {}
     }
@@ -715,95 +764,95 @@ function installNamedBinary(vendoredBinPath, binName, version, canonicalDir) {
     return { canonicalPath, versionedPath, versionedName };
 }
 
-test('installing both chaos and chaos-pager creates independent symlinks', () => {
+test('installing both grok and grok-pager creates independent symlinks', () => {
     const dir = makeTmpDir();
     try {
         const binDir = path.join(dir, 'bin');
         const vendored = path.join(dir, 'vendored');
-        fs.writeFileSync(vendored, 'chaos-binary');
+        fs.writeFileSync(vendored, 'grok-binary');
         const vendoredPager = path.join(dir, 'vendored-pager');
         fs.writeFileSync(vendoredPager, 'pager-binary');
 
-        installNamedBinary(vendored, 'chaos', '0.1.141', binDir);
-        installNamedBinary(vendoredPager, 'chaos-pager', '0.1.141', binDir);
+        installNamedBinary(vendored, 'grok', '0.1.141', binDir);
+        installNamedBinary(vendoredPager, 'grok-pager', '0.1.141', binDir);
 
         // Both symlinks exist and point to correct targets
-        assert.strictEqual(fs.readlinkSync(path.join(binDir, 'chaos')), 'chaos-0.1.141');
-        assert.strictEqual(fs.readlinkSync(path.join(binDir, 'chaos-pager')), 'chaos-pager-0.1.141');
+        assert.strictEqual(fs.readlinkSync(path.join(binDir, 'grok')), 'grok-0.1.141');
+        assert.strictEqual(fs.readlinkSync(path.join(binDir, 'grok-pager')), 'grok-pager-0.1.141');
 
         // Both versioned files exist with correct content
-        assert.strictEqual(fs.readFileSync(path.join(binDir, 'chaos-0.1.141'), 'utf8'), 'chaos-binary');
-        assert.strictEqual(fs.readFileSync(path.join(binDir, 'chaos-pager-0.1.141'), 'utf8'), 'pager-binary');
+        assert.strictEqual(fs.readFileSync(path.join(binDir, 'grok-0.1.141'), 'utf8'), 'grok-binary');
+        assert.strictEqual(fs.readFileSync(path.join(binDir, 'grok-pager-0.1.141'), 'utf8'), 'pager-binary');
     } finally {
         cleanup(dir);
     }
 });
 
-test('cleanup of chaos-* does not remove chaos-pager-*', () => {
+test('cleanup of grok-* does not remove grok-pager-*', () => {
     const dir = makeTmpDir();
     try {
         const binDir = path.join(dir, 'bin');
         fs.mkdirSync(binDir, { recursive: true });
 
-        // Old chaos versions
-        fs.writeFileSync(path.join(binDir, 'chaos-0.1.138'), 'old-chaos-1');
-        fs.writeFileSync(path.join(binDir, 'chaos-0.1.139'), 'old-chaos-2');
-        fs.writeFileSync(path.join(binDir, 'chaos-0.1.140'), 'old-chaos-3');
+        // Old grok versions
+        fs.writeFileSync(path.join(binDir, 'grok-0.1.138'), 'old-grok-1');
+        fs.writeFileSync(path.join(binDir, 'grok-0.1.139'), 'old-grok-2');
+        fs.writeFileSync(path.join(binDir, 'grok-0.1.140'), 'old-grok-3');
         // Current grok
-        fs.writeFileSync(path.join(binDir, 'chaos-0.1.141'), 'current-chaos');
+        fs.writeFileSync(path.join(binDir, 'grok-0.1.141'), 'current-grok');
 
-        // chaos-pager versions (should not be touched)
-        fs.writeFileSync(path.join(binDir, 'chaos-pager-0.1.138'), 'old-pager-1');
-        fs.writeFileSync(path.join(binDir, 'chaos-pager-0.1.139'), 'old-pager-2');
-        fs.writeFileSync(path.join(binDir, 'chaos-pager-0.1.141'), 'current-pager');
+        // grok-pager versions (should not be touched)
+        fs.writeFileSync(path.join(binDir, 'grok-pager-0.1.138'), 'old-pager-1');
+        fs.writeFileSync(path.join(binDir, 'grok-pager-0.1.139'), 'old-pager-2');
+        fs.writeFileSync(path.join(binDir, 'grok-pager-0.1.141'), 'current-pager');
 
-        cleanupOldVersionsNamed(binDir, 'chaos', '0.1.141');
+        cleanupOldVersionsNamed(binDir, 'grok', '0.1.141');
 
-        // chaos cleanup: current + N-1 kept, older removed
-        assert.ok(fs.existsSync(path.join(binDir, 'chaos-0.1.141')), 'current chaos should exist');
-        assert.ok(fs.existsSync(path.join(binDir, 'chaos-0.1.140')), 'N-1 chaos should be kept');
-        assert.ok(!fs.existsSync(path.join(binDir, 'chaos-0.1.139')), 'N-2 chaos should be removed');
-        assert.ok(!fs.existsSync(path.join(binDir, 'chaos-0.1.138')), 'N-3 chaos should be removed');
+        // grok cleanup: current + N-1 kept, older removed
+        assert.ok(fs.existsSync(path.join(binDir, 'grok-0.1.141')), 'current grok should exist');
+        assert.ok(fs.existsSync(path.join(binDir, 'grok-0.1.140')), 'N-1 grok should be kept');
+        assert.ok(!fs.existsSync(path.join(binDir, 'grok-0.1.139')), 'N-2 grok should be removed');
+        assert.ok(!fs.existsSync(path.join(binDir, 'grok-0.1.138')), 'N-3 grok should be removed');
 
-        // ALL chaos-pager versions must be untouched
-        assert.ok(fs.existsSync(path.join(binDir, 'chaos-pager-0.1.138')), 'chaos-pager-0.1.138 must survive chaos cleanup');
-        assert.ok(fs.existsSync(path.join(binDir, 'chaos-pager-0.1.139')), 'chaos-pager-0.1.139 must survive chaos cleanup');
-        assert.ok(fs.existsSync(path.join(binDir, 'chaos-pager-0.1.141')), 'chaos-pager-0.1.141 must survive chaos cleanup');
+        // ALL grok-pager versions must be untouched
+        assert.ok(fs.existsSync(path.join(binDir, 'grok-pager-0.1.138')), 'grok-pager-0.1.138 must survive grok cleanup');
+        assert.ok(fs.existsSync(path.join(binDir, 'grok-pager-0.1.139')), 'grok-pager-0.1.139 must survive grok cleanup');
+        assert.ok(fs.existsSync(path.join(binDir, 'grok-pager-0.1.141')), 'grok-pager-0.1.141 must survive grok cleanup');
     } finally {
         cleanup(dir);
     }
 });
 
-test('cleanup of chaos-pager-* does not remove chaos-*', () => {
+test('cleanup of grok-pager-* does not remove grok-*', () => {
     const dir = makeTmpDir();
     try {
         const binDir = path.join(dir, 'bin');
         fs.mkdirSync(binDir, { recursive: true });
 
-        // chaos versions (should not be touched)
-        fs.writeFileSync(path.join(binDir, 'chaos-0.1.138'), 'old-chaos-1');
-        fs.writeFileSync(path.join(binDir, 'chaos-0.1.139'), 'old-chaos-2');
-        fs.writeFileSync(path.join(binDir, 'chaos-0.1.141'), 'current-chaos');
+        // grok versions (should not be touched)
+        fs.writeFileSync(path.join(binDir, 'grok-0.1.138'), 'old-grok-1');
+        fs.writeFileSync(path.join(binDir, 'grok-0.1.139'), 'old-grok-2');
+        fs.writeFileSync(path.join(binDir, 'grok-0.1.141'), 'current-grok');
 
-        // Old chaos-pager versions
-        fs.writeFileSync(path.join(binDir, 'chaos-pager-0.1.138'), 'old-pager-1');
-        fs.writeFileSync(path.join(binDir, 'chaos-pager-0.1.139'), 'old-pager-2');
-        fs.writeFileSync(path.join(binDir, 'chaos-pager-0.1.140'), 'old-pager-3');
+        // Old grok-pager versions
+        fs.writeFileSync(path.join(binDir, 'grok-pager-0.1.138'), 'old-pager-1');
+        fs.writeFileSync(path.join(binDir, 'grok-pager-0.1.139'), 'old-pager-2');
+        fs.writeFileSync(path.join(binDir, 'grok-pager-0.1.140'), 'old-pager-3');
         // Current pager
-        fs.writeFileSync(path.join(binDir, 'chaos-pager-0.1.141'), 'current-pager');
+        fs.writeFileSync(path.join(binDir, 'grok-pager-0.1.141'), 'current-pager');
 
-        cleanupOldVersionsNamed(binDir, 'chaos-pager', '0.1.141');
+        cleanupOldVersionsNamed(binDir, 'grok-pager', '0.1.141');
 
-        // chaos-pager cleanup: current + N-1 kept, older removed
-        assert.ok(fs.existsSync(path.join(binDir, 'chaos-pager-0.1.141')), 'current pager should exist');
-        assert.ok(fs.existsSync(path.join(binDir, 'chaos-pager-0.1.140')), 'N-1 pager should be kept');
-        assert.ok(!fs.existsSync(path.join(binDir, 'chaos-pager-0.1.139')), 'N-2 pager should be removed');
-        assert.ok(!fs.existsSync(path.join(binDir, 'chaos-pager-0.1.138')), 'N-3 pager should be removed');
+        // grok-pager cleanup: current + N-1 kept, older removed
+        assert.ok(fs.existsSync(path.join(binDir, 'grok-pager-0.1.141')), 'current pager should exist');
+        assert.ok(fs.existsSync(path.join(binDir, 'grok-pager-0.1.140')), 'N-1 pager should be kept');
+        assert.ok(!fs.existsSync(path.join(binDir, 'grok-pager-0.1.139')), 'N-2 pager should be removed');
+        assert.ok(!fs.existsSync(path.join(binDir, 'grok-pager-0.1.138')), 'N-3 pager should be removed');
 
-        // ALL chaos versions must be untouched
-        assert.ok(fs.existsSync(path.join(binDir, 'chaos-0.1.138')), 'chaos-0.1.138 must survive pager cleanup');
-        assert.ok(fs.existsSync(path.join(binDir, 'chaos-0.1.139')), 'chaos-0.1.139 must survive pager cleanup');
-        assert.ok(fs.existsSync(path.join(binDir, 'chaos-0.1.141')), 'chaos-0.1.141 must survive pager cleanup');
+        // ALL grok versions must be untouched
+        assert.ok(fs.existsSync(path.join(binDir, 'grok-0.1.138')), 'grok-0.1.138 must survive pager cleanup');
+        assert.ok(fs.existsSync(path.join(binDir, 'grok-0.1.139')), 'grok-0.1.139 must survive pager cleanup');
+        assert.ok(fs.existsSync(path.join(binDir, 'grok-0.1.141')), 'grok-0.1.141 must survive pager cleanup');
     } finally {
         cleanup(dir);
     }
@@ -817,39 +866,39 @@ test('full dual-binary lifecycle: install, upgrade, cleanup both', () => {
         const vendoredPager = path.join(dir, 'vendored-pager');
 
         // v1
-        fs.writeFileSync(vendored, 'chaos-v1');
+        fs.writeFileSync(vendored, 'grok-v1');
         fs.writeFileSync(vendoredPager, 'pager-v1');
-        installNamedBinary(vendored, 'chaos', '0.1.140', binDir);
-        installNamedBinary(vendoredPager, 'chaos-pager', '0.1.140', binDir);
+        installNamedBinary(vendored, 'grok', '0.1.140', binDir);
+        installNamedBinary(vendoredPager, 'grok-pager', '0.1.140', binDir);
 
         // v2
-        fs.writeFileSync(vendored, 'chaos-v2');
+        fs.writeFileSync(vendored, 'grok-v2');
         fs.writeFileSync(vendoredPager, 'pager-v2');
-        installNamedBinary(vendored, 'chaos', '0.1.141', binDir);
-        installNamedBinary(vendoredPager, 'chaos-pager', '0.1.141', binDir);
+        installNamedBinary(vendored, 'grok', '0.1.141', binDir);
+        installNamedBinary(vendoredPager, 'grok-pager', '0.1.141', binDir);
 
         // v3
-        fs.writeFileSync(vendored, 'chaos-v3');
+        fs.writeFileSync(vendored, 'grok-v3');
         fs.writeFileSync(vendoredPager, 'pager-v3');
-        installNamedBinary(vendored, 'chaos', '0.1.142', binDir);
-        installNamedBinary(vendoredPager, 'chaos-pager', '0.1.142', binDir);
+        installNamedBinary(vendored, 'grok', '0.1.142', binDir);
+        installNamedBinary(vendoredPager, 'grok-pager', '0.1.142', binDir);
 
         // Cleanup both independently
-        cleanupOldVersionsNamed(binDir, 'chaos', '0.1.142');
-        cleanupOldVersionsNamed(binDir, 'chaos-pager', '0.1.142');
+        cleanupOldVersionsNamed(binDir, 'grok', '0.1.142');
+        cleanupOldVersionsNamed(binDir, 'grok-pager', '0.1.142');
 
         // Current + N-1 for each
-        assert.ok(fs.existsSync(path.join(binDir, 'chaos-0.1.142')));
-        assert.ok(fs.existsSync(path.join(binDir, 'chaos-0.1.141')));
-        assert.ok(!fs.existsSync(path.join(binDir, 'chaos-0.1.140')));
+        assert.ok(fs.existsSync(path.join(binDir, 'grok-0.1.142')));
+        assert.ok(fs.existsSync(path.join(binDir, 'grok-0.1.141')));
+        assert.ok(!fs.existsSync(path.join(binDir, 'grok-0.1.140')));
 
-        assert.ok(fs.existsSync(path.join(binDir, 'chaos-pager-0.1.142')));
-        assert.ok(fs.existsSync(path.join(binDir, 'chaos-pager-0.1.141')));
-        assert.ok(!fs.existsSync(path.join(binDir, 'chaos-pager-0.1.140')));
+        assert.ok(fs.existsSync(path.join(binDir, 'grok-pager-0.1.142')));
+        assert.ok(fs.existsSync(path.join(binDir, 'grok-pager-0.1.141')));
+        assert.ok(!fs.existsSync(path.join(binDir, 'grok-pager-0.1.140')));
 
         // Symlinks correct
-        assert.strictEqual(fs.readlinkSync(path.join(binDir, 'chaos')), 'chaos-0.1.142');
-        assert.strictEqual(fs.readlinkSync(path.join(binDir, 'chaos-pager')), 'chaos-pager-0.1.142');
+        assert.strictEqual(fs.readlinkSync(path.join(binDir, 'grok')), 'grok-0.1.142');
+        assert.strictEqual(fs.readlinkSync(path.join(binDir, 'grok-pager')), 'grok-pager-0.1.142');
     } finally {
         cleanup(dir);
     }
@@ -861,40 +910,40 @@ test('full dual-binary lifecycle: install, upgrade, cleanup both', () => {
 
 console.log('\nmacOS-only pager platform split tests\n');
 
-test('chaos installs normally regardless of platform key', () => {
+test('grok installs normally regardless of platform key', () => {
     const dir = makeTmpDir();
     try {
         const binDir = path.join(dir, 'bin');
-        const vendored = path.join(dir, 'vendored-chaos');
-        fs.writeFileSync(vendored, 'chaos-binary');
+        const vendored = path.join(dir, 'vendored-grok');
+        fs.writeFileSync(vendored, 'grok-binary');
 
         for (const platform of ['darwin-arm64', 'linux-x64', 'linux-arm64']) {
-            const result = installNamedBinary(vendored, 'chaos', '0.1.150', binDir);
-            assert.ok(fs.existsSync(result.versionedPath), `chaos should install for ${platform}`);
-            assert.strictEqual(fs.readlinkSync(result.canonicalPath), 'chaos-0.1.150');
+            const result = installNamedBinary(vendored, 'grok', '0.1.150', binDir);
+            assert.ok(fs.existsSync(result.versionedPath), `grok should install for ${platform}`);
+            assert.strictEqual(fs.readlinkSync(result.canonicalPath), 'grok-0.1.150');
         }
     } finally {
         cleanup(dir);
     }
 });
 
-test('chaos-pager installs when vendored binary exists (darwin-arm64 path)', () => {
+test('grok-pager installs when vendored binary exists (darwin-arm64 path)', () => {
     const dir = makeTmpDir();
     try {
         const binDir = path.join(dir, 'bin');
         const vendoredPager = path.join(dir, 'vendored-pager');
         fs.writeFileSync(vendoredPager, 'pager-binary');
 
-        const result = installNamedBinary(vendoredPager, 'chaos-pager', '0.1.150', binDir);
+        const result = installNamedBinary(vendoredPager, 'grok-pager', '0.1.150', binDir);
         assert.ok(fs.existsSync(result.versionedPath), 'pager versioned binary should exist');
-        assert.strictEqual(fs.readlinkSync(result.canonicalPath), 'chaos-pager-0.1.150');
+        assert.strictEqual(fs.readlinkSync(result.canonicalPath), 'grok-pager-0.1.150');
         assert.strictEqual(fs.readFileSync(result.canonicalPath, 'utf8'), 'pager-binary');
     } finally {
         cleanup(dir);
     }
 });
 
-test('Linux pager vendor files are not required for chaos install', () => {
+test('Linux pager vendor files are not required for grok install', () => {
     const dir = makeTmpDir();
     try {
         const binDir = path.join(dir, 'bin');
@@ -902,44 +951,44 @@ test('Linux pager vendor files are not required for chaos install', () => {
 
         // Only darwin-arm64 pager exists (mirrors npm tarball)
         fs.mkdirSync(path.join(vendorBase, 'darwin-arm64'), { recursive: true });
-        fs.writeFileSync(path.join(vendorBase, 'darwin-arm64', 'chaos-pager'), 'mac-pager');
+        fs.writeFileSync(path.join(vendorBase, 'darwin-arm64', 'grok-pager'), 'mac-pager');
 
         // Linux pager vendor dirs exist but without pager binaries
         fs.mkdirSync(path.join(vendorBase, 'linux-x64'), { recursive: true });
         fs.mkdirSync(path.join(vendorBase, 'linux-arm64'), { recursive: true });
 
         // Verify no Linux pager binaries
-        assert.ok(!fs.existsSync(path.join(vendorBase, 'linux-x64', 'chaos-pager')));
-        assert.ok(!fs.existsSync(path.join(vendorBase, 'linux-arm64', 'chaos-pager')));
+        assert.ok(!fs.existsSync(path.join(vendorBase, 'linux-x64', 'grok-pager')));
+        assert.ok(!fs.existsSync(path.join(vendorBase, 'linux-arm64', 'grok-pager')));
 
-        // chaos install should succeed independently
-        const chaosVendored = path.join(dir, 'vendored-chaos');
-        fs.writeFileSync(chaosVendored, 'chaos-linux');
-        const result = installNamedBinary(chaosVendored, 'chaos', '0.1.150', binDir);
-        assert.ok(fs.existsSync(result.versionedPath), 'chaos should install without Linux pager');
+        // grok install should succeed independently
+        const grokVendored = path.join(dir, 'vendored-grok');
+        fs.writeFileSync(grokVendored, 'grok-linux');
+        const result = installNamedBinary(grokVendored, 'grok', '0.1.150', binDir);
+        assert.ok(fs.existsSync(result.versionedPath), 'grok should install without Linux pager');
     } finally {
         cleanup(dir);
     }
 });
 
-test('skipping pager install on Linux does not affect chaos cleanup', () => {
+test('skipping pager install on Linux does not affect grok cleanup', () => {
     const dir = makeTmpDir();
     try {
         const binDir = path.join(dir, 'bin');
         const vendored = path.join(dir, 'vendored');
 
-        // Install chaos across two versions
-        fs.writeFileSync(vendored, 'chaos-v1');
-        installNamedBinary(vendored, 'chaos', '0.1.149', binDir);
-        fs.writeFileSync(vendored, 'chaos-v2');
-        installNamedBinary(vendored, 'chaos', '0.1.150', binDir);
+        // Install grok across two versions
+        fs.writeFileSync(vendored, 'grok-v1');
+        installNamedBinary(vendored, 'grok', '0.1.149', binDir);
+        fs.writeFileSync(vendored, 'grok-v2');
+        installNamedBinary(vendored, 'grok', '0.1.150', binDir);
 
-        // Simulate Linux: only run chaos cleanup, skip pager entirely
-        cleanupOldVersionsNamed(binDir, 'chaos', '0.1.150');
+        // Simulate Linux: only run grok cleanup, skip pager entirely
+        cleanupOldVersionsNamed(binDir, 'grok', '0.1.150');
 
-        assert.ok(fs.existsSync(path.join(binDir, 'chaos-0.1.150')), 'current chaos should exist');
-        assert.ok(fs.existsSync(path.join(binDir, 'chaos-0.1.149')), 'N-1 chaos should be kept');
-        assert.strictEqual(fs.readlinkSync(path.join(binDir, 'chaos')), 'chaos-0.1.150');
+        assert.ok(fs.existsSync(path.join(binDir, 'grok-0.1.150')), 'current grok should exist');
+        assert.ok(fs.existsSync(path.join(binDir, 'grok-0.1.149')), 'N-1 grok should be kept');
+        assert.strictEqual(fs.readlinkSync(path.join(binDir, 'grok')), 'grok-0.1.150');
 
         // No pager files should exist at all
         const entries = fs.readdirSync(binDir);
@@ -956,23 +1005,75 @@ test('canonical pager from non-npm install is preserved on Linux', () => {
         const binDir = path.join(dir, 'bin');
         fs.mkdirSync(binDir, { recursive: true });
 
-        // Simulate pager installed by install script (not npm)
-        const pagerVersioned = path.join(binDir, 'chaos-pager-0.1.150');
+        // Simulate pager installed by install-grok.sh (not npm)
+        const pagerVersioned = path.join(binDir, 'grok-pager-0.1.150');
         fs.writeFileSync(pagerVersioned, 'installer-pager-binary');
         fs.chmodSync(pagerVersioned, 0o755);
-        const pagerCanonical = path.join(binDir, 'chaos-pager');
-        fs.symlinkSync('chaos-pager-0.1.150', pagerCanonical);
+        const pagerCanonical = path.join(binDir, 'grok-pager');
+        fs.symlinkSync('grok-pager-0.1.150', pagerCanonical);
 
-        // Run chaos-only install + cleanup (simulating Linux postinstall)
+        // Run grok-only install + cleanup (simulating Linux postinstall)
         const vendored = path.join(dir, 'vendored');
-        fs.writeFileSync(vendored, 'chaos-binary');
-        installNamedBinary(vendored, 'chaos', '0.1.150', binDir);
-        cleanupOldVersionsNamed(binDir, 'chaos', '0.1.150');
+        fs.writeFileSync(vendored, 'grok-binary');
+        installNamedBinary(vendored, 'grok', '0.1.150', binDir);
+        cleanupOldVersionsNamed(binDir, 'grok', '0.1.150');
 
         // Pager installed by other means must be untouched
         assert.ok(fs.existsSync(pagerCanonical), 'canonical pager should survive');
         assert.ok(fs.existsSync(pagerVersioned), 'versioned pager should survive');
-        assert.strictEqual(fs.readlinkSync(pagerCanonical), 'chaos-pager-0.1.150');
+        assert.strictEqual(fs.readlinkSync(pagerCanonical), 'grok-pager-0.1.150');
+    } finally {
+        cleanup(dir);
+    }
+});
+
+console.log('\ngrok home + brotli install tests\n');
+
+test('resolveGrokBinDir honors $GROK_HOME, else falls back to <home>/.grok/bin', () => {
+    assert.strictEqual(
+        resolveGrokBinDir({ GROK_HOME: '/fast/local/.grok' }, '/home/alice'),
+        path.join('/fast/local/.grok', 'bin'),
+    );
+    assert.strictEqual(
+        resolveGrokBinDir({}, '/home/alice'),
+        path.join('/home/alice', '.grok', 'bin'),
+    );
+    assert.strictEqual(resolveGrokBinDir({ GROK_HOME: '' }, '/home/alice'), path.join('', 'bin'));
+});
+
+test('writeVendorBinary returns false (not true) when the destination cannot be written', () => {
+    const dir = makeTmpDir();
+    try {
+        const brPath = path.join(dir, 'grok.br');
+        fs.writeFileSync(brPath, zlib.brotliCompressSync(Buffer.from('binary')));
+
+        // A non-empty directory at destPath makes the final rename fail.
+        const dest = path.join(dir, 'dest');
+        fs.mkdirSync(dest);
+        fs.writeFileSync(path.join(dest, 'child'), 'x');
+
+        assert.strictEqual(writeVendorBinary(brPath, path.join(dir, 'raw'), dest), false);
+        assert.ok(!fs.existsSync(`${dest}.tmp.${process.pid}`), 'temp file is cleaned up on failure');
+    } finally {
+        cleanup(dir);
+    }
+});
+
+test('decompresses brotli into the canonical dir without duplicating into node_modules', () => {
+    const dir = makeTmpDir();
+    try {
+        const vendorBin = path.join(dir, 'node_modules', 'bin');
+        fs.mkdirSync(vendorBin, { recursive: true });
+        const brPath = path.join(vendorBin, 'grok.br');
+        fs.writeFileSync(brPath, zlib.brotliCompressSync(Buffer.from('native-binary-bytes')));
+
+        const binDir = path.join(dir, '.grok', 'bin');
+        const result = installBinaryFromBrotli(brPath, '0.1.220', binDir);
+
+        assert.ok(fs.lstatSync(result.canonicalPath).isSymbolicLink());
+        assert.strictEqual(fs.readFileSync(result.canonicalPath, 'utf8'), 'native-binary-bytes');
+        assert.ok(!fs.existsSync(path.join(vendorBin, 'grok')), 'no uncompressed binary in node_modules');
+        assert.ok(fs.existsSync(brPath), 'compressed .br payload is preserved');
     } finally {
         cleanup(dir);
     }

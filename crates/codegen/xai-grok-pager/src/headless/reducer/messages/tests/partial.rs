@@ -32,7 +32,11 @@ fn messages_partial_framing_closes_with_stop_reason_and_usage() {
     r.reduce(StreamEvent::ResponseCompleted {
         message_id: Some("msg_a".into()),
         stop_reason: Some("end_turn".into()),
-        usage: Some(response_usage(3, 7, 0, 0)),
+        usage: Some(ResponseUsage {
+            input_tokens: 3,
+            output_tokens: 7,
+            ..Default::default()
+        }),
         signature: None,
         stop_sequence: None,
     });
@@ -327,7 +331,11 @@ fn messages_partial_empty_response_still_frames_message() {
     r.reduce(StreamEvent::ResponseCompleted {
         message_id: Some("msg_empty".into()),
         stop_reason: Some("end_turn".into()),
-        usage: Some(response_usage(5, 0, 0, 0)),
+        usage: Some(ResponseUsage {
+            input_tokens: 5,
+            output_tokens: 0,
+            ..Default::default()
+        }),
         signature: None,
         stop_sequence: None,
     });
@@ -357,7 +365,11 @@ fn messages_partial_empty_then_real_response_do_not_cross_attribute() {
     out.extend(r.reduce(StreamEvent::ResponseCompleted {
         message_id: Some("msg_a".into()),
         stop_reason: Some("end_turn".into()),
-        usage: Some(response_usage(11, 0, 0, 0)),
+        usage: Some(ResponseUsage {
+            input_tokens: 11,
+            output_tokens: 0,
+            ..Default::default()
+        }),
         signature: None,
         stop_sequence: None,
     }));

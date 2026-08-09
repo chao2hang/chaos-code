@@ -53,10 +53,7 @@ async fn handle_set_context_window(agent: &MvpAgent, args: &acp::ExtRequest) -> 
     }
 
     let not_found_err = format!("session not found: {}", req.session_id);
-    let session_handle = {
-        let sessions = agent.sessions.borrow();
-        sessions.get(&req.session_id.into()).cloned()
-    };
+    let session_handle = agent.resident_session_handle(&req.session_id.into());
     let Some(session) = session_handle else {
         return Err(acp::Error::invalid_params().data(not_found_err));
     };
@@ -85,10 +82,8 @@ async fn handle_set_context_window(agent: &MvpAgent, args: &acp::ExtRequest) -> 
 async fn handle_compact(agent: &MvpAgent, args: &acp::ExtRequest) -> ExtResult {
     let req: CompactConversationRequest = parse_params(args)?;
     // send over the compact query here properly
-    let session_handle = {
-        let sessions = agent.sessions.borrow();
-        sessions.get(&req.session_id.into()).cloned()
-    };
+    let sid: acp::SessionId = req.session_id.into();
+    let session_handle = agent.resident_handle(&sid);
     let (tx, rx) = oneshot::channel();
     if let Some(session) = session_handle {
         let _ = session.cmd_tx.send(SessionCommand::CompactSession {
@@ -110,11 +105,8 @@ async fn handle_flush(agent: &MvpAgent, args: &acp::ExtRequest) -> ExtResult {
 
     let req: MemoryFlushRequest = parse_params(args)?;
     let not_found_err = format!("session not found: {}", req.session_id);
-    let session_handle = {
-        let sessions = agent.sessions.borrow();
-        sessions.get(&req.session_id.into()).cloned()
-    };
-    let Some(session) = session_handle else {
+    let sid: acp::SessionId = req.session_id.into();
+    let Some(session) = agent.resident_handle(&sid) else {
         return Err(acp::Error::invalid_params().data(not_found_err));
     };
     let (tx, rx) = oneshot::channel();
@@ -138,11 +130,8 @@ async fn handle_rewrite(agent: &MvpAgent, args: &acp::ExtRequest) -> ExtResult {
 
     let req: RewriteRequest = parse_params(args)?;
     let not_found_err = format!("session not found: {}", req.session_id);
-    let session_handle = {
-        let sessions = agent.sessions.borrow();
-        sessions.get(&req.session_id.into()).cloned()
-    };
-    let Some(session) = session_handle else {
+    let sid: acp::SessionId = req.session_id.into();
+    let Some(session) = agent.resident_handle(&sid) else {
         return Err(acp::Error::invalid_params().data(not_found_err));
     };
     let (tx, rx) = oneshot::channel();

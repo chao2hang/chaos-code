@@ -534,8 +534,17 @@ impl ToolCallFunction {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Usage {
+    /// Token counts are required by the OpenAI Chat Completions schema, but
+    /// some OpenAI-compatible gateways emit a `usage` object that omits one or
+    /// more of them (e.g. a streamed final chunk with only
+    /// `completion_tokens`/`total_tokens`, or a Responses-style usage with
+    /// `input_tokens`/`output_tokens`). Default missing fields to 0 so a
+    /// partially-specified usage never hard-fails deserialization.
+    #[serde(default)]
     pub prompt_tokens: u32,
+    #[serde(default)]
     pub completion_tokens: u32,
+    #[serde(default)]
     pub total_tokens: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prompt_tokens_details: Option<PromptTokensDetails>,
@@ -571,9 +580,18 @@ pub struct CompletionTokensDetails {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ChatCompletionChunk {
+    /// The OpenAI schema marks `id`/`object`/`created`/`model` as present on
+    /// every chunk, but some OpenAI-compatible gateways stream minimal chunks
+    /// that omit the metadata envelope entirely and carry only `choices` (and
+    /// `usage` on the final chunk). Default the envelope fields so a minimal
+    /// chunk never hard-fails deserialization.
+    #[serde(default)]
     pub id: String,
+    #[serde(default)]
     pub object: String,
+    #[serde(default)]
     pub created: u64,
+    #[serde(default)]
     pub model: String,
     pub choices: Vec<ChatChunkChoice>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -588,7 +606,12 @@ pub struct ChatCompletionChunk {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ChatChunkChoice {
+    /// Minimal gateways sometimes omit `index`, and a terminal chunk often
+    /// carries only `finish_reason` with no `delta`. Both default so any
+    /// well-formed `choices` entry parses.
+    #[serde(default)]
     pub index: u32,
+    #[serde(default)]
     pub delta: ChatChunkDelta,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub finish_reason: Option<FinishReason>,
@@ -1026,6 +1049,18 @@ impl ApiBackend {
     /// so structured output there goes through the StructuredOutput tool.
     pub fn supports_native_schema(&self) -> bool {
         matches!(self, Self::ChatCompletions | Self::Responses)
+    }
+
+    /// Whether replayed reasoning must be stripped. Only the Messages API rejects thinking blocks sent without a top-level `thinking` config.
+    pub fn requires_reasoning_strip(&self) -> bool {
+        matches!(self, Self::Messages)
+    }
+
+    /// Whether [`ConversationRequest::prompt_cache_key`] reaches the wire. Only the Responses mapping sends it, so a key set elsewhere is inert.
+    ///
+    /// [`ConversationRequest::prompt_cache_key`]: crate::conversation::ConversationRequest::prompt_cache_key
+    pub fn forwards_prompt_cache_key(&self) -> bool {
+        matches!(self, Self::Responses)
     }
 }
 
@@ -1537,5 +1572,73 @@ mod tests {
         let inner: &dyn TraceContext = &*cloned_trace;
         let downcast = inner.as_any().downcast_ref::<TestTrace>().unwrap();
         assert_eq!(downcast.0, "trace-data");
+    }
+
+    /// A partially-specified `usage` (missing token fields) must deserialize
+    /// instead of failing with "missing field `prompt_tokens`". Some
+    /// OpenAI-compatible gateways emit exactly this (e.g. a streamed final
+    /// chunk with only `completion_tokens`/`total_tokens`).
+    #[test]
+    fn usage_accepts_missing_token_fields() {
+        // Only completion tokens present.
+        let u: Usage =
+            serde_json::from_str(r#"{"completion_tokens": 5, "total_tokens": 5}"#).unwrap();
+        assert_eq!(u.prompt_tokens, 0);
+        assert_eq!(u.completion_tokens, 5);
+        assert_eq!(u.total_tokens, 5);
+
+        // Responses-style usage (no chat-completions keys at all).
+        let u: Usage = serde_json::from_str(r#"{"input_tokens": 10, "output_tokens": 5}"#).unwrap();
+        assert_eq!(u.prompt_tokens, 0);
+        assert_eq!(u.completion_tokens, 0);
+        assert_eq!(u.total_tokens, 0);
+
+        // Fully-specified usage still parses as before.
+        let u: Usage =
+            serde_json::from_str(r#"{"prompt_tokens": 3, "completion_tokens": 5, "total_tokens": 8}"#)
+                .unwrap();
+        assert_eq!(u.prompt_tokens, 3);
+        assert_eq!(u.completion_tokens, 5);
+        assert_eq!(u.total_tokens, 8);
+    }
+
+    /// Regression test for minimal OpenAI-compatible streaming chunks.
+    /// Some gateways omit the metadata envelope (`id`/`object`/`created`/
+    /// `model`) entirely and stream only `choices`, putting `usage` (if any)
+    /// on the final chunk. Every such chunk must deserialize instead of
+    /// failing with "missing field `id`" (or similar).
+    #[test]
+    fn chat_completion_chunk_accepts_minimal_wire_format() {
+        // Intermediate chunk: content delta only, no `usage`, no envelope.
+        let chunk: ChatCompletionChunk =
+            serde_json::from_str(r#"{"choices":[{"delta":{"content":"你好"}}]}"#).unwrap();
+        assert_eq!(chunk.choices.len(), 1);
+        assert_eq!(chunk.choices[0].delta.content.as_deref(), Some("你好"));
+        assert!(chunk.usage.is_none());
+
+        // Final chunk: empty choices, `usage` present, no envelope.
+        let chunk: ChatCompletionChunk = serde_json::from_str(
+            r#"{"choices":[],"usage":{"prompt_tokens":84,"completion_tokens":20,"total_tokens":104}}"#,
+        )
+        .unwrap();
+        assert!(chunk.choices.is_empty());
+        let usage = chunk.usage.expect("final chunk carries usage");
+        assert_eq!(usage.prompt_tokens, 84);
+
+        // Terminal finish-only chunk: no `delta`, no `index`, no envelope.
+        let chunk: ChatCompletionChunk =
+            serde_json::from_str(r#"{"choices":[{"finish_reason":"stop"}]}"#).unwrap();
+        assert_eq!(chunk.choices[0].finish_reason, Some(FinishReason::Stop));
+        assert_eq!(chunk.choices[0].index, 0);
+        assert_eq!(chunk.choices[0].delta.content, None);
+
+        // A fully-specified standard chunk still parses unchanged.
+        let chunk: ChatCompletionChunk = serde_json::from_str(
+            r#"{"id":"chatcmpl-1","object":"chat.completion.chunk","created":1,"model":"grok-3","choices":[{"index":0,"delta":{"role":"assistant","content":"hi"},"finish_reason":null}]}"#,
+        )
+        .unwrap();
+        assert_eq!(chunk.id, "chatcmpl-1");
+        assert_eq!(chunk.model, "grok-3");
+        assert_eq!(chunk.choices[0].delta.content.as_deref(), Some("hi"));
     }
 }

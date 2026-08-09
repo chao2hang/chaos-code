@@ -10,7 +10,13 @@ fn messages_usage_drops_reasoning_tokens() {
     r.reduce(StreamEvent::ResponseCompleted {
         message_id: None,
         stop_reason: Some("end_turn".into()),
-        usage: Some(response_usage(4, 2, 1, 9)),
+        usage: Some(ResponseUsage {
+            input_tokens: 4,
+            output_tokens: 2,
+            cache_read_input_tokens: 1,
+            cache_creation_input_tokens: 0,
+            reasoning_tokens: 9,
+        }),
         signature: None,
         stop_sequence: None,
     });
@@ -101,7 +107,10 @@ fn messages_result_usage_incomplete_aggregate_zeroes_buckets() {
     r.reduce(StreamEvent::ResponseCompleted {
         message_id: None,
         stop_reason: Some("end_turn".into()),
-        usage: Some(response_usage(0, 0, 0, 0)),
+        usage: Some(ResponseUsage {
+            cache_creation_input_tokens: 5,
+            ..Default::default()
+        }),
         signature: None,
         stop_sequence: None,
     });

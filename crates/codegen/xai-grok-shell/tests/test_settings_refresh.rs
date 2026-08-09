@@ -129,12 +129,12 @@ async fn test_fetch_settings_blocking_round_trip() {
         let result = tokio::task::spawn_blocking({
             let url = server.url().to_string();
             let auth = auth.clone();
-            move || xai_grok_shell::remote::fetch_settings_blocking(&url, &auth, None)
+            move || xai_grok_shell::remote::fetch_settings_blocking(&url, &auth, None).into_option()
         })
         .await
         .unwrap();
         assert!(
-            result.into_option().is_none(),
+            result.is_none(),
             "Expected None when settings not configured"
         );
 
@@ -146,12 +146,11 @@ async fn test_fetch_settings_blocking_round_trip() {
         let result = tokio::task::spawn_blocking({
             let url = server.url().to_string();
             let auth = auth.clone();
-            move || xai_grok_shell::remote::fetch_settings_blocking(&url, &auth, None)
+            move || xai_grok_shell::remote::fetch_settings_blocking(&url, &auth, None).into_option()
         })
         .await
         .unwrap();
         let settings = result
-            .into_option()
             .expect("Expected Some when settings are configured");
         assert_eq!(settings.tips, Some(vec!["fetched_tip".into()]));
     })

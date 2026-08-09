@@ -67,7 +67,6 @@ impl Theme {
             accent_verify: PINE,
 
             accent_feedback: FOAM,
-
             accent_remember: PINE,
 
             selection_border: HIGHLIGHT_HIGH,

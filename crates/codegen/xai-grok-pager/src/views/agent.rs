@@ -200,7 +200,9 @@ impl AgentViewLayout {
             bottom_vpad,
         ));
         let inner_area = outer_block.inner(area);
-        let mut constraints = vec![Constraint::Length(1)];
+        let mut constraints = vec![
+            Constraint::Length(1), // StatusBar
+        ];
         if startup_warning_height > 0 {
             constraints.push(Constraint::Length(startup_warning_height));
         }
@@ -884,8 +886,9 @@ pub fn render_todo_badge_spans(
     ));
     Some(spans)
 }
-/// Space:prompt hint — shared across multiple scrollback hint branches.
-fn space_prompt_hint() -> HintItem {
+/// The scrollback's default focus hint: `Space` leaves for the prompt. A
+/// parked blocking card replaces it with its own (pinned) route back.
+pub fn prompt_focus_hint() -> HintItem {
     use crate::input::key::KeyShortcut;
     use crossterm::event::{KeyCode, KeyModifiers};
     HintItem {
@@ -906,9 +909,15 @@ fn space_prompt_hint() -> HintItem {
 ///
 /// `group_header_label` ("展开"/"折叠") marks a selected group header;
 /// it replaces the fold and Enter:open hints with a single Enter toggle hint.
+///
+/// `focus_hint` is how the scrollback says the keyboard can leave it —
+/// [`prompt_focus_hint`], or a caller-supplied replacement. A pinned one
+/// leads the bar and is offered once; an unpinned one is offered only in the
+/// selection states where moving on is the useful next step.
 #[allow(clippy::too_many_arguments)]
 pub fn build_hints(
     active_pane: ActivePane,
+    focus_hint: HintItem,
     prompt: &PromptWidget,
     registry: &ActionRegistry,
     is_editing_queued: bool,
@@ -925,6 +934,7 @@ pub fn build_hints(
     vim_mode: bool,
     is_subagent_view: bool,
     is_turn_running: bool,
+    esc_would_cancel_turn: bool,
     has_queued_follow_up: bool,
     selected_is_user_prompt: bool,
     selected_is_agent_message: bool,
@@ -937,11 +947,7 @@ pub fn build_hints(
             let mut hints = Vec::new();
             hints.push(HintItem::new(
                 crate::key!('h'),
-                if show_done {
-                    "隐藏已完成"
-                } else {
-                    "显示已完成"
-                },
+                if show_done { "隐藏已完成" } else { "显示已完成" },
             ));
             hints
         }
@@ -1010,7 +1016,8 @@ pub fn build_hints(
             }
             if prompt.prompt_suggestion_visible() {
                 hints.push(
-                    HintItem::paired(crate::key!(Tab), crate::key!(Right), "接受建议").pinned(),
+                    HintItem::paired(crate::key!(Tab), crate::key!(Right), "接受建议")
+                        .pinned(),
                 );
             }
             hints.push(HintItem::new(crate::key!(BackTab), "模式"));
@@ -1041,11 +1048,7 @@ pub fn build_hints(
             }
             hints.push(HintItem::new(
                 crate::key!('h'),
-                if show_done {
-                    "隐藏已完成"
-                } else {
-                    "显示已完成"
-                },
+                if show_done { "隐藏已完成" } else { "显示已完成" },
             ));
             hints
         }
@@ -1076,6 +1079,14 @@ pub fn build_hints(
         }
         ActivePane::Scrollback => {
             let mut hints = Vec::new();
+            if focus_hint.pinned {
+                hints.push(focus_hint.clone());
+            }
+            let offer_focus_hint = |hints: &mut Vec<HintItem>| {
+                if !focus_hint.pinned {
+                    hints.push(focus_hint.clone());
+                }
+            };
             let nothing_special = !selected_is_agent_message
                 && !selected_is_user_prompt
                 && !selected_is_credit_limit
@@ -1083,13 +1094,13 @@ pub fn build_hints(
                 && group_header_label.is_none()
                 && !selected_supports_fullscreen;
             if nothing_special {
-                hints.push(space_prompt_hint());
+                offer_focus_hint(&mut hints);
             }
             if selected_is_credit_limit {
                 if let Some(key) = registry.key_for(ActionId::OpenBlockViewer) {
                     hints.push(HintItem::new(key, "打开"));
                 }
-                hints.push(space_prompt_hint());
+                offer_focus_hint(&mut hints);
             }
             if selected_is_agent_message {
                 if vim_mode
@@ -1098,7 +1109,7 @@ pub fn build_hints(
                 {
                     hints.push(HintItem::new(key, "复制"));
                 }
-                hints.push(space_prompt_hint());
+                offer_focus_hint(&mut hints);
             }
             if selected_is_user_prompt {
                 let user_collapsed = fold_label == Some("展开");
@@ -1114,7 +1125,7 @@ pub fn build_hints(
                     hints.push(HintItem::new(key, thinking_label));
                 }
                 if !user_collapsed {
-                    hints.push(space_prompt_hint());
+                    offer_focus_hint(&mut hints);
                 }
             }
             let user_collapsed_already_pushed =
@@ -1156,9 +1167,7 @@ pub fn build_hints(
                     registry.key_for(ActionId::NextTurn),
                 )
             {
-                let mut hint = HintItem::paired(l, h, "轮次").pinned();
-                hint.custom_display = Some("Shift+l/h");
-                hints.push(hint);
+                hints.push(HintItem::paired(l, h, "轮次").pinned());
             }
             if !selected_is_user_prompt
                 && let Some(key) = registry.key_for(ActionId::ExpandAllThinking)
@@ -1196,7 +1205,11 @@ pub fn build_hints(
         }
     };
     if is_turn_running && let Some(def) = registry.find(ActionId::CancelTurn) {
-        hints.push(def.hint());
+        let mut hint = def.hint();
+        if esc_would_cancel_turn {
+            hint.keys = vec![crate::key!(Esc)];
+        }
+        hints.push(hint);
     }
     let has_composer_payload = !prompt.text().trim().is_empty() || is_editing_queued;
     if matches!(active_pane, ActivePane::Prompt)
@@ -1249,6 +1262,7 @@ mod tests {
     ) -> Vec<HintItem> {
         build_hints(
             ActivePane::Scrollback,
+            prompt_focus_hint(),
             &PromptWidget::default(),
             registry,
             false,
@@ -1263,6 +1277,7 @@ mod tests {
             false,
             false,
             vim_mode,
+            false,
             false,
             false,
             false,
@@ -1281,6 +1296,7 @@ mod tests {
         let registry = ActionRegistry::defaults();
         let hints = build_hints(
             ActivePane::Scrollback,
+            prompt_focus_hint(),
             &PromptWidget::default(),
             &registry,
             false,
@@ -1295,6 +1311,7 @@ mod tests {
             false,
             false,
             true,
+            false,
             false,
             false,
             false,
@@ -1315,6 +1332,7 @@ mod tests {
         let registry = ActionRegistry::defaults();
         let hints = build_hints(
             ActivePane::Scrollback,
+            prompt_focus_hint(),
             &PromptWidget::default(),
             &registry,
             false,
@@ -1329,6 +1347,7 @@ mod tests {
             false,
             false,
             true,
+            false,
             false,
             false,
             false,
@@ -1479,6 +1498,7 @@ mod tests {
         }
         build_hints(
             ActivePane::Scrollback,
+            prompt_focus_hint(),
             &PromptWidget::default(),
             registry,
             false,
@@ -1493,6 +1513,7 @@ mod tests {
             false,
             false,
             vim_mode,
+            false,
             false,
             false,
             false,
@@ -1582,6 +1603,7 @@ mod tests {
         let registry = ActionRegistry::defaults();
         let hints = build_hints(
             ActivePane::Prompt,
+            prompt_focus_hint(),
             &PromptWidget::default(),
             &registry,
             false,
@@ -1596,6 +1618,7 @@ mod tests {
             false,
             false,
             true,
+            false,
             false,
             false,
             false,
@@ -1626,6 +1649,7 @@ mod tests {
         let registry = ActionRegistry::defaults();
         build_hints(
             ActivePane::Prompt,
+            prompt_focus_hint(),
             &prompt,
             &registry,
             false,
@@ -1642,6 +1666,7 @@ mod tests {
             true,
             false,
             is_turn_running,
+            false,
             false,
             false,
             false,
@@ -1685,6 +1710,7 @@ mod tests {
             let registry = ActionRegistry::defaults();
             let hints = build_hints(
                 ActivePane::Prompt,
+                prompt_focus_hint(),
                 &prompt,
                 &registry,
                 false,
@@ -1701,6 +1727,7 @@ mod tests {
                 true,
                 false,
                 true,
+                false,
                 true,
                 false,
                 false,
@@ -1715,6 +1742,162 @@ mod tests {
                  (multiline={multiline}); got {labels:?}"
             );
         }
+    }
+    /// Running-turn cancel hint key tracks `esc_would_cancel_turn` — the
+    /// input-routing predicate computed by the caller: Esc when a bare press
+    /// would reach the policy's mid-turn cancel, the registry Ctrl+C binding
+    /// otherwise. (The predicate itself — gate, panes, and higher-priority
+    /// Esc consumers — is pinned by `esc_would_cancel_turn_tests` in
+    /// `agent_view::input`.)
+    #[test]
+    fn running_turn_cancel_hint_key_tracks_esc_predicate() {
+        let prompt = PromptWidget::default();
+        let registry = ActionRegistry::defaults();
+        for (esc_would_cancel_turn, expected) in
+            [(true, crate::key!(Esc)), (false, crate::key!('c', CONTROL))]
+        {
+            let hints = build_hints(
+                ActivePane::Prompt,
+                prompt_focus_hint(),
+                &prompt,
+                &registry,
+                false,
+                None,
+                None,
+                "展开思考",
+                false,
+                false,
+                None,
+                false,
+                false,
+                false,
+                false,
+                true,
+                false,
+                true,
+                esc_would_cancel_turn,
+                false,
+                false,
+                false,
+                false,
+                false,
+                None,
+            );
+            let cancel = hints
+                .iter()
+                .find(|h| h.label == "取消")
+                .expect("running turn must surface the cancel hint");
+            assert_eq!(
+                cancel.keys,
+                vec![expected],
+                "cancel hint key for esc_would_cancel_turn={esc_would_cancel_turn}"
+            );
+        }
+    }
+    /// Running turn + open scrollback search: the search's own `Esc cancel`
+    /// hint stays the ONLY Esc hint — the CancelTurn hint keeps Ctrl+C (the
+    /// caller's predicate is false while the search would steal Esc), so the
+    /// bar never shows two different `Esc cancel` meanings at once.
+    #[test]
+    fn running_turn_with_scrollback_search_keeps_ctrl_c_cancel_hint() {
+        let registry = ActionRegistry::defaults();
+        let search = ScrollbackSearchState::open();
+        let hints = build_hints(
+            ActivePane::Scrollback,
+            prompt_focus_hint(),
+            &PromptWidget::default(),
+            &registry,
+            false,
+            None,
+            None,
+            "展开思考",
+            false,
+            false,
+            None,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            true,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            Some(&search),
+        );
+        let esc_cancels: Vec<&HintItem> = hints
+            .iter()
+            .filter(|h| h.label == "取消" && h.keys == vec![crate::key!(Esc)])
+            .collect();
+        assert_eq!(
+            esc_cancels.len(),
+            1,
+            "exactly one Esc:cancel hint (the search's own dismiss)"
+        );
+        assert!(
+            hints
+                .iter()
+                .any(|h| h.label == "取消" && h.keys == vec![crate::key!('c', CONTROL)]),
+            "CancelTurn hint must stay on Ctrl+C while the search owns Esc"
+        );
+    }
+    /// Running turn + editing a queued prompt: the edit's own `Esc cancel`
+    /// (discard) hint is the ONLY Esc-keyed row — the CancelTurn hint keeps
+    /// Ctrl+C (the caller's predicate is false while the edit owns Esc), so
+    /// the bar never shows two contradictory `Esc cancel` rows.
+    #[test]
+    fn running_turn_editing_queued_keeps_ctrl_c_cancel_hint() {
+        let registry = ActionRegistry::defaults();
+        let mut prompt = PromptWidget::default();
+        prompt.textarea.insert_str("edited row");
+        let hints = build_hints(
+            ActivePane::Prompt,
+            prompt_focus_hint(),
+            &prompt,
+            &registry,
+            true,
+            None,
+            None,
+            "展开思考",
+            false,
+            false,
+            None,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            true,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            None,
+        );
+        let esc_rows: Vec<&HintItem> = hints
+            .iter()
+            .filter(|h| h.keys.contains(&crate::key!(Esc)))
+            .collect();
+        assert_eq!(
+            esc_rows.len(),
+            1,
+            "exactly one Esc-keyed hint (the edit's discard), got {:?}",
+            hints.iter().map(|h| h.label.as_ref()).collect::<Vec<_>>()
+        );
+        assert_eq!(esc_rows[0].label, "取消");
+        assert!(
+            hints
+                .iter()
+                .any(|h| h.label == "取消" && h.keys == vec![crate::key!('c', CONTROL)]),
+            "CancelTurn hint must stay on Ctrl+C while the edit owns Esc"
+        );
     }
     #[test]
     fn prompt_legacy_vte_adds_alt_enter_newline_hint() {

@@ -17,6 +17,7 @@ pub(super) fn report() -> DiagnosticReport {
                 set_clipboard: crate::diagnostics::TmuxOptionFact::Unavailable,
                 allow_passthrough_support: crate::diagnostics::TmuxSupportFact::Unavailable,
                 allow_passthrough: crate::diagnostics::TmuxOptionFact::Unavailable,
+                color_passthrough: crate::diagnostics::TmuxColorPassthrough::Unknown,
             },
             color: crate::diagnostics::ColorFacts {
                 level: crate::diagnostics::RuntimeFact::Unavailable,
@@ -177,6 +178,11 @@ fn tmux_report(id: DiagnosticId, evidence: TmuxEvidence) -> DiagnosticReport {
             }
             .to_owned(),
         ),
+        color_passthrough: if evidence == TmuxEvidence::ColorPassthrough {
+            crate::diagnostics::TmuxColorPassthrough::Reduced
+        } else {
+            crate::diagnostics::TmuxColorPassthrough::Forwarded
+        },
     };
     report.findings.push(DiagnosticFinding {
         id,
@@ -251,6 +257,11 @@ fn tmux_specs_plan_exact_independent_managed_items() {
             TmuxEvidence::ExtendedKeys,
             "set -g extended-keys on",
         ),
+        (
+            TMUX_TRUECOLOR_ID,
+            TmuxEvidence::ColorPassthrough,
+            "set -as terminal-features \",*:RGB\"",
+        ),
     ] {
         let plan = plan_fix(
             tmux_request(temp.path(), id),
@@ -319,7 +330,7 @@ fn full_preview_safely_renders_backtick_requested_symlink_target_and_backup_path
     use std::os::unix::fs::symlink;
 
     let temp = tempfile::tempdir().unwrap();
-    let root = dunce::canonicalize(temp.path()).unwrap();
+    let root = temp.path().canonicalize().unwrap();
     let home = root.join("home`dir");
     let target_dir = root.join("target`dir");
     std::fs::create_dir_all(&home).unwrap();
@@ -407,6 +418,11 @@ fn tmux_managed_items_coexist_and_each_apply_is_one_transaction() {
             TmuxEvidence::ExtendedKeys,
             "set -g extended-keys on",
         ),
+        (
+            TMUX_TRUECOLOR_ID,
+            TmuxEvidence::ColorPassthrough,
+            "set -as terminal-features \",*:RGB\"",
+        ),
     ] {
         let plan = plan_fix(
             tmux_request(temp.path(), id),
@@ -422,7 +438,12 @@ fn tmux_managed_items_coexist_and_each_apply_is_one_transaction() {
     }
     let content = std::fs::read_to_string(&path).unwrap();
     assert_eq!(content.matches("# >>> chaos doctor >>>").count(), 1);
-    for id in [TMUX_CLIPBOARD_ID, DCS_PASSTHROUGH_ID, TMUX_EXTENDED_KEYS_ID] {
+    for id in [
+        TMUX_CLIPBOARD_ID,
+        DCS_PASSTHROUGH_ID,
+        TMUX_EXTENDED_KEYS_ID,
+        TMUX_TRUECOLOR_ID,
+    ] {
         assert_eq!(content.matches(&format!("# >>> {id} >>>")).count(), 1);
     }
 }
@@ -1042,9 +1063,9 @@ fn shell_aliases_expand_to_exact_argv_and_bypass_is_explicit() {
     let temp = tempfile::tempdir().unwrap();
     let capture = temp.path().join("capture");
     // Fake Chaos binary on PATH so `alias ssh='chaos wrap ssh'` expands correctly.
-    let chaos = temp.path().join("chaos");
+    let grok = temp.path().join("chaos");
     std::fs::write(
-        &chaos,
+        &grok,
         format!(
             "#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\n",
             capture.display()
@@ -1052,7 +1073,7 @@ fn shell_aliases_expand_to_exact_argv_and_bypass_is_explicit() {
     )
     .unwrap();
     use std::os::unix::fs::PermissionsExt as _;
-    std::fs::set_permissions(&chaos, std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::set_permissions(&grok, std::fs::Permissions::from_mode(0o755)).unwrap();
 
     if let Some(bash) = find_on_path("bash") {
         let rc = temp.path().join("bashrc");
@@ -1149,16 +1170,16 @@ fn shell_aliases_expand_to_exact_argv_and_bypass_is_explicit() {
 
     if let Some(fish) = find_on_path("fish") {
         let fish_capture = temp.path().join("fish-capture");
-        let fish_chaos = temp.path().join("fish-chaos");
+        let fish_grok = temp.path().join("fish-chaos");
         std::fs::write(
-            &fish_chaos,
+            &fish_grok,
             format!(
                 "#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\n",
                 fish_capture.display()
             ),
         )
         .unwrap();
-        std::fs::set_permissions(&fish_chaos, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::set_permissions(&fish_grok, std::fs::Permissions::from_mode(0o755)).unwrap();
         let rc = temp.path().join("config.fish");
         std::fs::write(&rc, "alias ssh 'fish-chaos wrap ssh'\n").unwrap();
         let command = format!(
@@ -1190,4 +1211,46 @@ fn shell_aliases_expand_to_exact_argv_and_bypass_is_explicit() {
     } else {
         eprintln!("fish unavailable; fish runtime alias test skipped explicitly");
     }
+}
+
+/// An accumulating remedy is additive, so a user's own `terminal-features`
+/// lines are not a conflict: tmux applies Grok's managed block last and the
+/// features merge. A direct-assignment remedy would refuse to touch the file.
+#[test]
+fn tmux_truecolor_fix_appends_alongside_existing_terminal_features() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join(".tmux.conf");
+    std::fs::write(
+        &path,
+        "set -g mouse on\nset -as terminal-features \",xterm-256color:RGB\"\n",
+    )
+    .unwrap();
+
+    let plan = plan_fix(
+        tmux_request(temp.path(), TMUX_TRUECOLOR_ID),
+        &tmux_report(TMUX_TRUECOLOR_ID, TmuxEvidence::ColorPassthrough),
+        &tmux_terminal(false),
+    )
+    .unwrap();
+    let outcome = apply_fix(plan).unwrap();
+
+    assert_eq!(outcome.status(), FixStatus::Applied);
+    let content = std::fs::read_to_string(&path).unwrap();
+    assert!(content.contains("set -as terminal-features \",xterm-256color:RGB\""));
+    assert!(content.contains("set -as terminal-features \",*:RGB\""));
+}
+
+#[test]
+fn tmux_truecolor_fix_requires_a_reducing_client() {
+    let temp = tempfile::tempdir().unwrap();
+    let report = tmux_report(TMUX_TRUECOLOR_ID, TmuxEvidence::Clipboard);
+
+    assert!(matches!(
+        plan_fix(
+            tmux_request(temp.path(), TMUX_TRUECOLOR_ID),
+            &report,
+            &tmux_terminal(false)
+        ),
+        Err(FixError::TmuxNotApplicable)
+    ));
 }

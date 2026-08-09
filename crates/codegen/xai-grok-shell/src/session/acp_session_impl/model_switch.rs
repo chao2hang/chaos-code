@@ -2,6 +2,67 @@ use super::*;
 use crate::remote::DEFAULT_CONTEXT_WINDOW;
 use xai_chat_state::conversation_util::replace_or_insert_system_head;
 impl SessionActor {
+    /// Set the session's context window (the `/memory set-context-window`
+    /// extension path). Refuses while a turn is in flight; applies the new
+    /// window to the override + chat-state config and refreshes usage signals.
+    pub(super) async fn handle_set_context_window(
+        self: &std::sync::Arc<Self>,
+        tokens: std::num::NonZeroU64,
+        compact_if_needed: bool,
+    ) -> Result<crate::session::commands::SetContextWindowResult, acp::Error> {
+        use crate::remote::DEFAULT_CONTEXT_WINDOW;
+
+        {
+            let state = self.state.lock().await;
+            if state.running_task.is_some() {
+                return Err(acp::Error::invalid_request().data(
+                    "Cannot change the context window while a turn is in flight; \
+                     try again after the turn finishes."
+                        .to_string(),
+                ));
+            }
+        }
+
+        let mut updated_config = self.chat_state_handle.get_sampling_config().await;
+        let previous_tokens = updated_config
+            .as_ref()
+            .map(|c| c.context_window.get())
+            .unwrap_or(DEFAULT_CONTEXT_WINDOW);
+
+        if let Some(cfg) = updated_config.as_mut() {
+            cfg.context_window = tokens;
+        }
+
+        let tokens_used = self.chat_state_handle.get_estimated_total_tokens().await;
+        let cw = tokens.get();
+        if let Some(cfg) = updated_config.take()
+            && !self
+                .chat_state_handle
+                .update_sampling_config_and_wait(cfg)
+                .await
+        {
+            return Err(acp::Error::internal_error()
+                .data("session state stopped before applying context window".to_string()));
+        }
+        self.signals_handle().update_context_usage(tokens_used, cw);
+        let usage_percent = xai_token_estimation::usage_percentage_u8(tokens_used, cw);
+
+        // Sticky auto-compact suppression was often set because the old window
+        // was "too full"; a user-requested budget change should re-open the gate.
+        self.compaction.auto_compact_suppressed.store(
+            super::super::compaction_config::SUPPRESS_NONE,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+
+        Ok(crate::session::commands::SetContextWindowResult {
+            previous_tokens,
+            tokens: cw,
+            tokens_used,
+            usage_percent,
+            compacted: false,
+            compaction_error: None,
+        })
+    }
     pub(super) async fn handle_set_session_model(
         &self,
         sampling_config: xai_grok_sampler::SamplerConfig,
@@ -11,70 +72,57 @@ impl SessionActor {
         auto_compact_threshold_percent: u8,
     ) -> Result<acp::ModelId, acp::Error> {
         let model_id = acp::ModelId::new(sampling_config.model.clone());
-        {
-            // Model switches replace the full sampling config, so serialize the
-            // override read and config write with user window changes and
-            // metadata refreshes. Credentials and prompt work happen after
-            // this short gate.
-            let _op_guard = self.compaction.operation_lock.lock().await;
-            let new_context_window = self
-                .compaction
-                .context_window_override
-                .get()
-                .unwrap_or_else(|| {
-                    std::num::NonZeroU64::new(sampling_config.context_window).unwrap_or_else(|| {
-                        std::num::NonZeroU64::new(DEFAULT_CONTEXT_WINDOW)
-                            .expect("DEFAULT_CONTEXT_WINDOW is non-zero")
-                    })
-                });
-            let prev_threshold = self.compaction.threshold_percent.get();
-            if prev_threshold != auto_compact_threshold_percent {
-                tracing::info!(
-                    session_id = %self.session_info.id.0,
-                    new_model = %sampling_config.model,
-                    old_threshold = prev_threshold,
-                    new_threshold = auto_compact_threshold_percent,
-                    "auto_compact_threshold_percent updated for model switch"
-                );
-            }
-            self.compaction
-                .threshold_percent
-                .set(auto_compact_threshold_percent);
-            self.supports_backend_search
-                .set(sampling_config.supports_backend_search);
-            self.compactions_remaining
-                .set(sampling_config.compactions_remaining);
-            self.compaction_at_tokens
-                .set(sampling_config.compaction_at_tokens);
-            xai_grok_telemetry::unified_log::info(
-                "backend_search: model switch",
-                Some(self.session_info.id.0.as_ref()),
-                Some(serde_json::json!({
-                    "new_model": &sampling_config.model,
-                    "api_backend": format!("{:?}", sampling_config.api_backend),
-                    "supports_backend_search": sampling_config.supports_backend_search,
-                })),
-            );
-            self.chat_state_handle.update_sampling_config(
-                xai_grok_sampling_types::SamplingConfig {
-                    base_url: sampling_config.base_url.clone(),
-                    model: sampling_config.model.clone(),
-                    max_completion_tokens: sampling_config.max_completion_tokens,
-                    temperature: sampling_config.temperature,
-                    top_p: sampling_config.top_p,
-                    api_backend: sampling_config.api_backend.clone(),
-                    extra_headers: sampling_config.extra_headers.clone(),
-                    query_params: sampling_config.query_params.clone(),
-                    env_http_headers: sampling_config.env_http_headers.clone(),
-                    context_window: new_context_window,
-                    reasoning_effort: sampling_config.reasoning_effort,
-                    stream_tool_calls: Some(sampling_config.stream_tool_calls),
-                    extract_inline_thinking: Some(sampling_config.extract_inline_thinking),
-                    is_workbuddy: sampling_config.is_workbuddy,
-                },
+        let new_context_window = self.compaction.context_window_override.unwrap_or_else(|| {
+            std::num::NonZeroU64::new(sampling_config.context_window).unwrap_or_else(|| {
+                std::num::NonZeroU64::new(DEFAULT_CONTEXT_WINDOW)
+                    .expect("DEFAULT_CONTEXT_WINDOW is non-zero")
+            })
+        });
+        let prev_threshold = self.compaction.threshold_percent.get();
+        if prev_threshold != auto_compact_threshold_percent {
+            tracing::info!(
+                session_id = %self.session_info.id.0,
+                new_model = %sampling_config.model,
+                old_threshold = prev_threshold,
+                new_threshold = auto_compact_threshold_percent,
+                "auto_compact_threshold_percent updated for model switch"
             );
         }
-
+        self.compaction
+            .threshold_percent
+            .set(auto_compact_threshold_percent);
+        self.supports_backend_search
+            .set(sampling_config.supports_backend_search);
+        self.compactions_remaining
+            .set(sampling_config.compactions_remaining);
+        self.compaction_at_tokens
+            .set(sampling_config.compaction_at_tokens);
+        xai_grok_telemetry::unified_log::info(
+            "backend_search: model switch",
+            Some(self.session_info.id.0.as_ref()),
+            Some(serde_json::json!({
+                "new_model": &sampling_config.model,
+                "api_backend": format!("{:?}", sampling_config.api_backend),
+                "supports_backend_search": sampling_config.supports_backend_search,
+            })),
+        );
+        self.chat_state_handle
+            .update_sampling_config(xai_grok_sampling_types::SamplingConfig {
+                base_url: sampling_config.base_url.clone(),
+                model: sampling_config.model.clone(),
+                max_completion_tokens: sampling_config.max_completion_tokens,
+                temperature: sampling_config.temperature,
+                top_p: sampling_config.top_p,
+                api_backend: sampling_config.api_backend.clone(),
+                extra_headers: sampling_config.extra_headers.clone(),
+                query_params: sampling_config.query_params.clone(),
+                env_http_headers: sampling_config.env_http_headers.clone(),
+                context_window: new_context_window,
+                reasoning_effort: sampling_config.reasoning_effort,
+                stream_tool_calls: Some(sampling_config.stream_tool_calls),
+                extract_inline_thinking: Some(sampling_config.extract_inline_thinking),
+                is_workbuddy: sampling_config.is_workbuddy,
+            });
         let existing = self.chat_state_handle.get_credentials().await;
         let session_key = self
             .auth_manager
@@ -134,171 +182,6 @@ impl SessionActor {
             });
         Ok(model_id)
     }
-
-    /// Handle [`SessionCommand::SetContextWindow`].
-    ///
-    /// Serializes the short sampling-config update with other context-window
-    /// mutations, then optionally runs compaction when usage is over the new
-    /// budget or threshold.
-    ///
-    /// All context-window sampling-config mutations share
-    /// `compaction.operation_lock`, so concurrent resizes and metadata/model
-    /// updates cannot interleave their reads and writes.
-    pub(super) async fn handle_set_context_window(
-        self: &std::sync::Arc<Self>,
-        tokens: std::num::NonZeroU64,
-        compact_if_needed: bool,
-    ) -> Result<crate::session::commands::SetContextWindowResult, acp::Error> {
-        use crate::remote::DEFAULT_CONTEXT_WINDOW;
-
-        // Phase 1 — held under the async operation lock: busy check,
-        // override write, sampling-config write, signals refresh, and
-        // suppression reset. We exit the gate before long-running compaction.
-        let (previous_tokens, tokens_used, usage_percent, should_compact_now) = {
-            let _op_guard = self.compaction.operation_lock.lock().await;
-
-            {
-                let state = self.state.lock().await;
-                if state.running_task.is_some() {
-                    return Err(acp::Error::invalid_request().data(
-                        "Cannot change the context window while a turn is in flight; \
-                         try again after the turn finishes."
-                            .to_string(),
-                    ));
-                }
-            }
-
-            // Re-read the current config inside the lock; never restore from a
-            // pre-await snapshot, which is the race that previously let an
-            // interleaved model switch or metadata refresh overwrite our
-            // context-window write.
-            let mut updated_config = self.chat_state_handle.get_sampling_config().await;
-            let previous_tokens = updated_config
-                .as_ref()
-                .map(|c| c.context_window.get())
-                .unwrap_or(DEFAULT_CONTEXT_WINDOW);
-
-            // Lock so model-switch / response-header upgrades cannot overwrite.
-            self.compaction.context_window_override.set(Some(tokens));
-
-            if let Some(cfg) = updated_config.as_mut() {
-                cfg.context_window = tokens;
-            }
-
-            let tokens_used = self.chat_state_handle.get_estimated_total_tokens().await;
-            let cw = tokens.get();
-            if let Some(cfg) = updated_config.take()
-                && !self
-                    .chat_state_handle
-                    .update_sampling_config_and_wait(cfg)
-                    .await
-            {
-                return Err(acp::Error::internal_error()
-                    .data("session state stopped before applying context window".to_string()));
-            }
-            self.signals_handle().update_context_usage(tokens_used, cw);
-            let usage_percent = xai_token_estimation::usage_percentage_u8(tokens_used, cw);
-
-            // Sticky auto-compact suppression was often set because the old window
-            // was "too full"; a user-requested budget change should re-open the gate.
-            self.compaction.auto_compact_suppressed.store(
-                super::super::compaction_config::SUPPRESS_NONE,
-                std::sync::atomic::Ordering::Relaxed,
-            );
-
-            let should_compact_now = compact_if_needed
-                && (tokens_used > cw || self.should_auto_compact(tokens_used, tokens).is_some());
-
-            (
-                previous_tokens,
-                tokens_used,
-                usage_percent,
-                should_compact_now,
-            )
-        };
-
-        let cw = tokens.get();
-
-        // Phase 2 — compaction runs OUTSIDE the operation lock. The
-        // override is already locked, so a model switch / metadata
-        // refresh arriving while we compact will see (and respect) the
-        // override rather than racing it. Compaction itself is the only
-        // consumer of `should_compact_on_error`'s path.
-        let mut compacted = false;
-        let mut compaction_error: Option<acp::Error> = None;
-        if should_compact_now {
-            tracing::info!(
-                session_id = %self.session_info.id.0,
-                previous_tokens,
-                new_tokens = cw,
-                tokens_used,
-                usage_percent,
-                "SetContextWindow: compacting to fit new budget"
-            );
-            match self
-                .run_compact(Some(
-                    "User reduced the context window; compress history to fit.".to_string(),
-                ))
-                .await
-            {
-                Ok(()) => compacted = true,
-                Err(e) => {
-                    tracing::warn!(
-                        session_id = %self.session_info.id.0,
-                        error = %e,
-                        "SetContextWindow: compaction failed; window still applied"
-                    );
-                    compaction_error = Some(e);
-                }
-            }
-        }
-
-        let tokens_used = self.chat_state_handle.get_estimated_total_tokens().await;
-        let usage_percent = xai_token_estimation::usage_percentage_u8(tokens_used, cw);
-        self.signals_handle().update_context_usage(tokens_used, cw);
-
-        self.send_xai_notification(
-            crate::extensions::notification::SessionUpdate::ContextUsageUpdated {
-                tokens_used,
-                context_window: cw,
-            },
-        )
-        .await;
-
-        let compaction_error = compaction_error.map(|err| err.to_string());
-        if let Some(ref err) = compaction_error {
-            tracing::info!(
-                session_id = %self.session_info.id.0,
-                previous_tokens,
-                new_tokens = cw,
-                tokens_used,
-                usage_percent,
-                compacted,
-                error = %err,
-                "SetContextWindow applied with partial success"
-            );
-        }
-
-        tracing::info!(
-            session_id = %self.session_info.id.0,
-            previous_tokens,
-            new_tokens = cw,
-            tokens_used,
-            usage_percent,
-            compacted,
-            "SetContextWindow applied"
-        );
-
-        Ok(crate::session::commands::SetContextWindowResult {
-            previous_tokens,
-            tokens: cw,
-            tokens_used,
-            usage_percent,
-            compacted,
-            compaction_error,
-        })
-    }
-
     /// Handle [`SessionCommand::RebuildAgentForDefinition`].
     ///
     /// Builds a fresh [`xai_grok_agent::Agent`] from the cached
@@ -314,8 +197,7 @@ impl SessionActor {
     pub(super) async fn handle_rebuild_agent_for_definition(
         &self,
         definition: xai_grok_agent::AgentDefinition,
-    ) -> Result<(), acp::Error> {
-        {
+    ) -> Result<(), acp::Error> {        {
             let state = self.state.lock().await;
             if state.running_task.is_some() {
                 tracing::warn!(

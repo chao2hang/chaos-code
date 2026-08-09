@@ -8,6 +8,31 @@ pub mod meta;
 pub mod model_state;
 pub mod spawn;
 pub mod tracker;
+mod version_mismatch;
+
+pub(crate) use version_mismatch::{is_version_mismatch_banner, version_mismatch_banner};
+
+/// ADHD skill rules injected into the system prompt when `/adhd` is enabled.
+///
+/// Source: https://github.com/uditakhourii/adhd
+/// These rules help users with ADHD stay focused and productive by encouraging
+/// task decomposition, visible progress tracking, and reduced cognitive load.
+const ADHD_SKILL_RULES: &str = "\
+## ADHD 辅助规则
+
+- 将大任务拆解为小的、可操作的步骤，每步不超过 5 分钟。
+- 使用待办清单跟踪进度，完成一项立即标记。
+- 一次只专注一个任务，避免多任务并行。
+- 用简洁、直接的语言沟通，避免冗长解释。
+- 频繁提供具体反馈，而非笼统评价。
+- 设置时间盒（time-box），每 25 分钟休息 5 分钟。
+- 庆祝小胜利，保持正反馈循环。
+- 遇到困难时主动提出简化方案或替代路径。";
+
+use xai_grok_telemetry::startup;
+pub use xai_grok_telemetry::startup::{
+    AgentKind, Owner, StartupOutcome, StartupPhase, StartupTimer,
+};
 
 use anyhow::Result;
 use tokio_util::sync::CancellationToken;
@@ -29,7 +54,7 @@ pub use model_state::ModelState;
 pub(crate) fn wait_for_exit_not_supported(context: &str) -> acp::Error {
     acp::Error::new(
         acp::ErrorCode::MethodNotFound.into(),
-        format!("{context}不支持 WaitForTerminalExit"),
+        format!("{context} does not handle WaitForTerminalExit"),
     )
 }
 
@@ -60,8 +85,9 @@ pub struct AcpConnection {
     pub auth_methods: Vec<acp::AuthMethod>,
     /// Cancellation token to stop the agent.
     pub cancel: CancellationToken,
-    /// Local ACP worker thread: the in-process agent or the leader IPC bridge.
-    pub worker_thread: Option<std::thread::JoinHandle<anyhow::Result<()>>>,
+    /// In-process agent worker thread (`connect` only). Join after cancel so
+    /// session actors can flush SessionEnd hooks. `None` in leader mode.
+    pub agent_thread: Option<std::thread::JoinHandle<anyhow::Result<()>>>,
     /// ACP-advertised slash commands parsed from `InitializeResponse.meta.availableCommands`.
     /// Seeded into every new `AgentSession` so autocomplete has shell builtins
     /// and skills immediately, before any `AvailableCommandsUpdate` arrives.
@@ -98,23 +124,6 @@ pub struct AcpConnection {
     /// resolves a fresh bearer per request via the refresh chain.
     pub auth_manager: std::sync::Arc<xai_grok_shell::auth::AuthManager>,
 }
-
-/// ADHD skill rules injected into the system prompt when `/adhd` is enabled.
-///
-/// Source: https://github.com/uditakhourii/adhd
-/// These rules help users with ADHD stay focused and productive by encouraging
-/// task decomposition, visible progress tracking, and reduced cognitive load.
-const ADHD_SKILL_RULES: &str = "\
-## ADHD 辅助规则
-
-- 将大任务拆解为小的、可操作的步骤，每步不超过 5 分钟。
-- 使用待办清单跟踪进度，完成一项立即标记。
-- 一次只专注一个任务，避免多任务并行。
-- 用简洁、直接的语言沟通，避免冗长解释。
-- 频繁提供具体反馈，而非笼统评价。
-- 设置时间盒（time-box），每 25 分钟休息 5 分钟。
-- 庆祝小胜利，保持正反馈循环。
-- 遇到困难时主动提出简化方案或替代路径。";
 
 /// CLI flags that affect agent configuration, threaded from PagerArgs.
 #[derive(Debug, Clone, Default)]
@@ -157,10 +166,6 @@ pub struct ConnectFlags {
     /// CLI permission rules from --allow / --deny flags.
     /// Not supported in leader mode (agent config is set at leader startup).
     pub permission_rules: Vec<xai_grok_workspace::permission::types::PermissionRule>,
-    /// CLI `--tools` allowlist (comma-separated tool names).
-    pub cli_tools: Option<Vec<String>>,
-    /// CLI `--disallowed-tools` denylist (comma-separated tool names).
-    pub cli_disallowed_tools: Option<Vec<String>>,
     /// Seed agent sessions with always-approve (YOLO) permission mode.
     pub default_yolo_mode: bool,
     /// Seed agent sessions with auto (classifier) permission mode.
@@ -169,11 +174,8 @@ pub struct ConnectFlags {
 }
 
 /// Connect to an agent: spawn, initialize, authenticate.
-///
-/// This is the main entry point for establishing an ACP connection.
-/// After this returns, the agent is ready to create sessions and receive prompts.
 pub async fn connect(cancel: &CancellationToken, mut flags: ConnectFlags) -> Result<AcpConnection> {
-    // Load agent config from disk
+    startup::enter(StartupPhase::LoadConfig);
     let raw_config = xai_grok_shell::config::load_effective_config()
         .map_err(|e| anyhow::anyhow!("Failed to load config: {}", e))?;
     let mut agent_config = AgentConfig::new_from_toml_cfg(&raw_config)
@@ -207,12 +209,6 @@ pub async fn connect(cancel: &CancellationToken, mut flags: ConnectFlags) -> Res
     if !flags.permission_rules.is_empty() {
         agent_config.cli_agent_overrides.permission_rules = flags.permission_rules.clone();
     }
-    if let Some(ref tools) = flags.cli_tools {
-        agent_config.cli_agent_overrides.tools = Some(tools.clone());
-    }
-    if let Some(ref dt) = flags.cli_disallowed_tools {
-        agent_config.cli_agent_overrides.disallowed_tools = Some(dt.clone());
-    }
 
     // ADHD skill integration: when enabled in config, inject ADHD-friendly
     // rules into the system prompt via the `rules` metadata field.
@@ -227,16 +223,12 @@ pub async fn connect(cancel: &CancellationToken, mut flags: ConnectFlags) -> Res
 
     apply_config_writes(&flags);
 
-    // Spawn the agent
     let memory_config = agent_config.memory_config.clone();
     let spawned = spawn::spawn_grok_shell(agent_config, cancel, memory_config).await?;
     let auth_manager = spawned.auth_manager.clone();
-    let agent_cancel = spawned.cancel;
-    let agent_guard =
-        spawn::AgentShutdownGuard::new(agent_cancel.clone(), Some(spawned.thread_handle));
     let (tx, rx) = (spawned.channel.tx, spawned.channel.rx);
 
-    // Initialize
+    startup::enter(StartupPhase::AcpInitialize);
     let (
         models,
         is_grok_shell,
@@ -251,8 +243,9 @@ pub async fn connect(cancel: &CancellationToken, mut flags: ConnectFlags) -> Res
     let (needs_login, login_label, login_method_id, auth_start_mode) =
         startup_auth_metadata(&auth_methods);
 
+    startup::enter(StartupPhase::EagerAuth);
     let (needs_login, login_label, login_method_id, auth_start_mode, auth_meta) =
-        eager_auth_or_login_fallback(
+        bounded_eager_auth(
             &tx,
             &auth_methods,
             default_auth_method_id.as_ref(),
@@ -269,8 +262,8 @@ pub async fn connect(cancel: &CancellationToken, mut flags: ConnectFlags) -> Res
         models,
         is_grok_shell,
         auth_methods,
-        cancel: agent_cancel,
-        worker_thread: agent_guard.into_thread(),
+        cancel: spawned.cancel,
+        agent_thread: Some(spawned.thread_handle),
         available_commands,
         needs_login,
         login_label,
@@ -305,6 +298,9 @@ pub async fn connect_via_leader(
 
     apply_config_writes(&flags);
 
+    startup::enter(StartupPhase::LoadConfig);
+    // The leader path never runs the managed-policy sync in this process.
+    startup::set_auth_mode(xai_grok_shell::managed_config::classify_auth_mode());
     let mut agent_config = AgentConfig::new_from_toml_cfg(raw_config)
         .map_err(|e| anyhow::anyhow!("Failed to create agent config: {e}"))?;
     // resolve_telemetry_mode reads remote_settings.
@@ -327,6 +323,7 @@ pub async fn connect_via_leader(
         fs_write: flags.fs_write,
     };
 
+    startup::enter(StartupPhase::LeaderConnect);
     let conn = connect_or_spawn(
         client_type,
         ClientMode::Stdio,
@@ -349,11 +346,9 @@ pub async fn connect_via_leader(
         Some(reconnector),
         ReconnectPolicy::unbounded(),
     )?;
-    let bridge_cancel = bridge.cancel;
-    let bridge_guard =
-        spawn::AgentShutdownGuard::new(bridge_cancel.clone(), Some(bridge.thread_handle));
     let (tx, rx) = (bridge.channel.tx, bridge.channel.rx);
 
+    startup::enter(StartupPhase::AcpInitialize);
     let (
         models,
         is_grok_shell,
@@ -367,8 +362,9 @@ pub async fn connect_via_leader(
     let (needs_login, login_label, login_method_id, auth_start_mode) =
         startup_auth_metadata(&auth_methods);
 
+    startup::enter(StartupPhase::EagerAuth);
     let (needs_login, login_label, login_method_id, auth_start_mode, auth_meta) =
-        eager_auth_or_login_fallback(
+        bounded_eager_auth(
             &tx,
             &auth_methods,
             default_auth_method_id.as_ref(),
@@ -399,8 +395,8 @@ pub async fn connect_via_leader(
         models,
         is_grok_shell,
         auth_methods,
-        cancel: bridge_cancel,
-        worker_thread: bridge_guard.into_thread(),
+        cancel: bridge.cancel,
+        agent_thread: None,
         available_commands,
         needs_login,
         login_label,
@@ -449,12 +445,6 @@ fn unsupported_leader_flags(flags: &ConnectFlags) -> Vec<&'static str> {
     if !flags.permission_rules.is_empty() {
         out.push("--allow/--deny permission rules");
     }
-    if flags.cli_tools.is_some() {
-        out.push("--tools");
-    }
-    if flags.cli_disallowed_tools.is_some() {
-        out.push("--disallowed-tools");
-    }
     out
 }
 
@@ -497,7 +487,6 @@ fn build_initialize_meta(flags: &ConnectFlags) -> serde_json::Value {
         .unwrap_or(PAGER_CLIENT_TYPE);
     let mut meta = serde_json::json!({
         "clientType": client_type,
-        "clientIdentifier": client_type,
         "clientVersion": PAGER_CLIENT_VERSION,
     });
     if let Some(spo) = &flags.system_prompt_override {
@@ -757,6 +746,49 @@ async fn eager_auth_or_login_fallback(
             let (label, method_id, mode) = find_interactive_login_method(auth_methods);
             (true, label, method_id, mode, None)
         }
+    }
+}
+
+/// [`eager_auth_or_login_fallback`] bounded by `STARTUP_AUTH_REFRESH_TIMEOUT`,
+/// so a hung agent cannot gate the first draw. On timeout the inputs pass
+/// through unchanged and the agent finishes authentication in the background.
+async fn bounded_eager_auth(
+    tx: &AcpAgentTx,
+    auth_methods: &[acp::AuthMethod],
+    default_auth_method_id: Option<&acp::AuthMethodId>,
+    needs_login: bool,
+    login_label: Option<String>,
+    login_method_id: Option<acp::AuthMethodId>,
+    auth_start_mode: AuthStartMode,
+) -> (
+    bool,
+    Option<String>,
+    Option<acp::AuthMethodId>,
+    AuthStartMode,
+    Option<serde_json::Value>,
+) {
+    match tokio::time::timeout(
+        xai_grok_shell::http::STARTUP_AUTH_REFRESH_TIMEOUT,
+        eager_auth_or_login_fallback(
+            tx,
+            auth_methods,
+            default_auth_method_id,
+            needs_login,
+            login_label.clone(),
+            login_method_id.clone(),
+            auth_start_mode,
+        ),
+    )
+    .await
+    {
+        Ok(resolved) => resolved,
+        Err(_) => (
+            needs_login,
+            login_label,
+            login_method_id,
+            auth_start_mode,
+            None,
+        ),
     }
 }
 

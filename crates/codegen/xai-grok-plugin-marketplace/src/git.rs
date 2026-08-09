@@ -169,19 +169,18 @@ fn cache_hash(url: &str) -> String {
 }
 
 /// Clone a git repo with depth 1.
+///
+/// Uses the git CLI (not libgit2): a libgit2 clone cannot be killed on
+/// timeout, so a hung remote would pin a thread forever.
 fn clone_repo(url: &str, branch: Option<&str>, dest: &Path) -> Result<(), String> {
-    // Try git2 first.
-    match clone_with_git2(url, branch, dest) {
-        Ok(()) => return Ok(()),
-        Err(e) => {
-            tracing::debug!("git2 clone failed, trying CLI: {e}");
-            // Clean up partial clone.
-            let _ = std::fs::remove_dir_all(dest);
-        }
-    }
-
-    // Fallback to git CLI.
-    clone_with_cli(url, branch, dest)
+    let url = xai_grok_agent::plugins::git_install::validate_git_url(url)?;
+    let branch = branch
+        .map(xai_grok_agent::plugins::git_install::validate_git_ref)
+        .transpose()?;
+    let mut cmd = clone_cli_command(url, branch, dest);
+    run_git_timed(&mut cmd, "clone", NETWORK_OP_TIMEOUT).inspect_err(|_| {
+        let _ = std::fs::remove_dir_all(dest);
+    })
 }
 
 fn reclone_repo(url: &str, branch: Option<&str>, dest: &Path) -> Result<(), String> {
@@ -236,26 +235,6 @@ fn unique_reclone_suffix() -> u128 {
         .unwrap_or(0)
 }
 
-fn clone_with_git2(url: &str, branch: Option<&str>, dest: &Path) -> Result<(), String> {
-    let url = xai_grok_agent::plugins::git_install::validate_git_url(url)?;
-    let branch = branch
-        .map(xai_grok_agent::plugins::git_install::validate_git_ref)
-        .transpose()?;
-    let mut fetch_opts = git2::FetchOptions::new();
-    fetch_opts.depth(1);
-
-    let mut builder = git2::build::RepoBuilder::new();
-    builder.fetch_options(fetch_opts);
-    if let Some(b) = branch {
-        builder.branch(b);
-    }
-
-    builder
-        .clone(url, dest)
-        .map_err(|e| format!("git2 clone failed: {e}"))?;
-    Ok(())
-}
-
 /// Environment variables set on every git command to suppress interactive prompts.
 pub const GIT_AUTH_SUPPRESSION_ENVS: [(&str, &str); 4] = [
     ("GIT_TERMINAL_PROMPT", "0"),
@@ -298,11 +277,25 @@ pub fn probe_git_remote(url: &str) -> Result<(), String> {
     run_git_timed(&mut cmd, "ls-remote", NETWORK_OP_TIMEOUT)
 }
 
+fn fetch_cli_command(repo_dir: &Path, branch: Option<&str>) -> std::process::Command {
+    let mut cmd = git_command();
+    cmd.current_dir(repo_dir).args([
+        "fetch",
+        "--depth",
+        "1",
+        "--",
+        "origin",
+        branch.unwrap_or("HEAD"),
+    ]);
+    cmd
+}
+
 /// Run a git command, wait up to `timeout`, kill+reap on hang. Errors on
 /// timeout or non-zero exit; `what` names the operation in error messages.
 fn run_git_timed(cmd: &mut Command, what: &str, timeout: Duration) -> Result<(), String> {
     cmd.stdout(Stdio::null());
     cmd.stderr(Stdio::piped());
+    #[allow(clippy::disallowed_methods)] // git command, killed and reaped on timeout
     let mut child = cmd
         .spawn()
         .map_err(|e| format!("failed to run git {what}: {e}"))?;
@@ -333,7 +326,10 @@ fn run_git_timed(cmd: &mut Command, what: &str, timeout: Duration) -> Result<(),
     }
 }
 
-/// Condense git stderr into a user-facing failure message.
+/// Condense git stderr into a user-facing failure message. git writes
+/// progress ("Cloning into ...") to stderr alongside real errors, so keep
+/// only `fatal:`/`error:` lines, and translate the prompts-disabled auth
+/// failure (we set GIT_TERMINAL_PROMPT=0 / ssh BatchMode) out of git-speak.
 fn git_failure_message(what: &str, stderr: &str) -> String {
     const AUTH_PATTERNS: [&str; 3] = [
         "could not read Username",
@@ -345,85 +341,38 @@ fn git_failure_message(what: &str, stderr: &str) -> String {
             "git {what} failed: authentication required or not a git repository (check the URL)"
         );
     }
-    let detail: String = stderr
+    let salient: Vec<&str> = stderr
         .lines()
-        .filter(|line| {
-            let lower = line.to_ascii_lowercase();
-            lower.contains("fatal:") || lower.contains("error:")
-        })
-        .collect::<Vec<_>>()
-        .join("; ");
-    if detail.is_empty() {
-        format!("git {what} failed")
+        .filter(|line| line.starts_with("fatal:") || line.starts_with("error:"))
+        .collect();
+    if salient.is_empty() {
+        format!("git {what} failed: {}", stderr.trim())
     } else {
-        format!("git {what} failed: {detail}")
+        format!("git {what} failed: {}", salient.join("; "))
     }
-}
-
-fn clone_with_cli(url: &str, branch: Option<&str>, dest: &Path) -> Result<(), String> {
-    let url = xai_grok_agent::plugins::git_install::validate_git_url(url)?;
-    let branch = branch
-        .map(xai_grok_agent::plugins::git_install::validate_git_ref)
-        .transpose()?;
-    let output = clone_cli_command(url, branch, dest)
-        .output()
-        .map_err(|e| format!("failed to run git clone: {e}"))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("git clone failed: {stderr}"));
-    }
-    Ok(())
-}
-
-fn fetch_cli_command(repo_dir: &Path, branch: Option<&str>) -> std::process::Command {
-    let mut cmd = git_command();
-    cmd.current_dir(repo_dir).args([
-        "fetch",
-        "--depth",
-        "1",
-        "--",
-        "origin",
-        branch.unwrap_or("HEAD"),
-    ]);
-    cmd
 }
 
 fn fetch_reset_cached_repo(repo_dir: &Path, branch: Option<&str>) -> Result<(), String> {
     let branch = branch
         .map(xai_grok_agent::plugins::git_install::validate_git_ref)
         .transpose()?;
-    let fetch_output = fetch_cli_command(repo_dir, branch)
-        .output()
-        .map_err(|e| format!("failed to run git fetch: {e}"))?;
+    run_git_timed(
+        &mut fetch_cli_command(repo_dir, branch),
+        "fetch",
+        NETWORK_OP_TIMEOUT,
+    )?;
 
-    if !fetch_output.status.success() {
-        let stderr = String::from_utf8_lossy(&fetch_output.stderr);
-        return Err(format!("git fetch failed: {stderr}"));
-    }
-
-    let checkout_output = git_command()
+    let mut checkout_cmd = git_command();
+    checkout_cmd
         .current_dir(repo_dir)
-        .args(["checkout", "--detach", "FETCH_HEAD"])
-        .output()
-        .map_err(|e| format!("failed to run git checkout: {e}"))?;
+        .args(["checkout", "--detach", "FETCH_HEAD"]);
+    run_git_timed(&mut checkout_cmd, "checkout", NETWORK_OP_TIMEOUT)?;
 
-    if !checkout_output.status.success() {
-        let stderr = String::from_utf8_lossy(&checkout_output.stderr);
-        return Err(format!("git checkout failed: {stderr}"));
-    }
-
-    let reset_output = git_command()
+    let mut reset_cmd = git_command();
+    reset_cmd
         .current_dir(repo_dir)
-        .args(["reset", "--hard", "FETCH_HEAD"])
-        .output()
-        .map_err(|e| format!("failed to run git reset: {e}"))?;
-
-    if !reset_output.status.success() {
-        let stderr = String::from_utf8_lossy(&reset_output.stderr);
-        return Err(format!("git reset failed: {stderr}"));
-    }
-
-    Ok(())
+        .args(["reset", "--hard", "FETCH_HEAD"]);
+    run_git_timed(&mut reset_cmd, "reset", NETWORK_OP_TIMEOUT)
 }
 
 #[cfg(test)]
@@ -547,6 +496,67 @@ mod tests {
             force_sync_source_cache(&url, Some("main"), cache_root.path()).unwrap();
         assert_eq!(forced_cache_dir, cache_dir);
         assert_ne!(current_head(&cache_dir), first_head);
+    }
+
+    #[test]
+    fn git_failure_message_maps_auth_prompt_to_plain_language() {
+        let stderr = "Cloning into '/tmp/x'...\nfatal: could not read Username for 'https://mcp.linear.app': terminal prompts disabled\n";
+        assert_eq!(
+            git_failure_message("clone", stderr),
+            "git clone failed: authentication required or not a git repository (check the URL)"
+        );
+    }
+
+    #[test]
+    fn git_failure_message_keeps_only_fatal_and_error_lines() {
+        let stderr =
+            "Cloning into '/tmp/x'...\nfatal: repository 'https://example.com/x.git/' not found\n";
+        assert_eq!(
+            git_failure_message("clone", stderr),
+            "git clone failed: fatal: repository 'https://example.com/x.git/' not found"
+        );
+    }
+
+    #[test]
+    fn git_failure_message_falls_back_to_raw_stderr() {
+        assert_eq!(
+            git_failure_message("fetch", "something unusual\n"),
+            "git fetch failed: something unusual"
+        );
+    }
+
+    #[test]
+    fn probe_git_remote_accepts_git_repo() {
+        if !git_available() {
+            eprintln!("skipping git-dependent test: git binary not available");
+            return;
+        }
+        let remote = tempfile::tempdir().unwrap();
+        init_remote_repo(remote.path());
+        let url = remote.path().to_string_lossy().to_string();
+        probe_git_remote(&url).unwrap();
+    }
+
+    #[test]
+    fn probe_git_remote_rejects_non_repo() {
+        if !git_available() {
+            eprintln!("skipping git-dependent test: git binary not available");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let url = dir.path().to_string_lossy().to_string();
+        let err = probe_git_remote(&url).unwrap_err();
+        assert!(err.contains("ls-remote failed"), "{err}");
+    }
+
+    #[test]
+    fn run_git_timed_kills_hung_process() {
+        let mut cmd = Command::new("sleep");
+        cmd.arg("30");
+        let start = Instant::now();
+        let err = run_git_timed(&mut cmd, "sleep", Duration::from_millis(200)).unwrap_err();
+        assert!(err.contains("timed out"), "{err}");
+        assert!(start.elapsed() < Duration::from_secs(5));
     }
 
     #[test]

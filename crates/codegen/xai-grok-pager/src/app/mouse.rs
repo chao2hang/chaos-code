@@ -19,6 +19,17 @@ use crate::views::prompt_widget::PromptEvent;
 use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 use std::time::Instant;
 impl AgentView {
+    /// Time-paired multi-click check for the prompt textarea. Pairing is
+    /// time-only (no coordinates); a mispaired action is one undo step.
+    /// Records the click for the next pairing.
+    pub(super) fn prompt_click_is_double(&mut self) -> bool {
+        let now = std::time::Instant::now();
+        let is_double = self
+            .last_prompt_click_ms
+            .is_some_and(|last| now.duration_since(last).as_millis() < MULTI_CLICK_TIMEOUT_MS);
+        self.last_prompt_click_ms = Some(now);
+        is_double
+    }
     /// Handle mouse events: click-to-focus, forward to prompt textarea.
     ///
     /// Scroll events are handled at app level (not here).
@@ -79,9 +90,6 @@ impl AgentView {
                     self.last_context_click_at = Some(now);
                     return InputOutcome::Action(Action::ShowContextInfo);
                 }
-                if self.hit_total_tokens.contains(mouse.column, mouse.row) {
-                    return InputOutcome::Action(Action::ShowUsageDetail);
-                }
                 if self.hit_plan_button.contains(mouse.column, mouse.row) {
                     if self.plan_approval_view.is_some() {
                         self.reopen_plan_approval();
@@ -128,6 +136,59 @@ impl AgentView {
                     self.cancel_trigger_hint = Some(crate::app::actions::CancelTrigger::Mouse);
                     return InputOutcome::Action(Action::CancelTurn);
                 }
+                if self
+                    .privacy_banner
+                    .hit_opt_in
+                    .contains(mouse.column, mouse.row)
+                    && !self.pos_occluded(mouse.column, mouse.row)
+                {
+                    return InputOutcome::Action(Action::PrivacyBannerOptIn);
+                }
+                if self
+                    .privacy_banner
+                    .hit_opt_out
+                    .contains(mouse.column, mouse.row)
+                    && !self.pos_occluded(mouse.column, mouse.row)
+                {
+                    return InputOutcome::Action(Action::PrivacyBannerOptOut);
+                }
+                if self
+                    .privacy_banner
+                    .hit_terms
+                    .contains(mouse.column, mouse.row)
+                    && !self.pos_occluded(mouse.column, mouse.row)
+                {
+                    return InputOutcome::Action(Action::OpenUrl(
+                        crate::views::privacy_banner::PRIVACY_BANNER_TERMS_URL.to_string(),
+                    ));
+                }
+                if self
+                    .privacy_banner
+                    .hit_policy
+                    .contains(mouse.column, mouse.row)
+                    && !self.pos_occluded(mouse.column, mouse.row)
+                {
+                    return InputOutcome::Action(Action::OpenUrl(
+                        crate::views::privacy_banner::PRIVACY_BANNER_POLICY_URL.to_string(),
+                    ));
+                }
+                if self.hit_watching_cue.contains(mouse.column, mouse.row)
+                    && !self.pos_occluded(mouse.column, mouse.row)
+                {
+                    let was_visible = self.tasks.overlay.visible;
+                    self.tasks.overlay.toggle();
+                    self.tasks.on_state_change();
+                    if self.tasks.overlay.focused {
+                        self.set_active_pane(AgentPane::Tasks, false);
+                    } else if self.active_pane == AgentPane::Tasks {
+                        self.set_active_pane(AgentPane::Scrollback, false);
+                    }
+                    if !was_visible && !self.watching_cue_toast_shown {
+                        self.watching_cue_toast_shown = true;
+                        self.show_toast("Tip: Ctrl+G toggles the tasks pane");
+                    }
+                    return InputOutcome::Changed;
+                }
                 if self.hit_announcement_hide.contains(mouse.column, mouse.row)
                     && !self.pos_occluded(mouse.column, mouse.row)
                 {
@@ -149,9 +210,7 @@ impl AgentView {
                 {
                     let plugin_id = name.clone();
                     if let Err(e) = xai_grok_shell::config::add_dismissed_plugin_cta(&plugin_id) {
-                        tracing::warn!(
-                            error = % e, "couldn't persist plugin CTA dismissal"
-                        );
+                        tracing::warn!(error = %e, "couldn't persist plugin CTA dismissal");
                     }
                     self.plugin_cta.dismissed.insert(plugin_id.clone());
                     xai_grok_telemetry::session_ctx::log_event(
@@ -214,6 +273,13 @@ impl AgentView {
                     self.scrollback.goto_bottom();
                     return InputOutcome::Changed;
                 }
+                if self
+                    .hit_response_top_indicator
+                    .contains(mouse.column, mouse.row)
+                {
+                    self.scrollback.prev_response();
+                    return InputOutcome::Changed;
+                }
                 if let Some(hd_area) = self.history_dropdown_area
                     && hd_area.contains((mouse.column, mouse.row).into())
                     && self.prompt.history_search.is_active()
@@ -236,8 +302,7 @@ impl AgentView {
                             .map(str::to_owned)
                     {
                         self.prompt.history_search.deactivate();
-                        if self.prompt_input_mode != PromptInputMode::Feedback
-                            && self.prompt_input_mode != PromptInputMode::Remember
+                        if self.prompt_input_mode != PromptInputMode::Remember
                             && let Some(cmd) = text.strip_prefix("! ")
                         {
                             self.prompt_input_mode = PromptInputMode::Bash;
@@ -416,7 +481,6 @@ impl AgentView {
                                     if self.visible_queue_is_empty() {
                                         self.hide_queue_pane();
                                     }
-                                    self.maybe_push_parked_marker();
                                     return InputOutcome::Action(Action::QueueRemoveShared {
                                         id: server_id,
                                         expected_version: row.version,
@@ -426,7 +490,6 @@ impl AgentView {
                             }
                             let was_drain_blocked = self.drain_blocked();
                             self.remove_local_queue_row(id);
-                            self.maybe_push_parked_marker();
                             if was_drain_blocked {
                                 return InputOutcome::Action(Action::DrainQueue);
                             }
@@ -471,10 +534,7 @@ impl AgentView {
                                     self.pending_effects.push(eff);
                                 }
                             }
-                            let now = std::time::Instant::now();
-                            if let Some(last) = self.last_prompt_click_ms
-                                && now.duration_since(last).as_millis() < MULTI_CLICK_TIMEOUT_MS
-                            {
+                            if self.prompt_click_is_double() {
                                 if self.prompt.file_ref_near_cursor()
                                     && let Some((path, initial_range)) =
                                         self.prompt.file_ref_element_at_cursor()
@@ -488,7 +548,6 @@ impl AgentView {
                                     self.prompt.refresh_slash(&self.session.models);
                                 }
                             }
-                            self.last_prompt_click_ms = Some(now);
                         }
                         InputOutcome::Changed
                     }
@@ -682,12 +741,15 @@ impl AgentView {
                         self.last_permission_click = None;
                         self.pending_scrollback_click = Some((mouse.column, mouse.row));
                         tracing::debug!(
-                            event = "scrollback_mouse_down", col = mouse.column, row =
-                            mouse.row, area = ? self.pane_areas.scrollback, content_area
-                            = ? self.last_scrollback_selection_model.content_area, ranges
-                            = self.last_scrollback_selection_model.ranges.len(), blocks =
-                            self.last_scrollback_selection_model.visible_blocks.len(),
-                            hovered_entry = ? self.hovered_entry, "scrollback mouse down"
+                            event = "scrollback_mouse_down",
+                            col = mouse.column,
+                            row = mouse.row,
+                            area = ?self.pane_areas.scrollback,
+                            content_area = ?self.last_scrollback_selection_model.content_area,
+                            ranges = self.last_scrollback_selection_model.ranges.len(),
+                            blocks = self.last_scrollback_selection_model.visible_blocks.len(),
+                            hovered_entry = ?self.hovered_entry,
+                            "scrollback mouse down"
                         );
                         if self.begin_pending_text_drag(mouse) {
                             return InputOutcome::Changed;
@@ -719,8 +781,11 @@ impl AgentView {
             MouseEventKind::Drag(MouseButton::Left) => {
                 self.pending_link_click = None;
                 tracing::debug!(
-                    event = "scrollback_mouse_drag", col = mouse.column, row = mouse.row,
-                    pending = ? self.pending_text_drag, active = ? self.drag_selection,
+                    event = "scrollback_mouse_drag",
+                    col = mouse.column,
+                    row = mouse.row,
+                    pending = ?self.pending_text_drag,
+                    active = ?self.drag_selection,
                     "scrollback mouse drag"
                 );
                 self.handle_scrollback_drag_motion(mouse)
@@ -728,8 +793,11 @@ impl AgentView {
             MouseEventKind::Up(MouseButton::Left) => {
                 self.left_mouse_down = false;
                 tracing::debug!(
-                    event = "scrollback_mouse_up", col = mouse.column, row = mouse.row,
-                    pending = ? self.pending_text_drag, active = ? self.drag_selection,
+                    event = "scrollback_mouse_up",
+                    col = mouse.column,
+                    row = mouse.row,
+                    pending = ?self.pending_text_drag,
+                    active = ?self.drag_selection,
                     "scrollback mouse up"
                 );
                 if self.scrollbar_dragging {
@@ -923,9 +991,12 @@ impl AgentView {
             }
             MouseEventKind::Moved => {
                 tracing::debug!(
-                    event = "scrollback_mouse_moved", col = mouse.column, row = mouse
-                    .row, pending = ? self.pending_text_drag, active = ? self
-                    .drag_selection, left_mouse_down = self.left_mouse_down,
+                    event = "scrollback_mouse_moved",
+                    col = mouse.column,
+                    row = mouse.row,
+                    pending = ?self.pending_text_drag,
+                    active = ?self.drag_selection,
+                    left_mouse_down = self.left_mouse_down,
                     "scrollback mouse moved"
                 );
                 if self.left_mouse_down
@@ -1008,7 +1079,6 @@ impl AgentView {
                     .set_hovered_follow_up_chip(self.follow_up_chip_at(mouse.column, mouse.row));
                 changed |= self.hit_badge.update_hover(mouse.column, mouse.row);
                 changed |= self.hit_context.update_hover(mouse.column, mouse.row);
-                changed |= self.hit_total_tokens.update_hover(mouse.column, mouse.row);
                 changed |= self.hit_credits.update_hover(mouse.column, mouse.row);
                 changed |= self.hit_todo_close.update_hover(mouse.column, mouse.row);
                 changed |= self.hit_queue_close.update_hover(mouse.column, mouse.row);
@@ -1034,13 +1104,33 @@ impl AgentView {
                 changed |= self
                     .hit_follow_indicator
                     .update_hover(mouse.column, mouse.row);
+                changed |= self
+                    .hit_response_top_indicator
+                    .update_hover(mouse.column, mouse.row);
                 changed |= self.hit_cancel_button.update_hover(mouse.column, mouse.row);
                 changed |= self.hit_bg_button.update_hover(mouse.column, mouse.row);
+                changed |= self.hit_watching_cue.update_hover(mouse.column, mouse.row);
                 changed |= self
                     .hit_announcement_hide
                     .update_hover(mouse.column, mouse.row);
                 changed |= self
                     .hit_announcement_cta
+                    .update_hover(mouse.column, mouse.row);
+                changed |= self
+                    .privacy_banner
+                    .hit_opt_in
+                    .update_hover(mouse.column, mouse.row);
+                changed |= self
+                    .privacy_banner
+                    .hit_opt_out
+                    .update_hover(mouse.column, mouse.row);
+                changed |= self
+                    .privacy_banner
+                    .hit_terms
+                    .update_hover(mouse.column, mouse.row);
+                changed |= self
+                    .privacy_banner
+                    .hit_policy
                     .update_hover(mouse.column, mouse.row);
                 changed |= self
                     .plugin_cta

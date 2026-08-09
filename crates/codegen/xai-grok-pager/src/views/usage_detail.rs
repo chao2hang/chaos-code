@@ -597,6 +597,7 @@ mod tests {
             output_tokens: output,
             total_tokens: input + output,
             cached_read_tokens: input / 2,
+            cache_creation_tokens: 0,
             reasoning_tokens: output / 4,
             model_calls: calls,
             api_duration_ms: 1_000,

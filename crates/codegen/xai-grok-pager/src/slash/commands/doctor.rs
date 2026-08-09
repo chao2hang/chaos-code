@@ -1,14 +1,14 @@
-//! `/doctor` — 诊断终端、配色/主题、剪贴板与语音输入。
+//! `/doctor` — diagnose terminal, color/theme, clipboard, and voice input.
 //!
-//! 走共享的 TUI 探测与诊断路径，包含独立 `doctor` 子命令观察不到的
-//! 运行时现场证据。
+//! Runs the shared TUI probe and diagnostics path, including live runtime
+//! evidence that the standalone command cannot observe.
 
 use crate::slash::command::{
     AppCtx, ArgItem, CommandExecCtx, CommandResult, DoctorRequest, SlashCommand,
 };
 
 const USAGE: &str =
-    "用法: /doctor [fix [ssh-wrap|tmux-clipboard|dcs-passthrough|tmux-extended-keys]]";
+    "Usage: /doctor [fix [ssh-wrap|tmux-clipboard|dcs-passthrough|tmux-extended-keys]]";
 
 pub struct DoctorCommand;
 
@@ -93,7 +93,7 @@ impl SlashCommand for DoctorCommand {
             display: "fix".into(),
             match_text: "fix".into(),
             insert_text: "fix".into(),
-            description: "显示此处可用的自动修复".into(),
+            description: "Show automatic fixes available here".into(),
         }])
     }
 
@@ -130,6 +130,7 @@ mod tests {
             bundle_state: &bundle,
             screen_mode: crate::app::ScreenMode::Inline,
             billing_surface_visible: true,
+            usage_command_visible: true,
             pager_state: crate::settings::PagerLocalSnapshot::default(),
         };
         DoctorCommand.run(&mut context, args)
@@ -189,6 +190,7 @@ mod tests {
             cwd: std::path::Path::new("/tmp"),
             has_session_announcements: false,
             billing_surface_visible: true,
+            usage_command_visible: true,
             workflows_available: false,
             screen_mode: crate::app::ScreenMode::Inline,
         };
