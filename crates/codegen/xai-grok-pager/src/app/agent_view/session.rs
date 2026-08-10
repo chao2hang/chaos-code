@@ -37,6 +37,11 @@ impl AgentView {
             // session's top-right chip mean.
             self.session.tracker.reset_session_rate();
         }
+        // 绑定/重载后 catalog 可能已替换，预置 tracker 的模型与分词器，保证
+        // 首个 chunk 就用对 tokenizer。幂等：模型未变则 no-op。
+        if let Some(model) = self.session.models.current_model_id_str() {
+            self.session.tracker.set_current_model(model);
+        }
         self.session.session_id = Some(session_id);
     }
     /// Unbind this view from its current session identity.
@@ -1415,6 +1420,75 @@ mod resolve_turn_activity_tests {
         assert!(
             got.started_at.elapsed() >= std::time::Duration::ZERO,
             "session rate carries a valid clock"
+        );
+    }
+
+    /// 懒同步：`AgentSession::handle_update` 在每次 update 前把 `models.current`
+    /// 同步到 tracker —— 模型变更后首个 chunk 就换用对应分词器；模型没变则
+    /// 不清累计（幂等）。子代理更新走同一入口，行为一致。
+    #[test]
+    fn handle_update_lazily_syncs_current_model_to_tracker() {
+        use crate::acp::tracker::TokenizerKind;
+        use agent_client_protocol as acp;
+        use std::sync::Arc;
+
+        let chunk = |text: &str| {
+            acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
+                acp::ContentBlock::Text(acp::TextContent::new(text.to_string())),
+            ))
+        };
+
+        let mut view = test_agent_view(Some("s1"), std::path::PathBuf::from("/tmp"));
+        // 设置当前模型为 gpt-4o-mini（BYOK / o200k 系）。
+        view.session.models.current = Some(acp::ModelId::new(Arc::from("gpt-4o-mini")));
+        assert_eq!(view.session.tracker.tokenizer_kind(), None);
+
+        // 首个 chunk：懒同步应把分词器换成 o200k 再计数。
+        let handled = view.session.handle_update(
+            chunk("hello"),
+            &Default::default(),
+            &mut view.scrollback,
+        );
+        assert!(handled);
+        assert_eq!(
+            view.session.tracker.tokenizer_kind(),
+            Some(TokenizerKind::O200k),
+            "lazy sync must pick the model's tokenizer before counting chunks"
+        );
+
+        // 同一模型重复 update：不清累计（幂等）。
+        let before = view
+            .session
+            .tracker
+            .session_streaming_rate()
+            .expect("seeded")
+            .total_tokens;
+        view.session.handle_update(
+            chunk("world"),
+            &Default::default(),
+            &mut view.scrollback,
+        );
+        assert_eq!(
+            view.session.tracker.tokenizer_kind(),
+            Some(TokenizerKind::O200k),
+            "same-model update must not reset the tokenizer"
+        );
+        assert!(
+            view.session.tracker.session_streaming_rate().unwrap().total_tokens > before,
+            "same-model update must keep accumulating"
+        );
+
+        // 切到 grok 系：懒同步换回 cl100k 并清掉跨模型累计。
+        view.session.models.current = Some(acp::ModelId::new(Arc::from("grok-4.5")));
+        view.session.handle_update(
+            chunk("next"),
+            &Default::default(),
+            &mut view.scrollback,
+        );
+        assert_eq!(
+            view.session.tracker.tokenizer_kind(),
+            Some(TokenizerKind::Cl100k),
+            "lazy sync must react to a model change"
         );
     }
 
