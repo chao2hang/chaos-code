@@ -451,6 +451,11 @@ pub(super) fn handle_session_notification(notif: &acp::ExtNotification, app: &mu
             let mut child_scrollback = crate::scrollback::state::ScrollbackState::new();
             child_scrollback.set_appearance(agent.scrollback.appearance().clone());
             let mut child_view = AgentView::new(child_session, child_scrollback);
+            // 子代理用自己的 tracker：预置其模型对应的分词器（models 克隆自
+            // 父会话），保证子代理首个 chunk 的 token 计数口径正确。幂等。
+            if let Some(model) = child_view.session.models.current_model_id_str() {
+                child_view.session.tracker.set_current_model(model);
+            }
             child_view.set_input_mode(InputMode::Vim);
             child_view.active_pane = crate::views::agent::ActivePane::Scrollback;
             child_view.set_sharing_enabled(agent.sharing_enabled);
