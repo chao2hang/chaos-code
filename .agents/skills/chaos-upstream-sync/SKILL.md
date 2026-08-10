@@ -1,6 +1,6 @@
 ---
 name: chaos-upstream-sync
-version: 1.0.0
+version: 1.1.0
 description: "跟踪 GitHub 上 xai-org/grok-build（Grok Build）的更新，并安全移植到本仓库 chaos-code（Chaos 分支）。**仅当用户明确提到「上游 / grok-build / upstream」时才触发**；否则不触发。触发词：当用户说「同步上游」「看 grok build 更新」「移植上游改动」「merge grok」「对齐 SOURCE_REV」「上游有没有新版本」时使用。覆盖：查 releases/tags/commits/changelog、对照本地 SOURCE_REV 与版本号、分流可移植 vs Chaos 专属冲突、分批 cherry-pick/merge、编译与单测、更新日志。"
 metadata:
   requires:
@@ -217,12 +217,46 @@ cp crates/codegen/xai-grok-shell/changelogs/<ver>.json "${GROK_HOME:-$HOME/.grok
 
 4. 可选：更新根 `SOURCE_REV` 为本次对齐的上游指纹（与公开仓约定一致时）
 
+### B6.5 L10n Guard（防中文回退 —— 必须跑）
+
+> 历史教训：上游合入后多次出现「中文 UI 被默默还原为英文」的事故，事后靠
+> `fix: 恢复 fork 个性化中文 UI` 兜底（见 commit `ba41b599`, 60 文件 / +1370 / -1023）。
+> 用机械化对照把这一步前移到移植**之前**和**之后**:
+
+```bash
+# 移植前先拍快照(基线)
+bash scripts/l10n-guard.sh --before HEAD --after WORKTREE --report /tmp/l10n-before
+
+# ... 移植(cherry-pick / merge) ...
+
+# 移植后做对照
+bash scripts/l10n-guard.sh --before <移植前基线> --after HEAD
+
+# 或最常用:对照 main vs 当前同步分支
+bash scripts/l10n-guard.sh --before main --after HEAD
+```
+
+**报告会写到 `--report` 目录(默认 `/tmp/l10n-guard-$$`):**
+
+| 文件 | 含义 | 触发失败 |
+|---|---|---|
+| `regressed.txt`     | 中文消失的文件(before ∖ after) | 任意一行 → exit 1 |
+| `shrunk.txt`        | 中文字数减少的文件             | 任意一行 → exit 1 |
+| `fortress-breach.txt` | 强保护路径下中文被删(默认 pager views / slash / diagnostics / doctor_cmd / headless / acp) | 任意一行 → exit 1 |
+
+**强保护路径默认**: `crates/codegen/xai-grok-pager/src/{slash/commands,views,diagnostics,doctor_cmd,acp}` + `headless.rs` + `startup.rs` + `models.rs` + `crates/codegen/xai-grok-shell/src/agent`。可用 `--fortress <path>` 追加,`--exclude <path>` 排除(测试 fixture 等)。
+
+**任何一项非空 → 必须手工恢复中文再交付**,不要只凭"看着对"过关。
+
+脚本本身位于 `scripts/l10n-guard.sh`,依赖 `git` + `rg`(带 Unicode property)。
+
 ### B7. 交付说明
 
 完成后给用户：
 
 - 合入了哪些上游 commit / 路径  
 - 刻意 **没** 合哪些（及原因）  
+- **L10n Guard 结果**（regressed / shrunk / fortress-breach 各几条）  
 - 测试命令与结果  
 - 是否需要重启 `target/release/chaos`  
 - 未 push 的分支名（默认不 push，除非用户要求）
