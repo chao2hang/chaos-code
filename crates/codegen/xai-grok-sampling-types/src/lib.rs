@@ -25,6 +25,10 @@ pub use self::error::{
     SentCredential, is_context_length_error, is_retryable_api_status, status_user_message,
     user_facing_api_error_message,
 };
+pub use self::provider_error::{
+    ProviderError, ProviderErrorKind,
+    parse_provider_error, parse_provider_error_str,
+};
 pub use self::tool_overrides::{
     ClearableField, SearchDateBound, SearchDateBoundError, ToolOverrides, ToolOverridesUpdate,
     WebSearchOptions, XSearchOptions,

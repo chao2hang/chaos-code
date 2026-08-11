@@ -5,8 +5,8 @@
 //!
 //! # Retry behavior summary
 //!
-//! **Retried** (up to 14 times — attempt [`DEFAULT_MAX_RETRIES`] = 15 is
-//! fatal — ≈5.5 min: every wait, including a server `Retry-After`, is
+//! **Retried** (up to 7 retries — attempt [`DEFAULT_MAX_RETRIES`] = 8 is
+//! fatal — ≈2.5 min: every wait, including a server `Retry-After`, is
 //! capped at [`MAX_RETRY_BACKOFF`] and jittered):
 //! - 429 and any 5xx except 525/526 — covers the Cloudflare edge pages
 //!   (520–524 origin unreachable/timed out, 530 edge 1xxx) and upstream
@@ -48,11 +48,13 @@ use xai_grok_sampling_types::{SamplingError, is_retryable_api_status};
 /// no point burning a long backoff just to be rate-limited again.
 pub const RATE_LIMIT_RETRY_THRESHOLD: u32 = 2;
 
-/// Default retry budget when no env or model override is set: at most 14
-/// retries (the attempt reaching this count is fatal). With the 30s cap:
-/// retries 1-4 exponential (2+4+8+16s ≈ 30s), 5-14 flat ~30s (≈ 5 min) —
-/// ≈ 5.5 min total.
-pub const DEFAULT_MAX_RETRIES: u32 = 15;
+/// Default retry budget when no env or model override is set. In practice the
+/// effective budget is also bounded by each error kind (429 → rate-limit
+/// threshold of 2, billing/auth → fast-fail), so this is the ceiling for
+/// transient 5xx / transport faults only. Matches opencode's `maxRetries = 8`
+/// reference behavior. With the 30s cap: retries 1-4 exponential
+/// (2+4+8+16s ≈ 30s), 5-8 flat ~30s — ≈ 2.5 min worst case.
+pub const DEFAULT_MAX_RETRIES: u32 = 8;
 
 /// Longest single wait on the generic retry path — the exponential-backoff
 /// ceiling, and the clamp for a server `Retry-After`. Cloudflare answers 52x
@@ -185,6 +187,14 @@ pub fn classify_error(
     }
     if err.is_encrypted_content_error() {
         return RetryDecision::EmitToSession(clone_error(err));
+    }
+    // Billing/quota faults are permanent — the provider refuses until the
+    // account is topped up. Do not burn retry budget on them; surface the
+    // error so the user can act (top up / switch provider). Gated on body
+    // classification so a plain 402 with an opaque body still falls through
+    // to the transport path.
+    if err.is_billing_error() {
+        return RetryDecision::Fatal(clone_error(err));
     }
     if max_retries == 0 {
         return RetryDecision::Fatal(clone_error(err));
@@ -603,6 +613,75 @@ mod tests {
         assert!(matches!(
             classify_error(&err, 0, 5, RATE_LIMIT_RETRY_THRESHOLD),
             RetryDecision::RetryWithImageStrip
+        ));
+    }
+
+    #[test]
+    fn classify_billing_body_fails_fast_regardless_of_status() {
+        // DeepSeek 402 / Zhipu 4013 balance: body classifies as Billing →
+        // Fatal immediately, even though a 5xx (transient) status alone
+        // would otherwise retry.
+        let billing = r#"{"error":{"message":"Insufficient Balance","type":"insufficient_balance_error"}}"#;
+        let err = api_err(StatusCode::PAYMENT_REQUIRED, billing);
+        assert!(matches!(
+            classify_error(&err, 0, 15, RATE_LIMIT_RETRY_THRESHOLD),
+            RetryDecision::Fatal(_)
+        ));
+
+        // A 500 wrapping a balance body must also NOT retry (body wins over
+        // the transient status).
+        let err = api_err(StatusCode::INTERNAL_SERVER_ERROR, billing);
+        assert!(matches!(
+            classify_error(&err, 0, 15, RATE_LIMIT_RETRY_THRESHOLD),
+            RetryDecision::Fatal(_)
+        ));
+
+        // Zhipu balance code via err_code.
+        let zhipu_billing = r#"{"error":{"err_code":4013,"message":"余额不足","type":"insufficient_balance_error"}}"#;
+        let err = api_err(StatusCode::PAYMENT_REQUIRED, zhipu_billing);
+        assert!(matches!(
+            classify_error(&err, 0, 15, RATE_LIMIT_RETRY_THRESHOLD),
+            RetryDecision::Fatal(_)
+        ));
+    }
+
+    #[test]
+    fn classify_domestic_rate_limit_retries_with_backoff() {
+        // DeepSeek 429 with a rate-limit body → RetryWithBackoff, and honors
+        // Retry-After.
+        let body =
+            r#"{"error":{"message":"Rate limit reached","type":"rate_limit_error","code":"rate_limit_exceeded"}}"#;
+        let err = SamplingError::Api {
+            status: StatusCode::TOO_MANY_REQUESTS,
+            message: body.into(),
+            model_metadata: None,
+            retry_after_secs: Some(5),
+            should_retry: None,
+        };
+        match classify_error(&err, 0, RATE_LIMIT_RETRY_THRESHOLD, RATE_LIMIT_RETRY_THRESHOLD) {
+            RetryDecision::RetryWithBackoff { backoff, .. } => {
+                assert_eq!(backoff, std::time::Duration::from_secs(5));
+            }
+            other => panic!("expected RetryWithBackoff, got {other:?}"),
+        }
+
+        // Domestic flat code (Qwen Throttling) body → also rate-limit retry.
+        let qwen_body = r#"{"code":"Throttling","message":"Flow control triggered, please slow down","request_id":"x"}"#;
+        let err = api_err(StatusCode::TOO_MANY_REQUESTS, qwen_body);
+        assert!(matches!(
+            classify_error(&err, 0, RATE_LIMIT_RETRY_THRESHOLD, RATE_LIMIT_RETRY_THRESHOLD),
+            RetryDecision::RetryWithBackoff { .. }
+        ));
+    }
+
+    #[test]
+    fn classify_domestic_auth_key_does_not_burn_budget() {
+        // DeepSeek 401 invalid key → EmitToSession (session re-auth), not retry.
+        let body = r#"{"error":{"message":"Authentication Fails (no such user)","type":"authentication_error"}}"#;
+        let err = api_err(StatusCode::UNAUTHORIZED, body);
+        assert!(matches!(
+            classify_error(&err, 0, 15, RATE_LIMIT_RETRY_THRESHOLD),
+            RetryDecision::EmitToSession(_)
         ));
     }
 
