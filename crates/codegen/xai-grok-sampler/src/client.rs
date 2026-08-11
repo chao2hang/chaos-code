@@ -2413,6 +2413,29 @@ mod tests {
     }
 
     #[test]
+    fn extract_retry_after_parses_http_date() {
+        let mut headers = reqwest::header::HeaderMap::new();
+        // A far-future RFC 2822 HTTP-date. Domestic providers occasionally emit
+        // this instead of a delta-seconds integer. Capped at 120s like integers.
+        headers.insert(
+            reqwest::header::RETRY_AFTER,
+            "Wed, 21 Oct 2099 07:28:00 GMT".parse().unwrap(),
+        );
+        assert_eq!(extract_retry_after(&headers), Some(120));
+    }
+
+    #[test]
+    fn extract_retry_after_http_date_in_past_returns_zero() {
+        let mut headers = reqwest::header::HeaderMap::new();
+        // A past HTTP-date → 0 seconds (retry immediately).
+        headers.insert(
+            reqwest::header::RETRY_AFTER,
+            "Wed, 21 Oct 2015 07:28:00 GMT".parse().unwrap(),
+        );
+        assert_eq!(extract_retry_after(&headers), Some(0));
+    }
+
+    #[test]
     fn extract_retry_after_zero_is_valid() {
         let mut headers = reqwest::header::HeaderMap::new();
         headers.insert(reqwest::header::RETRY_AFTER, "0".parse().unwrap());
@@ -2423,12 +2446,8 @@ mod tests {
     fn extract_retry_after_parses_http_date_and_clamps_to_120() {
         let mut headers = reqwest::header::HeaderMap::new();
         // RFC 3339 (allowed HTTP-date form) far in the future → clamped to 120.
-        let future = (chrono::Utc::now() + chrono::Duration::hours(5))
-            .to_rfc3339();
-        headers.insert(
-            reqwest::header::RETRY_AFTER,
-            future.parse().unwrap(),
-        );
+        let future = (chrono::Utc::now() + chrono::Duration::hours(5)).to_rfc3339();
+        headers.insert(reqwest::header::RETRY_AFTER, future.parse().unwrap());
         assert_eq!(extract_retry_after(&headers), Some(120));
     }
 

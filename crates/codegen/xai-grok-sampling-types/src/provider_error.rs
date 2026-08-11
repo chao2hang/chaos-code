@@ -37,9 +37,7 @@ impl ProviderErrorKind {
     pub fn is_retryable(self) -> bool {
         matches!(
             self,
-            ProviderErrorKind::RateLimit
-                | ProviderErrorKind::Server
-                | ProviderErrorKind::Transient
+            ProviderErrorKind::RateLimit | ProviderErrorKind::Server | ProviderErrorKind::Transient
         )
     }
 
@@ -141,7 +139,9 @@ impl ProviderError {
             tags.push(n);
         }
         let joined = tags.join(" ");
-        let codes_only_integer = tags.iter().all(|t| t.is_empty() || t.chars().all(|c| c.is_ascii_digit()));
+        let codes_only_integer = tags
+            .iter()
+            .all(|t| t.is_empty() || t.chars().all(|c| c.is_ascii_digit()));
 
         // --- code/kind-based claims (machine signals, most reliable) ---
         if !codes_only_integer && !joined.is_empty() {
@@ -156,14 +156,19 @@ impl ProviderError {
             {
                 return ProviderErrorKind::Auth;
             }
-            // Balance / quota.
+            // Balance / quota. We check the raw tag set (not `joined`) so a
+            // numeric code like `4013` still matches even when accompanied by
+            // other tags (e.g. Zhipu pairs `err_code: 4013` with
+            // `type: insufficient_balance_error` → joined would be
+            // "4013 insufficientbalanceerror" and `== "4013"` would miss).
             if joined.contains("balance")
                 || joined.contains("insufficient")
                 || joined.contains("billing")
                 || joined.contains("quota")
                 || joined == "no_quota"
-                || joined == "402"
-                || joined == "4013" // Zhipu balance code
+                || tags.iter().any(|t| t.as_str() == "402")
+                || tags.iter().any(|t| t.as_str() == "4013")
+            // Zhipu balance code
             {
                 return ProviderErrorKind::Billing;
             }
@@ -171,8 +176,9 @@ impl ProviderError {
             if joined.contains("throttl")
                 || joined.contains("rate_limit")
                 || joined.contains("many_requests")
-                || joined == "429"
-                || joined == "4022" // Zhipu throttling code
+                || tags.iter().any(|t| t.as_str() == "429")
+                || tags.iter().any(|t| t.as_str() == "4022")
+            // Zhipu throttling code
             {
                 return ProviderErrorKind::RateLimit;
             }
@@ -188,7 +194,7 @@ impl ProviderError {
                 || joined.contains("service_unavailable")
                 || joined.contains("capacity")
                 || joined.contains("timeout")
-                || joined == "529"
+                || tags.iter().any(|t| t.as_str() == "529")
             {
                 return ProviderErrorKind::Server;
             }
@@ -229,7 +235,7 @@ impl ProviderError {
         } else if msg.contains("context length")
             || msg.contains("context is too long")
             || msg.contains("maximum context")
-            || msg.contains("exceed.*context")
+            || (msg.contains("exceed") && msg.contains("context"))
             || msg.contains("上下文")
             || msg.contains("超长")
         {
@@ -558,7 +564,6 @@ mod tests {
             "Failed to deserialize the JSON body into the target type: messages[3].content: invalid type: null",
             None,
         ),
-
         // ---- Domestic providers (DeepSeek / Qwen / Zhipu / Moonshot / Volcengine) ----
         (
             "deepseek_401_invalid_key",
@@ -810,11 +815,36 @@ mod tests {
                 Auth,
                 false,
             ),
+            // Regression: Zhipu `err_code: 4013` paired with a `type` that
+            // carries no balance keyword and a message without billing text.
+            // Before the `tags.iter().any(...)` fix, `joined == "4013"` missed
+            // because joined was "4013 invalidrequesterror" and the case fell
+            // through to Transient.
+            (
+                r#"{"error":{"err_code":4013,"message":"操作失败","type":"invalid_request_error"}}"#,
+                Billing,
+                false,
+            ),
+            // Regression: Zhipu `err_code: 4022` without a throttling keyword in
+            // type or message. Same `joined == "4022"` gap as above.
+            (
+                r#"{"error":{"err_code":4022,"message":"服务繁忙","type":"internal_error"}}"#,
+                RateLimit,
+                true,
+            ),
+            // Regression: `exceed` + `context` co-occurring without the literal
+            // "context length" / "context is too long" substrings. Before the
+            // fix, `msg.contains("exceed.*context")` matched nothing (str::contains
+            // is literal, not regex) and this fell through to Transient.
+            (
+                r#"{"error":{"message":"token count exceed context window","type":"invalid_request_error"}}"#,
+                Context,
+                false,
+            ),
         ];
         for (body, expected_kind, expected_retry) in cases {
-            let parsed = parse_provider_error(body.as_bytes()).unwrap_or_else(|| {
-                panic!("failed to parse classify fixture: {body}")
-            });
+            let parsed = parse_provider_error(body.as_bytes())
+                .unwrap_or_else(|| panic!("failed to parse classify fixture: {body}"));
             assert_eq!(
                 parsed.classify(),
                 *expected_kind,
@@ -836,10 +866,9 @@ mod tests {
         .expect("parses");
         assert_eq!(parsed.code.as_deref(), Some("-1"));
 
-        let parsed = parse_provider_error(
-            r#"{"error":{"err_code":4022,"message":"限流"}}"#.as_bytes(),
-        )
-        .expect("parses");
+        let parsed =
+            parse_provider_error(r#"{"error":{"err_code":4022,"message":"限流"}}"#.as_bytes())
+                .expect("parses");
         assert_eq!(parsed.code.as_deref(), Some("4022"));
     }
 
