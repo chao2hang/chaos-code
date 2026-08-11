@@ -171,10 +171,10 @@ mod shell_completion;
 mod viewer;
 mod workflows_overlay;
 
-pub(crate) use key_owner::{BlockingCard, EscStep, KeyOwner};
-pub use render::AppRenderParams;
 use super::actions;
 use super::dispatch;
+pub(crate) use key_owner::{BlockingCard, EscStep, KeyOwner};
+pub use render::AppRenderParams;
 pub(super) fn active_contexts_for_pane(pane: ActivePane) -> Vec<crate::actions::When> {
     use crate::actions::When;
     match pane {

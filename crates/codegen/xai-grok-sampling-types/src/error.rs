@@ -9,9 +9,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use xai_circuit_breaker::RetryPolicy;
 
-use crate::provider_error::{
-    parse_provider_error, parse_provider_error_str, ProviderErrorKind,
-};
+use crate::provider_error::{ProviderErrorKind, parse_provider_error, parse_provider_error_str};
 
 pub type Result<T> = std::result::Result<T, SamplingError>;
 
@@ -367,8 +365,9 @@ impl SamplingError {
                 // budget, even when the HTTP status alone looks transient (e.g.
                 // a 402 or a 5xx wrapping a billing error).
                 match self.provider_kind() {
-                    Some(ProviderErrorKind::Unknown)
-                    | Some(ProviderErrorKind::Transient) => is_retryable_api_status(*status),
+                    Some(ProviderErrorKind::Unknown) | Some(ProviderErrorKind::Transient) => {
+                        is_retryable_api_status(*status)
+                    }
                     Some(kind) => kind.is_retryable(),
                     None => is_retryable_api_status(*status),
                 }
@@ -913,7 +912,8 @@ mod tests {
         // A 5xx wrapping a billing body must NOT retry (body signal wins).
         let server_billing = SamplingError::Api {
             status: StatusCode::BAD_GATEWAY,
-            message: r#"{"error":{"message":"余额不足","type":"insufficient_balance_error"}}"#.into(),
+            message: r#"{"error":{"message":"余额不足","type":"insufficient_balance_error"}}"#
+                .into(),
             model_metadata: None,
             retry_after_secs: None,
             should_retry: None,
@@ -924,7 +924,8 @@ mod tests {
         // Stream error with a rate-limit envelope → retryable.
         let stream_rate = SamplingError::StreamError {
             error_type: "rate_limit_error".into(),
-            message: r#"{"error":{"type":"rate_limit_error","message":"too many requests"}}"#.into(),
+            message: r#"{"error":{"type":"rate_limit_error","message":"too many requests"}}"#
+                .into(),
         };
         assert_eq!(stream_rate.provider_kind(), Some(K::RateLimit));
         assert!(stream_rate.is_retryable());
@@ -1170,7 +1171,8 @@ mod tests {
     #[test]
     fn user_facing_prepends_chinese_hint_for_domestic_faults() {
         // Billing body → Chinese hint prefix.
-        let billing = br#"{"error":{"message":"Insufficient Balance","type":"insufficient_balance_error"}}"#;
+        let billing =
+            br#"{"error":{"message":"Insufficient Balance","type":"insufficient_balance_error"}}"#;
         let msg = user_facing_api_error_message(StatusCode::PAYMENT_REQUIRED, billing);
         assert!(
             msg.starts_with("账户余额不足"),

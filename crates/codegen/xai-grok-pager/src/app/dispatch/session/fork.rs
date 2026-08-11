@@ -61,11 +61,9 @@ pub(in crate::app::dispatch) fn open_project_question(
     // tests, startup before the async runtime spins up) fall back to the
     // current directory so the picker never panics on `block_on`.
     let recent_dirs = match tokio::runtime::Handle::try_current() {
-        Ok(handle) => {
-            tokio::task::block_in_place(|| {
-                handle.block_on(crate::project_picker::sources::collect_recent_dirs(10))
-            })
-        }
+        Ok(handle) => tokio::task::block_in_place(|| {
+            handle.block_on(crate::project_picker::sources::collect_recent_dirs(10))
+        }),
         Err(_) => Vec::new(),
     };
     let pq = crate::project_picker::build_project_question(&recent_dirs, &app.cwd);
@@ -120,7 +118,10 @@ pub(in crate::app::dispatch) fn dispatch_project_selected(
     crate::git_info::populate_from_cwd_async(path.clone());
     effects.push(Effect::SetWorkingDir { path: path.clone() });
     let ActiveView::Agent(id) = app.active_view else {
-        effects.extend(crate::app::dispatch::prompt::dispatch_send_prompt(app, stashed_prompt));
+        effects.extend(crate::app::dispatch::prompt::dispatch_send_prompt(
+            app,
+            stashed_prompt,
+        ));
         return effects;
     };
     if let Some(agent) = app.agents.get_mut(&id) {
@@ -151,7 +152,10 @@ pub(in crate::app::dispatch) fn dispatch_project_selected(
         preferred_session_id,
         chat_kind,
     });
-    effects.extend(crate::app::dispatch::prompt::dispatch_send_prompt(app, stashed_prompt));
+    effects.extend(crate::app::dispatch::prompt::dispatch_send_prompt(
+        app,
+        stashed_prompt,
+    ));
     effects
 }
 
