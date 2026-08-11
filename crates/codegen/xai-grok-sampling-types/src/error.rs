@@ -288,6 +288,15 @@ impl SamplingError {
         )
     }
 
+    /// Whether the error body classifies as a permanent billing/quota fault
+    /// (balance exhausted, insufficient quota, out of credits). Retrying
+    /// cannot help — the provider refuses until the account is topped up —
+    /// so the retry loop should surface it immediately instead of burning
+    /// `max_retries` backoffs.
+    pub fn is_billing_error(&self) -> bool {
+        matches!(self.provider_kind(), Some(ProviderErrorKind::Billing))
+    }
+
     pub fn is_payload_too_large(&self) -> bool {
         matches!(
             self,

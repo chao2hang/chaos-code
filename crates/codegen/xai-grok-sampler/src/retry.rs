@@ -186,6 +186,14 @@ pub fn classify_error(
     if err.is_encrypted_content_error() {
         return RetryDecision::EmitToSession(clone_error(err));
     }
+    // Billing/quota faults are permanent — the provider refuses until the
+    // account is topped up. Do not burn retry budget on them; surface the
+    // error so the user can act (top up / switch provider). Gated on body
+    // classification so a plain 402 with an opaque body still falls through
+    // to the transport path.
+    if err.is_billing_error() {
+        return RetryDecision::Fatal(clone_error(err));
+    }
     if max_retries == 0 {
         return RetryDecision::Fatal(clone_error(err));
     }
