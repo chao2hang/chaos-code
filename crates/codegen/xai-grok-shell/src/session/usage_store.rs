@@ -20,7 +20,7 @@ const SCHEMA_VERSION: &str = "2";
 
 /// Per-model usage row as stored in the database.
 #[derive(Debug, Clone, Default, PartialEq)]
-pub struct StoredModelUsage {
+pub(crate) struct StoredModelUsage {
     pub session_id: String,
     pub model: String,
     pub recorded_at_unix: i64,
@@ -36,7 +36,7 @@ pub struct StoredModelUsage {
 
 /// Aggregate usage across all sessions, plus bookkeeping flags.
 #[derive(Debug, Clone, Default, PartialEq)]
-pub struct AggregateUsage {
+pub(crate) struct AggregateUsage {
     pub totals: PromptUsageModel,
     pub by_model: IndexMap<String, PromptUsageModel>,
     pub num_turns: u64,
@@ -46,20 +46,20 @@ pub struct AggregateUsage {
 }
 
 /// SQLite-backed usage store.
-pub struct UsageStore {
+pub(crate) struct UsageStore {
     db: Connection,
 }
 
 impl UsageStore {
     /// Open (or create) the aggregate usage store at the default location
     /// under `grok_home`.
-    pub fn open_default() -> Result<Self, rusqlite::Error> {
+    pub(crate) fn open_default() -> Result<Self, rusqlite::Error> {
         let path = default_db_path();
         Self::open_or_create(&path)
     }
 
     /// Open (or create) the store at an explicit path. Tests use this.
-    pub fn open_or_create(db_path: &Path) -> Result<Self, rusqlite::Error> {
+    pub(crate) fn open_or_create(db_path: &Path) -> Result<Self, rusqlite::Error> {
         if let Some(parent) = db_path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
@@ -132,7 +132,7 @@ impl UsageStore {
     /// Callers should pass the latest [`PromptUsage`] returned by the
     /// session ledger. The aggregate is recomputed on read, so stale rows
     /// for this session are overwritten in place.
-    pub fn record_session_usage(
+    pub(crate) fn record_session_usage(
         &self,
         session_id: &str,
         usage: &PromptUsage,
@@ -217,7 +217,7 @@ impl UsageStore {
     }
 
     /// Return aggregate usage across all stored sessions.
-    pub fn aggregate_usage(&self) -> Result<AggregateUsage, rusqlite::Error> {
+    pub(crate) fn aggregate_usage(&self) -> Result<AggregateUsage, rusqlite::Error> {
         let mut usage = AggregateUsage::default();
 
         // Totals.
@@ -357,7 +357,7 @@ impl UsageStore {
     }
 
     /// Convert the aggregate into the public [`PromptUsage`] wire shape.
-    pub fn aggregate_prompt_usage(&self) -> Result<PromptUsage, rusqlite::Error> {
+    pub(crate) fn aggregate_prompt_usage(&self) -> Result<PromptUsage, rusqlite::Error> {
         let aggregate = self.aggregate_usage()?;
         let mut usage = PromptUsage {
             totals: aggregate.totals,
@@ -373,7 +373,7 @@ impl UsageStore {
 /// Default path for the aggregate usage database: `<grok_home>/sessions/usage.sqlite`.
 ///
 /// `GROK_USAGE_STORE_PATH` overrides this for tests or advanced setups.
-pub fn default_db_path() -> PathBuf {
+pub(crate) fn default_db_path() -> PathBuf {
     if let Ok(path) = std::env::var("GROK_USAGE_STORE_PATH") {
         return PathBuf::from(path);
     }

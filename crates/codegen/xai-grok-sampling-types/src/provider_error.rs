@@ -135,12 +135,10 @@ impl ProviderError {
         let mut tags: Vec<String> = [self.code.as_deref(), self.kind.as_deref()]
             .into_iter()
             .flatten()
-            .filter_map(|t| normalize_tag(t))
+            .filter_map(normalize_tag)
             .collect();
-        if let Some(slug) = self.slug() {
-            if let Some(n) = normalize_tag(slug) {
-                tags.push(n);
-            }
+        if let Some(n) = self.slug().and_then(normalize_tag) {
+            tags.push(n);
         }
         let joined = tags.join(" ");
         let codes_only_integer = tags.iter().all(|t| t.is_empty() || t.chars().all(|c| c.is_ascii_digit()));
