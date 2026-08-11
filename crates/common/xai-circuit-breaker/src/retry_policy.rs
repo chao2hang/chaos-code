@@ -77,6 +77,21 @@ impl RetryPolicy {
         }
     }
 
+    /// Client preset tuned for domestic (Chinese) OpenAI-compatible providers
+    /// (DeepSeek / Qwen / Zhipu / Moonshot / Volcengine): same as
+    /// [`Self::edge_client`] but also treats a handful of transient 4xx codes
+    /// these providers sometimes answer with under load as retryable, so a
+    /// request isn't dropped just because the gateway wasn't ready. 4xx that
+    /// denote a genuine client error (400/403/404/422) stay terminal.
+    pub const fn edge_client_china() -> Self {
+        Self {
+            retryable: &[429, 408, 425, 409],
+            auth_refresh: &[],
+            terminal: &[400, 401, 403, 404, 413, 422, 525, 526],
+            default: Disposition::Terminal,
+        }
+    }
+
     /// Client storage/upload preset: 400/403/404 terminal-drop, 401
     /// auth-refresh-once, everything else (429, 5xx, unlisted 4xx) retried —
     /// except origin-TLS 525/526, terminal for the same reason as
@@ -131,6 +146,27 @@ mod tests {
         assert_eq!(policy.classify(401), Some(Disposition::AuthRefresh));
         for code in [429, 500, 503, 522, 409, 422] {
             assert_eq!(policy.classify(code), Some(Disposition::Retryable));
+        }
+        assert_eq!(policy.classify(200), None);
+    }
+
+    #[test]
+    fn edge_client_china_retries_transient_4xx_but_not_client_errors() {
+        let policy = RetryPolicy::edge_client_china();
+        // Transient codes domestic providers return under load.
+        for code in [429, 408, 425, 409, 500, 502, 503, 504, 520, 524, 529] {
+            assert!(
+                policy.should_retry(code),
+                "expected {code} to retry (edge_client_china)"
+            );
+        }
+        // Real client errors stay terminal.
+        for code in [400, 401, 403, 404, 413, 422, 525, 526] {
+            assert_eq!(
+                policy.classify(code),
+                Some(Disposition::Terminal),
+                "{code} must be terminal"
+            );
         }
         assert_eq!(policy.classify(200), None);
     }

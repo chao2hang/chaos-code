@@ -37,6 +37,11 @@ impl AgentView {
             // session's top-right chip mean.
             self.session.tracker.reset_session_rate();
         }
+        // 绑定/重载后 catalog 可能已替换，预置 tracker 的模型与分词器，保证
+        // 首个 chunk 就用对 tokenizer。幂等：模型未变则 no-op。
+        if let Some(model) = self.session.models.current_model_id_str() {
+            self.session.tracker.set_current_model(model);
+        }
         self.session.session_id = Some(session_id);
     }
     /// Unbind this view from its current session identity.
@@ -197,7 +202,8 @@ impl AgentView {
                 best = Some(rate);
             }
         }
-        best.or(own).or_else(|| self.session.tracker.session_streaming_rate())
+        best.or(own)
+            .or_else(|| self.session.tracker.session_streaming_rate())
     }
     /// Record a prompt id this client originated (sent to the agent as the turn
     /// driver). Used by the ACP gate to keep `attached_as_viewer` per-turn
@@ -297,6 +303,7 @@ impl AgentView {
             #[cfg(feature = "local-workspace")]
             workspace_mode_cli_locked: false,
             chat_kind: false,
+            conversation_entry: false,
             app_chat_mode: false,
             credit_balance: None,
             auto_topup: None,
@@ -488,6 +495,7 @@ impl AgentView {
             pending_recap_entry: None,
             display_name: None,
             generated_session_title: None,
+            title_unpin_committed: false,
             pending_effects: Vec::new(),
             paste_probe_in_flight: 0,
             deferred_send: None,
@@ -1172,6 +1180,14 @@ impl AgentView {
         ));
         self.set_restricted_commands(restricted_commands);
     }
+    /// ACP `kind` for `x.ai/session/rename`: the lane this session opened on.
+    pub(crate) fn rename_kind(&self) -> xai_grok_shell::session::unified_list::SessionKind {
+        if self.conversation_entry {
+            xai_grok_shell::session::unified_list::SessionKind::Chat
+        } else {
+            xai_grok_shell::session::unified_list::SessionKind::Build
+        }
+    }
     /// Show or hide the `/recap` slash command in this agent's registry.
     pub fn set_session_recap_available(&mut self, available: bool) {
         self.prompt.set_recap_visible(available);
@@ -1282,7 +1298,9 @@ mod resolve_turn_activity_tests {
         parent.max_total_tokens_seen = 1_000;
         // 子视图从未收到 totalTokens → max_total_tokens_seen 为 0。
         let child = test_agent_view(Some("child"), std::path::PathBuf::from("/tmp"));
-        parent.subagent_views.insert("child".into(), Box::new(child));
+        parent
+            .subagent_views
+            .insert("child".into(), Box::new(child));
         let now = Instant::now();
         parent.subagent_sessions.insert(
             "child".into(),
@@ -1338,10 +1356,16 @@ mod resolve_turn_activity_tests {
     #[test]
     fn live_rate_for_chip_surfaces_active_subagent_rate() {
         let mut parent = test_agent_view(Some("parent"), std::path::PathBuf::from("/tmp"));
-        assert!(parent.live_rate_for_chip().is_none(), "fresh parent: no rate");
+        assert!(
+            parent.live_rate_for_chip().is_none(),
+            "fresh parent: no rate"
+        );
 
         let mut child = test_agent_view(Some("child"), std::path::PathBuf::from("/tmp"));
-        child.session.tracker.credit_subagent_tokens(100, Some(50.0), true);
+        child
+            .session
+            .tracker
+            .credit_subagent_tokens(100, Some(50.0), true);
         parent
             .subagent_views
             .insert("child".into(), Box::new(child));
@@ -1356,9 +1380,15 @@ mod resolve_turn_activity_tests {
     #[test]
     fn live_rate_for_chip_prefers_own_fresh_rate() {
         let mut parent = test_agent_view(Some("parent"), std::path::PathBuf::from("/tmp"));
-        parent.session.tracker.credit_subagent_tokens(100, Some(80.0), true);
+        parent
+            .session
+            .tracker
+            .credit_subagent_tokens(100, Some(80.0), true);
         let mut child = test_agent_view(Some("child"), std::path::PathBuf::from("/tmp"));
-        child.session.tracker.credit_subagent_tokens(100, Some(50.0), true);
+        child
+            .session
+            .tracker
+            .credit_subagent_tokens(100, Some(50.0), true);
         parent
             .subagent_views
             .insert("child".into(), Box::new(child));
@@ -1373,13 +1403,24 @@ mod resolve_turn_activity_tests {
         let mut parent = test_agent_view(Some("parent"), std::path::PathBuf::from("/tmp"));
         // credit 一个无速率样本的 token 量：种子 smoothed_rate=0，
         // last_event_at 为 now，tokens_per_sec()==0 → 视为「安静」。
-        parent.session.tracker.credit_subagent_tokens(100, None, true);
+        parent
+            .session
+            .tracker
+            .credit_subagent_tokens(100, None, true);
         assert_eq!(
-            parent.session.tracker.streaming_rate().unwrap().tokens_per_sec(),
+            parent
+                .session
+                .tracker
+                .streaming_rate()
+                .unwrap()
+                .tokens_per_sec(),
             0.0
         );
         let mut child = test_agent_view(Some("child"), std::path::PathBuf::from("/tmp"));
-        child.session.tracker.credit_subagent_tokens(100, Some(60.0), true);
+        child
+            .session
+            .tracker
+            .credit_subagent_tokens(100, Some(60.0), true);
         parent
             .subagent_views
             .insert("child".into(), Box::new(child));
@@ -1395,7 +1436,10 @@ mod resolve_turn_activity_tests {
     #[test]
     fn live_rate_for_chip_falls_back_to_session_mean_after_turn() {
         let mut parent = test_agent_view(Some("parent"), std::path::PathBuf::from("/tmp"));
-        parent.session.tracker.credit_subagent_tokens(100, Some(80.0), true);
+        parent
+            .session
+            .tracker
+            .credit_subagent_tokens(100, Some(80.0), true);
         assert!(
             parent.live_rate_for_chip().is_some(),
             "fresh turn rate must be preferred"
@@ -1415,6 +1459,72 @@ mod resolve_turn_activity_tests {
         assert!(
             got.started_at.elapsed() >= std::time::Duration::ZERO,
             "session rate carries a valid clock"
+        );
+    }
+
+    /// 懒同步：`AgentSession::handle_update` 在每次 update 前把 `models.current`
+    /// 同步到 tracker —— 模型变更后首个 chunk 就换用对应分词器；模型没变则
+    /// 不清累计（幂等）。子代理更新走同一入口，行为一致。
+    #[test]
+    fn handle_update_lazily_syncs_current_model_to_tracker() {
+        use crate::acp::tracker::TokenizerKind;
+        use agent_client_protocol as acp;
+        use std::sync::Arc;
+
+        let chunk = |text: &str| {
+            acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(acp::ContentBlock::Text(
+                acp::TextContent::new(text.to_string()),
+            )))
+        };
+
+        let mut view = test_agent_view(Some("s1"), std::path::PathBuf::from("/tmp"));
+        // 设置当前模型为 gpt-4o-mini（BYOK / o200k 系）。
+        view.session.models.current = Some(acp::ModelId::new(Arc::from("gpt-4o-mini")));
+        assert_eq!(view.session.tracker.tokenizer_kind(), None);
+
+        // 首个 chunk：懒同步应把分词器换成 o200k 再计数。
+        let handled =
+            view.session
+                .handle_update(chunk("hello"), &Default::default(), &mut view.scrollback);
+        assert!(handled);
+        assert_eq!(
+            view.session.tracker.tokenizer_kind(),
+            Some(TokenizerKind::O200k),
+            "lazy sync must pick the model's tokenizer before counting chunks"
+        );
+
+        // 同一模型重复 update：不清累计（幂等）。
+        let before = view
+            .session
+            .tracker
+            .session_streaming_rate()
+            .expect("seeded")
+            .total_tokens;
+        view.session
+            .handle_update(chunk("world"), &Default::default(), &mut view.scrollback);
+        assert_eq!(
+            view.session.tracker.tokenizer_kind(),
+            Some(TokenizerKind::O200k),
+            "same-model update must not reset the tokenizer"
+        );
+        assert!(
+            view.session
+                .tracker
+                .session_streaming_rate()
+                .unwrap()
+                .total_tokens
+                > before,
+            "same-model update must keep accumulating"
+        );
+
+        // 切到 grok 系：懒同步换回 cl100k 并清掉跨模型累计。
+        view.session.models.current = Some(acp::ModelId::new(Arc::from("grok-4.5")));
+        view.session
+            .handle_update(chunk("next"), &Default::default(), &mut view.scrollback);
+        assert_eq!(
+            view.session.tracker.tokenizer_kind(),
+            Some(TokenizerKind::Cl100k),
+            "lazy sync must react to a model change"
         );
     }
 

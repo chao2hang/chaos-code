@@ -885,6 +885,13 @@ impl AgentSession {
         meta: &NotificationMeta,
         scrollback: &mut ScrollbackState,
     ) -> bool {
+        // 懒同步当前模型到 tracker：模型切换（/model、provider modal、远程
+        // ModelChanged 广播、会话重载 catalog 替换）后，下一次 update 会在此
+        // 换用该模型对应的分词器并清掉跨模型累计的速率。幂等，无模型时跳过。
+        // 子代理更新同样走本入口（acp_handler/mod.rs），自动获得相同行为。
+        if let Some(model) = self.models.current_model_id_str() {
+            self.tracker.set_current_model(model);
+        }
         self.tracker.set_session_cwd(&self.cwd);
         self.tracker.handle_update(update, meta, scrollback)
     }

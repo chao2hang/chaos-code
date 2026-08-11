@@ -2346,17 +2346,20 @@ impl SessionActor {
             let completion_tokens = usage.map(|u| u.completion_tokens);
             let reasoning_tokens = usage.map(|u| u.reasoning_tokens);
             let ttft_ms = latency.time_to_first_token_ms;
+            // decode_ms: 纯解码时长（剔除首字延迟）。
+            // 有 TTFT 时 = model_elapsed - ttft（正确，排除了排队+思考+网络等待）。
+            // 无 TTFT 时返回 None —— 不用 model_elapsed_ms（它会包含等待时间，
+            // 导致 tok/s 被严重拉低）。国产 provider 若不报 TTFT，
+            // 速率 chip 会显示占位符而非错误的偏低数值。
+            let decode_ms = match ttft_ms {
+                Some(ttft) if model_elapsed_ms > ttft => Some(model_elapsed_ms - ttft),
+                _ => None,
+            };
             let tokens_per_sec = match completion_tokens {
-                Some(ct) if ct > 0 => {
-                    let decode_ms = match ttft_ms {
-                        Some(ttft) if model_elapsed_ms > ttft => model_elapsed_ms - ttft,
-                        _ => model_elapsed_ms,
-                    };
-                    (decode_ms > 0).then(|| {
-                        let tps = f64::from(ct) * 1000.0 / decode_ms as f64;
-                        (tps * 10.0).round() / 10.0
-                    })
-                }
+                Some(ct) if ct > 0 => decode_ms.filter(|&ms| ms > 0).map(|ms| {
+                    let tps = f64::from(ct) * 1000.0 / ms as f64;
+                    (tps * 10.0).round() / 10.0
+                }),
                 _ => None,
             };
             xai_grok_telemetry::unified_log::info(
@@ -2410,7 +2413,7 @@ impl SessionActor {
                     },
                 );
             }
-            self.record_response_token_usage(&response, Some(model_duration_ms));
+            self.record_response_token_usage(&response, Some(model_duration_ms), decode_ms);
             let response_completed = self.response_completed_update(&response);
             if let Some(pt) = prompt_timing.take() {
                 let mcp_count = self.mcp_state.lock().await.configs.len() as u32;

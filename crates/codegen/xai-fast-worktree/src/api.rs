@@ -3613,6 +3613,8 @@ mod tests {
 
         #[cfg(any(target_os = "linux", target_os = "macos"))]
         #[test]
+        #[allow(clippy::disallowed_methods)] // test deliberately spawns a bare
+        // child to exercise live-CWD scanning
         fn gc_cwd_guard_skips_then_reclaims_expired_worktree() {
             let _cwd_lock = crate::api::cwd_test_guard();
             let tmp = tempfile::TempDir::new().unwrap();

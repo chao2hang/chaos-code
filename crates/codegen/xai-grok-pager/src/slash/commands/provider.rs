@@ -305,6 +305,10 @@ pub(crate) fn add_provider(
         "anthropic" => "ANTHROPIC_API_KEY",
         "deepseek" => "DEEPSEEK_API_KEY",
         "xai" => "XAI_API_KEY",
+        "qwen" => "DASHSCOPE_API_KEY",
+        "zhipu" => "ZHIPUAI_API_KEY",
+        "moonshot" => "MOONSHOT_API_KEY",
+        "volcengine" => "ARK_API_KEY",
         _ => "",
     };
     if !env_key.is_empty() {

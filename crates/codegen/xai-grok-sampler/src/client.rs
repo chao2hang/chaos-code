@@ -244,11 +244,25 @@ fn record_stream_request_failure(err: &reqwest::Error) {
 }
 
 fn extract_retry_after(headers: &reqwest::header::HeaderMap) -> Option<u64> {
-    headers
-        .get(reqwest::header::RETRY_AFTER)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.parse::<u64>().ok())
-        .map(|s| s.min(120))
+    let raw = headers.get(reqwest::header::RETRY_AFTER)?.to_str().ok()?;
+    let secs = if let Ok(secs) = raw.trim().parse::<u64>() {
+        // delta-seconds integer form: `Retry-After: 30`
+        secs
+    } else {
+        // HTTP-date form: `Retry-After: Wed, 21 Oct 2015 07:28:00 GMT`.
+        // Domestic providers occasionally emit this; fall back to the
+        // allowed HTTP-date grammar (IMF-fixdate / obs-date) rather than
+        // giving up and reusing an unsized exponential backoff.
+        chrono::DateTime::parse_from_rfc2822(raw.trim())
+            .or_else(|_| chrono::DateTime::parse_from_rfc3339(raw.trim()))
+            .ok()
+            .map(|dt| {
+                let now = chrono::Utc::now();
+                let diff = dt.with_timezone(&chrono::Utc) - now;
+                diff.num_seconds().max(0) as u64
+            })?
+    };
+    Some(secs.min(120))
 }
 
 fn extract_should_retry(headers: &reqwest::header::HeaderMap) -> Option<bool> {
@@ -2314,6 +2328,9 @@ mod tests {
             compaction_at_tokens: None,
             doom_loop_recovery: None,
             header_injector: None,
+            is_workbuddy: false,
+            extract_inline_thinking: false,
+            user_agent: None,
         }
     }
 
@@ -2396,6 +2413,29 @@ mod tests {
     }
 
     #[test]
+    fn extract_retry_after_parses_http_date() {
+        let mut headers = reqwest::header::HeaderMap::new();
+        // A far-future RFC 2822 HTTP-date. Domestic providers occasionally emit
+        // this instead of a delta-seconds integer. Capped at 120s like integers.
+        headers.insert(
+            reqwest::header::RETRY_AFTER,
+            "Wed, 21 Oct 2099 07:28:00 GMT".parse().unwrap(),
+        );
+        assert_eq!(extract_retry_after(&headers), Some(120));
+    }
+
+    #[test]
+    fn extract_retry_after_http_date_in_past_returns_zero() {
+        let mut headers = reqwest::header::HeaderMap::new();
+        // A past HTTP-date → 0 seconds (retry immediately).
+        headers.insert(
+            reqwest::header::RETRY_AFTER,
+            "Wed, 21 Oct 2015 07:28:00 GMT".parse().unwrap(),
+        );
+        assert_eq!(extract_retry_after(&headers), Some(0));
+    }
+
+    #[test]
     fn extract_retry_after_zero_is_valid() {
         let mut headers = reqwest::header::HeaderMap::new();
         headers.insert(reqwest::header::RETRY_AFTER, "0".parse().unwrap());
@@ -2403,11 +2443,33 @@ mod tests {
     }
 
     #[test]
-    fn extract_retry_after_ignores_http_date() {
+    fn extract_retry_after_parses_http_date_and_clamps_to_120() {
+        let mut headers = reqwest::header::HeaderMap::new();
+        // RFC 3339 (allowed HTTP-date form) far in the future → clamped to 120.
+        let future = (chrono::Utc::now() + chrono::Duration::hours(5)).to_rfc3339();
+        headers.insert(reqwest::header::RETRY_AFTER, future.parse().unwrap());
+        assert_eq!(extract_retry_after(&headers), Some(120));
+    }
+
+    #[test]
+    fn extract_retry_after_parses_rfc2822_http_date() {
+        let mut headers = reqwest::header::HeaderMap::new();
+        // RFC 2822 IMF-fixdate form. Pick a date in the near future so the
+        // delta is small (≤ 120) rather than clock-dependent.
+        let future = (chrono::Utc::now() + chrono::Duration::minutes(5))
+            .format("%a, %d %b %Y %H:%M:%S GMT")
+            .to_string();
+        headers.insert(reqwest::header::RETRY_AFTER, future.parse().unwrap());
+        let got = extract_retry_after(&headers).expect("RFC 2822 is parsed");
+        assert!(got <= 120, "got {got}");
+    }
+
+    #[test]
+    fn extract_retry_after_ignores_malformed_dates() {
         let mut headers = reqwest::header::HeaderMap::new();
         headers.insert(
             reqwest::header::RETRY_AFTER,
-            "Fri, 31 Dec 2025 23:59:59 GMT".parse().unwrap(),
+            "not-a-date-at-all".parse().unwrap(),
         );
         assert_eq!(extract_retry_after(&headers), None);
     }

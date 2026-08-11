@@ -1594,9 +1594,10 @@ mod tests {
         assert_eq!(u.total_tokens, 0);
 
         // Fully-specified usage still parses as before.
-        let u: Usage =
-            serde_json::from_str(r#"{"prompt_tokens": 3, "completion_tokens": 5, "total_tokens": 8}"#)
-                .unwrap();
+        let u: Usage = serde_json::from_str(
+            r#"{"prompt_tokens": 3, "completion_tokens": 5, "total_tokens": 8}"#,
+        )
+        .unwrap();
         assert_eq!(u.prompt_tokens, 3);
         assert_eq!(u.completion_tokens, 5);
         assert_eq!(u.total_tokens, 8);

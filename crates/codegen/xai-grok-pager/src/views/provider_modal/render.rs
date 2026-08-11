@@ -1740,4 +1740,3 @@ fn truncate_str(s: &str, max_width: usize) -> String {
     }
     result
 }
-

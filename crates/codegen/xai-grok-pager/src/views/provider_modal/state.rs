@@ -172,6 +172,34 @@ pub const PROVIDER_PRESETS: &[ProviderPreset] = &[
         auth_scheme: "bearer",
         api_backend: "chat_completions",
     },
+    ProviderPreset {
+        name: "qwen",
+        display: "Qwen (阿里通义)",
+        base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        auth_scheme: "bearer",
+        api_backend: "chat_completions",
+    },
+    ProviderPreset {
+        name: "zhipu",
+        display: "智谱 GLM",
+        base_url: "https://open.bigmodel.cn/api/paas/v4",
+        auth_scheme: "bearer",
+        api_backend: "chat_completions",
+    },
+    ProviderPreset {
+        name: "moonshot",
+        display: "Moonshot (月之暗面)",
+        base_url: "https://api.moonshot.cn/v1",
+        auth_scheme: "bearer",
+        api_backend: "chat_completions",
+    },
+    ProviderPreset {
+        name: "volcengine",
+        display: "Volcengine (火山方舟)",
+        base_url: "https://ark.cn-beijing.volces.com/api/v3",
+        auth_scheme: "bearer",
+        api_backend: "chat_completions",
+    },
 ];
 
 /// 多步表单的当前步骤（`Add` / `Edit` 模式使用）。

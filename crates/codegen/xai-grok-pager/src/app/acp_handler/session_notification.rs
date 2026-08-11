@@ -451,6 +451,11 @@ pub(super) fn handle_session_notification(notif: &acp::ExtNotification, app: &mu
             let mut child_scrollback = crate::scrollback::state::ScrollbackState::new();
             child_scrollback.set_appearance(agent.scrollback.appearance().clone());
             let mut child_view = AgentView::new(child_session, child_scrollback);
+            // 子代理用自己的 tracker：预置其模型对应的分词器（models 克隆自
+            // 父会话），保证子代理首个 chunk 的 token 计数口径正确。幂等。
+            if let Some(model) = child_view.session.models.current_model_id_str() {
+                child_view.session.tracker.set_current_model(model);
+            }
             child_view.set_input_mode(InputMode::Vim);
             child_view.active_pane = crate::views::agent::ActivePane::Scrollback;
             child_view.set_sharing_enabled(agent.sharing_enabled);
@@ -892,8 +897,41 @@ pub(super) fn handle_session_notification(notif: &acp::ExtNotification, app: &mu
             }
         }
         XaiSessionUpdate::SessionSummaryGenerated { session_summary } => {
-            agent.generated_session_title =
-                Some(crate::util::decode_html_entities(&session_summary).into_owned());
+            let title_is_manual = session_notif.meta.as_ref().and_then(|v| {
+                v.get(xai_grok_shell::extensions::notification::TITLE_IS_MANUAL_META_KEY)
+                    .and_then(|v| v.as_bool())
+            });
+            match title_is_manual {
+                Some(true) => {
+                    if let Some(clean) =
+                        xai_grok_shell::session::persistence::sanitize_and_cap_title(
+                            &session_summary,
+                        )
+                    {
+                        agent.display_name = Some(clean.clone());
+                        agent.generated_session_title = Some(clean);
+                        agent.title_unpin_committed = false;
+                    }
+                }
+                other => {
+                    let pin = if other == Some(false) {
+                        agent.title_unpin_committed = true;
+                        agent.display_name.take()
+                    } else {
+                        None
+                    };
+                    let decoded = crate::util::decode_html_entities(&session_summary);
+                    if let Some(clean) =
+                        xai_grok_shell::session::persistence::sanitize_and_cap_title(&decoded)
+                    {
+                        agent.generated_session_title = Some(clean);
+                    } else if other == Some(false)
+                        && agent.generated_session_title.as_deref() == pin.as_deref()
+                    {
+                        agent.generated_session_title = None;
+                    }
+                }
+            }
             true
         }
         XaiSessionUpdate::LastTurnSummary {
