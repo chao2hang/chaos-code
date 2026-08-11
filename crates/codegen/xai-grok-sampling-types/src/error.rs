@@ -621,7 +621,21 @@ pub fn parse_error_bytes(bytes: &[u8]) -> String {
 /// (including Cloudflare HTML) maps to a status-based string — no body
 /// content matching.
 pub fn user_facing_api_error_message(status: StatusCode, bytes: &[u8]) -> String {
-    structured_error_message(bytes).unwrap_or_else(|| status_user_message(status))
+    let base = structured_error_message(bytes).unwrap_or_else(|| status_user_message(status));
+    // Rich Chinese hint for permanent, user-actionable faults. Provider error
+    // bodies that classify as auth / billing / context are hard to act on from
+    // the raw English text alone; prepend an actionable hint in the user's
+    // locale so domestic-provider failures are immediately clear.
+    let hint = match parse_provider_error(bytes).map(|pe| pe.classify()) {
+        Some(ProviderErrorKind::Auth) => Some("API Key 无效或已过期，请检查 model_providers 配置"),
+        Some(ProviderErrorKind::Billing) => Some("账户余额不足，请充值后重试"),
+        Some(ProviderErrorKind::Context) => Some("上下文长度超出模型上限，请缩短或开启自动压缩"),
+        _ => None,
+    };
+    match hint {
+        Some(h) => format!("{h}：{base}"),
+        None => base,
+    }
 }
 
 pub fn try_parse_stream_error(data: &str) -> Option<SamplingError> {
@@ -1150,6 +1164,42 @@ mod tests {
         assert_eq!(
             msg,
             "A request may either be streaming or deferred, but not both."
+        );
+    }
+
+    #[test]
+    fn user_facing_prepends_chinese_hint_for_domestic_faults() {
+        // Billing body → Chinese hint prefix.
+        let billing = br#"{"error":{"message":"Insufficient Balance","type":"insufficient_balance_error"}}"#;
+        let msg = user_facing_api_error_message(StatusCode::PAYMENT_REQUIRED, billing);
+        assert!(
+            msg.starts_with("账户余额不足"),
+            "billing hint missing: {msg}"
+        );
+
+        // Auth body → Chinese hint + original detail preserved.
+        let auth = br#"{"error":{"message":"Authentication Fails (no such user)","type":"authentication_error"}}"#;
+        let msg = user_facing_api_error_message(StatusCode::UNAUTHORIZED, auth);
+        assert!(
+            msg.starts_with("API Key 无效或已过期"),
+            "auth hint missing: {msg}"
+        );
+        assert!(msg.contains("Authentication Fails"), "detail lost: {msg}");
+
+        // Context body → Chinese hint.
+        let ctx = br#"{"error":{"message":"Context length exceeded: 131072 > 65536","type":"invalid_request_error"}}"#;
+        let msg = user_facing_api_error_message(StatusCode::BAD_REQUEST, ctx);
+        assert!(
+            msg.starts_with("上下文长度超出模型上限"),
+            "context hint missing: {msg}"
+        );
+
+        // Rate-limit body → no permanent-fault hint (kept as-is).
+        let rate = br#"{"error":{"message":"rate limit exceeded","type":"rate_limit_error"}}"#;
+        let msg = user_facing_api_error_message(StatusCode::TOO_MANY_REQUESTS, rate);
+        assert!(
+            !msg.starts_with("账户余额不足") && !msg.starts_with("API Key"),
+            "rate-limit must not get a permanent-fault hint: {msg}"
         );
     }
 
