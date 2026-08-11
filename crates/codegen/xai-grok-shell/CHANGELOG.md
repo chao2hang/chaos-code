@@ -1,11 +1,18 @@
 # Changelog
 
-# Unreleased — 国产 Provider 错误处理优化
+# 0.2.136 — 2026-08-11
 
 ## Features
 
 - **国产 Provider 预设**：`/provider add` 新增 Qwen（阿里通义 DashScope compatible-mode）、智谱 GLM、Moonshot（月之暗面）、Volcengine（火山方舟）四家预设，自动写入对应 `env_key`（`DASHSCOPE_API_KEY` / `ZHIPUAI_API_KEY` / `MOONSHOT_API_KEY` / `ARK_API_KEY`）。配套 README 给出对应的 `config.toml` 完整示例。
 - **错误分类与快速失败**：新增 `ProviderErrorKind` 分类（Auth / Billing / RateLimit / Server / Context / Transient），覆盖 DeepSeek、Qwen、智谱、Moonshot、Volcengine 的典型错误体（含智谱 `err_code` 负值与火山大写 `Type` 字段）。
+- **工作区 server 版本上报**：`workspace.info` 透出 server 版本；新增 `xai-grok-workspace-client` crate（hub 代理 `workspace.*` RPC 的轻量类型化客户端，shell 代理模式共用）。
+
+## 上游 b13fa526 同步
+
+- **修复 EAGAIN / blocking-pool abort**：上限并预加热 tokio blocking pool，避免阻塞线程池耗尽导致的 EAGAIN 中断。
+- **`/rename` 系列**：title 上限、ghost-prefill、跨 host 手动标题、remote revert、`--auto` 解除手动标题、会话 `conversation_entry` / `title_unpin` 语义新增。
+- **会话标题元数据**：新增 `last_turn_summary` 及其世代计数、`title_unpin_committed` 等字段，驱动 dashboard 与 prompt 栏标题更稳。
 
 ## Fixes
 
