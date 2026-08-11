@@ -698,7 +698,7 @@ impl AgentView {
             voice_available,
             voice_listening,
             voice_interim,
-            esc_owned_before_agent,
+            esc_owned_before_agent: _,
         } = app_params;
         self.in_dashboard_overlay = in_dashboard_overlay;
         self.overlay_can_cycle = overlay_can_cycle;
@@ -706,8 +706,8 @@ impl AgentView {
             height: banner_height,
             announcements: banner_announcements,
             hidden_ids: hidden_announcement_ids,
-            privacy_banner,
-            mouse_pos,
+            privacy_banner: _,
+            mouse_pos: _,
             tip,
         } = banner;
         self.session_banner_active = crate::views::announcements::first_session_announcement(
