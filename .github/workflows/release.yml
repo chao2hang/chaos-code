@@ -168,6 +168,14 @@ jobs:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
           targets: ${{ matrix.target }}
 
+      # Belt-and-suspenders: on Apple Silicon runners the cross target
+      # (x86_64-apple-darwin) sometimes isn't installed by the action's
+      # `--target` flag (rustup 1.x profiling quirk). Ensure it's present
+      # before the build tries to compile `core`.
+      - name: Ensure cross target installed
+        if: runner.os == 'macOS' && matrix.target != 'aarch64-apple-darwin'
+        run: rustup target add --toolchain ${{ env.RUST_TOOLCHAIN }} ${{ matrix.target }}
+
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
         with:
