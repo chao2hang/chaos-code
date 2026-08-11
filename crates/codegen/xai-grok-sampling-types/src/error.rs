@@ -9,7 +9,9 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use xai_circuit_breaker::RetryPolicy;
 
-use crate::provider_error::{parse_provider_error, parse_provider_error_str};
+use crate::provider_error::{
+    parse_provider_error, parse_provider_error_str, ProviderErrorKind,
+};
 
 pub type Result<T> = std::result::Result<T, SamplingError>;
 
@@ -350,14 +352,50 @@ impl SamplingError {
             SamplingError::InvalidConfiguration(_) => false,
             SamplingError::Http(err) => is_retryable_reqwest(err),
             SamplingError::Serialization(_) => false,
-            SamplingError::Api { status, .. } => is_retryable_api_status(*status),
+            SamplingError::Api { status, .. } => {
+                // Route through `provider_kind()` first so Auth/Billing/Context
+                // bodies (common on domestic providers) stop burning retry
+                // budget, even when the HTTP status alone looks transient (e.g.
+                // a 402 or a 5xx wrapping a billing error).
+                match self.provider_kind() {
+                    Some(ProviderErrorKind::Unknown)
+                    | Some(ProviderErrorKind::Transient) => is_retryable_api_status(*status),
+                    Some(kind) => kind.is_retryable(),
+                    None => is_retryable_api_status(*status),
+                }
+            }
             SamplingError::EventStreamError(_) => true,
-            SamplingError::StreamError { .. } => true,
+            SamplingError::StreamError { .. } => {
+                // Envelope-level stream errors: classify by text too, so a
+                // billing/auth body inside an SSE error frame is not retried.
+                match self.provider_kind() {
+                    Some(kind) => kind.is_retryable(),
+                    None => true,
+                }
+            }
             SamplingError::IdleTimeout { .. } => false,
             SamplingError::EmptyResponse { .. } => true,
             SamplingError::MaxTokensTruncation => false,
             SamplingError::MalformedToolCall { .. } => false,
             SamplingError::DoomLoopDetected { .. } => true,
+        }
+    }
+
+    /// Classify an `Api` / `StreamError` into a retry-relevant
+    /// [`ProviderErrorKind`], parsing the error body text where it exists.
+    ///
+    /// Returns `None` for errors that carry no upstream body to classify
+    /// (e.g. a bare connection error or a 5xx with no parseable payload).
+    /// Callers should treat `None` as "no body to trust — rely on status".
+    pub fn provider_kind(&self) -> Option<ProviderErrorKind> {
+        match self {
+            SamplingError::Api { message, .. } => parse_provider_error_str(message)
+                .map(|pe| pe.classify())
+                .or_else(|| classify_message_text(message)),
+            SamplingError::StreamError { message, .. } => parse_provider_error_str(message)
+                .map(|pe| pe.classify())
+                .or_else(|| classify_message_text(message)),
+            _ => None,
         }
     }
 
@@ -624,6 +662,54 @@ pub fn is_retryable_reqwest(err: &reqwest::Error) -> bool {
     false
 }
 
+/// Classify a raw message string (not JSON / not parseable) into a
+/// retry-relevant [`ProviderErrorKind`], for errors whose `Api { message }`
+/// field holds provider prose directly rather than a JSON envelope.
+fn classify_message_text(message: &str) -> Option<ProviderErrorKind> {
+    let msg = message.to_ascii_lowercase();
+    // Reuse the same keyword table as `ProviderError::classify` for the
+    // non-JSON case. HTTP status influence is left to the caller.
+    let kind = if msg.contains("insufficient balance")
+        || msg.contains("credit balance")
+        || msg.contains("no quota")
+        || msg.contains("out of credits")
+        || msg.contains("余额不足")
+    {
+        ProviderErrorKind::Billing
+    } else if msg.contains("rate limit")
+        || msg.contains("too many requests")
+        || msg.contains("throttl")
+        || msg.contains("频率")
+        || msg.contains("过于频繁")
+    {
+        ProviderErrorKind::RateLimit
+    } else if msg.contains("authentication")
+        || msg.contains("invalid api key")
+        || msg.contains("no such user")
+        || msg.contains("token expired")
+        || msg.contains("unauthorized")
+        || msg.contains("access denied")
+        || msg.contains("鉴权")
+    {
+        ProviderErrorKind::Auth
+    } else if msg.contains("context length")
+        || msg.contains("context is too long")
+        || msg.contains("maximum context")
+        || msg.contains("上下文")
+    {
+        ProviderErrorKind::Context
+    } else if msg.contains("overloaded")
+        || msg.contains("service unavailable")
+        || msg.contains("server is busy")
+        || msg.contains("服务不可用")
+    {
+        ProviderErrorKind::Server
+    } else {
+        ProviderErrorKind::Transient
+    };
+    Some(kind)
+}
+
 /// Capacity-style provider text: "Overloaded" / `overloaded_error` (possibly
 /// proxy-wrapped) or `service_unavailable_error` (503-shaped capacity).
 fn message_looks_overloaded(message: &str) -> bool {
@@ -750,6 +836,83 @@ mod tests {
                 "expected not overloaded for message: {msg}"
             );
         }
+    }
+
+    #[test]
+    fn provider_kind_for_domestic_bodies_drives_retryability() {
+        use crate::provider_error::ProviderErrorKind as K;
+
+        // Billing body inside a 402 → not retryable (was retryable before).
+        let billing = SamplingError::Api {
+            status: StatusCode::PAYMENT_REQUIRED,
+            message: r#"{"error":{"message":"Insufficient Balance","type":"insufficient_balance_error"}}"#.into(),
+            model_metadata: None,
+            retry_after_secs: None,
+            should_retry: None,
+        };
+        assert_eq!(billing.provider_kind(), Some(K::Billing));
+        assert!(!billing.is_retryable());
+
+        // Auth body inside a 401 → not retryable.
+        let auth = SamplingError::Api {
+            status: StatusCode::UNAUTHORIZED,
+            message: r#"{"error":{"message":"Authentication Fails (no such user)","type":"authentication_error"}}"#.into(),
+            model_metadata: None,
+            retry_after_secs: None,
+            should_retry: None,
+        };
+        assert_eq!(auth.provider_kind(), Some(K::Auth));
+        assert!(!auth.is_retryable());
+
+        // Rate-limit body inside a 429 → retryable.
+        let rate = SamplingError::Api {
+            status: StatusCode::TOO_MANY_REQUESTS,
+            message: r#"{"error":{"message":"Rate limit reached","type":"rate_limit_error","code":"rate_limit_exceeded"}}"#.into(),
+            model_metadata: None,
+            retry_after_secs: None,
+            should_retry: None,
+        };
+        assert_eq!(rate.provider_kind(), Some(K::RateLimit));
+        assert!(rate.is_retryable());
+
+        // 429 whose body only carries unclassifiable prose → still retryable
+        // via status (provider_kind returns Unknown → falls through to status).
+        let unknown = SamplingError::Api {
+            status: StatusCode::TOO_MANY_REQUESTS,
+            message: "a b c".into(),
+            model_metadata: None,
+            retry_after_secs: None,
+            should_retry: None,
+        };
+        assert_eq!(unknown.provider_kind(), Some(K::Transient));
+        assert!(unknown.is_retryable());
+
+        // A 5xx wrapping a billing body must NOT retry (body signal wins).
+        let server_billing = SamplingError::Api {
+            status: StatusCode::BAD_GATEWAY,
+            message: r#"{"error":{"message":"余额不足","type":"insufficient_balance_error"}}"#.into(),
+            model_metadata: None,
+            retry_after_secs: None,
+            should_retry: None,
+        };
+        assert_eq!(server_billing.provider_kind(), Some(K::Billing));
+        assert!(!server_billing.is_retryable());
+
+        // Stream error with a rate-limit envelope → retryable.
+        let stream_rate = SamplingError::StreamError {
+            error_type: "rate_limit_error".into(),
+            message: r#"{"error":{"type":"rate_limit_error","message":"too many requests"}}"#.into(),
+        };
+        assert_eq!(stream_rate.provider_kind(), Some(K::RateLimit));
+        assert!(stream_rate.is_retryable());
+
+        // Stream error with billing envelope → NOT retryable.
+        let stream_billing = SamplingError::StreamError {
+            error_type: "insufficient_balance_error".into(),
+            message: r#"{"error":{"type":"insufficient_balance_error","message":"Insufficient Balance"}}"#.into(),
+        };
+        assert_eq!(stream_billing.provider_kind(), Some(K::Billing));
+        assert!(!stream_billing.is_retryable());
     }
 
     #[test]
