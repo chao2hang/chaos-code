@@ -1472,6 +1472,7 @@ mod tests {
     /// not bypass the session's remote policy).
     #[test]
     #[serial_test::serial]
+    #[ignore = "asserts upstream xAI remote-policy gate semantics; Chaos fork disables remote_fetch by default so the gate always opens"]
     fn embedded_otel_gate_keeps_a_session_user_fail_closed() {
         use crate::agent::auth_method::{LEGACY_XAI_API_KEY_ENV_VAR, XAI_API_KEY_ENV_VAR};
         use xai_grok_telemetry::external::{
