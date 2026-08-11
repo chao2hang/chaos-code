@@ -278,7 +278,7 @@ impl From<&xai_chat_state::UsageTotals> for PromptUsageModel {
             cost_usd_ticks,
             cost_is_partial: t.cost_is_partial(),
             cost_missing_calls,
-            decode_tokens_per_sec: None,
+            decode_tokens_per_sec: t.decode_tokens_per_sec().map(|v| v as f32),
         }
     }
 }
