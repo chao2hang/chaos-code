@@ -1139,6 +1139,7 @@ mod tests {
             smoothed_rate: 250.0,
             rate_window_started_at: started,
             rate_window_tokens: 0,
+            active_ms: 0,
         };
         let line = tokens_per_sec_line(&ctx, Some(live), &theme).expect("line should exist");
         let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
@@ -1170,6 +1171,7 @@ mod tests {
             smoothed_rate: 250.0,
             rate_window_started_at: stale,
             rate_window_tokens: 0,
+            active_ms: 0,
         };
         let line = tokens_per_sec_line(&ctx, Some(live), &theme)
             .expect("quiet live state should fall back to conversation average");
@@ -1194,6 +1196,7 @@ mod tests {
             smoothed_rate: 200.0,
             rate_window_started_at: started,
             rate_window_tokens: 0,
+            active_ms: 0,
         };
         let line = tokens_per_sec_line(&ctx, Some(live), &theme)
             .expect("live must render even when context is default");
@@ -1222,6 +1225,7 @@ mod tests {
             smoothed_rate: 250.0,
             rate_window_started_at: started,
             rate_window_tokens: 0,
+            active_ms: 0,
         };
         // live 静默 3s → tokens_per_sec()==0；无对话平均。
         assert_eq!(live.tokens_per_sec(), 0.0);
@@ -1339,6 +1343,7 @@ mod tests {
                 smoothed_rate: tps,
                 rate_window_started_at: now,
                 rate_window_tokens: 0,
+                active_ms: 0,
             };
             let line = tokens_per_sec_line(
                 &xai_grok_shell::session::ContextInfo::default(),

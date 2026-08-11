@@ -392,7 +392,18 @@ pub struct LiveStreamingRate {
     pub rate_window_started_at: Instant,
     /// Tokens received since `rate_window_started_at`.
     pub rate_window_tokens: u64,
+    /// Cumulative "active decode" milliseconds — only the wall-clock time
+    /// **between consecutive chunks** that are within `SILENCE_THRESHOLD`
+    /// of each other. Long pauses (thinking, tool calls, network stalls)
+    /// are excluded so `mean_tokens_per_sec` reflects steady-state decode
+    /// speed rather than being diluted by idle time.
+    pub active_ms: u64,
 }
+
+/// Inter-chunk gaps longer than this are treated as "silence" (thinking,
+/// tool calls, network stalls) and excluded from `active_ms` so the
+/// "回合均" chip reflects true decode speed rather than wall-clock average.
+const SILENCE_THRESHOLD: std::time::Duration = std::time::Duration::from_secs(3);
 
 impl LiveStreamingRate {
     pub fn new(started_at: Instant) -> Self {
@@ -403,13 +414,19 @@ impl LiveStreamingRate {
             smoothed_rate: 0.0,
             rate_window_started_at: started_at,
             rate_window_tokens: 0,
+            active_ms: 0,
         }
     }
 
-    /// **Mean rate since the first chunk.** Cumulative — gets diluted by
-    /// long silences. Useful for "how fast on average am I producing
-    /// tokens this turn?", but **not** what the chip displays.
+    /// **Mean rate while actively decoding.** Divides `total_tokens` by
+    /// `active_ms` (cumulative inter-chunk time, excluding silences longer
+    /// than `SILENCE_THRESHOLD`). This prevents thinking/tool/network stalls
+    /// from diluting the average, so "回合均" reflects true decode speed.
+    /// Falls back to wall-clock elapsed if no inter-chunk data exists yet.
     pub fn mean_tokens_per_sec(&self) -> f32 {
+        if self.active_ms > 0 {
+            return self.total_tokens as f32 * 1000.0 / self.active_ms as f32;
+        }
         let elapsed = self.started_at.elapsed();
         if elapsed.as_secs_f32() < 0.001 {
             return 0.0;
@@ -446,6 +463,19 @@ impl LiveStreamingRate {
             self.rate_window_tokens = tokens;
         } else {
             self.rate_window_tokens = self.rate_window_tokens.saturating_add(tokens);
+        }
+    }
+
+    /// Accumulate "active decode" time: the wall-clock delta since
+    /// `last_event_at`, but only if it's under `SILENCE_THRESHOLD`. Gaps
+    /// longer than the threshold (thinking, tool calls, network stalls)
+    /// are skipped so `mean_tokens_per_sec` isn't diluted by idle time.
+    fn accumulate_active_ms(&mut self, now: Instant) {
+        if let Some(last) = self.last_event_at {
+            let delta = now.saturating_duration_since(last);
+            if delta < SILENCE_THRESHOLD {
+                self.active_ms = self.active_ms.saturating_add(delta.as_millis() as u64);
+            }
         }
     }
 }
@@ -1147,6 +1177,7 @@ impl AcpUpdateTracker {
             } else {
                 rate.record_window_tokens(now, tokens);
             }
+            rate.accumulate_active_ms(now);
             rate.last_event_at = Some(now);
         } else {
             self.streaming_rate = Some(LiveStreamingRate {
@@ -1156,6 +1187,7 @@ impl AcpUpdateTracker {
                 smoothed_rate: sample_rate.unwrap_or(0.0),
                 rate_window_started_at: now,
                 rate_window_tokens: 0,
+                active_ms: 0,
             });
         }
         // Keep the session-lifetime accumulator in sync so subagent output
@@ -1175,11 +1207,13 @@ impl AcpUpdateTracker {
                     smoothed_rate: 0.0,
                     rate_window_started_at: now,
                     rate_window_tokens: tokens,
+                    active_ms: 0,
                 });
             }
             Some(rate) => {
                 rate.total_tokens = rate.total_tokens.saturating_add(tokens);
                 rate.record_window_tokens(now, tokens);
+                rate.accumulate_active_ms(now);
                 rate.last_event_at = Some(now);
             }
         }
