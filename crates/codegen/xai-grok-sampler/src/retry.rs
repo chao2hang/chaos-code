@@ -617,6 +617,75 @@ mod tests {
     }
 
     #[test]
+    fn classify_billing_body_fails_fast_regardless_of_status() {
+        // DeepSeek 402 / Zhipu 4013 balance: body classifies as Billing →
+        // Fatal immediately, even though a 5xx (transient) status alone
+        // would otherwise retry.
+        let billing = r#"{"error":{"message":"Insufficient Balance","type":"insufficient_balance_error"}}"#;
+        let err = api_err(StatusCode::PAYMENT_REQUIRED, billing);
+        assert!(matches!(
+            classify_error(&err, 0, 15, RATE_LIMIT_RETRY_THRESHOLD),
+            RetryDecision::Fatal(_)
+        ));
+
+        // A 500 wrapping a balance body must also NOT retry (body wins over
+        // the transient status).
+        let err = api_err(StatusCode::INTERNAL_SERVER_ERROR, billing);
+        assert!(matches!(
+            classify_error(&err, 0, 15, RATE_LIMIT_RETRY_THRESHOLD),
+            RetryDecision::Fatal(_)
+        ));
+
+        // Zhipu balance code via err_code.
+        let zhipu_billing = r#"{"error":{"err_code":4013,"message":"余额不足","type":"insufficient_balance_error"}}"#;
+        let err = api_err(StatusCode::PAYMENT_REQUIRED, zhipu_billing);
+        assert!(matches!(
+            classify_error(&err, 0, 15, RATE_LIMIT_RETRY_THRESHOLD),
+            RetryDecision::Fatal(_)
+        ));
+    }
+
+    #[test]
+    fn classify_domestic_rate_limit_retries_with_backoff() {
+        // DeepSeek 429 with a rate-limit body → RetryWithBackoff, and honors
+        // Retry-After.
+        let body =
+            r#"{"error":{"message":"Rate limit reached","type":"rate_limit_error","code":"rate_limit_exceeded"}}"#;
+        let err = SamplingError::Api {
+            status: StatusCode::TOO_MANY_REQUESTS,
+            message: body.into(),
+            model_metadata: None,
+            retry_after_secs: Some(5),
+            should_retry: None,
+        };
+        match classify_error(&err, 0, RATE_LIMIT_RETRY_THRESHOLD, RATE_LIMIT_RETRY_THRESHOLD) {
+            RetryDecision::RetryWithBackoff { backoff, .. } => {
+                assert_eq!(backoff, std::time::Duration::from_secs(5));
+            }
+            other => panic!("expected RetryWithBackoff, got {other:?}"),
+        }
+
+        // Domestic flat code (Qwen Throttling) body → also rate-limit retry.
+        let qwen_body = r#"{"code":"Throttling","message":"Flow control triggered, please slow down","request_id":"x"}"#;
+        let err = api_err(StatusCode::TOO_MANY_REQUESTS, qwen_body);
+        assert!(matches!(
+            classify_error(&err, 0, RATE_LIMIT_RETRY_THRESHOLD, RATE_LIMIT_RETRY_THRESHOLD),
+            RetryDecision::RetryWithBackoff { .. }
+        ));
+    }
+
+    #[test]
+    fn classify_domestic_auth_key_does_not_burn_budget() {
+        // DeepSeek 401 invalid key → EmitToSession (session re-auth), not retry.
+        let body = r#"{"error":{"message":"Authentication Fails (no such user)","type":"authentication_error"}}"#;
+        let err = api_err(StatusCode::UNAUTHORIZED, body);
+        assert!(matches!(
+            classify_error(&err, 0, 15, RATE_LIMIT_RETRY_THRESHOLD),
+            RetryDecision::EmitToSession(_)
+        ));
+    }
+
+    #[test]
     fn classify_image_processing_error_400_strips_images() {
         let err = api_err(StatusCode::BAD_REQUEST, "Could not process image");
         assert!(matches!(
