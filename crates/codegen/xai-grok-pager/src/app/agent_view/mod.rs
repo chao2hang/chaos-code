@@ -1489,17 +1489,6 @@ pub struct AgentView {
     /// pin would stick a manual title that later absent-meta auto titles
     /// refuse to clear.
     pub title_unpin_committed: bool,
-    /// Ultra-short summary of the most recent successful turn (shell
-    /// `LastTurnSummary`), preferred over the last-message preview for the
-    /// idle dashboard row's secondary line. Shown until replaced by the next
-    /// successful turn's summary; cleared only by a conversation rewind
-    /// (which removes the work it describes).
-    pub last_turn_summary: Option<String>,
-    /// Bumped on every live mutation of [`Self::last_turn_summary`] (notification
-    /// apply or rewind clear). Disk hydration captures this at enqueue and
-    /// applies only when it still matches, so a rewind that cleared the field
-    /// while the read was in flight is not undone by a stale disk value.
-    pub last_turn_summary_gen: u64,
     /// Effects queued by input handlers that cannot return `InputOutcome::Action`.
     /// Drained by `AppView.handle_input` after each event.
     pub(crate) pending_effects: Vec<super::actions::Effect>,

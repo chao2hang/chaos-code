@@ -495,8 +495,6 @@ impl AgentView {
             display_name: None,
             generated_session_title: None,
             title_unpin_committed: false,
-            last_turn_summary: None,
-            last_turn_summary_gen: 0,
             pending_effects: Vec::new(),
             paste_probe_in_flight: 0,
             deferred_send: None,
