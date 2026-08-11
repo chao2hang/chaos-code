@@ -177,6 +177,9 @@ mod tests {
     /// until a `wait` has returned.
     #[cfg(unix)]
     #[tokio::test]
+    #[allow(clippy::disallowed_methods)] // test deliberately spawns a bare
+    // child to exercise the lifecycle
+    // without session enrollment
     async fn a_collection_claim_requires_the_child_to_have_been_waited_on() {
         let mut child = tokio::process::Command::new("true")
             .spawn()
