@@ -77,6 +77,12 @@ jobs:
       # `check --all-targets` and `clippy` above still cover every crate, which
       # is what stops test code drifting out of sync with production structs.
       - name: cargo test
+        env:
+          # Some xai-grok-shell tests recurse deep enough (bounded but >2MB)
+          # to SIGABRT the test binary on the default 2MB test-thread stack.
+          # 8MB matches a common Linux main-thread default and is enough for
+          # every test that has overflowed so far.
+          RUST_MIN_STACK: "8388608"
         run: |
           cargo test --workspace --locked --no-fail-fast \
             --exclude xai-grok-pager \

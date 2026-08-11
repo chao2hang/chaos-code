@@ -1843,6 +1843,81 @@ extract_inline_thinking = true
 
 The option is off by default and only affects Chat Completions for that model. Tags may cross streaming chunks; if a `<think>` block is truncated without `</think>`, its remaining text stays reasoning. `extractInlineThinking` is also accepted for parity with remote model metadata, though snake case is canonical in `config.toml`.
 
+### Domestic Providers
+
+The pager's `/provider add` flow ships built-in presets for the common domestic providers (DeepSeek, Qwen, Zhipu, Moonshot, Volcengine) — pick one there and skip the manual setup. If you prefer to edit `config.toml` directly, these are the canonical blocks:
+
+```toml
+# DeepSeek (deepseek-reasoner / deepseek-chat)
+[model_providers.deepseek]
+base_url = "https://api.deepseek.com/v1"
+api_backend = "chat_completions"
+env_key = "DEEPSEEK_API_KEY"
+
+[model.deepseek-r1]
+model = "deepseek-reasoner"
+model_provider = "deepseek"
+context_window = 64000
+extract_inline_thinking = true   # deepseek-reasoner emits <think> in content
+```
+
+```toml
+# Qwen / 通义千问 (DashScope compatible-mode)
+[model_providers.qwen]
+base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+api_backend = "chat_completions"
+env_key = "DASHSCOPE_API_KEY"
+
+[model.qwen3]
+model = "qwen3-max"
+model_provider = "qwen"
+context_window = 32768
+# qwen3-thinking already streams a structured `reasoning_content`; do NOT
+# also set extract_inline_thinking=true, or duplicate/conflicting reasoning
+# is emitted.
+```
+
+```toml
+# Zhipu / 智谱 GLM
+[model_providers.zhipu]
+base_url = "https://open.bigmodel.cn/api/paas/v4"
+api_backend = "chat_completions"
+env_key = "ZHIPUAI_API_KEY"
+
+[model.glm4]
+model = "glm-4"
+model_provider = "zhipu"
+context_window = 128000
+```
+
+```toml
+# Moonshot / 月之暗面 (Kimi)
+[model_providers.moonshot]
+base_url = "https://api.moonshot.cn/v1"
+api_backend = "chat_completions"
+env_key = "MOONSHOT_API_KEY"
+
+[model.kimi]
+model = "moonshot-v1-8k"
+model_provider = "moonshot"
+context_window = 8192
+```
+
+```toml
+# Volcengine / 火山方舟 (Doubao)
+[model_providers.volcengine]
+base_url = "https://ark.cn-beijing.volces.com/api/v3"
+api_backend = "chat_completions"
+env_key = "ARK_API_KEY"
+
+[model.doubao]
+model = "doubao-1-5-pro-32k"
+model_provider = "volcengine"
+context_window = 32768
+```
+
+> Domestic provider errors are classified into retry-relevant kinds: a wrong/expired key (`Auth`) and exhausted balance/quota (`Billing`) **do not** retry — they surface immediately so you can top up or check credentials, instead of appearing to hang. Rate-limit and transient server faults retry with bounded backoff.
+
 ### Overriding Built-in Models
 
 You can override specific fields of built-in models without redefining everything. Only specify the fields you want to change:

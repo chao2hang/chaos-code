@@ -319,19 +319,20 @@ pub struct AcpUpdateTracker {
     /// show — even between turns or before the shell reports context
     /// metadata (`/context`). Cleared on a session rebind.
     session_rate: Option<LiveStreamingRate>,
-    /// Cached cl100k_base BPE encoder, lazy-initialized on the first chunk
-    /// so startup cost is flat. `None` until the first chunk arrives; if
-    /// the encoder fails to build, we fall back to `chars / 4` (this is the
-    /// best we can do without BPE — keeps the chip functional on hosts that
-    /// block embedded data blobs).
-    ///
-    /// Held in an `Arc` (rather than the bare `CoreBPE`) so the encoder can
-    /// be cloned cheaply into worker threads if we ever move streaming
-    /// tokenization off the main thread.
+    /// Current model id whose tokenizer the live rate counts with. `None`
+    /// until `set_current_model` is called. Serves as the idempotency guard:
+    /// `AgentSession::handle_update` calls `set_current_model` before every
+    /// update, so this check must stay cheap.
+    current_model: Option<String>,
+    /// Per-kind cache of BPE encoders, keyed by [`TokenizerKind`]. A `None`
+    /// entry means that kind failed to build on this host and must not be
+    /// retried (the `chars / 4` fallback keeps the chip functional where
+    /// embedded data blobs are blocked). At most one full vocabulary load per
+    /// kind, process-wide.
+    token_encoders: HashMap<TokenizerKind, Option<Arc<tiktoken_rs::CoreBPE>>>,
+    /// The active encoder selected by [`Self::set_current_model`] from
+    /// `token_encoders`. `None` → `chars / 4` fallback.
     token_encoder: Option<Arc<tiktoken_rs::CoreBPE>>,
-    /// Prevent repeated encoder initialization attempts and warning spam when
-    /// the embedded vocabulary cannot be loaded on a host.
-    token_encoder_init_attempted: bool,
 }
 
 /// Manual `Debug` impl so the `tiktoken_rs::CoreBPE` field (which doesn't
@@ -353,11 +354,9 @@ impl std::fmt::Debug for AcpUpdateTracker {
             )
             .field("streaming_rate", &self.streaming_rate)
             .field("session_rate", &self.session_rate)
+            .field("current_model", &self.current_model)
             .field("token_encoder_loaded", &self.token_encoder.is_some())
-            .field(
-                "token_encoder_init_attempted",
-                &self.token_encoder_init_attempted,
-            )
+            .field("tokenizer_kind", &self.tokenizer_kind())
             .finish()
     }
 }
@@ -521,6 +520,76 @@ impl Utf8Decoder {
         &self.decoded
     }
 }
+
+/// Tokenizer families the live tok/s chip can count with.
+///
+/// tiktoken-rs 0.7 exposes exactly these four public BPE vocabularies
+/// (`cl100k_base`, `o200k_base`, `p50k_base`, `r50k_base`). Models map onto
+/// them via [`tokenizer_kind_for_model`]; `grok-*` and unknown models use
+/// `Cl100k` as the closest generic BPE.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum TokenizerKind {
+    Cl100k,
+    O200k,
+    P50k,
+    R50k,
+}
+
+/// Map a model id to the tiktoken encoding whose vocabulary it ships with.
+///
+/// Prefix matching — the longer branches (`gpt-4o`, `gpt-4.1`, `o1`, ...)
+/// must be tested before the shorter `gpt-4` one, or `gpt-4o` would be
+/// misclassified as `cl100k_base`.
+fn tokenizer_kind_for_model(model_id: &str) -> TokenizerKind {
+    let id = model_id.to_ascii_lowercase();
+    if id.starts_with("gpt-4o")
+        || id.starts_with("gpt-4.1")
+        || id.starts_with("chatgpt-4o")
+        || id.starts_with("o1")
+        || id.starts_with("o3")
+        || id.starts_with("o4")
+    {
+        TokenizerKind::O200k
+    } else if id.starts_with("gpt-4") || id.starts_with("gpt-3.5") {
+        TokenizerKind::Cl100k
+    } else if id.starts_with("text-davinci") || id.starts_with("code-davinci") {
+        TokenizerKind::P50k
+    } else if id.starts_with("davinci")
+        || id.starts_with("curie")
+        || id.starts_with("babbage")
+        || id.starts_with("text-curie")
+        || id.starts_with("text-babbage")
+        || id.starts_with("text-ada")
+        || id.starts_with("gpt-3")
+    {
+        TokenizerKind::R50k
+    } else {
+        // grok-* and unknown/BYOK models: cl100k_base is the closest generic
+        // BPE. Keeps today's behaviour for models without a public tiktoken
+        // vocabulary.
+        TokenizerKind::Cl100k
+    }
+}
+
+/// Build the BPE encoder for a tokenizer kind. Fallible — the embedded
+/// vocabulary can be blocked on some hosts, in which case the caller keeps
+/// the `chars / 4` fallback.
+fn build_bpe(kind: TokenizerKind) -> Option<tiktoken_rs::CoreBPE> {
+    let result = match kind {
+        TokenizerKind::Cl100k => tiktoken_rs::cl100k_base(),
+        TokenizerKind::O200k => tiktoken_rs::o200k_base(),
+        TokenizerKind::P50k => tiktoken_rs::p50k_base(),
+        TokenizerKind::R50k => tiktoken_rs::r50k_base(),
+    };
+    match result {
+        Ok(bpe) => Some(bpe),
+        Err(e) => {
+            tracing::warn!(error = ?e, "tiktoken {kind:?} failed to load");
+            None
+        }
+    }
+}
+
 impl AcpUpdateTracker {
     pub fn new() -> Self {
         Self::default()
@@ -1065,20 +1134,7 @@ impl AcpUpdateTracker {
         }
         let sample_rate = output_tokens_per_sec.filter(|rate| rate.is_finite() && *rate > 0.0);
         let now = Instant::now();
-        if self.streaming_rate.is_none() {
-            self.streaming_rate = Some(LiveStreamingRate {
-                started_at: now,
-                total_tokens: tokens,
-                last_event_at: Some(now),
-                smoothed_rate: sample_rate.unwrap_or(0.0),
-                rate_window_started_at: now,
-                rate_window_tokens: 0,
-            });
-        } else {
-            let rate = self
-                .streaming_rate
-                .as_mut()
-                .expect("streaming rate seeded above");
+        if let Some(rate) = self.streaming_rate.as_mut() {
             // A completed child task already supplies a duration-based per-second
             // rate. Use it until this parent closes its next full accounting window.
             rate.total_tokens = rate.total_tokens.saturating_add(tokens);
@@ -1092,6 +1148,15 @@ impl AcpUpdateTracker {
                 rate.record_window_tokens(now, tokens);
             }
             rate.last_event_at = Some(now);
+        } else {
+            self.streaming_rate = Some(LiveStreamingRate {
+                started_at: now,
+                total_tokens: tokens,
+                last_event_at: Some(now),
+                smoothed_rate: sample_rate.unwrap_or(0.0),
+                rate_window_started_at: now,
+                rate_window_tokens: 0,
+            });
         }
         // Keep the session-lifetime accumulator in sync so subagent output
         // stays visible in the chip's mean fallback after the turn ends.
@@ -1226,30 +1291,54 @@ impl AcpUpdateTracker {
             scrollback.push_chunk_to_agent(id, &text)
         }
     }
-    /// Token count for a single chunk's text. Lazily initialises the
-    /// cl100k_base encoder on first call; on init failure (e.g. embedded
-    /// data blob blocked on host), falls back to `chars / 4` and stops
-    /// retrying for this tracker instance, so a streaming response cannot
-    /// repeatedly perform the same failed initialization or spam warnings.
+    /// Token count for a single chunk's text, using the tokenizer selected by
+    /// the current model (see [`Self::set_current_model`]). Without a loaded
+    /// BPE encoder (no model set yet, or the vocabulary is blocked on this
+    /// host) falls back to `chars / 4` — the same heuristic the rest of the
+    /// shell uses for context estimation.
     pub(crate) fn count_tokens(&mut self, text: &str) -> u64 {
-        if !self.token_encoder_init_attempted {
-            self.token_encoder_init_attempted = true;
-            match tiktoken_rs::cl100k_base() {
-                Ok(bpe) => {
-                    self.token_encoder = Some(Arc::new(bpe));
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        error = %e,
-                        "tiktoken cl100k_base failed to load; falling back to chars/4 for live rate"
-                    );
-                }
-            }
-        }
         match self.token_encoder.as_ref() {
             Some(bpe) => bpe.encode_ordinary(text).len() as u64,
             None => (text.chars().count() as u64) / 4 + 1,
         }
+    }
+
+    /// Select the tokenizer for `model_id` and reset the rate accumulators.
+    ///
+    /// Idempotent: repeated calls with the same model id are no-ops, so the
+    /// lazy per-update sync in `AgentSession::handle_update` stays cheap.
+    /// When the model actually changes, both the live and session-lifetime
+    /// accumulators are cleared — a mean that mixes tokens counted with two
+    /// different tokenizers would be misleading. Callers must invoke this
+    /// *before* streaming chunks of the new model arrive.
+    pub fn set_current_model(&mut self, model_id: &str) {
+        if self.current_model.as_deref() == Some(model_id) {
+            return;
+        }
+        self.current_model = Some(model_id.to_owned());
+        let kind = tokenizer_kind_for_model(model_id);
+        let cached = self
+            .token_encoders
+            .entry(kind)
+            .or_insert_with(|| build_bpe(kind).map(Arc::new));
+        self.token_encoder = cached.clone();
+        // Model changed: drop cross-model accumulators so the chip's mean and
+        // live rate start clean on the new model's tokenizer.
+        self.streaming_rate = None;
+        self.session_rate = None;
+    }
+
+    /// Which tokenizer the live rate currently counts with. `None` means no
+    /// model has been set yet (fresh tracker).
+    pub(crate) fn tokenizer_kind(&self) -> Option<TokenizerKind> {
+        self.current_model.as_deref().map(tokenizer_kind_for_model)
+    }
+
+    /// Whether a real BPE encoder is active (vs. the `chars / 4` fallback).
+    /// Display code can use this to decide whether the local live estimate is
+    /// trustworthy enough to override the server-measured average.
+    pub fn tokenizer_available(&self) -> bool {
+        self.token_encoder.is_some()
     }
     /// Handle an agent thought chunk (streaming thinking).
     fn handle_thought_chunk(
@@ -1279,6 +1368,15 @@ impl AcpUpdateTracker {
             scrollback.set_last_running(true);
             entry_id
         });
+        // 思考输出同样计入实时/会话速率：高推理强度模型的思考 token 往往占
+        // 输出大头，不计会让流式期间右上角 chip 速率明显偏低。replay 不计
+        // （与 agent chunk 的规则一致，避免历史回放污染实时值）。
+        if !is_replay {
+            let added = self.count_tokens(text);
+            let now = Instant::now();
+            Self::accumulate_rate(&mut self.streaming_rate, now, added);
+            Self::accumulate_rate(&mut self.session_rate, now, added);
+        }
         if let (Some(agent_ts), Some(stream_start)) =
             (meta.agent_timestamp_ms, meta.stream_start_ms)
         {
@@ -7122,7 +7220,9 @@ mod tests {
         let first = tracker.session_streaming_rate().expect("session seeded");
         assert!(first.total_tokens > 0);
         tracker.finish_turn(&mut sb);
-        let after_turn = tracker.session_streaming_rate().expect("survives finish_turn");
+        let after_turn = tracker
+            .session_streaming_rate()
+            .expect("survives finish_turn");
         assert_eq!(after_turn.total_tokens, first.total_tokens);
         // 第二个 turn 继续累积。
         tracker.handle_update(agent_chunk("world"), &meta(), &mut sb);
@@ -7290,6 +7390,146 @@ mod tests {
         assert!(
             tracker.streaming_rate().is_none(),
             "crediting without an active turn must not seed streaming_rate"
+        );
+    }
+
+    /// 模型 id → 分词器家族映射表：gpt-4o/o1 系用 o200k，gpt-4/gpt-3.5 用
+    /// cl100k，davinci 系用 p50k/r50k。
+    #[test]
+    fn tokenizer_kind_for_model_maps_known_families() {
+        for model in [
+            "gpt-4o",
+            "gpt-4o-mini",
+            "chatgpt-4o-latest",
+            "gpt-4.1",
+            "gpt-4.1-nano",
+            "o1-preview",
+            "o3-mini",
+            "o4-mini",
+        ] {
+            assert_eq!(
+                tokenizer_kind_for_model(model),
+                TokenizerKind::O200k,
+                "{model}"
+            );
+        }
+        for model in ["gpt-4", "gpt-4-turbo", "gpt-3.5-turbo"] {
+            assert_eq!(
+                tokenizer_kind_for_model(model),
+                TokenizerKind::Cl100k,
+                "{model}"
+            );
+        }
+        for model in ["text-davinci-003", "code-davinci-002"] {
+            assert_eq!(
+                tokenizer_kind_for_model(model),
+                TokenizerKind::P50k,
+                "{model}"
+            );
+        }
+        for model in ["davinci", "text-curie-001", "babbage", "text-ada-001"] {
+            assert_eq!(
+                tokenizer_kind_for_model(model),
+                TokenizerKind::R50k,
+                "{model}"
+            );
+        }
+    }
+
+    /// grok-* 与未知/BYOK 模型默认落到 cl100k（维持现状的最接近通用 BPE）；
+    /// 顺序陷阱：gpt-4o 不能被 gpt-4 分支误吞。
+    #[test]
+    fn tokenizer_kind_for_model_defaults_for_grok_and_unknown() {
+        for model in ["grok-4.5", "grok-build-0.1", "unknown-model", ""] {
+            assert_eq!(
+                tokenizer_kind_for_model(model),
+                TokenizerKind::Cl100k,
+                "{model:?}"
+            );
+        }
+        assert_ne!(
+            tokenizer_kind_for_model("gpt-4o"),
+            TokenizerKind::Cl100k,
+            "gpt-4o must match the o200k branch before the gpt-4 cl100k branch"
+        );
+    }
+
+    /// `set_current_model` 选择对应分词器；模型未变更时幂等（不清累计）。
+    #[test]
+    fn set_current_model_selects_tokenizer_and_resets_on_change() {
+        let mut sb = ScrollbackState::new();
+        let mut tracker = AcpUpdateTracker::new();
+        assert_eq!(tracker.tokenizer_kind(), None, "fresh tracker has no model");
+        assert!(!tracker.tokenizer_available());
+
+        // 造出累计值。
+        tracker.handle_update(agent_chunk("hello world"), &meta(), &mut sb);
+        assert!(tracker.streaming_rate().is_some());
+        assert!(tracker.session_streaming_rate().is_some());
+
+        // 模型变更：换 o200k 分词器并清空跨模型累计。
+        tracker.set_current_model("gpt-4o");
+        assert_eq!(tracker.tokenizer_kind(), Some(TokenizerKind::O200k));
+        assert!(tracker.tokenizer_available());
+        assert!(
+            tracker.streaming_rate().is_none(),
+            "model change must reset live rate"
+        );
+        assert!(
+            tracker.session_streaming_rate().is_none(),
+            "model change must reset session rate"
+        );
+
+        // 幂等：同一模型重复调用不再清空。
+        tracker.handle_update(agent_chunk("world again"), &meta(), &mut sb);
+        assert!(tracker.streaming_rate().is_some());
+        let before = tracker.session_streaming_rate().unwrap().total_tokens;
+        tracker.set_current_model("gpt-4o");
+        let after = tracker
+            .session_streaming_rate()
+            .expect("same-model call must not reset the accumulator");
+        assert_eq!(after.total_tokens, before);
+
+        // 再切回 grok 系：分词器回到 cl100k。
+        tracker.set_current_model("grok-4.5");
+        assert_eq!(tracker.tokenizer_kind(), Some(TokenizerKind::Cl100k));
+    }
+
+    /// 思考 token 同样计入实时/会话速率；replay 不计。
+    #[test]
+    fn thinking_chunks_accumulate_into_rate() {
+        crate::appearance::cache::set_show_thinking_blocks(true);
+        let mut sb = ScrollbackState::new();
+        let mut tracker = AcpUpdateTracker::new();
+        assert!(tracker.streaming_rate().is_none());
+        tracker.handle_update(
+            thought_chunk("Let me reason about this problem carefully"),
+            &meta(),
+            &mut sb,
+        );
+        let rate = tracker
+            .streaming_rate()
+            .expect("thought chunk must seed the live rate");
+        assert!(
+            rate.total_tokens > 0,
+            "thinking tokens must count toward the live rate"
+        );
+        assert!(
+            tracker.session_streaming_rate().is_some(),
+            "thinking tokens must count toward the session rate"
+        );
+
+        // replay 的思考 chunk 不累计。
+        let replay_meta = NotificationMeta {
+            is_replay: true,
+            ..NotificationMeta::default()
+        };
+        let before = tracker.session_streaming_rate().unwrap().total_tokens;
+        tracker.handle_update(thought_chunk("historical"), &replay_meta, &mut sb);
+        assert_eq!(
+            tracker.session_streaming_rate().unwrap().total_tokens,
+            before,
+            "replay thought chunks must not advance the rate"
         );
     }
 }

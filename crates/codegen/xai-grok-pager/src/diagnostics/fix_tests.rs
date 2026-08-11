@@ -326,6 +326,7 @@ fn reload_instruction_shell_quotes_and_markdown_escapes_paths() {
 
 #[cfg(unix)]
 #[test]
+#[allow(clippy::disallowed_methods)]
 fn full_preview_safely_renders_backtick_requested_symlink_target_and_backup_paths() {
     use std::os::unix::fs::symlink;
 

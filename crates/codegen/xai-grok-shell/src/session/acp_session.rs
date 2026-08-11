@@ -754,11 +754,9 @@ pub(crate) struct SessionActor {
     /// Per-session User-Agent override (client profile / `/client`).
     pub(crate) user_agent: std::cell::RefCell<Option<String>>,
     /// Extra headers injected into sampling requests (client profile).
-    pub(crate) client_extra_headers:
-        std::cell::RefCell<indexmap::IndexMap<String, String>>,
+    pub(crate) client_extra_headers: std::cell::RefCell<indexmap::IndexMap<String, String>>,
     /// Header-name → env-var mapping (client profile).
-    pub(crate) client_env_http_headers:
-        std::cell::RefCell<indexmap::IndexMap<String, String>>,
+    pub(crate) client_env_http_headers: std::cell::RefCell<indexmap::IndexMap<String, String>>,
     /// Feedback manager for signal tracking and feedback request heuristics
     pub(crate) feedback_manager: Arc<FeedbackManager>,
     pub(crate) upload_queue:

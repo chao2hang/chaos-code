@@ -2,6 +2,12 @@
 //!
 //! A clean-room implementation built on the v3 pager rendering engine.
 
+// This fork tracks upstream `xai-org/grok-build`. The /rename series and
+// workspace-client refactor (merge b13fa526) turned a large amount of
+// previously-used code into dead code in this fork; upstream may revive it in
+// a future sync, so we keep the code and silence the warnings crate-wide.
+#![allow(dead_code)]
+
 pub mod acp;
 pub mod actions;
 pub mod app;

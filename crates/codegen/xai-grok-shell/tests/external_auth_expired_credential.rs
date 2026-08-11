@@ -264,6 +264,7 @@ fn ambient_mint_endpoints() -> Vec<String> {
 }
 
 #[test]
+#[ignore = "asserts upstream xAI grok.com SSO login flow removed by Chaos fork"]
 fn expired_external_credential_routes_to_the_provider_login_flow() {
     let _ = rustls::crypto::ring::default_provider().install_default();
 

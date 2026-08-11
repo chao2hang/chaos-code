@@ -35,6 +35,21 @@ pub struct WorkflowAgentInfo {
     pub duration_ms: u64,
 }
 
+/// `_meta` key on rename fan-out (`SessionSummaryGenerated` + ACP
+/// `SessionInfoUpdate`). Old clients ignore unknown meta.
+pub const TITLE_IS_MANUAL_META_KEY: &str = "x.ai/titleIsManual";
+
+/// `_meta` object carried on a manual-rename fan-out.
+pub fn title_is_manual_meta() -> serde_json::Value {
+    serde_json::json!({ TITLE_IS_MANUAL_META_KEY: true })
+}
+
+/// `_meta` object carried on `/rename --auto` fan-out. Distinct from
+/// *absent* meta (auto title — must not clobber `display_name`).
+pub fn title_is_unpinned_meta() -> serde_json::Value {
+    serde_json::json!({ TITLE_IS_MANUAL_META_KEY: false })
+}
+
 /// xAI-specific session notification (parallel to acp::SessionNotification)
 /// This wraps an XaiSessionUpdate with session context for persistence and replay.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -157,7 +172,7 @@ impl PromptUsage {
             cost_usd_ticks: _,  // cost without usage cannot occur
             cost_is_partial: _,
             cost_missing_calls: _,
-            decode_duration_ms: _, // timing, not tokens
+            decode_duration_ms: _,    // timing, not tokens
             decode_tokens_per_sec: _, // derived rate, not tokens
         } = self.totals;
         model_calls == 0
@@ -263,7 +278,7 @@ impl From<&xai_chat_state::UsageTotals> for PromptUsageModel {
             cost_usd_ticks,
             cost_is_partial: t.cost_is_partial(),
             cost_missing_calls,
-            decode_tokens_per_sec: None,
+            decode_tokens_per_sec: t.decode_tokens_per_sec().map(|v| v as f32),
         }
     }
 }
@@ -326,7 +341,7 @@ pub(crate) fn project_result_usage(result: &mut serde_json::Value, usage: &Promp
         cost_usd_ticks,
         cost_is_partial,
         cost_missing_calls: _, // internal partiality count; the flag suffices
-        decode_duration_ms: _,   // timing; not part of the headless shape
+        decode_duration_ms: _, // timing; not part of the headless shape
         decode_tokens_per_sec: _, // derived rate; dropped
     } = usage.totals;
     result["usage"] = serde_json::json!({

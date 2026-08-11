@@ -1,9 +1,9 @@
 //! Frame rendering for [`AgentView`]: the `draw` entry point plus shortcut
 //! hints and the subagent fullscreen view.
 use super::{
-    ActivePane, AgentPane, AgentView, AgentViewLayout, BlockingCard, CtaPhase,
-    InlineMediaHitAreas, MODE_BANNER_FADE_TICKS, PromptMode, collect_citation_links,
-    dropdown_items_width, record_dot_pulse, render_dropdown_chrome, supports_osc22,
+    ActivePane, AgentPane, AgentView, AgentViewLayout, BlockingCard, CtaPhase, InlineMediaHitAreas,
+    MODE_BANNER_FADE_TICKS, PromptMode, collect_citation_links, dropdown_items_width,
+    record_dot_pulse, render_dropdown_chrome, supports_osc22,
 };
 use crate::actions::{ActionId, ActionRegistry};
 use crate::key;
@@ -698,7 +698,7 @@ impl AgentView {
             voice_available,
             voice_listening,
             voice_interim,
-            esc_owned_before_agent,
+            esc_owned_before_agent: _,
         } = app_params;
         self.in_dashboard_overlay = in_dashboard_overlay;
         self.overlay_can_cycle = overlay_can_cycle;
@@ -706,8 +706,8 @@ impl AgentView {
             height: banner_height,
             announcements: banner_announcements,
             hidden_ids: hidden_announcement_ids,
-            privacy_banner,
-            mouse_pos,
+            privacy_banner: _,
+            mouse_pos: _,
             tip,
         } = banner;
         self.session_banner_active = crate::views::announcements::first_session_announcement(
@@ -855,9 +855,21 @@ impl AgentView {
             placeholder_when_focused: false,
             show_accent_line: false,
             show_borders: true,
-            title: self.display_name.clone(),
+            title: self
+                .display_name
+                .as_deref()
+                .map(|s| crate::views::session_title::sanitize_display_text(s).into_owned()),
             image_preview: true,
         };
+        let next = crate::views::session_title::rename_source_title_raw(self)
+            .map(crate::views::session_title::sanitize_display_text);
+        if self.prompt.slash_current_title() != next.as_deref() {
+            self.prompt
+                .set_slash_current_title(next.map(|s| s.into_owned()));
+            if self.prompt.slash_open() {
+                self.prompt.refresh_slash(&self.session.models);
+            }
+        }
         let compact = appearance.prompt.compact;
         let inner_width = AgentViewLayout::inner_width(area, layout_cfg, compact);
         let banner_height = if banner_height > 0 {

@@ -912,6 +912,21 @@ impl ConversationResponse {
         }
     }
 
+    /// Whether this response came from a known reasoning/thinking model.
+    ///
+    /// Domestic reasoning models (DeepSeek-R1, Qwen3-Thinking, GLM-Z1, Grok
+    /// reasoning tier) routinely emit a `reasoning_only` response (visible
+    /// content arrives on a later turn). Resampling such a response is
+    /// pointless — the model intentionally answered with thoughts and no
+    /// prose, so the retry layer should surface it rather than retry-storm.
+    pub fn is_known_thinking_model(&self) -> bool {
+        let model = self
+            .assistant()
+            .and_then(|a| a.model_id.as_deref())
+            .unwrap_or_default();
+        known_thinking_model_id(model)
+    }
+
     /// Check if the response is effectively empty (no content, no tool calls).
     ///
     /// Equivalent to `self.empty_reason().is_some()`. Reasoning-only
@@ -941,6 +956,25 @@ impl ConversationResponse {
             .unwrap_or_default();
         if text.is_empty() { None } else { Some(text) }
     }
+}
+
+/// `true` when a model id matches a known reasoning/thinking family whose
+/// reasoning-only empty response is expected rather than a fault.
+pub fn known_thinking_model_id(model: &str) -> bool {
+    let m = model.to_ascii_lowercase();
+    // Central list of models whose first turn may legitimately be
+    // reasoning-only. Matched by prefix/contains to cover catalog renames.
+    m.starts_with("deepseek-r")
+        || m.contains("reasoner")
+        || m.contains("qwen3-thinking")
+        || m.contains("qwq")
+        || m.contains("glm-z")
+        || m.contains("glm-4.5-air")
+        || m.contains("thinking")
+        || m.starts_with("grok-4")
+        || m.starts_with("grok-reasoning")
+        || m.contains(":thinking")
+        || m.contains("-thinking")
 }
 
 // ============================================================================
@@ -4981,6 +5015,44 @@ mod tests {
             resp.empty_reason(),
             Some(crate::error::EmptyReason::NoVisibleContent)
         );
+    }
+
+    #[test]
+    fn known_thinking_model_id_flags_reasoning_families() {
+        for id in [
+            "deepseek-reasoner",
+            "deepseek-r1",
+            "qwen3-thinking-2507",
+            "qwq-32b",
+            "glm-z1",
+            "glm-4.5-air-2504",
+            "grok-4",
+            "grok-reasoning",
+            "some-vendor/qwen3-thinking",
+            "model:thinking-fused",
+        ] {
+            assert!(
+                known_thinking_model_id(id),
+                "expected {id} to be a known thinking model"
+            );
+        }
+        for id in ["gpt-4o", "claude-3-5-sonnet", "qwen-max", "false", ""] {
+            assert!(
+                !known_thinking_model_id(id),
+                "expected {id} to NOT be a known thinking model"
+            );
+        }
+    }
+
+    #[test]
+    fn empty_reason_reasoning_only_with_thinking_model_flags_known() {
+        // A reasoning-only empty response from a known thinking model must be
+        // distinguishable from one on a non-thinking model so the sampler
+        // layer can avoid a retry-storm.
+        assert!(!known_thinking_model_id("gpt-4o"));
+        assert!(known_thinking_model_id("deepseek-reasoner"));
+        assert!(known_thinking_model_id("qwen3-thinking-2507"));
+        assert!(known_thinking_model_id("glm-z1-250406"));
     }
 
     #[test]

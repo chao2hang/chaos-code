@@ -666,9 +666,9 @@ impl JsonlStorageAdapter {
             .filter_map(Result::ok)
             .take(MAX_RESTORED_WORKFLOW_RUNS.saturating_add(1))
             .collect();
+        entries.sort_by_key(|entry| entry.file_name());
         let entries_truncated = entries.len() > MAX_RESTORED_WORKFLOW_RUNS;
         entries.truncate(MAX_RESTORED_WORKFLOW_RUNS);
-        entries.sort_by_key(|entry| entry.file_name());
         if entries_truncated {
             tracing::warn!(
                 path = %workflows_dir.display(),
@@ -924,7 +924,8 @@ impl JsonlStorageAdapter {
         Ok(())
     }
     /// Like [`Self::apply_summary_patch`], but returns whether a
-    /// `generated_title_if_absent` was applied (see [`Summary::apply_patch`]).
+    /// `generated_title_if_absent` was applied or a manual pin was
+    /// cleared by `reset_title_to_auto` (see [`Summary::apply_patch`]).
     async fn apply_summary_patch_reporting(
         &self,
         info: &Info,
@@ -1011,6 +1012,16 @@ impl StorageAdapter for JsonlStorageAdapter {
             info,
             super::summary_write::SummaryPatch {
                 generated_title_if_absent: Some(session_title),
+                ..Default::default()
+            },
+        )
+        .await
+    }
+    async fn reset_title_to_auto(&self, info: &Info) -> io::Result<bool> {
+        self.apply_summary_patch_reporting(
+            info,
+            super::summary_write::SummaryPatch {
+                reset_title_to_auto: true,
                 ..Default::default()
             },
         )

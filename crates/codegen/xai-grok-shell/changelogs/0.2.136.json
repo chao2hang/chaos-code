@@ -1,0 +1,52 @@
+[
+  {
+    "category": "features",
+    "description": "国产 Provider 预设：/provider add 新增 Qwen（DashScope compatible-mode）、智谱 GLM、Moonshot、Volcengine，自动写入 env_key（DASHSCOPE/ZHIPUAI/MOONSHOT/ARK API_KEY）。",
+    "breaking_change": false
+  },
+  {
+    "category": "features",
+    "description": "新增 ProviderErrorKind 分类（Auth/Billing/RateLimit/Server/Context/Transient），覆盖 DeepSeek/Qwen/智谱/Moonshot/Volcengine 典型错误体（含智谱 err_code 负值与火山大写 Type 字段）。",
+    "breaking_change": false
+  },
+  {
+    "category": "features",
+    "description": "workspace.info 上报 server 版本；新增 xai-grok-workspace-client crate，hub 代理 workspace.* RPC 的轻量类型化客户端。",
+    "breaking_change": false
+  },
+  {
+    "category": "features",
+    "description": "/rename 系列：title 上限、ghost-prefill、跨 host 手动标题、remote revert、--auto 解除手动标题、conversation_entry/title_unpin 语义、last_turn_summary 支持。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "余额不足/Key 失效错误不再无限重试：Billing（DeepSeek 402/智谱 4013）与 Auth 立即报错，不消耗重试预算。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "推理模型（DeepSeek-R1/Qwen3-Thinking/GLM-Z1/Grok-reasoning）reasoning-only 空响应识别为预期行为，不再反复 resample。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "默认重试预算 15→8，对齐 opencode，缩短国产不稳定 provider 的抖动窗口。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "Retry-After 支持 HTTP-date（RFC 2822/3339）格式解析，使用已有 chrono 依赖。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "修复 tokio blocking pool EAGAIN abort：上限并预加热阻塞线程池。",
+    "breaking_change": false
+  },
+  {
+    "category": "ui",
+    "description": "用户可见错误增加中文可操作提示：余额不足/Key 失效/上下文超限均有中文文案。",
+    "breaking_change": false
+  }
+]

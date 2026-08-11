@@ -1065,10 +1065,7 @@ fn set_yolo_mode_toast_format() {
         .as_ref()
         .map(|(s, _)| s.clone())
         .expect("toast must be set");
-    assert_eq!(
-        toast,
-        "\u{26A0} 总是批准已开启：所有工具操作将自动执行"
-    );
+    assert_eq!(toast, "\u{26A0} 总是批准已开启：所有工具操作将自动执行");
 
     let _ = dispatch(Action::SetYoloMode(false), &mut app);
     let toast = app.agents[&AgentId(0)]

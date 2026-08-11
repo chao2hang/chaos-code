@@ -196,10 +196,7 @@ impl SessionEvent {
                 // Older shells don't send tokens_before — keep the legacy format.
                 let body = match tokens_before {
                     Some(before) if *before > 0 => {
-                        format!(
-                            "上下文已压缩：{} → {after} tokens",
-                            format_tokens(*before)
-                        )
+                        format!("上下文已压缩：{} → {after} tokens", format_tokens(*before))
                     }
                     _ => format!("上下文已压缩 → {after} tokens"),
                 };
@@ -272,10 +269,7 @@ impl SessionEvent {
                 format!("记忆已保存（{trigger}） \u{2192} {short_path}  \u{00b7}  用 /memory 查看")
             }
             SessionEvent::GoalCompleted { elapsed } => {
-                format!(
-                    "目标完成 \u{2014} 端到端 {}。",
-                    format_duration(*elapsed)
-                )
+                format!("目标完成 \u{2014} 端到端 {}。", format_duration(*elapsed))
             }
             SessionEvent::Recap { summary, auto: _ } => {
                 // Always "回顾 —" (manual `/recap` and auto return-from-away).
