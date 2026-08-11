@@ -5,8 +5,8 @@
 //!
 //! # Retry behavior summary
 //!
-//! **Retried** (up to 14 times — attempt [`DEFAULT_MAX_RETRIES`] = 15 is
-//! fatal — ≈5.5 min: every wait, including a server `Retry-After`, is
+//! **Retried** (up to 7 retries — attempt [`DEFAULT_MAX_RETRIES`] = 8 is
+//! fatal — ≈2.5 min: every wait, including a server `Retry-After`, is
 //! capped at [`MAX_RETRY_BACKOFF`] and jittered):
 //! - 429 and any 5xx except 525/526 — covers the Cloudflare edge pages
 //!   (520–524 origin unreachable/timed out, 530 edge 1xxx) and upstream
@@ -48,11 +48,13 @@ use xai_grok_sampling_types::{SamplingError, is_retryable_api_status};
 /// no point burning a long backoff just to be rate-limited again.
 pub const RATE_LIMIT_RETRY_THRESHOLD: u32 = 2;
 
-/// Default retry budget when no env or model override is set: at most 14
-/// retries (the attempt reaching this count is fatal). With the 30s cap:
-/// retries 1-4 exponential (2+4+8+16s ≈ 30s), 5-14 flat ~30s (≈ 5 min) —
-/// ≈ 5.5 min total.
-pub const DEFAULT_MAX_RETRIES: u32 = 15;
+/// Default retry budget when no env or model override is set. In practice the
+/// effective budget is also bounded by each error kind (429 → rate-limit
+/// threshold of 2, billing/auth → fast-fail), so this is the ceiling for
+/// transient 5xx / transport faults only. Matches opencode's `maxRetries = 8`
+/// reference behavior. With the 30s cap: retries 1-4 exponential
+/// (2+4+8+16s ≈ 30s), 5-8 flat ~30s — ≈ 2.5 min worst case.
+pub const DEFAULT_MAX_RETRIES: u32 = 8;
 
 /// Longest single wait on the generic retry path — the exponential-backoff
 /// ceiling, and the clamp for a server `Retry-After`. Cloudflare answers 52x
