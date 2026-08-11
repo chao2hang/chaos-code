@@ -653,7 +653,18 @@ async fn drive_l2(
                     // deterministic — resampling it would retry-storm.
                     let content_filtered = response.stop_reason
                         == Some(xai_grok_sampling_types::StopReason::ContentFilter);
-                    if !content_filtered && let Some(reason) = response.empty_reason() {
+                    // A reasoning-only response from a known thinking model is
+                    // also expected (DeepSeek-R1 / Qwen3-Thinking / GLM-Z1 /
+                    // Grok reasoning answer with thoughts and no prose on the
+                    // first turn). Resampling it retry-storms the same way;
+                    // surface it as a content-less but complete turn instead.
+                    let thinking_model_reasoning_only = response.is_known_thinking_model()
+                        && response.empty_reason()
+                            == Some(xai_grok_sampling_types::EmptyReason::ReasoningOnly);
+                    if !content_filtered
+                        && !thinking_model_reasoning_only
+                        && let Some(reason) = response.empty_reason()
+                    {
                         let context = build_empty_context(reason, &response);
                         return AttemptOutcome::Empty { context };
                     }
