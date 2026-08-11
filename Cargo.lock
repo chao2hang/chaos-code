@@ -2929,7 +2929,6 @@ checksum = "70e796c081cee67dc755e1a36a0a172b897fab85fc3f6bc48307991f64e4eca9"
 dependencies = [
  "curve25519-dalek",
  "ed25519",
- "rand_core 0.6.4",
  "serde",
  "sha2 0.10.9",
  "subtle",
@@ -3218,17 +3217,6 @@ dependencies = [
 
 [[package]]
 name = "fancy-regex"
-version = "0.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "531e46835a22af56d1e3b66f04844bed63158bc094a628bec1d321d9b4c44bf2"
-dependencies = [
- "bit-set 0.5.3",
- "regex-automata",
- "regex-syntax",
-]
-
-[[package]]
-name = "fancy-regex"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6e24cb5a94bcae1e5408b0effca5cd7172ea3c5755049c5f3af4cd283a165298"
@@ -3263,7 +3251,9 @@ dependencies = [
 
 [[package]]
 name = "fastant"
-version = "0.1.11"
+version = "0.1.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "62bf7fa928ce0c4a43bd6e7d1235318fc32ac3a3dea06a2208c44e729449471a"
 dependencies = [
  "small_ctor",
  "web-time",
@@ -5729,6 +5719,7 @@ version = "10.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0529410abe238729a60b108898784df8984c87f6054c9c4fcacc47e4803c1ce1"
 dependencies = [
+ "aws-lc-rs",
  "base64",
  "ed25519-dalek",
  "getrandom 0.2.16",
@@ -10612,21 +10603,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tiktoken-rs"
-version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "25563eeba904d770acf527e8b370fe9a5547bacd20ff84a0b6c3bc41288e5625"
-dependencies = [
- "anyhow",
- "base64",
- "bstr",
- "fancy-regex 0.13.0",
- "lazy_static",
- "regex",
- "rustc-hash 1.1.0",
-]
-
-[[package]]
 name = "tikv-jemalloc-ctl"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -13394,7 +13370,6 @@ dependencies = [
  "blake3",
  "core-foundation",
  "dunce",
- "file-id",
  "prod-mc-cli-chat-proxy-types",
  "ring",
  "semver",
@@ -13613,7 +13588,7 @@ dependencies = [
 
 [[package]]
 name = "xai-grok-pager"
-version = "0.2.138"
+version = "1.0.1"
 dependencies = [
  "agent-client-protocol",
  "ansi-to-tui",
@@ -13659,7 +13634,6 @@ dependencies = [
  "tar",
  "tempfile",
  "textwrap",
- "tiktoken-rs",
  "tokio",
  "tokio-util",
  "toml",
@@ -13671,7 +13645,6 @@ dependencies = [
  "url",
  "urlencoding",
  "uuid",
- "wait-timeout",
  "walkdir",
  "windows-sys 0.59.0",
  "xai-acp-lib",
@@ -13705,7 +13678,7 @@ dependencies = [
 
 [[package]]
 name = "xai-grok-pager-bin"
-version = "0.2.138"
+version = "1.0.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -13717,6 +13690,7 @@ dependencies = [
  "semver",
  "serde_json",
  "serial_test",
+ "tempfile",
  "tikv-jemalloc-ctl",
  "tikv-jemalloc-sys",
  "tikv-jemallocator",
@@ -13747,7 +13721,6 @@ dependencies = [
  "ratatui",
  "similar",
  "tracing",
- "unicode-width 0.2.0",
  "uuid",
  "xai-grok-pager",
  "xai-grok-shell",
@@ -13857,7 +13830,6 @@ dependencies = [
  "thiserror 2.0.18",
  "toml",
  "tracing",
- "wait-timeout",
  "xai-grok-agent",
  "xai-grok-config",
  "xai-hooks-plugins-types",
@@ -13973,7 +13945,7 @@ dependencies = [
 
 [[package]]
 name = "xai-grok-shell"
-version = "0.2.138"
+version = "1.0.1"
 dependencies = [
  "agent-client-protocol",
  "anyhow",
@@ -14028,7 +14000,6 @@ dependencies = [
  "regex",
  "reqwest 0.12.24",
  "reqwest-middleware 0.4.2",
- "rhai",
  "ring",
  "rsa",
  "rusqlite",
@@ -14366,11 +14337,10 @@ name = "xai-grok-update"
 version = "0.1.220-alpha.4"
 dependencies = [
  "anyhow",
- "base64",
  "dunce",
- "ed25519-dalek",
  "futures",
  "indicatif",
+ "libc",
  "reqwest 0.12.24",
  "semver",
  "serde",
@@ -14381,15 +14351,17 @@ dependencies = [
  "time",
  "tokio",
  "tracing",
+ "url",
  "wiremock",
  "xai-grok-shell",
+ "xai-grok-telemetry",
  "xai-grok-tools",
  "xai-grok-version",
 ]
 
 [[package]]
 name = "xai-grok-version"
-version = "0.2.138"
+version = "1.0.1"
 dependencies = [
  "semver",
 ]

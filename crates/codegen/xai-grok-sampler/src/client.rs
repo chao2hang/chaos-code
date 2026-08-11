@@ -21,7 +21,9 @@ use reqwest::header::{
 };
 use serde::Serialize;
 
-use xai_grok_sampling_types::error::{try_parse_stream_error, user_facing_api_error_message};
+use xai_grok_sampling_types::error::{
+    parse_error_code, try_parse_stream_error, user_facing_api_error_message,
+};
 use xai_grok_sampling_types::{
     ChatCompletionChunk, ChatCompletionRequest, ChatCompletionResponse, ChatContentBlock,
     ChatRequestMessage, ConversationRequest, ConversationResponse, CreateResponseWrapper,
@@ -1147,6 +1149,7 @@ impl SamplingClient {
                 model_metadata,
                 retry_after_secs,
                 should_retry,
+                error_code: parse_error_code(bytes.as_ref()),
             });
         }
 
@@ -1317,6 +1320,7 @@ impl SamplingClient {
                 model_metadata,
                 retry_after_secs,
                 should_retry,
+                error_code: parse_error_code(bytes.as_ref()),
             });
         }
 
@@ -1515,6 +1519,7 @@ impl SamplingClient {
                 model_metadata,
                 retry_after_secs,
                 should_retry,
+                error_code: parse_error_code(bytes.as_ref()),
             });
         }
 
@@ -1687,6 +1692,7 @@ impl SamplingClient {
                 model_metadata,
                 retry_after_secs,
                 should_retry,
+                error_code: parse_error_code(bytes.as_ref()),
             });
         }
 
@@ -1868,6 +1874,7 @@ impl SamplingClient {
                 model_metadata,
                 retry_after_secs,
                 should_retry,
+                error_code: parse_error_code(bytes.as_ref()),
             });
         }
 
@@ -2001,6 +2008,7 @@ impl SamplingClient {
                 model_metadata,
                 retry_after_secs,
                 should_retry,
+                error_code: parse_error_code(bytes.as_ref()),
             });
         }
 
@@ -2333,6 +2341,7 @@ fn stream_collect_error(info: SamplingErrorInfo) -> SamplingError {
         model_metadata: info.model_metadata,
         retry_after_secs: info.retry_after_secs,
         should_retry: info.should_retry,
+        error_code: info.error_code,
     }
 }
 
@@ -2340,6 +2349,7 @@ fn stream_collect_error(info: SamplingErrorInfo) -> SamplingError {
 mod tests {
     use super::*;
     use indexmap::IndexMap;
+    use xai_grok_sampling_types::ApiErrorCode;
     use xai_grok_sampling_types::types::ChatRequestMessage;
 
     #[test]
@@ -2351,6 +2361,7 @@ mod tests {
             is_retryable: true,
             retry_after_secs: Some(3),
             should_retry: Some(false),
+            error_code: Some(ApiErrorCode::InvalidImage),
             model_metadata: None,
             empty_response_context: None,
             doom_loop_triggers: None,
@@ -2365,6 +2376,7 @@ mod tests {
             model_metadata,
             retry_after_secs,
             should_retry,
+            error_code,
         } = stream_collect_error(info)
         else {
             panic!("expected Api");
@@ -2376,8 +2388,16 @@ mod tests {
                 model_metadata.is_none(),
                 retry_after_secs,
                 should_retry,
+                error_code,
             ),
-            (529, "Overloaded", true, Some(3), Some(false)),
+            (
+                529,
+                "Overloaded",
+                true,
+                Some(3),
+                Some(false),
+                Some(ApiErrorCode::InvalidImage)
+            ),
         );
     }
 

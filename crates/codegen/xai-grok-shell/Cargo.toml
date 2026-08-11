@@ -1,7 +1,11 @@
 [package]
 license = "Apache-2.0"
 name = "xai-grok-shell"
+<<<<<<< HEAD
 version = "0.2.138"
+=======
+version = "1.0.1"
+>>>>>>> be713136 (Synced from monorepo)
 edition.workspace = true
 
 [features]
@@ -11,6 +15,7 @@ dhat-heap = ["dep:dhat"]
 # load, and bench tests. Off by default; the tests/benches that use it declare
 # it via `required-features`.
 test-support = []
+test-util = []
 # Local Computer Hub workspace_server (own/attach + crash-restart). Requires
 local-workspace = []
 default-bazel = [
