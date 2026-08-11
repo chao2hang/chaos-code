@@ -26,8 +26,7 @@ pub use self::error::{
     user_facing_api_error_message,
 };
 pub use self::provider_error::{
-    ProviderError, ProviderErrorKind,
-    parse_provider_error, parse_provider_error_str,
+    ProviderError, ProviderErrorKind, parse_provider_error, parse_provider_error_str,
 };
 pub use self::tool_overrides::{
     ClearableField, SearchDateBound, SearchDateBoundError, ToolOverrides, ToolOverridesUpdate,

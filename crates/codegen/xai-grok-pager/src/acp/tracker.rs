@@ -1335,9 +1335,7 @@ impl AcpUpdateTracker {
     /// Which tokenizer the live rate currently counts with. `None` means no
     /// model has been set yet (fresh tracker).
     pub(crate) fn tokenizer_kind(&self) -> Option<TokenizerKind> {
-        self.current_model
-            .as_deref()
-            .map(tokenizer_kind_for_model)
+        self.current_model.as_deref().map(tokenizer_kind_for_model)
     }
 
     /// Whether a real BPE encoder is active (vs. the `chars / 4` fallback).
@@ -7226,7 +7224,9 @@ mod tests {
         let first = tracker.session_streaming_rate().expect("session seeded");
         assert!(first.total_tokens > 0);
         tracker.finish_turn(&mut sb);
-        let after_turn = tracker.session_streaming_rate().expect("survives finish_turn");
+        let after_turn = tracker
+            .session_streaming_rate()
+            .expect("survives finish_turn");
         assert_eq!(after_turn.total_tokens, first.total_tokens);
         // 第二个 turn 继续累积。
         tracker.handle_update(agent_chunk("world"), &meta(), &mut sb);
@@ -7411,7 +7411,11 @@ mod tests {
             "o3-mini",
             "o4-mini",
         ] {
-            assert_eq!(tokenizer_kind_for_model(model), TokenizerKind::O200k, "{model}");
+            assert_eq!(
+                tokenizer_kind_for_model(model),
+                TokenizerKind::O200k,
+                "{model}"
+            );
         }
         for model in ["gpt-4", "gpt-4-turbo", "gpt-3.5-turbo"] {
             assert_eq!(
@@ -7421,10 +7425,18 @@ mod tests {
             );
         }
         for model in ["text-davinci-003", "code-davinci-002"] {
-            assert_eq!(tokenizer_kind_for_model(model), TokenizerKind::P50k, "{model}");
+            assert_eq!(
+                tokenizer_kind_for_model(model),
+                TokenizerKind::P50k,
+                "{model}"
+            );
         }
         for model in ["davinci", "text-curie-001", "babbage", "text-ada-001"] {
-            assert_eq!(tokenizer_kind_for_model(model), TokenizerKind::R50k, "{model}");
+            assert_eq!(
+                tokenizer_kind_for_model(model),
+                TokenizerKind::R50k,
+                "{model}"
+            );
         }
     }
 
@@ -7463,7 +7475,10 @@ mod tests {
         tracker.set_current_model("gpt-4o");
         assert_eq!(tracker.tokenizer_kind(), Some(TokenizerKind::O200k));
         assert!(tracker.tokenizer_available());
-        assert!(tracker.streaming_rate().is_none(), "model change must reset live rate");
+        assert!(
+            tracker.streaming_rate().is_none(),
+            "model change must reset live rate"
+        );
         assert!(
             tracker.session_streaming_rate().is_none(),
             "model change must reset session rate"

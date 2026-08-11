@@ -133,10 +133,7 @@ fn doctor_planning_opens_refuses_remote_and_rejects_stale_identity() {
         },
         &mut app,
     );
-    assert!(
-        last_system_text(&app, id)
-            .contains("请在本地电脑运行：chaos doctor fix ssh-wrap")
-    );
+    assert!(last_system_text(&app, id).contains("请在本地电脑运行：chaos doctor fix ssh-wrap"));
 
     app.agents
         .get_mut(&id)
@@ -183,10 +180,7 @@ fn doctor_apply_completion_prefers_initiator_then_active_and_welcome_fallback() 
         },
         &mut app,
     );
-    assert_eq!(
-        last_system_text(&app, active),
-        "无法应用修复：apply failed"
-    );
+    assert_eq!(last_system_text(&app, active), "无法应用修复：apply failed");
 
     app.agents.clear();
     app.active_view = ActiveView::Welcome;

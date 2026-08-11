@@ -621,7 +621,8 @@ mod tests {
         // DeepSeek 402 / Zhipu 4013 balance: body classifies as Billing →
         // Fatal immediately, even though a 5xx (transient) status alone
         // would otherwise retry.
-        let billing = r#"{"error":{"message":"Insufficient Balance","type":"insufficient_balance_error"}}"#;
+        let billing =
+            r#"{"error":{"message":"Insufficient Balance","type":"insufficient_balance_error"}}"#;
         let err = api_err(StatusCode::PAYMENT_REQUIRED, billing);
         assert!(matches!(
             classify_error(&err, 0, 15, RATE_LIMIT_RETRY_THRESHOLD),
@@ -649,8 +650,7 @@ mod tests {
     fn classify_domestic_rate_limit_retries_with_backoff() {
         // DeepSeek 429 with a rate-limit body → RetryWithBackoff, and honors
         // Retry-After.
-        let body =
-            r#"{"error":{"message":"Rate limit reached","type":"rate_limit_error","code":"rate_limit_exceeded"}}"#;
+        let body = r#"{"error":{"message":"Rate limit reached","type":"rate_limit_error","code":"rate_limit_exceeded"}}"#;
         let err = SamplingError::Api {
             status: StatusCode::TOO_MANY_REQUESTS,
             message: body.into(),
@@ -658,7 +658,12 @@ mod tests {
             retry_after_secs: Some(5),
             should_retry: None,
         };
-        match classify_error(&err, 0, RATE_LIMIT_RETRY_THRESHOLD, RATE_LIMIT_RETRY_THRESHOLD) {
+        match classify_error(
+            &err,
+            0,
+            RATE_LIMIT_RETRY_THRESHOLD,
+            RATE_LIMIT_RETRY_THRESHOLD,
+        ) {
             RetryDecision::RetryWithBackoff { backoff, .. } => {
                 assert_eq!(backoff, std::time::Duration::from_secs(5));
             }
@@ -669,7 +674,12 @@ mod tests {
         let qwen_body = r#"{"code":"Throttling","message":"Flow control triggered, please slow down","request_id":"x"}"#;
         let err = api_err(StatusCode::TOO_MANY_REQUESTS, qwen_body);
         assert!(matches!(
-            classify_error(&err, 0, RATE_LIMIT_RETRY_THRESHOLD, RATE_LIMIT_RETRY_THRESHOLD),
+            classify_error(
+                &err,
+                0,
+                RATE_LIMIT_RETRY_THRESHOLD,
+                RATE_LIMIT_RETRY_THRESHOLD
+            ),
             RetryDecision::RetryWithBackoff { .. }
         ));
     }
