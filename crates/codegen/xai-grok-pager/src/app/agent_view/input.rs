@@ -51,7 +51,6 @@ impl AgentView {
             || self.block_viewer.is_some()
             || self.gboom.is_some()
             || self.show_goal_detail
-            || self.usage_detail.is_some()
             || self.btw_focused
             || !self.permission_queue.is_empty()
             || self.question_view.is_some()
@@ -160,7 +159,6 @@ impl AgentView {
             && self.highlighted_link_idx.is_none()
             && !self.show_goal_detail
             && !self.show_workflows
-            && self.usage_detail.is_none()
             && self.rewind_state.is_none()
             && self.btw_state.is_none()
             && self.jump_state.is_none()
@@ -612,41 +610,6 @@ impl AgentView {
                 return InputOutcome::Changed;
             }
         }
-        if self.usage_detail.is_some() {
-            if let Event::Key(key) = ev
-                && key.kind != KeyEventKind::Release
-            {
-                match key.code {
-                    KeyCode::Esc | KeyCode::Char('q') => {
-                        self.close_usage_detail();
-                        return InputOutcome::Changed;
-                    }
-                    _ => {
-                        return InputOutcome::Changed;
-                    }
-                }
-            }
-            // The close button, and the status chip that opened it — the
-            // overlay is centered, so the chip stays visible and clicking it
-            // again reads as a toggle. Both go through the same close helper.
-            if let Event::Mouse(mouse) = ev
-                && matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
-                && (self.hit_usage_close.contains(mouse.column, mouse.row)
-                    || self.hit_total_tokens.contains(mouse.column, mouse.row))
-            {
-                self.close_usage_detail();
-                return InputOutcome::Changed;
-            }
-            if let Event::Mouse(mouse) = ev
-                && matches!(mouse.kind, MouseEventKind::Moved)
-                && self.hit_usage_close.update_hover(mouse.column, mouse.row)
-            {
-                return InputOutcome::Changed;
-            }
-            if matches!(ev, Event::Mouse(_) | Event::Paste(_)) {
-                return InputOutcome::Changed;
-            }
-        }
         if self.btw_state.is_some()
             && let Event::Key(key) = ev
             && key.kind != KeyEventKind::Release
@@ -974,7 +937,6 @@ impl AgentView {
                                 .hit_plan_approval_status
                                 .update_hover(mouse.column, mouse.row);
                             changed |= self.hit_context.update_hover(mouse.column, mouse.row);
-                            changed |= self.hit_total_tokens.update_hover(mouse.column, mouse.row);
                             changed |= self.hit_credits.update_hover(mouse.column, mouse.row);
                         }
                         MouseEventKind::Down(MouseButton::Left) => {
@@ -1127,6 +1089,12 @@ impl AgentView {
                     && let Some(outcome) = self.handle_scrollback_search_paste(text)
                 {
                     return outcome;
+                }
+                if self.active_pane == AgentPane::Scrollback
+                    && !self.vim_mode
+                    && self.no_input_overlay_pending()
+                {
+                    return InputOutcome::ActionThenForward(Action::FocusPrompt);
                 }
                 if self.active_pane == AgentPane::Prompt {
                     self.ephemeral_tip
@@ -1767,7 +1735,7 @@ mod background_and_tasks_shortcut_tests {
         assert!(child.is_subagent_view);
         assert!(
             !child
-                .current_shortcut_hints(&registry)
+                .current_shortcut_hints(&registry, false)
                 .iter()
                 .any(|hint| hint.label == "send to bg")
         );
@@ -2610,116 +2578,81 @@ mod rich_textarea_paste_routing_tests {
         assert_eq!(agent.prompt.text(), "hidden prompt");
     }
 }
+/// Pasting while the scrollback pane holds the keyboard (prompt unfocused) must land in
+/// the composer, mirroring how a typed character focus-forwards into the prompt.
 #[cfg(test)]
-mod usage_detail_tests {
-    use super::test_fixtures::make_agent;
+mod scrollback_paste_focus_forward_tests {
+    use super::test_fixtures::{make_agent, make_followup_permission_state};
     use super::{AgentPane, AgentView};
     use crate::actions::ActionRegistry;
+    use crate::app::actions::Action;
     use crate::app::app_view::InputOutcome;
-    use crate::views::usage_detail::UsageDetail;
-    use crossterm::event::{
-        Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
-    };
-    use ratatui::layout::Rect;
-
-    fn key(code: KeyCode) -> Event {
-        Event::Key(KeyEvent::new(code, KeyModifiers::NONE))
-    }
-
-    fn click(col: u16, row: u16) -> Event {
-        Event::Mouse(MouseEvent {
-            kind: MouseEventKind::Down(MouseButton::Left),
-            column: col,
-            row,
-            modifiers: KeyModifiers::NONE,
-        })
-    }
-
-    /// An agent with the usage overlay open, focused on the prompt (the state
-    /// a chip click leaves behind).
-    fn overlay_agent() -> AgentView {
+    use crossterm::event::Event;
+    fn scrollback_agent() -> (AgentView, ActionRegistry) {
         let mut agent = make_agent();
-        agent.set_active_pane(AgentPane::Prompt, true);
-        agent.usage_detail = Some(UsageDetail::Loading);
+        agent.vim_mode = false;
+        agent.set_active_pane(AgentPane::Scrollback, true);
+        (agent, ActionRegistry::defaults())
+    }
+    /// The `ActionThenForward` round-trip the event loop performs: dispatch `FocusPrompt`
+    /// to focus the prompt pane, then re-process the same paste through it so the text lands.
+    #[test]
+    fn paste_from_scrollback_round_trip_lands_in_composer() {
+        let (mut agent, reg) = scrollback_agent();
+        let paste = Event::Paste("pasted text".to_owned());
+        assert!(matches!(
+            agent.handle_input(&paste, &reg),
+            InputOutcome::ActionThenForward(Action::FocusPrompt)
+        ));
+        agent.set_active_pane(AgentPane::Prompt, false);
+        let out = agent.handle_input(&paste, &reg);
+        assert!(matches!(out, InputOutcome::Changed));
+        assert_eq!(agent.prompt.text(), "pasted text");
+    }
+    /// A parked blocking card stays parked: `FocusPrompt` would unpark it and the
+    /// overlay would swallow the re-dispatched paste, so a paste here is inert.
+    #[test]
+    fn paste_from_scrollback_does_not_unpark_a_pending_overlay() {
+        let (mut agent, reg) = scrollback_agent();
         agent
-    }
-
-    #[test]
-    fn esc_closes_the_overlay() {
-        let mut agent = overlay_agent();
-        let reg = ActionRegistry::defaults();
-        assert!(matches!(
-            agent.handle_input(&key(KeyCode::Esc), &reg),
-            InputOutcome::Changed
-        ));
-        assert!(agent.usage_detail.is_none(), "Esc must close the overlay");
-    }
-
-    #[test]
-    fn q_closes_the_overlay() {
-        let mut agent = overlay_agent();
-        let reg = ActionRegistry::defaults();
-        agent.handle_input(&key(KeyCode::Char('q')), &reg);
-        assert!(agent.usage_detail.is_none());
-    }
-
-    /// The overlay swallows every other key — typing behind it must not reach
-    /// the prompt.
-    #[test]
-    fn other_keys_do_not_reach_the_prompt() {
-        let mut agent = overlay_agent();
-        let reg = ActionRegistry::defaults();
-        agent.handle_input(&key(KeyCode::Char('x')), &reg);
-        assert!(agent.usage_detail.is_some(), "overlay stays open");
-        assert_eq!(
-            agent.prompt.text(),
-            "",
-            "keystroke must not reach the prompt"
-        );
-    }
-
-    #[test]
-    fn close_button_click_closes_the_overlay() {
-        let mut agent = overlay_agent();
-        let reg = ActionRegistry::defaults();
-        agent.hit_usage_close.rect = Some(Rect::new(50, 3, 3, 1));
-        agent.handle_input(&click(51, 3), &reg);
-        assert!(agent.usage_detail.is_none());
+            .permission_queue
+            .push_back(make_followup_permission_state());
+        assert!(agent.parked_card().is_some(), "card should be parked");
+        assert!(agent.focused_card().is_none());
+        let out = agent.handle_input(&Event::Paste("hello".to_owned()), &reg);
         assert!(
-            agent.hit_usage_close.rect.is_none(),
-            "the close-button rect must not outlive the popup"
+            matches!(out, InputOutcome::Unchanged),
+            "paste must not unpark a pending overlay, got {out:?}"
         );
+        assert!(agent.parked_card().is_some(), "card must stay parked");
+        assert_eq!(agent.active_pane, AgentPane::Scrollback);
     }
-
-    /// The status chip is still visible under the centered overlay, so a
-    /// second click on it reads as a toggle.
-    #[test]
-    fn second_chip_click_closes_the_overlay() {
-        let mut agent = overlay_agent();
-        let reg = ActionRegistry::defaults();
-        agent.hit_total_tokens.rect = Some(Rect::new(70, 0, 10, 1));
-        agent.handle_input(&click(72, 0), &reg);
-        assert!(agent.usage_detail.is_none());
+    fn make_test_png(width: u32, height: u32) -> Vec<u8> {
+        use image::{ImageBuffer, Rgba};
+        let img: ImageBuffer<Rgba<u8>, Vec<u8>> =
+            ImageBuffer::from_pixel(width, height, Rgba([128, 64, 32, 255]));
+        let mut buf = Vec::new();
+        img.write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Png)
+            .unwrap();
+        buf
     }
-
-    /// A click anywhere else is swallowed, not passed through to the
-    /// scrollback underneath.
+    /// A dragged image arrives as a `file://` bracketed paste; from a focused
+    /// scrollback it takes the same focus-forward round trip as a text paste.
     #[test]
-    fn stray_click_is_swallowed() {
-        let mut agent = overlay_agent();
-        let reg = ActionRegistry::defaults();
+    fn dragging_image_while_scrollback_focused_attaches_to_composer() {
+        let (mut agent, reg) = scrollback_agent();
+        let dir = tempfile::tempdir().unwrap();
+        let png = dir.path().join("drag.png");
+        std::fs::write(&png, make_test_png(8, 8)).unwrap();
+        let drop = Event::Paste(format!("file://{}", png.display()));
         assert!(matches!(
-            agent.handle_input(&click(5, 5), &reg),
-            InputOutcome::Changed
+            agent.handle_input(&drop, &reg),
+            InputOutcome::ActionThenForward(Action::FocusPrompt)
         ));
-        assert!(agent.usage_detail.is_some());
-    }
-
-    /// While open, the overlay owns Esc — the dashboard back-out guard must
-    /// not steal it.
-    #[test]
-    fn overlay_is_an_esc_consumer() {
-        let agent = overlay_agent();
-        assert!(!agent.no_esc_consumer_pending());
+        agent.set_active_pane(AgentPane::Prompt, false);
+        let out = agent.handle_input(&drop, &reg);
+        assert!(matches!(out, InputOutcome::Changed));
+        assert_eq!(agent.prompt.images.len(), 1);
+        assert!(agent.prompt.text().contains("[Image #1]"));
     }
 }

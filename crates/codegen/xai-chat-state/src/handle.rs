@@ -116,14 +116,12 @@ impl ChatStateHandle {
         model_id: Option<String>,
         usage: TokenUsage,
         api_duration_ms: Option<u64>,
-        decode_duration_ms: Option<u64>,
         cost_usd_ticks: Option<i64>,
     ) {
         let _ = self.cmd_tx.send(ChatStateCommand::RecordModelCallUsage {
             model_id,
             usage,
             api_duration_ms,
-            decode_duration_ms,
             cost_usd_ticks,
         });
     }
@@ -172,20 +170,6 @@ impl ChatStateHandle {
             .send(ChatStateCommand::UpdateSamplingConfig { config });
     }
 
-    /// Update sampling config and wait until the actor has consumed the write.
-    /// The follow-up query uses the same command channel, so FIFO ordering makes
-    /// its response an acknowledgement without adding a second command shape.
-    pub async fn update_sampling_config_and_wait(&self, config: SamplingConfig) -> bool {
-        if self
-            .cmd_tx
-            .send(ChatStateCommand::UpdateSamplingConfig { config })
-            .is_err()
-        {
-            return false;
-        }
-        self.get_sampling_config().await.is_some()
-    }
-
     /// Track that the agent edited a file path.
     pub fn record_agent_edited_path(&self, path: String) {
         let _ = self
@@ -225,32 +209,19 @@ impl ChatStateHandle {
         });
     }
 
-    /// Add selective compression blocks without modifying canonical history.
-    pub async fn apply_selective_compression(
+    /// See [`ChatStateCommand::StripConversationImages`]. The outcome is
+    /// typed and disk-acknowledged: `Applied` means the backup and the
+    /// rewrite both reached disk; a dead actor reads as `ActorUnavailable`,
+    /// never as a successful no-op.
+    pub async fn strip_conversation_images(
         &self,
-        ranges: Vec<xai_grok_compaction::selective::CompressionRange>,
-        protected_items: BTreeSet<usize>,
-    ) -> Result<
-        Vec<xai_grok_compaction::selective::BlockId>,
-        xai_grok_compaction::selective::SelectiveError,
-    > {
-        self.query("ApplySelectiveCompression", |reply| {
-            ChatStateCommand::ApplySelectiveCompression {
-                ranges,
-                protected_items,
-                reply,
-            }
+        urls: Vec<std::sync::Arc<str>>,
+    ) -> crate::StripOutcome {
+        self.query("StripConversationImages", |reply| {
+            ChatStateCommand::StripConversationImages { urls, reply }
         })
         .await
-        .unwrap_or({
-            Err(
-                xai_grok_compaction::selective::SelectiveError::InvalidRange {
-                    start: 0,
-                    end: 0,
-                    history_len: 0,
-                },
-            )
-        })
+        .unwrap_or(crate::StripOutcome::ActorUnavailable)
     }
 
     /// Out-of-band history repair (`x.ai/session/repair`); see
@@ -498,14 +469,6 @@ impl ChatStateHandle {
     pub async fn get_agent_edited_paths(&self) -> BTreeSet<String> {
         self.query("GetAgentEditedPaths", |reply| {
             ChatStateCommand::GetAgentEditedPaths { reply }
-        })
-        .await
-        .unwrap_or_default()
-    }
-
-    pub async fn get_selective_compaction(&self) -> crate::SelectiveState {
-        self.query("GetSelectiveCompaction", |reply| {
-            ChatStateCommand::GetSelectiveCompaction { reply }
         })
         .await
         .unwrap_or_default()

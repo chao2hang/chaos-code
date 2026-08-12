@@ -1,10 +1,6 @@
 [package]
 name = "xai-grok-pager"
-<<<<<<< HEAD
-version = "0.2.138"
-=======
-version = "1.0.1"
->>>>>>> be713136 (Synced from monorepo)
+version = "1.0.3"
 edition.workspace = true
 license = "Apache-2.0"
 authors = ["xAI"]
@@ -20,6 +16,9 @@ xai-prompt-queue = { workspace = true }
 
 # Presentation-primitives layer (extracted)
 xai-grok-pager-render = { path = "../xai-grok-pager-render" }
+
+# Diff hunk construction (extracted)
+xai-grok-pager-diff = { path = "../xai-grok-pager-diff" }
 
 # Rendering
 ratatui = { workspace = true, features = ["crossterm", "unstable-widget-ref"] }
@@ -94,6 +93,8 @@ xai-grok-update = { path = "../xai-grok-update" }
 agent-client-protocol = { workspace = true }
 xai-acp-lib = { workspace = true }
 xai-file-utils = { path = "../xai-file-utils" }
+# Crash-recovery registry of open TUI sessions.
+xai-grok-active-sessions = { workspace = true }
 xai-grok-config = { workspace = true }
 # Voice dictation. `audio` (mic capture) is enabled on every target. On
 # macOS/Windows it links cpal; on Linux it compiles a subprocess-recorder
@@ -102,6 +103,8 @@ xai-grok-config = { workspace = true }
 xai-grok-voice = { path = "../xai-grok-voice", default-features = false, features = ["audio"] }
 xai-grok-shell = { workspace = true }
 xai-grok-workspace = { workspace = true }
+# Foreign coding-agent session discovery.
+xai-grok-foreign-sessions = { workspace = true }
 xai-token-estimation = { workspace = true }
 xai-grok-telemetry = { workspace = true }
 xai-fast-worktree = { path = "../xai-fast-worktree", features = ["metadata"] }
@@ -115,12 +118,6 @@ xai-grok-plugin-marketplace = { path = "../xai-grok-plugin-marketplace" }
 xai-hooks-plugins-types = { path = "../xai-hooks-plugins-types" }
 walkdir = { workspace = true }
 xai-grok-sandbox = { path = "../xai-grok-sandbox", default-features = false }
-
-# Live token-rate tracking: tiktoken-rs gives precise per-chunk BPE token
-# counts so the right-corner tok/s chip doesn't have to fall back to the
-# bytes/4 heuristic (which over-counts CJK by ~3x). Adds ~1.5 MB of cl100k_base
-# tables to the binary; lazy-init on first chunk keeps startup cost flat.
-tiktoken-rs = "0.7"
 
 # Base64 encoding for image data
 base64 = { workspace = true }

@@ -188,7 +188,7 @@ pub fn is_sendable_wait(activity: &Option<TurnActivity>) -> bool {
             WaitingReason::TaskOutput { waits: true, .. }
                 | WaitingReason::TasksComplete
                 | WaitingReason::Sleep
-                | WaitingReason::Subagent
+                | WaitingReason::Subagent { .. }
         ))
     )
 }
@@ -715,6 +715,11 @@ fn compute_activity(
             format!("Retrying (attempt {attempt})…"),
             false,
         ),
+        (AgentState::TurnRunning, Some(TurnActivity::WritingToolCall(writing))) => (
+            Style::default().fg(theme.text_secondary),
+            writing.label(),
+            false,
+        ),
         (AgentState::TurnRunning, Some(TurnActivity::Waiting(reason))) => (
             // Explicit wait reason (model / subagent / task output / tasks /
             // sleep): name what the agent is blocked on instead of a generic
@@ -901,7 +906,7 @@ mod tests {
             WaitingReason::Model
         ))));
         assert!(
-            is_sendable_wait(&Some(TurnActivity::Waiting(WaitingReason::Subagent))),
+            is_sendable_wait(&Some(TurnActivity::Waiting(WaitingReason::subagent()))),
             "the shell aborts a blocked foreground subagent await on send-now, \
              so Enter during it must read as sendable"
         );
@@ -973,9 +978,15 @@ mod tests {
         use crate::acp::tracker::WaitingReason;
         let theme = Theme::current();
         let cases = [
-            (WaitingReason::Model, "等待回复…"),
-            (WaitingReason::Subagent, "等待子代理…"),
-            (WaitingReason::task_output(), "等待任务输出…"),
+            (WaitingReason::Model, "Waiting for response…"),
+            (WaitingReason::subagent(), "Waiting on subagent…"),
+            (
+                WaitingReason::Subagent {
+                    display: Some("fix flaky test: Running: cargo test".into()),
+                },
+                "fix flaky test: Running: cargo test…",
+            ),
+            (WaitingReason::task_output(), "Waiting on task output…"),
             (
                 WaitingReason::TaskOutput {
                     task_ids: vec!["t1".into()],
@@ -984,8 +995,8 @@ mod tests {
                 },
                 "compile release…",
             ),
-            (WaitingReason::TasksComplete, "等待任务完成…"),
-            (WaitingReason::Sleep, "休眠中…"),
+            (WaitingReason::TasksComplete, "Waiting on tasks…"),
+            (WaitingReason::Sleep, "Sleeping…"),
         ];
         for (reason, expected) in cases {
             let (_, label, is_tool) = compute_activity(
@@ -1555,7 +1566,7 @@ mod tests {
 
     #[test]
     fn queued_hint_renders_after_phase_timer() {
-        let activity = Some(TurnActivity::Waiting(WaitingReason::Subagent));
+        let activity = Some(TurnActivity::Waiting(WaitingReason::subagent()));
         let mut args = idle_args(Watchers::default());
         args.state = &AgentState::TurnRunning;
         args.activity = &activity;
@@ -1564,7 +1575,7 @@ mod tests {
         args.held_queue_top_sendable = true;
         let text = render_row_text(args, 80);
         assert!(
-            text.contains("等 待 子 代 理 … 5m59s · 1 queued — Enter to send now"),
+            text.contains("Waiting on subagent… 5m59s · 1 queued — Enter to send now"),
             "phase timer must sit between the wait label and the queued hint, got: {text:?}"
         );
     }

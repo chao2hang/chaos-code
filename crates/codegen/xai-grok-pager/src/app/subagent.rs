@@ -7,7 +7,7 @@ use serde::Deserialize;
 use std::sync::Arc;
 use std::time::Instant;
 use xai_grok_shell::session::storage::{
-    ReplayEmission, ReplayPathHint, stream_replay_updates_at_hinted,
+    ReplayEmission, ReplayLookupFallback, ReplayPathHint, stream_replay_updates_at_hinted,
 };
 /// Enriched subagent tracking info.
 ///
@@ -58,7 +58,7 @@ pub struct SubagentInfo {
     pub context_usage_pct: Option<u8>,
     pub tools_used: Vec<Arc<str>>,
     pub error_count: Option<u32>,
-    /// Live activity label ("思考中", "运行: cargo build") mirroring
+    /// Live activity label ("Thinking", "Running: cargo build") mirroring
     /// the scrollback block's field; feeds the tasks pane row and the
     /// dashboard activity column. Cleared on `SubagentFinished`.
     pub activity_label: Option<String>,
@@ -185,6 +185,21 @@ pub(crate) fn replay_inherited_updates(
     parent_cwd: &std::path::Path,
     child_cwd: Option<&std::path::Path>,
 ) {
+    replay_inherited_updates_with_fallback(
+        child_view,
+        child_session_id,
+        parent_cwd,
+        child_cwd,
+        ReplayLookupFallback::Relocation,
+    );
+}
+pub(crate) fn replay_inherited_updates_with_fallback(
+    child_view: &mut crate::app::agent_view::AgentView,
+    child_session_id: &str,
+    parent_cwd: &std::path::Path,
+    child_cwd: Option<&std::path::Path>,
+    fallback: ReplayLookupFallback,
+) {
     let home = effective_grok_home();
     let replay_meta = crate::acp::meta::NotificationMeta {
         is_replay: true,
@@ -193,6 +208,7 @@ pub(crate) fn replay_inherited_updates(
     let hint = ReplayPathHint {
         parent_cwd: Some(parent_cwd),
         child_cwd,
+        fallback,
     };
     child_view.scrollback.begin_batch();
     let outcome = stream_replay_updates_at_hinted(child_session_id, &home, hint, |update| {
@@ -389,7 +405,7 @@ pub(crate) fn format_context_badge(info: &SubagentInfo) -> &str {
 ///
 /// Returns `(Some(tag), rest_after_close_bracket)` if the description begins
 /// with `[<non-empty>]`, otherwise `(None, description)` unchanged.
-fn parse_tag_prefix(description: &str) -> (Option<&str>, &str) {
+pub(crate) fn parse_tag_prefix(description: &str) -> (Option<&str>, &str) {
     if let Some(rest) = description.strip_prefix('[')
         && let Some(close) = rest.find(']')
     {
@@ -466,12 +482,12 @@ pub(crate) fn format_subagent_meta(
 /// Format a [`TurnActivity`] into a concise display label.
 ///
 /// Used in the subagent scrollback block and the fullscreen title bar.
-/// Callers handle the `None` activity / "等待中" case separately.
+/// Callers handle the `None` activity / "Waiting" case separately.
 pub(crate) fn format_activity_label(activity: &crate::acp::tracker::TurnActivity) -> String {
     use crate::acp::tracker::TurnActivity;
     match activity {
-        TurnActivity::Thinking => "思考中".to_string(),
-        TurnActivity::Responding => "回复中".to_string(),
+        TurnActivity::Thinking => "Thinking".to_string(),
+        TurnActivity::Responding => "Responding".to_string(),
         TurnActivity::ToolRunning { title, description } => {
             if let Some(desc) = description
                 .as_deref()
@@ -480,31 +496,32 @@ pub(crate) fn format_activity_label(activity: &crate::acp::tracker::TurnActivity
             {
                 crate::acp::tracker::format_waiting_for_subject(desc)
             } else if title.is_empty() {
-                "运行工具".to_string()
+                "Running tool".to_string()
             } else {
                 let first_line = title.lines().next().unwrap_or(title);
                 let max_len = crate::acp::tracker::MAX_ACTIVITY_SUBJECT_CHARS;
                 if first_line.len() <= max_len {
-                    format!("运行: {first_line}")
+                    format!("Running: {first_line}")
                 } else {
                     let char_count = first_line.chars().count();
                     if char_count <= max_len {
-                        format!("运行: {first_line}")
+                        format!("Running: {first_line}")
                     } else {
                         let truncated: String = first_line.chars().take(max_len).collect();
-                        format!("运行: {truncated}\u{2026}")
+                        format!("Running: {truncated}\u{2026}")
                     }
                 }
             }
         }
-        TurnActivity::AutoCompacting => "压缩中".to_string(),
+        TurnActivity::AutoCompacting => "Compacting".to_string(),
         TurnActivity::Retrying {
             attempt,
             max_retries,
             ..
         } => {
-            format!("重试中 ({attempt}/{max_retries})")
+            format!("Retrying ({attempt}/{max_retries})")
         }
+        TurnActivity::WritingToolCall(writing) => writing.label(),
         TurnActivity::Waiting(reason) => reason.label(),
     }
 }
@@ -1155,19 +1172,22 @@ mod tests {
     #[test]
     fn activity_label_thinking() {
         use crate::acp::tracker::TurnActivity;
-        assert_eq!(format_activity_label(&TurnActivity::Thinking), "思考中");
+        assert_eq!(format_activity_label(&TurnActivity::Thinking), "Thinking");
     }
     #[test]
     fn activity_label_responding() {
         use crate::acp::tracker::TurnActivity;
-        assert_eq!(format_activity_label(&TurnActivity::Responding), "回复中",);
+        assert_eq!(
+            format_activity_label(&TurnActivity::Responding),
+            "Responding",
+        );
     }
     #[test]
     fn activity_label_auto_compacting() {
         use crate::acp::tracker::TurnActivity;
         assert_eq!(
             format_activity_label(&TurnActivity::AutoCompacting),
-            "压缩中",
+            "Compacting",
         );
     }
     #[test]
@@ -1179,19 +1199,19 @@ mod tests {
                 max_retries: 5,
                 reason: "rate limited".into(),
             }),
-            "重试中 (2/5)",
+            "Retrying (2/5)",
         );
     }
     #[test]
     fn activity_label_waiting_reasons() {
         use crate::acp::tracker::{TurnActivity, WaitingReason};
         assert_eq!(
-            format_activity_label(&TurnActivity::Waiting(WaitingReason::Subagent)),
-            "等待子代理…",
+            format_activity_label(&TurnActivity::Waiting(WaitingReason::subagent())),
+            "Waiting on subagent…",
         );
         assert_eq!(
             format_activity_label(&TurnActivity::Waiting(WaitingReason::task_output())),
-            "等待任务输出…",
+            "Waiting on task output…",
         );
         assert_eq!(
             format_activity_label(&TurnActivity::Waiting(WaitingReason::TaskOutput {
@@ -1210,7 +1230,7 @@ mod tests {
                 title: String::new(),
                 description: None
             }),
-            "运行工具",
+            "Running tool",
         );
     }
     #[test]
@@ -1221,7 +1241,7 @@ mod tests {
                 title: "cargo build".into(),
                 description: None
             }),
-            "运行: cargo build",
+            "Running: cargo build",
         );
     }
     #[test]
@@ -1232,7 +1252,7 @@ mod tests {
             title: title.clone(),
             description: None,
         });
-        assert_eq!(result, format!("运行: {title}"));
+        assert_eq!(result, format!("Running: {title}"));
         assert!(!result.contains('\u{2026}'), "no ellipsis at boundary");
     }
     #[test]
@@ -1243,7 +1263,7 @@ mod tests {
             title,
             description: None,
         });
-        let expected_prefix = "运行: ".to_string() + "a".repeat(40).as_str();
+        let expected_prefix = "Running: ".to_string() + "a".repeat(40).as_str();
         assert!(result.starts_with(&expected_prefix));
         assert!(result.ends_with('\u{2026}'), "truncated with ellipsis");
     }
@@ -1257,7 +1277,7 @@ mod tests {
             title: title.clone(),
             description: None,
         });
-        assert_eq!(result, format!("运行: {title}"));
+        assert_eq!(result, format!("Running: {title}"));
         assert!(!result.contains('\u{2026}'), "no spurious ellipsis");
     }
     #[test]
@@ -1269,7 +1289,7 @@ mod tests {
             description: None,
         });
         assert!(result.ends_with('\u{2026}'), "truncated with ellipsis");
-        let after_prefix = result.strip_prefix("运行: ").unwrap();
+        let after_prefix = result.strip_prefix("Running: ").unwrap();
         let content_chars: Vec<char> = after_prefix.chars().collect();
         assert_eq!(content_chars.len(), 41);
     }
@@ -1280,6 +1300,6 @@ mod tests {
             title: "first line\nsecond line".into(),
             description: None,
         });
-        assert_eq!(result, "运行: first line");
+        assert_eq!(result, "Running: first line");
     }
 }

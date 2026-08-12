@@ -25,10 +25,10 @@ use xai_grok_sampling_types::error::{
     parse_error_code, try_parse_stream_error, user_facing_api_error_message,
 };
 use xai_grok_sampling_types::{
-    ChatCompletionChunk, ChatCompletionRequest, ChatCompletionResponse, ChatContentBlock,
-    ChatRequestMessage, ConversationRequest, ConversationResponse, CreateResponseWrapper,
-    DOOM_LOOP_CHECK_HEADER, MessageContent, MessagesRequestWrapper, ResponseModelMetadata, Result,
-    Role, SamplingError, SentCredential, build_messages_request, is_check_event, messages, rs,
+    ChatCompletionChunk, ChatCompletionRequest, ChatCompletionResponse, ConversationRequest,
+    ConversationResponse, CreateResponseWrapper, DOOM_LOOP_CHECK_HEADER, MessagesRequestWrapper,
+    ResponseModelMetadata, Result, SamplingError, SentCredential, build_messages_request,
+    is_check_event, messages, rs,
 };
 
 use crate::config::{AuthScheme, OriginClientInfo, SamplerConfig};
@@ -44,63 +44,6 @@ const DEFAULT_CLIENT_IDENTIFIER: &str = "grok-shell";
 /// Product identifier baked into User-Agent strings.
 const AGENT_PRODUCT: &str = "grok-shell";
 const ANTHROPIC_DEFAULT_MAX_TOKENS: u32 = 128_000;
-
-/// Placeholder injected into assistant messages that lack
-/// `reasoning_content` while in thinking mode. Some gateways (observed:
-/// the bblbb proxy serving GLM-5 / DeepSeek-R1 / Qwen3-Thinking) reject
-/// any request whose assistant messages omit the field once thinking mode
-/// is active — the wire schema only requires the field to be present and
-/// non-empty, not truthful. See [`SamplerClient::apply_defaults`].
-///
-/// TODO(net-gateway): remove once thinking-mode gateways stop requiring
-/// non-empty `reasoning_content` on every assistant message. The local
-/// model already stores reasoning as a sibling `Reasoning` item folded onto
-/// the following assistant turn; this backfill only exists to paper over
-/// turns where the model emitted no reasoning (bare tool calls, or reasoning
-/// lost to compaction).
-const REASONING_PLACEHOLDER: &str = "(no reasoning emitted)";
-
-/// Minimum spacing between `reasoning_content` backfill warnings, to avoid
-/// flooding the log on every request in a thinking-mode session.
-const REASONING_BACKFILL_WARN_INTERVAL: std::time::Duration =
-    std::time::Duration::from_secs(5 * 60);
-
-/// Prefix the freemodel gateway (work.freemodel.dev) requires on
-/// `messages[0]` (a system message) to accept a request as coming from
-/// the WorkBuddy client. Verified against the real client: exact 31-char
-/// prefix, case-sensitive; headers are NOT part of the client check.
-const WORKBUDDY_GATEWAY_MARKER: &str = "This conversation is powered by";
-
-/// Fingerprint the freemodel gateway blocks: any occurrence of this exact
-/// substring in the request body marks the request as coming from the Chaos
-/// client and is rejected with `unsupported_client` (403), regardless of the
-/// marker prefix or headers. Verified by ablation against the real WorkBuddy
-/// body (the WorkBuddy system prompt never contains this phrase).
-const WORKBUDDY_FINGERPRINT: &str = "You are Chaos";
-
-/// Body-level signature the freemodel gateway (work.freemodel.dev) requires
-/// on `messages[0]` since the 2026-08-06 gateway upgrade. The old check (the
-/// 31-char "This conversation is powered by" prefix alone) no longer suffices:
-/// the gateway now runs a semantic/embedding similarity check against the real
-/// WorkBuddy system prompt and rejects requests whose `messages[0]` content is
-/// too short / too dissimilar with `unsupported_client` (403).
-///
-/// Verified by live ablation (2026-08-06, gpt-5.6-sol, real account key):
-/// - plain 78-char marker -> 403
-/// - marker + 4k chars of the real WorkBuddy prompt -> 200
-/// - marker + "WorkBuddy. " x10 (~110 chars) -> 200
-/// - marker + this self-written signature (~957 chars) -> 200 (repeated 5x)
-/// - marker + "Tencent. " x30 / "Claude. " x30 -> 403 (brand term matters)
-///
-/// The text below is self-authored (not a copy of WorkBuddy's private prompt)
-/// and only re-uses publicly observable product facts; it carries enough
-/// WorkBuddy-branded tokens to clear the embedding similarity threshold.
-const WORKBUDDY_CLIENT_SIGNATURE: &str = "This conversation runs inside the WorkBuddy desktop application, which is the official client for the WorkBuddy platform and the freemodel gateway.\n\
-WorkBuddy provides an integrated workspace with a project sidebar, an Expert Center that hosts over one hundred domain experts, and a multi-layer memory system.\n\
-The WorkBuddy documentation, including guides for configuring MCP servers and implementing hooks, is published at workbuddy.cn under the docs section.\n\
-Projects opened in WorkBuddy keep their project-related data inside the .workbuddy folder, which is not a temporary cache and must never be deleted.\n\
-The WorkBuddy client stores user profile information in memory layers: a cloud memory with auto-injected profiles, a user-level local memory file, and a workspace memory directory.\n\
-When users ask about WorkBuddy features or how to configure components such as MCP servers or hooks, the assistant should consult the official WorkBuddy documentation.";
 
 /// Per-request `x-grok-*` headers. Optional fields are skipped when empty/`None`.
 struct GrokRequestHeaders<'a> {
@@ -265,58 +208,12 @@ fn record_stream_request_failure(err: &reqwest::Error) {
     span.record("error", err.to_string().as_str());
 }
 
-/// Emit a throttled `warn!` when `n` assistant messages are backfilled
-/// with [`REASONING_PLACEHOLDER`]. Warns at most once per
-/// [`REASONING_BACKFILL_WARN_INTERVAL`] per process, so a long
-/// thinking-mode session does not flood the log on every request.
-fn warn_reasoning_backfill(n: u32) {
-    use std::sync::{Mutex, OnceLock};
-    static LAST_WARN: OnceLock<Mutex<Option<std::time::Instant>>> = OnceLock::new();
-    let last = LAST_WARN.get_or_init(|| Mutex::new(None));
-    let should_warn = match last.lock() {
-        Ok(mut guard) => {
-            let due = match *guard {
-                Some(t) => t.elapsed() >= REASONING_BACKFILL_WARN_INTERVAL,
-                None => true,
-            };
-            if due {
-                *guard = Some(std::time::Instant::now());
-            }
-            due
-        }
-        Err(_) => true, // poisoned: warn anyway, the lock will recover
-    };
-    if should_warn {
-        tracing::warn!(
-            count = n,
-            placeholder = REASONING_PLACEHOLDER,
-            "backfilled `reasoning_content` placeholder on assistant message(s) \
-             — thinking-mode gateways require the field to be present and non-empty. \
-             TODO(net-gateway): remove when gateways stop requiring this.",
-        );
-    }
-}
-
 fn extract_retry_after(headers: &reqwest::header::HeaderMap) -> Option<u64> {
-    let raw = headers.get(reqwest::header::RETRY_AFTER)?.to_str().ok()?;
-    let secs = if let Ok(secs) = raw.trim().parse::<u64>() {
-        // delta-seconds integer form: `Retry-After: 30`
-        secs
-    } else {
-        // HTTP-date form: `Retry-After: Wed, 21 Oct 2015 07:28:00 GMT`.
-        // Domestic providers occasionally emit this; fall back to the
-        // allowed HTTP-date grammar (IMF-fixdate / obs-date) rather than
-        // giving up and reusing an unsized exponential backoff.
-        chrono::DateTime::parse_from_rfc2822(raw.trim())
-            .or_else(|_| chrono::DateTime::parse_from_rfc3339(raw.trim()))
-            .ok()
-            .map(|dt| {
-                let now = chrono::Utc::now();
-                let diff = dt.with_timezone(&chrono::Utc) - now;
-                diff.num_seconds().max(0) as u64
-            })?
-    };
-    Some(secs.min(120))
+    headers
+        .get(reqwest::header::RETRY_AFTER)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.parse::<u64>().ok())
+        .map(|s| s.min(120))
 }
 
 fn extract_should_retry(headers: &reqwest::header::HeaderMap) -> Option<bool> {
@@ -380,6 +277,30 @@ struct StreamOptions {
     include_usage: bool,
 }
 
+fn append_response_includes(body: &mut serde_json::Value, extra_includes: &[String]) {
+    if extra_includes.is_empty() {
+        return;
+    }
+    let Some(body) = body.as_object_mut() else {
+        return;
+    };
+    let include = body.entry("include").or_insert(serde_json::Value::Null);
+    if include.is_null() {
+        *include = serde_json::Value::Array(Vec::new());
+    }
+    let Some(include) = include.as_array_mut() else {
+        return;
+    };
+    for value in extra_includes {
+        if !include
+            .iter()
+            .any(|existing| existing.as_str() == Some(value.as_str()))
+        {
+            include.push(serde_json::Value::String(value.clone()));
+        }
+    }
+}
+
 /// Resolve `env_http_headers` (`header -> env var`) into `headers` via `getenv`, skipping unset/blank/invalid entries and trimming values.
 fn apply_env_http_headers(
     env_http_headers: &IndexMap<String, String>,
@@ -429,10 +350,6 @@ pub struct SamplingClient {
     header_injector: Option<crate::config::SharedHeaderInjector>,
     /// Endpoint URL builder, resolved once from `base_url` + `query_params`.
     endpoint: EndpointTemplate,
-    /// When true, no x-grok-* headers are added and only the WorkBuddy
-    /// transport profile is used (gateway marker / fingerprint handling,
-    /// `Accept: application/json`, dual `Authorization`+`X-API-Key` auth).
-    is_workbuddy: bool,
 }
 
 impl std::fmt::Debug for SamplingClient {
@@ -458,8 +375,8 @@ struct ClientDefaults {
     api_backend: ApiBackend,
     auth_scheme: AuthScheme,
     stream_tool_calls: bool,
+    extra_response_includes: Vec<String>,
     doom_loop_recovery: Option<xai_grok_sampling_types::DoomLoopRecoveryPolicy>,
-    extract_inline_thinking: bool,
 }
 
 /// Endpoint URL builder, resolved once at client construction so each request
@@ -661,15 +578,6 @@ impl SamplingClient {
                         )
                     })?;
                     headers.insert(AUTHORIZATION, header_value);
-                    // The real WorkBuddy client authenticates with both
-                    // `Authorization: Bearer <key>` and `X-API-Key: <key>`;
-                    // the freemodel gateway rejects requests that only carry
-                    // Bearer with `unsupported_client`.
-                    if config.is_workbuddy
-                        && let Ok(api_key_value) = HeaderValue::from_str(api_key)
-                    {
-                        headers.insert(HeaderName::from_static("x-api-key"), api_key_value);
-                    }
                 }
             }
         }
@@ -733,15 +641,12 @@ impl SamplingClient {
 
         // Always set User-Agent: per-session origin if available, else fallback.
         {
-            let ua_string = match config.user_agent.as_deref() {
-                Some(ua) => ua.to_string(),
-                None => match config.origin_client.as_ref() {
-                    Some(origin) => user_agent_string_for(origin),
-                    None => user_agent_string_for(&OriginClientInfo {
-                        product: AGENT_PRODUCT.to_string(),
-                        version: Some(agent_version()),
-                    }),
-                },
+            let ua_string = match config.origin_client.as_ref() {
+                Some(origin) => user_agent_string_for(origin),
+                None => user_agent_string_for(&OriginClientInfo {
+                    product: AGENT_PRODUCT.to_string(),
+                    version: Some(agent_version()),
+                }),
             };
             if let Ok(v) = HeaderValue::from_str(&ua_string) {
                 headers.insert(USER_AGENT, v);
@@ -779,8 +684,8 @@ impl SamplingClient {
             api_backend: config.api_backend,
             auth_scheme: config.auth_scheme,
             stream_tool_calls: config.stream_tool_calls,
+            extra_response_includes: config.extra_response_includes,
             doom_loop_recovery: config.doom_loop_recovery,
-            extract_inline_thinking: config.extract_inline_thinking,
         };
 
         let endpoint = EndpointTemplate::new(&config.base_url, &config.query_params);
@@ -794,50 +699,12 @@ impl SamplingClient {
             bearer_resolver: config.bearer_resolver,
             header_injector: config.header_injector,
             endpoint,
-            is_workbuddy: config.is_workbuddy,
         })
     }
 
     /// The configured API backend for this client.
     pub fn api_backend(&self) -> ApiBackend {
         self.defaults.api_backend.clone()
-    }
-
-    /// `Accept` header value for streaming requests. The real WorkBuddy
-    /// client advertises `application/json` even when consuming SSE; other
-    /// clients use `text/event-stream`.
-    fn streaming_accept_value(&self) -> HeaderValue {
-        if self.is_workbuddy {
-            HeaderValue::from_static("application/json")
-        } else {
-            HeaderValue::from_static("text/event-stream")
-        }
-    }
-
-    /// Whether the chat-completions stream parser should extract inline
-    /// `<think>` tags from `delta.content` into the reasoning channel.
-    pub fn extract_inline_thinking(&self) -> bool {
-        self.defaults.extract_inline_thinking
-    }
-
-    /// Add actionable context when a provider rejects one model route even
-    /// though the request is already using the WorkBuddy transport profile.
-    /// The upstream error text otherwise sends users back to `--client`, which
-    /// is misleading once the profile-specific headers and HTTP mode are live.
-    fn api_error_message(&self, status: reqwest::StatusCode, bytes: &[u8]) -> String {
-        let message = user_facing_api_error_message(status, bytes);
-        let lower = message.to_ascii_lowercase();
-        if self.is_workbuddy
-            && status == reqwest::StatusCode::FORBIDDEN
-            && (lower.contains("unsupported_client")
-                || lower.contains("only be used with the workbuddy client"))
-        {
-            format!(
-                "{message} WorkBuddy profile is active; the upstream provider rejected the selected model route. Verify provider-side access for this model."
-            )
-        } else {
-            message
-        }
     }
 
     /// POST with default headers, returning the builder coupled to the tail
@@ -1018,102 +885,6 @@ impl SamplingClient {
             request.top_p = self.defaults.top_p;
         }
 
-        if self.is_workbuddy {
-            // The freemodel gateway (work.freemodel.dev) rejects requests whose
-            // `messages[0]` is not a system message starting with the exact marker
-            // "This conversation is powered by" (31 chars, case-sensitive). This was
-            // verified by reverse-engineering the real WorkBuddy client: the marker
-            // prefix is the gateway's client check, not the HTTP headers.
-            //
-            // Since the 2026-08-06 gateway upgrade the bare marker is no longer
-            // enough: the gateway also runs a semantic/embedding similarity check
-            // against the real WorkBuddy system prompt and returns
-            // `unsupported_client` when `messages[0]` is too short or too
-            // dissimilar. Verified by live ablation; the marker message therefore
-            // carries a self-written WorkBuddy-branded signature (~957 chars)
-            // which clears the similarity threshold without copying WorkBuddy's
-            // private prompt text.
-            let marker = WORKBUDDY_GATEWAY_MARKER;
-            let has_valid_marker = request
-                .messages
-                .first()
-                .map(|m| {
-                    matches!(m.role, Role::System)
-                        && matches!(&m.content, MessageContent::Text(t) if t.starts_with(marker))
-                })
-                .unwrap_or(false);
-            if !has_valid_marker {
-                let mut messages = vec![ChatRequestMessage::system(format!(
-                    "{marker}\n\n{WORKBUDDY_CLIENT_SIGNATURE}"
-                ))];
-                messages.extend(request.messages);
-                request.messages = messages;
-            } else if let Some(first) = request.messages.first_mut()
-                && let MessageContent::Text(text) = &mut first.content
-            {
-                // messages[0] already starts with the marker (e.g. a request that
-                // was built by a WorkBuddy-compatible caller): make sure it also
-                // carries enough branded content to clear the gateway's semantic
-                // similarity check introduced on 2026-08-06.
-                let sig_start = format!("{marker}\n\n{WORKBUDDY_CLIENT_SIGNATURE}");
-                if !text.starts_with(&sig_start) {
-                    *text = format!("{sig_start}\n\n{text}");
-                }
-            }
-            // Second gateway check (also verified by ablation against the real
-            // WorkBuddy body): the request body must NOT contain the exact
-            // fingerprint "You are Chaos" anywhere — the gateway uses it to
-            // identify the Chaos client and rejects it with `unsupported_client`,
-            // regardless of headers or the marker prefix.
-            for message in &mut request.messages {
-                if let MessageContent::Text(text) = &mut message.content {
-                    if text.contains(WORKBUDDY_FINGERPRINT) {
-                        *text = text.replace(WORKBUDDY_FINGERPRINT, "You are the Chaos");
-                    }
-                } else if let MessageContent::Blocks(blocks) = &mut message.content {
-                    for block in blocks {
-                        if let ChatContentBlock::Text { text } = block
-                            && text.contains(WORKBUDDY_FINGERPRINT)
-                        {
-                            *text = text.replace(WORKBUDDY_FINGERPRINT, "You are the Chaos");
-                        }
-                    }
-                }
-            }
-        }
-
-        // Thinking-mode gateways (observed: the bblbb proxy serving
-        // GLM-5 / DeepSeek-R1 / Qwen3-Thinking) reject any request that
-        // carries an assistant message without `reasoning_content` once
-        // the session has entered thinking mode — the wire error is
-        // `bad_response_status_code: The reasoning_content in the
-        // thinking mode must be passed back to the API`. The local model
-        // stores reasoning as a sibling `Reasoning` item that
-        // `conversation_to_chat_messages` folds onto the *immediately*
-        // following assistant, but a turn where the model emitted no
-        // reasoning (a bare tool call, or reasoning lost to compaction)
-        // leaves that assistant's `reasoning_content` as `None`, and the
-        // next request 400s. When `reasoning_effort` is set the model is
-        // a thinking model, so backfill every assistant message that is
-        // missing it with a non-empty placeholder — the wire schema only
-        // requires the field to be present and non-empty, not truthful.
-        // TODO(net-gateway): remove once bblbb and other thinking-mode
-        // gateways stop requiring non-empty `reasoning_content` on every
-        // assistant message. See `REASONING_PLACEHOLDER` for the full
-        // background and the cleanup tracking issue.
-        if request.reasoning_effort.is_some() {
-            let mut backfilled = 0u32;
-            for msg in &mut request.messages {
-                if msg.role == Role::Assistant && msg.reasoning_content.is_none() {
-                    msg.reasoning_content = Some(REASONING_PLACEHOLDER.to_string());
-                    backfilled += 1;
-                }
-            }
-            if backfilled > 0 {
-                warn_reasoning_backfill(backfilled);
-            }
-        }
-
         Ok(request)
     }
 
@@ -1142,7 +913,7 @@ impl SamplingClient {
                     sent_bearer,
                 ));
             }
-            let message = self.api_error_message(status, bytes.as_ref());
+            let message = user_facing_api_error_message(status, bytes.as_ref());
             return Err(SamplingError::Api {
                 status,
                 message,
@@ -1260,7 +1031,7 @@ impl SamplingClient {
         } = self.post(self.endpoint("chat/completions"));
         let http_request = grok_headers
             .apply(builder)
-            .header(ACCEPT, self.streaming_accept_value())
+            .header(ACCEPT, HeaderValue::from_static("text/event-stream"))
             .json(&streaming_request);
 
         let built_request = http_request.build().map_err(|e| {
@@ -1305,7 +1076,7 @@ impl SamplingClient {
             }
 
             let bytes = response.bytes().await?;
-            let message = self.api_error_message(status, bytes.as_ref());
+            let message = user_facing_api_error_message(status, bytes.as_ref());
             span.record("error", message.as_str());
             tracing::error!(
                 status = %status,
@@ -1469,6 +1240,7 @@ impl SamplingClient {
             tracing::error!("Failed to serialize responses request: {}", e);
             SamplingError::Serialization(e)
         })?;
+        append_response_includes(&mut request_body, &self.defaults.extra_response_includes);
         // async-openai's ReasoningTextContent struct omits the `type`
         // discriminator that the Responses API requires on input. Patch
         // it in post-serialize. This is the last surviving piece of the
@@ -1616,6 +1388,7 @@ impl SamplingClient {
                 request_body["tools"] = serde_json::Value::Array(extra_tool_entries);
             }
         }
+        append_response_includes(&mut request_body, &self.defaults.extra_response_includes);
         xai_grok_sampling_types::patch_reasoning_text_types(&mut request_body);
         // Fresh per attempt so signals never leak across retries; `None`
         // (check disabled) sends no header and does no peek work per event.
@@ -1629,10 +1402,10 @@ impl SamplingClient {
         } = self.post(self.endpoint("responses"));
         let mut http_request = grok_headers
             .apply(builder)
-            .header(ACCEPT, self.streaming_accept_value());
-        if doom_loop.is_some() {
-            // Presence opts in; the server ignores the value.
-            http_request = http_request.header(DOOM_LOOP_CHECK_HEADER, "true");
+            .header(ACCEPT, HeaderValue::from_static("text/event-stream"));
+        if let Some(policy) = self.defaults.doom_loop_recovery {
+            http_request =
+                http_request.header(DOOM_LOOP_CHECK_HEADER, policy.window_tokens.to_string());
         }
         let http_request = http_request.json(&request_body);
 
@@ -1677,7 +1450,7 @@ impl SamplingClient {
             let retry_after_secs = extract_retry_after(response.headers());
             let should_retry = extract_should_retry(response.headers());
             let bytes = response.bytes().await?;
-            let message = self.api_error_message(status, bytes.as_ref());
+            let message = user_facing_api_error_message(status, bytes.as_ref());
             span.record("error", message.as_str());
             tracing::error!(
                 status = %status,
@@ -1949,7 +1722,7 @@ impl SamplingClient {
         } = self.post(self.endpoint("messages"));
         let http_request = grok_headers
             .apply(builder)
-            .header(ACCEPT, self.streaming_accept_value())
+            .header(ACCEPT, HeaderValue::from_static("text/event-stream"))
             .json(&request.inner);
 
         let built_request = http_request.build().map_err(|e| {
@@ -1993,7 +1766,7 @@ impl SamplingClient {
             let retry_after_secs = extract_retry_after(response.headers());
             let should_retry = extract_should_retry(response.headers());
             let bytes = response.bytes().await?;
-            let message = self.api_error_message(status, bytes.as_ref());
+            let message = user_facing_api_error_message(status, bytes.as_ref());
             span.record("error", message.as_str());
             tracing::error!(
                 status = %status,
@@ -2302,13 +2075,8 @@ impl SamplingClient {
         let result = match self.api_backend() {
             ApiBackend::ChatCompletions => {
                 let (raw, meta) = self.conversation_stream(request).await?;
-                let events = crate::stream::stream_chat_completions(
-                    raw,
-                    meta,
-                    request_id,
-                    idle_timeout,
-                    self.defaults.extract_inline_thinking,
-                );
+                let events =
+                    crate::stream::stream_chat_completions(raw, meta, request_id, idle_timeout);
                 crate::stream::collect_response(events).await
             }
             ApiBackend::Responses => {
@@ -2348,7 +2116,10 @@ fn stream_collect_error(info: SamplingErrorInfo) -> SamplingError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::{Router, body::Bytes, routing::post};
     use indexmap::IndexMap;
+    use tokio::net::TcpListener;
+    use tokio::sync::oneshot;
     use xai_grok_sampling_types::ApiErrorCode;
     use xai_grok_sampling_types::types::ChatRequestMessage;
 
@@ -2412,6 +2183,7 @@ mod tests {
             api_backend: ApiBackend::ChatCompletions,
             auth_scheme: AuthScheme::Bearer,
             extra_headers: IndexMap::new(),
+            extra_response_includes: Vec::new(),
             query_params: IndexMap::new(),
             env_http_headers: IndexMap::new(),
             context_window: 8192,
@@ -2432,9 +2204,6 @@ mod tests {
             compaction_at_tokens: None,
             doom_loop_recovery: None,
             header_injector: None,
-            is_workbuddy: false,
-            extract_inline_thinking: false,
-            user_agent: None,
         }
     }
 
@@ -2502,6 +2271,126 @@ mod tests {
         assert!(obj.get("tools").is_none());
     }
 
+    async fn capture_response_body(streaming: bool) -> serde_json::Value {
+        let (body_tx, body_rx) = oneshot::channel();
+        let body_tx = std::sync::Arc::new(std::sync::Mutex::new(Some(body_tx)));
+        let app = Router::new().route(
+            "/v1/responses",
+            post(move |body: Bytes| {
+                let body_tx = body_tx.clone();
+                async move {
+                    let _ = body_tx.lock().unwrap().take().unwrap().send(body);
+                    if streaming {
+                        axum::response::Response::builder()
+                            .header("content-type", "text/event-stream")
+                            .body(axum::body::Body::from("data: [DONE]\n\n"))
+                            .unwrap()
+                    } else {
+                        axum::response::Response::builder()
+                            .header("content-type", "application/json")
+                            .body(axum::body::Body::from(r#"{"id":"resp","object":"response","created_at":0,"model":"test-model","status":"completed","output":[],"usage":{"input_tokens":0,"input_tokens_details":{"cached_tokens":0},"output_tokens":0,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":0}}"#))
+                            .unwrap()
+                    }
+                }
+            }),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        let client = SamplingClient::new(SamplerConfig {
+            base_url: format!("http://{addr}/v1"),
+            api_backend: ApiBackend::Responses,
+            extra_response_includes: vec!["no_inline_citations".to_owned()],
+            ..minimal_config()
+        })
+        .unwrap();
+        let mut request = rs::CreateResponse {
+            input: rs::InputParam::Text("hi".to_owned()),
+            include: Some(vec![rs::IncludeEnum::ReasoningEncryptedContent]),
+            tools: Some(vec![rs::Tool::WebSearch(rs::WebSearchTool::default())]),
+            ..Default::default()
+        };
+        let mut wrapper = CreateResponseWrapper::new(request.clone());
+        wrapper.extra_tool_entries = vec![serde_json::json!({"type": "x_search"})];
+        if streaming {
+            let (_stream, _model_metadata, _doom_loop_collector) = client
+                .create_response_stream(wrapper)
+                .await
+                .expect("streaming request should succeed");
+        } else {
+            request.tools = None;
+            client
+                .create_response(CreateResponseWrapper::new(request))
+                .await
+                .expect("unary request should succeed");
+        }
+        let body = body_rx.await.unwrap();
+        server.abort();
+        serde_json::from_slice(&body).unwrap()
+    }
+
+    #[tokio::test]
+    async fn response_call_sites_emit_final_includes_and_stream_fields() {
+        let unary = capture_response_body(false).await;
+        assert_eq!(
+            serde_json::json!(["reasoning.encrypted_content", "no_inline_citations"]),
+            unary["include"],
+        );
+
+        let stream = capture_response_body(true).await;
+        assert_eq!(
+            serde_json::json!(["reasoning.encrypted_content", "no_inline_citations"]),
+            stream["include"],
+        );
+        assert_eq!(Some(true), stream["stream"].as_bool());
+        assert!(
+            stream["tools"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|tool| tool["type"] == "x_search")
+        );
+    }
+
+    #[test]
+    fn append_response_includes_preserves_typed_values_and_deduplicates() {
+        let typed = [
+            "reasoning.encrypted_content",
+            "web_search_call.action.sources",
+        ];
+        let mut body = serde_json::json!({ "include": typed });
+        append_response_includes(
+            &mut body,
+            &[
+                "no_inline_citations".to_owned(),
+                "no_inline_citations".to_owned(),
+            ],
+        );
+        assert_eq!(
+            serde_json::json!([
+                "reasoning.encrypted_content",
+                "web_search_call.action.sources",
+                "no_inline_citations",
+            ]),
+            body["include"],
+        );
+
+        let mut unchanged = serde_json::json!({ "include": typed });
+        let expected = unchanged.clone();
+        append_response_includes(&mut unchanged, &[]);
+        assert_eq!(expected, unchanged);
+
+        for mut body in [
+            serde_json::json!({}),
+            serde_json::json!({ "include": null }),
+        ] {
+            append_response_includes(&mut body, &["no_inline_citations".to_owned()]);
+            assert_eq!(serde_json::json!(["no_inline_citations"]), body["include"]);
+        }
+    }
+
     #[test]
     fn extract_retry_after_parses_seconds() {
         let mut headers = reqwest::header::HeaderMap::new();
@@ -2517,29 +2406,6 @@ mod tests {
     }
 
     #[test]
-    fn extract_retry_after_parses_http_date() {
-        let mut headers = reqwest::header::HeaderMap::new();
-        // A far-future RFC 2822 HTTP-date. Domestic providers occasionally emit
-        // this instead of a delta-seconds integer. Capped at 120s like integers.
-        headers.insert(
-            reqwest::header::RETRY_AFTER,
-            "Wed, 21 Oct 2099 07:28:00 GMT".parse().unwrap(),
-        );
-        assert_eq!(extract_retry_after(&headers), Some(120));
-    }
-
-    #[test]
-    fn extract_retry_after_http_date_in_past_returns_zero() {
-        let mut headers = reqwest::header::HeaderMap::new();
-        // A past HTTP-date → 0 seconds (retry immediately).
-        headers.insert(
-            reqwest::header::RETRY_AFTER,
-            "Wed, 21 Oct 2015 07:28:00 GMT".parse().unwrap(),
-        );
-        assert_eq!(extract_retry_after(&headers), Some(0));
-    }
-
-    #[test]
     fn extract_retry_after_zero_is_valid() {
         let mut headers = reqwest::header::HeaderMap::new();
         headers.insert(reqwest::header::RETRY_AFTER, "0".parse().unwrap());
@@ -2547,33 +2413,11 @@ mod tests {
     }
 
     #[test]
-    fn extract_retry_after_parses_http_date_and_clamps_to_120() {
-        let mut headers = reqwest::header::HeaderMap::new();
-        // RFC 3339 (allowed HTTP-date form) far in the future → clamped to 120.
-        let future = (chrono::Utc::now() + chrono::Duration::hours(5)).to_rfc3339();
-        headers.insert(reqwest::header::RETRY_AFTER, future.parse().unwrap());
-        assert_eq!(extract_retry_after(&headers), Some(120));
-    }
-
-    #[test]
-    fn extract_retry_after_parses_rfc2822_http_date() {
-        let mut headers = reqwest::header::HeaderMap::new();
-        // RFC 2822 IMF-fixdate form. Pick a date in the near future so the
-        // delta is small (≤ 120) rather than clock-dependent.
-        let future = (chrono::Utc::now() + chrono::Duration::minutes(5))
-            .format("%a, %d %b %Y %H:%M:%S GMT")
-            .to_string();
-        headers.insert(reqwest::header::RETRY_AFTER, future.parse().unwrap());
-        let got = extract_retry_after(&headers).expect("RFC 2822 is parsed");
-        assert!(got <= 120, "got {got}");
-    }
-
-    #[test]
-    fn extract_retry_after_ignores_malformed_dates() {
+    fn extract_retry_after_ignores_http_date() {
         let mut headers = reqwest::header::HeaderMap::new();
         headers.insert(
             reqwest::header::RETRY_AFTER,
-            "not-a-date-at-all".parse().unwrap(),
+            "Fri, 31 Dec 2025 23:59:59 GMT".parse().unwrap(),
         );
         assert_eq!(extract_retry_after(&headers), None);
     }

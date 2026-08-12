@@ -1,8 +1,35 @@
 # Changelog
 
-<<<<<<< HEAD
-# 0.2.136 — 2026-08-11
-=======
+# 1.0.3 — 2026-08-12
+
+## Features
+
+- **/session-info** now lets you click any row to copy its value, with hover highlights and a copy-all shortcut.
+
+## Performance
+
+- **Subagent spawning** is dramatically faster when you have many sessions in ~/.grok.
+- **TUI rendering** now automatically matches high-refresh displays (120 Hz+) for smoother scrolling and painting.
+
+
+# 1.0.2 — 2026-08-11
+
+## Features
+
+- **Tool-call argument streaming** now shows a distinct spinner label instead of a generic "Waiting for response…" message.
+- **Harness** now includes UI-verification instructions and project/user rules higher in prefix.
+- **Large sessions** with images no longer exceed limits during compaction
+
+## Bug Fixes
+
+- **Fixed recovery** from server-rejected images so poisoned sessions no longer become permanently unusable.
+- **Improved startup timeout messages** to show which step took longest, elapsed times, and actionable advice instead of a generic error.
+- **Worktree copies** of large repos no longer inherit dangerous fetch specs or stale shallow grafts.
+- **Privacy banner** can now be dismissed from Settings even when you are already opted out.
+- **Status bar** now keeps showing your current model after a catalog refresh even if that model is no longer listed.
+- **Grouped tool calls** now stay grouped even when hooks attach metadata, and show hook results in the header.
+- **Cmd+click** on autolinks in Apple Terminal now opens the correct URL when multiple messages are visible.
+
 # 1.0.1 — 2026-08-10
 
 ## Breaking Changes
@@ -60,267 +87,314 @@
 
 
 # 1.0.0 — 2026-08-07
->>>>>>> be713136 (Synced from monorepo)
 
 ## Features
 
-- **国产 Provider 预设**：`/provider add` 新增 Qwen（阿里通义 DashScope compatible-mode）、智谱 GLM、Moonshot（月之暗面）、Volcengine（火山方舟）四家预设，自动写入对应 `env_key`（`DASHSCOPE_API_KEY` / `ZHIPUAI_API_KEY` / `MOONSHOT_API_KEY` / `ARK_API_KEY`）。配套 README 给出对应的 `config.toml` 完整示例。
-- **错误分类与快速失败**：新增 `ProviderErrorKind` 分类（Auth / Billing / RateLimit / Server / Context / Transient），覆盖 DeepSeek、Qwen、智谱、Moonshot、Volcengine 的典型错误体（含智谱 `err_code` 负值与火山大写 `Type` 字段）。
-- **工作区 server 版本上报**：`workspace.info` 透出 server 版本；新增 `xai-grok-workspace-client` crate（hub 代理 `workspace.*` RPC 的轻量类型化客户端，shell 代理模式共用）。
+- Dashboard rows show a short summary of what the agent did in the previous turn
+- Extensions modal groups items alphabetically with collapsible Skills sections
+- Grok skips the project-directory prompt when launched from home or other non-project directories
+- `/feedback` opens a dedicated report box instead of prompt mode
+- Auto theme detection works over SSH and inside tmux
+- Markdown tables reflow inside cells on narrow panes instead of clipping
+- Permission prompts show the complete script; long bash bodies expand with `Ctrl-F`
 
-## 上游 b13fa526 同步
+## Bug Fixes
 
-- **修复 EAGAIN / blocking-pool abort**：上限并预加热 tokio blocking pool，避免阻塞线程池耗尽导致的 EAGAIN 中断。
-- **`/rename` 系列**：title 上限、ghost-prefill、跨 host 手动标题、remote revert、`--auto` 解除手动标题、会话 `conversation_entry` / `title_unpin` 语义新增。
-- **会话标题元数据**：新增 `last_turn_summary` 及其世代计数、`title_unpin_committed` 等字段，驱动 dashboard 与 prompt 栏标题更稳。
-
-## Fixes
-
-- **余额不足 / Key 失效不再无限重试**：Billing（余额/配额耗尽，如 DeepSeek 402 / 智谱 4013）和 Auth（Key 失效/过期）错误现在立即报错，不再消耗重试预算打转——此前 402 或包在 5xx 里的余额错误会被当成瞬时故障反复重试。
-- **推理模型空响应不再 resample 风暴**：DeepSeek-R1 / Qwen3-Thinking / GLM-Z1 / Grok-reasoning 的 reasoning-only 空响应（有思考无正文）被识别为"预期行为"，作为完成的回合展示，不再反复重采样。
-- **默认重试预算 15 → 8**：与 opencode 对齐，缩短国产不稳定 provider 的抖动窗口（约 5.5 分钟 → 约 2.5 分钟）。
-- **`Retry-After` 支持 HTTP-date 格式**：除整数秒外，现在也能解析 RFC 2822 / RFC 3339 时间（使用已有 chrono 依赖，未新增 crate）。
-
-## 可用性
-
-- 用户可见错误增加中文可操作提示：余额不足「账户余额不足，请充值后重试」、Key 失效「API Key 无效或已过期，请检查 model_providers 配置」、上下文超限等。
-
-# 0.2.135 — 2026-08-08
-
-## Features
-
-- **用量三栏弹窗（`/usage`）**：新增 tabbed 用量 / 会话信息弹窗，由 `/usage`、`/session-info`、`/context` 及上下文栏点击打开，分「上下文用量 / 用量限额 / 会话信息」三栏展示；数据由任务结果处理器异步填充。
-- **MCP 连接中提醒**：MCP 服务器仍在初始化时，等待轮次会提示「连接中」，并保留从声明工具通道交付的能力；只有在 attachment 策略实际变化时才重新武装提醒。
+- MCP tools that return images no longer drop or corrupt large screenshots
+- Sandboxed Grok starts on large directories with many deny-glob matches
+- Rapid send-now presses no longer lose earlier queued messages
+- Esc and stop prevent background tasks from restarting the model after cancel
+- Login no longer skips when an invalid API key is in the environment
+- Model picker and command palette work while reviewing a plan
+- Tab and Esc behave consistently on question, permission, and cancel-turn cards
+- `/new` from the dashboard returns to the dashboard from an empty prompt
+- Codebase restore no longer hangs on large or shallow git repositories
+- Remote resume restores conversation only unless `--restore-code` is passed
+- Copying CJK text with the mouse includes every character at the selection edges
+- API errors appear as clean banners instead of raw JSON dumps
+- Typing exit or quit in the dashboard exits the CLI
+- Mode indicator (plan/agent/ask) stays in sync after resume and mode changes
+- `/delete` returns to the dashboard when you delete a session opened from it
+- Enter in the slash command menu runs the highlighted command
+- Grok retries more server errors during outages
+- Session-only slash commands show a message when used from the dashboard
+- Queued prompts stay visible while waiting on subagents, and slash/image rows can be reordered
+- Auto recaps no longer appear mid-turn or while busy
+- `/btw` error messages wrap fully
 
 ## Performance
 
-- **进程级 git 状态门控**：libgit2 `statuses()`/diff 对大仓的 ODB pack 预读在进程级去重——相同在途工作被合并，短 TTL 快照复用，避免并发 git 扫描打满 CPU 与数十 GB 内存；失效风暴下最多重试一次、绝不让 `run()` 无界循环。
+- Forking very large sessions no longer uses many times the session file size in memory
+- Exiting an empty session is instant, even on slow networks
 
-## Fixes
 
-- **`extract_inline_thinking` / `is_workbuddy` 等 fork 专属字段补齐**：同步上游后，`#[cfg(test)]` 侧对 `SamplingConfig`、`SamplerConfig`、`SessionActor` 等新增字段的初始化缺失已补齐，shell lib 测试恢复可编译。
-- **自动更新错误路径统一前缀**：`install_gh_release` 的冒烟失败改由 `run_install_script` 统一附加「Auto-update failed:」前缀，不再双重嵌套。
-
-# 0.2.130 — 2026-08-02
-
-## Fixes
-
-- **恢复严格 CI 构建与会话配置安全性**：Chat Completions 的流式工具名解析改为满足 Rust 1.92 严格 Clippy 的 let-chain 写法；`SetContextWindow`、模型切换和响应元数据刷新的异步配置互斥改用 Tokio mutex，避免在单线程 `LocalSet` 上用阻塞锁跨越 `.await`，同时继续串行化上下文窗口与采样配置更新。
-
-# 0.2.129 — 2026-08-02
-
-## Features
-
-- **Inline `<think>` 抽取为 reasoning 通道（issue #21）**：Chat Completions 后端的流式响应里，将 `<think>...</think>` 片段提取为 `SamplingChannel::Reasoning`，而非与正文混杂在 `Text`。`extract_inline_thinking` 默认关闭，仅对在 `[model.<name>]` 配置中显式打开的模型生效（例：`deepseek-reasoner`）。Reasoning 片段持久化为独立的 `ConversationItem::Reasoning`，与最终的 Assistant 内容分开入库。下游所有 `consumer`（reasoning usage、turn capture、scrollback 折叠）直接看到真正的 reasoning 而无需自己再解析。
-- **右上角 token/s 速率档位（状态栏）**：状态栏新增实时速率芯片，根据 `decode_tokens_per_sec` / `avg_output_tokens_per_sec` 渲染为 7 档：`< 2` 🐢、`< 5` 🚲、`< 15` 🚗、`< 40` 🚂、`< 80` ✈️、`< 150` 🚀、`≥ 150` 🛸。颜色从低速红乌龟渐变到高速绿飞船。数据为空时该 chip 隐藏，不会出现「0 tok/s」噪音。
-- **`x.ai/session/set_context_window` 扩展**：客户端可动态调整会话的 context window 上限（`tokens` 字段）。缩小到低于当前用量时立即触发 compaction；其余情况保留锁值、刷新 usage 信号。所有写路径（model switch / response-header 元数据刷新 / 采样错误自动恢复 / `set_context_window`）共用 `compaction.operation_lock`，避免锁值与采样配置被并发写覆盖；活跃轮次中的 resize 会被 `InvalidRequest` 拒绝，保护正在进行的请求。
-
-## Fixes
-
-- **OpenAI 兼容流式 tool call 名称覆盖**：部分 Chat Completions 提供商在首个有效 `function.name` 之后会发送空字符串 `delta`，旧实现会把已经正确的工具名覆盖成空字符串，导致整轮失败。`chat_completions` 解析器现在只在 delta 非空时更新 `function.name`，且对完全空名称的 delta 上报 `MalformedToolCall`。
-- **Cloudflare 5xx 边缘码重试**：之前的 `is_retryable()` 只覆盖 520，而 521–524 在 0.2.128 端口被漏掉，导致 origin down / connect fail / timeout 直接 surface 而不走指数退避。现已扩展到 `520..=524`，新增 sampling-types 与 retry 两组回归测试。
-
-# 0.2.121 — 2026-07-29
-
-## Fixes
-
-- **修复 0.2.120 发版流水线编译失败**：上游终端检测移植引入的 `MultiplexerKind::Herdr` 变体未在 `doctor --json` 输出的 `multiplexer()` 匹配中覆盖（E0004 非穷尽匹配），导致全平台 release build 全部失败。本版补齐 `Herdr => "herdr"` 分支与测试断言，并为测试构造补上同期新增的 `TerminalContext::env_term_version` 字段，恢复 `cargo check --workspace --all-targets` 通过。
-- **Doctor 测试不再依赖宿主机麦克风**：`fake_standalone_facts_compose_through_shared_view` 此前会把 `apply_voice_probe` 在无麦克风机器（含 CI 容器）上追加的 `voice/no-input-device` finding 计入 `issue_count`，导致环境相关性失败。断言前现按 `voice` 域过滤。
-- **修复 `cargo fmt --check` 违规**：0.2.120 带入的若干格式漂移（`status_blocks.rs`、`context_info.rs`、`selective_compaction.rs` 等 7 个文件）已统一整理，恢复 CI `cargo fmt` 步骤通过。
-- **修复 clippy `-D warnings` 违规（Rust 1.92）**：`extensions/usage.rs` 折叠 `collapsible_if`；`views/agent_status.rs` 两个测试改用结构体字面量初始化（`field_reassign_with_default`）。
-- **消除 `daemonize::take_over_acquires_cleanly_when_predecessor_releases` CI flake**：`spawn_predecessor` 现自旋等 `/proc/<pid>/cmdline` 反映 `execve(sleep)` 后再返回，避免慢速 CI 上 takeover 名字匹配竞态导致 child 未被终止的断言失败。
-
-## UI
-
-- **终端标签页标题显示「Chaos Code」**：此前 tab 标题硬编码为 `grok`（含会话名后缀 `xxx - grok`）。现统一为 `Chaos Code`，空标题回退与 `TitleManager` 重置路径同步更新；用户配置中的 `title.items`（kebab-case `grok` 条目）不受影响，无需迁移。
-- **计划审批弹窗按钮中文化**：plan 预览/批准弹窗底部操作按钮由英文改为中文——`批准` / `批准（带批注）` / `请求修改` / `批注` / `发送` / `放弃计划`，与快捷键提示栏的中文风格保持一致。发送给模型的批注反馈文本（"Proposed plan line …"）保持英文，属提示词负载而非界面文案。
-
-# 0.2.120 — 2026-07-28
-
-## Fixes
-
-- **对齐上游 tok/s 埋点，修复内部 8 处编译错误**：上一版随合入 336551e 引入了 `decode_duration_ms` / `decode_tokens_per_sec` 两个新字段，但 Chaos 侧的若干调用点未同步。本版把 `record_main_loop_call` 的 7 处调用与 `PromptUsageModel` 字面量补齐，恢复 `cargo build --workspace` 通过。用户可见效果：`/usage`、`/context` 及状态栏的解码速率显示不再因数据缺失而落空。
-
-## Upstream Sync
-
-- **移植终端检测（terminal detection）**：新增 Herdr 复用器识别、`TermVersion` / `TermVersionSource` 结构对外导出，以及 `TERM_PROGRAM_VERSION → LC_TERMINAL_VERSION` 的兜底解析。终端遥测事件（`TerminalTelemetry`）随之携带 `term_version` / `term_version_source`，为后续按终端做兼容性适配提供数据。
-- **移植 plan-mode 批处理屏障（plan_exit_batch_barrier）**：`exit_plan_mode` 与 `plan.md` 写入被安排在同一 tool-call 批次时，新的屏障逻辑会先落文件再切换模式，避免快照与 plan 内容错位。Chaos DCP 的 `compress` 工具拦截路径在合并时被完整保留。
-
-## Docs
-
-- **归档 WSL2 p9io AcceptAsync 停机排障**：本地新增 `docs/known-issues/wsl-p9io-crash-20260728.md` 与 `docs/known-issues/wsl-p9io-issue-draft.md`（提交 microsoft/WSL 前的草稿，待人工审后再对外发布）。
-
-# 0.2.119 — 2026-07-27
-
-## Features
-
-- **Token 用量统计覆盖层支持累计用量**：右上角 token 统计点开后，除本次会话消耗外，新增「累计使用 Chaos 以来」区块，展示所有本地会话的 token/成本总计与各模型分项。数据持久化在 `<grok_home>/sessions/usage.sqlite`，每次读取会话用量时增量 upsert。subagent 会话的消耗已折叠进父会话账本，聚合时跳过以避免重复计数。
-
-# 0.2.118 — 2026-07-27
+# 0.2.120 — 2026-08-03
 
 ## Bug Fixes
 
-- **`chaos update` 在 install.sh 安装后失败**：`install.sh` 曾把二进制直接写成 `~/.chaos/bin/chaos` 普通文件，而自动更新在替换前会 `read_link` 捕获回滚状态，对普通文件得到 `EINVAL`（os error 22）并中止。现在对普通文件改为 `.rollback.bak` 备份；`install.sh` 与 `chaos update` 统一为 `downloads/` 版本化文件 + `bin/{chaos,agent}` 相对 symlink 布局。
+- **Model picker** now updates the status bar and /model menu immediately, even before the first prompt creates a session.
+- **Changes panel** now refreshes after the agent commits on the current branch instead of showing stale unstaged files.
+- **Background task** completions now report the full log size and read hint even when only a short prefix was captured.
+- **GitHub export** on old hibernated sessions now shows a clear message to start a new chat instead of a generic error.
 
-# 0.2.117 — 2026-07-27
 
-## Features
-
-- **导出到 GitHub**：新增 `workspace.export_github` RPC，可把工作区项目目录推送到 GitHub 仓库（自动初始化 git、创建分支与提交）。移植自上游 0.2.112。
-
-## Bug Fixes
-
-- **上传队列清理**：已过期的临时文件不再残留。清理过程原先边遍历边删除，而 sidecar 与其临时文件同时过期；若目录遍历先返回 sidecar，sidecar 被删后临时文件便无法再读取它，退回使用自身（较新的）mtime 从而被保留。是否发生取决于文件系统的遍历顺序。现在先对所有条目取龄，再执行删除。
-- **认证测试隔离**：`credential_provider` 的环境变量守卫改用全局串行组，避免与其它测试并发修改进程环境时相互干扰。
-
-## Internal
-
-- **上游同步**：对齐上游 `47348d13`（`SOURCE_REV` `d02693a8`）；回填 0.2.112 更新日志。上游在该批次中下线了 `deploy`，本 fork 保留 `DeployError` 并与 `ExportGithub` 并存。
-- **CI**：稳定化 0.2.116 引入的 Rust 作业（fmt / check --all-targets / clippy -D warnings / test）。测试步骤暂时排除 7 个存在历史失败的 crate，该清单为待偿还的技术债，不应用于掩盖新的回归；明细见 `docs/ci-test-debt.md`。
-
-# 0.2.116 — 2026-07-26
-
-## Security
-
-- **移除误提交的环境变量转储**：0.2.115 的工作区快照把 24 个 Windows 进程环境转储文件（字面文件名形如 `C:UsersChaos...Temp.tmpXXXXenv.txt`）提交进了 `xai-grok-pager` crate。文件已从工作树删除。**其中包含真实凭据，相关 token / API key 需要轮换**：转储仍存在于 0.2.115 及更早的历史提交对象中，删除文件不等于撤销泄露。
-- **漏洞报告渠道**：`SECURITY.md` 此前把报告指向 xAI 的 HackerOne；改为指向本 fork 的 GitHub Security Advisories。
+# 0.2.119 — 2026-08-02
 
 ## Features
 
-- **累计 token 状态条**：TUI 顶部显示累计 token 用量（`totalTokens` 高水位，含嵌套子代理；会话重绑时重置）。
-- **发布产物校验**：Release 现发布 `SHA256SUMS`，`install.sh` / `install.ps1` / `install.bat` 在赋予可执行权限或运行二进制之前先行校验。`CHAOS_SKIP_CHECKSUM=1` 可跳过。
+- **Always allow** for bash commands now lets you edit a free-form glob pattern instead of only word-prefix scopes.
+- **Long responses** now show a clickable arrow that jumps back to the start of the answer.
+- **Auto mode** now auto-approves more common read-only git commands and harmless file appends.
+- **Plan previews** now show Mermaid diagram buttons (Open Image, Copy Image Path, Copy Source).
 
 ## Bug Fixes
 
-- **aarch64 非法指令**：`aarch64-unknown-linux-gnu` 曾以 `target-cpu=neoverse-v2`（ARMv9 / SVE2）构建，在 Graviton2、Ampere Altra、树莓派以及 Apple Silicon 上的 Docker 里会 SIGILL。改用 `generic`，与 musl target 一致。
-- **`curl | bash` 安装失败**：`scripts/install.sh` 以 CRLF 提交，导致 `set -euo pipefail` 处直接失败。经 `.gitattributes` 全仓归一化行尾，`.bat` / `.ps1` 保持 CRLF。
-- **工作流恢复顺序**：恢复逻辑先按原始目录项数量截断再排序，导致恢复哪些运行取决于文件系统的 readdir 顺序，且每个被拒条目都会白占一个名额。改为先排序、再对已接受的运行计数截断。
-- **认证测试不确定失败**：`jsonwebtoken` 同时编译进两个加密后端（`gcloud-storage` 引入 `aws_lc_rs`，而 `xai-grok-shell` 选择 `rust_crypto`），进程级后端因此不确定，约 23 个认证测试在并行执行下随机 panic。`gcloud-storage` 统一到 `jwt-rust-crypto`。
-- **TUI 终端尺寸**：每次绘制前将缓存的终端高度与真实后端尺寸同步；内联视口探测前把光标固定到最后一行。
+- **Gateway connections** now detect and recover from dead sockets more reliably.
+- **Question cards** now let you Tab through answers instead of losing focus to the scrollback.
+- **Resume picker** no longer tries to load a session from pasted garbage when you press Enter.
+- **Background task** completion messages no longer grow unbounded when the task produced a huge log.
+- **Plan viewer scrollbar** now responds to clicks on the border column and renders without dark stripes in Terminal.app.
+- **Expired external auth provider** credentials now correctly trigger the interactive sign-in flow instead of a silent 401 loop.
 
-## Internal
+## Performance
 
-- **测试套件修复**：工作区测试目标与生产结构体长期脱节且无人发现——CI 此前完全没有 cargo 步骤，而 `release.yml` 只跑 `cargo build`，不编译 `#[cfg(test)]` 代码。修复了 `xai-chat-state`、`xai-grok-shell`、`xai-grok-workspace` 中累积的 96 个编译错误，约 7.4k 个测试恢复可运行。
-- **新增 Rust CI 作业**：fmt / `check --all-targets` / `clippy -D warnings` / test。测试步骤排除 7 个存在历史失败的 crate，明细与偿还计划见 `docs/ci-test-debt.md`。
-- **测试隔离**：`persist_ack_waits_for_disk_flush_before_success` 改用独立的 32 MiB 线程（`SessionActor` 体积过大，构造时会撑爆 2 MiB 默认测试栈并 SIGABRT 整个二进制）；`discovery_with_no_settings_files` 限定 `$HOME`，此前它在读取开发者真实的 `~/.claude/settings.json`。
-- **标记上游默认值测试**：21 个断言 xAI 默认行为（内置 catalog、非空 `PRODUCTION_ENDPOINTS`、grok.com 登录）的上游测试标注 `#[ignore]` 并附原因——本 fork 按设计移除了这些行为。
-- **仓库归一化**：全仓 CRLF→LF、去除多余可执行位、`cargo fmt`（无逻辑改动）。
-- **文档修正**：`CHAOS.md` 曾声称启动时不读取 `auth.json`，但 `AuthManager::new` 确实会读；改为描述实际行为及规避方式。
+- **/btw** side questions now reuse the parent session’s cached prefix for faster responses.
+- **Doctor** and tmux-backed startup are now faster when no live tmux processes remain.
 
-# 0.2.115 — 2026-07-26
 
-## Bug Fixes
-
-- **Windows 安装器**：`install.ps1` 在版本查询失败时不再抛出 “call a method on a null-valued expression”。`Get-LatestVersion` 的 `Invoke-RestMethod` 加了 try/catch 并区分限流与网络错误，`$Version.TrimStart` 前加了 null 守卫。(#8)
-
-## Documentation
-
-- **README**：cmd 单行安装命令标注为仅适用于 cmd.exe（`&&` 与 `%TEMP%` 在 PowerShell 5.1 下不成立），并补充原生 PowerShell 写法。(#9)
-
-## Internal
-
-- **发布准备**：合并本地工作区快照以准备 v0.2.115。该快照批次误将 24 个 Windows 进程环境变量转储文件带入 `xai-grok-pager` crate；文件已在 0.2.116 移除，凭据处置见 0.2.116 的安全条目。
-
-# 0.2.114 – 2026-07-25
+# 0.2.118 — 2026-07-31
 
 ## Features
 
-- **Provider modal**：可在 TUI 内编辑 provider channel、手动输入模型条目；保留 provider modal 与 incomplete end_turn 的 Chaos-only WIP。
-- **incomplete end_turn 自动重试**：当 provider 返回 incomplete end_turn 时，可选择自动重试（opt-in）。
-- **`/context` 动态设置**：支持可选 compact 的动态 `/context set`。
-- **Windows 安装器**：新增 `install.bat` / `install.ps1`，Release 优先文档。
-- **Doctor 中文诊断**：doctor 诊断、CLI 与修复提示本地化为中文；补充 session-required 类 toast。
+- **Sessions** can now be permanently deleted from the dashboard by pressing Ctrl+X twice on an idle row, or from the welcome list with d then y.
+- **Keyboard shortcuts help** (Ctrl+.) now shows how to browse prompt history and search the conversation.
+- **grok doctor** now warns when tmux is reducing colors and can fix the config.
 
 ## Bug Fixes
 
-- **zsh 兼容**：search/find shadows 下使用 builtin 命令，避免 zsh 别名冲突 (#7)。
-- **VersionPolicy**：API 改名后正确解析 min floor。
-- **TaskSnapshot**：测试 fixture 补齐上游新增的 `description` 字段。
-- **ListCommandsResponse**：修正可见性，使其与 `respond_to` 字段一致。
+- **`/btw`** now retries on temporary model overload instead of failing immediately.
+- **Session sharing** is temporarily disabled.
+- **`[stop]`** / Ctrl+C during `/compact` now cancels instead of no-opping.
+- **Automatic recaps** no longer appear twice after the same turn.
+- **Background task wait timeout** descriptions and limits now match the client's actual configured ceiling.
+- **Background tasks** no longer stay stuck as 'Running' in the tasks pane when they finish quickly.
+- **Plan mode indicator** now disappears right after approving a plan instead of lingering.
+- **Dragging the scrollbar** in the plan preview now works as expected.
+- **Compaction** now correctly handles certain context-length errors from the inference API.
 
-## Internal
 
-- **上游同步**：path-limited 移植上游批次 13–16（changelogs 0.2.110/0.2.111、terminal exit/output recorder、task coordinator stack、hooks/journal/gate preflight）；`SOURCE_REV` bump 至 `9b8d35b`。
+# 0.2.117 — 2026-07-30
+
+## Features
+
+- **GROK_EXTRA_CA_BUNDLE** env var allows adding custom TLS root certificates.
+
+## Bug Fixes
+
+- **Stop command** now terminates all background subagents from prior turns.
+- **kill_task** tool now correctly reports when a task does not exist over ACP connections.
+- **get_task_output** no longer waits the full timeout for already-finished tasks over ACP.
+- **/usage** command and billing UI are hidden for enterprise auth setups.
+- **Plan approval** no longer starts Build when pressing Enter without notes in revise mode.
+
+## Performance
+
+- **Terminal resize** is much faster on long conversations in fullscreen mode.
+
+
+# 0.2.116 — 2026-07-30
+
+## Features
+
+- **Headless streaming output** now includes tool calls, results, and usage when using `--output-format streaming-json`.
+- **New `/undo` slash command** restores files and chat to an earlier turn, same as `/rewind`.
+- **Slash commands** are now correctly hidden or refused in minimal or fullscreen mode based on their declared support.
+
+## Bug Fixes
+
+- **Fixed repeated forced re-logins** after laptop sleep or network hiccups during token refresh.
+- **Suppressed spurious history load warnings** on draft conversations that have no server history yet.
+- **Settings enum pickers** now keep the selected radio button on the current value until you press Enter.
+- **Deep-linked settings** such as `/privacy` now close the settings modal on Esc or Enter instead of returning to the list.
+
+
+# 0.2.115 — 2026-07-29
+
+## Features
+
+- **Delete sessions from the dashboard and welcome list.** On the dashboard, press `Ctrl+X` twice (or hover a settled row and click `[✗]` twice); in the welcome and `/resume` lists, press `d` then `y`.
+
+## Bug Fixes
+
+- **Fixed chat history corruption** that could duplicate tool results or cause later 400 errors after repeated identical tool calls.
+- **Fixed infinite redirect loops** in embedded previews when the browser blocks the required cookie.
+- **Improved the action-stationarity nudge message** to avoid incorrectly claiming tool results were identical.
+- **Fixed external auth provider commands** (`auth_provider_command`) not working on Windows.
+- **Fixed incorrect 'Turn cancelled by user' messages** shown on internal send-now wake turns.
+- **Fixed language server crashes** (e.g. Roslyn on every edit) and missing C# diagnostics; improved diagnostics reliability for other servers.
+
+## Performance
+
+- **Improved prompt caching** for long conversations, reducing repeated billing on growing transcripts.
+
+# 0.2.114 — 2026-07-29
+
+## Features
+
+- **New `/delete` slash command** removes the current session's history after confirmation.
+
+## Bug Fixes
+
+- **Grok** no longer crashes on startup when the host machine has no free threads.
+
+
+# 0.2.113 — 2026-07-28
+
+## Features
+
+- **MCP servers** can now be enabled or disabled directly from the CLI with `grok mcp enable <name>` and `grok mcp disable <name>`.
+- **Full plan markdown** can now be copied to the clipboard with `y` during plan approval or preview.
+- **Added support for the new SuperGrok Plus subscription tier** in authentication and feature gating.
+- **Enabled automatic recovery** from repetitive loops in model output by default.
+
+## Bug Fixes
+
+- **Terminal command output** is no longer lost or duplicated when the gateway is unreachable.
+- **Invalid MCP server entries** in config.toml no longer prevent Grok from starting; problems are shown in `grok inspect`.
+- **SessionEnd hooks** now run on exit in non-leader TUI and headless sessions.
+- **Paste chips** now display with the correct background in inline prompts and question inputs.
+- **Pasted content chips** now behave consistently when editing answers in the question view.
+- **Background task status** now shows only elapsed duration instead of absolute timestamps.
+- **Session lists** no longer drop real sessions when the remote registry reports an outdated turn count of zero.
+- **/loop** now stores prompts that include stop conditions so recurring tasks can terminate themselves when done.
+- **Reduced spurious warning messages** for common auth and config scenarios.
+- **Fixed conda activation** (and other sourced scripts that read $@) when using persistent or login-capture shells.
+- **Fixed stuck background-task tray rows** after long foreground shell commands complete.
+- **Agent subprocesses and idle inhibitors** are now cleaned up when the parent CLI process dies unexpectedly.
+- **Fixed truncated plans** in minimal mode and improved visual separation between reasoning and output (including NO_COLOR).
+- **Fixed credential loss** across multiple grok processes sharing the same auth file.
+- **Fixed doubled Enter** and other keys on older Alacritty terminals.
+- **Fixed false paywall** messages for free-tier and unmatched users.
+
+## Performance
+
+- **Cold start** shows the UI instantly while models and settings load in the background.
+- **Large session forks and resumes** now use far less memory and avoid spikes.
+- **Prevented thread exhaustion** on high-core shared machines by limiting the workspace daemon's worker threads.
+
 
 # 0.2.112 — 2026-07-24
 
-> 回填条目：0.2.112 的代码此前已并入本 fork，但未补更新日志。
-> 「导出到 GitHub」在 2026-07-26 的上游同步中才完成移植。
+## Breaking Changes
+
+- **CLI version policy** now has separate soft update floors/ceilings and hard startup requirements.
 
 ## Features
 
-- **导出到 GitHub**：新增 `workspace.export_github` RPC，可把工作区项目目录推送到 GitHub 仓库（自动初始化 git、创建分支与提交）。
-- **`tool_overrides` 配置**：可为内置搜索工具设置日期截止与域名白名单。
-- **自定义 provider 增强**：`model_providers` 支持 `query_params` 与 `env_http_headers`。
-- **新增 `/tutorial`**、hooks 可写在 `config.toml`、工作流覆盖层实时进度与失败恢复。
+- **New /tutorial slash command** opens an opt-in nine-topic onboarding tour of Grok.
+- **New tool_overrides option** lets you set date cutoffs and domain allowlists for the agent's built-in search tools.
+- **New toolOverrides option** lets you set date cutoffs and domain allowlists for the agent's built-in search tools.
+- **New config options** let you add query parameters or environment-backed headers to custom model providers and control which variables reach shell tools.
+- **Terminal and environment fixes** are now consolidated under the `/doctor` command with clearer guidance.
+- **Marketplace add** now rejects non-git URLs at add time instead of failing later.
+- **Slash commands** can now show optional bracket tags (e.g. [new]) via config or remote settings.
+- **Queued prompts** now offer an [edit] mouse button alongside Send now and cancel.
+- **Voice shortcut** toggle in settings can disable the Ctrl+Space/F8 keybind without disabling voice entirely.
+- **Image edit** can now use a remotely configured model slug instead of the hardcoded default.
+- **`grok doctor fix`** can now repair common tmux clipboard and passthrough problems.
+- **Per-provider auth helpers** now work on Windows and can run from a configurable working directory.
+- **/resume** now shows only native Grok sessions by default and shows a hint when external sessions are hidden.
+- **`grok --resume`** can now resume a session by its title as well as by ID.
+- **Workflows overlay** now shows live per-agent progress and automatically follows the active phase.
+- **Workflow runs** that failed can now be resumed; scratch file limits were also increased.
+- **Hooks** can now be defined in config.toml in addition to JSON files.
+- **Clicking** the "still running" status now opens the tasks pane.
 
 ## Bug Fixes
 
-- 后台 shell 命令上报真实退出码；文件附件在恢复/重放时正确显示；插件子 Agent 与父会话看到相同 MCP 工具；Linux 并发启动挂起修复。
+- **File attachments** now appear correctly when resuming or replaying conversations.
+- **Terminal output** from remote clients is now recorded so read-file hints and monitors function correctly.
+- **Background shell commands** now correctly report their real exit codes instead of always showing -1.
+- **Marketplace source refreshes** no longer hang the TUI or trap you in the extensions modal.
+- **Background task tray** now correctly clears killed tasks and keeps task descriptions after reconnect.
+- **Dashboard overlay** now correctly returns after forking a dashboard-attached session.
+- **Linux voice dictation** now works on PipeWire versions before 1.6.
+- **Fork** from a rewound session now copies the correct live-branch history.
+- **Account pane** now shows name and email even after the access token expires.
+- **Voice mode** now lets you edit already-dictated text without closing the microphone.
+- **Fixed startup hangs** on Linux after concurrent launches or rapid restarts.
+- **MCP tools** now appear without restart after enrolling or updating a managed service.
+- **Plugin subagents** now see the same MCP tools as the parent session.
+- **Copy confirmations** now show shorter messages when the clipboard succeeds.
+- **Repeated identical tool calls** now end the turn silently instead of showing a stop banner.
+- **Web search** now defaults to grok-4.5.
+- **Voice dictation** text is no longer dropped when pressing Enter to send.
+- **Bash mode** (`!`) now shows yellow prefix and action label in minimal mode.
+- **Parked turns** no longer spam duplicate "Worked for" markers in the transcript.
 
-完整条目见 [`changelogs/0.2.112.md`](changelogs/0.2.112.md)。
-
-## Internal
-
-- **上游同步**：对齐上游 `47348d13`（`SOURCE_REV` `d02693a8`）。移植 `export_github`（types + workspace op + hub_server 路由 + client 方法）与 `util/limits.rs`。上游在同一批次中下线了 `deploy`，本 fork 保留 `DeployError` 并与 `ExportGithub` 并存。
 
 # 0.2.111 — 2026-07-22
 
 ## Features
 
-- 可通过 `config.toml` 或环境变量关闭图片生成与视频生成工具（及其斜杠命令）。
-- `/session-info` 会显示当前会话使用的认证方式（API Key / 自定义 provider 等）与管理入口。
-- 可在 TUI 内直接运行 `doctor fix` 类修复命令，不必只走 CLI。
+- Users can now disable image generation and video generation tools (and their slash commands) via config.toml or environment variables.
+- `/session-info` now displays whether the session uses OAuth or an API key and where to manage the account.
+- You can now run `grok doctor fix` commands directly from inside the TUI instead of only from the CLI.
 
 ## Bug Fixes
 
-- **插件子 Agent** 默认继承父会话已连接的 MCP 服务器（`mcpInheritance: all`），`search_tool` / `use_tool` 行为与本地 Agent 一致。插件 Agent 仍不能自行声明 MCP、hooks 或提升权限模式。
-- **`!cmd` 命令** 超时上限提升至一小时。
-- **npm 包** 将原生二进制安装到 `$GROK_HOME/bin`（与 Rust CLI 相同的覆盖约定）。
-- **启动警告** 会引导使用 `/doctor` 查看详情与修复。
-- **Dashboard** 宽屏模式下悬停与点击不再漏掉条目间隙。
-- 编辑队列提示时 **Shift/Alt+Enter** 可插入换行。
-- **合并队列模式** 下编辑排队提示不再因过早释放 hold 而丢改动。
-- 对使用过压缩的会话做 fork 后，后续 rewind 不再因缺失 checkpoint 失败。
-- 在回看滚动缓冲时出现权限提示，焦点会正确落到提示上以便作答。
-- 按一次 Esc 可取消当前 Agent 回合（全屏 vim 滚动模式除外）。
-- 连续多次发起完全相同的工具调用时，会自动停止该回合（doom-loop 防护）。
-- 工作区 teleport 禁用标志的两种拼写均可正确加载与保存。
-- 多会话并存时，后台子 Agent 完成消息不再泄漏到无关会话。
-- 自动权限分类器超时或失败时，改为弹出正常权限提示，而不再静默拒绝。
-- **托管 MCP 工具** 在 Notion 更新等慢操作上不再过早超时。
+- **Plugin subagents** now inherit the parent session’s connected MCP servers (default `mcpInheritance: all`), so `search_tool` / `use_tool` work the same as for local agents. Plugin agents still cannot declare their own MCP servers, hooks, or elevated permission modes.
+- **`!cmd` commands** now allow up to one hour before timing out.
+- **npm package** now installs the native binary under `$GROK_HOME/bin` (honoring the same override as the Rust CLI).
+- **Startup warnings** now point to `/doctor` for details and fixes.
+- **Dashboard hover and clicks** no longer miss the gaps between items in wide mode.
+- **Shift/Alt+Enter** now inserts a newline while editing a queued prompt.
+- **Queued prompt edits** under combine mode no longer lose changes due to premature hold release.
+- Forking a session that used compaction no longer causes later rewinds to fail with missing checkpoint errors.
+- When a permission prompt appears while viewing scrollback, focus now correctly moves to the prompt so you can answer.
+- Pressing Esc once now cancels the current agent turn (except in fullscreen vim scrollback mode).
+- Grok now automatically stops a turn that keeps repeating the exact same tool call many times in a row.
+- Configs using either spelling of the workspace teleport disable flag now load and save correctly.
+- Background subagent completion messages no longer leak into unrelated sessions when multiple sessions are active.
+- When the auto-permission classifier times out or fails, Grok now shows a normal permission prompt instead of silently denying.
+- **Managed MCP tools** no longer time out prematurely on slow operations like Notion updates.
 
 ## Performance
 
-- macOS 语音听写通过临时 helper 进程采集音频，降低内存占用。
+- Voice dictation on macOS now uses less memory by running capture in a temporary helper process.
+
 
 # 0.2.110 — 2026-07-21
 
 ## Features
 
-- **扩展弹窗** 删除 MCP 服务器、插件或 hook 源时会要求确认（按 y 继续）。
+- **Removing MCP servers, plugins, or hook sources** in the Extensions modal now asks for confirmation (press y to proceed).
 
 ## Bug Fixes
 
-- **会话创建失败**（含磁盘满）会显示错误信息，而不再卡在「正在启动会话…」。
-- **自动压缩** 因凭证过期失败时，可重新配置凭证并自动重试压缩与原提示。
+- **Session creation failures** (including disk full) now show an error message instead of hanging on "Starting session…".
+- **Auto-compact** that fails due to an expired token now lets you log in and automatically retry the compact + original prompt.
 
-# 0.2.109 — 2026-07-23
+
+# 0.2.109 — 2026-07-21
 
 ## Features
 
-- **中文界面**：设置、扩展、快捷键帮助、斜杠命令说明等用户可见文案全面中文化。
-- **欢迎页 Logo**：首屏改为块阴影风格的 **CHAOS** 字符画（完整版与紧凑版随窗口高度切换）。
-- **Chaos 改造**：移除对 Grok 登录链路的硬依赖，支持用户自带模型凭证接入。
-- **/usage** 可查看当前会话的 Token 用量与费用。
-- **/doctor** 作为终端、tmux、剪贴板与键盘诊断的主入口。
-- **推理强度** 在模型支持时接受独立档位 `max`（高于 `xhigh`）。
+- **/usage** now shows token counts and cost for the current session.
+- **grok doctor fix ssh-wrap** can set up `grok wrap ssh` automatically for Bash, zsh, and fish.
+- **[model_providers.<id>]** lets operators share gateway settings across custom models.
+- **Reasoning effort** now accepts `max` as its own tier (above `xhigh`) when the model advertises it.
+- **Queued follow-ups** can now be batched into a single model turn with the new combine_queued_prompts setting.
+- **/doctor** is now the main in-app command for checking terminal, tmux, clipboard, and keyboard setup.
+- **read_file** now returns full Markdown files inside skills/ directories without truncation.
 
 ## Bug Fixes
 
-- **语音听写** 会区分麦克风仅收到静音（如 macOS 权限）与未检测到语音。
-- 停靠回合期间后台任务延迟时，不再堆叠重复的「Worked for」标记。
-- 空闲状态行在仍有子 Agent 运行时显示更清晰的文案。
+- **Voice dictation** now explains when the microphone delivered only silence (macOS permission) versus no speech detected.
+- **Duplicate 'Worked for' markers** no longer stack in the transcript when background tasks defer during a parked turn.
+- The idle status row now clearly says '1 subagent still running' instead of 'watching · 1 subagent' when background work remains.
+- **Background /loop** iterations no longer overlap when descendant subagents are still running.
+
 
 # 0.2.108 — 2026-07-21
 
@@ -328,7 +402,7 @@
 
 - **Sessions** can now be resumed after moving the working directory or switching machines.
 - **Ctrl+G** in minimal mode opens the current prompt draft in an external editor without sending it; fullscreen keeps the tasks pane.
-- **grok doctor** now shows standalone terminal, tmux, clipboard, and keyboard diagnostics without starting the TUI.
+- **grok doctor** checks terminal, tmux, clipboard, and keyboard setup without opening the TUI.
 
 ## Bug Fixes
 

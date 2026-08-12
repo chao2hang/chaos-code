@@ -153,12 +153,6 @@ pub enum SyntheticReason {
     /// agent with a "not yet achieved — keep working" reminder pointing
     /// at the persisted details file.
     GoalClassifierNudge,
-    /// Plan-mode missing-exit nudge: a plan-mode turn ended with plain
-    /// text (neither `exit_plan_mode` nor `ask_user_question`), which would
-    /// otherwise leave the session silently stuck in plan mode. Wakes the
-    /// agent with a "call the exit tool now" reminder. Bounded per
-    /// plan-mode activation.
-    PlanMissingExitNudge,
     /// Scheduled task (`/loop`) prompt fired by the scheduler.  Wakes the
     /// agent.
     SchedulerFired,
@@ -194,7 +188,6 @@ impl SyntheticReason {
             | Self::SubagentCompleted
             | Self::NotificationDrain
             | Self::GoalClassifierNudge
-            | Self::PlanMissingExitNudge
             | Self::SchedulerFired => true,
             Self::CompactionMeta
             | Self::SystemReminder
@@ -634,50 +627,70 @@ pub struct ConversationRequest {
 }
 
 impl ConversationRequest {
-    /// Strip all inline image data from the conversation to reduce payload size.
-    ///
-    /// Replaces `ContentPart::Image` entries with a text placeholder so the
-    /// model knows an image was there but the base64 blob is gone. This is
-    /// used as a recovery strategy when the downstream API returns 413
-    /// "Request Entity Too Large".
-    /// Strip `reasoning_effort` from the request so a retry can proceed
-    /// without the unsupported parameter. Returns `true` if effort was
-    /// present and has been removed, `false` if it was already `None`
-    /// (so the caller knows there's nothing to fall back from).
-    pub fn strip_reasoning_effort(&mut self) -> bool {
-        if self.reasoning_effort.is_some() {
-            self.reasoning_effort = None;
-            true
-        } else {
-            false
-        }
+    /// Strip every image; returns the stripped URLs.
+    pub fn strip_images(&mut self) -> Vec<Arc<str>> {
+        strip_images_where(&mut self.items, |_| true)
     }
+}
 
-    pub fn strip_images(&mut self) -> usize {
-        let mut stripped = 0usize;
-        for item in &mut self.items {
-            match item {
-                ConversationItem::User(user) => {
-                    for part in &mut user.content {
-                        if matches!(part, ContentPart::Image { .. }) {
+/// Strip only `urls`. Unlisted images (compaction, newer turns) stay.
+/// Returns the number of stripped occurrences (one per replaced part, so a
+/// URL stored twice counts twice).
+///
+/// Invariant: replaces parts in place, never adds or removes a
+/// `ConversationItem` (the `&mut [_]` signature cannot resize); chat-state
+/// relies on this to skip turn-capture rebasing.
+pub fn strip_images_by_url(items: &mut [ConversationItem], urls: &[Arc<str>]) -> usize {
+    strip_images_where(items, |url| urls.iter().any(|u| u.as_ref() == url)).len()
+}
+
+/// Replaces a stripped user image. Deliberately verbose, like the eviction
+/// placeholder: a silently-stripped image otherwise induces confident
+/// hallucination of its contents.
+pub const IMAGE_STRIP_PLACEHOLDER: &str = "[image removed — the server could not process it; \
+     its contents are unavailable. Ask the user to re-attach the image if it is still needed.]";
+
+/// User images become [`IMAGE_STRIP_PLACEHOLDER`]; tool-result images are
+/// dropped (a placeholder there is invisible to the conversion layers).
+fn strip_images_where(
+    items: &mut [ConversationItem],
+    mut should_strip: impl FnMut(&str) -> bool,
+) -> Vec<Arc<str>> {
+    let mut stripped = Vec::new();
+    for item in items {
+        match item {
+            ConversationItem::User(user) => {
+                for part in &mut user.content {
+                    match part {
+                        ContentPart::Image { url } if should_strip(url) => {
+                            stripped.push(Arc::clone(url));
                             *part = ContentPart::Text {
-                                text: Arc::<str>::from("[image removed — conversation too large]"),
+                                text: Arc::<str>::from(IMAGE_STRIP_PLACEHOLDER),
                             };
-                            stripped += 1;
                         }
+                        ContentPart::Image { .. } | ContentPart::Text { .. } => {}
                     }
                 }
-                ConversationItem::ToolResult(t) => {
-                    // Drop inline images from tool results (e.g. read_file on
-                    // images/PDFs). On 413 retry these are the largest payloads.
-                    stripped += t.images.len();
-                    t.images.clear();
-                }
-                _ => {}
             }
+            ConversationItem::ToolResult(t) => {
+                t.images.retain(|part| match part {
+                    ContentPart::Image { url } if should_strip(url) => {
+                        stripped.push(Arc::clone(url));
+                        false
+                    }
+                    ContentPart::Image { .. } | ContentPart::Text { .. } => true,
+                });
+            }
+            // Exhaustive on purpose, items here and content parts above: a
+            // future image-bearing variant of either must choose its strip
+            // behavior here, not silently keep images.
+            ConversationItem::System(_)
+            | ConversationItem::Assistant(_)
+            | ConversationItem::BackendToolCall(_)
+            | ConversationItem::Reasoning(_) => {}
         }
-        stripped
     }
+    stripped
 }
 
 /// Tool choice options
@@ -919,21 +932,6 @@ impl ConversationResponse {
         }
     }
 
-    /// Whether this response came from a known reasoning/thinking model.
-    ///
-    /// Domestic reasoning models (DeepSeek-R1, Qwen3-Thinking, GLM-Z1, Grok
-    /// reasoning tier) routinely emit a `reasoning_only` response (visible
-    /// content arrives on a later turn). Resampling such a response is
-    /// pointless — the model intentionally answered with thoughts and no
-    /// prose, so the retry layer should surface it rather than retry-storm.
-    pub fn is_known_thinking_model(&self) -> bool {
-        let model = self
-            .assistant()
-            .and_then(|a| a.model_id.as_deref())
-            .unwrap_or_default();
-        known_thinking_model_id(model)
-    }
-
     /// Check if the response is effectively empty (no content, no tool calls).
     ///
     /// Equivalent to `self.empty_reason().is_some()`. Reasoning-only
@@ -963,25 +961,6 @@ impl ConversationResponse {
             .unwrap_or_default();
         if text.is_empty() { None } else { Some(text) }
     }
-}
-
-/// `true` when a model id matches a known reasoning/thinking family whose
-/// reasoning-only empty response is expected rather than a fault.
-pub fn known_thinking_model_id(model: &str) -> bool {
-    let m = model.to_ascii_lowercase();
-    // Central list of models whose first turn may legitimately be
-    // reasoning-only. Matched by prefix/contains to cover catalog renames.
-    m.starts_with("deepseek-r")
-        || m.contains("reasoner")
-        || m.contains("qwen3-thinking")
-        || m.contains("qwq")
-        || m.contains("glm-z")
-        || m.contains("glm-4.5-air")
-        || m.contains("thinking")
-        || m.starts_with("grok-4")
-        || m.starts_with("grok-reasoning")
-        || m.contains(":thinking")
-        || m.contains("-thinking")
 }
 
 // ============================================================================
@@ -1218,22 +1197,6 @@ impl ConversationItem {
                 text: Arc::<str>::from(content.into()),
             }],
             synthetic_reason: Some(SyntheticReason::GoalClassifierNudge),
-            cwd_generation: None,
-            prior_turn_interrupt: None,
-            prompt_index: None,
-        })
-    }
-
-    /// Plan-mode missing-exit nudge: queued when a plan-mode turn ended
-    /// with plain text instead of `exit_plan_mode` / `ask_user_question`.
-    /// Tagged distinctly so trace tooling can tell the shell's self-nudge
-    /// from real user input even though the wire role is `user`.
-    pub fn plan_missing_exit_nudge(content: impl Into<String>) -> Self {
-        Self::User(UserItem {
-            content: vec![ContentPart::Text {
-                text: Arc::<str>::from(content.into()),
-            }],
-            synthetic_reason: Some(SyntheticReason::PlanMissingExitNudge),
             cwd_generation: None,
             prior_turn_interrupt: None,
             prompt_index: None,
@@ -4532,7 +4495,7 @@ mod tests {
         req.items.push(user);
 
         let stripped = req.strip_images();
-        assert_eq!(stripped, 1);
+        assert_eq!(stripped.len(), 1);
 
         // Verify image was replaced with placeholder text
         if let ConversationItem::User(user) = &req.items[0] {
@@ -4553,7 +4516,7 @@ mod tests {
         req.items.push(ConversationItem::assistant("response"));
 
         let stripped = req.strip_images();
-        assert_eq!(stripped, 0);
+        assert_eq!(stripped.len(), 0);
     }
 
     #[test]
@@ -4582,7 +4545,7 @@ mod tests {
             .push(ConversationItem::tool_result("call-1", "result text"));
 
         let stripped = req.strip_images();
-        assert_eq!(stripped, 0);
+        assert_eq!(stripped.len(), 0);
 
         // Verify nothing was modified
         assert_matches!(&req.items[0], ConversationItem::System(s) => {
@@ -4636,7 +4599,7 @@ mod tests {
         req.items.push(user2);
 
         let stripped = req.strip_images();
-        assert_eq!(stripped, 3);
+        assert_eq!(stripped.len(), 3);
     }
 
     #[test]
@@ -4656,7 +4619,7 @@ mod tests {
         ));
 
         let stripped = req.strip_images();
-        assert_eq!(stripped, 2);
+        assert_eq!(stripped.len(), 2);
 
         // Images should be cleared
         if let ConversationItem::ToolResult(t) = &req.items[0] {
@@ -4669,6 +4632,71 @@ mod tests {
         } else {
             panic!("Expected ToolResult");
         }
+    }
+
+    /// The URL-scoped strip: listed URLs are stripped from both part kinds
+    /// (User images → placeholder, ToolResult images removed), unlisted
+    /// images survive, and the count reflects parts stripped.
+    #[test]
+    fn test_strip_images_by_url_strips_only_listed_urls() {
+        let listed: Arc<str> = "data:image/png;base64,aaa".into();
+        let mut user = ConversationItem::user("look");
+        user.add_image(listed.to_string());
+        user.add_image("data:image/png;base64,unlisted".to_string());
+        let mut items = vec![
+            user,
+            ConversationItem::tool_result_with_images(
+                "call_1",
+                "read photo.png",
+                vec![
+                    ContentPart::Image {
+                        url: listed.clone(),
+                    },
+                    ContentPart::Image {
+                        url: "data:image/png;base64,unlisted".into(),
+                    },
+                ],
+            ),
+        ];
+
+        assert_eq!(strip_images_by_url(&mut items, &[listed]), 2);
+
+        // The whole safety case for persisting via `replace_history`: an
+        // in-place strip never changes item count or ordering.
+        assert_eq!(items.len(), 2, "strip must never add or remove items");
+
+        let ConversationItem::User(u) = &items[0] else {
+            panic!("expected User");
+        };
+        assert!(
+            u.content.iter().any(|p| matches!(
+                p,
+                ContentPart::Text { text } if text.as_ref() == IMAGE_STRIP_PLACEHOLDER
+            )),
+            "listed user image must be replaced by the strip placeholder: {:?}",
+            u.content
+        );
+        let user_image_urls: Vec<_> = u
+            .content
+            .iter()
+            .filter_map(|p| match p {
+                ContentPart::Image { url } => Some(url.as_ref()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            user_image_urls,
+            ["data:image/png;base64,unlisted"],
+            "listed user image replaced, unlisted survives"
+        );
+        let ConversationItem::ToolResult(t) = &items[1] else {
+            panic!("expected ToolResult");
+        };
+        assert!(
+            matches!(&t.images[..], [ContentPart::Image { url }] if url.contains("unlisted")),
+            "listed tool image removed, unlisted survives: {:?}",
+            t.images
+        );
     }
 
     #[test]
@@ -5038,81 +5066,6 @@ mod tests {
             resp.empty_reason(),
             Some(crate::error::EmptyReason::NoVisibleContent)
         );
-    }
-
-    #[test]
-    fn known_thinking_model_id_flags_reasoning_families() {
-        for id in [
-            "deepseek-reasoner",
-            "deepseek-r1",
-            "qwen3-thinking-2507",
-            "qwq-32b",
-            "glm-z1",
-            "glm-4.5-air-2504",
-            "grok-4",
-            "grok-reasoning",
-            "some-vendor/qwen3-thinking",
-            "model:thinking-fused",
-        ] {
-            assert!(
-                known_thinking_model_id(id),
-                "expected {id} to be a known thinking model"
-            );
-        }
-        for id in ["gpt-4o", "claude-3-5-sonnet", "qwen-max", "false", ""] {
-            assert!(
-                !known_thinking_model_id(id),
-                "expected {id} to NOT be a known thinking model"
-            );
-        }
-    }
-
-    #[test]
-    fn empty_reason_reasoning_only_with_thinking_model_flags_known() {
-        // A reasoning-only empty response from a known thinking model must be
-        // distinguishable from one on a non-thinking model so the sampler
-        // layer can avoid a retry-storm.
-        assert!(!known_thinking_model_id("gpt-4o"));
-        assert!(known_thinking_model_id("deepseek-reasoner"));
-        assert!(known_thinking_model_id("qwen3-thinking-2507"));
-        assert!(known_thinking_model_id("glm-z1-250406"));
-    }
-
-    #[test]
-    fn reasoning_only_empty_reason_is_content_based_not_model_based() {
-        // The sampler guard treats *any* ReasoningOnly response as complete
-        // (no resample), regardless of model name. This pins that behaviour:
-        // a response carrying reasoning items must report ReasoningOnly even
-        // for a model id NOT in the thinking-model allowlist, so the guard in
-        // request_task.rs (which checks empty_reason() == ReasoningOnly)
-        // covers it without needing the allowlist.
-        let response = ConversationResponse {
-            items: vec![
-                ConversationItem::Reasoning(synthesized_reasoning_item("thinking about the plan")),
-                ConversationItem::Assistant(AssistantItem {
-                    content: String::new().into(),
-                    tool_calls: Vec::new(),
-                    model_id: Some("some-unknown-vendor/glm-5.2-fp8".to_string()),
-                    model_fingerprint: None,
-                    reasoning_effort: None,
-                }),
-            ],
-            stop_reason: Some(StopReason::Stop),
-            usage: None,
-            cost_usd_ticks: None,
-            message_chunks_emitted: 0,
-            doom_loop_signals: Vec::new(),
-            stop_message: None,
-            message_id: None,
-            raw_stop_reason: None,
-            stop_sequence: None,
-        };
-        assert_eq!(
-            response.empty_reason(),
-            Some(crate::error::EmptyReason::ReasoningOnly)
-        );
-        // And the allowlist does NOT need to know about this model:
-        assert!(!known_thinking_model_id("some-unknown-vendor/glm-5.2-fp8"));
     }
 
     #[test]
