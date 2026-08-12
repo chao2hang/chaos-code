@@ -648,6 +648,13 @@ fn paint_or_reuse_combined_user_bubbles(
     crate::scrollback::EntryId,
     Vec<crate::scrollback::EntryId>,
 ) {
+    // Defensive: callers always pass non-empty segments (combined prompts
+    // have at least one text). Return a safe sentinel instead of panicking
+    // if the invariant ever breaks.
+    if segments.is_empty() {
+        use crate::scrollback::EntryId;
+        return (0, EntryId::new(0), EntryId::new(0), Vec::new());
+    }
     if let Some(existing) = trailing_user_prompts(agent, segments.len()).filter(|rows| {
         rows.iter()
             .map(|(_, _, t)| t.as_str())
