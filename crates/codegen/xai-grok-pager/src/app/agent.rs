@@ -1111,6 +1111,10 @@ impl AgentSession {
             .collect();
         let n = combine_prefix_len(gates, &skip_refs).max(1);
         let mut merged = self.pending_prompts.pop_front()?;
+        // Defensive: combine_prefix_len counts from the same queue so it
+        // should never exceed queue depth, but cap n to prevent a panic if
+        // the invariant is ever violated (merged already popped = +1).
+        let n = n.min(self.pending_prompts.len() + 1);
         if n == 1 {
             return Some(merged);
         }
@@ -1119,7 +1123,7 @@ impl AgentSession {
             let next = self
                 .pending_prompts
                 .pop_front()
-                .expect("prefix length checked");
+                .expect("prefix length capped to queue depth");
             let shift =
                 join_texts(segments.iter().map(String::as_str)).len() + TEXT_SEPARATOR.len();
             segments.push(next.text.clone());

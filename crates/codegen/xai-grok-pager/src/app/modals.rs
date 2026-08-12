@@ -142,7 +142,10 @@ impl AgentView {
                 ActiveModal::DocPicker { window, state, .. } => {
                     (window, state.query().is_empty(), true)
                 }
-                _ => unreachable!(),
+                // Defensive: outer matches! guard covers exactly these 4
+                // variants. If a new picker is added to the guard without an
+                // arm here, swallow the key instead of panicking.
+                _ => return InputOutcome::Changed,
             };
             // These modals don't use fold; fold_info is None so
             // Left/Right/h/l return Unhandled and reach the picker.
@@ -611,6 +614,14 @@ impl AgentView {
         };
         if let Some(outcome) = settings_outcome {
             return apply_settings_outcome(self, outcome);
+        }
+        if let Some(ActiveModal::ProviderModal { state }) = self.active_modal.as_mut() {
+            let out = crate::views::provider_modal::handle_provider_paste(state, text);
+            return crate::app::agent_view::apply_provider_outcome(self, out);
+        }
+        if let Some(ActiveModal::ClientModal { state }) = self.active_modal.as_mut() {
+            let out = crate::views::client_modal::handle_client_paste(state, text);
+            return crate::app::agent_view::apply_client_outcome(self, out);
         }
         if self.active_modal.is_some() {
             InputOutcome::Changed
@@ -1475,7 +1486,10 @@ impl AgentView {
                 Some(ActiveModal::DocViewer { window, .. }) => window,
                 Some(ActiveModal::ShortcutsHelp { window, .. }) => window,
                 Some(ActiveModal::RememberNoteReview { window, .. }) => window,
-                _ => unreachable!(),
+                // Defensive: outer matches! guard covers exactly these 7
+                // variants. If a new picker is added to the guard without an
+                // arm here, swallow the mouse event instead of panicking.
+                _ => return InputOutcome::Changed,
             };
             let outcome = mw::handle_modal_mouse(window, mouse.kind, mouse.column, mouse.row);
             match outcome {
@@ -1647,6 +1661,32 @@ impl AgentView {
                         mouse.row,
                     );
                     return apply_settings_outcome(self, out);
+                }
+                _ => return InputOutcome::Changed,
+            }
+        }
+
+        // ProviderModal: route through ModalWindow chrome (close / scroll / shortcuts).
+        if let Some(ActiveModal::ProviderModal { state }) = &mut self.active_modal {
+            let outcome =
+                mw::handle_modal_mouse(&mut state.window, mouse.kind, mouse.column, mouse.row);
+            match outcome {
+                ModalWindowOutcome::CloseRequested => {
+                    self.active_modal = None;
+                    return InputOutcome::Changed;
+                }
+                _ => return InputOutcome::Changed,
+            }
+        }
+
+        // ClientModal: route through ModalWindow chrome (close / scroll / shortcuts).
+        if let Some(ActiveModal::ClientModal { state }) = &mut self.active_modal {
+            let outcome =
+                mw::handle_modal_mouse(&mut state.window, mouse.kind, mouse.column, mouse.row);
+            match outcome {
+                ModalWindowOutcome::CloseRequested => {
+                    self.active_modal = None;
+                    return InputOutcome::Changed;
                 }
                 _ => return InputOutcome::Changed,
             }
@@ -2482,6 +2522,10 @@ impl AgentView {
                     compact,
                     None,
                 );
+            } else if let modal::ActiveModal::ProviderModal { state } = active_modal {
+                crate::views::provider_modal::render_provider_modal(buf, area, state, compact);
+            } else if let modal::ActiveModal::ClientModal { state } = active_modal {
+                crate::views::client_modal::render_client_modal(buf, area, state, compact);
             } else if matches!(
                 active_modal,
                 modal::ActiveModal::ResetSettingsConfirm { .. }

@@ -394,7 +394,10 @@ mod tests {
         for c in "WorkBuddy/5.3.5 WorkBuddy/5.3.5 CLI/2.115.0".chars() {
             handle_client_key(&mut state, &key(KeyCode::Char(c)));
         }
-        let outcome = handle_client_key(&mut state, &key(KeyCode::Enter));
+        // Tab advances to the Headers field; a second Tab commits (Enter on
+        // Headers opens the header editor instead).
+        handle_client_key(&mut state, &key(KeyCode::Tab)); // advance to Headers
+        let outcome = handle_client_key(&mut state, &key(KeyCode::Tab)); // commit
         assert_eq!(state.env_key, "MY_CLIENT_API_KEY");
         assert_eq!(state.client_identifier, "my-client");
         assert_eq!(
