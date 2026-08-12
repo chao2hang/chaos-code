@@ -569,7 +569,20 @@ impl AgentView {
             | ActiveModal::ResetSettingsConfirm { .. }
             | ActiveModal::RememberNoteReview { .. }
             | ActiveModal::ProviderModal { .. }
-            | ActiveModal::ClientModal { .. } => unreachable!(),
+            | ActiveModal::ClientModal { .. } => {
+                // Defensive: these modals are handled by their own if-let
+                // branches above (Esc/chrome/delegate), which always return.
+                // If control reaches here, the modal was swapped mid-dispatch
+                // or a new variant was added without a branch — swallow the
+                // key instead of panicking. Same class of fix as modals.rs
+                // lines 145 and 1486 (commit f6c663ad), which this completes.
+                tracing::warn!(
+                    "handle_modal_key: modal reached EditConfirm fallback, swallowing key"
+                );
+                // Restore the modal so it isn't lost.
+                self.active_modal = Some(modal);
+                InputOutcome::Changed
+            }
         }
     }
 
