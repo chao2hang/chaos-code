@@ -486,6 +486,54 @@ impl AgentView {
             };
         }
 
+        // ProviderModal: route through ModalWindow chrome, then delegate.
+        if let Some(ActiveModal::ProviderModal { state }) = self.active_modal.as_mut() {
+            let chrome_cfg = mw::ModalWindowConfig {
+                title: "",
+                tabs: None,
+                shortcuts: &[],
+                sizing: mw::ModalSizing::default(),
+                fold_info: None,
+            };
+            let outcome = mw::handle_modal_key(&mut state.window, key, &chrome_cfg);
+            match outcome {
+                mw::ModalWindowOutcome::CloseRequested => {
+                    self.active_modal = None;
+                    return InputOutcome::Changed;
+                }
+                mw::ModalWindowOutcome::Unhandled => {}
+                _ => return InputOutcome::Changed,
+            }
+        }
+        if let Some(ActiveModal::ProviderModal { state }) = self.active_modal.as_mut() {
+            let out = crate::views::provider_modal::handle_provider_key(state, key);
+            return crate::app::agent_view::apply_provider_outcome(self, out);
+        }
+
+        // ClientModal: route through ModalWindow chrome, then delegate.
+        if let Some(ActiveModal::ClientModal { state }) = self.active_modal.as_mut() {
+            let chrome_cfg = mw::ModalWindowConfig {
+                title: "",
+                tabs: None,
+                shortcuts: &[],
+                sizing: mw::ModalSizing::default(),
+                fold_info: None,
+            };
+            let outcome = mw::handle_modal_key(&mut state.window, key, &chrome_cfg);
+            match outcome {
+                mw::ModalWindowOutcome::CloseRequested => {
+                    self.active_modal = None;
+                    return InputOutcome::Changed;
+                }
+                mw::ModalWindowOutcome::Unhandled => {}
+                _ => return InputOutcome::Changed,
+            }
+        }
+        if let Some(ActiveModal::ClientModal { state }) = self.active_modal.as_mut() {
+            let out = crate::views::client_modal::handle_client_key(state, key);
+            return crate::app::agent_view::apply_client_outcome(self, out);
+        }
+
         // EditConfirm: single char matching.
         let ch = match key.code {
             KeyCode::Char(c) => c,
