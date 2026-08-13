@@ -29,8 +29,8 @@ pub use self::provider_error::{
     ProviderError, ProviderErrorKind, parse_provider_error, parse_provider_error_str,
 };
 pub use self::tool_overrides::{
-    ClearableField, SearchDateBound, SearchDateBoundError, ToolOverrides, ToolOverridesUpdate,
-    WebSearchOptions, XSearchOptions,
+    ClearableField, MAX_WEB_SEARCH_DOMAINS, SearchDateBound, SearchDateBoundError, ToolOverrides,
+    ToolOverridesUpdate, WebSearchOptions, WebSearchOptionsError, XSearchOptions,
 };
 pub use self::types::*;
 

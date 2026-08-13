@@ -1,10 +1,15 @@
 //! Binds the `xai-grok-session-search` index to this crate's JSONL session
-//! store. A process that keeps no index holds no manager, so these entry
-//! points take the handle rather than reach for a global.
+//! store: a process-wide manager plus the entry points the rest of the
+//! shell calls.
+//!
+//! Everything below the seam (the SQLite FTS5 cache, the cross-process
+//! bootstrap lease, the debounced upsert worker) lives in the crate; this
+//! module supplies the store binding and re-exports the request/response
+//! types at their original paths.
 
 use std::io;
 use std::path::Path;
-use std::sync::{Arc, OnceLock};
+use std::sync::LazyLock;
 
 use agent_client_protocol as acp;
 
@@ -12,130 +17,22 @@ use super::StorageAdapter;
 use super::jsonl::JsonlStorageAdapter;
 use crate::session::info::Info;
 use crate::session::persistence::Summary;
-use xai_grok_session_search::{IndexableSession, SessionSource};
+use xai_grok_session_search::{IndexableSession, SearchIndexManager, SessionSource};
 
-pub use xai_grok_session_search::{
-    SearchIndexManager, SearchIndexStatus, SessionSearchRequest, SessionSearchResponse,
-};
+pub use xai_grok_session_search::{SearchIndexStatus, SessionSearchRequest, SessionSearchResponse};
 
-/// Private on purpose: [`start_if_enabled`] is the only way to a manager, so the
-/// feature cannot be bypassed. One live manager per grok home, at most.
-fn start_search_index() -> SearchIndexManager {
+/// Global singleton — lazily started on first use.
+///
+/// Requires an active tokio runtime on first access (spawns tasks).
+pub static SEARCH_INDEX_MANAGER: LazyLock<SearchIndexManager> = LazyLock::new(|| {
     SearchIndexManager::start(
         |root| -> Box<dyn SessionSource> {
             Box::new(JsonlSessionSource(JsonlStorageAdapter::with_root(root)))
         },
         super::search_content::collect_all_indexable_content_single_pass,
+        super::search_gate::is_index_enabled,
     )
-}
-
-/// The index this process keeps, or the sentence naming what turned it off.
-pub enum SearchIndex {
-    Started(SearchIndexManager),
-    Off { reason: String },
-}
-
-impl SearchIndex {
-    pub fn index(&self) -> Option<&SearchIndexManager> {
-        match self {
-            Self::Started(index) => Some(index),
-            Self::Off { .. } => None,
-        }
-    }
-
-    pub fn started(self) -> Option<SearchIndexManager> {
-        match self {
-            Self::Started(index) => Some(index),
-            Self::Off { .. } => None,
-        }
-    }
-
-    pub fn off_reason(&self) -> Option<&str> {
-        match self {
-            Self::Started(_) => None,
-            Self::Off { reason } => Some(reason),
-        }
-    }
-}
-
-/// The process's one index decision, shared rather than copied, so a session
-/// created while the remote settings are in flight reads the answer that lands
-/// later. `OnceLock` not `OnceCell`: the persistence actor's clone is `Send`.
-#[derive(Clone, Default)]
-pub struct SharedSearchIndex(Arc<OnceLock<Option<Arc<SearchIndexManager>>>>);
-
-/// Three states, because collapsing the first two is a bug a reader cannot see:
-/// an empty answer from `Pending` is not final, and one from `Off` is.
-#[derive(Clone, Copy)]
-pub enum IndexDecision<'a> {
-    Pending,
-    Off,
-    On(&'a SearchIndexManager),
-}
-
-impl std::fmt::Debug for IndexDecision<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Pending => f.write_str("Pending"),
-            Self::Off => f.write_str("Off"),
-            Self::On(_) => f.debug_tuple("On").finish_non_exhaustive(),
-        }
-    }
-}
-
-impl<'a> IndexDecision<'a> {
-    /// The manager to write through. Treats `Pending` and `Off` alike on purpose:
-    /// it skips, and the bootstrap after the decision backfills what was missed.
-    /// A read must not, which is why this is not `decision`.
-    pub fn writer(self) -> Option<&'a SearchIndexManager> {
-        match self {
-            Self::On(index) => Some(index),
-            Self::Pending | Self::Off => None,
-        }
-    }
-
-    /// For a caller with no pending window, as a CLI has. Takes the resolution,
-    /// not its contents, which would let a pending `writer()` read back as `Off`.
-    pub fn settled(index: &'a SearchIndex) -> Self {
-        match index {
-            SearchIndex::Started(index) => Self::On(index),
-            SearchIndex::Off { .. } => Self::Off,
-        }
-    }
-}
-
-impl SharedSearchIndex {
-    /// Call at use time, never store: the snapshot is what this type avoids.
-    pub fn decision(&self) -> IndexDecision<'_> {
-        match self.0.get() {
-            None => IndexDecision::Pending,
-            Some(None) => IndexDecision::Off,
-            Some(Some(index)) => IndexDecision::On(index),
-        }
-    }
-
-    pub(crate) fn decide(&self, index: impl FnOnce() -> Option<Arc<SearchIndexManager>>) {
-        self.0.get_or_init(index);
-    }
-
-    /// For a session that must never reach an index, whatever the process decides.
-    pub(crate) fn never_indexed() -> Self {
-        let cell = OnceLock::new();
-        let _ = cell.set(None);
-        Self(Arc::new(cell))
-    }
-}
-
-pub fn start_if_enabled(cfg: &crate::agent::config::Config) -> SearchIndex {
-    if let Some(reason) = cfg.feature_off_reason(crate::agent::config::Feature::SessionSearch) {
-        tracing::info!(
-            reason = %reason,
-            "session search index turned off for this process"
-        );
-        return SearchIndex::Off { reason };
-    }
-    SearchIndex::Started(start_search_index())
-}
+});
 
 /// Projects the JSONL store's `Summary` down to the handful of fields the
 /// index reads, so the index never sees the full session record.
@@ -179,12 +76,10 @@ impl SessionSource for JsonlSessionSource {
     }
 }
 
-pub fn notify_session_updated(index: Option<&SearchIndexManager>, session_id: &str, cwd: &str) {
-    let Some(index) = index else {
-        return;
-    };
+/// Trigger indexing for a session that was just saved or updated.
+pub fn notify_session_updated(session_id: &str, cwd: &str) {
     let root = crate::util::grok_home::grok_home();
-    index.enqueue(root, session_id.to_string(), cwd.to_string());
+    SEARCH_INDEX_MANAGER.enqueue(root, session_id.to_string(), cwd.to_string());
 }
 
 /// Remove one session from an index built earlier, whether or not this process still indexes.
@@ -192,17 +87,12 @@ pub(crate) async fn evict_session(root_dir: &Path, session_id: &str) {
     xai_grok_session_search::evict_session(root_dir, session_id).await;
 }
 
+/// Execute a session search query against the shared index.
 pub async fn execute_search(
-    decision: IndexDecision<'_>,
     root_dir: &Path,
     req: &SessionSearchRequest,
 ) -> io::Result<SessionSearchResponse> {
-    let index = match decision {
-        IndexDecision::Pending => return Ok(SessionSearchResponse::still_settling()),
-        IndexDecision::Off => None,
-        IndexDecision::On(index) => Some(index),
-    };
-    xai_grok_session_search::execute_search(index, root_dir, req).await
+    xai_grok_session_search::execute_search(&SEARCH_INDEX_MANAGER, root_dir, req).await
 }
 
 #[cfg(test)]

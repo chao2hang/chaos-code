@@ -142,10 +142,7 @@ impl AgentView {
                 ActiveModal::DocPicker { window, state, .. } => {
                     (window, state.query().is_empty(), true)
                 }
-                // Defensive: outer matches! guard covers exactly these 4
-                // variants. If a new picker is added to the guard without an
-                // arm here, swallow the key instead of panicking.
-                _ => return InputOutcome::Changed,
+                _ => unreachable!(),
             };
             // These modals don't use fold; fold_info is None so
             // Left/Right/h/l return Unhandled and reach the picker.
@@ -493,54 +490,6 @@ impl AgentView {
             };
         }
 
-        // ProviderModal: route through ModalWindow chrome, then delegate.
-        if let Some(ActiveModal::ProviderModal { state }) = self.active_modal.as_mut() {
-            let chrome_cfg = mw::ModalWindowConfig {
-                title: "",
-                tabs: None,
-                shortcuts: &[],
-                sizing: mw::ModalSizing::default(),
-                fold_info: None,
-            };
-            let outcome = mw::handle_modal_key(&mut state.window, key, &chrome_cfg);
-            match outcome {
-                mw::ModalWindowOutcome::CloseRequested => {
-                    self.active_modal = None;
-                    return InputOutcome::Changed;
-                }
-                mw::ModalWindowOutcome::Unhandled => {}
-                _ => return InputOutcome::Changed,
-            }
-        }
-        if let Some(ActiveModal::ProviderModal { state }) = self.active_modal.as_mut() {
-            let out = crate::views::provider_modal::handle_provider_key(state, key);
-            return crate::app::agent_view::apply_provider_outcome(self, out);
-        }
-
-        // ClientModal: route through ModalWindow chrome, then delegate.
-        if let Some(ActiveModal::ClientModal { state }) = self.active_modal.as_mut() {
-            let chrome_cfg = mw::ModalWindowConfig {
-                title: "",
-                tabs: None,
-                shortcuts: &[],
-                sizing: mw::ModalSizing::default(),
-                fold_info: None,
-            };
-            let outcome = mw::handle_modal_key(&mut state.window, key, &chrome_cfg);
-            match outcome {
-                mw::ModalWindowOutcome::CloseRequested => {
-                    self.active_modal = None;
-                    return InputOutcome::Changed;
-                }
-                mw::ModalWindowOutcome::Unhandled => {}
-                _ => return InputOutcome::Changed,
-            }
-        }
-        if let Some(ActiveModal::ClientModal { state }) = self.active_modal.as_mut() {
-            let out = crate::views::client_modal::handle_client_key(state, key);
-            return crate::app::agent_view::apply_client_outcome(self, out);
-        }
-
         // EditConfirm: single char matching.
         let ch = match key.code {
             KeyCode::Char(c) => c,
@@ -571,22 +520,7 @@ impl AgentView {
             | ActiveModal::Settings { .. }
             | ActiveModal::UsageInfo { .. }
             | ActiveModal::ResetSettingsConfirm { .. }
-            | ActiveModal::RememberNoteReview { .. }
-            | ActiveModal::ProviderModal { .. }
-            | ActiveModal::ClientModal { .. } => {
-                // Defensive: these modals are handled by their own if-let
-                // branches above (Esc/chrome/delegate), which always return.
-                // If control reaches here, the modal was swapped mid-dispatch
-                // or a new variant was added without a branch — swallow the
-                // key instead of panicking. Same class of fix as modals.rs
-                // lines 145 and 1486 (commit f6c663ad), which this completes.
-                tracing::warn!(
-                    "handle_modal_key: modal reached EditConfirm fallback, swallowing key"
-                );
-                // Restore the modal so it isn't lost.
-                self.active_modal = Some(modal);
-                InputOutcome::Changed
-            }
+            | ActiveModal::RememberNoteReview { .. } => unreachable!(),
         }
     }
 
@@ -631,14 +565,6 @@ impl AgentView {
         };
         if let Some(outcome) = settings_outcome {
             return apply_settings_outcome(self, outcome);
-        }
-        if let Some(ActiveModal::ProviderModal { state }) = self.active_modal.as_mut() {
-            let out = crate::views::provider_modal::handle_provider_paste(state, text);
-            return crate::app::agent_view::apply_provider_outcome(self, out);
-        }
-        if let Some(ActiveModal::ClientModal { state }) = self.active_modal.as_mut() {
-            let out = crate::views::client_modal::handle_client_paste(state, text);
-            return crate::app::agent_view::apply_client_outcome(self, out);
         }
         if self.active_modal.is_some() {
             InputOutcome::Changed
@@ -1503,10 +1429,7 @@ impl AgentView {
                 Some(ActiveModal::DocViewer { window, .. }) => window,
                 Some(ActiveModal::ShortcutsHelp { window, .. }) => window,
                 Some(ActiveModal::RememberNoteReview { window, .. }) => window,
-                // Defensive: outer matches! guard covers exactly these 7
-                // variants. If a new picker is added to the guard without an
-                // arm here, swallow the mouse event instead of panicking.
-                _ => return InputOutcome::Changed,
+                _ => unreachable!(),
             };
             let outcome = mw::handle_modal_mouse(window, mouse.kind, mouse.column, mouse.row);
             match outcome {
@@ -1683,33 +1606,7 @@ impl AgentView {
             }
         }
 
-        // ProviderModal: route through ModalWindow chrome (close / scroll / shortcuts).
-        if let Some(ActiveModal::ProviderModal { state }) = &mut self.active_modal {
-            let outcome =
-                mw::handle_modal_mouse(&mut state.window, mouse.kind, mouse.column, mouse.row);
-            match outcome {
-                ModalWindowOutcome::CloseRequested => {
-                    self.active_modal = None;
-                    return InputOutcome::Changed;
-                }
-                _ => return InputOutcome::Changed,
-            }
-        }
-
-        // ClientModal: route through ModalWindow chrome (close / scroll / shortcuts).
-        if let Some(ActiveModal::ClientModal { state }) = &mut self.active_modal {
-            let outcome =
-                mw::handle_modal_mouse(&mut state.window, mouse.kind, mouse.column, mouse.row);
-            match outcome {
-                ModalWindowOutcome::CloseRequested => {
-                    self.active_modal = None;
-                    return InputOutcome::Changed;
-                }
-                _ => return InputOutcome::Changed,
-            }
-        }
-
-        // UsageInfo: chrome (close / tab clicks / footer copy), then wheel scroll.
+        // UsageInfo: chrome first (tabs / close / footer stay clickable), then drag / wheel.
         if let Some(ActiveModal::UsageInfo { state }) = &mut self.active_modal {
             use crate::views::usage_modal::{
                 self, COPY_ALL_SESSION_INFO_SHORTCUT, COPY_SESSION_ID_SHORTCUT, UsageModalOutcome,
@@ -1726,8 +1623,8 @@ impl AgentView {
                     return InputOutcome::Changed;
                 }
                 ModalWindowOutcome::ShortcutActivated(id) => {
-                    // The pointer is on the footer, not a value row.
-                    state.hovered_copy_line = None;
+                    // Footer click: drop gesture + hover.
+                    state.clear_text_drag();
                     if id == COPY_SESSION_ID_SHORTCUT {
                         self.copy_usage_modal_session_id();
                     } else if id == COPY_ALL_SESSION_INFO_SHORTCUT {
@@ -1742,10 +1639,29 @@ impl AgentView {
                     return InputOutcome::Changed;
                 }
                 ModalWindowOutcome::Handled => {
-                    // Chrome consumed the event (cursor on a tab / close /
-                    // footer, or a no-op tab click). The pointer is no longer
-                    // over a value row, so drop any stale hover highlight.
-                    state.hovered_copy_line = None;
+                    match mouse.kind {
+                        // Same rule as content: bare Moved with an active drag is a
+                        // lost Up. Pending press is left alone for click-to-copy.
+                        MouseEventKind::Moved => {
+                            if state.has_active_drag() {
+                                return match state.finish_lost_drag() {
+                                    UsageModalOutcome::CopyText(text) => {
+                                        self.copy_usage_modal_text(&text);
+                                        InputOutcome::Changed
+                                    }
+                                    _ => {
+                                        state.hovered_copy_line = None;
+                                        InputOutcome::Changed
+                                    }
+                                };
+                            }
+                            state.hovered_copy_line = None;
+                        }
+                        // Same-tab click and other chrome Downs: drop gesture + hover.
+                        _ => {
+                            state.clear_text_drag();
+                        }
+                    }
                     return InputOutcome::Changed;
                 }
                 ModalWindowOutcome::Unhandled => {
@@ -1848,8 +1764,8 @@ impl AgentView {
         self.show_toast(delivery.toast_message().as_ref());
     }
 
-    /// Copy an arbitrary Session-info value row (Model Hash, Turn, etc.) and
-    /// toast the delivery outcome. Mirrors [`Self::copy_usage_modal_session_id`].
+    /// Copy Session-info text (`y` / footer "copy all") and toast the
+    /// delivery outcome. Mirrors [`Self::copy_usage_modal_session_id`].
     fn copy_usage_modal_text(&mut self, text: &str) {
         let delivery = crate::clipboard::copy_text_or_file(text);
         self.show_toast(delivery.toast_message().as_ref());
@@ -2568,10 +2484,6 @@ impl AgentView {
                     compact,
                     None,
                 );
-            } else if let modal::ActiveModal::ProviderModal { state } = active_modal {
-                crate::views::provider_modal::render_provider_modal(buf, area, state, compact);
-            } else if let modal::ActiveModal::ClientModal { state } = active_modal {
-                crate::views::client_modal::render_client_modal(buf, area, state, compact);
             } else if matches!(
                 active_modal,
                 modal::ActiveModal::ResetSettingsConfirm { .. }
@@ -2626,7 +2538,6 @@ mod session_picker_delete_tests {
             repo_name: "repo".into(),
             worktree_label: None,
             last_turn_summary: None,
-            last_recap: None,
             card_detail: None,
         }
     }
@@ -3059,7 +2970,7 @@ mod command_palette_vim_input_tests {
             ),
             state: {
                 let mut state = PickerState::input_active();
-                state.set_query("快捷键");
+                state.set_query("keyboard shortcuts");
                 state.selected = 1; // matching section header is row 0
                 state
             },
@@ -3118,8 +3029,8 @@ mod command_palette_vim_input_tests {
             ),
             state: {
                 let mut state = PickerState::input_active();
-                // Contiguous substring of the label ("在外部编辑器中编辑提示").
-                state.set_query("外部编辑器");
+                // Contiguous substring of the label ("Edit Prompt in External Editor").
+                state.set_query("external editor");
                 state.selected = 1; // matching section header is row 0
                 state
             },
@@ -3270,12 +3181,6 @@ mod command_palette_vim_input_tests {
         use ratatui::buffer::Buffer;
         use ratatui::layout::Rect;
 
-        let theme = crate::theme::Theme::current();
-        // When the terminal can't distinguish colors (e.g. TERM=dumb quantises
-        // every Color to Reset), bg == text_primary == bg_base, so every cell
-        // looks like a cursor cell. Skip cursor detection in that degenerate case.
-        let colors_distinguishable = theme.text_primary != theme.bg_base;
-
         let render_palette_search_row = |search_active: bool| -> (bool, String) {
             let mut agent = make_agent();
             open_command_palette(&mut agent);
@@ -3286,6 +3191,7 @@ mod command_palette_vim_input_tests {
             let mut buf = Buffer::empty(area);
             agent.draw_active_modal(area, &mut buf, crate::theme::Theme::current(), false);
 
+            let theme = crate::theme::Theme::current();
             let search_bar = match agent.active_modal.as_ref() {
                 Some(ActiveModal::CommandPalette { state, .. }) => {
                     state
@@ -3303,7 +3209,7 @@ mod command_palette_vim_input_tests {
                 if let Some(cell) = buf.cell((x, y)) {
                     text.push_str(cell.symbol());
                     // The cursor is an inverse-video cell (bg == text_primary).
-                    if colors_distinguishable && cell.bg == theme.text_primary {
+                    if cell.bg == theme.text_primary {
                         has_cursor = true;
                     }
                 }
@@ -3312,20 +3218,16 @@ mod command_palette_vim_input_tests {
         };
 
         let (focused_cursor, _) = render_palette_search_row(true);
-        if colors_distinguishable {
-            assert!(
-                focused_cursor,
-                "command palette search bar should render a cursor when search_active",
-            );
-        }
+        assert!(
+            focused_cursor,
+            "command palette search bar should render a cursor when search_active",
+        );
 
         let (unfocused_cursor, unfocused_text) = render_palette_search_row(false);
-        if colors_distinguishable {
-            assert!(
-                !unfocused_cursor,
-                "command palette search bar must not render a cursor when not search_active",
-            );
-        }
+        assert!(
+            !unfocused_cursor,
+            "command palette search bar must not render a cursor when not search_active",
+        );
         assert!(
             unfocused_text.contains("/ to search"),
             "unfocused command palette should show the `/ to search` placeholder, got {unfocused_text:?}",

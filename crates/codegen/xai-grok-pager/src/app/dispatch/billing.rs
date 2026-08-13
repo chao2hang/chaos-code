@@ -30,8 +30,10 @@ pub(super) fn is_max_tier(subscription_tier: Option<&str>) -> bool {
 }
 
 /// URL for upgrading the subscription tier.
-pub(crate) const UPSELL_URL_UPGRADE: &str = "";
-pub(crate) const UPSELL_URL_PAYG: &str = "";
+pub(crate) const UPSELL_URL_UPGRADE: &str = "https://grok.com/supergrok?referrer=grok-build";
+
+/// URL for managing pay-as-you-go / on-demand spending / purchasing credits.
+pub(crate) const UPSELL_URL_PAYG: &str = "https://grok.com?_s=usage";
 
 /// Billing mode for credit-limit upsell copy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -115,28 +117,28 @@ pub(super) fn open_credit_limit_upsell(
         bool,
     ) = match mode {
         CreditLimitUpsellMode::UnifiedCredits => (
-            "已达到本周用量上限。",
-            "请在 Provider 控制台提高配额或更换模型",
-            "购买额度",
-            "购买额度以继续使用 Chaos",
+            "You hit your weekly limit.",
+            "Upgrade to a higher tier for more usage",
+            "Buy more credits",
+            "Purchase credits to keep using Grok Build",
             CreditLimitCardAction::PurchaseCredits,
             xai_grok_telemetry::events::CreditLimitChoice::PurchaseCredits,
             false,
         ),
         CreditLimitUpsellMode::LegacyPayg { enabled: true } => (
-            "已达到消费上限。",
-            "请在 Provider 控制台提高额度或更换模型",
-            "提高限额",
-            "提高按量付费消费上限",
+            "You\u{2019}ve hit your spending cap.",
+            "Upgrade to a higher tier for more credits",
+            "Increase limit",
+            "Raise your pay-as-you-go spending cap",
             CreditLimitCardAction::IncreasePaygLimit,
             xai_grok_telemetry::events::CreditLimitChoice::PayAsYouGo,
             true,
         ),
         CreditLimitUpsellMode::LegacyPayg { enabled: false } => (
-            "已达到当前计划的额度上限。",
-            "请在 Provider 控制台提高额度或更换模型",
-            "按量付费",
-            "启用按量付费额度以便按需使用",
+            "You\u{2019}ve hit the credit limit for your plan.",
+            "Upgrade to a higher tier for more credits",
+            "Pay as you go",
+            "Enable pay-as-you-go credits for on-demand usage",
             CreditLimitCardAction::EnablePayg,
             xai_grok_telemetry::events::CreditLimitChoice::PayAsYouGo,
             false,
@@ -182,7 +184,7 @@ pub(super) fn open_credit_limit_upsell(
         question: heading.into(),
         options: vec![
             QuestionOption {
-                label: "调整 Provider 配额".into(),
+                label: "Upgrade tier".into(),
                 description: upgrade_tier_desc.into(),
                 preview: None,
                 id: Some(UPSELL_URL_UPGRADE.into()),
@@ -268,15 +270,14 @@ fn open_supergrok_upsell(
         return false;
     }
 
-    // Chaos is BYOK: never push SuperGrok / grok.com upgrade links.
     let (heading, source, modal_id_prefix) = match reason {
         UpsellReason::FreeUsageLimit => (
-            "当前免费额度已用尽。",
+            "You hit your free usage limit.",
             SuperGrokUpsell::FreeUsagePaywall,
             "free-usage-upsell",
         ),
         UpsellReason::RestrictedCommand => (
-            "此功能需要可用的 Provider 配置。",
+            "Unlock all features with SuperGrok.",
             SuperGrokUpsell::RestrictedCommand,
             "restricted-command-upsell",
         ),
@@ -287,16 +288,23 @@ fn open_supergrok_upsell(
         auth_method,
     });
 
+    // /supergrok lists all plans; every upgrade option lands there.
     let options = vec![
         QuestionOption {
-            label: "配置 Provider".into(),
-            description: "设置模型、接口地址与 API 密钥（/provider）".into(),
+            label: "Upgrade to SuperGrok".into(),
+            description: "For everyday coding and productivity tasks".into(),
             preview: None,
             id: Some(UPSELL_URL_UPGRADE.into()),
         },
         QuestionOption {
-            label: "查看用量说明".into(),
-            description: "额度与限流由你的 Provider 决定，与 Chaos 订阅无关。".into(),
+            label: "Upgrade to SuperGrok Plus".into(),
+            description: "Significantly higher usage and rate limits".into(),
+            preview: None,
+            id: Some(UPSELL_URL_UPGRADE.into()),
+        },
+        QuestionOption {
+            label: "Upgrade to SuperGrok Heavy".into(),
+            description: "Get the most out of Grok Build. Highest usage limits.".into(),
             preview: None,
             id: Some(UPSELL_URL_UPGRADE.into()),
         },
@@ -513,7 +521,7 @@ pub(super) fn handle_credit_limit_recheck_complete(
         if let Some(prompt) = agent.credit_limit_stashed_prompt.take() {
             let tier_name = app.subscription_tier.as_deref().unwrap_or("a higher tier");
             agent.scrollback.push_block(RenderBlock::system(format!(
-                "订阅已升级到 {tier_name}。正在重试\u{2026}"
+                "Subscription upgraded to {tier_name}. Retrying\u{2026}"
             )));
             agent.session.enqueue_in_flight_prompt_front(prompt);
         }
@@ -546,17 +554,18 @@ pub(super) fn dispatch_open_supergrok_url(app: &mut AppView) -> Vec<Effect> {
         source: SuperGrokUpsell::WelcomeScreen,
         auth_method: app.login_method_id.as_ref().map(|id| id.0.to_string()),
     });
-    // Chaos is BYOK: never default to grok.com SuperGrok. Only open a URL when
-    // remote settings / gate explicitly provided one.
-    let Some(url) = app
+    let url = app
         .gate
         .as_ref()
         .and_then(|g| g.url.as_deref())
-        .filter(|u| !u.is_empty())
-        .map(|u| u.to_string())
-    else {
-        return vec![];
-    };
+        .unwrap_or("https://grok.com/supergrok?referrer=grok-build");
+    // Funnel attribution: tag CLI-originated SuperGrok upsell clicks
+    // with `referrer=grok-build`, matching the OAuth consent flow and
+    // x.ai/cli marketing links. Applied even when the URL came from
+    // remote settings's `gate_url`, so we don't depend on the remote flag
+    // being correctly configured. If the URL already specifies a
+    // referrer it's left alone.
+    let url = crate::app::link_opener::ensure_query_param(url, "referrer", "grok-build");
     super::ctx::open_url_or_show(app, &url);
     vec![]
 }

@@ -2,18 +2,19 @@
 
 use super::setters::{
     pr13_effective_default, set_ask_user_question_timeout_enabled_inner, set_auto_dark_theme_inner,
-    set_auto_light_theme_inner, set_auto_retry_incomplete_end_turn_inner, set_auto_update_inner,
-    set_collapsed_edit_blocks_inner, set_combine_queued_prompts_inner, set_compact_mode,
-    set_compact_mode_inner, set_contextual_hint_inner, set_default_model_inner,
+    set_auto_light_theme_inner, set_auto_update_inner, set_collapsed_edit_blocks_inner,
+    set_combine_queued_prompts_inner, set_compact_mode, set_compact_mode_inner,
+    set_confirm_before_rewind_inner, set_contextual_hint_inner, set_default_model_inner,
     set_default_selected_permission_inner, set_display_refresh_auto_cadence_inner,
-    set_fork_secondary_model_inner, set_group_tool_verbs_inner, set_hunk_tracker_mode_inner,
-    set_invert_scroll_inner, set_keep_text_selection_inner, set_max_thoughts_width_inner,
-    set_multiline_mode, set_page_flip_on_send_inner, set_prompt_suggestions_inner,
-    set_remember_tool_approvals_inner, set_render_mermaid_inner, set_respect_manual_folds_inner,
-    set_screen_mode_inner, set_scroll_lines_inner, set_scroll_mode_inner, set_scroll_speed_inner,
-    set_show_thinking_blocks_inner, set_show_tips_inner, set_simple_mode_inner, set_theme_inner,
-    set_timeline_inner, set_timestamps, set_timestamps_inner, set_vim_mode_inner,
-    set_voice_capture_mode_inner, set_voice_stt_language_inner,
+    set_follow_up_behavior_inner, set_fork_secondary_model_inner, set_group_tool_verbs_inner,
+    set_hunk_tracker_mode_inner, set_invert_scroll_inner, set_keep_text_selection_inner,
+    set_max_thoughts_width_inner, set_multiline_mode, set_page_flip_on_send_inner,
+    set_prompt_suggestions_inner, set_remember_tool_approvals_inner, set_render_mermaid_inner,
+    set_respect_manual_folds_inner, set_screen_mode_inner, set_scroll_lines_inner,
+    set_scroll_mode_inner, set_scroll_speed_inner, set_show_thinking_blocks_inner,
+    set_show_tips_inner, set_simple_mode_inner, set_theme_inner, set_timeline_inner,
+    set_timestamps, set_timestamps_inner, set_vim_mode_inner, set_voice_capture_mode_inner,
+    set_voice_keybind_enabled_inner, set_voice_stt_language_inner,
 };
 use crate::app::actions::{Action, Effect};
 use crate::app::app_view::{ActiveView, AppView};
@@ -53,8 +54,8 @@ pub(crate) fn refresh_open_settings_modals(app: &mut AppView) {
     let respect_manual_folds_from_app = app.appearance.scrollback.scroll.respect_manual_folds;
     let auto_mode_gate_from_app = app.auto_mode_gate;
     let ask_user_question_timeout_enabled_from_app = app.ask_user_question_timeout_enabled;
-    let auto_retry_incomplete_end_turn_from_app = app.auto_retry_incomplete_end_turn;
     let voice_stt_language_from_app = app.voice_config.language.clone();
+    let scheduler_background_loops_seed = app.scheduler_background_loops_seed;
     for agent in app.agents.values_mut() {
         // Walk both `Settings` and `ResetSettingsConfirm` — the
         // confirm dialog embeds settings state that must stay fresh
@@ -92,11 +93,10 @@ pub(crate) fn refresh_open_settings_modals(app: &mut AppView) {
                 respect_manual_folds: respect_manual_folds_from_app,
                 auto_mode_gate: auto_mode_gate_from_app,
                 ask_user_question_timeout_enabled: ask_user_question_timeout_enabled_from_app,
-                auto_retry_incomplete_end_turn: auto_retry_incomplete_end_turn_from_app,
                 voice_stt_language: voice_stt_language_from_app.clone(),
                 scheduler_background_loops: agent
                     .scheduler_background_loops
-                    .unwrap_or(app.scheduler_background_loops_seed),
+                    .unwrap_or(scheduler_background_loops_seed),
             };
         }
     }
@@ -151,6 +151,10 @@ pub(in crate::app::dispatch) fn dispatch_open_howto_guides(app: &mut AppView) ->
 
 /// Open the settings modal. Reads the live `UiConfig` snapshot
 /// (sans-IO). Single-instance: `debug_assert!` catches routing bugs.
+///
+/// `focus_key` selects a settings row after open (e.g. `coding_data_sharing`).
+/// When not on an agent view, switches to an existing agent or creates a
+/// placeholder session so the modal can mount.
 pub(in crate::app::dispatch) fn dispatch_open_settings(
     app: &mut AppView,
     focus_key: Option<&'static str>,
@@ -191,7 +195,6 @@ pub(in crate::app::dispatch) fn dispatch_open_settings(
     let respect_manual_folds_from_app = app.appearance.scrollback.scroll.respect_manual_folds;
     let auto_mode_gate_from_app = app.auto_mode_gate;
     let ask_user_question_timeout_enabled_from_app = app.ask_user_question_timeout_enabled;
-    let auto_retry_incomplete_end_turn_from_app = app.auto_retry_incomplete_end_turn;
     let voice_stt_language_from_app = app.voice_config.language.clone();
     let scheduler_background_loops_seed = app.scheduler_background_loops_seed;
 
@@ -240,7 +243,6 @@ pub(in crate::app::dispatch) fn dispatch_open_settings(
         respect_manual_folds: respect_manual_folds_from_app,
         auto_mode_gate: auto_mode_gate_from_app,
         ask_user_question_timeout_enabled: ask_user_question_timeout_enabled_from_app,
-        auto_retry_incomplete_end_turn: auto_retry_incomplete_end_turn_from_app,
         voice_stt_language: voice_stt_language_from_app,
         scheduler_background_loops: agent
             .scheduler_background_loops
@@ -262,212 +264,6 @@ pub(in crate::app::dispatch) fn dispatch_open_settings(
     }
     agent.active_modal = Some(ActiveModal::Settings { state });
     effects
-}
-
-/// Open the provider management modal (`/provider` subcommands).
-/// Single-instance: if already open, closes it first.
-pub(in crate::app::dispatch) fn dispatch_open_provider_modal(
-    app: &mut AppView,
-    mode: crate::views::provider_modal::ProviderModalMode,
-) -> Vec<Effect> {
-    use crate::views::modal::ActiveModal;
-    use crate::views::provider_modal::ProviderModalState;
-
-    let ActiveView::Agent(id) = app.active_view else {
-        return vec![];
-    };
-
-    // 预填充模式相关的状态
-    let mut state = ProviderModalState::new(mode.clone());
-
-    match &mode {
-        crate::views::provider_modal::ProviderModalMode::List => {
-            match crate::slash::commands::provider::load_config() {
-                Ok(doc) => {
-                    let providers = crate::slash::commands::provider::list_providers(&doc);
-                    let current_provider =
-                        crate::slash::commands::provider::current_provider_name(&doc);
-                    state.providers = providers
-                        .iter()
-                        .map(|name| {
-                            let base_url = crate::slash::commands::provider::provider_field(
-                                &doc, name, "base_url",
-                            )
-                            .unwrap_or_default();
-                            let auth_scheme = crate::slash::commands::provider::provider_field(
-                                &doc,
-                                name,
-                                "auth_scheme",
-                            )
-                            .unwrap_or_default();
-                            let api_backend = crate::slash::commands::provider::provider_field(
-                                &doc,
-                                name,
-                                "api_backend",
-                            )
-                            .unwrap_or_default();
-                            let has_key = crate::slash::commands::provider::provider_field(
-                                &doc, name, "api_key",
-                            )
-                            .is_some();
-                            let is_current = current_provider.as_deref() == Some(name.as_str());
-                            crate::views::provider_modal::ProviderSummary {
-                                name: name.clone(),
-                                base_url,
-                                auth_scheme,
-                                api_backend,
-                                has_key,
-                                is_current,
-                            }
-                        })
-                        .collect();
-                }
-                Err(e) => {
-                    state.error = Some(e);
-                }
-            }
-        }
-        crate::views::provider_modal::ProviderModalMode::Models(name)
-        | crate::views::provider_modal::ProviderModalMode::SetModel(name) => {
-            match crate::slash::commands::provider::fetch_provider_models(name) {
-                Ok(entries) => {
-                    // Register into catalog when deep-linked (same as go_models).
-                    let need_default = crate::slash::commands::provider::load_config()
-                        .map(|doc| {
-                            crate::slash::commands::provider::configured_default_model(&doc)
-                                .is_none()
-                        })
-                        .unwrap_or(false);
-                    let first_id = entries.first().map(|e| e.id.clone());
-                    let registered = crate::slash::commands::provider::register_provider_models(
-                        name,
-                        &entries,
-                        if need_default {
-                            first_id.as_deref()
-                        } else {
-                            None
-                        },
-                    );
-                    state.models = entries.iter().map(|e| e.id.clone()).collect();
-                    state.models_meta = entries.into_iter().map(|e| e.meta).collect();
-                    state.models_need_catalog_sync = registered.is_ok();
-                }
-                Err(e) => {
-                    state.error = Some(e);
-                }
-            }
-        }
-        crate::views::provider_modal::ProviderModalMode::Edit(name) => {
-            // 深链 `/provider edit <name>`：预填字段（与 go_edit 一致）。
-            if let Err(e) = state.prefill_edit_fields(name) {
-                state.error = Some(e);
-            }
-        }
-        crate::views::provider_modal::ProviderModalMode::ConfigureModel(name) => {
-            // 深链 `/provider configure-model <name>`：复用 config 中已注册的
-            // 模型目录（「查看可用模型」拉取的结果），可直接点选。
-            state.load_provider_models_from_config(name);
-        }
-        _ => {}
-    }
-
-    let Some(agent) = app.agents.get_mut(&id) else {
-        return vec![];
-    };
-
-    if matches!(&agent.active_modal, Some(ActiveModal::ProviderModal { .. })) {
-        agent.active_modal = None;
-        return vec![];
-    }
-
-    // Deep-link `/provider models|set-model|…` may have just written config;
-    // inject reasoning meta into the live catalog before the first paint so
-    // bare `/effort` works without waiting for a keypress or model switch.
-    let need_sync = state.models_need_catalog_sync;
-    let sync_provider = if need_sync {
-        match &state.mode {
-            crate::views::provider_modal::ProviderModalMode::SetModel(name)
-            | crate::views::provider_modal::ProviderModalMode::Models(name)
-            | crate::views::provider_modal::ProviderModalMode::ManualModel(name)
-            | crate::views::provider_modal::ProviderModalMode::ConfigureModel(name) => Some((
-                name.clone(),
-                state.models.first().cloned().unwrap_or_default(),
-            )),
-            _ => None,
-        }
-    } else {
-        None
-    };
-    state.models_need_catalog_sync = false;
-
-    agent.active_modal = Some(ActiveModal::ProviderModal {
-        state: Box::new(state),
-    });
-
-    if let Some((provider, first)) = sync_provider.filter(|(_, first)| !first.is_empty()) {
-        crate::app::agent_view::sync_provider_models_from_config(agent, &provider, &first);
-    }
-
-    vec![]
-}
-
-/// Open the `/client` request-client profile manager for the active session.
-pub(in crate::app::dispatch) fn dispatch_open_client_modal(
-    app: &mut AppView,
-    mode: crate::views::client_modal::ClientModalMode,
-) -> Vec<Effect> {
-    use crate::views::modal::ActiveModal;
-
-    let ActiveView::Agent(id) = app.active_view else {
-        return vec![];
-    };
-    let Some(agent) = app.agents.get_mut(&id) else {
-        return vec![];
-    };
-    if matches!(&agent.active_modal, Some(ActiveModal::ClientModal { .. })) {
-        agent.active_modal = None;
-        return vec![];
-    }
-
-    let configured_default = crate::slash::commands::provider::load_config()
-        .ok()
-        .and_then(|doc| crate::slash::commands::client::configured_default_client(&doc));
-    let current_id = agent
-        .client_profile
-        .as_ref()
-        .map(|profile| profile.id.clone())
-        .or(configured_default);
-    let mut state = crate::views::client_modal::ClientModalState::new(current_id.clone());
-    state.mode = mode;
-    if let Some(id) = current_id.as_deref() {
-        state.select_id(id);
-    }
-    agent.active_modal = Some(ActiveModal::ClientModal {
-        state: Box::new(state),
-    });
-    vec![]
-}
-
-/// Send a selected request-client profile to the live shell session.
-pub(in crate::app::dispatch) fn dispatch_set_client_profile(
-    app: &mut AppView,
-    profile: xai_grok_shell::agent::client_profiles::ClientProfile,
-) -> Vec<Effect> {
-    let ActiveView::Agent(agent_id) = app.active_view else {
-        return vec![];
-    };
-    let Some(agent) = app.agents.get(&agent_id) else {
-        return vec![];
-    };
-    let Some(session_id) = agent.session.session_id.clone() else {
-        app.show_toast("当前会话尚未准备好，无法切换客户端");
-        return vec![];
-    };
-    vec![Effect::SetClientProfile {
-        agent_id,
-        session_id,
-        profile,
-    }]
 }
 
 /// Open the reset-settings confirmation modal.
@@ -758,15 +554,16 @@ pub(in crate::app::dispatch) fn dispatch_toggle_timestamps(app: &mut AppView) ->
 /// selection and copy/paste; re-enabling restores in-app mouse handling
 /// (click-to-focus, scrollback selection, scrollbar drag, etc.).
 ///
-/// The on-wire enable/disable sequences mirror the auth-screen toggle in
-/// [`AppView::draw`]; the process-wide [`MOUSE_CAPTURE_ENABLED`] atomic is
-/// the single source of truth that teardown / panic paths read to decide
-/// whether to emit the reset sequence.
+/// The on-wire enable/disable sequences match [`AppView`]'s native-select hold;
+/// the process-wide [`MOUSE_CAPTURE_ENABLED`] atomic is the source of truth that
+/// teardown / panic paths read to decide whether to emit the reset.
 ///
 /// [`MOUSE_CAPTURE_ENABLED`]: crate::app::MOUSE_CAPTURE_ENABLED
 pub(in crate::app::dispatch) fn dispatch_toggle_mouse_capture(app: &mut AppView) {
     use std::sync::atomic::Ordering;
 
+    // User took ownership; do not restore our previous hold when the native-select surface closes.
+    app.native_select_hold = false;
     let was_enabled = crate::app::MOUSE_CAPTURE_ENABLED.load(Ordering::Acquire);
     let enable = !was_enabled;
     crate::unified_log::info(
@@ -843,19 +640,6 @@ fn agent_multiline_mode(app: &AppView) -> bool {
     false
 }
 
-/// The scheduler-background-loops value the shell pinned for that session,
-/// falling back to the startup seed while the session response is still in
-/// flight (or with no agent at all).
-fn agent_scheduler_background_loops(app: &AppView) -> bool {
-    if let ActiveView::Agent(id) = app.active_view
-        && let Some(agent) = app.agents.get(&id)
-        && let Some(value) = agent.scheduler_background_loops
-    {
-        return value;
-    }
-    app.scheduler_background_loops_seed
-}
-
 /// Helper to read the active agent's `yolo_mode`. See
 /// [`agent_multiline_mode`] for the no-agent fallback rationale.
 fn agent_yolo_mode(app: &AppView) -> bool {
@@ -876,6 +660,20 @@ fn agent_auto_mode(app: &AppView) -> bool {
         return agent.session.is_auto();
     }
     false
+}
+
+/// Effective `scheduler_background_loops` for the active agent: the value the
+/// shell pinned for that session, falling back to the startup seed while the
+/// session response is still in flight (or with no agent at all). See
+/// [`agent_multiline_mode`] for the no-agent fallback rationale.
+fn agent_scheduler_background_loops(app: &AppView) -> bool {
+    if let ActiveView::Agent(id) = app.active_view
+        && let Some(agent) = app.agents.get(&id)
+        && let Some(value) = agent.scheduler_background_loops
+    {
+        return value;
+    }
+    app.scheduler_background_loops_seed
 }
 
 /// Effective `plan_mode` for the active agent
@@ -943,7 +741,6 @@ pub(crate) fn build_pager_snapshot(app: &AppView) -> crate::settings::PagerLocal
         respect_manual_folds: app.appearance.scrollback.scroll.respect_manual_folds,
         auto_mode_gate: app.auto_mode_gate,
         ask_user_question_timeout_enabled: app.ask_user_question_timeout_enabled,
-        auto_retry_incomplete_end_turn: app.auto_retry_incomplete_end_turn,
         voice_stt_language: app.voice_config.language.clone(),
         scheduler_background_loops: agent_scheduler_background_loops(app),
     }
@@ -963,8 +760,14 @@ pub(in crate::app::dispatch) fn action_for_reset(
         ("show_timestamps", SettingValue::Bool(b)) => Some(Action::SetTimestamps(*b)),
         ("show_timeline", SettingValue::Bool(b)) => Some(Action::SetTimeline(*b)),
         ("page_flip_on_send", SettingValue::Bool(b)) => Some(Action::SetPageFlipOnSend(*b)),
+        ("confirm_before_rewind", SettingValue::Bool(b)) => {
+            Some(Action::SetConfirmBeforeRewind(*b))
+        }
         ("combine_queued_prompts", SettingValue::Bool(b)) => {
             Some(Action::SetCombineQueuedPrompts(*b))
+        }
+        ("follow_up_behavior", SettingValue::Enum(s)) => {
+            crate::appearance::FollowUpBehavior::from_canonical(s).map(Action::SetFollowUpBehavior)
         }
         ("simple_mode", SettingValue::Bool(b)) => Some(Action::SetSimpleMode(*b)),
         ("contextual_hints.undo", SettingValue::Bool(b)) => Some(Action::SetContextualHintUndo(*b)),
@@ -996,9 +799,6 @@ pub(in crate::app::dispatch) fn action_for_reset(
         }
         ("toolset.ask_user_question.timeout_enabled", SettingValue::Bool(b)) => {
             Some(Action::SetAskUserQuestionTimeoutEnabled(*b))
-        }
-        ("session.auto_retry_incomplete_end_turn", SettingValue::Bool(b)) => {
-            Some(Action::SetAutoRetryIncompleteEndTurn(*b))
         }
         ("keep_text_selection", SettingValue::Enum(s)) => {
             crate::appearance::TextSelection::from_canonical(s).map(Action::SetKeepTextSelection)
@@ -1110,6 +910,9 @@ pub(in crate::app::dispatch) fn action_for_reset(
             Some(Action::SetHunkTrackerMode((*s).to_string()))
         }
         ("screen_mode", SettingValue::Enum(s)) => Some(Action::SetScreenMode((*s).to_string())),
+        ("voice_keybind_enabled", SettingValue::Bool(b)) => {
+            Some(Action::SetVoiceKeybindEnabled(*b))
+        }
         ("voice_capture_mode", SettingValue::Enum(s)) => {
             Some(Action::SetVoiceCaptureMode((*s).to_string()))
         }
@@ -1159,8 +962,16 @@ pub(in crate::app::dispatch) fn apply_setting_rollback(
         ("show_timestamps", SettingValue::Bool(b)) => set_timestamps_inner(app, *b),
         ("show_timeline", SettingValue::Bool(b)) => set_timeline_inner(app, *b),
         ("page_flip_on_send", SettingValue::Bool(b)) => set_page_flip_on_send_inner(app, *b),
+        ("confirm_before_rewind", SettingValue::Bool(b)) => {
+            set_confirm_before_rewind_inner(app, *b)
+        }
         ("combine_queued_prompts", SettingValue::Bool(b)) => {
             set_combine_queued_prompts_inner(app, *b)
+        }
+        ("follow_up_behavior", SettingValue::Enum(s)) => {
+            if let Some(mode) = crate::appearance::FollowUpBehavior::from_canonical(s) {
+                set_follow_up_behavior_inner(app, mode);
+            }
         }
         ("simple_mode", SettingValue::Bool(b)) => set_simple_mode_inner(app, *b),
         ("contextual_hints.undo", SettingValue::Bool(b)) => {
@@ -1345,13 +1156,6 @@ pub(in crate::app::dispatch) fn apply_setting_rollback(
                 set_ask_user_question_timeout_enabled_inner(app, *b);
             }
         }
-        ("session.auto_retry_incomplete_end_turn", SettingValue::Bool(b)) => {
-            if Some(*b) == pr13_effective_default("session.auto_retry_incomplete_end_turn") {
-                app.auto_retry_incomplete_end_turn = None;
-            } else {
-                set_auto_retry_incomplete_end_turn_inner(app, *b);
-            }
-        }
         ("show_thinking_blocks", SettingValue::Bool(b)) => set_show_thinking_blocks_inner(app, *b),
         ("group_tool_verbs", SettingValue::Bool(b)) => set_group_tool_verbs_inner(app, *b),
         ("collapsed_edit_blocks", SettingValue::Bool(b)) => {
@@ -1376,6 +1180,9 @@ pub(in crate::app::dispatch) fn apply_setting_rollback(
         }
         ("screen_mode", SettingValue::Enum(s)) => {
             set_screen_mode_inner(app, crate::settings::canonical_screen_mode(Some(s)));
+        }
+        ("voice_keybind_enabled", SettingValue::Bool(b)) => {
+            set_voice_keybind_enabled_inner(app, *b)
         }
         ("voice_capture_mode", SettingValue::Enum(s)) => {
             set_voice_capture_mode_inner(

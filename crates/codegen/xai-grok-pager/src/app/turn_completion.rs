@@ -41,7 +41,7 @@ pub(super) fn cancelled_turn_event(
 }
 
 /// Push a turn-terminal marker ("Turn completed/cancelled/failed"), folding
-/// any pending stop/stop_failure hook runs into it so they render inline
+/// any pending stop-family hook runs into it so they render inline
 /// (right-justified) on the marker line instead of as a standalone block.
 ///
 /// All three marker rails route through here: the driver's `PromptResponse`,

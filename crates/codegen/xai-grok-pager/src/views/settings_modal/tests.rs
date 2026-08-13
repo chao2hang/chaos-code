@@ -12,8 +12,8 @@ use super::state::*;
 use crate::app::actions::Action;
 use crate::input::line_editor::LineEditor;
 use crate::settings::{
-    EnumChoice, PagerLocalSnapshot, SettingCategory, SettingKey, SettingKind, SettingMeta,
-    SettingOwner, SettingValue, SettingsRegistry, StringValidator,
+    CodingDataSharingLock, EnumChoice, PagerLocalSnapshot, SettingCategory, SettingKey,
+    SettingKind, SettingMeta, SettingOwner, SettingValue, SettingsRegistry, StringValidator,
 };
 use crate::theme::Theme;
 use xai_grok_shell::agent::config::UiConfig;
@@ -40,10 +40,9 @@ fn contextual_hints_group_sub_sheet_flow() {
         .expect("group row present");
     assert!(
         !s.rows.iter().any(|r| matches!(
-                    r,
-                    RowEntry::Setting { key, .. }
-        if key.starts_with("contextual_hints.")
-                )),
+            r,
+            RowEntry::Setting { key, .. } if key.starts_with("contextual_hints.")
+        )),
         "child rows must be hidden from the top-level list",
     );
 
@@ -192,17 +191,22 @@ fn setting_row_visible_gates_voice_capture_on_key_releases() {
 #[test]
 fn setting_row_visible_hides_voice_rows_when_voice_mode_off() {
     let reg = SettingsRegistry::defaults();
+    let keybind = meta_for(&reg, "voice_keybind_enabled");
     let capture = meta_for(&reg, "voice_capture_mode");
     let language = meta_for(&reg, "voice_stt_language");
     let vim = meta_for(&reg, "vim_mode");
-    // Gate off: both voice rows gone even with kitty releases + full TUI.
+    // Gate off: all voice rows gone even with kitty releases + full TUI.
+    assert!(!setting_row_visible(keybind, true, false, false));
     assert!(!setting_row_visible(capture, true, false, false));
     assert!(!setting_row_visible(language, true, false, false));
     // Non-voice rows unaffected.
     assert!(setting_row_visible(vim, true, false, false));
-    // Gate on: both visible (kitty releases for capture).
+    // Gate on: all visible (kitty releases for capture).
+    assert!(setting_row_visible(keybind, true, false, true));
     assert!(setting_row_visible(capture, true, false, true));
     assert!(setting_row_visible(language, true, false, true));
+    // The keybind row (unlike capture) doesn't need key-release reporting.
+    assert!(setting_row_visible(keybind, false, false, true));
 }
 
 #[test]
@@ -538,8 +542,14 @@ fn render_setting_row_shows_full_label_when_one_line_fits() {
         &theme,
         false, // is_expanded
         false, // is_hovered
+        None,
     );
-    let rendered = rendered_row_no_phantom(&buf, 0, area.width);
+    let mut rendered = String::new();
+    for x in 0..area.width {
+        if let Some(cell) = buf.cell((x, 0)) {
+            rendered.push_str(cell.symbol());
+        }
+    }
     assert!(
         !rendered.contains('\u{2026}'),
         "Commit 13: a row whose label + value fits on one line \
@@ -648,12 +658,15 @@ fn rows_contain_categories_and_settings_through_pr_14() {
             // both the pager drain and the shell promote. Registered before
             // multiline_mode, so it renders first).
             "combine_queued_prompts",
+            "follow_up_behavior",
+            "confirm_before_rewind",
             // PAGER-owned multiline (Editor category).
             "multiline_mode",
             // SHELL-owned prompt_suggestions (Editor; tab autocomplete
             // ghost text, live cache).
             "prompt_suggestions",
-            // voice_capture_mode + voice_stt_language hidden when gate is off.
+            // voice_keybind_enabled + voice_capture_mode + voice_stt_language
+            // hidden when the voice gate is off.
             // SHELL-owned permission_mode (Agent category).
             "permission_mode",
             // SHELL-owned remember_tool_approvals (Agent category,
@@ -665,8 +678,6 @@ fn rows_contain_categories_and_settings_through_pr_14() {
             // SHELL-owned ask_user_question timeout (Agent category,
             // registered directly above plan_mode).
             "toolset.ask_user_question.timeout_enabled",
-            // SHELL-owned incomplete end_turn auto-retry (Agent category).
-            "session.auto_retry_incomplete_end_turn",
             // PAGER-owned plan_mode (Agent category).
             "plan_mode",
             // SHELL-owned coding_data_sharing (Privacy category).
@@ -968,6 +979,7 @@ fn selected_browse_row_label_is_bold() {
         &theme,
         false,
         false,
+        None,
     );
 
     assert!(
@@ -1107,9 +1119,9 @@ fn mouse_moved_over_header_does_not_set_hover() {
 
 /// `state.hover_row = Some(idx)` paints the hovered row's bg
 /// with the theme's `bg_hover` color. (Mirrors the existing
-/// `picker_highlights_current_choice` test's pattern: the
-/// `assert_eq` against `theme.bg_hover` survives both colored
-/// and quantize-to-Reset color levels.)
+/// `picker_separates_focus_highlight_from_committed_marker` test's
+/// pattern: the `assert_eq` against `theme.bg_hover` survives both
+/// colored and quantize-to-Reset color levels.)
 #[test]
 fn hover_row_renders_with_hover_style() {
     let mut s = make_state();
@@ -1425,10 +1437,16 @@ fn render_setting_row_emits_restart_pill_when_required() {
         &theme,
         true,  // is_expanded — gate on
         false, // is_hovered
+        None,
     );
-    let rendered = rendered_row_no_phantom(&buf, 0, area.width);
+    let mut rendered = String::new();
+    for x in 0..area.width {
+        if let Some(cell) = buf.cell((x, 0)) {
+            rendered.push_str(cell.symbol());
+        }
+    }
     assert!(
-        rendered.contains("需重启"),
+        rendered.contains("restart"),
         "expanded row must contain the 'restart' pill: {rendered:?}"
     );
 
@@ -1444,10 +1462,16 @@ fn render_setting_row_emits_restart_pill_when_required() {
         &theme,
         false, // is_expanded — off
         false, // is_hovered
+        None,
     );
-    let rendered = rendered_row_no_phantom(&buf, 0, area.width);
+    let mut rendered = String::new();
+    for x in 0..area.width {
+        if let Some(cell) = buf.cell((x, 0)) {
+            rendered.push_str(cell.symbol());
+        }
+    }
     assert!(
-        !rendered.contains("需重启"),
+        !rendered.contains("restart"),
         "edited-but-collapsed row must NOT contain the 'restart' pill: {rendered:?}"
     );
 }
@@ -1487,10 +1511,16 @@ fn render_setting_row_hides_restart_pill_when_at_default_and_collapsed() {
         &theme,
         false, // is_expanded
         false, // is_hovered
+        None,
     );
-    let rendered = rendered_row_no_phantom(&buf, 0, area.width);
+    let mut rendered = String::new();
+    for x in 0..area.width {
+        if let Some(cell) = buf.cell((x, 0)) {
+            rendered.push_str(cell.symbol());
+        }
+    }
     assert!(
-        !rendered.contains("需重启"),
+        !rendered.contains("restart"),
         "at-default, not-expanded row must NOT contain the 'restart' pill: {rendered:?}"
     );
 }
@@ -2533,6 +2563,123 @@ fn picker_esc_returns_to_browse_after_preview_nav() {
     );
 }
 
+/// `/privacy` deep-link: focus + enter picker with `close_on_picker_exit`,
+/// then Esc closes the modal entirely (not Browse).
+#[test]
+fn deep_link_picker_esc_closes_modal() {
+    let mut s = make_state();
+    assert!(s.focus_key("coding_data_sharing"));
+    assert!(s.try_enter_picking_enum());
+    s.close_on_picker_exit = true;
+    assert!(matches!(s.mode(), SettingsModalMode::PickingEnum { .. }));
+
+    let outcome = handle_settings_key(&mut s, &KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    assert!(
+        matches!(outcome, SettingsKeyOutcome::Close),
+        "deep-link Esc must Close, got {outcome:?}"
+    );
+    assert!(
+        !s.close_on_picker_exit,
+        "flag must clear after Esc even when closing"
+    );
+}
+
+/// Settings → Privacy row → Enter into chooser: Esc returns to Browse.
+#[test]
+fn browse_enter_picker_esc_returns_to_browse() {
+    let mut s = make_state();
+    assert!(s.focus_key("coding_data_sharing"));
+    assert!(s.try_enter_picking_enum());
+    assert!(!s.close_on_picker_exit);
+    assert!(matches!(s.mode(), SettingsModalMode::PickingEnum { .. }));
+
+    let outcome = handle_settings_key(&mut s, &KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    assert!(
+        matches!(outcome, SettingsKeyOutcome::Changed),
+        "browse-path Esc must stay open (Changed), got {outcome:?}"
+    );
+    assert!(
+        matches!(s.mode(), SettingsModalMode::Browse),
+        "browse-path Esc must return to Browse, got {:?}",
+        s.mode()
+    );
+}
+
+/// Deep-link Enter commits the choice and closes the modal (not Browse).
+#[test]
+fn deep_link_commit_closes_modal() {
+    let mut s = make_state();
+    assert!(s.focus_key("coding_data_sharing"));
+    assert!(s.try_enter_picking_enum());
+    s.close_on_picker_exit = true;
+
+    let outcome = handle_settings_key(&mut s, &KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    match outcome {
+        SettingsKeyOutcome::ActionThenClose(Action::SetCodingDataSharing { opted_in }) => {
+            assert!(!opted_in, "default snapshot is opt-out");
+        }
+        other => panic!("expected ActionThenClose(SetCodingDataSharing), got {other:?}"),
+    }
+    assert!(!s.close_on_picker_exit);
+}
+
+/// Browse-path Enter commits and returns to Browse (not Close).
+#[test]
+fn browse_path_enter_commit_returns_to_browse() {
+    let mut s = make_state();
+    assert!(s.focus_key("coding_data_sharing"));
+    assert!(s.try_enter_picking_enum());
+    assert!(!s.close_on_picker_exit);
+
+    let outcome = handle_settings_key(&mut s, &KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    match outcome {
+        SettingsKeyOutcome::Action(Action::SetCodingDataSharing { opted_in }) => {
+            assert!(!opted_in, "default snapshot is opt-out");
+        }
+        other => panic!("expected Action(SetCodingDataSharing), got {other:?}"),
+    }
+    assert!(
+        matches!(s.mode(), SettingsModalMode::Browse),
+        "browse-path Enter must return to Browse, got {:?}",
+        s.mode()
+    );
+    assert!(!s.close_on_picker_exit);
+}
+
+/// Deep-link Enter on a preview enum commits via Set* and closes.
+#[test]
+fn deep_link_theme_commit_closes_with_set() {
+    let mut s = make_state();
+    s.transition_to_picking_enum("theme", 0, SettingValue::Enum("groknight"), true);
+    s.close_on_picker_exit = true;
+
+    let outcome = handle_settings_key(&mut s, &KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    match outcome {
+        SettingsKeyOutcome::ActionThenClose(Action::SetTheme(name)) => {
+            assert_eq!(name, "auto");
+        }
+        other => panic!("expected ActionThenClose(SetTheme), got {other:?}"),
+    }
+    assert!(!s.close_on_picker_exit);
+}
+
+/// Deep-link Esc on a preview enum reverts the live preview and closes.
+#[test]
+fn deep_link_picker_esc_reverts_preview_and_closes() {
+    let mut s = make_state();
+    s.transition_to_picking_enum("theme", 0, SettingValue::Enum("groknight"), true);
+    s.close_on_picker_exit = true;
+
+    let outcome = handle_settings_key(&mut s, &KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    match outcome {
+        SettingsKeyOutcome::ActionThenClose(Action::PreviewTheme(name)) => {
+            assert_eq!(name, "groknight");
+        }
+        other => panic!("expected ActionThenClose(PreviewTheme), got {other:?}"),
+    }
+    assert!(!s.close_on_picker_exit);
+}
+
 /// The picker renders every choice in declaration order, top to
 /// bottom. Asserts each choice's `display` string and description
 /// appears on the expected row with the documented spacing.
@@ -2599,14 +2746,12 @@ fn picker_renders_choices_in_order() {
     );
 }
 
-/// The currently-focused choice renders with the filled-disc
-/// marker `●`, `accent_user` marker color, `bg_visual` row bg,
-/// AND **BOLD** display text — three independent focus cues for
-/// low-contrast theme compatibility (parity with `cancel_turn_panel`).
+/// Focus (BG + bold) tracks `choices_idx`; the filled-disc marker
+/// tracks the committed `original_value` until Enter.
 #[test]
-fn picker_highlights_current_choice() {
+fn picker_separates_focus_highlight_from_committed_marker() {
     let mut s = picker_test_state();
-    // Focus the second choice (index 1).
+    // Focus the second choice while committed value remains "first".
     s.transition_to_picking_enum("test_enum", 1, SettingValue::Enum("first"), true);
     let area = Rect {
         x: 0,
@@ -2626,44 +2771,57 @@ fn picker_highlights_current_choice() {
             .map(|c| c.symbol().to_string())
             .unwrap_or_default()
     };
-    // Layout: rows 3..6 are choices (with subtitle on row 1).
-    assert_eq!(marker_at(3), "\u{25CB}", "row 3 (unfocused) should be ○");
-    assert_eq!(marker_at(4), "\u{25CF}", "row 4 (focused) should be ●");
-    assert_eq!(marker_at(5), "\u{25CB}", "row 5 (unfocused) should be ○");
+    let marker_fg = |buf: &Buffer, y: u16| -> Option<ratatui::style::Color> {
+        buf.cell((area.x + 1, y)).and_then(|c| c.style().fg)
+    };
+    // Layout: rows 3..5 are choices (with subtitle on row 1).
+    // Row 3 = committed "first" (unfocused), row 4 = focused "second".
+    assert_eq!(
+        marker_at(3),
+        "\u{25CF}",
+        "row 3 (committed, unfocused) should be ●"
+    );
+    assert_eq!(
+        marker_at(4),
+        "\u{25CB}",
+        "row 4 (focused, not committed) should be ○"
+    );
+    assert_eq!(marker_at(5), "\u{25CB}", "row 5 (neither) should be ○");
+
+    // Marker accent follows committed state, not focus.
+    if theme.accent_user != theme.gray {
+        assert_eq!(
+            marker_fg(&buf, 3),
+            Some(theme.accent_user),
+            "committed marker must use accent_user"
+        );
+        assert_eq!(
+            marker_fg(&buf, 4),
+            Some(theme.gray),
+            "focused-but-uncommitted marker must use gray"
+        );
+    }
 
     // Cell at the LAST column of each row carries the row bg
-    // independent of prefix-width tweaks.
-    // `settings_list_row_bg` falls back to ANSI DarkGray / Reset when
-    // the theme collapses `bg_visual` (terminal-native / Reset tokens).
-    let expect_focused_bg = if matches!(theme.bg_visual, Color::Reset) {
-        Color::DarkGray
-    } else {
-        theme.bg_visual
-    };
-    let expect_unfocused_bg = if matches!(theme.bg_visual, Color::Reset) {
-        Color::Reset
-    } else {
-        theme.bg_base
-    };
+    // independent of prefix-width tweaks. Compare via
+    // `settings_list_row_bg` so terminal-native themes (Reset
+    // tokens elevated to DarkGray) pass too.
     let bg_at = |y: u16| -> Option<ratatui::style::Color> {
         buf.cell((area.x + area.width - 1, y))
             .and_then(|c| c.style().bg)
     };
     assert_eq!(
         bg_at(4),
-        Some(expect_focused_bg),
-        "focused row must have selection background"
+        Some(settings_list_row_bg(&theme, true, false)),
+        "focused row must use selection background"
     );
     assert_eq!(
         bg_at(3),
-        Some(expect_unfocused_bg),
-        "unfocused row must have base/reset background"
+        Some(settings_list_row_bg(&theme, false, false)),
+        "committed-but-unfocused row must use base background"
     );
 
-    // Display text on focused row carries BOLD modifier
-    // (three focus cues). Display "Second
-    // Option" starts at col `PICKER_PREFIX_W` (= 4). The 'S' at
-    // col 4 should be bold.
+    // Display text on focused row carries BOLD; committed alone does not.
     let focused_modifier = buf
         .cell((area.x + PICKER_PREFIX_W, 4))
         .map(|c| c.style().add_modifier)
@@ -2672,13 +2830,156 @@ fn picker_highlights_current_choice() {
         focused_modifier.contains(Modifier::BOLD),
         "focused row's display must be BOLD, got modifiers {focused_modifier:?}"
     );
-    let unfocused_modifier = buf
+    let committed_unfocused_modifier = buf
         .cell((area.x + PICKER_PREFIX_W, 3))
         .map(|c| c.style().add_modifier)
         .unwrap_or_default();
     assert!(
+        !committed_unfocused_modifier.contains(Modifier::BOLD),
+        "committed-but-unfocused row must NOT be BOLD, got modifiers {committed_unfocused_modifier:?}"
+    );
+
+    // Committed + focused: filled dot and selection bg/bold together.
+    s.transition_to_picking_enum("test_enum", 0, SettingValue::Enum("first"), true);
+    let mut buf2 = Buffer::empty(area);
+    render_picking_enum(&mut buf2, area, &s, &theme);
+    let marker_at2 = |y: u16| -> String {
+        buf2.cell((area.x + 1, y))
+            .map(|c| c.symbol().to_string())
+            .unwrap_or_default()
+    };
+    assert_eq!(
+        marker_at2(3),
+        "\u{25CF}",
+        "committed+focused row should be ●"
+    );
+    assert_eq!(
+        marker_at2(4),
+        "\u{25CB}",
+        "uncommitted unfocused row should be ○"
+    );
+    let bg_at2 = |y: u16| -> Option<ratatui::style::Color> {
+        buf2.cell((area.x + area.width - 1, y))
+            .and_then(|c| c.style().bg)
+    };
+    assert_eq!(
+        bg_at2(3),
+        Some(settings_list_row_bg(&theme, true, false)),
+        "committed+focused row must use selection background"
+    );
+    assert_eq!(
+        bg_at2(4),
+        Some(settings_list_row_bg(&theme, false, false)),
+        "uncommitted unfocused row must use base background"
+    );
+    let both_modifier = buf2
+        .cell((area.x + PICKER_PREFIX_W, 3))
+        .map(|c| c.style().add_modifier)
+        .unwrap_or_default();
+    assert!(
+        both_modifier.contains(Modifier::BOLD),
+        "committed+focused row must be BOLD, got modifiers {both_modifier:?}"
+    );
+    let unfocused_modifier = buf2
+        .cell((area.x + PICKER_PREFIX_W, 4))
+        .map(|c| c.style().add_modifier)
+        .unwrap_or_default();
+    assert!(
         !unfocused_modifier.contains(Modifier::BOLD),
-        "unfocused row's display must NOT be BOLD, got modifiers {unfocused_modifier:?}"
+        "uncommitted unfocused row must NOT be BOLD, got modifiers {unfocused_modifier:?}"
+    );
+}
+
+/// DynamicEnum commits use `SettingValue::String`; the marker must
+/// resolve that arm the same way as static `Enum`, including the
+/// empty-canonical clear sentinel (`""` / "(no override)").
+#[test]
+fn picker_string_original_value_fills_committed_marker() {
+    let mut s = picker_test_state();
+    s.transition_to_picking_enum("test_enum", 1, SettingValue::String("first".into()), true);
+    let area = Rect {
+        x: 0,
+        y: 0,
+        width: 80,
+        height: 12,
+    };
+    let mut buf = Buffer::empty(area);
+    let theme = Theme::current();
+    render_picking_enum(&mut buf, area, &s, &theme);
+
+    let marker_at = |y: u16| -> String {
+        buf.cell((area.x + 1, y))
+            .map(|c| c.symbol().to_string())
+            .unwrap_or_default()
+    };
+    assert_eq!(
+        marker_at(3),
+        "\u{25CF}",
+        "String original_value \"first\" must fill row 3"
+    );
+    assert_eq!(
+        marker_at(4),
+        "\u{25CB}",
+        "focused non-committed row must stay hollow"
+    );
+
+    // Empty-canonical clear sentinel (DynamicEnum "(no override)" shape):
+    // empty String must fill the "" choice, not be skipped as "no value".
+    const CLEAR_SENTINEL_CHOICES: &[EnumChoice] = &[
+        EnumChoice {
+            canonical: "",
+            display: "(no override)",
+            description: "Clear override.",
+        },
+        EnumChoice {
+            canonical: "model-a",
+            display: "Model A",
+            description: "A model.",
+        },
+    ];
+    let entries = vec![SettingMeta {
+        key: "test_dynamic_like",
+        category: SettingCategory::Appearance,
+        owner: SettingOwner::Shared,
+        label: "Test clear sentinel",
+        description: "Catalog with empty-canonical choice.",
+        keywords: &[],
+        kind: SettingKind::Enum {
+            default: "",
+            choices: CLEAR_SENTINEL_CHOICES,
+            supports_preview: false,
+        },
+        restart_required: false,
+        hidden_in_minimal: false,
+    }];
+    let mut s2 = SettingsModalState::new(
+        Arc::new(SettingsRegistry::from_entries(entries)),
+        UiConfig::default(),
+        PagerLocalSnapshot::default(),
+    );
+    // Commit empty; focus the non-empty choice so marker ≠ focus.
+    s2.transition_to_picking_enum(
+        "test_dynamic_like",
+        1,
+        SettingValue::String(String::new()),
+        false,
+    );
+    let mut buf2 = Buffer::empty(area);
+    render_picking_enum(&mut buf2, area, &s2, &theme);
+    let marker_at2 = |y: u16| -> String {
+        buf2.cell((area.x + 1, y))
+            .map(|c| c.symbol().to_string())
+            .unwrap_or_default()
+    };
+    assert_eq!(
+        marker_at2(3),
+        "\u{25CF}",
+        "empty String must fill empty-canonical clear row"
+    );
+    assert_eq!(
+        marker_at2(4),
+        "\u{25CB}",
+        "focused non-empty choice must stay hollow while clear is committed"
     );
 }
 
@@ -2803,6 +3104,63 @@ fn try_enter_picking_enum_returns_false_for_non_enum_row() {
         matches!(s.mode(), SettingsModalMode::Browse),
         "mode must not change on non-Enum row"
     );
+}
+
+/// A persisted `fork_secondary_model` slug renders as the catalog display
+/// name and seeds the picker on that model's row — not the stale-value
+/// fallback (index 1). The catalog carries two models so a fallback seed
+/// and a genuine match land on different indices.
+#[test]
+fn fork_secondary_model_picker_opens_on_persisted_model() {
+    use agent_client_protocol as acp;
+    // Must differ from the baseline slug or the empty-fold arm hides the lookup.
+    let slug = "grok-4.5-fast";
+    assert_ne!(slug, xai_grok_shell::models::default_model());
+    let snapshot = PagerLocalSnapshot {
+        available_models: vec![
+            ("Grok 3".to_string(), acp::ModelId::new(Arc::from("grok-3"))),
+            (
+                "Grok 4.5 Fast".to_string(),
+                acp::ModelId::new(Arc::from(slug)),
+            ),
+        ],
+        ..PagerLocalSnapshot::default()
+    };
+    let ui = UiConfig {
+        fork_secondary_model: slug.to_string(),
+        ..UiConfig::default()
+    };
+    let mut s = SettingsModalState::new(Arc::new(SettingsRegistry::defaults()), ui, snapshot);
+
+    // Row value shows the display name, matching the default_model row.
+    assert_eq!(
+        s.value_for("fork_secondary_model"),
+        Some(SettingValue::String("Grok 4.5 Fast".to_string())),
+    );
+
+    assert!(s.focus_key("fork_secondary_model"));
+    assert!(s.try_enter_picking_enum());
+    match s.mode() {
+        SettingsModalMode::PickingEnum {
+            key,
+            choices_idx,
+            ref original_value,
+            ..
+        } => {
+            assert_eq!(key, "fork_secondary_model");
+            // Choices: [(no override), Grok 3, Grok 4.5 Fast] → idx 2.
+            assert_eq!(
+                choices_idx, 2,
+                "picker must open on the persisted model, not the stale fallback",
+            );
+            assert_eq!(
+                original_value,
+                &SettingValue::String("Grok 4.5 Fast".to_string()),
+                "original_value must carry the display name so Esc-revert round-trips",
+            );
+        }
+        ref other => panic!("expected PickingEnum mode, got {other:?}"),
+    }
 }
 
 // -- render_picking_enum narrow-terminal coverage --
@@ -4138,14 +4496,11 @@ fn advance_next_recovers_when_selection_is_hidden() {
 #[test]
 fn advance_prev_recovers_when_selection_is_hidden() {
     let mut s = make_state();
-    // Apply a filter matching only show_timestamps and simple_mode.
-    // "mode" matches both: compact_mode label, simple_mode label
-    // AND show_timestamps via... actually let's pick a more reliable
-    // filter — use individual keywords. "simple" matches simple_mode
-    // only. Let's use that and corrupt selected to compact_mode
-    // (hidden). Up should land on the LAST visible setting which
-    // is simple_mode.
-    s.set_query("simple");
+    // The filter must match exactly one setting, so the "LAST visible"
+    // target is unambiguous. `ascii` is a simple_mode keyword and hits
+    // nothing else (settings_e2e pins that). Corrupt `selected` to the
+    // now-hidden compact_mode; Up must land on simple_mode.
+    s.set_query("ascii");
     let compact_idx = s
         .rows
         .iter()
@@ -4172,25 +4527,13 @@ fn advance_prev_recovers_when_selection_is_hidden() {
 /// Scan one row of the buffer and return its text content (no
 /// styles) with leading/trailing whitespace preserved.
 fn buf_row_text(buf: &Buffer, y: u16, x: u16, width: u16) -> String {
-    use unicode_width::UnicodeWidthStr;
     let mut s = String::new();
-    let mut col = x;
-    let end = x.saturating_add(width);
-    while col < end {
+    for col in x..x.saturating_add(width) {
         if let Some(cell) = buf.cell((col, y)) {
-            let symbol = cell.symbol();
-            s.push_str(symbol);
-            col = col.saturating_add(UnicodeWidthStr::width(symbol).max(1) as u16);
-        } else {
-            col = col.saturating_add(1);
+            s.push_str(cell.symbol());
         }
     }
     s
-}
-
-/// Collapse ratatui wide-glyph continuation cells for `contains` checks.
-fn rendered_row_no_phantom(buf: &Buffer, y: u16, width: u16) -> String {
-    buf_row_text(buf, y, 0, width)
 }
 
 /// Find the absolute column index where `needle` begins on row
@@ -4489,6 +4832,7 @@ fn narrow_terminal_drops_value_to_second_line() {
         &theme,
         false,
         false, // is_hovered
+        None,
     );
     let line1 = buf_row_text(&buf, 0, area.x, area.width);
     let line2 = buf_row_text(&buf, 1, area.x, area.width);
@@ -4552,6 +4896,7 @@ fn wide_terminal_keeps_value_on_first_line() {
         &theme,
         false,
         false, // is_hovered
+        None,
     );
     let line1 = buf_row_text(&buf, 0, area.x, area.width);
     let line2 = buf_row_text(&buf, 1, area.x, area.width);
@@ -4593,6 +4938,7 @@ fn pathologically_narrow_truncates_label_with_ellipsis() {
         &theme,
         false,
         false, // is_hovered
+        None,
     );
     let line1 = buf_row_text(&buf, 0, area.x, area.width);
     let line2 = buf_row_text(&buf, 1, area.x, area.width);
@@ -4609,7 +4955,8 @@ fn pathologically_narrow_truncates_label_with_ellipsis() {
 /// Two-line rows expand `state.row_rects` to span BOTH lines so
 /// mouse clicks on either line trigger the same default action.
 ///
-/// `coding_data_sharing`: Chinese label is denser; render at width=20 so
+/// `coding_data_sharing`'s label plus the value "Opt out", the chevron,
+/// and the row chrome are far wider than the width=28 we render at, so
 /// the row drops to two lines.
 #[test]
 fn two_line_row_hit_rect_spans_both_lines() {
@@ -4624,7 +4971,7 @@ fn two_line_row_hit_rect_spans_both_lines() {
     let area = Rect {
         x: 0,
         y: 0,
-        width: 20,
+        width: 28,
         height: 60,
     };
     let mut buf = Buffer::empty(area);
@@ -4677,8 +5024,8 @@ fn two_line_row_hit_rect_spans_both_lines() {
 #[test]
 fn two_line_row_with_expansion_renders_three_segments() {
     let mut s = make_state();
-    // 编码数据共享 label + value (with chevron) won't fit on a
-    // 20-col line, forcing two-line layout.
+    // The coding-data row's label + value (with chevron) won't
+    // fit on a 28-col line, forcing two-line layout.
     let row_idx = s
         .rows
         .iter()
@@ -4690,7 +5037,7 @@ fn two_line_row_with_expansion_renders_three_segments() {
     let area = Rect {
         x: 0,
         y: 0,
-        width: 20,
+        width: 28,
         height: 60,
     };
     let mut buf = Buffer::empty(area);
@@ -4703,16 +5050,32 @@ fn two_line_row_with_expansion_renders_three_segments() {
         "expanded two-line row must allocate ≥2 lines for the row itself, got height={}",
         rect.height
     );
-    // The row label is on line 1.
+    // The row label is on line 1. A 28-col row truncates a long label, so
+    // match the head of the live copy rather than the whole string.
     let label_line = buf_row_text(&buf, rect.y, area.x, area.width);
+    let label = s
+        .registry
+        .find("coding_data_sharing")
+        .expect("registered")
+        .label;
+    let head: String = label
+        .split_whitespace()
+        .take(2)
+        .collect::<Vec<_>>()
+        .join(" ");
     assert!(
-        label_line.contains("编码数据共享"),
-        "line 1 must contain the row label: {label_line:?}"
+        label_line.contains(&head),
+        "line 1 must contain the row label (head {head:?}): {label_line:?}"
     );
-    // The value (display: "选择退出" for default opt-out) is on line 2.
+    // The value (display: "Opt out" or similar) is on line 2.
     let value_line = buf_row_text(&buf, rect.y + 1, area.x, area.width);
+    // Value comes from displaying the canonical → display mapping,
+    // which uses the synthetic enum's "Third Option" canonical of
+    // "opt-out". The display fallback returns the canonical when
+    // the lookup misses — registry has the real `CodingDataSharing`
+    // choices, so display should be "Opt out".
     assert!(
-        value_line.contains("选择退出") || value_line.contains("选择加入"),
+        value_line.contains("Opt") || value_line.contains("opt") || value_line.contains("out"),
         "line 2 must contain the value text: {value_line:?}"
     );
     // The expanded description renders on line 3 and below.
@@ -4754,7 +5117,7 @@ fn group_row_renders_expanded_description() {
     // Line 1 is the group's chevron row (its label).
     let label_line = buf_row_text(&buf, rect.y, area.x, area.width);
     assert!(
-        label_line.contains("显示情境提示"),
+        label_line.contains("Show contextual hints"),
         "line 1 must contain the group label: {label_line:?}"
     );
     // The description renders on the line below the chevron row (non-blank).
@@ -4771,13 +5134,13 @@ fn group_row_renders_expanded_description() {
         .find("contextual_hints")
         .expect("group registered")
         .description;
-    let token: String = desc
-        .chars()
-        .filter(|c| !c.is_whitespace() && *c != '；' && *c != '。' && *c != '，')
-        .take(4)
-        .collect();
+    let token = desc
+        .split_whitespace()
+        .nth(1)
+        .unwrap_or("")
+        .trim_matches(|c: char| !c.is_alphanumeric());
     assert!(
-        !token.is_empty() && desc_line.contains(&token),
+        !token.is_empty() && desc_line.contains(token),
         "expanded group description must render its text (token `{token}`): {desc_line:?}"
     );
 }
@@ -4852,20 +5215,6 @@ fn find_row_y(buf: &Buffer, area: Rect, needle: &str) -> Option<u16> {
     None
 }
 
-/// Footer tip row: LONG uses "可对 Chaos", SHORT uses "可让 Chaos".
-/// Both share the `提示` prefix and `Chaos` — require both so we
-/// don't match theme display names like "Chaos Night" earlier in
-/// the settings list.
-fn find_tip_row_y(buf: &Buffer, area: Rect) -> Option<u16> {
-    for y in area.y..area.y.saturating_add(area.height) {
-        let row = buf_row_text(buf, y, area.x, area.width);
-        if row.contains("提示") && row.contains("Chaos") {
-            return Some(y);
-        }
-    }
-    None
-}
-
 /// Return true if every cell strictly INSIDE the modal popup's
 /// vertical borders on the given row is whitespace. The modal
 /// borders (`│` at popup_area.x and at popup_area.x + width - 1)
@@ -4908,15 +5257,16 @@ fn footer_has_blank_line_between_tip_and_hints_when_hints_wrap() {
     render_settings_modal(&mut buf, area, &mut s, false, None);
     let popup_area = s.window.popup_area.expect("modal must have rendered");
 
-    let tip_y = find_tip_row_y(&buf, area).expect("tip row must render");
+    let tip_y = find_row_y(&buf, area, "Tip").expect("tip row must render");
     // Sanity-check that the hints actually wrap — if a future PR
     // trims the hint string enough that they fit on one row at
     // this width the test passes for the wrong reason. Look for
     // the first hint label (`nav`) AND the last (`F2/Esc`); they
     // must land on different y if the hints wrapped.
-    // Use `j/k 导航` (hint-unique) rather than `导航` alone.
-    let first_hint_y = find_row_y(&buf, area, "j/k 导航").expect("first hint line must render");
-    let last_hint_y = find_row_y(&buf, area, "F2/Esc 关闭").expect("close hint must render");
+    // Use `j/k nav` (hint-unique) rather than `nav` alone, which
+    // also matches the `vim_mode` row's "navigation" keyword.
+    let first_hint_y = find_row_y(&buf, area, "j/k nav").expect("first hint line must render");
+    let last_hint_y = find_row_y(&buf, area, "F2/Esc").expect("close hint must render");
     assert!(
         last_hint_y > first_hint_y,
         "this test requires the hints to wrap to ≥2 lines; got first_hint_y={first_hint_y} \
@@ -4963,12 +5313,12 @@ fn footer_has_blank_line_between_tip_and_hints_when_hints_dont_wrap() {
     render_settings_modal(&mut buf, area, &mut s, false, None);
     let popup_area = s.window.popup_area.expect("modal must have rendered");
 
-    let tip_y = find_tip_row_y(&buf, area).expect("tip row must render");
+    let tip_y = find_row_y(&buf, area, "Tip").expect("tip row must render");
     // FilterFocused-mode hints: `type to filter | ↑/↓ nav |
     // Backspace edit | Enter commit | Esc clear`. Verify both
     // ends land on the SAME row (proves no wrap).
-    let first_hint_y = find_row_y(&buf, area, "输入筛选").expect("first hint must render");
-    let last_hint_y = find_row_y(&buf, area, "Esc 清除").expect("last hint must render");
+    let first_hint_y = find_row_y(&buf, area, "type to filter").expect("first hint must render");
+    let last_hint_y = find_row_y(&buf, area, "Esc clear").expect("last hint must render");
     assert_eq!(
         first_hint_y, last_hint_y,
         "this test requires the hints to fit on a single line; at width=150 + \
@@ -5039,16 +5389,17 @@ fn footer_total_height_grows_when_hints_wrap() {
     // also fire if both renders had the same wrap count OR the
     // narrow case wrapped further, which would be a silent test
     // bug).
-    let narrow_first_hint = find_row_y(&buf_narrow, narrow_area, "输入筛选").expect("first hint");
-    let narrow_last_hint = find_row_y(&buf_narrow, narrow_area, "Esc 清除").expect("last hint");
+    let narrow_first_hint =
+        find_row_y(&buf_narrow, narrow_area, "type to filter").expect("first hint");
+    let narrow_last_hint = find_row_y(&buf_narrow, narrow_area, "Esc clear").expect("last hint");
     assert_eq!(
         narrow_last_hint,
         narrow_first_hint + 1,
         "narrow fixture must wrap the hints to exactly 2 rows; got \
          first={narrow_first_hint} last={narrow_last_hint}"
     );
-    let wide_first_hint = find_row_y(&buf_wide, wide_area, "输入筛选").expect("first");
-    let wide_last_hint = find_row_y(&buf_wide, wide_area, "Esc 清除").expect("last");
+    let wide_first_hint = find_row_y(&buf_wide, wide_area, "type to filter").expect("first");
+    let wide_last_hint = find_row_y(&buf_wide, wide_area, "Esc clear").expect("last");
     assert_eq!(
         wide_first_hint, wide_last_hint,
         "wide fixture must NOT wrap the hints; got first={wide_first_hint} \
@@ -5347,6 +5698,7 @@ fn bool_off_value_renders_in_dim_color() {
         &theme,
         false,
         false,
+        None,
     );
     // Use `find_text_col` so the
     // column index is the actual buffer position, not a byte
@@ -5379,6 +5731,7 @@ fn bool_off_value_renders_in_dim_color() {
         &theme,
         false,
         false,
+        None,
     );
     let on_col = find_text_col(&buf_on, 0, "on").expect("must find `on` substring");
     let on_cell = buf_on.cell((on_col, 0)).expect("on cell");
@@ -5450,6 +5803,7 @@ fn chevron_column_is_at_constant_right_offset() {
         &theme,
         false,
         false,
+        None,
     );
 
     // Enum row — chevron column contains the `›` glyph.
@@ -5464,6 +5818,7 @@ fn chevron_column_is_at_constant_right_offset() {
         &theme,
         false,
         false,
+        None,
     );
 
     // The chevron column is a 2-cell block at
@@ -5535,6 +5890,7 @@ fn chevron_column_is_at_constant_right_offset() {
         &theme,
         false,
         false,
+        None,
     );
     let _ = render_setting_row(
         &mut buf_multi,
@@ -5546,6 +5902,7 @@ fn chevron_column_is_at_constant_right_offset() {
         &theme,
         false,
         false,
+        None,
     );
     // Bool row's `off` ends at column N; Enum row's `›` glyph
     // lands at column M. The contract: N == M's column
@@ -5602,6 +5959,7 @@ fn chevron_column_aligns_across_one_and_two_line_layouts() {
         &theme,
         false,
         false,
+        None,
     );
     let area_one = Rect {
         x: 0,
@@ -5620,6 +5978,7 @@ fn chevron_column_aligns_across_one_and_two_line_layouts() {
         &theme,
         false,
         false,
+        None,
     );
     // The column offset from the area's right edge is constant:
     // `area.right - ROW_RIGHT_PAD_W - 1` is the `›` glyph
@@ -5677,13 +6036,12 @@ fn docs_footer_tip_is_centered() {
         };
         let mut buf = Buffer::empty(area);
         render_docs_footer(&mut buf, area, &theme);
-        // CJK-aware: skip wide-glyph continuation cells.
-        let row = buf_row_text(&buf, 0, area.x, area.width);
-        let tip_start = row.find("提示").expect("docs footer must contain `提示`");
-        // Column of tip is display width of leading whitespace, not char index.
-        let tip_col = unicode_width::UnicodeWidthStr::width(&row[..tip_start]);
+        let row: String = (area.x..area.x + area.width)
+            .filter_map(|x| buf.cell((x, 0)).map(|c| c.symbol().to_string()))
+            .collect();
+        let tip_start = row.find("Tip").expect("docs footer must contain `Tip`");
         let trailing_ws = row.chars().rev().take_while(|c| *c == ' ').count();
-        (row, tip_col, trailing_ws)
+        (row, tip_start, trailing_ws)
     };
 
     // LONG path: width=80 fits the full message.
@@ -5698,15 +6056,16 @@ fn docs_footer_tip_is_centered() {
     );
 
     // SHORT path: width that fits SHORT but not LONG.
-    // SHORT tip Chinese; LONG is wider. width=40 lands in the SHORT band.
+    // SHORT = "Tip · Ask Grok to change a setting" (34 cells);
+    // LONG ≈ 73 cells. width=40 lands in the SHORT band.
     let (row_short, tip_start_short, trailing_short) = render(40);
     assert!(
-        row_short.contains("帮你改设置"),
-        "width=40 must render SHORT path (contains `帮你改设置`): {row_short:?}",
+        row_short.contains("change a setting"),
+        "width=40 must render SHORT path (contains `change a setting`): {row_short:?}",
     );
     assert!(
-        !row_short.contains("chaosday"),
-        "width=40 must NOT render LONG path (no `chaosday`): {row_short:?}",
+        !row_short.contains("grokday"),
+        "width=40 must NOT render LONG path (no `grokday`): {row_short:?}",
     );
     assert!(
         tip_start_short.abs_diff(trailing_short) <= 1,
@@ -5715,11 +6074,11 @@ fn docs_footer_tip_is_centered() {
     );
 
     // Truncated path: width too narrow even for SHORT. The
-    // truncation prefix `提示 · …` should still render; the
+    // truncation prefix `Tip · …` should still render; the
     // centering math operates on the truncated SHORT.
     let (row_tiny, tip_start_tiny, _trailing_tiny) = render(15);
     assert!(
-        row_tiny.contains("提示"),
+        row_tiny.contains("Tip"),
         "even at width=15 the `Tip` prefix must render: {row_tiny:?}",
     );
     // At width=15, the truncated SHORT fills most/all of the
@@ -5750,7 +6109,7 @@ fn tip_line_has_blank_row_above() {
     let mut tip_y: Option<u16> = None;
     for y in 0..area.height {
         let txt = buf_row_text(&buf, y, area.x, area.width);
-        if txt.contains("提示") && txt.contains("Chaos") {
+        if txt.contains("Tip") && txt.contains("Ask Grok") {
             tip_y = Some(y);
             break;
         }
@@ -6079,6 +6438,51 @@ fn click_settings_breadcrumb_collapses_picker_to_browse() {
     );
 }
 
+/// Breadcrumb is hierarchical up: even with deep-link `close_on_picker_exit`,
+/// click returns to Browse (never Close / ActionThenClose).
+#[test]
+fn click_settings_breadcrumb_ignores_close_on_picker_exit() {
+    let area = Rect {
+        x: 0,
+        y: 0,
+        width: 120,
+        height: 30,
+    };
+    let mut s = enter_picker_for("theme");
+    s.close_on_picker_exit = true;
+    let mut buf = Buffer::empty(area);
+    render_settings_modal(&mut buf, area, &mut s, false, None);
+    let rect = s
+        .settings_breadcrumb_rect
+        .expect("PickingEnum must populate breadcrumb rect");
+
+    let outcome = handle_settings_mouse(
+        &mut s,
+        MouseEventKind::Down(crossterm::event::MouseButton::Left),
+        rect.x + rect.width / 2,
+        rect.y,
+    );
+    assert!(
+        !matches!(
+            outcome,
+            SettingsKeyOutcome::Close | SettingsKeyOutcome::ActionThenClose(_)
+        ),
+        "breadcrumb must not dismiss the modal, got {outcome:?}"
+    );
+    match outcome {
+        SettingsKeyOutcome::Action(Action::PreviewTheme(orig)) => {
+            assert_eq!(orig, "groknight");
+        }
+        other => panic!("expected preview revert Action, got {other:?}"),
+    }
+    assert!(
+        matches!(s.mode(), SettingsModalMode::Browse),
+        "breadcrumb must return to Browse, got {:?}",
+        s.mode()
+    );
+    assert!(!s.close_on_picker_exit);
+}
+
 /// Sibling of `click_settings_breadcrumb_collapses_picker_to_browse`
 /// that exercises the preview-then-click path: user navigates
 /// to a different theme via Down arrow (Action::PreviewTheme
@@ -6382,6 +6786,66 @@ fn hover_breadcrumb_flips_state_and_returns_changed() {
     );
 }
 
+/// `d` must be inert on a consent chooser, not merely hidden from the
+/// footer.
+#[test]
+fn consent_chooser_drops_tip_and_reset() {
+    let area = Rect {
+        x: 0,
+        y: 0,
+        width: 120,
+        height: 40,
+    };
+    let screen = |s: &mut SettingsModalState| {
+        let mut buf = Buffer::empty(area);
+        render_settings_modal(&mut buf, area, s, false, None);
+        (0..area.height)
+            .map(|y| buf_row_text(&buf, y, area.x, area.width))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+
+    let mut consent = enter_picker_for("coding_data_sharing");
+    let text = screen(&mut consent);
+    assert!(
+        !text.contains("Ask Grok"),
+        "consent chooser must not render the docs tip:\n{text}"
+    );
+    assert!(
+        !text.contains("d reset"),
+        "consent chooser must not offer reset:\n{text}"
+    );
+    assert!(
+        text.contains("Enter select"),
+        "the other footer hints must survive:\n{text}"
+    );
+
+    let outcome = handle_settings_key(
+        &mut consent,
+        &KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE),
+    );
+    assert!(
+        matches!(outcome, SettingsKeyOutcome::Unchanged),
+        "`d` must be inert on a consent chooser, got {outcome:?}"
+    );
+    assert!(
+        matches!(consent.mode(), SettingsModalMode::PickingEnum { .. }),
+        "`d` must leave the chooser open, got {:?}",
+        consent.mode()
+    );
+
+    let mut ordinary = enter_picker_for("theme");
+    let text = screen(&mut ordinary);
+    assert!(
+        text.contains("d reset") && text.contains("Ask Grok"),
+        "ordinary pickers keep the tip and the reset hint:\n{text}"
+    );
+    assert!(
+        text.contains("Enter select") && !text.contains("Enter commit"),
+        "every chooser selects an answer rather than committing a value:\n{text}"
+    );
+}
+
 /// The row-list-with-search-bar layout reserves row 1 (below
 /// the search bar) for a `─` divider in `gray_dim` — palette
 /// parity.
@@ -6520,7 +6984,7 @@ fn max_thoughts_width_preview_renders_below_stepper() {
     let stepper_y =
         find_text_row(&buf, area, int_stepper_left_glyph()).expect("stepper row must render");
     // Locate the preview title row.
-    let preview_y = find_text_row(&buf, area, "预览")
+    let preview_y = find_text_row(&buf, area, "preview")
         .expect("`preview` title row must render below the stepper");
     // Exact placement: 1 blank row between stepper and preview
     // title, regardless of `area.height` (no bottom-anchoring).
@@ -6561,27 +7025,23 @@ fn max_thoughts_width_preview_title_is_bold_italic_lowercase() {
         height: 24,
     };
     let (buf, _) = render_max_thoughts_width_at(85, area);
-    let preview_y = find_text_row(&buf, area, "预览").expect("preview title must render");
+    let preview_y = find_text_row(&buf, area, "preview").expect("preview title must render");
     // Assert the exact lowercase substring (the row must NOT
     // contain "Preview" or "PREVIEW").
     let row = buf_row_text(&buf, preview_y, area.x, area.width);
     assert!(
-        row.contains("预览"),
+        row.contains("preview"),
         "title row must contain lowercase `preview`; row={row:?}",
     );
     assert!(
         !row.contains("Preview") && !row.contains("PREVIEW"),
         "title row must NOT contain capitalised forms; row={row:?}",
     );
-    // Sample the first cell of the title text ("预览").
+    // Sample the first cell of the title text.
     let cell = buf
         .cell((area.x, preview_y))
         .expect("preview title cell at column 0");
-    assert_eq!(
-        cell.symbol(),
-        "预",
-        "expected first CJK glyph of 预览 at title column 0"
-    );
+    assert_eq!(cell.symbol(), "p", "expected `p` at title column 0");
     assert!(
         cell.modifier.contains(Modifier::BOLD),
         "title cell must carry Modifier::BOLD; got {:?}",
@@ -6605,7 +7065,7 @@ fn max_thoughts_width_preview_content_is_italic() {
         height: 24,
     };
     let (buf, _) = render_max_thoughts_width_at(85, area);
-    let preview_y = find_text_row(&buf, area, "预览").expect("preview title must render");
+    let preview_y = find_text_row(&buf, area, "preview").expect("preview title must render");
     // The first content row is the row immediately below the
     // title. Sample column 0 — the first character of the
     // wrapped sample text (`L` from "Let me trace through ...").
@@ -6655,7 +7115,7 @@ fn max_thoughts_width_preview_title_styling_distinguishes_from_content() {
         height: 24,
     };
     let (buf, _) = render_max_thoughts_width_at(85, area);
-    let preview_y = find_text_row(&buf, area, "预览").expect("preview title must render");
+    let preview_y = find_text_row(&buf, area, "preview").expect("preview title must render");
     let title_cell = buf
         .cell((area.x, preview_y))
         .expect("title cell at column 0");
@@ -6727,7 +7187,7 @@ fn max_thoughts_width_preview_wraps_at_pending_value() {
         height: 24,
     };
     let (buf, _) = render_max_thoughts_width_at(50, area);
-    let preview_y = find_text_row(&buf, area, "预览").expect("preview title must render");
+    let preview_y = find_text_row(&buf, area, "preview").expect("preview title must render");
     // Walk content rows below the title until a blank row
     // (signals end of preview block).
     let mut content_lines: Vec<String> = Vec::new();
@@ -6777,7 +7237,7 @@ fn max_thoughts_width_preview_clamps_when_terminal_narrower_than_value() {
         height: 24,
     };
     let (buf, _) = render_max_thoughts_width_at(85, area);
-    let preview_y = find_text_row(&buf, area, "预览").expect("preview title must render");
+    let preview_y = find_text_row(&buf, area, "preview").expect("preview title must render");
     let title_row = buf_row_text(&buf, preview_y, area.x, area.width);
     // Title must NOT carry the legacy `clamped to N cols`
     // suffix — that signal lives in the note row now.
@@ -6832,13 +7292,13 @@ fn clamped_preview_renders_note_below_content() {
         height: 24,
     };
     let (buf, _) = render_max_thoughts_width_at(85, area);
-    let preview_y = find_text_row(&buf, area, "预览").expect("preview title must render");
+    let preview_y = find_text_row(&buf, area, "preview").expect("preview title must render");
 
     // Title row carries the lowercase `preview` text and no
     // `clamped` suffix.
     let title_row = buf_row_text(&buf, preview_y, area.x, area.width);
     assert!(
-        title_row.contains("预览"),
+        title_row.contains("preview"),
         "title row must contain lowercase `preview`; row={title_row:?}",
     );
     assert!(
@@ -6858,7 +7318,7 @@ fn clamped_preview_renders_note_below_content() {
     for y in (preview_y + 1)..(area.y + area.height) {
         let row = buf_row_text(&buf, y, area.x, area.width);
         let trimmed = row.trim_end();
-        if trimmed.starts_with("说明：") || trimmed.starts_with("note:") {
+        if trimmed.starts_with("note:") {
             note_y = Some(y);
             break;
         }
@@ -6892,7 +7352,7 @@ fn clamped_preview_renders_note_below_content() {
     // The note text reports the actual clamp width (area.width = 60).
     let note_row = buf_row_text(&buf, note_y, area.x, area.width);
     assert!(
-        note_row.contains("说明：已限制为 60 列"),
+        note_row.contains("note: clamped at 60 cols"),
         "note row must read `note: clamped at 60 cols`; got {note_row:?}",
     );
 
@@ -6906,11 +7366,7 @@ fn clamped_preview_renders_note_below_content() {
     let cell = buf
         .cell((area.x, note_y))
         .expect("note cell at column 0 must exist");
-    assert_eq!(
-        cell.symbol(),
-        "说",
-        "expected first CJK glyph of 说明 at note column 0"
-    );
+    assert_eq!(cell.symbol(), "n", "expected `n` at note column 0");
     assert_eq!(
         cell.fg, theme.text_secondary,
         "note fg must be theme.text_secondary; got {:?}",
@@ -6959,10 +7415,10 @@ fn clamped_note_omitted_when_insufficient_height() {
         let (buf, _) = render_max_thoughts_width_at(85, area);
         // Skip heights at which the preview is omitted
         // entirely (too short).
-        let Some(preview_y) = find_text_row(&buf, area, "预览") else {
+        let Some(preview_y) = find_text_row(&buf, area, "preview") else {
             continue;
         };
-        let note_present = find_text_row(&buf, area, "说明：已限制").is_some();
+        let note_present = find_text_row(&buf, area, "note: clamped").is_some();
         if !note_present {
             tight_height = Some(h);
             // Sanity: verify wrap content still rendered for
@@ -6995,7 +7451,7 @@ fn clamped_note_omitted_when_insufficient_height() {
     };
     let (buf, _) = render_max_thoughts_width_at(85, area);
     assert!(
-        find_text_row(&buf, area, "说明：已限制").is_none(),
+        find_text_row(&buf, area, "note: clamped").is_none(),
         "at the tight boundary height (h={tight}) the clamped note must NOT render",
     );
 }
@@ -7013,7 +7469,7 @@ fn unclamped_preview_omits_note() {
     };
     let (buf, _) = render_max_thoughts_width_at(50, area);
     assert!(
-        find_text_row(&buf, area, "预览").is_some(),
+        find_text_row(&buf, area, "preview").is_some(),
         "preview must render at this size",
     );
     assert!(
@@ -7049,7 +7505,7 @@ fn max_thoughts_width_preview_omitted_when_modal_too_short() {
     );
     // The preview is omitted.
     assert!(
-        find_text_row(&buf, area, "预览").is_none(),
+        find_text_row(&buf, area, "preview").is_none(),
         "preview must be omitted when remaining height < 5 rows",
     );
 }
@@ -7066,7 +7522,7 @@ fn max_thoughts_width_preview_omitted_when_modal_too_narrow() {
     };
     let (buf, _) = render_max_thoughts_width_at(85, area);
     assert!(
-        find_text_row(&buf, area, "预览").is_none(),
+        find_text_row(&buf, area, "preview").is_none(),
         "preview must be omitted when area.width < 30 cols",
     );
 }
@@ -7119,7 +7575,7 @@ fn max_thoughts_width_preview_only_renders_for_max_thoughts_width_key() {
     );
     // No preview because the key is NOT max_thoughts_width.
     assert!(
-        find_text_row(&buf, area, "预览").is_none(),
+        find_text_row(&buf, area, "preview").is_none(),
         "preview must be hidden for non-max_thoughts_width Int settings",
     );
 }
@@ -7140,7 +7596,7 @@ fn max_thoughts_width_preview_updates_when_stepper_changes() {
     // Capture wrap shape at pending = 50.
     let (buf_50, _) = render_max_thoughts_width_at(50, area);
     let preview_y_50 =
-        find_text_row(&buf_50, area, "预览").expect("preview must render at pending 50");
+        find_text_row(&buf_50, area, "preview").expect("preview must render at pending 50");
     let mut wrap_50: Vec<String> = Vec::new();
     for y in (preview_y_50 + 1)..area.height {
         let row = buf_row_text(&buf_50, y, area.x, area.width);
@@ -7168,7 +7624,7 @@ fn max_thoughts_width_preview_updates_when_stepper_changes() {
     let theme = Theme::current();
     render_editing_value(&mut buf_55, area, &mut s, &theme);
     let preview_y_55 =
-        find_text_row(&buf_55, area, "预览").expect("preview must render at pending 55");
+        find_text_row(&buf_55, area, "preview").expect("preview must render at pending 55");
     let mut wrap_55: Vec<String> = Vec::new();
     for y in (preview_y_55 + 1)..area.height {
         let row = buf_row_text(&buf_55, y, area.x, area.width);
@@ -7221,7 +7677,7 @@ fn max_thoughts_width_preview_renders_at_just_fits_height() {
     };
     let (buf_fit, _) = render_max_thoughts_width_at(85, just_fits);
     assert!(
-        find_text_row(&buf_fit, just_fits, "预览").is_some(),
+        find_text_row(&buf_fit, just_fits, "preview").is_some(),
         "preview must render at the just-fits boundary height (header_rows + 5)",
     );
     // One row below the threshold: preview omitted, stepper
@@ -7238,7 +7694,7 @@ fn max_thoughts_width_preview_renders_at_just_fits_height() {
         "stepper must still render one row below the preview threshold",
     );
     assert!(
-        find_text_row(&buf_short, just_short, "预览").is_none(),
+        find_text_row(&buf_short, just_short, "preview").is_none(),
         "preview must omit at one row below the just-fits boundary",
     );
 }
@@ -7256,7 +7712,7 @@ fn max_thoughts_width_preview_renders_at_just_fits_width() {
     };
     let (buf_fit, _) = render_max_thoughts_width_at(85, just_fits);
     assert!(
-        find_text_row(&buf_fit, just_fits, "预览").is_some(),
+        find_text_row(&buf_fit, just_fits, "preview").is_some(),
         "preview must render at the MIN_WIDTH (30 cols) boundary",
     );
     let just_narrow = Rect {
@@ -7267,7 +7723,7 @@ fn max_thoughts_width_preview_renders_at_just_fits_width() {
     };
     let (buf_narrow, _) = render_max_thoughts_width_at(85, just_narrow);
     assert!(
-        find_text_row(&buf_narrow, just_narrow, "预览").is_none(),
+        find_text_row(&buf_narrow, just_narrow, "preview").is_none(),
         "preview must omit one column below MIN_WIDTH",
     );
 }
@@ -7439,7 +7895,7 @@ fn preview_renders_at_full_width_when_modal_widened() {
     );
     // Sanity: the preview itself still renders.
     assert!(
-        find_text_row(&buf, area, "预览").is_some(),
+        find_text_row(&buf, area, "preview").is_some(),
         "preview must render at the wide terminal size",
     );
 }
@@ -7477,11 +7933,279 @@ fn preview_remains_clamped_when_pending_exceeds_widened_width() {
     );
     // Preview still renders, AND the clamped note is present.
     assert!(
-        find_text_row(&buf, area, "预览").is_some(),
+        find_text_row(&buf, area, "preview").is_some(),
         "preview must render even when clamping",
     );
     assert!(
-        find_text_row(&buf, area, "说明：已限制").is_some(),
+        find_text_row(&buf, area, "note: clamped").is_some(),
         "clamped note must render when pending > interior, even after widening",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Locked coding_data_sharing row (ZDR / team non-admin)
+// ---------------------------------------------------------------------------
+
+fn make_locked_state(lock: CodingDataSharingLock) -> SettingsModalState {
+    SettingsModalState::new(
+        Arc::new(SettingsRegistry::defaults()),
+        UiConfig::default(),
+        PagerLocalSnapshot {
+            coding_data_sharing_lock: Some(lock),
+            ..PagerLocalSnapshot::default()
+        },
+    )
+}
+
+fn coding_data_sharing_row_idx(s: &SettingsModalState) -> usize {
+    s.rows
+        .iter()
+        .position(|r| matches!(r, RowEntry::Setting { key, .. } if *key == "coding_data_sharing"))
+        .expect("coding_data_sharing must be registered")
+}
+
+/// A locked `coding_data_sharing` row must NOT open the enum picker —
+/// neither via `try_enter_picking_enum` directly (the shared entry point
+/// for Enter, mouse value clicks, and the `focus_key` auto-open path) nor
+/// via the Browse Enter key. With no lock, the same row opens the picker.
+#[test]
+fn locked_coding_data_sharing_row_does_not_open_picker() {
+    for lock in [
+        CodingDataSharingLock::Zdr,
+        CodingDataSharingLock::TeamManaged,
+    ] {
+        let mut s = make_locked_state(lock);
+        s.selected = coding_data_sharing_row_idx(&s);
+        assert!(
+            !s.try_enter_picking_enum(),
+            "try_enter_picking_enum must return false for a locked row ({lock:?})"
+        );
+        assert!(
+            matches!(s.mode(), SettingsModalMode::Browse),
+            "mode must stay Browse for a locked row ({lock:?}), got {:?}",
+            s.mode()
+        );
+        let out = handle_settings_key(&mut s, &KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(
+            matches!(out, SettingsKeyOutcome::Unchanged),
+            "Enter on a locked row must be a no-op ({lock:?}), got {out:?}"
+        );
+        assert!(matches!(s.mode(), SettingsModalMode::Browse));
+    }
+
+    // Control arm: no lock → the picker opens (existing behavior).
+    let mut s = make_state();
+    s.selected = coding_data_sharing_row_idx(&s);
+    assert!(s.try_enter_picking_enum());
+    assert!(matches!(s.mode(), SettingsModalMode::PickingEnum { .. }));
+}
+
+/// `d` on a locked row must not open the confirm dialog: the dispatch-time
+/// guard would refuse the reset anyway, but only after walking the user
+/// through a confirmation for a change that cannot happen.
+#[test]
+fn locked_coding_data_sharing_row_refuses_reset() {
+    for lock in [
+        CodingDataSharingLock::Zdr,
+        CodingDataSharingLock::TeamManaged,
+    ] {
+        let mut s = make_locked_state(lock);
+        s.selected = coding_data_sharing_row_idx(&s);
+        let out = handle_settings_key(
+            &mut s,
+            &KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE),
+        );
+        assert!(
+            matches!(out, SettingsKeyOutcome::Unchanged),
+            "`d` on a locked row must be a no-op ({lock:?}), got {out:?}"
+        );
+    }
+
+    // Control arm: no lock → `d` still opens the confirm dialog.
+    let mut s = make_state();
+    s.selected = coding_data_sharing_row_idx(&s);
+    let out = handle_settings_key(
+        &mut s,
+        &KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE),
+    );
+    assert!(
+        matches!(
+            out,
+            SettingsKeyOutcome::Action(Action::OpenResetConfirm {
+                key: "coding_data_sharing"
+            })
+        ),
+        "`d` on an unlocked row must still offer reset, got {out:?}"
+    );
+}
+
+/// `→ expand` stays on a locked row — that is how the lock reason is read.
+#[test]
+fn locked_row_footer_drops_the_keys_it_refuses() {
+    let area = Rect {
+        x: 0,
+        y: 0,
+        width: 120,
+        height: 40,
+    };
+    let screen = |s: &mut SettingsModalState| {
+        let mut buf = Buffer::empty(area);
+        render_settings_modal(&mut buf, area, s, false, None);
+        (0..area.height)
+            .map(|y| buf_row_text(&buf, y, area.x, area.width))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+
+    let mut locked = make_locked_state(CodingDataSharingLock::Zdr);
+    locked.selected = coding_data_sharing_row_idx(&locked);
+    let text = screen(&mut locked);
+    for hint in ["d reset", "Enter edit", "Space toggle"] {
+        assert!(
+            !text.contains(hint),
+            "a locked row must not advertise `{hint}`:\n{text}"
+        );
+    }
+    assert!(
+        text.contains("expand"),
+        "`→ expand` reads the lock reason and must survive:\n{text}"
+    );
+
+    let mut unlocked = make_state();
+    unlocked.selected = coding_data_sharing_row_idx(&unlocked);
+    let text = screen(&mut unlocked);
+    assert!(
+        text.contains("d reset") && text.contains("Enter edit"),
+        "an unlocked row keeps the full footer:\n{text}"
+    );
+}
+
+/// Locked rows drop the `›` enter-affordance and render a per-variant
+/// value: ZDR replaces opt-in/out with "ZDR"; team-managed keeps the
+/// value with an " · Admin Managed" suffix. Unlocked rows keep the plain
+/// value + chevron.
+#[test]
+fn locked_coding_data_sharing_row_renders_locked_value_without_chevron() {
+    let area = Rect {
+        x: 0,
+        y: 0,
+        width: 80,
+        height: 60,
+    };
+    let theme = Theme::current();
+    let chevron = crate::glyphs::chevron();
+
+    let mut s = make_locked_state(CodingDataSharingLock::Zdr);
+    let idx = coding_data_sharing_row_idx(&s);
+    s.selected = idx;
+    let mut buf = Buffer::empty(area);
+    render_rows(&mut buf, area, &mut s, &theme);
+    let rect = s.row_rects[idx];
+    let line = buf_row_text(&buf, rect.y, area.x, area.width);
+    assert!(
+        line.contains("ZDR") && !line.contains("Opt"),
+        "ZDR lock must replace the opt-in/out value with `ZDR`: {line:?}"
+    );
+    assert!(
+        !line.contains(chevron),
+        "locked row must not render the `{chevron}` enter affordance: {line:?}"
+    );
+
+    let mut s = make_locked_state(CodingDataSharingLock::TeamManaged);
+    s.selected = idx;
+    let mut buf = Buffer::empty(area);
+    render_rows(&mut buf, area, &mut s, &theme);
+    let rect = s.row_rects[idx];
+    let line = buf_row_text(&buf, rect.y, area.x, area.width);
+    assert!(
+        line.contains("Opt out \u{00B7} Admin Managed"),
+        "team-managed lock must append ` · Admin Managed`: {line:?}"
+    );
+    assert!(
+        !line.contains(chevron),
+        "locked row must not render the `{chevron}` enter affordance: {line:?}"
+    );
+
+    // Control arm: unlocked row shows the plain value + chevron.
+    let mut s = make_state();
+    s.selected = idx;
+    let mut buf = Buffer::empty(area);
+    render_rows(&mut buf, area, &mut s, &theme);
+    let rect = s.row_rects[idx];
+    let line = buf_row_text(&buf, rect.y, area.x, area.width);
+    assert!(
+        line.contains("Opt out") && !line.contains("locked"),
+        "unlocked row must show the plain value: {line:?}"
+    );
+    assert!(
+        line.contains(chevron),
+        "unlocked row must keep the `{chevron}` enter affordance: {line:?}"
+    );
+}
+
+/// Expanding a locked row replaces the registry description with the lock
+/// reason; the unlocked expansion shows the description.
+#[test]
+fn locked_coding_data_sharing_expanded_description_replaces_with_reason() {
+    let area = Rect {
+        x: 0,
+        y: 0,
+        width: 80,
+        height: 60,
+    };
+    let theme = Theme::current();
+    // Word-wrap may split the reason across lines; normalize the whole
+    // buffer to a single whitespace-collapsed string before matching.
+    let flatten = |buf: &Buffer| -> String {
+        (0..area.height)
+            .map(|y| buf_row_text(buf, y, area.x, area.width))
+            .collect::<Vec<_>>()
+            .join(" ")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+
+    let mut s = make_locked_state(CodingDataSharingLock::TeamManaged);
+    let idx = coding_data_sharing_row_idx(&s);
+    s.selected = idx;
+    s.expanded_keys.insert("coding_data_sharing");
+    let mut buf = Buffer::empty(area);
+    render_rows(&mut buf, area, &mut s, &theme);
+    let text = flatten(&buf);
+    assert!(
+        text.contains("Managed by your team admin."),
+        "expanded locked row must show the lock reason: {text:?}"
+    );
+    // Token from the live description so this survives copy edits.
+    let desc = s
+        .registry
+        .find("coding_data_sharing")
+        .expect("registered")
+        .description;
+    let desc_head: String = desc
+        .split_whitespace()
+        .take(3)
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(
+        !text.contains(&desc_head),
+        "locked expansion must replace the description, not append to it: {text:?}"
+    );
+
+    // Control arm: unlocked expansion shows the description only.
+    let mut s = make_state();
+    s.selected = idx;
+    s.expanded_keys.insert("coding_data_sharing");
+    let mut buf = Buffer::empty(area);
+    render_rows(&mut buf, area, &mut s, &theme);
+    let text = flatten(&buf);
+    assert!(
+        text.contains(&desc_head),
+        "expanded row must render the registry description: {text:?}"
+    );
+    assert!(
+        !text.contains("Managed by your team admin."),
+        "unlocked expansion must not mention the team-admin lock: {text:?}"
     );
 }

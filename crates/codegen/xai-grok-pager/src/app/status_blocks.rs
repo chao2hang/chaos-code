@@ -284,7 +284,7 @@ pub(crate) fn format_decode_rate(
 
 /// First non-empty, trimmed line of `text` (empty string if none). Collapses a
 /// multi-line prompt/command to a single display line.
-fn first_nonempty_line(text: &str) -> &str {
+pub(crate) fn first_nonempty_line(text: &str) -> &str {
     text.lines()
         .map(str::trim)
         .find(|l| !l.is_empty())

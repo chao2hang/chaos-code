@@ -33,8 +33,9 @@ const ALL_SETTINGS_EXERCISED: &[&str] = &[
     "show_timestamps",
     "show_timeline",
     "page_flip_on_send",
-    "session.auto_retry_incomplete_end_turn",
+    "confirm_before_rewind",
     "combine_queued_prompts",
+    "follow_up_behavior",
     "simple_mode",
     "vim_mode",
     "remember_tool_approvals",
@@ -65,6 +66,7 @@ const ALL_SETTINGS_EXERCISED: &[&str] = &[
     "collapsed_edit_blocks",
     "respect_manual_folds",
     "hunk_tracker_mode",
+    "voice_keybind_enabled",
     "voice_capture_mode",
     "voice_stt_language",
     // Contextual-hints group + its per-tip child toggles (exercised via the
@@ -227,6 +229,7 @@ fn assert_set_bool_action(outcome: SettingsKeyOutcome, key: &str, expected: bool
                 "SetCombineQueuedPrompts value differs from expected"
             )
         }
+
         ("simple_mode", Action::SetSimpleMode(b)) => {
             assert_eq!(b, expected, "SetSimpleMode value differs from expected")
         }
@@ -255,12 +258,6 @@ fn assert_set_bool_action(outcome: SettingsKeyOutcome, key: &str, expected: bool
             assert_eq!(
                 b, expected,
                 "SetAskUserQuestionTimeoutEnabled value differs from expected"
-            )
-        }
-        ("session.auto_retry_incomplete_end_turn", Action::SetAutoRetryIncompleteEndTurn(b)) => {
-            assert_eq!(
-                b, expected,
-                "SetAutoRetryIncompleteEndTurn value differs from expected"
             )
         }
 
@@ -410,12 +407,12 @@ fn space_on_page_flip_on_send_dispatches_typed_setter() {
 }
 
 #[test]
-fn space_on_auto_retry_incomplete_end_turn_dispatches_typed_setter() {
+fn space_on_confirm_before_rewind_dispatches_typed_setter() {
     let mut s = make_state();
-    navigate_to(&mut s, "session.auto_retry_incomplete_end_turn");
+    navigate_to(&mut s, "confirm_before_rewind");
     let outcome = handle_settings_key(&mut s, &press(KeyCode::Char(' ')));
-    // Default is false, so toggling flips it on.
-    assert_set_bool_action(outcome, "session.auto_retry_incomplete_end_turn", true);
+    let default_on = UiConfig::default().confirm_before_rewind_enabled();
+    assert_set_bool_action(outcome, "confirm_before_rewind", !default_on);
 }
 
 #[test]
@@ -425,6 +422,48 @@ fn space_on_combine_queued_prompts_dispatches_typed_setter() {
     let outcome = handle_settings_key(&mut s, &press(KeyCode::Char(' ')));
     let default_on = UiConfig::default().combine_queued_prompts.unwrap_or(false);
     assert_set_bool_action(outcome, "combine_queued_prompts", !default_on);
+}
+
+#[test]
+fn enter_on_follow_up_behavior_row_enters_picking_enum() {
+    let mut s = make_state();
+    navigate_to(&mut s, "follow_up_behavior");
+    let outcome = handle_settings_key(&mut s, &press(KeyCode::Enter));
+    assert!(
+        matches!(outcome, SettingsKeyOutcome::Changed),
+        "Enter on follow_up_behavior row must transition to PickingEnum, got {outcome:?}"
+    );
+    match &s.mode() {
+        SettingsModalMode::PickingEnum {
+            key,
+            original_value,
+            ..
+        } => {
+            assert_eq!(*key, "follow_up_behavior");
+            assert_eq!(
+                original_value,
+                &SettingValue::Enum("queue"),
+                "default follow_up_behavior is queue"
+            );
+        }
+        other => panic!("expected PickingEnum mode, got {other:?}"),
+    }
+}
+
+#[test]
+fn follow_up_behavior_picker_enter_dispatches_set_commit() {
+    let mut s = make_state();
+    navigate_to(&mut s, "follow_up_behavior");
+    let _ = handle_settings_key(&mut s, &press(KeyCode::Enter));
+    // Default is queue (index 0); Down → steer.
+    let _ = handle_settings_key(&mut s, &press(KeyCode::Down));
+    let outcome = handle_settings_key(&mut s, &press(KeyCode::Enter));
+    match outcome {
+        SettingsKeyOutcome::Action(Action::SetFollowUpBehavior(mode)) => {
+            assert_eq!(mode, xai_grok_pager::appearance::FollowUpBehavior::Steer);
+        }
+        other => panic!("expected SetFollowUpBehavior(Steer), got {other:?}"),
+    }
 }
 
 #[test]
@@ -453,9 +492,8 @@ fn space_on_ask_user_question_timeout_dispatches_typed_setter() {
     let row = row_idx_for(&s, "toolset.ask_user_question.timeout_enabled");
     assert_eq!(
         row_idx_for(&s, "plan_mode"),
-        row + 2,
-        "Plan Mode must render two rows below Ask-Question timeout \
-         (session.auto_retry_incomplete_end_turn sits between them)"
+        row + 1,
+        "Ask-Question timeout must render directly above Plan Mode"
     );
     navigate_to(&mut s, "toolset.ask_user_question.timeout_enabled");
     let outcome = handle_settings_key(&mut s, &press(KeyCode::Char(' ')));
@@ -693,18 +731,40 @@ fn mouse_click_on_combine_queued_prompts_indicator_toggles_in_one_click() {
 }
 
 #[test]
-fn mouse_click_on_auto_retry_incomplete_end_turn_indicator_toggles_in_one_click() {
+fn mouse_click_on_follow_up_behavior_indicator_opens_picker() {
     let mut s = make_state();
     synth_rects(&mut s);
-    let row_y = row_idx_for(&s, "session.auto_retry_incomplete_end_turn") as u16;
+    let row_y = row_idx_for(&s, "follow_up_behavior") as u16;
     let outcome = handle_settings_mouse(
         &mut s,
         MouseEventKind::Down(crossterm::event::MouseButton::Left),
         72,
         row_y,
     );
-    // Default is false, so clicking toggles it on.
-    assert_set_bool_action(outcome, "session.auto_retry_incomplete_end_turn", true);
+    assert!(
+        matches!(outcome, SettingsKeyOutcome::Changed),
+        "click on follow_up_behavior indicator should open picker, got {outcome:?}"
+    );
+    assert!(
+        matches!(s.mode(), SettingsModalMode::PickingEnum { key, .. } if key == "follow_up_behavior"),
+        "expected PickingEnum(follow_up_behavior), got {:?}",
+        s.mode()
+    );
+}
+
+#[test]
+fn mouse_click_on_confirm_before_rewind_indicator_toggles_in_one_click() {
+    let mut s = make_state();
+    synth_rects(&mut s);
+    let row_y = row_idx_for(&s, "confirm_before_rewind") as u16;
+    let outcome = handle_settings_mouse(
+        &mut s,
+        MouseEventKind::Down(crossterm::event::MouseButton::Left),
+        72,
+        row_y,
+    );
+    let default_on = UiConfig::default().confirm_before_rewind_enabled();
+    assert_set_bool_action(outcome, "confirm_before_rewind", !default_on);
 }
 
 /// Value-column click toggles `remember_tool_approvals` in one click.
@@ -1755,8 +1815,8 @@ fn render_no_matches_placeholder_includes_query() {
         all_text.push('\n');
     }
     assert!(
-        all_text.contains("无 匹 配"),
-        "rendered buffer must contain '无匹配' placeholder, got:\n{all_text}"
+        all_text.contains("No matches"),
+        "rendered buffer must contain 'No matches' placeholder, got:\n{all_text}"
     );
     assert!(
         all_text.contains("xyzzy"),
@@ -1837,7 +1897,7 @@ fn registry_kind_membership_through_pr_14() {
             "show_timeline",
             "show_timestamps",
             "page_flip_on_send",
-            "session.auto_retry_incomplete_end_turn",
+            "confirm_before_rewind",
             "combine_queued_prompts",
             "simple_mode",
             "vim_mode",
@@ -1845,6 +1905,7 @@ fn registry_kind_membership_through_pr_14() {
             "toolset.ask_user_question.timeout_enabled",
             "auto_update",
             "show_tips",
+            "voice_keybind_enabled",
             // Per-tip contextual-hint children (hidden from the top-level list,
             // toggled inside the group sub-sheet) are still Bool settings.
             "contextual_hints.undo",
@@ -1870,6 +1931,7 @@ fn registry_kind_membership_through_pr_14() {
             "auto_light_theme",
             "coding_data_sharing",
             "default_selected_permission",
+            "follow_up_behavior",
             "hunk_tracker_mode",
             "keep_text_selection",
             "permission_mode",
@@ -1939,6 +2001,7 @@ fn enum_settings_membership_through_pr_14() {
             "auto_light_theme",
             "coding_data_sharing",
             "default_selected_permission",
+            "follow_up_behavior",
             "hunk_tracker_mode",
             "keep_text_selection",
             "permission_mode",
@@ -1972,6 +2035,9 @@ fn defaults_round_trip_through_registry() {
     xai_grok_pager::appearance::cache::set_group_tool_verbs(true);
     xai_grok_pager::appearance::cache::set_page_flip_on_send(true);
     xai_grok_pager::appearance::cache::set_combine_queued_prompts(false);
+    xai_grok_pager::appearance::cache::set_follow_up_behavior(
+        xai_grok_pager::appearance::FollowUpBehavior::Queue,
+    );
     xai_grok_pager::appearance::cache::set_scroll_mode(
         xai_grok_pager::appearance::ScrollMode::Auto,
     );
@@ -1987,8 +2053,9 @@ fn defaults_round_trip_through_registry() {
             "show_timestamps" => SettingValue::Bool(true),
             "show_timeline" => SettingValue::Bool(false),
             "page_flip_on_send" => SettingValue::Bool(true),
-            "session.auto_retry_incomplete_end_turn" => SettingValue::Bool(false),
+            "confirm_before_rewind" => SettingValue::Bool(true),
             "combine_queued_prompts" => SettingValue::Bool(false),
+            "follow_up_behavior" => SettingValue::Enum("queue"),
             "simple_mode" => SettingValue::Bool(true),
             "vim_mode" => SettingValue::Bool(false),
             "remember_tool_approvals" => SettingValue::Bool(false),
@@ -2010,6 +2077,7 @@ fn defaults_round_trip_through_registry() {
             "coding_data_sharing" => SettingValue::Enum("opt-out"),
             "default_selected_permission" => SettingValue::Enum("always_allow_all_sessions"),
             "hunk_tracker_mode" => SettingValue::Enum("agent_only"),
+            "voice_keybind_enabled" => SettingValue::Bool(true),
             "voice_capture_mode" => SettingValue::Enum("hold"),
             "voice_stt_language" => SettingValue::Enum("en"),
             "plan_mode" => SettingValue::Enum("off"),
@@ -2094,7 +2162,6 @@ fn settings_value_payload_matches_kind() {
             | SettingsKeyOutcome::Action(Action::SetVimMode(_))
             | SettingsKeyOutcome::Action(Action::SetRememberToolApprovals(_))
             | SettingsKeyOutcome::Action(Action::SetAskUserQuestionTimeoutEnabled(_))
-            | SettingsKeyOutcome::Action(Action::SetAutoRetryIncompleteEndTurn(_))
             | SettingsKeyOutcome::Action(Action::SetShowTips(_))
             | SettingsKeyOutcome::Action(Action::SetAutoUpdate(_))
             | SettingsKeyOutcome::Action(Action::SetRespectManualFolds(_))
@@ -3816,7 +3883,7 @@ fn reset_overlay_dims_all_rows_except_target() {
         }
         None
     };
-    let action_rows: Vec<u16> = ["重 置", "取 消"]
+    let action_rows: Vec<u16> = ["reset", "cancel"]
         .iter()
         .filter_map(|n| find_row_y(n))
         .collect();
@@ -3877,12 +3944,12 @@ fn docs_footer_renders_for_browse_and_picker() {
             all_text.push('\n');
         }
         assert!(
-            all_text.contains("Chaos 说"),
-            "[{fixture_label}] docs footer (`可对 Chaos 说`) must appear in the rendered modal:\n\
+            all_text.contains("Ask Grok"),
+            "[{fixture_label}] docs footer (`Ask Grok`) must appear in the rendered modal:\n\
              {all_text}"
         );
         assert!(
-            all_text.contains("chaosday"),
+            all_text.contains("change theme to grokday"),
             "[{fixture_label}] docs footer must include the example phrasing"
         );
     }
@@ -3939,9 +4006,9 @@ fn right_arrow_expands_focused_row() {
     );
 
     let rendered = render_modal_to_string(&mut s, 120, 30);
-    // `compact_mode`'s description starts with "减少消息周围边距".
+    // `compact_mode`'s description starts with "Reduce padding".
     assert!(
-        rendered.contains("减 少 消 息"),
+        rendered.contains("Reduce padding"),
         "expanded row's description must appear in the rendered modal, got:\n{rendered}"
     );
 }
@@ -3966,7 +4033,7 @@ fn left_arrow_collapses_focused_row() {
 
     let rendered = render_modal_to_string(&mut s, 120, 30);
     assert!(
-        !rendered.contains("减 少 消 息"),
+        !rendered.contains("Reduce padding"),
         "collapsed row's description must NOT appear in the rendered modal, got:\n{rendered}"
     );
 }
@@ -3986,7 +4053,7 @@ fn restart_pill_hidden_when_not_expanded_and_not_edited() {
     let rendered = render_modal_to_string(&mut s, 120, 30);
     let restart_lines: Vec<&str> = rendered
         .lines()
-        .filter(|l| l.contains("显 示 提 示") && l.contains("需 重 启"))
+        .filter(|l| l.contains("Show tips") && l.contains("restart"))
         .collect();
     assert!(
         restart_lines.is_empty(),
@@ -4006,7 +4073,7 @@ fn restart_pill_visible_when_expanded() {
     let rendered = render_modal_to_string(&mut s, 120, 30);
     let restart_lines: Vec<&str> = rendered
         .lines()
-        .filter(|l| l.contains("显 示 提 示") && l.contains("需 重 启"))
+        .filter(|l| l.contains("Show tips") && l.contains("restart"))
         .collect();
     assert!(
         !restart_lines.is_empty(),
@@ -4039,7 +4106,7 @@ fn restart_pill_hidden_when_edited_but_collapsed() {
     let rendered = render_modal_to_string(&mut s, 120, 30);
     let restart_lines: Vec<&str> = rendered
         .lines()
-        .filter(|l| l.contains("显 示 提 示") && l.contains("需 重 启"))
+        .filter(|l| l.contains("Show tips") && l.contains("restart"))
         .collect();
     assert!(
         restart_lines.is_empty(),
@@ -4074,12 +4141,13 @@ fn expanded_description_wraps_to_modal_width() {
     let rendered = render_modal_to_string(&mut s, 80, 34);
     // Distinctive phrases from the description text:
     assert!(
-        rendered.contains("默 认"),
-        "wrapped description must include the '默认使用' (Default uses) phrase"
+        rendered.contains("Default") || rendered.contains("default"),
+        "wrapped description must include the 'Default uses' phrase"
     );
     assert!(
-        rendered.contains("批 准") && rendered.contains("自 动"),
-        "wrapped description must include the '总是批准 自动授予全部权限' phrase, got:\n{rendered}"
+        rendered.contains("Always") && rendered.contains("automatically"),
+        "wrapped description must include the 'Always approve grants all \
+         permissions automatically' phrase, got:\n{rendered}"
     );
 }
 
@@ -4184,11 +4252,11 @@ fn reset_confirm_overlay_renders_prompt_with_setting_label_and_default() {
     );
     // The confirmation footer shortcuts are visible.
     assert!(
-        all_text.contains("y 重 置"),
+        all_text.contains("y reset"),
         "y reset shortcut must appear in the rendered buffer:\n{all_text}",
     );
     assert!(
-        all_text.contains("n 取 消"),
+        all_text.contains("n cancel"),
         "n cancel shortcut must appear in the rendered buffer:\n{all_text}",
     );
 }
@@ -5311,10 +5379,11 @@ fn default_selected_permission_mouse_click_on_indicator_opens_picker_in_one_clic
     }
 }
 
-/// `/privacy` accepts opt-in/opt-out arguments: it opens the settings page
-/// with no args, or toggles coding-data-sharing with an explicit argument.
-/// The ambiguous forms (`on`/`off`) are rejected to avoid flipping a privacy
-/// preference with the opposite of the user's intent.
+/// `/privacy` takes no arguments: it opens the settings page and nothing
+/// else. The alias parser it used to carry (`opt-in`, `share`, `out`, …) is
+/// gone — a one-word prompt alias could flip a privacy preference with none
+/// of the disclosure copy in front of the user, and the ambiguous forms
+/// (`on`/`off`) risked landing on the opposite of the intent.
 #[test]
 fn pr9_privacy_slash_command_takes_no_arguments() {
     use xai_grok_pager::slash::commands::builtin_commands;
@@ -5323,10 +5392,10 @@ fn pr9_privacy_slash_command_takes_no_arguments() {
     let reg = CommandRegistry::new(builtin_commands());
     let cmd = reg.get("privacy").expect("/privacy must be registered");
     assert!(
-        cmd.takes_args(),
-        "/privacy must advertise an argument slot for opt-in/opt-out"
+        !cmd.takes_args(),
+        "/privacy must not advertise an argument slot"
     );
-    assert_eq!(cmd.usage(), "/privacy [opt-in|opt-out]");
+    assert_eq!(cmd.usage(), "/privacy");
 }
 
 // ---------------------------------------------------------------------------
@@ -6299,6 +6368,31 @@ fn voice_stt_language_picker_enter_dispatches_set_commit() {
     );
 }
 
+/// Space-toggle on `voice_keybind_enabled` dispatches the typed setter.
+/// Default is ON (the chord works out of the box), so toggling flips it off.
+#[test]
+fn space_on_voice_keybind_enabled_dispatches_typed_setter() {
+    let mut s = make_state();
+    navigate_to(&mut s, "voice_keybind_enabled");
+    let outcome = handle_settings_key(&mut s, &press(KeyCode::Char(' ')));
+    assert_set_bool_action(outcome, "voice_keybind_enabled", false);
+}
+
+/// Value-column click toggles `voice_keybind_enabled` in one click.
+#[test]
+fn mouse_click_on_voice_keybind_enabled_indicator_toggles_in_one_click() {
+    let mut s = make_state();
+    synth_rects(&mut s);
+    let row_y = row_idx_for(&s, "voice_keybind_enabled") as u16;
+    let outcome = handle_settings_mouse(
+        &mut s,
+        MouseEventKind::Down(crossterm::event::MouseButton::Left),
+        72,
+        row_y,
+    );
+    assert_set_bool_action(outcome, "voice_keybind_enabled", false);
+}
+
 /// Value-column click on the voice_stt_language row opens the picker in ONE
 /// click (mouse ↔ keyboard parity).
 #[test]
@@ -6636,8 +6730,8 @@ fn simple_mode_label_distinguishes_input_from_scrollback() {
     let reg = SettingsRegistry::defaults();
     let simple = reg.find("simple_mode").expect("simple_mode registered");
     let vim = reg.find("vim_mode").expect("vim_mode registered");
-    assert_eq!(simple.label, "禁用 vim 输入模式");
-    assert_eq!(vim.label, "Vim 滚动导航");
+    assert_eq!(simple.label, "Disable vim input mode");
+    assert_eq!(vim.label, "Vim scrollback navigation");
     // Keyword sanity-check so search('vim') still finds both.
     assert!(simple.keywords.contains(&"vim"));
     assert!(vim.keywords.contains(&"vim"));
@@ -6658,7 +6752,7 @@ fn keep_text_selection_renders_under_mouse_shell_owned() {
         .expect("keep_text_selection must be registered");
     assert_eq!(meta.category, SettingCategory::Mouse);
     assert_eq!(meta.owner, SettingOwner::Shell);
-    assert_eq!(meta.label, "文本选择");
+    assert_eq!(meta.label, "Text selection");
     assert!(
         meta.description.contains("Shift"),
         "description should mention Shift-drag for native terminal copy"
@@ -6715,6 +6809,12 @@ fn enter_on_keep_text_selection_row_enters_picking_enum() {
 
 #[test]
 fn keep_text_selection_picker_nav_does_not_dispatch_preview() {
+    // Pin the cache-backed live value so the picker seeds at flash (idx 0)
+    // regardless of a sibling test that set hold/word_select on this thread.
+    // (word_select is the last choice, so Down would clamp; flash gives room.)
+    xai_grok_pager::appearance::cache::set_keep_text_selection(
+        xai_grok_pager::appearance::TextSelection::Flash,
+    );
     for nav_key in &[
         KeyCode::Down,
         KeyCode::Up,
@@ -7263,7 +7363,7 @@ fn display_refresh_auto_cadence_meta_appearance_shell_restart_hidden_minimal() {
     assert_eq!(meta.owner, SettingOwner::Shell);
     assert!(meta.restart_required);
     assert!(meta.hidden_in_minimal);
-    assert_eq!(meta.label, "匹配显示器刷新率");
+    assert_eq!(meta.label, "Match display refresh rate");
     match &meta.kind {
         SettingKind::Bool { default } => {
             assert!(*default, "display_refresh_auto_cadence must default ON")

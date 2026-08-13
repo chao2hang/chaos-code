@@ -289,6 +289,9 @@ async fn persist_ack_waits_for_disk_flush_before_success() {
                 last_search_prompt_index: std::sync::atomic::AtomicI64::new(-1),
                 last_api_request_at: std::sync::atomic::AtomicI64::new(0),
                 hook_registry: std::cell::RefCell::new(None),
+                turn_report: Default::default(),
+                turn_abort: Default::default(),
+                turn_end_tx: Default::default(),
                 client_hooks: Default::default(),
                 hook_resolved_workspace_root: String::new(),
                 vcs_kind: xai_grok_workspace::session::git::VcsKind::Git,
@@ -790,6 +793,9 @@ async fn first_turn_memory_injection_disabled_does_not_persist_to_chat_history()
                 last_search_prompt_index: std::sync::atomic::AtomicI64::new(-1),
                 last_api_request_at: std::sync::atomic::AtomicI64::new(0),
                 hook_registry: std::cell::RefCell::new(None),
+                turn_report: Default::default(),
+                turn_abort: Default::default(),
+                turn_end_tx: Default::default(),
                 client_hooks: Default::default(),
                 hook_resolved_workspace_root: String::new(),
                 vcs_kind: xai_grok_workspace::session::git::VcsKind::Git,
@@ -1103,6 +1109,9 @@ async fn cancel_running_task_teardown_clears_running_and_pending_work() {
                 last_search_prompt_index: std::sync::atomic::AtomicI64::new(-1),
                 last_api_request_at: std::sync::atomic::AtomicI64::new(0),
                 hook_registry: std::cell::RefCell::new(None),
+                turn_report: Default::default(),
+                turn_abort: Default::default(),
+                turn_end_tx: Default::default(),
                 client_hooks: Default::default(),
                 hook_resolved_workspace_root: String::new(),
                 vcs_kind: xai_grok_workspace::session::git::VcsKind::Git,
@@ -2073,7 +2082,8 @@ async fn assert_stop_trigger_arms_wake_barrier(trigger: &str) {
                     user_initiated: true,
                     ..Default::default()
                 })
-                .await;
+                .await
+                .barrier;
             assert_eq!(
                 barrier,
                 super::tasks_cancel::WakeBarrier::Armed,
@@ -2190,7 +2200,8 @@ async fn non_stop_cancels_preserve_queued_task_wakes_and_do_not_arm_barrier() {
                         user_initiated: true,
                         ..Default::default()
                     })
-                    .await;
+                    .await
+                    .barrier;
                 assert_eq!(
                     barrier,
                     super::tasks_cancel::WakeBarrier::Clear,
@@ -2647,6 +2658,9 @@ async fn cancel_propagates_to_sampler_handle_so_no_further_emission() {
                 last_search_prompt_index: std::sync::atomic::AtomicI64::new(-1),
                 last_api_request_at: std::sync::atomic::AtomicI64::new(0),
                 hook_registry: std::cell::RefCell::new(None),
+                turn_report: Default::default(),
+                turn_abort: Default::default(),
+                turn_end_tx: Default::default(),
                 client_hooks: Default::default(),
                 hook_resolved_workspace_root: String::new(),
                 vcs_kind: xai_grok_workspace::session::git::VcsKind::Git,

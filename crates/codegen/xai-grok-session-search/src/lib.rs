@@ -26,4 +26,6 @@ pub use manager::{
     SearchIndexManager, SearchIndexStatus, SessionSearchRequest, SessionSearchResponse,
     evict_session, execute_search,
 };
-pub use source::{ContentExtractor, IndexableSession, SessionSource, SessionSourceFactory};
+pub use source::{
+    ContentExtractor, IndexEnabled, IndexableSession, SessionSource, SessionSourceFactory,
+};
