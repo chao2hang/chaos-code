@@ -6,6 +6,17 @@
 
 - 新增 `docs/telemetry-policy.md`：集中说明遥测默认关、谁收、收什么、
   怎么永久关，以及优先级解析顺序。
+- 新增 `docs/telemetry-status-design.md`：`chaos telemetry status` /
+  `disable` 子命令设计草稿，分三版落地（0.2.137 status / 0.2.138
+  disable / 0.2.139 enable）。
+- 新增 `docs/audit-followup-report.md`：unsafe / unwrap / ignored 测试
+  三方向摸底报告 + 治理优先级。
+- 新增 `scripts/ci/ignored-tests.sh`：全工作区 `#[ignore]` 统计脚本，
+  支持 human / CSV / --stale 三种模式；配套
+  `docs/ci-test-debt.md` 加季度审计流程。
+- `xai-grok-update`：新增 `signature.rs` 模块（ed25519 离线验签，
+  minisign 兼容格式，编译期公钥注入 + 运行时 `CHAOS_REQUIRE_SIG` 灰
+  度开关，12 单测全过）。后续 PR 将接入下载链路和安装脚本。
 
 ### 采样 / 网关兼容
 

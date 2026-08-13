@@ -46,14 +46,47 @@ Tests marked `#[ignore]` are a separate, smaller debt. Their reasons must stay
 readable and be revisited periodically; a permanent `#[ignore]` is a deleted
 test with extra steps.
 
-| Crate | Count | Reason |
-| --- | --- | --- |
-| `xai-grok-pager` | 29 | 16 billing/subscription (fork removed); 3 connectors URL (`MANAGED_SECTION_CONNECTORS_URL` empty in Chaos); 10 other fork-specific. |
-| `xai-grok-update` | 48 | `fetch_gh_release_version` uses GitHub HTTP API, not `gh` CLI — `FakeBinGuard` mock bypassed. |
-| `xai-grok-pager-pty-harness` | 9 | PTY environment-sensitive tests that need specific terminal conditions. |
-| `xai-grok-shell-base` | 1 | Fork empties `PROD_CLI_CHAT_PROXY_BASE_URL`. |
+> 口径说明：下表只列"Chaos fork 引入的债务"——上游本来就 `#[ignore]` 的
+> PTY e2e / scripted scenarios / spawn-real-binary 测试不算 fork 债务。
+> 全工作区 `#[ignore]` 总数约 **528**（`scripts/ci/ignored-tests.sh` 统计），
+> 其中 fork 专属的约 87 个。
 
-**Total: ~87 ignored tests.** All carry a `#[ignore = "reason"]` annotation.
+| Crate | Fork 债务数 | 原因 | Owner | 下次重审 |
+| --- | ---: | --- | --- | --- |
+| `xai-grok-pager` | 29 | 16 billing/subscription (fork removed); 3 connectors URL (`MANAGED_SECTION_CONNECTORS_URL` empty in Chaos); 10 other fork-specific. | @chaos-devs | 2026-10 |
+| `xai-grok-update` | 48 | `fetch_gh_release_version` uses GitHub HTTP API, not `gh` CLI — `FakeBinGuard` mock bypassed. Wiremock rewrite in progress; concurrent convergence tests (~8) remain. | @chaos-devs | 2026-09 |
+| `xai-grok-pager-pty-harness` | 10 | PTY environment-sensitive tests that need specific terminal conditions. 8 scroll_matrix + 1 plan_approval + 1 scroll_correctness were rebaselined to Chinese strings; remaining 10 depend on terminal emulator behavior CI can't reproduce. | @chaos-devs | 2026-10 |
+| `xai-grok-shell-base` | 1 | Fork empties `PROD_CLI_CHAT_PROXY_BASE_URL`. | @chaos-devs | 2026-09 |
+
+**Fork 债务合计：88**（与 0.2.136 底条的"~87"一致）。全部带
+`#[ignore = "reason"]` 注释，无裸 `#[ignore]`。
+
+### 季度审计流程
+
+每季度（1 月 / 4 月 / 7 月 / 10 月开头）开一次 ignore 审计：
+
+```sh
+scripts/ci/ignored-tests.sh          # 全量统计 + 分 crate
+scripts/ci/ignored-tests.sh --csv    # 机器可读 CSV
+scripts/ci/ignored-tests.sh --stale  # 只列过期/未设 review date 的
+```
+
+步骤：
+
+1. 跑上面脚本，对比 3 个月前的数字。
+2. 逐个 review 已过 review date 的条目：
+   - 修了 → 去掉 `#[ignore]`
+   - 还得放着 → 把 reason 里的日期推后 1 季度，写一句"为什么还不能恢复"
+3. 更新本节表格里的"下次重审"列。
+4. 发一个 PR，标题 `chore(test): Q? ignore audit YYYY-MM`。
+
+### 规则
+
+- **禁止**裸 `#[ignore]`（不加 reason）。`scripts/ci/ignored-tests.sh`
+  会把它们列出来；CI 应当拒绝此类合入。
+- Reason 里**必须**有 `review YYYY-MM` 或等价的重审日期。无日期的算
+  "永久债务"，需季度审计时处理。
+- 新增 fork 专属 ignore → 必须同时更新本节表格计数和原因描述。
 
 ## Risk
 
