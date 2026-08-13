@@ -2,6 +2,11 @@
 
 ## 0.2.137 — 2026-08-13
 
+### 审计跟进（Audit followup）
+
+- 新增 `docs/telemetry-policy.md`：集中说明遥测默认关、谁收、收什么、
+  怎么永久关，以及优先级解析顺序。
+
 ### 采样 / 网关兼容
 
 - 修：thinking 模式回传补全 `reasoning_content`，避免 bblbb 等代理网关

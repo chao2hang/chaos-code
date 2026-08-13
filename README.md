@@ -347,6 +347,7 @@ chaos wrap kubectl exec -it my-pod -- bash
 - 已完成计划：[`docs/done/`](docs/done/)（headless 重写、Cline 导入）
 - 已知问题：[`docs/known-issues/`](docs/known-issues/)（WSL p9io 崩溃等）
 - CI 测试债务记录：[`docs/ci-test-debt.md`](docs/ci-test-debt.md)
+- 遥测策略（默认关 + 优先级解析）：[`docs/telemetry-policy.md`](docs/telemetry-policy.md)
 
 ---
 
