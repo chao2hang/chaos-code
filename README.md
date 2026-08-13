@@ -60,7 +60,7 @@ curl -fsSL https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/i
 固定版本 / 强制重下：
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.sh | bash -s -- --version 0.2.136
+curl -fsSL https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.sh | bash -s -- --version 0.2.137
 curl -fsSL https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.sh | bash -s -- --force
 ```
 
@@ -68,7 +68,7 @@ curl -fsSL https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/i
 
 ```sh
 ./scripts/install.sh
-./scripts/install.sh --version 0.2.136
+./scripts/install.sh --version 0.2.137
 ```
 
 #### 完整性校验
@@ -107,14 +107,14 @@ chaos --version
 固定版本（跳过 GitHub “latest” API，网络/限流时更稳）：
 
 ```powershell
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.ps1))) -Version 0.2.136
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.ps1))) -Version 0.2.137
 ```
 
 先下载再执行（组策略限制管道时更稳）：
 
 ```powershell
 Invoke-WebRequest -Uri "https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.ps1" -OutFile "$env:TEMP\install-chaos.ps1"
-powershell -ExecutionPolicy Bypass -File "$env:TEMP\install-chaos.ps1" -Version 0.2.136
+powershell -ExecutionPolicy Bypass -File "$env:TEMP\install-chaos.ps1" -Version 0.2.137
 ```
 
 #### 方式 B：cmd 一键（无需 `iex`）
@@ -133,7 +133,7 @@ curl -L -o "%TEMP%\install-chaos.bat" https://raw.githubusercontent.com/chao2han
 固定版本 / 强制重下：
 
 ```bat
-"%TEMP%\install-chaos.bat" --version 0.2.136
+"%TEMP%\install-chaos.bat" --version 0.2.137
 "%TEMP%\install-chaos.bat" --force
 ```
 
@@ -141,7 +141,7 @@ curl -L -o "%TEMP%\install-chaos.bat" https://raw.githubusercontent.com/chao2han
 
 ```bat
 scripts\install.bat
-scripts\install.bat --version 0.2.136 --force
+scripts\install.bat --version 0.2.137 --force
 ```
 
 `install.bat` 会优先调用同目录的 `install.ps1`；若无 PowerShell 或脚本失败，则回退为直接下载 `chaos.exe` 并写入用户 PATH。
@@ -236,7 +236,7 @@ curl -L -o "%TEMP%\install-chaos.bat" https://raw.githubusercontent.com/chao2han
 
 ```sh
 chaos update
-chaos update --version 0.2.136
+chaos update --version 0.2.137
 ```
 
 强制渠道（一般不必改）：
