@@ -2614,7 +2614,7 @@ mod tests {
             "5th row must be the indicator:\n{text}"
         );
         assert!(
-            text.contains("... Ctrl-F to expand"),
+            text.contains("... Ctrl-F 展开"),
             "indicator missing:\n{text}"
         );
         assert!(
@@ -2633,7 +2633,7 @@ mod tests {
             "full short script must render:\n{text}"
         );
         assert!(
-            !text.contains("Ctrl-F to expand"),
+            !text.contains("Ctrl-F 展开"),
             "no indicator within the budget:\n{text}"
         );
     }
@@ -2644,7 +2644,7 @@ mod tests {
         state.args_expanded = true;
         let text = render_to_text(&state, Rect::new(0, 0, 80, 30));
         assert!(
-            !text.contains("Ctrl-F to expand"),
+            !text.contains("Ctrl-F 展开"),
             "no indicator when expanded:\n{text}"
         );
         assert!(

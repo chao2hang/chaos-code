@@ -2795,6 +2795,7 @@ mod connectors_url_click_tests {
     }
 
     #[test]
+    #[ignore = "MANAGED_SECTION_CONNECTORS_URL is empty in Chaos (no portal); URL band is never recorded"]
     fn mouse_down_on_url_row_opens_connectors() {
         let mut agent = rendered_agent();
         let (col, band) = managed_url_hit(&agent);
@@ -2815,6 +2816,7 @@ mod connectors_url_click_tests {
     }
 
     #[test]
+    #[ignore = "MANAGED_SECTION_CONNECTORS_URL is empty in Chaos (no portal); URL band is never recorded"]
     fn mouse_down_on_label_row_folds_not_opens() {
         let mut agent = rendered_agent();
         let (col, label_row) = {
@@ -2846,6 +2848,7 @@ mod connectors_url_click_tests {
     }
 
     #[test]
+    #[ignore = "MANAGED_SECTION_CONNECTORS_URL is empty in Chaos (no portal); URL band is never recorded"]
     fn mouse_down_on_url_row_while_searching_does_not_open() {
         // Parity with the Ctrl+O guard: opening is suppressed while search is active.
         let mut agent = rendered_agent();

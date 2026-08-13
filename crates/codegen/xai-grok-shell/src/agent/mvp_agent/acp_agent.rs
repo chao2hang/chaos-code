@@ -2482,7 +2482,11 @@ impl acp::Agent for MvpAgent {
                 let ops = self.resolve_workspace_ops()?;
                 crate::extensions::git::handle(self, &ops, &args).await
             }
-            s if s.starts_with("x.ai/compact_conversation") => {
+            s if s.starts_with("x.ai/compact_conversation")
+                || s == "x.ai/session/set_context_window"
+                || s == "x.ai/memory/flush"
+                || s == "x.ai/memory/rewrite" =>
+            {
                 crate::extensions::memory::handle(self, &args).await
             }
             s if s.starts_with("x.ai/plugins/") => {

@@ -2411,7 +2411,7 @@ mod question_answer_focus_tests {
         for step in 0..7 {
             let hints = hint_labels(&agent);
             assert!(
-                hints.contains(&"next answer".to_string()),
+                hints.contains(&"下一个答案".to_string()),
                 "step {step}: the bar advertises the answer walk, got {hints:?}"
             );
             tab(&mut agent);

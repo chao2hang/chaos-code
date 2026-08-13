@@ -361,7 +361,7 @@ fn spawn_ready(
     let mut harness = PtyHarness::spawn_with_content(binary, rows, cols, content, &[])
         .context("spawn pager PTY harness")?;
     harness
-        .wait_for_text("Quit", Duration::from_secs(20))
+        .wait_for_text("退出", Duration::from_secs(20))
         .context("welcome screen")?;
     harness
         .inject_keys(b"go\r")

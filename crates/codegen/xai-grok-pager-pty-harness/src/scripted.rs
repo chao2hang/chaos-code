@@ -2035,7 +2035,7 @@ mod tests {
             r#"{
               "name": "welcome",
               "steps": [
-                {"action": "wait_for_text", "text": "Quit"},
+                {"action": "wait_for_text", "text": "退出"},
                 {"action": "screenshot", "name": "welcome"}
               ]
             }"#,

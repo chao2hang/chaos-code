@@ -1006,7 +1006,7 @@ mod tests {
             .filter_map(|x| buf.cell((x, 0)).map(|c| c.symbol().to_string()))
             .collect();
         assert!(
-            text.contains("Run shell command"),
+            text.contains("Shell 命 令"),
             "bash mode info label: {text:?}"
         );
         assert!(

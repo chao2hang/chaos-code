@@ -626,12 +626,104 @@ impl TerminalContext {
 
 static TERMINAL_CONTEXT: OnceLock<TerminalContext> = OnceLock::new();
 
+/// Test-only override for `is_ssh`. `-1` means no override (use real
+/// detection), `0` forces `false`, `1` forces `true`.
+#[cfg(feature = "test-support")]
+static TEST_IS_SSH_OVERRIDE: std::sync::atomic::AtomicI8 = std::sync::atomic::AtomicI8::new(-1);
+
+/// Test-only override for the entire [`TerminalContext`]. When non-null,
+/// [`terminal_context`] returns this instead of the real env-detected
+/// context. Uses `AtomicPtr` (not `OnceLock`) so the first test to call
+/// `set_test_plain_terminal_context` wins even under parallel test execution.
+#[cfg(feature = "test-support")]
+static TEST_CONTEXT_OVERRIDE: std::sync::atomic::AtomicPtr<TerminalContext> =
+    std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
+
+/// Test-only: override the `is_ssh` flag used by [`is_ssh_session`].
+/// Pass `Some(false)` to force non-SSH mode, `Some(true)` to force SSH,
+/// or `None` to restore real environment detection. Tests that create
+/// local temp files and paste `file://` URLs to them need this because
+/// the test runner may be connected via SSH, which would otherwise
+/// suppress file-URL decoding in the drop classifier.
+#[cfg(feature = "test-support")]
+pub fn set_test_is_ssh_override(value: Option<bool>) {
+    TEST_IS_SSH_OVERRIDE.store(
+        match value {
+            Some(true) => 1,
+            Some(false) => 0,
+            None => -1,
+        },
+        std::sync::atomic::Ordering::SeqCst,
+    );
+}
+
+/// Test-only: set a plain (non-SSH, Unknown-brand) terminal context so
+/// tests exercise app-owned link handling and file-URL decoding regardless
+/// of the real terminal the test runner happens to be inside (e.g. VS Code
+/// over SSH, which sets `native_link_hover=true` and `is_ssh=true`). First
+/// caller wins; subsequent calls are silently ignored.
+///
+/// **Process-level lifetime.** The plain context is leaked via `Box::into_raw`
+/// and never freed. This is intentional: every test wants a deterministic
+/// plain context, and there is no path that benefits from restoring the
+/// real environment. A real-terminal-sensitive test would call
+/// `terminal_context()` directly without using this override.
+#[cfg(feature = "test-support")]
+pub fn set_test_plain_terminal_context() {
+    let ctx = Box::new(TerminalContext {
+        brand: TerminalName::Unknown,
+        env_brand: TerminalName::Unknown,
+        is_ssh: false,
+        is_official_vscode_remote: false,
+        ..Default::default()
+    });
+    let ptr = Box::into_raw(ctx);
+    // Compare-exchange: only set if currently null. If another test already
+    // set the override, drop our duplicate (same value anyway).
+    let _ = TEST_CONTEXT_OVERRIDE.compare_exchange(
+        std::ptr::null_mut(),
+        ptr,
+        std::sync::atomic::Ordering::SeqCst,
+        std::sync::atomic::Ordering::SeqCst,
+    );
+    // If compare_exchange failed (another thread won), free our allocation.
+    if TEST_CONTEXT_OVERRIDE.load(std::sync::atomic::Ordering::SeqCst) != ptr {
+        // SAFETY: `ptr` was just allocated via `Box::into_raw` and not stored.
+        unsafe { drop(Box::from_raw(ptr)) };
+    }
+}
+
+/// Whether the current session is over SSH. In production this delegates
+/// to [`terminal_context`].`is_ssh`. In tests, callers can use
+/// [`set_test_is_ssh_override`] to force the result.
+pub fn is_ssh_session() -> bool {
+    #[cfg(feature = "test-support")]
+    {
+        match TEST_IS_SSH_OVERRIDE.load(std::sync::atomic::Ordering::SeqCst) {
+            0 => return false,
+            1 => return true,
+            _ => {}
+        }
+    }
+    terminal_context().is_ssh
+}
+
 /// Returns the cached terminal context for the current process.
 ///
 /// This is the preferred entry point for new code that needs multiplexer
 /// or Byobu information. The context is computed once at first access from
 /// process environment variables.
 pub fn terminal_context() -> &'static TerminalContext {
+    #[cfg(feature = "test-support")]
+    {
+        let ptr = TEST_CONTEXT_OVERRIDE.load(std::sync::atomic::Ordering::SeqCst);
+        if !ptr.is_null() {
+            // SAFETY: `ptr` was leaked via `Box::into_raw` in
+            // `set_test_plain_terminal_context` and lives for the process
+            // lifetime. It is never freed or mutated after storage.
+            return unsafe { &*ptr };
+        }
+    }
     TERMINAL_CONTEXT.get_or_init(detect_terminal_context)
 }
 

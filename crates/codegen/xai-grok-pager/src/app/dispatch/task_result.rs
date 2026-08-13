@@ -680,7 +680,7 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
                         app,
                         target.agent_id,
                         format!(
-                            "This fix configures your local computer, not this SSH session.\nOn your local computer, run: {command}"
+                            "此修复配置的是本地电脑，而非此 SSH 会话。\n请在本地电脑运行：{command}"
                         ),
                     );
                 }

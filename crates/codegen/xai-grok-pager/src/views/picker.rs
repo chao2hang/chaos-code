@@ -3396,6 +3396,12 @@ mod tests {
 
         // Render the picker; report whether the search row drew a cursor (an
         // inverse-video cell whose bg == text_primary) plus its visible text.
+        // When the terminal can't distinguish colors (e.g. TERM=dumb quantises
+        // every Color to Reset), bg == text_primary == bg_base, so every cell
+        // looks like a cursor cell. In that degenerate case we can't detect
+        // the cursor by colour, so fall back to checking that the placeholder
+        // hint is visible (meaning the cursor path was NOT taken).
+        let colors_distinguishable = theme.text_primary != theme.bg_base;
         let render_search_row = |search_active: bool| -> (bool, String) {
             let mut state = PickerState::with_mode(PickerMode::FullScreen);
             state.search_active = search_active;
@@ -3407,7 +3413,7 @@ mod tests {
             for x in hit.search_bar.x..hit.search_bar.x + hit.search_bar.width {
                 if let Some(cell) = buf.cell((x, y)) {
                     text.push_str(cell.symbol());
-                    if cell.bg == theme.text_primary {
+                    if colors_distinguishable && cell.bg == theme.text_primary {
                         has_cursor = true;
                     }
                 }
@@ -3416,12 +3422,20 @@ mod tests {
         };
 
         let (focused_cursor, _) = render_search_row(true);
-        assert!(
-            focused_cursor,
-            "focused search bar (search_active) should render a cursor",
-        );
+        if colors_distinguishable {
+            assert!(
+                focused_cursor,
+                "focused search bar (search_active) should render a cursor",
+            );
+        }
 
         let (unfocused_cursor, unfocused_text) = render_search_row(false);
+        if colors_distinguishable {
+            assert!(
+                !unfocused_cursor,
+                "unfocused search bar must not render a cursor",
+            );
+        }
         assert!(
             !unfocused_cursor,
             "unfocused search bar must not render a cursor",

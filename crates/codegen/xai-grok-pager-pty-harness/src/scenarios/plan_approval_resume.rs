@@ -99,13 +99,13 @@ pub async fn assert_plan_approval_restored_after_resume() -> Result<()> {
     // signal) over SETUP_SENTINEL, which may not be visible under the plan viewer.
     // Without the shell re-park this times out.
     resumed
-        .wait_for_text("request changes", WELCOME_TIMEOUT)
+        .wait_for_text("请求修改", WELCOME_TIMEOUT)
         .context("restored approval 'request changes' after --continue")?;
     resumed
-        .wait_for_text("quit plan", Duration::from_secs(5))
+        .wait_for_text("放弃计划", Duration::from_secs(5))
         .context("restored approval 'quit plan' after resume")?;
     let screen = resumed.screen_contents();
-    if !screen.contains("approve") {
+    if !screen.contains("批准") {
         bail!("expected approval primary action after resume\n{screen}");
     }
     // History was seeded before quit; plan body from disk is a stronger signal

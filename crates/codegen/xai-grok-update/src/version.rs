@@ -18,10 +18,17 @@ pub const GH_RELEASE_DOWNLOAD_BASE: &str =
     "https://github.com/chao2hang/chaos-code/releases/download";
 
 /// GitHub REST API for listing releases (public, unauthenticated OK with User-Agent).
-const GH_RELEASE_API_LATEST: &str =
-    "https://api.github.com/repos/chao2hang/chaos-code/releases/latest";
-const GH_RELEASE_API_LIST: &str =
-    "https://api.github.com/repos/chao2hang/chaos-code/releases?per_page=10";
+/// Overridable via `CHAOS_GH_API_BASE` env var so tests can point at a wiremock server.
+fn gh_release_api_latest() -> String {
+    let base =
+        std::env::var("CHAOS_GH_API_BASE").unwrap_or_else(|_| "https://api.github.com".to_string());
+    format!("{base}/repos/{GH_RELEASE_REPO}/releases/latest")
+}
+fn gh_release_api_list() -> String {
+    let base =
+        std::env::var("CHAOS_GH_API_BASE").unwrap_or_else(|_| "https://api.github.com".to_string());
+    format!("{base}/repos/{GH_RELEASE_REPO}/releases?per_page=10")
+}
 
 /// Primary CLI base URL: GitHub Releases for Chaos updates.
 /// Note: these are not GCS channel-pointer URLs; `internal` installer is
@@ -220,7 +227,7 @@ async fn fetch_gh_release_latest_http(stable_only: bool) -> Result<String> {
         .build()?;
 
     if stable_only {
-        let resp = client.get(GH_RELEASE_API_LATEST).send().await?;
+        let resp = client.get(gh_release_api_latest()).send().await?;
         if !resp.status().is_success() {
             anyhow::bail!(
                 "GitHub releases/latest failed: HTTP {} for {}",
@@ -237,7 +244,7 @@ async fn fetch_gh_release_latest_http(stable_only: bool) -> Result<String> {
     }
 
     // Include prereleases: walk recent releases, pick highest semver.
-    let resp = client.get(GH_RELEASE_API_LIST).send().await?;
+    let resp = client.get(gh_release_api_list()).send().await?;
     if !resp.status().is_success() {
         anyhow::bail!(
             "GitHub releases list failed: HTTP {} for {}",
@@ -297,9 +304,14 @@ pub fn gh_release_asset_name(os: &str, arch: &str) -> Result<String> {
 }
 
 /// Direct HTTPS URL for a release asset (follows GitHub CDN redirects).
+///
+/// Overridable via `CHAOS_GH_DOWNLOAD_BASE` env var so tests can point at a
+/// wiremock server serving fake release artifacts.
 pub fn gh_release_asset_url(version: &str, asset_name: &str) -> String {
+    let base = std::env::var("CHAOS_GH_DOWNLOAD_BASE")
+        .unwrap_or_else(|_| GH_RELEASE_DOWNLOAD_BASE.to_string());
     let version = version.strip_prefix('v').unwrap_or(version);
-    format!("{GH_RELEASE_DOWNLOAD_BASE}/v{version}/{asset_name}")
+    format!("{base}/v{version}/{asset_name}")
 }
 
 /// Fetch the latest version from a public CLI channel pointer.

@@ -221,16 +221,13 @@ fn doctor_apply_reload_success_does_not_claim_live_finding_disappeared() {
     let output = last_system_text(&app, id);
     assert!(
         output.starts_with(&format!(
-            "Added `set -g set-clipboard on` to `{}`.",
+            "已在 `{}` 中添加 `set -g set-clipboard on`。",
             path.display()
         )),
         "{output}"
     );
-    assert!(
-        output.contains("Reload tmux with `tmux source-file"),
-        "{output}"
-    );
-    assert!(output.contains("Run /doctor again to verify"), "{output}");
+    assert!(output.contains("请用 `tmux source-file"), "{output}");
+    assert!(output.contains("请再次运行 /doctor"), "{output}");
     assert!(!output.contains("0 issues"), "{output}");
     assert!(!output.contains("Environment\n"), "{output}");
 }
@@ -256,8 +253,8 @@ fn doctor_apply_success_only_renders_resolution_instructions() {
         &mut app,
     );
     let output = last_system_text(&app, id);
-    assert!(output.starts_with("Set up SSH wrapping in"), "{output}");
-    assert!(output.contains("Start a new shell"), "{output}");
+    assert!(output.contains("设置 SSH 包装"), "{output}");
+    assert!(output.contains("请启动新的 shell"), "{output}");
     assert!(!output.contains("Environment\n"), "{output}");
     assert!(!output.contains("Findings\n"), "{output}");
 }

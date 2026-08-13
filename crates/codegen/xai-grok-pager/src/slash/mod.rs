@@ -2369,9 +2369,13 @@ mod tests {
         let state = SlashState::default();
         let models = ModelState::default();
 
-        ctrl.refresh(&state, "/p", 2, &models);
+        // Use "/pr" instead of "/p" — "p" is now an alias for `/provider`
+        // (Chaos addition), so the top dropdown match would be "/p" itself
+        // and the ghost would have nothing to complete.  "/pr" is a prefix
+        // of multiple commands but not itself a command or alias.
+        ctrl.refresh(&state, "/pr", 3, &models);
         let snapshot = state.snapshot();
-        assert!(snapshot.open, "partial /p should open the dropdown");
+        assert!(snapshot.open, "partial /pr should open the dropdown");
         let selected = snapshot
             .selection()
             .expect("dropdown should have a selection");
@@ -2388,10 +2392,10 @@ mod tests {
             "ghost must complete the selected row (Tab target), not a separate fuzzy winner"
         );
         assert!(
-            selected_name.starts_with('p'),
-            "selected row for query 'p' should start with p, got {selected_name}"
+            selected_name.starts_with("pr"),
+            "selected row for query 'pr' should start with pr, got {selected_name}"
         );
-        assert_eq!(ghost.text, &selected_name[1..]);
+        assert_eq!(ghost.text, &selected_name[2..]);
     }
 
     #[test]
@@ -2575,7 +2579,9 @@ mod tests {
         let mut ctrl = SlashController::with_builtins(std::path::PathBuf::from("."));
         let state = SlashState::default();
         let models = ModelState::default();
-        ctrl.refresh(&state, "/p", 2, &models);
+        // Use "/pr" — "p" is now an alias for `/provider` (Chaos addition)
+        // and would be the top match, leaving the ghost empty for index 0.
+        ctrl.refresh(&state, "/pr", 3, &models);
         let before = state.snapshot();
         assert!(before.matches.len() >= 2, "need multiple /p hits");
         let first_name = before

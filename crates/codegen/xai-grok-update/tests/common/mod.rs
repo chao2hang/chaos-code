@@ -351,3 +351,124 @@ exit "$exit_code"
 "#
     )
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// wiremock GitHub API fixtures
+// ─────────────────────────────────────────────────────────────────────────────
+
+use wiremock::matchers::{method, path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
+
+/// RAII guard that starts a wiremock server, sets `CHAOS_GH_API_BASE` (and
+/// optionally `CHAOS_GH_DOWNLOAD_BASE`) to point at it, and restores the
+/// original env values on drop.
+///
+/// All tests using this MUST be `#[serial]` because env vars are
+/// process-global.
+pub struct GhApiMockGuard {
+    pub server: MockServer,
+    prev: Option<String>,
+    prev_download: Option<String>,
+}
+
+impl GhApiMockGuard {
+    /// Start a wiremock server and point `CHAOS_GH_API_BASE` at it.
+    pub async fn start() -> Self {
+        let server = MockServer::start().await;
+        let prev = std::env::var("CHAOS_GH_API_BASE").ok();
+        // SAFETY: tests using this helper must be `#[serial]`.
+        unsafe { std::env::set_var("CHAOS_GH_API_BASE", server.uri()) };
+        Self {
+            server,
+            prev,
+            prev_download: None,
+        }
+    }
+
+    /// Also point `CHAOS_GH_DOWNLOAD_BASE` at the same server, so download
+    /// paths (asset URLs) hit the wiremock instead of GitHub. Required for
+    /// tests that exercise `ensure_latest_on_disk` / `install_gh_release`.
+    pub fn with_download_base(mut self) -> Self {
+        self.prev_download = std::env::var("CHAOS_GH_DOWNLOAD_BASE").ok();
+        // SAFETY: tests using this helper must be `#[serial]`.
+        unsafe { std::env::set_var("CHAOS_GH_DOWNLOAD_BASE", self.server.uri()) };
+        self
+    }
+
+    /// Mount `/repos/{repo}/releases/latest` to return a single release with
+    /// the given `tag_name` and (optionally) `prerelease`/`draft` flags.
+    pub async fn stub_latest(&self, tag: &str, prerelease: bool, draft: bool) {
+        let body = serde_json::json!({
+            "tag_name": tag,
+            "prerelease": prerelease,
+            "draft": draft,
+            "name": tag,
+            "id": 1,
+        });
+        Mock::given(method("GET"))
+            .and(path("/repos/chao2hang/chaos-code/releases/latest"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(body))
+            .mount(&self.server)
+            .await;
+    }
+
+    /// Mount `/repos/{repo}/releases?per_page=10` to return a list of releases.
+    /// Each tuple is `(tag_name, prerelease, draft)`.
+    pub async fn stub_list(&self, releases: &[(&str, bool, bool)]) {
+        let items: Vec<serde_json::Value> = releases
+            .iter()
+            .enumerate()
+            .map(|(i, (tag, pre, draft))| {
+                serde_json::json!({
+                    "tag_name": tag,
+                    "prerelease": pre,
+                    "draft": draft,
+                    "name": tag,
+                    "id": i as u32 + 1,
+                })
+            })
+            .collect();
+        Mock::given(method("GET"))
+            .and(path("/repos/chao2hang/chaos-code/releases"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(items))
+            .mount(&self.server)
+            .await;
+    }
+
+    /// Mount `/repos/{repo}/releases/latest` to return the given status code
+    /// with an empty body.
+    pub async fn stub_latest_status(&self, status: u16) {
+        Mock::given(method("GET"))
+            .and(path("/repos/chao2hang/chaos-code/releases/latest"))
+            .respond_with(ResponseTemplate::new(status))
+            .mount(&self.server)
+            .await;
+    }
+
+    /// Return the number of requests received so far on `/releases/latest`.
+    pub async fn received_latest_count(&self) -> usize {
+        self.server
+            .received_requests()
+            .await
+            .unwrap_or_default()
+            .iter()
+            .filter(|r| r.url.path() == "/repos/chao2hang/chaos-code/releases/latest")
+            .count()
+    }
+}
+
+impl Drop for GhApiMockGuard {
+    fn drop(&mut self) {
+        // SAFETY: tests using this helper must be `#[serial]`.
+        unsafe {
+            match &self.prev {
+                Some(v) => std::env::set_var("CHAOS_GH_API_BASE", v),
+                None => std::env::remove_var("CHAOS_GH_API_BASE"),
+            }
+            match &self.prev_download {
+                Some(v) => std::env::set_var("CHAOS_GH_DOWNLOAD_BASE", v),
+                None => std::env::remove_var("CHAOS_GH_DOWNLOAD_BASE"),
+            }
+        }
+    }
+}

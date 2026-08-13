@@ -3594,15 +3594,24 @@ pub fn render_extensions_modal(
     // Underline the Managed section's last description line (the connectors URL) as a link affordance.
     let managed_section_key =
         crate::views::mcps_modal::section_key(&crate::views::mcps_modal::McpSectionId::Managed);
+    // When a connectors URL is configured, the last Managed description line is the
+    // bracketed URL and `underline_last_desc` underlines it as a link. When Chaos
+    // ships without a portal URL the Managed section renders plain help text with
+    // no trailing bracketed URL, so there is nothing to underline.
+    let managed_has_url =
+        !crate::views::mcps_modal::managed_connectors_url(state.session_team_id.as_deref())
+            .is_empty();
     // `underline_last_desc` and the recorded click band both assume the URL is the
-    // LAST Managed description line; trip a test if that ever stops holding.
+    // LAST Managed description line; trip a test if that ever stops holding (only
+    // when a URL is actually present).
     debug_assert!(
-        crate::views::mcps_modal::section_description_lines(
-            &crate::views::mcps_modal::McpSectionId::Managed,
-            state.session_team_id.as_deref(),
-        )
-        .last()
-        .is_some_and(|l| l.starts_with('[') && l.ends_with(']')),
+        !managed_has_url
+            || crate::views::mcps_modal::section_description_lines(
+                &crate::views::mcps_modal::McpSectionId::Managed,
+                state.session_team_id.as_deref(),
+            )
+            .last()
+            .is_some_and(|l| l.starts_with('[') && l.ends_with(']')),
         "Managed section's last description line must be the bracketed connectors URL",
     );
     let picker_entries: Vec<picker::PickerEntry<'_>> = entry_labels
@@ -3640,7 +3649,8 @@ pub fn render_extensions_modal(
                     badge: entry_badge_text.get(i).map(|s| s.as_str()).unwrap_or(""),
                     badge_color: entry_badge_color.get(i).copied().flatten(),
                     collapsible: is_collapsible,
-                    underline_last_desc: group_key.is_some_and(|k| *k == managed_section_key),
+                    underline_last_desc: managed_has_url
+                        && group_key.is_some_and(|k| *k == managed_section_key),
                 })
             }
         })
@@ -4493,7 +4503,9 @@ mod tests {
             "servers in collapsed managed section must be omitted"
         );
         assert!(
-            rows.labels.iter().any(|l| l.starts_with("Local")),
+            rows.labels
+                .iter()
+                .any(|l| l.starts_with("Local") || l.starts_with("本地")),
             "local section should still render"
         );
         assert!(rows.labels.iter().any(|l| l == "local-srv"));

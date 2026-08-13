@@ -543,6 +543,13 @@ mod tests {
         line.spans.iter().map(|s| s.content.as_ref()).collect()
     }
 
+    /// CI sets `NO_COLOR=1`, which quantizes every theme colour to `Color::Reset`,
+    /// making colour-equality filters match ALL spans.  Force truecolour so
+    /// `accent_skill` and `text_primary` keep their distinct RGB values.
+    fn ensure_truecolor() {
+        crate::theme::color_support::set_test_force_truecolor(true);
+    }
+
     #[test]
     fn test_short_prompt_no_truncation() {
         let block = UserPromptBlock::new("hello");
@@ -695,6 +702,7 @@ mod tests {
 
     #[test]
     fn mid_text_multiple_tokens_each_teal() {
+        ensure_truecolor();
         let text = "run /commit then /review please";
         let block = UserPromptBlock::with_skill_tokens(text, vec![4..11, 17..24]);
         let lines = block.wrap_prompt_lines(80, None, true, false);
@@ -713,6 +721,7 @@ mod tests {
 
     #[test]
     fn mid_text_token_on_second_logical_line() {
+        ensure_truecolor();
         let text = "first line\nthen /model here";
         // "/model" starts after "first line\nthen " = 16 bytes.
         let block = UserPromptBlock::with_skill_tokens(text, vec![16..22]);
@@ -735,6 +744,7 @@ mod tests {
 
     #[test]
     fn invalid_token_ranges_are_dropped() {
+        ensure_truecolor();
         let text = "héllo /model now"; // 'é' is 2 bytes: "/model" = 7..13
         let block = UserPromptBlock::with_skill_tokens(
             text,
@@ -762,6 +772,7 @@ mod tests {
 
     #[test]
     fn all_token_ranges_invalid_renders_plain() {
+        ensure_truecolor();
         let block = UserPromptBlock::with_skill_tokens("plain text", vec![100..200]);
         assert!(block.skill_token_ranges.is_empty());
         let lines = block.wrap_prompt_lines(80, None, true, false);
@@ -782,6 +793,7 @@ mod tests {
 
     #[test]
     fn collapsed_truncation_keeps_teal_on_straddling_token() {
+        ensure_truecolor();
         // "/pr-workflow" (bytes 8..20) is wider than the content width, so it
         // straddles the last visible row and the hidden continuation; the
         // truncating re-wrap must keep the visible head teal.
@@ -802,6 +814,7 @@ mod tests {
 
     #[test]
     fn collapsed_truncation_keeps_teal_on_token_within_last_line() {
+        ensure_truecolor();
         // "/do-it" (bytes 8..14) fits fully on the truncated last line even at
         // the ellipsis-reduced width, so it must survive whole and teal.
         let text = "one\ntwo\n/do-it more words here";
@@ -824,6 +837,7 @@ mod tests {
 
     #[test]
     fn narrow_wrap_keeps_teal_on_both_rows_of_split_token() {
+        ensure_truecolor();
         // Expanded (no max_lines): the 12-wide token cannot fit at width 8, so
         // the wrapper splits it mid-token; every piece must stay teal.
         let text = "aa /pr-workflow zz";

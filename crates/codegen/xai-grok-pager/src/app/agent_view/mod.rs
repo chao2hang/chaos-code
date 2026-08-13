@@ -784,6 +784,16 @@ pub struct PrivacyBannerState {
     pub(crate) hit_policy: HitArea,
 }
 
+impl PrivacyBannerState {
+    /// Drop all click targets (slot not painted this frame).
+    pub(crate) fn clear_hits(&mut self) {
+        self.hit_opt_in.clear();
+        self.hit_opt_out.clear();
+        self.hit_terms.clear();
+        self.hit_policy.clear();
+    }
+}
+
 pub struct AgentView {
     pub session: AgentSession,
     /// Pager-side mirror of the request-client profile selected for this
@@ -3196,6 +3206,10 @@ pub(crate) mod test_fixtures {
     }
     /// Minimal idle agent (no queue, no session id) shared by input tests.
     pub fn make_agent() -> AgentView {
+        // Force a plain (non-SSH, Unknown-brand) terminal context so tests
+        // exercise app-owned link handling and file-URL decoding regardless
+        // of the real terminal the test runner happens to be inside.
+        crate::terminal::set_test_plain_terminal_context();
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
         AgentView::new(
             AgentSession {

@@ -192,7 +192,7 @@ fn submit_and_settle(
         PtyHarness::spawn_with_content_in_dir(binary, ROWS, COLS, content, &[], Some(project))
             .context("spawn pager")?;
     pager
-        .wait_for_text("Quit", Duration::from_secs(20))
+        .wait_for_text("退出", Duration::from_secs(20))
         .context("welcome screen")?;
     pager
         .inject_keys(canary.as_bytes())

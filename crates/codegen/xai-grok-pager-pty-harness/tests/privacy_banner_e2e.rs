@@ -174,7 +174,7 @@ fn spawn_pager(binary: &Path, content: &ContentController, project: &Path) -> Re
 /// real failure rather than an early frame, then for the banner itself.
 fn wait_for_banner(pager: &mut PtyHarness) -> Result<()> {
     pager
-        .wait_for_text("Quit", Duration::from_secs(20))
+        .wait_for_text("退出", Duration::from_secs(20))
         .context("welcome screen")?;
     pager
         .wait_for_text(BANNER_TITLE, Duration::from_secs(20))

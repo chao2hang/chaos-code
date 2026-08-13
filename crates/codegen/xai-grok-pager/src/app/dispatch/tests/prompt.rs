@@ -3371,7 +3371,7 @@ fn show_queue_empty_commits_empty_message() {
     let effects = dispatch(Action::ShowQueue, &mut app);
     assert!(effects.is_empty(), "got: {effects:?}");
     assert_eq!(agent_scrollback_len(&app), before + 1);
-    assert_eq!(last_system_text(&app, AgentId(0)), "Queue is empty.");
+    assert_eq!(last_system_text(&app, AgentId(0)), "队列为空。");
 }
 
 #[test]
@@ -3387,7 +3387,7 @@ fn show_queue_lists_local_prompts_in_order() {
     let effects = dispatch(Action::ShowQueue, &mut app);
     assert!(effects.is_empty(), "got: {effects:?}");
     let text = last_system_text(&app, AgentId(0));
-    assert!(text.contains("Queued prompts (2):"), "got: {text:?}");
+    assert!(text.contains("排队提示（2）："), "got: {text:?}");
     assert!(text.contains("#1  first prompt"), "got: {text:?}");
     // Multi-line prompts collapse to the first line + a count suffix.
     assert!(text.contains("#2  second  (+1 more line)"), "got: {text:?}");

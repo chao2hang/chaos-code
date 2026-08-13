@@ -8929,8 +8929,8 @@ mod tests {
         );
         let content = buf_to_text(&buf);
         assert!(
-            content.to_lowercase().contains("press again"),
-            "stop-confirm footer must say `press again`, got: {content:?}",
+            content.contains("再 按 一 次"),
+            "stop-confirm footer must say `再按一次`, got: {content:?}",
         );
         assert!(
             content.to_lowercase().contains("delete this session"),

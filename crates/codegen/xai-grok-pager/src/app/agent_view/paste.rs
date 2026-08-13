@@ -321,7 +321,7 @@ impl AgentView {
         &mut self,
         text: &str,
     ) -> Option<(InputOutcome, crate::app::actions::ClipboardPasteCompletion)> {
-        if crate::terminal::terminal_context().is_ssh {
+        if crate::terminal::is_ssh_session() {
             return None;
         }
         /// Upper bound on the size of a paste payload the drop
@@ -448,6 +448,11 @@ pub(super) mod paste_key_tests {
     use crate::scrollback::state::ScrollbackState;
     use crate::views::prompt_widget::KIND_PASTE;
     fn make_agent() -> AgentView {
+        // The test runner may be connected via SSH (SSH_CONNECTION /
+        // SSH_CLIENT env vars present), which would cause the drop
+        // classifier to skip file:// URL decoding. Force non-SSH mode
+        // so paste tests can exercise the local file-url path.
+        crate::terminal::set_test_is_ssh_override(Some(false));
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
         AgentView::new(
             AgentSession {

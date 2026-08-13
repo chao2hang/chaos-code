@@ -1406,7 +1406,7 @@ mod tests {
     #[test]
     fn content_header_label_loading() {
         let label = build_content_header_label(true, false, 0);
-        assert!(label.contains("Searching"));
+        assert!(label.contains("正在搜索"));
     }
 
     #[test]

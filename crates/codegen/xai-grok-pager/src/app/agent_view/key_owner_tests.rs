@@ -203,19 +203,18 @@ fn permission_hints_follow_focus() {
 
     let focused = hint_labels(&agent);
     assert!(
-        focused.contains(&"next option".to_string()),
+        focused.contains(&"下一个选项".to_string()),
         "the bar names the option walk, got {focused:?}"
     );
     assert!(
-        focused.contains(&"scrollback".to_string()),
+        focused.contains(&"滚动区".to_string()),
         "and the way out, got {focused:?}"
     );
 
     agent.active_pane = AgentPane::Scrollback;
     let parked = hint_labels(&agent);
     assert!(
-        !parked.contains(&"next option".to_string())
-            && !parked.contains(&"always-approve".to_string()),
+        !parked.contains(&"下一个选项".to_string()) && !parked.contains(&"总是批准".to_string()),
         "parked in the scrollback the bar must drop the card's keys, got {parked:?}"
     );
     assert!(
@@ -289,12 +288,12 @@ fn cancel_turn_tab_walks_the_choices_and_wraps() {
 fn cancel_turn_panel_parks_and_returns_like_the_others() {
     let mut agent = make_agent();
     open_cancel_turn(&mut agent);
-    assert!(hint_labels(&agent).contains(&"next choice".to_string()));
+    assert!(hint_labels(&agent).contains(&"下一个选择".to_string()));
 
     agent.active_pane = AgentPane::Scrollback;
     let parked = hint_labels(&agent);
     assert!(
-        !parked.contains(&"next choice".to_string()),
+        !parked.contains(&"下一个选择".to_string()),
         "parked, the panel's keys leave the bar, got {parked:?}"
     );
     assert!(
@@ -310,13 +309,13 @@ fn cancel_turn_panel_parks_and_returns_like_the_others() {
 fn a_parked_card_contributes_one_route_back() {
     let mut agent = make_agent();
     open_question(&mut agent);
-    assert!(hint_labels(&agent).contains(&"next answer".to_string()));
+    assert!(hint_labels(&agent).contains(&"下一个答案".to_string()));
 
     agent.active_pane = AgentPane::Scrollback;
     let hints = agent.current_shortcut_hints(&ActionRegistry::defaults());
     let labels: Vec<String> = hints.iter().map(|h| h.label.to_string()).collect();
     assert!(
-        !labels.contains(&"next answer".to_string()),
+        !labels.contains(&"下一个答案".to_string()),
         "parked, the card's own keys leave the bar, got {labels:?}"
     );
     assert_eq!(
@@ -325,7 +324,7 @@ fn a_parked_card_contributes_one_route_back() {
         "one hint names the card, got {labels:?}"
     );
     assert!(
-        !labels.contains(&"prompt".to_string()),
+        !labels.contains(&"提示".to_string()),
         "and it replaces the pane's own focus hint rather than joining it, got {labels:?}"
     );
 
@@ -351,7 +350,7 @@ fn the_bar_follows_the_router_when_two_cards_are_open() {
 
     let labels = hint_labels(&agent);
     assert!(
-        labels.contains(&"next choice".to_string()) && !labels.contains(&"next answer".to_string()),
+        labels.contains(&"下一个选择".to_string()) && !labels.contains(&"下一个答案".to_string()),
         "the cancel-turn panel takes the keys, so it takes the bar too, got {labels:?}"
     );
 
@@ -359,7 +358,7 @@ fn the_bar_follows_the_router_when_two_cards_are_open() {
     assert_eq!(agent.focused_card(), Some(BlockingCard::Permission));
     let labels = hint_labels(&agent);
     assert!(
-        labels.contains(&"next option".to_string()) && !labels.contains(&"next choice".to_string()),
+        labels.contains(&"下一个选项".to_string()) && !labels.contains(&"下一个选择".to_string()),
         "and the permission card outranks both, got {labels:?}"
     );
 }
@@ -370,12 +369,12 @@ fn the_esc_hint_names_the_rung_the_key_takes() {
     open_question(&mut agent);
 
     assert_eq!(agent.card_esc(), Some(EscStep::ParkFocus));
-    assert!(hint_labels(&agent).contains(&"scrollback".to_string()));
+    assert!(hint_labels(&agent).contains(&"滚动区".to_string()));
 
     let _ =
         agent.handle_question_key_for_test(&KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE));
     assert_eq!(agent.card_esc(), Some(EscStep::ClearSelection));
-    assert!(hint_labels(&agent).contains(&"unselect".to_string()));
+    assert!(hint_labels(&agent).contains(&"取消选择".to_string()));
 }
 
 #[test]
@@ -390,7 +389,7 @@ fn the_overlay_owns_the_park_rung_and_the_bar_says_so() {
         "the overlay cascade and the ladder must agree"
     );
     assert!(
-        hint_labels(&agent).contains(&"dashboard".to_string()),
+        hint_labels(&agent).contains(&"仪表盘".to_string()),
         "the bar names where Esc actually goes, got {:?}",
         hint_labels(&agent)
     );
@@ -452,11 +451,11 @@ fn plan_approval_takes_the_bar_wherever_it_takes_the_keys() {
     assert_eq!(agent.focused_card(), None, "so no card is taking keys");
     let labels = hint_labels(&agent);
     assert!(
-        !labels.contains(&"next answer".to_string()),
+        !labels.contains(&"下一个答案".to_string()),
         "and the bar must not advertise the question card's walk, got {labels:?}"
     );
     assert!(
-        labels.contains(&"copy plan".to_string()),
+        labels.contains(&"复制计划".to_string()),
         "it names the surface the keys actually reach, got {labels:?}"
     );
 }
@@ -505,7 +504,7 @@ fn a_card_under_any_open_line_viewer_does_not_take_the_bar() {
     assert!(agent.line_viewer.is_some(), "the preview is open");
     assert_eq!(agent.key_owner(), KeyOwner::LineViewer);
     assert!(
-        !hint_labels(&agent).contains(&"next answer".to_string()),
+        !hint_labels(&agent).contains(&"下一个答案".to_string()),
         "the bar must not advertise a walk the viewer would swallow"
     );
 }
@@ -568,7 +567,7 @@ fn the_permission_esc_ladder_steps_out_one_rung_at_a_time() {
 
     agent.permission_queue.front_mut().expect("open").focus = PermissionFocus::FollowupInput;
     assert_eq!(agent.card_esc(), Some(EscStep::LeaveTextInput));
-    assert!(hint_labels(&agent).contains(&"back".to_string()));
+    assert!(hint_labels(&agent).contains(&"返回".to_string()));
     permission_key(&mut agent, KeyCode::Esc, KeyModifiers::NONE);
     assert_eq!(focus(&agent), PermissionFocus::Options);
 
@@ -577,13 +576,13 @@ fn the_permission_esc_ladder_steps_out_one_rung_at_a_time() {
         String::from("git status"),
     ));
     assert_eq!(agent.card_esc(), Some(EscStep::DiscardPatternEdit));
-    assert!(hint_labels(&agent).contains(&"cancel".to_string()));
+    assert!(hint_labels(&agent).contains(&"取消".to_string()));
     permission_key(&mut agent, KeyCode::Esc, KeyModifiers::NONE);
     assert!(agent.permission_pattern_edit.is_none());
     assert_eq!(focus(&agent), PermissionFocus::Options);
 
     assert_eq!(agent.card_esc(), Some(EscStep::ParkFocus));
-    assert!(hint_labels(&agent).contains(&"scrollback".to_string()));
+    assert!(hint_labels(&agent).contains(&"滚动区".to_string()));
     permission_key(&mut agent, KeyCode::Esc, KeyModifiers::NONE);
     assert_eq!(agent.active_pane, AgentPane::Scrollback);
     assert_eq!(
@@ -599,7 +598,7 @@ fn the_cancel_turn_panel_resolves_instead_of_parking() {
     open_cancel_turn(&mut agent);
 
     assert_eq!(agent.card_esc(), Some(EscStep::KeepRunning));
-    assert!(hint_labels(&agent).contains(&"keep running".to_string()));
+    assert!(hint_labels(&agent).contains(&"继续运行".to_string()));
 
     let outcome = agent.handle_cancel_turn_key(&KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
     assert!(
@@ -688,7 +687,7 @@ fn esc_on_a_later_question_parks_before_it_leaves_the_overlay() {
          Left still walks back there, so the card keeps the first press"
     );
     assert!(!agent.overlay_esc_backs_out());
-    assert!(hint_labels(&agent).contains(&"scrollback".to_string()));
+    assert!(hint_labels(&agent).contains(&"滚动区".to_string()));
 
     let _ = agent.handle_question_key_for_test(&KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
     assert_eq!(agent.active_pane, AgentPane::Scrollback);
@@ -754,11 +753,11 @@ fn the_plan_preview_names_tab_the_way_its_viewer_does() {
 
     let labels = hint_labels(&agent);
     assert!(
-        labels.contains(&"prompt".to_string()),
+        labels.contains(&"提示".to_string()),
         "Tab moves focus to the plan prompt, and the viewer's bar calls it \
          `Tab:prompt` too, got {labels:?}"
     );
-    assert!(labels.contains(&"copy plan".to_string()));
+    assert!(labels.contains(&"复制计划".to_string()));
 }
 
 /// Blanking a free-text answer unmarks it, however the user leaves the text

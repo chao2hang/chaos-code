@@ -1,9 +1,9 @@
 //! Frame rendering for [`AgentView`]: the `draw` entry point plus shortcut
 //! hints and the subagent fullscreen view.
 use super::{
-    ActivePane, AgentPane, AgentView, AgentViewLayout, BlockingCard, CtaPhase, InlineMediaHitAreas,
-    MODE_BANNER_FADE_TICKS, PromptMode, collect_citation_links, dropdown_items_width,
-    record_dot_pulse, render_dropdown_chrome, supports_osc22,
+    ActivePane, AgentPane, AgentView, AgentViewLayout, BlockingCard, CtaPhase, EscStep,
+    InlineMediaHitAreas, KeyOwner, MODE_BANNER_FADE_TICKS, PromptMode, collect_citation_links,
+    dropdown_items_width, record_dot_pulse, render_dropdown_chrome, supports_osc22,
 };
 use crate::actions::{ActionId, ActionRegistry};
 use crate::key;
@@ -127,7 +127,92 @@ impl AgentView {
                     ]
                 }
             }
-            PlanApprovalFocus::Preview => vec![],
+            PlanApprovalFocus::Preview => {
+                vec![
+                    HintItem::new(key!('y'), "复制计划"),
+                    HintItem::new(key!(Tab), "提示"),
+                ]
+            }
+        }
+    }
+    /// The `Esc` hint for the focused card, named by the rung the key actually
+    /// takes ([`EscStep`]).
+    fn card_esc_hint(&self) -> HintItem {
+        HintItem::new(key!(Esc), self.card_esc().map_or("返回", EscStep::label))
+    }
+    /// Shortcut hints for an open `ask_user_question` card.
+    fn question_shortcut_hints(
+        &self,
+        qv: &crate::views::question_view::QuestionViewState,
+    ) -> Vec<HintItem> {
+        use crate::views::question_view::QuestionFocus;
+        let esc = self.card_esc_hint();
+        match qv.focus {
+            QuestionFocus::InputMode if self.prompt.file_search_visible() => {
+                vec![
+                    HintItem::paired(key!(Up), key!(Down), "导航"),
+                    HintItem::new(key!(Tab), "接受"),
+                    HintItem::new(key!(Right), "深入"),
+                    esc,
+                ]
+            }
+            QuestionFocus::InputMode if qv.is_feedback() => {
+                vec![HintItem::new(key!(Enter), "发送"), esc]
+            }
+            QuestionFocus::InputMode => vec![HintItem::new(key!(Enter), "提交"), esc],
+            QuestionFocus::Navigation => {
+                vec![
+                    HintItem::new(key!(Tab), "下一个答案"),
+                    esc,
+                    HintItem::new(key!('X'), "关闭"),
+                ]
+            }
+        }
+    }
+    fn permission_shortcut_hints(
+        &self,
+        perm: &crate::views::permission_view::PermissionViewState,
+    ) -> Vec<HintItem> {
+        use crate::views::permission_view::PermissionFocus;
+        match perm.focus {
+            PermissionFocus::FollowupInput => {
+                vec![HintItem::new(key!(Enter), "发送"), self.card_esc_hint()]
+            }
+            PermissionFocus::PatternEdit => {
+                vec![
+                    HintItem::new(key!(Enter), "保存"),
+                    HintItem::new(key!(Esc), "取消"),
+                ]
+            }
+            PermissionFocus::Options => {
+                use crate::input::key::KeyShortcut;
+                use crossterm::event::{KeyCode, KeyModifiers};
+                let n = perm.options.len().min(9) as u8;
+                let last_ch = char::from(b'0' + n.max(1));
+                let last_key = KeyShortcut::new(KeyCode::Char(last_ch), KeyModifiers::NONE);
+                let mut hints = vec![HintItem::paired(key!('1'), last_key, "选择")];
+                if perm.options.len() > 1 {
+                    hints.push(HintItem::new(key!(Tab), "下一个选项"));
+                }
+                if perm.has_adjustable_scope() {
+                    hints.push(HintItem::paired(key!(Left), key!(Right), "范围"));
+                }
+                if perm.has_editable_bash_pattern() {
+                    hints.push(HintItem::new(key!('e'), "编辑模式"));
+                }
+                if !perm.description.is_empty() {
+                    let label = if perm.args_expanded {
+                        "折叠"
+                    } else {
+                        "展开"
+                    };
+                    hints.push(HintItem::new(key!('f', CONTROL), label));
+                }
+                hints.push(HintItem::new(key!('o', CONTROL), "总是批准"));
+                hints.push(HintItem::new(key!('c', CONTROL), "取消"));
+                hints.push(self.card_esc_hint());
+                hints
+            }
         }
     }
     /// Returns the *exact* hints the bottom shortcuts bar would render right now.
@@ -146,108 +231,35 @@ impl AgentView {
         use crate::views::shortcuts_bar::HintItem;
         if let Some(ref viewer) = self.block_viewer {
             viewer.shortcuts_hints()
-        } else if !self.permission_queue.is_empty() {
-            use crate::views::permission_view::PermissionFocus;
-            if let Some(perm) = self.permission_queue.front() {
-                match perm.focus {
-                    PermissionFocus::FollowupInput => {
-                        vec![
-                            HintItem::new(key!(Enter), "发送"),
-                            HintItem::new(key!(Esc), "返回"),
-                        ]
-                    }
-                    PermissionFocus::Options => {
-                        use crate::input::key::KeyShortcut;
-                        use crossterm::event::{KeyCode, KeyModifiers};
-                        let n = perm.options.len().min(9) as u8;
-                        let last_ch = char::from(b'0' + n.max(1));
-                        let last_key = KeyShortcut::new(KeyCode::Char(last_ch), KeyModifiers::NONE);
-                        let mut hints = vec![HintItem::paired(key!('1'), last_key, "选择")];
-                        if perm.has_adjustable_scope() {
-                            hints.push(HintItem::paired(key!(Left), key!(Right), "范围"));
-                        }
-                        if !perm.description.is_empty() {
-                            let label = if perm.args_expanded {
-                                "折叠"
-                            } else {
-                                "展开"
-                            };
-                            hints.push(HintItem::new(key!('f', CONTROL), label));
-                        }
-                        hints.push(HintItem::new(key!('o', CONTROL), "总是批准"));
-                        hints.push(HintItem::new(key!('c', CONTROL), "取消"));
-                        hints
-                    }
-                    PermissionFocus::PatternEdit => {
-                        vec![
-                            HintItem::new(key!(Enter), "保存"),
-                            HintItem::new(key!(Esc), "取消"),
-                        ]
-                    }
-                }
-            } else {
-                unreachable!("permission_queue non-empty per outer guard")
-            }
-        } else if let Some(ref pav) = self.plan_approval_view {
-            self.plan_approval_shortcut_hints(pav)
         } else if self.line_viewer.is_some() && self.is_plan_viewer() {
-            let suppress_shortcuts = self
-                .line_viewer
-                .as_ref()
-                .is_some_and(|v| v.fullscreen && v.list_state.input_mode().is_some());
-            if suppress_shortcuts {
-                vec![]
-            } else if self.is_casual_commenting() {
-                vec![
-                    HintItem::new(key!(Enter), "保存批注"),
-                    HintItem::new(key!(Esc), "取消"),
-                ]
-            } else {
-                let mut h = vec![
-                    HintItem::new(key!('c'), "批注"),
-                    HintItem::new(key!('f', CONTROL), "全屏"),
-                ];
-                if !self.plan_comments.is_empty() {
-                    h.push(HintItem::new(key!('s'), "发送"));
-                }
-                h.push(HintItem::new(key!(Esc), "关闭"));
-                h
-            }
-        } else if let Some(ref qv) = self.question_view {
-            use crate::views::question_view::QuestionFocus;
-            match qv.focus {
-                QuestionFocus::InputMode => {
-                    if self.prompt.file_search_visible() {
-                        vec![
-                            HintItem::paired(key!(Up), key!(Down), "导航"),
-                            HintItem::new(key!(Tab), "接受"),
-                            HintItem::new(key!(Right), "深入"),
-                            HintItem::new(key!(Esc), "关闭"),
-                        ]
-                    } else {
-                        vec![
-                            HintItem::new(key!(Enter), "提交"),
-                            HintItem::new(key!(Esc), "返回"),
-                        ]
-                    }
-                }
-                QuestionFocus::Navigation => {
+            // The plan viewer paints its own hints over the bar's row, so the
+            // bar has nothing left to say there.
+            vec![]
+        } else {
+            match self.key_owner() {
+                KeyOwner::Card(BlockingCard::Permission) => self
+                    .focused_permission()
+                    .map(|perm| self.permission_shortcut_hints(perm))
+                    .unwrap_or_default(),
+                KeyOwner::PlanApproval => self
+                    .plan_approval_view
+                    .as_ref()
+                    .map(|pav| self.plan_approval_shortcut_hints(pav))
+                    .unwrap_or_default(),
+                KeyOwner::Card(BlockingCard::CancelTurn) => {
                     vec![
-                        HintItem::new(key!(Esc), "取消选择"),
-                        HintItem::new(key!(Tab), "滚动区"),
-                        HintItem::new(key!('X'), "关闭"),
+                        HintItem::paired(key!('1'), key!('4'), "选择"),
+                        HintItem::new(key!(Tab), "下一个选择"),
+                        HintItem::new(key!(Enter), "确认"),
+                        self.card_esc_hint(),
                     ]
                 }
+                KeyOwner::Card(BlockingCard::Question) => self
+                    .focused_question()
+                    .map(|qv| self.question_shortcut_hints(qv))
+                    .unwrap_or_default(),
+                _ => self.normal_pane_hints(registry),
             }
-        } else if self.cancel_turn_view.is_some() {
-            vec![
-                HintItem::paired(key!('1'), key!('4'), "选择"),
-                HintItem::new(key!(Enter), "确认"),
-                HintItem::new(key!(Esc), "继续运行"),
-                HintItem::new(key!(Tab), "滚动区"),
-            ]
-        } else {
-            self.normal_pane_hints(registry)
         }
     }
     /// Shared "normal pane" hints: flag computation + `build_hints` + queue hint.
@@ -706,8 +718,8 @@ impl AgentView {
             height: banner_height,
             announcements: banner_announcements,
             hidden_ids: hidden_announcement_ids,
-            privacy_banner: _,
-            mouse_pos: _,
+            privacy_banner,
+            mouse_pos: banner_mouse_pos,
             tip,
         } = banner;
         self.session_banner_active = crate::views::announcements::first_session_announcement(
@@ -2060,6 +2072,7 @@ impl AgentView {
                 ));
                 self.hit_cancel_button.rect = None;
                 self.hit_bg_button.rect = None;
+                self.hit_watching_cue.rect = None;
             } else {
                 let has_running_execute = !self.is_subagent_view
                     && self
@@ -2107,10 +2120,13 @@ impl AgentView {
                     .set_unless_dropdown(turn_output.cancel_button, dropdown_open);
                 self.hit_bg_button
                     .set_unless_dropdown(turn_output.bg_button, dropdown_open);
+                self.hit_watching_cue
+                    .set_unless_dropdown(turn_output.watching_cue, dropdown_open);
             }
         } else {
             self.hit_cancel_button.clear();
             self.hit_bg_button.clear();
+            self.hit_watching_cue.clear();
             self.hit_plan_approval_status.clear();
         }
         if let Some((ref msg, remaining)) = self.mode_switch_banner {
@@ -2169,6 +2185,37 @@ impl AgentView {
                 && let Some(line) = self.ephemeral_tip.line()
             {
                 crate::tips::render::render_ephemeral_tip(layout.banner, buf, line);
+            }
+            // Privacy banner owns the banner slot when visible, taking
+            // priority over announcements (the critical-outranks-privacy
+            // ranking lives in AppView::draw, which never passes both).
+            let privacy_banner_owns_slot = privacy_banner && layout.banner.height >= 2;
+            if privacy_banner_owns_slot {
+                self.hit_announcement_hide.clear();
+                self.hit_announcement_cta.clear();
+                let rects = crate::views::privacy_banner::render(
+                    layout.banner,
+                    buf,
+                    &theme,
+                    banner_mouse_pos,
+                );
+                let to_opt = |r: ratatui::layout::Rect| {
+                    if r.area() > 0 { Some(r) } else { None }
+                };
+                self.privacy_banner
+                    .hit_opt_in
+                    .set_unless_dropdown(to_opt(rects.opt_in), dropdown_open);
+                self.privacy_banner
+                    .hit_opt_out
+                    .set_unless_dropdown(to_opt(rects.opt_out), dropdown_open);
+                self.privacy_banner
+                    .hit_terms
+                    .set_unless_dropdown(to_opt(rects.terms), dropdown_open);
+                self.privacy_banner
+                    .hit_policy
+                    .set_unless_dropdown(to_opt(rects.policy), dropdown_open);
+            } else {
+                self.privacy_banner.clear_hits();
             }
         }
         self.draw_plugin_cta(buf, layout.plugin_cta, &theme);

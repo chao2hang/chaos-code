@@ -3025,7 +3025,7 @@ mod command_palette_vim_input_tests {
             ),
             state: {
                 let mut state = PickerState::input_active();
-                state.set_query("keyboard shortcuts");
+                state.set_query("快捷键");
                 state.selected = 1; // matching section header is row 0
                 state
             },
@@ -3084,8 +3084,8 @@ mod command_palette_vim_input_tests {
             ),
             state: {
                 let mut state = PickerState::input_active();
-                // Contiguous substring of the label ("Edit Prompt in External Editor").
-                state.set_query("external editor");
+                // Contiguous substring of the label ("在外部编辑器中编辑提示").
+                state.set_query("外部编辑器");
                 state.selected = 1; // matching section header is row 0
                 state
             },
@@ -3236,6 +3236,12 @@ mod command_palette_vim_input_tests {
         use ratatui::buffer::Buffer;
         use ratatui::layout::Rect;
 
+        let theme = crate::theme::Theme::current();
+        // When the terminal can't distinguish colors (e.g. TERM=dumb quantises
+        // every Color to Reset), bg == text_primary == bg_base, so every cell
+        // looks like a cursor cell. Skip cursor detection in that degenerate case.
+        let colors_distinguishable = theme.text_primary != theme.bg_base;
+
         let render_palette_search_row = |search_active: bool| -> (bool, String) {
             let mut agent = make_agent();
             open_command_palette(&mut agent);
@@ -3246,7 +3252,6 @@ mod command_palette_vim_input_tests {
             let mut buf = Buffer::empty(area);
             agent.draw_active_modal(area, &mut buf, crate::theme::Theme::current(), false);
 
-            let theme = crate::theme::Theme::current();
             let search_bar = match agent.active_modal.as_ref() {
                 Some(ActiveModal::CommandPalette { state, .. }) => {
                     state
@@ -3264,7 +3269,7 @@ mod command_palette_vim_input_tests {
                 if let Some(cell) = buf.cell((x, y)) {
                     text.push_str(cell.symbol());
                     // The cursor is an inverse-video cell (bg == text_primary).
-                    if cell.bg == theme.text_primary {
+                    if colors_distinguishable && cell.bg == theme.text_primary {
                         has_cursor = true;
                     }
                 }
@@ -3273,16 +3278,20 @@ mod command_palette_vim_input_tests {
         };
 
         let (focused_cursor, _) = render_palette_search_row(true);
-        assert!(
-            focused_cursor,
-            "command palette search bar should render a cursor when search_active",
-        );
+        if colors_distinguishable {
+            assert!(
+                focused_cursor,
+                "command palette search bar should render a cursor when search_active",
+            );
+        }
 
         let (unfocused_cursor, unfocused_text) = render_palette_search_row(false);
-        assert!(
-            !unfocused_cursor,
-            "command palette search bar must not render a cursor when not search_active",
-        );
+        if colors_distinguishable {
+            assert!(
+                !unfocused_cursor,
+                "command palette search bar must not render a cursor when not search_active",
+            );
+        }
         assert!(
             unfocused_text.contains("/ to search"),
             "unfocused command palette should show the `/ to search` placeholder, got {unfocused_text:?}",

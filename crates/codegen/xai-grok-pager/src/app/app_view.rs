@@ -7672,6 +7672,7 @@ pub(crate) mod tests {
     #[test]
     fn welcome_ctrl_q_requires_confirmation() {
         let mut app = test_app();
+        pin_non_vscode_registry(&mut app);
         let outcome = app.handle_input(&key_event(KeyCode::Char('q'), KeyModifiers::CONTROL));
         assert!(matches!(outcome, InputOutcome::Changed));
         let pending = app
@@ -8437,7 +8438,7 @@ pub(crate) mod tests {
             "first Ctrl+D should set pending quit, got: {outcome:?}",
         );
         assert!(app.pending_action.is_some());
-        assert_eq!(app.pending_action.as_ref().unwrap().label, Some("quit"));
+        assert_eq!(app.pending_action.as_ref().unwrap().label, Some("退出"));
         let outcome = app.handle_input(&ctrl_d());
         assert!(matches!(outcome, InputOutcome::Action(Action::Quit)));
         assert!(app.pending_action.is_none());
@@ -8462,7 +8463,7 @@ pub(crate) mod tests {
             "first Ctrl+D should set pending quit, got: {outcome:?}",
         );
         assert!(app.pending_action.is_some());
-        assert_eq!(app.pending_action.as_ref().unwrap().label, Some("quit"));
+        assert_eq!(app.pending_action.as_ref().unwrap().label, Some("退出"));
         let outcome = app.handle_input(&ctrl_d());
         assert!(matches!(outcome, InputOutcome::Action(Action::Quit)));
         assert!(app.pending_action.is_none());
@@ -8470,14 +8471,16 @@ pub(crate) mod tests {
     #[test]
     fn ctrl_q_sets_pending_action() {
         let mut app = test_app_with_agent();
+        pin_non_vscode_registry(&mut app);
         let outcome = app.handle_input(&ctrl_q());
         assert!(matches!(outcome, InputOutcome::Changed));
         assert!(app.pending_action.is_some());
-        assert_eq!(app.pending_action.as_ref().unwrap().label, Some("quit"));
+        assert_eq!(app.pending_action.as_ref().unwrap().label, Some("退出"));
     }
     #[test]
     fn ctrl_q_double_press_quits() {
         let mut app = test_app_with_agent();
+        pin_non_vscode_registry(&mut app);
         let _ = app.handle_input(&ctrl_q());
         assert!(app.pending_action.is_some());
         let outcome = app.handle_input(&ctrl_q());
@@ -8488,6 +8491,7 @@ pub(crate) mod tests {
     fn different_key_clears_pending() {
         crate::appearance::cache::set_simple_mode(false);
         let mut app = test_app_with_agent();
+        pin_non_vscode_registry(&mut app);
         if let ActiveView::Agent(id) = app.active_view
             && let Some(agent) = app.agents.get_mut(&id)
         {
@@ -8521,7 +8525,7 @@ pub(crate) mod tests {
         let outcome = app.handle_input(&ctrl_n());
         assert!(matches!(outcome, InputOutcome::Changed));
         let pending = app.pending_action.as_ref().expect("pending action");
-        assert_eq!(pending.label, Some("new"));
+        assert_eq!(pending.label, Some("新建"));
     }
     #[test]
     fn second_ctrl_n_opens_new_session_mode_question_when_mode_is_ask() {
@@ -8569,7 +8573,7 @@ pub(crate) mod tests {
         let outcome = app.handle_input(&ctrl_c());
         assert!(matches!(outcome, InputOutcome::Changed));
         assert!(app.pending_action.is_some());
-        assert_eq!(app.pending_action.as_ref().unwrap().label, Some("quit"));
+        assert_eq!(app.pending_action.as_ref().unwrap().label, Some("退出"));
     }
     fn assert_pending_quit(app: &AppView) {
         let pending = app
@@ -8949,7 +8953,7 @@ pub(crate) mod tests {
         let outcome = app.handle_input(&key_event(KeyCode::Esc, KeyModifiers::NONE));
         assert!(matches!(outcome, InputOutcome::Changed));
         let pending = app.pending_action.as_ref().expect("arm clear");
-        assert_eq!(pending.label, Some("clear"));
+        assert_eq!(pending.label, Some("清空"));
         assert!(matches!(pending.action, Action::ClearPrompt));
         let outcome = app.handle_input(&key_event(KeyCode::Esc, KeyModifiers::NONE));
         assert!(matches!(outcome, InputOutcome::Action(Action::ClearPrompt)));
@@ -9245,7 +9249,7 @@ pub(crate) mod tests {
             "expired first Esc must not clear"
         );
         let pending = app.pending_action.as_ref().expect("re-arm clear");
-        assert_eq!(pending.label, Some("clear"));
+        assert_eq!(pending.label, Some("清空"));
     }
     #[test]
     fn idle_images_only_double_esc_arms_clear() {
@@ -10655,6 +10659,7 @@ pub(crate) mod tests {
     #[test]
     fn ctrl_q_on_dashboard_arms_quit() {
         let mut app = test_app();
+        pin_non_vscode_registry(&mut app);
         app.active_view = ActiveView::AgentDashboard;
         app.dashboard = Some(crate::views::dashboard::DashboardState::new());
         let outcome = app.handle_input(&key_event(KeyCode::Char('q'), KeyModifiers::CONTROL));
@@ -11071,7 +11076,7 @@ pub(crate) mod tests {
             "a drafted overlay prompt Esc must NOT back out, got {outcome:?}",
         );
         let pending = app.pending_action.as_ref().expect("clear arm");
-        assert_eq!(pending.label, Some("clear"));
+        assert_eq!(pending.label, Some("清空"));
     }
     /// A Bash/Remember empty prompt keeps Esc as its mode-exit even in an overlay: the back-out is gated to `PromptInputMode::Normal`, so the
     /// special-mode Esc is not stolen as a dashboard back-out.

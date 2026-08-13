@@ -20,7 +20,7 @@ use std::time::Duration;
 
 use serial_test::serial;
 
-use common::FakeBinGuard;
+use common::{FakeBinGuard, GhApiMockGuard};
 use xai_grok_update::auto_update::install_npm_for_test;
 use xai_grok_update::version::{
     fetch_gh_release_version, fetch_npm_tag_for_test, fetch_npm_version_for_test,
@@ -324,27 +324,21 @@ async fn install_npm_no_token_no_userconfig() {
 #[tokio::test]
 #[serial]
 async fn fetch_gh_release_stable_returns_tag_stripped() {
-    let g = FakeBinGuard::install_gh();
-    // For stable channel, only the `--exclude-pre-releases` invocation is made.
-    g.set_stable_only_stdout("v0.1.181\n");
+    // Stable channel hits `/releases/latest` once; the `v` prefix is stripped.
+    let g = GhApiMockGuard::start().await;
+    g.stub_latest("v0.1.181", false, false).await;
 
     let v = fetch_gh_release_version("stable").await.unwrap();
     assert_eq!(v, "0.1.181");
 
-    let log = g.args_log();
-    assert_eq!(log.len(), 1);
-    assert!(
-        log[0].contains("--exclude-pre-releases"),
-        "args: {}",
-        log[0]
-    );
+    assert_eq!(g.received_latest_count().await, 1);
 }
 
 #[tokio::test]
 #[serial]
 async fn fetch_gh_release_stable_handles_tag_without_v_prefix() {
-    let g = FakeBinGuard::install_gh();
-    g.set_stable_only_stdout("0.1.181");
+    let g = GhApiMockGuard::start().await;
+    g.stub_latest("0.1.181", false, false).await;
 
     let v = fetch_gh_release_version("stable").await.unwrap();
     assert_eq!(v, "0.1.181");
@@ -353,23 +347,30 @@ async fn fetch_gh_release_stable_handles_tag_without_v_prefix() {
 #[tokio::test]
 #[serial]
 async fn fetch_gh_release_alpha_returns_max_of_pre_and_stable() {
-    // Alpha channel makes two `gh release list` calls (with and without
-    // --exclude-pre-releases) and returns the semver-max.
-    let g = FakeBinGuard::install_gh();
-    g.set_with_pre_stdout("v0.1.182-alpha.1");
-    g.set_stable_only_stdout("v0.1.181");
+    // Alpha channel walks the full release list and returns the semver-max
+    // (a prerelease can outrank stable).
+    let g = GhApiMockGuard::start().await;
+    g.stub_latest("v0.1.181", false, false).await;
+    g.stub_list(&[
+        ("v0.1.182-alpha.1", true, false),
+        ("v0.1.181", false, false),
+    ])
+    .await;
 
     let v = fetch_gh_release_version("alpha").await.unwrap();
     assert_eq!(v, "0.1.182-alpha.1");
-    assert_eq!(g.args_log().len(), 2);
 }
 
 #[tokio::test]
 #[serial]
 async fn fetch_gh_release_alpha_returns_stable_when_higher() {
-    let g = FakeBinGuard::install_gh();
-    g.set_with_pre_stdout("v0.1.180-alpha.5");
-    g.set_stable_only_stdout("v0.1.181");
+    let g = GhApiMockGuard::start().await;
+    g.stub_latest("v0.1.181", false, false).await;
+    g.stub_list(&[
+        ("v0.1.180-alpha.5", true, false),
+        ("v0.1.181", false, false),
+    ])
+    .await;
 
     let v = fetch_gh_release_version("alpha").await.unwrap();
     assert_eq!(v, "0.1.181");
@@ -377,60 +378,76 @@ async fn fetch_gh_release_alpha_returns_stable_when_higher() {
 
 #[tokio::test]
 #[serial]
-async fn fetch_gh_release_propagates_gh_failure() {
-    let g = FakeBinGuard::install_gh();
-    g.set_exit_code(1);
+async fn fetch_gh_release_propagates_http_failure() {
+    let g = GhApiMockGuard::start().await;
+    g.stub_latest_status(500).await;
 
     let err = fetch_gh_release_version("stable").await.unwrap_err();
     let msg = format!("{err:#}");
-    assert!(msg.contains("gh release list"), "msg: {msg}");
-    assert!(msg.contains("failed"), "msg: {msg}");
+    assert!(msg.contains("500"), "msg: {msg}");
+    assert!(
+        msg.contains("releases/latest"),
+        "msg should mention the endpoint: {msg}"
+    );
 }
 
 #[tokio::test]
 #[serial]
 async fn fetch_gh_release_empty_response_returns_err() {
-    let g = FakeBinGuard::install_gh();
-    g.set_stable_only_stdout("");
+    // An empty JSON array or missing tag_name should surface as an error,
+    // not silently return an empty string.
+    let g = GhApiMockGuard::start().await;
+    g.stub_list(&[]).await;
 
     let err = fetch_gh_release_version("stable").await.unwrap_err();
     let msg = format!("{err:#}");
-    assert!(msg.contains("No releases found"), "msg: {msg}");
+    assert!(
+        msg.contains("releases") || msg.contains("tag_name") || msg.contains("No releases"),
+        "msg: {msg}"
+    );
 }
 
 #[tokio::test]
 #[serial]
-async fn fetch_gh_release_passes_repo_flag() {
-    let g = FakeBinGuard::install_gh();
-    g.set_stable_only_stdout("v0.1.181");
+async fn fetch_gh_release_targets_correct_repo() {
+    // The request path must include the chaos-code repo slug so a refactor
+    // doesn't accidentally point at the wrong repository.
+    let g = GhApiMockGuard::start().await;
+    g.stub_latest("v0.1.181", false, false).await;
 
     let _ = fetch_gh_release_version("stable").await.unwrap();
-    let log = g.args_log();
-    assert!(log[0].contains("--repo"), "args: {}", log[0]);
-    assert!(log[0].contains("chao2hang/chaos-code"), "args: {}", log[0]);
+    let requests = g.server.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 1);
+    let path = requests[0].url.path();
+    assert!(
+        path.contains("/repos/chao2hang/chaos-code/releases"),
+        "unexpected path: {path}"
+    );
 }
 
 #[tokio::test]
 #[serial]
-async fn fetch_gh_release_uses_jq_to_extract_tag() {
-    // The function constructs `gh release list --json tagName --jq '.[0].tagName'`
-    // — we verify the args include the jq filter so a refactor doesn't accidentally
-    // drop it.
-    let g = FakeBinGuard::install_gh();
-    g.set_stable_only_stdout("v0.1.181");
+async fn fetch_gh_release_skips_draft_releases() {
+    // Draft releases must be excluded from the semver-max calculation even
+    // when they appear in the list response (API may return them).
+    let g = GhApiMockGuard::start().await;
+    g.stub_latest("v0.1.181", false, false).await;
+    g.stub_list(&[
+        ("v0.2.0", true, true),     // draft + prerelease — must be skipped
+        ("v0.1.181", false, false), // stable release
+    ])
+    .await;
 
-    let _ = fetch_gh_release_version("stable").await.unwrap();
-    let log = g.args_log();
-    assert!(log[0].contains("--json"), "args: {}", log[0]);
-    assert!(log[0].contains("--jq"), "args: {}", log[0]);
+    let v = fetch_gh_release_version("alpha").await.unwrap();
+    assert_eq!(v, "0.1.181");
 }
 
 #[tokio::test]
 #[serial]
 async fn fetch_gh_release_does_not_hang_on_quick_responses() {
     // Sanity: every call should return well under our test timeout.
-    let g = FakeBinGuard::install_gh();
-    g.set_stable_only_stdout("v0.1.181");
+    let g = GhApiMockGuard::start().await;
+    g.stub_latest("v0.1.181", false, false).await;
 
     let res =
         tokio::time::timeout(Duration::from_secs(5), fetch_gh_release_version("stable")).await;

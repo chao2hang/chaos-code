@@ -99,14 +99,14 @@ pub(crate) enum EscStep {
 impl EscStep {
     pub(crate) fn label(self) -> &'static str {
         match self {
-            Self::DismissFileSearch => "dismiss",
-            Self::LeaveTextInput => "back",
-            Self::DismissFeedbackPane => "dismiss",
-            Self::DiscardPatternEdit => "cancel",
-            Self::ClearSelection => "unselect",
-            Self::BackOutOverlay => "dashboard",
-            Self::ParkFocus => "scrollback",
-            Self::KeepRunning => "keep running",
+            Self::DismissFileSearch => "关闭",
+            Self::LeaveTextInput => "返回",
+            Self::DismissFeedbackPane => "关闭",
+            Self::DiscardPatternEdit => "取消",
+            Self::ClearSelection => "取消选择",
+            Self::BackOutOverlay => "仪表盘",
+            Self::ParkFocus => "滚动区",
+            Self::KeepRunning => "继续运行",
         }
     }
 }
