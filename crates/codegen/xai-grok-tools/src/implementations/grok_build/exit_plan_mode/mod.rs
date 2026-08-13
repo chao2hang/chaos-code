@@ -31,12 +31,25 @@ use crate::types::tool::{ToolKind, ToolNamespace};
 
 /// Input for the `ExitPlanMode` tool.
 ///
-/// Empty object — the plan is read from the plan file on disk, NOT passed as
-/// a parameter. This ensures the user sees exactly what was written to disk,
+/// The plan itself is read from the plan file on disk, NOT passed as a
+/// parameter. This ensures the user sees exactly what was written to disk,
 /// preventing divergence between the model's in-context plan and the actual
 /// file content.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
-pub struct ExitPlanModeInput {}
+///
+/// The `note` field exists so the wire schema is never property-less: some
+/// OpenAI-compatible streaming backends (observed: vLLM 0.23 serving
+/// glm-5.2-fp8) silently DROP a streamed tool call whose arguments are empty
+/// — the call tokens are generated but no `tool_calls` delta is ever emitted,
+/// and the response ends with `finish_reason: "stop"`. A tool with zero
+/// schema properties can only ever be called with `{}`, so the call is
+/// guaranteed-lost on such backends — which used to wedge sessions in plan
+/// mode with no exit path. The optional field keeps `arguments` non-empty.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+pub struct ExitPlanModeInput {
+    /// A one-line summary of the plan being presented. Always include it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
 
 /// `ExitPlanMode` tool.
 ///
@@ -245,7 +258,7 @@ mod tests {
         let result = xai_tool_runtime::Tool::run(
             &tool,
             test_ctx_with_call_id(shared, "test-call"),
-            ExitPlanModeInput {},
+            ExitPlanModeInput::default(),
         )
         .await
         .unwrap();
@@ -281,7 +294,7 @@ mod tests {
         let result = xai_tool_runtime::Tool::run(
             &tool,
             test_ctx_with_call_id(shared, "test-call"),
-            ExitPlanModeInput {},
+            ExitPlanModeInput::default(),
         )
         .await
         .unwrap();
@@ -307,7 +320,7 @@ mod tests {
         let result = xai_tool_runtime::Tool::run(
             &tool,
             test_ctx_with_call_id(shared, "test-call"),
-            ExitPlanModeInput {},
+            ExitPlanModeInput::default(),
         )
         .await
         .unwrap();
@@ -340,7 +353,7 @@ mod tests {
         xai_tool_runtime::Tool::run(
             &tool,
             test_ctx_with_call_id(shared, "call-99"),
-            ExitPlanModeInput {},
+            ExitPlanModeInput::default(),
         )
         .await
         .unwrap();
@@ -366,7 +379,7 @@ mod tests {
         let result = xai_tool_runtime::Tool::run(
             &tool,
             test_ctx_with_call_id(shared, "test-call"),
-            ExitPlanModeInput {},
+            ExitPlanModeInput::default(),
         )
         .await;
 
@@ -387,7 +400,7 @@ mod tests {
         let result = xai_tool_runtime::Tool::run(
             &tool,
             test_ctx_with_call_id(shared, "test-call"),
-            ExitPlanModeInput {},
+            ExitPlanModeInput::default(),
         )
         .await
         .unwrap();
@@ -419,7 +432,7 @@ mod tests {
         let result = xai_tool_runtime::Tool::run(
             &ExitPlanModeTool,
             test_ctx_with_call_id(shared, "t1"),
-            ExitPlanModeInput {},
+            ExitPlanModeInput::default(),
         )
         .await
         .unwrap();
