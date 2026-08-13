@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use crate::allow_path::normalize_allow_path;
 #[cfg(all(feature = "enforce", unix))]
 use crate::deny::{
     apply_deny_globs_to_capability_set, apply_deny_paths_to_capability_set,
@@ -495,12 +496,16 @@ impl ProfileName {
 
                 // Add custom read-only paths
                 for path_str in &profile_config.read_only {
-                    profile.read_only.push(PathBuf::from(path_str));
+                    if let Some(path) = normalize_allow_path(path_str) {
+                        profile.read_only.push(path);
+                    }
                 }
 
                 // Add custom read-write paths
                 for path_str in &profile_config.read_write {
-                    profile.read_write.push(PathBuf::from(path_str));
+                    if let Some(path) = normalize_allow_path(path_str) {
+                        profile.read_write.push(path);
+                    }
                 }
 
                 // Add custom deny paths

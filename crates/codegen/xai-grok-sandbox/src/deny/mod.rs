@@ -13,10 +13,24 @@ use std::path::{Path, PathBuf};
 // expansion) live in a submodule; re-exported so call sites use `deny::…`.
 #[cfg(all(feature = "enforce", unix))]
 mod glob;
+#[cfg(all(feature = "enforce", unix))]
+pub(crate) use glob::is_glob;
 #[cfg(all(feature = "enforce", target_os = "linux"))]
 pub(crate) use glob::{DENY_GLOB_CAPS, expand_deny_globs};
 #[cfg(all(feature = "enforce", unix))]
 pub(crate) use glob::{apply_deny_globs_to_capability_set, partition_deny_entries};
+
+/// Whether a raw entry is a glob pattern rather than an exact path. True iff
+/// it contains a gitignore-style metacharacter (`*`, `?`, `[`).
+///
+/// Not cfg-gated: `allow_path::normalize_allow_path` uses it on all builds to
+/// decide whether a config entry can be a literal directory grant. The
+/// enforce+unix build re-exports the identical function from `glob` (which
+/// also consumes it internally), so the two never disagree.
+#[cfg(not(all(feature = "enforce", unix)))]
+pub(crate) fn is_glob(entry: &str) -> bool {
+    entry.contains(['*', '?', '['])
+}
 
 /// Escape a path for use inside a Seatbelt `(literal "...")` / `(subpath "...")`
 /// filter (used for both forms, hence the generic name).
