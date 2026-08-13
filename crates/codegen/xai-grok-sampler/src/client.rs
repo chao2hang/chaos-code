@@ -1028,6 +1028,29 @@ impl SamplingClient {
             }
         }
 
+        // Thinking-mode gateways (observed: the bblbb proxy serving
+        // GLM-5 / DeepSeek-R1 / Qwen3-Thinking) reject any request that
+        // carries an assistant message without `reasoning_content` once
+        // the session has entered thinking mode — the wire error is
+        // `bad_response_status_code: The reasoning_content in the
+        // thinking mode must be passed back to the API`. The local model
+        // stores reasoning as a sibling `Reasoning` item that
+        // `conversation_to_chat_messages` folds onto the *immediately*
+        // following assistant, but a turn where the model emitted no
+        // reasoning (a bare tool call, or reasoning lost to compaction)
+        // leaves that assistant's `reasoning_content` as `None`, and the
+        // next request 400s. When `reasoning_effort` is set the model is
+        // a thinking model, so backfill every assistant message that is
+        // missing it with a non-empty placeholder — the wire schema only
+        // requires the field to be present and non-empty, not truthful.
+        if request.reasoning_effort.is_some() {
+            for msg in &mut request.messages {
+                if msg.role == Role::Assistant && msg.reasoning_content.is_none() {
+                    msg.reasoning_content = Some("(no reasoning emitted)".to_string());
+                }
+            }
+        }
+
         Ok(request)
     }
 
