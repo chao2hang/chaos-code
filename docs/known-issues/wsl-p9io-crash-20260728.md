@@ -63,7 +63,7 @@ Tue Jul 28 18:26 → 19:53  (01:26)   ← 崩溃前一次正常 boot
 
 ## 待补充
 
-发外部 issue 前需要补录:
+发外部 issue 前需要补录。**一键收集脚本**：`bash scripts/collect-wsl-info.sh > wsl-info.txt`（在 WSL 里运行，输出含 Windows 版本、`wsl --version`、`.wslconfig`、内存、磁盘、`last reboot`、`journalctl -b -1 -p err`、`dmesg` 签名）。脚本会尝试脱敏，但粘贴前请再人工核对 hostname / 密钥。
 
 - [ ] Windows 版本号 (`ver` 或 `winver`)
 - [ ] `wsl.exe --version` 完整输出(内核版本、WSLg 版本、MSRDC 版本)

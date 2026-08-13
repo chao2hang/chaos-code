@@ -1,10 +1,21 @@
 # Chaos
 
+![CI](https://github.com/chao2hang/chaos-code/actions/workflows/ci.yml/badge.svg?branch=main)
+![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)
+
 **Chaos** 是终端 AI 编码助手（二进制名 `chaos`）。**不使用 Grok / xAI 登录**；模型、接口与密钥由用户自行配置（BYOK）。产品说明见 [CHAOS.md](CHAOS.md)。
 
 本仓库基于 [Grok Build](https://github.com/xai-org/grok-build) 改造；crate 仍保留 `xai-grok-*` 命名以便同步上游。`SOURCE_REV` 记录对齐的 monorepo 提交。
 
-[安装](#安装) · [更新](#更新) · [配置](#配置) · [从源码构建](#从源码构建) · [文档](#文档) · [开发](#开发)
+### 特性
+
+- **BYOK**：自带模型与密钥——在 `config.toml` 里配置任意 OpenAI 兼容端点（含国产 provider 预设），无需 xAI 登录
+- **终端原生 TUI**：中文界面、文件链接、权限审批、计划预览、隐私横幅、滚动回溯
+- **Agent 工具链**：内置 bash 执行、文件编辑、代码搜索、worktree 隔离、检查点回滚
+- **MCP / Skills**：原生 MCP 客户端 + 自定义 Skill 注册，可扩展工作流
+- **自更新**：`chaos update` 走 GitHub Release，不依赖 npm
+
+[安装](#安装) · [更新](#更新) · [配置](#配置) · [远程--容器剪贴板chaos-wrap](#远程--容器剪贴板chaos-wrap) · [从源码构建](#从源码构建) · [文档](#文档) · [开发](#开发)
 
 ---
 
@@ -49,7 +60,7 @@ curl -fsSL https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/i
 固定版本 / 强制重下：
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.sh | bash -s -- --version 0.2.118
+curl -fsSL https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.sh | bash -s -- --version 0.2.136
 curl -fsSL https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.sh | bash -s -- --force
 ```
 
@@ -57,7 +68,7 @@ curl -fsSL https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/i
 
 ```sh
 ./scripts/install.sh
-./scripts/install.sh --version 0.2.118
+./scripts/install.sh --version 0.2.136
 ```
 
 #### 完整性校验
@@ -96,14 +107,14 @@ chaos --version
 固定版本（跳过 GitHub “latest” API，网络/限流时更稳）：
 
 ```powershell
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.ps1))) -Version 0.2.118
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.ps1))) -Version 0.2.136
 ```
 
 先下载再执行（组策略限制管道时更稳）：
 
 ```powershell
 Invoke-WebRequest -Uri "https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.ps1" -OutFile "$env:TEMP\install-chaos.ps1"
-powershell -ExecutionPolicy Bypass -File "$env:TEMP\install-chaos.ps1" -Version 0.2.118
+powershell -ExecutionPolicy Bypass -File "$env:TEMP\install-chaos.ps1" -Version 0.2.136
 ```
 
 #### 方式 B：cmd 一键（无需 `iex`）
@@ -122,7 +133,7 @@ curl -L -o "%TEMP%\install-chaos.bat" https://raw.githubusercontent.com/chao2han
 固定版本 / 强制重下：
 
 ```bat
-"%TEMP%\install-chaos.bat" --version 0.2.118
+"%TEMP%\install-chaos.bat" --version 0.2.136
 "%TEMP%\install-chaos.bat" --force
 ```
 
@@ -130,7 +141,7 @@ curl -L -o "%TEMP%\install-chaos.bat" https://raw.githubusercontent.com/chao2han
 
 ```bat
 scripts\install.bat
-scripts\install.bat --version 0.2.118 --force
+scripts\install.bat --version 0.2.136 --force
 ```
 
 `install.bat` 会优先调用同目录的 `install.ps1`；若无 PowerShell 或脚本失败，则回退为直接下载 `chaos.exe` 并写入用户 PATH。
@@ -225,7 +236,7 @@ curl -L -o "%TEMP%\install-chaos.bat" https://raw.githubusercontent.com/chao2han
 
 ```sh
 chaos update
-chaos update --version 0.2.113
+chaos update --version 0.2.136
 ```
 
 强制渠道（一般不必改）：
@@ -281,10 +292,61 @@ cargo run -p xai-grok-pager-bin   # 开发：构建并启动 TUI
 
 ---
 
+## 远程 / 容器剪贴板（`chaos wrap`）
+
+远程 SSH 或容器里跑 `chaos` 时，剪贴板图片粘贴（截图、复制图片）默认**不工作**——远程进程读不到你**本地**的剪贴板。`chaos wrap` 子命令解决这个问题：它在本地起一个 PTY 包装器，把远程的剪贴板请求中转回本地。
+
+### 原理
+
+```
+[本地终端] ─SSH─→ [远程 chaos]
+                    │  粘贴时本地剪贴板读不到 → 发请求 OSC
+                    │  (仅当检测到 GROK_OSC52_SINK 环境变量时才发)
+                    ↓
+[本地 chaos wrap] ←─ 拦截 OSC，读本地剪贴板，base64 编码
+                    │
+                    └─→ 注入图片帧回 PTY → 远程 chaos 解码成图片
+```
+
+- 远程 `chaos` 只有检测到 `GROK_OSC52_SINK` 或 `LC_GROK_OSC52_SINK` 环境变量，才会发图片请求
+- `chaos wrap` 包装时会自动设置这两个变量；`LC_` 前缀的版本能穿过 SSH 默认的 `SendEnv LANG LC_*` / `AcceptEnv LANG LC_*`
+- 文本复制（OSC 52）同样经 wrap 中转到本地系统剪贴板
+
+### 用法
+
+在**本地终端**（不是远程）用 `chaos wrap` 包装你的连接命令：
+
+```sh
+# SSH 远程主机
+chaos wrap ssh user@remote-host
+
+# 带端口 / 跳板
+chaos wrap ssh -p 2222 user@remote-host
+chaos wrap -- ssh -J jump-host user@target
+
+# 容器
+chaos wrap docker exec -it my-container bash
+chaos wrap kubectl exec -it my-pod -- bash
+```
+
+包装后，远程 / 容器内正常运行 `chaos` 即可，粘贴时（`Ctrl+V` / `Cmd+V`）会自动向本地 wrap 请求剪贴板内容。
+
+### 注意事项
+
+- **本地必须装好 `chaos`**——`wrap` 是同一个二进制的子命令
+- 本地终端若不支持 OSC 52（如 Apple Terminal），`wrap` 正是用来补这个的；若你的终端原生支持 OSC 52，文本复制本身已可用，但**图片粘贴仍需 `wrap`**
+- 若 SSH 的 `SendEnv` / `AcceptEnv` 被改过（不转发 `LC_*`），`LC_GROK_OSC52_SINK` 过不去，需在 `~/.ssh/config` 显式加 `SetEnv` / `SendEnv`
+- 远程的 `chaos` 版本应与本地一致或更新（旧版可能没有剪贴板中转协议）
+
+---
+
 ## 文档
 
-- 产品与 BYOK：[CHAOS.md](CHAOS.md)
+- 产品与 BYOK 配置：[CHAOS.md](CHAOS.md)
 - 用户指南：[`crates/codegen/xai-grok-pager/docs/user-guide/`](crates/codegen/xai-grok-pager/docs/user-guide/)（部分章节仍为上游路径名，以 CHAOS.md 与双读策略为准）
+- 已完成计划：[`docs/done/`](docs/done/)（headless 重写、Cline 导入）
+- 已知问题：[`docs/known-issues/`](docs/known-issues/)（WSL p9io 崩溃等）
+- CI 测试债务记录：[`docs/ci-test-debt.md`](docs/ci-test-debt.md)
 
 ---
 
@@ -293,14 +355,19 @@ cargo run -p xai-grok-pager-bin   # 开发：构建并启动 TUI
 | 路径 | 内容 |
 |------|------|
 | `crates/codegen/xai-grok-pager-bin` | 组合根包；产出 `chaos` 二进制 |
-| `crates/codegen/xai-grok-pager` | TUI |
-| `crates/codegen/xai-grok-shell` | Agent 运行时 |
-| `crates/codegen/xai-grok-tools` | 工具实现 |
+| `crates/codegen/xai-grok-pager` | TUI 核心（~8.5k 单元测试，含 settings_e2e 集成测试） |
+| `crates/codegen/xai-grok-pager-render` | 渲染原语（终端、主题、颜色检测） |
+| `crates/codegen/xai-grok-shell` | Agent 运行时、会话存储、ACP 协议 |
+| `crates/codegen/xai-grok-agent` | Agent 生命周期与采样 |
+| `crates/codegen/xai-grok-tools` | 工具实现（bash、编辑、搜索等） |
 | `crates/codegen/xai-grok-workspace` | 文件系统、VCS、执行、检查点 |
-| `crates/codegen/...` | 其余 CLI 依赖（config、MCP、markdown、sandbox 等） |
+| `crates/codegen/xai-grok-update` | 自更新逻辑（GitHub Release 下载与校验） |
+| `crates/codegen/xai-grok-mcp` | MCP 客户端 |
+| `crates/codegen/...` | 其余 ~50 个叶子 crate（config、markdown、sandbox、hooks 等） |
 | `crates/common/`、`crates/build/`、`prod/mc/` | 共享叶子 crate |
 | `third_party/` | vendored 源码（Mermaid 等） |
 | `scripts/` | 安装与发版脚本 |
+| `docs/` | 已完成计划、已知问题、CI 测试债务记录 |
 
 > [!IMPORTANT]
 > 根目录 `Cargo.toml`（workspace members、依赖版本、lints、profiles）为**生成文件**，请只改各 crate 内的 `Cargo.toml`。
@@ -309,9 +376,12 @@ cargo run -p xai-grok-pager-bin   # 开发：构建并启动 TUI
 
 ## 开发
 
+CI 现在跑 `cargo test --workspace --locked --no-fail-fast`，全 workspace 0 失败（~87 个 fork 专属测试以 `#[ignore]` 标注，原因见 [`docs/ci-test-debt.md`](docs/ci-test-debt.md)）。
+
 ```sh
 cargo check -p <crate>        # 指定 crate；全 workspace 很慢
-cargo test -p xai-grok-config
+cargo test -p xai-grok-config # 单 crate 测试
+cargo test --workspace        # 全量测试（CI 同款）
 cargo clippy -p <crate>
 cargo fmt --all
 ```

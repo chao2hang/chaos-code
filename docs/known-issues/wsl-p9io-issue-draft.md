@@ -1,7 +1,7 @@
 # [DRAFT — 未发布] microsoft/WSL issue 起草稿
 
 发布前请:
-1. 补录 Windows 版本号、`wsl --version` 完整输出。
+1. 在 WSL 里运行 `bash scripts/collect-wsl-info.sh > wsl-info.txt`，把输出填入下方待补字段。
 2. 决定标题措辞。
 3. 决定是否附上 `dmesg` 完整输出(建议只截关键几行,勿泄漏 hostname 等)。
 

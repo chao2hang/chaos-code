@@ -1,9 +1,48 @@
 # Changelog
 
-## Unreleased (上游同步 sync/upstream-20260807)
+## Unreleased
 
-### 移植自上游
+### 采样 / 网关兼容
 
+- 修：thinking 模式回传补全 `reasoning_content`，避免 bblbb 等代理网关
+  报 `bad_response_status_code 400`。
+- 修：plan_mode / scheduler 零参数工具流式丢失（vLLM 0.23 + GLM-5.2-fp8
+  实测必现）—— `enter_plan_mode` / `exit_plan_mode` / `scheduler_list` 加
+  可选 `note` 字段，保证 arguments 非空。
+- 修：reasoning-only 重试风暴—— `request_task.rs` 改用内容判断
+  （`empty_reason() == ReasoningOnly`）替代 thinking-model 白名单，
+  覆盖任意思维模型首 turn 不再触发无谓重试。
+
+### Sandbox
+
+- 移植上游 `allow_path` 规范化，修复 trailing glob 误建字面 `**` 目录。
+
+### CI
+
+- 工作区全量测试打通：`cargo test --workspace` 取代 7-crate 排除列表；
+  4 crate（pager / pager-minimal / pty-harness / update）经 per-crate 审计
+  确认 0 failures 后移回。`xai-grok-update` 的 47 个 `gh-release` 测试
+  暂时 `#[ignore]`（上游 `fetch_gh_release_version` 从 gh CLI 切到
+  GitHub HTTP API（reqwest），需 wiremock 重写后恢复）—— 见
+  `docs/ci-test-debt.md`。
+- `xai-grok-pager-render` 新增 `test-support` feature，导出
+  `is_ssh_session` / `set_test_*` 钩子；为 CI（NO_COLOR=1、SSH 会话、
+  VS Code Remote 等环境）提供确定性的终端上下文与颜色支持。
+- 测试栈溢出修复：CI 设 `RUST_MIN_STACK=8MB`；`auth_retry_budget` 栈溢出
+  测试补 `#[ignore]`。
+
+### 文档
+
+- 引入上游 1.0.1 / 1.0.2 / 1.0.3 changelog（`xai-grok-shell/changelogs/`）
+  作参考，不替换本地 `0.2.136` 顶条。
+- 合并上游 `b13fa526` 的 fork-layer 清单 `sync/fork-layer-inventory.md`。
+
+## 0.2.136 - 2026-08-11
+
+### 上游同步
+
+- 同步上游 grok-build `b13fa526`（SOURCE_REV `a51a1dc6`），含 fork 层再核对
+  （`sync/fork-layer-inventory.md`）。
 - 手建仓库（无 `origin/HEAD`）时，默认分支回退到唯一存在的
   `origin/main` / `origin/master`，再回退 `init.defaultBranch`；两者同时存在
   时不猜测。
@@ -11,6 +50,53 @@
   （grapheme 硬切 + 带样式链接保留）。
 - SQLite 会话存储加固：`open`/`open_readonly` 内部改用带截止时间的
   `SQLITE_BUSY` 重试预算（10s，共享 deadline 不叠加），网络挂载更稳。
+- tracker 懒加载 model→tokenizer 同步（避免启动时全量加载 BPE 表）。
+
+### 国产 provider 错误处理
+
+- 新增 `ProviderErrorKind` 分类，识别国产 provider（freemodel / workbuddy 等）
+  的永久性故障（计费拒绝、客户端标识拒绝等）并给出中文可操作提示，而不是
+  笼统重试。
+- 计费类错误 fast-fail（不消耗 retry budget）；`edge_client_china` 标记国产
+  网关；`Retry-After` 支持 HTTP-date 解析。
+- `/provider` 新增国产 provider 预设；README 补充国产网关接入说明。
+- 默认 retry budget 上限收到 8（与 opencode 对齐），避免国产网关限流时无限重试。
+- thinking 模型 reasoning-only 空响应不再触发重试（避免误判为失败）。
+
+### 采样 / 重试修复
+
+- 修：`classify()` 多 tag 精确匹配漏洞 + `exceed.*context` 正则误用，导致
+  错误分类错位。
+- 修：OpenAI 兼容网关返回极小 SSE chunk 时采样器 panic（EAGAIN 路径），
+  现容忍最小 chunk。
+- 修：`record_response_token_usage` 测试调用签名与上游 merge 后的新签名对齐。
+
+### 速率统计修复
+
+- 修：`decode_tokens_per_sec` 未从 `UsageTotals` 传递到 pager，导致响应结束后
+  速率 chip 不显示。
+- 修：回合均 tok/s 不再把静默时间计入分母；速率统计不再把等待时间计入解码时长。
+
+### Modal panic 修复
+
+- 修：渠道/客户端模态框按键未分发到子组件导致 `unreachable!()` panic。
+- 补全 `ProviderModal` / `ClientModal` 的 render、paste、mouse 路径，硬化 panic
+  边界；第三处 `unreachable!()` 替换为 safe fallback。
+
+### 其他修复
+
+- 修：搜索 bootstrap 标记检查加重试，消除并发单飞竞态。
+- 修：工作流恢复排序先于截断；忽略 chat-mode 死代码测试。
+- 修：`agent_view` 合并后重复的 `last_turn_summary` 字段移除。
+
+### CI
+
+- 修：`rust-toolchain.toml` 覆盖导致 macOS x64 交叉编译缺 target，显式
+  `rustup target add` 修复。
+- 修：测试栈溢出，设置 `RUST_MIN_STACK=8MB`；`auth_retry_budget` 栈溢出测试
+  补 `#[ignore]`。
+- 修：上游 merge 带来的 clippy errors（`xai-grok-pager` 56 个、`xai-fast-worktree`
+  disallowed_methods、3 个 test target）。
 
 ## 0.2.135 - 2026-08-07
 
