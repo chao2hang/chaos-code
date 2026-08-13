@@ -653,16 +653,21 @@ async fn drive_l2(
                     // deterministic — resampling it would retry-storm.
                     let content_filtered = response.stop_reason
                         == Some(xai_grok_sampling_types::StopReason::ContentFilter);
-                    // A reasoning-only response from a known thinking model is
-                    // also expected (DeepSeek-R1 / Qwen3-Thinking / GLM-Z1 /
-                    // Grok reasoning answer with thoughts and no prose on the
-                    // first turn). Resampling it retry-storms the same way;
-                    // surface it as a content-less but complete turn instead.
-                    let thinking_model_reasoning_only = response.is_known_thinking_model()
-                        && response.empty_reason()
-                            == Some(xai_grok_sampling_types::EmptyReason::ReasoningOnly);
+                    // A reasoning-only response (the model emitted reasoning
+                    // tokens but no visible content and no tool calls) is an
+                    // expected first-turn behavior for thinking models
+                    // (DeepSeek-R1 / Qwen3-Thinking / GLM-Z1 / GLM-5 / Grok
+                    // reasoning / o3 / etc.). Resampling it retry-storms the
+                    // same response; surface it as a content-less but complete
+                    // turn instead. The check is content-based (the response
+                    // actually carries reasoning items), not model-name-based,
+                    // so it covers any thinking model without a brittle
+                    // allowlist — non-thinking models never emit reasoning
+                    // items and still fall through to resampling below.
+                    let reasoning_only = response.empty_reason()
+                        == Some(xai_grok_sampling_types::EmptyReason::ReasoningOnly);
                     if !content_filtered
-                        && !thinking_model_reasoning_only
+                        && !reasoning_only
                         && let Some(reason) = response.empty_reason()
                     {
                         let context = build_empty_context(reason, &response);

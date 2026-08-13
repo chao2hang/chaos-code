@@ -5,8 +5,20 @@ use crate::types::tool::{ToolKind, ToolNamespace};
 use super::interval::interval_to_human;
 use super::types::{SchedulerCommand, SchedulerHandle};
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
-pub struct SchedulerListInput {}
+/// Input for the `SchedulerList` tool.
+///
+/// The `note` field exists so the wire schema is never property-less: some
+/// OpenAI-compatible streaming backends (observed: vLLM 0.23 serving
+/// glm-5.2-fp8) silently DROP a streamed tool call whose arguments are empty.
+/// A zero-property tool can only ever be called with `{}`, so the call is
+/// guaranteed-lost on such backends. See `EnterPlanModeInput` for details.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+pub struct SchedulerListInput {
+    /// A short note on why you are listing tasks (e.g. "check reminders").
+    /// Always include it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]

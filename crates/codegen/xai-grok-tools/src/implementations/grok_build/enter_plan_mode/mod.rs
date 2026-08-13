@@ -29,11 +29,25 @@ use std::sync::Arc;
 
 /// Input for the `EnterPlanMode` tool.
 ///
-/// Empty object — no parameters. The decision to enter plan mode is a binary
+/// Semantically no parameters — the decision to enter plan mode is a binary
 /// gate. All configuration (workflow variant, explore agent count, etc.) comes
 /// from feature flags and environment variables, not from the tool call.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
-pub struct EnterPlanModeInput {}
+///
+/// The `note` field exists so the wire schema is never property-less: some
+/// OpenAI-compatible streaming backends (observed: vLLM 0.23 serving
+/// glm-5.2-fp8) silently DROP a streamed tool call whose arguments are empty
+/// — the call tokens are generated but no `tool_calls` delta is ever emitted,
+/// and the response ends with `finish_reason: "stop"`. A tool with zero
+/// schema properties can only ever be called with `{}`, so the call is
+/// guaranteed-lost on such backends. The optional field lets the model attach
+/// a one-liner, keeping `arguments` non-empty end-to-end.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+pub struct EnterPlanModeInput {
+    /// A one-line note describing what you intend to explore and plan.
+    /// Always include it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
 
 /// `EnterPlanMode` tool: signals plan mode entry and seeds the session plan
 /// file, returning a [`PlanFileSeedStatus`].
@@ -316,7 +330,7 @@ mod tests {
         let result = xai_tool_runtime::Tool::run(
             &tool,
             test_ctx_with_call_id(shared, "test-call"),
-            EnterPlanModeInput {},
+            EnterPlanModeInput::default(),
         )
         .await
         .unwrap();
@@ -347,7 +361,7 @@ mod tests {
         xai_tool_runtime::Tool::run(
             &tool,
             test_ctx_with_call_id(shared, "call-42"),
-            EnterPlanModeInput {},
+            EnterPlanModeInput::default(),
         )
         .await
         .unwrap();
@@ -370,7 +384,7 @@ mod tests {
         let result = xai_tool_runtime::Tool::run(
             &tool,
             test_ctx_with_call_id(shared, "test-call"),
-            EnterPlanModeInput {},
+            EnterPlanModeInput::default(),
         )
         .await;
 
@@ -385,7 +399,7 @@ mod tests {
         let result = xai_tool_runtime::Tool::run(
             &EnterPlanModeTool,
             test_ctx_with_call_id(shared, "test-call"),
-            EnterPlanModeInput {},
+            EnterPlanModeInput::default(),
         )
         .await
         .unwrap();
@@ -423,7 +437,7 @@ mod tests {
         let result = xai_tool_runtime::Tool::run(
             &EnterPlanModeTool,
             test_ctx_with_call_id(shared, "no-anchor"),
-            EnterPlanModeInput {},
+            EnterPlanModeInput::default(),
         )
         .await
         .unwrap();
@@ -452,7 +466,7 @@ mod tests {
         let result = xai_tool_runtime::Tool::run(
             &tool,
             test_ctx_with_call_id(shared, "test-call"),
-            EnterPlanModeInput {},
+            EnterPlanModeInput::default(),
         )
         .await
         .unwrap();
@@ -489,7 +503,7 @@ mod tests {
         let result = xai_tool_runtime::Tool::run(
             &EnterPlanModeTool,
             test_ctx_with_call_id(shared, "reentry"),
-            EnterPlanModeInput {},
+            EnterPlanModeInput::default(),
         )
         .await
         .unwrap();
@@ -520,7 +534,7 @@ mod tests {
         let result = xai_tool_runtime::Tool::run(
             &EnterPlanModeTool,
             test_ctx_with_call_id(shared, "empty-reentry"),
-            EnterPlanModeInput {},
+            EnterPlanModeInput::default(),
         )
         .await
         .unwrap();
@@ -604,7 +618,7 @@ mod tests {
         let result = xai_tool_runtime::Tool::run(
             &EnterPlanModeTool,
             test_ctx_with_call_id(shared, "t1"),
-            EnterPlanModeInput {},
+            EnterPlanModeInput::default(),
         )
         .await
         .unwrap();
@@ -625,7 +639,7 @@ mod tests {
         let result = xai_tool_runtime::Tool::run(
             &EnterPlanModeTool,
             test_ctx_with_call_id(shared, "t2"),
-            EnterPlanModeInput {},
+            EnterPlanModeInput::default(),
         )
         .await
         .unwrap();
@@ -653,7 +667,7 @@ mod tests {
         let result = xai_tool_runtime::Tool::run(
             &EnterPlanModeTool,
             test_ctx_with_call_id(shared, "t5"),
-            EnterPlanModeInput {},
+            EnterPlanModeInput::default(),
         )
         .await
         .unwrap();
@@ -672,7 +686,7 @@ mod tests {
         let result = xai_tool_runtime::Tool::run(
             &EnterPlanModeTool,
             test_ctx_with_call_id(shared, "t6"),
-            EnterPlanModeInput {},
+            EnterPlanModeInput::default(),
         )
         .await
         .unwrap();
@@ -698,7 +712,7 @@ mod tests {
         let result = xai_tool_runtime::Tool::run(
             &EnterPlanModeTool,
             test_ctx_with_call_id(shared, "t4"),
-            EnterPlanModeInput {},
+            EnterPlanModeInput::default(),
         )
         .await
         .unwrap();

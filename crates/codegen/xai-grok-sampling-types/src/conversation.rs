@@ -5056,6 +5056,45 @@ mod tests {
     }
 
     #[test]
+    fn reasoning_only_empty_reason_is_content_based_not_model_based() {
+        // The sampler guard treats *any* ReasoningOnly response as complete
+        // (no resample), regardless of model name. This pins that behaviour:
+        // a response carrying reasoning items must report ReasoningOnly even
+        // for a model id NOT in the thinking-model allowlist, so the guard in
+        // request_task.rs (which checks empty_reason() == ReasoningOnly)
+        // covers it without needing the allowlist.
+        let response = ConversationResponse {
+            items: vec![
+                ConversationItem::Reasoning(synthesized_reasoning_item(
+                    "thinking about the plan",
+                )),
+                ConversationItem::Assistant(AssistantItem {
+                    content: String::new().into(),
+                    tool_calls: Vec::new(),
+                    model_id: Some("some-unknown-vendor/glm-5.2-fp8".to_string()),
+                    model_fingerprint: None,
+                    reasoning_effort: None,
+                }),
+            ],
+            stop_reason: Some(StopReason::Stop),
+            usage: None,
+            cost_usd_ticks: None,
+            message_chunks_emitted: 0,
+            doom_loop_signals: Vec::new(),
+            stop_message: None,
+            message_id: None,
+            raw_stop_reason: None,
+            stop_sequence: None,
+        };
+        assert_eq!(
+            response.empty_reason(),
+            Some(crate::error::EmptyReason::ReasoningOnly)
+        );
+        // And the allowlist does NOT need to know about this model:
+        assert!(!known_thinking_model_id("some-unknown-vendor/glm-5.2-fp8"));
+    }
+
+    #[test]
     fn stop_reason_as_str_matches_serde() {
         assert_eq!(StopReason::Stop.as_str(), "stop");
         assert_eq!(StopReason::Length.as_str(), "length");
