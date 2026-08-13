@@ -5065,9 +5065,7 @@ mod tests {
         // covers it without needing the allowlist.
         let response = ConversationResponse {
             items: vec![
-                ConversationItem::Reasoning(synthesized_reasoning_item(
-                    "thinking about the plan",
-                )),
+                ConversationItem::Reasoning(synthesized_reasoning_item("thinking about the plan")),
                 ConversationItem::Assistant(AssistantItem {
                     content: String::new().into(),
                     tool_calls: Vec::new(),
