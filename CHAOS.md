@@ -11,6 +11,29 @@ Chaos 是终端 AI 编码助手。模型、接口地址和密钥均由用户自�
 > 如果不希望 Chaos 接触这些凭据，删除 `~/.grok/auth.json`，或把 `$CHAOS_HOME`
 > 指向一个不含该文件的目录。
 
+## 遥测默认关
+
+Chaos **默认不发送任何遥测**。产品遥测（mixpanel / events）、GCS trace
+上传、外部 OTEL 三条链路**全部默认关闭**，且互相独立。
+
+完整策略（优先级解析、字段清单、怎么永久关）见
+[`docs/telemetry-policy.md`](docs/telemetry-policy.md)。
+快速关法（任选其一）：
+
+```toml
+# ~/.chaos/config.toml 或项目 .chaos/config.toml
+[features]
+telemetry = false
+
+[telemetry]
+trace_upload = false
+```
+
+```sh
+export GROK_TELEMETRY_ENABLED=false
+export GROK_TELEMETRY_TRACE_UPLOAD=false
+```
+
 ## 安装与启动
 
 **推荐：GitHub Release 预编译二进制**（不依赖 Node / npm）。完整说明与 Windows
