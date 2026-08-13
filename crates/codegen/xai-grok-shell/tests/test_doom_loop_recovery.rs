@@ -20,7 +20,7 @@ use xai_grok_shell::sampling::{
 };
 use xai_grok_test_support::sse::{
     responses_api_doom_loop_check_events, responses_api_doom_loop_terminal_only_events,
-    responses_api_reasoning_and_text_events, responses_api_reasoning_only_events,
+    responses_api_reasoning_and_text_events, responses_api_script_exact,
     responses_api_with_doom_loop_frame,
 };
 use xai_grok_test_support::{MockInferenceServer, MockModelEntry, ScriptedResponse};
@@ -471,11 +471,16 @@ async fn mid_stream_signal_aborts_and_resamples() {
 
 /// The doom-loop budget and the existing empty-response retry class coexist,
 /// one debit each: turn 1 is doomed but NON-empty (confident trigger plus a
-/// visible answer), so only the doom class can advance past it; turn 2 is
-/// reasoning-only without a trigger, so only the empty class fires; turn 3
-/// is the clean accept.
+/// visible answer), so only the doom class can advance past it; turn 2 has
+/// no visible content and no reasoning (so only the empty class fires);
+/// turn 3 is the clean accept.
+///
+/// Note: reasoning-only responses (thinking models emitting thoughts but no
+/// prose) are treated as *complete*, not empty — resampling them would
+/// retry-storm the same response. This test uses a truly content-less
+/// response (`NoVisibleContent`) to exercise the empty-retry path.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn doomed_then_reasoning_only_empty_coexist() {
+async fn doomed_then_empty_content_coexist() {
     let server = MockInferenceServer::start().await.unwrap();
     server.enqueue_response(
         "/v1/responses",
@@ -488,10 +493,7 @@ async fn doomed_then_reasoning_only_empty_coexist() {
     );
     server.enqueue_response(
         "/v1/responses",
-        ScriptedResponse::sse(responses_api_reasoning_only_events(
-            "empty but not doomed",
-            MODEL,
-        )),
+        ScriptedResponse::sse(responses_api_script_exact("", MODEL)),
     );
     server.enqueue_response(
         "/v1/responses",
