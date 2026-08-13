@@ -2927,7 +2927,8 @@ mod exit_plan_tail_predicate_tests {
         assert!(!is_file_backed_exit_plan_kind(Some(ToolKind::Edit)));
         assert!(!is_file_backed_exit_plan_kind(None));
         assert!(is_file_backed_exit_plan_input(&ToolInput::ExitPlanMode(
-            xai_grok_tools::implementations::grok_build::exit_plan_mode::ExitPlanModeInput {}
+            xai_grok_tools::implementations::grok_build::exit_plan_mode::ExitPlanModeInput::default(
+            )
         )));
     }
     fn mixed(calls: Vec<crate::sampling::types::ToolCallResponse>) -> bool {

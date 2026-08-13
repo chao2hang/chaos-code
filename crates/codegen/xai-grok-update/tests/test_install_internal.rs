@@ -64,7 +64,7 @@ async fn mount_gcs(version: &str, platform: &str) -> MockServer {
 
     // Main grok binary download.
     Mock::given(method("GET"))
-        .and(path(format!("/grok-{version}-{platform}")))
+        .and(path(format!("/chaos-{version}-{platform}")))
         .respond_with(ResponseTemplate::new(200).set_body_bytes(b"#!/bin/sh\nexit 0\n".to_vec()))
         .mount(&server)
         .await;
@@ -78,6 +78,7 @@ async fn mount_gcs(version: &str, platform: &str) -> MockServer {
 
 #[tokio::test]
 #[serial]
+
 async fn install_internal_pinned_version_writes_binary_and_symlink() {
     let _ = test_home();
     reset_home();
@@ -92,29 +93,30 @@ async fn install_internal_pinned_version_writes_binary_and_symlink() {
     let home = test_home();
     let downloaded = home
         .join("downloads")
-        .join(format!("grok-0.1.181-{platform}"));
+        .join(format!("chaos-0.1.181-{platform}"));
     assert!(downloaded.exists(), "binary downloaded: {downloaded:?}");
     assert_eq!(std::fs::read(&downloaded).unwrap(), b"#!/bin/sh\nexit 0\n");
 
-    let symlink = home.join("bin").join("grok");
-    assert!(symlink.is_symlink(), "grok symlink created");
+    let symlink = home.join("bin").join("chaos");
+    assert!(symlink.is_symlink(), "chaos symlink created");
     let target = std::fs::read_link(&symlink).unwrap();
     assert_eq!(
         target.file_name().unwrap(),
-        format!("grok-0.1.181-{platform}").as_str()
+        format!("chaos-0.1.181-{platform}").as_str()
     );
 
-    // `grok` and `agent` move together — see `swap_managed_bin_links`.
+    // `chaos` and `agent` move together — see `swap_managed_bin_links`.
     let agent_link = home.join("bin").join("agent");
     assert!(agent_link.is_symlink(), "agent symlink created");
     let agent_target = std::fs::read_link(&agent_link).unwrap();
-    assert_eq!(agent_target, target, "agent and grok point at same target");
+    assert_eq!(agent_target, target, "agent and chaos point at same target");
 }
 
 /// Regression: pre-existing `agent` symlink from a prior install must be
 /// swapped to the new version, not left stale (the original bug).
 #[tokio::test]
 #[serial]
+
 async fn install_internal_updates_stale_agent_symlink_to_new_version() {
     let _ = test_home();
     reset_home();
@@ -128,11 +130,11 @@ async fn install_internal_updates_stale_agent_symlink_to_new_version() {
     let download_dir = home.join("downloads");
     std::fs::create_dir_all(&bin_dir).unwrap();
     std::fs::create_dir_all(&download_dir).unwrap();
-    let old_binary = download_dir.join(format!("grok-0.1.180-{platform}"));
+    let old_binary = download_dir.join(format!("chaos-0.1.180-{platform}"));
     std::fs::write(&old_binary, b"#!/bin/sh\nexit 0\n").unwrap();
     let rel_old = std::path::Path::new("..")
         .join("downloads")
-        .join(format!("grok-0.1.180-{platform}"));
+        .join(format!("chaos-0.1.180-{platform}"));
     std::os::unix::fs::symlink(&rel_old, bin_dir.join("grok")).unwrap();
     std::os::unix::fs::symlink(&rel_old, bin_dir.join("agent")).unwrap();
 
@@ -144,7 +146,7 @@ async fn install_internal_updates_stale_agent_symlink_to_new_version() {
     let agent_target = std::fs::read_link(&agent_link).unwrap();
     assert_eq!(
         agent_target.file_name().unwrap(),
-        format!("grok-0.1.181-{platform}").as_str(),
+        format!("chaos-0.1.181-{platform}").as_str(),
         "agent symlink must swap to the new version, not stay on old"
     );
 }
@@ -165,11 +167,11 @@ async fn install_internal_rolls_back_grok_when_agent_swap_fails() {
     let download_dir = home.join("downloads");
     std::fs::create_dir_all(&bin_dir).unwrap();
     std::fs::create_dir_all(&download_dir).unwrap();
-    let old_binary = download_dir.join(format!("grok-0.1.180-{platform}"));
+    let old_binary = download_dir.join(format!("chaos-0.1.180-{platform}"));
     std::fs::write(&old_binary, b"#!/bin/sh\nexit 0\n").unwrap();
     let rel_old = std::path::Path::new("..")
         .join("downloads")
-        .join(format!("grok-0.1.180-{platform}"));
+        .join(format!("chaos-0.1.180-{platform}"));
     std::os::unix::fs::symlink(&rel_old, bin_dir.join("grok")).unwrap();
 
     // Sabotage the agent swap: non-empty directory → rename fails with EISDIR.
@@ -186,7 +188,7 @@ async fn install_internal_rolls_back_grok_when_agent_swap_fails() {
     let grok_target = std::fs::read_link(bin_dir.join("grok")).unwrap();
     assert_eq!(
         grok_target.file_name().unwrap(),
-        format!("grok-0.1.180-{platform}").as_str(),
+        format!("chaos-0.1.180-{platform}").as_str(),
         "grok must be rolled back when agent swap fails"
     );
 }
@@ -230,6 +232,7 @@ async fn install_internal_rollback_removes_absent_prior_grok_link() {
 
 #[tokio::test]
 #[serial]
+
 async fn install_internal_chmods_binary_executable() {
     use std::os::unix::fs::PermissionsExt;
     let _ = test_home();
@@ -245,13 +248,14 @@ async fn install_internal_chmods_binary_executable() {
     let home = test_home();
     let binary = home
         .join("downloads")
-        .join(format!("grok-0.1.181-{platform}"));
+        .join(format!("chaos-0.1.181-{platform}"));
     let mode = std::fs::metadata(&binary).unwrap().permissions().mode();
     assert!(mode & 0o111 != 0, "binary must be executable, got {mode:o}");
 }
 
 #[tokio::test]
 #[serial]
+
 async fn install_internal_cleans_up_stale_pager_symlink() {
     // Old installations shipped a separate grok-pager binary. Verify the
     // update removes the stale symlink from ~/.grok/bin/.
@@ -283,6 +287,7 @@ async fn install_internal_cleans_up_stale_pager_symlink() {
 
 #[tokio::test]
 #[serial]
+
 async fn install_internal_persists_installer_config() {
     let _ = test_home();
     reset_home();
@@ -304,6 +309,7 @@ async fn install_internal_persists_installer_config() {
 
 #[tokio::test]
 #[serial]
+
 async fn install_internal_resolves_version_via_channel_pointer_when_no_target() {
     let _ = test_home();
     reset_home();
@@ -319,7 +325,7 @@ async fn install_internal_resolves_version_via_channel_pointer_when_no_target() 
     let home = test_home();
     assert!(
         home.join("downloads")
-            .join(format!("grok-0.1.181-{platform}"))
+            .join(format!("chaos-0.1.181-{platform}"))
             .exists(),
         "binary at version from /stable pointer"
     );
@@ -327,6 +333,7 @@ async fn install_internal_resolves_version_via_channel_pointer_when_no_target() 
 
 #[tokio::test]
 #[serial]
+
 async fn install_internal_alpha_channel_resolves_max_of_alpha_and_stable() {
     let _ = test_home();
     reset_home();
@@ -345,7 +352,7 @@ async fn install_internal_alpha_channel_resolves_max_of_alpha_and_stable() {
         .mount(&server)
         .await;
     Mock::given(method("GET"))
-        .and(path(format!("/grok-0.1.181-{platform}")))
+        .and(path(format!("/chaos-0.1.181-{platform}")))
         .respond_with(ResponseTemplate::new(200).set_body_bytes(b"#!/bin/sh\nexit 0\n".to_vec()))
         .mount(&server)
         .await;
@@ -358,7 +365,7 @@ async fn install_internal_alpha_channel_resolves_max_of_alpha_and_stable() {
     let home = test_home();
     assert!(
         home.join("downloads")
-            .join(format!("grok-0.1.181-{platform}"))
+            .join(format!("chaos-0.1.181-{platform}"))
             .exists()
     );
 }
@@ -416,6 +423,7 @@ async fn install_internal_rejects_invalid_pinned_version() {
 
 #[tokio::test]
 #[serial]
+
 async fn install_internal_cleans_up_old_versions_keeping_n_minus_one() {
     let _ = test_home();
     reset_home();
@@ -438,20 +446,20 @@ async fn install_internal_cleans_up_old_versions_keeping_n_minus_one() {
     let home = test_home();
     let downloads = home.join("downloads");
     assert!(
-        downloads.join(format!("grok-0.1.181-{platform}")).exists(),
+        downloads.join(format!("chaos-0.1.181-{platform}")).exists(),
         "current"
     );
     assert!(
-        downloads.join(format!("grok-0.1.180-{platform}")).exists(),
+        downloads.join(format!("chaos-0.1.180-{platform}")).exists(),
         "N-1 retained"
     );
     assert!(
-        !downloads.join(format!("grok-0.1.179-{platform}")).exists(),
+        !downloads.join(format!("chaos-0.1.179-{platform}")).exists(),
         "oldest deleted"
     );
 
     // Symlink updated to latest.
-    let target = std::fs::read_link(home.join("bin").join("grok")).unwrap();
+    let target = std::fs::read_link(home.join("bin").join("chaos")).unwrap();
     assert!(
         target
             .file_name()
@@ -464,6 +472,7 @@ async fn install_internal_cleans_up_old_versions_keeping_n_minus_one() {
 
 #[tokio::test]
 #[serial]
+
 async fn install_internal_idempotent_for_same_version() {
     // Re-installing the same version should not error and should leave the
     // binary at the same path with the same content.
@@ -479,7 +488,7 @@ async fn install_internal_idempotent_for_same_version() {
     let first = std::fs::read(
         test_home()
             .join("downloads")
-            .join(format!("grok-0.1.181-{platform}")),
+            .join(format!("chaos-0.1.181-{platform}")),
     )
     .unwrap();
 
@@ -489,17 +498,18 @@ async fn install_internal_idempotent_for_same_version() {
     let second = std::fs::read(
         test_home()
             .join("downloads")
-            .join(format!("grok-0.1.181-{platform}")),
+            .join(format!("chaos-0.1.181-{platform}")),
     )
     .unwrap();
 
     assert_eq!(first, second);
-    let target = std::fs::read_link(test_home().join("bin").join("grok")).unwrap();
+    let target = std::fs::read_link(test_home().join("bin").join("chaos")).unwrap();
     assert!(target.to_string_lossy().contains("0.1.181"));
 }
 
 #[tokio::test]
 #[serial]
+
 async fn install_internal_creates_grok_home_subdirs_if_missing() {
     let _ = test_home();
     reset_home();
@@ -526,6 +536,7 @@ async fn install_internal_creates_grok_home_subdirs_if_missing() {
 
 #[tokio::test]
 #[serial]
+
 async fn install_internal_from_bases_falls_back_to_secondary_when_primary_fails() {
     // Primary server returns 500 on every endpoint (CDN outage simulation);
     // fallback server serves the install successfully. Result: install
@@ -554,7 +565,7 @@ async fn install_internal_from_bases_falls_back_to_secondary_when_primary_fails(
     assert!(
         test_home()
             .join("downloads")
-            .join(format!("grok-0.1.181-{platform}"))
+            .join(format!("chaos-0.1.181-{platform}"))
             .exists(),
         "fallback should produce a downloaded binary"
     );
@@ -610,6 +621,7 @@ async fn install_internal_from_bases_does_not_fallback_on_smoke_failure() {
 
 #[tokio::test]
 #[serial]
+
 async fn install_internal_from_bases_uses_primary_when_it_works() {
     // Both bases work; the install must use the primary (first one) and
     // never touch the fallback. Verified by tearing down the fallback
@@ -633,7 +645,7 @@ async fn install_internal_from_bases_uses_primary_when_it_works() {
     assert!(
         test_home()
             .join("downloads")
-            .join(format!("grok-0.1.181-{platform}"))
+            .join(format!("chaos-0.1.181-{platform}"))
             .exists()
     );
 }
@@ -675,6 +687,7 @@ async fn install_internal_from_bases_propagates_last_error_when_all_fail() {
 /// never be contacted for a pointless re-download.
 #[tokio::test]
 #[serial]
+
 async fn install_internal_from_bases_does_not_redownload_on_local_swap_failure() {
     let _ = test_home();
     reset_home();

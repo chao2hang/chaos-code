@@ -408,22 +408,28 @@ pub fn has_background_work(agent: &AgentView) -> bool {
         .any(|t| t.status == crate::app::agent::BgTaskStatus::Running)
         || !agent.session.scheduled_tasks.is_empty()
 }
-/// Compact `"… still running"` label summarising a turn-idle agent's live
-/// background work — e.g. `"1 monitor · 2 loops still running"` or
-/// `"1 task still running"`. `None` when there's no background work (the
-/// caller then falls back to a bare `"Working"`). Shares the format
-/// mechanics with the agent view's idle cue
-/// ([`crate::views::turn_status::format_still_running`]) but keeps the
-/// dashboard's own nouns ("task", not "command") and omits subagents —
+/// Compact `"… 仍在运行"` label summarising a turn-idle agent's live
+/// background work — e.g. `"1 个监控 · 2 个循环 仍在运行"` or
+/// `"1 个任务 仍在运行"`. `None` when there's no background work (the
+/// caller then falls back to a bare `"Working"`). Keeps the
+/// dashboard's own nouns ("任务", not "命令") and omits subagents —
 /// dashboard rows list those separately. Counts come from local state (not
 /// backend content), so no sanitise.
 fn background_work_label(agent: &AgentView) -> Option<String> {
     let w = agent.watchers();
-    crate::views::turn_status::format_still_running([
+    let parts: Vec<String> = [
         (w.monitors, "监控"),
         (w.loops, "循环"),
         (w.commands, "任务"),
-    ])
+    ]
+    .into_iter()
+    .filter(|(count, _)| *count > 0)
+    .map(|(count, noun)| format!("{count} 个{noun}"))
+    .collect();
+    if parts.is_empty() {
+        return None;
+    }
+    Some(format!("{} 仍在运行", parts.join(" \u{00b7} ")))
 }
 /// Classify a subagent.
 ///

@@ -51,7 +51,10 @@ const OPT_IN_LABEL: &str = "[Opt in]";
 /// Title + legal.
 const CHROME_ROWS: u16 = 2;
 
-pub(crate) const MIN_HEIGHT: u16 = CHROME_ROWS + 1;
+/// Minimum height to paint the banner: title row + legal row (no body).
+/// At exactly 2 rows the body is elided but the title and legal links
+/// still render, matching the original 2-row layout.
+pub(crate) const MIN_HEIGHT: u16 = CHROME_ROWS;
 
 /// Caps banner growth on narrow terminals; overflow is elided with `…` so
 /// the disclosure never looks complete when it isn't.

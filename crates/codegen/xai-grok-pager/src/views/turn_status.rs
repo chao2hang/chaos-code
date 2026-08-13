@@ -973,9 +973,9 @@ mod tests {
         use crate::acp::tracker::WaitingReason;
         let theme = Theme::current();
         let cases = [
-            (WaitingReason::Model, "Waiting for response…"),
-            (WaitingReason::Subagent, "Waiting on subagent…"),
-            (WaitingReason::task_output(), "Waiting on task output…"),
+            (WaitingReason::Model, "等待回复…"),
+            (WaitingReason::Subagent, "等待子代理…"),
+            (WaitingReason::task_output(), "等待任务输出…"),
             (
                 WaitingReason::TaskOutput {
                     task_ids: vec!["t1".into()],
@@ -984,8 +984,8 @@ mod tests {
                 },
                 "compile release…",
             ),
-            (WaitingReason::TasksComplete, "Waiting on tasks…"),
-            (WaitingReason::Sleep, "Sleeping…"),
+            (WaitingReason::TasksComplete, "等待任务完成…"),
+            (WaitingReason::Sleep, "休眠中…"),
         ];
         for (reason, expected) in cases {
             let (_, label, is_tool) = compute_activity(
@@ -1564,7 +1564,7 @@ mod tests {
         args.held_queue_top_sendable = true;
         let text = render_row_text(args, 80);
         assert!(
-            text.contains("Waiting on subagent… 5m59s · 1 queued — Enter to send now"),
+            text.contains("等 待 子 代 理 … 5m59s · 1 queued — Enter to send now"),
             "phase timer must sit between the wait label and the queued hint, got: {text:?}"
         );
     }

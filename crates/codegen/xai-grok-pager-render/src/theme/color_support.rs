@@ -64,6 +64,29 @@ impl std::fmt::Display for ColorLevel {
 
 static COLOR_LEVEL: OnceLock<ColorLevel> = OnceLock::new();
 
+/// Test-only override that forces [`detect`] to return [`ColorLevel::TrueColor`]
+/// regardless of `NO_COLOR` or TTY status.  This is needed because the CI test
+/// runner sets `NO_COLOR=1`, which quantizes every theme colour to `Color::Reset`,
+/// making colour-equality assertions in downstream tests meaningless (all
+/// colours compare equal).  Set to `true` from test setup helpers.
+#[cfg(feature = "test-support")]
+static TEST_FORCE_TRUECOLOR: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Force the detected colour level to [`ColorLevel::TrueColor`] for the
+/// remainder of the process.  Test-only — allows downstream tests to assert
+/// specific theme colours even when `NO_COLOR=1` is set in the environment.
+///
+/// **Process-level pinning.** Once set to `true`, every call to `detect()`
+/// in this process returns `TrueColor`.  There is no teardown because
+/// CI always sets `NO_COLOR=1`, so every test in the same binary benefits
+/// from truecolour mode.  If you need the real colour level in a specific
+/// test, call `detect_raw()` directly before this function is first called.
+#[cfg(feature = "test-support")]
+pub fn set_test_force_truecolor(on: bool) {
+    TEST_FORCE_TRUECOLOR.store(on, std::sync::atomic::Ordering::SeqCst);
+}
+
 /// Detect the terminal's color support and cache the result.
 ///
 /// Uses the `supports-color` crate which checks `COLORTERM`, `TERM`,
@@ -87,6 +110,12 @@ pub fn detect() -> ColorLevel {
 
 /// The raw cached detection, without the terminal-native lock cap.
 fn detect_raw() -> ColorLevel {
+    #[cfg(feature = "test-support")]
+    {
+        if TEST_FORCE_TRUECOLOR.load(std::sync::atomic::Ordering::SeqCst) {
+            return ColorLevel::TrueColor;
+        }
+    }
     *COLOR_LEVEL.get_or_init(|| {
         // Explicit opt-out via NO_COLOR takes priority.
         if std::env::var_os("NO_COLOR").is_some() {

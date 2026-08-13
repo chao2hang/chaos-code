@@ -47,6 +47,7 @@ impl AgentView {
     /// Unbind this view from its current session identity.
     pub(crate) fn unbind_session_id(&mut self) {
         if self.session.session_id.take().is_some() {
+            self.session_binding_epoch = self.session_binding_epoch.wrapping_add(1);
             self.clear_minimal_btw_lifecycle();
         }
     }
@@ -570,6 +571,7 @@ impl AgentView {
         self.unexpected_replay_drops = 0;
         self.late_replay_until = None;
         self.pending_stop_hooks = None;
+        self.pending_cancel_resend = None;
         self.clear_send_now_expectation();
         self.optimistic_queue_ids.clear();
         self.send_now_awaiting_confirm = None;

@@ -85,6 +85,6 @@ pub(crate) async fn wait_for_welcome(harness: &mut PtyHarness) -> Result<()> {
     // Menu label on the normal welcome (and gate menus): capital Q — see
     // `xai-grok-pager` `views/welcome/mod.rs` (`"Quit"` in `render_menu`).
     harness
-        .wait_for_text("Quit", Duration::from_secs(15))
+        .wait_for_text("退出", Duration::from_secs(15))
         .map_err(|e| anyhow::anyhow!("pager failed to reach welcome screen: {e}"))
 }

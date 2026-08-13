@@ -4483,9 +4483,17 @@ mod tests {
             "mixed file-toolset should be rejected: {errors:?}"
         );
     }
-    /// Empty-struct tool inputs produce schemas with explicit `properties: {}` and `required: []`
+    /// Plan-mode tool schemas must expose at least one (optional) property.
+    ///
+    /// Regression guard: some OpenAI-compatible streaming backends (observed:
+    /// vLLM 0.23 serving glm-5.2-fp8) silently drop a streamed tool call whose
+    /// arguments are empty — no `tool_calls` delta is ever emitted and the
+    /// response ends `finish_reason: "stop"`. A zero-property schema can only
+    /// ever be called with `{}`, so the call is guaranteed-lost there, which
+    /// used to wedge sessions inside plan mode with no model-driven exit. The
+    /// optional `note` field keeps `arguments` non-empty; do not remove it.
     #[tokio::test]
-    async fn empty_struct_schema_has_properties_and_required() {
+    async fn plan_mode_tool_schemas_are_never_property_less() {
         let tmp = TempDir::new().unwrap();
         let builder = ToolRegistryBuilder::new();
         let config = ToolServerConfig {
@@ -4506,15 +4514,23 @@ mod tests {
                 .find(|d| d.function.name == *tool_name)
                 .unwrap_or_else(|| panic!("{tool_name} definition not found"));
             let params = &def.function.parameters;
-            assert_eq!(
-                params.get("properties"),
-                Some(&serde_json::json!({})),
-                "{tool_name}: schema must have `properties: {{}}`",
+            let properties = params
+                .get("properties")
+                .and_then(|p| p.as_object())
+                .unwrap_or_else(|| panic!("{tool_name}: schema must have a properties object"));
+            assert!(
+                !properties.is_empty(),
+                "{tool_name}: schema must not be property-less — empty-argument \
+                 streamed tool calls are silently dropped by some backends"
+            );
+            assert!(
+                properties.contains_key("note"),
+                "{tool_name}: expected the optional `note` property"
             );
             assert_eq!(
                 params.get("required"),
                 Some(&serde_json::json!([])),
-                "{tool_name}: schema must have `required: []`",
+                "{tool_name}: `note` must stay optional (required: [])",
             );
         }
     }

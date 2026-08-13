@@ -1445,6 +1445,7 @@ mod tests {
             combined_texts: None,
         }];
         let before = agent.scrollback.len();
+        agent.front_message_committed = false;
         arm_send_now_and_paint(agent, "p-next", None);
         assert!(agent.expect_send_now_cancel.is_none());
         assert_eq!(agent.scrollback.len(), before);

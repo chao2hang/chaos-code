@@ -305,6 +305,7 @@ pub fn is_grok_process_strict(pid: u32) -> bool {
 mod tests {
     use super::*;
     #[test]
+    #[ignore = "fork: PROD_CLI_CHAT_PROXY_BASE_URL is empty in Chaos; grok.com proxy URLs are not recognized"]
     fn test_is_cli_chat_proxy_url_accepts_proxy_subpath() {
         assert!(is_cli_chat_proxy_url(
             "https://cli-chat-proxy.grok.com/v1/chat/completions"
@@ -331,7 +332,9 @@ mod tests {
         assert!(is_xai_api_url("https://api.x.ai/v1"));
         assert!(is_xai_api_url("https://api.x.ai/v1/chat/completions"));
         assert!(is_xai_api_url("https://x.ai"));
-        assert!(is_xai_api_url(
+        // fork: PROD_CLI_CHAT_PROXY_BASE_URL is empty in Chaos, so the
+        // cli-chat-proxy.grok.com host is not recognized as an xAI URL.
+        assert!(!is_xai_api_url(
             "https://cli-chat-proxy.grok.com/v1/chat/completions"
         ));
         assert!(!is_xai_api_url("https://api.openai.com/v1"));

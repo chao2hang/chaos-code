@@ -659,7 +659,7 @@ fn session_failed_keeps_agent_clears_loading_and_toasts() {
     assert!(agent.mcp_init_progress.is_none());
     assert_eq!(
         agent.toast.as_ref().map(|(m, _)| m.as_str()),
-        Some("Session creation failed: No space left on device"),
+        Some("会话创建失败：No space left on device"),
     );
 }
 #[test]
@@ -689,7 +689,7 @@ fn session_failed_orphan_returns_to_welcome_with_warning() {
     assert!(
         app.startup_warnings
             .iter()
-            .any(|w| { w.message == "Session creation failed: No space left on device" })
+            .any(|w| { w.message == "会话创建失败：No space left on device" })
     );
 }
 #[test]
@@ -714,7 +714,7 @@ fn session_failed_orphan_with_fallback_toasts() {
     assert!(matches!(app.active_view, ActiveView::Agent(id) if id == keep_id));
     assert_eq!(
         app.agents[&keep_id].toast.as_ref().map(|(m, _)| m.as_str()),
-        Some("Session creation failed: No space left on device"),
+        Some("会话创建失败：No space left on device"),
     );
 }
 #[test]
@@ -739,7 +739,7 @@ fn session_failed_orphan_does_not_steal_other_active_agent() {
     assert!(matches!(app.active_view, ActiveView::Agent(id) if id == keep_id));
     assert_eq!(
         app.agents[&keep_id].toast.as_ref().map(|(m, _)| m.as_str()),
-        Some("Session creation failed: No space left on device"),
+        Some("会话创建失败：No space left on device"),
     );
 }
 #[test]
@@ -766,7 +766,7 @@ fn session_failed_orphan_on_welcome_with_survivor_uses_startup_warning() {
     assert!(
         app.startup_warnings
             .iter()
-            .any(|w| w.message == "Session creation failed: No space left on device"),
+            .any(|w| w.message == "会话创建失败：No space left on device"),
         "Welcome + survivor must record a startup warning; got {:?}",
         app.startup_warnings
             .iter()

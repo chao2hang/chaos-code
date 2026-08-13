@@ -3155,7 +3155,10 @@ mod tests {
 
     #[test]
     fn build_entries_surfaces_interject_ctrl_i_fallback() {
-        let registry = ActionRegistry::defaults();
+        // Pin to the non-VS-Code family so the key is deterministic regardless
+        // of the terminal the test runner happens to be inside (or what
+        // `set_test_plain_terminal_context` has set the brand to).
+        let registry = ActionRegistry::non_vscode_for_test();
         let entries = build_entries(&all_contexts(), &registry, true);
         // Action label is compact "send now" wording (interject under the hood).
         assert_cheatsheet_row_has_key(&entries, "立即发送", "Ctrl+i");

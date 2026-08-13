@@ -3459,9 +3459,9 @@ mod tests {
 
     #[test]
     fn hero_box_inactive_on_short_terminal() {
-        // Full CHAOS logo is 13 rows → box = 2+2+13 = 17, plus flex(1)+fixed(5) = 23.
-        // 22 rows is one short, so it falls back to the stacked layout.
-        let area = Rect::new(0, 0, 110, 22);
+        // Full CHAOS logo is 10 rows → box = 2+2+10 = 14, plus flex(1)+fixed(5) = 20.
+        // 19 rows is one short, so it falls back to the stacked layout.
+        let area = Rect::new(0, 0, 110, 19);
         let layout = WelcomeLayout::compute(WelcomeLayoutInput {
             content_area: area,
             menu_height: 4,
@@ -3469,17 +3469,17 @@ mod tests {
         });
         assert!(
             !layout.has_hero_box(),
-            "hero box should be inactive at 110x22 (needs 23 rows)"
+            "hero box should be inactive at 110x19 (needs 20 rows)"
         );
     }
 
     #[test]
     fn hero_box_inactive_when_warning_would_overflow() {
-        // Regression: the box is forced to the full 13-row logo, so even a
-        // 3-item menu needs 17 box rows (2 border + 2 v_pad + 13). A startup
-        // warning (error_height = 2 + gap 1) pushes past height 23, so the
+        // Regression: the box is forced to the full 10-row logo, so even a
+        // 3-item menu needs 14 box rows (2 border + 2 v_pad + 10). A startup
+        // warning (error_height = 2 + gap 1) pushes past height 20, so the
         // gate must fall back to the stacked layout instead of overflowing.
-        let area = Rect::new(0, 0, 110, 23);
+        let area = Rect::new(0, 0, 110, 22);
         let with_warning = WelcomeLayout::compute(WelcomeLayoutInput {
             content_area: area,
             error_height: 2,
@@ -3530,12 +3530,12 @@ mod tests {
 
     #[test]
     fn hero_box_does_not_overflow_with_tall_menu() {
-        // A 6-item menu is still shorter than the 13-row logo, so the box stays
-        // at 17 rows. The centering pad (derived from the default-4 menu box)
+        // A 6-item menu is still shorter than the 10-row logo, so the box stays
+        // at 14 rows. The centering pad (derived from the default-4 menu box)
         // must be clamped at exactly min_content_height or the version row
-        // clips. 23 == min_content_height(0, 6, 0, 0): 17-row box + 1 flex + 5
+        // clips. 20 == min_content_height(0, 6, 0, 0): 14-row box + 1 flex + 5
         // fixed-below.
-        let area = Rect::new(0, 0, 120, 23);
+        let area = Rect::new(0, 0, 120, 20);
         let layout = WelcomeLayout::compute(WelcomeLayoutInput {
             content_area: area,
             menu_height: 6,
@@ -3561,9 +3561,9 @@ mod tests {
 
     #[test]
     fn hero_box_height_accounts_for_borders_and_padding() {
-        // Full CHAOS logo is 13 lines. With menu_height=3:
-        // right_col = 1 + 1 + 0 + 1 + 3 = 6, inner = max(13, 6) = 13.
-        // hero_box_height = 2 (borders) + 2 (v_pad) + 13 = 17.
+        // Full CHAOS logo is 10 lines. With menu_height=3:
+        // right_col = 1 + 1 + 0 + 1 + 3 = 6, inner = max(10, 6) = 10.
+        // hero_box_height = 2 (borders) + 2 (v_pad) + 10 = 14.
         let area = Rect::new(0, 0, 120, 50);
         let layout = WelcomeLayout::compute(WelcomeLayoutInput {
             content_area: area,
@@ -3571,7 +3571,7 @@ mod tests {
             ..Default::default()
         });
         assert!(layout.has_hero_box());
-        assert_eq!(layout.hero_box.height, 17);
+        assert_eq!(layout.hero_box.height, 14);
     }
 
     #[test]

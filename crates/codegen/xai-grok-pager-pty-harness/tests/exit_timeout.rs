@@ -77,7 +77,7 @@ async fn spawn_pager_with_teardown_hold() -> Result<(PtyHarness, tempfile::TempD
         Some(project.path()),
     )?;
 
-    pager.wait_for_text("Quit", Duration::from_secs(20))?;
+    pager.wait_for_text("退出", Duration::from_secs(20))?;
     pager.inject_keys(CANARY.as_bytes())?;
     pager.inject_keys(keys::ENTER)?;
     pager.wait_for_text(ACK, Duration::from_secs(30))?;

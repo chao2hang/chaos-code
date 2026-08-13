@@ -52,7 +52,7 @@ async fn scroll_up_from_follow_bottom_then_back_down() -> Result<()> {
         .context("spawn pager in PTY")?;
 
     harness
-        .wait_for_text("Quit", Duration::from_secs(20))
+        .wait_for_text("退出", Duration::from_secs(20))
         .context("welcome")?;
 
     harness.inject_keys(b"scroll test\r")?;

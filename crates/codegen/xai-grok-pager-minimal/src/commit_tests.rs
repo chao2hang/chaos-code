@@ -1126,7 +1126,7 @@ fn collapsed_thinking_commit_is_one_advertised_row() {
         let row: String = (0..width)
             .filter_map(|x| buf.cell((x, 0)).map(|c| c.symbol().to_string()))
             .collect();
-        assert!(row.contains("Thought"), "@{width}: {row:?}");
+        assert!(row.contains("思 考"), "@{width}: {row:?}");
         assert!(
             row.contains("ctrl+e to expand"),
             "@{width}: the only way into a print-once folded block must be \

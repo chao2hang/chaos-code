@@ -19,7 +19,7 @@ use serial_test::serial;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-use common::{FakeBinGuard, reset_home, set_test_version, test_home};
+use common::{FakeBinGuard, GhApiMockGuard, reset_home, set_test_version, test_home};
 use xai_grok_update::UpdateConfig;
 use xai_grok_update::auto_update::{
     auto_update_target, check_update_status, ensure_latest_on_disk, install_internal_from_base,
@@ -78,7 +78,7 @@ async fn mount_gcs_with_channels(
     }
 
     Mock::given(method("GET"))
-        .and(path(format!("/grok-{binary_version}-{platform}")))
+        .and(path(format!("/chaos-{binary_version}-{platform}")))
         .respond_with(ResponseTemplate::new(200).set_body_bytes(b"#!/bin/sh\nexit 0\n".to_vec()))
         .mount(&server)
         .await;
@@ -96,6 +96,7 @@ async fn mount_gcs_with_channels(
 
 #[tokio::test]
 #[serial]
+
 async fn internal_install_stable_rollback_0_2_7_to_0_2_5() {
     // User was on 0.2.7, stable pointer rolled back to 0.2.5.
     let _ = test_home();
@@ -111,10 +112,10 @@ async fn internal_install_stable_rollback_0_2_7_to_0_2_5() {
     let home = test_home();
     let downloaded = home
         .join("downloads")
-        .join(format!("grok-0.2.5-{platform}"));
+        .join(format!("chaos-0.2.5-{platform}"));
     assert!(downloaded.exists(), "rolled-back binary must be downloaded");
 
-    let symlink = home.join("bin").join("grok");
+    let symlink = home.join("bin").join("chaos");
     let target = std::fs::read_link(&symlink).unwrap();
     assert!(
         target.to_string_lossy().contains("0.2.5"),
@@ -124,6 +125,7 @@ async fn internal_install_stable_rollback_0_2_7_to_0_2_5() {
 
 #[tokio::test]
 #[serial]
+
 async fn internal_install_stable_upgrade_0_2_5_to_0_2_7() {
     // Normal upgrade path: user on 0.2.5, pointer at 0.2.7.
     let _ = test_home();
@@ -136,13 +138,14 @@ async fn internal_install_stable_upgrade_0_2_5_to_0_2_7() {
         .await
         .unwrap();
 
-    let symlink = test_home().join("bin").join("grok");
+    let symlink = test_home().join("bin").join("chaos");
     let target = std::fs::read_link(&symlink).unwrap();
     assert!(target.to_string_lossy().contains("0.2.7"));
 }
 
 #[tokio::test]
 #[serial]
+
 async fn internal_install_rollback_then_upgrade_sequence() {
     // Simulates: install 0.2.7 → rollback to 0.2.5 → fix ships as 0.2.8.
     // All three installs must succeed sequentially.
@@ -163,7 +166,7 @@ async fn internal_install_rollback_then_upgrade_sequence() {
             .unwrap();
     }
 
-    let target = std::fs::read_link(test_home().join("bin").join("grok")).unwrap();
+    let target = std::fs::read_link(test_home().join("bin").join("chaos")).unwrap();
     assert!(
         target.to_string_lossy().contains("0.2.8"),
         "final symlink must point to 0.2.8: {target:?}"
@@ -172,21 +175,22 @@ async fn internal_install_rollback_then_upgrade_sequence() {
     // Cleanup retains current + highest-semver non-current (N-1 by version, not install order).
     let downloads = test_home().join("downloads");
     assert!(
-        downloads.join(format!("grok-0.2.8-{platform}")).exists(),
+        downloads.join(format!("chaos-0.2.8-{platform}")).exists(),
         "current"
     );
     assert!(
-        downloads.join(format!("grok-0.2.7-{platform}")).exists(),
+        downloads.join(format!("chaos-0.2.7-{platform}")).exists(),
         "N-1 by semver"
     );
     assert!(
-        !downloads.join(format!("grok-0.2.5-{platform}")).exists(),
+        !downloads.join(format!("chaos-0.2.5-{platform}")).exists(),
         "lowest cleaned up"
     );
 }
 
 #[tokio::test]
 #[serial]
+
 async fn internal_install_alpha_rollback_pointer_resolves_correctly() {
     // Alpha user on 0.2.8-alpha.3. Alpha pointer rolled back to 0.2.8-alpha.1,
     // stable pointer is 0.2.7. Alpha channel returns max(alpha, stable) = 0.2.8-alpha.1.
@@ -208,7 +212,7 @@ async fn internal_install_alpha_rollback_pointer_resolves_correctly() {
     // The resolved version is max(0.2.7, 0.2.8-alpha.1) = 0.2.8-alpha.1.
     // Note: semver considers 0.2.8-alpha.1 < 0.2.8 but > 0.2.7.
     Mock::given(method("GET"))
-        .and(path(format!("/grok-0.2.8-alpha.1-{platform}")))
+        .and(path(format!("/chaos-0.2.8-alpha.1-{platform}")))
         .respond_with(ResponseTemplate::new(200).set_body_bytes(b"#!/bin/sh\nexit 0\n".to_vec()))
         .mount(&server)
         .await;
@@ -220,7 +224,7 @@ async fn internal_install_alpha_rollback_pointer_resolves_correctly() {
 
     let downloaded = test_home()
         .join("downloads")
-        .join(format!("grok-0.2.8-alpha.1-{platform}"));
+        .join(format!("chaos-0.2.8-alpha.1-{platform}"));
     assert!(
         downloaded.exists(),
         "alpha rollback target must be installed"
@@ -229,6 +233,7 @@ async fn internal_install_alpha_rollback_pointer_resolves_correctly() {
 
 #[tokio::test]
 #[serial]
+
 async fn internal_install_alpha_user_gets_newer_stable_after_stable_passes_alpha() {
     // Alpha user on 0.2.6-alpha.2. Stable ships 0.2.7 (higher than alpha).
     // Alpha channel returns max(alpha=0.2.6-alpha.2, stable=0.2.7) = 0.2.7.
@@ -248,7 +253,7 @@ async fn internal_install_alpha_user_gets_newer_stable_after_stable_passes_alpha
         .mount(&server)
         .await;
     Mock::given(method("GET"))
-        .and(path(format!("/grok-0.2.7-{platform}")))
+        .and(path(format!("/chaos-0.2.7-{platform}")))
         .respond_with(ResponseTemplate::new(200).set_body_bytes(b"#!/bin/sh\nexit 0\n".to_vec()))
         .mount(&server)
         .await;
@@ -261,7 +266,7 @@ async fn internal_install_alpha_user_gets_newer_stable_after_stable_passes_alpha
     assert!(
         test_home()
             .join("downloads")
-            .join(format!("grok-0.2.7-{platform}"))
+            .join(format!("chaos-0.2.7-{platform}"))
             .exists(),
         "alpha user should get the newer stable"
     );
@@ -285,13 +290,18 @@ fn setup_npm(current_version: &str) -> FakeBinGuard {
     FakeBinGuard::install_npm()
 }
 
-fn setup_gh(current_version: &str) -> FakeBinGuard {
+/// Set up a wiremock-based gh-release environment: isolated home, current version,
+/// `GROK_INSTALLER=gh-release`. The returned guard pins both the
+/// API and download bases to the wiremock server.
+async fn setup_gh_api(current_version: &str, stable_tag: &str) -> GhApiMockGuard {
     let _ = test_home();
     reset_home();
     set_test_version(current_version);
     // SAFETY: serial_test ensures no race; reset_home clears this between tests.
     unsafe { std::env::set_var("GROK_INSTALLER", "gh-release") };
-    FakeBinGuard::install_gh()
+    let g = GhApiMockGuard::start().await.with_download_base();
+    g.stub_latest(stable_tag, false, false).await;
+    g
 }
 
 // ── npm: never downgrades ──
@@ -349,8 +359,7 @@ async fn npm_drastically_old_registry_does_not_report_update() {
 #[tokio::test]
 #[serial]
 async fn gh_release_upgrade_reports_update() {
-    let g = setup_gh("0.2.5");
-    g.set_stable_only_stdout("v0.2.7\n");
+    let _g = setup_gh_api("0.2.5", "v0.2.7").await;
 
     let status = check_update_status(&make_config("stable")).await;
     assert!(status.update_available);
@@ -362,8 +371,7 @@ async fn gh_release_upgrade_reports_update() {
 async fn gh_release_rollback_not_advertised_by_check() {
     // `update --check` advertises upgrades only; a rollback still converges via
     // the auto-install path (covered by the internal_install_* tests), not here.
-    let g = setup_gh("0.2.7");
-    g.set_stable_only_stdout("v0.2.5\n");
+    let _g = setup_gh_api("0.2.7", "v0.2.5").await;
 
     let status = check_update_status(&make_config("stable")).await;
     assert!(
@@ -377,8 +385,7 @@ async fn gh_release_rollback_not_advertised_by_check() {
 #[tokio::test]
 #[serial]
 async fn gh_release_same_version_no_update() {
-    let g = setup_gh("0.2.7");
-    g.set_stable_only_stdout("v0.2.7\n");
+    let _g = setup_gh_api("0.2.7", "v0.2.7").await;
 
     let status = check_update_status(&make_config("stable")).await;
     assert!(!status.update_available);
@@ -396,8 +403,7 @@ async fn gh_release_same_version_no_update() {
 #[tokio::test]
 #[serial]
 async fn auto_update_target_gh_release_rollback_returns_older() {
-    let g = setup_gh("0.2.26");
-    g.set_stable_only_stdout("v0.2.22\n");
+    let _g = setup_gh_api("0.2.26", "v0.2.22").await;
 
     assert_eq!(
         auto_update_target(&make_config("stable")).await,
@@ -409,8 +415,7 @@ async fn auto_update_target_gh_release_rollback_returns_older() {
 #[tokio::test]
 #[serial]
 async fn auto_update_target_gh_release_upgrade_returns_newer() {
-    let g = setup_gh("0.2.5");
-    g.set_stable_only_stdout("v0.2.7\n");
+    let _g = setup_gh_api("0.2.5", "v0.2.7").await;
 
     assert_eq!(
         auto_update_target(&make_config("stable")).await,
@@ -421,8 +426,7 @@ async fn auto_update_target_gh_release_upgrade_returns_newer() {
 #[tokio::test]
 #[serial]
 async fn auto_update_target_gh_release_same_version_returns_none() {
-    let g = setup_gh("0.2.7");
-    g.set_stable_only_stdout("v0.2.7\n");
+    let _g = setup_gh_api("0.2.7", "v0.2.7").await;
 
     assert_eq!(auto_update_target(&make_config("stable")).await, None);
 }
@@ -452,7 +456,7 @@ async fn auto_update_target_npm_rollback_returns_none() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Lay down a managed-install layout in the test GROK_HOME:
-/// `bin/grok -> ../downloads/grok-<version>-<platform>` (what
+/// `bin/chaos -> ../downloads/chaos-<version>-<platform>` (what
 /// `install_internal_from_base` produces).
 fn fake_managed_install(version: &str) {
     let home = test_home();
@@ -460,11 +464,11 @@ fn fake_managed_install(version: &str) {
     let bin = home.join("bin");
     std::fs::create_dir_all(&downloads).unwrap();
     std::fs::create_dir_all(&bin).unwrap();
-    let name = format!("grok-{version}-{}", host_platform());
+    let name = format!("chaos-{version}-{}", host_platform());
     std::fs::write(downloads.join(&name), b"#!/bin/sh\nexit 0\n").unwrap();
     std::os::unix::fs::symlink(
         std::path::Path::new("../downloads").join(&name),
-        bin.join("grok"),
+        bin.join("chaos"),
     )
     .unwrap();
 }
@@ -485,25 +489,23 @@ async fn installed_on_disk_version_reads_symlink_target() {
 async fn ensure_latest_skips_download_when_disk_current_but_still_relaunches() {
     // Running 0.2.5, pointer 0.2.7, disk already at 0.2.7 (another process
     // downloaded it): no download, but the stale running process must relaunch.
-    let g = setup_gh("0.2.5");
-    g.set_stable_only_stdout("v0.2.7\n");
+    let g = setup_gh_api("0.2.5", "v0.2.7").await;
     fake_managed_install("0.2.7");
 
     let outcome = ensure_latest_on_disk(&make_config("stable")).await.unwrap();
     assert_eq!(outcome.installed, None, "must not re-download");
     assert!(outcome.relaunch_needed, "running 0.2.5 < disk 0.2.7");
-    assert!(
-        !g.args_log().iter().any(|l| l.contains("release download")),
-        "no gh download invocation expected, got: {:?}",
-        g.args_log()
+    assert_eq!(
+        g.server.received_requests().await.unwrap().len(),
+        1,
+        "only the /releases/latest probe is expected; no asset download"
     );
 }
 
 #[tokio::test]
 #[serial]
 async fn ensure_latest_noop_when_running_and_disk_current() {
-    let g = setup_gh("0.2.7");
-    g.set_stable_only_stdout("v0.2.7\n");
+    let _g = setup_gh_api("0.2.7", "v0.2.7").await;
     fake_managed_install("0.2.7");
 
     let outcome = ensure_latest_on_disk(&make_config("stable")).await.unwrap();
@@ -517,8 +519,7 @@ async fn ensure_latest_relaunches_onto_rolled_back_disk() {
     // Pointer rolled back to 0.2.22 and the disk already converged; a running
     // 0.2.26 leader must relaunch onto the older binary (gh-release is an
     // authoritative installer → downgrades allowed).
-    let g = setup_gh("0.2.26");
-    g.set_stable_only_stdout("v0.2.22\n");
+    let _g = setup_gh_api("0.2.26", "v0.2.22").await;
     fake_managed_install("0.2.22");
 
     let outcome = ensure_latest_on_disk(&make_config("stable")).await.unwrap();
@@ -554,8 +555,7 @@ async fn npm_user_upgraded_then_stable_rolled_back_stays_on_newer() {
 async fn gh_release_user_ahead_of_pointer_check_reports_no_update() {
     // User manually installed 0.2.26 (ahead of the stable pointer 0.2.22);
     // `update --check` must not present the older pointer as a new version.
-    let g = setup_gh("0.2.26");
-    g.set_stable_only_stdout("v0.2.22\n");
+    let _g = setup_gh_api("0.2.26", "v0.2.22").await;
 
     let status = check_update_status(&make_config("stable")).await;
     assert!(
@@ -588,6 +588,7 @@ async fn npm_alpha_user_upgrade_after_stable_surpasses_alpha() {
 
 #[tokio::test]
 #[serial]
+
 async fn internal_install_double_rollback() {
     // Ship 0.2.7 → rollback to 0.2.5 → rollback further to 0.2.3.
     // The installer must handle multiple sequential downgrades.
@@ -602,7 +603,7 @@ async fn internal_install_double_rollback() {
             .await
             .unwrap();
 
-        let target = std::fs::read_link(test_home().join("bin").join("grok")).unwrap();
+        let target = std::fs::read_link(test_home().join("bin").join("chaos")).unwrap();
         assert!(
             target.to_string_lossy().contains(version),
             "symlink must point to {version} after install: {target:?}"

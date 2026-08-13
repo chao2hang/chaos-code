@@ -488,7 +488,7 @@ async fn run_workspace_mgmt(args: WorkspaceMgmtArgs) -> Result<()> {
     ) && let Some(profile) = xai_grok_sandbox::requested_confinement_profile()
     {
         anyhow::bail!(
-            "`grok workspace` start/restart/resume is unavailable under sandbox profile '{profile}': \
+            "`chaos workspace` start/restart/resume is unavailable under sandbox profile '{profile}': \
              those commands (re)activate shared-leader workspace exposure that this session cannot \
              prove is confined by that profile. Disable the profile at the source that selected it \
              (CLI, env, config, or a managed requirement)."
@@ -2796,30 +2796,30 @@ mod tests {
     }
     #[cfg(unix)]
     #[test]
-    fn is_managed_install_matches_only_the_bin_grok_target() {
+    fn is_managed_install_matches_only_the_bin_chaos_target() {
         let home =
             std::env::temp_dir().join(format!("grok-pager-managed-install-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&home);
         std::fs::create_dir_all(home.join("bin")).unwrap();
         std::fs::create_dir_all(home.join("downloads")).unwrap();
         assert!(!is_managed_install(
-            Some(home.join("bin").join("grok")),
+            Some(home.join("bin").join("chaos")),
             &home
         ));
         assert!(!is_managed_install(None, &home));
         assert!(!is_managed_install(
-            Some(home.join("bin").join("grok")),
+            Some(home.join("bin").join("chaos")),
             std::path::Path::new("")
         ));
-        let target = home.join("downloads").join("grok-1.2.3");
+        let target = home.join("downloads").join("chaos-1.2.3");
         std::fs::write(&target, b"binary").unwrap();
-        std::os::unix::fs::symlink(&target, home.join("bin").join("grok")).unwrap();
+        std::os::unix::fs::symlink(&target, home.join("bin").join("chaos")).unwrap();
         assert!(is_managed_install(
-            Some(home.join("bin").join("grok")),
+            Some(home.join("bin").join("chaos")),
             &home
         ));
         assert!(is_managed_install(Some(target.clone()), &home));
-        let pinned = home.join("bin").join("grok-9.9.9");
+        let pinned = home.join("bin").join("chaos-9.9.9");
         std::fs::write(&pinned, b"binary").unwrap();
         assert!(!is_managed_install(Some(pinned), &home));
         let _ = std::fs::remove_dir_all(&home);
@@ -2899,7 +2899,7 @@ mod tests {
         let result = flag_dashboard_at_startup_if_requested(&mut args);
         unsafe { std::env::remove_var("GROK_AGENT_DASHBOARD") };
         let err = result.expect_err("disabled dashboard must error");
-        assert!(err.to_string().contains("disabled"), "got: {err}");
+        assert!(err.to_string().contains("禁用"), "got: {err}");
         assert!(
             std::env::var("GROK_OPEN_DASHBOARD_AT_STARTUP").is_err(),
             "failure path must not flag the startup hook",
