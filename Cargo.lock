@@ -2929,6 +2929,7 @@ checksum = "70e796c081cee67dc755e1a36a0a172b897fab85fc3f6bc48307991f64e4eca9"
 dependencies = [
  "curve25519-dalek",
  "ed25519",
+ "rand_core 0.6.4",
  "serde",
  "sha2 0.10.9",
  "subtle",
@@ -14364,7 +14365,9 @@ name = "xai-grok-update"
 version = "0.1.220-alpha.4"
 dependencies = [
  "anyhow",
+ "base64",
  "dunce",
+ "ed25519-dalek",
  "futures",
  "indicatif",
  "reqwest 0.12.24",
