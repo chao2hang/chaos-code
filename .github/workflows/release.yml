@@ -363,7 +363,13 @@ jobs:
           from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
           from cryptography.hazmat.primitives.serialization import Encoding, PrivateFormat, NoEncryption
 
-          seed = base64.b64decode(os.environ['CHAOS_SIGNING_PRIVATE_KEY'])
+          # strip() also drops a UTF-8 BOM (\ufeff) and stray whitespace that
+          # can sneak in when the secret was set from a Windows shell — the
+          # exact failure mode of release run 31796456487.
+          seed = base64.b64decode(
+              os.environ['CHAOS_SIGNING_PRIVATE_KEY'].strip().lstrip('\ufeff'),
+              validate=True,
+          )
           sk = Ed25519PrivateKey.from_private_bytes(seed)
 
           binaries = [
