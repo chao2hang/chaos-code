@@ -301,6 +301,42 @@ if "%CHAOS_SKIP_CHECKSUM%"=="1" (
   echo checksum OK ^(!ACTUAL!^)
 )
 
+rem Signature verification: the direct_install path uses certutil which
+rem cannot verify ed25519 signatures. Signature verification is handled by
+rem install.ps1 (the preferred installer). This cmd fallback only runs when
+rem PowerShell is unavailable. Set CHAOS_SKIP_SIGNATURE=1 to suppress this
+rem notice. When Python + cryptography is on PATH, the .sig sidecar IS
+rem checked here too.
+if not "%CHAOS_SKIP_SIGNATURE%"=="1" (
+  where python >nul 2>&1
+  if not errorlevel 1 (
+    rem Probe cryptography availability — a missing package must skip,
+    rem not be reported as a tampered binary.
+    python -c "from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey" >nul 2>&1
+    if not errorlevel 1 (
+      set "SIG_URL=%URL%.sig"
+      set "SIG_FILE=%TEMP%\chaos-sig-%RANDOM%%RANDOM%.sig"
+      call :download_github "!SIG_URL!" "!SIG_FILE!" >nul 2>&1
+      if exist "!SIG_FILE!" (
+        if defined CHAOS_SIGNING_PUBLIC_KEY (
+          python -c "import base64;from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey;pk=Ed25519PublicKey.from_public_bytes(base64.b64decode('!CHAOS_SIGNING_PUBLIC_KEY!'));f=open(r'%TMP%','rb');d=f.read();f.close();f=open(r'!SIG_FILE!','r');s=base64.b64decode(f.read().strip());f.close();pk.verify(s,d);print('signature OK')" >nul 2>&1
+          if not errorlevel 1 (
+            echo signature OK
+          ) else (
+            del /f /q "%TMP%" >nul 2>&1
+            del /f /q "!SIG_FILE!" >nul 2>&1
+            echo error: signature verification FAILED for %ASSET%
+            echo   The binary may have been tampered with. Refusing to install.
+            echo   To bypass ^(NOT recommended^), set CHAOS_SKIP_SIGNATURE=1.
+            exit /b 1
+          )
+        )
+        del /f /q "!SIG_FILE!" >nul 2>&1
+      )
+    )
+  )
+)
+
 copy /y "%TMP%" "%DEST%" >nul
 del /f /q "%TMP%" >nul 2>&1
 if not exist "%DEST%" (

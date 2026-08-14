@@ -146,7 +146,7 @@ fn is_max_tier_rejects_partial_matches() {
 }
 
 #[test]
-#[ignore = "fork: billing/subscription features removed"]
+#[ignore = "fork: billing/subscription features removed; review 2026-10"]
 fn upsell_non_max_shows_qa_with_two_options() {
     let mut app = test_app_with_agent();
     open_upsell_qa(
@@ -162,7 +162,7 @@ fn upsell_non_max_shows_qa_with_two_options() {
 }
 
 #[test]
-#[ignore = "fork: billing/subscription features removed"]
+#[ignore = "fork: billing/subscription features removed; review 2026-10"]
 fn upsell_non_max_payg_on_shows_increase_label() {
     let mut app = test_app_with_agent();
     open_upsell_qa(
@@ -175,7 +175,7 @@ fn upsell_non_max_payg_on_shows_increase_label() {
 }
 
 #[test]
-#[ignore = "fork: billing/subscription features removed"]
+#[ignore = "fork: billing/subscription features removed; review 2026-10"]
 fn upsell_non_max_qa_heading_is_credit_limit_when_payg_off() {
     let mut app = test_app_with_agent();
     open_upsell_qa(
@@ -190,7 +190,7 @@ fn upsell_non_max_qa_heading_is_credit_limit_when_payg_off() {
 }
 
 #[test]
-#[ignore = "fork: billing/subscription features removed"]
+#[ignore = "fork: billing/subscription features removed; review 2026-10"]
 fn upsell_non_max_qa_heading_is_spending_cap_when_payg_on() {
     let mut app = test_app_with_agent();
     open_upsell_qa(
@@ -205,7 +205,7 @@ fn upsell_non_max_qa_heading_is_spending_cap_when_payg_on() {
 }
 
 #[test]
-#[ignore = "fork: billing/subscription features removed"]
+#[ignore = "fork: billing/subscription features removed; review 2026-10"]
 fn upsell_non_max_upgrade_url_is_supergrok() {
     let mut app = test_app_with_agent();
     open_upsell_qa(
@@ -221,7 +221,7 @@ fn upsell_non_max_upgrade_url_is_supergrok() {
 }
 
 #[test]
-#[ignore = "fork: billing/subscription features removed"]
+#[ignore = "fork: billing/subscription features removed; review 2026-10"]
 fn upsell_non_max_payg_url_is_usage() {
     let mut app = test_app_with_agent();
     open_upsell_qa(
@@ -236,7 +236,7 @@ fn upsell_non_max_payg_url_is_usage() {
 }
 
 #[test]
-#[ignore = "fork: billing/subscription features removed"]
+#[ignore = "fork: billing/subscription features removed; review 2026-10"]
 fn upsell_non_max_payg_on_description_mentions_spending_cap() {
     let mut app = test_app_with_agent();
     open_upsell_qa(
@@ -250,7 +250,7 @@ fn upsell_non_max_payg_on_description_mentions_spending_cap() {
 }
 
 #[test]
-#[ignore = "fork: billing/subscription features removed"]
+#[ignore = "fork: billing/subscription features removed; review 2026-10"]
 fn upsell_non_max_payg_off_description_mentions_on_demand() {
     let mut app = test_app_with_agent();
     open_upsell_qa(
@@ -264,7 +264,7 @@ fn upsell_non_max_payg_off_description_mentions_on_demand() {
 }
 
 #[test]
-#[ignore = "fork: billing/subscription features removed"]
+#[ignore = "fork: billing/subscription features removed; review 2026-10"]
 fn upsell_non_max_unified_shows_buy_credits() {
     let mut app = test_app_with_agent();
     open_upsell_qa(&mut app, CreditLimitUpsellMode::UnifiedCredits);
@@ -282,7 +282,7 @@ fn upsell_non_max_unified_shows_buy_credits() {
 }
 
 #[test]
-#[ignore = "fork: billing/subscription features removed"]
+#[ignore = "fork: billing/subscription features removed; review 2026-10"]
 fn upsell_max_unified_card_mentions_purchasing() {
     let mut app = test_app_with_agent();
     let before = agent_scrollback_len(&app);
@@ -417,7 +417,7 @@ fn upsell_non_max_idempotent_when_question_view_already_open() {
 }
 
 #[test]
-#[ignore = "fork: billing/subscription features removed"]
+#[ignore = "fork: billing/subscription features removed; review 2026-10"]
 fn upsell_max_tier_pushes_scrollback_card_payg_off() {
     let mut app = test_app_with_agent();
     let before = agent_scrollback_len(&app);
@@ -440,7 +440,7 @@ fn upsell_max_tier_pushes_scrollback_card_payg_off() {
 }
 
 #[test]
-#[ignore = "fork: billing/subscription features removed"]
+#[ignore = "fork: billing/subscription features removed; review 2026-10"]
 fn upsell_max_tier_pushes_scrollback_card_payg_on() {
     let mut app = test_app_with_agent();
     let before = agent_scrollback_len(&app);
@@ -615,7 +615,7 @@ fn manage_billing_gates_on_consumer_billing_surface() {
 }
 
 #[test]
-#[ignore = "fork: billing/subscription features removed"]
+#[ignore = "fork: billing/subscription features removed; review 2026-10"]
 fn session_usage_complete_pushes_block_and_chains_billing() {
     let mut app = test_app_with_agent();
     app.screen_mode = crate::app::ScreenMode::Minimal;
@@ -1289,7 +1289,7 @@ fn unknown_non_restricted_command_still_passes_through() {
 /// the headless-VM fix for silent Upgrade / Buy-more-credits no-ops.
 #[serial_test::serial(GROK_TEST_OPEN_URL_FILE)]
 #[test]
-#[ignore = "fork: billing/subscription features removed"]
+#[ignore = "fork: billing/subscription features removed; review 2026-10"]
 fn open_url_shows_manual_url_when_browser_unavailable() {
     // Point the test seam at a path whose parent dir does not exist so the
     // write fails and `open_url` returns false (BrowserUnavailable).
@@ -1329,7 +1329,7 @@ fn open_url_shows_manual_url_when_browser_unavailable() {
 /// Successful open (test seam write OK) must not spam a fallback system message.
 #[serial_test::serial(GROK_TEST_OPEN_URL_FILE)]
 #[test]
-#[ignore = "fork: billing/subscription features removed"]
+#[ignore = "fork: billing/subscription features removed; review 2026-10"]
 fn open_url_does_not_show_fallback_when_opener_succeeds() {
     let url_file =
         std::env::temp_dir().join(format!("grok-open-url-ok-{}.txt", std::process::id()));
@@ -1421,7 +1421,7 @@ fn open_url_welcome_toasts_single_line_url_when_browser_unavailable() {
 /// is unavailable the full option URL must land in scrollback.
 #[serial_test::serial(GROK_TEST_OPEN_URL_FILE)]
 #[test]
-#[ignore = "fork: billing/subscription features removed"]
+#[ignore = "fork: billing/subscription features removed; review 2026-10"]
 fn credit_limit_upsell_submit_shows_url_when_browser_unavailable() {
     use crate::app::agent_view::translate_local_submit_for_test;
     use crate::app::app_view::InputOutcome;

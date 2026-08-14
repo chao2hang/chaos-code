@@ -177,7 +177,13 @@ impl RunCodeRequest {
         });
 
         let counter = std::rc::Rc::new(std::cell::Cell::new(0u32));
-        register_host_fns(&mut engine, tool_calls, cancel, counter.clone(), max_tool_calls);
+        register_host_fns(
+            &mut engine,
+            tool_calls,
+            cancel,
+            counter.clone(),
+            max_tool_calls,
+        );
 
         let mut scope = rhai::Scope::new();
         let args_dyn = match rhai::serde::to_dynamic(&args) {
@@ -267,9 +273,9 @@ fn register_host_fns(
                     )
                 })?;
 
-            let result = reply_rx.blocking_recv().map_err(|_| {
-                runtime_error("code-mode host dropped the tool result".to_string())
-            })?;
+            let result = reply_rx
+                .blocking_recv()
+                .map_err(|_| runtime_error("code-mode host dropped the tool result".to_string()))?;
 
             if result.ok {
                 Ok(value_to_dynamic(&result.value))
@@ -284,7 +290,9 @@ fn register_host_fns(
     // `complete(value)` is the conventional way to end a script. It is
     // the identity function: the script's final expression is its result,
     // so `complete(x)` simply makes that intent explicit and readable.
-    engine.register_fn("complete", |value: rhai::Dynamic| -> rhai::Dynamic { value });
+    engine.register_fn("complete", |value: rhai::Dynamic| -> rhai::Dynamic {
+        value
+    });
     engine.register_fn("complete", || -> rhai::Dynamic { rhai::Dynamic::UNIT });
 
     engine.register_fn(
@@ -573,7 +581,10 @@ mod tests {
                 // before it ever reaches the host.
                 assert_eq!(tool_calls, 3, "the 3 allowed calls are the ones that count");
                 assert_eq!(answered, 3, "only 3 calls reach the host");
-                assert!(error.contains("tool-call cap exceeded"), "error was: {error}");
+                assert!(
+                    error.contains("tool-call cap exceeded"),
+                    "error was: {error}"
+                );
             }
             other => panic!("expected Failed, got {other:?}"),
         }

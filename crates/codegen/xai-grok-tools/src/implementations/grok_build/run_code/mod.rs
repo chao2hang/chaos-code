@@ -14,6 +14,26 @@
 //! `WorkflowLaunchHandle`). The session owns the Rhai runtime and answers
 //! the script's tool calls through its normal dispatch path, so
 //! permission/auto-mode checks and hooks apply unchanged.
+//!
+//! ## Threat model
+//!
+//! The threat Code Mode defends against is **amplification**: a single
+//! `run_code` invocation can batch up to 32 tool calls in one round-trip,
+//! so a budget overrun or sandbox escape would compound faster than N
+//! separate calls. The defense is layered:
+//!
+//! 1. **Rhai sandbox** — no `eval`, no module resolver, no ambient I/O.
+//!    The script can only reach the outside world through `tools_call`.
+//! 2. **Budget caps** — 5,000 ops / 30 s wall-clock / 32 tool calls per
+//!    script, enforced via `engine.on_progress` + `CancellationToken`.
+//! 3. **Permission inheritance** — every `tools_call` goes through the
+//!    same `ToolBridge` dispatch as a normal `tool_use`, so permission
+//!    rules, auto-mode checks, and hooks apply unchanged.
+//! 4. **Preset visibility** — `run_code` is only exposed in presets that
+//!    already trust the agent with a shell (`code` / `ask`), not in
+//!    read-only presets (`explore` / `plan`).
+//!
+//! See `docs/code-mode-safety.md` for the full safety write-up.
 
 use crate::types::requirements::{Expr, ToolRequirement};
 use crate::types::tool::{ToolKind, ToolNamespace};
@@ -101,10 +121,7 @@ pub enum RunCodeAck {
     },
     /// Code Mode is unavailable in this session, or the request was refused
     /// before execution.
-    Rejected {
-        code: &'static str,
-        detail: String,
-    },
+    Rejected { code: &'static str, detail: String },
 }
 
 pub type RunCodeEnvelope = (RunCodeRequest, tokio::sync::oneshot::Sender<RunCodeAck>);

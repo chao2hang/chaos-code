@@ -50,6 +50,7 @@ pub use list_dir::ListDirTool;
 pub use lsp::LspTool;
 pub use monitor::tool::MonitorTool;
 pub use read_file::ReadFileTool;
+pub use run_code::{RUN_CODE_TOOL_NAME, RunCodeTool};
 pub use scheduler::create::{
     LoopFireMode, SCHEDULER_CREATE_TOOL_NAME, SchedulerCreateTool, loop_schedule_instruction,
     loop_usage_message,
@@ -69,4 +70,3 @@ pub use video_gen::{
 pub use web_fetch::{WebFetchClient, WebFetchConfig, WebFetchParams, WebFetchTool};
 pub use web_search::WebSearchTool;
 pub use workflow::{WORKFLOW_TOOL_NAME, WorkflowTool};
-pub use run_code::{RUN_CODE_TOOL_NAME, RunCodeTool};

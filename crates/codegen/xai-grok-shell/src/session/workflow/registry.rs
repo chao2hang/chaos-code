@@ -883,25 +883,31 @@ mod tests {
         // valid meta block. Spot-check that it uses the cross-round handoff
         // primitives (agent + scratch files) and that its phase metadata is
         // correct.
-        let resolved = resolve_by_name("ralph", None)
-            .expect("ralph must resolve as builtin");
+        let resolved = resolve_by_name("ralph", None).expect("ralph must resolve as builtin");
         let meta = &resolved.meta;
         assert_eq!(meta.name, "ralph");
         assert!(
-            meta.description.to_ascii_lowercase().contains("fresh-agent"),
+            meta.description
+                .to_ascii_lowercase()
+                .contains("fresh-agent"),
             "ralph description must advertise the fresh-agent loop; got: {}",
             meta.description
         );
         let script = resolved.script.as_str();
         assert!(script.contains("agent("), "ralph must call agent()");
         assert!(
-            script.contains("write_scratch_file(")
-                && script.contains("read_scratch_file("),
+            script.contains("write_scratch_file(") && script.contains("read_scratch_file("),
             "ralph must use scratch files for cross-round handoff"
         );
         let titles: Vec<&str> = meta.phases.iter().map(|p| p.title.as_str()).collect();
-        assert!(titles.contains(&"Seeding"), "ralph phases must include Seeding");
-        assert!(titles.contains(&"Iterating"), "ralph phases must include Iterating");
+        assert!(
+            titles.contains(&"Seeding"),
+            "ralph phases must include Seeding"
+        );
+        assert!(
+            titles.contains(&"Iterating"),
+            "ralph phases must include Iterating"
+        );
         assert!(titles.contains(&"Done"), "ralph phases must include Done");
         assert_eq!(resolved.source, WorkflowSource::Builtin);
     }
@@ -920,13 +926,13 @@ mod tests {
         // `write_scratch_file()`, `read_scratch_file()`, the `done` check,
         // and the loop bound).
         use std::sync::Mutex;
+        use tokio::sync::mpsc;
+        use tokio_util::sync::CancellationToken;
+        use xai_workflow::WorkflowRunParams;
         use xai_workflow::host::AgentResult;
         use xai_workflow::host::WorkflowHostRequest;
-        use xai_workflow::run_workflow;
         use xai_workflow::journal::Journal;
-        use xai_workflow::WorkflowRunParams;
-        use tokio_util::sync::CancellationToken;
-        use tokio::sync::mpsc;
+        use xai_workflow::run_workflow;
 
         let script = include_str!("../workflows/ralph.rhai");
         let (tx, mut rx) = mpsc::unbounded_channel();

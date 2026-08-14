@@ -1,5 +1,90 @@
 # Changelog
 
+## 0.3.0 — 2026-08-14 (unreleased)
+
+### Security: 自更新验签链路
+
+- `xai-grok-update`：`signature.rs` 新增 `is_placeholder_key()` helper，
+  `lib.rs` 新增 `require_configured_public_key()`（启动时 gate，当
+  `CHAOS_REQUIRE_SIG=1` 但公钥未配置时 fail-fast）。
+- `auto_update.rs`：`install_gh_release` 和 `install_internal`（GCS）两条
+  下载路径在 smoke-test **之前**插入 `verify_downloaded_artifact()` 调用，
+  下载后先验签再 exec，避免 mmap 未验证二进制。
+- 新增 `fetch_signature(url)` helper：拉 `<asset_url>.sig` 旁车文件。
+- 验签行为受 `CHAOS_REQUIRE_SIG` 环境变量灰度控制：默认 `false`（过渡期），
+  `true` 时拒绝未签名/签名不匹配的二进制。sig 文件 404 时 warn 并跳过
+  （兼容旧 release），签名不匹配时删除文件并 abort。
+- `xai-grok-update/Cargo.toml` 新增 `require-sig` feature flag：启用后
+  `signature_required()` 默认返回 `true`（env 仍可覆盖）。release 构建可
+  通过 `--features require-sig` 开启。
+- `signature.rs` 新增 4 个单元测试 + `tests/test_signature_integration.rs`
+  新增 7 个集成测试，覆盖合法/篡改/缺 sig/env 解析/占位符等场景。
+- `.github/workflows/release.yml`：Build step 注入
+  `CHAOS_SIGNING_PUBLIC_KEY`（repo variable）；新增 `Sign binaries` step
+  用 Python `cryptography` 库对每个 `release-bins/*` 生成 `.sig`
+  （原始 ed25519 签名，base64 编码），加入 release assets。
+- `scripts/install.sh` / `install.ps1` / `install.bat`：在 checksum 验证后
+  加 `verify_signature`（用 Python `cryptography` 库验证 ed25519 签名），
+  失败时 abort。Python 或 `cryptography` 包不在 PATH 时静默跳过
+  （兼容最小容器）。
+- ed25519 密钥对已生成并上链：私钥（32 字节 seed）存入 GitHub Actions
+  secret `CHAOS_SIGNING_PRIVATE_KEY`，公钥（32 字节）存入 repo variable
+  `CHAOS_SIGNING_PUBLIC_KEY`。签名格式为原始 ed25519（无 minisign 头），
+  与 Rust 验证代码、install 脚本全链路一致。
+- 复审修复（4 处）：
+  - install.sh/.ps1/.bat：验签前先探测 python + `cryptography` 包可用性，
+    缺失时静默跳过而非误报"二进制被篡改"导致拒绝安装；
+  - release.yml：签名 step 检测 `cryptography` 缺失时自动创建 venv 安装
+    （ubuntu 24.04 PEP 668 环境不保证预装），避免整个 release 失败；
+  - `auto_update.rs`：`fetch_signature` fail-open 行为（网络错误也当
+    "无签名"放行）加 `SECURITY TODO(strict-sig)` 标注，后续收紧为仅
+    404 放行。
+
+### Behavior changes: Code Mode preset 可见性收窄
+
+- `run_code` 工具确认仅在 `code`（`grok-build`）和 `ask`
+  （`grok_build_ask_user`）preset 暴露，`explore`（只读）和 `plan`
+  （只读）preset 不含 —— 此策略在 DSH 移植时已落地，本次补回归测试
+  `run_code_tool_excluded_from_readonly_presets` 防止回退。
+- 新增 `docs/code-mode-safety.md`：完整描述 Rhai 沙箱、预算上限
+  （5K ops / 30s / 32 calls）、权限继承路径、preset 策略。
+- `run_code/mod.rs` 模块注释加 `## Threat model` 段。
+
+### Fixes: sampler reasoning_content 占位值标记
+
+- `xai-grok-sampler/src/client.rs::apply_defaults`：提取常量
+  `REASONING_PLACEHOLDER` 和 `REASONING_BACKFILL_WARN_INTERVAL`（5 分钟）。
+  加 `TODO(net-gateway)` 注释，标记 bblbb 网关要求 thinking 模式下所有
+  assistant 消息带非空 `reasoning_content` 是临时方案。
+- 新增 `warn_reasoning_backfill()` 函数：throttle 到每 5 分钟最多 warn
+  一次，避免长 thinking session 里每请求都刷 log。
+
+### Improvements: wrap SSH 间接路径支持
+
+- `wrap_cmd.rs`：`SpawnPlan` 新增 `env` 字段，支持给子进程设置额外
+  环境变量。`with_ssh_env_forwarding()` 扩展识别 `gcloud` / `aws` /
+  `mosh` / `lftp` / `rssh` 等间接 SSH 工具（`KNOWN_SSH_FORWARDERS`）——
+  这些工具不接受 `-o SendEnv`，改为直接在子进程 env 中设 `LC_GROK_*`
+  变量，让内部 ssh 子进程继承。
+- 新增 `program_is_ssh_forwarder()` 函数 + 3 个测试
+  （`program_is_ssh_forwarder_matches_known_forwarders`、
+  `with_ssh_env_forwarding_does_not_inject_send_env_for_gcloud`、
+  `with_ssh_env_forwarding_does_not_inject_send_env_for_mosh`）。
+- `pty_wrap.rs::run_wrapped_command` 签名加 `env: &[(String, String)]`，
+  在 `CommandBuilder` 上设置额外 env。
+
+### Test: 季度 ignore 审计 baseline
+
+- 跑 `scripts/ci/ignored-tests.sh`（用 ripgrep 替代 awk 不兼容的 Windows
+  环境），统计 540 个 `#[ignore]` 属性，174 个裸 `#[ignore]`（无 reason），
+  0 个带 review date。
+- **42 个 fork 专属 `#[ignore]`** 全部补 `; review 2026-10` 重审日期
+  （billing/connectors URL/upstream defaults/SSO flow 等）。
+- 新增 `docs/ignored-audit-2026q3.md`：完整审计报告（方法论/by crate 统计/
+  fork 债务明细/下次重审步骤）。
+- 更新 `docs/ci-test-debt.md`：fork 债务合计从 88 修正为 42（原口径含
+  PTY e2e / scripted scenarios 等上游继承的 debt）。
+
 ## 0.2.138 — 2026-08-14
 
 ### DSH 移植（deepseek-harness）

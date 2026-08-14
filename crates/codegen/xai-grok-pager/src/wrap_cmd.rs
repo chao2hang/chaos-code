@@ -56,23 +56,24 @@ pub fn run(args: &WrapArgs) -> Result<()> {
         let direct = SpawnPlan {
             program: program.clone(),
             args: args.command[1..].to_vec(),
+            env: Vec::new(),
         }
         .with_ssh_env_forwarding();
         (direct.clone(), direct)
     };
 
     if should_wrap() {
-        match crate::pty_wrap::run_wrapped_command(&wrapped.program, &wrapped.args) {
+        match crate::pty_wrap::run_wrapped_command(&wrapped.program, &wrapped.args, &wrapped.env) {
             Ok(code) => std::process::exit(code),
             Err(e) => {
                 // PTY setup failed; keep the chosen route without our PTY so
                 // the command still works (just without clipboard forwarding).
                 eprintln!("grok wrap: wrapped mode failed, running without PTY wrapping: {e}");
-                exec_command(&fallback.program, &fallback.args)
+                exec_command(&fallback.program, &fallback.args, &fallback.env)
             }
         }
     } else {
-        exec_command(&fallback.program, &fallback.args)
+        exec_command(&fallback.program, &fallback.args, &fallback.env)
     }
 }
 
@@ -81,6 +82,10 @@ pub fn run(args: &WrapArgs) -> Result<()> {
 struct SpawnPlan {
     program: String,
     args: Vec<String>,
+    /// Extra env vars to set on the child process (beyond what the parent
+    /// already has). Used by [`with_ssh_env_forwarding`] for indirect SSH
+    /// forwarders (`gcloud`, `aws`, `mosh`) that don't accept `-o SendEnv`.
+    env: Vec<(String, String)>,
 }
 
 /// Whether a shell-routed command runs `$SHELL -i -c` or plain `$SHELL -c`.
@@ -113,6 +118,7 @@ fn derive_spawn(
         SpawnPlan {
             program: shell.to_string(),
             args,
+            env: Vec::new(),
         }
     };
 
@@ -140,6 +146,7 @@ fn derive_spawn(
     SpawnPlan {
         program: command[0].clone(),
         args: command[1..].to_vec(),
+        env: Vec::new(),
     }
 }
 
@@ -158,10 +165,26 @@ fn derive_spawn(
 /// a default `sshd` would reject them and abort the whole `SendEnv` list.
 const SSH_FORWARDED_ENV: &[&str] = &["LC_GROK_OSC52_SINK", "LC_GROK_APPEARANCE"];
 
+/// Indirect SSH wrappers that ultimately invoke `ssh` (or an SSH-compatible
+/// transport) but don't accept `-o SendEnv` on their own command line.
+///
+/// For these we set the env vars on the child process directly, relying on
+/// the inner `ssh` to inherit them and a default `sshd AcceptEnv LANG LC_*`
+/// to forward them. `mosh` uses its own protocol (SSP, not SSH), so OSC 52
+/// clipboard forwarding does not apply — but we still set the env vars so a
+/// `mosh` session that falls back to SSH for the initial connection can pick
+/// them up.
+const KNOWN_SSH_FORWARDERS: &[&str] = &["gcloud", "aws", "mosh", "lftp", "rssh"];
+
 impl SpawnPlan {
     /// When the wrapped program is `ssh`, prepend `-o SendEnv=<name>` for each
     /// [`SSH_FORWARDED_ENV`] entry. Any other program is returned untouched:
     /// `SendEnv` is ssh-specific and would make `docker`/`kubectl` fail.
+    ///
+    /// For known indirect SSH forwarders ([`KNOWN_SSH_FORWARDERS`]) — `gcloud`,
+    /// `aws`, `mosh`, etc. — `-o SendEnv` is not a valid flag (these tools
+    /// have their own CLI). Instead, we set the env vars on the child process
+    /// directly, relying on the inner `ssh` they spawn to inherit them.
     ///
     /// Flags go *before* the user's argv so they land in ssh's own option
     /// section rather than after the hostname (where they would be treated as
@@ -173,18 +196,32 @@ impl SpawnPlan {
     /// quoted command line is ambiguous. Use the direct form
     /// (`grok wrap ssh host`) to get forwarding.
     fn with_ssh_env_forwarding(self) -> Self {
-        if !program_is_ssh(&self.program) {
-            return self;
-        }
-        let mut args = Vec::with_capacity(self.args.len() + SSH_FORWARDED_ENV.len() * 2);
-        for name in SSH_FORWARDED_ENV {
-            args.push("-o".to_string());
-            args.push(format!("SendEnv={name}"));
-        }
-        args.extend(self.args);
-        Self {
-            program: self.program,
-            args,
+        if program_is_ssh(&self.program) {
+            let mut args = Vec::with_capacity(self.args.len() + SSH_FORWARDED_ENV.len() * 2);
+            for name in SSH_FORWARDED_ENV {
+                args.push("-o".to_string());
+                args.push(format!("SendEnv={name}"));
+            }
+            args.extend(self.args);
+            Self {
+                program: self.program,
+                args,
+                env: self.env,
+            }
+        } else if program_is_ssh_forwarder(&self.program) {
+            // gcloud / aws / mosh etc. don't accept `-o SendEnv`. Set the env
+            // vars on the child process so the inner ssh inherits them.
+            let env: Vec<(String, String)> = SSH_FORWARDED_ENV
+                .iter()
+                .filter_map(|name| std::env::var(name).ok().map(|val| (name.to_string(), val)))
+                .collect();
+            Self {
+                program: self.program,
+                args: self.args,
+                env,
+            }
+        } else {
+            self
         }
     }
 }
@@ -198,15 +235,26 @@ impl SpawnPlan {
 /// `grok wrap` invocation can name any argv it likes, and `Path` only treats
 /// `\` as a separator on Windows targets.
 fn program_is_ssh(program: &str) -> bool {
-    let basename = program
-        .rsplit(['/', '\\'])
-        .next()
-        .unwrap_or(program);
+    let basename = program.rsplit(['/', '\\']).next().unwrap_or(program);
     let stem = basename
         .rsplit_once('.')
         .filter(|(_, ext)| ext.eq_ignore_ascii_case("exe"))
         .map_or(basename, |(stem, _)| stem);
     stem.eq_ignore_ascii_case("ssh")
+}
+
+/// Whether `program` is a known indirect SSH forwarder (`gcloud`, `aws`,
+/// `mosh`, …). These tools ultimately invoke `ssh` but have their own CLI
+/// that doesn't accept `-o SendEnv`.
+fn program_is_ssh_forwarder(program: &str) -> bool {
+    let basename = program.rsplit(['/', '\\']).next().unwrap_or(program);
+    let stem = basename
+        .rsplit_once('.')
+        .filter(|(_, ext)| ext.eq_ignore_ascii_case("exe"))
+        .map_or(basename, |(stem, _)| stem);
+    KNOWN_SSH_FORWARDERS
+        .iter()
+        .any(|name| stem.eq_ignore_ascii_case(name))
 }
 
 /// Join argv back into one shell command line, leaving the first word bare:
@@ -280,10 +328,15 @@ fn should_wrap() -> bool {
 
 /// Replace the current process with `program <args...>` (no PTY wrapping).
 #[cfg(unix)]
-fn exec_command(program: &str, args: &[String]) -> Result<()> {
+fn exec_command(program: &str, args: &[String], env: &[(String, String)]) -> Result<()> {
     use std::os::unix::process::CommandExt;
 
-    let err = std::process::Command::new(program).args(args).exec();
+    let mut cmd = std::process::Command::new(program);
+    cmd.args(args);
+    for (key, val) in env {
+        cmd.env(key, val);
+    }
+    let err = cmd.exec();
 
     // exec() only returns on error.
     Err(anyhow::anyhow!("failed to exec {program}: {err}"))
@@ -291,9 +344,13 @@ fn exec_command(program: &str, args: &[String]) -> Result<()> {
 
 /// On non-Unix platforms, spawn and wait.
 #[cfg(not(unix))]
-fn exec_command(program: &str, args: &[String]) -> Result<()> {
-    let status = std::process::Command::new(program)
-        .args(args)
+fn exec_command(program: &str, args: &[String], env: &[(String, String)]) -> Result<()> {
+    let mut cmd = std::process::Command::new(program);
+    cmd.args(args);
+    for (key, val) in env {
+        cmd.env(key, val);
+    }
+    let status = cmd
         .status()
         .map_err(|e| anyhow::anyhow!("failed to run {program}: {e}"))?;
 

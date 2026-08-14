@@ -4,6 +4,15 @@ name = "xai-grok-update"
 version = "0.1.220-alpha.4"
 edition.workspace = true
 
+[features]
+# When enabled, `signature_required()` returns `true` by default, making the
+# auto-updater refuse unsigned/tampered binaries. Disabled by default during
+# the 0.3.x transition (env CHAOS_REQUIRE_SIG=1 still works to opt in).
+# Enable in release builds by passing `--features require-sig` (or set it as
+# default once all published releases carry .sig files).
+default = []
+require-sig = []
+
 [dependencies]
 anyhow = { workspace = true }
 base64 = { workspace = true }

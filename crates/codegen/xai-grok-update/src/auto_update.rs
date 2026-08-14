@@ -1321,6 +1321,105 @@ async fn smoke_test_binary(binary_path: &std::path::Path) -> Result<(), SmokeTes
     Err(SmokeTestFailure::Spawn(last_spawn))
 }
 
+/// Fetch a `.sig` sidecar file as text.
+///
+/// Returns the raw text of the signature file (a bare base64-encoded
+/// 64-byte ed25519 signature, optionally preceded by an `untrusted comment:`
+/// header line that is ignored during verification).
+/// Errors on any network failure or non-2xx HTTP status.
+async fn fetch_signature(sig_url: &str) -> Result<String> {
+    let client = reqwest::Client::builder()
+        .timeout(DOWNLOAD_REQUEST_TIMEOUT)
+        .build()?;
+    let resp = client.get(sig_url).send().await?;
+    if !resp.status().is_success() {
+        anyhow::bail!("HTTP {} fetching signature {}", resp.status(), sig_url);
+    }
+    Ok(resp.text().await?)
+}
+
+/// Verify a downloaded binary against its `.sig` sidecar.
+///
+/// Fetches the signature from `sig_url`, writes it to a temporary
+/// `<binary_path>.sig` file, then calls [`signature::verify_file`].
+///
+/// Behavior is gated by [`signature::signature_required`] (the
+/// `CHAOS_REQUIRE_SIG` env var):
+///
+/// - **Not required** (default during transition): skips verification
+///   entirely, returns `Ok(())`.
+/// - **Required + sig found**: verifies; on mismatch, deletes the binary
+///   and returns an error. On success, cleans up the temp `.sig` file.
+/// - **Required + sig not found** (HTTP error): logs a warning and
+///   returns `Ok(())` — older releases that predate signing still
+///   install. Once all releases are signed this should become fatal.
+/// - **Required + no public key configured**: fatal — refuses to
+///   install an unverified binary rather than silently accepting it.
+///
+/// The verify step runs *before* [`smoke_test_binary`] so an unverified
+/// binary is never exec'd.
+async fn verify_downloaded_artifact(binary_path: &std::path::Path, sig_url: &str) -> Result<()> {
+    if !crate::signature::signature_required() {
+        return Ok(());
+    }
+
+    let public_key = match crate::signature::public_key() {
+        Ok(k) => k,
+        Err(crate::signature::SignatureError::NoPublicKey) => {
+            anyhow::bail!(
+                "signature verification required (CHAOS_REQUIRE_SIG=1) but \
+                 CHAOS_SIGNING_PUBLIC_KEY is not configured at build time — \
+                 refusing to install an unverified binary"
+            );
+        }
+        Err(e) => {
+            anyhow::bail!("invalid signing public key: {e}");
+        }
+    };
+
+    let sig_text = match fetch_signature(sig_url).await {
+        Ok(text) => text,
+        Err(e) => {
+            // Sig file not found. During the transition (not all releases
+            // have sigs yet) we warn and skip; once all releases are signed
+            // this branch should become fatal.
+            //
+            // SECURITY TODO(strict-sig): only a genuine 404 should take
+            // this lenient path. Other failures (403 rate limit, DNS,
+            // TLS, connection reset) currently also skip verification —
+            // an on-path attacker who can block the .sig request (but not
+            // the binary download) defeats the signature scheme. Split
+            // `fetch_signature` into NotFound vs Other errors and fail
+            // closed on Other once CHAOS_REQUIRE_SIG=1 is the default.
+            eprintln!(
+                "  warning: signature file not found at {sig_url} ({e}); \
+                 skipping verification"
+            );
+            return Ok(());
+        }
+    };
+
+    // Write sig to a temp sidecar so verify_file can read it.
+    let sig_path = binary_path.with_extension("sig");
+    tokio::fs::write(&sig_path, &sig_text).await?;
+
+    match crate::signature::verify_file(binary_path, Some(&sig_path), &public_key) {
+        Ok(()) => {
+            eprintln!("  signature verified OK");
+            let _ = tokio::fs::remove_file(&sig_path).await;
+            Ok(())
+        }
+        Err(e) => {
+            let _ = tokio::fs::remove_file(&sig_path).await;
+            let _ = tokio::fs::remove_file(binary_path).await;
+            anyhow::bail!(
+                "signature verification failed — refusing to install a \
+                 potentially compromised binary: {e}"
+            );
+        }
+    }
+}
+
 /// Test-only entry point: same as [`install_internal`] but reads from
 /// `gcs_base_url` instead of the hardcoded GCS bucket. Persists installer
 /// config and writes to `~/.grok/bin/`, so callers must isolate
@@ -1377,6 +1476,12 @@ async fn download_verified_from_base(
 
     // Published already +x (see `publish_downloaded_artifact`).
     download_cli_artifact_from_gcs(gcs_base_url, &binary_name, &binary_path, true).await?;
+
+    // Verify the downloaded binary against its .sig sidecar before
+    // smoke-testing it. Gated by CHAOS_REQUIRE_SIG; no-op during the
+    // transition window where the flag defaults to off.
+    let sig_url = format!("{}/{}.sig", gcs_base_url, binary_name);
+    verify_downloaded_artifact(&binary_path, &sig_url).await?;
 
     // Smoke-test: run the binary before activating it. A truncated or
     // corrupt download is caught here and never becomes the active grok.
@@ -2208,6 +2313,12 @@ async fn install_gh_release(target: Option<&str>) -> Result<()> {
     eprintln!("  {}", url);
 
     download_with_progress(&url, &binary_path).await?;
+
+    // Verify the downloaded binary against its .sig sidecar before
+    // smoke-testing it. Gated by CHAOS_REQUIRE_SIG; no-op during the
+    // transition window where the flag defaults to off.
+    let sig_url = format!("{}.sig", url);
+    verify_downloaded_artifact(&binary_path, &sig_url).await?;
 
     // chmod +x (download_with_progress may already set it on unix via publish)
     #[cfg(unix)]

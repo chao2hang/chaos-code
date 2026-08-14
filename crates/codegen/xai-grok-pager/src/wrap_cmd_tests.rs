@@ -226,6 +226,7 @@ fn with_ssh_env_forwarding_injects_send_env_for_ssh() {
     let plan = SpawnPlan {
         program: "ssh".to_string(),
         args: vec!["user@host".to_string()],
+        env: Vec::new(),
     }
     .with_ssh_env_forwarding();
     assert_eq!(plan.program, "ssh");
@@ -257,6 +258,7 @@ fn with_ssh_env_forwarding_preserves_user_supplied_o_flags() {
             "--".to_string(),
             "tmux".to_string(),
         ],
+        env: Vec::new(),
     }
     .with_ssh_env_forwarding();
     assert_eq!(plan.program, "/usr/bin/ssh");
@@ -285,6 +287,7 @@ fn with_ssh_env_forwarding_skips_non_ssh_programs() {
         let plan = SpawnPlan {
             program: program.to_string(),
             args: vec!["exec".to_string(), "-it".to_string()],
+            env: Vec::new(),
         }
         .with_ssh_env_forwarding();
         assert_eq!(
@@ -300,6 +303,7 @@ fn with_ssh_env_forwarding_recognizes_windows_ssh_exe() {
     let plan = SpawnPlan {
         program: r"C:\Windows\System32\OpenSSH\ssh.exe".to_string(),
         args: vec!["user@host".to_string()],
+        env: Vec::new(),
     }
     .with_ssh_env_forwarding();
     assert_eq!(plan.program, r"C:\Windows\System32\OpenSSH\ssh.exe");
@@ -321,6 +325,7 @@ fn with_ssh_env_forwarding_does_not_splice_into_shell_routed_plan() {
     let plan = SpawnPlan {
         program: "/bin/zsh".to_string(),
         args: vec!["-i".to_string(), "-c".to_string(), "ssh host".to_string()],
+        env: Vec::new(),
     }
     .with_ssh_env_forwarding();
     assert_eq!(plan.program, "/bin/zsh");
@@ -345,4 +350,59 @@ fn program_is_ssh_matches_canonical_and_pathed_forms() {
     assert!(!program_is_ssh("autossh"));
     assert!(!program_is_ssh("docker"));
     assert!(!program_is_ssh(""));
+}
+
+#[test]
+fn program_is_ssh_forwarder_matches_known_forwarders() {
+    assert!(program_is_ssh_forwarder("gcloud"));
+    assert!(program_is_ssh_forwarder("/usr/bin/gcloud"));
+    assert!(program_is_ssh_forwarder("./gcloud"));
+    assert!(program_is_ssh_forwarder("aws"));
+    assert!(program_is_ssh_forwarder("mosh"));
+    assert!(program_is_ssh_forwarder("lftp"));
+    assert!(program_is_ssh_forwarder("rssh"));
+    // Windows
+    assert!(program_is_ssh_forwarder("gcloud.exe"));
+    assert!(program_is_ssh_forwarder(r"C:\gcloud\gcloud.exe"));
+    // Case-insensitive
+    assert!(program_is_ssh_forwarder("GCLOUD"));
+    // Not forwarders
+    assert!(!program_is_ssh_forwarder("docker"));
+    assert!(!program_is_ssh_forwarder("kubectl"));
+    assert!(!program_is_ssh_forwarder("ssh"));
+    assert!(!program_is_ssh_forwarder("sshpass"));
+    assert!(!program_is_ssh_forwarder(""));
+}
+
+#[test]
+fn with_ssh_env_forwarding_does_not_inject_send_env_for_gcloud() {
+    // gcloud is an indirect SSH forwarder: it doesn't accept -o SendEnv.
+    // The env vars are set on the child process directly instead (via
+    // SpawnPlan.env), so args must be unchanged.
+    let plan = SpawnPlan {
+        program: "gcloud".to_string(),
+        args: vec!["compute".to_string(), "ssh".to_string(), "host".to_string()],
+        env: Vec::new(),
+    }
+    .with_ssh_env_forwarding();
+    assert_eq!(
+        plan.args,
+        vec!["compute", "ssh", "host"],
+        "gcloud must not receive -o SendEnv flags"
+    );
+}
+
+#[test]
+fn with_ssh_env_forwarding_does_not_inject_send_env_for_mosh() {
+    let plan = SpawnPlan {
+        program: "mosh".to_string(),
+        args: vec!["user@host".to_string()],
+        env: Vec::new(),
+    }
+    .with_ssh_env_forwarding();
+    assert_eq!(
+        plan.args,
+        vec!["user@host"],
+        "mosh must not receive -o SendEnv flags"
+    );
 }

@@ -999,7 +999,10 @@ impl ToolOutput {
             ToolOutput::Workflow(o) => o.message.clone(),
             ToolOutput::RunCode(o) => {
                 let value = serde_json::to_string_pretty(&o.result).unwrap_or_default();
-                format!("Code Mode script completed ({} tool call(s)):\n{}", o.tool_calls, value)
+                format!(
+                    "Code Mode script completed ({} tool call(s)):\n{}",
+                    o.tool_calls, value
+                )
             }
             ToolOutput::Dynamic(v) => serde_json::to_string_pretty(&v.value).unwrap_or_default(),
             ToolOutput::Text(text) => text.text.clone(),

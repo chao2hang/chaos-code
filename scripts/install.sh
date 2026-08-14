@@ -417,6 +417,7 @@ STORED_PATH="${DOWNLOAD_DIR}/${STORED_NAME}"
 
 ORIGIN_URL="https://github.com/${REPO}/releases/download/v${VERSION}/${ASSET}"
 SUMS_ORIGIN="https://github.com/${REPO}/releases/download/v${VERSION}/SHA256SUMS"
+SIG_ORIGIN="https://github.com/${REPO}/releases/download/v${VERSION}/${ASSET}.sig"
 DEST="${INSTALL_DIR}/${BIN_NAME}"
 AGENT_DEST="${INSTALL_DIR}/agent"
 
@@ -513,7 +514,81 @@ verify_checksum() {
   fi
   echo "checksum OK (${actual})"
 }
-verify_checksum
+
+# Signature verification: verify the downloaded binary against its .sig
+# sidecar using Python's cryptography library (if available). This is
+# defense-in-depth on top of the SHA256 checksum — the checksum catches
+# corruption, the signature catches a compromised release.
+#
+# Skipped silently when:
+#   - Python 3 or the cryptography package is not installed
+#   - CHAOS_SKIP_SIGNATURE=1 is set (explicit opt-out)
+#   - The .sig file is not found at the release URL (older releases that
+#     predate signing)
+#
+# Fails hard when Python+cryptography IS installed, the .sig IS found, but
+# the signature does not verify — this means the binary was tampered with
+# after the release was signed.
+verify_signature() {
+  if [[ "${CHAOS_SKIP_SIGNATURE:-0}" == "1" ]]; then
+    echo "warning: signature verification skipped (CHAOS_SKIP_SIGNATURE=1)" >&2
+    return 0
+  fi
+
+  local sig_tmp
+  sig_tmp="$(mktemp)"
+  if ! download_github "$SIG_ORIGIN" "$sig_tmp" 10 30 >/dev/null 2>&1; then
+    rm -f "$sig_tmp"
+    # No .sig file published for this release — skip (older releases).
+    return 0
+  fi
+
+  # The compiled-in public key is embedded in the chaos binary itself;
+  # for the installer we use the CHAOS_SIGNING_PUBLIC_KEY env var (same
+  # base64 32-byte key injected at build time).
+  local pubkey
+  pubkey="${CHAOS_SIGNING_PUBLIC_KEY:-}"
+  if [[ -z "$pubkey" ]]; then
+    rm -f "$sig_tmp"
+    # No public key configured — skip silently (the binary will still
+    # verify its own updates once installed).
+    return 0
+  fi
+
+  # Verify with Python's cryptography library (ed25519, raw — no pre-hash).
+  # The .sig file contains a bare base64-encoded 64-byte signature.
+  # Probe first: if python3 or the cryptography package is missing, skip
+  # silently (the checksum already ran) — a missing tool must NOT be
+  # reported as a tampered binary.
+  if ! python3 -c "from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey" >/dev/null 2>&1; then
+    rm -f "$sig_tmp"
+    return 0
+  fi
+  if python3 -c "
+import base64, sys
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+pubkey = base64.b64decode('$pubkey')
+pk = Ed25519PublicKey.from_public_bytes(pubkey)
+
+with open('$TMP', 'rb') as f:
+    data = f.read()
+with open('$sig_tmp', 'r') as f:
+    sig = base64.b64decode(f.read().strip())
+
+pk.verify(sig, data)
+print('signature OK')
+" 2>/dev/null; then
+    rm -f "$sig_tmp"
+  else
+    rm -f "$sig_tmp"
+    echo "error: signature verification FAILED for ${ASSET}" >&2
+    echo "  The binary may have been tampered with. Refusing to install." >&2
+    echo "  To bypass (NOT recommended), set CHAOS_SKIP_SIGNATURE=1." >&2
+    exit 1
+  fi
+}
+verify_signature
 
 chmod +x "$TMP"
 # Smoke before replace

@@ -305,7 +305,7 @@ pub fn is_grok_process_strict(pid: u32) -> bool {
 mod tests {
     use super::*;
     #[test]
-    #[ignore = "fork: PROD_CLI_CHAT_PROXY_BASE_URL is empty in Chaos; grok.com proxy URLs are not recognized"]
+    #[ignore = "fork: PROD_CLI_CHAT_PROXY_BASE_URL is empty in Chaos; grok.com proxy URLs are not recognized; review 2026-10"]
     fn test_is_cli_chat_proxy_url_accepts_proxy_subpath() {
         assert!(is_cli_chat_proxy_url(
             "https://cli-chat-proxy.grok.com/v1/chat/completions"

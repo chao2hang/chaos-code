@@ -53,13 +53,16 @@ test with extra steps.
 
 | Crate | Fork 债务数 | 原因 | Owner | 下次重审 |
 | --- | ---: | --- | --- | --- |
-| `xai-grok-pager` | 29 | 16 billing/subscription (fork removed); 3 connectors URL (`MANAGED_SECTION_CONNECTORS_URL` empty in Chaos); 10 other fork-specific. | @chaos-devs | 2026-10 |
-| `xai-grok-update` | 48 | `fetch_gh_release_version` uses GitHub HTTP API, not `gh` CLI — `FakeBinGuard` mock bypassed. Wiremock rewrite in progress; concurrent convergence tests (~8) remain. | @chaos-devs | 2026-09 |
-| `xai-grok-pager-pty-harness` | 10 | PTY environment-sensitive tests that need specific terminal conditions. 8 scroll_matrix + 1 plan_approval + 1 scroll_correctness were rebaselined to Chinese strings; remaining 10 depend on terminal emulator behavior CI can't reproduce. | @chaos-devs | 2026-10 |
-| `xai-grok-shell-base` | 1 | Fork empties `PROD_CLI_CHAT_PROXY_BASE_URL`. | @chaos-devs | 2026-09 |
+| `xai-grok-pager` | 19 | 16 billing/subscription (fork removed); 3 connectors URL (`MANAGED_SECTION_CONNECTORS_URL` empty in Chaos). | @chaos-devs | 2026-10 |
+| `xai-grok-shell` | 20 | 14 agent/config upstream xAI defaults; 2 cli_models defaults; 2 mvp_agent grok.com login; 1 app.rs PRODUCTION_ENDPOINTS; 1 external_auth SSO flow. | @chaos-devs | 2026-10 |
+| `xai-grok-shell-base` | 1 | Fork empties `PROD_CLI_CHAT_PROXY_BASE_URL`. | @chaos-devs | 2026-10 |
+| `xai-chat-state` | 1 | Pre-existing fork gap: selective-compaction projection. | @chaos-devs | 2026-10 |
+| `xai-grok-update` | 1 | `fetch_gh_release_version` uses GitHub HTTP API, not `gh` CLI. Wiremock rewrite in progress. | @chaos-devs | 2026-09 |
 
-**Fork 债务合计：88**（与 0.2.136 底条的"~87"一致）。全部带
-`#[ignore = "reason"]` 注释，无裸 `#[ignore]`。
+**Fork 债务合计：42**（2026 Q3 审计修正，详见
+`docs/ignored-audit-2026q3.md`）。全部带
+`#[ignore = "reason; review YYYY-MM"]` 注释，review date 已补全到
+`2026-10`。
 
 ### 季度审计流程
 

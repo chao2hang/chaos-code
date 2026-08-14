@@ -2697,7 +2697,7 @@ async fn cached_token_fallthrough_prefers_api_key_for_deployment_key() {
 /// neither advertised nor an eligible fallthrough).
 #[tokio::test(flavor = "current_thread")]
 #[serial_test::serial]
-#[ignore = "asserts upstream xAI grok.com login defaults removed by Chaos fork"]
+#[ignore = "asserts upstream xAI grok.com login defaults removed by Chaos fork; review 2026-10"]
 async fn cached_token_fallthrough_respects_kill_switch() {
     use crate::agent::auth_method::{GROK_COM_METHOD_ID, XAI_API_KEY_ENV_VAR};
     use xai_grok_test_support::EnvGuard;
@@ -2718,7 +2718,7 @@ async fn cached_token_fallthrough_respects_kill_switch() {
 /// genuinely needs to log in, so the fallthrough is interactive `grok.com`.
 #[tokio::test(flavor = "current_thread")]
 #[serial_test::serial]
-#[ignore = "asserts upstream xAI grok.com login defaults removed by Chaos fork"]
+#[ignore = "asserts upstream xAI grok.com login defaults removed by Chaos fork; review 2026-10"]
 async fn cached_token_fallthrough_falls_to_grok_com_without_credentials() {
     use crate::agent::auth_method::{
         GROK_COM_METHOD_ID, LEGACY_XAI_API_KEY_ENV_VAR, XAI_API_KEY_ENV_VAR,
