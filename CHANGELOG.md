@@ -1,5 +1,48 @@
 # Changelog
 
+## 0.2.138 — 2026-08-14
+
+### DSH 移植（deepseek-harness）
+
+承接 `docs/done/dsh-port-20260814.md`，三特性按 P3.1 → P2 → P1 顺序落地：
+
+- **P3.1 Agent Preset**：扩展 preset 为 persona + 工具集 + prompt 的复合体。
+  新增 `AgentDefinition` + `AgentPresetBuilder`、4 个 native preset（code /
+  ask / explore / plan），`AgentSelectionConfig.preset`、`/preset` slash
+  command、`--preset` CLI flag；7-tier 优先级链 `resolve_agent_definition`。
+  共 + 579 xai-grok-agent 测试 + 7 resolve_agent_definition 测试。
+
+- **P2 Ralph 循环**：复用 workflow 引擎 + spawn 基建，落地
+  `session/workflows/ralph.rhai`（3-phase workflow + `default_schema()` +
+  `schema_map` / `schema_text`）、`/ralph` slash command
+  （`<objective> [--rounds N]`）、`BuiltinAction::Ralph` 调度；
+  3 workflow engine 测试 + 3 ralph 集成测试。
+
+- **P1 Code Mode**（独立 Rhai 运行时，不经 workflow 引擎）：
+  `xai-grok-tools` 新增 `RunCodeTool` + `RunCodeHandle`（tool handle 模式）
+  + `RunCodeToolInput/Output` + `RunCodeEnvelope`；6 个 active toolset
+  显式包含 `RunCodeTool`（注册期 + 活跃集两步都必做），`ToolKind::RunCode`
+  + `ALL_TOOL_KINDS` compile-time guard；`xai-grok-shell` 独立 Rhai 运行时
+  `code_mode/mod.rs` + `SessionActor.run_code_tx` channel + listener
+  桥接 `workspace_ops.call_tool()`；13 code_mode + 6 run_code 测试。
+
+### wrap SSH 图片粘贴
+
+`chaos wrap ssh user@host` 在 Windows 下 Ctrl+V 粘图片不工作的两条断链
+都修了：
+
+- **环境变量转发**：`chaos wrap` 给 ssh 子进程设的 `LC_GROK_OSC52_SINK`
+  现在自动加 `-o SendEnv=LC_GROK_OSC52_SINK`（仅 ssh / ssh.exe，basename
+  跨平台识别），piggyback 各发行版 sshd 默认的 `AcceptEnv LANG LC_*`，
+  远端 `osc52_sink_active()` 终于能拿到信号。
+- **bracketed paste 路径**：Windows Terminal 把 Ctrl+V 映射成只粘文字
+  的 bracketed paste，图片被静默丢。`BracketedInserted` 来源在
+  `osc52_sink_active()` 为真时也额外发 wrap 图片请求；本地有图就
+  走 `try_handle_wrap_host_image_paste` 插入图片 chip。
+
+`wrap_cmd` 6 个新单测 + `task_result` 3 个新单测 + 一个 pty_e2e
+（沙盒 PTY 受限，本机未实际跑过端到端，需在真实环境复核）。
+
 ## 0.2.137 — 2026-08-13
 
 ### 审计跟进（Audit followup）
