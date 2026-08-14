@@ -243,6 +243,44 @@ pub(super) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         },
     },
     BuiltinCommand {
+        name: "ralph",
+        description: "Fresh-agent iterative execution: each round starts a brand-new agent that only sees a structured report from the previous round",
+        argument_hint: Some("<objective> [--rounds N]"),
+        aliases: &[],
+        gate: BuiltinGate::WorkflowLaunches,
+        resolve: |args| {
+            // Parse `<objective> [--rounds N]`. The flag may appear anywhere;
+            // everything else is the objective.
+            let mut objective_parts: Vec<&str> = Vec::new();
+            let mut max_rounds: Option<u32> = None;
+            let mut tokens = args.split_whitespace().peekable();
+            while let Some(token) = tokens.next() {
+                match token {
+                    "--rounds" | "--max-rounds" => {
+                        if let Some(value) = tokens.next() {
+                            max_rounds = value.parse::<u32>().ok().filter(|n| *n >= 1 && *n <= 20);
+                        }
+                    }
+                    other => {
+                        if let Some(value) = other
+                            .strip_prefix("--rounds=")
+                            .or_else(|| other.strip_prefix("--max-rounds="))
+                        {
+                            max_rounds = value.parse::<u32>().ok().filter(|n| *n >= 1 && *n <= 20);
+                        } else {
+                            objective_parts.push(other);
+                        }
+                    }
+                }
+            }
+            BuiltinAction::Ralph {
+                objective: objective_parts.join(" "),
+                max_rounds,
+                schema: None,
+            }
+        },
+    },
+    BuiltinCommand {
         name: "workflow",
         description: "Launch a saved workflow, or manage a run (pause, resume, stop, save)",
         argument_hint: Some("<name> [args] | pause|resume|stop|save [name]"),
@@ -495,11 +533,13 @@ pub const PAGER_COMMAND_KEYS: &[&str] = &[
     "plugins",
     "preferences",
     "prefs",
+    "preset",
     "privacy",
     "provider",
     "providers",
     "queue",
     "quit",
+    "ralph",
     "recap",
     "release-notes",
     "reload-plugins",
@@ -1237,6 +1277,11 @@ pub(super) enum BuiltinAction {
     DeepResearch {
         query: String,
     },
+    Ralph {
+        objective: String,
+        max_rounds: Option<u32>,
+        schema: Option<String>,
+    },
     WorkflowManage {
         run_id: String,
         op: String,
@@ -1277,6 +1322,7 @@ impl BuiltinAction {
             | BuiltinAction::GoalResume
             | BuiltinAction::GoalClear => "goal",
             BuiltinAction::DeepResearch { .. } => "deep-research",
+            BuiltinAction::Ralph { .. } => "ralph",
             BuiltinAction::WorkflowManage { .. } => "workflow",
             BuiltinAction::WorkflowLaunch { .. } => "workflow",
         }
@@ -1311,6 +1357,7 @@ impl BuiltinAction {
             | BuiltinAction::GoalResume
             | BuiltinAction::GoalClear => false,
             BuiltinAction::DeepResearch { .. } => true,
+            BuiltinAction::Ralph { objective, .. } => !objective.is_empty(),
             BuiltinAction::WorkflowManage { .. } => true,
             BuiltinAction::WorkflowLaunch { input, .. } => !input.is_empty(),
         }
@@ -2145,6 +2192,7 @@ mod tests {
                 "session-info",
                 "feedback",
                 "deep-research",
+                "ralph",
                 "workflow",
                 "goal",
                 "loop",

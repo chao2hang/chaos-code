@@ -863,6 +863,12 @@ pub(crate) struct SessionActor {
     pub(crate) workflow_launch_tx: tokio::sync::mpsc::UnboundedSender<
         xai_grok_tools::implementations::grok_build::workflow::WorkflowLaunchEnvelope,
     >,
+    /// Sends Code Mode (Rhai) script requests to the session-side listener
+    /// that owns the runtime. Pairs with the listener spawned in
+    /// `acp_session_impl::spawn`.
+    pub(crate) run_code_tx: tokio::sync::mpsc::UnboundedSender<
+        xai_grok_tools::implementations::grok_build::run_code::RunCodeEnvelope,
+    >,
     pub(crate) goal_classifier_enabled: bool,
     /// Master switch for the goal planner subagent.
     pub(crate) goal_planner_enabled: bool,

@@ -1416,6 +1416,91 @@ pub(crate) async fn spawn_session_actor(
             }
         });
     }
+
+    // ── run_code (Code Mode) listener ───────────────────────────────────────
+    //
+    // The leaf `RunCodeTool` sends requests over this channel. We own the
+    // Rhai runtime: one `tokio::task::spawn_blocking` per script, with each
+    // `tools_call(...)` dispatched through `workspace_ops.call_tool()` so
+    // that permission/auto-mode checks and hooks apply unchanged.
+
+    let (run_code_tx, mut run_code_rx) = tokio::sync::mpsc::unbounded_channel::<
+        xai_grok_tools::implementations::grok_build::run_code::RunCodeEnvelope,
+    >();
+    {
+        let session_id = session_info.id.0.clone();
+        let workspace_ops = workspace_ops.clone();
+        tokio::spawn(async move {
+            use crate::session::code_mode::{RunCodeRequest, ToolCallEnvelope};
+            use xai_grok_tools::implementations::grok_build::run_code::RunCodeAck;
+
+            while let Some((req, ack)) = run_code_rx.recv().await {
+                let session_id = session_id.clone();
+                let workspace_ops = workspace_ops.clone();
+
+                // Per-run channel for tool calls. The script sends on the
+                // sender; we drain and answer on the receiver, one at a time.
+                let (tool_tx, mut tool_rx) =
+                    tokio::sync::mpsc::unbounded_channel::<ToolCallEnvelope>();
+
+                tokio::task::spawn_blocking(move || {
+                    let run_req = RunCodeRequest {
+                        script: req.input.script,
+                        args: req
+                            .input
+                            .args
+                            .unwrap_or(serde_json::Value::Null),
+                        max_ops: None,
+                        max_wall_time: None,
+                        max_tool_calls: None,
+                        cancel: tokio_util::sync::CancellationToken::new(),
+                        tool_calls: tool_tx,
+                    };
+                    let outcome = run_req.run();
+                    let _ = ack.send(match outcome {
+                        crate::session::code_mode::CodeModeOutcome::Completed {
+                            result,
+                            tool_calls,
+                        } => RunCodeAck::Completed { result, tool_calls },
+                        crate::session::code_mode::CodeModeOutcome::Failed {
+                            error,
+                            tool_calls,
+                        } => RunCodeAck::Failed { error, tool_calls },
+                    });
+                });
+
+                // Pump tool calls on the async side: each call gets forwarded
+                // to `workspace_ops.call_tool()`, which goes through the
+                // normal `ToolBridge` — permissions, hooks, auto-mode, the lot.
+                let session_id_s = session_id.to_string();
+                while let Some(envelope) = tool_rx.recv().await {
+                    let result = workspace_ops
+                        .call_tool(
+                            &envelope.call.name,
+                            envelope.call.args.clone(),
+                            "run-code",
+                            Some(&session_id_s),
+                        )
+                        .await;
+                    let reply = match result {
+                        Ok(tool_result) => crate::session::code_mode::ToolCallResult {
+                            ok: true,
+                            value: serde_json::to_value(&tool_result.output)
+                                .unwrap_or(serde_json::Value::Null),
+                            error: None,
+                        },
+                        Err(e) => crate::session::code_mode::ToolCallResult {
+                            ok: false,
+                            value: serde_json::Value::Null,
+                            error: Some(e.to_string()),
+                        },
+                    };
+                    let _ = envelope.reply.send(reply);
+                }
+            }
+        });
+    }
+
     let obs_bridge = {
         let sid = xai_tool_protocol::SessionId::new(&*session_info.id.0)
             .unwrap_or_else(|_| xai_tool_protocol::SessionId::new("unknown").expect("valid"));
@@ -1605,6 +1690,7 @@ pub(crate) async fn spawn_session_actor(
         goal_update_tx,
         workflow_manager: workflow_manager.clone(),
         workflow_launch_tx: workflow_launch_tx.clone(),
+        run_code_tx: run_code_tx.clone(),
         goal_classifier_enabled: effective_config
             .resolve_goal_classifier_enabled(goal_enabled)
             .value,
@@ -1764,6 +1850,16 @@ pub(crate) async fn spawn_session_actor(
         .update_resource(
             xai_grok_tools::implementations::grok_build::workflow::WorkflowLaunchHandle(
                 session.workflow_launch_tx.clone(),
+            ),
+        )
+        .await;
+    session
+        .agent
+        .borrow()
+        .tool_bridge()
+        .update_resource(
+            xai_grok_tools::implementations::grok_build::run_code::RunCodeHandle(
+                session.run_code_tx.clone(),
             ),
         )
         .await;

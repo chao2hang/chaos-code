@@ -866,6 +866,89 @@ impl SessionActor {
                 }
                 ok_end_turn(0, None)
             }
+            BuiltinAction::Ralph {
+                objective,
+                max_rounds,
+                schema,
+            } => {
+                if objective.is_empty() {
+                    self.send_host_turn_slash_command_output(
+                        "Usage: /ralph <objective> [--rounds N]\n\
+                         Fresh-agent iterative execution (Ralph loop). Each round spawns a \
+                         brand-new child agent with no conversation history — only a bounded \
+                         structured report crosses rounds. Good for long-running tasks where \
+                         conversation drift is a risk.\n\
+                         · --rounds N — maximum rounds (1-20, default 5)\n\
+                         · schema can be set via /workflow ralph '{...json...}' for a custom report schema",
+                    )
+                    .await;
+                    return ok_end_turn(0, None);
+                }
+                let resolved = match crate::session::workflow::registry::resolve_by_name(
+                    "ralph",
+                    None,
+                ) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        self.send_host_turn_slash_command_output(&format!(
+                            "ralph workflow unavailable: {e}"
+                        ))
+                        .await;
+                        return ok_end_turn(0, None);
+                    }
+                };
+                let mut args_map = serde_json::Map::new();
+                args_map.insert("objective".into(), serde_json::Value::from(objective.clone()));
+                if let Some(rounds) = max_rounds {
+                    args_map.insert("max_rounds".into(), serde_json::Value::from(rounds));
+                }
+                if let Some(ref schema_text) = schema {
+                    args_map.insert("schema".into(), serde_json::Value::from(schema_text.clone()));
+                }
+                let spec = crate::session::workflow::manager::LaunchSpec {
+                    objective: objective.clone(),
+                    args: serde_json::Value::Object(args_map),
+                    agent_budget: None,
+                    resume_run_id: None,
+                };
+                let launched = self.workflow_manager.lock().await.launch(resolved, spec);
+                match launched {
+                    Ok((run_id, outcome_rx)) => {
+                        let (display, display_objective) = self
+                            .workflow_tracker()
+                            .await
+                            .lock()
+                            .get(&run_id)
+                            .map(|r| (r.name.clone(), r.objective.clone()))
+                            .unwrap_or_else(|| ("ralph".to_string(), String::new()));
+                        self.push_workflow_launch_reminder(
+                            &display,
+                            &run_id,
+                            &display_objective,
+                            &format!("/ralph {objective}"),
+                            false,
+                        );
+                        self.send_host_turn_slash_command_output(&format!(
+                            "Ralph loop '{display}' started in the background. Each round \
+                             spawns a fresh agent that reads only the previous round's report. \
+                             Use /workflows to follow progress."
+                        ))
+                        .await;
+                        tokio::spawn(async move {
+                            if let Ok(outcome) = outcome_rx.await {
+                                tracing::info!(run_id, ?outcome, "ralph finished");
+                            }
+                        });
+                    }
+                    Err(e) => {
+                        self.send_host_turn_slash_command_output(&format!(
+                            "Could not start ralph: {e}"
+                        ))
+                        .await;
+                    }
+                }
+                ok_end_turn(0, None)
+            }
             BuiltinAction::WorkflowManage { run_id, op } => {
                 let msg = self.manage_workflow_run(&run_id, &op).await;
                 self.send_host_turn_slash_command_output(&msg).await;

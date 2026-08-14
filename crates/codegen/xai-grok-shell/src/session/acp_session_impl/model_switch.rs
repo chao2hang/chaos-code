@@ -284,6 +284,13 @@ impl SessionActor {
                     ),
                 )
                 .await;
+            bridge
+                .update_resource(
+                    xai_grok_tools::implementations::grok_build::run_code::RunCodeHandle(
+                        self.run_code_tx.clone(),
+                    ),
+                )
+                .await;
             if !self.goal_runs_on_workflow_engine() {
                 bridge
                     .update_resource(

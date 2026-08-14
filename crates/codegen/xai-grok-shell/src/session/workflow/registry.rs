@@ -12,10 +12,16 @@ pub(crate) struct BuiltinWorkflow {
     pub script: &'static str,
 }
 
-pub(crate) const BUILTIN_WORKFLOWS: &[BuiltinWorkflow] = &[BuiltinWorkflow {
-    name: "deep-research",
-    script: include_str!("../workflows/deep_research.rhai"),
-}];
+pub(crate) const BUILTIN_WORKFLOWS: &[BuiltinWorkflow] = &[
+    BuiltinWorkflow {
+        name: "deep-research",
+        script: include_str!("../workflows/deep_research.rhai"),
+    },
+    BuiltinWorkflow {
+        name: "ralph",
+        script: include_str!("../workflows/ralph.rhai"),
+    },
+];
 
 pub(crate) struct ResolvedWorkflow {
     pub meta: WorkflowMeta,
@@ -869,5 +875,136 @@ mod tests {
             Err(ResolveError::UntrustedPath { .. })
         ));
         assert!(!attacker.join("safe.rhai").exists());
+    }
+
+    #[test]
+    fn ralph_builtin_resolves_and_meta_parses() {
+        // The bundled Ralph script must register as a built-in and have a
+        // valid meta block. Spot-check that it uses the cross-round handoff
+        // primitives (agent + scratch files) and that its phase metadata is
+        // correct.
+        let resolved = resolve_by_name("ralph", None)
+            .expect("ralph must resolve as builtin");
+        let meta = &resolved.meta;
+        assert_eq!(meta.name, "ralph");
+        assert!(
+            meta.description.to_ascii_lowercase().contains("fresh-agent"),
+            "ralph description must advertise the fresh-agent loop; got: {}",
+            meta.description
+        );
+        let script = resolved.script.as_str();
+        assert!(script.contains("agent("), "ralph must call agent()");
+        assert!(
+            script.contains("write_scratch_file(")
+                && script.contains("read_scratch_file("),
+            "ralph must use scratch files for cross-round handoff"
+        );
+        let titles: Vec<&str> = meta.phases.iter().map(|p| p.title.as_str()).collect();
+        assert!(titles.contains(&"Seeding"), "ralph phases must include Seeding");
+        assert!(titles.contains(&"Iterating"), "ralph phases must include Iterating");
+        assert!(titles.contains(&"Done"), "ralph phases must include Done");
+        assert_eq!(resolved.source, WorkflowSource::Builtin);
+    }
+
+    #[test]
+    fn ralph_name_validates_as_workflow_name() {
+        validate_workflow_name("ralph").expect("ralph must pass name validation");
+    }
+
+    #[test]
+    fn ralph_actual_script_runs_end_to_end() {
+        // The real ralph.rhai script must compile and execute against a mock
+        // host, with each round producing a fresh agent and writing the
+        // report to a scratch file. This catches the kinds of bugs that
+        // string-only meta parsing would miss (typos in `agent()`,
+        // `write_scratch_file()`, `read_scratch_file()`, the `done` check,
+        // and the loop bound).
+        use std::sync::Mutex;
+        use xai_workflow::host::AgentResult;
+        use xai_workflow::host::WorkflowHostRequest;
+        use xai_workflow::run_workflow;
+        use xai_workflow::journal::Journal;
+        use xai_workflow::WorkflowRunParams;
+        use tokio_util::sync::CancellationToken;
+        use tokio::sync::mpsc;
+
+        let script = include_str!("../workflows/ralph.rhai");
+        let (tx, mut rx) = mpsc::unbounded_channel();
+
+        // Mock scratch store: a single in-memory key/value.
+        let scratch = std::sync::Arc::new(Mutex::new(String::new()));
+        let scratch_for_host = scratch.clone();
+
+        let host = std::thread::spawn(move || {
+            while let Some(req) = rx.blocking_recv() {
+                match req {
+                    WorkflowHostRequest::ReserveAgentCalls { reply, .. }
+                    | WorkflowHostRequest::ReleaseAgentCalls { reply, .. } => {
+                        let _ = reply.send(Ok(()));
+                    }
+                    WorkflowHostRequest::SpawnAgent { reply, .. } => {
+                        // Each round is a fresh agent; the script asks the
+                        // first round to return done, so the loop should
+                        // terminate after a single iteration past the seed.
+                        let _ = reply.send(Ok(AgentResult {
+                            agent_id: "child".into(),
+                            success: true,
+                            output: serde_json::json!({
+                                "objective": "test",
+                                "status": "done",
+                                "progress_summary": "ok",
+                                "next_actions": [],
+                                "blockers": [],
+                            }),
+                            cancelled: false,
+                            tokens_used: 1,
+                            duration_ms: 1,
+                        }));
+                    }
+                    WorkflowHostRequest::WriteScratchFile { reply, content, .. } => {
+                        *scratch_for_host.lock().unwrap() = content.clone();
+                        let _ = reply.send(Ok(content));
+                    }
+                    WorkflowHostRequest::ReadScratchFile { reply, .. } => {
+                        let current = scratch_for_host.lock().unwrap().clone();
+                        let _ = reply.send(Ok(current));
+                    }
+                    WorkflowHostRequest::Phase { .. } | WorkflowHostRequest::Log { .. } => {
+                        // No-op: the launcher records these in the journal.
+                    }
+                    WorkflowHostRequest::BudgetQuery { reply } => {
+                        let _ = reply.send(Ok(xai_workflow::host::BudgetState {
+                            total: None,
+                            spent: 0,
+                            reserved: 0,
+                            remaining: None,
+                        }));
+                    }
+                    other => panic!("ralph emitted unexpected request: {other:?}"),
+                }
+            }
+        });
+
+        let outcome = run_workflow(WorkflowRunParams {
+            script: script.to_string(),
+            args: serde_json::json!({
+                "objective": "test objective",
+                "max_rounds": 5,
+            }),
+            journal: Journal::new(None),
+            host_tx: tx,
+            cancel: CancellationToken::new(),
+            max_ops: WorkflowRunParams::DEFAULT_MAX_OPS,
+        });
+        drop(host);
+
+        // Seed (1) + first iter (1) = 2 calls; agent declared done on the
+        // first iter so we don't continue.
+        match outcome {
+            xai_workflow::run::WorkflowOutcome::Completed { result } => {
+                assert_eq!(result["status"], "done");
+            }
+            other => panic!("ralph expected Completed, got {other:?}"),
+        }
     }
 }

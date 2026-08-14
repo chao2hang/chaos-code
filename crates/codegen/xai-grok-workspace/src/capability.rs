@@ -104,6 +104,7 @@ pub(crate) const ALL_TOOL_KINDS: &[ToolKind] = &[
     ToolKind::Monitor,
     ToolKind::GoalUpdate,
     ToolKind::Workflow,
+    ToolKind::RunCode,
     ToolKind::Other,
 ];
 
@@ -150,9 +151,8 @@ pub(crate) fn kind_allowed(mode: CapabilityMode, kind: ToolKind) -> bool {
         // Bash / shell.
         Execute => matches!(mode, M::Execute),
 
-        BackgroundTaskAction | WaitTasksAction | KillTaskAction | Task | Monitor | Workflow => {
-            matches!(mode, M::Execute)
-        }
+        BackgroundTaskAction | WaitTasksAction | KillTaskAction | Task | Monitor
+        | Workflow | RunCode => matches!(mode, M::Execute),
 
         // Integration dispatch.
         UseTool => matches!(mode, M::ReadWrite | M::Execute),

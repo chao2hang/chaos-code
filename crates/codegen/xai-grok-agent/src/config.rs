@@ -260,6 +260,115 @@ pub fn toolset_for_preset(preset: &str) -> Option<ToolServerConfig> {
         .map(|(_, toolset)| toolset)
         .or_else(|| registered_toolset_preset(&normalized))
 }
+
+// ── Agent preset definitions (toolset + persona + prompt) ───────────────────
+//
+// A "preset" extends the toolset-only `toolset_for_preset` with a persona and
+// optional prompt body, mirroring DSH's `agent-presets`. Each entry returns a
+// full `AgentDefinition` with `preset_id` stamped so a resumed/forked session
+// rebuilds under the composition it ran. The toolset half resolves through
+// the existing `native_toolset_presets()` table, so a preset's tool list stays
+// single-sourced with the toolset registry.
+
+/// A named agent preset: a full `AgentDefinition` builder keyed by id.
+pub type AgentPresetBuilder = fn() -> AgentDefinition;
+
+/// Built-in agent presets, as `(normalized_id, builder)` pairs.
+///
+/// `standard` and `minimal` are product presets (user-facing, switchable via
+/// `--preset` / `/preset`); the remaining ids alias existing toolset presets
+/// for convenience and carry a persona appropriate to their toolset.
+fn native_agent_presets() -> Vec<(&'static str, AgentPresetBuilder)> {
+    vec![
+        ("standard", standard_preset as AgentPresetBuilder),
+        ("minimal", minimal_preset),
+        ("grok-build", grok_build_preset),
+        ("grok-build-concise", grok_build_concise_preset),
+        ("grok-build-plan", grok_build_plan_preset),
+        ("codex", codex_preset),
+        ("explore", explore_preset),
+        ("plan", plan_preset),
+    ]
+}
+
+/// Names of every built-in agent preset, in declaration order.
+pub fn agent_preset_names() -> Vec<String> {
+    native_agent_presets()
+        .into_iter()
+        .map(|(name, _)| name.to_string())
+        .collect()
+}
+
+/// Resolve a named agent preset to a full `AgentDefinition`, stamping
+/// `preset_id`. Returns `None` for an unknown id.
+pub fn agent_definition_for_preset(preset: &str) -> Option<AgentDefinition> {
+    let normalized = preset.trim().to_ascii_lowercase().replace([' ', '_'], "-");
+    native_agent_presets()
+        .into_iter()
+        .find(|(name, _)| *name == normalized)
+        .map(|(_, builder)| {
+            let mut def = builder();
+            def.preset_id = Some(normalized);
+            def
+        })
+}
+
+// ── Preset builders ─────────────────────────────────────────────────────────
+
+/// **Standard** — the full coding agent (default). Full toolset, neutral
+/// persona.
+fn standard_preset() -> AgentDefinition {
+    AgentDefinition::default_grok_build()
+}
+
+/// **Minimal** — bash + str_replace_editor only. Low-token fast path.
+fn minimal_preset() -> AgentDefinition {
+    AgentDefinition {
+        tool_config: ToolServerConfig {
+            tools: vec![
+                bash_tool_config(),
+                (&grok_build::SearchReplaceTool).into(),
+            ],
+            behavior_preset: None,
+        },
+        inject_default_tools: false,
+        ..AgentDefinition::base(BuiltinAgentName::GrokBuild, "Minimal agent: bash + edit only.")
+    }
+}
+
+fn grok_build_preset() -> AgentDefinition {
+    AgentDefinition::default_grok_build()
+}
+
+fn grok_build_concise_preset() -> AgentDefinition {
+    AgentDefinition::grok_build_concise()
+}
+
+fn grok_build_plan_preset() -> AgentDefinition {
+    AgentDefinition::grok_build_plan()
+}
+
+fn codex_preset() -> AgentDefinition {
+    AgentDefinition {
+        tool_config: codex_toolset(),
+        ..AgentDefinition::base(BuiltinAgentName::Codex, "Codex toolset and prompt")
+    }
+}
+
+fn explore_preset() -> AgentDefinition {
+    AgentDefinition {
+        tool_config: explore_toolset(),
+        ..AgentDefinition::base(BuiltinAgentName::Explore, "Read-only exploration agent.")
+    }
+}
+
+fn plan_preset() -> AgentDefinition {
+    AgentDefinition {
+        tool_config: plan_toolset(),
+        ..AgentDefinition::base(BuiltinAgentName::Plan, "Planning agent.")
+    }
+}
+
 fn default_grok_build_toolset() -> ToolServerConfig {
     ToolServerConfig {
         tools: vec![
@@ -281,6 +390,7 @@ fn default_grok_build_toolset() -> ToolServerConfig {
             (&use_tool::UseTool).into(),
             (&grok_build::UpdateGoalTool).into(),
             (&grok_build::WorkflowTool).into(),
+            (&grok_build::RunCodeTool).into(),
         ],
         behavior_preset: None,
     }
@@ -302,6 +412,7 @@ fn grok_build_concise_toolset() -> ToolServerConfig {
             (&grok_build::MonitorTool).into(),
             (&grok_build::UpdateGoalTool).into(),
             (&grok_build::WorkflowTool).into(),
+            (&grok_build::RunCodeTool).into(),
         ],
         behavior_preset: None,
     }
@@ -332,6 +443,7 @@ pub fn grok_build_hashline_toolset(
         (&use_tool::UseTool).into(),
         (&grok_build::UpdateGoalTool).into(),
         (&grok_build::WorkflowTool).into(),
+        (&grok_build::RunCodeTool).into(),
     ]);
     ToolServerConfig {
         tools,
@@ -417,6 +529,7 @@ fn grok_build_plan_toolset() -> ToolServerConfig {
             (&use_tool::UseTool).into(),
             (&grok_build::UpdateGoalTool).into(),
             (&grok_build::WorkflowTool).into(),
+            (&grok_build::RunCodeTool).into(),
             // Plan mode tools
             (&grok_build::EnterPlanModeTool).into(),
             (&grok_build::ExitPlanModeTool).into(),
@@ -502,6 +615,7 @@ fn grok_build_plan_no_subagents_toolset() -> ToolServerConfig {
             (&use_tool::UseTool).into(),
             (&grok_build::UpdateGoalTool).into(),
             (&grok_build::WorkflowTool).into(),
+            (&grok_build::RunCodeTool).into(),
             // Plan mode tools
             (&grok_build::EnterPlanModeTool).into(),
             (&grok_build::ExitPlanModeTool).into(),
@@ -535,6 +649,7 @@ fn grok_build_ask_user_toolset() -> ToolServerConfig {
             (&use_tool::UseTool).into(),
             (&grok_build::UpdateGoalTool).into(),
             (&grok_build::WorkflowTool).into(),
+            (&grok_build::RunCodeTool).into(),
             // Ask user tool (without plan mode)
             (&grok_build::AskUserQuestionTool).into(),
         ],
@@ -842,6 +957,15 @@ pub struct AgentDefinition {
     /// Discovery scope (project vs user).
     #[serde(skip)]
     pub scope: AgentScope,
+    /// Preset identifier this definition was built from, if any.
+    ///
+    /// Set when the session is created from a named preset via `--preset` /
+    /// `/preset` (resolved through [`agent_definition_for_preset`]). Carried
+    /// on the durable header so a resumed/forked session rebuilds under the
+    /// composition it actually ran, not the deployment default. `None` for
+    /// definitions loaded from a file or built from a named agent.
+    #[serde(skip)]
+    pub preset_id: Option<String>,
 }
 /// Declares that the agent must call a specific tool before the turn ends.
 #[derive(Debug, Clone, Deserialize, serde::Serialize)]
@@ -1516,6 +1640,7 @@ impl AgentDefinition {
             source_path: None,
             user_message_template: UserMessageTemplate::Default,
             scope: AgentScope::BuiltIn,
+            preset_id: None,
         }
     }
     pub fn default_grok_build() -> Self {
@@ -1722,6 +1847,66 @@ mod tests {
         let explore = toolset_for_preset("explore").unwrap();
         assert!(explore.tools.len() < plan.tools.len());
         assert!(plan.tools.len() < gb.tools.len());
+    }
+    #[test]
+    fn agent_presets_resolve_and_stamp_preset_id() {
+        for name in [
+            "standard",
+            "minimal",
+            "grok-build",
+            "grok-build-concise",
+            "grok-build-plan",
+            "codex",
+            "explore",
+            "plan",
+        ] {
+            let def = agent_definition_for_preset(name)
+                .unwrap_or_else(|| panic!("agent preset `{name}` should resolve"));
+            assert_eq!(
+                def.preset_id.as_deref(),
+                Some(name),
+                "preset `{name}` must stamp its normalized id"
+            );
+        }
+        assert!(agent_definition_for_preset("does-not-exist").is_none());
+    }
+    #[test]
+    fn agent_preset_names_lists_all_builtins() {
+        let names = agent_preset_names();
+        assert!(names.contains(&"standard".to_string()));
+        assert!(names.contains(&"minimal".to_string()));
+        assert!(names.contains(&"explore".to_string()));
+    }
+    #[test]
+    fn minimal_preset_has_only_bash_and_edit() {
+        let def = agent_definition_for_preset("minimal").unwrap();
+        let ids: Vec<&str> = def.tool_config.tools.iter().map(|t| t.id.as_str()).collect();
+        // The bash tool registers as "GrokBuild:run_terminal_cmd".
+        assert!(
+            ids.iter().any(|id| id.contains("run_terminal_cmd") || id.contains("bash")),
+            "minimal preset must include the bash/terminal tool, got: {ids:?}"
+        );
+        assert!(
+            ids.iter().any(|id| id.contains("search_replace") || id.contains("edit")),
+            "minimal preset must include an edit tool, got: {ids:?}"
+        );
+        assert_eq!(
+            def.tool_config.tools.len(),
+            2,
+            "minimal preset must have exactly 2 tools, got {}: {ids:?}",
+            def.tool_config.tools.len()
+        );
+        assert!(
+            !def.inject_default_tools,
+            "minimal preset must disable default-tool injection"
+        );
+    }
+    #[test]
+    fn agent_preset_normalizes_name_with_underscores_and_spaces() {
+        let def = agent_definition_for_preset("Grok Build").unwrap();
+        assert_eq!(def.preset_id.as_deref(), Some("grok-build"));
+        let def = agent_definition_for_preset("grok_build").unwrap();
+        assert_eq!(def.preset_id.as_deref(), Some("grok-build"));
     }
     fn grok_computer_exclusive_ids() -> Vec<String> {
         #[allow(unused_mut)]

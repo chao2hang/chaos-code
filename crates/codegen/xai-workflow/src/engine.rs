@@ -832,6 +832,11 @@ fn register_host_fns(engine: &mut rhai::Engine, ctx: &Rc<RefCell<Ctx>>) {
         serde_json::to_string(&dynamic_to_value(value))
             .map_err(|error| runtime_error(format!("json encoding failed: {error}")))
     });
+    engine.register_fn("json_decode", |text: &str| -> ScriptResult<Dynamic> {
+        let value: serde_json::Value = serde_json::from_str(text)
+            .map_err(|error| runtime_error(format!("json decoding failed: {error}")))?;
+        value_to_dynamic(&value)
+    });
 }
 
 #[cfg(test)]
@@ -1771,6 +1776,138 @@ mod tests {
         match outcome {
             WorkflowOutcome::Completed { result } => {
                 assert_eq!(result, serde_json::json!("\"</tag>\\nquoted\""));
+            }
+            other => panic!("expected Completed, got {other:?}"),
+        }
+    }
+
+    // ── Ralph loop tests ──────────────────────────────────────────────────
+    // These exercise the Ralph pattern (seed report → N fresh-agent rounds →
+    // scratch-file handoff) with an in-memory mock host, validating the core
+    // correctness properties without a real agent backend.
+
+    fn ralph_script(max_rounds: u64) -> String {
+        // The script body is built by simple string concatenation: the meta
+        // block is one chunk, the body is another, and `max_rounds` is the
+        // only value that needs to vary. This avoids the double-brace
+        // escaping problem with `format!` + Rhai's `#{` object syntax.
+        let mut script = String::from(
+            r#"
+            let meta = #{ name: "ralph-test", description: "fresh-agent loop" };
+            let seed_result = agent("seed", #{ label: "seed" });
+            write_scratch_file("ralph-report.json", json_encode(seed_result.output));
+            let round = 1;
+            while round < "#,
+        );
+        script.push_str(&max_rounds.to_string());
+        script.push_str(
+            r#" {
+                round = round + 1;
+                let prev = read_scratch_file("ralph-report.json");
+                let r = agent("round", #{ label: "ralph-round-" + round.to_string() });
+                write_scratch_file("ralph-report.json", json_encode(r.output));
+                let status = r.output.status;
+                if status != () && status == "done" {
+                    break;
+                }
+            }
+            let final_report = read_scratch_file("ralph-report.json");
+            complete(json_decode(final_report));
+            "#,
+        );
+        script
+    }
+
+    fn agent_json_output(value: serde_json::Value) -> AgentResult {
+        AgentResult {
+            agent_id: "child".into(),
+            success: true,
+            output: value,
+            cancelled: false,
+            tokens_used: 1,
+            duration_ms: 1,
+        }
+    }
+
+    #[test]
+    fn ralph_runs_full_max_rounds_when_never_done() {
+        // When every round reports in_progress, the loop runs max_rounds - 1
+        // iterations on top of the seed: N total agent calls.
+        let (tx, rx) = mpsc::unbounded_channel();
+        let call_count = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let call_count_clone = call_count.clone();
+
+        let host = spawn_mock_host(rx, move |req| match req {
+            WorkflowHostRequest::SpawnAgent { reply, .. } => {
+                call_count_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let _ = reply.send(Ok(agent_json_output(
+                    serde_json::json!({ "status": "in_progress" })
+                )));
+            }
+            WorkflowHostRequest::WriteScratchFile { reply, content, .. } => {
+                let _ = reply.send(Ok(content));
+            }
+            WorkflowHostRequest::ReadScratchFile { reply, .. } => {
+                let _ = reply.send(Ok(r#"{"status":"in_progress"}"#.to_string()));
+            }
+            WorkflowHostRequest::Phase { .. } | WorkflowHostRequest::Log { .. } => {}
+            other => panic!("unexpected request: {other:?}"),
+        });
+
+        let outcome = run_workflow(params(&ralph_script(5), Journal::new(None), tx));
+        drop(host);
+
+        match outcome {
+            WorkflowOutcome::Completed { result } => {
+                assert_eq!(result["status"], "in_progress");
+                assert_eq!(call_count.load(std::sync::atomic::Ordering::SeqCst), 5);
+            }
+            other => panic!("expected Completed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn ralph_exits_early_when_agent_says_done() {
+        // When the third agent call returns done, the loop breaks:
+        // seed (1) + two iterations = 3 calls total, not the full 5.
+        let (tx, rx) = mpsc::unbounded_channel();
+        let call_count = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let counter = call_count.clone();
+        // The mock plays the role of the scratch store: whatever the script
+        // writes is what the next round reads.
+        let scratch = std::sync::Arc::new(std::sync::Mutex::new(String::from("{}")));
+        let scratch_for_host = scratch.clone();
+
+        let host = spawn_mock_host(rx, move |req| match req {
+            WorkflowHostRequest::SpawnAgent { reply, opts } => {
+                let n = counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                // Every Ralph round must be a fresh agent — never a fork.
+                assert!(!opts.fork_context, "ralph must not fork_context");
+                let status = if n >= 2 { "done" } else { "in_progress" };
+                let _ = reply.send(Ok(agent_json_output(
+                    serde_json::json!({ "status": status })
+                )));
+            }
+            WorkflowHostRequest::WriteScratchFile { reply, content, .. } => {
+                *scratch_for_host.lock().unwrap() = content.clone();
+                let _ = reply.send(Ok(content));
+            }
+            WorkflowHostRequest::ReadScratchFile { reply, .. } => {
+                let current = scratch_for_host.lock().unwrap().clone();
+                let _ = reply.send(Ok(current));
+            }
+            WorkflowHostRequest::Phase { .. } | WorkflowHostRequest::Log { .. } => {}
+            other => panic!("unexpected request: {other:?}"),
+        });
+
+        let outcome = run_workflow(params(&ralph_script(5), Journal::new(None), tx));
+        drop(host);
+
+        match outcome {
+            WorkflowOutcome::Completed { result } => {
+                assert_eq!(result["status"], "done");
+                // Seed (1) + two iteration rounds = 3; breaks before round 4.
+                assert_eq!(call_count.load(std::sync::atomic::Ordering::SeqCst), 3);
             }
             other => panic!("expected Completed, got {other:?}"),
         }

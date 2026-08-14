@@ -21,6 +21,8 @@ pub use agent::Agent;
 pub use builder::AgentBuilder;
 pub use compaction::CompactionPolicy;
 pub use config::AgentDefinition;
+pub use config::agent_definition_for_preset;
+pub use config::agent_preset_names;
 pub use config::preset_names;
 pub use config::toolset_for_preset;
 pub use config::workspace_grok_build_toolset;
