@@ -6503,7 +6503,10 @@ pub(crate) mod tests {
             "an open prompt history overlay must request animation ticks"
         );
         let mut delivered = false;
-        for _ in 0..1000 {
+        // CI runners can starve the history-search daemon thread well past a
+        // fixed 1000×1ms budget; poll against a wall-clock deadline instead.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while std::time::Instant::now() < deadline {
             if app.tick() && app.agents[&id].prompt.history_search.result_count() == 2 {
                 delivered = true;
                 break;
@@ -6561,7 +6564,10 @@ pub(crate) mod tests {
             "an open scrollback search must request animation ticks"
         );
         let mut delivered = false;
-        for _ in 0..1000 {
+        // Same daemon-thread starvation risk as the prompt-history test:
+        // wall-clock deadline instead of a fixed iteration budget.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while std::time::Instant::now() < deadline {
             app.tick();
             if app.agents[&id]
                 .scrollback_search

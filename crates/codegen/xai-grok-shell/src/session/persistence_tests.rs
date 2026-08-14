@@ -483,8 +483,45 @@ async fn manual_rename_next_flush_does_not_revert_backend_title() {
             .all(|t| t.title_is_manual == Some(true)),
         "every save of the manual title must stamp title_is_manual: {titles:?}"
     );
-    let upsert_path = format!("/sessions/{SESSION_ID}");
-    let upserted_title = server.requests().into_iter().rev().find_map(|r| {
+    let upserted_title =
+        wait_for_upserted_title(&server, SESSION_ID, std::time::Duration::from_secs(5)).await;
+    assert_eq!(
+        upserted_title.as_deref(),
+        Some(NEW_TITLE),
+        "SetTitle must upsert the session-row title, not only the metadata blob; requests={:?}",
+        request_path_summary(&server)
+    );
+    actor.stop().await;
+}
+
+/// Poll until a `PUT /sessions/{id}` upsert lands, or the deadline passes.
+///
+/// `RemoteSync` issues `save_session_data` (POST) *then* `upsert_session`
+/// (PUT) as two sequential awaits: observing the POST does not imply the PUT
+/// has reached the wire yet. Polling here removes that scheduling window
+/// without weakening the assertion — on timeout the caller still asserts
+/// against `None` and fails with the same diagnostics.
+async fn wait_for_upserted_title(
+    server: &xai_grok_test_support::MockInferenceServer,
+    session_id: &str,
+    timeout: std::time::Duration,
+) -> Option<String> {
+    let upsert_path = format!("/sessions/{session_id}");
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        let title = find_upserted_title(server, &upsert_path);
+        if title.is_some() || tokio::time::Instant::now() >= deadline {
+            return title;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+}
+
+fn find_upserted_title(
+    server: &xai_grok_test_support::MockInferenceServer,
+    upsert_path: &str,
+) -> Option<String> {
+    server.requests().into_iter().rev().find_map(|r| {
         (r.method == "PUT" && r.path == upsert_path)
             .then(|| {
                 r.body
@@ -495,14 +532,7 @@ async fn manual_rename_next_flush_does_not_revert_backend_title() {
                     .map(str::to_owned)
             })
             .flatten()
-    });
-    assert_eq!(
-        upserted_title.as_deref(),
-        Some(NEW_TITLE),
-        "SetTitle must upsert the session-row title, not only the metadata blob; requests={:?}",
-        request_path_summary(&server)
-    );
-    actor.stop().await;
+    })
 }
 
 #[derive(Debug)]
@@ -948,19 +978,8 @@ async fn reset_title_to_auto_then_generated_title_is_adopted() {
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
 
-    let upsert_path = format!("/sessions/{SESSION_ID}");
-    let upserted_title = server.requests().into_iter().rev().find_map(|r| {
-        (r.method == "PUT" && r.path == upsert_path)
-            .then(|| {
-                r.body
-                    .as_ref()?
-                    .get("session")?
-                    .get("title")?
-                    .as_str()
-                    .map(str::to_owned)
-            })
-            .flatten()
-    });
+    let upserted_title =
+        wait_for_upserted_title(&server, SESSION_ID, std::time::Duration::from_secs(5)).await;
     assert_eq!(
         upserted_title.as_deref(),
         Some(""),
