@@ -288,6 +288,12 @@ pub struct AgentArgs {
     /// Path to an agent profile file.
     #[arg(long = "agent-profile", value_name = "PATH")]
     pub agent_profile: Option<PathBuf>,
+    /// Select an agent preset by name (standard, minimal, explore, plan, …).
+    /// A preset bundles a toolset, persona, and prompt sections. It shadows
+    /// `--agent-profile` when both are given. Switchable mid-session via
+    /// `/preset` (blank sessions only).
+    #[arg(long = "preset", value_name = "PRESET")]
+    pub preset: Option<String>,
     /// Load a plugin from this directory for this process only (repeatable).
     /// Highest-priority plugin scope; always trusted — hooks and MCP servers
     /// activate without a prompt. Used by the Agent SDKs to inject

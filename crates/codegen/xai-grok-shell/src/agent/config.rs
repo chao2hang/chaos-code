@@ -1887,6 +1887,13 @@ pub struct AgentSelectionConfig {
     /// Global system-prompt identity label. Per-model override wins.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system_prompt_label: Option<String>,
+    /// Agent preset name (e.g. "standard", "minimal", "explore", "plan").
+    /// Resolved through `xai_grok_agent::agent_definition_for_preset` into a
+    /// full `AgentDefinition` (toolset + persona + prompt). Lower priority
+    /// than `name`/`definition`; higher than the built-in default. CLI
+    /// `--preset` and `/preset` set this.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preset: Option<String>,
 }
 /// Configuration for session behavior.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

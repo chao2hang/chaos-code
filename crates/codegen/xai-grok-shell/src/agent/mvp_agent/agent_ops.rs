@@ -3738,10 +3738,11 @@ impl MvpAgent {
     /// Priority (highest to lowest):
     /// 1. Model `agent_type` if it names a strict harness (codex, …).
     /// 2. `acp_agent_profile` from ACP `_meta.agentProfile` (remote clients).
-    /// 3. `agent_profile_path` from CLI `--agent-profile`.
-    /// 4. `agent_config` from config.toml `[agent]`.
-    /// 5. `GROK_AGENT` env var.
-    /// 6. Built-in default agent.
+    /// 3. `preset` from CLI `--preset` / config `[agent] preset`.
+    /// 4. `agent_profile_path` from CLI `--agent-profile`.
+    /// 5. `agent_config` from config.toml `[agent]`.
+    /// 6. `GROK_AGENT` env var.
+    /// 7. Built-in default agent.
     ///
     /// `GROK_AGENT` and an explicit `[agent] name` bypass step 1.
     /// Strict-harness classification is structural — see
@@ -3779,6 +3780,25 @@ impl MvpAgent {
                 "Using agent profile from ACP _meta.agentProfile"
             );
             return def;
+        }
+        // Preset (--preset / [agent] preset): resolves a named bundle of
+        // toolset + persona + prompt. Higher priority than --agent-profile
+        // and [agent] name/definition so an explicit preset always wins.
+        if let Some(ref preset) = agent_config.preset {
+            if let Some(def) = xai_grok_agent::agent_definition_for_preset(preset) {
+                tracing::info!(
+                    preset = %preset,
+                    agent_name = %def.name,
+                    "Using agent definition from preset"
+                );
+                return def;
+            }
+            tracing::warn!(
+                preset = %preset,
+                "Preset '{}' not found; available: {:?}. Falling through to next source.",
+                preset,
+                xai_grok_agent::agent_preset_names()
+            );
         }
         if let Some(path) = agent_profile_path {
             match AgentDefinition::from_file(path) {

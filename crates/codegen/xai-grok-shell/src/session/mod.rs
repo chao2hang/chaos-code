@@ -367,3 +367,4 @@ pub(crate) mod wire_tags;
 pub(crate) mod workflow;
 pub mod worktree;
 pub mod worktree_pool;
+pub mod code_mode;

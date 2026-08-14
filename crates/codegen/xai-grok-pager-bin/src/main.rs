@@ -1210,6 +1210,10 @@ async fn run_agent_command(
         .agent_profile
         .as_deref()
         .map(resolve_agent_profile_path);
+    // CLI `--preset` overrides config `[agent] preset`.
+    if let Some(ref preset) = agent_args.preset {
+        agent_config.agent.preset = Some(preset.clone());
+    }
     agent_config.client_version = Some(PAGER_CLIENT_VERSION.to_string());
     if is_leader && !agent_args.plugin_dirs.is_empty() {
         eprintln!("{PLUGIN_DIR_LEADER_WARNING}");

@@ -202,6 +202,7 @@ async fn create_test_actor(
         goal_update_tx: tokio::sync::mpsc::unbounded_channel().0,
         workflow_manager: crate::session::workflow::manager::WorkflowManager::test_bundle().0,
         workflow_launch_tx: tokio::sync::mpsc::unbounded_channel().0,
+        run_code_tx: tokio::sync::mpsc::unbounded_channel().0,
         goal_classifier_enabled: false,
         goal_planner_enabled: false,
         goal_summary_enabled: false,
@@ -668,6 +669,7 @@ async fn create_test_actor_with_memory(
         goal_update_tx: tokio::sync::mpsc::unbounded_channel().0,
         workflow_manager: crate::session::workflow::manager::WorkflowManager::test_bundle().0,
         workflow_launch_tx: tokio::sync::mpsc::unbounded_channel().0,
+        run_code_tx: tokio::sync::mpsc::unbounded_channel().0,
         goal_classifier_enabled: false,
         goal_planner_enabled: false,
         goal_summary_enabled: false,
@@ -1455,6 +1457,7 @@ async fn test_e2e_idle_resume_refreshes_model_metadata() {
                 workflow_manager: crate::session::workflow::manager::WorkflowManager::test_bundle()
                     .0,
                 workflow_launch_tx: tokio::sync::mpsc::unbounded_channel().0,
+                run_code_tx: tokio::sync::mpsc::unbounded_channel().0,
                 goal_classifier_enabled: false,
                 goal_planner_enabled: false,
                 goal_summary_enabled: false,

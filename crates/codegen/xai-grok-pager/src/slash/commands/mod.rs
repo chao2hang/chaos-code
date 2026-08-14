@@ -46,6 +46,7 @@ pub mod new;
 pub mod personas;
 pub mod plan;
 pub mod plugin;
+pub mod preset;
 pub mod privacy;
 pub mod provider;
 pub mod queue;
@@ -148,6 +149,7 @@ pub fn builtin_commands() -> Vec<Arc<dyn SlashCommand>> {
         Arc::new(tutorial::TutorialCommand),
         Arc::new(config_agents::ConfigAgentsCommand),
         Arc::new(personas::PersonasCommand),
+        Arc::new(preset::PresetCommand),
         Arc::new(provider::ProviderCommand),
         // Hidden easter egg: never listed, runs on bare `/gboom`.
         Arc::new(gboom::GboomCommand),

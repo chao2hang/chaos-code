@@ -22,6 +22,7 @@ pub mod list_dir;
 pub mod lsp;
 pub mod monitor;
 pub mod read_file;
+pub mod run_code;
 pub mod scheduler;
 pub mod search_replace;
 pub(crate) mod storage;
@@ -68,3 +69,4 @@ pub use video_gen::{
 pub use web_fetch::{WebFetchClient, WebFetchConfig, WebFetchParams, WebFetchTool};
 pub use web_search::WebSearchTool;
 pub use workflow::{WORKFLOW_TOOL_NAME, WorkflowTool};
+pub use run_code::{RUN_CODE_TOOL_NAME, RunCodeTool};

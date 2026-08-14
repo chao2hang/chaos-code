@@ -69,6 +69,7 @@ impl ToolKind {
             ToolKind::Monitor => "Monitor",
             ToolKind::GoalUpdate => "Update Goal",
             ToolKind::Workflow => "Workflow",
+            ToolKind::RunCode => "Run Code",
             ToolKind::Other => "Tool",
         }
     }
@@ -111,6 +112,7 @@ impl ToolKind {
             | ToolKind::Monitor
             | ToolKind::GoalUpdate
             | ToolKind::Workflow
+            | ToolKind::RunCode
             | ToolKind::Other => false,
         }
     }
