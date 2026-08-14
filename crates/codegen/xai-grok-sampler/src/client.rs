@@ -288,7 +288,7 @@ fn warn_reasoning_backfill(n: u32) {
         tracing::warn!(
             count = n,
             placeholder = REASONING_PLACEHOLDER,
-            "backfilled `reasoning_content` placeholder on {} assistant message(s) \
+            "backfilled `reasoning_content` placeholder on assistant message(s) \
              — thinking-mode gateways require the field to be present and non-empty. \
              TODO(net-gateway): remove when gateways stop requiring this.",
         );
