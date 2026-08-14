@@ -20,7 +20,7 @@ timeout 3 cat 2>/dev/null | head -c 256 | od -c | head -10
 echo "DONE"
 "#;
 
-    let (code, raw) = run_wrap(&["bash", "-c", script], &[("SHELL", "/bin/bash")]);
+    let (_code, raw) = run_wrap(&["bash", "-c", script], &[("SHELL", "/bin/bash")]);
 
     // Don't assert exit code — timeout may kill cat.
     assert!(raw.contains("DONE"), "must reach DONE marker\nraw:\n{raw}");
