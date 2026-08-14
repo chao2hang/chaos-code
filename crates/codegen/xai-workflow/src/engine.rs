@@ -1841,7 +1841,7 @@ mod tests {
             WorkflowHostRequest::SpawnAgent { reply, .. } => {
                 call_count_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 let _ = reply.send(Ok(agent_json_output(
-                    serde_json::json!({ "status": "in_progress" })
+                    serde_json::json!({ "status": "in_progress" }),
                 )));
             }
             WorkflowHostRequest::WriteScratchFile { reply, content, .. } => {
@@ -1885,7 +1885,7 @@ mod tests {
                 assert!(!opts.fork_context, "ralph must not fork_context");
                 let status = if n >= 2 { "done" } else { "in_progress" };
                 let _ = reply.send(Ok(agent_json_output(
-                    serde_json::json!({ "status": status })
+                    serde_json::json!({ "status": status }),
                 )));
             }
             WorkflowHostRequest::WriteScratchFile { reply, content, .. } => {

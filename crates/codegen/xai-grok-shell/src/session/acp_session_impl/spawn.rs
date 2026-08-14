@@ -1446,10 +1446,7 @@ pub(crate) async fn spawn_session_actor(
                 tokio::task::spawn_blocking(move || {
                     let run_req = RunCodeRequest {
                         script: req.input.script,
-                        args: req
-                            .input
-                            .args
-                            .unwrap_or(serde_json::Value::Null),
+                        args: req.input.args.unwrap_or(serde_json::Value::Null),
                         max_ops: None,
                         max_wall_time: None,
                         max_tool_calls: None,

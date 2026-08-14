@@ -7,6 +7,13 @@
 # Secrets (optional until you want npm):
 #   NPM_TOKEN  — npm Automation token with publish on chaos-code / chaos-code-*
 #                Without it: binaries + GitHub Release still work; npm step is skipped.
+#   CHAOS_SIGNING_PRIVATE_KEY — base64-encoded 32-byte ed25519 private key
+#                seed for signing release binaries. Without it: binaries still
+#                ship, but auto-update signature verification is disabled.
+# Variables (optional):
+#   CHAOS_SIGNING_PUBLIC_KEY — base64 32-byte ed25519 public key, compiled into
+#                the binary at build time so the updater can verify .sig sidecars.
+#                Must match CHAOS_SIGNING_PRIVATE_KEY.
 #
 # Jobs:
 #   resolve-version → build (matrix) → package (assemble + GH Release + npm)
@@ -177,6 +184,15 @@ jobs:
 
       - name: Build
         shell: bash
+        env:
+          # Compile-time ed25519 public key for auto-update signature
+          # verification. When set, the updater verifies downloaded binaries
+          # against .sig sidecars signed with the matching private key
+          # (see the Sign binaries step below). The value comes from the
+          # repo variable CHAOS_SIGNING_PUBLIC_KEY (base64 32-byte key).
+          # If unset, the build uses a placeholder and verification is
+          # skipped (CHAOS_REQUIRE_SIG defaults to off during transition).
+          CHAOS_SIGNING_PUBLIC_KEY: ${{ vars.CHAOS_SIGNING_PUBLIC_KEY }}
         run: |
           set -euo pipefail
           echo "Building ${{ matrix.target }} version=${GROK_VERSION}"
@@ -307,6 +323,68 @@ jobs:
           echo "=== SHA256SUMS ==="
           cat SHA256SUMS
 
+      # Sign each binary with ed25519 using the private key seed stored in
+      # the CHAOS_SIGNING_PRIVATE_KEY secret (base64-encoded 32-byte seed).
+      # The .sig files contain a bare base64-encoded 64-byte ed25519
+      # signature (no minisign header) so both the Rust auto-updater and
+      # install.sh/.ps1 can verify with the compiled-in public key
+      # (CHAOS_SIGNING_PUBLIC_KEY repo variable, injected at build time).
+      #
+      # Skip silently when the secret is not configured (e.g. forks, dev
+      # builds) — the binaries still ship, verification is just not enforced.
+      - name: Sign binaries
+        if: vars.CHAOS_SIGNING_PUBLIC_KEY != ''
+        shell: bash
+        env:
+          CHAOS_SIGNING_PRIVATE_KEY: ${{ secrets.CHAOS_SIGNING_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${CHAOS_SIGNING_PRIVATE_KEY:-}" ]]; then
+            echo "::warning::CHAOS_SIGNING_PRIVATE_KEY secret not set — skipping signing."
+            exit 0
+          fi
+          cd release-bins
+          # Ensure the cryptography package is available. ubuntu runners do
+          # not reliably preinstall it, and 24.04's python is externally
+          # managed (PEP 668) — a venv sidesteps both.
+          if ! python3 -c "from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey" 2>/dev/null; then
+            echo "cryptography not available — creating venv..."
+            python3 -m venv /tmp/chaos-sigenv
+            /tmp/chaos-sigenv/bin/pip install --quiet cryptography
+            PY=/tmp/chaos-sigenv/bin/python
+          else
+            PY=python3
+          fi
+          # Sign each binary with Python's cryptography library (ed25519,
+          # raw — no pre-hash). The .sig file is a bare base64 64-byte
+          # signature, matching what the Rust auto-updater expects.
+          "$PY" -c "
+          import base64, os, sys
+          from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+          from cryptography.hazmat.primitives.serialization import Encoding, PrivateFormat, NoEncryption
+
+          seed = base64.b64decode(os.environ['CHAOS_SIGNING_PRIVATE_KEY'])
+          sk = Ed25519PrivateKey.from_private_bytes(seed)
+
+          binaries = [
+              'chaos-linux-x64', 'chaos-linux-arm64',
+              'chaos-darwin-arm64', 'chaos-darwin-x64',
+              'chaos-win32-x64.exe', 'chaos-win32-arm64.exe',
+          ]
+          for name in binaries:
+              if not os.path.isfile(name):
+                  continue
+              with open(name, 'rb') as f:
+                  data = f.read()
+              sig = sk.sign(data)
+              sig_b64 = base64.b64encode(sig).decode()
+              with open(name + '.sig', 'w') as f:
+                  f.write(sig_b64 + '\n')
+              print(f'  signed {name} ({len(data)} bytes)')
+          "
+          echo "=== signed files ==="
+          ls -lh *.sig 2>/dev/null || echo "No .sig files generated"
+
       - name: Stamp npm versions
         run: node scripts/ci/stamp-npm-version.mjs "${{ needs.resolve-version.outputs.version }}"
 
@@ -403,10 +481,16 @@ jobs:
           files: |
             release-bins/SHA256SUMS
             release-bins/chaos-linux-x64
+            release-bins/chaos-linux-x64.sig
             release-bins/chaos-linux-arm64
+            release-bins/chaos-linux-arm64.sig
             release-bins/chaos-darwin-arm64
+            release-bins/chaos-darwin-arm64.sig
             release-bins/chaos-darwin-x64
+            release-bins/chaos-darwin-x64.sig
             release-bins/chaos-win32-x64.exe
+            release-bins/chaos-win32-x64.exe.sig
             release-bins/chaos-win32-arm64.exe
+            release-bins/chaos-win32-arm64.exe.sig
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

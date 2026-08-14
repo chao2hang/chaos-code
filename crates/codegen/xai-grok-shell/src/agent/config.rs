@@ -6103,7 +6103,7 @@ reasoning_effort = "low"
         }
     }
     #[test]
-    #[ignore = "asserts upstream xAI defaults removed by Chaos fork"]
+    #[ignore = "asserts upstream xAI defaults removed by Chaos fork; review 2026-10"]
     fn inject_url_derived_headers_adds_proxy_headers_for_cli_chat_proxy_url() {
         let mut headers = IndexMap::new();
         inject_url_derived_headers(
@@ -6129,7 +6129,7 @@ reasoning_effort = "low"
         assert!(headers.get("x-authenticateresponse").is_none());
     }
     #[test]
-    #[ignore = "asserts upstream xAI defaults removed by Chaos fork"]
+    #[ignore = "asserts upstream xAI defaults removed by Chaos fork; review 2026-10"]
     fn inject_url_derived_headers_preserves_caller_extra_headers() {
         let mut headers = IndexMap::new();
         headers.insert("x-custom-byok".to_string(), "value".to_string());
@@ -6438,7 +6438,7 @@ reasoning_effort = "low"
     /// sampler: the sampler substitutes the resolver's bearer at request
     /// time.
     #[test]
-    #[ignore = "asserts upstream xAI defaults removed by Chaos fork"]
+    #[ignore = "asserts upstream xAI defaults removed by Chaos fork; review 2026-10"]
     fn session_resolver_is_not_stamped_onto_third_party_samplers() {
         #[derive(Debug)]
         struct SessionResolver;
@@ -7357,7 +7357,7 @@ reasoning_effort = "low"
         }
     }
     #[test]
-    #[ignore = "asserts upstream xAI defaults removed by Chaos fork"]
+    #[ignore = "asserts upstream xAI defaults removed by Chaos fork; review 2026-10"]
     fn proxy_messages_models_use_bearer_auth_scheme() {
         let mut model = test_model_entry(
             "grok-4.5",
@@ -9000,7 +9000,7 @@ reasoning_effort = "low"
         assert_eq!(model.info.base_url, "https://inference.example.com/v1");
     }
     #[test]
-    #[ignore = "asserts upstream xAI defaults removed by Chaos fork"]
+    #[ignore = "asserts upstream xAI defaults removed by Chaos fork; review 2026-10"]
     fn e2e_default_model_with_session_routes_to_proxy() {
         let (_, models) = resolve_models_from_toml("", None);
         let model = models
@@ -9014,7 +9014,7 @@ reasoning_effort = "low"
         );
     }
     #[test]
-    #[ignore = "asserts upstream xAI defaults removed by Chaos fork"]
+    #[ignore = "asserts upstream xAI defaults removed by Chaos fork; review 2026-10"]
     #[serial]
     fn e2e_default_model_with_external_api_key_routes_to_api_xai() {
         let (_, models) = resolve_models_from_toml("", None);
@@ -9119,7 +9119,7 @@ reasoning_effort = "low"
         );
     }
     #[test]
-    #[ignore = "asserts upstream xAI defaults removed by Chaos fork"]
+    #[ignore = "asserts upstream xAI defaults removed by Chaos fork; review 2026-10"]
     fn e2e_duplicate_model_field_both_entries_survive() {
         let dm = crate::models::default_model();
         let (_, models) = resolve_models_from_toml(
@@ -9180,7 +9180,7 @@ reasoning_effort = "low"
         assert_eq!(resolved.len(), 1, "only the prefetched enterprise model");
     }
     #[test]
-    #[ignore = "asserts upstream xAI defaults removed by Chaos fork"]
+    #[ignore = "asserts upstream xAI defaults removed by Chaos fork; review 2026-10"]
     fn e2e_default_endpoint_still_injects_defaults() {
         let cfg = Config::default();
         let resolved = resolve_model_list(&cfg, None);
@@ -9228,7 +9228,7 @@ reasoning_effort = "low"
         );
     }
     #[test]
-    #[ignore = "asserts upstream xAI defaults removed by Chaos fork"]
+    #[ignore = "asserts upstream xAI defaults removed by Chaos fork; review 2026-10"]
     fn e2e_enterprise_endpoints_plus_partial_model_override() {
         let dm = crate::models::default_model();
         let (_, models) = resolve_models_from_toml(
@@ -9266,7 +9266,7 @@ reasoning_effort = "low"
         );
     }
     #[test]
-    #[ignore = "asserts upstream xAI defaults removed by Chaos fork"]
+    #[ignore = "asserts upstream xAI defaults removed by Chaos fork; review 2026-10"]
     fn e2e_enterprise_endpoints_only_no_model_override() {
         let (_, models) = resolve_models_from_toml(
             r#"
@@ -12498,7 +12498,7 @@ default = "grok-4.5"
         }
     }
     #[test]
-    #[ignore = "asserts upstream xAI defaults removed by Chaos fork"]
+    #[ignore = "asserts upstream xAI defaults removed by Chaos fork; review 2026-10"]
     fn global_extra_headers_apply_to_model_without_override() {
         let dm = crate::models::default_model();
         let (_, models) = resolve_models_from_toml(
@@ -12805,7 +12805,7 @@ default = "grok-4.5"
         );
     }
     #[test]
-    #[ignore = "asserts upstream xAI defaults removed by Chaos fork"]
+    #[ignore = "asserts upstream xAI defaults removed by Chaos fork; review 2026-10"]
     fn resolve_model_list_inherits_context_window_from_default_when_prefetched_has_fallback() {
         let cfg = Config::default();
         let dm = crate::models::default_model();
@@ -12884,7 +12884,7 @@ default = "grok-4.5"
         );
     }
     #[test]
-    #[ignore = "asserts upstream xAI defaults removed by Chaos fork"]
+    #[ignore = "asserts upstream xAI defaults removed by Chaos fork; review 2026-10"]
     fn resolve_model_list_prunes_bundled_entries_not_in_prefetch() {
         let cfg = Config::default();
         let dm = crate::models::default_model();
@@ -12899,7 +12899,7 @@ default = "grok-4.5"
         assert!(no_p.contains_key(dm));
     }
     #[test]
-    #[ignore = "asserts upstream xAI defaults removed by Chaos fork"]
+    #[ignore = "asserts upstream xAI defaults removed by Chaos fork; review 2026-10"]
     fn resolve_model_list_prefetch_visibility_matches_auth_and_server_list() {
         let cfg = Config::default();
         let dm = crate::models::default_model();
@@ -12980,7 +12980,7 @@ default = "grok-4.5"
     /// Guard: config overlay WITHOUT credentials must NOT flip the
     /// bundled supported_in_api flag. Only BYOK triggers that override.
     #[test]
-    #[ignore = "asserts upstream xAI defaults removed by Chaos fork"]
+    #[ignore = "asserts upstream xAI defaults removed by Chaos fork; review 2026-10"]
     fn plain_config_overlay_preserves_bundled_visibility() {
         let dm = crate::models::default_model();
         let bundled = default_model_entries(&EndpointsConfig::default())
@@ -13244,7 +13244,7 @@ default = "grok-4.5"
         assert_eq!(r.source, ConfigSource::Remote);
     }
     #[test]
-    #[ignore = "asserts upstream xAI defaults removed by Chaos fork"]
+    #[ignore = "asserts upstream xAI defaults removed by Chaos fork; review 2026-10"]
     #[serial_test::serial(remote_sig_disarm)]
     fn remote_settings_disarm_managed_config_signatures() {
         xai_grok_config::signed_policy::apply_remote_managed_config_signature_verification(
@@ -13278,7 +13278,7 @@ default = "grok-4.5"
     }
     /// Keyed path: prod proxy origin can disarm; env override cannot.
     #[test]
-    #[ignore = "asserts upstream xAI defaults removed by Chaos fork"]
+    #[ignore = "asserts upstream xAI defaults removed by Chaos fork; review 2026-10"]
     #[serial_test::serial(remote_sig_disarm)]
     fn remote_settings_disarm_requires_prod_proxy_when_keys_embedded() {
         xai_grok_config::signed_policy::apply_remote_managed_config_signature_verification(

@@ -583,9 +583,7 @@ fn bracketed_paste_wrap_eligibility_covers_windows_terminal_ctrl_v() {
 
 #[test]
 fn bracketed_paste_wrap_eligibility_rejects_the_keypress_source() {
-    use crate::app::actions::{
-        ClipboardPasteCompletion, ClipboardPasteSource, ClipboardTextRead,
-    };
+    use crate::app::actions::{ClipboardPasteCompletion, ClipboardPasteSource, ClipboardTextRead};
 
     // The Ctrl+V / Alt+V keypress path keeps its own, stricter gate
     // (`wrap_host_image_request_eligible` + `is_clipboard_key`): a `Handled`

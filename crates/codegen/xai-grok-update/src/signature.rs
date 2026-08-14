@@ -1,16 +1,15 @@
 //! Ed25519 离线签名验证。
 //!
-//! 签名格式（minisign 兼容的子集）：
+//! 签名格式（原始 ed25519，无 minisign 头）：
 //!
 //! ```text
-//! untrusted comment: ...
-//! <base64 签名正文>
+//! <base64 编码的 64 字节签名>
 //! ```
 //!
 //! 公钥格式：
 //!
 //! ```text
-//! <base64 32 字节公钥>
+//! <base64 编码的 32 字节公钥>
 //! ```
 //!
 //! 设计原则：
@@ -32,10 +31,13 @@
 //! CHAOS_SIGNING_PUBLIC_KEY=<base64> cargo build -p xai-grok-pager-bin --release
 //! ```
 //!
-//! 灰度开关：
+//! Gray-release switch:
 //!
-//! 运行时设 `CHAOS_REQUIRE_SIG=0` 可以临时跳过签名验证（用于开发和
-//! 早期版本过渡）。正式发版时此开关应移除。
+//! Set `CHAOS_REQUIRE_SIG=0` to temporarily skip signature verification
+//! (for development or a misconfigured release). The default is controlled
+//! by the `require-sig` Cargo feature: enabled when the feature is on
+//! (intended for production release builds), disabled otherwise. The env
+//! var always wins over the feature default.
 
 use std::path::Path;
 
@@ -90,21 +92,35 @@ pub fn public_key() -> Result<VerifyingKey, SignatureError> {
     parse_public_key_b64(b64)
 }
 
-/// Whether signature verification is disabled at runtime.
+/// Whether the compiled-in public key is the placeholder (all zeros),
+/// meaning signing was not configured at build time.
 ///
-/// `CHAOS_REQUIRE_SIG=0` / `CHAOS_REQUIRE_SIG=false` /
-/// `CHAOS_REQUIRE_SIG=no` / `CHAOS_REQUIRE_SIG=off` → skip.
+/// Use this to gate startup: when `signature_required()` is `true` but
+/// this returns `true`, the build is misconfigured and should refuse to
+/// run auto-update rather than silently accepting unsigned binaries.
+pub fn is_placeholder_key() -> bool {
+    let b64 = option_env!("CHAOS_SIGNING_PUBLIC_KEY").unwrap_or(PLACEHOLDER_PUBLIC_KEY_B64);
+    b64 == PLACEHOLDER_PUBLIC_KEY_B64
+}
+
+/// Gray-release switch for signature verification.
 ///
-/// Default: **enabled** (verify required). This flag is a transition aid
-/// during rollout; once the release pipeline signs binaries reliably, it
-/// should be removed.
+/// `CHAOS_REQUIRE_SIG=0` / `=false` / `=no` / `=off` → skip verification.
+///
+/// Default: **enabled** when the `require-sig` Cargo feature is on (the
+/// intended state for production release builds), **disabled** otherwise.
+/// The env var always wins over the feature default, so it can be used to
+/// force-verify a dev build or to temporarily bypass a misconfigured
+/// release. Once `require-sig` is the default in the release profile, the
+/// env override is only a escape hatch for emergencies.
 pub fn signature_required() -> bool {
     match std::env::var("CHAOS_REQUIRE_SIG") {
         Ok(val) => {
             let v = val.trim().to_ascii_lowercase();
             !(v == "0" || v == "false" || v == "no" || v == "off")
         }
-        Err(_) => true,
+        // Env not set: use the compile-time feature default.
+        Err(_) => cfg!(feature = "require-sig"),
     }
 }
 
@@ -309,11 +325,10 @@ mod tests {
     }
 
     #[test]
-    fn signature_required_defaults_on() {
-        // Don't actually unset the env — just test the parsing logic
-        // independently. With the default env (no var set), this is true.
-        // We can't easily test "no var set" because test harnesses may
-        // inherit env; test the parsing function instead.
+    fn signature_required_env_parsing() {
+        // Test the parsing logic independently of the env, since test
+        // harnesses may inherit env vars and the default also depends on
+        // the `require-sig` Cargo feature (compile-time).
         assert!(signature_required_env_value("1"));
         assert!(signature_required_env_value("true"));
         assert!(signature_required_env_value("yes"));
@@ -365,5 +380,55 @@ mod tests {
         std::fs::write(&bin_path, b"x").unwrap();
         let err = verify_file(&bin_path, None, &vk).expect_err("should fail");
         assert!(matches!(err, SignatureError::SignatureUnreadable));
+    }
+
+    #[test]
+    fn is_placeholder_key_true_when_unset() {
+        // When CHAOS_SIGNING_PUBLIC_KEY is not set at build time, the key
+        // is the placeholder (all zeros).
+        assert!(is_placeholder_key());
+    }
+
+    #[test]
+    fn require_configured_public_key_ok_when_not_required() {
+        // When signature_required() is false (default without the feature,
+        // and env not set to force it), require_configured_public_key
+        // should succeed even with a placeholder key.
+        // This test assumes CHAOS_REQUIRE_SIG is not set in the test env;
+        // if it is, the behavior depends on the env value.
+        if !signature_required() {
+            assert!(require_configured_public_key().is_ok());
+        }
+    }
+
+    #[test]
+    fn minisign_style_with_trusted_comment_extracts_body() {
+        // minisign .sig files may include a trusted comment line after the
+        // signature body. We ignore it (we don't do trusted comments), but
+        // the extraction must still find the body line.
+        let (sk, vk) = test_keypair();
+        let message = b"with trusted comment";
+        let sig = sk.sign(message);
+        let sig_text = format!(
+            "untrusted comment: minisign sig\n{}\ntrusted comment: timestamp:now\n",
+            b64_encode(&sig.to_bytes())
+        );
+        let body = extract_signature_body(&sig_text).unwrap();
+        assert_eq!(body, b64_encode(&sig.to_bytes()));
+        assert!(verify_bytes(message, &body, &vk).is_ok());
+    }
+
+    #[test]
+    fn bare_b64_with_whitespace_extracts_body() {
+        // A bare base64 signature (no minisign header) with surrounding
+        // whitespace should still be extracted correctly.
+        let (sk, vk) = test_keypair();
+        let message = b"bare b64";
+        let sig = sk.sign(message);
+        let sig_b64 = b64_encode(&sig.to_bytes());
+        let text = format!("  \n{sig_b64}\n  \n");
+        let body = extract_signature_body(&text).unwrap();
+        assert_eq!(body, sig_b64);
+        assert!(verify_bytes(message, &body, &vk).is_ok());
     }
 }

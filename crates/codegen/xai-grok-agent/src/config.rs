@@ -325,14 +325,14 @@ fn standard_preset() -> AgentDefinition {
 fn minimal_preset() -> AgentDefinition {
     AgentDefinition {
         tool_config: ToolServerConfig {
-            tools: vec![
-                bash_tool_config(),
-                (&grok_build::SearchReplaceTool).into(),
-            ],
+            tools: vec![bash_tool_config(), (&grok_build::SearchReplaceTool).into()],
             behavior_preset: None,
         },
         inject_default_tools: false,
-        ..AgentDefinition::base(BuiltinAgentName::GrokBuild, "Minimal agent: bash + edit only.")
+        ..AgentDefinition::base(
+            BuiltinAgentName::GrokBuild,
+            "Minimal agent: bash + edit only.",
+        )
     }
 }
 
@@ -1848,6 +1848,37 @@ mod tests {
         assert!(explore.tools.len() < plan.tools.len());
         assert!(plan.tools.len() < gb.tools.len());
     }
+    /// `run_code` (Code Mode) lets the model submit a Rhai script that calls
+    /// any tool the active toolset exposes. It must only appear in presets
+    /// that already trust the agent with a shell — read-only presets
+    /// (`explore`, `plan`) intentionally exclude it so an exploration or
+    /// planning agent cannot execute arbitrary scripts.
+    #[test]
+    fn run_code_tool_excluded_from_readonly_presets() {
+        let has_run_code = |preset: &str| -> bool {
+            toolset_for_preset(preset)
+                .unwrap_or_else(|| panic!("preset `{preset}` should resolve"))
+                .tools
+                .iter()
+                .any(|t| t.id.contains("run_code"))
+        };
+
+        // Code-capable presets expose run_code.
+        assert!(
+            has_run_code("grok-build"),
+            "grok-build preset should expose run_code"
+        );
+
+        // Read-only presets must NOT expose run_code.
+        assert!(
+            !has_run_code("explore"),
+            "explore preset must NOT expose run_code (read-only guarantee)"
+        );
+        assert!(
+            !has_run_code("plan"),
+            "plan preset must NOT expose run_code (read-only guarantee)"
+        );
+    }
     #[test]
     fn agent_presets_resolve_and_stamp_preset_id() {
         for name in [
@@ -1880,14 +1911,21 @@ mod tests {
     #[test]
     fn minimal_preset_has_only_bash_and_edit() {
         let def = agent_definition_for_preset("minimal").unwrap();
-        let ids: Vec<&str> = def.tool_config.tools.iter().map(|t| t.id.as_str()).collect();
+        let ids: Vec<&str> = def
+            .tool_config
+            .tools
+            .iter()
+            .map(|t| t.id.as_str())
+            .collect();
         // The bash tool registers as "GrokBuild:run_terminal_cmd".
         assert!(
-            ids.iter().any(|id| id.contains("run_terminal_cmd") || id.contains("bash")),
+            ids.iter()
+                .any(|id| id.contains("run_terminal_cmd") || id.contains("bash")),
             "minimal preset must include the bash/terminal tool, got: {ids:?}"
         );
         assert!(
-            ids.iter().any(|id| id.contains("search_replace") || id.contains("edit")),
+            ids.iter()
+                .any(|id| id.contains("search_replace") || id.contains("edit")),
             "minimal preset must include an edit tool, got: {ids:?}"
         );
         assert_eq!(

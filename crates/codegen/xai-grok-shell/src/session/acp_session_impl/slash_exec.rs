@@ -884,26 +884,30 @@ impl SessionActor {
                     .await;
                     return ok_end_turn(0, None);
                 }
-                let resolved = match crate::session::workflow::registry::resolve_by_name(
-                    "ralph",
-                    None,
-                ) {
-                    Ok(r) => r,
-                    Err(e) => {
-                        self.send_host_turn_slash_command_output(&format!(
-                            "ralph workflow unavailable: {e}"
-                        ))
-                        .await;
-                        return ok_end_turn(0, None);
-                    }
-                };
+                let resolved =
+                    match crate::session::workflow::registry::resolve_by_name("ralph", None) {
+                        Ok(r) => r,
+                        Err(e) => {
+                            self.send_host_turn_slash_command_output(&format!(
+                                "ralph workflow unavailable: {e}"
+                            ))
+                            .await;
+                            return ok_end_turn(0, None);
+                        }
+                    };
                 let mut args_map = serde_json::Map::new();
-                args_map.insert("objective".into(), serde_json::Value::from(objective.clone()));
+                args_map.insert(
+                    "objective".into(),
+                    serde_json::Value::from(objective.clone()),
+                );
                 if let Some(rounds) = max_rounds {
                     args_map.insert("max_rounds".into(), serde_json::Value::from(rounds));
                 }
                 if let Some(ref schema_text) = schema {
-                    args_map.insert("schema".into(), serde_json::Value::from(schema_text.clone()));
+                    args_map.insert(
+                        "schema".into(),
+                        serde_json::Value::from(schema_text.clone()),
+                    );
                 }
                 let spec = crate::session::workflow::manager::LaunchSpec {
                     objective: objective.clone(),

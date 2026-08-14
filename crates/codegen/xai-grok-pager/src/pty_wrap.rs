@@ -45,7 +45,11 @@ fn apply_wrap_child_env(
 /// through unchanged.
 ///
 /// Returns the child exit code on success.
-pub(crate) fn run_wrapped_command(program: &str, args: &[String]) -> Result<i32> {
+pub(crate) fn run_wrapped_command(
+    program: &str,
+    args: &[String],
+    env: &[(String, String)],
+) -> Result<i32> {
     use portable_pty::{CommandBuilder, PtySize, native_pty_system};
     use std::io::Read;
 
@@ -64,7 +68,11 @@ pub(crate) fn run_wrapped_command(program: &str, args: &[String]) -> Result<i32>
     // Build the command.
     let mut cmd = CommandBuilder::new(program);
     args.iter().for_each(|arg| cmd.arg(arg));
-
+    // Extra env vars from `with_ssh_env_forwarding` (indirect SSH forwarders
+    // like gcloud/aws/mosh that can't take `-o SendEnv`).
+    for (key, val) in env {
+        cmd.env(key, val);
+    }
     apply_wrap_child_env(&mut cmd, crate::theme::system_appearance::detect_desktop());
 
     // Not session-scoped: this is the wrapped process itself.

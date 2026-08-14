@@ -43,6 +43,26 @@ const DEFAULT_CLIENT_IDENTIFIER: &str = "grok-shell";
 const AGENT_PRODUCT: &str = "grok-shell";
 const ANTHROPIC_DEFAULT_MAX_TOKENS: u32 = 128_000;
 
+/// Placeholder injected into assistant messages that lack
+/// `reasoning_content` while in thinking mode. Some gateways (observed:
+/// the bblbb proxy serving GLM-5 / DeepSeek-R1 / Qwen3-Thinking) reject
+/// any request whose assistant messages omit the field once thinking mode
+/// is active — the wire schema only requires the field to be present and
+/// non-empty, not truthful. See [`SamplerClient::apply_defaults`].
+///
+/// TODO(net-gateway): remove once thinking-mode gateways stop requiring
+/// non-empty `reasoning_content` on every assistant message. The local
+/// model already stores reasoning as a sibling `Reasoning` item folded onto
+/// the following assistant turn; this backfill only exists to paper over
+/// turns where the model emitted no reasoning (bare tool calls, or reasoning
+/// lost to compaction).
+const REASONING_PLACEHOLDER: &str = "(no reasoning emitted)";
+
+/// Minimum spacing between `reasoning_content` backfill warnings, to avoid
+/// flooding the log on every request in a thinking-mode session.
+const REASONING_BACKFILL_WARN_INTERVAL: std::time::Duration =
+    std::time::Duration::from_secs(5 * 60);
+
 /// Prefix the freemodel gateway (work.freemodel.dev) requires on
 /// `messages[0]` (a system message) to accept a request as coming from
 /// the WorkBuddy client. Verified against the real client: exact 31-char
@@ -241,6 +261,38 @@ fn record_stream_request_failure(err: &reqwest::Error) {
     let span = tracing::Span::current();
     span.record("success", false);
     span.record("error", err.to_string().as_str());
+}
+
+/// Emit a throttled `warn!` when `n` assistant messages are backfilled
+/// with [`REASONING_PLACEHOLDER`]. Warns at most once per
+/// [`REASONING_BACKFILL_WARN_INTERVAL`] per process, so a long
+/// thinking-mode session does not flood the log on every request.
+fn warn_reasoning_backfill(n: u32) {
+    use std::sync::{Mutex, OnceLock};
+    static LAST_WARN: OnceLock<Mutex<Option<std::time::Instant>>> = OnceLock::new();
+    let last = LAST_WARN.get_or_init(|| Mutex::new(None));
+    let should_warn = match last.lock() {
+        Ok(mut guard) => {
+            let due = match *guard {
+                Some(t) => t.elapsed() >= REASONING_BACKFILL_WARN_INTERVAL,
+                None => true,
+            };
+            if due {
+                *guard = Some(std::time::Instant::now());
+            }
+            due
+        }
+        Err(_) => true, // poisoned: warn anyway, the lock will recover
+    };
+    if should_warn {
+        tracing::warn!(
+            count = n,
+            placeholder = REASONING_PLACEHOLDER,
+            "backfilled `reasoning_content` placeholder on {} assistant message(s) \
+             — thinking-mode gateways require the field to be present and non-empty. \
+             TODO(net-gateway): remove when gateways stop requiring this.",
+        );
+    }
 }
 
 fn extract_retry_after(headers: &reqwest::header::HeaderMap) -> Option<u64> {
@@ -1043,11 +1095,20 @@ impl SamplingClient {
         // a thinking model, so backfill every assistant message that is
         // missing it with a non-empty placeholder — the wire schema only
         // requires the field to be present and non-empty, not truthful.
+        // TODO(net-gateway): remove once bblbb and other thinking-mode
+        // gateways stop requiring non-empty `reasoning_content` on every
+        // assistant message. See `REASONING_PLACEHOLDER` for the full
+        // background and the cleanup tracking issue.
         if request.reasoning_effort.is_some() {
+            let mut backfilled = 0u32;
             for msg in &mut request.messages {
                 if msg.role == Role::Assistant && msg.reasoning_content.is_none() {
-                    msg.reasoning_content = Some("(no reasoning emitted)".to_string());
+                    msg.reasoning_content = Some(REASONING_PLACEHOLDER.to_string());
+                    backfilled += 1;
                 }
+            }
+            if backfilled > 0 {
+                warn_reasoning_backfill(backfilled);
             }
         }
 

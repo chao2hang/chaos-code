@@ -46,7 +46,9 @@ use xai_grok_shell::leader::{
 use xai_grok_shell::leader::{
     ControlPayload, LeaderClient, LeaderEnvUrls, connect_or_spawn, socket_path_for_ws_url,
 };
-use xai_grok_update::{UpdateConfig, auto_update, enforce_version_policy_or_exit};
+use xai_grok_update::{
+    UpdateConfig, auto_update, enforce_version_policy_or_exit, require_configured_public_key,
+};
 /// Apply headless args to an existing config, only overriding values that are
 /// explicitly set. This allows environment defaults to be preserved when
 /// specific args are not provided.
@@ -2053,7 +2055,7 @@ async fn async_main(args: PagerArgs) -> Result<()> {
                          请改用 `chaos agent {flag}`。"
                     );
                 }
-                enforce_version_policy_or_exit();
+                enforce_startup_gates(args.no_auto_update);
                 return run_agent_command(
                     agent_args,
                     args.permission_mode_flag.clone(),
@@ -2213,7 +2215,7 @@ async fn async_main(args: PagerArgs) -> Result<()> {
     if let Some(prompt) = headless_prompt {
         init_tracing_simple(HEADLESS_ENTRYPOINT);
         let _otel_guard = xai_grok_telemetry::otel_layer::otel_guard();
-        enforce_version_policy_or_exit();
+        enforce_startup_gates(args.no_auto_update);
         let launch_yolo = xai_grok_shell::util::config::effective_yolo_for_launch(
             args.yolo,
             args.permission_mode_flag.as_deref(),
@@ -2271,7 +2273,7 @@ async fn async_main(args: PagerArgs) -> Result<()> {
         )
         .await;
     }
-    enforce_version_policy_or_exit();
+    enforce_startup_gates(args.no_auto_update);
     let _otel_guard = xai_grok_telemetry::otel_layer::otel_guard();
     type UpdateWaitHandle = tokio::task::JoinHandle<std::io::Result<std::process::ExitStatus>>;
     let bg_update_wait: std::sync::Arc<tokio::sync::Mutex<Option<UpdateWaitHandle>>> =
@@ -2392,6 +2394,18 @@ fn should_check_for_updates(no_auto_update_flag: bool) -> bool {
     }
     !std::env::var_os("GROK_DISABLE_AUTOUPDATER")
         .is_some_and(|v| env_flag_enabled(&v.to_string_lossy()))
+}
+/// Run the version-policy gate and, when auto-update is enabled, the
+/// signature-key gate. The key check is skipped when auto-update is off
+/// (no download will occur, so a missing signing key is not actionable).
+fn enforce_startup_gates(no_auto_update: bool) {
+    enforce_version_policy_or_exit();
+    if should_check_for_updates(no_auto_update) {
+        if let Err(msg) = require_configured_public_key() {
+            eprintln!("chaos: {msg}");
+            std::process::exit(1);
+        }
+    }
 }
 /// Gate for the stdio agent's background auto-update: only the direct stdio
 /// agent, from the managed install. Other modes update in `run_agent_command`.

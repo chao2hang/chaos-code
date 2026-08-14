@@ -1472,7 +1472,7 @@ mod tests {
     /// not bypass the session's remote policy).
     #[test]
     #[serial_test::serial]
-    #[ignore = "pre-existing fork gap: chaos blanks PRODUCTION_ENDPOINTS (cli_chat_proxy_base_url: \"\"), so the policy channel is always Unavailable(ProxyRepointed) and should_open_at_startup opens the gate even for a session user. Fail-closed only holds on the upstream xAI channel."]
+    #[ignore = "pre-existing fork gap: chaos blanks PRODUCTION_ENDPOINTS (cli_chat_proxy_base_url: \"\"), so the policy channel is always Unavailable(ProxyRepointed) and should_open_at_startup opens the gate even for a session user. Fail-closed only holds on the upstream xAI channel.; review 2026-10"]
     fn embedded_otel_gate_keeps_a_session_user_fail_closed() {
         use crate::agent::auth_method::{LEGACY_XAI_API_KEY_ENV_VAR, XAI_API_KEY_ENV_VAR};
         use xai_grok_telemetry::external::{

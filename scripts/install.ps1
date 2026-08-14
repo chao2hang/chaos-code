@@ -363,6 +363,7 @@ if (-not $Dir) {
 $asset = Get-AssetName
 $originUrl = "https://github.com/$Repo/releases/download/v$Version/$asset"
 $sumsOrigin = "https://github.com/$Repo/releases/download/v$Version/SHA256SUMS"
+$sigOrigin = "https://github.com/$Repo/releases/download/v$Version/$asset.sig"
 $dest = Join-Path $Dir $BinName
 
 Write-Host "Chaos installer"
@@ -453,6 +454,65 @@ try {
         } finally {
             if (Test-Path -LiteralPath $sumsFile) {
                 Remove-Item -Force -LiteralPath $sumsFile -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    # Signature verification: verify the downloaded binary against its .sig
+    # sidecar using Python's cryptography library (if available). This is
+    # defense-in-depth on top of the SHA256 checksum — the checksum catches
+    # corruption, the signature catches a compromised release.
+    #
+    # Skipped silently when Python/cryptography is not installed,
+    # when CHAOS_SKIP_SIGNATURE=1 is set, or when no .sig file exists at the
+    # release URL (older releases that predate signing).
+    # Fails hard when Python+cryptography IS available, the .sig IS found,
+    # but the signature does not verify.
+    if ($env:CHAOS_SKIP_SIGNATURE -eq "1") {
+        Write-Warning "signature verification skipped (CHAOS_SKIP_SIGNATURE=1)"
+    } else {
+        $python = Get-Command python -ErrorAction SilentlyContinue
+        $pubKey = $env:CHAOS_SIGNING_PUBLIC_KEY
+        # Probe cryptography availability first — a missing package must
+        # skip, not be reported as a tampered binary.
+        $cryptoAvail = $false
+        if ($python) {
+            & python -c "from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey" 2>$null
+            $cryptoAvail = ($LASTEXITCODE -eq 0)
+        }
+        if ($python -and $cryptoAvail -and $pubKey) {
+            $sigFile = Join-Path $env:TEMP ("chaos-sig-" + [guid]::NewGuid().ToString("n") + ".sig")
+            try {
+                [void](Download-GitHubFile -OriginUrl $sigOrigin -OutFile $sigFile -Headers $headers -MinBytes 16 -ErrorAction SilentlyContinue)
+                if (Test-Path -LiteralPath $sigFile) {
+                    # Verify with Python's cryptography library (ed25519, raw).
+                    # The .sig file contains a bare base64-encoded 64-byte signature.
+                    $pyScript = @"
+import base64, sys
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+pubkey = base64.b64decode('$pubKey')
+pk = Ed25519PublicKey.from_public_bytes(pubkey)
+
+with open(r'$tmp', 'rb') as f:
+    data = f.read()
+with open(r'$sigFile', 'r') as f:
+    sig = base64.b64decode(f.read().strip())
+
+pk.verify(sig, data)
+print('signature OK')
+"@
+                    $result = & python -c $pyScript 2>&1
+                    if ($LASTEXITCODE -eq 0) {
+                        Write-Host "signature OK"
+                    } else {
+                        throw ("signature verification FAILED for $asset. " +
+                               "The binary may have been tampered with. Refusing to install. " +
+                               "To bypass (NOT recommended), set CHAOS_SKIP_SIGNATURE=1.")
+                    }
+                }
+            } finally {
+                if (Test-Path -LiteralPath $sigFile) { Remove-Item -Force -LiteralPath $sigFile -ErrorAction SilentlyContinue }
             }
         }
     }

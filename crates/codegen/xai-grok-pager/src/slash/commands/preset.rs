@@ -58,12 +58,16 @@ impl SlashCommand for PresetCommand {
         let names = xai_grok_agent::agent_preset_names();
         let arg = args.trim();
         if arg.is_empty() {
-            let mut lines = String::from("可用 preset（用 --preset <name> 或 [agent] preset = \"<name>\" 应用）：\n");
+            let mut lines = String::from(
+                "可用 preset（用 --preset <name> 或 [agent] preset = \"<name>\" 应用）：\n",
+            );
             for name in &names {
                 let desc = describe_preset(name);
                 lines.push_str(&format!("  • {name} — {desc}\n"));
             }
-            lines.push_str("\n切换需在会话启动时指定（--preset），或写入 config.toml 的 [agent] preset。");
+            lines.push_str(
+                "\n切换需在会话启动时指定（--preset），或写入 config.toml 的 [agent] preset。",
+            );
             return CommandResult::Message(lines);
         }
         let normalized = arg.trim().to_ascii_lowercase().replace([' ', '_'], "-");
@@ -79,10 +83,7 @@ impl SlashCommand for PresetCommand {
                 desc = def.description
             ));
         }
-        CommandResult::Message(format!(
-            "未知 preset「{arg}」。可用：{}",
-            names.join(", ")
-        ))
+        CommandResult::Message(format!("未知 preset「{arg}」。可用：{}", names.join(", ")))
     }
 }
 
