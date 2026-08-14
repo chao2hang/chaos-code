@@ -397,7 +397,7 @@ mod tests {
         // This test assumes CHAOS_REQUIRE_SIG is not set in the test env;
         // if it is, the behavior depends on the env value.
         if !signature_required() {
-            assert!(require_configured_public_key().is_ok());
+            assert!(crate::require_configured_public_key().is_ok());
         }
     }
 
