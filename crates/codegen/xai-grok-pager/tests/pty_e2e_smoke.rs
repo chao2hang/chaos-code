@@ -57,6 +57,8 @@ mod wrap_clean_exit_stays_byte_transparent;
 mod wrap_echo_passthrough_and_exit_code;
 #[path = "pty_e2e/wrap_explicit_path_not_found_fails_fast.rs"]
 mod wrap_explicit_path_not_found_fails_fast;
+#[path = "pty_e2e/wrap_host_image_request_returns_bracketed_paste.rs"]
+mod wrap_host_image_request_returns_bracketed_paste;
 #[path = "pty_e2e/wrap_not_found_alias_routes_via_shell_contract.rs"]
 mod wrap_not_found_alias_routes_via_shell_contract;
 #[path = "pty_e2e/wrap_osc52_sink_env_advertised_through_shell.rs"]

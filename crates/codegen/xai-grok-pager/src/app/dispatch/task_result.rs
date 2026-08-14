@@ -52,9 +52,9 @@ use super::transcript::{
 };
 use super::turn::handle_bg_task_killed;
 use crate::app::actions::{
-    ClipboardPasteCompletion, ClipboardPasteContext, ClipboardPasteFailure, ClipboardPasteTarget,
-    DoctorFixTarget, DoctorPlanningOutcome, Effect, ProbedAttachment, SubagentKillOutcome,
-    TaskResult,
+    ClipboardPasteCompletion, ClipboardPasteContext, ClipboardPasteFailure, ClipboardPasteSource,
+    ClipboardPasteTarget, DoctorFixTarget, DoctorPlanningOutcome, Effect, ProbedAttachment,
+    SubagentKillOutcome, TaskResult,
 };
 use crate::app::agent::AgentId;
 use crate::app::app_view::{ActiveView, AppView, AuthState};
@@ -117,6 +117,35 @@ pub(super) fn wrap_host_image_request_eligible(completion: ClipboardPasteComplet
     matches!(
         completion,
         ClipboardPasteCompletion::FullMiss
+            | ClipboardPasteCompletion::Failed(ClipboardPasteFailure::AttachmentRead)
+    )
+}
+/// Whether a *bracketed* paste (terminal-translated, not a `Ctrl+V`/Alt+V
+/// keypress) under `grok wrap` should additionally solicit the host image.
+///
+/// Windows Terminal maps `Ctrl+V` to a text-only bracketed paste: when the
+/// pasteboard holds a screenshot, the terminal silently drops the image and
+/// forwards whatever text accompanies it (usually empty, sometimes a file
+/// path or image description). The user's intent was "paste the picture";
+/// inside `grok wrap` we can still honor that by asking the host layer for
+/// the image over the wrap OSC channel. If the host has one, the normal
+/// `Event::Paste(GROK_WRAP_IMG…)` round-trip delivers a chip; if not, the
+/// already-inserted text stays put and the user keeps what Windows Terminal
+/// gave them. Gated on `osc52_sink_active()` so it is inert outside wrap.
+pub(super) fn wrap_host_image_request_eligible_for_bracketed_paste(
+    source: &ClipboardPasteSource,
+    completion: ClipboardPasteCompletion,
+) -> bool {
+    if !source.is_bracketed() {
+        return false;
+    }
+    // On macOS and Windows the bracketed-paste arm runs an asynchronous
+    // attachment probe; outside those targets we never get a `Handled`
+    // completion from this path, so the check below is a no-op anyway.
+    matches!(
+        completion,
+        ClipboardPasteCompletion::Handled
+            | ClipboardPasteCompletion::FullMiss
             | ClipboardPasteCompletion::Failed(ClipboardPasteFailure::AttachmentRead)
     )
 }
@@ -630,14 +659,26 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
                 && !app.screen_mode.is_minimal()
                 && crate::clipboard::x11_primary_guidance_available();
             let target = ctx.target.clone();
-            let wrap_text = if is_clipboard_key {
-                ctx.source.text().map(str::to_owned)
-            } else {
-                None
-            };
+            // For the wrap-image request we need the *bracketed* paste's text
+            // (when present) just like the keypress path uses it: if the host
+            // side already supplied a non-empty payload, the request is
+            // skipped so we do not duplicate it.
+            let wrap_text = ctx.source.text().map(str::to_owned);
+            // Compute the bracketed-paste eligibility *before* `ctx` is moved
+            // into `apply_clipboard_paste_result`.
+            let source_kind = ctx.source.clone();
             let completion = apply_clipboard_paste_result(ctx, image, file_urls, app);
-            let wrap_request_emitted = wrap_host_image_request_eligible(completion)
+            // The wrap-image request fires for the original `Ctrl+V`/`Alt+V`
+            // path *and* — under `grok wrap` — for the bracketed-paste path
+            // that Windows Terminal forces for `Ctrl+V` (text-only). The
+            // second arm is what makes "paste the screenshot I just took with
+            // Win+Shift+S" work on Windows. The OSC self-gates on
+            // `osc52_sink_active()` so the request is inert outside wrap.
+            let bracketed_eligible =
+                wrap_host_image_request_eligible_for_bracketed_paste(&source_kind, completion);
+            let wrap_request_emitted = (wrap_host_image_request_eligible(completion)
                 && is_clipboard_key
+                || bracketed_eligible)
                 && crate::wrap_clipboard_image::maybe_request_wrap_host_image(
                     None,
                     wrap_text.as_deref(),
