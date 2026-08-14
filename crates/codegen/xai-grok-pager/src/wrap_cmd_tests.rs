@@ -220,3 +220,129 @@ fn joined_line_roundtrips_words_through_real_sh() {
     let expected: String = words.iter().map(|w| format!("[{w}]")).collect();
     assert_eq!(String::from_utf8_lossy(&out.stdout), expected);
 }
+
+#[test]
+fn with_ssh_env_forwarding_injects_send_env_for_ssh() {
+    let plan = SpawnPlan {
+        program: "ssh".to_string(),
+        args: vec!["user@host".to_string()],
+    }
+    .with_ssh_env_forwarding();
+    assert_eq!(plan.program, "ssh");
+    assert_eq!(
+        plan.args,
+        vec![
+            "-o".to_string(),
+            "SendEnv=LC_GROK_OSC52_SINK".to_string(),
+            "-o".to_string(),
+            "SendEnv=LC_GROK_APPEARANCE".to_string(),
+            "user@host".to_string(),
+        ]
+    );
+}
+
+#[test]
+fn with_ssh_env_forwarding_preserves_user_supplied_o_flags() {
+    // User may already have -o SendEnv=FOO or other options; ours go first
+    // (so they're in ssh's own option block, before the hostname) and the
+    // user's tail is untouched.
+    let plan = SpawnPlan {
+        program: "/usr/bin/ssh".to_string(),
+        args: vec![
+            "-p".to_string(),
+            "2222".to_string(),
+            "-o".to_string(),
+            "SendEnv=FOO".to_string(),
+            "user@host".to_string(),
+            "--".to_string(),
+            "tmux".to_string(),
+        ],
+    }
+    .with_ssh_env_forwarding();
+    assert_eq!(plan.program, "/usr/bin/ssh");
+    assert_eq!(
+        &plan.args[..6],
+        &[
+            "-o",
+            "SendEnv=LC_GROK_OSC52_SINK",
+            "-o",
+            "SendEnv=LC_GROK_APPEARANCE",
+            "-p",
+            "2222",
+        ]
+    );
+    assert_eq!(
+        &plan.args[6..],
+        &["-o", "SendEnv=FOO", "user@host", "--", "tmux"]
+    );
+}
+
+#[test]
+fn with_ssh_env_forwarding_skips_non_ssh_programs() {
+    // SendEnv is ssh-specific; passing it to docker/kubectl/autossh would
+    // error.
+    for program in ["docker", "kubectl", "autossh", "sshpass", "sshfs"] {
+        let plan = SpawnPlan {
+            program: program.to_string(),
+            args: vec!["exec".to_string(), "-it".to_string()],
+        }
+        .with_ssh_env_forwarding();
+        assert_eq!(
+            plan.args,
+            vec!["exec".to_string(), "-it".to_string()],
+            "{program} must not receive SendEnv flags"
+        );
+    }
+}
+
+#[test]
+fn with_ssh_env_forwarding_recognizes_windows_ssh_exe() {
+    let plan = SpawnPlan {
+        program: r"C:\Windows\System32\OpenSSH\ssh.exe".to_string(),
+        args: vec!["user@host".to_string()],
+    }
+    .with_ssh_env_forwarding();
+    assert_eq!(plan.program, r"C:\Windows\System32\OpenSSH\ssh.exe");
+    assert_eq!(
+        plan.args[0..2],
+        ["-o".to_string(), "SendEnv=LC_GROK_OSC52_SINK".to_string()],
+        "windows ssh.exe must be detected by basename"
+    );
+}
+
+#[test]
+fn with_ssh_env_forwarding_does_not_splice_into_shell_routed_plan() {
+    // When the user runs `grok wrap "ssh host"`, derive_spawn routes through
+    // $SHELL -i -c 'ssh host' (alias expansion). We deliberately do not
+    // splice -o into the shell's argv: the quoted command line is the
+    // shell's job to parse, and trying to inject inside it would corrupt
+    // quoting. The plan returned by derive_spawn for that case is what
+    // should reach run_wrapped_command.
+    let plan = SpawnPlan {
+        program: "/bin/zsh".to_string(),
+        args: vec!["-i".to_string(), "-c".to_string(), "ssh host".to_string()],
+    }
+    .with_ssh_env_forwarding();
+    assert_eq!(plan.program, "/bin/zsh");
+    assert_eq!(plan.args, vec!["-i", "-c", "ssh host"]);
+}
+
+#[test]
+fn program_is_ssh_matches_canonical_and_pathed_forms() {
+    assert!(program_is_ssh("ssh"));
+    assert!(program_is_ssh("/usr/bin/ssh"));
+    assert!(program_is_ssh("/usr/local/bin/ssh"));
+    assert!(program_is_ssh("./ssh"));
+    assert!(program_is_ssh("SSH"));
+    assert!(program_is_ssh("Ssh"));
+    // Windows
+    assert!(program_is_ssh("ssh.exe"));
+    assert!(program_is_ssh(r"C:\Windows\System32\OpenSSH\ssh.exe"));
+    assert!(program_is_ssh("SSH.EXE"));
+    // Negatives
+    assert!(!program_is_ssh("sshpass"));
+    assert!(!program_is_ssh("sshfs"));
+    assert!(!program_is_ssh("autossh"));
+    assert!(!program_is_ssh("docker"));
+    assert!(!program_is_ssh(""));
+}

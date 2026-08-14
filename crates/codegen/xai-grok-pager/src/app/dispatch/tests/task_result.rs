@@ -2,7 +2,7 @@
 
 use super::super::task_result::{
     X11_PRIMARY_PASTE_HINT, maybe_show_x11_primary_paste_hint, show_clipboard_failure,
-    wrap_host_image_request_eligible,
+    wrap_host_image_request_eligible, wrap_host_image_request_eligible_for_bracketed_paste,
 };
 use super::*;
 use xai_grok_shell::session::unified_list::ListScope;
@@ -538,6 +538,89 @@ fn wrap_host_image_request_eligible_covers_full_miss_and_attachment_error_only()
             "{completion:?} must not route to the wrap host-image request"
         );
     }
+}
+
+#[test]
+fn bracketed_paste_wrap_eligibility_covers_windows_terminal_ctrl_v() {
+    use crate::app::actions::{
+        ClipboardPasteCompletion, ClipboardPasteFailure, ClipboardPasteSource,
+        ClipboardTextInsertion,
+    };
+
+    // Windows Terminal maps Ctrl+V to a text-only bracketed paste, silently
+    // dropping an image clipboard. Under `grok wrap` we must still solicit the
+    // host image, so a bracketed source qualifies even when the text leg
+    // already succeeded (`Handled`) — that is the whole point: the text is
+    // whatever WT could carry, the picture still has to come over the wrap OSC.
+    let bracketed = ClipboardPasteSource::BracketedInserted {
+        text: String::new(),
+        insertion: ClipboardTextInsertion::Empty,
+    };
+    for completion in [
+        ClipboardPasteCompletion::Handled,
+        ClipboardPasteCompletion::FullMiss,
+        ClipboardPasteCompletion::Failed(ClipboardPasteFailure::AttachmentRead),
+    ] {
+        assert!(
+            wrap_host_image_request_eligible_for_bracketed_paste(&bracketed, completion),
+            "bracketed {completion:?} must reach the wrap host-image request"
+        );
+    }
+
+    // Real dead ends stay dead ends even for a bracketed source.
+    for completion in [
+        ClipboardPasteCompletion::Dropped,
+        ClipboardPasteCompletion::Failed(ClipboardPasteFailure::TextRead),
+        ClipboardPasteCompletion::Failed(ClipboardPasteFailure::TargetInsertion),
+        ClipboardPasteCompletion::Failed(ClipboardPasteFailure::AlreadyReported),
+    ] {
+        assert!(
+            !wrap_host_image_request_eligible_for_bracketed_paste(&bracketed, completion),
+            "bracketed {completion:?} must not route to the wrap host-image request"
+        );
+    }
+}
+
+#[test]
+fn bracketed_paste_wrap_eligibility_rejects_the_keypress_source() {
+    use crate::app::actions::{
+        ClipboardPasteCompletion, ClipboardPasteSource, ClipboardTextRead,
+    };
+
+    // The Ctrl+V / Alt+V keypress path keeps its own, stricter gate
+    // (`wrap_host_image_request_eligible` + `is_clipboard_key`): a `Handled`
+    // keypress paste really did attach something, so re-asking the host would
+    // duplicate it. Only the bracketed arm gets the relaxed rule.
+    let keypress = ClipboardPasteSource::ClipboardKey {
+        text: ClipboardTextRead::Success(None),
+        tip_showing: false,
+    };
+    for completion in [
+        ClipboardPasteCompletion::Handled,
+        ClipboardPasteCompletion::FullMiss,
+        ClipboardPasteCompletion::Dropped,
+    ] {
+        assert!(
+            !wrap_host_image_request_eligible_for_bracketed_paste(&keypress, completion),
+            "keypress {completion:?} must not use the bracketed relaxation"
+        );
+    }
+}
+
+#[test]
+fn bracketed_deferred_source_also_reaches_the_wrap_request() {
+    use crate::app::actions::{ClipboardPasteCompletion, ClipboardPasteSource};
+
+    // `BracketedDeferred` is the other bracketed shape (text not yet
+    // inserted). It is equally a terminal-translated paste, so it takes the
+    // same relaxed route.
+    let deferred = ClipboardPasteSource::BracketedDeferred {
+        text: "some text".to_owned(),
+    };
+    assert!(wrap_host_image_request_eligible_for_bracketed_paste(
+        &deferred,
+        ClipboardPasteCompletion::Handled
+    ));
 }
 
 #[test]

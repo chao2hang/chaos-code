@@ -45,8 +45,10 @@ pub fn run(args: &WrapArgs) -> Result<()> {
         let shell = user_shell();
         let in_path = xai_grok_config::shell::is_command_available(program);
         (
-            derive_spawn(&args.command, &shell, in_path, ShellMode::Interactive),
-            derive_spawn(&args.command, &shell, in_path, ShellMode::Plain),
+            derive_spawn(&args.command, &shell, in_path, ShellMode::Interactive)
+                .with_ssh_env_forwarding(),
+            derive_spawn(&args.command, &shell, in_path, ShellMode::Plain)
+                .with_ssh_env_forwarding(),
         )
     };
     #[cfg(not(unix))]
@@ -54,7 +56,8 @@ pub fn run(args: &WrapArgs) -> Result<()> {
         let direct = SpawnPlan {
             program: program.clone(),
             args: args.command[1..].to_vec(),
-        };
+        }
+        .with_ssh_env_forwarding();
         (direct.clone(), direct)
     };
 
@@ -138,6 +141,72 @@ fn derive_spawn(
         program: command[0].clone(),
         args: command[1..].to_vec(),
     }
+}
+
+/// Variables `ssh` must forward so a *remote* `grok` learns that its host is a
+/// `grok wrap` (see [`crate::wrap_clipboard_image`]) and inherits the local
+/// theme.
+///
+/// Without this, `grok wrap ssh host` sets these on the local `ssh` client
+/// process only: ssh does not forward its own environment, so the remote
+/// `osc52_sink_active()` stays false and host-image paste never engages.
+///
+/// The `LC_*` spelling is deliberate — it piggybacks on the `AcceptEnv LANG
+/// LC_*` that every mainstream `sshd_config` ships by default, so no
+/// server-side change is needed. The bare `GROK_*` twins that
+/// [`crate::pty_wrap`] also sets stay local to the ssh client on purpose:
+/// a default `sshd` would reject them and abort the whole `SendEnv` list.
+const SSH_FORWARDED_ENV: &[&str] = &["LC_GROK_OSC52_SINK", "LC_GROK_APPEARANCE"];
+
+impl SpawnPlan {
+    /// When the wrapped program is `ssh`, prepend `-o SendEnv=<name>` for each
+    /// [`SSH_FORWARDED_ENV`] entry. Any other program is returned untouched:
+    /// `SendEnv` is ssh-specific and would make `docker`/`kubectl` fail.
+    ///
+    /// Flags go *before* the user's argv so they land in ssh's own option
+    /// section rather than after the hostname (where they would be treated as
+    /// the remote command). Injecting unconditionally is safe even when the
+    /// user passed their own `-o SendEnv=…`: OpenSSH unions every occurrence.
+    ///
+    /// The shell-routed plan (`grok wrap "ssh host"`, where `program` is the
+    /// user's `$SHELL`) is intentionally not rewritten — splicing flags into a
+    /// quoted command line is ambiguous. Use the direct form
+    /// (`grok wrap ssh host`) to get forwarding.
+    fn with_ssh_env_forwarding(self) -> Self {
+        if !program_is_ssh(&self.program) {
+            return self;
+        }
+        let mut args = Vec::with_capacity(self.args.len() + SSH_FORWARDED_ENV.len() * 2);
+        for name in SSH_FORWARDED_ENV {
+            args.push("-o".to_string());
+            args.push(format!("SendEnv={name}"));
+        }
+        args.extend(self.args);
+        Self {
+            program: self.program,
+            args,
+        }
+    }
+}
+
+/// Whether `program` invokes OpenSSH, by basename so `/usr/bin/ssh` and
+/// Windows `ssh.exe` both match. Deliberately exact (after dropping a `.exe`
+/// suffix): `sshpass`, `sshfs`, and `autossh` take different option syntax.
+///
+/// Splits on both separators rather than using [`std::path::Path`], because a
+/// Windows-style path must still be recognized when this runs on Unix — a
+/// `grok wrap` invocation can name any argv it likes, and `Path` only treats
+/// `\` as a separator on Windows targets.
+fn program_is_ssh(program: &str) -> bool {
+    let basename = program
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(program);
+    let stem = basename
+        .rsplit_once('.')
+        .filter(|(_, ext)| ext.eq_ignore_ascii_case("exe"))
+        .map_or(basename, |(stem, _)| stem);
+    stem.eq_ignore_ascii_case("ssh")
 }
 
 /// Join argv back into one shell command line, leaving the first word bare:
