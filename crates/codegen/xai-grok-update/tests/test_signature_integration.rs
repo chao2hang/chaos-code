@@ -15,11 +15,11 @@ use std::sync::OnceLock;
 mod common;
 use common::{reset_home, test_home};
 
-use ed25519_dalek::{Signer, SigningKey};
+use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
 use xai_grok_update::signature;
 
 /// Test keypair: deterministic seed so test vectors are stable.
-fn test_keypair() -> (SigningKey, signature::VerifyingKey) {
+fn test_keypair() -> (SigningKey, VerifyingKey) {
     let seed: [u8; 32] = *b"test-seed-0123456789abcdef012345";
     let signing = SigningKey::from_bytes(&seed);
     let verifying = signing.verifying_key();
