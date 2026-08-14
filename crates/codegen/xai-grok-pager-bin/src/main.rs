@@ -2400,11 +2400,11 @@ fn should_check_for_updates(no_auto_update_flag: bool) -> bool {
 /// (no download will occur, so a missing signing key is not actionable).
 fn enforce_startup_gates(no_auto_update: bool) {
     enforce_version_policy_or_exit();
-    if should_check_for_updates(no_auto_update) {
-        if let Err(msg) = require_configured_public_key() {
-            eprintln!("chaos: {msg}");
-            std::process::exit(1);
-        }
+    if should_check_for_updates(no_auto_update)
+        && let Err(msg) = require_configured_public_key()
+    {
+        eprintln!("chaos: {msg}");
+        std::process::exit(1);
     }
 }
 /// Gate for the stdio agent's background auto-update: only the direct stdio
