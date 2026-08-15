@@ -52,12 +52,6 @@ pub enum Command {
     Memory(crate::memory_cmd::MemoryArgs),
     /// List available models and exit
     Models,
-    /// List available request-client profiles and exit
-    Clients {
-        /// Print machine-readable JSON.
-        #[arg(long)]
-        json: bool,
-    },
     /// List, search, or restore sessions
     Sessions(crate::sessions_cmd::SessionsArgs),
     /// Fetch and install managed configuration
@@ -279,9 +273,6 @@ pub struct AgentArgs {
     /// Model ID to use
     #[arg(short = 'm', long = "model", value_name = "MODEL")]
     pub model: Option<String>,
-    /// Select the request-client profile (claude-code, codex, grok-build or workbuddy).
-    #[arg(long = "client", value_name = "PROFILE")]
-    pub client: Option<String>,
     /// Reasoning effort for reasoning models
     #[clap(
         long = "reasoning-effort",
@@ -296,12 +287,6 @@ pub struct AgentArgs {
     /// Path to an agent profile file.
     #[arg(long = "agent-profile", value_name = "PATH")]
     pub agent_profile: Option<PathBuf>,
-    /// Select an agent preset by name (standard, minimal, explore, plan, …).
-    /// A preset bundles a toolset, persona, and prompt sections. It shadows
-    /// `--agent-profile` when both are given. Switchable mid-session via
-    /// `/preset` (blank sessions only).
-    #[arg(long = "preset", value_name = "PRESET")]
-    pub preset: Option<String>,
     /// Load a plugin from this directory for this process only (repeatable).
     /// Highest-priority plugin scope; always trusted — hooks and MCP servers
     /// activate without a prompt. Used by the Agent SDKs to inject
@@ -425,8 +410,8 @@ pub struct LeaderArgs {
 #[derive(Debug, Clone, Parser)]
 #[command(
     name = "grok",
-    version = env!("VERSION_WITH_COMMIT"),
-    about = "Chaos AI 编码助手",
+    version = xai_grok_version::full_version(),
+    about = "Grok Build TUI",
     disable_version_flag = true,
     next_display_order = None,
     help_template = "\
@@ -540,9 +525,6 @@ pub struct PagerArgs {
     /// Model ID to use.
     #[clap(short = 'm', long = "model", value_name = "MODEL")]
     pub model: Option<String>,
-    /// Select the request-client profile (claude-code, codex, grok-build or workbuddy).
-    #[clap(long = "client", value_name = "PROFILE")]
-    pub client: Option<String>,
     /// Reasoning effort for reasoning models
     #[clap(
         long = "reasoning-effort",
@@ -672,11 +654,19 @@ pub struct PagerArgs {
     /// Disable structured question prompts from the agent.
     #[arg(long = "no-ask-user", hide = true)]
     pub no_ask_user: bool,
-    /// Enable cross-session memory.
-    #[arg(long = "experimental-memory", conflicts_with = "no_memory")]
+    /// Legacy compatibility flag for enabling cross-session memory.
+    #[arg(
+        long = "experimental-memory",
+        conflicts_with = "no_memory",
+        hide = true
+    )]
     pub experimental_memory: bool,
-    /// Disable cross-session memory for this session.
-    #[arg(long = "no-memory", conflicts_with = "experimental_memory")]
+    /// Legacy compatibility flag for disabling cross-session memory.
+    #[arg(
+        long = "no-memory",
+        conflicts_with = "experimental_memory",
+        hide = true
+    )]
     pub no_memory: bool,
     /// Agent name or definition file path.
     #[arg(long = "agent", value_name = "NAME")]
@@ -846,6 +836,24 @@ fn strip_cur_dir(path: PathBuf) -> PathBuf {
         .collect()
 }
 impl PagerArgs {
+    pub(crate) fn memory_enabled_override(&self) -> Option<bool> {
+        if self.experimental_memory {
+            Some(true)
+        } else if self.no_memory {
+            Some(false)
+        } else {
+            None
+        }
+    }
+    pub(crate) fn memory_override_flag(&self) -> Option<&'static str> {
+        if self.experimental_memory {
+            Some("--experimental-memory")
+        } else if self.no_memory {
+            Some("--no-memory")
+        } else {
+            None
+        }
+    }
     /// Parse CLI arguments without applying side effects.
     pub fn parse_cli() -> Self {
         let bin_name = std::env::args()

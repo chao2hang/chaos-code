@@ -1,5 +1,6 @@
 use super::support::*;
 use super::*;
+use crate::session::memory::MemorySearchSource;
 use tokio::sync::mpsc;
 use xai_grok_paths::AbsPathBuf;
 use xai_grok_workspace::file_system::MockFs;
@@ -24,7 +25,8 @@ fn initial_injection_backend_params_use_override_min_score() {
         },
         watcher: None,
         stale_claim_secs: 60,
-        search_source: "tool",
+        search_source: MemorySearchSource::Tool,
+        observation_sink: crate::session::memory::noop_memory_observation_sink(),
         embedding_credentials: crate::session::memory::EndpointScopedCredentials::none(),
     };
     let initial_injection = crate::config::MemoryInitialInjectionConfig {
@@ -33,11 +35,11 @@ fn initial_injection_backend_params_use_override_min_score() {
     };
     let (adjusted, effective_min_score) =
         build_initial_injection_backend_params(&params, &initial_injection);
-    assert_eq!("injection", adjusted.search_source);
+    assert_eq!(MemorySearchSource::Injection, adjusted.search_source);
     assert!((0.72 - adjusted.search_config.min_score).abs() < f32::EPSILON);
     assert!((0.72 - effective_min_score as f32).abs() < f32::EPSILON);
     assert!((0.35 - params.search_config.min_score).abs() < f32::EPSILON);
-    assert_eq!("tool", params.search_source);
+    assert_eq!(MemorySearchSource::Tool, params.search_source);
 }
 #[test]
 fn initial_injection_backend_params_preserve_default_zero_min_score() {
@@ -52,14 +54,17 @@ fn initial_injection_backend_params_preserve_default_zero_min_score() {
         },
         watcher: None,
         stale_claim_secs: 60,
-        search_source: "tool",
+        search_source: MemorySearchSource::Tool,
+        observation_sink: crate::session::memory::noop_memory_observation_sink(),
         embedding_credentials: crate::session::memory::EndpointScopedCredentials::none(),
     };
-    let (adjusted, effective_min_score) = build_initial_injection_backend_params(
-        &params,
-        &crate::config::MemoryInitialInjectionConfig::default(),
-    );
-    assert_eq!("injection", adjusted.search_source);
+    let initial_injection = crate::config::MemoryInitialInjectionConfig {
+        enabled: true,
+        min_score: None,
+    };
+    let (adjusted, effective_min_score) =
+        build_initial_injection_backend_params(&params, &initial_injection);
+    assert_eq!(MemorySearchSource::Injection, adjusted.search_source);
     assert!((0.41 - adjusted.search_config.min_score).abs() < f32::EPSILON);
     assert!((0.0 - effective_min_score as f32).abs() < f32::EPSILON);
 }
@@ -118,8 +123,6 @@ async fn create_test_actor_with_memory(
                 .expect("test context_window must be non-zero"),
             reasoning_effort: None,
             stream_tool_calls: None,
-            extract_inline_thinking: None,
-            is_workbuddy: false,
         },
         Box::new(xai_chat_state::NullChatPersistence),
         chat_event_tx,
@@ -229,11 +232,8 @@ async fn create_test_actor_with_memory(
         last_idle_flush_conversation_len: std::sync::atomic::AtomicUsize::new(0),
         event_tx,
         buffering_settings: None,
-        client_identifier: std::cell::RefCell::new(None),
-        origin_client: std::cell::RefCell::new(None),
-        user_agent: std::cell::RefCell::new(None),
-        client_extra_headers: std::cell::RefCell::new(indexmap::IndexMap::new()),
-        client_env_http_headers: std::cell::RefCell::new(indexmap::IndexMap::new()),
+        client_identifier: None,
+        origin_client: None,
         feedback_manager: Arc::new(FeedbackManager::local_only("test-memory")),
         upload_queue: Arc::new(OnceLock::new()),
         sync_loop_cancel: None,
@@ -247,7 +247,6 @@ async fn create_test_actor_with_memory(
         active_skill: parking_lot::Mutex::new(None),
         current_prompt_mode: Arc::new(parking_lot::Mutex::new(PromptMode::Agent)),
         turn_start_prompt_mode: parking_lot::Mutex::new(PromptMode::Agent),
-        turn_had_exit_or_ask: std::sync::atomic::AtomicBool::new(false),
         turn_prompt_mode: Arc::new(parking_lot::Mutex::new(PromptMode::Agent)),
         plan_mode: Arc::new(parking_lot::Mutex::new(
             crate::session::plan_mode::PlanModeTracker::new(std::path::PathBuf::from(
@@ -270,7 +269,6 @@ async fn create_test_actor_with_memory(
         goal_update_tx: tokio::sync::mpsc::unbounded_channel().0,
         workflow_manager: crate::session::workflow::manager::WorkflowManager::test_bundle().0,
         workflow_launch_tx: tokio::sync::mpsc::unbounded_channel().0,
-        run_code_tx: tokio::sync::mpsc::unbounded_channel().0,
         goal_classifier_enabled: false,
         goal_planner_enabled: false,
         goal_summary_enabled: false,
@@ -301,6 +299,9 @@ async fn create_test_actor_with_memory(
         last_search_prompt_index: std::sync::atomic::AtomicI64::new(-1),
         last_api_request_at: std::sync::atomic::AtomicI64::new(0),
         hook_registry: std::cell::RefCell::new(None),
+        turn_report: Default::default(),
+        turn_abort: Default::default(),
+        turn_end_tx: Default::default(),
         client_hooks: Default::default(),
         hook_resolved_workspace_root: String::new(),
         vcs_kind: xai_grok_workspace::session::git::VcsKind::Git,
@@ -315,7 +316,11 @@ async fn create_test_actor_with_memory(
         recap_epoch: std::cell::Cell::new(0),
         turn_summary_task: std::cell::RefCell::new(None),
         turn_summary_generation: std::cell::Cell::new(0),
+        title_refresh_task: std::cell::RefCell::new(None),
+        title_refresh_generation: std::cell::Cell::new(0),
+        next_title_refresh_idx: std::cell::Cell::new(0),
         turn_summary_enabled: false,
+        title_refresh_enabled: false,
         session_turn_active: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         streaming_turn_capture: parking_lot::Mutex::new(StreamingTurnCapture::default()),
         turn_stream_drained: parking_lot::Mutex::new(None),
@@ -552,7 +557,8 @@ async fn create_injection_ready_actor(
         search_config: crate::config::MemorySearchConfig::default(),
         watcher: None,
         stale_claim_secs: 60,
-        search_source: "tool",
+        search_source: MemorySearchSource::Tool,
+        observation_sink: crate::session::memory::noop_memory_observation_sink(),
         embedding_credentials: crate::session::memory::EndpointScopedCredentials::none(),
     });
     actor

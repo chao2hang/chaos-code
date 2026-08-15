@@ -123,7 +123,7 @@ pub fn build_session_tar(
 
         let metadata = ExportMetadata {
             session_id: session_id.to_owned(),
-            grok_version: env!("VERSION_WITH_COMMIT").to_owned(),
+            grok_version: xai_grok_version::full_version().to_owned(),
             os: std::env::consts::OS.to_owned(),
             arch: std::env::consts::ARCH.to_owned(),
             exported_at: chrono::Utc::now().to_rfc3339(),
@@ -442,8 +442,8 @@ async fn run_upload(
                 "trace_cmd: no upload credentials available"
             );
             anyhow::bail!(
-                "缺少上传凭证。请配置显式 deployment key 或环境提供的部署凭证。\
-                 上传配置说明见 {}。",
+                "No upload credentials. Run `grok login` or set a deployment key. \
+                 See {} for upload overrides.",
                 crate::util::display_user_grok_path("docs/user-guide")
             );
         }
@@ -592,7 +592,7 @@ impl UploadAttempt<'_> {
         let _ = writeln!(log, "Trace upload debug log");
         let _ = writeln!(log, "======================");
         let _ = writeln!(log, "Timestamp:    {}", chrono::Utc::now().to_rfc3339());
-        let _ = writeln!(log, "Chaos 版本: {}", env!("VERSION_WITH_COMMIT"));
+        let _ = writeln!(log, "Grok version: {}", xai_grok_version::full_version());
         let _ = writeln!(
             log,
             "OS:           {} {}",
@@ -656,9 +656,21 @@ async fn upload_with_retries(
 // ---------------------------------------------------------------------------
 
 pub async fn resolve_upload_method(agent_config: &AgentConfig) -> Option<UploadMethod> {
-    // Trace upload may use explicit deployment/ambient credentials, but never
-    // the removed Grok browser login or cached-token path.
-    let method = agent_config.endpoints.resolve_upload_method(None);
+    // On login failure, fall back to ambient creds rather than erroring.
+    let auth_token = xai_grok_shell::auth::ensure_authenticated_or_noninteractive(
+        &agent_config.grok_com_config,
+        agent_config.endpoints.has_noninteractive_upload_auth(),
+        Some("Authentication required for trace upload."),
+    )
+    .await
+    .inspect_err(
+        |e| tracing::info!(error = %e, "trace_cmd: auth failed, trying ambient credentials"),
+    )
+    .ok()
+    .flatten()
+    .map(|auth| auth.key);
+
+    let method = agent_config.endpoints.resolve_upload_method(auth_token);
     if method.is_none() {
         tracing::warn!("trace_cmd: no upload method available");
     }

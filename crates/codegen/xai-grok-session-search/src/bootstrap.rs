@@ -212,26 +212,13 @@ async fn bootstrap_with_lease_inner(
             // launch owes pruning and skipped retries); everyone else
             // adopts any completed marker.
             let first_launch_claim = role != BootstrapRole::Recheck && !peer_seen;
-            if !first_launch_claim {
-                // Retry the marker check a few times: the previous claimant
-                // may have just released the lease, and a new SQLite
-                // connection might not see the committed marker write yet
-                // (WAL snapshot timing under contention).  Without this
-                // retry, a peer that acquires the lease microseconds after
-                // the predecessor finishes would needlessly re-index.
-                for attempt in 0..3 {
-                    if has_completed_bootstrap_marker(root_dir).await == Some(true) {
-                        release_bootstrap_claim(&db_path, &token).await;
-                        tracing::info!(
-                            waited_ms = started.elapsed().as_millis() as u64,
-                            "adopted a peer's completed session search bootstrap"
-                        );
-                        return Ok(BootstrapOutcome::Done);
-                    }
-                    if attempt < 2 {
-                        tokio::time::sleep(timing.poll).await;
-                    }
-                }
+            if !first_launch_claim && has_completed_bootstrap_marker(root_dir).await == Some(true) {
+                release_bootstrap_claim(&db_path, &token).await;
+                tracing::info!(
+                    waited_ms = started.elapsed().as_millis() as u64,
+                    "adopted a peer's completed session search bootstrap"
+                );
+                return Ok(BootstrapOutcome::Done);
             }
             tracing::info!(
                 token = %token,
@@ -527,8 +514,8 @@ async fn reindex_all(
                 .await
                 .expect("semaphore is never closed");
 
-            // A successor owns the index. These upserts are idempotent,
-            // not fenced; stopping just avoids contending with it.
+            // A successor owns the index once the claim is lost. These upserts are idempotent,
+            // not fenced, so stopping just avoids contending with it.
             if claim_lost.load(Ordering::Acquire) {
                 return;
             }

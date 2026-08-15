@@ -15,9 +15,11 @@ use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use crate::app::app_view::{AuthMode, AuthState, SessionPickerEntry, TrustState};
+use crate::app::consent::ConsentState;
 use crate::startup::StartupWarning;
 use crate::theme::Theme;
 use crate::views::prompt_widget::{PromptFlag, PromptInfo, PromptWidget};
+mod consent;
 mod hero_box;
 pub(crate) mod logo;
 mod menu;
@@ -59,7 +61,7 @@ fn quit_hint_spans(theme: &Theme) -> Vec<Span<'static>> {
                 .fg(theme.accent_user)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled("  退出", Style::default().fg(theme.gray)),
+        Span::styled("  quit", Style::default().fg(theme.gray)),
     ]
 }
 
@@ -71,6 +73,25 @@ pub(super) fn hover_style(theme: &Theme, hovered: bool, base: Style) -> Style {
     } else {
         base
     }
+}
+
+/// Takes the version badge's row on screens with no shortcuts bar.
+pub(super) fn render_pending_hint(
+    area: Rect,
+    buf: &mut Buffer,
+    theme: &Theme,
+    pending: &crate::views::shortcuts_bar::PendingHint,
+) {
+    let key_style = Style::default()
+        .fg(theme.text_primary)
+        .add_modifier(Modifier::BOLD);
+    let action_style = Style::default().fg(theme.gray);
+    let line = Line::from(vec![
+        Span::styled(format!("  {}", pending.shortcut.display()), key_style),
+        Span::styled(":", action_style),
+        Span::styled(format!("press again to {}", pending.label), action_style),
+    ]);
+    buf.set_line(area.x, area.y, &line, area.width);
 }
 
 /// Horizontal margin (left and right) in normal mode.
@@ -114,6 +135,8 @@ pub struct WelcomeRenderResult {
     pub refresh_rect: Option<Rect>,
     /// Hit-test rect for the gate URL link (click to open in browser).
     pub gate_url_rect: Option<Rect>,
+    /// `None` when this frame did not paint the notice.
+    pub consent_legibility: Option<crate::app::consent::ConsentLegibility>,
     /// Whether a "Changelog" menu action was rendered (above Quit), so the
     /// input handler can map the extra menu row to the release-notes action
     /// once markdown is available.
@@ -187,6 +210,9 @@ struct WelcomeLayoutInput<'a> {
     expanded: bool,
     /// Whether the info slot reserves a promo upgrade CTA (spacer + button).
     has_upgrade_cta: bool,
+    /// Rows reserved for the prompt box. `None` keeps the default; the blocking screens that paint
+    /// no prompt pass 0 to give the rows back to their message.
+    prompt_height: Option<u16>,
 }
 
 impl WelcomeLayout {
@@ -196,8 +222,12 @@ impl WelcomeLayout {
     }
 
     pub(super) fn fixed_below(tip_height: u16) -> u16 {
+        Self::fixed_below_with_prompt(tip_height, PROMPT_HEIGHT)
+    }
+
+    fn fixed_below_with_prompt(tip_height: u16, prompt_height: u16) -> u16 {
         let tip_gap = if tip_height > 0 { 1u16 } else { 0 };
-        tip_height + tip_gap + PROMPT_HEIGHT + VERSION_GAP + 1
+        tip_height + tip_gap + prompt_height + VERSION_GAP + 1
     }
 
     pub(super) fn effective_changelog(
@@ -249,6 +279,7 @@ impl WelcomeLayout {
             announcement,
             expanded,
             has_upgrade_cta,
+            prompt_height,
         } = input;
         let zero = Rect::default();
         // Pick hero vs stacked first, independent of the announcement's height:
@@ -311,7 +342,8 @@ impl WelcomeLayout {
 
         let gap_after_logo = if error_height > 0 { 1 } else { 0 };
         let tip_gap = if tip_height > 0 { 1u16 } else { 0 };
-        let fixed_below = Self::fixed_below(tip_height);
+        let prompt_height = prompt_height.unwrap_or(PROMPT_HEIGHT);
+        let fixed_below = Self::fixed_below_with_prompt(tip_height, prompt_height);
         let fixed_above = logo_rows + 1 + gap_after_logo + error_height; // +1 for gap after logo
         // The stacked info slot below the menu holds whichever block is shown
         // (announcement or changelog), matching the hero box's single-slot rule.
@@ -369,7 +401,7 @@ impl WelcomeLayout {
             Constraint::Min(flex_gap),
             Constraint::Length(tip_height),
             Constraint::Length(tip_gap),
-            Constraint::Length(PROMPT_HEIGHT),
+            Constraint::Length(prompt_height),
             Constraint::Length(VERSION_GAP),
             Constraint::Length(1), // version
         ])
@@ -394,11 +426,11 @@ impl WelcomeLayout {
 
 /// Controls what the version badge renders.
 pub(super) enum VersionBadgeMode<'a> {
-    /// Full badge: team | tier | api_key | **Chaos** VERSION+channel (right-aligned).
+    /// Full badge: team | tier | api_key | **Grok Build** VERSION+channel (right-aligned).
     Full { subscription_tier: Option<&'a str> },
     /// Hero footer: team | api_key | channel (right-aligned, gray).
     HeroFooter,
-    /// Hero inline: **Chaos** VERSION (left-aligned).
+    /// Hero inline: **Grok Build**  VERSION (left-aligned).
     HeroInline,
 }
 
@@ -415,8 +447,9 @@ pub(super) fn render_version_badge(
         width: version_rect.width.saturating_sub(h_margin),
         ..version_rect
     };
+    const SEP: &str = "  \u{2502}  ";
     let sep = Span::styled(
-        "  \u{2502}  ",
+        SEP,
         Style::default().fg(theme.gray).add_modifier(Modifier::DIM),
     );
     let mut spans = Vec::new();
@@ -437,14 +470,14 @@ pub(super) fn render_version_badge(
         } = &mode
     {
         spans.push(Span::styled(
-            format!("套餐: {tier}"),
+            format!("Tier: {tier}"),
             Style::default().fg(theme.gray),
         ));
         spans.push(sep.clone());
     }
     if show_api_key && is_api_key_auth {
         spans.push(Span::styled(
-            "使用 Provider API Key",
+            "Logged in with API key",
             Style::default().fg(theme.gray),
         ));
         spans.push(sep);
@@ -454,7 +487,7 @@ pub(super) fn render_version_badge(
     match &mode {
         VersionBadgeMode::Full { .. } => {
             spans.push(Span::styled(
-                "Chaos  ",
+                "Grok Build  ",
                 Style::default()
                     .fg(theme.text_primary)
                     .add_modifier(Modifier::BOLD),
@@ -463,27 +496,18 @@ pub(super) fn render_version_badge(
                 format!("{}{}", xai_grok_version::VERSION, channel),
                 Style::default().fg(theme.gray),
             ));
-            spans.push(Span::styled(
-                "",
-                Style::default()
-                    .fg(theme.text_primary)
-                    .add_modifier(Modifier::BOLD),
-            ));
         }
         VersionBadgeMode::HeroFooter => {
-            let channel_display = if channel.is_empty() {
-                ""
-            } else {
-                channel.trim()
-            };
-            spans.push(Span::styled(
-                channel_display,
-                Style::default().fg(theme.gray),
-            ));
+            if !channel.is_empty() {
+                spans.push(Span::styled(
+                    channel.trim(),
+                    Style::default().fg(theme.gray),
+                ));
+            }
         }
         VersionBadgeMode::HeroInline => {
             spans.push(Span::styled(
-                "Chaos  ",
+                "Grok Build  ",
                 Style::default()
                     .fg(theme.text_primary)
                     .add_modifier(Modifier::BOLD),
@@ -493,6 +517,11 @@ pub(super) fn render_version_badge(
                 Style::default().fg(theme.gray),
             ));
         }
+    }
+
+    // Only alpha and beta builds print a channel, so on stable the spans can end on a separator.
+    if spans.last().is_some_and(|s| s.content == SEP) {
+        spans.pop();
     }
 
     let version_line = Line::from(spans).alignment(align);
@@ -554,23 +583,7 @@ fn render_prompt_and_version(
         prompt::render_prompt(prompt_centered, buf, focus, prompt, info, 2, 2, compact);
 
     if let Some(pending) = &pending_hint {
-        let key_style = Style::default()
-            .fg(theme.text_primary)
-            .add_modifier(Modifier::BOLD);
-        let action_style = Style::default().fg(theme.gray);
-        let key_text = pending.shortcut.display();
-        let label = format!("再按一次以{}", pending.label);
-        let line = Line::from(vec![
-            Span::styled(format!("  {key_text}"), key_style),
-            Span::styled(":", action_style),
-            Span::styled(label, action_style),
-        ]);
-        buf.set_line(
-            layout.version.x,
-            layout.version.y,
-            &line,
-            layout.version.width,
-        );
+        render_pending_hint(layout.version, buf, theme, pending);
     } else if !skip_version {
         render_version_badge(
             layout.version,
@@ -605,6 +618,7 @@ pub struct WelcomeRenderParams<'a> {
     /// Folder-trust state. When `Pending` (auth done, access granted), the
     /// welcome screen renders the trust question instead of the normal prompt.
     pub trust_state: &'a TrustState,
+    pub consent_state: &'a crate::app::consent::ConsentState,
     pub login_label: Option<&'a str>,
     pub auth_code_input: &'a str,
     pub auth_code_cursor_byte: usize,
@@ -639,12 +653,11 @@ pub struct WelcomeRenderParams<'a> {
     pub gate: Option<&'a xai_grok_shell::auth::GateInfo>,
     pub subscription_tier: Option<&'a str>,
     pub session_picker_grouped: bool,
-    /// Source filter (local/remote/all) for the session picker.
+    /// Source filter for the session picker.
     pub session_picker_source_filter: crate::views::session_picker::SourceFilter,
-    /// The picker has an armed delete (waiting for confirm); disables hover.
     pub session_picker_pending_delete: bool,
     /// Process-wide `--chat`: the picker lists backend conversations only, so
-    /// the Local/Remote source filter and local deep search are hidden.
+    /// the source filter and local deep search are hidden.
     pub chat_mode: bool,
     /// Live working directory (tracks `Effect::SetWorkingDir`), used to pin
     /// the current repo's session group to the top of the picker.
@@ -716,12 +729,10 @@ pub fn render_welcome(
 
     let mut result = match params.auth_state {
         AuthState::Pending { error } => {
-            // Chaos is BYOK-only: never offer browser login. Guide users to
-            // configure model_providers / API keys via `/provider`.
-            let menu = [("p", "配置 Provider"), ("q", "退出")];
-            let default_hint = xai_grok_shell::agent::auth_method::PREFERRED_API_KEY_UNAVAILABLE;
-            let err_text = error.as_deref().unwrap_or(default_hint);
-            let msg = Some((err_text, theme.accent_error));
+            let label = params.login_label.unwrap_or("grok.com");
+            let login_text = format!("Login with {}", label);
+            let menu = [("l", login_text.as_str()), ("q", "Quit")];
+            let msg = error.as_deref().map(|e| (e, theme.accent_error));
             let info = PromptInfo {
                 model_name: params.model_name,
                 flags: params.flags,
@@ -743,24 +754,7 @@ pub fn render_welcome(
                 cursor_pos: None,
                 post_flush_escapes,
                 menu_rects,
-                prompt_rect: None,
-                session_picker_hit_areas: None,
-                import_banner_rect: None,
-                auth_url_rect: None,
-                auth_fallback_rect: None,
-                refresh_rect: None,
-                gate_url_rect: None,
-                changelog_action_present: false,
-                changelog_cta_rect: None,
-                announcement_truncated: false,
-                announcement_rect: None,
-                upgrade_cta_rect: None,
-                privacy_banner_opt_in_rect: None,
-                privacy_banner_opt_out_rect: None,
-                privacy_banner_terms_rect: None,
-                privacy_banner_policy_rect: None,
-                #[cfg(feature = "local-workspace")]
-                workspace_mode_rects: WorkspaceModeHitRects::default(),
+                ..Default::default()
             }
         }
         AuthState::Authenticating { auth_url, mode, .. } => {
@@ -778,35 +772,20 @@ pub fn render_welcome(
                 params.show_raw_url,
             );
             WelcomeRenderResult {
-                cursor_pos: None,
-                post_flush_escapes: None,
-                menu_rects: vec![],
-                prompt_rect: None,
-                session_picker_hit_areas: None,
-                import_banner_rect: None,
                 auth_url_rect: url_rect,
                 auth_fallback_rect: fallback_rect,
-                refresh_rect: None,
-                gate_url_rect: None,
-                changelog_action_present: false,
-                changelog_cta_rect: None,
-                announcement_truncated: false,
-                announcement_rect: None,
-                upgrade_cta_rect: None,
-                privacy_banner_opt_in_rect: None,
-                privacy_banner_opt_out_rect: None,
-                privacy_banner_terms_rect: None,
-                privacy_banner_policy_rect: None,
-                #[cfg(feature = "local-workspace")]
-                workspace_mode_rects: WorkspaceModeHitRects::default(),
+                ..Default::default()
             }
         }
         AuthState::Done if params.is_zdr_blocked => {
-            let menu = [("l", "切换账户"), ("q", "退出")];
+            let menu = [("l", "Switch account"), ("q", "Quit")];
             let (menu_rects, post_flush_escapes) = render_welcome_blocked(
                 content_area,
                 buf,
-                Some(("Chaos 暂不可用于此账户。", theme.gray_bright)),
+                Some((
+                    "Grok Build is not yet available for this account.",
+                    theme.gray_bright,
+                )),
                 &menu,
                 params.selected,
                 None,
@@ -814,27 +793,9 @@ pub fn render_welcome(
                 params.compact,
             );
             WelcomeRenderResult {
-                cursor_pos: None,
                 post_flush_escapes,
                 menu_rects,
-                prompt_rect: None,
-                session_picker_hit_areas: None,
-                import_banner_rect: None,
-                auth_url_rect: None,
-                auth_fallback_rect: None,
-                refresh_rect: None,
-                gate_url_rect: None,
-                changelog_action_present: false,
-                changelog_cta_rect: None,
-                announcement_truncated: false,
-                announcement_rect: None,
-                upgrade_cta_rect: None,
-                privacy_banner_opt_in_rect: None,
-                privacy_banner_opt_out_rect: None,
-                privacy_banner_terms_rect: None,
-                privacy_banner_policy_rect: None,
-                #[cfg(feature = "local-workspace")]
-                workspace_mode_rects: WorkspaceModeHitRects::default(),
+                ..Default::default()
             }
         }
         // Folder-trust question: shown after auth, before any session is
@@ -844,7 +805,19 @@ pub fn render_welcome(
         // sessions. The `if let` destructure makes the `Pending`-only render
         // structurally exhaustive (no `unreachable!`).
         AuthState::Done if params.has_access => {
-            if let TrustState::Pending { workspace } = params.trust_state {
+            // Consent is account-level, so it resolves before the workspace-level trust question.
+            if let ConsentState::Pending { notice, .. } = params.consent_state {
+                consent::render_consent(
+                    content_area,
+                    buf,
+                    &theme,
+                    notice,
+                    params.selected,
+                    params.pending_hint,
+                    h_margin,
+                    params.compact,
+                )
+            } else if let TrustState::Pending { workspace } = params.trust_state {
                 render_welcome_trust(
                     content_area,
                     buf,
@@ -968,7 +941,7 @@ fn render_welcome_blocked(
 
 /// Render the folder-trust question. Mirrors [`render_welcome_blocked`]'s
 /// stacked layout (logo + message + menu + version badge), but the message is a
-/// multi-line block showing the workspace path and the warning that Chaos
+/// multi-line block showing the workspace path and the warning that Grok Build
 /// may run or modify contents in this directory (a security risk). The y/N
 /// answer is handled by the welcome input interceptor, so this only paints;
 /// `menu_rects` are returned for parity with the other welcome arms.
@@ -981,10 +954,10 @@ fn render_welcome_trust(
     h_margin: u16,
     compact: bool,
 ) -> WelcomeRenderResult {
-    let menu_items = [("y", "是，继续"), ("n", "否，退出")];
+    let menu_items = [("y", "Yes, proceed"), ("n", "No, quit")];
     let lines = vec![
         Line::from(Span::styled(
-            "您信任此目录的内容吗？",
+            "Do you trust the contents of this directory?",
             Style::default().fg(theme.gray_bright),
         ))
         .alignment(Alignment::Center),
@@ -997,12 +970,12 @@ fn render_welcome_trust(
         // Two lines so the warning never clips at narrow / compact widths
         // (a single ~78-char line would truncate "...posing security risks").
         Line::from(Span::styled(
-            "Chaos 可能在此目录中运行或修改内容，",
+            "Grok Build may run or modify contents in this directory,",
             Style::default().fg(theme.gray),
         ))
         .alignment(Alignment::Center),
         Line::from(Span::styled(
-            "存在安全风险。",
+            "posing security risks.",
             Style::default().fg(theme.gray),
         ))
         .alignment(Alignment::Center),
@@ -1049,11 +1022,11 @@ fn render_welcome_trust(
 }
 
 /// Header text shared by Loopback and Command auth modes.
-const AUTH_HEADER: &str = "将打开浏览器窗口以完成认证。";
+const AUTH_HEADER: &str = "A browser window will open for authentication.";
 /// Header text for the device-flow auth mode.
-const DEVICE_AUTH_HEADER: &str = "请在浏览器中批准以完成登录。";
+const DEVICE_AUTH_HEADER: &str = "Approve in your browser to finish signing in.";
 /// Caption beneath the device code.
-const DEVICE_CODE_CAPTION: &str = "请确认浏览器显示此代码。";
+const DEVICE_CODE_CAPTION: &str = "Make sure your browser shows this code.";
 
 /// Extract `user_code` from a device verification URL (`None` if absent or
 /// malformed). Shown on-screen so the user can confirm it matches the browser
@@ -1068,9 +1041,9 @@ fn extract_user_code(url: &str) -> Option<&str> {
     valid.then_some(code)
 }
 /// Clickable copy prompt shared by Loopback and Command auth modes.
-const AUTH_COPY_PREFIX: &str = "如果未打开，点击";
-const AUTH_COPY_HERE: &str = "此处";
-const AUTH_COPY_SUFFIX: &str = "复制。";
+const AUTH_COPY_PREFIX: &str = "If it doesn't open, click ";
+const AUTH_COPY_HERE: &str = "here";
+const AUTH_COPY_SUFFIX: &str = " to copy.";
 
 /// Build the "click here to copy" line with "here" underlined in accent color.
 fn auth_copy_line(theme: &Theme) -> Line<'static> {
@@ -1099,7 +1072,7 @@ fn auth_copy_line_rows(inner_width: u16) -> u16 {
     (copy_len as u16).div_ceil(inner_width)
 }
 
-const AUTH_FALLBACK_TEXT: &str = "复制无效？点击此处显示完整 URL。";
+const AUTH_FALLBACK_TEXT: &str = "Copying not working? Click here to show full URL.";
 
 /// Build the fallback "show full URL" link line.
 fn auth_fallback_line(theme: &Theme) -> Line<'static> {
@@ -1123,16 +1096,16 @@ fn push_auth_copy_block(
     lines.push(Line::default());
     lines.push(match clipboard_delivery {
         Some(crate::clipboard::ClipboardDelivery::Confirmed) => {
-            Line::from(Span::styled("已复制！", Style::default().fg(theme.gray)))
+            Line::from(Span::styled("copied!", Style::default().fg(theme.gray)))
                 .alignment(Alignment::Center)
         }
         Some(crate::clipboard::ClipboardDelivery::Unverified) => Line::from(Span::styled(
-            "已发送复制—请确认粘贴",
+            "copy sent—verify paste",
             Style::default().fg(theme.gray),
         ))
         .alignment(Alignment::Center),
         Some(crate::clipboard::ClipboardDelivery::Failed) => {
-            Line::from(Span::styled("复制失败", Style::default().fg(theme.gray)))
+            Line::from(Span::styled("copy failed", Style::default().fg(theme.gray)))
                 .alignment(Alignment::Center)
         }
         None => Line::default(),
@@ -1206,7 +1179,7 @@ fn render_raw_url_mode(
 
     // Render hint above the URL.
     let hint = Line::from(Span::styled(
-        "用鼠标选中下方 URL 并手动复制。",
+        "Select the URL below with your mouse and copy manually.",
         Style::default().fg(theme.gray),
     ))
     .alignment(Alignment::Center);
@@ -1305,10 +1278,10 @@ fn render_browser_status_arm(
 
     // Device also parses the user code from the verification URL.
     let (header, waiting_text, user_code) = match kind {
-        BrowserStatusKind::Command => (AUTH_HEADER, "正在等待登录完成…", None),
+        BrowserStatusKind::Command => (AUTH_HEADER, "Waiting for login to complete...", None),
         BrowserStatusKind::Device => (
             DEVICE_AUTH_HEADER,
-            "正在等待批准…",
+            "Waiting for approval...",
             auth_url.and_then(extract_user_code),
         ),
     };
@@ -1457,7 +1430,7 @@ fn render_welcome_authenticating(
             } else {
                 lines.push(
                     Line::from(Span::styled(
-                        "正在获取登录链接…",
+                        "Waiting for auth URL...",
                         Style::default().fg(theme.gray),
                     ))
                     .alignment(Alignment::Center),
@@ -1610,7 +1583,7 @@ fn render_changelog_section(
             .fg(theme.gray_bright)
             .add_modifier(Modifier::DIM),
     );
-    let title = "更新日志";
+    let title = "Changelog";
     buf.set_span(
         centered.x,
         centered.y,
@@ -1732,7 +1705,7 @@ fn render_welcome_done(
     let cta = p
         .gate
         .and_then(|g| g.label.as_deref())
-        .unwrap_or("升级订阅");
+        .unwrap_or("Upgrade Subscription");
     let in_vscode_family = welcome_in_vscode_family();
     let (key_g, key_l, key_q) = (
         "ctrl+g",
@@ -1787,9 +1760,7 @@ fn render_welcome_done(
     let gate_menu;
     let owned_menu;
     let menu_items: &[(&str, &str)] = if !p.has_access {
-        // Chaos has no subscription/login wall product surface; keep quit and
-        // optional CTA, but replace "log out" with provider configuration.
-        gate_menu = [(key_g, cta), (key_l, "配置 Provider"), (key_q, "退出")];
+        gate_menu = [(key_g, cta), (key_l, "Logout"), (key_q, "Quit")];
         &gate_menu
     } else {
         let (key_w, key_s, key_q, key_i_with_x) = (
@@ -1807,23 +1778,38 @@ fn render_welcome_done(
             // 3 cells of this row as dismiss instead of open. Keyboard:
             // ctrl-shift-i. The key string is right-aligned by render_menu,
             // so [x] sits at the very end of the row.
-            items.push((key_i_with_x, "导入 Claude 设置"));
+            items.push((key_i_with_x, "Import Claude settings"));
         }
-        items.push((key_w, "新建工作树"));
-        items.push((key_s, "恢复会话"));
-        // "更新日志" above Quit; no shortcut — opened by click (row or block).
+        items.push((key_w, "New worktree"));
+        items.push((key_s, "Resume session"));
+        // "Changelog" above Quit; no shortcut — opened by click (row or block).
         if show_changelog_action {
-            items.push(("", "更新日志"));
+            items.push(("", "Changelog"));
         }
-        items.push((key_q, "退出"));
+        items.push((key_q, "Quit"));
         owned_menu = items;
         owned_menu.as_slice()
     };
 
+    #[cfg(feature = "local-workspace")]
+    // Keep the segmented control (and ACK y/N) visible when history is open
+    // if first-run Local ACK is pending — otherwise the confirm is unpainted
+    // while the ACK handler still swallows keys.
+    let show_workspace_picker =
+        p.chat_mode && p.has_access && (!show_picker || p.workspace_mode_ack_pending);
+    #[cfg(feature = "local-workspace")]
+    let workspace_picker_rows = if show_workspace_picker {
+        workspace_mode::WORKSPACE_MODE_MENU_ROWS
+    } else {
+        0
+    };
+    #[cfg(not(feature = "local-workspace"))]
+    let workspace_picker_rows = 0u16;
+
     let menu_height = if show_picker {
         0
     } else {
-        menu_items.len() as u16
+        menu_items.len() as u16 + workspace_picker_rows
     };
 
     // Session picker height: 1 row per entry (no dividers), scrollable.
@@ -1832,7 +1818,16 @@ fn render_welcome_done(
         if p.session_picker_loading {
             1
         } else {
-            (picker_count as u16).min(15) + 3 // +3 for title + search + gap
+            // Reserve a row for the pinned hidden-external hint when shown.
+            let hint_row = u16::from(
+                !p.chat_mode
+                    && crate::views::session_picker::hidden_external_hint(
+                        p.session_picker,
+                        p.session_picker_source_filter,
+                    )
+                    .is_some(),
+            );
+            (picker_count as u16).min(15) + 3 + hint_row // +3 for title + search + gap
         }
     } else {
         0
@@ -1851,6 +1846,7 @@ fn render_welcome_done(
         announcement: p.announcement,
         expanded: p.welcome_announcement_expanded,
         has_upgrade_cta: p.upgrade_cta.is_some(),
+        prompt_height: None,
     });
 
     // Render startup warning in the error area (same slot as auth errors).
@@ -1862,6 +1858,8 @@ fn render_welcome_done(
     let mut announcement_rect: Option<Rect> = None;
     let mut upgrade_cta_rect: Option<Rect> = None;
 
+    #[cfg(feature = "local-workspace")]
+    let mut workspace_mode_rects = WorkspaceModeHitRects::default();
     let (menu_rects, picker_close_button) = if show_picker {
         // Use the full area since logo/menu are hidden and shortcuts
         // are now rendered inside the picker content area.
@@ -1907,11 +1905,21 @@ fn render_welcome_done(
             p.changelog_bullets,
             p.changelog_has_full_notes,
             p.upgrade_cta,
+            #[cfg(feature = "local-workspace")]
+            show_workspace_picker.then_some((
+                p.workspace_mode,
+                p.workspace_mode_startup_locked,
+                p.workspace_mode_ack_pending,
+            )),
         );
         changelog_cta_rect = rects.changelog_cta_rect;
         announcement_truncated = rects.announcement_truncated;
         announcement_rect = rects.announcement_rect;
         upgrade_cta_rect = rects.upgrade_cta_rect;
+        #[cfg(feature = "local-workspace")]
+        {
+            workspace_mode_rects = rects.workspace_mode_rects;
+        }
         (rects.menu_rects, None)
     } else {
         // Narrow layout: stacked logo above, menu below. Inset the menu the
@@ -1919,6 +1927,28 @@ fn render_welcome_done(
         // instead of touching the window edge on narrow terminals.
         render_logo(layout.logo, buf, theme, content_area.height);
         let menu_area = inset_horizontal(layout.menu, prompt::prompt_inset(p.compact));
+        #[cfg(feature = "local-workspace")]
+        let menu_area = if show_workspace_picker {
+            let picker_rect = workspace_mode::picker_area(menu_area);
+            workspace_mode_rects = render_workspace_mode_picker(
+                picker_rect,
+                buf,
+                theme,
+                p.workspace_mode,
+                p.mouse_pos,
+                p.workspace_mode_startup_locked,
+                p.workspace_mode_ack_pending,
+            );
+            Rect {
+                y: menu_area.y + workspace_mode::WORKSPACE_MODE_MENU_ROWS,
+                height: menu_area
+                    .height
+                    .saturating_sub(workspace_mode::WORKSPACE_MODE_MENU_ROWS),
+                ..menu_area
+            }
+        } else {
+            menu_area
+        };
         (
             render_menu(
                 menu_area,
@@ -1975,8 +2005,6 @@ fn render_welcome_done(
     let mut privacy_banner_opt_out_rect: Option<Rect> = None;
     let mut privacy_banner_terms_rect: Option<Rect> = None;
     let mut privacy_banner_policy_rect: Option<Rect> = None;
-    #[cfg(feature = "local-workspace")]
-    let mut workspace_mode_rects = WorkspaceModeHitRects::default();
     let (cursor_pos, post_flush_escapes) = if show_picker {
         (None, None)
     } else if !p.has_access {
@@ -1990,11 +2018,11 @@ fn render_welcome_done(
         .areas(layout.prompt);
         // Show the user's current tier + clickable refresh button above the gate message.
         let tier_label = p.subscription_tier.unwrap_or("Free");
-        let tier_prefix = format!("套餐: {tier_label}  ");
-        let refresh_text = "[刷新]";
+        let tier_prefix = format!("Tier: {tier_label}  ");
+        let refresh_text = "[Refresh]";
         let total_width = tier_prefix.len() + refresh_text.len();
         let tier_line = Line::from(vec![
-            Span::styled("套餐: ", Style::default().fg(theme.gray)),
+            Span::styled("Tier: ", Style::default().fg(theme.gray)),
             Span::styled(
                 tier_label,
                 Style::default()
@@ -2028,7 +2056,7 @@ fn render_welcome_done(
         let gate_text = p
             .gate
             .map(|g| g.message.as_str())
-            .unwrap_or("需要订阅才能继续使用");
+            .unwrap_or("SuperGrok subscription required");
         let msg = Line::from(Span::styled(
             gate_text,
             Style::default().fg(theme.gray_bright),
@@ -2043,20 +2071,16 @@ fn render_welcome_done(
             buf,
         );
 
-        // Chaos is BYOK: only paint a clickable gate URL when one was
-        // explicitly provided (remote settings / gate). Never fall back to
-        // grok.com SuperGrok.
-        if centered.height > 2
-            && let Some(gate_link) = p
-                .gate
-                .and_then(|g| g.url.as_deref())
-                .filter(|u| !u.is_empty())
-        {
+        if centered.height > 2 {
             let url_area = Rect {
                 y: centered.y + 2,
                 height: 1,
                 ..centered
             };
+            let gate_link = p
+                .gate
+                .and_then(|g| g.url.as_deref())
+                .unwrap_or("https://grok.com/supergrok?referrer=grok-build");
             let url = Line::from(Span::styled(
                 gate_link,
                 Style::default()
@@ -2115,8 +2139,7 @@ fn render_welcome_done(
         } else if let Some(ver) = p.pending_update_version
             && layout.tip.height > 0
         {
-            // When a background update is available, show the update
-            // notification in the tip area instead of the random tip.
+            // Background update notification in the tip area.
             let [_, tip_centered, _] = Layout::horizontal([
                 Constraint::Min(0),
                 Constraint::Length(content_area.width),
@@ -2134,13 +2157,13 @@ fn render_welcome_done(
             let key_name = "ctrl+u";
             let line = Line::from(vec![
                 Span::styled(
-                    "更新：",
+                    "Update: ",
                     Style::default()
                         .fg(theme.accent_user)
                         .add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(
-                    format!("v{ver} 可用 \u{2014} 按 {key_name} 重启"),
+                    format!("v{ver} available \u{2014} press {key_name} to restart"),
                     Style::default().fg(theme.accent_user),
                 ),
             ]);
@@ -2172,19 +2195,18 @@ fn render_welcome_done(
             };
             let mins = hint.age.as_secs() / 60;
             let when = if mins == 0 {
-                "刚刚".to_string()
+                "moments ago".to_string()
             } else {
-                format!("{mins} 分钟前")
+                format!("{mins}m ago")
             };
             let accent = Style::default().fg(theme.accent_user);
             let accent_bold = accent.add_modifier(Modifier::BOLD);
             let tool = crate::app::foreign_tool_display_label(hint.tool);
             let line = Line::from(vec![
-                Span::styled("刚从 ", accent),
+                Span::styled("Coming from ", accent),
                 Span::styled(tool, accent_bold),
-                Span::styled(format!(" 过来？用 "), accent),
+                Span::styled(format!("? Resume your session from {when} using "), accent),
                 Span::styled("ctrl+u", accent_bold),
-                Span::styled(format!(" 恢复 {when} 的会话"), accent),
             ]);
             Paragraph::new(line)
                 .style(Style::default().bg(theme.bg_base))
@@ -2214,8 +2236,11 @@ fn render_welcome_done(
             p.prompt_focus,
             prompt,
             &usage_info,
-            if p.pending_update_version.is_some() || p.foreign_resume_hint.is_some() {
-                // Update/resume tip already rendered above with custom styling.
+            if p.privacy_banner
+                || p.pending_update_version.is_some()
+                || p.foreign_resume_hint.is_some()
+            {
+                // Banner/update/resume tip already rendered above with custom styling.
                 None
             } else {
                 p.tip
@@ -2244,6 +2269,7 @@ fn render_welcome_done(
         auth_fallback_rect: None,
         refresh_rect: refresh_hit_rect,
         gate_url_rect: gate_url_hit_rect,
+        consent_legibility: None,
         changelog_action_present: show_changelog_action,
         changelog_cta_rect,
         announcement_truncated,
@@ -2277,9 +2303,8 @@ pub(crate) struct SessionPickerRenderCtx<'a> {
     pub(crate) tick: u64,
     /// When true, entries are grouped by `repo_name` with non-selectable headers.
     pub(crate) grouped: bool,
-    /// Source filter (local/remote/all) for filtering session entries.
+    /// Source filter for filtering session entries.
     pub(crate) source_filter: crate::views::session_picker::SourceFilter,
-    /// The picker has an armed delete (waiting for confirm); disables hover.
     pub(crate) pending_delete: bool,
     /// Process-wide `--chat`: hides the source-filter chip and the
     /// deep-search/filter footer hints (see `WelcomeRenderParams::chat_mode`).
@@ -2447,6 +2472,12 @@ pub(crate) fn render_session_picker(
         }));
     }
 
+    let hidden_hint = if ctx.chat_mode {
+        None
+    } else {
+        crate::views::session_picker::hidden_external_hint(ctx.sessions, ctx.source_filter)
+    };
+
     // Build shortcuts for fullscreen mode. Chat mode drops the worktree /
     // deep-search / filter hints (local-Build-row actions).
     let worktree_shortcut: &'static str = "ctrl+w";
@@ -2455,7 +2486,24 @@ pub(crate) fn render_session_picker(
         HintItem::new(crate::key!(Esc), "back"),
         HintItem::new(crate::key!(Enter), "select"),
     ];
+    if !ctx.chat_mode {
+        default_shortcuts.push(HintItem {
+            keys: vec![],
+            label: "worktree".into(),
+            custom_display: Some(worktree_shortcut),
+            description: None,
+            pinned: false,
+        });
+    }
+    default_shortcuts.push(HintItem {
+        keys: vec![],
+        label: "navigate".into(),
+        custom_display: Some("\u{2191}\u{2193}"),
+        description: None,
+        pinned: false,
+    });
     if ctx.pending_delete {
+        default_shortcuts.clear();
         default_shortcuts.push(HintItem {
             keys: vec![],
             label: "confirm delete".into(),
@@ -2473,22 +2521,6 @@ pub(crate) fn render_session_picker(
     } else if !ctx.chat_mode {
         default_shortcuts.push(HintItem {
             keys: vec![],
-            label: "worktree".into(),
-            custom_display: Some(worktree_shortcut),
-            description: None,
-            pinned: false,
-        });
-    }
-    default_shortcuts.push(HintItem {
-        keys: vec![],
-        label: "navigate".into(),
-        custom_display: Some("\u{2191}\u{2193}"),
-        description: None,
-        pinned: false,
-    });
-    if !ctx.chat_mode {
-        default_shortcuts.push(HintItem {
-            keys: vec![],
             label: "filter".into(),
             custom_display: Some("f"),
             description: None,
@@ -2503,14 +2535,8 @@ pub(crate) fn render_session_picker(
         });
     }
 
-    let hidden_hint = if ctx.chat_mode {
-        None
-    } else {
-        crate::views::session_picker::hidden_external_hint(ctx.sessions, ctx.source_filter)
-    };
-
     let config = PickerConfig {
-        title: Some("恢复会话"),
+        title: Some("Resume session"),
         show_search_hint: true,
         expandable: true,
         esc_clears_query: true,
@@ -2601,9 +2627,8 @@ fn render_auth_input_box(
 /// kitty-keyboard banner is prepended ahead of `summarize_warnings()`
 /// output — see `diagnostics::assemble_startup_warnings`), but only one is
 /// rendered — the severity-aware pick from `startup::banner_warning`, so a
-/// runtime-pushed Warning displaces an earlier Info entry; all of them point
-/// at `/terminal-setup`, which remains an alias and lists every issue. One
-/// message line, one optional action line, plus a buffer row for spacing.
+/// runtime-pushed Warning displaces an earlier Info entry. One message line,
+/// one optional action line, plus a buffer row for spacing.
 /// Severity controls color (yellow for `Warning`, dim for `Info`).
 fn render_startup_warnings(
     area: Rect,
@@ -2673,7 +2698,7 @@ fn build_masked_auth_token(input: &str, cursor_byte: usize) -> MaskedAuthToken {
 
 fn masked_auth_token_view(input: &str, cursor_byte: usize, width: usize) -> (String, usize) {
     if input.is_empty() {
-        return ("在此粘贴令牌…".to_string(), 0);
+        return ("Paste your token here...".to_string(), 0);
     }
     let masked = build_masked_auth_token(input, cursor_byte);
     let buffer =
@@ -2692,16 +2717,55 @@ mod tests {
     use crate::views::picker::PickerState;
     use crate::views::session_picker::{build_grouped_picker_entries, build_session_entry_data};
 
+    fn badge_text(mode: VersionBadgeMode<'_>, team: Option<&str>) -> String {
+        let area = Rect::new(0, 0, 80, 1);
+        let mut buf = Buffer::empty(area);
+        render_version_badge(area, &mut buf, &Theme::current(), team, 0, false, mode);
+        (0..area.width)
+            .map(|x| buf.cell((x, 0)).map_or(" ", |c| c.symbol()).to_string())
+            .collect::<String>()
+            .trim()
+            .to_string()
+    }
+
+    /// The badge carries the product name, the version, and the channel, and never a release label.
+    /// The hero footer prints a channel only on alpha and beta builds, so on stable it must not end on a separator.
+    #[test]
+    fn version_badge_carries_no_release_label() {
+        let full = badge_text(
+            VersionBadgeMode::Full {
+                subscription_tier: None,
+            },
+            Some("acme"),
+        );
+        let inline = badge_text(VersionBadgeMode::HeroInline, None);
+        let footer = badge_text(VersionBadgeMode::HeroFooter, Some("acme"));
+
+        for rendered in [&full, &inline, &footer] {
+            assert!(
+                !rendered.contains("Beta"),
+                "badge must not label the product: {rendered:?}"
+            );
+        }
+        assert!(full.contains("Grok Build"), "full badge: {full:?}");
+        assert!(inline.contains("Grok Build"), "inline badge: {inline:?}");
+        assert!(footer.contains("acme"), "footer keeps the team: {footer:?}");
+        assert!(
+            !footer.ends_with('\u{2502}'),
+            "footer must not end on a separator: {footer:?}"
+        );
+    }
+
     #[test]
     fn auth_copy_feedback_covers_delivery_states() {
         let theme = Theme::current();
         for (delivery, expected) in [
-            (crate::clipboard::ClipboardDelivery::Confirmed, "已复制！"),
+            (crate::clipboard::ClipboardDelivery::Confirmed, "copied!"),
             (
                 crate::clipboard::ClipboardDelivery::Unverified,
-                "已发送复制—请确认粘贴",
+                "copy sent—verify paste",
             ),
-            (crate::clipboard::ClipboardDelivery::Failed, "复制失败"),
+            (crate::clipboard::ClipboardDelivery::Failed, "copy failed"),
         ] {
             let mut lines = Vec::new();
             push_auth_copy_block(&mut lines, &theme, Some(delivery));
@@ -2718,7 +2782,7 @@ mod tests {
     fn masked_auth_token_preserves_reveal_policy() {
         assert_eq!(
             masked_auth_token_view("", 0, 24),
-            ("在此粘贴令牌…".to_string(), 0)
+            ("Paste your token here...".to_string(), 0)
         );
         assert_eq!(build_masked_auth_token("12345678", 8).display, "12345678");
         assert_eq!(build_masked_auth_token("123456789", 9).display, "•••••6789");
@@ -2802,6 +2866,7 @@ mod tests {
             repo_name: repo_name.into(),
             worktree_label: None,
             last_turn_summary: None,
+            last_recap: None,
             card_detail: None,
         }
     }
@@ -2815,6 +2880,7 @@ mod tests {
             prompt_focus: WelcomePromptFocus::Unfocused,
             auth_state,
             trust_state,
+            consent_state: &ConsentState::Done,
             login_label: None,
             auth_code_input: "",
             auth_code_cursor_byte: 0,
@@ -2845,7 +2911,7 @@ mod tests {
             gate: None,
             subscription_tier: None,
             session_picker_grouped: false,
-            session_picker_source_filter: crate::views::session_picker::SourceFilter::All,
+            session_picker_source_filter: crate::views::session_picker::SourceFilter::default(),
             session_picker_pending_delete: false,
             chat_mode: false,
             cwd: std::path::Path::new("/repo"),
@@ -2894,8 +2960,8 @@ mod tests {
             let mut params = render_params(&auth, &trust, None);
             params.foreign_resume_hint = Some(&hint);
             let text = render_done_text(&params);
-            assert!(text.contains(&format!("刚从 {label} 过来？")), "{text}");
-            assert!(text.contains("2 分钟前"), "{text}");
+            assert!(text.contains(&format!("Coming from {label}?")), "{text}");
+            assert!(text.contains("2m ago"), "{text}");
             assert!(text.contains("ctrl+u"), "{text}");
         }
     }
@@ -2914,8 +2980,8 @@ mod tests {
         params.pending_update_version = Some("9.9.9");
 
         let text = render_done_text(&params);
-        assert!(text.contains("v9.9.9 可用"), "{text}");
-        assert!(!text.contains("刚从 Cursor 过来？"), "{text}");
+        assert!(text.contains("v9.9.9 available"), "{text}");
+        assert!(!text.contains("Coming from Cursor?"), "{text}");
     }
 
     fn png() -> [u8; 8] {
@@ -3027,22 +3093,19 @@ mod tests {
                     entries_query,
                     tick: 0,
                     grouped: false,
-                    source_filter: crate::views::session_picker::SourceFilter::All,
+                    source_filter: crate::views::session_picker::SourceFilter::default(),
                     pending_delete: false,
                     chat_mode: true,
                 },
             );
-            use unicode_width::UnicodeWidthStr;
             (0..area.height)
                 .map(|y| {
-                    let mut line = String::new();
-                    let mut x = 0u16;
-                    while x < area.width {
-                        let symbol = buf.cell((x, y)).map(|c| c.symbol()).unwrap_or(" ");
-                        line.push_str(symbol);
-                        x = x.saturating_add(UnicodeWidthStr::width(symbol).max(1) as u16);
-                    }
-                    line
+                    (0..area.width)
+                        .map(|x| {
+                            buf.cell((x, y))
+                                .map_or(' ', |c| c.symbol().chars().next().unwrap_or(' '))
+                        })
+                        .collect::<String>()
                 })
                 .collect::<Vec<_>>()
                 .join("\n")
@@ -3050,7 +3113,7 @@ mod tests {
 
         let stamped = render(Some("hit"));
         assert!(
-            !stamped.contains("正在搜索会话内容"),
+            !stamped.contains("Searching session content"),
             "stamp==live must not render the search header:\n{stamped}"
         );
         assert!(
@@ -3062,8 +3125,86 @@ mod tests {
         // negative assertion above exercises the gate.
         let unstamped = render(None);
         assert!(
-            unstamped.contains("正在搜索会话内容"),
+            unstamped.contains("Searching session content"),
             "in-flight search without the stamp must render the header:\n{unstamped}"
+        );
+    }
+
+    /// The hidden-external hint stays pinned on the welcome picker's default
+    /// Grok view when scanned foreign rows exist — even when the native list
+    /// overflows the viewport — and never renders under `--chat` (foreign
+    /// scanning is disabled there, so the hint is dead weight).
+    #[test]
+    fn hidden_external_hint_renders_outside_chat_mode() {
+        use ratatui::buffer::Buffer;
+        use ratatui::layout::Rect;
+
+        let theme = crate::theme::Theme::default();
+        let area = Rect::new(0, 0, 80, 20);
+        // More native rows than the viewport fits: a trailing list row would
+        // scroll out of view, a pinned row must not.
+        let mut entries: Vec<SessionPickerEntry> = (0..30)
+            .map(|i| make_entry(&format!("s{i}"), &format!("native session {i}"), "repo"))
+            .collect();
+        let mut foreign = make_entry("f1", "Claude work", "repo");
+        foreign.source = "claude".into();
+        entries.push(foreign);
+
+        let render = |chat_mode: bool| -> String {
+            let mut buf = Buffer::empty(area);
+            let mut state = PickerState::default();
+            render_session_picker(
+                area,
+                &mut buf,
+                &theme,
+                &mut SessionPickerRenderCtx {
+                    state: &mut state,
+                    sessions: Some(&entries),
+                    cwd: std::path::Path::new("/repo"),
+                    loading: false,
+                    pending_hint: None,
+                    shortcuts_area: None,
+                    content_results: None,
+                    content_loading: false,
+                    entries_query: None,
+                    tick: 0,
+                    grouped: false,
+                    source_filter: crate::views::session_picker::SourceFilter::default(),
+                    pending_delete: false,
+                    chat_mode,
+                },
+            );
+            (0..area.height)
+                .map(|y| {
+                    (0..area.width)
+                        .map(|x| {
+                            buf.cell((x, y))
+                                .map_or(' ', |c| c.symbol().chars().next().unwrap_or(' '))
+                        })
+                        .collect::<String>()
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+
+        let build_mode = render(false);
+        assert!(
+            build_mode.contains("1 external session hidden \u{b7} f to show"),
+            "default Grok filter must pin the hidden-external hint:\n{build_mode}"
+        );
+        assert!(
+            build_mode.find("external session hidden") < build_mode.find("native session 0"),
+            "the hint must be pinned above the first list row:\n{build_mode}"
+        );
+        assert!(
+            !build_mode.contains("Claude work"),
+            "the foreign row itself stays hidden under the default filter:\n{build_mode}"
+        );
+
+        let chat = render(true);
+        assert!(
+            !chat.contains("external session"),
+            "chat mode must not render the hidden-external hint:\n{chat}"
         );
     }
 
@@ -3195,7 +3336,7 @@ mod tests {
 
     fn resume_picker_config() -> crate::views::picker::PickerConfig<'static> {
         crate::views::picker::PickerConfig {
-            title: Some("恢复会话"),
+            title: Some("Resume session"),
             show_search_hint: true,
             expandable: true,
             esc_clears_query: true,
@@ -3379,14 +3520,14 @@ mod tests {
 
     #[test]
     fn hero_box_active_on_wide_tall_terminal() {
-        // 110 cols, 50 rows: meets the minimum for the hero box.
-        let area = Rect::new(0, 0, 110, 50);
+        // 90 cols, 50 rows: meets the minimum for the hero box.
+        let area = Rect::new(0, 0, 90, 50);
         let layout = WelcomeLayout::compute(WelcomeLayoutInput {
             content_area: area,
             menu_height: 4,
             ..Default::default()
         });
-        assert!(layout.has_hero_box(), "hero box should be active at 110x50");
+        assert!(layout.has_hero_box(), "hero box should be active at 90x50");
         assert!(layout.hero_box.width > 0);
         assert!(layout.hero_box.height > 0);
         // Logo and menu slots are zero in hero box mode (content is inside the box).
@@ -3400,8 +3541,8 @@ mod tests {
 
     #[test]
     fn hero_box_inactive_on_narrow_terminal() {
-        // 100 cols is below the 110-col threshold.
-        let area = Rect::new(0, 0, 100, 50);
+        // 80 cols is below the 90-col threshold.
+        let area = Rect::new(0, 0, 80, 50);
         let layout = WelcomeLayout::compute(WelcomeLayoutInput {
             content_area: area,
             menu_height: 4,
@@ -3409,14 +3550,14 @@ mod tests {
         });
         assert!(
             !layout.has_hero_box(),
-            "hero box should be inactive at 100x50"
+            "hero box should be inactive at 80x50"
         );
         assert_eq!(layout.hero_box.width, 0);
     }
 
     #[test]
     fn hero_box_boundary_at_min_width() {
-        let just_below = Rect::new(0, 0, 109, 50);
+        let just_below = Rect::new(0, 0, 89, 50);
         let layout = WelcomeLayout::compute(WelcomeLayoutInput {
             content_area: just_below,
             menu_height: 4,
@@ -3424,10 +3565,10 @@ mod tests {
         });
         assert!(
             !layout.has_hero_box(),
-            "hero box should be inactive at 109 cols"
+            "hero box should be inactive at 89 cols"
         );
 
-        let at_threshold = Rect::new(0, 0, 110, 50);
+        let at_threshold = Rect::new(0, 0, 90, 50);
         let layout = WelcomeLayout::compute(WelcomeLayoutInput {
             content_area: at_threshold,
             menu_height: 4,
@@ -3435,7 +3576,7 @@ mod tests {
         });
         assert!(
             layout.has_hero_box(),
-            "hero box should be active at 110 cols"
+            "hero box should be active at 90 cols"
         );
     }
 
@@ -3459,9 +3600,9 @@ mod tests {
 
     #[test]
     fn hero_box_inactive_on_short_terminal() {
-        // Full CHAOS logo is 10 rows → box = 2+2+10 = 14, plus flex(1)+fixed(5) = 20.
-        // 19 rows is one short, so it falls back to the stacked layout.
-        let area = Rect::new(0, 0, 110, 19);
+        // 16 rows is one short of the 17 the box needs (11 box + 1 flex gap +
+        // 5 fixed-below), so it falls back to the stacked layout.
+        let area = Rect::new(0, 0, 90, 16);
         let layout = WelcomeLayout::compute(WelcomeLayoutInput {
             content_area: area,
             menu_height: 4,
@@ -3469,17 +3610,17 @@ mod tests {
         });
         assert!(
             !layout.has_hero_box(),
-            "hero box should be inactive at 110x19 (needs 20 rows)"
+            "hero box should be inactive at 90x16 (needs 17 rows)"
         );
     }
 
     #[test]
     fn hero_box_inactive_when_warning_would_overflow() {
-        // Regression: the box is forced to the full 10-row logo, so even a
-        // 3-item menu needs 14 box rows (2 border + 2 v_pad + 10). A startup
-        // warning (error_height = 2 + gap 1) pushes past height 20, so the
-        // gate must fall back to the stacked layout instead of overflowing.
-        let area = Rect::new(0, 0, 110, 22);
+        // Regression: the box is forced to the full 7-row logo, so even a
+        // 3-item menu needs 11 box rows. A startup warning (error_height = 2)
+        // pushes the total past height 19, so the gate must fall back to the
+        // stacked layout instead of overflowing by a row.
+        let area = Rect::new(0, 0, 90, 19);
         let with_warning = WelcomeLayout::compute(WelcomeLayoutInput {
             content_area: area,
             error_height: 2,
@@ -3530,12 +3671,12 @@ mod tests {
 
     #[test]
     fn hero_box_does_not_overflow_with_tall_menu() {
-        // A 6-item menu is still shorter than the 10-row logo, so the box stays
-        // at 14 rows. The centering pad (derived from the default-4 menu box)
-        // must be clamped at exactly min_content_height or the version row
-        // clips. 20 == min_content_height(0, 6, 0, 0): 14-row box + 1 flex + 5
-        // fixed-below.
-        let area = Rect::new(0, 0, 120, 20);
+        // A 6-item menu makes the box 2 rows taller than the default-4 box, so
+        // the centering pad (derived from the default box) must be clamped or
+        // the box gets pushed down and the version row clips at exactly
+        // min_content_height. 19 == min_content_height(0, 6, 0, 0): a 13-row box
+        // + 1 flex gap + 5 fixed-below.
+        let area = Rect::new(0, 0, 100, 19);
         let layout = WelcomeLayout::compute(WelcomeLayoutInput {
             content_area: area,
             menu_height: 6,
@@ -3561,22 +3702,22 @@ mod tests {
 
     #[test]
     fn hero_box_height_accounts_for_borders_and_padding() {
-        // Full CHAOS logo is 10 lines. With menu_height=3:
-        // right_col = 1 + 1 + 0 + 1 + 3 = 6, inner = max(10, 6) = 10.
-        // hero_box_height = 2 (borders) + 2 (v_pad) + 10 = 14.
-        let area = Rect::new(0, 0, 120, 50);
+        // At h >= 26, logo07 is used (7 lines). With menu_height=3:
+        // right_col = 2 + 0 + 0 + 1 + 3 = 6, inner = max(7, 6) = 7.
+        // hero_box_height = 2 (borders) + 2 (v_pad) + 7 = 11.
+        let area = Rect::new(0, 0, 100, 50);
         let layout = WelcomeLayout::compute(WelcomeLayoutInput {
             content_area: area,
             menu_height: 3,
             ..Default::default()
         });
         assert!(layout.has_hero_box());
-        assert_eq!(layout.hero_box.height, 14);
+        assert_eq!(layout.hero_box.height, 11);
     }
 
     #[test]
     fn hero_box_logo_top_aligned() {
-        let area = Rect::new(0, 0, 120, 50);
+        let area = Rect::new(0, 0, 100, 50);
         let layout = WelcomeLayout::compute(WelcomeLayoutInput {
             content_area: area,
             menu_height: 3,
@@ -3590,7 +3731,7 @@ mod tests {
     fn hero_box_with_changelog() {
         // With no announcement, the changelog renders inside the box (info
         // slot), not in a separate area below it.
-        let area = Rect::new(0, 0, 120, 50);
+        let area = Rect::new(0, 0, 100, 50);
         let layout = WelcomeLayout::compute(WelcomeLayoutInput {
             content_area: area,
             menu_height: 3,
@@ -3607,7 +3748,7 @@ mod tests {
 
     #[test]
     fn hero_box_with_announcement() {
-        let area = Rect::new(0, 0, 120, 50);
+        let area = Rect::new(0, 0, 100, 50);
         let a = long_ann();
         let layout = WelcomeLayout::compute(WelcomeLayoutInput {
             content_area: area,
@@ -3632,7 +3773,7 @@ mod tests {
     fn hero_box_announcement_takes_priority_over_changelog() {
         // When both are present, the info slot is sized for the announcement
         // and the changelog is suppressed (never shown outside the box).
-        let area = Rect::new(0, 0, 120, 50);
+        let area = Rect::new(0, 0, 100, 50);
         let a = long_ann();
         let layout = WelcomeLayout::compute(WelcomeLayoutInput {
             content_area: area,
@@ -3651,8 +3792,7 @@ mod tests {
         // A real announcement can't disable the hero box: the slot is clamped to
         // whatever still fits (the renderer trails a `…`), so the box stays
         // active rather than falling back to the stacked layout.
-        // min_content_height(0, 3, 0, 0) = 17 box + 1 flex + 5 fixed = 23.
-        let area = Rect::new(0, 0, 120, 23);
+        let area = Rect::new(0, 0, 100, 17);
         let a = long_ann();
         let without = WelcomeLayout::compute(WelcomeLayoutInput {
             content_area: area,
@@ -3681,18 +3821,17 @@ mod tests {
     fn hero_box_keeps_one_bottom_pad_below_actions() {
         // With a changelog/announcement the subtitle is hidden, but there's
         // still exactly one padding row between the actions and the bottom
-        // border. Full logo is 13 rows; collapsed announcement is 3, so
-        // menu=7 fills the right column (1+0+1+3+1+7 = 13).
-        let area = Rect::new(0, 0, 120, 50);
+        // border. (menu=4 + info=3 fills the inner, so the menu reaches the pad.)
+        let area = Rect::new(0, 0, 100, 50);
         let a = long_ann();
         let no_info = WelcomeLayout::compute(WelcomeLayoutInput {
             content_area: area,
-            menu_height: 7,
+            menu_height: 4,
             ..Default::default()
         });
         let with_info = WelcomeLayout::compute(WelcomeLayoutInput {
             content_area: area,
-            menu_height: 7,
+            menu_height: 4,
             announcement: Some(&a),
             ..Default::default()
         });
@@ -3709,17 +3848,11 @@ mod tests {
 
     /// Flatten a rendered buffer into one string for substring assertions.
     fn buffer_text(buf: &Buffer) -> String {
-        use unicode_width::UnicodeWidthStr;
         let area = *buf.area();
         let mut out = String::new();
         for y in area.y..area.y + area.height {
-            let mut x = area.x;
-            while x < area.x + area.width {
-                // Advance by display width so wide (CJK) glyphs don't leave a
-                // phantom space from their continuation cell.
-                let symbol = buf[(x, y)].symbol();
-                out.push_str(symbol);
-                x = x.saturating_add(UnicodeWidthStr::width(symbol).max(1) as u16);
+            for x in area.x..area.x + area.width {
+                out.push_str(buf[(x, y)].symbol());
             }
             out.push('\n');
         }
@@ -3770,7 +3903,7 @@ mod tests {
 
         let text = buffer_text(&buf);
         assert!(
-            text.contains("请在浏览器中批准"),
+            text.contains("Approve in your browser"),
             "device arm must show the approval header, got:\n{text}"
         );
         // Device code shown for the browser-match check (anti-phishing).
@@ -3779,17 +3912,17 @@ mod tests {
             "device arm must show the device code, got:\n{text}"
         );
         assert!(
-            text.contains("请确认浏览器显示此代码"),
+            text.contains("Make sure your browser shows this code"),
             "device arm must show the code caption, got:\n{text}"
         );
         // Copy affordance (click-to-copy line) is present.
         assert!(
-            text.contains("复制"),
+            text.contains("to copy"),
             "device arm must show the copy-URL affordance, got:\n{text}"
         );
         // No manual-paste affordance in device mode.
         assert!(
-            !text.contains("在此粘贴令牌"),
+            !text.contains("Paste your token"),
             "device arm must NOT render the token paste box, got:\n{text}"
         );
         // Copy + fallback links are clickable.
@@ -3930,21 +4063,21 @@ mod tests {
 
         let text = buffer_text(&buf);
         assert!(
-            text.contains("将打开浏览器窗口以完成认证"),
+            text.contains("A browser window will open"),
             "command arm must show the auth header, got:\n{text}"
         );
         assert!(
-            text.contains("正在等待登录完成"),
+            text.contains("Waiting for login to complete"),
             "command arm must show the waiting status, got:\n{text}"
         );
         // No device code — that's device-flow only.
         assert!(
-            !text.contains("请确认浏览器显示此代码"),
+            !text.contains("Make sure your browser shows this code"),
             "command arm must NOT show the device-code caption, got:\n{text}"
         );
         // No manual-paste affordance in command mode.
         assert!(
-            !text.contains("在此粘贴令牌"),
+            !text.contains("Paste your token"),
             "command arm must NOT render the token paste box, got:\n{text}"
         );
         // Copy + fallback links are clickable.
