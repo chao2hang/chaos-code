@@ -25,8 +25,7 @@ pub use config::{
     AnimationConfig, AppearanceConfig, BlockBackground, BlocksConfig, EditBlockConfig,
     ExecuteHeaderStyle, FollowIndicator, LayoutConfig, PromptConfig, PromptViewConfig,
     RawAltScreenMode, RawAppearanceConfig, RawTerminalConfig, ScrollConfig, ScrollbackConfig,
-    ScrollbarConfig, TodoBadgeFormat, TodoConfig, ToolBullet, ToolConfig,
-    persist_respect_manual_folds,
+    ScrollbarConfig, ToolBullet, ToolConfig, persist_respect_manual_folds,
 };
 pub use render_mermaid::RenderMermaid;
 pub use scroll_mode::ScrollMode;

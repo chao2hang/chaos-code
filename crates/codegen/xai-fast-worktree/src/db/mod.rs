@@ -7,6 +7,7 @@ mod queries;
 mod schema;
 
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use rusqlite::Connection;
@@ -229,11 +230,11 @@ impl WorktreeDb {
 
     /// Open the default DB at `~/.grok/worktrees.db`.
     ///
-    /// Discovers grok home via `$GROK_HOME`, falling back to the canonicalized
-    /// `$HOME/.grok` (matching `xai_grok_config::grok_home`).
-    /// Path is resolved fresh each call (~1µs env var read) to support
-    /// test overrides. Each call opens its own connection — callers in hot
-    /// paths should cache the `WorktreeDb` instance.
+    /// Discovers grok home via `xai_grok_home::resolve_grok_home` (`$GROK_HOME`,
+    /// else the canonicalized `<home>/.grok`).
+    /// Path is resolved fresh each call (env read plus a canonicalize) to
+    /// support test overrides. Each call opens its own connection — callers in
+    /// hot paths should cache the `WorktreeDb` instance.
     pub fn open_default() -> Result<Self> {
         Self::open(&resolve_grok_home()?)
     }
@@ -441,7 +442,7 @@ impl WorktreeDb {
 ///
 /// The basename alone collides across repos, and `INSERT OR REPLACE` would then evict
 /// the other repo's record; hashing the full path keeps distinct worktrees distinct.
-pub(crate) fn id_from_path(path: &Path) -> String {
+pub fn id_from_path(path: &Path) -> String {
     let name = path
         .file_name()
         .map(|n| n.to_string_lossy())
@@ -451,7 +452,7 @@ pub(crate) fn id_from_path(path: &Path) -> String {
 }
 
 /// Extract the repo name (last component) from a source repo path.
-pub(crate) fn repo_name_from_path(source: &Path) -> String {
+pub fn repo_name_from_path(source: &Path) -> String {
     source
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -459,35 +460,16 @@ pub(crate) fn repo_name_from_path(source: &Path) -> String {
 }
 
 pub fn now_epoch_secs() -> i64 {
-    crate::time::epoch_secs()
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64
 }
 
+/// Resolve the grok home: `$GROK_HOME`, else `<home>/.grok`.
 pub fn resolve_grok_home() -> Result<PathBuf> {
-    // Keep dual-home policy in sync with xai_grok_config::paths (`CHAOS_HOME` >
-    // `GROK_HOME` > prefer existing ~/.chaos > existing ~/.grok > default ~/.chaos).
-    // Home resolution deliberately differs ($HOME here vs std::env::home_dir()).
-    if let Ok(v) = std::env::var("CHAOS_HOME") {
-        return Ok(PathBuf::from(v));
-    }
-    if let Ok(v) = std::env::var("GROK_HOME") {
-        return Ok(PathBuf::from(v));
-    }
-    let home = PathBuf::from(
-        std::env::var("HOME").context("neither $CHAOS_HOME, $GROK_HOME, nor $HOME is set")?,
-    );
-    // Canonicalize the home dir so worktree paths share the same physical
-    // config tree as trust/hooks even when it is symlinked. Dunce
-    // canonicalization matches xai_grok_config::default_grok_home().
-    let home = dunce::canonicalize(&home).unwrap_or(home);
-    let chaos = home.join(".chaos");
-    let grok = home.join(".grok");
-    if chaos.is_dir() {
-        Ok(chaos)
-    } else if grok.is_dir() {
-        Ok(grok)
-    } else {
-        Ok(chaos)
-    }
+    xai_grok_home::resolve_grok_home()
+        .context("neither $GROK_HOME nor a home directory could be resolved")
 }
 
 /// Serializes tests that mutate the process-global `GROK_HOME` env var so they
@@ -528,8 +510,6 @@ impl GrokHomeFixture {
         // race fix.
         let _ = WorktreeDb::open(&home);
         let prev = std::env::var_os("GROK_HOME");
-        // SAFETY: the fixture holds the GROK_HOME env lock for its whole
-        // lifetime, so no other test thread reads or writes the environment.
         unsafe { std::env::set_var("GROK_HOME", &home) };
         Self {
             _lock: lock,
@@ -543,8 +523,6 @@ impl GrokHomeFixture {
 #[cfg(test)]
 impl Drop for GrokHomeFixture {
     fn drop(&mut self) {
-        // SAFETY: the fixture still holds the GROK_HOME env lock here, so no
-        // other test thread reads or writes the environment during restore.
         unsafe {
             match self.prev.take() {
                 Some(p) => std::env::set_var("GROK_HOME", p),

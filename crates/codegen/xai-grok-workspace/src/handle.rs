@@ -638,6 +638,9 @@ impl WorkspaceHandle {
                         .status_config
                         .effective_presence_activity_window()
                         .as_millis() as u64,
+                )
+                .with_scheduled_task_keep_awake_window_ms(
+                    config.status_config.scheduled_task_keep_awake.as_millis() as u64,
                 ),
             );
         activity_tracker.set_event_writers(session_event_writers.clone());
@@ -672,6 +675,7 @@ impl WorkspaceHandle {
             client_ext_sink: arc_swap::ArcSwap::new(Arc::new(None)),
             local_registry,
             activity_tracker,
+            scheduler_poll_started: std::sync::atomic::AtomicBool::new(false),
             status_config: config.status_config,
             server_metadata: config.server_metadata,
             identity,
@@ -3383,6 +3387,7 @@ impl WorkspaceHandle {
         self.shared
             .activity_notify_handle
             .store(Arc::new(Some(activity_notify_handle)));
+        crate::scheduler_liveness::spawn_scheduler_liveness_poll(&self.shared);
         let server = handle.server.clone();
         let server_task = tokio::spawn(async move {
             if let Err(e) = server.run().await {

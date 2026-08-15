@@ -74,6 +74,7 @@ use subagent_activity::{subagent_activity_label, sync_subagent_activity};
 
 use workflow_ingest::ingest_workflow_update;
 
+pub(crate) use session_notification::apply_child_view_session_event;
 #[cfg(test)]
 pub(crate) use session_notification::apply_session_event_for_test;
 pub(crate) use session_notification::drop_unexpected_replay;
