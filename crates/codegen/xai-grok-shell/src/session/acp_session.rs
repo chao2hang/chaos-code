@@ -824,6 +824,14 @@ pub(crate) struct SessionActor {
     /// `Arc`-shared with the notification bridge so `PlanModeEntered` /
     /// `PlanModeExited` tool notifications can transition state directly.
     pub(crate) plan_mode: Arc<parking_lot::Mutex<crate::session::plan_mode::PlanModeTracker>>,
+    /// Per-turn latch: set when the running turn calls `exit_plan_mode` or
+    /// `ask_user_question` (`prepare_tool_call`), cleared at every turn
+    /// start (`handle_prompt`). Read by the plan-mode missing-exit guard at
+    /// turn end: a plan-mode turn that ended with plain text — neither
+    /// closing tool called — would silently strand the session in plan
+    /// mode, so the guard queues a synthetic nudge turn instead. Not
+    /// persisted.
+    pub(crate) turn_had_exit_or_ask: std::sync::atomic::AtomicBool,
     /// Whether goal mode (`/goal`) is enabled for this session (feature flag).
     pub(crate) goal_enabled: bool,
     pub(crate) background_workflows_enabled: bool,
@@ -1657,6 +1665,10 @@ mod plan_approval_resume_tests;
 #[cfg(test)]
 #[path = "acp_session_tests/plan_exit_batch_barrier_tests.rs"]
 mod plan_exit_batch_barrier_tests;
+/// Plan-mode missing-exit guard: nudge turn on empty plan-mode endings.
+#[cfg(test)]
+#[path = "acp_session_tests/plan_missing_exit_nudge_tests.rs"]
+mod plan_missing_exit_nudge_tests;
 /// Plan-mode edit gate: read-only except the plan file, even under allow-all.
 #[cfg(test)]
 #[path = "acp_session_tests/plan_mode_edit_gate_tests.rs"]

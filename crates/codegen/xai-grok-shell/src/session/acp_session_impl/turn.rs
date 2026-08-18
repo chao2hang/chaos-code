@@ -285,6 +285,9 @@ impl SessionActor {
         let prompt_mode = self.resolve_turn_prompt_mode(&origin, prompt_mode);
         *self.turn_start_prompt_mode.lock() = prompt_mode;
         *self.turn_prompt_mode.lock() = prompt_mode;
+        // Plan-mode missing-exit guard: the closing-tool latch is per-turn.
+        self.turn_had_exit_or_ask
+            .store(false, std::sync::atomic::Ordering::Relaxed);
         let _turn_active_guard =
             TurnActiveGuard::activate(self.tool_context.is_turn_active.as_ref());
         let _session_turn_active_guard = TurnActiveGuard::activate(Some(&self.session_turn_active));
@@ -768,6 +771,9 @@ impl SessionActor {
                     ConversationItem::scheduler_fired(user_message)
                 }
                 super::super::PromptOrigin::PlanResume => ConversationItem::user(user_message),
+                super::super::PromptOrigin::PlanMissingExitNudge => {
+                    ConversationItem::plan_missing_exit_nudge(user_message)
+                }
                 super::super::PromptOrigin::User => {
                     let mut item = ConversationItem::user(user_message);
                     if let Some(interrupt) = self

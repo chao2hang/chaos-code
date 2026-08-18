@@ -272,6 +272,14 @@ impl SessionActor {
                 self.persist_plan_mode_state();
             }
         }
+        // Plan-mode missing-exit guard: decide under the state lock (it
+        // reads the queue depth), deliver after the lock is dropped.
+        let missing_exit_nudge = self.plan_missing_exit_nudge_decision(
+            &prompt_id,
+            &result,
+            owned_completion,
+            state.pending_inputs.is_empty(),
+        );
         // Drop the state guard before the async emit so the persist/broadcast
         // fork doesn't run under the state lock.
         drop(state);
@@ -322,6 +330,12 @@ impl SessionActor {
                 });
             self.emit_turn_completed(prompt_id, &mapped, usage, cancel_trigger)
                 .await;
+        }
+        // Deliver the missing-exit nudge (if any) last: the synthetic turn
+        // joins the queue behind nothing, and the caller's scheduler kick
+        // (`maybe_start_running_task` in the completion arm) promotes it.
+        if let Some(action) = missing_exit_nudge {
+            self.deliver_plan_missing_exit_nudge(action).await;
         }
         owned_completion
     }

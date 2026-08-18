@@ -1669,6 +1669,7 @@ pub(crate) async fn spawn_session_actor(
         active_skill: parking_lot::Mutex::new(None),
         current_prompt_mode: current_prompt_mode.clone(),
         turn_start_prompt_mode: parking_lot::Mutex::new(restored_prompt_mode),
+        turn_had_exit_or_ask: std::sync::atomic::AtomicBool::new(false),
         turn_prompt_mode: turn_prompt_mode.clone(),
         plan_mode: plan_mode.clone(),
         goal_enabled,

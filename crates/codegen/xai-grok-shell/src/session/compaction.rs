@@ -2420,6 +2420,7 @@ mod inline_auto_compact_flow_tests {
             active_skill: parking_lot::Mutex::new(None),
             current_prompt_mode: Arc::new(parking_lot::Mutex::new(PromptMode::Agent)),
             turn_start_prompt_mode: parking_lot::Mutex::new(PromptMode::Agent),
+            turn_had_exit_or_ask: std::sync::atomic::AtomicBool::new(false),
             turn_prompt_mode: Arc::new(parking_lot::Mutex::new(PromptMode::Agent)),
             plan_mode: Arc::new(parking_lot::Mutex::new(
                 crate::session::plan_mode::PlanModeTracker::new(std::path::PathBuf::from(

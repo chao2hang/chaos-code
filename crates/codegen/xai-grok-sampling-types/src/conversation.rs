@@ -153,6 +153,12 @@ pub enum SyntheticReason {
     /// agent with a "not yet achieved — keep working" reminder pointing
     /// at the persisted details file.
     GoalClassifierNudge,
+    /// Plan-mode missing-exit nudge: a plan-mode turn ended with plain
+    /// text (neither `exit_plan_mode` nor `ask_user_question`), which would
+    /// otherwise leave the session silently stuck in plan mode. Wakes the
+    /// agent with a "call the exit tool now" reminder. Bounded per
+    /// plan-mode activation.
+    PlanMissingExitNudge,
     /// Scheduled task (`/loop`) prompt fired by the scheduler.  Wakes the
     /// agent.
     SchedulerFired,
@@ -188,6 +194,7 @@ impl SyntheticReason {
             | Self::SubagentCompleted
             | Self::NotificationDrain
             | Self::GoalClassifierNudge
+            | Self::PlanMissingExitNudge
             | Self::SchedulerFired => true,
             Self::CompactionMeta
             | Self::SystemReminder
@@ -1211,6 +1218,22 @@ impl ConversationItem {
                 text: Arc::<str>::from(content.into()),
             }],
             synthetic_reason: Some(SyntheticReason::GoalClassifierNudge),
+            cwd_generation: None,
+            prior_turn_interrupt: None,
+            prompt_index: None,
+        })
+    }
+
+    /// Plan-mode missing-exit nudge: queued when a plan-mode turn ended
+    /// with plain text instead of `exit_plan_mode` / `ask_user_question`.
+    /// Tagged distinctly so trace tooling can tell the shell's self-nudge
+    /// from real user input even though the wire role is `user`.
+    pub fn plan_missing_exit_nudge(content: impl Into<String>) -> Self {
+        Self::User(UserItem {
+            content: vec![ContentPart::Text {
+                text: Arc::<str>::from(content.into()),
+            }],
+            synthetic_reason: Some(SyntheticReason::PlanMissingExitNudge),
             cwd_generation: None,
             prior_turn_interrupt: None,
             prompt_index: None,

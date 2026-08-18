@@ -1003,6 +1003,17 @@ impl SessionActor {
                 return Ok(Err(ToolLoop::ToolParsingError));
             }
         };
+        // Plan-mode missing-exit guard: latch that this turn touched a
+        // closing tool. Recorded at request time (not after approval), so a
+        // rejected `exit_plan_mode` still counts — the user just chose to
+        // keep planning, and ending the turn with text afterwards is fine.
+        if matches!(
+            &tool_input,
+            ToolInput::ExitPlanMode(_) | ToolInput::AskUserQuestion(_)
+        ) {
+            self.turn_had_exit_or_ask
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+        }
         let access_kind = AccessKind::from(&tool_input);
         let plan_gate = plan_mode_edit_gate(&self.plan_mode.lock(), &tool_input, &access_kind);
         if plan_gate != PlanEditGate::Allow {

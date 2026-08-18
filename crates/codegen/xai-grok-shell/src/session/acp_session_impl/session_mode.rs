@@ -403,4 +403,161 @@ impl SessionActor {
             .persistence_tx
             .send(PersistenceMsg::PlanModeState(snapshot));
     }
+    /// Plan-mode missing-exit guard: decide what a just-completed turn
+    /// earns. Called from `handle_completion` while the state lock is held
+    /// (the queue-depth input), acted on by
+    /// [`Self::deliver_plan_missing_exit_nudge`] after it is dropped.
+    ///
+    /// The guard exists for one failure shape: the model announces "the
+    /// plan is ready, exiting plan mode" as PLAIN TEXT and ends the turn
+    /// without calling the exit tool — the session then sits in plan mode
+    /// with no signal to anyone. Fires only when ALL of these hold:
+    ///
+    /// - this handler owned the completion (a stale one finalizes nothing);
+    /// - the turn finished plainly (`Completed` + `EndTurn`) — cancelled,
+    ///   errored, token-capped, and stationarity-ended turns never nudge;
+    /// - no further input is already queued (a waiting user prompt will
+    ///   reconcile the mode itself);
+    /// - the turn was a real user turn — or our own nudge retry. Other
+    ///   synthetic turns (background wakes, goal summaries, …) run
+    ///   read-only in plan mode and end with text by design; nudging them
+    ///   would push the model out of plan mode on a background event;
+    /// - the turn called neither `exit_plan_mode` nor `ask_user_question`
+    ///   (the per-turn latch set in `prepare_tool_call`);
+    /// - plan mode is still active.
+    pub(super) fn plan_missing_exit_nudge_decision(
+        &self,
+        prompt_id: &str,
+        result: &PromptTurnResult,
+        owned_completion: bool,
+        queued_inputs_empty: bool,
+    ) -> Option<MissingExitNudge> {
+        if !owned_completion || !queued_inputs_empty {
+            return None;
+        }
+        let plain_end_turn = matches!(
+            result,
+            Ok(PromptTurnOk {
+                stop_reason: acp::StopReason::EndTurn,
+                completion_kind: PromptCompletionKind::Completed,
+                ..
+            })
+        );
+        if !plain_end_turn {
+            return None;
+        }
+        let origin = crate::session::PromptOrigin::from_prompt_id(prompt_id);
+        if origin.is_synthetic()
+            && !matches!(origin, crate::session::PromptOrigin::PlanMissingExitNudge)
+        {
+            return None;
+        }
+        if self
+            .turn_had_exit_or_ask
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            return None;
+        }
+        let mut tracker = self.plan_mode.lock();
+        if !tracker.is_active() {
+            return None;
+        }
+        let nudge_count = tracker.record_missing_exit_nudge();
+        if nudge_count > crate::session::plan_mode::MAX_MISSING_EXIT_NUDGES {
+            Some(MissingExitNudge::CapReached)
+        } else {
+            Some(MissingExitNudge::Nudge {
+                nudge_count,
+                plan_path: tracker.plan_file_path().to_path_buf(),
+            })
+        }
+    }
+    /// Act on a [`MissingExitNudge`] decision: queue the synthetic nudge
+    /// turn, or — once the per-activation budget is spent — post a visible
+    /// notice and hand control back to the user.
+    ///
+    /// Only queues the input; starting it is left to the caller's
+    /// scheduler kick (`handle_completion`'s completion arm runs
+    /// `maybe_start_running_task` right after), so a direct
+    /// `handle_completion` caller in tests can observe the queued nudge
+    /// without a turn running.
+    pub(super) async fn deliver_plan_missing_exit_nudge(&self, action: MissingExitNudge) {
+        match action {
+            MissingExitNudge::CapReached => {
+                tracing::warn!(
+                    session_id = %self.session_info.id.0,
+                    "Plan-mode missing-exit nudge budget spent; handing control back"
+                );
+                xai_grok_telemetry::unified_log::warn(
+                    "shell.plan_mode.missing_exit_nudge_cap",
+                    Some(self.session_info.id.0.as_ref()),
+                    None,
+                );
+                self.send_slash_command_output(
+                    "Plan mode is still on, but the model keeps ending its turn with plain \
+                     text instead of calling exit_plan_mode. I've stopped auto-reminding it \
+                     for this round — reply to steer it, or press Shift+Tab to leave plan mode.",
+                )
+                .await;
+            }
+            MissingExitNudge::Nudge {
+                nudge_count,
+                plan_path,
+            } => {
+                let plan_has_content =
+                    crate::session::plan_mode::plan_file_has_content(&plan_path).await;
+                let rendered = self
+                    .render_plan_template(
+                        crate::session::plan_mode::plan_mode_missing_exit_tool_template(),
+                        &plan_path,
+                        plan_has_content,
+                    )
+                    .await;
+                let Some(rendered) = rendered else {
+                    tracing::warn!(
+                        session_id = %self.session_info.id.0,
+                        "Plan-mode missing-exit nudge: reminder render failed; skipping"
+                    );
+                    return;
+                };
+                let tag = self.reminder_wrapper_tag();
+                let text = format!("<{tag}>\n{rendered}\n</{tag}>");
+                let prompt_id = format!(
+                    "plan-missing-exit-nudge-{}-{nudge_count}",
+                    chrono::Utc::now().timestamp_millis()
+                );
+                tracing::info!(
+                    session_id = %self.session_info.id.0,
+                    nudge_count,
+                    "Plan-mode turn ended without a closing tool; queueing nudge turn"
+                );
+                xai_grok_telemetry::unified_log::info(
+                    "shell.plan_mode.missing_exit_nudge",
+                    Some(self.session_info.id.0.as_ref()),
+                    Some(serde_json::json!({ "nudge_count": nudge_count })),
+                );
+                let prompt_blocks = vec![acp::ContentBlock::Text(acp::TextContent::new(text))];
+                let (respond_to, _rx) = oneshot::channel();
+                let _ = self
+                    .queue_input(QueueInputRequest::new(
+                        prompt_blocks,
+                        prompt_id,
+                        PromptMode::Plan,
+                        respond_to,
+                    ))
+                    .await;
+            }
+        }
+    }
+}
+/// Outcome of [`SessionActor::plan_missing_exit_nudge_decision`].
+pub(super) enum MissingExitNudge {
+    /// Queue a synthetic nudge turn carrying the missing-exit reminder.
+    Nudge {
+        /// 1-based count of nudges this activation (for the prompt id and logs).
+        nudge_count: u32,
+        plan_path: std::path::PathBuf,
+    },
+    /// The per-activation nudge budget is spent — stop self-waking.
+    CapReached,
 }

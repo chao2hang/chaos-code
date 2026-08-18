@@ -73,11 +73,23 @@ pub struct PlanModeTracker {
     /// deferring an exit the model never knew about. Not persisted — a restart
     /// loses the buffer, and the next turn's Active-state injection covers it.
     pending_activation: Option<PendingActivation>,
+    /// Auto-nudges delivered this activation because a plan-mode turn ended
+    /// with plain text — neither `exit_plan_mode` nor `ask_user_question`
+    /// (see [`MAX_MISSING_EXIT_NUDGES`]). Reset on every activation and
+    /// deactivation. NOT persisted: a restart re-arms the budget, which at
+    /// worst replays one reminder the model already saw.
+    missing_exit_nudge_count: u32,
     /// Absolute path to the plan file on disk.
     /// Lives inside the session directory:
     /// `~/.grok/sessions/<cwd>/<session_id>/plan.md`
     plan_file_path: PathBuf,
 }
+/// Maximum synthetic "you forgot to close the plan-mode turn" nudges the
+/// shell self-delivers per plan-mode activation. Once exceeded, the guard
+/// stops self-waking and surfaces a visible notice so the user can take
+/// over — a bound that keeps a model stuck in a text-only loop from
+/// spinning turns forever.
+pub(crate) const MAX_MISSING_EXIT_NUDGES: u32 = 2;
 /// A buffered mid-turn activation reminder plus the state needed to roll the
 /// activation back if it is withdrawn before delivery.
 struct PendingActivation {
@@ -115,6 +127,7 @@ impl PlanModeTracker {
             pending_exit_reminder: false,
             awaiting_plan_approval: false,
             pending_activation: None,
+            missing_exit_nudge_count: 0,
             plan_file_path: session_dir.join("plan.md"),
         }
     }
@@ -143,6 +156,7 @@ impl PlanModeTracker {
             pending_exit_reminder: snapshot.pending_exit_reminder,
             awaiting_plan_approval: snapshot.awaiting_plan_approval,
             pending_activation: None,
+            missing_exit_nudge_count: 0,
             plan_file_path: session_dir.join("plan.md"),
         }
     }
@@ -218,11 +232,13 @@ impl PlanModeTracker {
             PlanModeState::Inactive => {
                 self.state = PlanModeState::Pending;
                 self.pending_exit_reminder = false;
+                self.missing_exit_nudge_count = 0;
                 true
             }
             PlanModeState::ExitPending => {
                 self.state = PlanModeState::Active;
                 self.pending_exit_reminder = false;
+                self.missing_exit_nudge_count = 0;
                 true
             }
             _ => false,
@@ -237,6 +253,7 @@ impl PlanModeTracker {
         self.state = PlanModeState::Active;
         self.was_previously_active = true;
         self.reminder_count = 0;
+        self.missing_exit_nudge_count = 0;
         true
     }
     /// Mid-turn toggle: activate immediately and buffer the pre-rendered
@@ -255,6 +272,7 @@ impl PlanModeTracker {
         self.state = PlanModeState::Active;
         self.was_previously_active = true;
         self.reminder_count = 0;
+        self.missing_exit_nudge_count = 0;
         self.pending_activation = Some(PendingActivation {
             text: rendered_reminder,
             prior_was_previously_active,
@@ -280,6 +298,7 @@ impl PlanModeTracker {
         self.state = PlanModeState::Active;
         self.was_previously_active = true;
         self.reminder_count = 0;
+        self.missing_exit_nudge_count = 0;
         self.pending_exit_reminder = false;
         true
     }
@@ -297,6 +316,7 @@ impl PlanModeTracker {
         }
         self.state = PlanModeState::Inactive;
         self.reminder_count = 0;
+        self.missing_exit_nudge_count = 0;
         self.awaiting_plan_approval = false;
         self.pending_activation = None;
         true
@@ -305,6 +325,7 @@ impl PlanModeTracker {
     /// `turn_in_flight`: whether a model turn is currently running.
     pub(crate) fn user_exit(&mut self, turn_in_flight: bool) {
         self.awaiting_plan_approval = false;
+        self.missing_exit_nudge_count = 0;
         if let Some(pending) = self.pending_activation.take()
             && self.state == PlanModeState::Active
         {
@@ -334,6 +355,7 @@ impl PlanModeTracker {
         }
         self.state = PlanModeState::Inactive;
         self.pending_exit_reminder = true;
+        self.missing_exit_nudge_count = 0;
     }
     /// Arm the one-shot exit reminder for the next turn.
     ///
@@ -346,6 +368,17 @@ impl PlanModeTracker {
     /// Called after injecting a per-turn reminder. Advances the counter.
     pub(crate) fn record_reminder_injected(&mut self) {
         self.reminder_count += 1;
+    }
+    /// Record a delivered missing-exit nudge, returning the new count. The
+    /// caller compares against [`MAX_MISSING_EXIT_NUDGES`] to decide between
+    /// queueing the nudge turn and surfacing the give-up notice.
+    pub(crate) fn record_missing_exit_nudge(&mut self) -> u32 {
+        self.missing_exit_nudge_count += 1;
+        self.missing_exit_nudge_count
+    }
+    /// Nudges delivered since the current activation.
+    pub(crate) fn missing_exit_nudge_count(&self) -> u32 {
+        self.missing_exit_nudge_count
     }
     /// Called after injecting the exit reminder. Clears the flag.
     pub(crate) fn clear_pending_exit_reminder(&mut self) {
@@ -429,6 +462,28 @@ pub(crate) fn plan_mode_edit_rejected_template() -> &'static str {
 pub(crate) fn plan_mode_exit_reminder_template() -> &'static str {
     "\
 You have exited plan mode. You can now make edits, run tools, and take actions."
+}
+/// Missing-exit nudge template.
+///
+/// Becomes the user message of a synthetic `plan-missing-exit-nudge-*` turn,
+/// queued when a plan-mode turn ended with plain text — the model neither
+/// called the exit tool to present its plan nor asked the user a question,
+/// which would otherwise leave the session silently stuck in plan mode.
+///
+/// Returns a MiniJinja template string; render via
+/// `TemplateRenderer::render_with_extra()` with `{ "plan_path": "..." }`.
+pub(crate) fn plan_mode_missing_exit_tool_template() -> &'static str {
+    "\
+Plan mode is still active, but your previous turn ended without calling \
+${{ tools.by_kind.exit_plan }} or ${{ tools.by_kind.ask_user }}, so the session is stuck \
+waiting: the user cannot see or approve a plan you only described in text.
+
+- If the plan is ready, call ${{ tools.by_kind.exit_plan }} NOW to present it for approval.
+- If you need clarification, call ${{ tools.by_kind.ask_user }} to ask the user.
+- Otherwise keep planning: write or refine the plan at ${{ plan_path }} with the \
+${{ tools.by_kind.edit }} tool, then call ${{ tools.by_kind.exit_plan }}.
+
+Do not end a plan-mode turn with plain text again."
 }
 /// Check if a write target matches the plan file.
 ///
@@ -876,6 +931,81 @@ mod tests {
         );
     }
     #[test]
+    fn missing_exit_nudge_template_renders() {
+        let r = test_renderer();
+        let text = render(
+            &r,
+            plan_mode_missing_exit_tool_template(),
+            "/tmp/session/plan.md",
+            false,
+        );
+        assert!(text.contains("Plan mode is still active"));
+        assert!(text.contains("call exit_plan_mode NOW"));
+        assert!(text.contains("ask_user_question"));
+        assert!(text.contains("/tmp/session/plan.md"));
+        assert!(text.contains("search_replace"));
+        assert!(
+            !text.contains("${{"),
+            "unresolved template placeholder found"
+        );
+    }
+    #[test]
+    fn missing_exit_nudge_template_uses_custom_tool_names() {
+        let r = custom_renderer();
+        let text = render(
+            &r,
+            plan_mode_missing_exit_tool_template(),
+            "/tmp/plan.md",
+            false,
+        );
+        assert!(text.contains("call FinishPlan NOW"));
+        assert!(text.contains("AskUser"));
+        assert!(text.contains("EditFile"));
+        assert!(!text.contains("exit_plan_mode"));
+        assert!(!text.contains("ask_user_question"));
+    }
+    #[test]
+    fn missing_exit_nudge_count_resets_on_activation_and_exit() {
+        let mut t = test_tracker();
+        assert_eq!(t.missing_exit_nudge_count(), 0);
+        // Agent-initiated activation: count runs, then resets on exit.
+        t.activate_from_tool();
+        assert_eq!(t.record_missing_exit_nudge(), 1);
+        assert_eq!(t.record_missing_exit_nudge(), 2);
+        assert!(t.record_missing_exit_nudge() > MAX_MISSING_EXIT_NUDGES);
+        t.deactivate_approved();
+        assert_eq!(t.missing_exit_nudge_count(), 0);
+        // User-toggle path: Pending -> Active -> user off (idle).
+        t.enter_pending();
+        t.activate();
+        assert_eq!(t.record_missing_exit_nudge(), 1);
+        t.user_exit(false);
+        assert_eq!(t.missing_exit_nudge_count(), 0);
+        // User-toggle off mid-turn: ExitPending -> deferred exit also resets.
+        t.enter_pending();
+        t.activate();
+        assert_eq!(t.record_missing_exit_nudge(), 1);
+        t.user_exit(true);
+        t.complete_deferred_exit();
+        assert_eq!(t.missing_exit_nudge_count(), 0);
+        // Re-entering after a full exit re-arms the budget too.
+        t.enter_pending();
+        t.activate();
+        assert_eq!(t.record_missing_exit_nudge(), 1);
+        t.deactivate_approved();
+        t.enter_pending();
+        assert_eq!(t.missing_exit_nudge_count(), 0);
+    }
+    #[test]
+    fn missing_exit_nudge_count_is_not_persisted() {
+        let mut t = test_tracker();
+        t.activate_from_tool();
+        t.record_missing_exit_nudge();
+        let restored =
+            PlanModeTracker::from_snapshot(PathBuf::from("/tmp/test-session"), t.snapshot());
+        assert_eq!(restored.missing_exit_nudge_count(), 0);
+    }
+    #[test]
     fn templates_are_static_with_no_hardcoded_tool_names() {
         let hardcoded_names = [
             "search_replace",
@@ -891,6 +1021,7 @@ mod tests {
             plan_mode_reentry_reminder_template(),
             plan_mode_exit_reminder_template(),
             plan_mode_edit_rejected_template(),
+            plan_mode_missing_exit_tool_template(),
         ];
         for template in &templates {
             for name in &hardcoded_names {

@@ -92,6 +92,13 @@ pub enum PromptOrigin {
     /// and the shell injects the follow-up turn. Synthetic so the user never
     /// typed it — kept out of prompt history — but it still runs a real turn.
     PlanResume,
+    /// Self-nudge queued when a plan-mode turn ended with plain text —
+    /// neither `exit_plan_mode` nor `ask_user_question` — which would
+    /// otherwise leave the session silently stuck in plan mode. Its user
+    /// message is a shell-written reminder, so it stays out of scrollback;
+    /// bounded per activation by
+    /// `plan_mode::MAX_MISSING_EXIT_NUDGES`.
+    PlanMissingExitNudge,
 }
 impl PromptOrigin {
     /// Parse a prompt_id string into a `PromptOrigin`.
@@ -118,6 +125,8 @@ impl PromptOrigin {
             Self::SchedulerFired
         } else if prompt_id.starts_with("plan-resume-") {
             Self::PlanResume
+        } else if prompt_id.starts_with("plan-missing-exit-nudge-") {
+            Self::PlanMissingExitNudge
         } else {
             Self::User
         }
@@ -140,7 +149,8 @@ impl PromptOrigin {
             | Self::WorkflowCompleted { .. }
             | Self::NotificationDrain
             | Self::GoalSummary
-            | Self::GoalClassifierNudge => true,
+            | Self::GoalClassifierNudge
+            | Self::PlanMissingExitNudge => true,
         }
     }
     pub fn completion_id(&self) -> Option<&str> {
@@ -153,7 +163,8 @@ impl PromptOrigin {
             | Self::GoalSummary
             | Self::GoalClassifierNudge
             | Self::SchedulerFired
-            | Self::PlanResume => None,
+            | Self::PlanResume
+            | Self::PlanMissingExitNudge => None,
         }
     }
 }
@@ -236,6 +247,14 @@ mod tests {
         assert_eq!(origin.completion_id(), None);
     }
     #[test]
+    fn plan_missing_exit_nudge_origin_from_prompt_id() {
+        let origin = PromptOrigin::from_prompt_id("plan-missing-exit-nudge-1730000000000-1");
+        assert!(matches!(origin, PromptOrigin::PlanMissingExitNudge));
+        assert!(origin.is_synthetic());
+        assert_eq!(origin.completion_id(), None);
+        assert!(origin.hide_user_echo_from_scrollback());
+    }
+    #[test]
     fn notification_drain_is_server_initiated() {
         let prompt_id = "notifications-019e0000-0000-7000-8000-0000000000aa";
         assert!(PromptOrigin::from_prompt_id(prompt_id).is_synthetic());
@@ -261,6 +280,10 @@ mod tests {
         assert!(PromptOrigin::from_prompt_id("goal-summary-1").hide_user_echo_from_scrollback());
         assert!(
             PromptOrigin::from_prompt_id("goal-classifier-nudge-1")
+                .hide_user_echo_from_scrollback()
+        );
+        assert!(
+            PromptOrigin::from_prompt_id("plan-missing-exit-nudge-1")
                 .hide_user_echo_from_scrollback()
         );
     }
