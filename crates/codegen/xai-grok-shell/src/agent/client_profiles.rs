@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use indexmap::IndexMap;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use xai_grok_sampler::{HeaderInjector, OriginClientInfo, SamplerConfig, SharedHeaderInjector};
 
@@ -15,7 +15,7 @@ use xai_grok_sampler::{HeaderInjector, OriginClientInfo, SamplerConfig, SharedHe
 ///
 /// The fields are owned because profiles can be supplied by the user's
 /// `[clients.custom.<id>]` configuration, not only by the built-in catalog.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ClientProfile {
     /// Stable value accepted by `--client` and `[model.<id>] client`.
     pub id: String,

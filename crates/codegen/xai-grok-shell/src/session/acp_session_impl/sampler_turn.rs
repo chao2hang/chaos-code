@@ -447,6 +447,15 @@ impl SessionActor {
         };
         let auth_scheme = model_facts.auth_scheme;
         let mut extra_headers = cfg.extra_headers;
+        // Layer client-profile headers on top of model/provider headers so
+        // an explicitly selected identity wins per-key.
+        for (k, v) in self.client_extra_headers.borrow().iter() {
+            extra_headers.insert(k.clone(), v.clone());
+        }
+        let mut env_http_headers = cfg.env_http_headers.clone();
+        for (k, v) in self.client_env_http_headers.borrow().iter() {
+            env_http_headers.insert(k.clone(), v.clone());
+        }
         crate::agent::config::inject_url_derived_headers(
             &mut extra_headers,
             creds.alpha_test_key.as_deref(),
@@ -488,7 +497,7 @@ impl SessionActor {
             auth_scheme,
             extra_headers,
             query_params: cfg.query_params.clone(),
-            env_http_headers: cfg.env_http_headers.clone(),
+            env_http_headers,
             context_window: cfg.context_window.get(),
             client_version: creds.client_version,
             reasoning_effort: cfg.reasoning_effort,

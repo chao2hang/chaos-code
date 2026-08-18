@@ -2197,6 +2197,9 @@ impl acp::Agent for MvpAgent {
             | "x.ai/sessions/list" => {
                 crate::agent::handlers::session::handle(self, &args).await
             }
+            "x.ai/session/set_client_profile" => {
+                crate::agent::handlers::client_profile::handle(self, &args).await
+            }
             "x.ai/workspaces/list" => {
                 crate::agent::handlers::workspaces::handle(self, &args).await
             }

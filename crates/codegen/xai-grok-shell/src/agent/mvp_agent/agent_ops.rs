@@ -2093,6 +2093,15 @@ impl MvpAgent {
             deployment_id,
             user_id,
         );
+        // Apply the resolved client profile (headers, UA, client_identifier)
+        // so requests carry the correct identity. Profile headers win
+        // per-key over model/provider headers.
+        {
+            let cfg = self.cfg.borrow();
+            if let Some(profile) = cfg.client_profile_for_model(model) {
+                profile.apply_to_sampling_config(&mut config);
+            }
+        }
         config.origin_client = origin_client;
         config
     }
