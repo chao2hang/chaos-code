@@ -31,11 +31,6 @@ pub(crate) use glob::{apply_deny_globs_to_capability_set, partition_deny_entries
 /// Not cfg-gated: `allow_path::normalize_allow_path` uses it on all builds to
 /// decide whether a config entry can be a literal directory grant. The
 /// enforce+unix build re-exports the identical function from `glob` (which
-/// also consumes it internally), so the two never disagree.
-#[cfg(not(all(feature = "enforce", unix)))]
-pub(crate) fn is_glob(entry: &str) -> bool {
-    entry.contains(['*', '?', '['])
-}
 
 /// Escape a path for use inside a Seatbelt `(literal "...")` / `(subpath "...")`
 /// filter (used for both forms, hence the generic name).
