@@ -2948,6 +2948,7 @@ checksum = "70e796c081cee67dc755e1a36a0a172b897fab85fc3f6bc48307991f64e4eca9"
 dependencies = [
  "curve25519-dalek",
  "ed25519",
+ "rand_core 0.6.4",
  "serde",
  "sha2 0.10.9",
  "subtle",
@@ -5748,7 +5749,6 @@ version = "10.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0529410abe238729a60b108898784df8984c87f6054c9c4fcacc47e4803c1ce1"
 dependencies = [
- "aws-lc-rs",
  "base64",
  "ed25519-dalek",
  "getrandom 0.2.16",
@@ -13454,6 +13454,7 @@ dependencies = [
  "blake3",
  "core-foundation",
  "dunce",
+ "file-id",
  "prod-mc-cli-chat-proxy-types",
  "ring",
  "semver",
@@ -13868,6 +13869,7 @@ dependencies = [
  "ratatui",
  "similar",
  "tracing",
+ "unicode-width 0.2.0",
  "uuid",
  "xai-grok-pager",
  "xai-grok-pager-diff",
@@ -14525,7 +14527,9 @@ name = "xai-grok-update"
 version = "0.1.220-alpha.4"
 dependencies = [
  "anyhow",
+ "base64",
  "dunce",
+ "ed25519-dalek",
  "futures",
  "indicatif",
  "libc",
@@ -15335,3 +15339,7 @@ dependencies = [
  "syn 2.0.117",
  "winnow",
 ]
+
+[[patch.unused]]
+name = "fastant"
+version = "0.1.11"
