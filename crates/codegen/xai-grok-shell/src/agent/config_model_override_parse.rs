@@ -187,11 +187,9 @@ impl ConfigWarning {
         }
     }
 
-    pub(crate) fn config_key(key: &str, kind: ConfigWarningKind, reason: String) -> Self {
+    pub(crate) fn config_key(key: String, kind: ConfigWarningKind, reason: String) -> Self {
         Self {
-            target: WarningTarget::ConfigKey {
-                key: key.to_owned(),
-            },
+            target: WarningTarget::ConfigKey { key },
             kind,
             reason,
         }

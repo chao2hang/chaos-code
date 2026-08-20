@@ -87,6 +87,13 @@ impl ChatPersistence for ChannelChatPersistence {
         receiver
     }
 
+    fn persist_selective_compaction(
+        &mut self,
+        _state: &xai_grok_compaction::selective::SelectiveState,
+    ) {
+        // Selective compaction persistence is not wired through the shell channel yet.
+    }
+
     fn flush(&mut self) {
         let _ = self.tx.send(PersistenceMsg::Flush);
     }

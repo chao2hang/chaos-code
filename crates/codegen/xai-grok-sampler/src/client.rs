@@ -395,6 +395,7 @@ struct ClientDefaults {
     api_backend: ApiBackend,
     auth_scheme: AuthScheme,
     stream_tool_calls: bool,
+    extract_inline_thinking: bool,
     extra_response_includes: Vec<String>,
     doom_loop_recovery: Option<xai_grok_sampling_types::DoomLoopRecoveryPolicy>,
 }
@@ -704,6 +705,7 @@ impl SamplingClient {
             api_backend: config.api_backend,
             auth_scheme: config.auth_scheme,
             stream_tool_calls: config.stream_tool_calls,
+            extract_inline_thinking: config.extract_inline_thinking,
             extra_response_includes: config.extra_response_includes,
             doom_loop_recovery: config.doom_loop_recovery,
         };
@@ -837,6 +839,10 @@ impl SamplingClient {
         if let Some(cb) = self.attribution_callback.as_ref() {
             cb.record_401(consumer, sent_suffix);
         }
+    }
+
+    pub fn extract_inline_thinking(&self) -> bool {
+        self.defaults.extract_inline_thinking
     }
 
     pub fn auth_info(&self) -> crate::sampling_log::AuthInfo {
@@ -2095,7 +2101,7 @@ impl SamplingClient {
             ApiBackend::ChatCompletions => {
                 let (raw, meta) = self.conversation_stream(request).await?;
                 let events =
-                    crate::stream::stream_chat_completions(raw, meta, request_id, idle_timeout);
+                    crate::stream::stream_chat_completions(raw, meta, request_id, idle_timeout, self.extract_inline_thinking());
                 crate::stream::collect_response(events).await
             }
             ApiBackend::Responses => {

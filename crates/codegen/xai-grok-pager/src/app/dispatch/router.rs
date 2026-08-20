@@ -56,7 +56,7 @@ use super::rewind::{
 use super::session::foreign::dispatch_fetch_session_list;
 use super::session::fork::{
     apply_persist_worktree_mode, dispatch_fork, dispatch_fork_resolved,
-    dispatch_startup_fork_session,
+    dispatch_project_selected, dispatch_startup_fork_session,
 };
 use super::session::lifecycle::{
     clear_startup_actions, dispatch_accept_consent, dispatch_agent_type_mismatch_answered,
@@ -86,7 +86,7 @@ use super::settings::setters::{
     set_remember_tool_approvals, set_render_mermaid, set_respect_manual_folds, set_screen_mode,
     set_scroll_lines, set_scroll_mode, set_scroll_speed, set_show_thinking_blocks, set_show_tips,
     set_simple_mode, set_theme, set_timeline, set_timestamps, set_vim_mode, set_voice_capture_mode,
-    set_voice_keybind_enabled, set_voice_stt_language,
+    set_voice_keybind_enabled, set_voice_stt_language, set_auto_retry_incomplete_end_turn,
 };
 use super::settings::ui::{
     dispatch_confirm_reset_setting, dispatch_open_command_palette, dispatch_open_howto_guides,
@@ -98,7 +98,8 @@ use super::status::{
     dispatch_copy_session_id, dispatch_manage_billing, dispatch_open_gboom, dispatch_open_tutorial,
     dispatch_privacy_banner_opt_in, dispatch_privacy_banner_opt_out, dispatch_share_session,
     dispatch_show_context_info, dispatch_show_queue, dispatch_show_release_notes,
-    dispatch_show_session_info, dispatch_show_tasks, dispatch_show_usage, set_coding_data_sharing,
+    dispatch_show_session_info, dispatch_show_tasks, dispatch_show_usage,
+    dispatch_set_context_window, set_coding_data_sharing,
 };
 use super::task_result::{dispatch_task_result, unregister_all_active_sessions};
 use super::transcript::{
@@ -1476,6 +1477,38 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
         Action::JumpShowPicker => dispatch_jump_show_picker(app),
         Action::JumpPickerSelect(turn_idx) => dispatch_jump_picker_select(app, turn_idx),
         Action::JumpDismiss => dispatch_jump_dismiss(app),
+        Action::SetAutoRetryIncompleteEndTurn(v) => set_auto_retry_incomplete_end_turn(app, v),
+        Action::SetContextWindow {
+            tokens,
+            compact_if_needed,
+        } => dispatch_set_context_window(app, tokens, compact_if_needed),
+        Action::ProjectSelected {
+            path,
+            stashed_prompt,
+            disable_picker,
+        } => dispatch_project_selected(app, path, stashed_prompt, disable_picker),
+        Action::SetClientProfile { profile } => {
+            with_active_agent(app, |agent| {
+                agent.client_profile = Some(profile);
+            });
+            vec![]
+        }
+        Action::OpenProviderModal { mode } => {
+            with_active_agent(app, |agent| {
+                agent.active_modal = Some(crate::views::modal::ActiveModal::ProviderModal {
+                    state: Box::new(crate::views::provider_modal::ProviderModalState::new(mode)),
+                });
+            });
+            vec![]
+        }
+        Action::OpenClientModal { mode: _ } => {
+            with_active_agent(app, |agent| {
+                agent.active_modal = Some(crate::views::modal::ActiveModal::ClientModal {
+                    state: Box::new(crate::views::client_modal::ClientModalState::new(None)),
+                });
+            });
+            vec![]
+        }
     };
     app.reconcile_foreign_resume_launch();
     sync_sleep_inhibitor(app);

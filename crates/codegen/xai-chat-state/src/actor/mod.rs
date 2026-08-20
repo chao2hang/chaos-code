@@ -213,6 +213,10 @@ impl ChatStateActor {
             ChatStateCommand::UpdateSamplingConfig { config } => {
                 self.state.sampling_config = config;
             }
+            ChatStateCommand::UpdateSamplingConfigAndWait { config, reply } => {
+                self.state.sampling_config = config;
+                let _ = reply.send(());
+            }
             ChatStateCommand::RecordAgentEditedPath { path } => {
                 self.state.agent_edited_paths.insert(path);
             }

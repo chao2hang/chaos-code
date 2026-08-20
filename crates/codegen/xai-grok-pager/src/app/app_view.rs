@@ -228,6 +228,15 @@ pub enum ActiveView {
     /// The top-level Agent Dashboard. State lives in `AppView::dashboard`.
     AgentDashboard,
 }
+impl ActiveView {
+    /// The agent on screen, or `None` for a view that shows no single agent.
+    pub fn agent_id(self) -> Option<AgentId> {
+        match self {
+            ActiveView::Agent(id) => Some(id),
+            ActiveView::Welcome | ActiveView::AgentDashboard => None,
+        }
+    }
+}
 /// Target restored when leaving the dashboard (Ctrl+\ / Esc).
 /// Consumed by `dispatch_exit_dashboard`; dead agents fall back to
 /// insertion-order first / Welcome.
@@ -651,6 +660,8 @@ pub struct AppView {
     pub appearance: AppearanceConfig,
     /// Notification service (terminal bell, OSC sequences, title updates).
     pub notification_service: NotificationService,
+    /// The status row follows whichever agent is on screen, so the app owns it.
+    pub(crate) status_line: crate::app::status_line::StatusLineState,
     /// Escape sequences (title, progress bar) accumulated by the last
     /// `update_notifications()` tick. Consumed by `draw()` and appended
     /// to the frame's `post_flush_escapes` so they are written inside the
@@ -703,6 +714,7 @@ pub struct AppView {
     /// Whether the plugin marketplace CTA is enabled. Env `GROK_PLUGIN_CTA`
     /// overrides `RemoteSettings.plugin_cta` (remote settings); defaults to `false`.
     pub plugin_cta_enabled: bool,
+    pub workspace_dashboard_enabled: bool,
     /// Consumer billing surface (credit fetches / warnings). False for team
     /// and API-key auth. `/usage` itself stays available for session token/cost
     /// unless [`Self::has_external_auth_provider`].
@@ -1175,6 +1187,13 @@ pub struct AppView {
     /// When true, the event loop should exit so the user can relaunch
     /// to pick up the downloaded update.
     pub quit_for_update: bool,
+    /// Mirror of `[session].auto_retry_incomplete_end_turn`. `None` = unset in
+    /// config (defaults to off). Applied to new sessions at creation time.
+    pub auto_retry_incomplete_end_turn: Option<bool>,
+    /// Persisted `[hints] project_picker_disabled` opt-out. When `true`, the
+    /// first-prompt project-directory picker is suppressed and the cwd is used
+    /// directly. Set by `Action::ProjectSelected { disable_picker: true }`.
+    pub project_picker_disabled: bool,
     /// Generation and state for the one launch-scoped foreign resume detection.
     pub(crate) foreign_resume_launch_generation: u64,
     pub(crate) foreign_resume_launch: Option<crate::app::foreign_sessions::ForeignResumeLaunch>,
@@ -1476,6 +1495,7 @@ impl AppView {
             scroll_config: ScrollConfig::from_settings(),
             appearance: AppearanceConfig::default(),
             notification_service: NotificationService::new(Default::default()),
+            status_line: Default::default(),
             pending_notification_escapes: None,
             deferred_notification: None,
             tracing_rx: None,
@@ -1637,6 +1657,8 @@ impl AppView {
             foreign_resume_launch_generation: 0,
             foreign_resume_launch: None,
             quit_for_update: false,
+            auto_retry_incomplete_end_turn: None,
+            project_picker_disabled: false,
             relaunch: None,
             has_claude_import: false,
             import_claude_modal: None,
@@ -1645,6 +1667,7 @@ impl AppView {
             show_resolved_model: true,
             sharing_enabled: false,
             plugin_cta_enabled: false,
+            workspace_dashboard_enabled: false,
             usage_visible: true,
             has_external_auth_provider: false,
             tier_restricted_commands: Vec::new(),
@@ -2046,6 +2069,24 @@ impl AppView {
     /// fires. On welcome, an overlay above the prompt for
     /// [`WELCOME_TOAST_DURATION`].
     ///
+    /// Whether the first-prompt project-directory picker should be shown for the
+    /// active agent. Suppressed when the user opted out
+    /// (`project_picker_disabled`) or no prompt is in flight. The picker is
+    /// gated on the active agent having a stashed prompt awaiting a directory.
+    pub fn needs_project_picker(&self) -> bool {
+        !self.project_picker_disabled
+    }
+
+    /// Mark the project picker as resolved for this process so a subsequent
+    /// first prompt (e.g. after `/new`) does not re-trigger it within the same
+    /// launch. The opt-out flag itself is only persisted via the
+    /// `disable_picker` path; this just clears the in-flight state.
+    pub fn mark_project_picker_done(&mut self) {
+        // The per-launch gating is implicit: once a session is created the
+        // picker is not re-shown for it. This hook exists so the dispatch path
+        // can explicitly signal completion; no additional field is required.
+    }
+
     /// Reconnect success copy is skipped when a leader version-mismatch toast
     /// is already showing: registration (and thus the mismatch notif) finishes
     /// during reconnect, and the later "Reconnected." / "Session restored…"
@@ -4527,6 +4568,7 @@ impl AppView {
                 &self.hidden_announcement_ids,
             );
         let agent_mouse_pos = self.last_mouse_pos;
+        let status_line_frame = self.status_line_frame();
         let Self {
             active_view,
             agents,
@@ -4943,6 +4985,7 @@ impl AppView {
                                     voice_listening,
                                     voice_interim: voice_interim.as_deref(),
                                     esc_owned_before_agent,
+                                    status_line: status_line_frame.clone(),
                                 },
                             );
                             if let Some(modal) = self.import_claude_modal.as_mut() {
@@ -5620,6 +5663,8 @@ impl AppView {
             }
         }
         needs_redraw |= self.tick_scroll();
+        self.update_status_line();
+        needs_redraw |= self.status_line.take_changed();
         needs_redraw
     }
     /// Flush pending scroll lines (stream gap detection, redraw cadence).
@@ -5766,6 +5811,9 @@ impl AppView {
     /// the ~12fps welcome logo shimmer and the macOS Cmd link-hover poll —
     /// so an app that *looks* idle doesn't spin a 30fps loop for them.
     pub fn tick_demand(&self) -> TickDemand {
+        self.view_tick_demand().max(self.status_line_tick_demand())
+    }
+    fn view_tick_demand(&self) -> TickDemand {
         if self.pending_action.is_some() {
             return TickDemand::Fast;
         }

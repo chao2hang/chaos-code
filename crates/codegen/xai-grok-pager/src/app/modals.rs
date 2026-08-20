@@ -520,7 +520,9 @@ impl AgentView {
             | ActiveModal::Settings { .. }
             | ActiveModal::UsageInfo { .. }
             | ActiveModal::ResetSettingsConfirm { .. }
-            | ActiveModal::RememberNoteReview { .. } => unreachable!(),
+            | ActiveModal::RememberNoteReview { .. }
+            | ActiveModal::ProviderModal { .. }
+            | ActiveModal::ClientModal { .. } => unreachable!(),
         }
     }
 
@@ -2538,6 +2540,7 @@ mod session_picker_delete_tests {
             repo_name: "repo".into(),
             worktree_label: None,
             last_turn_summary: None,
+            last_recap: None,
             card_detail: None,
         }
     }

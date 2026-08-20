@@ -122,6 +122,13 @@ pub enum ChatStateCommand {
     /// Update the sampling config (e.g., model switch).
     UpdateSamplingConfig { config: SamplingConfig },
 
+    /// Update the sampling config and acknowledge once applied, so callers
+    /// that need the new value visible before proceeding can await.
+    UpdateSamplingConfigAndWait {
+        config: SamplingConfig,
+        reply: oneshot::Sender<()>,
+    },
+
     /// Track that the agent edited a file path.
     RecordAgentEditedPath { path: String },
 

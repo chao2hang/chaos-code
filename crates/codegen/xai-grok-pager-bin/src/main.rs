@@ -1253,6 +1253,7 @@ async fn run_agent_command(
             terminal: false,
             fs_read: false,
             fs_write: false,
+            status_line: false,
         };
         let conn = connect_or_spawn(&client_type, mode, &env_urls, capabilities.clone()).await?;
         let (tx, rx) = conn.into_channels();
@@ -2212,6 +2213,7 @@ async fn async_main(args: PagerArgs) -> Result<()> {
                 deny_rules: args.deny_rules.clone(),
                 max_turns: args.max_turns,
                 permission_mode_flag: args.permission_mode_flag.clone(),
+                client_identifier: None,
                 reasoning_effort: args.reasoning_effort.clone(),
                 wait_for_background: !args.no_wait_for_background,
                 background_wait_timeout: std::time::Duration::from_secs(

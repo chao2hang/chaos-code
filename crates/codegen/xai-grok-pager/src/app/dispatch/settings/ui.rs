@@ -93,6 +93,7 @@ pub(crate) fn refresh_open_settings_modals(app: &mut AppView) {
                 respect_manual_folds: respect_manual_folds_from_app,
                 auto_mode_gate: auto_mode_gate_from_app,
                 ask_user_question_timeout_enabled: ask_user_question_timeout_enabled_from_app,
+                auto_retry_incomplete_end_turn: app.auto_retry_incomplete_end_turn,
                 voice_stt_language: voice_stt_language_from_app.clone(),
                 scheduler_background_loops: agent
                     .scheduler_background_loops
@@ -243,6 +244,7 @@ pub(in crate::app::dispatch) fn dispatch_open_settings(
         respect_manual_folds: respect_manual_folds_from_app,
         auto_mode_gate: auto_mode_gate_from_app,
         ask_user_question_timeout_enabled: ask_user_question_timeout_enabled_from_app,
+        auto_retry_incomplete_end_turn: app.auto_retry_incomplete_end_turn,
         voice_stt_language: voice_stt_language_from_app,
         scheduler_background_loops: agent
             .scheduler_background_loops
@@ -741,6 +743,7 @@ pub(crate) fn build_pager_snapshot(app: &AppView) -> crate::settings::PagerLocal
         respect_manual_folds: app.appearance.scrollback.scroll.respect_manual_folds,
         auto_mode_gate: app.auto_mode_gate,
         ask_user_question_timeout_enabled: app.ask_user_question_timeout_enabled,
+        auto_retry_incomplete_end_turn: app.auto_retry_incomplete_end_turn,
         voice_stt_language: app.voice_config.language.clone(),
         scheduler_background_loops: agent_scheduler_background_loops(app),
     }

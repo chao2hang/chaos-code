@@ -178,6 +178,9 @@ impl SessionEvent {
             SessionEvent::TurnBlockedByHook { elapsed } => {
                 format!("Turn blocked by a hook in {}.", format_duration(*elapsed))
             }
+            SessionEvent::TurnBlockedByHook { elapsed } => {
+                format!("Turn blocked by a hook in {}.", format_duration(*elapsed))
+            }
             SessionEvent::TurnHalted { elapsed } => {
                 format!(
                     "Agent 无法继续推进 \u{2014} 本轮在 {} 后结束。",

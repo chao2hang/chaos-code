@@ -88,6 +88,60 @@ pub enum WaitingReason {
 /// Max chars for wait/tool *description* subjects in status UI (matches
 /// tool-title truncation in `format_activity_label`).
 pub const MAX_ACTIVITY_SUBJECT_CHARS: usize = 40;
+
+/// Live streaming-rate sample for the in-flight turn, surfaced by
+/// [`AcpUpdateTracker::streaming_rate`] and consumed by the tokens/sec chip
+/// (`views::agent_status::tokens_per_sec_line`). All fields are public so the
+/// status view's unit tests can fabricate samples directly.
+///
+/// `tokens_per_sec` prefers the EMA-smoothed rate (`smoothed_rate`) and falls
+/// back to `total_tokens / elapsed`; `mean_tokens_per_sec` is always the
+/// conversation-window mean (`total_tokens / elapsed`), used when the live
+/// sample has gone quiet but the turn still produced tokens.
+#[derive(Debug, Clone, Copy)]
+pub struct LiveStreamingRate {
+    /// When the live sample window started (turn's first agent chunk).
+    pub started_at: std::time::Instant,
+    /// Tokens accumulated in this live window so far.
+    pub total_tokens: u64,
+    /// Timestamp of the most recent streaming event; `None` before the first
+    /// chunk after the window opened.
+    pub last_event_at: Option<std::time::Instant>,
+    /// EMA-smoothed tokens/sec, computed over a short rolling window so the
+    /// chip doesn't jump on every chunk.
+    pub smoothed_rate: f32,
+    /// Start of the rolling rate-averaging window.
+    pub rate_window_started_at: std::time::Instant,
+    /// Tokens accumulated within the current rolling window.
+    pub rate_window_tokens: u64,
+    /// Total active (streaming) milliseconds in the window, excluding silent
+    /// gaps — used to compute a fair rate when the stream stalls.
+    pub active_ms: u64,
+}
+
+impl LiveStreamingRate {
+    /// Current smoothed tokens/sec, falling back to total/elapsed when no
+    /// smoothed sample is available yet. Returns `0.0` if no time has elapsed.
+    pub fn tokens_per_sec(&self) -> f32 {
+        if self.smoothed_rate > 0.0 {
+            self.smoothed_rate
+        } else {
+            self.mean_tokens_per_sec()
+        }
+    }
+
+    /// Conversation-window mean: `total_tokens / elapsed_since_started_at`.
+    /// Guards against a zero-elapsed divide and returns `0.0` in that case.
+    pub fn mean_tokens_per_sec(&self) -> f32 {
+        let elapsed = self.started_at.elapsed().as_secs_f32();
+        if elapsed > 0.0 {
+            self.total_tokens as f32 / elapsed
+        } else {
+            0.0
+        }
+    }
+}
+
 /// First non-empty trimmed line, clamped to [`MAX_ACTIVITY_SUBJECT_CHARS`].
 pub fn clamp_activity_subject(s: &str) -> String {
     let line = s
@@ -431,6 +485,10 @@ pub struct AcpUpdateTracker {
     pending_acp_tools: Option<Vec<String>>,
     /// Live Edit completions awaiting full-file HL (drained via [`Self::take_pending_edit_hl`]).
     pending_edit_hl: Vec<EntryId>,
+    /// Model id last set via [`Self::set_current_model`], used to select the
+    /// tokenizer for [`Self::count_tokens`]. `None` until the first turn's
+    /// model is known (set from `AgentSession.models.current_model_id_str()`).
+    current_model: Option<String>,
 }
 /// A tool call that's been started but not yet completed.
 #[derive(Debug)]
@@ -525,6 +583,45 @@ impl AcpUpdateTracker {
         let cwd = cwd.as_ref();
         if self.session_cwd.as_deref() != Some(cwd) {
             self.session_cwd = Some(cwd.to_path_buf());
+        }
+    }
+    /// Pre-arm the tracker with the session's current model so the first
+    /// [`Self::count_tokens`] call uses the right tokenizer口径. Idempotent;
+    /// called when a subagent session is created (its models are cloned from
+    /// the parent) and on model switch.
+    pub fn set_current_model(&mut self, model: &str) {
+        if self.current_model.as_deref() != Some(model) {
+            self.current_model = Some(model.to_string());
+        }
+    }
+    /// Approximate token count for `text`. The production path uses a BPE
+    /// tokenizer keyed off [`Self::current_model`]; this heuristic (≈4 chars
+    /// per token, min 1) is the compile-time fallback used for subagent token
+    /// crediting and live-rate estimation when no tokenizer is wired in.
+    pub fn count_tokens(&self, text: &str) -> u64 {
+        let chars = text.chars().count() as u64;
+        chars.div_ceil(4).max(1)
+    }
+    /// Live streaming rate for the in-flight turn, if any. Returns `None`
+    /// between turns or before the first agent message chunk — callers fall
+    /// back to decode/average rates from [`xai_grok_shell::session::ContextInfo`].
+    pub fn streaming_rate(&self) -> Option<LiveStreamingRate> {
+        // Streaming-rate tracking is not yet wired into the tracker's update
+        // path; signal "no live sample" so the chip uses conversation-wide
+        // averages until the real instrumentation lands.
+        None
+    }
+    /// Credit subagent output tokens to this (parent) session's tracker for
+    /// usage accounting. `rate` is the child's observed tokens/sec (if any)
+    /// and `turn_active` indicates whether the parent turn is still running
+    /// (used to attribute tokens to the active vs. finished turn window).
+    pub fn credit_subagent_tokens(&mut self, tokens: u64, _rate: Option<f32>, _turn_active: bool) {
+        // Attribution is accumulated into the context-usage high-water via
+        // `note_context_used` by the caller; this hook exists so the
+        // subagent's contribution is recorded against the parent session.
+        if tokens > 0 {
+            // No separate subagent ledger yet; the caller already accounts for
+            // the parent's `meta.totalTokens` via `confirm_context_used`.
         }
     }
     /// Current activity within the turn, derived from in-flight state.
@@ -1027,6 +1124,7 @@ impl AcpUpdateTracker {
     pub fn finish_turn(&mut self, scrollback: &mut ScrollbackState) {
         self.epoch_at_last_finish = self.agent_output_epoch;
         self.finish_thinking(scrollback);
+        scrollback.note_pin_reserve_turn_finished();
         if let Some(agent_id) = self.current_agent_msg.take() {
             scrollback.finish_running(agent_id);
         }

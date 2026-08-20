@@ -36,31 +36,29 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
 use serial_test::serial;
-use wiremock::ResponseTemplate;
-use wiremock::matchers::{method, path};
 
 use common::artifact_server::ArtifactServer;
 use common::{
-    FakeBinGuard, GhApiMockGuard, can_exec_shell_scripts, host_platform, make_update_config,
-    reset_home, set_test_version, small_good_artifact, test_home,
+    FakeBinGuard, can_exec_shell_scripts, host_platform, make_update_config, reset_home,
+    set_test_version, small_good_artifact, test_home,
 };
 use xai_grok_update::auto_update::{
     CliUpdateTrigger, ensure_latest_on_disk, install_internal_from_base, run_update,
 };
 use xai_grok_update::version::installed_on_disk_version;
 
-/// Assert the active `~/.grok/bin/chaos` resolves to the expected versioned
+/// Assert the active `~/.grok/bin/grok` resolves to the expected versioned
 /// binary, actually runs, and has exactly the expected content (the content
 /// check is what catches a cross-racer temp-file corruption).
 fn assert_active_binary(home: &Path, version: &str, platform: &str, expected_content: &[u8]) {
-    let link = home.join("bin").join("chaos");
-    assert!(link.is_symlink(), "chaos must be a symlink");
+    let link = home.join("bin").join("grok");
+    assert!(link.is_symlink(), "grok must be a symlink");
     let resolved = dunce::canonicalize(&link)
-        .unwrap_or_else(|e| panic!("active chaos symlink does not resolve: {e}"));
+        .unwrap_or_else(|e| panic!("active grok symlink does not resolve: {e}"));
     assert_eq!(
         resolved.file_name().unwrap().to_string_lossy(),
-        format!("chaos-{version}-{platform}"),
-        "active chaos must be the expected version"
+        format!("grok-{version}-{platform}"),
+        "active grok must be the expected version"
     );
     assert_eq!(
         std::fs::read(&resolved).unwrap(),
@@ -76,19 +74,19 @@ fn assert_active_binary(home: &Path, version: &str, platform: &str, expected_con
         .status()
         .map(|s| s.success())
         .unwrap_or(false);
-    assert!(ran_ok, "active chaos must pass the smoke-test");
+    assert!(ran_ok, "active grok must pass the smoke-test");
 }
 
 /// Lay down a managed-install layout in the test GROK_HOME:
-/// `bin/chaos -> ../downloads/chaos-<version>-<platform>` (what
-/// `install_internal_from_base` / `install_gh_release` produces).
+/// `bin/grok -> ../downloads/grok-<version>-<platform>` (what
+/// `install_internal_from_base` produces).
 fn fake_managed_install(version: &str) {
     let home = test_home();
     let downloads = home.join("downloads");
     let bin = home.join("bin");
     std::fs::create_dir_all(&downloads).unwrap();
     std::fs::create_dir_all(&bin).unwrap();
-    let name = format!("chaos-{version}-{}", host_platform());
+    let name = format!("grok-{version}-{}", host_platform());
     std::fs::write(downloads.join(&name), small_good_artifact()).unwrap();
     std::fs::set_permissions(
         downloads.join(&name),
@@ -97,110 +95,57 @@ fn fake_managed_install(version: &str) {
     .unwrap();
     std::os::unix::fs::symlink(
         std::path::Path::new("../downloads").join(&name),
-        bin.join("chaos"),
+        bin.join("grok"),
     )
     .unwrap();
 }
 
-/// Set up a wiremock-based gh-release environment: isolated home, current
-/// version, `GROK_INSTALLER=gh-release`. The returned guard pins both the
-/// API and download bases to the wiremock server, stubs `/releases/latest`
-/// for `stable_tag`, and stubs the asset download for that version's
-/// platform binary. The `on_disk` flag mirrors what the previous fake-gh
-/// helper exposed: when `true`, a `fake_managed_install(target)` is laid
-/// down so the leader's `installed_on_disk_version` probe reports the
-/// target and the second pass becomes a no-op download.
-async fn setup_gh_api_release(
-    running_version: &str,
-    stable_tag: &str,
-    on_disk: Option<&str>,
-) -> GhApiMockGuard {
+/// Fake `gh` that logs argv to `<dir>/gh-args.log`, answers
+/// `release list --exclude-pre-releases` from `<dir>/gh-stable-only-stdout`,
+/// and for `release download ... --output <path>` writes a smoke-passing
+/// artifact to the output path.
+fn fake_gh_serving_releases(dir: &std::path::Path) -> String {
+    let dq = format!("'{}'", dir.to_string_lossy().replace('\'', "'\\''"));
+    format!(
+        r#"#!/bin/sh
+echo "$@" >> {dq}/gh-args.log
+case "$*" in
+  *"release list"*)
+    if [ -f {dq}/gh-stable-only-stdout ]; then cat {dq}/gh-stable-only-stdout; fi
+    ;;
+  *"release download"*)
+    out=""
+    prev=""
+    for a in "$@"; do
+      if [ "$prev" = "--output" ]; then out="$a"; fi
+      prev="$a"
+    done
+    if [ -n "$out" ]; then
+      printf '#!/bin/sh\nexit 0\n' > "$out"
+      chmod +x "$out"
+    fi
+    ;;
+esac
+exit 0
+"#
+    )
+}
+
+/// Count `release download` invocations in the fake gh's argv log.
+fn gh_download_count(g: &FakeBinGuard) -> usize {
+    g.args_log()
+        .iter()
+        .filter(|l| l.contains("release download"))
+        .count()
+}
+
+fn setup_gh_release(running_version: &str) -> FakeBinGuard {
     let _ = test_home();
     reset_home();
     set_test_version(running_version);
     // SAFETY: serial_test ensures no race; reset_home clears this between tests.
     unsafe { std::env::set_var("GROK_INSTALLER", "gh-release") };
-    let g = GhApiMockGuard::start().await.with_download_base();
-    g.stub_latest(stable_tag, false, false).await;
-
-    // Asset path matches `gh_release_asset_url`: `{download_base}/v{ver}/{asset_name}`.
-    // The asset name itself comes from `gh_release_asset_name(os, arch)` (CI-published
-    // name without the version), not the stored on-disk `chaos-{ver}-{platform}` name.
-    let version = stable_tag.trim_start_matches('v');
-    let asset_name = gh_release_asset_name_for_host();
-    let asset_path = format!("/v{version}/{asset_name}");
-    let body = b"#!/bin/sh\nexit 0\n".to_vec();
-    wiremock::Mock::given(method("GET"))
-        .and(path(asset_path.as_str()))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .insert_header("Content-Length", body.len().to_string())
-                .set_body_bytes(body),
-        )
-        .mount(&g.server)
-        .await;
-
-    if let Some(v) = on_disk {
-        fake_managed_install(v);
-    }
-    g
-}
-
-/// Mirror of `version::gh_release_asset_name` for the test host so the
-/// stubbed asset path matches what production code will request. Duplicated
-/// here (rather than re-exported from the production crate) to keep the
-/// test's view of the asset naming self-contained.
-fn gh_release_asset_name_for_host() -> String {
-    let (os, arch) = host_os_arch();
-    let os_part = match os {
-        "linux" => "linux",
-        "macos" | "darwin" => "darwin",
-        "windows" | "win32" => "win32",
-        other => panic!("unsupported test OS for GH asset name: {other}"),
-    };
-    let arch_part = match arch {
-        "x86_64" | "x64" | "amd64" => "x64",
-        "aarch64" | "arm64" => "arm64",
-        other => panic!("unsupported test arch for GH asset name: {other}"),
-    };
-    let base = format!("chaos-{os_part}-{arch_part}");
-    if os_part == "win32" {
-        format!("{base}.exe")
-    } else {
-        base
-    }
-}
-
-fn host_os_arch() -> (&'static str, &'static str) {
-    let os = if cfg!(target_os = "macos") {
-        "macos"
-    } else if cfg!(target_os = "linux") {
-        "linux"
-    } else {
-        panic!("unsupported test platform");
-    };
-    let arch = if cfg!(target_arch = "x86_64") {
-        "x86_64"
-    } else if cfg!(target_arch = "aarch64") {
-        "aarch64"
-    } else {
-        panic!("unsupported test arch");
-    };
-    (os, arch)
-}
-
-/// Count asset-download GET requests received so far on the wiremock server.
-/// Path matches the stubbed `/v{version}/{asset_name}` URL. HEAD probes from
-/// the parallel download path are excluded (they don't fetch the body).
-async fn asset_download_count(g: &GhApiMockGuard, version: &str) -> usize {
-    let expected_prefix = format!("/v{version}/");
-    g.server
-        .received_requests()
-        .await
-        .unwrap_or_default()
-        .iter()
-        .filter(|r| r.url.path().starts_with(&expected_prefix) && r.method.as_str() == "GET")
-        .count()
+    FakeBinGuard::install("gh", fake_gh_serving_releases)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -217,18 +162,15 @@ async fn ensure_latest_downloads_once_then_converges_without_redownload() {
         eprintln!("skipping: shell scripts cannot execute in this sandbox");
         return;
     }
-    let g = setup_gh_api_release("0.2.5", "v0.2.7", None).await;
+    let g = setup_gh_release("0.2.5");
+    g.set_stable_only_stdout("v0.2.7\n");
     let cfg = make_update_config("stable");
 
     // Pass 1: disk is empty → downloads and installs.
     let first = ensure_latest_on_disk(&cfg).await.unwrap();
     assert_eq!(first.installed.as_deref(), Some("0.2.7"));
     assert!(first.relaunch_needed, "running 0.2.5 < disk 0.2.7");
-    assert_eq!(
-        asset_download_count(&g, "0.2.7").await,
-        1,
-        "first pass downloads"
-    );
+    assert_eq!(gh_download_count(&g), 1, "first pass downloads");
     assert_eq!(installed_on_disk_version().as_deref(), Some("0.2.7"));
 
     // Pass 2 (the pre-fix hourly re-download): disk already current →
@@ -238,7 +180,7 @@ async fn ensure_latest_downloads_once_then_converges_without_redownload() {
     assert_eq!(second.installed, None, "second pass must not re-download");
     assert!(second.relaunch_needed, "still running 0.2.5 < disk 0.2.7");
     assert_eq!(
-        asset_download_count(&g, "0.2.7").await,
+        gh_download_count(&g),
         1,
         "hourly re-entry must not download again"
     );
@@ -257,7 +199,10 @@ async fn run_update_skips_download_when_disk_already_current() {
         eprintln!("skipping: shell scripts cannot execute in this sandbox");
         return;
     }
-    let g = setup_gh_api_release("0.2.5", "v0.2.7", Some("0.2.7")).await;
+    let g = setup_gh_release("0.2.5");
+    g.set_stable_only_stdout("v0.2.7\n");
+    // Another process (TUI background download) already installed 0.2.7.
+    fake_managed_install("0.2.7");
     let mut cfg = make_update_config("stable");
 
     let result = run_update(false, None, None, &mut cfg, CliUpdateTrigger::UserCommand)
@@ -271,7 +216,7 @@ async fn run_update_skips_download_when_disk_already_current() {
          signals stale leaders to relaunch"
     );
     assert_eq!(
-        asset_download_count(&g, "0.2.7").await,
+        gh_download_count(&g),
         0,
         "a binary someone else installed must not be downloaded again"
     );
@@ -284,7 +229,9 @@ async fn run_update_force_still_redownloads_when_disk_current() {
         eprintln!("skipping: shell scripts cannot execute in this sandbox");
         return;
     }
-    let g = setup_gh_api_release("0.2.7", "v0.2.7", Some("0.2.7")).await;
+    let g = setup_gh_release("0.2.7");
+    g.set_stable_only_stdout("v0.2.7\n");
+    fake_managed_install("0.2.7");
     let mut cfg = make_update_config("stable");
 
     let result = run_update(true, None, None, &mut cfg, CliUpdateTrigger::UserCommand)
@@ -293,7 +240,7 @@ async fn run_update_force_still_redownloads_when_disk_current() {
 
     assert_eq!(result.as_deref(), Some("0.2.7"));
     assert_eq!(
-        asset_download_count(&g, "0.2.7").await,
+        gh_download_count(&g),
         1,
         "--force must bypass the disk-current skip and reinstall"
     );
@@ -407,7 +354,7 @@ async fn disk_probe_rejects_dangling_symlink() {
 
     std::fs::remove_file(
         home.join("downloads")
-            .join(format!("chaos-0.2.7-{platform}")),
+            .join(format!("grok-0.2.7-{platform}")),
     )
     .unwrap();
 
@@ -428,14 +375,14 @@ async fn ensure_latest_repairs_dangling_symlink_by_downloading() {
     // Dangling symlink + stale running process: the probe returns None, so
     // the decision falls back to the running version and the download runs,
     // repairing the install instead of wedging on "already up to date".
-    // `setup_gh_api_release` lays down the on-disk install at 0.2.7, then
-    // we delete its target file to recreate the dangling-symlink state.
-    let g = setup_gh_api_release("0.2.5", "v0.2.7", Some("0.2.7")).await;
+    let g = setup_gh_release("0.2.5");
+    g.set_stable_only_stdout("v0.2.7\n");
     let home = test_home();
     let platform = host_platform();
+    fake_managed_install("0.2.7");
     std::fs::remove_file(
         home.join("downloads")
-            .join(format!("chaos-0.2.7-{platform}")),
+            .join(format!("grok-0.2.7-{platform}")),
     )
     .unwrap();
     let cfg = make_update_config("stable");
@@ -447,11 +394,7 @@ async fn ensure_latest_repairs_dangling_symlink_by_downloading() {
         Some("0.2.7"),
         "dangling symlink must be repaired by an actual download"
     );
-    assert_eq!(
-        asset_download_count(&g, "0.2.7").await,
-        1,
-        "repair install must trigger exactly one download"
-    );
+    assert_eq!(gh_download_count(&g), 1);
     assert_eq!(
         installed_on_disk_version().as_deref(),
         Some("0.2.7"),
@@ -528,7 +471,7 @@ async fn concurrent_different_version_installs_do_not_corrupt_each_other() {
     let server = ArtifactServer::start(artifact.clone());
     server.set_slow(true);
 
-    // Pre-fix, BOTH of these wrote to downloads/chaos-0.1.tmp concurrently
+    // Pre-fix, BOTH of these wrote to downloads/grok-0.1.tmp concurrently
     // (with_extension("tmp") truncates at the last dot), so one racer could
     // rename the other's partial file into its own versioned path.
     let results = run_concurrent_installs(&server, &["0.1.181", "0.1.182"]).await;
@@ -540,7 +483,7 @@ async fn concurrent_different_version_installs_do_not_corrupt_each_other() {
     for version in ["0.1.181", "0.1.182"] {
         let path = home
             .join("downloads")
-            .join(format!("chaos-{version}-{platform}"));
+            .join(format!("grok-{version}-{platform}"));
         assert_eq!(
             std::fs::read(&path).unwrap(),
             artifact,
@@ -550,17 +493,17 @@ async fn concurrent_different_version_installs_do_not_corrupt_each_other() {
 
     // The active symlink points at whichever racer swapped last; it must
     // resolve and run regardless.
-    let resolved = dunce::canonicalize(home.join("bin").join("chaos")).unwrap();
+    let resolved = dunce::canonicalize(home.join("bin").join("grok")).unwrap();
     assert_eq!(std::fs::read(&resolved).unwrap(), artifact);
     let name = resolved.file_name().unwrap().to_string_lossy().to_string();
     assert!(
         !name.contains(".tmp"),
-        "active chaos must never be a temp file: {name}"
+        "active grok must never be a temp file: {name}"
     );
 
     // No stray shared temp file left behind (the pre-fix collision name).
     assert!(
-        !home.join("downloads").join("chaos-0.1.tmp").exists(),
+        !home.join("downloads").join("grok-0.1.tmp").exists(),
         "the pre-fix shared temp name must not exist"
     );
 }

@@ -116,12 +116,14 @@ impl ChatStateHandle {
         model_id: Option<String>,
         usage: TokenUsage,
         api_duration_ms: Option<u64>,
+        decode_duration_ms: Option<u64>,
         cost_usd_ticks: Option<i64>,
     ) {
         let _ = self.cmd_tx.send(ChatStateCommand::RecordModelCallUsage {
             model_id,
             usage,
             api_duration_ms,
+            decode_duration_ms,
             cost_usd_ticks,
         });
     }
@@ -168,6 +170,18 @@ impl ChatStateHandle {
         let _ = self
             .cmd_tx
             .send(ChatStateCommand::UpdateSamplingConfig { config });
+    }
+
+    /// Update the sampling config and wait for the actor to confirm it was
+    /// applied. Returns `false` if the actor has stopped (the update did not
+    /// land); used by the `/memory set-context-window` path which must fail
+    /// closed rather than silently drop a budget change.
+    pub async fn update_sampling_config_and_wait(&self, config: SamplingConfig) -> bool {
+        self.query("UpdateSamplingConfigAndWait", |reply| {
+            ChatStateCommand::UpdateSamplingConfigAndWait { config, reply }
+        })
+        .await
+        .is_some()
     }
 
     /// Track that the agent edited a file path.
@@ -441,11 +455,17 @@ impl ChatStateHandle {
     /// `total_tokens` plus bytes/4 estimate of tool results pushed since the
     /// last model response. Used by `check_preflight_overflow`.
     pub async fn get_estimated_total_tokens(&self) -> u64 {
+        self.try_get_estimated_total_tokens().await.unwrap_or(0)
+    }
+
+    /// The same count, distinguishing "nothing yet" from "the actor did not
+    /// answer": a caller that reports occupancy cannot treat an unreadable
+    /// actor as an empty context.
+    pub async fn try_get_estimated_total_tokens(&self) -> Option<u64> {
         self.query("GetEstimatedTotalTokens", |reply| {
             ChatStateCommand::GetEstimatedTotalTokens { reply }
         })
         .await
-        .unwrap_or(0)
     }
 
     /// Bytes/4 estimate of all non-system conversation items.

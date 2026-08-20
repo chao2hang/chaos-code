@@ -40,6 +40,7 @@ pub mod notifications;
 pub mod obf;
 pub mod plugin_cmd;
 pub mod pty_wrap;
+pub mod project_picker;
 pub mod recent_dirs;
 pub mod scrollback;
 pub mod search;

@@ -1177,6 +1177,14 @@ pub(super) enum BuiltinAction {
     Compact {
         user_context: Option<String>,
     },
+    /// `/ralph` — fresh-agent iterative execution loop. Each round spawns a
+    /// brand-new child agent with no conversation history; only a bounded
+    /// structured report crosses rounds.
+    Ralph {
+        objective: String,
+        max_rounds: Option<u32>,
+        schema: Option<String>,
+    },
     SetYolo {
         enabled: bool,
     },
@@ -1273,6 +1281,7 @@ impl BuiltinAction {
             BuiltinAction::DeepResearch { .. } => "deep-research",
             BuiltinAction::WorkflowManage { .. } => "workflow",
             BuiltinAction::WorkflowLaunch { .. } => "workflow",
+            BuiltinAction::Ralph { .. } => "ralph",
         }
     }
     pub(crate) fn args_provided(&self) -> bool {
@@ -1307,6 +1316,7 @@ impl BuiltinAction {
             BuiltinAction::DeepResearch { .. } => true,
             BuiltinAction::WorkflowManage { .. } => true,
             BuiltinAction::WorkflowLaunch { input, .. } => !input.is_empty(),
+            BuiltinAction::Ralph { objective, .. } => !objective.is_empty(),
         }
     }
 }

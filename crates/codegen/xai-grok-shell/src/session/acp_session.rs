@@ -195,6 +195,8 @@ mod run_loop;
 mod session_setup;
 #[path = "acp_session_impl/side_call.rs"]
 mod side_call;
+#[path = "acp_session_impl/status_line.rs"]
+pub(crate) mod status_line;
 #[path = "acp_session_impl/title_refresh.rs"]
 mod title_refresh;
 #[path = "acp_session_impl/turn_end.rs"]
@@ -730,6 +732,9 @@ pub(crate) struct SessionActor {
     pub(crate) rewind_pending_prompt: std::sync::Mutex<Option<String>>,
     /// Startup hints for the session: currently responsible for customizing the user message prefix and the git status mode (fast no untracked for non-interactive mode)
     pub(crate) startup_hints: StartupHints,
+    /// Wakes the status-line emitter task, and on drop ends it. See
+    /// [`status_line::run_status_emitter`] and the `Drop` beside it.
+    pub(crate) status_wake: status_line::StatusWake,
     /// Delivery-tool names for the CURRENT attachment, seeded from the spawn
     /// `startupHints.deliveryTools` and re-applied when a resident
     /// `session/load` carries explicit hints (`UpdateAttachPolicy`). Kept
@@ -809,6 +814,15 @@ pub(crate) struct SessionActor {
     /// Client opted into `x.ai/gitHeadChanged`. When false (headless/SDK),
     /// `maybe_notify_git_branch` no-ops — no git subprocess.
     git_head_enabled: bool,
+    /// A client that will draw a status row has attached (`x.ai/statusLine`).
+    /// While false, the emitter wakes and returns without building anything: no
+    /// git discovery, no chat-state round trips.
+    ///
+    /// Live rather than fixed at spawn, because a resident session outlives the
+    /// client that created it and a later attach may be the one that draws a
+    /// row. Assigned from the attaching client's capability; see
+    /// [`crate::session::handle::SessionHandle::set_status_line_wanted`].
+    pub(crate) status_line_enabled: Arc<std::sync::atomic::AtomicBool>,
     /// Shared models manager for etag-triggered refresh from response headers.
     pub(crate) models_manager: crate::agent::models::ModelsManager,
     /// Stable display path for forked sessions (original project path).
@@ -847,6 +861,9 @@ pub(crate) struct SessionActor {
     /// `handle_prompt` and never modified during the turn. Used for
     /// `start_prompt_mode` telemetry.
     pub(crate) turn_start_prompt_mode: parking_lot::Mutex<PromptMode>,
+    /// Whether the current turn produced a terminal `Exit`/`Ask`-style
+    /// response. Reset at the start of each prompt (`handle_prompt`).
+    pub(crate) turn_had_exit_or_ask: std::sync::atomic::AtomicBool,
     /// Effective mode of the currently running turn. Set at turn start from
     /// the prompt mode parameter, then updated only by agent-initiated tool
     /// calls (`EnterPlanMode` / `ExitPlanMode`). NOT affected by
@@ -859,14 +876,6 @@ pub(crate) struct SessionActor {
     /// `Arc`-shared with the notification bridge so `PlanModeEntered` /
     /// `PlanModeExited` tool notifications can transition state directly.
     pub(crate) plan_mode: Arc<parking_lot::Mutex<crate::session::plan_mode::PlanModeTracker>>,
-    /// Per-turn latch: set when the running turn calls `exit_plan_mode` or
-    /// `ask_user_question` (`prepare_tool_call`), cleared at every turn
-    /// start (`handle_prompt`). Read by the plan-mode missing-exit guard at
-    /// turn end: a plan-mode turn that ended with plain text — neither
-    /// closing tool called — would silently strand the session in plan
-    /// mode, so the guard queues a synthetic nudge turn instead. Not
-    /// persisted.
-    pub(crate) turn_had_exit_or_ask: std::sync::atomic::AtomicBool,
     /// Whether goal mode (`/goal`) is enabled for this session (feature flag).
     pub(crate) goal_enabled: bool,
     pub(crate) background_workflows_enabled: bool,
@@ -906,9 +915,9 @@ pub(crate) struct SessionActor {
     pub(crate) workflow_launch_tx: tokio::sync::mpsc::UnboundedSender<
         xai_grok_tools::implementations::grok_build::workflow::WorkflowLaunchEnvelope,
     >,
-    /// Sends Code Mode (Rhai) script requests to the session-side listener
-    /// that owns the runtime. Pairs with the listener spawned in
-    /// `acp_session_impl::spawn`.
+    /// Channel for dispatching `/run_code` envelopes to the background
+    /// execution task. Shared with `SessionHandle` so client-profile
+    /// `/run_code` invocations reach the same runtime loop.
     pub(crate) run_code_tx: tokio::sync::mpsc::UnboundedSender<
         xai_grok_tools::implementations::grok_build::run_code::RunCodeEnvelope,
     >,
@@ -1741,10 +1750,6 @@ mod plan_approval_resume_tests;
 #[cfg(test)]
 #[path = "acp_session_tests/plan_exit_batch_barrier_tests.rs"]
 mod plan_exit_batch_barrier_tests;
-/// Plan-mode missing-exit guard: nudge turn on empty plan-mode endings.
-#[cfg(test)]
-#[path = "acp_session_tests/plan_missing_exit_nudge_tests.rs"]
-mod plan_missing_exit_nudge_tests;
 /// Plan-mode edit gate: read-only except the plan file, even under allow-all.
 #[cfg(test)]
 #[path = "acp_session_tests/plan_mode_edit_gate_tests.rs"]
@@ -2031,6 +2036,9 @@ mod prompt_context_persistence_tests;
 #[cfg(test)]
 #[path = "acp_session_tests/session_thread_tests.rs"]
 mod session_thread_tests;
+#[cfg(test)]
+#[path = "acp_session_tests/status_line_payload_tests.rs"]
+mod status_line_payload_tests;
 #[cfg(test)]
 #[path = "acp_session_tests/tool_layer_images_bridge_tests.rs"]
 mod tool_layer_images_bridge_tests;

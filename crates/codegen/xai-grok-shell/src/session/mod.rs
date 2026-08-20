@@ -158,7 +158,8 @@ impl PromptOrigin {
             Self::NotificationDrain
             | Self::GoalSummary
             | Self::GoalClassifierNudge
-            | Self::PlanResume => InputPolicy {
+            | Self::PlanResume
+            | Self::PlanMissingExitNudge => InputPolicy {
                 authority: InputAuthority::RuntimeControl,
                 turn_boundary: TurnBoundary::Conversational,
                 analytics: AnalyticsClass::RuntimeWake,

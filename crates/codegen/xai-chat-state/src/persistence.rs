@@ -44,6 +44,12 @@ pub trait ChatPersistence: Send + 'static {
 
     /// Flush pending writes to disk.
     fn flush(&mut self);
+
+    fn persist_selective_compaction(
+        &mut self,
+        _state: &xai_grok_compaction::selective::SelectiveState,
+    ) {
+    }
 }
 
 /// Outcome of a conversation image strip, as acknowledged by the actor.

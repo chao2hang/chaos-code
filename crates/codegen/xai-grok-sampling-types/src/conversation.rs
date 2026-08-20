@@ -165,6 +165,8 @@ pub enum SyntheticReason {
     /// Working-directory switch context appended after a session relocation.
     /// Carries a generation marker so recovery can detect an existing append.
     WorkingDirectorySwitch,
+    /// Injected by the plan-mode completion guard when plain text omitted an exit/ask.
+    PlanMissingExitNudge,
     /// Catch-all for unknown/future variants.  Preserves forward compatibility
     /// so older clients can deserialize sessions written by newer versions.
     #[serde(other)]
@@ -202,7 +204,8 @@ impl SyntheticReason {
             | Self::Interjection
             | Self::GoalSummary
             | Self::StopHookFeedback
-            | Self::WorkingDirectorySwitch => false,
+            | Self::WorkingDirectorySwitch
+            | Self::PlanMissingExitNudge => false,
         }
     }
 }
@@ -631,6 +634,16 @@ pub struct ConversationRequest {
 }
 
 impl ConversationRequest {
+    /// Remove reasoning effort before retrying through a backend that does not support it.
+    pub fn strip_reasoning_effort(&mut self) -> bool {
+        if self.reasoning_effort.is_some() {
+            self.reasoning_effort = None;
+            true
+        } else {
+            false
+        }
+    }
+
     /// Strip every image; returns the stripped URLs.
     pub fn strip_images(&mut self) -> Vec<Arc<str>> {
         strip_images_where(&mut self.items, |_| true)

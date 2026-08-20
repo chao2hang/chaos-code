@@ -53,7 +53,7 @@ async fn handle_set_context_window(agent: &MvpAgent, args: &acp::ExtRequest) -> 
     }
 
     let not_found_err = format!("session not found: {}", req.session_id);
-    let session_handle = agent.resident_session_handle(&req.session_id.into());
+    let session_handle = agent.resident_handle(&req.session_id.into());
     let Some(session) = session_handle else {
         return Err(acp::Error::invalid_params().data(not_found_err));
     };

@@ -177,6 +177,8 @@ mod rewind;
 mod selection;
 mod session;
 mod shell_completion;
+#[cfg(test)]
+mod task_status_tests;
 mod viewer;
 mod workflows_overlay;
 use super::actions;
@@ -567,6 +569,10 @@ pub(crate) struct PendingTurnEnd {
     pub stop_reason: Option<String>,
     /// `agentResult` detail from the broadcast (error text, when present).
     pub agent_result: Option<String>,
+    /// `_meta.cancellationCategory` from the broadcast (`"HookDenied"` picks
+    /// the "blocked by a hook" marker over "cancelled by user"). `None` on
+    /// older shells or plain user cancels.
+    pub cancellation_category: Option<String>,
     /// `_meta.cancelTrigger` from the broadcast (`"send_now"` marks a
     /// cancel-and-send whose "Turn cancelled" marker is suppressed). `None`
     /// on older shells / non-cancel ends.
@@ -659,16 +665,10 @@ pub(crate) struct SessionReload {
     /// Reconnect generation (from `ConnectionStatus::Connected`) this reload
     /// was opened for; finalization is rejected for any other generation.
     generation: u64,
-    /// Pre-outage transcript.
-    scrollback: ScrollbackState,
-    /// Pre-outage streaming tracker (paired with `scrollback`).
-    tracker: crate::acp::tracker::AcpUpdateTracker,
-    /// Pre-outage todo list (replayed Plan updates overwrite the live pane).
-    todo: TodoPane,
-    workflow_blocks: std::collections::HashMap<String, crate::scrollback::entry::EntryId>,
-    workflow_runs: Vec<crate::views::workflows::WorkflowRunSnapshot>,
-    workflow_run_revisions: std::collections::HashMap<String, u64>,
-    cleared_workflow_runs: std::collections::HashSet<String>,
+    /// Pre-outage transcript, tracker, todo, and workflow state: the same
+    /// [`ReplayRebuiltState`] every replay detaches, stashed for
+    /// restore-on-failure.
+    stash: ReplayRebuiltState,
     /// Reconnect cursor as of window open, restored with the stash so a
     /// later reload doesn't skip events the restored transcript never got.
     last_seen_event_id: Option<String>,
@@ -688,6 +688,18 @@ pub(crate) struct SessionReload {
     /// drops staged copies of a line only up to the count the stash already shows (two tasks can
     /// share identical notice text).
     replayed_expiry_notices: Vec<crate::scrollback::entry::EntryId>,
+}
+/// The `AgentView` state a session replay rebuilds from disk, detached by
+/// [`AgentView::take_replay_rebuilt_state`] (see its doc for the contract).
+pub(crate) struct ReplayRebuiltState {
+    pub(crate) scrollback: ScrollbackState,
+    pub(crate) tracker: crate::acp::tracker::AcpUpdateTracker,
+    pub(crate) todo: TodoPane,
+    pub(crate) workflow_blocks:
+        std::collections::HashMap<String, crate::scrollback::entry::EntryId>,
+    pub(crate) workflow_runs: Vec<crate::views::workflows::WorkflowRunSnapshot>,
+    pub(crate) workflow_run_revisions: std::collections::HashMap<String, u64>,
+    pub(crate) cleared_workflow_runs: std::collections::HashSet<String>,
 }
 /// Lifecycle of the inline plugin CTA. `Hidden`/`Matched` cover the idle and
 /// prompt-matched states; `Installing`/`Installed`/`Error` cover an in-TUI
@@ -938,6 +950,10 @@ pub struct AgentView {
     pub(crate) modal_hovered_key: Option<char>,
     /// Cached server-reported context state.
     pub context_state: Option<xai_grok_shell::session::ContextInfo>,
+    pub status_context: Option<xai_grok_status_line::StatusLineContext>,
+    /// Held across a frame that clamps the row away, so a script keeps the size
+    /// it last painted at.
+    pub last_status_line_size: Option<crate::views::status_line::RowSize>,
     /// Gateway light-frontend session (`kind: "chat"` / `--chat` / conversation
     /// resume). Suppresses Build credits / local sampler context telemetry so the
     /// status bar and prompt never imply remote usage from wrong metrics.
@@ -1147,7 +1163,6 @@ pub struct AgentView {
     pub last_context_click_at: Option<Instant>,
     /// Whether the mouse is hovering over the prompt widget.
     pub hovered_prompt: bool,
-    pub hit_badge: HitArea,
     pub hit_context: HitArea,
     pub hit_credits: HitArea,
     pub hit_todo_close: HitArea,
@@ -1161,7 +1176,6 @@ pub struct AgentView {
     #[allow(dead_code)]
     pub(crate) last_bg_click: Option<Instant>,
     pub hit_queue_close: HitArea,
-    pub hit_queue_badge: HitArea,
     pub hit_plan_button: HitArea,
     pub hit_plan_approval_status: HitArea,
     pub hit_follow_indicator: HitArea,
@@ -1225,6 +1239,12 @@ pub struct AgentView {
     /// Protocol-prepared image bytes keyed by file path. Used for dimension
     /// decoding and iTerm2 re-sends. Kitty transmits once and re-places.
     pub(crate) inline_media_cache: std::collections::HashMap<std::path::PathBuf, Vec<u8>>,
+    /// Paths that failed to decode/extract, keyed by the file stamp at
+    /// failure: skips per-frame decode/ffmpeg retries while the file is
+    /// unchanged, and self-heals when it changes (e.g. caught mid-write).
+    /// Cleared with the byte cache on eviction.
+    pub(crate) inline_media_load_failed:
+        std::collections::HashMap<std::path::PathBuf, media::MediaFileStamp>,
     /// Kitty GPU image IDs per media path. Each path gets a unique ID (2+)
     /// so switching between images is a cheap re-place (~80 bytes) instead
     /// of a full re-transmit. ID 1 is reserved for modal overlays.
@@ -1274,6 +1294,20 @@ pub struct AgentView {
     /// renders as a centered overlay. Opened by `/config-agents` or `/agents`.
     pub(crate) agents_modal: Option<crate::views::agents_modal::AgentsModalState>,
     pub(crate) persona_detail: Option<crate::views::persona_detail::PersonaDetailState>,
+    /// Usage-detail overlay state. `Some` while the `/usage` overlay is open
+    /// (loading / ready / failed); `None` when closed. Checked by render and
+    /// input paths to block scrollback scrolling and tip display.
+    pub(crate) usage_detail: Option<crate::views::usage_detail::UsageDetail>,
+    /// Hit area for the [Esc]/close button on the usage-detail overlay. Cleared
+    /// (`clear()`) alongside `usage_detail` when the overlay closes so a stale
+    /// rect can't be re-clicked.
+    pub(crate) hit_usage_close: HitArea,
+    /// High-water mark of `meta.totalTokens` seen for this session, used by the
+    /// usage/context chip. Updated via `confirm_context_used`.
+    pub max_total_tokens_seen: u64,
+    /// Active request-client profile applied to this session (via
+    /// `Action::SetClientProfile`), if any. `None` until a profile is switched.
+    pub(crate) client_profile: Option<xai_grok_shell::agent::client_profiles::ClientProfile>,
     /// Active /btw side question overlay. When `Some`, renders as a dismissible
     /// overlay and captures keyboard input (Esc/Enter/Space to dismiss).
     pub btw_state: Option<crate::views::btw_overlay::BtwOverlayState>,
@@ -1848,6 +1882,29 @@ fn translate_local_submit(
         }
         LocalQuestionKind::Feedback => {
             unreachable!("feedback submits through submit_feedback_pane, which returns first")
+        }
+        LocalQuestionKind::ProjectSelect {
+            resolved_paths,
+            original_cwd,
+            stashed_prompt,
+            dont_ask_index,
+        } => {
+            // The "Don't ask me again" entry continues in `original_cwd` and
+            // persists the opt-out; any other index picks the matching path.
+            let disable_picker = *idx == dont_ask_index;
+            let path = if disable_picker {
+                original_cwd.clone()
+            } else {
+                resolved_paths
+                    .get(*idx)
+                    .cloned()
+                    .unwrap_or_else(|| original_cwd.clone())
+            };
+            InputOutcome::Action(Action::ProjectSelected {
+                path,
+                stashed_prompt: stashed_prompt.clone(),
+                disable_picker,
+            })
         }
     }
 }
@@ -2510,7 +2567,7 @@ pub(crate) mod test_fixtures {
             prompt: None,
             child_cwd: None,
             worktree_path: None,
-            child_updates_replayed: false,
+            transcript: Default::default(),
         }
     }
     /// Count of "Worked for X" (`TurnCompleted`) marker blocks in the

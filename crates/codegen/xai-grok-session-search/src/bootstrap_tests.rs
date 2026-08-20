@@ -3,7 +3,6 @@
 
 use super::*;
 use crate::fts::META_KEY_SCHEMA_VERSION;
-use crate::source::{index_off, index_on};
 
 /// A synthetic session store: the gate tests exercise the claim lease, not
 /// the on-disk layout, so the sessions need no transcripts. `list_sessions`
@@ -128,7 +127,6 @@ async fn test_claimant_reindexes_even_when_marker_exists() {
         tmp.path(),
         &source,
         no_content,
-        index_on,
         &Arc::new(BootstrapProgress::default()),
         &TEST_TIMING,
         BootstrapRole::Launch,
@@ -186,7 +184,6 @@ async fn test_waiter_adopts_peer_marker_without_reindexing() {
         tmp.path(),
         &source,
         no_content,
-        index_on,
         &Arc::new(BootstrapProgress::default()),
         &TEST_TIMING,
         BootstrapRole::Launch,
@@ -214,7 +211,6 @@ async fn test_try_bootstrap_returns_at_once_when_peer_holds_claim() {
         tmp.path(),
         &source,
         no_content,
-        index_on,
         &Arc::new(BootstrapProgress::default()),
     )
     .await
@@ -240,7 +236,6 @@ async fn test_recheck_adopts_marker_completed_after_its_probe() {
         tmp.path(),
         &source,
         no_content,
-        index_on,
         &Arc::new(BootstrapProgress::default()),
     )
     .await
@@ -270,7 +265,6 @@ async fn test_waiter_gives_up_after_peer_wait() {
         tmp.path(),
         &source,
         no_content,
-        index_on,
         &Arc::new(BootstrapProgress::default()),
         &TEST_TIMING,
         BootstrapRole::Launch,
@@ -330,14 +324,7 @@ fn test_clear_last_bootstrap_at() {
     assert_eq!(try_read_last_bootstrap_at(&db_path).unwrap(), None);
 }
 
-/// Flaky under workspace-wide parallelism: two concurrent bootstrap gates can
-/// both acquire the SQLite lease before either commits, so both reindex
-/// instead of exactly one. The single-flight invariant holds in production
-/// (gates are spaced by user-visible delays, not a barrier), but the test
-/// forces them to race head-to-head. Passes reliably when this crate runs
-/// alone; fails ~10% of the time under full `cargo test --workspace`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "flaky under workspace-wide parallelism: concurrent lease acquisition race; passes when crate runs alone"]
 async fn test_concurrent_gates_single_flight() {
     let tmp = tempfile::TempDir::new().unwrap();
     let root = tmp.path().to_path_buf();
@@ -367,7 +354,6 @@ async fn test_concurrent_gates_single_flight() {
                 &root_a,
                 &source_a,
                 no_content,
-                index_on,
                 &pa,
                 &CONTENDED_TIMING,
                 BootstrapRole::Launch,
@@ -382,7 +368,6 @@ async fn test_concurrent_gates_single_flight() {
                 &root_b,
                 &source_b,
                 no_content,
-                index_on,
                 &pb,
                 &CONTENDED_TIMING,
                 BootstrapRole::Launch,
@@ -421,66 +406,5 @@ async fn test_concurrent_gates_single_flight() {
         "exactly one gate must reindex, a_total={}, b_total={}",
         progress_a.total.load(Ordering::Relaxed),
         progress_b.total.load(Ordering::Relaxed),
-    );
-}
-
-#[tokio::test]
-async fn test_search_off_mid_bootstrap_withholds_the_marker() {
-    let tmp = tempfile::TempDir::new().unwrap();
-    let db_path = search_db_path(tmp.path());
-    let source = FakeSource::with_ids(&["s1", "s2"], Arc::new(AtomicBool::new(true)));
-    let progress = Arc::new(BootstrapProgress::default());
-    // Only the claim holder writes the marker, so without a claim the assertion below would hold
-    // with the check deleted.
-    let token = ClaimToken::new();
-    assert!(
-        claim_bootstrap_lease(&db_path, &token, TEST_TIMING.lease)
-            .await
-            .unwrap(),
-    );
-
-    reindex_all(
-        tmp.path(),
-        &source,
-        no_content,
-        index_off,
-        &progress,
-        &token,
-        Arc::new(AtomicBool::new(false)),
-    )
-    .await
-    .unwrap();
-
-    assert_eq!(
-        progress.total.load(Ordering::Relaxed),
-        2,
-        "precondition: the bootstrap saw both sessions",
-    );
-    assert_eq!(progress.indexed.load(Ordering::Relaxed), 0);
-    assert_eq!(read_marker(&db_path), None);
-}
-
-#[tokio::test]
-async fn test_search_off_skips_the_lease_claim() {
-    let tmp = tempfile::TempDir::new().unwrap();
-    let source = FakeSource::with_ids(&["s1"], Arc::new(AtomicBool::new(true)));
-
-    bootstrap_with_lease(
-        tmp.path(),
-        &source,
-        no_content,
-        index_off,
-        &Arc::new(BootstrapProgress::default()),
-    )
-    .await
-    .unwrap();
-
-    assert!(
-        !tmp.path().join("sessions").exists(),
-        "the switch is read before the path helper that creates the directory",
-    );
-    assert!(
-        !crate::db::search_index_exists(tmp.path()),
-        "claiming the lease would create the database the switch exists to prevent",
     );
 }
