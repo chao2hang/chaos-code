@@ -428,7 +428,8 @@ impl SamplingError {
             | SamplingError::IdleTimeout { .. }
             | SamplingError::EmptyResponse { .. }
             | SamplingError::MaxTokensTruncation
-            | SamplingError::DoomLoopDetected { .. } => false,
+            | SamplingError::DoomLoopDetected { .. }
+            | SamplingError::MalformedToolCall { .. } => false,
         }
     }
 
