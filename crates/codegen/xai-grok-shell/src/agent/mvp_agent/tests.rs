@@ -6088,5 +6088,91 @@ mod soft_default_settings_emit {
             .await;
     }
 }
+
+/// Regression for the `/provider refresh` → switch race (issue: "Couldn't
+/// switch model: Invalid params: unknown model id").
+///
+/// A client writes a `[model."prov/new-model"]` entry to `config.toml` and
+/// immediately sends `session/set_model` — before the async config-watcher
+/// reload (~1s debounce) lands. `set_session_model` must re-read disk
+/// synchronously and resolve the fresh entry instead of failing.
+#[tokio::test(flavor = "current_thread")]
+#[serial_test::serial]
+async fn set_session_model_reloads_disk_catalog_on_unknown_id() {
+    use crate::agent::config::Config as AgentConfig;
+    use crate::auth::{AuthManager, GrokComConfig};
+    use acp::Agent as _;
+    use xai_grok_test_support::EnvGuard;
+
+    // `grok_home()` is OnceLock-cached per process: an earlier test may have
+    // pinned it to its (now-deleted) tempdir, so seeding `GROK_HOME` alone is
+    // not enough. Set the env anyway (first initializer wins with our dir),
+    // then always write/read through the RESOLVED home so the test is
+    // self-consistent even when the cache was poisoned.
+    let _env = EnvGuard::set("GROK_HOME", tempfile::tempdir().unwrap().path());
+    let home = crate::util::grok_home::grok_home();
+    // Seed a config with one provider model, then build the agent so its
+    // in-memory catalog only knows that entry.
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::write(
+        home.join("config.toml"),
+        "[model.\"prov/old-model\"]\nmodel = \"old-model\"\nmodel_provider = \"prov\"\n",
+    )
+    .unwrap();
+
+    let auth_dir = tempfile::tempdir().unwrap();
+    let auth_manager =
+        std::sync::Arc::new(AuthManager::new(auth_dir.path(), GrokComConfig::default()));
+    let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+    let agent = MvpAgent::new(
+        GatewaySender::new(tx),
+        &AgentConfig::default(),
+        auth_manager,
+        None,
+    )
+    .expect("valid test config");
+    assert!(
+        agent.resolve_model_id(&acp::ModelId::new("prov/new-model")).is_err(),
+        "precondition: the new id must not resolve before the disk reload"
+    );
+
+    // Simulate `/provider refresh`: append the new model entry to config.toml
+    // AFTER the agent booted (no watcher, no reload notification).
+    {
+        let mut config = std::fs::read_to_string(home.join("config.toml")).unwrap();
+        config.push_str("[model.\"prov/new-model\"]\nmodel = \"new-model\"\nmodel_provider = \"prov\"\n");
+        std::fs::write(home.join("config.toml"), config).unwrap();
+    }
+
+    // The direct resolver still misses (catalog not reloaded yet).
+    assert!(
+        agent.resolve_model_id(&acp::ModelId::new("prov/new-model")).is_err(),
+        "precondition: resolver alone must still miss before any reload"
+    );
+
+    // `set_session_model` needs a live session handle to reach the switch
+    // itself; a missing session errors with "unknown session id" — but ONLY
+    // AFTER the model id resolved. Reaching that error proves the disk reload
+    // rescued the id; "unknown model id" would mean the fix regressed.
+    let sid = acp::SessionId::new("sess-reload-race");
+    let err = agent
+        .set_session_model(acp::SetSessionModelRequest::new(
+            sid,
+            acp::ModelId::new("prov/new-model"),
+        ))
+        .await
+        .expect_err("no such session, so the switch itself must fail");
+    let err_data = err.data.map(|d| d.to_string()).unwrap_or_default();
+    assert!(
+        err_data.contains("unknown session id"),
+        "model id must resolve after the synchronous disk reload; got: {err_data}"
+    );
+    assert!(
+        agent
+            .models_manager
+            .model_in_catalog("prov/new-model"),
+        "reload must have added the entry to the live catalog"
+    );
+}
 #[cfg(feature = "dhat-heap")]
 mod dhat_soak;

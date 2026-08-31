@@ -2145,7 +2145,15 @@ impl acp::Agent for MvpAgent {
         let model = match self.resolve_model_id(&args.model_id) {
             Ok(model) => model,
             Err(_) => {
-                self.models_manager.wait_for_first_catalog().await;
+                // The id may be missing because a client (e.g. `/provider
+                // refresh`) just wrote `[model.*]` to config.toml and switched
+                // before the async config-watcher reload lands (~1s debounce).
+                // Re-read disk synchronously, then retry once. If the model is
+                // genuinely unknown the retry fails with the same error.
+                self.reload_models_from_disk().map_err(|e| {
+                    acp::Error::internal_error()
+                        .data(format!("model catalog reload failed: {e}"))
+                })?;
                 self.resolve_model_id(&args.model_id)?
             }
         };

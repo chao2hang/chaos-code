@@ -215,7 +215,16 @@ pub struct TodoUpdate {
     #[schemars(description = "The description/content of the todo item")]
     pub content: Option<String>,
 
+    // `with = "TodoStatus"` renders the schema as a plain non-nullable string
+    // enum. schemars would otherwise emit `"enum": ["pending", ..., null]` for
+    // `Option<enum>` fields, which upstream model APIs (e.g. Gemini
+    // FunctionDeclaration) reject as an empty enum value ("cannot be empty").
+    // The field stays optional in the schema via `#[serde(default)]` (schemars
+    // marks non-nullable-with-default fields as not required); runtime
+    // behavior is unchanged (Option already defaults to None on absence).
+    #[serde(default)]
     #[schemars(
+        with = "TodoStatus",
         description = "The status of the todo item: pending, in_progress, completed, or cancelled"
     )]
     pub status: Option<TodoStatus>,

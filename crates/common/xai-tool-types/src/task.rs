@@ -43,20 +43,30 @@ pub struct TaskToolInput {
     pub run_in_background: bool,
 
     /// Capability mode controlling the child's tool access.
+    // `with = "SubagentCapabilityMode"` renders the schema as a plain
+    // non-nullable string enum. schemars would otherwise emit
+    // `"enum": ["<variants>", null]` for `Option<enum>` fields, which upstream
+    // model APIs (e.g. Gemini FunctionDeclaration) reject with "cannot be
+    // empty". `Option` remains optional on the wire without a serde default,
+    // which also prevents schemars from emitting `default: null`.
     #[schemars(
+        with = "SubagentCapabilityMode",
         description = "Capability mode: \"read-only\", \"read-write\", \"execute\", or \"all\". \
             Controls which tool classes the child can use. Default is determined by the role."
     )]
-    #[serde(default)]
     pub capability_mode: Option<SubagentCapabilityMode>,
 
     /// Isolation mode for the child's execution environment.
+    // Same `with = "SubagentIsolationMode"` treatment as `capability_mode`
+    // above: avoid the `"enum": ["none", "worktree", null]` shape that
+    // upstream APIs reject (empty enum value).
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(
+        with = "SubagentIsolationMode",
         description = "Isolation mode: \"none\" (default, shared workspace) or \"worktree\" \
             (isolated git worktree). Worktree mode prevents the child's edits from \
             affecting the parent workspace until explicitly merged."
     )]
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub isolation: Option<SubagentIsolationMode>,
 
     /// Resume a previous subagent's conversation instead of starting fresh.
@@ -1307,6 +1317,40 @@ mod tests {
         )
         .unwrap();
         assert!(!foreground.run_in_background);
+    }
+
+    #[test]
+    fn task_tool_input_optional_enums_are_non_nullable_without_null_defaults() {
+        let schema = serde_json::to_value(schemars::schema_for!(TaskToolInput)).unwrap();
+        let props = schema["properties"].as_object().expect("object properties");
+        let definitions = schema["$defs"]
+            .as_object()
+            .or_else(|| schema["definitions"].as_object())
+            .expect("schema definitions");
+
+        for field in ["capability_mode", "isolation"] {
+            let property = &props[field];
+            let enum_schema = property
+                .get("$ref")
+                .and_then(serde_json::Value::as_str)
+                .and_then(|reference| {
+                    reference
+                        .strip_prefix("#/$defs/")
+                        .or_else(|| reference.strip_prefix("#/definitions/"))
+                })
+                .and_then(|name| definitions.get(name))
+                .unwrap_or(property);
+            assert!(
+                enum_schema["enum"].as_array().is_some_and(|values| values
+                    .iter()
+                    .all(serde_json::Value::is_string)),
+                "{field} must be a non-nullable string enum: {enum_schema}"
+            );
+            assert!(
+                property.get("default").is_none() || !property["default"].is_null(),
+                "{field} must not emit default: null: {property}"
+            );
+        }
     }
 
     #[test]
