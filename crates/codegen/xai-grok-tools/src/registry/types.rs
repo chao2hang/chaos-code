@@ -3548,17 +3548,14 @@ mod tests {
                       },
                       "status": {
                         "description": "The status of the todo item: pending, in_progress, completed, or cancelled",
-                        "type": [
-                          "string",
-                          "null"
-                        ],
+                        "type": "string",
                         "enum": [
                           "pending",
                           "in_progress",
                           "completed",
-                          "cancelled",
-                          null
-                        ]
+                          "cancelled"
+                        ],
+                        "default": null
                       }
                     },
                     "required": [

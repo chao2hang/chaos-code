@@ -2386,8 +2386,10 @@ pub(super) fn apply_provider_outcome(
             }
 
             let mid: agent_client_protocol::ModelId = catalog_key.into();
-            // SetDefaultModel → SwitchModel effect reloads agent catalog from
-            // disk, then switches session model and persists default.
+            // SetDefaultModel → SwitchModel effect sends `session/set_model`.
+            // The shell re-reads config.toml synchronously when the id misses
+            // its in-memory catalog, so the switch succeeds even though the
+            // async config-watcher reload hasn't landed yet.
             InputOutcome::Action(Action::SetDefaultModel(mid))
         }
     }

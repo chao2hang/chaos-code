@@ -58,6 +58,14 @@
   assistant 消息带非空 `reasoning_content` 是临时方案。
 - 新增 `warn_reasoning_backfill()` 函数：throttle 到每 5 分钟最多 warn
   一次，避免长 thinking session 里每请求都刷 log。
+- **修：backfill 触发条件过窄**——原条件仅 `reasoning_effort.is_some()`
+  时回填，但 DeepSeek-R1 / Qwen3-Thinking / GLM-5 等内禀思维模型不带
+  OpenAI `reasoning_effort` 参数，导致回填被跳过、网关仍 400
+  （`The reasoning_content in the thinking mode must be passed back to the
+  API`）。改为 `reasoning_effort.is_some()` 或「会话中已有 assistant 消息
+  携带 `reasoning_content`」即触发——一旦模型发出过 reasoning，后续所有
+  assistant 消息自动回填，无需参数。新增 3 个回归测试覆盖 effort 命中 /
+  会话已进入思维模式 / 非思维会话不注入空字段三路径。
 
 ### Improvements: wrap SSH 间接路径支持
 

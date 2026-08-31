@@ -764,51 +764,14 @@ fn cwd_matches(session_cwd: &std::path::Path, target_cwd: &std::path::Path) -> b
 /// `model_providers` empty after a cold start with no catalog, so
 /// `resolve_model_list` falls back to cli-chat-proxy with no Authorization
 /// (401 / empty `sent_key_prefix`) even though disk config is correct.
+///
+/// The merge logic lives in [`MvpAgent::reload_models_from_disk`] so
+/// `session/set_model` can invoke the same synchronous reload when a
+/// freshly-registered model isn't in the in-memory catalog yet.
 fn handle_reload_models(agent: &MvpAgent) -> ExtResult {
-    let disk_config = crate::config::load_effective_config()
-        .map_err(|e| acp::Error::internal_error().data(e.to_string()))?;
-
-    let toml_config = crate::agent::config::Config::new_from_toml_cfg(&disk_config)
+    let count = agent
+        .reload_models_from_disk()
         .map_err(|e| acp::Error::internal_error().data(e))?;
-
-    // Merge TOML-derived model fields into the agent's in-memory config so
-    // runtime-only fields (#[serde(skip)]: remote_settings, endpoints, CLI
-    // flags) are preserved. Only model-related TOML fields are refreshed.
-    {
-        let agent_config = agent.cfg.borrow();
-        let overrides = crate::config::ModelOverrideConfig::resolve(
-            agent_config.web_search_model_override.as_deref(),
-            agent_config.session_summary_model_override.as_deref(),
-            &disk_config,
-            agent_config.remote_settings.as_ref(),
-        );
-        drop(agent_config);
-        let mut agent_config = agent.cfg.borrow_mut();
-        agent_config.models = toml_config.models.clone();
-        agent_config.config_models = toml_config.config_models.clone();
-        // Provider tables are required for BYOK inheritance on hot-reload
-        // (see `/provider` → `reload_models` path). Without these, models
-        // resolve with missing credentials after an empty cold start.
-        agent_config.model_providers = toml_config.model_providers.clone();
-        agent_config.auth_providers = toml_config.auth_providers.clone();
-        agent_config.web_search_model = overrides.web_search;
-        agent_config.session_summary_model = overrides.session_summary;
-        agent_config.image_description_model = overrides.image_description;
-        agent_config.prompt_suggest_model_pin = overrides.prompt_suggestion;
-    }
-    // Recompute the campaign overlay + `pre_campaign_default` (the catalog-miss
-    // fallback) so reload matches spawn; `new_from_toml_cfg` reset it to None.
-    {
-        let mut agent_config = agent.cfg.borrow_mut();
-        crate::util::config::sync_campaign_fields(&mut agent_config);
-    }
-    let merged_config = agent.cfg.borrow().clone();
-
-    agent.models_manager.apply_config(merged_config);
-    agent.sync_process_static_api_key(None);
-
-    let count = agent.models_manager.models().len();
-    tracing::info!(count, "model list reloaded from config.toml");
     ExtMethodResult::success(serde_json::json!({ "models": count }))
         .to_ext_response()
         .map_err(|e| acp::Error::internal_error().data(e.to_string()))

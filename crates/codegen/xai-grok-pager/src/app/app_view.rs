@@ -2027,9 +2027,23 @@ impl AppView {
 
     /// Whether the project picker should intercept the next prompt.
     pub fn needs_project_picker(&self) -> bool {
-        !self.project_picker_shown
-            && !self.project_picker_disabled
-            && !crate::project_picker::detection::is_project_dir(&self.cwd)
+        if self.project_picker_shown
+            || self.project_picker_disabled
+            || crate::project_picker::detection::is_project_dir(&self.cwd)
+        {
+            return false;
+        }
+        // An active agent that already has a session id (e.g. a `--resume`d
+        // session) must never spawn the picker: doing so would create an
+        // empty shell session while the prompt is dispatched to the
+        // existing one, producing "Session: <id>" rows with no content.
+        if let ActiveView::Agent(id) = self.active_view
+            && let Some(agent) = self.agents.get(&id)
+            && agent.session.session_id.is_some()
+        {
+            return false;
+        }
+        true
     }
 
     /// is already showing: registration (and thus the mismatch notif) finishes
@@ -6253,6 +6267,29 @@ pub(crate) mod tests {
             super::super::dispatch::SwitchCause::Load,
         );
         app
+    }
+    #[test]
+    fn needs_project_picker_skipped_when_session_already_active() {
+        // A `--resume`d session has a session_id; the picker must not
+        // intercept its prompts. Regression: previously a prompt from a
+        // resumed session in a non-project dir spawned an empty shell
+        // session while the turn ran against the existing one.
+        let app = test_app_with_agent();
+        assert!(!app.project_picker_shown, "fixture: picker not yet shown");
+        assert!(
+            app.cwd.as_os_str() == "/tmp" || app.cwd == std::path::Path::new("/tmp"),
+            "fixture: non-project cwd"
+        );
+        assert!(!app.needs_project_picker(), "existing session must not spawn the picker");
+    }
+    #[test]
+    fn needs_project_picker_intercepts_fresh_non_project_prompt() {
+        // No active agent session (fresh start in a non-project dir): the
+        // picker still intercepts the first prompt so the user can pick a
+        // project directory.
+        let app = test_app();
+        assert!(matches!(app.active_view, ActiveView::Welcome));
+        assert!(app.needs_project_picker());
     }
     #[test]
     fn dashboard_x11_primary_provenance_bypasses_unrelated_clipboard_image() {

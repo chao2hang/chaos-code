@@ -1094,8 +1094,27 @@ pub struct ModelEntry {
 /// - `reasoning_effort` / `reasoningEffort` → `Option<String>`
 /// - `supports_reasoning_effort` / `supportsReasoningEffort` → `bool`
 fn parse_models_response(body: &str) -> Result<Vec<ModelEntry>, String> {
-    let json: serde_json::Value =
-        serde_json::from_str(body).map_err(|e| format!("JSON 解析失败: {e}"))?;
+    let json: serde_json::Value = serde_json::from_str(body).map_err(|e| {
+        // 网关鉴权失败 / 反代兜底常常回 HTML 登录页，而不是 JSON。
+        // 直接抛 serde 的 "expected value at line 1 column 1" 对用户毫无意义，
+        // 先认出 HTML 再给出可操作的提示。
+        let head = body.trim_start();
+        if head.starts_with('<') {
+            let snippet: String = head.chars().take(80).collect();
+            return format!(
+                "服务器返回的是 HTML 而不是 JSON，通常说明 base_url 少了 /v1 \
+                 或指向了网页控制台。\n实际收到: {snippet}…"
+            );
+        }
+        format!("JSON 解析失败: {e}\n实际收到: {}", truncate_body(body))
+    })?;
+
+    // 上游错误（无效 Key、URL 写错、额度用尽）也是合法 JSON，会一路走到
+    // 「找不到数组」分支。先显式认出 error 信封，把真实原因回给用户，
+    // 否则一律吞成「无法识别的响应格式」，无从排查。
+    if let Some(err) = extract_api_error(&json) {
+        return Err(err);
+    }
 
     let items: Option<Vec<&serde_json::Value>> = json
         .get("data")
@@ -1108,7 +1127,12 @@ fn parse_models_response(body: &str) -> Result<Vec<ModelEntry>, String> {
                 .map(|a| a.iter().collect())
         });
 
-    let items = items.ok_or_else(|| "无法识别的响应格式".to_string())?;
+    let items = items.ok_or_else(|| {
+        format!(
+            "无法识别的响应格式：JSON 里没有 data / models 数组。\n实际收到: {}",
+            truncate_body(body)
+        )
+    })?;
 
     let mut entries: Vec<ModelEntry> = items
         .into_iter()
@@ -1129,6 +1153,92 @@ fn parse_models_response(body: &str) -> Result<Vec<ModelEntry>, String> {
         .collect();
     entries.sort_by(|a, b| a.id.cmp(&b.id));
     Ok(entries)
+}
+
+/// 把响应体截断到可读长度，用于错误提示。
+///
+/// `/v1/models` 正常响应可以上百 KB，整段塞进 TUI 错误框会把界面冲垮，
+/// 因此只保留开头一小段样本。
+fn truncate_body(body: &str) -> String {
+    const MAX: usize = 200;
+    let trimmed = body.trim();
+    if trimmed.chars().count() <= MAX {
+        return trimmed.to_string();
+    }
+    let head: String = trimmed.chars().take(MAX).collect();
+    format!("{head}…")
+}
+
+/// 识别上游返回的错误信封，转成人话。
+///
+/// 覆盖两种主流形状：
+/// - OpenAI / New API：`{"error": {"message": ..., "type": ..., "code": ...}}`
+/// - 部分网关的扁平体：`{"message": ..., "success": false}`
+///
+/// 认不出来返回 `None`，交回给数组探测逻辑。
+fn extract_api_error(json: &serde_json::Value) -> Option<String> {
+    let as_text = |v: &serde_json::Value| -> Option<String> {
+        match v {
+            serde_json::Value::String(s) if !s.trim().is_empty() => Some(s.clone()),
+            serde_json::Value::Number(n) => Some(n.to_string()),
+            _ => None,
+        }
+    };
+
+    // {"error": {...}} 或 {"error": "..."}
+    if let Some(err) = json.get("error") {
+        if let Some(text) = as_text(err) {
+            return Some(format!("服务器返回错误: {text}"));
+        }
+        if let Some(obj) = err.as_object() {
+            let message = obj
+                .get("message")
+                .and_then(as_text)
+                .unwrap_or_else(|| "未提供错误信息".to_string());
+            let kind = obj.get("type").and_then(as_text);
+            let code = obj.get("code").and_then(as_text);
+
+            let mut out = format!("服务器返回错误: {message}");
+            if let Some(kind) = kind.filter(|s| !s.is_empty()) {
+                out.push_str(&format!("\n类型: {kind}"));
+            }
+            if let Some(code) = code.filter(|s| !s.is_empty()) {
+                out.push_str(&format!("\n代码: {code}"));
+            }
+            out.push_str(&auth_hint(&message));
+            return Some(out);
+        }
+    }
+
+    // {"success": false, "message": "..."} —— New API 一类网关的扁平错误体。
+    if json.get("success").and_then(|v| v.as_bool()) == Some(false) {
+        let message = json
+            .get("message")
+            .and_then(as_text)
+            .unwrap_or_else(|| "未提供错误信息".to_string());
+        let mut out = format!("服务器返回错误: {message}");
+        out.push_str(&auth_hint(&message));
+        return Some(out);
+    }
+
+    None
+}
+
+/// 针对常见失败原因补一句可操作的排查建议。
+fn auth_hint(message: &str) -> String {
+    let lower = message.to_ascii_lowercase();
+    if lower.contains("token") || lower.contains("api key") || lower.contains("unauthor") {
+        return "\n提示: API Key 可能无效或已过期，用 /provider set-key <渠道名> 重设。".into();
+    }
+    if lower.contains("invalid url") || lower.contains("not found") || lower.contains("404") {
+        return "\n提示: base_url 可能写错了。它应当以 /v1 结尾且不要重复，\
+                例如 https://example.com/v1。"
+            .into();
+    }
+    if lower.contains("quota") || lower.contains("balance") || lower.contains("insufficient") {
+        return "\n提示: 账户额度可能已用尽。".into();
+    }
+    String::new()
 }
 
 /// 从单条 model JSON 读取 reasoning 元数据。缺省字段走空值。
@@ -1415,6 +1525,82 @@ mod parse_models_response_tests {
         let body = r#"{"oops":true}"#;
         let err = parse_models_response(body).unwrap_err();
         assert!(err.contains("无法识别"), "err={err}");
+        // 未知信封也要把实际响应体回显出来，否则无从排查。
+        assert!(err.contains("oops"), "err={err}");
+    }
+
+    /// New API 一类网关：Key 无效时回 200 + JSON error 信封。
+    /// 旧实现会把它吞成「无法识别的响应格式」，真实原因彻底丢失。
+    #[test]
+    fn surfaces_invalid_token_error() {
+        let body = r#"{"error":{"code":"","message":"Invalid token (request id: abc123)","type":"new_api_error"}}"#;
+        let err = parse_models_response(body).unwrap_err();
+        assert!(err.contains("Invalid token"), "err={err}");
+        assert!(err.contains("new_api_error"), "err={err}");
+        assert!(err.contains("set-key"), "应给出重设 Key 的建议: err={err}");
+        assert!(!err.contains("无法识别"), "不应退化成通用错误: err={err}");
+    }
+
+    /// base_url 多写一层 /v1 时，网关回 "Invalid URL (GET /v1/v1/models)"。
+    #[test]
+    fn surfaces_invalid_url_error_with_base_url_hint() {
+        let body = r#"{"error":{"message":"Invalid URL (GET /v1/v1/models)","type":"invalid_request_error","param":"","code":""}}"#;
+        let err = parse_models_response(body).unwrap_err();
+        assert!(err.contains("Invalid URL"), "err={err}");
+        assert!(err.contains("base_url"), "应给出 base_url 建议: err={err}");
+    }
+
+    /// 扁平错误体：{"success": false, "message": "..."}。
+    #[test]
+    fn surfaces_flat_success_false_error() {
+        let body = r#"{"success":false,"message":"insufficient quota"}"#;
+        let err = parse_models_response(body).unwrap_err();
+        assert!(err.contains("insufficient quota"), "err={err}");
+        assert!(err.contains("额度"), "应给出额度提示: err={err}");
+    }
+
+    /// `{"error": "..."}` 的字符串简写形式。
+    #[test]
+    fn surfaces_string_error_field() {
+        let body = r#"{"error":"upstream unavailable"}"#;
+        let err = parse_models_response(body).unwrap_err();
+        assert!(err.contains("upstream unavailable"), "err={err}");
+    }
+
+    /// base_url 少写 /v1 时打到网页控制台，回的是 HTML 登录页。
+    /// serde 的 "expected value at line 1 column 1" 对用户毫无意义。
+    #[test]
+    fn detects_html_response() {
+        let body = "<!doctype html>\n<html lang=\"en\">\n  <head><title>New API</title></head>";
+        let err = parse_models_response(body).unwrap_err();
+        assert!(err.contains("HTML"), "err={err}");
+        assert!(err.contains("/v1"), "应提示补 /v1: err={err}");
+    }
+
+    /// success:true 的正常响应不能被错误分支误吞。
+    /// 这正是 model.proxy 一类网关的真实形状。
+    #[test]
+    fn success_true_envelope_is_not_treated_as_error() {
+        let body = r#"{"data":[{"id":"grok-4"},{"id":"gpt-5"}],"object":"list","success":true}"#;
+        let entries = parse_models_response(body).expect("parse ok");
+        assert_eq!(
+            entries.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(),
+            vec!["gpt-5", "grok-4"]
+        );
+    }
+
+    /// 超长响应体在错误提示里必须截断，否则会把 TUI 错误框冲垮。
+    #[test]
+    fn truncates_long_bodies_in_errors() {
+        let filler = "x".repeat(5000);
+        let body = format!(r#"{{"oops":"{filler}"}}"#);
+        let err = parse_models_response(&body).unwrap_err();
+        assert!(
+            err.chars().count() < 400,
+            "错误信息应被截断: len={}",
+            err.len()
+        );
+        assert!(err.contains('…'), "应有截断标记: err={err}");
     }
 
     #[test]

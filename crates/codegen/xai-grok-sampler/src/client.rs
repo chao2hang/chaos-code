@@ -1091,15 +1091,31 @@ impl SamplingClient {
         // following assistant, but a turn where the model emitted no
         // reasoning (a bare tool call, or reasoning lost to compaction)
         // leaves that assistant's `reasoning_content` as `None`, and the
-        // next request 400s. When `reasoning_effort` is set the model is
-        // a thinking model, so backfill every assistant message that is
-        // missing it with a non-empty placeholder — the wire schema only
+        // next request 400s.
+        //
+        // Thinking is considered active when EITHER the request carries
+        // `reasoning_effort` (explicit OpenAI-style parameter) OR the
+        // conversation has already seen reasoning — i.e. some prior
+        // assistant message already carries `reasoning_content`. The
+        // second arm covers inherently-thinking models (DeepSeek-R1 /
+        // Qwen3-Thinking / GLM-5 / GLM-Z1 / o3 / etc.) that emit
+        // `reasoning_content` but are frequently invoked WITHOUT the
+        // `reasoning_effort` parameter; without it the previous
+        // `reasoning_effort.is_some()`-only gate skipped the backfill and
+        // the 400 persisted for those models. Once the model emits
+        // reasoning on any turn, every subsequent assistant message is
+        // backfilled with a non-empty placeholder — the wire schema only
         // requires the field to be present and non-empty, not truthful.
         // TODO(net-gateway): remove once bblbb and other thinking-mode
         // gateways stop requiring non-empty `reasoning_content` on every
         // assistant message. See `REASONING_PLACEHOLDER` for the full
         // background and the cleanup tracking issue.
-        if request.reasoning_effort.is_some() {
+        let thinking_active = request.reasoning_effort.is_some()
+            || request
+                .messages
+                .iter()
+                .any(|m| m.role == Role::Assistant && m.reasoning_content.is_some());
+        if thinking_active {
             let mut backfilled = 0u32;
             for msg in &mut request.messages {
                 if msg.role == Role::Assistant && msg.reasoning_content.is_none() {
@@ -2340,7 +2356,7 @@ fn stream_collect_error(info: SamplingErrorInfo) -> SamplingError {
 mod tests {
     use super::*;
     use indexmap::IndexMap;
-    use xai_grok_sampling_types::types::ChatRequestMessage;
+    use xai_grok_sampling_types::types::{ChatRequestMessage, ReasoningEffort};
 
     #[test]
     fn stream_collect_error_preserves_should_retry() {
@@ -3301,5 +3317,107 @@ mod tests {
             event,
             rs::ResponseStreamEvent::ResponseOutputTextDelta(_)
         ));
+    }
+
+    /// Build a `ChatCompletionRequest` with the given messages and every
+    /// optional field left `None`. Tests mutate `reasoning_effort` as needed.
+    fn request_with_messages(messages: Vec<ChatRequestMessage>) -> ChatCompletionRequest {
+        ChatCompletionRequest {
+            model: Some("test-model".into()),
+            messages,
+            temperature: None,
+            max_tokens: None,
+            top_p: None,
+            frequency_penalty: None,
+            presence_penalty: None,
+            user: None,
+            tools: None,
+            tool_choice: None,
+            search_parameters: None,
+            response_format: None,
+            reasoning_effort: None,
+            x_grok_conv_id: None,
+            x_grok_req_id: None,
+            x_grok_session_id: None,
+            x_grok_turn_idx: None,
+            x_grok_agent_id: None,
+            x_grok_deployment_id: None,
+            x_grok_user_id: None,
+            trace: None,
+        }
+    }
+
+    #[test]
+    fn apply_defaults_backfills_reasoning_content_when_effort_set() {
+        // A thinking model (reasoning_effort set) with an assistant message
+        // that has no reasoning_content must be backfilled with the
+        // placeholder — the original behaviour the gate was introduced for.
+        let client = SamplingClient::new(minimal_config()).expect("client builds");
+        let mut request = request_with_messages(vec![
+            ChatRequestMessage::user("hello"),
+            // assistant turn emitted a bare tool call, no reasoning
+            ChatRequestMessage::assistant("ok", "test-model", None),
+        ]);
+        request.reasoning_effort = Some(ReasoningEffort::Medium);
+        let out = client.apply_defaults(request).expect("apply_defaults");
+        assert_eq!(out.messages[1].role, Role::Assistant);
+        assert_eq!(
+            out.messages[1].reasoning_content.as_deref(),
+            Some(REASONING_PLACEHOLDER),
+            "assistant without reasoning_content must be backfilled when effort is set"
+        );
+    }
+
+    #[test]
+    fn apply_defaults_backfills_when_conversation_already_thinking_without_effort() {
+        // Inherently-thinking models (DeepSeek-R1 / Qwen3-Thinking / GLM-5)
+        // emit `reasoning_content` WITHOUT the OpenAI `reasoning_effort`
+        // parameter. Once any prior assistant message carries
+        // `reasoning_content`, the gateway considers thinking mode active and
+        // requires the field on EVERY assistant message — so a later bare
+        // assistant turn must be backfilled even though `reasoning_effort` is
+        // `None`. This is the regression the broader gate fixes; the previous
+        // `reasoning_effort.is_some()`-only condition skipped the backfill
+        // and the 400 persisted for these models.
+        let client = SamplingClient::new(minimal_config()).expect("client builds");
+        let request = request_with_messages(vec![
+            ChatRequestMessage::user("hello"),
+            // turn 1: model emitted reasoning + content
+            ChatRequestMessage::assistant("answer", "test-model", Some("thinking...".into())),
+            // turn 2: bare assistant turn, no reasoning
+            ChatRequestMessage::assistant("ok", "test-model", None),
+        ]);
+        // reasoning_effort stays None — the model is inherently a thinker.
+        let out = client.apply_defaults(request).expect("apply_defaults");
+        // The first assistant's real reasoning must be preserved untouched.
+        assert_eq!(
+            out.messages[1].reasoning_content.as_deref(),
+            Some("thinking..."),
+            "existing reasoning_content must not be overwritten"
+        );
+        // The bare assistant turn must be backfilled.
+        assert_eq!(
+            out.messages[2].reasoning_content.as_deref(),
+            Some(REASONING_PLACEHOLDER),
+            "bare assistant turn must be backfilled once the conversation has \
+             entered thinking mode, even without reasoning_effort"
+        );
+    }
+
+    #[test]
+    fn apply_defaults_does_not_backfill_reasoning_content_when_not_thinking() {
+        // A non-thinking conversation (no reasoning_effort, no prior
+        // reasoning_content) must NOT inject a bogus placeholder — that would
+        // pollute the wire payload for backends that don't expect the field.
+        let client = SamplingClient::new(minimal_config()).expect("client builds");
+        let request = request_with_messages(vec![
+            ChatRequestMessage::user("hello"),
+            ChatRequestMessage::assistant("answer", "test-model", None),
+        ]);
+        let out = client.apply_defaults(request).expect("apply_defaults");
+        assert!(
+            out.messages[1].reasoning_content.is_none(),
+            "must not backfill reasoning_content in a non-thinking conversation"
+        );
     }
 }
