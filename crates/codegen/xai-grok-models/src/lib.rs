@@ -12,9 +12,8 @@
 
 use std::sync::LazyLock;
 
-/// The raw JSON, embedded at compile time. Re-exported through the
-/// `xai_grok_shell::models` facade and consumed by `agent::config`, so it must
-/// be `pub` (was `pub(crate)` when this lived inside the shell crate).
+/// The raw JSON, embedded at compile time.
+/// It is `pub` because `xai_grok_shell::models` re-exports it and `agent::config` reads it.
 pub const DEFAULT_MODELS_JSON: &str = include_str!("../default_models.json");
 
 #[derive(serde::Deserialize)]

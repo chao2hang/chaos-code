@@ -1,5 +1,3 @@
-//! Menu component — renders shortcut key menus.
-
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
 use ratatui::style::{Modifier, Style};
@@ -9,6 +7,10 @@ use unicode_width::UnicodeWidthStr;
 use crate::theme::Theme;
 
 use super::logo::logo_visual_width;
+
+fn cols(text: &str) -> u16 {
+    unicode_width::UnicodeWidthStr::width(text) as u16
+}
 
 /// Render the welcome menu rows as `label … shortcut`, padded within each row.
 /// Returns the Rect for each item row (for hit-testing clicks and hover).
@@ -108,7 +110,7 @@ pub fn render_menu(
             key_width,
         );
 
-        // [x] dismiss affordance restyling (for the import row)
+        // Restyle the [x] dismiss control (for the import row)
         if let Some(x_offset) = key.rfind("[x]") {
             let key_x_start = menu_centered.x + menu_centered.width - key_width;
             let dismiss_start = key_x_start + x_offset as u16;

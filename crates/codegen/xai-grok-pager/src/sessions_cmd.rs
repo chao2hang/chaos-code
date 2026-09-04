@@ -50,6 +50,8 @@ pub async fn run(args: SessionsArgs, agent_config: &AgentConfig) -> Result<()> {
                 xai_grok_shell::session::merge::CwdScope::WithSiblings,
                 None,
                 limit,
+                // The CLI listing is an inventory, not the resume picker.
+                xai_grok_shell::session::visibility::HeadlessPolicy::Include,
             )
             .await;
             print_sessions_grouped(&sessions);
@@ -57,7 +59,12 @@ pub async fn run(args: SessionsArgs, agent_config: &AgentConfig) -> Result<()> {
         SessionsCommand::Search { query, limit } => {
             use std::collections::HashSet;
             use xai_grok_shell::session::merge::REMOTE_TIMEOUT;
-            use xai_grok_shell::session::storage::search::{SessionSearchRequest, execute_search};
+            use xai_grok_shell::session::storage::search::{
+                IndexDecision, SessionSearchRequest, execute_search,
+            };
+
+            // Search is the only subcommand that reads the index, so it is the only one to start one
+            let search = xai_grok_shell::session::storage::search::start_if_enabled(agent_config);
 
             let req = SessionSearchRequest {
                 query,
@@ -69,25 +76,31 @@ pub async fn run(args: SessionsArgs, agent_config: &AgentConfig) -> Result<()> {
             let root = grok_home();
 
             let remote_limit = (limit * 3).max(100) as i64;
-            let (local_resp, remote_results) = tokio::join!(execute_search(&root, &req), async {
-                tokio::time::timeout(
-                    REMOTE_TIMEOUT,
-                    client.search(Some(&req.query), remote_limit),
-                )
-                .await
-                .unwrap_or_else(|_| {
-                    eprintln!(
-                        "warning: remote session search timed out, showing local results only"
-                    );
-                    Ok(Vec::new())
-                })
-                .unwrap_or_else(|e| {
-                    eprintln!("warning: remote session search failed: {e}");
-                    Vec::new()
-                })
-            });
+            let (local_resp, remote_results) = tokio::join!(
+                execute_search(IndexDecision::settled(&search), &root, &req),
+                async {
+                    tokio::time::timeout(
+                        REMOTE_TIMEOUT,
+                        client.search(Some(&req.query), remote_limit),
+                    )
+                    .await
+                    .unwrap_or_else(|_| {
+                        eprintln!("warning: remote session search timed out");
+                        Ok(Vec::new())
+                    })
+                    .unwrap_or_else(|e| {
+                        eprintln!("warning: remote session search failed: {e}");
+                        Vec::new()
+                    })
+                }
+            );
 
             let resp = local_resp?;
+            if let Some(by) = search.off_reason() {
+                eprintln!(
+                    "warning: local session search is off ({by}); searched remote sessions only."
+                );
+            }
             let local_ids: HashSet<&str> =
                 resp.results.iter().map(|r| r.session_id.as_str()).collect();
 
@@ -163,6 +176,7 @@ pub async fn run(args: SessionsArgs, agent_config: &AgentConfig) -> Result<()> {
                     &grok_home(),
                     Default::default(),
                 )),
+                None,
             )
             .await?;
 
@@ -177,8 +191,7 @@ pub async fn run(args: SessionsArgs, agent_config: &AgentConfig) -> Result<()> {
     Ok(())
 }
 
-/// Print sessions grouped by worktree label, preserving the original table
-/// format with a `Label: <label>` header before each group.
+/// Print sessions grouped by worktree label, preserving the original table format with a `Label: <label>` header before each group.
 fn print_sessions_grouped(sessions: &[MergedSession]) {
     if sessions.is_empty() {
         println!("No sessions found.");

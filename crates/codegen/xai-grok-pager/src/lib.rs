@@ -6,8 +6,13 @@
 // workspace-client refactor (merge b13fa526) turned a large amount of
 // previously-used code into dead code in this fork; upstream may revive it in
 // a future sync, so we keep the code and silence the warnings crate-wide.
-#![allow(dead_code)]
-
+#![allow(
+    unused_imports,
+    unused_variables,
+    unused_mut,
+    unreachable_code,
+    dead_code
+)]
 pub mod acp;
 pub mod actions;
 pub mod app;
@@ -15,7 +20,6 @@ pub mod client_identity;
 pub mod completions_cmd;
 mod config_toml_edit;
 pub mod diagnostics;
-pub mod diff;
 pub mod disk_usage_cmd;
 pub mod docs;
 pub mod doctor_cmd;
@@ -25,13 +29,11 @@ pub mod git_info;
 pub mod headless;
 pub mod hyperlink_route;
 pub mod inline_media_ffmpeg;
-pub mod input;
 pub mod input_log;
 pub mod mcp_cmd;
 pub mod memory_cmd;
 pub mod memory_release;
 pub mod memory_trace;
-pub mod tutorial_docs;
 // ── Minimal (scrollback-native) mode seam ────────────────────────────────────
 // The *only* minimal-specific surface in this (the "full pager") crate. Both
 // modules are grouped under `src/minimal/` so a full-pager contributor sees one
@@ -55,33 +57,30 @@ pub mod project_picker;
 pub mod pty_wrap;
 pub mod recent_dirs;
 pub mod scrollback;
-pub mod search;
 pub mod sessions_cmd;
 pub mod settings;
 pub mod share_cmd;
 pub mod slash;
 pub mod startup;
 pub mod tips;
+pub mod tool_usage;
+pub mod tutorial_docs;
+pub mod usage_cmd;
 pub mod wrap_clipboard_image;
 pub mod wrap_cmd;
 pub(crate) mod wrap_filter;
 pub(crate) mod wrap_restore;
-
-pub mod tool_usage;
-
-// Presentation-primitives layer extracted into the sibling crate
-// `xai-grok-pager-render`. Re-exported at the crate root so existing
-// `crate::<module>::...` references throughout the pager keep resolving.
+pub use xai_grok_gboom as gboom;
+pub use xai_grok_pager_render::key;
 pub use xai_grok_pager_render::{
-    appearance, clipboard, gboom, glyphs, host, link_opener, modal_window_state, prompt_images,
-    render, syntax, terminal, theme, util,
+    appearance, clipboard, glyphs, host, input, link_opener, modal_window_state, prompt_images,
+    render, search, syntax, terminal, theme, util,
 };
+#[cfg(test)]
+pub mod test_util;
 pub mod trace_cmd;
 pub mod tracing;
 pub mod unified_log;
 pub mod views;
 pub mod voice;
 pub mod worktree_cmd;
-
-#[cfg(test)]
-pub mod test_util;

@@ -16,38 +16,37 @@ pub(super) const PAYWALL_AUTO_CHECK_TIMEOUT: Duration = Duration::from_secs(10 *
 
 /// Whether the user is at the highest subscription tier (SuperGrok Heavy).
 ///
-/// Returns `true` only when `subscription_tier` **positively matches** a
-/// known max-tier identifier. When the tier is unknown (`None`) or any
-/// other value, returns `false` — the user gets the Q&A modal so lower-
-/// tier users always see the upgrade option.
+/// Returns `true` only when `subscription_tier` positively matches a known max-tier identifier.
+/// An unknown (`None`) or unrecognized tier returns `false`, so lower-tier users always get the Q&A modal with the upgrade option.
 pub(super) fn is_max_tier(subscription_tier: Option<&str>) -> bool {
     let Some(t) = subscription_tier else {
-        return false; // Unknown — default to Q&A.
+        return false; // Unknown: default to Q&A.
     };
-    // Normalize: lowercase + spaces→underscores to match both JWT-derived
-    // keys ("supergrok_heavy") and CCP display names ("SuperGrok Heavy").
+    // Lowercase and replace spaces with underscores to match both JWT-derived keys ("supergrok_heavy") and CCP display names ("SuperGrok Heavy")
     t.to_ascii_lowercase().replace(' ', "_") == "supergrok_heavy"
 }
 
 /// URL for upgrading the subscription tier.
 pub(crate) const UPSELL_URL_UPGRADE: &str = "";
+
+/// URL for managing pay-as-you-go or on-demand spending and purchasing credits.
+/// Chaos is BYOK: empty so no grok.com link is ever surfaced.
 pub(crate) const UPSELL_URL_PAYG: &str = "";
 
 /// Billing mode for credit-limit upsell copy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum CreditLimitUpsellMode {
-    /// Unified usage pool — suggest purchasing prepaid credits.
+    /// Unified usage pool: suggest purchasing prepaid credits.
     UnifiedCredits,
-    /// Legacy on-demand / PAYG (`enabled` = on-demand cap already active).
+    /// Legacy on-demand PAYG (`enabled` means the on-demand cap is already active).
     LegacyPayg { enabled: bool },
 }
 
 /// Resolve upsell copy mode from credits config.
 ///
-/// Prefers explicit `is_unified_billing_user` (`Option` — do not treat a
-/// missing field as legacy). Positive `pay_as_you_go` (on-demand cap &gt; 0)
-/// only selects legacy when the unified flag is absent. Unknown defaults to
-/// unified (buy credits) so pool users never get “enable on-demand” wrongly.
+/// An explicit `is_unified_billing_user` wins; a missing field is not treated as legacy.
+/// A positive `pay_as_you_go` (an on-demand cap over 0) only selects legacy when the unified flag is absent.
+/// Unknown defaults to unified (buy credits) so pool users are never told to enable on-demand.
 pub(super) fn credit_limit_upsell_mode(
     balance: Option<&crate::views::credit_bar::CreditBalance>,
 ) -> CreditLimitUpsellMode {
@@ -56,119 +55,51 @@ pub(super) fn credit_limit_upsell_mode(
         Some(b) if b.is_unified_billing_user == Some(false) => CreditLimitUpsellMode::LegacyPayg {
             enabled: b.pay_as_you_go,
         },
-        // Flag absent: only treat as legacy PAYG when we have a positive
-        // on-demand cap (pay_as_you_go is derived from cap &gt; 0).
+        // Flag absent: only treat as legacy PAYG on a positive on-demand cap (`pay_as_you_go` derives from that cap)
         Some(b) if b.pay_as_you_go => CreditLimitUpsellMode::LegacyPayg { enabled: true },
         _ => CreditLimitUpsellMode::UnifiedCredits,
     }
 }
 
-/// Whether an API / retry error is a credit-limit / spend-block denial.
+/// Whether an API or retry error is a credit-limit or spend-block denial.
 ///
-/// - **402** Payment Required — always credit/spend block on this surface
-///   (Build pool and IC spend blocks); no message filter.
-/// - **403** — only when the body contains "run out of credits" (legacy IC
-///   spend wording); other 403s (content-safety, ZDR, …) are excluded.
+/// - 402 Payment Required always means a credit or spend block here (Build pool and IC spend blocks); no message filter.
+/// - 403 counts only when the body contains "run out of credits" (legacy IC spend wording); other 403s (content-safety, ZDR, …) are excluded.
 pub(crate) fn is_credit_limit_error(http_status: Option<u16>, message: &str) -> bool {
     let m = message.to_ascii_lowercase();
     let legacy = m.contains("run out of credits");
     match http_status {
         Some(402) => true,
         Some(403) if legacy => true,
-        // Retry notifications embed "status 402" / "status 403" in the body
-        // without a separate status field.
+        // Retry notifications embed "status 402" / "status 403" in the body without a separate status field
         None | Some(_) => m.contains("status 402") || (m.contains("status 403") && legacy),
     }
 }
 
-/// Open the credit-limit upsell on the given agent.
+/// Option id for Try Again. Submit routes on this sentinel, not on
+/// position in the telemetry `choices` vec.
+pub(crate) const CREDIT_LIMIT_RETRY_OPTION_ID: &str = "retry-last-prompt";
+
+struct CreditLimitCopy {
+    heading: &'static str,
+    upgrade_tier_desc: &'static str,
+    secondary_label: &'static str,
+    secondary_desc: &'static str,
+    second_choice: xai_grok_telemetry::events::CreditLimitChoice,
+    payg_telemetry: bool,
+}
+
+/// Open the credit-limit upsell Q&A on the given agent.
 ///
-/// **`max_tier = false`** (default): shows the Q&A question modal with
-/// two options ("Upgrade tier" + buy-credits or PAYG). Each option's `id`
-/// carries the target URL so the submit handler is position-independent.
-///
-/// **`max_tier = true`** (positively identified as SuperGrok Heavy):
-/// pushes an inline scrollback card (`CreditLimitBlock`) with a single
-/// continue action. No Q&A modal — the user can't upgrade further.
+/// Non-max-tier: Upgrade tier + buy-credits (or PAYG) + Try Again.
+/// Max-tier (SuperGrok Heavy): buy-credits (or PAYG) + Try Again — no
+/// upgrade option. URL options carry the target in `id` so the submit
+/// handler is position-independent.
 pub(super) fn open_credit_limit_upsell(
     agent: &mut AgentView,
     mode: CreditLimitUpsellMode,
     max_tier: bool,
 ) {
-    use crate::scrollback::blocks::CreditLimitCardAction;
-
-    let (
-        heading,
-        upgrade_tier_desc,
-        secondary_label,
-        secondary_desc,
-        card_action,
-        second_choice,
-        payg_telemetry,
-    ): (
-        &str,
-        &str,
-        &str,
-        &str,
-        CreditLimitCardAction,
-        xai_grok_telemetry::events::CreditLimitChoice,
-        bool,
-    ) = match mode {
-        CreditLimitUpsellMode::UnifiedCredits => (
-            "已达到本周用量上限。",
-            "请在 Provider 控制台提高配额或更换模型",
-            "购买额度",
-            "购买额度以继续使用 Chaos",
-            CreditLimitCardAction::PurchaseCredits,
-            xai_grok_telemetry::events::CreditLimitChoice::PurchaseCredits,
-            false,
-        ),
-        CreditLimitUpsellMode::LegacyPayg { enabled: true } => (
-            "已达到消费上限。",
-            "请在 Provider 控制台提高额度或更换模型",
-            "提高限额",
-            "提高按量付费消费上限",
-            CreditLimitCardAction::IncreasePaygLimit,
-            xai_grok_telemetry::events::CreditLimitChoice::PayAsYouGo,
-            true,
-        ),
-        CreditLimitUpsellMode::LegacyPayg { enabled: false } => (
-            "已达到当前计划的额度上限。",
-            "请在 Provider 控制台提高额度或更换模型",
-            "按量付费",
-            "启用按量付费额度以便按需使用",
-            CreditLimitCardAction::EnablePayg,
-            xai_grok_telemetry::events::CreditLimitChoice::PayAsYouGo,
-            false,
-        ),
-    };
-    let unified_billing = matches!(mode, CreditLimitUpsellMode::UnifiedCredits);
-
-    // ── Max tier: inline scrollback card ─────────────────────────
-    if max_tier {
-        use crate::scrollback::block::RenderBlock;
-        log_event(xai_grok_telemetry::events::CreditLimitUpsellShown {
-            surface: xai_grok_telemetry::events::CreditLimitUpsellSurface::InlineCard,
-            max_tier: true,
-            pay_as_you_go: payg_telemetry,
-            unified_billing,
-        });
-        agent.scrollback.push_block(RenderBlock::credit_limit_card(
-            heading,
-            card_action,
-            UPSELL_URL_PAYG,
-        ));
-        return;
-    }
-
-    log_event(xai_grok_telemetry::events::CreditLimitUpsellShown {
-        surface: xai_grok_telemetry::events::CreditLimitUpsellSurface::QuestionModal,
-        max_tier: false,
-        pay_as_you_go: payg_telemetry,
-        unified_billing,
-    });
-
-    // ── Default: Q&A question modal with two options ────────────────
     use crate::views::question_view::{LocalQuestionKind, QuestionViewState};
     use xai_grok_tools::implementations::grok_build::ask_user_question::{
         Question, QuestionOption,
@@ -178,22 +109,70 @@ pub(super) fn open_credit_limit_upsell(
         return;
     }
 
+    let copy = match mode {
+        CreditLimitUpsellMode::UnifiedCredits => CreditLimitCopy {
+            heading: "已达到本周用量上限。",
+            upgrade_tier_desc: "请在 Provider 控制台提高配额或更换模型",
+            secondary_label: "购买额度",
+            secondary_desc: "购买额度以继续使用 Chaos",
+            second_choice: xai_grok_telemetry::events::CreditLimitChoice::PurchaseCredits,
+            payg_telemetry: false,
+        },
+        CreditLimitUpsellMode::LegacyPayg { enabled: true } => CreditLimitCopy {
+            heading: "已达到消费上限。",
+            upgrade_tier_desc: "请在 Provider 控制台提高额度或更换模型",
+            secondary_label: "提高限额",
+            secondary_desc: "提高按量付费消费上限",
+            second_choice: xai_grok_telemetry::events::CreditLimitChoice::PayAsYouGo,
+            payg_telemetry: true,
+        },
+        CreditLimitUpsellMode::LegacyPayg { enabled: false } => CreditLimitCopy {
+            heading: "已达到当前计划的额度上限。",
+            upgrade_tier_desc: "请在 Provider 控制台提高额度或更换模型",
+            secondary_label: "按量付费",
+            secondary_desc: "启用按量付费额度以便按需使用",
+            second_choice: xai_grok_telemetry::events::CreditLimitChoice::PayAsYouGo,
+            payg_telemetry: false,
+        },
+    };
+    let unified_billing = matches!(mode, CreditLimitUpsellMode::UnifiedCredits);
+
+    log_event(xai_grok_telemetry::events::CreditLimitUpsellShown {
+        surface: xai_grok_telemetry::events::CreditLimitUpsellSurface::QuestionModal,
+        max_tier,
+        pay_as_you_go: copy.payg_telemetry,
+        unified_billing,
+    });
+
+    let mut options = Vec::new();
+    let mut choices = Vec::new();
+    if !max_tier {
+        options.push(QuestionOption {
+            label: "调整 Provider 配额".into(),
+            description: copy.upgrade_tier_desc.into(),
+            preview: None,
+            id: Some(UPSELL_URL_UPGRADE.into()),
+        });
+        choices.push(xai_grok_telemetry::events::CreditLimitChoice::UpgradeTier);
+    }
+    options.push(QuestionOption {
+        label: copy.secondary_label.into(),
+        description: copy.secondary_desc.into(),
+        preview: None,
+        id: Some(UPSELL_URL_PAYG.into()),
+    });
+    choices.push(copy.second_choice);
+    options.push(QuestionOption {
+        label: "重试".into(),
+        description: "恢复用量后重新提交上一条提示".into(),
+        preview: None,
+        id: Some(CREDIT_LIMIT_RETRY_OPTION_ID.into()),
+    });
+    choices.push(xai_grok_telemetry::events::CreditLimitChoice::RetryLastPrompt);
+
     let question = Question {
-        question: heading.into(),
-        options: vec![
-            QuestionOption {
-                label: "调整 Provider 配额".into(),
-                description: upgrade_tier_desc.into(),
-                preview: None,
-                id: Some(UPSELL_URL_UPGRADE.into()),
-            },
-            QuestionOption {
-                label: secondary_label.into(),
-                description: secondary_desc.into(),
-                preview: None,
-                id: Some(UPSELL_URL_PAYG.into()),
-            },
-        ],
+        question: copy.heading.into(),
+        options,
         multi_select: Some(false),
         id: None,
     };
@@ -204,33 +183,24 @@ pub(super) fn open_credit_limit_upsell(
         vec![question],
         stashed,
     )
-    .with_local_kind(LocalQuestionKind::CreditLimitUpsell {
-        choices: vec![
-            xai_grok_telemetry::events::CreditLimitChoice::UpgradeTier,
-            second_choice,
-        ],
-    })
+    .with_local_kind(LocalQuestionKind::CreditLimitUpsell { choices })
     .with_no_freeform();
     agent.question_view = Some(state);
     agent.prompt.set_text("");
 }
 
-/// Open the free-usage paywall on the given agent: a Q&A modal in the
-/// [`open_credit_limit_upsell`] style with two upgrade options. Each
-/// option's `id` carries its target URL so the submit handler is
-/// position-independent.
+/// Open the free-usage paywall on the given agent: a Q&A modal in the [`open_credit_limit_upsell`] style with two upgrade options.
+/// Each option's `id` carries its target URL so the submit handler is position-independent.
 ///
-/// Driver-only by construction (called from the PromptResponse handler,
-/// which viewers never receive). `auth_method` feeds the
-/// `SuperGrokUpsellShown` funnel event.
+/// Only the driver can reach this: the PromptResponse handler calls it, and viewers never receive that response.
+/// `auth_method` feeds the `SuperGrokUpsellShown` funnel event.
 pub(super) fn open_free_usage_upsell(agent: &mut AgentView, auth_method: Option<String>) {
     open_supergrok_upsell(agent, UpsellReason::FreeUsageLimit, auth_method);
 }
 
-/// Open the SuperGrok upsell for a tier-restricted slash command
-/// (`/usage`, `/imagine`, …). Returns whether the modal opened (`false`
-/// when another question modal is already up) so the caller can decide
-/// whether to consume the input that triggered it.
+/// Open the SuperGrok upsell for a tier-restricted slash command (`/usage`, `/imagine`, …).
+/// Returns whether the modal opened (`false` when another question modal is already up).
+/// The caller uses that to decide whether to consume the input that triggered it.
 pub(super) fn open_restricted_command_upsell(
     agent: &mut AgentView,
     auth_method: Option<String>,
@@ -238,8 +208,7 @@ pub(super) fn open_restricted_command_upsell(
     open_supergrok_upsell(agent, UpsellReason::RestrictedCommand, auth_method)
 }
 
-/// Which situation opened the SuperGrok upsell modal. Controls the heading
-/// and the telemetry source.
+/// Which situation opened the SuperGrok upsell modal; it controls the heading and the telemetry source.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum UpsellReason {
     /// Free-usage quota exhausted (429 paywall).
@@ -248,10 +217,8 @@ pub(super) enum UpsellReason {
     RestrictedCommand,
 }
 
-/// Shared builder behind [`open_free_usage_upsell`] /
-/// [`open_restricted_command_upsell`]: a Q&A modal in the
-/// [`open_credit_limit_upsell`] style. Upgrade options carry their target
-/// URL in the option `id` (position-independent submit handling).
+/// Shared builder behind [`open_free_usage_upsell`] and [`open_restricted_command_upsell`]: a Q&A modal in the [`open_credit_limit_upsell`] style.
+/// Upgrade options carry their target URL in the option `id`, so submit handling does not depend on option position.
 fn open_supergrok_upsell(
     agent: &mut AgentView,
     reason: UpsellReason,
@@ -262,8 +229,8 @@ fn open_supergrok_upsell(
         Question, QuestionOption,
     };
 
-    // Never displace an already-open question modal. Callers that consume
-    // input on open must check this `false` and keep the input instead.
+    // Never displace an already-open question modal
+    // Callers that consume input on open must check this `false` and keep the input instead
     if agent.question_view.is_some() {
         return false;
     }
@@ -287,6 +254,7 @@ fn open_supergrok_upsell(
         auth_method,
     });
 
+    // Chaos is BYOK: configure a Provider or read the usage notes; no plan upsell.
     let options = vec![
         QuestionOption {
             label: "配置 Provider".into(),
@@ -321,9 +289,8 @@ fn open_supergrok_upsell(
     true
 }
 
-/// Apply an [`AutoTopupFetch`] outcome to a cached `auto_topup` slot: `Resolved`
-/// sets it, `Cleared` resets it to "unknown" (no credits), and `Unchanged` keeps
-/// the last-known-good value (the fetch failed).
+/// Apply an [`AutoTopupFetch`] outcome to a cached `auto_topup` slot.
+/// `Resolved` sets it, `Cleared` resets it to "unknown" (no credits), and `Unchanged` keeps the last-known-good value (the fetch failed).
 pub(super) fn apply_auto_topup(
     slot: &mut Option<crate::views::credit_bar::AutoTopupInfo>,
     fetch: &crate::views::credit_bar::AutoTopupFetch,
@@ -347,14 +314,9 @@ pub(super) fn handle_billing_fetched(
     autotopup: crate::views::credit_bar::AutoTopupFetch,
     nonce: u64,
 ) -> Vec<Effect> {
-    // Parse/transport failures route to `BillingError`, so a `None`
-    // balance here means the response carried no billing config. Clear
-    // the cached balance + polling so the status bar agrees with the
-    // "No billing data available." message rather than showing a stale
-    // value.
+    // Parse/transport failures route to `BillingError`, so a `None` balance here means the response carried no billing config
+    // Clear the cached balance and polling so the status bar agrees with the "No billing data available." message rather than showing a stale value
     app.credit_balance = balance.clone();
-    // `Resolved` updates the cached rule, `Cleared` resets it to unknown
-    // (no credits), `Unchanged` keeps the last-known-good (fetch failed).
     apply_auto_topup(&mut app.auto_topup, &autotopup);
     app.billing_poll_wanted = balance
         .as_ref()
@@ -371,9 +333,8 @@ pub(super) fn handle_billing_fetched(
         let mut topup = agent.auto_topup.clone();
         apply_auto_topup(&mut topup, &autotopup);
         agent.apply_credit_balance(balance.clone(), topup);
-        // The open usage modal renders from the mirrors updated above; only
-        // its own fetch generation may settle the loading/error flags
-        // (background refreshes carry nonce 0).
+        // The open usage modal renders from the mirrors updated above
+        // Only its own fetch generation may settle the loading/error flags (background refreshes carry nonce 0)
         if let Some(state) = super::status::usage_modal_state_mut(agent)
             && state.fetch_nonce == nonce
         {
@@ -413,10 +374,10 @@ pub(super) fn handle_gate_refreshed(
     }
 }
 
-/// `x.ai/auth/check_subscription` completed. Meta is authoritative
-/// (`apply_auth_meta` also drops any deferred gate). A failed check only
-/// promotes the deferred gate it was verifying (`verify` generation);
-/// generic watch/focus/paywall-chain failures never touch it.
+/// `x.ai/auth/check_subscription` completed.
+/// Meta is authoritative (`apply_auth_meta` also drops any deferred gate).
+/// A failed check only promotes the deferred gate it was verifying (the `verify` generation).
+/// Generic watch, focus, and paywall-chain failures never touch it.
 pub(super) fn handle_check_subscription_complete(
     app: &mut AppView,
     verify: Option<u64>,
@@ -431,9 +392,8 @@ pub(super) fn handle_check_subscription_complete(
                     true
                 }
                 Err(e) => {
-                    // Shell sent meta we can't decode — a protocol bug, not
-                    // a transient failure. The check result is lost, so a
-                    // verify deferral falls through to promotion below.
+                    // The shell sent meta we can't decode, a protocol bug rather than a transient failure
+                    // The check result is lost, so a verify deferral falls through to promotion below
                     crate::unified_log::error(
                         "subscription.check.meta_parse_failed",
                         None,
@@ -446,8 +406,7 @@ pub(super) fn handle_check_subscription_complete(
                 }
             }
         }
-        // meta: None = shell reports "not authenticated" or the check RPC
-        // failed (already logged as subscription.check.rpc_failed).
+        // A `None` meta means the shell reports "not authenticated" or the check RPC failed (already logged as subscription.check.rpc_failed)
         None => false,
     };
     if !applied && let Some(generation) = verify {
@@ -467,18 +426,16 @@ pub(super) fn handle_check_subscription_complete(
     maybe_start_paywall_chain(app, was_blocked)
 }
 
-/// Safety net for a hung verification check: show the still-pending
-/// deferred gate (err on blocking).
+/// Safety net for a hung verification check: show the still-pending deferred gate, erring on the side of blocking.
 pub(super) fn handle_gate_verify_timeout(app: &mut AppView, generation: u64) -> Vec<Effect> {
     let was_blocked = !app.has_access();
     app.promote_deferred_gate(generation, "verify_timeout");
     maybe_start_paywall_chain(app, was_blocked)
 }
 
-/// Arm the 5s paywall auto-check chain on an ungated→gated transition, so a
-/// paywall shown by verify-before-paywall self-lifts exactly like the
-/// login-path one. Guarded so steady-state paywall-poller responses and
-/// repeated checks can't fan out extra timers.
+/// Start the 5s paywall auto-check chain when the app goes from ungated to gated.
+/// A paywall shown after a failed verification check then lifts itself exactly like the one shown at login.
+/// The guard keeps repeated checks and steady-state paywall-poller responses from starting extra timers.
 fn maybe_start_paywall_chain(app: &mut AppView, was_blocked: bool) -> Vec<Effect> {
     if !was_blocked && !app.has_access() && app.paywall_check_started.is_none() {
         app.paywall_check_started = Some(std::time::Instant::now());
@@ -504,9 +461,8 @@ pub(super) fn handle_credit_limit_recheck_complete(
         return vec![];
     };
 
-    // If the user already submitted another prompt while the
-    // recheck was in flight, don't retry the stashed one — they've
-    // moved on. The tier update (above) still takes effect.
+    // If the user already submitted another prompt while the recheck ran, don't retry the stashed one; they've moved on
+    // The tier update (above) still takes effect
     let user_moved_on = !agent.session.state.is_idle() || !agent.session.pending_prompts.is_empty();
 
     if tier_changed && !user_moved_on {
@@ -525,16 +481,53 @@ pub(super) fn handle_credit_limit_recheck_complete(
         let mode = credit_limit_upsell_mode(balance);
         let max_tier = is_max_tier(app.subscription_tier.as_deref());
         open_credit_limit_upsell(agent, mode, max_tier);
+        // Keep the stashed prompt so Try Again can resubmit after the
+        // user buys credits or the limit resets.
+    } else {
+        agent.credit_limit_stashed_prompt = None;
     }
-    // Either way, drop the stashed prompt.
-    agent.credit_limit_stashed_prompt = None;
 
     let mut drain = maybe_drain_queue(agent);
     drain.effects.push(Effect::FetchBilling {
         agent_id,
         silent: true,
-        nonce: 0,
+        nonce: Default::default(),
     });
+    note_peek_page_flip(app, agent_id, drain.page_flip_entry);
+    drain.effects
+}
+
+/// Resubmit the prompt that hit the credit limit (modal option or card button).
+pub(super) fn dispatch_retry_credit_limit_prompt(app: &mut AppView) -> Vec<Effect> {
+    use crate::app::app_view::ActiveView;
+
+    let ActiveView::Agent(agent_id) = app.active_view else {
+        return vec![];
+    };
+    let Some(agent) = app.agents.get_mut(&agent_id) else {
+        return vec![];
+    };
+    let Some(prompt) = agent.credit_limit_stashed_prompt.take() else {
+        agent.show_toast("No prompt to retry.");
+        agent
+            .scrollback
+            .push_block(RenderBlock::system("No prompt to retry."));
+        return vec![];
+    };
+    agent.session.enqueue_in_flight_prompt_front(prompt);
+    let drain = maybe_drain_queue(agent);
+    if drain.effects.iter().any(|effect| {
+        matches!(
+            effect,
+            Effect::SendPrompt { .. }
+                | Effect::SendPromptBlocks { .. }
+                | Effect::SendBashCommand { .. }
+        )
+    }) {
+        agent
+            .scrollback
+            .push_block(RenderBlock::system("Trying again\u{2026}"));
+    }
     note_peek_page_flip(app, agent_id, drain.page_flip_entry);
     drain.effects
 }

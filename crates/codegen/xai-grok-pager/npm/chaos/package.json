@@ -1,6 +1,6 @@
 {
     "name": "chaos-code",
-    "version": "0.2.132",
+    "version": "0.3.1",
     "description": "Chaos terminal AI coding assistant (BYOK). Binary name: chaos.",
     "license": "Apache-2.0",
     "bin": {

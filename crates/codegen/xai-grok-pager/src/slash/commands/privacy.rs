@@ -1,7 +1,7 @@
 //! `/privacy` -- show or toggle privacy and data retention status.
 
 use crate::app::actions::Action;
-use crate::slash::command::{CommandExecCtx, CommandResult, SlashCommand};
+use crate::slash::command::{CommandExecCtx, CommandResult, SlashCommand, slash_meta};
 
 /// Show or toggle privacy and data retention status.
 ///
@@ -16,20 +16,11 @@ use crate::slash::command::{CommandExecCtx, CommandResult, SlashCommand};
 pub struct PrivacyCommand;
 
 impl SlashCommand for PrivacyCommand {
-    fn name(&self) -> &str {
-        "privacy"
-    }
-
-    fn description(&self) -> &str {
-        "显示或切换隐私与数据保留状态"
-    }
-
-    fn usage(&self) -> &str {
-        "/privacy [opt-in|opt-out]"
-    }
-
-    fn takes_args(&self) -> bool {
-        true
+    slash_meta! {
+        name: "privacy",
+        description: "显示或切换隐私与数据保留状态",
+        usage: "/privacy [opt-in|opt-out]",
+        takes_args: true,
     }
 
     fn run(&self, _ctx: &mut CommandExecCtx, args: &str) -> CommandResult {

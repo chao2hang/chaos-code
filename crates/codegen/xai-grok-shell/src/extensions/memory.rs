@@ -9,10 +9,10 @@
 //!   a one-shot LLM call.
 
 use agent_client_protocol as acp;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tokio::sync::oneshot;
 
-use super::{Empty, ExtResult, parse_params, to_ext_response, to_raw_response};
+use super::{ExtResult, parse_params, to_raw_response};
 use crate::agent::MvpAgent;
 use crate::session::{CompactConversationRequest, CompactConversationResponse, SessionCommand};
 
@@ -91,9 +91,9 @@ async fn handle_compact(agent: &MvpAgent, args: &acp::ExtRequest) -> ExtResult {
             respond_to: tx,
         });
     }
+    // Pass the session error through; rewrapping buries the detail in a Debug dump.
     rx.await
-        .map_err(|_| acp::Error::internal_error().data("session failed to respond"))?
-        .map_err(|e| acp::Error::internal_error().data(format!("Internal error: {:?}", e)))?;
+        .map_err(|_| acp::Error::internal_error().data("session failed to respond"))??;
     to_raw_response(&CompactConversationResponse {})
 }
 
@@ -113,10 +113,16 @@ async fn handle_flush(agent: &MvpAgent, args: &acp::ExtRequest) -> ExtResult {
     let _ = session
         .cmd_tx
         .send(SessionCommand::FlushMemory { respond_to: tx });
-    rx.await
+    let flushed = rx
+        .await
         .map_err(|_| acp::Error::internal_error().data("session failed to respond"))?
         .map_err(|e| acp::Error::internal_error().data(format!("{:?}", e)))?;
-    to_ext_response(Ok(Empty {}))
+    to_raw_response(&MemoryFlushResponse { flushed })
+}
+
+#[derive(Serialize)]
+struct MemoryFlushResponse {
+    flushed: bool,
 }
 
 async fn handle_rewrite(agent: &MvpAgent, args: &acp::ExtRequest) -> ExtResult {

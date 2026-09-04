@@ -1,8 +1,5 @@
-//! Plugin marketplace browse and index crate.
-//!
-//! Provides marketplace source configuration, plugin discovery (indexed +
-//! filesystem fallback), and install integration with the existing
-//! `InstallRegistry` pipeline.
+//! Provides marketplace source configuration and plugin discovery, indexed with a filesystem fallback.
+//! Install integration goes through the existing `InstallRegistry` pipeline.
 
 pub mod catalog;
 pub mod config;
@@ -39,8 +36,7 @@ pub fn is_official_source_url(url: &str) -> bool {
     canonical_github_owner_repo(url).as_deref() == Some("xai-org/plugin-marketplace")
 }
 
-/// Normalized lowercase `owner/repo` from a GitHub URL (HTTPS/http/ssh/scp,
-/// `www.`, trailing `.git`/`/`), or `None` if not a GitHub URL.
+/// Normalized lowercase `owner/repo` from a GitHub URL (HTTPS/http/ssh/scp, `www.`, trailing `.git`/`/`), or `None` if not a GitHub URL.
 pub(crate) fn canonical_github_owner_repo(url: &str) -> Option<String> {
     let s = url.trim();
     let s = s.strip_suffix('/').unwrap_or(s);

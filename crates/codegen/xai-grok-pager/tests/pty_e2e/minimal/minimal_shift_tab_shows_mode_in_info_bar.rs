@@ -26,7 +26,7 @@ async fn minimal_shift_tab_shows_mode_in_info_bar() {
         harness.screen_contents()
     );
 
-    // Shift+Tab → BackTab (CSI Z). First press cycles Normal → Plan.
+    // Shift+Tab arrives as BackTab (CSI Z); the first press cycles Normal to Plan
     harness.inject_keys(b"\x1b[Z").expect("inject BackTab");
     harness
         .wait_for_text("计划", Duration::from_secs(10))

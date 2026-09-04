@@ -1,5 +1,3 @@
-//! Environment helpers for benchmarking and testing.
-
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
@@ -30,10 +28,6 @@ fn local_pager_binary_path() -> Result<PathBuf> {
 }
 
 fn ensure_local_pager_binary(binary: &std::path::Path) -> Result<()> {
-    if binary.exists() {
-        return Ok(());
-    }
-
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
     let mut cmd = Command::new(&cargo);
     cmd.current_dir(workspace_root()?)
@@ -75,8 +69,7 @@ pub fn pager_binary() -> Result<PathBuf> {
         if !p.exists() {
             bail!("PAGER_BINARY does not exist: {}", p.display());
         }
-        // Bazel sets PAGER_BINARY to a runfiles-relative path; portable_pty
-        // resolves non-absolute paths via PATH lookup instead of the cwd.
+        // Bazel sets PAGER_BINARY to a runfiles-relative path; portable_pty resolves non-absolute paths via PATH lookup instead of the cwd
         return std::path::absolute(&p)
             .with_context(|| format!("failed to absolutize PAGER_BINARY: {}", p.display()));
     }

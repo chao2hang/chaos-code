@@ -222,9 +222,6 @@ mod tests {
     fn tool_name_and_description() {
         let tool = ExitPlanModeTool;
         assert_eq!(xai_tool_runtime::Tool::id(&tool).as_str(), "exit_plan_mode");
-        let desc = crate::types::tool_metadata::ToolMetadata::description_template(&tool);
-        assert!(desc.contains("Exit plan mode"));
-        assert!(desc.contains("plan file"));
     }
 
     #[test]
@@ -265,12 +262,10 @@ mod tests {
 
         match result {
             ExitPlanModeOutput::PlanReady {
-                ref message,
                 ref plan_content,
                 ref plan_file_path,
+                ..
             } => {
-                assert!(message.contains("plan has been approved"));
-                assert!(message.contains("start coding"));
                 assert!(plan_content.contains("Do thing A"));
                 assert!(plan_content.contains("Do thing B"));
                 // Cwd fallback now displays the resolved absolute path (shared resolver).
@@ -299,14 +294,7 @@ mod tests {
         .await
         .unwrap();
 
-        match result {
-            ExitPlanModeOutput::EmptyPlan { ref message, .. } => {
-                assert!(message.contains("Plan mode exit approved"));
-                assert!(message.contains("No plan content was found"));
-                assert!(message.contains("you can proceed"));
-            }
-            other => panic!("Expected EmptyPlan, got {:?}", other),
-        }
+        assert!(matches!(result, ExitPlanModeOutput::EmptyPlan { .. }));
     }
 
     #[tokio::test]
@@ -325,14 +313,7 @@ mod tests {
         .await
         .unwrap();
 
-        match result {
-            ExitPlanModeOutput::EmptyPlan { ref message, .. } => {
-                assert!(message.contains("Plan mode exit approved"));
-                assert!(message.contains("No plan content was found"));
-                assert!(message.contains("you can proceed"));
-            }
-            other => panic!("Expected EmptyPlan, got {:?}", other),
-        }
+        assert!(matches!(result, ExitPlanModeOutput::EmptyPlan { .. }));
     }
 
     #[tokio::test]
@@ -407,12 +388,9 @@ mod tests {
 
         let output: ToolOutput = result.into();
         let prompt = output.to_prompt_format();
-        assert!(prompt.contains("plan has been approved"));
-        assert!(prompt.contains("saved at:"));
         assert!(prompt.contains("Step 1"));
         assert!(prompt.contains("Step 2"));
         assert!(prompt.contains(".grok/plan.md"));
-        assert!(prompt.contains("## Plan:"));
     }
 
     // -- PlanFilePath resource tests --

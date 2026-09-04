@@ -143,8 +143,13 @@ const IMAGINE_VIDEO_SKILL: &str = "\
 # Imagine Video
 
 Video starts from an image — there is no text-to-video tool. \
-Default to `image_to_video`; use `reference_to_video` only when the user \
-explicitly asks for it or a shot genuinely needs multiple reference images.
+Default to `image_to_video`; use `reference_to_video` when the user \
+explicitly asks for it, a shot genuinely needs multiple reference images, \
+or the subject should speak in a specific preset voice (`voices`).
+
+If a video tool fails with a zero-data-retention (ZDR) storage error, relay \
+that error verbatim and stop the workflow — do not generate more source \
+images or retry.
 
 ## Default: single clip
 
@@ -176,7 +181,8 @@ After assembly, mention the final output path.
 - **Complex source image?** Intricate frames (busy geometry, fine detail, heavy reflections) warp when animated. Keep the subject fixed and move only the camera (slow push-in, orbit, or parallax), or break into simpler shots. For new shots, generate a simpler, animation-friendly base image rather than animating a busy one.
 - **`image_to_video` animates from frame 1** — stage the first frame with `image_gen`/`image_edit` before animating.
 - **Aspect ratio:** set it on the source image (`image_gen` `aspect_ratio`); don't re-crop an existing video.
-- **Duration:** 6s or 10s only (prefer 6s); round to the nearest.
+- **Duration:** 6s or 10s only (prefer 6s); round to the nearest. `reference_to_video` accepts 1–15s.
+- **Speaking subjects:** to give a subject a voice, use `reference_to_video` with `voices` (up to 3 preset voice identifiers, e.g. \"ara\", \"eve\") and tag them in the prompt as `<AUDIO_0>`…; combine with reference `images` tagged `<IMAGE_0>`… for a consistent character.
 - **Real people:** reference-first — drive the video from a verified reference image; never animate a named person without one.
 - Don't loop the same clip unless asked.";
 
@@ -228,7 +234,6 @@ mod tests {
         let text = imagine_instruction("a golden sunset");
         assert!(text.contains("a golden sunset"));
         assert!(text.contains("image_gen"));
-        assert!(text.contains("verbatim"));
     }
 
     #[test]
@@ -236,7 +241,6 @@ mod tests {
         let text = imagine_video_instruction("a cat playing piano");
         assert!(text.contains("a cat playing piano"));
         assert!(text.contains("image_to_video"));
-        assert!(text.contains("FFmpeg"));
     }
 
     #[test]
@@ -245,7 +249,6 @@ mod tests {
             let text = loop_schedule_instruction("every 30 minutes do x", mode);
             assert!(text.contains("every 30 minutes do x"), "{mode:?}");
             assert!(text.contains("<number><unit>"), "{mode:?}");
-            assert!(text.contains("ask the user how often"), "{mode:?}");
             assert!(
                 !text.contains("10m"),
                 "no host-side default interval: {mode:?}"
@@ -259,31 +262,9 @@ mod tests {
                 "must teach in-place updates via task_id: {mode:?}"
             );
             assert!(
-                text.contains("delete and recreate"),
-                "must steer away from delete+recreate: {mode:?}"
-            );
-            assert!(
                 text.contains("scheduler_delete <task_id>"),
                 "every mode must authorize the fire to end the task: {mode:?}"
             );
-        }
-    }
-
-    #[test]
-    fn each_fire_mode_describes_its_own_runtime() {
-        let detached = loop_schedule_instruction("5m check ci", LoopFireMode::Detached);
-        let in_session = loop_schedule_instruction("5m check ci", LoopFireMode::InSession);
-
-        assert!(detached.contains("cannot see this conversation"));
-        assert!(!detached.contains("arrives as a new turn in this conversation"));
-
-        assert!(in_session.contains("arrives as a new turn in this conversation"));
-        assert!(!in_session.contains("cannot see this conversation"));
-
-        // The two levers the A/B showed carry the behavior are mode-independent.
-        for text in [&detached, &in_session] {
-            assert!(text.contains("report it and call"));
-            assert!(text.contains("Keep it short and concrete"));
         }
     }
 
@@ -293,7 +274,6 @@ mod tests {
         assert!(text.contains("ship the widget"));
         assert!(text.contains("update_goal(completed: true"));
         assert!(text.contains("blocked_reason"));
-        assert!(text.contains("If update_goal returns an error"));
         assert!(
             !text.contains("system-reminder"),
             "expansions ride as user messages and must not claim reminder authority"

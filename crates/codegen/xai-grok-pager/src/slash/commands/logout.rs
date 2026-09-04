@@ -3,21 +3,15 @@
 //! Not registered in `builtin_commands()`. Clearing credentials is done by
 //! editing `config.toml` / env keys, not browser logout.
 
-use crate::slash::command::{CommandExecCtx, CommandResult, SlashCommand};
+use crate::slash::command::{CommandExecCtx, CommandResult, SlashCommand, slash_meta};
 
 pub struct LogoutCommand;
 
 impl SlashCommand for LogoutCommand {
-    fn name(&self) -> &str {
-        "logout"
-    }
-
-    fn description(&self) -> &str {
-        "Chaos 无需退出登录；请修改 config.toml 中的 Provider 配置"
-    }
-
-    fn usage(&self) -> &str {
-        "/logout"
+    slash_meta! {
+        name: "logout",
+        description: "Chaos 无需退出登录；请修改 config.toml 中的 Provider 配置",
+        usage: "/logout",
     }
 
     fn run(&self, _ctx: &mut CommandExecCtx, _args: &str) -> CommandResult {

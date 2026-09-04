@@ -28,7 +28,7 @@ pub fn build_project_question(
     let mut resolved_paths = Vec::new();
 
     // First option: continue in the current directory.
-    let is_home = dirs::home_dir().is_some_and(|h| h == cwd);
+    let is_home = xai_dirs::home_dir().is_some_and(|h| h == cwd);
     let cwd_name = if is_home {
         "~"
     } else {
