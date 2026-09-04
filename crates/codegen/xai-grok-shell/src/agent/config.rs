@@ -7096,6 +7096,7 @@ reasoning_effort = "low"
         assert_eq!(sampling_config.api_key, Some("fallback-key".to_string()));
     }
     #[test]
+    #[ignore = "asserts upstream xAI defaults removed by Chaos fork; review 2026-10"]
     fn default_models_dual_endpoint_routing() {
         let endpoints = EndpointsConfig::default();
         for (model_id, entry) in default_model_entries(&endpoints) {
@@ -7122,6 +7123,19 @@ reasoning_effort = "low"
                 "{model_id}: ExternalApiKey must route to api.x.ai"
             );
         }
+    }
+    /// Chaos BYOK guard: the bundled catalog must stay empty. A non-empty
+    /// `default_models.json` (e.g. an upstream merge reintroducing grok
+    /// models into the picker) fails here and must be re-emptied before
+    /// release.
+    #[test]
+    fn bundled_default_models_catalog_is_empty() {
+        let entries = default_model_entries(&EndpointsConfig::default());
+        assert!(
+            entries.is_empty(),
+            "Chaos BYOK: bundled catalog must be empty, found: {:?}",
+            entries.keys().collect::<Vec<_>>()
+        );
     }
     #[test]
     fn env_keys_deser_string_or_array() {
@@ -7515,13 +7529,9 @@ reasoning_effort = "low"
     }
     #[test]
     fn has_own_credentials_guards_session_vs_external_key() {
-        let endpoints = EndpointsConfig::default();
-        for (model_id, entry) in default_model_entries(&endpoints) {
-            assert!(
-                !entry.has_own_credentials(),
-                "{model_id}: Default model must not claim own credentials"
-            );
-        }
+        // Bundled catalog is empty in Chaos BYOK (see
+        // `bundled_default_models_catalog_is_empty`); only config-supplied
+        // entries can claim own credentials.
         let config_model = test_model_entry(
             "my-model",
             "https://api.example.com/v1",

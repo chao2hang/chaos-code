@@ -30,7 +30,7 @@ pub fn resolve_zdr_access_enabled(
 ///
 /// Precedence: requirements (MDM > system > user) > managed
 /// (`managed_config.toml` > system managed) > user `config.toml` > default
-/// (true). Callable before an `AgentConfig` exists (startup prefetch runs
+/// (false). Callable before an `AgentConfig` exists (startup prefetch runs
 /// pre-agent), so it re-reads the config layers like
 /// `managed_config::is_fetch_enabled`.
 ///
@@ -90,15 +90,15 @@ fn remote_fetch_enabled_from_layers(layers: &crate::config::ConfigLayers) -> boo
     .into_iter()
     .flatten()
     .find_map(remote_fetch_value)
-    .unwrap_or(true)
+    .unwrap_or(false)
 }
 
 /// Err-arm fallback for [`resolve_remote_fetch_enabled`]: the independently
 /// loadable policy tiers in Ok-arm walk order — merged requirements
 /// (`load_merged_requirements` merges user, system, MDM with last-wins,
 /// matching the walk), then the managed tiers — so a root-owned or synced
-/// managed-only pin also survives a corrupt user layer. The user `config.toml`
-/// tier stays fail-open: it is a preference, not deployment policy. Mirrors
+/// managed-only pin also survives a corrupt user layer. With no policy tier
+/// present the knob resolves to the fork default (off). Mirrors
 /// the `auto_permission_mode_enabled_from_disk` soft-fail precedent.
 fn remote_fetch_enabled_from_policy_layers(
     merged_requirements: Option<&TomlValue>,
@@ -109,7 +109,7 @@ fn remote_fetch_enabled_from_policy_layers(
         .into_iter()
         .flatten()
         .find_map(remote_fetch_value)
-        .unwrap_or(true)
+        .unwrap_or(false)
 }
 
 #[cfg(test)]
@@ -134,8 +134,10 @@ mod tests {
     }
 
     #[test]
-    fn remote_fetch_defaults_to_true_when_absent() {
-        assert!(remote_fetch_enabled_from_layers(&empty_layers()));
+    fn remote_fetch_defaults_to_false_when_absent() {
+        // Chaos BYOK: no xAI models/settings fetches unless explicitly enabled
+        // (matches CHAOS.md and docs/user-guide).
+        assert!(!remote_fetch_enabled_from_layers(&empty_layers()));
     }
 
     #[test]
@@ -217,7 +219,7 @@ mod tests {
     /// The all-or-nothing layer load failing (corrupt user config.toml, IO
     /// error) must not disarm a policy pin — the Err arm still consults the
     /// merged requirements and both managed tiers, in Ok-arm walk order, and
-    /// fails open only with no policy at all.
+    /// resolves to the fork default (off) only with no policy at all.
     #[test]
     fn remote_fetch_layer_load_failure_still_honors_policy_pins() {
         let off = features_remote_fetch(false);
@@ -257,8 +259,8 @@ mod tests {
             Some(&on)
         ));
         assert!(
-            remote_fetch_enabled_from_policy_layers(None, None, None),
-            "genuinely absent policy fails open"
+            !remote_fetch_enabled_from_policy_layers(None, None, None),
+            "genuinely absent policy falls back to the fork default (off)"
         );
     }
 }

@@ -1,6 +1,6 @@
-# Fork 专属层清单（sync/upstream-full-20260807 使用）
+# Fork 专属层清单（上游同步使用）
 
-merge 前基线 = `a54bde02`；目标 = `upstream/main` `393430ee`。
+merge 前基线 = 本仓库 main（上次上游同步合并点）；目标 = `upstream/main`。
 冲突解决时：**本清单内的文件禁止无脑 theirs**；merge 后逐一核对 fork 改动未被静默覆盖。
 
 ## 1. 认证 / 凭证（去 OIDC，用户自带模型凭证）
@@ -52,7 +52,7 @@ merge 前基线 = `a54bde02`；目标 = `upstream/main` `393430ee`。
 ## 6. 版本 / 二进制 / 日志
 - `crates/codegen/xai-grok-pager-bin/**`（`[[bin]] name = "chaos"`）
 - `crates/codegen/xai-grok-version/Cargo.toml`、`xai-grok-pager/Cargo.toml`、
-  `xai-grok-pager-bin/Cargo.toml`、`xai-grok-shell/Cargo.toml`（lockstep 0.2.134）
+  `xai-grok-pager-bin/Cargo.toml`、`xai-grok-shell/Cargo.toml`（lockstep 0.3.1）
 - `CHANGELOG.md`（仓库根，fork 中文）
 - `crates/codegen/xai-grok-shell/CHANGELOG.md` + `changelogs/**`（fork 版本线）
 - `crates/codegen/xai-grok-shell-base/src/util/changelog.rs`（CDN base / 缓存路径）
@@ -68,3 +68,13 @@ merge 前基线 = `a54bde02`；目标 = `upstream/main` `393430ee`。
 
 ## 9. 文档
 - `crates/codegen/xai-grok-pager/docs/**`（中文；上游新增章节视情况补译）
+
+## 10. 内置模型目录（BYOK 空目录，2026-09 新增）
+- `crates/codegen/xai-grok-models/default_models.json` — 必须保持
+  `{"default": "chaos-default", "models": []}`；上游 merge 冲突一律取本侧空目录，
+  **禁止带回 grok 模型**（上游 tip 含 grok-4.6 等条目）
+- `crates/codegen/xai-grok-models/src/lib.rs`（空目录 + 中性兜底 slug 语义）
+- `crates/codegen/xai-grok-shell/src/util/config/resolve/features.rs`（`remote_fetch`
+  代码默认必须为 **false**，与 CHAOS.md / user-guide 文档一致；上游默认 true 不合入）
+- 守卫测试：`bundled_default_models_catalog_is_empty`（`agent/config.rs`）、
+  `remote_fetch_defaults_to_false_when_absent`（`features.rs`）——merge 后必跑
