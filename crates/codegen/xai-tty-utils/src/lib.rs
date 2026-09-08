@@ -57,7 +57,7 @@ fn process_not_running(pid: u32) -> bool {
             }
             return false;
         }
-        std::io::Error::last_os_error().kind() == std::io::ErrorKind::NotFound
+        std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
     }
     #[cfg(not(unix))]
     {
