@@ -39,6 +39,31 @@
 use std::collections::HashMap;
 use std::io;
 
+#[cfg(test)]
+fn process_not_running(pid: u32) -> bool {
+    #[cfg(unix)]
+    {
+        // kill(pid, 0) distinguishes a live process from a missing one;
+        // treat zombies as stopped for this lifecycle test.
+        let rc = unsafe { libc::kill(pid as libc::pid_t, 0) };
+        if rc == 0 {
+            #[cfg(target_os = "linux")]
+            {
+                if let Ok(state) = std::fs::read_to_string(format!("/proc/{pid}/stat")) {
+                    return state.split_whitespace().nth(2) == Some("Z");
+                }
+            }
+            return false;
+        }
+        std::io::Error::last_os_error().kind() == std::io::ErrorKind::NotFound
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = pid;
+        true
+    }
+}
+
 mod child_wait;
 pub use child_wait::{is_child_wait_identity_uncertain, spawn_child_reaper, wait_child_bounded};
 
