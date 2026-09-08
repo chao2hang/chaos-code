@@ -39,6 +39,12 @@
 use std::collections::HashMap;
 use std::io;
 
+mod child_wait;
+pub use child_wait::{is_child_wait_identity_uncertain, spawn_child_reaper, wait_child_bounded};
+
+mod kill_on_drop;
+pub use kill_on_drop::KillOnDrop;
+
 mod process_resources;
 pub use process_resources::{ProcessResources, sample_process_memory, sample_process_resources};
 
