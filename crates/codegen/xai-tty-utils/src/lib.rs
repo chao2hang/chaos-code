@@ -49,8 +49,10 @@ fn process_not_running(pid: u32) -> bool {
         if rc == 0 {
             #[cfg(target_os = "linux")]
             {
-                if let Ok(state) = std::fs::read_to_string(format!("/proc/{pid}/stat")) {
-                    return state.split_whitespace().nth(2) == Some("Z");
+                match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
+                    Ok(state) => return state.split_whitespace().nth(2) == Some("Z"),
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => return true,
+                    Err(_) => {}
                 }
             }
             return false;
