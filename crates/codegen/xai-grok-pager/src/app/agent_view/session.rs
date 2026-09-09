@@ -239,6 +239,7 @@ impl AgentView {
             permission_pattern_edit: None,
             privacy_banner: Default::default(),
             rewind_suppress_deadline: None,
+            minimal_cancel_hint_turn: None,
             last_turn_summary: None,
             last_turn_summary_gen: 0,
             scheduler_background_loops: None,

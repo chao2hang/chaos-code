@@ -27,7 +27,7 @@
 //!   → 3. Esc policy (try_handle_esc_policy) on Prompt or Scrollback only,
 //!       after overlays/dropdowns/selection returned Changed / stole Esc:
 //!       turn running → Changed (swallow; Esc does not cancel)
-//!       turn cancelling → CancelTurn (retry lost ack; Ctrl+C escalates to Quit)
+//!       turn cancelling → Changed (swallow; Ctrl+C is the explicit cancel/quit gesture)
 //!       idle + non-empty prompt, prompt pane only → ArmPending ClearPrompt (2× within 800ms, hint)
 //!       idle + empty + messages, either pane (Normal composer mode, no
 //!         needs-input overlay pending, no open history search) → ArmPending
@@ -38,7 +38,7 @@
 //!   → 4. return Unchanged → bubbles to app_view for global actions (quit)
 //! ```
 //!
-//! The mid-turn cancel is the only Esc-policy branch gated on `[ui].vim_mode`
+//! Mid-turn Esc handling is independent of `[ui].vim_mode`
 //! (scrollback nav); everything else, and all of it with respect to
 //! `[ui].simple_mode` (prompt editor), is mode-independent. Tab remains
 //! leave-prompt in both modes.
@@ -1509,9 +1509,7 @@ pub struct AgentView {
     /// agent and persist to `[ui].cancel_subagents_on_turn_cancel`; when unset,
     /// cancel falls back to that UI/config field, then the prompt panel.
     pub(crate) cancel_subagents_preference: Option<bool>,
-    /// What gesture triggered the pending turn-cancel (Ctrl+C / mouse; Esc
-    /// only via the cancel-retry path while TurnCancelling — a bare Esc no
-    /// longer starts a cancel).
+    /// What gesture triggered the pending turn-cancel (Ctrl+C / mouse / dashboard stop).
     /// Set by the key/mouse handler, consumed by `do_cancel_turn` / the
     /// cancel-retry path so `session/cancel` carries `_meta.cancelTrigger`.
     pub(crate) cancel_trigger_hint: Option<crate::app::actions::CancelTrigger>,
@@ -1566,6 +1564,8 @@ pub struct AgentView {
     /// Cleared on any non-`d` key press, after 500ms expiry, or once
     /// `try_handle_esc_policy` consumes the Esc. `pub(crate)` for policy tests.
     pub(crate) esc_pressed_at: Option<std::time::Instant>,
+    /// Minimal only: the `scrollback.turn_count()` at which the mid-turn Esc hint was last committed.
+    pub(crate) minimal_cancel_hint_turn: Option<usize>,
     /// First prompt to enqueue once the session finishes loading replay.
     /// Set by `/fork` when a directive is provided; drained in the
     /// `TaskResult::SessionLoaded` arm via `enqueue_prompt_front` so the

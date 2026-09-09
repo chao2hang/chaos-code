@@ -890,7 +890,7 @@ pub fn build_hints(
     vim_mode: bool,
     is_subagent_view: bool,
     is_turn_running: bool,
-    esc_would_cancel_turn: bool,
+    _esc_would_cancel_turn: bool,
     has_queued_follow_up: bool,
     selected_is_user_prompt: bool,
     selected_is_agent_message: bool,
@@ -1167,11 +1167,9 @@ pub fn build_hints(
         }
     };
     if is_turn_running && let Some(def) = registry.find(ActionId::CancelTurn) {
-        let mut hint = def.hint();
-        if esc_would_cancel_turn {
-            hint.keys = vec![crate::key!(Esc)];
-        }
-        hints.push(hint);
+        // Esc only explains the cancel binding while a turn is active; it never
+        // becomes a second cancel shortcut. Keep the registry's Ctrl+C key here.
+        hints.push(def.hint());
     }
     let has_composer_payload = !prompt.text().trim().is_empty() || is_editing_queued;
     if matches!(active_pane, ActivePane::Prompt)
@@ -1805,16 +1803,12 @@ mod tests {
             );
         }
     }
-    /// The running-turn cancel hint key tracks `esc_would_cancel_turn`, the input-routing predicate computed by the caller.
-    /// The key is Esc when a bare press would reach the policy's mid-turn cancel, the registry Ctrl+C binding otherwise.
-    /// (The predicate itself, its gate, panes, and higher-priority Esc consumers, is pinned by `esc_would_cancel_turn_tests` in `agent_view::input`.)
+    /// The running-turn cancel hint always names the registry Ctrl+C binding: Esc never cancels a turn.
     #[test]
-    fn running_turn_cancel_hint_key_tracks_esc_predicate() {
+    fn running_turn_cancel_hint_is_always_ctrl_c() {
         let prompt = PromptWidget::default();
         let registry = ActionRegistry::defaults();
-        for (esc_would_cancel_turn, expected) in
-            [(true, crate::key!(Esc)), (false, crate::key!('c', CONTROL))]
-        {
+        for esc_would_cancel_turn in [true, false] {
             let hints = build_hints(
                 ActivePane::Prompt,
                 prompt_focus_hint(),
@@ -1847,7 +1841,7 @@ mod tests {
                 .expect("running turn must surface the cancel hint");
             assert_eq!(
                 cancel.keys,
-                vec![expected],
+                vec![crate::key!('c', CONTROL)],
                 "cancel hint key for esc_would_cancel_turn={esc_would_cancel_turn}"
             );
         }

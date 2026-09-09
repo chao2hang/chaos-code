@@ -16,7 +16,7 @@ use tokio::{
 };
 
 use rmcp::{
-    ClientHandler, ServiceExt,
+    ClientHandler, ClientLifecycleMode, ClientServiceExt,
     model::{
         CallToolRequestParams, ClientCapabilities, ClientInfo, Implementation,
         PaginatedRequestParams,
@@ -2821,6 +2821,12 @@ impl Transport<RoleClient> for SafeTokioChildProcess {
 }
 
 /// Transport configuration before connection is established.
+/// Outcome of the `server/discover` probe phase.
+enum ProbeVerdict {
+    Modern(Box<rmcp::service::RunningService<RoleClient, GrokClientHandler>>),
+    Legacy { probe_error: String },
+}
+
 enum PendingTransport {
     Stdio(Box<SafeTokioChildProcess>),
     Http(HttpConfig),
@@ -3653,11 +3659,11 @@ impl McpClient {
     /// On rare contention the slot stays `Initializing`; the wait-timeout fallback below then surfaces a clear error rather than blocking forever.
     pub async fn ensure_initialized(&self) -> Result<McpService, McpError> {
         // Bound how long a parked caller waits on `init_done` before surfacing an error
-        // `try_handshake` is itself bounded by `startup_timeout_sec`
+        // HTTP/ACP may spend a bounded probe before the legacy handshake.
         // Anything beyond that plus a 1 s margin means the holder was dropped without restoring the transport (cancellation under heavy contention)
         // Wedging silently would recreate the exact "stuck client" failure mode
         let inflight_wait =
-            std::time::Duration::from_secs(self.startup_timeout_sec.saturating_add(1));
+            std::time::Duration::from_secs(self.handshake_budget_secs().saturating_add(1));
 
         // Drive the loop body until we either return directly or break out with an owned `PendingTransport`
         // We deliberately use a labelled `loop` with a `break <expr>`
@@ -3844,115 +3850,207 @@ impl McpClient {
         &self,
         pending: PendingTransport,
     ) -> Result<rmcp::service::RunningService<RoleClient, GrokClientHandler>, McpError> {
-        let timeout = std::time::Duration::from_secs(self.startup_timeout_sec);
-        let name = &self.server_name;
-
         match pending {
-            PendingTransport::Stdio(process) => {
-                let handler = self.make_client_handler();
-                tokio::time::timeout(timeout, handler.serve(*process))
-                    .await
-                    .map_err(|_| McpError::timeout(name, timeout))?
-                    .map_err(|e| McpError::HandshakeFailed {
-                        server: name.to_string(),
-                        source: Box::new(e),
-                    })
-            }
+            // Do not probe stdio: a late response on the same byte stream
+            // would corrupt the fallback initialize handshake.
+            PendingTransport::Stdio(process) => self.serve_legacy(*process).await,
             PendingTransport::Http(config) => {
-                let transport =
-                    Self::build_http_transport(&config, name, self.warn_budget.clone())?;
-                let handler = self.make_client_handler();
-                tokio::time::timeout(timeout, handler.serve(transport))
-                    .await
-                    .map_err(|_| McpError::timeout(name, timeout))?
-                    .map_err(|e| McpError::HandshakeFailed {
-                        server: name.to_string(),
-                        source: Box::new(e),
-                    })
+                let http_client =
+                    Self::build_http_client(&config, &self.server_name, self.warn_budget.clone())?;
+                self.probe_then_legacy(|| {
+                    StreamableHttpClientTransport::with_client(
+                        http_client.clone(),
+                        StreamableHttpClientTransportConfig::with_uri(config.url.as_str()),
+                    )
+                })
+                .await
             }
             PendingTransport::HttpAuth {
                 config,
                 auth_manager,
             } => {
-                // Local app endpoints skip OAuth outright (`start_mcp_server`
-                // routes them to `NoOauthSupport`), so this transport must
-                // never see one — its client is built without the local
-                // no-proxy/no-redirect hardening.
-                debug_assert!(
-                    !config.local_agent_endpoint,
-                    "a local agent endpoint must not reach the OAuth transport"
-                );
-                // Authorization is injected per-request by `AuthClient`, never
-                // carried in `default_headers`.
-                let mut headers = parse_config_headers(
-                    name,
-                    "oauth-transport",
-                    config
-                        .headers
-                        .iter()
-                        .filter(|(key, _)| !key.eq_ignore_ascii_case("Authorization"))
-                        .map(|(key, value)| (key.as_str(), value.as_str())),
-                );
-                apply_user_agent_policy(&mut headers, name, &config.url);
-                // reqwest 0.13; the policy chokepoint is typed for 0.12 and cannot wrap this builder.
-                #[allow(clippy::disallowed_methods)]
-                let http_client = with_extra_root_certificates(
-                    reqwest::Client::builder()
-                        .default_headers(headers)
-                        .connect_timeout(HTTP_CONNECT_TIMEOUT),
-                )
-                .build()
-                .map_err(|e| McpError::ClientError(format!("Failed to build HTTP client: {e}")))?;
-                // `AuthClient::new` wants an owned manager, but ours is shared (`Arc`) with the OAuth flow
-                // The struct is non_exhaustive, so build with a throwaway manager and swap in the shared one
-                let placeholder_manager =
-                    rmcp::transport::auth::AuthorizationManager::new(config.url.as_str())
-                        .await
-                        .map_err(|e| {
-                            McpError::ClientError(format!("Failed to build OAuth client: {e}"))
-                        })?;
-                let mut auth_client =
-                    rmcp::transport::auth::AuthClient::new(http_client, placeholder_manager);
-                auth_client.auth_manager = auth_manager.clone();
-                let mcp_http_client = crate::mcp_http_client::McpHttpClient::new(
-                    auth_client,
-                    name.as_str(),
-                    self.warn_budget.clone(),
-                );
-                let transport_config =
-                    StreamableHttpClientTransportConfig::with_uri(config.url.as_str());
-                let transport =
-                    StreamableHttpClientTransport::with_client(mcp_http_client, transport_config);
-                let handler = self.make_client_handler();
-                tokio::time::timeout(timeout, handler.serve(transport))
-                    .await
-                    .map_err(|_| McpError::timeout(name, timeout))?
-                    .map_err(|e| McpError::HandshakeFailed {
-                        server: name.to_string(),
-                        source: Box::new(e),
-                    })
+                let http_client = self.build_oauth_http_client(&config, &auth_manager).await?;
+                self.probe_then_legacy(|| {
+                    StreamableHttpClientTransport::with_client(
+                        http_client.clone(),
+                        StreamableHttpClientTransportConfig::with_uri(config.url.as_str()),
+                    )
+                })
+                .await
             }
             PendingTransport::Acp { server_id, invoker } => {
-                // Per-reverse-call backstop on `x.ai/mcp/sdk_call`: the larger of the startup and tool timeouts
-                // It never undercuts the real outer bound: the handshake `initialize` is bounded by the serve `timeout` below
-                // Tool calls are bounded by `tool_timeout_for` in `try_call_tool`
-                // The bridge forwards raw JSON-RPC without the tool name, so per-TOOL overrides aren't applied here in v1
-                // The HTTP path still honors them
-                let invoke_timeout = std::time::Duration::from_secs(
-                    self.startup_timeout_sec.max(self.tool_timeout_sec),
-                );
-                let transport =
-                    crate::acp_transport::acp_bridge_transport(server_id, invoker, invoke_timeout);
-                let handler = self.make_client_handler();
-                tokio::time::timeout(timeout, handler.serve(transport))
+                self.probe_then_legacy(|| self.build_acp_transport(server_id.clone(), &invoker))
                     .await
-                    .map_err(|_| McpError::timeout(name, timeout))?
-                    .map_err(|e| McpError::HandshakeFailed {
-                        server: name.to_string(),
-                        source: Box::new(e),
-                    })
             }
         }
+    }
+
+    async fn probe_then_legacy<T, E, A>(
+        &self,
+        mut make_transport: impl FnMut() -> T,
+    ) -> Result<rmcp::service::RunningService<RoleClient, GrokClientHandler>, McpError>
+    where
+        T: rmcp::transport::IntoTransport<RoleClient, E, A>,
+        E: std::error::Error + Send + Sync + 'static,
+    {
+        let mut probe_failure = None;
+        if self.probe_fits_budget() {
+            match self.probe_modern(make_transport()).await? {
+                ProbeVerdict::Modern(service) => return Ok(*service),
+                ProbeVerdict::Legacy { probe_error } => probe_failure = Some(probe_error),
+            }
+        }
+        let result = self.serve_legacy(make_transport()).await;
+        if let (Err(legacy_error), Some(probe_error)) = (&result, &probe_failure) {
+            tracing::warn!(
+                server = %self.server_name,
+                %probe_error,
+                %legacy_error,
+                "both MCP handshake phases failed (surfacing the legacy error)"
+            );
+        }
+        result
+    }
+
+    pub(crate) const DISCOVER_PROBE_TIMEOUT_SECS: u64 = 10;
+
+    fn probe_fits_budget(&self) -> bool {
+        self.startup_timeout_sec > Self::DISCOVER_PROBE_TIMEOUT_SECS
+    }
+
+    fn handshake_budget_secs(&self) -> u64 {
+        self.startup_timeout_sec.saturating_add(if self.probe_fits_budget() {
+            Self::DISCOVER_PROBE_TIMEOUT_SECS
+        } else {
+            0
+        })
+    }
+
+    pub fn max_startup_within_deadline(deadline_secs: u64) -> u64 {
+        if deadline_secs > Self::DISCOVER_PROBE_TIMEOUT_SECS.saturating_mul(2) {
+            deadline_secs - Self::DISCOVER_PROBE_TIMEOUT_SECS
+        } else {
+            deadline_secs.min(Self::DISCOVER_PROBE_TIMEOUT_SECS)
+        }
+    }
+
+    async fn probe_modern<T, E, A>(&self, transport: T) -> Result<ProbeVerdict, McpError>
+    where
+        T: rmcp::transport::IntoTransport<RoleClient, E, A>,
+        E: std::error::Error + Send + Sync + 'static,
+    {
+        let timeout = std::time::Duration::from_secs(Self::DISCOVER_PROBE_TIMEOUT_SECS);
+        let handler = self.make_client_handler();
+        let lifecycle = ClientLifecycleMode::Discover {
+            preferred_versions: vec![rmcp::model::ProtocolVersion::V_2026_07_28],
+        };
+        match tokio::time::timeout(
+            timeout,
+            handler.serve_with_lifecycle(transport, lifecycle),
+        )
+        .await
+        {
+            Ok(Ok(service)) => Ok(ProbeVerdict::Modern(Box::new(service))),
+            Ok(Err(probe_error)) => {
+                if init_error_is_connect_phase(&probe_error)
+                    || is_connect_failure_message(&probe_error.to_string())
+                {
+                    return Err(McpError::HandshakeFailed {
+                        server: self.server_name.clone(),
+                        source: Box::new(probe_error),
+                    });
+                }
+                tracing::debug!(
+                    server = %self.server_name,
+                    %probe_error,
+                    "server/discover probe failed; falling back to legacy initialize"
+                );
+                Ok(ProbeVerdict::Legacy {
+                    probe_error: probe_error.to_string(),
+                })
+            }
+            Err(_) => Ok(ProbeVerdict::Legacy {
+                probe_error: format!(
+                    "server/discover probe timed out after {}s",
+                    Self::DISCOVER_PROBE_TIMEOUT_SECS
+                ),
+            }),
+        }
+    }
+
+    async fn serve_legacy<T, E, A>(
+        &self,
+        transport: T,
+    ) -> Result<rmcp::service::RunningService<RoleClient, GrokClientHandler>, McpError>
+    where
+        T: rmcp::transport::IntoTransport<RoleClient, E, A>,
+        E: std::error::Error + Send + Sync + 'static,
+    {
+        let timeout = std::time::Duration::from_secs(self.startup_timeout_sec);
+        let handler = self.make_client_handler();
+        tokio::time::timeout(
+            timeout,
+            handler.serve_with_lifecycle(transport, ClientLifecycleMode::Initialize),
+        )
+        .await
+        .map_err(|_| McpError::timeout(&self.server_name, timeout))?
+        .map_err(|e| McpError::HandshakeFailed {
+            server: self.server_name.clone(),
+            source: Box::new(e),
+        })
+    }
+
+    fn build_acp_transport(
+        &self,
+        server_id: String,
+        invoker: &Arc<dyn crate::acp_transport::AcpReverseInvoker>,
+    ) -> crate::acp_transport::AcpBridgeTransport {
+        let invoke_timeout =
+            std::time::Duration::from_secs(self.startup_timeout_sec.max(self.tool_timeout_sec));
+        crate::acp_transport::acp_bridge_transport(server_id, Arc::clone(invoker), invoke_timeout)
+    }
+
+    async fn build_oauth_http_client(
+        &self,
+        config: &HttpConfig,
+        auth_manager: &Arc<tokio::sync::Mutex<rmcp::transport::auth::AuthorizationManager>>,
+    ) -> Result<
+        crate::mcp_http_client::McpHttpClient<
+            rmcp::transport::auth::AuthClient<reqwest::Client>,
+        >,
+        McpError,
+    > {
+        debug_assert!(!config.local_agent_endpoint);
+        let mut headers = parse_config_headers(
+            &self.server_name,
+            "oauth-transport",
+            config
+                .headers
+                .iter()
+                .filter(|(key, _)| !key.eq_ignore_ascii_case("Authorization"))
+                .map(|(key, value)| (key.as_str(), value.as_str())),
+        );
+        apply_user_agent_policy(&mut headers, &self.server_name, &config.url);
+        #[allow(clippy::disallowed_methods)]
+        let http_client = with_extra_root_certificates(
+            reqwest::Client::builder()
+                .default_headers(headers)
+                .connect_timeout(HTTP_CONNECT_TIMEOUT),
+        )
+        .build()
+        .map_err(|e| McpError::ClientError(format!("Failed to build HTTP client: {e}")))?;
+        let placeholder_manager =
+            rmcp::transport::auth::AuthorizationManager::new(config.url.as_str())
+                .await
+                .map_err(|e| McpError::ClientError(format!("Failed to build OAuth client: {e}")))?;
+        let mut auth_client =
+            rmcp::transport::auth::AuthClient::new(http_client, placeholder_manager);
+        auth_client.auth_manager = auth_manager.clone();
+        Ok(crate::mcp_http_client::McpHttpClient::new(
+            auth_client,
+            self.server_name.as_str(),
+            self.warn_budget.clone(),
+        ))
     }
 
     fn make_client_info(server_name: &str, advertise_elicitation: bool) -> ClientInfo {
@@ -3984,11 +4082,9 @@ impl McpClient {
                 xai_grok_version::VERSION.to_string(),
             ),
         )
-        // This pin currently equals rmcp 3.2 LATEST
-        // The explicit setter must remain so a future rmcp bump cannot silently move the wire
-        // 2026-07-28 brings SEP-2322 multi round-trip requests (`input_required` results); older
-        // servers negotiate down and keep the server-initiated `elicitation/create` flow
-        .with_protocol_version(rmcp::model::ProtocolVersion::V_2026_07_28)
+        // 2026-07-28 removes the initialize handshake. It is negotiated only
+        // through server/discover; legacy initialize must name 2025-11-25.
+        .with_protocol_version(rmcp::model::ProtocolVersion::V_2025_11_25)
     }
 
     /// Build the [`GrokClientHandler`] that drives `client.serve(...)`.
@@ -4095,14 +4191,11 @@ impl McpClient {
         true
     }
 
-    fn build_http_transport(
+    fn build_http_client(
         config: &HttpConfig,
         server_name: &str,
         warn_budget: crate::mcp_http_client::WarnBudget,
-    ) -> Result<
-        StreamableHttpClientTransport<crate::mcp_http_client::McpHttpClient<reqwest::Client>>,
-        McpError,
-    > {
+    ) -> Result<crate::mcp_http_client::McpHttpClient<reqwest::Client>, McpError> {
         let mut headers = parse_config_headers(
             server_name,
             "transport",
@@ -4131,12 +4224,10 @@ impl McpClient {
         let client = builder
             .build()
             .map_err(|e| McpError::ClientError(format!("Failed to build HTTP client: {e}")))?;
-        let mcp_http_client =
-            crate::mcp_http_client::McpHttpClient::new(client, server_name, warn_budget);
-        let transport_config = StreamableHttpClientTransportConfig::with_uri(config.url.as_str());
-        Ok(StreamableHttpClientTransport::with_client(
-            mcp_http_client,
-            transport_config,
+        Ok(crate::mcp_http_client::McpHttpClient::new(
+            client,
+            server_name,
+            warn_budget,
         ))
     }
 

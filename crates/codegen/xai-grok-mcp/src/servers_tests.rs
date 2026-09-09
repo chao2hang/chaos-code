@@ -1,4 +1,5 @@
 use super::*;
+use rmcp::ServiceExt;
 use std::path::PathBuf;
 
 #[tokio::test]
@@ -1633,6 +1634,18 @@ async fn recover_and_retry_surfaces_original_error_when_recover_fails() {
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+#[derive(Clone, Copy, Default)]
+enum DiscoverBehavior {
+    #[default]
+    Legacy,
+    Modern,
+}
+
+#[derive(Clone, Copy, Default)]
+struct FakeMcpOptions {
+    discover: DiscoverBehavior,
+}
+
 #[derive(Clone, Copy)]
 enum CallToolBehavior {
     ErrorThenOk {
@@ -1664,6 +1677,7 @@ enum CallToolBehavior {
 #[derive(Clone)]
 struct FakeMcpHandles {
     inits: Arc<AtomicUsize>,
+    discovers: Arc<AtomicUsize>,
     calls: Arc<AtomicUsize>,
     init_version: Arc<parking_lot::Mutex<Option<String>>>,
     init_user_agents: Arc<parking_lot::Mutex<Vec<String>>>,
@@ -1687,6 +1701,7 @@ fn header_values(
 #[derive(Clone)]
 struct FakeMcpState {
     behavior: CallToolBehavior,
+    options: FakeMcpOptions,
     handles: FakeMcpHandles,
 }
 
@@ -1732,6 +1747,29 @@ async fn fake_handle_post(
                 },
             });
             ([("mcp-session-id", "fake-session")], axum::Json(result)).into_response()
+        }
+        Some("server/discover") => {
+            state.handles.discovers.fetch_add(1, Ordering::Relaxed);
+            match state.options.discover {
+                DiscoverBehavior::Modern => axum::Json(serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": id.clone(),
+                    "result": {
+                        "resultType": "complete",
+                        "supportedVersions": ["2026-07-28"],
+                        "capabilities": {"tools": {}},
+                        "ttlMs": 0,
+                        "cacheScope": "private",
+                        "_meta": {
+                            "io.modelcontextprotocol/serverInfo": {"name": "fake", "version": "0.0.0"}
+                        }
+                    }
+                }))
+                .into_response(),
+                DiscoverBehavior::Legacy => {
+                    axum::Json(err(-32601, "Method not found".to_string())).into_response()
+                }
+            }
         }
         Some("tools/list") => axum::Json(serde_json::json!({
             "jsonrpc": "2.0",
@@ -1879,8 +1917,16 @@ async fn spawn_test_http_server(app: axum::Router) -> String {
 }
 
 async fn spawn_fake_mcp(behavior: CallToolBehavior) -> (String, FakeMcpHandles) {
+    spawn_fake_mcp_with(behavior, FakeMcpOptions::default()).await
+}
+
+async fn spawn_fake_mcp_with(
+    behavior: CallToolBehavior,
+    options: FakeMcpOptions,
+) -> (String, FakeMcpHandles) {
     let handles = FakeMcpHandles {
         inits: Arc::new(AtomicUsize::new(0)),
+        discovers: Arc::new(AtomicUsize::new(0)),
         calls: Arc::new(AtomicUsize::new(0)),
         init_version: Arc::new(parking_lot::Mutex::new(None)),
         init_user_agents: Arc::new(parking_lot::Mutex::new(Vec::new())),
@@ -1894,9 +1940,42 @@ async fn spawn_fake_mcp(behavior: CallToolBehavior) -> (String, FakeMcpHandles) 
         )
         .with_state(FakeMcpState {
             behavior,
+            options,
             handles: handles.clone(),
         });
     (spawn_test_http_server(app).await, handles)
+}
+
+async fn spawn_fake_mcp_modern(behavior: CallToolBehavior) -> (String, FakeMcpHandles) {
+    spawn_fake_mcp_with(
+        behavior,
+        FakeMcpOptions {
+            discover: DiscoverBehavior::Modern,
+        },
+    )
+    .await
+}
+
+fn fake_http_client_with_startup(
+    url: &str,
+    startup_timeout_sec: u64,
+    tool_timeout_sec: u64,
+) -> Arc<McpClient> {
+    let overrides = McpClientTimeoutOverrides {
+        startup_timeout_sec: Some(startup_timeout_sec),
+        tool_timeout_sec: Some(tool_timeout_sec),
+        ..Default::default()
+    };
+    Arc::new(McpClient::new_http(
+        "fake".to_string(),
+        HttpConfig {
+            url: url.to_string(),
+            headers: vec![],
+            local_agent_endpoint: false,
+        },
+        Some(&overrides),
+        None,
+    ))
 }
 
 fn fake_http_client(url: &str, tool_timeout_sec: u64) -> Arc<McpClient> {
@@ -1949,6 +2028,20 @@ async fn http_transport_sends_default_user_agent_on_initialize() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn modern_discover_handshake_skips_initialize() {
+    let (url, handles) =
+        spawn_fake_mcp_modern(CallToolBehavior::HangThenOk { hang_ms: 0 }).await;
+    let client = fake_http_client_with_startup(
+        &url,
+        McpClient::DISCOVER_PROBE_TIMEOUT_SECS + 1,
+        5,
+    );
+    client.ensure_initialized().await.expect("modern handshake");
+    assert_eq!(handles.discovers.load(Ordering::Relaxed), 1);
+    assert_eq!(handles.inits.load(Ordering::Relaxed), 0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn try_call_tool_http_mcperror_recovers_then_retry_succeeds() {
     let (url, handles) = spawn_fake_mcp(CallToolBehavior::ErrorThenOk { code: -32603 }).await;
     let client = fake_http_client(&url, 5);
@@ -1982,8 +2075,8 @@ async fn try_call_tool_http_mcperror_recovers_then_retry_succeeds() {
     );
     assert_eq!(
         handles.init_version.lock().as_deref(),
-        Some("2026-07-28"),
-        "initialize must offer protocolVersion 2026-07-28"
+        Some("2025-11-25"),
+        "legacy initialize must offer the newest initialize-era protocolVersion"
     );
 
     let jsonl = std::fs::read_to_string(tmp.path().join("events.jsonl")).unwrap();
@@ -2120,8 +2213,8 @@ async fn try_call_tool_mrtr_form_elicitation_round_trip() {
     // session-less `discover` handshake).
     assert_eq!(
         handles.init_version.lock().as_deref(),
-        Some("2026-07-28"),
-        "handshake must offer the MRTR-capable protocol version"
+        Some("2025-11-25"),
+        "legacy initialize must offer the newest initialize-era protocol version"
     );
     let init_caps = handles
         .init_capabilities
@@ -3248,8 +3341,28 @@ async fn is_healthy_pending_does_not_block_on_handshake() {
 fn make_client_info_pins_protocol_version() {
     assert_eq!(
         McpClient::make_client_info("test-srv", /* advertise_elicitation */ true).protocol_version,
-        rmcp::model::ProtocolVersion::V_2026_07_28
+        rmcp::model::ProtocolVersion::V_2025_11_25
     );
+}
+
+#[test]
+fn probe_budget_keeps_short_startups_probe_free() {
+    let short = fake_http_client_with_startup("http://127.0.0.1:1/mcp", 5, 5);
+    assert!(!short.probe_fits_budget());
+    let probing = fake_http_client_with_startup(
+        "http://127.0.0.1:1/mcp",
+        McpClient::DISCOVER_PROBE_TIMEOUT_SECS + 1,
+        5,
+    );
+    assert!(probing.probe_fits_budget());
+    assert_eq!(probing.handshake_budget_secs(), 21);
+}
+
+#[test]
+fn max_startup_within_deadline_accounts_for_probe() {
+    assert_eq!(McpClient::max_startup_within_deadline(20), 10);
+    assert_eq!(McpClient::max_startup_within_deadline(21), 11);
+    assert_eq!(McpClient::max_startup_within_deadline(30), 20);
 }
 
 #[test]

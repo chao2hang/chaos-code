@@ -1110,7 +1110,7 @@ impl PlanModeKind {
 /// The shell's deny-list treats every gesture value as a stop, so new variants need no shell change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CancelTrigger {
-    /// Wire value `"esc"` (bare Esc mid-turn cancel in minimal / non-vim mode, plus the Esc cancel-retry while TurnCancelling).
+    /// Wire value `"esc"` retained for compatibility with historical cancel telemetry.
     Esc,
     /// `Ctrl+C` pressed (the default cancel keybinding).
     CtrlC,
