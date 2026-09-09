@@ -79,9 +79,8 @@ async fn handle_set(agent: &MvpAgent, args: &acp::ExtRequest) -> ExtResult {
     }
 
     // Update local auth state to reflect the change.
-    // Use save_without_enrichment to avoid a race: update() spawns a
-    // background GET /user enrichment that may read stale ACL state
-    // and overwrite the opt-out flag back to its previous value.
+    // Use save_without_enrichment to avoid a race
+    // update() spawns a background GET /user enrichment that may read stale ACL state and overwrite the opt-out flag back to its previous value
     let mut updated = auth.clone();
     updated.coding_data_retention_opt_out = params.coding_data_retention_opt_out;
     agent

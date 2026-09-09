@@ -23,14 +23,14 @@ async fn shift_tab_on_welcome_starts_session_in_plan_mode() {
         .wait_for_text(WELCOME_SCREEN_SENTINEL, WELCOME_TIMEOUT)
         .expect("welcome text");
 
-    // Shift+Tab → BackTab (CSI Z).
+    // Shift+Tab arrives as BackTab (CSI Z)
     harness.inject_keys(b"\x1b[Z").expect("inject BackTab");
 
     harness
         .wait_for_text("已切换到模式：计划", Duration::from_secs(10))
         .expect("plan mode banner after Shift+Tab on welcome screen");
 
-    // Second press cycles Plan → Auto (gate defaults ON).
+    // Second press cycles Plan to Auto (gate defaults ON)
     harness.inject_keys(b"\x1b[Z").expect("inject BackTab");
     harness
         .wait_for_text("已切换到模式：自动", Duration::from_secs(10))

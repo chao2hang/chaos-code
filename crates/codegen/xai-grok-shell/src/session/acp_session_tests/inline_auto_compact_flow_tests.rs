@@ -36,12 +36,15 @@ async fn create_test_actor(
     let tool_context = ToolContext::new(cwd.clone(), None, None, fs, terminal, hunk_tracker_handle);
     let state = TokioMutex::new(State {
         running_task: None,
+        finalization_gate: Default::default(),
+        message_delivery: Default::default(),
         pending_inputs: VecDeque::new(),
-        combine_edit_holds: std::collections::HashSet::new(),
+        edit_holds: HashMap::new(),
         pending_notifications: Vec::new(),
         notifications_suppressed: false,
         rewindable: false,
         front_message_committed: false,
+        hook_block_hold: Default::default(),
         nudges_used_this_session: 0,
     });
     let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -70,6 +73,13 @@ async fn create_test_actor(
     );
     chat_state_handle.record_token_usage(total_tokens);
     SessionActor {
+        repo_status_prefetch: crate::session::repo_status_prefix::RepoStatusPrefetchState::default(
+        ),
+        transient_retry_enabled: true,
+        transient_retries_prompt_total: std::cell::Cell::new(0),
+        transient_episode_start: std::cell::Cell::new(None),
+        status_wake: Default::default(),
+        active_work: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         session_info: SessionInfo {
             id: acp::SessionId::new("test-auto-compact"),
             cwd: cwd.as_str().to_string(),
@@ -93,7 +103,7 @@ async fn create_test_actor(
         mcp_state: Arc::new(TokioMutex::new(McpState::new(vec![]))),
         mcp_strategy: std::cell::Cell::new(McpInitStrategy::Blocking),
         delivery_tools: std::cell::RefCell::new(Vec::new()),
-        attach_non_interactive: std::cell::Cell::new(false),
+        attach_non_interactive: std::rc::Rc::new(std::cell::Cell::new(false)),
         chat_state_handle,
         unattributed_background_usage: std::sync::atomic::AtomicBool::new(false),
         current_prompt_id: std::sync::Arc::new(std::sync::Mutex::new(None)),
@@ -146,6 +156,7 @@ async fn create_test_actor(
             injection_count: std::sync::atomic::AtomicU64::new(0),
             compaction_recovery_count: std::sync::atomic::AtomicU64::new(0),
             chunks_added: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            init_reindex_handle: std::cell::RefCell::new(None),
             dream_config: Default::default(),
             dream_count: std::sync::atomic::AtomicU64::new(0),
             dream_success_count: std::sync::atomic::AtomicU64::new(0),
@@ -154,6 +165,7 @@ async fn create_test_actor(
         session_start: std::time::Instant::now(),
         inference_idle_timeout: Duration::from_secs(300),
         max_retries: 3,
+        rate_limit_waits: crate::session::acp_session::RateLimitWaitConfig::default(),
         max_turns: None,
         pending_interjections: InterjectionBuffer::new(),
         pending_skill_reminders: Mutex::new(Vec::new()),
@@ -176,6 +188,7 @@ async fn create_test_actor(
         agent: std::cell::RefCell::new(test_agent_default().await),
         last_reported_branch: std::sync::Arc::new(parking_lot::Mutex::new(None)),
         git_head_enabled: false,
+        status_line_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         models_manager: Default::default(),
         display_cwd: std::sync::OnceLock::new(),
         active_agent_type: parking_lot::Mutex::new(None),
@@ -206,6 +219,7 @@ async fn create_test_actor(
         goal_classifier_enabled: false,
         goal_planner_enabled: false,
         goal_summary_enabled: false,
+        length_salvage_remote_budget: None,
         goal_verifier_skeptic_count: 1,
         goal_role_models: Default::default(),
         goal_use_current_model_only: false,
@@ -218,13 +232,14 @@ async fn create_test_actor(
         managed_mcp_handle: Default::default(),
         initial_client_mcp_servers: vec![],
         tool_metadata_snapshot: Arc::new(std::sync::Mutex::new(Default::default())),
-        mcp_announced_servers: Mutex::new(HashMap::new()),
+        mcp_announcements: Default::default(),
         mcp_reminder_mode: McpReminderMode::Delta,
         mcp_reminder_dirty: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         mcp_connecting_reminder_injected: std::cell::Cell::new(false),
         mcp_handshakes_done: Arc::new(tokio::sync::Notify::new()),
         user_input_generation: std::sync::atomic::AtomicU64::new(0),
         laziness_debug_log: None,
+        last_live_orphan_reconcile: std::cell::Cell::new(None),
         deferred_prefix: TaskSlot::new(),
         extension_registry: xai_agent_lifecycle::LocalExtensionRegistry::default(),
         last_announced_local_date: std::cell::Cell::new(chrono::Local::now().date_naive()),
@@ -232,6 +247,9 @@ async fn create_test_actor(
         last_search_prompt_index: std::sync::atomic::AtomicI64::new(-1),
         last_api_request_at: std::sync::atomic::AtomicI64::new(0),
         hook_registry: std::cell::RefCell::new(None),
+        turn_report: Default::default(),
+        turn_abort: Default::default(),
+        turn_end_tx: Default::default(),
         client_hooks: Default::default(),
         hook_resolved_workspace_root: String::new(),
         vcs_kind: xai_grok_workspace::session::git::VcsKind::Git,
@@ -246,11 +264,18 @@ async fn create_test_actor(
         recap_epoch: std::cell::Cell::new(0),
         turn_summary_task: std::cell::RefCell::new(None),
         turn_summary_generation: std::cell::Cell::new(0),
+        title_refresh_task: std::cell::RefCell::new(None),
+        title_refresh_generation: std::cell::Cell::new(0),
+        next_title_refresh_idx: std::cell::Cell::new(0),
         turn_summary_enabled: false,
+        title_refresh_enabled: false,
         session_turn_active: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         streaming_turn_capture: parking_lot::Mutex::new(StreamingTurnCapture::default()),
-        turn_stream_drained: parking_lot::Mutex::new(None),
+        turn_stream_drained: parking_lot::Mutex::new(std::collections::HashMap::new()),
+        pending_image_strip: parking_lot::Mutex::new(std::collections::HashMap::new()),
+        image_strip_rewrite_barrier: ImageStripRewriteBarrier::new(),
         sampler_handle: xai_grok_sampler::SamplerHandle::noop(),
+        sampling_gate: None,
         image_description_model: crate::test_support::TEST_MODEL.to_owned(),
         image_describe_cache: Arc::new(crate::session::image_describe::ImageDescribeCache::new()),
         subagent_token_records: parking_lot::Mutex::new(HashMap::new()),
@@ -258,7 +283,6 @@ async fn create_test_actor(
         trace_config_template: std::cell::RefCell::new(None),
     }
 }
-/// Test that should_auto_compact returns correct trigger info.
 #[tokio::test(flavor = "current_thread")]
 async fn test_should_auto_compact_triggers_at_threshold() {
     let local = tokio::task::LocalSet::new();
@@ -278,7 +302,6 @@ async fn test_should_auto_compact_triggers_at_threshold() {
         })
         .await;
 }
-/// Test that should_auto_compact does NOT trigger below threshold.
 #[tokio::test(flavor = "current_thread")]
 async fn test_should_auto_compact_below_threshold() {
     let local = tokio::task::LocalSet::new();
@@ -294,7 +317,6 @@ async fn test_should_auto_compact_below_threshold() {
         })
         .await;
 }
-/// Test check_auto_compact_needed uses state values.
 #[tokio::test(flavor = "current_thread")]
 async fn test_check_auto_compact_needed_uses_state() {
     let local = tokio::task::LocalSet::new();
@@ -311,10 +333,8 @@ async fn test_check_auto_compact_needed_uses_state() {
         })
         .await;
 }
-/// Test that overriding context_window on the sampling config changes
-/// auto-compact behavior. This validates the A/B fork fix: forked sessions
-/// must use the new model's context window, not the source session's.
-/// Without this, auto-compact fires at the wrong threshold.
+/// Overriding context_window on the sampling config changes auto-compact behavior.
+/// A forked session must use the new model's context window, not the source session's, or auto-compact fires at the wrong threshold.
 #[tokio::test(flavor = "current_thread")]
 async fn test_context_window_override_affects_auto_compact() {
     let local = tokio::task::LocalSet::new();
@@ -339,8 +359,7 @@ async fn test_context_window_override_affects_auto_compact() {
         })
         .await;
 }
-/// Test the reverse direction: overriding to a smaller context window
-/// should make auto-compact trigger sooner.
+/// Test the reverse direction: overriding to a smaller context window should make auto-compact trigger sooner.
 #[tokio::test(flavor = "current_thread")]
 async fn test_context_window_override_to_smaller_triggers_compact() {
     let local = tokio::task::LocalSet::new();
@@ -365,9 +384,7 @@ async fn test_context_window_override_to_smaller_triggers_compact() {
         })
         .await;
 }
-/// Response-header downgrade guard: `handle_model_metadata_update`
-/// must reject a smaller context_window from response headers but
-/// accept a larger one.
+/// `handle_model_metadata_update` must reject a smaller context_window from a response header and accept a larger one.
 #[tokio::test(flavor = "current_thread")]
 async fn test_response_header_context_window_downgrade_rejected() {
     let local = tokio::task::LocalSet::new();
@@ -408,58 +425,6 @@ async fn test_response_header_context_window_downgrade_rejected() {
         })
         .await;
 }
-#[test]
-fn initial_injection_backend_params_use_override_min_score() {
-    let params = crate::session::memory::MemoryBackendParams {
-        session_id: "test-session".to_owned(),
-        embed_config: None,
-        embed_base_url: "http://localhost".to_owned(),
-        embed_api_key: None,
-        search_config: crate::config::MemorySearchConfig {
-            min_score: 0.35,
-            ..Default::default()
-        },
-        watcher: None,
-        stale_claim_secs: 60,
-        search_source: "tool",
-        embedding_credentials: crate::session::memory::EndpointScopedCredentials::none(),
-    };
-    let initial_injection = crate::config::MemoryInitialInjectionConfig {
-        enabled: true,
-        min_score: Some(0.72),
-    };
-    let (adjusted, effective_min_score) =
-        build_initial_injection_backend_params(&params, &initial_injection);
-    assert_eq!("injection", adjusted.search_source);
-    assert!((0.72 - adjusted.search_config.min_score).abs() < f32::EPSILON);
-    assert!((0.72 - effective_min_score as f32).abs() < f32::EPSILON);
-    assert!((0.35 - params.search_config.min_score).abs() < f32::EPSILON);
-    assert_eq!("tool", params.search_source);
-}
-#[test]
-fn initial_injection_backend_params_preserve_default_zero_min_score() {
-    let params = crate::session::memory::MemoryBackendParams {
-        session_id: "test-session".to_owned(),
-        embed_config: None,
-        embed_base_url: "http://localhost".to_owned(),
-        embed_api_key: None,
-        search_config: crate::config::MemorySearchConfig {
-            min_score: 0.41,
-            ..Default::default()
-        },
-        watcher: None,
-        stale_claim_secs: 60,
-        search_source: "tool",
-        embedding_credentials: crate::session::memory::EndpointScopedCredentials::none(),
-    };
-    let (adjusted, effective_min_score) = build_initial_injection_backend_params(
-        &params,
-        &crate::config::MemoryInitialInjectionConfig::default(),
-    );
-    assert_eq!("injection", adjusted.search_source);
-    assert!((0.41 - adjusted.search_config.min_score).abs() < f32::EPSILON);
-    assert!((0.0 - effective_min_score as f32).abs() < f32::EPSILON);
-}
 #[allow(clippy::field_reassign_with_default)]
 async fn create_test_actor_with_memory(
     total_tokens: u64,
@@ -489,12 +454,15 @@ async fn create_test_actor_with_memory(
         .map(|_| crate::session::memory::MemoryStorage::new(&cwd_path, None));
     let state = TokioMutex::new(State {
         running_task: None,
+        finalization_gate: Default::default(),
+        message_delivery: Default::default(),
         pending_inputs: VecDeque::new(),
-        combine_edit_holds: std::collections::HashSet::new(),
+        edit_holds: HashMap::new(),
         pending_notifications: Vec::new(),
         notifications_suppressed: false,
         rewindable: false,
         front_message_committed: false,
+        hook_block_hold: Default::default(),
         nudges_used_this_session: 0,
     });
     let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -527,6 +495,13 @@ async fn create_test_actor_with_memory(
         .as_ref()
         .map_or_else(Default::default, |mc| mc.initial_injection.clone());
     SessionActor {
+        repo_status_prefetch: crate::session::repo_status_prefix::RepoStatusPrefetchState::default(
+        ),
+        transient_retry_enabled: true,
+        transient_retries_prompt_total: std::cell::Cell::new(0),
+        transient_episode_start: std::cell::Cell::new(None),
+        status_wake: Default::default(),
+        active_work: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         session_info: SessionInfo {
             id: acp::SessionId::new("test-memory"),
             cwd: cwd.as_str().to_string(),
@@ -550,7 +525,7 @@ async fn create_test_actor_with_memory(
         mcp_state: Arc::new(TokioMutex::new(McpState::new(vec![]))),
         mcp_strategy: std::cell::Cell::new(McpInitStrategy::Blocking),
         delivery_tools: std::cell::RefCell::new(Vec::new()),
-        attach_non_interactive: std::cell::Cell::new(false),
+        attach_non_interactive: std::rc::Rc::new(std::cell::Cell::new(false)),
         chat_state_handle,
         unattributed_background_usage: std::sync::atomic::AtomicBool::new(false),
         current_prompt_id: std::sync::Arc::new(std::sync::Mutex::new(None)),
@@ -602,6 +577,7 @@ async fn create_test_actor_with_memory(
             injection_count: std::sync::atomic::AtomicU64::new(0),
             compaction_recovery_count: std::sync::atomic::AtomicU64::new(0),
             chunks_added: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            init_reindex_handle: std::cell::RefCell::new(None),
             dream_config: Default::default(),
             dream_count: std::sync::atomic::AtomicU64::new(0),
             dream_success_count: std::sync::atomic::AtomicU64::new(0),
@@ -610,6 +586,7 @@ async fn create_test_actor_with_memory(
         session_start: std::time::Instant::now(),
         inference_idle_timeout: Duration::from_secs(300),
         max_retries: 3,
+        rate_limit_waits: crate::session::acp_session::RateLimitWaitConfig::default(),
         max_turns: None,
         pending_interjections: InterjectionBuffer::new(),
         pending_skill_reminders: Mutex::new(Vec::new()),
@@ -640,6 +617,7 @@ async fn create_test_actor_with_memory(
         agent: std::cell::RefCell::new(test_agent_default().await),
         last_reported_branch: std::sync::Arc::new(parking_lot::Mutex::new(None)),
         git_head_enabled: false,
+        status_line_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         models_manager: Default::default(),
         display_cwd: std::sync::OnceLock::new(),
         active_agent_type: parking_lot::Mutex::new(None),
@@ -673,6 +651,7 @@ async fn create_test_actor_with_memory(
         goal_classifier_enabled: false,
         goal_planner_enabled: false,
         goal_summary_enabled: false,
+        length_salvage_remote_budget: None,
         goal_verifier_skeptic_count: 1,
         goal_role_models: Default::default(),
         goal_use_current_model_only: false,
@@ -685,13 +664,14 @@ async fn create_test_actor_with_memory(
         managed_mcp_handle: Default::default(),
         initial_client_mcp_servers: vec![],
         tool_metadata_snapshot: Arc::new(std::sync::Mutex::new(Default::default())),
-        mcp_announced_servers: Mutex::new(HashMap::new()),
+        mcp_announcements: Default::default(),
         mcp_reminder_mode: McpReminderMode::Delta,
         mcp_reminder_dirty: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         mcp_connecting_reminder_injected: std::cell::Cell::new(false),
         mcp_handshakes_done: Arc::new(tokio::sync::Notify::new()),
         user_input_generation: std::sync::atomic::AtomicU64::new(0),
         laziness_debug_log: None,
+        last_live_orphan_reconcile: std::cell::Cell::new(None),
         deferred_prefix: TaskSlot::new(),
         extension_registry: xai_agent_lifecycle::LocalExtensionRegistry::default(),
         last_announced_local_date: std::cell::Cell::new(chrono::Local::now().date_naive()),
@@ -699,6 +679,9 @@ async fn create_test_actor_with_memory(
         last_search_prompt_index: std::sync::atomic::AtomicI64::new(-1),
         last_api_request_at: std::sync::atomic::AtomicI64::new(0),
         hook_registry: std::cell::RefCell::new(None),
+        turn_report: Default::default(),
+        turn_abort: Default::default(),
+        turn_end_tx: Default::default(),
         client_hooks: Default::default(),
         hook_resolved_workspace_root: String::new(),
         vcs_kind: xai_grok_workspace::session::git::VcsKind::Git,
@@ -713,11 +696,18 @@ async fn create_test_actor_with_memory(
         recap_epoch: std::cell::Cell::new(0),
         turn_summary_task: std::cell::RefCell::new(None),
         turn_summary_generation: std::cell::Cell::new(0),
+        title_refresh_task: std::cell::RefCell::new(None),
+        title_refresh_generation: std::cell::Cell::new(0),
+        next_title_refresh_idx: std::cell::Cell::new(0),
         turn_summary_enabled: false,
+        title_refresh_enabled: false,
         session_turn_active: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         streaming_turn_capture: parking_lot::Mutex::new(StreamingTurnCapture::default()),
-        turn_stream_drained: parking_lot::Mutex::new(None),
+        turn_stream_drained: parking_lot::Mutex::new(std::collections::HashMap::new()),
+        pending_image_strip: parking_lot::Mutex::new(std::collections::HashMap::new()),
+        image_strip_rewrite_barrier: ImageStripRewriteBarrier::new(),
         sampler_handle: xai_grok_sampler::SamplerHandle::noop(),
+        sampling_gate: None,
         image_description_model: crate::test_support::TEST_MODEL.to_owned(),
         image_describe_cache: Arc::new(crate::session::image_describe::ImageDescribeCache::new()),
         subagent_token_records: parking_lot::Mutex::new(HashMap::new()),
@@ -725,74 +715,9 @@ async fn create_test_actor_with_memory(
         trace_config_template: std::cell::RefCell::new(None),
     }
 }
-#[tokio::test(flavor = "current_thread")]
-async fn test_is_flushing_suppresses_auto_compact() {
-    let local = tokio::task::LocalSet::new();
-    local
-        .run_until(async {
-            let (gateway_tx, _) = mpsc::unbounded_channel();
-            let (persistence_tx, _) = mpsc::unbounded_channel();
-            let actor = create_test_actor(90_000, 100_000, 85, gateway_tx, persistence_tx).await;
-            let result = actor.check_auto_compact_needed().await;
-            assert!(result.is_some(), "should trigger at 90%");
-            actor
-                .memory
-                .is_flushing
-                .store(true, std::sync::atomic::Ordering::Relaxed);
-            let result = actor.check_auto_compact_needed().await;
-            assert!(result.is_none(), "should suppress when is_flushing=true");
-            actor
-                .memory
-                .is_flushing
-                .store(false, std::sync::atomic::Ordering::Relaxed);
-            let result = actor.check_auto_compact_needed().await;
-            assert!(
-                result.is_some(),
-                "should trigger again after is_flushing=false"
-            );
-        })
-        .await;
-}
-/// Test that `force_compact` triggers auto-compact even below threshold,
-/// and is consumed (reset to false) after a single use.
-#[tokio::test(flavor = "current_thread")]
-async fn test_force_compact_triggers_below_threshold() {
-    let local = tokio::task::LocalSet::new();
-    local
-        .run_until(async {
-            let (gateway_tx, _) = mpsc::unbounded_channel();
-            let (persistence_tx, _) = mpsc::unbounded_channel();
-            let actor = create_test_actor(10_000, 100_000, 85, gateway_tx, persistence_tx).await;
-            let result = actor.check_auto_compact_needed().await;
-            assert!(result.is_none(), "should not trigger at 10%");
-            actor
-                .compaction
-                .force_compact
-                .store(true, std::sync::atomic::Ordering::Relaxed);
-            let result = actor.check_auto_compact_needed().await;
-            assert!(
-                result.is_some(),
-                "force_compact should trigger at any usage"
-            );
-            let info = result.unwrap();
-            assert_eq!(info.tokens_used, 10_000);
-            assert!(
-                !actor
-                    .compaction
-                    .force_compact
-                    .load(std::sync::atomic::Ordering::Relaxed),
-                "force_compact should be consumed after use"
-            );
-            let result = actor.check_auto_compact_needed().await;
-            assert!(result.is_none(), "should not trigger after flag consumed");
-        })
-        .await;
-}
-/// Unit test of the `compare_exchange` atomic pattern used in
-/// `run_memory_flush` to prevent concurrent flushes. Tests the
-/// acquire/reject/release/re-acquire cycle on a standalone `AtomicBool`
-/// (not a full `SessionActor` integration test — constructing one
-/// requires a sampling client, persistence channel, etc.).
+/// Unit test of the `compare_exchange` pattern `run_memory_flush` uses to prevent concurrent flushes.
+/// Exercises the acquire/reject/release/re-acquire cycle on a standalone `AtomicBool`.
+/// A full `SessionActor` would need a sampling client and a persistence channel.
 #[test]
 fn test_is_flushing_compare_exchange_prevents_double_entry() {
     let is_flushing = std::sync::atomic::AtomicBool::new(false);
@@ -830,157 +755,6 @@ fn test_is_flushing_compare_exchange_prevents_double_entry() {
             .is_ok(),
         "should succeed after release"
     );
-}
-#[tokio::test(flavor = "current_thread")]
-#[allow(clippy::field_reassign_with_default)]
-async fn test_flush_config_from_memory_config() {
-    let local = tokio::task::LocalSet::new();
-    local
-        .run_until(async {
-            let (gateway_tx, _) = mpsc::unbounded_channel();
-            let (persistence_tx, _) = mpsc::unbounded_channel();
-            let mut config = crate::config::MemoryConfig::default();
-            config.enabled = true;
-            config.pruning.keep_last_n_turns = 7;
-            config.pruning.soft_trim_threshold = 9999;
-            config.flush.soft_threshold_tokens = 12345;
-            let actor = create_test_actor_with_memory(
-                50_000,
-                100_000,
-                85,
-                gateway_tx,
-                persistence_tx,
-                Some(config),
-            )
-            .await;
-            assert_eq!(actor.memory.flush_config.soft_threshold_tokens, 12345);
-        })
-        .await;
-}
-#[tokio::test(flavor = "current_thread")]
-#[allow(clippy::field_reassign_with_default)]
-async fn test_memory_flush_enabled_from_config() {
-    let local = tokio::task::LocalSet::new();
-    local
-        .run_until(async {
-            let (gateway_tx, _) = mpsc::unbounded_channel();
-            let (persistence_tx, _) = mpsc::unbounded_channel();
-            let mut config = crate::config::MemoryConfig::default();
-            config.enabled = true;
-            config.flush.enabled = true;
-            let actor = create_test_actor_with_memory(
-                50_000,
-                100_000,
-                85,
-                gateway_tx.clone(),
-                persistence_tx,
-                Some(config),
-            )
-            .await;
-            assert!(
-                actor.memory.flush_config.enabled,
-                "flush_config.enabled should be true from MemoryConfig"
-            );
-            let (persistence_tx2, _) = mpsc::unbounded_channel();
-            let mut config2 = crate::config::MemoryConfig::default();
-            config2.enabled = true;
-            config2.flush.enabled = false;
-            let actor2 = create_test_actor_with_memory(
-                50_000,
-                100_000,
-                85,
-                gateway_tx,
-                persistence_tx2,
-                Some(config2),
-            )
-            .await;
-            assert!(
-                !actor2.memory.flush_config.enabled,
-                "flush_config.enabled should be false when config says so"
-            );
-        })
-        .await;
-}
-#[tokio::test(flavor = "current_thread")]
-#[allow(clippy::field_reassign_with_default)]
-async fn test_memory_storage_created_when_enabled() {
-    let local = tokio::task::LocalSet::new();
-    local
-        .run_until(async {
-            let (gateway_tx, _) = mpsc::unbounded_channel();
-            let (persistence_tx, _) = mpsc::unbounded_channel();
-            let mut config = crate::config::MemoryConfig::default();
-            config.enabled = true;
-            let actor = create_test_actor_with_memory(
-                50_000,
-                100_000,
-                85,
-                gateway_tx.clone(),
-                persistence_tx,
-                Some(config),
-            )
-            .await;
-            assert!(
-                actor.memory.is_enabled(),
-                "memory_storage should be Some when enabled"
-            );
-            let (persistence_tx2, _) = mpsc::unbounded_channel();
-            let actor2 = create_test_actor_with_memory(
-                50_000,
-                100_000,
-                85,
-                gateway_tx,
-                persistence_tx2,
-                None,
-            )
-            .await;
-            assert!(
-                !actor2.memory.is_enabled(),
-                "memory_storage should be None when disabled"
-            );
-        })
-        .await;
-}
-#[tokio::test(flavor = "current_thread")]
-#[allow(clippy::field_reassign_with_default)]
-async fn test_idle_flush_timeout_from_config() {
-    let local = tokio::task::LocalSet::new();
-    local
-        .run_until(async {
-            let (gateway_tx, _) = mpsc::unbounded_channel();
-            let (persistence_tx, _) = mpsc::unbounded_channel();
-            let mut config = crate::config::MemoryConfig::default();
-            config.enabled = true;
-            config.flush.idle_timeout_secs = Some(120);
-            let actor = create_test_actor_with_memory(
-                50_000,
-                100_000,
-                85,
-                gateway_tx.clone(),
-                persistence_tx,
-                Some(config),
-            )
-            .await;
-            assert_eq!(
-                actor.idle_flush_timeout,
-                Some(std::time::Duration::from_secs(120))
-            );
-            let (persistence_tx2, _) = mpsc::unbounded_channel();
-            let mut config2 = crate::config::MemoryConfig::default();
-            config2.enabled = true;
-            config2.flush.idle_timeout_secs = None;
-            let actor2 = create_test_actor_with_memory(
-                50_000,
-                100_000,
-                85,
-                gateway_tx,
-                persistence_tx2,
-                Some(config2),
-            )
-            .await;
-            assert_eq!(actor2.idle_flush_timeout, None);
-        })
-        .await;
 }
 #[tokio::test(flavor = "current_thread")]
 #[allow(clippy::field_reassign_with_default)]
@@ -1055,50 +829,9 @@ async fn test_dream_check_timeout_from_config() {
         })
         .await;
 }
-/// Test that `last_api_request_at` is recorded and used for idle detection.
-///
-/// The `maybe_refresh_model_metadata_on_resume` method checks this timestamp
-/// to decide whether to proactively refresh model metadata from cli-chat-proxy.
-/// This test verifies the timestamp recording and idle detection logic.
-#[tokio::test(flavor = "current_thread")]
-async fn test_last_api_request_at_idle_detection() {
-    let local = tokio::task::LocalSet::new();
-    local
-        .run_until(async {
-            let (gateway_tx, _) = mpsc::unbounded_channel();
-            let (persistence_tx, _) = mpsc::unbounded_channel();
-            let actor = create_test_actor(50_000, 100_000, 85, gateway_tx, persistence_tx).await;
-            let initial = actor
-                .last_api_request_at
-                .load(std::sync::atomic::Ordering::Relaxed);
-            assert_eq!(initial, 0, "last_api_request_at should be 0 initially");
-            actor.record_api_request_time();
-            let recorded = actor
-                .last_api_request_at
-                .load(std::sync::atomic::Ordering::Relaxed);
-            assert!(
-                recorded > 0,
-                "last_api_request_at should be set after recording"
-            );
-            let now_ms = chrono::Utc::now().timestamp_millis();
-            let diff = (now_ms - recorded).abs();
-            assert!(
-                diff < 1000,
-                "recorded timestamp should be within 1 second of now"
-            );
-            let idle_secs = (now_ms - recorded) / 1000;
-            assert!(
-                idle_secs < SessionActor::IDLE_REFRESH_THRESHOLD_SECS,
-                "should be within idle threshold immediately after recording"
-            );
-        })
-        .await;
-}
-/// Verify that `last_idle_flush_conversation_len` is reset after
-/// compaction shrinks the conversation. Without this reset the
-/// interval flush guard (`current_len > last_len`) stays false
-/// because the compacted conversation is shorter than the stored
-/// pre-compaction length.
+/// Verify that `last_idle_flush_conversation_len` is reset after compaction shrinks the conversation.
+/// Without the reset the interval flush guard (`current_len > last_len`) stays false.
+/// The compacted conversation is shorter than the stored pre-compaction length.
 #[tokio::test(flavor = "current_thread")]
 #[allow(clippy::field_reassign_with_default)]
 async fn test_idle_flush_conversation_len_reset_after_compaction() {
@@ -1177,6 +910,7 @@ fn api_error_with_context_window(context_window: u64) -> xai_grok_sampler::Sampl
         is_retryable: false,
         retry_after_secs: None,
         should_retry: None,
+        error_code: None,
         model_metadata: Some(crate::sampling::ResponseModelMetadata {
             context_window: Some(context_window),
             max_completion_tokens: None,
@@ -1189,8 +923,7 @@ fn api_error_with_context_window(context_window: u64) -> xai_grok_sampler::Sampl
     }
 }
 /// Primary scenario: remote settings shrinks the context window mid-session.
-/// The shell's last-known token count (214K) exceeds the new limit (200K) —
-/// should_compact_on_error must return true so the session can recover.
+/// The shell's last-known token count (214K) exceeds the new limit (200K), so should_compact_on_error must return true and the session can recover.
 #[tokio::test(flavor = "current_thread")]
 async fn test_compact_on_error_triggers_when_tokens_exceed_new_window() {
     let local = tokio::task::LocalSet::new();
@@ -1204,8 +937,7 @@ async fn test_compact_on_error_triggers_when_tokens_exceed_new_window() {
         })
         .await;
 }
-/// When tracked tokens are within the new limit, the error was not a context
-/// overflow — do not compact.
+/// When tracked tokens are within the new limit, the error was not a context overflow, so do not compact.
 #[tokio::test(flavor = "current_thread")]
 async fn test_compact_on_error_no_trigger_when_tokens_within_new_window() {
     let local = tokio::task::LocalSet::new();
@@ -1270,12 +1002,15 @@ async fn test_e2e_idle_resume_refreshes_model_metadata() {
                 ToolContext::new(cwd.clone(), None, None, fs, terminal, hunk_tracker_handle);
             let state = TokioMutex::new(State {
                 running_task: None,
+                finalization_gate: Default::default(),
+                message_delivery: Default::default(),
                 pending_inputs: VecDeque::new(),
-                combine_edit_holds: std::collections::HashSet::new(),
+                edit_holds: Default::default(),
                 pending_notifications: Vec::new(),
                 notifications_suppressed: false,
                 rewindable: false,
                 front_message_committed: false,
+                hook_block_hold: Default::default(),
                 nudges_used_this_session: 0,
             });
             let (event_tx, _) = tokio::sync::mpsc::unbounded_channel();
@@ -1345,7 +1080,7 @@ async fn test_e2e_idle_resume_refreshes_model_metadata() {
                 mcp_state: Arc::new(TokioMutex::new(McpState::new(vec![]))),
                 mcp_strategy: std::cell::Cell::new(McpInitStrategy::Blocking),
                 delivery_tools: std::cell::RefCell::new(Vec::new()),
-                attach_non_interactive: std::cell::Cell::new(false),
+                attach_non_interactive: std::rc::Rc::new(std::cell::Cell::new(false)),
                 chat_state_handle,
                 unattributed_background_usage: std::sync::atomic::AtomicBool::new(false),
                 current_prompt_id: std::sync::Arc::new(std::sync::Mutex::new(None)),
@@ -1398,6 +1133,7 @@ async fn test_e2e_idle_resume_refreshes_model_metadata() {
                     injection_count: std::sync::atomic::AtomicU64::new(0),
                     compaction_recovery_count: std::sync::atomic::AtomicU64::new(0),
                     chunks_added: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+                    init_reindex_handle: std::cell::RefCell::new(None),
                     dream_config: Default::default(),
                     dream_count: std::sync::atomic::AtomicU64::new(0),
                     dream_success_count: std::sync::atomic::AtomicU64::new(0),
@@ -1476,8 +1212,7 @@ async fn test_e2e_idle_resume_refreshes_model_metadata() {
                 managed_mcp_handle: Default::default(),
                 initial_client_mcp_servers: vec![],
                 tool_metadata_snapshot: Arc::new(std::sync::Mutex::new(Default::default())),
-                mcp_announced_servers: Mutex::new(HashMap::new()),
-                mcp_reminder_mode: McpReminderMode::Delta,
+                                mcp_reminder_mode: McpReminderMode::Delta,
                 mcp_reminder_dirty: Arc::new(std::sync::atomic::AtomicBool::new(false)),
                 mcp_connecting_reminder_injected: std::cell::Cell::new(false),
                 mcp_handshakes_done: Arc::new(tokio::sync::Notify::new()),
@@ -1507,7 +1242,7 @@ async fn test_e2e_idle_resume_refreshes_model_metadata() {
                 turn_summary_enabled: false,
                 session_turn_active: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
                 streaming_turn_capture: parking_lot::Mutex::new(StreamingTurnCapture::default()),
-                turn_stream_drained: parking_lot::Mutex::new(None),
+                turn_stream_drained: parking_lot::Mutex::new(std::collections::HashMap::new()),
                 attribution_callback: None,
                 sampler_handle: xai_grok_sampler::SamplerHandle::noop(),
                 image_description_model: crate::test_support::TEST_MODEL.to_owned(),
@@ -1517,6 +1252,28 @@ async fn test_e2e_idle_resume_refreshes_model_metadata() {
                 subagent_token_records: parking_lot::Mutex::new(HashMap::new()),
                 workspace_ops: xai_grok_workspace::WorkspaceOps::for_test(),
                 trace_config_template: std::cell::RefCell::new(None),
+                repo_status_prefetch: crate::session::repo_status_prefix::RepoStatusPrefetchState::default(
+                ),
+                transient_retry_enabled: true,
+                transient_retries_prompt_total: std::cell::Cell::new(0),
+                transient_episode_start: std::cell::Cell::new(None),
+                status_wake: Default::default(),
+                active_work: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+                rate_limit_waits: crate::session::acp_session::RateLimitWaitConfig::default(),
+                status_line_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                length_salvage_remote_budget: None,
+                mcp_announcements: Default::default(),
+                last_live_orphan_reconcile: std::cell::Cell::new(None),
+                turn_report: Default::default(),
+                turn_abort: Default::default(),
+                turn_end_tx: Default::default(),
+                title_refresh_task: std::cell::RefCell::new(None),
+                title_refresh_generation: std::cell::Cell::new(0),
+                next_title_refresh_idx: std::cell::Cell::new(0),
+                title_refresh_enabled: false,
+                pending_image_strip: parking_lot::Mutex::new(std::collections::HashMap::new()),
+                image_strip_rewrite_barrier: ImageStripRewriteBarrier::new(),
+                sampling_gate: None,
             };
             let eleven_minutes_ago_ms = chrono::Utc::now().timestamp_millis() - (11 * 60 * 1000);
             actor
@@ -1567,8 +1324,7 @@ async fn test_idle_resume_noop_when_not_idle_enough() {
         })
         .await;
 }
-/// If the proxy hasn't been updated yet, model_metadata is None — must be
-/// a no-op for backwards compatibility.
+/// If the proxy hasn't been updated yet, model_metadata is None, and the check must be a no-op for backwards compatibility.
 #[tokio::test(flavor = "current_thread")]
 async fn test_compact_on_error_noop_without_model_metadata() {
     let local = tokio::task::LocalSet::new();
@@ -1584,6 +1340,7 @@ async fn test_compact_on_error_noop_without_model_metadata() {
                 is_retryable: false,
                 retry_after_secs: None,
                 should_retry: None,
+                error_code: None,
                 model_metadata: None,
                 empty_response_context: None,
                 doom_loop_triggers: None,
@@ -1594,8 +1351,7 @@ async fn test_compact_on_error_noop_without_model_metadata() {
         })
         .await;
 }
-/// A fresh session emits `x-compactions-remaining: 1`; once the chat-state
-/// reflects a compaction, the next reconstructed config emits `0`.
+/// A fresh session emits `x-compactions-remaining: 1`; once the chat-state reflects a compaction, the next reconstructed config emits `0`.
 #[tokio::test(flavor = "current_thread")]
 async fn compactions_remaining_header_flips_after_compaction() {
     use xai_grok_sampling_types::CompactionsRemaining;
@@ -1634,8 +1390,7 @@ async fn compactions_remaining_header_flips_after_compaction() {
         })
         .await;
 }
-/// `Fixed(n)` sends the constant `n` and never flips: the header stays put
-/// across a compaction, unlike the dynamic 1->0 variant.
+/// `Fixed(n)` sends the constant `n` and never flips: the header stays the same across a compaction, unlike the dynamic variant's 1 to 0.
 #[tokio::test(flavor = "current_thread")]
 async fn compactions_remaining_fixed_does_not_flip_after_compaction() {
     use xai_grok_sampling_types::CompactionsRemaining;
@@ -1674,9 +1429,8 @@ async fn compactions_remaining_fixed_does_not_flip_after_compaction() {
         })
         .await;
 }
-/// With the calculated form enabled, a fresh session emits
-/// `x-compaction-at = context_window * threshold_percent / 100`; once the
-/// chat-state reflects a compaction, the next reconstructed config drops it.
+/// With the calculated form enabled, a fresh session emits `x-compaction-at = context_window * threshold_percent / 100`.
+/// Once the chat-state reflects a compaction, the next reconstructed config drops the header.
 #[tokio::test(flavor = "current_thread")]
 async fn compaction_at_tokens_header_flips_after_compaction() {
     use xai_grok_sampling_types::CompactionAtTokens;

@@ -1,30 +1,16 @@
-//! `/remember` -- save a memory note.
-
 use crate::app::actions::Action;
-use crate::slash::command::{CommandExecCtx, CommandResult, SlashCommand};
+use crate::slash::command::{CommandExecCtx, CommandResult, SlashCommand, slash_meta};
 
 /// 保存一条记忆笔记 inline or enter remember mode.
 pub struct RememberCommand;
 
 impl SlashCommand for RememberCommand {
-    fn name(&self) -> &str {
-        "remember"
-    }
-
-    fn description(&self) -> &str {
-        "保存一条记忆笔记"
-    }
-
-    fn usage(&self) -> &str {
-        "/remember [text]"
-    }
-
-    fn takes_args(&self) -> bool {
-        true
-    }
-
-    fn arg_placeholder(&self) -> Option<&str> {
-        Some("[memory note text]")
+    slash_meta! {
+        name: "remember",
+        description: "保存一条记忆笔记",
+        usage: "/remember [text]",
+        takes_args: true,
+        arg_placeholder: "[memory note text]",
     }
 
     fn run(&self, _ctx: &mut CommandExecCtx, args: &str) -> CommandResult {

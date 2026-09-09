@@ -8,30 +8,18 @@
 //! - `/context set <size> --no-compact` — only change the budget, never compact.
 
 use crate::app::actions::Action;
-use crate::slash::command::{CommandExecCtx, CommandResult, SlashCommand};
+use crate::slash::command::{CommandExecCtx, CommandResult, SlashCommand, slash_meta};
 
 /// Show context usage breakdown, or set the window size.
 pub struct ContextCommand;
 
 impl SlashCommand for ContextCommand {
-    fn name(&self) -> &str {
-        "context"
-    }
-
-    fn aliases(&self) -> &[&str] {
-        &["ctx", "cw"]
-    }
-
-    fn description(&self) -> &str {
-        "查看或设置当前会话上下文窗口（可动态调小并压缩）"
-    }
-
-    fn session_scoped(&self) -> bool {
-        true
-    }
-
-    fn usage(&self) -> &str {
-        "/context [set <size>] [--no-compact]"
+    slash_meta! {
+        name: "context",
+        aliases: ["ctx", "cw"],
+        description: "查看或设置当前会话上下文窗口（可动态调小并压缩）",
+        usage: "/context [set <size>] [--no-compact]",
+        session_scoped: true,
     }
 
     fn takes_args(&self) -> bool {

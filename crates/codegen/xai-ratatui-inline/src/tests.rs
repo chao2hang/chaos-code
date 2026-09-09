@@ -180,8 +180,12 @@ mod links {
     }
 
     fn span(col_start: u16, col_end: u16, url: &str, id: Option<u32>) -> LinkSpan {
+        span_at(0, col_start, col_end, url, id)
+    }
+
+    fn span_at(row: u16, col_start: u16, col_end: u16, url: &str, id: Option<u32>) -> LinkSpan {
         LinkSpan {
-            row: 0,
+            row,
             col_start,
             col_end,
             url: url.into(),
@@ -208,7 +212,7 @@ mod links {
         let mut t = term(20, 3);
         let out = frame(&mut t, "AB", &[span(0, 2, "https://x.ai", None)]);
         assert!(
-            out.contains("\x1b]8;;https://x.ai\x07"),
+            out.contains("\x1b]8;id=1;https://x.ai\x07"),
             "missing open: {out:?}"
         );
         assert!(out.contains("AB"));
@@ -326,7 +330,7 @@ mod links {
         let _ = frame(&mut t, "AB", &[span(0, 2, "https://a", None)]);
         let out = frame(&mut t, "AB", &[span(0, 2, "https://b", None)]);
         assert!(
-            out.contains("\x1b]8;;https://b\x07"),
+            out.contains("\x1b]8;id=1;https://b\x07"),
             "new url not emitted: {out:?}"
         );
     }
@@ -336,8 +340,116 @@ mod links {
         let mut t = term(20, 3);
         let out = frame(&mut t, "AB", &[span(0, 2, "https://x.ai", Some(7))]);
         assert!(
-            out.contains("\x1b]8;id=7;https://x.ai\x07"),
+            out.contains("\x1b]8;id=1;https://x.ai\x07"),
             "id param missing: {out:?}"
+        );
+    }
+
+    #[test]
+    fn colliding_source_ids_different_urls_get_distinct_osc8_ids() {
+        let mut t = term(20, 3);
+        let out = frame(
+            &mut t,
+            "AxBxC",
+            &[
+                span(0, 1, "https://first.com", Some(0)),
+                span(2, 3, "https://second.com", Some(0)),
+                span(4, 5, "https://third.com", Some(0)),
+            ],
+        );
+        assert!(
+            out.contains("\x1b]8;id=1;https://first.com\x07"),
+            "first: {out:?}"
+        );
+        assert!(
+            out.contains("\x1b]8;id=2;https://second.com\x07"),
+            "second: {out:?}"
+        );
+        assert!(
+            out.contains("\x1b]8;id=3;https://third.com\x07"),
+            "third: {out:?}"
+        );
+    }
+
+    fn id1_payloads(out: &str, url: &str) -> String {
+        let open = format!("\x1b]8;id=1;{url}\x07");
+        let close = "\x1b]8;;\x07";
+        let mut payload = String::new();
+        let mut rest = out;
+        while let Some(i) = rest.find(&open) {
+            let after = &rest[i + open.len()..];
+            let end = after.find(close).expect("OSC 8 close after id=1 open");
+            payload.push_str(&after[..end]);
+            rest = &after[end + close.len()..];
+        }
+        payload
+    }
+
+    #[test]
+    fn wrapped_same_source_id_and_url_share_osc8_id() {
+        let mut t = term(20, 3);
+        t.backend_mut().buf.clear();
+        {
+            let mut f = t.get_frame();
+            f.buffer_mut().set_string(0, 0, "AB", Style::default());
+            f.buffer_mut().set_string(0, 1, "CD", Style::default());
+            f.buffer_mut().set_string(0, 2, "EF", Style::default());
+        }
+        t.set_frame_links(&[
+            span_at(0, 0, 2, "https://wrap.com", Some(3)),
+            span_at(1, 0, 2, "https://wrap.com", Some(3)),
+            span_at(2, 0, 2, "https://other.com", Some(3)),
+        ]);
+        t.flush_with_links().unwrap();
+        t.swap_buffers();
+        let out = String::from_utf8(t.backend().buf.clone()).unwrap();
+        let payload = id1_payloads(&out, "https://wrap.com");
+        assert!(
+            payload.contains("AB") && payload.contains("CD"),
+            "both wrap fragments must sit in id=1 runs: payload={payload:?} out={out:?}"
+        );
+        assert!(
+            !payload.contains('E') && !payload.contains('F'),
+            "following collision must not share wrap id: payload={payload:?} out={out:?}"
+        );
+        assert!(
+            !out.contains("\x1b]8;;https://wrap.com\x07"),
+            "un-id'd open must be absent: {out:?}"
+        );
+        assert!(
+            out.contains("\x1b]8;id=2;https://other.com\x07"),
+            "collision remint missing: {out:?}"
+        );
+    }
+
+    #[test]
+    fn unnamed_wrapped_same_url_share_osc8_id() {
+        // Scanned wrap fragments have no source id. They must still share a
+        // reminted OSC 8 id so Windows Terminal groups the wrap as one link.
+        let mut t = term(20, 3);
+        t.backend_mut().buf.clear();
+        {
+            let mut f = t.get_frame();
+            f.buffer_mut()
+                .set_string(0, 0, "https://example.com/", Style::default());
+            f.buffer_mut()
+                .set_string(0, 1, "projects/issues/1", Style::default());
+        }
+        t.set_frame_links(&[
+            span_at(0, 0, 20, "https://example.com/projects/issues/1", None),
+            span_at(1, 0, 17, "https://example.com/projects/issues/1", None),
+        ]);
+        t.flush_with_links().unwrap();
+        t.swap_buffers();
+        let out = String::from_utf8(t.backend().buf.clone()).unwrap();
+        let payload = id1_payloads(&out, "https://example.com/projects/issues/1");
+        assert!(
+            payload.contains("https://example.com/") && payload.contains("projects/issues/1"),
+            "both wrap fragments must sit in id=1 runs: payload={payload:?} out={out:?}"
+        );
+        assert!(
+            !out.contains("\x1b]8;;https://example.com/projects/issues/1\x07"),
+            "un-id'd open must be absent: {out:?}"
         );
     }
 
@@ -346,7 +458,7 @@ mod links {
         let mut t = term(20, 3);
         let out = frame(&mut t, "AB", &[span(0, 2, "https://x\x07\x1b/y", None)]);
         assert!(
-            out.contains("\x1b]8;;https://x/y\x07"),
+            out.contains("\x1b]8;id=1;https://x/y\x07"),
             "url not sanitized: {out:?}"
         );
     }
@@ -362,11 +474,11 @@ mod links {
         );
         // Each link wraps exactly its own cell; the gap is not wrapped.
         assert!(
-            out.contains("\x1b]8;;https://a\x07A\x1b]8;;\x07"),
+            out.contains("\x1b]8;id=1;https://a\x07A\x1b]8;;\x07"),
             "a-run: {out:?}"
         );
         assert!(
-            out.contains("\x1b]8;;https://b\x07B\x1b]8;;\x07"),
+            out.contains("\x1b]8;id=2;https://b\x07B\x1b]8;;\x07"),
             "b-run: {out:?}"
         );
     }
@@ -378,7 +490,7 @@ mod links {
         // the OSC 8 wraps it.
         let out = frame(&mut t, "世", &[span(0, 2, "https://x.ai", None)]);
         assert!(
-            out.contains("\x1b]8;;https://x.ai\x07世\x1b]8;;\x07"),
+            out.contains("\x1b]8;id=1;https://x.ai\x07世\x1b]8;;\x07"),
             "wide-char run: {out:?}"
         );
     }
@@ -410,7 +522,7 @@ mod links {
         t.flush_with_links().unwrap();
         let out = String::from_utf8(t.backend().buf.clone()).unwrap();
         assert!(
-            out.contains("\x1b]8;;https://x.ai\x07AB\x1b]8;;\x07"),
+            out.contains("\x1b]8;id=1;https://x.ai\x07AB\x1b]8;;\x07"),
             "non-origin mapping: {out:?}"
         );
     }

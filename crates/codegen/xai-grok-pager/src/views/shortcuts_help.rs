@@ -1,23 +1,18 @@
 //! All-shortcuts cheatsheet modal (Ctrl+. / Ctrl+X).
 //!
-//! Registry-driven: `build_entries(registry)` pulls every `ActionDef` from
-//! `ActionRegistry`, groups them by `Category` in onboarding-friendly order
-//! (Essentials → Panes → Scrollback Navigation → View → Prompt → Agent),
-//! and includes alt-key bindings inline. Search filters against key display,
-//! description, and label.
+//! Registry-driven: `build_entries(registry)` pulls every `ActionDef` from `ActionRegistry` and groups them by `Category`.
+//! The order is onboarding-friendly (Essentials, Panes, Scrollback Navigation, View, Prompt, Agent), with alt-key bindings inline.
+//! Search filters against key display, description, and label.
 //!
-//! Two ways to read a binding's help: pattern A expands an inline help line under
-//! the selected hint (e/Space/l/h/arrows); pattern B opens an in-modal man-style
-//! detail page on Enter, where Esc (or h/Left/Backspace) returns to the browse list.
+//! Two ways to read a binding's help: pattern A expands an inline help line under the selected hint (e/Space/l/h/arrows).
+//! Pattern B opens an in-modal man-style detail page on Enter; Esc (or h/Left/Backspace) returns to the browse list.
 //! Section headers collapse/expand; close via Esc in browse or Ctrl+./Ctrl+X.
 //! Rendered via `ModalWindow` chrome (same appearance as the command palette).
 //!
 //! Entry points from `AgentView`:
-//! - `build_entries(registry)` + `build_initial_picker_state` →
-//!   `ActiveModal::ShortcutsHelp`
+//! - `build_entries(registry)` and `build_initial_picker_state` feed `ActiveModal::ShortcutsHelp`
 //! - `handle_input` / `handle_mouse` for key/mouse dispatch
-//! - Rendering is done inline in `AgentView` via `render_modal_window` +
-//!   `render_picker_in_modal`.
+//! - Rendering is done inline in `AgentView` via `render_modal_window` and `render_picker_in_modal`.
 
 use std::borrow::Cow;
 
@@ -32,8 +27,7 @@ use crate::views::shortcuts_bar::HintItem;
 
 /// Key for pattern-A inline expand state (`expanded_ids`).
 ///
-/// Registry rows use [`ExpandKey::Action`]; display-only rows that ship
-/// `long_help` (e.g. paste) use [`ExpandKey::Pseudo`] with a stable label.
+/// Registry rows use [`ExpandKey::Action`]; display-only rows that ship `long_help` (e.g. paste) use [`ExpandKey::Pseudo`] with a stable label.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ExpandKey {
     Action(ActionId),
@@ -42,8 +36,7 @@ pub enum ExpandKey {
 
 /// One row in the all-shortcuts cheatsheet.
 ///
-/// Headers are non-selectable section dividers; Hints are the actual key
-/// bindings and are selectable / dispatchable on Enter.
+/// Headers are non-selectable section dividers; Hints are the actual key bindings, selectable and dispatchable on Enter.
 pub enum ShortcutsHelpEntry {
     SectionHeader {
         label: &'static str,
@@ -89,8 +82,8 @@ pub fn default_collapsed() -> std::collections::HashSet<usize> {
     (1..CATEGORY_ORDER.len()).collect()
 }
 
-// Man-page body for the paste pseudo-row (Enter detail). Keep claims that
-// hold on every host (agent + dashboard); non-image file paths are agent-only.
+// Man-page body for the paste pseudo-row (Enter detail)
+// Keep claims that hold on every host (agent and dashboard); non-image file paths are agent-only
 #[cfg(target_os = "windows")]
 const PASTE_LONG_HELP: &str = "\
 将剪贴板图片粘贴为提示中的芯片，纯文本按输入插入。\n\
@@ -109,8 +102,7 @@ const PASTE_LONG_HELP: &str = "\
 
 /// Build the entries vector for the modal, grouped by category.
 ///
-/// All registered actions are included, grouped by category. Actions
-/// whose `When` context is not in `active_contexts` are dimmed.
+/// All registered actions are included; those whose `When` context is not in `active_contexts` are dimmed.
 pub fn build_entries(
     active_contexts: &[When],
     registry: &ActionRegistry,
@@ -118,11 +110,9 @@ pub fn build_entries(
 ) -> Vec<ShortcutsHelpEntry> {
     let mut entries: Vec<ShortcutsHelpEntry> = Vec::new();
 
-    // Keys the dashboard session-overlay claims while it is up. The
-    // overlay intercept consults `When::DashboardOverlay` before
-    // forwarding a key to the agent, so a lit row from another context
-    // advertising one of these keys would be lying (e.g. the
-    // cheatsheet's Ctrl+X alt is shadowed by the overlay stop).
+    // Keys the dashboard session-overlay claims while it is up
+    // The overlay intercept consults `When::DashboardOverlay` before forwarding a key to the agent
+    // A lit row from another context advertising one of these keys would be lying (e.g. the cheatsheet's Ctrl+X alt is shadowed by the overlay stop).
     let overlay_claimed: std::collections::HashSet<KeyShortcut> =
         if active_contexts.contains(&When::DashboardOverlay) {
             registry
@@ -136,11 +126,9 @@ pub fn build_entries(
         };
 
     for (cat_idx, &(cat, label)) in CATEGORY_ORDER.iter().enumerate() {
-        // Dedup per category on the default key, preferring the def
-        // whose `When` context is active: `DashboardStop` (list) and
-        // `DashboardOverlayStop` (overlay) share Ctrl+X and category,
-        // and whichever matches the current surface must win
-        // regardless of registration order.
+        // Dedup per category on the default key, preferring the def whose `When` context is active
+        // `DashboardStop` (list) and `DashboardOverlayStop` (overlay) share Ctrl+X and category
+        // Whichever matches the active context must win regardless of registration order
         let mut seen_in_cat: std::collections::HashMap<KeyShortcut, usize> =
             std::collections::HashMap::new();
         let defs: Vec<&ActionDef> = registry
@@ -158,8 +146,7 @@ pub fn build_entries(
             entry_count: 0,
         });
         for def in defs {
-            // Slash-only actions with no real keybinding (e.g. `/voice`'s
-            // EnableVoiceMode) don't belong in a keyboard cheatsheet.
+            // Slash-only actions with no real keybinding (e.g. `/voice`'s EnableVoiceMode) don't belong in a keyboard cheatsheet.
             if def.default_key == crate::key!(Null) && def.alt_keys.is_empty() {
                 continue;
             }
@@ -176,52 +163,41 @@ pub fn build_entries(
             let mut item = def.hint();
             if !def.alt_keys.is_empty() {
                 item.keys.extend_from_slice(&def.alt_keys);
-                // Alt keys can be terminal-encoding variants of the SAME
-                // physical chord (Shift+Tab arrives as `BackTab`,
-                // `BackTab`+SHIFT, or `Tab`+SHIFT depending on the
-                // terminal). Collapse keys that render identically so the
-                // row doesn't read "Shift+Tab / Shift+Tab / Shift+Tab".
+                // Alt keys can be terminal-encoding variants of the SAME physical chord
+                // Shift+Tab arrives as `BackTab`, `BackTab`+SHIFT, or `Tab`+SHIFT depending on the terminal
+                // Collapse keys that render identically so the row doesn't read "Shift+Tab / Shift+Tab / Shift+Tab"
                 let mut seen_displays = std::collections::HashSet::new();
                 item.keys
                     .retain(|k| seen_displays.insert(k.display_pretty()));
                 item.custom_display = None;
             }
-            // In non-vim mode, suppress bare-letter / Shift+letter keys
-            // from any scrollback-context binding. If the row has at least
-            // one non-vim key left (e.g. an arrow alt), show only those —
-            // they still work, so don't dim. If every key was a vim key,
-            // hide the row entirely (the binding is genuinely inert when
-            // vim mode is off).
+            // In non-vim mode, suppress bare-letter / Shift+letter keys from any scrollback-context binding
+            // If the row has at least one non-vim key left (e.g. an arrow alt), show only those; they still work, so don't dim.
+            // If every key was a vim key, hide the row entirely (the binding is genuinely inert when vim mode is off)
             if !vim_mode && def.context == When::ScrollbackFocused {
                 let has_non_vim = item.keys.iter().any(|k| !k.is_letter_or_shift_letter());
                 if has_non_vim {
                     item.keys.retain(|k| !k.is_letter_or_shift_letter());
-                    // When we strip the default_key but keep an alt, the
-                    // custom_display string (e.g. "Shift+l/h") no longer
-                    // matches what's shown; drop it so the keys render
-                    // verbatim.
+                    // When we strip the default_key but keep an alt, the custom_display string (e.g. "Shift+l/h") no longer matches what's shown.
+                    // Drop it so the keys render verbatim
                     item.custom_display = None;
                 } else {
                     continue;
                 }
             }
             let dimmed = !active_contexts.contains(&def.context);
-            // Strip overlay-claimed keys from lit rows of other
-            // contexts (the overlay intercept shadows them). Dimmed
-            // rows already say "not applicable here", so they keep
-            // their keys for discoverability.
+            // Strip overlay-claimed keys from lit rows of other contexts (the overlay intercept shadows them)
+            // Dimmed rows already say "not applicable here", so they keep their keys for discoverability
             if !dimmed
                 && def.context != When::DashboardOverlay
                 && item.keys.iter().any(|k| overlay_claimed.contains(k))
             {
                 item.keys.retain(|k| !overlay_claimed.contains(k));
                 if item.keys.is_empty() {
-                    // Every key is shadowed — the binding is
-                    // genuinely unreachable inside the overlay.
+                    // Every key is shadowed; the binding is genuinely unreachable inside the overlay
                     continue;
                 }
-                // The custom display no longer matches the surviving
-                // keys; render them verbatim.
+                // The custom display no longer matches the surviving keys; render them verbatim
                 item.custom_display = None;
             }
             // Identical row for both arms; `item` moves in, `dimmed`/`def.id` are Copy.
@@ -237,9 +213,8 @@ pub fn build_entries(
                     entries.push(hint);
                 }
                 std::collections::hash_map::Entry::Occupied(slot) => {
-                    // Same key already rendered in this category —
-                    // replace it only when the earlier row is dimmed
-                    // and this one is lit (active context wins).
+                    // Same key already rendered in this category
+                    // Replace it only when the earlier row is dimmed and this one is lit (active context wins)
                     let prior = &mut entries[*slot.get()];
                     if !dimmed && matches!(prior, ShortcutsHelpEntry::Hint { dimmed: true, .. }) {
                         *prior = hint;
@@ -247,8 +222,7 @@ pub fn build_entries(
                 }
             }
         }
-        // Scrollback search (`/`) has no registered ActionDef yet — vim-only,
-        // handled inline; surface it here for discoverability.
+        // Scrollback search (`/`) has no registered ActionDef yet (vim-only, handled inline); list it here for discoverability
         if vim_mode && cat == Category::ConversationNav {
             let mut item = HintItem::new(crate::key!('/'), "搜索");
             item.description = Some("搜索滚动历史".into());
@@ -279,9 +253,8 @@ pub fn build_entries(
         }
         let count = entries.len() - header_idx - 1;
         if count == 0 {
-            // Every action in this category got filtered out (e.g. all
-            // scrollback vim-only bindings in non-vim mode); drop the
-            // empty header rather than render a dead section.
+            // Every action in this category got filtered out (e.g. all scrollback vim-only bindings in non-vim mode).
+            // Drop the empty header rather than render a dead section
             entries.pop();
         } else if let Some(ShortcutsHelpEntry::SectionHeader { entry_count, .. }) =
             entries.get_mut(header_idx)
@@ -292,9 +265,8 @@ pub fn build_entries(
     entries
 }
 
-/// Build the initial `PickerState` for the modal. Width/height are wider
-/// than the default Floating popup so the cheatsheet has room for the
-/// key + label columns.
+/// Build the initial `PickerState` for the modal.
+/// The popup is larger than the default Floating one so the cheatsheet has room for the key and label columns.
 pub fn build_initial_picker_state(entries: &[ShortcutsHelpEntry]) -> PickerState {
     use crate::views::picker::{PickerMode, PopupConfig};
     let mut state = PickerState::with_mode(PickerMode::Popup(PopupConfig {
@@ -314,8 +286,7 @@ pub fn build_initial_picker_state(entries: &[ShortcutsHelpEntry]) -> PickerState
 /// Filter ShortcutsHelp entries by search query.
 ///
 /// Returns the original-index list of entries that pass the filter.
-/// Section headers are kept only when at least one hint in their section
-/// matches; this mirrors the palette's `filter_palette_entries` behavior.
+/// Section headers are kept only when at least one hint in their section matches; this mirrors the palette's `filter_palette_entries` behavior.
 pub fn filter_entries(
     entries: &[ShortcutsHelpEntry],
     query: &str,
@@ -392,9 +363,8 @@ fn hint_key_display(h: &HintItem) -> String {
 
 /// Pretty key display for the cheatsheet modal.
 ///
-/// Uses `custom_display` when set (for special representations like
-/// "Esc Esc" that can't be derived from the key list), otherwise renders
-/// the actual keys with pretty formatting (e.g. "Ctrl+Q", "Tab / i / Space").
+/// Uses `custom_display` when set (for special representations like "Esc Esc" that can't be derived from the key list).
+/// Otherwise renders the actual keys with pretty formatting (e.g. "Ctrl+Q", "Tab / i / Space").
 fn hint_key_pretty(h: &HintItem) -> String {
     if let Some(d) = h.custom_display {
         return d.to_string();
@@ -479,8 +449,7 @@ fn picker_config(non_sel: &[bool]) -> PickerConfig<'_> {
 
 /// Outcome of an input event delivered to the cheatsheet modal.
 ///
-/// The caller is responsible for mutating `AgentView` state — closing the
-/// modal, re-dispatching a synthesized key into `handle_input`, etc.
+/// The caller is responsible for mutating `AgentView` state: closing the modal, re-dispatching a synthesized key into `handle_input`, etc.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ShortcutsHelpOutcome {
     /// User asked to close the modal (Esc in browse, Ctrl+./Ctrl+X, [x] click).
@@ -491,7 +460,7 @@ pub enum ShortcutsHelpOutcome {
     ToggleSection(usize),
     /// Toggle inline help expand for a hint row (registry or long_help pseudo).
     ToggleExpand(ExpandKey),
-    /// Visual state changed (selection, hover, or detail enter/scroll/back) — redraw.
+    /// Visual state changed (selection, hover, or detail enter/scroll/back); redraw.
     Changed,
     /// Nothing changed.
     Unchanged,
@@ -568,8 +537,8 @@ pub fn detail_from_entry(entry: &ShortcutsHelpEntry) -> Option<ShortcutsHelpMode
     })
 }
 
-/// Open the detail page for `entry`, dropping any committed search so Esc from
-/// detail returns to an unfiltered browse and closes with one more press.
+/// Open the detail page for `entry`, dropping any committed search.
+/// Esc from detail then returns to an unfiltered browse and closes with one more press.
 fn enter_detail(state: &mut PickerState, entry: &ShortcutsHelpEntry) -> Option<ShortcutsHelpMode> {
     let detail = detail_from_entry(entry)?;
     state.set_query("");
@@ -619,7 +588,7 @@ pub fn render_detail_body<'a>(
     if area.width == 0 || area.height == 0 {
         return;
     }
-    // Borrow from the owned detail payload — no allocation while building the rows.
+    // Borrow from the owned detail payload; no allocation while building the rows
     let mut lines: Vec<Line<'a>> = Vec::new();
     lines.push(Line::from(Span::styled(
         title,
@@ -664,8 +633,8 @@ pub fn render_detail_body<'a>(
     Paragraph::new(visible).render(area, buf);
 }
 
-/// Render the detail page (pattern B) with its modal chrome + footer. Shared by
-/// both hosts so the chrome orchestration lives in one place (like `CheatsheetRows`).
+/// Render the detail page (pattern B) with its modal chrome and footer.
+/// Shared by both hosts so the chrome setup lives in one place (like `CheatsheetRows`).
 pub fn render_detail(
     buf: &mut ratatui::buffer::Buffer,
     area: ratatui::layout::Rect,
@@ -707,8 +676,8 @@ pub fn render_detail(
     }
 }
 
-/// Help line(s) shown under an expanded hint: prefers the action's `long_help`,
-/// falling back to the palette description. Callers split on `\n` for multi-line.
+/// Help line(s) shown under an expanded hint: prefers the action's `long_help`, falling back to the palette description.
+/// Callers split on `\n` for multi-line.
 pub fn hint_inline_help(entry: &ShortcutsHelpEntry) -> Option<&str> {
     match entry {
         ShortcutsHelpEntry::Hint {
@@ -718,8 +687,8 @@ pub fn hint_inline_help(entry: &ShortcutsHelpEntry) -> Option<&str> {
     }
 }
 
-/// Expand key for pattern A (e/Space/l/→). Registry rows use their ActionId;
-/// pseudo-rows with `long_help` and a static label use [`ExpandKey::Pseudo`].
+/// Expand key for pattern A (e/Space/l/→).
+/// Registry rows use their ActionId; pseudo-rows with `long_help` and a static label use [`ExpandKey::Pseudo`].
 pub fn expand_key(entry: &ShortcutsHelpEntry) -> Option<ExpandKey> {
     match entry {
         ShortcutsHelpEntry::Hint {
@@ -761,8 +730,7 @@ pub fn toggle_membership<T: Eq + std::hash::Hash>(
 
 /// Dispatch a key event to the cheatsheet picker. Mutates `state`.
 ///
-/// When `mode` is `Detail`, keys scroll the man page or return to browse; global
-/// close chords still dismiss the whole modal.
+/// When `mode` is `Detail`, keys scroll the man page or return to browse; global close chords still dismiss the whole modal.
 pub fn handle_input(
     key: &crossterm::event::KeyEvent,
     entries: &[ShortcutsHelpEntry],
@@ -782,7 +750,7 @@ pub fn handle_input(
 
     if mode.is_detail() {
         // Back-to-browse keys handled before borrowing `scroll` so we can replace `mode`.
-        // Vim keys (h/j/k/g) are intentionally NOT bound here — vim modal bindings are owned separately.
+        // Vim keys (h/j/k/g) are intentionally NOT bound here; vim modal bindings are owned separately
         if matches!(key.code, KeyCode::Esc | KeyCode::Left | KeyCode::Backspace) {
             *mode = ShortcutsHelpMode::Browse;
             return ShortcutsHelpOutcome::Changed;
@@ -811,7 +779,7 @@ pub fn handle_input(
     let vim_mode = crate::appearance::cache::load_vim_mode();
 
     if !searching {
-        // `i` mirrors the vim-nav pickers' "press i to search" affordance.
+        // `i` mirrors the vim-nav pickers' "press i to search" shortcut
         if key.code == KeyCode::Char('/')
             || (key.code == KeyCode::Char('i') && key.modifiers.is_empty())
         {
@@ -964,7 +932,7 @@ pub fn handle_mouse(
     let ev = crossterm::event::Event::Mouse(*mouse);
     match handle_picker_input(&ev, state, filtered.len(), &config) {
         PickerOutcome::Selected(idx) => {
-            // Clicking a section header toggles it; hint opens detail (pattern B).
+            // Clicking a section header toggles it; clicking a hint opens detail (pattern B)
             if let Some(ShortcutsHelpEntry::SectionHeader { category_idx, .. }) =
                 selected_original_entry(&filtered, entries, idx)
             {
@@ -992,9 +960,8 @@ pub fn handle_mouse(
 // Modal rendering + chrome integration
 // ---------------------------------------------------------------------------
 
-/// Footer hints painted along the bottom border of the cheatsheet
-/// modal. Identical visual vocabulary for the agent view and the
-/// dashboard so muscle memory ports across surfaces.
+/// Footer hints painted along the bottom border of the cheatsheet modal.
+/// The agent view and the dashboard show the same hints so muscle memory carries over.
 pub fn modal_footer(filter_active: bool) -> Vec<crate::views::modal_window::Shortcut<'static>> {
     use crate::views::modal_window::Shortcut;
     let mut shortcuts = vec![
@@ -1043,9 +1010,8 @@ pub fn modal_footer(filter_active: bool) -> Vec<crate::views::modal_window::Shor
     shortcuts
 }
 
-/// Modal-window sizing for the cheatsheet. The `compact` knob lets
-/// callers honour the user's compact-prompt setting (smaller
-/// margins + tighter padding) without re-deriving the sizing rules.
+/// Modal-window sizing for the cheatsheet.
+/// The `compact` knob lets callers honour the user's compact-prompt setting (smaller margins, tighter padding) without re-deriving the sizing rules.
 pub fn modal_sizing(compact: bool) -> crate::views::modal_window::ModalSizing {
     crate::views::modal_window::ModalSizing {
         width_pct: 0.70,
@@ -1059,8 +1025,7 @@ pub fn modal_sizing(compact: bool) -> crate::views::modal_window::ModalSizing {
     .with_compact(compact)
 }
 
-/// Per-row kind captured during [`CheatsheetRows::build`] so the borrowed
-/// picker rows need only the owned buffers, not the source `entries`.
+/// Per-row kind captured during [`CheatsheetRows::build`] so the borrowed picker rows need only the owned buffers, not the source `entries`.
 enum CheatsheetRowKind {
     Header {
         is_collapsed: bool,
@@ -1072,21 +1037,19 @@ enum CheatsheetRowKind {
     Other,
 }
 
-/// Owned per-frame buffers backing the cheatsheet picker rows, shared by both
-/// modal hosts (agent inline render + dashboard [`render_modal`]). The
-/// [`crate::views::picker::PickerEntry`] list from [`Self::picker_entries`]
-/// borrows these buffers, so this value must outlive the render call.
+/// Owned per-frame buffers backing the cheatsheet picker rows, shared by both modal hosts (agent inline render and dashboard [`render_modal`]).
+/// The [`crate::views::picker::PickerEntry`] list from [`Self::picker_entries`] borrows these buffers, so this value must outlive the render call.
 pub struct CheatsheetRows {
     row_strs: Vec<(String, String)>,
-    // Inline-help per row, newlines collapsed to spaces so the collapsible view renders one
-    // wrap-flowed block; empty string when the row has no help. Owned (it's a transform of the source).
+    // Inline-help per row, newlines collapsed to spaces so the collapsible view renders one wrap-flowed block
+    // Empty string when the row has no help; owned (it's a transform of the source)
     help_text: Vec<String>,
     kinds: Vec<CheatsheetRowKind>,
 }
 
 impl CheatsheetRows {
-    /// Build the row buffers for the current filter/collapse state. Both hosts
-    /// call this so the row/expand construction lives in exactly one place.
+    /// Build the row buffers for the current filter/collapse state.
+    /// Both hosts call this so the row/expand construction lives in exactly one place.
     pub fn build(
         entries: &[ShortcutsHelpEntry],
         query: &str,
@@ -1140,15 +1103,14 @@ impl CheatsheetRows {
         }
     }
 
-    /// Borrowed views of the per-row inline help, in row order. The caller holds
-    /// these so the picker's description slices can borrow them across the render.
+    /// Borrowed views of the per-row inline help, in row order.
+    /// The caller holds these so the picker's description slices can borrow them across the render.
     pub fn help_refs(&self) -> Vec<&str> {
         self.help_text.iter().map(String::as_str).collect()
     }
 
-    /// Build the borrowed picker rows, reading selection + expand state. The
-    /// returned list borrows `self` and `help` (from [`Self::help_refs`]), so it
-    /// lives only as long as both.
+    /// Build the borrowed picker rows, reading selection and expand state.
+    /// The returned list borrows `self` and `help` (from [`Self::help_refs`]), so it lives only as long as both.
     pub fn picker_entries<'a>(
         &'a self,
         state: &PickerState,
@@ -1228,19 +1190,14 @@ impl CheatsheetRows {
     }
 }
 
-/// Render the cheatsheet modal in full (chrome + picker content).
+/// Render the cheatsheet modal in full (chrome and picker content).
 ///
-/// Pulled out of `AgentView::draw` so the dashboard can paint the
-/// exact same modal without re-plumbing `ModalWindowConfig` /
-/// picker-inner glue. The agent view continues to drive its own
-/// modal via `views::modal::ActiveModal::ShortcutsHelp`; this
-/// function consumes the same fields by reference.
+/// Pulled out of `AgentView::draw` so the dashboard can paint the exact same modal without repeating the `ModalWindowConfig` and picker setup.
+/// The agent view continues to drive its own modal via `views::modal::ActiveModal::ShortcutsHelp`.
+/// This function consumes the same fields by reference.
 ///
-/// The signature mirrors the destructured `ActiveModal::ShortcutsHelp`
-/// fields one-to-one so callers can splat them directly — packing
-/// these into a wrapper struct would force every call site to
-/// build an intermediate just to take it apart again at the
-/// chrome / picker boundary.
+/// The signature mirrors the destructured `ActiveModal::ShortcutsHelp` fields one-to-one so callers can pass them directly.
+/// Packing these into a wrapper struct would force every call site to build an intermediate to take it apart again at the chrome/picker boundary.
 #[allow(clippy::too_many_arguments)]
 pub fn render_modal(
     buf: &mut ratatui::buffer::Buffer,
@@ -1334,14 +1291,12 @@ pub fn render_modal(
     });
 }
 
-/// Outcome of routing a key through the cheatsheet's
-/// chrome + picker pipeline.
+/// Outcome of routing a key through the cheatsheet's chrome and picker pipeline.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModalKeyOutcome {
-    /// User asked to close the modal (Esc in browse, Ctrl+./Ctrl+X,
-    /// or the close chrome button).
+    /// User asked to close the modal (Esc in browse, Ctrl+./Ctrl+X, or the close chrome button).
     Close,
-    /// `f` was pressed — caller should flip `filter_active`.
+    /// `f` was pressed; the caller should flip `filter_active`.
     ToggleFilter,
     /// User toggled a section header (collapse / expand).
     ToggleSection(usize),
@@ -1353,16 +1308,12 @@ pub enum ModalKeyOutcome {
     Unchanged,
 }
 
-/// Route a key through the cheatsheet's modal-window chrome + the
-/// picker `handle_input`. Mirrors the agent view's per-modal
-/// handler so the dashboard can reuse the exact same key
-/// semantics. Caller owns `filter_active` / `collapsed_sections`
-/// so the result mutations stay local to the wrapping struct.
+/// Route a key through the cheatsheet's modal-window chrome and the picker `handle_input`.
+/// Mirrors the agent view's per-modal handler so keys behave exactly the same on the dashboard.
+/// The caller owns `filter_active` / `collapsed_sections` so the result mutations stay local to the wrapping struct.
 ///
-/// Args follow the same one-to-one shape as the field set behind
-/// `ActiveModal::ShortcutsHelp` so dashboards and agents can call
-/// it via plain destructuring instead of building / unpacking a
-/// wrapper struct.
+/// Args follow the same one-to-one shape as the field set behind `ActiveModal::ShortcutsHelp`.
+/// Dashboards and agents can thus call it via plain destructuring instead of building and unpacking a wrapper struct.
 #[allow(clippy::too_many_arguments)]
 pub fn handle_modal_key(
     key: &crossterm::event::KeyEvent,
@@ -1445,10 +1396,6 @@ pub fn handle_paste(
         crate::input::line_editor::LineEditOutcome::Unhandled => ShortcutsHelpOutcome::Unchanged,
     }
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {

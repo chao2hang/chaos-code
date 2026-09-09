@@ -1,28 +1,18 @@
-//! `/timestamps` -- toggle timestamp display on messages.
+//! `/timestamps`: toggle timestamp display on messages.
 //!
-//! This command computes the new value itself and dispatches the typed
-//! `Action::SetTimestamps(bool)`.
+//! This command computes the new value itself and dispatches the typed `Action::SetTimestamps(bool)`.
 
 use crate::app::actions::Action;
-use crate::slash::command::{CommandExecCtx, CommandResult, SlashCommand};
+use crate::slash::command::{CommandExecCtx, CommandResult, SlashCommand, slash_meta};
 
 pub struct TimestampsCommand;
 
 impl SlashCommand for TimestampsCommand {
-    fn name(&self) -> &str {
-        "timestamps"
-    }
-
-    fn description(&self) -> &str {
-        "开关消息时间戳"
-    }
-
-    fn usage(&self) -> &str {
-        "/timestamps"
-    }
-
-    fn arg_placeholder(&self) -> Option<&str> {
-        Some("on/off")
+    slash_meta! {
+        name: "timestamps",
+        description: "开关消息时间戳",
+        usage: "/timestamps",
+        arg_placeholder: "on/off",
     }
 
     fn run(&self, _ctx: &mut CommandExecCtx, _args: &str) -> CommandResult {

@@ -1,30 +1,20 @@
-//! `/session-info` -- show current session info (instant, not queued).
+//! `/session-info`: show current session info (instant, not queued).
 
 use crate::app::actions::Action;
-use crate::slash::command::{CommandExecCtx, CommandResult, SlashCommand};
+use crate::slash::command::{CommandExecCtx, CommandResult, SlashCommand, slash_meta};
 
 /// 显示会话信息 (session ID, cwd, model, context usage).
 pub struct SessionInfoCommand;
 
 impl SlashCommand for SessionInfoCommand {
-    fn name(&self) -> &str {
-        "session-info"
-    }
-
-    fn description(&self) -> &str {
-        "显示会话信息"
-    }
-
-    fn session_scoped(&self) -> bool {
-        true
-    }
-
-    fn usage(&self) -> &str {
-        "/session-info"
+    slash_meta! {
+        name: "session-info",
+        description: "显示会话信息",
+        usage: "/session-info",
+        session_scoped: true,
     }
 
     fn run(&self, ctx: &mut CommandExecCtx, _args: &str) -> CommandResult {
-        // Check if we have an active session
         if ctx.session_id.is_none() {
             return CommandResult::Error("No active session".to_string());
         }

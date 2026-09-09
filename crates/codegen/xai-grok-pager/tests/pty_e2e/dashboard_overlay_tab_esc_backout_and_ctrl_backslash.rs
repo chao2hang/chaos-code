@@ -2,9 +2,9 @@
 #[allow(unused_imports)]
 use super::common::*;
 
-/// Ctrl+\ (OpenDashboard). crossterm maps the raw 0x1c byte to Ctrl+4, so the
-/// universal dashboard chord must be sent as the kitty CSI-u form: code 92
-/// (`\`), modifier 5 (Ctrl). Mirrors `CTRL_ENTER` / `CTRL_SEMICOLON` in common.
+/// Ctrl+\ (OpenDashboard).
+/// crossterm maps the raw 0x1c byte to Ctrl+4, so the universal dashboard chord must be sent as kitty CSI-u: code 92 (`\`), modifier 5 (Ctrl).
+/// Mirrors `CTRL_ENTER` / `CTRL_SEMICOLON` in common.
 const CTRL_BACKSLASH: &[u8] = b"\x1b[92;5u";
 
 /// Attach the (only) agent row as a session overlay from the dashboard list.
@@ -29,9 +29,8 @@ fn attach_overlay(h: &mut PtyHarness) {
     );
 }
 
-/// Dashboard-overlay back-out. Attaching a
-/// session lands on the default Prompt focus, so every keyboard back-out path
-/// must work and the user must never be trapped:
+/// Dashboard-overlay back-out.
+/// Attaching a session lands on the default Prompt focus, so every keyboard back-out path must work and the user must never be trapped:
 ///   - **Ctrl+\** opens the dashboard from a session (and from inside the overlay);
 ///   - **empty-prompt Esc** backs out;
 ///   - **Left on an empty prompt** backs out;
@@ -96,7 +95,7 @@ async fn dashboard_overlay_tab_esc_backout_and_ctrl_backslash() {
         .wait_for_text("+ 新建会话", Duration::from_secs(10))
         .expect("empty-prompt overlay Esc must back out to the dashboard");
 
-    // ── (a) Left on an empty prompt backs out. (Left arrow = CSI D.)
+    // ── (a) Left on an empty prompt backs out. (Left arrow is CSI D.)
     attach_overlay(&mut harness);
     harness
         .inject_keys(b"\x1b[D")

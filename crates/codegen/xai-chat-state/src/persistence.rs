@@ -39,8 +39,34 @@ pub trait ChatPersistence: Send + 'static {
         state: &xai_grok_compaction::selective::SelectiveState,
     );
 
+    /// Destructive image-strip rewrite: back up the on-disk history, then
+    /// replace it, acking the DISK outcome. A failed backup gates off the
+    /// rewrite so recoverability never silently evaporates; backends without
+    /// a recoverable store may no-op the backup but must ack the write.
+    fn replace_history_for_strip_and_ack(
+        &mut self,
+        items: &[ConversationItem],
+    ) -> oneshot::Receiver<io::Result<()>>;
+
     /// Flush pending writes to disk.
     fn flush(&mut self);
+}
+
+/// Outcome of a conversation image strip, as acknowledged by the actor.
+/// Typed so a dead actor can never masquerade as "stripped nothing".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StripOutcome {
+    /// Stripped and durably persisted; `stripped` counts the stored
+    /// occurrences replaced (a URL stored twice counts twice).
+    Applied { stripped: usize },
+    /// No stored image matched the requested URLs; nothing changed.
+    NoMatch,
+    /// Stripped in memory, but the backup or disk write failed, or the
+    /// acknowledgement was lost mid-flight. Treated as not persisted: the
+    /// stored file may still carry the images and the next load re-poisons.
+    WriteFailed { stripped: usize },
+    /// The chat-state actor is gone; the strip may not have happened at all.
+    ActorUnavailable,
 }
 
 // ============================================================================
@@ -58,6 +84,8 @@ pub enum PersistenceRecord {
     ReplaceHistory(Vec<ConversationItem>),
     /// Selective compaction metadata was replaced atomically.
     SelectiveCompaction(xai_grok_compaction::selective::SelectiveState),
+    /// A backup-gated, disk-acknowledged strip rewrite was requested.
+    ReplaceHistoryForStrip(Vec<ConversationItem>),
     /// A flush was requested.
     Flush,
 }
@@ -67,6 +95,9 @@ pub enum PersistenceRecord {
 /// the actor did. No locks, no atomics — just message passing.
 pub struct MockChatPersistence {
     tx: mpsc::UnboundedSender<PersistenceRecord>,
+    /// When set, strip rewrites ack an I/O error instead of success:
+    /// pins the honest-failure half of the [`StripOutcome`] contract.
+    fail_strip_writes: bool,
     persistence_ack_tx:
         Option<mpsc::UnboundedSender<oneshot::Sender<Result<StrictAppendAck, StrictAppendError>>>>,
     persisted_working_directory_switches: Vec<ConversationItem>,
@@ -88,6 +119,7 @@ impl MockChatPersistence {
         (
             Self {
                 tx,
+                fail_strip_writes: false,
                 persistence_ack_tx: None,
                 persisted_working_directory_switches: Vec::new(),
             },
@@ -98,6 +130,14 @@ impl MockChatPersistence {
         )
     }
 
+    /// Create a mock whose strip rewrites fail at "disk": the ack carries
+    /// an error, so callers must surface `StripOutcome::WriteFailed`.
+    pub fn new_failing_strip_writes() -> (Self, MockPersistenceReceiver) {
+        let (mut mock, rx) = Self::new();
+        mock.fail_strip_writes = true;
+        (mock, rx)
+    }
+
     /// Create a mock whose persistence acknowledgement is test-controlled.
     pub fn new_with_manual_persistence_ack() -> (Self, MockPersistenceReceiver) {
         let (tx, rx) = mpsc::unbounded_channel();
@@ -105,6 +145,7 @@ impl MockChatPersistence {
         (
             Self {
                 tx,
+                fail_strip_writes: false,
                 persistence_ack_tx: Some(persistence_ack_tx),
                 persisted_working_directory_switches: Vec::new(),
             },
@@ -202,6 +243,23 @@ impl ChatPersistence for MockChatPersistence {
             .send(PersistenceRecord::SelectiveCompaction(state.clone()));
     }
 
+    fn replace_history_for_strip_and_ack(
+        &mut self,
+        items: &[ConversationItem],
+    ) -> oneshot::Receiver<io::Result<()>> {
+        let (reply, receiver) = oneshot::channel();
+        let _ = self
+            .tx
+            .send(PersistenceRecord::ReplaceHistoryForStrip(items.to_vec()));
+        let ack = if self.fail_strip_writes {
+            Err(io::Error::new(io::ErrorKind::StorageFull, "mock disk full"))
+        } else {
+            Ok(())
+        };
+        let _ = reply.send(ack);
+        receiver
+    }
+
     fn flush(&mut self) {
         let _ = self.tx.send(PersistenceRecord::Flush);
     }
@@ -228,7 +286,14 @@ impl ChatPersistence for NullChatPersistence {
     fn persist_selective_compaction(
         &mut self,
         _state: &xai_grok_compaction::selective::SelectiveState,
-    ) {
+    ) {}
+    fn replace_history_for_strip_and_ack(
+        &mut self,
+        _items: &[ConversationItem],
+    ) -> oneshot::Receiver<io::Result<()>> {
+        let (reply, receiver) = oneshot::channel();
+        let _ = reply.send(Ok(()));
+        receiver
     }
     fn flush(&mut self) {}
 }
@@ -302,13 +367,5 @@ mod tests {
             .unwrap(),
             StrictAppendAck::AlreadyPresent(item) if item.text_content() == "authoritative"
         ));
-    }
-
-    #[test]
-    fn null_persistence_does_not_panic() {
-        let mut null = NullChatPersistence;
-        null.persist_message(&ConversationItem::system("test"));
-        null.replace_history(&[ConversationItem::user("a")]);
-        null.flush();
     }
 }

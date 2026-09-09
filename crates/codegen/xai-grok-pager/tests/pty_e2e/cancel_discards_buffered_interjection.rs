@@ -44,8 +44,7 @@ async fn cancel_discards_buffered_interjection() {
         .inject_keys(b"deliver this steer now")
         .expect("type steering");
     harness.inject_keys(CTRL_ENTER).expect("send-now chord");
-    // Cancel-and-send: the steer commits as a standard "❯ " prompt block via
-    // the turn-start adoption and runs as its own turn.
+    // Cancel-and-send: the steer commits as a standard "❯ " prompt block via the turn-start adoption and runs as its own turn
     harness
         .wait_for_text("\u{276F} deliver this steer now", Duration::from_secs(15))
         .expect("send-now prompt block");
@@ -59,9 +58,8 @@ async fn cancel_discards_buffered_interjection() {
         harness.screen_contents()
     );
 
-    // Explicit Ctrl+C on the steer turn (still streaming): a REAL cancel,
-    // whose marker must render — the earlier send-now expectation was
-    // consumed and must not silence it.
+    // Explicit Ctrl+C on the steer turn (still streaming): a REAL cancel, whose marker must render
+    // The earlier send-now expectation was consumed and must not silence it
     harness.inject_keys(keys::CTRL_C).expect("cancel turn");
     harness
         .wait_for_text("用户在", Duration::from_secs(10))
@@ -85,12 +83,12 @@ async fn cancel_discards_buffered_interjection() {
     );
     for s in &steers {
         assert!(
-            !s.contains(INTERJECTION_WIRE_PREFIX),
-            "send-now must not use the interjection preamble: {s}"
+            s.contains(INTERJECTION_WIRE_PREFIX),
+            "send-now must use the interjection preamble: {s}"
         );
         assert!(
             s.contains("<user_query>"),
-            "send-now must arrive as a standard user_query prompt: {s}"
+            "send-now must wrap the steered text in user_query: {s}"
         );
     }
 

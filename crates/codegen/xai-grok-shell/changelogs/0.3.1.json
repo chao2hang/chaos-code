@@ -1,0 +1,22 @@
+[
+  {
+    "category": "features",
+    "description": "**上游同步**：逐步移植 xai-org/grok-build 上游 `72a61251` 的功能、测试与基础设施改进。",
+    "breaking_change": false
+  },
+  {
+    "category": "features",
+    "description": "**模型选择**：清空安装包内置的默认模型目录；模型列表改由用户配置，避免安装后默认出现 Grok 模型。",
+    "breaking_change": false
+  },
+  {
+    "category": "features",
+    "description": "**安装与更新**：统一 Chaos Code 的 `chaos` 命令、npm 安装包、GitHub Release 更新路径和双 home 目录兼容逻辑。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "**品牌清理**：修复 npm postinstall/bootstrap 中残留的官方 Grok 包名与二进制命名。",
+    "breaking_change": false
+  }
+]
