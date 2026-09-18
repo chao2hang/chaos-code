@@ -1,6 +1,7 @@
 # 用户指南中文化的进度与恢复点
 
-更新于 2026-09-18，分支 `sync/curated-port-20260918`，基线 `a82a27ea`。
+更新于 2026-09-18，分支 `sync/curated-port-20260918`，基线 `a82a27ea`，
+本文的提交清单与统计数字截至 `707899b4`。
 
 ## 一、已完成
 
@@ -15,42 +16,50 @@
 | `01029f2c` | 本文件：进度与恢复点 |
 | `b99dca39` | `--cells` 表格校验 + `scripts/doc-cell-glossary.tsv` + 自测 33 例 |
 | `a82a27ea` | 按词典机械替换 855 个表格短单元格 |
+| `05a25b25` | 围栏内行尾注释的对齐按装饰处理 + 3 条自测 |
+| `21ee6aa3` | `01-getting-started.md` 中文化 |
+| `90d81e4e` | `06-theming.md` 中文化（Terminal 主题按 §4.3 删除） |
+| `ddac8fc6` | 有心删除的行内代码字面量改为逐条声明（`scripts/doc-span-removals.tsv`） |
+| `f945bd07` | 围栏内 ASCII 示意图的边框对齐按装饰处理 + 2 条自测 |
+| `cea224fd` | `15-agent-mode.md` 中文化 |
+| `9df3ea16` | `18-sandbox.md` 中文化 |
+| `9f2c529c` | `08-skills.md` 中文化 |
+| `6abb37a6` | `11-custom-models.md` 中文化（凭据解析一节按 BYOK 重写） |
+| `cab54b74` | 句末的 `grok.` 也按改名归一化 + 3 条自测 |
+| `37e5b55f` | `07-mcp-servers.md` 中文化 |
+| `b9a0fcbc` | `25-status-line.md` 中文化 |
+| `d4934338` | 点名上游的段落也算豁免 + `--fork-names` 自测 7 例 |
+| `707899b4` | `19-plan-mode.md` 残留的 `~/.grok/sessions` 改回 `~/.chaos` |
 
-已整章完成：`12`、`19`、`20`（`02` 已更正，`README` 标题行待译）。
-`26` 的首节散文已译，表格短单元格已全库替换。
+已整章完成（散文行、表格单元格、上游旧名三项都归零）：`01`、`02`、`06`、`07`、
+`08`、`11`、`12`、`15`、`18`、`19`、`20`、`25`。本轮之前已提交的整章是
+`12`、`19`、`20`；`02` 是更正而非翻译。
+`26` 的首节散文已译，表格短单元格已全库替换；`README` 还剩链接表的 10 个单元格。
 
 ## 二、真实剩余工作量
 
 `--english` 只扫散文行、不扫表格行，单看过它会把「散文已中文、表格全英文」
 的章节误判成接近完成。下表是 `--english` 与 `--cells` 合起来的口径
-（`--fork-names` 是同一批改动里顺带做的）。
+（`--fork-names` 是同一批改动里顺带做的），统计于 `707899b4`。
 
 | 章节 | 行数 | 字符 | 散文行 | 表格单元格 | 上游旧名 |
 |---|---:|---:|---:|---:|---:|
-| `10-hooks.md` | 665 | 57 204 | 177 | 52 | 27 |
-| `26-config-reference.md` | 686 | 58 471 | 0 | 373 | 0 |
-| `03-keyboard-shortcuts.md` | 478 | 28 835 | 108 | 123 | 0 |
-| `14-headless-mode.md` | 687 | 41 464 | 112 | 75 | 44 |
-| `05-configuration.md` | 834 | 44 495 | 71 | 75 | 40 |
-| `22-permissions-and-safety.md` | 572 | 32 964 | 123 | 20 | 28 |
-| `24-monitoring-usage.md` | 380 | 20 936 | 118 | 32 | 2 |
-| `23-dashboard.md` | 312 | 14 905 | 136 | 20 | 2 |
-| `21-terminal-support.md` | 304 | 13 414 | 150 | 0 | 12 |
-| `16-subagents.md` | 401 | 20 065 | 87 | 39 | 8 |
-| `13-memory.md` | 485 | 18 651 | 87 | 40 | 25 |
-| `18-sandbox.md` | 306 | 18 437 | 101 | 17 | 24 |
-| `09-plugins.md` | 451 | 26 801 | 82 | 28 | 44 |
-| `04-slash-commands.md` | 470 | 23 245 | 84 | 5 | 6 |
-| `17-sessions.md` | 392 | 20 560 | 79 | 0 | 35 |
-| `07-mcp-servers.md` | 394 | 17 172 | 67 | 5 | 38 |
-| `08-skills.md` | 234 | 13 265 | 47 | 18 | 21 |
-| `25-status-line.md` | 143 | 17 227 | 30 | 31 | 9 |
-| `11-custom-models.md` | 400 | 12 628 | 38 | 4 | 9 |
-| `06-theming.md` | 346 | 14 528 | 35 | 17 | 3 |
-| `15-agent-mode.md` | 339 | 12 851 | 27 | 25 | 11 |
-| `01-getting-started.md` | 229 | 7 185 | 16 | 15 | 20 |
-| `README.md` | 61 | 2 019 | 0 | 10 | 2 |
-| 合计 | 10 089 | 536 744 | 1 775 | 1 024 | 412 |
+| `26-config-reference.md` | 685 | 58471 | 0 | 373 | 0 |
+| `03-keyboard-shortcuts.md` | 477 | 28835 | 108 | 123 | 0 |
+| `10-hooks.md` | 664 | 57204 | 177 | 52 | 27 |
+| `14-headless-mode.md` | 686 | 41464 | 112 | 75 | 44 |
+| `23-dashboard.md` | 311 | 14905 | 136 | 20 | 2 |
+| `21-terminal-support.md` | 303 | 13414 | 150 | 0 | 12 |
+| `24-monitoring-usage.md` | 379 | 20936 | 118 | 32 | 2 |
+| `05-configuration.md` | 833 | 44495 | 71 | 75 | 40 |
+| `22-permissions-and-safety.md` | 571 | 32964 | 123 | 20 | 28 |
+| `13-memory.md` | 484 | 18651 | 87 | 40 | 25 |
+| `16-subagents.md` | 400 | 20065 | 87 | 39 | 8 |
+| `09-plugins.md` | 450 | 26801 | 82 | 28 | 44 |
+| `04-slash-commands.md` | 469 | 23245 | 84 | 5 | 6 |
+| `17-sessions.md` | 391 | 20560 | 79 | 0 | 35 |
+| `README.md` | 60 | 2019 | 0 | 10 | 0 |
+| 合计 | 7 163 | 424 029 | 1 414 | 892 | 273 |
 
 ## 三、执行顺序
 
@@ -69,6 +78,9 @@
 10. `03-keyboard-shortcuts`、`14-headless-mode`（大）
 11. `10-hooks`、`26-config-reference`（最大，各拆 2–3 次派发，按小节区间）
 12. `README`（等所有章节标题定稿后再译链接文字）
+
+已做完：1（`08`、`11`）、2（`06`、`25`）、3（`15`、`18`）、4 的 `07`
+（`13` 已派发，进行中）。
 
 ## 四、每章的执行协议（实测唯一稳定的做法）
 
@@ -98,7 +110,8 @@ python3 scripts/check-doc-l10n.py --fork-names --glob "$G/<本章>"
 ```
 
 前三条必须为 0；第四条剩下的必须是 §4.1 表里「原样」的那些，或明确讨论
-双读兼容的那一段。
+双读兼容、或点名上游以说明「那不是我」的那一段。豁免按**段落**判定，认
+「兼容」和「上游」两个词（脚本里的 `EXEMPT_LINE`）。
 
 ## 五、各章特有的写作要求
 
@@ -123,6 +136,9 @@ python3 scripts/check-doc-l10n.py --fork-names --glob "$G/<本章>"
 - `26`：断言的核对结论见 `sync/doc-claims-verification.md`；表格的
   `Details` 列是散文（373 个单元格），`Key`/`Type / Values`/
   `Requirements`/`Managed` 四列是字面量。
+- `26` 第 101 行那个 `mixed` note 要顺手重写：它讲的是 `-w` 的 `Grove`
+  模式，而 `Grove` 是本分叉没有的功能（`xai-grok-config`、`app/cli.rs`
+  里都没有这个字符串），按 §4.3 删掉相关表述。
 
 ## 六、收尾清单（全部章节译完后）
 
@@ -133,7 +149,9 @@ python3 scripts/check-doc-l10n.py --fork-names --glob "$G/<本章>"
 4. `python3 scripts/check-doc-l10n.py --english` 归零。
 5. `python3 scripts/check-doc-l10n.py --cells --strict` 归零。
 6. `python3 scripts/check-doc-l10n.py --before main --after HEAD --strict-spans`
-   全库 0 漂移。
+   全库 0 漂移，且每一条 `note:` 都要能逐条讲清来历（新增的行内字面量是
+   有意补的，例如 `01` 的 `/provider`、`06` 的三个枚举名），讲不清的按漂移
+   处理，不算通过。
 7. `bash scripts/l10n-guard.sh --before main --after HEAD --report <dir>`
    三份报告都是 0。
 8. `cargo test -p xai-grok-shell --lib --features config-docs config_docs`
