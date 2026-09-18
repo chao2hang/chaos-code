@@ -205,7 +205,7 @@
 ## 七、每次提交前自检
 
 机器校验脚本是 `scripts/check-doc-l10n.py`（它自己的测试在
-`scripts/check-doc-l10n-selftest.py`，42 条用例覆盖每个不变量的
+`scripts/check-doc-l10n-selftest.py`，49 条用例覆盖每个不变量的
 「该拦」和「该放」两个方向，改动脚本后先跑它）。翻译完一章，至少跑：
 
 ```sh

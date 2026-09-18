@@ -52,8 +52,9 @@ Plus heuristics for localization residue:
   fork-names reports `grok` used as a command or a config path (prose *and*
              code), i.e. names the fork has since renamed. Legacy `GROK_*`
              env vars, `xai-grok-*` crates, `grok-<model>` ids, `grok.com`
-             and `/etc/grok` are allowlisted; a line that explicitly discusses
-             compatibility may name the legacy path.
+             and `/etc/grok` are allowlisted; a block that explicitly
+             discusses compatibility, or that names the upstream in order to
+             say it is *not* this binary, may name the legacy path.
 
 `--english` deliberately skips table rows, so on its own it reports a
 translated-looking chapter that still has English table prose. `--cells`
@@ -780,9 +781,11 @@ FORK_NAME_ALLOW = re.compile(
     r"|grok\.com|auth\.x\.ai"   # upstream service, not the local binary
     r"|/etc/grok"               # system config dir, `.chaos` twin does not exist
 )
-# A line that explicitly discusses the dual-read compatibility policy is
-# allowed to name the legacy path: that is the one place it belongs.
-COMPAT_LINE = re.compile(r"兼容")
+# A line that explicitly discusses the upstream is allowed to name it: the
+# dual-read compatibility note that tells the reader how to spell the legacy
+# path, and a sentence that names the upstream binary to say it is *not* this
+# one, are the two places the old name belongs.
+EXEMPT_LINE = re.compile(r"兼容|上游")
 
 
 def fork_name_hits(text: str) -> list[tuple[int, str]]:
@@ -808,7 +811,7 @@ def fork_name_hits(text: str) -> list[tuple[int, str]]:
         if i == 1 or not lines[i - 2].strip():
             block += 1
         block_of[i] = block
-        if COMPAT_LINE.search(line):
+        if EXEMPT_LINE.search(line):
             compat_block.add(block)
     exempt = compat_block | {b - 1 for b in compat_block}
 

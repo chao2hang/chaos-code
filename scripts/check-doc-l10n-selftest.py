@@ -219,6 +219,28 @@ CELL_CASES = (
      TABLE.format(a="说明", b="说明"), "Yes\t是\nYes\t否\n", False),
 )
 
+# The residue detector is the gate that decides whether the sweep is over, so
+# its allowlist and its exemption need the same two-way coverage: a leftover
+# upstream name must be reported, and each literal the fork deliberately kept
+# must not be.
+FORK_NAME_CASES = (
+    ("fork names: a leftover command word is reported",
+     "运行 `grok inspect` 查看。\n", False),
+    ("fork names: a leftover config path is reported",
+     "写入 `~/.grok/config.toml`。\n", False),
+    ("fork names: a leftover bare name is reported",
+     "顶层目录是 .grok。\n", False),
+    ("fork names: the dual-read note may name the legacy path",
+     "路径请按兼容规则把 `~/.grok` 理解为配置根。\n", True),
+    ("fork names: a sentence about the upstream may name it",
+     "（上游官方安装脚本安装的是 `grok`，与本 fork 无关。）\n", True),
+    ("fork names: literals the fork did not rename are allowed",
+     "见 `grok.com`、`xai-grok-pager`、`grok-4.5`、`/etc/grok`、"
+     "`GROK_AGENT_DASHBOARD`。\n", True),
+    ("fork names: a name inside a path is allowed",
+     "日志写在 `/tmp/grok.log`。\n", True),
+)
+
 # Whole-cell matching: the longer cell must survive an apply untouched.
 APPLY_DOC = """# T
 
@@ -244,6 +266,21 @@ def run_cell_case(name: str, doc: str, glossary: str, expect_pass: bool) -> int:
     proc = subprocess.run(
         [sys.executable, GATE, "--cells", "--strict", "--glob", "*.md",
          "--cell-glossary", "g.tsv"],
+        cwd=tmp, capture_output=True, text=True)
+    passed = proc.returncode == 0
+    if passed == expect_pass:
+        print(f"ok   {name}: pass={passed} (expected {expect_pass})")
+        return 0
+    print(f"FAIL {name}: pass={passed} but expected {expect_pass}")
+    print("     " + proc.stdout.strip().replace("\n", "\n     ")[:500])
+    return 1
+
+
+def run_fork_name_case(name: str, doc: str, expect_pass: bool) -> int:
+    tmp = Path(tempfile.mkdtemp())
+    (tmp / "doc.md").write_text(doc, encoding="utf-8")
+    proc = subprocess.run(
+        [sys.executable, GATE, "--fork-names", "--strict", "--glob", "*.md"],
         cwd=tmp, capture_output=True, text=True)
     passed = proc.returncode == 0
     if passed == expect_pass:
@@ -316,9 +353,10 @@ def run_removal_case() -> int:
 def main() -> int:
     failures = sum(run_case(*case) for case in CASES)
     failures += sum(run_cell_case(*case) for case in CELL_CASES)
+    failures += sum(run_fork_name_case(*case) for case in FORK_NAME_CASES)
     failures += run_apply_case()
     failures += run_removal_case()
-    total = len(CASES) + len(CELL_CASES) + 2
+    total = (len(CASES) + len(CELL_CASES) + len(FORK_NAME_CASES) + 2)
     print(f"\n{total - failures}/{total} self-test case(s) passed")
     return 1 if failures else 0
 
