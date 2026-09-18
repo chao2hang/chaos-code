@@ -36,6 +36,11 @@ identifier); *adding* one is only reported, because a verified content
 correction may introduce a literal the upstream text never named. Pass
 `--strict-spans` to treat additions as drift too.
 
+Losing one is drift *unless* it is declared in `scripts/doc-span-removals.tsv`.
+The fork dropped literals whose feature does not exist here (a `grok login`
+command, a device-code flag), and dropping them is the documented behaviour;
+the list keeps each such removal reviewable instead of invisible.
+
 Plus heuristics for localization residue:
 
   english    reports prose lines with no Han characters and >= MIN_WORDS
@@ -286,6 +291,7 @@ SEP_ROW = re.compile(r"^\s*\|[\s:|-]+\|\s*$")
 CELL_SPLIT = re.compile(r"(?<!\\)\|")
 KEEP = "=keep"                       # glossary value: keep this literal English
 DEFAULT_CELL_GLOSSARY = "scripts/doc-cell-glossary.tsv"
+DEFAULT_SPAN_REMOVALS = "scripts/doc-span-removals.tsv"
 
 # A Han-bearing cell that still carries this many ASCII words, one of them a
 # function word, probably stopped halfway. Reported as a note, never a
@@ -639,8 +645,37 @@ def fix_anchors(before: str, glob: str) -> int:
     return 1 if unresolved else 0
 
 
+def load_span_removals(path: str) -> tuple[set[str], list[str]]:
+    """Inline spans that may legitimately disappear, and why.
+
+    The fork drops some literals the upstream text used, because the feature
+    does not exist here (the `grok login` command, an OIDC or device-code
+    flag). Without an entry in the removal list, dropping *any* inline span is
+    reported as drift -- that is what catches a mangled identifier -- so each
+    deliberate removal is declared once, with a reason, and then shows up as a
+    reviewable note instead of a failure. Entries are compared after
+    `fork_normalize`.
+    """
+    spans: set[str] = set()
+    problems: list[str] = []
+    file = Path(path)
+    if not file.is_file():
+        return spans, problems
+    for lineno, raw in enumerate(file.read_text(encoding="utf-8").split("\n"), 1):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split("\t")
+        if len(parts) != 2 or not parts[0].strip() or not parts[1].strip():
+            problems.append(f"{path}:{lineno}: expected `span<TAB>reason`")
+            continue
+        spans.add(fork_normalize(parts[0].strip()))
+    return spans, problems
+
+
 def compare(before: str, after: str, path: str,
-            strict_spans: bool = False) -> tuple[list[str], list[str]]:
+            strict_spans: bool = False,
+            removals: frozenset[str] = frozenset()) -> tuple[list[str], list[str]]:
     """Return (problems, notes).
 
     Problems are structural damage. Notes are visible-but-tolerated changes:
@@ -664,6 +699,11 @@ def compare(before: str, after: str, path: str,
     after_inline = Counter(fork_normalize(s) for s in inline_spans(after).elements())
     lost = before_inline - after_inline
     added = after_inline - before_inline
+    declared = Counter({s: c for s, c in lost.items() if s in removals})
+    lost = lost - declared
+    if declared:
+        notes.append("inline-code spans removed, as declared: "
+                     + str(sorted(declared.elements())))
     if lost:
         problems.append(
             "inline-code spans lost: " + str(sorted(lost.elements())[:8])
@@ -810,6 +850,11 @@ def main() -> int:
                     help="with --fork-names: exit non-zero when any remain")
     ap.add_argument("--strict-spans", action="store_true",
                     help="treat an added inline-code span as drift, not a note")
+    ap.add_argument("--span-removals", default=DEFAULT_SPAN_REMOVALS,
+                    help="file listing inline spans the fork may drop, "
+                         "one `span<TAB>reason` per line")
+    ap.add_argument("--check-span-removals", action="store_true",
+                    help="validate the removal list and exit")
     ap.add_argument("--links", action="store_true",
                     help="verify internal file/anchor links in the worktree")
     ap.add_argument("--fix-anchors", action="store_true",
@@ -901,9 +946,21 @@ def main() -> int:
             return 1
         return 0
 
+    removals, removal_problems = load_span_removals(args.span_removals)
+    if args.check_span_removals:
+        for item in removal_problems:
+            print(item)
+        print(f"{len(removals)} declared span removal(s), "
+              f"{len(removal_problems)} problem(s)")
+        return 1 if removal_problems else 0
+
     if not args.before or not args.after:
         ap.error("--before and --after are required unless "
                  "--english/--cells/--links")
+
+    if removal_problems:
+        for item in removal_problems:
+            print(item)
 
     worktree = args.after in WORKTREE_ALIASES
     failures = 0
@@ -919,7 +976,8 @@ def main() -> int:
             after = read_rev(args.after, path)
         if after is None:
             continue
-        problems, notes = compare(before, after, path, args.strict_spans)
+        problems, notes = compare(before, after, path, args.strict_spans,
+                                  removals)
         if problems or notes:
             print(f"{path}")
             for item in problems:

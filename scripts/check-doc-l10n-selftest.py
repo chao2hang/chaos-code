@@ -253,11 +253,53 @@ def run_apply_case() -> int:
     return 1
 
 
+def run_removal_case() -> int:
+    """A declared span removal is a note; an undeclared one is still drift."""
+    name = "span removal: declared passes, undeclared fails"
+    tmp = Path(tempfile.mkdtemp())
+    target = tmp / REL
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(FIXTURE, encoding="utf-8")
+
+    def git(*a: str):
+        return subprocess.run(["git", *a], cwd=tmp, capture_output=True,
+                              text=True)
+
+    git("init", "-q")
+    git("config", "user.email", "t@t")
+    git("config", "user.name", "t")
+    git("add", "-A")
+    git("commit", "-qm", "before")
+
+    target.write_text(sub("`GROK_CONFIG`", "GROK_CONFIG")(FIXTURE),
+                      encoding="utf-8")
+    (tmp / "declared.tsv").write_text(
+        "GROK_CONFIG\t上游变量，本分叉没有孪生\n", encoding="utf-8")
+    (tmp / "empty.tsv").write_text("# nothing declared\n", encoding="utf-8")
+
+    results = []
+    for listing, expect_drift in (("declared.tsv", False), ("empty.tsv", True)):
+        proc = subprocess.run(
+            [sys.executable, GATE, "--before", "HEAD", "--after", "WORKTREE",
+             "--glob", REL, "--span-removals", listing],
+            cwd=tmp, capture_output=True, text=True)
+        results.append((listing, proc.returncode != 0, expect_drift, proc))
+    if all(drifted == expect for _, drifted, expect, _ in results):
+        print(f"ok   {name}: declared=no-drift undeclared=drift")
+        return 0
+    print(f"FAIL {name}")
+    for listing, drifted, expect, proc in results:
+        print(f"     {listing}: drift={drifted} but expected {expect}")
+        print("     " + proc.stdout.strip().replace("\n", "\n     ")[:400])
+    return 1
+
+
 def main() -> int:
     failures = sum(run_case(*case) for case in CASES)
     failures += sum(run_cell_case(*case) for case in CELL_CASES)
     failures += run_apply_case()
-    total = len(CASES) + len(CELL_CASES) + 1
+    failures += run_removal_case()
+    total = len(CASES) + len(CELL_CASES) + 2
     print(f"\n{total - failures}/{total} self-test case(s) passed")
     return 1 if failures else 0
 

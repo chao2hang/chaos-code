@@ -44,9 +44,11 @@
 - `### Slash Commands` → `### 斜杠命令`
 - 专有名词不译：`## Project Rules (AGENTS.md)` → `## 项目规则 (AGENTS.md)`；
   `### MCP Servers` → `### MCP 服务器`
-- 章节标题里的锚点依赖：**改标题会改锚点**，所以同一轮内必须同步修正
-  指向它的链接（`docs.rs` 与其它章节的 `](#...)`）。改完用
-  `rg -n '\]\(#?[a-z0-9-]*' ` 逐个核对。
+- 章节标题里的锚点依赖：**改标题会改锚点**，所以指向标题的链接
+  （本文件内的 `](#...)` 与其它章节里的 `](NN-xxx.md#...)`）**不要手工改**，
+  一律留给收尾时 `scripts/check-doc-l10n.py --fix-anchors` 机械重写（见 §六）。
+  手工改锚点会让 `links` 不变量当轮就报漂移，而且和 `--fix-anchors` 的
+  序号映射打架。
 
 ## 三、术语表
 
@@ -203,7 +205,7 @@
 ## 七、每次提交前自检
 
 机器校验脚本是 `scripts/check-doc-l10n.py`（它自己的测试在
-`scripts/check-doc-l10n-selftest.py`，36 条用例覆盖每个不变量的
+`scripts/check-doc-l10n-selftest.py`，37 条用例覆盖每个不变量的
 「该拦」和「该放」两个方向，改动脚本后先跑它）。翻译完一章，至少跑：
 
 ```sh
@@ -228,6 +230,11 @@ python3 scripts/check-doc-l10n.py --fork-names --glob "$G/<本章>"
    在 `regressed.txt` / `shrunk.txt` / `fortress-breach.txt` 上都是 0。
 7. `cargo test -p xai-grok-shell --lib --features config-docs config_docs`
    仍通过（`26-config-reference.md` 是它的输入，表格结构不能破坏）。
+8. 行内代码 span **不许丢**。确需删除上游专有功能的表述（§4.3 的登录命令、
+   OIDC/设备码标志）时，在 `scripts/doc-span-removals.tsv` 里加一行
+   `span<TAB>理由` 声明它，校验会把这条丢失降级为「已声明的删除」note；
+   没有声明的丢失仍是硬失败。**不要为了过门禁把字面量换写成另一个字面量**
+   （那是「丢失 + 新增」，看起来像修好了，实际把标识符改错了）。
 
 全部章节翻完后，再做一次收尾：`--fix-anchors` 机械重写入站锚点 →
 `--links` 归零 → 全库 `--fork-names --strict`。
