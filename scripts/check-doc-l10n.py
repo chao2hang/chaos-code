@@ -121,8 +121,13 @@ NUMBER = re.compile(r"(?<![A-Za-z_.])(\d+(?:\.\d+)+|\d{2,})")
 RENAMES = (
     # `grok inspect`, `grok -c`: a command word, so a following space.
     (re.compile(r"(?<![\w./-])grok(?=[ \t])"), "chaos"),
-    # A bare `grok` (a whole span or a line by itself).
-    (re.compile(r"(?<![\w./-])grok(?![\w./-])"), "chaos"),
+    # A bare `grok`: a whole span, a line by itself, or a sentence ending on
+    # the name (`parsed by grok.`). `.` is allowed as a follower so that last
+    # shape normalizes, but `grok.com` -- the upstream service, not the local
+    # binary -- is carved back out. The lookbehind still spares a name that
+    # sits inside a path (`/etc/grok`, `/tmp/grok.log`), and the follower
+    # still spares `grok-cli` and `grok-4.5`.
+    (re.compile(r"(?<![\w./-])grok(?![\w/-])(?!\.com\b)"), "chaos"),
     # `~/.grok` -> `~/.chaos`; `.grok/rules` -> `.chaos/rules`; `.grok` alone.
     (re.compile(r"~/\.grok(?![\w-])"), "~/.chaos"),
     (re.compile(r"(?<![\w.-])\.grok(?![\w-])"), ".chaos"),
@@ -157,7 +162,7 @@ def fence_normalize(text: str) -> str:
 # bare `grok`, or a `~/.grok` / `.grok` config path.
 FORK_NAME = re.compile(
     r"(?<![\w./-])grok(?=[ \t])"
-    r"|(?<![\w./-])grok(?![\w./-])"
+    r"|(?<![\w./-])grok(?![\w/-])(?!\.com\b)"
     r"|~/\.grok(?![\w-])"
     r"|(?<![\w.-])\.grok(?![\w-])"
 )

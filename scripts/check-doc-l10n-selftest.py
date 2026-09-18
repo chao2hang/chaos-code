@@ -38,6 +38,9 @@ grok plugin list
 +-----------------------------+
 |          grok plugin list   |
 +-----------------------------+
+tail -f /tmp/grok.log
+# flags after -- are not parsed by grok.
+# the hosted portal is grok.com, not the local binary
 ```
 
 | Key | Type / Values | Requirements | Managed | Details |
@@ -61,7 +64,8 @@ def renamed(s: str) -> str:
     return (s.replace("`grok inspect`", "`chaos inspect`")
              .replace("$GROK_HOME", "$CHAOS_HOME")
              .replace("~/.grok/config.toml", "~/.chaos/config.toml")
-             .replace("grok plugin list", "chaos plugin list"))
+             .replace("grok plugin list", "chaos plugin list")
+             .replace("parsed by grok.", "parsed by chaos."))
 
 
 def sub(old: str, new: str, count: int = 1):
@@ -106,6 +110,12 @@ CASES = (
     ("fence: ASCII box content is still compared",
      sub("|          grok plugin list   |",
          "|          grok plugin lx     |"), True, ()),
+    ("fence: a sentence-final command name is renamed",
+     sub("parsed by grok.", "parsed by chaos."), False, ()),
+    ("fence: the upstream service is not renamed",
+     sub("grok.com", "chaos.com"), True, ()),
+    ("fence: a name inside a path is left alone",
+     sub("/tmp/grok.log", "/tmp/chaos.log"), True, ()),
     ("table: extra cell in a data row",
      sub("| `config.toml` | `string` | `yes` |", "| `config.toml` | `string` | `yes` | x |"),
      True, ()),
