@@ -531,7 +531,7 @@ mod tests {
             ),
         ];
         let l = label(&entries);
-        assert_eq!(l.text, "Read 3 files  [hooks: 1 ok, 1 blocked, 1 failed]");
+        assert_eq!(l.text, "读取 3 个文件  [hooks: 1 ok, 1 blocked, 1 failed]");
         assert!(l.failed, "failed hooks give the group error accent");
         let dimmed = Modifier::DIM;
         assert_eq!(

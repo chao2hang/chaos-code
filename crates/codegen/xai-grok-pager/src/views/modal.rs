@@ -1393,7 +1393,7 @@ mod palette_sharing_tests {
         ] {
             let entries = default_palette_entries(true, &slash(mode));
             assert!(
-                entries.iter().any(|e| e.label == "Workflows"),
+                entries.iter().any(|e| e.label == "工作流"),
                 "hub row missing in {mode:?}"
             );
             assert!(

@@ -633,7 +633,7 @@ fn rendered_verb_group_header_aggregates_hook_outcomes_and_keeps_compact_members
     let header_row = buffer_row_text(&buf, 0);
     assert!(
         header_row.contains(
-            "Read 1 file, Listed 1 dir, Searched 1 pattern  [hooks: 1 ok, 1 blocked, 1 failed]"
+            "读取 1 个文件, 列出 1 个目录, 搜索 1 个模式  [hooks: 1 ok, 1 blocked, 1 failed]"
         ),
         "collapsed header must show every hidden hook outcome: {header_row:?}"
     );

@@ -64,6 +64,11 @@ pub fn render_menu(
 
         let is_selected = selected == Some(i);
         let key_width = key.width() as u16;
+        // The key sits at the right edge, so the label is cut to leave room for it.
+        let label = crate::render::line_utils::truncate_str(
+            label,
+            menu_centered.width.saturating_sub(key_width + 1) as usize,
+        );
         let label_width = label.width() as u16;
 
         let row_rect = Rect {
@@ -93,7 +98,7 @@ pub fn render_menu(
         buf.set_span(
             menu_centered.x,
             y,
-            &Span::styled(*label, lstyle),
+            &Span::styled(label.as_str(), lstyle),
             label_width,
         );
 

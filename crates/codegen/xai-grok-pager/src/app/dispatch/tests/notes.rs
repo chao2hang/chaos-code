@@ -1112,7 +1112,7 @@ fn acp_question_displacing_trace_card_still_sends_report() {
         "acp-driven-question"
     );
     assert!(
-        last_system_text(&app, AgentId(0)).contains("sent without a trace"),
+        last_system_text(&app, AgentId(0)).contains("报告已发送（未附 Trace）"),
         "the user must learn what happened to the report"
     );
 }

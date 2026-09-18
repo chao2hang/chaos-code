@@ -578,7 +578,7 @@ pub(super) fn default_actions(
             id: ActionId::OpenSessions,
             label: "会话",
             description: "打开会话列表",
-            default_key: key!('s', CONTROL),
+            default_key: key!(F(3)),
             alt_keys: vec![],
             category: Category::Panels,
             context: When::AgentScreen,

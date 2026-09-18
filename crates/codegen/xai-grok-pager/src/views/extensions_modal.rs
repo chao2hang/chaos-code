@@ -4497,7 +4497,7 @@ mod tests {
                 ExtensionsTab::Skills,
                 &[(' ', "toggle"), ('f', "筛选"), ('r', "重载")],
             ),
-            (ExtensionsTab::Workflows, &[('r', "reload")]),
+            (ExtensionsTab::Workflows, &[('r', "重载")]),
             (
                 ExtensionsTab::McpServers,
                 &[
@@ -7805,7 +7805,7 @@ mod tests {
         assert_eq!(
             state.entry_labels_cache,
             vec![
-                "User (3 plugins)".to_string(),
+                "用户 (3 plugins)".to_string(),
                 "alpha".to_string(),
                 "MID".to_string(),
                 "Zebra".to_string(),

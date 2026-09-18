@@ -974,13 +974,27 @@ impl AgentView {
         dropped_heavy
     }
     /// Effective turn elapsed time, excluding time spent in question views (accumulated pauses plus the currently open one, on both clocks).
+    ///
+    /// Both clocks feed [`honest_turn_elapsed`]: `Instant` stops while the machine suspends, the wall clock does not, and the larger net wins,
+    /// so a suspend neither loses the time the turn really ran nor invents time it never spent.
     pub fn turn_elapsed(&self) -> Option<std::time::Duration> {
-        let raw = self.turn_started_at?.elapsed();
-        let mut paused = self.turn_paused_duration;
+        let instant_elapsed = self.turn_started_at?.elapsed();
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        let mut instant_paused = self.turn_paused_duration;
+        let mut wall_paused = self.turn_paused_wall;
         if let Some(qv) = &self.question_view {
-            paused += qv.opened_at.elapsed();
+            instant_paused += qv.opened_at.elapsed();
+            wall_paused += wall_since_ms(qv.opened_at_wall_ms, now_ms);
         }
-        Some(raw.saturating_sub(paused))
+        Some(honest_turn_elapsed(TurnElapsedParams {
+            instant_elapsed,
+            instant_paused,
+            wall_anchor_ms: self.turn_start_ms,
+            wall_paused,
+            anchor_prompt: self.turn_start_ms_prompt.as_deref(),
+            current_prompt: self.session.current_prompt_id.as_deref(),
+            now_ms,
+        }))
     }
     /// Turn activity for the status spinner: an implicit "no activity" gap during a running inference turn resolves to an explicit [`WaitingReason`].
     /// `TaskOutput` / `Subagent` waits also get a display subject from live bg-task or subagent state so the spinner can read `{description}…`.
@@ -2113,7 +2127,7 @@ mod resolve_turn_activity_tests {
         let Some(TurnActivity::Waiting(reason)) = view.resolve_turn_activity() else {
             panic!("expected waiting activity");
         };
-        assert_eq!(reason.label(), "Waiting on subagent…");
+        assert_eq!(reason.label(), "等待子代理…");
     }
     #[test]
     fn tracker_subagent_wait_is_enriched() {

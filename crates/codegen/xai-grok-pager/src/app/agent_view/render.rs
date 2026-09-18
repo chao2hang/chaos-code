@@ -1172,13 +1172,17 @@ impl AgentView {
             .is_some_and(|qv| qv.is_feedback_report());
         let inline_prompt_max = ((area.height as u32) / 3).clamp(3, 15) as u16;
         let question_prompt_body_h = if question_view_h > 0 && is_question_input_mode {
-            let question_text_w = crate::views::question_view::inline_text_width(inner_width);
-            self.prompt.desired_height(
-                question_text_w,
-                &question_input_style,
-                false,
-                inline_prompt_max,
-            )
+            if feedback_pane {
+                self.feedback_editor_h(inner_width, inline_prompt_max, &theme)
+            } else {
+                let question_text_w = crate::views::question_view::inline_text_width(inner_width);
+                self.prompt.desired_height(
+                    question_text_w,
+                    &question_input_style,
+                    false,
+                    inline_prompt_max,
+                )
+            }
         } else {
             0
         };
@@ -2794,7 +2798,46 @@ impl AgentView {
                 self.question_scroll_region =
                     Some((render_result.options_start_y, render_result.options_end_y));
             }
-            if is_input_mode && inline_prompt_h > 0 {
+            let mut painted_prompt_h = inline_prompt_h;
+            if is_input_mode && feedback_pane {
+                let box_y = question_area.y + question_area.height;
+                let below_card = (layout.prompt.y + layout.prompt.height).saturating_sub(box_y);
+                let box_h = inline_prompt_h
+                    .min(below_card.saturating_sub(question_footer_h))
+                    .max(below_card.min(1));
+                let input_area = Rect {
+                    x: layout.prompt.x + 3,
+                    y: box_y,
+                    width: feedback_input::width(layout.prompt.width),
+                    height: box_h,
+                };
+                buf.set_style(
+                    Rect {
+                        x: layout.prompt.x + 1,
+                        y: box_y,
+                        width: layout.prompt.width.saturating_sub(1),
+                        height: box_h,
+                    },
+                    Style::default().bg(theme.bg_light),
+                );
+                let outlined = box_h >= feedback_input::MIN_HEIGHT;
+                let style = if outlined {
+                    feedback_input::style(&theme)
+                } else {
+                    feedback_input::flat_style(&theme)
+                };
+                let result = self.prompt.draw(
+                    buf,
+                    input_area,
+                    Some(layout.scrollback),
+                    &style,
+                    outlined.then_some(&PromptInfo::default()),
+                    None,
+                );
+                prompt_cursor_pos = result.cursor_pos;
+                self.inline_prompt_area = Some(input_area);
+                painted_prompt_h = box_h;
+            } else if is_input_mode && inline_prompt_h > 0 {
                 let row_y = question_area.y + question_area.height;
                 let content_x = layout.prompt.x + 3;
                 let content_w = layout.prompt.width.saturating_sub(3);
@@ -2920,14 +2963,14 @@ impl AgentView {
                 self.inline_prompt_area = None;
             }
             if let Some(ref qv) = self.question_view {
-                let footer_y = question_area.y + question_area.height + inline_prompt_h + 1;
+                let footer_y = question_area.y + question_area.height + painted_prompt_h + 1;
                 let footer_x = layout.prompt.x;
                 let footer_w = layout.prompt.width;
                 if footer_y < layout.prompt.y + layout.prompt.height && footer_w > 10 {
                     use ratatui::style::Modifier;
                     let footer_bg = theme.bg_light;
                     let gap_above = footer_y.saturating_sub(1);
-                    if gap_above >= question_area.y + question_area.height + inline_prompt_h {
+                    if gap_above >= question_area.y + question_area.height + painted_prompt_h {
                         buf.set_style(
                             Rect {
                                 x: footer_x,
@@ -2966,21 +3009,12 @@ impl AgentView {
                         .fg(question_accent)
                         .bg(footer_bg)
                         .add_modifier(Modifier::BOLD);
-                    let mut left_spans: Vec<Span<'_>> = Vec::new();
-                    if qv.questions.len() > 1 {
-                        let counter = format!("[{}/{}] ", qv.active_tab + 1, qv.questions.len());
-                        left_spans.push(Span::styled(counter, hint_style));
-                    }
-                    left_spans.push(Span::styled("\u{2191}/\u{2193}", hint_key));
-                    left_spans.push(Span::styled(" navigate", hint_style));
-                    if qv.questions.len() > 1 {
-                        left_spans.push(Span::styled(" \u{b7} ", hint_style));
-                        left_spans.push(Span::styled("\u{2190}/\u{2192}", hint_key));
-                        left_spans.push(Span::styled(" question", hint_style));
-                    }
-                    left_spans.push(Span::styled(" \u{b7} ", hint_style));
-                    left_spans.push(Span::styled("y", hint_key));
-                    left_spans.push(Span::styled(" copy", hint_style));
+                    let left_spans = Self::question_footer_hints(
+                        qv,
+                        feedback_pane,
+                        hint_style,
+                        hint_key,
+                    );
                     let left_line = Line::from(left_spans);
                     let avail_w = footer_w.saturating_sub(3);
                     buf.set_line_safe(content_x, footer_y, &left_line, avail_w);
@@ -5049,6 +5083,13 @@ mod feedback_input_tests {
     fn render_text(agent: &mut AgentView) -> String {
         render_text_sized(agent, 100, 40)
     }
+    /// Substring check that ignores the wide-glyph continuation cells: a CJK glyph occupies two cells, and the
+    /// trailing one reads `" "` when the buffer is flattened cell-by-cell, so `发送` comes back as `发 送`
+    /// (the same artifact `views::usage_detail` documents for its `contains` helper).
+    fn screen_contains(screen: &str, needle: &str) -> bool {
+        let strip = |s: &str| s.replace(' ', "");
+        strip(screen).contains(&strip(needle))
+    }
     fn render_text_sized(agent: &mut AgentView, width: u16, height: u16) -> String {
         let reg = ActionRegistry::defaults();
         let area = Rect::new(0, 0, width, height);
@@ -5099,7 +5140,7 @@ mod feedback_input_tests {
             "there is nothing to navigate in the feedback pane\n{screen}"
         );
         assert!(
-            screen.contains("Enter:发送"),
+            screen_contains(&screen, "Enter:发送"),
             "footer must offer the send action\n{screen}"
         );
         let top = screen
@@ -5155,7 +5196,7 @@ mod feedback_input_tests {
             "turning trace upload on must render preselected\n{screen}"
         );
         assert!(
-            screen.contains("Enter:发送"),
+            screen_contains(&screen, "Enter:发送"),
             "footer must offer send\n{screen}"
         );
         assert!(

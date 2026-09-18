@@ -2044,6 +2044,7 @@ pub(super) fn pr13_effective_default(key: &str) -> Option<bool> {
             Some(ask_user_question::DEFAULT_ASK_USER_QUESTION_TIMEOUT_ENABLED)
         }
         "session.auto_retry_incomplete_end_turn" => Some(false),
+        "voice_keybind_enabled" => Some(true),
         _ => None,
     }
 }

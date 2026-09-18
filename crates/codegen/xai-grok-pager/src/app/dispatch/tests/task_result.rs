@@ -3116,7 +3116,7 @@ fn compact_complete_error_surfaces_real_error_in_scrollback() {
             error: error.unwrap_or_default(),
         }
         .message(),
-        "Compaction failed - API error (status 400 Bad Request): invalid_image: too big"
+        "压缩失败：API error (status 400 Bad Request): invalid_image: too big"
     );
 }
 

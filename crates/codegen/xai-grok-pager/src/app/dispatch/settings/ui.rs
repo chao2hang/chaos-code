@@ -4,8 +4,9 @@ use super::setters::{
     pr13_effective_default, set_ask_user_question_timeout_enabled_inner, set_auto_dark_theme_inner,
     set_auto_light_theme_inner, set_auto_retry_incomplete_end_turn_inner, set_auto_update_inner,
     set_collapsed_edit_blocks_inner, set_combine_queued_prompts_inner, set_compact_mode,
-    set_compact_mode_inner, set_contextual_hint_inner, set_default_model_inner,
-    set_default_selected_permission_inner, set_display_refresh_auto_cadence_inner,
+    set_compact_mode_inner, set_confirm_before_rewind_inner, set_contextual_hint_inner,
+    set_default_model_inner, set_default_selected_permission_inner,
+    set_display_refresh_auto_cadence_inner,
     set_follow_up_behavior_inner, set_fork_secondary_model_inner, set_group_tool_verbs_inner,
     set_hunk_tracker_mode_inner, set_invert_scroll_inner, set_keep_text_selection_inner,
     set_max_thoughts_width_inner, set_multiline_mode, set_page_flip_on_send_inner,
@@ -890,6 +891,9 @@ pub(in crate::app::dispatch) fn action_for_reset(
         ("follow_up_behavior", SettingValue::Enum(s)) => {
             crate::appearance::FollowUpBehavior::from_canonical(s).map(Action::SetFollowUpBehavior)
         }
+        ("confirm_before_rewind", SettingValue::Bool(b)) => {
+            Some(Action::SetConfirmBeforeRewind(*b))
+        }
         ("simple_mode", SettingValue::Bool(b)) => Some(Action::SetSimpleMode(*b)),
         ("contextual_hints.undo", SettingValue::Bool(b)) => Some(Action::SetContextualHintUndo(*b)),
         ("contextual_hints.plan_mode", SettingValue::Bool(b)) => {
@@ -1017,6 +1021,9 @@ pub(in crate::app::dispatch) fn action_for_reset(
             Some(Action::SetHunkTrackerMode((*s).to_string()))
         }
         ("screen_mode", SettingValue::Enum(s)) => Some(Action::SetScreenMode((*s).to_string())),
+        ("voice_keybind_enabled", SettingValue::Bool(b)) => {
+            Some(Action::SetVoiceKeybindEnabled(*b))
+        }
         ("voice_capture_mode", SettingValue::Enum(s)) => {
             Some(Action::SetVoiceCaptureMode((*s).to_string()))
         }
@@ -1071,6 +1078,10 @@ pub(in crate::app::dispatch) fn apply_setting_rollback(
             if let Some(mode) = crate::appearance::FollowUpBehavior::from_canonical(s) {
                 set_follow_up_behavior_inner(app, mode);
             }
+        }
+        // confirm_before_rewind: the mirror is the whole state, so the inner is the rollback.
+        ("confirm_before_rewind", SettingValue::Bool(b)) => {
+            set_confirm_before_rewind_inner(app, *b)
         }
         ("simple_mode", SettingValue::Bool(b)) => set_simple_mode_inner(app, *b),
         ("contextual_hints.undo", SettingValue::Bool(b)) => {
@@ -1299,6 +1310,17 @@ pub(in crate::app::dispatch) fn apply_setting_rollback(
                 app,
                 crate::settings::canonical_voice_stt_language(Some(s)),
             );
+        }
+        // voice_keybind_enabled: the effective default is `true` (`None` inherits it), so a rollback to the default
+        // restores the unset mirror instead of pinning `Some(true)` over a disk state that never had the key
+        // The process-global mirror still has to be written: the event-loop chord intercept reads it without an `AppView`
+        ("voice_keybind_enabled", SettingValue::Bool(b)) => {
+            if Some(*b) == pr13_effective_default("voice_keybind_enabled") {
+                app.current_ui.voice_keybind_enabled = None;
+                crate::app::VOICE_KEYBIND_ENABLED.store(true, std::sync::atomic::Ordering::Release);
+            } else {
+                set_voice_keybind_enabled_inner(app, *b);
+            }
         }
         // show_tips / auto_update: if the rollback equals the effective default, restore to None (keeps the mirror in sync with disk)
         ("show_tips", SettingValue::Bool(b)) => {

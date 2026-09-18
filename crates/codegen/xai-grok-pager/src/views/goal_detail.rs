@@ -914,10 +914,10 @@ pub fn render_goal_detail(
         }
 
         if y < inner.y + inner.height {
-            // Shared label with the chip; empty (no run reserved yet) falls back to a hyphen so the row never reads "Attempts: "
+            // Shared label with the chip; empty (no run reserved yet) falls back to an em-dash so the row never reads "Attempts: "
             let attempts = classifier_attempts_label(goal);
             let attempts_display = if attempts.is_empty() {
-                "-".to_owned()
+                "\u{2014}".to_owned()
             } else {
                 attempts
             };
@@ -2115,8 +2115,8 @@ mod tests {
     #[test]
     fn classifier_details_display_handles_missing_present_and_none() {
         // Existence is a precomputed bool, so the display is pure
-        // No path gives a hyphen; a reported path with a missing file gives "(unavailable)"; an existing file gives the path
-        assert_eq!(classifier_details_display(None, false), "-");
+        // No path gives an em-dash; a reported path with a missing file gives "(unavailable)"; an existing file gives the path
+        assert_eq!(classifier_details_display(None, false), "\u{2014}");
         assert_eq!(
             classifier_details_display(Some("/no/such/path/zzz-details.md"), false),
             "（不可用）"
@@ -2147,9 +2147,9 @@ mod tests {
     // -- Attempts hyphen branch --------------------------------------------
 
     #[test]
-    fn modal_attempts_shows_hyphen_when_classifier_active_without_counts() {
+    fn modal_attempts_shows_em_dash_when_classifier_active_without_counts() {
         // Completion review renders (a verdict is present) but no run counter has arrived (both counts absent)
-        // The row must read "Attempts: -", never "Attempts: "
+        // The row must read "Attempts: —", never "Attempts: "
         let mut goal = make_goal();
         goal.classifier_runs_attempted = None;
         goal.classifier_max_runs = None;

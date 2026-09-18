@@ -2149,7 +2149,7 @@ mod tests {
             let error = resume("fix login bug", &cwd_str)
                 .await
                 .expect_err("headless title must not resolve interactively");
-            assert!(error.to_string().contains("does not exist"));
+            assert!(error.to_string().contains("会话不存在"));
         }
         #[serial_test::serial(GROK_HOME)]
         #[tokio::test]

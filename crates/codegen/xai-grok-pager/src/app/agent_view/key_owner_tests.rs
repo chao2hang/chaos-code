@@ -379,7 +379,7 @@ fn elicitation_shares_the_question_layer_under_cancel_turn() {
     assert_eq!(agent.focused_card(), Some(BlockingCard::Question));
     let labels = hint_labels(&agent);
     assert!(
-        labels.contains(&"next answer".to_string()),
+        labels.contains(&"下一个答案".to_string()),
         "the bar must name the question the user can see, got {labels:?}"
     );
 
@@ -392,7 +392,7 @@ fn elicitation_shares_the_question_layer_under_cancel_turn() {
     assert_eq!(agent.focused_card(), Some(BlockingCard::CancelTurn));
     let labels = hint_labels(&agent);
     assert!(
-        labels.contains(&"next choice".to_string()) && !labels.contains(&"next answer".to_string()),
+        labels.contains(&"下一个选择".to_string()) && !labels.contains(&"下一个答案".to_string()),
         "the cancel-turn panel takes the keys, so it takes the bar too, got {labels:?}"
     );
 
@@ -1108,7 +1108,7 @@ fn elicitation_esc_leaves_edit_then_parks() {
 
     agent.elicitation_view.as_mut().unwrap().focus = ElicitationFocus::Editing;
     assert_eq!(agent.card_esc(), Some(EscStep::LeaveTextInput));
-    assert!(hint_labels(&agent).contains(&"back".to_string()));
+    assert!(hint_labels(&agent).contains(&"返回".to_string()));
     let _ = agent.handle_elicitation_key(&KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
     assert_eq!(
         agent.elicitation_view.as_ref().unwrap().focus,
@@ -1120,7 +1120,7 @@ fn elicitation_esc_leaves_edit_then_parks() {
     );
 
     assert_eq!(agent.card_esc(), Some(EscStep::ParkFocus));
-    assert!(hint_labels(&agent).contains(&"scrollback".to_string()));
+    assert!(hint_labels(&agent).contains(&"滚动区".to_string()));
     let _ = agent.handle_elicitation_key(&KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
     assert_eq!(agent.active_pane, AgentPane::Scrollback);
     assert!(

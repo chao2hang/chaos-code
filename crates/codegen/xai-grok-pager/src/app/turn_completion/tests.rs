@@ -569,11 +569,11 @@ fn blocked_prompt_card_refuses_skip() {
         .map(|hint| hint.label.to_string())
         .collect();
     assert!(
-        !labels.contains(&"dismiss".to_string()),
+        !labels.contains(&"关闭".to_string()),
         "the hard-modal card must not hint a dismiss it refuses, got {labels:?}"
     );
     assert!(
-        labels.contains(&"next answer".to_string()),
+        labels.contains(&"下一个答案".to_string()),
         "this probe must be looking at the focused card's own footer, got {labels:?}"
     );
 

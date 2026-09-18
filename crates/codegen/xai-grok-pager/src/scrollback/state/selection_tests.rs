@@ -1320,7 +1320,7 @@ fn verb_group_singleton_expand_and_collapse_round_trip() {
     // The folded singleton still acts as a group header: selectable, with the expand label
     state.set_selected(Some(0));
     assert!(state.is_selected_group_header());
-    assert_eq!(state.selected_group_header_fold_label(), Some("expand"));
+    assert_eq!(state.selected_group_header_fold_label(), Some("展开"));
 
     // Expand: the slot stacks the header line above the member's own row.
     assert!(state.toggle_group_expansion());

@@ -22,6 +22,10 @@ fn execute_hook(
         .stderr(Stdio::null());
     if let Some(sid) = session_id {
         cmd.env("GROK_SESSION_ID", sid);
+    } else {
+        // `Command` inherits the parent environment, so a Grok session running under another one would
+        // otherwise leak that session's id into a hook the caller never gave an id for.
+        cmd.env_remove("GROK_SESSION_ID");
     }
 
     xai_tty_utils::detach_std_command(&mut cmd);

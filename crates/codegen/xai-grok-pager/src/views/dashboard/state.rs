@@ -4286,7 +4286,7 @@ pub fn parse_row_state_token(s: &str) -> Option<RowState> {
         "needsinput" | "needs" | "input" => Some(RowState::NeedsInput),
         "working" | "busy" | "running" => Some(RowState::Working),
         "idle" => Some(RowState::Idle),
-        "inactive" | "dormant" => Some(RowState::Inactive),
+        "inactive" | "dormant" | "blocked" | "paused" => Some(RowState::Inactive),
         "completed" | "done" => Some(RowState::Completed),
         "failed" | "errored" | "cancelled" | "canceled" => Some(RowState::Failed),
         _ => None,
@@ -8856,7 +8856,6 @@ mod tests {
             RowState::Idle,
             RowState::Completed,
             RowState::Failed,
-            RowState::Inactive,
         ] {
             assert!(
                 !state.is_section_collapsed(SectionKey::State(other)),

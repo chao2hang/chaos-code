@@ -4876,6 +4876,11 @@ mod tests {
             ),
         ] {
             let mut app = crate::app::app_view::tests::test_app();
+            // `test_app()` sits in `/tmp`, which is not a project directory, so `needs_project_picker()`
+            // would divert the create into the directory picker and no `CreateSession` effect would be
+            // emitted. The picker is orthogonal to what this test pins: the welcome Shift+Tab has to be
+            // applied to the mode before the create effect is built.
+            app.project_picker_disabled = true;
             app.default_yolo = initial_yolo;
             app.current_ui.permission_mode = Some(initial_mode.into());
             let event = Event::Key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT));

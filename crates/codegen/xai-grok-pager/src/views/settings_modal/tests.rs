@@ -580,6 +580,9 @@ fn rows_contain_categories_and_settings_through_pr_14() {
             // SHARED-owned combine_queued_prompts (Editor category; read by both the pager drain and the shell promote)
             // Registered before multiline_mode, so it renders first
             "combine_queued_prompts",
+            // SHARED-owned follow_up_behavior + confirm_before_rewind (Editor category, registered right after combine_queued_prompts)
+            "follow_up_behavior",
+            "confirm_before_rewind",
             // PAGER-owned multiline (Editor category).
             "multiline_mode",
             // SHELL-owned prompt_suggestions (Editor; tab autocomplete ghost text, live cache)
