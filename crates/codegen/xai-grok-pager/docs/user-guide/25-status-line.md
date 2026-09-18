@@ -1,10 +1,10 @@
-# Status Line
+# 状态栏
 
-An optional row at the bottom of the pager — above the shortcuts bar in the full screen, under the prompt's info row in minimal mode — and disabled by default. It shows live session context, such as the model, context-window usage, cost, directory, and git worktree, or the output of any script you configure. Opt in with `[ui.status_line]` in `~/.grok/config.toml`.
+分页器底部的一个可选行——全屏时位于快捷键栏上方，最小模式下位于提示框信息行下方——默认关闭。它显示实时会话上下文，例如模型、上下文窗口占用、开销、目录和 git 工作树，或你配置的任意脚本的输出。在 `~/.chaos/config.toml`（或兼容的 `~/.grok/config.toml`）里设置 `[ui.status_line]` 即可启用。
 
-## Set up
+## 设置
 
-### Built-in
+### 内置
 
 ```toml
 [ui.status_line]
@@ -12,108 +12,108 @@ type = "builtin"
 items = ["cwd", "model", "context"]   # default when omitted
 ```
 
-This renders, for example, `grok-shell-status-line │ Grok 4.5 │ 12% ctx`. Items appear in the order you list them, and long ones are elided with `…`: the directory and session name at 40 columns, the model at 30.
+例如它会渲染成 `grok-shell-status-line │ Grok 4.5 │ 12% ctx`。条目按你列出的顺序出现，过长的会以 `…` 省略：目录和会话名在 40 列处截断，模型在 30 列处截断。
 
 | 条目 | 显示 |
 | --- | --- |
 | `cwd` | 当前目录（basename） |
-| `model` | Model display name |
-| `context` | Context-window percent, amber at the auto-compaction threshold or at 80% when the agent reports none |
-| `cost` | Session cost, hidden below $0.005 so it never shows a misleading `$0.00` |
-| `turn-timer` | Elapsed time of the running turn, from one second in |
-| `session-name` | Session name, when set |
+| `model` | 模型显示名 |
+| `context` | 上下文窗口百分比；到达自动压缩阈值时呈琥珀色，代理未报告阈值时则在 80% 处呈琥珀色 |
+| `cost` | 会话开销；低于 $0.005 时隐藏，因此绝不会显示有误导性的 `$0.00` |
+| `turn-timer` | 正在进行的回合的已用时间，从一秒起显示 |
+| `session-name` | 会话名（已设置时） |
 
-### Command
+### 命令
 
-Point `command` at a script. Grok pipes [JSON](#available-data) to it on stdin and shows its stdout. A `~/` prefix expands to your home directory.
+把 `command` 指向一个脚本。Chaos 通过 stdin 把 [JSON](#available-data) 管道给它，并显示其 stdout。`~/` 前缀会展开为你的主目录。
 
 ```toml
 [ui.status_line]
 type = "command"
-command = "~/.grok/statusline.sh"
+command = "~/.chaos/statusline.sh"
 ```
 
-Field names and nesting follow the common status line convention, so a ported script usually needs a small edit rather than a rewrite. Anything the table below does not list is not sent.
+字段名与嵌套遵循通用的状态栏约定，因此移植的脚本通常只需小改而非重写。下表未列出的内容一律不发送。
 
-### Disabled
+### 禁用
 
-`type = "disabled"`, the default, shows nothing; `off`, `none`, and `hidden` are accepted as spellings of `disabled`.
+`type = "disabled"`（默认）不显示任何内容；`off`、`none` 和 `hidden` 都被接受为 `disabled` 的写法。
 
-### Options
+### 选项
 
 | 键 | 类型 | 默认 | 说明 |
 | --- | --- | --- | --- |
 | `type` | string | `disabled` | `builtin`、`command` 或 `disabled`。 |
-| `items` | array | `["cwd", "model", "context"]` | Built-in segments, in order. |
+| `items` | array | `["cwd", "model", "context"]` | 内置条目，按此顺序。 |
 | `command` | string | none | `type = "command"` 用的脚本。 |
-| `padding` | integer | `0` | Horizontal spacing, in characters per side, capped at 16. A padding wide enough to leave no columns reserves the row but paints nothing in it. |
-| `refresh_interval` | integer | unset | `command` rows only, in seconds, 1 to 86,400. Re-runs the script this often even when nothing changed, so an idle session can still surface a change — an incident page, a CI status. Unset keeps the row event-driven. The run it schedules carries `"trigger": "refresh_interval"`, and its failures keep the last output rather than painting an error (see [Refresh runs](#refresh-runs)). A script that calls a network should prefer a longer interval and read a cache on `state` runs. |
+| `padding` | integer | `0` | 水平留白，每侧字符数，上限 16。若留白大到一列都不剩，则保留该行但不在其中绘制任何内容。 |
+| `refresh_interval` | integer | unset | 仅用于 `command` 行，单位秒，取值 1 到 86,400。即使没有任何变化，也按此间隔重新运行脚本，这样闲置的会话仍能反映出变化——一次事故页面、一个 CI 状态。不设置则该行保持事件驱动。它调度的那次运行携带 `"trigger": "refresh_interval"`，其失败时保留上一次输出而不绘制错误（见[定时刷新](#refresh-runs)）。调用网络的脚本应选更长的间隔，并在 `state` 运行时读取缓存。 |
 
-## How it works
+## 工作原理
 
-- **Refresh.** The row updates when the session state changes (session start, turn end, a model or effort switch, a HEAD move, a compaction, a client attaching) and continuously while a turn runs, not on a timer. An idle session does not re-run your script, so a clock in it will not tick on its own — unless you set `refresh_interval`, which adds a timer on top of all of the above. These updates are debounced at a fixed 300 ms, so a busy turn cannot run your script every frame; a change that must show at once (a resize, a new snapshot, switching agents) waits only 100 ms. A run already going is never cancelled: the next change waits for it to finish. Grok reads `[ui.status_line]` at startup, so changes to it take effect at the next launch.
-- **Output.** Each line you print becomes one line of the row, up to five, and each is cut at 1024 characters, counting the ANSI escapes themselves, so a heavily coloured row has less room for text. A short terminal takes fewer, dropping the surplus from the bottom. ANSI colors are honored; every other escape (cursor motion, line erase, carriage-return overwrite) is dropped. OSC 8 hyperlinks are honored for `http`, `https` and `mailto` targets, and any other target renders as plain text. Stdout past 64 KiB is truncated and the script is stopped. A script that succeeds and prints nothing takes the row away rather than falling back to the built-in segments, so a script that prints only sometimes moves the transcript by a line as it comes and goes.
-- **Sizing.** Grok sets `COLUMNS` and `LINES` to the row your output fills, not to the window: the pane's padding and your `padding` are already deducted. `tput` reports these too, since it reads them when stdout is not a terminal. `LINES` is what the row currently fills rather than what it may grow to, so it reads `1` until you print more; the ceiling is five whatever it says. Before the row has painted once, and on a frame with no room for it, the size is the last one the row painted at, or 80x1 if it never has.
-- **Shell.** `command` is a shell command line, so `jq -r '…'` and pipes work as written; a path is run directly when it names an executable, and through `sh -c` otherwise, which is what runs a script whose `#!` line is missing or wrong. Quote a path containing spaces as you would at a prompt. Each run is a fresh process, so an edit to the script file applies on the next run.
-- **Background work does not survive.** Whatever a script leaves running is killed when the run ends, on every path: a clean exit, a timeout, or too much output. The run ends when your script exits, so anything a background job prints after that is lost.
-- **Environment.** Scripts run in the session's working directory, then the repository root, then the pager's own, whichever is a local path first, with a 10 second timeout, after which the row shows `[status line: timed out]`. `COLUMNS` and `LINES` describe the row the script fills, not the window. No shell rc files run (`BASH_ENV` and `ENV` are cleared), and `GIT_OPTIONAL_LOCKS=0`. Pagers and editors are neutralized the same way the rest of Grok neutralizes them, so a `git` or `gh` call inside your script will not block waiting for one.
-- **Input.** The JSON payload is written to stdin with a trailing newline, so `read -r line` and `input=$(cat)` both work.
+- **刷新。** 会话状态变化时（会话启动、回合结束、模型或努力级别切换、HEAD 移动、压缩、客户端接入）该行会更新，回合进行期间持续更新，而不是靠定时器。闲置的会话不会重新运行你的脚本，因此其中的时钟不会自己走——除非你设置 `refresh_interval`，它在上述一切之上再加一个定时器。这些更新以固定的 300 ms 去抖，因此繁忙的回合无法每一帧都运行你的脚本；必须立即反映的变化（一次缩放、一个新快照、切换代理）只等待 100 ms。已经在进行的运行绝不会被取消：下一个变化等它结束。Chaos 在启动时读取 `[ui.status_line]`，对它的修改要到下次启动才生效。
+- **输出。** 你打印的每一行成为该行的一行，最多五行，每行在 1024 个字符处截断，ANSI 转义序列本身也计入，因此颜色繁多的行留给文本的空间更少。终端太矮时行数更少，多余的自底部丢弃。支持 ANSI 颜色；其余所有转义（光标移动、行清除、回车覆写）一律丢弃。OSC 8 超链接对 `http`、`https` 和 `mailto` 目标有效，其他目标渲染为纯文本。stdout 超过 64 KiB 会被截断并停止脚本。成功但什么都没打印的脚本会拿走该行，而不是回退到内置条目，因此只在某些时候打印的脚本会在出现和消失之间让转录区移动一行。
+- **尺寸。** Chaos 把 `COLUMNS` 和 `LINES` 设为你的输出所填充的行，而不是窗口大小：面板内边距和你的 `padding` 已经扣除。`tput` 报告的也是这些值，因为它在 stdout 不是终端时读取它们。`LINES` 是该行当前填充的行数而不是它可能增长到的行数，因此在你打印更多内容之前它一直是 `1`；无论它显示什么，上限都是五。在该行首次绘制之前，以及在没有空间容纳它的帧上，尺寸是该行上次绘制时的值；从未绘制过则为 80x1。
+- **Shell。** `command` 是一条 shell 命令行，因此 `jq -r '…'` 和管道按原样工作；路径在指向可执行文件时直接运行，否则通过 `sh -c` 运行——后者正是 `#!` 行缺失或写错时脚本的运行方式。包含空格的路径要像在提示符下那样加引号。每次运行都是全新进程，因此对脚本文件的修改在下次运行时生效。
+- **后台工作不会存活。** 运行结束时，脚本留下的任何仍在运行的进程都会被杀死，每条路径都是如此：正常退出、超时、输出过多。运行在脚本退出时即告结束，因此后台作业在那之后打印的任何内容都会丢失。
+- **环境。** 脚本依次在会话的工作目录、仓库根目录、分页器自身目录中运行，以第一个是本地路径的为准，超时 10 秒，超时后该行显示 `[status line: timed out]`。`COLUMNS` 和 `LINES` 描述的是脚本填充的行，不是窗口。不运行任何 shell rc 文件（`BASH_ENV` 和 `ENV` 已清空），且 `GIT_OPTIONAL_LOCKS=0`。分页器和编辑器的中和方式与 Chaos 其余部分相同，因此脚本里的 `git` 或 `gh` 调用不会阻塞等待它们。
+- **输入。** JSON 负载写入 stdin 时带一个尾随换行，因此 `read -r line` 和 `input=$(cat)` 都可用。
 
-## Refresh runs
+## 定时刷新
 
-Set `refresh_interval` on a `command` row and the script also re-runs on a timer, so an incident page or a CI status can reach the row while the session sits idle:
+在 `command` 行上设置 `refresh_interval` 后，脚本还会按定时器重新运行，这样事故页面或 CI 状态就能在会话闲置期间到达该行：
 
 ```toml
 [ui.status_line]
 type = "command"
-command = "~/.grok/statusline.sh"
+command = "~/.chaos/statusline.sh"
 refresh_interval = 300   # seconds
 ```
 
-- **The payload says why the script ran.** A run that answers the timer carries `"trigger": "refresh_interval"` — a state change landing while a timer fire is owed rides that run — and a run with no fire owed carries `"trigger": "state"`. Hit the network on `refresh_interval` and read a cache on `state`, or a busy turn — which re-runs the script continuously — becomes a request storm against whatever the script calls.
-- **The payload is the last one Grok sent.** A timer run re-runs your script with the payload from the last state change, so its session numbers — cost, context, tokens — are as of that change, not of the fire. Only what your script fetches itself is fresh.
-- **Refresh failures keep the last output.** Once your script has answered — printed a row, or deliberately nothing — a timer run that fails or times out leaves the row exactly as it was, whether that is the last output or a failure a state run had already painted, and writes the failure to `~/.grok/logs/unified.jsonl`, so a flaky endpoint does not paint an error over a quiet night. Three consecutive refresh failures mean the script itself is broken, and the error shows after all; a refresh failure before the script has answered anything — a fresh session, or right after switching agents — also paints at once, since there is nothing to keep. A run triggered by session state still reports its failure at once, as ever.
-- **Missed fires coalesce.** While the row is hidden (a fullscreen subagent view, the welcome screen) or a run already holds the slot, the fire waits and the row is owed one run when it can have it — never a burst for the fires a suspend or a long turn skipped. The timer keeps its cadence whatever your script's runtime: a fire that comes due while a run is still going is carried to the next run rather than stacked behind it.
-- **The timer belongs to the mode that runs a script.** `refresh_interval` under `builtin` schedules nothing and is reported through `grok inspect`; under `disabled` it is off with everything else.
+- **负载会说明脚本为何运行。** 响应定时器的那次运行携带 `"trigger": "refresh_interval"`——定时器尚未触发期间到来的状态变化会搭乘这次运行——不欠触发的运行则携带 `"trigger": "state"`。在 `refresh_interval` 时访问网络、在 `state` 时读缓存，否则繁忙回合——它会持续重新运行脚本——会对脚本调用的对象形成请求风暴。
+- **负载是 Chaos 发送的最后一份。** 定时器运行用上一次状态变化时的负载重新运行你的脚本，因此其中的会话数字——开销、上下文、token——停留在那次变化时，而不是触发时。只有脚本自己取到的数据是新的。
+- **刷新失败保留上一次输出。** 一旦你的脚本给出过应答——打印了一行，或刻意什么都不打印——失败或超时的定时器运行会让该行保持原样，无论那是上一次输出还是一次状态运行已绘制的失败，并把失败写入 `~/.chaos/logs/unified.jsonl`，这样不稳定的端点不会在安静的夜里画上一个错误。连续三次刷新失败意味着脚本本身坏了，错误终究会显示出来；在脚本尚未应答任何东西之前的刷新失败——新会话，或刚切换代理之后——也会立即绘制，因为没有什么可保留。由会话状态触发的运行照旧立即报告其失败。
+- **错过的触发会合并。** 当该行隐藏（全屏子代理视图、欢迎界面）或一次运行已占用槽位时，触发会等待，该行在可以运行时补一次运行——绝不会为挂起或长回合跳过的那些触发补一串。无论脚本运行多久，定时器保持自己的节奏：运行尚未结束时到期的触发会顺延到下一次运行，而不是在其后堆积。
+- **定时器属于运行脚本的模式。** `builtin` 下的 `refresh_interval` 不调度任何东西，`chaos inspect` 会报告这一点；`disabled` 下它随其他一切一起关闭。
 
-## Available data
+## 可用数据
 
-Porting a script, read these closely. `workspace.repo_root` is the repository root, and there is no `project_dir`, a name used elsewhere for a launch directory. `context_window.session_usage` and the `session_*` token counts are cumulative for the session, not one call's, while the live window is `context_window.context_tokens`. There is no list of extra session directories, because Grok has none. `transcript_path` names Grok's own update stream rather than a transcript in another tool's format, and `prompt_id` is present only while a turn runs. In each case a ported script reads nothing rather than a wrong answer, so guard the ones you use.
+移植脚本时请仔细阅读这些说明。`workspace.repo_root` 是仓库根目录，没有 `project_dir`——那个名字在别处指启动目录。`context_window.session_usage` 和 `session_*` 的 token 计数是整个会话的累计值，不是单次调用的，而实时窗口是 `context_window.context_tokens`。没有额外会话目录的列表，因为 Chaos 没有这个概念。`transcript_path` 指的是 Chaos 自己的更新流，不是其他工具格式的转录，`prompt_id` 只在回合进行期间出现。以上每种情况里，移植的脚本读到的是空而不是错误答案，所以要对你用到的字段做好保护。
 
-Nothing outside the table below is sent. A ported script that reads counts of lines the agent changed, a rate-limit summary, an editor mode, a thinking or fast-mode flag, an output style, a pull request, extra session directories, or the directory a worktree was created from will find them absent: each is either a feature Grok does not have or a number it cannot source honestly.
+下表之外的内容一律不发送。移植的脚本若去读代理改动行数的计数、速率限制摘要、编辑器模式、思考或快速模式标志、输出风格、拉取请求、额外会话目录、或工作树的创建来源目录，都会发现它们不存在：每一项要么是 Chaos 没有的功能，要么是它无法如实提供数字的量。
 
 | 字段 | 说明 |
 | --- | --- |
-| `cwd`, `session_id` | Working directory and unique session id |
-| `session_name` | The session's tab name, filled in by the client. Present in `command` stdin, absent from the `SessionStatus` notification |
-| `prompt_id` | UUID of the prompt being processed. Present only during a turn |
-| `transcript_path` | Path to the session's `updates.jsonl`. The file is Grok's own update stream, so a script that parses another tool's transcript format will not read it |
-| `model.id`, `model.display_name` | Model identifier and display name. Omitted when the agent cannot read the session's model |
+| `cwd`, `session_id` | 工作目录和唯一会话 id |
+| `session_name` | 会话的标签页名，由客户端填写。出现在 `command` 的 stdin 中，`SessionStatus` 通知里没有 |
+| `prompt_id` | 正在处理的提示的 UUID。仅在回合进行期间出现 |
+| `transcript_path` | 会话的 `updates.jsonl` 的路径。该文件是 Chaos 自己的更新流，因此解析其他工具转录格式的脚本读不了它 |
+| `model.id`, `model.display_name` | 模型标识符和显示名。代理无法读取会话的模型时省略 |
 | `workspace.current_dir` | 当前目录 |
-| `workspace.repo_root` | The repository root, absent outside one. Not `project_dir`, a name used elsewhere for a launch directory |
-| `workspace.branch` | Checked-out branch, in any repo. Absent on a detached HEAD |
-| `workspace.git_worktree` | Worktree name, inside a linked worktree |
-| `workspace.repo.{host,owner,name}` | Parsed from the `origin` remote, inside a git repo. `owner` is omitted for a remote with no owner segment |
-| `schema_version` | Payload shape revision. Adding a field never bumps it; removing or retyping one does. Test it with `>=`, and branch on it rather than on `version` |
-| `version` | Grok release, for display |
-| `cost.total_duration_ms` | Milliseconds since this process attached the session. A resumed session counts from the resume, as its cost does |
-| `cost.total_cost_usd`, `cost.total_api_duration_ms` | Session cost and API-wait milliseconds. The cost is absent until something in the session carries a price, and also when the usage ledger is unreadable, so treat an absent cost as unknown rather than as zero |
-| `context_window.context_window_size` | Maximum context size, in tokens. Omitted until the model's window is known |
-| `context_window.context_tokens` | Tokens the conversation occupies right now, counting input only, so it falls after a compaction. Omitted when the agent cannot read the count, so `0` always means an empty context |
-| `context_window.session_input_tokens`, `.session_output_tokens` | Billed across the whole session, so they only grow. Named for the session because that is what they count: `total_*` is used elsewhere for what is in the window right now, which here is `context_tokens`. Dividing these by `context_window_size` passes 100% and keeps going. Omitted when the usage ledger is unreadable |
-| `context_window.used_percentage`, `.remaining_percentage` | How full the window is right now, whole numbers from 0 to 100. Omitted with `context_window_size` or `context_tokens`, since a percentage of an unknown window is not a number |
-| `context_window.session_usage.{input_tokens,output_tokens,cache_creation_input_tokens,cache_read_input_tokens}` | `input_tokens`, `cache_creation_input_tokens` and `cache_read_input_tokens`, which sum back to `session_input_tokens`, plus `output_tokens`. Cumulative for the session, not one turn's. Absent before the first call |
-| `context_window.auto_compact_threshold_percent` | Where the session auto-compacts. Omitted when the agent reported none |
-| `effort.level` | Reasoning effort, when the model supports it |
-| `turn.started_at_ms` | Unix milliseconds the turn in flight began, absent between turns. Subtract it from your own clock for an elapsed time |
-| `worktree.{name,path,branch,main_worktree_root}` | Active worktree, inside a linked worktree. `name` is omitted for a worktree at a filesystem root, and `main_worktree_root` is where the worktree branched from |
-| `trigger` | Why this run was invoked: `refresh_interval` for a run the timer asked for, `state` otherwise. Present on a command row's stdin, absent from the `SessionStatus` notification, which describes the session rather than a run |
+| `workspace.repo_root` | 仓库根目录，仓库之外省略。不是 `project_dir`——那个名字在别处指启动目录 |
+| `workspace.branch` | 检出的分支，任意仓库中都有。分离 HEAD 时省略 |
+| `workspace.git_worktree` | 工作树名，位于链接工作树内时 |
+| `workspace.repo.{host,owner,name}` | 在 git 仓库内从 `origin` 远端解析。没有 owner 段的远端会省略 `owner` |
+| `schema_version` | 负载结构的修订号。新增字段不会提升它；删除或改变字段类型会。用 `>=` 测试它，并依据它而非 `version` 分支 |
+| `version` | Chaos 版本，用于显示 |
+| `cost.total_duration_ms` | 本进程接入会话以来的毫秒数。恢复的会话从恢复时刻起算，其开销亦然 |
+| `cost.total_cost_usd`, `cost.total_api_duration_ms` | 会话开销和 API 等待毫秒数。会话中尚无任何带价格的内容时开销缺失，用量账本不可读时也缺失，因此把缺失的开销当作未知而不是零 |
+| `context_window.context_window_size` | 最大上下文尺寸，单位 token。在模型窗口已知之前省略 |
+| `context_window.context_tokens` | 对话当前占用的 token，只计输入，因此压缩后会下降。代理无法读取计数时省略，所以 `0` 永远意味着空上下文 |
+| `context_window.session_input_tokens`, `.session_output_tokens` | 按整个会话计费，因此只增不减。以会话命名是因为它们计的就是会话：`total_*` 在别处指当前窗口内的内容，在这里即 `context_tokens`。用它们除以 `context_window_size` 会超过 100% 并继续增长。用量账本不可读时省略 |
+| `context_window.used_percentage`, `.remaining_percentage` | 窗口当前的填充程度，0 到 100 的整数。与 `context_window_size` 或 `context_tokens` 一起省略，因为未知窗口的百分比不是数字 |
+| `context_window.session_usage.{input_tokens,output_tokens,cache_creation_input_tokens,cache_read_input_tokens}` | `input_tokens`、`cache_creation_input_tokens` 和 `cache_read_input_tokens`（三者之和回到 `session_input_tokens`），外加 `output_tokens`。整个会话的累计值，不是单个回合的。首次调用之前缺失 |
+| `context_window.auto_compact_threshold_percent` | 会话自动压缩的位置。代理未报告时省略 |
+| `effort.level` | 推理努力级别，模型支持时才有 |
+| `turn.started_at_ms` | 当前回合开始的 Unix 毫秒数，回合之间缺失。用你自己的时钟减去它即得已用时间 |
+| `worktree.{name,path,branch,main_worktree_root}` | 当前工作树，位于链接工作树内时。位于文件系统根的工作树会省略 `name`，`main_worktree_root` 是该工作树的分叉来源 |
+| `trigger` | 这次运行为何被调用：定时器请求的运行为 `refresh_interval`，否则为 `state`。出现在 command 行的 stdin 中，`SessionStatus` 通知里没有——后者描述的是会话而非一次运行 |
 
-Fields Grok cannot source are omitted rather than sent as placeholders, so the row never shows a fabricated value. Always guard them: `jq -r` prints the literal text `null` for a missing key, so write `// 0` or `// "?"` in jq, and `?.` in JavaScript.
+Chaos 无法如实提供的数据一律省略而不是以占位符发送，因此该行绝不会显示编造的值。务必对它们做好保护：`jq -r` 对缺失的键会打印字面文本 `null`，所以在 jq 里写 `// 0` 或 `// "?"`，在 JavaScript 里写 `?.`。
 
-## Example
+## 示例
 
-Save a script (for example `~/.grok/statusline.sh`), make it executable with `chmod +x`, and set it as `command`. This one uses [`jq`](https://jqlang.org/); Python and Node.js parse JSON natively. The payload carries no dirty-file count, so the script calls `git` for that.
+保存一个脚本（例如 `~/.chaos/statusline.sh`），用 `chmod +x` 赋予可执行权限，然后把它设为 `command`。这个例子用了 [`jq`](https://jqlang.org/)；Python 和 Node.js 原生就能解析 JSON。负载里不带脏文件计数，所以脚本为此调用 `git`。
 
 ```bash
 #!/bin/bash
@@ -126,17 +126,17 @@ DIRTY=$(git diff --numstat 2>/dev/null | wc -l | tr -d ' ')
 printf '%b\n' "${DIR##*/} │ $MODEL │ ${PCT}% ctx │ \033[32m$BRANCH\033[0m ~$DIRTY"
 ```
 
-## Tips
+## 提示
 
-- Test with mock input: `echo '{"session_id":"t","workspace":{"current_dir":"/tmp/demo"},"model":{"display_name":"Grok 4.5"},"context_window":{"used_percentage":25}}' | ./statusline.sh`
-- Cache slow commands such as `git status` to a temp file keyed on `session_id`, refreshed every few seconds. `session_id` is stable per session and unique across sessions.
-- Use `printf '%b'` rather than `echo -e` for reliable escapes.
+- 用模拟输入测试：`echo '{"session_id":"t","workspace":{"current_dir":"/tmp/demo"},"model":{"display_name":"Grok 4.5"},"context_window":{"used_percentage":25}}' | ./statusline.sh`
+- 把 `git status` 这类慢命令缓存到以 `session_id` 为键的临时文件，每隔几秒刷新。`session_id` 在单个会话内稳定，且跨会话唯一。
+- 用 `printf '%b'` 而不是 `echo -e`，转义更可靠。
 
-## Troubleshooting
+## 故障排查
 
-- **Nothing shows.** Grok reads `[ui.status_line]` at startup, so restart it after editing `config.toml`. Restarting is enough: when the new client attaches, the agent switches the row on for a session that is still running. The row only renders once the agent view is active, so not on the welcome screen or while a subagent view is open full screen. Check that `type` is not `disabled`, and that a command script is executable and writes to stdout.
-- **A message in the row.** A row beginning `[ui.status_line]` means Grok could not use that section as written: it either names the key it could not read, or names what the mode you chose still needs. `grok inspect` lists the same problems, including keys this version does not know, which is where to look when the row is switched off. Everything it could read still applies, and Grok leaves the section as you wrote it rather than rewriting one it cannot read. Setting `type = "disabled"` removes the row and the message.
-- **A blank row that never fills.** The agent is not sending status updates, which usually means a `grok` or leader process older than this client. Restart the leader or update Grok.
-- **Only your own config can set this.** A `command` row runs a program, so it is read from your `~/.grok/config.toml` and from configuration your administrator manages. A repository cannot set one: a repo-local `.grok/config.toml` is read for MCP servers only, and `[ui.status_line]` is not among the keys any project-scoped layer can supply, so cloning a repo cannot make Grok run its script.
-- **A pushed config had no effect.** `[ui.status_line]` is stripped from campaign and version-override patches, because a status line can name a command your machine would run. Set it in your own `config.toml`.
-- **Errors.** Anything your script prints is shown, even when it exits non-zero, so `printf …; [[ -n $dirty ]]` behaves as you would expect. A script that prints nothing and fails shows `[status line: exit N]`, and that stays until the next run succeeds — for a run triggered by session state, which reports its failure at once; a timer run's failure keeps the last output instead (see [Refresh runs](#refresh-runs)). Your script's stderr is never painted, so a debugging `echo` will not disturb the row; run Grok with `--debug` to read it. A script Grok could not start at all shows `[status line: could not start the script: …]`, which is what a file without the execute bit produces, and one the system kills shows `[status line: killed by signal]`. A `#!` line naming a missing interpreter is retried under `sh` instead, so it shows an exit code.
+- **什么都不显示。** Chaos 在启动时读取 `[ui.status_line]`，因此编辑 `config.toml` 后要重启。重启就足够了：新客户端接入时，代理会为仍在运行的会话打开该行。该行只在代理视图激活后才渲染，因此在欢迎界面上、或全屏子代理视图打开时不渲染。检查 `type` 不是 `disabled`，且 command 脚本可执行并写入 stdout。
+- **行内出现一条消息。** 以 `[ui.status_line]` 开头的行意味着 Chaos 无法按所写内容使用该节：它要么指出读不了的键，要么指出你选的模式还缺什么。`chaos inspect` 列出同样的问题，包括这个版本不认识的键——该行被关闭时先看这里。它能读的部分仍然生效，且 Chaos 保留你写的原样，不会重写一个它读不了的节。设置 `type = "disabled"` 可移除该行和这条消息。
+- **永远空着的行。** 代理没有发送状态更新，这通常意味着某个 `chaos` 或 leader 进程比这个客户端旧。重启 leader 或更新 Chaos。
+- **只有你自己的配置能设置它。** `command` 行会运行一个程序，因此它只从你的 `~/.chaos/config.toml` 和管理员管理的配置中读取。仓库无法设置它：仓库本地的 `.chaos/config.toml` 只为 MCP 服务器读取，`[ui.status_line]` 不在任何项目级配置层能提供的键之列，因此克隆仓库无法让 Chaos 运行其中的脚本。
+- **推送的配置没有生效。** `[ui.status_line]` 会从 campaign 和 version-override 补丁中剥离，因为状态栏可以指定一条会在你机器上运行的命令。请在自己的 `config.toml` 里设置。
+- **错误。** 脚本打印的任何内容都会显示，即使它以非零退出，因此 `printf …; [[ -n $dirty ]]` 的行为和预期一致。什么都不打印且失败的脚本显示 `[status line: exit N]`，并保持到下一次运行成功为止——会话状态触发的运行会立即报告其失败；定时器运行的失败则保留上一次输出（见[定时刷新](#refresh-runs)）。脚本的 stderr 永远不会画到行上，因此用于调试的 `echo` 不会打扰该行；带 `--debug` 运行 Chaos 即可读到它。Chaos 完全无法启动的脚本显示 `[status line: could not start the script: …]`，没有可执行位的文件正是这种结果；被系统杀死的脚本显示 `[status line: killed by signal]`。`#!` 行指定的解释器不存在时会改用 `sh` 重试，因此显示的是退出码。
