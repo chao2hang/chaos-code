@@ -1,117 +1,117 @@
-# Plan Mode
+# 计划模式
 
-Plan mode is a structured planning phase: the agent explores the codebase and designs an implementation approach before writing any code. Use it for tasks with genuine ambiguity about the right approach, where getting your input before coding prevents significant rework.
-
----
-
-## What Plan Mode Does
-
-When plan mode is active, the agent:
-
-1. Reads and searches the codebase to understand existing patterns and architecture
-2. Designs an implementation approach and writes it to the plan file
-3. May use `ask_user_question` to clarify specific questions
-4. Calls `exit_plan_mode` to present the plan for your approval
-
-Plan mode is read-only except for the plan file: plan-file edits (`plan.md` in the session directory) are auto-approved, and edits to any other file are rejected outright — the tool call fails with a short message naming the plan file as the only editable path. This holds in every permission mode, including always-approve. Separating planning from implementation lets you review and correct the approach before any code is written.
+计划模式是一个结构化的规划阶段：代理在编写任何代码之前，先探索代码库并设计实现方案。当任务在正确做法上确实存在歧义、写码前听取你的意见能避免大量返工时，就使用它。
 
 ---
 
-## How to Enter Plan Mode
+## 计划模式的作用
 
-### Agent-Initiated Entry
+计划模式激活时，代理会：
 
-The agent enters plan mode when it determines a task has genuine ambiguity. It calls the `enter_plan_mode` tool, which requires your approval before plan mode activates. If you decline, the agent stays in normal mode.
+1. 阅读并搜索代码库，理解既有模式与架构
+2. 设计实现方案并写入计划文件
+3. 可能使用 `ask_user_question` 澄清具体问题
+4. 调用 `exit_plan_mode` 呈现计划供你批准
 
-**Good triggers for plan mode:**
-
-- "Add user authentication to the app" -- genuinely ambiguous (session vs JWT, token storage, middleware structure)
-- "Redesign the data pipeline" -- major restructuring where the wrong approach wastes significant effort
-- "Add caching to the API" -- multiple reasonable approaches (Redis vs in-memory vs file-based)
-- "Add real-time updates" -- architectural decision (WebSockets vs SSE vs polling)
-
-**Not appropriate for plan mode:**
-
-- "Add a delete button to the user profile" -- clear implementation path
-- "Fix the typo in the README" -- straightforward
-- "Update the error handling in the API" -- start working, ask specific questions if needed
-- "Can we work on the search feature?" -- user wants to get started, not plan
-
-### User-Initiated Entry
-
-You can enter plan mode yourself in two ways:
-
-- **`/plan`** -- Enter plan mode. Plan mode activates when you send your next prompt. Run `/plan <description>` to enter plan mode and start a turn with that description in one step.
-- **Shift+Tab** -- Cycle the session mode: Normal, then Plan, then Always-approve, then back to Normal. From Normal, a single press lands on Plan.
-
-After a plan exists, run **`/view-plan`** (aliases `/show-plan`, `/plan-view`) to reopen its saved preview.
+除计划文件外，计划模式是只读的：计划文件的编辑（会话目录中的 `plan.md`）自动批准，对任何其他文件的编辑则直接拒绝——工具调用会失败，并附一条简短消息，指明计划文件是唯一可编辑的路径。这一点在任何权限模式下都成立，包括始终批准。把规划与实现分开，让你能在写任何代码之前审查并纠正方案。
 
 ---
 
-## The Plan File
+## 如何进入计划模式
 
-The plan is written to `plan.md` inside the session directory (`~/.grok/sessions/<cwd>/<session-id>/plan.md`, where `<cwd>` is an encoded directory name, not the literal path).
+### 代理主动进入
 
-The plan file contains:
+当代理判断任务确实存在歧义时，会进入计划模式。它调用 `enter_plan_mode` 工具，该工具需要你的批准，批准后计划模式才会激活。如果你拒绝，代理保持普通模式。
 
-- A **Context** section explaining why the change is being made
-- The recommended approach (not every alternative)
-- The paths of critical files to modify
-- Existing functions and utilities to reuse, with their file paths
-- A verification section describing how to test the changes end to end
+**适合触发计划模式的任务：**
+
+- "Add user authentication to the app" -- 确实存在歧义（session 还是 JWT、token 存储、中间件结构）
+- "Redesign the data pipeline" -- 重大重构，选错方案会浪费大量精力
+- "Add caching to the API" -- 存在多种合理方案（Redis、内存、基于文件）
+- "Add real-time updates" -- 架构决策（WebSockets、SSE 还是轮询）
+
+**不适合计划模式的任务：**
+
+- "Add a delete button to the user profile" -- 实现路径清晰
+- "Fix the typo in the README" -- 直接了当
+- "Update the error handling in the API" -- 先动手做，需要时再提具体问题
+- "Can we work on the search feature?" -- 用户想直接开始，而不是先规划
+
+### 用户主动进入
+
+你可以通过两种方式自行进入计划模式：
+
+- **`/plan`** -- 进入计划模式。计划模式在你发送下一条提示时激活。运行 `/plan <description>` 可以一步进入计划模式并以该描述开始一个回合。
+- **Shift+Tab** -- 循环切换会话模式：普通，然后计划，然后始终批准，再回到普通。从普通模式出发，按一次即落在计划模式。
+
+计划生成后，运行 **`/view-plan`**（别名 `/show-plan`、`/plan-view`）可重新打开其保存的预览。
 
 ---
 
-## Plan Approval
+## 计划文件
 
-When the agent finishes planning, it calls the `exit_plan_mode` tool. The tool reads the plan file from disk, and the TUI opens a scrollable preview of the plan with an action bar along the bottom.
+计划写入会话目录内的 `plan.md`（`~/.grok/sessions/<cwd>/<session-id>/plan.md`，其中 `<cwd>` 是编码后的目录名，而非字面路径）。
 
-If the agent exits without writing a plan (empty or missing `plan.md`), the same approval surface still opens with a clear empty-state message so you can approve and start implementing, request changes (send the agent back to planning), or quit. In minimal mode the empty notice is committed into scrollback and the controls strip header reads **No plan written yet**.
+计划文件包含：
 
-### Reviewing the Plan
+- 一个 **Context** 章节，解释为什么要做这项改动
+- 推荐方案（不含所有备选方案）
+- 需要修改的关键文件路径
+- 可复用的既有函数与工具，及其文件路径
+- 一个验证章节，描述如何端到端测试这些改动
 
-Scroll the plan with the arrow keys or `j`/`k`. The action bar shows these shortcuts:
+---
+
+## 计划批准
+
+代理完成规划后，会调用 `exit_plan_mode` 工具。该工具从磁盘读取计划文件，TUI 随即打开一个可滚动的计划预览，底部带一条操作栏。
+
+如果代理退出时没有写计划（`plan.md` 为空或缺失），同样的批准界面仍会打开，并给出明确的空状态提示，让你可以批准并开始实现、要求修改（把代理打回规划），或退出。在最小模式下，空提示会提交进回滚区，控制条头部显示 **No plan written yet**。
+
+### 审查计划
+
+用方向键或 `j`/`k` 滚动计划。操作栏显示这些快捷键：
 
 | Shortcut | Action                                                                                               |
 | -------- | ---------------------------------------------------------------------------------------------------- |
-| `a`      | Approve the plan and start building. With pending comments, this reads `approve w/ comments` and sends them alongside the approval. |
-| `s`      | Request changes. Focus moves to the prompt so you can type revision notes; press `Enter` to send them. |
-| `c`      | Comment on the selected line or line range.                                                          |
-| `y`      | Copy the full plan to the clipboard.                                                                 |
-| `q`      | Quit plan -- abandon the plan without approving and turn plan mode off.                              |
+| `a`      | 批准计划并开始构建。存在待发评论时，该项显示为 `approve w/ comments`，并随批准一并发送。 |
+| `s`      | 要求修改。焦点移到提示框，输入修改意见后按 `Enter` 发送。 |
+| `c`      | 对选中行或行区间添加评论。                                                          |
+| `y`      | 把整份计划复制到剪贴板。                                                                 |
+| `q`      | 退出计划——不批准并放弃该计划，同时关闭计划模式。                              |
 
-Press `Tab` to move focus between the plan preview and the prompt.
+按 `Tab` 在计划预览与提示框之间移动焦点。
 
-While the plan approval view is open, `Ctrl+P` (command palette → model) still works for switching model before you press `a` to approve.
+计划批准视图打开期间，`Ctrl+P`（命令面板 → 模型）仍然可用，可在你按 `a` 批准之前切换模型。
 
-### Providing Feedback
+### 提供反馈
 
-The approval view has three focus states:
+批准视图有三种焦点状态：
 
-- **Preview**: Scroll the plan and select lines to comment on.
-- **Commenting**: Add an inline comment to the selected line range (press `c`, or `Enter` on a line).
-- **Prompt**: Type freeform revision notes.
+- **Preview**：滚动计划并选中要评论的行。
+- **Commenting**：给选中的行区间添加行内评论（按 `c`，或在某行上按 `Enter`）。
+- **Prompt**：输入自由格式的修改意见。
 
-Press `Tab` to switch between the preview and the prompt. When you send feedback -- inline comments, freeform notes, or both -- the agent receives it and revises the plan. Plan mode stays active so you can iterate. A complete pager command typed in the prompt (for example `/feedback <text>` or `/compact`) runs as a command instead of being sent as notes; the review stays open. Pressing `a` while such a command sits in the prompt is refused until you run it with Enter or delete it.
+按 `Tab` 在预览与提示框之间切换。当你发送反馈——行内评论、自由意见或两者兼有——代理会收到并修改计划。计划模式保持激活，便于持续迭代。在提示框中输入完整的翻页器命令（例如 `/feedback <text>` 或 `/compact`）会作为命令执行，而不是当作意见发送；审查视图保持打开。提示框里还留着这类命令时按 `a` 会被拒绝，直到你用 Enter 运行它或将其删除。
 
-### Leaving the Approval View
+### 离开批准视图
 
-Press `Esc` to return focus from the prompt to the plan preview. To dismiss the approval without approving or sending feedback, press `q` to quit the plan. Quitting abandons the proposed plan and turns plan mode off.
+按 `Esc` 把焦点从提示框移回计划预览。要在既不批准也不发送反馈的情况下关闭批准界面，按 `q` 退出计划。退出会放弃提议的计划并关闭计划模式。
 
 ---
 
-## Plan Mode Lifecycle
+## 计划模式生命周期
 
-The plan mode state machine has four states:
+计划模式状态机有四个状态：
 
 | State          | Description                                                    |
 | -------------- | -------------------------------------------------------------- |
-| `Inactive`     | Normal operating mode. No plan mode constraints.               |
-| `Pending`      | Client toggled plan mode ON, but no prompt has been sent yet.  |
-| `Active`       | Plan mode is active. Plan-file edits are auto-approved; edits to other files are rejected. |
-| `ExitPending`  | User toggled plan mode OFF while a turn is in-flight.          |
+| `Inactive`     | 普通运行模式。没有计划模式约束。               |
+| `Pending`      | 客户端已开启计划模式，但尚未发送任何提示。  |
+| `Active`       | 计划模式激活。计划文件的编辑自动批准；对其他文件的编辑被拒绝。 |
+| `ExitPending`  | 回合进行中用户关闭了计划模式。          |
 
-Transitions:
+状态转移：
 
 ```
 Inactive    --> Active   (enter_plan_mode tool called and approved -- skips Pending)
@@ -122,42 +122,42 @@ Active      --> ExitPending (you toggle plan mode off while a turn is in-flight)
 ExitPending --> Inactive (after the turn completes)
 ```
 
-Plan mode state is persisted to disk and survives process restarts. Transient states (`Pending`, `ExitPending`) are collapsed to `Inactive` on restart since they depend on in-flight interactions.
+计划模式状态会持久化到磁盘，进程重启后仍然保留。瞬态（`Pending`、`ExitPending`）在重启时会折叠为 `Inactive`，因为它们依赖进行中的交互。
 
 ---
 
-## Edits During Plan Mode
+## 计划模式期间的编辑
 
-During active plan mode, edits to the plan file are auto-approved without prompting, so the agent can iterate on the plan freely. Edits to **any other file are rejected** before they run — the agent receives a short message naming the plan file as the only editable path.
+计划模式激活期间，对计划文件的编辑不经提示即自动批准，代理可以自由迭代计划。对**任何其他文件的编辑都会在运行前被拒绝**——代理收到一条简短消息，指明计划文件是唯一可编辑的路径。
 
-This enforcement is independent of the permission mode:
+这一强制与权限模式无关：
 
-- **Always-approve (yolo) stays armed underneath plan mode.** Non-edit tools (bash commands, reads, MCP tools) still auto-run, but file edits are blocked until you approve exiting plan mode. Once the plan is approved, always-approve resumes for implementation.
-- Bash commands are not inspected for file writes — plan mode blocks the edit tools, not shell redirection.
-- Subagents are not covered by the parent session's plan-mode edit gate. Each subagent starts with a fresh plan-mode tracker (`Inactive`), so a `general-purpose` (or other write-capable) subagent can edit files while the parent is still in plan mode — and it inherits the parent's permission mode (including always-approve). Read-only types such as `explore` remain limited by their own toolset.
+- **始终批准（yolo）在计划模式之下仍然保持就绪。** 非编辑类工具（bash 命令、读取、MCP 工具）仍会自动运行，但文件编辑被阻止，直到你批准退出计划模式。计划获批后，实现阶段会恢复始终批准。
+- Bash 命令不会被检查是否写文件——计划模式拦截的是编辑工具，不是 shell 重定向。
+- 子代理不受父会话的计划模式编辑门控约束。每个子代理以全新的计划模式跟踪器（`Inactive`）启动，因此 `general-purpose`（或其他具备写权限的）子代理可以在父会话仍处于计划模式时编辑文件——并且它继承父会话的权限模式（包括始终批准）。`explore` 等只读类型仍受各自工具集的限制。
 
-The status flag shows `plan` while plan mode is active. If always-approve is enabled underneath, its flag reappears when plan mode exits.
-
----
-
-## Plan Mode and Compaction
-
-When `/compact` runs during an active plan mode session, the plan mode state is preserved. The compacted context includes a reminder that plan mode is active, so the agent continues planning after compaction.
+计划模式激活期间状态栏标志显示 `plan`。如果底层启用了始终批准，计划模式退出后其标志会重新出现。
 
 ---
 
-## When Plan Mode is Appropriate
+## 计划模式与压缩
 
-**Use plan mode for:**
+在激活计划模式的会话中运行 `/compact` 时，计划模式状态会被保留。压缩后的上下文包含一条计划模式处于激活状态的提醒，因此代理在压缩后继续规划。
 
-- Tasks with significant architectural ambiguity (multiple reasonable approaches)
-- Unclear requirements that need exploration before implementation
-- High-impact restructuring where the wrong approach wastes significant effort
+---
 
-**Skip plan mode for:**
+## 何时适合使用计划模式
 
-- Tasks with a clear implementation path
-- Bug fixes where the fix is obvious once you understand the bug
-- Adding features that follow existing conventions
-- Straightforward modifications (renaming, formatting, adding tests)
-- Research and exploration tasks (use subagents instead)
+**适合使用计划模式：**
+
+- 在架构上存在显著歧义的任务（多种合理方案并存）
+- 需求不清、实现前需要先探索的任务
+- 高影响的重构，选错方案会浪费大量精力
+
+**跳过计划模式：**
+
+- 实现路径清晰的任务
+- 理解缺陷后修法显而易见的 bug 修复
+- 遵循既有约定添加功能
+- 直接了当的修改（重命名、格式化、补测试）
+- 研究与探索类任务（改用子代理）
