@@ -377,11 +377,7 @@ fn paint_row(
 }
 
 pub fn fmt_elapsed(secs: u64) -> String {
-    if secs < 60 {
-        format!("{secs}s")
-    } else {
-        format!("{}m{:02}s", secs / 60, secs % 60)
-    }
+    crate::views::goal_detail::format_elapsed(secs.saturating_mul(1000))
 }
 
 #[cfg(test)]
