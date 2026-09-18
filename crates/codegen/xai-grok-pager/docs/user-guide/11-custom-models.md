@@ -1,16 +1,14 @@
-# Custom Models
+# 自定义模型
 
-Grok connects to custom model endpoints for alternative providers, self-hosted models, and overriding built-in settings. This guide explains how to select models, configure endpoints, and integrate third-party providers.
+Chaos 可以接入自定义模型端点，用于替代 Provider、自托管模型，以及覆盖内置设置。本指南说明如何选择模型、配置端点，以及接入第三方 Provider。
 
 ---
 
-## Default Models
+## 默认模型
 
-Chaos ships **no built-in models**. A fresh install has an empty catalog until
-you add `[model.*]` (and optional `model_providers`) in `config.toml`. Online
-catalog fetches are off by default (`[features] remote_fetch = false`).
+Chaos **不内置任何模型**。全新安装的目录是空的，直到你在 `config.toml` 里加上 `[model.*]`（以及可选的 `model_providers`）。在线目录抓取默认关闭（`[features] remote_fetch = false`）。
 
-List configured models:
+列出已配置的模型：
 
 ```bash
 chaos models
@@ -18,35 +16,35 @@ chaos models
 
 ---
 
-## Selecting a Model
+## 选择模型
 
-### CLI Flag
+### CLI 标志
 
 ```bash
-grok -p "Hello" -m grok-4.6
+chaos -p "Hello" -m grok-4.6
 ```
 
-### Slash Command
+### 斜杠命令
 
-In the TUI, switch models during a session:
+在 TUI 里可以在会话中途切换模型：
 
 ```
 /model grok-4.6
 ```
 
-Or use the alias:
+或使用别名：
 
 ```
 /m grok-4.6
 ```
 
-### Model Picker (Ctrl+M)
+### 模型选择器（Ctrl+M）
 
-Press `Ctrl+M` from the scrollback pane to open the model picker. Chaos **does not ship built-in models**; the list is only your `[model.*]` entries (remote catalog only if you set `remote_fetch = true` and a models list URL). With the prompt focused, `Ctrl+M` toggles multiline input instead — use `/model` to switch without leaving the prompt.
+在回滚区按 `Ctrl+M` 打开模型选择器。Chaos **不内置任何模型**，列表里只有你的 `[model.*]` 条目（只有设置了 `remote_fetch = true` 与模型列表 URL 时才有远端目录）。提示框获得焦点时，`Ctrl+M` 改为切换多行输入——想不离开提示框就换模型，请用 `/model`。
 
-### Fleet allowlist (`requirements.toml`)
+### 机群白名单（`requirements.toml`）
 
-Enterprise hosts can pin the **selectable** set — not only the default — in signed `requirements.toml`. That list **replaces** any user `allowed_models` (it is not a union), so `/model`, `Ctrl+M`, and `-m` cannot offer models outside it.
+企业主机可以在签名的 `requirements.toml` 里钉住**可选**集合——不只是默认值。该列表会**取代**用户的 `allowed_models`（不是取并集），因此 `/model`、`Ctrl+M` 和 `-m` 都无法提供列表之外的模型。
 
 ```toml
 [models]
@@ -54,11 +52,11 @@ default = "grok-4.5"
 allowed_models = ["grok-4.5", "grok-4*"]
 ```
 
-A fleet pin matches the **model id** (not a user-chosen catalog key), so a local `[model.<name>]` entry cannot widen the set. User-config `allowed_models` still matches catalog key or model id. Omit the key to leave user config standing. An empty array is unrestricted. A present-but-unreadable pin fail-closes (nothing selectable). A default or `-m` value outside the pinned set is rejected once the model catalog is fetched — contact your administrator; the list is not user-editable.
+机群钉定匹配的是**模型 id**（而不是用户自选的 catalog 键），因此本地的 `[model.<name>]` 条目无法把集合放宽。用户配置里的 `allowed_models` 仍按 catalog 键或模型 id 匹配。省略该键则保留用户配置不变。空数组表示不限制。钉定存在但读不出来时按 fail-closed 处理（什么都选不了）。在模型目录抓取之后，默认值或 `-m` 若落在钉定集合之外会被拒绝——请联系管理员；这份列表用户无法自行编辑。
 
-### Config Default
+### 配置默认值
 
-Set a persistent default in `~/.chaos/config.toml`（或兼容的 `~/.grok/config.toml`）:
+在 `~/.chaos/config.toml`（或兼容的 `~/.grok/config.toml`）里设置持久默认值：
 
 ```toml
 [models]
@@ -69,9 +67,9 @@ default = "gpt-5"
 
 ---
 
-## Supported API Backends
+## 支持的 API 后端
 
-Chaos supports three API backends. Set `api_backend` in your `[model.*]` config to choose which protocol the model uses:
+Chaos 支持三种 API 后端。在 `[model.*]` 配置里设置 `api_backend`，决定该模型使用哪种协议：
 
 | 取值 | API | 默认 |
 |-------|-----|---------|
@@ -79,15 +77,15 @@ Chaos supports three API backends. Set `api_backend` in your `[model.*]` config 
 | `"responses"` | OpenAI Responses (`/v1/responses`) | |
 | `"messages"` | Anthropic Messages (`/v1/messages`) | |
 
-When you omit `api_backend`, Grok uses `chat_completions`.
+省略 `api_backend` 时，Chaos 使用 `chat_completions`。
 
-To send provider-specific authentication or version headers -- for example, Anthropic's `x-api-key` -- use the `extra_headers` field described below. Grok sends those headers verbatim with every request to the endpoint.
+要发送 Provider 专有的认证或版本头——例如 Anthropic 的 `x-api-key`——请用下面介绍的 `extra_headers` 字段。Chaos 会把这些头原样附在发往该端点的每个请求上。
 
 ---
 
-## Configuring Custom Models
+## 配置自定义模型
 
-Add custom model endpoints in `~/.grok/config.toml` under `[model.<name>]` sections:
+在 `~/.chaos/config.toml` 里用 `[model.<name>]` 段添加自定义模型端点：
 
 ```toml
 [model.my-model]
@@ -105,33 +103,33 @@ context_window = 128000                   # Total context window in tokens
 extra_headers = { "x-api-key" = "sk-..." } # Extra request headers, sent verbatim (optional)
 ```
 
-### Credential Resolution
+### 凭据解析
 
-Grok resolves the API key in this order:
+Chaos 按以下顺序解析 API 密钥：
 
-1. The `api_key` field in the model config
-2. The environment variable(s) named by `env_key` — a single string or an array of names. The first set, non-empty value wins (for example `env_key = ["ANTHROPIC_AUTH_TOKEN", "LC_ANTHROPIC_AUTH_TOKEN"]` for SSH `LC_*` forwarding)
-3. Your signed-in session token (from `grok login`), for a model with no `api_key`/`env_key` of its own
-4. The `XAI_API_KEY` environment variable (global fallback; Grok also accepts `GROK_CODE_XAI_API_KEY` for backward compatibility)
+1. 模型配置里的 `api_key` 字段
+2. `env_key` 指定的环境变量（单个名字或名字数组）。取第一个已设置且非空的值（例如为 SSH `LC_*` 转发设置 `env_key = ["ANTHROPIC_AUTH_TOKEN", "LC_ANTHROPIC_AUTH_TOKEN"]`）
+3. 模型自身既没有 `api_key` 也没有 `env_key` 时，就没有凭据可用：本分叉的认证是自带密钥（BYOK），请配置上面两项之一
+4. `XAI_API_KEY` 环境变量（全局兜底；为向后兼容，Chaos 也接受 `GROK_CODE_XAI_API_KEY`）
 
-### Context Window
+### 上下文窗口
 
-The `context_window` value tells Grok when to trigger auto-compaction. When you override a known model, Grok inherits that model's context window. When you define a new model and omit `context_window`, Grok defaults to 200,000 tokens, so set it explicitly to match your provider.
+`context_window` 的取值告诉 Chaos 何时触发自动压缩。覆盖一个已知模型时，Chaos 继承该模型的上下文窗口。定义新模型且省略 `context_window` 时，Chaos 默认使用 200,000 个 token，所以请显式设置成与你 Provider 一致的值。
 
-### Global Default Headers
+### 全局默认请求头
 
-To apply the same headers to *every* model in the catalog -- built-in, prefetched from `/v1/models`, or custom -- set them once under the global `[models]` section instead of repeating them per model:
+要把同样的请求头应用到目录里的*每个*模型——内置的、从 `/v1/models` 预取的、以及自定义的——请在全局 `[models]` 段里设置一次，而不必逐个模型重复：
 
 ```toml
 [models]
 extra_headers = { "X-Request-Tags" = "team=example,env=prod" }
 ```
 
-These act as a base for each model's inference requests. A per-model `[model.<id>].extra_headers` entry overrides the global default **per key** (matched case-insensitively): a key set on the model wins, while any global-only keys are still inherited by that model. Like the per-model field, they ride on that model's inference calls -- not on separate services such as image generation or video generation -- which makes them handy for attribution tags (for example, cost tracking) without re-declaring them whenever a new model appears.
+这些头是每个模型推理请求的基础。某个模型的 `[model.<id>].extra_headers` 会**按单个键**覆盖全局默认值（键名不区分大小写）：在模型上设置的键生效，而只在全局出现的键仍会被该模型继承。与单模型字段一样，它们只附在该模型的推理调用上——不会附到图像生成、视频生成这类独立服务上——因此很适合用来做归属标记（例如成本核算），不必每次出现新模型都重新声明一遍。
 
-### Global Default Values
+### 全局默认值
 
-A few common per-model settings can also be set once under `[models]` as a default for *every* model. A per-model `[model.<id>]` value always wins; the global only fills in where a model (or the server's model list) left the field unset:
+一些常见的单模型设置也可以在 `[models]` 下设置一次，作为*每个*模型的默认值。单模型的 `[model.<id>]` 值总是优先；全局值只在模型（或服务端的模型列表）没有给出该字段时补上：
 
 ```toml
 [models]
@@ -144,15 +142,15 @@ subagent_rate_limit_max_attempts = 8
 stream_tool_calls           = true
 ```
 
-This is a small, fixed set of environment-wide knobs. Settings that identify a specific model (`model`, `base_url`, `api_key`, `context_window`, ...) cannot be defaulted this way, and a few settings with their own dedicated configuration -- auto-compaction (`[session]`), the system-prompt label (`[agent]`), and reasoning effort (`[models].default_reasoning_effort`) -- keep their existing homes.
+这是一组小而固定的全局开关。用于标识具体模型的设置（`model`、`base_url`、`api_key`、`context_window` 等）不能用这种方式设默认值；另有少数设置各有专属配置位置——自动压缩在 `[session]`、系统提示词标签在 `[agent]`、推理强度在 `[models].default_reasoning_effort`——它们仍留在原处。
 
-> **Note on `stream_tool_calls`:** this one affects request *shape*, not just sampling. A few endpoints (some BYOK providers) expect it left unset; if a global `stream_tool_calls = true` causes problems for such a model, opt that model out with `stream_tool_calls = false` in its `[model.<id>]` block.
+> **关于 `stream_tool_calls`：** 它影响的是请求的*形状*，不只是采样。少数端点（某些 BYOK Provider）希望这一项不被设置；若全局的 `stream_tool_calls = true` 让这类模型出问题，请在该模型的 `[model.<id>]` 块里用 `stream_tool_calls = false` 把它单独排除。
 
 ---
 
-## Overriding Built-in Models
+## 覆盖内置模型
 
-You can override specific fields of built-in models without redefining everything. Only specify the fields you want to change:
+可以只覆盖内置模型的某些字段，而不必整体重定义。只写你想改的字段即可：
 
 ```toml
 # Override only the API key for a default model
@@ -165,21 +163,21 @@ temperature = 0.5
 api_key = "sk-custom"
 ```
 
-When you override a built-in model, Grok starts with the default configuration (including the correct `base_url`), then applies only the fields you specify. Unspecified fields inherit from the default.
+覆盖内置模型时，Chaos 先取默认配置（包括正确的 `base_url`），再只应用你写出的那些字段。未指定的字段继承默认值。
 
-### Priority Order
+### 优先级顺序
 
-1. Your config (`[model.*]`) -- highest priority
-2. Prefetched models from remote `/v1/models`
-3. Hardcoded defaults -- lowest priority
+1. 你的配置（`[model.*]`）—— 最高优先级
+2. 从远端 `/v1/models` 预取的模型
+3. 硬编码默认值 —— 最低优先级
 
 ---
 
 ## Provider Examples
 
-### Anthropic (Claude)
+### Anthropic（Claude）
 
-Use Claude models directly via the Anthropic Messages API:
+通过 Anthropic Messages API 直接使用 Claude 模型：
 
 ```toml
 [model.claude-opus]
@@ -191,9 +189,9 @@ context_window = 200000
 extra_headers = { "x-api-key" = "sk-ant-...", "anthropic-version" = "2023-06-01" }
 ```
 
-The `messages` backend uses the Anthropic Messages protocol. Anthropic authenticates with an `x-api-key` header rather than `Authorization: Bearer`, so pass your key through `extra_headers`, which Grok sends verbatim.
+`messages` 后端使用 Anthropic Messages 协议。Anthropic 用 `x-api-key` 头认证，而不是 `Authorization: Bearer`，所以请把密钥通过 `extra_headers` 传入——Chaos 会原样发送它。
 
-### OpenAI (Chat Completions)
+### OpenAI（Chat Completions）
 
 ```toml
 [model.gpt-4o]
@@ -203,11 +201,11 @@ name = "GPT-4o"
 env_key = "OPENAI_API_KEY"
 ```
 
-`api_backend` defaults to `"chat_completions"`, so you don't need to set it explicitly for OpenAI.
+`api_backend` 默认就是 `"chat_completions"`，所以接入 OpenAI 时不必显式设置。
 
-### OpenAI (Responses API)
+### OpenAI（Responses API）
 
-If your provider supports the newer Responses API:
+如果你的 Provider 支持较新的 Responses API：
 
 ```toml
 [model.gpt-4o-responses]
@@ -218,9 +216,9 @@ api_backend = "responses"
 env_key = "OPENAI_API_KEY"
 ```
 
-### Ollama (Local Models)
+### Ollama（本地模型）
 
-Run models locally with [Ollama](https://ollama.ai):
+用 [Ollama](https://ollama.ai) 在本地运行模型：
 
 ```toml
 [model.ollama-codellama]
@@ -229,7 +227,7 @@ base_url = "http://localhost:11434/v1"
 name = "CodeLlama (Ollama)"
 ```
 
-Make sure Ollama is running (`ollama serve`) and the model is pulled (`ollama pull codellama`).
+请确认 Ollama 正在运行（`ollama serve`），并且模型已经拉取（`ollama pull codellama`）。
 
 ### Together AI
 
@@ -241,9 +239,9 @@ name = "Mixtral 8x7B"
 env_key = "TOGETHER_API_KEY"
 ```
 
-### Local OpenAI-Compatible Server
+### 本地 OpenAI 兼容服务器
 
-Any server that implements the OpenAI Chat Completions or Responses API:
+任何实现了 OpenAI Chat Completions 或 Responses API 的服务器：
 
 ```toml
 [model.local-llama]
@@ -255,27 +253,27 @@ temperature = 0.8
 
 ---
 
-## Custom Models Endpoint
+## 自定义模型端点
 
-Point Grok at a custom OpenAI-compatible `/v1/models` endpoint instead of the default. Use this when your models sit behind a corporate gateway or a self-hosted inference service.
+把 Chaos 指向一个自定义的、兼容 OpenAI 的 `/v1/models` 端点，而不是默认端点。当你的模型位于企业网关或自托管推理服务之后时用它。
 
-### Environment Variables
+### 环境变量
 
 | 变量 | 必填 | 说明 |
 |----------|----------|-------------|
-| `GROK_MODELS_BASE_URL` | 是 | Base URL for inference. Grok fetches the model list from `{base_url}/models`. |
-| `XAI_API_KEY` | 是 | API key sent as `Authorization: Bearer`. Grok also accepts `GROK_CODE_XAI_API_KEY`. |
-| `GROK_MODELS_LIST_URL` | 否 | Override the model-list URL when it differs from `{base_url}/models`. |
+| `GROK_MODELS_BASE_URL` | 是 | 推理用的 Base URL。Chaos 从 `{base_url}/models` 抓取模型列表。 |
+| `XAI_API_KEY` | 是 | 作为 `Authorization: Bearer` 发送的 API 密钥。Chaos 也接受 `GROK_CODE_XAI_API_KEY`。 |
+| `GROK_MODELS_LIST_URL` | 否 | 模型列表 URL 与 `{base_url}/models` 不同时，用它覆盖。 |
 
-### Setup
+### 配置步骤
 
 ```bash
 export GROK_MODELS_BASE_URL="https://api.acme.com/v1"
 export XAI_API_KEY="xai-..."
-grok
+chaos
 ```
 
-### Config File Alternative
+### 改用配置文件
 
 ```toml
 [endpoints]
@@ -286,30 +284,30 @@ models_base_url = "https://api.acme.com/v1"
 api_key = "my-api-key"
 ```
 
-When you use `[endpoints]` with partial model overrides, Grok inherits the `base_url` from the endpoints config, so you do not need to specify it in each `[model.*]` section.
+把 `[endpoints]` 与部分模型覆盖一起使用时，Chaos 会从 endpoints 配置继承 `base_url`，因此不必在每个 `[model.*]` 段里重复指定。
 
-### Auth Behavior
+### 认证行为
 
-When you set `models_base_url`, Grok uses API key auth (`Authorization: Bearer`) instead of session auth. You do not need `grok login` -- the API key is enough.
+设置 `models_base_url` 后，Chaos 改用 API key 认证（`Authorization: Bearer`），而不是会话认证。有 API key 就够了，无需其它登录步骤。
 
 ---
 
-## Web Search Model
+## 网页搜索模型
 
-The `web_search` tool uses a separate model. Configure it with:
+`web_search` 工具使用单独的模型。这样配置：
 
 ```toml
 [models]
 web_search = "grok-4.20-multi-agent"
 ```
 
-Or via environment variable:
+或通过环境变量：
 
 ```bash
 export GROK_WEB_SEARCH_MODEL="grok-4.20-multi-agent"
 ```
 
-If you point web search at a custom model, you also need a `[model.*]` entry so Grok can reach it. Server-side ("backend") web search runs only when the model sets `supports_backend_search = true` (and the build enables backend search); it does not depend on `api_backend`:
+如果让网页搜索指向自定义模型，你还需要一条 `[model.*]` 条目，Chaos 才能访问到它。服务端（「后端」）网页搜索只在模型声明了 `supports_backend_search = true`（且该构建启用了后端搜索）时运行；它与 `api_backend` 无关：
 
 ```toml
 [models]
@@ -322,17 +320,17 @@ supports_backend_search = true
 
 ---
 
-## Using Custom Models
+## 使用自定义模型
 
 ```bash
 # List available models (including custom)
-grok models
+chaos models
 
 # Use in the TUI via slash command
 /model my-model
 
 # Use in headless mode
-grok -p "Hello" -m my-model
+chaos -p "Hello" -m my-model
 
 # Set as default in config.toml:
 [models]
@@ -341,9 +339,9 @@ default = "my-model"
 
 ---
 
-## Enterprise Deployment
+## 企业部署
 
-A complete config for an enterprise deployment with custom models:
+一份带自定义模型的企业部署完整配置：
 
 ```toml
 [cli]
@@ -369,31 +367,31 @@ telemetry = false
 
 ---
 
-## Troubleshooting
+## 故障排查
 
-### Model Not Found
+### 找不到模型
 
 ```bash
 # List available models
-grok models
+chaos models
 
 # Check config.toml for typos in [model.*] sections
 ```
 
-### Connection Errors
+### 连接错误
 
-Verify the endpoint is reachable:
+确认端点可达：
 
 ```bash
 curl -s https://api.example.com/v1/models \
   -H "Authorization: Bearer $XAI_API_KEY"
 ```
 
-### Debug Logging
+### 调试日志
 
 ```bash
-RUST_LOG=debug GROK_LOG_FILE=/tmp/grok.log grok
+RUST_LOG=debug GROK_LOG_FILE=/tmp/grok.log chaos
 tail -f /tmp/grok.log
 ```
 
-Look for log entries containing `model` or `sampling` to trace model selection and API calls.
+查找含 `model` 或 `sampling` 的日志条目，以追踪模型选择与 API 调用。
