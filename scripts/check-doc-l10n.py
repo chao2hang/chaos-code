@@ -24,6 +24,13 @@ spelling on both sides, which accepts either form (a translator may keep a
 legacy literal or localise it) while still rejecting anything invented. Use
 `--fork-names` to see which literals are still upstream-spelled.
 
+A rename can also change a name's *length* (`~/.grok` -> `~/.chaos`), which
+shifts the padding of a trailing aligned comment inside a fence; that
+re-alignment is cosmetic, so `fence_normalize` collapses whitespace before an
+end-of-line `#` while the comment text itself is still compared exactly. The
+indentation of a comment-only line is *not* collapsed, because it carries
+meaning in YAML/TOML samples.
+
 For inline spans, *losing* one is drift (that is what catches a mangled
 identifier); *adding* one is only reported, because a verified content
 correction may introduce a literal the upstream text never named. Pass
@@ -124,6 +131,20 @@ def fork_normalize(text: str) -> str:
     for pattern, repl in RENAMES:
         text = pattern.sub(repl, text)
     return text
+
+
+# `~/.grok` -> `~/.chaos` makes a name one character longer, which shifts the
+# padding of a trailing aligned comment inside a code fence. The re-alignment
+# is cosmetic, so fence bodies are compared with comment padding collapsed.
+# Only a comment that follows content on the same line is affected; the
+# indentation of a comment-only line (which matters in YAML/TOML samples)
+# is still compared exactly.
+COMMENT_PAD = re.compile(r"(?<=\S)[ \t]{2,}(?=#)")
+
+
+def fence_normalize(text: str) -> str:
+    """Canonicalise a fence body for the `fences` invariant."""
+    return COMMENT_PAD.sub(" ", fork_normalize(text))
 
 
 # Upstream spellings that should no longer appear: a `grok` command word, a
@@ -632,8 +653,8 @@ def compare(before: str, after: str, path: str,
     notes: list[str] = []
     # Fences and inline spans are compared canonicalised: a fork rename that
     # a translator applied (or deliberately did not) is not drift.
-    before_fences = [fork_normalize(b) for b in fenced_blocks(before)]
-    after_fences = [fork_normalize(b) for b in fenced_blocks(after)]
+    before_fences = [fence_normalize(b) for b in fenced_blocks(before)]
+    after_fences = [fence_normalize(b) for b in fenced_blocks(after)]
     if before_fences != after_fences:
         problems.append(
             "fenced code blocks changed "

@@ -33,6 +33,8 @@ This paragraph still names `GROK_CONFIG` (inline JSON) and
 
 ```sh
 grok plugin list
+  # comment-only line keeps its indentation
+~/.grok/config.toml       # Global settings
 ```
 
 | Key | Type / Values | Requirements | Managed | Details |
@@ -55,6 +57,7 @@ def renamed(s: str) -> str:
     """The intended fork localization: same meaning, fork spelling."""
     return (s.replace("`grok inspect`", "`chaos inspect`")
              .replace("$GROK_HOME", "$CHAOS_HOME")
+             .replace("~/.grok/config.toml", "~/.chaos/config.toml")
              .replace("grok plugin list", "chaos plugin list"))
 
 
@@ -86,6 +89,14 @@ CASES = (
     ("fence: flag typo", sub("grok plugin list", "grok plugin ls"), True, ()),
     ("fence: legit command rename",
      sub("grok plugin list", "chaos plugin list"), False, ()),
+    ("fence: comment padding is cosmetic after a rename",
+     sub("~/.grok/config.toml       # Global settings",
+         "~/.chaos/config.toml    # Global settings"), False, ()),
+    ("fence: comment text is still compared",
+     sub("~/.grok/config.toml       # Global settings",
+         "~/.grok/config.toml       # Global preferences"), True, ()),
+    ("fence: comment-only line keeps its indentation",
+     sub("\n  # comment-only line", "\n    # comment-only line"), True, ()),
     ("table: extra cell in a data row",
      sub("| `config.toml` | `string` | `yes` |", "| `config.toml` | `string` | `yes` | x |"),
      True, ()),
