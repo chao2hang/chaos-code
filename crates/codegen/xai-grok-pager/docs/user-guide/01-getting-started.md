@@ -24,16 +24,6 @@ cargo run -p xai-grok-pager-bin
 
 （上游官方安装脚本安装的是 `grok`，与本 fork 无关。）
 
-To fetch a repository through Grove (NFS on macOS, FUSE on Linux) after
-`[clone] enabled = true` in Grove config:
-
-```bash
-grok clone <url> [dir]
-```
-
-The default is a depth-1 checkout of the selected branch. Pass `--full-history`
-for a complete clone. See [grok clone](27-grok-clone.md).
-
 ---
 
 ## 首次启动
