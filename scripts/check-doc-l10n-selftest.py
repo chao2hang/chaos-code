@@ -35,6 +35,9 @@ This paragraph still names `GROK_CONFIG` (inline JSON) and
 grok plugin list
   # comment-only line keeps its indentation
 ~/.grok/config.toml       # Global settings
++-----------------------------+
+|          grok plugin list   |
++-----------------------------+
 ```
 
 | Key | Type / Values | Requirements | Managed | Details |
@@ -97,6 +100,12 @@ CASES = (
          "~/.grok/config.toml       # Global preferences"), True, ()),
     ("fence: comment-only line keeps its indentation",
      sub("\n  # comment-only line", "\n    # comment-only line"), True, ()),
+    ("fence: ASCII box border is re-aligned by a rename",
+     sub("|          grok plugin list   |",
+         "|          chaos plugin list  |"), False, ()),
+    ("fence: ASCII box content is still compared",
+     sub("|          grok plugin list   |",
+         "|          grok plugin lx     |"), True, ()),
     ("table: extra cell in a data row",
      sub("| `config.toml` | `string` | `yes` |", "| `config.toml` | `string` | `yes` | x |"),
      True, ()),

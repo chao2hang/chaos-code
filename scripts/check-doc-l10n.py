@@ -25,11 +25,11 @@ legacy literal or localise it) while still rejecting anything invented. Use
 `--fork-names` to see which literals are still upstream-spelled.
 
 A rename can also change a name's *length* (`~/.grok` -> `~/.chaos`), which
-shifts the padding of a trailing aligned comment inside a fence; that
-re-alignment is cosmetic, so `fence_normalize` collapses whitespace before an
-end-of-line `#` while the comment text itself is still compared exactly. The
-indentation of a comment-only line is *not* collapsed, because it carries
-meaning in YAML/TOML samples.
+shifts the padding that aligns a trailing comment or an ASCII-diagram border
+inside a fence; that re-alignment is cosmetic, so `fence_normalize` collapses
+whitespace before an end-of-line `#` or `|` while the rest of the line is
+still compared exactly. The indentation of a comment-only line is *not*
+collapsed, because it carries meaning in YAML/TOML samples.
 
 For inline spans, *losing* one is drift (that is what catches a mangled
 identifier); *adding* one is only reported, because a verified content
@@ -139,17 +139,18 @@ def fork_normalize(text: str) -> str:
 
 
 # `~/.grok` -> `~/.chaos` makes a name one character longer, which shifts the
-# padding of a trailing aligned comment inside a code fence. The re-alignment
-# is cosmetic, so fence bodies are compared with comment padding collapsed.
-# Only a comment that follows content on the same line is affected; the
-# indentation of a comment-only line (which matters in YAML/TOML samples)
-# is still compared exactly.
-COMMENT_PAD = re.compile(r"(?<=\S)[ \t]{2,}(?=#)")
+# padding that aligns a trailing comment or an ASCII-diagram border inside a
+# code fence. That re-alignment is cosmetic -- the box simply gets one column
+# wider -- so fence bodies are compared with such padding collapsed. Only
+# padding *inside* a line is affected; the indentation of a comment-only line
+# (which matters in YAML/TOML samples) is still compared exactly, and so is
+# every other character of the line.
+ALIGN_PAD = re.compile(r"(?<=\S)[ \t]{2,}(?=[#|])")
 
 
 def fence_normalize(text: str) -> str:
     """Canonicalise a fence body for the `fences` invariant."""
-    return COMMENT_PAD.sub(" ", fork_normalize(text))
+    return ALIGN_PAD.sub(" ", fork_normalize(text))
 
 
 # Upstream spellings that should no longer appear: a `grok` command word, a
