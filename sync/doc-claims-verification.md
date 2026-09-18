@@ -111,3 +111,57 @@ T1-7c / T1-7d 原本要把上游增量与本轮行为注记写进 `04`、`10`、
 - `slash/commands/logout.rs:19` 的提示文案里写的是 `~/.grok/config.toml`，
   而该章正文按 `~/.chaos` 写。
 - 这两处属于源码文案而非用户指南，按「不碰架构」的范围留待后续统一。
+
+---
+
+## 八、第 13 章《记忆》的核对（2026-09-18）
+
+翻 `13-memory.md` 之前按同样的方式把它逐节和代码对了一遍。这一章的问题比
+前面四章都重：它有一整节描述了一套**本仓库根本没有的存储架构**。
+
+### 8.1 不成立的断言
+
+| # | 原文断言 | 实际 | 证据 |
+| --- | --- | --- | --- |
+| 17 | 「`topics/` 存放整理过的笔记，一个主题一个文件；完成的回合先落成小的 observations，之后由 `/dream` 折叠进 topics；两个作用域的生成式索引每会话注入一次」 | **没有 `topics/` 目录，也没有 observation 层。** 每个作用域只有**一份** `MEMORY.md`：全局在 `grok_home()/memory/MEMORY.md`，工作区在 `grok_home()/memory/<slug>-<hash8>/MEMORY.md`；会话日志在 `.../<slug>-<hash8>/sessions/`；索引是 `.../<slug>-<hash8>/index.sqlite`。`/dream` 是把会话日志喂给模型、拿回**一份** markdown 文档写回工作区 `MEMORY.md`，然后删掉已处理的会话日志 | `xai-grok-memory/src/storage.rs:51-56`、`:103`、`:113`、`:118`、`:140`；`dream.rs:350-372`（`write_long_term(Workspace, …)`）、`:302`（`clean_processed_sessions`，`:298` 有 5 分钟新近度保护） |
+| 18 | 「早期版本的笔记在更新后首次打开工作区时自动迁移，同名小节追加到 `"From earlier sessions"` 标题下」 | **没有这段迁移代码。** 全仓库（不含 `target/`）搜 `From earlier sessions` 只命中本文档自身；`xai-grok-memory` 里唯一的 `legacy` 是 dream 锁的旧文件名回退与 SQLite WAL 注释，与笔记迁移无关 | `dream_lock.rs:451-470`、`index.rs:784`（两处都不是迁移） |
+| 19 | 「（打开记忆）会在下一个回合注入记忆索引」 | **不会重新注入。** `MemoryToggle` 只做三件事：`ensure_initialized()`、重新注册 `memory_search`/`memory_get`、写回 storage。`context_injected` 没有被重置，而首回合注入只在它为 `false` 时发生 | `slash_exec.rs:750-795`；置位处 `turn.rs:2001-2005`，初始化 `spawn.rs:1814` |
+| 20 | 首回合注入的是「两个作用域的有界生成式索引」 | 注入的是**检索结果**：取最后一条真实用户提问（若是空/短于 20 字符/寒暄，则退回 `"project conventions preferences architecture"`）调 `backend.search(&query, 6, min_score)`，把命中格式化成提醒 | `turn.rs:2013-2116`；`session/helpers/memory_context.rs:29-60` |
+
+第 17、18、19 条按 §4.3 处理：改写为真实布局 / 删除描述。第 20 条在同一节里
+与本文档自己的「首回合注入」一节自相矛盾，随手删掉。`topics/` 的
+行内代码 span 丢失已在 `scripts/doc-span-removals.tsv` 里声明。
+
+### 8.2 保留未改的一条（散文数字是硬门禁）
+
+| # | 原文断言 | 实际 | 证据 |
+| --- | --- | --- | --- |
+| 21 | 「当记忆模态的内容区不足 **64** 列时，只显示文件列表并隐藏大小列」 | 阈值是 **80**：`SPLIT_MIN_WIDTH: u16 = 80`，`show_preview = content_area.width >= SPLIT_MIN_WIDTH`。另外「隐藏大小列」也不准 —— 窄宽度下只是不画分栏预览和分隔线、列表占满整宽，元信息列（修改时间）在 `render_file_list` 里照画 | `xai-grok-pager/src/views/memory_modal.rs:36`、`:424-429`、`:596-618` |
+
+**这条故意没改。** 散文数字由 `numbers` 不变量逐字比对，没有像
+`doc-span-removals.tsv` 那样的声明通道，而 `sync/doc-l10n-conventions.md` §五
+明令「不改数字」。要修得先给散文数字开一条声明机制（或等上游自己修），
+不在本轮范围内。修的时候一并把「隐藏大小列」改掉。
+
+### 8.3 核对为真、照写
+
+| # | 断言 | 证据 |
+| --- | --- | --- |
+| 22 | 存储表格三行、`<project-slug>-<hash8>` 后缀、身份取 `origin` 远端的 `org/repo` 形式（无远端则取目录路径）、克隆与工作树共用一份 | `storage.rs:584-618`、`:620-624` |
+| 23 | 自动保存写结构化元数据摘要、不调 LLM、不加延迟；主题取前五条真实用户提示词；含消息计数与 UTC 时间；真实提示词少于 3 条或用户文本不足 50 字节则跳过；`session.save_on_end`；会话 ID 进文件名；不记录工具调用、路径与 shell 命令 | `xai-grok-shell/src/session/memory/hooks.rs:1-35`、`:75-118`、`:123-166` |
+| 24 | 索引由 FTS5 全文检索 + 可选 vec0 向量检索组成 | `xai-grok-memory/src/index.rs:1-6`、`:166` |
+| 25 | 时效提示只给会话来源，全局与工作区不附加 | `session/helpers/memory_context.rs:48`；测试 `:269` |
+| 26 | 记忆埋点只有枚举、布尔、计数、时长与分数（`session_id` 之外没有自由文本） | `observation.rs:26-47`；`xai-grok-telemetry/src/memory_telemetry.rs:83-158` |
+| 27 | 配置参考各表的默认值与键名 | `xai-grok-config-types/src/memory.rs:134-140`、`:155-162`、`:192-210`、`:228-236`、`:245-270`、`:341-352`、`:376-393`、`:408-423`、`:466-508` |
+| 28 | `/remember` 先开审核面板，`Tab` 切换改写版本，`Enter`/`y` 才写入 | `xai-grok-pager/src/app/modals.rs:199-240` |
+| 29 | 浏览模态键位：`j`/`k`、`↑`/`↓`、`PgUp`/`PgDn` 每次 10 条、`x` 仅会话日志且需二次确认、`y` 复制路径、`t` 切换、`/`（`i` 亦可）进筛选、`Ctrl+F` 全屏、`Backspace` 清筛选 | `xai-grok-pager/src/views/memory_modal.rs:907-1012` |
+| 30 | 通知串 `Memory saved to …` 用的是配置根路径，本分叉渲染成 `~/.chaos/memory/MEMORY.md` | `xai-grok-pager/src/app/dispatch/notes.rs:815` |
+| 31 | `/dream` 要求记忆已启用 | `slash_exec.rs:85` |
+
+### 8.4 又一处源码文案遗留（本轮不改）
+
+`ensure_initialized()` 给全局 `MEMORY.md` 的模板已经是中文
+（`# 全局记忆` / `## 偏好设置`），但工作区那份还是英文
+（`# Project Memory — {cwd}` / `> Auto-populated by dream consolidation. Edit freely.`）：
+`xai-grok-memory/src/storage.rs:352-362` 与 `:374-383`。属源码文案，
+按「不碰架构」留待后续统一。

@@ -10,3 +10,4 @@
 grok login	本分叉没有可用的登录命令，认证是 BYOK（§4.3）
 grok login --device-auth	本分叉无设备码流程，认证是 BYOK（§4.3）
 grok login --oauth	本分叉无 OIDC/浏览器登录（§4.3）
+topics/	本分叉的记忆不是「一主题一文件」：每个作用域一份 MEMORY.md，会话日志在 sessions/ 下，由 /dream 折叠进工作区的 MEMORY.md（§4.3，见 13-memory.md）

@@ -1,253 +1,236 @@
-# Cross-Session Memory
+# 记忆
 
-Memory lets Grok recall facts, decisions, and patterns from earlier sessions. Grok indexes the information you save and searches it automatically, so a new session can reuse relevant context.
-
----
-
-## What Is Memory?
-
-Without memory, each Grok session starts fresh: the model knows nothing about previous sessions. When you enable memory, Grok can:
-
-- Recall project conventions you explained before.
-- Reuse debugging steps that worked.
-- Carry architectural decisions forward across sessions.
-- Avoid re-asking questions it already has answers to.
-
-Memory is experimental and disabled by default.
-
-### How memory is organized
-
-Memory has two scopes. Global memory holds facts that apply across all your
-projects; workspace memory holds facts about one repository. Clones and
-worktrees of the same repository share one workspace scope.
-
-Each scope keeps its knowledge as ordinary Markdown files. `topics/` holds
-curated notes, one file per subject, and is what Grok reads at the start of a
-session. New facts captured from a completed turn land as small observations
-that a later consolidation pass (`/dream`) folds into topics. A bounded generated
-index of both scopes is injected into the model's context once per session so
-it can decide which topics to open.
-
-Notes you recorded with earlier versions of Grok Build are carried over
-automatically the first time a workspace is opened after updating: each section
-of the earlier notes becomes a topic, and sections whose name already matches a
-topic are appended to it under a "From earlier sessions" heading. The earlier
-files are left in place unchanged.
-
-Memory product telemetry contains only fixed enums, booleans, counts, and
-durations. It never includes prompts, statements, topic names, keywords,
-paths, model output, or free-form errors.
+记忆让 Chaos 能回想起此前会话中的事实、决策与模式。Chaos 会为你保存的信息建立索引并自动检索，因此新会话可以复用相关的上下文。
 
 ---
 
-## Enabling Memory
+## 什么是记忆？
 
-### Config (Persistent)
+没有记忆时，每个 Chaos 会话都从零开始：模型对之前的会话一无所知。启用记忆后，Chaos 可以：
+
+- 回想起你此前说明过的项目约定。
+- 复用验证有效的调试步骤。
+- 让架构决策跨会话延续。
+- 不再重复询问已经知道答案的问题。
+
+记忆是实验性功能，默认关闭。
+
+### 记忆的组织方式
+
+记忆分两个作用域。全局记忆存放适用于你所有项目的事实；工作区记忆存放某个仓库的事实。同一仓库的克隆与工作树共用一个工作区作用域。
+
+每个作用域的知识都保存在一份普通的 Markdown 文件 `MEMORY.md` 里：全局那份在 `~/.chaos/memory/MEMORY.md`，工作区那份在 `~/.chaos/memory/<project-slug>-<hash8>/MEMORY.md`。会话结束时写下的日志落在同一工作区目录的 `sessions/` 下，之后由整理流程（`/dream`）把会话日志折叠进工作区的那份 `MEMORY.md`。
+
+记忆功能的埋点只包含固定的枚举名、布尔值、计数、时长和分数，绝不包含提示词、陈述、主题名、关键词、路径、模型输出或自由格式的错误信息。
+
+---
+
+## 启用记忆
+
+### 配置文件（持久）
+
+在 `~/.chaos/config.toml`（或兼容的 `~/.grok/config.toml`）里启用：
 
 ```toml
-# ~/.grok/config.toml
+# ~/.chaos/config.toml
 [memory]
 enabled = true
 ```
 
-### Environment Variable
+### 环境变量
 
 ```bash
 export GROK_MEMORY=1
-grok
+chaos
 ```
 
-### Force-Disable
+### 强制关闭
 
-To disable memory for the process even when TOML or remote settings enable it:
+即使 TOML 或远端设置已经启用，也可以只为当前进程关掉记忆：
 
 ```bash
 export GROK_MEMORY=0
 ```
 
-### Mid-Session Toggle
+### 会话中切换
 
-Toggle memory on or off during a session without restarting: open `/memory`
-and press `t`.
+不必重启就能在会话里开关记忆：打开 `/memory`，按 `t`。
 
-The toggle is session-scoped -- it does not persist to `config.toml`, and it works in both directions: a session that started with `[memory] enabled = true` can turn memory off, and a session that started with `[memory] enabled = false` can turn it on. New sessions follow `config.toml` again. Toggling off removes access to memory tools and the memory instructions in the system prompt but keeps existing files on disk. Toggling on re-initializes memory storage, registers the memory tools, restores the memory instructions, and injects the memory index on the next turn. Turning memory on waits for any turn in progress to finish.
+这个开关只作用于当前会话 —— 它不会写回 `config.toml`，而且两个方向都有效：以 `[memory] enabled = true` 开始的会话可以关掉记忆，以 `[memory] enabled = false` 开始的会话也可以打开。新会话重新遵循 `config.toml`。关闭会撤掉记忆工具的访问入口和系统提示里的记忆说明，但磁盘上已有的文件保留。打开会重新初始化记忆存储、注册记忆工具、恢复系统提示里的记忆说明；打开时会等待进行中的回合结束。
 
-The toggle cannot override the process-wide force-disable (`--no-memory` or `GROK_MEMORY=0`); those hide `/memory` for the whole session.
+这个开关无法覆盖进程级的强制关闭（`--no-memory` 或 `GROK_MEMORY=0`）；那两者会让 `/memory` 在整个会话里都不可见。
 
-### Priority Order
+### 优先级顺序
 
-1. A process-wide force-disable (`--no-memory` compatibility flag or
-   `GROK_MEMORY=0`) turns memory off.
-2. An explicit `[memory] enabled = false` in effective TOML turns memory off,
-   including anything enabled by managed remote settings. The `/memory` `t`
-   toggle can still turn it on for the current session.
-3. Otherwise memory is enabled by `GROK_MEMORY=1`, `[memory] enabled = true`,
-   or a managed remote setting.
-
-Staged-rollout and kill-switch controls for operators are documented in the
-internal hardening notes, not here.
+1. 进程级强制关闭（`--no-memory` 兼容标志或
+   `GROK_MEMORY=0`）会关掉记忆。
+2. 生效 TOML 里显式的 `[memory] enabled = false` 会关掉记忆，
+   包括由远端托管设置启用的部分。`/memory` 的 `t`
+   开关仍可为当前会话把它打开。
+3. 否则，记忆由 `GROK_MEMORY=1`、`[memory] enabled = true`
+   或远端托管设置启用。
 
 ---
 
-## How Memory Is Stored
+## 记忆的存储方式
 
-Memory is stored as Markdown files under `~/.grok/memory/`:
+记忆以 Markdown 文件的形式存放在 `~/.chaos/memory/` 下：
 
 | 位置 | 作用域 | 说明 |
 |----------|-------|-------------|
-| `~/.grok/memory/MEMORY.md` | 全局 | Facts that apply across all your projects |
-| `~/.grok/memory/<project-slug>-<hash8>/MEMORY.md` | 工作区 | Project-specific conventions and context |
-| `~/.grok/memory/<project-slug>-<hash8>/sessions/` | 会话 | Per-session summaries and logs |
+| `~/.chaos/memory/MEMORY.md` | 全局 | 适用于你所有项目的事实 |
+| `~/.chaos/memory/<project-slug>-<hash8>/MEMORY.md` | 工作区 | 项目专属的约定与上下文 |
+| `~/.chaos/memory/<project-slug>-<hash8>/sessions/` | 会话 | 每个会话的摘要与日志 |
 
-Grok suffixes each workspace directory with a short hash of the repository's identity. The identity is the `origin` remote in `org/repo` form when the directory is a Git repository with an `origin` remote, or the directory path otherwise. Because clones and worktrees of the same repository share an `origin` remote, they also share one memory directory.
+Chaos 会给每个工作区目录附上仓库身份的一小段哈希。当目录是带 `origin` 远端的 Git 仓库时，身份取 `origin` 远端归一化后的 `org/repo` 形式，否则取目录路径。由于同一仓库的克隆与工作树共用同一个 `origin` 远端，它们也就共用一个记忆目录。
 
-An SQLite index supports search across all memory files:
-- **FTS5** provides the default full-text search for keyword matching.
-- **vec0** adds vector search for semantic similarity when an embedding model is configured.
-
----
-
-## Automatic Saves
-
-When a session ends, Grok saves a structured metadata summary to that session's daily log. The summary contains:
-
-- Message counts (user, assistant, and tool results).
-- Topics: the first few substantive user prompts from the session, up to five.
-- The session date and time (UTC).
-
-Grok builds the summary from conversation metadata without an LLM call, without added latency. Grok skips the save for trivial sessions -- those with fewer than three substantive prompts, or fewer than 50 bytes of user text.
-
-The summary does not record tool usage, file paths, or shell commands. The session ID forms part of the log filename. To turn automatic saves off, set `session.save_on_end = false`. For richer capture of decisions, patterns, and reasoning, use `/flush`.
+一个 SQLite 索引支撑跨所有记忆文件的检索：
+- **FTS5** 提供默认的全文检索，用于关键词匹配。
+- 配置了嵌入模型后，**vec0** 补上用于语义相似度的向量检索。
 
 ---
 
-## Saving Rich Knowledge with /flush
+## 自动保存
 
-For richer capture -- decisions, patterns, debugging workflows, API discoveries -- use `/flush` in the TUI:
+会话结束时，Chaos 会把一份结构化的元数据摘要写进该会话的每日日志。摘要包含：
+
+- 消息计数（用户、助手与工具结果）。
+- 主题：该会话里前几条实打实的用户提示词，最多五条。
+- 会话的日期与时间（UTC）。
+
+Chaos 只依据对话元数据生成摘要，不调用 LLM，也不增加延迟。过于简短的会话会跳过保存 —— 实打实的提示词少于三条，或用户文本不足 50 字节的都会跳过。
+
+摘要不记录工具调用、文件路径或 shell 命令。会话 ID 是日志文件名的一部分。要关掉自动保存，设置 `session.save_on_end = false`。想更完整地留存决策、模式与推理过程，请用 `/flush`。
+
+---
+
+## 用 /flush 保存更丰富的知识
+
+想留下更完整的内容 —— 决策、模式、调试流程、API 发现 —— 在 TUI 里用 `/flush`：
 
 ```
 /flush
 ```
 
-This triggers an LLM-generated summary of the current session's most important content and writes it to a dated session log. The summary is indexed and searchable in future sessions.
+它会触发一次由 LLM 生成的摘要，把这轮会话里最重要的内容写进一份带日期的会话日志。摘要会被索引，未来的会话里可以检索到。
 
-Use `/flush` when you want to preserve important context:
-- Before compaction (which discards old conversation turns)
-- At the end of a productive debugging session
-- After discovering important patterns or conventions
+以下场合适合用 `/flush` 保住重要上下文：
+- 压缩之前（压缩会丢弃旧的对话回合）
+- 一次有产出的调试会话结束时
+- 发现重要的模式或约定之后
 
 ---
 
-## Working with Memory
+## 使用记忆
 
-### Remember
+### 记住
 
-Ask Grok to remember something, and it appends the note to a `MEMORY.md` file -- the workspace file for project-specific items, or the global `~/.grok/memory/MEMORY.md` for cross-project preferences:
+让 Chaos 记住某件事，它会把这条笔记追加到某个 `MEMORY.md` 里 —— 项目专属的内容进工作区那份，跨项目的偏好进全局的 `~/.chaos/memory/MEMORY.md`：
 
 ```
 > remember to always open PR links after pushing
 ```
 
-Grok records entries as durable statements under organized headings, such as `## Preferences`, `## Project Context`, or `## Debugging`. The file watcher reindexes the change on the next memory search, so the new entry is searchable within the current session.
+Chaos 会把条目作为持久陈述记录在整理好的标题下，例如 `## Preferences`、`## Project Context` 或 `## Debugging`。文件监视器会在下次检索记忆时重建索引，所以新条目在当前会话里就能被搜到。
 
-You can also save a note directly with the `/remember` command:
+你也可以用 `/remember` 命令直接存一条笔记：
 
 ```
 /remember always open PR links after pushing
 ```
 
-Run `/remember` with no text to enter remember mode, where the next line you type becomes the note. Either way, Grok opens a review panel showing the note (with an optional rewritten version you can toggle with `Tab`); the note is written only after you confirm. On save, Grok shows `Memory saved to ~/.grok/memory/MEMORY.md`.
+不带文本运行 `/remember` 会进入记忆模式，你接下来输入的一行就成为笔记。两种方式下，Chaos 都会打开一个审核面板展示这条笔记（另有一份可选的改写版本，用 `Tab` 切换）；只有你确认之后笔记才会写入。保存时 Chaos 会显示 `Memory saved to ~/.chaos/memory/MEMORY.md`。
 
-### Forget
+### 忘记
 
-Ask Grok to forget something, and it finds and removes the matching entry:
+让 Chaos 忘掉某件事，它会找出并删除匹配的条目：
 
 ```
 > forget the snake_case convention
 ```
 
-Forget is best-effort: the model searches memory and removes entries that match. For guaranteed removal, edit the files under `~/.grok/memory/` directly and delete the entry yourself. To locate a file, open the `/memory` browser and press `y` to copy its path.
+忘记是尽力而为的：模型检索记忆，删掉匹配的条目。想确保删除，请直接编辑 `~/.chaos/memory/` 下的文件，自己动手删掉那一条。要定位文件，打开 `/memory` 浏览器，按 `y` 复制它的路径。
 
-### Recall
+### 回忆
 
-Ask what Grok remembers:
+问问 Chaos 记住了什么：
 
 ```
 > what do you remember?
 ```
 
-Grok searches across all memory files and summarizes what it knows, grouped by source: global preferences, project-specific knowledge, and session history. Use `/memory` to browse the raw files.
+Chaos 会检索所有记忆文件，并按来源分组总结它知道的内容：全局偏好、项目专属知识，以及会话历史。想浏览原始文件，请用 `/memory`。
 
-### Direct Editing
+### 直接编辑
 
-You can edit memory files directly under `~/.grok/memory/`. The file watcher reindexes your changes on the next memory search. Use `/flush` to save the current session now, and `/dream` to consolidate session logs into organized topics.
+你可以直接编辑 `~/.chaos/memory/` 下的记忆文件。文件监视器会在下次检索记忆时重建索引。想立刻保存当前会话，用 `/flush`；想把会话日志整理成有条理的主题，用 `/dream`。
 
 ---
 
-## Browsing Memory with /memory
+## 用 /memory 浏览记忆
 
-The `/memory` command opens a modal showing all memory files:
+`/memory` 命令会打开一个模态，列出所有记忆文件：
 
 ```
 /memory
 ```
 
-Files are grouped by scope:
-- **Global** -- cross-project memory (`MEMORY.md`).
-- **Workspace** -- project-specific memory (`MEMORY.md`).
-- **Sessions** -- per-session summaries, in reverse chronological order.
+文件按作用域分组：
+- **全局** —— 跨项目的记忆（`MEMORY.md`）。
+- **工作区** —— 项目专属的记忆（`MEMORY.md`）。
+- **会话** —— 每个会话的摘要，按时间倒序排列。
 
-The modal uses a split-pane layout: the file list on the left, a read-only content preview on the right. The preview updates as you move through the list.
+这个模态是分栏布局：左边是文件列表，右边是只读的内容预览。随着你在列表里移动，预览会跟着更新。
 
-### Keyboard Shortcuts
+### 键盘快捷键
 
 | 键 | 操作 |
 |-----|--------|
-| `↑`/`↓` 或 `j`/`k` | Move through the file list |
+| `↑`/`↓` 或 `j`/`k` | 在文件列表里移动 |
 | `PgUp`/`PgDn` | 跳 10 条 |
-| `/` | Filter the file list |
-| `Enter` | Read the selected note: the preview takes keyboard focus (arrows, `PgUp`/`PgDn`, `Home`/`End` scroll it) |
-| `y` | Copy the selected file's path to the clipboard |
-| `x` | Delete the selected note (press `x` again to confirm) |
-| `t` | Toggle memory on or off |
+| `/` | 筛选文件列表 |
+| `Enter` | 阅读选中的笔记：预览取得键盘焦点（方向键、`PgUp`/`PgDn`、`Home`/`End` 可滚动它） |
+| `y` | 把选中文件的路径复制到剪贴板 |
+| `x` | 删除选中的笔记（再按一次 `x` 确认） |
+| `t` | 打开或关闭记忆 |
 | `Ctrl+F` | 切换全屏 |
-| `Esc` | Close the modal, or leave filter or preview focus |
+| `Esc` | 关闭模态，或离开筛选、预览焦点 |
 
-The filter matches note names and note contents; separate words all have to match. When you filter, the preview scrolls to the first match. If nothing matches, the list says so; `Backspace` clears the filter.
+筛选同时匹配笔记名与笔记内容；多个词必须全部命中。筛选时，预览会滚动到第一个命中处。没有命中时列表会说明；`Backspace` 清空筛选。
 
-The preview pane is read-only. Scroll it with the mouse wheel, by dragging its scrollbar, or with the keyboard after `Enter`. Drag across the preview text to copy that text to the clipboard; a brief message under the file list confirms every copy. Generated `MEMORY.md` indexes cannot be deleted.
+预览窗格是只读的。可以用鼠标滚轮、拖动它的滚动条，或按 `Enter` 之后用键盘滚动。在预览文本上拖动即可把那段文字复制到剪贴板；每次复制，文件列表下方都会短暂确认一下。生成的 `MEMORY.md` 索引无法删除。
 
-When the memory modal's content area is under 64 columns, the modal shows the file list only and hides the size column; press `Enter` to read the selected note full-width and `Esc` to return to the list.
+当记忆模态的内容区不足 64 列时，模态只显示文件列表并隐藏大小列；按 `Enter` 全宽阅读选中的笔记，按 `Esc` 回到列表。
 
-You can also open `/memory` from the command palette.
-
----
-
-## Memory Notifications
-
-When you save a note with `/remember`, Grok confirms in the scrollback:
-
-```
-Memory saved to ~/.grok/memory/MEMORY.md
-```
-
-Background saves — automatic flush, automatic Dream, and session-end — run silently and do not post a scrollback message. `/flush` and `/dream` report their outcome in scrollback when you run them yourself. Use `/memory` at any time to browse what Grok has stored.
+你也可以从命令面板打开 `/memory`。
 
 ---
 
-## Dream Consolidation with /dream
+## 记忆通知
 
-The `/dream` command consolidates scattered memory fragments into organized topics:
+用 `/remember` 保存笔记时，Chaos 会在回滚区确认：
+
+```
+Memory saved to ~/.chaos/memory/MEMORY.md
+```
+
+后台保存 —— 自动 flush、自动 Dream，以及会话结束 —— 都静默运行，不会往回滚区发消息。你自己运行 `/flush` 和 `/dream` 时，它们会在回滚区报告结果。随时可以用 `/memory` 浏览 Chaos 存了什么。
+
+---
+
+## 用 /dream 整理记忆
+
+`/dream` 命令把散落的记忆片段整理成有条理的主题：
 
 ```
 /dream
 ```
 
-Dream reorganizes individual session logs and memory entries into a coherent, deduplicated knowledge base, which reduces noise and improves search quality over time. `/dream` requires memory to be enabled.
+Dream 会把单个会话日志与记忆条目重组为一份连贯、去重后的知识库，从而随着时间推移降低噪声、提升检索质量。`/dream` 需要记忆处于启用状态。
 
-### Auto-Dream
+### 自动 Dream
 
-Dream also runs automatically. By default, Grok checks the consolidation gates at launch and periodically during a session, and runs Dream once enough time has passed and enough sessions have accumulated:
+Dream 也会自动运行。默认情况下，Chaos 在启动时以及会话进行中定期检查整理闸门，等到经过足够时间、攒够足够会话之后运行一次 Dream：
 
 ```toml
 [memory.dream]
@@ -259,13 +242,13 @@ check_interval_secs = 3600 # Also check the gates hourly
 
 ---
 
-## How Memory Affects Prompts
+## 记忆如何影响提示词
 
-### First-Turn Injection
+### 首回合注入
 
-On the first turn of each session, Grok automatically searches memory for content relevant to the current project and injects it as context. This means Grok starts with knowledge from previous sessions without a reminder.
+在每个会话的第一个回合，Chaos 会自动检索与当前项目相关的记忆内容，并把它作为上下文注入。也就是说，Chaos 一开始就带着此前会话的知识，不需要你再提醒。
 
-First-turn injection can be configured:
+首回合注入可以配置：
 
 ```toml
 [memory.initial_injection]
@@ -273,32 +256,32 @@ enabled = true     # Enable or disable first-turn injection
 min_score = 0.9    # Score threshold for first-turn injection
 ```
 
-### After Compaction
+### 压缩之后
 
-Memory is also searched after auto-compaction to recover relevant context that may have been discarded.
+自动压缩之后也会检索一次记忆，以找回可能被丢弃的相关上下文。
 
 ---
 
-## Memory Search
+## 记忆检索
 
-Grok searches memory automatically, but you can also trigger searches manually in the chat:
+Chaos 会自动检索记忆，你也可以在对话里手动触发检索：
 
 ```
 Search memory for "auth middleware patterns"
 Read my workspace MEMORY.md
 ```
 
-The model has access to two memory tools:
-- `memory_search` -- Search across all memory
-- `memory_get` -- Read a specific memory file by path
+模型可以访问两个记忆工具：
+- `memory_search` —— 检索全部记忆
+- `memory_get` —— 按路径读取指定的记忆文件
 
-### Search Scoring
+### 检索打分
 
-The default embedding model is unset, so memory starts in full-text-only mode. If you configure an embedding model, search combines vector similarity (weight `0.7`) with BM25 text similarity (weight `0.3`). Results are filtered by a minimum score threshold (default: `0.7`).
+默认没有配置嵌入模型，所以记忆起步时是纯全文检索模式。若你配置了嵌入模型，检索会把向量相似度（权重 `0.7`）与 BM25 文本相似度（权重 `0.3`）结合起来。结果会按最低分阈值过滤（默认 `0.7`）。
 
-### Source Weights
+### 来源权重
 
-Each memory source has a weight multiplier applied to its score. All sources default to `1.0`, and you can adjust any of them under `[memory.search.source_weights]`:
+每个记忆来源都有一个施加在得分上的权重乘数。所有来源默认 `1.0`，可以在 `[memory.search.source_weights]` 下逐个调整：
 
 | 来源 | 权重 | 说明 |
 |--------|--------|-------------|
@@ -306,9 +289,9 @@ Each memory source has a weight multiplier applied to its score. All sources def
 | `session` | 1.0 | 会话日志 |
 | `global` | 1.0 | 跨项目记忆 |
 
-### Temporal Decay
+### 时间衰减
 
-Session memories decay over time so recent sessions are prioritized:
+会话记忆会随时间衰减，让更近的会话优先：
 
 ```toml
 [memory.search.temporal_decay]
@@ -316,11 +299,11 @@ enabled = true           # Enable time-based decay
 half_life_days = 30.0    # Score halves after this many days
 ```
 
-Only session chunks decay. Global and workspace memories are exempt since they contain curated long-term knowledge.
+只有会话分块会衰减。全局与工作区记忆不受影响，因为它们存放的是整理过的长期知识。
 
-### MMR (Maximal Marginal Relevance)
+### MMR（最大边际相关）
 
-MMR re-ranking penalizes redundant results to improve diversity:
+MMR 重排会惩罚冗余结果，以提升多样性：
 
 ```toml
 [memory.search.mmr]
@@ -330,122 +313,122 @@ lambda = 0.7             # 0.0 = max diversity, 1.0 = pure relevance
 
 ---
 
-## CLI Commands
+## 命令行
 
-The `grok memory` command manages memory from the shell. It has one subcommand, `clear`:
+`chaos memory` 命令在 shell 里管理记忆。它只有一个子命令 `clear`：
 
 ```bash
 # Clear workspace memory (MEMORY.md, sessions/, and index.sqlite). This is the default scope.
-grok memory clear
+chaos memory clear
 
 # The same scope, stated explicitly
-grok memory clear --workspace
+chaos memory clear --workspace
 
 # Clear the global MEMORY.md
-grok memory clear --global
+chaos memory clear --global
 
 # Clear both workspace and global memory
-grok memory clear --all
+chaos memory clear --all
 
 # Skip the confirmation prompt (-y is the short form)
-grok memory clear --yes
+chaos memory clear --yes
 ```
 
-To edit memory from the shell, open the files in your editor directly -- for example, `$EDITOR ~/.grok/memory/MEMORY.md`.
+想从 shell 编辑记忆，直接用编辑器打开那些文件即可 —— 例如 `$EDITOR ~/.chaos/memory/MEMORY.md`。
 
 ---
 
-## Configuration Reference
+## 配置参考
 
-### Core Settings (`[memory]`)
+### 核心设置（`[memory]`）
 
 | 键 | 默认 | 说明 |
 |-----|---------|-------------|
 | `enabled` | `false` | 启用记忆 |
-| `session.save_on_end` | `true` | Write metadata summary on session end |
-| `watcher.enabled` | `true` | Watch `~/.grok/memory/` for external edits and reindex |
+| `session.save_on_end` | `true` | 会话结束时写入元数据摘要 |
+| `watcher.enabled` | `true` | 监视 `~/.chaos/memory/` 的外部改动并重建索引 |
 
-### Index Settings (`[memory.index]`)
-
-| 键 | 默认 | 说明 |
-|-----|---------|-------------|
-| `max_chunk_chars` | `1600` | Maximum chunk size in characters |
-| `chunk_overlap_chars` | `320` | Character overlap between chunks |
-
-### Embedding Settings (`[memory.embedding]`)
+### 索引设置（`[memory.index]`）
 
 | 键 | 默认 | 说明 |
 |-----|---------|-------------|
-| `provider` | `"api"` | Embedding provider (currently `"api"`) |
-| `model` | unset | Embedding model name. Unset or `""` uses full-text-only retrieval. |
-| `dimensions` | `1024` | Embedding vector dimensions |
+| `max_chunk_chars` | `1600` | 分块的最大字符数 |
+| `chunk_overlap_chars` | `320` | 分块之间的字符重叠量 |
 
-### Search Settings (`[memory.search]`)
-
-| 键 | 默认 | 说明 |
-|-----|---------|-------------|
-| `max_results` | `6` | Maximum search results |
-| `min_score` | `0.7` | Minimum relevance score |
-| `vector_weight` | `0.7` | Weight for vector similarity |
-| `text_weight` | `0.3` | Weight for BM25 text similarity |
-
-### Initial Injection Settings (`[memory.initial_injection]`)
+### 嵌入设置（`[memory.embedding]`）
 
 | 键 | 默认 | 说明 |
 |-----|---------|-------------|
-| `enabled` | `true` | Enable first-turn memory injection |
-| `min_score` | `0.9` | Score threshold for first-turn results |
+| `provider` | `"api"` | 嵌入 provider（目前只有 `"api"`） |
+| `model` | 未设置 | 嵌入模型名。未设置或为 `""` 时只用全文检索。 |
+| `dimensions` | `1024` | 嵌入向量维度 |
 
-### Dream Settings (`[memory.dream]`)
-
-| 键 | 默认 | 说明 |
-|-----|---------|-------------|
-| `enabled` | `true` | Enable automatic Dream consolidation |
-| `min_hours` | `24` | Minimum hours between consolidations |
-| `min_sessions` | `5` | Minimum sessions since the last consolidation |
-| `stale_lock_secs` | `3600` | Seconds before a stale consolidation lock is reclaimed |
-| `check_interval_secs` | `3600` | Periodic Dream-gate check interval in seconds. Set `0` to disable periodic checks. |
-
-### Flush Settings (`[compaction.memory_flush]`)
-
-You configure flush under `[compaction]`, not `[memory]`, because it is a compaction behavior.
+### 检索设置（`[memory.search]`）
 
 | 键 | 默认 | 说明 |
 |-----|---------|-------------|
-| `enabled` | `true` | Enable the pre-compaction memory flush |
-| `soft_threshold_tokens` | `4000` | Token headroom before the compact threshold that triggers a flush |
-| `max_flush_write_chars` | `8000` | Maximum characters the flush may write to memory |
-| `flush_model` | unset | Model for the flush turn. When unset or `""`, Grok uses the session's primary model. |
-| `idle_timeout_secs` | `300` | Idle seconds before a background flush. Set `0` to disable idle flushes. |
-| `semantic_dedup_threshold` | unset | Cosine-similarity threshold for de-duplicating flushed content. When unset, defaults to `0.92`. |
+| `max_results` | `6` | 最大检索结果数 |
+| `min_score` | `0.7` | 最低相关度得分 |
+| `vector_weight` | `0.7` | 向量相似度的权重 |
+| `text_weight` | `0.3` | BM25 文本相似度的权重 |
 
-### Pruning Settings (`[compaction.pruning]`)
-
-You configure pruning under `[compaction]`, not `[memory]`, because it is a compaction behavior.
+### 首回合注入设置（`[memory.initial_injection]`）
 
 | 键 | 默认 | 说明 |
 |-----|---------|-------------|
-| `enabled` | `true` | Enable tool-result pruning |
-| `keep_last_n_turns` | `3` | Number of recent turns whose tool results are never pruned |
-| `soft_trim_threshold` | `4000` | Character threshold above which old tool results are soft-trimmed |
-| `soft_trim_head` | `1500` | Characters kept from the start of a soft-trimmed result |
-| `soft_trim_tail` | `1500` | Characters kept from the end of a soft-trimmed result |
-| `hard_clear_age_turns` | `10` | Turn age after which tool results are replaced with a placeholder |
+| `enabled` | `true` | 启用首回合的记忆注入 |
+| `min_score` | `0.9` | 首回合结果的分阈值 |
+
+### Dream 设置（`[memory.dream]`）
+
+| 键 | 默认 | 说明 |
+|-----|---------|-------------|
+| `enabled` | `true` | 启用自动 Dream 整理 |
+| `min_hours` | `24` | 两次整理之间的最少小时数 |
+| `min_sessions` | `5` | 距上次整理至少经过的会话数 |
+| `stale_lock_secs` | `3600` | 多久之后可以回收过期的整理锁（秒） |
+| `check_interval_secs` | `3600` | 定期检查 Dream 闸门的间隔（秒）。设为 `0` 关闭定期检查。 |
+
+### Flush 设置（`[compaction.memory_flush]`）
+
+flush 配在 `[compaction]` 下而不是 `[memory]` 下，因为它是压缩行为。
+
+| 键 | 默认 | 说明 |
+|-----|---------|-------------|
+| `enabled` | `true` | 启用压缩前的记忆 flush |
+| `soft_threshold_tokens` | `4000` | 触发 flush 的、距压缩阈值的 token 余量 |
+| `max_flush_write_chars` | `8000` | 一次 flush 最多可写入记忆的字符数 |
+| `flush_model` | 未设置 | flush 回合使用的模型。未设置或为 `""` 时用会话的主模型。 |
+| `idle_timeout_secs` | `300` | 后台 flush 之前的空闲秒数。设为 `0` 关闭空闲 flush。 |
+| `semantic_dedup_threshold` | 未设置 | 给 flush 内容去重用的余弦相似度阈值。未设置时默认 `0.92`。 |
+
+### 剪枝设置（`[compaction.pruning]`）
+
+剪枝配在 `[compaction]` 下而不是 `[memory]` 下，因为它是压缩行为。
+
+| 键 | 默认 | 说明 |
+|-----|---------|-------------|
+| `enabled` | `true` | 启用工具结果剪枝 |
+| `keep_last_n_turns` | `3` | 最近多少个回合的工具结果永不剪枝 |
+| `soft_trim_threshold` | `4000` | 超过多少字符的旧工具结果会被软裁剪 |
+| `soft_trim_head` | `1500` | 软裁剪结果从头保留的字符数 |
+| `soft_trim_tail` | `1500` | 软裁剪结果从尾部保留的字符数 |
+| `hard_clear_age_turns` | `10` | 超过多少个回合后，工具结果被替换为占位符 |
 
 ---
 
-## Memory Staleness
+## 记忆的时效性
 
-When a session memory is old, Grok attaches a staleness note to it in search results. Older results get a stronger reminder to verify the current state before you rely on them. These notes help you spot stored facts that might no longer be accurate. Global and workspace memories never receive staleness notes, because they hold curated long-term knowledge.
+会话记忆变旧之后，Chaos 会在检索结果里给它附上一条时效提示。结果越旧，提示你「先核实当前状态再依赖它」的语气越强。这些提示能帮你发现可能已经不再准确的记忆。全局与工作区记忆永远不会收到时效提示，因为它们存放的是整理过的长期知识。
 
 ---
 
-## File Watcher
+## 文件监视器
 
-By default, Grok watches `~/.grok/memory/` for external file changes. If you edit memory files directly (e.g., in your editor), the changes are picked up automatically on the next memory search:
+默认情况下，Chaos 会监视 `~/.chaos/memory/` 的外部文件改动。如果你直接编辑记忆文件（例如在编辑器里），改动会在下次检索记忆时自动被接收：
 
-- Created or modified files are reindexed.
-- Deleted files have their stale chunks removed from the index.
+- 新建或修改过的文件会重建索引。
+- 已删除文件在索引里的过期分块会被清掉。
 
 ```toml
 [memory.watcher]
@@ -454,31 +437,31 @@ enabled = true    # default
 
 ---
 
-## Troubleshooting
+## 故障排查
 
-### Memory Not Working
+### 记忆不工作
 
-1. Verify memory is enabled: check `grok inspect` output.
-2. Check `GROK_MEMORY` or `[memory] enabled` in effective TOML.
-3. Check for `GROK_MEMORY=0` or a deprecated compatibility flag overriding config.
+1. 确认记忆已启用：查看 `chaos inspect` 的输出。
+2. 检查 `GROK_MEMORY` 或生效 TOML 里的 `[memory] enabled`。
+3. 检查是否有 `GROK_MEMORY=0` 或已废弃的兼容标志覆盖了配置。
 
-### Memory Not Appearing in Sessions
+### 会话里看不到记忆
 
-Memory is injected on the first turn. If you started a session before enabling memory, start a new session with `/new`.
+记忆是在第一个回合注入的。如果你在启用记忆之前就已经开始了会话，用 `/new` 开一个新会话。
 
-### Viewing Memory Files
+### 查看记忆文件
 
-Use `/memory` in the TUI to browse all memory files with a preview. You can also access them directly:
+在 TUI 里用 `/memory` 可以带预览浏览所有记忆文件。也可以直接访问它们：
 
 ```bash
-ls ~/.grok/memory/
-cat ~/.grok/memory/MEMORY.md
-$EDITOR ~/.grok/memory/MEMORY.md
+ls ~/.chaos/memory/
+cat ~/.chaos/memory/MEMORY.md
+$EDITOR ~/.chaos/memory/MEMORY.md
 ```
 
-### Debug Logging
+### 调试日志
 
 ```bash
-RUST_LOG=debug GROK_LOG_FILE=/tmp/grok.log grok
+RUST_LOG=debug GROK_LOG_FILE=/tmp/grok.log chaos
 grep "memory" /tmp/grok.log
 ```
