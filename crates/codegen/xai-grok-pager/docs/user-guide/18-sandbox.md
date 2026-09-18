@@ -1,70 +1,70 @@
-# Sandbox Mode
+# 沙箱模式
 
-Sandbox mode restricts what the agent process and its spawned commands can access on your filesystem and network using OS-level kernel primitives (Landlock on Linux, Seatbelt on macOS). The kernel enforces these limits for the process lifetime.
+沙箱模式用操作系统内核原语（Linux 上是 Landlock，macOS 上是 Seatbelt）限制代理进程及其派生的命令能访问哪些文件和网络。这些限制由内核在整个进程生命周期内强制执行。
 
-Sandbox mode is off by default.
+沙箱模式默认关闭。
 
 ---
 
-## Quick Start
+## 快速上手
 
 ```bash
-# Run with workspace sandbox (read everywhere, write to CWD + temp dirs + ~/.grok/)
-grok --sandbox workspace
+# Run with workspace sandbox (read everywhere, write to CWD + temp dirs + ~/.chaos/)
+chaos --sandbox workspace
 
-# Read-only mode (read everywhere, write only to ~/.grok/ + temp dirs)
-grok --sandbox read-only
+# Read-only mode (read everywhere, write only to ~/.chaos/ + temp dirs)
+chaos --sandbox read-only
 
-# Most restrictive profile (read CWD + system paths + ~/.grok, write CWD + ~/.grok/sessions + temp dirs, no child network)
-grok --sandbox strict
+# Most restrictive profile (read CWD + system paths + ~/.chaos, write CWD + ~/.chaos/sessions + temp dirs, no child network)
+chaos --sandbox strict
 ```
 
 ---
 
-## Built-in Profiles
+## 内置配置档
 
 | Profile               | 文件读                        | 文件写                                       | 子网络 | 适用场景                          |
 | --------------------- | ------------------------------ | ---------------------------------------------- | ------------- | --------------------------------- |
 | `off`（默认）       | 不受限                   | 不受限                                   | 不受限  | 无沙箱                        |
-| `workspace`           | 所有位置                     | CWD + `~/.grok/` + `/tmp` + `/var/tmp`         | 允许       | 日常开发                |
-| `devbox`              | 所有位置                     | All top-level dirs except `/data`              | 允许       | Disposable dev VMs                |
-| `read-only`           | 所有位置                     | `~/.grok/` + `/tmp` + `/var/tmp`               | 已阻止¹      | Exploration, code review          |
-| `strict`              | CWD + system paths + `~/.grok` | CWD + `~/.grok/sessions` + `/tmp` + `/var/tmp` | 已阻止¹      | 不受信任的代码                    |
+| `workspace`           | 所有位置                     | CWD + `~/.chaos/` + `/tmp` + `/var/tmp`         | 允许       | 日常开发                |
+| `devbox`              | 所有位置                     | 除 `/data` 外的所有顶层目录                     | 允许       | 用完即弃的开发虚拟机                |
+| `read-only`           | 所有位置                     | `~/.chaos/` + `/tmp` + `/var/tmp`               | 已阻止¹      | 探索代码、代码审阅          |
+| `strict`              | CWD + 系统路径 + `~/.chaos` | CWD + `~/.chaos/sessions` + `/tmp` + `/var/tmp` | 已阻止¹      | 不受信任的代码                    |
 
-¹ Child-network blocking is enforced on **Linux only** (via seccomp). On macOS it is a no-op — these profiles do not restrict child-process network there.
+¹ 子进程网络阻断只在 **Linux** 上生效（通过 seccomp）——在 macOS 上它是空操作，这些配置档不会限制那里的子进程网络。
 
-To block specific files (e.g. `.env` or credential paths) on top of a profile, define a [custom profile](#custom-profiles) with a `deny` list — it is kernel-enforced (read + write/rename) and supports glob patterns like `**/*.pem`.
+要在配置档之上再拦住特定文件（例如 `.env` 或凭据路径），可以定义一个带 `deny` 列表的[自定义配置档](#custom-profiles)——它由内核强制执行（读 + 写/改名），并支持 `**/*.pem` 这类 glob 模式。
 
-### Profile Details
+### 各配置档详解
 
-**workspace** -- The recommended profile for everyday development. The agent can read any file on the system (for understanding dependencies, system libraries, etc.) but can only write to the current working directory, `~/.grok/`, and temp directories (`/tmp`, `/var/tmp`, plus the macOS temp dirs). Network access is allowed for tools like `web_search` and MCP servers.
+**workspace** —— 日常开发推荐用它。代理可以读系统上的任何文件（便于理解依赖、系统库等），但只能写入当前工作目录、`~/.chaos/` 和临时目录（`/tmp`、`/var/tmp`，以及 macOS 的临时目录）。`web_search` 这类工具与 MCP 服务器允许联网。
 
-**devbox** -- A reserved built-in profile for disposable development VMs. The agent can read everywhere and write to every top-level directory except `/data` and the virtual filesystems (`/proc`, `/sys`, `/dev`), including the home directory. Network access is allowed. `--sandbox devbox` runs the built-in profile, which shadows any `[profiles.devbox]` you define in `sandbox.toml`.
+**devbox** —— 为用完即弃的开发虚拟机预留的内置配置档。代理可以读所有位置，也可以写入除 `/data` 和虚拟文件系统（`/proc`、`/sys`、`/dev`）之外的每个顶层目录，包括主目录。允许联网。`--sandbox devbox` 运行的是内置配置档，它会盖过你在 `sandbox.toml` 里定义的任何 `[profiles.devbox]`。
 
-**read-only** -- Use when you want the agent to analyze code without modifying your project files. The agent can read everything but can only write to `~/.grok/` (needed for session persistence) and temp directories. Child-process network access is blocked on Linux (no-op on macOS).
+**read-only** —— 想让代理分析代码、不改动项目文件时用它。代理可以读所有内容，但只能写入 `~/.chaos/`（会话持久化需要）和临时目录。子进程网络访问在 Linux 上被阻断（macOS 上是空操作）。
 
-**strict** -- The most restrictive profile, for reviewing untrusted code. The agent can read the current working directory, essential system paths, and `~/.grok`. Writes are limited to CWD, `~/.grok/sessions`, and temp directories — not the whole `~/.grok` tree. Child-process network access is blocked on Linux (no-op on macOS).
+**strict** —— 限制最严的配置档，用于审阅不受信任的代码。代理可以读当前工作目录、必要的系统路径和 `~/.chaos`。写入限于 CWD、`~/.chaos/sessions` 和临时目录——不是整棵 `~/.chaos` 树。子进程网络访问在 Linux 上被阻断（macOS 上是空操作）。
 
-### Direct global write protection
+### 对全局直接写入路径的保护
 
-Under `workspace`, `read-only`, and `strict` (and custom profiles that extend those bases), the kernel **write-denies** the Grok-owned direct disk paths used as user-global hook sources, plus its configuration and trust files (they stay readable when granted). Built-in `strict` can read `~/.grok` (they stay readable); writes are CWD + `~/.grok/sessions` + temp, not the whole tree. Write-deny still applies where the profile grants write:
+在 `workspace`、`read-only`、`strict` 下（以及以它们为基础扩展出来的自定义配置档），内核会对 Chaos 自有的那些直接磁盘路径**拒绝写入**：它们被用作用户级钩子来源，此外还有配置与信任文件（被授予读取权限时它们仍可读）。内置的 `strict` 可以读 `~/.chaos`（这些文件保持可读）；写入限于 CWD + `~/.chaos/sessions` + 临时目录，不是整棵树。即使配置档授予了写权限，拒写依然生效：
 
-- `~/.grok/hooks/` (hook directory)
-- `~/.grok/hooks-paths` (registry file; not loaded as hook JSON — only its absolute targets are)
-- Absolute targets listed in `hooks-paths` (relative lines are ignored; missing targets refuse sandbox start)
-- `~/.grok/config.toml`, `~/.grok/trusted_folders.toml`, `~/.grok/managed_config.toml`, `~/.grok/requirements.toml`, `~/.grok/sandbox.toml` (settings, folder trust, managed policy, requirements, and sandbox profiles)
+- `~/.chaos/hooks/`（钩子目录）
+- `~/.chaos/hooks-paths`（注册表文件；它本身不作为钩子 JSON 加载——被加载的只是其中列出的绝对目标）
+- `hooks-paths` 里列出的绝对目标（相对路径的行会被忽略；目标缺失时拒绝启动沙箱）
+- `~/.chaos/config.toml`、`~/.chaos/trusted_folders.toml`、`~/.chaos/managed_config.toml`、`~/.chaos/requirements.toml`、`~/.chaos/sandbox.toml`（设置、目录信任、受管策略、要求项和沙箱配置档）
 
-Because these files are read-only under these profiles, a change that would be saved to them applies to the current session only. Accepting a folder-trust prompt, switching the model with `/model`, and changing the permission mode (`/auto` or Shift+Tab) take effect for the session but are not saved. To save folder trust, run `grok --trust` in the directory before starting the sandbox. To change the default model or permission mode, edit `~/.grok/config.toml` directly.
+由于这些文件在上述配置档下是只读的，本该保存到它们的改动只对当前会话生效。接受目录信任提示、用 `/model` 换模型、修改权限模式（`/auto` 或 Shift+Tab），都只对当前会话生效，不会被保存。要保存目录信任，请在启动沙箱前于该目录下运行 `chaos --trust`。要改默认模型或权限模式，请直接编辑 `~/.chaos/config.toml`。
 
-On first launch under these profiles, Grok creates a real empty `hooks/` directory and empty `hooks-paths` file when they are missing (never symlinks or wrong types). Claude/Cursor global settings are **not** covered by this write-deny; discovery of those vendors remains separately gated by compatibility settings.
+在这些配置档下首次启动时，若 `hooks/` 目录与 `hooks-paths` 文件缺失，Chaos 会创建真实的空目录与空文件（绝不会用符号链接，也不会创建成错误的类型）。Claude/Cursor 的全局设置**不在**这条拒写规则覆盖范围内；这些厂商配置的发现仍由兼容性设置单独把关。
 
-A symlinked `$GROK_HOME` or a `hooks-paths` entry with a symlink component is refused at sandbox start (prevents retargeting). Existing parent directories of protected paths are pinned so they cannot be renamed out from under the deny (siblings remain writable). On Linux, nested user namespaces are disabled inside bubblewrap so mount binds cannot be rearranged. Project hooks remain gated by folder trust. The `devbox` profile does not apply this protection (disposable VMs). Profiles that require it refuse to start if the kernel policy cannot be applied (including Linux without verified read-only mounts).
+`$CHAOS_HOME` 本身是符号链接、或 `hooks-paths` 的某一项带有符号链接成分时，沙箱启动会被拒绝（防止目标被改写）。受保护路径已存在的父目录会被固定，使其无法在拒绝规则之下被改名（同级目录仍可写）。在 Linux 上，bubblewrap 内部的嵌套用户命名空间被禁用，因此挂载绑定无法被重排。项目钩子仍由目录信任把关。`devbox` 配置档不施加这项保护（用完即弃的虚拟机）。需要这项保护的配置档在内核策略无法生效时会拒绝启动（包括无法验证只读挂载的 Linux）。
 
 ---
 
-## Custom Profiles
+## 自定义配置档
 
-Create custom sandbox profiles in `~/.grok/sandbox.toml` (global) or `.grok/sandbox.toml` (per-project):
+自定义沙箱配置档写在 `~/.chaos/sandbox.toml`（全局）或 `.chaos/sandbox.toml`（按项目）：
 
 ```toml
 [profiles.project]
@@ -82,160 +82,147 @@ read_write = ["/tmp/scratch"]
 deny = ["/data/shared-secrets", "**/.env", "**/*.pem"]
 ```
 
-Use the custom profile:
+使用这个自定义配置档：
 
 ```bash
-grok --sandbox project
+chaos --sandbox project
 ```
 
-A custom profile can't reuse a built-in name. `--sandbox devbox` always runs the built-in `devbox` profile, shadowing any `[profiles.devbox]` you define.
+自定义配置档不能复用内置名称。`--sandbox devbox` 始终运行内置的 `devbox` 配置档，盖过你定义的任何 `[profiles.devbox]`。
 
-If the user and project files define the same custom profile differently, Grok uses the user profile and shows a startup warning. Run `/doctor` to see both file locations and how to resolve the conflict. Identical definitions do not produce a warning.
+如果用户级与项目级文件对同一个自定义配置档定义不一致，Chaos 采用用户级的那个，并在启动时给出告警。运行 `/doctor` 可以看到两个文件的位置以及如何解决冲突。定义完全相同时不会告警。
 
-### Custom Profile Fields
+### 自定义配置档的字段
 
 | 字段              | 类型     | 说明                                          |
 | ------------------ | -------- | ---------------------------------------------------- |
-| `extends`          | String   | Base built-in profile to inherit from (`workspace`, `devbox`, `read-only`, `strict`). Defaults to `workspace` when omitted |
-| `restrict_network` | Boolean  | Block network access for child processes             |
-| `read_only`        | String[] | Additional read-only paths                           |
-| `read_write`       | String[] | Additional read-write paths                          |
-| `deny`             | String[] | Paths or globs to kernel-deny (read + write/rename; see notes). An entry with `*`, `?`, or `[` is a glob |
+| `extends`          | String   | 要继承的内置配置档（`workspace`、`devbox`、`read-only`、`strict`）。省略时默认 `workspace` |
+| `restrict_network` | Boolean  | 阻断子进程的网络访问 |
+| `read_only`        | String[] | 额外的只读路径 |
+| `read_write`       | String[] | 额外的可读写路径 |
+| `deny`             | String[] | 要由内核拒绝读取的路径或 glob（读 + 写/改名；见下方说明）。含 `*`、`?` 或 `[` 的条目按 glob 处理 |
 
-> **Note on `read_only` / `read_write`:** These are **literal directory grants**,
-> not globs. A trailing `/**` (or `/*`) is treated as the parent directory, so
-> `…/cache/**` grants `…/cache` (and a bare `/**` grants `/`). Any entry that
-> still contains `*`, `?`, or `[` after that (e.g. `/home/**/cache`, or a
-> directory literally named `dir[1]`) is skipped with a warning — list the
-> concrete directories you need, or put globs under `deny`. Entries with
-> leading or trailing whitespace are also skipped with a warning: whitespace
-> is significant in literal paths, so fix the entry rather than relying on
-> trimming.
+> **关于 `read_only` / `read_write`：** 这两项是**字面目录授权**，不是 glob。
+> 末尾的 `/**`（或 `/*`）会被当作父目录，所以 `…/cache/**` 授权的是
+> `…/cache`（单独一个 `/**` 授权的则是 `/`）。在那之后仍含 `*`、`?` 或 `[`
+> 的条目（例如 `/home/**/cache`，或名字里真的带 `dir[1]` 的目录）会被跳过，
+> 并给出告警——请直接列出你需要的具体目录，或把 glob 放到 `deny` 里。
+> 首尾带空白的条目同样会被跳过并告警：字面路径里的空白是有意义的，所以
+> 请改正条目本身，不要指望它会被自动裁剪。
 
-> **Note on `deny`:** A non-empty `deny` list is **kernel-enforced**. Denied paths
-> are **read-denied and write/rename-denied** via Seatbelt on macOS and a bwrap
-> bind-over on Linux, so a denied path can neither be read (via `bash`, `grep`, or
-> subagents) nor relocated out of the deny set and read elsewhere (the
-> `mv secret x && cat x` bypass is closed). On **Linux**, read-deny requires
-> `bubblewrap`: if it is missing (or any single deny path can't be bound), Grok
-> refuses to start rather than run with denied paths exposed (`devbox`, which only
-> write-denies `/data`, still falls back to Landlock). Writes to paths **not** in
-> `deny` are controlled by what you grant in `read_write`.
+> **关于 `deny`：** 非空的 `deny` 列表由**内核强制执行**。被拒绝的路径在
+> macOS 上通过 Seatbelt、在 Linux 上通过 bwrap 的 bind-over 实现
+> **拒绝读取、拒绝写入/改名**，因此被拒绝的路径既读不到（无论用 `bash`、
+> `grep` 还是子代理），也无法移出拒绝集合再到别处读取（`mv secret x && cat x`
+> 这条绕过路径已被封堵）。在 **Linux** 上，拒绝读取依赖 `bubblewrap`：若它
+> 缺失（或任意一个拒绝路径无法被绑定），Chaos 会拒绝启动，而不是把被拒绝的
+> 路径暴露在外运行（`devbox` 只对 `/data` 拒写，仍会退回 Landlock）。
+> 对**不在** `deny` 中的路径的写入，由你在 `read_write` 里授予的权限决定。
 
-> **Globs in `deny`:** An entry is a **glob** if it contains `*`, `?`, or `[`.
-> Those characters **always** mean glob — to deny a literal file whose name
-> contains them, name a parent directory instead. The supported, gitignore-style
-> subset is:
+> **`deny` 里的 glob：** 条目只要含 `*`、`?` 或 `[` 就是 **glob**。这些字符
+> **永远**表示 glob——要拒绝某个名字里含这些字符的字面文件，请改为指定它的
+> 父目录。支持的 gitignore 风格子集是：
 >
-> - `*` — any run of characters within one path segment (stops at `/`)
-> - `?` — exactly one character within a segment
-> - `**` — spans directories (as a whole path segment, e.g. `**/`, `a/**`); `**/`
->   also matches zero directories, so `**/.env` matches `.env` and `sub/.env`
-> - `[abc]` / `[a-z]` — character classes; a leading `!` **or** `^` negates
->   (`[!a]` and `[^a]` both mean "not `a`")
+> - `*` —— 单个路径段内的任意字符（遇到 `/` 停止）
+> - `?` —— 单个路径段内恰好一个字符
+> - `**` —— 跨目录（须作为完整的路径段，例如 `**/`、`a/**`）；`**/`
+>   也匹配零个目录，所以 `**/.env` 匹配 `.env` 和 `sub/.env`
+> - `[abc]` / `[a-z]` —— 字符类；开头的 `!` **或** `^` 表示取反
+>   （`[!a]` 和 `[^a]` 都是「不是 `a`」）
 >
-> Brace alternation (`{a,b}`), backslash-escapes, empty path segments (a
-> doubled `//` or a trailing `/`), `.` or `..` segments, and the unusual class
-> forms `[]…]` (literal `]` first) and POSIX `[[:…:]]` are **not** supported,
-> so the two platforms
-> can never interpret a glob differently. A glob using an unsupported
-> metacharacter, or one that is malformed, makes Grok **refuse to start** (fail
-> closed) on **both** platforms — write `*.pem` and `*.key` as separate entries
-> rather than `*.{pem,key}`.
+> 花括号展开（`{a,b}`）、反斜杠转义、空路径段（重复的 `//` 或末尾的 `/`）、
+> `.` 或 `..` 段，以及两种少见的字符类写法 `[]…]`（`]` 写在最前）与 POSIX
+> `[[:…:]]` 都**不支持**，这样两个平台就绝不可能对同一个 glob 作出不同解释。
+> 使用不受支持元字符的 glob、或写法有误的 glob，会让 Chaos 在**两个平台上
+> 都拒绝启动**（fail closed）——请把 `*.pem` 和 `*.key` 写成两条，而不要写成
+> `*.{pem,key}`。
 >
-> Relative globs are anchored at the workspace; absolute globs (e.g.
-> `/home/**/.ssh`) at their literal prefix. Non-glob entries keep exact-path
-> matching. A relative glob matches **only inside the workspace**. To deny
-> files elsewhere, write the entry as an absolute path. Enforcement otherwise
-> differs by platform:
+> 相对 glob 以工作区为锚点，绝对 glob（例如 `/home/**/.ssh`）以它的字面前缀
+> 为锚点。非 glob 条目仍按精确路径匹配。相对 glob **只在工作区内**匹配。要拒绝
+> 其它位置的文件，请把条目写成绝对路径。除此之外，执行方式因平台而异：
 >
-> - **macOS is airtight:** each glob becomes a Seatbelt regex applied at runtime,
->   so matching files are denied **even if created after Grok starts**.
-> - **Linux is best-effort:** a mount namespace can't glob at runtime, so each
->   glob is expanded to the files that **exist at launch** and those are bound
->   over. Files created **later** that match a glob are **not** covered — name
->   exact paths for anything that must be airtight on Linux. A matched symlink
->   is masked together with its resolved target. A glob that matches too many
->   files, or whose tree is too deep or broad to scan, makes Grok **refuse to
->   start** rather than under-enforce; the error names the globs and the
->   directory where the scan stopped. The launch scan starts at each glob's
->   literal prefix and includes gitignored and hidden files, so on very large
->   workspaces prefer anchored globs (`certs/**/*.pem` scans only `certs/`)
->   over bare `**` patterns.
+> - **macOS 上是严密的：** 每个 glob 会在运行时变成一条 Seatbelt 正则，所以
+>   匹配的文件**即使在 Chaos 启动之后才创建**也会被拒绝。
+> - **Linux 上是尽力而为：** 挂载命名空间无法在运行时做 glob，所以每个 glob
+>   会展开成**启动时已存在**的文件，再绑定覆盖上去。**之后**才创建、且匹配该
+>   glob 的文件**不在**覆盖范围内——在 Linux 上必须严密拦截的内容请写成精确
+>   路径。被匹配的符号链接会连同它解析后的目标一起屏蔽。若某个 glob 匹配到太
+>   多文件，或它所在的目录树过深过广而无法扫描，Chaos 会**拒绝启动**，而不是
+>   降低强度；错误信息会指出是哪些 glob、扫描停在了哪个目录。启动扫描从每个
+>   glob 的字面前缀开始，并包含被 gitignore 忽略的文件和隐藏文件，所以在很大
+>   的工作区里，请优先用带锚点的 glob（`certs/**/*.pem` 只扫描 `certs/`），
+>   而不要用裸 `**` 模式。
 
 ---
 
-## How It Works
+## 工作原理
 
-The sandbox is applied to the **entire grok process** at startup using kernel primitives -- not per-command wrapping. This means all tool operations are covered:
+沙箱在启动时通过内核原语施加到**整个 Chaos 进程**上——不是逐条命令地包装。因此所有工具操作都在覆盖范围内：
 
-- `read_file`, `search_replace`, `list_dir` -- restricted by Landlock/Seatbelt in-process
-- `bash` commands, `grep` (rg) -- child processes inherit FS restrictions automatically
-- Network -- on Linux, child processes can be blocked via seccomp; on macOS this is a no-op
+- `read_file`、`search_replace`、`list_dir` —— 由进程内的 Landlock/Seatbelt 限制
+- `bash` 命令、`grep`（rg）—— 子进程自动继承文件系统限制
+- 网络 —— 在 Linux 上可用 seccomp 阻断子进程；在 macOS 上是空操作
 
-When a non-`off` sandbox profile is **requested** (CLI, `GROK_SANDBOX`, config, or a managed requirement):
+当**请求**了非 `off` 的沙箱配置档时（来自 CLI、`GROK_SANDBOX`、配置或受管要求项）：
 
-- The agent runs **in-process**, not through the shared leader, so tool calls stay in this process when the profile is enforced. If leader mode would otherwise have been on, a one-line note at startup says so
-- If a built-in profile fails to apply, Grok warns and continues without enforcement (see [Platform Support](#platform-support)), but still refuses the leader so tools are not delegated elsewhere
-- `grok workspace start`, `restart`, and `resume` are unavailable; `pause`, `stop`, and `status` still work
+- 代理**在进程内**运行，不走共享 leader，这样在配置档被强制执行时，工具调用留在这个进程里。若本来会启用 leader 模式，启动时会有一行提示说明这一点
+- 内置配置档施加失败时，Chaos 会告警并在没有强制执行的情况下继续（见[平台支持](#platform-support)），但仍会拒绝 leader，以免工具被委派到别处
+- `chaos workspace start`、`restart`、`resume` 不可用；`pause`、`stop`、`status` 仍可用
 
-Disable the profile at the source that selected it to use the refused commands.
+要使用被拒绝的那些命令，请在选中该配置档的源头把它关掉。
 
-The sandbox is **irreversible** once applied. The agent cannot relax restrictions at runtime.
-
----
-
-## Resuming Sessions
-
-The profile a session was started with is saved with the session and is **fixed
-for the life of the session**. When you resume it (`grok --resume <id>`,
-`grok --continue`, or `grok -r`), Grok restores that same profile automatically —
-so a session started with `--sandbox workspace` won't silently come back under a
-stricter default and break commands that previously worked.
-
-Resuming will **not** change a session's sandbox:
-
-- Omitting `--sandbox` on resume uses the session's saved profile.
-- Passing `--sandbox <profile>` that **matches** the saved profile is allowed.
-- Passing `--sandbox <profile>` that **differs** from the saved profile is
-  **refused with an error** — changing a resumed session's sandbox is a safety
-  footgun (it could widen access the session was meant to be confined to, or
-  break a session that relied on broader access). Start a new session to use a
-  different profile.
-
-Profile resolution order for a **new** session:
-
-1. An explicit `--sandbox <profile>` flag or `GROK_SANDBOX` environment variable
-2. The `[sandbox] profile` in your config
-3. `off` (no sandbox)
+沙箱一旦施加就**不可撤销**。代理无法在运行时放宽限制。
 
 ---
 
-## Platform Support
+## 恢复会话
+
+会话启动时所用的配置档会随会话一起保存，并且在**会话存续期间固定不变**。
+恢复会话时（`chaos --resume <id>`、`chaos --continue` 或 `chaos -r`），Chaos 会
+自动恢复同一个配置档——因此用 `--sandbox workspace` 启动的会话不会悄悄回到更
+严格的默认值上，把原本能跑的命令弄坏。
+
+恢复**不会**改变会话的沙箱：
+
+- 恢复时不加 `--sandbox`，沿用会话保存的配置档。
+- `--sandbox <profile>` 与保存的配置档**相同**时允许。
+- `--sandbox <profile>` 与保存的配置档**不同**时**报错拒绝**——改动已恢复会话的
+  沙箱是个安全陷阱（它可能放宽本应被限制的访问范围，也可能弄坏依赖更宽权限的
+  会话）。要换配置档请新建会话。
+
+**新**会话的配置档解析顺序：
+
+1. 显式的 `--sandbox <profile>` 标志，或 `GROK_SANDBOX` 环境变量
+2. 配置里的 `[sandbox] profile`
+3. `off`（无沙箱）
+
+---
+
+## 平台支持
 
 | 平台 | 机制 | 最低版本        |
 | -------- | --------- | ---------------------- |
-| Linux    | Landlock  | Kernel 5.13 or later   |
-| macOS    | Seatbelt  | macOS (all versions)   |
+| Linux    | Landlock  | 内核 5.13 或更高   |
+| macOS    | Seatbelt  | macOS（所有版本）   |
 
-If the sandbox cannot be applied (e.g., unsupported kernel, missing entitlements), Grok logs a warning and continues without enforcement. The exception is an explicitly-requested **custom profile**: on **both macOS and Linux**, if it cannot be applied (unknown profile, malformed `sandbox.toml`, or — on Linux — `bubblewrap` unavailable for a non-empty `deny`), Grok refuses to start rather than run with its denied paths exposed.
-
----
-
-## Network Restrictions
-
-On Linux, profiles with `restrict_network` block network access in **child processes** (bash commands, scripts) via seccomp. On macOS, network blocking is a no-op. Built-in tools that make HTTP requests in-process (web search, LLM API calls) are never affected -- the agent needs network access to function.
-
-In practice, on Linux this means:
-
-- `web_search`, `web_fetch`, and the LLM API always have network access
-- `bash` commands like `curl`, `wget`, and `npm install` are blocked when `restrict_network` is enabled
+沙箱无法施加时（例如内核不支持、缺少 entitlements），Chaos 会记录一条告警，并在没有强制执行的情况下继续。例外是显式请求的**自定义配置档**：在 **macOS 和 Linux 上都是**，若它无法施加（配置档不存在、`sandbox.toml` 格式有误，或在 Linux 上非空 `deny` 所需的 `bubblewrap` 不可用），Chaos 会拒绝启动，而不是把被拒绝的路径暴露在外运行。
 
 ---
 
-## Shell Environment Policy
+## 网络限制
 
-The sandbox controls which files and network a subprocess can reach. The top-level `[shell_environment_policy]` table controls which environment variables it inherits, so a tool command the model runs cannot read a secret that happens to sit in your shell environment.
+在 Linux 上，带 `restrict_network` 的配置档通过 seccomp 阻断**子进程**（bash 命令、脚本）的网络访问。在 macOS 上，网络阻断是空操作。在进程内发起 HTTP 请求的内置工具（网页搜索、LLM API 调用）从不受影响——代理需要网络才能工作。
+
+实际效果上，在 Linux 上这意味着：
+
+- `web_search`、`web_fetch` 和 LLM API 始终可以联网
+- `curl`、`wget`、`npm install` 这类 `bash` 命令在启用 `restrict_network` 时被阻断
+
+---
+
+## Shell 环境策略
+
+沙箱控制的是子进程能触达哪些文件和网络。顶层的 `[shell_environment_policy]` 表控制的则是它继承哪些环境变量，这样模型运行的某个工具命令就读不到你 shell 环境里恰好躺着的密钥。
 
 ```toml
 [shell_environment_policy]
@@ -246,60 +233,60 @@ include_only = ["PATH", "HOME"]  # if set, keep only these names
 set = { MY_FLAG = "1" }          # force these values
 ```
 
-Grok builds the child environment in order: it starts from `inherit` (`all` keeps everything, `core` keeps a small platform set such as `PATH` and `HOME`, `none` starts empty); drops the built-in secret patterns `*KEY*`, `*SECRET*`, and `*TOKEN*` unless `ignore_default_excludes = true`; drops any `exclude` matches; applies `set`; and, when `include_only` is non-empty, keeps only the matching names. Patterns are case-insensitive globs (`*`, `?`).
+Chaos 按顺序构造子进程环境：先从 `inherit` 开始（`all` 保留全部，`core` 保留一小撮平台相关变量如 `PATH` 和 `HOME`，`none` 从空环境开始）；再丢掉内置的密钥模式 `*KEY*`、`*SECRET*`、`*TOKEN*`，除非 `ignore_default_excludes = true`；再丢掉所有匹配 `exclude` 的名字；然后应用 `set`；最后在 `include_only` 非空时只保留匹配的名字。模式是不区分大小写的 glob（`*`、`?`）。
 
-The default (`inherit = "all"`, `ignore_default_excludes = true`) leaves the environment untouched, so nothing changes until you configure a policy. On the non-persistent backend the policy also filters variables captured from your login shell, so an `.rc` file export cannot slip a secret past `exclude` or `include_only`. The persistent shell is one exception: it applies the policy to its base environment, but variables that an `.rc` file exports during login are replayed from a snapshot and are not re-filtered, so keep secrets out of shell startup files there. Enforcement covers the bash tool and terminals on macOS, Linux, and Windows.
-
----
-
-## Event Logging
-
-Sandbox events are logged to `~/.grok/sessions` for debugging. Events include:
-
-- Profile applied (which profile, timestamp)
-- Violations (attempted access to denied paths)
+默认值（`inherit = "all"`、`ignore_default_excludes = true`）不改动环境，所以在你配置策略之前什么都不会变。在非持久化后端上，该策略还会过滤从你登录 shell 捕获的变量，因此 `.rc` 文件里的 export 无法把密钥偷偷带过 `exclude` 或 `include_only`。持久化 shell 是一个例外：策略会作用于它的基础环境，但 `.rc` 文件在登录期间导出的变量是从快照回放的，不会重新过滤——所以在这种 shell 下不要把密钥放进启动文件。在 macOS、Linux 和 Windows 上，强制范围覆盖 bash 工具与各终端。
 
 ---
 
-## When to Use Sandbox Mode
+## 事件日志
 
-**Use `workspace` when:**
+沙箱事件会记录到 `~/.chaos/sessions` 便于排查。事件包括：
 
-- Working on your own projects and you want basic write protection
-- Running in shared environments where you want to limit the scope of changes
-
-**Define a custom profile with a `deny` list when:**
-
-- You need to block specific files (e.g. `.env` or credential paths) on top of a base profile
-- You need kernel enforcement that covers `bash`, `grep`, and subagents — not just the `read_file` tool
-
-**Use `read-only` when:**
-
-- Reviewing code you do not trust
-- Exploring a codebase without risk of accidental modification
-- Running code analysis or audits
-
-**Use `strict` when:**
-
-- Analyzing untrusted or third-party code
-- Running in security-sensitive environments
-- You want maximum isolation
-
-**Skip sandbox when:**
-
-- The agent needs to install dependencies (`npm install`, `pip install`)
-- The agent needs to modify files outside the working directory
-- You are working in a trusted environment and want maximum flexibility
+- 已施加的配置档（哪个配置档、时间戳）
+- 违规（尝试访问被拒绝的路径）
 
 ---
 
-## Trade-offs
+## 何时使用沙箱模式
+
+**在以下情况使用 `workspace`：**
+
+- 做自己的项目，只想要基本的写入保护
+- 在共享环境里运行，想限制改动的范围
+
+**在以下情况用 `deny` 列表定义自定义配置档：**
+
+- 需要在某个基础配置档之上再拦住特定文件（例如 `.env` 或凭据路径）
+- 需要的内核级强制要覆盖 `bash`、`grep` 和子代理——而不只是 `read_file` 工具
+
+**在以下情况使用 `read-only`：**
+
+- 审阅你不信任的代码
+- 探索一个代码库，但不想冒误改的风险
+- 做代码分析或审计
+
+**在以下情况使用 `strict`：**
+
+- 分析不受信任的或第三方的代码
+- 在安全敏感的环境里运行
+- 想要最大程度的隔离
+
+**在以下情况不用沙箱：**
+
+- 代理需要安装依赖（`npm install`、`pip install`）
+- 代理需要改动工作目录之外的文件
+- 你在可信环境里工作，想要最大的灵活性
+
+---
+
+## 取舍
 
 | 方面      | 无沙箱            | 有沙箱                    |
 | ----------- | -------------------------- | ------------------------------- |
-| 安全      | Agent has full system access | Agent restricted to profile rules |
-| 能力  | Can do anything            | Limited by profile              |
+| 安全      | 代理拥有完整的系统访问权限 | 代理受配置档规则限制 |
+| 能力  | 什么都能做            | 受配置档限制              |
 | 性能 | 无额外开销                | 开销可忽略             |
-| 恢复    | Must trust the agent       | Kernel enforces boundaries      |
+| 恢复    | 只能信任代理       | 由内核强制边界      |
 
-The sandbox enforces limits at the OS level -- through Landlock or a mount namespace on Linux, and Seatbelt on macOS -- not a separate VM.
+沙箱在操作系统层面施加限制——Linux 上通过 Landlock 或挂载命名空间，macOS 上通过 Seatbelt——而不是另起一个虚拟机。
