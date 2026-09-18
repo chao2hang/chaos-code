@@ -12,7 +12,7 @@ Chaos TUI 快捷键参考。绑定为内置，目前不可自定义重映射。
 Chaos 有两种输入模式，控制回滚区导航方式：
 
 - **Simple mode**（默认）：方向键导航，`Shift+Arrow` 按回合跳转，`Space` 聚焦提示框，字母键自动聚焦提示框。
-- **Vim mode**（可选）：`j`/`k` 导航，`H`/`L` 按回合，`J`/`K` 按回复，`h`/`l` 折叠，`e`/`E` 展开/收起，`i`/`Tab`/`Space` 聚焦提示框。
+- **Vim mode**（可选）：`j`/`k` 导航，`H`/`L` 按选中回合跳转，`J`/`K` 跳到下一/上一回合的视口顶部（与时间轴箭头一致），`h`/`l` 折叠，`e`/`E` 展开/收起，`i`/`Tab`/`Space` 聚焦提示框。
 
 默认 Simple。切换到 Vim：在用户 `config.toml` 的 `[ui]` 下设 `vim_mode = true`，或运行时 `/vim-mode`。详见 [Configuration](05-configuration.md)。
 
@@ -35,8 +35,8 @@ Move through conversation entries in the scrollback pane.
 | `k` | `Up` | Select previous entry |
 | `⇧L` | `Shift+Right` | Jump to next turn (user prompt) |
 | `⇧H` | `Shift+Left` | Jump to previous turn (user prompt) |
-| `⇧J` | | Jump to next assistant response |
-| `⇧K` | | Jump to previous assistant response |
+| `⇧J` | | Jump to next turn at viewport top |
+| `⇧K` | | Jump to previous turn at viewport top |
 | `g` | | Go to top of scrollback |
 | `⇧G` | | Go to bottom of scrollback |
 | `Ctrl+K` | | Scroll up one line (without changing selection) |
@@ -240,6 +240,8 @@ Actions that affect the agent session, available from the agent screen.
 | `Ctrl+.` (alt: `Ctrl+X`) | Agent screen | Open the keyboard shortcuts help |
 | `F2` (alt: `Ctrl+,` / `Cmd+,`) | Agent screen | Open the settings modal |
 
+**Note:** While a **subagent fullscreen view** is open, the composer is hidden. Root-only chords (`Ctrl+P`, `Ctrl+M`, `F3`, `Ctrl+O`, `Ctrl+B`, settings, extensions, Shift+Tab) do nothing. `Ctrl+C` cancels the **child's** turn. `q` / `Esc` closes the view. `Ctrl+Q` still quits (`Ctrl+D` on VS Code family). See [Viewing Subagents in the TUI](16-subagents.md#fullscreen-framed-view-the-child-transcript).
+
 **Note:** `Ctrl+M` is context-dependent. When the prompt is focused, it toggles multiline input mode. Otherwise, it opens the model picker.
 
 **Note:** While a draft is stashed, the prompt's top border reads `Stashed` (next to the `/rename` title, if you set one). Minimal mode draws no border, so it prints a line in the scrollback each time you stash or restore. The stash lives in memory only: it is gone when you quit, and it does not travel to a resumed session. A new stash replaces the old one, and only the old one's **text** moves to the `↑` history, so any images on the replaced draft are lost.
@@ -408,7 +410,7 @@ Focus prompt:     Space or any letter key (auto-focuses and types)
 ### When scrollback is focused (Vim mode)
 
 ```
-Navigation:       j/k (up/down)  H/L (prev/next turn)  K/J (prev/next response)  g/G (top/bottom)
+Navigation:       j/k (up/down)  H/L (prev/next turn)  K/J (viewport-top turn)  g/G (top/bottom)
 Scrolling:        Ctrl+J/K (line)  Ctrl+U/D (half page; D=Shift+D in VSCode)  PgUp/PgDn (page)
 Folding:          h/l (collapse/expand)  e (toggle)  E (all)
 Content:          y (copy)  Y (copy cmd)  Enter (fullscreen)
