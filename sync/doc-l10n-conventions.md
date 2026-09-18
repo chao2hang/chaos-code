@@ -27,6 +27,12 @@
 **行内代码里的散文也不要翻。** 例如 `# Attach a file` 这种代码块注释按
 第一条处理（保留），但 `（可选）` 这类正文括号要翻译。
 
+**一处例外**：本分叉把二进制改名为 `chaos`、原生配置目录改名为
+`.chaos`，所以 `grok <cmd>`、`~/.grok`、`.grok/`、`$GROK_HOME` 要按
+§4.1 的对照表改写（其余 `GROK_*`、`xai-grok-*`、`grok-<模型>`、
+`/etc/grok` 仍然逐字保留）。也就是说「行内代码里的字面量不动」有个
+明确的改名白名单，不在表里的照旧。
+
 ## 二、标题
 
 `01`、`02`、`README` 用中文标题，其余章节历史上保留了英文标题。
@@ -82,9 +88,40 @@
 
 本仓库是 `xai-org/grok-build` 的中文化分叉。译文按**本分叉的实际行为**写：
 
-1. **二进制名 `chaos`**。命令写 `chaos <cmd>`，不写 `grok <cmd>`。
+1. **二进制名 `chaos`**。命令写 `chaos <cmd>`，不写 `grok <cmd>`；
    包名仍是上游的 `xai-grok-pager-bin`（从源码构建时用
    `cargo build -p xai-grok-pager-bin --release`）。
+
+   **改与不改的清单**（依据 `xai-dirs/src/lib.rs`、
+   `xai-grok-config/src/paths.rs`、`pager/src/app/cli.rs`）：
+
+   | 上游写法 | 本分叉写法 | 说明 |
+   |---|---|---|
+   | `grok inspect`、`grok -c`、`grok wrap` | `chaos inspect`、`chaos -c`、`chaos wrap` | 命令字，改 |
+   | 单独一个 `grok` 指本程序 | `chaos` | 产品名，改 |
+   | `~/.grok/config.toml` | `~/.chaos/config.toml` | 新装默认根，改 |
+   | `.grok/rules/`、`.grok/config.toml` | `.chaos/rules/`、`.chaos/config.toml` | 项目级原生目录，改 |
+   | `$GROK_HOME` | `$CHAOS_HOME` | **唯一**有 Chaos 孪生的环境变量 |
+   | `GROK_MEMORY`、`GROK_APPEARANCE`、`GROK_API_KEY` … | 原样 | 其余 `GROK_*` 没有孪生，**不许改** |
+   | `/etc/grok/` | 原样 | 系统级目录没改名，`system_config_dir()` 仍是它 |
+   | `xai-grok-pager`、`xai-grok-shell` | 原样 | 包名 |
+   | `grok-4.5`、`grok-3-mini` | 原样 | 模型 id |
+   | `grok.com`、`auth.x.ai` | 原样 | 上游托管服务 |
+
+   现存命令（`chaos <cmd>`，别自己造）：`agent`、`inspect`、`doctor`、
+   `leader`、`mcp`、`plugin`、`memory`、`models`、`clients`、`sessions`、
+   `usage`、`setup`、`export`、`trace`、`update`、`version`、
+   `completions`、`worktree`、`du`、`dashboard`、`wrap`、`share`、
+   `workspace`。`login` / `logout` 虽仍在 clap 枚举里，但分叉没有派发
+   实现，按 §4.3 处理（删除相关段落，不要写成本分叉的功能）。
+
+   改完用 `python3 scripts/check-doc-l10n.py --fork-names` 清点剩余项：
+   它会把该改而没改的列出来，同时放过上表里「原样」的那些。
+
+   **判据是「兼容」二字**：正文里出现 `~/.grok`、`.grok/`、`$GROK_HOME`
+   的行，必须是在说明兼容/历史遗留（因此句中含有「兼容」），否则就是漏改。
+   所以「历史路径 `~/.grok/auth.json` 属上游遗留，请勿依赖」要写成
+   「属上游**兼容**遗留」；双读顺序那段按 §4.2 的措辞写全。
 2. **配置根**。正文统一写 `~/.chaos`，并在每章首次出现处点明兼容读取：
    > 配置根按 `$CHAOS_HOME` → `$GROK_HOME` → 已有 `~/.chaos` → 已有
    > `~/.grok` → 默认 `~/.chaos` 的顺序解析；旧用户可继续使用
@@ -95,8 +132,21 @@
 3. **删除本分叉不存在的功能**，不要留占位或「上游有而此处没有」的说明：
    - Grove / `grok clone` / `grok grove` / `[cli] grove` / `GROK_GROVE` /
      `GROK_CLONE` 相关全部段落
-   - grok.com 浏览器登录、OIDC、企业 SSO、设备码流程、`/login`、`/logout`、
-     `~/.grok/auth.json`、订阅门墙
+   - grok.com 浏览器登录、OIDC、企业 SSO、设备码流程、`~/.grok/auth.json`、
+     订阅门墙、xAI 计费/额度页
+
+   但 **`/login` 与 `/logout` 要留下**，它们是本分叉注册的**兼容桩**，不是
+   上游行为，也不是「未注册」。照实写：
+
+   | 命令 | 本分叉行为 | 依据 |
+   |---|---|---|
+   | `/login` | 不启动浏览器 OIDC，直接打开 `/provider` 面板（fail-closed） | `slash/commands/login.rs` |
+   | `/logout` | 只打印一条提示，让你去改 `config.toml` / 用 `/provider` | `slash/commands/logout.rs` |
+
+   两处源码的模块注释写着「Not registered in `builtin_commands()`」，但
+   `slash/commands/mod.rs:151-152` 确实注册了它们——**注释是过期的，别照抄**。
+   照抄会写出「`/login` 未注册」这种与代码相反的话（`02-authentication.md`
+   一度就是这么错的）。
    - 上游专有的托管服务（`grok.com` 远端设置、xAI 计费/额度页）
    - Terminal 主题（`theme = "terminal"`）、`GROK_TERMINAL_THEME`、
      `[features] terminal_theme`。本分叉可选主题只有 5 个 + `auto`
@@ -148,14 +198,29 @@
 
 ## 七、每次提交前自检
 
-见 `sync/doc-l10n-check.md` 中的机器校验脚本。至少确认：
+机器校验脚本是 `scripts/check-doc-l10n.py`（它自己的测试在
+`scripts/check-doc-l10n-selftest.py`，12 条用例覆盖每个不变量的
+「该拦」和「该放」两个方向，改动脚本后先跑它）。翻译完一章，至少跑：
 
-1. 围栏代码块数量成对，且数量与改前一致。
-2. 每章行内代码里的标识符集合与改前一致（用脚本比对，不靠肉眼）。
-3. 表格行列数与分隔行 `| --- |` 数量一致。
-4. 所有 `](...)` 目标仍然可达（站内链接的文件名存在、锚点在同文件内存在）。
+```sh
+G=crates/codegen/xai-grok-pager/docs/user-guide
+python3 scripts/check-doc-l10n.py --before HEAD --after WORKTREE --glob "$G/<本章>"
+python3 scripts/check-doc-l10n.py --english   --glob "$G/<本章>"
+python3 scripts/check-doc-l10n.py --fork-names --glob "$G/<本章>"
+```
+
+三个都必须是 0（`--fork-names` 只报告、不失败；剩下的应当是上表里
+「原样」的那些，或是明确讨论双读兼容的那一行）。此外：
+
+1. 围栏代码块数量与改前一致，块内除命令名外逐字未动。
+2. 行内代码里的标识符集合与改前一致（脚本比对，不靠肉眼）。
+3. 表格声明列数与每个数据行的单元格数都不变。
+4. 所有 `](...)` 目标仍然可达（文件名存在、锚点在同文件内存在）。
 5. 标题层级不跳级。
 6. `bash scripts/l10n-guard.sh --before main --after HEAD --report <dir>`
    在 `regressed.txt` / `shrunk.txt` / `fortress-breach.txt` 上都是 0。
 7. `cargo test -p xai-grok-shell --lib --features config-docs config_docs`
    仍通过（`26-config-reference.md` 是它的输入，表格结构不能破坏）。
+
+全部章节翻完后，再做一次收尾：`--fix-anchors` 机械重写入站锚点 →
+`--links` 归零 → 全库 `--fork-names --strict`。
