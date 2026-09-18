@@ -1,4 +1,4 @@
-# MCP Servers
+# MCP 服务器
 
 MCP（Model Context Protocol）服务器为 Chaos 接入外部工具。可与任何实现 MCP 标准的服务交互。
 
@@ -8,7 +8,7 @@ MCP（Model Context Protocol）服务器为 Chaos 接入外部工具。可与任
 
 ---
 
-## What Are MCP Servers?
+## 什么是 MCP 服务器？
 
 MCP 服务器通过标准协议向 Chaos 暴露工具。配置后，其工具与内置工具一并提供给模型，可在会话中发现并调用。
 
@@ -18,14 +18,17 @@ MCP 服务器通过标准协议向 Chaos 暴露工具。配置后，其工具与
 
 ---
 
-## Configuration
+## 配置
 
 在用户配置根的 `config.toml`（`~/.chaos` 或兼容 `~/.grok`）中配置
 `[mcp_servers.<name>]`。项目级见 `.chaos/config.toml` / `.grok/config.toml`。
 
-To distribute MCP servers to a team, or to restrict which servers users may run (`allowedMcpServers` / `deniedMcpServers` in `requirements.toml` / `managed_config.toml`, with Claude `managed-settings.json` advisory for foreign-defined servers), see [Distribute across an organization](09-plugins.md#distribute-across-an-organization) in the Plugins guide.
+要把 MCP 服务器分发给团队，或限制用户能运行哪些服务器（在 `requirements.toml` /
+`managed_config.toml` 里用 `allowedMcpServers` / `deniedMcpServers`；对由外部来源
+定义的服务器，另有 Claude `managed-settings.json` 的劝告性设置），见插件指南中的
+[跨组织分发](09-plugins.md#distribute-across-an-organization)。
 
-### stdio Transport (Local Process)
+### stdio 传输（本地进程）
 
 Chaos 拉起本地进程，经 stdin/stdout 通信：
 
@@ -40,35 +43,33 @@ tool_timeout_sec = 6000               # Per-tool-call timeout fallback, seconds 
 tool_timeouts = { slow_op = 120 }     # Per-tool timeout overrides, seconds
 ```
 
-> **Global startup-timeout override:** instead of setting `startup_timeout_sec`
-> per server, you can change the default for all servers via the `MCP_TIMEOUT`
-> environment variable (milliseconds, compatible with Claude Code) or
-> `GROK_MCP_STARTUP_TIMEOUT_SECS` (seconds). A per-server `startup_timeout_sec`
-> still takes precedence over both. Cold-start `npx`/`uvx` servers that download
-> packages on first launch often need this; the default is 30s.
+> **全局启动超时覆盖：** 不必逐个服务器设置 `startup_timeout_sec`，可以用 `MCP_TIMEOUT`
+> 环境变量（毫秒，兼容 Claude Code）或 `GROK_MCP_STARTUP_TIMEOUT_SECS`（秒）改动所有
+> 服务器的默认值。单个服务器的 `startup_timeout_sec` 仍然优先于这两者。首次启动就要
+> 下载包的 `npx`/`uvx` 冷启动服务器常常需要调大；默认 30 秒。
 >
-> **MCP tool-result size cap:** large MCP / `use_tool` results are truncated
-> inline (full payload spilled under the session `mcp/` folder). Default is
-> **20_000 bytes**. Override via:
+> **MCP 工具结果大小上限：** 过大的 MCP / `use_tool` 结果会被就地截断（完整内容落到
+> 会话的 `mcp/` 目录下）。默认 **20_000 字节**。覆盖方式：
 >
-> - env `GROK_MAX_MCP_OUTPUT_BYTES` or `MAX_MCP_OUTPUT_BYTES` (bytes; Grok-native
->   wins if both set; Claude-style name, but we bound by **bytes** not tokens)
-> - `config.toml` — user-level (`~/.grok/config.toml`) **or repo-level**
->   (`.grok/config.toml` anywhere on the cwd → git-root chain; the deepest
->   file wins, and the repo value applies only once the folder is trusted):
+> - 环境变量 `GROK_MAX_MCP_OUTPUT_BYTES` 或 `MAX_MCP_OUTPUT_BYTES`（单位字节；两个都
+>   设时以 Grok 原生名为准；后者是 Claude 风格的命名，但我们的上限按**字节**计，
+>   不是 token）
+> - `config.toml` —— 用户级（`~/.chaos/config.toml`）**或仓库级**
+>   （cwd → git 根链路上任意位置的 `.chaos/config.toml`；最深的那份生效，而仓库级
+>   的取值只在该目录被信任后才起作用）：
 >
 > ```toml
 > [mcp]
 > max_output_bytes = 40000
 > ```
 >
-> Precedence: requirements.toml > env > repo `.grok/config.toml` >
-> user/managed config > default. Repo edits apply to running sessions in that
-> directory via config hot-reload.
+> 优先级：requirements.toml > 环境变量 > 仓库 `.chaos/config.toml` >
+> 用户/托管配置 > 默认值。改动仓库里的配置会通过配置热重载作用于该目录下正在运行的
+> 会话。
 
-### HTTP/SSE Transport (Remote Server)
+### HTTP/SSE 传输（远程服务器）
 
-For remote MCP servers accessible over HTTP:
+能通过 HTTP 访问的远程 MCP 服务器：
 
 ```toml
 [mcp_servers.remote-api]
@@ -76,18 +77,15 @@ url = "https://mcp.example.com/api"
 headers = { "Authorization" = "Bearer token" }
 ```
 
-MCP data-plane requests (JSON-RPC and SSE) and the anonymous-access probe carry a
-default `User-Agent: grok-cli/<version>` header, where `<version>` is the Grok binary
-version. OAuth discovery, client registration, and token requests are issued by the
-rmcp OAuth client and keep its own behavior (no default `User-Agent`). A valid
-`User-Agent` entry in the server's `headers` overrides the default; an invalid
-configured `User-Agent` value is dropped by header parsing (with a warning), so such a
-server still receives the default. Exception: Figma MCP servers (server name `figma`,
-legacy managed name `grok_com_figma`, or a `figma.com` host — all case-insensitive)
-send the bare token `grok-cli` with no version unless the config supplies its own
-`User-Agent`.
+MCP 数据面请求（JSON-RPC 与 SSE）以及匿名访问探测默认带一个
+`User-Agent: grok-cli/<version>` 头，`<version>` 是 Grok 二进制的版本号。OAuth 发现、
+客户端注册和取 token 的请求由 rmcp 的 OAuth 客户端发出，保持它自己的行为（不带默认
+`User-Agent`）。服务器 `headers` 里配了合法的 `User-Agent` 会覆盖默认值；配了非法的
+`User-Agent` 值会在解析请求头时被丢弃（并给出警告），因此该服务器仍会收到默认值。例外：Figma MCP
+服务器（服务器名 `figma`、旧版托管名 `grok_com_figma`，或主机为 `figma.com`——都不区分
+大小写）会收到不带版本号的裸 token `grok-cli`，除非配置里自带 `User-Agent`。
 
-### Streamable HTTP with Session ID
+### 带会话 ID 的 Streamable HTTP
 
 ```toml
 [mcp_servers.my-streamable-server]
@@ -97,163 +95,192 @@ headers = { "x-mcp-session-id" = "{{session_id}}" }
 
 ---
 
-## CLI Management
+## 命令行管理
 
-Manage MCP servers from the command line without editing config files:
+不用改配置文件，直接从命令行管理 MCP 服务器：
 
 ```bash
 # List configured MCP servers
-grok mcp list
-grok mcp list --json          # Machine-readable output
+chaos mcp list
+chaos mcp list --json          # Machine-readable output
 
 # Add a stdio server. Everything after -- is the server command, so flags
-# like -y reach the server instead of being parsed by grok.
-grok mcp add filesystem -- npx -y @modelcontextprotocol/server-filesystem /path/to/dir
+# like -y reach the server instead of being parsed by chaos.
+chaos mcp add filesystem -- npx -y @modelcontextprotocol/server-filesystem /path/to/dir
 
 # Add a stdio server with environment variables (-e is repeatable)
-grok mcp add postgres -e DATABASE_URL=postgres://localhost/mydb -- npx -y @modelcontextprotocol/server-postgres
+chaos mcp add postgres -e DATABASE_URL=postgres://localhost/mydb -- npx -y @modelcontextprotocol/server-postgres
 
 # Add a remote HTTP server
-grok mcp add --transport http sentry https://mcp.sentry.dev/mcp
+chaos mcp add --transport http sentry https://mcp.sentry.dev/mcp
 
 # Add a remote server with an authentication header (--header is repeatable)
-grok mcp add --transport http api https://mcp.example.com/mcp --header "Authorization: Bearer YOUR_TOKEN"
+chaos mcp add --transport http api https://mcp.example.com/mcp --header "Authorization: Bearer YOUR_TOKEN"
 
 # Add a remote SSE server
-grok mcp add --transport sse linear https://mcp.linear.app/sse
+chaos mcp add --transport sse linear https://mcp.linear.app/sse
 
 # Remove a server
-grok mcp remove github
+chaos mcp remove github
 
 # Enable or disable a local/TOML (or compat-sourced) server
-grok mcp enable github
-grok mcp disable github
+chaos mcp enable github
+chaos mcp disable github
 
 # Diagnose a server's configuration and connectivity
-grok mcp doctor               # Check every configured server
-grok mcp doctor github        # Check one server
-grok mcp doctor --json        # Machine-readable output
+chaos mcp doctor               # Check every configured server
+chaos mcp doctor github        # Check one server
+chaos mcp doctor --json        # Machine-readable output
 ```
 
-The transport defaults to `stdio`; pass `--transport http` or `--transport sse` for remote servers.
+传输方式默认 `stdio`；远程服务器请加 `--transport http` 或 `--transport sse`。
 
-By default `grok mcp add` writes to `~/.grok/config.toml` (`--scope user`). Use `--scope project` to write to `.grok/config.toml` in the current directory instead, which can be committed and shared with your team (see [Project-Scoped MCP Servers](#project-scoped-mcp-servers)). Header and environment variable values are stored verbatim, so reference secrets as `${VAR}` instead of pasting them into a committed project config (see [Example Configurations](#example-configurations)). `grok mcp list` shows servers from both scopes, marking project-scoped ones with `(project)` and disabled ones with `(disabled)`.
+默认情况下 `chaos mcp add` 写入 `~/.chaos/config.toml`（`--scope user`）。加
+`--scope project` 改为写入当前目录的 `.chaos/config.toml`，这份文件可以提交并与团队
+共享（见[项目级 MCP 服务器](#project-scoped-mcp-servers)）。请求头和环境变量的值按原样
+保存，所以密钥请写成 `${VAR}` 引用，不要直接粘进会被提交的项目配置里（见
+[配置示例](#example-configurations)）。`chaos mcp list` 会列出两个作用域里的服务器，
+项目级的标注 `(project)`，已停用的标注 `(disabled)`。
 
-`grok mcp remove` searches both scopes and exits 0 after removing the server. It exits 1 when the name is not found, or when the name is defined in both user and project scope — pass `--scope` to say which one to remove.
+`chaos mcp remove` 在两个作用域里查找，删除成功后退出码为 0。名字找不到，或者用户在
+用户级和项目级都定义了同名服务器时，退出码为 1——这时用 `--scope` 指明删哪一个。
 
-`grok mcp enable` / `disable` persist the personal on/off state to user `~/.grok/config.toml` (`disabled_mcp_servers`, and `[mcp_servers.<name>].enabled` when that entry exists). Scope:
+`chaos mcp enable` / `disable` 把个人的启停状态持久化到用户级
+`~/.chaos/config.toml`（`disabled_mcp_servers`，以及该条目存在时的
+`[mcp_servers.<name>].enabled`）。作用范围：
 
-- **Known names:** user/project Grok TOML, names already on the disabled list, compat sources (`.mcp.json`, Claude, Cursor), and **plugin** MCP servers (same discovery as doctor/`/mcps`).
-- **Enable only:** if the cwd-nearest project definition has sticky `enabled = false`, that single key is cleared (comments preserved); disable never rewrites project configs.
-- **Not full `/mcps` parity:** gateway connectors (`managed_gateway:…`, stored under `disabled_mcp_tools.__managed_gateway_connectors`) stay Space-only in the TUI. Idempotent; unknown names exit 1.
+- **已知名字：** 用户/项目级的原生 TOML 配置、已在停用列表里的名字、兼容来源
+  （`.mcp.json`、Claude、Cursor），以及**插件**提供的 MCP 服务器（发现范围与
+  doctor/`/mcps` 一致）。
+- **只有 `enable` 会写项目配置：** 如果 cwd 最近的那份项目定义里写死了
+  `enabled = false`，只清掉这一个键（保留注释）；`disable` 从不改写项目配置。
+- **与 `/mcps` 并非完全等价：** 网关连接器（`managed_gateway:…`，存放在
+  `disabled_mcp_tools.__managed_gateway_connectors` 下）在 TUI 里仍然只能在面板上用
+  空格键操作。该命令是幂等的；名字未知时退出码为 1。
 
-Breaking changes from earlier releases: `--env` now takes one `KEY=value` per flag (use `-e A=1 -e B=2`, not `--env A=1 B=2`), and server names may only contain letters, numbers, hyphens, and underscores.
+与更早版本相比的破坏性变更：`--env` 现在每个标志只接受一个 `KEY=value`（用
+`-e A=1 -e B=2`，而不是 `--env A=1 B=2`）；服务器名只能包含字母、数字、连字符和下划线。
 
 ---
 
-## Project-Scoped MCP Servers
+## 项目级 MCP 服务器
 
-MCP servers can be configured per-project by placing a `.grok/config.toml` in your repository:
+在仓库里放一份 `.chaos/config.toml`，就能按项目配置 MCP 服务器：
 
 ```
 my-project/
-  .grok/
+  .chaos/
     config.toml
   src/
   ...
 ```
 
 ```toml
-# .grok/config.toml
+# .chaos/config.toml
 [mcp_servers.linear]
 url = "https://mcp.linear.app/mcp"
 enabled = true
 ```
 
-When a server exposes a native HTTP/SSE endpoint, prefer the `url` form over wrapping it in a stdio proxy such as `npx mcp-remote <url>`. Grok handles HTTP/SSE and OAuth directly, so the native form avoids an extra subprocess per session. It also registers Grok's own OAuth client with the provider.
+当服务器本身提供 HTTP/SSE 端点时，优先用 `url` 形式，而不是用 `npx mcp-remote <url>`
+这类 stdio 代理包一层。Grok 直接处理 HTTP/SSE 和 OAuth，用原生形式可以省掉每个会话
+多起一个子进程，同时还会向服务商注册 Grok 自己的 OAuth 客户端。
 
-Grok walks from the current directory up to the git repo root, loading `.grok/config.toml` at each level:
+Grok 从当前目录逐级向上走到 git 仓库根，每层都加载 `.chaos/config.toml`：
 
 | 位置 | 作用域 | 优先级 |
 |----------|-------|----------|
-| `~/.grok/config.toml` | 所有项目 | 最低 |
-| `<repo-root>/.grok/config.toml` | 本仓库 | 中 |
-| `<cwd>/.grok/config.toml` | 当前目录 | 最高 |
+| `~/.chaos/config.toml` | 所有项目 | 最低 |
+| `<repo-root>/.chaos/config.toml` | 本仓库 | 中 |
+| `<cwd>/.chaos/config.toml` | 当前目录 | 最高 |
 
-If a project defines a server with the same name as a global one, the project version replaces it entirely (fields are not merged).
+如果项目里定义的服务器与全局同名，项目里的定义会整体替换全局定义（字段不合并）。
 
-Project-scoped files contribute `[mcp_servers]`, `[plugins]`, and `[permission]` entries. Grok reads most other config sections only from `~/.grok/config.toml`.
-
----
-
-## Tool Naming
-
-MCP tools are namespaced with the server name to avoid collisions:
-
-- Server `filesystem` with tool `read_file` becomes `filesystem__read_file`
-- Server `github` with tool `create_issue` becomes `github__create_issue`
+项目级的文件只贡献 `[mcp_servers]`、`[plugins]` 和 `[permission]` 三类条目；其他大多数
+配置段 Grok 只从 `~/.chaos/config.toml` 读取。
 
 ---
 
-## Toggle Servers at Runtime
+## 工具命名
 
-You can enable or disable MCP servers without restarting Grok (TUI `/mcps` or CLI — see [CLI Management](#cli-management)).
+MCP 工具以服务器名作命名空间，避免重名：
 
-### The /mcps Modal
-
-Open the MCP servers modal in the TUI:
-
-- Run `/mcps` as a slash command
-- Or press `Ctrl+L` (non–VS Code family) and navigate to the MCP Servers tab; on VS Code family use `/plugins` or `/mcp` and open the MCP Servers tab
-
-From the modal you can:
-
-- See each server's source, enabled state, and tool count
-- Enable or disable a server with `Space`
-- Expand a server to view the tools it provides
-- Refresh the list with `r` after you edit `config.toml`
-- Authenticate an OAuth server with `i`
-- Add a server with `a`, or remove a local server with `x` (the modal asks for confirmation; press lowercase `y` to remove, or any other key to cancel)
-
-### Tool Discovery
-
-The model has access to two built-in tools for working with MCP servers:
-
-- `search_tool` — Discover available integration tools across all enabled MCP servers. Use this to find tools by name or description.
-- `use_tool` — Call an integration tool discovered via `search_tool`. Specify the fully-qualified tool name (e.g., `github__create_issue`).
+- 服务器 `filesystem` 的 `read_file` 工具成为 `filesystem__read_file`
+- 服务器 `github` 的 `create_issue` 工具成为 `github__create_issue`
 
 ---
 
-## Compatibility
+## 运行时开关服务器
 
-Grok loads MCP server configurations from multiple sources for compatibility:
+不用重启 Grok 就能启停 MCP 服务器（TUI 里用 `/mcps`，或用命令行——见
+[命令行管理](#cli-management)）。
+
+### /mcps 面板
+
+在 TUI 里打开 MCP 服务器面板：
+
+- 作为斜杠命令运行 `/mcps`
+- 或者按 `Ctrl+L`（VS Code 系列除外）再切到 MCP Servers 标签页；VS Code 系列请用
+  `/plugins` 或 `/mcp`，然后打开 MCP Servers 标签页
+
+在面板里可以：
+
+- 查看每个服务器的来源、启用状态和工具数量
+- 用 `Space` 启用或停用某个服务器
+- 展开某个服务器，查看它提供哪些工具
+- 改完 `config.toml` 后按 `r` 刷新列表
+- 按 `i` 为需要 OAuth 的服务器完成认证
+- 按 `a` 添加服务器，或用 `x` 删除本地服务器（面板会要求确认；按小写 `y` 确认删除，
+  按其他任意键取消）
+
+### 工具发现
+
+模型有两个内置工具用于操作 MCP 服务器：
+
+- `search_tool` —— 在所有已启用的 MCP 服务器中发现可用的集成工具。按名字或描述查找。
+- `use_tool` —— 调用通过 `search_tool` 发现的集成工具。需要给出完整限定的工具名
+  （例如 `github__create_issue`）。
+
+---
+
+## 兼容性
+
+为了兼容，Grok 会从多个来源加载 MCP 服务器配置：
 
 | 来源 | 格式 | 位置 | 可配置 |
 |--------|--------|----------|-------------|
-| `config.toml` | Native Grok config | `~/.grok/config.toml`, `.grok/config.toml` | 始终开启 |
-| `.claude.json` | Claude Code format | `~/.claude.json` | `[compat.claude] mcps` |
+| `config.toml` | Grok 原生配置 | `~/.chaos/config.toml`、`.chaos/config.toml` | 始终开启 |
+| `.claude.json` | Claude Code 格式 | `~/.claude.json` | `[compat.claude] mcps` |
 | `.cursor/mcp.json` | Cursor 格式 | `~/.cursor/mcp.json`, `<project>/.cursor/mcp.json` | `[compat.cursor] mcps` |
-| `.mcp.json` | MCP standard format | Project root (cwd to git root) | Loaded unless you have imported or dismissed the Claude import prompt (the import marker is set) |
+| `.mcp.json` | MCP 标准格式 | 项目根（cwd 到 git 根） | 除非你已经导入或忽略过 Claude 导入提示（导入标记已写入），否则会加载 |
 
-All sources are merged in priority order: config.toml > Claude > Cursor > `.mcp.json`. Servers from higher-priority sources take precedence when names conflict.
+各来源按优先级合并：config.toml > Claude > Cursor > `.mcp.json`。名字冲突时，优先级高的
+来源胜出。
 
-The Claude and Cursor MCP sources are scanned by default. To disable scanning for a specific vendor, set `[compat.<vendor>] mcps = false` in `~/.grok/config.toml` or the corresponding environment variable (`GROK_CURSOR_MCPS_ENABLED`, `GROK_CLAUDE_MCPS_ENABLED`). See [Configuration](05-configuration.md#harness-compatibility) for details. Use `grok inspect` to see which MCP servers were loaded and their vendor origin (`[cursor]`, `[claude]`).
+Claude 和 Cursor 两个 MCP 来源默认会被扫描。要关掉某个来源，在
+`~/.chaos/config.toml` 里设置 `[compat.<vendor>] mcps = false`，或改用对应的环境变量
+（`GROK_CURSOR_MCPS_ENABLED`、`GROK_CLAUDE_MCPS_ENABLED`）。详见
+[配置](05-configuration.md#harness-compatibility)。用 `chaos inspect` 可以看到加载了哪些
+MCP 服务器以及它们的来源（`[cursor]`、`[claude]`）。
 
 ---
 
 ## MCP OAuth
 
-For MCP servers that require OAuth authentication, Grok handles the credential flow automatically. When an MCP server requests OAuth credentials, Grok opens a browser-based authorization flow and stores the resulting tokens for future use.
+对于需要 OAuth 认证的 MCP 服务器，Grok 会自动处理凭据流程。当 MCP 服务器要求 OAuth
+凭据时，Grok 会打开浏览器授权流程，并把拿到的 token 存下来备用。
 
 ---
 
-## Example Configurations
+## 配置示例
 
-Use the `url` form for hosted MCP servers and the `command` / `args` form for local stdio tools.
+托管的 MCP 服务器用 `url` 形式，本地 stdio 工具用 `command` / `args` 形式。
 
-### Native HTTP (hosted services)
+### 原生 HTTP（托管服务）
 
-You must authenticate OAuth-based MCP servers before you can use them. Grok stores the resulting tokens under `~/.grok/mcp_credentials.json` as local plaintext with owner-only file permissions (`0600` on Unix). Prefer full-disk encryption on the host. After you edit `config.toml`, press `r` in the `/mcps` modal to refresh the server list.
+基于 OAuth 的 MCP 服务器必须先完成认证才能使用。Grok 把拿到的 token 存放在
+`~/.chaos/mcp_credentials.json`，本地明文保存，文件权限仅限属主（Unix 下为 `0600`）。
+建议宿主开启全盘加密。改完 `config.toml` 后，在 `/mcps` 面板里按 `r` 刷新服务器列表。
 
 ```toml
 [mcp_servers.linear]
@@ -269,7 +296,7 @@ url = "https://mcp.mixpanel.com/mcp"
 enabled = true
 ```
 
-For internal or self-hosted servers that authenticate with a static bearer token rather than OAuth, set the `Authorization` header explicitly:
+用静态 bearer token 而不是 OAuth 认证的内部或自建服务器，请显式设置 `Authorization` 头：
 
 ```toml
 [mcp_servers.internal-tools]
@@ -280,7 +307,9 @@ enabled = true
 Authorization = "Bearer <token>"
 ```
 
-To avoid putting secrets in the config file, reference an environment variable with `${VAR}` (or `${VAR:-default}`). Grok expands string fields in `[mcp_servers.*]` — `url`, `command`, `args`, and the values in `env` and `headers` — at load time:
+为了不把密钥写进配置文件，可以用 `${VAR}`（或 `${VAR:-default}`）引用环境变量。加载时
+Grok 会展开 `[mcp_servers.*]` 里的字符串字段——`url`、`command`、`args`，以及 `env` 和
+`headers` 的值：
 
 ```toml
 [mcp_servers.internal-tools]
@@ -289,9 +318,9 @@ enabled = true
 headers = { "Authorization" = "Bearer ${INTERNAL_MCP_TOKEN}" }
 ```
 
-### Local stdio
+### 本地 stdio
 
-Use stdio for tools that must run locally (filesystem access, local databases, in-house servers).
+必须在本地运行的工具（文件系统访问、本地数据库、自建服务）用 stdio。
 
 ```toml
 # Filesystem access scoped to a directory
@@ -313,13 +342,17 @@ tool_timeout_sec = 120
 tool_timeouts = { slow_analysis = 300, quick_lookup = 10 }
 ```
 
-On Windows, npm installs launchers like `npx`, `npm`, `pnpm`, and `yarn` as `.cmd` batch shims (there is no `npx.exe`). Grok resolves a bare `command` such as `npx` to its real launcher path on `PATH` (honoring `PATHEXT`) before spawning, so these work without manually wrapping them in `cmd /c`. A `command` given as an absolute path or one containing a path separator is used as-is.
+在 Windows 上，npm 把 `npx`、`npm`、`pnpm`、`yarn` 这类启动器装成 `.cmd` 批处理垫片
+（并不存在 `npx.exe`）。拉起进程之前，Grok 会把 `npx` 这样光秃秃的 `command` 解析成
+`PATH` 上的真实启动器路径（遵循 `PATHEXT`），所以不必手动用 `cmd /c` 包一层。写成绝对
+路径、或含路径分隔符的 `command` 会按原样使用。
 
 ---
 
-## Available MCP Servers
+## 可用的 MCP 服务器
 
-A partial list of MCP servers you can configure with the `url` or `command` forms shown above. Confirm the current endpoint or package name with each provider before use:
+下面是一份不完整的清单，都可以用上文介绍的 `url` 或 `command` 形式配置。使用前请向各
+服务商确认当前的端点或包名：
 
 | 服务器 | 传输 | 端点 / 包名 |
 |--------|-----------|--------------------|
@@ -334,25 +367,27 @@ A partial list of MCP servers you can configure with the `url` or `command` form
 | SQLite | stdio | `@modelcontextprotocol/server-sqlite` |
 | Puppeteer | stdio | `@modelcontextprotocol/server-puppeteer` |
 
-See the [MCP Server Registry](https://github.com/modelcontextprotocol/servers) for the full list of community servers and the [MCP specification](https://modelcontextprotocol.io) for protocol details.
+完整社区服务器清单见 [MCP Server Registry](https://github.com/modelcontextprotocol/servers)，协议细节见 [MCP specification](https://modelcontextprotocol.io)。
 
 ---
 
-## Subagents and MCP
+## 子代理与 MCP
 
-Subagents inherit the parent session’s connected MCP servers by default, including plugin-sourced agents. Use agent frontmatter `mcpInheritance` to restrict that set (`all`, `none`, `named`, or `except`). Details are in [Subagents — MCP inheritance](16-subagents.md#mcp-inheritance).
+子代理默认继承父会话已连接的 MCP 服务器，插件提供的代理也一样。可以用代理 frontmatter
+里的 `mcpInheritance` 收窄这个集合（`all`、`none`、`named`、`except`）。详见
+[子代理 —— MCP 继承](16-subagents.md#mcp-inheritance)。
 
-If a child lists `search_tool` / `use_tool` but returns an empty catalog, check that:
+如果子代理明明列出了 `search_tool` / `use_tool`，返回的工具目录却是空的，请检查：
 
-1. The parent session actually connected the server (see Extensions / `grok inspect`)
-2. The agent’s `mcpInheritance` is not `none` or a filter that excludes the server
-3. Plugin agents cannot declare their own `mcpServers` in frontmatter — they only see parent-connected servers
+1. 父会话是否真的连上了该服务器（见扩展面板 / `chaos inspect`）
+2. 该代理的 `mcpInheritance` 是否为 `none`，或用了排除该服务器的过滤器
+3. 插件代理不能在 frontmatter 里自行声明 `mcpServers`——它们只能看到父会话已连接的服务器
 
 ---
 
-## Troubleshooting
+## 故障排查
 
-### Server Not Starting
+### 服务器起不来
 
 ```bash
 # Test the server command manually
@@ -364,30 +399,37 @@ npx -y @modelcontextprotocol/server-filesystem /path
 startup_timeout_sec = 30
 ```
 
-For stdio servers, Grok captures the process's standard error to `~/.grok/logs/mcp/<server>.stderr.log`, truncated on each launch. Check this file when a server starts but fails to handshake:
+对 stdio 服务器，Grok 会把进程的标准错误输出抓到
+`~/.chaos/logs/mcp/<server>.stderr.log`，每次启动都截断重写。服务器能起来但握手失败
+时，看这个文件：
 
 ```bash
-tail -f ~/.grok/logs/mcp/filesystem.stderr.log
+tail -f ~/.chaos/logs/mcp/filesystem.stderr.log
 ```
 
-### Blocked by organization policy
+### 被组织策略拦截
 
-If native TOML policy or Claude `managed-settings.json` sets `deniedMcpServers`, a nonempty `allowedMcpServers`, or `allowManagedMcpServersOnly`, Grok drops non-matching servers at merge time and logs `MCP server blocked by managed settings policy`. Native grok layers bind every server; the Claude file binds foreign-defined servers only. `grok inspect` shows the lists, lockdown scope, and each remaining server. Details and examples: [Restrict which MCP servers can run](09-plugins.md#restrict-which-mcp-servers-can-run).
+如果原生 TOML 策略或 Claude `managed-settings.json` 设置了 `deniedMcpServers`、非空的
+`allowedMcpServers`，或 `allowManagedMcpServersOnly`，Grok 会在合并阶段丢弃不匹配的
+服务器，并记录 `MCP server blocked by managed settings policy`。原生 TOML 层会约束每一个
+服务器；Claude 文件只约束由外部定义的服务器。`chaos inspect` 会显示这些名单、锁定范围
+以及每个仍然保留的服务器。细节与示例见
+[限制哪些 MCP 服务器可运行](09-plugins.md#restrict-which-mcp-servers-can-run)。
 
-### Viewing Server Status
+### 查看服务器状态
 
-Use `grok inspect` to see all loaded MCP servers and their sources:
+用 `chaos inspect` 查看所有已加载的 MCP 服务器及其来源：
 
 ```bash
-grok inspect          # Human-readable
-grok inspect --json   # Machine-readable
+chaos inspect          # Human-readable
+chaos inspect --json   # Machine-readable
 ```
 
-### Debug Logging
+### 调试日志
 
 ```bash
-RUST_LOG=debug GROK_LOG_FILE=/tmp/grok.log grok
+RUST_LOG=debug GROK_LOG_FILE=/tmp/grok.log chaos
 tail -f /tmp/grok.log
 ```
 
-Look for log entries containing `mcp` to trace server startup, tool discovery, and tool call execution.
+看日志里含 `mcp` 的条目，可以追踪服务器启动、工具发现和工具调用执行。
