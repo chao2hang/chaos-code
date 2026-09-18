@@ -50,7 +50,7 @@
 
 ## 计划文件
 
-计划写入会话目录内的 `plan.md`（`~/.grok/sessions/<cwd>/<session-id>/plan.md`，其中 `<cwd>` 是编码后的目录名，而非字面路径）。
+计划写入会话目录内的 `plan.md`（`~/.chaos/sessions/<cwd>/<session-id>/plan.md`，其中 `<cwd>` 是编码后的目录名，而非字面路径）。
 
 计划文件包含：
 
