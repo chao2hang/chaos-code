@@ -20,7 +20,7 @@ These knobs are independent of each other (and of this guide's external OTEL str
 | Trace upload | `[telemetry] trace_upload` / `GROK_TELEMETRY_TRACE_UPLOAD` |
 | External OpenTelemetry | `GROK_EXTERNAL_OTEL` / `[telemetry] otel_*` (this guide) |
 
-See also [Authentication](02-authentication.md#related-settings) and
+See also [Authentication](02-authentication.md#相关文档) and
 [Configuration](05-configuration.md#telemetry).
 
 ## External OTEL stream

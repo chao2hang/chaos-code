@@ -1,7 +1,7 @@
 # Chaos 用户指南
 
 > **Chaos** 是本仓库 fork：无需 Grok / xAI 登录，用户自带模型凭证（BYOK）。
-> 认证与模型配置以仓库根 [CHAOS.md](../../../../CHAOS.md) 与
+> 认证与模型配置以仓库根 [CHAOS.md](../../../../../CHAOS.md) 与
 > [Authentication](02-authentication.md) 为准。
 > 部分进阶章节仍沿用上游 Grok Build 结构；路径请按双读规则把 `~/.grok` 理解为
 > 「解析后的配置根」（也可能是 `~/.chaos`），`grok` 命令一律用 `chaos`。

@@ -2,7 +2,7 @@
 
 > **Chaos 分支说明：** 本产品**不使用** Grok / xAI 浏览器登录、OIDC 或订阅门墙。
 > 模型、接口地址与密钥均由用户在配置文件中自带（BYOK）。完整示例见仓库根目录
-> [CHAOS.md](../../../../CHAOS.md)。下文上游 Grok 登录说明已停用。
+> [CHAOS.md](../../../../../CHAOS.md)。下文上游 Grok 登录说明已停用。
 
 ---
 
@@ -10,7 +10,7 @@
 
 Chaos 仅通过 **Provider API Key** 访问模型：
 
-1. 在解析后的用户配置根写入 `config.toml`（顺序见 [CHAOS.md](../../../../CHAOS.md)：
+1. 在解析后的用户配置根写入 `config.toml`（顺序见 [CHAOS.md](../../../../../CHAOS.md)：
    `$CHAOS_HOME` → `$GROK_HOME` → 已有 `~/.chaos` → 已有 `~/.grok` → 默认 `~/.chaos`）。
    配置 `model_providers` 与 `model`。程序**不会**自动复制或覆盖任一侧已有目录。
 2. 密钥优先放在环境变量中（`env_key`），不要写入 Git。
@@ -109,6 +109,6 @@ chaos
 
 ## 相关文档
 
-- 仓库根 [CHAOS.md](../../../../CHAOS.md) — 构建、模型配置、Token 统计、动态上下文裁剪
+- 仓库根 [CHAOS.md](../../../../../CHAOS.md) — 构建、模型配置、Token 统计、动态上下文裁剪
 - [Custom Models](11-custom-models.md) — BYOK / 兼容端点（若仍写 Grok 登录，以本文与 CHAOS.md 为准）
 - [Configuration](05-configuration.md) — `config.toml` 其他项

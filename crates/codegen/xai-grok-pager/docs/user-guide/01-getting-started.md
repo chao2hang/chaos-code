@@ -1,7 +1,7 @@
 # Getting Started
 
 > **Chaos 分支：** 从源码构建的二进制名为 `chaos`（包 `xai-grok-pager-bin`）。
-> 模型凭证由用户自带，无需 Grok 登录。详见仓库根 [CHAOS.md](../../../../CHAOS.md)。
+> 模型凭证由用户自带，无需 Grok 登录。详见仓库根 [CHAOS.md](../../../../../CHAOS.md)。
 
 Chaos 是终端 AI 编码助手。它以全屏 TUI 理解代码库、执行 shell、编辑文件、搜索网页并管理任务；也可无头运行（脚本/CI）或通过 ACP 嵌入编辑器。
 
@@ -38,7 +38,7 @@ for a complete clone. See [grok clone](27-grok-clone.md).
 
 ## 首次启动
 
-1. 按 [Authentication](02-authentication.md) 或 [CHAOS.md](../../../../CHAOS.md)
+1. 按 [Authentication](02-authentication.md) 或 [CHAOS.md](../../../../../CHAOS.md)
    在配置根（`~/.chaos` 或兼容的 `~/.grok`）的 `config.toml` 中配置
    `model_providers` 与 `model`。
 2. 导出密钥环境变量（例如 `OPENAI_API_KEY` 或 `ANTHROPIC_API_KEY`）。

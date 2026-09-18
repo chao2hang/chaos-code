@@ -5,7 +5,7 @@ Chaos 从配置文件、环境变量和 CLI flags 读取设置。本页覆盖常
 > **配置根（user home）：** `$CHAOS_HOME` → `$GROK_HOME` → 已有 `~/.chaos` →
 > 已有 `~/.grok` → 默认新建 `~/.chaos`。下文写 `~/.chaos/...` 时，若你仍在用
 > 兼容目录，请替换为 `~/.grok/...`。项目级同样双读 `.chaos/` 与 `.grok/`。
-> 模型与 Provider 完整示例见 [CHAOS.md](../../../../CHAOS.md)。
+> 模型与 Provider 完整示例见 [CHAOS.md](../../../../../CHAOS.md)。
 
 ---
 
