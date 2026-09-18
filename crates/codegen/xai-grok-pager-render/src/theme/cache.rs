@@ -262,6 +262,9 @@ pub fn reset_for_test() {
     LOADED.store(false, Ordering::Release);
     AUTO_MODE.store(false, Ordering::Relaxed);
     set_terminal_native_lock(false);
+    // Deterministic level regardless of the ambient environment (see
+    // pin_theme).
+    super::color_support::set_level_for_test(super::color_support::ColorLevel::TrueColor);
     *AUTO_THEME_CONFIG.lock().unwrap_or_else(|e| e.into_inner()) = None;
 }
 
@@ -286,9 +289,8 @@ pub fn test_lock() -> &'static Mutex<()> {
 pub fn pin_theme() -> std::sync::MutexGuard<'static, ()> {
     let guard = test_lock().lock().unwrap_or_else(|e| e.into_inner());
     set(ThemeKind::GrokNight);
-    // Color level is a write-once `OnceLock`; tests run without a TTY so it resolves to `TrueColor` anyway
-    // Pin it explicitly (best-effort: ignore the already-initialized `Err`) so the measure path that reads it stays fixed
-    let _ = super::color_support::set(super::color_support::ColorLevel::TrueColor);
+    // Deterministic level regardless of the ambient environment (agent shells export NO_COLOR, which would otherwise win the write-once detection by scheduling)
+    super::color_support::set_level_for_test(super::color_support::ColorLevel::TrueColor);
     guard
 }
 

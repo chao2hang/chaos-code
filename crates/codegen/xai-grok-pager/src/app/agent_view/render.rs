@@ -5242,21 +5242,31 @@ mod status_line_draw_tests {
         );
         buf
     }
+    /// Where `text` starts, if it is on screen.
+    /// The row is walked one glyph at a time: a double-width glyph resets its trailing column to a blank, so a cell-by-cell scan reads `模式` as `模 式` and a label carrying CJK would never match.
     fn find(buf: &Buffer, text: &str) -> Option<(u16, u16)> {
+        use unicode_width::UnicodeWidthStr;
         let area = *buf.area();
         let want: Vec<String> = text.chars().map(String::from).collect();
-        (area.y..area.bottom()).find_map(|y| {
-            (area.x..area.right().saturating_sub(want.len() as u16 - 1))
-                .find(|x| {
-                    want.iter()
-                        .enumerate()
-                        .all(|(i, c)| buf[(x + i as u16, y)].symbol() == c.as_str())
-                })
-                .map(|x| (x, y))
-        })
+        let matches = |y: u16| {
+            let mut glyphs: Vec<(u16, &str)> = Vec::new();
+            let mut x = area.x;
+            while x < area.right() {
+                let Some(symbol) = buf.cell((x, y)).map(|c| c.symbol()) else {
+                    break;
+                };
+                glyphs.push((x, symbol));
+                x += u16::try_from(symbol.width()).unwrap_or(1).max(1);
+            }
+            (0..glyphs.len().saturating_sub(want.len().saturating_sub(1)))
+                .find(|&i| want.iter().enumerate().all(|(k, c)| glyphs[i + k].1 == c.as_str()))
+                .map(|i| (glyphs[i].0, y))
+        };
+        (area.y..area.bottom()).find_map(matches)
     }
     #[test]
     fn script_background_survives_the_pane_fill() {
+        let _guard = crate::theme::cache::pin_theme();
         let buf = draw_script("\x1b[41mRED\x1b[0m", 30);
         let (x, y) = find(&buf, "RED").expect("the script row is on screen");
         assert_eq!(buf[(x, y)].bg, Color::Red);
@@ -5329,7 +5339,7 @@ mod status_line_draw_tests {
             "the panel shrinks by the rows the script asks for, got rows at {present:?}\n{screen}"
         );
         assert!(
-            find(&buf, "Esc:关闭").is_some(),
+            find(&buf, "Esc:返回").is_some(),
             "the shortcuts bar keeps its row\n{screen}"
         );
     }
@@ -5340,7 +5350,7 @@ mod status_line_draw_tests {
         let row_y = find(&buf, ONE_ROW_SCRIPT)
             .map(|(_, y)| y)
             .unwrap_or_else(|| panic!("the panel must leave the single row on screen\n{screen}"));
-        let bar_y = find(&buf, "Esc:关闭")
+        let bar_y = find(&buf, "Esc:返回")
             .map(|(_, y)| y)
             .unwrap_or_else(|| panic!("the shortcuts bar keeps its row\n{screen}"));
         assert_eq!(

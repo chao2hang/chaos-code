@@ -1231,7 +1231,7 @@ mod tests {
 
         let text = render_to_text(&goal);
         assert!(
-            text.contains("进行中 \u{2014} 校验中（2/3）"),
+            text.contains("进行中 \u{00b7} 校验中（2/3）"),
             "status line must show the verifying overlay with counter, got:\n{text}"
         );
         assert!(
@@ -1247,7 +1247,7 @@ mod tests {
 
         let text = render_to_text(&goal);
         assert!(
-            text.contains("进行中 \u{2014} 规划中"),
+            text.contains("进行中 \u{00b7} 规划中"),
             "status line must show the planning overlay, got:\n{text}"
         );
     }
@@ -1267,7 +1267,7 @@ mod tests {
             "verifying overlay must win over planning, got:\n{text}"
         );
         assert!(
-            !text.contains("\u{2014} 规划中"),
+            !text.contains("\u{00b7} 规划中"),
             "planning must not render when verifying is also set, got:\n{text}"
         );
     }
@@ -1280,7 +1280,7 @@ mod tests {
 
         let text = render_to_text(&goal);
         assert!(
-            text.contains("进行中 \u{2014} 执行中"),
+            text.contains("进行中 \u{00b7} 执行中"),
             "steady-state status line must show Executing, got:\n{text}"
         );
     }

@@ -522,7 +522,9 @@ mod tests {
     /// making colour-equality filters match ALL spans.  Force truecolour so
     /// `accent_skill` and `text_primary` keep their distinct RGB values.
     fn ensure_truecolor() {
-        crate::theme::color_support::set_test_force_truecolor(true);
+        crate::theme::color_support::set_level_for_test(
+            crate::theme::color_support::ColorLevel::TrueColor,
+        );
     }
 
     #[test]

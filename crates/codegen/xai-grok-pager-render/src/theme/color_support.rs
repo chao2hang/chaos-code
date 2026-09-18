@@ -58,37 +58,32 @@ impl std::fmt::Display for ColorLevel {
 
 static COLOR_LEVEL: OnceLock<ColorLevel> = OnceLock::new();
 
-/// Test-only override that forces [`detect`] to return [`ColorLevel::TrueColor`]
-/// regardless of `NO_COLOR` or TTY status.  This is needed because the CI test
-/// runner sets `NO_COLOR=1`, which quantizes every theme colour to `Color::Reset`,
-/// making colour-equality assertions in downstream tests meaningless (all
-/// colours compare equal).  Set to `true` from test setup helpers.
-#[cfg(feature = "test-support")]
-static TEST_FORCE_TRUECOLOR: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
+/// Test override before the write-once `OnceLock`. Ambient `NO_COLOR` would otherwise win by scheduling luck. `u8::MAX` means unset.
+#[cfg(any(test, feature = "test-support"))]
+static TEST_LEVEL_OVERRIDE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(u8::MAX);
 
-/// Force the detected colour level to [`ColorLevel::TrueColor`] for the
-/// remainder of the process.  Test-only — allows downstream tests to assert
-/// specific theme colours even when `NO_COLOR=1` is set in the environment.
-///
-/// **Process-level pinning.** Once set to `true`, every call to `detect()`
-/// in this process returns `TrueColor`.  There is no teardown because
-/// CI always sets `NO_COLOR=1`, so every test in the same binary benefits
-/// from truecolour mode.  If you need the real colour level in a specific
-/// test, call `detect_raw()` directly before this function is first called.
-#[cfg(feature = "test-support")]
-pub fn set_test_force_truecolor(on: bool) {
-    TEST_FORCE_TRUECOLOR.store(on, std::sync::atomic::Ordering::SeqCst);
+/// Pin the detected color level for the test process (see
+/// [`TEST_LEVEL_OVERRIDE`]). The terminal-native lock cap still applies on
+/// top, so minimal-mode tests keep their Basic cap.
+#[cfg(any(test, feature = "test-support"))]
+pub fn set_level_for_test(level: ColorLevel) {
+    TEST_LEVEL_OVERRIDE.store(level as u8, std::sync::atomic::Ordering::Relaxed);
 }
 
-/// Detect the terminal's color support and cache the result.
-///
-/// The `supports-color` crate checks `COLORTERM`, `TERM`, terminal-specific env vars (`ITERM_SESSION_ID`, etc.) and whether stdout is a TTY.
-///
-/// If `NO_COLOR` is set the result is [`ColorLevel::None`].
-/// If stdout is not a TTY (test runner, piped output) and `NO_COLOR` is absent, the result defaults to [`ColorLevel::TrueColor`].
-/// That is the safe assumption for a TUI app that always runs inside a terminal.
-///
+#[cfg(any(test, feature = "test-support"))]
+fn test_level_override() -> Option<ColorLevel> {
+    let v = TEST_LEVEL_OVERRIDE.load(std::sync::atomic::Ordering::Relaxed);
+    [
+        ColorLevel::None,
+        ColorLevel::Basic,
+        ColorLevel::Ansi256,
+        ColorLevel::TrueColor,
+    ]
+    .into_iter()
+    .find(|l| *l as u8 == v)
+}
+
+/// `NO_COLOR` forces [`ColorLevel::None`]. Non-TTY without it defaults to TrueColor (a TUI always runs in a terminal).
 /// Capped at [`ColorLevel::Basic`] while the terminal-native lock is engaged.
 pub fn detect() -> ColorLevel {
     let raw = detect_raw();
@@ -100,11 +95,9 @@ pub fn detect() -> ColorLevel {
 
 /// The raw cached detection, without the terminal-native lock cap.
 fn detect_raw() -> ColorLevel {
-    #[cfg(feature = "test-support")]
-    {
-        if TEST_FORCE_TRUECOLOR.load(std::sync::atomic::Ordering::SeqCst) {
-            return ColorLevel::TrueColor;
-        }
+    #[cfg(any(test, feature = "test-support"))]
+    if let Some(level) = test_level_override() {
+        return level;
     }
     *COLOR_LEVEL.get_or_init(|| {
         // Explicit opt-out via NO_COLOR takes priority.
