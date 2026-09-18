@@ -1,22 +1,22 @@
-# Agent mode (ACP) and IDE integration
+# 代理模式（ACP）与编辑器集成
 
-Agent mode runs Grok as a long-lived server that clients talk to over [ACP](https://agentclientprotocol.com) (JSON-RPC). Use it from IDEs, SDKs, eval harnesses, and custom apps. For a one-shot prompt that prints and exits, use `grok -p` instead ([headless mode](14-headless-mode.md)).
+代理模式把 Chaos 作为长期运行的服务器启动，客户端通过 [ACP](https://agentclientprotocol.com)（JSON-RPC）与它通信。IDE、SDK、评测框架和自定义应用都能接入。若只要发一次提示、打印结果后退出，请改用 `chaos -p`（[无头模式](14-headless-mode.md)）。
 
 ---
 
-## Automation and SDKs
+## 自动化与 SDK
 
-For scripts, CI, evals, and agent servers, start with always-approve so tools run without interactive permission prompts. Deny rules and hooks still apply.
+脚本、CI、评测和代理服务器请从始终批准模式起步，这样工具运行时不会弹出交互式权限提示。拒绝规则与钩子仍然生效。
 
 ```bash
 # stdio (local process / many SDKs)
-grok agent --always-approve stdio
+chaos agent --always-approve stdio
 
 # WebSocket server
-grok agent --always-approve serve --bind 127.0.0.1:2419 --secret <token>
+chaos agent --always-approve serve --bind 127.0.0.1:2419 --secret <token>
 ```
 
-You can also set always-approve per session on `session/new`:
+也可以在 `session/new` 上按会话开启始终批准：
 
 ```json
 {
@@ -26,84 +26,84 @@ You can also set always-approve per session on `session/new`:
 }
 ```
 
-Interactive TUI users typically leave the default ask mode (or use auto). See [Permissions and safety](22-permissions-and-safety.md).
+交互式 TUI 用户通常保持默认的询问模式（或改用自动模式）。详见[权限与安全](22-permissions-and-safety.md)。
 
 ---
 
-## What is ACP?
+## 什么是 ACP？
 
-The [Agent Client Protocol (ACP)](https://agentclientprotocol.com) defines how clients talk to coding agents over JSON-RPC. With Grok it covers:
+[Agent Client Protocol（ACP）](https://agentclientprotocol.com)规定了客户端如何通过 JSON-RPC 与编码代理通信。Chaos 覆盖的部分包括：
 
-- Sessions (create, load, resume)
-- Prompts and streamed replies
-- Tool call updates
-- Reasoning / thought streams
-- Permission prompts when the session is not always-approve
+- 会话（创建、加载、恢复）
+- 提示与流式回复
+- 工具调用更新
+- 推理 / 思考流
+- 会话未开启始终批准时的权限提示
 
 ---
 
-## stdio transport
+## stdio 传输
 
-stdio is the common local integration path. The agent speaks JSON-RPC on stdin and stdout:
+stdio 是最常见的本地集成方式。代理在 stdin 与 stdout 上传输 JSON-RPC：
 
 ```bash
-grok agent --always-approve stdio
+chaos agent --always-approve stdio
 ```
 
-Typical clients: IDE extensions (Zed, Neovim, Emacs), custom tools, and ACP SDKs.
+典型客户端是 IDE 扩展（Zed、Neovim、Emacs）、自定义工具和 ACP SDK。
 
-### Options
+### 选项
 
-Agent options apply to every transport (`stdio`, `serve`, `headless`, `leader`). They go after `agent` and before the mode name. Mode-specific flags go after the mode (for example `serve --bind`).
+代理选项对每种传输都适用（`stdio`、`serve`、`headless`、`leader`）。它们写在 `agent` 之后、模式名之前。模式专属的标志写在模式之后（例如 `serve --bind`）。
 
 ```bash
-grok agent --always-approve --model grok-4.6 stdio
-grok agent --always-approve serve --bind 127.0.0.1:2419 --secret <token>
+chaos agent --always-approve --model grok-4.6 stdio
+chaos agent --always-approve serve --bind 127.0.0.1:2419 --secret <token>
 ```
 
 | 标志 | 说明 |
 | ---- | ----------- |
-| `-m, --model <MODEL>` | Model ID (for example `grok-4.6`). |
-| `--always-approve` | Run without interactive tool-permission prompts. Alias: `--yolo`. |
-| `--reauth` | Authenticate before the agent starts. |
-| `--agent-profile <PATH>` | Load an agent profile from a file. |
-| `--leader` / `--no-leader` | Connect to a shared leader process, or force a local agent. When a non-`off` sandbox profile is requested, leader mode is refused so tools stay in-process (see [Sandbox Mode](18-sandbox.md)). |
+| `-m, --model <MODEL>` | 模型 ID（例如 `grok-4.6`）。 |
+| `--always-approve` | 运行时不再弹出交互式工具权限提示。别名：`--yolo`。 |
+| `--reauth` | 在代理启动前完成认证。 |
+| `--agent-profile <PATH>` | 从文件加载代理配置档。 |
+| `--leader` / `--no-leader` | 连接共享的 leader 进程，或强制使用本地代理。请求非 `off` 的沙箱配置档时会拒绝 leader 模式，好让工具留在进程内（见[沙箱模式](18-sandbox.md)）。 |
 
 ---
 
-## Server mode
+## 服务器模式
 
 ```bash
-grok agent --always-approve serve --bind 127.0.0.1:2419 --secret <token>
+chaos agent --always-approve serve --bind 127.0.0.1:2419 --secret <token>
 ```
 
-Clients connect over WebSocket and authenticate with the secret token. If you omit `--secret`, the agent prints a generated token at startup, or set `GROK_AGENT_SECRET`. The process keeps state across client reconnects. Permissions match other entry points; see [Permissions and safety](22-permissions-and-safety.md).
+客户端通过 WebSocket 连接，并用密钥 token 认证。省略 `--secret` 时，代理会在启动时打印一个生成的 token；也可以设置 `GROK_AGENT_SECRET`。进程在客户端重连之间保持状态。权限与其他入口一致，详见[权限与安全](22-permissions-and-safety.md)。
 
-This is a server you run yourself — Grok's hosted cloud sandboxes do not run `grok agent serve`.
+这个服务器由你自己运行——`chaos agent serve` 由你启动，不依赖托管服务。
 
 ---
 
-## WebSocket relay
+## WebSocket 中继
 
-To reach the agent over the internet, connect the agent to a relay and point browsers at the same relay:
+要让代理可以从公网访问，请把代理接到中继上，并让浏览器指向同一个中继：
 
 ```bash
-grok agent --always-approve headless --grok-ws-url wss://your-relay.example.com/ws
+chaos agent --always-approve headless --grok-ws-url wss://your-relay.example.com/ws
 ```
 
 ---
 
-## ACP protocol basics
+## ACP 协议基础
 
-Communication follows the JSON-RPC 2.0 format. A typical session lifecycle:
+通信遵循 JSON-RPC 2.0 格式。一次典型会话的生命周期：
 
-1. **Initialize** -- client sends `initialize` with capabilities
-2. **Create session** -- client sends `session/new` with working directory
-3. **Send prompts** -- client sends `session/prompt` with user messages
-4. **Receive updates** -- agent sends `session/update` notifications with streamed content
-5. **Handle permissions** -- agent may request tool execution approval (or allow or deny based on permission mode)
+1. **初始化** —— 客户端发送 `initialize`，携带自身能力
+2. **创建会话** —— 客户端发送 `session/new`，携带工作目录
+3. **发送提示** —— 客户端发送 `session/prompt`，携带用户消息
+4. **接收更新** —— 代理发送 `session/update` 通知，携带流式内容
+5. **处理权限** —— 代理可能请求工具执行授权（也可按权限模式直接允许或拒绝）
 
-### Architecture
+### 架构
 
 ```
 +------------------------------------------+
@@ -112,7 +112,7 @@ Communication follows the JSON-RPC 2.0 format. A typical session lifecycle:
 +-------------------+----------------------+
                     | JSON-RPC over stdio
 +-------------------v----------------------+
-|           grok agent stdio               |
+|           chaos agent stdio              |
 |                                          |
 |  +---------+  +---------+  +---------+   |
 |  | Session |  |  Tools  |  |   MCP   |   |
@@ -123,25 +123,25 @@ Communication follows the JSON-RPC 2.0 format. A typical session lifecycle:
 
 ---
 
-## Streaming updates
+## 流式更新
 
-ACP streams structured events. Each `session/update` notification carries a `sessionUpdate` field that identifies the update type:
+ACP 以流的方式发送结构化事件。每条 `session/update` 通知都带一个 `sessionUpdate` 字段，标明更新类型：
 
 | `sessionUpdate` 的取值 | 说明                                            |
 | --------------------- | ----------------------------------------------------- |
-| `agent_message_chunk` | A chunk of the agent's response text.                 |
-| `agent_thought_chunk` | A chunk of the agent's internal reasoning.            |
-| `tool_call`           | A new tool invocation (title, kind, status, input).   |
-| `tool_call_update`    | A status or result update for an in-flight tool call. |
-| `plan`                | The agent's execution plan.                           |
+| `agent_message_chunk` | 代理回复文本中的一个片段。 |
+| `agent_thought_chunk` | 代理内部推理中的一个片段。 |
+| `tool_call`           | 一次新的工具调用（标题、类型、状态、输入）。 |
+| `tool_call_update`    | 对进行中的工具调用的状态或结果更新。 |
+| `plan`                | 代理的执行计划。 |
 
-Each update names its type, so a client can render distinct panels for reasoning, tool calls, and response text.
+每条更新都自带类型，客户端可以据此为推理、工具调用和回复文本分别渲染不同的面板。
 
 ---
 
-## Extension methods
+## 扩展方法
 
-Beyond the base ACP protocol, Grok defines extension methods under the `x.ai/` prefix for SpaceXAI-specific functionality. These cover:
+在基础 ACP 协议之外，Chaos 还在 `x.ai/` 前缀下定义了一批扩展方法，用于自身专有的功能。其中包括：
 
 | 类别                   | 前缀               | 示例                                         |
 | -------------------------- | -------------------- | ------------------------------------------------ |
@@ -155,32 +155,32 @@ Beyond the base ACP protocol, Grok defines extension methods under the `x.ai/` p
 | **认证**         | `x.ai/auth/*`        | `get_url`, `submit_code`                         |
 | **反馈与遥测**   | `x.ai/*`             | `feedback`, `telemetry/*`                        |
 
-The tables here show representative methods in each category. The `x.ai/*` set is SpaceXAI-specific and may expand across releases, so treat it as non-exhaustive and discover the available methods from the agent's `initialize` response.
+下面的表只列出各类别中有代表性的方法。`x.ai/*` 这套方法是 Chaos 专有的，会随版本增加，所以不要当成完整清单；可用方法请从代理的 `initialize` 响应里发现。
 
-### Notifications (agent to client)
+### 通知（代理 → 客户端）
 
-The agent sends push notifications to clients for real-time updates:
+代理会向客户端推送通知，用于实时更新：
 
 | 通知               | 说明                          |
 | -------------------------- | ------------------------------------ |
-| `x.ai/search/fuzzy/status` | Fuzzy search results update          |
-| `x.ai/git/worktree/status` | Worktree creation progress           |
-| `x.ai/fs_notify`           | Filesystem change notification       |
-| `x.ai/fs/index`            | Full file index update               |
-| `x.ai/fs/index/delta`      | Incremental file index update        |
-| `x.ai/session_notification`| Session-specific updates (diff review, retry state, auto-compact) |
-| `x.ai/session/update`      | Session update (tool calls, content) |
+| `x.ai/search/fuzzy/status` | 模糊搜索结果更新 |
+| `x.ai/git/worktree/status` | 工作树创建进度 |
+| `x.ai/fs_notify`           | 文件系统变更通知 |
+| `x.ai/fs/index`            | 完整文件索引更新 |
+| `x.ai/fs/index/delta`      | 增量文件索引更新 |
+| `x.ai/session_notification`| 会话级更新（diff 审阅、重试状态、自动压缩） |
+| `x.ai/session/update`      | 会话更新（工具调用、内容） |
 
 ---
 
-## Session config options
+## 会话配置选项
 
-`session/new` and `session/load` responses include a typed `configOptions` list (standard ACP, not an `x.ai/` extension). Change a live option with `session/set_config_option`.
+`session/new` 与 `session/load` 的响应里带一个带类型的 `configOptions` 列表（这是标准 ACP，不是 `x.ai/` 扩展）。改运行中的选项用 `session/set_config_option`。
 
 | `configId` | 类别 | 效果 |
 |------------|----------|--------|
-| `model` | `model` | Switches the session model (`allowed_models`, chat gateway routing). Value must be a string id. |
-| `reasoning_effort` | `thought_level` | Applies effort to the current model without changing the model (no prompt rewrite, no `allowed_models` gate). Value must be a string id (`minimal`, `low`, `medium`, `high`, `xhigh`). Dropped with a warning when the model does not advertise `supportsReasoningEffort`. |
+| `model` | `model` | 切换会话所用的模型（`allowed_models`、chat gateway 路由）。值必须是字符串 id。 |
+| `reasoning_effort` | `thought_level` | 在不换模型的前提下给当前模型施加推理强度（不重写提示、不过 `allowed_models` 门）。值必须是字符串 id（`minimal`、`low`、`medium`、`high`、`xhigh`）。当模型没有声明 `supportsReasoningEffort` 时，该值会被丢弃并给出警告。 |
 
 ```json
 {
@@ -190,21 +190,21 @@ The agent sends push notifications to clients for real-time updates:
 }
 ```
 
-The response is the **complete, updated** option list. A `config_option_update` session notification mirrors it to every subscribed client. In leader mode the proxy snoops `configId: model` so each client's `default_model` stays in sync. Boolean values are rejected; exposing boolean options is not implemented yet.
+响应是**完整且已更新**的选项列表。`config_option_update` 会话通知会把它同步给每个已订阅的客户端。leader 模式下，代理会旁听 `configId: model`，让各客户端的 `default_model` 保持同步。布尔值会被拒绝；暴露布尔型选项尚未实现。
 
 ---
 
-## Session `_meta` options
+## 会话 `_meta` 选项
 
-Optional fields on `session/new`:
+`session/new` 上的可选字段：
 
 | 字段 | 说明 |
 | ----- | ----------- |
-| `rules` | Extra rules appended to the system prompt. |
-| `systemPromptOverride` | Replacement system prompt. |
-| `agentProfile` | Agent profile name or JSON object. |
-| `yoloMode` | When `true`, always-approve for this session. |
-| `autoMode` | When `true`, auto permission mode for this session. Superseded when always-approve is already on. |
+| `rules` | 追加到系统提示之后的额外规则。 |
+| `systemPromptOverride` | 替换掉系统提示。 |
+| `agentProfile` | 代理配置档的名称或 JSON 对象。 |
+| `yoloMode` | 为 `true` 时，本会话开启始终批准。 |
+| `autoMode` | 为 `true` 时，本会话使用自动权限模式。已开启始终批准时本项被取代。 |
 
 ```json
 {
@@ -216,9 +216,9 @@ Optional fields on `session/new`:
 
 ---
 
-## ACP SDKs
+## ACP SDK
 
-Official SDK libraries are available for multiple languages:
+官方为多种语言提供了 SDK 库：
 
 | 语言   | 包                                                                                  |
 | ---------- | ---------------------------------------------------------------------------------------- |
@@ -230,19 +230,19 @@ Official SDK libraries are available for multiple languages:
 
 ---
 
-## Compatible clients
+## 兼容的客户端
 
 | 客户端                                                   | 状态      |
 | -------------------------------------------------------- | ----------- |
 | [Zed](https://zed.dev/docs/ai/external-agents)           | 支持   |
-| [Neovim](https://neovim.io) (CodeCompanion, avante.nvim) | 支持   |
+| [Neovim](https://neovim.io)（插件 CodeCompanion、avante.nvim） | 支持   |
 | [Emacs](https://github.com/xenodium/agent-shell)         | 支持   |
 | [marimo notebook](https://github.com/marimo-team/marimo) | 支持   |
 | JetBrains                                                | 即将支持 |
 
 ---
 
-## Integration example: a TypeScript ACP client
+## 集成示例：一个 TypeScript ACP 客户端
 
 ```typescript
 import { spawn, ChildProcess } from "child_process";
@@ -256,7 +256,7 @@ class GrokACPChat {
   constructor(private cwd = ".") {}
 
   async init() {
-    this.proc = spawn("grok", ["agent", "--always-approve", "stdio"]);
+    this.proc = spawn("chaos", ["agent", "--always-approve", "stdio"]);
     this.rl = readline.createInterface({ input: this.proc.stdout! });
 
     await this.request("initialize", {
@@ -332,7 +332,7 @@ for await (const update of client.streamPrompt("List the files in this project")
 
 ---
 
-## Resources
+## 相关资源
 
 - [ACP Specification](https://agentclientprotocol.com/protocol/prompt-turn)
 - [Protocol Introduction](https://agentclientprotocol.com/overview/introduction)
