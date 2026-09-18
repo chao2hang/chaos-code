@@ -10,13 +10,13 @@
 
 Chaos 仅通过 **Provider API Key** 访问模型：
 
-1. 在解析后的用户配置根写入 `config.toml`（顺序见 [CHAOS.md](../../../../../CHAOS.md)：
+1. 在解析后的用户配置根写入 `config.toml`（兼容解析顺序见 [CHAOS.md](../../../../../CHAOS.md)：
    `$CHAOS_HOME` → `$GROK_HOME` → 已有 `~/.chaos` → 已有 `~/.grok` → 默认 `~/.chaos`）。
    配置 `model_providers` 与 `model`。程序**不会**自动复制或覆盖任一侧已有目录。
 2. 密钥优先放在环境变量中（`env_key`），不要写入 Git。
 3. 使用 `/provider` 在 TUI 中管理 Provider 列表、密钥与默认模型。
 
-Chaos **不提供**可用的 `/login`、`/logout` 或浏览器 OAuth 流程。若仍看到历史登录相关入口，应改为配置 Provider。
+Chaos 不提供浏览器 OAuth 流程。`/login` 与 `/logout` 仍在命令表中，但都是本分叉的**兼容桩**：`/login` 从不启动浏览器 OIDC，而是直接打开 `/provider` 面板；`/logout` 只打印一条提示，让你去改 `config.toml`。认证请走 Provider 配置。
 
 ---
 
@@ -101,9 +101,9 @@ chaos
 | OIDC / 企业 SSO | 支持 | 不支持 |
 | `XAI_API_KEY` / xAI 会话 | 支持 | 不作为产品路径 |
 | 用户自带 Provider | 有限 | **唯一**认证路径 |
-| `/login` `/logout` | 产品命令 | 未注册；请用 `/provider` |
+| `/login` `/logout` | 产品命令 | 保留为兼容桩：`/login` 打开 `/provider`，`/logout` 只提示改配置 |
 
-历史路径 `~/.grok/auth.json` 与 OIDC 配置与 Chaos 无关；请勿依赖。
+历史路径 `~/.grok/auth.json` 与 OIDC 配置属上游兼容遗留，与 Chaos 无关；请勿依赖。
 
 ---
 
