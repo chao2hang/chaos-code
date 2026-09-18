@@ -1,4 +1,4 @@
-# Getting Started
+# 快速上手
 
 > **Chaos 分支：** 从源码构建的二进制名为 `chaos`（包 `xai-grok-pager-bin`）。
 > 模型凭证由用户自带，无需 Grok 登录。详见仓库根 [CHAOS.md](../../../../../CHAOS.md)。
@@ -28,7 +28,7 @@ cargo run -p xai-grok-pager-bin
 
 ## 首次启动
 
-1. 按 [Authentication](02-authentication.md) 或 [CHAOS.md](../../../../../CHAOS.md)
+1. 按 [认证](02-authentication.md) 或 [CHAOS.md](../../../../../CHAOS.md)
    在配置根（`~/.chaos` 或兼容的 `~/.grok`）的 `config.toml` 中配置
    `model_providers` 与 `model`。
 2. 导出密钥环境变量（例如 `OPENAI_API_KEY` 或 `ANTHROPIC_API_KEY`）。
@@ -51,11 +51,11 @@ Chaos **不会**打开浏览器登录 grok.com。缺少凭证时，欢迎页会�
 
 输入消息后按 `Enter` 发送。助手会按需读文件、跑命令、改代码；工具输出实时进入回滚区。
 
-Press `Tab` to move focus between the prompt and the scrollback. While a turn is running, `Ctrl+C` cancels it once the composer is empty — with a draft, the first press only clears it. `Esc` never cancels a turn; mid-turn it shows a reminder to use `Ctrl+C`. Idle, press `Esc` twice within 800ms to clear a non-empty prompt, or (with an empty prompt and conversation messages) to open rewind — see [Keyboard Shortcuts](03-keyboard-shortcuts.md#escape). With the scrollback focused, use the arrow keys to select entries and to collapse or expand them. To navigate with `j`/`k` and fold with `h`/`l` instead, enable Vim mode.
+按 `Tab` 可在提示框与回滚区之间切换焦点。回合运行期间，输入框为空时 `Ctrl+C` 会取消该回合；若输入框里还有草稿，第一次按下只会清空草稿。`Esc` 从不取消回合——回合进行中按下它只会提示你改用 `Ctrl+C`。空闲时，800ms 内连按两次 `Esc` 可清空非空的提示框；若提示框为空且已有对话消息，则会打开回滚——见[键盘快捷键](03-keyboard-shortcuts.md#escape)。回滚区获得焦点后，可用方向键选中条目并折叠或展开它们。若想改用 `j`/`k` 导航、`h`/`l` 折叠，请启用 Vim 模式。
 
-### File References
+### 文件引用
 
-Use `@` in your prompt to attach files:
+在提示框中用 `@` 附加文件：
 
 ```
 @src/main.rs              # Attach a file
@@ -63,14 +63,14 @@ Use `@` in your prompt to attach files:
 @src/                     # Browse a directory
 ```
 
-The `@` operator opens a fuzzy file picker. By default it respects `.gitignore` and hides dotfiles. Prefix with `!` to search hidden files:
+`@` 会打开模糊文件选择器。默认遵循 `.gitignore` 并隐藏点文件；加上前缀 `!` 可搜索隐藏文件：
 
 ```
 @!.github                 # Search hidden files
 @!.env                    # Attach a .env file
 ```
 
-### Permissions
+### 权限
 
 默认情况下，Chaos 在执行 shell 或编辑文件前会请求确认。可单次批准，或开启始终批准：
 
@@ -80,48 +80,48 @@ The `@` operator opens a fuzzy file picker. By default it respects `.gitignore` 
 
 ---
 
-## Key Concepts
+## 核心概念
 
-### Sessions
+### 会话
 
-Every conversation is a **session**. Sessions are automatically saved to `~/.grok/sessions/` and can be resumed later. Each session tracks the full conversation history, tool calls, file edits, and task state.
+每段对话都是一个**会话（session）**。会话会自动保存到 `~/.chaos/sessions/`，之后可以恢复。每个会话都会记录完整的对话历史、工具调用、文件编辑和任务状态。
 
-- Start a new session: `Ctrl+N` or `/new`
-- Resume a previous session: `/resume` in the TUI, or `--resume <ID>` from the CLI
-- Continue the most recent session: `grok -c`
+- 新建会话：`Ctrl+N` 或 `/new`
+- 恢复已有会话：TUI 里用 `/resume`，或从命令行用 `--resume <ID>`
+- 继续最近的会话：`chaos -c`
 
-### Scrollback
+### 回滚区
 
-The scrollback is the main display area. It shows:
+回滚区是主显示区域，其中显示：
 
-- **User prompts** -- your messages, rendered as sticky headers
-- **Agent messages** -- Grok's responses with full markdown rendering and syntax highlighting
-- **Thinking blocks** -- Grok's reasoning process (collapsible)
-- **Tool calls** -- file edits (with inline diffs), command executions, search results, and more
-- **Task lists** -- TODO items tracking progress
+- **用户提示** —— 你的消息，以吸顶标题的形式呈现
+- **代理消息** —— Chaos 的回复，带完整的 Markdown 渲染与语法高亮
+- **思考块** —— Chaos 的推理过程（可折叠）
+- **工具调用** —— 文件编辑（含内联 diff）、命令执行、搜索结果等
+- **任务列表** —— 跟踪进度的 TODO 项
 
-Collapse or expand the selected entry with the `Left`/`Right` arrow keys (or `h`/`l` and `e` in Vim mode). In Vim mode, press `y` to copy its content and `Y` to copy its metadata (for example, the command that ran). Press `Enter` to open it in the fullscreen viewer (in any mode).
+用 `Left`/`Right` 方向键折叠或展开选中的条目（Vim 模式下则是 `h`/`l` 与 `e`）。Vim 模式下，按 `y` 复制其内容，按 `Y` 复制其元数据（例如所执行的命令）。按 `Enter` 可在全屏查看器中打开该条目（任何模式下都可用）。
 
-### Tools
+### 工具
 
-Grok has built-in tools for:
+Chaos 内置以下工具：
 
 | 工具 | 说明 |
 |------|-------------|
-| `read_file` / `search_replace` | Read and edit files with line-precise changes |
-| `grep` | Regex search across your codebase (powered by ripgrep) |
-| `list_dir` | List directory contents |
-| `run_terminal_command` | Execute shell commands |
-| `web_search` / `web_fetch` | Search the web and fetch URLs |
-| `todo_write` | Create and manage task lists |
-| `spawn_subagent` | Spawn parallel subagent sessions |
-| `memory_search` | Search cross-session memory |
+| `read_file` / `search_replace` | 读取并编辑文件，改动精确到行 |
+| `grep` | 在整个代码库中做正则搜索（由 ripgrep 驱动） |
+| `list_dir` | 列出目录内容 |
+| `run_terminal_command` | 执行 shell 命令 |
+| `web_search` / `web_fetch` | 搜索网页并抓取 URL |
+| `todo_write` | 创建和管理任务列表 |
+| `spawn_subagent` | 派生并行的子代理会话 |
+| `memory_search` | 搜索跨会话记忆 |
 
-Tools can be extended with [MCP servers](05-configuration.md#mcp-servers) for integrations like GitHub, databases, and more.
+工具可以通过 [MCP 服务器](05-configuration.md#mcp-servers)扩展，以接入 GitHub、数据库等集成。
 
-### Slash Commands
+### 斜杠命令
 
-Type `/` in the prompt to access commands. These provide quick actions without writing a full prompt:
+在提示框中输入 `/` 即可访问命令。它们提供快捷操作，无需写完整提示：
 
 ```
 /model grok-4.6                 # Switch model
@@ -130,99 +130,99 @@ Type `/` in the prompt to access commands. These provide quick actions without w
 /new                              # Start a new session
 ```
 
-See [Slash Commands](04-slash-commands.md) for the complete reference.
+完整清单见[斜杠命令](04-slash-commands.md)。
 
 ---
 
-## Common Launch Options
+## 常用启动选项
 
 ```bash
 # Launch the interactive TUI and submit an initial prompt as the first turn
-grok "fix the failing auth test and run it"
+chaos "fix the failing auth test and run it"
 
 # Initial prompt in a new git worktree. Use --worktree=<name> (with `=`) so the
-# prompt isn't swallowed as the worktree name — `grok -w "refactor module X"`
+# prompt isn't swallowed as the worktree name — `chaos -w "refactor module X"`
 # would treat "refactor module X" as the worktree label, not the prompt.
-grok --worktree=feat "refactor module X"
+chaos --worktree=feat "refactor module X"
 
 # Base the worktree on a specific branch (e.g. main) instead of the current HEAD:
-grok -w --ref main "implement feature from main"
+chaos -w --ref main "implement feature from main"
 
 
 # Start in a specific project directory
-grok --cwd ~/projects/my-app
+chaos --cwd ~/projects/my-app
 
 # Add project-specific rules
-grok --rules "Always use TypeScript. Prefer functional components."
+chaos --rules "Always use TypeScript. Prefer functional components."
 
 # Auto-approve all tool executions
-grok --yolo
+chaos --yolo
 
 # Use a specific model
-grok -m grok-4.6
+chaos -m grok-4.6
 
 # Resume a previous session
-grok --resume <session-id>
+chaos --resume <session-id>
 
 # Continue the most recent session
-grok -c
+chaos -c
 
-# Experimental scrollback-native render mode. Sticky: plain `grok` reopens in
+# Experimental scrollback-native render mode. Sticky: plain `chaos` reopens in
 # the mode last chosen via --minimal/--fullscreen (or /minimal//fullscreen).
-grok --minimal
+chaos --minimal
 
 # Back to the standard fullscreen TUI (and make it sticky again)
-grok --fullscreen
+chaos --fullscreen
 
 # Headless mode (for scripts)
-grok -p "Explain this codebase"
+chaos -p "Explain this codebase"
 ```
 
 ---
 
-## Headless Mode
+## 无头模式
 
-Run Grok non-interactively for scripting, CI/CD, and automation:
+以非交互方式运行 Chaos，用于脚本、CI/CD 和自动化：
 
 ```bash
-grok -p "Your prompt here"
+chaos -p "Your prompt here"
 ```
 
-Output formats:
+输出格式：
 
 | 格式 | 标志 | 说明 |
 |--------|------|-------------|
 | `plain` | （默认） | 人类可读文本 |
-| `json` | `--output-format json` | Single JSON object with `text`, `stopReason`, `sessionId`, and `requestId` |
-| `streaming-json` | `--output-format streaming-json` | NDJSON event stream for real-time processing |
+| `json` | `--output-format json` | 单个 JSON 对象，包含 `text`、`stopReason`、`sessionId` 和 `requestId` |
+| `streaming-json` | `--output-format streaming-json` | 用于实时处理的 NDJSON 事件流 |
 
-Example CI/CD usage:
+CI/CD 用法示例：
 
 ```bash
-grok -p "Review changes for bugs" --output-format json --yolo | jq -r '.text'
+chaos -p "Review changes for bugs" --output-format json --yolo | jq -r '.text'
 ```
 
 ---
 
-## Project Rules (AGENTS.md)
+## 项目规则（AGENTS.md）
 
-Add per-project instructions by creating an `AGENTS.md` file in your repository. Grok reads these files and injects their contents as a project-instructions message at the start of the conversation:
+在仓库中放置 `AGENTS.md` 文件即可添加按项目生效的指令。Chaos 会读取这些文件，并在对话开始时把其中的内容作为一条项目指令消息注入：
 
 ```
-~/.grok/AGENTS.md           # Global rules (apply to all projects)
+~/.chaos/AGENTS.md          # Global rules (apply to all projects)
 <repo-root>/AGENTS.md       # Repository-level rules
 <cwd>/AGENTS.md             # Directory-level rules (highest priority)
 ```
 
-Deeper files take precedence. Grok also reads `CLAUDE.md` files for compatibility.
+目录越深，文件优先级越高。为兼容起见，Chaos 也会读取 `CLAUDE.md` 文件。
 
 ---
 
-## Where to Go Next
+## 接下来读什么
 
-| 文档 | What You Will Learn |
+| 文档 | 你能学到什么 |
 |----------|-------------------|
-| [认证](02-authentication.md) | Browser login, API keys, OIDC, external auth, device code flow |
-| [键盘快捷键](03-keyboard-shortcuts.md) | Complete reference for all key bindings |
-| [斜杠命令](04-slash-commands.md) | All available `/` commands |
-| [配置](05-configuration.md) | config.toml, pager.toml, environment variables |
+| [认证](02-authentication.md) | 模型凭证的配置方式、`/provider` 面板，以及本分叉与上游的差异 |
+| [键盘快捷键](03-keyboard-shortcuts.md) | 所有键位的完整参考 |
+| [斜杠命令](04-slash-commands.md) | 全部可用的 `/` 命令 |
+| [配置](05-configuration.md) | config.toml、pager.toml、环境变量 |
