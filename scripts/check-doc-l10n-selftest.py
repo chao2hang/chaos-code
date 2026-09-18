@@ -4,8 +4,14 @@
 The gate is what protects the user guide while it is being translated, so the
 gate itself needs a test: a check that silently passes damage is worse than no
 check at all. Each case names the invariant it exercises and the direction it
-must decide; a mutation that does not apply to the real file is a FAILURE, not
-a skip, so no case can quietly stop testing anything.
+must decide; a mutation that does not apply is a FAILURE, not a skip, so no
+case can quietly stop testing anything.
+
+The structural cases run against `FIXTURE`, not against a chapter. A chapter
+is the thing under translation, so a case anchored in one rots the moment its
+target sentence is translated; the fixture carries the same features (a fence,
+inline spans, a five-column table, a link, headings, prose numbers) and stays
+put. The cell cases run the worktree modes against throwaway documents.
 
 Run:  python3 scripts/check-doc-l10n-selftest.py
 """
@@ -17,19 +23,39 @@ import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-GUIDE = REPO / "crates/codegen/xai-grok-pager/docs/user-guide"
 GATE = str(REPO / "scripts/check-doc-l10n.py")
 
-TARGET = "26-config-reference.md"
-PLUGINS = "09-plugins.md"
+FIXTURE = """# Configuration reference
+
+运行 `grok inspect` 或 `grok inspect --json`，查看哪些文件与值最终生效。
+This paragraph still names `GROK_CONFIG` (inline JSON) and
+`$GROK_HOME/config.toml` (your settings).
+
+```sh
+grok plugin list
+```
+
+| Key | Type / Values | Requirements | Managed | Details |
+| --- | --- | --- | --- | --- |
+| `config.toml` | `string` | `yes` | `user` | Set personal defaults for this machine. |
+| `agent.name` | `string` | `yes` | `user` | Built-in or discovered agent definition name. |
+
+路径 `/etc/grok/managed_config.toml`：RFC 3339 UTC timestamp。详见
+[Configuration](05-configuration.md) 与 [Hooks](10-hooks.md#when-it-fires)。
+
+## How to configure
+
+正文段落。
+"""
+
+REL = "docs/user-guide/26-config-reference.md"
 
 
 def renamed(s: str) -> str:
     """The intended fork localization: same meaning, fork spelling."""
-    return (s.replace("~/.grok/", "~/.chaos/")
-             .replace("`grok inspect`", "`chaos inspect`")
-             .replace("`$GROK_HOME/managed_config.toml`",
-                      "`$CHAOS_HOME/managed_config.toml`"))
+    return (s.replace("`grok inspect`", "`chaos inspect`")
+             .replace("$GROK_HOME", "$CHAOS_HOME")
+             .replace("grok plugin list", "chaos plugin list"))
 
 
 def sub(old: str, new: str, count: int = 1):
@@ -39,52 +65,47 @@ def sub(old: str, new: str, count: int = 1):
     return mutate
 
 
-# (name, file, mutate, expect_drift, extra_args)
+# (name, mutate, expect_drift, extra_args)
 CASES = (
-    ("legit fork rename (fences + inline)", TARGET, renamed, False, ()),
-    ("inline: dropped backticks", TARGET,
-     sub("Run `grok inspect` or", "Run grok inspect or"), True, ()),
-    ("inline: invented flag", TARGET,
-     sub("Run `grok inspect` or", "Run `chaos inspect --all` or"), True, ()),
-    ("inline: added span is a note", TARGET,
-     sub("Run `grok inspect` or", "Run `grok inspect` or see `/provider` or"),
-     False, ()),
-    ("inline: added span with --strict-spans", TARGET,
-     sub("Run `grok inspect` or", "Run `grok inspect` or see `/provider` or"),
-     True, ("--strict-spans",)),
-    ("env var: forged CHAOS twin", TARGET,
-     sub("`GROK_CONFIG` (inline JSON)", "`CHAOS_CONFIG` (inline JSON)"), True, ()),
-    ("env var: allowed twin GROK_HOME", TARGET,
-     sub("`$GROK_HOME/config.toml` (your settings",
-         "`$CHAOS_HOME/config.toml` (your settings)"), False, ()),
-    ("fence: flag typo", PLUGINS,
-     sub("grok plugin list", "grok plugin ls"), True, ()),
-    ("fence: legit command rename", PLUGINS,
-     sub("grok plugin list", "chaos plugin list"), False, ()),
-    ("literal: /etc/grok is not renamed", TARGET,
+    ("fork rename: command, env var, fence", renamed, False, ()),
+    ("inline: dropped backticks", sub("`grok inspect`", "grok inspect"), True, ()),
+    ("inline: invented flag", sub("`grok inspect`", "`chaos inspect --all`"),
+     True, ()),
+    ("inline: added span is a note",
+     sub("`grok inspect`", "`grok inspect` 或 `/provider`"), False, ()),
+    ("inline: added span with --strict-spans",
+     sub("`grok inspect`", "`grok inspect` 或 `/provider`"), True,
+     ("--strict-spans",)),
+    ("env var: forged CHAOS twin",
+     sub("`GROK_CONFIG`", "`CHAOS_CONFIG`"), True, ()),
+    ("env var: allowed twin GROK_HOME",
+     sub("$GROK_HOME/config.toml", "$CHAOS_HOME/config.toml"), False, ()),
+    ("literal: /etc/grok is never renamed",
      sub("`/etc/grok/managed_config.toml`", "`/etc/chaos/managed_config.toml`"),
      True, ()),
-    ("table: extra cell in a data row", TARGET,
-     sub("| `config.toml` | The developer |",
-         "| `config.toml` | The developer | x |"), True, ()),
-    ("link: changed anchor", TARGET,
-     sub("](05-configuration.md)", "](05-configuration.md#bogus)"), True, ()),
-    ("heading: changed level", TARGET, sub("\n## ", "\n### "), True, ()),
-    ("numbers: changed default", TARGET,
-     sub("RFC 3339 UTC timestamp", "RFC 3338 UTC timestamp"), True, ()),
+    ("fence: flag typo", sub("grok plugin list", "grok plugin ls"), True, ()),
+    ("fence: legit command rename",
+     sub("grok plugin list", "chaos plugin list"), False, ()),
+    ("table: extra cell in a data row",
+     sub("| `config.toml` | `string` | `yes` |", "| `config.toml` | `string` | `yes` | x |"),
+     True, ()),
+    ("table: dropped column from the separator",
+     sub("| --- | --- | --- | --- | --- |", "| --- | --- | --- | --- |"), True, ()),
+    ("link: changed anchor", sub("](10-hooks.md#when-it-fires)",
+                                 "](10-hooks.md#when-it-fired)"), True, ()),
+    ("link: dropped target", sub(" 与 [Hooks](10-hooks.md#when-it-fires)", ""),
+     True, ()),
+    ("heading: changed level", sub("\n## ", "\n### "), True, ()),
+    ("numbers: changed default", sub("RFC 3339", "RFC 3338"), True, ()),
 )
 
 
-def run_case(name: str, fname: str, mutate, expect_drift: bool,
+def run_case(name: str, mutate, expect_drift: bool,
              extra_args: tuple[str, ...] = ()) -> int:
-    src = GUIDE / fname
-    before = src.read_text(encoding="utf-8")
-    rel = f"docs/user-guide/{fname}"
-
     tmp = Path(tempfile.mkdtemp())
-    target = tmp / rel
+    target = tmp / REL
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(before, encoding="utf-8")
+    target.write_text(FIXTURE, encoding="utf-8")
 
     def git(*a: str):
         return subprocess.run(["git", *a], cwd=tmp, capture_output=True,
@@ -97,18 +118,18 @@ def run_case(name: str, fname: str, mutate, expect_drift: bool,
     git("commit", "-qm", "before")
 
     try:
-        after = mutate(before)
+        after = mutate(FIXTURE)
     except AssertionError as err:
         print(f"FAIL {name}: {err}")
         return 1
-    if after == before:
+    if after == FIXTURE:
         print(f"FAIL {name}: mutation was a no-op")
         return 1
 
     target.write_text(after, encoding="utf-8")
     proc = subprocess.run(
         [sys.executable, GATE, "--before", "HEAD", "--after", "WORKTREE",
-         "--glob", rel, *extra_args],
+         "--glob", REL, *extra_args],
         cwd=tmp, capture_output=True, text=True)
     drifted = proc.returncode != 0
     if drifted == expect_drift:
@@ -119,9 +140,114 @@ def run_case(name: str, fname: str, mutate, expect_drift: bool,
     return 1
 
 
+# ---------------------------------------------------------------------------
+# Cell cases: these run the worktree modes (`--cells`, `--apply-cell-glossary`)
+# against a throwaway document, so a case states the glossary it is judged by.
+
+TABLE = """# T
+
+| 键 | 说明 |
+| --- | --- |
+| `a` | {a} |
+| `b` | {b} |
+"""
+
+CELL_CASES = (
+    ("cells: English prose cell is reported", TABLE.format(
+        a="Set personal defaults for this machine.", b="说明"), "", False),
+    ("cells: translated cell passes", TABLE.format(
+        a="为本机设置个人默认值。", b="说明"), "", True),
+    ("cells: short literal is reported without a decision", TABLE.format(
+        a="array", b="说明"), "", False),
+    ("cells: short literal allowlisted as =keep", TABLE.format(
+        a="array", b="说明"), "array\t=keep\n", True),
+    ("cells: short literal translated", TABLE.format(
+        a="array", b="说明"), "array\t数组\n", True),
+    ("cells: unlisted short literal still fails", TABLE.format(
+        a="Whatever", b="说明"), "array\t=keep\n", False),
+    ("cells: glossary key is matched without its padding", TABLE.format(
+        a="array", b="说明"), "  array  \t=keep\n", True),
+    ("cells: escaped pipe does not split a cell", TABLE.format(
+        a="`array` \\| `list` or `map`", b="说明"),
+     "`array` \\| `list` or `map`\t=keep\n", True),
+    ("glossary: value that drops a backticked literal is refused",
+     TABLE.format(a="说明", b="说明"), "`a`\t就是 a\n", False),
+    ("glossary: command rename is not a dropped literal",
+     TABLE.format(a="说明", b="说明"),
+     "`grok inspect` 的输出\t`chaos inspect` 的输出\n", True),
+    ("glossary: value with no Han characters is refused",
+     TABLE.format(a="说明", b="说明"), "Yes\tyes\n", False),
+    ("glossary: value with an unescaped pipe is refused",
+     TABLE.format(a="说明", b="说明"), "Yes\t是 | 否\n", False),
+    ("glossary: value that changes a number is refused",
+     TABLE.format(a="说明", b="说明"), "30 seconds\t3 秒后\n", False),
+    ("glossary: same number keeps the entry valid",
+     TABLE.format(a="说明", b="说明"), "30 seconds\t30 秒\n", True),
+    ("glossary: literal value passes as =keep",
+     TABLE.format(a="说明", b="说明"), "Yes\t=keep\n", True),
+    ("glossary: a duplicate key is refused",
+     TABLE.format(a="说明", b="说明"), "Yes\t是\nYes\t否\n", False),
+)
+
+# Whole-cell matching: the longer cell must survive an apply untouched.
+APPLY_DOC = """# T
+
+| 键 | 说明 |
+| --- | --- |
+| array | 数组是定长的。 |
+| `array` or a list | 说明 |
+"""
+APPLY_GLOSSARY = "array\t数组\n"
+APPLY_EXPECT = """# T
+
+| 键 | 说明 |
+| --- | --- |
+| 数组 | 数组是定长的。 |
+| `array` or a list | 说明 |
+"""
+
+
+def run_cell_case(name: str, doc: str, glossary: str, expect_pass: bool) -> int:
+    tmp = Path(tempfile.mkdtemp())
+    (tmp / "doc.md").write_text(doc, encoding="utf-8")
+    (tmp / "g.tsv").write_text(glossary, encoding="utf-8")
+    proc = subprocess.run(
+        [sys.executable, GATE, "--cells", "--strict", "--glob", "*.md",
+         "--cell-glossary", "g.tsv"],
+        cwd=tmp, capture_output=True, text=True)
+    passed = proc.returncode == 0
+    if passed == expect_pass:
+        print(f"ok   {name}: pass={passed} (expected {expect_pass})")
+        return 0
+    print(f"FAIL {name}: pass={passed} but expected {expect_pass}")
+    print("     " + proc.stdout.strip().replace("\n", "\n     ")[:500])
+    return 1
+
+
+def run_apply_case() -> int:
+    name = "apply: whole-cell match only, longer cell untouched"
+    tmp = Path(tempfile.mkdtemp())
+    (tmp / "doc.md").write_text(APPLY_DOC, encoding="utf-8")
+    (tmp / "g.tsv").write_text(APPLY_GLOSSARY, encoding="utf-8")
+    proc = subprocess.run(
+        [sys.executable, GATE, "--apply-cell-glossary", "--glob", "*.md",
+         "--cell-glossary", "g.tsv"],
+        cwd=tmp, capture_output=True, text=True)
+    got = (tmp / "doc.md").read_text(encoding="utf-8")
+    if proc.returncode == 0 and got == APPLY_EXPECT:
+        print(f"ok   {name}: {got.splitlines()[4]}")
+        return 0
+    print(f"FAIL {name}: exit={proc.returncode}")
+    print("     " + got.replace("\n", "\n     ")[:500])
+    return 1
+
+
 def main() -> int:
     failures = sum(run_case(*case) for case in CASES)
-    print(f"\n{len(CASES) - failures}/{len(CASES)} self-test case(s) passed")
+    failures += sum(run_cell_case(*case) for case in CELL_CASES)
+    failures += run_apply_case()
+    total = len(CASES) + len(CELL_CASES) + 1
+    print(f"\n{total - failures}/{total} self-test case(s) passed")
     return 1 if failures else 0
 
 

@@ -1,0 +1,393 @@
+# 表格短单元格词典
+#
+# 用户指南里所有「1–2 个 ASCII 单词」的表格单元格都在这里决定一次，
+# 而不是在 27 个文件里各写一遍。格式：`英文单元格<TAB>中文`。
+#
+#   键   单元格的完整文本（前后空白不算，`**`、`` ` `` 算）
+#   值   中文译文；写 `=keep` 表示这是标识符/字面量/专名，保留英文
+#
+# 只在单元格**整体**与键相同时替换，所以译文不会拼进更长的句子里；
+# 替换时保留单元格原有的前后空白，表格列宽不变。
+#
+# 校验：python3 scripts/check-doc-l10n.py --check-glossary
+# 应用：python3 scripts/check-doc-l10n.py --apply-cell-glossary
+# 清点未决：python3 scripts/check-doc-l10n.py --cells --strict
+#
+# 写译文时的硬约束（`--check-glossary` 会逐条检查）：
+#   1. 译文中行内代码 `` `...` `` 的集合必须与英文一致（改名的例外见
+#      `sync/doc-l10n-conventions.md` §4.1，脚本按同一张表归一化）；
+#   2. 散文数字不得增减；
+#   3. 链接目标 `](...)` 不得增减；
+#   4. 不得含裸 `|`（会切坏表格行）或换行；
+#   5. 译文必须含汉字——纯英文一律写 `=keep`，不要留空。
+#
+# 3 个及以上单词的单元格不在这里：它们是散文，按章节就地翻译。
+
+Key	键
+Details	说明
+Description	说明
+Type / Values	类型 / 取值
+Requirements	requirements.toml 可否设置
+Managed	managed_config.toml 是否生效
+Field	字段
+Scope	作用域
+Type	类型
+Value	取值
+Values (default)	取值（默认）
+Variable	变量
+Flag	标志
+Default	默认
+Required	必填
+Notes	说明
+Meaning	含义
+Effect	效果
+Action	操作
+Category	类别
+Context	上下文
+Mode	模式
+State	状态
+Setting	设置
+Shortcut	快捷键
+Tool	工具
+Command	命令
+File	文件
+Path	路径
+Source	来源
+Format	格式
+Platform	平台
+Plugin	插件
+Option	选项
+Parameter	参数
+Process	进程
+Method	方式
+Mechanism	机制
+Level	级别
+Priority	优先级
+Prefix	前缀
+Weight	权重
+Unit	单位
+Entry	条目
+Event	事件
+Item	条目
+Example	示例
+Examples	示例
+Contents	内容
+Status	状态
+Location	位置
+Supported	支持
+Config	配置
+Config Names	配置项
+Config Value	配置值
+Configurable	可配置
+Attributes	属性
+Attribute	属性
+Alternates	备选键
+Detection	检测
+Transport	传输
+Metric	指标
+Tier	层级
+Capability	能力
+Profile	=keep
+Execute	执行
+Read	读
+Write	写
+Document	文档
+Best for	最适合
+Maps to	对应
+Matches	匹配
+Shows	显示
+Use Case	适用场景
+Aspect	方面
+Gesture	手势
+Language	语言
+Package	包
+Server	服务器
+Client	客户端
+Session	会话
+Sessions	会话
+Session logs	会话日志
+Workspace	工作区
+Repo	仓库
+Theme	主题
+Safety	安全
+Recovery	恢复
+Performance	性能
+Progress Bar	进度条
+Notification	通知
+Confirmation	确认
+Trust	信任
+Preselected row	预选中行
+Primary	主要
+Other	其他
+Unknown	未知
+Terminal	终端
+Hook Option	钩子选项
+Focus Tracking	焦点跟踪
+Minimum Version	最低版本
+Exit Code	退出码
+N/A	=keep
+Yes	是
+No	否
+Always	始终
+Always on	始终开启
+Automatic	自动
+Auto Protocol	自动协议
+Interactive	交互
+Interactive TUI	交互式 TUI
+Interactive grants	交互授权
+Persistent	持久
+Global	全局
+Project	项目
+User	用户
+You	你
+You, signed	你（含签名）
+The developer	开发者
+Your organization	你的组织
+All projects	所有项目
+Everywhere	所有位置
+This repository	本仓库
+Current repository	当前仓库
+Current directory	当前目录
+Current directory (basename)	当前目录（basename）
+Local (CWD)	本地（CWD）
+Local / Repo	本地 / 仓库
+Managed / system	managed / 系统
+None (native)	无（原生）
+Normal development	日常开发
+Highest	最高
+High	高
+Medium	中
+Lowest	最低
+Unrestricted	不受限
+Allowed	允许
+Blocked¹	已阻止¹
+Requires trust	需要信任
+Trusted automatically	自动信任
+Trusted?	是否信任？
+Untrusted code	不受信任的代码
+With Sandbox	有沙箱
+Without Sandbox	无沙箱
+No sandbox	无沙箱
+No overhead	无额外开销
+Negligible overhead	开销可忽略
+No bullet	无项目符号
+Bullet	项目符号
+Filled circle	实心圆
+Right-pointing triangle	右向三角
+Send now	立即发送
+Refresh sources	刷新来源
+Toggle fullscreen	切换全屏
+Pin / unpin	固定 / 取消固定
+Jump 10 entries	跳 10 条
+Coming soon	即将支持
+Depends on location	取决于位置
+Human-readable text	人类可读文本
+Claude-compatible settings	Claude 兼容设置
+Cross-project memory	跨项目记忆
+Project-specific memory	项目专属记忆
+Project-scoped hooks	项目级钩子
+Project-scoped plugins	项目级插件
+User-scoped plugins	用户级插件
+Project (committed)	项目（已提交）
+Project (personal)	项目（个人）
+User configuration	用户配置
+Personal hooks	个人钩子
+Per-plugin	按插件
+Per-repo automation	按仓库自动化
+Crash reports	崩溃报告
+Shortcuts cheatsheet	快捷键速查
+Startup tips.	启动提示。
+Export timeout.	导出超时。
+Enable memory	启用记忆
+Enable workflows.	启用工作流。
+Enable `/goal`.	启用 `/goal`。
+Reasoning-effort override.	推理强度覆盖。
+Deprecated; prefer `reasoning_efforts`.	已弃用；请改用 `reasoning_efforts`。
+Deprecated; use `ui.permission_mode`.	已弃用；请改用 `ui.permission_mode`。
+Script for `type = "command"`.	`type = "command"` 用的脚本。
+Output format: `plain`, `json`, `streaming-json`, `streaming-messages-json`	输出格式：`plain`、`json`、`streaming-json`、`streaming-messages-json`
+Hover + click `[✗]`	悬停并点击 `[✗]`
+Endpoint / Package	端点 / 包名
+External OpenTelemetry	外部 OpenTelemetry
+FS Read	文件读
+FS Write	文件写
+Trace upload	Trace 上传
+Truecolor Required	需要 Truecolor
+Turn cancelling	回合取消中
+Subagents only	仅子代理
+Agent screen	代理界面
+Prompt focused	提示框聚焦
+Scrollback focused	回滚区聚焦
+Alt Key	Alt 键
+Child Network	子网络
+Character	字符
+Code	代码
+Situation	场景
+Behaviour	行为
+Behavior	行为
+Blocking?	是否阻塞？
+When off	关闭时
+Cursor event	Cursor 事件
+Cursor format	Cursor 格式
+User-attention events (`idle_prompt`, `permission_prompt`, `task_complete`, …).	需要用户注意的事件（`idle_prompt`、`permission_prompt`、`task_complete`、…）。
+(default)	（默认）
+(none)	（无）
+(required)	（必填）
+(see above)	（见上）
+*(none)*	*（无）*
+**16-color**	**16 色**
+**256-color**	**256 色**
+**Truecolor** (24-bit)	**Truecolor**（24 位）
+**2× `Esc` within 800ms**	**800ms 内按两次 `Esc`**
+**Agents**	**代理**
+**Authentication**	**认证**
+**Conversation & History**	**会话与历史**
+**Examples**	**示例**
+**Feedback & Telemetry**	**反馈与遥测**
+**Filesystem**	**文件系统**
+**Git Worktree**	**Git 工作树**
+**Personas**	**角色**
+**Scope**	**作用域**
+**Search**	**搜索**
+**Session Management**	**会话管理**
+**Terminal**	**终端**
+Filesystem	文件系统
+[Agent Dashboard](23-dashboard.md)	[代理看板](23-dashboard.md)
+[Authentication](02-authentication.md)	[认证](02-authentication.md)
+[Configuration](05-configuration.md)	[配置](05-configuration.md)
+[Custom Models](11-custom-models.md)	[自定义模型](11-custom-models.md)
+[Getting Started](01-getting-started.md)	[快速上手](01-getting-started.md)
+[Hooks](10-hooks.md)	[钩子](10-hooks.md)
+[Keyboard Shortcuts](03-keyboard-shortcuts.md)	[键盘快捷键](03-keyboard-shortcuts.md)
+[MCP Servers](07-mcp-servers.md)	[MCP 服务器](07-mcp-servers.md)
+[Memory](13-memory.md)	[记忆](13-memory.md)
+[Plan Mode](19-plan-mode.md)	[计划模式](19-plan-mode.md)
+[Plugins](09-plugins.md)	[插件](09-plugins.md)
+[Sandbox Mode](18-sandbox.md)	[沙箱模式](18-sandbox.md)
+[Session Management](17-sessions.md)	[会话管理](17-sessions.md)
+[Slash Commands](04-slash-commands.md)	[斜杠命令](04-slash-commands.md)
+[Skills](08-skills.md)	[技能](08-skills.md)
+`?` (Shift+/)	=keep
+`Ctrl+.` (alt: `?`)	`Ctrl+.`（另一种：`?`）
+`Ctrl+.` (alt: `Ctrl+X`)	`Ctrl+.`（另一种：`Ctrl+X`）
+`Ctrl+;` (alt: `Ctrl+'`)	`Ctrl+;`（另一种：`Ctrl+'`）
+`Ctrl+D` (`Shift+D` in VSCode)	`Ctrl+D`（VSCode 里是 `Shift+D`）
+`Ctrl+S` (alt: `Alt+S`)	`Ctrl+S`（另一种：`Alt+S`）
+`F2` (alt: `Ctrl+,` / `Cmd+,`)	`F2`（另一种：`Ctrl+,` / `Cmd+,`）
+`Shift+Tab` (backwards)	`Shift+Tab`（反向）
+`Enter` (empty reply)	`Enter`（空回复）
+`Enter` (typed reply)	`Enter`（已输入回复）
+`Enter` on Accept	在 Accept 上按 `Enter`
+`↑`/`↓` or `j`/`k`	`↑`/`↓` 或 `j`/`k`
+`←` / `→` on actions	操作项上的 `←` / `→`
+`d` / Decline	=keep
+`off` (default)	`off`（默认）
+`false` (default)	`false`（默认）
+`true` (default)	`true`（默认）
+`10000` (ms)	`10000`（毫秒）
+`5000` (ms)	`5000`（毫秒）
+`60000` (ms)	`60000`（毫秒）
+`1`–`10` (unset)	`1`–`10`（未设置）
+`always_allow_all_sessions` (default)	`always_allow_all_sessions`（默认）
+`default` (**ask**)	`default`（**询问**）
+`bypassPermissions` (**always-approve**)	`bypassPermissions`（**始终批准**）
+`sessionUpdate` value	`sessionUpdate` 的取值
+`[plugins].paths` (config)	`[plugins].paths`（配置）
+`_meta.yoloMode: true` on `session/new`	在 `session/new` 上设 `_meta.yoloMode: true`
+`--plugin-dir` (the `grok agent … stdio` flag)	`--plugin-dir`（`chaos agent … stdio` 的标志）
+`GROK_EXTERNAL_OTEL` / `[telemetry] otel_*` (this guide)	`GROK_EXTERNAL_OTEL` / `[telemetry] otel_*`（本指南）
+`OTEL_BLRP_SCHEDULE_DELAY` (or alias `OTEL_LOGS_EXPORT_INTERVAL`)	`OTEL_BLRP_SCHEDULE_DELAY`（别名 `OTEL_LOGS_EXPORT_INTERVAL`）
+`OTEL_EXPORTER_OTLP_CERTIFICATE` (+ signal-specific variants)	`OTEL_EXPORTER_OTLP_CERTIFICATE`（+ 各信号专用变体）
+`OTEL_EXPORTER_OTLP_HEADERS` (+ signal-specific variants)	`OTEL_EXPORTER_OTLP_HEADERS`（+ 各信号专用变体）
+`OTEL_EXPORTER_OTLP_CLIENT_CERTIFICATE` / `OTEL_EXPORTER_OTLP_CLIENT_KEY` (+ signal-specific `…_LOGS_…` / `…_METRICS_…` variants)	`OTEL_EXPORTER_OTLP_CLIENT_CERTIFICATE` / `OTEL_EXPORTER_OTLP_CLIENT_KEY`（+ 各信号专用的 `…_LOGS_…` / `…_METRICS_…` 变体）
+`install_kind?`, `success`, `error_category?`; `plugin_name` (**details**)	`install_kind?`、`success`、`error_category?`；`plugin_name`（**详情**）
+`skill_source`, `trigger` = `slash_command` \| `skill_md_read` \| `skill_tool`; `skill.name` (**details**)	`skill_source`、`trigger` = `slash_command` \| `skill_md_read` \| `skill_tool`；`skill.name`（**详情**）
+`builtin`, `command`, or `disabled`.	`builtin`、`command` 或 `disabled`。
+`~/.chaos/config.toml` or `~/.grok/config.toml`	`~/.chaos/config.toml` 或 `~/.grok/config.toml`
+`~/.chaos/pager.toml` or `~/.grok/pager.toml`	`~/.chaos/pager.toml` 或 `~/.grok/pager.toml`
+`~/.chaos/auth.json` or `~/.grok/auth.json`	`~/.chaos/auth.json` 或 `~/.grok/auth.json`
+`~/.chaos/sessions/` or `~/.grok/sessions/`	`~/.chaos/sessions/` 或 `~/.grok/sessions/`
+`~/.chaos/memory/` or `~/.grok/memory/`	`~/.chaos/memory/` 或 `~/.grok/memory/`
+`~/.chaos/skills/` or `~/.grok/skills/`	`~/.chaos/skills/` 或 `~/.grok/skills/`
+`~/.chaos/plugins/` or `~/.grok/plugins/`	`~/.chaos/plugins/` 或 `~/.grok/plugins/`
+`~/.chaos/agents/` or `~/.grok/agents/`	`~/.chaos/agents/` 或 `~/.grok/agents/`
+`~/.chaos/lsp.json` or `~/.grok/lsp.json`	`~/.chaos/lsp.json` 或 `~/.grok/lsp.json`
+`~/.chaos/logs/` or `~/.grok/logs/`	`~/.chaos/logs/` 或 `~/.grok/logs/`
+`.chaos/config.toml` or `.grok/config.toml`	`.chaos/config.toml` 或 `.grok/config.toml`
+`.chaos/skills/` or `.grok/skills/`	`.chaos/skills/` 或 `.grok/skills/`
+`.chaos/plugins/` or `.grok/plugins/`	`.chaos/plugins/` 或 `.grok/plugins/`
+`.chaos/agents/` or `.grok/agents/`	`.chaos/agents/` 或 `.grok/agents/`
+`.chaos/hooks/` or `.grok/hooks/`	`.chaos/hooks/` 或 `.grok/hooks/`
+`.chaos/lsp.json` or `.grok/lsp.json`	`.chaos/lsp.json` 或 `.grok/lsp.json`
+# ---- 以下为「保留英文」的字面量与专名 ----
+stdio	=keep
+string	=keep
+bool	=keep
+array	=keep
+integer	=keep
+unset	=keep
+none	=keep
+String	=keep
+String[]	=keep
+Boolean	=keep
+BEL	=keep
+OSC 9	=keep
+OSC 99	=keep
+OSC 777	=keep
+HTTP (OAuth)	=keep
+ACP	=keep
+API	=keep
+CLI	=keep
+iTerm2	=keep
+macOS	=keep
+Windows	=keep
+Linux	=keep
+**macOS**	=keep
+**Windows**	=keep
+**Linux**	=keep
+**Git**	=keep
+**OscuraMidnight**	=keep
+**RosePineMoon**	=keep
+**TokyoNight**	=keep
+Apple Terminal	=keep
+Alacritty	=keep
+Ghostty	=keep
+Kitty	=keep
+WezTerm	=keep
+Warp	=keep
+VS Code	=keep
+JetBrains	=keep
+Git	=keep
+GitHub	=keep
+GitLab	=keep
+Go	=keep
+Kotlin	=keep
+Rust	=keep
+Python	=keep
+TypeScript	=keep
+PostgreSQL	=keep
+SQLite	=keep
+Puppeteer	=keep
+Sentry	=keep
+Mixpanel	=keep
+Linear	=keep
+Landlock	=keep
+Seatbelt	=keep
+Chaos	=keep
+Grok Desktop	=keep
+Explorer ✓	=keep
+Finder ✓	=keep
+Files / Dolphin ✓	=keep
+Anthropic Messages (`/v1/messages`)	=keep
+OpenAI Responses (`/v1/responses`)	=keep
+[Emacs](https://github.com/xenodium/agent-shell)	=keep
+[Zed](https://zed.dev/docs/ai/external-agents)	=keep
+[marimo notebook](https://github.com/marimo-team/marimo)	=keep
+`--always-approve` (alias `--yolo`), or `--permission-mode bypassPermissions`	=keep
+`managed_config.toml` (`$GROK_HOME` and `/etc/grok`)	=keep
+`boolean` or `grove` / `grove-fuse` / `grove-nfs` / `nfs` / `copy` / `true` / `false` / `1` / `0` / `on` / `off`	=keep
+same as `cli.grove_worktree`	=keep
+CWD + `~/.grok/` + `/tmp` + `/var/tmp`	=keep
+CWD + `~/.grok/sessions` + `/tmp` + `/var/tmp`	=keep
+`<project>/.claude/settings.json` (and `settings.local.json`)	=keep
+`~/.claude/settings.json` (and `settings.local.json`)	=keep

@@ -29,28 +29,54 @@ identifier); *adding* one is only reported, because a verified content
 correction may introduce a literal the upstream text never named. Pass
 `--strict-spans` to treat additions as drift too.
 
-Plus two heuristics for localization residue:
+Plus heuristics for localization residue:
 
   english    reports prose lines with no Han characters and >= MIN_WORDS
-             ASCII words, excluding code, tables, HTML comments, link
-             definitions and lines that are mostly identifiers
+             ASCII words, excluding code, HTML comments, link definitions and
+             lines that are mostly identifiers
+  cells      reports table cells that are not localized yet: prose cells that
+             still read as English, and short cells that neither carry Han
+             characters nor appear in the cell glossary (see below)
   fork-names reports `grok` used as a command or a config path (prose *and*
              code), i.e. names the fork has since renamed. Legacy `GROK_*`
              env vars, `xai-grok-*` crates, `grok-<model>` ids, `grok.com`
              and `/etc/grok` are allowlisted; a line that explicitly discusses
              compatibility may name the legacy path.
 
+`--english` deliberately skips table rows, so on its own it reports a
+translated-looking chapter that still has English table prose. `--cells`
+covers that half; together they are the completeness gate for a chapter.
+
+Table cells need two different treatments, so `--cells` splits them:
+
+  * prose cell  three or more ASCII words outside inline code: a sentence to
+    translate in place, like a `Details` column
+  * short cell  one or two ASCII words: almost always a literal to preserve
+    (`array`, `String`, `Boolean`, `Yes`) or a column label to translate
+    (`Action`, `Details`), so each distinct one is decided once in the
+    glossary rather than restated per file
+
+`scripts/doc-cell-glossary.tsv` holds that decision as `english<TAB>chinese`,
+with `=keep` for a literal that stays English. `--apply-cell-glossary`
+rewrites matching cells everywhere; `--check-glossary` validates the file.
+Matching is on the whole cell (surrounding padding is preserved), so a
+translation can never splice itself into a longer sentence.
+
 Usage:
   scripts/check-doc-l10n.py --before <rev> --after <rev|WORKTREE> [--glob PATH]
   scripts/check-doc-l10n.py --english [--glob PATH]
+  scripts/check-doc-l10n.py --cells [--strict] [--glob PATH]
   scripts/check-doc-l10n.py --fork-names [--strict] [--glob PATH]
   scripts/check-doc-l10n.py --links [--glob PATH]
+  scripts/check-doc-l10n.py --check-glossary
+  scripts/check-doc-l10n.py --apply-cell-glossary [--glob PATH]
 
-`--english`, `--fork-names` and `--links` scan the working tree, so a file can
-be checked right after it is edited and before it is committed. `--after
-WORKTREE` compares a revision against the working tree. Every mode exits
-non-zero when a check fails, so this can gate a commit the way
-`scripts/l10n-guard.sh` does; `--fork-names` needs `--strict` to do so.
+`--english`, `--cells`, `--fork-names` and `--links` scan the working tree, so
+a file can be checked right after it is edited and before it is committed.
+`--after WORKTREE` compares a revision against the working tree. Every mode
+exits non-zero when a check fails, so this can gate a commit the way
+`scripts/l10n-guard.sh` does; `--fork-names` needs `--strict` to do so,
+`--cells` needs it to fail on short cells as well as prose.
 """
 
 from __future__ import annotations
@@ -226,6 +252,211 @@ def table_shapes(text: str) -> list[tuple[int, tuple[int, ...]]]:
     if cols or rows:
         shapes.append((cols, tuple(rows)))
     return shapes
+
+
+# --------------------------------------------------------------- table cells
+#
+# A table row is split on `|`, but `\|` is a legal escaped pipe inside a cell
+# (24-monitoring-usage.md uses it for enum alternatives), so the split must
+# not break on it.
+
+ROW = re.compile(r"^\s*\|.*\|\s*$")
+SEP_ROW = re.compile(r"^\s*\|[\s:|-]+\|\s*$")
+CELL_SPLIT = re.compile(r"(?<!\\)\|")
+KEEP = "=keep"                       # glossary value: keep this literal English
+DEFAULT_CELL_GLOSSARY = "scripts/doc-cell-glossary.tsv"
+
+# A Han-bearing cell that still carries this many ASCII words, one of them a
+# function word, probably stopped halfway. Reported as a note, never a
+# failure: a cell like "打包 skills/commands/agents/hooks/MCP" is legitimate.
+MIXED = re.compile(
+    r"\b(the|a|an|is|are|was|were|be|been|to|of|for|and|or|with|when|if|"
+    r"you|your|this|that|it|its|in|on|by|from|not|do|does|can|will|as|at|but)\b",
+    re.IGNORECASE,
+)
+
+
+def row_cells(line: str) -> list[str]:
+    """Cells of a table row, keeping their surrounding padding."""
+    return CELL_SPLIT.split(line.rstrip("\n"))
+
+
+def cell_prose_text(cell: str) -> str:
+    """Cell text with literals removed, for counting and classifying words.
+
+    Inline code, link targets and emphasis markers go; link *text* stays,
+    because a link in a table cell is translated prose ("[Hooks](10-hooks.md)"
+    is "Hooks" to translate, not a path to preserve).
+    """
+    text = INLINE.sub(" ", cell)
+    text = re.sub(r"\[([^\]]*)\]\([^)\s]*\)", r"\1", text)
+    return text.replace("**", " ").replace("*", " ")
+
+
+def cell_prose_words(cell: str) -> list[str]:
+    return WORD.findall(cell_prose_text(cell))
+
+
+def cell_has_han(cell: str) -> bool:
+    return bool(HAN.search(cell))
+
+
+def glossary_entry_problem(key: str, value: str) -> str | None:
+    """Why this glossary entry is unsafe, or None when it is fine.
+
+    Replacing a cell must not disturb anything the structural invariants
+    watch, so the translation has to carry the same inline-code spans, prose
+    numbers and link targets as the English it replaces.
+    """
+    if not key or not value:
+        return "empty key or value"
+    if value == KEEP:
+        return None
+    if "\n" in value:
+        return "value contains a newline"
+    if re.search(r"(?<!\\)\|", value):
+        return "value contains an unescaped `|`, which would split the row"
+    if not HAN.search(value):
+        return "value has no Han characters; use =keep to preserve a literal"
+    for label, pattern in (("inline-code spans", INLINE),
+                           ("prose numbers", NUMBER),
+                           ("link targets", LINK)):
+        before = sorted(fork_normalize(s) for s in pattern.findall(key))
+        after = sorted(fork_normalize(s) for s in pattern.findall(value))
+        if before != after:
+            return f"{label} differ: {before} -> {after}"
+    return None
+
+
+def load_cell_glossary(path: str) -> tuple[dict[str, str], list[str]]:
+    mapping: dict[str, str] = {}
+    problems: list[str] = []
+    p = Path(path)
+    if not p.is_file():
+        return mapping, [f"{path}: glossary file not found"]
+    for n, raw in enumerate(p.read_text(encoding="utf-8").split("\n"), 1):
+        if not raw.strip() or raw.lstrip().startswith("#"):
+            continue
+        if "\t" not in raw:
+            problems.append(f"{path}:{n}: not a `english<TAB>chinese` line")
+            continue
+        key, _, value = raw.partition("\t")
+        key, value = key.strip(), value.strip()
+        if key in mapping:
+            problems.append(f"{path}:{n}: duplicate key {key!r}")
+            continue
+        reason = glossary_entry_problem(key, value)
+        if reason:
+            problems.append(f"{path}:{n}: {reason}: {raw.strip()[:80]!r}")
+            continue
+        mapping[key] = value
+    return mapping, problems
+
+
+def cell_findings(text: str, glossary: dict[str, str],
+                  min_words: int) -> list[tuple[int, str, str]]:
+    """(line, cell text, class) for every table cell that is not localized.
+
+    Classes: `prose` (a sentence to translate in place), `short` (one or two
+    words, so it needs a glossary decision) and `mixed` (has Han characters
+    but still reads like English). Fenced blocks are excluded: `strip_code`
+    blanks them, so line numbers still line up with the file.
+    """
+    findings: list[tuple[int, str, str]] = []
+    for n, line in enumerate(split_lines(strip_code(text)), 1):
+        if not ROW.match(line) or SEP_ROW.match(line):
+            continue
+        cells = row_cells(line)
+        for raw in cells[1:-1]:
+            inner = raw.strip()
+            if not inner:
+                continue
+            if cell_has_han(inner):
+                words = cell_prose_words(inner)
+                if len(words) >= 3 and MIXED.search(cell_prose_text(inner)):
+                    findings.append((n, inner, "mixed"))
+                continue
+            words = cell_prose_words(inner)
+            if not words or inner in glossary:
+                continue
+            findings.append((n, inner,
+                             "prose" if len(words) >= min_words else "short"))
+    return findings
+
+
+def check_glossary(path: str, glob: str) -> int:
+    """Validate the glossary, and report entries nothing uses."""
+    glossary, problems = load_cell_glossary(path)
+    for item in problems:
+        print(item)
+    used: set[str] = set()
+    for file in expand(glob, None):
+        text = strip_code(Path(file).read_text(encoding="utf-8"))
+        for line in split_lines(text):
+            if not ROW.match(line) or SEP_ROW.match(line):
+                continue
+            for raw in row_cells(line)[1:-1]:
+                used.add(raw.strip())
+    unused = sorted(k for k in glossary if k not in used)
+    for key in unused:
+        print(f"{path}: unused entry {key!r}")
+    print(f"\n{len(glossary)} entr(ies), {len(problems)} problem(s), "
+          f"{len(unused)} unused")
+    return 1 if problems else 0
+
+
+def apply_cell_glossary(path: str, glob: str) -> int:
+    """Rewrite every cell that exactly matches a glossary key."""
+    glossary, problems = load_cell_glossary(path)
+    if problems:
+        for item in problems:
+            print(item)
+        print("\nrefusing to apply a glossary with problems")
+        return 1
+    total = 0
+    for file in expand(glob, None):
+        p = Path(file)
+        out: list[str] = []
+        inside = False
+        marker = ""
+        replaced = 0
+        for line in split_lines(p.read_text(encoding="utf-8")):
+            m = FENCE.match(line)
+            if inside:
+                if m and m.group(2)[0] == marker:
+                    inside = False
+                out.append(line)
+                continue
+            if m:
+                inside = True
+                marker = m.group(2)[0]
+                out.append(line)
+                continue
+            if not ROW.match(line) or SEP_ROW.match(line):
+                out.append(line)
+                continue
+            cells = row_cells(line)
+            for i in range(1, len(cells) - 1):
+                raw = cells[i]
+                inner = raw.strip()
+                if not inner or cell_has_han(inner):
+                    continue
+                value = glossary.get(inner)
+                if value is None or value == KEEP:
+                    continue
+                lead = raw[:len(raw) - len(raw.lstrip())]
+                trail = raw[len(raw.rstrip()):]
+                cells[i] = lead + value + trail
+                replaced += 1
+            out.append("|".join(cells))
+        updated = "\n".join(out)
+        if updated != p.read_text(encoding="utf-8"):
+            p.write_text(updated, encoding="utf-8")
+        if replaced:
+            print(f"{file}: {replaced} cell(s)")
+            total += replaced
+    print(f"\n{total} cell(s) rewritten")
+    return 0
 
 
 def read_rev(rev: str, path: str) -> str | None:
@@ -490,38 +721,33 @@ COMPAT_LINE = re.compile(r"兼容")
 def fork_name_hits(text: str) -> list[tuple[int, str]]:
     """Lines still using an upstream name the fork has since renamed.
 
-    The compatibility exemption is applied per *paragraph*: a wrapped sentence
-    can put the legacy path on a different line than the word 「兼容」, so
-    testing line by line would report a legitimate note as residue.
+    The compatibility exemption is applied per *block*, where a block is a run
+    of consecutive non-blank lines: a wrapped sentence can put the legacy path
+    on a different line than the word 「兼容」, so testing line by line would
+    report a legitimate note as residue.
+
+    A block also inherits the exemption from the block directly above it,
+    because a table or list is introduced by its paragraph. The dual-read
+    location table is exactly that shape: the sentence above it explains that
+    the paths on show are the legacy spelling.
     """
     lines = split_lines(text)
-    # Paragraph = a run of consecutive non-blank lines. Collect every
-    # paragraph that mentions compatibility, then scan; the legacy mention may
-    # come before the word 「兼容」 within the same paragraph.
-    compat_para: set[int] = set()
-    para = 0
-    in_para = False
-    for line in lines:
-        if not line.strip():
-            in_para = False
-            continue
-        if not in_para:
-            para += 1
-            in_para = True
-        if COMPAT_LINE.search(line):
-            compat_para.add(para)
-
-    hits: list[tuple[int, str]] = []
-    para = 0
-    in_para = False
+    block_of: list[int] = [0] * (len(lines) + 1)
+    compat_block: set[int] = set()
+    block = 0
     for i, line in enumerate(lines, start=1):
         if not line.strip():
-            in_para = False
             continue
-        if not in_para:
-            para += 1
-            in_para = True
-        if para in compat_para:
+        if i == 1 or not lines[i - 2].strip():
+            block += 1
+        block_of[i] = block
+        if COMPAT_LINE.search(line):
+            compat_block.add(block)
+    exempt = compat_block | {b - 1 for b in compat_block}
+
+    hits: list[tuple[int, str]] = []
+    for i, line in enumerate(lines, start=1):
+        if block_of[i] in exempt:
             continue
         # Blank allowlisted occurrences, then look for what is left.
         residue = FORK_NAME_ALLOW.sub(lambda m: " " * len(m.group(0)), line)
@@ -569,7 +795,24 @@ def main() -> int:
                     help="rewrite inbound anchors for retitled headings "
                          "(needs --before)")
     ap.add_argument("--min-words", type=int, default=6)
+    ap.add_argument("--min-cell-words", type=int, default=3,
+                    help="with --cells: word count at which a cell is treated "
+                         "as prose to translate in place rather than as a "
+                         "short cell needing a glossary decision")
+    ap.add_argument("--cells", action="store_true",
+                    help="report table cells that are not localized yet")
+    ap.add_argument("--cell-glossary", default=DEFAULT_CELL_GLOSSARY)
+    ap.add_argument("--check-glossary", action="store_true",
+                    help="validate the cell glossary")
+    ap.add_argument("--apply-cell-glossary", action="store_true",
+                    help="rewrite cells that match a cell-glossary key")
     args = ap.parse_args()
+
+    if args.check_glossary:
+        return check_glossary(args.cell_glossary, args.glob)
+
+    if args.apply_cell_glossary:
+        return apply_cell_glossary(args.cell_glossary, args.glob)
 
     if args.fix_anchors:
         if not args.before:
@@ -604,8 +847,42 @@ def main() -> int:
         print(f"\n{total} upstream name(s) remaining")
         return 1 if (total and args.strict) else 0
 
+    if args.cells:
+        glossary, problems = load_cell_glossary(args.cell_glossary)
+        if problems:
+            for item in problems:
+                print(item)
+            print(f"{args.cell_glossary} has problems; it decides the short "
+                  f"cells, so --cells cannot tell a literal from prose without")
+            return 1
+        prose = shorts = mixed = 0
+        for path in expand(args.glob, None):
+            findings = cell_findings(Path(path).read_text(encoding="utf-8"),
+                                     glossary, args.min_cell_words)
+            counts = Counter(kind for _, _, kind in findings)
+            if counts["prose"] or counts["short"]:
+                print(f"{path}: {counts['prose']} prose cell(s), "
+                      f"{counts['short']} short cell(s)")
+                for n, text, kind in findings:
+                    if kind != "mixed":
+                        print(f"  {n} [{kind}] {text[:110]}")
+            if counts["mixed"]:
+                print(f"{path}: {counts['mixed']} half-translated cell(s) (note)")
+                for n, text, kind in findings:
+                    if kind == "mixed":
+                        print(f"  {n} [mixed] {text[:110]}")
+            prose += counts["prose"]
+            shorts += counts["short"]
+            mixed += counts["mixed"]
+        print(f"\n{prose} prose cell(s), {shorts} short cell(s) to decide, "
+              f"{mixed} note(s)")
+        if prose or (shorts and args.strict):
+            return 1
+        return 0
+
     if not args.before or not args.after:
-        ap.error("--before and --after are required unless --english/--links")
+        ap.error("--before and --after are required unless "
+                 "--english/--cells/--links")
 
     worktree = args.after in WORKTREE_ALIASES
     failures = 0

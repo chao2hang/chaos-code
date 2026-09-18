@@ -21,6 +21,8 @@
   （`~/.chaos/config.toml`）、命令（`/model`、`chaos -p`）、工具名
   （`read_file`）、键位（`Ctrl+O`）、模型 id
 - 表格表头中作为**字面量**出现的列名（`Key`、`Flag`、`Value`）
+  ——注意是**反引号里的**才算字面量：表头单元格 `| Key |` 是散文，译
+  `| 键 |`；`` 用 `Key` 列 `` 这种带反引号的提及才保留。
 - Markdown 链接目标 `](...)`，包括锚点
 - 转义与实体：`&lt;`、`\|`、行尾双空格
 
@@ -177,7 +179,9 @@
 - 原文的破折号插入语、括号补充、`**粗体**` 用于强调时保留强调，
   但不要额外加粗。
 - 长句拆成中文短句；不保留英文语序的定语从句。
-- 表格单元格内是散文时翻译；单元格内是字面量时保留。
+- 表格单元格内是散文时翻译；单元格内是字面量时保留。判定与执行见 §八：
+  「1–2 个单词」的单元格在词典里一次决定，「3 个及以上单词」的是散文，
+  按章节就地翻译。
 - 引用块（`>`）里的提示照译，但 `> **Note:**` 视作散文标题，译作
   `> **注意：**`。
 - HTML 注释、`<!-- ... -->` 保留原样。
@@ -199,13 +203,14 @@
 ## 七、每次提交前自检
 
 机器校验脚本是 `scripts/check-doc-l10n.py`（它自己的测试在
-`scripts/check-doc-l10n-selftest.py`，12 条用例覆盖每个不变量的
+`scripts/check-doc-l10n-selftest.py`，33 条用例覆盖每个不变量的
 「该拦」和「该放」两个方向，改动脚本后先跑它）。翻译完一章，至少跑：
 
 ```sh
 G=crates/codegen/xai-grok-pager/docs/user-guide
 python3 scripts/check-doc-l10n.py --before HEAD --after WORKTREE --glob "$G/<本章>"
-python3 scripts/check-doc-l10n.py --english   --glob "$G/<本章>"
+python3 scripts/check-doc-l10n.py --english --glob "$G/<本章>"
+python3 scripts/check-doc-l10n.py --cells --strict --glob "$G/<本章>"
 python3 scripts/check-doc-l10n.py --fork-names --glob "$G/<本章>"
 ```
 
@@ -224,3 +229,48 @@ python3 scripts/check-doc-l10n.py --fork-names --glob "$G/<本章>"
 
 全部章节翻完后，再做一次收尾：`--fix-anchors` 机械重写入站锚点 →
 `--links` 归零 → 全库 `--fork-names --strict`。
+
+## 八、表格单元格与词典
+
+`--english` **不扫表格行**（表格行是 `|` 开头，被判为结构化内容）。所以它
+一个人报不出「散文全中文、表格全英文」的章节——`26-config-reference.md`
+就是这样：`--english` 只剩 16 行，全文 57,850 字符里却只有 1.0% 是汉字。
+表格那一半由 `--cells` 负责，两者合起来才是完整性判据。
+
+`--cells` 按词数把单元格分成三档：
+
+| 档 | 判据 | 处理方式 |
+|---|---|---|
+| `prose` | 去掉行内代码后 ≥ 3 个 ASCII 单词 | 就地翻译（子代理做） |
+| `short` | 1–2 个 ASCII 单词 | 在 **`scripts/doc-cell-glossary.tsv`** 里决定一次 |
+| `mixed` | 已含汉字但仍 ≥ 3 个英文词且有虚词 | 只提示，不算失败 |
+
+`short` 档必须在词典里有条目，否则 `--cells --strict` 失败。词典一行一条
+`英文单元格<TAB>中文`，值写 `=keep` 表示这是标识符/字面量/专名，保留英文：
+
+```
+array	=keep
+Details	说明
+`~/.chaos/config.toml` or `~/.grok/config.toml`	`~/.chaos/config.toml` 或 `~/.grok/config.toml`
+```
+
+规则：
+
+- **整体匹配**：只有单元格文本与键完全相同时才替换，所以译文不会拼进更长
+  的句子里；替换时保留单元格原有的前后空白，列宽不变。
+- 词典条目自身也过机器校验（`--check-glossary`）：译文的行内代码集合、
+  散文数字、链接目标必须与英文一致（命令改名按 §4.1 归一化后比较），
+  不得含裸 `|` 或换行，必须含汉字。不满足的条目不会被采用。
+- 因此写条目时不能凭空加反引号。要保留 `Key` 这样的字面量就写 `=keep`。
+- 双语路径单元格（`.chaos/config.toml` or `.grok/config.toml`）只在**紧随
+  其后的段落说明了兼容/双读**时才出现；`--fork-names` 按「块」豁免，一个块
+  能继承它上面那个块的豁免，正是为这张表准备的。
+
+```sh
+python3 scripts/check-doc-l10n.py --check-glossary      # 校验词典
+python3 scripts/check-doc-l10n.py --apply-cell-glossary  # 全库机械替换
+python3 scripts/check-doc-l10n.py --cells --strict       # 清点未决
+```
+
+词典是**数据**，不是脚本：新增一个重复出现的短单元格，加一行即可，不要
+在 27 个文件里各写一遍，也不要为此改脚本。
