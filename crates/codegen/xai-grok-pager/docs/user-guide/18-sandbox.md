@@ -23,13 +23,13 @@ grok --sandbox strict
 
 ## Built-in Profiles
 
-| Profile               | FS Read                        | FS Write                                       | Child Network | Use Case                          |
+| Profile               | 文件读                        | 文件写                                       | 子网络 | 适用场景                          |
 | --------------------- | ------------------------------ | ---------------------------------------------- | ------------- | --------------------------------- |
-| `off` (default)       | Unrestricted                   | Unrestricted                                   | Unrestricted  | No sandbox                        |
-| `workspace`           | Everywhere                     | CWD + `~/.grok/` + `/tmp` + `/var/tmp`         | Allowed       | Normal development                |
-| `devbox`              | Everywhere                     | All top-level dirs except `/data`              | Allowed       | Disposable dev VMs                |
-| `read-only`           | Everywhere                     | `~/.grok/` + `/tmp` + `/var/tmp`               | Blocked¹      | Exploration, code review          |
-| `strict`              | CWD + system paths + `~/.grok` | CWD + `~/.grok/sessions` + `/tmp` + `/var/tmp` | Blocked¹      | Untrusted code                    |
+| `off`（默认）       | 不受限                   | 不受限                                   | 不受限  | 无沙箱                        |
+| `workspace`           | 所有位置                     | CWD + `~/.grok/` + `/tmp` + `/var/tmp`         | 允许       | 日常开发                |
+| `devbox`              | 所有位置                     | All top-level dirs except `/data`              | 允许       | Disposable dev VMs                |
+| `read-only`           | 所有位置                     | `~/.grok/` + `/tmp` + `/var/tmp`               | 已阻止¹      | Exploration, code review          |
+| `strict`              | CWD + system paths + `~/.grok` | CWD + `~/.grok/sessions` + `/tmp` + `/var/tmp` | 已阻止¹      | 不受信任的代码                    |
 
 ¹ Child-network blocking is enforced on **Linux only** (via seccomp). On macOS it is a no-op — these profiles do not restrict child-process network there.
 
@@ -94,7 +94,7 @@ If the user and project files define the same custom profile differently, Grok u
 
 ### Custom Profile Fields
 
-| Field              | Type     | Description                                          |
+| 字段              | 类型     | 说明                                          |
 | ------------------ | -------- | ---------------------------------------------------- |
 | `extends`          | String   | Base built-in profile to inherit from (`workspace`, `devbox`, `read-only`, `strict`). Defaults to `workspace` when omitted |
 | `restrict_network` | Boolean  | Block network access for child processes             |
@@ -213,7 +213,7 @@ Profile resolution order for a **new** session:
 
 ## Platform Support
 
-| Platform | Mechanism | Minimum Version        |
+| 平台 | 机制 | 最低版本        |
 | -------- | --------- | ---------------------- |
 | Linux    | Landlock  | Kernel 5.13 or later   |
 | macOS    | Seatbelt  | macOS (all versions)   |
@@ -295,11 +295,11 @@ Sandbox events are logged to `~/.grok/sessions` for debugging. Events include:
 
 ## Trade-offs
 
-| Aspect      | Without Sandbox            | With Sandbox                    |
+| 方面      | 无沙箱            | 有沙箱                    |
 | ----------- | -------------------------- | ------------------------------- |
-| Safety      | Agent has full system access | Agent restricted to profile rules |
-| Capability  | Can do anything            | Limited by profile              |
-| Performance | No overhead                | Negligible overhead             |
-| Recovery    | Must trust the agent       | Kernel enforces boundaries      |
+| 安全      | Agent has full system access | Agent restricted to profile rules |
+| 能力  | Can do anything            | Limited by profile              |
+| 性能 | 无额外开销                | 开销可忽略             |
+| 恢复    | Must trust the agent       | Kernel enforces boundaries      |
 
 The sandbox enforces limits at the OS level -- through Landlock or a mount namespace on Linux, and Seatbelt on macOS -- not a separate VM.

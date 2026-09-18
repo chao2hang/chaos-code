@@ -100,27 +100,27 @@ The dispatch input uses the same prompt chrome as the agent view. Press
 
 ## Keybindings
 
-| Key | Action |
+| 键 | 操作 |
 | --- | --- |
 | `↑` / `↓`, `j` / `k` | Navigate rows and section titles (selecting a row opens peek) |
 | `→` / `←` (on a section title) | Expand / collapse the section (`l` / `h` in vim mode) |
 | `Enter` (on a section title) | Toggle the section collapsed / expanded |
-| `Enter` (empty reply) | Open the selected agent full-screen (details view) |
+| `Enter`（空回复） | Open the selected agent full-screen (details view) |
 | `Ctrl+S` | Send the peek reply and open the agent (or dispatch and attach a new session) |
 | `Shift+Enter` / `Alt+Enter` | Newline in the reply / dispatch input |
 | `1`–`9` | Answer a pending permission / ask question when peek shows options |
-| `Enter` (typed reply) | Send / queue the reply to the selected agent |
+| `Enter`（已输入回复） | Send / queue the reply to the selected agent |
 | `/` | Literal `/` into the prompt |
 | `Ctrl+/` | Toggle search mode (live-filter rows) |
 | `Ctrl+R` | Rename selected row |
-| `Ctrl+T` | Pin / unpin |
+| `Ctrl+T` | 固定 / 取消固定 |
 | `Ctrl+G` | Toggle grouping (state ↔ directory) |
 | `Ctrl+X` | Cancel a running turn, or press twice within 2s to permanently delete |
-| Hover + click `[✗]` | Permanently delete an idle/done row (click again to confirm) |
+| 悬停并点击 `[✗]` | Permanently delete an idle/done row (click again to confirm) |
 | `Shift+↑` / `Shift+↓` | Reorder pinned rows |
 | `Esc` | Step back: cancel search → close peek → clear filter → unfocus dispatch → unselect row → exit. Never clears a typed dispatch draft (`Ctrl+U` / `Ctrl+C` for that) |
 | `Ctrl+\` | Return from details view, or exit dashboard |
-| `Ctrl+.` (alt: `?`) | Keyboard shortcuts cheatsheet. Footer shows `?` when `Ctrl+.` cannot be delivered. Bare `?` opens help when list-focused or the draft is empty |
+| `Ctrl+.`（另一种：`?`） | Keyboard shortcuts cheatsheet. Footer shows `?` when `Ctrl+.` cannot be delivered. Bare `?` opens help when list-focused or the draft is empty |
 
 When grouping by state, each group has a **section title** (for example
 `Working`, `Idle`) with a `▸`/`▾` marker. Select a title and press `→` /

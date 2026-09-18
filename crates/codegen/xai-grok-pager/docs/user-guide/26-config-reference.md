@@ -1,41 +1,41 @@
 # Configuration reference
 
-This file ships with the CLI and is extracted to `~/.grok/docs/user-guide/26-config-reference.md` on launch. It is the complete field list for `config.toml`, `managed_config.toml`, and `requirements.toml`. For conceptual guidance see [05-configuration.md](05-configuration.md).
+本文件随 CLI 一起分发，启动时解包到 `~/.chaos/docs/user-guide/26-config-reference.md`。它是 `config.toml`、`managed_config.toml` 与 `requirements.toml` 的完整字段清单。概念性说明见 [05-configuration.md](05-configuration.md)。
 
 ## How to configure
 
-Three files configure Grok Build, and they are written by different people.
+三个文件用来配置 Chaos，它们由不同的人维护。
 
-| File | Who writes it | Where it lives | Use it to |
+| 文件 | Who writes it | Where it lives | Use it to |
 | --- | --- | --- | --- |
-| `config.toml` | The developer | `~/.grok/config.toml`, and `.grok/config.toml` in a project | Set personal defaults. Anything here can be changed by the person using the machine. |
+| `config.toml` | 开发者 | `~/.chaos/config.toml`, and `.chaos/config.toml` in a project | Set personal defaults. Anything here can be changed by the person using the machine. |
 | `managed_config.toml` | You, through the console or a deployment tool | `/etc/grok/managed_config.toml` | Ship a starting point to a fleet. A developer's own file overrides it. |
-| `requirements.toml` | You, signed | `/etc/grok/requirements.toml`, or macOS device management | Set values a developer cannot change. Keys marked `pin` below hold against every other file, the environment, and the command line. |
+| `requirements.toml` | 你（含签名） | `/etc/grok/requirements.toml`, or macOS device management | Set values a developer cannot change. Keys marked `pin` below hold against every other file, the environment, and the command line. |
 
-Choose `managed_config.toml` for defaults you want people to be able to adjust, and `requirements.toml` for the ones you do not.
+如果你希望别人能调整某些默认值，就用 `managed_config.toml`；如果希望他们不能改，就用 `requirements.toml`。
 
-Grok Build also reads these layers, later rows winning except where a requirements pin or the Managed column says otherwise.
+Chaos 还会读取以下各层，靠后的行优先，除非 requirements 的 pin 或 Managed 列另有说明。
 
-1. Compiled defaults.
-2. `/etc/grok/managed_config.toml`, then `$GROK_HOME/managed_config.toml` (fleet defaults; console-synced).
-3. `$GROK_HOME/config.toml` (your settings; `/settings` writes here). Default `$GROK_HOME` is `~/.grok`.
-4. Project `.grok/config.toml`: only `[mcp_servers]`, `[plugins]`, `[permission]`, and `[mcp] max_output_bytes`.
-5. `GROK_CONFIG` (inline JSON) or `GROK_CONFIG_PATH` (JSON or TOML file). Allowlisted keys only.
-6. `$GROK_HOME/requirements.toml`, then `/etc/grok/requirements.toml`, then macOS MDM `ai.x.grok`. Admin layer. Keys marked `pin` in the table cannot be overridden; keys marked `yes` are also valid in this file.
-7. `GROK_*` environment variables.
-8. CLI flags such as `--model`, `--sandbox`, `--yolo`.
+1. 内置默认值。
+2. `/etc/grok/managed_config.toml`，然后是 `$CHAOS_HOME/managed_config.toml`（团队默认值；由控制台同步）。
+3. `$CHAOS_HOME/config.toml`（你的设置；`/settings` 写在这里）。`$CHAOS_HOME` 默认为 `~/.chaos`。配置根按 `$CHAOS_HOME` → `$GROK_HOME` → 已有 `~/.chaos` → 已有 `~/.grok` → 默认 `~/.chaos` 的顺序解析；旧用户仍可使用 `~/.grok/config.toml`（兼容）。
+4. 项目级 `.chaos/config.toml`：只包含 `[mcp_servers]`、`[plugins]`、`[permission]`，以及 `[mcp] max_output_bytes`。
+5. `GROK_CONFIG`（内联 JSON）或 `GROK_CONFIG_PATH`（JSON 或 TOML 文件）。仅限白名单内的键。
+6. `$CHAOS_HOME/requirements.toml`，然后是 `/etc/grok/requirements.toml`，然后 macOS MDM `ai.x.grok`。管理层。表中标为 `pin` 的键不可覆盖；标为 `yes` 的键在本文件中同样有效。
+7. `GROK_*` 环境变量。
+8. 命令行标志，例如 `--model`、`--sandbox`、`--yolo`。
 
-Run `grok inspect` or `grok inspect --json` to see which files and values won.
+运行 `chaos inspect` 或 `chaos inspect --json`，查看哪些文件与值最终生效。
 
 ## config.toml
 
-User-level configuration lives in `$GROK_HOME/config.toml` (default `~/.grok/config.toml`; Windows `%USERPROFILE%\.grok\config.toml`). Project-scoped overrides live in `.grok/config.toml` and only contribute `[mcp_servers]`, `[plugins]`, `[permission]`, and `[mcp] max_output_bytes`.
+用户级配置位于 `$CHAOS_HOME/config.toml`（默认 `~/.chaos/config.toml`；Windows 为 `%USERPROFILE%\.chaos\config.toml`）。项目级覆盖位于 `.chaos/config.toml`，只贡献 `[mcp_servers]`、`[plugins]`、`[permission]` 与 `[mcp] max_output_bytes`。
 
-**Requirements** marks whether the same key can be set in `requirements.toml`: `pin` cannot be overridden (including env and CLI where the resolver honors the pin); `yes` is accepted in that file; `—` is not read from `requirements.toml`. **Managed** marks whether a fleet `managed_config.toml` value stands (`fleet`) or the user's file wins (`user`).
+**Requirements** 标明同一个键能否在 `requirements.toml` 中设置：`pin` 不可被覆盖（在解析器遵循 pin 的情况下，包括环境变量与 CLI）；`yes` 可在该文件中使用；`—` 不会从 `requirements.toml` 读取。**Managed** 标明团队 `managed_config.toml` 的值生效（`fleet`）还是用户文件胜出（`user`）。
 
 ### `agent`
 
-| Key | Type / Values | Requirements | Managed | Details |
+| 键 | 类型 / 取值 | requirements.toml 可否设置 | managed_config.toml 是否生效 | 说明 |
 | --- | --- | --- | --- | --- |
 | `agent.definition` | `string (path)` | `yes` | `user` | Path to an agent definition markdown file with YAML frontmatter. |
 | `agent.name` | `string` | `yes` | `user` | Built-in or discovered agent definition name. Also GROK_AGENT and `--agent-profile`. |
@@ -43,13 +43,13 @@ User-level configuration lives in `$GROK_HOME/config.toml` (default `~/.grok/con
 
 ### `announcements`
 
-| Key | Type / Values | Requirements | Managed | Details |
+| 键 | 类型 / 取值 | requirements.toml 可否设置 | managed_config.toml 是否生效 | 说明 |
 | --- | --- | --- | --- | --- |
 | `announcements` | `array of tables` | `—` | `user` | Remote announcement payloads consumed at load. Not a user-authored table. |
 
 ### `auth`
 
-| Key | Type / Values | Requirements | Managed | Details |
+| 键 | 类型 / 取值 | requirements.toml 可否设置 | managed_config.toml 是否生效 | 说明 |
 | --- | --- | --- | --- | --- |
 | `auth` | `table` | `yes` | `user` | Alias of `[grok_com_config]`; every `grok_com_config.*` key also works as `auth.*`. |
 | `auth.auth_provider_command` | `string` | `yes` | `user` | External auth binary; stdout is the token. Also GROK_AUTH_PROVIDER_COMMAND; also valid as `grok_com_config.auth_provider_command`. |
@@ -76,29 +76,29 @@ User-level configuration lives in `$GROK_HOME/config.toml` (default `~/.grok/con
 
 ### `auth_provider`
 
-| Key | Type / Values | Requirements | Managed | Details |
+| 键 | 类型 / 取值 | requirements.toml 可否设置 | managed_config.toml 是否生效 | 说明 |
 | --- | --- | --- | --- | --- |
 | `auth_provider.<name>` | `table` | `yes` | `user` | Named credential helper used by `[model.<id>] auth_provider`. |
 
 ### `auto_mode`
 
-| Key | Type / Values | Requirements | Managed | Details |
+| 键 | 类型 / 取值 | requirements.toml 可否设置 | managed_config.toml 是否生效 | 说明 |
 | --- | --- | --- | --- | --- |
 | `auto_mode.enabled` | `boolean` | `yes` | `user` | Enable Auto permission mode. |
 
 ### `campaigns`
 
-| Key | Type / Values | Requirements | Managed | Details |
+| 键 | 类型 / 取值 | requirements.toml 可否设置 | managed_config.toml 是否生效 | 说明 |
 | --- | --- | --- | --- | --- |
 | `campaigns` | `array of tables` | `yes` | `user` | Named campaign patches applied below requirements. The deployment publishes these. |
 
 ### `cli`
 
-| Key | Type / Values | Requirements | Managed | Details |
+| 键 | 类型 / 取值 | requirements.toml 可否设置 | managed_config.toml 是否生效 | 说明 |
 | --- | --- | --- | --- | --- |
 | `cli.auto_update` | `boolean` | `pin` | `user` | Check for CLI updates on launch. Also GROK_DISABLE_AUTOUPDATER to suppress. |
 | `cli.channel` | `stable / alpha` | `pin` | `user` | Release channel preference. |
-| `cli.grove_worktree` | `boolean` or `grove` / `grove-fuse` / `grove-nfs` / `nfs` / `copy` / `true` / `false` / `1` / `0` / `on` / `off` | `yes` | `user` | Session / `-w` Grove vs copy. Default copy. Distinct from creation-mode `cli.worktree_type`. Also `GROK_WORKTREE_TYPE`. Layer order: request → env → local → remote-true; then kill last: remote `grove_worktree = false` → copy. Missing remote settings are not a kill: local/env/request still apply. Does not enable `grok clone`. |
+| `cli.grove_worktree` | `boolean` or `grove` / `grove-fuse` / `grove-nfs` / `nfs` / `copy` / `true` / `false` / `1` / `0` / `on` / `off` | `yes` | `user` | Session / `-w` Grove vs copy. Default copy. Distinct from creation-mode `cli.worktree_type`. Also `GROK_WORKTREE_TYPE`. Layer order: request → env → local → remote-true; then kill last: remote `grove_worktree = false` → copy. Missing remote settings are not a kill: local/env/request still apply. 上游的 `grok clone` 依赖 Grove，本分叉不含该功能（兼容说明）。 |
 | `cli.installer` | `string` | `—` | `user` | Which installer last set up this CLI, used to pick the update path. |
 | `cli.maximum_version` | `string` | `pin` | `user` | Highest CLI version that still runs without a hard block. Also GROK_MAXIMUM_VERSION. |
 | `cli.minimum_version` | `string` | `pin` | `user` | Lowest CLI version that still runs without a hard block. Also GROK_MINIMUM_VERSION. |
@@ -108,13 +108,13 @@ User-level configuration lives in `$GROK_HOME/config.toml` (default `~/.grok/con
 | `cli.required_minimum_version` | `string` | `pin` | `user` | Hard minimum CLI version. Also GROK_REQUIRED_MINIMUM_VERSION. |
 | `cli.session_picker_grouped` | `boolean` | `yes` | `user` | Group sessions by repo in the picker and CLI listings. |
 | `cli.session_registry` | `boolean` | `yes` | `user` | Participate in the cross-process session registry. |
-| `cli.show_tips` | `boolean` | `pin` | `user` | Startup tips. |
+| `cli.show_tips` | `boolean` | `pin` | `user` | 启动提示。 |
 | `cli.use_leader` | `boolean` | `pin` | `user` | Use the leader process for config reload and MCP watches. |
 | `cli.worktree_type` | `string` | `yes` | `user` | Creation-mode when set to `linked`, `standalone`, or `git`. The spellings `grove`, `grove-fuse`, `grove-nfs`, `nfs`, and `copy` also feed the session / `-w` Grove gate (same as `cli.grove_worktree`); they are not creation-mode values. |
 
 ### `compat`
 
-| Key | Type / Values | Requirements | Managed | Details |
+| 键 | 类型 / 取值 | requirements.toml 可否设置 | managed_config.toml 是否生效 | 说明 |
 | --- | --- | --- | --- | --- |
 | `compat.claude.agents` | `boolean` | `yes` | `user` | Scan CLAUDE.md. Also GROK_CLAUDE_AGENTS_ENABLED. |
 | `compat.claude.hooks` | `boolean` | `yes` | `user` | Scan Claude hooks. Also GROK_CLAUDE_HOOKS_ENABLED. |
@@ -131,50 +131,50 @@ User-level configuration lives in `$GROK_HOME/config.toml` (default `~/.grok/con
 
 ### `dashboard`
 
-| Key | Type / Values | Requirements | Managed | Details |
+| 键 | 类型 / 取值 | requirements.toml 可否设置 | managed_config.toml 是否生效 | 说明 |
 | --- | --- | --- | --- | --- |
 | `dashboard.enabled` | `boolean` | `yes` | `user` | Show the agent dashboard. |
 | `dashboard.grouping` | `state / directory` | `yes` | `user` | How dashboard rows group. |
 
 ### `default_auto_mode`
 
-| Key | Type / Values | Requirements | Managed | Details |
+| 键 | 类型 / 取值 | requirements.toml 可否设置 | managed_config.toml 是否生效 | 说明 |
 | --- | --- | --- | --- | --- |
 | `default_auto_mode` | `boolean` | `yes` | `user` | Start sessions in auto permission mode when no per-session override is set. |
 
 ### `diagnostics`
 
-| Key | Type / Values | Requirements | Managed | Details |
+| 键 | 类型 / 取值 | requirements.toml 可否设置 | managed_config.toml 是否生效 | 说明 |
 | --- | --- | --- | --- | --- |
-| `diagnostics.crash_handler` | `boolean` | `yes` | `user` | Write a panic report under `$GROK_HOME/crash/`. Also GROK_CRASH_HANDLER. |
+| `diagnostics.crash_handler` | `boolean` | `yes` | `user` | Write a panic report under `$CHAOS_HOME/crash/`. Also GROK_CRASH_HANDLER. |
 
 ### `disable_web_search`
 
-| Key | Type / Values | Requirements | Managed | Details |
+| 键 | 类型 / 取值 | requirements.toml 可否设置 | managed_config.toml 是否生效 | 说明 |
 | --- | --- | --- | --- | --- |
 | `disable_web_search` | `boolean` | `yes` | `user` | Drop the web_search tool for this process. Also `--disable-web-search`. |
 
 ### `disabled_mcp_servers`
 
-| Key | Type / Values | Requirements | Managed | Details |
+| 键 | 类型 / 取值 | requirements.toml 可否设置 | managed_config.toml 是否生效 | 说明 |
 | --- | --- | --- | --- | --- |
 | `disabled_mcp_servers` | `string[]` | `yes` | `user` | MCP server names to skip without deleting their `[mcp_servers]` blocks. |
 
 ### `disabled_mcp_tools`
 
-| Key | Type / Values | Requirements | Managed | Details |
+| 键 | 类型 / 取值 | requirements.toml 可否设置 | managed_config.toml 是否生效 | 说明 |
 | --- | --- | --- | --- | --- |
 | `disabled_mcp_tools` | `map<string, string[]>` | `yes` | `user` | Per-server MCP tool deny lists keyed by server name. |
 
 ### `doom_loop_recovery`
 
-| Key | Type / Values | Requirements | Managed | Details |
+| 键 | 类型 / 取值 | requirements.toml 可否设置 | managed_config.toml 是否生效 | 说明 |
 | --- | --- | --- | --- | --- |
 | `doom_loop_recovery.enabled` | `boolean` | `yes` | `user` | Resample confident tool-call loops; set false to disable. |
 
 ### `endpoints`
 
-| Key | Type / Values | Requirements | Managed | Details |
+| 键 | 类型 / 取值 | requirements.toml 可否设置 | managed_config.toml 是否生效 | 说明 |
 | --- | --- | --- | --- | --- |
 | `endpoints.cli_chat_proxy_base_url` | `string` | `pin` | `user` | Session-service API base URL. |
 | `endpoints.deployment_key` | `string` | `pin` | `user` | Management key for enterprise deployments. Also GROK_DEPLOYMENT_KEY. |
@@ -192,7 +192,7 @@ User-level configuration lives in `$GROK_HOME/config.toml` (default `~/.grok/con
 
 ### `features`
 
-| Key | Type / Values | Requirements | Managed | Details |
+| 键 | 类型 / 取值 | requirements.toml 可否设置 | managed_config.toml 是否生效 | 说明 |
 | --- | --- | --- | --- | --- |
 | `features.active_agent_messages` | `boolean` | `pin` | `user` | Enable or disable `active_agent_messages`. Default false. Also `GROK_ACTIVE_AGENT_MESSAGES`. |
 | `features.ask_user_question` | `boolean` | `pin` | `user` | Enable or disable `ask_user_question`. Default true. Also `GROK_ASK_USER_QUESTION`. |
@@ -216,7 +216,7 @@ User-level configuration lives in `$GROK_HOME/config.toml` (default `~/.grok/con
 | `features.mcp_auto_restart` | `boolean` | `yes` | `user` | Auto-restart stdio MCP servers after transport failure. Also GROK_MCP_AUTO_RESTART. |
 | `features.mcp_liveness_watchers` | `boolean` | `yes` | `user` | Poll MCP transports and push server_status updates. Emergency kill switch when false. |
 | `features.mcp_push_server_status` | `boolean` | `yes` | `user` | Pager subscribes to MCP server_status push. Process env GROK_MCP_PUSH_SERVER_STATUS wins at launch. |
-| `features.mcp_recursive_config_watch` | `boolean` | `yes` | `user` | Watch `<cwd>/` and `<cwd>/.grok/` for project MCP config edits. Name is a misnomer; watches are non-recursive. |
+| `features.mcp_recursive_config_watch` | `boolean` | `yes` | `user` | Watch `<cwd>/` and `<cwd>/.chaos/` for project MCP config edits. Name is a misnomer; watches are non-recursive. |
 | `features.non_git_warning` | `boolean` | `yes` | `user` | Show a blocking warning when Grok starts outside a Git repository. |
 | `features.remember_mode` | `boolean` | `—` | `—` | Remember the last permission mode across sessions. Read from user `config.toml` only. |
 | `features.remote_fetch` | `boolean` | `pin` | `fleet` | Pin remote model-catalog and asset fetch. Managed wins over the user file when both set. |
@@ -237,7 +237,7 @@ User-level configuration lives in `$GROK_HOME/config.toml` (default `~/.grok/con
 
 ### `feedback`
 
-| Key | Type / Values | Requirements | Managed | Details |
+| 键 | 类型 / 取值 | requirements.toml 可否设置 | managed_config.toml 是否生效 | 说明 |
 | --- | --- | --- | --- | --- |
 | `feedback.user.command` | `string` | `yes` | `user` | Shell command that prints name and email JSON for feedback submissions. |
 | `feedback.user.email` | `string[]` | `yes` | `user` | Sources for the feedback author email (`git_email` or a literal). |
@@ -245,13 +245,13 @@ User-level configuration lives in `$GROK_HOME/config.toml` (default `~/.grok/con
 
 ### `goal`
 
-| Key | Type / Values | Requirements | Managed | Details |
+| 键 | 类型 / 取值 | requirements.toml 可否设置 | managed_config.toml 是否生效 | 说明 |
 | --- | --- | --- | --- | --- |
-| `goal.enabled` | `boolean` | `yes` | `user` | Enable `/goal`. |
+| `goal.enabled` | `boolean` | `yes` | `user` | 启用 `/goal`。 |
 
 ### `grok_com_config`
 
-| Key | Type / Values | Requirements | Managed | Details |
+| 键 | 类型 / 取值 | requirements.toml 可否设置 | managed_config.toml 是否生效 | 说明 |
 | --- | --- | --- | --- | --- |
 | `grok_com_config` | `table` | `yes` | `user` | Grok.com websocket and OAuth/OIDC settings. `[auth]` is an alias. |
 | `grok_com_config.auth_provider_command` | `string` | `yes` | `user` | External auth binary; stdout is the token. Also GROK_AUTH_PROVIDER_COMMAND. |
@@ -278,21 +278,21 @@ User-level configuration lives in `$GROK_HOME/config.toml` (default `~/.grok/con
 
 ### `harness`
 
-| Key | Type / Values | Requirements | Managed | Details |
+| 键 | 类型 / 取值 | requirements.toml 可否设置 | managed_config.toml 是否生效 | 说明 |
 | --- | --- | --- | --- | --- |
 | `harness.block_for_upload` | `boolean` | `yes` | `user` | Block turn end until the workspace snapshot upload finishes. |
 | `harness.disable_workspace_teleport` | `boolean` | `pin` | `user` | Kill switch for per-turn workspace snapshots. |
 
 ### `hints`
 
-| Key | Type / Values | Requirements | Managed | Details |
+| 键 | 类型 / 取值 | requirements.toml 可否设置 | managed_config.toml 是否生效 | 说明 |
 | --- | --- | --- | --- | --- |
 | `hints.fork_worktree_mode` | `ask / always / never` | `yes` | `user` | Whether `/fork` offers a worktree. |
 | `hints.new_session_worktree_mode` | `ask / always / never` | `yes` | `user` | Whether `/new` offers a worktree. |
 
 ### `hooks`
 
-| Key | Type / Values | Requirements | Managed | Details |
+| 键 | 类型 / 取值 | requirements.toml 可否设置 | managed_config.toml 是否生效 | 说明 |
 | --- | --- | --- | --- | --- |
 | `hooks.<event>` | `array of tables` | `yes` | `user` | Matcher groups for a lifecycle event such as PreToolUse or Stop. See Hooks. |
 | `hooks.<event>[].hooks[].command` | `string` | `yes` | `user` | Command to run for this hook. `$VAR` is not expanded at load. |
@@ -301,27 +301,27 @@ User-level configuration lives in `$GROK_HOME/config.toml` (default `~/.grok/con
 
 ### `managed_mcps`
 
-| Key | Type / Values | Requirements | Managed | Details |
+| 键 | 类型 / 取值 | requirements.toml 可否设置 | managed_config.toml 是否生效 | 说明 |
 | --- | --- | --- | --- | --- |
 | `managed_mcps.enabled` | `boolean` | `pin` | `user` | Fetch managed MCP configs at startup. Also GROK_MANAGED_MCPS_ENABLED. |
 | `managed_mcps.gateway_tools_enabled` | `boolean` | `yes` | `user` | Expose managed MCP gateway tools. Also GROK_MANAGED_MCP_GATEWAY_TOOLS_ENABLED. |
 
 ### `marketplace`
 
-| Key | Type / Values | Requirements | Managed | Details |
+| 键 | 类型 / 取值 | requirements.toml 可否设置 | managed_config.toml 是否生效 | 说明 |
 | --- | --- | --- | --- | --- |
 | `marketplace.sources` | `array of tables` | `yes` | `user` | `[[marketplace.sources]]` plugin marketplace repos. |
 | `marketplace.require_sha` | `boolean` | `yes` | `user` | Tighten-only: remote plugin installs and updates must pin a full commit sha. Also `GROK_MARKETPLACE_REQUIRE_SHA`. Neither this key nor the env var can turn the gate back off. |
 
 ### `mcp`
 
-| Key | Type / Values | Requirements | Managed | Details |
+| 键 | 类型 / 取值 | requirements.toml 可否设置 | managed_config.toml 是否生效 | 说明 |
 | --- | --- | --- | --- | --- |
 | `mcp.max_output_bytes` | `number` | `yes` | `user` | Cap MCP tool output size in bytes. Project files may set this. |
 
 ### `mcp_servers`
 
-| Key | Type / Values | Requirements | Managed | Details |
+| 键 | 类型 / 取值 | requirements.toml 可否设置 | managed_config.toml 是否生效 | 说明 |
 | --- | --- | --- | --- | --- |
 | `mcp_servers.<name>.args` | `string[]` | `yes` | `user` | `[mcp_servers.<name>]` `args` on a stdio or HTTP MCP server. |
 | `mcp_servers.<name>.bearer_token_env_var` | `string` | `yes` | `user` | `[mcp_servers.<name>]` `bearer_token_env_var` on a stdio or HTTP MCP server. |
@@ -344,13 +344,13 @@ User-level configuration lives in `$GROK_HOME/config.toml` (default `~/.grok/con
 
 ### `memory`
 
-| Key | Type / Values | Requirements | Managed | Details |
+| 键 | 类型 / 取值 | requirements.toml 可否设置 | managed_config.toml 是否生效 | 说明 |
 | --- | --- | --- | --- | --- |
 | `memory.enabled` | `boolean` | `pin` | `user` | Cross-session memory master switch. Also GROK_MEMORY. |
 
 ### `model`
 
-| Key | Type / Values | Requirements | Managed | Details |
+| 键 | 类型 / 取值 | requirements.toml 可否设置 | managed_config.toml 是否生效 | 说明 |
 | --- | --- | --- | --- | --- |
 | `model.<id>` | `table` | `yes` | `user` | Per-model override or BYOK definition. Prefer `env_key` over inline `api_key`. |
 | `model.<id>.agent_type` | `string` | `yes` | `user` | Agent definition type associated with this model. |
@@ -382,7 +382,7 @@ User-level configuration lives in `$GROK_HOME/config.toml` (default `~/.grok/con
 | `model.<id>.stream_tool_calls` | `boolean` | `yes` | `user` | Per-model tool-call streaming request shape. |
 | `model.<id>.supported_in_api` | `boolean` | `yes` | `user` | Whether this catalog entry is offered as a public API model. |
 | `model.<id>.supports_backend_search` | `boolean` | `yes` | `user` | Whether the endpoint supports Grok-hosted server-side search tools. |
-| `model.<id>.supports_reasoning_effort` | `boolean` | `yes` | `user` | Deprecated; prefer `reasoning_efforts`. |
+| `model.<id>.supports_reasoning_effort` | `boolean` | `yes` | `user` | 已弃用；请改用 `reasoning_efforts`。 |
 | `model.<id>.system_prompt_label` | `string` | `yes` | `user` | Per-model system-prompt identity label. |
 | `model.<id>.temperature` | `number` | `yes` | `user` | Per-model sampling temperature. |
 | `model.<id>.top_p` | `number` | `yes` | `user` | Per-model top_p. |
@@ -390,13 +390,13 @@ User-level configuration lives in `$GROK_HOME/config.toml` (default `~/.grok/con
 
 ### `model_providers`
 
-| Key | Type / Values | Requirements | Managed | Details |
+| 键 | 类型 / 取值 | requirements.toml 可否设置 | managed_config.toml 是否生效 | 说明 |
 | --- | --- | --- | --- | --- |
 | `model_providers.<name>` | `table` | `yes` | `user` | Named custom model provider definition. |
 
 ### `models`
 
-| Key | Type / Values | Requirements | Managed | Details |
+| 键 | 类型 / 取值 | requirements.toml 可否设置 | managed_config.toml 是否生效 | 说明 |
 | --- | --- | --- | --- | --- |
 | `models.agent_type` | `string` | `yes` | `user` | Fallback agent_type for models without a per-model override. |
 | `models.allowed_models` | `string[]` | `pin` | `user` | Glob allowlist for the model picker, default, and `-m`. Empty means no restriction. |
@@ -418,20 +418,20 @@ User-level configuration lives in `$GROK_HOME/config.toml` (default `~/.grok/con
 
 ### `path_not_found_hints`
 
-| Key | Type / Values | Requirements | Managed | Details |
+| 键 | 类型 / 取值 | requirements.toml 可否设置 | managed_config.toml 是否生效 | 说明 |
 | --- | --- | --- | --- | --- |
 | `path_not_found_hints` | `boolean` | `yes` | `user` | Enrich path-not-found errors with CWD reminders and similar-name suggestions. |
 
 ### `paths`
 
-| Key | Type / Values | Requirements | Managed | Details |
+| 键 | 类型 / 取值 | requirements.toml 可否设置 | managed_config.toml 是否生效 | 说明 |
 | --- | --- | --- | --- | --- |
 | `paths.extra_rule_dirs` | `string[]` | `yes` | `user` | More rule directories (each contains `*.md`). |
 | `paths.extra_skill_dirs` | `string[]` | `yes` | `user` | More skill directories (each contains `<skill>/SKILL.md`). |
 
 ### `permission`
 
-| Key | Type / Values | Requirements | Managed | Details |
+| 键 | 类型 / 取值 | requirements.toml 可否设置 | managed_config.toml 是否生效 | 说明 |
 | --- | --- | --- | --- | --- |
 | `permission.allow` | `string[]` | `yes` | `user` | Compact allow rules such as `Bash(git *)`. Deny beats ask beats allow. Project files may set this. |
 | `permission.ask` | `string[]` | `yes` | `user` | Compact ask rules. Project files may set this. |
@@ -440,7 +440,7 @@ User-level configuration lives in `$GROK_HOME/config.toml` (default `~/.grok/con
 
 ### `plugins`
 
-| Key | Type / Values | Requirements | Managed | Details |
+| 键 | 类型 / 取值 | requirements.toml 可否设置 | managed_config.toml 是否生效 | 说明 |
 | --- | --- | --- | --- | --- |
 | `plugins.disabled` | `string[]` | `yes` | `user` | Plugin IDs to discover but not load. Project files may set this. |
 | `plugins.enabled` | `string[]` | `yes` | `user` | Plugin IDs to enable; needed for project plugins that default off. |
@@ -448,33 +448,33 @@ User-level configuration lives in `$GROK_HOME/config.toml` (default `~/.grok/con
 
 ### `privacy`
 
-| Key | Type / Values | Requirements | Managed | Details |
+| 键 | 类型 / 取值 | requirements.toml 可否设置 | managed_config.toml 是否生效 | 说明 |
 | --- | --- | --- | --- | --- |
 | `privacy.privacy_banner_acked` | `string` | `—` | `—` | RFC 3339 UTC timestamp when the local privacy banner was dismissed. The pager reads user `config.toml` only. |
 
 ### `relay`
 
-| Key | Type / Values | Requirements | Managed | Details |
+| 键 | 类型 / 取值 | requirements.toml 可否设置 | managed_config.toml 是否生效 | 说明 |
 | --- | --- | --- | --- | --- |
 | `relay.enabled` | `boolean` | `yes` | `user` | Enable session relay sync. |
 
 ### `sandbox`
 
-| Key | Type / Values | Requirements | Managed | Details |
+| 键 | 类型 / 取值 | requirements.toml 可否设置 | managed_config.toml 是否生效 | 说明 |
 | --- | --- | --- | --- | --- |
 | `sandbox.auto_allow_bash` | `boolean` | `pin` | `user` | Skip bash permission prompts when a sandbox profile is active. Also GROK_SANDBOX_AUTO_ALLOW_BASH. |
 | `sandbox.profile` | `off / workspace / read-only / strict / string` | `pin` | `user` | Filesystem sandbox profile. Also `--sandbox` and GROK_SANDBOX. |
 
 ### `session`
 
-| Key | Type / Values | Requirements | Managed | Details |
+| 键 | 类型 / 取值 | requirements.toml 可否设置 | managed_config.toml 是否生效 | 说明 |
 | --- | --- | --- | --- | --- |
 | `session.auto_compact_threshold_percent` | `integer` | `yes` | `user` | Auto-compact when context usage reaches this percent (0–100). |
 | `session.load_envrc` | `boolean` | `yes` | `user` | Inject `.envrc` variables into bash. |
 
 ### `shell_environment_policy`
 
-| Key | Type / Values | Requirements | Managed | Details |
+| 键 | 类型 / 取值 | requirements.toml 可否设置 | managed_config.toml 是否生效 | 说明 |
 | --- | --- | --- | --- | --- |
 | `shell_environment_policy.exclude` | `string[]` | `yes` | `user` | Env names to drop from bash. Overlay-allowlisted. |
 | `shell_environment_policy.ignore_default_excludes` | `boolean` | `yes` | `user` | Skip the built-in env denylist. Overlay-allowlisted. |
@@ -484,20 +484,20 @@ User-level configuration lives in `$GROK_HOME/config.toml` (default `~/.grok/con
 
 ### `skills`
 
-| Key | Type / Values | Requirements | Managed | Details |
+| 键 | 类型 / 取值 | requirements.toml 可否设置 | managed_config.toml 是否生效 | 说明 |
 | --- | --- | --- | --- | --- |
 | `skills.disabled` | `string[]` | `yes` | `user` | Skill names to discover but not activate. |
 | `skills.paths` | `string[]` | `yes` | `user` | Additional skill directories. |
 
 ### `storage`
 
-| Key | Type / Values | Requirements | Managed | Details |
+| 键 | 类型 / 取值 | requirements.toml 可否设置 | managed_config.toml 是否生效 | 说明 |
 | --- | --- | --- | --- | --- |
 | `storage.cleanup_ttl_days` | `integer` | `yes` | `user` | Days a session may stay idle before its folder is deleted; media and terminal logs older than this are pruned from live sessions. Default 30. |
 
 ### `subagents`
 
-| Key | Type / Values | Requirements | Managed | Details |
+| 键 | 类型 / 取值 | requirements.toml 可否设置 | managed_config.toml 是否生效 | 说明 |
 | --- | --- | --- | --- | --- |
 | `subagents.enabled` | `boolean` | `pin` | `user` | Subagent / task tool master switch. Also GROK_SUBAGENTS. |
 | `subagents.limit_behavior` | `queue / fail` | `yes` | `user` | What to do when the concurrent subagent cap is hit. |
@@ -508,7 +508,7 @@ User-level configuration lives in `$GROK_HOME/config.toml` (default `~/.grok/con
 
 ### `telemetry`
 
-| Key | Type / Values | Requirements | Managed | Details |
+| 键 | 类型 / 取值 | requirements.toml 可否设置 | managed_config.toml 是否生效 | 说明 |
 | --- | --- | --- | --- | --- |
 | `telemetry.otel_enabled` | `boolean` | `pin` | `user` | External OTEL master switch. Also GROK_EXTERNAL_OTEL. |
 | `telemetry.otel_metrics_exporter` | `otlp / console / none` | `pin` | `user` | External OTEL metrics exporter. Also OTEL_METRICS_EXPORTER. |
@@ -539,7 +539,7 @@ User-level configuration lives in `$GROK_HOME/config.toml` (default `~/.grok/con
 
 ### `tools`
 
-| Key | Type / Values | Requirements | Managed | Details |
+| 键 | 类型 / 取值 | requirements.toml 可否设置 | managed_config.toml 是否生效 | 说明 |
 | --- | --- | --- | --- | --- |
 | `tools.disable_zdr_incompatible_tools` | `boolean` | `yes` | `user` | Restrict tools that need xAI-hosted output under ZDR. Also GROK_DISABLE_ZDR_INCOMPATIBLE_TOOLS. |
 | `tools.media_gen.max_parallel_image_gen_calls` | `integer` | `yes` | `user` | Cap parallel image_gen/image_edit calls in one model step. Also GROK_MAX_PARALLEL_IMAGE_GEN_CALLS. |
@@ -549,7 +549,7 @@ User-level configuration lives in `$GROK_HOME/config.toml` (default `~/.grok/con
 
 ### `toolset`
 
-| Key | Type / Values | Requirements | Managed | Details |
+| 键 | 类型 / 取值 | requirements.toml 可否设置 | managed_config.toml 是否生效 | 说明 |
 | --- | --- | --- | --- | --- |
 | `toolset.ask_user_question.timeout_secs` | `number` | `yes` | `user` | Timeout for the ask_user_question tool. |
 | `toolset.bash.auto_background_on_timeout` | `boolean` | `yes` | `user` | Background the command when the foreground timeout fires. |
@@ -565,9 +565,9 @@ User-level configuration lives in `$GROK_HOME/config.toml` (default `~/.grok/con
 
 ### `ui`
 
-| Key | Type / Values | Requirements | Managed | Details |
+| 键 | 类型 / 取值 | requirements.toml 可否设置 | managed_config.toml 是否生效 | 说明 |
 | --- | --- | --- | --- | --- |
-| `ui.approval_mode` | `string` | `yes` | `user` | Deprecated; use `ui.permission_mode`. |
+| `ui.approval_mode` | `string` | `yes` | `user` | 已弃用；请改用 `ui.permission_mode`。 |
 | `ui.auto_dark_theme` | `string` | `yes` | `user` | Theme when `theme = auto` and the OS is dark. |
 | `ui.auto_light_theme` | `string` | `yes` | `user` | Theme when `theme = auto` and the OS is light. |
 | `ui.cancel_subagents_on_turn_cancel` | `ask / always_stop / always_continue` | `yes` | `user` | What to do with running subagents when cancelling a parent turn. |
@@ -579,7 +579,7 @@ User-level configuration lives in `$GROK_HOME/config.toml` (default `~/.grok/con
 | `ui.contextual_hints.plan_mode` | `boolean` | `yes` | `user` | Suggest plan mode (Shift+Tab) for planning-style prompts. |
 | `ui.contextual_hints.send_now` | `boolean` | `yes` | `user` | After queuing a mid-turn follow-up, Enter on an empty prompt sends now. |
 | `ui.contextual_hints.small_screen` | `boolean` | `yes` | `user` | Suggest `/compact-mode` on short terminals. |
-| `ui.contextual_hints.ssh_wrap` | `boolean` | `yes` | `user` | Recommend `grok wrap` when SSH lacks a clipboard sink. |
+| `ui.contextual_hints.ssh_wrap` | `boolean` | `yes` | `user` | Recommend `chaos wrap` when SSH lacks a clipboard sink. |
 | `ui.contextual_hints.undo` | `boolean` | `yes` | `user` | Ctrl+Z restores a wiped prompt draft tip. |
 | `ui.contextual_hints.word_select` | `boolean` | `yes` | `user` | After double-click with fold/nav selection, point at Word select in settings. |
 | `ui.cursor_blink` | `boolean` | `yes` | `user` | Force blinking (true) or steady (false) block cursor. Unset inherits the terminal. |
@@ -601,7 +601,7 @@ User-level configuration lives in `$GROK_HOME/config.toml` (default `~/.grok/con
 | `prompt_suggestions.reasoning_effort` | `none / minimal / low / medium / high` | `yes` | `user` | Reasoning effort for the suggestion call; default and `none` disable reasoning, while other values use a supported model effort. Remote-overridable. |
 | `ui.remember_tool_approvals` | `boolean` | `yes` | `user` | Show per-tool Always allow options. Also GROK_REMEMBER_TOOL_APPROVALS. |
 | `ui.render_mermaid` | `auto / on / off` | `yes` | `user` | How mermaid fences render: clickable open row or raw source. |
-| `ui.screen_mode` | `fullscreen / minimal` | `yes` | `user` | Default render mode for plain `grok`. Restart required. |
+| `ui.screen_mode` | `fullscreen / minimal` | `yes` | `user` | Default render mode for plain `chaos`. Restart required. |
 | `ui.scroll_lines` | `integer` | `yes` | `user` | Lines per scroll tick (1–10). Also GROK_SCROLL_LINES. |
 | `ui.scroll_mode` | `auto / wheel / trackpad` | `yes` | `user` | Scroll input classification. Also GROK_SCROLL_MODE. |
 | `ui.scroll_speed` | `integer` | `yes` | `user` | Mouse/trackpad scroll speed multiplier (1–100). Also GROK_SCROLL_SPEED. |
@@ -621,13 +621,13 @@ User-level configuration lives in `$GROK_HOME/config.toml` (default `~/.grok/con
 
 ### `version_overrides`
 
-| Key | Type / Values | Requirements | Managed | Details |
+| 键 | 类型 / 取值 | requirements.toml 可否设置 | managed_config.toml 是否生效 | 说明 |
 | --- | --- | --- | --- | --- |
 | `version_overrides` | `array of tables` | `yes` | `user` | Per-CLI-version config patches applied before merge. See `[[version_overrides]]`. |
 
 ### `voice`
 
-| Key | Type / Values | Requirements | Managed | Details |
+| 键 | 类型 / 取值 | requirements.toml 可否设置 | managed_config.toml 是否生效 | 说明 |
 | --- | --- | --- | --- | --- |
 | `voice.api_base` | `string` | `yes` | `user` | HTTPS API root for speech-to-text. Unset inherits `[endpoints].xai_api_base_url`. |
 | `voice.language` | `string` | `yes` | `user` | Preferred STT language catalog code or `auto`. |
@@ -635,51 +635,51 @@ User-level configuration lives in `$GROK_HOME/config.toml` (default `~/.grok/con
 
 ### `workflows`
 
-| Key | Type / Values | Requirements | Managed | Details |
+| 键 | 类型 / 取值 | requirements.toml 可否设置 | managed_config.toml 是否生效 | 说明 |
 | --- | --- | --- | --- | --- |
-| `workflows.enabled` | `boolean` | `yes` | `user` | Enable workflows. |
+| `workflows.enabled` | `boolean` | `yes` | `user` | 启用工作流。 |
 
 ### `worktree`
 
-| Key | Type / Values | Requirements | Managed | Details |
+| 键 | 类型 / 取值 | requirements.toml 可否设置 | managed_config.toml 是否生效 | 说明 |
 | --- | --- | --- | --- | --- |
 | `worktree.auto_gc` | `table` | `yes` | `user` | Automatic worktree garbage collection policy. |
 
 ## managed_config.toml
 
-`managed_config.toml` accepts every key in the tables above. It sets fleet defaults, so a developer's own `config.toml` overrides it. Use it for values you want people to be able to adjust, and `requirements.toml` for values they cannot.
+`managed_config.toml` 接受上面各表中的所有键。它设置团队默认值，因此开发者自己的 `config.toml` 会覆盖它。想让别人能调整的值放这里，不能调整的值放 `requirements.toml`。
 
 One exception to that rule:
 
-| Key | Behaviour |
+| 键 | 行为 |
 | --- | --- |
 | `features.remote_fetch` | The managed value wins over the developer's. |
 
-Grok Build reads `/etc/grok/managed_config.toml` first, then `$GROK_HOME/managed_config.toml`, which the console keeps in sync. Values in the second replace values in the first.
+Chaos 先读取 `/etc/grok/managed_config.toml`，再读取 `$CHAOS_HOME/managed_config.toml`，后者由控制台保持同步。后者的值会替换前者的值。
 
-The **Managed** column on the tables above is the per-key answer: `fleet` means the fleet value stands, `user` means the user's file wins, `—` means this file is ignored.
+上面各表的 **Managed** 列给出每个键的答案：`fleet` 表示团队值生效，`user` 表示用户文件胜出，`—` 表示忽略本文件。
 
 ## requirements.toml
 
-`requirements.toml` is an admin-enforced file. Locations: `$GROK_HOME/requirements.toml` (signed cache) then `/etc/grok/requirements.toml`, then macOS MDM `ai.x.grok`. The **Requirements** column on the `config.toml` tables lists every `config.toml` key this file accepts (`pin` or `yes`). Omitted keys stay unconstrained.
+`requirements.toml` 是管理员强制下发的文件。位置依次为 `$CHAOS_HOME/requirements.toml`（带签名的缓存）、`/etc/grok/requirements.toml`，以及 macOS MDM `ai.x.grok`。`config.toml` 各表里的 **Requirements** 列列出该文件接受的每个 `config.toml` 键（`pin` 或 `yes`）。未列出的键不受约束。
 
 These keys exist only in `requirements.toml`:
 
-| Key | Type / Values | Default | Details |
+| 键 | 类型 / 取值 | 默认 | 说明 |
 | --- | --- | --- | --- |
 | `fail_closed` | `boolean` | `false` | Refuse to start when signed requirements or version_overrides cannot be applied; default false. |
 | `features.image_edit` | `boolean` | — | Pin image_edit availability. Requirements only; a user-file entry is unrecognized and unset leaves the remotely configured default. |
 | `ui.disable_bypass_permissions_mode` | `boolean` | — | Lock always-approve off. The lock is enforced only from a requirements layer; true in user or managed files is ignored. |
 
-## What happens when a setting is refused
+## 设置被拒绝时会发生什么
 
-| Situation | What Grok Build does |
+| 场景 | What Grok Build does |
 | --- | --- |
-| A developer sets a key you pinned | The pinned value applies. `grok inspect` lists the requirements file that contributed. |
+| A developer sets a key you pinned | The pinned value applies. `chaos inspect` lists the requirements file that contributed. |
 | A developer sets a key you shipped in `managed_config.toml` | Their value applies, except `features.remote_fetch`. Pin the key instead if it must hold. |
 | `requirements.toml` is missing or its signature does not verify | The pins do not apply, and Grok Build starts without them. Set `fail_closed = true` to refuse to start instead. |
 | A pinned key names a value this version does not recognise | The key is ignored and the rest of the file still applies. |
 
 ## Check what is in effect
 
-Run `grok inspect` on the developer's machine. It lists every config file that contributed, including requirements and managed layers, so a policy that is not applying is visible in one command.
+在开发者的机器上运行 `chaos inspect`。它会列出每个参与合并的配置文件，包括 requirements 与 managed 层，因此哪条策略没有生效，一条命令就能看清。

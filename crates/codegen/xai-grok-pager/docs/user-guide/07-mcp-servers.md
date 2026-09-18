@@ -174,11 +174,11 @@ When a server exposes a native HTTP/SSE endpoint, prefer the `url` form over wra
 
 Grok walks from the current directory up to the git repo root, loading `.grok/config.toml` at each level:
 
-| Location | Scope | Priority |
+| 位置 | 作用域 | 优先级 |
 |----------|-------|----------|
-| `~/.grok/config.toml` | All projects | Lowest |
-| `<repo-root>/.grok/config.toml` | This repository | Medium |
-| `<cwd>/.grok/config.toml` | Current directory | Highest |
+| `~/.grok/config.toml` | 所有项目 | 最低 |
+| `<repo-root>/.grok/config.toml` | 本仓库 | 中 |
+| `<cwd>/.grok/config.toml` | 当前目录 | 最高 |
 
 If a project defines a server with the same name as a global one, the project version replaces it entirely (fields are not merged).
 
@@ -228,11 +228,11 @@ The model has access to two built-in tools for working with MCP servers:
 
 Grok loads MCP server configurations from multiple sources for compatibility:
 
-| Source | Format | Location | Configurable |
+| 来源 | 格式 | 位置 | 可配置 |
 |--------|--------|----------|-------------|
-| `config.toml` | Native Grok config | `~/.grok/config.toml`, `.grok/config.toml` | Always on |
+| `config.toml` | Native Grok config | `~/.grok/config.toml`, `.grok/config.toml` | 始终开启 |
 | `.claude.json` | Claude Code format | `~/.claude.json` | `[compat.claude] mcps` |
-| `.cursor/mcp.json` | Cursor format | `~/.cursor/mcp.json`, `<project>/.cursor/mcp.json` | `[compat.cursor] mcps` |
+| `.cursor/mcp.json` | Cursor 格式 | `~/.cursor/mcp.json`, `<project>/.cursor/mcp.json` | `[compat.cursor] mcps` |
 | `.mcp.json` | MCP standard format | Project root (cwd to git root) | Loaded unless you have imported or dismissed the Claude import prompt (the import marker is set) |
 
 All sources are merged in priority order: config.toml > Claude > Cursor > `.mcp.json`. Servers from higher-priority sources take precedence when names conflict.
@@ -321,12 +321,12 @@ On Windows, npm installs launchers like `npx`, `npm`, `pnpm`, and `yarn` as `.cm
 
 A partial list of MCP servers you can configure with the `url` or `command` forms shown above. Confirm the current endpoint or package name with each provider before use:
 
-| Server | Transport | Endpoint / Package |
+| 服务器 | 传输 | 端点 / 包名 |
 |--------|-----------|--------------------|
 | Linear | HTTP (OAuth) | `https://mcp.linear.app/mcp` |
 | Sentry | HTTP (OAuth) | `https://mcp.sentry.dev/mcp` |
 | Mixpanel | HTTP (OAuth) | `https://mcp.mixpanel.com/mcp` |
-| Filesystem | stdio | `@modelcontextprotocol/server-filesystem` |
+| 文件系统 | stdio | `@modelcontextprotocol/server-filesystem` |
 | Git | stdio | `@modelcontextprotocol/server-git` |
 | GitHub | stdio | `@modelcontextprotocol/server-github` |
 | GitLab | stdio | `@modelcontextprotocol/server-gitlab` |

@@ -16,15 +16,15 @@ Use a skill for a repeatable procedure that's too specific for AGENTS.md but too
 
 Grok discovers skills from these directories, in priority order:
 
-| Location | Scope | Priority | Notes |
+| 位置 | 作用域 | 优先级 | 说明 |
 |----------|-------|----------|-------|
-| `./.grok/skills/`, `./.grok/commands/` | Local (CWD) | Highest | Current directory skills / legacy command markdown |
-| `<repo_root>/.grok/skills/`, `…/commands/` | Repo | Medium | Shared across the repo |
-| `~/.grok/skills/`, `~/.grok/commands/` | User | Lowest | Personal skills for all projects |
-| `~/.claude/skills/`, `~/.claude/commands/` | User | Lowest | Claude Code compatibility (configurable) |
-| `./.claude/skills/`, `./.claude/commands/` | Local / Repo | High | Project Claude skills and legacy custom slash commands |
-| `~/.cursor/skills/` | User | Lowest | Cursor compatibility (configurable) |
-| `./.cursor/skills/` | Local / Repo | High | Project Cursor skills (when cursor compat skills are enabled) |
+| `./.grok/skills/`, `./.grok/commands/` | 本地（CWD） | 最高 | Current directory skills / legacy command markdown |
+| `<repo_root>/.grok/skills/`, `…/commands/` | 仓库 | 中 | Shared across the repo |
+| `~/.grok/skills/`, `~/.grok/commands/` | 用户 | 最低 | Personal skills for all projects |
+| `~/.claude/skills/`, `~/.claude/commands/` | 用户 | 最低 | Claude Code compatibility (configurable) |
+| `./.claude/skills/`, `./.claude/commands/` | 本地 / 仓库 | 高 | Project Claude skills and legacy custom slash commands |
+| `~/.cursor/skills/` | 用户 | 最低 | Cursor compatibility (configurable) |
+| `./.cursor/skills/` | 本地 / 仓库 | 高 | Project Cursor skills (when cursor compat skills are enabled) |
 
 Grok deduplicates skills by name -- a higher-priority location overrides a lower one. Grok also scans `.agents/skills/` (and `commands/`) at each tier (alongside `.grok/`) and walks every directory between your working directory and the repo root.
 
@@ -91,7 +91,7 @@ Review staged changes and create a commit with a clear, conventional message.
 
 ### Core Frontmatter Fields
 
-| Field | Description |
+| 字段 | 说明 |
 |-------|-------------|
 | `name` | Skill identifier. Use lowercase letters, digits, and hyphens, up to 64 characters. Grok normalizes spaces and underscores to hyphens. If you omit `name`, Grok uses the skill's directory name. |
 | `description` | What the skill does and when to use it. Grok reads this to decide whether to invoke the skill. If you omit it, Grok uses the first paragraph of the body. |
@@ -102,7 +102,7 @@ Write a specific `description`. It determines when Grok invokes the skill automa
 
 Multi-word frontmatter keys use kebab-case (single-word keys like `model` are written as-is).
 
-| Field | Description |
+| 字段 | 说明 |
 |-------|-------------|
 | `when-to-use` | Trigger phrases for automatic invocation, kept separate from `description`. |
 | `allowed-tools` | Tools the skill uses, as a YAML list or a comma- or space-separated string. |
@@ -110,7 +110,7 @@ Multi-word frontmatter keys use kebab-case (single-word keys like `model` are wr
 | `user-invocable` | Whether you can run the skill as a slash command. Defaults to `true`; set `false` to hide it from slash commands. (To stop the model from invoking a skill, set `disable-model-invocation` instead.) |
 | `disable-model-invocation` | When `true`, only your slash command runs the skill -- the model cannot invoke it automatically. Defaults to `false`. |
 | `model` | Model override for running the skill. |
-| `effort` | Reasoning-effort override. |
+| `effort` | 推理强度覆盖。 |
 | `license` | License identifier (for example, `Apache-2.0`). |
 | `compatibility` | Environment requirements (for example, `Requires git, docker, jq`). |
 | `metadata` | Arbitrary string key-value pairs. Grok promotes `metadata.author` and `metadata.short-description` for display. |

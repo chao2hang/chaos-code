@@ -18,7 +18,7 @@ Grok processes the prompt, runs any necessary tools, and prints the result to st
 
 ## Command-Line Options
 
-| Flag                    | Description                                           |
+| 标志                    | 说明                                           |
 | ----------------------- | ----------------------------------------------------- |
 | `-p, --single <PROMPT>` | The prompt to send (or use `--prompt-json` / `--prompt-file`) |
 | `-m, --model <MODEL>`   | Model to use (e.g., `grok-4.6`)              |
@@ -27,7 +27,7 @@ Grok processes the prompt, runs any necessary tools, and prints the result to st
 | `-r, --resume <ID_OR_TITLE>` | Resume an existing session by ID, or by title for the current directory, ignoring letter case (a sole manually renamed match wins among duplicates; remaining duplicates error with their IDs; UUID-shaped values always take the ID path; scripts should prefer IDs) |
 | `-c, --continue`        | Continue the most recent session in current directory  |
 | `--cwd <PATH>`          | Set working directory                                 |
-| `--output-format <FMT>` | Output format: `plain`, `json`, `streaming-json`, `streaming-messages-json` |
+| `--output-format <FMT>` | 输出格式：`plain`、`json`、`streaming-json`、`streaming-messages-json` |
 | `--include-partial-messages` | Emit raw `stream_event` deltas. Only affects `--output-format streaming-messages-json`; ignored (with a warning) otherwise. |
 | `--yolo`                | Auto-approve all tool executions                      |
 | `--rules <TEXT>`        | Custom rules for the system prompt                    |
@@ -65,7 +65,7 @@ grok -p "Review this code" --disallowed-tools "run_terminal_cmd"
 
 `--disallowed-tools` also supports special `Agent` entries to control subagent spawning:
 
-| Entry                  | Effect                                  |
+| 条目                  | 效果                                  |
 | ---------------------- | --------------------------------------- |
 | `Agent`                | Block all subagent spawning             |
 | `Agent(explore)`       | Block the `explore` subagent type only  |
@@ -87,7 +87,7 @@ Permission rules control whether specific tool invocations are auto-approved, de
 
 Rules use `ToolPrefix(glob_pattern)` syntax:
 
-| Prefix        | What it controls                   |
+| 前缀        | What it controls                   |
 | ------------- | ---------------------------------- |
 | `Bash(...)`   | Shell command execution            |
 | `Edit(...)`   | File editing (path glob)           |
@@ -224,7 +224,7 @@ Newline-delimited JSON, one `type`-tagged object per line, derived from the agen
 
 Event types:
 
-| Type               | Description                                                                                  |
+| 类型               | 说明                                                                                  |
 | ------------------ | ------------------------------------------------------------------------------------------- |
 | `text`             | A chunk of the agent's response text                                                          |
 | `thought`          | Internal reasoning (thinking tokens)                                                          |
@@ -263,7 +263,7 @@ The stream opens with a `system`/`init` line, then `assistant` messages whose `m
 
 Message types:
 
-| Type        | Description                                                              |
+| 类型        | 说明                                                              |
 | ----------- | ---------------------------------------------------------------------- |
 | `system`    | Session preamble (`subtype: "init"`) with model, cwd, permission mode, tools, slash commands, and MCP servers. `subtype: "compact_boundary"` marks an auto compaction |
 | `assistant` | A model message; `message.content[]` holds `text`/`thinking`/`tool_use`, plus `server_tool_use`/`web_search_tool_result` for inline backend web search |
@@ -540,7 +540,7 @@ For agent servers and SDKs, see [Agent mode](15-agent-mode.md#automation-and-sdk
 
 Key environment variables that affect headless mode:
 
-| Variable                        | Description                                                   |
+| 变量                        | 说明                                                   |
 | ------------------------------- | ------------------------------------------------------------- |
 | `XAI_API_KEY`        | API key for authentication (required when no browser login)   |
 | `GROK_HOME`                    | Override config directory (default: `~/.grok`)                |
@@ -558,7 +558,7 @@ grok -p "Run the test suite" --yolo
 
 ## Exit Codes
 
-| Code | Meaning                              |
+| 代码 | 含义                              |
 | ---- | ------------------------------------ |
 | `0`  | Success. The prompt completed normally |
 | `1`  | Error. Authentication failure, network error, or runtime error |
@@ -605,9 +605,9 @@ the scope small.
 
 Grok stores data in `~/.grok` (override with `GROK_HOME`; see [Environment Variables for Headless](#environment-variables-for-headless)):
 
-| Path                     | Contents                              |
+| 路径                     | 内容                              |
 | ------------------------ | ------------------------------------- |
-| `config.toml`            | User configuration                    |
+| `config.toml`            | 用户配置                    |
 | `auth.json`              | Cached OAuth2/API credentials         |
 | `version.json`           | Version cache for update checks       |
 | `sessions/`              | Session transcripts (SQLite)          |
@@ -616,7 +616,7 @@ Grok stores data in `~/.grok` (override with `GROK_HOME`; see [Environment Varia
 | `logs/mcp/`              | MCP server logs                       |
 | `skills/`                | User skill definitions                |
 | `personas/`              | User-scoped agent personas            |
-| `crash/`                 | Crash reports                         |
+| `crash/`                 | 崩溃报告                         |
 | `trace-exports/`         | Session trace exports                 |
 | `worktrees/`             | Git worktree metadata                 |
 
@@ -638,12 +638,12 @@ grok -p "..." --no-auto-update
 
 ## Update Check Suppression
 
-| Method                          | Scope     |
+| 方式                          | 作用域     |
 | ------------------------------- | --------- |
-| `--no-auto-update`              | Session   |
-| `GROK_DISABLE_AUTOUPDATER=1`    | Process   |
-| Non-TTY stderr (auto-detected)  | Automatic |
-| `[cli] auto_update = false`     | Persistent|
+| `--no-auto-update`              | 会话   |
+| `GROK_DISABLE_AUTOUPDATER=1`    | 进程   |
+| Non-TTY stderr (auto-detected)  | 自动 |
+| `[cli] auto_update = false`     | 持久|
 
 `GROK_DISABLE_AUTOUPDATER` set to a falsy value (`0`, `false`, `off`, `no`, or empty, any
 case) counts as not set. The agent SDKs
@@ -659,7 +659,7 @@ Update messages go to **stderr**. Stdout stays clean for `--output-format json`.
 
 These flags supplement the [Command-Line Options](#command-line-options) table above. Flags already listed there (`--prompt-json`, `--prompt-file`, `--verbatim`, `--sandbox`, `--no-auto-update`) are not repeated here.
 
-| Flag                          | Description                                       |
+| 标志                          | 说明                                       |
 | ----------------------------- | ------------------------------------------------- |
 | `--agent <NAME>`              | Agent name or definition file path                |
 | `--agents <JSON>`             | Inline subagent definitions as JSON               |

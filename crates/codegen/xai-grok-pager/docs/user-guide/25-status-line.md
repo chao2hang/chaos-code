@@ -14,9 +14,9 @@ items = ["cwd", "model", "context"]   # default when omitted
 
 This renders, for example, `grok-shell-status-line │ Grok 4.5 │ 12% ctx`. Items appear in the order you list them, and long ones are elided with `…`: the directory and session name at 40 columns, the model at 30.
 
-| Item | Shows |
+| 条目 | 显示 |
 | --- | --- |
-| `cwd` | Current directory (basename) |
+| `cwd` | 当前目录（basename） |
 | `model` | Model display name |
 | `context` | Context-window percent, amber at the auto-compaction threshold or at 80% when the agent reports none |
 | `cost` | Session cost, hidden below $0.005 so it never shows a misleading `$0.00` |
@@ -41,11 +41,11 @@ Field names and nesting follow the common status line convention, so a ported sc
 
 ### Options
 
-| Key | Type | Default | Description |
+| 键 | 类型 | 默认 | 说明 |
 | --- | --- | --- | --- |
-| `type` | string | `disabled` | `builtin`, `command`, or `disabled`. |
+| `type` | string | `disabled` | `builtin`、`command` 或 `disabled`。 |
 | `items` | array | `["cwd", "model", "context"]` | Built-in segments, in order. |
-| `command` | string | none | Script for `type = "command"`. |
+| `command` | string | none | `type = "command"` 用的脚本。 |
 | `padding` | integer | `0` | Horizontal spacing, in characters per side, capped at 16. A padding wide enough to leave no columns reserves the row but paints nothing in it. |
 | `refresh_interval` | integer | unset | `command` rows only, in seconds, 1 to 86,400. Re-runs the script this often even when nothing changed, so an idle session can still surface a change — an incident page, a CI status. Unset keeps the row event-driven. The run it schedules carries `"trigger": "refresh_interval"`, and its failures keep the last output rather than painting an error (see [Refresh runs](#refresh-runs)). A script that calls a network should prefer a longer interval and read a cache on `state` runs. |
 
@@ -82,14 +82,14 @@ Porting a script, read these closely. `workspace.repo_root` is the repository ro
 
 Nothing outside the table below is sent. A ported script that reads counts of lines the agent changed, a rate-limit summary, an editor mode, a thinking or fast-mode flag, an output style, a pull request, extra session directories, or the directory a worktree was created from will find them absent: each is either a feature Grok does not have or a number it cannot source honestly.
 
-| Field | Description |
+| 字段 | 说明 |
 | --- | --- |
 | `cwd`, `session_id` | Working directory and unique session id |
 | `session_name` | The session's tab name, filled in by the client. Present in `command` stdin, absent from the `SessionStatus` notification |
 | `prompt_id` | UUID of the prompt being processed. Present only during a turn |
 | `transcript_path` | Path to the session's `updates.jsonl`. The file is Grok's own update stream, so a script that parses another tool's transcript format will not read it |
 | `model.id`, `model.display_name` | Model identifier and display name. Omitted when the agent cannot read the session's model |
-| `workspace.current_dir` | Current directory |
+| `workspace.current_dir` | 当前目录 |
 | `workspace.repo_root` | The repository root, absent outside one. Not `project_dir`, a name used elsewhere for a launch directory |
 | `workspace.branch` | Checked-out branch, in any repo. Absent on a detached HEAD |
 | `workspace.git_worktree` | Worktree name, inside a linked worktree |

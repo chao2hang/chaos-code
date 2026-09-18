@@ -15,9 +15,9 @@ Modes set a baseline. Allow, ask, and deny [rules](#configuring-permissions) sti
 
 ### Starting points
 
-| Situation | Mode |
+| 场景 | 模式 |
 | --------- | ---- |
-| Interactive TUI | Default (ask), or auto for fewer prompts with background checks |
+| 交互式 TUI | Default (ask), or auto for fewer prompts with background checks |
 | Scripts, SDKs, CI, agent servers | Always-approve; add [deny rules](#configuring-permissions) or hooks for hard limits |
 
 ```bash
@@ -30,14 +30,14 @@ ACP clients can set `"_meta": { "yoloMode": true }` on `session/new`. See [Agent
 
 ### Available modes
 
-| Mode | What runs without asking | Best for |
+| 模式 | What runs without asking | 最适合 |
 | ---- | ------------------------ | -------- |
-| `default` (**ask**) | Read-only tools and built-in read-only shell commands | Interactive day-to-day use |
+| `default`（**询问**） | Read-only tools and built-in read-only shell commands | Interactive day-to-day use |
 | `acceptEdits` | File edits without a prompt | Local coding while you review diffs later |
-| `plan` | Accepted for compatibility; use [plan mode](19-plan-mode.md) for gated planning | Claude-compatible settings |
+| `plan` | Accepted for compatibility; use [plan mode](19-plan-mode.md) for gated planning | Claude 兼容设置 |
 | `auto` | Work the safety check allows; other calls are blocked or escalated | Interactive sessions that want fewer prompts |
 | `dontAsk` | Only pre-approved tools and built-in read-only handling | Strict CI allowlists |
-| `bypassPermissions` (**always-approve**) | Tool calls in general (`deny` rules, hooks, and some shell `ask` rules still apply) | Trusted automation and agent servers |
+| `bypassPermissions`（**始终批准**） | Tool calls in general (`deny` rules, hooks, and some shell `ask` rules still apply) | Trusted automation and agent servers |
 
 **Always-approve** is the product name; config and Claude-compatible settings may use `bypassPermissions` for the same mode. Always-approve and auto are mutually exclusive (always-approve takes precedence when both are requested).
 
@@ -66,12 +66,12 @@ Claude-compatible `defaultMode` in `.claude/settings.json` is also supported (se
 
 Skips ordinary permission prompts so tools run without waiting for a click. `deny` rules, hooks, and some shell `ask` rules still apply. Admins can lock the mode off (below).
 
-| Mechanism | Example |
+| 机制 | 示例 |
 | --------- | ------- |
 | CLI | `--always-approve` (alias `--yolo`), or `--permission-mode bypassPermissions` |
-| Config | `[ui] permission_mode = "always-approve"` |
-| Interactive | `/always-approve`, `Ctrl+O` |
-| ACP | `_meta.yoloMode: true` on `session/new` |
+| 配置 | `[ui] permission_mode = "always-approve"` |
+| 交互 | `/always-approve`, `Ctrl+O` |
+| ACP | 在 `session/new` 上设 `_meta.yoloMode: true` |
 
 #### Always-approve with hard limits
 
@@ -186,12 +186,12 @@ Grok reads permission rules from three compatible sources. Rules from all source
 
 Permission rules can be global (all projects), project-scoped (one repository), or personal to you within a project:
 
-| Scope | File | Shared with teammates |
+| 作用域 | 文件 | Shared with teammates |
 |-------|------|-----------------------|
-| Global (all projects) | `~/.grok/config.toml` | No |
-| Project (committed) | `<project>/.grok/config.toml` | Yes (commit it) |
-| Project (personal) | `<project>/.claude/settings.local.json` | No (gitignore it) |
-| Interactive grants | Stored internally by Grok, per project | No |
+| Global (all projects) | `~/.grok/config.toml` | 否 |
+| 项目（已提交） | `<project>/.grok/config.toml` | Yes (commit it) |
+| 项目（个人） | `<project>/.claude/settings.local.json` | No (gitignore it) |
+| 交互授权 | Stored internally by Grok, per project | 否 |
 
 Notes on scoping:
 

@@ -13,12 +13,12 @@ any data flowing through SpaceXAI.
 
 These knobs are independent of each other (and of this guide's external OTEL stream):
 
-| Setting | How to set it |
+| 设置 | How to set it |
 |---------|---------------|
 | Telemetry master switch | `[features] telemetry` / `GROK_TELEMETRY_ENABLED` |
 | Coding data, retention, and training | Settings — `/privacy` opens the row |
-| Trace upload | `[telemetry] trace_upload` / `GROK_TELEMETRY_TRACE_UPLOAD` |
-| External OpenTelemetry | `GROK_EXTERNAL_OTEL` / `[telemetry] otel_*` (this guide) |
+| Trace 上传 | `[telemetry] trace_upload` / `GROK_TELEMETRY_TRACE_UPLOAD` |
+| 外部 OpenTelemetry | `GROK_EXTERNAL_OTEL` / `[telemetry] otel_*`（本指南） |
 
 See also [Authentication](02-authentication.md#相关文档) and
 [Configuration](05-configuration.md#telemetry).
@@ -76,7 +76,7 @@ without the master switch.
 
 ## Environment variables
 
-| Variable | Default | Meaning |
+| 变量 | 默认 | 含义 |
 |---|---|---|
 | `GROK_EXTERNAL_OTEL` | `0` | Master switch. Distinct from `GROK_TELEMETRY_ENABLED`, which controls SpaceXAI-internal product analytics — the two govern opposite-pointing data flows. |
 | `OTEL_METRICS_EXPORTER` | `none` | `otlp` \| `console` \| `none`. |
@@ -85,12 +85,12 @@ without the master switch.
 | `OTEL_EXPORTER_OTLP_LOGS_PROTOCOL` / `..._METRICS_PROTOCOL` | — | Per-signal protocol overrides (same values as the base protocol). Unrecognized values disable the stream. |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4318` for HTTP, `http://localhost:4317` for gRPC | Base endpoint. For `http/protobuf`, `/v1/logs` and `/v1/metrics` are appended per the OTLP spec; for `grpc`, the collector endpoint is used as-is. Path appending uses **that signal’s** protocol. |
 | `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` / `..._METRICS_ENDPOINT` | — | Signal-specific overrides, used verbatim. For gRPC these should normally be collector endpoints without `/v1/...` paths. |
-| `OTEL_EXPORTER_OTLP_HEADERS` (+ signal-specific variants) | — | Collector auth (`k=v,k2=v2`). The **only** headers the external exporters send, and the only supported collector-auth mechanism (no config-file headers key — tokens never live on disk). |
-| `OTEL_EXPORTER_OTLP_CERTIFICATE` (+ signal-specific variants) | — | Path to a PEM bundle with additional trusted CA certificate(s) for verifying the collector — for collectors behind a private/corporate CA. Additive to the default trust roots (system store and embedded Mozilla roots). Also settable via `[telemetry] otel_certificate`. |
-| `OTEL_EXPORTER_OTLP_CLIENT_CERTIFICATE` / `OTEL_EXPORTER_OTLP_CLIENT_KEY` (+ signal-specific `…_LOGS_…` / `…_METRICS_…` variants) | — | PEM **paths** for mTLS client identity. Both cert and key must be set (base or same signal); half-config is ignored with a warning. Unencrypted PEM keys only. Also settable via `[telemetry] otel_client_certificate` / `otel_client_key`. |
-| `OTEL_EXPORTER_OTLP_TIMEOUT` | `10000` (ms) | Export timeout. |
-| `OTEL_METRIC_EXPORT_INTERVAL` | `60000` (ms) | Metric export interval. |
-| `OTEL_BLRP_SCHEDULE_DELAY` (or alias `OTEL_LOGS_EXPORT_INTERVAL`) | `5000` (ms) | Log batch interval. |
+| `OTEL_EXPORTER_OTLP_HEADERS`（+ 各信号专用变体） | — | Collector auth (`k=v,k2=v2`). The **only** headers the external exporters send, and the only supported collector-auth mechanism (no config-file headers key — tokens never live on disk). |
+| `OTEL_EXPORTER_OTLP_CERTIFICATE`（+ 各信号专用变体） | — | Path to a PEM bundle with additional trusted CA certificate(s) for verifying the collector — for collectors behind a private/corporate CA. Additive to the default trust roots (system store and embedded Mozilla roots). Also settable via `[telemetry] otel_certificate`. |
+| `OTEL_EXPORTER_OTLP_CLIENT_CERTIFICATE` / `OTEL_EXPORTER_OTLP_CLIENT_KEY`（+ 各信号专用的 `…_LOGS_…` / `…_METRICS_…` 变体） | — | PEM **paths** for mTLS client identity. Both cert and key must be set (base or same signal); half-config is ignored with a warning. Unencrypted PEM keys only. Also settable via `[telemetry] otel_client_certificate` / `otel_client_key`. |
+| `OTEL_EXPORTER_OTLP_TIMEOUT` | `10000`（毫秒） | 导出超时。 |
+| `OTEL_METRIC_EXPORT_INTERVAL` | `60000`（毫秒） | Metric export interval. |
+| `OTEL_BLRP_SCHEDULE_DELAY`（别名 `OTEL_LOGS_EXPORT_INTERVAL`） | `5000`（毫秒） | Log batch interval. |
 | `OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE` | `delta` | `delta` \| `cumulative`. |
 | `OTEL_METRICS_INCLUDE_SESSION_ID` | `1` | Attach `session.id` to metrics (cardinality opt-out). |
 | `OTEL_METRICS_INCLUDE_VERSION` | `0` | Attach `app.version` to metrics. |
@@ -206,7 +206,7 @@ resolved its configuration, and whether it is exporting or suppressed.
 
 ## Resource attributes
 
-| Attribute | Value |
+| 属性 | 取值 |
 |---|---|
 | `service.name` | `grok-cli` |
 | `service.version`, `client.version` | build/client versions |
@@ -224,7 +224,7 @@ events only, never metrics.
 
 ## Metrics (meter scope `ai.xai.grok_code`)
 
-| Metric | Unit | Attributes |
+| 指标 | 单位 | 属性 |
 |---|---|---|
 | `grok_code.session.count` | `{session}` | base attrs only |
 | `grok_code.token.usage` | `{token}` | `type` = `input` \| `output` \| `reasoning` \| `cache_read`; `model` |
@@ -282,7 +282,7 @@ requires `OTEL_LOG_TOOL_DETAILS`, **prompts** = requires
 (independent of details; default off); everything else always exports while the
 stream is active.
 
-| `event.name` | Attributes |
+| `event.name` | 属性 |
 |---|---|
 | `grok_code.session_start` | `model`, `permission_mode`, `mcp_server_count`, `plugin_count`, `skill_count`, `hook_count`, `memory_enabled`, `is_git_repo`, `client_identifier` |
 | `grok_code.session_end` | `duration_secs`, `turn_count`, `tool_call_count`, `compaction_count`, `model` |
@@ -295,8 +295,8 @@ stream is active.
 | `grok_code.tool_decision` | `tool_name`, `decision`, `access_kind`, `permission_mode`, `source`, `tool_use_id`; reduced MCP names always (verbatim under **details**); `tool_parameters` preview (**details**); `tool_input`, `full_command` (**content**) |
 | `grok_code.mcp_server_connection` | `status`, `transport_type`, `duration_ms`, `tool_count?`, `error_type?`; reduced `mcp_server.name` always (verbatim under **details**); `error_message` (**content**) |
 | `grok_code.permission_mode_changed` | `from_mode`, `to_mode`, `trigger` |
-| `grok_code.skill_activated` | `skill_source`, `trigger` = `slash_command` \| `skill_md_read` \| `skill_tool`; `skill.name` (**details**) |
-| `grok_code.plugin_loaded` | `install_kind?`, `success`, `error_category?`; `plugin_name` (**details**) |
+| `grok_code.skill_activated` | `skill_source`、`trigger` = `slash_command` \| `skill_md_read` \| `skill_tool`；`skill.name`（**详情**） |
+| `grok_code.plugin_loaded` | `install_kind?`、`success`、`error_category?`；`plugin_name`（**详情**） |
 | `grok_code.compaction` | `duration_ms`, `tokens_before`, `tokens_after`, `model?` |
 | `grok_code.subagent` | `phase` = `launched` \| `completed`, `subagent_type?`, `outcome?`, `duration_ms?` |
 | `grok_code.auth` | `auth_method` |

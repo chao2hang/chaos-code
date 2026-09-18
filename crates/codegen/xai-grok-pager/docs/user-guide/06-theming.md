@@ -12,13 +12,13 @@ Chaos 从中心主题绘制全部 TUI 颜色。运行时可切换主题、跟随
 
 内置五套主题，外加跟随系统外观的 `auto`：
 
-| Theme | Config Names | Description | Truecolor Required |
+| 主题 | 配置项 | 说明 | 需要 Truecolor |
 |-------|-------------|-------------|--------------------|
-| **Chaos Night**（内部 `GrokNight`） | `groknight`, `grok-night`, `dark` | 中性深色底 + 品红强调。默认主题。256/16 色终端量化后仍清晰。 | No |
-| **Chaos Day**（内部 `GrokDay`） | `grokday`, `grok-day`, `light`, `day` | 浅色主题，适合亮色终端背景。 | No |
-| **TokyoNight** | `tokyonight`, `tokyo-night`, `tokyo` | Dark, blue-tinted backgrounds from the Tokyo Night palette. Loses its character when quantized. | Yes |
-| **RosePineMoon** | `rosepine`, `rose-pine`, `rosepine-moon`, `rose-pine-moon` | Muted dark palette with mauve accents, from the Rosé Pine family. | Yes |
-| **OscuraMidnight** | `oscura`, `oscura-midnight` | Deep dark base with purple accents. | Yes |
+| **Chaos Night**（内部 `GrokNight`） | `groknight`, `grok-night`, `dark` | 中性深色底 + 品红强调。默认主题。256/16 色终端量化后仍清晰。 | 否 |
+| **Chaos Day**（内部 `GrokDay`） | `grokday`, `grok-day`, `light`, `day` | 浅色主题，适合亮色终端背景。 | 否 |
+| **TokyoNight** | `tokyonight`, `tokyo-night`, `tokyo` | Dark, blue-tinted backgrounds from the Tokyo Night palette. Loses its character when quantized. | 是 |
+| **RosePineMoon** | `rosepine`, `rose-pine`, `rosepine-moon`, `rose-pine-moon` | Muted dark palette with mauve accents, from the Rosé Pine family. | 是 |
+| **OscuraMidnight** | `oscura`, `oscura-midnight` | Deep dark base with purple accents. | 是 |
 
 Theme names are case-insensitive. The `auto` option (alias `system`) is documented under [Auto Theme (System Appearance)](#auto-theme-system-appearance).
 
@@ -77,7 +77,7 @@ auto_light_theme = "grokday"
 
 ### How Detection Works
 
-| Platform | Method |
+| 平台 | 方式 |
 |----------|--------|
 | **macOS** | Reads `AppleInterfaceStyle` system preference |
 | **Linux** | Queries XDG Desktop Portal (`org.freedesktop.appearance.color-scheme`) |
@@ -98,11 +98,11 @@ Run `/settings` (alias `/config`) and open the **Appearance** category to set th
 
 On startup, Grok detects your terminal's color capability level:
 
-| Level | Description | Detection |
+| 级别 | 说明 | 检测 |
 |-------|-------------|-----------|
-| **Truecolor** (24-bit) | Full RGB color. All themes render as designed. | `COLORTERM=truecolor` or equivalent terminal capability |
-| **256-color** | Indexed palette. RGB values are mapped to the nearest palette entry. | Standard xterm-256color |
-| **16-color** | ANSI names only. Colors are mapped to the closest ANSI color. | Basic terminal support |
+| **Truecolor**（24 位） | Full RGB color. All themes render as designed. | `COLORTERM=truecolor` or equivalent terminal capability |
+| **256 色** | Indexed palette. RGB values are mapped to the nearest palette entry. | Standard xterm-256color |
+| **16 色** | ANSI names only. Colors are mapped to the closest ANSI color. | Basic terminal support |
 
 When you set `NO_COLOR`, Grok emits no color and renders in monochrome.
 
@@ -260,14 +260,14 @@ bullet = "diamond"          # Bullet style before tool headers
 
 Available bullet styles:
 
-| Config Value | Character | Description |
+| 配置值 | 字符 | 说明 |
 |-------------|-----------|-------------|
-| `none` | (none) | No bullet |
+| `none` | （无） | 无项目符号 |
 | `dot` | `·` | Middle dot (smallest) |
-| `small-circle` | `•` | Bullet |
-| `circle` | `●` | Filled circle |
+| `small-circle` | `•` | 项目符号 |
+| `circle` | `●` | 实心圆 |
 | `small-triangle` | `▸` | Right-pointing small triangle |
-| `triangle` | `▶` | Right-pointing triangle |
+| `triangle` | `▶` | 右向三角 |
 | `diamond` | `◆` | Filled diamond (default) |
 
 ### Block Styling: Execute (Shell Commands)

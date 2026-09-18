@@ -10,14 +10,14 @@ Subagents are enabled by default.
 
 Agents and personas both customize behavior, but they operate at different levels:
 
-| | **Agents** | **Personas** |
+| | **代理** | **角色** |
 |---|---|---|
 | **What they configure** | The whole session: model, tools, prompt mode, system prompt | A behavioral overlay added to a subagent's prompt |
-| **Scope** | Primary session or subagent | Subagents only |
+| **作用域** | Primary session or subagent | 仅子代理 |
 | **How you set them** | At startup, or with agent definitions (`.md` files in `.grok/agents/` or `~/.grok/agents/`) | In `config.toml` (`[subagents.personas]`) or `.toml` files under `.grok/personas/`; applied during subagent resolution |
 | **What they control** | Model, tool availability, prompt body, skills | Tone, output format, task focus, and input/output contracts |
 | **Who edits them** | You -- create, delete, or toggle them in the agents modal or by editing files | You -- define custom personas in config or files; bundled personas are read-only |
-| **Examples** | `grok-build`, `explore`, `plan` | `researcher`, `concise` |
+| **示例** | `grok-build`, `explore`, `plan` | `researcher`, `concise` |
 
 An agent defines the session itself. A persona shapes how a subagent behaves within a session. A subagent always runs as an agent type (for example, `general-purpose`), and resolution can layer a persona on top.
 
@@ -57,7 +57,7 @@ The parent receives the child's output -- usually a summary -- when the child fi
 
 The `spawn_subagent` tool accepts a `subagent_type` parameter that selects the child's role:
 
-| Type              | Description                                          |
+| 类型              | 说明                                          |
 | ----------------- | ---------------------------------------------------- |
 | `general-purpose` | Default type. Full-capability agent for any task.    |
 | `explore`         | Research agent. Searches, reads, greps, and runs shell commands, but does not edit files. Use it for codebase investigation. |
@@ -93,7 +93,7 @@ Manage personas in the Personas tab of the agents modal (`/personas`). Bundled p
 
 ### Persona Fields
 
-| Field               | Description                                                          |
+| 字段               | 说明                                                          |
 | ------------------- | ------------------------------------------------------------------- |
 | `instructions`      | Inline instruction text applied as the persona layer.               |
 | `instructions_file` | Path to an instruction file, loaded at spawn time and merged after `instructions`. |
@@ -142,7 +142,7 @@ If a persona is requested but cannot be resolved -- it is not found, has no inst
 
 The main agent calls the `spawn_subagent` tool. Its parameters:
 
-| Parameter         | Description                                                       |
+| 参数         | 说明                                                       |
 | ----------------- | ---------------------------------------------------------------- |
 | `prompt`          | The full task prompt for the subagent.                           |
 | `description`     | A short label for the task (3-5 words).                          |
@@ -191,12 +191,12 @@ The collapsed row never shows the message or the reason. **Right** (or `l`/`e` i
 
 Capability mode is not a spawn argument. A child's tools come from its **agent type** and any **role / definition default**. `general-purpose` is unrestricted (`all`). The built-in `explore` and `plan` types read, search, and run shell commands but cannot edit files.
 
-| Mode         | Read | Write | Execute | Description                                  |
+| 模式         | 读 | 写 | 执行 | 说明                                  |
 | ------------ | ---- | ----- | ------- | -------------------------------------------- |
-| `read-only`  | Yes  | No    | No      | Read, search, and inspect (also web search and LSP); no file edits or shell. |
-| `read-write` | Yes  | Yes   | No      | Read, plus create, edit, delete, and move files. No shell. |
-| `execute`    | Yes  | No    | Yes     | Read, plus run shell commands and background tasks. No file edits. |
-| `all`        | Yes  | Yes   | Yes     | Unrestricted tool access. Default for `general-purpose`. |
+| `read-only`  | 是  | 否    | 否      | Read, search, and inspect (also web search and LSP); no file edits or shell. |
+| `read-write` | 是  | 是   | 否      | Read, plus create, edit, delete, and move files. No shell. |
+| `execute`    | 是  | 否    | 是     | Read, plus run shell commands and background tasks. No file edits. |
+| `all`        | 是  | 是   | 是     | Unrestricted tool access. Default for `general-purpose`. |
 
 ---
 
@@ -217,7 +217,7 @@ Subagents inherit the parent session’s **already-connected** MCP servers by de
 
 Control inheritance with agent frontmatter `mcpInheritance`:
 
-| Value | Effect |
+| 取值 | 效果 |
 | ----- | ------ |
 | `all` (default if omitted) | Inherit every parent-connected MCP server |
 | `none` | Inherit no parent MCP servers |

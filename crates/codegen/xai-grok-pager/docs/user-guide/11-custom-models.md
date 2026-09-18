@@ -73,9 +73,9 @@ default = "gpt-5"
 
 Chaos supports three API backends. Set `api_backend` in your `[model.*]` config to choose which protocol the model uses:
 
-| Value | API | Default |
+| 取值 | API | 默认 |
 |-------|-----|---------|
-| `"chat_completions"` | OpenAI Chat Completions (`/v1/chat/completions`) | Yes |
+| `"chat_completions"` | OpenAI Chat Completions (`/v1/chat/completions`) | 是 |
 | `"responses"` | OpenAI Responses (`/v1/responses`) | |
 | `"messages"` | Anthropic Messages (`/v1/messages`) | |
 
@@ -261,11 +261,11 @@ Point Grok at a custom OpenAI-compatible `/v1/models` endpoint instead of the de
 
 ### Environment Variables
 
-| Variable | Required | Description |
+| 变量 | 必填 | 说明 |
 |----------|----------|-------------|
-| `GROK_MODELS_BASE_URL` | Yes | Base URL for inference. Grok fetches the model list from `{base_url}/models`. |
-| `XAI_API_KEY` | Yes | API key sent as `Authorization: Bearer`. Grok also accepts `GROK_CODE_XAI_API_KEY`. |
-| `GROK_MODELS_LIST_URL` | No | Override the model-list URL when it differs from `{base_url}/models`. |
+| `GROK_MODELS_BASE_URL` | 是 | Base URL for inference. Grok fetches the model list from `{base_url}/models`. |
+| `XAI_API_KEY` | 是 | API key sent as `Authorization: Bearer`. Grok also accepts `GROK_CODE_XAI_API_KEY`. |
+| `GROK_MODELS_LIST_URL` | 否 | Override the model-list URL when it differs from `{base_url}/models`. |
 
 ### Setup
 

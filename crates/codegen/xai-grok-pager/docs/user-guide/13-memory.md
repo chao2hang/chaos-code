@@ -93,11 +93,11 @@ internal hardening notes, not here.
 
 Memory is stored as Markdown files under `~/.grok/memory/`:
 
-| Location | Scope | Description |
+| 位置 | 作用域 | 说明 |
 |----------|-------|-------------|
-| `~/.grok/memory/MEMORY.md` | Global | Facts that apply across all your projects |
-| `~/.grok/memory/<project-slug>-<hash8>/MEMORY.md` | Workspace | Project-specific conventions and context |
-| `~/.grok/memory/<project-slug>-<hash8>/sessions/` | Sessions | Per-session summaries and logs |
+| `~/.grok/memory/MEMORY.md` | 全局 | Facts that apply across all your projects |
+| `~/.grok/memory/<project-slug>-<hash8>/MEMORY.md` | 工作区 | Project-specific conventions and context |
+| `~/.grok/memory/<project-slug>-<hash8>/sessions/` | 会话 | Per-session summaries and logs |
 
 Grok suffixes each workspace directory with a short hash of the repository's identity. The identity is the `origin` remote in `org/repo` form when the directory is a Git repository with an `origin` remote, or the directory path otherwise. Because clones and worktrees of the same repository share an `origin` remote, they also share one memory directory.
 
@@ -201,16 +201,16 @@ The modal uses a split-pane layout: the file list on the left, a read-only conte
 
 ### Keyboard Shortcuts
 
-| Key | Action |
+| 键 | 操作 |
 |-----|--------|
-| `↑`/`↓` or `j`/`k` | Move through the file list |
-| `PgUp`/`PgDn` | Jump 10 entries |
+| `↑`/`↓` 或 `j`/`k` | Move through the file list |
+| `PgUp`/`PgDn` | 跳 10 条 |
 | `/` | Filter the file list |
 | `Enter` | Read the selected note: the preview takes keyboard focus (arrows, `PgUp`/`PgDn`, `Home`/`End` scroll it) |
 | `y` | Copy the selected file's path to the clipboard |
 | `x` | Delete the selected note (press `x` again to confirm) |
 | `t` | Toggle memory on or off |
-| `Ctrl+F` | Toggle fullscreen |
+| `Ctrl+F` | 切换全屏 |
 | `Esc` | Close the modal, or leave filter or preview focus |
 
 The filter matches note names and note contents; separate words all have to match. When you filter, the preview scrolls to the first match. If nothing matches, the list says so; `Backspace` clears the filter.
@@ -300,11 +300,11 @@ The default embedding model is unset, so memory starts in full-text-only mode. I
 
 Each memory source has a weight multiplier applied to its score. All sources default to `1.0`, and you can adjust any of them under `[memory.search.source_weights]`:
 
-| Source | Weight | Description |
+| 来源 | 权重 | 说明 |
 |--------|--------|-------------|
-| `workspace` | 1.0 | Project-specific memory |
-| `session` | 1.0 | Session logs |
-| `global` | 1.0 | Cross-project memory |
+| `workspace` | 1.0 | 项目专属记忆 |
+| `session` | 1.0 | 会话日志 |
+| `global` | 1.0 | 跨项目记忆 |
 
 ### Temporal Decay
 
@@ -359,22 +359,22 @@ To edit memory from the shell, open the files in your editor directly -- for exa
 
 ### Core Settings (`[memory]`)
 
-| Key | Default | Description |
+| 键 | 默认 | 说明 |
 |-----|---------|-------------|
-| `enabled` | `false` | Enable memory |
+| `enabled` | `false` | 启用记忆 |
 | `session.save_on_end` | `true` | Write metadata summary on session end |
 | `watcher.enabled` | `true` | Watch `~/.grok/memory/` for external edits and reindex |
 
 ### Index Settings (`[memory.index]`)
 
-| Key | Default | Description |
+| 键 | 默认 | 说明 |
 |-----|---------|-------------|
 | `max_chunk_chars` | `1600` | Maximum chunk size in characters |
 | `chunk_overlap_chars` | `320` | Character overlap between chunks |
 
 ### Embedding Settings (`[memory.embedding]`)
 
-| Key | Default | Description |
+| 键 | 默认 | 说明 |
 |-----|---------|-------------|
 | `provider` | `"api"` | Embedding provider (currently `"api"`) |
 | `model` | unset | Embedding model name. Unset or `""` uses full-text-only retrieval. |
@@ -382,7 +382,7 @@ To edit memory from the shell, open the files in your editor directly -- for exa
 
 ### Search Settings (`[memory.search]`)
 
-| Key | Default | Description |
+| 键 | 默认 | 说明 |
 |-----|---------|-------------|
 | `max_results` | `6` | Maximum search results |
 | `min_score` | `0.7` | Minimum relevance score |
@@ -391,14 +391,14 @@ To edit memory from the shell, open the files in your editor directly -- for exa
 
 ### Initial Injection Settings (`[memory.initial_injection]`)
 
-| Key | Default | Description |
+| 键 | 默认 | 说明 |
 |-----|---------|-------------|
 | `enabled` | `true` | Enable first-turn memory injection |
 | `min_score` | `0.9` | Score threshold for first-turn results |
 
 ### Dream Settings (`[memory.dream]`)
 
-| Key | Default | Description |
+| 键 | 默认 | 说明 |
 |-----|---------|-------------|
 | `enabled` | `true` | Enable automatic Dream consolidation |
 | `min_hours` | `24` | Minimum hours between consolidations |
@@ -410,7 +410,7 @@ To edit memory from the shell, open the files in your editor directly -- for exa
 
 You configure flush under `[compaction]`, not `[memory]`, because it is a compaction behavior.
 
-| Key | Default | Description |
+| 键 | 默认 | 说明 |
 |-----|---------|-------------|
 | `enabled` | `true` | Enable the pre-compaction memory flush |
 | `soft_threshold_tokens` | `4000` | Token headroom before the compact threshold that triggers a flush |
@@ -423,7 +423,7 @@ You configure flush under `[compaction]`, not `[memory]`, because it is a compac
 
 You configure pruning under `[compaction]`, not `[memory]`, because it is a compaction behavior.
 
-| Key | Default | Description |
+| 键 | 默认 | 说明 |
 |-----|---------|-------------|
 | `enabled` | `true` | Enable tool-result pruning |
 | `keep_last_n_turns` | `3` | Number of recent turns whose tool results are never pruned |

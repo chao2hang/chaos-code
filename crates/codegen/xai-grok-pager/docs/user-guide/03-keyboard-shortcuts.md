@@ -29,7 +29,7 @@ Chaos 有两种输入模式，控制回滚区导航方式：
 
 Move through conversation entries in the scrollback pane.
 
-| Key | Alt Key | Action |
+| 键 | Alt 键 | 操作 |
 |-----|---------|--------|
 | `j` | `Down` | Select next entry |
 | `k` | `Up` | Select previous entry |
@@ -44,7 +44,7 @@ Move through conversation entries in the scrollback pane.
 | `PageUp` | | Scroll up one page (selection moves to the top of the viewport) |
 | `PageDown` | | Scroll down one page (selection moves to the bottom of the viewport) |
 | `Ctrl+U` | | Scroll up half page |
-| `Ctrl+D` (`Shift+D` in VSCode) | | Scroll down half page |
+| `Ctrl+D`（VSCode 里是 `Shift+D`） | | Scroll down half page |
 
 `PageUp` and `PageDown` also scroll the conversation while the ordinary prompt
 is focused, without moving focus or changing the draft. An active prompt
@@ -57,7 +57,7 @@ its own navigation.
 
 Control how entries are displayed in the scrollback.
 
-| Key | Alt Key | Action |
+| 键 | Alt 键 | 操作 |
 |-----|---------|--------|
 | `h` | `Left` | Collapse selected entry |
 | `l` | `Right` | Expand selected entry |
@@ -77,7 +77,7 @@ prompt. `⇧E` clears all pins, and `Ctrl+E` clears pins on thinking blocks.
 
 ### Block Content
 
-| Key | Action |
+| 键 | 操作 |
 |-----|--------|
 | `y` | Copy block content to clipboard |
 | `⇧Y` | Copy block metadata (e.g., the shell command) to clipboard |
@@ -90,13 +90,13 @@ prompt. `⇧E` clears all pins, and `Ctrl+E` clears pins on thinking blocks.
 
 Switch between the prompt input and scrollback pane.
 
-| Key | Alt Key | Context | Action |
+| 键 | Alt 键 | 上下文 | 操作 |
 |-----|---------|---------|--------|
-| `Tab` | `Space` (and `i` in vim mode) | Scrollback focused | Focus the prompt input |
-| `Tab` | | Prompt focused | Focus the scrollback (both simple and vim scrollback modes) |
-| `Tab` | `Shift+Tab` (backwards) | A blocking card is focused (question, permission prompt, cancel-turn panel) | Walk that card's rows, wrapping round at the ends. Focus stays in the card |
+| `Tab` | `Space` (and `i` in vim mode) | 回滚区聚焦 | Focus the prompt input |
+| `Tab` | | 提示框聚焦 | Focus the scrollback (both simple and vim scrollback modes) |
+| `Tab` | `Shift+Tab`（反向） | A blocking card is focused (question, permission prompt, cancel-turn panel) | Walk that card's rows, wrapping round at the ends. Focus stays in the card |
 | `Tab` | `Space` (and `i` in vim mode) | Scrollback focused with a card parked | Hand the keyboard back to the card (the bar's focus hint names it) |
-| `Enter` | | Prompt focused | Send the current prompt |
+| `Enter` | | 提示框聚焦 | Send the current prompt |
 
 **Esc is not a focus key.** It follows the clear / rewind semantics below, and it never cancels a running turn (`Ctrl+C` does). Nothing about Esc depends on `[ui].vim_mode` (scrollback nav) or `[ui].simple_mode` (prompt editor). Overlays, modals, slash/file dropdowns, voice, search, and selection still steal Esc first.
 
@@ -134,12 +134,12 @@ They share one contract:
 Shown when an MCP server asks for user input (form fields or URL consent).
 The title always includes the MCP server name.
 
-| Key | Action |
+| 键 | 操作 |
 |-----|--------|
 | `↑` / `↓`, `j` / `k`, `Tab` | Move between fields / actions |
 | `Space` / `Enter` on a field | Edit text, or toggle boolean / enum |
-| `←` / `→` on actions | Accept vs Decline |
-| `Enter` on Accept | Submit (form validates first; URL opens the browser) |
+| 操作项上的 `←` / `→` | Accept vs Decline |
+| 在 Accept 上按 `Enter` | Submit (form validates first; URL opens the browser) |
 | `d` / Decline | Decline the request |
 | `Esc` | Step back: leave text editing first, then park focus in the scrollback (`Tab` returns). Only while waiting on an accepted URL does it dismiss the card |
 | `Ctrl+C` | Cancel the request |
@@ -147,7 +147,7 @@ The title always includes the MCP server name.
 
 ### Question card (`ask_user_question`)
 
-| Key | Action |
+| 键 | 操作 |
 |-----|--------|
 | `↑` / `↓`, `j` / `k` | Move between answers (clamped at the ends) |
 | `Tab` / `Shift+Tab` | Walk this question's answers in a loop — off the last answer back to the first. It never carries you into another question |
@@ -172,7 +172,7 @@ answer rows; every other key goes to the text field.
 
 ### Permission prompt
 
-| Key | Action |
+| 键 | 操作 |
 |-----|--------|
 | `↑` / `↓`, `j` / `k` | Move between options (clamped at the ends) |
 | `Tab` / `Shift+Tab` | Walk the options in a loop |
@@ -190,7 +190,7 @@ sends it and `Esc` returns to the options.
 
 ### Cancel-turn panel
 
-| Key | Action |
+| 键 | 操作 |
 |-----|--------|
 | `↑` / `↓`, `j` / `k`, `Tab` / `Shift+Tab` | Move between the choices |
 | `1`–`4`, `Enter` | Confirm that choice |
@@ -198,12 +198,12 @@ sends it and `Esc` returns to the options.
 
 ## Escape
 
-| State | Gesture | Effect |
+| 状态 | 手势 | 效果 |
 |--------|---------|--------|
 | Turn running (every mode and pane) | `Esc` | Does **not** cancel. Shows a “Press Ctrl+C to cancel the turn” reminder; the draft is untouched. Use `Ctrl+C` (or palette / other cancel entry points). |
-| Turn cancelling | `Esc` | Swallowed no-op. `Ctrl+C` in this state escalates toward quit. |
-| Idle + non-empty prompt (text or image chips), **prompt focused** | **2× `Esc` within 800ms** | Clear the prompt; the cleared draft is stashed (`Ctrl+S` or `Alt+S` restores it, images included) and its text ranks first in the `↑` history browse. First press shows “press again to clear”. |
-| Idle + empty prompt + conversation messages, **prompt or scrollback focused** | **2× `Esc` within 800ms** | Open the rewind picker (same as `/rewind`). First press is silent (no toast). |
+| 回合取消中 | `Esc` | Swallowed no-op. `Ctrl+C` in this state escalates toward quit. |
+| Idle + non-empty prompt (text or image chips), **prompt focused** | **800ms 内按两次 `Esc`** | Clear the prompt; the cleared draft is stashed (`Ctrl+S` or `Alt+S` restores it, images included) and its text ranks first in the `↑` history browse. First press shows “press again to clear”. |
+| Idle + empty prompt + conversation messages, **prompt or scrollback focused** | **800ms 内按两次 `Esc`** | Open the rewind picker (same as `/rewind`). First press is silent (no toast). |
 | Idle + empty + no messages, **or scrollback focused with a draft / moded (`!` `#`) composer / pending needs-input overlay / open history search** | `Esc` | Swallowed no-op (does not focus scrollback). Clear is prompt-pane only; rewind requires an empty Normal-mode composer, no pending overlay, and no open history search. Reading the scrollback never mutates your draft, your composer mode, a question awaiting an answer, or an in-progress search. |
 
 **Mid-turn Esc grace:** for about a second after a mid-turn Esc, the idle rewind arm stays suppressed — mashing Esc at a turn that then ends cannot silently open the rewind picker. Only the rewind arm is held; every other Esc behavior is unaffected.
@@ -218,27 +218,27 @@ sends it and `Esc` returns to the options.
 
 Actions that affect the agent session, available from the agent screen.
 
-| Key | Context | Action |
+| 键 | 上下文 | 操作 |
 |-----|---------|--------|
-| `Ctrl+P` | Agent screen | Open the command palette |
-| `?` (Shift+/) | Agent screen | Open the command palette (alt binding) |
-| `Ctrl+M` | Agent screen | Open the model picker / switch model |
-| `Ctrl+M` | Prompt focused | Toggle multiline input mode |
-| `Ctrl+C` | Agent screen | Cancel the current turn (or clear non-empty draft first; see Escape table) |
-| `Ctrl+O` | Agent screen | Toggle always-approve (YOLO) mode |
-| `F3` | Agent screen | Open the session picker (resume a previous session, same as `/resume`) |
-| `Ctrl+;` (alt: `Ctrl+'`) | Agent screen | Toggle the prompt queue pane (when non-empty). **Local macOS** VS Code family only: primary **`Ctrl+4`** (`;` / `'` still alts). SSH and non-Mac keep **`Ctrl+;`** / **`Ctrl+'`**. |
-| `Shift+Tab` | Prompt focused | Cycle mode (Normal → Plan → Auto (when enabled) → Always-approve) |
-| `Ctrl+B` | Agent screen | Send the running foreground command to the background |
-| `Ctrl+T` | Agent screen | Toggle the todos pane |
+| `Ctrl+P` | 代理界面 | Open the command palette |
+| `?` (Shift+/) | 代理界面 | Open the command palette (alt binding) |
+| `Ctrl+M` | 代理界面 | Open the model picker / switch model |
+| `Ctrl+M` | 提示框聚焦 | Toggle multiline input mode |
+| `Ctrl+C` | 代理界面 | Cancel the current turn (or clear non-empty draft first; see Escape table) |
+| `Ctrl+O` | 代理界面 | Toggle always-approve (YOLO) mode |
+| `F3` | 代理界面 | Open the session picker (resume a previous session, same as `/resume`) |
+| `Ctrl+;`（另一种：`Ctrl+'`） | 代理界面 | Toggle the prompt queue pane (when non-empty). **Local macOS** VS Code family only: primary **`Ctrl+4`** (`;` / `'` still alts). SSH and non-Mac keep **`Ctrl+;`** / **`Ctrl+'`**. |
+| `Shift+Tab` | 提示框聚焦 | Cycle mode (Normal → Plan → Auto (when enabled) → Always-approve) |
+| `Ctrl+B` | 代理界面 | Send the running foreground command to the background |
+| `Ctrl+T` | 代理界面 | Toggle the todos pane |
 | `Ctrl+G` | Agent screen (full TUI) | Toggle the tasks pane |
 | `Ctrl+G` | Ordinary composer (minimal mode) | Edit the current draft in an external editor without sending it. If the terminal reserves this chord, choose **Edit Prompt in External Editor** from the command palette. |
-| `Ctrl+L` | Agent screen | Open the extensions modal (**non–VS Code family only**; on VS Code / Cursor / Windsurf / Zed, `Ctrl+L` is mid-turn **interject** and extensions open via `/plugins` / `/hooks`) |
+| `Ctrl+L` | 代理界面 | Open the extensions modal (**non–VS Code family only**; on VS Code / Cursor / Windsurf / Zed, `Ctrl+L` is mid-turn **interject** and extensions open via `/plugins` / `/hooks`) |
 | `↑` | Prompt focused (empty prompt, normal input mode) | With prompts queued, move focus into the queue pane with the last row highlighted (`e` edits it, `Enter` sends it now). Otherwise open the history panel with your last prompt filled in; `↑`/`↓` step through entries (each lands in the input), `↓` at the newest closes the panel, and typing edits the recalled prompt in place. Recalled `!` shell commands re-enter shell mode. `↓` never opens history. |
-| `Ctrl+S` (alt: `Alt+S`) | Prompt focused | Stash / pop the draft, `git stash`-style. With text or images in the composer: stash it and start fresh. On an empty composer: restore the newest stash (images and `!` shell mode included). A chord-stashed draft also **restores automatically after you send your next prompt** (a double-Esc-cleared draft stays stashed, since that gesture is a discard). One draft at a time: a new stash replaces the old one, whose text stays reachable in the `↑` history; the stashed draft's text ranks first there. |
-| `!` | Prompt focused | Enter shell mode (type `!` on an empty prompt) |
-| `Ctrl+.` (alt: `Ctrl+X`) | Agent screen | Open the keyboard shortcuts help |
-| `F2` (alt: `Ctrl+,` / `Cmd+,`) | Agent screen | Open the settings modal |
+| `Ctrl+S`（另一种：`Alt+S`） | 提示框聚焦 | Stash / pop the draft, `git stash`-style. With text or images in the composer: stash it and start fresh. On an empty composer: restore the newest stash (images and `!` shell mode included). A chord-stashed draft also **restores automatically after you send your next prompt** (a double-Esc-cleared draft stays stashed, since that gesture is a discard). One draft at a time: a new stash replaces the old one, whose text stays reachable in the `↑` history; the stashed draft's text ranks first there. |
+| `!` | 提示框聚焦 | Enter shell mode (type `!` on an empty prompt) |
+| `Ctrl+.`（另一种：`Ctrl+X`） | 代理界面 | Open the keyboard shortcuts help |
+| `F2`（另一种：`Ctrl+,` / `Cmd+,`） | 代理界面 | Open the settings modal |
 
 **Note:** While a **subagent fullscreen view** is open, the composer is hidden. Root-only chords (`Ctrl+P`, `Ctrl+M`, `F3`, `Ctrl+O`, `Ctrl+B`, settings, extensions, Shift+Tab) do nothing. `Ctrl+C` cancels the **child's** turn. `q` / `Esc` closes the view. `Ctrl+Q` still quits (`Ctrl+D` on VS Code family). See [Viewing Subagents in the TUI](16-subagents.md#fullscreen-framed-view-the-child-transcript).
 
@@ -256,7 +256,7 @@ Actions that affect the agent session, available from the agent screen.
 
 ## Image Paste & Drag-and-Drop
 
-| Action | macOS | Linux | Windows |
+| 操作 | macOS | Linux | Windows |
 |---|---|---|---|
 | Drag image from file manager into the prompt | Finder ✓ | Files / Dolphin ✓ | Explorer ✓ |
 | Copy a file in the file manager, then paste | `Cmd+V` | `Ctrl+V` | `Ctrl+V` |
@@ -290,11 +290,11 @@ While the agent is generating:
   - **Idle**, or **empty composer with nothing queued** → no-op for that key.
 - While the agent is **blocked waiting** (on task output or a subagent), plain `Enter` with text also delivers immediately — the shell cancels the blocked turn and runs your message next.
 
-| Terminal | Primary | Alternates | Action |
+| 终端 | 主要 | 备选键 | 操作 |
 |----------|---------|------------|--------|
-| Default | `Ctrl+Enter` | `Ctrl+I` | Send now (cancels the current turn, runs your message next) |
-| Apple Terminal | `Ctrl+O` | `Ctrl+Enter`, `Ctrl+I` | Send now |
-| VS Code family (VS Code, Cursor, Windsurf, Zed) | **`Ctrl+L`** | *(none)* | Send now (`Ctrl+I` not used — Tab / host chat; plugins via `/plugins`) |
+| 默认 | `Ctrl+Enter` | `Ctrl+I` | Send now (cancels the current turn, runs your message next) |
+| Apple Terminal | `Ctrl+O` | `Ctrl+Enter`, `Ctrl+I` | 立即发送 |
+| VS Code family (VS Code, Cursor, Windsurf, Zed) | **`Ctrl+L`** | *（无）* | Send now (`Ctrl+I` not used — Tab / host chat; plugins via `/plugins`) |
 
 In `/multiline` mode, `Shift+Enter` (or `Alt+Enter`) sends while plain `Enter` inserts a newline — except on an **empty** composer mid-turn with a queued follow-up, where plain `Enter` still **send now**s the top row (same as normal mode). (`Ctrl+Enter` is send-now mid-turn when bound on non–VS Code family; it does not submit a new idle turn.)
 
@@ -312,10 +312,10 @@ Send-now is intentionally interruptive — it reads as "stop what you're doing a
 
 Actions available from any screen.
 
-| Key | Alt Key | Action | Confirmation |
+| 键 | Alt 键 | 操作 | 确认 |
 |-----|---------|--------|-------------|
 | `Ctrl+N` | | Create a new session (optionally in a git worktree) | Yes (double-press within 1000ms) |
-| `Ctrl+\` | | Open or toggle the [Agent Dashboard](23-dashboard.md) | No |
+| `Ctrl+\` | | Open or toggle the [Agent Dashboard](23-dashboard.md) | 否 |
 | `Ctrl+Q` | `Ctrl+D` | Quit the application | Yes (double-press within 1000ms) |
 
 **VS Code family terminal** (VS Code, Cursor, Windsurf, Zed integrated terminals): `Ctrl+Q` is captured by the host, so Grok makes **`Ctrl+D` the sole quit key** (`Ctrl+Q` is not bound). Half-page-down is rebound to bare **`Shift+D`**. Mid-turn interject uses **`Ctrl+L`** (no alternates) because `Ctrl+Enter` / `Ctrl+I` do not reliably reach the PTY; extensions are opened via `/plugins` instead of `Ctrl+L`.
@@ -332,7 +332,7 @@ Actions marked with "Yes" in the confirmation column require a double-press with
 
 Bindings that only fire on the welcome screen (before any agent session is open).
 
-| Key | Action |
+| 键 | 操作 |
 |-----|--------|
 | `F3` | Resume session (open the session picker) |
 | `Ctrl+W` | Open the New Worktree dialog (only inside a git repository) |
@@ -347,21 +347,21 @@ Bindings that only fire on the welcome screen (before any agent session is open)
 
 Bindings while the [Agent Dashboard](23-dashboard.md) is focused (`Ctrl+\` or `/dashboard`).
 
-| Key | Action |
+| 键 | 操作 |
 |-----|--------|
 | `↑` / `↓`, `j` / `k` | Navigate agent rows (selecting a row opens peek) |
 | `Enter` | Open the selected agent, or send a typed peek reply / dispatch prompt |
 | `Ctrl+S` | Reply or dispatch **and** attach to that agent |
 | `Ctrl+/` | Toggle search / filter mode |
 | `Ctrl+R` | Rename the selected agent |
-| `Ctrl+T` | Pin / unpin |
+| `Ctrl+T` | 固定 / 取消固定 |
 | `Ctrl+G` | Toggle grouping (state ↔ working directory) |
 | `Ctrl+X` | Cancel a running turn, or press twice within 2s to permanently delete |
 | `Ctrl+O` | Toggle always-approve on the selected agent |
 | `Tab` | Toggle focus between the list and the dispatch / peek input |
 | `Esc` | Step back (cancel search → close peek → clear filter → unfocus → unselect → exit) |
 | `Ctrl+\` | Exit the dashboard (or return from an attached agent) |
-| `Ctrl+.` (alt: `?`) | Shortcuts cheatsheet |
+| `Ctrl+.`（另一种：`?`） | 快捷键速查 |
 
 Details (peek vs dispatch, search prefixes, persistence): [Agent Dashboard](23-dashboard.md).
 

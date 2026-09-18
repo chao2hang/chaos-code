@@ -100,7 +100,7 @@ Open the plugins modal with `Ctrl+L` (outside the VS Code family) or `/plugins` 
 
 In the **Plugins** tab, press `Enter` to expand a plugin and see its name, version, scope (`cli`, `project`, `user`, `custom path`, or the marketplace source name), skills, agents, hooks, MCP servers (shown as `blocked` when the plugin is not trusted), description, and path. Then:
 
-| Key | Action |
+| 键 | 操作 |
 |-----|--------|
 | `r` | Reload all plugins |
 | `a` | Add a plugin from `owner/repo`, a URL, or a local path |
@@ -111,13 +111,13 @@ In the **Plugins** tab, press `Enter` to expand a plugin and see its name, versi
 
 In the **Marketplace** tab, browse and install from your sources:
 
-| Key | Action |
+| 键 | 操作 |
 |-----|--------|
 | `i` | Install the selected plugin |
 | `d` | Uninstall the selected plugin |
 | `a` | Add a marketplace source |
 | `x` | Remove the selected source and its plugins |
-| `r` | Refresh sources |
+| `r` | 刷新来源 |
 | `u` | Update the selected plugin |
 
 Component summaries in the Marketplace tab appear only for marketplaces that publish a [`plugin-index.json`](#add-a-catalog-optional) catalog. Destructive actions ask for confirmation: press lowercase `y` to confirm, any other key (including `Esc`) to cancel.
@@ -305,7 +305,7 @@ Grok enforces MCP allow/deny lists from every native TOML policy layer and from 
 
 Each allow or deny entry is one of:
 
-| Field | Matches |
+| 字段 | 匹配 |
 | --- | --- |
 | `serverUrl` / `server_url` | HTTP/SSE server URL. Host and path follow the Claude `serverUrl` rules on both lists: `*` wildcards match host and path separately (`https://*.example.com/*` cannot match a lookalike path on another host); a pattern with no path (`https://mcp.example.com`, or with a bare trailing `/`) matches every path on that host; a pattern with a path matches only that path, so use `/mcp/*` to scope a grant. **Allow entries** are stricter than Claude on scheme and port. The scheme is literal or a bare `*` (`*` matches the supported remote schemes, http and https, and nothing else); a scheme-less `*.example.com/*` or a partial scheme glob such as Claude's `http*://` never matches and logs a warning at startup. Ports stay literal (an explicit `:443` on https and no port are the same target); a glob port such as Claude's `http://localhost:*/*` never matches and logs a warning at startup — list each port. **Deny entries** match by host and path across every scheme and port: `mcp.untrusted.example/*` and `http://mcp.untrusted.example:*/*` both block that host on any scheme and port, without a warning. |
 | `command` | stdio executable name, exact match on the configured command (not the rest of argv). |
@@ -416,13 +416,13 @@ A skill or command may ship a **helper script** next to its SKILL.md (for exampl
 
 Grok discovers plugins from these locations, in priority order. The `.claude/plugins/` equivalents also work, and when two plugins share a name the higher-priority one wins:
 
-| Location | Scope | Trust |
+| 位置 | 作用域 | 信任 |
 |----------|-------|-------|
-| `_meta.pluginDirs` (`session/new` / `session/load`) | Session, that session only | Trusted automatically |
-| `--plugin-dir` (the `grok agent … stdio` flag) | Process, that agent process only | Trusted automatically |
-| `.grok/plugins/` | Project, shared through version control | Requires trust |
-| `~/.grok/plugins/` | User, every project | Trusted automatically |
-| `[plugins].paths` (config) | Custom directories you add | Depends on location |
+| `_meta.pluginDirs` (`session/new` / `session/load`) | Session, that session only | 自动信任 |
+| `--plugin-dir`（`chaos agent … stdio` 的标志） | Process, that agent process only | 自动信任 |
+| `.grok/plugins/` | Project, shared through version control | 需要信任 |
+| `~/.grok/plugins/` | User, every project | 自动信任 |
+| `[plugins].paths`（配置） | Custom directories you add | 取决于位置 |
 
 The `_meta.pluginDirs` field on the `session/new` and `session/load` requests loads plugins for a single session; because the caller supplies the directory, those plugins are trusted automatically and do not persist after the session. `--plugin-dir` is the process-wide equivalent for a dedicated `grok agent … stdio` process, repeatable (`grok agent --no-leader --plugin-dir A --plugin-dir B stdio`), and ignored in leader mode, where the shared leader discovers its own plugins.
 
@@ -430,7 +430,7 @@ The `_meta.pluginDirs` field on the `session/new` and `session/load` requests lo
 
 Plugin hooks receive two variables beyond the standard hook environment:
 
-| Variable | Description |
+| 变量 | 说明 |
 |----------|-------------|
 | `GROK_PLUGIN_ROOT` | Absolute path to the plugin's installed directory. |
 | `GROK_PLUGIN_DATA` | Absolute path to the plugin's writable data directory, for state, caches, and logs. |
@@ -441,7 +441,7 @@ Grok sets these and overrides any same-named value in the hook's `env` map (the 
 
 These keys work across every tab in the plugins modal:
 
-| Key | Action |
+| 键 | 操作 |
 |-----|--------|
 | `Tab` / `Shift+Tab` | Next / previous tab |
 | `j` / `k` or arrow keys | Move the selection |

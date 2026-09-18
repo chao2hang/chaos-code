@@ -61,7 +61,7 @@ grok agent --always-approve --model grok-4.6 stdio
 grok agent --always-approve serve --bind 127.0.0.1:2419 --secret <token>
 ```
 
-| Flag | Description |
+| 标志 | 说明 |
 | ---- | ----------- |
 | `-m, --model <MODEL>` | Model ID (for example `grok-4.6`). |
 | `--always-approve` | Run without interactive tool-permission prompts. Alias: `--yolo`. |
@@ -127,7 +127,7 @@ Communication follows the JSON-RPC 2.0 format. A typical session lifecycle:
 
 ACP streams structured events. Each `session/update` notification carries a `sessionUpdate` field that identifies the update type:
 
-| `sessionUpdate` value | Description                                            |
+| `sessionUpdate` 的取值 | 说明                                            |
 | --------------------- | ----------------------------------------------------- |
 | `agent_message_chunk` | A chunk of the agent's response text.                 |
 | `agent_thought_chunk` | A chunk of the agent's internal reasoning.            |
@@ -143,17 +143,17 @@ Each update names its type, so a client can render distinct panels for reasoning
 
 Beyond the base ACP protocol, Grok defines extension methods under the `x.ai/` prefix for SpaceXAI-specific functionality. These cover:
 
-| Category                   | Prefix               | Examples                                         |
+| 类别                   | 前缀               | 示例                                         |
 | -------------------------- | -------------------- | ------------------------------------------------ |
-| **Filesystem**             | `x.ai/fs/*`          | `list`, `exists`, `read_file`, `write_file`      |
+| **文件系统**             | `x.ai/fs/*`          | `list`, `exists`, `read_file`, `write_file`      |
 | **Git**                    | `x.ai/git/*`         | `status`, `stage`, `commit`, `diffs`, `discard`  |
-| **Git Worktree**           | `x.ai/git/worktree/*`| `create`, `remove`, `apply`, `list`, `gc`        |
-| **Search**                 | `x.ai/search/*`      | `fuzzy/open`, `fuzzy/change`, `content`          |
-| **Terminal**               | `x.ai/terminal/*`    | `create`, `kill`, `output`, `wait_for_exit`      |
-| **Session Management**     | `x.ai/session/*`     | `fork`, `resolve_local_for_worktree_resume`      |
-| **Conversation & History** | `x.ai/*`             | `prompt_history`, `rewind/*`, `compact_conversation` |
-| **Authentication**         | `x.ai/auth/*`        | `get_url`, `submit_code`                         |
-| **Feedback & Telemetry**   | `x.ai/*`             | `feedback`, `telemetry/*`                        |
+| **Git 工作树**           | `x.ai/git/worktree/*`| `create`, `remove`, `apply`, `list`, `gc`        |
+| **搜索**                 | `x.ai/search/*`      | `fuzzy/open`, `fuzzy/change`, `content`          |
+| **终端**               | `x.ai/terminal/*`    | `create`, `kill`, `output`, `wait_for_exit`      |
+| **会话管理**     | `x.ai/session/*`     | `fork`, `resolve_local_for_worktree_resume`      |
+| **会话与历史** | `x.ai/*`             | `prompt_history`, `rewind/*`, `compact_conversation` |
+| **认证**         | `x.ai/auth/*`        | `get_url`, `submit_code`                         |
+| **反馈与遥测**   | `x.ai/*`             | `feedback`, `telemetry/*`                        |
 
 The tables here show representative methods in each category. The `x.ai/*` set is SpaceXAI-specific and may expand across releases, so treat it as non-exhaustive and discover the available methods from the agent's `initialize` response.
 
@@ -161,7 +161,7 @@ The tables here show representative methods in each category. The `x.ai/*` set i
 
 The agent sends push notifications to clients for real-time updates:
 
-| Notification               | Description                          |
+| 通知               | 说明                          |
 | -------------------------- | ------------------------------------ |
 | `x.ai/search/fuzzy/status` | Fuzzy search results update          |
 | `x.ai/git/worktree/status` | Worktree creation progress           |
@@ -177,7 +177,7 @@ The agent sends push notifications to clients for real-time updates:
 
 `session/new` and `session/load` responses include a typed `configOptions` list (standard ACP, not an `x.ai/` extension). Change a live option with `session/set_config_option`.
 
-| `configId` | Category | Effect |
+| `configId` | 类别 | 效果 |
 |------------|----------|--------|
 | `model` | `model` | Switches the session model (`allowed_models`, chat gateway routing). Value must be a string id. |
 | `reasoning_effort` | `thought_level` | Applies effort to the current model without changing the model (no prompt rewrite, no `allowed_models` gate). Value must be a string id (`minimal`, `low`, `medium`, `high`, `xhigh`). Dropped with a warning when the model does not advertise `supportsReasoningEffort`. |
@@ -198,7 +198,7 @@ The response is the **complete, updated** option list. A `config_option_update` 
 
 Optional fields on `session/new`:
 
-| Field | Description |
+| 字段 | 说明 |
 | ----- | ----------- |
 | `rules` | Extra rules appended to the system prompt. |
 | `systemPromptOverride` | Replacement system prompt. |
@@ -220,7 +220,7 @@ Optional fields on `session/new`:
 
 Official SDK libraries are available for multiple languages:
 
-| Language   | Package                                                                                  |
+| 语言   | 包                                                                                  |
 | ---------- | ---------------------------------------------------------------------------------------- |
 | TypeScript | [`@agentclientprotocol/sdk`](https://www.npmjs.com/package/@agentclientprotocol/sdk)     |
 | Rust       | [`agent-client-protocol`](https://crates.io/crates/agent-client-protocol)                |
@@ -232,13 +232,13 @@ Official SDK libraries are available for multiple languages:
 
 ## Compatible clients
 
-| Client                                                   | Status      |
+| 客户端                                                   | 状态      |
 | -------------------------------------------------------- | ----------- |
-| [Zed](https://zed.dev/docs/ai/external-agents)           | Supported   |
-| [Neovim](https://neovim.io) (CodeCompanion, avante.nvim) | Supported   |
-| [Emacs](https://github.com/xenodium/agent-shell)         | Supported   |
-| [marimo notebook](https://github.com/marimo-team/marimo) | Supported   |
-| JetBrains                                                | Coming soon |
+| [Zed](https://zed.dev/docs/ai/external-agents)           | 支持   |
+| [Neovim](https://neovim.io) (CodeCompanion, avante.nvim) | 支持   |
+| [Emacs](https://github.com/xenodium/agent-shell)         | 支持   |
+| [marimo notebook](https://github.com/marimo-team/marimo) | 支持   |
+| JetBrains                                                | 即将支持 |
 
 ---
 

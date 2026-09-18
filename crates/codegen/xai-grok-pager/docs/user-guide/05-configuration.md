@@ -102,9 +102,9 @@ respect_gitignore = false              # default: false; set true to make every 
 
 `[ui] simple_mode` controls how you edit text in the **prompt** — the input editor. It has nothing to do with how you move around the scrollback; that's [`vim_mode`](#vim-mode).
 
-| Value | Behavior |
+| 取值 | 行为 |
 |-------|----------|
-| `true` (default) | **Readline editing.** Plain readline-style text entry. |
+| `true`（默认） | **Readline editing.** Plain readline-style text entry. |
 | `false` | **Vim editing (experimental).** Vim-style modal editing (normal and insert modes). When the prompt is empty it starts in normal mode with focus on the scrollback. |
 
 To switch the prompt to vim-style editing:
@@ -120,9 +120,9 @@ You can also flip it from the settings pane (`/settings` → **Disable vim input
 
 When the agent asks to run a command (or take some other tool action), the approval menu highlights one row by default. `[ui] default_selected_permission` sets which row that is on the **first** prompt of a session.
 
-| Value | Preselected row |
+| 取值 | 预选中行 |
 |-------|-----------------|
-| `always_allow_all_sessions` (default) | The "Always allow on all sessions" row. |
+| `always_allow_all_sessions`（默认） | The "Always allow on all sessions" row. |
 | `allow_command_always` | The "Always allow this command" row. |
 | `allow_once` | The "Yes" / allow-once row. |
 | `reject` | The reject row. |
@@ -142,9 +142,9 @@ You can also override this with `GROK_DEFAULT_SELECTED_PERMISSION`, which is han
 
 `[ui] vim_mode` controls whether vim-style bindings are active in the **scrollback** pane. It does not affect the prompt.
 
-| Value | Behavior |
+| 取值 | 行为 |
 |-------|----------|
-| `false` (default) | Bare-letter and `Shift+letter` keys (`j`/`k`, `h`/`l`, `g`/`G`, `y`/`Y`, `o`/`O`, `r`, `x`, `e`/`E`, `H`/`L`, plus `i`) are suppressed in the scrollback: pressing one focuses the prompt and types the character. Arrows, `Tab`, `Space`, `PageUp`/`PageDown`, and every `Ctrl+letter` shortcut still navigate. `Esc` is **not** a scrollback key — it never cancels a running turn (`Ctrl+C` does), and while idle follows the clear / rewind policy (see [Keyboard Shortcuts](03-keyboard-shortcuts.md#escape)). |
+| `false`（默认） | Bare-letter and `Shift+letter` keys (`j`/`k`, `h`/`l`, `g`/`G`, `y`/`Y`, `o`/`O`, `r`, `x`, `e`/`E`, `H`/`L`, plus `i`) are suppressed in the scrollback: pressing one focuses the prompt and types the character. Arrows, `Tab`, `Space`, `PageUp`/`PageDown`, and every `Ctrl+letter` shortcut still navigate. `Esc` is **not** a scrollback key — it never cancels a running turn (`Ctrl+C` does), and while idle follows the clear / rewind policy (see [Keyboard Shortcuts](03-keyboard-shortcuts.md#escape)). |
 | `true` | All vim-style scrollback bindings are active, exactly as listed in [Keyboard Shortcuts](03-keyboard-shortcuts.md). Esc behavior is the same in both settings. |
 
 Toggle it at runtime with `/vim-mode`, or from `/settings` → **Vim scrollback navigation**. Grok writes the change to `[ui] vim_mode` immediately and applies it to every future pager session, including new agents and subagents in the same process. There's no per-session override — `config.toml` is the source of truth on next launch. `vim_mode` is independent of `simple_mode`.
@@ -153,7 +153,7 @@ Toggle it at runtime with `/vim-mode`, or from `/settings` → **Vim scrollback 
 
 `[ui] screen_mode` is the **default render mode** for plain `grok` launches. Set it from `/settings` → **Default screen mode** (restart required) or edit `config.toml` by hand — both write the file. CLI flags (`--minimal` / `--fullscreen`) and slash commands (`/minimal` / `/fullscreen`) are session-scoped and do **not** write this key; after a slash switch, the reverse command returns you for that session only.
 
-| Value | Behavior |
+| 取值 | 行为 |
 |-------|----------|
 | unset | Settings shows **Fullscreen**. There's no sticky preference at startup: legacy `pager.toml` `[terminal] minimal` can still force minimal, and terminals that leak mouse reports (JediTerm/Windows) may auto-open minimal until you set an explicit value. Otherwise the alt-screen policy picks fullscreen vs inline. |
 | `"fullscreen"` | Sticky non-minimal. Fullscreen-vs-inline still follows the alt-screen policy (`--no-alt-screen`, `[terminal] alt_screen`, terminal auto-detection). |
@@ -169,11 +169,11 @@ By default, sending a prompt scrolls it to the top of the viewport so the respon
 
 Four `[ui]` settings tune mouse-wheel and trackpad scrolling. All apply immediately and are editable from the settings pane (`/settings` → **Scroll speed** / **Scroll input** / **Scroll lines** / **Invert scroll**).
 
-| Key | Values (default) | Behavior |
+| 键 | 取值（默认） | 行为 |
 |-----|------------------|----------|
 | `scroll_speed` | `1`–`100` (`50`) | Speed multiplier for wheel and trackpad. `50` = 1.0x, `1` = 0.1x, `100` = 6.0x. |
 | `scroll_mode` | `auto` \| `wheel` \| `trackpad` (`auto`) | Wheel-vs-trackpad detection is heuristic (terminal scroll events carry no magnitude); force one when auto-detection misreads your device — e.g. a wheel notch that jumps too far, or a trackpad that feels stepped. |
-| `scroll_lines` | `1`–`10` (unset) | Lines per scroll tick, applied to **both** wheel and trackpad. While unset, each terminal's own profile applies (e.g. a conservative 1 line/event under tmux). Committing any value — even `3`, the number the settings pane shows — switches permanently to that explicit override. |
+| `scroll_lines` | `1`–`10`（未设置） | Lines per scroll tick, applied to **both** wheel and trackpad. While unset, each terminal's own profile applies (e.g. a conservative 1 line/event under tmux). Committing any value — even `3`, the number the settings pane shows — switches permanently to that explicit override. |
 | `invert_scroll` | `false` \| `true` (`false`) | Reverse vertical scroll direction ("natural" scrolling). |
 
 ```toml
@@ -417,7 +417,7 @@ new_session_worktree_mode = "never"    # /new worktree prompt: "ask" | "always" 
 fork_worktree_mode = "ask"             # /fork worktree prompt: "ask" | "always" | "never"
 ```
 
-| Key | Type | Default | Description |
+| 键 | 类型 | 默认 | 说明 |
 |-----|------|---------|-------------|
 | `project_picker_disabled` | bool | `false` | When `true`, skips the picker that asks you to choose a project directory on the first prompt when Grok launches from a non-project directory (home, Desktop, Downloads, `/tmp`). Set automatically when you choose **"Don't ask me again"** in that picker. Teams can pin it in `managed_config.toml` or `requirements.toml`. |
 | `memory_modal_fullscreen` | bool | `false` | Remembers whether the memory modal was last opened fullscreen. |
@@ -442,7 +442,7 @@ enabled = true
 items = ["action-required", "spinner", "activity", "session-name", "grok"]
 ```
 
-| Option | Type | Default | Description |
+| 选项 | 类型 | 默认 | 说明 |
 |--------|------|---------|-------------|
 | `method` | string | `"auto"` | Notification protocol. `auto` picks the best for your terminal. |
 | `condition` | string | `"unfocused"` | When to notify: `unfocused` (only when the terminal lost focus), `always`, or `never`. |
@@ -451,23 +451,23 @@ items = ["action-required", "spinner", "activity", "session-name", "grok"]
 | `sleep_prevention` | bool | `true` | Keep the display awake while the agent works (macOS/Linux). |
 | `progress_bar` | bool | `true` | Show a progress indicator in the terminal tab (OSC 9;4). |
 | `title.enabled` | bool | `true` | Set the terminal title to reflect agent state. |
-| `title.items` | array | (see above) | Items shown in the title bar. Options: `action-required`, `spinner`, `activity`, `session-name`, `cwd`, `model`, `turn-timer`, `grok`. |
+| `title.items` | array | （见上） | Items shown in the title bar. Options: `action-required`, `spinner`, `activity`, `session-name`, `cwd`, `model`, `turn-timer`, `grok`. |
 
 #### Terminal support matrix
 
-| Terminal | Auto Protocol | Focus Tracking | Progress Bar |
+| 终端 | 自动协议 | 焦点跟踪 | 进度条 |
 |----------|---------------|----------------|--------------|
-| iTerm2 | OSC 9 | Yes | Yes |
-| Kitty | OSC 99 | Yes | No |
-| Ghostty | OSC 777 | Yes | Yes |
-| WezTerm | OSC 9 | Yes | Yes |
-| Warp | OSC 9 | Yes | No |
-| Alacritty | BEL | Yes | No |
-| VS Code | BEL | Yes | No |
-| Apple Terminal | BEL | No | No |
-| VTE (GNOME Terminal) | OSC 777 | Yes | No |
-| Grok Desktop | None (native) | N/A | N/A |
-| Unknown | BEL | No | No |
+| iTerm2 | OSC 9 | 是 | 是 |
+| Kitty | OSC 99 | 是 | 否 |
+| Ghostty | OSC 777 | 是 | 是 |
+| WezTerm | OSC 9 | 是 | 是 |
+| Warp | OSC 9 | 是 | 否 |
+| Alacritty | BEL | 是 | 否 |
+| VS Code | BEL | 是 | 否 |
+| Apple Terminal | BEL | 否 | 否 |
+| VTE (GNOME Terminal) | OSC 777 | 是 | 否 |
+| Grok Desktop | 无（原生） | N/A | N/A |
+| 未知 | BEL | 否 | 否 |
 
 With `method = "auto"`, Grok detects the terminal brand and picks the best protocol. Set `method` explicitly to override that.
 
@@ -498,9 +498,9 @@ only_unfocused = true
 timeout_secs = 5
 ```
 
-| Hook Option | Type | Default | Description |
+| 钩子选项 | 类型 | 默认 | 说明 |
 |-------------|------|---------|-------------|
-| `command` | string | (required) | Shell command to run. |
+| `command` | string | （必填） | Shell command to run. |
 | `events` | array | `[]` | Events that trigger this hook (empty = all events). |
 | `only_unfocused` | bool | `true` | Only fire when the terminal has lost focus. |
 | `timeout_secs` | integer | `10` | Kill the hook process after this many seconds. |
@@ -714,7 +714,7 @@ The key ones. See the README for the complete list.
 
 ### Authentication
 
-| Variable | Description |
+| 变量 | 说明 |
 |----------|-------------|
 | `XAI_API_KEY` | API key from console.x.ai |
 | `GROK_AUTH_PROVIDER_COMMAND` | External auth binary path |
@@ -726,13 +726,13 @@ The key ones. See the README for the complete list.
 
 ### Endpoints
 
-| Variable | Description |
+| 变量 | 说明 |
 |----------|-------------|
 | `GROK_CLI_CHAT_PROXY_BASE_URL` | Override API proxy base URL |
 
 ### Features
 
-| Variable | Description |
+| 变量 | 说明 |
 |----------|-------------|
 | `GROK_MEMORY` | Enable (`1`) or disable (`0`) cross-session memory |
 | `GROK_SUBAGENTS` | Enable (`1`) or disable (`0`) subagents |
@@ -745,14 +745,14 @@ The key ones. See the README for the complete list.
 
 ### Logging
 
-| Variable | Description |
+| 变量 | 说明 |
 |----------|-------------|
 | `GROK_LOG_FILE` | Write logs to this file path (used verbatim as the path) |
 | `RUST_LOG` | Log level filter (e.g. `debug`); controls the `GROK_LOG_FILE` log and headless stderr output |
 
 ### Paths
 
-| Variable | Description |
+| 变量 | 说明 |
 |----------|-------------|
 | `CHAOS_HOME` | Override config directory (Chaos preferred; highest precedence) |
 | `GROK_HOME` | Override config directory (legacy; used when `CHAOS_HOME` is unset). Default dual-read: existing `~/.chaos`, else existing `~/.grok`, else `~/.chaos` |
@@ -760,7 +760,7 @@ The key ones. See the README for the complete list.
 
 ### Telemetry
 
-| Variable | Description |
+| 变量 | 说明 |
 |----------|-------------|
 | `GROK_TELEMETRY_ENABLED` | Enable/disable telemetry |
 | `GROK_TELEMETRY_TRACE_UPLOAD` | Enable/disable session trace upload |
@@ -775,24 +775,24 @@ The key ones. See the README for the complete list.
 
 User home below means the resolved config root (`$CHAOS_HOME` / `$GROK_HOME` / dual-read `~/.chaos` or `~/.grok`). Paths still document the legacy `~/.grok/...` form; substitute `~/.chaos` when that is your active home.
 
-| Path | Description |
+| 路径 | 说明 |
 |------|-------------|
-| `~/.chaos/config.toml` or `~/.grok/config.toml` | Main configuration file |
-| `~/.chaos/pager.toml` or `~/.grok/pager.toml` | TUI appearance configuration |
-| `~/.chaos/auth.json` or `~/.grok/auth.json` | Authentication credentials (auto-managed) |
-| `~/.chaos/sessions/` or `~/.grok/sessions/` | Persisted sessions (organized by working directory) |
-| `~/.chaos/memory/` or `~/.grok/memory/` | Cross-session memory files and index |
-| `~/.chaos/skills/` or `~/.grok/skills/` | User-scoped skill definitions |
-| `~/.chaos/plugins/` or `~/.grok/plugins/` | User-scoped plugins |
-| `~/.chaos/agents/` or `~/.grok/agents/` | User-scoped agent definitions |
-| `~/.chaos/lsp.json` or `~/.grok/lsp.json` | LSP server configuration (user-scoped) |
-| `~/.chaos/logs/` or `~/.grok/logs/` | Internal log files (e.g. `unified.jsonl`, MCP server logs) |
-| `.chaos/config.toml` or `.grok/config.toml` | Project-scoped MCP servers, plugins, and permission rules (both dual-read; Chaos wins on conflict) |
-| `.chaos/skills/` or `.grok/skills/` | Project-scoped skill definitions |
-| `.chaos/plugins/` or `.grok/plugins/` | Project-scoped plugins |
-| `.chaos/agents/` or `.grok/agents/` | Project-scoped agent definitions |
-| `.chaos/hooks/` or `.grok/hooks/` | Project-scoped hooks |
-| `.chaos/lsp.json` or `.grok/lsp.json` | LSP server configuration |
+| `~/.chaos/config.toml` 或 `~/.grok/config.toml` | Main configuration file |
+| `~/.chaos/pager.toml` 或 `~/.grok/pager.toml` | TUI appearance configuration |
+| `~/.chaos/auth.json` 或 `~/.grok/auth.json` | Authentication credentials (auto-managed) |
+| `~/.chaos/sessions/` 或 `~/.grok/sessions/` | Persisted sessions (organized by working directory) |
+| `~/.chaos/memory/` 或 `~/.grok/memory/` | Cross-session memory files and index |
+| `~/.chaos/skills/` 或 `~/.grok/skills/` | User-scoped skill definitions |
+| `~/.chaos/plugins/` 或 `~/.grok/plugins/` | 用户级插件 |
+| `~/.chaos/agents/` 或 `~/.grok/agents/` | User-scoped agent definitions |
+| `~/.chaos/lsp.json` 或 `~/.grok/lsp.json` | LSP server configuration (user-scoped) |
+| `~/.chaos/logs/` 或 `~/.grok/logs/` | Internal log files (e.g. `unified.jsonl`, MCP server logs) |
+| `.chaos/config.toml` 或 `.grok/config.toml` | Project-scoped MCP servers, plugins, and permission rules (both dual-read; Chaos wins on conflict) |
+| `.chaos/skills/` 或 `.grok/skills/` | Project-scoped skill definitions |
+| `.chaos/plugins/` 或 `.grok/plugins/` | 项目级插件 |
+| `.chaos/agents/` 或 `.grok/agents/` | Project-scoped agent definitions |
+| `.chaos/hooks/` 或 `.grok/hooks/` | 项目级钩子 |
+| `.chaos/lsp.json` 或 `.grok/lsp.json` | LSP server configuration |
 
 ---
 
@@ -800,7 +800,7 @@ User home below means the resolved config root (`$CHAOS_HOME` / `$GROK_HOME` / d
 
 项目级配置放在仓库内的 `.chaos/` 或 `.grok/`（双读，同名冲突时 Chaos 侧优先）：
 
-| File | What it configures |
+| 文件 | What it configures |
 |------|--------------------|
 | `.chaos/config.toml` 或 `.grok/config.toml` | MCP、plugins、permission 与 `[mcp] max_output_bytes`（其余 section 只从用户 `config.toml` 加载） |
 | `.chaos/skills/` 或 `.grok/skills/` | 项目 skills |
@@ -818,11 +818,11 @@ User home below means the resolved config root (`$CHAOS_HOME` / `$GROK_HOME` / d
 
 Language servers power passive diagnostics and the optional `lsp` tool (see the [`lsp_tools`](#general-settings) feature flag). Definitions come from three sources and merge by server name:
 
-| Source | Location | Scope |
+| 来源 | 位置 | 作用域 |
 |--------|----------|-------|
-| User | `~/.grok/lsp.json` | All projects |
-| Project | `.grok/lsp.json` | Current repository |
-| Plugin | A trusted plugin's `.lsp.json` file, or an inline `lspServers` block in its `plugin.json` | Wherever the plugin is enabled |
+| 用户 | `~/.grok/lsp.json` | 所有项目 |
+| 项目 | `.grok/lsp.json` | 当前仓库 |
+| 插件 | A trusted plugin's `.lsp.json` file, or an inline `lspServers` block in its `plugin.json` | Wherever the plugin is enabled |
 
 When the same server name comes from more than one source, it resolves highest-priority first:
 

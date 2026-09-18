@@ -119,7 +119,7 @@ Set reasoning effort on the **current** model without reselecting it. The built-
 
 Both are real toggles for the permission mode: they stay in the menu, and running the mode you're already in turns it back off.
 
-| Command | When off | When already on |
+| 命令 | 关闭时 | When already on |
 |---|---|---|
 | `/always-approve` | Skip all permission prompts | Back to ask |
 | `/auto` | Classifier approves safe tools (dangerous ones may still prompt) | Back to ask |

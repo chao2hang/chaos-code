@@ -61,18 +61,18 @@ A hook is a shell command or HTTP endpoint that Grok calls when a specific lifec
 
 Hooks are discovered from several places (all are merged):
 
-| Scope | Path | Trusted? | Notes |
+| 作用域 | 路径 | 是否信任？ | 说明 |
 |-------|------|----------|-------|
-| Global | `~/.grok/hooks/*.json` | Always | Personal hooks |
-| Global | `~/.claude/settings.json` (and `settings.local.json`) | Always | Claude Code compatibility (configurable) |
-| Global | `~/.cursor/hooks.json` | Always | Cursor compatibility (configurable) |
-| Project | `<project>/.grok/hooks/*.json` | Requires trust | Per-repo automation |
-| Project | `<project>/.claude/settings.json` (and `settings.local.json`) | Requires trust | Claude compatibility (configurable) |
-| Project | `<project>/.cursor/hooks.json` | Requires trust | Cursor compatibility (configurable) |
-| Config | `~/.grok/config.toml` | Always | Your hooks alongside the rest of your config |
-| Config | `managed_config.toml` (`$GROK_HOME` and `/etc/grok`) | Always | Organization-distributed hooks (server-synced and on-device) |
-| Config | `requirements.toml` (user and system) | Always | Organization-distributed hooks in the requirements layer |
-| Plugin | Bundled inside installed plugins | Per-plugin | Shared team hooks |
+| 全局 | `~/.grok/hooks/*.json` | 始终 | 个人钩子 |
+| 全局 | `~/.claude/settings.json` (and `settings.local.json`) | 始终 | Claude Code compatibility (configurable) |
+| 全局 | `~/.cursor/hooks.json` | 始终 | Cursor compatibility (configurable) |
+| 项目 | `<project>/.grok/hooks/*.json` | 需要信任 | 按仓库自动化 |
+| 项目 | `<project>/.claude/settings.json` (and `settings.local.json`) | 需要信任 | Claude compatibility (configurable) |
+| 项目 | `<project>/.cursor/hooks.json` | 需要信任 | Cursor compatibility (configurable) |
+| 配置 | `~/.grok/config.toml` | 始终 | Your hooks alongside the rest of your config |
+| 配置 | `managed_config.toml` (`$GROK_HOME` and `/etc/grok`) | 始终 | Organization-distributed hooks (server-synced and on-device) |
+| 配置 | `requirements.toml` (user and system) | 始终 | Organization-distributed hooks in the requirements layer |
+| 插件 | Bundled inside installed plugins | 按插件 | Shared team hooks |
 
 Config-file hooks live in the same TOML your organization already controls; see [Hooks in Config Files](#hooks-in-config-files) for the format. The compatible vendor hook sources are scanned by default. To disable scanning for a specific vendor, set `[compat.<vendor>] hooks = false` in `~/.grok/config.toml` or the corresponding environment variable. See [Configuration](05-configuration.md#harness-compatibility) for details.
 
@@ -86,23 +86,23 @@ Because hooks are unified under folder-trust, a `--trust` / `/hooks-trust` grant
 
 Events fire at three cadences: once per session (`SessionStart`, `SessionEnd`), once per turn (`UserPromptSubmit`, `Stop`, `StopFailure`), and on every tool call inside the turn (`PreToolUse`, `PostToolUse`, `PostToolUseFailure`).
 
-| Event | When it fires | Blocking? |
+| 事件 | When it fires | 是否阻塞？ |
 |-------|---------------|-----------|
-| `SessionStart` | A session starts. Does not fire for a subagent's own session. | No |
+| `SessionStart` | A session starts. Does not fire for a subagent's own session. | 否 |
 | `UserPromptSubmit` | You submit a prompt. | Yes: can block the prompt |
 | `PreToolUse` | A tool is about to run. | Yes: can deny |
 | `PostToolUse` | A tool finishes running (including a built-in logical error such as a non-zero `run_terminal_command` exit; a dispatch failure or an MCP error result fires `PostToolUseFailure` instead). | No, but it can feed the model feedback and replace the output the model sees |
 | `PostToolUseFailure` | A tool fails to dispatch, or an MCP tool returns an error result. | No, but it can feed the model `additionalContext` |
-| `PermissionDenied` | The permission system denies a tool call. | No |
+| `PermissionDenied` | The permission system denies a tool call. | 否 |
 | `Stop` | An agent turn ends on a genuine completion (an interrupt fires `StopCancelled` instead). | Yes: can block the stop |
-| `StopFailure` | A turn ends because of an API error. | No |
-| `StopCancelled` | Runs instead of `Stop` when a turn ends without completing: a user interrupt (Ctrl+C / a client stop), a declined permission prompt, the `--max-turns` limit, or a no-progress bail-out. | No |
-| `Notification` | User-attention events (`idle_prompt`, `permission_prompt`, `task_complete`, …). | No |
-| `SubagentStart` | A subagent starts. | No |
+| `StopFailure` | A turn ends because of an API error. | 否 |
+| `StopCancelled` | Runs instead of `Stop` when a turn ends without completing: a user interrupt (Ctrl+C / a client stop), a declined permission prompt, the `--max-turns` limit, or a no-progress bail-out. | 否 |
+| `Notification` | 需要用户注意的事件（`idle_prompt`、`permission_prompt`、`task_complete`、…）。 | 否 |
+| `SubagentStart` | A subagent starts. | 否 |
 | `SubagentStop` | A subagent's turn ends (fires once, in the subagent, with stop decision control). | Yes: can block the stop |
-| `PreCompact` | Conversation compaction is about to run. | No |
-| `PostCompact` | Conversation compaction completes. | No |
-| `SessionEnd` | The session ends. Carries `subagentType` for a child session, so a host can tell a child's teardown from its own. | No |
+| `PreCompact` | Conversation compaction is about to run. | 否 |
+| `PostCompact` | Conversation compaction completes. | 否 |
+| `SessionEnd` | The session ends. Carries `subagentType` for a child session, so a host can tell a child's teardown from its own. | 否 |
 
 `SubagentEnd` is accepted as an alias for `SubagentStop`. `PreToolUse` can block a tool call, `UserPromptSubmit` can block a prompt (see below), and `Stop`/`SubagentStop` can block the agent from stopping (see [Stop Decision Control](#stop-decision-control)). `PostToolUse` runs too late to block anything, but its stdout is read: it can feed the model feedback and replace the tool output the model sees (see [PostToolUse Output](#posttooluse-output)). Every other event is passive.
 
@@ -116,7 +116,7 @@ After a block, prompts already queued behind the blocked one do not auto-run: th
 
 Grok accepts Cursor's camelCase hook event names, so `~/.cursor/hooks.json` loads unchanged:
 
-| Cursor event | Maps to |
+| Cursor 事件 | 对应 |
 |---|---|
 | `sessionStart`, `sessionEnd` | `SessionStart`, `SessionEnd` |
 | `preToolUse`, `postToolUse`, `postToolUseFailure` | `PreToolUse`, `PostToolUse`, `PostToolUseFailure` |
@@ -196,11 +196,11 @@ When an event fires, Grok resolves it in four steps:
 
 Hooks can also live directly in your Grok config, so a team can distribute them with the rest of their configuration instead of shipping separate JSON files. The same `hooks` object is read from three TOML files:
 
-| File | Tier | Who sets it |
+| 文件 | 层级 | Who sets it |
 |------|------|-------------|
-| `~/.grok/config.toml` | User | You |
-| `managed_config.toml` (`$GROK_HOME`, `/etc/grok`) | Managed / system | Your organization |
-| `requirements.toml` (user and system) | Requirements | Your organization |
+| `~/.grok/config.toml` | 用户 | 你 |
+| `managed_config.toml` (`$GROK_HOME`, `/etc/grok`) | managed / 系统 | 你的组织 |
+| `requirements.toml` (user and system) | requirements.toml 可否设置 | 你的组织 |
 
 The TOML is structurally identical to the JSON hook object, so an existing hook transliterates directly:
 
@@ -300,7 +300,7 @@ A `defer` neither blocks the call nor approves it: the call takes the normal per
 }
 ```
 
-| Field | Effect |
+| 字段 | 效果 |
 |-------|--------|
 | `decision: "block"` + `reason` | Delivers `reason` to the model next to the tool result. The tool's own output still arrives; "block" means "tell the model something went wrong", not "stop the call". |
 | `additionalContext` | Adds a note for the model next to the tool result. |
@@ -318,11 +318,11 @@ A `defer` neither blocks the call nor approves it: the call takes the normal per
 
 ### Exit Codes
 
-| Exit Code | Meaning |
+| 退出码 | 含义 |
 |-----------|---------|
 | `0` | Success / allow (for blocking hooks) |
 | `2` | Explicit deny (`PreToolUse`), block-stop with stderr as feedback (`Stop`/`SubagentStop`), or feedback to the model (`PostToolUse`). For `PreToolUse`, the first stderr line (capped) becomes the deny reason when the JSON carries none; `Stop`/`SubagentStop` and `PostToolUse` feed the full stderr to the model, and a JSON `reason` wins over it. |
-| Other | Fail-open — the failure is recorded (as `exit code N: <first stderr line>`) but nothing is blocked. For `PreToolUse`, a `deny` decision in stdout JSON is honored regardless of exit code. For `Stop`/`SubagentStop`, a valid decision JSON on stdout wins over the exit code; the exit code decides only when stdout has no usable JSON, in which case exit 2 blocks with stderr as the feedback. For `PostToolUse`, the tool has already run so nothing is blocked either way; the failure is still recorded, and the hook keeps its block reason but loses its `additionalContext` and its output replacement. |
+| 其他 | Fail-open — the failure is recorded (as `exit code N: <first stderr line>`) but nothing is blocked. For `PreToolUse`, a `deny` decision in stdout JSON is honored regardless of exit code. For `Stop`/`SubagentStop`, a valid decision JSON on stdout wins over the exit code; the exit code decides only when stdout has no usable JSON, in which case exit 2 blocks with stderr as the feedback. For `PostToolUse`, the tool has already run so nothing is blocked either way; the failure is still recorded, and the hook keeps its block reason but loses its `additionalContext` and its output replacement. |
 
 **`PostToolUse` exit 2 is a behavior change.** It used to be an ordinary recorded failure that changed nothing; it now feeds the hook's stderr to the model. A logging hook written as `run_checker; exit $?` therefore hands the model whatever the checker printed whenever the checker exits 2 — `mypy`, `grep`, `pytest` and `argparse` all use exit 2 for "no match" or "bad usage". End such a hook with an explicit `exit 0` to keep it silent.
 
@@ -485,7 +485,7 @@ Grok sets several environment variables on every hook process. These are useful 
 
 These variables are set by the hook runner for **every** hook:
 
-| Variable              | Description |
+| 变量              | 说明 |
 |-----------------------|-------------|
 | `GROK_HOOK_EVENT`     | The name of the event that triggered the hook (e.g. `pre_tool_use`, `session_start`, `post_tool_use`, `session_end`, `stop`, `notification`). |
 | `GROK_HOOK_NAME`      | The configured name of this specific hook (includes the plugin prefix for plugin-provided hooks). |
@@ -499,7 +499,7 @@ These variables are **reserved**. Any values you attempt to set for them via the
 
 When a hook originates from a plugin, Grok additionally injects the following variables:
 
-| Variable             | Description |
+| 变量             | 说明 |
 |----------------------|-------------|
 | `GROK_PLUGIN_ROOT`   | Absolute path to the plugin's installed directory. |
 | `GROK_PLUGIN_DATA`   | Absolute path to the plugin's writable data directory (for storing plugin state, caches, etc.). |
@@ -547,7 +547,7 @@ The full event envelope is POSTed as JSON.
 
 Press `Ctrl+L` on non–VS Code family terminals to open the Extensions modal (Plugins tab), or run `/hooks` (any terminal; required on VS Code family where `Ctrl+L` is interject) to open it on the Hooks tab. In the **Hooks** tab:
 
-| Key | Action |
+| 键 | 操作 |
 |-----|--------|
 | `r` | Reload all hooks from disk |
 | `a` | Add a custom hook by path |

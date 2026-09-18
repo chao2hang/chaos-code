@@ -106,7 +106,7 @@ Collapse or expand the selected entry with the `Left`/`Right` arrow keys (or `h`
 
 Grok has built-in tools for:
 
-| Tool | Description |
+| 工具 | 说明 |
 |------|-------------|
 | `read_file` / `search_replace` | Read and edit files with line-precise changes |
 | `grep` | Regex search across your codebase (powered by ripgrep) |
@@ -190,9 +190,9 @@ grok -p "Your prompt here"
 
 Output formats:
 
-| Format | Flag | Description |
+| 格式 | 标志 | 说明 |
 |--------|------|-------------|
-| `plain` | (default) | Human-readable text |
+| `plain` | （默认） | 人类可读文本 |
 | `json` | `--output-format json` | Single JSON object with `text`, `stopReason`, `sessionId`, and `requestId` |
 | `streaming-json` | `--output-format streaming-json` | NDJSON event stream for real-time processing |
 
@@ -220,9 +220,9 @@ Deeper files take precedence. Grok also reads `CLAUDE.md` files for compatibilit
 
 ## Where to Go Next
 
-| Document | What You Will Learn |
+| 文档 | What You Will Learn |
 |----------|-------------------|
-| [Authentication](02-authentication.md) | Browser login, API keys, OIDC, external auth, device code flow |
-| [Keyboard Shortcuts](03-keyboard-shortcuts.md) | Complete reference for all key bindings |
-| [Slash Commands](04-slash-commands.md) | All available `/` commands |
-| [Configuration](05-configuration.md) | config.toml, pager.toml, environment variables |
+| [认证](02-authentication.md) | Browser login, API keys, OIDC, external auth, device code flow |
+| [键盘快捷键](03-keyboard-shortcuts.md) | Complete reference for all key bindings |
+| [斜杠命令](04-slash-commands.md) | All available `/` commands |
+| [配置](05-configuration.md) | config.toml, pager.toml, environment variables |
