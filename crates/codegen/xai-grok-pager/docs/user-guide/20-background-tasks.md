@@ -1,76 +1,76 @@
-# Background Tasks and Monitoring
+# 后台任务与监控
 
-Grok runs long-lived processes without blocking the conversation. This document covers background commands, the `/loop` command, the `monitor` tool, and the scheduler.
-
----
-
-## Background Commands
-
-Set `background: true` on the `run_terminal_command` tool to run a command in the background. It returns a task ID immediately; retrieve output with `get_command_or_subagent_output`.
-
-### How It Works
-
-1. The agent calls `run_terminal_command` with `background: true`.
-2. The command starts in the background.
-3. The agent receives a `task_id` for later reference.
-4. When the command completes, a notification appears in the conversation.
-
-### Getting Output
-
-Use `get_command_or_subagent_output` to check a background command or subagent. Pass `task_ids` as a list (one id is a one-element array; maximum 20):
-
-- Omit `timeout_ms`, or pass `0`, for a non-blocking snapshot.
-- A positive `timeout_ms` waits for completion. Several ids wait until **all** complete.
-
-A positive `timeout_ms` is clamped to **1 hour** (`3600000` ms). Hosts with a shorter transport deadline set `GROK_MAX_WAIT_BLOCK_MS` (plain milliseconds; unparseable values keep the default).
-
-If the wait returns while the child is still running, leave it alone: do not kill it or tell it to stop. Completion wakes the parent automatically. Poll again only if you need another snapshot.
-
-### Killing Background Tasks
-
-Use `kill_command_or_subagent(task_id)` to terminate a running background task or subagent. The tool sends SIGTERM, then SIGKILL, to shell processes, and sends Cancel and Shutdown to subagents. It reports success if the task was killed or had already exited.
-
-### Common Use Cases
-
-- **Dev servers**: Start a development server and continue coding
-- **Test suites**: Run tests in the background while working on fixes
-- **Build processes**: Start a build and check results later
-- **Long compilations**: Start a compile and continue with other tasks
+Chaos 在不阻塞对话的前提下运行长时进程。本文覆盖后台命令、`/loop` 命令、`monitor` 工具与调度器。
 
 ---
 
-## Send a Running Task to the Background
+## 后台命令
 
-In the interactive TUI, press `Ctrl+B` to send the running foreground command to the background. It is the only backgrounding shortcut, though sending a new message mid-command also backgrounds that command instead of killing it. Do this when:
+在 `run_terminal_command` 工具上设置 `background: true`，即可让命令在后台运行。它会立即返回一个任务 ID；用 `get_command_or_subagent_output` 取回输出。
 
-- A command takes longer than expected.
-- You want to ask the agent something else while a command runs.
-- You realize a process is long-running after it has started.
+### 工作原理
 
-The task keeps running, and you receive a notification when it completes.
+1. 代理以 `background: true` 调用 `run_terminal_command`。
+2. 命令在后台启动。
+3. 代理收到一个 `task_id`，供之后引用。
+4. 命令完成时，对话中出现一条通知。
+
+### 获取输出
+
+用 `get_command_or_subagent_output` 检查后台命令或子代理。`task_ids` 以列表传入（单个 id 就是单元素数组；最多 20 个）：
+
+- 省略 `timeout_ms`，或传 `0`，得到非阻塞快照。
+- 正的 `timeout_ms` 会等待完成。多个 id 会等到**全部**完成。
+
+正的 `timeout_ms` 会被截断到 **1 小时**（`3600000` 毫秒）以内。传输层截止时间更短的主机可设置 `GROK_MAX_WAIT_BLOCK_MS`（纯毫秒数；无法解析的值保持默认）。
+
+若等待返回时子进程仍在运行，别去动它：既不要杀死它，也不要让它停止。完成时会自动唤醒父进程。只有在还需要一份新快照时才再次轮询。
+
+### 终止后台任务
+
+用 `kill_command_or_subagent(task_id)` 终止正在运行的后台任务或子代理。该工具对 shell 进程先发 SIGTERM、再发 SIGKILL，对子代理发送 Cancel 和 Shutdown。任务被杀死或早已退出时都报告成功。
+
+### 常见用法
+
+- **开发服务器**：启动开发服务器，继续写代码
+- **测试套件**：在后台跑测试，同时修复问题
+- **构建流程**：先启动构建，稍后查看结果
+- **长编译**：先启动编译，同时做其他事
 
 ---
 
-## The /loop Command
+## 把运行中的任务转到后台
 
-`/loop` runs a prompt on a recurring interval. It is useful for polling tasks, periodic checks, and continuous monitoring.
+在交互式 TUI 里，按 `Ctrl+B` 可把正在前台运行的命令转到后台。这是唯一的后台化快捷键，不过命令执行中途发送新消息也会把该命令转入后台而不是杀死它。以下情况适合这么做：
 
-### Syntax
+- 命令耗时超出预期。
+- 你想在命令运行期间问代理别的事。
+- 进程启动后你才发现它是长时任务。
+
+任务会继续运行，完成时你会收到通知。
+
+---
+
+## /loop 命令
+
+`/loop` 按固定间隔重复运行一个提示。它适合轮询任务、周期检查和持续监控。
+
+### 语法
 
 ```
 /loop [interval] <prompt>
 ```
 
-The interval format supports:
+支持的间隔格式：
 
-| Format | Example | Description        |
+| 格式  | 示例    | 说明               |
 | ------ | ------- | ------------------ |
-| `Ns`   | `60s`   | Every N seconds (minimum 60) |
-| `Nm`   | `5m`    | Every N minutes    |
-| `Nh`   | `2h`    | Every N hours      |
-| `Nd`   | `1d`    | Every N days       |
+| `Ns`   | `60s`   | 每 N 秒（最小 60）|
+| `Nm`   | `5m`    | 每 N 分钟          |
+| `Nh`   | `2h`    | 每 N 小时          |
+| `Nd`   | `1d`    | 每 N 天            |
 
-### Examples
+### 示例
 
 ```
 /loop 5m Check if the test suite passes and report any failures
@@ -78,35 +78,35 @@ The interval format supports:
 /loop 60s Check if the dev server at localhost:3000 is responding
 ```
 
-### Behavior
+### 行为
 
-- The prompt fires immediately on creation, then repeats at the specified interval
-- Each firing runs in a detached background subagent, not as a turn in your conversation. The fire cannot see the conversation, so the stored prompt must stand on its own; only its result comes back
-- Recurring tasks auto-expire after 7 days
-- Maximum 50 scheduled tasks can be active at once
+- 提示在创建时立即触发一次，之后按指定间隔重复
+- 每次触发都在一个分离的后台子代理中运行，而不是作为你对话中的一个回合。触发看不到对话内容，所以存储的提示必须自含；只有结果会传回
+- 周期任务 7 天后自动过期
+- 最多可同时有 50 个活跃的定时任务
 
 ---
 
-## The monitor Tool
+## monitor 工具
 
-The `monitor` tool streams events from a long-running script. Each line of output becomes a notification in the conversation. The `monitor` tool is the streaming counterpart to `/loop`: use `/loop` for periodic checks, and use `monitor` for real-time event streams.
+`monitor` 工具从长时运行的脚本流式读取事件。输出的每一行都成为对话中的一条通知。`monitor` 工具是 `/loop` 的流式对应物：周期检查用 `/loop`，实时事件流用 `monitor`。
 
-### How It Works
+### 工作原理
 
-1. You provide a shell command (`command`) and a short `description` that appears in every notification.
-2. Grok merges the command's stdout and stderr into a single output file.
-3. Each new line in that file becomes a notification delivered to the conversation.
-4. The monitor runs until the command exits or you stop it.
+1. 你提供一个 shell 命令（`command`）和一条简短的 `description`，后者出现在每条通知里。
+2. Chaos 把命令的 stdout 与 stderr 合并进同一个输出文件。
+3. 该文件中的每个新行都成为一条通知，送达到对话。
+4. 监视器一直运行，直到命令退出或你停止它。
 
-### Script Guidelines
+### 脚本编写准则
 
-- **Always use `grep --line-buffered` in pipes.** Without it, pipe buffering delays events by minutes.
-- **Handle transient failures in poll loops** (`curl ... || true`). One failed request should not stop the monitor.
-- **Use selective filters.** Every line becomes a message, so never pipe raw logs.
-- **Set poll intervals to match the source.** Use 30 seconds or more for remote APIs to respect rate limits, and 0.5 to 1 second for local checks.
-- **Both stdout and stderr generate events.** Redirect output you don't want as events — for example, append `2>/dev/null` — or filter it out.
+- **管道里一定用 `grep --line-buffered`。** 不用的话，管道缓冲会把事件延迟数分钟。
+- **轮询循环里处理瞬时失败**（`curl ... || true`）。一次失败的请求不应让监视器停止。
+- **使用有选择性的过滤器。** 每一行都会成为一条消息，所以绝不要直接管道原始日志。
+- **轮询间隔要与来源匹配。** 远程 API 用 30 秒或更长以尊重速率限制，本地检查用 0.5 到 1 秒。
+- **stdout 与 stderr 都会产生事件。** 把不想作为事件的输出重定向掉——例如追加 `2>/dev/null`——或把它过滤掉。
 
-### Examples
+### 示例
 
 ```bash
 # Watch for errors in a log file
@@ -125,115 +125,115 @@ while true; do
 done
 ```
 
-### Persistent Monitors
+### 持久监视器
 
-Set `persistent: true` for monitors that should run for the lifetime of the session:
+对应当在整个会话期间存活的监视器，设置 `persistent: true`：
 
-- PR monitoring
-- Log tailing
-- CI status watching
+- PR 监控
+- 日志跟踪
+- CI 状态观察
 
-Stop persistent monitors with `kill_command_or_subagent(task_id)`.
+用 `kill_command_or_subagent(task_id)` 停止持久监视器。
 
-### Volume Control
+### 事件量控制
 
-If a monitor produces too many events, Grok stops it automatically. When this happens, restart the monitor with a tighter filter. Prefer `grep --line-buffered`, `awk`, or a wrapper script that emits only the events you care about.
+若某个监视器产生的事件过多，Chaos 会自动停止它。此时请用更紧的过滤器重启监视器。优先用 `grep --line-buffered`、`awk`，或只输出你关心事件的包装脚本。
 
 ---
 
-## The Scheduler
+## 调度器
 
-The scheduler provides a lower-level API for creating recurring tasks. `/loop` is a convenience wrapper around the scheduler.
+调度器提供了创建周期任务的更底层 API。`/loop` 是对调度器的便捷封装。
 
 ### scheduler_create
 
-Create a scheduled task:
+创建一个定时任务：
 
-| Parameter        | Description                                              |
-| ---------------- | -------------------------------------------------------- |
-| `interval`       | How often to run: `"5m"`, `"2h"`, `"1d"`, `"60s"`       |
-| `prompt`         | The prompt text to execute on each fire                  |
-| `fire_immediately`| Fire on creation in addition to the interval (default: `false`) |
-| `recurring`      | Repeat (default: `true`) or fire once (`false`)          |
-| `durable`        | Persist across sessions (default: `false`)               |
+| 参数             | 说明                                                       |
+| --------------- | --------------------------------------------------------- |
+| `interval`      | 运行频率：`"5m"`、`"2h"`、`"1d"`、`"60s"`                   |
+| `prompt`        | 每次触发要执行的提示文本                                    |
+| `fire_immediately`| 除间隔外，创建时也立即触发一次（默认：`false`）              |
+| `recurring`     | 重复运行（默认：`true`）或只触发一次（`false`）             |
+| `durable`       | 跨会话持久保留（默认：`false`）                             |
 
-Every fire runs in a detached background subagent; there is no option to run one as a turn in the conversation.
+每次触发都在一个分离的后台子代理中运行；没有让它作为对话中回合运行的选项。
 
 ### scheduler_list
 
-List all active scheduled tasks with their IDs, prompts, intervals, and next fire times.
+列出所有活跃的定时任务，含其 ID、提示、间隔和下次触发时间。
 
 ### scheduler_delete
 
-Cancel a scheduled task by ID. Returns success if the task was found and removed.
+按 ID 取消一个定时任务。任务被找到并移除时返回成功。
 
 ---
 
-## The Tasks Pane
+## 任务面板
 
-In the interactive TUI, press `Ctrl+G` to toggle the tasks pane. This pane lists, in a single view:
+在交互式 TUI 里，按 `Ctrl+G` 可切换任务面板。该面板在一个视图中列出：
 
-- Running subagents and their progress
-- Active background tasks and their status
-- Monitor and `/loop` tasks, each with a live line-count badge
-- The task ID for each entry
+- 运行中的子代理及其进度
+- 活跃的后台任务及其状态
+- 监视器与 `/loop` 任务，各带一个实时行数徽标
+- 每个条目的任务 ID
 
-To toggle the prompt queue instead, press `Ctrl+;`.
+若要切换的是提示队列，按 `Ctrl+;`。
 
 ---
 
-## The Still-Running Status Line
+## 仍在运行状态栏
 
-Whenever background work is still running while the agent looks idle — between turns, or while a turn is blocked on a user-interruptible wait — a persistent status line appears above the prompt:
+当代理看似空闲而后台工作仍在运行时——回合之间，或某个回合正阻塞在可被用户打断的等待上——提示框上方会出现一条常驻状态栏：
 
 ```
 ◎ 1 command · 2 monitors · 1 loop · 1 subagent still running
 ```
 
-It counts running background commands, monitors, scheduled `/loop` tasks, and background subagents, and updates live as each finishes. Any of them can wake the agent for a new turn (commands and subagents on completion, monitors on events, loops on their timer), so the cue stays up until nothing is left. The running counts live only on this status line: completions land in the transcript as a single "Task completed" chip, and "Worked for" markers stay plain — the transcript never repeats or restates the running counts.
+它统计正在运行的后台命令、监视器、`/loop` 定时任务和后台子代理，并随每项完成实时更新。其中任何一项都能唤醒代理开启新回合（命令与子代理在完成时，监视器在事件时，loop 在计时器到点时），所以这条提示会一直挂着，直到什么都不剩。运行计数只存在于这条状态栏上：完成在转录里只是一枚单独的“Task completed”徽片，而“Worked for”标记保持朴素——转录从不重复或复述运行计数。
 
-While a turn is waiting on background work (blocked in `get_command_or_subagent_output`), the status line adds a hint that typing takes over immediately:
+当某个回合正等待后台工作（阻塞在 `get_command_or_subagent_output`）时，状态栏会加一条提示：输入会立即接管：
 
 ```
 ◎ 1 command still running · send a message to interrupt
 ```
 
-The same hint appears as `◎ waiting · send a message to interrupt` when the agent is waiting on something with no live counter (a sleep, or work that already finished). Sending a message interrupts the wait and runs your message right away. The transcript keeps its usual shape throughout: one "Worked for" marker when the turn ends. When a completion wakes the agent and it replies, that reply gets its own "Worked for" marker; a wake the agent answers silently leaves no trace in the transcript — unless it fails, in which case a "Turn failed" line appears even for a silent wake, so a standing instruction never stops executing invisibly.
+代理在等待某个没有实时计数器的东西（一次 sleep，或已经完成的工作）时，同样的提示显示为 `◎ waiting · send a message to interrupt`。发送消息会打断等待，立即运行你的消息。转录始终保持惯常形态：回合结束时一枚“Worked for”标记。当一次完成唤醒代理并让它回复时，那条回复有它自己的“Worked for”标记；代理静默应答的唤醒在转录里不留痕迹——除非它失败，那样即使静默唤醒也会出现一行“Turn failed”，所以一条常驻指令永远不会在无形中停止执行。
 
 ---
 
-## Use Cases and Patterns
+## 用法与模式
 
-### Dev Server + Coding
+### 开发服务器 + 编码
 
-Start a dev server in the background and continue coding:
+在后台启动开发服务器，继续写代码：
 
 ```
 Start the dev server with `npm run dev` in the background, then implement the login form.
 ```
 
-The agent runs the dev server with `background: true` and continues writing code. When the server starts, you see a notification.
+代理以 `background: true` 运行开发服务器，并继续写代码。服务器启动时，你会看到一条通知。
 
-### Continuous Test Monitoring
+### 持续测试监控
 
 ```
 /loop 5m Run the test suite and report any new failures since the last run
 ```
 
-Every 5 minutes, the agent runs tests and reports only new failures.
+每 5 分钟，代理运行一次测试，只报告新增的失败。
 
-### Log Monitoring
+### 日志监控
 
-Use `monitor` to watch for specific events:
+用 `monitor` 观察特定事件：
 
 ```
 Monitor the application log for ERROR and WARN entries. Use:
 tail -f /var/log/app.log | grep --line-buffered -E "ERROR|WARN"
 ```
 
-Each error or warning appears as a notification in the conversation.
+每个错误或警告都会作为一条通知出现在对话中。
 
-### CI Pipeline Watching
+### CI 流水线观察
 
 ```
 /loop 2m Check the status of the GitHub Actions run for this PR. Report when it completes.
@@ -241,12 +241,12 @@ Each error or warning appears as a notification in the conversation.
 
 ---
 
-## Best Practices
+## 最佳实践
 
-- **Use `background` for one-shot long commands** (builds, test suites, server starts)
-- **Use `/loop` for periodic checks** (CI status, test runs, health checks)
-- **Use `monitor` for real-time event streams** (log tailing, file watching)
-- **Use `scheduler_create` with `recurring: false`** for delayed one-shot tasks
-- **Keep monitor filters tight** — prefer `grep --line-buffered` over raw log streams
-- **Do not use sleep loops** in normal commands to poll — use `get_command_or_subagent_output` with `timeout_ms` instead
-- **Set reasonable poll intervals** — 30s+ for remote APIs to avoid rate limits, shorter for local checks
+- **一次性长命令用 `background`**（构建、测试套件、服务器启动）
+- **周期检查用 `/loop`**（CI 状态、测试运行、健康检查）
+- **实时事件流用 `monitor`**（日志跟踪、文件监视）
+- **延迟的一次性任务用 `scheduler_create` 加 `recurring: false`**
+- **监视器过滤器要收紧** —— 优先 `grep --line-buffered`，不要原始日志流
+- **不要用 sleep 循环**在普通命令里轮询 —— 改用带 `timeout_ms` 的 `get_command_or_subagent_output`
+- **设置合理的轮询间隔** —— 远程 API 用 30 秒以上以避免速率限制，本地检查用更短的
