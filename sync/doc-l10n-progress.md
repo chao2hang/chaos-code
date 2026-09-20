@@ -1,7 +1,7 @@
 # 用户指南中文化的进度与恢复点
 
-更新于 2026-09-18，分支 `sync/curated-port-20260918`，基线 `a82a27ea`，
-本文的提交清单与统计数字截至 `6f92436a`。
+更新于 2026-09-20，分支 `sync/curated-port-20260918`，基线 `a82a27ea`，
+本文的提交清单与统计数字截至 `35711ebb`。
 
 ## 一、已完成
 
@@ -31,18 +31,20 @@
 | `d4934338` | 点名上游的段落也算豁免 + `--fork-names` 自测 7 例 |
 | `707899b4` | `19-plan-mode.md` 残留的 `~/.grok/sessions` 改回 `~/.chaos` |
 | `6f92436a` | `13-memory.md` 中文化（四处错误断言按 §4.3 改写，`topics/` 声明删除） |
+| `a660f513` | 刷新进度表，记下第 13 章的核对结论 |
+| `35711ebb` | `04-slash-commands.md` 中文化（兼容桩与记忆闸按核对结论改写） |
 
-已整章完成（散文行、表格单元格、上游旧名三项都归零）：`01`、`02`、`06`、`07`、
-`08`、`11`、`12`、`13`、`15`、`18`、`19`、`20`、`25`。本轮之前已提交的整章是
-`12`、`19`、`20`；`02` 是更正而非翻译；`13` 的核对结论见
-`sync/doc-claims-verification.md` 第八节。
+已整章完成（散文行、表格单元格、上游旧名三项都归零）：`01`、`02`、`04`、
+`06`、`07`、`08`、`11`、`12`、`13`、`15`、`18`、`19`、`20`、`25`。本轮之前
+已提交的整章是 `12`、`19`、`20`；`02` 是更正而非翻译；`13` 与 `04` 的核对
+结论分别见 `sync/doc-claims-verification.md` 第八、九节。
 `26` 的首节散文已译，表格短单元格已全库替换；`README` 还剩链接表的 10 个单元格。
 
 ## 二、真实剩余工作量
 
 `--english` 只扫散文行、不扫表格行，单看过它会把「散文已中文、表格全英文」
 的章节误判成接近完成。下表是 `--english` 与 `--cells` 合起来的口径
-（`--fork-names` 是同一批改动里顺带做的），统计于 `707899b4`。
+（`--fork-names` 是同一批改动里顺带做的），统计于 `35711ebb`。
 
 | 章节 | 行数 | 字符 | 散文行 | 表格单元格 | 上游旧名 |
 |---|---:|---:|---:|---:|---:|
@@ -57,10 +59,9 @@
 | `22-permissions-and-safety.md` | 571 | 32964 | 123 | 20 | 28 |
 | `16-subagents.md` | 400 | 20065 | 87 | 39 | 8 |
 | `09-plugins.md` | 450 | 26801 | 82 | 28 | 44 |
-| `04-slash-commands.md` | 469 | 23245 | 84 | 5 | 6 |
 | `17-sessions.md` | 391 | 20560 | 79 | 0 | 35 |
 | `README.md` | 60 | 2019 | 0 | 10 | 0 |
-| 合计 | 6 679 | 405 378 | 1 327 | 852 | 248 |
+| 合计 | 6 210 | 382 133 | 1 243 | 847 | 242 |
 
 ## 三、执行顺序
 
@@ -80,8 +81,8 @@
 11. `10-hooks`、`26-config-reference`（最大，各拆 2–3 次派发，按小节区间）
 12. `README`（等所有章节标题定稿后再译链接文字）
 
-已做完：1（`08`、`11`）、2（`06`、`25`）、3（`15`、`18`）、4（`07`、`13`）。
-下一批是 5 的 `04-slash-commands` 与 `17-sessions`。
+已做完：1（`08`、`11`）、2（`06`、`25`）、3（`15`、`18`）、4（`07`、`13`）、
+5 的 `04`。下一批是 `17-sessions` 与 `09-plugins`。
 
 ## 四、每章的执行协议（实测唯一稳定的做法）
 
@@ -119,10 +120,12 @@ python3 scripts/check-doc-l10n.py --fork-names --glob "$G/<本章>"
 除 `sync/doc-l10n-conventions.md` 的通用约定外：
 
 - `01`：有一处 `~/.grok/AGENTS.md` 应是 `~/.chaos`。
-- `04`：`/memory` 不以 `enabled` 为闸；`/flush`、`/dream` 不要引用不存在的
-  状态串（`/dream` 成功时无用户可见输出）；记忆浏览模态没有绑定 `s`；
-  `/login` `/logout` 照兼容桩译；`/usage` 是三标签模态；
-  `Account and Billing` 一节在本分叉没有计费内容，按 §4.3 处理标题。
+- `04`（已完成 2026-09-20）：`/memory` 不以 `enabled` 为闸，写的是「后端已
+  配置即可用」；`/flush`、`/dream` 不引用不存在的状态串，且 `/dream` 写明成功
+  时没有用户可见输出；记忆浏览模态的键位没写 `s`；`/login` `/logout` 照兼容
+  桩译；`/usage` 写了三标签模态，并注明配置外部认证提供方时该命令会被隐藏；
+  `Account and Billing` 改为 `## 账号与数据`。四条新结论见
+  `sync/doc-claims-verification.md` 第九节。
 - `06`：Terminal 主题在本分叉不存在，按 §4.3 删掉相关段落与
   `GROK_TERMINAL_THEME`、`[features] terminal_theme`。权威清单是
   `settings/defs.rs:38-69` 的 `THEME_CHOICES`：`auto` + 5 个具体主题
@@ -152,7 +155,11 @@ python3 scripts/check-doc-l10n.py --fork-names --glob "$G/<本章>"
 
 1. `python3 scripts/check-doc-l10n.py --fix-anchors --before <译前基线>`
    机械重写入站锚点（标题顺序不变，按序号映射，不需要猜）。
-2. `python3 scripts/check-doc-l10n.py --links` 归零。
+2. `python3 scripts/check-doc-l10n.py --links` 归零。已知的死锚点（改标题
+   造成，随第 1 步一起修掉）：`06` 的 `#auto-theme-system-appearance`、
+   `12` 的 `#supported-file-names`、`08` 的 `#viewing-skill-details`、
+   `14` 的 `02-authentication.md#device-code-flow`、`04` 的
+   `#minimal-and-fullscreen`，以及本轮所有改了标题的章节。
 3. `python3 scripts/check-doc-l10n.py --fork-names --strict` 归零。
 4. `python3 scripts/check-doc-l10n.py --english` 归零。
 5. `python3 scripts/check-doc-l10n.py --cells --strict` 归零。
