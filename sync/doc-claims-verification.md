@@ -233,3 +233,84 @@ T1-7c / T1-7d 原本要把上游增量与本轮行为注记写进 `04`、`10`、
 `04-slash-commands.md#the-grok-usage-subcommand`（本章 `grok usage` 一节改了
 中文标题）、出站 `17-sessions.md` → `15-agent-mode.md#session-config-options`。
 都属 §二 预期，留给收尾的 `--fix-anchors` 机械重写，不手工改。
+
+---
+
+## 十一、第 9 章《插件》的核对（2026-09-20）
+
+| # | 结论 | 证据 |
+| --- | --- | --- |
+| 42 | 插件市场索引的协议目录确实叫 `.grok-plugin/`（再退到 `.grok-plugin/plugin.json`，然后是 `.claude-plugin/` 的等价形式），**不是** `.chaos-plugin/`；译文三处照旧 | `xai-grok-plugin-marketplace/src/index.rs:196-204`、`catalog.rs:63` |
+| 43 | `chaos plugin` 的子命令与译文列出的选项逐一对应：List（`--json`，`--available` 要求 json）、Install（`--trust`）、Uninstall（别名 `rm`/`remove`，`--confirm`/`--keep-data`）、Update、Enable、Disable、Details、Validate、Tag（`--push`、`-f`、`--dry-run`）、Marketplace | `xai-grok-pager/src/plugin_cmd.rs:84-155` |
+| 44 | 扩展模态的标签栏顺序与文字是 Hooks、插件、市场、Skills、工作流、MCP 服务器；其中 `Hooks`/`Skills` 是界面上的英文品牌词，所以译文里只有另外四个写中文 | `xai-grok-pager/src/views/extensions_modal.rs:731-747`、`:750-762` |
+| 45 | 插件组件的位置与文件名全部属实：`skills/`、`commands/`、`agents/`、`hooks/hooks.json`、`.mcp.json`、`.lsp.json`，以及可选的 `plugin.json` 清单；惯例式插件就是按这些路径认出来的 | `xai-grok-agent/src/plugins/manifest.rs:171-212`、`discovery.rs:613-628` |
+| 46 | 插件发现的作用域与优先级（`--plugin-dir` 0 → 项目 1 → 用户 2 → `[plugins].paths` 3）、项目与用户目录、以及「`.claude/plugins/` 等价形式也可用」都属实。译文按本分叉把 `~/.grok/plugins/`、`.grok/plugins/` 写成 `.chaos/...`：`grok_home()` 返回的就是 chaos home | `xai-grok-agent/src/plugins/discovery.rs:27-36`、`:208-226`；`xai-dirs/src/lib.rs:120-138` |
+| 47 | `_meta.pluginDirs` 是 `session/new` / `session/load` 上真实的 meta 键；`--plugin-dir` 可重复，且在 leader 模式下被忽略并打一条警告——两处行为都对得上译文 | `xai-grok-shell/src/agent/mvp_agent/mod.rs:369`；`xai-grok-pager/src/app/cli.rs:302`；`xai-grok-pager-bin/src/main.rs:1303-1305`、`:1391-1393` |
+| 48 | 钩子拿到的两个插件变量（`GROK_PLUGIN_ROOT`、`GROK_PLUGIN_DATA`）与两个 `CLAUDE_*` 别名属实，技能侧用的是同一对变量 | `xai-grok-tools/src/implementations/skills/skill.rs:250-257` |
+| 49 | 插件代理用 `plugin:agent` 限定名；未受信任的插件只解析 frontmatter，正文不进模型——与译文「未受信任的插件代理只保留 frontmatter」一致 | `xai-grok-agent/src/discovery.rs:438`、`:519-527` |
+| 50 | 「`require_sha` 两条开关都只能收紧、关不掉」属实：`[marketplace] require_sha` 与 `GROK_MARKETPLACE_REQUIRE_SHA` 是或的关系 | `xai-grok-plugin-marketplace/src/config.rs:32-44` |
+| 51 | `plugin_auto_update` / `pluginAutoUpdate` 是只收紧的 `PolicyPin`；Claude 每个市场级的 `autoUpdate: false` 会把**全局**会话启动自动更新钉死，代码注释说明了为什么不做细粒度等价物——与译文那句括注一致 | `xai-grok-workspace/src/permission/managed_policy/mod.rs:58-59`、`:233-236`、`:250-258` |
+| 52 | MCP 策略条目只认 `serverUrl`/`server_url`、`command`、`serverCommand`/`server_command`、`serverName`/`server_name` 四种（解析处的告警文案就是这么写的）；名字比较是「空格转 `_` 后小写、剥掉 `grok_com_` 前缀」，前缀常量也在 | `managed_policy/parse.rs:202-243`；`managed_policy/mcp.rs:245-291` |
+| 53 | 译文照引的两条运行时日志与源码逐字一致：`MCP server blocked by managed settings policy`、`Marketplace source blocked by allowlist` | `xai-grok-shell/src/session/managed_mcp.rs:211`；`xai-grok-shell/src/plugin.rs:746` |
+| 54 | `**Enforced by policy**` 是 `chaos inspect` 真正打印的小标题，所以保留英文并只用括号补一句中文注解 | `xai-grok-shell/src/inspect/mod.rs:1472` |
+
+### 11.1 ⚠️ 文档超前于代码的三处说法（来自上游 a28ee2b2 的增量，本轮只译不改）
+
+这三处都是 `ca7e2f1f`（「补入纯上游章节增量」）有意搬进来的上游 tip 文案，而本
+分支的代码是 `SOURCE_REV 72a61251` + 精选移植，所以它们描述的是**上游更新**的
+行为。本轮按「文档照译、差异记录在案」处理，没有改写成「本分支实际行为」——
+要改的话应先决定是移植代码还是改文档，那是另一张工单。
+
+1. **「配置错误是锁死而不是放行」那一段不成立。** 它的理由是
+   `locked down by policy (<file>)`，而这个串在本修订版根本不存在：
+   `McpBlockReason` 只有三种 Display——`matches deniedMcpServers (<file>)`、
+   `not in allowedMcpServers (<file>)`、
+   `project MCP disabled (enableAllProjectMcpServers = false, <file>)`
+   （`managed_policy/verdict.rs:44-60`）。而且类型写错的策略键是被**忽略**而不是
+   锁死：`policy_array` 打一条 `policy key must be an array of entries; the whole
+   list is ignored` 的告警后返回空（`parse.rs:177-189`），allowlist 只在条目非空
+   时才登记（`mod.rs:203-221`）。
+2. **「`strict_known_marketplaces` 键存在即限制、空数组等于全面锁死」也不成立。**
+   `MarketplaceAllowlist::is_restricted()` 就是 `!allowed_urls.is_empty()`
+   （`marketplace.rs:19-21`），空数组不产生任何限制；这一条还有测试正面钉住：
+   `tests.rs:1956-1975` 的用例名是「wrong-typed policy lists do not drop sibling
+   keys」，断言 `Expect::MarketRestricted(false)`。也就是说本修订版是 fail-open，
+   与文档写反了。
+3. **更广的一层：本章第 16–19 节描述的「原生 TOML 策略层」当前没有被运行时消费。**
+   所有 MCP / 插件市场策略的运行时入口都走
+   `resolution::managed_settings()`，而它是 `managed_policy/compat.rs` 的兼容
+   视图：只读 Claude 的 `managed-settings.json`，而且用的是旧解析器（只认
+   `serverUrl`/`command`/`serverName`，不认 `serverCommand`，见 `compat.rs:196-224`）。
+   engine 从 `requirements.toml` / `managed_config.toml` 解析出来的策略层没有
+   任何调用方，`plugin_auto_update` 这个 pin 更是全库无人读取。`compat.rs:134-137`
+   的注释自己写明了这一点：「The engine's TOML policy layers are invisible here —
+   multi-source enforcement lands with the migrated callers in the stacked PR」。
+
+三处的处置建议相同：要么把 engine 的调用方按上游那张 stacked PR 移植过来
+（推荐，属上游已完成的迁移），要么在文档里补一句行为注记。**不要**在翻译轮里
+顺手改写，否则文档与上游差分表就再也对不上了。
+
+### 11.2 顺带发现的两处代码侧英文残留（已记入 t1-7x）
+
+- `xai-grok-pager/src/app/cli.rs:334`、`:340` 打印 `grok: --plugin-dir …`，而
+  二进制叫 `chaos`。
+- `title_miss_hint()`（§10.3 已记）是同一类。
+
+### 11.3 死锚点
+
+本章译完后全库 `--links` 从 16 条升到 28 条，新增的 12 条全部指向
+`09-plugins.md#…`（来自第 7、8 章与本章自身），属 §二 预期，留给收尾的
+`--fix-anchors` 机械重写。
+
+### 11.4 一个工具坑：`--after HEAD` 读的是提交后的版本
+
+`--after HEAD` 比较的是**已提交**的 HEAD，不含工作树。逐章自查要用
+`--before HEAD --after WORKTREE`（或 `--after .`），否则会把这一章刚做的改动
+整个漏掉，却把这一章在更早提交里已有的差异当成「本轮漂移」报出来——
+
+本章就踩过这个坑：`--before main --after HEAD` 报出的 5 条结构差异（围栏
+16→17、丢 `*://…` 与 `/*` 两个行内跨度、多一张 2×4 表格、多一条
+`#restrict-which-mcp-servers-can-run` 链接、多一个 H3）全部来自 `ca7e2f1f`
+搬进来的上游增量，与本次翻译无关；换成 `--before HEAD --after WORKTREE` 后是
+0 漂移。这也说明收尾时第 6 条不能用 `--after HEAD` 当「本章无漂移」的判据，
+而要按「继承差异逐条登记」处理。

@@ -1,7 +1,7 @@
 # 用户指南中文化的进度与恢复点
 
 更新于 2026-09-20，分支 `sync/curated-port-20260918`，基线 `a82a27ea`，
-本文的提交清单与统计数字截至 `de2cba71`。
+本文的提交清单与统计数字截至 `d6d4508c`。
 
 ## 一、已完成
 
@@ -34,18 +34,21 @@
 | `a660f513` | 刷新进度表，记下第 13 章的核对结论 |
 | `35711ebb` | `04-slash-commands.md` 中文化（兼容桩与记忆闸按核对结论改写） |
 | `de2cba71` | `17-sessions.md` 中文化（认证行按上游遗留处理，`refs/grok/…` 保持） |
+| `bf59677e` | 扩展模态标签按分叉实际显示的中文改写（第 4、7 章） |
+| `d6d4508c` | `09-plugins.md` 中文化（协议名与 `Enforced by policy` 保持原样） |
 
 已整章完成（散文行、表格单元格、上游旧名三项都归零）：`01`、`02`、`04`、
-`06`、`07`、`08`、`11`、`12`、`13`、`15`、`17`、`18`、`19`、`20`、`25`。
+`06`、`07`、`08`、`09`、`11`、`12`、`13`、`15`、`17`、`18`、`19`、`20`、`25`。
 本轮之前已提交的整章是 `12`、`19`、`20`；`02` 是更正而非翻译；`13`、`04`、
-`17` 的核对结论分别见 `sync/doc-claims-verification.md` 第八、九、十节。
+`17`、`09` 的核对结论分别见 `sync/doc-claims-verification.md` 第八、九、十、
+十一节。
 `26` 的首节散文已译，表格短单元格已全库替换；`README` 还剩链接表的 10 个单元格。
 
 ## 二、真实剩余工作量
 
 `--english` 只扫散文行、不扫表格行，单看过它会把「散文已中文、表格全英文」
 的章节误判成接近完成。下表是 `--english` 与 `--cells` 合起来的口径
-（`--fork-names` 是同一批改动里顺带做的），统计于 `de2cba71`。
+（`--fork-names` 是同一批改动里顺带做的），统计于 `d6d4508c`。
 
 | 章节 | 行数 | 字符 | 散文行 | 表格单元格 | 上游旧名 |
 |---|---:|---:|---:|---:|---:|
@@ -59,9 +62,8 @@
 | `05-configuration.md` | 833 | 44495 | 71 | 75 | 40 |
 | `22-permissions-and-safety.md` | 571 | 32964 | 123 | 20 | 28 |
 | `16-subagents.md` | 400 | 20065 | 87 | 39 | 8 |
-| `09-plugins.md` | 450 | 26801 | 82 | 28 | 44 |
 | `README.md` | 60 | 2019 | 0 | 10 | 0 |
-| 合计 | 5 819 | 361 573 | 1 164 | 847 | 207 |
+| 合计 | 5 369 | 334 772 | 1 082 | 819 | 163 |
 
 ## 三、执行顺序
 
@@ -82,8 +84,8 @@
 12. `README`（等所有章节标题定稿后再译链接文字）
 
 已做完：1（`08`、`11`）、2（`06`、`25`）、3（`15`、`18`）、4（`07`、`13`）、
-5（`04`、`17`）、6 的 `01`。下一批是 `09-plugins`，再往后是 `16-subagents`
-与 `24-monitoring-usage`。
+5（`04`、`17`）、6（`01`、`09`）。下一批是 `16-subagents` 与
+`24-monitoring-usage`。
 
 ## 四、每章的执行协议（实测唯一稳定的做法）
 
@@ -148,6 +150,17 @@ python3 scripts/check-doc-l10n.py --fork-names --glob "$G/<本章>"
   `-s` 与 `--fork-session` 的关系、`chaos sessions list` 的列、
   `costUsdTicks` 的 1e10 刻度都核对为真，逐条记在
   `sync/doc-claims-verification.md` 第十节。
+- `09`（已完成 2026-09-20）：下列名字**不是**残留，必须原样保留——
+  `.grok-plugin/marketplace.json`、`.grok-plugin/plugin.json` 与
+  `.claude-plugin/`（市场索引的协议目录，见
+  `xai-grok-plugin-marketplace/src/index.rs:196-204`）、
+  `/etc/grok/requirements.toml`（系统策略路径）、
+  `GROK_PLUGIN_ROOT` / `GROK_PLUGIN_DATA` / `GROK_MARKETPLACE_REQUIRE_SHA` /
+  `grok_com_`。标签页按分叉真实界面写（`Hooks`、`插件`、`市场`、`Skills`、
+  `工作流`、`MCP 服务器`）；`**Enforced by policy**` 是 `chaos inspect`
+  原样打印的标题，保留英文加括号注解。**这一章有 §11.1 记的三处「文档超前
+  于代码」**（`locked down by policy`、空列表锁死、第 16–19 节的 TOML 策略层
+  尚未被运行时消费），本轮照译不改，别在重译时把它们「修正」成别的说法。
 - `14`：`Authentication for Headless Environments` 整节按 BYOK 重写，
   删掉 `grok login --device-auth`、`grok login` 两条，指向
   `02-authentication.md`；该章还带着一条死锚点
@@ -164,9 +177,10 @@ python3 scripts/check-doc-l10n.py --fork-names --glob "$G/<本章>"
 
 1. `python3 scripts/check-doc-l10n.py --fix-anchors --before <译前基线>`
    机械重写入站锚点（标题顺序不变，按序号映射，不需要猜）。
-2. `python3 scripts/check-doc-l10n.py --links` 归零。`de2cba71` 时全库还有
-   16 条死锚点，都是改标题造成的，随第 1 步一起机械修掉：`04` 的
-   `#minimal-and-fullscreen` 与 `17-sessions.md#the-grok-usage-subcommand`、
+2. `python3 scripts/check-doc-l10n.py --links` 归零。`d6d4508c` 时全库还有
+   28 条死锚点，都是改标题造成的，随第 1 步一起机械修掉。`de2cba71` 时的
+   16 条：`04` 的 `#minimal-and-fullscreen` 与
+   `17-sessions.md#the-grok-usage-subcommand`、
    `06` 的 `#auto-theme-system-appearance`、`07` 的 `#cli-management` /
    `#example-configurations` / `#project-scoped-mcp-servers`、`08` 的
    `#viewing-skill-details`、`12` 的 `#supported-file-names`、`14` 的
@@ -174,17 +188,37 @@ python3 scripts/check-doc-l10n.py --fork-names --glob "$G/<本章>"
    `17` 的 `15-agent-mode.md#session-config-options`、`18` 的
    `#custom-profiles` / `#platform-support`、`22` 的
    `15-agent-mode.md#automation-and-sdks`、`25` 的 `#available-data` /
-   `#refresh-runs`。
+   `#refresh-runs`。译完第 9 章后新增的 12 条全部指向
+   `09-plugins.md#…`：`07` 与 `08` 各两条
+   （`#create-your-own-marketplace`、`#distribute-across-an-organization`、
+   `#restrict-which-mcp-servers-can-run`），本章自身 8 条
+   （`#add-a-catalog-optional`、`#create-your-own-marketplace`、
+   `#distribute-across-an-organization`、`#require-pinned-versions`、
+   `#restrict-which-mcp-servers-can-run`、`#trust-and-security`、
+   `#what-a-plugin-contains`、`#what-this-does-not-cover`）。
 3. `python3 scripts/check-doc-l10n.py --fork-names --strict` 归零。
 4. `python3 scripts/check-doc-l10n.py --english` 归零。
 5. `python3 scripts/check-doc-l10n.py --cells --strict` 归零。
 6. `python3 scripts/check-doc-l10n.py --before main --after HEAD`
-   全库 0 问题（`problems` 为空），且每一条 `note:` 都要能逐条讲清来历
-   （新增的行内字面量是有意补的，例如 `01` 的 `/provider`、`06` 的三个枚举
-   名、`13` 的 `MEMORY.md`、`17` 的 `CHAOS_HOME` 与 `~/.chaos`），讲不清的
-   按漂移处理，不算通过。这里**不能**加 `--strict-spans`：那个开关会把
-   **有意补的**字面量也算成漂移，而补字面量恰好是本轮允许的动作
-   （理由见 `sync/doc-claims-verification.md` 第 10.2 节）。
+   全库跑一遍，要求**每一行结论都有来历**，而不是「原始输出为空」。因为这条
+   命令同时混进了两类差异：
+   - **翻译造成的**：逐章自查用的是 `--before HEAD --after WORKTREE`，每章
+     都必须是 0 漂移；这一条才是「翻译没有破坏结构」的真判据
+     （`--after HEAD` 读的是**已提交**版本、不含工作树，别拿它当自查，见
+     `sync/doc-claims-verification.md` 第 11.4 节）。
+   - **更早的提交本来就有的**：`ca7e2f1f`（补上游章节增量）等提交有意改过
+     结构，于是 `main → HEAD` 会出现与翻译无关的差异。第 9 章就有 5 条
+     （围栏 16→17、丢 `*://…` 与 `/*`、多一张 2×4 表格、多一条
+     `#restrict-which-mcp-servers-can-run` 链接、多一个 H3），全部由
+     `ca7e2f1f` 引入。
+   所以收尾时要把 `main → HEAD` 的每一条按「翻译造成 / 早先提交造成」分类：
+   前者必须是 0，后者要么在 `scripts/doc-span-removals.tsv` 里逐条声明
+   （只对行内字面量删除有效），要么在收尾报告里列出「差异 + 引入提交」。
+   `note:` 同样要能逐条讲清来历（新增的行内字面量是有意补的，例如 `01` 的
+   `/provider`、`06` 的三个枚举名、`13` 的 `MEMORY.md`、`17` 的 `CHAOS_HOME`
+   与 `~/.chaos`），讲不清的按漂移处理，不算通过。这里**不能**加
+   `--strict-spans`：那个开关会把**有意补的**字面量也算成漂移，而补字面量
+   恰好是本轮允许的动作（理由见 `sync/doc-claims-verification.md` 第 10.2 节）。
 7. `bash scripts/l10n-guard.sh --before main --after HEAD --report <dir>`
    三份报告都是 0。
 8. `cargo test -p xai-grok-shell --lib --features config-docs config_docs`
