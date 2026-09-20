@@ -215,13 +215,13 @@ shell 另外还对外提供 `/hooks-list`、`/hooks-trust`、`/hooks-add`、`/ho
 
 ### `/plugins`
 
-在 Plugins 标签页上打开扩展模态，查看已安装的插件、从市场安装新的插件，并管理信任。
+在插件标签页上打开扩展模态，查看已安装的插件、从市场安装新的插件，并管理信任。
 
 shell 另外还支持子命令（`/plugins list`、`/plugins install <source>`、`/plugins uninstall <name>`、`/plugins update`、`/plugins reload`）。在分页器里，模态用可视界面做同样的事。
 
 ### `/marketplace`
 
-在 Marketplace 标签页上打开扩展模态，浏览并安装插件。
+在市场标签页上打开扩展模态，浏览并安装插件。
 
 ### `/skills`
 
@@ -316,7 +316,7 @@ shell 另外还支持子命令（`/plugins list`、`/plugins install <source>`�
 
 ### `/workflows`
 
-在 **Workflows** 标签页上打开扩展模态 —— 这是一份只读目录，列出 Chaos 发现的已保存工作流（内置的、项目里的 `.chaos/workflows/`、用户目录的 `~/.chaos/workflows/`），每条给出它的来源、描述和路径。同一份目录也会列给模型看，放在会话前言里的技能清单下面。用 `/workflow <name>`（或它自己的斜杠命令）启动一个，然后到 `/workflow runs` 里观察它。
+在工作流标签页上打开扩展模态 —— 这是一份只读目录，列出 Chaos 发现的已保存工作流（内置的、项目里的 `.chaos/workflows/`、用户目录的 `~/.chaos/workflows/`），每条给出它的来源、描述和路径。同一份目录也会列给模型看，放在会话前言里的技能清单下面。用 `/workflow <name>`（或它自己的斜杠命令）启动一个，然后到 `/workflow runs` 里观察它。
 
 ---
 

@@ -220,8 +220,8 @@ MCP 工具以服务器名作命名空间，避免重名：
 在 TUI 里打开 MCP 服务器面板：
 
 - 作为斜杠命令运行 `/mcps`
-- 或者按 `Ctrl+L`（VS Code 系列除外）再切到 MCP Servers 标签页；VS Code 系列请用
-  `/plugins` 或 `/mcp`，然后打开 MCP Servers 标签页
+- 或者按 `Ctrl+L`（VS Code 系列除外）再切到 MCP 服务器标签页；VS Code 系列请用
+  `/plugins` 或 `/mcp`，然后打开 MCP 服务器标签页
 
 在面板里可以：
 
