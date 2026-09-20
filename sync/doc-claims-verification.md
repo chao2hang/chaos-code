@@ -189,3 +189,47 @@ T1-7c / T1-7d 原本要把上游增量与本轮行为注记写进 `04`、`10`、
 本轮的副作用：`### /minimal and /fullscreen` 改中文标题后，章首那条
 `](#minimal-and-fullscreen)` 变成死锚点。这是 §二 预期的，留给收尾的
 `--fix-anchors` 机械重写，不手工改。
+
+---
+
+## 十、第 17 章《会话管理》的核对（2026-09-20）
+
+| # | 结论 | 证据 |
+| --- | --- | --- |
+| 36 | `/session-info` 的认证行是**源码里活着的上游遗留**：API key 会话会原样打印 ``  Run `grok login` to use your SuperGrok subscription instead.``，所以译文把 `grok login` 当引文保留，并在同句注明那是上游屏幕文本、凭据改用 `/provider` | `xai-grok-pager/src/app/effects/mod.rs:4984-4996`（`format_auth_lines`）；两个分支都有测试钉住：`app/effects/tests.rs:2573-2620` |
+| 37 | `/session-info` 的字段与顺序（Title、Shell version、Session ID、Conversation ID（有则）、Working directory、Model、Model Hash（`show_model_fingerprint` 时）、API Backend、Sandbox、Turn、Context）与译文一致；认证行是在 Shell version 之后另外拼进去的散文，不是字段 | `effects/mod.rs:4900-4956`、`:4966-4983` |
+| 38 | 按标题恢复的规则全部为真：忽略大小写（`trim().to_lowercase()`）、UUID 形状的值直接走 ID、重复标题里唯一被手动改过名的那个胜出、其余重复项报错并列出各自的 ID | `app/session_title_resolve.rs:18-20`、`:38-78` |
+| 39 | `-s`/`--session-id` 只用于**新建**，且与 `-r`/`-c` 同用必须带 `--fork-session`；`--fork-session` 确实存在 | `app/cli.rs:600-605` |
+| 40 | `chaos sessions list/search`、`chaos du`（可见别名 `disk-usage`）、`chaos worktree gc/rm/show/db rebuild` 全部存在；`sessions list` 按 worktree 标签分组，每行是 ID、创建、更新、来源与摘要（截断 50 字） | `sessions_cmd.rs:13-26`、`:194-238`；`app/cli.rs:143-144`；`worktree_cmd/mod.rs:18-70` |
+| 41 | `costUsdTicks` 是 1e10 ticks = 1 美元 | `xai-grok-sampling-types/src/types.rs:545`；`xai-chat-state/src/usage.rs:44` |
+
+### 10.1 保留未改的两处
+
+- 散文数字 `30`（reflog 名字只保留 30 天）按 §五 原样保留，没有可声明漂移的通道。
+- `refs/grok/reclaimed/<worktree>/<commit>` 与 `git log refs/grok/reclaimed/`
+  **保持上游命名**：代码里这个 ref 名字空间就叫这个
+  （`xai-fast-worktree/src/nfs/remove.rs:294`），`FORK_NAME` 的前后视也把它
+  排除在外，不算残留。
+
+### 10.2 本轮有意新增的行内字面量
+
+`/provider`（第 36 条那句要指向本分叉真正的凭据入口）、`CHAOS_HOME` 两处与
+`~/.chaos` 两处（配置根那段的双读兼容说明，原来的英文段没有点名环境变量）。
+因此收尾清单第 6 条**不能**用 `--strict-spans`：那个开关会把**有意补的**
+字面量也算成漂移，而补字面量正是本轮允许的动作。已按此改写第 6 条。
+
+### 10.3 顺带发现的代码侧文案缺口（本轮不改，仅记录）
+
+`title_miss_hint()` 是用户会看到的英文提示，而且点名了
+`grok sessions search`（本分叉的二进制叫 `chaos`）：
+`app/session_title_resolve.rs:25-30`。同一批代码里
+`正在恢复会话 {}（按标题匹配）` 已经中文化，说明这是漏网的一条。
+钉住它的测试有 `app/session_startup.rs:1882` 与
+`app/session_title_resolve_tests.rs:113`。
+
+### 10.4 死锚点计数
+
+本章译完后全库 `--links` 是 16 条死锚点，其中两条与本章有关：入站
+`04-slash-commands.md#the-grok-usage-subcommand`（本章 `grok usage` 一节改了
+中文标题）、出站 `17-sessions.md` → `15-agent-mode.md#session-config-options`。
+都属 §二 预期，留给收尾的 `--fix-anchors` 机械重写，不手工改。
