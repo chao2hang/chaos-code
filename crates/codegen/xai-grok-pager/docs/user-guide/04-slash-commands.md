@@ -1,59 +1,59 @@
-# Slash Commands
+# 斜杠命令
 
-Type `/` in the prompt to open the command menu. It fuzzy-matches as you type, and picking a command runs it immediately.
+在提示框里输入 `/` 打开命令菜单。它会随着你的输入做模糊匹配，选中一条就立即执行。
 
-Commands come from two places: **shell builtins**, handled by the agent backend (xai-grok-shell), and **pager builtins**, handled by the pager frontend (xai-grok-pager). Both show up in the same menu, and any enabled skill with `user-invocable: true` appears there too. If a skill reuses a built-in name such as `login`, the built-in keeps `/login` and the skill stays available as `/plugin-name:login` — the menu badges both so the collision is visible.
+命令来自两处：**shell 内置命令**，由代理后端（xai-grok-shell）处理；**分页器内置命令**，由分页器前端（xai-grok-pager）处理。两者出现在同一个菜单里，任何带 `user-invocable: true` 的已启用技能也会出现在那里。如果一个技能重用了内置名（比如 `login`），内置命令保留 `/login`，技能则以 `/plugin-name:login` 的形式继续可用 —— 菜单会给两者都加上标记，让冲突看得见。
 
-Every command below lists its aliases where it has them. A few commands only appear when a feature or session state enables them; those cases are called out inline. The menu is also filtered by render mode — see [`/minimal` and `/fullscreen`](#minimal-and-fullscreen).
+下面每条命令都列出了它的别名（如果有的话）。有少数命令只在某项功能或会话状态启用时才出现，这些情况会在正文里点明。菜单还会按渲染模式过滤 —— 见 [`/minimal` 和 `/fullscreen`](#minimal-and-fullscreen)。
 
 ---
 
-## Session Management
+## 会话管理
 
 ### `/new`
 
-Start a fresh session and clear the current conversation. Alias: `/clear`.
+开一个新会话，并清空当前对话。别名：`/clear`。
 
 ### `/resume`
 
-Open the session picker to reload a previous session from disk.
+打开会话选择器，从磁盘重新载入此前的会话。
 
 ### `/dashboard`
 
-Open the [Agent Dashboard](23-dashboard.md): live roster of top-level sessions in this pager (peek, reply, dispatch, pin, rename, stop, attach). Aliases: `/agents-dashboard`, `/sessions`.
+打开[代理看板](23-dashboard.md)：本分页器里顶层会话的实时名册（查看、回复、派发、置顶、重命名、停止、接入）。别名：`/agents-dashboard`、`/sessions`。
 
-Not `/config-agents` (alias `/agents`), which manages agent *definitions* and personas. Hidden in minimal mode; disable with `GROK_AGENT_DASHBOARD=0` or `[dashboard].enabled = false`.
+它不是 `/config-agents`（别名 `/agents`）—— 后者管理代理*定义*与角色。最小模式下隐藏；用 `GROK_AGENT_DASHBOARD=0` 或 `[dashboard].enabled = false` 关闭。
 
 ### `/compact [context]`
 
-Compress conversation history to reclaim context-window space. Pass a note to tell Grok what to keep:
+压缩对话历史，回收上下文窗口的空间。可以带一段说明，告诉 Chaos 要保留什么：
 
 ```
 /compact
 /compact keep the auth implementation details
 ```
 
-Grok also auto-compacts once the context window hits 85% (tune it with `[session] auto_compact_threshold_percent`).
+上下文窗口用到 85% 时 Chaos 也会自动压缩（用 `[session] auto_compact_threshold_percent` 调这个阈值）。
 
 ### `/context`
 
-Show how the context window is being used: a category breakdown (system prompt, messages, reasoning and overhead, free space) plus informational rows for tool definitions, the skills listing, and MCP server announcements with their estimated token cost.
+展示上下文窗口的使用情况：按类别拆分（系统提示、消息、推理与开销、剩余空间），外加若干信息行 —— 工具定义、技能清单，以及 MCP 服务器通告及其估算的 token 开销。
 
 ### `/session-info`
 
-Show session details — auth method, model, turn count, and context usage. Aliases: `/status`, `/info`. Click a value or drag to select and copy; `c` copies the session ID and `y` copies the whole block.
+展示会话详情 —— 认证方式、模型、回合数、上下文用量。别名：`/status`、`/info`。点击某个值，或拖动选中后复制；`c` 复制会话 ID，`y` 复制整块内容。
 
 ### `/fork`
 
-Branch the current session into a new agent, keeping history up to this point.
+把当前会话分叉成一个新代理，保留到此为止的历史。
 
-### `/rewind` (alias: `/undo`)
+### `/rewind`（别名：`/undo`）
 
-Roll the conversation back to an earlier turn and discard everything after it. `/undo` is the same command.
+把对话回退到更早的回合，并丢弃其后的所有内容。`/undo` 是同一条命令。
 
 ### `/copy`
 
-Copy the most recent response's source markdown to the clipboard. Pass a number to copy the Nth-latest response instead, or a file path to write the text to a file rather than the clipboard (handy over SSH, where the local clipboard is often unreachable).
+把最近一次回复的源 markdown 复制到剪贴板。传一个数字就复制倒数第 N 条回复；传一个文件路径就把文本写进文件而不是剪贴板（在 SSH 上很方便 —— 本地剪贴板往往够不着）。
 
 ```
 /copy
@@ -62,44 +62,44 @@ Copy the most recent response's source markdown to the clipboard. Pass a number 
 /copy 2 ~/exports/last-reply.md
 ```
 
-Every copy is also written to a backup file — `~/.grok/last-copy.txt` by default, or `GROK_COPY_FILE` if set. Confirmed copies toast briefly (e.g. `Copied!`). Unverified OSC 52 deliveries and clipboard-unreachable fallbacks name the backup path so you can recover the text.
+每一次复制还会写一份备份文件 —— 默认是 `~/.chaos/last-copy.txt`，设了 `GROK_COPY_FILE` 就用它。确认成功的复制会短暂提示一下（例如 `Copied!`）。未经确认的 OSC 52 投递，以及剪贴板够不着时的回退，都会给出备份路径，好让你把文本取回来。
 
 ### `/export`
 
-Export the conversation to a file or the clipboard.
+把对话导出到文件或剪贴板。
 
 ### `/quit`
 
-Quit the application. Alias: `/exit`.
+退出程序。别名：`/exit`。
 
 ### `/home`
 
-Leave the current session and return to the welcome screen. Alias: `/welcome`.
+离开当前会话，回到欢迎界面。别名：`/welcome`。
 
 ### `/delete`
 
-Delete the current session's history. Confirms first. Stops any running turn, background tasks, and subagents before wiping history. Returns to the welcome screen, or to the dashboard when you opened the session from the dashboard.
+删除当前会话的历史。会先要求确认。清除历史之前，会停掉正在运行的回合、后台任务与子代理。删完回到欢迎界面；如果你是从看板打开的这个会话，就回看板。
 
-To delete a session you are not in, open `/resume` or the welcome session list and press `d` then `y`. On the dashboard, press `Ctrl+X` twice or click `[✗]`.
+要删除一个你不在其中的会话，打开 `/resume` 或欢迎界面的会话列表，按 `d` 再按 `y`。在看板上，连按两次 `Ctrl+X`，或点击 `[✗]`。
 
 ### `/rename`
 
-Rename the current session. Alias: `/title`.
+重命名当前会话。别名：`/title`。
 
 ```
 /rename new session title
 /rename --auto
 ```
 
-`--auto` unpins a manual title and lets auto-titling resume. It applies to Build sessions only — chat conversations have no local auto-titler. It must be the only argument (`/rename --auto Something` is an error). A session cannot be named `--auto` via this command; use the dashboard rename editor (`Ctrl+R`) for that pathological case.
+`--auto` 解除手动标题的固定，让自动起名恢复工作。它只对 Build 会话有效 —— 聊天式对话没有本地自动起名器。它必须是唯一的参数（`/rename --auto Something` 会报错）。用这条命令没法把会话命名成 `--auto`；这种极端情况请用看板的重命名编辑器（`Ctrl+R`）。
 
 ---
 
-## Model and Mode
+## 模型与模式
 
 ### `/model <name>`
 
-Switch models. Accepts a model ID or display name (case-insensitive), and you can add an effort level as a second argument. Models without effort metadata use the built-in fallback levels. Alias: `/m`.
+切换模型。接受模型 ID 或显示名（不区分大小写），还可以把推理等级作为第二个参数传进去。没有等级元数据的模型使用内置的回退等级。别名：`/m`。
 
 ```
 /model grok-4.6
@@ -107,60 +107,60 @@ Switch models. Accepts a model ID or display name (case-insensitive), and you ca
 /model Reasoning X high
 ```
 
-### `/effort <level>` (alias `/think`)
+### `/effort <level>`（别名 `/think`）
 
-Set reasoning effort on the **current** model without reselecting it. The built-in fallback levels are `max`, `xhigh`, `high`, `medium`, and `low`; a provider-supplied `reasoningEfforts` list takes precedence. A missing capability declaration is allowed, while an explicit `supportsReasoningEffort: false` disables the command.
+给**当前**模型设置推理等级，而不重新选择模型。内置的回退等级是 `max`、`xhigh`、`high`、`medium`、`low`；服务商提供的 `reasoningEfforts` 列表优先。能力声明缺失时放行，而显式声明 `supportsReasoningEffort: false` 会禁用这条命令。
 
 ```
 /effort high
 ```
 
-### `/always-approve` and `/auto`
+### `/always-approve` 与 `/auto`
 
-Both are real toggles for the permission mode: they stay in the menu, and running the mode you're already in turns it back off.
+两者都是权限模式的真实开关：它们一直留在菜单里，运行你当前已经处于的那个模式就会把它关掉。
 
-| 命令 | 关闭时 | When already on |
+| 命令 | 关闭时 | 已经打开时 |
 |---|---|---|
-| `/always-approve` | Skip all permission prompts | Back to ask |
-| `/auto` | Classifier approves safe tools (dangerous ones may still prompt) | Back to ask |
+| `/always-approve` | 跳过所有权限提示 | 回到询问 |
+| `/auto` | 分类器放行安全的工具（危险工具仍可能提示） | 回到询问 |
 
-Running one while the other is active switches modes — for example, `/auto` while always-approve is on switches to auto. `/auto` only appears when the auto permission-mode feature is enabled. You can also change mode with `Shift+Tab` (cycles Normal / Plan / Auto (when enabled) / Always-approve), `Ctrl+O`, or `/settings`.
+一个开着的时候运行另一个会切换模式 —— 例如在 always-approve 打开时运行 `/auto` 就切到 auto。`/auto` 只在自动权限模式这项功能启用时才出现。你也可以用 `Shift+Tab`（在 Normal / Plan / Auto（启用时）/ Always-approve 之间循环）、`Ctrl+O` 或 `/settings` 换模式。
 
 ### `/multiline`
 
-Toggle multiline input. When it's on, `Enter` inserts a newline and `Shift+Enter` (or `Alt+Enter`) sends the message. Mid-turn, a bare `Enter` on an empty composer still force-sends the top queued follow-up. Alias: `/ml`.
+切换多行输入。打开时 `Enter` 插入换行，`Shift+Enter`（或 `Alt+Enter`）发送消息。回合进行中，在空的输入框里光按一下 `Enter` 仍然会强制发送队列里最上面那条后续消息。别名：`/ml`。
 
 ### `/history`
 
-Open prompt-history search: fuzzy-search this session's prompts newest-first, then press `Enter` or `Tab` to drop a match back into the prompt.
+打开提示词历史搜索：把本会话的提示词从新到旧模糊搜索，然后按 `Enter` 或 `Tab` 把命中的那条放回提示框。
 
-For quick recall, press `↑` on an empty prompt instead. With prompts queued, that moves focus into the queue pane, highlighting the last row; otherwise the panel opens with your most recent prompt already filled in, and `↑`/`↓` step through entries (each lands in the input), `↓` past the newest entry closes the panel, and typing edits the recalled prompt in place.
+想快速召回，也可以在空提示框上按 `↑`。如果有排队中的提示词，这么做会把焦点移进队列面板并高亮最后一行；否则面板打开时已经填好你最近的那条提示词，`↑`/`↓` 逐条翻阅（每按一次都会落进输入框），从最新那条再往下按 `↓` 就关闭面板，直接输入则是在原地编辑召回的那条提示词。
 
 ### `/compact-mode`
 
-Toggle compact display — less padding and tighter spacing for denser output.
+切换紧凑显示 —— 更少的留白、更紧的行距，输出更密集。
 
 ### `/vim-mode`
 
-Toggle vim-style scrollback keys (`j`/`k`, `h`/`l`, `g`/`G`, `y`/`Y`, and so on). With it off (the default), a bare letter or `Shift+letter` in the scrollback just focuses the prompt and types the character. The setting persists to `[ui] vim_mode`.
+切换 vim 风格的回滚区按键（`j`/`k`、`h`/`l`、`g`/`G`、`y`/`Y` 等等）。关掉时（这也是默认值），在回滚区里光按一个字母或 `Shift+letter`，只会把焦点移到提示框并输入该字符。这项设置会持久化到 `[ui] vim_mode`。
 
 ### `/edit-prompt`
 
-Open an external editor for the prompt, in either render mode. Grok resolves `$VISUAL`, then `$EDITOR`, then `vi`; command values may include quoted arguments. Saving replaces the draft without sending it, and saving an empty file clears it. Typing `/edit-prompt` necessarily replaces the composer's contents, so the editor starts from an empty draft; to edit an **existing** draft, choose **Edit Prompt in External Editor** from the command palette (or press `Ctrl+G` in minimal mode), which preserves the text and refuses pasted, file-reference, or image chips without flattening them.
+在任一渲染模式下为提示词打开外部编辑器。Chaos 依次解析 `$VISUAL`、`$EDITOR`、`vi`；命令值里可以带带引号的参数。保存会替换草稿但不发送，保存一个空文件则清空草稿。输入 `/edit-prompt` 必然替换输入框里的内容，所以编辑器是从空草稿开始的；要编辑**已有的**草稿，请从命令面板里选 **Edit Prompt in External Editor**（或在最小模式下按 `Ctrl+G`），它会保留文本，遇到粘贴内容、文件引用或图片块时直接拒绝，而不是把它们拍平。
 
 ```
 /edit-prompt
 ```
 
-### `/minimal` and `/fullscreen`
+### `/minimal` 与 `/fullscreen`
 
-Switch the current session to the other render mode, in place. `/minimal` (offered while you're in fullscreen) switches to the experimental scrollback-native mode; `/fullscreen` (offered while you're in minimal; alias `/full`) switches back to standard fullscreen mode. The switch happens inside the running process — nothing restarts, so a running turn keeps streaming and your composer draft, queued prompts, and permission mode all carry over; a marker (committed line in minimal, toast in fullscreen) reminds you how to switch back. Both are session-scoped — they don't touch `config.toml` — and the `--minimal` / `--fullscreen` CLI flags are session-scoped the same way. To make plain `grok` open in a given mode by default, use `/settings` → **Default screen mode** or set `[ui] screen_mode`. (If the in-place transition misbehaves in an exotic terminal, `GROK_SCREEN_MODE_SWITCH=exec` restores the old behavior of relaunching the pager onto the same session.)
+把当前会话就地切到另一种渲染模式。`/minimal`（在 fullscreen 下提供）切到实验性的回滚区原生模式；`/fullscreen`（在 minimal 下提供；别名 `/full`）切回标准全屏模式。切换发生在运行中的进程内部 —— 没有任何东西重启，所以正在跑的回合继续流式输出，你的输入框草稿、排队的提示词和权限模式都一并带过去；一个标记（最小模式下是提交进回滚区的一行，全屏下是一条提示）会提醒你怎么切回去。两者都是会话级的 —— 不写 `config.toml` —— `--minimal` / `--fullscreen` 这两个命令行开关同样是会话级的。要让裸跑的 `chaos` 默认以某个模式打开，用 `/settings` → **Default screen mode**，或设置 `[ui] screen_mode`。（如果这个就地切换在某个古怪的终端里出了问题，`GROK_SCREEN_MODE_SWITCH=exec` 可以恢复旧行为：把分页器重新拉起，挂到同一个会话上。）
 
-A handful of commands only work in one of the two modes, because the surface they drive doesn't exist in the other: `/find`, `/jump`, `/timeline`, `/theme`, `/tutorial`, and `/dashboard` are fullscreen-only, while `/expand` is minimal-only. (`/workflow runs` is different: it opens the run pane in fullscreen and degrades to a text overview in minimal rather than refusing.) Those are hidden from the command menu and the palette in the mode they can't run in. If you type one out anyway, Grok says why — and points you at whichever is actually useful. When the other mode is the only way to get it, that's the mode switch: `/theme isn't available in minimal mode (minimal renders with your terminal's own palette). Run /fullscreen to switch this session.` When this mode already does the job another way, it names that instead: `/expand isn't available in fullscreen mode: press Tab to focus the scrollback, then → on the block.` Everything else works in both. Note that `--no-alt-screen` still counts as fullscreen here, so it keeps the fullscreen-only commands.
+有少数命令只能在两种模式中的一种里工作，因为它们驱动的界面在另一种模式里并不存在：`/find`、`/jump`、`/timeline`、`/theme`、`/tutorial` 和 `/dashboard` 是全屏专属，而 `/expand` 是最小模式专属。（`/workflow runs` 不一样：它在全屏下打开运行面板，在最小模式下退化成文本概览，而不是拒绝执行。）在它们跑不了的那种模式里，这些命令会从命令菜单和命令面板中隐藏。如果你还是把它们敲了出来，Chaos 会说明原因 —— 并指向真正有用的那个做法。当另一种模式是拿到它的唯一途径时，给出的就是模式切换：`/theme isn't available in minimal mode (minimal renders with your terminal's own palette). Run /fullscreen to switch this session.` 而当当前模式本来就有别的做法时，它点名那个做法：`/expand isn't available in fullscreen mode: press Tab to focus the scrollback, then → on the block.` 其余命令两种模式都能用。注意 `--no-alt-screen` 在这里仍然算全屏，所以它保留全屏专属的那些命令。
 
 ### `/plan`
 
-Enter plan mode.
+进入计划模式。
 
 ```
 /plan [description]
@@ -168,17 +168,17 @@ Enter plan mode.
 
 ### `/view-plan`
 
-Open a preview of the current saved plan. Aliases: `/show-plan`, `/plan-view`.
+打开当前已保存计划的预览。别名：`/show-plan`、`/plan-view`。
 
 ---
 
-## Memory
+## 记忆
 
-`/flush`, `/dream`, and `/memory` require memory enabled through `GROK_MEMORY=1`, `[memory] enabled = true`, or managed remote settings; `/memory` also needs a configured memory backend. `/remember` is always available.
+`/flush` 与 `/dream` 要求记忆已启用 —— 通过 `GROK_MEMORY=1`、`[memory] enabled = true`，或托管的远程设置。`/memory` 的要求不一样：只要记忆后端**已配置**就能用，哪怕记忆当前是关的，这样你关掉之后还能用 `/memory` 把它打开。`/remember` 始终可用。
 
 ### `/memory`
 
-Browse, view, and manage saved memories. Pass `on` or `off` to enable or disable memory. Alias: `/mem`.
+浏览、查看和管理已保存的记忆。传 `on` 或 `off` 可以打开或关闭记忆。别名：`/mem`。
 
 ```
 /memory
@@ -187,15 +187,15 @@ Browse, view, and manage saved memories. Pass `on` or `off` to enable or disable
 
 ### `/flush`
 
-Save the current session's knowledge to memory right now, triggering an LLM summary of the most important content. Reach for it before compaction, or any time you want to lock in context.
+立刻把当前会话的知识写进记忆，触发一次由模型归纳的「最重要内容」摘要。压缩之前值得用一次，任何时候想把上下文钉下来也可以用。回滚区里会给出一行提示，写明这次的触发原因与保存路径；headless 下则输出保存结果。
 
 ### `/dream`
 
-Run memory consolidation — merge session logs into organized topics.
+执行记忆整理 —— 把工作区的会话日志交给模型归纳，折叠回工作区那份 `MEMORY.md`，然后删掉已经处理过的会话日志。成功时**没有**用户可见输出；只有被跳过时才会说明原因。
 
 ### `/remember`
 
-Save a note to memory immediately, without waiting for an automatic summary.
+立刻往记忆里存一条笔记，不必等自动摘要。
 
 ```
 /remember the staging deploy uses the eu-west cluster
@@ -203,37 +203,37 @@ Save a note to memory immediately, without waiting for an automatic summary.
 
 ---
 
-## Hooks and Plugins
+## 钩子与插件
 
-`/hooks`, `/plugins`, `/marketplace`, `/skills`, and `/workflows` all open the same extensions modal, each on its own tab.
+`/hooks`、`/plugins`、`/marketplace`、`/skills` 和 `/workflows` 都打开同一个扩展模态，各自落在自己的标签页上。
 
 ### `/hooks`
 
-Open the extensions modal on the Hooks tab, where you can view loaded hooks, add or remove custom ones, and toggle them individually. The modal does not grant project trust — see [10-hooks.md](10-hooks.md) for the trust model.
+在 Hooks 标签页上打开扩展模态，在那里可以查看已加载的钩子、增删自定义钩子，并逐个开关它们。这个模态**不会**授予项目信任 —— 信任模型见 [10-hooks.md](10-hooks.md)。
 
-The shell also advertises individual `/hooks-list`, `/hooks-trust`, `/hooks-add`, `/hooks-remove`, and `/hooks-untrust` commands; in the pager these are folded into the `/hooks` modal.
+shell 另外还对外提供 `/hooks-list`、`/hooks-trust`、`/hooks-add`、`/hooks-remove`、`/hooks-untrust` 这几条单独的命令；在分页器里它们被折进 `/hooks` 模态。
 
 ### `/plugins`
 
-Open the extensions modal on the Plugins tab to view installed plugins, install new ones from the marketplace, and manage trust.
+在 Plugins 标签页上打开扩展模态，查看已安装的插件、从市场安装新的插件，并管理信任。
 
-The shell additionally supports subcommands (`/plugins list`, `/plugins install <source>`, `/plugins uninstall <name>`, `/plugins update`, `/plugins reload`). In the pager, the modal does the same work visually.
+shell 另外还支持子命令（`/plugins list`、`/plugins install <source>`、`/plugins uninstall <name>`、`/plugins update`、`/plugins reload`）。在分页器里，模态用可视界面做同样的事。
 
 ### `/marketplace`
 
-Open the extensions modal on the Marketplace tab to browse and install plugins.
+在 Marketplace 标签页上打开扩展模态，浏览并安装插件。
 
 ### `/skills`
 
-Open the extensions modal on the Skills tab to view installed skills.
+在 Skills 标签页上打开扩展模态，查看已安装的技能。
 
 ---
 
-## Media Generation
+## 媒体生成
 
 ### `/imagine <description>`
 
-Generate an image from a text description.
+根据文字描述生成一张图片。
 
 ```
 /imagine a golden sunset over a calm ocean with silhouetted palm trees
@@ -241,7 +241,7 @@ Generate an image from a text description.
 
 ### `/imagine-video <description>`
 
-Generate a video from a text (or image) description. It plans shots, generates source images, and animates them with `image_to_video`.
+根据文字（或图片）描述生成一段视频。它会规划分镜、生成素材图，然后用 `image_to_video` 把它们动起来。
 
 ```
 /imagine-video a cat playing piano in a jazz club
@@ -249,26 +249,26 @@ Generate a video from a text (or image) description. It plans shots, generates s
 
 ---
 
-## Scheduling
+## 定时任务
 
 ### `/loop [interval] <prompt>`
 
-Run a prompt on a recurring interval. Give the interval as `30m`, `1 hour`, or `every 2 days`; leave it out and Grok will ask.
+让一条提示词按固定间隔重复运行。间隔写成 `30m`、`1 hour` 或 `every 2 days` 都可以；不写的话 Chaos 会问你。
 
 ```
 /loop 30m check deploy status
 /loop check deploy status every hour
 ```
 
-Intervals are `Ns` (seconds, minimum 60), `Nm` (minutes), `Nh` (hours), or `Nd` (days); anything under 60 seconds is raised to the minimum. Recurring tasks expire after 7 days, and you can cancel one with `scheduler_delete` using the job ID reported when the loop is created.
+间隔的写法是 `Ns`（秒，最小 60）、`Nm`（分钟）、`Nh`（小时）、`Nd`（天）；低于 60 秒的会被抬到最小值。重复任务 7 天后过期，取消时用 `scheduler_delete` 并传入创建这个循环时报告的作业 ID。
 
 ---
 
-## Workflows and Goals
+## 工作流与目标
 
 ### `/goal`
 
-Set, manage, or check an autonomous goal. Grok works across rounds and only marks the goal complete after an independent evidence review confirms the claim; if that review can't reproduce the result or has no usable evidence, the goal stays active or pauses with concrete gaps.
+设置、管理或查看一个自主目标。Chaos 会跨多轮工作，只有在一次独立的证据复核确认了结论之后，才会把目标标记为完成；如果那次复核无法复现结果、或者拿不出可用证据，目标要么保持进行中，要么连同具体的缺口一起暂停下来。
 
 ```
 /goal Migrate the auth module to the new API
@@ -278,25 +278,25 @@ Set, manage, or check an autonomous goal. Grok works across rounds and only mark
 /goal clear
 ```
 
-Arguments are `<objective> [--budget <tokens>]`, or one of `status`, `pause`, `resume`, `clear`. The `--budget` here is a **token** budget for the goal run, separate from the agent-count budgets that workflows use. `/goal` appears when goal mode is enabled for the session. Which driver runs it depends on background workflows: with them on, the host evaluates each model round and runs adversarial verification on completion candidates; with them off, the legacy model-facing `update_goal` path reports progress and triggers verification.
+参数是 `<objective> [--budget <tokens>]`，或者 `status`、`pause`、`resume`、`clear` 之一。这里的 `--budget` 是这次目标运行用的 **token** 预算，与工作流用的代理个数预算无关。`/goal` 在会话启用目标模式时出现。由哪个驱动来跑它取决于后台工作流：开着的时候，宿主会评估每一个模型轮次，并对候选的完成结论做对抗式验证；关着的时候，走旧的、面向模型的 `update_goal` 路径来报告进度并触发验证。
 
 ### `/deep-research <query>`
 
-Kick off a background research workflow. It plans a bounded set of questions, gathers structured claims with source evidence, cross-checks each claim on an independent verifier shard, and renders only the claims that survive, with their verified source locators. Failed shards, dropped claims, and researcher uncertainties are reported as coverage limitations, and the report is marked **Partial** whenever any remain.
+启动一个后台研究工作流。它会规划一组有界的问题，带来源证据地收集结构化论断，把每条论断交给独立的验证分片交叉核对，最后只呈现活下来的论断及其已核验的来源定位符。失败的分片、被丢弃的论断、研究员的不确定之处都会作为覆盖度局限报出来；只要有这类局限残留，报告就会被标上 **Partial**。
 
 ```
 /deep-research Compare the migration risks of PostgreSQL 17 and MySQL 9
 ```
 
-The command returns right away — follow progress in `/workflow runs`, and the final report appears in the conversation on its own.
+命令会立刻返回 —— 进度去 `/workflow runs` 里看，最终报告会自己出现在对话中。
 
-Workflows use an absolute cumulative `agent_budget` cap on logical child-agent calls: every `agent()` call and every item in a `parallel()` panel spends one slot, while schema-correction retries don't. The default is 128, explicit values run 1–1,024, and a panel that would cross the remaining budget is rejected before any of its children launch. Model-launched workflows set `agent_budget` on the `workflow` tool; named slash launches accept `--agent-budget N` or an `agent_budget` field in their JSON args. Named launches can also set child reasoning effort with `--effort LEVEL` or JSON `effort`, without changing the current session's `/effort`; a child script's own `effort` option takes precedence. Separately, a host-configured cap (32 by default) bounds how many children run at a time per run; larger panels queue and still act as a barrier. `budget()` reports the cap as `total`, admitted calls as `spent`, `reserved` (always zero), and `remaining`.
+工作流对逻辑子代理调用设了一道绝对的累计 `agent_budget` 上限：每一次 `agent()` 调用、`parallel()` 面板里的每一个条目，都花掉一个名额，而模式纠正的重试不花。默认是 128，显式取值在 1–1,024 之间，如果一个面板会越过剩余预算，它会在任何子代理启动之前被拒绝。由模型发起的工作流，在 `workflow` 工具上设置 `agent_budget`；具名的斜杠启动则接受 `--agent-budget N`，或在其 JSON 参数里给一个 `agent_budget` 字段。具名启动还可以用 `--effort LEVEL` 或 JSON 里的 `effort` 设置子代理的推理等级，而不会改动当前会话的 `/effort`；子脚本自己的 `effort` 选项优先。另外，宿主配置的一道上限（默认 32）限制每次运行同时能跑多少个孩子；更大的面板会排队，并且仍然充当一道屏障。`budget()` 报告的字段是：上限为 `total`，已准入的调用为 `spent`，`reserved`（恒为 0），以及 `remaining`。
 
 ### `/workflow`
 
-Launch a saved workflow, or manage a running one by its session-unique display name. Launch the same workflow twice and the display names are numbered (`review-changes`, `review-changes-2`); you never need the internal run IDs. Bare `/workflow` prints a text overview of this session's runs.
+启动一个已保存的工作流，或者按会话内唯一的显示名管理正在运行的工作流。同一个工作流启动两次，显示名会带上编号（`review-changes`、`review-changes-2`）；你永远不需要内部的运行 ID。光敲 `/workflow` 会打印本会话各次运行的文本概览。
 
-Type `/workflow` and a space to autocomplete saved workflow names (built-in, project, and user) plus the manage verbs `runs`, `pause`, `resume`, `stop`, and `save`. Picking a name fills it in and offers launch flags before you add args; it does not launch until you press Enter. `pause` / `resume` / `stop` / `save` then list this session's run handles — a bare `/workflow stop` does not pick a run.
+输入 `/workflow` 再打一个空格，就会自动补全已保存的工作流名（内置、项目、用户）以及管理动词 `runs`、`pause`、`resume`、`stop`、`save`。选中一个名字会把它填进去，并在你追加参数之前先给出启动开关；不按 Enter 就不会启动。而 `pause` / `resume` / `stop` / `save` 会接着列出本会话的运行句柄 —— 光敲 `/workflow stop` 不会替你选中哪一次运行。
 
 ```
 /workflow review-changes --agent-budget 256 --effort high {"target":"origin/main...HEAD"}
@@ -308,27 +308,27 @@ Type `/workflow` and a space to autocomplete saved workflow names (built-in, pro
 /workflow save review-changes
 ```
 
-`/workflow runs` opens the live **Workflow Runs** dashboard in the fullscreen TUI — active and retained runs, not a catalog of saved definitions. Each row shows the run's display name, phase, agent roster, progress, and result. Inside a run's detail view, `p` pauses, `r` resumes an ordinary pause, and `x` stops. Budget-limited runs can't bare-resume: `r` returns the shell's rejection (raise the cap with a model/tool resume that passes a higher `agent_budget`), while `x` still stops. `s` saves the run's script, but it's hidden for known built-ins and numbered duplicate handles — for those, choose a new unique `meta.name` and save the edited script explicitly. In minimal mode and non-TUI clients, `/workflow runs` prints the same text overview as bare `/workflow`.
+`/workflow runs` 在全屏 TUI 里打开实时的 **Workflow Runs** 看板 —— 显示的是活跃与保留中的运行，不是已保存定义的目录。每一行给出这次运行的显示名、阶段、代理名册、进度和结果。在运行的详情视图里，`p` 暂停，`r` 恢复一次普通暂停，`x` 停止。受预算限制的运行无法用裸恢复命令继续：`r` 会把 shell 的拒绝原样返回（要用模型/工具发起的恢复请求、带上更高的 `agent_budget` 才能抬高上限），而 `x` 仍然能停。`s` 保存这次运行的脚本，但对已知的内置工作流与带编号的重复句柄是隐藏的 —— 遇到这些，请另选一个唯一的 `meta.name`，然后显式保存改过的脚本。在最小模式和非 TUI 客户端里，`/workflow runs` 打印的文本概览与光敲 `/workflow` 相同。
 
-Project workflows live in `.grok/workflows/*.rhai`; user workflows live in `~/.grok/workflows/*.rhai`. A same-process pause/resume continues the original immutable script, args, and `agent_budget` cap from committed host-call results — to iterate, edit the returned script copy and launch it as a new run.
+项目工作流放在 `.chaos/workflows/*.rhai`，用户工作流放在 `~/.chaos/workflows/*.rhai`。同进程的暂停/恢复会沿用最初那份不可变的脚本、参数与 `agent_budget` 上限，从已提交的宿主调用结果继续 —— 想迭代，就编辑返回给你的那份脚本副本，再把它当作新的一次运行启动。
 
-A budget-limited run is different: it only resumes through a model/tool resume request that supplies an `agent_budget` above the admitted agent count. A bare `/workflow resume <name>` can't raise the cap, so it rejects budget-limited runs. Runs interrupted by a process restart aren't resumed at all, because external effects have no stable cross-process identity. And resume is not exactly-once: an external effect whose result wasn't committed before a same-process pause can run again.
+受预算限制的运行不一样：它只能通过模型/工具发起的恢复请求继续，且该请求要给出高于已准入代理数的 `agent_budget`。光敲 `/workflow resume <name>` 抬不高上限，所以它拒绝恢复受预算限制的运行。因进程重启而中断的运行根本不会恢复，因为外部副作用没有稳定的跨进程身份。而且恢复并不是恰好一次：某个外部副作用如果在同进程暂停之前结果还没提交，就可能再跑一遍。
 
 ### `/workflows`
 
-Open the extensions modal on the **Workflows** tab — a browse-only catalog of the saved workflows Grok discovered (built-ins, project `.grok/workflows/`, and user `~/.grok/workflows/`), with each entry's source, description, and path. The same catalog is listed for the model under the skill listing in the session preamble. Launch one with `/workflow <name>` (or its own slash command), then watch it in `/workflow runs`.
+在 **Workflows** 标签页上打开扩展模态 —— 这是一份只读目录，列出 Chaos 发现的已保存工作流（内置的、项目里的 `.chaos/workflows/`、用户目录的 `~/.chaos/workflows/`），每条给出它的来源、描述和路径。同一份目录也会列给模型看，放在会话前言里的技能清单下面。用 `/workflow <name>`（或它自己的斜杠命令）启动一个，然后到 `/workflow runs` 里观察它。
 
 ---
 
-## Other
+## 其他
 
 ### `/theme`
 
-Switch the color theme. Alias: `/t`.
+切换配色主题。别名：`/t`。
 
 ### `/feedback [message]`
 
-Report an issue or send feedback. Opens a report pane: `Enter` sends, `Esc` discards. A message prefills the pane so you can edit before sending. In `--minimal`, a message still sends immediately.
+报告问题或发送反馈。会打开一个报告面板：`Enter` 发送，`Esc` 丢弃。带的消息会预先填进面板，方便你在发送前修改。在 `--minimal` 下，带的消息仍然立即发送。
 
 ```
 /feedback
@@ -337,7 +337,7 @@ Report an issue or send feedback. Opens a report pane: `Enter` sends, `Esc` disc
 
 ### `/btw`
 
-Send an aside to the agent without interrupting the current task. In minimal mode (`--minimal`), the answer shows up in a dismissible panel above the prompt: `Esc` dismisses it, a finished answer is saved into native scrollback, and a late reply to an already-dismissed panel is dropped. The side question and its answer aren't part of the main turn.
+给代理发一句题外话，不打断当前任务。在最小模式（`--minimal`）下，回答会显示在提示框上方一个可关闭的面板里：`Esc` 关掉它，已经写好的回答会存进原生回滚区，而给一个已经关掉的面板送来的迟到回复会被丢弃。这条旁问和它的回答不属于主回合。
 
 ```
 /btw also check the error handling
@@ -345,19 +345,19 @@ Send an aside to the agent without interrupting the current task. In minimal mod
 
 ### `/mcps`
 
-Open the MCP servers management modal.
+打开 MCP 服务器管理模态。
 
 ### `/doctor`
 
-Check the current session for terminal, clipboard, color, input, notification, and sandbox issues. Doctor shows what it found and how to resolve each issue. Run `/doctor fix` to list available automatic fixes; other findings include manual steps. `/terminal-setup`, `/terminal-check`, and `/terminal-info` remain aliases.
+检查当前会话在终端、剪贴板、颜色、输入、通知和沙箱方面的问题。Doctor 会显示它发现了什么，以及每个问题该怎么解决。运行 `/doctor fix` 会列出可用的自动修复；其它发现会附上手工步骤。`/terminal-setup`、`/terminal-check`、`/terminal-info` 仍是别名。
 
 ### `/release-notes`
 
-View release notes for the current version. Alias: `/changelog`.
+查看当前版本的发行说明。别名：`/changelog`。
 
 ### `/docs`
 
-Browse the built-in How-to Guides, open the online Build docs, or jump straight to a guide by title. Aliases: `/howto`, `/guides`.
+浏览内置的操作指南、打开线上 Build 文档，或者按标题直接跳到某篇指南。别名：`/howto`、`/guides`。
 
 ```
 /docs
@@ -365,105 +365,107 @@ Browse the built-in How-to Guides, open the online Build docs, or jump straight 
 /docs Getting Started
 ```
 
-- Bare `/docs` (or `/docs how-to`) opens the How-to Guides picker.
-- `/docs web` opens https://docs.x.ai/build/overview in your browser.
-- `/docs <title>` opens a specific guide by case-insensitive title match.
+- 光敲 `/docs`（或 `/docs how-to`）会打开操作指南选择器。
+- `/docs web` 在浏览器里打开 https://docs.x.ai/build/overview。
+- `/docs <title>` 按不区分大小写的标题匹配打开某篇指南。
 
 ### `/tutorial`
 
-Open the onboarding tutorial: a short list of topics (your first prompt, attaching context, navigation, slash commands, worktrees, plan mode, customization, switching from another agent tool) — each a ~30-second read, with `→` flowing straight to the next topic. Nothing auto-shows — this command (or the command palette) is the way in.
+打开上手教程：一份简短的话题清单（你的第一个提示词、附加上下文、导航、斜杠命令、工作树、计划模式、自定义、从别的代理工具迁移）—— 每篇大约读 30 秒，按 `→` 直接流到下一个话题。它不会自动弹出 —— 这条命令（或命令面板）就是入口。
 
 ```
 /tutorial
 ```
 
-Aliases: `/tour`, `/onboarding`
+别名：`/tour`、`/onboarding`
 
 ### `/import-claude`
 
-Open the Claude import modal to bring over `~/.claude` settings: permissions, environment variables, MCP servers, hooks, and paths.
+打开 Claude 导入模态，把 `~/.claude` 的设置搬过来：权限、环境变量、MCP 服务器、钩子和路径。
 
 ---
 
-## Agents and Personas
+## 代理与角色
 
 ### `/config-agents`
 
-Open the agents modal to view and manage agent definitions, set the default, and switch the active one. Alias: `/agents`.
+打开代理模态，查看和管理代理定义、设置默认项、切换当前生效的那个。别名：`/agents`。
 
-Not the live multi-session [Agent Dashboard](23-dashboard.md) (`/dashboard` / `Ctrl+\`).
+它不是实时的多会话[代理看板](23-dashboard.md)（`/dashboard` / `Ctrl+\`）。
 
 ### `/personas`
 
-Create, edit, and delete personas. A subagent can apply a persona to shape how it behaves.
+创建、编辑和删除角色。子代理可以套用一个角色，来塑造自己的行为方式。
 
 ---
 
-## Account and Billing
+## 账号与数据
 
 ### `/login`
 
-Log in or re-authenticate without leaving the session.
+Chaos 不支持账号登录。这条命令**失败即关闭**：绝不启动浏览器授权流程，而是直接打开 `/provider` 面板，让你在那里配置 API Key。
 
 ### `/logout`
 
-Log out and return to the login screen.
+Chaos 没有需要退出的登录会话。这条命令只打印一条提示，让你去 `config.toml` 里改 provider 配置，或改用 `/provider`。
 
 ### `/usage`
 
-View credit usage or manage billing. Alias: `/cost`.
+查看本次会话的 token 用量和费用。别名：`/cost`。
 
 ```
 /usage
 /usage manage
 ```
 
-For persisted per-turn token and cost totals of any local session, use `grok usage <session-id> [turn]` from the shell. See [Session Management](17-sessions.md#the-grok-usage-subcommand).
+它打开的是一个三标签的会话内模态：Context usage / Usage limit / Session info，默认停在 Usage limit。配置了外部认证提供方的安装里，这条命令会被隐藏。
+
+要查看任何本地会话逐回合的 token 与费用累计，用 shell 里的 `chaos usage <session-id> [turn]`。见[会话管理](17-sessions.md#the-grok-usage-subcommand)。
 
 ### `/privacy`
 
-Open Settings on **Coding data, retention, and training**, where you choose
-**Opt in** or **Opt out**. Takes no arguments.
+在设置里打开 **Coding data, retention, and training**，在那里选
+**Opt in** 或 **Opt out**。不带参数。
 
 ```
 /privacy
 ```
 
-This setting doesn't touch `[features] telemetry`, `trace_upload`, or your external OTEL settings — see [Monitoring Usage](24-monitoring-usage.md#related-settings). On team accounts only a team admin can change it, and admins can also enable or disable Zero Data Retention for the team ([how to enable ZDR](https://docs.x.ai/developers/faq/security#how-to-enable-zdr)). When the choice isn't yours to make, the row says so — `ZDR` or `· Admin Managed` — instead of opening the chooser. ZDR locks coding-data sharing; it does not mute external OTEL or `user.email` — see [ZDR and this stream](24-monitoring-usage.md#zdr-and-this-stream).
+这项设置不碰 `[features] telemetry`、`trace_upload`，也不碰你的外部 OTEL 设置 —— 见[用量监视](24-monitoring-usage.md#related-settings)。在团队账号上，只有团队管理员能改它；管理员还可以为团队打开或关闭 Zero Data Retention（[如何启用 ZDR](https://docs.x.ai/developers/faq/security#how-to-enable-zdr)）。当这不由你决定时，那一行会直接说明 —— `ZDR` 或 `· Admin Managed` —— 而不是打开选择器。ZDR 锁住的是编码数据共享；它不会屏蔽外部 OTEL，也不会屏蔽 `user.email` —— 见 [ZDR 与本数据流](24-monitoring-usage.md#zdr-and-this-stream)。
 
 ---
 
-## Configuration and UI
+## 配置与界面
 
 ### `/settings`
 
-Open the settings modal to view and change configuration interactively. Aliases: `/config`, `/preferences`, `/prefs`.
+打开设置模态，以交互方式查看和修改配置。别名：`/config`、`/preferences`、`/prefs`。
 
 ### `/timestamps`
 
-Toggle message timestamps on or off.
+打开或关闭消息时间戳。
 
 ---
 
-## Skills as Slash Commands
+## 技能作为斜杠命令
 
-Any enabled skill with `user-invocable: true` in its SKILL.md frontmatter shows up as a slash command. (Turn a skill off via `/skills` and it stops being advertised.) So a skill at `~/.grok/skills/commit/SKILL.md` runs as:
+任何已启用、且 SKILL.md frontmatter 里带 `user-invocable: true` 的技能，都会作为斜杠命令出现。（用 `/skills` 把技能关掉，它就不再被列出。）所以放在 `~/.chaos/skills/commit/SKILL.md` 的技能是这样运行的：
 
 ```
 /commit fix typo in README
 ```
 
-Skills from plugins work the same way. When two skills share a name across scopes, qualify it:
+插件带来的技能同理。两个不同作用域的技能重名时，要加限定前缀：
 
 ```
 /local:commit      # Project-scoped skill
 /user:commit       # User-scoped skill
 ```
 
-Built-in commands always win the bare name. Name a skill "compact" and `/compact` still runs the built-in — the skill stays available as `/local:compact` (or `/acme:compact` for a plugin). Both appear in the slash menu: the built-in is tagged `built-in` and the skill is tagged `skill · local` / `skill · acme`.
+内置命令永远赢下裸名。把一个技能命名为 "compact"，`/compact` 跑的仍然是内置命令 —— 该技能以 `/local:compact` 继续可用（插件技能则是 `/acme:compact`）。两者都会出现在斜杠菜单里：内置的那条标为 `built-in`，技能那条标为 `skill · local` / `skill · acme`。
 
 ---
 
-## Autocomplete
+## 自动补全
 
-The menu supports fuzzy search: start typing after `/` to filter. Each entry shows the command name, its description, an argument hint when it takes arguments, and its source (builtin, skill scope, or plugin name). Press `Tab` or `Enter` to accept the highlighted command.
+菜单支持模糊搜索：在 `/` 后面开始输入即可过滤。每个条目显示命令名、描述、需要参数时的参数提示，以及它的来源（内置、技能作用域或插件名）。按 `Tab` 或 `Enter` 接受高亮的那条命令。

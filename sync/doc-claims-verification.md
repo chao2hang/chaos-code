@@ -165,3 +165,27 @@ T1-7c / T1-7d 原本要把上游增量与本轮行为注记写进 `04`、`10`、
 （`# Project Memory — {cwd}` / `> Auto-populated by dream consolidation. Edit freely.`）：
 `xai-grok-memory/src/storage.rs:352-362` 与 `:374-383`。属源码文案，
 按「不碰架构」留待后续统一。
+
+---
+
+## 九、第 4 章《斜杠命令》的核对（2026-09-20）
+
+第四节已经把该改的三处写清楚了，本轮按它执行。另补四条：
+
+| # | 结论 | 证据 |
+| --- | --- | --- |
+| 32 | 译文里照引的两条拒绝文案与代码**逐字一致**，所以它们该保持英文：`/theme isn't available in minimal mode (minimal renders with your terminal's own palette). Run /fullscreen to switch this session.` 与 `/expand isn't available in fullscreen mode: press Tab to focus the scrollback, then → on the block.` | `slash/commands/theme.rs:27-29`（`Remedy::SwitchMode.why`）、`expand.rs:21-23`（`Remedy::UseInstead`）；拼装处 `slash/mode_support.rs:43-51` |
+| 33 | `/login` `/logout` 的**源码描述文案已经是中文**，与 §五 的定性一致，可照译：前者「Chaos 不支持账号登录；请使用 /provider 配置 API Key」且 `run()` 只发 `Action::OpenProviderModal`；后者「Chaos 无需退出登录；请修改 config.toml 中的 Provider 配置」，`run()` 只回一条消息 | `slash/commands/login.rs:14`、`:19-21`；`logout.rs:14`、`:17-22` |
+| 34 | `/usage` 的可用性还有一道闸：`UsageCommand::visible()` 走 `ctx.usage_command_visible`，配置了外部认证提供方（`auth_provider_command`）的安装里这条命令**被隐藏并拒绝**。译文按此加了行为注记 | `slash/commands/usage.rs:8-9`、`:31`、`:46-51` |
+| 35 | `/privacy` 在本分叉**保留**，且译文提到的 ZDR 与 `· Admin Managed` 两行真实存在（不是上游专有） | `app/dispatch/status.rs:212`、`:235-237` |
+
+第 32 条值得记一笔：它是「照 §一 保留字面量」和「译文要写成中文」两条规则的
+交界处，判据是**这句引文是不是运行时会原样打印的字符串**。是，就保留英文。
+
+顺带清掉的上游旧名 6 处：`~/.grok/last-copy.txt`、`.grok/workflows/`、
+`~/.grok/workflows/`（两处）、`~/.grok/skills/commit/SKILL.md`
+（均按 §4.1 改为 `.chaos`），以及 `grok usage <session-id>` → `chaos usage`。
+
+本轮的副作用：`### /minimal and /fullscreen` 改中文标题后，章首那条
+`](#minimal-and-fullscreen)` 变成死锚点。这是 §二 预期的，留给收尾的
+`--fix-anchors` 机械重写，不手工改。
