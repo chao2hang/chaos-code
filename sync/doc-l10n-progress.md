@@ -1,7 +1,7 @@
 # 用户指南中文化的进度与恢复点
 
 更新于 2026-09-20，分支 `sync/curated-port-20260918`，基线 `a82a27ea`，
-本文的提交清单与统计数字截至 `35711ebb`。
+本文的提交清单与统计数字截至 `de2cba71`。
 
 ## 一、已完成
 
@@ -33,18 +33,19 @@
 | `6f92436a` | `13-memory.md` 中文化（四处错误断言按 §4.3 改写，`topics/` 声明删除） |
 | `a660f513` | 刷新进度表，记下第 13 章的核对结论 |
 | `35711ebb` | `04-slash-commands.md` 中文化（兼容桩与记忆闸按核对结论改写） |
+| `de2cba71` | `17-sessions.md` 中文化（认证行按上游遗留处理，`refs/grok/…` 保持） |
 
 已整章完成（散文行、表格单元格、上游旧名三项都归零）：`01`、`02`、`04`、
-`06`、`07`、`08`、`11`、`12`、`13`、`15`、`18`、`19`、`20`、`25`。本轮之前
-已提交的整章是 `12`、`19`、`20`；`02` 是更正而非翻译；`13` 与 `04` 的核对
-结论分别见 `sync/doc-claims-verification.md` 第八、九节。
+`06`、`07`、`08`、`11`、`12`、`13`、`15`、`17`、`18`、`19`、`20`、`25`。
+本轮之前已提交的整章是 `12`、`19`、`20`；`02` 是更正而非翻译；`13`、`04`、
+`17` 的核对结论分别见 `sync/doc-claims-verification.md` 第八、九、十节。
 `26` 的首节散文已译，表格短单元格已全库替换；`README` 还剩链接表的 10 个单元格。
 
 ## 二、真实剩余工作量
 
 `--english` 只扫散文行、不扫表格行，单看过它会把「散文已中文、表格全英文」
 的章节误判成接近完成。下表是 `--english` 与 `--cells` 合起来的口径
-（`--fork-names` 是同一批改动里顺带做的），统计于 `35711ebb`。
+（`--fork-names` 是同一批改动里顺带做的），统计于 `de2cba71`。
 
 | 章节 | 行数 | 字符 | 散文行 | 表格单元格 | 上游旧名 |
 |---|---:|---:|---:|---:|---:|
@@ -59,9 +60,8 @@
 | `22-permissions-and-safety.md` | 571 | 32964 | 123 | 20 | 28 |
 | `16-subagents.md` | 400 | 20065 | 87 | 39 | 8 |
 | `09-plugins.md` | 450 | 26801 | 82 | 28 | 44 |
-| `17-sessions.md` | 391 | 20560 | 79 | 0 | 35 |
 | `README.md` | 60 | 2019 | 0 | 10 | 0 |
-| 合计 | 6 210 | 382 133 | 1 243 | 847 | 242 |
+| 合计 | 5 819 | 361 573 | 1 164 | 847 | 207 |
 
 ## 三、执行顺序
 
@@ -82,7 +82,8 @@
 12. `README`（等所有章节标题定稿后再译链接文字）
 
 已做完：1（`08`、`11`）、2（`06`、`25`）、3（`15`、`18`）、4（`07`、`13`）、
-5 的 `04`。下一批是 `17-sessions` 与 `09-plugins`。
+5（`04`、`17`）、6 的 `01`。下一批是 `09-plugins`，再往后是 `16-subagents`
+与 `24-monitoring-usage`。
 
 ## 四、每章的执行协议（实测唯一稳定的做法）
 
@@ -139,6 +140,14 @@ python3 scripts/check-doc-l10n.py --fork-names --glob "$G/<本章>"
   注入的是检索结果而非生成索引。`topics/` 是已声明的删除项（见
   `scripts/doc-span-removals.tsv`）。模态分栏阈值散文的 `64` 与代码的 `80`
   不一致，§五禁止改数字、`numbers` 门禁也无声明通道，**保持 64 不动**。
+- `17`（已完成 2026-09-20）：`/session-info` 的认证行是**源码里活着的上游
+  遗留**，会原样打印「Run `grok login` to use your SuperGrok subscription
+  instead.」，所以照引英文并在同句说明那是上游屏幕文本、凭据改用
+  `/provider`（`effects/mod.rs:4984-4996`）。`refs/grok/reclaimed/…` 保持
+  上游命名，那是代码里的 ref 名字空间，不是残留。按标题恢复的四条规则、
+  `-s` 与 `--fork-session` 的关系、`chaos sessions list` 的列、
+  `costUsdTicks` 的 1e10 刻度都核对为真，逐条记在
+  `sync/doc-claims-verification.md` 第十节。
 - `14`：`Authentication for Headless Environments` 整节按 BYOK 重写，
   删掉 `grok login --device-auth`、`grok login` 两条，指向
   `02-authentication.md`；该章还带着一条死锚点
@@ -155,18 +164,27 @@ python3 scripts/check-doc-l10n.py --fork-names --glob "$G/<本章>"
 
 1. `python3 scripts/check-doc-l10n.py --fix-anchors --before <译前基线>`
    机械重写入站锚点（标题顺序不变，按序号映射，不需要猜）。
-2. `python3 scripts/check-doc-l10n.py --links` 归零。已知的死锚点（改标题
-   造成，随第 1 步一起修掉）：`06` 的 `#auto-theme-system-appearance`、
-   `12` 的 `#supported-file-names`、`08` 的 `#viewing-skill-details`、
-   `14` 的 `02-authentication.md#device-code-flow`、`04` 的
-   `#minimal-and-fullscreen`，以及本轮所有改了标题的章节。
+2. `python3 scripts/check-doc-l10n.py --links` 归零。`de2cba71` 时全库还有
+   16 条死锚点，都是改标题造成的，随第 1 步一起机械修掉：`04` 的
+   `#minimal-and-fullscreen` 与 `17-sessions.md#the-grok-usage-subcommand`、
+   `06` 的 `#auto-theme-system-appearance`、`07` 的 `#cli-management` /
+   `#example-configurations` / `#project-scoped-mcp-servers`、`08` 的
+   `#viewing-skill-details`、`12` 的 `#supported-file-names`、`14` 的
+   `02-authentication.md#device-code-flow` 与 `15-agent-mode.md#automation-and-sdks`、
+   `17` 的 `15-agent-mode.md#session-config-options`、`18` 的
+   `#custom-profiles` / `#platform-support`、`22` 的
+   `15-agent-mode.md#automation-and-sdks`、`25` 的 `#available-data` /
+   `#refresh-runs`。
 3. `python3 scripts/check-doc-l10n.py --fork-names --strict` 归零。
 4. `python3 scripts/check-doc-l10n.py --english` 归零。
 5. `python3 scripts/check-doc-l10n.py --cells --strict` 归零。
-6. `python3 scripts/check-doc-l10n.py --before main --after HEAD --strict-spans`
-   全库 0 漂移，且每一条 `note:` 都要能逐条讲清来历（新增的行内字面量是
-   有意补的，例如 `01` 的 `/provider`、`06` 的三个枚举名），讲不清的按漂移
-   处理，不算通过。
+6. `python3 scripts/check-doc-l10n.py --before main --after HEAD`
+   全库 0 问题（`problems` 为空），且每一条 `note:` 都要能逐条讲清来历
+   （新增的行内字面量是有意补的，例如 `01` 的 `/provider`、`06` 的三个枚举
+   名、`13` 的 `MEMORY.md`、`17` 的 `CHAOS_HOME` 与 `~/.chaos`），讲不清的
+   按漂移处理，不算通过。这里**不能**加 `--strict-spans`：那个开关会把
+   **有意补的**字面量也算成漂移，而补字面量恰好是本轮允许的动作
+   （理由见 `sync/doc-claims-verification.md` 第 10.2 节）。
 7. `bash scripts/l10n-guard.sh --before main --after HEAD --report <dir>`
    三份报告都是 0。
 8. `cargo test -p xai-grok-shell --lib --features config-docs config_docs`
