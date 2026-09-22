@@ -1567,6 +1567,9 @@ impl MvpAgent {
     pub(super) async fn refresh_remote_settings(&self, auth: &crate::auth::GrokAuth) {
         if !crate::util::config::resolve_remote_fetch_enabled() {
             tracing::debug!("post-auth settings refresh skipped: remote_fetch disabled");
+            // Chaos BYOK: the answer is settled (nothing will arrive), so the
+            // work deferred for it still has to run.
+            self.run_deferred_remote_work();
             return;
         }
         let is_xai = auth.is_xai_auth();

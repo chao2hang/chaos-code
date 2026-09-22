@@ -1600,6 +1600,7 @@ impl MvpAgent {
     /// Non-xAI auth (API keys, enterprise) always passes.
     /// For xAI OAuth2 users, reads `allow_access` from remote settings (explicit `false` blocks; absent field fails open).
     /// When settings have not arrived yet the gate is provisionally open and re-resolved on arrival.
+    /// Only a verdict fetched *for this identity* may decide for it: `cfg.remote_settings` survives an account switch, so a mismatched identity keeps the unknown/absent policy.
     pub(super) async fn enforce_grok_code_access(&self, auth: &crate::auth::GrokAuth) {
         if !auth.is_xai_auth() {
             self.tier_allowed.set(true);
@@ -1614,7 +1615,17 @@ impl MvpAgent {
             self.tier_allowed.set(true);
             return;
         }
-        let allow = settings_allow_access(self.cfg.borrow().remote_settings.as_ref());
+        // Reaching here with `settings_for_this_identity == false` means no fetch
+        // can still produce a verdict for this identity (Chaos BYOK ships with
+        // remote fetch off), so decide now. It must be the settings-*absent*
+        // policy: the `remote_settings` we hold were fetched for another account,
+        // and their `allow_access: false` is a verdict about that account, not
+        // this one.
+        let allow = if settings_for_this_identity {
+            settings_allow_access(self.cfg.borrow().remote_settings.as_ref())
+        } else {
+            settings_allow_access(None)
+        };
         self.tier_allowed.set(allow);
         *self.allow_access_resolved_for.borrow_mut() = Some(auth.user_id.clone());
         if !allow {
@@ -1908,6 +1919,10 @@ impl MvpAgent {
             return;
         }
         if !crate::util::config::resolve_remote_fetch_enabled() {
+            // Chaos BYOK: no fetch will ever answer, so the work deferred for
+            // that answer (auto-GC, the search index) must run now instead of
+            // waiting for a settings arrival that cannot happen.
+            self.run_deferred_remote_work();
             return;
         }
         let Some(auth) = self.auth_manager.current() else {

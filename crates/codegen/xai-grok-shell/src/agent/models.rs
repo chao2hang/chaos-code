@@ -895,7 +895,11 @@ impl ModelsManager {
                             return Ok(());
                         }
 
-                        mgr.fetch_and_apply().await;
+                        // Use the parameter this retry was spawned with instead of
+                        // re-reading the ambient setting: a caller that explicitly
+                        // opted in (bootstrap / tests) would otherwise spin against
+                        // a disabled global and never fetch anything.
+                        mgr.fetch_and_apply_inner(remote_fetch_enabled).await;
 
                         if mgr.inner.catalog.read().has_fetched_real_catalog {
                             Ok(())
