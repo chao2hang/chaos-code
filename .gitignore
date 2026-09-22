@@ -14,3 +14,6 @@
 # The colon-looking char is U+F03A (PUA), produced by some Windows shell
 # quirk that replaced ':' when a Windows path became a filename.
 **/CUsers*
+# Python bytecode from the l10n checkers (scripts/check-doc-l10n*.py)
+__pycache__/
+*.pyc
