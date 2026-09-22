@@ -1417,7 +1417,35 @@ async fn ensure_binding_forks_conv_branch_off_base_and_is_idempotent() {
             .await
             .unwrap()
     );
-    assert_eq!(Some(main_sha.clone()), res.head_sha);
+    // The fork starts at `main`, and the only commit it carries on top is the
+    // seeded `.gitignore` (`seed_default_gitignore`). So `main` remains the merge
+    // base, and `head_sha` — documented as "HEAD after the op" — is that seed
+    // commit rather than `main` itself.
+    assert_eq!(
+        main_sha,
+        git_cli(&work, &["merge-base", "conv/new", "main"])
+            .await
+            .unwrap()
+    );
+    assert_eq!(
+        "1",
+        git_cli(&work, &["rev-list", "--count", "main..conv/new"])
+            .await
+            .unwrap(),
+        "a fresh fork adds exactly the seeded .gitignore commit"
+    );
+    assert_eq!(
+        ".gitignore",
+        git_cli(&work, &["diff", "--name-only", "main", "conv/new"])
+            .await
+            .unwrap(),
+        "the seeded file is the whole delta between base and fork"
+    );
+    assert_eq!(
+        Some(git_cli(&work, &["rev-parse", "HEAD"]).await.unwrap()),
+        res.head_sha,
+        "head_sha reports HEAD after the op, seeded commit included"
+    );
     std::fs::write(work.join("f.txt"), "x").unwrap();
     git_cli(&work, &["add", "-A"]).await.unwrap();
     git_cli(&work, &["commit", "-m", "conv work"])

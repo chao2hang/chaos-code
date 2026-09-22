@@ -3023,7 +3023,7 @@ pub async fn sync_base(
 }
 /// Reject a ref/branch value that could be parsed as a git option (leading `-`) or that carries whitespace/control characters or `..`.
 /// A boundary guard for client-influenced refs (notably `base_ref`) so they cannot be smuggled in as flags.
-/// Combined with `--end-of-options` at each call site.
+/// Combined with `--end-of-options` at the call sites whose git subcommand supports it.
 fn ensure_ref_arg_safe(value: &str, what: &str) -> Result<()> {
     anyhow::ensure!(!value.is_empty(), "{what} must not be empty");
     anyhow::ensure!(
@@ -3141,15 +3141,15 @@ pub async fn ensure_binding(
             )
             .await?;
         } else {
+            // `git checkout` does not accept `--end-of-options` in this position:
+            // git reads it as a pathspec marker and aborts with "Cannot update
+            // paths and switch to branch '<b>' at the same time" (exit 128), so
+            // the branch was never created. A trailing `--` separates the
+            // start-point from any pathspec instead, and `ensure_ref_arg_safe`
+            // above already rejects a dash-leading `base_ref`.
             git_cli(
                 git_root,
-                &[
-                    "checkout",
-                    "-b",
-                    session_branch,
-                    "--end-of-options",
-                    base_ref,
-                ],
+                &["checkout", "-b", session_branch, base_ref, "--"],
             )
             .await?;
             created = true;
