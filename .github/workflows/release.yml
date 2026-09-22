@@ -50,8 +50,6 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: "1"
-  # Must match rust-toolchain.toml channel; the toml file wins on runners.
-  RUST_TOOLCHAIN: "1.94.0"
 
 jobs:
   # ─────────────────────────────────────────────────────────────────────────
@@ -169,10 +167,21 @@ jobs:
           version: "29.3"
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
+      # Single source of truth: `rust-toolchain.toml` pins the channel, and CI
+      # reads it the same way. The previous `env.RUST_TOOLCHAIN` literal was a
+      # second copy that could drift (and did: ci.yml still said 1.92.0).
+      - name: Read pinned toolchain
+        id: toolchain
+        run: |
+          set -euo pipefail
+          channel="$(sed -n 's/^channel[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' rust-toolchain.toml)"
+          test -n "$channel" || { echo "no channel pinned in rust-toolchain.toml" >&2; exit 1; }
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          toolchain: ${{ steps.toolchain.outputs.channel }}
           targets: ${{ matrix.target }}
 
       - name: Cache cargo

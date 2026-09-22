@@ -15,7 +15,6 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  RUST_TOOLCHAIN: "1.92.0"
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: "0"
 
@@ -45,10 +44,22 @@ jobs:
           version: "29.3"
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
+      # Single source of truth: `rust-toolchain.toml` pins the channel, and the
+      # release build reads it too. Duplicating the number in `env` is what let
+      # this file say 1.92.0 while the toml said 1.94.0, so CI and local builds
+      # ran different compilers with nothing to notice.
+      - name: Read pinned toolchain
+        id: toolchain
+        run: |
+          set -euo pipefail
+          channel="$(sed -n 's/^channel[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' rust-toolchain.toml)"
+          test -n "$channel" || { echo "no channel pinned in rust-toolchain.toml" >&2; exit 1; }
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          toolchain: ${{ steps.toolchain.outputs.channel }}
           components: rustfmt, clippy
 
       - uses: Swatinem/rust-cache@v2
@@ -118,6 +129,13 @@ jobs:
       - name: postinstall unit tests
         working-directory: crates/codegen/xai-grok-pager/npm/chaos
         run: node scripts/test-postinstall.js
+
+      # MT-1: `release.yml` resolves the release version from npm and injects it
+      # into the Rust build, while the Rust side falls back to
+      # `CARGO_PKG_VERSION`. Nothing compared the two, so a one-sided bump would
+      # ship a `chaos --version` that disagrees with the package that installed it.
+      - name: version consistency (Cargo vs npm)
+        run: ./scripts/ci/check-versions.sh
 
       - name: stamp-version dry run
         run: |
