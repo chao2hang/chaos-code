@@ -2288,7 +2288,6 @@ impl ExtensionsModalState {
                     false
                 }
             }
-            _ => self.picker_state.expanded.contains(&sel),
         }
     }
 
