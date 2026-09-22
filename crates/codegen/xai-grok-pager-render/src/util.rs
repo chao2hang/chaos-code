@@ -20,22 +20,38 @@ pub fn pager_toml_path() -> PathBuf {
     grok_home().join("pager.toml")
 }
 
-/// `~/.grok` or `$GROK_HOME`, decided by the resolved home rather than by
-/// whether `GROK_HOME` is set in the environment.
+/// `~/.chaos` (or the legacy `~/.grok`), or `$GROK_HOME`, decided by the
+/// resolved home rather than by whether `GROK_HOME` is set in the environment.
 pub fn display_grok_home_prefix() -> String {
     display_grok_home_prefix_for(&grok_home())
 }
 
+/// The label standing in for `home`: the resolved default's own name, or
+/// `$GROK_HOME` for an environment override.
+///
+/// The default case is delegated to
+/// [`xai_grok_config::default_home_display_prefix`] rather than naming the
+/// directory here. The two had already drifted: this function returned a
+/// hardcoded `~/.grok` while `xai-grok-pager-bin` printed `~/.chaos` in the same
+/// process, so `chaos du` reported on `~/.chaos` under the heading `~/.grok`.
+/// `xai-dirs` still dual-reads a legacy `~/.grok`, but a new install defaults to
+/// the Chaos-native `~/.chaos`, so neither name may be assumed.
 pub fn display_grok_home_prefix_for(home: &Path) -> String {
     let default = xai_grok_config::default_grok_home();
-    if home == default || home == dunce::canonicalize(&default).unwrap_or(default) {
-        "~/.grok".to_string()
+    // `home` also matches when it is the canonical form of the default (`~/.chaos`
+    // -> a symlink target). Only whether this *is* the default is decided from
+    // `home`; the label itself comes from the default, since `home`'s final
+    // component would then be the symlink target's name.
+    let is_default =
+        home == default || dunce::canonicalize(&default).is_ok_and(|canonical| home == canonical);
+    if is_default {
+        xai_grok_config::default_home_display_prefix().to_string()
     } else {
         "$GROK_HOME".to_string()
     }
 }
 
-/// User-facing path under [`grok_home()`], e.g. ``~/.grok/config.toml``.
+/// User-facing path under [`grok_home()`], e.g. ``~/.chaos/config.toml``.
 pub fn display_user_grok_path(relative: impl AsRef<Path>) -> String {
     display_user_grok_path_for(&grok_home(), relative)
 }
@@ -385,19 +401,64 @@ mod tests {
         }
     }
 
+    /// The label must name the directory the resolved default home actually is.
+    /// The fork defaults to `~/.chaos` while still dual-reading a legacy
+    /// `~/.grok`, so pinning either literal misreports the other. That is what
+    /// happened here: this case asserted the hardcoded `~/.grok`, so it passed
+    /// while `chaos du` was reporting on `~/.chaos` under that heading.
     #[test]
-    fn display_grok_home_prefix_default_install() {
-        if std::env::var("GROK_HOME").is_ok() {
+    fn display_grok_home_prefix_names_the_resolved_default() {
+        if std::env::var("GROK_HOME").is_ok() || std::env::var("CHAOS_HOME").is_ok() {
             return;
         }
-        assert_eq!(display_grok_home_prefix(), "~/.grok");
+        let default = xai_grok_config::default_grok_home();
+        let dirname = default
+            .file_name()
+            .expect("the default home has a final component")
+            .to_string_lossy()
+            .into_owned();
+        assert!(
+            dirname.starts_with('.'),
+            "the home is a dot directory, got {dirname}"
+        );
+        assert_eq!(display_grok_home_prefix(), format!("~/{dirname}"));
+    }
+
+    /// The label is derived from the default home, not from the path handed in:
+    /// a canonicalized home ends in the symlink target's name, which must not
+    /// leak into user-facing text.
+    #[test]
+    fn display_grok_home_prefix_ignores_a_symlinked_target_name() {
+        let default = xai_grok_config::default_grok_home();
+        let dirname = default
+            .file_name()
+            .expect("the default home has a final component")
+            .to_string_lossy()
+            .into_owned();
+        assert_eq!(
+            display_grok_home_prefix_for(Path::new("/somewhere/symlink-target")),
+            "$GROK_HOME",
+            "a path that is not the default is an environment override"
+        );
+        assert_eq!(
+            display_grok_home_prefix_for(&default),
+            format!("~/{dirname}")
+        );
     }
 
     #[test]
     fn display_user_grok_path_joins_relative() {
         let path = display_user_grok_path(xai_grok_config::USER_CONFIG_FILENAME);
-        assert!(path.ends_with("/config.toml") || path.ends_with("\\config.toml"));
-        assert!(path.contains(".grok") || path.contains("$GROK_HOME"));
+        // Build the expectation through the same helpers, so this cannot drift
+        // into pinning a literal the resolver no longer produces.
+        assert_eq!(
+            path,
+            format!(
+                "{}/{}",
+                display_grok_home_prefix(),
+                xai_grok_config::USER_CONFIG_FILENAME
+            )
+        );
     }
 
     #[test]
@@ -415,19 +476,17 @@ mod tests {
 
     #[test]
     fn abbreviate_path_uses_home_when_under_default_grok() {
-        let Some(home) = xai_dirs::home_dir() else {
-            return;
-        };
-        let home = home.to_string_lossy();
-        if home.is_empty() {
-            return;
-        }
-        let full = format!("{home}/.grok/memory/MEMORY.md");
-        let abbreviated = abbreviate_path(&full);
-        assert!(
-            abbreviated.contains("memory/MEMORY.md"),
-            "got {abbreviated}"
+        // Drive the `grok_home()` branch with the home the app actually uses,
+        // whatever its directory happens to be named.
+        let full = grok_home().join("memory").join("MEMORY.md");
+        let full_str = full.to_string_lossy();
+        let abbreviated = abbreviate_path(&full_str);
+        let expected = format!(
+            "{}/{}",
+            display_grok_home_prefix(),
+            Path::new("memory").join("MEMORY.md").display()
         );
+        assert_eq!(abbreviated.as_ref(), expected);
     }
 
     #[test]
@@ -438,7 +497,7 @@ mod tests {
         if home.as_os_str().is_empty() {
             return;
         }
-        // Stay outside grok_home so this hits the $HOME branch, not ~/.grok.
+        // Stay outside grok_home so this hits the $HOME branch, not the home label.
         let full = home.join("not-grok-home").join("file.txt");
         let full_str = full.to_string_lossy();
         let abbreviated = abbreviate_path(&full_str);
