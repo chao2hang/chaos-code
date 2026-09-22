@@ -13,6 +13,7 @@
 | `48271133` | 长任务计时显示进位到小时，不再停在分钟 | `1bb7a966` |
 | `75810042` | CJK / 色深渲染测试固定色深机制 | `1d6d316e` |
 | `75810042` / `48271133` | `quick-xml` 0.41、`tikv-jemalloc` 0.7 | `011346fc` |
+| `75810042` | Esc 中段提示的三条 pty 用例改名并重写 | `c181fd64` |
 | — | 分叉自持章节中与代码相符的上游增量 | `e6583a78` |
 | — | 纯上游章节增量与配置参考缺行 | `ca7e2f1f` |
 
@@ -70,6 +71,19 @@
   于是桶一消失，恢复就整个失败——测试里表现为 `remote_miss_*` 三条随机挂掉，
   生产里则是别的 `chaos` 进程清理目录时把本次启动打掉。已把桶级与会话级的
   `NotFound` 按「没有内容可贡献」处理，其余 IO 错误仍旧 fail closed。
+
+### 2.3 与实现长期不符的三条 Esc 用例
+
+中段 Esc 的策略在本分叉落地于 `00323c34`（轮次运行时按 Esc 不再取消，只提示
+Ctrl+C），但同在 `a5727c59` 进来的三条 pty 用例仍断言「Esc 取消轮次」。它们一直
+`#[ignore]`，所以不进 CI，也就一直没人发现。按上游 `75810042` 改名并重写：
+`esc_mid_turn_hints_ctrl_c_from_prompt_preserves_draft`、
+`esc_mid_turn_hints_ctrl_c_from_scrollback`、
+`minimal/minimal_esc_mid_turn_hints_ctrl_c`（`c181fd64`）。
+
+断言改为「Esc 后出现提示、屏幕上没有取消标记、草稿仍在」，再用 Ctrl+C 完成取消，
+与实现一致。提示文案 `Press Ctrl+c to cancel the turn` 本身仍是英文，属 §6
+延后的代码侧英文界面面，故照上游原文断言，未夹带翻译。
 
 ## 3. 用户指南中文化
 
