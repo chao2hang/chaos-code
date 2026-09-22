@@ -32,10 +32,10 @@
 1. 创建钩子目录：
 
    ```sh
-   mkdir -p ~/.grok/hooks
+   mkdir -p ~/.chaos/hooks
    ```
 
-2. 创建一个钩子文件，例如 `~/.grok/hooks/session-start.json`：
+2. 创建一个钩子文件，例如 `~/.chaos/hooks/session-start.json`：
 
    ```json
    {
@@ -76,7 +76,7 @@
 
 配置文件中的钩子位于你的组织已经掌控的那个 TOML 里；格式见[配置文件中的钩子](#hooks-in-config-files)。兼容厂商的钩子源默认会被扫描。要禁用对特定厂商的扫描，在 `~/.grok/config.toml` 里设 `[compat.<vendor>] hooks = false`，或设置对应的环境变量。详见[配置](05-configuration.md#harness-compatibility)。
 
-**信任一个项目**：第一次打开一个带钩子的项目时，必须先信任它，它的项目钩子才会运行；在那之前它们会被静默跳过。运行 `/hooks-trust`（或以 `--trust` 启动）来授信；该决定记录在统一的文件夹信任存储（`~/.grok/trusted_folders.toml`）里，与管理仓库本地 MCP/LSP 服务器的是同一道闸门。`~/.grok/hooks/` 里的全局钩子始终被信任，无需条目。这可以防止不受信任的仓库运行任意代码。
+**信任一个项目**：第一次打开一个带钩子的项目时，必须先信任它，它的项目钩子才会运行；在那之前它们会被静默跳过。运行 `/hooks-trust`（或以 `--trust` 启动）来授信；该决定记录在统一的文件夹信任存储（`~/.chaos/trusted_folders.toml`）里，与管理仓库本地 MCP/LSP 服务器的是同一道闸门。`~/.chaos/hooks/` 里的全局钩子始终被信任，无需条目。这可以防止不受信任的仓库运行任意代码。
 
 由于钩子统一归入文件夹信任，一次 `--trust` / `/hooks-trust` 授权会为 **MCP、LSP、钩子、项目说明与项目技能** 一起信任整个文件夹，并覆盖同一仓库的子目录。该文件夹下嵌套的 git checkout 是一个独立的工作区，不被覆盖。反过来，禁用文件夹信任（`GROK_FOLDER_TRUST=0` 或 `[folder_trust] enabled = false`）会同时解除这些表面的门禁。
 
@@ -198,7 +198,7 @@ matcher 也保留原始名称，因此 `Bash` 同时匹配 `Bash` 和 `run_termi
 
 | 文件 | 层级 | 谁设置它 |
 |------|------|-------------|
-| `~/.grok/config.toml` | 用户 | 你 |
+| `~/.chaos/config.toml` | 用户 | 你 |
 | `managed_config.toml` (`$GROK_HOME`, `/etc/grok`) | managed / 系统 | 你的组织 |
 | `requirements.toml`（用户与系统） | requirements.toml 可否设置 | 你的组织 |
 
@@ -253,7 +253,7 @@ timeout = 10
 }
 ```
 
-每个事件都携带相同的公共字段：`hookEventName`、`sessionId`、`cwd`、`workspaceRoot`、`timestamp`、`permissionMode`（`default`、`auto`、`plan` 或 `bypassPermissions`）与 `promptId`（事件所属的回合；会话级事件没有该字段），再加上像上面 `toolName` 这样的事件特有字段。`hook_event_name`（snake_case 键）携带 Claude 的 PascalCase 值；`hookEventName`（camelCase 键）携带 grok 的 snake_case 值。
+每个事件都携带相同的公共字段：`hookEventName`、`sessionId`、`cwd`、`workspaceRoot`、`timestamp`、`permissionMode`（`default`、`auto`、`plan` 或 `bypassPermissions`）与 `promptId`（事件所属的回合；会话级事件没有该字段），再加上像上面 `toolName` 这样的事件特有字段。`hook_event_name`（snake_case 键）携带 Claude 的 PascalCase 值；`hookEventName`（camelCase 键）携带 Chaos 的 snake_case 值。
 
 ### 输出（拦截型钩子）
 
@@ -280,7 +280,7 @@ timeout = 10
 
 `deny` 会丢弃任何 `updatedInput`；多个钩子都返回时，最后一个胜出。返回 `updatedInput` 而省略 `decision` 会允许调用并应用改写。
 
-`defer` 既不拦截调用也不批准它：调用走正常权限流程，就像你的钩子没有应答一样，日志里会记录一条点名该钩子的警告。它对其余发送的内容也不生效——`defer` 旁边的 `updatedInput` 或 `additionalContext` 会被忽略并在日志中点名。在多个钩子之间 `defer` 排在 `ask` 之后，因此当你的一个钩子 defer、另一个 ask 时，grok 会发出提示。
+`defer` 既不拦截调用也不批准它：调用走正常权限流程，就像你的钩子没有应答一样，日志里会记录一条点名该钩子的警告。它对其余发送的内容也不生效——`defer` 旁边的 `updatedInput` 或 `additionalContext` 会被忽略并在日志中点名。在多个钩子之间 `defer` 排在 `ask` 之后，因此当你的一个钩子 defer、另一个 ask 时，Chaos 会发出提示。
 
 `additionalContext` 是给模型的提示。它在调用运行之后到达——绝不在之前——随该调用所属批次的结果一起，包在你所用 harness 的提醒标签里（默认为 `<system-reminder>`）并点名写入它的钩子，模型因此能区分你的文本与用户的文本。每个发送它的钩子都会被送达，顺序与钩子运行顺序一致（与 `updatedInput` 不同，那里是最后写入者胜出）。`deny` 会丢弃全部内容，因为调用从未运行，并在日志中点名这次丢弃。超过 10,000 字符的文本会被截断，与 `Stop` 反馈的上限相同。
 
@@ -308,7 +308,7 @@ timeout = 10
 | `updatedMCPToolOutput` | `updatedToolOutput` 的 MCP 专用别名。在内置工具上被忽略。 |
 
 - **送达。** block 原因与 `additionalContext` 在工具结果之后到达，包在你所用 harness 的提醒标签里并点名写入它们的钩子，模型因此能在同一回合内行动。每个钩子的 block 原因与 `additionalContext` 按钩子运行顺序送达，因此一个钩子的发现不会挤掉另一个的。只有替换是最后写入者胜出：两个钩子都返回时，最后一个存活，并在日志中点名被丢弃的那个。
-- **构建 `updatedToolOutput`。** 对内置工具，它必须携带 grok 自身为刚运行的工具定义的输出形状，即一个带标签的对象，例如 `{"type": "Bash", …}`。拿事件交给你的 `toolResult`，编辑后再发回去——那正是它被校验时依据的形状。解析失败或解析成另一个工具输出的替换会被忽略，原件保留，但钩子的运行会被记录为 `Failed` 并注明原因，因此一个显示"failed"的退出码 0 钩子报告的是一次被丢弃的替换，而不是它从未运行。`decision` 拼写错误（只认 `"block"`）也以同样方式报告。先检查 `toolResultTruncated`：超大的载荷会以纯字符串到达钩子，无法原样回传。
+- **构建 `updatedToolOutput`。** 对内置工具，它必须携带 Chaos 自身为刚运行的工具定义的输出形状，即一个带标签的对象，例如 `{"type": "Bash", …}`。拿事件交给你的 `toolResult`，编辑后再发回去——那正是它被校验时依据的形状。解析失败或解析成另一个工具输出的替换会被忽略，原件保留，但钩子的运行会被记录为 `Failed` 并注明原因，因此一个显示"failed"的退出码 0 钩子报告的是一次被丢弃的替换，而不是它从未运行。`decision` 拼写错误（只认 `"block"`）也以同样方式报告。先检查 `toolResultTruncated`：超大的载荷会以纯字符串到达钩子，无法原样回传。
 - **MCP 工具。** 没有形状可强制，因此 `updatedToolOutput` 与 `updatedMCPToolOutput` 都不经校验直接通过——JSON 字符串逐字成为面向模型的文本，其他值则被序列化——两个键上最后写入的钩子胜出。
 - **上限。** block 原因与 `additionalContext` 截断到 10,000 字符，与 `Stop` 反馈及 `PreToolUse` 上下文共享同一上限。替换获得 64 K 字符。上限按渲染后面向模型的文本度量，并在替换渲染完成后应用，因此一段很长的 `updatedToolOutput` 会像字符串一样被截断，而不是因超长被丢弃。结构化替换只有在与工具自身的输出形状不匹配时才会被丢弃。
 - **坏掉的钩子。** 非零退出——包括退出码 2——保留 block 原因并丢弃其余一切：`additionalContext` 与替换被丢弃并在日志中点名，这正是 `PreToolUse` 应用于 `updatedInput` 的同一条规则。block 是失败安全的方向。
@@ -355,7 +355,7 @@ timeout = 10
 
 被取消回合的报告从会话命令循环之外分发，因此中断绝不会因你的钩子而延迟。报告因而可能到达于下一回合 `UserPromptSubmit` 的**之后**，各路径之间的回合结束报告彼此不保序。
 
-跟踪忙碌与空闲的脚本应以下述规则围绕 `promptId` 组织。grok 为每回合铸造一个，但自行在 `_meta` 中提供 id 的客户端拥有其唯一性，因此把 id 当作不透明值，并将会话作为其作用域。
+跟踪忙碌与空闲的脚本应以下述规则围绕 `promptId` 组织。Chaos 为每回合铸造一个，但自行在 `_meta` 中提供 id 的客户端拥有其唯一性，因此把 id 当作不透明值，并将会话作为其作用域。
 
 每个回合结束报告都经过同一个 worker，因此慢钩子会推迟下一个报告，但绝不会推迟它所属的回合。观察型钩子的超时保持短小。
 
@@ -412,7 +412,7 @@ timeout = 10
 
 - **跟踪最新的 `promptId`，忽略旧回合的报告。** 被取消回合的报告从命令循环之外
   分发，因此可能晚于下一回合的 `UserPromptSubmit` 到达。
-- **没有 `promptId` 时无条件落定。** 那是 grok 在报告会话而非回合：`idle_prompt`
+- **没有 `promptId` 时无条件落定。** 那是 Chaos 在报告会话而非回合：`idle_prompt`
   ping 与会话结束的 `Stop`。正是它让兜底对回退或被取代的回合（它们什么都不报告）
   生效。
 - **把一个从未见其开始的 `promptId` 视为空闲。** 被中断的 bash 模式回合没有前置的
@@ -434,7 +434,7 @@ timeout = 10
 能把子会话从两半中都过滤掉。这对后台子代理最重要：它比父回合活得久，否则会在
 父级空闲后让宿主保持忙碌。
 
-`Stop` 输入还携带 `backgroundTasks` 与 `sessionCrons`，钩子可以借此区分"会话已结束"与"会话暂停、等待后台工作把它唤醒"。没有在运行或计划中的东西时两个数组都为空。每个 `backgroundTasks` 条目描述一个运行中的任务：`id`、`type`（`shell`、`monitor` 或 `subagent`）、`status`，以及（取决于类型）`command`（仅 shell 任务）、`description`（监视器被监视的命令行，或子代理的任务描述）和 `agentType`（子代理）。每个 `sessionCrons` 条目描述一次计划中的唤醒（`scheduler_create` 或 `/loop`）：`id`、`schedule`、`recurring` 与 `prompt`。`schedule` 值是人类可读的间隔，例如 `every 5 minutes`；grok 的计划是间隔，不是 cron 表达式。自由文本条目字段截断到 1000 字符，并带字符串内的 `… [+N chars]` 标记。
+`Stop` 输入还携带 `backgroundTasks` 与 `sessionCrons`，钩子可以借此区分"会话已结束"与"会话暂停、等待后台工作把它唤醒"。没有在运行或计划中的东西时两个数组都为空。每个 `backgroundTasks` 条目描述一个运行中的任务：`id`、`type`（`shell`、`monitor` 或 `subagent`）、`status`，以及（取决于类型）`command`（仅 shell 任务）、`description`（监视器被监视的命令行，或子代理的任务描述）和 `agentType`（子代理）。每个 `sessionCrons` 条目描述一次计划中的唤醒（`scheduler_create` 或 `/loop`）：`id`、`schedule`、`recurring` 与 `prompt`。`schedule` 值是人类可读的间隔，例如 `every 5 minutes`；Chaos 的计划是间隔，不是 cron 表达式。自由文本条目字段截断到 1000 字符，并带字符串内的 `… [+N chars]` 标记。
 
 在子代理内部，闸门以 `SubagentStop` 触发（agent frontmatter 的 `Stop` 钩子会被自动重映射）。`Stop` 钩子只为总 agent 设闸。
 
@@ -442,21 +442,21 @@ timeout = 10
 
 **移植 Claude Code 停止钩子**：输出词汇（`decision`、`reason`、`continue`、`stopReason`、`additionalContext`）无需改动即可使用。对照这份清单检查与 Claude 不一致之处：
 
-- **camelCase 输入**：grok 的 stdin 信封通篇使用 camelCase 键，而 Claude 用 snake_case。读取 `.stop_hook_active` 或 `.background_tasks[].agent_type` 的脚本必须改读 `.stopHookActive` 与 `.backgroundTasks[].agentType`（`hook_event_name` snake_case 键携带 Claude 的 PascalCase 值，如 `"Stop"`；`hookEventName` camelCase 键携带 grok 的 snake_case 值，如 `"stop"`）。通过 grok-agent-sdk 注册的钩子会把顶层键与 `backgroundTasks`/`sessionCrons` 的条目键都转换为 snake_case，因此线上格式的 `.backgroundTasks[].agentType` 在 SDK 中读作 `.background_tasks[].agent_type`。
-- **`toolResult` 字段**：`PostToolUse` 的工具输出是 `toolResult`（SDK：`tool_result`）；grok 还会发出一个复制 `toolResult` 的 `tool_response` snake 别名，因此读取 Claude 的 `.tool_response` 的钩子无需改动即可工作。
-- **`updatedToolOutput` 在内置工具上携带 grok 自身的输出形状**：针对内置工具的 `PostToolUse` 替换会按 grok 序列化的工具输出校验——即该事件 `toolResult` 里的带标签对象——因此按另一个运行时的字段名编写的替换会解析成错误形状并被忽略。MCP 工具上没有形状可强制，因此 `updatedToolOutput` 与其 `updatedMCPToolOutput` 别名一样直接通过。见 [PostToolUse 输出](#posttooluse-output)。
+- **camelCase 输入**：Chaos 的 stdin 信封通篇使用 camelCase 键，而 Claude 用 snake_case。读取 `.stop_hook_active` 或 `.background_tasks[].agent_type` 的脚本必须改读 `.stopHookActive` 与 `.backgroundTasks[].agentType`（`hook_event_name` snake_case 键携带 Claude 的 PascalCase 值，如 `"Stop"`；`hookEventName` camelCase 键携带 Chaos 的 snake_case 值，如 `"stop"`）。通过 grok-agent-sdk 注册的钩子会把顶层键与 `backgroundTasks`/`sessionCrons` 的条目键都转换为 snake_case，因此线上格式的 `.backgroundTasks[].agentType` 在 SDK 中读作 `.background_tasks[].agent_type`。
+- **`toolResult` 字段**：`PostToolUse` 的工具输出是 `toolResult`（SDK：`tool_result`）；Chaos 还会发出一个复制 `toolResult` 的 `tool_response` snake 别名，因此读取 Claude 的 `.tool_response` 的钩子无需改动即可工作。
+- **`updatedToolOutput` 在内置工具上携带 Chaos 自身的输出形状**：针对内置工具的 `PostToolUse` 替换会按 Chaos 序列化的工具输出校验——即该事件 `toolResult` 里的带标签对象——因此按另一个运行时的字段名编写的替换会解析成错误形状并被忽略。MCP 工具上没有形状可强制，因此 `updatedToolOutput` 与其 `updatedMCPToolOutput` 别名一样直接通过。见 [PostToolUse 输出](#posttooluse-output)。
 - **会话结束时触发**：会话结束时会额外触发一次仅观察的 Stop；用 `reason == "end_turn"` 过滤（见上文）。
 - **间隔计划**：`sessionCrons[].schedule` 是人类可读的间隔，绝不是 cron 表达式。
 - **任务类型**：`backgroundTasks[].type` 只有 `shell`、`monitor` 或 `subagent`；Claude 的其他标签（`workflow`、`teammate`、…）不会被发出。
-- **StopFailure 分类**：grok 发出六种（`rate_limit`、`authentication_failed`、`invalid_request`、`server_error`、`max_output_tokens`、`unknown`）。容量错误（503/529）归类为 `rate_limit`。针对 grok 不会发出的错误类的 matcher 永不触发。
-- **默认超时**：grok 默认观察钩子 5 秒，比多数运行时短。给一个做实际工作的导入钩子显式设置 `timeout`。
+- **StopFailure 分类**：Chaos 发出六种（`rate_limit`、`authentication_failed`、`invalid_request`、`server_error`、`max_output_tokens`、`unknown`）。容量错误（503/529）归类为 `rate_limit`。针对 Chaos 不会发出的错误类的 matcher 永不触发。
+- **默认超时**：Chaos 默认观察钩子 5 秒，比多数运行时短。给一个做实际工作的导入钩子显式设置 `timeout`。
 - **`UserPromptSubmit` 可拦截，但有一个缺口**：退出码 2 与 `decision: "block"` 像 Claude 一样拒绝提示，被拒绝的提示绝不进入对话历史——但放行钩子的 stdout / `additionalContext` 会被丢弃，而不是作为上下文加入。
-- **`StopCancelled` 是 grok 特有的**：使用它的配置无法移植到没有中断钩子的运行时。
-- **`idle_prompt` 在任意回合结束时触发**：grok 在被中断或出错的回合之后也会触发它，而不只是完成的回合，因为它报告的是状态而非结果。其 `message` 是展示文本，可能随版本变化，因此改匹配 `notificationType`。
-- **子代理标识是 `subagentType`，不是 `agent_type`**：grok 把它放在能在子代理内触发的事件的载荷里，与自己的 `SubagentStart`/`SubagentStop` 一致，而不是放在公共字段里。
-- **permission_mode 取值**：grok 发出 `default`、`auto`、`plan` 或 `bypassPermissions`。Claude 的 `acceptEdits`/`dontAsk` 在 grok 中没有对应（grok 的 `auto` 最接近），因此 `permission_mode === "acceptEdits"` 之类的检查永不匹配。
+- **`StopCancelled` 是 Chaos 特有的**：使用它的配置无法移植到没有中断钩子的运行时。
+- **`idle_prompt` 在任意回合结束时触发**：Chaos 在被中断或出错的回合之后也会触发它，而不只是完成的回合，因为它报告的是状态而非结果。其 `message` 是展示文本，可能随版本变化，因此改匹配 `notificationType`。
+- **子代理标识是 `subagentType`，不是 `agent_type`**：Chaos 把它放在能在子代理内触发的事件的载荷里，与自己的 `SubagentStart`/`SubagentStop` 一致，而不是放在公共字段里。
+- **permission_mode 取值**：Chaos 发出 `default`、`auto`、`plan` 或 `bypassPermissions`。Claude 的 `acceptEdits`/`dontAsk` 在 Chaos 中没有对应（Chaos 的 `auto` 最接近），因此 `permission_mode === "acceptEdits"` 之类的检查永不匹配。
 - **客户端（SDK）闸门超时**：SDK 的 `Stop`/`SubagentStop` 闸门与文件钩子一样默认 600 秒；`PreToolUse` 客户端闸门默认 30 秒（交互热路径）。两者都可在各 matcher 组上用 `timeoutS` 覆盖，上限 600。
-- **`/goal`**：grok 的目标循环是另一个功能，在停止闸门之前运行；它不是提示类型的 Stop 钩子。
+- **`/goal`**：Chaos 的目标循环是另一个功能，在停止闸门之前运行；它不是提示类型的 Stop 钩子。
 
 一个脚本搞定的完整"继续工作"策略：
 
@@ -590,7 +590,7 @@ Grok 会在每个钩子进程上设置若干环境变量。编写需要感知上
 
 - 当回合被一个钩子批次拦住（工具前的 `PreToolUse` 闸门、`UserPromptSubmit` 闸门、`Stop` 闸门）时，批次运行约 300 ms 后状态行会显示 `Running pre_tool_use hook…`（或 `Running 3 stop hooks…`）。计时器从批次启动时开始，因此慢钩子显示其全部等待时间；快的则根本不显示。
 - 运行并放行的钩子不留痕迹。它的 stdout 不会被展示。
-- 拒绝工具调用、拦截提示或停止/延续 agent 的钩子会得到一行带原因的注记。来自 `~/.grok`、项目与插件文件的钩子会被点名；来自受管配置的钩子显示为"a managed policy hook"。
+- 拒绝工具调用、拦截提示或停止/延续 agent 的钩子会得到一行带原因的注记。来自 `~/.chaos`、项目与插件文件的钩子会被点名；来自受管配置的钩子显示为"a managed policy hook"。
 - 失败（非零退出、超时、崩溃、输出格式错误）的钩子得到一行：`<event> hook (<name>) failed, ignored: <reason>`，其中原因是退出码加第一行 stderr，或超时。"Ignored" 是字面意思：失败按失败放行处理，工具调用或回合就像钩子放行了它一样继续。
 
 拒绝与失败的行带有与工具行相同的子弹符号，因此读起来像是其上方工具调用的一部分。
@@ -638,7 +638,7 @@ echo '{"decision": "allow"}'
 
 ## 安全注意事项
 
-- 全局钩子（`~/.grok/hooks/`）以你的用户权限运行；把它们当作 shell 脚本对待。
+- 全局钩子（`~/.chaos/hooks/`）以你的用户权限运行；把它们当作 shell 脚本对待。
 - 项目钩子需要文件夹信任（`/hooks-trust` 或 `--trust`，与仓库本地 MCP/LSP 相同的闸门），以防恶意仓库的供应链攻击。
 - HTTP 钩子会发送会话数据；只使用可信端点。
 - `PostToolUse` 钩子决定模型在该工具调用中读到什么——它可以添加指令或彻底替换输出——因此要像信任 `PreToolUse` 闸门一样信任它。回滚区与转录保留真实输出，因此替换对你始终可见。
@@ -651,7 +651,7 @@ echo '{"decision": "allow"}'
 2. **用显式 `deny` 拦截**：钩子在出错时按失败放行，因此崩溃的钩子不会拦截工具。要强制执行策略，你的钩子必须运行到完成并在 stdout 上发出 `{"decision":"deny","reason":"..."}`。务必在脚本内部处理错误，使其总能返回显式决定。
 3. **使用绝对路径或相对于钩子文件的路径**：JSON 文件旁 `bin/` 中的脚本便于移植。
 4. **用弹窗测试**：按 `Ctrl+L`（非 VS Code 家族）或运行 `/hooks`，在依赖钩子之前确认它们已加载并匹配。
-5. **对项目钩子做版本控制**：提交 `.grok/hooks/`（但绝不要提交密钥）。
+5. **对项目钩子做版本控制**：提交 `.chaos/hooks/`（但绝不要提交密钥）。
 
 ---
 
@@ -660,4 +660,4 @@ echo '{"decision": "allow"}'
 - **钩子没有运行？** 在非 VS Code 家族终端上按 `Ctrl+L`（或在任意位置运行 `/hooks`），看它是否已加载并匹配。
 - **项目钩子被忽略？** 该文件夹可能不受信任。运行 `/hooks-trust`（或带 `--trust` 重新启动）。
 - **找不到脚本？** 检查路径是否相对于 `.json` 文件且可执行（`chmod +x`）。
-- **看到错误？** 以 `RUST_LOG=debug GROK_LOG_FILE=/tmp/grok.log grok` 启动来捕获日志，然后检查 `/tmp/grok.log`。
+- **看到错误？** 以 `RUST_LOG=debug GROK_LOG_FILE=/tmp/grok.log chaos` 启动来捕获日志，然后检查 `/tmp/grok.log`。
