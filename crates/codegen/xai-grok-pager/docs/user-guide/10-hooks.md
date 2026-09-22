@@ -1,41 +1,41 @@
-# Hooks
+# 钩子
 
-Hooks let you run a script or send an HTTP request at key moments in a Grok session. Use them to automate tasks, enforce safety checks, log activity, send notifications, and integrate your own tools.
-
----
-
-## What Are Hooks?
-
-A hook is a shell command or HTTP endpoint that Grok calls when a specific lifecycle event occurs. Hooks can:
-
-- **Block actions**: A `PreToolUse` hook can deny a dangerous command before it runs.
-- **Keep the agent working**: A `Stop` hook can block the agent from finishing its turn until a condition holds (e.g. the test suite passes) and feed the reason back to the model.
-- **React to events**: A `PostToolUse` hook can log every tool execution to a file.
-- **Correct a call after it ran**: A `PostToolUse` hook can tell the model what a tool result means, or replace the output the model reads — redact a secret, trim a wall of log lines — while the real result stays on the record.
-- **Set up context**: A `SessionStart` hook can export environment variables or run setup scripts.
+钩子让你在 Grok 会话的关键时刻运行脚本或发送 HTTP 请求。可以用它来自动化任务、强制执行安全检查、记录活动、发送通知，以及集成你自己的工具。
 
 ---
 
-## Common Use Cases
+## 什么是钩子？
 
-- **Safety guards**: Block commands such as `rm -rf /` before they run.
-- **Audit logging**: Record tool use and sessions to a file or external service.
-- **Notifications**: Send a message when a task finishes.
-- **Auto-formatting**: Run `cargo fmt` or `prettier` after edits.
-- **Environment setup**: Export variables at session start.
-- **Custom workflows**: Trigger builds, tests, or deployments on specific events.
+钩子是一条 shell 命令或一个 HTTP 端点，在特定生命周期事件发生时由 Grok 调用。钩子可以：
+
+- **拦截操作**：`PreToolUse` 钩子可以在危险命令运行之前拒绝它。
+- **让 agent 保持工作**：`Stop` 钩子可以阻止 agent 结束当前回合，直到某个条件满足（例如测试套件通过），并把原因反馈给模型。
+- **对事件作出反应**：`PostToolUse` 钩子可以把每次工具执行记录到文件。
+- **在调用之后纠正它**：`PostToolUse` 钩子可以告诉模型某个工具结果意味着什么，或者替换模型读到的输出——抹掉密钥、裁剪一大段日志行——同时真实结果仍保留在记录里。
+- **准备上下文**：`SessionStart` 钩子可以导出环境变量或运行初始化脚本。
 
 ---
 
-## Quick Start
+## 常见用例
 
-1. Create the hooks directory:
+- **安全防护**：在 `rm -rf /` 之类的命令运行之前拦截它。
+- **审计日志**：把工具使用与会话记录到文件或外部服务。
+- **通知**：任务完成时发送消息。
+- **自动格式化**：编辑之后运行 `cargo fmt` 或 `prettier`。
+- **环境准备**：会话开始时导出变量。
+- **自定义工作流**：在特定事件上触发构建、测试或部署。
+
+---
+
+## 快速上手
+
+1. 创建钩子目录：
 
    ```sh
    mkdir -p ~/.grok/hooks
    ```
 
-2. Create a hook file, e.g. `~/.grok/hooks/session-start.json`:
+2. 创建一个钩子文件，例如 `~/.grok/hooks/session-start.json`：
 
    ```json
    {
@@ -51,70 +51,70 @@ A hook is a shell command or HTTP endpoint that Grok calls when a specific lifec
    }
    ```
 
-3. Start (or restart) a Grok session. The hook runs automatically on `SessionStart`.
+3. 启动（或重启）Grok 会话。钩子会在 `SessionStart` 时自动运行。
 
-4. Press `Ctrl+L` on non–VS Code family terminals (or run `/hooks` anywhere — preferred on VS Code family) and check the Hooks tab to confirm it loaded.
+4. 在非 VS Code 家族终端上按 `Ctrl+L`（或在任意位置运行 `/hooks`——VS Code 家族上推荐后者），检查 Hooks 标签页确认它已加载。
 
 ---
 
-## Hook Locations
+## 钩子位置
 
-Hooks are discovered from several places (all are merged):
+钩子从多个位置被发现（全部会合并）：
 
 | 作用域 | 路径 | 是否信任？ | 说明 |
 |-------|------|----------|-------|
 | 全局 | `~/.grok/hooks/*.json` | 始终 | 个人钩子 |
-| 全局 | `~/.claude/settings.json` (and `settings.local.json`) | 始终 | Claude Code compatibility (configurable) |
-| 全局 | `~/.cursor/hooks.json` | 始终 | Cursor compatibility (configurable) |
+| 全局 | `~/.claude/settings.json`（及 `settings.local.json`） | 始终 | Claude Code 兼容（可配置） |
+| 全局 | `~/.cursor/hooks.json` | 始终 | Cursor 兼容（可配置） |
 | 项目 | `<project>/.grok/hooks/*.json` | 需要信任 | 按仓库自动化 |
-| 项目 | `<project>/.claude/settings.json` (and `settings.local.json`) | 需要信任 | Claude compatibility (configurable) |
-| 项目 | `<project>/.cursor/hooks.json` | 需要信任 | Cursor compatibility (configurable) |
-| 配置 | `~/.grok/config.toml` | 始终 | Your hooks alongside the rest of your config |
-| 配置 | `managed_config.toml` (`$GROK_HOME` and `/etc/grok`) | 始终 | Organization-distributed hooks (server-synced and on-device) |
-| 配置 | `requirements.toml` (user and system) | 始终 | Organization-distributed hooks in the requirements layer |
-| 插件 | Bundled inside installed plugins | 按插件 | Shared team hooks |
+| 项目 | `<project>/.claude/settings.json`（及 `settings.local.json`） | 需要信任 | Claude 兼容（可配置） |
+| 项目 | `<project>/.cursor/hooks.json` | 需要信任 | Cursor 兼容（可配置） |
+| 配置 | `~/.grok/config.toml` | 始终 | 你的钩子与配置的其余部分放在一起 |
+| 配置 | `managed_config.toml`（`$GROK_HOME` 与 `/etc/grok`） | 始终 | 组织分发的钩子（服务器同步与本地设备） |
+| 配置 | `requirements.toml`（用户与系统） | 始终 | requirements 层中组织分发的钩子 |
+| 插件 | 内置于已安装的插件中 | 按插件 | 团队共享钩子 |
 
-Config-file hooks live in the same TOML your organization already controls; see [Hooks in Config Files](#hooks-in-config-files) for the format. The compatible vendor hook sources are scanned by default. To disable scanning for a specific vendor, set `[compat.<vendor>] hooks = false` in `~/.grok/config.toml` or the corresponding environment variable. See [Configuration](05-configuration.md#harness-compatibility) for details.
+配置文件中的钩子位于你的组织已经掌控的那个 TOML 里；格式见[配置文件中的钩子](#hooks-in-config-files)。兼容厂商的钩子源默认会被扫描。要禁用对特定厂商的扫描，在 `~/.grok/config.toml` 里设 `[compat.<vendor>] hooks = false`，或设置对应的环境变量。详见[配置](05-configuration.md#harness-compatibility)。
 
-**Trusting a project**: The first time you open a project with hooks, you must trust it before its project hooks will run; until then they are silently skipped. Grant trust by running `/hooks-trust` (or launching with `--trust`); the decision is recorded in the unified folder-trust store (`~/.grok/trusted_folders.toml`), the same gate that governs repo-local MCP/LSP servers. Global hooks in `~/.grok/hooks/` are always trusted and need no entry. This prevents untrusted repos from running arbitrary code.
+**信任一个项目**：第一次打开一个带钩子的项目时，必须先信任它，它的项目钩子才会运行；在那之前它们会被静默跳过。运行 `/hooks-trust`（或以 `--trust` 启动）来授信；该决定记录在统一的文件夹信任存储（`~/.grok/trusted_folders.toml`）里，与管理仓库本地 MCP/LSP 服务器的是同一道闸门。`~/.grok/hooks/` 里的全局钩子始终被信任，无需条目。这可以防止不受信任的仓库运行任意代码。
 
-Because hooks are unified under folder-trust, a `--trust` / `/hooks-trust` grant trusts the whole folder for **MCP, LSP, hooks, project instructions, and project skills** together, and covers subdirectories of the same repository. A nested git checkout under that folder is a separate workspace and is not covered. Conversely, disabling folder-trust (`GROK_FOLDER_TRUST=0` or `[folder_trust] enabled = false`) ungates those surfaces together.
+由于钩子统一归入文件夹信任，一次 `--trust` / `/hooks-trust` 授权会为 **MCP、LSP、钩子、项目说明与项目技能** 一起信任整个文件夹，并覆盖同一仓库的子目录。该文件夹下嵌套的 git checkout 是一个独立的工作区，不被覆盖。反过来，禁用文件夹信任（`GROK_FOLDER_TRUST=0` 或 `[folder_trust] enabled = false`）会同时解除这些表面的门禁。
 
 ---
 
-## Hook Events
+## 钩子事件
 
-Events fire at three cadences: once per session (`SessionStart`, `SessionEnd`), once per turn (`UserPromptSubmit`, `Stop`, `StopFailure`), and on every tool call inside the turn (`PreToolUse`, `PostToolUse`, `PostToolUseFailure`).
+事件按三种节奏触发：每会话一次（`SessionStart`、`SessionEnd`）、每回合一次（`UserPromptSubmit`、`Stop`、`StopFailure`），以及回合内每次工具调用（`PreToolUse`、`PostToolUse`、`PostToolUseFailure`）。
 
-| 事件 | When it fires | 是否阻塞？ |
+| 事件 | 触发时机 | 是否阻塞？ |
 |-------|---------------|-----------|
-| `SessionStart` | A session starts. Does not fire for a subagent's own session. | 否 |
-| `UserPromptSubmit` | You submit a prompt. | Yes: can block the prompt |
-| `PreToolUse` | A tool is about to run. | Yes: can deny |
-| `PostToolUse` | A tool finishes running (including a built-in logical error such as a non-zero `run_terminal_command` exit; a dispatch failure or an MCP error result fires `PostToolUseFailure` instead). | No, but it can feed the model feedback and replace the output the model sees |
-| `PostToolUseFailure` | A tool fails to dispatch, or an MCP tool returns an error result. | No, but it can feed the model `additionalContext` |
-| `PermissionDenied` | The permission system denies a tool call. | 否 |
-| `Stop` | An agent turn ends on a genuine completion (an interrupt fires `StopCancelled` instead). | Yes: can block the stop |
-| `StopFailure` | A turn ends because of an API error. | 否 |
-| `StopCancelled` | Runs instead of `Stop` when a turn ends without completing: a user interrupt (Ctrl+C / a client stop), a declined permission prompt, the `--max-turns` limit, or a no-progress bail-out. | 否 |
+| `SessionStart` | 会话启动。子代理自身的会话不触发。 | 否 |
+| `UserPromptSubmit` | 你提交一条提示。 | 是：可拦截提示 |
+| `PreToolUse` | 某个工具即将运行。 | 是：可拒绝 |
+| `PostToolUse` | 某个工具运行结束（包括非零 `run_terminal_command` 退出码这类内置逻辑错误；分发失败或 MCP 错误结果改为触发 `PostToolUseFailure`）。 | 否，但可以向模型反馈并替换模型看到的输出 |
+| `PostToolUseFailure` | 工具分发失败，或 MCP 工具返回错误结果。 | 否，但可以向模型喂 `additionalContext` |
+| `PermissionDenied` | 权限系统拒绝了一次工具调用。 | 否 |
+| `Stop` | agent 回合以真正的完成收尾（中断则改触发 `StopCancelled`）。 | 是：可拦截停止 |
+| `StopFailure` | 回合因 API 错误而结束。 | 否 |
+| `StopCancelled` | 回合未完成即结束时运行，替代 `Stop`：用户中断（Ctrl+C / 客户端停止）、权限提示被拒绝、`--max-turns` 上限，或无进展退出。 | 否 |
 | `Notification` | 需要用户注意的事件（`idle_prompt`、`permission_prompt`、`task_complete`、…）。 | 否 |
-| `SubagentStart` | A subagent starts. | 否 |
-| `SubagentStop` | A subagent's turn ends (fires once, in the subagent, with stop decision control). | Yes: can block the stop |
-| `PreCompact` | Conversation compaction is about to run. | 否 |
-| `PostCompact` | Conversation compaction completes. | 否 |
-| `SessionEnd` | The session ends. Carries `subagentType` for a child session, so a host can tell a child's teardown from its own. | 否 |
+| `SubagentStart` | 子代理启动。 | 否 |
+| `SubagentStop` | 子代理的回合结束（在子代理内触发一次，带停止决定控制）。 | 是：可拦截停止 |
+| `PreCompact` | 对话压缩即将运行。 | 否 |
+| `PostCompact` | 对话压缩完成。 | 否 |
+| `SessionEnd` | 会话结束。子会话会携带 `subagentType`，宿主可以借此区分子会话的收尾与自身的收尾。 | 否 |
 
-`SubagentEnd` is accepted as an alias for `SubagentStop`. `PreToolUse` can block a tool call, `UserPromptSubmit` can block a prompt (see below), and `Stop`/`SubagentStop` can block the agent from stopping (see [Stop Decision Control](#stop-decision-control)). `PostToolUse` runs too late to block anything, but its stdout is read: it can feed the model feedback and replace the tool output the model sees (see [PostToolUse Output](#posttooluse-output)). Every other event is passive.
+`SubagentEnd` 被接受为 `SubagentStop` 的别名。`PreToolUse` 可以拦截一次工具调用，`UserPromptSubmit` 可以拦截一条提示（见下文），`Stop`/`SubagentStop` 可以阻止 agent 停止（见[停止决定控制](#stop-decision-control)）。`PostToolUse` 运行得太晚，无法拦截任何东西，但它的 stdout 会被读取：它可以向模型反馈并替换模型看到的工具输出（见 [PostToolUse 输出](#posttooluse-output)）。其余事件都是被动的。
 
-### UserPromptSubmit Decision Control
+### UserPromptSubmit 决定控制
 
-A `UserPromptSubmit` hook can reject a prompt: exit 2 blocks (stderr becomes the message), and so does JSON `{"decision": "block", "reason": "..."}` on stdout, on any exit code. The reason is shown to you and is never added to the model's context. Only a prompt you typed can be blocked: auto-wake turns (task and subagent completions, scheduler fires) and subagent sessions run the hook observe-only. The default timeout for this event is 30 seconds; a timed-out or crashed hook fails open and the prompt proceeds.
+`UserPromptSubmit` 钩子可以拒绝一条提示：退出码 2 拦截（stderr 成为消息），stdout 上的 JSON `{"decision": "block", "reason": "..."}` 在任何退出码下同样拦截。原因会展示给你，绝不会加入模型的上下文。只有你亲手输入的提示才能被拦截：自动唤醒回合（任务与子代理完成、调度器触发）以及子代理会话只以观察模式运行该钩子。此事件的默认超时为 30 秒；超时或崩溃的钩子按失败放行处理，提示继续执行。
 
-After a block, prompts already queued behind the blocked one do not auto-run: the queue holds until you act (send a prompt, or edit / remove / reorder / force-run a queued row). A blocked prompt is not recorded: it never enters the conversation history the model sees on later turns, the on-disk session record, or the session summary. It stays visible in the live scrollback and is held at the front of the queue for you to edit, resend, or discard — but after a session restart the blocked bubble is gone from the scrollback, exactly because nothing was stored. One deliberate exception: your client's local prompt history (the up-arrow recall) keeps the text, recorded at submit time before the hook runs, so a discarded prompt is still recoverable. One current limit: stdout of an allowing hook is discarded (no `additionalContext`).
+被拦截后，已排在被拦截提示后面的提示不会自动运行：队列保持等待，直到你采取行动（发送提示，或编辑 / 移除 / 重排 / 强制运行队列中的某一行）。被拦截的提示不会被记录：它既不进入模型在后续回合看到的对话历史，也不进入磁盘上的会话记录或会话摘要。它仍留在实时回滚区可见，并被保持在队列最前，供你编辑、重发或丢弃——但会话重启后，被拦截的气泡会从回滚区消失，正是因为什么都没有存储。一个刻意的例外：你的客户端本地提示历史（上箭头调出的那条记录）保留文本，在钩子运行之前的提交时刻就已记录，所以被丢弃的提示仍可找回。一个当前限制：放行钩子的 stdout 会被丢弃（没有 `additionalContext`）。
 
-### Cursor Hook Compatibility
+### Cursor 钩子兼容
 
-Grok accepts Cursor's camelCase hook event names, so `~/.cursor/hooks.json` loads unchanged:
+Grok 接受 Cursor 的驼峰式钩子事件名，因此 `~/.cursor/hooks.json` 无需改动即可加载：
 
 | Cursor 事件 | 对应 |
 |---|---|
@@ -127,13 +127,13 @@ Grok accepts Cursor's camelCase hook event names, so `~/.cursor/hooks.json` load
 | `subagentStart`, `subagentStop` | `SubagentStart`, `SubagentStop` |
 | `preCompact`, `stop` | `PreCompact`, `Stop` |
 
-Cursor's per-operation hooks (`beforeShellExecution`, `afterFileEdit`, etc.) map to the generic `PreToolUse`/`PostToolUse` events. The hook script receives the tool name in the JSON input and can filter accordingly, or use the `matcher` field.
+Cursor 的按操作钩子（`beforeShellExecution`、`afterFileEdit` 等）映射到通用的 `PreToolUse`/`PostToolUse` 事件。钩子脚本在 JSON 输入中接收工具名，可据此过滤，或使用 `matcher` 字段。
 
 ---
 
-## The Hook JSON Format
+## 钩子 JSON 格式
 
-Each `.json` file can define hooks for multiple events:
+每个 `.json` 文件可以为多个事件定义钩子：
 
 ```json
 {
@@ -157,17 +157,17 @@ Each `.json` file can define hooks for multiple events:
 }
 ```
 
-### Key Fields
+### 关键字段
 
-- **Event name** (top-level key): any event listed in [Hook Events](#hook-events). Grok skips unrecognized event names so a shared Claude or Cursor settings file still loads.
-- **matcher** (optional): A regular expression that selects which invocations trigger the hook. What it tests depends on the event: the tool name on tool events (`PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `PermissionDenied`), the notification type on `Notification`, the subagent type on `SubagentStart`/`SubagentStop` (e.g. `explore`), the start source on `SessionStart` (`startup`, `resume`, …), the end reason on `SessionEnd`, the compaction trigger on `PreCompact`/`PostCompact` (`manual` or `auto`), the error type on `StopFailure` (`rate_limit`, `authentication_failed`, `invalid_request`, `server_error`, `max_output_tokens`, or `unknown`), and the reason on `StopCancelled` (`user_interrupt`, `permission_rejected`, `permission_cancelled`, `max_turns`, `no_progress`, or `unknown`). A matcher on `Stop` or `UserPromptSubmit` is ignored with a warning (those events always fire). An empty or omitted matcher matches everything. A finish-thinking chime should set `matcher` to `idle_prompt` on `Notification` (any turn end, then sustained idle); `permission_prompt` fires only when a permission UI is actually waiting. The matcher tests the real tool name; MCP calls routed through the internal `use_tool` dispatcher appear as the qualified `server__tool` name (e.g. `linear__save_issue`), so match on that, not the dispatcher name.
-- **type**: `"command"` (run a script or shell one-liner) or `"http"` (POST the event to a URL).
-- **command**: Path to executable (relative to the JSON file) or inline shell command.
-- **timeout**: Seconds before killing the hook (default: 5, or 600 for `Stop`/`SubagentStop`/`PostToolUse` gates). All hook failures (timeouts, crashes, malformed output, missing required env vars) are fail-open: the failure is recorded for the UI scrollback but the tool call is not blocked. Only an explicit `deny` decision returned by the hook blocks a tool call.
+- **事件名**（顶层键）：[钩子事件](#hook-events)中列出的任意事件。Grok 会跳过无法识别的事件名，因此共享的 Claude 或 Cursor 设置文件仍能加载。
+- **matcher**（可选）：一个正则表达式，选择哪些调用会触发钩子。它测试什么取决于事件：工具事件（`PreToolUse`、`PostToolUse`、`PostToolUseFailure`、`PermissionDenied`）上是工具名，`Notification` 上是通知类型，`SubagentStart`/`SubagentStop` 上是子代理类型（例如 `explore`），`SessionStart` 上是启动来源（`startup`、`resume`、…），`SessionEnd` 上是结束原因，`PreCompact`/`PostCompact` 上是压缩触发方式（`manual` 或 `auto`），`StopFailure` 上是错误类型（`rate_limit`、`authentication_failed`、`invalid_request`、`server_error`、`max_output_tokens` 或 `unknown`），`StopCancelled` 上是原因（`user_interrupt`、`permission_rejected`、`permission_cancelled`、`max_turns`、`no_progress` 或 `unknown`）。`Stop` 或 `UserPromptSubmit` 上的 matcher 会被忽略并给出警告（这两个事件总会触发）。空 matcher 或省略 matcher 匹配一切。思考结束的提示音应在 `Notification` 上把 `matcher` 设为 `idle_prompt`（任意回合结束，随后持续空闲）；`permission_prompt` 只在权限 UI 确实在等待时触发。matcher 测试的是真实工具名；经内部 `use_tool` 分发器路由的 MCP 调用会以带限定符的 `server__tool` 名称出现（例如 `linear__save_issue`），因此要匹配它而非分发器名。
+- **type**：`"command"`（运行脚本或 shell 单行命令）或 `"http"`（把事件 POST 到某个 URL）。
+- **command**：可执行文件的路径（相对于 JSON 文件）或内联 shell 命令。
+- **timeout**：杀死钩子前的秒数（默认：5，`Stop`/`SubagentStop`/`PostToolUse` 闸门为 600）。所有钩子失败（超时、崩溃、输出格式错误、缺少必需的环境变量）都按失败放行处理：失败会记录到 UI 回滚区，但工具调用不会被拦截。只有钩子返回显式 `deny` 决定才会拦截一次工具调用。
 
-### Tool Name Aliases
+### 工具名别名
 
-In a `matcher`, Grok maps Claude-style tool names to its own so hooks migrated from Claude fire correctly. Common aliases include:
+在 `matcher` 中，Grok 会把 Claude 风格的工具名映射为自己的工具名，让从 Claude 迁移来的钩子正确触发。常见别名包括：
 
 - `Bash` → `run_terminal_command`
 - `Read` → `read_file`
@@ -177,32 +177,32 @@ In a `matcher`, Grok maps Claude-style tool names to its own so hooks migrated f
 - `WebSearch` → `web_search`
 - `Task` → `spawn_subagent`
 
-A matcher keeps its original name too, so `Bash` matches both `Bash` and `run_terminal_command`.
+matcher 也保留原始名称，因此 `Bash` 同时匹配 `Bash` 和 `run_terminal_command`。
 
 ---
 
-## How a Hook Resolves
+## 钩子如何解析
 
-When an event fires, Grok resolves it in four steps:
+事件触发时，Grok 分四步解析它：
 
-1. **Select matching groups.** For that event, each matcher group whose `matcher` matches the event's field runs. The matcher tests the tool name on tool events, the notification type on `Notification`, and so on (see [Key Fields](#key-fields)). An empty or omitted matcher matches everything.
-2. **Run the handlers in order.** Handlers in the selected groups run in config order, each receiving the event as JSON on stdin, until one returns `deny` (which stops the chain). Handlers from different sources (global, project, plugin, config) are merged, and identical handlers are deduplicated. Every handler sees the model's original tool input; a `PreToolUse` `updatedInput` is applied only after all handlers finish, so one handler cannot see another's rewrite (the last rewrite wins).
-3. **Apply the decision.** For a `PreToolUse` gate, the first `deny` blocks the call and its reason is shown to the model, an `updatedInput` rewrites the tool input, and otherwise the call proceeds. For `Stop` and `SubagentStop`, a `block` keeps the agent working. For `PostToolUse` the tool has already run, so nothing is blocked and every hook runs: a `block` reason and any `additionalContext` are delivered to the model with the tool result, and an output replacement rewrites the model's copy of that result. Every other event is passive: its output is recorded but does not change control flow.
-4. **Fail open.** A handler that times out, crashes, or emits malformed output is recorded in the scrollback but never blocks the action. The one exception is a `PreToolUse` `updatedInput` that fails the tool's schema: the rewrite cannot run safely, so the call is blocked and reported as an invalid-input error. Otherwise only an explicit `deny` blocks a tool call.
+1. **选择匹配的组。** 对该事件，每个 `matcher` 与事件字段匹配的 matcher 组都会运行。matcher 在工具事件上测试工具名，在 `Notification` 上测试通知类型，等等（见[关键字段](#key-fields)）。空 matcher 或省略 matcher 匹配一切。
+2. **按顺序运行处理器。** 被选中组里的处理器按配置顺序运行，各自通过 stdin 以 JSON 形式接收事件，直到某个处理器返回 `deny`（它会终止链条）。来自不同来源（全局、项目、插件、配置）的处理器会合并，相同的处理器会被去重。每个处理器看到的都是模型的原始工具输入；`PreToolUse` 的 `updatedInput` 只在所有处理器结束后应用，因此一个处理器看不到另一个处理器的改写（最后一次改写胜出）。
+3. **应用决定。** 对 `PreToolUse` 闸门，第一个 `deny` 拦截调用并把原因展示给模型，`updatedInput` 改写工具输入，否则调用照常进行。对 `Stop` 与 `SubagentStop`，`block` 让 agent 继续工作。对 `PostToolUse`，工具已经运行，因此什么都不会被拦截，每个钩子都会运行：`block` 原因与任何 `additionalContext` 会随工具结果一起交付给模型，输出替换则改写模型那份结果。其余事件都是被动的：其输出会被记录，但不改变控制流。
+4. **失败放行。** 超时、崩溃或输出格式错误的处理器会记录到回滚区，但绝不拦截操作。唯一的例外是 `PreToolUse` 的 `updatedInput` 未通过工具的 schema 校验：改写无法安全运行，因此调用被拦截并报告为无效输入错误。除此之外，只有显式 `deny` 才会拦截一次工具调用。
 
 ---
 
-## Hooks in Config Files
+## 配置文件中的钩子
 
-Hooks can also live directly in your Grok config, so a team can distribute them with the rest of their configuration instead of shipping separate JSON files. The same `hooks` object is read from three TOML files:
+钩子也可以直接放在你的 Grok 配置里，团队就能随其余配置一起分发它们，而不必单独交付 JSON 文件。同一个 `hooks` 对象会从三个 TOML 文件读取：
 
-| 文件 | 层级 | Who sets it |
+| 文件 | 层级 | 谁设置它 |
 |------|------|-------------|
 | `~/.grok/config.toml` | 用户 | 你 |
 | `managed_config.toml` (`$GROK_HOME`, `/etc/grok`) | managed / 系统 | 你的组织 |
-| `requirements.toml` (user and system) | requirements.toml 可否设置 | 你的组织 |
+| `requirements.toml`（用户与系统） | requirements.toml 可否设置 | 你的组织 |
 
-The TOML is structurally identical to the JSON hook object, so an existing hook transliterates directly:
+这个 TOML 在结构上与 JSON 钩子对象完全一致，因此既有钩子可以直接转写：
 
 ```toml
 [[hooks.PreToolUse]]
@@ -212,9 +212,9 @@ hooks = [
 ]
 ```
 
-Each matcher group is a `[[hooks.<Event>]]` entry with an optional `matcher` and an inner `hooks` array of handlers. The handler fields (`type`, `command`, `url`, `timeout`, `env`) and event names are exactly the same as the [JSON format](#the-hook-json-format).
+每个 matcher 组是一个 `[[hooks.<Event>]]` 条目，带可选的 `matcher` 与内层 `hooks` 处理器数组。处理器字段（`type`、`command`、`url`、`timeout`、`env`）与事件名和 [JSON 格式](#the-hook-json-format)完全相同。
 
-TOML offers two equivalent notations for the inner handlers, and both parse to the identical structure. The inline-table array shown above is recommended: it reads best for the common single-handler case. The nested array-of-tables form is also accepted:
+TOML 为内层处理器提供两种等价写法，二者解析出相同的结构。推荐上面展示的内联表数组形式：在常见的单处理器场景下最易读。嵌套的表数组形式同样被接受：
 
 ```toml
 [[hooks.PreToolUse]]
@@ -225,19 +225,19 @@ command = "/opt/guard/pretooluse.sh"
 timeout = 10
 ```
 
-Prefer the inline form to avoid repeating the `[[hooks.<Event>.hooks]]` header for each handler.
+优先使用内联形式，避免为每个处理器重复 `[[hooks.<Event>.hooks]]` 表头。
 
-- **Additive across layers.** Every layer's hooks run; a lower-priority layer adds hooks but never replaces another layer's block. A hook defined identically in more than one layer is deduplicated, keeping the highest-authority copy.
-- **Provenance labels.** Config hooks appear in `/hooks` tagged by origin (`managed:`, `requirements/user:`, `user:`, and so on) so you can see which layer contributed each one.
-- **No read-time expansion.** A literal `${VAR}` in a `command` or `url` reaches the hook runner unchanged, matching JSON hook-file semantics; the runner performs the single expansion.
+- **跨层叠加。** 每一层的钩子都会运行；低优先级层会添加钩子，但从不替换另一层的块。在多个层中以相同方式定义的钩子会被去重，保留权威最高的那份。
+- **来源标签。** 配置钩子出现在 `/hooks` 中并按来源打标签（`managed:`、`requirements/user:`、`user:` 等），你可以看到每个钩子来自哪一层。
+- **读取时不展开。** `command` 或 `url` 中字面的 `${VAR}` 会原样到达钩子运行器，与 JSON 钩子文件的语义一致；由运行器执行这唯一一次展开。
 
 ---
 
-## Writing Hook Scripts
+## 编写钩子脚本
 
-### Input
+### 输入
 
-The event is sent as JSON on **stdin** (for example, a `PreToolUse` event; the payload also always includes `toolUseId` and `toolInputTruncated`):
+事件以 JSON 形式通过 **stdin** 发送（例如一个 `PreToolUse` 事件；载荷还始终包含 `toolUseId` 与 `toolInputTruncated`）：
 
 ```json
 {
@@ -253,40 +253,40 @@ The event is sent as JSON on **stdin** (for example, a `PreToolUse` event; the p
 }
 ```
 
-Every event carries the same common fields: `hookEventName`, `sessionId`, `cwd`, `workspaceRoot`, `timestamp`, `permissionMode` (`default`, `auto`, `plan`, or `bypassPermissions`), and `promptId` (the turn the event belongs to; absent for session-scoped events), plus event-specific fields like `toolName` above. The `hook_event_name` (snake_case key) carries Claude's PascalCase value; `hookEventName` (camelCase key) carries grok's snake_case value.
+每个事件都携带相同的公共字段：`hookEventName`、`sessionId`、`cwd`、`workspaceRoot`、`timestamp`、`permissionMode`（`default`、`auto`、`plan` 或 `bypassPermissions`）与 `promptId`（事件所属的回合；会话级事件没有该字段），再加上像上面 `toolName` 这样的事件特有字段。`hook_event_name`（snake_case 键）携带 Claude 的 PascalCase 值；`hookEventName`（camelCase 键）携带 grok 的 snake_case 值。
 
-### Output (Blocking Hooks)
+### 输出（拦截型钩子）
 
-For `PreToolUse` hooks, write JSON to **stdout**:
+对 `PreToolUse` 钩子，向 **stdout** 写入 JSON：
 
-- **Allow**: `{"decision": "allow"}`
-- **Deny**: `{"decision": "deny", "reason": "Unsafe command detected"}`
-- **Ask the user**: `{"decision": "ask", "reason": "Confirm this deploy"}`
-- **State no opinion**: `{"decision": "defer"}`
-- **Rewrite the tool input**: `{"hookSpecificOutput": {"hookEventName": "PreToolUse", "updatedInput": {"command": "npm test"}}}`
-- **Tell the model something**: `{"hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": "This repo builds with xb, not cargo"}}`
+- **允许**：`{"decision": "allow"}`
+- **拒绝**：`{"decision": "deny", "reason": "Unsafe command detected"}`
+- **询问用户**：`{"decision": "ask", "reason": "Confirm this deploy"}`
+- **不表态**：`{"decision": "defer"}`
+- **改写工具输入**：`{"hookSpecificOutput": {"hookEventName": "PreToolUse", "updatedInput": {"command": "npm test"}}}`
+- **告诉模型一些事**：`{"hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": "This repo builds with xb, not cargo"}}`
 
-The decision can be written as top-level `decision` or as `hookSpecificOutput.permissionDecision`. Both take `allow`, `deny`, `ask`, or `defer` (the legacy `approve` and `block` spellings also work), each with its own reason field — `reason` and `permissionDecisionReason`. The canonical `permissionDecision` decides when present; the top-level `decision` applies only when it is absent. The deny or ask message is `permissionDecisionReason` if present, otherwise `reason`. An `allow` means only "not blocked" — it does not auto-approve a call the user would otherwise be asked about. A decision value outside that set is a hook failure, which fails open unless the hook also exits 2, in which case the deny stands and carries the mistake in its reason.
+决定可以写成顶层 `decision`，也可以写成 `hookSpecificOutput.permissionDecision`。两者都接受 `allow`、`deny`、`ask` 或 `defer`（旧式的 `approve` 与 `block` 拼法也可用），各有自己的原因字段——`reason` 与 `permissionDecisionReason`。规范的 `permissionDecision` 在存在时优先；顶层 `decision` 只在它缺席时生效。deny 或 ask 的消息在 `permissionDecisionReason` 存在时取它，否则取 `reason`。`allow` 只意味着"未被拦截"——它不会自动批准一个原本会询问用户的调用。集合之外的决定值视为钩子失败，按失败放行处理，除非钩子同时以退出码 2 退出，此时拒绝成立并把错误带在原因里。
 
-An `ask` makes the call reach the permission prompt: nothing that would otherwise approve it without asking — always-approve mode, auto mode, a saved "always allow" grant, a safe command — applies, and the prompt names your hook and shows your reason. There is never a second prompt: where you would have been asked anyway, the ask only re-labels that one. Approving runs it; rejecting blocks it as an ordinary permission rejection. A client running in full always-approve/YOLO mode (auto-answering every prompt) will still auto-approve the call, matching Claude Code's `bypassPermissions`: the ask overrides the manager's always-approve, auto, saved-grant, and safe-command paths, not a client that blanket-approves every prompt.
+`ask` 让调用到达权限提示：原本可以不经询问就放行它的东西——always-approve 模式、auto 模式、已保存的"始终允许"授权、安全命令——都不再适用，提示会点名你的钩子并展示你的原因。绝不会有第二次提示：在你本来就会被询问的地方，ask 只是把那一次重新标注。批准则运行；拒绝则像普通权限拒绝一样拦截。以完整 always-approve/YOLO 模式（自动应答每个提示）运行的客户端仍会自动批准该调用，与 Claude Code 的 `bypassPermissions` 一致：ask 覆盖的是管理器的 always-approve、auto、已保存授权与安全命令路径，而不是一个对所有提示一概批准的客户端。
 
-An `ask` cannot widen anything, so a permission policy deny, an auto-mode block, or plan mode still decides the call. In auto mode a hook `ask` still runs the classifier before the prompt appears: the classifier may deny the call, but it can never silently approve one the hook asked about. `dontAsk` mode denies whatever it would have to prompt for, so there an ask turns an otherwise-approved call into a denial.
+`ask` 不能放宽任何东西，因此权限策略的拒绝、auto 模式的拦截或 plan 模式仍然决定该调用。在 auto 模式下，钩子的 `ask` 仍会在提示出现前运行分类器：分类器可以拒绝调用，但绝不能悄悄批准一个钩子要求询问的调用。`dontAsk` 模式会拒绝一切它需要提示的东西，因此在那里 ask 会把一个原本批准的调用变成拒绝。
 
-Only hooks configured in a settings file (command and HTTP hooks) can ask, defer, or send `additionalContext`: a `PreToolUse` hook registered through the grok-agent-sdk can allow or deny, and the rest is dropped — an `ask` or a `defer` there leaves the call to the normal permission flow and is logged as an unrecognized decision, and `additionalContext` never reaches the model.
+只有配置在设置文件里的钩子（命令与 HTTP 钩子）才能 ask、defer 或发送 `additionalContext`：通过 grok-agent-sdk 注册的 `PreToolUse` 钩子可以 allow 或 deny，其余一律丢弃——那里的 `ask` 或 `defer` 会让调用走正常权限流程，并被记录为无法识别的决定，`additionalContext` 也不会到达模型。
 
-`updatedInput` replaces the tool's input before it runs, silently: the model is not told and nothing is written to the scrollback, so the only sign of a rewrite is the rewritten arguments themselves, which the user sees if the call reaches a permission prompt. The plan-mode gate, the permission prompt, the tool itself, and the later `PostToolUse` payload all see the rewritten input, so a hook can normalize or harden a call rather than only allow or deny it. Hooks run before the plan-mode gate, so a hook with side effects fires even when plan mode later rejects the call.
+`updatedInput` 在工具运行之前静默替换其输入：模型不会被告知，回滚区也不会写入任何内容，因此改写唯一的痕迹就是被改写的参数本身，用户只有在调用到达权限提示时才会看到。plan 模式闸门、权限提示、工具本身以及稍后的 `PostToolUse` 载荷看到的都是改写后的输入，因此钩子可以规范化或加固一次调用，而不只是允许或拒绝它。钩子在 plan 模式闸门之前运行，因此带副作用的钩子即使随后被 plan 模式拒绝也会触发。
 
-The value must be a JSON object; a non-object fails the hook. If the rewritten input fails the tool's schema, the call is blocked as a hook denial — the scrollback annotation names the hook — rather than falling back to the original. A rewrite may change a call's arguments but not which tool runs, so one that retargets a `use_tool` call is blocked too. A hook that exits non-zero keeps its `deny` but loses its `updatedInput` and its `additionalContext`.
+该值必须是 JSON 对象；非对象会让钩子失败。如果改写后的输入未通过工具的 schema 校验，调用会作为钩子拒绝被拦截——回滚区注记会点名钩子——而不是回退到原始输入。改写可以改变调用的参数，但不能改变运行的是哪个工具，因此重定向 `use_tool` 调用的改写同样会被拦截。以非零退出的钩子保留其 `deny`，但丢失其 `updatedInput` 与 `additionalContext`。
 
-A `deny` discards any `updatedInput`; when several hooks return one, the last wins. Omitting `decision` while returning `updatedInput` allows the call and applies the rewrite.
+`deny` 会丢弃任何 `updatedInput`；多个钩子都返回时，最后一个胜出。返回 `updatedInput` 而省略 `decision` 会允许调用并应用改写。
 
-A `defer` neither blocks the call nor approves it: the call takes the normal permission flow, exactly as if your hook had not answered, and a warning naming the hook goes to the log. It also acts on nothing else you sent — an `updatedInput` or `additionalContext` next to a `defer` is ignored and named in the log. Across hooks `defer` ranks below `ask`, so where one of your hooks defers and another asks, grok prompts.
+`defer` 既不拦截调用也不批准它：调用走正常权限流程，就像你的钩子没有应答一样，日志里会记录一条点名该钩子的警告。它对其余发送的内容也不生效——`defer` 旁边的 `updatedInput` 或 `additionalContext` 会被忽略并在日志中点名。在多个钩子之间 `defer` 排在 `ask` 之后，因此当你的一个钩子 defer、另一个 ask 时，grok 会发出提示。
 
-`additionalContext` is a note for the model. It arrives after the call has run — never before — with the results of the batch the call belongs to, wrapped in your harness's reminder tag (`<system-reminder>` by default) and naming the hook that wrote it, so the model can tell your text from the user's. Every hook that sends one is delivered, in the order the hooks ran (unlike `updatedInput`, where the last writer wins). A `deny` drops all of it, since the call never runs, and names the drop in the log. Text over 10,000 characters is clipped, the same ceiling `Stop` feedback carries.
+`additionalContext` 是给模型的提示。它在调用运行之后到达——绝不在之前——随该调用所属批次的结果一起，包在你所用 harness 的提醒标签里（默认为 `<system-reminder>`）并点名写入它的钩子，模型因此能区分你的文本与用户的文本。每个发送它的钩子都会被送达，顺序与钩子运行顺序一致（与 `updatedInput` 不同，那里是最后写入者胜出）。`deny` 会丢弃全部内容，因为调用从未运行，并在日志中点名这次丢弃。超过 10,000 字符的文本会被截断，与 `Stop` 反馈的上限相同。
 
-### PostToolUse Output
+### PostToolUse 输出
 
-`PostToolUse` runs after the tool finished, so it blocks nothing. Its stdout is still read, because it decides what the model sees next. Write JSON to **stdout**:
+`PostToolUse` 在工具结束后运行，因此什么也不拦截。它的 stdout 仍会被读取，因为它决定模型接下来看到什么。向 **stdout** 写入 JSON：
 
 ```json
 {
@@ -302,77 +302,77 @@ A `defer` neither blocks the call nor approves it: the call takes the normal per
 
 | 字段 | 效果 |
 |-------|--------|
-| `decision: "block"` + `reason` | Delivers `reason` to the model next to the tool result. The tool's own output still arrives; "block" means "tell the model something went wrong", not "stop the call". |
-| `additionalContext` | Adds a note for the model next to the tool result. |
-| `updatedToolOutput` | Replaces the model's copy of the result. Universal key; works for every tool. |
-| `updatedMCPToolOutput` | MCP-only alias for `updatedToolOutput`. Ignored on a built-in tool. |
+| `decision: "block"` + `reason` | 把 `reason` 送达模型，紧挨工具结果。工具自身的输出仍会到达；"block" 意为"告诉模型出了问题"，而非"停止调用"。 |
+| `additionalContext` | 在工具结果旁为模型追加一条提示。 |
+| `updatedToolOutput` | 替换模型那份结果。通用键；对每个工具都有效。 |
+| `updatedMCPToolOutput` | `updatedToolOutput` 的 MCP 专用别名。在内置工具上被忽略。 |
 
-- **Delivery.** The block reason and `additionalContext` arrive after the tool result, wrapped in your harness's reminder tag and naming the hook that wrote them, so the model can act in the same turn. Every hook's block reason and `additionalContext` are delivered in the order the hooks ran, so one hook's finding cannot drop another's. Only replacements are last-writer-wins: when two hooks return one, the last survives and the drop is named in the log.
-- **Building `updatedToolOutput`.** On a built-in tool it must carry grok's own output shape for the tool that ran, a tagged object such as `{"type": "Bash", …}`. Take the `toolResult` the event handed you, edit it, and send it back — that is exactly the shape it is validated against. A replacement that fails to parse or parses as another tool's output is ignored and the original stands, but the hook's run is recorded `Failed` with the reason, so an exit-0 hook that shows "failed" is reporting a dropped replacement, not that it never ran. A mistyped `decision` (only `"block"` is honored) is reported the same way. Check `toolResultTruncated` first: an oversized payload reaches the hook as a plain string and cannot be echoed back.
-- **MCP tools.** There is no shape to enforce, so both `updatedToolOutput` and `updatedMCPToolOutput` pass through un-checked — a JSON string becomes the model-facing text verbatim, any other value is serialized — and the last hook to write wins across both keys.
-- **Caps.** The block reason and `additionalContext` are clipped at 10,000 characters, the ceiling `Stop` feedback and `PreToolUse` context share. A replacement gets 64 K characters. Caps are measured on the rendered model-facing text and applied once the replacement has rendered, so a long `updatedToolOutput` is clipped like a string, not dropped for its size. A structured replacement is dropped only when it does not match the tool's own output shape.
-- **Broken hook.** A non-zero exit — exit 2 included — keeps the block reason and drops everything else: `additionalContext` and the replacement are dropped and the drop is named in the log, the same rule `PreToolUse` applies to `updatedInput`. The block is the fail-safe direction.
-- **Record vs. model.** A replacement rewrites only the model's copy. The scrollback, transcript, and telemetry keep the original, so redacting a secret hides it from the model, not from you, and a failure rewritten as success stays real on the record. Images are not delivered under a replacement, so a replaced screenshot or PDF read reaches the model as your text alone. Everything a hook sends (note, block reason, replacement) is escaped so it cannot close the reminder tag and pose as harness or user authored instruction.
-- **Output replacement is settings-file only.** Command and HTTP hooks can do all of this. A `PostToolUse` hook registered through the grok-agent-sdk can contribute a `block` reason and `additionalContext`, but cannot replace the tool output.
-- **When it fires.** `PostToolUse` fires for every tool that actually ran, including one whose result is a built-in logical error such as a non-zero `run_terminal_command` exit. A tool that failed to dispatch, or an MCP tool that returned an error result, fires `PostToolUseFailure` instead — context-only: it can feed the model `additionalContext` but cannot block or replace the output. The hook inherits the 600-second gate default (it commonly runs a linter or test); set `timeout` explicitly only when the check needs longer or shorter. A timed-out hook is recorded as a failure and contributes nothing.
+- **送达。** block 原因与 `additionalContext` 在工具结果之后到达，包在你所用 harness 的提醒标签里并点名写入它们的钩子，模型因此能在同一回合内行动。每个钩子的 block 原因与 `additionalContext` 按钩子运行顺序送达，因此一个钩子的发现不会挤掉另一个的。只有替换是最后写入者胜出：两个钩子都返回时，最后一个存活，并在日志中点名被丢弃的那个。
+- **构建 `updatedToolOutput`。** 对内置工具，它必须携带 grok 自身为刚运行的工具定义的输出形状，即一个带标签的对象，例如 `{"type": "Bash", …}`。拿事件交给你的 `toolResult`，编辑后再发回去——那正是它被校验时依据的形状。解析失败或解析成另一个工具输出的替换会被忽略，原件保留，但钩子的运行会被记录为 `Failed` 并注明原因，因此一个显示"failed"的退出码 0 钩子报告的是一次被丢弃的替换，而不是它从未运行。`decision` 拼写错误（只认 `"block"`）也以同样方式报告。先检查 `toolResultTruncated`：超大的载荷会以纯字符串到达钩子，无法原样回传。
+- **MCP 工具。** 没有形状可强制，因此 `updatedToolOutput` 与 `updatedMCPToolOutput` 都不经校验直接通过——JSON 字符串逐字成为面向模型的文本，其他值则被序列化——两个键上最后写入的钩子胜出。
+- **上限。** block 原因与 `additionalContext` 截断到 10,000 字符，与 `Stop` 反馈及 `PreToolUse` 上下文共享同一上限。替换获得 64 K 字符。上限按渲染后面向模型的文本度量，并在替换渲染完成后应用，因此一段很长的 `updatedToolOutput` 会像字符串一样被截断，而不是因超长被丢弃。结构化替换只有在与工具自身的输出形状不匹配时才会被丢弃。
+- **坏掉的钩子。** 非零退出——包括退出码 2——保留 block 原因并丢弃其余一切：`additionalContext` 与替换被丢弃并在日志中点名，这正是 `PreToolUse` 应用于 `updatedInput` 的同一条规则。block 是失败安全的方向。
+- **记录与模型。** 替换只改写模型那份。回滚区、转录与遥测保留原件，因此抹掉密钥只是对模型隐藏，而不是对你，被改写成成功的失败在记录上仍是失败。图片不会在替换下送达，因此被替换的截图或 PDF 读取到达模型的只有你的文本。钩子发送的一切（提示、block 原因、替换）都会被转义，无法闭合提醒标签来冒充 harness 或用户撰写的指令。
+- **输出替换仅限设置文件。** 命令与 HTTP 钩子可以做所有这些。通过 grok-agent-sdk 注册的 `PostToolUse` 钩子可以贡献 `block` 原因与 `additionalContext`，但不能替换工具输出。
+- **触发时机。** `PostToolUse` 对每个真正运行了的工具触发，包括结果是非零 `run_terminal_command` 退出码这类内置逻辑错误的工具。分发失败的工具，或返回错误结果的 MCP 工具，改为触发 `PostToolUseFailure`——只有上下文：它可以向模型喂 `additionalContext`，但不能拦截或替换输出。该钩子继承 600 秒的闸门默认值（它常用于运行 linter 或测试）；只有当检查需要更长或更短时间时才显式设置 `timeout`。超时的钩子被记录为失败，什么都不贡献。
 
-### Exit Codes
+### 退出码
 
 | 退出码 | 含义 |
 |-----------|---------|
-| `0` | Success / allow (for blocking hooks) |
-| `2` | Explicit deny (`PreToolUse`), block-stop with stderr as feedback (`Stop`/`SubagentStop`), or feedback to the model (`PostToolUse`). For `PreToolUse`, the first stderr line (capped) becomes the deny reason when the JSON carries none; `Stop`/`SubagentStop` and `PostToolUse` feed the full stderr to the model, and a JSON `reason` wins over it. |
-| 其他 | Fail-open — the failure is recorded (as `exit code N: <first stderr line>`) but nothing is blocked. For `PreToolUse`, a `deny` decision in stdout JSON is honored regardless of exit code. For `Stop`/`SubagentStop`, a valid decision JSON on stdout wins over the exit code; the exit code decides only when stdout has no usable JSON, in which case exit 2 blocks with stderr as the feedback. For `PostToolUse`, the tool has already run so nothing is blocked either way; the failure is still recorded, and the hook keeps its block reason but loses its `additionalContext` and its output replacement. |
+| `0` | 成功 / 允许（对拦截型钩子而言） |
+| `2` | 显式拒绝（`PreToolUse`）、以 stderr 作为反馈的拦截停止（`Stop`/`SubagentStop`），或给模型的反馈（`PostToolUse`）。对 `PreToolUse`，当 JSON 未携带原因时，第一行 stderr（有上限）成为拒绝原因；`Stop`/`SubagentStop` 与 `PostToolUse` 把完整 stderr 喂给模型，且 JSON `reason` 优先于它。 |
+| 其他 | 失败放行——失败会被记录（形如 `exit code N: <first stderr line>`），但什么都不拦截。对 `PreToolUse`，stdout JSON 中的 `deny` 决定无论退出码如何都会被采纳。对 `Stop`/`SubagentStop`，stdout 上的有效决定 JSON 优先于退出码；只有 stdout 没有可用 JSON 时才由退出码决定，此时退出码 2 以 stderr 作为反馈拦截。对 `PostToolUse`，工具已经运行，因此无论哪种情况都不拦截；失败仍会记录，钩子保留其 block 原因，但丢失其 `additionalContext` 与输出替换。 |
 
-**`PostToolUse` exit 2 is a behavior change.** It used to be an ordinary recorded failure that changed nothing; it now feeds the hook's stderr to the model. A logging hook written as `run_checker; exit $?` therefore hands the model whatever the checker printed whenever the checker exits 2 — `mypy`, `grep`, `pytest` and `argparse` all use exit 2 for "no match" or "bad usage". End such a hook with an explicit `exit 0` to keep it silent.
+**`PostToolUse` 退出码 2 是一处行为变更。** 它过去只是被记录的普通失败，什么也不改变；现在它会把钩子的 stderr 喂给模型。因此写成 `run_checker; exit $?` 的日志型钩子，会在检查器以退出码 2 退出时把检查器打印的一切交给模型——`mypy`、`grep`、`pytest` 与 `argparse` 都用退出码 2 表示"无匹配"或"用法错误"。让这样的钩子以显式 `exit 0` 结尾以保持沉默。
 
-Write human-readable diagnostics to **stderr**: it is the hook's feedback channel. On failures the first stderr line appears in the scrollback entry and logs instead of a bare exit code.
+把人类可读的诊断写到 **stderr**：它是钩子的反馈通道。失败时，第一行 stderr 会出现在回滚区条目与日志中，取代光秃秃的退出码。
 
-### Stop Decision Control
+### 停止决定控制
 
-`Stop` and `SubagentStop` hooks run when the agent is about to finish its turn and can keep it working (Claude Code-compatible). Write JSON to **stdout**:
+`Stop` 与 `SubagentStop` 钩子在 agent 即将结束回合时运行，可以让它继续工作（与 Claude Code 兼容）。向 **stdout** 写入 JSON：
 
-- **Block the stop**: `{"decision": "block", "reason": "The test suite hasn't been run yet"}`. The reason is fed back to the model as a user message and the agent runs another round in the same turn.
-- **Non-error feedback**: `{"hookSpecificOutput": {"hookEventName": "Stop", "additionalContext": "Run the linter before finishing"}}`. Also keeps the agent working, but is surfaced as hook feedback rather than a hook error.
-- **Force stop**: `{"continue": false, "stopReason": "Budget exhausted"}`. Ends the turn, overriding any blocks.
-- **Allow the stop**: exit 0 with no output (or any non-JSON output).
+- **拦截停止**：`{"decision": "block", "reason": "The test suite hasn't been run yet"}`。原因作为用户消息反馈给模型，agent 在同一回合再跑一轮。
+- **非错误反馈**：`{"hookSpecificOutput": {"hookEventName": "Stop", "additionalContext": "Run the linter before finishing"}}`。同样让 agent 继续工作，但以钩子反馈而非钩子错误的形式呈现。
+- **强制停止**：`{"continue": false, "stopReason": "Budget exhausted"}`。结束回合，压过任何拦截。
+- **允许停止**：以退出码 0 退出且无输出（或任何非 JSON 输出）。
 
-Exiting with code `2` also blocks the stop, with **stderr** as the feedback.
+以退出码 `2` 退出同样会拦截停止，并以 **stderr** 作为反馈。
 
-The hook input includes `stopHookActive` and `lastAssistantMessage`. `stopHookActive` is true when the agent is already continuing due to a previous stop-hook block this turn; check it, or the transcript, to avoid blocking on a condition that will never resolve. `lastAssistantMessage` carries the text of the agent's final response this turn, so hooks can act on it without parsing the transcript. Every event carrying this field clips it at 32,768 characters, with the same `… [+N chars]` marker as the other free-text fields. It is far looser than the 1,000 applied to `errorDetails` and friends because it carries a whole answer rather than a label, and it is sized to the same scale as the tool payload cap. After **8 continuations** (blocks or non-error feedback) in one turn the gate is overridden and the turn ends; hooks are not consulted for that final, forced stop. The counter is per turn: the next user prompt starts fresh, so a long-running goal can span turns. Hook failures fail open: the agent stops normally.
+钩子输入包含 `stopHookActive` 与 `lastAssistantMessage`。当 agent 已因本回合此前一次停止钩子拦截而继续时，`stopHookActive` 为 true；检查它或转录，避免对一个永远不会满足的条件反复拦截。`lastAssistantMessage` 携带 agent 本回合最终回复的文本，钩子无需解析转录即可据此行动。每个携带该字段的事件都把它截断到 32,768 字符，并使用与其他自由文本字段相同的 `… [+N chars]` 标记。它远比 `errorDetails` 等字段的 1,000 上限宽松，因为它承载的是完整回答而非标签，量级与工具载荷上限一致。同一回合内 **8 次延续**（拦截或非错误反馈）之后，闸门被压过、回合结束；那次最终的强制停止不会再询问钩子。计数按回合计：下一条用户提示重新开始，因此长期目标可以跨回合。钩子失败按失败放行：agent 正常停止。
 
-`Stop`, `SubagentStop`, and `PostToolUse` hooks default to a 600-second timeout because these gates commonly run builds or test suites, and a timed-out hook fails open, so the check does not block anyway. Every other event keeps the 5-second default. Set `timeout` explicitly when a gate needs more: `{ "type": "command", "command": "bin/verify.sh", "timeout": 1200 }`.
+`Stop`、`SubagentStop` 与 `PostToolUse` 钩子默认 600 秒超时，因为这些闸门常运行构建或测试套件，而超时的钩子按失败放行，检查反正不会拦截。其余事件保持 5 秒默认值。闸门需要更长时间时显式设置 `timeout`：`{ "type": "command", "command": "bin/verify.sh", "timeout": 1200 }`。
 
-The gate runs only for genuine completions. A turn that was interrupted (Ctrl+C), refused, or cut off at the turn limit skips the Stop gate, though a Ctrl+C that lands while a Stop hook is already running kills it mid-flight (see below); API-error turns fire `StopFailure`, and cancelled turns fire `StopCancelled`. `Esc` never cancels a running turn. A separate Stop also fires at session end (`reason: "channel_closed"` or `"shutdown"`); its decision output is parsed but ignored, since there is no turn left to continue. A script that counts or gates on Stop fires should check `reason == "end_turn"` so the session-end fire doesn't skew it.
+闸门只在真正的完成时运行。被中断（Ctrl+C）、被拒绝或在回合上限被截断的回合会跳过 Stop 闸门，不过落在已运行的 Stop 钩子上的一次 Ctrl+C 会将其中途杀掉（见下文）；API 错误的回合触发 `StopFailure`，被取消的回合触发 `StopCancelled`。`Esc` 绝不会取消一个运行中的回合。会话结束时还会单独触发一次 Stop（`reason: "channel_closed"` 或 `"shutdown"`）；其决定输出会被解析但被忽略，因为没有可继续的回合了。按 Stop 触发计数或设闸的脚本应检查 `reason == "end_turn"`，以免会话结束时那次触发扭曲统计。
 
-`StopFailure` is observation-only (use it to log failures or send alerts; output and exit code are ignored). Its input carries `error` (the classified type the matcher tests: `rate_limit`, `authentication_failed`, `invalid_request`, `server_error`, `max_output_tokens`, or `unknown` for anything the runtime cannot distinguish; capacity errors classify as `rate_limit`), `errorDetails` (the raw error detail, when available, clipped at 1000 characters; absent for a refusal, whose explanation rides `lastAssistantMessage` alone), `lastAssistantMessage` (the rendered error text shown in the conversation; for this event it is the error string, not assistant output), and `subagentType` (the subagent's type when the turn ran inside one).
+`StopFailure` 只用于观察（用它记录失败或发送警报；输出与退出码都会被忽略）。其输入携带 `error`（matcher 测试的分类类型：`rate_limit`、`authentication_failed`、`invalid_request`、`server_error`、`max_output_tokens`，运行时无法区分的一切为 `unknown`；容量错误归类为 `rate_limit`）、`errorDetails`（原始错误细节，可用时截断到 1000 字符；拒绝时没有，因为其解释只经由 `lastAssistantMessage`）、`lastAssistantMessage`（会话中展示的渲染错误文本；对该事件而言它是错误字符串，而非助手输出）以及 `subagentType`（回合在子代理内运行时该子代理的类型）。
 
-`StopCancelled` is observation-only too. **It runs instead of `Stop` when the turn ends without completing**, the same way `StopFailure` runs instead of `Stop` on an API error.
+`StopCancelled` 同样只用于观察。**回合未完成即结束时，它替代 `Stop` 运行**，与 API 错误时 `StopFailure` 替代 `Stop` 的方式相同。
 
-A turn reports **at most one** of the three, with one exception noted below: a `Stop` hook that ran to completion can still be followed by `StopCancelled` if the user interrupts during the gate, because by then the hook has already been told the turn ended. Every turn that runs the model and then ends, errors, or is cancelled reports one, except for the cases listed below.
+一个回合最多报告三者之一，但有一个下文提到的例外：运行到完成的 `Stop` 钩子之后仍可能跟一次 `StopCancelled`，如果用户在闸门期间中断，因为那时钩子已被告知回合结束。每个先运行模型然后结束、出错或被取消的回合都会报告一次，下列情况除外。
 
-If your host must never miss an idle transition, listen for the `idle_prompt` `Notification` as well. It covers every exception in which the session is still alive, with one gap: a session whose only activity was a bash-mode command that ran to completion earns neither the report nor the ping, though interrupting one earns both. `SessionEnd` covers teardown. The `idle_prompt` ping fires about a minute after the session settles, needs at least one turn to have ended, and is cancelled if you send another message first.
+如果你的宿主绝不能错过一次空闲转换，还要监听 `idle_prompt` `Notification`。它覆盖会话仍存活的所有例外情况，只有一个缺口：一个只执行了一条运行完毕的 bash 模式命令的会话，既得不到报告也得不到 ping，但中断一条却能两者兼得。`SessionEnd` 覆盖收尾。`idle_prompt` ping 在会话安定后约一分钟触发，需要至少一个回合已结束，且若你先发送了其他消息则被取消。
 
-A cancelled turn's report is dispatched off the session's command loop, so an interrupt is never delayed by your hook. The report can therefore arrive **after** the next turn's `UserPromptSubmit`, and turn-end reports are not ordered against each other across paths.
+被取消回合的报告从会话命令循环之外分发，因此中断绝不会因你的钩子而延迟。报告因而可能到达于下一回合 `UserPromptSubmit` 的**之后**，各路径之间的回合结束报告彼此不保序。
 
-A script that tracks busy and idle should key on `promptId`, following the rules below. grok mints one per turn, but a client that supplies its own in `_meta` owns its uniqueness, so treat the id as opaque and scope it to the session.
+跟踪忙碌与空闲的脚本应以下述规则围绕 `promptId` 组织。grok 为每回合铸造一个，但自行在 `_meta` 中提供 id 的客户端拥有其唯一性，因此把 id 当作不透明值，并将会话作为其作用域。
 
-Every turn-end report goes through one worker, so a slow hook delays the next report but never the turn it belongs to. Keep observe-hook timeouts short.
+每个回合结束报告都经过同一个 worker，因此慢钩子会推迟下一个报告，但绝不会推迟它所属的回合。观察型钩子的超时保持短小。
 
-An interrupt while a `Stop` hook is running kills that hook mid-flight, and the turn then reports `StopCancelled`: a `Stop` hook that started is not a promise the turn completed. A `StopFailure` hook runs off the turn, so an interrupt cannot kill it, and that turn has already reported, so no `StopCancelled` follows.
+`Stop` 钩子运行期间的中断会将其中途杀掉，回合随后报告 `StopCancelled`：`Stop` 钩子已启动并不意味着回合已完成。`StopFailure` 钩子在回合之外运行，中断杀不掉它，而该回合已经报告过，因此不会再跟 `StopCancelled`。
 
-`Stop` is a gate, so when a stop hook blocks it fires again for each continuation round; only the fire that lets the turn end is the report, and a turn that ends cancelled or failed after a blocked `Stop` reports that instead. A passive observer cannot tell a continuation fire from the final one (`stopHookActive` is true for both), so a UI gated on `Stop` alone shows a false idle from the first continuation fire until the user's next prompt, since no `UserPromptSubmit` marks a continuation round. Leave `Stop` out of the state script when you also run a blocking gate, and settle on the `idle_prompt` `Notification` instead.
+`Stop` 是闸门，因此停止钩子拦截后每轮延续都会再次触发；只有放行回合结束的那次触发才是报告，被拦截的 `Stop` 之后以取消或失败收场的回合改为报告后者。被动观察者无法区分延续触发与最终触发（两者 `stopHookActive` 均为 true），因此仅依赖 `Stop` 设闸的 UI 从第一次延续触发起到用户下一次提示之间会显示错误的空闲，因为没有 `UserPromptSubmit` 标记延续轮。在同时运行拦截闸门时，把 `Stop` 从状态脚本中去掉，改用 `idle_prompt` `Notification`。
 
-Some turns report none of the three:
+有些回合三者都不报告：
 
-- bash mode (`!`) and builtin slash commands that run to completion. Interrupting one still reports `user_interrupt`, without a preceding `UserPromptSubmit`.
-- a cancel-and-send, a rewind, or a queued prompt removed before it ran.
-- session teardown, reported by the session-end `Stop` and `SessionEnd`.
-- a turn whose stop hooks kept the agent working until the per-turn continuation limit forced the stop.
-- a turn where no stop hook ran to completion, because they were all disabled, untrusted, or failed, or, in a subagent, because their matchers all missed. Leaving the turn unreported is deliberate: a later cancel or failure can then report it.
-- a turn superseded by the next one while its report was still being built.
-- a report still queued when the session exits: teardown waits half a second for queued turn-end hooks, then drops what is left and aborts any hook still running.
-- a turn that completed, ran its `Stop`, and only then failed to write to disk: it reported `Stop`, so no `StopFailure` follows. The failure still surfaces in the conversation.
+- 运行完毕的 bash 模式（`!`）与内置斜杠命令。中断其中之一仍会报告 `user_interrupt`，且前面没有 `UserPromptSubmit`。
+- 取消并发送、回退，或运行前被移除的排队提示。
+- 会话收尾，由会话结束的 `Stop` 与 `SessionEnd` 报告。
+- 停止钩子让 agent 一直工作、直到每回合延续上限强制停止的回合。
+- 没有任何停止钩子运行到完成的回合——它们全被禁用、不受信任或失败，或在子代理中因其 matcher 全都未命中。让该回合不被报告是刻意的：之后的取消或失败仍能报告它。
+- 报告还在构建时就被下一回合取代的回合。
+- 会话退出时仍在排队中的报告：收尾会等待排队中的回合结束钩子半秒，然后丢弃剩余并中止仍在运行的钩子。
+- 已完成、已运行其 `Stop`、之后才写入磁盘失败的回合：它已报告 `Stop`，因此不再跟 `StopFailure`。失败仍会显示在会话中。
 
 `StopCancelled`'s input carries:
 
@@ -383,16 +383,16 @@ Some turns report none of the three:
 - `lastAssistantMessage`: whatever the turn had committed to the conversation at the interrupt, if any. A Ctrl+C during the final answer leaves the last committed text, or nothing if the turn never committed any. Clipped like the same field on `Stop` and `StopFailure`.
 - `subagentType`: the subagent's type when the turn ran inside one, so a hook can tell a nested agent's stop from the session's. Absent in the main session.
 
-The envelope's `timestamp` is stamped when the hook dispatches, not when the turn ended. The three turn-end events queue behind one worker, so a report waiting on a slow hook ahead of it carries a later timestamp than the moment it describes. Use `promptId` to correlate, not the clock.
+信封上的 `timestamp` 是在钩子分发时打上的，而不是回合结束的时刻。三个回合结束事件排在同一个 worker 后面，因此等待前方慢钩子的报告携带的时间戳晚于它所描述的时刻。用 `promptId` 关联，不要用时钟。
 
-`StopCancelled` cannot block: the turn is already over, and letting a hook reopen a turn the user deliberately stopped would fight the user. Use `Stop` when you want to keep the agent working.
+`StopCancelled` 不能拦截：回合已经结束，允许钩子重开一个用户刻意停止的回合将与用户对抗。想让 agent 继续工作就用 `Stop`。
 
-A "cancel-and-send" (typing a new message while a turn runs) does **not** fire `StopCancelled`, because the turn is being replaced, not stopped, and the agent stays busy. Inside a subagent, a `user_interrupt` does not fire either: it follows the parent's cancel, and the session-level signal is the useful one. A subagent's own `max_turns`, `no_progress`, or declined permission does fire. The matcher tests `reason` only, so a script that reports whether the session is idle should exit early when `subagentType` is present.
+"取消并发送"（回合运行时输入新消息）**不会**触发 `StopCancelled`，因为回合是被替换而非停止，agent 仍保持忙碌。在子代理内部，`user_interrupt` 也不触发：它跟随父级的取消，会话级信号才是有用的那个。子代理自身的 `max_turns`、`no_progress` 或被拒绝的权限则会触发。matcher 只测试 `reason`，因此报告会话是否空闲的脚本应在 `subagentType` 存在时提前退出。
 
-A complete busy and idle indicator takes five registrations. `UserPromptSubmit` marks the session busy;
-`Stop`, `StopFailure`, and `StopCancelled` settle it however the turn ended; the `idle_prompt`
-`Notification` is the backstop for the turns that report none of the three. Registering only
-`StopCancelled` leaves the host busy after every normal turn.
+完整的忙碌与空闲指示需要五个注册。`UserPromptSubmit` 把会话标记为忙碌；
+`Stop`、`StopFailure` 与 `StopCancelled` 无论回合如何结束都把它落定；`idle_prompt`
+`Notification` 是三者都不报告的那些回合的兜底。只注册
+`StopCancelled` 会让宿主在每个正常回合之后保持忙碌。
 
 ```json
 {
@@ -408,58 +408,57 @@ A complete busy and idle indicator takes five registrations. `UserPromptSubmit` 
 }
 ```
 
-What the two scripts have to get right:
+两个脚本必须处理好的事情：
 
-- **Track the newest `promptId` and ignore reports for older turns.** A cancelled turn's report is
-  dispatched off the command loop, so it can arrive after the next turn's `UserPromptSubmit`.
-- **Settle unconditionally when there is no `promptId`.** That is grok reporting on the session
-  rather than a turn: the `idle_prompt` ping and the session-end `Stop`. It is what makes the
-  backstop work for a rewind or a superseded turn, which report nothing.
-- **Treat a `promptId` you never saw start as idle.** An interrupted bash-mode turn reports without
-  a preceding `UserPromptSubmit`.
-- **Exit early when `subagentType` is present.** A subagent's stop is not the session's.
-- **Settle the host before you record the turn as handled,** so a hook killed mid-flight leaves the
-  turn correctable. Re-read that record first, so you only clear a turn you recorded yourself.
-- **Keep it to a local write.** Teardown gives the whole queue of turn-end reports half a second,
-  and each `SessionEnd` hook is then bounded by its own timeout (default 1.5s; set
-  `GROK_SESSION_END_HOOKS_TIMEOUT_MS`, in milliseconds, to change that default, capped at 60s).
+- **跟踪最新的 `promptId`，忽略旧回合的报告。** 被取消回合的报告从命令循环之外
+  分发，因此可能晚于下一回合的 `UserPromptSubmit` 到达。
+- **没有 `promptId` 时无条件落定。** 那是 grok 在报告会话而非回合：`idle_prompt`
+  ping 与会话结束的 `Stop`。正是它让兜底对回退或被取代的回合（它们什么都不报告）
+  生效。
+- **把一个从未见其开始的 `promptId` 视为空闲。** 被中断的 bash 模式回合没有前置的
+  `UserPromptSubmit` 就会报告。
+- **`subagentType` 存在时提前退出。** 子代理的停止不是会话的停止。
+- **先把宿主落定，再把回合记为已处理，** 这样被中途杀掉的钩子仍让回合可被纠正。
+  先重读那条记录，只清除你自己记录的回合。
+- **只做本地写入。** 收尾给整队列的回合结束报告半秒，之后每个 `SessionEnd` 钩子再受
+  自己的超时约束（默认 1.5s；设置 `GROK_SESSION_END_HOOKS_TIMEOUT_MS`（毫秒）可改
+  该默认值，上限 60s）。
 
-`Stop` is a gate, so that entry runs on the turn's critical path: keep it fast, give it a `timeout`,
-and exit 0, because exit 2 blocks the stop and keeps the agent working. Leave `Stop` out if you also
-run a blocking `Stop` gate, since a continuation fire would settle the host while the agent is still
-going; register `SessionEnd` instead, which is the only thing that settles a session that exits
-before the ping.
+`Stop` 是闸门，因此该条目运行在回合的关键路径上：保持快速、给它 `timeout`、
+并以 0 退出，因为退出码 2 会拦截停止并让 agent 继续工作。如果你同时运行拦截型
+`Stop` 闸门，就把 `Stop` 从中去掉，因为一次延续触发会在 agent 仍在继续时把宿主
+落定；改注册 `SessionEnd`，它是唯一能落定一个在 ping 之前就退出的会话的东西。
 
-Both scripts also run inside a subagent's own session. Every event either script reads carries
-`subagentType` there and omits it in the main session, so `[ -n "$subagentType" ] && exit 0`
-filters a child out of both halves. This matters most for a background subagent, which outlives
-the parent turn and would otherwise hold the host busy after the parent went idle.
+两个脚本也会在子代理自己的会话内运行。任一脚本读到的事件在那里都携带
+`subagentType`，在主会话中则省略，因此 `[ -n "$subagentType" ] && exit 0`
+能把子会话从两半中都过滤掉。这对后台子代理最重要：它比父回合活得久，否则会在
+父级空闲后让宿主保持忙碌。
 
-`Stop` input also carries `backgroundTasks` and `sessionCrons`, so a hook can distinguish "session is done" from "session is paused waiting for background work to wake it back up". Both arrays are empty when nothing is in flight or scheduled. Each `backgroundTasks` entry describes one in-flight task: `id`, `type` (`shell`, `monitor`, or `subagent`), `status`, and (depending on the type) `command` (shell tasks only), `description` (a monitor's watched command line, or a subagent's task description), and `agentType` (subagents). Each `sessionCrons` entry describes one scheduled wakeup (`scheduler_create` or `/loop`): `id`, `schedule`, `recurring`, and `prompt`. The `schedule` value is a human-readable interval such as `every 5 minutes`; grok schedules are intervals, not cron expressions. Free-text entry fields are capped at 1000 characters with an in-string `… [+N chars]` marker.
+`Stop` 输入还携带 `backgroundTasks` 与 `sessionCrons`，钩子可以借此区分"会话已结束"与"会话暂停、等待后台工作把它唤醒"。没有在运行或计划中的东西时两个数组都为空。每个 `backgroundTasks` 条目描述一个运行中的任务：`id`、`type`（`shell`、`monitor` 或 `subagent`）、`status`，以及（取决于类型）`command`（仅 shell 任务）、`description`（监视器被监视的命令行，或子代理的任务描述）和 `agentType`（子代理）。每个 `sessionCrons` 条目描述一次计划中的唤醒（`scheduler_create` 或 `/loop`）：`id`、`schedule`、`recurring` 与 `prompt`。`schedule` 值是人类可读的间隔，例如 `every 5 minutes`；grok 的计划是间隔，不是 cron 表达式。自由文本条目字段截断到 1000 字符，并带字符串内的 `… [+N chars]` 标记。
 
-Inside a subagent, the gate fires as `SubagentStop` (agent-frontmatter `Stop` hooks are automatically remapped). A `Stop` hook only gates the main agent.
+在子代理内部，闸门以 `SubagentStop` 触发（agent frontmatter 的 `Stop` 钩子会被自动重映射）。`Stop` 钩子只为总 agent 设闸。
 
-`SubagentStop` fires once per subagent, at the subagent's own turn end, matching Claude Code. Its input carries a `phase` field (currently always `"gate"`) reserved for forward compatibility.
+`SubagentStop` 每个子代理触发一次，在子代理自己的回合结束时，与 Claude Code 一致。其输入携带一个 `phase` 字段（当前恒为 `"gate"`），为前向兼容预留。
 
-**Porting Claude Code stop hooks**: the output vocabulary (`decision`, `reason`, `continue`, `stopReason`, `additionalContext`) works unchanged. Check this list for what does not match Claude:
+**移植 Claude Code 停止钩子**：输出词汇（`decision`、`reason`、`continue`、`stopReason`、`additionalContext`）无需改动即可使用。对照这份清单检查与 Claude 不一致之处：
 
-- **camelCase input**: grok's stdin envelope uses camelCase keys throughout where Claude uses snake_case. A script reading `.stop_hook_active` or `.background_tasks[].agent_type` must switch to `.stopHookActive` and `.backgroundTasks[].agentType` (the `hook_event_name` snake_case key carries Claude's PascalCase value, e.g. `"Stop"`; the `hookEventName` camelCase key carries grok's snake_case value, e.g. `"stop"`). Hooks registered through the grok-agent-sdk convert both the top-level keys and the `backgroundTasks`/`sessionCrons` entry keys to snake_case, so the wire's `.backgroundTasks[].agentType` reads as `.background_tasks[].agent_type` in the SDK.
-- **`toolResult` field**: the `PostToolUse` tool output is `toolResult` (SDK: `tool_result`); grok also emits a `tool_response` snake alias that copies `toolResult`, so a hook reading Claude's `.tool_response` works unchanged.
-- **`updatedToolOutput` carries grok's own output shape on built-in tools**: a `PostToolUse` replacement for a built-in tool is validated against the tool's output as grok serializes it — the tagged object in that event's `toolResult` — so one written against another runtime's field names parses as the wrong shape and is ignored. On an MCP tool there is no shape to enforce, so `updatedToolOutput` passes through like its `updatedMCPToolOutput` alias. See [PostToolUse Output](#posttooluse-output).
-- **Session-end fire**: an extra observe-only Stop fires at session end; filter on `reason == "end_turn"` (see above).
-- **Interval schedules**: `sessionCrons[].schedule` is a human-readable interval, never a cron expression.
-- **Task types**: `backgroundTasks[].type` is only `shell`, `monitor`, or `subagent`; Claude's other labels (`workflow`, `teammate`, …) are not emitted.
-- **StopFailure classes**: grok emits six (`rate_limit`, `authentication_failed`, `invalid_request`, `server_error`, `max_output_tokens`, `unknown`). Capacity errors (503/529) classify as `rate_limit`. A matcher on an error class grok does not emit never fires.
-- **Default timeout**: grok defaults observe hooks to 5 seconds, which is shorter than most. Set `timeout` explicitly on an imported hook that does real work.
-- **`UserPromptSubmit` blocks, with one gap**: exit 2 and `decision: "block"` reject the prompt like Claude, and a blocked prompt never enters the conversation history — but an allowing hook's stdout / `additionalContext` is discarded rather than added as context.
-- **`StopCancelled` is grok-specific**: a config that uses it is not portable to a runtime with no interrupt hook.
-- **`idle_prompt` fires on any turn end**: grok fires it after an interrupted or errored turn too, not only a completed one, because it reports a state rather than an outcome. Its `message` is display text and can change between releases, so match on `notificationType` instead.
-- **Subagent identity is `subagentType`, not `agent_type`**: grok puts it in the payload of the events that can fire inside a subagent, matching its own `SubagentStart`/`SubagentStop`, rather than in the common fields.
-- **permission_mode values**: grok emits `default`, `auto`, `plan`, or `bypassPermissions`. Claude's `acceptEdits`/`dontAsk` have no grok equivalent (grok's `auto` is the nearest), so a check like `permission_mode === "acceptEdits"` never matches.
-- **Client (SDK) gate timeouts**: SDK `Stop`/`SubagentStop` gates default to 600 seconds like file hooks; `PreToolUse` client gates default to 30 seconds (the interactive hot path). Either can be overridden per matcher group via `timeoutS`, capped at 600.
-- **`/goal`**: grok's goal loop is a separate feature that runs before the stop gate; it is not a prompt-type Stop hook.
+- **camelCase 输入**：grok 的 stdin 信封通篇使用 camelCase 键，而 Claude 用 snake_case。读取 `.stop_hook_active` 或 `.background_tasks[].agent_type` 的脚本必须改读 `.stopHookActive` 与 `.backgroundTasks[].agentType`（`hook_event_name` snake_case 键携带 Claude 的 PascalCase 值，如 `"Stop"`；`hookEventName` camelCase 键携带 grok 的 snake_case 值，如 `"stop"`）。通过 grok-agent-sdk 注册的钩子会把顶层键与 `backgroundTasks`/`sessionCrons` 的条目键都转换为 snake_case，因此线上格式的 `.backgroundTasks[].agentType` 在 SDK 中读作 `.background_tasks[].agent_type`。
+- **`toolResult` 字段**：`PostToolUse` 的工具输出是 `toolResult`（SDK：`tool_result`）；grok 还会发出一个复制 `toolResult` 的 `tool_response` snake 别名，因此读取 Claude 的 `.tool_response` 的钩子无需改动即可工作。
+- **`updatedToolOutput` 在内置工具上携带 grok 自身的输出形状**：针对内置工具的 `PostToolUse` 替换会按 grok 序列化的工具输出校验——即该事件 `toolResult` 里的带标签对象——因此按另一个运行时的字段名编写的替换会解析成错误形状并被忽略。MCP 工具上没有形状可强制，因此 `updatedToolOutput` 与其 `updatedMCPToolOutput` 别名一样直接通过。见 [PostToolUse 输出](#posttooluse-output)。
+- **会话结束时触发**：会话结束时会额外触发一次仅观察的 Stop；用 `reason == "end_turn"` 过滤（见上文）。
+- **间隔计划**：`sessionCrons[].schedule` 是人类可读的间隔，绝不是 cron 表达式。
+- **任务类型**：`backgroundTasks[].type` 只有 `shell`、`monitor` 或 `subagent`；Claude 的其他标签（`workflow`、`teammate`、…）不会被发出。
+- **StopFailure 分类**：grok 发出六种（`rate_limit`、`authentication_failed`、`invalid_request`、`server_error`、`max_output_tokens`、`unknown`）。容量错误（503/529）归类为 `rate_limit`。针对 grok 不会发出的错误类的 matcher 永不触发。
+- **默认超时**：grok 默认观察钩子 5 秒，比多数运行时短。给一个做实际工作的导入钩子显式设置 `timeout`。
+- **`UserPromptSubmit` 可拦截，但有一个缺口**：退出码 2 与 `decision: "block"` 像 Claude 一样拒绝提示，被拒绝的提示绝不进入对话历史——但放行钩子的 stdout / `additionalContext` 会被丢弃，而不是作为上下文加入。
+- **`StopCancelled` 是 grok 特有的**：使用它的配置无法移植到没有中断钩子的运行时。
+- **`idle_prompt` 在任意回合结束时触发**：grok 在被中断或出错的回合之后也会触发它，而不只是完成的回合，因为它报告的是状态而非结果。其 `message` 是展示文本，可能随版本变化，因此改匹配 `notificationType`。
+- **子代理标识是 `subagentType`，不是 `agent_type`**：grok 把它放在能在子代理内触发的事件的载荷里，与自己的 `SubagentStart`/`SubagentStop` 一致，而不是放在公共字段里。
+- **permission_mode 取值**：grok 发出 `default`、`auto`、`plan` 或 `bypassPermissions`。Claude 的 `acceptEdits`/`dontAsk` 在 grok 中没有对应（grok 的 `auto` 最接近），因此 `permission_mode === "acceptEdits"` 之类的检查永不匹配。
+- **客户端（SDK）闸门超时**：SDK 的 `Stop`/`SubagentStop` 闸门与文件钩子一样默认 600 秒；`PreToolUse` 客户端闸门默认 30 秒（交互热路径）。两者都可在各 matcher 组上用 `timeoutS` 覆盖，上限 600。
+- **`/goal`**：grok 的目标循环是另一个功能，在停止闸门之前运行；它不是提示类型的 Stop 钩子。
 
-A complete keep-working policy in one script:
+一个脚本搞定的完整"继续工作"策略：
 
 ```bash
 #!/bin/bash
@@ -471,44 +470,44 @@ if ! bin/verify.sh >/dev/null 2>&1; then
 fi
 ```
 
-registered as `{ "type": "command", "command": "bin/stop-gate.sh", "timeout": 300 }` with `timeout` sized for the verify step. The hook fires again after each continuation, and the built-in cap ends the turn after 8; check `stopHookActive` to give up earlier on feedback the agent evidently cannot act on.
+注册为 `{ "type": "command", "command": "bin/stop-gate.sh", "timeout": 300 }`，`timeout` 按验证步骤的需要设置。钩子在每次延续之后再次触发，内置上限在 8 次后结束回合；检查 `stopHookActive`，对 agent 显然无法据以行动的反馈尽早放弃。
 
-### Passive Hooks
+### 被动钩子
 
-For events like `SessionStart` or `Notification`, stdout is ignored. Just exit 0 on success. The exceptions are `PreToolUse` (see [Output (Blocking Hooks)](#output-blocking-hooks)), `Stop`/`SubagentStop` (see [Stop Decision Control](#stop-decision-control)), and `PostToolUse`, whose stdout is read even though it blocks nothing (see [PostToolUse Output](#posttooluse-output)).
+对 `SessionStart` 或 `Notification` 这类事件，stdout 会被忽略。成功时以 0 退出即可。例外是 `PreToolUse`（见[输出（拦截型钩子）](#output-blocking-hooks)）、`Stop`/`SubagentStop`（见[停止决定控制](#stop-decision-control)）与 `PostToolUse`——它虽然什么也不拦截，stdout 仍会被读取（见 [PostToolUse 输出](#posttooluse-output)）。
 
 ### Environment Variables
 
-Grok sets several environment variables on every hook process. These are useful when writing context-aware or plugin-aware hook scripts.
+Grok 会在每个钩子进程上设置若干环境变量。编写需要感知上下文或插件的钩子脚本时它们很有用。
 
-#### Runner-injected variables (always available)
+#### 运行器注入的变量（始终可用）
 
-These variables are set by the hook runner for **every** hook:
+钩子运行器为**每个**钩子设置这些变量：
 
 | 变量              | 说明 |
 |-----------------------|-------------|
-| `GROK_HOOK_EVENT`     | The name of the event that triggered the hook (e.g. `pre_tool_use`, `session_start`, `post_tool_use`, `session_end`, `stop`, `notification`). |
-| `GROK_HOOK_NAME`      | The configured name of this specific hook (includes the plugin prefix for plugin-provided hooks). |
-| `GROK_SESSION_ID`     | The unique identifier of the current Grok session. |
-| `GROK_WORKSPACE_ROOT` | Absolute path to the root of the current workspace. |
-| `CLAUDE_PROJECT_DIR`  | Absolute path to the workspace root. A Claude Code-compatible alias for `GROK_WORKSPACE_ROOT`, set for every hook. |
+| `GROK_HOOK_EVENT`     | 触发钩子的事件名（如 `pre_tool_use`、`session_start`、`post_tool_use`、`session_end`、`stop`、`notification`）。 |
+| `GROK_HOOK_NAME`      | 该钩子的配置名称（插件提供的钩子会带上插件前缀）。 |
+| `GROK_SESSION_ID`     | 当前 Grok 会话的唯一标识符。 |
+| `GROK_WORKSPACE_ROOT` | 当前工作区根目录的绝对路径。 |
+| `CLAUDE_PROJECT_DIR`  | 工作区根目录的绝对路径。`GROK_WORKSPACE_ROOT` 的 Claude Code 兼容别名，每个钩子都会设置。 |
 
-These variables are **reserved**. Any values you attempt to set for them via the `env` field in your hook JSON are stripped at load time (a warning is logged), and the runner always injects the real values at spawn time.
+这些变量是**保留的**。你试图通过钩子 JSON 的 `env` 字段为它们设置的任何值都会在加载时被剥除（并记录一条警告），运行器在启动时始终注入真实值。
 
-#### Plugin hook variables
+#### 插件钩子变量
 
-When a hook originates from a plugin, Grok additionally injects the following variables:
+当钩子来自某个插件时，Grok 还会额外注入以下变量：
 
 | 变量             | 说明 |
 |----------------------|-------------|
-| `GROK_PLUGIN_ROOT`   | Absolute path to the plugin's installed directory. |
-| `GROK_PLUGIN_DATA`   | Absolute path to the plugin's writable data directory (for storing plugin state, caches, etc.). |
+| `GROK_PLUGIN_ROOT`   | 插件已安装目录的绝对路径。 |
+| `GROK_PLUGIN_DATA`   | 插件可写数据目录的绝对路径（用于存储插件状态、缓存等）。 |
 
-These values are provided by the plugin system. For the four plugin-related keys (`GROK_PLUGIN_ROOT`, `GROK_PLUGIN_DATA`, and their Claude aliases), the plugin adapter ensures the official plugin values always win over any user-declared values in the hook's `env` map.
+这些值由插件系统提供。对四个插件相关键（`GROK_PLUGIN_ROOT`、`GROK_PLUGIN_DATA` 及其 Claude 别名），插件适配器确保官方插件值始终压过用户在钩子 `env` 映射中声明的任何值。
 
-#### User-defined environment variables
+#### 用户自定义环境变量
 
-You can supply additional environment variables for an individual hook handler using the `env` field:
+你可以用 `env` 字段为单个钩子处理器提供额外的环境变量：
 
 ```json
 {
@@ -521,49 +520,49 @@ You can supply additional environment variables for an individual hook handler u
 }
 ```
 
-These variables are passed through to the hook process, but they cannot override the reserved runner or plugin variables listed above.
+这些变量会透传给钩子进程，但不能覆盖上面列出的保留运行器变量或插件变量。
 
-#### Using variables in `command` and `url` fields
+#### 在 `command` 与 `url` 字段中使用变量
 
-Both `command` and `url` support `${VAR}` and `$VAR` expansion. On Windows PowerShell, known `$VAR` refs are rewritten to `$env:VAR` so they read the child environment. See the custom-hooks reference for load-time vs runtime expansion, the `env` map lookup order, and parameter-expansion modifiers (e.g. `${VAR:-default}`).
+`command` 与 `url` 都支持 `${VAR}` 与 `$VAR` 展开。在 Windows PowerShell 上，已知的 `$VAR` 引用会被改写为 `$env:VAR`，以便读取子进程环境。关于加载时与运行时展开、`env` 映射的查找顺序以及参数展开修饰符（如 `${VAR:-default}`），见自定义钩子参考。
 
 ---
 
-## HTTP Hooks
+## HTTP 钩子
 
-Instead of a local script, call a remote endpoint:
+不调用本地脚本，改为调用远程端点：
 
 ```json
 { "type": "http", "url": "https://hooks.example.com/grok-event", "timeout": 15 }
 ```
 
-The full event envelope is POSTed as JSON.
+完整的事件信封会以 JSON 形式 POST 出去。
 
 ---
 
-## Managing Hooks in the TUI
+## 在 TUI 中管理钩子
 
-### The Hooks Tab
+### Hooks 标签页
 
-Press `Ctrl+L` on non–VS Code family terminals to open the Extensions modal (Plugins tab), or run `/hooks` (any terminal; required on VS Code family where `Ctrl+L` is interject) to open it on the Hooks tab. In the **Hooks** tab:
+在非 VS Code 家族终端上按 `Ctrl+L` 打开扩展弹窗（Plugins 标签页），或运行 `/hooks`（任意终端；在 `Ctrl+L` 是 interject 的 VS Code 家族上必须用它）直接打开到 Hooks 标签页。在 **Hooks** 标签页：
 
 | 键 | 操作 |
 |-----|--------|
-| `r` | Reload all hooks from disk |
-| `a` | Add a custom hook by path |
-| `x` | Remove the selected hook source (asks for confirmation; press lowercase `y` to confirm) |
-| `Space` | Enable or disable the selected hook |
-| `f` | Cycle the status filter (All / Enabled / Disabled) |
+| `r` | 从磁盘重新加载全部钩子 |
+| `a` | 按路径添加自定义钩子 |
+| `x` | 移除选中的钩子源（会请求确认；按小写 `y` 确认） |
+| `Space` | 启用或禁用选中的钩子 |
+| `f` | 循环切换状态过滤器（全部 / 已启用 / 已禁用） |
 
-Hooks are grouped by source: **Global**, **Project**, **Plugin**, and **Custom**.
+钩子按来源分组：**全局**、**项目**、**插件**与**自定义**。
 
-Each hook shows:
-- **Event** it triggers on
-- **Command** or **URL** that runs
-- **Timeout** duration
-- **Status**: enabled or `[disabled]`
+每个钩子显示：
+- 触发它的**事件**
+- 运行的**命令**或 **URL**
+- **超时**时长
+- **状态**：已启用或 `[disabled]`
 
-### Slash Commands
+### 斜杠命令
 
 ```
 /hooks-list           # Show hooks loaded in this session
@@ -573,36 +572,36 @@ Each hook shows:
 /hooks-untrust        # Revoke trust for this project
 ```
 
-In the TUI pager, the individual `/hooks-*` commands do not appear in the slash-command list. The `/hooks` modal covers listing, adding, removing, and enabling or disabling hooks; project trust is managed via `/hooks-trust` (or the modal's Trust action), which writes the unified folder-trust store described above.
+在 TUI 分页器中，单个 `/hooks-*` 命令不会出现在斜杠命令列表里。`/hooks` 弹窗覆盖钩子的列出、添加、移除与启用/禁用；项目信任通过 `/hooks-trust`（或弹窗的 Trust 操作）管理，它写入的正是上文描述的统一文件夹信任存储。
 
-### Per-Hook Enable/Disable
+### 按钩子启用/禁用
 
-Enable or disable an individual hook at runtime by pressing `Space` in the Hooks tab. The change takes effect immediately, without restarting the session.
+在 Hooks 标签页按 `Space` 即可在运行时启用或禁用单个钩子。改动立即生效，无需重启会话。
 
-### Mid-Session Reload
+### 会话中途重载
 
-Press `r` in the Hooks tab to reload all hooks from disk. Grok re-reads every hook source, so this picks up changes you made to hook files during the session.
-
----
-
-## Hooks in the Status Row and Scrollback
-
-Hooks are quiet unless they hold the turn up or change its course:
-
-- While the turn is blocked on a hook batch (a `PreToolUse` gate before a tool, the `UserPromptSubmit` gate, a `Stop` gate), the status row reads `Running pre_tool_use hook…` (or `Running 3 stop hooks…`) once the batch has run for about 300 ms. The timer counts from when the batch started, so a slow hook shows its full wait; a fast one never shows at all.
-- A hook that ran and allowed leaves no trace. Its stdout is not shown.
-- A hook that denies a tool call, blocks a prompt, or stops or continues the agent gets one annotation line with the reason. Hooks from `~/.grok`, project, and plugin files are named; hooks from managed configuration read as "a managed policy hook".
-- A hook that fails (non-zero exit, timeout, crash, malformed output) gets one line: `<event> hook (<name>) failed, ignored: <reason>`, where the reason is the exit code with the first stderr line, or the timeout. "Ignored" is literal: failures are fail-open, so the tool call or turn proceeds as if the hook had allowed it.
-
-Deny and failure lines carry the same bullet as the tool rows, so they read as part of the tool call above them.
-
-These lines appear only when the plugins UI is enabled (the default).
+在 Hooks 标签页按 `r` 从磁盘重新加载全部钩子。Grok 会重新读取每个钩子源，因此你在会话期间对钩子文件所做的改动都会被拾取。
 
 ---
 
-## Example: Safe Shell Guard
+## 状态行与回滚区中的钩子
 
-Block dangerous shell commands:
+除非钩子拖住回合或改变其走向，否则它们是安静的：
+
+- 当回合被一个钩子批次拦住（工具前的 `PreToolUse` 闸门、`UserPromptSubmit` 闸门、`Stop` 闸门）时，批次运行约 300 ms 后状态行会显示 `Running pre_tool_use hook…`（或 `Running 3 stop hooks…`）。计时器从批次启动时开始，因此慢钩子显示其全部等待时间；快的则根本不显示。
+- 运行并放行的钩子不留痕迹。它的 stdout 不会被展示。
+- 拒绝工具调用、拦截提示或停止/延续 agent 的钩子会得到一行带原因的注记。来自 `~/.grok`、项目与插件文件的钩子会被点名；来自受管配置的钩子显示为"a managed policy hook"。
+- 失败（非零退出、超时、崩溃、输出格式错误）的钩子得到一行：`<event> hook (<name>) failed, ignored: <reason>`，其中原因是退出码加第一行 stderr，或超时。"Ignored" 是字面意思：失败按失败放行处理，工具调用或回合就像钩子放行了它一样继续。
+
+拒绝与失败的行带有与工具行相同的子弹符号，因此读起来像是其上方工具调用的一部分。
+
+这些行只在插件 UI 启用（默认如此）时出现。
+
+---
+
+## 示例：安全 Shell 防护
+
+拦截危险的 shell 命令：
 
 ```json
 {
@@ -619,7 +618,7 @@ Block dangerous shell commands:
 }
 ```
 
-Where `bin/safe-shell.sh`:
+其中 `bin/safe-shell.sh`：
 
 ```bash
 #!/bin/sh
@@ -637,28 +636,28 @@ echo '{"decision": "allow"}'
 
 ---
 
-## Security Notes
+## 安全注意事项
 
-- Global hooks (`~/.grok/hooks/`) run with your user permissions; treat them like shell scripts.
-- Project hooks require folder trust (`/hooks-trust` or `--trust`, the same gate as repo-local MCP/LSP) to prevent supply-chain attacks from malicious repos.
-- HTTP hooks send session data; only use trusted endpoints.
-- A `PostToolUse` hook decides what the model reads for that tool call — it can add instructions or replace the output outright — so trust one the way you trust a `PreToolUse` gate. The scrollback and the transcript keep the real output, so a replacement is always visible to you.
-
----
-
-## Best Practices
-
-1. **Keep hooks fast**: long-running hooks block the UI. Use background processes (`&`) or async where possible.
-2. **Use explicit `deny` to block**: hooks fail-open on any error, so a hook that crashes will not block the tool. To enforce policy, your hook must run to completion and emit `{"decision":"deny","reason":"..."}` on stdout. Always handle errors inside your script so it can return an explicit decision.
-3. **Use absolute paths or relative to hook file**: scripts in `bin/` next to the JSON file are portable.
-4. **Test with the modal**: press `Ctrl+L` (non–VS Code family) or run `/hooks` to verify hooks are loaded and matching before relying on them.
-5. **Version control project hooks**: commit `.grok/hooks/` (but never secrets).
+- 全局钩子（`~/.grok/hooks/`）以你的用户权限运行；把它们当作 shell 脚本对待。
+- 项目钩子需要文件夹信任（`/hooks-trust` 或 `--trust`，与仓库本地 MCP/LSP 相同的闸门），以防恶意仓库的供应链攻击。
+- HTTP 钩子会发送会话数据；只使用可信端点。
+- `PostToolUse` 钩子决定模型在该工具调用中读到什么——它可以添加指令或彻底替换输出——因此要像信任 `PreToolUse` 闸门一样信任它。回滚区与转录保留真实输出，因此替换对你始终可见。
 
 ---
 
-## Troubleshooting
+## 最佳实践
 
-- **Hook not running?** Press `Ctrl+L` on non–VS Code family (or run `/hooks` anywhere) to see if it is loaded and matched.
-- **Project hooks ignored?** The folder may be untrusted. Run `/hooks-trust` (or relaunch with `--trust`).
-- **Script not found?** Check the path is relative to the `.json` file and executable (`chmod +x`).
-- **See errors?** Capture logs by launching with `RUST_LOG=debug GROK_LOG_FILE=/tmp/grok.log grok`, then check `/tmp/grok.log`.
+1. **保持钩子快速**：长时间运行的钩子会阻塞 UI。尽可能使用后台进程（`&`）或异步方式。
+2. **用显式 `deny` 拦截**：钩子在出错时按失败放行，因此崩溃的钩子不会拦截工具。要强制执行策略，你的钩子必须运行到完成并在 stdout 上发出 `{"decision":"deny","reason":"..."}`。务必在脚本内部处理错误，使其总能返回显式决定。
+3. **使用绝对路径或相对于钩子文件的路径**：JSON 文件旁 `bin/` 中的脚本便于移植。
+4. **用弹窗测试**：按 `Ctrl+L`（非 VS Code 家族）或运行 `/hooks`，在依赖钩子之前确认它们已加载并匹配。
+5. **对项目钩子做版本控制**：提交 `.grok/hooks/`（但绝不要提交密钥）。
+
+---
+
+## 故障排查
+
+- **钩子没有运行？** 在非 VS Code 家族终端上按 `Ctrl+L`（或在任意位置运行 `/hooks`），看它是否已加载并匹配。
+- **项目钩子被忽略？** 该文件夹可能不受信任。运行 `/hooks-trust`（或带 `--trust` 重新启动）。
+- **找不到脚本？** 检查路径是否相对于 `.json` 文件且可执行（`chmod +x`）。
+- **看到错误？** 以 `RUST_LOG=debug GROK_LOG_FILE=/tmp/grok.log grok` 启动来捕获日志，然后检查 `/tmp/grok.log`。
