@@ -817,7 +817,7 @@ async fn run_update_subcommand(
             // The atomic install protocol makes mid-download kills safe
             let status = cmd.status().await?;
             if !status.success() {
-                anyhow::bail!("grok update failed with {}", status);
+                anyhow::bail!("chaos update failed with {}", status);
             }
             Ok(None)
         }
@@ -2187,7 +2187,7 @@ async fn windows_replace_exe(src: &std::path::Path, dest: &std::path::Path) -> R
     rename_result.map_err(|e| {
         anyhow::anyhow!(
             "cannot rename locked executable {}: {e}\n\
-             Close all running grok sessions and retry.",
+             Close all running chaos sessions and retry.",
             dest.display(),
         )
     })?;
@@ -2615,12 +2615,12 @@ fn warn_if_other_grok_processes_running() {
             .collect();
         if !other_pids.is_empty() {
             eprintln!(
-                "  ⚠ Warning: {} other grok process(es) detected.",
+                "  ⚠ Warning: {} other chaos process(es) detected.",
                 other_pids.len()
             );
             eprintln!("    Processes running from the npm vendored binary path may be");
             eprintln!("    killed by macOS when npm replaces the package files.");
-            eprintln!("    Consider closing other grok sessions before updating.");
+            eprintln!("    Consider closing other chaos sessions before updating.");
             eprintln!();
         }
     }
@@ -2925,7 +2925,7 @@ async fn refresh_deployment_config() {
         Err(e) if e.is_auth_rejection() => tracing::debug!("managed config not applied: {e}"),
         Err(e) if e.is_retryable() => {
             tracing::debug!("managed config refresh failed: {e}");
-            eprintln!("  Couldn't apply managed configuration. Run `grok setup` to retry.");
+            eprintln!("  Couldn't apply managed configuration. Run `chaos setup` to retry.");
         }
         Err(e) => eprintln!("  Couldn't apply managed configuration. {e}"),
     }
