@@ -10,6 +10,12 @@
 # Codegraph local index (database, daemon socket/pid/log) — machine-local
 /.codegraph/
 
+# Images the TUI stages under the project's `.chaos` when you paste or attach one
+# — machine-local scratch, never repo content. Scoped to `uploads/` rather than
+# the whole directory so a future project-scoped `.chaos/` (agents, roles,
+# skills) can still be committed deliberately.
+/.chaos/uploads/
+
 # Windows-path leaked temp artifacts (accidental redirect targets)
 # The colon-looking char is U+F03A (PUA), produced by some Windows shell
 # quirk that replaced ':' when a Windows path became a filename.
