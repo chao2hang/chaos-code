@@ -116,6 +116,40 @@ jobs:
       - name: scan tracked files
         run: ./scripts/ci/secret-scan.sh
 
+  # The user guide, the reference docs and the tutorials are compiled into the
+  # binary (`pager/src/docs.rs`) and unpacked to `~/.chaos/docs/`, so all of it
+  # is user-visible text. `scripts/check-doc-l10n.py` has always been able to
+  # check it, but its default glob is `docs/user-guide/*.md` and nothing ever
+  # ran it against the rest -- so `docs/custom-hooks.md` and
+  # `docs/hooks-and-plugins.md` went unchecked, and two cross-document anchors
+  # rotted there for a whole translation round: the *link* lived in a file no
+  # check read, pointing at a heading a translation had renamed. This job is
+  # that missing reader. It uses only the worktree modes (no `--before`), since
+  # those are the ones that are meaningful on a single checkout; the
+  # `--before/--after` invariants are a translation-time tool for comparing
+  # adjacent commits.
+  docs-l10n:
+    name: docs localization
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: user guide, reference docs and tutorials
+        run: |
+          set -euo pipefail
+          glob='crates/codegen/xai-grok-pager/docs/**/*.md'
+          # No English prose left untranslated. This mode skips table rows on
+          # purpose; `--cells` is the other half.
+          python3 scripts/check-doc-l10n.py --english --glob "$glob"
+          # No upstream-only `grok <cmd>` command name or `~/.grok` config path.
+          python3 scripts/check-doc-l10n.py --fork-names --strict --glob "$glob"
+          # Every `](file.md#anchor)` resolves. Translating a heading renames its
+          # anchor, so an inbound link has to be rewritten in the same commit --
+          # this is what catches it when it is not.
+          python3 scripts/check-doc-l10n.py --links --glob "$glob"
+          # Every table cell is either translated or a decided literal.
+          python3 scripts/check-doc-l10n.py --cells --strict --glob "$glob"
+
   npm-scripts:
     name: npm package scripts
     runs-on: ubuntu-latest
@@ -173,3 +207,7 @@ jobs:
           grep -q 'name: Release' .github/workflows/release.yml
           grep -q 'xai-grok-pager-bin' .github/workflows/release.yml
           grep -q 'chaos-code' crates/codegen/xai-grok-pager/npm/chaos/package.json
+          # The docs-localization job is the only reader of the reference docs
+          # and tutorials; losing it would be silent, which is the same reason
+          # this step exists at all.
+          grep -q 'docs-l10n' .github/workflows/ci.yml
