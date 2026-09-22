@@ -488,7 +488,24 @@ fn dropping_the_guard_silences_the_heartbeat_before_anyone_else_can_hold_the_loc
         .truncate(true)
         .open(&lock_path)
         .unwrap();
-    second.try_lock_exclusive().unwrap();
+    // Another test's `Command::spawn` can fork between our flock and our close, and the child holds the
+    // inherited dup (flock lives on the shared open file description) until it execs and CLOEXEC fires.
+    // That holder is transient; a leaked heartbeat fd or a wedged child is not, and still fails here.
+    let deadline = std::time::Instant::now() + StdDuration::from_secs(5);
+    loop {
+        match second.try_lock_exclusive() {
+            Ok(()) => break,
+            Err(e) => {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "could not re-acquire {} within 5s ({e}): a heartbeat fd outlived the guard, or a \
+                     child still holds the dup it inherited before exec",
+                    lock_path.display()
+                );
+                std::thread::sleep(StdDuration::from_millis(10));
+            }
+        }
+    }
     write!(second, "sentinel").unwrap();
     second.sync_all().unwrap();
     std::thread::sleep(StdDuration::from_millis(30));
