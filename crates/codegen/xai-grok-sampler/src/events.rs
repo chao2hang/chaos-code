@@ -287,6 +287,7 @@ impl std::str::FromStr for SamplingErrorKind {
             "rate_limited" => Self::RateLimited,
             "empty_response" => Self::EmptyResponse,
             "max_tokens_truncation" => Self::MaxTokensTruncation,
+            "malformed_tool_call" => Self::MalformedToolCall,
             "doom_loop_detected" => Self::DoomLoopDetected,
             _ => return Err(UnknownSamplingErrorKind),
         })
@@ -573,6 +574,7 @@ mod tests {
             RateLimited,
             EmptyResponse,
             MaxTokensTruncation,
+            MalformedToolCall,
             DoomLoopDetected,
         ];
         for kind in all {
@@ -581,7 +583,7 @@ mod tests {
             // Only variants listed in `all` are round-trip-checked; the compiler cannot force those two edits
             match kind {
                 Auth | Http | Api | Serialization | IdleTimeout | RateLimited | EmptyResponse
-                | MaxTokensTruncation | DoomLoopDetected => {}
+                | MaxTokensTruncation | MalformedToolCall | DoomLoopDetected => {}
             }
             assert_eq!(kind.as_str().parse(), Ok(kind));
         }

@@ -3465,6 +3465,7 @@ mod tests {
             x_grok_req_id: None,
             x_grok_session_id: None,
             x_grok_turn_idx: None,
+            x_grok_transient_retry: None,
             x_grok_agent_id: None,
             x_grok_deployment_id: None,
             x_grok_user_id: None,

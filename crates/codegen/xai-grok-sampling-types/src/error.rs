@@ -1074,6 +1074,11 @@ mod tests {
     fn provider_kind_for_domestic_bodies_drives_retryability() {
         use crate::provider_error::ProviderErrorKind as K;
 
+        // Every case below drives classification from the RAW BODY TEXT, because that is all
+        // `provider_kind()` (and therefore `is_retryable()`) reads. The structured `error_code` /
+        // `code` slots stay `None` on purpose: production fills them from the envelope, but no
+        // assertion here depends on them. Cases that are about a code slot set it explicitly.
+
         // Billing body inside a 402 → not retryable (was retryable before).
         let billing = SamplingError::Api {
             status: StatusCode::PAYMENT_REQUIRED,
@@ -1081,6 +1086,7 @@ mod tests {
             model_metadata: None,
             retry_after_secs: None,
             should_retry: None,
+            error_code: None,
         };
         assert_eq!(billing.provider_kind(), Some(K::Billing));
         assert!(!billing.is_retryable());
@@ -1092,6 +1098,7 @@ mod tests {
             model_metadata: None,
             retry_after_secs: None,
             should_retry: None,
+            error_code: None,
         };
         assert_eq!(auth.provider_kind(), Some(K::Auth));
         assert!(!auth.is_retryable());
@@ -1103,6 +1110,7 @@ mod tests {
             model_metadata: None,
             retry_after_secs: None,
             should_retry: None,
+            error_code: None,
         };
         assert_eq!(rate.provider_kind(), Some(K::RateLimit));
         assert!(rate.is_retryable());
@@ -1115,6 +1123,7 @@ mod tests {
             model_metadata: None,
             retry_after_secs: None,
             should_retry: None,
+            error_code: None,
         };
         assert_eq!(unknown.provider_kind(), Some(K::Transient));
         assert!(unknown.is_retryable());
@@ -1127,6 +1136,7 @@ mod tests {
             model_metadata: None,
             retry_after_secs: None,
             should_retry: None,
+            error_code: None,
         };
         assert_eq!(server_billing.provider_kind(), Some(K::Billing));
         assert!(!server_billing.is_retryable());
@@ -1136,6 +1146,7 @@ mod tests {
             error_type: "rate_limit_error".into(),
             message: r#"{"error":{"type":"rate_limit_error","message":"too many requests"}}"#
                 .into(),
+            code: None,
         };
         assert_eq!(stream_rate.provider_kind(), Some(K::RateLimit));
         assert!(stream_rate.is_retryable());
@@ -1144,6 +1155,7 @@ mod tests {
         let stream_billing = SamplingError::StreamError {
             error_type: "insufficient_balance_error".into(),
             message: r#"{"error":{"type":"insufficient_balance_error","message":"Insufficient Balance"}}"#.into(),
+            code: None,
         };
         assert_eq!(stream_billing.provider_kind(), Some(K::Billing));
         assert!(!stream_billing.is_retryable());

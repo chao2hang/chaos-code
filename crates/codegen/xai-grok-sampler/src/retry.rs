@@ -586,6 +586,7 @@ mod tests {
             model_metadata: None,
             retry_after_secs: Some(5),
             should_retry: None,
+            error_code: None,
         };
         match classify_error(
             &err,

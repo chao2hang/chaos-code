@@ -744,6 +744,7 @@ mod tests {
             None,
             rid(),
             Duration::from_secs(60),
+            false,
         ))
         .await;
 
@@ -785,6 +786,7 @@ mod tests {
             None,
             rid(),
             Duration::from_secs(60),
+            false,
         ))
         .await;
 
