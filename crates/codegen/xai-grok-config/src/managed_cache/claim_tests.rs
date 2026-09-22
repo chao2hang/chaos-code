@@ -69,6 +69,9 @@ fn claim_not_consulted_on_sidecar_read_blip() {
 /// Keyed build: a garbage claim alone (no fail-closed) does not trip the gate or force a refetch.
 #[test]
 fn garbage_claim_without_fail_closed_is_not_imposing() {
+    // The claim verdict only means what it says while verification is armed; a disarming sibling test
+    // would otherwise flip the process-global out from under it.
+    let _switch = crate::signed_policy::tests::remote_disarm_guard();
     assert!(crate::signed_policy::verification_active());
     let dir = tempfile::tempdir().unwrap();
     let home = dir.path();

@@ -697,6 +697,7 @@ fn signed_cache_compromised_with_keys(
 }
 
 // Tests live in a sibling file (they dwarf the module) but form a child module, for private access
+// `pub(crate)` so sibling test modules (`managed_cache::tests`) can hold the same kill-switch lock.
 #[cfg(test)]
 #[path = "signed_policy/tests.rs"]
-mod tests;
+pub(crate) mod tests;

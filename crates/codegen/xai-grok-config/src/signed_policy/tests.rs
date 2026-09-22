@@ -485,6 +485,8 @@ fn sidecar_round_trips_on_disk() {
 
 #[test]
 fn verification_armed_with_embedded_key() {
+    // Hold the kill-switch lock: `verification_active()` reads a process-global that a disarming sibling test flips.
+    let _switch = remote_disarm_guard();
     // Armed: prod v1 key compiled in.
     assert!(verification_active());
     assert_eq!(EMBEDDED_DEPLOYMENT_CONFIG_PUBKEYS.len(), 1);
@@ -506,6 +508,9 @@ fn verification_armed_with_embedded_key() {
 /// An empty key set turns verification off; an incident disarm looks the same.
 #[test]
 fn with_dark_forces_keyless_verification_inactive() {
+    // Held across the whole body: the lock is what makes the inner `!verification_active()` mean
+    // "with_dark did it" rather than "someone else disarmed the global".
+    let _switch = remote_disarm_guard();
     test_seam::with_dark(|| {
         assert!(
             !verification_active(),
@@ -520,6 +525,8 @@ fn with_dark_forces_keyless_verification_inactive() {
 /// Armed: a policy with a missing or untrusted sidecar is flagged; an empty dir is not.
 #[test]
 fn cloud_cache_signature_invalid_when_armed() {
+    // Hold the kill-switch lock: every verdict below is gated on the process-global armed state.
+    let _switch = remote_disarm_guard();
     let dir = tempfile::tempdir().unwrap();
     assert!(verification_active());
     assert!(!cloud_cache_signature_invalid(
@@ -905,6 +912,8 @@ fn signed_cache_compromised_inactive_when_dark() {
 /// Armed: a foreign key reads NoAuthenticSidecar (never Inactive).
 #[test]
 fn signed_cache_compromised_is_no_authentic_sidecar_when_armed() {
+    // Hold the kill-switch lock: a foreign key must read NoAuthenticSidecar only while actually armed.
+    let _switch = remote_disarm_guard();
     let dir = tempfile::tempdir().unwrap();
     let home = dir.path();
     let (kp, _) = test_keypair();
@@ -1047,11 +1056,21 @@ fn rotation_selects_the_trusted_key_by_signed_key_id() {
 #[path = "claim_tests.rs"]
 mod claim_tests;
 
-/// Serialize tests that mutate the process-global kill-switch and key seam.
-fn with_remote_disarm_lock<R>(f: impl FnOnce() -> R) -> R {
-    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+/// Serialize tests that read or write the process-global kill-switch and key seam.
+/// `REMOTE_VERIFICATION_DISARMED` is one `AtomicBool` for the whole test binary, so a reader asserting
+/// a verdict that depends on *being armed* alongside a disarming writer would read the writer's
+/// transient state instead of its own precondition. Every writer, and every reader whose assertion
+/// would invert under a disarm, must hold this lock.
+pub(crate) fn with_remote_disarm_lock<R>(f: impl FnOnce() -> R) -> R {
+    let _g = remote_disarm_guard();
     f()
+}
+
+/// [`with_remote_disarm_lock`]'s lock as a guard, for tests whose body is too long to wrap in a closure.
+/// Sync-only: the guard is `!Send`, so it must not be held across an `await`.
+pub(crate) fn remote_disarm_guard() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 #[test]

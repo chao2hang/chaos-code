@@ -1335,6 +1335,9 @@ fn bump_rollback_floor_is_inert_when_dark() {
 
 #[test]
 fn bump_rollback_floor_raises_when_verification_active() {
+    // "raises when verification is active" is only meaningful while armed, so hold off the sibling
+    // test that disarms the process-global kill switch mid-assert.
+    let _switch = crate::signed_policy::tests::remote_disarm_guard();
     let dir = tempfile::tempdir().unwrap();
     let home = dir.path();
     mark_managed_config_synced_at(
