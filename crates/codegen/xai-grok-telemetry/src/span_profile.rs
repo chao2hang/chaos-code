@@ -212,7 +212,15 @@ pub(crate) mod test_support {
     use tracing_subscriber::layer::SubscriberExt as _;
 
     /// Run `f` under a fresh profile layer and return its folded output.
+    ///
+    /// Takes `startup`'s test lock: `InstrumentationTimer` falls back to the process-global
+    /// `current_phase_span()` when its thread's parent stack is empty, and a phase span created
+    /// under a concurrently running startup test's subscriber cannot be cloned into this layer's
+    /// registry.
     pub(crate) fn folded_with_layer(f: impl FnOnce()) -> String {
+        let _serial = crate::startup::SERIAL
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         let profile: &'static SpanProfile = Box::leak(Box::new(SpanProfile {
             output: std::path::PathBuf::from("/tmp"),
             label: "test",

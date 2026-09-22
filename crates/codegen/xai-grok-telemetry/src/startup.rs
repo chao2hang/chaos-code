@@ -734,14 +734,21 @@ pub fn format_duration(d: Duration) -> String {
     }
 }
 
+/// Serializes every test that drives the process-wide startup statics (`CURRENT`/`DONE`/`SUBPHASES`
+/// and the redirected unified log): run in parallel they race, and each holder calls
+/// `reset_for_tests` first.
+///
+/// Crate-visible because the race is not confined to this module: a live phase span is a
+/// `tracing::Span` owned by *this* test's thread-local subscriber, while `span_profile`'s harness
+/// builds `InstrumentationTimer`s whose parent lookup falls back to `current_phase_span()`. Taking
+/// that span into another registry panics with "tried to clone Id(N), but no span exists with that
+/// ID", so the profile harness takes this same lock.
+#[cfg(test)]
+pub(crate) static SERIAL: Mutex<()> = Mutex::new(());
+
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // Serializes the tests that drive the process-wide startup statics (`CURRENT`/`DONE`/`SUBPHASES` and the redirected unified log)
-    // Run in parallel they race
-    // Each holder also calls `reset_for_tests` first
-    static SERIAL: Mutex<()> = Mutex::new(());
 
     mod span_capture {
         use std::collections::HashMap;
