@@ -376,7 +376,8 @@ mod tests {
 
     #[test]
     fn tokenize_uses_baked_product_default_model() {
-        assert_eq!(crate::models::default_model(), "grok-4.6");
+        // Chaos BYOK bakes `chaos-default` (`crates/codegen/xai-grok-models/default_models.json`).
+        assert_eq!(crate::models::default_model(), "chaos-default");
     }
 
     #[test]

@@ -1154,11 +1154,14 @@ fn sampling_config_uses_fallback_when_no_model_api_key() {
 #[test]
 fn sampling_config_scopes_no_inline_citations_include() {
     for (supports_search, backend, base_url, expected) in [
+        // Chaos blanks `PROD_CLI_CHAT_PROXY_BASE_URL` (no first-party proxy), so
+        // the production endpoint is not recognized as xAI-hosted and the
+        // no-inline-citations include is never added for it.
         (
             true,
             ApiBackend::Responses,
             crate::env::PROD_CLI_CHAT_PROXY_BASE_URL,
-            true,
+            false,
         ),
         (true, ApiBackend::Responses, "https://api.x.ai/v1", true),
         (false, ApiBackend::Responses, "https://api.x.ai/v1", false),

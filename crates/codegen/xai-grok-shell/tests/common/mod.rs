@@ -325,10 +325,14 @@ pub async fn start_seeded_mock(
         }
     });
     std::fs::write(home.join("auth.json"), auth.to_string()).expect("write auth.json");
+    // Chaos BYOK defaults `features.remote_fetch` off, which would make every startup fetch a no-op
+    // and leave these tests asserting against a decline they never meant to exercise. Each of these
+    // binaries owns its process, so the isolated home is the user layer this gate walks, and an
+    // explicit opt-in here restores the upstream fetch path they are written against.
     std::fs::write(
         home.join("config.toml"),
         format!(
-            "[endpoints]\ncli_chat_proxy_base_url = \"{}\"\n",
+            "[endpoints]\ncli_chat_proxy_base_url = \"{}\"\n\n[features]\nremote_fetch = true\n",
             server.url()
         ),
     )

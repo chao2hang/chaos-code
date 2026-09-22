@@ -3422,21 +3422,22 @@ async fn search_index_honors_the_session_search_feature() {
     );
 }
 /// Reclaiming is the one irreversible half of the deferred work, and the six hour throttle then hides the run that could have honored a remote veto.
+/// Chaos BYOK ships with remote fetch off, so no answer is pending and the guard has nothing to wait for: the reclaim must not be suppressed.
 #[tokio::test]
 #[serial_test::serial]
-async fn auto_gc_declines_until_the_remote_answer_settles() {
+async fn auto_gc_runs_because_no_remote_answer_is_pending() {
     let (_home, _env) = search_index_env();
     let agent = build_agent_with_auth(crate::auth::GrokAuth::test_default());
     assert!(
-        !agent.remote_settings_settled(),
-        "precondition: remote fetch is on and no settings have arrived"
+        agent.remote_settings_settled(),
+        "remote fetch is off, so this host is settled without any settings arriving"
     );
     agent.spawn_auto_worktree_gc();
     agent.decide_search_index();
     assert_eq!(
         agent.auto_gc_spawn_count.get(),
-        0,
-        "a host that never reaches the server must not reclaim under the default policy"
+        1,
+        "a settled answer must not leave the guard waiting forever"
     );
     assert!(
         matches!(agent.search_index(), IndexDecision::On(_)),
@@ -3447,8 +3448,8 @@ async fn auto_gc_declines_until_the_remote_answer_settles() {
     agent.spawn_auto_worktree_gc();
     assert_eq!(
         agent.auto_gc_spawn_count.get(),
-        1,
-        "once the server has answered it reclaims, or the guard would just never run"
+        2,
+        "settings arriving later must not re-open a question that was already settled"
     );
 }
 #[tokio::test]
@@ -3481,14 +3482,15 @@ async fn search_before_the_decision_asks_the_caller_to_retry() {
 }
 /// A leader boots with no remote settings.
 /// If the first reader resolved the feature, the registered default would latch before the server could answer.
+/// Chaos BYOK: remote fetch is off, so the answer is settled at boot; the invariant under test is that *reading* still must not decide.
 #[tokio::test]
 #[serial_test::serial]
 async fn read_before_the_remote_settings_land_does_not_decide() {
     let (_home, _env) = search_index_env();
     let agent = build_agent_with_auth(crate::auth::GrokAuth::test_default());
     assert!(
-        !agent.remote_settings_settled(),
-        "precondition: remote fetch is on and no settings have arrived"
+        agent.remote_settings_settled(),
+        "remote fetch is off, so this host is settled without any settings arriving"
     );
     assert!(
         matches!(agent.search_index(), IndexDecision::Pending),
@@ -3532,9 +3534,13 @@ async fn exhausted_fetch_decides_on_the_local_layers() {
         None,
     )
     .expect("valid test config");
+    // Chaos BYOK ships with remote fetch off, so no answer is pending and this
+    // host is settled from the start — the "wait for the fetch" path is unreachable
+    // here, and `maybe_fetch_post_auth_settings` must go straight to the local
+    // layers instead of returning early on the gate.
     assert!(
-        !agent.remote_settings_settled(),
-        "precondition: remote fetch is on and no settings have arrived"
+        agent.remote_settings_settled(),
+        "precondition: remote fetch is off, so nothing is pending"
     );
     agent.maybe_fetch_post_auth_settings().await;
     assert!(
@@ -5474,11 +5480,14 @@ async fn access_gate_does_not_leak_verdict_across_identities() {
         "identity B must not inherit identity A's denied allow_access verdict",
     );
 }
-/// First-party xAI auth with `writeback_enabled` settings upgrades storage to Writeback.
-/// The settings arrival also emits `x.ai/settings/update` and opens the external-OTEL gate.
+/// Chaos BYOK: remote fetch defaults off, so the post-auth settings step must not touch the
+/// configured proxy even when it advertises `writeback_enabled` — no storage upgrade to
+/// Writeback, no `x.ai/settings/update` push, and no gate opened by this call.
+/// The OTEL gate is resolved at startup instead (`otel_gate::should_open_at_startup` opens it
+/// for the `RemoteFetchDisabled` channel), which is why this call leaves a suppressed gate alone.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[serial_test::serial]
-async fn post_auth_settings_xai_upgrades_writeback_emits_and_opens_gate() {
+async fn post_auth_settings_declined_by_default_keeps_local_storage() {
     use crate::agent::config::AgentMode;
     use crate::auth::{GrokAuth, XAI_OAUTH2_ISSUER};
     let _restore = RestoreOtelGate;
@@ -5505,21 +5514,27 @@ async fn post_auth_settings_xai_upgrades_writeback_emits_and_opens_gate() {
     xai_grok_telemetry::external::suppress_external_otel_until_settings();
     assert!(!xai_grok_telemetry::external::is_settings_gate_open());
     agent.maybe_fetch_post_auth_settings().await;
+    assert!(
+        agent.cfg.borrow().remote_settings.is_none(),
+        "the egress gate is off, so the advertised writeback_enabled policy was never fetched"
+    );
     assert_eq!(
         agent.storage_mode(),
-        StorageMode::Writeback,
-        "xai auth + writeback_enabled settings must upgrade storage to Writeback"
+        StorageMode::Local,
+        "storage must stay Local: a policy this process never fetched cannot upgrade it"
     );
     assert!(
-        xai_grok_telemetry::external::is_settings_gate_open(),
-        "a settings response must open the external-OTEL gate"
+        !xai_grok_telemetry::external::is_settings_gate_open(),
+        "the gate is resolved at startup, not by a fetch that never started"
     );
     assert!(
-        drained_settings_update(&mut rx),
-        "settings arrival must push x.ai/settings/update to clients"
+        !drained_settings_update(&mut rx),
+        "no settings arrived, so there is nothing to push to clients"
     );
 }
-/// BYOK auth must not be upgraded to `Writeback` even when the server advertises it; the push and gate still fire.
+/// Requires a live `/v1/settings` answer, which Chaos BYOK never asks for: `maybe_fetch_post_auth_settings`
+/// returns as soon as the remote-fetch gate is off, so the BYOK-keeps-Local-but-still-emits branch is unreachable here.
+#[ignore = "fork: asserts an upstream xAI settings response (writeback push) that Chaos removes by design (remote fetch defaults off, no grok.com/OIDC login); rewrite against Chaos behaviour or delete; review 2026-10"]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[serial_test::serial]
 async fn post_auth_settings_non_xai_keeps_local_but_still_emits() {
@@ -5559,6 +5574,10 @@ async fn post_auth_settings_non_xai_keeps_local_but_still_emits() {
         "settings arrival must push x.ai/settings/update for non-xai auth too"
     );
 }
+/// Requires an actually-exhausted `/v1/settings` fetch, which Chaos BYOK never starts: the gate is off, so
+/// `maybe_fetch_post_auth_settings` returns without contacting the proxy and the "exhausted fetch is a
+/// definitive answer" branch is unreachable here. The process-wide gate is opened at startup instead.
+#[ignore = "fork: asserts an upstream xAI settings fetch outcome (exhausted fetch opens the gate onto local policy) that Chaos removes by design (remote fetch defaults off, no grok.com/OIDC login); rewrite against Chaos behaviour or delete; review 2026-10"]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[serial_test::serial]
 async fn post_auth_settings_failure_resolves_gate_onto_local_policy() {
@@ -5614,6 +5633,9 @@ async fn same_credential_refresh_does_not_flap_resolved_gate() {
 }
 /// A `/settings` 401 from a token that rotated mid-flight must self-heal: refresh once and, if the token changed, re-fetch with it.
 /// Without the re-fetch the stale 401 fails OPEN (no remote policy).
+/// Requires that first `/settings` call to happen at all: Chaos BYOK has the remote-fetch gate off, so
+/// `refresh_remote_settings` never reaches the proxy and no 401 can arrive to be healed.
+#[ignore = "fork: asserts an upstream xAI `/settings` 401 self-heal that Chaos removes by design (remote fetch defaults off, no grok.com/OIDC login); rewrite against Chaos behaviour or delete; review 2026-10"]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[serial_test::serial]
 async fn settings_self_heal_refetches_after_token_rotation() {

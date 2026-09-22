@@ -248,14 +248,23 @@ mod tests {
 
     #[test]
     fn remote_fetch_env_overlay_is_ignored_in_both_directions() {
+        // overlay=true cannot enable the fetch against a user-level stay-off...
         let mut layers = empty_layers();
         layers.user = features_remote_fetch(false);
         layers.env_overlay = Some(features_remote_fetch(true));
         assert!(!remote_fetch_enabled_from_layers(&layers));
 
+        // ...and overlay=false cannot revoke a user-level opt-in. The fork
+        // default is off (`remote_fetch_defaults_to_false_when_absent`), so the
+        // overlay-free direction that proves the gate is an egress gate is the
+        // one that must *stay* on.
         let mut layers = empty_layers();
+        layers.user = features_remote_fetch(true);
         layers.env_overlay = Some(features_remote_fetch(false));
-        assert!(remote_fetch_enabled_from_layers(&layers));
+        assert!(
+            remote_fetch_enabled_from_layers(&layers),
+            "the GROK_CONFIG overlay must be excluded from the walk in both directions"
+        );
     }
 
     #[test]

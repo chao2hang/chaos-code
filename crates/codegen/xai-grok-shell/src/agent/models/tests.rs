@@ -204,8 +204,11 @@ async fn disk_cache_reload_applies_without_fetching() {
     );
 }
 
+/// Chaos BYOK ships with remote fetch off, so the watcher must decline the
+/// re-fetch: the endpoint stays untouched and the catalog never claims to be
+/// real. (Upstream's version of this test asserts the opt-in fetch.)
 #[tokio::test]
-async fn auth_refresh_watcher_refetches_on_notify() {
+async fn auth_refresh_watcher_declines_while_remote_fetch_is_disabled() {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     struct NotifyEndpoint {
@@ -246,17 +249,22 @@ async fn auth_refresh_watcher_refetches_on_notify() {
     mgr.start_auth_refresh_watcher(notify.clone());
     notify.notify_one();
 
-    let mut updated = false;
-    for _ in 0..200 {
-        if mgr.has_fetched_real_catalog() {
-            updated = true;
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-    }
-    assert!(updated, "watcher did not re-fetch the catalog on notify");
-    assert!(mgr.models().contains_key("grok-4"));
-    assert!(calls.load(Ordering::SeqCst) >= 1);
+    // The watcher checks the gate synchronously once notified, so a short wait
+    // is enough to prove the skip; anything slower would be a flake, not a fetch.
+    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        0,
+        "the remote_fetch gate must keep the watcher off the wire",
+    );
+    assert!(
+        !mgr.has_fetched_real_catalog(),
+        "a skipped refresh must not mark a real catalog",
+    );
+    assert!(
+        !mgr.models().contains_key("grok-4"),
+        "a skipped refresh must not install the endpoint's catalog",
+    );
 }
 
 #[tokio::test(start_paused = true)]
@@ -1253,8 +1261,9 @@ async fn sign_out_clears_catalog_rebuilds_bundled_without_fetching() {
         "sign-out must reset the user-pick latch",
     );
     assert!(
-        !mgr.models().is_empty(),
-        "sign-out must rebuild the bundled default catalog",
+        mgr.models().is_empty(),
+        "Chaos BYOK bundles no catalog, so sign-out leaves an empty one; found: {:?}",
+        mgr.models().keys().collect::<Vec<_>>(),
     );
     assert_eq!(
         *mgr.inner.catalog_progress.borrow(),
@@ -1264,7 +1273,7 @@ async fn sign_out_clears_catalog_rebuilds_bundled_without_fetching() {
 }
 
 #[test]
-fn from_config_without_prefetch_produces_usable_catalog() {
+fn from_config_without_prefetch_bundles_no_catalog_and_keeps_the_baked_default() {
     let tmp = tempfile::TempDir::new().unwrap();
     let auth_manager = Arc::new(AuthManager::new(tmp.path(), GrokComConfig::default()));
     let cfg = config::Config::default();
@@ -1273,16 +1282,18 @@ fn from_config_without_prefetch_produces_usable_catalog() {
 
     let cat = mgr.inner.catalog.read();
     let catalog = &cat.models;
+    // Chaos BYOK bundles no model catalog (`bundled_default_models_catalog_is_empty`):
+    // a zero-network boot has nothing to select until the user's own `[models]`
+    // entries arrive, and it must not pretend otherwise.
     assert!(
-        !catalog.is_empty(),
-        "zero-network boot must produce at least one model in the internal catalog"
-    );
-    let default = mgr.current_model_id();
-    assert!(
-        catalog.contains_key(default.0.as_ref()),
-        "default model {:?} not in internal catalog: {:?}",
-        default,
+        catalog.is_empty(),
+        "the bundled catalog is empty by design, found: {:?}",
         catalog.keys().collect::<Vec<_>>()
+    );
+    assert_eq!(
+        mgr.current_model_id().0.as_ref(),
+        crate::models::default_model(),
+        "the boot still names the baked default model id"
     );
     drop(cat);
     assert!(
