@@ -87,7 +87,7 @@ pub static USER_GUIDE: &[Doc] = &[
     ),
     guide!(
         "09-plugins.md",
-        "插件与市场",
+        "插件",
         "插件包的安装、管理与创建"
     ),
     guide!(

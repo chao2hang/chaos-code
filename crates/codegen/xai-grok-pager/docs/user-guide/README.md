@@ -30,13 +30,13 @@
 
 | # | 文档 | 说明 |
 |---|------|------|
-| 6 | [Theming and Appearance](06-theming.md) | 主题、`/theme`、`pager.toml` |
+| 6 | [主题与外观](06-theming.md) | 主题、`/theme`、`pager.toml` |
 | 7 | [MCP 服务器](07-mcp-servers.md) | 通过 MCP 接入外部工具 |
 | 8 | [技能](08-skills.md) | SKILL.md 可复用提示包 |
 | 9 | [插件](09-plugins.md) | 打包 skills/commands/agents/hooks/MCP |
 | 10 | [钩子](10-hooks.md) | 工具前后生命周期脚本 |
 | 11 | [自定义模型](11-custom-models.md) | BYOK、Ollama、OpenAI 兼容端点 |
-| 12 | [Project Rules (AGENTS.md)](12-project-rules.md) | 目录级指令与优先级 |
+| 12 | [项目规则 (AGENTS.md)](12-project-rules.md) | 目录级指令与优先级 |
 | 13 | [记忆](13-memory.md) | 跨会话记忆 |
 
 ---
@@ -47,14 +47,14 @@
 
 | # | 文档 | 说明 |
 |---|------|------|
-| 14 | [Headless Mode and Scripting](14-headless-mode.md) | `chaos -p`、输出格式、CI |
-| 15 | [Agent Mode and IDE Integration](15-agent-mode.md) | ACP、WebSocket、SDK |
-| 16 | [Subagents and Personas](16-subagents.md) | 子代理与能力模式 |
+| 14 | [无头模式与脚本](14-headless-mode.md) | `chaos -p`、输出格式、CI |
+| 15 | [代理模式（ACP）与编辑器集成](15-agent-mode.md) | ACP、WebSocket、SDK 三种集成 |
+| 16 | [子代理与人设](16-subagents.md) | 子代理与能力模式 |
 | 17 | [会话管理](17-sessions.md) | 会话保存/恢复/压缩 |
 | 18 | [沙箱模式](18-sandbox.md) | 沙箱配置 |
 | 19 | [计划模式](19-plan-mode.md) | 计划模式 |
-| 20 | [Background Tasks and Monitoring](20-background-tasks.md) | 后台任务与 `monitor` |
-| 21 | [Terminal Support and Troubleshooting](21-terminal-support.md) | tmux、SSH、剪贴板 |
-| 22 | [Permissions and Safety Controls](22-permissions-and-safety.md) | 权限与安全 |
+| 20 | [后台任务与监控](20-background-tasks.md) | 后台任务与 `monitor` |
+| 21 | [终端支持与故障排查](21-terminal-support.md) | tmux、SSH、剪贴板 |
+| 22 | [权限与安全](22-permissions-and-safety.md) | 权限与安全 |
 | 23 | [代理看板](23-dashboard.md) | 本地会话总览 |
-| 24 | [Monitoring Usage (External OpenTelemetry)](24-monitoring-usage.md) | 外部 OTEL 导出 |
+| 24 | [用量监视（外部 OpenTelemetry）](24-monitoring-usage.md) | 外部 OTEL 导出 |

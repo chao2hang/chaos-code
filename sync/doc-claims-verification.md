@@ -427,3 +427,47 @@ WORKTREE` 立刻从 0 漂移变成 1 条：
 这么留下来的（第 16 章自己那条也就成了这 32 条中的一条，试改后已回退）。全库重写那一步
 会**整体**改动 `links` 集合，那批差异要在收尾报告里按「有意改锚点」逐条说明，不能当成
 漂移。
+
+## 十三、第 3 章《键盘快捷键》的核对（2026-09-22）
+
+### 13.1 一处上游写错名的 UI 文案（已改）
+
+上游第 3 章的表格把命令面板里的一条写成 `Edit Prompt in External Editor`。这个字面量
+在**全仓库不存在**——`grep -rn "Edit Prompt in External Editor" crates/` 无结果。真正的那
+条是 `xai-grok-pager/src/views/modal.rs:477-481`：
+
+```rust
+        PaletteEntry {
+            label: "在外部编辑器中编辑提示".into(),
+            shortcut: "Ctrl+G".into(),
+            command: PaletteCommand::EditPromptExternal,
+        },
+```
+
+而且 `shortcut` 是**跟着模式变的**：非极简模式下 `views/modal.rs:593-598` 会把它改写成
+`/edit-prompt`，极简模式下才显示 `Ctrl+G`：
+
+```rust
+    if !screen_mode.is_minimal()
+        && let Some(entry) = entries
+            .iter_mut()
+            .find(|entry| matches!(entry.command, PaletteCommand::EditPromptExternal))
+    {
+        entry.shortcut = "/edit-prompt".into();
+    }
+```
+
+所以正确的说法是「在外部编辑器中编辑提示」；普通模式下等价于 `/edit-prompt`，极简模式
+下按 `Ctrl+G`。已改两处：第 3 章 `Ctrl+G` 表行、第 4 章「在外部编辑器中编辑提示」条目行。
+
+注意这一条**不是**翻译引入的：原文照抄的是上游的错误名字。因为它是行内字面量、受
+`inline` 不变式保护，改成正确的中文名会留下一条 `note:`——第 4 章那条新增字面量
+`['/edit-prompt']` 就是它的代价，已在 `--english --cells` 与漂移检查里核对为「容忍的新增」。
+
+### 13.2 核对为真的 UI 文案（照写）
+
+| 第 3 章里的说法 | 源码出处 |
+| --- | --- |
+| `Press {cancel_key} to cancel the turn` | `app/agent_view/prompt.rs:823` |
+| `press again to clear` 一类二次确认 | `app/app_view.rs:482-491`（`PendingAction::label` 拼串） |
+| `Space:prompt` 提示（Tab 聚焦回滚区） | 与 `pty_e2e/tab_focuses_scrollback_in_vim_and_default_modes.rs` 断言一致 |

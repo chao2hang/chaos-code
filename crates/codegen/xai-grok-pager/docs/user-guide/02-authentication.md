@@ -1,4 +1,4 @@
-# Authentication（Chaos）
+# 认证
 
 > **Chaos 分支说明：** 本产品**不使用** Grok / xAI 浏览器登录、OIDC 或订阅门墙。
 > 模型、接口地址与密钥均由用户在配置文件中自带（BYOK）。完整示例见仓库根目录
