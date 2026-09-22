@@ -24,8 +24,8 @@ fn title_key(s: &str) -> String {
 /// Debug formatting: the arg is arbitrary user text.
 pub(crate) fn title_miss_hint(arg: &str) -> String {
     format!(
-        "no session id or title matched {arg:?} for this directory; \
-         try `grok sessions search {arg:?}`"
+        "本目录下没有匹配 {arg:?} 的会话 ID 或标题；可运行 \
+         `chaos sessions search {arg:?}` 查找"
     )
 }
 
@@ -70,8 +70,8 @@ pub(crate) fn select_by_title<'a>(
                 .collect::<Vec<_>>()
                 .join("\n");
             anyhow::bail!(
-                "Multiple sessions match title {:?}:\n{listing}\n\
-                 Resume by session id instead: chaos --resume <session-id>",
+                "有多个会话都匹配标题 {:?}：\n{listing}\n\
+                 请改用会话 ID 恢复：chaos --resume <session-id>",
                 arg.trim()
             );
         }
@@ -148,7 +148,7 @@ pub(crate) fn worktree_resume_failure_message(
     local_miss_target: Option<&str>,
     detail: &str,
 ) -> String {
-    let msg = format!("couldn't resume worktree session: {detail}");
+    let msg = format!("恢复 worktree 会话失败：{detail}");
     match local_miss_target {
         Some(target) => format!("{msg}; {}", title_miss_hint(target)),
         None => msg,

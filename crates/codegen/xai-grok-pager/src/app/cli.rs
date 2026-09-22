@@ -331,13 +331,13 @@ impl AgentArgs {
                 Ok(canonical) if canonical.is_dir() => Some(canonical),
                 Ok(_) => {
                     eprintln!(
-                        "grok: --plugin-dir {}: not a directory; skipping",
+                        "chaos: --plugin-dir {}: not a directory; skipping",
                         p.display()
                     );
                     None
                 }
                 Err(e) => {
-                    eprintln!("grok: --plugin-dir {}: {e}; skipping", p.display());
+                    eprintln!("chaos: --plugin-dir {}: {e}; skipping", p.display());
                     None
                 }
             })
@@ -1071,21 +1071,21 @@ mod tests {
     #[test]
     fn version_flags_parse_as_early_intent_without_exiting() {
         for flag in ["--version", "-v", "-V"] {
-            let args = PagerArgs::try_parse_from(["grok", flag]).expect("version flag parses");
+            let args = PagerArgs::try_parse_from(["chaos", flag]).expect("version flag parses");
             assert!(args.version, "{flag} must set the early version intent");
             assert!(args.command.is_none());
         }
     }
     #[test]
     fn ordinary_and_doctor_parsing_do_not_set_version_intent() {
-        assert!(!PagerArgs::try_parse_from(["grok"]).unwrap().version);
+        assert!(!PagerArgs::try_parse_from(["chaos"]).unwrap().version);
         assert!(
-            !PagerArgs::try_parse_from(["grok", "doctor"])
+            !PagerArgs::try_parse_from(["chaos", "doctor"])
                 .unwrap()
                 .version
         );
         assert!(matches!(
-            PagerArgs::try_parse_from(["grok", "version"])
+            PagerArgs::try_parse_from(["chaos", "version"])
                 .unwrap()
                 .command,
             Some(Command::Version { json: false })
@@ -1093,7 +1093,7 @@ mod tests {
     }
     #[test]
     fn doctor_accepts_report_and_explicit_fix_forms() {
-        let bare = PagerArgs::try_parse_from(["grok", "doctor"]).expect("bare doctor parses");
+        let bare = PagerArgs::try_parse_from(["chaos", "doctor"]).expect("bare doctor parses");
         assert!(matches!(
             bare.command,
             Some(Command::Doctor(crate::doctor_cmd::DoctorArgs {
@@ -1102,7 +1102,7 @@ mod tests {
             }))
         ));
         let json =
-            PagerArgs::try_parse_from(["grok", "doctor", "--json"]).expect("doctor --json parses");
+            PagerArgs::try_parse_from(["chaos", "doctor", "--json"]).expect("doctor --json parses");
         assert!(matches!(
             json.command,
             Some(Command::Doctor(crate::doctor_cmd::DoctorArgs {
@@ -1116,7 +1116,7 @@ mod tests {
             "terminal.dcs-passthrough",
             "tmux-extended-keys",
         ] {
-            let fix = PagerArgs::try_parse_from(["grok", "doctor", "fix", id, "--yes"])
+            let fix = PagerArgs::try_parse_from(["chaos", "doctor", "fix", id, "--yes"])
                 .expect("doctor fix parses");
             assert!(matches!(
                 fix.command,
@@ -1128,7 +1128,7 @@ mod tests {
                 })) if parsed == id
             ));
         }
-        let list = PagerArgs::try_parse_from(["grok", "doctor", "fix"])
+        let list = PagerArgs::try_parse_from(["chaos", "doctor", "fix"])
             .expect("doctor fix without an ID lists applicable fixes");
         assert!(matches!(
             list.command,
@@ -1156,35 +1156,35 @@ mod tests {
     #[test]
     fn resume_target_classifies_flags() {
         assert_eq!(
-            PagerArgs::try_parse_from(["grok"]).unwrap().resume_target(),
+            PagerArgs::try_parse_from(["chaos"]).unwrap().resume_target(),
             ResumeTarget::None
         );
         assert_eq!(
-            PagerArgs::try_parse_from(["grok", "-c"])
+            PagerArgs::try_parse_from(["chaos", "-c"])
                 .unwrap()
                 .resume_target(),
             ResumeTarget::MostRecentForCwd
         );
         assert_eq!(
-            PagerArgs::try_parse_from(["grok", "--resume"])
+            PagerArgs::try_parse_from(["chaos", "--resume"])
                 .unwrap()
                 .resume_target(),
             ResumeTarget::MostRecentForCwd
         );
         assert_eq!(
-            PagerArgs::try_parse_from(["grok", "--resume", "sess-1"])
+            PagerArgs::try_parse_from(["chaos", "--resume", "sess-1"])
                 .unwrap()
                 .resume_target(),
             ResumeTarget::SessionId("sess-1".to_string())
         );
         assert_eq!(
-            PagerArgs::try_parse_from(["grok", "-s", "sess-2"])
+            PagerArgs::try_parse_from(["chaos", "-s", "sess-2"])
                 .unwrap()
                 .resume_target(),
             ResumeTarget::None
         );
         assert_eq!(
-            PagerArgs::try_parse_from(["grok", "-r", "old", "--fork-session"])
+            PagerArgs::try_parse_from(["chaos", "-r", "old", "--fork-session"])
                 .unwrap()
                 .resume_target(),
             ResumeTarget::SessionId("old".to_string())
@@ -1194,11 +1194,11 @@ mod tests {
     /// The pair exists so one can override the other's sticky config value; accepting both in one invocation would be ambiguous.
     #[test]
     fn minimal_and_fullscreen_flags_conflict() {
-        let args = PagerArgs::try_parse_from(["grok", "--minimal"]).unwrap();
+        let args = PagerArgs::try_parse_from(["chaos", "--minimal"]).unwrap();
         assert!(args.minimal && !args.fullscreen);
-        let args = PagerArgs::try_parse_from(["grok", "--fullscreen"]).unwrap();
+        let args = PagerArgs::try_parse_from(["chaos", "--fullscreen"]).unwrap();
         assert!(args.fullscreen && !args.minimal);
-        let err = PagerArgs::try_parse_from(["grok", "--minimal", "--fullscreen"]).unwrap_err();
+        let err = PagerArgs::try_parse_from(["chaos", "--minimal", "--fullscreen"]).unwrap_err();
         assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
     }
     #[test]
@@ -1268,19 +1268,19 @@ mod tests {
     #[test]
     fn startup_sandbox_profile_no_resume() {
         assert_eq!(
-            PagerArgs::try_parse_from(["grok", "--sandbox", "strict"])
+            PagerArgs::try_parse_from(["chaos", "--sandbox", "strict"])
                 .unwrap()
                 .startup_sandbox_profile(None),
             SandboxStartup::Apply(Some("strict".to_string()))
         );
         assert_eq!(
-            PagerArgs::try_parse_from(["grok", "--sandbox", ""])
+            PagerArgs::try_parse_from(["chaos", "--sandbox", ""])
                 .unwrap()
                 .startup_sandbox_profile(None),
             SandboxStartup::Apply(None)
         );
         assert_eq!(
-            PagerArgs::try_parse_from(["grok"])
+            PagerArgs::try_parse_from(["chaos"])
                 .unwrap()
                 .startup_sandbox_profile(None),
             SandboxStartup::Apply(None)
@@ -1323,7 +1323,7 @@ mod tests {
     }
     #[test]
     fn leader_socket_flag_parses_at_root() {
-        let args = PagerArgs::try_parse_from(["grok", "--leader-socket", "/tmp/leader-x.sock"])
+        let args = PagerArgs::try_parse_from(["chaos", "--leader-socket", "/tmp/leader-x.sock"])
             .expect("--leader-socket parses at the root");
         assert_eq!(
             args.leader_socket.as_deref(),
@@ -1347,12 +1347,12 @@ mod tests {
     }
     #[test]
     fn leader_socket_flag_defaults_to_none() {
-        let args = PagerArgs::try_parse_from(["grok"]).expect("bare grok parses");
+        let args = PagerArgs::try_parse_from(["chaos"]).expect("bare grok parses");
         assert!(args.leader_socket.is_none());
     }
     #[test]
     fn leader_mgmt_list_info_kill_parse() {
-        let list = PagerArgs::try_parse_from(["grok", "leader", "list", "--json"])
+        let list = PagerArgs::try_parse_from(["chaos", "leader", "list", "--json"])
             .expect("grok leader list --json");
         assert!(matches!(
             list.command,
@@ -1360,7 +1360,7 @@ mod tests {
                 command: LeaderMgmtCommand::List { json: true },
             }))
         ));
-        let info = PagerArgs::try_parse_from(["grok", "leader", "info", "--pid", "42"])
+        let info = PagerArgs::try_parse_from(["chaos", "leader", "info", "--pid", "42"])
             .expect("grok leader info --pid");
         assert!(matches!(
             info.command,
@@ -1371,25 +1371,25 @@ mod tests {
                 },
             }))
         ));
-        let kill = PagerArgs::try_parse_from(["grok", "leader", "kill"]).expect("grok leader kill");
+        let kill = PagerArgs::try_parse_from(["chaos", "leader", "kill"]).expect("grok leader kill");
         assert!(matches!(
             kill.command,
             Some(Command::Leader(LeaderMgmtArgs {
                 command: LeaderMgmtCommand::Kill,
             }))
         ));
-        assert!(PagerArgs::try_parse_from(["grok", "leader", "profile"]).is_err());
+        assert!(PagerArgs::try_parse_from(["chaos", "leader", "profile"]).is_err());
     }
     #[test]
     fn debug_file_flag_parses_and_is_global() {
-        let root = PagerArgs::try_parse_from(["grok", "--debug-file", "/tmp/fire.txt"])
+        let root = PagerArgs::try_parse_from(["chaos", "--debug-file", "/tmp/fire.txt"])
             .expect("--debug-file parses at the root");
         assert_eq!(
             root.debug_file.as_deref(),
             Some(std::path::Path::new("/tmp/fire.txt"))
         );
         let sub =
-            PagerArgs::try_parse_from(["grok", "agent", "stdio", "--debug-file", "/tmp/f.txt"])
+            PagerArgs::try_parse_from(["chaos", "agent", "stdio", "--debug-file", "/tmp/f.txt"])
                 .expect("--debug-file parses after a subcommand (global)");
         assert_eq!(
             sub.debug_file.as_deref(),
@@ -1398,38 +1398,38 @@ mod tests {
     }
     #[test]
     fn debug_file_flag_defaults_to_none() {
-        let args = PagerArgs::try_parse_from(["grok"]).expect("bare grok parses");
+        let args = PagerArgs::try_parse_from(["chaos"]).expect("bare grok parses");
         assert!(args.debug_file.is_none());
     }
     #[test]
     fn positional_prompt_seeds_interactive_session() {
         let args =
-            PagerArgs::try_parse_from(["grok", "fix the bug"]).expect("positional prompt parses");
+            PagerArgs::try_parse_from(["chaos", "fix the bug"]).expect("positional prompt parses");
         assert_eq!(args.initial_prompt(), Some("fix the bug"));
         assert!(args.command.is_none());
         assert!(args.single.is_none());
     }
     #[test]
     fn bare_grok_has_no_initial_prompt() {
-        let args = PagerArgs::try_parse_from(["grok"]).expect("bare grok parses");
+        let args = PagerArgs::try_parse_from(["chaos"]).expect("bare grok parses");
         assert_eq!(args.initial_prompt(), None);
     }
     #[test]
     fn initial_prompt_trims_and_ignores_whitespace_only() {
-        let args = PagerArgs::try_parse_from(["grok", "  spaced  "]).expect("padded prompt parses");
+        let args = PagerArgs::try_parse_from(["chaos", "  spaced  "]).expect("padded prompt parses");
         assert_eq!(args.initial_prompt(), Some("spaced"));
-        let blank = PagerArgs::try_parse_from(["grok", "   "]).expect("blank prompt parses");
+        let blank = PagerArgs::try_parse_from(["chaos", "   "]).expect("blank prompt parses");
         assert_eq!(blank.initial_prompt(), None);
     }
     #[test]
     fn subcommand_takes_precedence_over_positional_prompt() {
-        let args = PagerArgs::try_parse_from(["grok", "logout"]).expect("subcommand parses");
+        let args = PagerArgs::try_parse_from(["chaos", "logout"]).expect("subcommand parses");
         assert!(matches!(args.command, Some(Command::Logout)));
         assert!(args.prompt.is_none());
     }
     #[test]
     fn usage_command_parses_session_and_optional_turn() {
-        let session_only = PagerArgs::try_parse_from(["grok", "usage", "sess-1"])
+        let session_only = PagerArgs::try_parse_from(["chaos", "usage", "sess-1"])
             .expect("grok usage <session-id>");
         assert!(matches!(
             session_only.command,
@@ -1438,7 +1438,7 @@ mod tests {
                 turn: None,
             })) if session_id == "sess-1"
         ));
-        let with_turn = PagerArgs::try_parse_from(["grok", "usage", "sess-1", "3"])
+        let with_turn = PagerArgs::try_parse_from(["chaos", "usage", "sess-1", "3"])
             .expect("grok usage <session-id> <turn>");
         assert!(matches!(
             with_turn.command,
@@ -1450,65 +1450,65 @@ mod tests {
     }
     #[test]
     fn positional_prompt_conflicts_with_headless_single() {
-        let err = PagerArgs::try_parse_from(["grok", "-p", "headless", "interactive"])
+        let err = PagerArgs::try_parse_from(["chaos", "-p", "headless", "interactive"])
             .expect_err("positional prompt + --single must conflict");
         assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
     }
     #[test]
     fn worktree_flag_and_initial_prompt_combine() {
-        let a = PagerArgs::try_parse_from(["grok", "do the thing", "-w"])
+        let a = PagerArgs::try_parse_from(["chaos", "do the thing", "-w"])
             .expect("prompt then bare -w parses");
         assert_eq!(a.initial_prompt(), Some("do the thing"));
         assert_eq!(a.worktree.as_deref(), Some(""));
-        let b = PagerArgs::try_parse_from(["grok", "--worktree=feat", "do the thing"])
+        let b = PagerArgs::try_parse_from(["chaos", "--worktree=feat", "do the thing"])
             .expect("--worktree=name + positional parses");
         assert_eq!(b.initial_prompt(), Some("do the thing"));
         assert_eq!(b.worktree.as_deref(), Some("feat"));
-        let c = PagerArgs::try_parse_from(["grok", "-w", "x"]).expect("-w x parses");
+        let c = PagerArgs::try_parse_from(["chaos", "-w", "x"]).expect("-w x parses");
         assert_eq!(c.worktree.as_deref(), Some("x"));
         assert_eq!(c.initial_prompt(), None);
     }
     #[test]
     fn trust_flag_parses_on_pager_and_alias() {
-        let bare = PagerArgs::try_parse_from(["grok"]).expect("bare grok parses");
+        let bare = PagerArgs::try_parse_from(["chaos"]).expect("bare grok parses");
         assert!(!bare.trust);
-        let long = PagerArgs::try_parse_from(["grok", "--trust"]).expect("--trust parses");
+        let long = PagerArgs::try_parse_from(["chaos", "--trust"]).expect("--trust parses");
         assert!(long.trust);
         let alias =
-            PagerArgs::try_parse_from(["grok", "--trust-folder"]).expect("--trust-folder parses");
+            PagerArgs::try_parse_from(["chaos", "--trust-folder"]).expect("--trust-folder parses");
         assert!(alias.trust);
     }
     #[test]
     fn reasoning_effort_and_effort_alias_parse_same_field() {
-        let long = PagerArgs::try_parse_from(["grok", "--reasoning-effort", "high"])
+        let long = PagerArgs::try_parse_from(["chaos", "--reasoning-effort", "high"])
             .expect("--reasoning-effort parses");
         assert_eq!(long.reasoning_effort.as_deref(), Some("high"));
         let alias =
-            PagerArgs::try_parse_from(["grok", "--effort", "high"]).expect("--effort alias parses");
+            PagerArgs::try_parse_from(["chaos", "--effort", "high"]).expect("--effort alias parses");
         assert_eq!(alias.reasoning_effort.as_deref(), Some("high"));
     }
     #[test]
     fn reasoning_effort_accepts_max_and_remapped_ids() {
-        let max = PagerArgs::try_parse_from(["grok", "--effort", "max"]).expect("max parses");
+        let max = PagerArgs::try_parse_from(["chaos", "--effort", "max"]).expect("max parses");
         assert_eq!(max.reasoning_effort.as_deref(), Some("max"));
         let deep =
-            PagerArgs::try_parse_from(["grok", "--reasoning-effort", "deep"]).expect("deep parses");
+            PagerArgs::try_parse_from(["chaos", "--reasoning-effort", "deep"]).expect("deep parses");
         assert_eq!(deep.reasoning_effort.as_deref(), Some("deep"));
     }
     #[test]
     fn reasoning_effort_last_flag_wins_when_both_names_set() {
         let args =
-            PagerArgs::try_parse_from(["grok", "--reasoning-effort", "low", "--effort", "high"])
+            PagerArgs::try_parse_from(["chaos", "--reasoning-effort", "low", "--effort", "high"])
                 .expect("both effort flag names parse");
         assert_eq!(args.reasoning_effort.as_deref(), Some("high"));
         let reverse =
-            PagerArgs::try_parse_from(["grok", "--effort", "high", "--reasoning-effort", "low"])
+            PagerArgs::try_parse_from(["chaos", "--effort", "high", "--reasoning-effort", "low"])
                 .expect("both effort flag names parse (reverse order)");
         assert_eq!(reverse.reasoning_effort.as_deref(), Some("low"));
     }
     #[test]
     fn agent_args_effort_alias_parses() {
-        let args = PagerArgs::try_parse_from(["grok", "agent", "--effort", "max", "stdio"])
+        let args = PagerArgs::try_parse_from(["chaos", "agent", "--effort", "max", "stdio"])
             .expect("agent --effort parses");
         let Command::Agent(agent) = args.command.expect("agent subcommand") else {
             panic!("expected agent subcommand");

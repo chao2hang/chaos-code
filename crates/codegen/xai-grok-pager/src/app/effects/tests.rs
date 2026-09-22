@@ -2791,12 +2791,12 @@ fn worktree_resume_failure_sanitizes_detail_before_hint() {
     assert_eq!(
             msg,
             format!(
-                "couldn't resume worktree session: No space left on device; {}",
+                "恢复 worktree 会话失败：No space left on device; {}",
                 crate::app::session_title_resolve::title_miss_hint("typo title")
             )
         );
     let id_msg = worktree_resume_failure_message(None, &sanitize_user_error(raw));
-    assert_eq!(id_msg, "couldn't resume worktree session: No space left on device");
+    assert_eq!(id_msg, "恢复 worktree 会话失败：No space left on device");
 }
 /// A resume-picker entry converts to a dormant dashboard roster row (the non-leader idle source).
 /// It preserves title, cwd, model, worktree flag, origin, and last-change time.

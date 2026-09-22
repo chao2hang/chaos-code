@@ -114,7 +114,7 @@ fn title_miss_hint_escapes_arg_and_suggests_search() {
     let hint = title_miss_hint("evil\ntitle");
     assert!(hint.contains("evil\\ntitle"), "arg must be escaped: {hint}");
     assert!(
-        hint.contains("grok sessions search"),
+        hint.contains("chaos sessions search"),
         "missing hint: {hint}"
     );
 }
@@ -125,13 +125,13 @@ fn title_miss_hint_escapes_arg_and_suggests_search() {
 #[test]
 fn worktree_failure_message_hint_follows_threaded_provenance() {
     let msg = worktree_resume_failure_message(Some("typo title"), "restore failed");
-    assert!(msg.contains("couldn't resume worktree session: restore failed"));
-    assert!(msg.contains("no session id or title matched"), "{msg}");
-    assert!(msg.contains("grok sessions search"), "{msg}");
+    assert!(msg.contains("恢复 worktree 会话失败：restore failed"));
+    assert!(msg.contains("没有匹配"), "{msg}");
+    assert!(msg.contains("chaos sessions search"), "{msg}");
     let resolved_msg = worktree_resume_failure_message(None, "restore failed");
     assert_eq!(
         resolved_msg,
-        "couldn't resume worktree session: restore failed"
+        "恢复 worktree 会话失败：restore failed"
     );
 }
 
@@ -191,14 +191,14 @@ fn headless_title_pin_is_caller_aware() {
     );
 
     let mut interactive =
-        crate::app::cli::PagerArgs::try_parse_from(["grok", "-r", "batch run"]).unwrap();
+        crate::app::cli::PagerArgs::try_parse_from(["chaos", "-r", "batch run"]).unwrap();
     interactive
         .pin_local_resume_target_for_cwd(Some(&cwd_str))
         .unwrap();
     assert_eq!(interactive.session_to_resume(), Some("batch run"));
 
     let mut headless =
-        crate::app::cli::PagerArgs::try_parse_from(["grok", "-p", "next", "-r", "batch run"])
+        crate::app::cli::PagerArgs::try_parse_from(["chaos", "-p", "next", "-r", "batch run"])
             .unwrap();
     headless
         .pin_local_resume_target_for_cwd(Some(&cwd_str))
@@ -231,7 +231,7 @@ fn pin_prefers_restored_child_over_same_id_in_other_cwd() {
     );
 
     let mut args =
-        crate::app::cli::PagerArgs::try_parse_from(["grok", "-r", "legacy-remote-7"]).unwrap();
+        crate::app::cli::PagerArgs::try_parse_from(["chaos", "-r", "legacy-remote-7"]).unwrap();
     args.pin_local_resume_target_for_cwd(Some(&cwd_str))
         .unwrap();
     assert_eq!(args.session_to_resume(), Some(child));
@@ -255,7 +255,7 @@ async fn materialization_consumes_pinned_id_after_concurrent_rename() {
         serde_json::json!({ "generated_title": "Alpha", "title_is_manual": true }),
     );
 
-    let mut args = crate::app::cli::PagerArgs::try_parse_from(["grok", "-r", "alpha"]).unwrap();
+    let mut args = crate::app::cli::PagerArgs::try_parse_from(["chaos", "-r", "alpha"]).unwrap();
     args.pin_local_resume_target_for_cwd(Some(&cwd_str))
         .unwrap();
     assert_eq!(args.session_to_resume(), Some(pinned));
@@ -313,13 +313,13 @@ fn pin_ambiguous_title_errors_before_sandbox() {
         serde_json::json!({ "generated_title": "Dup" }),
     );
 
-    let mut args = crate::app::cli::PagerArgs::try_parse_from(["grok", "-r", "Dup"]).unwrap();
+    let mut args = crate::app::cli::PagerArgs::try_parse_from(["chaos", "-r", "Dup"]).unwrap();
     let msg = args
         .pin_local_resume_target_for_cwd(Some(&cwd_str))
         .unwrap_err()
         .to_string();
     assert!(
-        msg.contains("Multiple sessions match title"),
+        msg.contains("有多个会话都匹配标题"),
         "unexpected message: {msg}"
     );
 }
@@ -332,7 +332,7 @@ async fn pinned_no_match_does_not_retry_title_after_sandbox() {
     let mut fx = GrokHomeFixture::new();
     let cwd_str = fx.cwd_str();
 
-    let mut args = crate::app::cli::PagerArgs::try_parse_from(["grok", "-r", "ghost"]).unwrap();
+    let mut args = crate::app::cli::PagerArgs::try_parse_from(["chaos", "-r", "ghost"]).unwrap();
     args.pin_local_resume_target_for_cwd(Some(&cwd_str))
         .unwrap();
     assert!(args.resume_target_pinned);
@@ -355,7 +355,7 @@ async fn pinned_no_match_does_not_retry_title_after_sandbox() {
         .unwrap_err()
         .to_string();
     assert!(
-        msg.contains("no session id or title matched"),
+        msg.contains("没有匹配"),
         "must not resume the late title match: {msg}"
     );
     // Contrast: an unpinned caller (no pre-sandbox pin ran) may still select the title; the gate, not the data, decides
@@ -383,7 +383,7 @@ async fn pinned_non_uuid_id_is_not_reinterpreted_as_title() {
     fx.write_summary(&cwd_str, "legacy-remote-7", serde_json::json!({}));
 
     let mut args =
-        crate::app::cli::PagerArgs::try_parse_from(["grok", "-r", "legacy-remote-7"]).unwrap();
+        crate::app::cli::PagerArgs::try_parse_from(["chaos", "-r", "legacy-remote-7"]).unwrap();
     args.pin_local_resume_target_for_cwd(Some(&cwd_str))
         .unwrap();
     assert!(args.resume_target_pinned);
@@ -404,7 +404,7 @@ async fn pinned_non_uuid_id_is_not_reinterpreted_as_title() {
         .unwrap_err()
         .to_string();
     assert!(
-        msg.contains("no session id or title matched"),
+        msg.contains("没有匹配"),
         "must not resume the decoy titled with the pinned id: {msg}"
     );
 }
@@ -437,7 +437,7 @@ async fn duplicate_legacy_id_is_not_title_addressable() {
     );
 
     let mut args =
-        crate::app::cli::PagerArgs::try_parse_from(["grok", "-r", "locked down"]).unwrap();
+        crate::app::cli::PagerArgs::try_parse_from(["chaos", "-r", "locked down"]).unwrap();
     args.pin_local_resume_target_for_cwd(Some(&cwd_str))
         .unwrap();
     assert!(args.resume_target_pinned);
@@ -456,7 +456,7 @@ async fn duplicate_legacy_id_is_not_title_addressable() {
         .unwrap_err()
         .to_string();
     assert!(
-        msg.contains("no session id or title matched"),
+        msg.contains("没有匹配"),
         "duplicate-id session must fail closed, not resume: {msg}"
     );
 }

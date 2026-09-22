@@ -1879,7 +1879,7 @@ mod tests {
         .to_string();
         assert!(title_err.contains("--worktree"), "{title_err}");
         assert!(
-            title_err.contains("no session id or title matched"),
+            title_err.contains("没有匹配"),
             "{title_err}"
         );
     }

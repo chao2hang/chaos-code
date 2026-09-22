@@ -811,7 +811,7 @@ mod tests {
 
     #[test]
     fn add_hyphen_flag_without_double_dash_is_rejected() {
-        let err = PagerArgs::try_parse_from(["grok", "mcp", "add", "fs", "npx", "-y"])
+        let err = PagerArgs::try_parse_from(["chaos", "mcp", "add", "fs", "npx", "-y"])
             .expect_err("hyphen args must be escaped with --");
         assert_eq!(err.kind(), clap::error::ErrorKind::UnknownArgument);
     }
@@ -1235,7 +1235,7 @@ mod tests {
 
     #[test]
     fn remove_accepts_optional_scope() {
-        let args = PagerArgs::try_parse_from(["grok", "mcp", "remove", "fs", "-s", "project"])
+        let args = PagerArgs::try_parse_from(["chaos", "mcp", "remove", "fs", "-s", "project"])
             .expect("remove with scope parses");
         match args.command {
             Some(Command::Mcp(McpArgs {
@@ -1295,7 +1295,7 @@ url = "https://mcp.example.test/sse"
 
     #[test]
     fn enable_and_disable_parse_name() {
-        let args = PagerArgs::try_parse_from(["grok", "mcp", "enable", "user-grafana"])
+        let args = PagerArgs::try_parse_from(["chaos", "mcp", "enable", "user-grafana"])
             .expect("enable should parse");
         match args.command {
             Some(Command::Mcp(McpArgs {
@@ -1304,7 +1304,7 @@ url = "https://mcp.example.test/sse"
             other => panic!("expected mcp enable, got {other:?}"),
         }
 
-        let args = PagerArgs::try_parse_from(["grok", "mcp", "disable", "user-slack"])
+        let args = PagerArgs::try_parse_from(["chaos", "mcp", "disable", "user-slack"])
             .expect("disable should parse");
         match args.command {
             Some(Command::Mcp(McpArgs {
@@ -1316,11 +1316,11 @@ url = "https://mcp.example.test/sse"
 
     #[test]
     fn enable_disable_require_name() {
-        let err = PagerArgs::try_parse_from(["grok", "mcp", "enable"])
+        let err = PagerArgs::try_parse_from(["chaos", "mcp", "enable"])
             .expect_err("enable without name must fail");
         assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument);
 
-        let err = PagerArgs::try_parse_from(["grok", "mcp", "disable"])
+        let err = PagerArgs::try_parse_from(["chaos", "mcp", "disable"])
             .expect_err("disable without name must fail");
         assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument);
     }

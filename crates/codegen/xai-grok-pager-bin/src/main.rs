@@ -1153,7 +1153,7 @@ fn shutdown_and_flush_telemetry(exit_code: i32) -> ! {
 }
 fn finalize_span_profile() {
     if let Some(path) = xai_grok_telemetry::span_profile::finalize() {
-        eprintln!("grok: span profile written to {}", path.display());
+        eprintln!("chaos: span profile written to {}", path.display());
     }
 }
 #[tracing::instrument(level = "debug", skip_all)]
@@ -1745,10 +1745,10 @@ impl WorkerCount {
                 used,
                 cores,
             } => Some(format!(
-                "grok: clamped {GROK_WORKER_THREADS_ENV}={requested} to {used} (valid range is 1..={cores})"
+                "chaos: clamped {GROK_WORKER_THREADS_ENV}={requested} to {used} (valid range is 1..={cores})"
             )),
             Self::Ignored { value, .. } => Some(format!(
-                "grok: ignoring {GROK_WORKER_THREADS_ENV}={value:?} (not a valid integer)"
+                "chaos: ignoring {GROK_WORKER_THREADS_ENV}={value:?} (not a valid integer)"
             )),
         }
     }
@@ -2031,7 +2031,7 @@ fn main() {
     builder.worker_threads(workers.get()).enable_all();
     let runtime =
         xai_tty_utils::runtime::build_with_blocking_pool(&mut builder).unwrap_or_else(|e| {
-            eprintln!("grok: failed to start tokio runtime: {e}");
+            eprintln!("chaos: failed to start tokio runtime: {e}");
             shutdown_and_flush_telemetry(1);
         });
     let result = run_and_shutdown(runtime, async_main(args), RUNTIME_SHUTDOWN_GRACE);
@@ -2823,7 +2823,7 @@ mod tests {
         );
         assert_eq!(
             resolve_worker_override("100000", cores).notice().unwrap(),
-            "grok: clamped GROK_WORKER_THREADS=100000 to 360 (valid range is 1..=360)"
+            "chaos: clamped GROK_WORKER_THREADS=100000 to 360 (valid range is 1..=360)"
         );
     }
     #[test]
@@ -2836,7 +2836,7 @@ mod tests {
         }
         assert_eq!(
             resolve_worker_override("abc", cores).notice().unwrap(),
-            "grok: ignoring GROK_WORKER_THREADS=\"abc\" (not a valid integer)"
+            "chaos: ignoring GROK_WORKER_THREADS=\"abc\" (not a valid integer)"
         );
     }
     #[test]
@@ -2857,13 +2857,13 @@ mod tests {
     }
     #[test]
     fn version_flags_and_doctor_are_distinct_early_intents() {
-        let version = PagerArgs::try_parse_from(["grok", "--version"]).unwrap();
+        let version = PagerArgs::try_parse_from(["chaos", "--version"]).unwrap();
         assert!(version.version);
         assert!(version.command.is_none());
-        let short = PagerArgs::try_parse_from(["grok", "-v"]).unwrap();
+        let short = PagerArgs::try_parse_from(["chaos", "-v"]).unwrap();
         assert!(short.version);
         assert!(short.command.is_none());
-        let subcommand = PagerArgs::try_parse_from(["grok", "version"]).unwrap();
+        let subcommand = PagerArgs::try_parse_from(["chaos", "version"]).unwrap();
         assert!(!subcommand.version);
         assert!(matches!(
             subcommand.command,
@@ -3072,7 +3072,7 @@ mod tests {
     #[serial_test::serial(GROK_AGENT_DASHBOARD)]
     #[test]
     fn dashboard_subcommand_flags_startup_without_forcing_leader() {
-        let mut args = PagerArgs::try_parse_from(["grok", "dashboard"]).unwrap();
+        let mut args = PagerArgs::try_parse_from(["chaos", "dashboard"]).unwrap();
         assert!(!args.leader, "fixture: no explicit --leader");
         flag_dashboard_at_startup_if_requested(&mut args).unwrap();
         assert!(!args.leader, "dashboard must NOT force leader mode");
@@ -3092,7 +3092,7 @@ mod tests {
     #[serial_test::serial(GROK_AGENT_DASHBOARD)]
     #[test]
     fn dashboard_subcommand_allows_no_leader() {
-        let mut args = PagerArgs::try_parse_from(["grok", "--no-leader", "dashboard"]).unwrap();
+        let mut args = PagerArgs::try_parse_from(["chaos", "--no-leader", "dashboard"]).unwrap();
         flag_dashboard_at_startup_if_requested(&mut args)
             .expect("--no-leader + dashboard must be allowed");
         assert!(args.no_leader, "--no-leader must be preserved");
@@ -3113,7 +3113,7 @@ mod tests {
     #[test]
     fn dashboard_subcommand_errors_when_disabled() {
         unsafe { std::env::set_var("GROK_AGENT_DASHBOARD", "0") };
-        let mut args = PagerArgs::try_parse_from(["grok", "dashboard"]).unwrap();
+        let mut args = PagerArgs::try_parse_from(["chaos", "dashboard"]).unwrap();
         let result = flag_dashboard_at_startup_if_requested(&mut args);
         unsafe { std::env::remove_var("GROK_AGENT_DASHBOARD") };
         let err = result.expect_err("disabled dashboard must error");
