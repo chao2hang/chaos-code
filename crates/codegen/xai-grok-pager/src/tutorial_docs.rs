@@ -32,56 +32,56 @@ macro_rules! topic {
 pub static TUTORIAL_TOPICS: &[TutorialTopic] = &[
     topic!(
         "01-coming-from-another-tool.md",
-        "Coming from Claude, Cursor, or Codex?",
-        "your settings, rules & skills carry over",
-        Some("Project Rules (AGENTS.md)")
+        "从 Claude、Cursor 或 Codex 迁移过来？",
+        "你的设置、规则与技能都能沿用",
+        Some("项目规则 (AGENTS.md)")
     ),
     topic!(
         "02-first-prompt.md",
-        "Your First Prompt",
-        "send, queue, cancel",
-        Some("Getting Started")
+        "第一次发提示",
+        "发送、排队、取消",
+        Some("快速上手")
     ),
     topic!(
         "03-attach-and-paste.md",
-        "Attach Files, Images & Paste",
-        "@files, line ranges, screenshots",
-        Some("Getting Started")
+        "附加文件、图片与粘贴",
+        "@文件、行范围、截图",
+        Some("快速上手")
     ),
     topic!(
         "04-navigation.md",
-        "Finding Your Way Around",
-        "focus, scrollback, panes",
-        Some("Keyboard Shortcuts")
+        "熟悉界面导航",
+        "焦点、滚动回溯、面板",
+        Some("键盘快捷键")
     ),
     topic!(
         "05-slash-commands.md",
-        "Slash Commands",
-        "/help  /model  /resume  and Ctrl+P",
-        Some("Slash Commands")
+        "斜杠命令",
+        "/help  /model  /resume 与 Ctrl+P",
+        Some("斜杠命令")
     ),
     topic!(
         "06-worktrees.md",
-        "Parallel Work: Worktrees",
-        "isolated sessions on one repo",
-        Some("Session Management")
+        "并行工作：worktree",
+        "在同一仓库上开隔离会话",
+        Some("会话管理")
     ),
     topic!(
         "07-plan-and-permissions.md",
-        "Plan Mode & Permissions",
-        "review the approach before it acts",
-        Some("Plan Mode")
+        "计划模式与权限",
+        "动手前先审阅方案",
+        Some("计划模式")
     ),
     topic!(
         "08-make-it-yours.md",
-        "Make It Yours",
-        "just ask: AGENTS.md, memory, themes",
-        Some("Project Rules (AGENTS.md)")
+        "把它变成你的",
+        "直接开口：AGENTS.md、记忆、主题",
+        Some("项目规则 (AGENTS.md)")
     ),
     topic!(
         "09-where-next.md",
-        "Where to Go Next",
-        "guides, feedback, and good habits",
+        "接下来去哪",
+        "指南、反馈与好习惯",
         None
     ),
 ];

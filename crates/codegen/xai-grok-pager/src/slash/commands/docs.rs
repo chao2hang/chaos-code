@@ -45,7 +45,7 @@ impl SlashCommand for DocsCommand {
             display: title.into(),
             match_text: title.into(),
             insert_text: title.into(),
-            description: format!("Open \"{title}\""),
+            description: format!("打开「{title}」"),
         }));
         Some(items)
     }
@@ -64,7 +64,7 @@ impl SlashCommand for DocsCommand {
                 content: doc.content.into(),
             }),
             None => CommandResult::Error(format!(
-                "Unknown docs target {trimmed:?}. Try /docs, /docs web, or a guide title (e.g. /docs Getting Started)."
+                "未知的文档目标 {trimmed:?}。可试试 /docs、/docs web，或某个指南标题（例如 /docs 快速上手）。"
             )),
         }
     }
@@ -160,9 +160,9 @@ mod tests {
     fn title_opens_guide() {
         let models = ModelState::default();
         let mut ctx = make_ctx(&models);
-        match DocsCommand.run(&mut ctx, "Getting Started") {
+        match DocsCommand.run(&mut ctx, "快速上手") {
             CommandResult::Action(Action::ShowReleaseNotes { title, content }) => {
-                assert_eq!(title, "Getting Started");
+                assert_eq!(title, "快速上手");
                 assert!(!content.is_empty());
             }
             other => panic!("expected ShowReleaseNotes, got {other:?}"),
@@ -207,6 +207,6 @@ mod tests {
         let items = DocsCommand.suggest_args(&ctx, "").expect("suggestions");
         assert!(items.iter().any(|i| i.insert_text == "web"));
         assert!(items.iter().any(|i| i.insert_text == "how-to"));
-        assert!(items.iter().any(|i| i.insert_text == "Getting Started"));
+        assert!(items.iter().any(|i| i.insert_text == "快速上手"));
     }
 }

@@ -1510,7 +1510,7 @@ mod palette_sharing_tests {
         assert_eq!(state.selected, 0);
         assert_eq!(
             entries.first().map(|e| e.title.as_str()),
-            Some("Getting Started")
+            Some("快速上手")
         );
     }
 }

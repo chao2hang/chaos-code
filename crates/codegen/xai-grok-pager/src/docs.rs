@@ -47,133 +47,133 @@ macro_rules! guide {
 pub static USER_GUIDE: &[Doc] = &[
     guide!(
         "01-getting-started.md",
-        "Getting Started",
-        "Installation, first launch, and basic interaction"
+        "快速上手",
+        "构建、首次启动与基本交互"
     ),
     guide!(
         "02-authentication.md",
-        "Authentication",
-        "Browser login, API keys, OIDC, external auth providers"
+        "认证",
+        "API Key、BYOK 与外部认证提供方"
     ),
     guide!(
         "03-keyboard-shortcuts.md",
-        "Keyboard Shortcuts",
-        "Complete reference for all TUI key bindings"
+        "键盘快捷键",
+        "TUI 全部按键绑定的完整参考"
     ),
     guide!(
         "04-slash-commands.md",
-        "Slash Commands",
-        "All / commands, including goals, research, and workflow management"
+        "斜杠命令",
+        "全部 / 命令，含目标、研究与工作流管理"
     ),
     guide!(
         "05-configuration.md",
-        "Configuration",
-        "config.toml, pager.toml, environment variables, file locations"
+        "配置",
+        "config.toml、pager.toml、环境变量与文件位置"
     ),
     guide!(
         "06-theming.md",
-        "Theming and Appearance",
-        "Themes, color support, pager.toml customization"
+        "主题与外观",
+        "主题、颜色支持与 pager.toml 定制"
     ),
     guide!(
         "07-mcp-servers.md",
-        "MCP Servers",
-        "Setting up external tool integrations via MCP"
+        "MCP 服务器",
+        "通过 MCP 接入外部工具"
     ),
     guide!(
         "08-skills.md",
-        "Skills",
-        "Creating and using reusable prompt packages"
+        "技能",
+        "创建并使用可复用的提示包"
     ),
     guide!(
         "09-plugins.md",
-        "Plugins and Marketplace",
-        "Installing, managing, and creating plugin packages"
+        "插件与市场",
+        "插件包的安装、管理与创建"
     ),
     guide!(
         "10-hooks.md",
-        "Hooks",
-        "Project lifecycle scripts for pre/post tool-use events"
+        "钩子",
+        "工具调用前后的事件脚本"
     ),
     guide!(
         "11-custom-models.md",
-        "Custom Models",
-        "BYOK, Ollama, OpenAI-compatible endpoints"
+        "自定义模型",
+        "BYOK、Ollama、OpenAI 兼容端点"
     ),
     guide!(
         "12-project-rules.md",
-        "Project Rules (AGENTS.md)",
-        "Per-directory instructions and precedence rules"
+        "项目规则 (AGENTS.md)",
+        "目录级指令与优先级规则"
     ),
     guide!(
         "13-memory.md",
-        "Memory",
-        "Cross-session knowledge persistence and search"
+        "记忆",
+        "跨会话知识持久化与检索"
     ),
     guide!(
         "14-headless-mode.md",
-        "Headless Mode and Scripting",
-        "Non-interactive CLI for automation and CI/CD"
+        "无头模式与脚本",
+        "用于自动化与 CI/CD 的非交互式 CLI"
     ),
     guide!(
         "15-agent-mode.md",
-        "Agent Mode and IDE Integration",
-        "ACP stdio transport, WebSocket relay, SDK integration"
+        "代理模式（ACP）与编辑器集成",
+        "ACP stdio 传输、WebSocket 中继与 SDK 集成"
     ),
     guide!(
         "16-subagents.md",
-        "Subagents and Personas",
-        "Spawning parallel child agents with specialized roles"
+        "子代理与人设",
+        "派生带专属角色的并行子代理"
     ),
     guide!(
         "17-sessions.md",
-        "Session Management",
-        "Save, load, resume, rewind, and compact sessions"
+        "会话管理",
+        "会话的保存、加载、恢复、回退与压缩"
     ),
     guide!(
         "18-sandbox.md",
-        "Sandbox Mode",
-        "OS-level filesystem and network isolation"
+        "沙箱模式",
+        "操作系统级文件系统与网络隔离"
     ),
     guide!(
         "19-plan-mode.md",
-        "Plan Mode",
-        "Structured planning with approval dialogs"
+        "计划模式",
+        "带审批对话框的结构化规划"
     ),
     guide!(
         "20-background-tasks.md",
-        "Background Tasks and Monitoring",
-        "Background commands, /loop, monitor, scheduler"
+        "后台任务与监控",
+        "后台命令、/loop、monitor 与调度器"
     ),
     guide!(
         "21-terminal-support.md",
-        "Terminal Support and Troubleshooting",
-        "tmux, Byobu, Zellij, SSH, truecolor, clipboard, and diagnostics"
+        "终端支持与故障排查",
+        "tmux、Byobu、Zellij、SSH、真彩色、剪贴板与诊断"
     ),
     guide!(
         "22-permissions-and-safety.md",
-        "Permissions and Safety",
-        "Modes, authorization order, allow/ask/deny rules, matching, and hooks"
+        "权限与安全",
+        "模式、授权顺序、allow/ask/deny 规则、匹配与钩子"
     ),
     guide!(
         "23-dashboard.md",
-        "Agent Dashboard",
-        "Live multi-session roster: peek, dispatch, pin, stop, and search"
+        "代理看板",
+        "实时多会话总览：查看、派发、固定、停止与搜索"
     ),
     guide!(
         "24-monitoring-usage.md",
-        "Monitoring Usage (External OpenTelemetry)",
-        "Export usage metrics to a customer OpenTelemetry collector"
+        "用量监视（外部 OpenTelemetry）",
+        "把用量指标导出到自建 OpenTelemetry 收集器"
     ),
     guide!(
         "25-status-line.md",
-        "Status Line",
-        "A bottom row of live session context, or the output of your own script"
+        "状态栏",
+        "底部的实时会话上下文，或你自己的脚本输出"
     ),
     guide!(
         "26-config-reference.md",
-        "Configuration Reference",
-        "Field list for config.toml, managed_config.toml, and requirements.toml"
+        "配置参考",
+        "config.toml、managed_config.toml 与 requirements.toml 的字段清单"
     ),
 ];
 
@@ -319,8 +319,8 @@ mod tests {
 
     #[test]
     fn find_doc_is_case_insensitive() {
-        let doc = find_doc("getting started").expect("should find Getting Started");
-        assert_eq!(doc.title, "Getting Started");
+        let doc = find_doc("mcp 服务器").expect("should find MCP 服务器");
+        assert_eq!(doc.title, "MCP 服务器");
         assert!(find_doc("nonexistent guide").is_none());
     }
 
@@ -332,7 +332,7 @@ mod tests {
 
     #[test]
     fn get_howto_doc_delegates_to_find_doc() {
-        assert!(get_howto_doc("Getting Started").is_some());
+        assert!(get_howto_doc("快速上手").is_some());
         assert!(get_howto_doc("Hooks & Plugins Guide").is_some());
         assert!(get_howto_doc("no such doc").is_none());
     }
