@@ -1,10 +1,9 @@
 # xai-grok-pager
 
-Terminal UI (TUI) for Grok Build. Provides the interactive full-screen interface
-including the scrollback view, prompt input, session management, and all modal
-dialogs.
+Chaos 的终端 UI（TUI）。提供交互式全屏界面，包括滚动回看视图、提示词输入、
+会话管理和全部模态对话框。
 
-## Architecture
+## 架构
 
 ```
 src/
@@ -28,39 +27,39 @@ src/
 └── render/              # Low-level rendering helpers (color, wrapping, etc.)
 ```
 
-## Key Concepts
+## 核心概念
 
-- **AppView** — owns the welcome screen, agent sessions, and global config
-- **AgentView** — one per session; owns the prompt, scrollback, tool panes, and modals
-- **PromptWidget** — text editor component with file search (`@`), slash commands (`/`), history search, and paste elements
-- **Action/Effect** — Elm-style architecture: input → Action → dispatch → Effect → state update
+- **AppView** —— 拥有欢迎界面、Agent 会话和全局配置
+- **AgentView** —— 每个会话一个；拥有提示词、滚动回看、工具面板和模态框
+- **PromptWidget** —— 文本编辑器组件，支持文件搜索（`@`）、斜杠命令（`/`）、历史搜索和粘贴元素
+- **Action/Effect** —— Elm 风格架构：输入 → Action → dispatch → Effect → 状态更新
 
-## Keyboard Shortcuts
+## 快捷键
 
 | Key | Context | Action |
 |-----|---------|--------|
-| `Ctrl+P` or `?` | Agent screen | Open command palette |
-| `Ctrl+L` | Any (non–VS Code family) | Open plugins/hooks modal; on VS Code / Cursor / Windsurf / Zed use `/plugins` or `/hooks` (`Ctrl+L` is mid-turn interject) |
-| `Tab` | Prompt | Switch to scrollback |
-| `Esc` | Turn running | Cancel — in minimal mode or with vim scrollback mode off (the default). Fullscreen vim mode: no-op (use `Ctrl+C`) |
-| `Esc` `Esc` | Idle, non-empty prompt | Clear prompt (within 800ms; first press shows hint) |
-| `Esc` `Esc` | Idle, empty prompt + messages | Open rewind picker (silent first press) |
-| `Ctrl+M` | Prompt | Toggle multiline mode |
-| `Shift+Enter` | Prompt | Insert newline |
-| `/` | Prompt | Start slash command |
-| `@` | Prompt | Start file search |
-| `!` | Prompt (empty) | Enter bash mode |
-| `Ctrl+C` | Prompt (with text) | Clear prompt (even while turn running) |
-| `Ctrl+C` | Prompt (empty) + turn running | Cancel running turn |
-| `Ctrl+B` | Agent screen + foreground command running | Send the command to the background |
-| `Ctrl+G` | Agent screen (full TUI) | Toggle the tasks pane |
-| `Ctrl+G` | Ordinary composer (minimal mode) | Edit the draft externally; use the command-palette entry if the chord is reserved |
+| `Ctrl+P` 或 `?` | Agent 界面 | 打开命令面板 |
+| `Ctrl+L` | 任意界面（非 VS Code 系） | 打开插件/钩子模态框；在 VS Code / Cursor / Windsurf / Zed 上请改用 `/plugins` 或 `/hooks`（`Ctrl+L` 是回合中途插话） |
+| `Tab` | 提示词输入框 | 切换到滚动回看 |
+| `Esc` | 回合运行中 | 取消——在极简模式下，或 vim 滚动回看模式关闭时（默认）。全屏 vim 模式：无操作（请用 `Ctrl+C`） |
+| `Esc` `Esc` | 空闲、提示词非空 | 清空提示词（800ms 内；第一次按下会显示提示） |
+| `Esc` `Esc` | 空闲、提示词为空且有消息 | 打开回退选择器（第一次按下静默） |
+| `Ctrl+M` | 提示词输入框 | 切换多行模式 |
+| `Shift+Enter` | 提示词输入框 | 插入换行 |
+| `/` | 提示词输入框 | 开始输入斜杠命令 |
+| `@` | 提示词输入框 | 开始文件搜索 |
+| `!` | 提示词输入框（空） | 进入 bash 模式 |
+| `Ctrl+C` | 提示词输入框（有文本） | 清空提示词（即使回合正在运行） |
+| `Ctrl+C` | 提示词输入框（空）+ 回合运行中 | 取消正在运行的回合 |
+| `Ctrl+B` | Agent 界面 + 前台命令运行中 | 把该命令送到后台 |
+| `Ctrl+G` | Agent 界面（完整 TUI） | 切换任务面板 |
+| `Ctrl+G` | 普通输入框（极简模式） | 在外部编辑草稿；如果该组合键已被占用，请用命令面板入口 |
 
-## Docs
+## 文档
 
-- [Terminal Support & Troubleshooting](docs/user-guide/21-terminal-support.md) — tmux/SSH truecolor, clipboard, mouse, diagnostics, `/doctor`
-- [Hooks & Plugins Guide](docs/hooks-and-plugins.md) — managing hooks, plugins, and marketplace sources
-- [Custom Hooks Guide](docs/custom-hooks.md) — creating, configuring, and writing your own hooks
-- [Hook Examples](../xai-grok-hooks/examples/README.md) — sample hooks for common workflows
-- [Hooks Crate (`xai-grok-hooks`)](../xai-grok-hooks/) — hook runtime, event types, and execution engine
-- [Plugin Marketplace Crate (`xai-grok-plugin-marketplace`)](../xai-grok-plugin-marketplace/) — marketplace source loading, scanning, and install
+- [终端支持与故障排查](docs/user-guide/21-terminal-support.md) —— tmux/SSH 真彩色、剪贴板、鼠标、诊断、`/doctor`
+- [钩子与插件指南](docs/hooks-and-plugins.md) —— 管理钩子、插件和插件市场源
+- [自定义钩子指南](docs/custom-hooks.md) —— 创建、配置并编写你自己的钩子
+- [钩子示例](../xai-grok-hooks/examples/README.md) —— 常见工作流的示例钩子
+- [钩子 crate（`xai-grok-hooks`）](../xai-grok-hooks/) —— 钩子运行时、事件类型和执行引擎
+- [插件市场 crate（`xai-grok-plugin-marketplace`）](../xai-grok-plugin-marketplace/) —— 插件市场源的加载、扫描与安装
