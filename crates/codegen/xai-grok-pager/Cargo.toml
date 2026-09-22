@@ -187,7 +187,12 @@ windows-sys = { version = "0.59", features = ["Win32_System_Console"] }
 xai-grok-status-line = { workspace = true, features = ["test-support"] }
 xai-grok-pager-render = { path = "../xai-grok-pager-render", features = ["test-support"] }
 xai-grok-gboom = { path = "../xai-grok-gboom", features = ["test-support"] }
-xai-grok-shell = { workspace = true, features = ["test-support"] }
+# `config-docs` is what compiles the `config_docs` guard (the committed
+# config-reference page vs the live registries) — see that module. The feature
+# is off cargo `default` by design, and this dev-dependency edge is what turns
+# it on for `cargo test --workspace`; without an edge like this the guard is
+# dead code that never runs and the page can drift unnoticed.
+xai-grok-shell = { workspace = true, features = ["test-support", "config-docs"] }
 pretty_assertions = { workspace = true }
 insta = { workspace = true }
 criterion = { workspace = true }

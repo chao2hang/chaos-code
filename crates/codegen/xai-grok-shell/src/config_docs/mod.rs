@@ -129,26 +129,47 @@ fn load_markdown() -> String {
     std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
 }
 
-fn agents_md_path() -> PathBuf {
+/// The crate's contributor guide, if this tree has one.
+///
+/// Neither this fork nor the public upstream checkout ships
+/// `crates/codegen/xai-grok-shell/AGENTS.md`: the file belongs to the internal
+/// tree the page was authored in. Returning `None` rather than panicking lets
+/// the one assertion that reads it hold where the file exists (an internal
+/// tree, or any tree that sets `GROK_CONFIG_DOCS_AGENTS_MD`) without turning a
+/// missing file into a failure of the whole page test.
+fn agents_md_path() -> Option<PathBuf> {
     if let Some(path) = std::env::var_os("GROK_CONFIG_DOCS_AGENTS_MD") {
-        return PathBuf::from(path);
+        return Some(PathBuf::from(path));
     }
     let crate_agents = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("AGENTS.md");
     if crate_agents.exists() {
-        return crate_agents;
+        return Some(crate_agents);
     }
-    let root = find_monorepo_root().unwrap_or_else(|| {
-        panic!(
-            "xai-grok-shell AGENTS.md not found; set GROK_CONFIG_DOCS_AGENTS_MD or run from the monorepo (CARGO_MANIFEST_DIR={})",
-            env!("CARGO_MANIFEST_DIR")
-        )
-    });
-    root.join("crates/codegen/xai-grok-shell/AGENTS.md")
+    let candidate = find_monorepo_root()?.join("crates/codegen/xai-grok-shell/AGENTS.md");
+    candidate.exists().then_some(candidate)
 }
 
-fn load_agents_markdown() -> String {
-    let path = agents_md_path();
-    std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
+fn load_agents_markdown() -> Option<String> {
+    let path = agents_md_path()?;
+    Some(std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display())))
+}
+
+/// The default a row's Details cell claims, if it makes a claim at all.
+///
+/// The localized page states it as `默认 true` / `默认 false`, and only that
+/// shape is machine-readable. A row that words its default another way returns
+/// `None`; the caller decides whether that is an error, so an unreadable claim
+/// is never silently counted as agreement.
+fn stated_default(details: &str) -> Option<bool> {
+    let (_, rest) = details.split_once("默认")?;
+    let rest = rest.trim_start();
+    if rest.starts_with("true") {
+        Some(true)
+    } else if rest.starts_with("false") {
+        Some(false)
+    } else {
+        None
+    }
 }
 
 fn strip_cell(s: &str) -> String {
@@ -507,11 +528,20 @@ mod tests {
         }
     }
 
+    /// The page is the user-facing field list, not a contributor document.
+    ///
+    /// The title and table header asserted here are the *localized* ones: the
+    /// fork ships this page in Chinese, so pinning the English wording would
+    /// only pin the fact that the page had not been translated yet. Everything
+    /// else below is language-independent.
     #[test]
     fn page_is_the_user_facing_field_list() {
         let (_, _, md) = page();
-        assert!(md.starts_with("# Configuration reference\n"));
-        assert!(md.contains("| Key | Type / Values | Requirements | Managed | Details |"));
+        assert!(md.starts_with("# 配置参考\n"));
+        assert!(md.contains(concat!(
+            "| 键 | 类型 / 取值 | requirements.toml 可否设置 | ",
+            "managed_config.toml 是否生效 | 说明 |"
+        )));
         assert!(md.contains("| `models.allowed_models` | `string[]` | `pin` |"));
         assert!(md.contains("### `cli`\n"));
         assert!(!md.contains("Generated from `xai-grok-shell`"));
@@ -526,10 +556,55 @@ mod tests {
                 "user-guide must not name contributor registry {leak}"
             );
         }
-        let agents = load_agents_markdown();
-        assert!(agents.contains("Edit it; do not regenerate it."));
-        assert!(agents.contains("FEATURES"));
-        assert!(agents.contains("UNMIRRORED_BOOLEAN_FEATURES"));
-        assert!(agents.contains("KNOWN_MCP_SERVER_FIELDS"));
+        // Present only in an internal tree; see `agents_md_path`.
+        if let Some(agents) = load_agents_markdown() {
+            assert!(agents.contains("Edit it; do not regenerate it."));
+            assert!(agents.contains("FEATURES"));
+            assert!(agents.contains("UNMIRRORED_BOOLEAN_FEATURES"));
+            assert!(agents.contains("KNOWN_MCP_SERVER_FIELDS"));
+        }
+    }
+
+    /// A row that states a default must state the registry's.
+    ///
+    /// This page is where a user learns whether a switch is on when nothing is
+    /// configured, and the fork flips `default_enabled` for reasons the upstream
+    /// English text knows nothing about. The translated sentence is the only
+    /// place that value is repeated, so a flipped registry entry leaves the page
+    /// quietly wrong: `features.feedback` and `features.two_pass_compaction` both
+    /// read 「默认 true」 for as long as this check was switched off.
+    ///
+    /// A row that mentions no default is not checked. A row that mentions one
+    /// must spell it `默认 true` or `默认 false`, so that rewording the sentence
+    /// fails loudly here instead of silently vacating the check.
+    #[test]
+    fn feature_rows_state_the_registry_default() {
+        let (config, _, _) = page();
+        let map = by_key(&config);
+        let mut checked = 0;
+        for spec in FEATURES {
+            let row = map
+                .get(spec.path)
+                .unwrap_or_else(|| panic!("missing FEATURES path {}", spec.path));
+            if !row.details.contains("默认") {
+                continue;
+            }
+            let claimed = stated_default(&row.details).unwrap_or_else(|| {
+                panic!(
+                    "{} mentions a default but not as `默认 true|false`: {}",
+                    spec.path, row.details
+                )
+            });
+            assert_eq!(
+                claimed, spec.default_enabled,
+                "{} says 默认 {claimed}, but registered default_enabled is {}",
+                spec.path, spec.default_enabled
+            );
+            checked += 1;
+        }
+        assert!(
+            checked > 0,
+            "no FEATURES row stated a default, so this check tested nothing"
+        );
     }
 }
