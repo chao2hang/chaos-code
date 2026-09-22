@@ -33,6 +33,7 @@ const ALL_SETTINGS_EXERCISED: &[&str] = &[
     "session.auto_retry_incomplete_end_turn",
     "combine_queued_prompts",
     "follow_up_behavior",
+    "confirm_before_rewind",
     "simple_mode",
     "vim_mode",
     "remember_tool_approvals",
@@ -65,6 +66,7 @@ const ALL_SETTINGS_EXERCISED: &[&str] = &[
     "hunk_tracker_mode",
     "voice_capture_mode",
     "voice_stt_language",
+    "voice_keybind_enabled",
     // Contextual-hints group and its per-tip child toggles (exercised via the group sub-sheet, not as top-level rows)
     "contextual_hints",
     "contextual_hints.undo",
@@ -761,6 +763,17 @@ fn mouse_click_on_follow_up_behavior_indicator_opens_picker() {
         "expected PickingEnum(follow_up_behavior), got {:?}",
         s.mode()
     );
+}
+
+/// Space-toggle on `confirm_before_rewind` dispatches the typed setter.
+/// Default is ON (rewinding asks first), so toggling flips it off.
+#[test]
+fn space_on_confirm_before_rewind_dispatches_typed_setter() {
+    let mut s = make_state();
+    navigate_to(&mut s, "confirm_before_rewind");
+    let default_on = UiConfig::default().confirm_before_rewind_enabled();
+    let outcome = handle_settings_key(&mut s, &press(KeyCode::Char(' ')));
+    assert_set_bool_action(outcome, "confirm_before_rewind", !default_on);
 }
 
 /// Value-column click toggles `confirm_before_rewind` in one click.
@@ -1875,6 +1888,7 @@ fn registry_kind_membership_through_pr_14() {
         bool_keys,
         vec![
             "compact_mode",
+            "confirm_before_rewind",
             "group_tool_verbs",
             "collapsed_edit_blocks",
             "invert_scroll",
@@ -2055,6 +2069,7 @@ fn defaults_round_trip_through_registry() {
             "auto_light_theme" => SettingValue::Enum("grokday"),
             "render_mermaid" => SettingValue::Enum("auto"),
             "multiline_mode" => SettingValue::Bool(false),
+            "confirm_before_rewind" => SettingValue::Bool(true),
             "permission_mode" => SettingValue::Enum("ask"),
             "default_model" => SettingValue::String(String::new()),
             "max_thoughts_width" => SettingValue::Int(120),

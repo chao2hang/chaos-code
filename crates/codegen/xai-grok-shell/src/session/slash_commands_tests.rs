@@ -616,6 +616,7 @@ fn available_commands_orders_builtins_first() {
             "session-info",
             "feedback",
             "deep-research",
+            "ralph",
             "workflow",
             "goal",
             "loop",

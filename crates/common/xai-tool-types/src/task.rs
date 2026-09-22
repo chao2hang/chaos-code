@@ -1410,7 +1410,10 @@ mod tests {
             .or_else(|| schema["definitions"].as_object())
             .expect("schema definitions");
 
-        for field in ["capability_mode", "isolation"] {
+        // `capability_mode` is `#[schemars(skip)]`d, so it never reaches the schema
+        // (pinned by `task_tool_input_schema_omits_capability_mode` below); only
+        // `isolation` is an optional enum that must stay non-nullable.
+        for field in ["isolation"] {
             let property = &props[field];
             let enum_schema = property
                 .get("$ref")

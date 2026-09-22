@@ -28,7 +28,7 @@ use xai_grok_test_support::{MockInferenceServer, MockModelEntry, ScriptedRespons
 const MODEL: &str = "test-model";
 
 /// A sampling client with the doom-loop check enabled (default tunables:
-/// `max_threshold` 8, `max_retries` 2).
+/// `max_threshold` 64, `max_retries` 2).
 fn doom_loop_client(base_url: &str) -> Client {
     let mut config = test_sampler_config(base_url, ApiBackend::Responses, &[]);
     config.doom_loop_recovery = Some(Default::default());
@@ -288,11 +288,15 @@ async fn disabled_policy_leaves_terminal_field_unparsed() {
 // Recovery contract (the acceptance spec for the resample behavior)
 // ---------------------------------------------------------------------------
 
-/// A confident signal (`tail_repetition:8@thinking` at the default
-/// `max_threshold` 8) on a completed turn is resampled once: two requests,
-/// the clean second script is the accepted response, and the resample
-/// request body is identical to the first — the poisoned turn's output never
-/// enters the conversation.
+/// A confident signal (`tail_repetition:8@thinking`, well under the default
+/// `max_threshold` 64) on a completed turn is resampled once: two requests,
+/// the clean second script is the accepted response — the poisoned turn is
+/// never what the caller sees.
+///
+/// The resample request itself is the first body plus the failed turn and a
+/// synthetic recovery reminder (the implementation deliberately *retains* the
+/// flagged response and retries with guidance); the original prefix is
+/// re-sent unchanged.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn confident_signal_resamples_once_and_discards_poisoned_turn() {
     let server = MockInferenceServer::start().await.unwrap();
@@ -327,9 +331,28 @@ async fn confident_signal_resamples_once_and_discards_poisoned_turn() {
         "the accepted response is the clean resample, not the poisoned turn"
     );
     let bodies = server.request_bodies();
+    let first = bodies[0]["input"]
+        .as_array()
+        .expect("responses input is an array");
+    let second = bodies[1]["input"]
+        .as_array()
+        .expect("responses input is an array");
+    assert!(
+        second.len() > first.len(),
+        "the resample appends the failed turn plus the recovery reminder: \
+         {} -> {} items",
+        first.len(),
+        second.len()
+    );
     assert_eq!(
-        bodies[0]["input"], bodies[1]["input"],
-        "the resample re-sends the same prefix; poisoned output never enters it"
+        &second[..first.len()],
+        first.as_slice(),
+        "the resample re-sends the same prefix; nothing before it is dropped or rewritten"
+    );
+    let appended = serde_json::to_string(&second[first.len()..]).unwrap();
+    assert!(
+        appended.contains("flagged as looping"),
+        "the appended tail must carry the recovery reminder: {appended}"
     );
 }
 
@@ -375,7 +398,7 @@ async fn budget_exhaustion_accepts_last_doomed_response() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn not_confident_signals_do_not_resample() {
     for trigger in [
-        "tail_repetition:64@thinking",
+        "tail_repetition:65@thinking",
         "tail_repetition:2@response",
         "low_logprob@thinking",
     ] {

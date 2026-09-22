@@ -338,6 +338,17 @@ async fn fetch_gh_release_stable_handles_tag_without_v_prefix() {
 #[tokio::test]
 #[serial]
 async fn fetch_gh_release_alpha_returns_max_of_pre_and_stable() {
+    // Without the mock guard this test reaches the real GitHub API and asserts
+    // whatever tag happens to be published — it needs the same stub as its
+    // `..._returns_stable_when_higher` sibling.
+    let g = GhApiMockGuard::start().await;
+    g.stub_latest("v0.1.181", false, false).await;
+    g.stub_list(&[
+        ("v0.1.182-alpha.1", true, false),
+        ("v0.1.181", false, false),
+    ])
+    .await;
+
     let v = fetch_gh_release_version("alpha").await.unwrap();
     assert_eq!(v, "0.1.182-alpha.1");
 }
