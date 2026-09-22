@@ -626,7 +626,7 @@ fn suppression_notification_message_is_reason_specific() {
     );
     assert_eq!(
         msg(SuppressReason::Auth, detail),
-        "authentication problem — re-authenticate using /login and retry."
+        "authentication problem — check your provider credentials and retry."
     );
     assert_eq!(
         msg(SuppressReason::Size, detail),

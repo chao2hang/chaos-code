@@ -45,7 +45,7 @@
             chip_elements: Vec::new(),
         });
         for error in [
-            "authentication problem — re-authenticate using /login and retry.",
+            "authentication problem — check your provider credentials and retry.",
             "this conversation is too large to compact.",
         ] {
             let update = XaiSessionUpdate::AutoCompactFailed {

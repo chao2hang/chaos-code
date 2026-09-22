@@ -675,7 +675,7 @@ impl SessionActor {
                 "out of credits or over your spending limit. Add credits and retry.".to_string()
             }
             SuppressReason::Auth => {
-                "authentication problem — re-authenticate using /login and retry.".to_string()
+                "authentication problem — check your provider credentials and retry.".to_string()
             }
             SuppressReason::Size => "this conversation is too large to compact.".to_string(),
             SuppressReason::Schema => "this conversation can't be summarized.".to_string(),
@@ -753,7 +753,7 @@ impl SessionActor {
             detailed
         } else {
             format!(
-                "{UNAUTHORIZED_NEEDLE}: compaction failed — re-authenticate with /login \
+                "{UNAUTHORIZED_NEEDLE}: compaction failed — check your provider credentials \
                  and retry. ({detailed})"
             )
         };

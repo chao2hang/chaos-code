@@ -5,15 +5,17 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum AuthError {
-    #[error("Not logged in. Run `grok login`.")]
+    #[error("No xAI account credential. Chaos does not sign in to xAI.")]
     NotLoggedIn,
 
     /// The token expired and no refresh authority is available.
-    #[error("Token expired. Run `grok login` to re-authenticate.")]
+    #[error(
+        "The xAI account credential expired and cannot be refreshed. Chaos does not sign in to xAI."
+    )]
     TokenExpiredNoRefresh,
 
     /// Server rejected the token (401) with no recovery path.
-    #[error("Authentication rejected by server. Run `grok login` to re-authenticate.")]
+    #[error("The server rejected the xAI account credential. Chaos does not sign in to xAI.")]
     ServerRejectedNoRecovery,
 
     /// All recovery strategies are exhausted.
@@ -22,11 +24,11 @@ pub enum AuthError {
 
     /// A session's team principal violates the `force_login_team_uuid` pin.
     /// `message` states which team is required and which was returned.
-    #[error("{message} Run `grok login` to sign in with the required team.")]
+    #[error("{message} Chaos does not sign in to xAI.")]
     PinnedTeamMismatch { message: String },
 
     /// The cached API-key session was rejected because API-key auth is disabled.
-    #[error("API-key auth is disabled by your administrator. Run `grok login` to authenticate.")]
+    #[error("API-key auth is disabled by your administrator. Chaos does not sign in to xAI.")]
     ApiKeyAuthDisabled,
 
     /// Outcome of a refresh-authority attempt.
@@ -109,15 +111,15 @@ impl RefreshTokenFailedReason {
     pub(crate) fn user_message(self) -> Cow<'static, str> {
         match self {
             Self::RefreshTokenRejected => {
-                "Your session has expired. Run `grok login` to sign in again.".into()
+                "Your xAI account session expired. Chaos does not sign in to xAI.".into()
             }
             Self::ClientRejected => {
-                "Authentication is temporarily unavailable. Run `grok login` if this persists."
-                    .into()
+                "Authentication is temporarily unavailable; retry later.".into()
             }
             Self::ProviderInteractiveRequired => provider_login_message(None),
             Self::Other => {
-                "Authentication could not be refreshed. Run `grok login` to sign in again.".into()
+                "The xAI account credential could not be refreshed. Chaos does not sign in to xAI."
+                    .into()
             }
         }
     }

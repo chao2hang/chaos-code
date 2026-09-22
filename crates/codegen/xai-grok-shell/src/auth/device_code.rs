@@ -27,8 +27,8 @@ const MIN_DEVICE_CODE_EXPIRY_FALLBACK_SECS: i64 = 10 * 60;
 #[derive(Debug, Error)]
 pub(crate) enum DeviceCodeError {
     #[error(
-        "Device-code login is not available for this deployment. \
-         Try `grok login` or set XAI_API_KEY instead."
+        "Device-code login is not available in Chaos. \
+         Set XAI_API_KEY or configure a provider instead."
     )]
     NotEnabled,
 }
@@ -216,7 +216,7 @@ pub(crate) async fn complete_device_code_login(
         tokio::time::sleep(poll_interval).await;
 
         if tokio::time::Instant::now() > deadline {
-            anyhow::bail!("Device code expired. Run `grok login --device-auth` again.");
+            anyhow::bail!("Device code expired. Start the sign-in again.");
         }
 
         let resp = with_alpha_test_key(
@@ -257,7 +257,7 @@ pub(crate) async fn complete_device_code_login(
             }
             "expired_token" => {
                 tracing::warn!(description = detail, "device auth token expired");
-                anyhow::bail!("Device code expired. Run `grok login --device-auth` again.");
+                anyhow::bail!("Device code expired. Start the sign-in again.");
             }
             other => {
                 tracing::warn!(

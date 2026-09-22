@@ -31,8 +31,7 @@ async fn handle_record(agent: &MvpAgent, args: &acp::ExtRequest) -> ExtResult {
     // Checked before the POST so a logged-out caller is told to log in instead of getting a 401.
     agent.auth_manager.auth().await.map_err(|e| {
         tracing::warn!(error = %e, "consent: auth resolution failed");
-        acp::Error::auth_required()
-            .data("Authentication required. Run `grok login` to re-authenticate.")
+        acp::Error::auth_required().data("Authentication required. Chaos does not sign in to xAI.")
     })?;
 
     let proxy_url = agent.cfg.borrow().endpoints.proxy_url();

@@ -165,7 +165,7 @@ fn require_xai_auth_for_share(
     super::auth_gate::require_xai_auth(
         auth_manager,
         "Authentication required to share session",
-        "Share session is disabled. Run `grok login` to authenticate.",
+        super::auth_gate::NO_XAI_SIGNIN_SHARE,
     )
 }
 
@@ -240,7 +240,7 @@ mod tests {
     }
 
     #[test]
-    fn share_rejects_non_xai_auth_with_actionable_grok_login_message() {
+    fn share_rejects_non_xai_auth_with_credential_message() {
         let dir = tempdir().expect("tempdir");
         let mgr = Arc::new(crate::auth::AuthManager::new(
             dir.path(),
@@ -267,9 +267,6 @@ mod tests {
             .and_then(|v| v.as_str())
             .expect("auth_required error carries a data string");
 
-        assert_eq!(
-            data,
-            "Share session is disabled. Run `grok login` to authenticate."
-        );
+        assert_eq!(data, crate::extensions::auth_gate::NO_XAI_SIGNIN_SHARE);
     }
 }

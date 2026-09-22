@@ -347,7 +347,7 @@ fn e2e_compact_auth_failure_holds_prompt_and_resubmits_after_login() {
 
         apply_session_event_for_test(
             &XaiSessionUpdate::AutoCompactFailed {
-                error: "authentication problem — re-authenticate using /login and retry.".into(),
+                error: "authentication problem — check your provider credentials and retry.".into(),
             },
             &mut agent.session,
             &mut agent.scrollback,
