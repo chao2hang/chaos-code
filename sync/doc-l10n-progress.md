@@ -1,7 +1,7 @@
 # 用户指南中文化的进度与恢复点
 
 更新于 2026-09-20，分支 `sync/curated-port-20260918`，基线 `a82a27ea`，
-本文的提交清单与统计数字截至 `cadb6dd5`。
+本文的提交清单与统计数字截至 `6bf588a7`。
 
 ## 一、已完成
 
@@ -38,10 +38,15 @@
 | `d6d4508c` | `09-plugins.md` 中文化（协议名与 `Enforced by policy` 保持原样） |
 | `4c8eb3f3` | 记下第 9 章的核对结论（含三处文档超前于代码）并刷新进度表 |
 | `cadb6dd5` | `16-subagents.md` 中文化（persona = 人设、role = 角色，界面串按实际中文改写） |
+| `ad87ae6c` | 记下第 16 章的核对结论并刷新进度表 |
+| `1216a399` | `21-terminal-support.md` 中文化 |
+| `a9893bb1` | 应用内指南与教程目录改说中文（`docs.rs`、`tutorial_docs.rs`、`/docs`、速查表标题） |
+| `2d14cb09` | 修好改名为 `chaos` 后三处仍在找旧 bin target 的测试与测试工具 |
+| `6bf588a7` | 恢复/诊断类提示改中文，`grok: ` 前缀统一改 `chaos: `，argv[0] 同步 |
 
 已整章完成（散文行、表格单元格、上游旧名三项都归零）：`01`、`02`、`04`、
 `06`、`07`、`08`、`09`、`11`、`12`、`13`、`15`、`16`、`17`、`18`、`19`、
-`20`、`25`。
+`20`、`21`、`25`。
 本轮之前已提交的整章是 `12`、`19`、`20`；`02` 是更正而非翻译；`13`、`04`、
 `17`、`09`、`16` 的核对结论分别见 `sync/doc-claims-verification.md` 第八、九、
 十、十一、十二节。
@@ -60,12 +65,14 @@
 | `10-hooks.md` | 664 | 57204 | 177 | 52 | 27 |
 | `14-headless-mode.md` | 686 | 41464 | 112 | 75 | 44 |
 | `23-dashboard.md` | 311 | 14905 | 136 | 20 | 2 |
-| `21-terminal-support.md` | 303 | 13414 | 150 | 0 | 12 |
 | `24-monitoring-usage.md` | 379 | 20936 | 118 | 32 | 2 |
 | `05-configuration.md` | 833 | 44495 | 71 | 75 | 40 |
 | `22-permissions-and-safety.md` | 571 | 32964 | 123 | 20 | 28 |
 | `README.md` | 60 | 2019 | 0 | 10 | 0 |
-| 合计 | 4 969 | 314 707 | 995 | 780 | 155 |
+| 合计 | 4 666 | 301 293 | 845 | 780 | 143 |
+
+（`21-terminal-support.md` 那行 303 行 / 13 414 字符 / 150 散文行 / 0 单元格 /
+12 个上游旧名已在 `1216a399` 做完，已从表里扣掉。）
 
 （`16-subagents.md` 那行 400 行 / 20 065 字符 / 87 散文行 / 39 单元格 / 8 个上游旧名
 已在 `cadb6dd5` 做完，已从表里扣掉。）
@@ -89,8 +96,8 @@
 12. `README`（等所有章节标题定稿后再译链接文字）
 
 已做完：1（`08`、`11`）、2（`06`、`25`）、3（`15`、`18`）、4（`07`、`13`）、
-5（`04`、`17`）、6（`01`、`09`）、7 的一半（`16`）。下一批是 `24-monitoring-usage`，
-之后按 8→12 的顺序。
+5（`04`、`17`）、6（`01`、`09`）、7（`16`、`21` 已完，`24` 在跑）、8（`23` 在跑）。
+余下按 9→12 的顺序，`03`、`14` 也已派出。
 
 ## 四、每章的执行协议（实测唯一稳定的做法）
 
@@ -103,11 +110,17 @@
 5. 结束时报告：调用次数、改动行数、门禁命令的 stdout。
 
 原因：单条回复有约 8k token 的输出上限，整篇 `write` 必截断
-（`max_tokens_truncation`）。并发派发时约有一半的 run 会在**第一次调用**
-就被上游中止（signature：`modelCalls: 1`、`outputTokens: 48–91`、
-`apiDurationMs: ~3400`、`decodeDurationMs: 0`），与内容无关；串行派发
-（第 3 章 `12`）一次成功。**模型必须显式指定 `BBLBB/glm-5.3`**：默认路由
+（`max_tokens_truncation`）。**模型必须显式指定 `BBLBB/glm-5.3`**：默认路由
 会落到 `deepseek-flash`，那个账号返回 402 余额不足。
+
+并发实测（2026-09-20，4–5 路并发）：把「每次 `search_replace` ≤40 行、禁止
+整文件 `write`」写进提示词后，`max_tokens_truncation` 不再出现；此刻的失败
+几乎全是上游基础设施抖动，与内容无关，signature 是
+`API error (status 404): The ***.Z.ai gateway is currently at capacity`
+（`http_status: 404`，`modelCalls` 1 到 30 都有，`numTurns` 也各不相同）。
+判据是**文件有没有被写**：`git status --short` 里没出现目标文件就是一次
+零产出的 run，直接重派即可，不要 `resume_from`（没什么可续的）；出现过改动
+才值得考虑续跑。
 
 每章收尾跑这四条，然后才提交：
 
@@ -183,6 +196,13 @@ python3 scripts/check-doc-l10n.py --fork-names --glob "$G/<本章>"
   删掉 `grok login --device-auth`、`grok login` 两条，指向
   `02-authentication.md`；该章还带着一条死锚点
   `02-authentication.md#device-code-flow`，随这一节一起重写掉。
+- `21`（已完成 2026-09-20）：译文里保留了两句英文引号文案，那是**源码真的这么
+  打印**，不是漏译——`tips/ssh_wrap.rs:44` 拼出「Run `/doctor` for details and
+  fixes.」（`tips/ssh_wrap.rs:69` 的断言就是这句）、`voice/pipeline.rs:188` 是
+  「No speech was detected. Voice stopped.」。要么同时改代码，要么文档照抄实际
+  输出；本轮选后者（改代码会牵动 `tips/` 与 `xai-grok-voice` 两个 crate 的断言，
+  属于另一件事）。这一章没有表格、没有行内字面量删除，所以四条门禁全是 0，
+  不需要往 `scripts/doc-span-removals.tsv` 添条目。
 - `23`、`25`：核对结论为真，可照写。
 - `26`：断言的核对结论见 `sync/doc-claims-verification.md`；表格的
   `Details` 列是散文（373 个单元格），`Key`/`Type / Values`/
@@ -251,3 +271,36 @@ python3 scripts/check-doc-l10n.py --fork-names --glob "$G/<本章>"
 8. `cargo test -p xai-grok-shell --lib --features config-docs config_docs`
    仍通过（`26-config-reference.md` 是它的输入）。
 9. 对照 `~/.chaos/docs/user-guide/` 的解包结果与仓库副本一致。
+
+## 七、`docs/user-guide/` 之外的英文残留（本轮新发现，已盘点）
+
+把 26 篇指南译完，并不等于 TUI 里读不到英文。本轮顺着「用户点开指南的路径」
+找了一遍，落在指南目录**之外**的还有这些面：
+
+| 面 | 位置 | 规模 | 状态 |
+|---|---|---:|---|
+| 指南与教程的目录 | `src/docs.rs`（`USER_GUIDE`）、`src/tutorial_docs.rs`（`TUTORIAL_TOPICS`） | 26 + 9 条标题、26 + 9 条简介 | `a9893bb1` 已译 |
+| `/docs` 的报错与补全说明 | `src/slash/commands/docs.rs` | 2 条 | `a9893bb1` 已译 |
+| Ctrl+. 速查表的模态标题 | `src/app/modals.rs` | 1 条 | `a9893bb1` 已译 |
+| 教程正文 | `docs/tutorial/01…09-*.md` | 9 篇、约 302 行，**全英文** | 未做 |
+| 参考文档 | `docs/hooks-and-plugins.md`、`docs/custom-hooks.md`（`REFERENCE_DOCS`） | 164 + 290 行，标题与正文全英文 | 未做 |
+| 速查表的 man 式详情页 | `src/actions/defaults.rs` 的 `long_help` | **40 条全英文**（每条 2–4 行，带 `\n`） | 未做 |
+| 同上，粘贴伪行 | `src/views/shortcuts_help.rs` 的 `PASTE_LONG_HELP` | 1 条 | 未做 |
+| 文档引用的界面串 | `src/tips/ssh_wrap.rs`、`xai-grok-voice/src/pipeline.rs` | 各 1–2 条，第 21 章照抄实际输出 | 未做（改了要动两个 crate 的断言） |
+
+盘点的口径与坑：
+
+- **`scripts/l10n-guard.sh` 不覆盖这些面**。它守的是指南目录的结构不变式
+  （锚点、链接、围栏、行内字面量），`docs.rs` 的标题不会进它的视野。
+- `tutorial_docs.rs` 的 `go_deeper` 是**按字符串查 `docs.rs` 目录标题**的
+  （`find_doc` 大小写不敏感精确匹配，`go_deeper_titles_resolve_to_real_guides`
+  测试守着它）。改目录标题必须与六处 `go_deeper` **同一次提交**改完，否则
+  `d` 键变静默无效。
+- `REFERENCE_DOCS` 只改标题会变成「中文标题 + 英文正文」，所以要么连正文一起
+  译，要么整篇保持英文——`a9893bb1` 选了后者，等正文一起做。
+- `docs/tutorial/` 与 `docs/*.md`（参考文档）都**不在** `--glob` 的默认范围
+  里，逐章四条门禁对它们不生效；要验收得手工比对，或先把它们纳入 glob。
+- **故意不动的**：`xai-grok-workspace/src/session/git.rs:1961` 拼出的
+  `"grok: pre-{label} …"` 是 git stash 的跨版本标记（`worktree.rs:1155` 与
+  `git_restore_code_tests.rs:58` 靠它认领 stash），改名会认不出旧 stash；
+  `GROK_*` 环境变量名同理保留，本分叉认这套兼容名。
