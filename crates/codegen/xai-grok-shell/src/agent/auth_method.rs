@@ -383,7 +383,10 @@ pub fn cached_token_auth_method() -> acp::AuthMethod {
             acp::AuthMethodId::new(CACHED_TOKEN_AUTH_METHOD_ID),
             "cached_token".to_string(),
         )
-        .description(Some("Cached token from ~/.grok/auth.json".to_string())),
+        .description(Some(format!(
+            "来自 {} 的缓存令牌",
+            xai_grok_config::display_home_path("auth.json")
+        ))),
     )
 }
 

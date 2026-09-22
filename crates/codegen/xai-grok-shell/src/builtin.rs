@@ -1,10 +1,11 @@
-//! Built-in files extracted to `~/.grok/` on startup.
+//! Built-in files extracted to the resolved user home (`~/.chaos/`) on startup.
 
 const BUILTIN_FILES: &[(&str, &str)] = &[("README.md", include_str!("../README.md"))];
 
-/// Extract built-in metadata files to `~/.grok/` on startup.
+/// Extract built-in metadata files to the resolved user home (`~/.chaos/`) on
+/// startup.
 ///
-/// User skills under `~/.grok/skills/` are never managed here. Platform skills
+/// User skills under `<home>/skills/` are never managed here. Platform skills
 /// are delivered separately through the bundled skill cache.
 pub fn extract_builtin_files(grok_home: &std::path::Path) {
     let version = xai_grok_version::VERSION;

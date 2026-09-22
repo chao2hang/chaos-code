@@ -96,7 +96,10 @@ impl xai_tool_runtime::Tool for LspTool {
                 .ok_or_else(|| {
                     xai_tool_runtime::ToolError::custom(
                         "process_manager",
-                        "LSP tool is unavailable. Configure ~/.grok/lsp.json or <cwd>/.grok/lsp.json and ensure the language server can start.",
+                        format!(
+                            "LSP tool is unavailable. Configure {} or <cwd>/.grok/lsp.json and ensure the language server can start.",
+                            xai_grok_config::display_home_path("lsp.json")
+                        ),
                     )
                 })?
                 .clone();
