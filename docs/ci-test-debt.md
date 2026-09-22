@@ -54,15 +54,49 @@ test with extra steps.
 | Crate | Fork 债务数 | 原因 | Owner | 下次重审 |
 | --- | ---: | --- | --- | --- |
 | `xai-grok-pager` | 19 | 16 billing/subscription (fork removed); 3 connectors URL (`MANAGED_SECTION_CONNECTORS_URL` empty in Chaos). | @chaos-devs | 2026-10 |
-| `xai-grok-shell` | 20 | 14 agent/config upstream xAI defaults; 2 cli_models defaults; 2 mvp_agent grok.com login; 1 app.rs PRODUCTION_ENDPOINTS; 1 external_auth SSO flow. | @chaos-devs | 2026-10 |
+| `xai-grok-shell` | 28 | agent/config 等上游 xAI 默认值；cli_models 默认值；grok.com 登录；app.rs `PRODUCTION_ENDPOINTS`；external_auth SSO；远程 settings 抓取路径（BYOK 下不可达，见下节）。 | @chaos-devs | 2026-10 |
 | `xai-grok-shell-base` | 1 | Fork empties `PROD_CLI_CHAT_PROXY_BASE_URL`. | @chaos-devs | 2026-10 |
 | `xai-chat-state` | 1 | Pre-existing fork gap: selective-compaction projection. | @chaos-devs | 2026-10 |
-| `xai-grok-update` | 1 | `fetch_gh_release_version` uses GitHub HTTP API, not `gh` CLI. Wiremock rewrite in progress. | @chaos-devs | 2026-09 |
+| `xai-grok-update` | 5 | `fetch_gh_release_version` 用 GitHub HTTP API 而非 `gh` CLI；并发收敛类用例等 wiremock 重写。 | @chaos-devs | 2026-09 |
+| `xai-fast-worktree` | 2 | Grove pin 后端缺失（`pin_exists` 恒 `Ok(false)`、`delete_pin_ref_gated` 拒绝），pin 剪除类用例无法运行。 | @chaos-devs | 2026-10 |
 
-**Fork 债务合计：42**（2026 Q3 审计修正，详见
-`docs/ignored-audit-2026q3.md`）。全部带
+**Fork 债务合计：56**（2026-09-22 复核修正）。全部带
 `#[ignore = "reason; review YYYY-MM"]` 注释，review date 已补全到
 `2026-10`。
+
+## 2026-09-22：本地全量基线清账
+
+同步到 `SOURCE_REV 72a61251` 后跑本地全量 `cargo test --workspace`，得到
+**46 条失败基线**。逐条查明后全部处置完毕，按性质分为六类（每类一个提交）：
+
+| 类别 | 条数 | 处置 |
+| --- | ---: | --- |
+| 机械性过期期望（与 fork 无关，实现改了用例没跟） | 9 | 改断言，不动实现 |
+| 文案漏在英文（该中文的地方没中文） | 2 | 改成中文并钉住常量 |
+| 远程抓取默认关导致的行为缺陷 | 3 | **改实现**（含一条跨身份判决泄漏，见提交 `ab61a53e`） |
+| 上游未跑到的真实 git bug（`checkout -b … --end-of-options`） | 2 | **改实现** + 用例按真实契约重写 |
+| 分叉语义用例（前提是上游云端形态） | 8 | 能钉 fork 契约的改写，其余 3 条 `#[ignore]` |
+| 进程级全局态竞争 / 缺 Grove 后端的用例 | 10 | 加互斥锁；pin 存活断言改写，2 条 `#[ignore]` |
+
+### 本轮新增的 ignore 与丢失的覆盖面
+
+上表计数已按 2026-09-22 实测重新核对（此前几轮同步新增的 ignore 未回填本表，
+一并补齐：shell 20→28、update 1→5）。**本轮清账显式新增 5 条**：
+
+- `xai-grok-shell`（远程 settings 抓取路径，BYOK 下不可达）：
+  `post_auth_settings_non_xai_keeps_local_but_still_emits`、
+  `post_auth_settings_failure_resolves_gate_onto_local_policy`、
+  `settings_self_heal_refetches_after_token_rotation`。
+  **代价**：settings 抓取成功与失败两条分支、以及 401 令牌轮换自愈的用例
+  覆盖被移除。恢复条件：fork 提供可观测的抓取后端（或在集成测试里用独立进程
+  打开 `features.remote_fetch`，`tests/common/mod.rs` 的启动预取桩已按后者做）。
+- `xai-fast-worktree`（缺 Grove pin 后端）：
+  `nfs::liveness::tests::aborted_partial_removal_prunes_after_grace`、
+  `api::gc::tests::run_pass_prunes_orphan_grove_pins_after_grace`。
+  **代价**：pin 超过宽限期后被真正剪除的用例覆盖被移除；同一文件里其余 3 条
+  pin 用例已改为断言可验证的契约（`git cat-file` 仍能读到被 pin 保护的提交、
+  孤儿不被剪、在飞创建不被回收）。恢复条件：`nfs::liveness::pin_exists` 接上
+  真实 ref 读取器（`gix` 已在依赖里），届时同时恢复 `delete_pin_ref_gated`。
 
 ### 季度审计流程
 
