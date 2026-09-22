@@ -45,11 +45,11 @@
         "@iarna/toml": "^3.0.0"
     },
     "optionalDependencies": {
-        "chaos-code-darwin-arm64": "0.2.121",
-        "chaos-code-darwin-x64": "0.2.121",
-        "chaos-code-linux-arm64": "0.2.121",
-        "chaos-code-linux-x64": "0.2.121",
-        "chaos-code-win32-arm64": "0.2.121",
-        "chaos-code-win32-x64": "0.2.121"
+        "chaos-code-darwin-arm64": "0.4.0",
+        "chaos-code-darwin-x64": "0.4.0",
+        "chaos-code-linux-arm64": "0.4.0",
+        "chaos-code-linux-x64": "0.4.0",
+        "chaos-code-win32-arm64": "0.4.0",
+        "chaos-code-win32-x64": "0.4.0"
     }
 }

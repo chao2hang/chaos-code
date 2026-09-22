@@ -67,7 +67,9 @@
 ### Compatibility
 
 - 版本号统一为 `0.4.0`：`xai-grok-version`、`xai-grok-pager`、`xai-grok-pager-bin`、
-  `xai-grok-shell` 联动。
+  `xai-grok-shell` 联动；npm 侧的 `chaos-code` 与六个 `chaos-code-<平台>` 包，
+  以及 `optionalDependencies` 里的钉版，按 `scripts/ci/stamp-npm-version.mjs`
+  的同一口径钉到 `0.4.0`（此前平台包与钉版还停在 `0.2.121`）。
 - 分叉层不变：二进制名 `chaos`、配置根 `~/.chaos`、遥测默认关闭、内置模型目录
   为空、`remote_fetch` 默认 false、不引入登录/OIDC 依赖。
 
