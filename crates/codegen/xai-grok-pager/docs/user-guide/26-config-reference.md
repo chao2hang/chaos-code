@@ -206,7 +206,7 @@ Chaos 还会读取以下各层，靠后的行优先，除非 requirements 的 pi
 | `features.compaction_tool_choice` | `string` | `yes` | `user` | 压缩期间使用的工具选择提示。 |
 | `features.compaction_verbatim_input` | `boolean` | `pin` | `user` | 启用或禁用 `compaction_verbatim_input`。默认 true。另见 `GROK_COMPACTION_VERBATIM_INPUT`。 |
 | `features.dock` | `boolean` | `pin` | `user` | 启用或禁用 `dock`。默认 false。另见 `GROK_DOCK`。 |
-| `features.feedback` | `boolean` | `pin` | `user` | 启用或禁用 `feedback`。默认 true。另见 `GROK_FEEDBACK_ENABLED`。 |
+| `features.feedback` | `boolean` | `pin` | `user` | 启用或禁用 `feedback`。本分叉默认 false：反馈提交依赖上游服务，自定义模型提供方用不上。另见 `GROK_FEEDBACK_ENABLED`。 |
 | `features.feedback_trace_card` | `boolean` | `pin` | `user` | 在 `/feedback` 之后显示 trace 上传征询问题。默认 false。另见 `GROK_FEEDBACK_TRACE_CARD`。 |
 | `features.image_edit_model_override` | `string` | `yes` | `user` | image_edit 使用的 Imagine 模型 id。 |
 | `features.image_gen` | `boolean` | `pin` | `user` | 启用 image_gen / `/imagine`。 |
@@ -228,7 +228,7 @@ Chaos 还会读取以下各层，靠后的行优先，除非 requirements 的 pi
 | `features.telemetry` | `boolean / session_metrics / off` | `pin` | `user` | 产品遥测模式。企业默认为 off。 |
 | `features.title_refresh` | `boolean` | `pin` | `user` | 会话早期的自动标题刷新。在 requirements 中 pin 该键可压过 GROK_TITLE_REFRESH。 |
 | `features.turn_summary` | `boolean` | `pin` | `user` | 启用或禁用 `turn_summary`。默认 true。另见 `GROK_TURN_SUMMARY`。 |
-| `features.two_pass_compaction` | `boolean` | `pin` | `user` | 启用或禁用 `two_pass_compaction`。默认 true。另见 `GROK_TWO_PASS_COMPACTION`。 |
+| `features.two_pass_compaction` | `boolean` | `pin` | `user` | 启用或禁用 `two_pass_compaction`。本分叉默认 false（保持历史行为，需显式开启）。另见 `GROK_TWO_PASS_COMPACTION`。 |
 | `features.video_gen` | `boolean` | `pin` | `user` | 启用视频工具 / `/imagine-video`。 |
 | `features.voice_mode` | `boolean` | `pin` | `user` | 启用或禁用 `voice_mode`。默认 true。另见 `GROK_VOICE_MODE`。 |
 | `features.web_fetch` | `boolean` | `pin` | `user` | 启用或禁用 `web_fetch`。默认 false。另见 `GROK_WEB_FETCH`。 |
