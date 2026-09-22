@@ -514,9 +514,21 @@ fn table_cells(section: &str) -> impl Iterator<Item = &str> {
         .flat_map(|row| row.split('`').skip(1).step_by(2))
 }
 
+/// The `##` headings this module looks its sections up by, as the fork's translated guide writes them.
+/// The raw markdown ships in Chinese, so the English anchor that names the section in the test body is
+/// resolved through this table; a heading that is not listed is used verbatim.
+const TRANSLATED_HEADINGS: &[(&str, &str)] = &[
+    ("## Set up", "## 设置"),
+    ("## Available data", "## 可用数据"),
+];
+
 /// One `##` section of the guide.
 /// Scoped, because a name in a neighbouring section would otherwise vouch for a row that was deleted.
 fn section<'a>(guide: &'a str, heading: &str) -> &'a str {
+    let heading = TRANSLATED_HEADINGS
+        .iter()
+        .find_map(|(english, translated)| (*english == heading).then_some(*translated))
+        .unwrap_or(heading);
     let start = guide.find(heading).expect("the guide has this section");
     let rest = &guide[start + heading.len()..];
     match rest.find("\n## ") {

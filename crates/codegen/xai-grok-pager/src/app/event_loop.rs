@@ -4817,6 +4817,11 @@ mod tests {
     #[tokio::test]
     async fn pending_create_uses_auto_selected_before_effect_execution() {
         let mut app = crate::app::app_view::tests::test_app();
+        // `test_app()` sits in `/tmp`, which is not a project directory, so `needs_project_picker()`
+        // would divert the create into the directory picker and no `CreateSession` effect would be
+        // emitted — the `recv` below would then block forever. The picker is orthogonal to what this
+        // test pins: the auto-selected mode must be committed before the create effect is built.
+        app.project_picker_disabled = true;
         app.default_yolo = true;
         app.current_ui.permission_mode = Some("always-approve".into());
         let (acp_tx, mut acp_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -4926,6 +4931,10 @@ mod tests {
     #[tokio::test]
     async fn welcome_paste_preserves_create_and_forwarded_prompt() {
         let mut app = crate::app::app_view::tests::test_app();
+        // Same reason as `pending_create_uses_auto_selected_before_effect_execution`: plain text
+        // pasted into a non-project cwd is a user-authored first prompt, so the picker would
+        // intercept it and the create effect this test asserts on would never be emitted.
+        app.project_picker_disabled = true;
         let (acp_tx, mut acp_rx) = tokio::sync::mpsc::unbounded_channel();
         app.acp_tx = acp_tx;
         let (input_tx, mut input_rx) = tokio::sync::mpsc::unbounded_channel();

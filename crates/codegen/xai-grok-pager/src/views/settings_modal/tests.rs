@@ -204,6 +204,7 @@ fn setting_row_visible_hides_voice_rows_when_voice_mode_off() {
 }
 
 #[test]
+#[serial_test::serial(VOICE_GATE)]
 fn rebuild_rows_drops_voice_settings_when_gate_turns_off() {
     let prev = crate::app::voice_mode_enabled();
     crate::app::set_voice_mode_enabled_for_test(true);
@@ -498,7 +499,11 @@ fn render_setting_row_shows_full_label_when_one_line_fits() {
 /// It also holds the Editor entry `multiline_mode`, the Agent entries `permission_mode` and `plan_mode`, and the Privacy entry `coding_data_sharing`.
 /// The Models entry `default_model` and the Advanced entries `show_tips` and `auto_update` complete the list.
 /// `default_reasoning_effort` and `auto_compact_threshold_percent` are not exposed in the modal.
+/// Serialized against `rebuild_rows_drops_voice_settings_when_gate_turns_off`: the voice gate is a
+/// process-global, and that test flips it on mid-body, which would put the two voice rows back into
+/// the list asserted below.
 #[test]
+#[serial_test::serial(VOICE_GATE)]
 fn rows_contain_categories_and_settings_through_pr_14() {
     let prev_voice = crate::app::voice_mode_enabled();
     crate::app::set_voice_mode_enabled_for_test(false);
@@ -4541,7 +4546,10 @@ fn footer_has_blank_line_between_tip_and_hints_when_hints_dont_wrap() {
 /// There'd be no "1-row" baseline to compare against.
 /// The narrow viewport (100 cols gives modal_width=70, footer_width=64) is tuned so the FilterFocused hints wrap to exactly 2 rows.
 /// The hints are ~76 cells including separators; a more-aggressive narrow would split them into 3+ rows and trip the multi-row delta assertion.
+///
+/// Serialized against the tests that toggle the process-global `modal_window` embedded (minimal) flag: this test renders twice and compares the two row-list heights, and embedding re-anchors and re-heights the popup, so a flip landing between the two renders changes the comparison by rows rather than by the one row the wrap is supposed to cost. Bare `serial` is the lock those toggling tests already hold.
 #[test]
+#[serial_test::serial]
 fn footer_total_height_grows_when_hints_wrap() {
     // Wide modal: FilterFocused-mode hints fit on 1 row. footer_lines = 1 (hints) + 1 (gap) = 2, matching the baseline.
     let wide_area = Rect {
@@ -5388,7 +5396,9 @@ fn picker_description_word_wraps_no_ellipsis() {
 /// Also pins the rect's x and y.
 /// A future modal-chrome refactor that shifts the title origin then trips a test rather than silently breaking the breadcrumb.
 /// The hit-rect spans the FULL breadcrumb (`Settings › <label>`) so any click on the breadcrumb routes back to Browse.
+/// Serialized against the modal-embedded toggles: it renders several modes in a row and compares their popup rects (see `footer_total_height_grows_when_hints_wrap`).
 #[test]
+#[serial_test::serial]
 fn settings_breadcrumb_rect_set_in_sub_pane_modes() {
     let area = Rect {
         x: 0,
@@ -6614,7 +6624,9 @@ fn modal_widens_when_editing_max_thoughts_width() {
 
 /// Transitioning from `EditingValue { max_thoughts_width }` back to `Browse` snaps the modal back to its standard width on the next render frame.
 /// The widening lives in the render-time active-state match, not in any persistent layout state.
+/// Serialized against the modal-embedded toggles: it compares popup widths across two renders (see `footer_total_height_grows_when_hints_wrap`).
 #[test]
+#[serial_test::serial]
 fn modal_returns_to_default_width_when_leaving_edit_mode() {
     let area = Rect {
         x: 0,
@@ -6656,7 +6668,9 @@ fn modal_returns_to_default_width_when_leaving_edit_mode() {
 /// At 100 cols (below STANDARD_MAX_WIDTH + WIDENED_MARGIN = 118), EditingValue for max_thoughts_width must NOT shrink the modal below standard size.
 /// The widening gate requires `widened_candidate > STANDARD_MAX_WIDTH`; otherwise the standard path applies.
 /// This preserves the "never shrink" guarantee for narrow terminals.
+/// Serialized against the modal-embedded toggles: it compares popup widths across two renders (see `footer_total_height_grows_when_hints_wrap`).
 #[test]
+#[serial_test::serial]
 fn modal_widening_respects_terminal_width_minimum() {
     let area = Rect {
         x: 0,

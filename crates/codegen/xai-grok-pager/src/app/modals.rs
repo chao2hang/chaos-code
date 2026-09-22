@@ -3257,6 +3257,11 @@ mod command_palette_vim_input_tests {
         use ratatui::buffer::Buffer;
         use ratatui::layout::Rect;
 
+        // The cursor is detected by comparing a rendered cell's bg against the theme read here,
+        // while `draw_active_modal` reads `Theme::current()` again. A concurrent theme test
+        // flipping the global in between makes the two disagree and the cursor undetectable, so
+        // hold the theme test lock for the whole test.
+        let _theme = crate::theme::cache::pin_theme();
         let theme = crate::theme::Theme::current();
         // When the terminal can't distinguish colors (e.g. TERM=dumb quantises
         // every Color to Reset), bg == text_primary == bg_base, so every cell

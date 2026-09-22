@@ -469,6 +469,10 @@ mod tests {
 
     #[test]
     fn run_job_succeeds_on_temp_file() {
+        // `run_job` labels its result with the theme kind it baked the foregrounds under, and the
+        // assertion below re-reads that same process-global to compare. A concurrent theme test
+        // flipping it in between makes the two disagree, so pin the kind for the whole test.
+        let _theme = crate::theme::cache::pin_theme();
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("probe.py");
         let body = "x = 1\ny = 2\n";

@@ -170,6 +170,15 @@ mod tests {
             .unwrap_or_else(|| panic!("no output line contains {needle:?}"))
     }
 
+    /// Pins GrokNight and the color level via the shared test-lock guard.
+    /// Content parses its `│` bars from `Theme::current()`, and `quote_bar_style()` re-reads that
+    /// same process-global at output time to recognise them. A concurrent theme test flipping the
+    /// global in between makes the detector miss the painted bar, so the prefix silently stays in
+    /// the copy. Hold this for the whole test.
+    fn pin_groknight() -> std::sync::MutexGuard<'static, ()> {
+        crate::theme::cache::pin_theme()
+    }
+
     #[test]
     fn rendered_quote_prefix_len_shapes() {
         let bq = quote_bar_style();
@@ -259,6 +268,7 @@ mod tests {
 
     #[test]
     fn quote_line_selection_excludes_bar_prefix() {
+        let _theme = pin_groknight();
         let md = MarkdownContent::new("intro\n\n> QUOTE alpha\n\noutro");
         let out = md.output(80);
 
@@ -289,6 +299,7 @@ mod tests {
 
     #[test]
     fn nested_quote_selection_excludes_all_bars() {
+        let _theme = pin_groknight();
         let md = MarkdownContent::new("> outer line\n>\n> > NESTED deep");
         let out = md.output(80);
 
@@ -301,6 +312,7 @@ mod tests {
 
     #[test]
     fn wrapped_quote_continuations_exclude_reinjected_prefix() {
+        let _theme = pin_groknight();
         let md = MarkdownContent::new("> alpha bravo charlie delta echo foxtrot golf hotel india");
         let out = md.output(16);
         assert!(out.lines.len() > 1, "quote must wrap at width 16");
@@ -335,6 +347,7 @@ mod tests {
 
     #[test]
     fn blank_quote_line_survives_drag_copy_as_blank() {
+        let _theme = pin_groknight();
         let md = MarkdownContent::new("> QUOTE_A first\n>\n> QUOTE_B second");
         let out = md.output(80);
         assert_eq!(out.lines.len(), 3, "quote renders as three rows");
@@ -377,6 +390,7 @@ mod tests {
     fn literal_bar_at_quote_content_start_is_not_stripped() {
         // Quoted box-drawing output: the content's own bar must never be consumed as a nesting level (that would DELETE user bytes from the copy)
         // The row degrades to the conservative interior-bar class
+        let _theme = pin_groknight();
         let md = MarkdownContent::new("> │ box art");
         let out = md.output(80);
         let line = find_line(&out, "box art");
@@ -387,6 +401,7 @@ mod tests {
     #[test]
     fn literal_bar_as_entire_quote_content_is_not_dropped() {
         // Degenerate `> │`: without the style-aware scan this classified as a bar-only blank row and the content bar vanished from copies
+        let _theme = pin_groknight();
         let md = MarkdownContent::new("> │");
         let out = md.output(80);
         let line = find_line(&out, "│");
@@ -397,6 +412,7 @@ mod tests {
     #[test]
     fn list_nested_quote_keeps_prefix() {
         // Bullet span precedes the bar, so the first-span guard skips the row (documented conservative false negative on quote_prefix_selectable)
+        let _theme = pin_groknight();
         let md = MarkdownContent::new("- > quoted text");
         let out = md.output(80);
         let line = find_line(&out, "quoted text");
@@ -407,6 +423,7 @@ mod tests {
     #[test]
     fn literal_bar_in_paragraph_is_not_stripped() {
         // A paragraph starting with a literal bar (file-tree art) is a single glued span without the quote-bar style, so it stays fully selectable
+        let _theme = pin_groknight();
         let md = MarkdownContent::new("│ literal tree line");
         let out = md.output(80);
         let line = find_line(&out, "literal");
@@ -416,6 +433,7 @@ mod tests {
 
     #[test]
     fn literal_bar_in_code_block_is_not_stripped() {
+        let _theme = pin_groknight();
         let md = MarkdownContent::new("```\n│ box art\n└── tree\n```");
         let out = md.output(80);
         let line = find_line(&out, "box art");
@@ -425,6 +443,7 @@ mod tests {
 
     #[test]
     fn table_rows_keep_borders_in_copy() {
+        let _theme = pin_groknight();
         let md = MarkdownContent::new("| a | b |\n|---|---|\n| CELL1 | CELL2 |");
         let out = md.output(40);
         let row = find_line(&out, "CELL1");
@@ -438,6 +457,7 @@ mod tests {
 
     #[test]
     fn raw_mode_quote_lines_stay_fully_selectable() {
+        let _theme = pin_groknight();
         let mut md = MarkdownContent::new("> QUOTE alpha");
         md.set_raw_mode(true);
         let out = md.output(80);

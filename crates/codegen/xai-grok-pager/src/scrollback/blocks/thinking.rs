@@ -589,6 +589,10 @@ mod tests {
     fn thinking_quote_line_selection_excludes_bar_prefix() {
         use crate::scrollback::types::{derive_selection_text, line_plain_text};
 
+        // The markdown spans are painted from `Theme::current()` at parse time, and the quote-bar
+        // detector re-reads that same process-global at output time; a concurrent theme test
+        // flipping it in between would leave the bar in the copy. Pin it for the whole test.
+        let _theme = crate::theme::cache::pin_theme();
         let mut appearance = AppearanceConfig::default();
         appearance.scrollback.blocks.thinking.header = false;
         let ctx = BlockContext {
