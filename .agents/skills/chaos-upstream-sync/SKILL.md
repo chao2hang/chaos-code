@@ -1,6 +1,6 @@
 ---
 name: chaos-upstream-sync
-version: 1.1.0
+version: 1.2.0
 description: "跟踪 GitHub 上 xai-org/grok-build（Grok Build）的更新，并安全移植到本仓库 chaos-code（Chaos 分支）。**仅当用户明确提到「上游 / grok-build / upstream」时才触发**；否则不触发。触发词：当用户说「同步上游」「看 grok build 更新」「移植上游改动」「merge grok」「对齐 SOURCE_REV」「上游有没有新版本」时使用。覆盖：查 releases/tags/commits/changelog、对照本地 SOURCE_REV 与版本号、分流可移植 vs Chaos 专属冲突、分批 cherry-pick/merge、编译与单测、更新日志。"
 metadata:
   requires:
@@ -250,13 +250,50 @@ bash scripts/l10n-guard.sh --before main --after HEAD
 
 脚本本身位于 `scripts/l10n-guard.sh`,依赖 `git` + `rg`(带 Unicode property)。
 
+#### B6.6 文档中文化门禁(两个互补的检查器)
+
+`l10n-guard.sh` 守的是 **`crates/**/*.rs` 的中文字符数**(上游合并把中文 UI 冲掉时要能看见),
+它**看不见** `docs/` 里的 Markdown。文档那侧由 `scripts/check-doc-l10n.py` 负责,而它此前
+只在有人手动跑的时候才跑——CI 里**没有任何作业**读它,后果是一批用户可见文本长期没门禁。
+
+**2026-09-23 起** CI 新增 `docs-l10n` 作业(见 `.github/workflows/ci.yml`),对
+`crates/codegen/xai-grok-pager/docs/**/*.md`(36 个文件:26 章用户指南 + 9 篇教程 +
+2 篇参考文档)跑四项,四项都必须为 0:
+
+| 模式 | 查什么 | 失败原因示例 |
+|---|---|---|
+| `--english` | 未翻译的英文散文行 | 上游新章节整段英文 |
+| `--fork-names --strict` | `grok <cmd>` 命令名 / `~/.grok` 路径残留 | 新文档抄了上游的 `grok doctor` |
+| `--links` | `](file.md#anchor)` 是否解析得到 | **翻译改了标题却忘了改入链** |
+| `--cells --strict` | 表格单元格是否译过或已登记为保留字面量 | 新表 `Action` / `Details` 表头没译 |
+
+本地等价跑法(移植后必做,与 CI 同一 glob):
+
+```bash
+glob='crates/codegen/xai-grok-pager/docs/**/*.md'
+python3 scripts/check-doc-l10n.py --english    --glob "$glob"
+python3 scripts/check-doc-l10n.py --fork-names --strict --glob "$glob"
+python3 scripts/check-doc-l10n.py --links      --glob "$glob"
+python3 scripts/check-doc-l10n.py --cells      --strict --glob "$glob"
+```
+
+**为什么 `--links` 最值得注意**:`--english` 按 `--min-words 6` 判英文散文,短标题结构上
+就抓不到;而**翻译标题会改锚点**,任何 `](#某英文锚点)` 的入链会在同一次提交里静默失效。
+历史上 `docs/custom-hooks.md` 与 `docs/hooks-and-plugins.md` 各有一条这样的死链烂了整整
+一轮(`962d4bf8` 修)。改标题时**同一提交**改入链,别指望下一个提交补。
+
+**不要**把 `--before/--after` 那套结构不变式(fences / inline / tables / links / headings /
+numbers)用在跨度很大的范围上:它设计给「比较相邻两次翻译提交」。`--before main --after HEAD`
+连默认 glob 都会报 21 个文件"结构漂移",因为两端不可比——CI 因此只用 worktree 模式。
+
 ### B7. 交付说明
 
 完成后给用户：
 
 - 合入了哪些上游 commit / 路径  
 - 刻意 **没** 合哪些（及原因）  
-- **L10n Guard 结果**（regressed / shrunk / fortress-breach 各几条）  
+- **L10n Guard 结果**（regressed / shrunk / fortress-breach 各几条）
+- **文档中文化门禁结果**（`--english` / `--fork-names --strict` / `--links` / `--cells --strict` 四项是否全 0，见 B6.6）  
 - 测试命令与结果  
 - 是否需要重启 `target/release/chaos`  
 - 未 push 的分支名（默认不 push，除非用户要求）
