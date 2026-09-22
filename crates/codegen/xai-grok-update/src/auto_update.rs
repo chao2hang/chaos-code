@@ -28,7 +28,7 @@ pub enum UpdateRunMode {
 }
 
 const PROMPT_UPDATE_NOW: &str = "现在更新？[Y/n/d]";
-const MSG_AUTO_UPDATE_BACKGROUND: &str = "Auto-update running in background.";
+const MSG_AUTO_UPDATE_BACKGROUND: &str = "自动更新正在后台运行。";
 const MSG_RUN_UPDATE_MANUAL: &str = "运行 `chaos update` 获取最新版本。";
 
 /// Manual-install one-liner for this platform's bootstrap installer.

@@ -918,11 +918,13 @@ async fn test_cleanup_old_downloads_mixed_stable_and_alpha() {
 
 #[test]
 fn test_reinstall_hint_npm_mentions_npm_command() {
+    // Chaos fork: the npm package is `chaos-code`, not upstream's
+    // `@xai-official/grok`, and the hint also points at the GitHub release path.
     let hint = reinstall_hint("npm", "stable");
     assert!(hint.contains("npm i -g"), "should suggest npm i -g: {hint}");
     assert!(
-        hint.contains("@xai-official/grok"),
-        "should name the package: {hint}"
+        hint.contains("npm i -g chaos-code"),
+        "should name the fork's npm package: {hint}"
     );
 }
 
@@ -1620,15 +1622,10 @@ async fn test_cleanup_old_downloads_darwin_platform_recognized() {
 
 #[test]
 fn test_user_facing_constants_are_stable() {
-    assert_eq!(PROMPT_UPDATE_NOW, "Update now? [Y/n/d]");
-    assert_eq!(
-        MSG_AUTO_UPDATE_BACKGROUND,
-        "Auto-update running in background."
-    );
-    assert_eq!(
-        MSG_RUN_UPDATE_MANUAL,
-        "Run `grok update` to get the latest version."
-    );
+    // Chaos fork: user-facing update text is Chinese (and names the `chaos` binary).
+    assert_eq!(PROMPT_UPDATE_NOW, "现在更新？[Y/n/d]");
+    assert_eq!(MSG_AUTO_UPDATE_BACKGROUND, "自动更新正在后台运行。");
+    assert_eq!(MSG_RUN_UPDATE_MANUAL, "运行 `chaos update` 获取最新版本。");
 }
 
 // ──────────────────────────────────────────────────────────────────────
