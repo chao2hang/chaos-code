@@ -3772,15 +3772,24 @@ fn validate_hooks_path_rejects_relative_path() {
             "should mention 'absolute'"
         );
 }
+/// The "must be under …" fragment, built from the dual-home policy rather than
+/// hardcoded: which directory a host resolves is a property of that host.
+fn hooks_under_label() -> String {
+    format!(
+        "must be under {}/",
+        xai_grok_config::default_home_display_prefix()
+    )
+}
+
 #[test]
 fn validate_hooks_path_rejects_outside_grok_home() {
     let result = validate_hooks_path("/tmp/evil-hooks");
     assert!(result.is_err());
     let msg = result.unwrap_err().to_string();
     assert!(
-            msg.contains("must be under ~/.grok/"),
-            "should mention ~/.grok/ restriction, got: {msg}"
-        );
+        msg.contains(&hooks_under_label()),
+        "should mention the config-home restriction, got: {msg}"
+    );
 }
 #[test]
 fn validate_hooks_path_rejects_traversal_attack() {
@@ -3790,9 +3799,9 @@ fn validate_hooks_path_rejects_traversal_attack() {
     assert!(result.is_err());
     let msg = result.unwrap_err().to_string();
     assert!(
-            msg.contains("must be under ~/.grok/"),
-            "traversal should be rejected, got: {msg}"
-        );
+        msg.contains(&hooks_under_label()),
+        "traversal should be rejected, got: {msg}"
+    );
 }
 #[test]
 fn validate_hooks_path_accepts_grok_hooks_subdir() {

@@ -507,10 +507,11 @@ impl ProfileName {
             }
 
             Self::Custom(name) => {
+                let user_sandbox = xai_grok_config::display_home_path("sandbox.toml");
                 let profile_config = config.profiles.get(name).ok_or_else(|| {
                     anyhow::anyhow!(
                         "Custom sandbox profile '{name}' not found. \
-                         Define it in ~/.grok/sandbox.toml or .grok/sandbox.toml:\n\n\
+                         Define it in {user_sandbox} or .grok/sandbox.toml:\n\n\
                          [profiles.{name}]\n\
                          extends = \"workspace\"\n\
                          read_only = [\"/data\"]\n"

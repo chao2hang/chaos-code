@@ -145,16 +145,20 @@ fn discover_servers(cwd: &Path) -> (Vec<ConfigSourceStatus>, Vec<DiscoveredServe
 
     let grok_home = xai_grok_tools::util::grok_home::grok_home();
     let user_config = grok_home.join("config.toml");
+    // Tracks the dual-home policy instead of naming the legacy `~/.grok` this
+    // process may not read; the project rows below already show resolved paths.
+    let user_config_label =
+        xai_grok_config::display_home_path(xai_grok_config::USER_CONFIG_FILENAME);
     if user_config.is_file() {
         sources.push(ConfigSourceStatus {
-            path: "~/.grok/config.toml".to_string(),
+            path: user_config_label.clone(),
             status: ConfigSourceState::Found {
                 server_count: config_count,
             },
         });
     } else {
         sources.push(ConfigSourceStatus {
-            path: "~/.grok/config.toml".to_string(),
+            path: user_config_label,
             status: ConfigSourceState::NotFound,
         });
     }

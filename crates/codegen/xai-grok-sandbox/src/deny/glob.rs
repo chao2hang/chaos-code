@@ -473,12 +473,16 @@ pub(crate) fn expand_deny_globs(
                         }
                     };
                     if visited.fetch_add(1, Ordering::Relaxed) >= caps.entries {
+                        // Built here rather than outside `run`: the inner walker
+                        // closure must stay free of extra captures.
+                        let guide =
+                            xai_grok_config::display_home_path("docs/user-guide/18-sandbox.md");
                         let _ = failure.set(format!(
                             "expanding the deny globs {globs:?} visited over {} entries \
                              across their roots (stopped in {} at {}; gitignored and \
                              hidden files are included in the scan). Use narrower globs \
                              with a literal prefix, or deny exact paths; see the sandbox \
-                             guide (~/.grok/docs/user-guide/18-sandbox.md)",
+                             guide ({guide})",
                             caps.entries,
                             root.display(),
                             entry.path().display(),

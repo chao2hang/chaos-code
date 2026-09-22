@@ -1097,21 +1097,31 @@ fn deserialize_mcp_server_config(
 }
 
 /// Turn a failed `[mcp_servers.<name>]` entry into an actionable problem.
+/// User-facing path of the MCP chapter in the extracted user guide.
+///
+/// Resolved per call: the guide is extracted into whichever config home the
+/// dual-home policy selected, so a literal `~/.grok/docs/...` names a file a
+/// default install never writes.
+fn mcp_guide_path() -> String {
+    xai_grok_config::display_home_path("docs/user-guide/07-mcp-servers.md")
+}
+
 /// The transport-less case is steered to `disabled_mcp_servers`, Grok's real disable mechanism.
 fn diagnose_invalid_entry(name: &str, value: &TomlValue, error: &str) -> McpServerConfigProblem {
     let has_command = value.get("command").is_some();
     let has_url = value.get("url").is_some();
+    let guide = mcp_guide_path();
     let message = if !has_command && !has_url {
         format!(
             "`mcp_servers.{name}` has no transport. To run it, set `command = \"...\"` or \
              `url = \"...\"`. To turn it off, add \"{name}\" to `disabled_mcp_servers` instead of \
              leaving an entry with no transport. \
-             See ~/.grok/docs/user-guide/07-mcp-servers.md"
+             See {guide}"
         )
     } else {
         format!(
             "`mcp_servers.{name}` has an invalid transport: {error}. \
-             See ~/.grok/docs/user-guide/07-mcp-servers.md"
+             See {guide}"
         )
     };
     McpServerConfigProblem {
@@ -1140,6 +1150,7 @@ pub(crate) fn parse_mcp_servers_with_problems(root: &TomlValue) -> ParsedMcpServ
         _ => return ParsedMcpServers { servers, problems },
     };
 
+    let guide = mcp_guide_path();
     for (name, value) in entries {
         match deserialize_mcp_server_config(value) {
             Ok((config, unknown_fields)) => {
@@ -1150,7 +1161,7 @@ pub(crate) fn parse_mcp_servers_with_problems(root: &TomlValue) -> ParsedMcpServ
                         severity: McpServerProblemSeverity::Warning,
                         message: format!(
                             "`mcp_servers.{name}` has an unrecognized field `{field}`; it is \
-                             ignored. See ~/.grok/docs/user-guide/07-mcp-servers.md"
+                             ignored. See {guide}"
                         ),
                     });
                 }
@@ -1164,7 +1175,7 @@ pub(crate) fn parse_mcp_servers_with_problems(root: &TomlValue) -> ParsedMcpServ
                         message: format!(
                             "`mcp_servers.{name}` is enabled but its `{field}` is blank. \
                              Set a value, or add \"{name}\" to `disabled_mcp_servers` to turn it \
-                             off. See ~/.grok/docs/user-guide/07-mcp-servers.md"
+                             off. See {guide}"
                         ),
                     });
                     continue;

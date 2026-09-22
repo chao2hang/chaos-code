@@ -84,10 +84,10 @@ clipboard (containers, SSH) and your terminal does not handle OSC 52 itself
 sync with your window size.
 
 Examples:
-  grok wrap docker exec -it my-container bash
-  grok wrap kubectl exec -it my-pod -- bash
+  chaos wrap docker exec -it my-container bash
+  chaos wrap kubectl exec -it my-pod -- bash
 
-See ~/.grok/README.md for more information.
+See ~/.chaos/README.md for more information.
 ")]
     Wrap(WrapArgs),
     /// Export a session transcript as Markdown

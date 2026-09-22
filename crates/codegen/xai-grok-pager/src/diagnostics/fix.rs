@@ -510,7 +510,7 @@ const FIX_REGISTRY: &[FixSpec] = &[
         id: TMUX_TRUECOLOR_ID,
         handle: "tmux-truecolor",
         label: TMUX_TRUECOLOR_SPEC.label,
-        command: "grok doctor fix terminal.tmux-truecolor",
+        command: "chaos doctor fix terminal.tmux-truecolor",
         kind: FixKind::TmuxOption(&TMUX_TRUECOLOR_SPEC),
     },
 ];

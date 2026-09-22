@@ -15,10 +15,10 @@ impl SlashCommand for LogoutCommand {
     }
 
     fn run(&self, _ctx: &mut CommandExecCtx, _args: &str) -> CommandResult {
-        CommandResult::Message(
-            "Chaos 不使用 Grok 登录会话。请编辑 ~/.grok/config.toml 中的 \
-             model_providers / env_key，或运行 /provider。详见 CHAOS.md。"
-                .into(),
-        )
+        CommandResult::Message(format!(
+            "Chaos 不使用 Grok 登录会话。请编辑 {} 中的 \
+                 model_providers / env_key，或运行 /provider。详见 CHAOS.md。",
+            crate::util::display_user_grok_path(xai_grok_config::USER_CONFIG_FILENAME)
+        ))
     }
 }

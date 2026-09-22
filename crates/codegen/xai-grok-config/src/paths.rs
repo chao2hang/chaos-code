@@ -48,6 +48,20 @@ pub fn default_home_display_prefix() -> &'static str {
     }
 }
 
+/// User-facing path under the resolved config home, e.g. `~/.chaos/config.toml`.
+///
+/// For messages a user reads that must name a file under their own config home.
+/// The name comes from [`default_home_display_prefix`], so it tracks the
+/// dual-home policy instead of hardcoding one of the two directories.
+///
+/// Caveat: like that helper this ignores `$CHAOS_HOME`/`$GROK_HOME`, so a message
+/// built here names the default home even in a process launched with an explicit
+/// override. Crates that can see `xai-grok-pager-render` should prefer
+/// `util::display_user_grok_path`, which is override-aware.
+pub fn display_home_path(relative: &str) -> String {
+    format!("{}/{relative}", default_home_display_prefix())
+}
+
 /// Project-local config directory names in **merge order** (lower → higher
 /// priority). Legacy `.grok` is listed first so a co-located `.chaos` layer
 /// wins when both exist at the same path depth.
