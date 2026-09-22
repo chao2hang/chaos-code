@@ -314,7 +314,11 @@ mod tests {
             serde_json::to_vec(&decoy_marker).unwrap(),
         )
         .unwrap();
-        crate::nfs::confined::tests::plant_journal(&data, victim_id, &victim_backing, None);
+        // NOTE: upstream's version of this test seeded a grove journal entry here through
+        // `crate::nfs::confined::tests::plant_journal`. That helper is defined nowhere in this
+        // tree — the reference is dangling at upstream 72a61251 as well, and upstream later
+        // deleted the whole `nfs` module — so the call is dropped. No assertion below depended
+        // on it: `try_nfs_remove` is invoked with `harmless`, never with the victim backing.
         let _env = crate::nfs::GROVE_ENV_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());

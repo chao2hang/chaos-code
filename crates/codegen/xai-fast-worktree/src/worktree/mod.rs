@@ -63,6 +63,7 @@ pub(crate) fn execute_plan(plan: WorktreePlan) -> Result<CreateWorktreeResult> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use crate::{IgnoredFilesMode, WorkingTreeMode, WorktreeBuilder};
     #[cfg(unix)]
     use std::path::PathBuf;
