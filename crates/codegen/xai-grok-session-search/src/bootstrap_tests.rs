@@ -110,6 +110,10 @@ fn read_marker(db_path: &Path) -> Option<String> {
     with_search_index(db_path, |index| index.get_meta(META_KEY_LAST_BOOTSTRAP)).unwrap()
 }
 
+/// A launch ignores any completed marker on its first claim, so its reindex rewrites the marker.
+/// The cache epoch is process-global, so a sibling test healing its own cache mid-run makes the
+/// claimant withhold the marker and report `RunAgain` instead; the marker assertion tolerates that
+/// the way `test_concurrent_gates_single_flight` does, rather than failing on a foreign heal.
 #[tokio::test]
 async fn test_claimant_reindexes_even_when_marker_exists() {
     let tmp = tempfile::TempDir::new().unwrap();
@@ -117,6 +121,7 @@ async fn test_claimant_reindexes_even_when_marker_exists() {
     stamp_marker(&db_path, "123");
 
     let source = FakeSource::empty();
+    let epoch_before = recovery::current_epoch();
     bootstrap_with_lease_inner(
         tmp.path(),
         &source,
@@ -127,9 +132,12 @@ async fn test_claimant_reindexes_even_when_marker_exists() {
     )
     .await
     .unwrap();
+    let healed = recovery::current_epoch() != epoch_before;
 
-    // The reindex rewrote the marker and released the claim.
-    assert_ne!(read_marker(&db_path).as_deref(), Some("123"));
+    assert!(
+        healed || read_marker(&db_path).as_deref() != Some("123"),
+        "the reindex must rewrite the marker it found (a sibling cache heal withholds it)"
+    );
     let claim =
         with_search_index(&db_path, |index| index.get_meta(META_KEY_BOOTSTRAP_CLAIM)).unwrap();
     assert_eq!(claim, None);
