@@ -1069,47 +1069,47 @@ pub fn render_agents_modal(
 fn build_agents_tab_shortcuts<'a>(state: &AgentsModalState) -> Vec<Shortcut<'a>> {
     let mut shortcuts = vec![
         Shortcut {
-            label: "j/k nav",
+            label: "j/k 导航",
             clickable: false,
             id: 0,
         },
         Shortcut {
-            label: "e/\u{2192} expand",
+            label: "e/\u{2192} 展开",
             clickable: false,
             id: 0,
         },
         Shortcut {
-            label: "E/\u{2190} collapse",
+            label: "E/\u{2190} 折叠",
             clickable: false,
             id: 0,
         },
         Shortcut {
-            label: "Enter view",
+            label: "Enter 查看",
             clickable: false,
             id: 0,
         },
         Shortcut {
-            label: "/ search",
+            label: "/ 搜索",
             clickable: false,
             id: 0,
         },
         Shortcut {
-            label: "t toggle",
+            label: "t 切换",
             clickable: false,
             id: 0,
         },
         Shortcut {
-            label: "s default",
+            label: "s 设为默认",
             clickable: false,
             id: 0,
         },
         Shortcut {
-            label: "Tab switch tab",
+            label: "Tab 切换标签页",
             clickable: false,
             id: 0,
         },
         Shortcut {
-            label: "Esc close",
+            label: "Esc 关闭",
             clickable: false,
             id: 0,
         },
@@ -1122,17 +1122,17 @@ fn build_personas_tab_shortcuts<'a>(state: &AgentsModalState) -> Vec<Shortcut<'a
     if state.persona_input.is_some() {
         vec![
             Shortcut {
-                label: "Tab switch field",
+                label: "Tab 切换字段",
                 clickable: false,
                 id: 0,
             },
             Shortcut {
-                label: "Enter create",
+                label: "Enter 创建",
                 clickable: false,
                 id: 0,
             },
             Shortcut {
-                label: "Esc cancel",
+                label: "Esc 取消",
                 clickable: false,
                 id: 0,
             },
@@ -1140,12 +1140,12 @@ fn build_personas_tab_shortcuts<'a>(state: &AgentsModalState) -> Vec<Shortcut<'a
     } else if state.persona_confirm.is_some() {
         vec![
             Shortcut {
-                label: "y confirm",
+                label: "y 确认",
                 clickable: false,
                 id: 0,
             },
             Shortcut {
-                label: "n/Esc cancel",
+                label: "n/Esc 取消",
                 clickable: false,
                 id: 0,
             },
@@ -1153,17 +1153,17 @@ fn build_personas_tab_shortcuts<'a>(state: &AgentsModalState) -> Vec<Shortcut<'a
     } else {
         let mut shortcuts = vec![
             Shortcut {
-                label: "j/k nav",
+                label: "j/k 导航",
                 clickable: false,
                 id: 0,
             },
             Shortcut {
-                label: "e/\u{2192} expand",
+                label: "e/\u{2192} 展开",
                 clickable: false,
                 id: 0,
             },
             Shortcut {
-                label: "E/\u{2190} collapse",
+                label: "E/\u{2190} 折叠",
                 clickable: false,
                 id: 0,
             },

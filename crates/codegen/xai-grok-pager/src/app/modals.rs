@@ -1880,17 +1880,17 @@ impl AgentView {
             // Standard footer shortcuts for picker-style modals.
             let mut picker_shortcuts: Vec<Shortcut> = vec![
                 Shortcut {
-                    label: "\u{2191}/\u{2193} nav",
+                    label: "\u{2191}/\u{2193} 导航",
                     clickable: false,
                     id: 0,
                 },
                 Shortcut {
-                    label: "Enter select",
+                    label: "Enter 选择",
                     clickable: false,
                     id: 0,
                 },
                 Shortcut {
-                    label: "Esc close",
+                    label: "Esc 关闭",
                     clickable: false,
                     id: 0,
                 },
@@ -2071,12 +2071,12 @@ impl AgentView {
                 let mut session_shortcuts: Vec<Shortcut> = if pending_delete.is_some() {
                     vec![
                         Shortcut {
-                            label: "y confirm delete",
+                            label: "y 确认删除",
                             clickable: false,
                             id: 0,
                         },
                         Shortcut {
-                            label: "n cancel",
+                            label: "n 取消",
                             clickable: false,
                             id: 0,
                         },
@@ -2085,19 +2085,19 @@ impl AgentView {
                     let external =
                         *source_filter == crate::views::session_picker::SourceFilter::External;
                     let mut shortcuts = vec![Shortcut {
-                        label: "\u{2191}\u{2193} nav",
+                        label: "\u{2191}\u{2193} 导航",
                         clickable: false,
                         id: 0,
                     }];
                     if !external {
                         shortcuts.extend([
                             Shortcut {
-                                label: "e expand",
+                                label: "e 展开",
                                 clickable: false,
                                 id: 0,
                             },
                             Shortcut {
-                                label: "/ search",
+                                label: "/ 搜索",
                                 clickable: false,
                                 id: 0,
                             },
@@ -2105,13 +2105,13 @@ impl AgentView {
                     }
                     if !chat_mode {
                         shortcuts.push(Shortcut {
-                            label: "f filter",
+                            label: "f 筛选",
                             clickable: false,
                             id: 0,
                         });
                         if !external {
                             shortcuts.push(Shortcut {
-                                label: "d delete",
+                                label: "d 删除",
                                 clickable: false,
                                 id: 0,
                             });
@@ -2414,12 +2414,12 @@ impl AgentView {
 
                 let shortcuts: Vec<Shortcut> = vec![
                     Shortcut {
-                        label: "\u{2191}/\u{2193} scroll",
+                        label: "\u{2191}/\u{2193} 滚动",
                         clickable: false,
                         id: 0,
                     },
                     Shortcut {
-                        label: "Enter save",
+                        label: "Enter 保存",
                         clickable: false,
                         id: 0,
                     },
@@ -2429,7 +2429,7 @@ impl AgentView {
                         id: 0,
                     },
                     Shortcut {
-                        label: "Esc cancel",
+                        label: "Esc 取消",
                         clickable: false,
                         id: 0,
                     },
