@@ -1,7 +1,8 @@
 # 用户指南中文化的进度与恢复点
 
-更新于 2026-09-20，分支 `sync/curated-port-20260918`，基线 `a82a27ea`，
-本文的提交清单与统计数字截至 `6bf588a7`。
+更新于 2026-09-22，分支 `sync/curated-port-20260918`，基线 `a82a27ea`。
+§一 的提交清单截至 `6bf588a7`，`6bf588a7` 之后补齐的 13 个提交见 §一之补；
+§二 的统计表是 `d6d4508c` 时的**历史快照**，当前结论见该节开头。
 
 ## 一、已完成
 
@@ -52,11 +53,46 @@
 十、十一、十二节。
 `26` 的首节散文已译，表格短单元格已全库替换；`README` 还剩链接表的 10 个单元格。
 
-## 二、真实剩余工作量
+### 一之补：`6bf588a7` 之后的收尾提交（2026-09-22）
 
+`6bf588a7` 时还没做完的 9 项（即 §二 历史快照表里的那 9 篇：`03`、`05`、`10`、
+`14`、`22`、`23`、`24`、`26` 与 `README`，含各节的表格单元格与上游旧名改写）
+由下列提交补齐，其中译章节的提交都带「上游 `a28ee2b2` 增量」：
+
+| 提交 | 内容 |
+|---|---|
+| `fab8a8e8` | 第 3 章 —— `03-keyboard-shortcuts.md` |
+| `b2db8d4a` | 指南正文标题、文档名与目录条目统一为中文名 |
+| `6c0d53fc` | 第 23 章 —— `23-dashboard.md` |
+| `58228c4e` | 第 10 章 —— `10-hooks.md` |
+| `02c2576b` | 第 24 章 —— `24-monitoring-usage.md` |
+| `2c96f179` | 第 22 章 —— `22-permissions-and-safety.md` |
+| `1f534c90` | 第 10 章补完上游旧名改写 |
+| `55f76b00` | 第 26 章补完表格单元格中文化 |
+| `82519506` | 第 14 章 —— `14-headless-mode.md` |
+| `17e10ec3` | 第 5 章 —— `05-configuration.md` |
+| `dd1171d7` | 章节中文化后重建入站锚点（`d` 键跳转面） |
+| `1936c0fa` | 修正看板章节残留的上游旧命令名与断锚点 |
+| `f39dfd1a` | 修正配置参考里两个已与实现脱节的默认值 |
+
+至此 26 篇（含 `README`）全部完成，验收口径见 §二 与 §六之补。
+
+## 二、真实剩余工作量（2026-09-22：已清零）
+
+**当前结论**：26 篇用户指南全部中文化完毕，本节下表所记的 9 篇待译章节已于
+§一之补 列的提交中做完。当时的四项指标现况：
+
+| 口径 | 命令 | 现状 |
+|---|---|---|
+| 散文行残留英文 | `check-doc-l10n.py --english` | 0 行 |
+| 表格单元格 | `… --cells --strict` | 0 条散文单元格；仅剩 4 条有意保留的混合 note |
+| 上游旧名 | `… --fork-names --strict` | 0 条 |
+| 死锚点 | `… --links` | 0 条 |
+
+下面是 `d6d4508c` 时的历史快照，**仅供追溯**，不要据此重做已完成的章节：
 `--english` 只扫散文行、不扫表格行，单看过它会把「散文已中文、表格全英文」
-的章节误判成接近完成。下表是 `--english` 与 `--cells` 合起来的口径
-（`--fork-names` 是同一批改动里顺带做的），统计于 `d6d4508c`。
+的章节误判成接近完成；这张表是 `--english` 与 `--cells` 合起来的口径
+（`--fork-names` 是同一批改动里顺带做的）。
 
 | 章节 | 行数 | 字符 | 散文行 | 表格单元格 | 上游旧名 |
 |---|---:|---:|---:|---:|---:|
@@ -98,6 +134,10 @@
 已做完：1（`08`、`11`）、2（`06`、`25`）、3（`15`、`18`）、4（`07`、`13`）、
 5（`04`、`17`）、6（`01`、`09`）、7（`16`、`21` 已完，`24` 在跑）、8（`23` 在跑）。
 余下按 9→12 的顺序，`03`、`14` 也已派出。
+
+**2026-09-22：1–12 全部做完。** 第 12 步的 `README` 链接文字在章节标题定稿后
+随 `b2db8d4a` 处理。本节的顺序表自此只作方法论留档，不再有「下一个派哪个」的
+问题；新章节若出现，按同样的一章一子代理、一章一提交来走。
 
 ## 四、每章的执行协议（实测唯一稳定的做法）
 
@@ -211,6 +251,22 @@ python3 scripts/check-doc-l10n.py --fork-names --glob "$G/<本章>"
   模式，而 `Grove` 是本分叉没有的功能（`xai-grok-config`、`app/cli.rs`
   里都没有这个字符串），按 §4.3 删掉相关表述。
 
+### 五之补：`persona` / `role` 的译名（第 04 章曾与第 16 章冲突，已统一）
+
+第 16 章定下的分层是**代理 > 人设 > 角色**（`persona` = 人设，`role` = 角色），
+与上游一致，代码侧也是这个口径（`views/subagent_catalog_pane.rs` 的分类表头写作
+`("人设", "persona", …)`）。
+
+第 04 章此前把上游的 `persona` 逐处译成了「角色」，共三处：章节标题
+`## Agents and Personas` → 「代理与角色」、`/personas` 条文
+`Create, edit, and delete personas` → 「创建、编辑和删除角色」、第 25 行
+`manages agent *definitions* and personas` → 「管理代理*定义*与角色」。三处均已按
+第 16 章口径改为「人设」（提交 `a4826e99`）。这不是译名取舍，是译错：`/personas`
+面板管的正是人设标签页，读成「角色」会把两个不同的层级混为一谈。
+
+改的只是中文散文，`--english` / `--cells` / `--fork-names` / `--links` 四条门禁
+不受影响（改动后已复跑，全 0）。
+
 ## 六、收尾清单（全部章节译完后）
 
 1. `python3 scripts/check-doc-l10n.py --fix-anchors --before <译前基线>`
@@ -271,6 +327,32 @@ python3 scripts/check-doc-l10n.py --fork-names --glob "$G/<本章>"
 8. `cargo test -p xai-grok-shell --lib --features config-docs config_docs`
    仍通过（`26-config-reference.md` 是它的输入）。
 9. 对照 `~/.chaos/docs/user-guide/` 的解包结果与仓库副本一致。
+
+### 六之补：第 8 条当时其实不成立（2026-09-22 修）
+
+收尾时按第 8 条实跑，发现三件事叠在一起，这条清单项此前一直是「写了但没跑」：
+
+1. `config-docs` 不在 cargo `default` 里，上游把打开它的责任交给内部 bazel 的
+   `default-bazel`，公开树没有对应机制，本仓库也没有依赖边打开它。所以
+   `cargo test -p xai-grok-shell --lib --features config-docs config_docs` 之外的
+   任何跑法（含 `--workspace`）都是 `running 0 tests`——`26-config-reference.md`
+   其实没有任何自动守护。
+2. 即使手动开特性，`page_is_the_user_facing_field_list` 也过不去：它钉的是英文
+   标题 `# Configuration reference` 与英文表头，而本页已中文化；这等于在钉
+   「这页还没翻」，不是钉页面契约。
+3. 同一用例还读 `crates/codegen/xai-grok-shell/AGENTS.md`，该文件既不在本分叉
+   也不在上游公开树里，`find_monorepo_root().join(...)` 之后 `read_to_string`
+   直接 panic。
+
+已修（见 `91eadcfe` 与 `docs/ci-test-debt.md` 的「一组从不执行的守护测试」）：断言
+改钉中文页面形态；`AGENTS.md` 那段改成「文件存在才断言」；新增
+`feature_rows_state_the_registry_default` 把页面写出的 `默认 true|false` 与注册表
+`default_enabled` 对齐（它正是靠这条抓出 `features.feedback`、
+`features.two_pass_compaction` 两行的失效默认值，见 `f39dfd1a`）；并用 pager 的
+dev-dependency 边打开该特性，让 `cargo test --workspace` 自动跑到。
+
+因此第 8 条的有效形态改为：`config_docs` 12 个用例在 `cargo test --workspace`
+里全绿（无需再手写 `--features config-docs`）。
 
 ## 七、`docs/user-guide/` 之外的英文残留（本轮新发现，已盘点）
 
