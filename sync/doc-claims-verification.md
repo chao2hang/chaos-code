@@ -314,3 +314,116 @@ T1-7c / T1-7d 原本要把上游增量与本轮行为注记写进 `04`、`10`、
 搬进来的上游增量，与本次翻译无关；换成 `--before HEAD --after WORKTREE` 后是
 0 漂移。这也说明收尾时第 6 条不能用 `--after HEAD` 当「本章无漂移」的判据，
 而要按「继承差异逐条登记」处理。
+
+---
+
+## 十二、第 16 章《子代理与人设》的核对（2026-09-20）
+
+| # | 结论 | 证据 |
+| --- | --- | --- |
+| 55 | 内置代理类型就是 `general-purpose`、`explore`、`plan` 三种；并且**本分叉没有改掉内置代理名 `grok-build`**（它仍是真实的内置定义名），所以译文表格里的 `grok-build` 照旧保留 | `xai-grok-agent/src/discovery.rs:294`、`:802-804` |
+| 56 | 界面文字：代理模态框的标签页是 **代理** 与 **人设**（不是 Agents/Personas），命令面板条目是 **管理 Agent**，任务面板分组名是 **子代理**。这两个界面串只对得上「人设 = persona、角色 = role」这一种读法（`/personas` 命令的说明偏偏写的是「管理角色」），再加上 `[subagents.personas]` 与 `[subagents.roles]` 是两层配置，本章译文因此定 **persona = 人设、role = 角色**。**代价**：第 4 章已提交的三处（`04-slash-commands.md:25`、`:388` 标题「代理与角色」、`:398`）用「角色」翻 persona，与本章不一致 | `xai-grok-pager/src/views/agents_modal.rs:37-38`；`views/modal.rs:531`；`views/tasks_pane.rs:188`；`slash/commands/personas.rs:14`；`xai-grok-shell/src/config/mod.rs:53-86`（`[subagents.toggle]`/`[subagents.models]`/`[subagents.roles.*]`/`[subagents.personas.*]` 四层） |
+| 57 | 滚动回溯里的子代理生命周期块逐字为 `子代理运行中：“…”`（阻塞）/`子代理已启动：“…”`（后台）/`子代理已完成（用时 43s）：“…”`/`子代理失败（用时 43s）：“…”`/`子代理已取消（用时 43s）：“…”`；描述用中文弯引号，`(persona · role · model)` 是半角括号加前导空格 | `scrollback/blocks/subagent.rs:183-255`、`:159-166`；`app/subagent.rs:875-887` |
+| 58 | 活动后缀是中文：`思考中`、`回复中`、`运行: cargo test`、`运行工具`、`压缩中`、`重试中 (2/3)`（半角括号加空格）。译文里的例子按这些写 | `app/subagent.rs:891-931` |
+| 59 | 仍是英文、译文要保留英文的界面串：`resumed`、`forked` 徽章、`[Dashboard]`、`[‹]`、`[›]`、`Subagent ID: `、`Message:` | `app/subagent.rs:816-823`；`views/dashboard/render.rs:3892`；`scrollback/blocks/tool/sent_message.rs:222`、`:243` |
+| 60 | 嵌套深度上限确实是 1（`MAX_SUBAGENT_DEPTH = 1`），超限报 `Subagent depth limit exceeded (current depth: …, max: …)` | `xai-grok-tools/src/implementations/grok_build/task/mod.rs:39-46`、`:430-435` |
+| 61 | `send_subagent_message` 默认关闭，由 `[features] active_agent_messages`（环境变量 `GROK_ACTIVE_AGENT_MESSAGES`）打开，默认值是 `false` | `xai-grok-config-types/src/registry.rs:221-225`；`xai-grok-agent/src/builder.rs:96`、`:230` |
+| 62 | 能力模式的四个取值 `read-only` / `read-write` / `execute` / `all` 属实（另有 `readonly`、`read_only`、`ReadOnly` 等别名） | `common/xai-tool-types/src/task.rs:166-185` |
+| 63 | agent frontmatter 的 `mcpInheritance` 属实：省略即 `All`，映射只允许一个键，四态 `all` / `none` / `named` / `except` 各有解析测试 | `xai-grok-agent/src/config.rs:872`、`:1040`、`:1570`、`:2727-2746` |
+| 64 | 项目级路径写 `.chaos/…` 是本分叉的正确写法：项目配置根按「已存在的 `.chaos` → 已存在的 `.grok` → 默认 `.chaos`」解析，合并时两者都读 | `xai-grok-config/src/paths.rs:60-82` |
+
+### 12.1 ⚠️ 文档超前于代码的两处说法（本轮只译不改）
+
+1. **「一行 `Message` 行」那一段描述的渲染方式在本修订版不存在。** 译文照译的那段说
+   每次发送在会话记录里显示为一行 `Message` 行（动词 + 标签 + 弯引号里的描述，
+   截到第一行且最多 40 字符），示例是 `Message sent to Explore “find callers”` 等五条。
+   实际实现里 `send_subagent_message` 的折叠行就是块标题，四个取值仍是**英文**：
+   `Sending message to subagent`、`Sent message to subagent`、
+   `Failed to send message to subagent`、`Message delivery unconfirmed`；全仓库搜不到
+   `Message sent to …` / `Message queued for …` / `Message interjected to …` 这些串，
+   也没有「40 字符」截断（描述是按可用宽度截的）。
+   所以译文保留那五条英文示例——它们本来就是界面串，属「该英文的地方就英文」；
+   差异记在这里：这是「文档对不上本分支实现」，不是翻译问题。
+2. **「子发送方有配额：每个发送方-目标对 4 条在途、每次发送尝试 32 条外发」的数字对不上。**
+   代码里是每子代理 `MAX_ACTIVE_MESSAGE_ADMISSIONS_PER_CHILD = 8`、
+   每协调器 `MAX_ACTIVE_MESSAGE_ADMISSIONS = 64`，另有
+   `MAX_ACTIVE_AGENT_MESSAGE_BYTES = 32 * 1024`（32 KiB 的**消息体积**上限，
+   很可能是「32」这个数字的来源）。没有 per-(sender, target) 的 4 条这种常量。
+   因为 `--numbers` 不变式禁止翻译轮改动散文里的数字（`32` 会被 `--numbers` 抓到），
+   本轮原文照译，差异记在这里，留给收尾报告决定改代码还是改文档。
+
+### 12.2 ⚠️ 项目作用域的 `.chaos/…` 当前不被读取（本分叉的漏网点）
+
+译文按本分叉的写法把所有路径写成 `.chaos/…`（`RENAMES` 会把两边的 `.grok` 归一成
+`.chaos`，所以门禁看不见这个差异）。但本修订版里，**项目作用域**的四个发现点仍是写死的
+`.grok`，项目里建 `.chaos/agents/`、`.chaos/roles/`、`.chaos/personas/` 不会被读：
+
+| 发现点 | 项目作用域实际路径 | 用户作用域 |
+| --- | --- | --- |
+| 代理定义 | `PROJECT_AGENT_SUBDIRS = [".grok/agents", ".claude/agents"]` | 走 `user_grok_home()`，即 `~/.chaos/agents` ✅ |
+| 子代理角色 | `cwd.join(".grok").join("roles")`（写死） | `user_grok_root.join("roles")`，即 `~/.chaos/roles` ✅ |
+| 子代理人设 | `cwd.join(".grok").join("personas")`（写死） | `user_grok_root.join("personas")`，即 `~/.chaos/personas` ✅ |
+| 技能（agent 侧） | 优先级注释仍写 `.grok/skills`/`.agents/skills`/`.claude/skills` | 同左，走 grok_home |
+
+证据：`xai-grok-agent/src/discovery.rs:16`、`xai-grok-shell/src/config/mod.rs:197`、
+`:238`（对 `:403-405`）。
+
+对照本分叉**已经**支持双名的其它项目级发现点——它们都是「两个都列，`.grok` 在前」：
+`xai-grok-sandbox/src/profiles.rs:131`、`:145` 的 `[".grok", ".chaos"]`，
+`xai-grok-tools/src/reminders/skill_discovery.rs:15` 的
+`[".grok", ".chaos", ".agents", ".claude", ".cursor"]`，
+`xai-grok-tools/src/implementations/skills/discovery.rs:855` 的
+`[".grok", ".chaos", ".agents"]`。按这个已成型的写法，上表前三行属于**漏改的点**，
+而不是有意的设计。
+
+顺带记一个更干净的证据：`xai-grok-config/src/paths.rs` 里本分叉新加的
+`project_config_toml_candidates`、`resolve_project_config_dir`、
+`existing_project_config_dirs` 三个函数**全仓库没有任何调用点**（只有 `lib.rs:75-77`
+的 re-export），即「按 `.chaos` 优先解析项目配置根」这条规则写好了但没接上去。
+
+本轮不改代码：改这些发现点是**行为变更**（新目录开始被读），超出「中文化 + 精选上游
+修复」的范围，且需要各自的测试。留给收尾报告让用户决定：补上 `.chaos`，还是把文档
+改回 `.grok`。
+
+### 12.3 一个工具坑：标题数变过的文件会被 `--fix-anchors` 静默跳过
+
+收尾第 1 步打算用 `--fix-anchors --before <译前基线>` 机械重写锚点，它的做法是**按标题
+序号**把旧 slug 映射到新 slug，因此要求「译前基线」与当前文件的标题**数量相同**，数量
+不同就打印 `heading count N -> M, skipped` 并跳过整个文件。
+
+对 `main`（译前基线）比一遍，有 5 个文件数量不同，全部是 `ca7e2f1f` 搬进来的上游增量
+加了标题：
+
+| 文件 | `main` 标题数 | 工作树标题数 |
+| --- | ---: | ---: |
+| `07-mcp-servers.md` | 23 | 24 |
+| `09-plugins.md` | 29 | 30 |
+| `13-memory.md` | 46 | 47 |
+| `16-subagents.md` | 26 | 27 |
+| `21-terminal-support.md` | 21 | 22 |
+
+（比法：把 `check-doc-l10n.py` 当模块导入，对每个文件跑
+`heading_list(git show main:<path>)` 与 `heading_list(<工作树>)` 比长度；第 16 章多出来
+的那个标题就是 `ca7e2f1f` 加的 `### Docked bar (when enabled)`。）
+
+所以收尾不能对全库跑一次 `--fix-anchors --before main` 就以为完事：这 5 个文件会被跳过，
+指向它们的入站锚点仍是英文（`03`、`07`、`09` 各有一条指向第 16 章的
+`#fullscreen-framed-view-the-child-transcript` 与 `#mcp-inheritance`）。这 5 个要**逐文件**
+用「该文件译前的那次提交」当基线，或者手工改掉——数量不大，`--links` 全库本轮从 28 条
+（`d6d4508c`）升到 32 条，新增的 4 条都是第 16 章改标题造成的：本章自己一条
+`#sending-messages-to-subagents`，加上 `03`、`07`、`09` 指向本章的三条入站锚点。
+
+再记一条相关的坑：**不要在章节提交里顺手改锚点**。实测把第 16 章自己那条
+`#sending-messages-to-subagents` 改成 `#给子代理发消息` 之后，`--before HEAD --after
+WORKTREE` 立刻从 0 漂移变成 1 条：
+
+```text
+- link targets changed: lost ['#sending-messages-to-subagents'], added ['#给子代理发消息']
+```
+
+因为 `links` 不变式比的是 `](target)` 的**集合**，改锚点同时算「丢失」和「新增」，
+既不是 `note:` 也没有声明通道（`scripts/doc-span-removals.tsv` 只管行内字面量）。
+所以锚点一律留到收尾的 `--fix-anchors` 那一次改，逐章提交保持 0 漂移——前 15 章都是
+这么留下来的（第 16 章自己那条也就成了这 32 条中的一条，试改后已回退）。全库重写那一步
+会**整体**改动 `links` 集合，那批差异要在收尾报告里按「有意改锚点」逐条说明，不能当成
+漂移。

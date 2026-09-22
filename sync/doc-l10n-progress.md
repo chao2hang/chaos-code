@@ -1,7 +1,7 @@
 # 用户指南中文化的进度与恢复点
 
 更新于 2026-09-20，分支 `sync/curated-port-20260918`，基线 `a82a27ea`，
-本文的提交清单与统计数字截至 `d6d4508c`。
+本文的提交清单与统计数字截至 `cadb6dd5`。
 
 ## 一、已完成
 
@@ -36,12 +36,15 @@
 | `de2cba71` | `17-sessions.md` 中文化（认证行按上游遗留处理，`refs/grok/…` 保持） |
 | `bf59677e` | 扩展模态标签按分叉实际显示的中文改写（第 4、7 章） |
 | `d6d4508c` | `09-plugins.md` 中文化（协议名与 `Enforced by policy` 保持原样） |
+| `4c8eb3f3` | 记下第 9 章的核对结论（含三处文档超前于代码）并刷新进度表 |
+| `cadb6dd5` | `16-subagents.md` 中文化（persona = 人设、role = 角色，界面串按实际中文改写） |
 
 已整章完成（散文行、表格单元格、上游旧名三项都归零）：`01`、`02`、`04`、
-`06`、`07`、`08`、`09`、`11`、`12`、`13`、`15`、`17`、`18`、`19`、`20`、`25`。
+`06`、`07`、`08`、`09`、`11`、`12`、`13`、`15`、`16`、`17`、`18`、`19`、
+`20`、`25`。
 本轮之前已提交的整章是 `12`、`19`、`20`；`02` 是更正而非翻译；`13`、`04`、
-`17`、`09` 的核对结论分别见 `sync/doc-claims-verification.md` 第八、九、十、
-十一节。
+`17`、`09`、`16` 的核对结论分别见 `sync/doc-claims-verification.md` 第八、九、
+十、十一、十二节。
 `26` 的首节散文已译，表格短单元格已全库替换；`README` 还剩链接表的 10 个单元格。
 
 ## 二、真实剩余工作量
@@ -61,9 +64,11 @@
 | `24-monitoring-usage.md` | 379 | 20936 | 118 | 32 | 2 |
 | `05-configuration.md` | 833 | 44495 | 71 | 75 | 40 |
 | `22-permissions-and-safety.md` | 571 | 32964 | 123 | 20 | 28 |
-| `16-subagents.md` | 400 | 20065 | 87 | 39 | 8 |
 | `README.md` | 60 | 2019 | 0 | 10 | 0 |
-| 合计 | 5 369 | 334 772 | 1 082 | 819 | 163 |
+| 合计 | 4 969 | 314 707 | 995 | 780 | 155 |
+
+（`16-subagents.md` 那行 400 行 / 20 065 字符 / 87 散文行 / 39 单元格 / 8 个上游旧名
+已在 `cadb6dd5` 做完，已从表里扣掉。）
 
 ## 三、执行顺序
 
@@ -84,8 +89,8 @@
 12. `README`（等所有章节标题定稿后再译链接文字）
 
 已做完：1（`08`、`11`）、2（`06`、`25`）、3（`15`、`18`）、4（`07`、`13`）、
-5（`04`、`17`）、6（`01`、`09`）。下一批是 `16-subagents` 与
-`24-monitoring-usage`。
+5（`04`、`17`）、6（`01`、`09`）、7 的一半（`16`）。下一批是 `24-monitoring-usage`，
+之后按 8→12 的顺序。
 
 ## 四、每章的执行协议（实测唯一稳定的做法）
 
@@ -161,6 +166,19 @@ python3 scripts/check-doc-l10n.py --fork-names --glob "$G/<本章>"
   原样打印的标题，保留英文加括号注解。**这一章有 §11.1 记的三处「文档超前
   于代码」**（`locked down by policy`、空列表锁死、第 16–19 节的 TOML 策略层
   尚未被运行时消费），本轮照译不改，别在重译时把它们「修正」成别的说法。
+- `16`（已完成 2026-09-20）：术语定案 **persona = 人设、role = 角色**（依据与
+  代价见核对文档第十二节第 56 条：模态标签页「人设」＋ `/personas` 说明写
+  「管理角色」＋两层配置 `[subagents.personas]`/`[subagents.roles]`；代价是第 4 章
+  三处用「角色」翻 persona，**别顺手去改第 4 章**，等收尾统一决定）。界面串按分叉
+  实际渲染写：滚动回溯块 `子代理运行中：“…”` / `子代理已启动：“…”` /
+  `子代理已完成（用时 Xs）：“…”`，活动后缀 `思考中`、`运行: cargo test`、
+  `压缩中`、`重试中 (2/3)`，模态标签「代理 / 人设」，面板分组「子代理」；
+  `resumed`、`forked`、`[Dashboard]`、`‹` `›`、`Subagent ID: `、`Message: `
+  保持英文。三条英文滚动回溯示例按真实中文渲染改写，逐条声明在
+  `scripts/doc-span-removals.tsv`。**两处「文档超前于代码」照译不改**（那一行
+  `Message` 行在本修订版不存在；「每个发送方-目标对 4 条、每次 32 条」的配额与
+  代码的 8 / 64 / 32 KiB 不符），见 §12.1；另有 §12.2 的项目作用域 `.chaos/…`
+  漏网点、§12.3 的 `--fix-anchors` 标题数坑，都记在同一文件里。
 - `14`：`Authentication for Headless Environments` 整节按 BYOK 重写，
   删掉 `grok login --device-auth`、`grok login` 两条，指向
   `02-authentication.md`；该章还带着一条死锚点
@@ -177,9 +195,13 @@ python3 scripts/check-doc-l10n.py --fork-names --glob "$G/<本章>"
 
 1. `python3 scripts/check-doc-l10n.py --fix-anchors --before <译前基线>`
    机械重写入站锚点（标题顺序不变，按序号映射，不需要猜）。
-2. `python3 scripts/check-doc-l10n.py --links` 归零。`d6d4508c` 时全库还有
-   28 条死锚点，都是改标题造成的，随第 1 步一起机械修掉。`de2cba71` 时的
-   16 条：`04` 的 `#minimal-and-fullscreen` 与
+   **坑**：它要求基线与当前文件的标题**数量相同**，数量不同就把整个文件跳过；
+   对 `main` 比对有 5 个文件数量不同（`07`、`09`、`13`、`16`、`21`，都因
+   `ca7e2f1f` 搬上游增量时加了标题），这 5 个必须**逐文件**用「该文件译前的
+   那次提交」当基线。细节见 `sync/doc-claims-verification.md` 第 12.3 节。
+2. `python3 scripts/check-doc-l10n.py --links` 归零。`d6d4508c` 时为 28 条、
+   `cadb6dd5` 时为 32 条死锚点，都是改标题造成的，随第 1 步一起机械修掉。
+   `de2cba71` 时的 16 条：`04` 的 `#minimal-and-fullscreen` 与
    `17-sessions.md#the-grok-usage-subcommand`、
    `06` 的 `#auto-theme-system-appearance`、`07` 的 `#cli-management` /
    `#example-configurations` / `#project-scoped-mcp-servers`、`08` 的
@@ -195,7 +217,12 @@ python3 scripts/check-doc-l10n.py --fork-names --glob "$G/<本章>"
    （`#add-a-catalog-optional`、`#create-your-own-marketplace`、
    `#distribute-across-an-organization`、`#require-pinned-versions`、
    `#restrict-which-mcp-servers-can-run`、`#trust-and-security`、
-   `#what-a-plugin-contains`、`#what-this-does-not-cover`）。
+   `#what-a-plugin-contains`、`#what-this-does-not-cover`）。译完第 16 章后新增
+   4 条，全部来自本章改标题：本章自身的 `#sending-messages-to-subagents`，
+   加上 `03`、`07`、`09` 指向本章的
+   `#fullscreen-framed-view-the-child-transcript` 与 `#mcp-inheritance`（两条）。
+   别在章节提交里顺手改锚点：`links` 不变式把改锚点同时算「丢失」与「新增」，
+   逐章自查要求 0 漂移，所以一律留到这一步统一改（见第 12.3 节）。
 3. `python3 scripts/check-doc-l10n.py --fork-names --strict` 归零。
 4. `python3 scripts/check-doc-l10n.py --english` 归零。
 5. `python3 scripts/check-doc-l10n.py --cells --strict` 归零。
