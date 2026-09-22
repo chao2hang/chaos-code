@@ -58,5 +58,30 @@
     "category": "fixes",
     "description": "修掉校验器自身三个缺陷：`--fix-anchors` 重写锚点多加一个右括号（15 篇 55 处，`--links` 看不见）；`links` 判据与它自己规定的收尾动作自相矛盾；`--glob` 匹配不到文件时静默全 0 通过。各加自测钉住。",
     "breaking_change": false
+  },
+  {
+    "category": "features",
+    "description": "**命令行帮助汉化**：`chaos --help` 与 11 个子命令的帮助文案全部说中文（顶层 161 条 + 子命令 119 条，含每个 `--flag` 的说明、`chaos du` 的 `after_help` 与 `chaos mcp add` 的示例块）。clap 的结构标签 `Arguments:` / `Options:` / `Commands:` 保持英文——它们由 clap 渲染、顶层是字面量、子命令的 `{all-args}` 无法覆盖。",
+    "breaking_change": false
+  },
+  {
+    "category": "features",
+    "description": "**README 汉化**：npm 元包与六个平台包、`xai-grok-pager` crate 页，以及会随二进制落到 `~/.chaos/README.md` 的 `xai-grok-shell` README（全文重写）四份都改说中文。",
+    "breaking_change": false
+  },
+  {
+    "category": "features",
+    "description": "**CI 门禁**：工具链版本改为从 `rust-toolchain.toml` 单点读取（删掉两处硬编码——此前 CI 写 1.92.0、toml 写 1.94.0，长期不一致）；新增 `scripts/ci/check-versions.sh` 要求 Cargo 与 npm 各包版本一致；新增 `docs-l10n` 作业，把参考文档与 9 篇教程纳入中文化门禁（此前 `docs/` 下 36 个文件没有任何自动化读过）。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "用户可见文案不再写死 `~/.grok`：LSP 配置路径提示、workflow 与 skill 的工具描述、托管配置写盘失败提示、缓存令牌说明、`voice_probe` 用法串——用户级一律走解析后的配置根（项目级 `.grok` 保持不变，实现确实只认它）。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "修两条跨文档死锚点（标题翻译改了锚点、入链未在同一次提交改）并补齐四个漏译标题；三处早就过期的认证文案（`Logout` 声称清除凭据实则不清、`Login` 宣传本分支已移除的登录流程）按实际行为改写。",
+    "breaking_change": false
   }
 ]

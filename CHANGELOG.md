@@ -81,6 +81,44 @@
 - 恢复后实测：`fmt`、`check --all-targets`、`clippy -D warnings`、release 构建、
   `--version`、`secret-scan` 全部通过。
 
+### 命令行、README 与文档门禁（发版前补足）
+
+- `chaos --help` 与 11 个子命令的帮助文案全部汉化：顶层 161 条 doc comment（`about`、
+  `long_about` 与每个 `--flag` 的说明）加子命令模块 119 条，另含 `chaos du` 的
+  `after_help` 与 `chaos mcp add` 的示例块。clap 的结构标签 `Arguments:` /
+  `Options:` / `Commands:` **保持英文**——它们由 clap 渲染，顶层 `help_template` 里
+  是字面量，子命令的 `{all-args}` 无法覆盖，中文化等于重写帮助输出层；顶层与子命令
+  因此语言一致。
+- 顺带修掉三处**本来就过期**的认证文案：`Logout` 声称「退出登录并清除缓存的凭据」，
+  实际只打印一句说明就返回、不清任何东西；`Login` 的 `--oauth` / `--device-auth`
+  仍在宣传本分支已移除的登录流程（`Command::Login` 忽略全部 flag）。英文原文同样
+  是错的，忠实翻译只是让它在中文里第一次可见。
+- 四份会被用户读到的 README 全部汉化：npm 元包与六个平台包、`xai-grok-pager` crate
+  页，以及会随二进制落到 `~/.chaos/README.md` 的 `xai-grok-shell` README（61% 重写，
+  同时把其中的 `~/.grok/leader.log` 改为实现真正使用的 `~/.chaos/leader.log`）。
+- 用户可见文案不再写死 `~/.grok`：LSP 配置路径提示、workflow 与 skill 的工具描述与
+  提示模板、托管配置写盘失败提示、缓存令牌说明、`voice_probe` 用法串——用户级一律
+  走解析后的配置根，项目级 `.grok` 保持不变（实现确实只认它）。`builtin.rs:149` 与
+  `:306-307` 与 sha256 常量耦合的字符串**逐字节未动**。
+- 修两条跨文档**死锚点**（标题翻译改了锚点、入链未在同一次提交改）并补齐四个漏译
+  标题。`crates/codegen/xai-grok-pager/docs/` 下 36 个文件此前没有任何自动化读过——
+  这正是那两条死链能活过一整轮的原因。
+
+### CI 门禁：版本、工具链与文档中文化
+
+- **工具链版本单一来源**：`ci.yml` 与 `release.yml` 各加一步从 `rust-toolchain.toml`
+  读 `channel`，删掉两处硬编码的 `RUST_TOOLCHAIN`（此前 CI 写 1.92.0、toml 写 1.94.0，
+  CI 与本机构建长期跑不同编译器而无人察觉）。此后升级工具链只改一个文件。
+- **新增 `scripts/ci/check-versions.sh`**：Cargo 的 `[package] version`、npm 元包、
+  六个平台包版本与 `optionalDependencies` 钉版必须一致，平台包集合也必须与磁盘上的
+  目录一致，否则构建失败。负向验证：把版本临时改成 `9.9.9`，脚本报 13 行 MISMATCH
+  并退出 1。
+- **新增 `docs-l10n` 作业**：对 `docs/**/*.md` 跑 `--english`、`--fork-names --strict`、
+  `--links`、`--cells --strict` 四项。`--links` 是其中最容易漏的一项：翻译标题会改
+  锚点，而入链可能写在别处。负向验证：把一处锚点改回英文，作业报 `dead anchor` 并
+  退出 1。
+- `workflows-present` 增加一行断言防止 `docs-l10n` 被静默删除。
+
 ### Compatibility
 
 - 版本号统一为 `0.4.0`：`xai-grok-version`、`xai-grok-pager`、`xai-grok-pager-bin`、
