@@ -50,6 +50,11 @@ jobs:
       # ran different compilers with nothing to notice.
       - name: Read pinned toolchain
         id: toolchain
+        # This job is ubuntu-only, so the default shell would be bash anyway --
+        # but say it out loud, because the release build matrix *is* Windows and
+        # a copy of this step that forgot was what broke the first v0.4.0 tag.
+        # `scripts/ci/check-workflow-shells.py` now enforces the habit.
+        shell: bash
         run: |
           set -euo pipefail
           channel="$(sed -n 's/^channel[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' rust-toolchain.toml)"
@@ -211,3 +216,9 @@ jobs:
           # and tutorials; losing it would be silent, which is the same reason
           # this step exists at all.
           grep -q 'docs-l10n' .github/workflows/ci.yml
+          # Every `run:` step in a Windows-capable job must pin `shell: bash`
+          # (or opt out with an `if: runner.os` guard). This job is ubuntu-only,
+          # so nothing here can catch such a mistake the way the release matrix
+          # does -- and by then the tag is already public. The first v0.4.0 tag
+          # failed exactly this way, on two of six builds.
+          python3 scripts/ci/check-workflow-shells.py

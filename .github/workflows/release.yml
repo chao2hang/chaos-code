@@ -172,6 +172,12 @@ jobs:
       # second copy that could drift (and did: ci.yml still said 1.92.0).
       - name: Read pinned toolchain
         id: toolchain
+        # `shell: bash` is mandatory here, not stylistic: this job's matrix
+        # includes the two Windows runners, where the default shell is pwsh and
+        # `sed`/`test`/`set -euo pipefail` do not exist. Every other `run:` step
+        # in this file already says so; this one used to not, and the first
+        # v0.4.0 release died on it while Linux and macOS sailed through.
+        shell: bash
         run: |
           set -euo pipefail
           channel="$(sed -n 's/^channel[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' rust-toolchain.toml)"
