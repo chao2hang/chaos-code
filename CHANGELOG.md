@@ -64,6 +64,23 @@
   「中段 Esc 只提示 Ctrl+C，从不取消」；按上游 `75810042` 改名并重写为
   「提示 → Ctrl+C 取消」。
 
+### CI 门禁恢复
+
+- 全量验证时发现分叉的 CI 在 `main` 上本来就是红的，且三处互相掩盖。逐条修好：
+  `cargo fmt --all`（48 个 hunk / 28 个文件）、`--all-targets` 下 3 个 crate 的 14 个
+  测试代码编译错误（生产结构体加字段、改签名后测试没跟上）、30 条 clippy 告警
+  （一条失效的 lint 配置、两处文档注释错位、一批策略性 allow 缺失）。
+- 30 条告警在 1.92.0 与 1.94.0 下完全相同，不是工具链差异；处理原则是能改正确
+  写法就改（`xai_dirs::home_dir()`、`download_client()`、
+  `xai_grok_extra_ca::build_reqwest_client`、`dunce::canonicalize`），改不动才
+  局部 allow 并写明理由。
+- 顺带修好一处**空悬引用**：`xai-fast-worktree` 的测试调用了
+  `crate::nfs::confined::tests::plant_journal`，该辅助函数在本仓库与上游的整个
+  历史里都不存在（上游后来删掉了整个 `nfs` 模块）。删掉该行并就地写明原因，不
+  新造一个来路不明的函数。
+- 恢复后实测：`fmt`、`check --all-targets`、`clippy -D warnings`、release 构建、
+  `--version`、`secret-scan` 全部通过。
+
 ### Compatibility
 
 - 版本号统一为 `0.4.0`：`xai-grok-version`、`xai-grok-pager`、`xai-grok-pager-bin`、

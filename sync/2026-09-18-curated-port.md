@@ -13,7 +13,7 @@
 | `48271133` | 长任务计时显示进位到小时，不再停在分钟 | `1bb7a966` |
 | `75810042` | CJK / 色深渲染测试固定色深机制 | `1d6d316e` |
 | `75810042` / `48271133` | `quick-xml` 0.41、`tikv-jemalloc` 0.7 | `011346fc` |
-| `75810042` | Esc 中段提示的三条 pty 用例改名并重写 | `c181fd64` |
+| `75810042` | Esc 中段提示的三条 pty 用例改名并重写 | `e4c9c340` |
 | — | 分叉自持章节中与代码相符的上游增量 | `e6583a78` |
 | — | 纯上游章节增量与配置参考缺行 | `ca7e2f1f` |
 
@@ -79,7 +79,7 @@ Ctrl+C），但同在 `a5727c59` 进来的三条 pty 用例仍断言「Esc 取�
 `#[ignore]`，所以不进 CI，也就一直没人发现。按上游 `75810042` 改名并重写：
 `esc_mid_turn_hints_ctrl_c_from_prompt_preserves_draft`、
 `esc_mid_turn_hints_ctrl_c_from_scrollback`、
-`minimal/minimal_esc_mid_turn_hints_ctrl_c`（`c181fd64`）。
+`minimal/minimal_esc_mid_turn_hints_ctrl_c`（`e4c9c340`）。
 
 断言改为「Esc 后出现提示、屏幕上没有取消标记、草稿仍在」，再用 Ctrl+C 完成取消，
 与实现一致。提示文案 `Press Ctrl+c to cancel the turn` 本身仍是英文，属 §6
@@ -202,6 +202,11 @@ note（本轮 8 处 span 丢失与若干表格都属这一类），报告会更�
 
 - **不做**：`oniguruma` 2→3（延后到 Tier 2）、MCP admission 放宽（会改动
   架构语义）。
+- **顺手做掉**：npm 侧三个版本号对齐（`b7947cda`）。元包 `chaos-code` 已在
+  0.4.0，六个平台包 `chaos-code-<平台>` 与元包 `optionalDependencies` 里的钉版
+  却还停在 `0.2.121`。发布流程（`release.yml` 的 Stamp npm versions 一步）会在
+  打包前统一盖一遍，但盖完的结果留在 CI 工作区、不回写仓库，于是源码里长期对不上。
+  本次直接按 `scripts/ci/stamp-npm-version.mjs` 的同一口径盖成 0.4.0。
 - **待用户拍板**：项目作用域 `.chaos` 不参与 agents/roles/personas/skills 解析
   （`xai-grok-config` §12.2 的漏网点）；`persona` 的译名在 `04`（角色）与
   `16`（人设）之间不统一。
@@ -219,10 +224,83 @@ note（本轮 8 处 span 丢失与若干表格都属这一类），报告会更�
   `'Edit'` / `'Resend'` / `'Discard'`，以及 `diagnostics/fix.rs`、
   `views/extensions_modal.rs`、`memory_cmd.rs`，合计约 60–80 条、约 18 个模块。
   范围比指南正文大，建议单独一轮，且要先逐处判断哪些是**故意**留给英文的
-  （键位名、命令名、`Execute` 这类术语）。
+  （键位名、命令名、`Execute` 这类术语）。中段 Esc 的提示
+  `Press Ctrl+c to cancel the turn` 也属这一批（见 §2.3），所以它是照上游原文
+  断言的，没有在这次移植里夹带翻译。
 - **测试基建的已知隐患**（本轮只是消掉症状）：`xai_dirs::grok_home()` 是
   `OnceLock` 进程缓存，而 `GrokHomeFixture` 靠「设 `GROK_HOME` 环境变量」做隔离。
   缓存一旦被别的用例先播种（例如某个用例直接读真实家目录），夹具写的会话目录就
   落到真实的 `~/.chaos/sessions` 下，退出时又 `remove_dir_all` 删掉，于是与并发读
   的用例互相踩。§2.2 的生产侧容忍让读方不再因此报错，但夹具本身没改——真要根治
   得动 `xai-dirs` 的缓存机制（改成可重置），属架构层，本轮按约定不碰。
+
+## 7. CI 门禁恢复（验证阶段发现，与移植无关）
+
+做全量验证时发现一件比移植本身更要紧的事：**分叉的 CI 门禁在 `main` 上本来就是
+红的**。四条门禁里三条直接失败，而且是互相掩盖的——`cargo check` 默认在第一个失败
+的 crate 停下，`cargo test` 又因为编译不过而跑不到，所以长期只看得见最前面的那一处。
+
+| 门禁 | `main` 实测 | 根因 |
+| --- | --- | --- |
+| `cargo fmt --all -- --check` | 48 个 hunk / 28 个文件 | 长期未跑格式化。装 1.92 复跑报**完全同一批**，不是工具链差异 |
+| `cargo check --workspace --all-targets --locked` | 3 个 crate 的测试代码编译不过 | 生产结构体加字段 / 改签名后，测试代码没跟上 |
+| `cargo clippy --workspace --all-targets -- -D warnings` | 30 条告警 | 一条失效的 lint 配置 + 两处文档注释错位 + 一批策略性 allow 缺失 |
+| `cargo test --workspace --locked` | 编译不过，跑不到 | 同第二条 |
+
+顺带记一个方法上的坑：`cargo check --workspace` 会停在第一个失败的 crate，看不到
+全貌；改用 `--keep-going` 才一次列全。本轮三个 crate 的编译缺陷就是这么找出来的。
+
+### 7.1 测试目标编译失败（14 个点，跨 3 个 crate）
+
+- **`xai-grok-sampling-types/src/error.rs`（7 处 `E0063`）**：分叉自持的
+  `provider_kind_for_domestic_bodies_drives_retryability` 没有随 0.3.1 同步补上
+  `error_code` / `code` 两个新槽位。该测试的判类只看**原始 body 文本**（`provider_kind()`
+  与 `is_retryable()` 也只读 message），所以显式补 `None` 并写明这一点。
+- **`xai-grok-sampler`（5 处）**：`client.rs` 少 `x_grok_transient_retry`、
+  `retry.rs` 少 `error_code`、`stream/chat_completions.rs` 两处少第 5 个参数
+  `extract_inline_thinking`（同一文件的另外 21 处都已补上，只有这两处漏了）、
+  `events.rs` 的成员遍历漏 `MalformedToolCall`。最后一条尤其值得记：那个用例的注释
+  自己写着「新成员会让这个用例编译失败，提醒你同时补 `all` 和 `from_str`」——机制
+  确实生效了，只是没人去补。
+- **`xai-fast-worktree`（2 处）**
+  - `worktree/mod.rs` 的测试模块**丢了 `use super::*;`**：上游 `72a61251`（本分叉的
+    `SOURCE_REV`）与 `a28ee2b2` 两处都有这一行，分叉在 0.3.1 同步时弄丢了，于是
+    `is_grove_strategy` / `STRATEGY_*` 在这个子模块里全部不可见。按上游原文恢复。
+  - `nfs/remove.rs` 的用例调用了 `crate::nfs::confined::tests::plant_journal`，而这个
+    辅助函数**在本仓库和上游的整个历史里都不存在**（`git grep` 全树只有这一处引用）。
+    上游后来把整个 `nfs` 模块删掉，所以它一直没暴露。该调用只作用于准备阶段，用例的
+    三条断言讲的是另一件事——「id 与目录名不符的诱饵标记必须被忽略，不得据此删除」，
+    而 `try_nfs_remove` 拿到的是 `harmless` 而非受害 backing，本来就会提前返回
+    `Ok(None)`。故删掉该行并就地写明原因，而不是新造一个来路不明的 `plant_journal`。
+
+### 7.2 clippy 告警（30 条 → 0）
+
+处理原则：**能改成正确写法就改，改不动才 allow，且 allow 必须写明理由、不整 crate 静音。**
+
+| 位置 | 处理 |
+| --- | --- |
+| `xai-grok-shell/src/cline_import.rs:53` | `dirs::home_dir()` → `xai_dirs::home_dir()`。同 crate 其余 20 余处早已是后者，本例是漏网的（`claude_import.rs` 的同一段逻辑就是正确的） |
+| `xai-grok-update/src/auto_update.rs` `fetch_signature` | 裸 `Client::builder()…build()` → 复用**同一文件里已有**的 `download_client()` 辅助函数 |
+| `xai-grok-update/src/version.rs` `fetch_gh_release_latest_http` | 裸 builder → `xai_grok_extra_ca::build_reqwest_client`（同文件 `fetch_gcs_channel_pointer` 已是此写法） |
+| `xai-grok-update/src/auto_update_tests.rs:2443` | `std::fs::canonicalize` → `dunce::canonicalize` |
+| `xai-grok-shell/src/agent/mvp_agent/mod.rs` | 删掉一条**孤儿文档注释**：它描述的 bundle sync 函数随登录 / OIDC 一起被删，注释留在 `tier_recheck_identity_changed` 上方，且中间夹了空行 |
+| `xai-grok-pager/src/app/dispatch/prompt.rs` | 分叉新增的 `input_can_trigger_project_picker` 被插在 `dispatch_send_prompt_inner` 的文档注释与函数定义之间，把两者拆开；把辅助函数整体移到注释块之前 |
+| `xai-grok-shell/src/leader/mod.rs` | 加 `#[allow(clippy::disallowed_methods)]`——上游在**同一个用例**（`policy_reclaim_requires_client_spawn_marker`）上有同一条 allow，属逐字搬运 |
+| `xai-grok-tools/src/util/shared_http.rs`、`xai-tracing/src/http_client.rs` | 仅测试用的假 client；按 lint 自述的「localhost/test clients allow with a reason」加**局部** allow（前者加在 `mod tests` 上，后者加在单个用例上） |
+| `clippy.toml:47` | 给 `tokio::process::Command::spawn` 补 `allow-invalid = true`（同文件 `dirs::home_dir` 已有此写法）。缺了它会在**每次** clippy 调用时打一条配置告警，而且这条禁令实际是失效的 |
+
+### 7.3 恢复后的门禁状态（2026-09-22 实测）
+
+| 命令 | 结果 |
+| --- | --- |
+| `cargo fmt --all -- --check` | exit 0（1.94.0 与 1.92.0 均 0 hunk） |
+| `cargo check --workspace --all-targets --locked -j 4 --keep-going` | exit 0，0 error / 0 warning |
+| `cargo clippy --workspace --all-targets --locked -j 4 -- -D warnings` | exit 0，0 error / 0 warning |
+| `cargo build -p xai-grok-pager-bin --release -j 4` | exit 0 |
+| `./target/release/chaos --version` | `chaos 0.4.0` |
+| `./scripts/ci/secret-scan.sh` | clean（3729 个文件） |
+
+`ci.yml` 里 `RUST_TOOLCHAIN` 钉的是 `1.92.0`，而 `rust-toolchain.toml` 钉的是
+`1.94.0`；因为 `dtolnay/rust-toolchain` 设的 `RUSTUP_TOOLCHAIN` 优先于
+`rust-toolchain.toml`，CI 实际跑的是 1.92.0。两边不一致本身要拍板（改 CI 配置需
+用户确认），但**不影响上面的结论**：30 条告警在 1.92.0 下同样全部出现。
