@@ -11,3 +11,6 @@ grok login	本分叉没有可用的登录命令，认证是 BYOK（§4.3）
 grok login --device-auth	本分叉无设备码流程，认证是 BYOK（§4.3）
 grok login --oauth	本分叉无 OIDC/浏览器登录（§4.3）
 topics/	本分叉的记忆不是「一主题一文件」：每个作用域一份 MEMORY.md，会话日志在 sessions/ 下，由 /dream 折叠进工作区的 MEMORY.md（§4.3，见 13-memory.md）
+Subagent running: "do the thing" (Implementer · grok-4.6) · Thinking	第 16 章：本分叉的滚动回溯块是中文（scrollback/blocks/subagent.rs:183-255），上游英文串按实际渲染改写为 子代理运行中：“…” · 活动后缀 (人设 · 角色 · 模型)
+Subagent started: "..."	第 16 章：同上，后台启动的实际渲染是 子代理已启动：“…”
+Subagent completed/failed/cancelled in Xs: "..."	第 16 章：同上，实际渲染是 子代理已完成/失败/已取消（用时 Xs）：“…”
