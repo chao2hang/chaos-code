@@ -14,7 +14,9 @@ fn pager_binary() -> std::path::PathBuf {
         return std::path::absolute(&p)
             .unwrap_or_else(|e| panic!("failed to absolutize PAGER_BINARY {p}: {e}"));
     }
-    option_env!("CARGO_BIN_EXE_xai-grok-pager")
+    // `chaos` 是本分支的二进制名（bin target 已改名），旧名保留为上游兼容回退。
+    option_env!("CARGO_BIN_EXE_chaos")
+        .or(option_env!("CARGO_BIN_EXE_xai-grok-pager"))
         .map(std::path::PathBuf::from)
         .expect("PAGER_BINARY is unset and this build is not `cargo test`")
 }

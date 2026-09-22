@@ -2,7 +2,13 @@ use std::collections::HashSet;
 use std::process::{Command, Stdio};
 
 fn pager_binary() -> Result<std::path::PathBuf, String> {
-    for key in ["PAGER_BINARY", "CARGO_BIN_EXE_xai-grok-pager"] {
+    // `chaos` 是本分支的二进制名（cargo test 设置的也是 `CARGO_BIN_EXE_chaos`）；
+    // 旧名保留为 Bazel/上游兼容回退。
+    for key in [
+        "PAGER_BINARY",
+        "CARGO_BIN_EXE_chaos",
+        "CARGO_BIN_EXE_xai-grok-pager",
+    ] {
         if let Some(value) = std::env::var_os(key) {
             let path = std::path::PathBuf::from(value);
             if path.exists() {
@@ -10,7 +16,7 @@ fn pager_binary() -> Result<std::path::PathBuf, String> {
             }
         }
     }
-    Err("PAGER_BINARY/CARGO_BIN_EXE_xai-grok-pager not set".to_owned())
+    Err("PAGER_BINARY/CARGO_BIN_EXE_chaos not set".to_owned())
 }
 
 #[test]
