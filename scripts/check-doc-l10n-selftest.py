@@ -405,6 +405,65 @@ def run_fix_anchors_case() -> int:
     return 1
 
 
+LINK_MAP_A_BEFORE = "## Overview\n\n## Trust and Security\n"
+LINK_MAP_A_AFTER = "## 概述\n\n## 信任与安全\n"
+LINK_MAP_A_AFTER_EXTRA = LINK_MAP_A_AFTER + "\n## Brand New\n"
+
+
+def run_link_mapping_case() -> int:
+    """A link that followed its translated heading is not drift.
+
+    Translating a heading necessarily changes the anchor pointing at it, so a
+    verbatim `](target)` comparison would call every inbound anchor a loss
+    plus an addition and the invariant could never pass on a translated
+    guide. The comparison is canonicalised onto the after-revision slugs; a
+    link that was genuinely retargeted still has to be reported, and so does
+    a link in a file whose headings could not be mapped positionally.
+    """
+    name = "links: anchor following its heading is not drift"
+    tmp = Path(tempfile.mkdtemp())
+    (tmp / "a.md").write_text(LINK_MAP_A_BEFORE, encoding="utf-8")
+    (tmp / "b.md").write_text("See [ok](a.md#trust-and-security).\n",
+                              encoding="utf-8")
+
+    def git(*a: str):
+        return subprocess.run(["git", *a], cwd=tmp, capture_output=True,
+                              text=True)
+
+    git("init", "-q")
+    git("config", "user.email", "t@t")
+    git("config", "user.name", "t")
+    git("add", "-A")
+    git("commit", "-qm", "before")
+
+    def drift(after_a: str, after_b: str):
+        (tmp / "a.md").write_text(after_a, encoding="utf-8")
+        (tmp / "b.md").write_text(after_b, encoding="utf-8")
+        proc = subprocess.run(
+            [sys.executable, GATE, "--before", "HEAD", "--after", "WORKTREE",
+             "--glob", "*.md"],
+            cwd=tmp, capture_output=True, text=True)
+        return proc.returncode != 0, proc.stdout
+
+    followed, _ = drift(LINK_MAP_A_AFTER, "See [ok](a.md#信任与安全).\n")
+    retargeted, _ = drift(
+        LINK_MAP_A_AFTER,
+        "See [ok](a.md#信任与安全) and [bad](a.md#nope).\n")
+    unmappable, out = drift(
+        LINK_MAP_A_AFTER_EXTRA, "See [ok](a.md#信任与安全).\n")
+
+    if not followed and retargeted and unmappable:
+        print(f"ok   {name}: followed=clean retargeted=drift "
+              f"unmappable=drift")
+        return 0
+    print(f"FAIL {name}")
+    print(f"     followed  drifted={followed} but expected False")
+    print(f"     retargeted drifted={retargeted} but expected True")
+    print(f"     unmappable drifted={unmappable} but expected True")
+    print("     " + out.strip().replace("\n", "\n     ")[:400])
+    return 1
+
+
 def main() -> int:
     failures = sum(run_case(*case) for case in CASES)
     failures += sum(run_cell_case(*case) for case in CELL_CASES)
@@ -412,7 +471,8 @@ def main() -> int:
     failures += run_apply_case()
     failures += run_removal_case()
     failures += run_fix_anchors_case()
-    total = (len(CASES) + len(CELL_CASES) + len(FORK_NAME_CASES) + 3)
+    failures += run_link_mapping_case()
+    total = (len(CASES) + len(CELL_CASES) + len(FORK_NAME_CASES) + 4)
     print(f"\n{total - failures}/{total} self-test case(s) passed")
     return 1 if failures else 0
 

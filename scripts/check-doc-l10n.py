@@ -543,6 +543,52 @@ def heading_slugs(text: str) -> set[str]:
     return found
 
 
+def slug_mapping(before: str, after: str) -> dict[str, str]:
+    """Positional old-slug -> new-slug table for one file.
+
+    Translation preserves heading count and order, so the i-th heading before
+    maps to the i-th heading after. An empty table means "no reliable
+    mapping" -- a heading was added, dropped or reordered -- and callers then
+    fall back to comparing anchors verbatim.
+    """
+    olds = heading_list(before)
+    news = heading_list(after)
+    if len(olds) != len(news):
+        return {}
+    return dict(zip(olds, news))
+
+
+def linked_file(path: str, target: str) -> str | None:
+    """Repo-relative file a link target points at, or None for a bare URL."""
+    if target.startswith(("http://", "https://", "mailto:")):
+        return None
+    file_part = target.partition("#")[0]
+    return str(Path(path).parent / file_part) if file_part else path
+
+
+def canonical_link(path: str, target: str,
+                   mapping: dict[str, dict[str, str]]) -> str:
+    """Rewrite a link target's anchor to its post-translation slug.
+
+    A translated heading necessarily changes the anchor pointing at it, so the
+    raw `](target)` set can never survive localization: every inbound anchor
+    would read as one loss plus one addition. Both revisions are therefore
+    canonicalised onto the *after* slugs. A link that merely followed its
+    heading then compares equal, while a link that was retargeted, dropped or
+    pointed at the wrong file still registers as drift -- which is the point
+    of the invariant.
+    """
+    file_part, sep, anchor = target.partition("#")
+    if not sep or not anchor:
+        return target
+    resolved = linked_file(path, target)
+    table = mapping.get(resolved) if resolved else None
+    if not table:
+        return target
+    new_anchor = table.get(anchor)
+    return target if new_anchor is None else f"{file_part}{sep}{new_anchor}"
+
+
 def check_links(glob: str) -> int:
     """Every `](file.md#anchor)` must resolve, in the worktree."""
     paths = expand(glob, None)
@@ -589,11 +635,12 @@ def fix_anchors(before: str, glob: str) -> int:
         if old is None:
             continue
         olds = heading_list(old)
-        news = heading_list(Path(path).read_text(encoding="utf-8"))
+        after = Path(path).read_text(encoding="utf-8")
+        news = heading_list(after)
         if len(olds) != len(news):
             print(f"{path}: heading count {len(olds)} -> {len(news)}, skipped")
             continue
-        mapping[path] = dict(zip(olds, news))
+        mapping[path] = slug_mapping(old, after)
 
     touched_files = 0
     rewrites = 0
@@ -684,7 +731,9 @@ def load_span_removals(path: str) -> tuple[set[str], list[str]]:
 
 def compare(before: str, after: str, path: str,
             strict_spans: bool = False,
-            removals: frozenset[str] = frozenset()) -> tuple[list[str], list[str]]:
+            removals: frozenset[str] = frozenset(),
+            link_mapping: dict[str, dict[str, str]] | None = None,
+            ) -> tuple[list[str], list[str]]:
     """Return (problems, notes).
 
     Problems are structural damage. Notes are visible-but-tolerated changes:
@@ -725,9 +774,27 @@ def compare(before: str, after: str, path: str,
             f"table shapes changed ({table_shapes(before)} -> {table_shapes(after)})"
         )
     if link_targets(before) != link_targets(after):
-        lost = sorted(link_targets(before) - link_targets(after))
-        added = sorted(link_targets(after) - link_targets(before))
-        problems.append(f"link targets changed: lost {lost}, added {added}")
+        mapping = link_mapping or {}
+        before_links = {canonical_link(path, t, mapping)
+                        for t in link_targets(before)}
+        after_links = {canonical_link(path, t, mapping)
+                       for t in link_targets(after)}
+        if before_links != after_links:
+            lost = sorted(before_links - after_links)
+            added = sorted(after_links - before_links)
+            problems.append(f"link targets changed: lost {lost}, added {added}")
+            unmapped = sorted({
+                resolved
+                for target in lost
+                for resolved in [linked_file(path, target)]
+                if resolved is not None and not mapping.get(resolved)
+            })
+            if unmapped:
+                notes.append(
+                    "anchors in these files were compared verbatim, because "
+                    "their heading counts differ and position cannot map "
+                    f"them: {unmapped}"
+                )
     if heading_counts(before) != heading_counts(after):
         problems.append(
             f"heading counts changed ({dict(heading_counts(before))} "
@@ -990,8 +1057,7 @@ def main() -> int:
             print(item)
 
     worktree = args.after in WORKTREE_ALIASES
-    failures = 0
-    noted = 0
+    pairs: list[tuple[str, str, str]] = []
     for path in expand(args.glob, None if worktree else args.after):
         before = read_rev(args.before, path)
         if before is None:
@@ -1003,8 +1069,19 @@ def main() -> int:
             after = read_rev(args.after, path)
         if after is None:
             continue
+        pairs.append((path, before, after))
+
+    # An anchor that followed its translated heading is not drift, so the link
+    # comparison is canonicalised onto the after-revision slugs. The table is
+    # positional and per file, exactly as `--fix-anchors` builds it.
+    link_mapping = {path: slug_mapping(before, after)
+                    for path, before, after in pairs}
+
+    failures = 0
+    noted = 0
+    for path, before, after in pairs:
         problems, notes = compare(before, after, path, args.strict_spans,
-                                  removals)
+                                  removals, link_mapping)
         if problems or notes:
             print(f"{path}")
             for item in problems:
