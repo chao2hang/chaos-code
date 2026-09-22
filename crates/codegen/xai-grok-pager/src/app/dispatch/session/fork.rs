@@ -149,7 +149,6 @@ pub(in crate::app::dispatch) fn dispatch_project_selected(
     effects
 }
 
-
 /// - Active agent has no `session_id` (still being created): toast and return.
 ///
 /// Both rejections are deliberate: queueing the fork until `SessionLoaded` would require persisting `ForkArgs` across the `TaskResult`.

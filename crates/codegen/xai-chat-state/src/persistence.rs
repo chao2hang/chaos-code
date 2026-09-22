@@ -286,7 +286,8 @@ impl ChatPersistence for NullChatPersistence {
     fn persist_selective_compaction(
         &mut self,
         _state: &xai_grok_compaction::selective::SelectiveState,
-    ) {}
+    ) {
+    }
     fn replace_history_for_strip_and_ack(
         &mut self,
         _items: &[ConversationItem],

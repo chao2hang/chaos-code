@@ -338,7 +338,6 @@ async fn fetch_gh_release_stable_handles_tag_without_v_prefix() {
 #[tokio::test]
 #[serial]
 async fn fetch_gh_release_alpha_returns_max_of_pre_and_stable() {
-
     let v = fetch_gh_release_version("alpha").await.unwrap();
     assert_eq!(v, "0.1.182-alpha.1");
 }

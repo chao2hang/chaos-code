@@ -1508,10 +1508,7 @@ mod palette_sharing_tests {
         };
         assert!(!state.search_active, "how-to picker must open list-focused");
         assert_eq!(state.selected, 0);
-        assert_eq!(
-            entries.first().map(|e| e.title.as_str()),
-            Some("快速上手")
-        );
+        assert_eq!(entries.first().map(|e| e.title.as_str()), Some("快速上手"));
     }
 }
 #[cfg(test)]

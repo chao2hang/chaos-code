@@ -438,10 +438,10 @@ async fn apply_retry_decision(
                 | SamplingError::EmptyResponse { .. }
                 | SamplingError::MaxTokensTruncation
                 | SamplingError::DoomLoopDetected { .. } => StripReason::PayloadHeuristic,
-            // Deterministic (never retried) so this arm is unreachable for it;
-            // listed explicitly to keep the match exhaustive rather than landing
-            // on a future default arm silently.
-            | SamplingError::MalformedToolCall { .. } => StripReason::PayloadHeuristic,
+                // Deterministic (never retried) so this arm is unreachable for it;
+                // listed explicitly to keep the match exhaustive rather than landing
+                // on a future default arm silently.
+                SamplingError::MalformedToolCall { .. } => StripReason::PayloadHeuristic,
             };
             tracing::warn!(
                 stripped = stripped_urls.len(),

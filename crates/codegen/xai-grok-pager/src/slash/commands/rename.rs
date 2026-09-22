@@ -11,14 +11,14 @@ pub struct RenameCommand;
 
 impl SlashCommand for RenameCommand {
     slash_meta! {
-        name: "rename",
-        aliases: ["title"],
-        description: "重命名当前会话",
-        usage: "/rename <title> | --auto",
-        takes_args: true,
-        args_required: true,
-        session_scoped: true,
-        arg_placeholder: "<title>",    }
+    name: "rename",
+    aliases: ["title"],
+    description: "重命名当前会话",
+    usage: "/rename <title> | --auto",
+    takes_args: true,
+    args_required: true,
+    session_scoped: true,
+    arg_placeholder: "<title>",    }
 
     fn suggest_args(&self, ctx: &AppCtx, args_query: &str) -> Option<Vec<ArgItem>> {
         // The ghost row is offered only while the args are empty

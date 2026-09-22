@@ -78,12 +78,7 @@ pub static TUTORIAL_TOPICS: &[TutorialTopic] = &[
         "直接开口：AGENTS.md、记忆、主题",
         Some("项目规则 (AGENTS.md)")
     ),
-    topic!(
-        "09-where-next.md",
-        "接下来去哪",
-        "指南、反馈与好习惯",
-        None
-    ),
+    topic!("09-where-next.md", "接下来去哪", "指南、反馈与好习惯", None),
 ];
 
 #[cfg(test)]

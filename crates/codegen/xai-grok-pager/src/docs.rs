@@ -75,26 +75,10 @@ pub static USER_GUIDE: &[Doc] = &[
         "主题与外观",
         "主题、颜色支持与 pager.toml 定制"
     ),
-    guide!(
-        "07-mcp-servers.md",
-        "MCP 服务器",
-        "通过 MCP 接入外部工具"
-    ),
-    guide!(
-        "08-skills.md",
-        "技能",
-        "创建并使用可复用的提示包"
-    ),
-    guide!(
-        "09-plugins.md",
-        "插件",
-        "插件包的安装、管理与创建"
-    ),
-    guide!(
-        "10-hooks.md",
-        "钩子",
-        "工具调用前后的事件脚本"
-    ),
+    guide!("07-mcp-servers.md", "MCP 服务器", "通过 MCP 接入外部工具"),
+    guide!("08-skills.md", "技能", "创建并使用可复用的提示包"),
+    guide!("09-plugins.md", "插件", "插件包的安装、管理与创建"),
+    guide!("10-hooks.md", "钩子", "工具调用前后的事件脚本"),
     guide!(
         "11-custom-models.md",
         "自定义模型",
@@ -105,11 +89,7 @@ pub static USER_GUIDE: &[Doc] = &[
         "项目规则 (AGENTS.md)",
         "目录级指令与优先级规则"
     ),
-    guide!(
-        "13-memory.md",
-        "记忆",
-        "跨会话知识持久化与检索"
-    ),
+    guide!("13-memory.md", "记忆", "跨会话知识持久化与检索"),
     guide!(
         "14-headless-mode.md",
         "无头模式与脚本",
@@ -130,16 +110,8 @@ pub static USER_GUIDE: &[Doc] = &[
         "会话管理",
         "会话的保存、加载、恢复、回退与压缩"
     ),
-    guide!(
-        "18-sandbox.md",
-        "沙箱模式",
-        "操作系统级文件系统与网络隔离"
-    ),
-    guide!(
-        "19-plan-mode.md",
-        "计划模式",
-        "带审批对话框的结构化规划"
-    ),
+    guide!("18-sandbox.md", "沙箱模式", "操作系统级文件系统与网络隔离"),
+    guide!("19-plan-mode.md", "计划模式", "带审批对话框的结构化规划"),
     guide!(
         "20-background-tasks.md",
         "后台任务与监控",

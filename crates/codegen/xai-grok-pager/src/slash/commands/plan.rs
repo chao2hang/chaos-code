@@ -11,14 +11,14 @@ pub struct PlanCommand;
 
 impl SlashCommand for PlanCommand {
     slash_meta! {
-        name: "plan",
-        description: "进入计划模式",
-        usage: "/plan [description]",
-        takes_args: true,
-        session_scoped: true,
-        // The dashboard offers `/plan` to start the next spawned agent in plan mode (intercepted in `dispatch_dashboard_dispatch_slash`).
-        offered_when_session_less: true,
-        arg_placeholder: "[description]",    }
+    name: "plan",
+    description: "进入计划模式",
+    usage: "/plan [description]",
+    takes_args: true,
+    session_scoped: true,
+    // The dashboard offers `/plan` to start the next spawned agent in plan mode (intercepted in `dispatch_dashboard_dispatch_slash`).
+    offered_when_session_less: true,
+    arg_placeholder: "[description]",    }
 
     fn run(&self, _ctx: &mut CommandExecCtx, args: &str) -> CommandResult {
         let trimmed = args.trim();

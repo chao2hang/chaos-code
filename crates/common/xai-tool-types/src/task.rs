@@ -1423,9 +1423,9 @@ mod tests {
                 .and_then(|name| definitions.get(name))
                 .unwrap_or(property);
             assert!(
-                enum_schema["enum"].as_array().is_some_and(|values| values
-                    .iter()
-                    .all(serde_json::Value::is_string)),
+                enum_schema["enum"]
+                    .as_array()
+                    .is_some_and(|values| values.iter().all(serde_json::Value::is_string)),
                 "{field} must be a non-nullable string enum: {enum_schema}"
             );
             assert!(

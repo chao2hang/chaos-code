@@ -3009,12 +3009,8 @@ impl AgentView {
                         .fg(question_accent)
                         .bg(footer_bg)
                         .add_modifier(Modifier::BOLD);
-                    let left_spans = Self::question_footer_hints(
-                        qv,
-                        feedback_pane,
-                        hint_style,
-                        hint_key,
-                    );
+                    let left_spans =
+                        Self::question_footer_hints(qv, feedback_pane, hint_style, hint_key);
                     let left_line = Line::from(left_spans);
                     let avail_w = footer_w.saturating_sub(3);
                     buf.set_line_safe(content_x, footer_y, &left_line, avail_w);
@@ -5031,9 +5027,7 @@ mod permission_hint_tests {
             perm.focus = focus;
             let hints = agent.permission_shortcut_hints(&perm);
             assert!(
-                !hints
-                    .iter()
-                    .any(|h| h.label == "展开" || h.label == "折叠"),
+                !hints.iter().any(|h| h.label == "展开" || h.label == "折叠"),
                 "protected-edit must not advertise Ctrl-F in {focus:?}"
             );
         }
@@ -5300,7 +5294,11 @@ mod status_line_draw_tests {
                 x += u16::try_from(symbol.width()).unwrap_or(1).max(1);
             }
             (0..glyphs.len().saturating_sub(want.len().saturating_sub(1)))
-                .find(|&i| want.iter().enumerate().all(|(k, c)| glyphs[i + k].1 == c.as_str()))
+                .find(|&i| {
+                    want.iter()
+                        .enumerate()
+                        .all(|(k, c)| glyphs[i + k].1 == c.as_str())
+                })
                 .map(|i| (glyphs[i].0, y))
         };
         (area.y..area.bottom()).find_map(matches)

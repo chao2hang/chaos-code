@@ -754,9 +754,7 @@ async fn most_recent_session_id(
     let first = summaries
         .iter()
         .find(|summary| selection.admits(summary))
-        .ok_or_else(|| {
-            anyhow::anyhow!("当前目录没有可恢复的会话。请运行 `chaos` 启动新会话。")
-        })?;
+        .ok_or_else(|| anyhow::anyhow!("当前目录没有可恢复的会话。请运行 `chaos` 启动新会话。"))?;
     Ok((first.info.id.to_string(), first.display_title_opt()))
 }
 /// `AuthManager` for direct grok.com calls made outside the agent (pre-ACP `--continue` conversation listing, the GCS restore effect).
@@ -1878,10 +1876,7 @@ mod tests {
         .unwrap_err()
         .to_string();
         assert!(title_err.contains("--worktree"), "{title_err}");
-        assert!(
-            title_err.contains("没有匹配"),
-            "{title_err}"
-        );
+        assert!(title_err.contains("没有匹配"), "{title_err}");
     }
     /// `--restore-code --worktree` stays on the existing defer path.
     #[tokio::test]

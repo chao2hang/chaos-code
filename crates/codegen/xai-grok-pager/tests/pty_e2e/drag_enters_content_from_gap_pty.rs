@@ -7,7 +7,6 @@ const GAPDEEP_LINE: &str = "GAPDEEP alpha beta gamma delta epsilon";
 
 const ENTRY_WORD: &str = "epsilon";
 
-
 /// PTY: a mouse-down on the blank gap below the conversation (between the turn marker and the prompt box) starts an anchor-less drag.
 /// Dead space is a valid drag start.
 /// The anchor appears at the first drag position that lands on selectable text: here a word inside the last message.

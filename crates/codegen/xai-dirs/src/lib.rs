@@ -186,8 +186,11 @@ mod tests {
         // Neither <tmp>/.chaos nor <tmp>/.grok exists yet → new-install
         // default <tmp>/.chaos.
         let tmp = tempfile::tempdir().unwrap();
-        let resolved =
-            resolve_grok_home_from(Some(&OsString::new()), Some(&OsString::new()), Some(tmp.path()));
+        let resolved = resolve_grok_home_from(
+            Some(&OsString::new()),
+            Some(&OsString::new()),
+            Some(tmp.path()),
+        );
         assert_eq!(
             resolved,
             Some((
@@ -239,7 +242,10 @@ mod tests {
     #[test]
     fn none_when_nothing_resolves() {
         assert_eq!(
-            resolve_grok_home_from(/* chaos_home_env */ None, /* grok_home_env */ None, /* os_home */ None),
+            resolve_grok_home_from(
+                /* chaos_home_env */ None, /* grok_home_env */ None,
+                /* os_home */ None
+            ),
             None
         );
     }

@@ -3919,11 +3919,12 @@ impl McpClient {
     }
 
     fn handshake_budget_secs(&self) -> u64 {
-        self.startup_timeout_sec.saturating_add(if self.probe_fits_budget() {
-            Self::DISCOVER_PROBE_TIMEOUT_SECS
-        } else {
-            0
-        })
+        self.startup_timeout_sec
+            .saturating_add(if self.probe_fits_budget() {
+                Self::DISCOVER_PROBE_TIMEOUT_SECS
+            } else {
+                0
+            })
     }
 
     pub fn max_startup_within_deadline(deadline_secs: u64) -> u64 {
@@ -3944,11 +3945,8 @@ impl McpClient {
         let lifecycle = ClientLifecycleMode::Discover {
             preferred_versions: vec![rmcp::model::ProtocolVersion::V_2026_07_28],
         };
-        match tokio::time::timeout(
-            timeout,
-            handler.serve_with_lifecycle(transport, lifecycle),
-        )
-        .await
+        match tokio::time::timeout(timeout, handler.serve_with_lifecycle(transport, lifecycle))
+            .await
         {
             Ok(Ok(service)) => Ok(ProbeVerdict::Modern(Box::new(service))),
             Ok(Err(probe_error)) => {
@@ -4015,9 +4013,7 @@ impl McpClient {
         config: &HttpConfig,
         auth_manager: &Arc<tokio::sync::Mutex<rmcp::transport::auth::AuthorizationManager>>,
     ) -> Result<
-        crate::mcp_http_client::McpHttpClient<
-            rmcp::transport::auth::AuthClient<reqwest::Client>,
-        >,
+        crate::mcp_http_client::McpHttpClient<rmcp::transport::auth::AuthClient<reqwest::Client>>,
         McpError,
     > {
         debug_assert!(!config.local_agent_endpoint);

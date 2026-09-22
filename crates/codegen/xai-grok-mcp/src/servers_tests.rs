@@ -2029,13 +2029,8 @@ async fn http_transport_sends_default_user_agent_on_initialize() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn modern_discover_handshake_skips_initialize() {
-    let (url, handles) =
-        spawn_fake_mcp_modern(CallToolBehavior::HangThenOk { hang_ms: 0 }).await;
-    let client = fake_http_client_with_startup(
-        &url,
-        McpClient::DISCOVER_PROBE_TIMEOUT_SECS + 1,
-        5,
-    );
+    let (url, handles) = spawn_fake_mcp_modern(CallToolBehavior::HangThenOk { hang_ms: 0 }).await;
+    let client = fake_http_client_with_startup(&url, McpClient::DISCOVER_PROBE_TIMEOUT_SECS + 1, 5);
     client.ensure_initialized().await.expect("modern handshake");
     assert_eq!(handles.discovers.load(Ordering::Relaxed), 1);
     assert_eq!(handles.inits.load(Ordering::Relaxed), 0);

@@ -11,10 +11,10 @@ pub struct SettingsCommand;
 
 impl SlashCommand for SettingsCommand {
     slash_meta! {
-        name: "settings",
-        aliases: ["config", "preferences", "prefs"],
-        description: "打开设置对话框",
-        usage: "/settings",    }
+    name: "settings",
+    aliases: ["config", "preferences", "prefs"],
+    description: "打开设置对话框",
+    usage: "/settings",    }
 
     fn run(&self, _ctx: &mut CommandExecCtx, _args: &str) -> CommandResult {
         CommandResult::Action(Action::OpenSettings)

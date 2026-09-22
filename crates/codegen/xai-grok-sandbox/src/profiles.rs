@@ -143,7 +143,9 @@ pub fn sandbox_profile_conflicts(workspace: &Path) -> Vec<String> {
     // Merge both project layers the same way `load_sandbox_config` does.
     let mut project = SandboxConfig::default();
     for dirname in [".grok", ".chaos"] {
-        if let Some(layer) = load_config_file(&workspace.join(dirname).join(SANDBOX_CONFIG_FILENAME)) {
+        if let Some(layer) =
+            load_config_file(&workspace.join(dirname).join(SANDBOX_CONFIG_FILENAME))
+        {
             merge_project_profiles(&mut project, layer);
         }
     }

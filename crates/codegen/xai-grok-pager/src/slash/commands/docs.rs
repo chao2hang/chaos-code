@@ -18,13 +18,13 @@ pub struct DocsCommand;
 
 impl SlashCommand for DocsCommand {
     slash_meta! {
-        name: "docs",
-        aliases: ["howto", "guides"],
-        description: "打开使用指南或在线文档",
-        usage: "/docs [web|title]",
-        takes_args: true,
-        args_required: false,
-        arg_placeholder: "[web|title]",    }
+    name: "docs",
+    aliases: ["howto", "guides"],
+    description: "打开使用指南或在线文档",
+    usage: "/docs [web|title]",
+    takes_args: true,
+    args_required: false,
+    arg_placeholder: "[web|title]",    }
 
     fn suggest_args(&self, _ctx: &AppCtx, _args_query: &str) -> Option<Vec<ArgItem>> {
         let mut items = vec![

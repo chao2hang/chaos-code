@@ -168,11 +168,11 @@ fn subagent_permission_mode_precedence() {
 fn inject_url_derived_headers_adds_proxy_headers_for_cli_chat_proxy_url() {
     let mut headers = IndexMap::new();
     inject_url_derived_headers(
-    &mut headers,
-    None,
-    crate::env::PROD_CLI_CHAT_PROXY_BASE_URL,
-    false,
-);
+        &mut headers,
+        None,
+        crate::env::PROD_CLI_CHAT_PROXY_BASE_URL,
+        false,
+    );
     assert_eq!(
         headers.get("X-XAI-Token-Auth").map(String::as_str),
         Some("xai-grok-cli")
@@ -207,11 +207,11 @@ fn inject_url_derived_headers_preserves_caller_extra_headers() {
     let mut headers = IndexMap::new();
     headers.insert("x-custom-byok".to_string(), "value".to_string());
     inject_url_derived_headers(
-    &mut headers,
-    None,
-    crate::env::PROD_CLI_CHAT_PROXY_BASE_URL,
-    false,
-);
+        &mut headers,
+        None,
+        crate::env::PROD_CLI_CHAT_PROXY_BASE_URL,
+        false,
+    );
     assert_eq!(
         headers.get("x-custom-byok").map(String::as_str),
         Some("value")
@@ -226,11 +226,11 @@ fn inject_url_derived_headers_does_not_overwrite_existing_entries() {
     let mut headers = IndexMap::new();
     headers.insert("X-XAI-Token-Auth".to_string(), "caller-set".to_string());
     inject_url_derived_headers(
-    &mut headers,
-    None,
-    crate::env::PROD_CLI_CHAT_PROXY_BASE_URL,
-    false,
-);
+        &mut headers,
+        None,
+        crate::env::PROD_CLI_CHAT_PROXY_BASE_URL,
+        false,
+    );
     assert_eq!(
         headers.get("X-XAI-Token-Auth").map(String::as_str),
         Some("caller-set"),
@@ -1075,7 +1075,7 @@ fn test_model_entry(
             compactions_remaining: None,
             compaction_at_tokens: None,
             show_model_fingerprint: false,
-stream_tool_calls: None,
+            stream_tool_calls: None,
             extract_inline_thinking: None,
             laziness_detector: LazinessDetectorPerModelConfig::default(),
             variants: Vec::new(),
@@ -2246,7 +2246,7 @@ fn model_info_from_config_propagates_use_concise() {
         compactions_remaining: None,
         compaction_at_tokens: None,
         show_model_fingerprint: false,
-stream_tool_calls: None,
+        stream_tool_calls: None,
         extract_inline_thinking: None,
         laziness_detector: LazinessDetectorPerModelConfig::default(),
         variants: Vec::new(),
@@ -2409,7 +2409,7 @@ fn model_info_from_config_propagates_agent_type() {
         compactions_remaining: None,
         compaction_at_tokens: None,
         show_model_fingerprint: false,
-stream_tool_calls: None,
+        stream_tool_calls: None,
         extract_inline_thinking: None,
         laziness_detector: LazinessDetectorPerModelConfig::default(),
         variants: Vec::new(),
@@ -2864,7 +2864,7 @@ fn inference_idle_timeout_propagates_to_model_info() {
         compactions_remaining: None,
         compaction_at_tokens: None,
         show_model_fingerprint: false,
-stream_tool_calls: None,
+        stream_tool_calls: None,
         extract_inline_thinking: None,
         laziness_detector: LazinessDetectorPerModelConfig::default(),
         variants: Vec::new(),
@@ -7271,7 +7271,7 @@ fn prefetch_model_entry(slug: &str, context_window: u64, api_backend: ApiBackend
             compactions_remaining: None,
             compaction_at_tokens: None,
             show_model_fingerprint: false,
-stream_tool_calls: None,
+            stream_tool_calls: None,
             extract_inline_thinking: None,
             laziness_detector: LazinessDetectorPerModelConfig::default(),
             auto_compact_threshold_percent: None,

@@ -2737,7 +2737,6 @@ fn filter_and_sort_skills(
     SkillsEntryData { matches }
 }
 
-
 fn skill_source_str(skill: &SkillInfo) -> String {
     if let Some(ref cs) = skill.config_source {
         match cs {

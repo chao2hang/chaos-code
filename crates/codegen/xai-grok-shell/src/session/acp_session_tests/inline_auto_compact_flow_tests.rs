@@ -1212,7 +1212,7 @@ async fn test_e2e_idle_resume_refreshes_model_metadata() {
                 managed_mcp_handle: Default::default(),
                 initial_client_mcp_servers: vec![],
                 tool_metadata_snapshot: Arc::new(std::sync::Mutex::new(Default::default())),
-                                mcp_reminder_mode: McpReminderMode::Delta,
+                mcp_reminder_mode: McpReminderMode::Delta,
                 mcp_reminder_dirty: Arc::new(std::sync::atomic::AtomicBool::new(false)),
                 mcp_connecting_reminder_injected: std::cell::Cell::new(false),
                 mcp_handshakes_done: Arc::new(tokio::sync::Notify::new()),
@@ -1252,8 +1252,8 @@ async fn test_e2e_idle_resume_refreshes_model_metadata() {
                 subagent_token_records: parking_lot::Mutex::new(HashMap::new()),
                 workspace_ops: xai_grok_workspace::WorkspaceOps::for_test(),
                 trace_config_template: std::cell::RefCell::new(None),
-                repo_status_prefetch: crate::session::repo_status_prefix::RepoStatusPrefetchState::default(
-                ),
+                repo_status_prefetch:
+                    crate::session::repo_status_prefix::RepoStatusPrefetchState::default(),
                 transient_retry_enabled: true,
                 transient_retries_prompt_total: std::cell::Cell::new(0),
                 transient_episode_start: std::cell::Cell::new(None),

@@ -4681,8 +4681,7 @@ fn media_gen_ref_skips_uploaded_only_video() {
 /// It must NOT mark the card as an error.
 #[test]
 fn tier_restricted_media_shows_upsell_text_not_error() {
-    let upsell =
-        "图片生成功能不可用。请通过配置文件添加支持图片生成的模型提供商。不要重试此工具。";
+    let upsell = "图片生成功能不可用。请通过配置文件添加支持图片生成的模型提供商。不要重试此工具。";
     let output = ToolOutput::Text(xai_grok_tools::types::output::TextOutput::from(upsell));
     let tc = acp::ToolCall::new(
         acp::ToolCallId::new(Arc::from("tier-restricted-img")),

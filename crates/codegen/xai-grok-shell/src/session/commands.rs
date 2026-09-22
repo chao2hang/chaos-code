@@ -80,7 +80,6 @@ pub struct SetContextWindowResult {
     pub compaction_error: Option<String>,
 }
 
-
 /// `_meta.completionKind` on a `PromptResponse`. Distinguishes a queued prompt
 /// that never ran from a real cancelled turn (both use `StopReason::Cancelled`).
 pub const COMPLETION_KIND_KEY: &str = "completionKind";

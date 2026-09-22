@@ -129,10 +129,7 @@ fn worktree_failure_message_hint_follows_threaded_provenance() {
     assert!(msg.contains("没有匹配"), "{msg}");
     assert!(msg.contains("chaos sessions search"), "{msg}");
     let resolved_msg = worktree_resume_failure_message(None, "restore failed");
-    assert_eq!(
-        resolved_msg,
-        "恢复 worktree 会话失败：restore failed"
-    );
+    assert_eq!(resolved_msg, "恢复 worktree 会话失败：restore failed");
 }
 
 /// Regression, through the production wiring: pinning rewrites the `-r` title to the canonical id and the profile peek sees the saved profile.
