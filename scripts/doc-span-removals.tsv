@@ -20,3 +20,5 @@ Shift+letter	第 5 章：按键记号按中文习惯写作 `Shift+字母`
 Ctrl+letter	第 5 章：按键记号按中文习惯写作 `Ctrl+字母`
 <repo-root>/.grok/config.toml	第 5 章：路径占位符随正文中文化写作 `<仓库根>/.chaos/config.toml`
 <repo-root>/.grok/workflows/	第 5 章：同上，写作 `<仓库根>/.chaos/workflows/`
+[clone] enabled = true	第 1 章：Grove 克隆在本分叉不存在（27-grok-clone.md 连 `docs.rs` 条目一并删除），介绍 `chaos clone` 的整段随之删掉，该配置项也就没有了
+--full-history	第 1 章：同上，`--full-history` 只在这段 `chaos clone` 说明里出现过，随段删除。全库 `main` 只有 01 与已删除的 27 两处用它
