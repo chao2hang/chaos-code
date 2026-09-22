@@ -1,11 +1,11 @@
 # chaos-code-linux-arm64
 
-Platform-specific binary for [`chaos-code`](https://www.npmjs.com/package/chaos-code) on linux-arm64.
+[`chaos-code`](https://www.npmjs.com/package/chaos-code) 在 linux-arm64 上的平台专用二进制包。
 
-Do not install this package directly. Install the main package instead:
+请勿直接安装本包，请安装主包：
 
 ```sh
 npm install -g chaos-code
 ```
 
-The main package will automatically pull the correct binary for your platform via `optionalDependencies`.
+主包会通过 `optionalDependencies` 自动拉取匹配你所在平台的二进制文件。

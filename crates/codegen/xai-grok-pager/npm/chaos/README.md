@@ -1,37 +1,37 @@
 # chaos-code
 
-**Chaos** — terminal AI coding assistant. Bring-your-own-key (BYOK); no Grok/xAI login.
+**Chaos** —— 终端里的 AI 编码助手。自带密钥（BYOK），不需要 Grok / xAI 登录。
 
-The installed command is **`chaos`**.
+安装后的命令是 **`chaos`**。
 
-## Install
+## 安装
 
-### One-liner (GitHub Release binary — recommended)
+### 一行命令（GitHub Release 二进制，推荐）
 
-Works when npm platform packages are incomplete (e.g. Windows `win32-x64` missing).
+当 npm 平台包不全时（例如 Windows 的 `win32-x64` 缺失）用这个。
 
-**macOS / Linux:**
+**macOS / Linux：**
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.sh | bash
-# China / slow GitHub:
+# 国内 / GitHub 慢：
 # curl -fsSL .../install.sh | CHAOS_CN=1 bash
-export PATH="$HOME/.chaos/bin:$PATH"   # current shell only; new terminals auto-pick PATH
+export PATH="$HOME/.chaos/bin:$PATH"   # 只对当前 shell 生效；新终端会自动读到 PATH
 chaos --version
 ```
 
-**Windows (PowerShell):**
+**Windows（PowerShell）：**
 
 ```powershell
-# China / slow GitHub: $env:CHAOS_CN = "1"
+# 国内 / GitHub 慢：$env:CHAOS_CN = "1"
 irm https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.ps1 | iex
-# then open a NEW terminal, or: $env:Path = "$env:USERPROFILE\.chaos\bin;$env:Path"
+# 然后开一个「新」终端，或者执行：$env:Path = "$env:USERPROFILE\.chaos\bin;$env:Path"
 chaos --version
 ```
 
-Pin a version: `bash -s -- --version 0.2.118` / `-Version 0.2.118`.  
-Scripts install under `~/.chaos/bin` (or `~/.grok/bin`), upgrade existing installs in place, and configure PATH.  
-Optional: `CHAOS_GITHUB_MIRROR=https://ghfast.top` or `CHAOS_CN=1` for GitHub release acceleration (SHA256 still verified).
+指定版本：`bash -s -- --version 0.2.118` / `-Version 0.2.118`。  
+脚本装到 `~/.chaos/bin`（也兼容 `~/.grok/bin`），会就地升级已有安装并配置 PATH。  
+可选：用 `CHAOS_GITHUB_MIRROR=https://ghfast.top` 或 `CHAOS_CN=1` 加速 GitHub 下载（SHA256 校验仍然照做）。
 
 ### npm
 
@@ -39,56 +39,55 @@ Optional: `CHAOS_GITHUB_MIRROR=https://ghfast.top` or `CHAOS_CN=1` for GitHub re
 npm i -g chaos-code
 ```
 
-Requires Node.js ≥ 20. npm installs the meta package plus one platform package
-(`chaos-code-<os>-<cpu>`) that carries a brotli-compressed binary.
+需要 Node.js ≥ 20。npm 会装上元包，外加一个平台包
+（`chaos-code-<os>-<cpu>`），二进制以 brotli 压缩放在里面。
 
-If you see `no platform binary installed for win32-x64`, use the one-liner above
-or download `chaos-win32-x64.exe` from
-[GitHub Releases](https://github.com/chao2hang/chaos-code/releases/latest).
+如果看到 `no platform binary installed for win32-x64`，请改用上面的一行命令，
+或者从 [GitHub Releases](https://github.com/chao2hang/chaos-code/releases/latest)
+下载 `chaos-win32-x64.exe`。
 
-## Get Started
+## 开始使用
 
 ```bash
-# Launch the interactive TUI
+# 启动交互式 TUI
 chaos
 
-# Single-shot task
+# 单次任务
 chaos -p "Explain this codebase"
 
 chaos --version
 ```
 
-Configure models and providers under `~/.chaos/config.toml` (or legacy
-`~/.grok/`). See [CHAOS.md](https://github.com/chao2hang/chaos-code/blob/main/CHAOS.md)
-in the repo.
+模型与 Provider 配置写在 `~/.chaos/config.toml`（旧路径 `~/.grok/` 也读）。
+见仓库里的 [CHAOS.md](https://github.com/chao2hang/chaos-code/blob/main/CHAOS.md)。
 
-## Update
+## 更新
 
 ```bash
-# Release installer (re-run one-liner, or):
+# Release 安装脚本（重跑一遍一行命令，或者）：
 curl -fsSL https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.sh | bash -s -- --force
 
-# npm:
+# npm：
 npm i -g chaos-code@latest
-# or, if installed via npm:
+# 或者，如果当初是用 npm 装的：
 chaos update
 ```
 
-## Supported Platforms
+## 支持的平台
 
-| Platform | Architecture |
+| 平台 | 架构 |
 |---|---|
-| macOS | Apple Silicon (arm64), Intel (x64) |
-| Linux | x86_64, arm64 |
-| Windows | x86_64, arm64 |
+| macOS | Apple Silicon (arm64)、Intel (x64) |
+| Linux | x86_64、arm64 |
+| Windows | x86_64、arm64 |
 
-## Build from source
+## 从源码构建
 
 ```bash
 cargo build -p xai-grok-pager-bin --release
-# binary: target/release/chaos
+# 二进制：target/release/chaos
 ```
 
-## License
+## 许可
 
-Apache-2.0. See the repository root `LICENSE` and `THIRD-PARTY-NOTICES`.
+Apache-2.0。见仓库根目录的 `LICENSE` 与 `THIRD-PARTY-NOTICES`。
