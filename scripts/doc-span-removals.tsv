@@ -14,3 +14,5 @@ topics/	本分叉的记忆不是「一主题一文件」：每个作用域一份
 Subagent running: "do the thing" (Implementer · grok-4.6) · Thinking	第 16 章：本分叉的滚动回溯块是中文（scrollback/blocks/subagent.rs:183-255），上游英文串按实际渲染改写为 子代理运行中：“…” · 活动后缀 (人设 · 角色 · 模型)
 Subagent started: "..."	第 16 章：同上，后台启动的实际渲染是 子代理已启动：“…”
 Subagent completed/failed/cancelled in Xs: "..."	第 16 章：同上，实际渲染是 子代理已完成/失败/已取消（用时 Xs）：“…”
+--device-code	第 14 章：本分叉无设备码流程（§4.3），随 `grok login --device-auth` 说明一并删除
+$GROK_HOME/bin/grok	第 14 章：受管安装路径随分叉改名（$CHAOS_HOME/bin/chaos），二进制名不是 grok

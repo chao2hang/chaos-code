@@ -1,126 +1,128 @@
-# Headless Mode and Scripting
+# 无头模式与脚本
 
-Headless mode runs Grok non-interactively from the command line. It accepts a single prompt, executes it with full tool access, and returns the result. Use it to automate tasks, script workflows, build integrations, and parse output programmatically.
+无头模式让 Chaos 在命令行里非交互地运行。它接收单个提示，以完整的工具访问权限执行，
+并返回结果。可以用它自动化任务、编写工作流脚本、构建集成，以及以程序化方式解析输出。
 
 ---
 
-## Basic Usage
+## 基本用法
 
-Passing a prompt non-interactively triggers headless mode. The most common way is the `-p` flag (short for `--single`); `--prompt-json` and `--prompt-file` also trigger it:
+以非交互方式传入提示即触发无头模式。最常见的是 `-p` 标志（`--single` 的
+简写）；`--prompt-json` 与 `--prompt-file` 同样会触发它：
 
 ```bash
-grok -p "Your prompt here"
+chaos -p "Your prompt here"
 ```
 
-Grok processes the prompt, runs any necessary tools, and prints the result to stdout. The process exits when the response is complete.
+Grok 会处理该提示，运行所有必要的工具，并把结果打印到 stdout。响应完成后进程即退出。
 
 ---
 
-## Command-Line Options
+## 命令行选项
 
 | 标志                    | 说明                                           |
 | ----------------------- | ----------------------------------------------------- |
-| `-p, --single <PROMPT>` | The prompt to send (or use `--prompt-json` / `--prompt-file`) |
-| `-m, --model <MODEL>`   | Model to use (e.g., `grok-4.6`)              |
-| `-s, --session-id <ID>` | Create a **new** session with this **UUID** (errors if invalid UUID or already in use under the target session directory; does not resume, use `-r`/`-c`) |
-| `--fork-session`        | With `-r`/`-c`, fork into a new session ID instead of appending to the original |
-| `-r, --resume <ID_OR_TITLE>` | Resume an existing session by ID, or by title for the current directory, ignoring letter case (a sole manually renamed match wins among duplicates; remaining duplicates error with their IDs; UUID-shaped values always take the ID path; scripts should prefer IDs) |
-| `-c, --continue`        | Continue the most recent session in current directory  |
-| `--cwd <PATH>`          | Set working directory                                 |
+| `-p, --single <PROMPT>` | 要发送的提示（或改用 `--prompt-json` / `--prompt-file`） |
+| `-m, --model <MODEL>`   | 要使用的模型（例如 `grok-4.6`）              |
+| `-s, --session-id <ID>` | 以该 **UUID** 创建**新**会话（UUID 无效或在目标会话目录下已被占用时报错；不会恢复会话，恢复请用 `-r`/`-c`） |
+| `--fork-session`        | 与 `-r`/`-c` 连用时，分叉到一个新的会话 ID，而不是追加到原会话 |
+| `-r, --resume <ID_OR_TITLE>` | 按 ID 恢复既有会话，或按当前目录的标题恢复（忽略大小写；重名时唯一一个被手动改名的匹配胜出，其余重名项报错并列出其 ID；形如 UUID 的值总是走 ID 路径；脚本应优先使用 ID） |
+| `-c, --continue`        | 继续当前目录中最近的一个会话  |
+| `--cwd <PATH>`          | 设置工作目录                                 |
 | `--output-format <FMT>` | 输出格式：`plain`、`json`、`streaming-json`、`streaming-messages-json` |
-| `--include-partial-messages` | Emit raw `stream_event` deltas. Only affects `--output-format streaming-messages-json`; ignored (with a warning) otherwise. |
-| `--yolo`                | Auto-approve all tool executions                      |
-| `--rules <TEXT>`        | Custom rules for the system prompt                    |
-| `--tools <TOOLS>`       | Allowlist of built-in tools (comma-separated). MCP meta-tools remain available unless denied. Headless only. |
-| `--disallowed-tools <TOOLS>` | Denylist of built-in tools to remove (comma-separated). Supports `Agent` entries. Headless only. |
-| `--max-turns <N>`       | Maximum number of agentic turns before stopping. Headless only. |
-| `--reasoning-effort` / `--effort <LEVEL>` | Reasoning effort for reasoning models. Canonical levels: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` (each a distinct tier; a model only accepts the levels its menu advertises). Also accepts per-model menu option ids (e.g. `deep` → mapped wire value), same as `/effort`. Works in TUI and headless. |
-| `--permission-mode <MODE>` | Permission mode. `bypassPermissions` enables always-approve (see [Permissions and safety](22-permissions-and-safety.md#permission-modes)); for deny-by-default use `defaultMode` in `.claude/settings.json`. |
-| `--allow <RULE>`        | Permission allow rule with glob patterns (repeatable). Works in TUI and headless. |
-| `--deny <RULE>`         | Permission deny rule with glob patterns (repeatable). Works in TUI and headless. |
-| `--prompt-json <JSON>`  | Prompt as JSON content blocks                         |
-| `--prompt-file <PATH>`  | Prompt from a file                                    |
-| `--verbatim`            | Send prompt exactly as given                          |
-| `--no-auto-update`      | Disable update checks for this session                |
-| `--sandbox <PROFILE>`   | Sandbox profile for filesystem/network access         |
+| `--include-partial-messages` | 发出原始的 `stream_event` 增量。仅对 `--output-format streaming-messages-json` 生效；其他格式会被忽略（并给出警告）。 |
+| `--yolo`                | 自动批准所有工具执行                      |
+| `--rules <TEXT>`        | 用于系统提示的自定义规则                    |
+| `--tools <TOOLS>`       | 内置工具的白名单（逗号分隔）。除非被拒绝，MCP 元工具仍然可用。仅无头模式。 |
+| `--disallowed-tools <TOOLS>` | 要移除的内置工具黑名单（逗号分隔）。支持 `Agent` 条目。仅无头模式。 |
+| `--max-turns <N>`       | 停止前允许的最大智能体轮数。仅无头模式。 |
+| `--reasoning-effort` / `--effort <LEVEL>` | 推理模型的推理投入程度。规范级别：`none`、`minimal`、`low`、`medium`、`high`、`xhigh`、`max`（每个都是独立档位；模型只接受其菜单中列出的级别）。也接受按模型的菜单选项 id（例如 `deep` → 映射的线上传输值），与 `/effort` 相同。在 TUI 和无头模式下均可用。 |
+| `--permission-mode <MODE>` | 权限模式。`bypassPermissions` 启用始终批准（见[权限与安全](22-permissions-and-safety.md#permission-modes)）；要默认拒绝，请在 `.claude/settings.json` 中设置 `defaultMode`。 |
+| `--allow <RULE>`        | 带通配符模式的权限允许规则（可重复）。在 TUI 和无头模式下均可用。 |
+| `--deny <RULE>`         | 带通配符模式的权限拒绝规则（可重复）。在 TUI 和无头模式下均可用。 |
+| `--prompt-json <JSON>`  | 以 JSON 内容块表示的提示                         |
+| `--prompt-file <PATH>`  | 从文件读取提示                                    |
+| `--verbatim`            | 按原样发送提示                          |
+| `--no-auto-update`      | 为本次会话禁用更新检查                |
+| `--sandbox <PROFILE>`   | 用于文件系统/网络访问的沙箱配置         |
 
-> **Note:** `--tools`, `--disallowed-tools`, `--max-turns`, and `--agents` are headless-only flags. If used in the interactive TUI, a warning is printed and the flag is ignored. `--reasoning-effort`/`--effort`, `--permission-mode`, `--allow`, and `--deny` work in both modes. For more flags (agents and worktrees), see [Additional Headless Flags](#additional-headless-flags).
+> **注意：** `--tools`、`--disallowed-tools`、`--max-turns` 和 `--agents` 是仅限无头模式的标志。如果在交互式 TUI 中使用，会打印警告并忽略该标志。`--reasoning-effort`/`--effort`、`--permission-mode`、`--allow` 和 `--deny` 在两种模式下都可用。更多标志（智能体与工作树）见[其他无头模式标志](#additional-headless-flags)。
 
-### Tool Filtering
+### 工具过滤
 
-Use `--tools` to restrict the agent to an explicit set of tools (allowlist), or `--disallowed-tools` to remove specific tools from the default set (denylist). Both accept comma-separated tool names.
+使用 `--tools` 把智能体限制在一组显式工具（白名单），或用 `--disallowed-tools` 从默认集合中移除特定工具（黑名单）。两者都接受逗号分隔的工具名。
 
-Tool names are internal tool IDs (e.g. the shell tool is `run_terminal_cmd`, not `bash`).
+工具名是内部工具 ID（例如 shell 工具是 `run_terminal_cmd`，而不是 `bash`）。
 
 ```bash
 # Only allow read-only tools
-grok -p "Explain this codebase" --tools "read_file,grep,list_dir"
+chaos -p "Explain this codebase" --tools "read_file,grep,list_dir"
 
 # Remove web access and file editing
-grok -p "Review this code" --disallowed-tools "web_search,web_fetch,search_replace"
+chaos -p "Review this code" --disallowed-tools "web_search,web_fetch,search_replace"
 
 # Remove shell access
-grok -p "Review this code" --disallowed-tools "run_terminal_cmd"
+chaos -p "Review this code" --disallowed-tools "run_terminal_cmd"
 ```
 
-`--disallowed-tools` also supports special `Agent` entries to control subagent spawning:
+`--disallowed-tools` 还支持特殊的 `Agent` 条目，用于控制子智能体的派生：
 
 | 条目                  | 效果                                  |
 | ---------------------- | --------------------------------------- |
-| `Agent`                | Block all subagent spawning             |
-| `Agent(explore)`       | Block the `explore` subagent type only  |
-| `Agent(explore, plan)` | Block multiple specific types           |
+| `Agent`                | 阻止所有子智能体派生             |
+| `Agent(explore)`       | 仅阻止 `explore` 类型的子智能体  |
+| `Agent(explore, plan)` | 阻止多个指定类型           |
 
 ```bash
 # Prevent the agent from spawning any subagents
-grok -p "Fix this bug" --disallowed-tools "Agent"
+chaos -p "Fix this bug" --disallowed-tools "Agent"
 
 # Block only the explore subagent
-grok -p "Refactor this module" --disallowed-tools "Agent(explore)"
+chaos -p "Refactor this module" --disallowed-tools "Agent(explore)"
 ```
 
-`--tools` preserves the selected agent profile's injection policy: stock profiles inject enabled optional tools before applying the allowlist, while curated profiles remain strict. The final toolset retains requested tools plus always-on MCP meta-tools. When both flags are present, `--disallowed-tools` wins.
+`--tools` 会保留所选智能体配置的注入策略：出厂配置（stock profiles）会在应用白名单之前先注入已启用的可选工具，而精选配置（curated profiles）则保持严格。最终工具集会保留所请求的工具，加上始终开启的 MCP 元工具。两个标志同时出现时，`--disallowed-tools` 优先。
 
-### Permission Rules (`--allow` / `--deny`)
+### 权限规则（`--allow` / `--deny`）
 
-Permission rules control whether specific tool invocations are auto-approved, denied, or require user confirmation. Unlike `--disallowed-tools` (which removes tools entirely), permission rules leave tools available but gate their execution.
+权限规则控制特定工具调用是被自动批准、拒绝，还是需要用户确认。与 `--disallowed-tools`（彻底移除工具）不同，权限规则保留工具可用，但对其执行加以门控。
 
-Rules use `ToolPrefix(glob_pattern)` syntax:
+规则使用 `ToolPrefix(glob_pattern)` 语法：
 
-| 前缀        | What it controls                   |
+| 前缀        | 控制内容                   |
 | ------------- | ---------------------------------- |
-| `Bash(...)`   | Shell command execution            |
-| `Edit(...)`   | File editing (path glob)           |
-| `Write(...)`  | File writing (path glob)           |
-| `Read(...)`   | File reading (path glob)           |
-| `Grep(...)`   | Search operations (path glob)      |
-| `WebFetch(...)` | URL fetching (glob or `domain:host`) |
-| `MCPTool(...)` | MCP tool invocations              |
+| `Bash(...)`   | Shell 命令执行            |
+| `Edit(...)`   | 文件编辑（路径通配符）           |
+| `Write(...)`  | 文件写入（路径通配符）           |
+| `Read(...)`   | 文件读取（路径通配符）           |
+| `Grep(...)`   | 搜索操作（路径通配符）      |
+| `WebFetch(...)` | URL 抓取（通配符或 `domain:host`） |
+| `MCPTool(...)` | MCP 工具调用              |
 
-For path rules (`Read`, `Edit`, `Write`, `Grep`), `*` is a single-level wildcard and `**` is recursive. For `Bash` rules, `*` matches any characters including spaces. A bare prefix without parentheses matches all invocations of that type, and `Bash(cmd:*)` is equivalent to prefix matching on `cmd`. See [22-permissions-and-safety.md](22-permissions-and-safety.md#rule-matching-reference) for the full matching semantics.
+对于路径规则（`Read`、`Edit`、`Write`、`Grep`），`*` 是单层通配符，`**` 是递归通配符。对于 `Bash` 规则，`*` 匹配包括空格在内的任意字符。不带括号的裸前缀匹配该类型的所有调用，`Bash(cmd:*)` 等价于对 `cmd` 的前缀匹配。完整的匹配语义见 [22-permissions-and-safety.md](22-permissions-and-safety.md#rule-matching-reference)。
 
 ```bash
 # Deny shell commands matching "rm*"
-grok -p "Clean up this project" --deny "Bash(rm*)"
+chaos -p "Clean up this project" --deny "Bash(rm*)"
 
 # Allow npm commands, deny sudo
-grok -p "Set up the project" --allow "Bash(npm*)" --deny "Bash(sudo*)"
+chaos -p "Set up the project" --allow "Bash(npm*)" --deny "Bash(sudo*)"
 
 # Allow all bash commands (auto-approve without prompting)
-grok -p "Build the project" --allow "Bash"
+chaos -p "Build the project" --allow "Bash"
 ```
 
-`--allow` and `--deny` can be repeated. Deny rules take precedence over allow rules.
+`--allow` 和 `--deny` 可以重复使用。拒绝规则优先于允许规则。
 
 ---
 
-## Output Formats
+## 输出格式
 
-Headless mode supports four output formats, selected with `--output-format`.
+无头模式支持四种输出格式，通过 `--output-format` 选择。
 
-### plain (default)
+### plain（默认）
 
-Human-readable text, suitable for direct display or piping:
+人类可读的文本，适合直接显示或通过管道传递：
 
 ```
 Here's a summary of the codebase...
@@ -128,11 +130,10 @@ Here's a summary of the codebase...
 
 ### json
 
-A single JSON object emitted after the response completes: response text,
-stop reason, session ID, request ID (plus `thought` when reasoning is present).
-When the prompt reached the model, the same object also carries spend fields
-(`usage`, `num_turns`, `modelUsage`, cost). `stopReason` is the snake_case
-ACP/Messages token (`end_turn`, `max_tokens`, …).
+响应完成后发出的单个 JSON 对象：响应文本、停止原因、会话 ID、请求 ID（存在推理时还有 `thought`）。
+当提示已到达模型时，同一对象还会携带花费字段
+（`usage`、`num_turns`、`modelUsage`、成本）。`stopReason` 是 snake_case 的
+ACP/Messages 令牌（`end_turn`、`max_tokens`、…）。
 
 ```json
 {
@@ -163,47 +164,44 @@ ACP/Messages token (`end_turn`, `max_tokens`, …).
 }
 ```
 
-Usage notes:
+用法说明：
 
-- `usage` sums tokens for the prompt, including subagents that finished
-  before turn end (also under their own `modelUsage` keys). Compaction and
-  other side-model calls are excluded.
-- **Token field policy (headless result / `end` / error spend):**
-  - `usage.input_tokens` and `modelUsage.*.inputTokens` are **uncached only**.
-  - `cache_read_input_tokens` / `cacheReadInputTokens` are cache hits.
-  - `total_tokens` is full input + output (includes both cache buckets):
-    `total_tokens = input_tokens + cache_read_input_tokens + cache_creation_input_tokens + output_tokens`.
-  - ACP `_meta.usage.inputTokens` (PromptUsage) is still the **full** prompt
-    sum; only the headless projector subtracts cache. Prefer headless fields
-    for spend automation.
-- `num_turns` counts main-agent model rounds recorded on the prompt ledger
-  (tool-loop rounds that reported usage). Subagent sampler calls do not
-  increase it. Per-model call counts (including subagents) stay on
-  `modelUsage.*.modelCalls`. This is the same counter family as `--max-turns`,
-  not a guarantee of exact equality when rounds lack usage or hit gates.
-- `total_cost_usd` appears only when the server reported a **complete** cost.
-  Absence means unreported or incomplete, never free. Cost is stamped for
-  API-key traffic today; pool/OAuth paths often omit it until the server
-  stamps cost. When some calls lacked cost, `cost_is_partial` is true and
-  **all** cost floats are omitted (`total_cost_usd` and every
-  `modelUsage.*.costUSD`) so consumers cannot sum model rows into a fake
-  complete bill.
-- `total_cost_usd_ticks` is the same value in exact integer ticks
-  (1 USD = 10^10 ticks) and appears under the same conditions. Use it for
-  billing reconciliation: summing per-invocation ticks matches the server's
-  usage export exactly, which float dollars cannot guarantee.
-- When subagent usage could not be applied, nested subagent usage was incomplete,
-  or the success-path drain timed out (up to 120s on the turn task),
-  `usage_is_incomplete` is true and cost floats are omitted the same way
-  (token totals may under-count subagents). Cancel snapshots without that long
-  drain and marks incomplete while subagents are still live. Incomplete with
-  no recorded tokens emits only `usage_is_incomplete` (no zero `usage` object).
-- A prompt that never reached the model omits the spend fields.
+- `usage` 汇总该提示的 token，包括在轮次结束前已完成的子智能体
+  （它们也各自记在 `modelUsage` 键下）。压缩和其他侧模型调用不计入。
+- **Token 字段策略（无头结果 / `end` / 错误花费）：**
+  - `usage.input_tokens` 与 `modelUsage.*.inputTokens` **仅计未命中缓存的部分**。
+  - `cache_read_input_tokens` / `cacheReadInputTokens` 是缓存命中。
+  - `total_tokens` 是完整的输入 + 输出（包含两个缓存桶）：
+    `total_tokens = input_tokens + cache_read_input_tokens + cache_creation_input_tokens + output_tokens`。
+  - ACP 的 `_meta.usage.inputTokens`（PromptUsage）仍是**完整的**提示
+    总和；只有无头投影器会扣除缓存。做花费自动化时优先使用无头字段。
+- `num_turns` 统计记录在提示账本上的主智能体模型轮次
+  （上报了用量的工具循环轮次）。子智能体的采样调用不会增加它。
+  按模型的调用次数（包括子智能体）记在 `modelUsage.*.modelCalls` 上。
+  它与 `--max-turns` 属于同一族计数器，但当某些轮次缺少用量或触发门限时，并不保证严格相等。
+- `total_cost_usd` 只在服务端上报了**完整**花费时出现。
+  缺失意味着未上报或不完整，绝不等于免费。目前只有 API key 流量会打上
+  花费；pool/OAuth 路径常常不带，直到服务端补上。当部分调用缺少花费时，
+  `cost_is_partial` 为 true，且**所有**花费浮点数都被省略
+  （`total_cost_usd` 与每一个 `modelUsage.*.costUSD`），
+  这样消费者就无法把各模型行加总成一张
+  看起来完整的假账单。
+- `total_cost_usd_ticks` 是同一个值的精确整数刻度表示
+  （1 USD = 10^10 ticks），出现条件也相同。它最适合用来
+  对账：把每次调用的刻度相加，能与服务端的用量导出精确吻合，
+  这一点浮点美元无法保证。
+- 当子智能体用量无法应用、嵌套的子智能体用量不完整，
+  或成功路径的收尾等待超时（在回合任务上最长 120 秒）时，
+  `usage_is_incomplete` 为 true，花费浮点数以同样方式省略
+  （token 总数可能少算子智能体）。取消产生的快照不走那段长等待，
+  并且在子智能体仍活跃时就标记为不完整。不完整且没有记录到 token 时，
+  只发出 `usage_is_incomplete`（不带全零的 `usage` 对象）。
+- 从未到达模型的提示会省略这些花费字段。
 
-The `sessionId` field is useful for resuming the conversation later.
+`sessionId` 字段可用于之后恢复该会话。
 
-On failure, Grok emits an error object (process exit non-zero). Prompt-level
-failures may also include frozen spend fields when usage was recorded:
+失败时，Chaos 会发出一个错误对象（进程以非零码退出）。提示层面的失败
+在已记录用量时，也可能带上冻结的花费字段：
 
 ```json
 {"type":"error","message":"Couldn't start session: ..."}
@@ -211,7 +209,7 @@ failures may also include frozen spend fields when usage was recorded:
 
 ### streaming-json
 
-Newline-delimited JSON, one `type`-tagged object per line, derived from the agent's ACP session updates. Leaf field names (`toolCallId`, `kind`, `rawInput`, `rawOutput`) follow ACP; `toolName` and the `usage` line are xAI additions. Consume it by switching on `type`.
+换行分隔的 JSON，每行一个带 `type` 标签的对象，由智能体的 ACP 会话更新派生而来。叶子字段名（`toolCallId`、`kind`、`rawInput`、`rawOutput`）沿用 ACP；`toolName` 与 `usage` 行是 xAI 的增补。消费时按 `type` 分支即可。
 
 ```json
 {"type":"thought","data":"Analyzing the directory structure..."}
@@ -222,37 +220,37 @@ Newline-delimited JSON, one `type`-tagged object per line, derived from the agen
 {"type":"end","stopReason":"end_turn","sessionId":"abc123","requestId":"xyz789","usage":{...},"num_turns":7,"modelUsage":{...}}
 ```
 
-Event types:
+事件类型：
 
 | 类型               | 说明                                                                                  |
 | ------------------ | ------------------------------------------------------------------------------------------- |
-| `text`             | A chunk of the agent's response text                                                          |
-| `thought`          | Internal reasoning (thinking tokens)                                                          |
-| `tool_call`        | A tool call the agent started (`toolCallId`, `toolName`, `kind`, `status`, `rawInput`, `content`, `locations`) |
-| `tool_call_update` | Progress or result for a tool call (`status`, `rawOutput`, `content`, `locations`)            |
-| `usage`            | Per-response boundary (`messageId`, `stopReason`, `usage`, `signature`), one per model response |
-| `plan`             | The agent's current plan (`entries`)                                                          |
-| `available_commands` | Tool and slash command lists (`tools`, `commands`)                                          |
-| `end`              | Final event with metadata and spend fields when available                                    |
-| `error`            | An error occurred (carries `message`, and spend fields if any)                               |
+| `text`             | 智能体响应文本的一个片段                                                          |
+| `thought`          | 内部推理（思考 token）                                                          |
+| `tool_call`        | 智能体发起的一次工具调用（`toolCallId`、`toolName`、`kind`、`status`、`rawInput`、`content`、`locations`） |
+| `tool_call_update` | 某次工具调用的进度或结果（`status`、`rawOutput`、`content`、`locations`）            |
+| `usage`            | 单次模型响应的边界（`messageId`、`stopReason`、`usage`、`signature`），每个模型响应一条 |
+| `plan`             | 智能体当前的计划（`entries`）                                                          |
+| `available_commands` | 工具与斜杠命令清单（`tools`、`commands`）                                          |
+| `end`              | 最终事件，带元数据和（有则带）花费字段                                    |
+| `error`            | 出错了（带 `message`，有花费字段则一并带上）                               |
 
-`end` is always the last event. Spend fields on `end` match the json object
-shape (snake_case uncached `input_tokens`, safe cost floats). `end.stopReason`
-is the turn stop reason in snake_case (`end_turn`, `max_tokens`,
-`max_turn_requests`, `refusal`, `cancelled`); the verbatim per-response provider
-reason (e.g. `tool_use`, `pause_turn`) is on the `usage` line's `stopReason`.
-Per-response `message_id`/`stopReason`/`signature` are populated on the Messages
-API backend; other backends report what they carry.
+`end` 永远是最后一个事件。`end` 上的花费字段与 json 对象形状一致
+（snake_case 的未命中缓存 `input_tokens`、安全的花费浮点数）。
+`end.stopReason` 是回合停止原因，snake_case（`end_turn`、`max_tokens`、
+`max_turn_requests`、`refusal`、`cancelled`）；每个响应的原始服务商原因
+（如 `tool_use`、`pause_turn`）在 `usage` 行的 `stopReason` 上。
+每个响应的 `message_id`/`stopReason`/`signature` 在 Messages API 后端
+会被填充；其他后端只上报它们确实携带的内容。
 
-Grok may also emit `max_turns_reached` and `auto_compact_*` events; treat the list as non-exhaustive and switch on `type`.
+Chaos 还可能发出 `max_turns_reached` 与 `auto_compact_*` 事件；请把上面的清单视为非穷尽，按 `type` 分支处理。
 
 ### streaming-messages-json
 
-Newline-delimited JSON in the Messages API `stream-json` wire format. The data-bearing surface matches the Messages shape exactly. This includes the `assistant`/`user` message bodies, `usage`, `tool_use`/`tool_result`, inline web search, `stop_reason`, and the `--include-partial-messages` event framing. A consumer that reconstructs messages, reads spend, or detects errors works without changes.
+换行分隔的 JSON，采用 Messages API 的 `stream-json` 线上格式。承载数据的部分与 Messages 形状完全一致，包括 `assistant`/`user` 消息体、`usage`、`tool_use`/`tool_result`、内联网页搜索、`stop_reason`，以及 `--include-partial-messages` 的事件框架。用于重建消息、读取花费或检测错误的消费者无需改动即可工作。
 
-The `system`/`init` and terminal `result` lines carry metadata. Grok emits the fields it has real data for and omits pure-placeholder fields it cannot fill, rather than zero-filling them. As a result, those two lines may not pass strict `init`/`result` schema validation. The individual fields are listed below. Read the fidelity notes before treating any one field as authoritative. For a clean xAI-native stream with no placeholder shape, use `streaming-json`.
+`system`/`init` 行与结尾的 `result` 行承载元数据。Chaos 只发出它确实有数据的字段，填不上的纯占位字段一律省略，而不是补零。因此这两行可能通不过严格的 `init`/`result` schema 校验。各字段列在下面。把任何单个字段当作权威之前，请先读保真度说明。若想要一条干净、没有占位形状的 xAI 原生流，请用 `streaming-json`。
 
-The stream opens with a `system`/`init` line, then `assistant` messages whose `message.content[]` holds `text`, `thinking`, and `tool_use` blocks, `user` messages carrying `tool_result` blocks, and a terminal `result`:
+这条流以 `system`/`init` 行开头，随后是 `message.content[]` 里带 `text`、`thinking`、`tool_use` 块的 `assistant` 消息、带 `tool_result` 块的 `user` 消息，最后是一个结尾 `result`：
 
 ```json
 {"type":"system","subtype":"init","session_id":"abc123","apiKeySource":"user","model":"grok-4.6","cwd":"/repo","permissionMode":"default","tools":["read_file","bash"],"slash_commands":["review"],"mcp_servers":[{"name":"linear","status":"connected"}],"skills":[],"uuid":"..."}
@@ -261,184 +259,184 @@ The stream opens with a `system`/`init` line, then `assistant` messages whose `m
 {"type":"result","subtype":"success","is_error":false,"duration_ms":0,"duration_api_ms":0,"num_turns":7,"result":"Here's a summary...","stop_reason":"end_turn","total_cost_usd":0.0127,"usage":{"input_tokens":812,"output_tokens":210,"cache_read_input_tokens":0,"cache_creation_input_tokens":0,"server_tool_use":{"web_search_requests":0}},"modelUsage":{},"session_id":"abc123","uuid":"..."}
 ```
 
-Message types:
+消息类型：
 
 | 类型        | 说明                                                              |
 | ----------- | ---------------------------------------------------------------------- |
-| `system`    | Session preamble (`subtype: "init"`) with model, cwd, permission mode, tools, slash commands, and MCP servers. `subtype: "compact_boundary"` marks an auto compaction |
-| `assistant` | A model message; `message.content[]` holds `text`/`thinking`/`tool_use`, plus `server_tool_use`/`web_search_tool_result` for inline backend web search |
-| `user`      | Tool results, as `tool_result` blocks inside `message.content[]`         |
-| `result`    | Terminal message with final text, stop reason, and spend fields         |
+| `system`    | 会话前导（`subtype: "init"`），含模型、cwd、权限模式、工具、斜杠命令与 MCP 服务器。`subtype: "compact_boundary"` 标记一次自动压缩 |
+| `assistant` | 一条模型消息；`message.content[]` 里是 `text`/`thinking`/`tool_use`，内联后端网页搜索时还会有 `server_tool_use`/`web_search_tool_result` |
+| `user`      | 工具结果，以 `tool_result` 块的形式放在 `message.content[]` 里         |
+| `result`    | 结尾消息，含最终文本、停止原因与花费字段         |
 
-The `assistant` and `user` messages carry `session_id`, `uuid`, and `parent_tool_use_id` (`null` for the main conversation). The `system`/`init` and terminal `result` lines carry `session_id` and `uuid` but no `parent_tool_use_id`.
+`assistant` 与 `user` 消息带 `session_id`、`uuid` 和 `parent_tool_use_id`（主对话为 `null`）。`system`/`init` 行与结尾的 `result` 行带 `session_id` 和 `uuid`，但没有 `parent_tool_use_id`。
 
-The `uuid` on each line is freshly generated per emitted line. It is not a provider, message, or event id, and not a correlation key. It does not match the provider `message.id` (that value rides `assistant.message.id`). It is unique per line, even for lines that describe the same message, and it carries no cross-line or cross-run identity. Do not use it to correlate or deduplicate.
+每一行的 `uuid` 都是该行发出时新生成的。它不是服务商 id、消息 id 或事件 id，也不是关联键。它与服务商的 `message.id` 不同（后者挂在 `assistant.message.id` 上）。它逐行唯一，即使多行描述同一条消息也各不相同，并且不携带跨行或跨运行的身份。不要用它做关联或去重。
 
-Text and reasoning chunks are grouped into one assistant message per model response. A response's parallel `tool_result` blocks are grouped into a single `user` message. `result.result` is the final assistant message text. A model response that produces no content blocks emits no `assistant` line in the default mode. Only `--include-partial-messages` surfaces such a response, as its empty `message_start` … `message_stop` envelope.
+文本与推理片段按每个模型响应归组成一条 assistant 消息。一个响应里并行的 `tool_result` 块归组成一条 `user` 消息。`result.result` 是最后一条 assistant 消息的文本。不产生任何内容块的模型响应在默认模式下不发 `assistant` 行；只有 `--include-partial-messages` 会把它露出来，形式是空的 `message_start` … `message_stop` 信封。
 
-On `init`, `skills` is live. It lists the session's user-invocable skill names, a subset of `slash_commands` sourced from the session's advertised commands, or `[]` when the session surfaces no skills. The `init` line is emitted once, deferred to the first output line so it captures the session's advertised `tools`, `slash_commands`, and `skills`. The Messages schema defines no second `init`, so a command list that changes after streaming begins is not re-advertised.
+`init` 上的 `skills` 是实时的。它列出该会话可供用户调用的技能名，是 `slash_commands` 的子集，取自会话公布的命令；会话没有技能时是 `[]`。`init` 行只发一次，且推迟到第一条输出行，以便把会话公布的 `tools`、`slash_commands` 和 `skills` 一并收进来。Messages schema 没有定义第二个 `init`，所以流开始后才变化的命令列表不会再公布。
 
-The other `init` fields carry real data:
+其余 `init` 字段都带真实数据：
 
-- `apiKeySource` is `user` for API-key auth and `oauth` otherwise. Grok does not distinguish the schema's `project`, `org`, and `temporary` sources.
-- `permissionMode` is the effective headless mode mapped to the Messages enum: the `--permission-mode` value, or `bypassPermissions` under `--yolo`, else `default`. Grok-only modes such as `auto` collapse to `default`.
-- `mcp_servers[].status` is one `x.ai/mcp/list` snapshot, emitted only for `streaming-messages-json`: `connected`, `failed`, `needs-auth`, `pending`, or `disabled`. Servers still handshaking are `pending`. `disabled` is only stamped after the session reports `sessionMcpResolved`; an unresolved list row is `pending` even when `enabled` is still false. The snapshot does not wait for the Blocking startup grace; that grace still applies to the prompt's toolset. Other output formats omit the array and do not call `x.ai/mcp/list`.
+- `apiKeySource` 在用 API key 认证时是 `user`，否则是 `oauth`。schema 里的 `project`、`org`、`temporary` 三种来源 Chaos 不作区分。
+- `permissionMode` 是映射到 Messages 枚举后的实际无头模式：`--permission-mode` 的值，`--yolo` 下为 `bypassPermissions`，其余情况为 `default`。`auto` 这类 Chaos 独有的模式会塌缩成 `default`。
+- `mcp_servers[].status` 是一次 `x.ai/mcp/list` 快照，只为 `streaming-messages-json` 发出：`connected`、`failed`、`needs-auth`、`pending` 或 `disabled`。仍在握手的服务器是 `pending`。`disabled` 只有在会话上报 `sessionMcpResolved` 之后才会打上；即使 `enabled` 仍为 false，未解析的清单行也是 `pending`。该快照不等 Blocking 启动宽限期，那段宽限期仍作用于提示的工具集。其他输出格式会省略该数组，也不会调用 `x.ai/mcp/list`。
 
-Grok omits the schema's pure-placeholder `init` fields it has no data for, rather than emitting dummy values: `claude_code_version`, `output_style`, and `plugins`.
+schema 里纯占位、Chaos 又没有数据的 `init` 字段一律省略，不发占位值：`claude_code_version`、`output_style` 和 `plugins`。
 
-`result` includes `duration_ms`, `duration_api_ms`, `num_turns`, `stop_reason`, `total_cost_usd`, `usage` (Messages API `message.usage` shape), and `modelUsage`. It also includes `errors[]` on the error subtypes. Grok omits the schema's always-empty `permission_denials`, because it does not collect permission denials. `structured_output` (with `--json-schema`) is snake_case, matching the schema.
+`result` 包含 `duration_ms`、`duration_api_ms`、`num_turns`、`stop_reason`、`total_cost_usd`、`usage`（Messages API 的 `message.usage` 形状）以及 `modelUsage`。错误子类型上还会包含 `errors[]`。schema 里恒为空的 `permission_denials` 被省略，因为 Chaos 不收集权限拒绝记录。`structured_output`（配合 `--json-schema`）是 snake_case，与 schema 一致。
 
-`model` appears on `init` and every `assistant` frame. It is the real model id when known, and the literal `"unknown"` only when no model is known at emit time.
+`model` 出现在 `init` 和每个 `assistant` 帧上。已知时是真实模型 id；只有在发出时还不知道模型的情况下才会是字面量 `"unknown"`。
 
-The assistant frame's `stop_sequence` is wired end-to-end. It carries the provider's matched stop sequence when the model stopped on a configured one (`stop_reason: "stop_sequence"`), and is `null` on every other stop reason and backend. In `--include-partial-messages` framing, the matched sequence rides both the flushed `assistant` frame and the partial `message_delta.stop_sequence`, so a partial rebuild matches the frame. Only the partial `message_start.stop_sequence` stays `null`, because the matched sequence is not known at message open.
+assistant 帧的 `stop_sequence` 是端到端连通的。当模型停在某个已配置的停止序列上（`stop_reason: "stop_sequence"`）时，它携带服务商匹配到的那个序列；其他停止原因和其他后端上都是 `null`。在 `--include-partial-messages` 框架下，匹配到的序列同时出现在刷出的 `assistant` 帧和局部的 `message_delta.stop_sequence` 上，因此用局部流重建的结果与帧一致。只有局部的 `message_start.stop_sequence` 保持 `null`，因为消息打开时还不知道匹配到了哪个序列。
 
-The emitted error subtypes are `error_max_turns`, `error_during_execution`, and `error_max_structured_output_retries`. The schema's `error_max_budget_usd` subtype is never emitted, because grok has no budget feature.
+会发出的错误子类型是 `error_max_turns`、`error_during_execution` 和 `error_max_structured_output_retries`。schema 里的 `error_max_budget_usd` 子类型永远不会发出，因为 Chaos 没有预算功能。
 
-`result.usage` reports the Messages `message.usage` shape with the three token buckets disjoint: `input_tokens` (uncached), `cache_read_input_tokens`, and `cache_creation_input_tokens`. Grok derives these from the turn's aggregate ledger, reshaped into those buckets. Subagent cache creation is included in `cache_creation_input_tokens`. The aggregate ledger tracks it as its own bucket, so it is no longer folded into `input_tokens`.
+`result.usage` 上报 Messages 的 `message.usage` 形状，三个 token 桶互不相交：`input_tokens`（未命中缓存）、`cache_read_input_tokens` 和 `cache_creation_input_tokens`。Chaos 从回合的汇总账本推导这些值，再重塑进对应的桶。子智能体的缓存创建计入 `cache_creation_input_tokens`；汇总账本把它当作独立的一桶，因此不再折进 `input_tokens`。
 
-`result.usage` always emits numeric buckets, even when data is missing. This happens when the turn's usage ledger is incomplete (the same condition that surfaces `usage_is_incomplete` in the `json` format), or when no aggregate ledger reached the reducer at all. Any bucket grok cannot account for falls back to `0`, because the Messages API schema has no marker for incomplete or absent usage. The reducer logs a warning to stderr in both cases. Read an all-zero `usage` here as "unknown", not "free".
+`result.usage` 总是发出数值桶，即使数据缺失。数据缺失发生在两种情形：该回合的用量账本不完整（与 `json` 格式里出现 `usage_is_incomplete` 的条件相同），或者根本没有汇总账本到达归约器。凡是 Chaos 算不出来的桶都退回 `0`，因为 Messages API 的 schema 没有标记「不完整」或「缺失」用量的方式。两种情形下归约器都会向 stderr 记一条警告。这里全零的 `usage` 要读作「未知」，而不是「免费」。
 
-The nested `server_tool_use` counter is populated. `web_search_requests` is the number of *successful* backend web searches emitted this run. Failed searches and non-search `WebSearch` actions such as open_page are excluded, matching the Messages API, which does not bill errored searches. A failed backend search still emits a `web_search_tool_result` in the error shape (`content.type: "web_search_tool_result_error"`), but is not counted. Its `error_code` is a fixed `"unavailable"` placeholder, not a code forwarded from the backend. There is no `web_fetch_requests` key, because grok has no server-side `web_fetch`, so the placeholder is omitted.
+嵌套的 `server_tool_use` 计数器会被填充。`web_search_requests` 是本次运行发出的**成功**后端网页搜索次数。失败的搜索以及 open_page 这类非搜索的 `WebSearch` 动作不计入，与 Messages API 一致——它对报错的搜索不计费。失败的后端搜索仍会以错误形状发出一个 `web_search_tool_result`（`content.type: "web_search_tool_result_error"`），但不计数。它的 `error_code` 是固定的 `"unavailable"` 占位值，不是从后端透传的代码。没有 `web_fetch_requests` 键，因为 Chaos 没有服务端的 `web_fetch`，所以该占位项直接省略。
 
-Backend web search is inline. It folds into the same `assistant` frame as the surrounding text. The frame carries a `server_tool_use` block (`name: "web_search"`, `input.query`) immediately followed by a `web_search_tool_result` block. That result block's `tool_use_id` matches the `server_tool_use.id`, and its `content` is a `web_search_result` hit array of `{type, url, title}`. This matches the Messages API's inline server-tool shape rather than splitting the response across frames.
+后端网页搜索是内联的，与前后文本折进同一个 `assistant` 帧。该帧带一个 `server_tool_use` 块（`name: "web_search"`、`input.query`），紧跟一个 `web_search_tool_result` 块。结果块的 `tool_use_id` 与 `server_tool_use.id` 相同，其 `content` 是 `{type, url, title}` 形式的 `web_search_result` 命中数组。这与 Messages API 的内联服务端工具形状一致，而不是把响应拆到多个帧里。
 
-X search and code interpreter are a documented divergence. They stay generic, surfaced as a client `tool_use` block plus a `user` `tool_result`, because the Messages API defines no inline block type for them. Every other client tool likewise keeps the `tool_use`/`tool_result` split.
+X 搜索与代码解释器是一处有记录的差异。它们保持通用形式，以一个客户端 `tool_use` 块加一条 `user` `tool_result` 呈现，因为 Messages API 没有为它们定义内联块类型。其余客户端工具同样保持 `tool_use`/`tool_result` 的拆分。
 
-`--include-partial-messages` emits the raw event framing so a consumer can rebuild each message with the Messages streaming accumulator. The framing is `message_start`, `content_block_start`/`content_block_delta`/`content_block_stop`, `message_delta`, and `message_stop`. It carries the structural events an accumulator needs. The deltas are coarser than the Messages API's token-level streaming: tool input arrives as a single `input_json_delta`, and `citations_delta` is never produced (see below). The result is a faithful reconstruction of each message rather than a token-by-token replay.
+`--include-partial-messages` 发出原始事件框架，消费者可以用 Messages 的流式累加器重建每条消息。框架是 `message_start`、`content_block_start`/`content_block_delta`/`content_block_stop`、`message_delta` 和 `message_stop`，携带累加器所需的结构性事件。这些增量比 Messages API 的 token 级流式更粗：工具输入以一个 `input_json_delta` 到达，`citations_delta` 从不产生（见下）。结果是每条消息的忠实重建，而不是逐 token 回放。
 
-On the Messages API backend, the framing is faithful. `message_start` carries the real provider `message.id` and the input-side `usage`. A thinking block emits its `signature_delta` in order, before the block's `content_block_stop`. The `message_start.usage` input side reports all three prompt-side buckets known at message open: `input_tokens` (the uncached portion), `cache_read_input_tokens`, and `cache_creation_input_tokens`. A cache hit is therefore visible on `message_start`, rather than only appearing later on `message_delta`/`result`. `output_tokens` seeds `0` there and is finalized on `message_delta`. A response that starts but produces no content still emits the `message_start` … `message_stop` envelope with no content blocks.
+在 Messages API 后端上，框架是忠实的。`message_start` 携带真实的 `message.id` 和输入侧的 `usage`。思考块按顺序在块的 `content_block_stop` 之前发出自己的 `signature_delta`。`message_start.usage` 的输入侧上报消息打开时已知的全部三个提示侧桶：`input_tokens`（未命中缓存的部分）、`cache_read_input_tokens` 和 `cache_creation_input_tokens`。因此缓存命中在 `message_start` 上就可见，而不是只在后面的 `message_delta`/`result` 上出现。`output_tokens` 在那里先置 `0`，在 `message_delta` 上定稿。已经开始但不产生任何内容的响应，仍会发出不带内容块的 `message_start` … `message_stop` 信封。
 
-Some backends surface per-response metadata only at end of turn. Those backends fall back to a synthesized `message_start.id` and zero-seeded input `usage`. They defer the reasoning `signature` to the final `assistant` line, which is authoritative in that case.
+有些后端只在回合结束时才给出每个响应的元数据。这些后端会退回合成的 `message_start.id` 和置零的输入 `usage`，并把推理的 `signature` 推迟到最后的 `assistant` 行；在那种情况下以那一行为准。
 
-Tool-call input is emitted as a single `input_json_delta` carrying the complete arguments JSON, followed by `content_block_stop`. It is not a sequence of token-level fragments. This is a deliberate divergence from the Messages API's incremental `partial_json` streaming. Grok's ACP tool-call path delivers each tool call as one validated JSON object once the arguments are fully parsed, so a single delta is the accurate representation. A consumer that concatenates `partial_json` reassembles the identical object either way. The backend web-search `server_tool_use` block's `input.query` is emitted the same way, as one `input_json_delta`.
+工具调用的输入以一个 `input_json_delta` 发出，携带完整的参数 JSON，随后是 `content_block_stop`，而不是一串 token 级碎片。这是与 Messages API 增量式 `partial_json` 流的有意差异。Chaos 的 ACP 工具调用路径在参数完全解析后，把每次工具调用作为一个校验过的 JSON 对象交付，因此单个增量才是准确的表示。拼接 `partial_json` 的消费者两种情况下重组出的对象完全相同。后端网页搜索 `server_tool_use` 块的 `input.query` 也以同样方式发出，即一个 `input_json_delta`。
 
-The Messages API `citations_delta` carries inline citations for cited text spans, such as those from web search. This stream does not produce it. Grok's Messages content deltas are limited to text, thinking, signature, and tool-input JSON, so there is no citation data to surface as a `citations_delta`. Backend web-search source URLs are reported inline on the completed `web_search_tool_result` block instead (see above), not as per-span text citations.
+Messages API 的 `citations_delta` 携带被引用文本片段的内联引用，例如来自网页搜索的那些。这条流不产生它。Chaos 的 Messages 内容增量只限于文本、思考、签名和工具输入 JSON，因此没有引用数据可以以 `citations_delta` 呈现。后端网页搜索的来源 URL 改为在完成的 `web_search_tool_result` 块上内联上报（见上），而不是作为逐片段的文本引用。
 
-Fidelity caveats apply to a few fields.
+少数几个字段有保真度上的注意事项。
 
-`duration_ms` is the prompt-execution wall clock. `duration_api_ms` is the summed *reported* per-call model time. A model call that does not report its own duration contributes `0`, so `duration_api_ms` can under-count the true API time.
+`duration_ms` 是提示执行的墙上时钟时间。`duration_api_ms` 是各次模型调用**上报**耗时的总和。不上报自身耗时的模型调用贡献 `0`，所以 `duration_api_ms` 可能少算真实的 API 时间。
 
-`num_turns` and `total_cost_usd` are authoritative when known. When they are not, `num_turns` falls back to the count of completed model responses this turn, and `total_cost_usd` falls back to `0`. A completed but contentless response emits no `assistant` line, yet still counts as a turn. Spend is never overreported.
+`num_turns` 和 `total_cost_usd` 在已知时是权威值。未知时，`num_turns` 退回本回合已完成的模型响应数，`total_cost_usd` 退回 `0`。已完成但不产生内容的响应不发 `assistant` 行，但仍算一个回合。花费从不多报。
 
-`modelUsage` carries the per-model token and cost fields grok tracks, plus `webSearchRequests` attributed to the active model. The reducer tracks a single global web-search count rather than per-model, so the whole count lands on the current or last model and other rows stay `0`. A per-model `modelUsage.*.costUSD` is `0` when that model's cost is unknown or withheld. This is the same fail-closed-to-zero behavior as the top-level `total_cost_usd`. The `json` format omits cost floats entirely when partial, but this stream keeps the field present and `0`. `contextWindow` is the current model's real total context window (the same value grok uses for auto-compaction), and it appears only on the current model's row. Other rows omit it, and so does the current row when the window is unknown. `maxOutputTokens` has no grok catalog, so that key is omitted entirely. `modelUsage` is `{}` when no per-model breakdown is available.
+`modelUsage` 携带 Chaos 所跟踪的按模型 token 与花费字段，以及归到当前活跃模型上的 `webSearchRequests`。归约器只跟踪一个全局网页搜索计数，而不是按模型分别计数，所以整个计数都落在当前或最后一个模型上，其他行保持 `0`。当某个模型的花费未知或被扣留时，该模型的 `modelUsage.*.costUSD` 为 `0`。这与顶层 `total_cost_usd` 一样是「失败即归零」的行为。`json` 格式在不完整时会整体省略花费浮点数，而这条流会保留该字段并置 `0`。`contextWindow` 是当前模型的真实总上下文窗口（Chaos 用于自动压缩的同一个值），只出现在当前模型那一行上。其他行省略它；窗口未知时当前行也省略。`maxOutputTokens` 没有对应的 Chaos 目录项，所以该键整体省略。没有按模型拆分数据时，`modelUsage` 为 `{}`。
 
-Like `streaming-json`, this stream is read only. Tool approvals and other bidirectional flows use the ACP interface (`grok agent`).
+与 `streaming-json` 一样，这条流是只读的。工具批准和其他双向流程走 ACP 接口（`chaos agent`）。
 
 ---
 
-## Session Management in Headless Mode
+## 无头模式下的会话管理
 
-By default, each `grok -p` invocation creates a fresh session. To maintain context across calls, use session flags.
+默认情况下，每次 `chaos -p` 调用都会新建一个会话。要在多次调用间保持上下文，请使用会话标志。
 
-### Named Sessions (`-s`)
+### 具名会话（`-s`）
 
-To carry context across headless calls, use `-r/--resume` or `-c/--continue`. Use `-s/--session-id` only for a **new** session with a **UUID** (errors if not a UUID or already in use under the target directory). Older hidden `-s` upsert/resume behavior is gone. Use `-r`/`-c` to continue. With `-r`/`-c`, `-s` requires `--fork-session`:
+要在多次无头调用间延续上下文，请用 `-r/--resume` 或 `-c/--continue`。`-s/--session-id` 只用于以 **UUID** 创建**新**会话（不是 UUID，或在目标会话目录下已被占用时报错）。旧版隐藏的 `-s` upsert/resume 行为已经移除。要继续会话请用 `-r`/`-c`。与 `-r`/`-c` 连用时，`-s` 需要配 `--fork-session`：
 
 ```bash
 # Start a headless session and capture its ID
-grok -p "Review the changes in this PR" --output-format json | jq -r '.sessionId'
+chaos -p "Review the changes in this PR" --output-format json | jq -r '.sessionId'
 
 # Continue in the same session
-grok -p "Now check for security issues" --resume "<id>"
+chaos -p "Now check for security issues" --resume "<id>"
 
 # Optional: create with a client-chosen UUID (must not already exist)
-grok -p "hello" --session-id "$(uuidgen | tr '[:upper:]' '[:lower:]')" --output-format json
+chaos -p "hello" --session-id "$(uuidgen | tr '[:upper:]' '[:lower:]')" --output-format json
 ```
 
-> **Note:** `-s/--session-id` creates a new session only (valid UUID; errors if already in use). Use `-r` to resume.
+> **注意：** `-s/--session-id` 只创建新会话（UUID 需有效；已被占用时报错）。要恢复会话请用 `-r`。
 
-### Resume (`-r`)
+### 恢复会话（`-r`）
 
-The `-r/--resume` flag resumes a specific session by ID, or by title for the current directory when the value is not an ID, ignoring letter case (a sole manually renamed match wins among duplicates; remaining duplicates error with their IDs; UUID-shaped values always take the ID path, so scripts should prefer IDs). It errors if the session does not exist:
+`-r/--resume` 按 ID 恢复指定会话；当值不是 ID 时，按当前目录下的标题恢复，忽略大小写（重名时，唯一一个被手动改过名的匹配胜出，其余重名项报错并列出各自的 ID；形如 UUID 的值总走 ID 路径，因此脚本应优先用 ID）。会话不存在时报错：
 
 ```bash
 # Get the session ID from a previous JSON response
-grok -p "Remember: the secret number is 42" --output-format json
+chaos -p "Remember: the secret number is 42" --output-format json
 # Output includes "sessionId": "abc123"
 
 # Resume that exact session
-grok -p "What's the secret number?" --resume abc123
+chaos -p "What's the secret number?" --resume abc123
 ```
 
-### Continue (`-c`)
+### 继续会话（`-c`）
 
-The `-c/--continue` flag continues the most recent session in the current working directory:
+`-c/--continue` 继续当前工作目录中最近的一个会话：
 
 ```bash
-grok -p "Continue where we left off" -c
+chaos -p "Continue where we left off" -c
 ```
 
-### Extracting Session IDs
+### 取出会话 ID
 
-Use `--output-format json` and parse the `sessionId` field:
+用 `--output-format json`，然后解析 `sessionId` 字段：
 
 ```bash
-grok -p "Hello" --output-format json | jq -r '.sessionId'
+chaos -p "Hello" --output-format json | jq -r '.sessionId'
 ```
 
 ---
 
-## Piping Input and Output
+## 管道输入与输出
 
-Headless mode works naturally with Unix pipes and redirection.
+无头模式与 Unix 管道和重定向天然契合。
 
-### Standard Output
+### 标准输出
 
 ```bash
 # Pipe output to a file
-grok -p "Generate a README" > README.md
+chaos -p "Generate a README" > README.md
 
 # Parse JSON output with jq
-grok -p "List files" --output-format json | jq -r '.text'
+chaos -p "List files" --output-format json | jq -r '.text'
 ```
 
-### Standard Input
+### 标准输入
 
-Headless mode does not read piped stdin into the prompt. Pass external content through command substitution or `--prompt-file`:
+无头模式不会把管道进来的 stdin 读进提示。请通过命令替换或 `--prompt-file` 传入外部内容：
 
 ```bash
 # Include git diff as context via command substitution
-grok -p "Write a concise commit message for these changes:
+chaos -p "Write a concise commit message for these changes:
 
 $(git diff --staged)"
 
 # Or read the prompt from a file
-grok --prompt-file ./prompt.txt
+chaos --prompt-file ./prompt.txt
 ```
 
 ---
 
-## CI/CD Integration Examples
+## CI/CD 集成示例
 
-### Automated Code Review
+### 自动化代码评审
 
 ```bash
-grok -p "Review changes for bugs and security issues." \
+chaos -p "Review changes for bugs and security issues." \
   --output-format json --yolo | jq -r '.text' > review.md
 ```
 
-### Pre-Commit Hook
+### 提交前钩子
 
 ```bash
-grok -p "Review staged changes for obvious bugs. Reply OK if fine, or list issues." \
+chaos -p "Review staged changes for obvious bugs. Reply OK if fine, or list issues." \
   --yolo --output-format json | jq -r '.text' | grep -q "^OK" || exit 1
 ```
 
-### Batch Processing
+### 批量处理
 
 ```bash
 for file in src/*.js; do
-  grok -p "Migrate $file from CommonJS to ES modules." --yolo
+  chaos -p "Migrate $file from CommonJS to ES modules." --yolo
 done
 ```
 
 ---
 
-## Scripting Patterns
+## 脚本范式
 
-### Python Wrapper
+### Python 封装
 
-Grok's headless mode can be wrapped as an OpenAI-compatible chat completion API:
+Chaos 的无头模式可以封装成一个兼容 OpenAI 的 chat completion API：
 
 ```python
 import asyncio
@@ -453,7 +451,7 @@ class GrokChat:
         self.env = {**os.environ}
 
     def _build_cmd(self, prompt, model, stream):
-        return ["grok", "-p", prompt, "-m", model, "--cwd", self.cwd,
+        return ["chaos", "-p", prompt, "-m", model, "--cwd", self.cwd,
                 "--output-format", "streaming-json" if stream else "json",
                 "--yolo"]
 
@@ -502,13 +500,13 @@ async def main():
 asyncio.run(main())
 ```
 
-### Shell Script
+### Shell 脚本
 
 ```bash
 #!/bin/bash
 # Run a code review and exit with failure if issues are found
 
-RESULT=$(grok -p "Review this PR for bugs. Output JSON with 'issues' array." \
+RESULT=$(chaos -p "Review this PR for bugs. Output JSON with 'issues' array." \
   --output-format json --yolo | jq -r '.text')
 
 ISSUE_COUNT=$(echo "$RESULT" | jq '.issues | length' 2>/dev/null || echo "0")
@@ -524,163 +522,161 @@ echo "No issues found"
 
 ---
 
-## Always-approve for automation
+## 自动化场景下的始终批准
 
-`--always-approve` (alias `--yolo`, same as `--permission-mode bypassPermissions`) runs tool calls without interactive permission prompts. Deny rules, hooks, and admin locks still apply (see [Permissions and safety](22-permissions-and-safety.md#permission-modes)).
+`--always-approve`（别名 `--yolo`，等价于 `--permission-mode bypassPermissions`）让工具调用不经交互式权限提示直接执行。拒绝规则、钩子和管理员锁定仍然生效（见[权限与安全](22-permissions-and-safety.md#permission-modes)）。
 
 ```bash
-grok -p "Format all files" --always-approve
-grok -p "Run the tests and fix any failures" --cwd ~/projects/my-app --always-approve
+chaos -p "Format all files" --always-approve
+chaos -p "Run the tests and fix any failures" --cwd ~/projects/my-app --always-approve
 ```
 
-For agent servers and SDKs, see [Agent mode](15-agent-mode.md#automation-and-sdks).
+智能体服务器与 SDK 见[智能体模式](15-agent-mode.md#automation-and-sdks)。
 ---
 
-## Environment Variables for Headless
+## 无头模式的环境变量
 
-Key environment variables that affect headless mode:
+影响无头模式的关键环境变量：
 
 | 变量                        | 说明                                                   |
 | ------------------------------- | ------------------------------------------------------------- |
-| `XAI_API_KEY`        | API key for authentication (required when no browser login)   |
-| `GROK_HOME`                    | Override config directory (default: `~/.grok`)                |
-| `GROK_LOG_FILE`                | Path to a log file (used verbatim as the path; works in headless and TUI, honors `RUST_LOG`) |
-| `RUST_LOG`                     | Log level filter (e.g. `debug`). Headless logs to stderr.     |
+| `XAI_API_KEY`        | 用于认证的 API key（没有浏览器登录时必需）   |
+| `CHAOS_HOME`                    | 覆盖配置目录（默认 `~/.chaos`）                |
+| `GROK_LOG_FILE`                | 日志文件路径（按原样作为路径使用；无头模式与 TUI 均可用，遵循 `RUST_LOG`） |
+| `RUST_LOG`                     | 日志级别过滤（如 `debug`）。无头模式把日志写到 stderr。     |
 
-For CI environments without browser access, set `XAI_API_KEY` with an API key from [console.x.ai](https://console.x.ai):
+在没有浏览器访问的 CI 环境里，用来自 [console.x.ai](https://console.x.ai) 的 API key 设置 `XAI_API_KEY`：
 
 ```bash
 export XAI_API_KEY="xai-..."
-grok -p "Run the test suite" --yolo
+chaos -p "Run the test suite" --yolo
 ```
 
 ---
 
-## Exit Codes
+## 退出码
 
 | 代码 | 含义                              |
 | ---- | ------------------------------------ |
-| `0`  | Success. The prompt completed normally |
-| `1`  | Error. Authentication failure, network error, or runtime error |
-| `130` | Interrupted by SIGINT (Ctrl+C)                                   |
-| `143` | Terminated by SIGTERM                                            |
+| `0`  | 成功。提示正常完成 |
+| `1`  | 出错。认证失败、网络错误或运行时错误 |
+| `130` | 被 SIGINT（Ctrl+C）中断                                   |
+| `143` | 被 SIGTERM 终止                                            |
 
 ---
 
-## Authentication for Headless Environments
+## 无头模式的认证
 
-For headless use, authenticate with one of:
+无头模式用以下方式之一认证：
 
-- **`XAI_API_KEY`**: simplest for CI. See [Environment Variables](#environment-variables-for-headless) above.
-- **`grok login --device-auth`** (or `--device-code`): no browser needed on the target machine.
-  See [Authentication > Device Code Flow](02-authentication.md#device-code-flow).
-- **`grok login`**: browser-based OAuth2 on machines with a GUI.
+- **`XAI_API_KEY`**：CI 里最简单的方式。见上面的[环境变量](#无头模式的环境变量)。
+- 其他认证方式（自定义 Provider 密钥、OpenAI 兼容与 Anthropic 原生接口）见[认证](02-authentication.md#认证方式)。
 
-If you've previously logged in, cached credentials are used automatically.
+此前登录过的话，缓存的凭据会被自动使用。
 
 ---
 
-## Tips
+## 提示
 
-- Headless mode starts a **fresh session by default**. Use `-r/--resume` or `-c/--continue` to maintain context across calls.
-- The `--output-format json` response always includes a `sessionId` you can use with `--resume` for follow-up calls.
-- Combine `--yolo` with `--rules` to set guardrails: `grok -p "..." --yolo --rules "Never delete files"`.
-- For debugging, raise the log level and capture stderr: `RUST_LOG=debug grok -p "..." 2> debug.log`.
-
----
-
-## Project Root Discovery
-
-When Grok starts, it discovers the project root by walking upward from `--cwd`
-(or the current directory) until it finds a `.git` directory.
-
-Note: If `--cwd` is nested inside a large repository (such as a monorepo),
-Grok discovers that repository as the project root and scopes its discovery (AGENTS.md, skills, git history) to it, which can make
-startup slow. Point `--cwd` at the specific subproject you want to work in to keep
-the scope small.
+- 无头模式**默认新建会话**。要用 `-r/--resume` 或 `-c/--continue` 才能在多次调用间保持上下文。
+- `--output-format json` 的响应总带一个 `sessionId`，后续调用可以用它配 `--resume`。
+- 把 `--yolo` 与 `--rules` 组合起来设护栏：`chaos -p "..." --yolo --rules "Never delete files"`。
+- 调试时提高日志级别并捕获 stderr：`RUST_LOG=debug chaos -p "..." 2> debug.log`。
 
 ---
 
-## File Locations
+## 项目根目录的发现
 
-Grok stores data in `~/.grok` (override with `GROK_HOME`; see [Environment Variables for Headless](#environment-variables-for-headless)):
+Chaos 启动时，会从 `--cwd`（或当前目录）向上走，直到找到 `.git` 目录，
+以此确定项目根。
+
+注意：如果 `--cwd` 嵌在一个大型仓库（例如 monorepo）里，
+Chaos 会把那个仓库当作项目根，并把发现范围（AGENTS.md、技能、git 历史）限定在其内，这可能拖慢
+启动。把 `--cwd` 指向你要具体工作的子项目，可以让范围
+保持得比较小。
+
+---
+
+## 文件位置
+
+Chaos 把数据存放在 `~/.chaos`（兼容旧的 `~/.grok`；可用 `CHAOS_HOME` 覆盖；见[无头模式的环境变量](#无头模式的环境变量)）：
 
 | 路径                     | 内容                              |
 | ------------------------ | ------------------------------------- |
 | `config.toml`            | 用户配置                    |
-| `auth.json`              | Cached OAuth2/API credentials         |
-| `version.json`           | Version cache for update checks       |
-| `sessions/`              | Session transcripts (SQLite)          |
-| `memory/`                | Cross-session memory store            |
-| `logs/`                  | Internal log files (for example `unified.jsonl`) |
-| `logs/mcp/`              | MCP server logs                       |
-| `skills/`                | User skill definitions                |
-| `personas/`              | User-scoped agent personas            |
+| `auth.json`              | 缓存的 OAuth2/API 凭据         |
+| `version.json`           | 更新检查用的版本缓存       |
+| `sessions/`              | 会话记录（SQLite）          |
+| `memory/`                | 跨会话记忆存储            |
+| `logs/`                  | 内部日志文件（例如 `unified.jsonl`） |
+| `logs/mcp/`              | MCP 服务器日志                       |
+| `skills/`                | 用户技能定义                |
+| `personas/`              | 用户作用域的智能体人设            |
 | `crash/`                 | 崩溃报告                         |
-| `trace-exports/`         | Session trace exports                 |
-| `worktrees/`             | Git worktree metadata                 |
+| `trace-exports/`         | 会话 trace 导出                 |
+| `worktrees/`             | Git worktree 元数据                 |
 
-### Read-Only `~/.grok`
+### 只读的 `~/.chaos`
 
-For containers or CI, mount `~/.grok` read-only:
+在容器或 CI 里，可以把 `~/.chaos` 以只读方式挂载：
 
-- Pre-populate `auth.json` or use `XAI_API_KEY`
-- Session persistence fails silently (ephemeral)
-- Update checks log a warning and skip
+- 预先放好 `auth.json`，或使用 `XAI_API_KEY`
+- 会话持久化会静默失败（环境是临时的）
+- 更新检查记一条警告后跳过
 
 ```bash
 export XAI_API_KEY="xai-..."
 export GROK_DISABLE_AUTOUPDATER=1
-grok -p "..." --no-auto-update
+chaos -p "..." --no-auto-update
 ```
 
 ---
 
-## Update Check Suppression
+## 抑制更新检查
 
 | 方式                          | 作用域     |
 | ------------------------------- | --------- |
 | `--no-auto-update`              | 会话   |
 | `GROK_DISABLE_AUTOUPDATER=1`    | 进程   |
-| Non-TTY stderr (auto-detected)  | 自动 |
+| 非 TTY 的 stderr（自动检测）  | 自动 |
 | `[cli] auto_update = false`     | 持久|
 
-`GROK_DISABLE_AUTOUPDATER` set to a falsy value (`0`, `false`, `off`, `no`, or empty, any
-case) counts as not set. The agent SDKs
-inject `GROK_DISABLE_AUTOUPDATER=1` for the non-leader agents they spawn (a falsy value in
-the SDK's isolation env keeps updates on), and the stdio agent skips its background update
-unless it runs from the managed install (`$GROK_HOME/bin/grok`).
+`GROK_DISABLE_AUTOUPDATER` 设为假值（`0`、`false`、`off`、`no` 或空串，大小写不限）
+等同于没设。智能体 SDK
+为它派生的非主智能体注入 `GROK_DISABLE_AUTOUPDATER=1`（SDK 隔离环境里的假值
+会让更新保持开启），而 stdio 智能体会跳过自己的后台更新检查，
+除非它是从受管安装（`$CHAOS_HOME/bin/chaos`）运行的。
 
-Update messages go to **stderr**. Stdout stays clean for `--output-format json`. See also [Environment Variables for Headless](#environment-variables-for-headless).
+更新提示走 **stderr**，stdout 对 `--output-format json` 保持干净。另见[无头模式的环境变量](#无头模式的环境变量)。
 
 ---
 
-## Additional Headless Flags
+## 其他无头模式标志
 
-These flags supplement the [Command-Line Options](#command-line-options) table above. Flags already listed there (`--prompt-json`, `--prompt-file`, `--verbatim`, `--sandbox`, `--no-auto-update`) are not repeated here.
+这些标志补充上面的[命令行选项](#命令行选项)表。已经在那里列出的标志（`--prompt-json`、`--prompt-file`、`--verbatim`、`--sandbox`、`--no-auto-update`）不再重复。
 
 | 标志                          | 说明                                       |
 | ----------------------------- | ------------------------------------------------- |
-| `--agent <NAME>`              | Agent name or definition file path                |
-| `--agents <JSON>`             | Inline subagent definitions as JSON               |
-| `--system-prompt-override`    | Override the agent's system prompt                |
-| `--no-plan`                   | Disable plan mode                                 |
-| `--no-subagents`              | Disable subagent spawning                         |
-| `GROK_MEMORY=0`                | Disable cross-session memory for the process      |
-| `--disable-web-search`        | Disable web search and fetch tools                |
-| `--no-alt-screen`             | Run inline (no alternate screen)                  |
-| `--worktree [NAME]`           | Create a git worktree from the current checkout (dirty changes included) and run the session there. Launching from a subdirectory lands in the same subdirectory of the worktree. With `-r`, the session is resumed into the new worktree. Not combinable with `--fork-session`. |
-| `--ref <REF>` / `--worktree-ref <REF>` | Branch/tag/commit to base the worktree on (with `--worktree`); a clean checkout, no dirty overlay |
+| `--agent <NAME>`              | 智能体名称或定义文件路径                |
+| `--agents <JSON>`             | 以内联 JSON 给出的子智能体定义               |
+| `--system-prompt-override`    | 覆盖该智能体的系统提示                |
+| `--no-plan`                   | 禁用计划模式                                 |
+| `--no-subagents`              | 禁用子智能体派生                         |
+| `GROK_MEMORY=0`                | 为该进程禁用跨会话记忆      |
+| `--disable-web-search`        | 禁用网页搜索与抓取工具                |
+| `--no-alt-screen`             | 内联运行（不使用备用屏幕）                  |
+| `--worktree [NAME]`           | 从当前检出（含未提交的改动）创建一个 git worktree 并在其中运行会话。从子目录启动会落在 worktree 的同一个子目录里。配 `-r` 时，会话会恢复进新 worktree。不可与 `--fork-session` 组合。 |
+| `--ref <REF>` / `--worktree-ref <REF>` | worktree 所基于的分支/标签/提交（配合 `--worktree`）；要求检出干净，不带未提交改动 |
 
 ---
 
-## Interrupted Headless Runs
+## 被中断的无头运行
 
-On SIGINT/SIGTERM:
+遇到 SIGINT/SIGTERM 时：
 
-- Session state saved up to the last completed tool call
-- File modifications by tools are **not rolled back**
-- Exit code is **130** for SIGINT (`128 + 2`) and **143** for SIGTERM (`128 + 15`); CI pipelines can distinguish these from a normal error (exit code `1`)
-- Resume: `grok -p "continue" --resume "<id>"` or `grok -p "continue" --continue`
+- 会话状态保存到最后一个完成的工具调用为止
+- 工具造成的文件改动**不会回滚**
+- SIGINT 的退出码是 **130**（`128 + 2`），SIGTERM 是 **143**（`128 + 15`）；CI 流水线可以据此把它们与普通错误（退出码 `1`）区分开
+- 恢复：`chaos -p "continue" --resume "<id>"` 或 `chaos -p "continue" --continue`
 
-See [Session Management in Headless Mode](#session-management-in-headless-mode) for details on named sessions and the `-s`/`-r`/`-c` flags.
+具名会话以及 `-s`/`-r`/`-c` 标志的细节，见[无头模式下的会话管理](#无头模式下的会话管理)。
