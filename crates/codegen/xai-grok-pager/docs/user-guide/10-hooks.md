@@ -476,7 +476,7 @@ fi
 
 对 `SessionStart` 或 `Notification` 这类事件，stdout 会被忽略。成功时以 0 退出即可。例外是 `PreToolUse`（见[输出（拦截型钩子）](#输出拦截型钩子)）、`Stop`/`SubagentStop`（见[停止决定控制](#停止决定控制)）与 `PostToolUse`——它虽然什么也不拦截，stdout 仍会被读取（见 [PostToolUse 输出](#posttooluse-输出)）。
 
-### Environment Variables
+### 环境变量
 
 Grok 会在每个钩子进程上设置若干环境变量。编写需要感知上下文或插件的钩子脚本时它们很有用。
 

@@ -54,7 +54,7 @@
 | 配置 | `config.toml`, `managed_config.toml`, `requirements.toml` | 始终 | 随你的（或你组织的）配置一起分发的钩子 |
 | 插件 | 内置于已安装的插件中 | 按插件 | 团队共享钩子 |
 
-配置文件里的钩子用 TOML 形式表达同一套 schema；详见[钩子用户指南](user-guide/10-hooks.md#hooks-in-config-files)。
+配置文件里的钩子用 TOML 形式表达同一套 schema；详见[钩子用户指南](user-guide/10-hooks.md#配置文件中的钩子)。
 
 **信任项目**：第一次打开带钩子的项目时，打开钩子弹窗（在 VS Code 系之外按 `Ctrl+L`，或在任意终端运行 `/hooks`），或运行 `/hooks-trust`。这与 `--trust` 是同一道文件夹信任闸门，记录在 `~/.chaos/trusted_folders.toml`。信任可防止不受信任的仓库运行任意代码。
 

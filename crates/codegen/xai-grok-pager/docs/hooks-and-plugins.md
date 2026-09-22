@@ -58,7 +58,7 @@ Chaos 支持**钩子**（事件驱动的 shell 命令）与**插件**（技能�
 - **描述**
 - **冲突** —— 有任何冲突时给出 ⚠ 警告
 
-插件钩子会自动收到 `GROK_PLUGIN_ROOT` 和 `GROK_PLUGIN_DATA` 环境变量（见[插件指南](user-guide/09-plugins.md#environment-variables-in-plugin-hooks)）。
+插件钩子会自动收到 `GROK_PLUGIN_ROOT` 和 `GROK_PLUGIN_DATA` 环境变量（见[插件指南](user-guide/09-plugins.md#插件钩子中的环境变量)）。
 
 ### 快捷键（插件标签页）
 

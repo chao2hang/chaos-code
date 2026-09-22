@@ -228,7 +228,7 @@ chaos inspect
 
 ---
 
-## Best Practices
+## 最佳实践
 
 1. **从根目录开始。** 把最重要的、全项目范围的规则放进仓库根目录的 AGENTS.md。
 

@@ -265,7 +265,7 @@ MCP 服务器以及它们的来源（`[cursor]`、`[claude]`）。
 
 ---
 
-## MCP OAuth
+## MCP OAuth 认证
 
 对于需要 OAuth 认证的 MCP 服务器，Grok 会自动处理凭据流程。当 MCP 服务器要求 OAuth
 凭据时，Grok 会打开浏览器授权流程，并把拿到的 token 存下来备用。

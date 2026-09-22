@@ -173,7 +173,7 @@ api_key = "sk-custom"
 
 ---
 
-## Provider Examples
+## 提供方示例
 
 ### Anthropic（Claude）
 
