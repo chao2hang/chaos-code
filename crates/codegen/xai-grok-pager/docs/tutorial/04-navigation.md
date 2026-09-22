@@ -1,32 +1,24 @@
-# Finding Your Way Around
+# 熟悉界面导航
 
-The screen has three parts: the **scrollback** (the conversation), the
-**prompt** below it, and the **shortcuts bar** at the bottom. Panes for
-todos and background tasks slide in when you need them.
+屏幕分三部分：**回滚区**（对话）、它下方的**提示框**，以及底部的**快捷键栏**。待办与后台任务的面板会在你需要时滑出。
 
-## Focus
+## 焦点
 
-**`Tab`** switches focus between the prompt and the scrollback. Focused
-scrollback gets a selection you can move with the arrow keys.
+**`Tab`** 在提示框与回滚区之间切换焦点。回滚区获得焦点后会出现选中项，可用方向键移动。
 
-## Moving through the conversation
+## 在对话中移动
 
-- **`↑`/`↓`** — select the previous/next entry.
-- **`Shift+←`/`Shift+→`** — jump between turns (your prompts).
-- **`PageUp`/`PageDown`** — scroll by page; this works straight from the
-  prompt, no focus change needed.
-- **`←`/`→`** — collapse/expand the selected entry; long tool output stays
-  out of your way until you want it.
-- **`Enter`** — open the selected entry in a fullscreen viewer.
+- **`↑`/`↓`** —— 选中上一条/下一条。
+- **`Shift+←`/`Shift+→`** —— 在回合（你的提示）之间跳转。
+- **`PageUp`/`PageDown`** —— 按页滚动；直接从提示框里就能用，无需切换焦点。
+- **`←`/`→`** —— 折叠/展开选中项；冗长的工具输出会先让开，直到你想看它。
+- **`Enter`** —— 在整屏查看器中打开选中项。
 
-## Panes
+## 面板
 
-- **`Ctrl+T`** — toggle the **todos pane**: Chaos's live plan for the
-  current task.
-- **`Ctrl+G`** — toggle the **tasks pane**: everything running in the
-  background, with its status.
+- **`Ctrl+T`** —— 开关**待办面板**：Chaos 对当前任务的实时计划。
+- **`Ctrl+G`** —— 开关**任务面板**：后台正在运行的一切及其状态。
 
-Prefer vim keys? **`/vim-mode`** switches the scrollback to `j`/`k`,
-`g`/`G`, and friends.
+喜欢 vim 键位？**`/vim-mode`** 把回滚区切换为 `j`/`k`、`g`/`G` 等键位。
 
-*Go deeper: `/docs Keyboard Shortcuts`*
+*深入了解：`/docs Keyboard Shortcuts`*

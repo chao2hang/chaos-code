@@ -1,39 +1,28 @@
-# Plan Mode & Permissions
+# 计划模式与权限
 
-Chaos asks before doing anything risky — and can plan before it codes.
+Chaos 在动手做任何有风险的事之前都会先问你——并且能在写码前先规划。
 
-## Permissions
+## 权限
 
-When Chaos wants to run a risky command or edit a file, it pauses and asks:
-allow once, always allow that kind of action, or deny.
+当 Chaos 想运行有风险的命令或编辑文件时，它会暂停并询问：允许一次、始终允许这类操作，还是拒绝。
 
-Reading is always free: file reads, searches, and safe read-only commands
-(`ls`, `git status`, `grep`, …) never prompt. Chained commands are
-checked piece by piece — `ls && rm -rf tmp` still prompts for the `rm`.
+读操作永远是自由的：读文件、搜索，以及安全的只读命令（`ls`、`git status`、`grep`、…）从不询问。链式命令会逐段检查——`ls && rm -rf tmp` 仍会为其中的 `rm` 弹出确认。
 
-Trust the session? `/always-approve` (or `Ctrl+O`) skips the prompts.
+信任本次会话？`/always-approve`（或 `Ctrl+O`）会跳过这些确认。
 
-## Plan mode
+## 计划模式
 
-For bigger or more ambiguous tasks, use **plan mode**: Chaos explores the
-codebase read-only, designs an approach, and presents a plan you approve
-*before* any code is written.
+面对更大或更含糊的任务，用**计划模式**：Chaos 以只读方式探索代码库、设计方案，并给出一份计划，让你在写任何代码*之前*批准。
 
-- **`Shift+Tab`** (prompt focused) cycles the mode: Normal → Plan →
-  Always-approve.
-- **`/plan`** enters plan mode directly; `/plan <task>` plans that task in
-  one step.
+- **`Shift+Tab`**（提示框聚焦时）循环切换模式：普通 → 计划 → 始终批准。
+- **`/plan`** 直接进入计划模式；`/plan <task>` 一步为某个任务做规划。
 
-When the plan is ready: `a` approves, `c` comments on a specific line,
-`s` requests changes — Chaos iterates until you're happy, then implements.
+计划就绪后：`a` 批准，`c` 对某一行评论，`s` 请求修改——Chaos 会反复迭代直到你满意，然后开始实现。
 
-A good habit: plan mode for "how should we even do this?", normal mode for
-"just do it".
+一个好习惯：拿不准「这事到底该怎么做」时用计划模式，「直接开干」时用普通模式。
 
-## Long-running commands
+## 长时间运行的命令
 
-A build or test run hogging the turn? **`Ctrl+B`** sends it to the
-background — Chaos keeps working and you're notified when it finishes
-(`Ctrl+G` shows the tasks pane).
+某个构建或测试跑起来占着回合？**`Ctrl+B`** 把它送到后台——Chaos 继续干活，完成时会通知你（`Ctrl+G` 显示任务面板）。
 
-*Go deeper: `/docs Plan Mode` or `/docs Permissions and Safety`*
+*深入了解：`/docs Plan Mode` 或 `/docs Permissions and Safety`*

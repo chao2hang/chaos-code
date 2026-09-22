@@ -1,20 +1,18 @@
-# Make It Yours
+# 把它变成你的
 
-## The easiest way: just ask
+## 最省事的办法：直接开口
 
-Chaos knows its own capabilities and can configure itself. Try:
+Chaos 了解自己的能力，也能自己配置自己。试试：
 
-- *"add the Postgres MCP server for our staging db"*
-- *"switch to a light theme"*
-- *"write an AGENTS.md for this repo"*
+- *"给我们的 staging 数据库加上 Postgres MCP 服务器"*
+- *"换成浅色主题"*
+- *"给这个仓库写一份 AGENTS.md"*
 
-If you'd rather drive, everything below has a command too.
+如果你更想自己动手，下面每一样也都有对应命令。
 
-## Teach Chaos your project: AGENTS.md
+## 教会 Chaos 你的项目：AGENTS.md
 
-Drop an `AGENTS.md` file in your repo root with build commands, conventions,
-and gotchas. Chaos reads it automatically in every session — it's the single
-highest-leverage customization:
+在仓库根目录放一个 `AGENTS.md`，写上构建命令、约定和各种坑。Chaos 每次会话都会自动读取它——这是投入产出比最高的一项定制：
 
 ```markdown
 # My Project
@@ -22,19 +20,16 @@ highest-leverage customization:
 - Never edit files under generated/
 ```
 
-## Teach Chaos your facts: memory
+## 教会 Chaos 你的事实：记忆
 
-Start a prompt with `#` (or use `/remember`) to save a note for future
-sessions: `# the staging deploy uses eu-west`.
+用 `#` 开头（或使用 `/remember`）可以把一条笔记存给以后的会话：`# the staging deploy uses eu-west`。
 
-## Looks, keys, and extensions
+## 外观、按键与扩展
 
-- **`/theme`** — color themes (or `auto` to follow your OS); **`/settings`**
-  (or `F2`) for everything else; **`/vim-mode`** if that's your thing.
-- **Skills** (`/skills`) — reusable prompt packages; user-invocable skills
-  become slash commands automatically.
-- **MCP servers** (`/mcps`) and **plugins & hooks** (`/plugins`, `/hooks`).
+- **`/theme`** —— 配色主题（或用 `auto` 跟随操作系统）；其余设置交给 **`/settings`**（或 `F2`）；如果你好这一口，还有 **`/vim-mode`**。
+- **技能**（`/skills`）—— 可复用的提示包；用户可调用的技能会自动变成斜杠命令。
+- **MCP 服务器**（`/mcps`）以及**插件与钩子**（`/plugins`、`/hooks`）。
 
-Start with `AGENTS.md` and a theme; add the rest when you need it.
+先从 `AGENTS.md` 和一个主题起步；需要时再加其余部分。
 
-*Go deeper: `/docs Project Rules (AGENTS.md)`, `/docs Skills`, or `/docs MCP Servers`*
+*深入了解：`/docs Project Rules (AGENTS.md)`、`/docs Skills` 或 `/docs MCP Servers`*

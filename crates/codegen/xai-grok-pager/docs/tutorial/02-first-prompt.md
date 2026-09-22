@@ -1,26 +1,19 @@
-# Your First Prompt
+# 第一次发提示
 
-Chaos is a conversation with an agent that can read your code, run
-commands, and edit files — right here in your terminal.
+Chaos 是你与一个代理的对话——它能读你的代码、运行命令、编辑文件，就在你的终端里。
 
-Type what you want and press `Enter`. Chaos streams its work into the
-**scrollback** above the prompt: responses, shell commands, file edits.
+输入你想要的内容，按 `Enter`。Chaos 会把工作过程流式输出到提示框上方的**回滚区**：回复、shell 命令、文件编辑。
 
-## Keep typing while Chaos works
+## Chaos 工作时继续输入
 
-While a turn is running, `Enter` **queues** your next message instead of
-interrupting. Change your mind? Press `Enter` on the empty prompt to stop
-the current turn and send the queued message right away.
+回合运行期间，`Enter` 会**排队**你的下一条消息，而不是打断它。改主意了？在空提示框上按 `Enter`，即可停止当前回合并立刻发送排队的消息。
 
-## You are always in control
+## 你始终掌控一切
 
-- **`Ctrl+C`** — cancel a running turn (with a draft, the first press only clears it).
-  `Esc` does not cancel; it reminds you to use `Ctrl+C`.
-- **`Esc Esc`** while idle — clear the prompt; with an empty prompt, open
-  the rewind picker instead. Cleared something by accident? `Ctrl+Z` undoes.
-- **`Ctrl+Q`** — quit (`Ctrl+D` in VS Code-family terminals), press twice.
+- **`Ctrl+C`** —— 取消运行中的回合（若已有草稿，第一次按下只会清空草稿）。`Esc` 不会取消，它会提醒你改用 `Ctrl+C`。
+- 空闲时 **`Esc Esc`** —— 清空提示框；提示框为空时，改为打开回退选择器。误清东西了？`Ctrl+Z` 可以撤销。
+- **`Ctrl+Q`** —— 退出（VS Code 系终端里是 `Ctrl+D`），按两次。
 
-The **shortcuts bar** at the bottom always shows the keys relevant to what
-you're doing right now — when in doubt, look down.
+底部的**快捷键栏**始终显示你当下操作相关的按键——拿不准时，往下看。
 
-*Go deeper: `/docs Getting Started`*
+*深入了解：`/docs Getting Started`*

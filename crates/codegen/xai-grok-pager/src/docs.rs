@@ -156,14 +156,14 @@ pub static USER_GUIDE: &[Doc] = &[
 static REFERENCE_DOCS: &[Doc] = &[
     Doc {
         filename: "hooks-and-plugins.md",
-        title: "Hooks & Plugins Guide",
-        description: "Using hooks, plugins, and marketplace",
+        title: "钩子与插件指南",
+        description: "使用钩子、插件与插件市场",
         content: include_str!("../docs/hooks-and-plugins.md"),
     },
     Doc {
         filename: "custom-hooks.md",
-        title: "Creating Custom Hooks",
-        description: "Writing your own hooks and matchers",
+        title: "自定义钩子指南",
+        description: "编写自己的钩子与匹配器",
         content: include_str!("../docs/custom-hooks.md"),
     },
 ];
@@ -305,7 +305,7 @@ mod tests {
     #[test]
     fn get_howto_doc_delegates_to_find_doc() {
         assert!(get_howto_doc("快速上手").is_some());
-        assert!(get_howto_doc("Hooks & Plugins Guide").is_some());
+        assert!(get_howto_doc("钩子与插件指南").is_some());
         assert!(get_howto_doc("no such doc").is_none());
     }
 

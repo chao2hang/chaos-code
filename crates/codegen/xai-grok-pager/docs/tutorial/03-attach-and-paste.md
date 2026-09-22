@@ -1,11 +1,10 @@
-# Attach Files, Images & Paste
+# 附加文件、图片与粘贴
 
-The more precisely you point Chaos at the right context, the better the
-result. Three ways to get things into the prompt:
+你把 Chaos 指向的上下文越精确，结果就越好。有三种方式把内容送进提示框：
 
-## Mention files with `@`
+## 用 `@` 引用文件
 
-Type `@` for a fuzzy file picker — line ranges work too:
+输入 `@` 会打开模糊文件选择器——也支持行范围：
 
 ```
 @src/main.rs          attach a file
@@ -13,14 +12,12 @@ Type `@` for a fuzzy file picker — line ranges work too:
 @!.env                reach hidden files with @!
 ```
 
-## Paste images
+## 粘贴图片
 
-Paste a screenshot straight into the prompt: `Cmd+V` on macOS, `Ctrl+V` on
-Linux, `Alt+V` on Windows. Great for error dialogs, designs, and diagrams.
+把截图直接粘贴进提示框：macOS 上用 `Cmd+V`，Linux 上用 `Ctrl+V`，Windows 上用 `Alt+V`。处理报错弹窗、设计稿和示意图时很好用。
 
-## Run shell commands yourself
+## 自己运行 shell 命令
 
-Type `!` on an empty prompt to run a shell command directly — the output
-lands in the scrollback where Chaos can see it too.
+在空提示框上输入 `!` 可直接运行 shell 命令——输出会进入回滚区，Chaos 也能看到。
 
-*Go deeper: `/docs Getting Started`*
+*深入了解：`/docs Getting Started`*

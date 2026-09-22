@@ -1,36 +1,28 @@
-# Slash Commands
+# 斜杠命令
 
-Type `/` on an empty prompt and a searchable dropdown of commands appears.
-A few worth knowing on day one:
+在空提示框上输入 `/`，会弹出可搜索的命令下拉列表。有几个第一天就该知道：
 
-| Command | What it does |
+| 命令 | 作用 |
 |---------|--------------|
-| `/help` | Browse every command and keyboard shortcut |
-| `/model` | Switch models or reasoning effort |
-| `/resume` | Pick up a previous session where you left off |
-| `/new` | Start a fresh session |
-| `/compact` | Compress a long conversation to free up context |
-| `/btw` | Send Chaos an aside *without* interrupting its current task |
-| `/rewind` | Restore your files and history to an earlier prompt |
-| `/docs` | Full How-to Guides, in the TUI or on the web |
-| `/feedback` | Send feedback to the team |
+| `/help` | 浏览所有命令与键盘快捷键 |
+| `/model` | 切换模型或推理强度 |
+| `/resume` | 接着此前的会话继续 |
+| `/new` | 开始一个新会话 |
+| `/compact` | 压缩长对话以腾出上下文 |
+| `/btw` | 给 Chaos 发个旁支问题，*不*打断它当前的任务 |
+| `/rewind` | 把文件与历史恢复到更早的某次提示 |
+| `/docs` | 完整的操作指南，在 TUI 里或网页上 |
+| `/feedback` | 给团队发反馈 |
 
-Two of those deserve a second look:
+其中两个值得细看：
 
-- **`/compact`** takes an optional hint: `/compact keep the auth details`.
-  Check context usage anytime with `/context` — Chaos also auto-compacts
-  when the window fills up.
-- **`/rewind`** restores actual file snapshots taken at each prompt, not
-  just the chat.
+- **`/compact`** 可以带一个可选提示：`/compact keep the auth details`。随时用 `/context` 查看上下文占用——窗口占满时 Chaos 也会自动压缩。
+- **`/rewind`** 恢复的是每次提示时拍下的真实文件快照，而不只是聊天记录。
 
-## The command palette
+## 命令面板
 
-Press **`Ctrl+P`** (or `?` from the scrollback) to open the command palette —
-one searchable list of every command, shortcut, and skill. There's also a
-full shortcuts cheatsheet on `Ctrl+.` (use `Ctrl+X` if your terminal
-swallows it).
+按 **`Ctrl+P`**（或在回滚区按 `?`）打开命令面板——一份可搜索的列表，涵盖所有命令、快捷键与技能。`Ctrl+.` 上还有一份完整的快捷键速查表（如果你的终端吃掉了这个键，就用 `Ctrl+X`）。
 
-You don't need to memorize anything: `/` and `Ctrl+P` will always show you
-what's available.
+你不需要记任何东西：`/` 和 `Ctrl+P` 总会显示可用的内容。
 
-*Go deeper: `/docs Slash Commands`*
+*深入了解：`/docs Slash Commands`*

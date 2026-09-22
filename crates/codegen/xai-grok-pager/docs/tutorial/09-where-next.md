@@ -1,29 +1,23 @@
-# Where to Go Next
+# 接下来去哪
 
-You know enough to be productive. When you want more:
+你已经足够高效地干活了。想要更多时：
 
-## Built-in help
+## 内置帮助
 
-- **`/help`** or **`Ctrl+P`** — every command, shortcut, and skill, searchable.
-- **`/docs`** — the full How-to Guides inside the TUI (`/docs web` for the
-  online docs). Covers sessions, headless mode, subagents, sandboxing,
-  memory, and much more.
-- **Ask Chaos itself** — it can read its own user guide and set itself up.
-  Try: "How do I run you in CI?" or "add an MCP server for GitHub".
+- **`/help`** 或 **`Ctrl+P`** —— 所有命令、快捷键与技能，可搜索。
+- **`/docs`** —— TUI 内的完整操作指南（`/docs web` 查看在线版）。涵盖会话、无头模式、子代理、沙箱、记忆，以及更多。
+- **直接问 Chaos 自己** —— 它能读自己的用户指南，也能给自己做配置。试试：「我怎么在 CI 里跑你？」或「给 GitHub 加一个 MCP 服务器」。
 
-## Good habits
+## 好习惯
 
-- Sessions save automatically. Resume the latest with `chaos -c`, or pick
-  one with `/resume` (`F3`).
-- Long session getting slow? `/compact` frees context; `/context` shows
-  where it's going.
-- Automate anything: `chaos -p "summarize new TODOs" --output-format json`
-  runs headless — great for scripts and CI.
-- Stay current with `chaos update`; see what changed with `/release-notes`.
-- Something feel off? `/feedback` goes straight to the team.
+- 会话自动保存。用 `chaos -c` 恢复最近一次，或用 `/resume`（`F3`）挑一个。
+- 长会话变慢了？`/compact` 腾出上下文；`/context` 显示它花在哪了。
+- 什么都能自动化：`chaos -p "summarize new TODOs" --output-format json` 以无头模式运行——很适合脚本与 CI。
+- 用 `chaos update` 保持最新；用 `/release-notes` 看看改了什么。
+- 感觉哪里不对？`/feedback` 直达团队。
 
-## Reopen this tutorial
+## 重新打开本教程
 
-Type **`/tutorial`** anytime.
+随时输入 **`/tutorial`**。
 
-Now go build something.
+现在，去造点什么吧。

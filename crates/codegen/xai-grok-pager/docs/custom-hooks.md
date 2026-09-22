@@ -1,28 +1,28 @@
-# Custom Hooks Guide
+# 自定义钩子指南
 
-Hooks let you run custom scripts or HTTP requests at key moments during a Grok session, for example before or after a tool runs, when a session starts or ends, or when the agent sends a notification.
+钩子让你在 Chaos 会话的关键时刻运行自定义脚本或 HTTP 请求，比如工具运行前后、会话开始或结束时，或代理发出通知时。
 
-Use them for automation, safety checks, logging, notifications, and integrating with your own tools.
+你可以用它做自动化、安全检查、日志记录、通知，以及与你自己的工具集成。
 
-## Why Use Hooks?
+## 为什么用钩子？
 
-Common use cases:
+常见用例：
 
-- **Safety guards**: Block dangerous commands like `rm -rf /` before they execute.
-- **Audit logging**: Record every tool use or session to a file or external service.
-- **Notifications**: Send a Slack/Discord message when a long-running task finishes.
-- **Auto-formatting**: Run `cargo fmt` or `prettier` automatically after edits.
-- **Environment setup**: Export secrets or set variables at session start.
-- **Custom workflows**: Trigger builds, tests, or deployments on specific events.
+- **安全防护**：在执行前拦截 `rm -rf /` 这类危险命令。
+- **审计日志**：把每次工具使用或会话记录到文件或外部服务。
+- **通知**：长任务结束时发一条 Slack/Discord 消息。
+- **自动格式化**：编辑后自动运行 `cargo fmt` 或 `prettier`。
+- **环境准备**：在会话开始时导出密钥或设置变量。
+- **自定义工作流**：在特定事件上触发构建、测试或部署。
 
-## Quick Start
+## 快速上手
 
-1. Create the hooks directory:
+1. 创建钩子目录：
    ```sh
-   mkdir -p ~/.grok/hooks
+   mkdir -p ~/.chaos/hooks
    ```
 
-2. Create a simple hook file, e.g. `~/.grok/hooks/session-start.json`:
+2. 创建一个简单的钩子文件，例如 `~/.chaos/hooks/session-start.json`：
    ```json
    {
      "hooks": {
@@ -37,30 +37,30 @@ Common use cases:
    }
    ```
 
-3. Start (or restart) a Grok session. The hook runs automatically on `SessionStart`.
+3. 启动（或重启）一个 Chaos 会话。该钩子会在 `SessionStart` 时自动运行。
 
-   To confirm it loaded, open the Hooks tab: press `Ctrl+L` outside the VS Code family, or run `/hooks` anywhere (preferred on VS Code, Cursor, Windsurf, and Zed).
+   要确认它已加载，打开 Hooks 标签页：在 VS Code 系之外按 `Ctrl+L`，或在任何终端运行 `/hooks`（在 VS Code、Cursor、Windsurf 和 Zed 上推荐后者）。
 
-## Hook Locations
+## 钩子位置
 
-Hooks are discovered from several places (all are merged):
+钩子从多个位置被发现（全部会合并）：
 
-| Scope     | Path                              | Trusted?     | Notes |
+| 作用域 | 路径 | 是否信任？ | 说明 |
 |-----------|-----------------------------------|--------------|-------|
-| Global    | `~/.grok/hooks/*.json`            | Always       | Best for personal hooks |
-| Global    | `~/.claude/settings.json`         | Always       | Claude Code compatibility |
-| Project   | `<project>/.grok/hooks/*.json`    | Requires trust | Per-repo automation |
-| Project   | `<project>/.claude/settings.json` | Requires trust | Claude compatibility |
-| Config    | `config.toml`, `managed_config.toml`, `requirements.toml` | Always | Hooks shipped in your (or your organization's) config |
-| Plugin    | Bundled inside installed plugins  | Per-plugin   | Shared team hooks |
+| 全局 | `~/.chaos/hooks/*.json` | 始终 | 个人钩子 |
+| 全局 | `~/.claude/settings.json` | 始终 | Claude Code 兼容 |
+| 项目 | `<project>/.chaos/hooks/*.json` | 需要信任 | 按仓库自动化 |
+| 项目 | `<project>/.claude/settings.json` | 需要信任 | Claude 兼容 |
+| 配置 | `config.toml`, `managed_config.toml`, `requirements.toml` | 始终 | 随你的（或你组织的）配置一起分发的钩子 |
+| 插件 | 内置于已安装的插件中 | 按插件 | 团队共享钩子 |
 
-Config-file hooks use the same schema in TOML form; see the [Hooks user guide](user-guide/10-hooks.md#hooks-in-config-files) for details.
+配置文件里的钩子用 TOML 形式表达同一套 schema；详见[钩子用户指南](user-guide/10-hooks.md#hooks-in-config-files)。
 
-**Trusting a project**: The first time you open a project with hooks, open the hooks modal (`Ctrl+L` outside the VS Code family, or `/hooks` on any terminal) or run `/hooks-trust`. This is the same folder-trust gate as `--trust`, recorded in `~/.grok/trusted_folders.toml`. Trust prevents untrusted repos from running arbitrary code.
+**信任项目**：第一次打开带钩子的项目时，打开钩子弹窗（在 VS Code 系之外按 `Ctrl+L`，或在任意终端运行 `/hooks`），或运行 `/hooks-trust`。这与 `--trust` 是同一道文件夹信任闸门，记录在 `~/.chaos/trusted_folders.toml`。信任可防止不受信任的仓库运行任意代码。
 
-## The Hook JSON Format
+## 钩子 JSON 格式
 
-Each `.json` file can define multiple hooks:
+每个 `.json` 文件可以定义多个钩子：
 
 ```json
 {
@@ -84,20 +84,20 @@ Each `.json` file can define multiple hooks:
 }
 ```
 
-Key fields:
+关键字段：
 
-- **Event name** (top-level key): `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `Stop`, `Notification`, `SessionEnd`, etc.
-- **matcher** (optional): Regex tested against the event's match value: the tool name on tool events, and per-event values elsewhere (see the user guide's Hooks chapter). Empty matches everything.
-- **type**: `"command"` (run a script or shell one-liner) or `"http"` (POST the event to a URL).
-- **command**: Path to executable (relative to the JSON file) or inline shell command.
-- **timeout**: Seconds before killing the hook (default: 5, or 600 for `Stop`/`SubagentStop`/`PostToolUse` gates). Hooks fail open on timeout.
+- **事件名**（顶层键）：`SessionStart`、`UserPromptSubmit`、`PreToolUse`、`PostToolUse`、`Stop`、`Notification`、`SessionEnd` 等。
+- **matcher**（可选）：对事件的匹配值做正则测试：工具事件上是工具名，其它事件上则是各事件自己的取值（见用户指南的钩子章节）。为空则匹配一切。
+- **type**：`"command"`（运行脚本或 shell 单行命令）或 `"http"`（把事件 POST 到某个 URL）。
+- **command**：可执行文件的路径（相对于 JSON 文件）或内联 shell 命令。
+- **timeout**：杀死钩子前的秒数（默认：5，`Stop`/`SubagentStop`/`PostToolUse` 闸门为 600）。钩子在超时时按失败放行。
 
-**Tool name aliases**: Claude-style names like `Bash`, `Edit`, `Read` automatically match Grok's internal names (`run_terminal_cmd`, `search_replace`, `read_file`).
+**工具名别名**：`Bash`、`Edit`、`Read` 这类 Claude 风格的名字会自动匹配 Chaos 的内部名（`run_terminal_cmd`、`search_replace`、`read_file`）。
 
-## Writing Hook Scripts
+## 编写钩子脚本
 
-### Input
-The full event is sent as JSON on **stdin**. Example for a `PreToolUse` hook:
+### 输入
+完整事件以 JSON 形式通过 **stdin** 发送。一个 `PreToolUse` 钩子的示例：
 
 ```json
 {
@@ -112,44 +112,44 @@ The full event is sent as JSON on **stdin**. Example for a `PreToolUse` hook:
 }
 ```
 
-The `hook_event_name` (snake_case key) carries Claude's PascalCase value; `hookEventName` (camelCase key) carries grok's snake_case value.
+`hook_event_name`（snake_case 键）携带 Claude 的 PascalCase 值；`hookEventName`（camelCase 键）携带 Chaos 的 snake_case 值。
 
-### Output (for blocking hooks like PreToolUse)
-Write JSON to **stdout**:
+### 输出（拦截型钩子）
+向 **stdout** 写入 JSON：
 
-- Allow: `{"decision": "allow"}`
-- Deny: `{"decision": "deny", "reason": "Unsafe command detected"}`
+- 允许：`{"decision": "allow"}`
+- 拒绝：`{"decision": "deny", "reason": "Unsafe command detected"}`
 
-**Exit codes** (behavior differs by hook type):
-- `0`: success / allow (for blocking hooks).
-- `2`: explicit deny (`PreToolUse`), block-stop with stderr as feedback (`Stop`/`SubagentStop`; see Stop Decision Control in the user guide), or feedback to the model (`PostToolUse`, whose stderr reaches the model even though the tool has already run).
-- Any other (including timeout, crash, or a missing env var): **fail-open**. The failure is logged and gets one line in the scrollback, but the tool call is not blocked. To block a tool call, return JSON `{"decision":"deny","reason":"..."}` on stdout.
+**退出码**（行为随钩子类型而不同）：
+- `0`：成功 / 允许（对拦截型钩子而言）。
+- `2`：显式拒绝（`PreToolUse`）、以 stderr 作为反馈的拦截停止（`Stop`/`SubagentStop`；见用户指南的停止决定控制），或给模型的反馈（`PostToolUse`——尽管工具已经运行，其 stderr 仍会到达模型）。
+- 其它任何取值（包括超时、崩溃或缺少环境变量）：**失败放行**。失败会被记录，并在回滚区留一行，但工具调用不会被拦截。要拦截一次工具调用，请在 stdout 返回 JSON `{"decision":"deny","reason":"..."}`。
 
-### PostToolUse output
-`PostToolUse` runs after the tool finished, so it blocks nothing, but its stdout decides what the model sees next. `{"decision":"block","reason":"..."}` feeds the reason to the model alongside the result. `hookSpecificOutput.additionalContext` adds a note. `hookSpecificOutput.updatedToolOutput` (built-in tools; must match the tool's own output shape) or `hookSpecificOutput.updatedMCPToolOutput` (MCP tools; not shape-checked) replaces the output the model reads, while the scrollback and telemetry keep the original. Every hook's block reason and context are delivered in call order, each naming its hook. Only the replacements are last-writer-wins, and a hook that exits non-zero keeps only its block reason. Output replacement is settings-file only: an SDK-registered `PostToolUse` hook can contribute a `block` reason and `additionalContext` but cannot replace the tool output. See PostToolUse Output in the user guide.
+### PostToolUse 输出
+`PostToolUse` 在工具结束后运行，因此什么也不拦截，但它的 stdout 决定模型接下来看到什么。`{"decision":"block","reason":"..."}` 会把原因连同结果一起喂给模型。`hookSpecificOutput.additionalContext` 会追加一条注记。`hookSpecificOutput.updatedToolOutput`（内置工具；必须匹配工具自身的输出形状）或 `hookSpecificOutput.updatedMCPToolOutput`（MCP 工具；不校验形状）会替换模型读到的输出，而回滚区与遥测保留原件。每个钩子的 block 原因与上下文按调用顺序送达，各自点名其钩子。只有替换是最后写入者胜出，而以非零退出的钩子只保留其 block 原因。输出替换仅限设置文件：通过 SDK 注册的 `PostToolUse` 钩子可以贡献 `block` 原因与 `additionalContext`，但不能替换工具输出。见用户指南的 PostToolUse 输出。
 
-### Passive hooks
-For events like `SessionStart` or `Notification`, stdout is ignored. Just exit 0 on success.
+### 被动钩子
+对 `SessionStart` 或 `Notification` 这类事件，stdout 会被忽略。成功时以 0 退出即可。
 
-### Useful Environment Variables
+### 常用环境变量
 
-Grok injects the following variables into every hook process:
+Chaos 会把以下变量注入每个钩子进程：
 
-- `GROK_HOOK_EVENT`: the event name (e.g. `pre_tool_use`, `session_start`, `post_tool_use`).
-- `GROK_HOOK_NAME`: the full configured name of this hook.
-- `GROK_SESSION_ID`: the current session identifier.
-- `GROK_WORKSPACE_ROOT`: absolute path to the workspace root.
+- `GROK_HOOK_EVENT`：事件名（例如 `pre_tool_use`、`session_start`、`post_tool_use`）。
+- `GROK_HOOK_NAME`：该钩子配置的完整名称。
+- `GROK_SESSION_ID`：当前会话的标识符。
+- `GROK_WORKSPACE_ROOT`：工作区根目录的绝对路径。
 
-For hooks provided by plugins, the following are also set:
+对插件提供的钩子，还会额外设置以下变量：
 
-- `GROK_PLUGIN_ROOT`: absolute path to the plugin's installation directory.
-- `GROK_PLUGIN_DATA`: absolute path to the plugin's writable data directory.
+- `GROK_PLUGIN_ROOT`：插件安装目录的绝对路径。
+- `GROK_PLUGIN_DATA`：插件可写数据目录的绝对路径。
 
-These runner- and plugin-injected variables always take precedence. Attempts to override the reserved runner keys via the `env` field are stripped at load time (with a warning logged). For plugin hooks, `GROK_PLUGIN_ROOT` and `GROK_PLUGIN_DATA` similarly override any user-supplied values for those keys.
+这些由运行器和插件注入的变量始终优先。试图通过 `env` 字段覆盖保留的运行器键，会在加载时被剥除（并记录一条警告）。对插件钩子，`GROK_PLUGIN_ROOT` 与 `GROK_PLUGIN_DATA` 同样会压过用户为这些键提供的任何值。
 
-### Custom Environment Variables (`env` field)
+### 自定义环境变量（`env` 字段）
 
-Each handler can declare additional env vars to inject into the child process:
+每个处理器都可以声明额外的环境变量，注入到子进程：
 
 ```json
 {
@@ -162,17 +162,15 @@ Each handler can declare additional env vars to inject into the child process:
 }
 ```
 
-Values must be **strings**. JSON numbers and bools currently fail to parse; wrap
-them in quotes if you need them.
+值必须是**字符串**。JSON 数字与布尔值目前无法解析；需要时请用引号包起来。
 
-For plugin hooks, the plugin adapter additionally injects
-`GROK_PLUGIN_ROOT` and `GROK_PLUGIN_DATA`. These keys override any user-declared
-values for the same names (the plugin contract is non-negotiable).
+对插件钩子，插件适配器还会额外注入
+`GROK_PLUGIN_ROOT` 与 `GROK_PLUGIN_DATA`。这些键会压过用户为同名键声明的
+任何值（插件契约不可协商）。
 
-### Variable Substitution
+### 变量替换
 
-`command` and `url` strings support `$VAR` and `${VAR}` substitution at
-config-load time:
+`command` 与 `url` 字符串支持在配置加载时做 `$VAR` 与 `${VAR}` 替换：
 
 ```json
 {
@@ -181,110 +179,105 @@ config-load time:
 }
 ```
 
-Lookup order for each reference:
-1. The handler's own `env` map.
-2. The current process environment (the env Grok itself sees).
+每个引用的查找顺序：
+1. 处理器自己的 `env` 映射。
+2. 当前进程环境（Chaos 自己看到的环境）。
 
-If a reference is unset in both, it's **preserved verbatim** (e.g. `${UNSET}`
-stays as the literal string). Runner-injected names (`CLAUDE_PROJECT_DIR`,
-`GROK_WORKSPACE_ROOT`, `GROK_HOOK_EVENT`, `GROK_HOOK_NAME`,
-`GROK_SESSION_ID`) are not taken from the Grok process environment at
-load. Unix `sh -c` expands them from the child env; Windows PowerShell
-rewrites `$VAR` to `$env:VAR`. HTTP `url` substitutes them at request
-time. Remaining unresolved command refs are refused with "required env
-var(s) not set".
+如果某个引用在两处都未设置，它会**原样保留**（例如 `${UNSET}`
+仍是那个字面字符串）。运行器注入的名字（`CLAUDE_PROJECT_DIR`、
+`GROK_WORKSPACE_ROOT`、`GROK_HOOK_EVENT`、`GROK_HOOK_NAME`、
+`GROK_SESSION_ID`）在加载时不取自 Chaos 进程的环境。
+Unix 的 `sh -c` 会从子进程环境里展开它们；Windows PowerShell 把 `$VAR`
+改写成 `$env:VAR`。HTTP 的 `url` 在请求时替换它们。其余未解析的
+命令引用会以 "required env var(s) not set" 拒绝。
 
-For HTTP hooks specifically, `url` is also re-expanded **at request time**
-(immediately before SSRF validation), so plugin-injected vars like
-`${GROK_PLUGIN_ROOT}/check` resolve against the plugin's actual path.
+具体到 HTTP 钩子，`url` 还会**在请求时**再次展开
+（就在 SSRF 校验之前），因此 `${GROK_PLUGIN_ROOT}/check` 这类
+由插件注入的变量会按插件的真实路径解析。
 
-#### Parameter-expansion modifiers
+#### 参数展开修饰符
 
-POSIX parameter-expansion forms are **never** expanded at load time. They are
-left verbatim for the runtime `sh -c` branch to handle: `${VAR:-default}`,
-`${VAR-default}`, `${VAR:=x}`, `${VAR:?msg}`, `${VAR:+x}`, `${VAR%pat}`,
-`${VAR#pat}`, `${VAR/pat/repl}`, `${VAR:N:M}`. This avoids subtle divergences
-between the load-time expander and POSIX shell semantics (notably, the
-empty-string behaviour of `:-`).
+POSIX 的参数展开形式在加载时**绝不**展开。它们被原样留给运行时的
+`sh -c` 分支处理：`${VAR:-default}`、`${VAR-default}`、`${VAR:=x}`、
+`${VAR:?msg}`、`${VAR:+x}`、`${VAR%pat}`、`${VAR#pat}`、
+`${VAR/pat/repl}`、`${VAR:N:M}`。这避免加载期展开器与 POSIX shell
+语义之间出现细微分歧（尤其是 `:-` 的空串行为）。
 
-If your hook command contains shell metacharacters (spaces, pipes, `&&`,
-redirects, `$`, etc.), the runner routes it through `sh -c` and you get full
-shell-expansion semantics. If your command is a bare path with no metachars,
-the runner spawns it directly. Even then, `$VAR` / `${VAR}` references in the
-path are still resolved at load time, so direct-exec paths like
-`${HOME}/bin/check.sh` work without being wrapped in `sh -c`.
+如果你的钩子命令包含 shell 元字符（空格、管道、`&&`、重定向、`$`
+等），运行器会把它交给 `sh -c`，你就能得到完整的 shell 展开语义。如果
+命令是不含元字符的裸路径，运行器会直接 spawn 它。即便如此，路径里的
+`$VAR` / `${VAR}` 引用仍会在加载时解析，因此像 `${HOME}/bin/check.sh`
+这样的直接执行路径无需包进 `sh -c`。
 
-#### What is NOT expanded
+#### 什么不会被展开
 
-- **`matcher`** is a regex (`$` is the regex anchor for end-of-line). It is
-  never env-expanded. Substituting `$VAR` would silently change the regex's
-  semantics and likely produce an invalid pattern. If you need a dynamic
-  matcher, generate the JSON file at write time.
-- **`timeout`** is numeric, so there is nothing to expand.
-- **The values of the `env` map itself**: these are stored verbatim and
-  passed to the child as-is, so `"BAR": "${HOME}/x"` injects the literal
-  string `${HOME}/x` into the child's environment.
+- **`matcher`** 是正则（`$` 是行尾的正则锚点），它从不做环境变量展开。
+  替换 `$VAR` 会悄悄改变正则的语义，并很可能产出一个无效模式。如果你需要
+  动态的 matcher，请在写入时生成 JSON 文件。
+- **`timeout`** 是数字，没什么可展开的。
+- **`env` 映射本身的值**：它们被原样存储并原样传给子进程，因此
+  `"BAR": "${HOME}/x"` 会把字面字符串 `${HOME}/x` 注入子进程的环境。
 
-## Managing Hooks in the TUI
+## 在 TUI 中管理钩子
 
-Press `Ctrl+L` outside the VS Code family (or run `/hooks` anywhere) to open the Hooks & Plugins modal.
+在 VS Code 系之外按 `Ctrl+L`（或在任何终端运行 `/hooks`）打开钩子与插件模态。
 
-In the **Hooks** tab you can:
-- `l`: Reload all hooks.
-- `a`: Add a custom hook by path (great for testing).
-- `e`: Enable or disable.
-- `r`: Remove.
-- `Space`: Expand groups.
+在 **Hooks** 标签页里，你可以：
+- `l`：重新加载所有钩子。
+- `a`：按路径添加自定义钩子（很适合做测试）。
+- `e`：启用或禁用。
+- `r`：移除。
+- `Space`：展开分组。
 
-Hooks from `~/.grok/hooks/` appear under **Global**, project ones under **Project**, etc.
+来自 `~/.chaos/hooks/` 的钩子显示在**全局**下，项目的显示在**项目**下，等等。
 
-## HTTP Hooks
+## HTTP 钩子
 
-Instead of a local script, call a remote endpoint:
+不跑本地脚本，改为调用远端端点：
 
 ```json
 { "type": "http", "url": "https://hooks.example.com/grok-event", "timeout": 15 }
 ```
 
-The full event envelope is POSTed as JSON. Useful for webhooks, analytics, or serverless functions.
+完整事件信封以 JSON POST 出去。适合 webhook、分析或 serverless 函数。
 
-## Best Practices
+## 最佳实践
 
-1. **Keep hooks fast**: long-running hooks block the UI. Use background `&` or async where possible.
-2. **Use explicit `deny` to block**: hooks fail-open on any error (timeout, crash, missing env var, etc.), so a hook that crashes will not block the tool call. To enforce policy, your hook must run to completion and emit `{"decision":"deny","reason":"..."}` on stdout.
-3. **Use absolute paths or paths relative to the hook file**: scripts in `bin/` next to the JSON are portable.
-4. **Test with the Hooks tab**: press `Ctrl+L` outside the VS Code family, or run `/hooks`, to verify loading and matching before relying on them.
-5. **Version control project hooks**: commit `.grok/hooks/` (but never secrets).
+1. **保持钩子快速**：长时间运行的钩子会阻塞 UI。尽可能用后台 `&` 或异步方式。
+2. **用显式 `deny` 拦截**：钩子在任何错误（超时、崩溃、缺少环境变量等）下都按失败放行，因此崩溃的钩子不会拦截工具调用。要强制执行策略，你的钩子必须运行到完成并在 stdout 上发出 `{"decision":"deny","reason":"..."}`。
+3. **使用绝对路径或相对于钩子文件的路径**：JSON 旁 `bin/` 中的脚本便于移植。
+4. **用 Hooks 标签页测试**：在 VS Code 系之外按 `Ctrl+L`，或运行 `/hooks`，在依赖钩子之前确认它们已加载并匹配。
+5. **对项目钩子做版本控制**：提交 `.chaos/hooks/`（但绝不要提交密钥）。
 
-## Security Notes
+## 安全注意事项
 
-- Global hooks (`~/.grok/...`) run with your user permissions. Treat them like shell scripts.
-- Project hooks require explicit trust (run `/hooks-trust` or use the modal) to prevent supply-chain attacks from malicious repos.
-- HTTP hooks send session data. Only use trusted endpoints.
+- 全局钩子（`~/.chaos/...`）以你的用户权限运行。把它们当作 shell 脚本对待。
+- 项目钩子需要显式信任（运行 `/hooks-trust` 或使用模态），以防恶意仓库的供应链攻击。
+- HTTP 钩子会发送会话数据。只使用可信端点。
 
-## Troubleshooting
+## 故障排查
 
-- **Hook not running?** Press `Ctrl+L` outside the VS Code family (or run `/hooks` anywhere) to see if it's loaded and matched.
-- **Project hooks ignored?** Trust the project first.
-- **Script not found?** Check the path is relative to the `.json` file and executable (`chmod +x`).
-- **`The argument '/.claude/hooks/….ps1' to the -File parameter does not exist`?** PowerShell treated `$CLAUDE_PROJECT_DIR` as empty. Grok rewrites it to `$env:CLAUDE_PROJECT_DIR` unless `GROK_SHELL=cmd`.
-- **See errors?** Check the pager logs (usually in the tracing pane or `~/.grok/logs`).
+- **钩子没有运行？** 在 VS Code 系之外按 `Ctrl+L`（或在任何位置运行 `/hooks`），看它是否已加载并匹配。
+- **项目钩子被忽略？** 先信任该项目。
+- **找不到脚本？** 检查路径是否相对于 `.json` 文件且可执行（`chmod +x`）。
+- **`The argument '/.claude/hooks/….ps1' to the -File parameter does not exist`？** PowerShell 把 `$CLAUDE_PROJECT_DIR` 当成了空。除非 `GROK_SHELL=cmd`，否则 Chaos 会把它改写成 `$env:CLAUDE_PROJECT_DIR`。
+- **想看错误？** 查看 pager 日志（通常在 tracing 面板或 `~/.chaos/logs`）。
 
-## More Examples
+## 更多示例
 
-See the built-in examples in the `xai-grok-hooks` crate:
+参见 `xai-grok-hooks` crate 里内置的示例：
 
-- [Safe Shell Guard](../../../xai-grok-hooks/examples/hooks/safe-shell.json)
-- [No Recursive Grep](../../../xai-grok-hooks/examples/hooks/no-recursive-grep.json): hard-blocks `grep -r`/`grep -R`/`rgrep` (OOM guard)
-- [Session Audit Log](../../../xai-grok-hooks/examples/hooks/session-log.json)
-- [Tool Activity Logger](../../../xai-grok-hooks/examples/hooks/tool-logger.json)
+- [安全 Shell 防护](../../xai-grok-hooks/examples/hooks/safe-shell.json)
+- [禁止递归 grep](../../xai-grok-hooks/examples/hooks/no-recursive-grep.json)：硬拦 `grep -r`/`grep -R`/`rgrep`（OOM 防护）
+- [会话审计日志](../../xai-grok-hooks/examples/hooks/session-log.json)
+- [工具活动日志](../../xai-grok-hooks/examples/hooks/tool-logger.json)
 
-Copy them to `~/.grok/hooks/` and customize.
+把它们复制到 `~/.chaos/hooks/` 并按需定制。
 
-## Full Reference
+## 完整参考
 
-For the complete event list, matcher semantics, trust model, and advanced details, see the [Hooks user guide](user-guide/10-hooks.md).
+完整事件列表、matcher 语义、信任模型与进阶细节，见[钩子用户指南](user-guide/10-hooks.md)。
 
 ---
 
-*Happy hooking!* If you build something cool, consider sharing it as a plugin.
+*写钩子愉快！* 如果你做出了什么好东西，考虑把它作为插件分享出来。

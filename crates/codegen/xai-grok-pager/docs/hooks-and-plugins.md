@@ -1,109 +1,109 @@
-# Hooks & Plugins Guide
+# 钩子与插件指南
 
-Grok Build supports **hooks** (event-driven shell commands) and **plugins** (bundles of skills, agents, hooks, and MCP servers). Both are managed through a unified modal interface.
+Chaos 支持**钩子**（事件驱动的 shell 命令）与**插件**（技能、代理、钩子和 MCP 服务器的打包）。两者都通过一个统一的模态界面管理。
 
-## Opening the Modal
+## 打开模态
 
-| Method | Opens on tab |
+| 方式 | 打开的标签页 |
 |--------|-------------|
-| `Ctrl+L` | Plugins (any pane; **non–VS Code family** — on VS Code / Cursor / Windsurf / Zed use `/plugins`) |
-| `/plugins` | Plugins (any terminal) |
-| `/hooks` | Hooks |
+| `Ctrl+L` | 插件（任意面板；**非 VS Code 系** —— 在 VS Code / Cursor / Windsurf / Zed 上用 `/plugins`） |
+| `/plugins` | 插件（任意终端） |
+| `/hooks` | Hooks 标签页 |
 
-## Tabs
+## 标签页
 
-The modal has three tabs: **Hooks**, **Plugins**, and **Marketplace**. Switch between them with `Tab` / `→` (forward) or `Shift+Tab` / `←` (backward).
-
----
-
-## Hooks Tab
-
-Hooks are shell commands (or HTTP calls) that run automatically on events like `session_start`, `post_tool_use`, `notification`, etc. See [Creating Custom Hooks](custom-hooks.md) for how to write your own.
-
-Hooks are grouped by source:
-- **Global hooks** — from `~/.grok/hooks/`
-- **Project hooks** — from `.grok/hooks/` in your repo
-- **Plugin hooks** — bundled with installed plugins
-- **Custom hooks** — added manually via a path
-
-Each hook shows:
-- **Event** it triggers on (e.g., `session_start`, `post_tool_use`)
-- **Command** or **URL** that runs
-- **Timeout** duration
-- **Status** — enabled or `[disabled]`
-
-### Shortcuts (Hooks tab)
-
-| Key | Action |
-|-----|--------|
-| `l` | Reload all hooks |
-| `a` | Add hook from path |
-| `r` | Remove selected hook |
-| `e` | Enable / disable selected hook |
-| `Space` | Expand / collapse group |
+模态有三个标签页：**Hooks**、**插件**和**市场**。用 `Tab` / `→` 切到下一个，用 `Shift+Tab` / `←` 切回上一个。
 
 ---
 
-## Plugins Tab
+## Hooks 标签页
 
-Plugins are directories containing any combination of skills, agents, hooks, and MCP server configs.
+钩子是在 `session_start`、`post_tool_use`、`notification` 等事件上自动运行的 shell 命令（或 HTTP 调用）。想自己写钩子，见[创建自定义钩子](custom-hooks.md)。
 
-Each plugin shows (when expanded):
-- **Name** and **version**
-- **Scope** — `user`, `project`, `cli`, or marketplace source name
-- **Skills** — names or count
-- **Agents** — names or count
-- **Hooks** — count
-- **MCP servers** — count (or "blocked" if not trusted)
-- **Description**
-- **Conflicts** — ⚠ warning if any
+钩子按来源分组：
+- **全局钩子** —— 来自 `~/.chaos/hooks/`
+- **项目钩子** —— 来自你仓库里的 `.chaos/hooks/`
+- **插件钩子** —— 随已安装的插件打包
+- **自定义钩子** —— 手动通过路径添加
 
-Plugin hooks automatically receive `GROK_PLUGIN_ROOT` and `GROK_PLUGIN_DATA` environment variables (see the [Plugins guide](../user-guide/09-plugins.md#environment-variables-in-plugin-hooks)).
+每个钩子显示：
+- 触发它的**事件**（例如 `session_start`、`post_tool_use`）
+- 运行的**命令**或 **URL**
+- **超时**时长
+- **状态** —— 已启用或 `[disabled]`
 
-### Shortcuts (Plugins tab)
+### 快捷键（Hooks 标签页）
 
-| Key | Action |
+| 键 | 操作 |
 |-----|--------|
-| `r` | Reload all plugins |
-| `i` | Install plugin from path |
-| `e` | Enable / disable selected plugin |
-| `Space` | Expand / collapse plugin details |
-| `/` | Search plugins by name |
+| `l` | 重新加载所有钩子 |
+| `a` | 按路径添加钩子 |
+| `r` | 移除选中的钩子 |
+| `e` | 启用 / 禁用选中的钩子 |
+| `Space` | 展开 / 折叠分组 |
 
 ---
 
-## Marketplace Tab
+## 插件标签页
 
-Browse and install plugins from configured marketplace sources.
+插件是包含技能、代理、钩子和 MCP 服务器配置任意组合的目录。
 
-Sources are loaded from:
-1. **config.toml** — `[[marketplace.sources]]` entries
-2. **settings.json** — `extraKnownMarketplaces` from `~/.grok/settings.json` or `~/.claude/settings.json`
+展开后，每个插件显示：
+- **名称**与**版本**
+- **作用域** —— `user`、`project`、`cli`，或插件市场源名称
+- **技能** —— 名称或数量
+- **代理** —— 名称或数量
+- **钩子** —— 数量
+- **MCP 服务器** —— 数量（未受信任时显示为 "blocked"）
+- **描述**
+- **冲突** —— 有任何冲突时给出 ⚠ 警告
 
-Each source shows its plugins with:
-- **Name** and **version**
-- **Description**
-- **Install status** — `[installed]`, `[installed • update: v1 → v2]`, or not installed
+插件钩子会自动收到 `GROK_PLUGIN_ROOT` 和 `GROK_PLUGIN_DATA` 环境变量（见[插件指南](user-guide/09-plugins.md#environment-variables-in-plugin-hooks)）。
 
-### Shortcuts (Marketplace tab)
+### 快捷键（插件标签页）
 
-| Key | Action |
+| 键 | 操作 |
 |-----|--------|
-| `i` | Install selected plugin |
-| `d` | Uninstall selected plugin |
-| `r` | Refresh marketplace sources (re-clone/pull git repos) |
-| `u` | Update all installed marketplace plugins |
-| `Space` | Expand / collapse source or plugin |
-| `/` | Search plugins by name |
+| `r` | 重新加载所有插件 |
+| `i` | 按路径安装插件 |
+| `e` | 启用 / 禁用选中的插件 |
+| `Space` | 展开 / 折叠插件详情 |
+| `/` | 按名称搜索插件 |
 
-### Adding Marketplace Sources
+---
 
-Press `a` on the Marketplace tab (or run `grok plugin marketplace add <source>`)
-with a git URL, a GitHub shorthand (`owner/repo`), or a local directory path
-(`/absolute`, `~/dir`, or `./relative`). Local paths are stored as `path`
-sources — handy for developing a marketplace from an existing checkout.
+## 市场标签页
 
-Sources land in `~/.grok/config.toml`:
+从已配置的插件市场源浏览并安装插件。
+
+来源从以下位置加载：
+1. **config.toml** —— `[[marketplace.sources]]` 条目
+2. **settings.json** —— 来自 `~/.chaos/settings.json` 或 `~/.claude/settings.json` 的 `extraKnownMarketplaces`
+
+每个源会连同它的插件一起显示：
+- **名称**与**版本**
+- **描述**
+- **安装状态** —— `[installed]`、`[installed • update: v1 → v2]`，或未安装
+
+### 快捷键（市场标签页）
+
+| 键 | 操作 |
+|-----|--------|
+| `i` | 安装选中的插件 |
+| `d` | 卸载选中的插件 |
+| `r` | 刷新插件市场源（重新 clone/pull git 仓库） |
+| `u` | 更新所有已安装的插件市场插件 |
+| `Space` | 展开 / 折叠源或插件 |
+| `/` | 按名称搜索插件 |
+
+### 添加插件市场源
+
+在市场标签页按 `a`（或运行 `chaos plugin marketplace add <source>`），
+给出一个 git URL、GitHub 简写（`owner/repo`），或本地目录路径
+（`/absolute`、`~/dir` 或 `./relative`）。本地路径会存为 `path` 源——从已有
+检出开发插件市场时很方便。
+
+源会写入 `~/.chaos/config.toml`：
 
 ```toml
 [[marketplace.sources]]
@@ -115,7 +115,7 @@ name = "Local Dev"
 path = "~/dev/my-plugins"
 ```
 
-Or in `~/.grok/settings.json` / `~/.claude/settings.json`:
+或写入 `~/.chaos/settings.json` / `~/.claude/settings.json`：
 
 ```json
 {
@@ -130,35 +130,35 @@ Or in `~/.grok/settings.json` / `~/.claude/settings.json`:
 
 ---
 
-## General Keyboard Shortcuts
+## 通用键盘快捷键
 
-These work across all tabs:
+这些在所有标签页都可用：
 
-| Key | Action |
+| 键 | 操作 |
 |-----|--------|
-| `Tab` / `→` | Next tab |
-| `Shift+Tab` / `←` | Previous tab |
-| `j` / `↓` | Move selection down |
-| `k` / `↑` | Move selection up |
-| `Space` | Toggle expand / collapse |
-| `/` | Start search (Plugins & Marketplace) |
-| `Backspace` | Delete search char, or re-enter search |
-| `Esc` | Clear search, or close modal |
-| `q` | Close modal |
+| `Tab` / `→` | 下一个标签页 |
+| `Shift+Tab` / `←` | 上一个标签页 |
+| `j` / `↓` | 向下移动选择 |
+| `k` / `↑` | 向上移动选择 |
+| `Space` | 切换展开 / 折叠 |
+| `/` | 开始搜索（插件与插件市场） |
+| `Backspace` | 删除搜索字符，或重新进入搜索 |
+| `Esc` | 清空搜索，或关闭模态 |
+| `q` | 关闭模态 |
 
-## Confirmation & Errors
+## 确认与错误
 
-Some actions (like uninstalling a plugin) may ask for confirmation:
-- Press `y` to confirm
-- Press `Esc` or any other key to cancel
+有些操作（比如卸载插件）会请求确认：
+- 按 `y` 确认
+- 按 `Esc` 或任何其它键取消
 
-Errors are shown as a message overlay — press any key to dismiss.
+错误会以消息浮层显示——按任意键关掉。
 
-While an action is in progress, the modal shows "Processing..." and blocks input until the operation completes.
+操作进行中时，模态会显示 "Processing..." 并阻塞输入，直到操作完成。
 
-## See Also
+## 另见
 
-- [Creating Custom Hooks](custom-hooks.md) — step-by-step guide to writing your own hooks and scripts
-- [Hooks user guide](user-guide/10-hooks.md) — events, matchers, trust model
-- [Hook Examples](../../../xai-grok-hooks/examples/README.md) — ready-to-use sample hooks
-- [Plugins user guide](user-guide/09-plugins.md) — install, trust, and marketplace
+- [创建自定义钩子](custom-hooks.md) —— 一步步教你写自己的钩子和脚本
+- [钩子用户指南](user-guide/10-hooks.md) —— 事件、匹配器、信任模型
+- [钩子示例](../../xai-grok-hooks/examples/README.md) —— 开箱即用的示例钩子
+- [插件用户指南](user-guide/09-plugins.md) —— 安装、信任与插件市场
