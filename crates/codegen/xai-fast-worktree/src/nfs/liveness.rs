@@ -517,12 +517,20 @@ fn read_marker_capped(path: &Path) -> Option<Vec<u8>> {
     }
     Some(buf)
 }
+/// Whether `refs/grok/worktrees/<id>` exists in `source`.
+/// Pins are written by the Grove daemon, and this build ships without it, so the
+/// answer is always `Ok(false)` — never `Err`, because callers age an orphan on
+/// `Err` and a hardcoded error would turn every unknown id into a permanent
+/// warning. The consequence is that pin GC cannot see a pin that does exist: it
+/// retires the orphan from the ledger instead of pruning it, which leaks the ref
+/// but never deletes a live one.
 fn pin_exists(source: &Path, worktree_id: &str) -> Result<bool> {
     {
         let _ = (source, worktree_id);
         Ok(false)
     }
 }
+/// Deletes `refs/grok/worktrees/<id>`; the Grove daemon owns the ref, so this build declines.
 fn delete_pin_ref_gated(source: &Path, worktree_id: &str) -> Result<()> {
     {
         let _ = (source, worktree_id);
@@ -720,7 +728,10 @@ mod tests {
         let report = gc_orphan_pins(&data, &[], 10, false).unwrap();
         assert_eq!(report.kept_live, 1, "union liveness must keep the pin");
         assert_eq!(report.pruned, 0);
-        assert!(pin_exists(&repo, "wt-live").unwrap());
+        // `pin_exists` cannot observe the pin in this Grove-less build: it is a hardcoded `Ok(false)`,
+        // so asserting through it here would only re-state the stub. The `cat-file` assertion at the
+        // end is the real contract — the ref is what keeps the orphaned commit reachable, and it must
+        // survive `git gc`.
         let mut gc = std::process::Command::new("git");
         xai_tty_utils::detach_std_command(&mut gc);
         assert!(
@@ -742,8 +753,12 @@ mod tests {
             "orphaned commit must remain reachable through the pin after git gc"
         );
     }
+    /// Needs a real pin backend: the fork ships without the Grove daemon, so `pin_exists` answers
+    /// `Ok(false)` and `delete_pin_ref_gated` refuses — the aged orphan is retired from the ledger
+    /// instead of pruned, and `deferred_grace` never advances.
     #[test]
     #[cfg(feature = "metadata")]
+    #[ignore = "fork: needs the Grove daemon's pin backend (`pin_exists` is a hardcoded `Ok(false)`, `delete_pin_ref_gated` bails 'pin delete requires grove'), which the fork removes by design; re-enable with a real pin reader; review 2026-10"]
     fn aborted_partial_removal_prunes_after_grace() {
         xai_test_utils::require_git!();
         let tmp = TempDir::new().unwrap();
@@ -799,7 +814,8 @@ mod tests {
         write_create_state(&data, "wt-fly", "pinned", "/dest", &repo);
         let r = gc_orphan_pins(&data, &[], 10 + PIN_GC_GRACE_SECS, false).unwrap();
         assert_eq!(r.pruned, 0);
-        assert!(pin_exists(&repo, "wt-fly").unwrap());
+        // No `pin_exists` check: an in-flight create is live by its own phase, which is exactly what
+        // `r.pruned == 0` asserts, and this build cannot observe refs (see `pin_exists`).
     }
     #[test]
     #[cfg(feature = "metadata")]
@@ -865,11 +881,11 @@ mod tests {
             "aborted journal must not hide marker/mounts.toml: {r1:?}"
         );
         assert_eq!(r1.pruned, 0);
-        assert!(pin_exists(&repo, "wt-mask").unwrap());
+        // The marker/mounts teardown is the point here; the pin's survival is asserted by the
+        // `cat-file` check below instead, since this build cannot observe refs (see `pin_exists`).
         let r2 = gc_orphan_pins(&data, &[], t0 + PIN_GC_GRACE_SECS + 1, false).unwrap();
         assert!(r2.kept_live >= 1, "still live after grace: {r2:?}");
         assert_eq!(r2.pruned, 0);
-        assert!(pin_exists(&repo, "wt-mask").unwrap());
         let mut gc = std::process::Command::new("git");
         xai_tty_utils::detach_std_command(&mut gc);
         assert!(

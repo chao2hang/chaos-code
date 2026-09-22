@@ -393,7 +393,12 @@ fn effective_max_age_precedence() {
     );
 }
 
+/// Needs a real pin backend: the pin sweep can only see the pin through `nfs::liveness::pin_exists`,
+/// which the Grove-less fork hardcodes to `Ok(false)`, and deleting it goes through
+/// `delete_pin_ref_gated`, which bails "pin delete requires grove". So `pin_gc_examined` reaches 1
+/// while `pin_gc_pruned` stays 0 and the ref survives.
 #[test]
+#[ignore = "fork: needs the Grove daemon's pin backend (`pin_exists` is a hardcoded `Ok(false)`, `delete_pin_ref_gated` bails 'pin delete requires grove'), which the fork removes by design; re-enable with a real pin reader; review 2026-10"]
 fn run_pass_prunes_orphan_grove_pins_after_grace() {
     xai_test_utils::require_git!();
     use xai_test_utils::git::{git_commit_all, init_git_repo};

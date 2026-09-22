@@ -117,7 +117,10 @@ pub(crate) fn is_safe_worktree_id(id: &str) -> bool {
         && !id.starts_with('.')
         && !id.contains('/')
         && !id.contains('\\')
-        && !id.contains('\0')
+        // Kept identical to `nfs::confined::is_safe_worktree_id`: whitespace and
+        // control characters break the pin ref and the backing-marker dirent
+        // lookup, so the stub build must reject them too.
+        && !id.chars().any(|c| c.is_whitespace() || c.is_control())
 }
 pub(crate) fn try_grove_worktree(_plan: &WorktreePlan) -> Result<Option<CreateWorktreeResult>> {
     Ok(None)
