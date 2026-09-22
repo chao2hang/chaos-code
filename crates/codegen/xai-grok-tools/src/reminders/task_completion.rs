@@ -106,6 +106,17 @@ impl ReportedTaskCompletions {
         }
         self.reported.insert(id.to_owned())
     }
+
+    /// Whether `id` has already been surfaced as a `<system-reminder>`.
+    ///
+    /// Read-only on purpose: the only other way to ask is to look up the state
+    /// in `Resources`, and every writer in the reminder pipeline reaches it
+    /// through `get_or_default`, which *creates* an empty entry. So "the state
+    /// is absent" is not the same claim as "nothing was reported" — a caller
+    /// that wants the latter has to read the set.
+    pub fn is_reported(&self, id: &str) -> bool {
+        self.reported.contains(id)
+    }
 }
 crate::register_resource!(
     "grok_build",
