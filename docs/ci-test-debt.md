@@ -185,11 +185,11 @@ scripts/ci/ignored-tests.sh --stale  # 只列过期/未设 review date 的
 **教训**：新增 `#[cfg(all(test, feature = …))]` 的测试模块时，必须同时说明
 「谁打开这个特性」，否则它和删掉没有区别。
 
-## 2026-09-22：全量 test 暴露的四类遗留失败（已修）
+## 2026-09-22：全量 test 暴露的五类遗留失败（已修）
 
-`cargo test --workspace --no-fail-fast` 与随后的复现实验找出四类问题，都不是
+`cargo test --workspace --no-fail-fast` 与随后的复现实验找出五类问题，都不是
 本轮改动引入的：三个文件在本分叉与 `SOURCE_REV` 逐字节相同，第四类是上游
-`75810042` 已经修过、本分叉还停在旧写法上。
+`75810042` 已经修过、本分叉还停在旧写法上，第五类在改动前后同样比例地出现（见下）。
 
 | 用例 | 表现 | 成因 | 修法 |
 |---|---|---|---|
@@ -197,6 +197,7 @@ scripts/ci/ignored-tests.sh --stale  # 只列过期/未设 review date 的
 | `prompt_queue_actor_tests::drain_at_safe_point_with_steer_off_does_not_promote_held_row` | 偶发（全量跑 2/3 次挂 1 次） | steer 缓存是进程全局的，同文件另两条用例会写它 | 两个写入者补 `#[serial_test::serial]` |
 | `session_search::{bootstrap::tests::test_claimant_reindexes_even_when_marker_exists, manager::tests::test_recheck_bootstrap_reruns_reindex_when_marker_missing}` | 偶发（加压后 4/120） | `recovery::CACHE_EPOCH` 是进程全局的，同二进制里别的用例 heal 自己的缓存会把它自增 | 断言容忍外来 heal，写法照抄同文件 `test_concurrent_gates_single_flight` |
 | `auth::manager::lock::tests::dropping_the_guard_silences_the_heartbeat_before_anyone_else_can_hold_the_lock` | 全量 6819 条里挂过 1 次（`lock_tests.rs:491` `WouldBlock`） | 别的用例 `Command::spawn` 时 fork 把当刻开着的锁文件 dup 带进子进程，那份 dup 压着 flock 到 exec | 抢锁改成有界重试；真泄漏仍会超时失败 |
+| `telemetry::span_profile::tests::nested_timer_folds_under_parent_without_enter` | 偶发且**整条测试二进制 SIGABRT**（单跑 8 次挂 2 次；70 次挂 3 次） | `InstrumentationTimer` 找不到线程内父跨度时回退到进程全局的 `startup::current_phase_span()`，而那份 span 属于另一个用例的线程局部 subscriber，克隆进自己的 registry 即 panic，析构再踩污染锁 → 非展开 panic → abort | `span_profile` 的夹具拿 `startup` 用例那把 `SERIAL` 锁，两族互斥；另给相邻的覆盖断言加 1ms 采样偏斜界 |
 
 ### 一：`is_none()` 不是「没报告过」
 
@@ -265,10 +266,48 @@ flock 挂在打开文件描述上，`fork` 出来的子进程带着当刻开着�
 （心跳线程没死、或某个子进程卡在 exec 前）仍会走到超时 panic；用例真正要钉的
 属性——30ms 后文件里还是 `sentinel`——没有放宽。
 
-**教训**：进程全局状态（`CACHE_EPOCH`、steer 缓存、fd 继承）不会出现在用例自己
-的 tmpdir 里，却决定它读到什么。这样的用例要么显式互斥，要么把「全局变化了」
-当成合法分支写进断言——把它当成不可能的巧合，就换来一条只在全量跑时冒头的
-偶发失败。
+### 五：跨测试的 `tracing` 注册表
+
+`xai-grok-telemetry` 的 `span_profile::tests::nested_timer_folds_under_parent_without_enter`
+全量跑时偶发，而且**整条测试二进制 SIGABRT**——同一二进制里其余 275 条结果一起丢：
+
+```
+thread 'span_profile::tests::nested_timer_folds_under_parent_without_enter' panicked at .../tracing-subscriber-0.3.23/src/registry/sharded.rs:306:32:
+tried to clone Id(57005), but no span exists with that ID
+...
+thread '...' panicked at crates/codegen/xai-grok-telemetry/src/startup.rs:783:45:
+called `Result::unwrap()` on an `Err` value: PoisonError { .. }
+panic in a destructor during cleanup
+thread caused non-unwinding panic. aborting.
+```
+
+在 `timer_parents::open` 里加一行诊断，原因当场暴露：
+
+```
+DIAG open name=parent.work top=false global=true current=false
+```
+
+`InstrumentationTimer` 找父跨度时先看本线程的父栈，栈空则回退到**进程全局**的
+`crate::startup::current_phase_span()`。而 `startup` 的用例会把一个活的 phase span
+放进那份全局状态，那个 span 属于**它自己那份线程局部 subscriber**。回退把它克隆进
+`span_profile` 用例自己的 registry，「Id 在我这儿不存在」直接 panic；panic 展开时
+析构又踩到被污染的锁，于是非展开 panic → abort。
+
+修法：让 `span_profile` 的测试夹具 `folded_with_layer` 去拿 `startup` 用例早就在用的
+那把 `SERIAL`（本次从 `mod tests` 提升为 `#[cfg(test)] pub(crate) static`），两族用例
+互斥。实测：修前 70 次挂 3 次（更早的 8 次里挂 2 次，即 25%），修后 150 次 0 次。
+
+同一轮还清掉紧邻的**另一条**临界断言：`startup_phases_emit_spans_with_durations`
+断言「根 span 必须覆盖它所有的 phase」，而两侧都是各自回调里采样出的墙钟时间，
+真实差值在 0.4µs / 0.8µs / 2.3µs 这种量级就翻符号（窗口是 30ms）。它与本次改动无关
+（改前 70 次里出现 2 次，改后同样比例），所以给它加了 1ms 的采样偏斜界：最小的一段
+phase 也有 10ms，真出现覆盖缺口时超出量至少是它的十倍。
+
+**教训**：进程全局状态（`CACHE_EPOCH`、steer 缓存、fd 继承、tracing 注册表）不会
+出现在用例自己的 tmpdir 里，却决定它读到什么。这样的用例要么显式互斥，要么把
+「全局变化了」当成合法分支写进断言——把它当成不可能的巧合，就换来一条只在全量跑时
+冒头的偶发失败。附带一条：**测量类断言必须给出测量方式对应的容差**，两侧由不同回调
+采样时，`a >= b` 在微秒量级上不成立。
 
 ## Risk
 
