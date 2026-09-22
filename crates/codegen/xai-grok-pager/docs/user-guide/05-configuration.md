@@ -1,4 +1,4 @@
-# Configuration
+# 配置
 
 Chaos 从配置文件、环境变量和 CLI flags 读取设置。本页覆盖常用选项。
 
@@ -9,9 +9,9 @@ Chaos 从配置文件、环境变量和 CLI flags 读取设置。本页覆盖常
 
 ---
 
-## Precedence
+## 优先级
 
-Settings resolve highest-priority first:
+设置按以下优先级从高到低解析：
 
 1. **CLI flags**（如 `--yolo`、`--model`、`--sandbox`）
 2. **环境变量**（如 Provider 的 `env_key`、`GROK_MEMORY`）
@@ -21,11 +21,11 @@ Settings resolve highest-priority first:
 
 ---
 
-## config.toml (main configuration)
+## config.toml（主配置）
 
-位置：`~/.chaos/config.toml`（或双读解析到的 `~/.grok/config.toml`）。文件不存在时使用内置默认值，只需覆盖你需要的项。
+位置：`~/.chaos/config.toml`（兼容旧名 `~/.grok/config.toml`，双读）。文件不存在时使用内置默认值，只需覆盖你需要的项。
 
-### General settings
+### 通用设置
 
 ```toml
 [cli]
@@ -98,83 +98,83 @@ respect_gitignore = false              # default: false; set true to make every 
 # max_parallel_video_gen_calls = 4
 ```
 
-#### Input mode
+#### 输入模式
 
-`[ui] simple_mode` controls how you edit text in the **prompt** — the input editor. It has nothing to do with how you move around the scrollback; that's [`vim_mode`](#vim-mode).
+`[ui] simple_mode` 控制你在**提示框**（输入编辑器）里如何编辑文本。它不影响你在回滚区里怎么移动，那是 [`vim_mode`](#vim-mode) 的事。
 
 | 取值 | 行为 |
 |-------|----------|
-| `true`（默认） | **Readline editing.** Plain readline-style text entry. |
-| `false` | **Vim editing (experimental).** Vim-style modal editing (normal and insert modes). When the prompt is empty it starts in normal mode with focus on the scrollback. |
+| `true`（默认） | **Readline 编辑。** 普通 readline 风格的文本输入。 |
+| `false` | **Vim 编辑（实验性）。** Vim 风格的模态编辑（normal 与 insert 模式）。提示框为空时以 normal 模式启动并聚焦回滚区。 |
 
-To switch the prompt to vim-style editing:
+把提示框切换为 vim 风格编辑：
 
 ```toml
 [ui]
 simple_mode = false
 ```
 
-You can also flip it from the settings pane (`/settings` → **Disable vim input mode**); Grok writes your choice to `[ui] simple_mode`. `simple_mode` and `vim_mode` are independent — one governs the prompt editor, the other governs scrollback navigation. See [Keyboard Shortcuts](03-keyboard-shortcuts.md) for the full binding reference.
+也可以在设置面板里切换（`/settings` → **Disable vim input mode**）；Chaos 会把你的选择写入 `[ui] simple_mode`。`simple_mode` 与 `vim_mode` 相互独立——前者管提示框编辑器，后者管回滚区导航。完整按键参考见 [键盘快捷键](03-keyboard-shortcuts.md)。
 
-#### Default selected permission
+#### 默认预选权限
 
-When the agent asks to run a command (or take some other tool action), the approval menu highlights one row by default. `[ui] default_selected_permission` sets which row that is on the **first** prompt of a session.
+当智能体请求运行命令（或执行其他工具操作）时，审批菜单默认会高亮某一行。`[ui] default_selected_permission` 决定会话中**第一个**提示出现时高亮的是哪一行。
 
 | 取值 | 预选中行 |
 |-------|-----------------|
-| `always_allow_all_sessions`（默认） | The "Always allow on all sessions" row. |
-| `allow_command_always` | The "Always allow this command" row. |
-| `allow_once` | The "Yes" / allow-once row. |
-| `reject` | The reject row. |
+| `always_allow_all_sessions`（默认） | "Always allow on all sessions"（在所有会话中始终允许）那一行。 |
+| `allow_command_always` | "Always allow this command"（始终允许该命令）那一行。 |
+| `allow_once` | "Yes" / 仅本次允许那一行。 |
+| `reject` | 拒绝那一行。 |
 
 ```toml
 [ui]
 default_selected_permission = "allow_once"
 ```
 
-After you answer the first prompt the cursor turns **sticky**: each later prompt preselects whatever you last confirmed (pick "No" once and subsequent prompts start on their reject row), carrying across edit / bash / MCP prompts until you restart. So this setting only picks the starting point.
+回答完第一个提示后，光标会变成**粘性**的：之后的每个提示都会预选你上一次确认的选项（比如选过一次 "No"，后续提示就从拒绝行开始），并跨编辑 / bash / MCP 提示一直延续，直到重启。因此这个设置只决定起始位置。
 
-Values match case-insensitively; an unset or unrecognized value falls back to `always_allow_all_sessions`. The `allow_command_always` row is always scoped to the specific action being approved (command / tool / domain / edit-session), never a global allow-everything — that's what `always_allow_all_sessions` is for. Note the per-command "Always allow" rows appear while `[ui] remember_tool_approvals` is enabled (the default; set it to `false` to hide them). See [22-permissions-and-safety.md](22-permissions-and-safety.md).
+取值不区分大小写；未设置或无法识别的值会回退到 `always_allow_all_sessions`。`allow_command_always` 行始终只作用于当前正在审批的具体操作（命令 / 工具 / 域名 / 编辑会话），绝不会是全局放行一切——那是 `always_allow_all_sessions` 的职责。注意，按命令区分的 "Always allow" 行只在 `[ui] remember_tool_approvals` 启用时出现（默认启用；设为 `false` 可隐藏它们）。参见 [22-permissions-and-safety.md](22-permissions-and-safety.md)。
 
-You can also override this with `GROK_DEFAULT_SELECTED_PERMISSION`, which is handy for headless or agent test runs that shouldn't mutate `config.toml`. Precedence: env var → `config.toml` → `always_allow_all_sessions`.
+你也可以用 `GROK_DEFAULT_SELECTED_PERMISSION` 覆盖它，这在无头运行或智能体测试（不应改动 `config.toml`）时非常方便。优先级：环境变量 → `config.toml` → `always_allow_all_sessions`。
 
-#### Vim mode
+#### Vim 模式
 
-`[ui] vim_mode` controls whether vim-style bindings are active in the **scrollback** pane. It does not affect the prompt.
-
-| 取值 | 行为 |
-|-------|----------|
-| `false`（默认） | Bare-letter and `Shift+letter` keys (`j`/`k`, `h`/`l`, `g`/`G`, `y`/`Y`, `o`/`O`, `r`, `x`, `e`/`E`, `H`/`L`, plus `i`) are suppressed in the scrollback: pressing one focuses the prompt and types the character. Arrows, `Tab`, `Space`, `PageUp`/`PageDown`, and every `Ctrl+letter` shortcut still navigate. `Esc` is **not** a scrollback key — it never cancels a running turn (`Ctrl+C` does), and while idle follows the clear / rewind policy (see [Keyboard Shortcuts](03-keyboard-shortcuts.md#escape)). |
-| `true` | All vim-style scrollback bindings are active, exactly as listed in [Keyboard Shortcuts](03-keyboard-shortcuts.md). Esc behavior is the same in both settings. |
-
-Toggle it at runtime with `/vim-mode`, or from `/settings` → **Vim scrollback navigation**. Grok writes the change to `[ui] vim_mode` immediately and applies it to every future pager session, including new agents and subagents in the same process. There's no per-session override — `config.toml` is the source of truth on next launch. `vim_mode` is independent of `simple_mode`.
-
-#### Screen mode
-
-`[ui] screen_mode` is the **default render mode** for plain `grok` launches. Set it from `/settings` → **Default screen mode** (restart required) or edit `config.toml` by hand — both write the file. CLI flags (`--minimal` / `--fullscreen`) and slash commands (`/minimal` / `/fullscreen`) are session-scoped and do **not** write this key; after a slash switch, the reverse command returns you for that session only.
+`[ui] vim_mode` 控制 vim 风格按键绑定是否在**回滚区**窗格中生效。它不影响输入框。
 
 | 取值 | 行为 |
 |-------|----------|
-| unset | Settings shows **Fullscreen**. There's no sticky preference at startup: legacy `pager.toml` `[terminal] minimal` can still force minimal, and terminals that leak mouse reports (JediTerm/Windows) may auto-open minimal until you set an explicit value. Otherwise the alt-screen policy picks fullscreen vs inline. |
-| `"fullscreen"` | Sticky non-minimal. Fullscreen-vs-inline still follows the alt-screen policy (`--no-alt-screen`, `[terminal] alt_screen`, terminal auto-detection). |
-| `"minimal"` | Sticky minimal (scrollback-native) mode. |
+| `false`（默认） | 裸字母键与 `Shift+字母` 键（`j`/`k`、`h`/`l`、`g`/`G`、`y`/`Y`、`o`/`O`、`r`、`x`、`e`/`E`、`H`/`L`，以及 `i`）在回滚区里被屏蔽：按下去会聚焦提示框并把该字符输进去。方向键、`Tab`、`Space`、`PageUp`/`PageDown`，以及所有 `Ctrl+字母` 快捷键仍然可以导航。`Esc` **不是**回滚区按键——它从不取消正在运行的回合（那是 `Ctrl+C` 的事），空闲时则遵循清屏 / 回退策略（见[键盘快捷键](03-keyboard-shortcuts.md#escape)）。 |
+| `true` | 所有 vim 风格的回滚区绑定全部生效，与[键盘快捷键](03-keyboard-shortcuts.md)里列出的完全一致。两种设置下 Esc 的行为相同。 |
 
-A CLI flag always wins over the config value for that invocation.
+运行时可用 `/vim-mode` 切换，或从 `/settings` → **Vim scrollback navigation** 切换。Chaos 会立即把改动写入 `[ui] vim_mode`，并应用到之后的每个分页器会话，包括同一进程里新建的智能体与子代理。没有会话级覆盖 —— 下次启动时以 `config.toml` 为准。`vim_mode` 与 `simple_mode` 相互独立。
 
-#### Snap prompt to top on send
+#### 屏幕模式
 
-By default, sending a prompt scrolls it to the top of the viewport so the response starts on a fresh page. Set `[ui] page_flip_on_send = false` (or toggle **Snap prompt to top on send** in `/settings` → Appearance) to leave the scroll position alone when you send. It takes effect on the next send — no restart.
+`[ui] screen_mode` 是裸跑 `chaos` 时的**默认渲染模式**。可从 `/settings` → **Default screen mode**（需重启）设置，或手工编辑 `config.toml` —— 两者都会写文件。命令行开关（`--minimal` / `--fullscreen`）和斜杠命令（`/minimal` / `/fullscreen`）都是会话级的，**不会**写这个键；斜杠切换之后，反向命令只在该会话内把你切回去。
 
-#### Scrolling
+| 取值 | 行为 |
+|-------|----------|
+| unset | 设置面板显示 **Fullscreen**。启动时没有粘性偏好：旧版 `pager.toml` 的 `[terminal] minimal` 仍可强制最小模式，而会泄漏鼠标上报的终端（JediTerm/Windows）在你显式设值之前可能自动开成最小模式。除此之外，全屏还是内联由备用屏幕策略决定。 |
+| `"fullscreen"` | 粘性非最小模式。全屏还是内联仍由备用屏幕策略决定（`--no-alt-screen`、`[terminal] alt_screen`、终端自动检测）。 |
+| `"minimal"` | 粘性最小模式（以回滚区为主）。 |
 
-Four `[ui]` settings tune mouse-wheel and trackpad scrolling. All apply immediately and are editable from the settings pane (`/settings` → **Scroll speed** / **Scroll input** / **Scroll lines** / **Invert scroll**).
+对于当次调用，命令行开关永远优先于配置值。
+
+#### 发送时把提示置顶
+
+默认情况下，发送提示会把它滚动到视口顶端，让回答从新的一页开始。设置 `[ui] page_flip_on_send = false`（或在 `/settings` → Appearance 里切换 **Snap prompt to top on send**）可在发送时保持滚动位置不变。下次发送即生效 —— 无需重启。
+
+#### 滚动
+
+四个 `[ui]` 设置调节鼠标滚轮与触控板滚动。全部立即生效，并可在设置面板（`/settings` → **Scroll speed** / **Scroll input** / **Scroll lines** / **Invert scroll**）中编辑。
 
 | 键 | 取值（默认） | 行为 |
 |-----|------------------|----------|
-| `scroll_speed` | `1`–`100` (`50`) | Speed multiplier for wheel and trackpad. `50` = 1.0x, `1` = 0.1x, `100` = 6.0x. |
-| `scroll_mode` | `auto` \| `wheel` \| `trackpad` (`auto`) | Wheel-vs-trackpad detection is heuristic (terminal scroll events carry no magnitude); force one when auto-detection misreads your device — e.g. a wheel notch that jumps too far, or a trackpad that feels stepped. |
-| `scroll_lines` | `1`–`10`（未设置） | Lines per scroll tick, applied to **both** wheel and trackpad. While unset, each terminal's own profile applies (e.g. a conservative 1 line/event under tmux). Committing any value — even `3`, the number the settings pane shows — switches permanently to that explicit override. |
-| `invert_scroll` | `false` \| `true` (`false`) | Reverse vertical scroll direction ("natural" scrolling). |
+| `scroll_speed` | `1`–`100` (`50`) | 滚轮与触控板的滚动速度倍数。`50` = 1.0x，`1` = 0.1x，`100` = 6.0x。 |
+| `scroll_mode` | `auto` \| `wheel` \| `trackpad` (`auto`) | 滚轮与触控板的判定是启发式的（终端的滚动事件不带幅度信息）；当自动检测误判你的设备时，用这个键强制指定一类——例如滚轮一格跳得太远，或触控板手感一顿一顿。 |
+| `scroll_lines` | `1`–`10`（未设置） | 每档滚动的行数，对滚轮与触控板**都**生效。未设置时，各终端自己的配置生效（例如 tmux 下保守的 1 行/事件）。一旦提交任何值——哪怕是设置面板显示的那个 `3`——就会永久切换到该显式覆盖值。 |
+| `invert_scroll` | `false` \| `true` (`false`) | 反转垂直滚动方向（「自然」滚动）。 |
 
 ```toml
 [ui]
@@ -185,9 +185,9 @@ invert_scroll = false
 # scroll_lines = 3
 ```
 
-Each setting also has an environment-variable override, applied on first load only (again, handy for headless / test runs): `GROK_SCROLL_SPEED`, `GROK_SCROLL_MODE`, `GROK_INVERT_SCROLL` (`1`/`true`/`0`/`false`), and `GROK_SCROLL_LINES`. Precedence: env var → `config.toml` → default. Unrecognized values fall back to the default, and out-of-range numbers clamp.
+每个设置还支持环境变量覆盖，只在首次加载时应用（同样便于无头 / 测试运行）：`GROK_SCROLL_SPEED`、`GROK_SCROLL_MODE`、`GROK_INVERT_SCROLL`（`1`/`true`/`0`/`false`）和 `GROK_SCROLL_LINES`。优先级：环境变量 → `config.toml` → 默认值。无法识别的值回退到默认值，超范围的数字会被钳制。
 
-### Tool configuration
+### 工具配置
 
 ```toml
 [toolset.bash]
@@ -210,15 +210,15 @@ allowed_domains = ["docs.x.ai", "arxiv.org"]
 # excluded_domains = ["reddit.com", "pinterest.com"]
 ```
 
-`allow_local` is off by default (SSRF fail-closed). Turn it on (or set `GROK_WEB_FETCH_ALLOW_LOCAL=1`) and `web_fetch` may reach **explicit** loopback hosts only — private, link-local, and cloud-metadata ranges stay blocked. Resolution: TOML > env > default off.
+`allow_local` 默认关闭（对 SSRF 失败即关）。开启它（或设置 `GROK_WEB_FETCH_ALLOW_LOCAL=1`）后，`web_fetch` 也只能访问**显式**回环主机 —— 私有、链路本地和云元数据网段仍然被封禁。解析顺序：TOML > 环境变量 > 默认关闭。
 
-`[toolset.web_search]` constrains the `web_search` tool's domains — the allowlist/blocklist the search itself runs under (not a post-filter). `allowed_domains` and `excluded_domains` are **mutually exclusive**; if you set both, the allowlist wins and the blocklist is dropped with a warning. An empty or absent list is unbounded. This applies to both the backend-hosted search (models with server-side search) and the client-side fallback. A configured policy is **authoritative**: it cannot be bypassed by the model — the model's own per-call `allowed_domains` is ignored whenever you have set `allowed_domains` or `excluded_domains` here (so a blocklist is a real block). The model's per-call allowlist only applies when you have configured nothing. Resolution: requirements → user `config.toml` → managed → default (unset). Config is read at session start, so edit it before starting a session — changes don't apply mid-session.
+`[toolset.web_search]` 约束 `web_search` 工具的域名 —— 即搜索本身运行时所依据的允许清单/屏蔽清单（不是事后过滤）。`allowed_domains` 与 `excluded_domains` **互斥**；两者都设时允许清单获胜，屏蔽清单被丢弃并给出警告。清单为空或缺省即不受限。这同时适用于后端托管的搜索（带服务端搜索的模型）和客户端回退。已配置的策略是**权威的**：模型无法绕过 —— 只要你在这里设置了 `allowed_domains` 或 `excluded_domains`，模型自己按调用传入的 `allowed_domains` 就会被忽略（所以屏蔽清单是真屏蔽）。模型的按调用允许清单只在你什么都没配置时才生效。解析顺序：requirements → 用户 `config.toml` → managed → 默认（未设置）。配置在会话启动时读取，所以要改就趁会话开始前改 —— 中途修改不生效。
 
-`[toolset.ask_user_question]` is honored across **requirements.toml**, **managed config**, and your user **`config.toml`**. Precedence: requirements → env (`GROK_ASK_USER_QUESTION_TIMEOUT_ENABLED` / `GROK_ASK_USER_QUESTION_TIMEOUT_SECS`) → user config → managed → defaults. Set `timeout_enabled = false` in your user config to disable the automatic questionnaire timeout for yourself; `timeout_secs` must be a positive integer. You can also toggle `timeout_enabled` from `/settings` → **Ask-Question timeout** (under Agent & Approval); changes apply to newly started sessions.
+`[toolset.ask_user_question]` 在 **requirements.toml**、**managed 配置**和你的用户 **`config.toml`** 中均被采纳。优先级：requirements → 环境变量（`GROK_ASK_USER_QUESTION_TIMEOUT_ENABLED` / `GROK_ASK_USER_QUESTION_TIMEOUT_SECS`）→ 用户配置 → managed → 默认值。在用户配置里设 `timeout_enabled = false` 可为自己关闭问卷的自动超时；`timeout_secs` 必须是正整数。也可以从 `/settings` → **Ask-Question timeout**（位于 Agent & Approval 下）切换 `timeout_enabled`；改动对新启动的会话生效。
 
-### Authentication
+### 认证
 
-See [Authentication](02-authentication.md) for the full story.
+完整说明参见 [认证](02-authentication.md)。
 
 ```toml
 [auth]
@@ -233,9 +233,9 @@ client_id = "0oa1b2c3d4e5f6g7h8i9"
 # audience = "https://api.acme.com"
 ```
 
-### Custom models
+### 自定义模型
 
-Add custom model endpoints to use alternative providers or self-hosted models.
+添加自定义模型端点，以使用替代提供商或自托管模型。
 
 ```toml
 [model.my-model]
@@ -251,18 +251,18 @@ max_completion_tokens = 8192          # max tokens per response
 context_window = 128000               # context window size (for auto-compact)
 ```
 
-Credential resolution: `api_key` > `env_key` > signed-in session token > `XAI_API_KEY`.
+凭据解析顺序：`api_key` > `env_key` > 已登录会话 token > `XAI_API_KEY`。
 
-To override a built-in model, use its name as the section key and set only the fields you need:
+要覆盖内置模型，用它的名字作为节键，只设置你需要的字段：
 
 ```toml
 [model.grok-4.6]
 api_key = "my-api-key"
 ```
 
-### MCP servers
+### MCP 服务器
 
-Configure external tool integrations over the Model Context Protocol.
+通过 Model Context Protocol 配置外部工具集成。
 
 ```toml
 [mcp_servers.github]
@@ -283,20 +283,20 @@ url = "https://mcp.example.com/api/mcp"  # HTTP/SSE transport
 headers = { "x-mcp-session-id" = "{{session_id}}" }
 ```
 
-Remote (HTTP/SSE) servers receive a default `User-Agent: grok-cli/<version>` header; a
-valid `User-Agent` entry in `headers` overrides it (Figma servers receive bare
-`grok-cli`). See [MCP servers](07-mcp-servers.md) for details.
+远程（HTTP/SSE）服务器会收到默认的 `User-Agent: grok-cli/<version>` 头；
+`headers` 里有效的 `User-Agent` 项会覆盖它（Figma 服务器收到的是裸
+`grok-cli`）。细节见 [MCP 服务器](07-mcp-servers.md)。
 
-MCP servers can also be set per-project in `.grok/config.toml`. Project-scoped config contributes `[mcp_servers]`, `[plugins]`, and `[permission]` rules; every other section loads only from `~/.grok/config.toml`.
+MCP 服务器也可以按项目设置在项目根下的 `.chaos/config.toml`（兼容旧名 `.grok/config.toml`）里。项目作用域配置只贡献 `[mcp_servers]`、`[plugins]` 和 `[permission]` 规则；其他所有 section 都只从 `~/.chaos/config.toml`（兼容 `~/.grok`）加载。
 
-Priority for `[mcp_servers]` and `[plugins]`: `.grok/config.toml` (current dir) > `<repo-root>/.grok/config.toml` > `~/.grok/config.toml`. `[permission]` rules aren't overridden by priority — they merge across all files with `deny` > `ask` > `allow` (see [22-permissions-and-safety.md](22-permissions-and-safety.md)).
+`[mcp_servers]` 与 `[plugins]` 的优先级：`.chaos/config.toml`（当前目录）> `<仓库根>/.chaos/config.toml` > `~/.chaos/config.toml`（各层均兼容 `.grok` 旧名）。`[permission]` 规则不受优先级覆盖——它们跨所有文件合并，按 `deny` > `ask` > `allow`（见 [22-permissions-and-safety.md](22-permissions-and-safety.md)）。
 
-### Memory
+### 记忆
 
-Persist knowledge across sessions. Enable it with `[memory] enabled = true` or
-`GROK_MEMORY=1`; an explicit `[memory] enabled = false` turns it off even when a
-managed remote setting enables it. Notes recorded by earlier versions are
-carried over automatically. See [13-memory.md](13-memory.md).
+跨会话持久保存知识。用 `[memory] enabled = true` 或
+`GROK_MEMORY=1` 启用；显式的 `[memory] enabled = false` 会把它关掉，
+即使受管的远程设置把它打开了也一样。早期版本记录下的笔记
+会自动沿用。见 [13-memory.md](13-memory.md)。
 
 ```toml
 [memory]
@@ -321,7 +321,7 @@ min_score = 0.9                       # score threshold for first-turn injection
 dimensions = 1024                     # vector dimensions
 ```
 
-### Subagents
+### 子智能体
 
 ```toml
 [subagents]
@@ -336,24 +336,24 @@ plan = false
 explore = "grok-4.6"               # route to different models
 ```
 
-To pin the model a subagent uses, set its entry under `[subagents.models]`.
+要钉住某个子智能体所用的模型，在 `[subagents.models]` 下设置它的条目。
 
-### Goal mode and background workflows
+### 目标模式与后台工作流
 
-`/goal` has two drivers, chosen by the background-workflows setting. With workflows enabled, the host-owned workflow engine evaluates rounds and drives completion verification; with them disabled, `/goal` falls back to the legacy model-facing `update_goal` tool. Whether `/goal` is available at all is a separate switch (the goal feature setting).
+`/goal` 有两种驱动方式，由「后台工作流」这一设置选择。工作流启用时，宿主自有的工作流引擎评估各轮并驱动完成度校验；禁用时，`/goal` 回退到旧版面向模型的 `update_goal` 工具。`/goal` 本身是否可用是另一个开关（goal 功能设置）。
 
-Background workflows — the `workflow` tool, named `.grok/workflows/*.rhai` scripts, `/deep-research`, and `/workflow` launches — are **off by default**.
+后台工作流——`workflow` 工具、具名的 `.chaos/workflows/*.rhai` 脚本（兼容 `.grok/workflows/`）、`/deep-research` 和 `/workflow` 启动——**默认关闭**。
 
 ```toml
 [workflows]
 enabled = true                        # enable background workflows (or GROK_WORKFLOWS=1)
 ```
 
-Project workflows are discovered from `<repo-root>/.grok/workflows/`; user workflows from `~/.grok/workflows/`. Discovery and invocation key off the script's `meta.name`, so keep each filename aligned with its `meta.name`. Built-ins win over project names, and project names win over user names, so keep names unique across scopes.
+项目工作流从 `<仓库根>/.chaos/workflows/` 发现；用户工作流从 `~/.chaos/workflows/` 发现（两处均兼容 `.grok` 旧名）。发现与调用都以脚本的 `meta.name` 为准，所以让每个文件名与它的 `meta.name` 保持一致。内置名胜过项目名，项目名胜过用户名，因此请让各作用域的名字互不重复。
 
-Each launch gets a session-unique display handle such as `deep-research-2`. That handle is what you see in the `/workflow runs` dashboard and pass to `/workflow pause`, `resume`, or `stop` — the internal run IDs never surface in commands. A numbered handle isn't a reusable definition name, so the dashboard disables **save** until you pick a new unique `meta.name` and save the edited script yourself. See [Slash Commands](04-slash-commands.md) for examples.
+每次启动都会得到一个会话内唯一的展示句柄，例如 `deep-research-2`。这个句柄就是你在 `/workflow runs` 面板里看到的、也是传给 `/workflow pause`、`resume`、`stop` 的那个；内部运行 ID 从不出现在命令里。带编号的句柄不是可复用的定义名，所以面板会禁用 **save**，直到你另选一个唯一的 `meta.name` 并自己保存改过的脚本。例子见[斜杠命令](04-slash-commands.md)。
 
-### Skills
+### 技能
 
 ```toml
 [skills]
@@ -362,9 +362,9 @@ ignore = ["~/my-team-skills/wip"]     # paths to exclude
 disabled = ["wip-skill"]              # skill names to keep listed but inactive
 ```
 
-### Harness compatibility
+### 厂商兼容性开关
 
-Control vendor compatibility for Cursor, Claude, and Codex. Every cell defaults to `true`. Session cells stay staged and inert until a foreign-session scanner consumes them, and each tool needs both its `sessions` cell and the matching `resume-claude`, `resume-codex`, or `resume-cursor` skill — a missing skill means zero foreign-session filesystem I/O.
+控制对 Cursor、Claude 与 Codex 的厂商兼容。每个单元格默认 `true`。session 类单元格会一直停留在预备状态、不产生作用，直到有外部会话扫描器消费它们；而且每个工具同时需要它的 `sessions` 单元格和对应的 `resume-claude`、`resume-codex` 或 `resume-cursor` 技能——技能缺失就意味着完全不对外部会话的文件系统做 I/O。
 
 ```toml
 [compat.cursor]
@@ -387,15 +387,15 @@ sessions = true   # staged; no scanner consumer yet
 sessions = true   # staged; no scanner consumer yet
 ```
 
-Codex's `skills`, `rules`, `agents`, `mcps`, and `hooks` cells are reserved and currently inert — they do not enable `.codex` discovery.
+Codex 的 `skills`、`rules`、`agents`、`mcps` 和 `hooks` 单元格是保留项，目前不产生作用——它们不会启用 `.codex` 发现。
 
-For Claude and Cursor, `rules` and `agents` are independent: turning off named instruction files doesn't disable the home or project rules directory, and turning off rules doesn't disable named files. Claude's `agents` cell gates home-level `~/.claude/` named files and project `<dir>/.claude/CLAUDE*.md`; generic top-level `Claude.md`, `CLAUDE.md`, and `CLAUDE.local.md` stay recognized. Project rule paths are scanned at every directory from the repo root down to the current one.
+对 Claude 与 Cursor 而言，`rules` 和 `agents` 相互独立：关掉具名说明文件不会停用 home 或项目规则目录，关掉 rules 也不会停用具名文件。Claude 的 `agents` 单元格管辖 home 级的 `~/.claude/` 具名文件和项目里的 `<dir>/.claude/CLAUDE*.md`；顶层的通用 `Claude.md`、`CLAUDE.md` 和 `CLAUDE.local.md` 仍会被识别。项目规则路径会从仓库根一路扫到当前目录的每一层。
 
-Each cell can be set via environment variable or `config.toml`; see the environment-variables reference for the names. Resolution: env var > config.toml > default (on).
+每个单元格都可以用环境变量或 `config.toml` 设置；变量名见环境变量参考。解析顺序：环境变量 > config.toml > 默认值（开启）。
 
-`grok inspect` reports cells that still need session-start resolution as `?` until a value is available; cells with an explicit env or TOML value use that value. Affected discovery entries report `compatibilityStatus: "unresolved"` in JSON and `[compat unresolved]` in human output.
+`chaos inspect` 会把仍需在会话启动时才能解析的单元格显示为 `?`，直到有值可用为止；带显式环境变量或 TOML 值的单元格直接用那个值。受影响的发现条目在 JSON 里上报 `compatibilityStatus: "unresolved"`，在人类可读输出里显示 `[compat unresolved]`。
 
-### Plugins
+### 插件
 
 ```toml
 [plugins]
@@ -403,11 +403,11 @@ paths = ["~/my-plugins/custom-tools"]
 disabled = ["user/a1b2c3d4/noisy-plugin"]
 ```
 
-### Hints
+### 提示项
 
-`[hints]` holds small persisted UI preferences — mostly "stop asking me" opt-outs. Grok writes these for you when you pick a "don't ask again" option in the TUI, but you can edit or delete them by hand; removing a key restores the default.
+`[hints]` 保存一些小的持久化 UI 偏好——多半是「别再问我」类的免打扰项。你在 TUI 里选「不再询问」时 Chaos 会替你写入，但你也可以手工编辑或删除；删掉一个键就恢复默认。
 
-`[hints]` is read from the **effective config merge**, with the usual precedence: system managed → user `managed_config.toml` → user `config.toml` → user `requirements.toml` → system `requirements.toml`, higher layers winning. The TUI only ever **writes** opt-outs to your user `~/.grok/config.toml`.
+`[hints]` 从**生效后的配置合并结果**读取，遵循通常的优先级：系统 managed → 用户 `managed_config.toml` → 用户 `config.toml` → 用户 `requirements.toml` → 系统 `requirements.toml`，层越高越优先。TUI **只会**把免打扰项**写入**你用户的 `~/.chaos/config.toml`（兼容 `~/.grok`）。
 
 ```toml
 [hints]
@@ -419,14 +419,14 @@ fork_worktree_mode = "ask"             # /fork worktree prompt: "ask" | "always"
 
 | 键 | 类型 | 默认 | 说明 |
 |-----|------|---------|-------------|
-| `project_picker_disabled` | bool | `false` | When `true`, skips the picker that asks you to choose a project directory on the first prompt when Grok launches from a non-project directory (home, Desktop, Downloads, `/tmp`). Set automatically when you choose **"Don't ask me again"** in that picker. Teams can pin it in `managed_config.toml` or `requirements.toml`. |
-| `memory_modal_fullscreen` | bool | `false` | Remembers whether the memory modal was last opened fullscreen. |
-| `new_session_worktree_mode` | string | `"never"` | Worktree prompt for `/new`: `ask` shows the popup, `always` creates a worktree, `never` skips it. |
-| `fork_worktree_mode` | string | `"ask"` | Worktree prompt for `/fork`: `ask`, `always`, or `never`. |
+| `project_picker_disabled` | bool | `false` | 为 `true` 时，Chaos 从非项目目录（主目录、桌面、下载、`/tmp`）启动的首个提示不再弹出挑选项目目录的选择器。在该选择器里选过 **"Don't ask me again"（别再问我）** 后会自动置位。团队可在 `managed_config.toml` 或 `requirements.toml` 中钉死。 |
+| `memory_modal_fullscreen` | bool | `false` | 记录记忆弹窗上次是否以全屏方式打开。 |
+| `new_session_worktree_mode` | string | `"never"` | `/new` 的工作树提示：`ask` 弹窗询问，`always` 创建 worktree，`never` 跳过。 |
+| `fork_worktree_mode` | string | `"ask"` | `/fork` 的工作树提示：`ask`、`always` 或 `never`。 |
 
-### Notifications
+### 通知
 
-Fire terminal notifications when the agent finishes a turn or needs approval. They use terminal-native protocols (OSC 9, OSC 99, OSC 777, or BEL) and are focus-gated by default, so they only fire when you're not looking at the terminal.
+当智能体完成一个回合或需要批准时发出终端通知。它们使用终端原生协议（OSC 9、OSC 99、OSC 777 或 BEL），并且默认受焦点门控，因此只在你没看着终端的时候触发。
 
 ```toml
 [ui.notifications]
@@ -444,16 +444,16 @@ items = ["action-required", "spinner", "activity", "session-name", "grok"]
 
 | 选项 | 类型 | 默认 | 说明 |
 |--------|------|---------|-------------|
-| `method` | string | `"auto"` | Notification protocol. `auto` picks the best for your terminal. |
-| `condition` | string | `"unfocused"` | When to notify: `unfocused` (only when the terminal lost focus), `always`, or `never`. |
-| `idle_threshold_secs` | integer | `3` | Minimum seconds unfocused before a notification fires. |
-| `events` | array | `["turn_complete", "approval_required"]` | Events that trigger notifications. Options: `turn_complete`, `approval_required`, `session_ready`, `task_complete`, `agent_error`. |
-| `sleep_prevention` | bool | `true` | Keep the display awake while the agent works (macOS/Linux). |
-| `progress_bar` | bool | `true` | Show a progress indicator in the terminal tab (OSC 9;4). |
-| `title.enabled` | bool | `true` | Set the terminal title to reflect agent state. |
-| `title.items` | array | （见上） | Items shown in the title bar. Options: `action-required`, `spinner`, `activity`, `session-name`, `cwd`, `model`, `turn-timer`, `grok`. |
+| `method` | string | `"auto"` | 通知协议。`auto` 会为你的终端挑最合适的那个。 |
+| `condition` | string | `"unfocused"` | 何时通知：`unfocused`（仅在终端失去焦点时）、`always` 或 `never`。 |
+| `idle_threshold_secs` | integer | `3` | 失去焦点至少多少秒后才发出通知。 |
+| `events` | array | `["turn_complete", "approval_required"]` | 触发通知的事件。可选值：`turn_complete`、`approval_required`、`session_ready`、`task_complete`、`agent_error`。 |
+| `sleep_prevention` | bool | `true` | 智能体工作期间保持屏幕不休眠（macOS/Linux）。 |
+| `progress_bar` | bool | `true` | 在终端标签里显示进度指示（OSC 9;4）。 |
+| `title.enabled` | bool | `true` | 把终端标题设为反映智能体状态。 |
+| `title.items` | array | （见上） | 标题栏显示的条目。可选值：`action-required`、`spinner`、`activity`、`session-name`、`cwd`、`model`、`turn-timer`、`grok`（沿用上游段名，渲染出来是本分叉品牌 `Chaos Code`）。 |
 
-#### Terminal support matrix
+#### 终端支持矩阵
 
 | 终端 | 自动协议 | 焦点跟踪 | 进度条 |
 |----------|---------------|----------------|--------------|
@@ -465,15 +465,15 @@ items = ["action-required", "spinner", "activity", "session-name", "grok"]
 | Alacritty | BEL | 是 | 否 |
 | VS Code | BEL | 是 | 否 |
 | Apple Terminal | BEL | 否 | 否 |
-| VTE (GNOME Terminal) | OSC 777 | 是 | 否 |
-| Grok Desktop | 无（原生） | N/A | N/A |
+| VTE（GNOME 终端） | OSC 777 | 是 | 否 |
+| 上游 Grok Desktop | 无（原生） | N/A | N/A |
 | 未知 | BEL | 否 | 否 |
 
-With `method = "auto"`, Grok detects the terminal brand and picks the best protocol. Set `method` explicitly to override that.
+`method = "auto"` 时 Chaos 会识别终端品牌并选出最合适的协议；显式设置 `method` 可覆盖它。
 
-#### Notification hooks
+#### 通知钩子
 
-Run your own commands when events fire. Hooks receive `$GROK_EVENT`, `$GROK_MESSAGE`, and `$GROK_SESSION_ID` in the environment.
+事件触发时运行你自己的命令。钩子会在环境变量中拿到 `$GROK_EVENT`、`$GROK_MESSAGE` 和 `$GROK_SESSION_ID`。
 
 ```toml
 # macOS native notification
@@ -500,29 +500,29 @@ timeout_secs = 5
 
 | 钩子选项 | 类型 | 默认 | 说明 |
 |-------------|------|---------|-------------|
-| `command` | string | （必填） | Shell command to run. |
-| `events` | array | `[]` | Events that trigger this hook (empty = all events). |
-| `only_unfocused` | bool | `true` | Only fire when the terminal has lost focus. |
-| `timeout_secs` | integer | `10` | Kill the hook process after this many seconds. |
+| `command` | string | （必填） | 要运行的 shell 命令。 |
+| `events` | array | `[]` | 触发该钩子的事件（留空 = 所有事件）。 |
+| `only_unfocused` | bool | `true` | 仅在终端失去焦点时触发。 |
+| `timeout_secs` | integer | `10` | 超过这么多秒后杀掉钩子进程。 |
 
-#### Troubleshooting
+#### 常见问题
 
-**Notifications not working in tmux:** tmux blocks escape sequences by default, so enable passthrough:
+**tmux 里通知不工作：** tmux 默认拦截转义序列，需要打开 passthrough：
 
 ```bash
 # In ~/.tmux.conf
 set -g allow-passthrough on
 ```
 
-Restart tmux afterward. If passthrough isn't available (tmux < 3.3), set `method = "bel"`, which works without it.
+之后重启 tmux。若所用 tmux 不支持 passthrough（tmux < 3.3），改用 `method = "bel"`，它无需 passthrough 也能工作。
 
-**Focus tracking not working:** some terminals don't report focus events. If `condition = "unfocused"` never fires, try `condition = "always"`. Grok supports focus tracking in every detected terminal except Apple Terminal and unrecognized ones.
+**焦点跟踪不工作：** 有些终端不上报焦点事件。若 `condition = "unfocused"` 从不触发，试试 `condition = "always"`。除 Apple Terminal 与无法识别的终端外，Chaos 在所有可识别终端上都支持焦点跟踪。
 
-**Sleep prevention not taking effect:** on macOS, sleep prevention uses `IOPMAssertionCreateWithName` via CoreFoundation; on Linux, `systemd-inhibit` (which must be on `$PATH`). Make sure the relevant tool is available. Prevention is only active during agent turns and releases automatically when the turn ends.
+**防休眠不生效：** macOS 上防休眠通过 CoreFoundation 的 `IOPMAssertionCreateWithName` 实现；Linux 上则用 `systemd-inhibit`（必须在 `$PATH` 中）。确认相应工具可用。防休眠只在智能体回合期间生效，回合结束后自动释放。
 
-### Status line
+### 状态行
 
-An optional row at the bottom of the full-screen pager, disabled by default. Opt in with `[ui.status_line]`:
+全屏 pager 底部可选的一行，默认关闭。用 `[ui.status_line]` 打开：
 
 ```toml
 [ui.status_line]
@@ -530,24 +530,24 @@ type = "builtin"                # builtin | command | disabled
 items = ["cwd", "model", "context"]
 ```
 
-The other keys are `items` (which built-in segments to show, in order), `command`, `padding`, and `refresh_interval` (in seconds; re-runs a `command` row on a timer, so an incident page or a CI status reaches an idle session). The [Status Line guide](25-status-line.md) documents all of them, along with the JSON contract a `command` script reads on stdin and an example script.
+其余键为 `items`（按顺序显示哪些内置段）、`command`、`padding` 与 `refresh_interval`（单位秒；按定时器重跑 `command` 行，好让事故页面或 CI 状态也能送进空闲会话）。[状态行指南](25-status-line.md) 记录了全部键，以及 `command` 脚本从 stdin 读取的 JSON 约定和一个示例脚本。
 
-Minimal mode has no status-line row; it uses the terminal tab title instead (see [Notifications](#notifications) `title.items`).
+极简模式没有状态行，改用终端标签标题（见[通知](#notifications) 的 `title.items`）。
 
-### Keyboard shortcuts
+### 键盘快捷键
 
-Keyboard shortcuts are **not** configurable — all bindings are built in. See [Keyboard Shortcuts](03-keyboard-shortcuts.md) for the complete reference.
+键盘快捷键**不可配置**——所有绑定都是内置的。完整参考见[键盘快捷键](03-keyboard-shortcuts.md)。
 
-### Telemetry
+### 遥测
 
-These are independent knobs (see [Monitoring Usage](24-monitoring-usage.md#related-settings)):
+这些是彼此独立的开关（见[用量监控](24-monitoring-usage.md#related-settings)）：
 
-- **`[features] telemetry`** / `GROK_TELEMETRY_ENABLED` — the product-analytics master switch. `/privacy` doesn't change it.
-- **`/privacy`** / Settings — coding-data sharing, separate from telemetry.
-- **`[telemetry] trace_upload`** / `GROK_TELEMETRY_TRACE_UPLOAD` — session traces; follows telemetry when unset.
-- **`[telemetry] otel_*`** / `GROK_EXTERNAL_OTEL` — external OTEL to your own collector (below).
+- **`[features] telemetry`** / `GROK_TELEMETRY_ENABLED` —— 产品分析的总开关。`/privacy` 不改动它。
+- **`/privacy`** / 设置 —— 代码数据分享，与遥测相互独立。
+- **`[telemetry] trace_upload`** / `GROK_TELEMETRY_TRACE_UPLOAD` —— 会话轨迹；未设置时跟随遥测开关。
+- **`[telemetry] otel_*`** / `GROK_EXTERNAL_OTEL` —— 发往你自己 collector 的外部 OTEL（见下文）。
 
-When telemetry is on, enterprises running their own collector can redirect it or turn parts off under `[telemetry]`:
+遥测打开时，自建 collector 的企业可以把它重定向，或按 `[telemetry]` 下的项关掉其中一部分：
 
 ```toml
 [telemetry]
@@ -557,9 +557,9 @@ mixpanel_enabled = false                                  # disable Mixpanel pro
 trace_upload = false                                      # disable session/trace uploads (inherits the telemetry toggle when unset)
 ```
 
-Set these only to point telemetry at your own infrastructure or to switch parts off. The built-in endpoint and credentials are managed by Grok — leave them unset to use the defaults.
+只在要把遥测指向自己的基础设施或关掉部分内容时才设置这些项。内置端点与凭据由 Chaos 托管——保持未设置即用默认值。
 
-The same `[telemetry]` table also configures the **external OpenTelemetry stream**, an independent opt-in (it doesn't require the telemetry toggle above) that ships a curated, content-free usage schema to your *own* OTLP collector. Collector auth comes from `OTEL_EXPORTER_OTLP_HEADERS` and is never stored on disk. See [Monitoring & Usage](24-monitoring-usage.md) for the full schema, env vars, and privacy model.
+同一个 `[telemetry]` 表还配置**外部 OpenTelemetry 流**：一个独立的开关（不依赖上面的遥测总开关），把一套经过筛选、不含内容的用量 schema 送进你*自己的* OTLP collector。Collector 认证来自 `OTEL_EXPORTER_OTLP_HEADERS`，从不落盘。完整 schema、环境变量与隐私模型见[监控与用量](24-monitoring-usage.md)。
 
 ```toml
 [telemetry]
@@ -577,9 +577,9 @@ otel_log_tool_details = true                              # metadata/preview; en
 otel_log_tool_content = false                             # full-body gate; independent of details — does not imply names/paths
 ```
 
-### Enterprise deployment
+### 企业部署
 
-A complete config for enterprise use:
+一份完整的企业配置：
 
 ```toml
 [cli]
@@ -605,22 +605,22 @@ telemetry = false
 
 ---
 
-## pager.toml (appearance configuration)
+## pager.toml（外观配置）
 
-Location: `~/.grok/pager.toml`. This controls the TUI's look and feel. Changes apply on restart.
+位置：`~/.chaos/pager.toml`（兼容旧名 `~/.grok/pager.toml`，双读）。该文件控制 TUI 的外观，重启后生效。
 
-### Terminal
+### 终端
 
 ```toml
 [terminal]
 alt_screen = "auto"                   # fullscreen mode: "auto", "always", "never"
 ```
 
-- `auto` (default): use the alternate screen when the terminal supports it.
-- `always`: always use the alternate screen.
-- `never`: run inline in the terminal's main scrollback buffer.
+- `auto`（默认）：终端支持时使用备用屏幕。
+- `always`：总是使用备用屏幕。
+- `never`：直接在终端主滚动缓冲区里内联运行。
 
-### Animation
+### 动画
 
 ```toml
 [animation]
@@ -628,7 +628,7 @@ fps = 30                              # animation frame rate (ticks per second)
 wave_rows = 32                        # rows per wave cycle for accent animation
 ```
 
-### Prompt
+### 提示符
 
 ```toml
 [prompt]
@@ -637,9 +637,9 @@ mouse_hover = true                    # show hover highlight on the prompt widge
 show_prefix = true                    # show the prompt prefix character
 ```
 
-Compact mode isn't persisted here — control it at runtime with `[ui] compact_mode` or the `/compact-mode` command.
+紧凑模式不在这里持久化——运行时用 `[ui] compact_mode` 或 `/compact-mode` 命令控制。
 
-### Scrollback
+### 滚动缓冲
 
 ```toml
 [scrollback.layout]
@@ -676,9 +676,9 @@ highlight_overlays_border = false     # highlight extends over selection box bor
 dim_accent = 0.5                      # dimming factor for collapsed accents (0.0-1.0)
 ```
 
-`respect_manual_folds` is off by default. Turn it on and a block you fold by hand is pinned: streaming updates and finish events (a thinking block ending, say) leave its fold state alone, and expanding a block while follow-mode is tailing new content stops the auto-scroll so the view stays put. Follow resumes via `Shift+G`, `j` at the last entry, scrolling past the bottom, or sending a new prompt. `Shift+E` clears all pins; `Ctrl+E` clears pins on thinking blocks.
+`respect_manual_folds` 默认关闭。打开后，你手动折叠的块会被钉住：流式更新与完成事件（比如 thinking 块结束）不会改动它的折叠状态；在 follow 模式追踪新内容时展开某个块，会停下自动滚动，让视图留在原处。按 `Shift+G`、在最后一条上按 `j`、向下滚过底部，或发送新的提示，都会恢复 follow。`Shift+E` 清除所有钉子；`Ctrl+E` 只清除 thinking 块上的钉子。
 
-### Block configuration
+### 块配置
 
 ```toml
 [scrollback.blocks.edit]
@@ -700,7 +700,7 @@ animate = true                        # animated accent while thinking
 truncated_lines = 3                   # lines in truncated mode
 ```
 
-### Plugins
+### 插件
 
 ```toml
 disable_plugins = false               # hide hooks/plugins UI entirely
@@ -708,105 +708,105 @@ disable_plugins = false               # hide hooks/plugins UI entirely
 
 ---
 
-## Environment variables
+## 环境变量
 
-The key ones. See the README for the complete list.
+以下是关键项，完整列表见 README。
 
-### Authentication
-
-| 变量 | 说明 |
-|----------|-------------|
-| `XAI_API_KEY` | API key from console.x.ai |
-| `GROK_AUTH_PROVIDER_COMMAND` | External auth binary path |
-| `GROK_AUTH_PROVIDER_LABEL` | Display name on TUI login screen |
-| `GROK_AUTH_TOKEN_TTL` | Token lifetime in seconds |
-| `GROK_AUTH_EARLY_INVALIDATION_SECS` | Seconds before expiry to refresh (default: 300) |
-| `GROK_OIDC_ISSUER` | OIDC issuer URL |
-| `GROK_OIDC_CLIENT_ID` | OIDC client ID |
-
-### Endpoints
+### 认证
 
 | 变量 | 说明 |
 |----------|-------------|
-| `GROK_CLI_CHAT_PROXY_BASE_URL` | Override API proxy base URL |
+| `XAI_API_KEY` | 来自 console.x.ai 的 API 密钥 |
+| `GROK_AUTH_PROVIDER_COMMAND` | 外部认证程序路径 |
+| `GROK_AUTH_PROVIDER_LABEL` | TUI 登录界面上显示的名字 |
+| `GROK_AUTH_TOKEN_TTL` | token 有效期（秒） |
+| `GROK_AUTH_EARLY_INVALIDATION_SECS` | 到期前多少秒刷新（默认 300） |
+| `GROK_OIDC_ISSUER` | OIDC issuer URL（上游遗留项） |
+| `GROK_OIDC_CLIENT_ID` | OIDC client ID（上游遗留项） |
 
-### Features
-
-| 变量 | 说明 |
-|----------|-------------|
-| `GROK_MEMORY` | Enable (`1`) or disable (`0`) cross-session memory |
-| `GROK_SUBAGENTS` | Enable (`1`) or disable (`0`) subagents |
-| `GROK_WORKFLOWS` | Enable (`1`) or disable (`0`) background workflows and select the `/goal` driver (default off: legacy `update_goal`; on: host-owned workflow driver) |
-| `GROK_WEB_FETCH` | Enable (`1`) or disable (`0`) the web_fetch tool |
-| `GROK_WEB_FETCH_ALLOW_LOCAL` | Allow `web_fetch` to explicit loopback hosts only (`localhost` / `127.0.0.0/8` / `::1`). Same as `[toolset.web_fetch] allow_local`. Default off; private/metadata stay blocked. |
-| `GROK_AGENT` | Custom agent definition path or name |
-| `GROK_SANDBOX` | Sandbox profile (off, workspace, devbox, read-only, strict; or a custom profile name) |
-| `GROK_EXIT_TIMEOUT_SECS` | Seconds after a quit is requested before the process is force-exited if teardown hangs (default: 20, `0` disables; a hard exit follows 5s later) |
-
-### Logging
+### 端点
 
 | 变量 | 说明 |
 |----------|-------------|
-| `GROK_LOG_FILE` | Write logs to this file path (used verbatim as the path) |
-| `RUST_LOG` | Log level filter (e.g. `debug`); controls the `GROK_LOG_FILE` log and headless stderr output |
+| `GROK_CLI_CHAT_PROXY_BASE_URL` | 覆盖 API 代理的 base URL |
 
-### Paths
-
-| 变量 | 说明 |
-|----------|-------------|
-| `CHAOS_HOME` | Override config directory (Chaos preferred; highest precedence) |
-| `GROK_HOME` | Override config directory (legacy; used when `CHAOS_HOME` is unset). Default dual-read: existing `~/.chaos`, else existing `~/.grok`, else `~/.chaos` |
-| `GROK_RESPECT_GITIGNORE` | Force gitignore filtering on (`1`) or off (`0`); overrides `[tools] respect_gitignore` |
-
-### Telemetry
+### 功能开关
 
 | 变量 | 说明 |
 |----------|-------------|
-| `GROK_TELEMETRY_ENABLED` | Enable/disable telemetry |
-| `GROK_TELEMETRY_TRACE_UPLOAD` | Enable/disable session trace upload |
-| `GROK_TELEMETRY_MIXPANEL_ENABLED` | Enable/disable Mixpanel specifically |
-| `GROK_EXTERNAL_OTEL` | External OTEL to your collector (see [24-monitoring-usage.md](24-monitoring-usage.md)) |
-| `GROK_FEEDBACK_ENABLED` | Enable/disable feedback system |
-| `GROK_DEPLOYMENT_KEY` | Management API key for enterprise |
+| `GROK_MEMORY` | 启用（`1`）或禁用（`0`）跨会话记忆 |
+| `GROK_SUBAGENTS` | 启用（`1`）或禁用（`0`）子智能体 |
+| `GROK_WORKFLOWS` | 启用（`1`）或禁用（`0`）后台工作流，并选择 `/goal` 的驱动方式（默认关：沿用旧的 `update_goal`；打开：由宿主的工作流驱动） |
+| `GROK_WEB_FETCH` | 启用（`1`）或禁用（`0`）web_fetch 工具 |
+| `GROK_WEB_FETCH_ALLOW_LOCAL` | 只允许 `web_fetch` 访问显式写出的回环地址（`localhost` / `127.0.0.0/8` / `::1`）。等同于 `[toolset.web_fetch] allow_local`。默认关闭；私有网段与 metadata 地址仍被拦截。 |
+| `GROK_AGENT` | 自定义智能体定义的路径或名字 |
+| `GROK_SANDBOX` | 沙箱 profile（off、workspace、devbox、read-only、strict，或自定义 profile 名） |
+| `GROK_EXIT_TIMEOUT_SECS` | 请求退出后，若收尾卡住，多少秒后强制退出进程（默认 20，`0` 表示禁用；5 秒后硬退出） |
+
+### 日志
+
+| 变量 | 说明 |
+|----------|-------------|
+| `GROK_LOG_FILE` | 把日志写到这个文件路径（该值原样用作路径） |
+| `RUST_LOG` | 日志级别过滤（如 `debug`）；同时控制 `GROK_LOG_FILE` 日志与无头模式的 stderr 输出 |
+
+### 路径
+
+| 变量 | 说明 |
+|----------|-------------|
+| `CHAOS_HOME` | 覆盖配置目录（Chaos 侧首选，优先级最高） |
+| `GROK_HOME` | 覆盖配置目录（旧名，兼容保留；`CHAOS_HOME` 未设置时生效）。默认双读顺序：存在的 `~/.chaos`，否则存在的 `~/.grok`，否则 `~/.chaos` |
+| `GROK_RESPECT_GITIGNORE` | 强制打开（`1`）或关闭（`0`）gitignore 过滤；覆盖 `[tools] respect_gitignore` |
+
+### 遥测
+
+| 变量 | 说明 |
+|----------|-------------|
+| `GROK_TELEMETRY_ENABLED` | 启用/禁用遥测 |
+| `GROK_TELEMETRY_TRACE_UPLOAD` | 启用/禁用会话轨迹上传 |
+| `GROK_TELEMETRY_MIXPANEL_ENABLED` | 单独启用/禁用 Mixpanel |
+| `GROK_EXTERNAL_OTEL` | 发往你自己 collector 的外部 OTEL（见 [24-monitoring-usage.md](24-monitoring-usage.md)） |
+| `GROK_FEEDBACK_ENABLED` | 启用/禁用反馈系统 |
+| `GROK_DEPLOYMENT_KEY` | 企业用的管理 API 密钥 |
 
 ---
 
-## File locations
+## 文件位置
 
-User home below means the resolved config root (`$CHAOS_HOME` / `$GROK_HOME` / dual-read `~/.chaos` or `~/.grok`). Paths still document the legacy `~/.grok/...` form; substitute `~/.chaos` when that is your active home.
+下文所说的「用户主目录」指解析后的配置根（`$CHAOS_HOME` / `$GROK_HOME`；为兼容旧安装，双读 `~/.chaos` 或 `~/.grok`）。下表路径仍按旧形式 `~/.grok/...` 书写；若生效的是 `~/.chaos`，请自行替换。
 
 | 路径 | 说明 |
 |------|-------------|
-| `~/.chaos/config.toml` 或 `~/.grok/config.toml` | Main configuration file |
-| `~/.chaos/pager.toml` 或 `~/.grok/pager.toml` | TUI appearance configuration |
-| `~/.chaos/auth.json` 或 `~/.grok/auth.json` | Authentication credentials (auto-managed) |
-| `~/.chaos/sessions/` 或 `~/.grok/sessions/` | Persisted sessions (organized by working directory) |
-| `~/.chaos/memory/` 或 `~/.grok/memory/` | Cross-session memory files and index |
-| `~/.chaos/skills/` 或 `~/.grok/skills/` | User-scoped skill definitions |
+| `~/.chaos/config.toml` 或 `~/.grok/config.toml` | 主配置文件（`.grok` 为兼容旧名，双读时 `.chaos` 优先） |
+| `~/.chaos/pager.toml` 或 `~/.grok/pager.toml` | TUI 外观配置 |
+| `~/.chaos/auth.json` 或 `~/.grok/auth.json` | 认证凭据（自动管理） |
+| `~/.chaos/sessions/` 或 `~/.grok/sessions/` | 已持久化的会话（按工作目录组织） |
+| `~/.chaos/memory/` 或 `~/.grok/memory/` | 跨会话记忆文件与索引 |
+| `~/.chaos/skills/` 或 `~/.grok/skills/` | 用户级技能定义 |
 | `~/.chaos/plugins/` 或 `~/.grok/plugins/` | 用户级插件 |
-| `~/.chaos/agents/` 或 `~/.grok/agents/` | User-scoped agent definitions |
-| `~/.chaos/lsp.json` 或 `~/.grok/lsp.json` | LSP server configuration (user-scoped) |
-| `~/.chaos/logs/` 或 `~/.grok/logs/` | Internal log files (e.g. `unified.jsonl`, MCP server logs) |
-| `.chaos/config.toml` 或 `.grok/config.toml` | Project-scoped MCP servers, plugins, and permission rules (both dual-read; Chaos wins on conflict) |
-| `.chaos/skills/` 或 `.grok/skills/` | Project-scoped skill definitions |
+| `~/.chaos/agents/` 或 `~/.grok/agents/` | 用户级智能体定义 |
+| `~/.chaos/lsp.json` 或 `~/.grok/lsp.json` | LSP 服务器配置（用户级） |
+| `~/.chaos/logs/` 或 `~/.grok/logs/` | 内部日志文件（如 `unified.jsonl`、MCP 服务器日志） |
+| `.chaos/config.toml` 或 `.grok/config.toml` | 项目级 MCP 服务器、插件与权限规则（两者兼容双读；同名冲突时 Chaos 侧优先） |
+| `.chaos/skills/` 或 `.grok/skills/` | 项目级技能定义 |
 | `.chaos/plugins/` 或 `.grok/plugins/` | 项目级插件 |
-| `.chaos/agents/` 或 `.grok/agents/` | Project-scoped agent definitions |
+| `.chaos/agents/` 或 `.grok/agents/` | 项目级智能体定义 |
 | `.chaos/hooks/` 或 `.grok/hooks/` | 项目级钩子 |
-| `.chaos/lsp.json` 或 `.grok/lsp.json` | LSP server configuration |
+| `.chaos/lsp.json` 或 `.grok/lsp.json` | LSP 服务器配置 |
 
 ---
 
-## Project-scoped configuration
+## 项目级配置
 
-项目级配置放在仓库内的 `.chaos/` 或 `.grok/`（双读，同名冲突时 Chaos 侧优先）：
+项目级配置放在仓库内的 `.chaos/`（为兼容旧安装，也读 `.grok/`；双读，同名冲突时 Chaos 侧优先）：
 
-| 文件 | What it configures |
+| 文件 | 配置了什么 |
 |------|--------------------|
-| `.chaos/config.toml` 或 `.grok/config.toml` | MCP、plugins、permission 与 `[mcp] max_output_bytes`（其余 section 只从用户 `config.toml` 加载） |
-| `.chaos/skills/` 或 `.grok/skills/` | 项目 skills |
-| `.chaos/hooks/` 或 `.grok/hooks/` | 项目 hooks |
-| `.chaos/agents/` 或 `.grok/agents/` | 项目 agent 定义 |
-| `.chaos/lsp.json` 或 `.grok/lsp.json` | LSP 配置 |
+| `.chaos/config.toml` 或 `.grok/config.toml` | MCP、插件、权限与 `[mcp] max_output_bytes`（其余 section 只从用户 `config.toml` 加载；`.grok` 为兼容旧名） |
+| `.chaos/skills/` 或 `.grok/skills/` | 项目级技能 |
+| `.chaos/hooks/` 或 `.grok/hooks/` | 项目级钩子 |
+| `.chaos/agents/` 或 `.grok/agents/` | 项目级智能体定义 |
+| `.chaos/lsp.json` 或 `.grok/lsp.json` | LSP 服务器配置 |
 | `.chaos/sandbox.toml` 或 `.grok/sandbox.toml` | 沙箱 profile |
 | `AGENTS.md` | 项目指令（系统提示） |
 
@@ -814,20 +814,20 @@ User home below means the resolved config root (`$CHAOS_HOME` / `$GROK_HOME` / d
 
 ---
 
-## LSP servers
+## LSP 服务器
 
-Language servers power passive diagnostics and the optional `lsp` tool (see the [`lsp_tools`](#general-settings) feature flag). Definitions come from three sources and merge by server name:
+语言服务器为被动诊断和可选的 `lsp` 工具提供支持（见 [`lsp_tools`](#general-settings) 功能开关）。定义来自三个来源，按服务器名合并：
 
 | 来源 | 位置 | 作用域 |
 |--------|----------|-------|
-| 用户 | `~/.grok/lsp.json` | 所有项目 |
-| 项目 | `.grok/lsp.json` | 当前仓库 |
-| 插件 | A trusted plugin's `.lsp.json` file, or an inline `lspServers` block in its `plugin.json` | Wherever the plugin is enabled |
+| 用户 | `~/.chaos/lsp.json`（兼容 `~/.grok/lsp.json`） | 所有项目 |
+| 项目 | `.chaos/lsp.json`（兼容 `.grok/lsp.json`） | 当前仓库 |
+| 插件 | 受信任插件的 `.lsp.json` 文件，或它 `plugin.json` 里的内联 `lspServers` 块 | 插件启用的任何位置 |
 
-When the same server name comes from more than one source, it resolves highest-priority first:
+当同一个服务器名来自多个来源时，按优先级从高到低解析：
 
-1. **Project** — `.grok/lsp.json`
-2. **User** — `~/.grok/lsp.json`
-3. **Plugins** — file-based `.lsp.json`, then inline `lspServers`, in plugin load order
+1. **项目** — `.chaos/lsp.json`（兼容 `.grok/lsp.json`）
+2. **用户** — `~/.chaos/lsp.json`（兼容 `~/.grok/lsp.json`）
+3. **插件** —— 基于文件的 `.lsp.json`，然后是内联 `lspServers`，按插件加载顺序
 
-Project and user entries replace lower-priority ones of the same name. Plugin entries only add servers whose names aren't already defined by a local file, so a local `lsp.json` always wins over a plugin. Plugin LSP servers load only after the plugin is trusted (see [Plugins](09-plugins.md)).
+项目与用户条目会替换同名的低优先级条目。插件条目只补充本地文件尚未定义的名字，所以本地的 `lsp.json` 总是胜过插件。插件的 LSP 服务器只在插件被信任后才加载（见[插件](09-plugins.md)）。

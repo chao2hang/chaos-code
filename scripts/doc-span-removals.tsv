@@ -16,3 +16,7 @@ Subagent started: "..."	第 16 章：同上，后台启动的实际渲染是 子
 Subagent completed/failed/cancelled in Xs: "..."	第 16 章：同上，实际渲染是 子代理已完成/失败/已取消（用时 Xs）：“…”
 --device-code	第 14 章：本分叉无设备码流程（§4.3），随 `grok login --device-auth` 说明一并删除
 $GROK_HOME/bin/grok	第 14 章：受管安装路径随分叉改名（$CHAOS_HOME/bin/chaos），二进制名不是 grok
+Shift+letter	第 5 章：按键记号按中文习惯写作 `Shift+字母`
+Ctrl+letter	第 5 章：按键记号按中文习惯写作 `Ctrl+字母`
+<repo-root>/.grok/config.toml	第 5 章：路径占位符随正文中文化写作 `<仓库根>/.chaos/config.toml`
+<repo-root>/.grok/workflows/	第 5 章：同上，写作 `<仓库根>/.chaos/workflows/`
