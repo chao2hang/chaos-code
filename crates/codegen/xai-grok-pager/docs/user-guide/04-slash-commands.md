@@ -22,7 +22,7 @@
 
 打开[代理看板](23-dashboard.md)：本分页器里顶层会话的实时名册（查看、回复、派发、置顶、重命名、停止、接入）。别名：`/agents-dashboard`、`/sessions`。
 
-它不是 `/config-agents`（别名 `/agents`）—— 后者管理代理*定义*与角色。最小模式下隐藏；用 `GROK_AGENT_DASHBOARD=0` 或 `[dashboard].enabled = false` 关闭。
+它不是 `/config-agents`（别名 `/agents`）—— 后者管理代理*定义*与人设。最小模式下隐藏；用 `GROK_AGENT_DASHBOARD=0` 或 `[dashboard].enabled = false` 关闭。
 
 ### `/compact [context]`
 
@@ -385,7 +385,7 @@ shell 另外还支持子命令（`/plugins list`、`/plugins install <source>`�
 
 ---
 
-## 代理与角色
+## 代理与人设
 
 ### `/config-agents`
 
@@ -395,7 +395,7 @@ shell 另外还支持子命令（`/plugins list`、`/plugins install <source>`�
 
 ### `/personas`
 
-创建、编辑和删除角色。子代理可以套用一个角色，来塑造自己的行为方式。
+创建、编辑和删除人设。子代理可以套用一个人设，来塑造自己的行为方式。
 
 ---
 
