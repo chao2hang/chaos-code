@@ -166,10 +166,10 @@ pub struct WrapArgs {
     )]
     pub command: Vec<String>,
 }
-/// Targets a running leader process by PID (used by `grok leader` / `grok workspace`).
+/// Targets a running leader process by PID (used by `chaos leader` / `chaos workspace`).
 #[derive(Debug, clap::Args, Clone, Default)]
 pub struct LeaderTargetArgs {
-    /// Leader process ID from `grok leader list`.
+    /// Leader process ID from `chaos leader list`.
     #[arg(long)]
     pub pid: Option<u32>,
 }
@@ -414,7 +414,7 @@ pub struct LeaderArgs {
 }
 #[derive(Debug, Clone, Parser)]
 #[command(
-    name = "grok",
+    name = "chaos",
     version = xai_grok_version::full_version(),
     about = "Chaos AI 编码助手",
     disable_version_flag = true,
@@ -703,7 +703,7 @@ pub struct PagerArgs {
     #[arg(long = "disable-web-search")]
     pub disable_web_search: bool,
     /// Exit as soon as the first agent turn ends, without waiting for pending background bash/monitor tasks or background subagents (headless only).
-    /// Default for all `grok -p` runs is to wait (up to `--background-wait-timeout`) so eval harnesses see full task completion.
+    /// Default for all `chaos -p` runs is to wait (up to `--background-wait-timeout`) so eval harnesses see full task completion.
     /// Use this for fast scripts that only need the first turn's text.
     /// Does not wait for server-side auto-wake output or persistent monitors (those hit the timeout).
     #[arg(long = "no-wait-for-background", hide = true)]
@@ -784,7 +784,7 @@ pub struct PagerArgs {
     /// Run standalone even when leader mode is configured.
     #[arg(long, conflicts_with = "leader", hide = true)]
     pub no_leader: bool,
-    /// Initial prompt for the interactive session, e.g. `grok "fix the bug"` or `grok --worktree=feat "create this feature"`.
+    /// Initial prompt for the interactive session, e.g. `chaos "fix the bug"` or `chaos --worktree=feat "create this feature"`.
     #[arg(
         value_name = "PROMPT",
         conflicts_with_all = &["single",
@@ -830,6 +830,24 @@ fn strip_cur_dir(path: PathBuf) -> PathBuf {
         .filter(|component| !matches!(component, std::path::Component::CurDir))
         .collect()
 }
+/// The program name shown in usage and error output.
+///
+/// Only a name this binary is installed under is echoed back; anything else
+/// normalizes to the public `chaos` rather than leaking the invoker's file name
+/// (a crate-named path from `cargo run`, a build-tree path). The fallback used
+/// to be `grok`, which is not a name this branch ships, so every invocation
+/// reported `Usage: grok …` while the completion scripts it generated said
+/// `chaos`.
+fn program_display_name(argv0: Option<&str>) -> &'static str {
+    match argv0
+        .map(std::path::Path::new)
+        .and_then(|path| path.file_name())
+        .and_then(|name| name.to_str())
+    {
+        Some("agent") => "agent",
+        _ => "chaos",
+    }
+}
 impl PagerArgs {
     pub fn memory_enabled_override(&self) -> Option<bool> {
         if self.experimental_memory {
@@ -851,16 +869,8 @@ impl PagerArgs {
     }
     /// Parse CLI arguments without applying side effects.
     pub fn parse_cli() -> Self {
-        let bin_name = std::env::args()
-            .next()
-            .as_deref()
-            .map(std::path::Path::new)
-            .and_then(|p| p.file_name())
-            .and_then(|n| n.to_str())
-            .filter(|n| *n == "grok" || *n == "agent")
-            .unwrap_or("grok")
-            .to_owned();
-        Self::parse_from(std::iter::once(bin_name).chain(std::env::args().skip(1)))
+        let bin_name = program_display_name(std::env::args().next().as_deref());
+        Self::parse_from(std::iter::once(bin_name.to_string()).chain(std::env::args().skip(1)))
     }
     /// Apply launch-directory path anchoring and `--cwd` after early commands have been dispatched without filesystem or process initialization.
     pub fn apply_cwd(self) -> anyhow::Result<Self> {
@@ -1346,6 +1356,29 @@ mod tests {
             args.leader_socket.as_deref(),
             Some(std::path::Path::new("/tmp/leader-y.sock"))
         );
+    }
+    /// The name in usage and error output must be one this branch installs.
+    ///
+    /// [`cli_command_name_is_chaos`] cannot catch a wrong fallback here: it
+    /// renders the derive, while every real invocation goes through `argv[0]`.
+    /// The fallback was `grok` long after the binary became `chaos`, so `--help`
+    /// named a program the user does not have.
+    #[test]
+    fn program_display_name_normalizes_to_an_installed_name() {
+        assert_eq!(program_display_name(Some("chaos")), "chaos");
+        assert_eq!(program_display_name(Some("/usr/local/bin/chaos")), "chaos");
+        assert_eq!(program_display_name(Some("agent")), "agent");
+        assert_eq!(
+            program_display_name(Some("grok")),
+            "chaos",
+            "the upstream name must not survive as a fallback"
+        );
+        assert_eq!(
+            program_display_name(Some("/t/debug/xai-grok-pager-bin")),
+            "chaos",
+            "a crate-named path must not leak into --help"
+        );
+        assert_eq!(program_display_name(None), "chaos");
     }
     #[test]
     fn leader_socket_flag_defaults_to_none() {
