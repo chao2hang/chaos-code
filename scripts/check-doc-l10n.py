@@ -827,23 +827,39 @@ def fork_name_hits(text: str) -> list[tuple[int, str]]:
 
 
 def expand(pattern: str, rev: str | None) -> list[str]:
-    """Resolve a glob to repo-relative paths, at a revision or in the worktree."""
+    """Resolve a glob to repo-relative paths, at a revision or in the worktree.
+
+    A pattern that matches nothing is a hard error, never an empty result: the
+    globs are relative to the repository root, so a bare chapter name such as
+    `--glob 10-hooks.md` silently matches no file and every downstream count
+    would read as a vacuous zero. Failing loudly keeps "0 findings" meaning
+    "checked and clean" instead of "checked nothing".
+    """
     if rev is None:
-        return sorted(
+        found = sorted(
             str(p) for p in Path().glob(pattern) if p.is_file()
         )
-    proc = subprocess.run(
-        ["git", "ls-tree", "-r", "--name-only", rev],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    root = pattern.split("*")[0]
-    return sorted(
-        line
-        for line in proc.stdout.split("\n")
-        if line.startswith(root) and line.endswith(".md")
-    )
+    else:
+        proc = subprocess.run(
+            ["git", "ls-tree", "-r", "--name-only", rev],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        root = pattern.split("*")[0]
+        found = sorted(
+            line
+            for line in proc.stdout.split("\n")
+            if line.startswith(root) and line.endswith(".md")
+        )
+    if not found:
+        raise SystemExit(
+            f"glob {pattern!r} matched no file(s) at "
+            f"{rev or 'WORKTREE'}; the pattern is relative to the repository "
+            f"root, so use e.g. 'crates/.../docs/user-guide/10-hooks.md' or "
+            f"'**/10-hooks.md'"
+        )
+    return found
 
 
 def main() -> int:
