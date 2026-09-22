@@ -2009,6 +2009,7 @@ mod tests {
     }
     #[cfg(unix)]
     #[test]
+    #[allow(clippy::disallowed_methods)] // test child; detach_std_command already enrolled it
     fn policy_reclaim_requires_client_spawn_marker() {
         let spawn = |args: &[&str]| {
             let mut cmd = std::process::Command::new("sh");

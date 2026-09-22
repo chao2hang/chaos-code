@@ -50,7 +50,7 @@ fn editor_global_storage_dirs() -> Vec<(&'static str, PathBuf)> {
     let mut out: Vec<(&'static str, PathBuf)> = Vec::new();
     let editors = ["Code", "Cursor", "Windsurf", "VSCodium"];
 
-    if let Some(home) = dirs::home_dir() {
+    if let Some(home) = xai_dirs::home_dir() {
         #[cfg(target_os = "macos")]
         {
             let base = home.join("Library").join("Application Support");

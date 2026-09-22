@@ -426,15 +426,6 @@ fn maybe_show_send_now_tip(app: &mut AppView) {
     }
 }
 
-/// Body of [`dispatch_send_prompt`], parameterized over whether to consume the prompt textarea after the command is processed.
-///
-/// `consume_input = true` (Enter from the prompt) wipes the textarea, drains pending images into the queue, and inserts the text into up-arrow history.
-/// `consume_input = false` (command palette or ArgPicker dispatch) preserves the draft, leaves images attached, and skips the history insert.
-/// The slash-registry resolution and the downstream `Effect`s are identical in both cases.
-///
-/// `literal = true` (follow-up chip click) submits `text` straight to the model.
-/// The slash-command and exit-alias branches are skipped so server- or model-controlled chip text can never execute a command.
-
 /// Whether a prompt text could trigger the first-prompt project picker.
 /// Slash commands, bang commands, exit/quit aliases, and empty input never
 /// send a prompt to the agent, so they must pass through untouched.
@@ -446,6 +437,14 @@ pub(super) fn input_can_trigger_project_picker(text: &str) -> bool {
         && !matches!(t, "exit" | "quit" | ":q" | ":q!" | ":wq" | ":wq!")
 }
 
+/// Body of [`dispatch_send_prompt`], parameterized over whether to consume the prompt textarea after the command is processed.
+///
+/// `consume_input = true` (Enter from the prompt) wipes the textarea, drains pending images into the queue, and inserts the text into up-arrow history.
+/// `consume_input = false` (command palette or ArgPicker dispatch) preserves the draft, leaves images attached, and skips the history insert.
+/// The slash-registry resolution and the downstream `Effect`s are identical in both cases.
+///
+/// `literal = true` (follow-up chip click) submits `text` straight to the model.
+/// The slash-command and exit-alias branches are skipped so server- or model-controlled chip text can never execute a command.
 pub(super) fn dispatch_send_prompt_inner(
     app: &mut AppView,
     text: String,

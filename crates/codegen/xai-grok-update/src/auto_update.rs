@@ -1536,9 +1536,7 @@ async fn smoke_test_binary(binary_path: &std::path::Path) -> Result<(), SmokeTes
 /// header line that is ignored during verification).
 /// Errors on any network failure or non-2xx HTTP status.
 async fn fetch_signature(sig_url: &str) -> Result<String> {
-    let client = reqwest::Client::builder()
-        .timeout(DOWNLOAD_REQUEST_TIMEOUT)
-        .build()?;
+    let client = download_client()?;
     let resp = client.get(sig_url).send().await?;
     if !resp.status().is_success() {
         anyhow::bail!("HTTP {} fetching signature {}", resp.status(), sig_url);

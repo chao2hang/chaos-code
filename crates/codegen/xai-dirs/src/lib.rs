@@ -94,7 +94,7 @@ fn resolve_grok_home_from(
     if let Some(env) = grok_home_env.filter(|env| !env.is_empty()) {
         return Some((PathBuf::from(env), GrokHomeSource::EnvOverride));
     }
-    os_home.map(|home| dual_default_home_in(home))
+    os_home.map(dual_default_home_in)
 }
 
 /// Resolve the chaos/grok home from the environment (fresh, no cache); `None` if nothing resolves.

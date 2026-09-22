@@ -93,6 +93,9 @@ mod tests {
         assert_eq!(injected_span_id, span_id);
     }
 
+    // A plain client is enough: the mock server is local and only the injected
+    // `traceparent` header is under test.
+    #[allow(clippy::disallowed_methods)]
     #[tokio::test]
     async fn traced_client_injects_client_span_not_parent_on_wire() {
         let _env = OtelTestEnv::install();

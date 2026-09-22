@@ -2106,10 +2106,6 @@ impl MvpAgent {
     ) -> Option<SessionHandle> {
         self.session_registry.resident_handle(id)
     }
-    /// Spawn a best-effort bundle sync. Re-fires on every call site (init,
-    /// cached_token, grok.com/oidc); the cheap pre-checks below absorb repeats
-    /// so reconnects are cheap.
-
     /// True when the live credential no longer belongs to the identity a tier re-check started with.
     /// Every post-await write in [`Self::retry_subscription_check`] runs behind this.
     /// So a detached check that outlives an account switch discards its result instead of gating/ungating the successor identity.

@@ -82,6 +82,9 @@ fn headers_fingerprint(headers: &reqwest::header::HeaderMap) -> String {
 
 #[cfg(test)]
 mod tests {
+    // Only a dummy client is needed here: these tests exercise the cache key,
+    // single-flight admission and LRU eviction, and nothing leaves the process.
+    #![allow(clippy::disallowed_methods)]
     use super::*;
     use reqwest::header::{HeaderMap, HeaderValue};
 

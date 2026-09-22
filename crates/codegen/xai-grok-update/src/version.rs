@@ -244,14 +244,13 @@ fn tag_to_version(tag: &str) -> Option<String> {
 }
 
 async fn fetch_gh_release_latest_http(stable_only: bool) -> Result<String> {
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(15))
-        .user_agent(format!(
+    let client = xai_grok_extra_ca::build_reqwest_client(|builder| {
+        builder.timeout(Duration::from_secs(15)).user_agent(format!(
             "chaos-code-updater/{} (+https://github.com/{})",
             xai_grok_version::VERSION,
             GH_RELEASE_REPO
         ))
-        .build()?;
+    })?;
 
     if stable_only {
         let resp = client.get(gh_release_api_latest()).send().await?;
