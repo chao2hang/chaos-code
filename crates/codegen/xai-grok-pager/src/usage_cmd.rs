@@ -7,9 +7,9 @@ use xai_grok_shell::session::usage_file::{SessionUsageFile, UsageLoad};
 
 #[derive(Debug, clap::Args, Clone)]
 pub struct UsageArgs {
-    /// Session ID
+    /// 会话 ID
     pub session_id: String,
-    /// Turn number. Omit for session totals and every recorded turn.
+    /// 轮次编号。省略则显示会话总计及每个已记录的轮次。
     pub turn: Option<u32>,
 }
 

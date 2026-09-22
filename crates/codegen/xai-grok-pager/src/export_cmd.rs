@@ -10,11 +10,11 @@ use crate::scrollback::state::ScrollbackState;
 
 #[derive(Debug, clap::Args, Clone)]
 pub struct ExportArgs {
-    /// Session ID to export
+    /// 要导出的会话 ID
     pub session_id: String,
-    /// Output file path (default: stdout)
+    /// 输出文件路径（默认：标准输出）
     pub output: Option<PathBuf>,
-    /// Copy to clipboard instead of writing to stdout
+    /// 复制到剪贴板，而不是写入标准输出
     #[arg(long, short)]
     pub clipboard: bool,
 }

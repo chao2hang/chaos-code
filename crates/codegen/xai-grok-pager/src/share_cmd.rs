@@ -3,7 +3,7 @@ use xai_grok_shell::agent::config::Config as AgentConfig;
 
 #[derive(Debug, clap::Args, Clone)]
 pub struct ShareArgs {
-    /// Session ID to share
+    /// 要分享的会话 ID
     pub session_id: String,
 }
 

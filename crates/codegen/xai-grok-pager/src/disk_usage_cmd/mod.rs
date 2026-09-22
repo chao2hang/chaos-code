@@ -26,14 +26,14 @@ const SCHEMA_VERSION: u32 = 1;
 
 #[derive(Clone, Debug, clap::Args)]
 #[command(
-    after_help = "Lists every top-level directory in the grok home, largest first, then every \
-worktree under `worktrees/` and `worktree_pool/` with its size, age, and label. To reclaim space, preview a sweep with \
-`chaos worktree gc --max-age 7d --dry-run`: without `--max-age`, gc expires nothing, it \
-visits only worktrees the registry tracks, and it keeps a worktree whose work \
-it cannot find elsewhere."
+    after_help = "按从大到小列出 Chaos 主目录中的每个顶层目录，然后列出 `worktrees/` 与 `worktree_pool/` 下每个\
+工作树及其大小、年龄和标签。要回收空间，可用\
+`chaos worktree gc --max-age 7d --dry-run` 预览一次清理：不带 `--max-age` 时 gc 不会让任何\
+工作树过期，它只访问注册表跟踪的工作树，并且会保留无法在别处找到其工作的工作\
+树。"
 )]
 pub struct DiskUsageArgs {
-    /// Emit machine-readable JSON output.
+    /// 输出机器可读的 JSON。
     #[arg(long)]
     pub json: bool,
 }
