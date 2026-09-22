@@ -279,6 +279,17 @@ path = "tests/scripted_scenarios.rs"
 name = "pty_auto_mode"
 path = "tests/pty_auto_mode.rs"
 
+# Upstream's "internal operator docs are in sync" check. It `include_str!`s
+# `docs/internal/25-enterprise.md` and `docs/internal/22-environment-variables.md`,
+# and that directory has never existed in the public snapshot (absent from this
+# repo's whole history and from `origin/main`), so this target cannot compile
+# under cargo. Declaratively skip it instead of deleting it: whoever has the
+# internal docs can run it with `--features internal-docs`.
+[[test]]
+name = "registered_features_are_documented"
+path = "tests/registered_features_are_documented.rs"
+required-features = ["internal-docs"]
+
 # Opt into [workspace.lints.clippy] (too_many_arguments etc.). Without this,
 # `cargo clippy --workspace -- -D warnings` on this package is stricter than
 # the workspace-default clippy allows used in CI.
@@ -306,3 +317,8 @@ release-dist = []
 # `AgentSession::set_yolo_mode_for_test`) to sibling crates' test builds — used
 # by `xai-grok-pager-minimal`'s unit tests. Never enabled in production builds.
 test-support = ["xai-grok-pager-render/test-support", "xai-grok-gboom/test-support"]
+# Only for builds that also have the upstream internal operator docs on disk;
+# gates the `registered_features_are_documented` test target (see its `[[test]]`
+# entry above). Off by default because `docs/internal/` is not in the public
+# snapshot, which would otherwise break `cargo test` for the whole package.
+internal-docs = []

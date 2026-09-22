@@ -73,6 +73,14 @@ async fn drag_enters_content_from_gap_pty() {
         .unwrap_or_else(|| panic!("could not locate the turn marker; screen:\n{screen}"));
     assert!(marker_row > msg_row, "setup: marker below the message");
 
+    // The gap row below the marker must be fully blank (above the prompt box).
+    let gap_row = marker_row + 1;
+    let gap_line = screen.lines().nth(gap_row as usize).unwrap_or("");
+    assert!(
+        gap_line.trim().is_empty(),
+        "setup: the press row must be a blank gap; line: {gap_line:?}"
+    );
+
     // PRESS in the gap, then drag up into the message
     // The motion samples jump the marker row deliberately (terminals coalesce motion)
     // The column clamp within a row makes the marker's line hittable at any column of its row, so a sample there would anchor the drag on the marker
