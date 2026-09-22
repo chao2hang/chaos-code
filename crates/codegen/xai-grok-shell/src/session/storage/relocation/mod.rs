@@ -136,15 +136,25 @@ fn load_candidates(sessions_root: &Path) -> Result<(SessionCandidates, SessionCa
         if !cwd_type.is_dir() || cwd_type.is_symlink() {
             continue;
         }
-        for session_entry in
-            fs::read_dir(&cwd_path).map_err(|error| io_error("read", &cwd_path, error))?
-        {
+        // A cwd bucket can be pruned between the listing above and this walk (a concurrent
+        // `chaos` process, a user cleaning up, a test fixture dropping its scratch home).
+        // A bucket that is already gone has no sessions to contribute, exactly like a missing
+        // sessions root, so treat it as empty rather than failing the whole listing.
+        let session_entries = match fs::read_dir(&cwd_path) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(io_error("read", &cwd_path, error)),
+        };
+        for session_entry in session_entries {
             let session_entry =
                 session_entry.map_err(|error| io_error("read", &cwd_path, error))?;
             let path = session_entry.path();
-            let file_type = session_entry
-                .file_type()
-                .map_err(|error| io_error("inspect", &path, error))?;
+            let file_type = match session_entry.file_type() {
+                Ok(file_type) => file_type,
+                // Same race one level down: the session dir can vanish mid-walk.
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => return Err(io_error("inspect", &path, error)),
+            };
             let Some(id) = session_entry.file_name().to_str().map(str::to_owned) else {
                 continue;
             };
