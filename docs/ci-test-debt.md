@@ -125,6 +125,151 @@ scripts/ci/ignored-tests.sh --stale  # 只列过期/未设 review date 的
   "永久债务"，需季度审计时处理。
 - 新增 fork 专属 ignore → 必须同时更新本节表格计数和原因描述。
 
+## 2026-09-22：一组「从不执行」的守护测试（已接回）
+
+`xai-grok-shell` 的 `config_docs` 模块把提交进仓库的配置参考页
+（`crates/codegen/xai-grok-pager/docs/user-guide/26-config-reference.md`）与实时
+注册表逐行对齐：每个 `FEATURES` 键必须在页面上有行、Requirements 必须是
+`pin`、Managed 列必须与 `MANAGED_WINS_OVER_USER` 一致、MCP 已知字段与
+`telemetry.otel_*` 必须齐全、Details 不得泄漏内部系统名。
+
+它在 `lib.rs` 里写作 `#[cfg(all(test, feature = "config-docs"))]`，而
+`config-docs` 不在 cargo `default` 里：上游把打开它的责任交给内部 bazel 的
+`default-bazel` 集合，公开树没有对应机制，本仓库也没有任何依赖边打开它。于是
+这组守护在本仓库从未编译过——`cargo test -p xai-grok-shell --lib` 是
+`running 0 tests`，`--workspace` 同样跑不到——模块文档里「CI fails when …」的
+承诺是空的。`features.feedback` 与 `features.two_pass_compaction` 的默认值在
+页面上反着写了很久，没有任何东西会响。
+
+已处理（`91eadcfe`）：
+
+- 中文化之后必然失败的两条英文断言（页面标题 `# Configuration reference`、
+  英文表头）改成中文页面的实际形态；这等于原先在钉「这页还没翻」。
+- 同一用例读 `crates/codegen/xai-grok-shell/AGENTS.md`，该文件既不在本分叉
+  也不在上游公开树里，`find_monorepo_root().join(...)` 之后 `read_to_string`
+  直接 panic；改成「文件存在才断言」。
+- 新增 `feature_rows_state_the_registry_default`，逐行把 `FEATURES` 里 19 个
+  特性写出的 `默认 true|false` 与 `default_enabled` 对齐，凡出现「默认」的行
+  都必须能解析成该形态（避免用例空转）。
+- 在 `crates/codegen/xai-grok-pager/Cargo.toml` 的 dev-dependency 边上打开
+  `config-docs`（上游同一行已有同型做法：给 `xai-grok-shell` 开 `test-support`），
+  于是 `cargo test --workspace` 会跑到它，`cargo check/clippy --all-targets`
+  也会编译它。`.github/workflows/ci.yml` 未改动。
+- 变异验证：把 `features.dock` 改成「默认 true」，新用例报
+  `features.dock says 默认 true, but registered default_enabled is false`。
+
+### 同类残留：还有哪些 `#[cfg(all(test, feature = …))]` 不编译
+
+`scripts/ci/ignored-tests.sh` 数的是 `#[ignore]`，「根本没编译」的测试不在它的
+视野里。按「模块特性 vs 有没有依赖边打开」对全仓扫一遍（2026-09-22，
+`grep -rn 'cfg(all(test, feature'` 对照各 `Cargo.toml` 的 `features = [...]`）：
+
+| 模块 | 特性 | 是否有边打开 | 状态 |
+|---|---|---|---|
+| `xai-grok-shell::config_docs` | `config-docs` | 本轮补上（pager dev-dep） | 已接回 |
+| `xai-grok-pager::app::acp_handler::permissions` 的 `local-workspace` 用例 | `local-workspace` | 否（只在 pager/pager-bin 的 `default-bazel` 里） | **仍未编译** |
+| `xai-grok-pager::views::welcome::workspace_mode` 的 `local-workspace` 用例 | `local-workspace` | 同上 | **仍未编译** |
+| `xai-fast-worktree`（`api.rs`/`git/mod.rs`） | `metadata` | 是（shell / workspace / pager 的依赖边） | 正常 |
+| `xai-computer-hub-sdk::metrics` | `metrics` | 是（workspace / workspace-daemon） | 正常 |
+| `xai-grok-voice::pipeline` | `audio` | 是（pager 的依赖边） | 正常 |
+| `xai-grok-tools::notification::types` | `serde` | 是（tools 的 `default`） | 正常 |
+| `xai-grok-sandbox::read_deny_verify` | `enforce` | 是（pager 的 `sandbox-enforce` 默认） | 正常 |
+| `xai-grok-pager-bin::main`（jemalloc） | `jemalloc` | 是（pager-bin 的 `default`） | 正常 |
+| `xai-grok-shell`（loom）、`xai-grok-shell`（dhat-heap）、`xai-grok-announcements::bindings_export` | `loom` / `dhat-heap` / `ts` | 否，**有意**（各自 `Cargo.toml` 写了手跑命令或 generate.sh） | 非债务 |
+
+剩下那两条 `local-workspace` 用例**不**照抄本轮的接法：`local-workspace` 是一个
+真实功能开关（workspace_server 的 own/attach 路径），不是纯测试门闩，打开它会让
+整个 lib 测试构建的编译面变化，可能把「该功能默认关闭」的断言一起掀翻。要么
+先确认打开后全绿再接，要么把这两条用例改成不依赖该特性的契约断言。
+
+**教训**：新增 `#[cfg(all(test, feature = …))]` 的测试模块时，必须同时说明
+「谁打开这个特性」，否则它和删掉没有区别。
+
+## 2026-09-22：全量 test 暴露的四类遗留失败（已修）
+
+`cargo test --workspace --no-fail-fast` 与随后的复现实验找出四类问题，都不是
+本轮改动引入的：三个文件在本分叉与 `SOURCE_REV` 逐字节相同，第四类是上游
+`75810042` 已经修过、本分叉还停在旧写法上。
+
+| 用例 | 表现 | 成因 | 修法 |
+|---|---|---|---|
+| `acp_session_tests::auto_wake_suppression_tests` 的两条 | 确定性（3/3 复现） | 用「资源里没有这条状态」当「没报告过」，而提醒流水线的任何一次工具调用都会经 `get_or_default` 把空状态建出来 | 采纳上游 `75810042` 的只读 `is_reported`，断言换成只读探针 |
+| `prompt_queue_actor_tests::drain_at_safe_point_with_steer_off_does_not_promote_held_row` | 偶发（全量跑 2/3 次挂 1 次） | steer 缓存是进程全局的，同文件另两条用例会写它 | 两个写入者补 `#[serial_test::serial]` |
+| `session_search::{bootstrap::tests::test_claimant_reindexes_even_when_marker_exists, manager::tests::test_recheck_bootstrap_reruns_reindex_when_marker_missing}` | 偶发（加压后 4/120） | `recovery::CACHE_EPOCH` 是进程全局的，同二进制里别的用例 heal 自己的缓存会把它自增 | 断言容忍外来 heal，写法照抄同文件 `test_concurrent_gates_single_flight` |
+| `auth::manager::lock::tests::dropping_the_guard_silences_the_heartbeat_before_anyone_else_can_hold_the_lock` | 全量 6819 条里挂过 1 次（`lock_tests.rs:491` `WouldBlock`） | 别的用例 `Command::spawn` 时 fork 把当刻开着的锁文件 dup 带进子进程，那份 dup 压着 flock 到 exec | 抢锁改成有界重试；真泄漏仍会超时失败 |
+
+### 一：`is_none()` 不是「没报告过」
+
+两条用例都写 `resources.get::<State<ReportedTaskCompletions>>().is_none()`，注释说
+这是「拒绝入队不得报告」「入队本身不算报告」。问题是提醒流水线上**任何一次**工具
+调用都会经 `get_or_default` 把这条状态建出来（空集），于是「容器不存在」与
+「没有报过」是两件事：用例断言的是前者，想说的是后者。
+
+同文件里那个 `already_reported` 帮手更值得记一笔：它靠
+`!reported.mark_reported(task_id)` 回答，**问谁就标记谁**。于是等待「本轮把它标记
+了」的轮询第一次就自证成功，而断言「它没被标记」的用例在提问的瞬间把答案改了。
+
+修法与上游 `75810042` 一致：`ReportedTaskCompletions::is_reported` 只读访问器
+＋ 只读探针 ＋ 断言 `!already_reported(&actor, …)`。
+
+### 二：进程全局的 steer 缓存
+
+`drain_at_safe_point_with_steer_off_does_not_promote_held_row` 读 steer 缓存，
+而 `promote_queued_as_interjections_skips_auto_wake`、
+`drain_at_safe_point_with_steer_on_leaves_protected_row_queued` 会写它。同文件里
+它们的孪生用例早就带了 `#[serial_test::serial]`（本分叉上一轮补的），这两条漏了。
+补齐后全量跑不再复现。
+
+### 三：`CACHE_EPOCH` 是进程全局的
+
+`reindex_all` 在收尾时检查 `epoch.changed()`：只要进程里发生过一次
+`heal_unusable` 的「隔离并重建」，它就**按契约**扣下完成标记并返回 `RunAgain`
+（标记留给下一次重跑写）。而同一测试二进制里
+`bootstrap_tests::test_shared_index_reopens_after_epoch_change` 与
+`recovery::tests::heal_quarantines_only_on_confirmed_corruption` 各自会在自己的
+tmpdir 上触发一次自增。两条用例却把「reindex 写完了标记」当确定事实。
+
+证据（诊断塞在 `reindex_all` 的每个扣标记分支里，20 个 `yes` 压满 CPU，直接跑
+测试二进制 120 次）：4 次失败，且每次都打印
+`DIAG withhold reason=cache_healed_during_reindex` 与
+`DIAG claimant epoch 0 -> 1 outcome RunAgain marker Some("123")`；
+`reason=claim_lost`、`reason=index_replaced` 各 0 次，即机制只有 epoch 一条。
+另有 13/120 次落在别的不做标记断言的用例窗口里，因此静默通过。
+
+修法沿用同文件已有的写法（`test_concurrent_gates_single_flight` 就是先取
+`epoch_before`，再用 `healed || read_marker(…)` 容忍外来 heal）：先取
+`epoch_before`，把「被外来 heal 打断」当成合法分支。**不**改成让用例自己重跑：
+`RunAgain` 的合同是把重跑交还给调用方（`manager::handle_job` 会
+`bootstrap_once` 重新入队），直接调 `bootstrap_with_lease_inner` 的用例没有这个
+循环，替它补一个等于替生产代码做决定。修后同条件 150 次全绿。
+
+### 四：fork 会把 flock 的 dup 带进子进程
+
+失败了 1 次的那条用例在 `drop(AuthFileLock{..})` 之后立刻重新打开同一个锁文件并
+`try_lock_exclusive()`。先排除了「`join()` 不保证关掉心跳线程那份 dup」：把该
+模式（`try_clone` → 线程持有 → signal → `join` → drop → 再抢锁）单独跑 3000 次，
+0 失败。再把 fork→exec 窗口人为拉长（`Command::pre_exec` 里睡 400ms）后**稳定
+复现**：
+
+```
+right after the parent dropped its fd: Some("WouldBlock")
+after the child exec'd:               None
+```
+
+flock 挂在打开文件描述上，`fork` 出来的子进程带着当刻开着的锁文件 dup；父进程
+关掉自己的 fd 之后，子进程那份仍然压着锁，直到它 `exec` 触发 CLOEXEC。同一测试
+二进制里 `auth::manager::lock::tests::subprocess_lock_holder` 那一组正是 spawn
+大户，所以这条只在全量并行时偶发。
+
+修法：把「重新抢到锁」当成用例的**前置条件**重试（5s，10ms 轮询）。真泄漏
+（心跳线程没死、或某个子进程卡在 exec 前）仍会走到超时 panic；用例真正要钉的
+属性——30ms 后文件里还是 `sentinel`——没有放宽。
+
+**教训**：进程全局状态（`CACHE_EPOCH`、steer 缓存、fd 继承）不会出现在用例自己
+的 tmpdir 里，却决定它读到什么。这样的用例要么显式互斥，要么把「全局变化了」
+当成合法分支写进断言——把它当成不可能的巧合，就换来一条只在全量跑时冒头的
+偶发失败。
+
 ## Risk
 
 With the full workspace now tested in CI, logic regressions in the TUI
