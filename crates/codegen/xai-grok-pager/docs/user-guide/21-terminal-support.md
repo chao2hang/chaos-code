@@ -1,56 +1,50 @@
-# Terminal Support and Troubleshooting
+# 终端支持与故障排查
 
-Grok Build runs as a full-screen TUI. It relies on terminal support for color,
-clipboard, keyboard input, mouse input, and full-screen display. Terminals,
-multiplexers, containers, and SSH sessions can handle these features differently.
+Chaos 以全屏 TUI 运行，依赖终端提供颜色、剪贴板、键盘输入、鼠标输入与全屏
+显示能力。不同的终端、多路复用器、容器与 SSH 会话对这些特性的支持各有差异。
 
-## Diagnose and Fix Terminal Problems
+## 诊断并修复终端问题
 
-Run `/doctor` in Grok to check the current session and see available fixes. If
-Grok cannot start, run `grok doctor` in your shell. Use `grok doctor --json`
-for a machine-readable report.
+在 Chaos 里运行 `/doctor` 检查当前会话并查看可用修复。如果 Chaos 无法启动，
+在 shell 里运行 `chaos doctor`；需要机器可读的报告时用
+`chaos doctor --json`。
 
-Doctor checks the terminal, multiplexer, color support, keyboard and newline
-behavior, clipboard routes, and microphone availability when audio capture is
-included. The in-app command can also check live session details such as
-notification focus tracking and sandbox profile conflicts.
+Doctor 会检查终端、多路复用器、颜色支持、键盘与换行行为、剪贴板路由，以及
+（在包含音频采集的构建里）麦克风可用性。应用内命令还能检查实时会话细节，
+例如通知焦点跟踪与沙箱 profile 冲突。
 
-A report can contain issues or recommendations and still exit successfully.
-`grok doctor --json` reports the same color capability when piped. Microphone
-checks do not start recording, so Doctor cannot detect macOS permission failures
-that appear only as silence during capture.
+报告可以既包含问题或建议、又以成功状态退出。`chaos doctor --json` 在被管道
+接管时报告相同的颜色能力。麦克风检查不会真正开始录音，因此 Doctor 无法检测
+只在采集期间表现为静音的 macOS 权限失败。
 
-`/terminal-setup`, `/terminal-check`, and `/terminal-info` remain aliases for
-`/doctor`.
+`/terminal-setup`、`/terminal-check` 与 `/terminal-info` 仍是 `/doctor`
+的别名。
 
-When Doctor finds an explicit unhealthy tmux setting, `/doctor fix` lists the
-available automatic fixes. Apply one named fix at a time, for example
-`/doctor fix tmux-clipboard` or `grok doctor fix dcs-passthrough --yes`.
-Doctor can persist these four tmux options:
+当 Doctor 发现某个明确的 tmux 不健康设置时，`/doctor fix` 会列出可用的自动
+修复。一次只应用一个指名修复，例如 `/doctor fix tmux-clipboard` 或
+`chaos doctor fix dcs-passthrough --yes`。Doctor 可以持久化以下四个 tmux
+选项：
 
 - `terminal.tmux-clipboard` — `set -g set-clipboard on`
 - `terminal.dcs-passthrough` — `set -wg allow-passthrough on`
 - `terminal.tmux-extended-keys` — `set -g extended-keys on`
 - `terminal.tmux-truecolor` — `set -as terminal-features ",*:RGB"`
 
-A tmux fix edits only the persistent config on the computer hosting the affected
-tmux server, including remote sessions. Plain tmux uses the real
-`$HOME/.tmux.conf`; Byobu-tmux uses its effective `BYOBU_CONFIG_DIR` and refuses
-to guess if that directory is unavailable or unsafe. Grok preserves the file's
-line endings and mode, makes a backup when changing an existing file, and
-refuses conflicting or ambiguous direct assignments.
+tmux 修复只编辑承载受影响 tmux 服务器的那台机器上的持久配置（含远程会话）。
+普通 tmux 使用真实的 `$HOME/.tmux.conf`；Byobu-tmux 使用其生效的
+`BYOBU_CONFIG_DIR`，在该目录不可用或不安全时拒绝猜测。Chaos 会保留文件的
+行尾符与权限模式，修改既有文件时先做备份，并拒绝有冲突或含义不明的直接赋值。
 
-Grok deliberately does **not** run `tmux source-file` or change the live tmux
-server. Reload with the exact command shown after apply, or detach and reattach,
-then run `/doctor` again. Until reload, the live finding is expected to remain.
-The conservative config scan checks direct global assignments only; review
-sourced files, conditionals, plugins, and generated tmux setup yourself.
+Chaos 刻意**不**执行 `tmux source-file`，也不改动运行中的 tmux 服务器。请用
+应用后给出的那条命令原样重载，或脱离再重新接入，然后再跑一次 `/doctor`。
+在重载之前，实时检查项保持原样是预期行为。保守的配置扫描只检查直接全局
+赋值；sourced 文件、条件分支、插件和生成的 tmux 配置请自行审阅。
 
 ---
 
-## Detected Terminals
+## 已识别的终端
 
-Grok detects these terminal emulators from environment variables:
+Chaos 根据环境变量识别这些终端模拟器：
 
 - **Apple Terminal**
 - **Ghostty**
@@ -60,244 +54,219 @@ Grok detects these terminal emulators from environment variables:
 - **Kitty**
 - **Alacritty**
 - **Rio**
-- **foot** (Wayland-native, Linux)
-- **VS Code**, **Cursor**, **Windsurf**, and **Zed** integrated terminals
-- **JetBrains** IDE terminals
-- **Grok Desktop**
-- **VTE**-based terminals such as GNOME Terminal, GNOME Console, and Tilix
+- **foot**（Wayland 原生，Linux）
+- **VS Code**、**Cursor**、**Windsurf** 与 **Zed** 集成终端
+- **JetBrains** IDE 终端
+- **Chaos Desktop**
+- 基于 **VTE** 的终端，如 GNOME Terminal、GNOME Console 与 Tilix
 - **Windows Terminal**
 
-Detection has these limitations:
+识别有以下限制：
 
-- Inside tmux, variables that identify the outer terminal may not reach Grok.
-- Over SSH, many terminal variables are not forwarded.
-- tmux's global environment reflects the first client attached to the server,
-  not necessarily the current terminal.
+- 在 tmux 内部，标识外层终端的变量可能传达不到 Chaos。
+- 通过 SSH 时，许多终端变量不会被转发。
+- tmux 的全局环境反映的是第一个接入该服务器的客户端，不一定是当前终端。
 
 ---
 
-## Common Problems and Fixes
+## 常见问题与修复
 
-### Colors look wrong or lack truecolor
+### 颜色不对或缺少真彩色
 
-Run `/doctor`. A fully supported setup shows `color truecolor` and `themes all`.
-If it does not, Doctor shows the detected limitation and the relevant fix.
+运行 `/doctor`。完全受支持的配置会显示 `color truecolor` 与 `themes all`。
+否则 Doctor 会显示检测到的限制与相应修复。
 
-Inside tmux there are two separate questions: what color Grok emits, and what
-color survives the multiplexer. The `color` line answers the first. For the
-second, when the attached client is not marked `RGB`, tmux rewrites every
-24-bit color to the nearest color the outer terminal's terminfo advertises,
-which can be as few as eight. Themes then look washed out even though `color`
-reads `truecolor`. Doctor reports this as `terminal.tmux-truecolor`. Reload
-your tmux config and then detach and reattach: the server reads the new option
-only on reload, and a client fixes its color depth only at attach, so neither
-step alone changes anything.
+在 tmux 里有两个独立的问题：Chaos 发出什么颜色，以及什么颜色能穿过复用器。
+`color` 行回答第一个问题。至于第二个：当接入的客户端未被标记为 `RGB` 时，
+tmux 会把每个 24-bit 颜色改写为外层终端 terminfo 所声明的最接近颜色，可能
+少到只有八种。此时即使 `color` 读数是 `truecolor`，主题看起来仍然发灰。
+Doctor 将其报告为 `terminal.tmux-truecolor`。重载 tmux 配置并脱离后重新
+接入：服务器只在重载时读取新选项，客户端只在接入时修正颜色深度，所以单独
+任一步骤都不会带来变化。
 
-### Clipboard problems
+### 剪贴板问题
 
-Grok writes through up to three routes, shown in `/doctor` under **Clipboard**:
+Chaos 最多通过三条路由写入，`/doctor` 的**剪贴板**部分会展示：
 
-- **native** — the local operating-system clipboard.
-- **tmux** — the tmux paste buffer when Grok runs inside tmux.
-- **OSC 52** — an escape sequence that can cross tmux, containers, or SSH.
+- **native** — 本地操作系统的剪贴板。
+- **tmux** — Chaos 运行在 tmux 内时使用的 tmux 粘贴缓冲区。
+- **OSC 52** — 一种可以穿过 tmux、容器或 SSH 的转义序列。
 
 #### Wayland
 
-Modern Wayland compositors can update the clipboard without keeping the
-terminal focused. Older compositors may require Grok to remain focused until
-the copy message appears. Grok shows a startup warning when this applies; run
-`/doctor` for the detected status and steps.
+现代 Wayland 合成器无需保持终端聚焦即可更新剪贴板；较老的合成器可能要求
+Chaos 保持聚焦，直到复制消息出现。当适用这种情况时 Chaos 会在启动时给出
+警告；运行 `/doctor` 查看检测到的状态与步骤。
 
-`GROK_CLIPBOARD_NO_DATA_CONTROL=1` is an advanced fallback that disables the
-data-control route. Copies then use command-line clipboard tools.
+`GROK_CLIPBOARD_NO_DATA_CONTROL=1` 是禁用 data-control 路由的高级回退手段，
+此时复制改用命令行剪贴板工具。
 
-#### OSC 52 kill switch
+#### OSC 52 关闭开关
 
-Grok emits OSC 52 on Linux and across tmux, SSH, or displayless containers when
-that route is enabled. A terminal that does not implement OSC 52 may display the
-encoded payload as text. Set `GROK_CLIPBOARD_NO_OSC52=1` before starting Grok to
-disable that route. `/doctor` then shows `osc 52 off`; native and tmux routes are
-unchanged.
+当该路由启用时，Chaos 在 Linux 上以及穿越 tmux、SSH 或无显示容器时发出
+OSC 52。未实现 OSC 52 的终端可能把编码后的载荷当作文本显示。在启动
+Chaos 之前设置 `GROK_CLIPBOARD_NO_OSC52=1` 可禁用该路由；`/doctor` 随后显示
+`osc 52 off`，native 与 tmux 路由不受影响。
 
-#### Linux X11 selections
+#### Linux X11 选区
 
-X11 **PRIMARY** and **CLIPBOARD** are separate:
+X11 的 **PRIMARY** 与 **CLIPBOARD** 是相互独立的：
 
-- An unmodified middle click reads PRIMARY only when `DISPLAY` is set. Under
-  XWayland, `xclip` or `xsel` must be on `PATH`.
-- `Ctrl+V` reads CLIPBOARD and never falls back to PRIMARY.
-- `Shift+Insert` remains the terminal's selected-text paste.
+- 不带修饰键的中键点击只在 `DISPLAY` 已设置时读取 PRIMARY。在 XWayland 下，
+  `xclip` 或 `xsel` 必须位于 `PATH` 中。
+- `Ctrl+V` 读取 CLIPBOARD，绝不回退到 PRIMARY。
+- `Shift+Insert` 仍然是终端自身的选中文本粘贴。
 
-#### SSH and selected text
+#### SSH 与选中文本
 
-A remote Grok process normally cannot read the local terminal's selection. Use
-terminal-native `Shift+Insert`, or hold `Shift` while middle-clicking when the
-terminal uses that gesture to bypass mouse reporting.
+远程的 Chaos 进程通常无法读取本地终端的选区。请使用终端原生的
+`Shift+Insert`，或在终端用「中键点击时按住 `Shift`」这一手势绕过鼠标上报。
 
-When Grok cannot identify the outer terminal over SSH, it predicts that OSC 52
-will be sent but marks the route as not verified. The copy toast then names the
-backup file so you can retrieve the text. Run `/doctor` for other copy options.
+当 Chaos 无法通过 SSH 识别外层终端时，它会预测 OSC 52 将被发送，但把该路由
+标记为未验证。复制提示会给出备份文件名，以便你找回文本。运行 `/doctor`
+查看其它复制选项。
 
-#### Apple Terminal over SSH
+#### 通过 SSH 使用 Apple Terminal
 
-Apple Terminal does not support OSC 52, so a remote copy cannot reach the local
-clipboard. Each copy is still saved to a backup file (`~/.grok/last-copy.txt` by
-default; override with `GROK_COPY_FILE`); the toast names that path when delivery
-is unverified or the clipboard is unreachable. You can also use `/copy <file>` or
-`/minimal`.
+Apple Terminal 不支持 OSC 52，因此远程复制无法到达本地剪贴板。每次复制仍会
+保存到备份文件（默认 `~/.chaos/last-copy.txt`，可用 `GROK_COPY_FILE`
+覆盖）；当投递未验证或剪贴板不可达时，提示会给出该路径。你也可以用
+`/copy <file>` 或 `/minimal`。
 
-For direct clipboard forwarding, run the SSH command from the local computer
-through `grok wrap`, for example `grok wrap ssh user@host`. The same command can
-wrap container and pod shells. It also restores terminal modes after a dropped
-connection.
+若要直接转发剪贴板，请在本地机器上通过 `chaos wrap` 运行 SSH 命令，例如
+`chaos wrap ssh user@host`。同一条命令也可以包装容器与 pod shell，并且会在
+连接断开后恢复终端模式。
 
-When an SSH session is not using `grok wrap`, Grok shows the one-time tip
-“Run `/doctor` for details and fixes.” The tip stops appearing after the session
-is launched through wrap. Turn it off with `/settings` → **Show contextual
-hints** → **SSH wrap**, or set `ssh_wrap = false` under
-`[ui.contextual_hints]` in `$GROK_HOME/config.toml`. This setting does not hide
-the Doctor recommendation.
+当 SSH 会话没有使用 `chaos wrap` 时，Chaos 会显示一次性提示
+“Run `/doctor` for details and fixes.”。会话通过 wrap 启动后该提示不再出现。
+关闭它的方式：`/settings` → **显示情境提示** → **SSH 包装**，或在
+`$CHAOS_HOME/config.toml` 的 `[ui.contextual_hints]` 下设
+`ssh_wrap = false`。该设置不会隐藏 Doctor 的建议。
 
-For repeated SSH use, Doctor offers `grok doctor fix ssh-wrap`. It also shows
-the one-off command, the file that would change, and the cases where the alias
-should be bypassed. The ID `terminal.ssh-wrap` remains accepted and appears in
-JSON.
+对于反复的 SSH 使用，Doctor 提供 `chaos doctor fix ssh-wrap`。它还会显示
+一次性命令、将被修改的文件，以及应当绕过该别名的情况。ID
+`terminal.ssh-wrap` 仍然被接受并出现在 JSON 里。
 
-> **Warning**: `grok wrap` is experimental and may not work in every setup.
+> **警告**：`chaos wrap` 是实验性功能，未必在所有环境下可用。
 
 #### iTerm2
 
-iTerm2 can require permission for OSC 52 clipboard access. Run `/doctor`; the
-`terminal.iterm2-clipboard-permission` recommendation shows the setting to
-check.
+iTerm2 可能要求为 OSC 52 剪贴板访问授予权限。运行 `/doctor`；
+`terminal.iterm2-clipboard-permission` 建议会指出需要检查的设置。
 
-### Fullscreen or alternate screen does not activate
+### 全屏或备用屏幕未激活
 
-Zellij and tmux control mode can limit the alternate screen. Grok normally uses
-inline mode in those environments. Run `/doctor` to see the detected condition.
-You can configure `[terminal] alt_screen` in `~/.grok/pager.toml`, or run
-`grok --no-alt-screen` to confirm inline mode works.
+Zellij 与 tmux 控制模式可能限制备用屏幕。在这些环境里 Chaos 通常使用内联
+模式。运行 `/doctor` 查看检测到的状态。你可以在 `~/.chaos/pager.toml` 里
+配置 `[terminal] alt_screen`，或运行 `chaos --no-alt-screen` 确认内联模式
+可用。
 
-### Zellij keybindings interfere with Grok
+### Zellij 键位与 Chaos 冲突
 
-Zellij can intercept Ctrl/Alt keys before they reach Grok. On Zellij 0.41 or
-later, use the **Unlock-First (non-colliding)** preset:
+Zellij 可能在按键到达 Chaos 之前拦截 Ctrl/Alt 组合键。在 Zellij 0.41 及更高
+版本中，使用 **Unlock-First (non-colliding)** 预设：
 
-1. Press `Ctrl+o`, then `c`.
-2. Open **Change Mode Behavior**.
-3. Select **Unlock-First (non-colliding)**.
-4. Press `Enter` to apply it.
+1. 按 `Ctrl+o`，然后按 `c`。
+2. 打开 **Change Mode Behavior**。
+3. 选择 **Unlock-First (non-colliding)**。
+4. 按 `Enter` 应用。
 
-Press `Ctrl+g` when you need Zellij's own pane or session controls. In minimal
-mode, if `Ctrl+G` still does not reach Grok, open the command palette and select
-**Edit Prompt in External Editor**. This preserves the current draft; typing
-`/edit-prompt` starts an empty editor draft because the command itself occupies
-the composer.
+需要 Zellij 自己的面板或会话控制时按 `Ctrl+g`。在最小模式下，如果 `Ctrl+G`
+仍然到不了 Chaos，打开命令面板并选择**在外部编辑器中编辑提示**。这会保留
+当前草稿；直接输入 `/edit-prompt` 会开启一个空的编辑器草稿，因为该命令本身
+占用了输入框。
 
-### Ctrl+Enter does not interject in WezTerm
+### Ctrl+Enter 在 WezTerm 中不触发插话
 
-WezTerm ships with the Kitty keyboard protocol disabled. Run `/doctor` in Grok.
-The `terminal.wezterm-kitty` finding shows the setting and restart step. Over
-SSH, Doctor shows only the workaround that can work in the current session.
-Apple Terminal uses `Ctrl+O` for interjection because it cannot distinguish the
-modified Enter chord.
+WezTerm 默认禁用 Kitty 键盘协议。在 Chaos 里运行 `/doctor`。
+`terminal.wezterm-kitty` 检查项会给出设置与重启步骤。通过 SSH 时，Doctor
+只显示当前会话中可行的替代方案。Apple Terminal 用 `Ctrl+O` 触发插话，因为
+它无法区分带修饰的 Enter 组合键。
 
-### Shift+Enter does not insert a newline in VS Code
+### Shift+Enter 在 VS Code 中不插入换行
 
-VS Code, Cursor, Windsurf, and Zed terminals use xterm.js, which only partially
-implements the Kitty keyboard protocol and mis-encodes some shifted printable
-keys. Grok therefore does not negotiate the protocol there, and Shift+Enter can
-arrive as the same `CR` as Enter. This also affects VS Code reached over SSH when
-`TERM_PROGRAM` is not forwarded. Use `Alt+Enter` to insert a newline; `/doctor`
-reports `terminal.newline-fallback` with the detected explanation and workaround.
+VS Code、Cursor、Windsurf 与 Zed 终端使用 xterm.js，后者只部分实现了 Kitty
+键盘协议，并对某些 Shift 加可打印键的组合编码有误。因此 Chaos 不在那里协商
+该协议，Shift+Enter 可能与 Enter 一样到达为同一个 `CR`。当 `TERM_PROGRAM`
+未被转发时，经 SSH 访问的 VS Code 也受影响。用 `Alt+Enter` 插入换行；
+`/doctor` 会报告 `terminal.newline-fallback` 及检测到的解释与替代方案。
 
-### Cmd+Enter is not an advertised send or newline chord
+### Cmd+Enter 不是公开的发送或换行组合键
 
-`Cmd+Enter` is not an advertised send or newline chord. Grok advertises
-only `Shift+Enter` and `Alt+Enter` as newline. Many terminals bind
-Cmd+Enter to fullscreen, so `SUPER` is excluded from the newline matcher,
-and a delivered `SUPER+Enter` does not match the agent's bare-Enter send
-binding. When Kitty (or another protocol that can deliver `SUPER`) does
-deliver `SUPER+Enter`, the composer still inserts a newline: the key
-misses send and lands in the textarea, which treats any Enter as a line
-break. Apple Terminal is a separate local path: CoreGraphics rescue
-treats held Cmd as modified Enter and inserts a newline on what arrives
-as bare Enter. Over SSH the Cmd modifier never arrives, so the chord
-looks like bare Enter and sends.
+`Cmd+Enter` 不是公开的发送或换行组合键。Chaos 只把 `Shift+Enter` 与
+`Alt+Enter` 公开为换行。许多终端把 Cmd+Enter 绑定到全屏，因此 `SUPER` 不在
+换行匹配器之内，送达的 `SUPER+Enter` 也不匹配代理的裸 Enter 发送绑定。当
+Kitty（或其它能送达 `SUPER` 的协议）真的送达 `SUPER+Enter` 时，输入框仍然
+插入换行：该按键错过发送、落入文本区，而文本区把任何 Enter 都当作换行。
+Apple Terminal 是另一条本地路径：CoreGraphics 补救机制把按住 Cmd 视为带
+修饰的 Enter，于是对到达的裸 Enter 插入换行。通过 SSH 时 Cmd 修饰永远不会
+到达，该组合键看起来就是裸 Enter，于是直接发送。
 
-The composer footer shows the working newline chord when the draft is
-non-empty. Over SSH it prefers `Alt+Enter`. You can also type `\` then
-Enter, or `/ml`. Do not expect Cmd+Enter to insert a newline on a remote
-session.
+草稿非空时，输入框底栏会显示当前可用的换行组合键。SSH 下它优先显示
+`Alt+Enter`。你也可以先输入 `\` 再按 Enter，或用 `/ml`。不要指望 Cmd+Enter
+在远程会话中插入换行。
 
-### Mouse scrolling stops working
+### 鼠标滚动失效
 
-If Grok stops receiving mouse input, re-enable mouse reporting in the terminal:
+如果 Chaos 不再收到鼠标输入，请在终端中重新启用鼠标上报：
 
-- **Apple Terminal**: **View → Allow Mouse Reporting** (`Cmd+R`).
-- **iTerm2**: **Settings → Profiles → Terminal → Enable mouse reporting**.
+- **Apple Terminal**：**View → Allow Mouse Reporting**（`Cmd+R`）。
+- **iTerm2**：**Settings → Profiles → Terminal → Enable mouse reporting**。
 
-### Voice dictation records nothing
+### 语音听写录不到内容
 
-After about 10 seconds without a transcript, Grok stops capture and shows
-**“No speech was detected. Voice stopped.”** with microphone fix steps. On macOS,
-a denied microphone grant can look the same as silence because permission belongs
-to the terminal hosting Grok. Open **System Settings → Privacy & Security →
-Microphone**, enable the terminal, and restart it. If access is already on, check
-the input device and level under **System Settings → Sound → Input** and try
-again.
+约 10 秒后仍无转写文本时，Chaos 停止采集并显示
+**“No speech was detected. Voice stopped.”**，附麦克风修复步骤。在 macOS
+上，被拒绝的麦克风授权看起来可能与静音一样，因为权限属于承载 Chaos 的那个
+终端。打开**系统设置 → 隐私与安全性 → 麦克风**，启用该终端并重启它。如果
+访问已开启，请在**系统设置 → 声音 → 输入**下检查输入设备与音量后重试。
 
-Run `grok doctor`, or run `/doctor` while voice mode is on. The **Voice** section
-shows the microphone Grok would use. If no input device is available, Doctor
-shows `voice.no-input-device` and the next steps. Doctor cannot detect denied
-macOS microphone access passively when macOS supplies silence.
+运行 `chaos doctor`，或在语音模式开启时运行 `/doctor`。**语音**部分会显示
+Chaos 将使用的麦克风。若没有可用输入设备，Doctor 会显示
+`voice.no-input-device` 及后续步骤。当 macOS 以静音代替报错时，Doctor 无法
+被动检测到被拒的麦克风访问。
 
-On macOS, each dictation uses a short-lived capture helper process so the audio
-stack's memory is released when capture ends. If the helper itself may be the
-problem, set `GROK_VOICE_CAPTURE=inprocess` to use the in-process fallback for
-comparison.
+在 macOS 上，每次听写使用一个短生命周期的采集辅助进程，使音频栈的内存在
+采集结束时释放。如果怀疑辅助进程本身有问题，可设置
+`GROK_VOICE_CAPTURE=inprocess`，改用进程内回退路径做对比。
 
-### Byobu with GNU screen
+### Byobu 与 GNU screen
 
-Byobu on GNU screen has limited support. `/doctor` reports
-`terminal.byobu-screen` and explains how to switch to Byobu's tmux backend.
+Byobu 在 GNU screen 上支持有限。`/doctor` 会报告 `terminal.byobu-screen`
+并说明如何切换到 Byobu 的 tmux 后端。
 
-### Arabic and Persian (RTL) text
+### 阿拉伯语与波斯语（RTL）文本
 
-Many terminals already reorder right-to-left text themselves (VTE-based
-terminals, Terminal.app, Konsole, mlterm, and others). Grok Build therefore
-**does not** reorder RTL by default.
+许多终端自己就会重排从右向左的文本（基于 VTE 的终端、Terminal.app、
+Konsole、mlterm 等）。因此 Chaos **默认不**做 RTL 重排。
 
-If Arabic or Persian in **scrollback** (or list content) reads backwards,
-enable app-side reordering in `~/.grok/pager.toml` (or project config):
+如果**回滚区**（或列表内容）里的阿拉伯语或波斯语读起来是反的，请在
+`~/.chaos/pager.toml`（或项目配置）中启用应用侧重排：
 
 ```toml
 [scrollback.display]
 rtl_bidi = true
 ```
 
-The setting reloads with appearance config (no full restart required). If text
-looks correct with the default and becomes wrong after enabling this, turn it
-back off — your terminal is already handling bidi.
+该设置随外观配置热重载（无需完全重启）。如果默认情况下文本正常、启用后反
+而错了，请把它关掉——你的终端已经在处理 bidi。
 
-When enabled:
+启用后：
 
-- Reorders full content lines in scrollback, list content, and the fullscreen
-  block viewer (plus the dashboard peek preview and hook popup, which mirror
-  scrollback). Chrome, dropdowns, and modals stay logical so their hit-testing
-  stays consistent.
-- Leaves markdown table columns unchanged.
-- Search highlights, selection/drag-copy, double-click word/URL selection, and
-  link hit targets all map between the painted (visual) cells and the logical
-  text of the same row, so on-screen highlights land on the right glyphs while
-  clipboard paste stays in logical order.
-- Base direction is resolved per painted row. A soft-wrapped continuation that
-  starts with English can take a different base than the paragraph's first row.
+- 重排回滚区、列表内容与全屏块查看器中的完整内容行（看板预览与钩子弹窗
+  镜像回滚区，也同样重排）。行首装饰、下拉菜单与模态框保持逻辑序，以保证
+  命中检测一致。
+- Markdown 表格的列不变。
+- 搜索高亮、选区/拖拽复制、双击选词/选 URL 以及链接命中目标都在同一行的
+  绘制（视觉）单元格与逻辑文本之间映射，因此屏幕上的高亮落在正确的字形上，
+  而剪贴板粘贴仍保持逻辑序。
+- 基方向按每个绘制行解析。以英文开头的软换行续行，其基方向可以与该段落
+  首行不同。
 
-This is not a full mirrored RTL UI.
+这不是完整的镜像 RTL 界面。
 
 ---
 
-## Still Stuck?
+## 仍然卡住？
 
-Run `/feedback` to report it.
+运行 `/feedback` 上报。
