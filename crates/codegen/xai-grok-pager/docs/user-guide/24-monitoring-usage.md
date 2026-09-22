@@ -21,7 +21,7 @@ Grok CLI（上游）可以把使用量**指标**和**事件**导出到你所在�
 | 外部 OpenTelemetry | `GROK_EXTERNAL_OTEL` / `[telemetry] otel_*`（本指南） |
 
 另见[认证](02-authentication.md#相关文档)与
-[配置](05-configuration.md#telemetry)。
+[配置](05-configuration.md#遥测)。
 
 ## 外部 OTEL 数据流
 

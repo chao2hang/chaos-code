@@ -51,7 +51,7 @@ Chaos 会加载目录中每个匹配的文件，因此同时包含 `AGENTS.md` �
 extra_rule_dirs = ["~/team-rules", "/opt/company/grok-rules"]
 ```
 
-所列目录中直接包含的每个 `*.md` 都会作为规则加载（不扫描子目录），适用于每个项目，且不受文件夹信任、仓库的 `.gitignore` 或兼容性配置项的影响；模型将其接收为用户规则，`chaos inspect` 会把它们列为 `global`。条目必须是绝对路径或以 `~/` 开头；相对路径或缺失的条目不会加载任何内容。`/import-claude` 会把你现有的 `~/.claude/rules/` 写到这里，使其在关闭 Claude 兼容性扫描后仍能继续加载。各厂商的 `rules` 配置项同时控制主目录规则与项目规则，并与相应的 `agents` 配置项相互独立。Claude 的 `agents` 配置项控制 `~/.claude/` 下的命名文件以及项目中的 `<dir>/.claude/CLAUDE*.md`；`Claude.md`、`CLAUDE.md` 和 `CLAUDE.local.md` 这类通用顶级文件名仍会被识别。参见 [配置](05-configuration.md#harness-compatibility)。
+所列目录中直接包含的每个 `*.md` 都会作为规则加载（不扫描子目录），适用于每个项目，且不受文件夹信任、仓库的 `.gitignore` 或兼容性配置项的影响；模型将其接收为用户规则，`chaos inspect` 会把它们列为 `global`。条目必须是绝对路径或以 `~/` 开头；相对路径或缺失的条目不会加载任何内容。`/import-claude` 会把你现有的 `~/.claude/rules/` 写到这里，使其在关闭 Claude 兼容性扫描后仍能继续加载。各厂商的 `rules` 配置项同时控制主目录规则与项目规则，并与相应的 `agents` 配置项相互独立。Claude 的 `agents` 配置项控制 `~/.claude/` 下的命名文件以及项目中的 `<dir>/.claude/CLAUDE*.md`；`Claude.md`、`CLAUDE.md` 和 `CLAUDE.local.md` 这类通用顶级文件名仍会被识别。参见 [配置](05-configuration.md#厂商兼容性开关)。
 
 ---
 
@@ -195,7 +195,7 @@ Chaos 会完整加载每个项目指令文件；没有字符上限，也没有�
 CLAUDE.local.md
 ```
 
-作为顶级指令文件，Chaos 只会发现 [支持的文件名](#supported-file-names) 中列出的被识别文件名——而不是自定义名称（例如 `AGENTS.local.md` 或 `notes.md`）。（而在 `.chaos/rules/` 这类规则目录内，每个 `*.md` 文件无论叫什么名字都会被加载。）
+作为顶级指令文件，Chaos 只会发现 [支持的文件名](#支持的文件名) 中列出的被识别文件名——而不是自定义名称（例如 `AGENTS.local.md` 或 `notes.md`）。（而在 `.chaos/rules/` 这类规则目录内，每个 `*.md` 文件无论叫什么名字都会被加载。）
 
 ---
 

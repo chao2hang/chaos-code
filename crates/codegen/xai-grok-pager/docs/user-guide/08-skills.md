@@ -32,7 +32,7 @@ Chaos 按名称对技能去重——优先级更高的位置会覆盖更低的�
 
 技能与命令的发现过程**不**使用 `.gitignore`。已知技能根目录（`.chaos/`、`.agents/`、`.claude/`、`.cursor/`）下的路径只要在磁盘上存在就会加载——团队常把 `.claude/**` 当作仅限本地的配置忽略掉，却仍期望 `/frontend` 这类项目命令可用。要隐藏某个技能，请使用配置中的 `[skills] ignore`（而不是仓库的忽略规则）。
 
-Chaos 默认会扫描 Claude 与 Cursor 的技能目录。要停止扫描某个厂商，请在 `~/.chaos/config.toml` 中把 `[compat.cursor]` 或 `[compat.claude]` 下的 `skills` 项设为 `false`，或将 `GROK_CURSOR_SKILLS_ENABLED` 或 `GROK_CLAUDE_SKILLS_ENABLED` 环境变量设为 `false`。详见[配置](05-configuration.md#harness-compatibility)。无论这些设置如何，Chaos 始终会过滤掉已知的厂商自带默认技能（例如 Cursor 的 `shell`、`canvas`、`statusline`）。
+Chaos 默认会扫描 Claude 与 Cursor 的技能目录。要停止扫描某个厂商，请在 `~/.chaos/config.toml` 中把 `[compat.cursor]` 或 `[compat.claude]` 下的 `skills` 项设为 `false`，或将 `GROK_CURSOR_SKILLS_ENABLED` 或 `GROK_CLAUDE_SKILLS_ENABLED` 环境变量设为 `false`。详见[配置](05-configuration.md#厂商兼容性开关)。无论这些设置如何，Chaos 始终会过滤掉已知的厂商自带默认技能（例如 Cursor 的 `shell`、`canvas`、`statusline`）。
 
 ### 额外技能目录
 
@@ -142,7 +142,7 @@ Chaos 会询问把技能保存到哪里：
 - **项目**（`<repo_root>/.chaos/skills/<name>/`）——仅在本仓库可用，可通过版本控制分享给队友。在 git 仓库中，Chaos 推荐这个作用域。
 - **用户**（`~/.chaos/skills/<name>/`）——在你所有项目中可用。
 
-要把技能分发给整个团队或组织，可以把它打包进插件并通过插件市场发布。见[创建你自己的插件市场](09-plugins.md#create-your-own-marketplace)与[跨组织分发](09-plugins.md#distribute-across-an-organization)。
+要把技能分发给整个团队或组织，可以把它打包进插件并通过插件市场发布。见[创建你自己的插件市场](09-plugins.md#创建你自己的插件市场)与[跨组织分发](09-plugins.md#跨组织分发)。
 
 新技能几秒内就会出现在斜杠菜单中，因为磁盘上的文件变化时 Chaos 会重新加载技能。
 
@@ -165,7 +165,7 @@ Chaos 会询问把技能保存到哪里：
 /commit fix the build
 ```
 
-要浏览你的技能，输入 `/` 打开斜杠命令菜单。Chaos 会列出所有内置命令和技能，并随你的输入过滤。如果想从命令行列出技能，运行 `chaos inspect`（见[查看技能详情](#viewing-skill-details)）。
+要浏览你的技能，输入 `/` 打开斜杠命令菜单。Chaos 会列出所有内置命令和技能，并随你的输入过滤。如果想从命令行列出技能，运行 `chaos inspect`（见[查看技能详情](#查看技能详情)）。
 
 ### 限定名
 

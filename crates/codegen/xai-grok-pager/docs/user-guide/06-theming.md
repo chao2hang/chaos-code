@@ -20,7 +20,7 @@ Chaos 从中心主题绘制全部 TUI 颜色。运行时可切换主题、跟随
 | **Rose Pine Moon**（内部 `RosePineMoon`） | `rosepine`, `rose-pine`, `rosepine-moon`, `rose-pine-moon` | 柔和深色配淡紫强调色，出自 Rosé Pine 家族。 | 是 |
 | **Oscura Midnight**（内部 `OscuraMidnight`） | `oscura`, `oscura-midnight` | 深黑底配紫色强调色。 | 是 |
 
-主题名不区分大小写。`auto` 选项（别名 `system`）见[自动主题（跟随系统外观）](#auto-theme-system-appearance)。
+主题名不区分大小写。`auto` 选项（别名 `system`）见[自动主题（跟随系统外观）](#自动主题跟随系统外观)。
 
 ### 最小模式没有主题
 

@@ -26,7 +26,7 @@ MCP 服务器通过标准协议向 Chaos 暴露工具。配置后，其工具与
 要把 MCP 服务器分发给团队，或限制用户能运行哪些服务器（在 `requirements.toml` /
 `managed_config.toml` 里用 `allowedMcpServers` / `deniedMcpServers`；对由外部来源
 定义的服务器，另有 Claude `managed-settings.json` 的劝告性设置），见插件指南中的
-[跨组织分发](09-plugins.md#distribute-across-an-organization)。
+[跨组织分发](09-plugins.md#跨组织分发)。
 
 ### stdio 传输（本地进程）
 
@@ -137,9 +137,9 @@ chaos mcp doctor --json        # Machine-readable output
 
 默认情况下 `chaos mcp add` 写入 `~/.chaos/config.toml`（`--scope user`）。加
 `--scope project` 改为写入当前目录的 `.chaos/config.toml`，这份文件可以提交并与团队
-共享（见[项目级 MCP 服务器](#project-scoped-mcp-servers)）。请求头和环境变量的值按原样
+共享（见[项目级 MCP 服务器](#项目级-mcp-服务器)）。请求头和环境变量的值按原样
 保存，所以密钥请写成 `${VAR}` 引用，不要直接粘进会被提交的项目配置里（见
-[配置示例](#example-configurations)）。`chaos mcp list` 会列出两个作用域里的服务器，
+[配置示例](#配置示例)）。`chaos mcp list` 会列出两个作用域里的服务器，
 项目级的标注 `(project)`，已停用的标注 `(disabled)`。
 
 `chaos mcp remove` 在两个作用域里查找，删除成功后退出码为 0。名字找不到，或者用户在
@@ -213,7 +213,7 @@ MCP 工具以服务器名作命名空间，避免重名：
 ## 运行时开关服务器
 
 不用重启 Grok 就能启停 MCP 服务器（TUI 里用 `/mcps`，或用命令行——见
-[命令行管理](#cli-management)）。
+[命令行管理](#命令行管理)）。
 
 ### /mcps 面板
 
@@ -260,7 +260,7 @@ MCP 工具以服务器名作命名空间，避免重名：
 Claude 和 Cursor 两个 MCP 来源默认会被扫描。要关掉某个来源，在
 `~/.chaos/config.toml` 里设置 `[compat.<vendor>] mcps = false`，或改用对应的环境变量
 （`GROK_CURSOR_MCPS_ENABLED`、`GROK_CLAUDE_MCPS_ENABLED`）。详见
-[配置](05-configuration.md#harness-compatibility)。用 `chaos inspect` 可以看到加载了哪些
+[配置](05-configuration.md#厂商兼容性开关)。用 `chaos inspect` 可以看到加载了哪些
 MCP 服务器以及它们的来源（`[cursor]`、`[claude]`）。
 
 ---
@@ -375,7 +375,7 @@ tool_timeouts = { slow_analysis = 300, quick_lookup = 10 }
 
 子代理默认继承父会话已连接的 MCP 服务器，插件提供的代理也一样。可以用代理 frontmatter
 里的 `mcpInheritance` 收窄这个集合（`all`、`none`、`named`、`except`）。详见
-[子代理 —— MCP 继承](16-subagents.md#mcp-inheritance)。
+[子代理 —— MCP 继承](16-subagents.md#mcp-继承)。
 
 如果子代理明明列出了 `search_tool` / `use_tool`，返回的工具目录却是空的，请检查：
 
@@ -414,7 +414,7 @@ tail -f ~/.chaos/logs/mcp/filesystem.stderr.log
 服务器，并记录 `MCP server blocked by managed settings policy`。原生 TOML 层会约束每一个
 服务器；Claude 文件只约束由外部定义的服务器。`chaos inspect` 会显示这些名单、锁定范围
 以及每个仍然保留的服务器。细节与示例见
-[限制哪些 MCP 服务器可运行](09-plugins.md#restrict-which-mcp-servers-can-run)。
+[限制哪些 MCP 服务器可运行](09-plugins.md#限制可以运行哪些-mcp-服务器)。
 
 ### 查看服务器状态
 

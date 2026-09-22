@@ -4,7 +4,7 @@
 
 命令来自两处：**shell 内置命令**，由代理后端（xai-grok-shell）处理；**分页器内置命令**，由分页器前端（xai-grok-pager）处理。两者出现在同一个菜单里，任何带 `user-invocable: true` 的已启用技能也会出现在那里。如果一个技能重用了内置名（比如 `login`），内置命令保留 `/login`，技能则以 `/plugin-name:login` 的形式继续可用 —— 菜单会给两者都加上标记，让冲突看得见。
 
-下面每条命令都列出了它的别名（如果有的话）。有少数命令只在某项功能或会话状态启用时才出现，这些情况会在正文里点明。菜单还会按渲染模式过滤 —— 见 [`/minimal` 和 `/fullscreen`](#minimal-and-fullscreen)。
+下面每条命令都列出了它的别名（如果有的话）。有少数命令只在某项功能或会话状态启用时才出现，这些情况会在正文里点明。菜单还会按渲染模式过滤 —— 见 [`/minimal` 和 `/fullscreen`](#minimal-与-fullscreen)。
 
 ---
 
@@ -420,7 +420,7 @@ Chaos 没有需要退出的登录会话。这条命令只打印一条提示，�
 
 它打开的是一个三标签的会话内模态：Context usage / Usage limit / Session info，默认停在 Usage limit。配置了外部认证提供方的安装里，这条命令会被隐藏。
 
-要查看任何本地会话逐回合的 token 与费用累计，用 shell 里的 `chaos usage <session-id> [turn]`。见[会话管理](17-sessions.md#the-grok-usage-subcommand)。
+要查看任何本地会话逐回合的 token 与费用累计，用 shell 里的 `chaos usage <session-id> [turn]`。见[会话管理](17-sessions.md#chaos-usage-子命令)。
 
 ### `/privacy`
 
@@ -431,7 +431,7 @@ Chaos 没有需要退出的登录会话。这条命令只打印一条提示，�
 /privacy
 ```
 
-这项设置不碰 `[features] telemetry`、`trace_upload`，也不碰你的外部 OTEL 设置 —— 见[用量监视](24-monitoring-usage.md#related-settings)。在团队账号上，只有团队管理员能改它；管理员还可以为团队打开或关闭 Zero Data Retention（[如何启用 ZDR](https://docs.x.ai/developers/faq/security#how-to-enable-zdr)）。当这不由你决定时，那一行会直接说明 —— `ZDR` 或 `· Admin Managed` —— 而不是打开选择器。ZDR 锁住的是编码数据共享；它不会屏蔽外部 OTEL，也不会屏蔽 `user.email` —— 见 [ZDR 与本数据流](24-monitoring-usage.md#zdr-and-this-stream)。
+这项设置不碰 `[features] telemetry`、`trace_upload`，也不碰你的外部 OTEL 设置 —— 见[用量监视](24-monitoring-usage.md#相关设置)。在团队账号上，只有团队管理员能改它；管理员还可以为团队打开或关闭 Zero Data Retention（[如何启用 ZDR](https://docs.x.ai/developers/faq/security#how-to-enable-zdr)）。当这不由你决定时，那一行会直接说明 —— `ZDR` 或 `· Admin Managed` —— 而不是打开选择器。ZDR 锁住的是编码数据共享；它不会屏蔽外部 OTEL，也不会屏蔽 `user.email` —— 见 [ZDR 与本数据流](24-monitoring-usage.md#zdr-与本数据流)。
 
 ---
 

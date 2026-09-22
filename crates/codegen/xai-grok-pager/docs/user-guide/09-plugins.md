@@ -1,6 +1,6 @@
 # 插件
 
-插件把技能、斜杠命令、代理、钩子和 MCP 服务器打包成一个可安装的单元。你从插件市场获取插件，安装想要的那些，Chaos 会加载它们带来的内容。要构建并分享你自己的插件市场，见[创建你自己的插件市场](#create-your-own-marketplace)。
+插件把技能、斜杠命令、代理、钩子和 MCP 服务器打包成一个可安装的单元。你从插件市场获取插件，安装想要的那些，Chaos 会加载它们带来的内容。要构建并分享你自己的插件市场，见[创建你自己的插件市场](#创建你自己的插件市场)。
 
 ---
 
@@ -11,7 +11,7 @@
 1. **添加插件市场**，让 Chaos 能展示它提供的内容。此时不会安装任何东西。
 2. **安装你想要的插件**，一次一个。
 
-插件在安装并启用之前保持关闭，插件的钩子和 MCP 服务器在你[信任](#trust-and-security)它之前保持未激活。
+插件在安装并启用之前保持关闭，插件的钩子和 MCP 服务器在你[信任](#信任与安全)它之前保持未激活。
 
 ---
 
@@ -75,7 +75,7 @@ chaos plugin install deploy-tools --trust
 - 完整的 git URL（`https://github.com/user/repo.git`）或 SSH（`git@github.com:user/repo.git`）
 - 本地路径（`./local-dir` 或 `/absolute/path`）
 
-不带 `--trust` 运行 `chaos plugin install <source>` 时，Chaos 会显示该源，警告安装会激活插件的钩子、MCP 服务器和技能，然后停下。加上 `--trust` 才会继续。只从你信任的源安装插件（见[信任与安全](#trust-and-security)）。
+不带 `--trust` 运行 `chaos plugin install <source>` 时，Chaos 会显示该源，警告安装会激活插件的钩子、MCP 服务器和技能，然后停下。加上 `--trust` 才会继续。只从你信任的源安装插件（见[信任与安全](#信任与安全)）。
 
 插件的技能会出现在斜杠菜单里。当技能名称有歧义时，Chaos 会显示带插件名前缀的限定形式，例如 `/deploy-tools:release`。要加载新安装的插件，在插件标签页按 `r` 或开始新会话。
 
@@ -120,7 +120,7 @@ chaos plugin details <name>                # show the plugin's component invento
 | `r` | 刷新来源 |
 | `u` | 更新选中的插件 |
 
-市场标签页里的组件摘要只为发布了 [`plugin-index.json`](#add-a-catalog-optional) 目录的市场显示。破坏性操作会请求确认：按小写 `y` 确认，按其它任意键（包括 `Esc`）取消。
+市场标签页里的组件摘要只为发布了 [`plugin-index.json`](#添加目录可选) 目录的市场显示。破坏性操作会请求确认：按小写 `y` 确认，按其它任意键（包括 `Esc`）取消。
 
 在**工作流**标签页中（直接用 `/workflows` 打开，或在上面的命令处按 `Tab`），浏览 Chaos 找到的已保存工作流：内置的、项目 `.chaos/workflows/` 和用户 `~/.chaos/workflows/` 下的。每行显示工作流的名称、来源和描述；按 `Enter` 展开其路径和何时使用的说明，`r` 重新加载列表，`/` 搜索。各行仅供浏览——用 `/workflow <name>` 或它自己的斜杠命令来运行。
 
@@ -151,7 +151,7 @@ enabled = ["project/9f8e7d6c/team-tools"]    # names or IDs to force on
 chaos plugin install <source> --trust
 ```
 
-受信任插件的 `.mcp.json` 服务器像其它 MCP 配置一样附加到会话，子代理会继承它们。插件代理（`plugin-name:agent-name`）默认使用父会话的 MCP 服务器，与 `~/.chaos/agents/` 下的用户代理相同；用 `mcpInheritance` frontmatter 可以限制这一点（见[子代理](16-subagents.md#mcp-inheritance)）。为安全起见，插件代理的 frontmatter 不能声明 `mcpServers` 或钩子，也不能设置 `permissionMode: bypassPermissions`。
+受信任插件的 `.mcp.json` 服务器像其它 MCP 配置一样附加到会话，子代理会继承它们。插件代理（`plugin-name:agent-name`）默认使用父会话的 MCP 服务器，与 `~/.chaos/agents/` 下的用户代理相同；用 `mcpInheritance` frontmatter 可以限制这一点（见[子代理](16-subagents.md#mcp-继承)）。为安全起见，插件代理的 frontmatter 不能声明 `mcpServers` 或钩子，也不能设置 `permissionMode: bypassPermissions`。
 
 ---
 
@@ -164,7 +164,7 @@ chaos plugin install <source> --trust
 ### 搭建仓库
 
 1. **创建一个 git 仓库。** 私有仓库即可；访问使用每个人自己的 git 凭据。
-2. **把每个插件添加为一个文件夹。** 插件文件夹可包含 `skills/`、`commands/`、`agents/`、`hooks/hooks.json`、`.mcp.json` 中的任意内容，以及可选的 `plugin.json` 清单（见[插件包含什么](#what-a-plugin-contains)）。
+2. **把每个插件添加为一个文件夹。** 插件文件夹可包含 `skills/`、`commands/`、`agents/`、`hooks/hooks.json`、`.mcp.json` 中的任意内容，以及可选的 `plugin.json` 清单（见[插件包含什么](#插件包含什么)）。
 3. **在 `.grok-plugin/marketplace.json` 中列出插件。** 这是 Chaos 读取的索引。
 4. **推送仓库。**
 
@@ -207,7 +207,7 @@ Chaos 从 `.grok-plugin/marketplace.json` 读取索引。它也接受 `.grok-plu
 每个插件的 `source` 以以下两种方式之一指向其文件：
 
 - **在本仓库中**：`{ "type": "local", "path": "./plugins/gdrive" }`。纯字符串 `"./plugins/gdrive"` 也可以。
-- **在单独的仓库中**：`{ "source": "url", "url": "https://github.com/my-org/gdrive.git", "sha": "<full commit sha>" }`。固定一个 `sha`，安装才可复现（当你[要求固定版本](#require-pinned-versions)时必需）。
+- **在单独的仓库中**：`{ "source": "url", "url": "https://github.com/my-org/gdrive.git", "sha": "<full commit sha>" }`。固定一个 `sha`，安装才可复现（当你[要求固定版本](#要求固定版本)时必需）。
 
 可选的每插件字段：`version`、`author`、`homepage`、`tags`、`keywords`。
 
@@ -237,7 +237,7 @@ chaos plugin marketplace add my-org/my-org-plugins   # GitHub shorthand, a git U
 chaos plugin install gdrive --trust
 ```
 
-要为所有人自动安装而不是逐人安装，见[跨组织分发](#distribute-across-an-organization)。
+要为所有人自动安装而不是逐人安装，见[跨组织分发](#跨组织分发)。
 
 ---
 
@@ -381,15 +381,15 @@ disable_plugins = true
 
 **你安装的插件没有出现。** 插件在启用之前是关闭的。查看 `chaos plugin list`，然后把插件的名字或 ID 加进 `[plugins].enabled`，或在插件标签页对它按 `Space`。在插件标签页按 `r` 重新加载，或开始一个新会话。
 
-**插件的技能、钩子或 MCP 服务器没有加载。** 在插件受信任之前它们保持未激活。加 `--trust` 重新安装，或把插件放到 `~/.chaos/plugins/` 下（自动信任）。见[信任与安全](#trust-and-security)。
+**插件的技能、钩子或 MCP 服务器没有加载。** 在插件受信任之前它们保持未激活。加 `--trust` 重新安装，或把插件放到 `~/.chaos/plugins/` 下（自动信任）。见[信任与安全](#信任与安全)。
 
-**插件市场里的某个技能或 MCP 服务器缺失。** 用 `chaos plugin marketplace update` 刷新源，确认插件已安装并启用；如果你的组织限制源，再确认该插件市场仍被允许（见[跨组织分发](#distribute-across-an-organization)）。有些 MCP 服务器需要登录，认证之前不会出现。
+**插件市场里的某个技能或 MCP 服务器缺失。** 用 `chaos plugin marketplace update` 刷新源，确认插件已安装并启用；如果你的组织限制源，再确认该插件市场仍被允许（见[跨组织分发](#跨组织分发)）。有些 MCP 服务器需要登录，认证之前不会出现。
 
-**配置了 MCP 服务器但它从不启动。** 可能是组织策略封禁了它。`chaos inspect` 列出 `allowedMcpServers` / `deniedMcpServers`、`mcpManagedServersOnly`、所有被锁死的策略文件，以及每个服务器的来源。拒绝匹配、未放行该服务器的允许列表/锁定、被锁死的策略文件，或项目作用域服务器上的 `enableAllProjectMcpServers = false`，都会在启动前把它丢弃。见[限制可以运行哪些 MCP 服务器](#restrict-which-mcp-servers-can-run)。
+**配置了 MCP 服务器但它从不启动。** 可能是组织策略封禁了它。`chaos inspect` 列出 `allowedMcpServers` / `deniedMcpServers`、`mcpManagedServersOnly`、所有被锁死的策略文件，以及每个服务器的来源。拒绝匹配、未放行该服务器的允许列表/锁定、被锁死的策略文件，或项目作用域服务器上的 `enableAllProjectMcpServers = false`，都会在启动前把它丢弃。见[限制可以运行哪些 MCP 服务器](#限制可以运行哪些-mcp-服务器)。
 
 **添加插件市场被拒绝。** 有 `strictKnownMarketplaces` 列表在生效。只有列出的 git / GitHub URL 能添加；本地路径的添加被拒绝，除非管理员的 `extraKnownMarketplaces` pin 恰好指名该路径。如果 `chaos inspect` 显示该列表已被锁死，说明键存在但为空、格式错误或只指名了不受支持的源，修复之前什么都添加不了。
 
-**安装因未固定而被拒绝。** 你的部署要求固定 commit。安装一个确切的提交（`owner/repo@<sha>`），或使用在 `plugin-index.json` 里发布 `sha` 值的插件市场。见[要求固定版本](#require-pinned-versions)。
+**安装因未固定而被拒绝。** 你的部署要求固定 commit。安装一个确切的提交（`owner/repo@<sha>`），或使用在 `plugin-index.json` 里发布 `sha` 值的插件市场。见[要求固定版本](#要求固定版本)。
 
 **查看确切加载了什么。** 运行 `chaos inspect`（加 `--json` 得到机器可读输出），列出每个发现的插件及其提供的技能、代理、钩子和 MCP 服务器，每项都带 `plugin: <name>` 来源标签。
 
@@ -410,7 +410,7 @@ disable_plugins = true
 
 可选的 `plugin.json` 清单可以覆盖路径或添加元数据；没有它时，Chaos 会从这些标准目录发现组件。例如，一个 `team-tools` 插件可能打包一个部署技能、一个代码评审代理、pre-commit 钩子和一个 Linear MCP 服务器，一步安装到位。
 
-技能或命令可以在其 SKILL.md 旁附带一个**辅助脚本**（例如它调用的一个 Python 文件）。把脚本放进插件，让技能按相对路径运行它；它会随插件一起复制到机器上。脚本的运行时及其导入的任何包必须已经存在，插件交付的是文件，不是运行时或原生二进制（见[这不涵盖什么](#what-this-does-not-cover)）。
+技能或命令可以在其 SKILL.md 旁附带一个**辅助脚本**（例如它调用的一个 Python 文件）。把脚本放进插件，让技能按相对路径运行它；它会随插件一起复制到机器上。脚本的运行时及其导入的任何包必须已经存在，插件交付的是文件，不是运行时或原生二进制（见[这不涵盖什么](#这不涵盖什么)）。
 
 ### Chaos 在哪里查找插件
 

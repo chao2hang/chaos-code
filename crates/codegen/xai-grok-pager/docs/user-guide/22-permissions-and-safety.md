@@ -11,14 +11,14 @@
 
 当 Chaos 编辑文件、运行命令或调用外部工具时，它可能会暂停以等待批准。权限模式控制这种情况发生的频率。
 
-模式设定的是一条基线。allow、ask、deny [规则](#configuring-permissions)在任何模式之上仍然生效。
+模式设定的是一条基线。allow、ask、deny [规则](#配置权限)在任何模式之上仍然生效。
 
 ### 起点建议
 
 | 场景 | 模式 |
 | --------- | ---- |
 | 交互式 TUI | Default（ask），或用 auto 减少弹窗并辅以后台检查 |
-| 脚本、SDK、CI、代理服务器 | 始终批准；再加 [deny 规则](#configuring-permissions)或钩子做硬性限制 |
+| 脚本、SDK、CI、代理服务器 | 始终批准；再加 [deny 规则](#配置权限)或钩子做硬性限制 |
 
 ```bash
 chaos -p "Run the tests" --always-approve
@@ -26,7 +26,7 @@ chaos agent --always-approve stdio
 chaos agent --always-approve serve --bind 127.0.0.1:2419 --secret <token>
 ```
 
-ACP 客户端可以在 `session/new` 上设置 `"_meta": { "yoloMode": true }`。见[代理模式](15-agent-mode.md#automation-and-sdks)。
+ACP 客户端可以在 `session/new` 上设置 `"_meta": { "yoloMode": true }`。见[代理模式](15-agent-mode.md#自动化与-sdk)。
 
 ### 可用模式
 
@@ -60,7 +60,7 @@ chaos agent --always-approve serve --bind 127.0.0.1:2419 --secret <token>
 permission_mode = "always-approve"   # or "auto", "ask", …
 ```
 
-`.claude/settings.json` 中的 Claude 兼容 `defaultMode` 也受支持（见 [Claude 兼容设置](#3-claude-code-compatibility-claudesettingsjson)）。对当次进程而言，命令行覆盖配置。
+`.claude/settings.json` 中的 Claude 兼容 `defaultMode` 也受支持（见 [Claude 兼容设置](#3-claude-code-兼容claudesettingsjson)）。对当次进程而言，命令行覆盖配置。
 
 ### 始终批准
 
@@ -93,7 +93,7 @@ deny = [
 chaos -p "Deploy the service" --always-approve --deny 'Bash(rm -rf *)'
 ```
 
-Deny 永远压过 allow，也压过始终批准的正常放行。见[配置权限](#configuring-permissions)。
+Deny 永远压过 allow，也压过始终批准的正常放行。见[配置权限](#配置权限)。
 
 ### Auto 模式
 
@@ -127,19 +127,19 @@ Chaos 仍可从托管设置加载 Claude 风格的权限**规则**；始终批�
    - 命中的 `ask` 规则会向你弹出提示，包括原本会被自动批准的文件读取、搜索与 shell 命令。
    - 命中的 `allow` 规则批准该调用。
 
-3. **记住的授权**。你此前在弹窗中保存的按命令批准在这里生效，作用域为当前项目。已有的授权可以满足一条 `ask` 规则，而不必再次弹窗。[危险命令清单](#dangerous-commands)上的命令会重新弹窗，而不是套用记住的前缀。见[交互式批准](#interactive-approvals-and-where-they-persist)。
+3. **记住的授权**。你此前在弹窗中保存的按命令批准在这里生效，作用域为当前项目。已有的授权可以满足一条 `ask` 规则，而不必再次弹窗。[危险命令清单](#危险命令)上的命令会重新弹窗，而不是套用记住的前缀。见[交互式批准](#交互式批准及其持久化位置)。
 
 4. **内置自动批准**。只读工具和一组固定的只读 shell 命令不经提示直接运行（见下文）。
 
-5. **提示策略**（由[权限模式](#permission-modes)设定）：向你提示、自动批准或自动拒绝该调用。
+5. **提示策略**（由[权限模式](#权限模式)设定）：向你提示、自动批准或自动拒绝该调用。
 
-[始终批准](#always-approve)在第 2 步之后短路这条流水线：命中的 `deny` 规则、钩子以及匹配 shell 命令各片段的 `ask` 规则仍然生效，但不会查阅记住的授权（包括记住的「永不允许」条目），非 shell 工具上的 `ask` 规则也不再弹窗。
+[始终批准](#始终批准)在第 2 步之后短路这条流水线：命中的 `deny` 规则、钩子以及匹配 shell 命令各片段的 `ask` 规则仍然生效，但不会查阅记住的授权（包括记住的「永不允许」条目），非 shell 工具上的 `ask` 规则也不再弹窗。
 
 ---
 
 ## 默认不弹窗的操作
 
-下列操作在任何模式（包括 `dontAsk`）下都被视为只读、不经提示直接运行，除非命中的 `deny` 规则或钩子阻止了它们。`ask` 规则会强制为文件读取、搜索和 shell 命令弹出提示（见[一次工具调用如何被授权](#how-a-tool-call-is-authorized)）。
+下列操作在任何模式（包括 `dontAsk`）下都被视为只读、不经提示直接运行，除非命中的 `deny` 规则或钩子阻止了它们。`ask` 规则会强制为文件读取、搜索和 shell 命令弹出提示（见[一次工具调用如何被授权](#一次工具调用如何被授权)）。
 
 ### 只读工具
 
@@ -153,7 +153,7 @@ Chaos 仍可从托管设置加载 Claude 风格的权限**规则**；始终批�
 
 ### 只读 shell 命令
 
-拆分链式命令（按 `&&`、`||`、`;` 和管道）之后，下列命令作为主命令出现时会被识别为只读。这份清单按词边界匹配，因此 `ls` 不会匹配 `lsof` 或 `less`。（你自己的 `Bash(...)` 规则匹配方式不同；见[规则匹配参考](#rule-matching-reference)。）
+拆分链式命令（按 `&&`、`||`、`;` 和管道）之后，下列命令作为主命令出现时会被识别为只读。这份清单按词边界匹配，因此 `ls` 不会匹配 `lsof` 或 `less`。（你自己的 `Bash(...)` 规则匹配方式不同；见[规则匹配参考](#规则匹配参考)。）
 
 **文件系统（只读查看）：**
 - `ls`, `cat`, `pwd`, `date`, `whoami`, `hostname`, `uptime`, `ps`
@@ -197,8 +197,8 @@ Chaos 从三种兼容来源读取权限规则。所有来源的规则合并为�
 
 - Chaos 会从仓库根向下到你的工作目录，在每一级目录发现 `.chaos/config.toml`，因此子目录可以在仓库根的规则之上追加规则。
 - 所有作用域的规则合并为一个规则集；`deny` > `ask` > `allow` 跨作用域生效，因此全局 `deny` 不能被项目 `allow` 覆盖。
-- Chaos 没有原生的 `config.local.toml`。项目中个人的、未提交的规则请用 `.claude/settings.local.json`；Chaos 直接读取它（见 [Claude Code 兼容](#3-claude-code-compatibility-claudesettingsjson)）。
-- 交互式的「始终允许」决定存储在仓库之外，作用域为该项目（见[交互式批准](#interactive-approvals-and-where-they-persist)）。
+- Chaos 没有原生的 `config.local.toml`。项目中个人的、未提交的规则请用 `.claude/settings.local.json`；Chaos 直接读取它（见 [Claude Code 兼容](#3-claude-code-兼容claudesettingsjson)）。
+- 交互式的「始终允许」决定存储在仓库之外，作用域为该项目（见[交互式批准](#交互式批准及其持久化位置)）。
 
 要在一个项目里免掉某条命令的弹窗，可在该项目的 `.chaos/config.toml`（或 `.claude/settings.json`）里加一条窄的 allow 规则：
 
@@ -231,7 +231,7 @@ chaos -p "Review the API changes" \
 - `Grep` — 所有 grep 操作
 - `MCPTool(my-server__*)` — 来自某个特定服务器的 MCP 工具
 
-精确的匹配语义（包括链式命令与通配符如何求值）见[规则匹配参考](#rule-matching-reference)。
+精确的匹配语义（包括链式命令与通配符如何求值）见[规则匹配参考](#规则匹配参考)。
 
 ### 2. 原生配置（`~/.chaos/config.toml` 与 `.chaos/config.toml`）
 
@@ -247,7 +247,7 @@ rules = [
 ]
 ```
 
-结构化的 `tool` 字段接受小写名称 `bash`、`read`、`edit`、`grep`、`mcp`、`webfetch`、`websearch`，对应[工具名称](#tool-names)里的工具类别。
+结构化的 `tool` 字段接受小写名称 `bash`、`read`、`edit`、`grep`、`mcp`、`webfetch`、`websearch`，对应[工具名称](#工具名称)里的工具类别。
 
 由于 `deny` 永远胜出，你不能把这些 `allow` 规则与针对 `bash` 的一网打尽式 `deny` 组合成「只允许 git/gh」；一条 `deny tool = "bash"` 规则会把 `git` 和 `gh` 也一并阻止。要默认拒绝，请在 `.claude/settings.json` 里用 `defaultMode: "dontAsk"`，或使用 `PreToolUse` 钩子（见下文）。
 
@@ -299,9 +299,9 @@ Chaos 读取 `~/.claude/settings.json` 和 `~/.claude/settings.local.json`，以
 
 支持的 `defaultMode` 取值包括 `default`、`auto`、`acceptEdits`、`bypassPermissions`、`dontAsk` 和 `plan`。Chaos 从 `permissions` 之下的规范位置读取 `defaultMode`；当嵌套键缺失时，也接受顶层的 `defaultMode`。
 
-`permissions.allow`、`permissions.deny` 和 `permissions.ask` 条目会被翻译成原生规则，再按[规则匹配参考](#rule-matching-reference)的语义匹配。翻译说明：
+`permissions.allow`、`permissions.deny` 和 `permissions.ask` 条目会被翻译成原生规则，再按[规则匹配参考](#规则匹配参考)的语义匹配。翻译说明：
 
-- MCP 工具的规则既可以用 `.claude/settings.json` 文件里的 `mcp__server__tool` 形式，也可以用原生的 `MCPTool(server__tool)` 形式（见 [MCP 规则](#mcp-rules)）。
+- MCP 工具的规则既可以用 `.claude/settings.json` 文件里的 `mcp__server__tool` 形式，也可以用原生的 `MCPTool(server__tool)` 形式（见 [MCP 规则](#mcp-规则)）。
 - 命名了无法识别的工具的规则，以及 `Agent(model:opus)` 这类参数规则，会被跳过并给出警告，而不是让加载失败。
 - `permissions.additionalDirectories` 会被解析但不被支持。
 
@@ -329,7 +329,7 @@ Bash 规则上尾随的 `:*` 后缀会被剥成普通前缀：`Bash(git commit:*
 - `deny` 和 `ask` 规则针对每个片段以及整串命令检查。任何一个片段被拒绝，整条命令即被拒绝。
 - `allow` 规则是合取的：只有**每个**片段都独立命中某条 allow 规则时，命令才因规则被自动批准。`Bash(git *)` 批准 `git status && git diff`，但不批准 `git status && rm -rf /` —— `rm` 片段没有命中任何 allow 规则，于是命令落入该模式的正常处理（`default` 模式下弹窗；`auto` 模式下交给分类器，它仍可能批准或阻止；`dontAsk` 下拒绝）。因此单条 allow 规则永远无法批准一条夹带了无关命令的链。
 
-> **allow 规则不是封闭的白名单。** 未命中任何 allow 规则的命令并不会因此被拒绝——它落入模式处理。在 `auto` 模式下，分类器可以批准你的规则从未提及的命令。要默认拒绝的策略，请用 `dontAsk`（或始终批准加 `deny` 规则做硬性阻止），如[配置权限](#configuring-permissions)所述。
+> **allow 规则不是封闭的白名单。** 未命中任何 allow 规则的命令并不会因此被拒绝——它落入模式处理。在 `auto` 模式下，分类器可以批准你的规则从未提及的命令。要默认拒绝的策略，请用 `dontAsk`（或始终批准加 `deny` 规则做硬性阻止），如[配置权限](#配置权限)所述。
 
 无法拆分成简单片段的命令（子 shell、命令替换 `$(...)`、反引号、后台 `&`、控制流）在配置了 Bash 限制时作为一个整体弹窗。
 
@@ -379,7 +379,7 @@ Bash 规则上尾随的 `:*` 后缀会被剥成普通前缀：`Bash(git commit:*
 
 ### 求值顺序
 
-每个来源的规则合并为一个集合，按严重度而非顺序求值：任何命中的 `deny` 拒绝；否则任何命中的 `ask` 弹窗；否则任何命中的 `allow` 批准。没有规则命中时，请求落入内置自动批准，再到提示策略，如[一次工具调用如何被授权](#how-a-tool-call-is-authorized)所述。
+每个来源的规则合并为一个集合，按严重度而非顺序求值：任何命中的 `deny` 拒绝；否则任何命中的 `ask` 弹窗；否则任何命中的 `allow` 批准。没有规则命中时，请求落入内置自动批准，再到提示策略，如[一次工具调用如何被授权](#一次工具调用如何被授权)所述。
 
 ---
 
@@ -410,7 +410,7 @@ remember_tool_approvals = false
 
 被记住的前缀仅限命令的短形式：只读命令只保留其清单形式的前缀（例如 `git status`，而不是完整参数列表），其他命令保留一个较短的开头前缀。提示会在你确认之前显示将要记住的确切内容。
 
-[危险命令清单](#dangerous-commands)上的命令（例如 `git push` 和 `rm`）从不认记住的*前缀*：只有针对整条命令的精确授权才算数，因此它们的「始终允许」选项默认作用于完整命令。批准它只会免除那次精确调用的弹窗；换任何不同参数都会再次弹窗。当没有任何可记住的授权能阻止一个脚本再次弹窗时——例如危险命令前加了 `env` 前缀，或链中其余步骤仍需批准——「始终允许」选项索性不予显示，而不是保存一条不会生效的规则。
+[危险命令清单](#危险命令)上的命令（例如 `git push` 和 `rm`）从不认记住的*前缀*：只有针对整条命令的精确授权才算数，因此它们的「始终允许」选项默认作用于完整命令。批准它只会免除那次精确调用的弹窗；换任何不同参数都会再次弹窗。当没有任何可记住的授权能阻止一个脚本再次弹窗时——例如危险命令前加了 `env` 前缀，或链中其余步骤仍需批准——「始终允许」选项索性不予显示，而不是保存一条不会生效的规则。
 
 ### 持久化按项目生效
 
@@ -545,8 +545,8 @@ rules = [
 ## 在 TUI 中管理权限
 
 - 权限决定会出现在会话记录里。
-- `/always-approve` 命令切换始终批准模式；其他模式通过 `defaultMode` 设置（见[如何设置模式](#how-to-set-the-mode)）。
-- 权限提示包含按命令的「始终允许」选项，仅对当前项目持久化（默认开启；用 `[ui] remember_tool_approvals = false` 关闭）。见[交互式批准](#interactive-approvals-and-where-they-persist)。
+- `/always-approve` 命令切换始终批准模式；其他模式通过 `defaultMode` 设置（见[如何设置模式](#如何设置模式)）。
+- 权限提示包含按命令的「始终允许」选项，仅对当前项目持久化（默认开启；用 `[ui] remember_tool_approvals = false` 关闭）。见[交互式批准](#交互式批准及其持久化位置)。
 - 要管理钩子与插件，请运行 `/hooks` 或 `/plugins`（在多数终端上，**Ctrl+L** 也会打开扩展面板；在 VS Code、Cursor、Windsurf 和 Zed 上，`Ctrl+L` 是回合中插话）。见 [10-hooks.md](10-hooks.md)。
 
 ---

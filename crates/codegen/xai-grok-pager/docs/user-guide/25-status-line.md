@@ -25,7 +25,7 @@ items = ["cwd", "model", "context"]   # default when omitted
 
 ### 命令
 
-把 `command` 指向一个脚本。Chaos 通过 stdin 把 [JSON](#available-data) 管道给它，并显示其 stdout。`~/` 前缀会展开为你的主目录。
+把 `command` 指向一个脚本。Chaos 通过 stdin 把 [JSON](#可用数据) 管道给它，并显示其 stdout。`~/` 前缀会展开为你的主目录。
 
 ```toml
 [ui.status_line]
@@ -47,7 +47,7 @@ command = "~/.chaos/statusline.sh"
 | `items` | array | `["cwd", "model", "context"]` | 内置条目，按此顺序。 |
 | `command` | string | none | `type = "command"` 用的脚本。 |
 | `padding` | integer | `0` | 水平留白，每侧字符数，上限 16。若留白大到一列都不剩，则保留该行但不在其中绘制任何内容。 |
-| `refresh_interval` | integer | unset | 仅用于 `command` 行，单位秒，取值 1 到 86,400。即使没有任何变化，也按此间隔重新运行脚本，这样闲置的会话仍能反映出变化——一次事故页面、一个 CI 状态。不设置则该行保持事件驱动。它调度的那次运行携带 `"trigger": "refresh_interval"`，其失败时保留上一次输出而不绘制错误（见[定时刷新](#refresh-runs)）。调用网络的脚本应选更长的间隔，并在 `state` 运行时读取缓存。 |
+| `refresh_interval` | integer | unset | 仅用于 `command` 行，单位秒，取值 1 到 86,400。即使没有任何变化，也按此间隔重新运行脚本，这样闲置的会话仍能反映出变化——一次事故页面、一个 CI 状态。不设置则该行保持事件驱动。它调度的那次运行携带 `"trigger": "refresh_interval"`，其失败时保留上一次输出而不绘制错误（见[定时刷新](#定时刷新)）。调用网络的脚本应选更长的间隔，并在 `state` 运行时读取缓存。 |
 
 ## 工作原理
 
@@ -139,4 +139,4 @@ printf '%b\n' "${DIR##*/} │ $MODEL │ ${PCT}% ctx │ \033[32m$BRANCH\033[0m 
 - **永远空着的行。** 代理没有发送状态更新，这通常意味着某个 `chaos` 或 leader 进程比这个客户端旧。重启 leader 或更新 Chaos。
 - **只有你自己的配置能设置它。** `command` 行会运行一个程序，因此它只从你的 `~/.chaos/config.toml` 和管理员管理的配置中读取。仓库无法设置它：仓库本地的 `.chaos/config.toml` 只为 MCP 服务器读取，`[ui.status_line]` 不在任何项目级配置层能提供的键之列，因此克隆仓库无法让 Chaos 运行其中的脚本。
 - **推送的配置没有生效。** `[ui.status_line]` 会从 campaign 和 version-override 补丁中剥离，因为状态栏可以指定一条会在你机器上运行的命令。请在自己的 `config.toml` 里设置。
-- **错误。** 脚本打印的任何内容都会显示，即使它以非零退出，因此 `printf …; [[ -n $dirty ]]` 的行为和预期一致。什么都不打印且失败的脚本显示 `[status line: exit N]`，并保持到下一次运行成功为止——会话状态触发的运行会立即报告其失败；定时器运行的失败则保留上一次输出（见[定时刷新](#refresh-runs)）。脚本的 stderr 永远不会画到行上，因此用于调试的 `echo` 不会打扰该行；带 `--debug` 运行 Chaos 即可读到它。Chaos 完全无法启动的脚本显示 `[status line: could not start the script: …]`，没有可执行位的文件正是这种结果；被系统杀死的脚本显示 `[status line: killed by signal]`。`#!` 行指定的解释器不存在时会改用 `sh` 重试，因此显示的是退出码。
+- **错误。** 脚本打印的任何内容都会显示，即使它以非零退出，因此 `printf …; [[ -n $dirty ]]` 的行为和预期一致。什么都不打印且失败的脚本显示 `[status line: exit N]`，并保持到下一次运行成功为止——会话状态触发的运行会立即报告其失败；定时器运行的失败则保留上一次输出（见[定时刷新](#定时刷新)）。脚本的 stderr 永远不会画到行上，因此用于调试的 `echo` 不会打扰该行；带 `--debug` 运行 Chaos 即可读到它。Chaos 完全无法启动的脚本显示 `[status line: could not start the script: …]`，没有可执行位的文件正是这种结果；被系统杀死的脚本显示 `[status line: killed by signal]`。`#!` 行指定的解释器不存在时会改用 `sh` 重试，因此显示的是退出码。

@@ -100,7 +100,7 @@ respect_gitignore = false              # default: false; set true to make every 
 
 #### 输入模式
 
-`[ui] simple_mode` 控制你在**提示框**（输入编辑器）里如何编辑文本。它不影响你在回滚区里怎么移动，那是 [`vim_mode`](#vim-mode) 的事。
+`[ui] simple_mode` 控制你在**提示框**（输入编辑器）里如何编辑文本。它不影响你在回滚区里怎么移动，那是 [`vim_mode`](#vim-模式) 的事。
 
 | 取值 | 行为 |
 |-------|----------|
@@ -532,7 +532,7 @@ items = ["cwd", "model", "context"]
 
 其余键为 `items`（按顺序显示哪些内置段）、`command`、`padding` 与 `refresh_interval`（单位秒；按定时器重跑 `command` 行，好让事故页面或 CI 状态也能送进空闲会话）。[状态行指南](25-status-line.md) 记录了全部键，以及 `command` 脚本从 stdin 读取的 JSON 约定和一个示例脚本。
 
-极简模式没有状态行，改用终端标签标题（见[通知](#notifications) 的 `title.items`）。
+极简模式没有状态行，改用终端标签标题（见[通知](#通知) 的 `title.items`）。
 
 ### 键盘快捷键
 
@@ -540,7 +540,7 @@ items = ["cwd", "model", "context"]
 
 ### 遥测
 
-这些是彼此独立的开关（见[用量监控](24-monitoring-usage.md#related-settings)）：
+这些是彼此独立的开关（见[用量监控](24-monitoring-usage.md#相关设置)）：
 
 - **`[features] telemetry`** / `GROK_TELEMETRY_ENABLED` —— 产品分析的总开关。`/privacy` 不改动它。
 - **`/privacy`** / 设置 —— 代码数据分享，与遥测相互独立。
@@ -816,7 +816,7 @@ disable_plugins = false               # hide hooks/plugins UI entirely
 
 ## LSP 服务器
 
-语言服务器为被动诊断和可选的 `lsp` 工具提供支持（见 [`lsp_tools`](#general-settings) 功能开关）。定义来自三个来源，按服务器名合并：
+语言服务器为被动诊断和可选的 `lsp` 工具提供支持（见 [`lsp_tools`](#通用设置) 功能开关）。定义来自三个来源，按服务器名合并：
 
 | 来源 | 位置 | 作用域 |
 |--------|----------|-------|

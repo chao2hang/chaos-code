@@ -117,7 +117,7 @@ Chaos 内置以下工具：
 | `spawn_subagent` | 派生并行的子代理会话 |
 | `memory_search` | 搜索跨会话记忆 |
 
-工具可以通过 [MCP 服务器](05-configuration.md#mcp-servers)扩展，以接入 GitHub、数据库等集成。
+工具可以通过 [MCP 服务器](05-configuration.md#mcp-服务器)扩展，以接入 GitHub、数据库等集成。
 
 ### 斜杠命令
 

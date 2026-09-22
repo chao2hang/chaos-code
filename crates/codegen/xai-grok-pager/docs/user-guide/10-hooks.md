@@ -74,7 +74,7 @@
 | 配置 | `requirements.toml`（用户与系统） | 始终 | requirements 层中组织分发的钩子 |
 | 插件 | 内置于已安装的插件中 | 按插件 | 团队共享钩子 |
 
-配置文件中的钩子位于你的组织已经掌控的那个 TOML 里；格式见[配置文件中的钩子](#hooks-in-config-files)。兼容厂商的钩子源默认会被扫描。要禁用对特定厂商的扫描，在 `~/.grok/config.toml` 里设 `[compat.<vendor>] hooks = false`，或设置对应的环境变量。详见[配置](05-configuration.md#harness-compatibility)。
+配置文件中的钩子位于你的组织已经掌控的那个 TOML 里；格式见[配置文件中的钩子](#配置文件中的钩子)。兼容厂商的钩子源默认会被扫描。要禁用对特定厂商的扫描，在 `~/.grok/config.toml` 里设 `[compat.<vendor>] hooks = false`，或设置对应的环境变量。详见[配置](05-configuration.md#厂商兼容性开关)。
 
 **信任一个项目**：第一次打开一个带钩子的项目时，必须先信任它，它的项目钩子才会运行；在那之前它们会被静默跳过。运行 `/hooks-trust`（或以 `--trust` 启动）来授信；该决定记录在统一的文件夹信任存储（`~/.chaos/trusted_folders.toml`）里，与管理仓库本地 MCP/LSP 服务器的是同一道闸门。`~/.chaos/hooks/` 里的全局钩子始终被信任，无需条目。这可以防止不受信任的仓库运行任意代码。
 
@@ -104,7 +104,7 @@
 | `PostCompact` | 对话压缩完成。 | 否 |
 | `SessionEnd` | 会话结束。子会话会携带 `subagentType`，宿主可以借此区分子会话的收尾与自身的收尾。 | 否 |
 
-`SubagentEnd` 被接受为 `SubagentStop` 的别名。`PreToolUse` 可以拦截一次工具调用，`UserPromptSubmit` 可以拦截一条提示（见下文），`Stop`/`SubagentStop` 可以阻止 agent 停止（见[停止决定控制](#stop-decision-control)）。`PostToolUse` 运行得太晚，无法拦截任何东西，但它的 stdout 会被读取：它可以向模型反馈并替换模型看到的工具输出（见 [PostToolUse 输出](#posttooluse-output)）。其余事件都是被动的。
+`SubagentEnd` 被接受为 `SubagentStop` 的别名。`PreToolUse` 可以拦截一次工具调用，`UserPromptSubmit` 可以拦截一条提示（见下文），`Stop`/`SubagentStop` 可以阻止 agent 停止（见[停止决定控制](#停止决定控制)）。`PostToolUse` 运行得太晚，无法拦截任何东西，但它的 stdout 会被读取：它可以向模型反馈并替换模型看到的工具输出（见 [PostToolUse 输出](#posttooluse-输出)）。其余事件都是被动的。
 
 ### UserPromptSubmit 决定控制
 
@@ -159,7 +159,7 @@ Cursor 的按操作钩子（`beforeShellExecution`、`afterFileEdit` 等）映�
 
 ### 关键字段
 
-- **事件名**（顶层键）：[钩子事件](#hook-events)中列出的任意事件。Grok 会跳过无法识别的事件名，因此共享的 Claude 或 Cursor 设置文件仍能加载。
+- **事件名**（顶层键）：[钩子事件](#钩子事件)中列出的任意事件。Grok 会跳过无法识别的事件名，因此共享的 Claude 或 Cursor 设置文件仍能加载。
 - **matcher**（可选）：一个正则表达式，选择哪些调用会触发钩子。它测试什么取决于事件：工具事件（`PreToolUse`、`PostToolUse`、`PostToolUseFailure`、`PermissionDenied`）上是工具名，`Notification` 上是通知类型，`SubagentStart`/`SubagentStop` 上是子代理类型（例如 `explore`），`SessionStart` 上是启动来源（`startup`、`resume`、…），`SessionEnd` 上是结束原因，`PreCompact`/`PostCompact` 上是压缩触发方式（`manual` 或 `auto`），`StopFailure` 上是错误类型（`rate_limit`、`authentication_failed`、`invalid_request`、`server_error`、`max_output_tokens` 或 `unknown`），`StopCancelled` 上是原因（`user_interrupt`、`permission_rejected`、`permission_cancelled`、`max_turns`、`no_progress` 或 `unknown`）。`Stop` 或 `UserPromptSubmit` 上的 matcher 会被忽略并给出警告（这两个事件总会触发）。空 matcher 或省略 matcher 匹配一切。思考结束的提示音应在 `Notification` 上把 `matcher` 设为 `idle_prompt`（任意回合结束，随后持续空闲）；`permission_prompt` 只在权限 UI 确实在等待时触发。matcher 测试的是真实工具名；经内部 `use_tool` 分发器路由的 MCP 调用会以带限定符的 `server__tool` 名称出现（例如 `linear__save_issue`），因此要匹配它而非分发器名。
 - **type**：`"command"`（运行脚本或 shell 单行命令）或 `"http"`（把事件 POST 到某个 URL）。
 - **command**：可执行文件的路径（相对于 JSON 文件）或内联 shell 命令。
@@ -185,7 +185,7 @@ matcher 也保留原始名称，因此 `Bash` 同时匹配 `Bash` 和 `run_termi
 
 事件触发时，Grok 分四步解析它：
 
-1. **选择匹配的组。** 对该事件，每个 `matcher` 与事件字段匹配的 matcher 组都会运行。matcher 在工具事件上测试工具名，在 `Notification` 上测试通知类型，等等（见[关键字段](#key-fields)）。空 matcher 或省略 matcher 匹配一切。
+1. **选择匹配的组。** 对该事件，每个 `matcher` 与事件字段匹配的 matcher 组都会运行。matcher 在工具事件上测试工具名，在 `Notification` 上测试通知类型，等等（见[关键字段](#关键字段)）。空 matcher 或省略 matcher 匹配一切。
 2. **按顺序运行处理器。** 被选中组里的处理器按配置顺序运行，各自通过 stdin 以 JSON 形式接收事件，直到某个处理器返回 `deny`（它会终止链条）。来自不同来源（全局、项目、插件、配置）的处理器会合并，相同的处理器会被去重。每个处理器看到的都是模型的原始工具输入；`PreToolUse` 的 `updatedInput` 只在所有处理器结束后应用，因此一个处理器看不到另一个处理器的改写（最后一次改写胜出）。
 3. **应用决定。** 对 `PreToolUse` 闸门，第一个 `deny` 拦截调用并把原因展示给模型，`updatedInput` 改写工具输入，否则调用照常进行。对 `Stop` 与 `SubagentStop`，`block` 让 agent 继续工作。对 `PostToolUse`，工具已经运行，因此什么都不会被拦截，每个钩子都会运行：`block` 原因与任何 `additionalContext` 会随工具结果一起交付给模型，输出替换则改写模型那份结果。其余事件都是被动的：其输出会被记录，但不改变控制流。
 4. **失败放行。** 超时、崩溃或输出格式错误的处理器会记录到回滚区，但绝不拦截操作。唯一的例外是 `PreToolUse` 的 `updatedInput` 未通过工具的 schema 校验：改写无法安全运行，因此调用被拦截并报告为无效输入错误。除此之外，只有显式 `deny` 才会拦截一次工具调用。
@@ -212,7 +212,7 @@ hooks = [
 ]
 ```
 
-每个 matcher 组是一个 `[[hooks.<Event>]]` 条目，带可选的 `matcher` 与内层 `hooks` 处理器数组。处理器字段（`type`、`command`、`url`、`timeout`、`env`）与事件名和 [JSON 格式](#the-hook-json-format)完全相同。
+每个 matcher 组是一个 `[[hooks.<Event>]]` 条目，带可选的 `matcher` 与内层 `hooks` 处理器数组。处理器字段（`type`、`command`、`url`、`timeout`、`env`）与事件名和 [JSON 格式](#钩子-json-格式)完全相同。
 
 TOML 为内层处理器提供两种等价写法，二者解析出相同的结构。推荐上面展示的内联表数组形式：在常见的单处理器场景下最易读。嵌套的表数组形式同样被接受：
 
@@ -444,7 +444,7 @@ timeout = 10
 
 - **camelCase 输入**：Chaos 的 stdin 信封通篇使用 camelCase 键，而 Claude 用 snake_case。读取 `.stop_hook_active` 或 `.background_tasks[].agent_type` 的脚本必须改读 `.stopHookActive` 与 `.backgroundTasks[].agentType`（`hook_event_name` snake_case 键携带 Claude 的 PascalCase 值，如 `"Stop"`；`hookEventName` camelCase 键携带 Chaos 的 snake_case 值，如 `"stop"`）。通过 grok-agent-sdk 注册的钩子会把顶层键与 `backgroundTasks`/`sessionCrons` 的条目键都转换为 snake_case，因此线上格式的 `.backgroundTasks[].agentType` 在 SDK 中读作 `.background_tasks[].agent_type`。
 - **`toolResult` 字段**：`PostToolUse` 的工具输出是 `toolResult`（SDK：`tool_result`）；Chaos 还会发出一个复制 `toolResult` 的 `tool_response` snake 别名，因此读取 Claude 的 `.tool_response` 的钩子无需改动即可工作。
-- **`updatedToolOutput` 在内置工具上携带 Chaos 自身的输出形状**：针对内置工具的 `PostToolUse` 替换会按 Chaos 序列化的工具输出校验——即该事件 `toolResult` 里的带标签对象——因此按另一个运行时的字段名编写的替换会解析成错误形状并被忽略。MCP 工具上没有形状可强制，因此 `updatedToolOutput` 与其 `updatedMCPToolOutput` 别名一样直接通过。见 [PostToolUse 输出](#posttooluse-output)。
+- **`updatedToolOutput` 在内置工具上携带 Chaos 自身的输出形状**：针对内置工具的 `PostToolUse` 替换会按 Chaos 序列化的工具输出校验——即该事件 `toolResult` 里的带标签对象——因此按另一个运行时的字段名编写的替换会解析成错误形状并被忽略。MCP 工具上没有形状可强制，因此 `updatedToolOutput` 与其 `updatedMCPToolOutput` 别名一样直接通过。见 [PostToolUse 输出](#posttooluse-输出)。
 - **会话结束时触发**：会话结束时会额外触发一次仅观察的 Stop；用 `reason == "end_turn"` 过滤（见上文）。
 - **间隔计划**：`sessionCrons[].schedule` 是人类可读的间隔，绝不是 cron 表达式。
 - **任务类型**：`backgroundTasks[].type` 只有 `shell`、`monitor` 或 `subagent`；Claude 的其他标签（`workflow`、`teammate`、…）不会被发出。
@@ -474,7 +474,7 @@ fi
 
 ### 被动钩子
 
-对 `SessionStart` 或 `Notification` 这类事件，stdout 会被忽略。成功时以 0 退出即可。例外是 `PreToolUse`（见[输出（拦截型钩子）](#output-blocking-hooks)）、`Stop`/`SubagentStop`（见[停止决定控制](#stop-decision-control)）与 `PostToolUse`——它虽然什么也不拦截，stdout 仍会被读取（见 [PostToolUse 输出](#posttooluse-output)）。
+对 `SessionStart` 或 `Notification` 这类事件，stdout 会被忽略。成功时以 0 退出即可。例外是 `PreToolUse`（见[输出（拦截型钩子）](#输出拦截型钩子)）、`Stop`/`SubagentStop`（见[停止决定控制](#停止决定控制)）与 `PostToolUse`——它虽然什么也不拦截，stdout 仍会被读取（见 [PostToolUse 输出](#posttooluse-输出)）。
 
 ### Environment Variables
 

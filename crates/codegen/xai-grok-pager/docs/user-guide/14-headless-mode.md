@@ -37,7 +37,7 @@ Grok 会处理该提示，运行所有必要的工具，并把结果打印到 st
 | `--disallowed-tools <TOOLS>` | 要移除的内置工具黑名单（逗号分隔）。支持 `Agent` 条目。仅无头模式。 |
 | `--max-turns <N>`       | 停止前允许的最大智能体轮数。仅无头模式。 |
 | `--reasoning-effort` / `--effort <LEVEL>` | 推理模型的推理投入程度。规范级别：`none`、`minimal`、`low`、`medium`、`high`、`xhigh`、`max`（每个都是独立档位；模型只接受其菜单中列出的级别）。也接受按模型的菜单选项 id（例如 `deep` → 映射的线上传输值），与 `/effort` 相同。在 TUI 和无头模式下均可用。 |
-| `--permission-mode <MODE>` | 权限模式。`bypassPermissions` 启用始终批准（见[权限与安全](22-permissions-and-safety.md#permission-modes)）；要默认拒绝，请在 `.claude/settings.json` 中设置 `defaultMode`。 |
+| `--permission-mode <MODE>` | 权限模式。`bypassPermissions` 启用始终批准（见[权限与安全](22-permissions-and-safety.md#权限模式)）；要默认拒绝，请在 `.claude/settings.json` 中设置 `defaultMode`。 |
 | `--allow <RULE>`        | 带通配符模式的权限允许规则（可重复）。在 TUI 和无头模式下均可用。 |
 | `--deny <RULE>`         | 带通配符模式的权限拒绝规则（可重复）。在 TUI 和无头模式下均可用。 |
 | `--prompt-json <JSON>`  | 以 JSON 内容块表示的提示                         |
@@ -46,7 +46,7 @@ Grok 会处理该提示，运行所有必要的工具，并把结果打印到 st
 | `--no-auto-update`      | 为本次会话禁用更新检查                |
 | `--sandbox <PROFILE>`   | 用于文件系统/网络访问的沙箱配置         |
 
-> **注意：** `--tools`、`--disallowed-tools`、`--max-turns` 和 `--agents` 是仅限无头模式的标志。如果在交互式 TUI 中使用，会打印警告并忽略该标志。`--reasoning-effort`/`--effort`、`--permission-mode`、`--allow` 和 `--deny` 在两种模式下都可用。更多标志（智能体与工作树）见[其他无头模式标志](#additional-headless-flags)。
+> **注意：** `--tools`、`--disallowed-tools`、`--max-turns` 和 `--agents` 是仅限无头模式的标志。如果在交互式 TUI 中使用，会打印警告并忽略该标志。`--reasoning-effort`/`--effort`、`--permission-mode`、`--allow` 和 `--deny` 在两种模式下都可用。更多标志（智能体与工作树）见[其他无头模式标志](#其他无头模式标志)。
 
 ### 工具过滤
 
@@ -99,7 +99,7 @@ chaos -p "Refactor this module" --disallowed-tools "Agent(explore)"
 | `WebFetch(...)` | URL 抓取（通配符或 `domain:host`） |
 | `MCPTool(...)` | MCP 工具调用              |
 
-对于路径规则（`Read`、`Edit`、`Write`、`Grep`），`*` 是单层通配符，`**` 是递归通配符。对于 `Bash` 规则，`*` 匹配包括空格在内的任意字符。不带括号的裸前缀匹配该类型的所有调用，`Bash(cmd:*)` 等价于对 `cmd` 的前缀匹配。完整的匹配语义见 [22-permissions-and-safety.md](22-permissions-and-safety.md#rule-matching-reference)。
+对于路径规则（`Read`、`Edit`、`Write`、`Grep`），`*` 是单层通配符，`**` 是递归通配符。对于 `Bash` 规则，`*` 匹配包括空格在内的任意字符。不带括号的裸前缀匹配该类型的所有调用，`Bash(cmd:*)` 等价于对 `cmd` 的前缀匹配。完整的匹配语义见 [22-permissions-and-safety.md](22-permissions-and-safety.md#规则匹配参考)。
 
 ```bash
 # Deny shell commands matching "rm*"
@@ -524,14 +524,14 @@ echo "No issues found"
 
 ## 自动化场景下的始终批准
 
-`--always-approve`（别名 `--yolo`，等价于 `--permission-mode bypassPermissions`）让工具调用不经交互式权限提示直接执行。拒绝规则、钩子和管理员锁定仍然生效（见[权限与安全](22-permissions-and-safety.md#permission-modes)）。
+`--always-approve`（别名 `--yolo`，等价于 `--permission-mode bypassPermissions`）让工具调用不经交互式权限提示直接执行。拒绝规则、钩子和管理员锁定仍然生效（见[权限与安全](22-permissions-and-safety.md#权限模式)）。
 
 ```bash
 chaos -p "Format all files" --always-approve
 chaos -p "Run the tests and fix any failures" --cwd ~/projects/my-app --always-approve
 ```
 
-智能体服务器与 SDK 见[智能体模式](15-agent-mode.md#automation-and-sdks)。
+智能体服务器与 SDK 见[智能体模式](15-agent-mode.md#自动化与-sdk)。
 ---
 
 ## 无头模式的环境变量

@@ -253,7 +253,7 @@ await connection.request("session/set_config_option", {
 });
 ```
 
-代理会自动持久化所有会话更新。客户端可以按 ID 重连并加载以前的会话。选项 ID、值的形状，以及 leader 模式下的旁听行为，见[代理模式](15-agent-mode.md#session-config-options)。
+代理会自动持久化所有会话更新。客户端可以按 ID 重连并加载以前的会话。选项 ID、值的形状，以及 leader 模式下的旁听行为，见[代理模式](15-agent-mode.md#会话配置选项)。
 
 ---
 

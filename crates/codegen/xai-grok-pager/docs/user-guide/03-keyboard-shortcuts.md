@@ -243,7 +243,7 @@ MCP 服务器名。
 **注：**当**子代理全屏视图**打开时，编辑器被隐藏。仅限根会话的组合键
 （`Ctrl+P`、`Ctrl+M`、`F3`、`Ctrl+O`、`Ctrl+B`、设置、扩展、Shift+Tab）
 都不起作用。`Ctrl+C` 取消的是**子代理**的回合。`q` / `Esc` 关闭该视图。
-`Ctrl+Q` 仍可退出（VS Code 家族为 `Ctrl+D`）。见[在 TUI 中查看子代理](16-subagents.md#fullscreen-framed-view-the-child-transcript)。
+`Ctrl+Q` 仍可退出（VS Code 家族为 `Ctrl+D`）。见[在 TUI 中查看子代理](16-subagents.md#全屏框架视图子会话记录)。
 
 **注：**`Ctrl+M` 依上下文而定。提示框聚焦时切换多行输入模式；否则打开
 模型选择器。
@@ -346,7 +346,7 @@ Linux X11 有两套相互独立的文本选区：
 
 > **WezTerm**：这些带修饰符的 Enter 键需要在 WezTerm 配置里设
 > `enable_kitty_keyboard = true`。完整步骤与一行 workaround 见
-> [终端支持指南](21-terminal-support.md#ctrlenter-does-not-interject-in-wezterm)。
+> [终端支持指南](21-terminal-support.md#ctrlenter-在-wezterm-中不触发插话)。
 
 > **Windows（非 VS Code 家族）**：有些终端会丢掉 `Ctrl+Enter` 上的 `Ctrl`
 > 修饰符（可能塌缩成裸 `Enter` 或 `Ctrl+J`）。改用 `Ctrl+I` 作备用 ——
