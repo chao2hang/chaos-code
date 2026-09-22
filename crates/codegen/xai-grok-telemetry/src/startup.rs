@@ -870,8 +870,13 @@ mod tests {
             .filter(|c| c.parent.as_deref() == Some("startup"))
             .map(|c| c.elapsed)
             .sum();
+        // The layer samples every span's open and close in its own callback, so the parts can add up
+        // to a hair more than the whole: a sibling closing a few hundred nanoseconds late is
+        // sampling skew, not a coverage gap. A real gap is at least one 10ms phase sleep, so this
+        // bound cannot mask one.
+        const SAMPLING_SKEW: Duration = Duration::from_millis(1);
         assert!(
-            root.elapsed >= phase_sum,
+            root.elapsed + SAMPLING_SKEW >= phase_sum,
             "root span ({:?}) must cover the phases it parents ({phase_sum:?})",
             root.elapsed
         );
