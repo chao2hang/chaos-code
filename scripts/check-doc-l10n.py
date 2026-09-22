@@ -616,7 +616,9 @@ def fix_anchors(before: str, glob: str) -> int:
                 unresolved.append(f"{path} -> {m.group(1)}")
             elif new_anchor != anchor:
                 rewrites += 1
-                return f"]({file_part}#{new_anchor})"
+                # `LINK` stops before the closing `)`, so the match already
+                # excludes it and the replacement must not add one back.
+                return f"]({file_part}#{new_anchor}"
             return m.group(0)
 
         return LINK.sub(repl, line)

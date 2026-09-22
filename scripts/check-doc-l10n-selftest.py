@@ -350,13 +350,69 @@ def run_removal_case() -> int:
     return 1
 
 
+FIX_ANCHORS_BEFORE_A = (
+    "## Overview\n\n## Trust and Security\n\nSee [self](#trust-and-security).\n"
+)
+FIX_ANCHORS_AFTER_A = (
+    "## 概述\n\n## 信任与安全\n\nSee [self](#信任与安全).\n"
+)
+FIX_ANCHORS_BEFORE_B = "See [trust](a.md#trust-and-security).\n"
+FIX_ANCHORS_EXPECT_B = "See [trust](a.md#信任与安全).\n"
+
+
+def run_fix_anchors_case() -> int:
+    """A rewritten anchor must not gain a second closing paren.
+
+    `LINK` deliberately stops before the `)`, so the replacement has to
+    supply only what the match consumed. Emitting one more yields
+    `](a.md#anchor))`, which still passes `--links` (the target parses and
+    the stray paren is trailing text) but renders as a broken link with a
+    visible `)`. That is why this needs its own case.
+
+    Both directions are covered: a cross-file anchor (`b.md` -> `a.md`) and
+    a same-file one, which resolves against the linking file's own table.
+    """
+    name = "fix-anchors: rewritten links stay well formed"
+    tmp = Path(tempfile.mkdtemp())
+    (tmp / "a.md").write_text(FIX_ANCHORS_BEFORE_A, encoding="utf-8")
+    (tmp / "b.md").write_text(FIX_ANCHORS_BEFORE_B, encoding="utf-8")
+
+    def git(*a: str):
+        return subprocess.run(["git", *a], cwd=tmp, capture_output=True,
+                              text=True)
+
+    git("init", "-q")
+    git("config", "user.email", "t@t")
+    git("config", "user.name", "t")
+    git("add", "-A")
+    git("commit", "-qm", "before")
+
+    (tmp / "a.md").write_text(FIX_ANCHORS_AFTER_A, encoding="utf-8")
+    proc = subprocess.run(
+        [sys.executable, GATE, "--fix-anchors", "--before", "HEAD",
+         "--glob", "*.md"],
+        cwd=tmp, capture_output=True, text=True)
+    got_a = (tmp / "a.md").read_text(encoding="utf-8")
+    got_b = (tmp / "b.md").read_text(encoding="utf-8")
+    if got_a == FIX_ANCHORS_AFTER_A and got_b == FIX_ANCHORS_EXPECT_B:
+        print(f"ok   {name}: {got_b.strip()}")
+        return 0
+    print(f"FAIL {name}: exit={proc.returncode}")
+    print(f"     want a.md {FIX_ANCHORS_AFTER_A!r}")
+    print(f"     got  a.md {got_a!r}")
+    print(f"     want b.md {FIX_ANCHORS_EXPECT_B!r}")
+    print(f"     got  b.md {got_b!r}")
+    return 1
+
+
 def main() -> int:
     failures = sum(run_case(*case) for case in CASES)
     failures += sum(run_cell_case(*case) for case in CELL_CASES)
     failures += sum(run_fork_name_case(*case) for case in FORK_NAME_CASES)
     failures += run_apply_case()
     failures += run_removal_case()
-    total = (len(CASES) + len(CELL_CASES) + len(FORK_NAME_CASES) + 2)
+    failures += run_fix_anchors_case()
+    total = (len(CASES) + len(CELL_CASES) + len(FORK_NAME_CASES) + 3)
     print(f"\n{total - failures}/{total} self-test case(s) passed")
     return 1 if failures else 0
 
