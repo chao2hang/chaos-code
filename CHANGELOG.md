@@ -1,5 +1,66 @@
 # Changelog
 
+## 0.4.0 — 2026-09-22
+
+### 上游同步：精选外科手术式修复
+
+- 从上游 `48271133`、`75810042` 两个批次里手工搬运与分叉自持章节相符的修复：
+  压缩重试不再把 TPM 429 误判为上下文溢出；长任务计时显示进位到小时，不再停在
+  分钟；CJK 与色深渲染测试引入固定色深机制。
+- 依赖对齐上游：`quick-xml` 0.41、`tikv-jemalloc` 0.7。
+- `SOURCE_REV` 维持 `72a61251fcffb464bcc687aeb5a998e5a98ec0c9`；本轮移植的每一处
+  都在提交信息里写明上游提交号，不虚报对齐点。
+
+### 用户指南中文化
+
+- 补完 20 篇纯英文章节，全书 27 篇的正文、表格与目录条目均为中文。
+- 正文 H1、`docs.rs` 里的文档名与目录条目统一为同一个中文名，`/docs` 里点进
+  去不再中英混排。
+- 删除本分叉不存在的功能章节与段落：Grove / `grok clone`、grok.com 浏览器登录
+  与 OIDC、`docs/internal/*`、Terminal 主题；`/login`、`/logout` 按本分叉的
+  兼容桩行为如实改写。
+- 路径与命令按分叉实际改写：`chaos <cmd>`、`~/.chaos`（兼容读取 `~/.grok`），
+  其余 `GROK_*`、`xai-grok-*`、`grok-<模型>` 保持原样。
+- 应用内文案：快捷键详情页的 42 条 `long_help`、弹窗底栏的 30 个快捷键标签，
+  以及 `stash`、`Shell` 两个条目改说中文；键位名（`Ctrl+P`、`j/k`）与命令名
+  保持 ASCII。
+
+### 中文化机器校验
+
+- 新增 `scripts/check-doc-l10n.py`：把围栏代码块、行内代码 span、表格结构与
+  单元格数、链接目标、标题层级、正文数字、上游旧名做成不变量，翻译不可能
+  悄悄改掉默认值或改坏代码块。
+- 新增 51 条自测（`scripts/check-doc-l10n-selftest.py`）覆盖每个不变量的「该拦」
+  与「该放」两个方向；新增表格单元格词典，重复出现的短单元格一次决定。
+- 新增 `scripts/l10n-guard.sh` 作为收尾硬门：比较相对于 `main` 的中文行数，
+  报告 `regressed` / `shrunk` / `fortress-breach` 三类回退。
+- 修掉校验器自身的三个缺陷，并各加自测钉住：`--fix-anchors` 重写锚点时多加一个
+  右括号（15 篇 55 处，`--links` 看不见，只有渲染时看得出）；`links` 判据与它
+  自己规定的收尾动作自相矛盾（改为按标题位置把两侧目标折算到译文 slug 再比）；
+  `--glob` 匹配不到文件时静默全 0 通过（改为硬报错并提示正确写法）。
+- `scripts/doc-span-removals.tsv` 声明本分叉有意删除的行内字面量（15 条），
+  删功能说明不再误报漂移，而理由留档可复核。
+- 写作与执行约定记在 `sync/doc-l10n-conventions.md`，逐章核对结论记在
+  `sync/doc-claims-verification.md`，全库漂移归因记在
+  `sync/2026-09-18-curated-port.md`。
+
+### 测试与构建修复
+
+- 修复基线就失败的 8 条 CJK 渲染测试（采用上游 `75810042` 的色深固定机制）。
+- 清零分叉侧残留的 32 条测试失败，并修复其暴露的 6 处真实缺陷。
+- 修好公共快照里两个编译不过的测试目标：`registered_features_are_documented`
+  依赖本仓库从未有过的 `docs/internal/`，改用 `internal-docs` feature 门控；
+  `pty_e2e_scroll_selection` 丢了 `gap_row` 定义，按上游逐字恢复。
+- 修好二进制改名后找不到二进制而失败的测试与测试工具。
+- 恢复类与诊断类提示改说中文，并清掉二进制自称 `grok` 的残留。
+
+### Compatibility
+
+- 版本号统一为 `0.4.0`：`xai-grok-version`、`xai-grok-pager`、`xai-grok-pager-bin`、
+  `xai-grok-shell` 联动。
+- 分叉层不变：二进制名 `chaos`、配置根 `~/.chaos`、遥测默认关闭、内置模型目录
+  为空、`remote_fetch` 默认 false、不引入登录/OIDC 依赖。
+
 ## 0.3.0 — 2026-08-14 (unreleased)
 
 ### Security: 自更新验签链路

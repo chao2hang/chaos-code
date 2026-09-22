@@ -52,7 +52,13 @@ merge 前基线 = 本仓库 main（上次上游同步合并点）；目标 = `up
 ## 6. 版本 / 二进制 / 日志
 - `crates/codegen/xai-grok-pager-bin/**`（`[[bin]] name = "chaos"`）
 - `crates/codegen/xai-grok-version/Cargo.toml`、`xai-grok-pager/Cargo.toml`、
-  `xai-grok-pager-bin/Cargo.toml`、`xai-grok-shell/Cargo.toml`（lockstep 0.3.1）
+  `xai-grok-pager-bin/Cargo.toml`、`xai-grok-shell/Cargo.toml`（lockstep 0.4.0）
+- `crates/codegen/xai-grok-pager/npm/chaos/package.json`（npm 元包，版本跟 crate 版本线；
+  六个 `chaos-<平台>/package.json` 的版本由 `scripts/assemble-platform-packages.js`
+  打包时按元包盖写，仓库里的值是占位，不必手改）
+  - **已知不一致（未修）**：元包 `optionalDependencies` 里六个平台包仍钉在 `0.2.121`，
+    0.3.1 那一跳就没跟着改；而 assemble 脚本会把平台包盖成元包版本，两者对不上，
+    `npm install chaos-code@<新版本>` 会去要一个没发布过的平台包版本。发布前需对齐。
 - `CHANGELOG.md`（仓库根，fork 中文）
 - `crates/codegen/xai-grok-shell/CHANGELOG.md` + `changelogs/**`（fork 版本线）
 - `crates/codegen/xai-grok-shell-base/src/util/changelog.rs`（CDN base / 缓存路径）
@@ -68,6 +74,14 @@ merge 前基线 = 本仓库 main（上次上游同步合并点）；目标 = `up
 
 ## 9. 文档
 - `crates/codegen/xai-grok-pager/docs/**`（中文；上游新增章节视情况补译）
+- `crates/codegen/xai-grok-pager/docs/user-guide/**`（27 篇指南，`include_str!` 进二进制，
+  首次启动解包到 `~/.chaos/docs/user-guide/`）
+- `scripts/check-doc-l10n.py` + `scripts/check-doc-l10n-selftest.py`（中文化不变量与自测）
+- `scripts/doc-cell-glossary.tsv`、`scripts/doc-span-removals.tsv`（词典与已声明删除）
+- `scripts/l10n-guard.sh`（收尾硬门：regressed / shrunk / fortress-breach）
+- `sync/doc-l10n-conventions.md`（中文化写作与执行约定）
+- `sync/doc-claims-verification.md`（指南断言逐条核对结论）
+- `sync/doc-l10n-progress.md`（逐章进度与恢复点）
 
 ## 10. 内置模型目录（BYOK 空目录，2026-09 新增）
 - `crates/codegen/xai-grok-models/default_models.json` — 必须保持
