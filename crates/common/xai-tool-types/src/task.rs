@@ -1413,29 +1413,28 @@ mod tests {
         // `capability_mode` is `#[schemars(skip)]`d, so it never reaches the schema
         // (pinned by `task_tool_input_schema_omits_capability_mode` below); only
         // `isolation` is an optional enum that must stay non-nullable.
-        for field in ["isolation"] {
-            let property = &props[field];
-            let enum_schema = property
-                .get("$ref")
-                .and_then(serde_json::Value::as_str)
-                .and_then(|reference| {
-                    reference
-                        .strip_prefix("#/$defs/")
-                        .or_else(|| reference.strip_prefix("#/definitions/"))
-                })
-                .and_then(|name| definitions.get(name))
-                .unwrap_or(property);
-            assert!(
-                enum_schema["enum"]
-                    .as_array()
-                    .is_some_and(|values| values.iter().all(serde_json::Value::is_string)),
-                "{field} must be a non-nullable string enum: {enum_schema}"
-            );
-            assert!(
-                property.get("default").is_none() || !property["default"].is_null(),
-                "{field} must not emit default: null: {property}"
-            );
-        }
+        let field = "isolation";
+        let property = &props[field];
+        let enum_schema = property
+            .get("$ref")
+            .and_then(serde_json::Value::as_str)
+            .and_then(|reference| {
+                reference
+                    .strip_prefix("#/$defs/")
+                    .or_else(|| reference.strip_prefix("#/definitions/"))
+            })
+            .and_then(|name| definitions.get(name))
+            .unwrap_or(property);
+        assert!(
+            enum_schema["enum"]
+                .as_array()
+                .is_some_and(|values| values.iter().all(serde_json::Value::is_string)),
+            "{field} must be a non-nullable string enum: {enum_schema}"
+        );
+        assert!(
+            property.get("default").is_none() || !property["default"].is_null(),
+            "{field} must not emit default: null: {property}"
+        );
     }
 
     #[test]
