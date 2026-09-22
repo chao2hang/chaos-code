@@ -1,30 +1,22 @@
-# Agent Dashboard
+# 代理看板
 
-The Agent Dashboard lists every top-level session in this pager process —
-local sessions and forks — grouped by state. From one screen you can peek,
-reply, attach, pin, rename, stop, or dispatch a new agent. Subagents are not
-listed; they run under their parent, which already shows when work is in
-flight.
+代理看板（Agent Dashboard）列出本 pager 进程中的每一个顶层会话——包括本地会话与分支（fork）——并按状态分组。在同一个界面里，你可以预览、回复、接入（attach）、置顶、重命名、停止会话，或派发一个新代理。子代理（subagent）不会列出；它们运行在父会话之下，而父会话在任务进行中时本来就会显示。
 
-Not the agents modal (`/config-agents` / `/agents` — definitions and
-personas), the session picker (`/resume` / `F3`, past conversations on
-disk), or the workflows run UI (`/workflow runs`).
+它不是代理模态框（`/config-agents` / `/agents`——定义与人设），也不是会话选择器（`/resume` / `F3`，磁盘上的历史会话），更不是工作流运行界面（`/workflow runs`）。
 
 ---
 
-## Opening the dashboard
+## 打开看板
 
-- **`grok dashboard`** — launch the TUI into the dashboard.
-- **`/dashboard`** (aliases **`/agents-dashboard`**, **`/sessions`**) — open
-  from inside a session.
-- **`Ctrl+\`** — same view as the slash command.
+- **`grok dashboard`** —— 启动 TUI 并直接进入看板。
+- **`/dashboard`**（别名 **`/agents-dashboard`**、**`/sessions`**）—— 在会话内部打开。
+- **`Ctrl+\`** —— 与斜杠命令相同的视图。
 
-Hidden in minimal mode. Set `GROK_AGENT_DASHBOARD=0` or
-`[dashboard].enabled = false` to disable.
+在极简模式（minimal mode）下隐藏。设置 `GROK_AGENT_DASHBOARD=0` 或 `[dashboard].enabled = false` 可将其禁用。
 
 ---
 
-## What you see
+## 你会看到什么
 
 ```
   main ~/xai [Choose Ctrl+l]                    ◆ 2 awaiting │ ⋮ 1 working │ ◇ 1 idle
@@ -42,262 +34,147 @@ Hidden in minimal mode. Set `GROK_AGENT_DASHBOARD=0` or
  ↑/↓ select (peek) · Enter open · Ctrl+R rename · Ctrl+T pin · Ctrl+X stop · ? help · Esc new
 ```
 
-The **header** shows where a new agent will run — the git branch and the
-working directory — with state-count chips on the right (the same glyph
-and colour as the rows, plus a label). Click the location
-(or press `Ctrl+L`) to **choose** another directory; `/cd <path>` does the
-same from the dispatch box.
+**头部（header）**显示新代理将在哪里运行——git 分支与工作目录——右侧是按状态计数的徽标（与各行使用相同的字形和颜色，外加一个标签）。点击该位置（或按 `Ctrl+L`）可以**选择**另一个目录；在派发框里输入 `/cd <path>` 效果相同。
 
-The **actions row** below it holds `+ New Agent` (the default cursor target
-when no row is selected) and, on the right, `Open Previous` (the session
-picker; workspace dashboard only) and the **worktree toggle**. `→` / `←`
-move the cursor along the row in that order, stopping at either end. Like
-every arrow on the dashboard, they navigate while the list has focus (`Tab`)
-or while the dispatch box is empty, and edit the draft once you've typed
-something; in search mode the empty box is still the query, so they edit. In
-vim mode `l` / `h` do the same but need the list focused, and stay inert in
-search mode. `Enter` acts like a click on the focused item — create, open the
-picker, or toggle worktree mode — and `Esc` steps back to `+ New Agent`. The
-same actions are always a click or `/resume` / `Ctrl+W` away. With worktree mode on inside a git repo, the row
-reads `+ New Agent in Worktree` / `Disable Worktree`, and the next dispatch
-creates the agent in a fresh git worktree.
+它下面的**动作行（actions row）**左侧是 `+ New Agent`（没有选中任何行时的默认光标位置），右侧是 `Open Previous`（会话选择器，仅工作区看板有）与 **worktree 开关**。`→` / `←` 按这个顺序沿该行移动光标，到任一端就停住。与看板上所有方向键一样：列表获得焦点（`Tab`）或派发框为空时，它们用来导航；一旦你在框里输入了内容，就改为在草稿里移动光标；而在搜索模式下空框仍是查询串，所以它们同样是编辑草稿。vim 模式下 `l` / `h` 效果相同，但需要列表获得焦点，而且在搜索模式下不起作用。`Enter` 相当于点击当前聚焦的条目——新建、打开选择器或切换 worktree 模式——`Esc` 则退回 `+ New Agent`。这些操作随时也可以用鼠标点击，或 `/resume` / `Ctrl+W`。在 git 仓库里打开 worktree 模式后，该行会显示 `+ New Agent in Worktree` / `Disable Worktree`，下一次派发就会在一个全新的 git worktree 里创建代理。
 
-Each row is a top-level agent. Sort by state (Needs input → Working → Idle →
-Inactive → Completed → Failed) so same-state rows sit together, or by working
-directory (`Ctrl+G` toggles). **Inactive** is roster-only sessions owned by
-other pager processes that this process has not loaded — background noise, so
-the section **starts collapsed** (expand with `→` / click).
+每一行是一个顶层代理。可以按状态排序（需要输入 → 运行中 → 空闲 → 未激活 → 已完成 → 失败），让同状态的行聚在一起；也可以按工作目录排序（`Ctrl+G` 切换）。**未激活（Inactive）**指属于其它 pager 进程、本进程尚未加载的名册会话——它们只是背景噪音，所以该分组**默认折叠**（按 `→` 或点击展开）。
 
-Pinned rows keep their manual order in both grouping modes. Agent activity
-and recent updates do not move them; `Shift+↑` / `Shift+↓` changes their order.
+被固定（pin）的行在两种分组模式下都保持你手动的顺序，代理活动与近期更新都不会挪动它们；`Shift+↑` / `Shift+↓` 调整它们的顺序。
 
-To keep **Idle** scannable, only the most recent idle agents stay visible —
-the 8 freshest, plus any active within the last hour. The rest fold into a
-**"N more"** row at the bottom of the group; select it and press `Enter` /
-`→` (or click) to expand, `←` to re-fold. The Idle header always shows the
-true total. Folding is suspended while a filter or search is active.
+为了让**空闲**分组仍然好扫，只显示最近空闲的代理——最新的 8 个，加上最近一小时内活动过的那些。其余的会折叠成该分组底部一行 **"N more"**；选中它按 `Enter` / `→`（或点击）展开，按 `←` 重新折叠。空闲分组的标题始终显示真实总数。有筛选或搜索生效时暂停折叠。
 
-State icons match other session lists in Grok Build:
+状态图标与其它会话列表保持一致：
 
-- `⋅`/`:`/`⸬`/`⁙` — animated spinner for **Working**
-- `●` — filled circle for **Needs input**, **Completed**, **Failed**,
-  **Blocked** (color: yellow / green / red / amber)
-- `○` — hollow circle for **Idle** and **Inactive**
+- `⋅`/`:`/`⸬`/`⁙` —— **运行中**的动画 spinner
+- `●` —— 实心圆，表示**需要输入**、**已完成**、**失败**、**被阻塞**（颜色：黄 / 绿 / 红 / 琥珀）
+- `○` —— 空心圆，表示**空闲**与**未激活**
 
-A row stays **Working** while it has live background work even if its turn
-has finished — a background task, a `monitor`, or an active scheduled
-`/loop`. The activity line says what is still running (for example
-`1 monitor · 2 loops still running`).
+只要还有活着的后台工作在跑，即使回合已经结束，该行也仍然显示为**运行中**——比如一个后台任务、一个 `monitor`，或一个生效中的定时 `/loop`。活动行会说明还有什么在跑（例如 `1 monitor · 2 loops still running`）。
 
-There are no inline group headers; sort order keeps same-state rows adjacent,
-and the per-row dot + color shows the group.
+分组没有内联标题；排序保证同状态的行彼此相邻，每行的小圆点加颜色就说明了它属于哪一组。
 
-The dispatch input uses the same prompt chrome as the agent view. Press
-`Ctrl+/` to flip it into **search mode**: the `❯` prefix becomes a yellow
-`Search:` and typing live-filters the list instead of dispatching.
+派发输入框沿用与代理视图相同的提示框外观。按 `Ctrl+/` 可以把它翻到**搜索模式**：`❯` 前缀变成黄色的 `Search:`，此时输入会实时过滤列表，而不是派发新会话。
 
 ---
 
-## Keybindings
+## 按键绑定
 
 | 键 | 操作 |
 | --- | --- |
-| `↑` / `↓`, `j` / `k` | Navigate rows and section titles (selecting a row opens peek) |
-| `→` / `←` (on a section title) | Expand / collapse the section (`l` / `h` in vim mode) |
-| `Enter` (on a section title) | Toggle the section collapsed / expanded |
-| `Enter`（空回复） | Open the selected agent full-screen (details view) |
-| `Ctrl+S` | Send the peek reply and open the agent (or dispatch and attach a new session) |
-| `Shift+Enter` / `Alt+Enter` | Newline in the reply / dispatch input |
-| `1`–`9` | Answer a pending permission / ask question when peek shows options |
-| `Enter`（已输入回复） | Send / queue the reply to the selected agent |
-| `/` | Literal `/` into the prompt |
-| `Ctrl+/` | Toggle search mode (live-filter rows) |
-| `Ctrl+R` | Rename selected row |
+| `↑` / `↓`, `j` / `k` | 在各行与分组标题之间移动（选中一行会打开预览面板） |
+| `→` / `←`（在分组标题上） | 展开 / 折叠该分组（vim 模式下是 `l` / `h`） |
+| `Enter`（在分组标题上） | 折叠 / 展开该分组 |
+| `Enter`（空回复） | 全屏打开选中的代理（详情视图） |
+| `Ctrl+S` | 发送预览面板里的回复并打开该代理（或派发并接入一个新会话） |
+| `Shift+Enter` / `Alt+Enter` | 在回复 / 派发输入框里换行 |
+| `1`–`9` | 预览面板显示选项时，回答待处理的权限 / 提问 |
+| `Enter`（已输入回复） | 把回复发送 / 排队给选中的代理 |
+| `/` | 向提示框输入一个字面 `/` |
+| `Ctrl+/` | 切换搜索模式（实时过滤行） |
+| `Ctrl+R` | 重命名选中的行 |
 | `Ctrl+T` | 固定 / 取消固定 |
-| `Ctrl+G` | Toggle grouping (state ↔ directory) |
-| `Ctrl+X` | Cancel a running turn, or press twice within 2s to permanently delete |
-| 悬停并点击 `[✗]` | Permanently delete an idle/done row (click again to confirm) |
-| `Shift+↑` / `Shift+↓` | Reorder pinned rows |
-| `Esc` | Step back: cancel search → close peek → clear filter → unfocus dispatch → unselect row → exit. Never clears a typed dispatch draft (`Ctrl+U` / `Ctrl+C` for that) |
-| `Ctrl+\` | Return from details view, or exit dashboard |
-| `Ctrl+.`（另一种：`?`） | Keyboard shortcuts cheatsheet. Footer shows `?` when `Ctrl+.` cannot be delivered. Bare `?` opens help when list-focused or the draft is empty |
+| `Ctrl+G` | 切换分组方式（状态 ↔ 目录） |
+| `Ctrl+X` | 取消正在跑的回合；2 秒内按两次则永久删除 |
+| 悬停并点击 `[✗]` | 永久删除空闲 / 已结束的行（再点一次确认） |
+| `Shift+↑` / `Shift+↓` | 调整已固定行的顺序 |
+| `Esc` | 逐级后退：取消搜索 → 关闭预览 → 清除筛选 → 派发框失焦 → 取消选中行 → 退出。它永远不会清空你已输入的派发草稿（要清空用 `Ctrl+U` / `Ctrl+C`） |
+| `Ctrl+\` | 从详情视图返回，或退出看板 |
+| `Ctrl+.`（另一种：`?`） | 打开快捷键速查表。当 `Ctrl+.` 无法送达时，页脚会显示 `?`。列表获得焦点或草稿为空时，单按 `?` 也能打开帮助 |
 
-When grouping by state, each group has a **section title** (for example
-`Working`, `Idle`) with a `▸`/`▾` marker. Select a title and press `→` /
-`←` to expand or collapse (`l` / `h` in vim mode). Click toggles; hover
-brightens. Collapse state is remembered while the dashboard stays open.
-**Inactive** starts collapsed each time the pager starts; expanding it sticks
-until you quit.
+按状态分组时，每个分组有一个**分组标题**（例如 `Working`、`Idle`），带 `▸`/`▾` 标记。选中标题后按 `→` / `←` 展开或折叠（vim 模式下是 `l` / `h`）。点击同样可以切换；鼠标悬停会变亮。看板开着期间，折叠状态会被记住。**未激活**分组每次启动 pager 时都从折叠开始；一旦展开，就一直保持到你退出。
 
-Opening a row shows the agent's conversation in the **details view**. The
-session's own header row does the work — no extra title band: the agent's
-name leads it (`name │ main ~/xai`; omitted for an unnamed session), and on
-the right, after the usual chips, sit `‹ 2/5 ›` (your position among the
-dashboard's agents; hidden when there is only one) and `[Dashboard]`. Keys
-go to the attached agent; `Esc` / `Ctrl+\` (or `[Dashboard]`) return to the
-dashboard; `‹` / `›` cycle agents. The shortcuts bar shows
-`Ctrl+\: back to dashboard`. Gotcha: `Esc` only returns; `/exit` inside the
-agent closes the session (dashboard toast: "Session closed").
+打开一行会在**详情视图**里显示该代理的对话。这里不需要额外的标题条——会话自己的头部行就承担了这件事：最前面是代理名（`name │ main ~/xai`；未命名的会话则省略），右侧在常用的那些小标签之后是 `‹ 2/5 ›`（你在看板所有代理中的位置；只有一个代理时隐藏）与 `[Dashboard]`。按键会送给已接入的代理；`Esc` / `Ctrl+\`（或点 `[Dashboard]`）回到看板；`‹` / `›` 在各个代理之间切换。快捷键栏显示 `Ctrl+\: back to dashboard`。有个坑：`Esc` 只是返回，而在代理里执行 `/exit` 会关闭该会话（看板会弹出提示 "Session closed"）。
 
-Every session with the dashboard enabled shows `[Dashboard]` in its header,
-not just ones opened from the dashboard; clicking it is the same as `Ctrl+\`.
-Disabling the dashboard (see the top of this page) removes the button too.
+只要启用了看板，每个会话的头部都会显示 `[Dashboard]`，不只是从看板打开的那些；点它等同于 `Ctrl+\`。关掉看板（见本页开头）这个按钮也会一起消失。
 
-`Ctrl+X` in the details view is state-dependent. While a **turn is running**
-it cancels the turn (same as `Ctrl+C`, including the keep-subagents prompt)
-and never closes the session. Otherwise — **idle**, a slash command in
-flight, or a cancel still pending — `Ctrl+X` arms a confirmation: press again
-within 2 seconds to close the session and return to the dashboard. Any other
-key cancels the confirmation; a turn that starts inside the window turns the
-confirmed press into a cancel instead. (If `Ctrl+X` is also the cheatsheet
-binding on your terminal, use `Ctrl+.` inside the details view.)
+详情视图里的 `Ctrl+X` 取决于当前状态。**回合正在跑**时它取消这个回合（与 `Ctrl+C` 相同，包括那个「是否保留子代理」的询问），并且永远不会关闭会话。其它情况下——**空闲**、有斜杠命令正在执行，或上一次取消仍在等待确认——`Ctrl+X` 会进入确认状态：2 秒内再按一次就关闭该会话并返回看板。按其它任何键都会取消这个确认；如果在这个窗口内有一个回合开始了，那么那次已确认的按键就变成「取消回合」。（如果你的终端把 `Ctrl+X` 也用作速查表绑定，请在详情视图里改用 `Ctrl+.`。）
 
-See [Keyboard Shortcuts](03-keyboard-shortcuts.md#agent-dashboard).
+参见[键盘快捷键](03-keyboard-shortcuts.md#agent-dashboard)。
 
 ---
 
-## Completing or closing a session
+## 完成或关闭一个会话
 
-There is **no** “mark completed” command. Row state is derived from the agent:
+**没有**「标记为已完成」这种命令。行的状态由代理推导而来：
 
-- **Completed** / **Failed** when work ends on its own (turn finished and no
-  background task / monitor / `/loop` still running).
-- **`Ctrl+X` once** while a turn is running cancels the turn.
-- **`Ctrl+X` twice** (within 2s) **permanently deletes** the session
-  (same as `/delete`). Hover an idle/done row to swap age for `[✗]` and
-  click twice to confirm.
-- In the details view, `/exit` also closes the session (Esc only returns).
-  `/delete` inside an attached agent wipes that session and returns to the
-  dashboard.
+- **已完成** / **失败**：工作自行结束时（回合已结束，且没有后台任务 / monitor / `/loop` 还在跑）。
+- **按一次 `Ctrl+X`**（回合正在跑时）取消该回合。
+- **按两次 `Ctrl+X`**（2 秒内）**永久删除**该会话（等同于 `/delete`）。把鼠标悬停在空闲 / 已结束的行上，会把时长换成 `[✗]`，点两次确认。
+- 在详情视图里 `/exit` 同样会关闭会话（`Esc` 只是返回）。在已接入的代理里执行 `/delete` 会抹掉该会话并回到看板。
 
-There is no manual complete flag. Use `/exit` to leave a session without
-deleting history.
+没有手动的完成标记。想离开一个会话又不删掉历史记录，就用 `/exit`。
 
 ---
 
-## Dispatch input
+## 派发输入框
 
-The bottom textarea **always spawns a new session**. A selected row is the
-navigation cursor, not a reply target — open an agent to talk to it.
+底部的文本框**永远用于新建会话**。选中的行只是导航光标，不是回复对象——要和某个代理对话，得先把它打开。
 
-- Free text → new top-level session seeded with the prompt. Text is never
-  treated as a filter (even if it starts with `/`, `s:`, `a:`, or `#`);
-  filtering is `Ctrl+/` search mode. A leading `/` runs a pager-global slash
-  command.
-- Empty input → open the selected row, or create a new agent when
-  `+ New Agent` is focused.
+- 自由文本 → 用这段提示词新建一个顶层会话。文本永远不会被当作筛选条件（即使它是以 `/`、`s:`、`a:` 或 `#` 开头）；筛选要靠 `Ctrl+/` 搜索模式。开头的 `/` 会执行一条 pager 全局斜杠命令。
+- 空输入 → 打开选中的行；若光标在 `+ New Agent` 上，则新建一个代理。
 
-`/usage` opens the usage modal over the dashboard. The dashboard has no
-session, so the **Usage limit** tab shows your account allowance while the
-two session tabs read "No active session"; open an agent for its context and
-token totals (`/context` and `/session-info` only work inside a session).
-`Esc` or `[✗]` closes it.
+`/usage` 会在看板之上打开用量弹窗。看板自身没有会话，所以**用量上限**标签页显示的是你账户的额度，而另外两个会话标签页显示 "No active session"；要看上下文与 token 总数请打开某个代理（`/context` 与 `/session-info` 只能在会话内部使用）。按 `Esc` 或 `[✗]` 关闭它。
 
-`Ctrl+S` after typing dispatches **and** attaches; plain `Enter` stays on the
-dashboard so you can dispatch several sessions. `Shift+Enter` / `Alt+Enter`
-insert a newline; the box grows with the draft (up to a cap, then scrolls).
+输入后按 `Ctrl+S` 会派发**并**接入；单按 `Enter` 则留在看板上，方便你连续派发多个会话。`Shift+Enter` / `Alt+Enter` 插入换行；输入框随草稿增长（到上限后开始滚动）。
 
-Empty or whitespace-only prompts are ignored. Prompts above 64 KiB are
-rejected with a toast.
+空白或只有空格的提示词会被忽略。超过 64 KiB 的提示词会被拒绝，并弹出提示。
 
-### Focus: input bar ↔ overview list (`Tab`)
+### 焦点：输入栏 ↔ 总览列表（`Tab`）
 
-Two focus areas: the **dispatch input** and the **overview list**. `Tab`
-toggles between them; the inactive input dims its border and hides its caret.
+有两个焦点区域：**派发输入框**与**总览列表**。`Tab` 在两者之间切换；未激活的输入框边框会变暗并隐藏光标。
 
-On open, focus defaults to the **overview list** when at least one agent
-exists (so `↑`/`↓` / vim `j`/`k` navigate immediately). With **no** agents,
-focus stays on the **dispatch input**. Either way, the cursor starts on
-`+ New Agent` (no agent row pre-selected).
+打开看板时，只要至少存在一个代理，焦点默认落在**总览列表**（这样 `↑`/`↓` 或 vim 的 `j`/`k` 可以立刻导航）。如果一个代理都**没有**，焦点留在**派发输入框**上。无论哪种情况，光标都从 `+ New Agent` 开始（不会预先选中某个代理行）。
 
-- **Input focused**: type a new-session prompt. Empty prompt: `↑`/`↓`
-  navigate rows; non-empty: move the caret. `Esc` unfocuses to the list
-  (draft kept).
-- **Overview focused**: `↑`/`↓` (and vim `j`/`k`) move between rows. `Enter`
-  opens the highlighted agent (on `+ New Agent`, sends a typed draft or
-  creates a new session). `Esc` stays on the list and steps back — clear
-  filter, then unselect (→ `+ New Agent`), then exit. `Tab`, `i` (vim), or
-  any printable key returns to the input.
+- **输入框获得焦点**：输入新会话的提示词。提示词为空时，`↑`/`↓` 在行之间导航；非空时移动光标。`Esc` 让输入框失焦、回到列表（草稿保留）。
+- **总览列表获得焦点**：`↑`/`↓`（以及 vim 的 `j`/`k`）在行之间移动。`Enter` 打开高亮的代理（若在 `+ New Agent` 上，则发送已输入的草稿，或新建一个会话）。`Esc` 留在列表上并逐级后退——先清除筛选，再取消选中（→ `+ New Agent`），最后退出。`Tab`、`i`（vim）或任意可打印字符都会把焦点交回输入框。
 
 ---
 
-## Peek panel
+## 预览面板
 
-Selecting an agent row shows the **peek panel** in place of the dispatch box.
-With no row selected (`+ New Agent`, or after `Esc`), the dispatch box
-returns. Select a row to talk to an existing agent; deselect to start a new
-one.
+选中某个代理行时，**预览面板**会取代派发框出现。没有选中任何行时（停在 `+ New Agent` 上，或按过 `Esc` 之后），派发框回来。选中一行就是和已有代理对话；取消选中则是新建一个。
 
-Top to bottom: header (**last response type** — `Thinking` / `Thought` /
-`Response` / `Edit` / `Read` / `Bash` / … — and **time**), the most recent
-response (word-wrapped, up to ~3 rows; `…` when truncated), and a live
-`❯ reply` input.
+从上到下依次是：头部（**最近一次回复的类型**——`Thinking` / `Thought` / `Response` / `Edit` / `Read` / `Bash` / …——以及**时间**）、最近一次回复（按词换行，最多约 3 行；被截断时显示 `…`），以及一个实时生效的 `❯ reply` 输入框。
 
-The selected agent's **model** and, in always-approve (yolo) mode, an
-**`always-approve`** flag sit on the panel's bottom border (same badge slot as
-the dispatch box), including while answering questions. List rows no longer
-repeat model or always-approve badges.
+所选代理的**模型**，以及在总是批准（yolo）模式下出现的 **`always-approve`** 标记，位于面板底边框上（与派发框共用同一个标记位），回答问题时也一样显示。列表里的行已不再重复显示模型或 always-approve 标记。
 
-**`Shift+Tab` cycles the peeked agent's mode** (Normal → Plan → Auto
-(when enabled) → Always-approve → Normal) on the **live** agent. On the dispatch box,
-Shift+Tab only stages mode for the *next* agent.
+**`Shift+Tab` 用于轮换被预览代理的模式**（普通 → 计划 → 自动（若已启用）→ 总是批准 → 普通），作用于**当前活着的**代理。在派发框上，Shift+Tab 只是为*下一个*代理预先设定模式。
 
-Unlike dispatch (new sessions only), peek reply **talks to the selected
-agent**:
+与派发（只能新建会话）不同，预览面板的回复**是发给所选代理的**：
 
-- **Type into `❯ reply`, then `Enter`** to send. Idle agents start immediately;
-  busy agents **queue** the message (same as the agent view prompt). `Ctrl+S`
-  replies and opens the detail view; `Shift+Enter` / `Alt+Enter` insert a
-  newline (reply grows with the draft).
-- Empty reply + `Enter` opens the agent.
-- **`↑`/`↓` move the caret** once the reply has content. While empty (or
-  unfocused via `Tab`), `↑`/`↓` **switch the selected agent** — the panel
-  follows, and a half-typed draft is cleared so it cannot land on the wrong
-  agent. (`Tab` to the list to navigate while a draft is in the reply.)
-- **`Esc` unselects**: clear a typed reply first, then deselect and focus
-  `+ New Agent`.
-- **`Tab`** toggles focus between reply and row list; a printable key
-  re-focuses the reply.
-- Full prompt editor (same as dispatch / agent prompt): multi-line paste
-  chips, mouse select, word navigation, `Ctrl+A`/`Ctrl+E`, `Alt+Backspace`,
-  `Ctrl+W`/`Ctrl+U`/`Ctrl+K`, undo, Shift+arrow selection, `Ctrl+Shift+V`
-  inline paste. **`@`** opens the file picker rooted at the **peeked agent's**
-  working directory; the dropdown floats above the panel. Dashboard chords
-  (`Ctrl+X` stop, `Ctrl+T` pin, `Shift+↑/↓` reorder, …) still win while the
-  panel is open.
-- Pending **permission / ask-tool** question: `❯ reply` hides; options list
-  instead. **`↑`/`↓` highlight**, **`Enter` answers**, **`1`–`9`** answer
-  directly. Free-text **No / reject** and ask-tool **Other** accept a typed
-  answer on the free-text row. Multi-question Ask forms walk one at a time
-  (`(i/N)`); multi-select forms need the agent's own view.
+- **在 `❯ reply` 里输入，然后按 `Enter`** 发送。空闲代理会立刻开始；忙碌中的代理会把这条消息**排队**（与代理视图的提示框相同）。`Ctrl+S` 发送回复并打开详情视图；`Shift+Enter` / `Alt+Enter` 插入换行（回复框随草稿增长）。
+- 回复为空时按 `Enter` 会打开该代理。
+- **回复有内容后 `↑`/`↓` 移动光标**。回复为空时（或通过 `Tab` 让回复框失焦时），`↑`/`↓` **切换所选代理**——面板随之切换，并且会清掉只输入了一半的草稿，以免它落到错误的代理上。（想在回复里留着草稿又要导航，就按 `Tab` 到列表上操作。）
+- **`Esc` 取消选中**：先清掉已输入的回复，然后取消选中并把焦点交给 `+ New Agent`。
+- **`Tab`** 在回复框与行列表之间切换焦点；按任意可打印字符会把焦点交回回复框。
+- 完整的提示词编辑器（与派发框 / 代理提示框一致）：多行粘贴会变成小标签、鼠标选择、按词移动、`Ctrl+A`/`Ctrl+E`、`Alt+Backspace`、`Ctrl+W`/`Ctrl+U`/`Ctrl+K`、撤销、Shift+方向键选择、`Ctrl+Shift+V` 行内粘贴。**`@`** 打开文件选择器，根目录是**被预览代理的**工作目录；下拉框浮在面板上方。面板打开时，看板自己的快捷键（`Ctrl+X` 停止、`Ctrl+T` 固定、`Shift+↑/↓` 重排等）仍然优先。
+- 有待处理的**权限 / 提问类工具**问题时，`❯ reply` 会隐藏，改为列出选项。**`↑`/`↓` 高亮**，**`Enter` 作答**，**`1`–`9`** 直接作答。自由文本形式的 **No / reject** 与提问工具的 **Other** 可以在自由文本行上接受手写答案。多问题 Ask 表单一次问一个（`(i/N)`）；多选表单需要用代理自己的视图。
 
-On very short terminals the panel may not fit; the dispatch box stays even
-with a row selected.
+在很矮的终端上面板可能放不下；此时即使选中了行，派发框也仍然保留。
 
 ---
 
-## Search / filter (`Ctrl+/`)
+## 搜索 / 筛选（`Ctrl+/`）
 
-`Ctrl+/` toggles search mode so normal typing always dispatches. Prefix
-flips from `❯` to yellow `Search:`; every keystroke live-filters the list.
+`Ctrl+/` 切换搜索模式，这样平时打字总会是派发。前缀会从 `❯` 变成黄色的 `Search:`；每敲一个键都会实时过滤列表。
 
-- `Enter` — confirm: keep the filter and return to the dispatch prompt.
-- `Esc` or `Ctrl+/` — cancel: clear the filter and exit search.
-- `↑` / `↓` — navigate filtered rows.
+- `Enter` —— 确认：保留筛选并回到派发提示。
+- `Esc` 或 `Ctrl+/` —— 取消：清除筛选并退出搜索。
+- `↑` / `↓` —— 在筛选后的行之间导航。
 
-Prefixes (only inside search mode):
+可用的前缀（只在搜索模式内有效）：
 
-- `a:<name>` — agent label (case-insensitive substring; persona / role).
-- `s:<state>` — row state: `working`, `idle`, `completed`, `failed`,
-  `needs-input`, `blocked` and synonyms (`busy`/`running`/`done`/etc.).
-- `#<text>` — substring match on `#<text>` (literal `#` in labels).
-- anything else — substring over label + working dir.
+- `a:<name>` —— 代理标签（大小写不敏感的子串；人设 / 角色）。
+- `s:<state>` —— 行状态：`working`、`idle`、`completed`、`failed`、`needs-input`、`blocked`，以及同义词（`busy`/`running`/`done` 等）。
+- `#<text>` —— 按 `#<text>` 做子串匹配（标签里的字面 `#`）。
+- 其它任何内容 —— 在标签 + 工作目录上做子串匹配。
 
 ---
 
-## Persistence
+## 持久化
 
-Per-user preferences under `[dashboard]` in `~/.grok/config.toml`:
+每个用户的偏好设置在 `~/.chaos/config.toml` 的 `[dashboard]` 段下：
 
 ```toml
 [dashboard]
@@ -307,5 +184,4 @@ pinned   = ["top:<session_id>", "sub:<parent_session_id>:<child_session_id>"]
 reorder  = ["top:<session_id>"]
 ```
 
-Pinned/reorder entries use **session id** (not a per-process agent slot), so
-they survive restarts.
+`pinned` / `reorder` 里的条目标识用的是**会话 id**（而不是每个进程内的代理槽位），所以重启之后它们依然有效。
