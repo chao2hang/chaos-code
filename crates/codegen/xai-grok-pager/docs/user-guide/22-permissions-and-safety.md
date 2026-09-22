@@ -1,84 +1,84 @@
-# Permissions and safety
+# 权限与安全
 
-Control what Grok can access and do: permission modes, allow/ask/deny rules, hooks, and the optional OS-level sandbox.
+控制 Chaos 可以访问什么、做什么：权限模式、allow/ask/deny 规则、钩子，以及可选的 OS 级沙箱。
 
-- **Modes** set how often Grok asks for approval (always-approve, auto, ask, and related).
-- **Rules** set which tools are allowed, asked about, or blocked within that baseline.
+- **模式（Modes）**决定 Chaos 多久请求一次批准（始终批准、auto、ask 等）。
+- **规则（Rules）**决定在该基线之上，哪些工具被允许、被询问或被阻止。
 
 ---
 
-## Permission modes
+## 权限模式
 
-When Grok edits a file, runs a command, or calls an external tool, it may pause for approval. Permission modes control how often that happens.
+当 Chaos 编辑文件、运行命令或调用外部工具时，它可能会暂停以等待批准。权限模式控制这种情况发生的频率。
 
-Modes set a baseline. Allow, ask, and deny [rules](#configuring-permissions) still apply on top of any mode.
+模式设定的是一条基线。allow、ask、deny [规则](#configuring-permissions)在任何模式之上仍然生效。
 
-### Starting points
+### 起点建议
 
 | 场景 | 模式 |
 | --------- | ---- |
-| 交互式 TUI | Default (ask), or auto for fewer prompts with background checks |
-| Scripts, SDKs, CI, agent servers | Always-approve; add [deny rules](#configuring-permissions) or hooks for hard limits |
+| 交互式 TUI | Default（ask），或用 auto 减少弹窗并辅以后台检查 |
+| 脚本、SDK、CI、代理服务器 | 始终批准；再加 [deny 规则](#configuring-permissions)或钩子做硬性限制 |
 
 ```bash
-grok -p "Run the tests" --always-approve
-grok agent --always-approve stdio
-grok agent --always-approve serve --bind 127.0.0.1:2419 --secret <token>
+chaos -p "Run the tests" --always-approve
+chaos agent --always-approve stdio
+chaos agent --always-approve serve --bind 127.0.0.1:2419 --secret <token>
 ```
 
-ACP clients can set `"_meta": { "yoloMode": true }` on `session/new`. See [Agent mode](15-agent-mode.md#automation-and-sdks).
+ACP 客户端可以在 `session/new` 上设置 `"_meta": { "yoloMode": true }`。见[代理模式](15-agent-mode.md#automation-and-sdks)。
 
-### Available modes
+### 可用模式
 
-| 模式 | What runs without asking | 最适合 |
+| 模式 | 不经询问即可运行的内容 | 最适合 |
 | ---- | ------------------------ | -------- |
-| `default`（**询问**） | Read-only tools and built-in read-only shell commands | Interactive day-to-day use |
-| `acceptEdits` | File edits without a prompt | Local coding while you review diffs later |
-| `plan` | Accepted for compatibility; use [plan mode](19-plan-mode.md) for gated planning | Claude 兼容设置 |
-| `auto` | Work the safety check allows; other calls are blocked or escalated | Interactive sessions that want fewer prompts |
-| `dontAsk` | Only pre-approved tools and built-in read-only handling | Strict CI allowlists |
-| `bypassPermissions`（**始终批准**） | Tool calls in general (`deny` rules, hooks, and some shell `ask` rules still apply) | Trusted automation and agent servers |
+| `default`（**询问**） | 只读工具与内置只读 shell 命令 | 交互式日常使用 |
+| `acceptEdits` | 文件编辑不弹窗 | 本地编码、事后审查 diff |
+| `plan` | 为兼容而接受；门控式规划请用[计划模式](19-plan-mode.md) | Claude 兼容设置 |
+| `auto` | 安全检查放行的工作；其余调用被阻止或上报 | 想减少弹窗的交互式会话 |
+| `dontAsk` | 仅预先批准的工具与内置只读处理 | 严格的 CI 白名单 |
+| `bypassPermissions`（**始终批准**） | 一般工具调用（`deny` 规则、钩子以及部分 shell `ask` 规则仍然生效） | 受信任的自动化与代理服务器 |
 
-**Always-approve** is the product name; config and Claude-compatible settings may use `bypassPermissions` for the same mode. Always-approve and auto are mutually exclusive (always-approve takes precedence when both are requested).
+**始终批准（Always-approve）**是产品名称；配置与 Claude 兼容设置中可能以 `bypassPermissions` 指代同一模式。始终批准与 auto 互斥（同时请求时以始终批准为准）。
 
-### How to set the mode
+### 如何设置模式
 
-**Interactive TUI:** `Shift+Tab` / `Ctrl+O`, `/always-approve` or `/auto`, or `/settings` ([shortcuts](03-keyboard-shortcuts.md), [commands](04-slash-commands.md)).
+**交互式 TUI：** `Shift+Tab` / `Ctrl+O`、`/always-approve` 或 `/auto`，或 `/settings`（[快捷键](03-keyboard-shortcuts.md)、[命令](04-slash-commands.md)）。
 
-**CLI:**
+**命令行：**
 
 ```bash
-grok --always-approve -p "Run the test suite"
-grok --permission-mode auto
-grok agent --always-approve serve --bind 127.0.0.1:2419 --secret <token>
+chaos --always-approve -p "Run the test suite"
+chaos --permission-mode auto
+chaos agent --always-approve serve --bind 127.0.0.1:2419 --secret <token>
 ```
 
-**Config:**
+**配置：**
 
 ```toml
 [ui]
 permission_mode = "always-approve"   # or "auto", "ask", …
 ```
 
-Claude-compatible `defaultMode` in `.claude/settings.json` is also supported (see [Claude-compatible settings](#3-claude-code-compatibility-claudesettingsjson)). CLI overrides config for that process.
+`.claude/settings.json` 中的 Claude 兼容 `defaultMode` 也受支持（见 [Claude 兼容设置](#3-claude-code-compatibility-claudesettingsjson)）。对当次进程而言，命令行覆盖配置。
 
-### Always-approve
+### 始终批准
 
-Skips ordinary permission prompts so tools run without waiting for a click. `deny` rules, hooks, and some shell `ask` rules still apply. Admins can lock the mode off (below).
+跳过普通权限弹窗，工具无需等待点击即可运行。`deny` 规则、钩子以及部分 shell `ask` 规则仍然生效。管理员可以锁定并禁用该模式（见下文）。
 
 | 机制 | 示例 |
 | --------- | ------- |
-| CLI | `--always-approve` (alias `--yolo`), or `--permission-mode bypassPermissions` |
+| 命令行 | `--always-approve`（别名 `--yolo`），或 `--permission-mode bypassPermissions` |
 | 配置 | `[ui] permission_mode = "always-approve"` |
 | 交互 | `/always-approve`, `Ctrl+O` |
 | ACP | 在 `session/new` 上设 `_meta.yoloMode: true` |
 
-#### Always-approve with hard limits
+#### 为始终批准加硬性限制
 
-Keep always-approve for automation, and add deny rules for paths or commands you never want run:
+自动化场景继续使用始终批准，同时为绝不希望运行的路径或命令加上 deny 规则：
 
 ```toml
-# project .grok/config.toml
+# project .chaos/config.toml
 [ui]
 permission_mode = "always-approve"
 
@@ -90,129 +90,129 @@ deny = [
 ```
 
 ```bash
-grok -p "Deploy the service" --always-approve --deny 'Bash(rm -rf *)'
+chaos -p "Deploy the service" --always-approve --deny 'Bash(rm -rf *)'
 ```
 
-Deny always wins over allow and over always-approve’s normal pass-through. See [Configuring permissions](#configuring-permissions).
+Deny 永远压过 allow，也压过始终批准的正常放行。见[配置权限](#configuring-permissions)。
 
-### Auto mode
+### Auto 模式
 
-Reduces interactive prompts by checking many tool calls before they run. Routine local work often proceeds. A call the classifier will not auto-allow surfaces a permission prompt so you can allow or reject it. In non-interactive sessions (`grok -p`, unidentified stdio), that same call fails and is reported to the model (for example `Auto mode blocked this action …`).
+在许多工具调用运行之前先做检查，从而减少交互式弹窗。常规本地工作通常直接放行。分类器不愿自动放行的调用会弹出权限提示，由你允许或拒绝。在非交互式会话（`chaos -p`、未识别的 stdio）中，同一调用会失败并上报给模型（例如 `Auto mode blocked this action …`）。
 
-For automation that must run tools without interactive approval, use always-approve (and deny rules if you need hard blocks) rather than auto alone.
+对于必须不经交互批准就运行工具的自动化，请使用始终批准（需要硬性阻止时配合 deny 规则），而不是只用 auto。
 
-### Disable always-approve (administrators)
+### 禁用始终批准（管理员）
 
-Organizations can prevent always-approve from being enabled via CLI, TUI, or `/always-approve`. Set this in `requirements.toml` (user-level under `~/.grok/`, or system-wide under `/etc/grok/` for enforcement users cannot remove):
+组织可以禁止通过命令行、TUI 或 `/always-approve` 启用始终批准。在 `requirements.toml` 中设置（用户级位于 `~/.chaos/`，或系统级位于 `/etc/grok/`，后者用户无法移除）：
 
 ```toml
 [ui]
 disable_bypass_permissions_mode = true
 ```
 
-Do not use `permission_mode` for this lock; that key is a switchable default. The legacy `[ui] yolo = false` key in `requirements.toml` also disables always-approve for compatibility.
+这把锁不要用 `permission_mode` 来做；那个键是一个可切换的默认值。`requirements.toml` 中的旧键 `[ui] yolo = false` 出于兼容同样会禁用始终批准。
 
-Grok can still load Claude-style permission **rules** from managed settings; always-approve is locked with `requirements.toml` as shown above.
-
----
-
-## How a tool call is authorized
-
-When the model requests a tool, the following checks happen in order:
-
-1. **`PreToolUse` hooks**. A hook can deny a tool call before any other check. A hook that allows a call does not skip the checks below; it only declines to deny. See [10-hooks.md](10-hooks.md).
-
-2. **Permission rules** (from configuration files or `--allow`/`--deny` flags)
-   - A matching `deny` rule rejects the call. `deny` wins over every other rule.
-   - A matching `ask` rule prompts you, including for file reads, searches, and shell commands that would otherwise be auto-approved.
-   - A matching `allow` rule approves the call.
-
-3. **Remembered grants**. Per-command approvals you saved from earlier prompts apply here, scoped to the current project. An existing grant can satisfy an `ask` rule instead of re-prompting. Commands on the [dangerous list](#dangerous-commands) prompt again rather than using a remembered prefix. See [Interactive Approvals](#interactive-approvals-and-where-they-persist).
-
-4. **Built-in auto-approvals**. Read-only tools and a fixed set of read-only shell commands run without prompting (see below).
-
-5. **Prompt policy** (set by the [permission mode](#permission-modes)): prompt you, auto-approve, or auto-deny the call.
-
-[Always-approve](#always-approve) short-circuits this pipeline after step 2: `deny` rules, hooks, and `ask` rules that match a shell command's segments still apply, but remembered grants (including remembered "never allow" entries) are not consulted, and `ask` rules on non-shell tools do not prompt.
+Chaos 仍可从托管设置加载 Claude 风格的权限**规则**；始终批准则被上面展示的 `requirements.toml` 锁定。
 
 ---
 
-## Operations That Never Prompt by Default
+## 一次工具调用如何被授权
 
-The operations below are treated as read-only and run without prompting, in every mode including `dontAsk`, unless a matching `deny` rule or a hook blocks them. An `ask` rule forces a prompt for file reads, searches, and shell commands (see [How a Tool Call Is Authorized](#how-a-tool-call-is-authorized)).
+当模型请求一个工具时，会按顺序进行下列检查：
 
-### Read-Only Tools
+1. **`PreToolUse` 钩子**。钩子可以在任何其他检查之前拒绝一次工具调用。允许调用的钩子并不会跳过下面的检查；它只是不拒绝而已。见 [10-hooks.md](10-hooks.md)。
+
+2. **权限规则**（来自配置文件或 `--allow`/`--deny` 标志）
+   - 命中的 `deny` 规则拒绝该调用。`deny` 压过其他所有规则。
+   - 命中的 `ask` 规则会向你弹出提示，包括原本会被自动批准的文件读取、搜索与 shell 命令。
+   - 命中的 `allow` 规则批准该调用。
+
+3. **记住的授权**。你此前在弹窗中保存的按命令批准在这里生效，作用域为当前项目。已有的授权可以满足一条 `ask` 规则，而不必再次弹窗。[危险命令清单](#dangerous-commands)上的命令会重新弹窗，而不是套用记住的前缀。见[交互式批准](#interactive-approvals-and-where-they-persist)。
+
+4. **内置自动批准**。只读工具和一组固定的只读 shell 命令不经提示直接运行（见下文）。
+
+5. **提示策略**（由[权限模式](#permission-modes)设定）：向你提示、自动批准或自动拒绝该调用。
+
+[始终批准](#always-approve)在第 2 步之后短路这条流水线：命中的 `deny` 规则、钩子以及匹配 shell 命令各片段的 `ask` 规则仍然生效，但不会查阅记住的授权（包括记住的「永不允许」条目），非 shell 工具上的 `ask` 规则也不再弹窗。
+
+---
+
+## 默认不弹窗的操作
+
+下列操作在任何模式（包括 `dontAsk`）下都被视为只读、不经提示直接运行，除非命中的 `deny` 规则或钩子阻止了它们。`ask` 规则会强制为文件读取、搜索和 shell 命令弹出提示（见[一次工具调用如何被授权](#how-a-tool-call-is-authorized)）。
+
+### 只读工具
 
 - `read_file`
 - `list_dir`
-- `grep` (content search)
+- `grep`（内容搜索）
 - `web_search`
 - `todo_write`
-- `get_command_or_subagent_output` / `kill_command_or_subagent` (subagent control)
-- Invoking skills
+- `get_command_or_subagent_output` / `kill_command_or_subagent`（子代理控制）
+- 调用技能
 
-### Read-Only Shell Commands
+### 只读 shell 命令
 
-After splitting chained commands (on `&&`, `||`, `;`, and pipes), the following commands are recognized as read-only when they appear as the primary command. This list is word-boundary matched, so `ls` does not match `lsof` or `less`. (Your own `Bash(...)` rules match differently; see [Rule Matching Reference](#rule-matching-reference).)
+拆分链式命令（按 `&&`、`||`、`;` 和管道）之后，下列命令作为主命令出现时会被识别为只读。这份清单按词边界匹配，因此 `ls` 不会匹配 `lsof` 或 `less`。（你自己的 `Bash(...)` 规则匹配方式不同；见[规则匹配参考](#rule-matching-reference)。）
 
-**Filesystem (read-only viewing):**
+**文件系统（只读查看）：**
 - `ls`, `cat`, `pwd`, `date`, `whoami`, `hostname`, `uptime`, `ps`
 - `head`, `tail`, `wc`, `sort`, `uniq`, `tr`, `cut`
 
-**Git (read-only):**
+**Git（只读）：**
 - `git status`, `git branch`, `git log`, `git diff`, `git ls-files`, `git show`, `git rev-parse`
 - `git blame`, `git describe`, `git merge-base`, `git shortlog`
 - `git check-ignore`, `git check-attr`, `git cat-file`, `git ls-tree`, `git show-ref`, `git for-each-ref`, `git rev-list`, `git name-rev`, `git count-objects`
 
-**Search and inspection:**
-- `grep`, `rg` (not `rg --pre` / `rg --pre=…`, which spawn a preprocessor per file)
+**搜索与检视：**
+- `grep`, `rg`（不含 `rg --pre` / `rg --pre=…`，它们会为每个文件启动一个预处理器）
 
-**Kubernetes (read-only):**
+**Kubernetes（只读）：**
 - `kubectl get`, `kubectl logs`, `kubectl describe`
 
-> **Note:** `tee` is not on this list because it can write its input to arbitrary files. `cargo check` is not on this list because it compiles and runs `build.rs`, proc-macros, and any `build.rustc-wrapper` from the repo (in Ask mode it therefore prompts; Auto mode may still heuristic-allow `cargo` as a project code runner). `sort --compress-program=…` (including unique long-option abbreviations), `git -c` / `--config-env` overrides, and a git command whose local/worktree config installs an executable hook (`core.fsmonitor`, a `diff.*.command`/`textconv`/`external` driver, or a shell `alias.<safe-subcommand> = !…`) raise a request-level floor and prompt rather than auto-approve, unless the user granted that exact full script or always-approve is enabled.
+> **注意：** `tee` 不在清单里，因为它可以把输入写入任意文件。`cargo check` 不在清单里，因为它会编译并运行仓库中的 `build.rs`、proc-macro 以及任何 `build.rustc-wrapper`（因此在 Ask 模式下会弹窗；Auto 模式仍可能把 `cargo` 启发式地当作项目代码运行器放行）。`sort --compress-program=…`（包括唯一长选项的缩写）、`git -c` / `--config-env` 覆盖，以及本地/worktree 配置安装了可执行钩子的 git 命令（`core.fsmonitor`、某个 `diff.*.command`/`textconv`/`external` 驱动，或 shell `alias.<safe-subcommand> = !…`），会把请求级别的下限抬高为弹窗而不是自动批准，除非用户已为那段完整脚本授权或启用了始终批准。
 
-These checks apply per segment. In a command like `ls && rm -rf /`, the `ls` segment is recognized as read-only, but the `rm` segment is not on the list. In `default` mode the `rm` segment prompts; under `dontAsk` it is denied.
-
----
+这些检查按片段逐一应用。在 `ls && rm -rf /` 这样的命令里，`ls` 片段被识别为只读，但 `rm` 片段不在清单上。在 `default` 模式下 `rm` 片段会弹窗；在 `dontAsk` 下则被拒绝。
 
 ---
 
-## Configuring Permissions
+---
 
-Grok reads permission rules from three compatible sources. Rules from all sources are merged into one set; a rule's effect depends on its action (`deny` > `ask` > `allow`), not on which file it came from.
+## 配置权限
 
-### Where Permission Rules Live (Scopes)
+Chaos 从三种兼容来源读取权限规则。所有来源的规则合并为一个集合；一条规则的效果取决于它的动作（`deny` > `ask` > `allow`），与来自哪个文件无关。
 
-Permission rules can be global (all projects), project-scoped (one repository), or personal to you within a project:
+### 权限规则放在哪里（作用域）
 
-| 作用域 | 文件 | Shared with teammates |
+权限规则可以是全局的（所有项目）、项目级的（单个仓库），或项目中仅属于你个人的：
+
+| 作用域 | 文件 | 是否与队友共享 |
 |-------|------|-----------------------|
-| Global (all projects) | `~/.grok/config.toml` | 否 |
-| 项目（已提交） | `<project>/.grok/config.toml` | Yes (commit it) |
-| 项目（个人） | `<project>/.claude/settings.local.json` | No (gitignore it) |
-| 交互授权 | Stored internally by Grok, per project | 否 |
+| 全局（所有项目） | `~/.chaos/config.toml` | 否 |
+| 项目（已提交） | `<project>/.chaos/config.toml` | 是（提交进仓库） |
+| 项目（个人） | `<project>/.claude/settings.local.json` | 否（gitignore 它） |
+| 交互授权 | 由 Chaos 内部按项目存储 | 否 |
 
-Notes on scoping:
+关于作用域的说明：
 
-- Grok discovers a `.grok/config.toml` at every directory level from the repository root down to your working directory, so a subdirectory can add rules on top of the repo root's.
-- Rules from all scopes are merged into one rule set; `deny` > `ask` > `allow` applies across scopes, so a global `deny` cannot be overridden by a project `allow`.
-- Grok has no native `config.local.toml`. For personal, uncommitted rules in a project, use `.claude/settings.local.json`; Grok reads it directly (see [Claude Code Compatibility](#3-claude-code-compatibility-claudesettingsjson)).
-- Interactive "Always allow" decisions are stored outside the repository, scoped to the project (see [Interactive Approvals](#interactive-approvals-and-where-they-persist)).
+- Chaos 会从仓库根向下到你的工作目录，在每一级目录发现 `.chaos/config.toml`，因此子目录可以在仓库根的规则之上追加规则。
+- 所有作用域的规则合并为一个规则集；`deny` > `ask` > `allow` 跨作用域生效，因此全局 `deny` 不能被项目 `allow` 覆盖。
+- Chaos 没有原生的 `config.local.toml`。项目中个人的、未提交的规则请用 `.claude/settings.local.json`；Chaos 直接读取它（见 [Claude Code 兼容](#3-claude-code-compatibility-claudesettingsjson)）。
+- 交互式的「始终允许」决定存储在仓库之外，作用域为该项目（见[交互式批准](#interactive-approvals-and-where-they-persist)）。
 
-To stop prompts for a specific command in one project, add a narrow allow rule to that project's `.grok/config.toml` (or `.claude/settings.json`):
+要在一个项目里免掉某条命令的弹窗，可在该项目的 `.chaos/config.toml`（或 `.claude/settings.json`）里加一条窄的 allow 规则：
 
 ```toml
 [permission]
 allow = ["Bash(cargo test *)", "Bash(npm run build)"]
 ```
 
-This approves only the listed commands. Always-approve mode, by contrast, approves all tool calls.
+这样只批准列出的命令。相比之下，始终批准模式会批准所有工具调用。
 
-### 1. CLI Flags
+### 1. 命令行标志
 
 ```bash
-grok -p "Review the API changes" \
+chaos -p "Review the API changes" \
   --allow 'Bash(git *)' \
   --allow 'Bash(gh *)' \
   --allow 'Read' \
@@ -220,20 +220,20 @@ grok -p "Review the API changes" \
   --deny 'Bash(rm -rf *)'
 ```
 
-`--allow RULE` and `--deny RULE` can be repeated and are always enforced.
+`--allow RULE` 和 `--deny RULE` 可以重复给出，并且始终会被强制执行。
 
-Rule syntax examples:
-- `Bash(git *)` — any command starting with `git `
-- `Bash(npm run build)` — exact command (or prefix)
-- `Bash(git commit:*)` — the `cmd:*` suffix form, equivalent to prefix matching on `git commit`
-- `Read(src/**)` — read access under `src/`
-- `Edit(**/*.rs)` — edit any Rust file
-- `Grep` — all grep operations
-- `MCPTool(my-server__*)` — MCP tools from a specific server
+规则语法示例：
+- `Bash(git *)` — 任何以 `git ` 开头的命令
+- `Bash(npm run build)` — 精确命令（或前缀）
+- `Bash(git commit:*)` — `cmd:*` 后缀形式，等价于对 `git commit` 做前缀匹配
+- `Read(src/**)` — `src/` 之下的读取权限
+- `Edit(**/*.rs)` — 编辑任何 Rust 文件
+- `Grep` — 所有 grep 操作
+- `MCPTool(my-server__*)` — 来自某个特定服务器的 MCP 工具
 
-See [Rule Matching Reference](#rule-matching-reference) for the exact matching semantics, including how chained commands and wildcards are evaluated.
+精确的匹配语义（包括链式命令与通配符如何求值）见[规则匹配参考](#rule-matching-reference)。
 
-### 2. Native Configuration (`~/.grok/config.toml` and `.grok/config.toml`)
+### 2. 原生配置（`~/.chaos/config.toml` 与 `.chaos/config.toml`）
 
 ```toml
 [permission]
@@ -247,17 +247,17 @@ rules = [
 ]
 ```
 
-The structured `tool` field accepts the lowercase names `bash`, `read`, `edit`, `grep`, `mcp`, `webfetch`, and `websearch`, corresponding to the tool classes in [Tool Names](#tool-names).
+结构化的 `tool` 字段接受小写名称 `bash`、`read`、`edit`、`grep`、`mcp`、`webfetch`、`websearch`，对应[工具名称](#tool-names)里的工具类别。
 
-Because `deny` always wins, you cannot combine these `allow` rules with a catch-all `deny` on `bash` to mean "only allow git/gh"; a `deny tool = "bash"` rule would block `git` and `gh` too. For deny-by-default, use `defaultMode: "dontAsk"` in `.claude/settings.json` or a `PreToolUse` hook (below).
+由于 `deny` 永远胜出，你不能把这些 `allow` 规则与针对 `bash` 的一网打尽式 `deny` 组合成「只允许 git/gh」；一条 `deny tool = "bash"` 规则会把 `git` 和 `gh` 也一并阻止。要默认拒绝，请在 `.claude/settings.json` 里用 `defaultMode: "dontAsk"`，或使用 `PreToolUse` 钩子（见下文）。
 
-Rules from the global `~/.grok/config.toml` and every project `.grok/config.toml` (from the repo root down to your working directory) are merged into one rule set, alongside any `.claude/settings.json` rules.
+全局 `~/.chaos/config.toml` 与每个项目 `.chaos/config.toml`（从仓库根到你的工作目录）的规则会连同任何 `.claude/settings.json` 规则一起合并为一个规则集。
 
-Managed configuration deployed by your organization also contributes `[permission]` rules: the system `/etc/grok/managed_config.toml`, and a user-level copy that Grok maintains automatically at `~/.grok/managed_config.toml`. Managed rules merge like rules from any other source, with two properties specific to managed `allow` rules: your own `deny` and `ask` rules win over a managed `allow` (severity ordering), and a catch-all managed `allow` is ignored when always-approve is locked off. For rules that users cannot edit away, use the root-owned system `/etc/grok/requirements.toml`.
+组织部署的托管配置也会贡献 `[permission]` 规则：系统级 `/etc/grok/managed_config.toml`，以及 Chaos 自动维护在 `~/.chaos/managed_config.toml` 的用户级副本。托管规则像任何其他来源的规则一样合并，但托管 `allow` 规则有两个特有属性：你自己的 `deny` 和 `ask` 规则压过托管 `allow`（按严重度排序），并且在始终批准被锁定关闭时，一网打尽式的托管 `allow` 会被忽略。要写出用户改不掉的规则，请使用 root 拥有的系统级 `/etc/grok/requirements.toml`。
 
-Permission rules from every source are read once, when a session starts. Changes apply to the next session.
+每个来源的权限规则在会话启动时读取一次。修改会在下一个会话生效。
 
-The native `[permission]` section also accepts the compact `allow` / `deny` / `ask` string-array form, using the same rule strings as the `--allow` / `--deny` flags and `.claude/settings.json`:
+原生 `[permission]` 段也接受紧凑的 `allow` / `deny` / `ask` 字符串数组形式，使用与 `--allow` / `--deny` 标志和 `.claude/settings.json` 相同的规则字符串：
 
 ```toml
 [permission]
@@ -272,13 +272,13 @@ allow = [
 ]
 ```
 
-`deny` always wins over `allow` (evaluation is `deny` > `ask` > `allow`), regardless of order or source. To block reads of paths outside your project at the OS level as well, combine deny rules with the `strict` sandbox profile (see [18-sandbox.md](18-sandbox.md)).
+`deny` 永远压过 `allow`（求值顺序为 `deny` > `ask` > `allow`），与书写顺序或来源无关。若还想在 OS 层面阻止读取项目之外的路径，可把 deny 规则与 `strict` 沙箱 profile 组合使用（见 [18-sandbox.md](18-sandbox.md)）。
 
-### 3. Claude Code Compatibility (`.claude/settings.json`)
+### 3. Claude Code 兼容（`.claude/settings.json`）
 
-Grok reads `~/.claude/settings.json` and `~/.claude/settings.local.json`, plus the project-level `<project>/.claude/settings.json` and `settings.local.json` (walking up to the repo root). The native `.grok` source for permission rules is `config.toml`, described in the section above.
+Chaos 读取 `~/.claude/settings.json` 和 `~/.claude/settings.local.json`，以及项目级 `<project>/.claude/settings.json` 与 `settings.local.json`（向上查找到仓库根为止）。权限规则的原生 `.chaos` 来源是 `config.toml`，见上一节。
 
-Example:
+示例：
 
 ```json
 {
@@ -297,140 +297,140 @@ Example:
 }
 ```
 
-Supported `defaultMode` values include `default`, `auto`, `acceptEdits`, `bypassPermissions`, `dontAsk`, and `plan`. Grok reads `defaultMode` from its canonical location under `permissions`; a top-level `defaultMode` is also accepted when the nested key is absent.
+支持的 `defaultMode` 取值包括 `default`、`auto`、`acceptEdits`、`bypassPermissions`、`dontAsk` 和 `plan`。Chaos 从 `permissions` 之下的规范位置读取 `defaultMode`；当嵌套键缺失时，也接受顶层的 `defaultMode`。
 
-`permissions.allow`, `permissions.deny`, and `permissions.ask` entries are translated into native rules and then matched with the semantics in the [Rule Matching Reference](#rule-matching-reference). Translation notes:
+`permissions.allow`、`permissions.deny` 和 `permissions.ask` 条目会被翻译成原生规则，再按[规则匹配参考](#rule-matching-reference)的语义匹配。翻译说明：
 
-- Rules for MCP tools may use either the `mcp__server__tool` form found in `.claude/settings.json` files or the native `MCPTool(server__tool)` form (see [MCP Rules](#mcp-rules)).
-- Rules naming an unrecognized tool, and parameter rules such as `Agent(model:opus)`, are skipped with a warning rather than failing the load.
-- `permissions.additionalDirectories` is parsed but not supported.
+- MCP 工具的规则既可以用 `.claude/settings.json` 文件里的 `mcp__server__tool` 形式，也可以用原生的 `MCPTool(server__tool)` 形式（见 [MCP 规则](#mcp-rules)）。
+- 命名了无法识别的工具的规则，以及 `Agent(model:opus)` 这类参数规则，会被跳过并给出警告，而不是让加载失败。
+- `permissions.additionalDirectories` 会被解析但不被支持。
 
-You can import existing Claude settings interactively with **Ctrl+I** ("Import Claude settings").
-
----
-
-## Rule Matching Reference
-
-This section defines exactly how rules are matched.
-
-### Bash Rules
-
-A `Bash(...)` pattern matches a command (each chained segment, for `allow` rules — see "Chained commands" below) in either of two ways:
-
-- **Prefix**: the command starts with the pattern text, compared character for character. There is no word-boundary requirement, so `Bash(git)` matches `gitleaks` as well as `git status`. Include a trailing space and wildcard (`Bash(git *)`) to require the prefix to be a whole word.
-- **Glob**: the pattern matches the whole command (or the whole segment) as a glob. `*` can appear at any position and matches any characters, including spaces and slashes, so `Bash(git * main)` matches `git checkout main`. `?` and `[...]` are also supported.
-
-Matching is case-sensitive. Leading whitespace in the command is trimmed before matching. For `deny` and `ask` rules the raw command string is otherwise not normalized; segment-level checks additionally match normalized forms (see below).
-
-A trailing `:*` suffix on a Bash rule is stripped to a plain prefix: `Bash(git commit:*)` becomes prefix `git commit`. Because prefixes have no word boundary, a `deny` written as `Bash(sed:*)` also blocks commands such as `sed-custom`.
-
-**Chained commands.** Grok parses each command like a shell and splits it on `&&`, `||`, `;`, `|`, and newlines. The rule actions treat segments differently:
-
-- `deny` and `ask` rules are checked against every segment, and against the whole string. One denied segment rejects the entire command.
-- `allow` rules are conjunctive: the command is auto-approved by rule only when **every** segment independently matches an allow rule. `Bash(git *)` approves `git status && git diff`, but not `git status && rm -rf /` — the `rm` segment matches no allow rule, so the command falls through to the mode's normal handling (a prompt in `default` mode; the classifier in `auto` mode, which may still approve or block it; a denial under `dontAsk`). A single allow rule can therefore never approve a chain that smuggles in an unrelated command.
-
-> **Allow rules are not a closed allowlist.** A command that matches no allow rule is not thereby denied — it falls through to the mode. In `auto` mode the classifier can approve commands your rules never mention. For deny-by-default policies, use `dontAsk` (or always-approve plus `deny` rules for hard blocks), as described under [Configuring Permissions](#configuring-permissions).
-
-Commands that cannot be split into simple segments (subshells, command substitution `$(...)`, backticks, background `&`, control flow) prompt as a single unit when Bash restrictions are configured.
-
-Each segment is normalized before rules are matched. Leading environment assignments such as `RUST_LOG=debug` are stripped, and a fixed set of wrappers (`timeout`, `nice`, `ionice`, `chrt`, `stdbuf`, `env`) is peeled away, so rules match the inner command: `Bash(npm test *)` approves `RUST_LOG=debug timeout 30 npm test --workers=4`. This applies to `deny`, `ask`, and `allow` rules, remembered grants, and the read-only command list.
-
-A few more matching details:
-
-- Rules also apply inside a literal script passed to `bash -c`. For `allow`, every command inside that script must itself be allowed.
-- Wrappers not on the list (`sudo`, `xargs`, `nohup`, …) are not peeled. Write rules that name them explicitly.
-- When the parser cannot safely peel a form (for example `env -S`), the command prompts instead of matching an `allow` rule.
-- Matching sees the parsed words joined by single spaces, without shell quotes. Write patterns against the unquoted command.
-
-### Dangerous Commands
-
-A built-in list (`rm`, `chmod`, `chown`, `chgrp`, `chattr`, `pkill`, `kill`, `killall`, `git push`) prompts even when a segment is covered by a remembered command prefix or the read-only command list. An explicit `allow` rule in configuration does approve them, and always-approve mode auto-approves them like any other command; use `deny` rules to block them unconditionally. Review rules like `Bash(rm *)` carefully before adding them as allow rules.
-
-### Read, Edit, and Grep Rules
-
-Path patterns are globs matched against the tool path after lexical normalization (`.`/`..` collapsed; relative paths joined with the session working directory). A `~`-prefixed tool path is matched literally — never joined with the working directory — because tools expand `~` to the home directory only after the permission check:
-
-- `*` and `?` do not cross `/`; `**` does. `Read(src/*)` matches `src/main.rs` but not `src/nested/mod.rs`; use `Read(src/**)` for the whole tree.
-- A bare filename matches only that exact string. Use `**/.env` to match `.env` at any depth.
-- There are no anchor prefixes: a leading `//` or `~/` in a pattern is treated as literal glob text. Write absolute-path patterns or `**/` patterns instead.
-- Because `.`/`..` are collapsed before matching, rooted patterns cannot be escaped by traversal: `Read(./**)` scopes to the working directory (bare relatives like `src/main.rs` match; `./../../etc/passwd` does not), and `Read(src/**)` stays under `src/`. Unrooted patterns (`*`, or a leading `**` as in `**/*.rs`) intentionally match at any depth, anywhere.
-- `Read` rules also govern `grep` searches; `Grep(...)` rules match only grep.
-- Native Read/Edit/Grep checks follow in-path symlinks for deny and ask on the resolved target. An allow that matches only the resolved target does not grant allow for the tool argument.
-- An in-path symlink that cannot be resolved prompts when any deny or ask file rule applies to that tool.
-
-`Read` and `Edit` deny rules additionally apply to file paths that shell commands touch (for example `cat` or `sed` on a denied path), including literal inline scripts passed to `bash`, `sh`, `dash`, `zsh`, or `ksh` with `-c`. The shell-level check uses the same working-directory-aware normalization and symlink follow for deny/ask as the direct Read/Edit/Grep tools described above (an absolute operand under the working directory also matches rooted rules like `Read(src/**)`). For OS-level enforcement that covers every process, combine deny rules with the sandbox ([18-sandbox.md](18-sandbox.md)).
-
-### MCP Rules
-
-`MCPTool(...)` patterns match the full Grok tool name in `server__tool` form, with glob support: `MCPTool(linear__*)` matches every tool from the `linear` server. Grok tool names carry no `mcp__` prefix.
-
-The `mcp__` rule spelling used in `.claude/settings.json` files is also accepted and rewritten onto the same matcher: `mcp__linear` (every tool on the `linear` server), `mcp__linear__get_issue` (one tool), `mcp__linear__*` (every tool on the server), and `mcp__*` (every MCP tool).
-
-### WebFetch Rules
-
-- `WebFetch(domain:example.com)` matches that host and every subdomain (`api.example.com`), case-insensitively, ignoring a leading `www.`. Wildcards are not supported inside `domain:` patterns.
-- A pattern without the `domain:` prefix globs against the entire URL: `WebFetch(https://api.example.com/*)`.
-
-### Tool Names
-
-Recognized tool names: `Bash`, `Read`, `Edit` (and `Write`), `Grep` (and `Glob`), `MCPTool`, `WebFetch`, `WebSearch`. A bare `*` rule matches every tool. Globs are not supported in the tool-name position.
-
-Rules naming an unrecognized tool (for example `Agent(model:opus)`) are skipped with a warning rather than failing the load.
-
-### Evaluation Order
-
-Rules from every source are merged into one set and evaluated by severity, not order: any matching `deny` rejects, otherwise any matching `ask` prompts, otherwise any matching `allow` approves. When no rule matches, the request falls through to the built-in auto-approvals and then the prompt policy, as described in [How a Tool Call Is Authorized](#how-a-tool-call-is-authorized).
+你可以用 **Ctrl+I**（「导入 Claude 设置」）交互式导入现有 Claude 设置。
 
 ---
 
-## Interactive Approvals and Where They Persist
+## 规则匹配参考
 
-When a tool call requires approval, the permission prompt offers these choices:
+本节精确定义规则如何匹配。
 
-- **Allow once**: approve this single invocation.
-- **Reject once**: reject it, optionally with a message back to the model.
-- **Enable always-approve mode**: approves all future tool calls, not just the one being prompted.
-- **Allow all edits this session**: shown for file edits. This grant is held in memory only and does not survive a restart.
+### Bash 规则
 
-### Per-Command "Always Allow"
+一条 `Bash(...)` 模式按以下两种方式之一匹配一条命令（对 `allow` 规则而言是每个链式片段——见下文「链式命令」）：
 
-A narrower set of options remembers just the specific command, MCP tool, or web-fetch domain being prompted, for example "Always allow `cargo test`". These rows are on by default. Disable them with:
+- **前缀**：命令以模式文本开头，逐字符比较。没有词边界要求，因此 `Bash(git)` 既能匹配 `git status` 也能匹配 `gitleaks`。要让前缀必须是完整单词，请带上尾随空格和通配符（`Bash(git *)`）。
+- **Glob**：模式作为 glob 匹配整条命令（或整个片段）。`*` 可以出现在任意位置并匹配任意字符，包括空格和斜杠，因此 `Bash(git * main)` 能匹配 `git checkout main`。也支持 `?` 和 `[...]`。
+
+匹配区分大小写。命令的前导空白在匹配前会被去掉。对 `deny` 和 `ask` 规则而言，原始命令串此外不做归一化；片段级检查还会额外匹配归一化后的形式（见下文）。
+
+Bash 规则上尾随的 `:*` 后缀会被剥成普通前缀：`Bash(git commit:*)` 变成前缀 `git commit`。由于前缀没有词边界，写成 `Bash(sed:*)` 的 `deny` 也会阻止 `sed-custom` 之类的命令。
+
+**链式命令。** Chaos 像 shell 一样解析每条命令，并按 `&&`、`||`、`;`、`|` 和换行拆分。规则动作对各片段的处理不同：
+
+- `deny` 和 `ask` 规则针对每个片段以及整串命令检查。任何一个片段被拒绝，整条命令即被拒绝。
+- `allow` 规则是合取的：只有**每个**片段都独立命中某条 allow 规则时，命令才因规则被自动批准。`Bash(git *)` 批准 `git status && git diff`，但不批准 `git status && rm -rf /` —— `rm` 片段没有命中任何 allow 规则，于是命令落入该模式的正常处理（`default` 模式下弹窗；`auto` 模式下交给分类器，它仍可能批准或阻止；`dontAsk` 下拒绝）。因此单条 allow 规则永远无法批准一条夹带了无关命令的链。
+
+> **allow 规则不是封闭的白名单。** 未命中任何 allow 规则的命令并不会因此被拒绝——它落入模式处理。在 `auto` 模式下，分类器可以批准你的规则从未提及的命令。要默认拒绝的策略，请用 `dontAsk`（或始终批准加 `deny` 规则做硬性阻止），如[配置权限](#configuring-permissions)所述。
+
+无法拆分成简单片段的命令（子 shell、命令替换 `$(...)`、反引号、后台 `&`、控制流）在配置了 Bash 限制时作为一个整体弹窗。
+
+每个片段在规则匹配前会被归一化。`RUST_LOG=debug` 这类前导环境变量赋值会被剥掉，一组固定的包装器（`timeout`、`nice`、`ionice`、`chrt`、`stdbuf`、`env`）会被剥离，使规则匹配内层命令：`Bash(npm test *)` 批准 `RUST_LOG=debug timeout 30 npm test --workers=4`。这适用于 `deny`、`ask`、`allow` 规则、记住的授权以及只读命令清单。
+
+还有一些匹配细节：
+
+- 规则同样适用于传给 `bash -c` 的字面脚本内部。对 `allow` 而言，该脚本内部的每条命令本身都必须被允许。
+- 不在清单上的包装器（`sudo`、`xargs`、`nohup`、…）不会被剥离。请写出显式点名它们的规则。
+- 当解析器无法安全剥离某种形式（例如 `env -S`）时，命令会弹窗，而不是匹配某条 `allow` 规则。
+- 匹配看到的是解析后以单个空格连接的词，不含 shell 引号。请针对不带引号的命令书写模式。
+
+### 危险命令
+
+一份内置清单（`rm`、`chmod`、`chown`、`chgrp`、`chattr`、`pkill`、`kill`、`killall`、`git push`）上的命令即使片段已被记住的命令前缀或只读命令清单覆盖，仍会弹窗。配置中显式的 `allow` 规则确实可以批准它们，始终批准模式也会像对待其他命令一样自动批准；要无条件阻止它们，请用 `deny` 规则。把 `Bash(rm *)` 这类规则加入 allow 之前请仔细审查。
+
+### Read、Edit 与 Grep 规则
+
+路径模式是 glob，匹配经过词法归一化之后的工具路径（折叠 `.`/`..`；相对路径与会话工作目录拼接）。以 `~` 开头的工具路径按字面匹配——绝不与工作目录拼接——因为工具只在权限检查之后才把 `~` 展开为家目录：
+
+- `*` 和 `?` 不跨越 `/`；`**` 可以。`Read(src/*)` 匹配 `src/main.rs` 但不匹配 `src/nested/mod.rs`；要覆盖整棵树请用 `Read(src/**)`。
+- 裸文件名只匹配那个精确字符串。要匹配任意深度的 `.env` 请用 `**/.env`。
+- 没有锚定前缀：模式里开头的 `//` 或 `~/` 会被当作字面 glob 文本。请改写绝对路径模式或 `**/` 模式。
+- 由于 `.`/`..` 在匹配前被折叠，有根模式无法靠路径穿越绕开：`Read(./**)` 限定在工作目录内（`src/main.rs` 这类裸相对路径匹配；`./../../etc/passwd` 不匹配），`Read(src/**)` 保持在 `src/` 之下。无根模式（`*`，或以 `**` 开头如 `**/*.rs`）有意在任意深度、任意位置匹配。
+- `Read` 规则同样管辖 `grep` 搜索；`Grep(...)` 规则只匹配 grep。
+- 原生 Read/Edit/Grep 检查在 deny 与 ask 上会跟随解析目标内的路径内符号链接。只匹配解析目标的 allow 并不为工具参数授予 allow。
+- 无法解析的路径内符号链接在任一 deny 或 ask 文件规则适用于该工具时弹窗。
+
+`Read` 和 `Edit` 的 deny 规则还适用于 shell 命令触及的文件路径（例如对被拒绝路径上的 `cat` 或 `sed`），包括以 `-c` 传给 `bash`、`sh`、`dash`、`zsh` 或 `ksh` 的字面内联脚本。shell 级检查使用与上文直接 Read/Edit/Grep 工具相同的工作目录感知归一化以及 deny/ask 的符号链接跟随（工作目录之下的绝对操作数同样命中 `Read(src/**)` 这类有根规则）。要覆盖每个进程的 OS 级强制，请把 deny 规则与沙箱组合（[18-sandbox.md](18-sandbox.md)）。
+
+### MCP 规则
+
+`MCPTool(...)` 模式匹配 `server__tool` 形式的完整 Chaos 工具名，支持 glob：`MCPTool(linear__*)` 匹配 `linear` 服务器上的所有工具。Chaos 工具名不带 `mcp__` 前缀。
+
+`.claude/settings.json` 文件里使用的 `mcp__` 规则拼写也被接受，并改写到同一匹配器：`mcp__linear`（`linear` 服务器上的所有工具）、`mcp__linear__get_issue`（单个工具）、`mcp__linear__*`（该服务器上的所有工具）和 `mcp__*`（所有 MCP 工具）。
+
+### WebFetch 规则
+
+- `WebFetch(domain:example.com)` 匹配该主机及所有子域（`api.example.com`），不区分大小写，并忽略开头的 `www.`。`domain:` 模式内部不支持通配符。
+- 不带 `domain:` 前缀的模式对整个 URL 做 glob 匹配：`WebFetch(https://api.example.com/*)`。
+
+### 工具名称
+
+可识别的工具名称：`Bash`、`Read`、`Edit`（及 `Write`）、`Grep`（及 `Glob`）、`MCPTool`、`WebFetch`、`WebSearch`。裸 `*` 规则匹配所有工具。工具名位置不支持 glob。
+
+命名了无法识别的工具的规则（例如 `Agent(model:opus)`）会被跳过并给出警告，而不是让加载失败。
+
+### 求值顺序
+
+每个来源的规则合并为一个集合，按严重度而非顺序求值：任何命中的 `deny` 拒绝；否则任何命中的 `ask` 弹窗；否则任何命中的 `allow` 批准。没有规则命中时，请求落入内置自动批准，再到提示策略，如[一次工具调用如何被授权](#how-a-tool-call-is-authorized)所述。
+
+---
+
+## 交互式批准及其持久化位置
+
+当一次工具调用需要批准时，权限提示提供以下选项：
+
+- **允许一次**：仅批准这一次调用。
+- **拒绝一次**：拒绝它，可选择附带一条回给模型的消息。
+- **启用始终批准模式**：批准此后所有工具调用，而不只是当前提示的这一条。
+- **本次会话允许所有编辑**：仅对文件编辑显示。这份授权只保存在内存里，重启后不保留。
+
+### 按命令「始终允许」
+
+更窄的一组选项只记住当前提示的具体命令、MCP 工具或 web-fetch 域名，例如「始终允许 `cargo test`」。这些选项默认开启。可用下面方式关闭：
 
 ```toml
-# ~/.grok/config.toml
+# ~/.chaos/config.toml
 [ui]
 remember_tool_approvals = false
 ```
 
-Organizations can disable them via the same key in `requirements.toml` or managed configuration. With the gate enabled (the default), prompts gain:
+组织可以通过 `requirements.toml` 或托管配置中的同一键禁用它们。开关开启（默认）时，提示会多出：
 
-- **`Always allow: <command>`**, which persists an allow for the command prefix.
-- A matching "never allow" row, which persists a deny the same way.
-- Equivalent "always allow" and "never allow" rows for MCP tools and web-fetch domains. The "never allow" row always remembers the exact tool (never a whole server) or the exact domain being prompted; a remembered deny wins over any grant, and a denied domain also covers its subdomains.
+- **`Always allow: <command>`**，为该命令前缀持久化一条 allow。
+- 配套的「永不允许」选项，以同样方式持久化一条 deny。
+- MCP 工具与 web-fetch 域名的等价「始终允许」和「永不允许」选项。「永不允许」永远只记住被提示的那个精确工具（从不是整个服务器）或精确域名；记住的 deny 压过任何授权，被拒绝的域名也覆盖其子域。
 
-The remembered prefix is limited to a short form of the command: read-only commands persist just their listed prefix (for example `git status`, not the full argument list), and other commands persist a short leading prefix. The prompt shows exactly what will be remembered before you confirm.
+被记住的前缀仅限命令的短形式：只读命令只保留其清单形式的前缀（例如 `git status`，而不是完整参数列表），其他命令保留一个较短的开头前缀。提示会在你确认之前显示将要记住的确切内容。
 
-Commands on the [dangerous list](#dangerous-commands) (for example `git push` and `rm`) never honor a remembered *prefix*: only an exact grant for the entire command counts, so their "Always allow" row defaults to the full command. Approving it stops prompts for that exact invocation only; any different arguments prompt again. When no rememberable grant could stop a script from prompting again — a dangerous command behind an `env` prefix, or a chain whose other steps would still need approval — the "Always allow" row is not offered at all rather than saving a rule that would not work.
+[危险命令清单](#dangerous-commands)上的命令（例如 `git push` 和 `rm`）从不认记住的*前缀*：只有针对整条命令的精确授权才算数，因此它们的「始终允许」选项默认作用于完整命令。批准它只会免除那次精确调用的弹窗；换任何不同参数都会再次弹窗。当没有任何可记住的授权能阻止一个脚本再次弹窗时——例如危险命令前加了 `env` 前缀，或链中其余步骤仍需批准——「始终允许」选项索性不予显示，而不是保存一条不会生效的规则。
 
-### Persistence Is Per Project
+### 持久化按项目生效
 
-Interactive grants are stored in Grok's own state directory under your home directory, scoped to the git repository you launched Grok in (its repository root), so a grant accepted at the repo root also applies in sessions started from a subdirectory of the same repository. Outside a git repository, grants are scoped to the launch directory, and each git worktree keeps its own grants. A grant made in one project never applies in another, grants are not written into the repository, and they are not meant to be hand-edited.
+交互式授权存储在你家目录下 Chaos 自己的状态目录中，作用域为你启动 Chaos 的 git 仓库（其仓库根），因此在仓库根接受的授权同样适用于从同一仓库子目录启动的会话。在 git 仓库之外，授权的作用域是启动目录；每个 git worktree 保留自己的授权。一个项目里的授权绝不会在另一个项目生效；授权不会写进仓库，也不应手工编辑。
 
-To inspect or reset a project's grants, open the `sessions` subdirectory of your Grok home (the `.grok` directory under your home directory, or `$GROK_HOME`): each project directory there (URL-encoded scope root) holds a `permission.toml` (plus per-client `permission_<client>.toml` variants) listing the remembered command prefixes, globs, MCP tools/servers, web-fetch domains, and "never allow" entries. Deleting the file resets that project's grants; the next matching tool call prompts again. Treat it as read-only state — to *add* rules, use the declarative `[permission]` configuration instead.
+要检视或重置某个项目的授权，请打开 Chaos 主目录（你家目录下的 `.chaos` 目录，或 `$GROK_HOME`）的 `sessions` 子目录：其中每个项目目录（URL 编码的作用域根）持有一份 `permission.toml`（外加按客户端的 `permission_<client>.toml` 变体），列出被记住的命令前缀、glob、MCP 工具/服务器、web-fetch 域名和「永不允许」条目。删除该文件即重置该项目的授权；下一次匹配的工具调用会再次弹窗。请把它当作只读状态——要*新增*规则，请改用声明式的 `[permission]` 配置。
 
-Interactive grants are personal, per-machine state. For an allowlist you can review in code review and share with teammates, use declarative rules in the project's `.grok/config.toml` instead.
+交互式授权是个人、按机器的状态。要得到能在代码评审中审查、能与队友共享的白名单，请改用项目 `.chaos/config.toml` 里的声明式规则。
 
 ---
 
-## Restricting Bash to Specific Commands with a Hook
+## 用钩子把 Bash 限制到特定命令
 
-A `PreToolUse` hook can enforce an allow list on the `Bash` tool that applies in every permission mode. Hooks are evaluated before the permission system; a hook deny stops the call, and a hook allow falls through to the normal permission checks (so your `deny` rules still apply).
+一个 `PreToolUse` 钩子可以在 `Bash` 工具上强制一份允许清单，并在每种权限模式下都生效。钩子在权限系统之前求值；钩子 deny 会阻止调用，钩子 allow 则落入正常的权限检查（因此你的 `deny` 规则仍然生效）。
 
-> **Note:** Hooks fail open. If a hook script crashes, times out, or is missing, the tool call proceeds as if the hook had allowed it, and the failure is reported in the UI. A hook used as a security boundary must handle its own errors, and must account for chained commands, as the example below does. See [10-hooks.md](10-hooks.md).
+> **注意：** 钩子是失败放行的。如果钩子脚本崩溃、超时或缺失，工具调用会像钩子允许了它一样继续进行，失败会在 UI 中报告。把钩子用作安全边界时，它必须自行处理错误，并且必须考虑链式命令，如下例所示。见 [10-hooks.md](10-hooks.md)。
 
-### Example: Allow Only `git` and `gh`
+### 示例：只允许 `git` 和 `gh`
 
-**`~/.grok/hooks/git-gh-only.json`**
+**`~/.chaos/hooks/git-gh-only.json`**
 
 ```json
 {
@@ -451,7 +451,7 @@ A `PreToolUse` hook can enforce an allow list on the `Bash` tool that applies in
 }
 ```
 
-**`~/.grok/hooks/git-gh-only.sh`**
+**`~/.chaos/hooks/git-gh-only.sh`**
 
 ```bash
 #!/bin/sh
@@ -488,33 +488,33 @@ done
 ```
 
 ```bash
-chmod +x ~/.grok/hooks/git-gh-only.sh
+chmod +x ~/.chaos/hooks/git-gh-only.sh
 ```
 
-This hook denies every `Bash` command unless each chained segment starts with `git` or `gh`, and rejects command substitution, backgrounding, and redirection outright because it cannot verify what they execute. It works in every permission mode.
+这个钩子会拒绝所有 `Bash` 命令，除非每个链式片段以 `git` 或 `gh` 开头；它还因为无法核实命令替换、后台与重定向执行了什么，而把它们一概拒绝。它在每种权限模式下都有效。
 
-For hook installation, the JSON format, the trust model for project hooks, and other events, see [10-hooks.md](10-hooks.md), which also contains a complementary "block dangerous patterns" example.
+钩子的安装、JSON 格式、项目钩子的信任模型以及其他事件，见 [10-hooks.md](10-hooks.md)，其中还有一个互补的「阻止危险模式」示例。
 
 ---
 
-## Example Configurations
+## 示例配置
 
-### Headless git and gh Only (CI and Automation)
+### 只用 git 和 gh 的无头模式（CI 与自动化）
 
 ```bash
-grok -p "Implement the feature using only git and GitHub CLI" \
+chaos -p "Implement the feature using only git and GitHub CLI" \
   --allow 'Read' \
   --allow 'Grep' \
   --allow 'Bash(git *)' \
   --allow 'Bash(gh *)'
 ```
 
-Install the `git-gh-only` hook above to deny every other `Bash` command. For deny-by-default on all tools, also set `{"permissions": {"defaultMode": "dontAsk"}}` in `.claude/settings.json`.
+安装上面的 `git-gh-only` 钩子，以拒绝其他所有 `Bash` 命令。要对所有工具默认拒绝，还要在 `.claude/settings.json` 里设置 `{"permissions": {"defaultMode": "dontAsk"}}`。
 
-### Read-Only Code Reviewer
+### 只读代码审查者
 
 ```toml
-# .grok/config.toml
+# .chaos/config.toml
 [permission]
 rules = [
   { action = "allow", tool = "read" },
@@ -524,48 +524,48 @@ rules = [
 ]
 ```
 
-### Interactive Development
+### 交互式开发
 
-Use `default` mode plus narrow `Bash(...)` allow rules for the commands you run most (`git`, `cargo test`, `rg`, and similar).
-
----
-
-## Combining with the Sandbox
-
-Permissions control what the model is allowed to request. The OS-level sandbox (see [18-sandbox.md](18-sandbox.md)) controls what the process can do even after a command is approved.
-
-Recommended combination for untrusted code:
-
-1. `dontAsk` plus narrow allow rules, or a restrictive hook
-2. `--sandbox strict` or a custom profile
-3. Project trust plus review of any `SessionStart` hooks
+使用 `default` 模式，再为你最常运行的命令（`git`、`cargo test`、`rg` 等）加窄的 `Bash(...)` allow 规则。
 
 ---
 
-## Managing Permissions in the TUI
+## 与沙箱组合
 
-- Permission decisions appear in the transcript.
-- The `/always-approve` command toggles always-approve mode; other modes are set through `defaultMode` (see [How to set the mode](#how-to-set-the-mode)).
-- Permission prompts include per-command "Always allow" options that persist for the current project only (on by default; disable with `[ui] remember_tool_approvals = false`). See [Interactive Approvals](#interactive-approvals-and-where-they-persist).
-- To manage hooks and plugins, run `/hooks` or `/plugins` (on most terminals, **Ctrl+L** also opens the Extensions modal; on VS Code, Cursor, Windsurf, and Zed, `Ctrl+L` is mid-turn interject instead). See [10-hooks.md](10-hooks.md).
+权限控制的是**模型**被允许请求什么。OS 级沙箱（见 [18-sandbox.md](18-sandbox.md)）控制的是**进程**在命令被批准之后还能做什么。
 
----
+针对不受信任代码的推荐组合：
 
-## Best Practices
-
-1. **Prefer narrow patterns.** `Bash(git *)` grants less access than a bare `Bash` allow rule.
-2. **Combine layers.** `dontAsk`, narrow allow rules, a restrictive hook, and the sandbox each restrict independently.
-3. **Review project configuration from unfamiliar sources.** Folder trust gates project permission rules in `.grok/config.toml` and `.claude/settings.json`, plus startup loading of project instructions and skills. Headless startup with these sources requires `--trust` or a prior grant. Review them and any project hooks before trusting an unfamiliar checkout (see [10-hooks.md](10-hooks.md)).
-4. **Test your policy.** With `defaultMode: "dontAsk"` set (or your `PreToolUse` hook installed), run representative commands and confirm what is blocked.
-5. **Treat the read-only command list as a convenience, not a security boundary.**
+1. `dontAsk` 加窄的 allow 规则，或一个限制性的钩子
+2. `--sandbox strict` 或自定义 profile
+3. 项目信任，外加对任何 `SessionStart` 钩子的审查
 
 ---
 
-## See also
+## 在 TUI 中管理权限
 
-- [Hooks](10-hooks.md) — PreToolUse and other lifecycle scripts
-- [Headless mode](14-headless-mode.md) — One-shot CLI and automation flags
-- [Agent mode](15-agent-mode.md) — ACP, stdio, and agent servers
-- [Sandbox](18-sandbox.md) — OS-level isolation profiles
-- [Configuration](05-configuration.md) — Native `config.toml` structure
+- 权限决定会出现在会话记录里。
+- `/always-approve` 命令切换始终批准模式；其他模式通过 `defaultMode` 设置（见[如何设置模式](#how-to-set-the-mode)）。
+- 权限提示包含按命令的「始终允许」选项，仅对当前项目持久化（默认开启；用 `[ui] remember_tool_approvals = false` 关闭）。见[交互式批准](#interactive-approvals-and-where-they-persist)。
+- 要管理钩子与插件，请运行 `/hooks` 或 `/plugins`（在多数终端上，**Ctrl+L** 也会打开扩展面板；在 VS Code、Cursor、Windsurf 和 Zed 上，`Ctrl+L` 是回合中插话）。见 [10-hooks.md](10-hooks.md)。
+
+---
+
+## 最佳实践
+
+1. **优先窄模式。** `Bash(git *)` 授予的权限比裸 `Bash` allow 规则小。
+2. **组合多层。** `dontAsk`、窄 allow 规则、限制性钩子和沙箱各自独立设限。
+3. **审查来自陌生来源的项目配置。** 文件夹信任为 `.chaos/config.toml` 与 `.claude/settings.json` 中的项目权限规则把关，也为项目指令与技能的启动加载把关。无头启动要使用这些来源需要 `--trust` 或既有授权。在信任一个陌生检出之前，请审查它们以及任何项目钩子（见 [10-hooks.md](10-hooks.md)）。
+4. **测试你的策略。** 设置 `defaultMode: "dontAsk"`（或安装你的 `PreToolUse` 钩子）后，运行有代表性的命令，确认哪些被阻止。
+5. **把只读命令清单当作便利，而不是安全边界。**
+
+---
+
+## 另见
+
+- [钩子](10-hooks.md) — PreToolUse 及其他生命周期脚本
+- [无头模式](14-headless-mode.md) — 一次性命令行与自动化标志
+- [代理模式](15-agent-mode.md) — ACP、stdio 与代理服务器
+- [沙箱](18-sandbox.md) — OS 级隔离 profile
+- [配置](05-configuration.md) — 原生 `config.toml` 结构
 
