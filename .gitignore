@@ -23,3 +23,7 @@
 # Python bytecode from the l10n checkers (scripts/check-doc-l10n*.py)
 __pycache__/
 *.pyc
+
+# Frontend dependencies and build output
+apps/chaos-ui/node_modules/
+apps/chaos-ui/dist/
