@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
 use tokio::sync::broadcast;
@@ -111,7 +112,7 @@ pub struct AuditEntry {
     pub sequence: u64,
 }
 
-#[derive(Default)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 struct SessionState {
     messages: Vec<TimelineMessage>,
     audit: Vec<AuditEntry>,
@@ -119,7 +120,7 @@ struct SessionState {
     pending_approval: Option<Uuid>,
 }
 
-#[derive(Default)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 struct State {
     sessions: HashMap<Uuid, SessionState>,
     seen_client_messages: HashSet<String>,
@@ -129,18 +130,49 @@ struct State {
 pub struct Engine {
     events: broadcast::Sender<ServerMessage>,
     state: Arc<Mutex<State>>,
+    store_path: Option<Arc<PathBuf>>,
 }
 
 impl Engine {
     pub fn new() -> Self {
+        Self::with_state(State::default(), None)
+    }
+
+    pub fn with_persistence(path: impl AsRef<Path>) -> std::io::Result<Self> {
+        let path = path.as_ref().to_path_buf();
+        let state = if path.exists() {
+            serde_json::from_slice(&std::fs::read(&path)?).map_err(std::io::Error::other)?
+        } else {
+            State::default()
+        };
+        Ok(Self::with_state(state, Some(path)))
+    }
+
+    fn with_state(state: State, path: Option<PathBuf>) -> Self {
         let (events, _) = broadcast::channel(256);
         Self {
             events,
-            state: Arc::new(Mutex::new(State::default())),
+            state: Arc::new(Mutex::new(state)),
+            store_path: path.map(Arc::new),
         }
     }
+
     pub fn subscribe(&self) -> broadcast::Receiver<ServerMessage> {
         self.events.subscribe()
+    }
+
+    fn persist(&self, state: &State) -> Result<(), ServerMessage> {
+        let Some(path) = &self.store_path else {
+            return Ok(());
+        };
+        let bytes = serde_json::to_vec_pretty(state)
+            .map_err(|_| Self::error("persistence_failed", "无法编码会话状态"))?;
+        let temporary = path.with_extension("tmp");
+        std::fs::write(&temporary, bytes)
+            .map_err(|_| Self::error("persistence_failed", "无法写入会话状态"))?;
+        std::fs::rename(temporary, path.as_ref())
+            .map_err(|_| Self::error("persistence_failed", "无法提交会话状态"))?;
+        Ok(())
     }
 
     pub fn handle(&self, message: ClientMessage) -> Vec<ServerMessage> {
@@ -157,7 +189,6 @@ impl Engine {
         if !state.seen_client_messages.insert(client_msg_id.clone()) {
             return vec![ServerMessage::Ack { client_msg_id }];
         }
-        let approval_is_approved = matches!(&message, ClientMessage::Approve { .. });
         let result = match message {
             ClientMessage::CreateSession { .. } => {
                 let id = Uuid::new_v4();
@@ -184,30 +215,46 @@ impl Engine {
                 if session.pending_approval.is_some() {
                     return vec![Self::error("approval_pending", "请先处理待审批操作")];
                 }
-                session.messages.push(TimelineMessage {
-                    role: "user".into(),
-                    text: prompt.clone(),
-                });
-                let response = format!("演示响应：{prompt}");
-                session.messages.push(TimelineMessage {
-                    role: "assistant".into(),
-                    text: response.clone(),
-                });
-                let mut events = vec![ServerMessage::Ack { client_msg_id }];
-                for chunk in response.as_bytes().chunks(DELTA_SIZE) {
+                if let Some(summary) = prompt.strip_prefix("/approve-tool ") {
+                    let request_id = Uuid::new_v4();
+                    session.pending_approval = Some(request_id);
                     session.sequence += 1;
-                    events.push(ServerMessage::TextDelta {
+                    vec![
+                        ServerMessage::Ack { client_msg_id },
+                        ServerMessage::ToolApprovalRequested {
+                            session_id,
+                            request_id,
+                            tool: "demo.tool".into(),
+                            summary: summary.into(),
+                            sequence: session.sequence,
+                        },
+                    ]
+                } else {
+                    session.messages.push(TimelineMessage {
+                        role: "user".into(),
+                        text: prompt.clone(),
+                    });
+                    let response = format!("演示响应：{prompt}");
+                    session.messages.push(TimelineMessage {
+                        role: "assistant".into(),
+                        text: response.clone(),
+                    });
+                    let mut events = vec![ServerMessage::Ack { client_msg_id }];
+                    for chunk in response.as_bytes().chunks(DELTA_SIZE) {
+                        session.sequence += 1;
+                        events.push(ServerMessage::TextDelta {
+                            session_id,
+                            text: String::from_utf8_lossy(chunk).into(),
+                            sequence: session.sequence,
+                        });
+                    }
+                    session.sequence += 1;
+                    events.push(ServerMessage::Completed {
                         session_id,
-                        text: String::from_utf8_lossy(chunk).into(),
                         sequence: session.sequence,
                     });
+                    events
                 }
-                session.sequence += 1;
-                events.push(ServerMessage::Completed {
-                    session_id,
-                    sequence: session.sequence,
-                });
-                events
             }
             ClientMessage::Cancel {
                 client_msg_id,
@@ -239,75 +286,16 @@ impl Engine {
             ClientMessage::Approve {
                 client_msg_id,
                 request_id,
-            } => {
-                let Some((session_id, session)) = state
-                    .sessions
-                    .iter_mut()
-                    .find(|(_, session)| session.pending_approval == Some(request_id))
-                else {
-                    return vec![Self::error("approval_not_found", "审批请求不存在或已处理")];
-                };
-                let approved = approval_is_approved;
-                session.pending_approval = None;
-                session.sequence += 1;
-                let outcome = if approved { "approved" } else { "rejected" };
-                session.audit.push(AuditEntry {
-                    action: "tool_approval".into(),
-                    outcome: outcome.into(),
-                    sequence: session.sequence,
-                });
-                vec![
-                    ServerMessage::Ack { client_msg_id },
-                    ServerMessage::ApprovalResolved {
-                        session_id: *session_id,
-                        request_id,
-                        approved,
-                        sequence: session.sequence,
-                    },
-                    ServerMessage::Audit {
-                        session_id: *session_id,
-                        action: "tool_approval".into(),
-                        outcome: outcome.into(),
-                        sequence: session.sequence,
-                    },
-                ]
-            }
+            } => self.resolve_approval(&mut state, client_msg_id, request_id, true),
             ClientMessage::Reject {
                 client_msg_id,
                 request_id,
                 ..
-            } => {
-                let Some((session_id, session)) = state
-                    .sessions
-                    .iter_mut()
-                    .find(|(_, session)| session.pending_approval == Some(request_id))
-                else {
-                    return vec![Self::error("approval_not_found", "审批请求不存在或已处理")];
-                };
-                session.pending_approval = None;
-                session.sequence += 1;
-                session.audit.push(AuditEntry {
-                    action: "tool_approval".into(),
-                    outcome: "rejected".into(),
-                    sequence: session.sequence,
-                });
-                vec![
-                    ServerMessage::Ack { client_msg_id },
-                    ServerMessage::ApprovalResolved {
-                        session_id: *session_id,
-                        request_id,
-                        approved: false,
-                        sequence: session.sequence,
-                    },
-                    ServerMessage::Audit {
-                        session_id: *session_id,
-                        action: "tool_approval".into(),
-                        outcome: "rejected".into(),
-                        sequence: session.sequence,
-                    },
-                ]
-            }
+            } => self.resolve_approval(&mut state, client_msg_id, request_id, false),
         };
+        if let Err(error) = self.persist(&state) {
+            return vec![error];
+        }
         drop(state);
         for event in &result {
             let _ = self.events.send(event.clone());
@@ -315,6 +303,44 @@ impl Engine {
         result
     }
 
+    fn resolve_approval(
+        &self,
+        state: &mut State,
+        client_msg_id: String,
+        request_id: Uuid,
+        approved: bool,
+    ) -> Vec<ServerMessage> {
+        let Some((session_id, session)) = state
+            .sessions
+            .iter_mut()
+            .find(|(_, session)| session.pending_approval == Some(request_id))
+        else {
+            return vec![Self::error("approval_not_found", "审批请求不存在或已处理")];
+        };
+        session.pending_approval = None;
+        session.sequence += 1;
+        let outcome = if approved { "approved" } else { "rejected" };
+        session.audit.push(AuditEntry {
+            action: "tool_approval".into(),
+            outcome: outcome.into(),
+            sequence: session.sequence,
+        });
+        vec![
+            ServerMessage::Ack { client_msg_id },
+            ServerMessage::ApprovalResolved {
+                session_id: *session_id,
+                request_id,
+                approved,
+                sequence: session.sequence,
+            },
+            ServerMessage::Audit {
+                session_id: *session_id,
+                action: "tool_approval".into(),
+                outcome: outcome.into(),
+                sequence: session.sequence,
+            },
+        ]
+    }
     fn error(code: &str, message: &str) -> ServerMessage {
         ServerMessage::Error {
             code: code.into(),
@@ -322,7 +348,6 @@ impl Engine {
         }
     }
 }
-
 impl Default for Engine {
     fn default() -> Self {
         Self::new()
@@ -398,5 +423,64 @@ mod tests {
                 client_msg_id: "x".into()
             }]
         );
+    }
+    #[test]
+    fn persistent_engine_restores_snapshot_after_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("sessions.json");
+        let first = Engine::with_persistence(&path).unwrap();
+        let id = match first.handle(ClientMessage::CreateSession {
+            client_msg_id: "create".into(),
+        })[0]
+        {
+            ServerMessage::SessionCreated { session_id } => session_id,
+            _ => panic!(),
+        };
+        first.handle(ClientMessage::Submit {
+            client_msg_id: "submit".into(),
+            session_id: id,
+            prompt: "持久化".into(),
+        });
+        drop(first);
+        let second = Engine::with_persistence(&path).unwrap();
+        let snapshot = second.handle(ClientMessage::Resume {
+            client_msg_id: "resume".into(),
+            session_id: id,
+        });
+        assert!(
+            matches!(&snapshot[0], ServerMessage::SessionSnapshot { messages, .. } if messages[1].text.contains("持久化"))
+        );
+    }
+    #[test]
+    fn approval_requires_explicit_resolution() {
+        let engine = Engine::new();
+        let id = match engine.handle(ClientMessage::CreateSession {
+            client_msg_id: "create".into(),
+        })[0]
+        {
+            ServerMessage::SessionCreated { session_id } => session_id,
+            _ => panic!(),
+        };
+        let events = engine.handle(ClientMessage::Submit {
+            client_msg_id: "tool".into(),
+            session_id: id,
+            prompt: "/approve-tool write file".into(),
+        });
+        let request_id = match events[1] {
+            ServerMessage::ToolApprovalRequested { request_id, .. } => request_id,
+            _ => panic!(),
+        };
+        let resolved = engine.handle(ClientMessage::Reject {
+            client_msg_id: "reject".into(),
+            request_id,
+            reason: "deny".into(),
+        });
+        assert!(resolved.iter().any(|event| matches!(
+            event,
+            ServerMessage::ApprovalResolved {
+                approved: false,
+                ..
+            }
+        )));
     }
 }

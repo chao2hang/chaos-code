@@ -179,9 +179,9 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 
 - [x] `ADR-001`：前后端逻辑协议；确定 Rust `chaos-engine` 作为 envelope 单一来源，Web/Desktop 共享逻辑协议，协议版本从 1 起步。（2026-09-24；`docs/architecture/adr-001-gui-walking-skeleton.md`）
 - [x] `ADR-002`：engine 边界；walking skeleton 先以 `chaos-engine` 协议 mock 验证 Web/Desktop seam，保留现有 headless 实现，后续通过 adapter 接入而不复制生命周期。（2026-09-24；`docs/architecture/adr-002-gui-engine-adapter.md`）**必须点名解决 headless 的物理位置问题**：`headless.rs`（1732 行）逻辑上无头——导入的几乎全是 `xai_grok_shell::*`，仅 3 处提及渲染相关标识符——但它住在依赖 `ratatui` 的 `xai-grok-pager` 里。GUI 若直接复用，会把整个终端渲染栈拖进桌面端和 Web 端。ADR 需在"把 headless 及其 `acp` 胶水下沉到引擎侧"与"在引擎侧新建入口、headless 保持原位"之间做出选择，并给出迁移与回滚方式。
-- [ ] `ADR-003`：持久化；确定 canonical store、旧数据导入、双写/回滚、备份和 NFS 策略。
+- [x] `ADR-003`：确定 M0 使用 engine 原子 JSON 快照验证恢复，后续 canonical SQLite store、迁移、备份和 NFS 策略按文档推进。（2026-09-24；`docs/architecture/adr-003-gui-persistence.md`）
 - [ ] `ADR-004`：远程拓扑；在“本地 Agent + 远程工具”和“远程 Agent + 远程工具”之间做出明确选择。
-- [ ] `ADR-005`：安全模型；定义桌面 IPC、Web、远程连接、凭据和审批的信任边界。
+- [~] `ADR-005`：已冻结本地 Web 安全基线，见 `docs/architecture/adr-005-web-security.md`；桌面 IPC、远程连接和完整凭据边界待补。
 - [ ] `ADR-006`：前端来源与可维护性；决定直接移植、clean-room 重写及上游 UI 更新策略。
 
 **ADR 必须回答**：备选方案、选择理由、兼容影响、失败模式、迁移和回滚。
@@ -242,25 +242,25 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 
 ### M0.2 最小协议
 
-- [ ] 实现并版本化：handshake/capabilities、create/open session、submission、ack、text delta、completed、error、cancel、snapshot。
-- [ ] 每条命令携带 `client_msg_id`；定义去重作用域、TTL、重启后的行为和重复响应。
-- [ ] sequence 明确为 session 级或 subscription 级；定义 snapshot 原子切点和旧 delta 拒绝规则。
-- [ ] 为 Tauri IPC 与 WebSocket 分别映射同一逻辑 envelope；不强制共享物理 framing。
-- [ ] 建立生成类型漂移 CI 和 golden fixtures；fixtures 去除密钥、路径和个人信息。
+- [x] 实现并版本化 handshake、create/resume session、submission、ack、分块 text delta、completed、error、cancel、snapshot；engine protocol v1 与 WebSocket integration test 已提交。（2026-09-24）
+- [x] 每条命令携带 `client_msg_id`；engine 以进程/持久化状态作用域去重，重复命令只返回 ack；单测覆盖重复提交和取消。（2026-09-24）
+- [x] sequence 定义为 session 级；snapshot 返回原子序列切点，delta 带 sequence；engine 单测覆盖恢复顺序。（2026-09-24）
+- [~] WebSocket 已映射共享 envelope；Desktop host 已导出同一 engine 类型，Tauri IPC adapter 尚待 M0 Desktop 实现。
+- [ ] 建立生成类型漂移 CI 和 golden fixtures；当前 serde envelope 与无密钥 WebSocket fixture 已有，生成 TS 类型/漂移门禁待补。
 
 ### M0.3 最小模型配置
 
-- [ ] 提供开发测试 provider/mock，CI 不依赖真实云端凭据。
+- [x] 提供 deterministic engine responder 作为开发测试 provider/mock，CI 不依赖真实云端凭据；真实 headless Agent adapter 仍待接入。（2026-09-24）
 - [ ] 提供最小 Provider、Base URL、model slug 和 API Key 配置路径。
-- [ ] API Key 不写日志、不进入 URL、不返回前端；存储方案遵循 ADR-005。
+- [x] 当前 GUI protocol 不接受 API Key，Web token 仅使用 Authorization header，engine 不记录或返回凭据；真实 provider credential storage 待 M3。（2026-09-24）
 - [ ] 空模型目录、无凭据、401/429/5xx、网络断开均有可操作错误提示。
 
 ### M0.4 前端最小闭环
 
-- [ ] 实现工作区入口、会话列表、纯文本 composer、时间线和停止按钮。
-- [ ] 实现 loading、空态、错误态、取消态和重连提示。
-- [ ] 流式更新按帧批处理，但刷新频率必须由 benchmark 决定，不把固定 16ms 当协议要求。
-- [ ] 桌面和 Web 使用显式 transport 注入，不依赖脆弱的运行时猜测。
+- [~] React 已接入真实 WebSocket，支持会话创建、纯文本 composer、时间线、流式 delta 和停止按钮；会话列表与多会话工作区待补。
+- [~] React 已有连接中/已连接、空态、生成中、连接错误和取消入口；断线自动重连与恢复提示待补。
+- [ ] 流式更新当前按 WebSocket delta 逐事件更新；按帧批处理和 benchmark 尚待 M5 性能门禁。
+- [~] Web 使用显式 WebSocket transport；Desktop 已有 engine host boundary，Tauri transport injection 待补。
 
 ### M0.5 Web 基础安全
 
@@ -362,7 +362,7 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 
 ### M2.5 数据持久化与迁移
 
-- [ ] 按 ADR-003 实现 schema 版本、向前迁移、较新 schema 只读保护和备份恢复。
+- [ ] Engine 当前使用原子替换 JSON 持久化快照以验证 restart resume；schema 版本、migration、较新 schema 只读保护与备份恢复仍须按 ADR-003 实现。
 - [ ] 保留 `$CHAOS_HOME`/`$GROK_HOME` 与旧目录兼容；路径变化必须提供一次性导入和回滚。
 - [ ] 不宣称“无锁”；明确 SQLite busy timeout、WAL/TRUNCATE、NFS 和多进程并发策略。
 - [ ] 用现有真实会话 fixture 验证 TUI→GUI 读取，以及 GUI 数据不破坏 TUI。
