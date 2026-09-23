@@ -42,14 +42,19 @@ scripted scenarios, stress, concurrent convergence wiremock rewrite backlog).
 
 ## Ignored tests
 
-Tests marked `#[ignore]` are a separate, smaller debt. Their reasons must stay
+Tests marked `#[ignore]` are a separate debt. Their reasons must stay
 readable and be revisited periodically; a permanent `#[ignore]` is a deleted
 test with extra steps.
 
-> 口径说明：下表只列"Chaos fork 引入的债务"——上游本来就 `#[ignore]` 的
-> PTY e2e / scripted scenarios / spawn-real-binary 测试不算 fork 债务。
-> 全工作区 `#[ignore]` 总数约 **528**（`scripts/ci/ignored-tests.sh` 统计），
-> 其中 fork 专属的约 87 个。
+> 口径说明：下表只列“Chaos fork 引入的债务”；全工作区清单见
+> [`ignored-audit-2026q4-summary.md`](ignored-audit-2026q4-summary.md)。初次统计工具输出并非可靠 CSV，
+> 解析逻辑还把行尾注释误判为 reason；之前记录的 452 / 228 / 49 / 403 数字撤回，不能用于治理。
+> 已生成的 CSV 快照同样不可靠，待修复统计器后重生成。
+
+> 口径说明：下表只列"Chaos fork 引入的债务"；全工作区清单见
+> [`ignored-audit-2026q4-summary.md`](ignored-audit-2026q4-summary.md)。初次统计工具输出并非可靠 CSV，
+> 解析逻辑还把行尾注释误判为 reason；之前记录的 452 / 228 / 49 / 403 数字撤回，不能用于治理。
+> 已生成的 CSV 快照同样不可靠，待修复统计器后重生成。
 
 | Crate | Fork 债务数 | 原因 | Owner | 下次重审 |
 | --- | ---: | --- | --- | --- |
@@ -103,9 +108,10 @@ test with extra steps.
 每季度（1 月 / 4 月 / 7 月 / 10 月开头）开一次 ignore 审计：
 
 ```sh
-scripts/ci/ignored-tests.sh          # 全量统计 + 分 crate
-scripts/ci/ignored-tests.sh --csv    # 机器可读 CSV
-scripts/ci/ignored-tests.sh --stale  # 只列过期/未设 review date 的
+scripts/ci/ignored-tests.sh          # 全量统计 + 分 crate；发现裸 ignore 时退出 1
+scripts/ci/ignored-tests.sh --csv    # 机器可读 CSV；发现裸 ignore 时退出 1
+scripts/ci/ignored-tests.sh --stale  # 只列过期/未设 review date 的（同时拒绝裸 ignore）
+scripts/ci/ignored-tests.sh --csv > docs/ignored-audit-2026q4.csv  # 保存季度快照
 ```
 
 步骤：
@@ -119,11 +125,16 @@ scripts/ci/ignored-tests.sh --stale  # 只列过期/未设 review date 的
 
 ### 规则
 
-- **禁止**裸 `#[ignore]`（不加 reason）。`scripts/ci/ignored-tests.sh`
-  会把它们列出来；CI 应当拒绝此类合入。
+- 目标是**禁止新增**裸 `#[ignore]`。当前存量为 228 条（见 Q4 CSV）；新增门禁必须先
+  支持明确的存量基线/豁免，否则会让 CI 立即失败。清理存量时逐条补理由，不批量伪造原因。
 - Reason 里**必须**有 `review YYYY-MM` 或等价的重审日期。无日期的算
-  "永久债务"，需季度审计时处理。
+  “永久债务”，需季度审计时处理。
 - 新增 fork 专属 ignore → 必须同时更新本节表格计数和原因描述。
+
+2026 Q4 审计暂缓：首次运行发现 `scripts/ci/ignored-tests.sh` 的 CSV 转义与尾部注释解析有缺陷，
+产生的数字与 `docs/ignored-audit-2026q4.csv` 均已撤回。详见
+[`ignored-audit-2026q4-summary.md`](ignored-audit-2026q4-summary.md)。修复解析器并用 fixture 验证前，
+不得据此批量更改属性或建立 CI 门禁。
 
 ## 2026-09-22：一组「从不执行」的守护测试（已接回）
 

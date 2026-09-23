@@ -148,16 +148,15 @@
 
 ## 3. ignored 测试
 
-数据来自 `scripts/ci/ignored-tests.sh` 首次运行。
+首次运行结果已过期。2026-09-23 重跑统计时发现 `scripts/ci/ignored-tests.sh` 的 CSV 转义和尾部注释判定有缺陷；初步输出已撤回，详见 `docs/ignored-audit-2026q4-summary.md`。
 
-### 3.1 总量
+### 3.1 当前状态
 
-- 全工作区 `#[ignore]`：**528 处**
-- 裸 `#[ignore]`（无 reason）：**0 处** ✅
-- 带 review date 的：**0 处** ⚠️
-- fork 专属债务（估）：~88 处
+- 全工作区总量、裸属性数、review date 覆盖率：**待统计器修复后重新测量**。
+- 直接源代码行扫描至少找到 218 条无 Rust reason 字符串的 `#[ignore]` 属性；该结果不是完整统计。
+- fork 专属债务：见 `docs/ci-test-debt.md` 的独立口径表，不从无效快照推算。
 
-### 3.2 分布（前 10）
+### 3.2 分布（历史快照，已过期）
 
 | Crate | ignore 数 | 主要类型 |
 |---|---:|---|
@@ -170,39 +169,35 @@
 
 ### 3.3 结论
 
-- 0 裸 ignore ✅ —— 规范执行得好。
-- 但 **0 个 review date**，意味着没有一条 ignore 有明确的"什么时候
-  重新看"承诺。已在 `docs/ci-test-debt.md` 加季度审计流程。
-- 528 总数 vs docs 说的 87：文档只统计"fork 专属债务"，数字没错，但
-  容易让人低估全量。已在文档里澄清口径。
+- 当前仍有 **228 条裸 `#[ignore]`**，必须逐项补充准确原因，不能用统一占位文案批量掩盖。
+- 403 条未注明 review date；需按 crate 与执行环境分批复核，决定恢复、加理由/期限或移除。
+- 旧版 528 / 0 / 0 数字与当前实测不符，已由 Q4 CSV 快照取代。
 
 ---
 
 ## 4. 自更新签名
 
-### 4.1 已落地
+### 4.1 已落地（2026-09-23 复核）
 
-- `crates/codegen/xai-grok-update/src/signature.rs`：ed25519 验签模块
-  - `verify_bytes` / `verify_file` 两个入口
-  - minisign 兼容签名格式（带 `untrusted comment:` 头）
-  - 公钥来自编译期 env `CHAOS_SIGNING_PUBLIC_KEY`，未配置则用占位符
-  - 运行时灰度开关 `CHAOS_REQUIRE_SIG=0`（过渡用）
-  - 12 个单测，全部通过
+- `crates/codegen/xai-grok-update/src/signature.rs` 提供 Ed25519 `verify_bytes` / `verify_file`；公钥通过编译期 `CHAOS_SIGNING_PUBLIC_KEY` 注入，未配置时使用占位公钥。
+- `auto_update.rs` 下载后会读取 `.sig` 并调用 `verify_file`；是否强制验签由 `CHAOS_REQUIRE_SIG` 或 `require-sig` feature 决定。
+- `release.yml` 会在私钥 secret 和公钥 variable 均配置时签名二进制；缺任一项时会跳过签名，workflow 仍允许发布未签名产物。
+- `install.sh` 对存在的签名执行验证，签名缺失时仍可继续；`install.ps1` 同样仅在 Python、cryptography、公钥和签名文件均可用时验证，缺少条件时跳过。`install.bat` 调用 PowerShell 安装流程。
+- **实测配置状态**：2026-09-23，`gh secret list` / `gh variable list` 未列出 `CHAOS_SIGNING_PRIVATE_KEY` 或 `CHAOS_SIGNING_PUBLIC_KEY`。这里只检查名称，不读取任何密钥值。
 
-### 4.2 还没做
+### 4.2 发布阻断项（P1，未完成）
 
-- 集成进 `auto_update.rs` 的下载→验证→激活链路（1.2.2 / 1.2.3）
-- 安装脚本（`install.sh` / `install.ps1` / `install.bat`）同步加验签
-- `release.yml` 加签名步骤
-- 真实密钥生成 + 公钥常量替换
+- 生成并安全配置匹配的 `CHAOS_SIGNING_PRIVATE_KEY` secret 与 `CHAOS_SIGNING_PUBLIC_KEY` repository variable；执行真实签名和验证闭环。
+- 为正式 release 构建启用 `require-sig`，并确认编译进二进制的公钥非占位值；未配置密钥时 release 必须失败，而非静默发布无签名二进制。
+- 将安装脚本验签保证统一：支持平台应在存在签名配置时拒绝缺失/无效签名；若环境依赖（如 Windows Python/cryptography）不可用，明确安全策略并提供可验证实现。
+- 增加端到端发布/安装测试：有效签名接受、签名不匹配拒绝、签名缺失拒绝、错误密钥拒绝；覆盖自动更新和安装脚本。
 
-### 4.3 待决定
+这些项目需要仓库维护者配置并保管供应链密钥。当前不能声称签名链路已满足发布门禁；完成前不得创建新 release tag。
 
-- 是否用 minisign 完整格式（trusted comment、key id）？目前是简化版
-  （只有 untrusted comment + sig body）。**建议维持简化版**，减少审计
-  表面积。
-- 灰度开关 `CHAOS_REQUIRE_SIG=0` 保留多久？**建议两个版本**：
-  0.2.137 加（默认 require）→ 0.2.139 移除开关、强制验证。
+### 4.3 格式与开关决策
+
+- 当前使用裸 base64 Ed25519 签名 sidecar（不是完整 minisign 格式）；保持现状，减少格式迁移范围。
+- `CHAOS_REQUIRE_SIG=0` 是绕过强制验签的环境开关。正式发布启用 `require-sig` 后，应评审是否保留紧急绕过；若保留，必须在安全文档中明确其影响并测试。
 
 ---
 
