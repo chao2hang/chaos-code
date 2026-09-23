@@ -264,11 +264,11 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 
 ### M0.5 Web 基础安全
 
-- [ ] 默认仅绑定 `127.0.0.1`；非回环绑定必须显式确认并强制认证。
-- [ ] 实现高熵 Token、轮换和常量时间比较；Token 不进入可被第三方读取的 query/referrer。
-- [ ] 校验 Origin/Host，设置 CSP、frame policy、secure headers 和请求体上限。
-- [ ] WebSocket 握手和所有 HTTP API 使用同一认证策略；覆盖跨站 WebSocket 劫持测试。
-- [ ] M0 Web 不暴露命令执行和任意文件写入。
+- [x] 默认仅绑定 `127.0.0.1`；当前 Web host 无非回环绑定入口，后续公网部署必须另立安全门禁。（2026-09-24）
+- [~] 实现 Token 和常量时间比较；当前支持通过 `CHAOS_WEB_TOKEN` 配置 bearer token，Token 不接受 query 参数；高熵生成、轮换和 Safe Web Mode 仍待完成。
+- [x] 校验 Origin，设置 CSP、frame policy、`nosniff` 和 64 KiB 请求体上限；Host/部署模式门禁仍需在公网能力启用前补齐。（2026-09-24；Web tests）
+- [x] WebSocket 握手和 HTTP API 使用同一 bearer/Origin 策略；单测覆盖未授权、错误 Origin 和安全响应头。（2026-09-24）
+- [x] M0 Web 仅提供会话 handshake/create/WS 路由，不暴露命令执行和任意文件写入。（2026-09-24）
 
 ### M0.6 验收门禁
 

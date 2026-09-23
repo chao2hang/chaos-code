@@ -16,5 +16,8 @@ serde.workspace = true
 serde_json.workspace = true
 tower.workspace = true
 tokio = { workspace = true, features = ["net", "rt-multi-thread", "macros"] }
-tower-http = { workspace = true, features = ["cors"] }
+tower-http = { workspace = true, features = ["cors", "limit"] }
 uuid.workspace = true
+
+[dev-dependencies]
+tokio-tungstenite.workspace = true

@@ -4,25 +4,22 @@ use axum::{
         State, WebSocketUpgrade,
         ws::{Message, WebSocket},
     },
-    http::{HeaderValue, StatusCode},
+    http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
     routing::{get, post},
 };
 use chaos_engine::{ClientMessage, Engine, PROTOCOL_VERSION, ServerMessage};
-use serde::Deserialize;
 use std::{net::SocketAddr, sync::Arc};
-use tower_http::cors::CorsLayer;
+use tower_http::{cors::CorsLayer, limit::RequestBodyLimitLayer};
+
+const MAX_REQUEST_BYTES: usize = 64 * 1024;
+const DEV_ORIGINS: [&str; 2] = ["http://127.0.0.1:5173", "http://localhost:5173"];
 
 #[derive(Clone)]
 pub struct WebState {
     pub engine: Engine,
     pub token: Arc<String>,
 }
-#[derive(Deserialize)]
-pub struct TokenQuery {
-    token: Option<String>,
-}
-
 pub fn router(engine: Engine, token: impl Into<String>) -> Router {
     let state = Arc::new(WebState {
         engine,
@@ -33,57 +30,98 @@ pub fn router(engine: Engine, token: impl Into<String>) -> Router {
         .route("/api/handshake", get(handshake))
         .route("/api/sessions", post(create_session))
         .route("/ws", get(websocket))
-        .layer(CorsLayer::very_permissive())
+        .layer(CorsLayer::new().allow_origin(DEV_ORIGINS.map(|origin| origin.parse().unwrap())))
+        .layer(RequestBodyLimitLayer::new(MAX_REQUEST_BYTES))
         .with_state(state)
 }
 
 async fn health() -> Json<serde_json::Value> {
-    Json(serde_json::json!({"status":"ok"}))
+    Json(serde_json::json!({ "status": "ok" }))
 }
-fn authorized(state: &WebState, token: Option<&str>) -> bool {
-    state.token.is_empty() || token == Some(state.token.as_str())
-}
-async fn handshake(
-    State(state): State<Arc<WebState>>,
-    query: axum::extract::Query<TokenQuery>,
-) -> Response {
-    if !authorized(&state, query.token.as_deref()) {
-        return StatusCode::UNAUTHORIZED.into_response();
+
+fn constant_time_equal(left: &str, right: &str) -> bool {
+    let mut diff = left.len() ^ right.len();
+    for (a, b) in left.as_bytes().iter().zip(right.as_bytes()) {
+        diff |= usize::from(a != b);
     }
+    diff == 0
+}
+
+fn authorized(state: &WebState, headers: &HeaderMap) -> bool {
+    if state.token.is_empty() {
+        return true;
+    }
+    let Some(value) = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+    else {
+        return false;
+    };
+    let Some(candidate) = value.strip_prefix("Bearer ") else {
+        return false;
+    };
+    constant_time_equal(candidate, state.token.as_str())
+}
+
+fn origin_allowed(headers: &HeaderMap) -> bool {
+    headers
+        .get(header::ORIGIN)
+        .map(|origin| DEV_ORIGINS.iter().any(|allowed| origin == *allowed))
+        .unwrap_or(true)
+}
+
+fn secure_json<T: serde::Serialize>(value: T) -> Response {
     (
-        [(
-            axum::http::header::CONTENT_TYPE,
-            HeaderValue::from_static("application/json"),
-        )],
-        Json(ServerMessage::Handshake {
-            protocol_version: PROTOCOL_VERSION,
-        }),
+        [
+            (
+                header::CONTENT_TYPE,
+                HeaderValue::from_static("application/json"),
+            ),
+            (
+                header::CONTENT_SECURITY_POLICY,
+                HeaderValue::from_static("default-src 'self'; frame-ancestors 'none'"),
+            ),
+            (
+                header::X_CONTENT_TYPE_OPTIONS,
+                HeaderValue::from_static("nosniff"),
+            ),
+        ],
+        Json(value),
     )
         .into_response()
 }
-async fn create_session(
-    State(state): State<Arc<WebState>>,
-    query: axum::extract::Query<TokenQuery>,
-) -> Response {
-    if !authorized(&state, query.token.as_deref()) {
+
+async fn handshake(State(state): State<Arc<WebState>>, headers: HeaderMap) -> Response {
+    if !origin_allowed(&headers) || !authorized(&state, &headers) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    secure_json(ServerMessage::Handshake {
+        protocol_version: PROTOCOL_VERSION,
+    })
+}
+
+async fn create_session(State(state): State<Arc<WebState>>, headers: HeaderMap) -> Response {
+    if !origin_allowed(&headers) || !authorized(&state, &headers) {
         return StatusCode::UNAUTHORIZED.into_response();
     }
     let event = state.engine.handle(ClientMessage::CreateSession {
         client_msg_id: uuid::Uuid::new_v4().to_string(),
     });
-    Json(event).into_response()
+    secure_json(event)
 }
+
 async fn websocket(
     State(state): State<Arc<WebState>>,
-    query: axum::extract::Query<TokenQuery>,
+    headers: HeaderMap,
     upgrade: WebSocketUpgrade,
 ) -> Response {
-    if !authorized(&state, query.token.as_deref()) {
+    if !origin_allowed(&headers) || !authorized(&state, &headers) {
         return StatusCode::UNAUTHORIZED.into_response();
     }
     let engine = state.engine.clone();
     upgrade.on_upgrade(move |socket| websocket_session(socket, engine))
 }
+
 async fn websocket_session(mut socket: WebSocket, engine: Engine) {
     let _ = socket
         .send(Message::Text(
@@ -132,9 +170,40 @@ mod tests {
     };
     use tower::ServiceExt;
     #[tokio::test]
-    async fn protected_handshake_rejects_without_token() {
+    async fn protected_handshake_rejects_without_bearer() {
         let response = router(Engine::new(), "secret")
             .oneshot(Request::get("/api/handshake").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+    #[tokio::test]
+    async fn protected_handshake_accepts_bearer_and_secure_headers() {
+        let response = router(Engine::new(), "secret")
+            .oneshot(
+                Request::get("/api/handshake")
+                    .header("authorization", "Bearer secret")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(
+            response
+                .headers()
+                .contains_key(header::CONTENT_SECURITY_POLICY)
+        );
+    }
+    #[tokio::test]
+    async fn origin_is_checked() {
+        let response = router(Engine::new(), "")
+            .oneshot(
+                Request::get("/api/handshake")
+                    .header("origin", "https://evil.example")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);

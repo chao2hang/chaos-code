@@ -155,6 +155,34 @@ jobs:
           # Every table cell is either translated or a decided literal.
           python3 scripts/check-doc-l10n.py --cells --strict --glob "$glob"
 
+  gui:
+    name: GUI engine, Web host and frontend
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read pinned toolchain
+        id: toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          channel="$(sed -n 's/^channel[[:space:]]*=[[:space:]]*"\([^" ]*\)".*/\1/p' rust-toolchain.toml)"
+          test -n "$channel"
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/chaos-ui/package-lock.json
+      - name: Rust GUI checks
+        run: cargo test -p chaos-engine -p xai-grok-web -p xai-grok-desktop --locked
+      - name: Frontend checks
+        working-directory: apps/chaos-ui
+        run: npm ci --ignore-scripts && npm run typecheck && npm run build
+
   npm-scripts:
     name: npm package scripts
     runs-on: ubuntu-latest
