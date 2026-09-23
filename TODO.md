@@ -147,8 +147,8 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 
 ### M-1.1 来源与许可证门禁
 
-- [ ] 记录参考 UI 的仓库 URL、固定 commit/tag、获取日期和内容哈希；禁止使用会漂移的未固定源码。
-- [ ] 核验源码许可证、版权主体、NOTICE 要求，并将证据保存在 `docs/legal/`。
+- [x] 记录 GUI 来源与资产基线：本阶段采用 clean-room，自有实现不复制参考产品源码或资产；系统字体/CSS 无新增第三方资产。（2026-09-24；`docs/legal/ui-source-baseline.md`）
+- [x] 核验当前 GUI 新增范围的许可证与 NOTICE：无复制源码/字体/图标/图片，仅使用仓库既有 Apache-2.0 依赖和系统字体；证据见 `docs/legal/ui-source-baseline.md`。（2026-09-24）
 - [ ] 逐类审计字体、图标、插画、图片、Office 预览资产和商标；形成“可复制 / 需替换 / 禁止使用”清单。
 - [ ] 确定文件头、NOTICE、第三方声明和修改记录规则，并验证与现有 `THIRD-PARTY-NOTICES` 生成流程兼容。
 - [ ] 若无法证明可复制，批准 clean-room 重新实现方案，并把对应条目标记为 Replacement，而不是 Parity。
