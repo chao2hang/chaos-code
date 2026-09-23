@@ -658,9 +658,9 @@ npm 元包 `crates/codegen/xai-grok-pager/npm/chaos/package.json` 的版本已�
 
 - [x] 更新 `docs/audit-followup-report.md` §4，记录签名接线、降级路径和未配置密钥时的真实状态。（2026-09-23；证据：本次复核）
 - [ ] 由仓库维护者生成/托管 Ed25519 密钥对，配置 `CHAOS_SIGNING_PRIVATE_KEY` secret 与 `CHAOS_SIGNING_PUBLIC_KEY` repository variable；名称检查确认两项均存在（2026-09-23），未读取或输出密钥值。仍需核验配置有效且公私钥匹配。
-- [ ] release workflow 强制要求签名密钥与 `require-sig` feature；配置缺失时 release 阻断，不得静默发布无签名产物。
-- [ ] 统一 Unix、PowerShell 与 batch 安装路径的验签策略；明确没有 Python/cryptography、签名文件缺失或公钥缺失时必须失败还是明确 opt-out。
-- [ ] 增加自动更新及安装端到端测试：有效签名接受、签名错误拒绝、缺签名拒绝、错误公钥拒绝；在 Windows runner 验证 PowerShell 路径。
+- [x] release workflow 强制要求签名密钥与 `require-sig` feature；新增 `signing-preflight` 校验 secret/variable 非空、Ed25519 公私钥匹配，配置缺失或不匹配时在构建前阻断。（2026-09-24；workflow shell/YAML 检查通过）
+- [ ] 统一 Unix、PowerShell 与 batch 安装路径的验签策略；发布 workflow/updater 已改为签名必需并在缺失时失败，安装器仍需补齐一致的 fail-closed 行为和跨平台测试。明确 opt-out 仅用于维护者有意绕过。
+- [ ] 增加自动更新及安装端到端测试：有效签名接受、签名错误拒绝、缺签名拒绝、错误公钥拒绝；updater 单元测试已有有效/篡改/错误公钥/缺 sidecar 覆盖，仍缺安装器端到端测试及 Windows runner 验证。
 - [ ] 完成以上项后运行真实 release dry-run，确认各平台签名 sidecar 与编译内公钥匹配，再允许创建补丁版本 tag。
 
 **本轮不代建或代存私钥**：该操作需要维护者控制的密钥生成环境和 GitHub secret 权限。

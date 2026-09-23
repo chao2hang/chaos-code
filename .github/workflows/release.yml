@@ -9,12 +9,11 @@
 # Variables:
 #   CHAOS_NPM_PUBLISH_ENABLED=true — opt in to npm publication after all package names are publishable
 #   CHAOS_SIGNING_PRIVATE_KEY — base64-encoded 32-byte ed25519 private key
-#                seed for signing release binaries. Without it: binaries still
-#                ship, but auto-update signature verification is disabled.
+#                seed for signing release binaries. Required for every release.
 # Variables (optional):
 #   CHAOS_SIGNING_PUBLIC_KEY — base64 32-byte ed25519 public key, compiled into
 #                the binary at build time so the updater can verify .sig sidecars.
-#                Must match CHAOS_SIGNING_PRIVATE_KEY.
+#                Required and must match CHAOS_SIGNING_PRIVATE_KEY.
 #
 # Jobs:
 #   resolve-version → build (matrix) → package (assemble + GH Release + npm)
@@ -99,9 +98,39 @@ jobs:
 
           echo "Resolved version=$VER tag=v$VER"
 
+  # Verify the protected release credentials before starting expensive builds.
+  signing-preflight:
+    needs: resolve-version
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate signing configuration
+        shell: bash
+        env:
+          CHAOS_SIGNING_PRIVATE_KEY: ${{ secrets.CHAOS_SIGNING_PRIVATE_KEY }}
+          CHAOS_SIGNING_PUBLIC_KEY: ${{ vars.CHAOS_SIGNING_PUBLIC_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "${CHAOS_SIGNING_PRIVATE_KEY:-}" || { echo "::error::CHAOS_SIGNING_PRIVATE_KEY is not configured" >&2; exit 1; }
+          test -n "${CHAOS_SIGNING_PUBLIC_KEY:-}" || { echo "::error::CHAOS_SIGNING_PUBLIC_KEY is not configured" >&2; exit 1; }
+          python3 -m venv /tmp/chaos-key-check
+          /tmp/chaos-key-check/bin/pip install --quiet cryptography
+          /tmp/chaos-key-check/bin/python - <<'PY'
+          import base64, os, sys
+          from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+          from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+          seed = base64.b64decode(os.environ['CHAOS_SIGNING_PRIVATE_KEY'].strip().lstrip('\\ufeff'), validate=True)
+          expected = base64.b64decode(os.environ['CHAOS_SIGNING_PUBLIC_KEY'].strip(), validate=True)
+          if len(seed) != 32 or len(expected) != 32:
+              sys.exit('signing key material has an invalid length')
+          actual = Ed25519PrivateKey.from_private_bytes(seed).public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
+          if actual != expected:
+              sys.exit('configured signing keys do not match')
+          print('signing configuration validated')
+          PY
+
   # ─────────────────────────────────────────────────────────────────────────
   build:
-    needs: resolve-version
+    needs: [resolve-version, signing-preflight]
     strategy:
       fail-fast: false
       matrix:
@@ -207,14 +236,19 @@ jobs:
           # against .sig sidecars signed with the matching private key
           # (see the Sign binaries step below). The value comes from the
           # repo variable CHAOS_SIGNING_PUBLIC_KEY (base64 32-byte key).
-          # If unset, the build uses a placeholder and verification is
-          # skipped (CHAOS_REQUIRE_SIG defaults to off during transition).
+          # Release builds must embed the configured public key and enable
+          # signature enforcement. An empty variable is rejected before Cargo.
           CHAOS_SIGNING_PUBLIC_KEY: ${{ vars.CHAOS_SIGNING_PUBLIC_KEY }}
         run: |
           set -euo pipefail
+          test -n "${CHAOS_SIGNING_PUBLIC_KEY:-}" || {
+            echo "::error::CHAOS_SIGNING_PUBLIC_KEY is not configured" >&2
+            exit 1
+          }
           echo "Building ${{ matrix.target }} version=${GROK_VERSION}"
           cargo build \
             -p xai-grok-pager-bin \
+            --features xai-grok-update/require-sig \
             --profile release-dist \
             --target "${{ matrix.target }}"
 
@@ -259,7 +293,7 @@ jobs:
 
   # ─────────────────────────────────────────────────────────────────────────
   package:
-    needs: [resolve-version, build]
+    needs: [resolve-version, signing-preflight, build]
     # Optional matrix legs use job-level continue-on-error, so a successful
     # build result means every required platform passed while optional legs may be absent.
     if: always() && needs.resolve-version.result == 'success' && needs.build.result == 'success'
@@ -348,19 +382,23 @@ jobs:
       # install.sh/.ps1 can verify with the compiled-in public key
       # (CHAOS_SIGNING_PUBLIC_KEY repo variable, injected at build time).
       #
-      # Skip silently when the secret is not configured (e.g. forks, dev
-      # builds) — the binaries still ship, verification is just not enforced.
+      # Signing is mandatory for this release workflow; missing credentials
+      # fail in signing-preflight before any platform build starts.
       - name: Sign binaries
-        if: ${{ vars.CHAOS_SIGNING_PUBLIC_KEY != '' }}
         shell: bash
         env:
           CHAOS_SIGNING_PRIVATE_KEY: ${{ secrets.CHAOS_SIGNING_PRIVATE_KEY }}
+          CHAOS_SIGNING_PUBLIC_KEY: ${{ vars.CHAOS_SIGNING_PUBLIC_KEY }}
         run: |
           set -euo pipefail
-          if [[ -z "${CHAOS_SIGNING_PRIVATE_KEY:-}" ]]; then
-            echo "::warning::CHAOS_SIGNING_PRIVATE_KEY secret not set — skipping signing."
-            exit 0
-          fi
+          test -n "${CHAOS_SIGNING_PRIVATE_KEY:-}" || {
+            echo "::error::CHAOS_SIGNING_PRIVATE_KEY secret is not configured" >&2
+            exit 1
+          }
+          test -n "${CHAOS_SIGNING_PUBLIC_KEY:-}" || {
+            echo "::error::CHAOS_SIGNING_PUBLIC_KEY variable is not configured" >&2
+            exit 1
+          }
           cd release-bins
           # Ensure the cryptography package is available. ubuntu runners do
           # not reliably preinstall it, and 24.04's python is externally

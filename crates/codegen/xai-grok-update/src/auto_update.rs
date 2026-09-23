@@ -1556,9 +1556,8 @@ async fn fetch_signature(sig_url: &str) -> Result<String> {
 ///   entirely, returns `Ok(())`.
 /// - **Required + sig found**: verifies; on mismatch, deletes the binary
 ///   and returns an error. On success, cleans up the temp `.sig` file.
-/// - **Required + sig not found** (HTTP error): logs a warning and
-///   returns `Ok(())` — older releases that predate signing still
-///   install. Once all releases are signed this should become fatal.
+/// - **Required + signature fetch fails**: returns an error and refuses the
+///   update. A required signature must be available and verifiable.
 /// - **Required + no public key configured**: fatal — refuses to
 ///   install an unverified binary rather than silently accepting it.
 ///
@@ -1583,27 +1582,9 @@ async fn verify_downloaded_artifact(binary_path: &std::path::Path, sig_url: &str
         }
     };
 
-    let sig_text = match fetch_signature(sig_url).await {
-        Ok(text) => text,
-        Err(e) => {
-            // Sig file not found. During the transition (not all releases
-            // have sigs yet) we warn and skip; once all releases are signed
-            // this branch should become fatal.
-            //
-            // SECURITY TODO(strict-sig): only a genuine 404 should take
-            // this lenient path. Other failures (403 rate limit, DNS,
-            // TLS, connection reset) currently also skip verification —
-            // an on-path attacker who can block the .sig request (but not
-            // the binary download) defeats the signature scheme. Split
-            // `fetch_signature` into NotFound vs Other errors and fail
-            // closed on Other once CHAOS_REQUIRE_SIG=1 is the default.
-            eprintln!(
-                "  warning: signature file not found at {sig_url} ({e}); \
-                 skipping verification"
-            );
-            return Ok(());
-        }
-    };
+    let sig_text = fetch_signature(sig_url)
+        .await
+        .with_context(|| format!("required signature unavailable at {sig_url}; refusing update"))?;
 
     // Write sig to a temp sidecar so verify_file can read it.
     let sig_path = binary_path.with_extension("sig");
