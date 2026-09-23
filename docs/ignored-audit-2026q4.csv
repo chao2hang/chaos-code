@@ -1,0 +1,446 @@
+crate,file,line,reason,nearest_fn
+xai-chat-state,crates/codegen/xai-chat-state/src/actor/tests.rs,115,"pre-existing fork gap: selective-compaction blocks are stored but not \
+            projected into build_request items at the chat-state layer (assertion \
+            `encoded.contains(""context-summary"")` never holds). CI was red at the \
+            cargo fmt step for a long time, so this debt went unnoticed; the projection \
+            is a separate feature task; review 2026-10",selective_compaction_projects_without_mutating_history_and_survives_snapshot
+xai-crash-handler,crates/codegen/xai-crash-handler/tests/integration.rs,42,NO_REASON,subprocess_entry
+xai-fast-worktree,crates/codegen/xai-fast-worktree/src/api/gc/tests.rs,401,"fork: needs the Grove daemon's pin backend (`pin_exists` is a hardcoded `Ok(false)`, `delete_pin_ref_gated` bails 'pin delete requires grove'), which the fork removes by design; re-enable with a real pin reader; review 2026-10",run_pass_prunes_orphan_grove_pins_after_grace
+xai-fast-worktree,crates/codegen/xai-fast-worktree/src/git/safety_tests/gate.rs,207,run by git_dir_in_the_environment_does_not_change_the_verdict,verdict_under_a_foreign_git_dir
+xai-fast-worktree,crates/codegen/xai-fast-worktree/src/git/safety_tests/gate.rs,222,run by git_configuration_in_the_environment_does_not_reach_the_snapshot,snapshot_under_a_foreign_clean_filter
+xai-fast-worktree,crates/codegen/xai-fast-worktree/src/nfs/liveness.rs,761,"fork: needs the Grove daemon's pin backend (`pin_exists` is a hardcoded `Ok(false)`, `delete_pin_ref_gated` bails 'pin delete requires grove'), which the fork removes by design; re-enable with a real pin reader; review 2026-10",aborted_partial_removal_prunes_after_grace
+xai-grok-agent,crates/codegen/xai-grok-agent/src/prompt/skills.rs,2050,"environment-dependent: reads real $HOME for user-scope skills, so on a host \
+                with a 'commit' skill (e.g. ~/.agents/skills/git-commit-conventional) the \
+                assertion 'exactly 2' sees a 3rd. pre-existing, not caused by b13fa526.",user_skills_shadow_bundled_skills
+xai-grok-env,crates/codegen/xai-grok-env/src/lib.rs,239,"asserts upstream xAI defaults (bundled model catalog / non-empty \
+                PRODUCTION_ENDPOINTS / grok.com interactive login) that this fork \
+                removes by design; rewrite against Chaos behaviour or delete",relay_and_gateway_urls_are_distinct
+xai-grok-pager,crates/codegen/xai-grok-pager/src/app/agent_view/modals.rs,2890,fork: MANAGED_SECTION_CONNECTORS_URL is empty in Chaos (no portal); URL band is never recorded; review 2026-10,mouse_down_on_url_row_opens_connectors
+xai-grok-pager,crates/codegen/xai-grok-pager/src/app/agent_view/modals.rs,2911,fork: MANAGED_SECTION_CONNECTORS_URL is empty in Chaos (no portal); URL band is never recorded; review 2026-10,mouse_down_on_label_row_folds_not_opens
+xai-grok-pager,crates/codegen/xai-grok-pager/src/app/agent_view/modals.rs,2943,fork: MANAGED_SECTION_CONNECTORS_URL is empty in Chaos (no portal); URL band is never recorded; review 2026-10,mouse_down_on_url_row_while_searching_does_not_open
+xai-grok-pager,crates/codegen/xai-grok-pager/src/app/dispatch/tests/billing.rs,344,fork: billing/subscription features removed; review 2026-10,upsell_non_max_shows_qa_with_retry_option
+xai-grok-pager,crates/codegen/xai-grok-pager/src/app/dispatch/tests/billing.rs,365,fork: billing/subscription features removed; review 2026-10,upsell_non_max_payg_on_shows_increase_label
+xai-grok-pager,crates/codegen/xai-grok-pager/src/app/dispatch/tests/billing.rs,379,fork: billing/subscription features removed; review 2026-10,upsell_non_max_qa_heading_is_credit_limit_when_payg_off
+xai-grok-pager,crates/codegen/xai-grok-pager/src/app/dispatch/tests/billing.rs,394,fork: billing/subscription features removed; review 2026-10,upsell_non_max_qa_heading_is_spending_cap_when_payg_on
+xai-grok-pager,crates/codegen/xai-grok-pager/src/app/dispatch/tests/billing.rs,409,fork: billing/subscription features removed; review 2026-10,upsell_non_max_upgrade_url_is_supergrok
+xai-grok-pager,crates/codegen/xai-grok-pager/src/app/dispatch/tests/billing.rs,425,fork: billing/subscription features removed; review 2026-10,upsell_non_max_payg_url_is_usage
+xai-grok-pager,crates/codegen/xai-grok-pager/src/app/dispatch/tests/billing.rs,440,fork: billing/subscription features removed; review 2026-10,upsell_non_max_payg_on_description_mentions_spending_cap
+xai-grok-pager,crates/codegen/xai-grok-pager/src/app/dispatch/tests/billing.rs,454,fork: billing/subscription features removed; review 2026-10,upsell_non_max_payg_off_description_mentions_on_demand
+xai-grok-pager,crates/codegen/xai-grok-pager/src/app/dispatch/tests/billing.rs,468,fork: billing/subscription features removed; review 2026-10,upsell_non_max_unified_shows_buy_credits
+xai-grok-pager,crates/codegen/xai-grok-pager/src/app/dispatch/tests/billing.rs,487,fork: billing/subscription features removed; review 2026-10,upsell_max_unified_qa_omits_upgrade
+xai-grok-pager,crates/codegen/xai-grok-pager/src/app/dispatch/tests/billing.rs,631,fork: billing/subscription features removed; review 2026-10,upsell_max_tier_opens_qa_without_upgrade_payg_off
+xai-grok-pager,crates/codegen/xai-grok-pager/src/app/dispatch/tests/billing.rs,650,fork: billing/subscription features removed; review 2026-10,upsell_max_tier_opens_qa_without_upgrade_payg_on
+xai-grok-pager,crates/codegen/xai-grok-pager/src/app/dispatch/tests/billing.rs,820,fork: billing/subscription features removed; review 2026-10,session_usage_complete_pushes_block_and_chains_billing
+xai-grok-pager,crates/codegen/xai-grok-pager/src/app/dispatch/tests/billing.rs,1486,fork: billing/subscription features removed; review 2026-10,open_url_shows_manual_url_when_browser_unavailable
+xai-grok-pager,crates/codegen/xai-grok-pager/src/app/dispatch/tests/billing.rs,1525,fork: billing/subscription features removed; review 2026-10,open_url_does_not_show_fallback_when_opener_succeeds
+xai-grok-pager,crates/codegen/xai-grok-pager/src/app/dispatch/tests/billing.rs,1613,fork: billing/subscription features removed; review 2026-10,credit_limit_upsell_submit_shows_url_when_browser_unavailable
+xai-grok-pager,crates/codegen/xai-grok-pager/src/app/leader_cluster/scenarios.rs,13,leader-cluster: needs single-process isolation (process-global env + grok_home OnceLock in the shared lib test binary); run: cargo test -p xai-grok-pager --lib -- app::leader_cluster --ignored --test-threads=1,two_clients_share_session_and_stream_both_ways
+xai-grok-pager,crates/codegen/xai-grok-pager/src/app/leader_cluster/scenarios.rs,75,leader-cluster: needs single-process isolation (process-global env + grok_home OnceLock in the shared lib test binary); run: cargo test -p xai-grok-pager --lib -- app::leader_cluster --ignored --test-threads=1,n_client_fan_out_without_replay_duplication
+xai-grok-pager,crates/codegen/xai-grok-pager/src/app/leader_cluster/scenarios.rs,154,leader-cluster: needs single-process isolation (process-global env + grok_home OnceLock in the shared lib test binary); run: cargo test -p xai-grok-pager --lib -- app::leader_cluster --ignored --test-threads=1,reattach_completion_roundtrips_durable_log
+xai-grok-pager,crates/codegen/xai-grok-pager/src/app/leader_cluster/scenarios.rs,230,leader-cluster: needs single-process isolation (process-global env + grok_home OnceLock in the shared lib test binary); run: cargo test -p xai-grok-pager --lib -- app::leader_cluster --ignored --test-threads=1,leader_kill_reconnect_reloads_without_duplicating_history
+xai-grok-pager,crates/codegen/xai-grok-pager/src/views/dashboard/render.rs,4228,NO_REASON,dashboard_visual_preview
+xai-grok-pager,crates/codegen/xai-grok-pager/src/views/dashboard/render.rs,4375,NO_REASON,dashboard_overlay_visual_preview
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/doctor_early_dispatch.rs,23,spawns the real pager binary; CI/Bazel provides PAGER_BINARY,doctor_json_bypasses_unrelated_startup_state
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/doctor_early_dispatch.rs,79,spawns the real pager binary; CI/Bazel provides PAGER_BINARY,doctor_fix_without_id_lists_tmux_fixes_from_current_probe_evidence
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/doctor_early_dispatch.rs,120,spawns the real pager binary; CI/Bazel provides PAGER_BINARY,doctor_tmux_fix_probes_are_bounded_and_never_write_on_timeout
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/doctor_early_dispatch.rs,170,spawns the real pager binary; CI/Bazel provides PAGER_BINARY,doctor_tmux_fix_kills_background_pipe_holders_after_leader_exit
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/doctor_early_dispatch.rs,215,spawns the real pager binary; CI/Bazel provides PAGER_BINARY,doctor_tmux_fix_kills_term_ignoring_redirected_descendants
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/doctor_early_dispatch.rs,281,spawns the real pager binary; CI/Bazel provides PAGER_BINARY,doctor_irrelevant_unsafe_byobu_does_not_break_ssh_or_plain_tmux
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/doctor_early_dispatch.rs,324,spawns the real pager binary; CI/Bazel provides PAGER_BINARY,doctor_hostile_home_and_byobu_create_no_config_files
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/doctor_early_dispatch.rs,356,spawns the real pager binary; CI/Bazel provides PAGER_BINARY,doctor_fix_without_id_lists_only_applicable_automatic_fixes
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/doctor_early_dispatch.rs,406,spawns the real pager binary; CI/Bazel provides PAGER_BINARY,doctor_tmux_fix_yes_writes_only_actual_home_tmux_config
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/doctor_early_dispatch.rs,466,spawns the real pager binary; CI/Bazel provides PAGER_BINARY,doctor_fix_yes_writes_only_actual_home_shell_rc
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/doctor_early_dispatch.rs,504,spawns the real pager binary; CI/Bazel provides PAGER_BINARY,doctor_fix_safety_boundaries_are_process_isolated
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/doctor_early_dispatch.rs,569,spawns the real pager binary; CI/Bazel provides PAGER_BINARY,restrictive_umask_still_preserves_exact_rc_mode
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/doctor_early_dispatch.rs,606,spawns the real pager binary; CI/Bazel provides PAGER_BINARY,wrap_non_tty_true_exec_preserves_argv_and_exit
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/leader_pty_e2e/campaign_leader_mode_remote_dismiss_on_model_pick.rs,16,PTY e2e; run with cargo test -p xai-grok-pager --test leader_pty_e2e -- --ignored --test-threads=1,campaign_leader_mode_remote_dismiss_on_model_pick
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/leader_pty_e2e/leader_n_clients_shared_session.rs,13,PTY e2e; run with cargo test -p xai-grok-pager --test leader_pty_e2e -- --ignored --test-threads=1,leader_n_clients_shared_session
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/leader_pty_e2e/leader_reattach_cancellation_roundtrips_durable_log.rs,18,PTY e2e; run with cargo test -p xai-grok-pager --test leader_pty_e2e -- --ignored --test-threads=1,leader_reattach_cancellation_roundtrips_durable_log
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/leader_pty_e2e/leader_reattach_completion_roundtrips_durable_log.rs,12,PTY e2e; run with cargo test -p xai-grok-pager --test leader_pty_e2e -- --ignored --test-threads=1,leader_reattach_completion_roundtrips_durable_log
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/leader_pty_e2e/leader_two_clients_shared_session.rs,12,PTY e2e; run with cargo test -p xai-grok-pager --test leader_pty_e2e -- --ignored --test-threads=1,leader_two_clients_shared_session
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/mermaid_render_subprocess.rs,34,spawns the built pager binary; run with cargo test -- --ignored,child_renders_login_flow_to_png
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/mermaid_render_subprocess.rs,61,spawns the built pager binary; run with cargo test -- --ignored,oversized_source_is_contained
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/mermaid_render_subprocess.rs,88,spawns the built pager binary; run with cargo test -- --ignored,invalid_diagram_is_contained
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/mermaid_render_subprocess.rs,114,spawns the built pager binary; run with cargo test -- --ignored,tight_timeout_kills_child_and_returns_err
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_auto_mode.rs,107,spawns real pager PTY; run with cargo test -- --ignored,pty_shift_tab_cycles_to_auto_mode_banner
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_auto_mode.rs,196,spawns real pager PTY; run with cargo test -- --ignored,pty_shift_tab_skips_auto_when_gate_off
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/agent_execute_full_output_double_click_fold_pty.rs,25,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),agent_execute_full_output_double_click_fold_pty
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/agent_response.rs,8,NO_REASON,agent_response
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/agent_type_mismatch_modal_on_model_switch.rs,8,NO_REASON,agent_type_mismatch_modal_on_model_switch
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/agent_type_mismatch_no_keeps_current_session.rs,8,NO_REASON,agent_type_mismatch_no_keeps_current_session
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/agent_type_mismatch_yes_starts_new_session.rs,7,NO_REASON,agent_type_mismatch_yes_starts_new_session
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/ansi_scrollback_content_integrity.rs,17,NO_REASON,ansi_scrollback_content_integrity
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/auto_compact_top_row.rs,32,NO_REASON,auto_compact_top_row
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/auto_compact_top_row.rs,107,NO_REASON,auto_compact_at_startup
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/auto_wake_cancel_preserves_queued_user_prompt.rs,52,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),auto_wake_cancel_preserves_queued_user_prompt
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/auto_wake_cancel_preserves_queued_user_prompt.rs,292,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),cancel_before_task_completion_defers_auto_wake_until_user_prompt
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/auto_wake_cancel_via_esc_preserves_queued_user_prompt.rs,8,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),auto_wake_cancel_via_esc_preserves_queued_user_prompt
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/auto_wake_cancel_via_stop_click_preserves_queued_user_prompt.rs,8,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),auto_wake_cancel_via_stop_click_preserves_queued_user_prompt
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/background_task_reaped_on_quit.rs,19,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),background_task_reaped_on_quit
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/bash_full_output_double_click_fold_pty.rs,30,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),bash_full_output_double_click_fold_pty
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/bash_mode_file_completion_shell_like.rs,57,NO_REASON,bash_mode_file_completion_shell_like
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/bash_mode_strips_redundant_session_cd_from_chrome.rs,10,NO_REASON,bash_mode_strips_redundant_session_cd_from_chrome
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/bash_mode_tab_completion_dropdown.rs,44,NO_REASON,bash_mode_tab_accepts_dropdown_item_in_place
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/bash_queued_mid_turn_drains_as_bash.rs,10,NO_REASON,bash_queued_mid_turn_drains_as_bash
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/bracketed_ime_paste_skips_clipboard_image_linux.rs,12,NO_REASON,bracketed_ime_paste_skips_clipboard_image_linux
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/bracketed_ime_paste_skips_clipboard_image_macos.rs,15,NO_REASON,bracketed_ime_paste_skips_clipboard_image_macos
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/campaign_nudges_default_until_dismissed_by_model_pick.rs,13,NO_REASON,campaign_nudges_default_until_dismissed_by_model_pick
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/campaign_remote_settings_nudge_and_dismiss.rs,14,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),campaign_remote_settings_nudge_and_dismiss
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/cancel_discards_buffered_interjection.rs,13,NO_REASON,cancel_discards_buffered_interjection
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/cancel_then_resend_prompt_appears_once.rs,12,NO_REASON,cancel_then_resend_prompt_appears_once
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/connect_ui_timeout_env_override.rs,73,NO_REASON,connect_ui_timeout_env_override_logs_and_boots
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/connect_ui_timeout_env_override.rs,90,NO_REASON,connect_ui_timeout_env_garbage_logs_default_and_boots
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/consent_gate_blocks_session_pty.rs,52,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),consent_gate_renders_and_blocks_new_session
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/consent_gate_blocks_session_pty.rs,83,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),absent_consent_gate_shows_no_notice
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/consent_gate_blocks_session_pty.rs,115,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),an_answered_notice_does_not_ask_again
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/continue_resumes_session_with_history.rs,8,NO_REASON,continue_resumes_session_with_history
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/critical_announcement_session_banner_pty.rs,74,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),critical_announcement_title_on_welcome
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/critical_announcement_session_banner_pty.rs,102,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),critical_announcement_session_banner_two_lines
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/critical_announcement_session_banner_pty.rs,168,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),critical_announcement_hide_button_click_hides_banner
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/critical_announcement_session_banner_pty.rs,244,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),info_announcement_no_session_banner
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/critical_announcement_session_banner_pty.rs,279,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),critical_announcements_slash_hide_and_show
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/critical_announcement_session_banner_pty.rs,333,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),announcements_slash_listed_only_for_critical
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/critical_announcement_session_banner_pty.rs,410,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),critical_announcement_reaches_live_session_via_periodic_refresh
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/critical_announcement_session_banner_pty.rs,465,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),hidden_critical_does_not_suppress_new_critical_id
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/critical_announcement_session_banner_pty.rs,546,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),promo_announcement_banner_slash_gate_and_critical_preemption
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/critical_announcement_session_banner_pty.rs,663,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),promo_cta_click_opens_link_and_hide_roundtrip
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/critical_announcement_session_banner_pty.rs,784,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),non_dismissible_promo_ignores_hide_then_dismissible_hides
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/critical_announcement_session_banner_pty.rs,904,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),pinned_promo_multi_surface_and_ctrl_o_open
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/ctrl_c_cancel_during_stream_recovers_cleanly.rs,11,NO_REASON,ctrl_c_cancel_during_stream_recovers_cleanly
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/ctrlc_after_activity_no_rewind_prompt_once.rs,10,NO_REASON,ctrlc_after_activity_no_rewind_prompt_once
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/ctrlc_with_queued_prompt_no_dup.rs,8,NO_REASON,ctrlc_with_queued_prompt_no_dup
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/dashboard_overlay_tab_esc_backout_and_ctrl_backslash.rs,41,NO_REASON,dashboard_overlay_tab_esc_backout_and_ctrl_backslash
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/doubled_lines_out_of_band_repro.rs,21,NO_REASON,out_of_band_stale_row_heals_on_focus_gained
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/drag_autoscroll_no_bounce_pty.rs,12,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),drag_autoscroll_no_bounce_pty
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/drag_enters_content_from_gap_pty.rs,17,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),drag_enters_content_from_gap_pty
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/drag_from_above_prompt_strip_pty.rs,17,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),drag_from_above_prompt_strip_pty
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/drag_from_chrome_stays_block_pty.rs,16,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),drag_from_chrome_stays_block_pty
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/drag_over_gap_rows_does_not_freeze_head_pty.rs,18,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),drag_over_gap_rows_does_not_freeze_head_pty
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/drag_select_autoscroll_full_scrollout_copy_pty.rs,22,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),drag_select_autoscroll_full_scrollout_copy_pty
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/drag_select_wheel_scroll_extends_pty.rs,25,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),drag_select_wheel_scroll_extends_pty
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/edit_collapsed_oneliner_pty.rs,18,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),edit_collapsed_oneliner_pty
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/edit_hl_inplace_refresh_pty.rs,90,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),edit_hl_inplace_refresh_pty
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/edit_interject_lone_queued_row_keeps_tui_alive.rs,14,NO_REASON,edit_interject_lone_queued_row_keeps_tui_alive
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/edit_merge_parallel_pty.rs,12,PTY e2e; run with cargo test -p xai-grok-pager --test pty_e2e -- --ignored,edit_merge_parallel_pty
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/edit_merge_sequential_pty.rs,57,PTY e2e; run with cargo test -p xai-grok-pager --test pty_e2e -- --ignored,edit_merge_sequential_pty
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/embedded_mode_boots_without_hanging_on_blocked_backend.rs,11,NO_REASON,embedded_mode_boots_without_hanging_on_blocked_backend
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/empty_enter_force_sends_top_queued.rs,9,NO_REASON,empty_enter_force_sends_top_queued
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/empty_enter_sends_top_not_last_of_two.rs,9,NO_REASON,empty_enter_sends_top_not_last_of_two
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/endline_park_is_markerless.rs,10,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),endline_park_is_markerless
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/endline_wakeups_close_with_markers.rs,17,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),endline_wakeups_close_with_markers
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/esc_esc_clears_idle_prompt_into_the_stash.rs,13,NO_REASON,esc_esc_clears_idle_prompt_into_the_stash
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/esc_esc_opens_rewind_picker_silent_first_press.rs,15,NO_REASON,esc_esc_opens_rewind_picker_silent_first_press
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/esc_idle_empty_no_messages_is_swallowed_noop.rs,9,NO_REASON,esc_idle_empty_no_messages_is_swallowed_noop
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/esc_mid_turn_hints_ctrl_c_from_prompt_preserves_draft.rs,9,NO_REASON,esc_mid_turn_hints_ctrl_c_from_prompt_preserves_draft
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/esc_mid_turn_hints_ctrl_c_from_scrollback.rs,7,NO_REASON,esc_mid_turn_hints_ctrl_c_from_scrollback
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/extensions_modal_copy_hints_pty.rs,65,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),extensions_modal_copy_hints_pty
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/extensions_modal_workflows_tab_pty.rs,30,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),extensions_modal_workflows_tab_pty
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/feedback_slash_opens_descriptive_pane.rs,31,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),feedback_slash_opens_descriptive_pane
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/file_path_with_space_emits_full_osc8_hyperlink.rs,9,NO_REASON,file_path_with_space_emits_full_osc8_hyperlink
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/folder_trust_cwd_is_home_git_repo_no_prompt.rs,10,NO_REASON,folder_trust_cwd_is_home_git_repo_no_prompt
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/folder_trust_decline_quits_without_grant.rs,9,NO_REASON,folder_trust_decline_quits_without_grant
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/folder_trust_feature_off_shows_no_question.rs,8,NO_REASON,folder_trust_feature_off_shows_no_question
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/folder_trust_home_git_repo_subdir_keys_on_subdir.rs,10,NO_REASON,folder_trust_home_git_repo_subdir_keys_on_subdir
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/folder_trust_question_renders_and_accept_persists_grant.rs,9,NO_REASON,folder_trust_question_renders_and_accept_persists_grant
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/forced_wheel_mode_env_scrolls_exact_rows.rs,37,NO_REASON,forced_wheel_mode_env_scrolls_exact_rows
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/fullscreen_external_editor_round_trip.rs,9,NO_REASON,fullscreen_external_editor_round_trip
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/image_chip_preview_path_free_pty.rs,7,NO_REASON,image_chip_preview_path_free_pty
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/initial_prompt_positional_auto_submits.rs,9,NO_REASON,initial_prompt_positional_auto_submits
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/input_echoes_at_idle_prompt.rs,11,NO_REASON,input_echoes_at_idle_prompt
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/interjection_reaches_model_ctrl_l_in_vscode_family.rs,9,NO_REASON,interjection_reaches_model_ctrl_l_in_vscode_family
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/interjection_reaches_model_in_same_turn.rs,10,NO_REASON,interjection_reaches_model_in_same_turn
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/iterm_readline_editing.rs,38,PTY e2e; CI runs the ignored pty_e2e suite,iterm_raw_readline_sequences_edit_picker_and_dashboard_rename
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/keep_text_selection_settings_visible_pty.rs,7,NO_REASON,keep_text_selection_settings_visible_pty
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/managed_policy_gate_refusal_reaches_real_terminal.rs,8,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),managed_policy_gate_refusal_reaches_real_terminal
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/mcp_menu_loads_servers_in_non_project_dir.rs,8,NO_REASON,mcp_menu_loads_servers_in_non_project_dir
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/mcp_menu_loads_servers_in_project_dir.rs,7,NO_REASON,mcp_menu_loads_servers_in_project_dir
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/mid_text_skill_token_echo_styled_pty.rs,52,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),mid_text_skill_token_echo_styled_pty
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/mid_turn_slash_dropdown_esc_dismisses_not_cancel.rs,8,NO_REASON,mid_turn_slash_dropdown_esc_dismisses_not_cancel
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/middle_click_pastes_primary_linux.rs,7,Linux X11 PTY e2e; run in CI with the built pager,middle_click_pastes_primary_linux
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/minimal/minimal_cli_screen_mode_does_not_persist.rs,8,NO_REASON,minimal_cli_screen_mode_does_not_persist
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/minimal/minimal_commits_response_to_scrollback.rs,12,NO_REASON,minimal_commits_response_to_scrollback
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/minimal/minimal_commits_thinking_body_to_scrollback.rs,11,NO_REASON,minimal_commits_thinking_body_to_scrollback
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/minimal/minimal_committed_content_survives_overlay_grow.rs,9,NO_REASON,minimal_committed_content_survives_overlay_grow
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/minimal/minimal_continue_reprints_transcript.rs,9,NO_REASON,minimal_continue_reprints_transcript
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/minimal/minimal_ctrl_c_arms_and_quits.rs,10,NO_REASON,minimal_ctrl_c_arms_and_quits
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/minimal/minimal_ctrl_o_send_now_queued_apple_terminal.rs,9,NO_REASON,minimal_ctrl_o_send_now_queued_apple_terminal
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/minimal/minimal_double_esc_committed_queued_prompt_single_render.rs,11,NO_REASON,minimal_double_esc_committed_queued_prompt_single_render
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/minimal/minimal_esc_mid_turn_hints_ctrl_c.rs,9,NO_REASON,minimal_esc_mid_turn_hints_ctrl_c
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/minimal/minimal_external_editor_round_trip.rs,8,NO_REASON,minimal_external_editor_round_trip
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/minimal/minimal_feedback_session_gate_and_pane.rs,13,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),minimal_feedback_session_gate_and_pane
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/minimal/minimal_flush_left_no_hpad.rs,10,NO_REASON,minimal_flush_left_no_hpad
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/minimal/minimal_help_opens_command_palette.rs,9,NO_REASON,minimal_help_opens_command_palette
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/minimal/minimal_lookup_commits_one_line_summary.rs,12,NO_REASON,minimal_lookup_commits_one_line_summary
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/minimal/minimal_new_session_keeps_history_and_resets.rs,14,NO_REASON,minimal_new_session_keeps_history_and_resets
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/minimal/minimal_parked_plan_commits_to_scrollback.rs,48,NO_REASON,minimal_parked_plan_commits_to_scrollback
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/minimal/minimal_parked_plan_survives_quit.rs,11,NO_REASON,minimal_parked_plan_survives_quit
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/minimal/minimal_queue_indicator_shows_while_running.rs,11,NO_REASON,minimal_queue_indicator_shows_while_running
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/minimal/minimal_quit_resets_bracketed_paste.rs,11,NO_REASON,minimal_quit_resets_bracketed_paste
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/minimal/minimal_resize_preserves_committed_scrollback.rs,10,NO_REASON,minimal_resize_preserves_committed_scrollback
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/minimal/minimal_settings_modal_opens_and_closes.rs,8,NO_REASON,minimal_settings_modal_opens_and_closes
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/minimal/minimal_shift_tab_shows_mode_in_info_bar.rs,12,NO_REASON,minimal_shift_tab_shows_mode_in_info_bar
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/minimal/minimal_short_response_stays_on_screen.rs,15,NO_REASON,minimal_short_response_stays_on_screen
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/minimal/minimal_slash_dropdown_dismisses_with_esc.rs,8,NO_REASON,minimal_slash_dropdown_dismisses_with_esc
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/minimal/minimal_slash_switches_from_fullscreen.rs,7,NO_REASON,minimal_slash_switches_from_fullscreen
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/minimal/minimal_slash_switches_to_fullscreen.rs,7,NO_REASON,minimal_slash_switches_to_fullscreen
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/minimal/minimal_switch_exec_escape_hatch.rs,7,NO_REASON,minimal_switch_exec_escape_hatch
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/minimal/minimal_switch_mid_turn_keeps_streaming.rs,7,NO_REASON,minimal_switch_mid_turn_keeps_streaming
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/minimal/minimal_switch_preserves_queued_prompt.rs,7,NO_REASON,minimal_switch_preserves_queued_prompt
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/minimal/minimal_switch_probe_failure_rolls_back.rs,7,NO_REASON,minimal_switch_probe_failure_rolls_back
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/minimal/minimal_switch_round_trip_no_reprint.rs,8,NO_REASON,minimal_switch_round_trip_no_reprint
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/minimal/minimal_thinking_is_visually_distinct_from_output.rs,117,NO_REASON,minimal_thinking_is_visually_distinct_from_output
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/minimal/minimal_thinking_is_visually_distinct_from_output.rs,191,NO_REASON,minimal_collapse_thinking_toggle_folds_and_ctrl_e_reopens
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/minimal/minimal_transcript_opens_in_pager.rs,11,NO_REASON,minimal_transcript_opens_in_pager
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/minimal/minimal_transcript_pager_restore_no_artifacts.rs,23,NO_REASON,minimal_transcript_pager_restore_no_artifacts
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/misclassified_wheel_flood_does_not_teleport_viewport.rs,53,NO_REASON,misclassified_wheel_flood_does_not_teleport_viewport
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/mouse_reporting_toggle_inactive_without_config_pty.rs,7,NO_REASON,mouse_reporting_toggle_inactive_without_config_pty
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/mouse_reporting_toggle_sticky_persists_pty.rs,17,NO_REASON,mouse_reporting_toggle_sticky_persists_pty
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/nested_quote_drag_copy_excludes_bars_pty.rs,12,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),nested_quote_drag_copy_excludes_bars_pty
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/page_flip_on_send_pty.rs,61,NO_REASON,send_page_flips_by_default
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/page_flip_on_send_pty.rs,86,NO_REASON,send_keeps_viewport_when_page_flip_disabled
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/paste_bracketed_chip_text_sends_full_payload.rs,11,NO_REASON,paste_bracketed_chip_text_sends_full_payload
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/paste_bracketed_inline_text_echoes_and_sends_intact.rs,12,NO_REASON,paste_bracketed_inline_text_echoes_and_sends_intact
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/paste_bracketed_then_immediate_enter_sends_intact.rs,22,NO_REASON,paste_bracketed_then_immediate_enter_sends_intact
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/paste_ctrl_v_image_keeps_ui_responsive_macos.rs,17,NO_REASON,paste_ctrl_v_image_keeps_ui_responsive_macos
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/paste_ctrl_v_image_keeps_ui_responsive_windows.rs,17,NO_REASON,paste_ctrl_v_image_keeps_ui_responsive_windows
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/paste_ctrl_v_text_echoes_fast_macos.rs,14,NO_REASON,paste_ctrl_v_text_echoes_fast_macos
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/paste_ctrl_v_text_echoes_fast_windows.rs,15,NO_REASON,paste_ctrl_v_text_echoes_fast_windows
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/permission_prompt_hook_chimes_only_on_real_wait.rs,35,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),permission_prompt_hook_chimes_only_on_real_wait
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/plan_revise_empty_enter_does_not_approve.rs,5,NO_REASON,plan_revise_empty_enter_does_not_approve
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/plan_scrollbar_grab_zone_pty.rs,14,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),plan_scrollbar_grab_zone_pty
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/prompt_suggestion_ghost_tab_accepts.rs,18,NO_REASON,prompt_suggestion_ghost_tab_accepts
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/question_tab_cycles_answers.rs,302,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),question_tab_cycles_answers
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/question_tab_cycles_answers.rs,309,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),question_tab_cycles_answers_in_vim_mode
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/queue_and_interjection_lifecycle.rs,10,NO_REASON,queue_and_interjection_lifecycle
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/queue_reorder_local_row_above_server_row.rs,7,NO_REASON,queue_reorder_local_row_above_server_row
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/queue_reorder_moves_row_up.rs,7,NO_REASON,queue_reorder_moves_row_up
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/queued_bash_promotion_renders_output_pty.rs,7,NO_REASON,queued_bash_promotion_renders_output_pty
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/queued_message_renders_once_not_twice.rs,9,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),queued_message_renders_once_not_twice
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/quote_block_drag_copy_excludes_bars_pty.rs,39,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),quote_block_drag_copy_excludes_bars_pty
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/quote_block_raw_mode_copy_keeps_source_pty.rs,13,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),quote_block_raw_mode_copy_keeps_source_pty
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/read_tool_header_selection_copies_path_only_pty.rs,13,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),read_tool_header_selection_copies_path_only_pty
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/reasoning_efforts_fallback_menu_matches_builtin.rs,8,NO_REASON,reasoning_efforts_fallback_menu_matches_builtin
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/reasoning_efforts_from_config_toml_menu.rs,8,NO_REASON,reasoning_efforts_from_config_toml_menu
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/reasoning_efforts_menu_renders_and_remaps_on_wire.rs,8,NO_REASON,reasoning_efforts_menu_renders_and_remaps_on_wire
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/recap_header_not_in_selection_pty.rs,20,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),recap_header_not_in_selection_pty
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/removed_queued_prompt_never_sent.rs,9,NO_REASON,removed_queued_prompt_never_sent
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/rename_title_shows_in_prompt_border.rs,154,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),rename_title_shows_in_prompt_border
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/rename_title_shows_in_prompt_border.rs,184,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),rename_title_survives_resume_and_stays_absent_without_rename
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/rename_title_shows_in_prompt_border.rs,261,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),rename_auto_clears_prompt_border_title
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/renders_on_action.rs,8,NO_REASON,renders_on_action
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/reparked_wait_stays_markerless.rs,21,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),reparked_wait_stays_markerless
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/requirements_version_failure_exits_2_with_guidance.rs,8,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),requirements_version_failure_exits_2_with_guidance
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/resize_preserves_scroll_position.rs,164,NO_REASON,resize_preserves_scroll_position
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/response_top_indicator_pty.rs,43,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),response_top_indicator_jumps_to_answer_start
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/reverse_agent_type_mismatch_cursor_to_default.rs,8,NO_REASON,reverse_agent_type_mismatch_cursor_to_default
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/rtl_bidi_drag_copy_logical_pty.rs,19,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),rtl_bidi_drag_copy_logical_pty
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/same_agent_type_switch_no_modal.rs,8,NO_REASON,same_agent_type_switch_no_modal
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/scroll_anchor_holds_parked_marker_during_live_stream.rs,29,NO_REASON,parked_marker_does_not_jolt_during_live_stream_after_wheel_up
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/scroll_debug_hud_env_toggles_overlay.rs,27,NO_REASON,scroll_debug_hud_env_shows_hud_and_tracks_flood
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/scroll_debug_hud_env_toggles_overlay.rs,102,NO_REASON,scroll_debug_hud_absent_without_env
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/scroll_debug_hud_env_toggles_overlay.rs,122,NO_REASON,debug_scroll_command_toggles_hud_live
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/scroll_does_not_crash.rs,7,NO_REASON,scroll_does_not_crash
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/send_now_tip_after_mid_turn_queue.rs,8,NO_REASON,send_now_tip_after_mid_turn_queue
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/send_then_ctrlc_rewinds_to_composer_no_history_dup.rs,12,NO_REASON,send_then_ctrlc_rewinds_to_composer_no_history_dup
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/shift_selection_key_encodings.rs,79,NO_REASON,legacy_shift_arrow_selects_and_type_replaces
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/shift_selection_key_encodings.rs,96,NO_REASON,legacy_word_extend_selects_alt_and_ctrl_variants
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/shift_selection_key_encodings.rs,124,NO_REASON,legacy_shift_home_end_select_to_row_edges
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/shift_selection_key_encodings.rs,167,NO_REASON,legacy_shift_up_selects_across_lines
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/shift_selection_key_encodings.rs,187,NO_REASON,kitty_super_chords_row_extend_cut_and_copy
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/shift_selection_key_encodings.rs,233,NO_REASON,backtab_with_selection_cycles_mode_and_drops_highlight
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/shift_tab_in_session_cycles_mode.rs,12,NO_REASON,shift_tab_in_session_cycles_mode
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/shift_tab_on_welcome_starts_session_in_plan_mode.rs,13,NO_REASON,shift_tab_on_welcome_starts_session_in_plan_mode
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/shift_tab_plan_nudge_from_always_approve_enters_plan.rs,8,NO_REASON,shift_tab_plan_nudge_from_always_approve_enters_plan
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/show_thinking_blocks_toggle_hides_existing_pty.rs,272,NO_REASON,show_thinking_blocks_toggle_hides_existing_pty
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/small_screen_tip_survives_slow_turn.rs,19,NO_REASON,small_screen_tip_survives_slow_turn
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/spinner_reappears_after_wait_resumes.rs,13,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),spinner_reappears_after_wait_resumes
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/sticky_header_drag_copy_pty.rs,46,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),sticky_header_drag_copy_pty
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/storage_upload_parks_on_401_and_drains_after_recovery.rs,11,NO_REASON,storage_upload_parks_on_401_and_drains_after_recovery
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/stuck_drag_finishes_on_bare_motion_pty.rs,33,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),stuck_drag_finishes_on_bare_motion_pty
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/stuck_drag_recovers_on_esc_pty.rs,36,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),stuck_drag_recovers_on_esc_pty
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/subscription_watch_and_gate_verify_pty.rs,215,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),subscription_watch_polls_free_tier_then_goes_dormant_after_upgrade
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/subscription_watch_and_gate_verify_pty.rs,305,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),startup_gate_shows_paywall_for_free_user_after_live_check
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/subscription_watch_and_gate_verify_pty.rs,348,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),stale_gate_push_never_flashes_paywall_for_subscribed_user
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/tab_focuses_scrollback_in_vim_and_default_modes.rs,48,NO_REASON,tab_focuses_scrollback_vim_mode
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/tab_focuses_scrollback_in_vim_and_default_modes.rs,58,NO_REASON,tab_focuses_scrollback_default_config
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/tab_focuses_scrollback_in_vim_and_default_modes.rs,67,NO_REASON,esc_policy_and_tab_focus_work_in_simple_mode
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/trackpad_flood_does_not_under_travel.rs,72,NO_REASON,trackpad_flood_does_not_under_travel
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/undo_tip_resets_each_new_session.rs,11,NO_REASON,undo_tip_resets_each_new_session
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/undo_tip_seen_count_never_persisted.rs,9,NO_REASON,undo_tip_seen_count_never_persisted
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/undo_tip_session_cap_blocks_fourth_show.rs,11,NO_REASON,undo_tip_session_cap_blocks_fourth_show
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/up_focuses_queue_bottom_row.rs,7,NO_REASON,up_focuses_queue_bottom_row
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/verb_group_fold_expand_collapse_pty.rs,12,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),verb_group_fold_expand_collapse_pty
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/verb_group_header_drag_copy_pty.rs,45,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),verb_group_header_drag_copy_pty
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/verb_group_settings_toggle_pty.rs,77,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),verb_group_settings_toggle_pty
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/verb_group_streaming_fold_pty.rs,13,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),verb_group_streaming_fold_pty
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/verb_group_thinking_fold_pty.rs,19,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),verb_group_thinking_fold_pty
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/verify_bashq_claim2_force_interject.rs,8,NO_REASON,verify_bashq_claim2_force_interject
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/verify_bashq_claim3_edit_keeps_bash.rs,7,NO_REASON,verify_bashq_claim3_edit_keeps_bash
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/waiting_for_model_label.rs,9,NO_REASON,waiting_for_model_label_shows_before_first_token
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/welcome_screen.rs,8,NO_REASON,welcome_screen
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/welcome_screen_braille_logo_renders_correctly.rs,11,NO_REASON,welcome_screen_braille_logo_renders_correctly
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/wheel_burst_scrolls_viewport_without_frame_amplification.rs,37,NO_REASON,wheel_burst_scrolls_viewport_without_frame_amplification
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/wheel_flood_paints_no_ghost_frames.rs,52,NO_REASON,wheel_flood_paints_no_ghost_frames
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/wheel_overscroll_at_bottom_reengages_follow_mid_stream.rs,50,NO_REASON,wheel_overscroll_at_bottom_reengages_follow_mid_stream
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/wheel_scrolls_viewport_during_streaming_turn.rs,49,NO_REASON,wheel_scrolls_viewport_during_streaming_turn
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/word_select_tip_on_double_click_pty.rs,34,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),word_select_tip_shows_and_ctrl_y_accepts
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/word_select_tip_on_double_click_pty.rs,146,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),word_select_tip_skipped_when_mode_is_word_select
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/word_select_tip_on_double_click_pty.rs,199,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),word_select_tip_skipped_when_contextual_hint_disabled
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/wrap_appearance_env_advertised_through_shell.rs,22,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),wrap_appearance_env_advertised_through_shell
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/wrap_appearance_env_advertised_through_shell.rs,54,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),wrap_appearance_env_desktop_none_does_not_restamp_parent_grok
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/wrap_child_killed_with_latched_modes_restores_terminal.rs,14,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),wrap_child_killed_with_latched_modes_restores_terminal
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/wrap_clean_exit_stays_byte_transparent.rs,9,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),wrap_clean_exit_stays_byte_transparent
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/wrap_echo_passthrough_and_exit_code.rs,8,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),wrap_echo_passthrough_and_exit_code
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/wrap_explicit_path_not_found_fails_fast.rs,9,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),wrap_explicit_path_not_found_fails_fast
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/wrap_host_image_request_returns_bracketed_paste.rs,9,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),wrap_host_image_request_returns_bracketed_paste
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/wrap_not_found_alias_routes_via_shell_contract.rs,12,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),wrap_not_found_alias_routes_via_shell_contract
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/wrap_osc52_sink_env_advertised_through_shell.rs,9,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),wrap_osc52_sink_env_advertised_through_shell
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/wrap_sigterm_restores_terminal_and_exit_code.rs,12,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),wrap_sigterm_restores_terminal_and_exit_code
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/wrap_single_string_routes_via_shell.rs,9,PTY e2e; run the owning pty_e2e_* Cargo test with --ignored (see Cargo.toml),wrap_single_string_routes_via_shell
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e/zero_turn_model_switch_no_modal.rs,7,NO_REASON,zero_turn_model_switch_no_modal
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_e2e_clipboard.rs,36,PTY e2e; exercises real copy output and /doctor,unknown_ssh_clipboard_delivery_is_unverified
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_xtversion.rs,66,NO_REASON,unknown_brand_probe_round_trip
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_xtversion.rs,101,NO_REASON,allowlisted_brand_probe_fires
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_xtversion.rs,133,NO_REASON,non_allowlisted_brand_skips_probe
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_xtversion.rs,162,NO_REASON,multiplexer_skips_probe
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_xtversion.rs,185,NO_REASON,unknown_brand_no_reply_starts_cleanly
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_xtversion.rs,214,NO_REASON,unknown_brand_malformed_reply_is_discarded
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_xtversion.rs,251,NO_REASON,unknown_brand_late_reply_swallowed_and_recorded
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_xtversion.rs,286,NO_REASON,unknown_brand_keystrokes_interleaved_with_reply
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/pty_xtversion.rs,319,NO_REASON,unknown_brand_split_reply_round_trip
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/scripted_scenarios.rs,54,NO_REASON,scripted_welcome_screen
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/scripted_scenarios.rs,61,scripted scenario; run with cargo test -- --ignored,scripted_slash_resize_storm
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/scripted_scenarios.rs,67,NO_REASON,scripted_release_notes_scroll
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/scripted_scenarios.rs,73,NO_REASON,scripted_mock_response
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/scripted_scenarios.rs,80,scripted scenario; run with cargo test -- --ignored,scripted_dashboard_overlay_agents_esc
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/scripted_scenarios.rs,86,NO_REASON,scripted_input_modalities
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/scripted_scenarios.rs,92,NO_REASON,scripted_ansi_execute_output
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/scripted_scenarios.rs,98,NO_REASON,scripted_copy_selection
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/scripted_scenarios.rs,104,NO_REASON,scripted_table_cell_selection
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/scripted_scenarios.rs,114,scripted scenario; run with cargo test -- --ignored,scripted_vim_modal_command_palette
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/scripted_scenarios.rs,122,scripted scenario; run with cargo test -- --ignored,scripted_tool_header_path_selection
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/scripted_scenarios.rs,129,scripted scenario; run with cargo test -- --ignored,scripted_bracket_prompt_input
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/scripted_scenarios.rs,136,scripted scenario; run with cargo test -- --ignored,scripted_paste_chip_double_click
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/scripted_scenarios.rs,143,scripted scenario; run with cargo test -- --ignored,scripted_paste_chip_repaste
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/scripted_scenarios.rs,149,NO_REASON,scripted_image_inputs
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/scripted_scenarios.rs,156,scripted scenario; run with cargo test -- --ignored,scripted_image_chip_preview_path_free
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/scripted_scenarios.rs,162,scripted scenario; run with cargo test -- --ignored,scripted_image_normalize_corrupt_dropped
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/scripted_scenarios.rs,168,scripted scenario; run with cargo test -- --ignored,scripted_image_normalize_persist_atomic
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/scripted_scenarios.rs,177,scripted scenario; run with cargo test -- --ignored,scripted_mermaid_affordances
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/scripted_scenarios.rs,187,scripted scenario; run with cargo test -- --ignored,scripted_path_space_hyperlink
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/scripted_scenarios.rs,275,scripted scenario; run with cargo test -- --ignored,scripted_inline_image_memory
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/scripted_scenarios.rs,341,scripted scenario; run with cargo test -- --ignored,scripted_goal_slash_presession
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/scripted_scenarios.rs,350,scripted scenario; run with cargo test -- --ignored,scripted_goal_slash_presession_disabled
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/scripted_scenarios.rs,359,scripted scenario; run with cargo test -- --ignored,scripted_folder_trust_prompt
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/scripted_scenarios.rs,367,scripted scenario; run with cargo test -- --ignored,scripted_dashboard_model_list_click
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/scripted_scenarios.rs,375,scripted scenario; run with cargo test -- --ignored,scripted_shortcuts_help_detail
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/scripted_scenarios.rs,383,scripted scenario; run with cargo test -- --ignored,scripted_undo_tip_clear_shows
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/scripted_scenarios.rs,390,scripted scenario; run with cargo test -- --ignored,scripted_undo_tip_ctrl_c_clear_shows
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/scripted_scenarios.rs,397,scripted scenario; run with cargo test -- --ignored,scripted_undo_tip_short_draft_no_show
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/scripted_scenarios.rs,404,scripted scenario; run with cargo test -- --ignored,scripted_undo_tip_short_terminal_no_show
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/scripted_scenarios.rs,411,scripted scenario; run with cargo test -- --ignored,scripted_undo_tip_completion_accept_no_show
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/scripted_scenarios.rs,418,scripted scenario; run with cargo test -- --ignored,scripted_plan_nudge_shows
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/scripted_scenarios.rs,426,scripted scenario; run with cargo test -- --ignored,scripted_plan_nudge_opt_out_no_show
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/scripted_scenarios.rs,433,scripted scenario; run with cargo test -- --ignored,scripted_mid_text_skill_token_echo
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/scripted_scenarios.rs,440,scripted scenario; run with cargo test -- --ignored,scripted_auto_compact_resize
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/scripted_scenarios.rs,448,scripted scenario; run with cargo test -- --ignored,scripted_small_screen_tip_band
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/scripted_scenarios.rs,455,scripted scenario; run with cargo test -- --ignored,scripted_small_screen_tip_no_show_tall
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/scripted_scenarios.rs,462,scripted scenario; run with cargo test -- --ignored,scripted_small_screen_tip_no_show_tiny
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/scripted_scenarios.rs,472,scripted scenario; run with cargo test -- --ignored,scripted_inline_edit_resubmit
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/scripted_scenarios.rs,479,scripted scenario; run with cargo test -- --ignored,scripted_inline_edit_unchanged_exit
+xai-grok-pager,crates/codegen/xai-grok-pager/tests/scripted_scenarios.rs,487,scripted scenario; run with cargo test -- --ignored,scripted_inline_edit_dismiss_returns_to_editor
+xai-grok-pager-pty-harness,crates/codegen/xai-grok-pager-pty-harness/tests/empty_enter_send_now.rs,8,NO_REASON,empty_enter_force_sends_top_queued
+xai-grok-pager-pty-harness,crates/codegen/xai-grok-pager-pty-harness/tests/exit_timeout.rs,21,NO_REASON,double_ctrl_c_exits_within_deadline_when_teardown_hangs
+xai-grok-pager-pty-harness,crates/codegen/xai-grok-pager-pty-harness/tests/exit_timeout.rs,35,NO_REASON,single_sighup_exits_within_deadline_when_teardown_hangs
+xai-grok-pager-pty-harness,crates/codegen/xai-grok-pager-pty-harness/tests/privacy_banner_e2e.rs,32,NO_REASON,privacy_banner_welcome_opt_out_ack_persists
+xai-grok-pager-pty-harness,crates/codegen/xai-grok-pager-pty-harness/tests/privacy_banner_e2e.rs,38,NO_REASON,privacy_banner_persists_into_agent_view_and_opt_in_shares
+xai-grok-pager-pty-harness,crates/codegen/xai-grok-pager-pty-harness/tests/prompt_history_browse_order.rs,39,NO_REASON,up_arrow_browse_interleaves_prompts_commands_and_notes
+xai-grok-pager-pty-harness,crates/codegen/xai-grok-pager-pty-harness/tests/prompt_history_durable_quit.rs,32,NO_REASON,prompt_history_durable_after_double_ctrl_c_and_recallable_on_resume
+xai-grok-pager-pty-harness,crates/codegen/xai-grok-pager-pty-harness/tests/prompt_history_durable_quit.rs,41,NO_REASON,prompt_history_durable_after_real_sigint_graceful_quit
+xai-grok-pager-pty-harness,crates/codegen/xai-grok-pager-pty-harness/tests/prompt_stash.rs,26,NO_REASON,chord_bytes_stash_and_restore_the_draft
+xai-grok-pager-pty-harness,crates/codegen/xai-grok-pager-pty-harness/tests/settings_locked_row_e2e.rs,43,NO_REASON,zdr_team_locks_row_and_suppresses_banner
+xai-grok-pager-pty-harness,crates/codegen/xai-grok-pager-pty-harness/tests/settings_locked_row_e2e.rs,49,NO_REASON,team_member_sees_admin_managed_row_and_no_banner
+xai-grok-pager-pty-harness,crates/codegen/xai-grok-pager-pty-harness/tests/x10_mouse_leak.rs,8,NO_REASON,x10_leak_defenses
+xai-grok-sandbox,crates/codegen/xai-grok-sandbox/tests/child_net_e2e.rs,14,NO_REASON,subprocess_entry
+xai-grok-sandbox,crates/codegen/xai-grok-sandbox/tests/deny_paths_e2e.rs,219,NO_REASON,subprocess_entry
+xai-grok-sandbox,crates/codegen/xai-grok-sandbox/tests/read_write_trailing_glob_e2e.rs,117,NO_REASON,subprocess_entry
+xai-grok-session-search,crates/codegen/xai-grok-session-search/src/bootstrap_tests.rs,322,flaky under workspace-wide parallelism: concurrent lease acquisition race; passes when crate runs alone,test_concurrent_gates_single_flight
+xai-grok-shell,crates/codegen/xai-grok-shell/src/agent/app.rs,1422,"pre-existing fork gap: chaos blanks PRODUCTION_ENDPOINTS (cli_chat_proxy_base_url: """"), so the policy channel is always Unavailable(ProxyRepointed) and should_open_at_startup opens the gate even for a session user. Fail-closed only holds on the upstream xAI channel.; review 2026-10",embedded_otel_gate_keeps_a_session_user_fail_closed
+xai-grok-shell,crates/codegen/xai-grok-shell/src/agent/config_tests.rs,167,asserts upstream xAI defaults removed by Chaos fork; review 2026-10,inject_url_derived_headers_adds_proxy_headers_for_cli_chat_proxy_url
+xai-grok-shell,crates/codegen/xai-grok-shell/src/agent/config_tests.rs,205,asserts upstream xAI defaults removed by Chaos fork; review 2026-10,inject_url_derived_headers_preserves_caller_extra_headers
+xai-grok-shell,crates/codegen/xai-grok-shell/src/agent/config_tests.rs,500,asserts upstream xAI defaults removed by Chaos fork; review 2026-10,session_resolver_is_not_stamped_onto_third_party_samplers
+xai-grok-shell,crates/codegen/xai-grok-shell/src/agent/config_tests.rs,1207,asserts upstream xAI defaults removed by Chaos fork; review 2026-10,default_models_dual_endpoint_routing
+xai-grok-shell,crates/codegen/xai-grok-shell/src/agent/config_tests.rs,1572,asserts upstream xAI defaults removed by Chaos fork; review 2026-10,proxy_messages_models_use_bearer_auth_scheme
+xai-grok-shell,crates/codegen/xai-grok-shell/src/agent/mvp_agent/tests/dhat_soak.rs,62,"heap soak; nightly only, needs --features dhat-heap",leader_session_lifecycle_heap_steady_state
+xai-grok-shell,crates/codegen/xai-grok-shell/src/agent/mvp_agent/tests.rs,2973,asserts upstream xAI grok.com login defaults removed by Chaos fork; review 2026-10,cached_token_fallthrough_respects_kill_switch
+xai-grok-shell,crates/codegen/xai-grok-shell/src/agent/mvp_agent/tests.rs,2994,asserts upstream xAI grok.com login defaults removed by Chaos fork; review 2026-10,cached_token_fallthrough_falls_to_grok_com_without_credentials
+xai-grok-shell,crates/codegen/xai-grok-shell/src/agent/mvp_agent/tests.rs,5537,"fork: asserts an upstream xAI settings response (writeback push) that Chaos removes by design (remote fetch defaults off, no grok.com/OIDC login); rewrite against Chaos behaviour or delete; review 2026-10",post_auth_settings_non_xai_keeps_local_but_still_emits
+xai-grok-shell,crates/codegen/xai-grok-shell/src/agent/mvp_agent/tests.rs,5580,"fork: asserts an upstream xAI settings fetch outcome (exhausted fetch opens the gate onto local policy) that Chaos removes by design (remote fetch defaults off, no grok.com/OIDC login); rewrite against Chaos behaviour or delete; review 2026-10",post_auth_settings_failure_resolves_gate_onto_local_policy
+xai-grok-shell,crates/codegen/xai-grok-shell/src/agent/mvp_agent/tests.rs,5638,"fork: asserts an upstream xAI `/settings` 401 self-heal that Chaos removes by design (remote fetch defaults off, no grok.com/OIDC login); rewrite against Chaos behaviour or delete; review 2026-10",settings_self_heal_refetches_after_token_rotation
+xai-grok-shell,crates/codegen/xai-grok-shell/src/auth/manager/lock_tests.rs,318,spawned as a subprocess by the cross-process lock tests,subprocess_lock_holder
+xai-grok-shell,crates/codegen/xai-grok-shell/src/auth/oidc/login.rs,563,"flaky under full-workspace parallelism: asserts auth.json before the persist \
+                step is awaited; passes when this crate runs alone",full_login_flow_via_race
+xai-grok-shell,crates/codegen/xai-grok-shell/src/cli_models.rs,160,asserts upstream xAI defaults (bundled model catalog / non-empty PRODUCTION_ENDPOINTS / grok.com interactive login) that this fork removes by design; rewrite against Chaos behaviour or delete; review 2026-10,resolve_oauth_session
+xai-grok-shell,crates/codegen/xai-grok-shell/src/cli_models.rs,261,asserts upstream xAI defaults (bundled model catalog / non-empty PRODUCTION_ENDPOINTS / grok.com interactive login) that this fork removes by design; rewrite against Chaos behaviour or delete; review 2026-10,resolve_priority_session_over_byok_and_deployment
+xai-grok-shell,crates/codegen/xai-grok-shell/src/remote/pull_smoke_test.rs,25,NO_REASON,smoke_push_pull_round_trip
+xai-grok-shell,crates/codegen/xai-grok-shell/src/session/acp_session_tests/session_thread_tests.rs,29,NO_REASON,session_thread_detects_panic
+xai-grok-shell,crates/codegen/xai-grok-shell/src/session/helpers/session_compact_large_body_tests.rs,93,large compaction body: allocates and serializes over 50 MiB,responses_large_tool_result_images_fit_transport_limit
+xai-grok-shell,crates/codegen/xai-grok-shell/src/session/persistence_tests.rs,1030,manual durability-cost measurement; run with --ignored --nocapture and RUST_MIN_STACK=8388608,measure_prompt_barrier_idle_barrier_and_summary_rewrite_cost
+xai-grok-shell,crates/codegen/xai-grok-shell/src/session/unified_list/mod.rs,993,"process_chat_mode_enabled() is hardcoded false (upstream + Chaos), so \
+        force_kind_chat is never called; the bad-loop cases (kind=[],null,[other]) \
+        retain their original facet value instead of being forced to None",parse_list_req_forces_kind_under_process_chat_mode_only
+xai-grok-shell,crates/codegen/xai-grok-shell/tests/external_auth_expired_credential.rs,257,asserts upstream xAI grok.com SSO login flow removed by Chaos fork; review 2026-10,expired_external_credential_routes_to_the_provider_login_flow
+xai-grok-shell,crates/codegen/xai-grok-shell/tests/subagent_bootstrap_regression.rs,17,perf regression tier; drives real subagent bursts; run with --ignored --nocapture,regression_bootstrap_cost
+xai-grok-shell,crates/codegen/xai-grok-shell/tests/test_built_binary_e2e.rs,115,NO_REASON,test_version_exits_zero
+xai-grok-shell,crates/codegen/xai-grok-shell/tests/test_built_binary_e2e.rs,135,NO_REASON,test_version_with_crash_handler_exits_zero
+xai-grok-shell,crates/codegen/xai-grok-shell/tests/test_built_binary_e2e.rs,159,NO_REASON,test_headless_session_in_git_repo
+xai-grok-shell,crates/codegen/xai-grok-shell/tests/test_built_binary_e2e.rs,184,NO_REASON,test_headless_session_in_non_git_dir
+xai-grok-shell,crates/codegen/xai-grok-shell/tests/test_built_binary_e2e.rs,199,NO_REASON,test_headless_tools_allowlist_keeps_enabled_web_tools
+xai-grok-shell,crates/codegen/xai-grok-shell/tests/test_built_binary_e2e.rs,257,NO_REASON,test_headless_tools_allowlist_does_not_fail_open_for_disabled_web_fetch
+xai-grok-shell,crates/codegen/xai-grok-shell/tests/test_built_binary_e2e.rs,297,NO_REASON,test_headless_terminal_only_allowlist_is_foreground_only
+xai-grok-shell,crates/codegen/xai-grok-shell/tests/test_built_binary_e2e.rs,335,NO_REASON,test_headless_free_usage_exhausted_prints_paywall_message
+xai-grok-shell,crates/codegen/xai-grok-shell/tests/test_built_binary_e2e.rs,385,NO_REASON,test_headless_streaming_json_output
+xai-grok-shell,crates/codegen/xai-grok-shell/tests/test_built_binary_e2e.rs,451,NO_REASON,test_headless_streaming_messages_json_output
+xai-grok-shell,crates/codegen/xai-grok-shell/tests/test_built_binary_e2e.rs,508,NO_REASON,test_headless_streaming_messages_json_carries_per_response_metadata
+xai-grok-shell,crates/codegen/xai-grok-shell/tests/test_built_binary_e2e.rs,621,NO_REASON,test_headless_streaming_messages_json_carries_stop_sequence
+xai-grok-shell,crates/codegen/xai-grok-shell/tests/test_built_binary_e2e.rs,700,NO_REASON,test_headless_json_reports_server_cost
+xai-grok-shell,crates/codegen/xai-grok-shell/tests/test_built_binary_e2e.rs,762,NO_REASON,test_headless_json_reports_usage_on_max_turns
+xai-grok-shell,crates/codegen/xai-grok-shell/tests/test_built_binary_e2e.rs,803,NO_REASON,test_headless_streaming_json_usage
+xai-grok-shell,crates/codegen/xai-grok-shell/tests/test_built_binary_e2e.rs,838,NO_REASON,headless_json_schema_chat_completions_uses_response_format
+xai-grok-shell,crates/codegen/xai-grok-shell/tests/test_built_binary_e2e.rs,897,NO_REASON,headless_json_schema_responses_uses_text_format
+xai-grok-shell,crates/codegen/xai-grok-shell/tests/test_built_binary_e2e.rs,950,NO_REASON,headless_json_schema_messages_backend_uses_structured_output_tool
+xai-grok-shell,crates/codegen/xai-grok-shell/tests/test_built_binary_e2e.rs,1035,NO_REASON,headless_json_schema_messages_validates_text_when_tool_not_called
+xai-grok-shell,crates/codegen/xai-grok-shell/tests/test_built_binary_e2e.rs,1075,NO_REASON,headless_json_schema_messages_retries_on_schema_violation
+xai-grok-shell,crates/codegen/xai-grok-shell/tests/test_built_binary_e2e.rs,1121,NO_REASON,invalid_json_schema_disables_structured_output_and_surfaces_error
+xai-grok-shell,crates/codegen/xai-grok-shell/tests/test_built_binary_e2e.rs,1196,NO_REASON,test_stdio_full_session_lifecycle
+xai-grok-shell,crates/codegen/xai-grok-shell/tests/test_built_binary_e2e.rs,1241,NO_REASON,test_stdio_session_close
+xai-grok-shell,crates/codegen/xai-grok-shell/tests/test_built_binary_e2e.rs,1307,NO_REASON,test_stdio_prompt_then_immediate_load_session
+xai-grok-shell,crates/codegen/xai-grok-shell/tests/test_built_binary_e2e.rs,1389,NO_REASON,test_stdio_xcode_escaped_slash_methods_get_responses
+xai-grok-shell,crates/codegen/xai-grok-shell/tests/test_built_binary_e2e.rs,1499,NO_REASON,test_stdio_agent_exits_on_stdin_eof
+xai-grok-shell,crates/codegen/xai-grok-shell/tests/test_built_binary_e2e.rs,1621,NO_REASON,test_headless_managed_config_byok_sends_authorized_requests
+xai-grok-shell,crates/codegen/xai-grok-shell/tests/test_built_binary_e2e.rs,1673,NO_REASON,headless_reasoning_efforts_payload_parses_and_legacy_effort_rides_wire
+xai-grok-shell,crates/codegen/xai-grok-shell/tests/test_built_binary_e2e.rs,1813,NO_REASON,test_headless_timeout_exit_kills_pending_background_task
+xai-grok-shell,crates/codegen/xai-grok-shell/tests/test_built_binary_e2e.rs,1854,NO_REASON,test_headless_no_wait_exit_kills_background_task
+xai-grok-shell,crates/codegen/xai-grok-shell/tests/test_built_binary_e2e.rs,1891,NO_REASON,test_headless_waits_for_short_background_task_and_exits_clean
+xai-grok-shell,crates/codegen/xai-grok-shell/tests/test_doom_loop_recovery.rs,558,NO_REASON,headless_config_enables_doom_loop_check_header
+xai-grok-shell,crates/codegen/xai-grok-shell/tests/test_leader_stdio_integration.rs,3128,leader-acceptance: cancel severed in reconnect swap window is not resent; un-ignore with cancel-ack,test_cancel_severed_in_swap_window_reaches_agent_after_recovery
+xai-grok-shell,crates/codegen/xai-grok-shell/tests/test_trusted_local_plugin_refresh_e2e.rs,199,requires pre-built grok binary; run with --ignored,headless_session_refreshes_trusted_local_plugin_and_writes_session_json
+xai-grok-shell-base,crates/codegen/xai-grok-shell-base/src/util/mod.rs,349,fork: PROD_CLI_CHAT_PROXY_BASE_URL is empty in Chaos; grok.com proxy URLs are not recognized; review 2026-10,test_is_cli_chat_proxy_url_accepts_proxy_subpath
+xai-grok-shell-terminal,crates/codegen/xai-grok-shell-terminal/src/local_terminal.rs,268,flaky on CI: PTY timing race — background pid echo may not arrive before the kill under CI scheduler latency,test_timeout_kills_grandchildren_and_returns_promptly
+xai-grok-tools,crates/codegen/xai-grok-tools/src/computer/local/shell_state.rs,1183,flaky on CI: bash allexport + printenv exit 126 under certain CI bash configurations,test_user_cmd_var_not_exported_under_allexport_bash
+xai-grok-tools,crates/codegen/xai-grok-tools/src/implementations/lsp/tests.rs,690,NO_REASON,e2e_real_typescript_language_server
+xai-grok-tools,crates/codegen/xai-grok-tools/src/implementations/lsp/tests.rs,2157,NO_REASON,e2e_real_roslyn_survives_editing
+xai-grok-tools,crates/codegen/xai-grok-tools/tests/cgroup_memory_test.rs,141,requires Linux cgroupv2 with delegation — run with: cargo test --test cgroup_memory_test -- --ignored --nocapture,test_under_limit_exits_normally
+xai-grok-tools,crates/codegen/xai-grok-tools/tests/cgroup_memory_test.rs,179,requires Linux cgroupv2 with delegation,test_over_limit_gets_oom_killed
+xai-grok-tools,crates/codegen/xai-grok-tools/tests/cgroup_memory_test.rs,231,requires Linux cgroupv2 with delegation,test_session_survives_oom
+xai-grok-tools,crates/codegen/xai-grok-tools/tests/cgroup_memory_test.rs,277,requires Linux cgroupv2 with delegation,test_background_task_oom
+xai-grok-tools,crates/codegen/xai-grok-tools/tests/cgroup_memory_test.rs,339,requires Linux cgroupv2 with delegation,test_gradual_allocation_oom
+xai-grok-tools,crates/codegen/xai-grok-tools/tests/test_subagent_soak.rs,619,subagent soak; run with --ignored (SUBAGENT_SOAK_CYCLES bounds the measured window),subagent_lifecycle_soak_bounds_threads_open_files_and_heap
+xai-grok-update,crates/codegen/xai-grok-update/src/auto_update_tests.rs,932,asserts upstream x.ai channel-parameterized install URLs; Chaos fork installs from chao2hang/chaos-code with a single release channel,test_reinstall_hint_gh_release_mentions_gh_command
+xai-grok-update,crates/codegen/xai-grok-update/src/auto_update_tests.rs,946,asserts upstream x.ai channel-parameterized install URLs; Chaos fork installs from chao2hang/chaos-code with a single release channel,test_reinstall_hint_internal_mentions_platform_installer
+xai-grok-update,crates/codegen/xai-grok-update/src/auto_update_tests.rs,973,asserts upstream x.ai channel-parameterized install URLs; Chaos fork installs from chao2hang/chaos-code with a single release channel,test_reinstall_hint_internal_alpha_sets_channel
+xai-grok-update,crates/codegen/xai-grok-update/src/auto_update_tests.rs,991,asserts upstream x.ai channel-parameterized install URLs; Chaos fork installs from chao2hang/chaos-code with a single release channel,test_reinstall_hint_enterprise_uses_enterprise_script
+xai-grok-update,crates/codegen/xai-grok-update/src/auto_update_tests.rs,1006,asserts upstream x.ai channel-parameterized install URLs; Chaos fork installs from chao2hang/chaos-code with a single release channel,test_reinstall_hint_malformed_channel_falls_back_to_stable
+xai-grok-update,crates/codegen/xai-grok-update/tests/test_blitz_cancel.rs,374,"stress: 100k iterations, run via `just blitz-stress`",blitz_fuzz_stress
+xai-grok-workspace-daemon,crates/codegen/xai-grok-workspace-daemon/src/daemonize.rs,898,known CI flake: process signal timing in containers,take_over_declines_when_lock_is_never_released
+xai-grok-workspace-daemon,crates/codegen/xai-grok-workspace-daemon/src/daemonize.rs,987,known CI flake: process signal timing in containers,take_over_acquires_cleanly_when_predecessor_releases

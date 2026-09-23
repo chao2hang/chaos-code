@@ -657,7 +657,7 @@ npm 元包 `crates/codegen/xai-grok-pager/npm/chaos/package.json` 的版本已�
 `docs/audit-followup-report.md` §4 已于 2026-09-23 按实际代码与仓库配置状态更新。本项仍未清零：当前 release 可在无签名时发布，updater 默认不强制验签，Windows 安装脚本在依赖或签名缺失时会跳过验证。
 
 - [x] 更新 `docs/audit-followup-report.md` §4，记录签名接线、降级路径和未配置密钥时的真实状态。（2026-09-23；证据：本次复核）
-- [ ] 由仓库维护者生成/托管 Ed25519 密钥对，配置 `CHAOS_SIGNING_PRIVATE_KEY` secret 与 `CHAOS_SIGNING_PUBLIC_KEY` repository variable；用名称检查确认两项存在，不读取或输出密钥值。
+- [ ] 由仓库维护者生成/托管 Ed25519 密钥对，配置 `CHAOS_SIGNING_PRIVATE_KEY` secret 与 `CHAOS_SIGNING_PUBLIC_KEY` repository variable；名称检查确认两项均存在（2026-09-23），未读取或输出密钥值。仍需核验配置有效且公私钥匹配。
 - [ ] release workflow 强制要求签名密钥与 `require-sig` feature；配置缺失时 release 阻断，不得静默发布无签名产物。
 - [ ] 统一 Unix、PowerShell 与 batch 安装路径的验签策略；明确没有 Python/cryptography、签名文件缺失或公钥缺失时必须失败还是明确 opt-out。
 - [ ] 增加自动更新及安装端到端测试：有效签名接受、签名错误拒绝、缺签名拒绝、错误公钥拒绝；在 Windows runner 验证 PowerShell 路径。
@@ -844,8 +844,8 @@ metadata`、`xai-grok-config`、`xai-tool-types`、pager `settings_e2e` 等）�
 既存缺陷、只记录不动**。下次有人碰 `bidi.rs` 时应顺手把它改成显式传入的
 布尔参数（而非全局静态），那才是根治。
 
-- [ ] 修复 `scripts/ci/ignored-tests.sh`：CSV 字段需正确转义；`#[ignore] // 注释` 仍应视为裸属性；多行 reason、转义引号与空清单需有 fixtures。2026-09-23 的 Q4 初扫已撤回，错误原因与扫描记录见 `docs/ignored-audit-2026q4-summary.md`。
-- [ ] 修复统计器后重新跑 `scripts/ci/ignored-tests.sh --csv > docs/ignored-audit-2026q4.csv`，核对与 Q3 基线差异，再逐项审查 review 到期条目。
+- [x] 修复 `scripts/ci/ignored-tests.sh`：入口改用 Python 标准库 CSV 输出与 Rust 字符串转义解析；`#[ignore] // 注释` 仍识别为裸属性。四个 fixture 覆盖行尾注释、多行 reason/转义引号、CSV 逗号/引号/换行、空清单。（2026-09-23；`python3 scripts/ci/test-ignored-tests.py`：4 passed）
+- [x] 修复后重新生成 `docs/ignored-audit-2026q4.csv`，用标准 CSV reader 回读验证 434 行、5 列；盘点 218 个无理由属性与 37 条含日期 reason。已更新 `docs/ignored-audit-2026q4-summary.md`；Q3 使用不同扫描口径，不作直接差异比较。逐项 review 仍待维护者审查。
 - [ ] 复核所有 fork 债务的 `review 2026-10` 到期条目：逐条判定“修复 / 删除 / 续期并写明理由”，不允许无声续期。
 - [ ] 裸 `#[ignore]` 治理：先用可靠解析结果确定存量；再建显式存量基线/豁免的 CI 门禁拒绝新增；最后按 crate 分批补准确理由与 review date。不得把行尾注释自动当作属性 reason。
 - [ ] `xai-grok-update` 的 wiremock 重写队列：`test_concurrent_*` 系列 8 条是优先项（该 crate 现存 7 个 `#[ignore]`，与文档记的 48 条不符，需要先核对口径）。

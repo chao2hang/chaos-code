@@ -1,11 +1,7 @@
-# 2026 Q4 ignored test audit — deferred
+# 2026 Q4 ignored test audit
 
-The initial audit attempt on 2026-09-23 exposed defects in `scripts/ci/ignored-tests.sh`:
+The inventory was regenerated on 2026-09-23 with the repaired Python scanner at `scripts/ci/ignored-tests.py`; the full machine-readable result is `docs/ignored-audit-2026q4.csv`.
 
-- CSV output does not quote fields correctly, so reasons containing commas are split into columns.
-- The parser treats trailing source comments after `#[ignore]` as a non-empty reason. For example, `#[ignore] // requires pre-built binary` is still a bare Rust attribute, but was not classified as `NO_REASON`.
-- Therefore the preliminary totals (452 attributes, 228 bare, 49 dated, 403 undated) and `docs/ignored-audit-2026q4.csv` are invalid and must not be used as a governance baseline.
+The scanner emits one CSV row per Rust `#[ignore]` attribute and the CSV was read back with Python's standard CSV parser. Five fixtures cover trailing comments, multiline reasons with escaped quotes, CSV commas/quotes/newlines, an empty source tree, and textual `#[ignore]` examples inside documentation comments.
 
-A direct source-line scan found at least 218 `#[ignore]` attributes with no Rust reason string, but this is not a complete count because valid reasons may span lines and attributes can carry different syntax. The Q4 audit remains open until the inventory tool parses Rust attributes accurately, emits valid CSV, and passes fixtures for comments, multiline reasons, escaped quotes, and empty inventories.
-
-No ignore reasons were mass-edited and no CI gate was enabled against this unverified inventory.
+Current inventory: **434 attributes**, of which **218 have no Rust reason string** and **37 reasons include a `YYYY-MM` review date**. These are scanner counts, not an approval or classification of ignored tests. The 2026 Q3 file records a prior point-in-time scan using a different method, so its counts are not directly comparable. The source-by-source review and approved baseline are still pending; no legacy ignores were edited and no CI gate was enabled.
