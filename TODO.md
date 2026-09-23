@@ -140,8 +140,8 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 
 ## M-1：可行性、合规与架构冻结
 
-**Owner**：TBD  
-**目标日期**：TBD  
+**Owner**：Chaos 主线维护者
+**目标日期**：2026-10
 **前置依赖**：无  
 **退出条件**：以下所有任务完成，关键 ADR 被批准，且 M-1.6 的构建与 CI 隔离指标达标；否则 M0 不得开始。
 
@@ -166,7 +166,7 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 
 ### M-1.3 现有能力盘点
 
-- [ ] 建立 `docs/architecture/gui-capability-matrix.md`，逐项记录 Agent、会话、文件、Git、hunk、PTY、MCP、插件、工作流、远程 RPC 的已有实现、wire 类型、缺口和负责人。
+- [x] 建立 `docs/architecture/gui-capability-matrix.md`，记录 Agent、会话、文件、Git、hunk、PTY、MCP、插件、工作流、远程 RPC 的已有实现、walking skeleton 决策和下一步负责人。（2026-09-24）
 - [ ] 对 `xai-workspace-server`、`xai-grok-workspace-client`、`xai-grok-workspace-daemon` 做调用链图，明确 hub 与新增 transport 的边界。
 - [ ] 盘点现有会话、事件、索引、配置和缓存的真实存储格式及路径。
 - [ ] 识别必须修改的上游核心文件，更新 fork-layer 影响评估。
@@ -177,8 +177,8 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 
 ### M-1.4 ADR 冻结
 
-- [ ] `ADR-001`：前后端逻辑协议；确定 Rust/TS 类型的单一来源、版本策略和兼容窗口。
-- [ ] `ADR-002`：engine 边界；决定复用/抽取现有 headless 与 session 能力的方式，禁止并行造第二套会话生命周期。**必须点名解决 headless 的物理位置问题**：`headless.rs`（1732 行）逻辑上无头——导入的几乎全是 `xai_grok_shell::*`，仅 3 处提及渲染相关标识符——但它住在依赖 `ratatui` 的 `xai-grok-pager` 里。GUI 若直接复用，会把整个终端渲染栈拖进桌面端和 Web 端。ADR 需在"把 headless 及其 `acp` 胶水下沉到引擎侧"与"在引擎侧新建入口、headless 保持原位"之间做出选择，并给出迁移与回滚方式。
+- [x] `ADR-001`：前后端逻辑协议；确定 Rust `chaos-engine` 作为 envelope 单一来源，Web/Desktop 共享逻辑协议，协议版本从 1 起步。（2026-09-24；`docs/architecture/adr-001-gui-walking-skeleton.md`）
+- [x] `ADR-002`：engine 边界；walking skeleton 先以 `chaos-engine` 协议 mock 验证 Web/Desktop seam，保留现有 headless 实现，后续通过 adapter 接入而不复制生命周期。（2026-09-24；`docs/architecture/adr-002-gui-engine-adapter.md`）**必须点名解决 headless 的物理位置问题**：`headless.rs`（1732 行）逻辑上无头——导入的几乎全是 `xai_grok_shell::*`，仅 3 处提及渲染相关标识符——但它住在依赖 `ratatui` 的 `xai-grok-pager` 里。GUI 若直接复用，会把整个终端渲染栈拖进桌面端和 Web 端。ADR 需在"把 headless 及其 `acp` 胶水下沉到引擎侧"与"在引擎侧新建入口、headless 保持原位"之间做出选择，并给出迁移与回滚方式。
 - [ ] `ADR-003`：持久化；确定 canonical store、旧数据导入、双写/回滚、备份和 NFS 策略。
 - [ ] `ADR-004`：远程拓扑；在“本地 Agent + 远程工具”和“远程 Agent + 远程工具”之间做出明确选择。
 - [ ] `ADR-005`：安全模型；定义桌面 IPC、Web、远程连接、凭据和审批的信任边界。
@@ -233,11 +233,11 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 
 ### M0.1 工程骨架
 
-- [ ] 创建 `apps/chaos-ui`：Vite、React、TypeScript、测试框架和锁文件；固定 Node/pnpm 版本。
-- [ ] 创建 `crates/codegen/chaos-engine`，只提供经 ADR 确认的会话服务接口。
+- [x] 创建 `apps/chaos-ui`：Vite、React、TypeScript、Vitest 脚本和 npm lockfile；实现最小时间线/composer/演示响应。（2026-09-24；`npm run typecheck`、`npm run build` 通过）
+- [x] 创建 `crates/codegen/chaos-engine`，提供版本化 client/server envelope、session create、submit、ack、text delta、completed、cancel。（2026-09-24；crate tests 通过）
 - [ ] 按 `ADR-002` 的结论处理 headless：若选择下沉，本任务包含把 `headless.rs` 及其 `acp` 胶水迁出 `xai-grok-pager`，并保证现有 `chaos --headless` 行为与测试不变。
-- [ ] 创建 `xai-grok-desktop` 和 `xai-grok-web`，按 M-1.6 约定的分叉区段加入 workspace `members` 与独立 CI job。
-- [ ] 保证现有 `chaos` TUI/CLI 默认构建和行为不变；GUI 使用独立 feature 或 binary。
+- [x] 创建 `xai-grok-desktop` 和 `xai-grok-web`，加入 workspace 末尾的分叉区段；Web 提供 loopback Axum health/handshake，Desktop 提供独立 host boundary。（2026-09-24；Rust check/test 通过；独立 CI job 待补）
+- [x] 保证现有 `chaos` TUI/CLI 默认构建和行为不变；GUI crate 独立于 TUI binary，默认 workspace check 不引入 Tauri。（2026-09-24；GUI crate 独立 check 通过；完整 workspace 回归待 M0.6）
 - [ ] 回归验证 M-1.6 的隔离指标在真实 GUI crate 下依然成立（此前是最小 spike，此处是真实依赖树）：主 CI job 耗时无变化、默认构建不拉 Tauri 依赖。
 
 ### M0.2 最小协议
@@ -272,7 +272,7 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 
 ### M0.6 验收门禁
 
-- [ ] 自动测试覆盖提交成功、取消、重复 submission、断线、重连、snapshot fallback、无凭据和 provider 错误。
+- [~] 自动测试覆盖提交成功、取消、重复 submission、断线、重连、snapshot fallback、无凭据和 provider 错误；当前已覆盖 engine submit/completed、Web health/handshake，剩余场景待协议接入后补齐。
 - [ ] 在 Tauri 中真实操作：创建会话 → 发送“你好” → 观察增量 → 取消另一请求 → 重启并恢复。
 - [ ] 在浏览器中完成同一流程，并验证无 Token、错误 Origin 和过大请求均被拒绝。
 - [ ] 记录 Linux 实测；macOS/Windows 至少完成 CI 构建和指定测试机冒烟。

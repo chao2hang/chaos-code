@@ -1709,6 +1709,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "chaos-engine"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "chrono"
 version = "0.4.44"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -13550,6 +13562,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "xai-grok-desktop"
+version = "0.1.0"
+dependencies = [
+ "chaos-engine",
+]
+
+[[package]]
 name = "xai-grok-diag-server"
 version = "0.1.0"
 dependencies = [
@@ -14709,6 +14728,19 @@ dependencies = [
  "xai-dirs",
  "xai-grok-extra-ca",
  "xai-tty-utils",
+]
+
+[[package]]
+name = "xai-grok-web"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "chaos-engine",
+ "serde_json",
+ "tokio",
+ "tower",
+ "tower-http",
 ]
 
 [[package]]

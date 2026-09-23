@@ -13,6 +13,10 @@ members = [
     "crates/codegen/ptyctl",
     "crates/codegen/ptyctl-cli",
     "crates/codegen/xai-acp-lib",
+    # Chaos GUI fork layer: kept at the end to minimize upstream sync conflicts.
+    "crates/codegen/chaos-engine",
+    "crates/codegen/xai-grok-desktop",
+    "crates/codegen/xai-grok-web",
     "crates/codegen/xai-agent-lifecycle",
     "crates/codegen/xai-chat-state",
     "crates/codegen/xai-codebase-graph",
