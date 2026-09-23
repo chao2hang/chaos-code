@@ -1,24 +1,13 @@
 # Changelog
 
-## 0.4.1 — 2026-09-23
+## 0.4.2 — 2026-09-23
 
-本版的内容与 `0.4.0` **完全相同**，唯一差别是修好了发布流水线。
+本版本修复发布流水线与 npm 发布安全性，并默认将 npm 发布与 GitHub Release 解耦；功能内容延续 0.4.1。
 
-`v0.4.0` 的 tag 推出后，六个构建里两个 Windows 作业在第 5 步「读取工具链」就失败
-了：该步骤用 `sed` / `test` / `set -euo pipefail`，却没有声明 `shell: bash`，而
-Windows runner 的默认 shell 是 pwsh。`ci.yml` 是 ubuntu-only，所以本地与 CI 全绿，
-问题只在发版时才现形——`0.4.0` 因此没有产出任何产物（GitHub Release 与 npm 上都没
-有它）。
-
-- **修复**：`release.yml` 的 `Read pinned toolchain` 补上 `shell: bash`；`ci.yml`
-  的同名步骤也补上，因为它是被复制到 release 里的那一份。
-- **新增门禁**：`scripts/ci/check-workflow-shells.py`，接进 `workflows-present` 作业
-  ——凡是 `runs-on` 可能落在 Windows 上的作业，其每个 `run:` 步骤必须声明
-  `shell: bash`，或者带一条提到 `runner.os` 的 `if:` 守卫。
-- **版本号进到 `0.4.1`**，没有重打 `v0.4.0` 这个 tag：仓库既有做法就是失败后发下一
-  个补丁版（`v0.2.125` 失败后发的是 `v0.2.126`），且已推送的 tag 不做改写。
-
-`0.4.0` 的功能条目见下一节，本版照单全收。
+- `release.yml` 的 `Read pinned toolchain` 增加 `shell: bash`，修复 Windows runner 默认 pwsh 导致的失败；新增 `scripts/ci/check-workflow-shells.py` CI 门禁。
+- npm 发布不再有 `continue-on-error` 假成功；真实 npm 发布后会逐包核验 registry。默认只发布 GitHub Release，只有仓库变量 `CHAOS_NPM_PUBLISH_ENABLED=true` 才启用 npm。
+- 发布脚本要求平台包归档完整，拒绝用 `.gitkeep` 冒充二进制；缺平台时不发布固定依赖六个平台的元包。新增回归测试覆盖空、部分、完整平台集合与 registry 假阳性。
+- 已发现 npm 上两个 Windows 平台包名为 `0.0.1-security` 安全占位包，尚待包所有者通过 npm 支持处理。因此本版将 npm 默认关闭，不影响 GitHub Release 二进制交付。
 
 ## 0.4.0 — 2026-09-22
 

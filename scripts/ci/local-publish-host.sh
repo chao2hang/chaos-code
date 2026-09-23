@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
-# Publish chaos-code for the *current host platform only* — no GitHub Actions,
-# no NPM_TOKEN secret. Uses your interactive `npm login` session.
+# Publish chaos-code packages locally — no GitHub Actions or NPM_TOKEN secret.
+# Full publication requires six binaries; partial mode only publishes the host package.
 #
 # Prerequisites:
 #   npm login          # once
-#   release binary at target/release/chaos or target/<triple>/release-dist/chaos
+#   all six release binaries for full publication, supplied via CHAOS_* variables
+#   host release binary only when PUBLISH_NPM_ALLOW_PARTIAL=1
 #
 # Usage (repo root):
-#   ./scripts/ci/local-publish-host.sh           # pack dry-run by default
-#   ./scripts/ci/local-publish-host.sh --publish # actually npm publish
+#   ./scripts/ci/local-publish-host.sh           # assemble + pack dry-run
+#   ./scripts/ci/local-publish-host.sh --publish # publish all packages after dry-run
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -29,64 +30,64 @@ while [[ $# -gt 0 ]]; do
 done
 
 case "$(uname -s)-$(uname -m)" in
-  Linux-x86_64|Linux-amd64)   PLATFORM=linux-x64;   ENV_KEY=CHAOS_LINUX_X64;   BIN_NAME=chaos ;;
-  Linux-aarch64|Linux-arm64)  PLATFORM=linux-arm64; ENV_KEY=CHAOS_LINUX_ARM64; BIN_NAME=chaos ;;
-  Darwin-arm64)               PLATFORM=darwin-arm64; ENV_KEY=CHAOS_DARWIN_ARM64; BIN_NAME=chaos ;;
-  Darwin-x86_64)              PLATFORM=darwin-x64;  ENV_KEY=CHAOS_DARWIN_X64;  BIN_NAME=chaos ;;
-  MINGW*|MSYS*|CYGWIN*)
-    echo "on Windows use Git Bash / WSL; set CHAOS_WIN32_* and ONLY_HOST manually" >&2
-    exit 1
-    ;;
+  Linux-x86_64|Linux-amd64)   PLATFORM=linux-x64 ;;
+  Linux-aarch64|Linux-arm64)  PLATFORM=linux-arm64 ;;
+  Darwin-arm64)               PLATFORM=darwin-arm64 ;;
+  Darwin-x86_64)              PLATFORM=darwin-x64 ;;
+  MINGW*|MSYS*|CYGWIN*)       PLATFORM=win32-x64 ;;
   *)
     echo "unsupported host: $(uname -s)-$(uname -m)" >&2
     exit 1
     ;;
 esac
 
-# Prefer release-dist, then release.
-BIN=""
-for cand in \
-  "target/release-dist/$BIN_NAME" \
-  "target/release/$BIN_NAME" \
-  "target/$(rustc -vV 2>/dev/null | awk '/host:/{print $2}')/release-dist/$BIN_NAME" \
-  "target/$(rustc -vV 2>/dev/null | awk '/host:/{print $2}')/release/$BIN_NAME"
-do
-  if [[ -f "$cand" ]]; then
-    BIN="$cand"
-    break
+# A single-host build is not sufficient: the meta package pins all six platform
+# packages, and publishing it without those packages makes installs unreliable.
+PLATFORMS=(darwin-arm64 darwin-x64 linux-arm64 linux-x64 win32-arm64 win32-x64)
+REQUIRED_BINARIES=("${PLATFORMS[@]}")
+if [[ "${PUBLISH_NPM_ALLOW_PARTIAL:-0}" == "1" ]]; then
+  export PUBLISH_EXISTING_ONLY=1
+  REQUIRED_BINARIES=("$PLATFORM")
+  echo "warning: partial publish enabled; only the host platform package will be assembled; the meta package will not be published" >&2
+fi
+for platform in "${REQUIRED_BINARIES[@]}"; do
+  key="CHAOS_${platform^^}"
+  key="${key//-/_}"
+  if [[ -z "${!key:-}" || ! -f "${!key}" ]]; then
+    echo "missing $key: provide the binary before publishing" >&2
+    exit 1
   fi
 done
-
-if [[ -z "$BIN" ]]; then
-  echo "no binary found. Build first:" >&2
-  echo "  cargo build -p xai-grok-pager-bin --release" >&2
-  echo "  # or: cargo build -p xai-grok-pager-bin --profile release-dist" >&2
-  exit 1
-fi
 
 if [[ -n "$VERSION" ]]; then
   node scripts/ci/stamp-npm-version.mjs "$VERSION"
 fi
 
 echo "host platform: $PLATFORM"
-echo "binary:        $BIN ($(du -h "$BIN" | awk '{print $1}'))"
-export "$ENV_KEY=$BIN"
-export ONLY_HOST=1
+for platform in "${REQUIRED_BINARIES[@]}"; do
+  key="CHAOS_${platform^^}"
+  key="${key//-/_}"
+  printf '%-24s %s (%s)\n' "$key" "${!key}" "$(du -h "${!key}" | awk '{print $1}')"
+  export "$key"
+done
+export ONLY_PLATFORMS="${REQUIRED_BINARIES[*]}"
 node crates/codegen/xai-grok-pager/npm/chaos/scripts/assemble-platform-packages.js
-
-NPM_ROOT="$ROOT/crates/codegen/xai-grok-pager/npm"
-PLAT_DIR="$NPM_ROOT/chaos-$PLATFORM"
-META_DIR="$NPM_ROOT/chaos"
+if [[ "${PUBLISH_NPM_ALLOW_PARTIAL:-0}" == "1" ]]; then
+  export ONLY_PLATFORMS="$PLATFORM"
+fi
 
 if [[ "$PUBLISH" -eq 0 ]]; then
   echo ""
   echo "== dry-run (pass --publish to actually release) =="
-  (cd "$PLAT_DIR" && npm pack --dry-run)
-  (cd "$META_DIR" && npm pack --dry-run)
+  DRY_RUN=1 NPM_TOKEN=dummy PUBLISH_EXISTING_ONLY=1 PUBLISH_NPM_ALLOW_PARTIAL="${PUBLISH_NPM_ALLOW_PARTIAL:-0}" bash scripts/ci/publish-npm.sh
   echo ""
   echo "When ready:"
   echo "  1. npm whoami          # must be logged in"
-  echo "  2. $0 --publish"
+  if [[ "${PUBLISH_NPM_ALLOW_PARTIAL:-0}" == "1" ]]; then
+    echo "  2. PUBLISH_NPM_ALLOW_PARTIAL=1 $0 --publish # platform only; no meta package"
+  else
+    echo "  2. $0 --publish       # all six platforms + meta package"
+  fi
   exit 0
 fi
 
@@ -95,13 +96,12 @@ if ! npm whoami >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "==> publish chaos-code-$PLATFORM"
-(cd "$PLAT_DIR" && npm publish --access public)
-
-echo "==> publish chaos-code (meta)"
-(cd "$META_DIR" && npm publish --access public)
+echo "==> publish the selected platform packages"
+PUBLISH_EXISTING_ONLY=1 PUBLISH_NPM_ALLOW_PARTIAL="${PUBLISH_NPM_ALLOW_PARTIAL:-0}" bash scripts/ci/publish-npm.sh
 
 echo ""
-echo "done. Users on $PLATFORM can:"
-echo "  npm i -g chaos-code"
-echo "Other platforms need their platform packages published (CI later, or another host)."
+if [[ "${PUBLISH_NPM_ALLOW_PARTIAL:-0}" == "1" ]]; then
+  echo "done. Published $PLATFORM only; the meta package was not published."
+else
+  echo "done. Published all six platform packages and the meta package."
+fi

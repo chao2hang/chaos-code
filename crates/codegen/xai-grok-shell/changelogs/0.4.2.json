@@ -93,5 +93,10 @@
     "category": "fixes",
     "description": "npm 发布安全：拒绝把 `.gitkeep` 当作二进制、默认要求六个平台包归档齐全才发布固定依赖六平台的元包；partial 模式只发布平台包。新增 `scripts/ci/test-publish-npm.sh` 覆盖空目录、占位文件、平台不全、partial opt-in、完整包集及 registry 拒绝发布的回归场景。",
     "breaking_change": false
+  },
+  {
+    "category": "compatibility",
+    "description": "版本号统一为 `0.4.2`，`xai-grok-version`、`xai-grok-pager`、`xai-grok-pager-bin`、`xai-grok-shell` 与 `Cargo.lock` 联动；tag 默认发布 GitHub Release，npm 发布需显式启用 `CHAOS_NPM_PUBLISH_ENABLED`。",
+    "breaking_change": false
   }
 ]

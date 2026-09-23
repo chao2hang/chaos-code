@@ -189,15 +189,8 @@ jobs:
           node --check crates/codegen/xai-grok-pager/npm/chaos/bin/postinstall.js
           node --check crates/codegen/xai-grok-pager/npm/chaos/bin/chaos
 
-      - name: publish-npm.sh dry-run guard
-        run: |
-          set -euo pipefail
-          # Without bin/ contents and without token, should fail fast (not hang)
-          if DRY_RUN=1 bash scripts/ci/publish-npm.sh 2>/dev/null; then
-            echo "expected failure without assembled bins" >&2
-            exit 1
-          fi
-          echo "publish-npm correctly refuses empty packages"
+      - name: publish-npm.sh guards
+        run: bash scripts/ci/test-publish-npm.sh
 
   workflows-present:
     name: workflows present

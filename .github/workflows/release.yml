@@ -1,12 +1,13 @@
 # Build multi-platform `chaos` binaries → GitHub Release → optional npm publish.
 #
 # Triggers:
-#   - push tag v*                 → build + GH Release + npm (if NPM_TOKEN set)
+#   - push tag v*                 → build + GitHub Release; npm only when repository variable enables it
 #   - workflow_dispatch           → same; toggles below
 #
-# Secrets (optional until you want npm):
-#   NPM_TOKEN  — npm Automation token with publish on chaos-code / chaos-code-*
-#                Without it: binaries + GitHub Release still work; npm step is skipped.
+# Secrets:
+#   NPM_TOKEN  — npm token with publish access on all publishable chaos-code packages
+# Variables:
+#   CHAOS_NPM_PUBLISH_ENABLED=true — opt in to npm publication after all package names are publishable
 #   CHAOS_SIGNING_PRIVATE_KEY — base64-encoded 32-byte ed25519 private key
 #                seed for signing release binaries. Without it: binaries still
 #                ship, but auto-update signature verification is disabled.
@@ -30,10 +31,10 @@ on:
         required: false
         type: string
       publish_npm:
-        description: "Publish to registry.npmjs.org (requires NPM_TOKEN secret)"
+        description: "Publish to npmjs (requires NPM_TOKEN and all package names released)"
         required: false
         type: boolean
-        default: true
+        default: false
       create_github_release:
         description: "Create/update GitHub Release with binaries"
         required: false
@@ -87,10 +88,11 @@ jobs:
           echo "tag=v$VER" >> "$GITHUB_OUTPUT"
 
           if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
-            echo "publish_npm=true" >> "$GITHUB_OUTPUT"
+            echo "publish_npm=${{ vars.CHAOS_NPM_PUBLISH_ENABLED == 'true' && 'true' || 'false' }}" >> "$GITHUB_OUTPUT"
             echo "create_github_release=true" >> "$GITHUB_OUTPUT"
           else
-            # workflow_dispatch — honor checkboxes (default true)
+            # workflow_dispatch — honor checkboxes; npm defaults off until the
+            # blocked package names and token permissions are explicitly resolved.
             echo "publish_npm=${{ inputs.publish_npm }}" >> "$GITHUB_OUTPUT"
             echo "create_github_release=${{ inputs.create_github_release }}" >> "$GITHUB_OUTPUT"
           fi
@@ -258,8 +260,9 @@ jobs:
   # ─────────────────────────────────────────────────────────────────────────
   package:
     needs: [resolve-version, build]
-    # Run even if optional matrix legs failed (e.g. windows-11-arm unavailable)
-    if: always() && needs.resolve-version.result == 'success' && needs.build.result != 'cancelled'
+    # Optional matrix legs use job-level continue-on-error, so a successful
+    # build result means every required platform passed while optional legs may be absent.
+    if: always() && needs.resolve-version.result == 'success' && needs.build.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -348,7 +351,7 @@ jobs:
       # Skip silently when the secret is not configured (e.g. forks, dev
       # builds) — the binaries still ship, verification is just not enforced.
       - name: Sign binaries
-        if: vars.CHAOS_SIGNING_PUBLIC_KEY != ''
+        if: ${{ vars.CHAOS_SIGNING_PUBLIC_KEY != '' }}
         shell: bash
         env:
           CHAOS_SIGNING_PRIVATE_KEY: ${{ secrets.CHAOS_SIGNING_PRIVATE_KEY }}
@@ -444,13 +447,25 @@ jobs:
             fi
           done
 
+      - name: Verify npm package names are available
+        if: needs.resolve-version.outputs.publish_npm == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          for reserved in chaos-code-win32-arm64 chaos-code-win32-x64; do
+            existing="$(npm view "$reserved" version --json 2>/dev/null || true)"
+            if [[ "$existing" == '"0.0.1-security"' || "$existing" == "0.0.1-security" ]]; then
+              echo "::error::npm package name $reserved is reserved by npm security placeholder; resolve it before enabling npm publication."
+              exit 1
+            fi
+          done
+
       - name: Publish to npmjs
         id: npm
         if: needs.resolve-version.outputs.publish_npm == 'true'
-        # Soft-fail so a bad/mis-scoped NPM_TOKEN does not block GitHub Release.
-        # First-time package names need a token that can *create* packages
-        # (npm often returns 404 for that case instead of 403).
-        continue-on-error: true
+        # npm publication is a release deliverable: a failure must fail this job
+        # so the release cannot silently claim success without installable packages.
+        # GitHub Release upload still runs independently under its `always()` gate.
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -458,16 +473,16 @@ jobs:
         run: |
           set -euo pipefail
           if [[ -z "${NPM_TOKEN:-}" ]]; then
-            echo "::warning::NPM_TOKEN secret not configured — skipping npm publish."
-            echo "Add repo secret NPM_TOKEN (npm Automation token), then re-run or tag again."
+            echo "::error::NPM_TOKEN secret is not configured; refusing to skip npm publication."
+            echo "Configure a token that can publish all packages, then release a new patch version."
             echo "skipped=true" >> "$GITHUB_OUTPUT"
-            exit 0
+            exit 1
           fi
           chmod +x scripts/ci/publish-npm.sh
           # Publish only packages that have bin/ contents
           export PUBLISH_EXISTING_ONLY=1
           if ! scripts/ci/publish-npm.sh; then
-            echo "::error::npm publish failed. Common causes: NPM_TOKEN lacks create/publish for chaos-code* packages (E404 on first publish), 2FA, or wrong registry. Binaries still ship via GitHub Release."
+            echo "::error::npm publish failed. Check that NPM_TOKEN can publish each selected package, and that package versions do not already exist. Binaries still ship via GitHub Release."
             echo "skipped=false" >> "$GITHUB_OUTPUT"
             exit 1
           fi
@@ -486,8 +501,8 @@ jobs:
           retention-days: 7
           if-no-files-found: warn
 
-      # Keep GH Release independent of npm: a missing/mis-scoped NPM_TOKEN
-      # (or first-publish E404) must not skip attaching the built binaries.
+      # Keep GitHub Release independent of npm: npm publish failures should
+      # fail this job, but must not skip attaching successfully built binaries.
       - name: Create GitHub Release
         if: >-
           always()
