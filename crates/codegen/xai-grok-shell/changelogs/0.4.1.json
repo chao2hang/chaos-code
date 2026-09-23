@@ -1,0 +1,92 @@
+[
+  {
+    "category": "features",
+    "description": "**上游同步**：手工搬运上游 `48271133` 与 `75810042` 两个批次里外科手术式的修复——压缩重试不再把 TPM 429 误判为上下文溢出；长任务计时显示进位到小时；CJK 与色深渲染测试引入固定色深机制。`SOURCE_REV` 仍为 `72a61251`。",
+    "breaking_change": false
+  },
+  {
+    "category": "features",
+    "description": "**依赖对齐**：`quick-xml` 对齐上游 0.41，`tikv-jemalloc` 对齐 0.7。",
+    "breaking_change": false
+  },
+  {
+    "category": "features",
+    "description": "**用户指南中文化**：补完 20 篇纯英文章节，正文标题、`docs.rs` 文档名与目录条目统一为中文名；删除本分叉不存在的 Grove、`grok clone`、浏览器登录与 Terminal 主题章节。",
+    "breaking_change": false
+  },
+  {
+    "category": "features",
+    "description": "**中文化机器校验**：新增 `scripts/check-doc-l10n.py` 与 51 条自测，把围栏代码块、行内代码 span、表格结构、链接目标、标题层级、正文数字、上游旧名做成不变量；新增表格单元格词典与 15 条「有意删除」声明。",
+    "breaking_change": false
+  },
+  {
+    "category": "features",
+    "description": "**应用内文档**：`/docs` 与教程目录改说中文；扩展管理器的标签页名称按分叉实际显示的中文标签对齐。",
+    "breaking_change": false
+  },
+  {
+    "category": "features",
+    "description": "**应用内文案**：快捷键详情页 42 条 `long_help`、弹窗底栏 30 个快捷键标签，以及 `stash`、`Shell` 两个条目改说中文；键位名与命令名保持 ASCII。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "修复基线就失败的 8 条 CJK 渲染测试（采用上游 `75810042` 的色深固定机制）。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "清零分叉侧残留的 32 条测试失败，并修复其暴露的 6 处真实缺陷。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "修好公共快照里两个编译不过的测试目标：`registered_features_are_documented` 缺 `docs/internal/`（本仓库从未有过该目录），`pty_e2e_scroll_selection` 缺 `gap_row` 定义。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "修好二进制改名后找不到二进制而失败的测试与测试工具。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "恢复类与诊断类提示改说中文，并清掉二进制自称 `grok` 的残留。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "修掉校验器自身三个缺陷：`--fix-anchors` 重写锚点多加一个右括号（15 篇 55 处，`--links` 看不见）；`links` 判据与它自己规定的收尾动作自相矛盾；`--glob` 匹配不到文件时静默全 0 通过。各加自测钉住。",
+    "breaking_change": false
+  },
+  {
+    "category": "features",
+    "description": "**命令行帮助汉化**：`chaos --help` 与 11 个子命令的帮助文案全部说中文（顶层 161 条 + 子命令 119 条，含每个 `--flag` 的说明、`chaos du` 的 `after_help` 与 `chaos mcp add` 的示例块）。clap 的结构标签 `Arguments:` / `Options:` / `Commands:` 保持英文——它们由 clap 渲染、顶层是字面量、子命令的 `{all-args}` 无法覆盖。",
+    "breaking_change": false
+  },
+  {
+    "category": "features",
+    "description": "**README 汉化**：npm 元包与六个平台包、`xai-grok-pager` crate 页，以及会随二进制落到 `~/.chaos/README.md` 的 `xai-grok-shell` README（全文重写）四份都改说中文。",
+    "breaking_change": false
+  },
+  {
+    "category": "features",
+    "description": "**CI 门禁**：工具链版本改为从 `rust-toolchain.toml` 单点读取（删掉两处硬编码——此前 CI 写 1.92.0、toml 写 1.94.0，长期不一致）；新增 `scripts/ci/check-versions.sh` 要求 Cargo 与 npm 各包版本一致；新增 `docs-l10n` 作业，把参考文档与 9 篇教程纳入中文化门禁（此前 `docs/` 下 36 个文件没有任何自动化读过）。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "用户可见文案不再写死 `~/.grok`：LSP 配置路径提示、workflow 与 skill 的工具描述、托管配置写盘失败提示、缓存令牌说明、`voice_probe` 用法串——用户级一律走解析后的配置根（项目级 `.grok` 保持不变，实现确实只认它）。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "修两条跨文档死锚点（标题翻译改了锚点、入链未在同一次提交改）并补齐四个漏译标题；三处早就过期的认证文案（`Logout` 声称清除凭据实则不清、`Login` 宣传本分支已移除的登录流程）按实际行为改写。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "发布流水线修复：`v0.4.0` 的 tag 推出后两个 Windows 构建都在第 5 步「读取工具链」失败（该步骤用 `sed`/`set -euo pipefail` 却没声明 `shell: bash`，Windows runner 默认是 pwsh），0.4.0 因此没有产出任何产物。本版为同批内容加上该修复，并新增 `scripts/ci/check-workflow-shells.py` 把这类只在 Windows 才现形的步骤挡在 CI 里。",
+    "breaking_change": false
+  }
+]
