@@ -20,4 +20,5 @@ tower-http = { workspace = true, features = ["cors", "limit"] }
 uuid.workspace = true
 
 [dev-dependencies]
+futures-util.workspace = true
 tokio-tungstenite.workspace = true

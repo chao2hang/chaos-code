@@ -14738,6 +14738,7 @@ dependencies = [
  "anyhow",
  "axum",
  "chaos-engine",
+ "futures-util",
  "serde",
  "serde_json",
  "tokio",
