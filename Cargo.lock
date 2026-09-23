@@ -14737,10 +14737,12 @@ dependencies = [
  "anyhow",
  "axum",
  "chaos-engine",
+ "serde",
  "serde_json",
  "tokio",
  "tower",
  "tower-http",
+ "uuid",
 ]
 
 [[package]]
