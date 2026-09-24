@@ -6,6 +6,10 @@ async fn main() -> anyhow::Result<()> {
         .ok()
         .and_then(|value| value.parse().ok())
         .unwrap_or(8787);
+    let engine = match std::env::var("CHAOS_WEB_STATE") {
+        Ok(path) => Engine::with_persistence(path)?,
+        Err(_) => Engine::new(),
+    };
     eprintln!("Chaos Web listening on http://127.0.0.1:{port}");
-    xai_grok_web::serve_loopback(Engine::new(), port).await
+    xai_grok_web::serve_loopback(engine, port).await
 }

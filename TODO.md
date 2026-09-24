@@ -362,7 +362,7 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 
 ### M2.5 数据持久化与迁移
 
-- [ ] Engine 当前使用原子替换 JSON 持久化快照以验证 restart resume；schema 版本、migration、较新 schema 只读保护与备份恢复仍须按 ADR-003 实现。
+- [~] `CHAOS_WEB_STATE` 已接入真实 Web 入口，使用 engine 原子替换 JSON 快照并可跨进程恢复；schema 版本、migration、较新 schema 只读保护与备份恢复仍须按 ADR-003 实现。
 - [ ] 保留 `$CHAOS_HOME`/`$GROK_HOME` 与旧目录兼容；路径变化必须提供一次性导入和回滚。
 - [ ] 不宣称“无锁”；明确 SQLite busy timeout、WAL/TRUNCATE、NFS 和多进程并发策略。
 - [ ] 用现有真实会话 fixture 验证 TUI→GUI 读取，以及 GUI 数据不破坏 TUI。
