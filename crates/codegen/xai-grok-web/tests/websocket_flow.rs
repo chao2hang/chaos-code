@@ -41,6 +41,7 @@ async fn websocket_drives_real_session_create_submit_and_cancel_flow() {
     socket
         .send(Message::Text(
             serde_json::to_string(&ClientMessage::CreateSession {
+                workspace_id: None,
                 client_msg_id: "create".into(),
             })
             .unwrap()
@@ -51,7 +52,7 @@ async fn websocket_drives_real_session_create_submit_and_cancel_flow() {
     let created: ServerMessage =
         serde_json::from_str(&socket.next().await.unwrap().unwrap().into_text().unwrap()).unwrap();
     let session_id = match created {
-        ServerMessage::SessionCreated { session_id } => session_id,
+        ServerMessage::SessionCreated { session_id, .. } => session_id,
         other => panic!("unexpected {other:?}"),
     };
 

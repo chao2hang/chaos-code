@@ -337,7 +337,7 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 
 当前状态：engine 已提供 workspace registry 的创建/切换/归档/最近使用协议；完整多工作区 UI、布局和 desktop 状态隔离仍待前端/桌面实现。
 
-- [~] engine 已实现 workspace 创建/切换/归档/最近使用协议与真实 state 测试；React 已接入 workspace list/switch/archive 真实协议和窄屏样式，重命名/置顶、多会话跨 workspace 和 Desktop 状态隔离仍待后续。（2026-09-24；`session.test.ts`）
+- [~] engine 已实现 workspace 创建/切换/归档/最近使用协议与真实 state 测试；React 已接入 workspace create/list/switch/archive 真实协议和窄屏样式，重命名/置顶、多会话跨 workspace 和 Desktop 状态隔离仍待后续。（2026-09-24；`session.test.ts`）
 - [ ] 实现标签页、分屏、尺寸和主题持久化；定义损坏布局的安全回退。
 - [~] workspace registry 具备独立 workspace IDs；session cancellation/resource key、文件锁和 Git 锁的多工作区并发测试仍待真实 UI/desktop adapter。
 

@@ -46,6 +46,7 @@ async fn websocket_workspace_requests_are_confined_to_root() {
     socket
         .send(Message::Text(
             serde_json::to_string(&ClientMessage::CreateSession {
+                workspace_id: None,
                 client_msg_id: "session".into(),
             })
             .unwrap()
@@ -58,7 +59,7 @@ async fn websocket_workspace_requests_are_confined_to_root() {
     )
     .unwrap()
     {
-        ServerMessage::SessionCreated { session_id } => session_id,
+        ServerMessage::SessionCreated { session_id, .. } => session_id,
         _ => panic!("expected session"),
     };
     socket

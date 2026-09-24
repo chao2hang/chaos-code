@@ -7,10 +7,11 @@ fn sqlite_engine_entry_restores_state_after_reopen() {
     let path = directory.path().join("gui.db");
     let first = Engine::with_sqlite_store(&path).unwrap();
     let created = first.handle(ClientMessage::CreateSession {
+        workspace_id: None,
         client_msg_id: "create".into(),
     });
     let session_id = match &created[0] {
-        ServerMessage::SessionCreated { session_id } => *session_id,
+        ServerMessage::SessionCreated { session_id, .. } => *session_id,
         other => panic!("unexpected {other:?}"),
     };
     first.handle(ClientMessage::Submit {

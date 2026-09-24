@@ -78,12 +78,13 @@ async fn websocket_tool_approval_emits_ordered_ack_resolution_audit() {
     send(
         &mut socket,
         ClientMessage::CreateSession {
+            workspace_id: None,
             client_msg_id: "create".into(),
         },
     )
     .await;
     let session_id = match next(&mut socket).await {
-        ServerMessage::SessionCreated { session_id } => session_id,
+        ServerMessage::SessionCreated { session_id, .. } => session_id,
         other => panic!("{other:?}"),
     };
     send(
@@ -141,12 +142,13 @@ async fn websocket_repeated_approval_and_question_resolution_fail_closed() {
     send(
         &mut socket,
         ClientMessage::CreateSession {
+            workspace_id: None,
             client_msg_id: "create".into(),
         },
     )
     .await;
     let session_id = match next(&mut socket).await {
-        ServerMessage::SessionCreated { session_id } => session_id,
+        ServerMessage::SessionCreated { session_id, .. } => session_id,
         other => panic!("{other:?}"),
     };
     send(
@@ -202,12 +204,13 @@ async fn websocket_diff_without_adapter_reports_structured_failure() {
     send(
         &mut socket,
         ClientMessage::CreateSession {
+            workspace_id: None,
             client_msg_id: "create".into(),
         },
     )
     .await;
     let session_id = match next(&mut socket).await {
-        ServerMessage::SessionCreated { session_id } => session_id,
+        ServerMessage::SessionCreated { session_id, .. } => session_id,
         other => panic!("{other:?}"),
     };
     send(
@@ -238,12 +241,13 @@ async fn websocket_diff_accept_and_rollback_use_the_bound_adapter() {
     send(
         &mut socket,
         ClientMessage::CreateSession {
+            workspace_id: None,
             client_msg_id: "create".into(),
         },
     )
     .await;
     let session_id = match next(&mut socket).await {
-        ServerMessage::SessionCreated { session_id } => session_id,
+        ServerMessage::SessionCreated { session_id, .. } => session_id,
         other => panic!("{other:?}"),
     };
     send(

@@ -28,6 +28,7 @@ async fn create_and_submit(url: &str) -> uuid::Uuid {
     socket
         .send(Message::Text(
             serde_json::to_string(&ClientMessage::CreateSession {
+                workspace_id: None,
                 client_msg_id: "create".into(),
             })
             .unwrap()
@@ -40,7 +41,7 @@ async fn create_and_submit(url: &str) -> uuid::Uuid {
     )
     .unwrap()
     {
-        ServerMessage::SessionCreated { session_id } => session_id,
+        ServerMessage::SessionCreated { session_id, .. } => session_id,
         other => panic!("unexpected {other:?}"),
     };
     socket

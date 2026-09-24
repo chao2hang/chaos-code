@@ -336,6 +336,10 @@ pub enum ClientMessage {
         client_msg_id: String,
         workspace_id: Option<Uuid>,
     },
+    CreateWorkspace {
+        client_msg_id: String,
+        name: String,
+    },
     ListWorkspaces {
         client_msg_id: String,
     },
@@ -1182,6 +1186,7 @@ impl Engine {
     pub fn handle(&self, message: ClientMessage) -> Vec<ServerMessage> {
         let client_msg_id = match &message {
             ClientMessage::CreateSession { client_msg_id, .. }
+            | ClientMessage::CreateWorkspace { client_msg_id, .. }
             | ClientMessage::ListWorkspaces { client_msg_id }
             | ClientMessage::ArchiveWorkspace { client_msg_id, .. }
             | ClientMessage::SwitchWorkspace { client_msg_id, .. }
@@ -1214,6 +1219,20 @@ impl Engine {
             return vec![ServerMessage::Ack { client_msg_id }];
         }
         let result = match message {
+            ClientMessage::CreateWorkspace { name, .. } => {
+                let id = Uuid::new_v4();
+                state.workspaces.insert(
+                    id,
+                    WorkspaceInfo {
+                        id,
+                        name,
+                        archived: false,
+                        last_used_sequence: 0,
+                    },
+                );
+                state.active_workspace_id = Some(id);
+                vec![ServerMessage::WorkspaceSwitched { workspace_id: id }]
+            }
             ClientMessage::CreateSession { workspace_id, .. } => {
                 let workspace_id =
                     workspace_id

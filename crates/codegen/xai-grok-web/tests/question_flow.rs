@@ -24,6 +24,7 @@ async fn websocket_question_requires_an_explicit_answer() {
     socket
         .send(Message::Text(
             serde_json::to_string(&ClientMessage::CreateSession {
+                workspace_id: None,
                 client_msg_id: "create".into(),
             })
             .unwrap()
@@ -36,7 +37,7 @@ async fn websocket_question_requires_an_explicit_answer() {
     )
     .unwrap()
     {
-        ServerMessage::SessionCreated { session_id } => session_id,
+        ServerMessage::SessionCreated { session_id, .. } => session_id,
         other => panic!("unexpected {other:?}"),
     };
     socket

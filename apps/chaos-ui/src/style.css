@@ -6,6 +6,7 @@ header { display: flex; justify-content: space-between; gap: 16px; color: #aebbd
 .workspaces { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; }
 .workspaces button { display: flex; flex-direction: column; gap: 4px; border: 1px solid #34445e; border-radius: 8px; padding: 8px 10px; color: #b5c3d7; background: #172033; }
 .workspaces button.active { border-color: #5e9de0; color: white; }
+.workspaces > button:first-child { color: #a8d4ff; border-style: dashed; }
 .workspaces span { display: flex; gap: 8px; }
 header strong { color: #fff; font-size: 1.2rem; }
 .timeline { display: flex; flex-direction: column; gap: 12px; padding: 16px 0; }

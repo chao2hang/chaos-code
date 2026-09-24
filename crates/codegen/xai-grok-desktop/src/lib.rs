@@ -28,6 +28,7 @@ mod tests {
         let app = DesktopApp::new(Engine::new());
         let events = app.dispatch(ClientMessage::CreateSession {
             client_msg_id: "desktop-create".into(),
+            workspace_id: None,
         });
         assert!(matches!(events[0], ServerMessage::SessionCreated { .. }));
     }

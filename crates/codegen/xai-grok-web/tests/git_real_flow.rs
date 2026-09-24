@@ -36,6 +36,7 @@ async fn websocket_uses_real_git_adapter_only_after_approval() {
     socket
         .send(Message::Text(
             serde_json::to_string(&ClientMessage::CreateSession {
+                workspace_id: None,
                 client_msg_id: "create".into(),
             })
             .unwrap()
@@ -48,7 +49,7 @@ async fn websocket_uses_real_git_adapter_only_after_approval() {
     )
     .unwrap()
     {
-        ServerMessage::SessionCreated { session_id } => session_id,
+        ServerMessage::SessionCreated { session_id, .. } => session_id,
         other => panic!("{other:?}"),
     };
     socket
