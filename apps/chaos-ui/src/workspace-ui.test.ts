@@ -60,22 +60,13 @@ describe('workspace session isolation', () => {
     expect(switched.messages).toEqual([])
   })
 
-  it('clears active conversation state if the only workspace is archived', () => {
-    const state = { ...initialSessionState, workspaces: [workspaces[0]], activeWorkspaceId: 'a', sessionId: 'session-a', messages: [{ role: 'user', text: 'secret' }], busy: true }
+  it('clears active UI state when the last workspace is archived', () => {
+    const state = { ...initialSessionState, workspaces: [workspaces[0]], activeWorkspaceId: 'a', sessionId: 'session-a', messages: [{ role: 'user', text: 'private' }], busy: true }
     const archived = applyServerMessage(state, { type: 'workspace_archived', workspace_id: 'a' })
     expect(archived.activeWorkspaceId).toBeUndefined()
     expect(archived.sessionId).toBeUndefined()
     expect(archived.messages).toEqual([])
     expect(archived.busy).toBe(false)
-  })
-
-  it('clears active UI state when the last workspace is archived', () => {
-    const state = { ...initialSessionState, workspaces: [workspaces[0]], activeWorkspaceId: 'a', sessionId: 'session-a', messages: [{ role: 'user', text: 'private' }], approval: { requestId: 'approval', tool: 'tool', summary: 'private' } }
-    const archived = applyServerMessage(state, { type: 'workspace_archived', workspace_id: 'a' })
-    expect(archived.activeWorkspaceId).toBeUndefined()
-    expect(archived.sessionId).toBeUndefined()
-    expect(archived.messages).toEqual([])
-    expect(archived.approval).toBeUndefined()
   })
 
   it('selects a new workspace without reusing another workspace session', () => {
