@@ -288,12 +288,14 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 
 ### M1.1 会话投影与交互协议
 
-- [~] 增加 tool start/progress/result、question request/response、file change、usage 和 structured error；M1 engine 已落地 question/answer 事件，工具/Diff adapter 结果与 audit 事件，完整真实 provider/tool progress/file adapter 仍待接入。
+- [~] 增加 tool start/progress/result、question request/response、file change、usage 和 structured error；M1 engine/WebSocket 已真实覆盖 question、tool started/progress/result/usage、Diff、workspace file changed/write 和 fail-closed errors；完整真实 provider/MCP tool adapter 仍待接入。（2026-09-24；`tests/m1_flow.rs`、`m1-events-verify.log`）
 - [~] 已有有界 engine snapshot、session sequence、dedup 和 resume；客户端 cursor、追赶、TTL/容量预算与 snapshot/delta 竞争测试仍待补齐。
 - [x] 定义命令/交互在重复投递和 engine 重启时的状态机：client message 去重、question/approval 单次 resolve、snapshot resume 已有测试；超时/断线中的真实 Agent 状态仍待补齐。（2026-09-24）
-- [~] 覆盖重复与恢复；真实 WebSocket question、工具审批、Diff 和 workspace 流程及 React reducer 事件投影均有测试，乱序、丢帧、snapshot/delta 竞争及多标签订阅测试待 Web client/真实浏览器阶段补齐。（2026-09-24；`m1-final-evidence.log`）
+- [~] 覆盖重复与恢复；真实 WebSocket question、工具审批、Diff 和 workspace 流程及 React reducer 事件投影均有测试，乱序、丢帧、snapshot/delta 竞争及多标签订阅测试待 Web client/真实浏览器阶段补齐。（2026-09-24；`m1-events-verify.log`）
 
 ### M1.2 对话 UI
+
+当前状态：`apps/chaos-ui/src/session.ts` 已提供真实 WebSocket 事件投影，覆盖 timeline、streaming、approval、question、completion/cancel 和 snapshot；虚拟滚动、Markdown/代码块、reasoning 折叠、完整错误恢复和稳定 test-id 仍待后续实现。
 
 - [ ] 移植或重写时间线、轮次分组、虚拟滚动、滚动锚点和行高缓存。
 - [ ] 实现 Markdown、代码块、reasoning 折叠、工具卡片和错误恢复。

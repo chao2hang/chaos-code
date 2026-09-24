@@ -20,7 +20,8 @@ require platform runners, external services, or a later milestone.
   assert ordered ACK/resolution/audit events for accept and rollback.
 - M1 interaction events now include question request/response and explicit
   protocol variants for tool progress, tool result, file change, and usage;
-  provider-backed production emission remains a later adapter task.
+  WebSocket tests assert tool started/progress/result/usage ordering. Provider-
+  backed production emission remains a later adapter task.
 - M2 workspace boundary now canonicalizes a configured root and supports bounded
   list/read/search requests; path escapes and missing workspace adapters fail
   closed before any browser-controlled path reaches filesystem I/O.
