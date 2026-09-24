@@ -291,7 +291,7 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 - [~] 增加 tool start/progress/result、question request/response、file change、usage 和 structured error；M1 engine 已落地 question/answer 事件，工具/Diff adapter 结果与 audit 事件，完整真实 provider/tool progress/file adapter 仍待接入。
 - [~] 已有有界 engine snapshot、session sequence、dedup 和 resume；客户端 cursor、追赶、TTL/容量预算与 snapshot/delta 竞争测试仍待补齐。
 - [x] 定义命令/交互在重复投递和 engine 重启时的状态机：client message 去重、question/approval 单次 resolve、snapshot resume 已有测试；超时/断线中的真实 Agent 状态仍待补齐。（2026-09-24）
-- [~] 覆盖重复与恢复；新增真实 WebSocket question request/response 测试，乱序、丢帧、snapshot/delta 竞争及多标签订阅测试待 Web client/真实浏览器阶段补齐。
+- [~] 覆盖重复与恢复；真实 WebSocket question、工具审批、Diff 和 workspace 流程及 React reducer 事件投影均有测试，乱序、丢帧、snapshot/delta 竞争及多标签订阅测试待 Web client/真实浏览器阶段补齐。（2026-09-24；`m1-final-evidence.log`）
 
 ### M1.2 对话 UI
 
@@ -304,7 +304,7 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 
 - [~] engine 已支持 ToolAdapter 边界：审批通过才执行、无 adapter 安全失败、执行结果写入 timeline/audit；真实命令、写文件、网络、MCP tool adapter 和通用提问对话框仍待补。（2026-09-24；engine tests）
 - [x] engine 审批记录绑定 session、tool、参数摘要、UUID request ID、结果和序列；ToolAdapter 只在批准后调用，测试覆盖执行、拒绝和无 adapter fail-closed。（2026-09-24）
-- [~] WebSocket 工具审批真实集成测试已覆盖允许、拒绝基础路径和 ordered ack/resolution/audit；记住规则、超时、断线中的审批恢复和多客户端竞争仍待补。
+- [~] WebSocket 工具审批真实集成测试已覆盖允许、拒绝基础路径和 ordered ack/resolution/audit；Diff accept/rollback 真实 adapter 测试已覆盖；记住规则、超时、断线中的审批恢复和多客户端竞争仍待补。（2026-09-24；`tests/m1_flow.rs`）
 - [ ] Web 写操作增加 workspace 路径约束、CSRF/重放防护和本地审计日志；日志必须脱敏并轮转。
 - [ ] Safe Web Mode 禁止命令和写入，后端强制执行，不能只隐藏按钮。
 
