@@ -258,7 +258,7 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 ### M0.4 前端最小闭环
 
 - [~] React 已接入真实 WebSocket，支持会话创建、纯文本 composer、时间线、流式 delta 和停止按钮；会话列表与多会话工作区待补。
-- [~] React 已有连接中/已连接、空态、生成中、连接错误和取消入口；断线自动重连与恢复提示待补。
+- [x] React 已有连接中/已连接、空态、生成中、连接错误和取消入口；WebSocket 断线自动重连并通过 resume 恢复历史。（2026-09-24；typecheck/build 通过）
 - [ ] 流式更新当前按 WebSocket delta 逐事件更新；按帧批处理和 benchmark 尚待 M5 性能门禁。
 - [~] Web 使用显式 WebSocket transport；Desktop 已有 engine host boundary，Tauri transport injection 待补。
 
