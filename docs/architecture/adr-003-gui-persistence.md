@@ -17,6 +17,8 @@ configuration/secrets boundary.
 A session resume request is an explicit snapshot operation. On process restart,
 missing or corrupt storage returns a typed recovery error rather than silently
 creating a new session. `CHAOS_WEB_SQLITE` now selects the canonical SQLite
-engine entry; `CHAOS_WEB_STATE` remains a transitional JSON fallback. TUI
-compatibility fixtures, multi-process/NFS coverage, and migration rollback are
-required before SQLite persistence is called production-complete.
+engine entry; `CHAOS_WEB_STATE` remains a transitional JSON fallback. A
+read-only `ImportTuiSession` seam validates the real TUI `summary.json`/
+`updates.jsonl` shape under a host-configured root and proves source bytes are
+unchanged. Full ACP update conversion into GUI SQLite, GUI write-back to TUI,
+multi-process/NFS coverage, and migration rollback remain open.

@@ -45,7 +45,9 @@ require platform runners, external services, or a later milestone.
 - Transitional JSON snapshot and canonical `SqliteSessionStore` persistence, with
   schema/version tests, corrupt/missing-parent rejection, old-schema upgrade
   backup/restore, invalid-version rejection, legacy backup, and real Web SQLite
-  re-open recovery.
+  re-open recovery. A host-allowlisted read-only `ImportTuiSession` seam
+  validates real `summary.json`/`updates.jsonl` files without modifying the TUI
+  source directory; full ACP conversion and GUI write-back remain open.
 - M3 settings seam exposes only non-secret Base URL/model fields, rejects unsafe
   URLs, and reports `has_api_key` as a boolean; provider shape validation returns
   `network_not_attempted` without touching credentials or making network calls.

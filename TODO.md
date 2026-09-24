@@ -367,10 +367,10 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 
 ### M2.5 数据持久化与迁移
 
-- [~] `CHAOS_WEB_STATE` 保留为 transitional JSON；`CHAOS_WEB_SQLITE` 现正式选择 `SqliteSessionStore` Engine 入口，支持 schema reject/round-trip、旧 schema 升级备份/恢复和真实 Web sqlite entry 恢复测试；TUI fixture、多进程/NFS 仍须按 ADR-003 完成。（2026-09-24；engine migration fixture、`sqlite_entry_flow.rs`）
+- [~] `CHAOS_WEB_STATE` 保留为 transitional JSON；`CHAOS_WEB_SQLITE` 现正式选择 `SqliteSessionStore` Engine 入口，支持 schema reject/round-trip、旧 schema 升级备份/恢复、只读 TUI 导入 fixture 和真实 Web sqlite entry 恢复测试；完整 ACP→GUI 转换、多进程/NFS 仍须按 ADR-003 完成。（2026-09-24；engine migration fixture、`tui_import.rs`、`sqlite_entry_flow.rs`）
 - [ ] 保留 `$CHAOS_HOME`/`$GROK_HOME` 与旧目录兼容；路径变化必须提供一次性导入和回滚。
 - [~] 不宣称“无锁”：`SqliteSessionStore` 复用 `xai-sqlite-journal` 的 WAL/TRUNCATE 与 busy retry policy；NFS/多进程并发策略已有底层 journal 文档，但 GUI 真实并发 fixture 尚待补。
-- [ ] 用现有真实会话 fixture 验证 TUI→GUI 读取，以及 GUI 数据不破坏 TUI。
+- [~] 已新增 host allowlist 下的只读 `ImportTuiSession` seam：读取真实格式 `summary.json`/`updates.jsonl` 的 cwd、标题和消息数，损坏/缺字段/未配置根目录 fail-closed，并断言源文件字节不变；尚未把 ACP 更新完整转换为 GUI SQLite 会话，也未覆盖 GUI 写回 TUI。（2026-09-24；`crates/codegen/chaos-engine/tests/tui_import.rs`）
 - [~] SQLite store 已覆盖损坏 DB、新 schema、缺父目录、旧 schema 升级备份/恢复、非法版本和重启恢复；迁移中断/磁盘满、多进程/NFS 和 TUI 旧目录导入仍需真实 filesystem fault/TUI fixture，当前环境不能把普通 tempfile 测试冒充完成。（2026-09-24）
 
 ### M2.6 验收门禁

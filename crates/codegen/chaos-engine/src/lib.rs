@@ -460,6 +460,11 @@ pub enum ClientMessage {
         upload_id: Uuid,
         relative_path: String,
     },
+    ImportTuiSession {
+        client_msg_id: String,
+        root: String,
+        session_id: String,
+    },
     ValidateProvider {
         client_msg_id: String,
         base_url: String,
@@ -669,6 +674,13 @@ pub enum ServerMessage {
     MarketplaceScan {
         entries: Vec<xai_grok_plugin_marketplace::MarketplaceEntry>,
         catalog_loaded: bool,
+    },
+    TuiSessionImport {
+        session_id: String,
+        cwd: String,
+        title: Option<String>,
+        message_count: usize,
+        source_unchanged: bool,
     },
     Error {
         code: String,
@@ -1020,6 +1032,7 @@ pub struct Engine {
     terminal_adapter: Option<Arc<dyn TerminalAdapter>>,
     git_adapter: Option<Arc<dyn GitAdapter>>,
     marketplace_roots: Arc<Vec<PathBuf>>,
+    tui_session_roots: Arc<Vec<PathBuf>>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -1223,7 +1236,21 @@ impl Engine {
             terminal_adapter: None,
             git_adapter: None,
             marketplace_roots: Arc::new(Vec::new()),
+            tui_session_roots: Arc::new(Vec::new()),
         }
+    }
+
+    pub fn with_tui_session_root(mut self, root: impl AsRef<Path>) -> std::io::Result<Self> {
+        let root = std::fs::canonicalize(root)?;
+        if !root.is_dir() {
+            return Err(std::io::Error::other("TUI session root is not a directory"));
+        }
+        let mut roots = (*self.tui_session_roots).clone();
+        if !roots.contains(&root) {
+            roots.push(root);
+        }
+        self.tui_session_roots = Arc::new(roots);
+        Ok(self)
     }
 
     pub fn with_marketplace_root(mut self, root: impl AsRef<Path>) -> std::io::Result<Self> {
@@ -1308,6 +1335,7 @@ impl Engine {
             | ClientMessage::AttachmentChunk { client_msg_id, .. }
             | ClientMessage::CancelAttachment { client_msg_id, .. }
             | ClientMessage::FinalizeAttachment { client_msg_id, .. }
+            | ClientMessage::ImportTuiSession { client_msg_id, .. }
             | ClientMessage::ValidateProvider { client_msg_id, .. }
             | ClientMessage::ScanMarketplace { client_msg_id, .. } => client_msg_id.clone(),
         };
@@ -1796,6 +1824,29 @@ impl Engine {
                         sequence: session.sequence,
                     },
                 ]
+            }
+            ClientMessage::ImportTuiSession {
+                root, session_id, ..
+            } => {
+                let requested = std::fs::canonicalize(&root).ok();
+                let allowed = requested.as_ref().is_some_and(|requested| {
+                    self.tui_session_roots
+                        .iter()
+                        .any(|configured| requested == configured)
+                });
+                if !allowed {
+                    vec![Self::error(
+                        "tui_session_root_not_allowed",
+                        "TUI session root is not configured",
+                    )]
+                } else {
+                    Self::import_tui_session(
+                        requested
+                            .as_deref()
+                            .expect("allowed TUI session root is canonical"),
+                        &session_id,
+                    )
+                }
             }
             ClientMessage::ScanMarketplace { root, .. } => {
                 let requested = std::fs::canonicalize(&root).ok();
@@ -2292,6 +2343,62 @@ impl Engine {
                 sequence: session.sequence,
             },
         ]
+    }
+
+    fn import_tui_session(root: &Path, session_id: &str) -> Vec<ServerMessage> {
+        let session_root = root.join(session_id);
+        let summary_path = session_root.join("summary.json");
+        let updates_path = session_root.join("updates.jsonl");
+        let summary = match std::fs::read(&summary_path)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+        {
+            Some(summary) => summary,
+            None => {
+                return vec![Self::error(
+                    "tui_session_invalid",
+                    "TUI summary.json 不可读取或格式无效",
+                )];
+            }
+        };
+        let info = summary.get("info").and_then(serde_json::Value::as_object);
+        let cwd = info
+            .and_then(|info| info.get("cwd"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned);
+        let Some(cwd) = cwd else {
+            return vec![Self::error(
+                "tui_session_invalid",
+                "TUI summary 缺少 info.cwd",
+            )];
+        };
+        let title = summary
+            .get("session_summary")
+            .and_then(serde_json::Value::as_str)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned);
+        let message_count = summary
+            .get("num_messages")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or_else(|| {
+                std::fs::read_to_string(&updates_path)
+                    .map(|contents| {
+                        contents
+                            .lines()
+                            .filter(|line| !line.trim().is_empty())
+                            .count()
+                    })
+                    .unwrap_or(0) as u64
+            }) as usize;
+        let source_unchanged =
+            std::fs::metadata(&summary_path).is_ok() && std::fs::metadata(&updates_path).is_ok();
+        vec![ServerMessage::TuiSessionImport {
+            session_id: session_id.to_owned(),
+            cwd,
+            title,
+            message_count,
+            source_unchanged,
+        }]
     }
 
     fn preview_diff(

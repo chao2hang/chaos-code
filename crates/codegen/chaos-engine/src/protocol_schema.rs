@@ -27,6 +27,7 @@ export type ClientMessage =
   | { type: 'get_git_status'; client_msg_id: string }
   | { type: 'validate_attachment'; client_msg_id: string; filename: string; byte_len: number; content_type: string }
   | { type: 'finalize_attachment'; client_msg_id: string; upload_id: UUID; relative_path: string }
+  | { type: 'import_tui_session'; client_msg_id: string; root: string; session_id: string }
   | { type: 'validate_provider'; client_msg_id: string; base_url: string; model: string }
   | { type: 'scan_marketplace'; client_msg_id: string; root: string }
   | { type: 'accept_diff'; client_msg_id: string; session_id: UUID; proposal_id: string; summary: string }
@@ -65,6 +66,7 @@ export type ServerMessage =
   | { type: 'attachment_validated'; filename: string; byte_len: number; content_type: string }
   | { type: 'provider_validation'; base_url: string; model: string; reachable: boolean; error_code: string | null }
   | { type: 'attachment_completed'; session_id: UUID; upload_id: UUID; path: string; bytes: number }
+  | { type: 'tui_session_import'; session_id: string; cwd: string; title: string | null; message_count: number; source_unchanged: boolean }
   | { type: 'marketplace_scan'; entries: MarketplaceEntry[]; catalog_loaded: boolean }
   | { type: 'terminal_result'; session_id: UUID; output: string; exit_code: number }
   | { type: 'git_mutation_result'; session_id: UUID; operation: string; result: string }
