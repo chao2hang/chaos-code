@@ -1,7 +1,9 @@
-export type Message = { role: 'user' | 'assistant'; text: string }
+import type { ServerMessage as ProtocolServerMessage, TimelineMessage } from './generated/protocol'
+
+export type Message = TimelineMessage
 export type Approval = { requestId: string; tool: string; summary: string }
 export type Question = { questionId: string; prompt: string }
-export type ServerMessage = { type: string; session_id?: string; request_id?: string; question_id?: string; tool?: string; summary?: string; prompt?: string; text?: string; answer?: string; messages?: Message[]; protocol_version?: number }
+export type ServerMessage = ProtocolServerMessage
 
 export type SessionState = {
   messages: Message[]

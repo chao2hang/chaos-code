@@ -2,6 +2,9 @@
 
 The Rust `chaos-engine` crate is the single source for the logical envelope used
 by WebSocket, HTTP, and Desktop transports. The wire encoding is JSON in M0.
+`cargo run -p chaos-engine --bin chaos-protocol-schema` generates the committed
+TypeScript declarations at `apps/chaos-ui/src/generated/protocol.ts`; CI rejects
+protocol drift with `scripts/ci/check-gui-protocol.sh`.
 
 ## Envelope rules
 

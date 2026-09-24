@@ -179,6 +179,8 @@ jobs:
           cache-dependency-path: apps/chaos-ui/package-lock.json
       - name: Rust GUI checks
         run: cargo test -p chaos-engine -p xai-grok-web -p xai-grok-desktop --locked
+      - name: Protocol type drift
+        run: ./scripts/ci/check-gui-protocol.sh
       - name: Frontend checks
         working-directory: apps/chaos-ui
         run: npm ci --ignore-scripts && npm run typecheck && npm test && npm run build
