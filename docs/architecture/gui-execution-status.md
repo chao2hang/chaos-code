@@ -63,4 +63,7 @@ require platform runners, external services, or a later milestone.
 
 The open rows are intentionally not marked complete in `TODO.md`. Mock engine
 responses, library tests, and a curl check prove the local protocol seam only;
-they do not prove the product milestones above.
+they do not prove the product milestones above. Existing TUI session persistence
+uses `xai-grok-shell` session directories and `summary.json` through its actor,
+so compatibility with GUI SQLite is an explicit migration task rather than an
+implicit format match.

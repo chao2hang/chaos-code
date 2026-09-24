@@ -192,7 +192,7 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 - [~] Axum + 静态资源嵌入：Axum loopback/WebSocket 已真实运行；静态资源嵌入、压缩、SPA fallback 待 M5。
 - [~] Rust→TS：M0 使用 serde JSON envelope 与协议文档；自动生成 TypeScript 类型/运行时校验待 M0.2 完成。
 - [ ] 验证候选 SSH 库的 SSH Agent、私钥口令、keyboard-interactive、ProxyJump/ProxyCommand 和端口转发能力。
-- [~] SQLite migration：M0 JSON transitional；`SqliteSessionStore` 已正式接入 Engine/Web，复用当前 `rusqlite`/`xai-sqlite-journal`，schema/损坏库/新版本/重启恢复测试通过；多进程/NFS/迁移回滚和 TUI fixture 仍待 M2 gate。（2026-09-24）
+- [~] SQLite migration：M0 JSON transitional；`SqliteSessionStore` 已正式接入 Engine/Web，复用当前 `rusqlite`/`xai-sqlite-journal`，schema/损坏库/新版本/重启恢复测试通过；已核对 TUI 真实 session persistence 仍是 `xai-grok-shell` 的目录/summary actor，不与 GUI SQLite schema 直接兼容，需独立迁移 fixture；多进程/NFS/迁移回滚和 TUI fixture 仍待 M2 gate。（2026-09-24）
 - [x] 新增依赖许可证/维护状态完成初步审查：GUI 仅复用 workspace 已声明 axum/tower/tower-http/serde/uuid/tokio 依赖，未新增第三方资产。（2026-09-24）
 
 **验收命令**：每个 spike 有独立 README、最小测试和 CI job；失败的候选不得写入正式架构。
