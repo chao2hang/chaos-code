@@ -264,7 +264,7 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 ### M0.5 Web 基础安全
 
 - [x] 默认仅绑定 `127.0.0.1`；当前 Web host 无非回环绑定入口，后续公网部署必须另立安全门禁。（2026-09-24）
-- [~] 实现 Token 和常量时间比较；当前支持通过 `CHAOS_WEB_TOKEN` 配置 bearer token，Token 不接受 query 参数；高熵生成、轮换和 Safe Web Mode 仍待完成。
+- [~] 实现 Token 和常量时间比较；当前支持通过 `CHAOS_WEB_TOKEN` 配置 bearer token，Token 不接受 query 参数；`CHAOS_SAFE_WEB_MODE` 已由 WebSocket 后端强制阻断 mutation；高熵生成/轮换和完整部署模式仍待完成。（2026-09-24）
 - [x] 校验 Origin/Host，设置 CSP、frame policy、`nosniff` 和 64 KiB HTTP/WS 消息上限；公网部署模式门禁仍需在公网能力启用前补齐。（2026-09-24；Web tests）
 - [x] WebSocket 握手和 HTTP API 使用同一 bearer/Origin 策略；单测覆盖未授权、错误 Origin 和安全响应头。（2026-09-24）
 - [x] M0 Web 仅提供会话 handshake/create/WS 路由，不暴露命令执行和任意文件写入。（2026-09-24）
@@ -307,8 +307,8 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 - [~] engine 已支持 ToolAdapter 边界：审批通过才执行、无 adapter 安全失败、执行结果写入 timeline/audit；真实命令、写文件、网络、MCP tool adapter 和通用提问对话框仍待补。（2026-09-24；engine tests）
 - [x] engine 审批记录绑定 session、tool、参数摘要、UUID request ID、结果和序列；ToolAdapter 只在批准后调用，测试覆盖执行、拒绝和无 adapter fail-closed。（2026-09-24）
 - [~] WebSocket 工具审批真实集成测试已覆盖允许、拒绝基础路径和 ordered ack/resolution/audit；Diff accept/rollback 真实 adapter 测试已覆盖；记住规则、超时、断线中的审批恢复和多客户端竞争仍待补。（2026-09-24；`tests/m1_flow.rs`）
-- [ ] Web 写操作增加 workspace 路径约束、CSRF/重放防护和本地审计日志；日志必须脱敏并轮转。
-- [ ] Safe Web Mode 禁止命令和写入，后端强制执行，不能只隐藏按钮。
+- [~] Web 写操作已有 workspace root confinement、message dedup、Origin/Host/token 校验和 Safe Web Mode 后端 gate；CSRF/重放跨 HTTP 写操作防护、审计日志脱敏轮转仍待完整部署模式。
+- [x] Safe Web Mode 已由 WebSocket 后端强制执行：命令、文件写入、Git/Diff mutation、审批执行等 mutation message 在 `CHAOS_SAFE_WEB_MODE` 下直接返回 `safe_web_mode_blocked`；真实 WebSocket 测试覆盖 terminal direct call。（2026-09-24；`safe_mode_flow.rs`）
 
 ### M1.4 Diff 闭环
 

@@ -36,5 +36,12 @@ async fn main() -> anyhow::Result<()> {
         },
     };
     eprintln!("Chaos Web listening on http://127.0.0.1:{port}");
-    xai_grok_web::serve_loopback(engine, port).await
+    xai_grok_web::serve_loopback_with_safe_mode(
+        engine,
+        port,
+        std::env::var("CHAOS_SAFE_WEB_MODE")
+            .map(|value| value != "0" && value != "false")
+            .unwrap_or(false),
+    )
+    .await
 }

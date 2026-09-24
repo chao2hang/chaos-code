@@ -19,11 +19,21 @@ const DEV_ORIGINS: [&str; 2] = ["http://127.0.0.1:5173", "http://localhost:5173"
 pub struct WebState {
     pub engine: Engine,
     pub token: Arc<String>,
+    pub safe_web_mode: bool,
 }
 pub fn router(engine: Engine, token: impl Into<String>) -> Router {
+    router_with_safe_mode(engine, token, false)
+}
+
+pub fn router_with_safe_mode(
+    engine: Engine,
+    token: impl Into<String>,
+    safe_web_mode: bool,
+) -> Router {
     let state = Arc::new(WebState {
         engine,
         token: Arc::new(token.into()),
+        safe_web_mode,
     });
     Router::new()
         .route("/health", get(health))
@@ -134,10 +144,28 @@ async fn websocket(
         return StatusCode::UNAUTHORIZED.into_response();
     }
     let engine = state.engine.clone();
-    upgrade.on_upgrade(move |socket| websocket_session(socket, engine))
+    let safe_web_mode = state.safe_web_mode;
+    upgrade.on_upgrade(move |socket| websocket_session(socket, engine, safe_web_mode))
 }
 
-async fn websocket_session(mut socket: WebSocket, engine: Engine) {
+fn safe_mode_allows(message: &ClientMessage) -> bool {
+    matches!(
+        message,
+        ClientMessage::CreateSession { .. }
+            | ClientMessage::Resume { .. }
+            | ClientMessage::Snapshot { .. }
+            | ClientMessage::Submit { .. }
+            | ClientMessage::Cancel { .. }
+            | ClientMessage::RespondQuestion { .. }
+            | ClientMessage::GetSettings { .. }
+            | ClientMessage::UpdateSettings { .. }
+            | ClientMessage::ListFiles { .. }
+            | ClientMessage::ReadFile { .. }
+            | ClientMessage::SearchFiles { .. }
+    )
+}
+
+async fn websocket_session(mut socket: WebSocket, engine: Engine, safe_web_mode: bool) {
     let _ = socket
         .send(Message::Text(
             serde_json::to_string(&ServerMessage::Handshake {
@@ -166,6 +194,16 @@ async fn websocket_session(mut socket: WebSocket, engine: Engine) {
         }
         match serde_json::from_str::<ClientMessage>(&text) {
             Ok(message) => {
+                if safe_web_mode && !safe_mode_allows(&message) {
+                    let event = ServerMessage::Error {
+                        code: "safe_web_mode_blocked".into(),
+                        message: "Safe Web Mode 禁止此操作".into(),
+                    };
+                    let _ = socket
+                        .send(Message::Text(serde_json::to_string(&event).unwrap().into()))
+                        .await;
+                    continue;
+                }
                 for event in engine.handle(message) {
                     let _ = socket
                         .send(Message::Text(serde_json::to_string(&event).unwrap().into()))
@@ -186,9 +224,21 @@ async fn websocket_session(mut socket: WebSocket, engine: Engine) {
 }
 
 pub async fn serve_loopback(engine: Engine, port: u16) -> anyhow::Result<()> {
+    serve_loopback_with_safe_mode(engine, port, false).await
+}
+
+pub async fn serve_loopback_with_safe_mode(
+    engine: Engine,
+    port: u16,
+    safe_web_mode: bool,
+) -> anyhow::Result<()> {
     let token = std::env::var("CHAOS_WEB_TOKEN").unwrap_or_default();
     let listener = tokio::net::TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], port))).await?;
-    axum::serve(listener, router(engine, token)).await?;
+    axum::serve(
+        listener,
+        router_with_safe_mode(engine, token, safe_web_mode),
+    )
+    .await?;
     Ok(())
 }
 

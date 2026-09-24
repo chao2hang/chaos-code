@@ -10,6 +10,8 @@ comparison is constant-time and tokens are not accepted from query strings.
 Origins are limited to the local Vite origins, request bodies are capped at
 64 KiB, and JSON responses include CSP and `nosniff` headers.
 
-Non-loopback binding, public deployment, user/token rotation, CSRF protections,
-and Safe Web Mode are not yet exposed by this host and remain release gates.
+Non-loopback binding, public deployment, user/token rotation, and full CSRF
+protection remain release gates. `CHAOS_SAFE_WEB_MODE` is now enforced in the
+WebSocket backend: mutation messages are rejected before engine dispatch, so it
+is not a UI-only feature flag.
 The WebSocket uses the same authorization and Origin checks as HTTP routes.
