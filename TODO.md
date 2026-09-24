@@ -338,7 +338,7 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 当前状态：engine 已提供 workspace registry 的创建/切换/归档/最近使用协议；完整多工作区 UI、布局和 desktop 状态隔离仍待前端/桌面实现。
 
 - [~] engine 已实现 workspace 创建/切换/归档/最近使用协议，记录每个 workspace 最近 session 并在切换时发该会话 snapshot；创建和切换到空 workspace 自动创建 session，归档活动 workspace 后切回/创建 fallback session，归档 session 的 Resume/Submit/写文件/Git/终端 mutation fail-closed；create/archive/switch 同步 workspace 列表；session 持久化 workspace_id，Resume/Snapshot 拒绝错误 workspace；React 按 workspace 缓存 session、切换时清理旧 transcript 再恢复对应快照；当前 Engine 仍只有一个 host-level `WorkspaceAdapter`/Git root，不能宣称 registry workspace 有各自独立文件根，需后续 workspace-root mapping/desktop 配置。（2026-09-24；`archive_workspace_flow.rs`、`workspace_session.rs`、`workspace-ui.test.ts`）
-- [ ] 实现标签页、分屏、尺寸和主题持久化；定义损坏布局的安全回退。
+- [~] React UI 已新增版本化 layout persistence helper，持久化 sidebar/composer 尺寸、theme 和 panel visibility；损坏 JSON、未知 schema、非法值及 storage denied 安全回退，并在本地 UI 装载/变更时读写。完整 tabs/split 和桌面宽窄屏/视觉人工验收仍待浏览器/Tauri 环境。（2026-09-24；`apps/chaos-ui/src/layout.test.ts`）
 - [~] workspace registry 具备独立 workspace IDs；session cancellation/resource key、文件锁和 Git 锁的多工作区并发测试仍待真实 UI/desktop adapter。
 
 ### M2.2 文件、搜索和附件
@@ -375,7 +375,7 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 
 ### M2.6 验收门禁
 
-- [~] engine/Web/React 已验证 session workspace 绑定、错误 workspace Resume/Snapshot 拒绝、snapshot 返回 workspace_id、重启后绑定恢复以及 workspace 切换时 transcript/审批/question/busy 状态隔离并恢复各自 session；布局、标签页、草稿、多工作区人工 UI 和 Desktop transport 仍待平台验收。（2026-09-24；`workspace_session.rs`、`workspace-ui.test.ts`）
+- [~] engine/Web/React 已验证 session workspace 绑定、错误 workspace Resume/Snapshot 拒绝、snapshot 返回 workspace_id、重启后绑定恢复以及 workspace 切换时 transcript/审批/question/busy 状态隔离并恢复各自 session；layout 尺寸/theme/panel visibility 有版本化 JSON 持久化与损坏回退。跨 workspace tabs/split/draft、宽窄屏浏览器和 Desktop transport 仍待平台验收。（2026-09-24；`workspace_session.rs`、`workspace-ui.test.ts`、`layout.test.ts`）
 - [ ] E2E：终端创建文件，文件树实时更新；搜索、打开、编辑和 Git Diff 状态一致。
 - [~] engine `AttachmentStager` 已覆盖分块写入、10 MiB/类型/路径策略和失败清理；真实 WebSocket 上传、取消/进度与最终 staging-to-workspace 审批移动均有测试，上传后未批准不会写入 workspace。（2026-09-24；`attachment_flow.rs`）
 - [~] `SqliteSessionStore` 本地 round-trip/schema reject/既有 journal policy 测试已通过；多进程、网络文件系统 fixture、busy retry 和迁移中断测试仍待真实 filesystem fixture。
