@@ -55,7 +55,9 @@ async fn websocket_scans_only_configured_marketplace_roots() {
                 .unwrap();
         match (id, response) {
             ("allowed", ServerMessage::MarketplaceScan { entries, .. }) => {
-                assert!(entries.iter().any(|entry| entry.name == "demo"));
+                assert!(entries.iter().any(|entry| {
+                    entry.get("name").and_then(serde_json::Value::as_str) == Some("demo")
+                }));
             }
             ("denied", ServerMessage::Error { code, .. }) => {
                 assert_eq!(code, "marketplace_root_not_allowed");

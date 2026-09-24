@@ -33,7 +33,7 @@ pub trait ToolAdapter: Send + Sync {
 
 /// Boundary for applying a proposed file change. Implementations own the
 /// actual workspace and must make accept/rollback atomic for their backend.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct DiffPreview {
     pub proposal_id: String,
     pub path: String,
@@ -492,7 +492,7 @@ pub enum ClientMessage {
     },
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ServerMessage {
     Handshake {
@@ -672,7 +672,7 @@ pub enum ServerMessage {
         error_code: Option<String>,
     },
     MarketplaceScan {
-        entries: Vec<xai_grok_plugin_marketplace::MarketplaceEntry>,
+        entries: Vec<serde_json::Value>,
         catalog_loaded: bool,
     },
     TuiSessionImport {
@@ -1878,7 +1878,11 @@ impl Engine {
                         .expect("allowed marketplace root is canonical"),
                 );
                 vec![ServerMessage::MarketplaceScan {
-                    entries: scan.entries,
+                    entries: scan
+                        .entries
+                        .into_iter()
+                        .filter_map(|entry| serde_json::to_value(entry).ok())
+                        .collect(),
                     catalog_loaded: scan.catalog_loaded,
                 }]
             }

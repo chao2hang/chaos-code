@@ -25,7 +25,11 @@ fn marketplace_scan_is_read_only_and_rejects_escaping_root_as_empty_or_invalid_f
     });
     match &result[0] {
         ServerMessage::MarketplaceScan { entries, .. } => {
-            assert!(entries.iter().any(|entry| entry.name == "demo"))
+            assert!(
+                entries.iter().any(
+                    |entry| entry.get("name").and_then(serde_json::Value::as_str) == Some("demo")
+                )
+            )
         }
         other => panic!("unexpected {other:?}"),
     }
