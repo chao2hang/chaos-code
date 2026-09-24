@@ -35,6 +35,60 @@ pub trait DiffAdapter: Send + Sync {
     fn rollback(&self, proposal_id: &str) -> Result<(), String>;
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TerminalResult {
+    pub output: String,
+    pub exit_code: i32,
+}
+
+pub trait TerminalAdapter: Send + Sync {
+    fn run(&self, command: &str) -> Result<TerminalResult, String>;
+}
+
+pub struct ProcessTerminalAdapter {
+    cwd: PathBuf,
+    max_output_bytes: usize,
+}
+
+impl ProcessTerminalAdapter {
+    pub fn new(cwd: impl AsRef<Path>, max_output_bytes: usize) -> std::io::Result<Self> {
+        let cwd = std::fs::canonicalize(cwd)?;
+        if !cwd.is_dir() {
+            return Err(std::io::Error::other("terminal cwd is not a directory"));
+        }
+        Ok(Self {
+            cwd,
+            max_output_bytes,
+        })
+    }
+}
+
+impl TerminalAdapter for ProcessTerminalAdapter {
+    fn run(&self, command: &str) -> Result<TerminalResult, String> {
+        if command.trim().is_empty() || command.contains('\0') {
+            return Err("terminal command is empty or invalid".into());
+        }
+        let output = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(command)
+            .current_dir(&self.cwd)
+            .output()
+            .map_err(|error| format!("无法启动终端命令: {error}"))?;
+        let mut text = String::from_utf8_lossy(&output.stdout).to_string();
+        if text.len() > self.max_output_bytes {
+            text.truncate(self.max_output_bytes);
+            text.push_str("\n[output truncated]");
+        }
+        if !output.status.success() && text.is_empty() {
+            text = String::from_utf8_lossy(&output.stderr).to_string();
+        }
+        Ok(TerminalResult {
+            output: text,
+            exit_code: output.status.code().unwrap_or(-1),
+        })
+    }
+}
+
 /// Adapter that invokes the installed `chaos --headless` binary in JSON mode.
 /// The binary path is explicit so Web/Desktop hosts cannot accidentally execute
 /// an arbitrary command from a browser message.
@@ -132,6 +186,11 @@ pub enum ClientMessage {
         session_id: Uuid,
         relative_path: String,
         contents: String,
+    },
+    ProposeTerminal {
+        client_msg_id: String,
+        session_id: Uuid,
+        command: String,
     },
     GetSettings {
         client_msg_id: String,
@@ -279,6 +338,11 @@ pub enum ServerMessage {
         session_id: Uuid,
         path: String,
         bytes: usize,
+    },
+    TerminalResult {
+        session_id: Uuid,
+        output: String,
+        exit_code: i32,
     },
     Settings {
         base_url: Option<String>,
@@ -610,6 +674,7 @@ pub struct Engine {
     workspace: Option<Arc<WorkspaceAdapter>>,
     sqlite_store: Option<Arc<SqliteSessionStore>>,
     settings: Arc<Mutex<GuiSettings>>,
+    terminal_adapter: Option<Arc<dyn TerminalAdapter>>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -622,6 +687,11 @@ struct GuiSettings {
 impl Engine {
     pub fn new() -> Self {
         Self::with_state(State::default(), None, None, None, None, None, None)
+    }
+
+    pub fn with_terminal_adapter(mut self, adapter: impl TerminalAdapter + 'static) -> Self {
+        self.terminal_adapter = Some(Arc::new(adapter));
+        self
     }
 
     pub fn with_sqlite_store(path: impl AsRef<Path>) -> rusqlite::Result<Self> {
@@ -783,6 +853,7 @@ impl Engine {
             workspace,
             sqlite_store,
             settings: Arc::new(Mutex::new(GuiSettings::default())),
+            terminal_adapter: None,
         }
     }
 
@@ -840,6 +911,7 @@ impl Engine {
             | ClientMessage::ReadFile { client_msg_id, .. }
             | ClientMessage::SearchFiles { client_msg_id, .. }
             | ClientMessage::ProposeFileWrite { client_msg_id, .. }
+            | ClientMessage::ProposeTerminal { client_msg_id, .. }
             | ClientMessage::GetSettings { client_msg_id }
             | ClientMessage::UpdateSettings { client_msg_id, .. }
             | ClientMessage::GetGitStatus { client_msg_id }
@@ -1153,6 +1225,32 @@ impl Engine {
                 settings.model = model.clone();
                 vec![ServerMessage::SettingsUpdated { base_url, model }]
             }
+            ClientMessage::ProposeTerminal {
+                client_msg_id,
+                session_id,
+                command,
+            } => {
+                let Some(session) = state.sessions.get_mut(&session_id) else {
+                    return vec![Self::error("session_not_found", "会话不存在")];
+                };
+                let request_id = Uuid::new_v4();
+                session.pending_approval = Some(PendingApproval {
+                    request_id,
+                    tool: "terminal.execute".into(),
+                    summary: command,
+                });
+                session.sequence += 1;
+                vec![
+                    ServerMessage::Ack { client_msg_id },
+                    ServerMessage::ToolApprovalRequested {
+                        session_id,
+                        request_id,
+                        tool: "terminal.execute".into(),
+                        summary: "请求执行工作区内终端命令".into(),
+                        sequence: session.sequence,
+                    },
+                ]
+            }
             ClientMessage::ProposeFileWrite {
                 client_msg_id,
                 session_id,
@@ -1270,52 +1368,84 @@ impl Engine {
                 tool: pending.tool.clone(),
                 sequence: session.sequence,
             });
-            match &self.tool_adapter {
-                Some(adapter) => match adapter.execute(&pending.tool, &pending.summary) {
-                    Ok(result) => {
-                        session.messages.push(TimelineMessage {
-                            role: "tool".into(),
-                            text: result.clone(),
-                        });
-                        session.sequence += 1;
-                        events.push(ServerMessage::ToolProgress {
-                            session_id: *session_id,
-                            tool: pending.tool.clone(),
-                            progress: "completed".into(),
-                            sequence: session.sequence,
-                        });
-                        session.sequence += 1;
-                        events.push(ServerMessage::ToolResult {
-                            session_id: *session_id,
-                            tool: pending.tool.clone(),
-                            result,
-                            sequence: session.sequence,
-                        });
-                        session.sequence += 1;
-                        events.push(ServerMessage::Usage {
-                            session_id: *session_id,
-                            input_tokens: pending.summary.len() as u64,
-                            output_tokens: 1,
-                            sequence: session.sequence,
-                        });
-                        "executed"
-                    }
-                    Err(error) => {
+            if pending.tool == "terminal.execute" {
+                match &self.terminal_adapter {
+                    Some(adapter) => match adapter.run(&pending.summary) {
+                        Ok(result) => {
+                            session.sequence += 1;
+                            events.push(ServerMessage::TerminalResult {
+                                session_id: *session_id,
+                                output: result.output,
+                                exit_code: result.exit_code,
+                            });
+                            "executed"
+                        }
+                        Err(error) => {
+                            session.sequence += 1;
+                            events.push(ServerMessage::Error {
+                                code: "terminal_failed".into(),
+                                message: error,
+                            });
+                            "failed"
+                        }
+                    },
+                    None => {
                         session.sequence += 1;
                         events.push(ServerMessage::Error {
-                            code: "tool_failed".into(),
-                            message: error,
+                            code: "terminal_unavailable".into(),
+                            message: "没有配置终端 adapter".into(),
                         });
-                        "failed"
+                        "unavailable"
                     }
-                },
-                None => {
-                    session.sequence += 1;
-                    events.push(ServerMessage::Error {
-                        code: "tool_unavailable".into(),
-                        message: "没有配置获准的工具 adapter".into(),
-                    });
-                    "unavailable"
+                }
+            } else {
+                match &self.tool_adapter {
+                    Some(adapter) => match adapter.execute(&pending.tool, &pending.summary) {
+                        Ok(result) => {
+                            session.messages.push(TimelineMessage {
+                                role: "tool".into(),
+                                text: result.clone(),
+                            });
+                            session.sequence += 1;
+                            events.push(ServerMessage::ToolProgress {
+                                session_id: *session_id,
+                                tool: pending.tool.clone(),
+                                progress: "completed".into(),
+                                sequence: session.sequence,
+                            });
+                            session.sequence += 1;
+                            events.push(ServerMessage::ToolResult {
+                                session_id: *session_id,
+                                tool: pending.tool.clone(),
+                                result,
+                                sequence: session.sequence,
+                            });
+                            session.sequence += 1;
+                            events.push(ServerMessage::Usage {
+                                session_id: *session_id,
+                                input_tokens: pending.summary.len() as u64,
+                                output_tokens: 1,
+                                sequence: session.sequence,
+                            });
+                            "executed"
+                        }
+                        Err(error) => {
+                            session.sequence += 1;
+                            events.push(ServerMessage::Error {
+                                code: "tool_failed".into(),
+                                message: error,
+                            });
+                            "failed"
+                        }
+                    },
+                    None => {
+                        session.sequence += 1;
+                        events.push(ServerMessage::Error {
+                            code: "tool_unavailable".into(),
+                            message: "没有配置获准的工具 adapter".into(),
+                        });
+                        "unavailable"
+                    }
                 }
             }
         } else {
@@ -1854,6 +1984,55 @@ mod tests {
         assert!(
             matches!(&valid_shape[0], ServerMessage::ProviderValidation { reachable: false, error_code: Some(code), .. } if code == "network_not_attempted")
         );
+    }
+
+    #[test]
+    fn terminal_process_adapter_runs_in_fixed_cwd_and_truncates_output() {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(directory.path().join("marker.txt"), "cwd").unwrap();
+        let adapter = ProcessTerminalAdapter::new(directory.path(), 8).unwrap();
+        let result = adapter.run("pwd; printf 123456789").unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert!(result.output.len() <= 8 + "\n[output truncated]".len());
+        assert!(result.output.contains("output truncated") || result.output.contains("marker"));
+    }
+
+    #[test]
+    fn terminal_command_requires_approval_before_execution() {
+        let directory = tempfile::tempdir().unwrap();
+        let adapter = ProcessTerminalAdapter::new(directory.path(), 1024).unwrap();
+        let engine = Engine::new().with_terminal_adapter(adapter);
+        let session_id = match engine.handle(ClientMessage::CreateSession {
+            client_msg_id: "term-session".into(),
+        })[0]
+        {
+            ServerMessage::SessionCreated { session_id } => session_id,
+            _ => panic!(),
+        };
+        let requested = engine.handle(ClientMessage::ProposeTerminal {
+            client_msg_id: "term-propose".into(),
+            session_id,
+            command: "printf approved".into(),
+        });
+        let request_id = match &requested[1] {
+            ServerMessage::ToolApprovalRequested {
+                request_id, tool, ..
+            } if tool == "terminal.execute" => *request_id,
+            other => panic!("unexpected {other:?}"),
+        };
+        let result = engine.handle(ClientMessage::Approve {
+            client_msg_id: "term-approve".into(),
+            request_id,
+        });
+        assert!(result.iter().any(|event| matches!(event, ServerMessage::TerminalResult { output, exit_code: 0, .. } if output.contains("approved"))));
+    }
+
+    #[test]
+    fn terminal_process_adapter_returns_nonzero_exit_code() {
+        let directory = tempfile::tempdir().unwrap();
+        let adapter = ProcessTerminalAdapter::new(directory.path(), 1024).unwrap();
+        let result = adapter.run("exit 7").unwrap();
+        assert_eq!(result.exit_code, 7);
     }
 
     #[test]

@@ -349,10 +349,8 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 
 ### M2.3 终端
 
-- [ ] Xterm.js 对接现有 `ptyctl` 或经能力盘点确认的终端 backend。
-- [ ] 支持 stdin/stdout、resize、退出码、重连后的明确状态和进程终止。
-- [ ] 明确 Agent 后台命令与交互终端是否共享 backend；不强行共享同一个 PTY 会话。
-- [ ] Web 终端默认受审批和 Safe Web Mode 约束。
+- [~] 新增固定 cwd 的 `ProcessTerminalAdapter` 边界：必须先审批、输出上限、退出码、非零错误和 terminal result 已有 engine tests；Xterm.js/ptyctl 交互 stdin/resize/重连/进程取消仍待真实 PTY adapter。（2026-09-24；`terminal-adapter-test.log`）
+- [~] Web terminal 当前不提供任意命令入口；未来 terminal route 必须复用审批和 Safe Web Mode，不能绕过后端策略。（2026-09-24）
 
 ### M2.4 Git 与变更审查
 
