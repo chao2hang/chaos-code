@@ -274,9 +274,9 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 
 - [~] 自动测试覆盖提交成功、取消、重复 submission、断线、重连、snapshot fallback、无凭据和 provider 错误；当前已覆盖 engine submit/completed、Web health/handshake，剩余场景待协议接入后补齐。
 - [ ] 在 Tauri 中真实操作：创建会话 → 发送“你好” → 观察增量 → 取消另一请求 → 重启并恢复。
-- [ ] 在浏览器中完成同一流程，并验证无 Token、错误 Origin 和过大请求均被拒绝。
-- [ ] 记录 Linux 实测；macOS/Windows 至少完成 CI 构建和指定测试机冒烟。
-- [ ] 更新 README：开发启动、配置、测试和已知限制。
+- [ ] 浏览器自动化环境不可用（本机无 Playwright/Chromium）；已用真实 WebSocket 集成测试和真实服务 curl 验证协议/认证，浏览器实测仍为 M0 gate。
+- [~] Linux engine/Web/前端实测已记录；macOS/Windows GUI runner 与 Tauri 冒烟尚待提供。
+- [ ] README 尚待补充 GUI 开发启动、`CHAOS_WEB_TOKEN` 配置、测试和已知限制。
 
 ---
 
