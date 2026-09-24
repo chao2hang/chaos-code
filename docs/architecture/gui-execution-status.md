@@ -32,8 +32,8 @@ require platform runners, external services, or a later milestone.
   migration/concurrency gates remain open.
 - M2 attachment policy validates filename/content type/size before any upload,
   and the workspace Git seam only runs fixed status arguments under the
-  canonical workspace root; a fixed-cwd terminal adapter now also requires
-  approval and caps output, while full upload/Git mutation/PTY remains gated.
+  canonical workspace root; fixed-cwd terminal and approval-gated Git mutation
+  adapters now have engine tests, while full upload/Git mutation/PTY remains gated.
 - M3 settings seam exposes only non-secret Base URL/model fields, rejects unsafe
   URLs, and reports `has_api_key` as a boolean; provider shape validation returns
   `network_not_attempted` without touching credentials or making network calls.

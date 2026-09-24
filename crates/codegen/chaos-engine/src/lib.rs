@@ -45,6 +45,12 @@ pub trait TerminalAdapter: Send + Sync {
     fn run(&self, command: &str) -> Result<TerminalResult, String>;
 }
 
+pub trait GitAdapter: Send + Sync {
+    fn stage(&self, path: &str) -> Result<(), String>;
+    fn commit(&self, message: &str) -> Result<String, String>;
+    fn checkout_branch(&self, branch: &str) -> Result<(), String>;
+}
+
 pub struct ProcessTerminalAdapter {
     cwd: PathBuf,
     max_output_bytes: usize,
@@ -191,6 +197,12 @@ pub enum ClientMessage {
         client_msg_id: String,
         session_id: Uuid,
         command: String,
+    },
+    ProposeGitMutation {
+        client_msg_id: String,
+        session_id: Uuid,
+        operation: String,
+        argument: String,
     },
     GetSettings {
         client_msg_id: String,
@@ -343,6 +355,11 @@ pub enum ServerMessage {
         session_id: Uuid,
         output: String,
         exit_code: i32,
+    },
+    GitMutationResult {
+        session_id: Uuid,
+        operation: String,
+        result: String,
     },
     Settings {
         base_url: Option<String>,
@@ -675,6 +692,7 @@ pub struct Engine {
     sqlite_store: Option<Arc<SqliteSessionStore>>,
     settings: Arc<Mutex<GuiSettings>>,
     terminal_adapter: Option<Arc<dyn TerminalAdapter>>,
+    git_adapter: Option<Arc<dyn GitAdapter>>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -691,6 +709,11 @@ impl Engine {
 
     pub fn with_terminal_adapter(mut self, adapter: impl TerminalAdapter + 'static) -> Self {
         self.terminal_adapter = Some(Arc::new(adapter));
+        self
+    }
+
+    pub fn with_git_adapter(mut self, adapter: impl GitAdapter + 'static) -> Self {
+        self.git_adapter = Some(Arc::new(adapter));
         self
     }
 
@@ -854,6 +877,7 @@ impl Engine {
             sqlite_store,
             settings: Arc::new(Mutex::new(GuiSettings::default())),
             terminal_adapter: None,
+            git_adapter: None,
         }
     }
 
@@ -912,6 +936,7 @@ impl Engine {
             | ClientMessage::SearchFiles { client_msg_id, .. }
             | ClientMessage::ProposeFileWrite { client_msg_id, .. }
             | ClientMessage::ProposeTerminal { client_msg_id, .. }
+            | ClientMessage::ProposeGitMutation { client_msg_id, .. }
             | ClientMessage::GetSettings { client_msg_id }
             | ClientMessage::UpdateSettings { client_msg_id, .. }
             | ClientMessage::GetGitStatus { client_msg_id }
@@ -1225,6 +1250,40 @@ impl Engine {
                 settings.model = model.clone();
                 vec![ServerMessage::SettingsUpdated { base_url, model }]
             }
+            ClientMessage::ProposeGitMutation {
+                client_msg_id,
+                session_id,
+                operation,
+                argument,
+            } => {
+                let allowed = matches!(operation.as_str(), "stage" | "commit" | "checkout_branch");
+                if !allowed || argument.contains('\0') || argument.contains("..") {
+                    return vec![Self::error(
+                        "git_operation_rejected",
+                        "Git 操作或参数不在允许范围",
+                    )];
+                }
+                let Some(session) = state.sessions.get_mut(&session_id) else {
+                    return vec![Self::error("session_not_found", "会话不存在")];
+                };
+                let request_id = Uuid::new_v4();
+                session.pending_approval = Some(PendingApproval {
+                    request_id,
+                    tool: format!("git.{operation}"),
+                    summary: argument,
+                });
+                session.sequence += 1;
+                vec![
+                    ServerMessage::Ack { client_msg_id },
+                    ServerMessage::ToolApprovalRequested {
+                        session_id,
+                        request_id,
+                        tool: format!("git.{operation}"),
+                        summary: "请求执行受限 Git 操作".into(),
+                        sequence: session.sequence,
+                    },
+                ]
+            }
             ClientMessage::ProposeTerminal {
                 client_msg_id,
                 session_id,
@@ -1368,7 +1427,41 @@ impl Engine {
                 tool: pending.tool.clone(),
                 sequence: session.sequence,
             });
-            if pending.tool == "terminal.execute" {
+            if pending.tool.starts_with("git.") {
+                let result = match &self.git_adapter {
+                    Some(adapter) => {
+                        let operation = pending.tool.strip_prefix("git.").unwrap_or_default();
+                        match operation {
+                            "stage" => adapter.stage(&pending.summary).map(|_| "staged".into()),
+                            "commit" => adapter.commit(&pending.summary),
+                            "checkout_branch" => adapter
+                                .checkout_branch(&pending.summary)
+                                .map(|_| "checked out".into()),
+                            _ => Err("git operation unavailable".into()),
+                        }
+                    }
+                    None => Err("没有配置 Git adapter".into()),
+                };
+                match result {
+                    Ok(result) => {
+                        session.sequence += 1;
+                        events.push(ServerMessage::GitMutationResult {
+                            session_id: *session_id,
+                            operation: pending.tool.clone(),
+                            result,
+                        });
+                        "executed"
+                    }
+                    Err(error) => {
+                        session.sequence += 1;
+                        events.push(ServerMessage::Error {
+                            code: "git_failed".into(),
+                            message: error,
+                        });
+                        "failed"
+                    }
+                }
+            } else if pending.tool == "terminal.execute" {
                 match &self.terminal_adapter {
                     Some(adapter) => match adapter.run(&pending.summary) {
                         Ok(result) => {
@@ -1983,6 +2076,65 @@ mod tests {
         });
         assert!(
             matches!(&valid_shape[0], ServerMessage::ProviderValidation { reachable: false, error_code: Some(code), .. } if code == "network_not_attempted")
+        );
+    }
+
+    struct FixtureGit;
+    impl GitAdapter for FixtureGit {
+        fn stage(&self, path: &str) -> Result<(), String> {
+            if path == "src/main.rs" {
+                Ok(())
+            } else {
+                Err("bad path".into())
+            }
+        }
+        fn commit(&self, message: &str) -> Result<String, String> {
+            Ok(format!("commit:{message}"))
+        }
+        fn checkout_branch(&self, branch: &str) -> Result<(), String> {
+            if branch == "feature" {
+                Ok(())
+            } else {
+                Err("bad branch".into())
+            }
+        }
+    }
+
+    #[test]
+    fn git_mutation_requires_approval_and_allows_only_fixed_operations() {
+        let engine = Engine::new().with_git_adapter(FixtureGit);
+        let session_id = match engine.handle(ClientMessage::CreateSession {
+            client_msg_id: "git-session".into(),
+        })[0]
+        {
+            ServerMessage::SessionCreated { session_id } => session_id,
+            _ => panic!(),
+        };
+        let requested = engine.handle(ClientMessage::ProposeGitMutation {
+            client_msg_id: "git-propose".into(),
+            session_id,
+            operation: "commit".into(),
+            argument: "safe".into(),
+        });
+        let request_id = match &requested[1] {
+            ServerMessage::ToolApprovalRequested {
+                request_id, tool, ..
+            } if tool == "git.commit" => *request_id,
+            other => panic!("{other:?}"),
+        };
+        let result = engine.handle(ClientMessage::Approve {
+            client_msg_id: "git-approve".into(),
+            request_id,
+        });
+        assert!(result.iter().any(|event| matches!(event, ServerMessage::GitMutationResult { result, .. } if result == "commit:safe")));
+        let rejected = engine.handle(ClientMessage::ProposeGitMutation {
+            client_msg_id: "git-bad".into(),
+            session_id,
+            operation: "push".into(),
+            argument: "origin".into(),
+        });
+        assert!(
+            matches!(&rejected[0], ServerMessage::Error { code, .. } if code == "git_operation_rejected")
         );
     }
 
