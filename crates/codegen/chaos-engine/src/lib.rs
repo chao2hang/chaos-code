@@ -733,6 +733,8 @@ struct State {
     seen_client_messages: HashSet<String>,
     workspaces: HashMap<Uuid, WorkspaceInfo>,
     active_workspace_id: Option<Uuid>,
+    #[serde(default)]
+    settings: GuiSettings,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -1035,7 +1037,7 @@ pub struct Engine {
     tui_session_roots: Arc<Vec<PathBuf>>,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 struct GuiSettings {
     base_url: Option<String>,
     model: Option<String>,
@@ -1221,6 +1223,7 @@ impl Engine {
         workspace: Option<Arc<WorkspaceAdapter>>,
         sqlite_store: Option<Arc<SqliteSessionStore>>,
     ) -> Self {
+        let initial_settings = state.settings.clone();
         let (events, _) = broadcast::channel(256);
         Self {
             events,
@@ -1232,7 +1235,7 @@ impl Engine {
             workspace,
             sqlite_store,
             attachments: Arc::new(Mutex::new(HashMap::new())),
-            settings: Arc::new(Mutex::new(GuiSettings::default())),
+            settings: Arc::new(Mutex::new(initial_settings)),
             terminal_adapter: None,
             git_adapter: None,
             marketplace_roots: Arc::new(Vec::new()),
@@ -1894,6 +1897,10 @@ impl Engine {
                 let mut settings = self.settings.lock().expect("settings lock");
                 settings.base_url = base_url.clone();
                 settings.model = model.clone();
+                state.settings = settings.clone();
+                if let Err(error) = self.persist(&state) {
+                    return vec![error];
+                }
                 vec![ServerMessage::SettingsUpdated { base_url, model }]
             }
             ClientMessage::ProposeGitMutation {
@@ -3206,6 +3213,23 @@ mod tests {
         });
         assert!(
             matches!(&unsafe_url[0], ServerMessage::Error { code, .. } if code == "invalid_base_url")
+        );
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("settings.json");
+        let persisted = Engine::with_persistence(&path).unwrap();
+        let updated = persisted.handle(ClientMessage::UpdateSettings {
+            client_msg_id: "persist-settings".into(),
+            base_url: Some("https://persisted.example.test/v1".into()),
+            model: Some("persisted-model".into()),
+        });
+        assert!(matches!(updated[0], ServerMessage::SettingsUpdated { .. }));
+        drop(persisted);
+        let reopened = Engine::with_persistence(&path).unwrap();
+        let restored = reopened.handle(ClientMessage::GetSettings {
+            client_msg_id: "restore-settings".into(),
+        });
+        assert!(
+            matches!(&restored[0], ServerMessage::Settings { base_url, model, .. } if base_url.as_deref() == Some("https://persisted.example.test/v1") && model.as_deref() == Some("persisted-model"))
         );
     }
 

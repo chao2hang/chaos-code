@@ -50,8 +50,10 @@ require platform runners, external services, or a later milestone.
   validates real `summary.json`/`updates.jsonl` files without modifying the TUI
   source directory; full ACP conversion and GUI write-back remain open.
 - M3 settings seam exposes only non-secret Base URL/model fields, rejects unsafe
-  URLs, and reports `has_api_key` as a boolean; provider shape validation returns
-  `network_not_attempted` without touching credentials or making network calls.
+  URLs, and reports `has_api_key` as a boolean; valid settings persist in the
+  engine snapshot and restore after reopen, while invalid updates leave the old
+  value intact. Provider shape validation returns `network_not_attempted`
+  without touching credentials or making network calls.
 - M3 marketplace discovery is read-only and reuses the existing catalog/scanner;
   `Engine::with_marketplace_root` makes scan roots an explicit host allowlist, and
   WebSocket coverage verifies discovery plus rejection of unconfigured roots.
