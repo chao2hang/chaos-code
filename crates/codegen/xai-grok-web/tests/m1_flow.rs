@@ -135,6 +135,102 @@ async fn websocket_tool_approval_emits_ordered_ack_resolution_audit() {
 }
 
 #[tokio::test]
+async fn websocket_repeated_approval_and_question_resolution_fail_closed() {
+    let log = ToolLog::default();
+    let (mut socket, task) = connect(Engine::with_tool_adapter(log)).await;
+    send(
+        &mut socket,
+        ClientMessage::CreateSession {
+            client_msg_id: "create".into(),
+        },
+    )
+    .await;
+    let session_id = match next(&mut socket).await {
+        ServerMessage::SessionCreated { session_id } => session_id,
+        other => panic!("{other:?}"),
+    };
+    send(
+        &mut socket,
+        ClientMessage::Submit {
+            client_msg_id: "ask".into(),
+            session_id,
+            prompt: "/ask continue?".into(),
+        },
+    )
+    .await;
+    assert!(matches!(next(&mut socket).await, ServerMessage::Ack { .. }));
+    let question_id = match next(&mut socket).await {
+        ServerMessage::QuestionRequested { question_id, .. } => question_id,
+        other => panic!("{other:?}"),
+    };
+    send(
+        &mut socket,
+        ClientMessage::RespondQuestion {
+            client_msg_id: "answer".into(),
+            question_id,
+            answer: "yes".into(),
+        },
+    )
+    .await;
+    assert!(matches!(next(&mut socket).await, ServerMessage::Ack { .. }));
+    assert!(matches!(
+        next(&mut socket).await,
+        ServerMessage::QuestionResolved { .. }
+    ));
+    assert!(matches!(
+        next(&mut socket).await,
+        ServerMessage::Audit { .. }
+    ));
+    send(
+        &mut socket,
+        ClientMessage::RespondQuestion {
+            client_msg_id: "answer-again".into(),
+            question_id,
+            answer: "no".into(),
+        },
+    )
+    .await;
+    assert!(
+        matches!(next(&mut socket).await, ServerMessage::Error { code, .. } if code == "question_not_found")
+    );
+    task.await.unwrap();
+}
+
+#[tokio::test]
+async fn websocket_diff_without_adapter_reports_structured_failure() {
+    let (mut socket, task) = connect(Engine::new()).await;
+    send(
+        &mut socket,
+        ClientMessage::CreateSession {
+            client_msg_id: "create".into(),
+        },
+    )
+    .await;
+    let session_id = match next(&mut socket).await {
+        ServerMessage::SessionCreated { session_id } => session_id,
+        other => panic!("{other:?}"),
+    };
+    send(
+        &mut socket,
+        ClientMessage::AcceptDiff {
+            client_msg_id: "accept".into(),
+            session_id,
+            proposal_id: "p1".into(),
+            summary: "safe".into(),
+        },
+    )
+    .await;
+    assert!(matches!(next(&mut socket).await, ServerMessage::Ack { .. }));
+    assert!(
+        matches!(next(&mut socket).await, ServerMessage::Error { code, .. } if code == "diff_failed")
+    );
+    assert!(
+        matches!(next(&mut socket).await, ServerMessage::DiffResolved { action, .. } if action == "accept_diff")
+    );
+    task.await.unwrap();
+}
+
+#[tokio::test]
 async fn websocket_diff_accept_and_rollback_use_the_bound_adapter() {
     let log = DiffLog::default();
     let engine = Engine::with_diff_adapter(log.clone());

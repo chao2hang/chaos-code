@@ -306,7 +306,7 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 
 - [~] engine 已支持 ToolAdapter 边界：审批通过才执行、无 adapter 安全失败、执行结果写入 timeline/audit；真实命令、写文件、网络、MCP tool adapter 和通用提问对话框仍待补。（2026-09-24；engine tests）
 - [x] engine 审批记录绑定 session、tool、参数摘要、UUID request ID、结果和序列；ToolAdapter 只在批准后调用，测试覆盖执行、拒绝和无 adapter fail-closed。（2026-09-24）
-- [~] WebSocket 工具审批真实集成测试已覆盖允许、拒绝基础路径和 ordered ack/resolution/audit；Diff accept/rollback 真实 adapter 测试已覆盖；记住规则、超时、断线中的审批恢复和多客户端竞争仍待补。（2026-09-24；`tests/m1_flow.rs`）
+- [~] WebSocket 工具审批真实集成测试已覆盖允许、拒绝、重复 question resolve、无 Diff adapter 结构化失败和 ordered ack/resolution/audit；记住规则、超时、断线中的审批恢复和多客户端竞争仍待补。（2026-09-24；`tests/m1_flow.rs`）
 - [~] Web 写操作已有 workspace root confinement、message dedup、Origin/Host/token 校验和 Safe Web Mode 后端 gate；CSRF/重放跨 HTTP 写操作防护、审计日志脱敏轮转仍待完整部署模式。
 - [x] Safe Web Mode 已由 WebSocket 后端强制执行：命令、文件写入、Git/Diff mutation、审批执行等 mutation message 在 `CHAOS_SAFE_WEB_MODE` 下直接返回 `safe_web_mode_blocked`；真实 WebSocket 测试覆盖 terminal direct call。（2026-09-24；`safe_mode_flow.rs`）
 
