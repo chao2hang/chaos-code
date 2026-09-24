@@ -28,8 +28,8 @@ require platform runners, external services, or a later milestone.
 - M2 workspace boundary canonicalizes a configured root and supports bounded
   list/read/search/write requests; path escapes, symlink escapes and missing
   workspace adapters fail closed before browser-controlled paths reach I/O.
-  Workspace registry has engine create/switch/archive/recent tests; full
-  multi-workspace UI/layout isolation remains open.
+  Workspace registry has engine create/switch/archive/recent tests and React now
+  renders real list/switch/archive events; full multi-workspace UI/layout isolation remains open.
 - M2 attachment policy validates filename/content type/size; `AttachmentStager`
   writes bounded chunks into a root-local staging directory and cleans failures.
   Engine/Web attachment protocol covers begin/chunk/progress/cancel/quota;
