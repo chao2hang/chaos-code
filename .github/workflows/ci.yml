@@ -204,6 +204,9 @@ jobs:
       - name: version consistency (Cargo vs npm)
         run: ./scripts/ci/check-versions.sh
 
+      - name: installer signature policy
+        run: python3 scripts/ci/test-installer-signature-policy.py
+
       - name: stamp-version dry run
         run: |
           set -euo pipefail

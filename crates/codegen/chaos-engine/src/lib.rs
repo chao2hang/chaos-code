@@ -7,6 +7,8 @@ use std::{
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
+pub mod remote;
+
 pub const PROTOCOL_VERSION: u16 = 1;
 pub const STATE_SCHEMA_VERSION: u16 = 1;
 const DELTA_SIZE: usize = 8;

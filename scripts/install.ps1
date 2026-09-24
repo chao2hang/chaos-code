@@ -458,33 +458,27 @@ try {
         }
     }
 
-    # Signature verification: verify the downloaded binary against its .sig
-    # sidecar using Python's cryptography library (if available). This is
-    # defense-in-depth on top of the SHA256 checksum — the checksum catches
-    # corruption, the signature catches a compromised release.
-    #
-    # Skipped silently when Python/cryptography is not installed,
-    # when CHAOS_SKIP_SIGNATURE=1 is set, or when no .sig file exists at the
-    # release URL (older releases that predate signing).
-    # Fails hard when Python+cryptography IS available, the .sig IS found,
-    # but the signature does not verify.
+    # Signature verification is mandatory unless the user explicitly sets
+    # CHAOS_SKIP_SIGNATURE=1. Missing prerequisites or a missing sidecar fail
+    # closed instead of silently downgrading to checksum-only.
     if ($env:CHAOS_SKIP_SIGNATURE -eq "1") {
         Write-Warning "signature verification skipped (CHAOS_SKIP_SIGNATURE=1)"
     } else {
         $python = Get-Command python -ErrorAction SilentlyContinue
         $pubKey = $env:CHAOS_SIGNING_PUBLIC_KEY
-        # Probe cryptography availability first — a missing package must
-        # skip, not be reported as a tampered binary.
+        # Probe cryptography availability; missing prerequisites fail closed.
         $cryptoAvail = $false
         if ($python) {
             & python -c "from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey" 2>$null
             $cryptoAvail = ($LASTEXITCODE -eq 0)
         }
-        if ($python -and $cryptoAvail -and $pubKey) {
-            $sigFile = Join-Path $env:TEMP ("chaos-sig-" + [guid]::NewGuid().ToString("n") + ".sig")
-            try {
-                [void](Download-GitHubFile -OriginUrl $sigOrigin -OutFile $sigFile -Headers $headers -MinBytes 16 -ErrorAction SilentlyContinue)
-                if (Test-Path -LiteralPath $sigFile) {
+        if (-not $python) { throw "python is required for signature verification. To bypass (NOT recommended), set CHAOS_SKIP_SIGNATURE=1." }
+        if (-not $cryptoAvail) { throw "Python package cryptography is required for signature verification. To bypass (NOT recommended), set CHAOS_SKIP_SIGNATURE=1." }
+        if (-not $pubKey) { throw "CHAOS_SIGNING_PUBLIC_KEY is required for signature verification. To bypass (NOT recommended), set CHAOS_SKIP_SIGNATURE=1." }
+        $sigFile = Join-Path $env:TEMP ("chaos-sig-" + [guid]::NewGuid().ToString("n") + ".sig")
+        try {
+            [void](Download-GitHubFile -OriginUrl $sigOrigin -OutFile $sigFile -Headers $headers -MinBytes 16)
+            if (Test-Path -LiteralPath $sigFile) {
                     # Verify with Python's cryptography library (ed25519, raw).
                     # The .sig file contains a bare base64-encoded 64-byte signature.
                     $pyScript = @"

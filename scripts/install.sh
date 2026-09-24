@@ -515,20 +515,9 @@ verify_checksum() {
   echo "checksum OK (${actual})"
 }
 
-# Signature verification: verify the downloaded binary against its .sig
-# sidecar using Python's cryptography library (if available). This is
-# defense-in-depth on top of the SHA256 checksum — the checksum catches
-# corruption, the signature catches a compromised release.
-#
-# Skipped silently when:
-#   - Python 3 or the cryptography package is not installed
-#   - CHAOS_SKIP_SIGNATURE=1 is set (explicit opt-out)
-#   - The .sig file is not found at the release URL (older releases that
-#     predate signing)
-#
-# Fails hard when Python+cryptography IS installed, the .sig IS found, but
-# the signature does not verify — this means the binary was tampered with
-# after the release was signed.
+# Signature verification is mandatory unless the user explicitly sets
+# CHAOS_SKIP_SIGNATURE=1. Missing sidecars, public keys, or verification
+# prerequisites fail closed instead of silently downgrading to checksums.
 verify_signature() {
   if [[ "${CHAOS_SKIP_SIGNATURE:-0}" == "1" ]]; then
     echo "warning: signature verification skipped (CHAOS_SKIP_SIGNATURE=1)" >&2
@@ -539,8 +528,8 @@ verify_signature() {
   sig_tmp="$(mktemp)"
   if ! download_github "$SIG_ORIGIN" "$sig_tmp" 10 30 >/dev/null 2>&1; then
     rm -f "$sig_tmp"
-    # No .sig file published for this release — skip (older releases).
-    return 0
+    echo "error: required signature sidecar unavailable for ${ASSET}" >&2
+    exit 1
   fi
 
   # The compiled-in public key is embedded in the chaos binary itself;
@@ -550,9 +539,14 @@ verify_signature() {
   pubkey="${CHAOS_SIGNING_PUBLIC_KEY:-}"
   if [[ -z "$pubkey" ]]; then
     rm -f "$sig_tmp"
-    # No public key configured — skip silently (the binary will still
-    # verify its own updates once installed).
-    return 0
+    echo "error: CHAOS_SIGNING_PUBLIC_KEY is required for signature verification" >&2
+    exit 1
+  fi
+  if ! command -v python3 >/dev/null 2>&1 || ! python3 -c "from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey" >/dev/null 2>&1; then
+    rm -f "$sig_tmp"
+    echo "error: python3 with cryptography is required for signature verification" >&2
+    echo "  To bypass (NOT recommended), set CHAOS_SKIP_SIGNATURE=1." >&2
+    exit 1
   fi
 
   # Verify with Python's cryptography library (ed25519, raw — no pre-hash).

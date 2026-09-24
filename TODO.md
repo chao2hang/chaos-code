@@ -430,16 +430,16 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 
 ### M4.1 远程 transport 与部署
 
-- [ ] 基于现有 workspace RPC 类型和 handler 设计 transport adapter，禁止复制第二套业务协议。
+- [~] 新增 `chaos-engine::remote` capability/endpoint boundary：声明 workspace/tool/port-forward 能力，要求 Strict 或有 fingerprint 的 TOFU host-key policy，拒绝 detached Agent；真实 SSH/workspace transport 仍需远端主机与 SSH spike。（2026-09-24；remote unit test）
 - [ ] 明确复用 `xai-workspace-server` 的方式；`xai-grok-workspace-daemon` 只承担其已有的生命周期职责。
 - [ ] 实现架构/OS 探测、校验和原子部署；二进制放在版本化目录，权限最小化。
-- [ ] 实现 client/server 版本和 capability 协商；不兼容时给出升级或降级提示。
+- [~] `chaos-engine::remote::RemoteEndpoint` 已提供 capability/host-key policy 校验边界；真实 client/server version negotiation、降级提示和传输仍需 M4 远端实现。
 - [ ] 实现心跳、有限重试、取消和明确的连接状态机。
 
 ### M4.2 SSH 安全
 
 - [ ] 支持 ADR/spike 已验证的认证方式；未验证的 ProxyCommand 等能力不得宣传。
-- [ ] 默认严格 host key 校验；首次 TOFU 显示指纹并记录，变更时阻断连接。
+- [~] remote endpoint 类型已强制 Strict/带 fingerprint 的 TOFU policy，缺 fingerprint 或 detached Agent 会被拒绝；真实 SSH host-key 交换、变更阻断和凭据测试仍待远端 runner。（2026-09-24；`gui-remote-status.md`）
 - [ ] 密钥、口令和 Token 不写日志、不同步到远端；Agent forwarding 默认关闭。
 - [ ] 远端 server 仅监听 Unix socket、stdio 或回环端口，并使用一次性握手凭据。
 - [ ] 对上传目录、daemon 权限、日志、pidfile 和升级回滚做威胁测试。
@@ -485,10 +485,10 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 ### M5.1 CI
 
 - [~] 独立 `gui` CI 已运行前端 typecheck、Vitest unit 和 production build；format/lint 与生成类型漂移检查待接入 schema/typegen 后补齐。（2026-09-24）
-- [~] 独立 `gui` CI 已运行 Rust GUI/Web crates test（workspace pinned toolchain）和前端 typecheck/unit/build；GUI crate fmt/clippy 独立门禁与更细的 job 仍待补齐。（2026-09-24）
+- [~] 独立 `gui` CI 已运行 Rust GUI/Web crates test（workspace pinned toolchain）和前端 typecheck/unit/build；新增 installer signature policy fixture 到 npm-scripts CI，GUI crate fmt/clippy 独立门禁与更细的 job 仍待补齐。（2026-09-24）
 - [ ] 复测主 `rust` job 耗时仍在 `timeout-minutes: 60` 内且未因 GUI 增长；超出则先修隔离，不得直接调高 timeout。
 - [ ] 增加 Playwright Web E2E；当前环境无可用 Playwright/Chromium，React reducer 与真实 WebSocket 集成测试已作为降级证据；桌面端仍需 Tauri/WebDriver 平台自动化。
-- [~] GUI CI 已使用 npm cache 与 `package-lock.json`；pnpm/sccache 尚未引入，避免没有测量就叠加缓存系统。
+- [~] GUI CI 已使用 npm cache 与 `package-lock.json`；Rust cache 由现有 CI 提供，pnpm/sccache 尚未引入，避免没有测量就叠加缓存系统。（2026-09-24）
 - [~] 现有 `THIRD-PARTY-NOTICES`、lockfile 和 secret scan 提供基础审查；SBOM、漏洞扫描和自动 license gate 尚待接入工具/CI runner。
 - [~] ignored inventory 已修复并纳入 Q4 CSV；稳定版相关 ignored test 的逐项 owner/豁免审查仍未完成，不能作为 release 通过依据。
 
@@ -658,8 +658,9 @@ npm 元包 `crates/codegen/xai-grok-pager/npm/chaos/package.json` 的版本已�
 - [x] 更新 `docs/audit-followup-report.md` §4，记录签名接线、降级路径和未配置密钥时的真实状态。（2026-09-23；证据：本次复核）
 - [ ] 由仓库维护者生成/托管 Ed25519 密钥对，配置 `CHAOS_SIGNING_PRIVATE_KEY` secret 与 `CHAOS_SIGNING_PUBLIC_KEY` repository variable；名称检查确认两项均存在（2026-09-23），未读取或输出密钥值。仍需核验配置有效且公私钥匹配。
 - [x] release workflow 强制要求签名密钥与 `require-sig` feature；新增 `signing-preflight` 校验 secret/variable 非空、Ed25519 公私钥匹配，配置缺失或不匹配时在构建前阻断。（2026-09-24；workflow shell/YAML 检查通过）
-- [ ] 统一 Unix、PowerShell 与 batch 安装路径的验签策略；发布 workflow/updater 已改为签名必需并在缺失时失败，安装器仍需补齐一致的 fail-closed 行为和跨平台测试。明确 opt-out 仅用于维护者有意绕过。
-- [ ] 增加自动更新及安装端到端测试：有效签名接受、签名错误拒绝、缺签名拒绝、错误公钥拒绝；updater 单元测试已有有效/篡改/错误公钥/缺 sidecar 覆盖，仍缺安装器端到端测试及 Windows runner 验证。
+- [x] Unix/PowerShell/batch installers 默认 fail-closed；新增 `scripts/ci/test-installer-signature-policy.py` 并接入 CI，缺少 signature/public key/cryptography 会失败，仅 `CHAOS_SKIP_SIGNATURE=1` 显式 opt-out。（2026-09-24；fixture 和 bash -n 通过；Windows runner 仍待运行）
+- [~] Unix、PowerShell 与 batch 安装路径已统一为默认 fail-closed：缺 sidecar、公钥或 cryptography 均失败，只有显式 `CHAOS_SKIP_SIGNATURE=1` 绕过；结构 fixture 与 Unix 语法测试通过，Windows runner 实测仍待平台 gate。（2026-09-24）
+- [~] updater 现有单测覆盖有效/篡改/错误公钥/缺 sidecar；新增 `scripts/ci/test-installer-signature-policy.py` 锁住三安装器 fail-closed 结构，真实签名安装成功/错误/缺签名与 Windows PowerShell runner 仍待具备真实 release asset 的外部 gate。
 - [ ] 完成以上项后运行真实 release dry-run，确认各平台签名 sidecar 与编译内公钥匹配，再允许创建补丁版本 tag。
 
 **本轮不代建或代存私钥**：该操作需要维护者控制的密钥生成环境和 GitHub secret 权限。
