@@ -8,6 +8,8 @@ header strong { color: #fff; font-size: 1.2rem; }
 .empty { margin: auto; color: #8290a5; }
 article { max-width: 78%; padding: 12px 16px; border-radius: 12px; background: #1e293b; }
 article.user { align-self: flex-end; background: #24558f; }
+article.approval { border: 1px solid #d39d32; background: #3b2d13; }
+article.approval div { display: flex; gap: 8px; margin-top: 10px; }
 article p { margin: 6px 0 0; white-space: pre-wrap; }
 small { color: #b5c3d7; }
 form { display: flex; gap: 12px; align-items: end; }
