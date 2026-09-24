@@ -521,6 +521,8 @@ pub enum ServerMessage {
         workspace_id: Option<Uuid>,
         messages: Vec<TimelineMessage>,
         sequence: u64,
+        pending_approval: Option<PendingApprovalSnapshot>,
+        pending_question: Option<QuestionSnapshot>,
     },
     Ack {
         client_msg_id: String,
@@ -712,6 +714,21 @@ pub struct AuditEntry {
     pub action: String,
     pub outcome: String,
     pub sequence: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct QuestionSnapshot {
+    pub question_id: Uuid,
+    pub prompt: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct PendingApprovalSnapshot {
+    pub request_id: Uuid,
+    pub tool: String,
+    pub summary: String,
+    pub confirmations_required: u8,
+    pub confirmations: u8,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -1460,6 +1477,25 @@ impl Engine {
                         workspace_id: session.workspace_id,
                         messages: session.messages.clone(),
                         sequence: session.sequence,
+                        pending_approval: session.pending_approval.as_ref().map(|approval| {
+                            PendingApprovalSnapshot {
+                                request_id: approval.request_id,
+                                tool: approval.tool.clone(),
+                                summary: approval.summary.clone(),
+                                confirmations_required: approval.confirmations_required,
+                                confirmations: approval.confirmations,
+                            }
+                        }),
+                        pending_question: session.pending_question.map(|question_id| {
+                            QuestionSnapshot {
+                                question_id,
+                                prompt: session
+                                    .messages
+                                    .last()
+                                    .map(|message| message.text.clone())
+                                    .unwrap_or_default(),
+                            }
+                        }),
                     }]
                 }
                 Some(_) => vec![Self::error(

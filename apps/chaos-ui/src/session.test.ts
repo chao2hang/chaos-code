@@ -32,7 +32,8 @@ describe('session event projection', () => {
   })
 
   it('uses snapshot as the reconnect source of truth', () => {
-    const state = applyServerMessage({ ...initialSessionState, messages: [{ role: 'user', text: 'stale' }] }, { type: 'session_snapshot', session_id: 's1', workspace_id: null, sequence: 1, messages: [{ role: 'user', text: 'restored' }] })
+    const state = applyServerMessage({ ...initialSessionState, messages: [{ role: 'user', text: 'stale' }] }, { type: 'session_snapshot', session_id: 's1', workspace_id: null, sequence: 1, pending_approval: { request_id: 'r1', tool: 'demo.tool', summary: 'confirm', confirmations_required: 1, confirmations: 0 }, pending_question: null, messages: [{ role: 'user', text: 'restored' }] })
     expect(state.messages).toEqual([{ role: 'user', text: 'restored' }])
+    expect(state.approval).toEqual({ requestId: 'r1', tool: 'demo.tool', summary: 'confirm' })
   })
 })

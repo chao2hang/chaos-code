@@ -25,9 +25,17 @@ export function applyServerMessage(state: SessionState, message: ServerMessage):
   if (message.type === 'workspaces') return { ...state, workspaces: message.workspaces, activeWorkspaceId: message.active_workspace_id }
   if (message.type === 'workspace_switched') return { ...state, activeWorkspaceId: message.workspace_id, status: '工作区已切换' }
   if (message.type === 'workspace_archived') return { ...state, workspaces: state.workspaces.map((workspace) => workspace.id === message.workspace_id ? { ...workspace, archived: true } : workspace) }
-  if (message.type === 'session_snapshot' && message.messages) return { ...state, messages: message.messages, status: '历史已恢复' }
+  if (message.type === 'session_snapshot' && message.messages) return {
+    ...state,
+    messages: message.messages,
+    activeWorkspaceId: message.workspace_id ?? state.activeWorkspaceId,
+    approval: message.pending_approval ? { requestId: message.pending_approval.request_id, tool: message.pending_approval.tool, summary: message.pending_approval.summary } : undefined,
+    question: message.pending_question ? { questionId: message.pending_question.question_id, prompt: message.pending_question.prompt || '请继续回答待处理问题' } : undefined,
+    status: message.pending_approval ? '等待审批' : message.pending_question ? '等待回答' : '历史已恢复',
+  }
   if (message.type === 'tool_approval_requested' && message.request_id) return { ...state, busy: false, approval: { requestId: message.request_id, tool: message.tool ?? 'unknown', summary: message.summary ?? '' }, status: '等待审批' }
   if (message.type === 'question_requested' && message.question_id) return { ...state, busy: false, question: { questionId: message.question_id, prompt: message.prompt ?? '' }, status: '等待回答' }
+  if (message.type === 'session_snapshot' && message.pending_question) return { ...state, busy: false, question: state.question ?? { questionId: message.pending_question.question_id, prompt: message.pending_question.prompt || '请继续回答待处理问题' }, status: '等待回答' }
   if (message.type === 'approval_resolved') return { ...state, approval: undefined, status: '审批已处理' }
   if (message.type === 'question_resolved') return { ...state, question: undefined, status: '回答已提交' }
   if (message.type === 'text_delta') {

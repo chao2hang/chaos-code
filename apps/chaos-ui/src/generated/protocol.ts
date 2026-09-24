@@ -40,7 +40,7 @@ export type ServerMessage =
   | { type: 'workspaces'; active_workspace_id: UUID; workspaces: WorkspaceInfo[] }
   | { type: 'workspace_archived'; workspace_id: UUID }
   | { type: 'workspace_switched'; workspace_id: UUID }
-  | { type: 'session_snapshot'; session_id: UUID; workspace_id: UUID | null; messages: TimelineMessage[]; sequence: number }
+  | { type: 'session_snapshot'; session_id: UUID; workspace_id: UUID | null; messages: TimelineMessage[]; sequence: number; pending_approval: PendingApprovalSnapshot | null; pending_question: QuestionSnapshot | null }
   | { type: 'ack'; client_msg_id: string }
   | { type: 'text_delta'; session_id: UUID; text: string; sequence: number }
   | { type: 'completed'; session_id: UUID; sequence: number }
@@ -74,6 +74,8 @@ export type ServerMessage =
   | { type: 'diff_preview'; session_id: UUID; preview: DiffPreview }
 
 export type DiffPreview = { proposal_id: string; path: string; before: string | null; after: string }
+export type PendingApprovalSnapshot = { request_id: UUID; tool: string; summary: string; confirmations_required: number; confirmations: number }
+export type QuestionSnapshot = { question_id: UUID; prompt: string }
 export type TimelineMessage = { role: string; text: string }
 export type WorkspaceInfo = { id: UUID; name: string; archived: boolean; last_used_sequence: number }
 export type MarketplaceEntry = { name: string; version: string | null; description: string | null; category: string | null; author: string | null; tags: string[]; keywords: string[]; domains: string[]; homepage: string | null; relative_path: string; skill_count: number; has_hooks: boolean; has_agents: boolean; has_mcp: boolean; remote_url?: string; remote_ref?: string; remote_sha?: string; remote_subdir?: string; components?: unknown }
