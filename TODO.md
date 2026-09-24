@@ -234,7 +234,7 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 
 - [x] 创建 `apps/chaos-ui`：Vite、React、TypeScript、Vitest 脚本和 npm lockfile；实现最小时间线/composer/演示响应。（2026-09-24；`npm run typecheck`、`npm run build` 通过）
 - [x] 创建 `crates/codegen/chaos-engine`，提供版本化 client/server envelope、session create、submit、ack、text delta、completed、cancel。（2026-09-24；crate tests 通过）
-- [ ] 按 `ADR-002` 的结论处理 headless：若选择下沉，本任务包含把 `headless.rs` 及其 `acp` 胶水迁出 `xai-grok-pager`，并保证现有 `chaos --headless` 行为与测试不变。
+- [~] 按 `ADR-002` 的结论处理 headless：已新增 `chaos-engine::PromptAdapter` 和受显式路径控制的 `HeadlessProcessAdapter`，Web 可通过 `CHAOS_AGENT_BINARY` 接入真实 `chaos --headless --output-format json`；物理迁移 `headless.rs` 及其 ACP 胶水仍待独立回归批次，现有 CLI 行为未改。（2026-09-24；engine/Web adapter tests 通过）
 - [x] 创建 `xai-grok-desktop` 和 `xai-grok-web`，加入 workspace 末尾的分叉区段；Web 提供 loopback Axum health/handshake，Desktop 提供独立 host boundary。（2026-09-24；Rust check/test 与独立 `ci.yml` GUI job 已加入）
 - [x] 保证现有 `chaos` TUI/CLI 默认构建和行为不变；GUI crate 独立于 TUI binary，默认 workspace check 不引入 Tauri。（2026-09-24；GUI crate 独立 check 通过；完整 workspace 回归待 M0.6）
 - [ ] 回归验证 M-1.6 的隔离指标在真实 GUI crate 下依然成立（此前是最小 spike，此处是真实依赖树）：主 CI job 耗时无变化、默认构建不拉 Tauri 依赖。

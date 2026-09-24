@@ -10,6 +10,55 @@ use uuid::Uuid;
 pub const PROTOCOL_VERSION: u16 = 1;
 const DELTA_SIZE: usize = 8;
 
+/// Boundary for connecting the GUI session state to a real Agent runtime.
+/// Implementations return text chunks and never receive GUI credentials.
+pub trait PromptAdapter: Send + Sync {
+    fn run_prompt(&self, prompt: &str) -> Result<Vec<String>, String>;
+}
+
+/// Adapter that invokes the installed `chaos --headless` binary in JSON mode.
+/// The binary path is explicit so Web/Desktop hosts cannot accidentally execute
+/// an arbitrary command from a browser message.
+pub struct HeadlessProcessAdapter {
+    binary: std::path::PathBuf,
+    cwd: std::path::PathBuf,
+}
+
+impl HeadlessProcessAdapter {
+    pub fn new(binary: impl Into<std::path::PathBuf>, cwd: impl Into<std::path::PathBuf>) -> Self {
+        Self {
+            binary: binary.into(),
+            cwd: cwd.into(),
+        }
+    }
+}
+
+impl PromptAdapter for HeadlessProcessAdapter {
+    fn run_prompt(&self, prompt: &str) -> Result<Vec<String>, String> {
+        let output = std::process::Command::new(&self.binary)
+            .current_dir(&self.cwd)
+            .args([
+                "--no-auto-update",
+                "--output-format",
+                "json",
+                "--single",
+                prompt,
+            ])
+            .output()
+            .map_err(|error| format!("无法启动 headless Agent: {error}"))?;
+        if !output.status.success() {
+            return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+        }
+        let value: serde_json::Value = serde_json::from_slice(&output.stdout)
+            .map_err(|error| format!("headless Agent 返回无效 JSON: {error}"))?;
+        let text = value
+            .get("text")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| "headless Agent JSON 缺少 text 字段".to_string())?;
+        Ok(bounded_text_chunks(text, DELTA_SIZE))
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ClientMessage {
@@ -131,29 +180,50 @@ pub struct Engine {
     events: broadcast::Sender<ServerMessage>,
     state: Arc<Mutex<State>>,
     store_path: Option<Arc<PathBuf>>,
+    adapter: Option<Arc<dyn PromptAdapter>>,
 }
 
 impl Engine {
     pub fn new() -> Self {
-        Self::with_state(State::default(), None)
+        Self::with_state(State::default(), None, None)
+    }
+
+    pub fn with_adapter(adapter: impl PromptAdapter + 'static) -> Self {
+        Self::with_state(State::default(), None, Some(Arc::new(adapter)))
+    }
+
+    pub fn with_adapter_arc(adapter: Arc<dyn PromptAdapter>) -> Self {
+        Self::with_state(State::default(), None, Some(adapter))
     }
 
     pub fn with_persistence(path: impl AsRef<Path>) -> std::io::Result<Self> {
+        Self::with_persistence_and_adapter(path, None)
+    }
+
+    pub fn with_persistence_and_adapter(
+        path: impl AsRef<Path>,
+        adapter: Option<Arc<dyn PromptAdapter>>,
+    ) -> std::io::Result<Self> {
         let path = path.as_ref().to_path_buf();
         let state = if path.exists() {
             serde_json::from_slice(&std::fs::read(&path)?).map_err(std::io::Error::other)?
         } else {
             State::default()
         };
-        Ok(Self::with_state(state, Some(path)))
+        Ok(Self::with_state(state, Some(path), adapter))
     }
 
-    fn with_state(state: State, path: Option<PathBuf>) -> Self {
+    fn with_state(
+        state: State,
+        path: Option<PathBuf>,
+        adapter: Option<Arc<dyn PromptAdapter>>,
+    ) -> Self {
         let (events, _) = broadcast::channel(256);
         Self {
             events,
             state: Arc::new(Mutex::new(state)),
             store_path: path.map(Arc::new),
+            adapter,
         }
     }
 
@@ -230,17 +300,34 @@ impl Engine {
                         },
                     ]
                 } else {
+                    let response_chunks =
+                        match self.adapter.as_ref() {
+                            Some(adapter) => adapter.run_prompt(&prompt).map_err(|message| {
+                                ServerMessage::Error {
+                                    code: "agent_failed".into(),
+                                    message,
+                                }
+                            }),
+                            None => Ok(bounded_text_chunks(
+                                &format!("演示响应：{prompt}"),
+                                DELTA_SIZE,
+                            )),
+                        };
+                    let response_chunks = match response_chunks {
+                        Ok(chunks) => chunks,
+                        Err(error) => return vec![error],
+                    };
+                    let response = response_chunks.concat();
                     session.messages.push(TimelineMessage {
                         role: "user".into(),
                         text: prompt.clone(),
                     });
-                    let response = format!("演示响应：{prompt}");
                     session.messages.push(TimelineMessage {
                         role: "assistant".into(),
-                        text: response.clone(),
+                        text: response,
                     });
                     let mut events = vec![ServerMessage::Ack { client_msg_id }];
-                    for text in bounded_text_chunks(&response, DELTA_SIZE) {
+                    for text in response_chunks {
                         session.sequence += 1;
                         events.push(ServerMessage::TextDelta {
                             session_id,
@@ -471,6 +558,51 @@ mod tests {
             matches!(&snapshot[0], ServerMessage::SessionSnapshot { messages, .. } if messages[1].text.contains("持久化"))
         );
     }
+    struct FixtureAdapter;
+
+    impl PromptAdapter for FixtureAdapter {
+        fn run_prompt(&self, prompt: &str) -> Result<Vec<String>, String> {
+            Ok(vec![format!("真实 adapter: {prompt}")])
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn headless_process_adapter_reads_real_json_entrypoint() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let binary = dir.path().join("chaos-fixture");
+        std::fs::write(
+            &binary,
+            "#!/bin/sh\nprintf '{\"text\":\"process response\"}\\n'\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let adapter = HeadlessProcessAdapter::new(&binary, dir.path());
+        assert_eq!(
+            adapter.run_prompt("hello").unwrap().concat(),
+            "process response"
+        );
+    }
+
+    #[test]
+    fn adapter_response_drives_the_same_session_events() {
+        let engine = Engine::with_adapter(FixtureAdapter);
+        let session_id = match engine.handle(ClientMessage::CreateSession {
+            client_msg_id: "c".into(),
+        })[0]
+        {
+            ServerMessage::SessionCreated { session_id } => session_id,
+            _ => panic!(),
+        };
+        let events = engine.handle(ClientMessage::Submit {
+            client_msg_id: "s".into(),
+            session_id,
+            prompt: "prompt".into(),
+        });
+        assert!(events.iter().any(|event| matches!(event, ServerMessage::TextDelta { text, .. } if text.contains("真实 adapter"))));
+    }
+
     #[test]
     fn text_deltas_preserve_utf8_boundaries() {
         let chunks = bounded_text_chunks("你好 Chaos", 8);
