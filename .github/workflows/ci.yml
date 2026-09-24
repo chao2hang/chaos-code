@@ -185,6 +185,40 @@ jobs:
         working-directory: apps/chaos-ui
         run: npm ci --ignore-scripts && npm run typecheck && npm test && npm run build
 
+  gui-browser-e2e:
+    name: GUI browser E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read pinned toolchain
+        id: toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          channel="$(sed -n 's/^channel[[:space:]]*=[[:space:]]*"\([^" ]*\)".*/\1/p' rust-toolchain.toml)"
+          test -n "$channel"
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/chaos-ui/package-lock.json
+      - name: Install frontend dependencies
+        working-directory: apps/chaos-ui
+        run: npm ci --ignore-scripts
+      - name: Install Chromium
+        working-directory: apps/chaos-ui
+        run: npx playwright install --with-deps chromium
+      - name: Run browser E2E
+        working-directory: apps/chaos-ui
+        env:
+          CI: true
+        run: npm run test:e2e
+
   npm-scripts:
     name: npm package scripts
     runs-on: ubuntu-latest

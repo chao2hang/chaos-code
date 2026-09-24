@@ -17,5 +17,7 @@ is not a UI-only feature flag.
 The WebSocket uses the same authorization and Origin checks as HTTP routes. The
 React client derives `ws:`/`wss:` from the page scheme and preserves an explicit
 port and base path; this URL selection does not configure TLS termination or a
-reverse proxy. Public HTTPS deployments still need a separately reviewed host
-and proxy configuration.
+reverse proxy. The Vite development server proxies the same `/health`, `/api`, and
+`/ws` routes to the loopback Web host; these routes remain subject to its ordinary
+Host, Origin, token, and Safe Web Mode checks. Public HTTPS deployments still need
+separately reviewed host and proxy configuration.

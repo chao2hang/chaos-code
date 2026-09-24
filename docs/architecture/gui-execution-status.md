@@ -18,7 +18,8 @@ require platform runners, external services, or a later milestone.
 - M0 real headless process adapter with explicit binary path and cwd; provider
   credentials remain in the existing CLI/config boundary. Local Chromium caught a
   missing `create_workspace` ACK in the browser/dedup path; server event ordering
-  now returns ACK before workspace/session/registry events and the browser E2E passes.
+  now returns ACK before workspace/session/registry events and the repeatable
+  repository Playwright E2E passes locally.
 - M1 tool adapter boundary: approvals are resolved before a `ToolAdapter` can
   execute; missing adapters fail closed and tool output is recorded in the
   session timeline/audit.
@@ -41,16 +42,20 @@ require platform runners, external services, or a later milestone.
   workspace adapters fail closed before browser-controlled paths reach I/O.
   Workspace registry has engine create/switch/archive/recent tests, session
   state persists its workspace binding, Resume/Snapshot reject cross-workspace
-  requests, and snapshots return the bound workspace ID. Each workspace records
+  requests, and snapshots return the bound workspace ID. This guarantees session
+  identity only: Engine has one host-configured `WorkspaceAdapter` and `ProcessGitAdapter`
+  root, not a separate physical root for each registry entry. Logical workspace
+  switching must not be advertised as multiple project-root support. Per-root
+  operations require a trusted host-owned ID→canonical-root map and two-root
+  security tests; arbitrary browser roots are forbidden. Each workspace records
   its recent session; React clears the previous transcript, approvals, questions
   and busy state on switch, selects that workspace's session, and restores its
   snapshot. Empty workspaces receive a session on first switch; archiving the
   last workspace creates a new default workspace/session, while archiving one of
   several switches to its most-recent active fallback. Sessions in archived
   workspaces reject Resume/Submit/Approve/RespondQuestion and new file/Git/terminal
-  mutations. Create/
-  archive operations return a refreshed registry. Reducer tests cover
-  workspace-local selection. Full tabs/layout isolation and Desktop flow remain open.
+  mutations. Create/archive operations return a refreshed registry. Reducer tests
+  cover workspace-local selection. Full tabs/layout isolation and Desktop flow remain open.
 - M2 attachment policy validates filename/content type/size; `AttachmentStager`
   writes bounded chunks into a root-local staging directory and cleans failures.
   Engine/Web attachment protocol covers begin/chunk/progress/cancel/quota and
@@ -91,8 +96,10 @@ require platform runners, external services, or a later milestone.
   on corrupt/unknown data, and show status if browser storage is unavailable.
   Chromium verified local workspace creation/session switch and transcript
   isolation, same-origin API/WebSocket/health development proxy, persisted layout
-  controls, and narrow-viewport composer interaction. CI Playwright and
-  Tauri/WebDriver gates remain open.
+  controls, and narrow-viewport composer interaction. Repository Playwright E2E
+  now repeats the desktop and 390×844 viewport flows against spawned Engine/Web
+  servers; the GitHub CI browser job is added but its first remote PR run remains
+  an external observation; the current workflow has no manual dispatch trigger. Tauri/WebDriver gates remain open.
 - Independent CI job for GUI Rust, protocol drift, frontend unit, typecheck and
   production build checks.
 - Release signing preflight, `require-sig` build feature, fail-closed Unix/
@@ -103,10 +110,10 @@ require platform runners, external services, or a later milestone.
 | Area | State | Evidence required |
 |---|---|---|
 | Tauri Desktop | Open | Tauri three-platform builds and real desktop flow |
-| Browser E2E | Open | Playwright or equivalent installed and exercised at desktop/narrow viewports |
+| Browser E2E | Partial | Repository Playwright tests verify create/submit/switch/reload/archive/transcript isolation, layout restore, health/handshake proxy, empty/cancel states and narrow composer locally; GitHub CI first run and Desktop browser automation remain open |
 | Provider/config/secrets | Partial | Non-secret settings/provider shape validation; real provider/keyring tests remain open |
 | M1 hunk/workspace Diff | Partial | Adapter boundaries and real local workspace/Diff tests; production `xai-hunk-tracker` partial-hunk/binary integration remains open |
-| M2 persistence/workspace | Partial | SQLite/JSON boundaries, workspace/Git/terminal/attachment safety, Git edge fixtures and destructive-action confirmations; multi-workspace UI, PTY, NFS/multiprocess, remote Git auth and full migration remain open |
+| M2 persistence/workspace | Partial | SQLite/JSON boundaries, single-root workspace/Git/terminal/attachment safety, Git edge fixtures and destructive-action confirmations; multi-root mapping, PTY, NFS/multiprocess, remote Git auth and full migration remain open |
 | M3 ecosystem | Partial | Read-only marketplace discovery and root allowlist are tested; MCP/plugin install/execute, skill/workflow/subagent integration and credential-backed connection tests remain open |
 | M4 remote | Partial | Typed capability/host-key boundary; clean Linux remote, SSH transport and forwarding remain open |
 | M5 release | Partial | GUI CI, signing preflight, fail-closed installers and policy fixtures; packaging/signing assets/SBOM/performance/manual acceptance remain open |
