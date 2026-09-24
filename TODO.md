@@ -335,9 +335,11 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 
 ### M2.1 工作区与布局
 
-- [ ] 实现工作区新增、切换、重命名、置顶、归档和最近使用列表。
+当前状态：engine 已提供 workspace registry 的创建/切换/归档/最近使用协议；完整多工作区 UI、布局和 desktop 状态隔离仍待前端/桌面实现。
+
+- [~] engine 已实现 workspace 创建/切换/归档/最近使用协议与真实 state 测试；重命名/置顶、多工作区 UI 和跨页面状态仍待前端实现。（2026-09-24；`workspace_registry_creates_switches_archives_and_lists_recent`）
 - [ ] 实现标签页、分屏、尺寸和主题持久化；定义损坏布局的安全回退。
-- [ ] 多工作区并发使用独立 session/cancellation/resource key，文件锁和 Git 锁行为可测试。
+- [~] workspace registry 具备独立 workspace IDs；session cancellation/resource key、文件锁和 Git 锁的多工作区并发测试仍待真实 UI/desktop adapter。
 
 ### M2.2 文件、搜索和附件
 

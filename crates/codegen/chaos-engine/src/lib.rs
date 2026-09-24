@@ -334,6 +334,18 @@ impl PromptAdapter for HeadlessProcessAdapter {
 pub enum ClientMessage {
     CreateSession {
         client_msg_id: String,
+        workspace_id: Option<Uuid>,
+    },
+    ListWorkspaces {
+        client_msg_id: String,
+    },
+    ArchiveWorkspace {
+        client_msg_id: String,
+        workspace_id: Uuid,
+    },
+    SwitchWorkspace {
+        client_msg_id: String,
+        workspace_id: Uuid,
     },
     Resume {
         client_msg_id: String,
@@ -454,6 +466,17 @@ pub enum ServerMessage {
     },
     SessionCreated {
         session_id: Uuid,
+        workspace_id: Uuid,
+    },
+    Workspaces {
+        active_workspace_id: Uuid,
+        workspaces: Vec<WorkspaceInfo>,
+    },
+    WorkspaceArchived {
+        workspace_id: Uuid,
+    },
+    WorkspaceSwitched {
+        workspace_id: Uuid,
     },
     SessionSnapshot {
         session_id: Uuid,
@@ -622,6 +645,14 @@ pub struct TimelineMessage {
     pub text: String,
 }
 
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+pub struct WorkspaceInfo {
+    pub id: Uuid,
+    pub name: String,
+    pub archived: bool,
+    pub last_used_sequence: u64,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct AuditEntry {
     pub action: String,
@@ -650,6 +681,8 @@ struct SessionState {
 struct State {
     sessions: HashMap<Uuid, SessionState>,
     seen_client_messages: HashSet<String>,
+    workspaces: HashMap<Uuid, WorkspaceInfo>,
+    active_workspace_id: Option<Uuid>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -1148,7 +1181,10 @@ impl Engine {
 
     pub fn handle(&self, message: ClientMessage) -> Vec<ServerMessage> {
         let client_msg_id = match &message {
-            ClientMessage::CreateSession { client_msg_id }
+            ClientMessage::CreateSession { client_msg_id, .. }
+            | ClientMessage::ListWorkspaces { client_msg_id }
+            | ClientMessage::ArchiveWorkspace { client_msg_id, .. }
+            | ClientMessage::SwitchWorkspace { client_msg_id, .. }
             | ClientMessage::Resume { client_msg_id, .. }
             | ClientMessage::Submit { client_msg_id, .. }
             | ClientMessage::Cancel { client_msg_id, .. }
@@ -1178,10 +1214,71 @@ impl Engine {
             return vec![ServerMessage::Ack { client_msg_id }];
         }
         let result = match message {
-            ClientMessage::CreateSession { .. } => {
+            ClientMessage::CreateSession { workspace_id, .. } => {
+                let workspace_id =
+                    workspace_id
+                        .or(state.active_workspace_id)
+                        .unwrap_or_else(|| {
+                            let id = Uuid::new_v4();
+                            state.workspaces.insert(
+                                id,
+                                WorkspaceInfo {
+                                    id,
+                                    name: "默认工作区".into(),
+                                    archived: false,
+                                    last_used_sequence: 0,
+                                },
+                            );
+                            state.active_workspace_id = Some(id);
+                            id
+                        });
+                if !state.workspaces.contains_key(&workspace_id)
+                    || state
+                        .workspaces
+                        .get(&workspace_id)
+                        .is_some_and(|workspace| workspace.archived)
+                {
+                    return vec![Self::error("workspace_unavailable", "工作区不存在或已归档")];
+                }
                 let id = Uuid::new_v4();
                 state.sessions.insert(id, SessionState::default());
-                vec![ServerMessage::SessionCreated { session_id: id }]
+                vec![ServerMessage::SessionCreated {
+                    session_id: id,
+                    workspace_id,
+                }]
+            }
+            ClientMessage::ListWorkspaces { .. } => {
+                let mut workspaces = state.workspaces.values().cloned().collect::<Vec<_>>();
+                workspaces.sort_by_key(|workspace| std::cmp::Reverse(workspace.last_used_sequence));
+                vec![ServerMessage::Workspaces {
+                    active_workspace_id: state.active_workspace_id.unwrap_or(Uuid::nil()),
+                    workspaces,
+                }]
+            }
+            ClientMessage::SwitchWorkspace { workspace_id, .. } => {
+                if !state
+                    .workspaces
+                    .get(&workspace_id)
+                    .is_some_and(|workspace| !workspace.archived)
+                {
+                    return vec![Self::error("workspace_unavailable", "工作区不存在或已归档")];
+                }
+                state.active_workspace_id = Some(workspace_id);
+                vec![ServerMessage::WorkspaceSwitched { workspace_id }]
+            }
+            ClientMessage::ArchiveWorkspace { workspace_id, .. } => {
+                let Some(workspace) = state.workspaces.get_mut(&workspace_id) else {
+                    return vec![Self::error("workspace_unavailable", "工作区不存在")];
+                };
+                workspace.archived = true;
+                if state.active_workspace_id == Some(workspace_id) {
+                    state.active_workspace_id = state
+                        .workspaces
+                        .values()
+                        .find(|candidate| !candidate.archived && candidate.id != workspace_id)
+                        .map(|candidate| candidate.id);
+                }
+                vec![ServerMessage::WorkspaceArchived { workspace_id }]
             }
             ClientMessage::Resume { session_id, .. }
             | ClientMessage::Snapshot { session_id, .. } => match state.sessions.get(&session_id) {
@@ -2018,13 +2115,57 @@ impl Default for Engine {
 mod tests {
     use super::*;
     #[test]
+    fn workspace_registry_creates_switches_archives_and_lists_recent() {
+        let engine = Engine::new();
+        let first = engine.handle(ClientMessage::CreateSession {
+            client_msg_id: "workspace-session".into(),
+            workspace_id: None,
+        });
+        let (session_id, workspace_id) = match first[0] {
+            ServerMessage::SessionCreated {
+                session_id,
+                workspace_id,
+            } => (session_id, workspace_id),
+            _ => panic!(),
+        };
+        let listed = engine.handle(ClientMessage::ListWorkspaces {
+            client_msg_id: "workspaces".into(),
+        });
+        assert!(
+            matches!(&listed[0], ServerMessage::Workspaces { workspaces, active_workspace_id } if *active_workspace_id == workspace_id && workspaces.iter().any(|workspace| workspace.id == workspace_id && !workspace.archived))
+        );
+        assert!(matches!(
+            engine.handle(ClientMessage::SwitchWorkspace {
+                client_msg_id: "switch".into(),
+                workspace_id
+            })[0],
+            ServerMessage::WorkspaceSwitched { .. }
+        ));
+        assert!(matches!(
+            engine.handle(ClientMessage::ArchiveWorkspace {
+                client_msg_id: "archive".into(),
+                workspace_id
+            })[0],
+            ServerMessage::WorkspaceArchived { .. }
+        ));
+        assert!(matches!(
+            engine.handle(ClientMessage::Resume {
+                client_msg_id: "resume".into(),
+                session_id
+            })[0],
+            ServerMessage::SessionSnapshot { .. }
+        ));
+    }
+
+    #[test]
     fn real_session_flow_supports_resume_deduplication_and_sequence() {
         let engine = Engine::new();
         let created = engine.handle(ClientMessage::CreateSession {
             client_msg_id: "create".into(),
+            workspace_id: None,
         });
         let id = match created[0] {
-            ServerMessage::SessionCreated { session_id } => session_id,
+            ServerMessage::SessionCreated { session_id, .. } => session_id,
             _ => panic!(),
         };
         let first = engine.handle(ClientMessage::Submit {
@@ -2065,9 +2206,10 @@ mod tests {
         let engine = Engine::new();
         let id = match engine.handle(ClientMessage::CreateSession {
             client_msg_id: "c".into(),
+            workspace_id: None,
         })[0]
         {
-            ServerMessage::SessionCreated { session_id } => session_id,
+            ServerMessage::SessionCreated { session_id, .. } => session_id,
             _ => panic!(),
         };
         let events = engine.handle(ClientMessage::Cancel {
@@ -2096,6 +2238,7 @@ mod tests {
         let engine = Engine::with_persistence(&path).unwrap();
         engine.handle(ClientMessage::CreateSession {
             client_msg_id: "schema-create".into(),
+            workspace_id: None,
         });
         let value: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
@@ -2126,9 +2269,10 @@ mod tests {
         let first = Engine::with_persistence(&path).unwrap();
         let id = match first.handle(ClientMessage::CreateSession {
             client_msg_id: "create".into(),
+            workspace_id: None,
         })[0]
         {
-            ServerMessage::SessionCreated { session_id } => session_id,
+            ServerMessage::SessionCreated { session_id, .. } => session_id,
             _ => panic!(),
         };
         first.handle(ClientMessage::Submit {
@@ -2178,9 +2322,10 @@ mod tests {
         let engine = Engine::with_adapter(FixtureAdapter);
         let session_id = match engine.handle(ClientMessage::CreateSession {
             client_msg_id: "c".into(),
+            workspace_id: None,
         })[0]
         {
-            ServerMessage::SessionCreated { session_id } => session_id,
+            ServerMessage::SessionCreated { session_id, .. } => session_id,
             _ => panic!(),
         };
         let events = engine.handle(ClientMessage::Submit {
@@ -2211,9 +2356,10 @@ mod tests {
         let engine = Engine::with_tool_adapter(FixtureTool);
         let session_id = match engine.handle(ClientMessage::CreateSession {
             client_msg_id: "sequence-create".into(),
+            workspace_id: None,
         })[0]
         {
-            ServerMessage::SessionCreated { session_id } => session_id,
+            ServerMessage::SessionCreated { session_id, .. } => session_id,
             _ => panic!(),
         };
         let requested = engine.handle(ClientMessage::Submit {
@@ -2239,9 +2385,10 @@ mod tests {
         let engine = Engine::with_tool_adapter(FixtureTool);
         let id = match engine.handle(ClientMessage::CreateSession {
             client_msg_id: "create-tool".into(),
+            workspace_id: None,
         })[0]
         {
-            ServerMessage::SessionCreated { session_id } => session_id,
+            ServerMessage::SessionCreated { session_id, .. } => session_id,
             _ => panic!(),
         };
         let requested = engine.handle(ClientMessage::Submit {
@@ -2269,9 +2416,10 @@ mod tests {
         let engine = Engine::new();
         let id = match engine.handle(ClientMessage::CreateSession {
             client_msg_id: "create-tool".into(),
+            workspace_id: None,
         })[0]
         {
-            ServerMessage::SessionCreated { session_id } => session_id,
+            ServerMessage::SessionCreated { session_id, .. } => session_id,
             _ => panic!(),
         };
         let requested = engine.handle(ClientMessage::Submit {
@@ -2316,9 +2464,10 @@ mod tests {
         let engine = Engine::with_diff_adapter(FixtureDiff);
         let session_id = match engine.handle(ClientMessage::CreateSession {
             client_msg_id: "diff-create".into(),
+            workspace_id: None,
         })[0]
         {
-            ServerMessage::SessionCreated { session_id } => session_id,
+            ServerMessage::SessionCreated { session_id, .. } => session_id,
             _ => panic!(),
         };
         let accepted = engine.handle(ClientMessage::AcceptDiff {
@@ -2484,9 +2633,10 @@ mod tests {
         let engine = Engine::new().with_git_adapter(FixtureGit);
         let session_id = match engine.handle(ClientMessage::CreateSession {
             client_msg_id: "git-session".into(),
+            workspace_id: None,
         })[0]
         {
-            ServerMessage::SessionCreated { session_id } => session_id,
+            ServerMessage::SessionCreated { session_id, .. } => session_id,
             _ => panic!(),
         };
         let requested = engine.handle(ClientMessage::ProposeGitMutation {
@@ -2535,9 +2685,10 @@ mod tests {
         let engine = Engine::new().with_terminal_adapter(adapter);
         let session_id = match engine.handle(ClientMessage::CreateSession {
             client_msg_id: "term-session".into(),
+            workspace_id: None,
         })[0]
         {
-            ServerMessage::SessionCreated { session_id } => session_id,
+            ServerMessage::SessionCreated { session_id, .. } => session_id,
             _ => panic!(),
         };
         let requested = engine.handle(ClientMessage::ProposeTerminal {
@@ -2643,9 +2794,10 @@ mod tests {
         );
         let session_id = match engine.handle(ClientMessage::CreateSession {
             client_msg_id: "write-session".into(),
+            workspace_id: None,
         })[0]
         {
-            ServerMessage::SessionCreated { session_id } => session_id,
+            ServerMessage::SessionCreated { session_id, .. } => session_id,
             _ => panic!(),
         };
         let proposed = engine.handle(ClientMessage::ProposeFileWrite {
@@ -2706,9 +2858,10 @@ mod tests {
         let engine = Engine::new();
         let session_id = match engine.handle(ClientMessage::CreateSession {
             client_msg_id: "q-create".into(),
+            workspace_id: None,
         })[0]
         {
-            ServerMessage::SessionCreated { session_id } => session_id,
+            ServerMessage::SessionCreated { session_id, .. } => session_id,
             _ => panic!(),
         };
         let requested = engine.handle(ClientMessage::Submit {
@@ -2733,9 +2886,10 @@ mod tests {
         let engine = Engine::new();
         let session_id = match engine.handle(ClientMessage::CreateSession {
             client_msg_id: "diff-create".into(),
+            workspace_id: None,
         })[0]
         {
-            ServerMessage::SessionCreated { session_id } => session_id,
+            ServerMessage::SessionCreated { session_id, .. } => session_id,
             _ => panic!(),
         };
         let events = engine.handle(ClientMessage::AcceptDiff {
@@ -2754,9 +2908,10 @@ mod tests {
         let engine = Engine::new();
         let id = match engine.handle(ClientMessage::CreateSession {
             client_msg_id: "create".into(),
+            workspace_id: None,
         })[0]
         {
-            ServerMessage::SessionCreated { session_id } => session_id,
+            ServerMessage::SessionCreated { session_id, .. } => session_id,
             _ => panic!(),
         };
         let events = engine.handle(ClientMessage::Submit {
