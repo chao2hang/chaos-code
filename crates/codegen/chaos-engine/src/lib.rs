@@ -714,6 +714,10 @@ struct PendingApproval {
     request_id: Uuid,
     tool: String,
     summary: String,
+    #[serde(default)]
+    confirmations_required: u8,
+    #[serde(default)]
+    confirmations: u8,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -1469,6 +1473,8 @@ impl Engine {
                         request_id,
                         tool: "demo.tool".into(),
                         summary: summary.to_string(),
+                        confirmations_required: 1,
+                        confirmations: 0,
                     });
                     session.sequence += 1;
                     vec![
@@ -1812,6 +1818,8 @@ impl Engine {
                     request_id,
                     tool: "workspace.attach_attachment".into(),
                     summary: format!("写入附件 {relative_path}"),
+                    confirmations_required: 1,
+                    confirmations: 0,
                 });
                 session
                     .pending_attachment_moves
@@ -1923,10 +1931,16 @@ impl Engine {
                     return vec![Self::error("session_not_found", "会话不存在")];
                 };
                 let request_id = Uuid::new_v4();
+                let confirmations_required = u8::from(matches!(
+                    operation.as_str(),
+                    "commit" | "checkout_branch" | "discard"
+                )) + 1;
                 session.pending_approval = Some(PendingApproval {
                     request_id,
                     tool: format!("git.{operation}"),
                     summary: argument,
+                    confirmations_required,
+                    confirmations: 0,
                 });
                 session.sequence += 1;
                 vec![
@@ -1953,6 +1967,8 @@ impl Engine {
                     request_id,
                     tool: "terminal.execute".into(),
                     summary: command,
+                    confirmations_required: 1,
+                    confirmations: 0,
                 });
                 session.sequence += 1;
                 vec![
@@ -1983,6 +1999,8 @@ impl Engine {
                     request_id,
                     tool: "workspace.write_file".into(),
                     summary: format!("写入 {relative_path}"),
+                    confirmations_required: 1,
+                    confirmations: 0,
                 });
                 session
                     .pending_file_writes
@@ -2029,6 +2047,28 @@ impl Engine {
             .pending_approval
             .take()
             .expect("matched pending approval");
+        if approved && pending.confirmations < pending.confirmations_required {
+            let mut pending = pending.clone();
+            pending.confirmations += 1;
+            if pending.confirmations < pending.confirmations_required {
+                session.pending_approval = Some(pending);
+                session.sequence += 1;
+                return vec![
+                    ServerMessage::Ack { client_msg_id },
+                    ServerMessage::ToolApprovalRequested {
+                        session_id: *session_id,
+                        request_id,
+                        tool: session
+                            .pending_approval
+                            .as_ref()
+                            .map(|approval| approval.tool.clone())
+                            .unwrap_or_default(),
+                        summary: "破坏性 Git 操作需要再次确认".into(),
+                        sequence: session.sequence,
+                    },
+                ];
+            }
+        }
         let pending_file_write = session.pending_file_writes.remove(&request_id);
         let pending_attachment_move = session.pending_attachment_moves.remove(&request_id);
         let mut events = vec![ServerMessage::Ack { client_msg_id }];
@@ -3103,6 +3143,14 @@ mod tests {
         };
         let result = engine.handle(ClientMessage::Approve {
             client_msg_id: "git-approve".into(),
+            request_id,
+        });
+        let request_id = match &result[1] {
+            ServerMessage::ToolApprovalRequested { request_id, .. } => *request_id,
+            other => panic!("unexpected {other:?}"),
+        };
+        let result = engine.handle(ClientMessage::Approve {
+            client_msg_id: "git-approve-again".into(),
             request_id,
         });
         assert!(result.iter().any(|event| matches!(event, ServerMessage::GitMutationResult { result, .. } if result == "commit:safe")));

@@ -42,7 +42,8 @@ require platform runners, external services, or a later milestone.
   records approval/resize/reconnect/cancel requirements, while interactive PTY
   transport remains a separate platform adapter.
 - M2 ProcessGitAdapter fixes cwd and operation arguments for approval-gated
-  stage/commit/checkout_branch/unstage/discard; push/pull/rollback remain disabled.
+  stage/commit/checkout_branch/unstage/discard; commit, checkout_branch and
+  discard require a second confirmation, while push/pull/rollback remain disabled.
 - Transitional JSON snapshot and canonical `SqliteSessionStore` persistence, with
   schema/version tests, corrupt/missing-parent rejection, old-schema upgrade
   backup/restore, invalid-version rejection, legacy backup, and real Web SQLite
