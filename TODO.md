@@ -256,7 +256,7 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 
 ### M0.4 前端最小闭环
 
-- [~] React 已接入真实 WebSocket，支持会话创建、纯文本 composer、时间线、流式 delta、审批/question 卡片和停止按钮；会话列表与多会话工作区待补。（2026-09-24；`src/session.ts` reducer 与 Vitest 覆盖事件投影）
+- [~] React 已接入真实 WebSocket，支持会话创建、纯文本 composer、时间线、流式 delta、审批/question 卡片和停止按钮；transport URL 按页面 http/https 选择 ws/wss，保留 host port/base path；TLS 终止/reverse proxy 部署本身仍需独立 host 配置和安全验收；会话列表与多会话工作区待补。（2026-09-24；`src/transport.test.ts`）
 - [x] React 已有连接中/已连接、空态、生成中、连接错误和取消入口；WebSocket 断线自动重连并通过 resume 恢复历史。（2026-09-24；typecheck/build/Vitest 通过）
 - [~] 流式更新当前按 WebSocket delta 逐事件更新；UTF-8 安全分块与真实 WebSocket 测试已完成，按帧批处理和 benchmark 尚待 M5 性能门禁。
 - [~] Web 使用显式 WebSocket transport；Desktop 已有 engine host boundary，Tauri transport injection 待补。
@@ -523,7 +523,7 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 - [ ] 检查空态、错误态、断线、超长会话、大文件、无权限目录、磁盘满和损坏配置。
 - [ ] 检查多个工作区、多个标签页、主题、语言、宽屏和窄视口状态一致性。
 - [ ] 检查 macOS、Windows、Linux 的安装、首次启动、升级、回滚和卸载。
-- [ ] 检查 Web 回环与非回环模式、Token 轮换、Safe Web Mode、TLS（若支持）和审计日志。
+- [~] 前端 transport 已在 HTTPS 页面选择 `wss:`、HTTP 页面选择 `ws:` 并保留 host port/base path；生产 TLS 终止、proxy headers、Token 轮换和审计日志仍待真实部署拓扑验收。（2026-09-24；`src/transport.test.ts`）
 - [ ] 检查远程支持矩阵中的每种认证和故障路径；未支持能力无误导入口。
 
 ### M5.6 发布资料

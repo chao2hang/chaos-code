@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { applyServerMessage, initialSessionState, workspaceReconnectMessage, type Approval, type Message, type Question, type ServerMessage } from './session'
 import { selectWorkspaceSession } from './workspace-ui'
+import { webSocketUrl } from './transport'
 import './style.css'
 
 function App() {
@@ -18,8 +19,7 @@ function App() {
   }, [])
 
   const connect = useCallback(() => {
-    const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const ws = new WebSocket(`${wsProtocol}//${location.hostname || '127.0.0.1'}:8787/ws`)
+    const ws = new WebSocket(webSocketUrl(location))
     socket.current = ws
     ws.onopen = () => {
       setSession((current) => ({ ...current, status: '已连接' }))

@@ -14,4 +14,8 @@ Non-loopback binding, public deployment, user/token rotation, and full CSRF
 protection remain release gates. `CHAOS_SAFE_WEB_MODE` is now enforced in the
 WebSocket backend: mutation messages are rejected before engine dispatch, so it
 is not a UI-only feature flag.
-The WebSocket uses the same authorization and Origin checks as HTTP routes.
+The WebSocket uses the same authorization and Origin checks as HTTP routes. The
+React client derives `ws:`/`wss:` from the page scheme and preserves an explicit
+port and base path; this URL selection does not configure TLS termination or a
+reverse proxy. Public HTTPS deployments still need a separately reviewed host
+and proxy configuration.
