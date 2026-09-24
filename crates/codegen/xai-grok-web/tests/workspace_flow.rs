@@ -18,7 +18,7 @@ async fn websocket_workspace_requests_are_confined_to_root() {
     let address = listener.local_addr().unwrap();
     let server = tokio::spawn(async move {
         serve(listener, router(engine, ""))
-            .with_graceful_shutdown(async { tokio::time::sleep(Duration::from_millis(400)).await })
+            .with_graceful_shutdown(async { tokio::time::sleep(Duration::from_millis(500)).await })
             .await
             .unwrap();
     });
@@ -41,6 +41,26 @@ async fn websocket_workspace_requests_are_confined_to_root() {
         serde_json::from_str(&socket.next().await.unwrap().unwrap().into_text().unwrap()).unwrap();
     assert!(
         matches!(listed, ServerMessage::FilesListed { entries, .. } if entries.iter().any(|entry| entry == "note.txt"))
+    );
+
+    socket
+        .send(Message::Text(
+            serde_json::to_string(&ClientMessage::WriteFile {
+                client_msg_id: "write".into(),
+                relative_path: "new.txt".into(),
+                contents: "created".into(),
+            })
+            .unwrap()
+            .into(),
+        ))
+        .await
+        .unwrap();
+    let written: ServerMessage =
+        serde_json::from_str(&socket.next().await.unwrap().unwrap().into_text().unwrap()).unwrap();
+    assert!(matches!(written, ServerMessage::FileWritten { path, .. } if path == "new.txt"));
+    assert_eq!(
+        std::fs::read_to_string(directory.path().join("new.txt")).unwrap(),
+        "created"
     );
 
     socket

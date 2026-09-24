@@ -122,6 +122,11 @@ pub enum ClientMessage {
         client_msg_id: String,
         query: String,
     },
+    WriteFile {
+        client_msg_id: String,
+        relative_path: String,
+        contents: String,
+    },
     AcceptDiff {
         client_msg_id: String,
         session_id: Uuid,
@@ -242,6 +247,10 @@ pub enum ServerMessage {
         query: String,
         matches: Vec<String>,
     },
+    FileWritten {
+        path: String,
+        bytes: usize,
+    },
     Error {
         code: String,
         message: String,
@@ -344,6 +353,50 @@ impl WorkspaceAdapter {
             code: "read_failed".into(),
             message: "文件不是可读文本".into(),
         })
+    }
+
+    fn write(&self, relative: &str, contents: &str) -> Result<usize, ServerMessage> {
+        if contents.len() > 1024 * 1024 {
+            return Err(ServerMessage::Error {
+                code: "file_too_large".into(),
+                message: "文件超过 1 MiB 限制".into(),
+            });
+        }
+        let relative_path = Path::new(relative);
+        if relative_path.is_absolute() {
+            return Err(Self::path_escape());
+        }
+        let candidate = self.root.join(relative_path);
+        let parent = candidate.parent().ok_or_else(|| ServerMessage::Error {
+            code: "write_failed".into(),
+            message: "无效父目录".into(),
+        })?;
+        let canonical_parent = std::fs::canonicalize(parent).map_err(|_| ServerMessage::Error {
+            code: "write_failed".into(),
+            message: "父目录不存在".into(),
+        })?;
+        if !canonical_parent.starts_with(self.root.as_path()) {
+            return Err(Self::path_escape());
+        }
+        if candidate.exists() {
+            let canonical = std::fs::canonicalize(&candidate).map_err(|_| Self::path_escape())?;
+            if !canonical.starts_with(self.root.as_path()) {
+                return Err(Self::path_escape());
+            }
+        }
+        let path = canonical_parent.join(candidate.file_name().ok_or_else(Self::path_escape)?);
+        std::fs::write(&path, contents).map_err(|_| ServerMessage::Error {
+            code: "write_failed".into(),
+            message: "无法写入文件".into(),
+        })?;
+        Ok(contents.len())
+    }
+
+    fn path_escape() -> ServerMessage {
+        ServerMessage::Error {
+            code: "path_escape".into(),
+            message: "路径超出 workspace 范围".into(),
+        }
     }
 
     fn search(&self, query: &str) -> Result<Vec<String>, ServerMessage> {
@@ -539,7 +592,8 @@ impl Engine {
             | ClientMessage::RollbackDiff { client_msg_id, .. }
             | ClientMessage::ListFiles { client_msg_id, .. }
             | ClientMessage::ReadFile { client_msg_id, .. }
-            | ClientMessage::SearchFiles { client_msg_id, .. } => client_msg_id.clone(),
+            | ClientMessage::SearchFiles { client_msg_id, .. }
+            | ClientMessage::WriteFile { client_msg_id, .. } => client_msg_id.clone(),
         };
         let mut state = self.state.lock().expect("engine state lock");
         if !state.seen_client_messages.insert(client_msg_id.clone()) {
@@ -743,6 +797,22 @@ impl Engine {
                 Some(workspace) => workspace
                     .search(&query)
                     .map(|matches| vec![ServerMessage::SearchResults { query, matches }])
+                    .unwrap_or_else(|error| vec![error]),
+                None => vec![Self::error("workspace_unavailable", "没有配置 workspace")],
+            },
+            ClientMessage::WriteFile {
+                relative_path,
+                contents,
+                ..
+            } => match &self.workspace {
+                Some(workspace) => workspace
+                    .write(&relative_path, &contents)
+                    .map(|bytes| {
+                        vec![ServerMessage::FileWritten {
+                            path: relative_path,
+                            bytes,
+                        }]
+                    })
                     .unwrap_or_else(|error| vec![error]),
                 None => vec![Self::error("workspace_unavailable", "没有配置 workspace")],
             },
@@ -1248,6 +1318,26 @@ mod tests {
         });
         assert!(
             matches!(&escaped[0], ServerMessage::Error { code, .. } if code == "path_invalid" || code == "path_escape")
+        );
+        let written = engine.handle(ClientMessage::WriteFile {
+            client_msg_id: "write".into(),
+            relative_path: "new.txt".into(),
+            contents: "written".into(),
+        });
+        assert!(
+            matches!(&written[0], ServerMessage::FileWritten { path, .. } if path == "new.txt")
+        );
+        assert_eq!(
+            std::fs::read_to_string(directory.path().join("new.txt")).unwrap(),
+            "written"
+        );
+        let escaped_write = engine.handle(ClientMessage::WriteFile {
+            client_msg_id: "escape-write".into(),
+            relative_path: "../outside".into(),
+            contents: "bad".into(),
+        });
+        assert!(
+            matches!(&escaped_write[0], ServerMessage::Error { code, .. } if code == "path_invalid" || code == "path_escape")
         );
         let search = engine.handle(ClientMessage::SearchFiles {
             client_msg_id: "search".into(),
