@@ -1,4 +1,4 @@
-import type { ServerMessage as ProtocolServerMessage, TimelineMessage } from './generated/protocol'
+import type { ClientMessage, ServerMessage as ProtocolServerMessage, TimelineMessage } from './generated/protocol'
 
 export type Message = TimelineMessage
 export type Approval = { requestId: string; tool: string; summary: string }
@@ -21,6 +21,13 @@ export type SessionState = {
 }
 
 export const initialSessionState: SessionState = { messages: [], workspaceSessions: {}, workspaces: [], busy: false, status: '连接中' }
+
+export function workspaceReconnectMessage(state: SessionState): ClientMessage {
+  if (state.sessionId && state.activeWorkspaceId) {
+    return { type: 'resume', client_msg_id: crypto.randomUUID(), session_id: state.sessionId, workspace_id: state.activeWorkspaceId }
+  }
+  return { type: 'create_session', client_msg_id: crypto.randomUUID(), workspace_id: state.activeWorkspaceId ?? null }
+}
 
 export function applyServerMessage(state: SessionState, message: ServerMessage): SessionState {
   if (message.type === 'session_created' && message.session_id) return { ...state, sessionId: message.session_id, workspaceSessions: { ...state.workspaceSessions, [message.workspace_id]: message.session_id }, activeWorkspaceId: message.workspace_id, status: '会话已创建' }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applyServerMessage, initialSessionState } from './session'
+import { applyServerMessage, initialSessionState, workspaceReconnectMessage } from './session'
 
 describe('session event projection', () => {
   it('projects streaming text and completion through shipped reducer', () => {
@@ -55,6 +55,18 @@ describe('session event projection', () => {
     expect(state.activeWorkspaceId).toBe('workspace-b')
     expect(state.sessionId).toBe('session-b')
     expect(state.messages).toEqual([])
+  })
+
+  it('reconnects with the selected workspace session rather than a stale previous session', () => {
+    const selected = {
+      ...initialSessionState,
+      activeWorkspaceId: 'workspace-a',
+      sessionId: 'session-a',
+      workspaceSessions: { 'workspace-a': 'session-a', 'workspace-b': 'session-b' },
+    }
+    expect(workspaceReconnectMessage(selected)).toMatchObject({ type: 'resume', session_id: 'session-a', workspace_id: 'workspace-a' })
+    const newWorkspace = { ...selected, activeWorkspaceId: 'workspace-new', sessionId: undefined }
+    expect(workspaceReconnectMessage(newWorkspace)).toMatchObject({ type: 'create_session', workspace_id: 'workspace-new' })
   })
 
   it('uses snapshot as the reconnect source of truth', () => {

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import { applyServerMessage, initialSessionState, type Approval, type Message, type Question, type ServerMessage } from './session'
+import { applyServerMessage, initialSessionState, workspaceReconnectMessage, type Approval, type Message, type Question, type ServerMessage } from './session'
 import { selectWorkspaceSession } from './workspace-ui'
 import './style.css'
 
@@ -8,7 +8,10 @@ function App() {
   const [session, setSession] = useState(initialSessionState)
   const [prompt, setPrompt] = useState('')
   const socket = useRef<WebSocket | null>(null)
+  const sessionStateRef = useRef(session)
   const reconnectTimer = useRef<number | undefined>(undefined)
+
+  useEffect(() => { sessionStateRef.current = session }, [session])
 
   const send = useCallback((message: object) => {
     if (socket.current?.readyState === WebSocket.OPEN) socket.current.send(JSON.stringify(message))
@@ -21,8 +24,7 @@ function App() {
     ws.onopen = () => {
       setSession((current) => ({ ...current, status: '已连接' }))
       send({ type: 'list_workspaces', client_msg_id: crypto.randomUUID() })
-      if (session.sessionId && session.activeWorkspaceId) send({ type: 'resume', client_msg_id: crypto.randomUUID(), session_id: session.sessionId, workspace_id: session.activeWorkspaceId })
-      else send({ type: 'create_session', client_msg_id: crypto.randomUUID(), workspace_id: null })
+      send(workspaceReconnectMessage(sessionStateRef.current))
     }
     ws.onmessage = (event) => {
       const message = JSON.parse(event.data) as ServerMessage
