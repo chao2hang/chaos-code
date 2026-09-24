@@ -642,9 +642,9 @@ npm 元包 `crates/codegen/xai-grok-pager/npm/chaos/package.json` 的版本已�
   结果为 `1.94.0`；除一处解释性注释外仓库内再无 `RUST_TOOLCHAIN` 引用。此后升级工具链
   只需改 `rust-toolchain.toml` 一个文件。
 - [x] **修复 npm 发布假成功与不完整元包风险**（本轮）：真实根因已从 `v0.3.1` Actions 日志确认——npm 对首个平台包返回 `E404`，脚本明确退出 1，但 workflow 的 `continue-on-error: true` 把步骤改成 `success`，导致 release package job 仍绿。已移除 `continue-on-error`，缺少 `NPM_TOKEN` 时明确失败；发布脚本对每个包执行 registry read-after-write 核验；只在六个平台归档都有效时发布元包，partial opt-in 只发布平台包。新增 `scripts/ci/test-publish-npm.sh` 覆盖空目录、`.gitkeep`、不完整集合、partial mode、完整集合及 registry 假阳性；CI 已接入。**新发现的硬阻塞**：npm 上 `chaos-code-win32-arm64` 与 `chaos-code-win32-x64` 是 `0.0.1-security` 占位包；要继续 npm 全平台发布，必须先由维护者通过 npm 支持取回包名，或选择新包名并迁移 pins。当前需要用户/包所有者介入，不能由我安全地擅自改品牌包名。已将 tag 发布默认改为 GitHub Release only；仓库变量 `CHAOS_NPM_PUBLISH_ENABLED=true` 显式启用 npm 后才会做占位探测与发布。npm 问题已隔离，不再阻塞二进制发版。
-- [ ] 在干净环境里实测 `npm install`（至少 linux-x64 一条路径）并跑通 `chaos --version`。—— 需要七个包实际发布后才能验证，作为本轮 release 的确认项。
+- [ ] 在干净环境里实测 `npm install`（至少 linux-x64 一条路径）并跑通 `chaos --version`。—— 当前 Windows npm 包名仍为 `0.0.1-security` 占位，七个包不能安全完成真实安装发布；保留为 npm 所有者介入后的 release gate。
 
-**2026-09-23 复核与版本决策**：当前工作分支 `main` 的 Cargo/npm 版本仍为 `0.4.2`，仓库已存在 `v0.4.2` tag；该 tag 指向 curated-port 代码树。版本升至 `0.4.3` 前，至少要完成未解决的发布 P1：MT-2 自更新签名（真实密钥、release 强制验签和跨平台拒绝测试）。另有 MT-1 的真实 `npm install` 验证依赖七个 npm 包可发布，当前 Windows 包名仍被 `0.0.1-security` 占位。Q4 ignore 审计的初次统计器有缺陷，数字已撤回。本轮不能安全创建 release tag。
+**2026-09-24 复核与版本决策**：Cargo/npm 仍为 `0.4.2`，仓库已有 `v0.4.2` tag。release workflow 已强制签名/`require-sig`，安装器也默认 fail-closed；但 signing preflight 尚未在真实 release dispatch 成功验证 GitHub secrets 公私钥匹配，且 Windows installer runner 未通过。MT-1 的七个 npm 包仍受 Windows `0.0.1-security` 占位包阻塞。故不能创建 `0.4.3` tag 或 Release。
 
 **验收证据**：CI 检查的 PR、一次真实的 `npm install` 输出。
 
@@ -658,7 +658,7 @@ npm 元包 `crates/codegen/xai-grok-pager/npm/chaos/package.json` 的版本已�
 `docs/audit-followup-report.md` §4 已于 2026-09-23 按实际代码与仓库配置状态更新。本项仍未清零：当前 release 可在无签名时发布，updater 默认不强制验签，Windows 安装脚本在依赖或签名缺失时会跳过验证。
 
 - [x] 更新 `docs/audit-followup-report.md` §4，记录签名接线、降级路径和未配置密钥时的真实状态。（2026-09-23；证据：本次复核）
-- [ ] 由仓库维护者生成/托管 Ed25519 密钥对，配置 `CHAOS_SIGNING_PRIVATE_KEY` secret 与 `CHAOS_SIGNING_PUBLIC_KEY` repository variable；名称检查确认两项均存在（2026-09-23），未读取或输出密钥值。仍需核验配置有效且公私钥匹配。
+- [~] GitHub 配置项名称 `CHAOS_SIGNING_PRIVATE_KEY` / `CHAOS_SIGNING_PUBLIC_KEY` 已存在；本次只检查名称，未读取值。`signing-preflight` 会在真实 release workflow 中核验长度和公私钥匹配；在该 preflight 运行成功前不能创建补丁 tag。（2026-09-24）
 - [x] release workflow 强制要求签名密钥与 `require-sig` feature；新增 `signing-preflight` 校验 secret/variable 非空、Ed25519 公私钥匹配，配置缺失或不匹配时在构建前阻断。（2026-09-24；workflow shell/YAML 检查通过）
 - [x] Unix/PowerShell/batch installers 默认 fail-closed；新增 `scripts/ci/test-installer-signature-policy.py` 并接入 CI，缺少 signature/public key/cryptography 会失败，仅 `CHAOS_SKIP_SIGNATURE=1` 显式 opt-out。（2026-09-24；fixture 和 bash -n 通过；Windows runner 仍待运行）
 - [~] Unix、PowerShell 与 batch 安装路径已统一为默认 fail-closed：缺 sidecar、公钥或 cryptography 均失败，只有显式 `CHAOS_SKIP_SIGNATURE=1` 绕过；结构 fixture 与 Unix 语法测试通过，Windows runner 实测仍待平台 gate。（2026-09-24）
@@ -791,7 +791,7 @@ npm 元包 `crates/codegen/xai-grok-pager/npm/chaos/package.json` 的版本已�
 **阻断级别**：P2  
 **下次季度审计**：2026-10（已到期，本条即是执行入口）
 
-**2026-09-23 复核更正**：本节此前引用 `scripts/ci/ignored-tests.sh` 的输出，后来确认脚本把 `#[ignore] // 注释` 错当作带理由，且 CSV 字段未正确转义。先前记录的总量、裸属性数量、review date 覆盖率及 crate 分布均撤回，不作为治理事实。Q4 审计待修复统计器后重跑；问题记录见 `docs/ignored-audit-2026q4-summary.md`。
+**2026-09-24 复核更正**：统计器已修复并重跑 Q4 CSV；现有 434 属性行/218 条无 reason/37 条含 review date 仅为 scanner inventory，逐条 review 仍待维护者排期。Q3 基线与扫描口径不同，不作直接比较。历史错误初扫数字已撤回，说明见 `docs/ignored-audit-2026q4-summary.md`。
 
 同一轮还清掉了一件优先级更高的事：**本轮开始时本地全量 `cargo test --workspace`
 有 46 条失败**（分属 shell、五个 prefetch 二进制、`xai-fast-worktree --features
