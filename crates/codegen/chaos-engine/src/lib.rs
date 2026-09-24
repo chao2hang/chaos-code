@@ -1392,7 +1392,13 @@ impl Engine {
                     },
                 );
                 state.active_workspace_id = Some(id);
-                vec![ServerMessage::WorkspaceSwitched { workspace_id: id }]
+                let mut events = vec![ServerMessage::WorkspaceSwitched { workspace_id: id }];
+                let workspaces = state.workspaces.values().cloned().collect::<Vec<_>>();
+                events.push(ServerMessage::Workspaces {
+                    active_workspace_id: id,
+                    workspaces,
+                });
+                events
             }
             ClientMessage::CreateSession { workspace_id, .. } => {
                 let workspace_id =
@@ -1460,33 +1466,47 @@ impl Engine {
                     .get(&workspace_id)
                     .and_then(|workspace| workspace.last_session_id);
                 let mut events = vec![ServerMessage::WorkspaceSwitched { workspace_id }];
-                if let Some(session_id) = session_id {
-                    if let Some(session) = state.sessions.get(&session_id) {
-                        events.push(ServerMessage::SessionSnapshot {
+                let session_id = match session_id {
+                    Some(session_id) => session_id,
+                    None => {
+                        let session_id = Uuid::new_v4();
+                        state.sessions.insert(
                             session_id,
-                            workspace_id: session.workspace_id,
-                            messages: session.messages.clone(),
-                            sequence: session.sequence,
-                            pending_approval: session.pending_approval.as_ref().map(|approval| {
-                                PendingApprovalSnapshot {
-                                    request_id: approval.request_id,
-                                    tool: approval.tool.clone(),
-                                    summary: approval.summary.clone(),
-                                    confirmations_required: approval.confirmations_required,
-                                    confirmations: approval.confirmations,
-                                }
-                            }),
-                            pending_question: session.pending_question.map(|question_id| {
-                                QuestionSnapshot {
-                                    question_id,
-                                    prompt: session
-                                        .pending_question_prompt
-                                        .clone()
-                                        .unwrap_or_default(),
-                                }
-                            }),
-                        });
+                            SessionState {
+                                workspace_id: Some(workspace_id),
+                                ..SessionState::default()
+                            },
+                        );
+                        if let Some(workspace) = state.workspaces.get_mut(&workspace_id) {
+                            workspace.last_session_id = Some(session_id);
+                            workspace.last_used_sequence =
+                                workspace.last_used_sequence.saturating_add(1);
+                        }
+                        session_id
                     }
+                };
+                if let Some(session) = state.sessions.get(&session_id) {
+                    events.push(ServerMessage::SessionSnapshot {
+                        session_id,
+                        workspace_id: session.workspace_id,
+                        messages: session.messages.clone(),
+                        sequence: session.sequence,
+                        pending_approval: session.pending_approval.as_ref().map(|approval| {
+                            PendingApprovalSnapshot {
+                                request_id: approval.request_id,
+                                tool: approval.tool.clone(),
+                                summary: approval.summary.clone(),
+                                confirmations_required: approval.confirmations_required,
+                                confirmations: approval.confirmations,
+                            }
+                        }),
+                        pending_question: session.pending_question.map(|question_id| {
+                            QuestionSnapshot {
+                                question_id,
+                                prompt: session.pending_question_prompt.clone().unwrap_or_default(),
+                            }
+                        }),
+                    });
                 }
                 events
             }
@@ -1502,7 +1522,14 @@ impl Engine {
                         .find(|candidate| !candidate.archived && candidate.id != workspace_id)
                         .map(|candidate| candidate.id);
                 }
-                vec![ServerMessage::WorkspaceArchived { workspace_id }]
+                let workspaces = state.workspaces.values().cloned().collect::<Vec<_>>();
+                vec![
+                    ServerMessage::WorkspaceArchived { workspace_id },
+                    ServerMessage::Workspaces {
+                        active_workspace_id: state.active_workspace_id.unwrap_or(Uuid::nil()),
+                        workspaces,
+                    },
+                ]
             }
             ClientMessage::Resume {
                 session_id,

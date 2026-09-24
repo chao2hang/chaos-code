@@ -36,7 +36,12 @@ function App() {
 
   useEffect(() => { connect(); return () => { if (reconnectTimer.current) window.clearTimeout(reconnectTimer.current); socket.current?.close() } }, [connect])
 
-  function createWorkspace() { const name = window.prompt('工作区名称')?.trim(); if (name) send({ type: 'create_workspace', client_msg_id: crypto.randomUUID(), name }) }
+  function createWorkspace() {
+    const name = window.prompt('工作区名称')?.trim()
+    if (!name) return
+    setSession((current) => ({ ...current, messages: [], approval: undefined, question: undefined, busy: false, status: '正在创建工作区' }))
+    send({ type: 'create_workspace', client_msg_id: crypto.randomUUID(), name })
+  }
   function switchWorkspace(workspaceId: string) {
     setSession((current) => selectWorkspaceSession(current, workspaceId))
     send({ type: 'switch_workspace', client_msg_id: crypto.randomUUID(), workspace_id: workspaceId })

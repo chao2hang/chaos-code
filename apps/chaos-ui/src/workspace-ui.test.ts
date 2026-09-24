@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { initialSessionState } from './session'
+import { applyServerMessage, initialSessionState } from './session'
 import { selectWorkspaceSession, workspaceChanged } from './workspace-ui'
 
 const workspaces = [
@@ -27,6 +27,23 @@ describe('workspace session isolation', () => {
     expect(selected.approval).toBeUndefined()
     expect(selected.question).toBeUndefined()
     expect(selected.busy).toBe(false)
+  })
+
+  it('clears an archived current workspace and selects the remaining active workspace', () => {
+    const source = {
+      ...initialSessionState,
+      workspaces,
+      activeWorkspaceId: 'a',
+      workspaceSessions: { a: 'session-a', b: 'session-b' },
+      sessionId: 'session-a',
+      messages: [{ role: 'assistant', text: 'A private transcript' }],
+      busy: true,
+    }
+    const archived = applyServerMessage(source, { type: 'workspace_archived', workspace_id: 'a' })
+    expect(archived.activeWorkspaceId).toBe('b')
+    expect(archived.sessionId).toBe('session-b')
+    expect(archived.messages).toEqual([])
+    expect(archived.busy).toBe(false)
   })
 
   it('selects a new workspace without reusing another workspace session', () => {

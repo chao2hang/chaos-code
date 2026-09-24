@@ -1,17 +1,18 @@
 :root { font-family: system-ui, sans-serif; color: #e8edf5; background: #111827; }
 * { box-sizing: border-box; }
 body { margin: 0; min-width: 320px; }
-.shell { width: min(960px, 100%); min-height: 100vh; margin: auto; display: grid; grid-template-rows: auto 1fr auto; padding: 24px; gap: 16px; }
+.shell { width: min(960px, 100%); min-height: 100vh; margin: auto; display: grid; grid-template-rows: auto auto 1fr auto; padding: 24px; gap: 16px; }
 header { display: flex; justify-content: space-between; gap: 16px; color: #aebbd0; }
-.workspaces { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; }
-.workspaces button { display: flex; flex-direction: column; gap: 4px; border: 1px solid #34445e; border-radius: 8px; padding: 8px 10px; color: #b5c3d7; background: #172033; }
+.workspaces { display: flex; gap: 8px; overflow-x: auto; padding: 0 0 8px; }
+.workspaces button { display: flex; flex-direction: column; gap: 4px; flex: 0 0 auto; border: 1px solid #34445e; border-radius: 8px; padding: 8px 10px; color: #b5c3d7; background: #172033; }
 .workspaces button.active { border-color: #5e9de0; color: white; }
 .workspaces > button:first-child { color: #a8d4ff; border-style: dashed; }
 .workspaces span { display: flex; gap: 8px; }
+.workspaces small[role="button"] { cursor: pointer; text-decoration: underline; }
 header strong { color: #fff; font-size: 1.2rem; }
-.timeline { display: flex; flex-direction: column; gap: 12px; padding: 16px 0; }
+.timeline { display: flex; flex-direction: column; gap: 12px; padding: 16px 0; min-width: 0; }
 .empty { margin: auto; color: #8290a5; }
-article { max-width: 78%; padding: 12px 16px; border-radius: 12px; background: #1e293b; }
+article { max-width: 78%; overflow-wrap: anywhere; padding: 12px 16px; border-radius: 12px; background: #1e293b; }
 article.user { align-self: flex-end; background: #24558f; }
 article.approval { border: 1px solid #d39d32; background: #3b2d13; }
 article.approval div { display: flex; gap: 8px; margin-top: 10px; }
