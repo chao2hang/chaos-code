@@ -276,7 +276,7 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 - [ ] 在 Tauri 中真实操作：创建会话 → 发送“你好” → 观察增量 → 取消另一请求 → 重启并恢复。
 - [ ] 浏览器自动化环境不可用（本机无 Playwright/Chromium）；已用真实 WebSocket 集成测试和真实服务 curl 验证协议/认证，浏览器实测仍为 M0 gate。
 - [~] Linux engine/Web/前端实测已记录；macOS/Windows GUI runner 与 Tauri 冒烟尚待提供。
-- [ ] README 尚待补充 GUI 开发启动、`CHAOS_WEB_TOKEN` 配置、测试和已知限制。
+- [x] 新增 `apps/chaos-ui/README.md`，记录 GUI 启动、`CHAOS_WEB_STATE`、测试和当前 provider/Tauri/远程限制。（2026-09-24）
 
 ---
 
