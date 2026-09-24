@@ -30,6 +30,8 @@ require platform runners, external services, or a later milestone.
   workspace adapters fail closed before browser-controlled paths reach I/O.
 - M2 attachment policy validates filename/content type/size; `AttachmentStager`
   writes bounded chunks into a root-local staging directory and cleans failures.
+  Engine/Web attachment protocol covers begin/chunk/progress/cancel/quota;
+  final move into workspace and resumable transfer remain open.
 - M2 ProcessTerminalAdapter fixes cwd, requires approval, caps output and returns
   exit codes; interactive PTY remains a separate capability.
 - M2 ProcessGitAdapter fixes cwd and operation arguments for approval-gated
