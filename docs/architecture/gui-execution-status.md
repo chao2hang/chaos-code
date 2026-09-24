@@ -20,6 +20,9 @@ require platform runners, external services, or a later milestone.
 - M1 interaction events now include question request/response and explicit
   protocol variants for tool progress, tool result, file change, and usage;
   provider-backed production emission remains a later adapter task.
+- M2 workspace boundary now canonicalizes a configured root and supports bounded
+  list/read/search requests; path escapes and missing workspace adapters fail
+  closed before any browser-controlled path reaches filesystem I/O.
 - Axum loopback HTTP/WebSocket transport with bearer authorization, Origin
   checks, request-size limit, CSP, `nosniff`, and health endpoint.
 - Atomic JSON snapshot persistence used by the M0 engine.

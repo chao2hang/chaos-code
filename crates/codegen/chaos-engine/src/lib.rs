@@ -110,6 +110,18 @@ pub enum ClientMessage {
         question_id: Uuid,
         answer: String,
     },
+    ListFiles {
+        client_msg_id: String,
+        relative_path: String,
+    },
+    ReadFile {
+        client_msg_id: String,
+        relative_path: String,
+    },
+    SearchFiles {
+        client_msg_id: String,
+        query: String,
+    },
     AcceptDiff {
         client_msg_id: String,
         session_id: Uuid,
@@ -218,6 +230,18 @@ pub enum ServerMessage {
         output_tokens: u64,
         sequence: u64,
     },
+    FilesListed {
+        path: String,
+        entries: Vec<String>,
+    },
+    FileContents {
+        path: String,
+        contents: String,
+    },
+    SearchResults {
+        query: String,
+        matches: Vec<String>,
+    },
     Error {
         code: String,
         message: String,
@@ -260,6 +284,98 @@ struct State {
 }
 
 #[derive(Clone)]
+pub struct WorkspaceAdapter {
+    root: Arc<PathBuf>,
+}
+
+impl WorkspaceAdapter {
+    pub fn new(root: impl AsRef<Path>) -> std::io::Result<Self> {
+        let root = std::fs::canonicalize(root)?;
+        if !root.is_dir() {
+            return Err(std::io::Error::other("workspace root is not a directory"));
+        }
+        Ok(Self {
+            root: Arc::new(root),
+        })
+    }
+
+    fn confined(&self, relative: &str) -> Result<PathBuf, ServerMessage> {
+        let candidate = self.root.join(relative);
+        let canonical = std::fs::canonicalize(&candidate).map_err(|_| ServerMessage::Error {
+            code: "path_invalid".into(),
+            message: "路径不存在或无法解析".into(),
+        })?;
+        if !canonical.starts_with(self.root.as_path()) {
+            return Err(ServerMessage::Error {
+                code: "path_escape".into(),
+                message: "路径超出 workspace 范围".into(),
+            });
+        }
+        Ok(canonical)
+    }
+
+    fn list(&self, relative: &str) -> Result<Vec<String>, ServerMessage> {
+        let path = self.confined(relative)?;
+        let mut entries = std::fs::read_dir(path)
+            .map_err(|_| ServerMessage::Error {
+                code: "list_failed".into(),
+                message: "无法读取目录".into(),
+            })?
+            .filter_map(Result::ok)
+            .filter_map(|entry| entry.file_name().into_string().ok())
+            .collect::<Vec<_>>();
+        entries.sort();
+        Ok(entries)
+    }
+
+    fn read(&self, relative: &str) -> Result<String, ServerMessage> {
+        let path = self.confined(relative)?;
+        let metadata = std::fs::metadata(&path).map_err(|_| ServerMessage::Error {
+            code: "read_failed".into(),
+            message: "无法读取文件".into(),
+        })?;
+        if metadata.len() > 1024 * 1024 {
+            return Err(ServerMessage::Error {
+                code: "file_too_large".into(),
+                message: "文件超过 1 MiB 限制".into(),
+            });
+        }
+        std::fs::read_to_string(path).map_err(|_| ServerMessage::Error {
+            code: "read_failed".into(),
+            message: "文件不是可读文本".into(),
+        })
+    }
+
+    fn search(&self, query: &str) -> Result<Vec<String>, ServerMessage> {
+        let mut matches = Vec::new();
+        for entry in walkdir::WalkDir::new(self.root.as_path())
+            .follow_links(false)
+            .into_iter()
+            .filter_map(Result::ok)
+        {
+            if !entry.file_type().is_file() {
+                continue;
+            }
+            let relative = entry
+                .path()
+                .strip_prefix(self.root.as_path())
+                .unwrap_or(entry.path())
+                .display()
+                .to_string();
+            if let Ok(contents) = std::fs::read_to_string(entry.path()) {
+                if contents.contains(query) {
+                    matches.push(relative);
+                }
+            }
+            if matches.len() >= 100 {
+                break;
+            }
+        }
+        Ok(matches)
+    }
+}
+
+#[derive(Clone)]
 pub struct Engine {
     events: broadcast::Sender<ServerMessage>,
     state: Arc<Mutex<State>>,
@@ -267,34 +383,75 @@ pub struct Engine {
     adapter: Option<Arc<dyn PromptAdapter>>,
     tool_adapter: Option<Arc<dyn ToolAdapter>>,
     diff_adapter: Option<Arc<dyn DiffAdapter>>,
+    workspace: Option<Arc<WorkspaceAdapter>>,
 }
 
 impl Engine {
     pub fn new() -> Self {
-        Self::with_state(State::default(), None, None, None, None)
+        Self::with_state(State::default(), None, None, None, None, None)
     }
 
     pub fn with_adapter(adapter: impl PromptAdapter + 'static) -> Self {
-        Self::with_state(State::default(), None, Some(Arc::new(adapter)), None, None)
+        Self::with_state(
+            State::default(),
+            None,
+            Some(Arc::new(adapter)),
+            None,
+            None,
+            None,
+        )
     }
 
     pub fn with_adapter_arc(adapter: Arc<dyn PromptAdapter>) -> Self {
-        Self::with_state(State::default(), None, Some(adapter), None, None)
+        Self::with_state(State::default(), None, Some(adapter), None, None, None)
     }
 
     pub fn with_tool_adapter(adapter: impl ToolAdapter + 'static) -> Self {
-        Self::with_state(State::default(), None, None, Some(Arc::new(adapter)), None)
+        Self::with_state(
+            State::default(),
+            None,
+            None,
+            Some(Arc::new(adapter)),
+            None,
+            None,
+        )
     }
 
     pub fn with_adapters(
         prompt: Option<Arc<dyn PromptAdapter>>,
         tool: Option<Arc<dyn ToolAdapter>>,
     ) -> Self {
-        Self::with_state(State::default(), None, prompt, tool, None)
+        Self::with_state(State::default(), None, prompt, tool, None, None)
     }
 
     pub fn with_diff_adapter(adapter: impl DiffAdapter + 'static) -> Self {
-        Self::with_state(State::default(), None, None, None, Some(Arc::new(adapter)))
+        Self::with_state(
+            State::default(),
+            None,
+            None,
+            None,
+            Some(Arc::new(adapter)),
+            None,
+        )
+    }
+
+    pub fn with_workspace(root: impl AsRef<Path>) -> std::io::Result<Self> {
+        Self::with_workspace_and_adapter(root, None)
+    }
+
+    pub fn with_workspace_and_adapter(
+        root: impl AsRef<Path>,
+        adapter: Option<Arc<dyn PromptAdapter>>,
+    ) -> std::io::Result<Self> {
+        let workspace = Arc::new(WorkspaceAdapter::new(root)?);
+        Ok(Self::with_state(
+            State::default(),
+            None,
+            adapter,
+            None,
+            None,
+            Some(workspace),
+        ))
     }
 
     pub fn with_persistence(path: impl AsRef<Path>) -> std::io::Result<Self> {
@@ -326,6 +483,7 @@ impl Engine {
             adapter,
             tool_adapter,
             diff_adapter,
+            None,
         ))
     }
 
@@ -335,6 +493,7 @@ impl Engine {
         adapter: Option<Arc<dyn PromptAdapter>>,
         tool_adapter: Option<Arc<dyn ToolAdapter>>,
         diff_adapter: Option<Arc<dyn DiffAdapter>>,
+        workspace: Option<Arc<WorkspaceAdapter>>,
     ) -> Self {
         let (events, _) = broadcast::channel(256);
         Self {
@@ -344,6 +503,7 @@ impl Engine {
             adapter,
             tool_adapter,
             diff_adapter,
+            workspace,
         }
     }
 
@@ -376,7 +536,10 @@ impl Engine {
             | ClientMessage::Reject { client_msg_id, .. }
             | ClientMessage::RespondQuestion { client_msg_id, .. }
             | ClientMessage::AcceptDiff { client_msg_id, .. }
-            | ClientMessage::RollbackDiff { client_msg_id, .. } => client_msg_id.clone(),
+            | ClientMessage::RollbackDiff { client_msg_id, .. }
+            | ClientMessage::ListFiles { client_msg_id, .. }
+            | ClientMessage::ReadFile { client_msg_id, .. }
+            | ClientMessage::SearchFiles { client_msg_id, .. } => client_msg_id.clone(),
         };
         let mut state = self.state.lock().expect("engine state lock");
         if !state.seen_client_messages.insert(client_msg_id.clone()) {
@@ -552,6 +715,37 @@ impl Engine {
                 String::new(),
                 false,
             ),
+            ClientMessage::ListFiles { relative_path, .. } => match &self.workspace {
+                Some(workspace) => workspace
+                    .list(&relative_path)
+                    .map(|entries| {
+                        vec![ServerMessage::FilesListed {
+                            path: relative_path,
+                            entries,
+                        }]
+                    })
+                    .unwrap_or_else(|error| vec![error]),
+                None => vec![Self::error("workspace_unavailable", "没有配置 workspace")],
+            },
+            ClientMessage::ReadFile { relative_path, .. } => match &self.workspace {
+                Some(workspace) => workspace
+                    .read(&relative_path)
+                    .map(|contents| {
+                        vec![ServerMessage::FileContents {
+                            path: relative_path,
+                            contents,
+                        }]
+                    })
+                    .unwrap_or_else(|error| vec![error]),
+                None => vec![Self::error("workspace_unavailable", "没有配置 workspace")],
+            },
+            ClientMessage::SearchFiles { query, .. } => match &self.workspace {
+                Some(workspace) => workspace
+                    .search(&query)
+                    .map(|matches| vec![ServerMessage::SearchResults { query, matches }])
+                    .unwrap_or_else(|error| vec![error]),
+                None => vec![Self::error("workspace_unavailable", "没有配置 workspace")],
+            },
         };
         if let Err(error) = self.persist(&state) {
             return vec![error];
@@ -1027,6 +1221,41 @@ mod tests {
             proposal_id: "p1".into(),
         });
         assert!(rolled_back.iter().any(|event| matches!(event, ServerMessage::DiffResolved { action, .. } if action == "rollback_diff")));
+    }
+
+    #[test]
+    fn workspace_root_confinement_rejects_escape_and_reads_files() {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(directory.path().join("hello.txt"), "needle").unwrap();
+        let engine = Engine::with_workspace(directory.path()).unwrap();
+        let listed = engine.handle(ClientMessage::ListFiles {
+            client_msg_id: "list".into(),
+            relative_path: ".".into(),
+        });
+        assert!(
+            matches!(&listed[0], ServerMessage::FilesListed { entries, .. } if entries == &["hello.txt"])
+        );
+        let read = engine.handle(ClientMessage::ReadFile {
+            client_msg_id: "read".into(),
+            relative_path: "hello.txt".into(),
+        });
+        assert!(
+            matches!(&read[0], ServerMessage::FileContents { contents, .. } if contents == "needle")
+        );
+        let escaped = engine.handle(ClientMessage::ReadFile {
+            client_msg_id: "escape".into(),
+            relative_path: "../outside".into(),
+        });
+        assert!(
+            matches!(&escaped[0], ServerMessage::Error { code, .. } if code == "path_invalid" || code == "path_escape")
+        );
+        let search = engine.handle(ClientMessage::SearchFiles {
+            client_msg_id: "search".into(),
+            query: "needle".into(),
+        });
+        assert!(
+            matches!(&search[0], ServerMessage::SearchResults { matches, .. } if matches.iter().any(|path| path == "hello.txt"))
+        );
     }
 
     #[test]
