@@ -78,7 +78,9 @@ require platform runners, external services, or a later milestone.
 - React client connected to the real WebSocket transport with reconnect/resume,
   workspace-isolated sessions, visible streaming state, cancel, approval/question
   cards, stable test IDs for shell/workspace/timeline/composer entry points, and
-  generated protocol types. Browser DOM/E2E verification remains unavailable here.
+  generated protocol types. Composer supports multiline input, Enter/Shift+Enter,
+  prompt history and draft restoration with IME guards. Browser DOM/E2E verification
+  remains unavailable in this environment.
 - Independent CI job for GUI Rust, protocol drift, frontend unit, typecheck and
   production build checks.
 - Release signing preflight, `require-sig` build feature, fail-closed Unix/
