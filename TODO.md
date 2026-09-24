@@ -250,28 +250,28 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 ### M0.3 最小模型配置
 
 - [x] 提供 deterministic engine responder 作为开发测试 provider/mock，CI 不依赖真实云端凭据；真实 headless Agent adapter 仍待接入。（2026-09-24）
-- [ ] 提供最小 Provider、Base URL、model slug 和 API Key 配置路径。
+- [~] 提供最小 Provider、Base URL、model slug 和 API Key 配置路径；M0 adapter 复用现有 headless 配置边界，GUI 配置表单和凭据存储留至 M3。
 - [x] 当前 GUI protocol 不接受 API Key，Web token 仅使用 Authorization header，engine 不记录或返回凭据；真实 provider credential storage 待 M3。（2026-09-24）
-- [ ] 空模型目录、无凭据、401/429/5xx、网络断开均有可操作错误提示。
+- [~] 空模型目录、无凭据、401/429/5xx、网络断开均有可操作错误提示；Web adapter 会把 headless 启动/JSON/非零错误映射为 `agent_failed`，provider 专项错误仍待真实 provider adapter。
 
 ### M0.4 前端最小闭环
 
 - [~] React 已接入真实 WebSocket，支持会话创建、纯文本 composer、时间线、流式 delta 和停止按钮；会话列表与多会话工作区待补。
 - [x] React 已有连接中/已连接、空态、生成中、连接错误和取消入口；WebSocket 断线自动重连并通过 resume 恢复历史。（2026-09-24；typecheck/build 通过）
-- [ ] 流式更新当前按 WebSocket delta 逐事件更新；按帧批处理和 benchmark 尚待 M5 性能门禁。
+- [~] 流式更新当前按 WebSocket delta 逐事件更新；UTF-8 安全分块与真实 WebSocket 测试已完成，按帧批处理和 benchmark 尚待 M5 性能门禁。
 - [~] Web 使用显式 WebSocket transport；Desktop 已有 engine host boundary，Tauri transport injection 待补。
 
 ### M0.5 Web 基础安全
 
 - [x] 默认仅绑定 `127.0.0.1`；当前 Web host 无非回环绑定入口，后续公网部署必须另立安全门禁。（2026-09-24）
 - [~] 实现 Token 和常量时间比较；当前支持通过 `CHAOS_WEB_TOKEN` 配置 bearer token，Token 不接受 query 参数；高熵生成、轮换和 Safe Web Mode 仍待完成。
-- [x] 校验 Origin，设置 CSP、frame policy、`nosniff` 和 64 KiB 请求体上限；Host/部署模式门禁仍需在公网能力启用前补齐。（2026-09-24；Web tests）
+- [x] 校验 Origin/Host，设置 CSP、frame policy、`nosniff` 和 64 KiB HTTP/WS 消息上限；公网部署模式门禁仍需在公网能力启用前补齐。（2026-09-24；Web tests）
 - [x] WebSocket 握手和 HTTP API 使用同一 bearer/Origin 策略；单测覆盖未授权、错误 Origin 和安全响应头。（2026-09-24）
 - [x] M0 Web 仅提供会话 handshake/create/WS 路由，不暴露命令执行和任意文件写入。（2026-09-24）
 
 ### M0.6 验收门禁
 
-- [~] 自动测试覆盖提交成功、取消、重复 submission、断线、重连、snapshot fallback、无凭据和 provider 错误；当前已覆盖 engine submit/completed、Web health/handshake，剩余场景待协议接入后补齐。
+- [~] 自动测试覆盖提交成功、取消、重复 submission、断线、重连、snapshot fallback、无凭据和 provider 错误；当前已覆盖真实 WebSocket submit/completed/cancel、重复/dedup、UTF-8 delta、adapter error boundary、跨 engine 重启 resume、认证/Origin/Host 和安全头，浏览器与真实 provider 仍待补齐。（2026-09-24）
 - [ ] Desktop host 已通过共享 engine dispatch 单测；Tauri 真实入口、平台构建、增量/取消/重启恢复操作仍是 M0 gate。
 - [ ] 浏览器自动化环境不可用（本机无 Playwright/Chromium）；已用真实 WebSocket 集成测试和真实服务 curl 验证协议/认证，浏览器实测仍为 M0 gate。
 - [~] Linux engine/Web/前端实测已记录；macOS/Windows GUI runner 与 Tauri 冒烟尚待提供。
@@ -361,7 +361,7 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 
 ### M2.5 数据持久化与迁移
 
-- [~] `CHAOS_WEB_STATE` 已接入真实 Web 入口，使用 engine 原子替换 JSON 快照并可跨进程恢复；schema 版本、migration、较新 schema 只读保护与备份恢复仍须按 ADR-003 实现。
+- [~] `CHAOS_WEB_STATE` 已接入真实 Web 入口，使用 engine 原子替换 JSON 快照并可跨进程恢复；真实 WebSocket resume 跨 engine 重启测试已通过；schema 版本、migration、较新 schema 只读保护与备份恢复仍须按 ADR-003 实现。
 - [ ] 保留 `$CHAOS_HOME`/`$GROK_HOME` 与旧目录兼容；路径变化必须提供一次性导入和回滚。
 - [ ] 不宣称“无锁”；明确 SQLite busy timeout、WAL/TRUNCATE、NFS 和多进程并发策略。
 - [ ] 用现有真实会话 fixture 验证 TUI→GUI 读取，以及 GUI 数据不破坏 TUI。

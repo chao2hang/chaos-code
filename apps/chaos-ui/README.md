@@ -19,6 +19,6 @@ npm run dev
 headless Agent；可用 `CHAOS_AGENT_CWD` 固定工作目录。该进程边界不会把浏览器
 请求转换成任意 shell 命令。
 
-当前限制：真实 provider 仍由 headless Agent 的本地配置负责；
+当前限制：真实 provider 仍由 headless Agent 的本地配置负责；adapter 是同步进程边界，取消/超时尚需异步 Agent 适配器；
 Desktop host 尚未接入 Tauri；远程 workspace、终端、文件写入和公共 Web 部署
 均未启用。

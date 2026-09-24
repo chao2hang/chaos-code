@@ -70,6 +70,21 @@ fn origin_allowed(headers: &HeaderMap) -> bool {
         .unwrap_or(true)
 }
 
+fn host_allowed(headers: &HeaderMap) -> bool {
+    let Some(host) = headers
+        .get(header::HOST)
+        .and_then(|value| value.to_str().ok())
+    else {
+        return true;
+    };
+    let hostname = host.rsplit_once(':').map_or(host, |(name, _)| name);
+    matches!(hostname, "127.0.0.1" | "localhost" | "[::1]" | "::1")
+}
+
+fn request_allowed(state: &WebState, headers: &HeaderMap) -> bool {
+    host_allowed(headers) && origin_allowed(headers) && authorized(state, headers)
+}
+
 fn secure_json<T: serde::Serialize>(value: T) -> Response {
     (
         [
@@ -92,7 +107,7 @@ fn secure_json<T: serde::Serialize>(value: T) -> Response {
 }
 
 async fn handshake(State(state): State<Arc<WebState>>, headers: HeaderMap) -> Response {
-    if !origin_allowed(&headers) || !authorized(&state, &headers) {
+    if !request_allowed(&state, &headers) {
         return StatusCode::UNAUTHORIZED.into_response();
     }
     secure_json(ServerMessage::Handshake {
@@ -101,7 +116,7 @@ async fn handshake(State(state): State<Arc<WebState>>, headers: HeaderMap) -> Re
 }
 
 async fn create_session(State(state): State<Arc<WebState>>, headers: HeaderMap) -> Response {
-    if !origin_allowed(&headers) || !authorized(&state, &headers) {
+    if !request_allowed(&state, &headers) {
         return StatusCode::UNAUTHORIZED.into_response();
     }
     let event = state.engine.handle(ClientMessage::CreateSession {
@@ -115,7 +130,7 @@ async fn websocket(
     headers: HeaderMap,
     upgrade: WebSocketUpgrade,
 ) -> Response {
-    if !origin_allowed(&headers) || !authorized(&state, &headers) {
+    if !request_allowed(&state, &headers) {
         return StatusCode::UNAUTHORIZED.into_response();
     }
     let engine = state.engine.clone();
@@ -132,7 +147,23 @@ async fn websocket_session(mut socket: WebSocket, engine: Engine) {
             .into(),
         ))
         .await;
-    while let Some(Ok(Message::Text(text))) = socket.recv().await {
+    while let Some(Ok(message)) = socket.recv().await {
+        let Message::Text(text) = message else {
+            continue;
+        };
+        if text.len() > MAX_REQUEST_BYTES {
+            let _ = socket
+                .send(Message::Text(
+                    serde_json::to_string(&ServerMessage::Error {
+                        code: "message_too_large".into(),
+                        message: "消息超过 64 KiB 限制".into(),
+                    })
+                    .unwrap()
+                    .into(),
+                ))
+                .await;
+            continue;
+        }
         match serde_json::from_str::<ClientMessage>(&text) {
             Ok(message) => {
                 for event in engine.handle(message) {
@@ -208,6 +239,20 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
+    #[tokio::test]
+    async fn host_is_checked() {
+        let response = router(Engine::new(), "")
+            .oneshot(
+                Request::get("/api/handshake")
+                    .header("host", "evil.example")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
     #[tokio::test]
     async fn health_is_public() {
         let response = router(Engine::new(), "secret")
