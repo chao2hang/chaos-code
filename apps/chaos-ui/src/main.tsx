@@ -44,6 +44,7 @@ function App() {
     }
     ws.onmessage = (event) => {
       const message = JSON.parse(event.data) as ServerMessage
+      if (message.type === 'session_created') (window as Window & { __chaosDevWorkspaceCreated?: boolean }).__chaosDevWorkspaceCreated = true
       setSession((current) => applyServerMessage(current, message))
     }
     ws.onerror = () => setSession((current) => ({ ...current, status: '连接错误' }))

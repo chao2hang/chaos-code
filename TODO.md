@@ -159,7 +159,7 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 
 - [x] 为第 2 节每个 TBD 项选择 Parity、Replacement、Degraded、Deferred 或 Unsupported；见 `docs/architecture/m1-scope-matrix.md`。（2026-09-24）
 - [x] 明确首个稳定版是单用户本地开发工作台，Web 默认 loopback；公网、多用户、云同步和登录墙不在首版范围。（2026-09-24）
-- [x] 固定当前最低平台策略：M0 Linux 本地验收；macOS/Windows 需独立 CI 构建通过后才列为支持平台；WebView/浏览器版本由 M5 CI 固定。（2026-09-24）
+- [x] 固定当前最低平台策略：M0 Linux 本地验收；macOS/Windows 需独立 CI 构建通过后才列为支持平台；WebView/浏览器版本由 M5 CI 固定。（2026-09-24；本轮 Linux Chromium 153 临时 Playwright browser flow 已用于 Web locale/workspace smoke，非正式平台支持声明）
 - [x] 明确移动 Web 是窄视口适配，不是独立正式移动平台。（2026-09-24）
 
 **验收证据**：更新后的兼容矩阵；无未解释的 TBD。
@@ -191,7 +191,7 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 - [~] Tauri v2 spike：Desktop host boundary 已隔离且不引入 Tauri 依赖；真实 Tauri 三平台构建待环境依赖与独立 runner，不能以 host crate 通过替代。
 - [~] Axum + 静态资源嵌入：Axum loopback/WebSocket 已真实运行；静态资源嵌入、压缩、SPA fallback 待 M5。
 - [x] Rust→TS：M0 使用 serde JSON envelope；`chaos-protocol-schema` 生成 TypeScript 类型并由 `scripts/ci/check-gui-protocol.sh` 执行漂移门禁，GUI CI 已运行；运行时 schema validation 仍待后续边界。（2026-09-24）
-- [ ] 验证候选 SSH 库的 SSH Agent、私钥口令、keyboard-interactive、ProxyJump/ProxyCommand 和端口转发能力。
+- [ ] 验证候选 SSH 库的 SSH Agent、私钥口令、keyboard-interactive、ProxyJump/ProxyCommand 和端口转发能力。此项需先由 maintainer 选择候选依赖/支持的认证和代理范围（尤其 ProxyCommand 执行 arbitrary command 的 trust policy），再批准可控 SSH 测试主机、测试 key/agent 和 proxy/forward 环境；当前没有产品/安全决策或获批主机凭据，不能用本地 endpoint unit test 代替。此项需先由 maintainer 选择候选依赖/支持的认证和代理范围（含 ProxyCommand 执行 arbitrary command 的 trust policy），再批准可控 SSH 测试主机、test key/agent 和 proxy/forward 环境；当前没有该产品/安全决策或获批主机/凭据，不能仅以本地 endpoint unit test 代替。
 - [~] SQLite migration：M0 JSON transitional；`SqliteSessionStore` 已正式接入 Engine/Web，支持 schema/损坏库/新版本/重启恢复和旧 schema 备份升级；TUI 真实 `summary.json`/`updates.jsonl` 有只读 allowlisted import seam，但完整 ACP 更新转换、多进程/NFS/迁移中断回滚仍待 M2 gate。（2026-09-24；`sqlite_entry_flow.rs`、`tui_import.rs`）
 - [x] 新增依赖许可证/维护状态完成初步审查：GUI 仅复用 workspace 已声明 axum/tower/tower-http/serde/uuid/tokio 依赖，未新增第三方资产。（2026-09-24）
 
@@ -213,7 +213,7 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 
 - [x] 定义 GUI crate 的构建隔离方式：GUI Rust crates 保持独立 package，Tauri 依赖不进入 workspace；前端使用独立 `apps/chaos-ui/node_modules`/`dist`，并由 `.gitignore` 排除。（2026-09-24）
 - [x] 确认默认 TUI binary 不触发 Tauri/WebView：当前 Desktop crate 无 Tauri 依赖，GUI package 独立检查通过；结构检查见 CI `gui` job。（2026-09-24）
-- [~] 主 CI `rust` job 不包含 GUI；GUI 走独立 `gui` job，当前 workflow 已验证分离，主 job 前后耗时对比与平台 runner 结果待 CI 完成。
+- [~] 主 CI `rust` job 不包含 GUI；GUI 走独立 `gui` job，workflow 静态分离和本地 GUI crate tests 已验证；CI runner 上 rust job 历史耗时对比、峰值内存和磁盘 delta 必须由有 Actions runner telemetry/权限的 maintainer 核对。
 - [x] 文档化 target/node 构建容量治理入口：GUI 输出目录已隔离并忽略；WSL 低内存 `-j 4` 约束沿用贡献基线。（2026-09-24）
 - [x] 评估 `node_modules` 与前端构建产物落盘并补 `.gitignore`，避免 GUI 本地生成物进入 `git status`。（2026-09-24）
 - [x] 若隔离失败的退出方案：撤回 workspace GUI members，保留独立 engine crate 并拆分发布；当前隔离未失败。（2026-09-24）
@@ -235,7 +235,7 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 - [x] 创建 `apps/chaos-ui`：Vite、React、TypeScript、Vitest 脚本和 npm lockfile；实现最小时间线/composer/演示响应。（2026-09-24；`npm run typecheck`、`npm run build` 通过）
 - [x] 创建 `crates/codegen/chaos-engine`，提供版本化 client/server envelope、session create、submit、ack、text delta、completed、cancel。（2026-09-24；crate tests 通过）
 - [~] 按 `ADR-002` 的结论处理 headless：已新增 `chaos-engine::PromptAdapter` 和受显式路径控制的 `HeadlessProcessAdapter`，Web 可通过 `CHAOS_AGENT_BINARY` 接入真实 `chaos --headless --output-format json`；物理迁移 `headless.rs` 及其 ACP 胶水仍待独立回归批次，现有 CLI 行为未改。（2026-09-24；engine/Web adapter tests 通过）
-- [x] 创建 `xai-grok-desktop` 和 `xai-grok-web`，加入 workspace 末尾的分叉区段；Web 提供 loopback Axum health/handshake，Desktop 提供独立 host boundary。（2026-09-24；Rust check/test 与独立 `ci.yml` GUI job 已加入）
+- [x] 创建 `xai-grok-desktop` 和 `xai-grok-web`，加入 workspace 末尾的分叉区段；Web 提供 loopback Axum health/handshake，Desktop 提供独立 host boundary。（2026-09-24；Rust check/test 与独立 `ci.yml` GUI job 已加入）Chromium 发现 workspace create 前端在 backend client_msg_id 去重协议下必须先收到 ACK；已补 ACK，再发 workspace/session/registry events，并用真实浏览器流程验证。
 - [x] 保证现有 `chaos` TUI/CLI 默认构建和行为不变；GUI crate 独立于 TUI binary，默认 workspace check 不引入 Tauri。（2026-09-24；GUI crate 独立 check 通过；完整 workspace 回归待 M0.6）
 - [~] 真实 GUI crate 已通过独立 GUI CI、协议漂移、前端 typecheck/unit/build 和无 Tauri 依赖结构门禁；主 rust job 历史耗时对比与跨 runner 资源指标仍待 CI 维护者提供。（2026-09-24；`.github/workflows/ci.yml`、`check-gui-protocol.sh`）
 
@@ -244,8 +244,8 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 - [x] 实现并版本化 handshake、create/resume session、submission、ack、分块 text delta、completed、error、cancel、snapshot；engine protocol v1 与 WebSocket integration test 已提交。（2026-09-24）
 - [x] 每条命令携带 `client_msg_id`；engine 以进程/持久化状态作用域去重，重复命令只返回 ack；单测覆盖重复提交和取消。（2026-09-24）
 - [x] sequence 定义为 session 级；snapshot 返回原子序列切点，delta 带 sequence；engine 单测覆盖恢复顺序。（2026-09-24）
-- [~] WebSocket 已映射共享 envelope；Desktop host 已导出同一 engine 类型并有 dispatch 测试，Tauri IPC adapter 尚待 M0 Desktop 实现。
-- [x] 建立 Rust→TypeScript 协议生成与漂移 CI：`chaos-engine` 是唯一 source，`apps/chaos-ui/src/generated/protocol.ts` 由 `chaos-protocol-schema` 生成，CI `gui` job 用 `check-gui-protocol.sh` 比对；React reducer 使用生成的 `ServerMessage`/`TimelineMessage` 类型。（2026-09-24；生成命令、drift check、typecheck、Vitest 和 build 通过）
+- [~] WebSocket 已映射共享 envelope；Desktop host 已导出同一 engine 类型并有 dispatch 测试，Tauri IPC adapter 尚待 M0 Desktop 实现。真实 Chromium workspace flow 曾抓到 workspace-create wire protocol 缺少 Ack：Web Engine 以 client_msg_id 全局去重，少 Ack 会把 switch/session/registry 的第一事件冒充 Ack、令浏览器等待/状态不一致；已按真实操作 flow 修复服务端 ACK/event 次序并复测。
+- [x] 建立 Rust→TypeScript 协议生成与漂移 CI：`chaos-engine` 是唯一 source，`apps/chaos-ui/src/generated/protocol.ts` 由 `chaos-protocol-schema` 生成，CI `gui` job 用 `check-gui-protocol.sh` 比对；React reducer 使用生成的 `ServerMessage`/`TimelineMessage` 类型。（2026-09-24；本轮 final `check-gui-protocol.sh`、Vitest、typecheck、build 通过）
 
 ### M0.3 最小模型配置
 
@@ -256,7 +256,7 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 
 ### M0.4 前端最小闭环
 
-- [~] React 已接入真实 WebSocket，支持会话创建、纯文本 composer、时间线、流式 delta、审批/question 卡片和停止按钮；transport URL 按页面 http/https 选择 ws/wss，保留 host port/base path；TLS 终止/reverse proxy 部署本身仍需独立 host 配置和安全验收；会话列表与多会话工作区待补。（2026-09-24；`src/transport.test.ts`）
+- [~] React 已接入真实 WebSocket，支持会话创建、纯文本 composer、时间线、流式 delta、审批/question 卡片和停止按钮；Chromium 已真实验证 workspace A/B 创建、发送、切回 transcript isolation 及移动窗口 composer。真实 browser flow 揭示两个运行时配置缺口并已修复：create_workspace 缺少 ACK 会被 `client_msg_id` 去重当作重复；Vite dev server 不代理 `/ws`/`/api`。现在 UI 后端按 HTTP/HTTPS 选择 WS/WSS，Vite 开发代理通过 backend 的非 public prefixed routes 转发；production TLS termination/reverse proxy 未配置，仍待独立 host/security gate。（2026-09-24；`browser-workspace-flow-final.log`、`browser-proxy-verification.log`、`src/transport.test.ts`）
 - [x] React 已有连接中/已连接、空态、生成中、连接错误和取消入口；WebSocket 断线自动重连并通过 resume 恢复历史。（2026-09-24；typecheck/build/Vitest 通过）
 - [~] 流式更新当前按 WebSocket delta 逐事件更新；UTF-8 安全分块与真实 WebSocket 测试已完成，按帧批处理和 benchmark 尚待 M5 性能门禁。
 - [~] Web 使用显式 WebSocket transport；Desktop 已有 engine host boundary，Tauri transport injection 待补。
@@ -300,7 +300,7 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 - [ ] 移植或重写时间线、轮次分组、虚拟滚动、滚动锚点和行高缓存。
 - [ ] 实现 Markdown、代码块、reasoning 折叠、工具卡片和错误恢复。
 - [~] composer 现支持多行输入、按 Enter 发送、Shift+Enter 换行、上/下箭头历史导航和发送后恢复未发送草稿；IME composition 与 keyCode 229 不触发提交；`/` 命令及 `@` 文件候选仍待补。（2026-09-24；`apps/chaos-ui/src/composer.ts`、`composer.test.ts`）
-- [~] Web 主流程现为 app shell、workspace list、session timeline、composer input/submit 建立稳定 `data-testid`，Vitest 覆盖独立 reducer/transport/composer 模型；关键工具审批卡和真实浏览器 DOM/E2E test-id 验收仍待 Playwright/Tauri 环境。（2026-09-24；`apps/chaos-ui/src/main.tsx`）
+- [~] Web 主流程现为 app shell、workspace list、session timeline、composer input/submit、逐 workspace 选择与归档操作建立稳定 `data-testid`/ARIA label；Vitest 与 Chromium desktop/mobile flow 覆盖 workspace/session 模型；同源 Vite proxy 对 `/api`、`/health`、`/ws` 已验证，关键工具审批卡和 Desktop DOM/E2E 仍待补。（2026-09-24；`apps/chaos-ui/src/main.tsx`、`workspace-ui.test.ts`、browser scratch）
 
 ### M1.3 权限、提问与审计
 
@@ -319,7 +319,7 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 ### M1.5 验收门禁
 
 - [~] E2E：engine/WebSocket 已覆盖读取 workspace 文件 → 请求写入 → 拒绝一次 → 再次批准 → 预览 Diff → 接受 → 回滚并确认磁盘状态；浏览器/桌面人工验收和真实 hunk/二进制场景仍待平台 gate。（2026-09-24；`workspace_diff_flow.rs`）
-- [ ] E2E：审批时断网并重连；操作不能重复执行，审批状态必须一致。
+- [~] WebSocket integration 已在 socket 断开后通过持久化 Engine reopen，恢复待审批 approval/question prompt，并验证批准/回答只完成一次；未模拟中断中的真实浏览器多-tab竞争/通知时序，该 UI gate 仍留给 Playwright。（2026-09-24；`approval_resume_flow.rs`、`question_resume_flow.rs`）
 - [~] WebSocket 双客户端 fixture 已验证同一审批只接受一个终态，第二次 resolve 返回 `approval_not_found`；真实浏览器多标签人工/Playwright 验收仍待浏览器环境。（2026-09-24；`approval_competition_flow.rs`）
 - [x] Safe Web Mode 已通过真实 WebSocket 直接发送 terminal 和 destructive Git mutation 验证无法绕过；浏览器人工/Playwright 覆盖仍受环境限制。（2026-09-24；`safe_mode_flow.rs`）
 - [~] Web 真实 WebSocket 工具审批/Diff/question 流程和 React reducer 已测试；Desktop/Tauri 真实操作与浏览器人工验证仍待平台 gate。
@@ -335,18 +335,18 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 
 ### M2.1 工作区与布局
 
-当前状态：engine 已提供 workspace registry 的创建/切换/归档/最近使用协议；完整多工作区 UI、布局和 desktop 状态隔离仍待前端/桌面实现。
+当前状态：engine 已提供 workspace registry 的创建/切换/归档/最近使用和 session 绑定协议，React 已按 workspace 隔离 transcript/session 并持久化有限 layout preferences；但 Engine 文件/Git/terminal adapter 仍绑定单一 host-level root，registry workspace 暂不能配置多根。完整多 workspace 物理隔离、tabs/split 和 Desktop 状态隔离仍待 root mapping/desktop 实现。
 
 - [~] engine 已实现 workspace 创建/切换/归档/最近使用协议，记录每个 workspace 最近 session 并在切换时发该会话 snapshot；创建和切换到空 workspace 自动创建 session，归档活动 workspace 后切回/创建 fallback session，归档 session 的 Resume/Submit/Approve/RespondQuestion/写文件/Git/终端 mutation fail-closed；create/archive/switch 同步 workspace 列表；session 持久化 workspace_id，Resume/Snapshot 拒绝错误 workspace；React 按 workspace 缓存 session、切换时清理旧 transcript 再恢复对应快照；当前 Engine 仍只有一个 host-level `WorkspaceAdapter`/Git root，不能宣称 registry workspace 有各自独立文件根，需后续 workspace-root mapping/desktop 配置。（2026-09-24；`archive_workspace_flow.rs`、`workspace_session.rs`、`workspace-ui.test.ts`）
-- [~] React UI 已新增版本化 layout persistence helper 和面板/主题/尺寸控件，持久化 sidebar/composer 尺寸、theme 和 panel visibility；损坏 JSON、未知 schema、非法值及 storage denied 安全回退，无法保存时向用户显示提示。完整 tabs/split 和桌面宽窄屏/视觉人工验收仍待浏览器/Tauri 环境。（2026-09-24；`apps/chaos-ui/src/layout.test.ts`）
-- [~] workspace registry 具备独立 workspace IDs；session cancellation/resource key、文件锁和 Git 锁的多工作区并发测试仍待真实 UI/desktop adapter。
+- [~] React UI 已新增版本化 layout persistence helper 和面板/主题/尺寸控件，持久化 sidebar/composer 尺寸、theme 和 panel visibility；损坏 JSON、未知 schema、非法值及 storage denied 安全回退，无法保存时向用户显示提示。Chromium 已操作 theme/panel/size inputs 并 reload，验证 browser storage state 可恢复；完整 tabs/split 和 Tauri 桌面人工验收仍待平台。（2026-09-24；`apps/chaos-ui/src/layout.test.ts`、goal scratch screenshots/logs）
+- [~] workspace registry 具备独立 workspace IDs 和按 session 的 timeline/snapshot 隔离；**当前仍是单一 host-configured WorkspaceAdapter/ProcessGitAdapter root**，registry 中不同 workspace 的文件、Git、terminal、Diff/attachment mutation 不会自动进入独立物理路径。Multi-root mapping 尚未实现；创建普通 UI workspace 不应被表述为创建独立项目目录。需后续提供 host-owned workspace ID→canonical root mapping 后再开放多项目文件操作，并以双临时仓库 fixture 验收；绝不接受浏览器任意路径作为 root。（2026-09-24；单 root engine structure、`active_workspace_access` probe）
 
 ### M2.2 文件、搜索和附件
 
-- [~] 新增受 root confinement 保护的 `WorkspaceAdapter`，WebSocket 已支持 list/read/search 和“提议写入→审批→落盘”协议，越界/未审批写入被拒绝；后续接入现有 workspace RPC 的 range/get/put 能力，禁止复制业务协议。（2026-09-24；workspace engine/WebSocket tests）
+- [~] 新增受 root confinement 保护的 `WorkspaceAdapter`，WebSocket 已支持 list/read/search 和“提议写入→审批→落盘”协议，越界/未审批写入被拒绝；adapter 仍是单 root host 配置，UI workspace registry 主要隔离 session，尚未映射不同物理 roots。后续应通过 workspace_id→canonical root host registry 接入现有 workspace RPC range/get/put，禁止浏览器直接指定 roots。（2026-09-24；workspace engine/WebSocket tests）
 - [~] 已实现受限目录列表、文本读取和内容搜索（最多 100 个匹配、单文件 1 MiB）；增量文件树、模糊搜索和 `@` 文件候选待前端/M2 后续。
 - [~] 当前普通文本写入限制 1 MiB 并执行 root confinement；新增 attachment filename/content-type/10 MiB allowlist、`.chaos-staging` 分块写入/失败清理 stager，以及 Web/engine BeginAttachment/Chunk/Progress/Cancel/quota 协议测试；现已补 `FinalizeAttachment` 审批门控和 staging-to-workspace 原子落盘，WebSocket 覆盖拒绝/批准与磁盘状态；断线续传和配额跨会话策略仍待补。（2026-09-24；`attachment_flow.rs`）
-- [~] `WorkspaceAdapter` 对 root 和目标执行 canonicalization 并拒绝越界路径，WebSocket 已有真实越界测试；symlink escape、写入/删除和网络文件系统 fixture 待 M2 完整 adapter。
+- [~] `WorkspaceAdapter` 对当前 host-configured root 和目标执行 canonicalization 并拒绝越界路径，WebSocket 有真实越界测试；symlink escape 已有 engine fixture。registry 还未绑定每 workspace 独立 root；完成 mapping 后需对每个 root 再补 symlink/write/delete 和网络文件系统 fixture。
 - [~] Web 外部编辑器打开入口暂未暴露；workspace path/remote path 已区分并默认不生成本机深链接，handler/远程降级待 UI adapter。（2026-09-24）
 
 ### M2.3 终端
@@ -362,23 +362,23 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 
 - [~] engine 已提供固定 `git -C <canonical-root>` status 和真实 `ProcessGitAdapter`：stage/unstage/commit/checkout_branch/discard 必须先审批，commit/checkout_branch/discard 还需第二次确认，WebSocket 临时 Git 仓库测试验证 stage 结果；仍未开放 push/pull、rollback 和冲突恢复。（2026-09-24；`git_real_flow.rs`、`git-real-flow.log`）
 - [~] commit、checkout_branch、discard 等破坏性 Git 操作现需两次独立审批；WebSocket fixture 已在临时仓库确认第一次审批前 HEAD 不变、第二次后才提交；push、覆盖性 checkout 和浏览器确认 UI 仍待补。（2026-09-24；`git_confirmation_flow.rs`）
-- [ ] AI commit message 只是建议，提交前可编辑；失败不丢 staged state。
+- [~] `ProcessGitAdapter` 不丢 staged state 的失败路径已有临时仓库测试（stage 后无效 commit message）；AI commit-message 建议与 UI 编辑表单尚未实现，当前没有 LLM 自动改写提交信息。（2026-09-24；`tests/git_edges.rs`）
 - [~] 已补真实 fixture 覆盖非 Git 工作区、detached HEAD、缺失分支和无效 commit；失败不会丢 staged state。无 remote/认证失败需要远端或凭据环境，冲突恢复仍待 Git fixture。（2026-09-24；`crates/codegen/chaos-engine/tests/git_edges.rs`）
 
 ### M2.5 数据持久化与迁移
 
 - [~] `CHAOS_WEB_STATE` 保留为 transitional JSON；`CHAOS_WEB_SQLITE` 现正式选择 `SqliteSessionStore` Engine 入口，支持 schema reject/round-trip、旧 schema 升级备份/恢复、只读 TUI 导入 fixture 和真实 Web sqlite entry 恢复测试；完整 ACP→GUI 转换、多进程/NFS 仍须按 ADR-003 完成。（2026-09-24；engine migration fixture、`tui_import.rs`、`sqlite_entry_flow.rs`）
-- [ ] 保留 `$CHAOS_HOME`/`$GROK_HOME` 与旧目录兼容；路径变化必须提供一次性导入和回滚。
+- [~] TUI 现有 `$CHAOS_HOME`/`$GROK_HOME` 双读仍由 `xai-dirs` 维持，GUI `CHAOS_WEB_SQLITE` 不改写 TUI 根；尚无 GUI SQLite 数据迁移或 home-path 重定位/import/rollback 命令，等产品配置根决策与 migration format 明确后再实现。
 - [~] 不宣称“无锁”：`SqliteSessionStore` 复用 `xai-sqlite-journal` 的 WAL/TRUNCATE 与 busy retry policy；NFS/多进程并发策略已有底层 journal 文档，但 GUI 真实并发 fixture 尚待补。
 - [~] 已新增 host allowlist 下的只读 `ImportTuiSession` seam：读取真实格式 `summary.json`/`updates.jsonl` 的 cwd、标题和消息数，损坏/缺字段/未配置根目录 fail-closed，并断言源文件字节不变；尚未把 ACP 更新完整转换为 GUI SQLite 会话，也未覆盖 GUI 写回 TUI。（2026-09-24；`crates/codegen/chaos-engine/tests/tui_import.rs`）
 - [~] SQLite store 已覆盖损坏 DB、新 schema、缺父目录、旧 schema 升级备份/恢复、非法版本和重启恢复；迁移中断/磁盘满、多进程/NFS 和 TUI 旧目录导入仍需真实 filesystem fault/TUI fixture，当前环境不能把普通 tempfile 测试冒充完成。（2026-09-24）
 
 ### M2.6 验收门禁
 
-- [~] engine/Web/React 已验证 session workspace 绑定、错误 workspace Resume/Snapshot 拒绝、snapshot 返回 workspace_id、重启后绑定恢复以及 workspace 切换时 transcript/审批/question/busy 状态隔离并恢复各自 session；layout 尺寸/theme/panel visibility 有版本化 JSON 持久化与损坏回退。跨 workspace tabs/split/draft、宽窄屏浏览器和 Desktop transport 仍待平台验收。（2026-09-24；`workspace_session.rs`、`workspace-ui.test.ts`、`layout.test.ts`）
+- [~] engine/Web/React 已验证 session workspace ID 绑定、错误 workspace Resume/Snapshot 拒绝、snapshot 返回 workspace_id、重启后绑定恢复以及 registry session 切换时 transcript/审批/question/busy 状态隔离；**不表示不同 registry workspace 有独立物理 root，当前仍 single-root**。layout 尺寸/theme/panel visibility 有版本化 JSON 持久化与损坏回退；跨 workspace 多-root files/Git、tabs/split/draft、宽窄屏浏览器和 Desktop transport 仍待验收。（2026-09-24；`workspace_session.rs`、`workspace-ui.test.ts`、`layout.test.ts`）
 - [ ] E2E：终端创建文件，文件树实时更新；搜索、打开、编辑和 Git Diff 状态一致。
 - [~] engine `AttachmentStager` 已覆盖分块写入、10 MiB/类型/路径策略和失败清理；真实 WebSocket 上传、取消/进度与最终 staging-to-workspace 审批移动均有测试，上传后未批准不会写入 workspace。（2026-09-24；`attachment_flow.rs`）
-- [~] `SqliteSessionStore` 本地 round-trip/schema reject/既有 journal policy 测试已通过；多进程、网络文件系统 fixture、busy retry 和迁移中断测试仍待真实 filesystem fixture。
+- [~] `SqliteSessionStore` 本地 round-trip/schema reject、old-schema backup/forward-upgrade、损坏/非法版本拒绝和重启恢复测试已通过；多进程、网络文件系统/busy contention、磁盘满及进程中断 recovery 仍需要可控 filesystem fault/独立进程测试环境，未以普通 tempfile 伪报完成。该条仍需独立 storage fault scope，不被 UI layout/localStorage persistence 取代。
 - [ ] 桌面宽屏和 Web 窄视口均验证布局；所有共享状态页面执行回归导航。
 
 ---
@@ -401,7 +401,7 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 ### M3.2 MCP、插件与技能
 
 - [~] plugin marketplace 现已通过 `chaos-engine` 暴露只读 `ScanMarketplace` adapter，复用现有 catalog/scanner/path validation；扫描根目录必须由 host 显式配置，WebSocket 已覆盖允许/拒绝路径；危险安装/执行、来源权限、签名失败和 MCP 连接状态仍需 approval-gated adapter 与真实 registry/credential 环境。（2026-09-24；`crates/codegen/chaos-engine/tests/marketplace_scan.rs`、`crates/codegen/xai-grok-web/tests/marketplace_scan.rs`）
-- [ ] 安装或执行第三方扩展前显示来源和权限；覆盖恶意 manifest、路径穿越和签名/校验失败。
+- [~] 已有只读 marketplace scanner 对 indexed relative path traversal/symlink escape 的 crate tests；GUI 尚无第三方安装/执行入口，来源/权限审批 UX、恶意 manifest/supply-chain signature fail gate 需先由维护者批准 extension trust/signature policy，之后接 approval-gated adapter。
 
 ### M3.3 工作流与子代理
 
@@ -491,7 +491,7 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 - [~] 独立 `gui` CI 已运行前端 typecheck、Vitest unit 和 production build；format/lint 与生成类型漂移检查待接入 schema/typegen 后补齐。（2026-09-24）
 - [~] 独立 `gui` CI 已运行 Rust GUI/Web crates test（workspace pinned toolchain）和前端 typecheck/unit/build；新增 installer signature policy fixture 到 npm-scripts CI，GUI crate fmt/clippy 独立门禁与更细的 job 仍待补齐。（2026-09-24）
 - [ ] 复测主 `rust` job 耗时仍在 `timeout-minutes: 60` 内且未因 GUI 增长；超出则先修隔离，不得直接调高 timeout。
-- [ ] 增加 Playwright Web E2E；当前环境无可用 Playwright/Chromium，React reducer 与真实 WebSocket 集成测试已作为降级证据；桌面端仍需 Tauri/WebDriver 平台自动化。
+- [~] 已在当前 Linux 安装临时 Playwright Chromium 并执行真实 React→WebSocket backend browser E2E：两 workspace 创建/发送/切回 transcript isolation 和窄屏 composer 通过；同源 `/api/handshake`、Vite WebSocket proxy workspace create 也已实测。测试包/Browser scripts 未加入产品依赖；CI Playwright gate、Tauri/WebDriver 仍待维护 CI/平台。（2026-09-24；scratch `browser-workspace-flow-final2.log`、`browser-proxy-verification-final3.log`）
 - [~] GUI CI 已使用 npm cache 与 `package-lock.json`；Rust cache 由现有 CI 提供，pnpm/sccache 尚未引入，避免没有测量就叠加缓存系统。（2026-09-24）
 - [~] 现有 `THIRD-PARTY-NOTICES`、lockfile 和 secret scan 提供基础审查；SBOM、漏洞扫描和自动 license gate 尚待接入工具/CI runner。
 - [~] ignored inventory 已修复并纳入 Q4 CSV；稳定版相关 ignored test 的逐项 owner/豁免审查仍未完成，不能作为 release 通过依据。
@@ -663,7 +663,7 @@ npm 元包 `crates/codegen/xai-grok-pager/npm/chaos/package.json` 的版本已�
 - [~] GitHub 配置项名称 `CHAOS_SIGNING_PRIVATE_KEY` / `CHAOS_SIGNING_PUBLIC_KEY` 已存在；本次只检查名称，未读取值。`signing-preflight` 会在真实 release workflow 中核验长度和公私钥匹配；在该 preflight 运行成功前不能创建补丁 tag。（2026-09-24）
 - [x] release workflow 强制要求签名密钥与 `require-sig` feature；新增 `signing-preflight` 校验 secret/variable 非空、Ed25519 公私钥匹配，配置缺失或不匹配时在构建前阻断。（2026-09-24；workflow shell/YAML 检查通过）
 - [x] Unix/PowerShell/batch installers 默认 fail-closed；新增 `scripts/ci/test-installer-signature-policy.py` 并接入 CI，缺少 signature/public key/cryptography 会失败，仅 `CHAOS_SKIP_SIGNATURE=1` 显式 opt-out。（2026-09-24；fixture 和 bash -n 通过；Windows runner 仍待运行）
-- [~] Unix、PowerShell 与 batch 安装路径已统一为默认 fail-closed：缺 sidecar、公钥或 cryptography 均失败，只有显式 `CHAOS_SKIP_SIGNATURE=1` 绕过；结构 fixture 与 Unix 语法测试通过，Windows runner 实测仍待平台 gate。（2026-09-24）
+- [~] Unix、PowerShell 与 batch 安装路径已统一为默认 fail-closed：缺 sidecar、公钥或 cryptography 均失败，只有显式 `CHAOS_SKIP_SIGNATURE=1` 绕过；结构 fixture 与 Unix 语法测试通过，Windows runner 实测仍待平台 gate。每次 release 还需确认真实 GitHub workflow 签名配置且不能以本地模拟替代。
 - [~] updater 现有单测覆盖有效/篡改/错误公钥/缺 sidecar；新增 `scripts/ci/test-installer-signature-policy.py` 锁住三安装器 fail-closed 结构，真实签名安装成功/错误/缺签名与 Windows PowerShell runner 仍待具备真实 release asset 的外部 gate。
 - [ ] 完成以上项后运行真实 release dry-run，确认各平台签名 sidecar 与编译内公钥匹配，再允许创建补丁版本 tag。
 

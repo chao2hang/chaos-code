@@ -53,13 +53,19 @@ async fn archiving_last_workspace_creates_a_new_default_workspace_and_session() 
         ))
         .await
         .unwrap();
-    let archived = serde_json::from_str::<ServerMessage>(
-        &socket.next().await.unwrap().unwrap().into_text().unwrap(),
-    )
-    .unwrap();
-    assert!(
-        matches!(archived, ServerMessage::WorkspaceArchived { workspace_id } if workspace_id == old_workspace)
-    );
+    let mut archived = false;
+    for _ in 0..4 {
+        let message = serde_json::from_str::<ServerMessage>(
+            &socket.next().await.unwrap().unwrap().into_text().unwrap(),
+        )
+        .unwrap();
+        if matches!(message, ServerMessage::WorkspaceArchived { workspace_id } if workspace_id == old_workspace)
+        {
+            archived = true;
+            break;
+        }
+    }
+    assert!(archived);
     let switched = serde_json::from_str::<ServerMessage>(
         &socket.next().await.unwrap().unwrap().into_text().unwrap(),
     )

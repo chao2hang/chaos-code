@@ -63,6 +63,7 @@ async fn archiving_active_workspace_switches_to_fallback_session_and_updates_reg
         },
     )
     .await;
+    assert!(matches!(next(&mut socket).await, ServerMessage::Ack { .. }));
     assert!(matches!(
         next(&mut socket).await,
         ServerMessage::WorkspaceSwitched { .. }

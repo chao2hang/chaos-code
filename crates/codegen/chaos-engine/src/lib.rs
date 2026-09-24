@@ -1405,6 +1405,7 @@ impl Engine {
                     workspace.last_used_sequence = 1;
                 }
                 let mut events = vec![
+                    ServerMessage::Ack { client_msg_id },
                     ServerMessage::WorkspaceSwitched { workspace_id: id },
                     ServerMessage::SessionCreated {
                         session_id,
