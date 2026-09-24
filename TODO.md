@@ -349,6 +349,8 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 
 ### M2.3 终端
 
+当前状态：固定 cwd 的 `ProcessTerminalAdapter` 已支持审批后执行、输出上限、退出码和结构化错误；真实 PTY stdin/stdout/resize/重连/取消仍待 ptyctl/Tauri/Web terminal adapter。
+
 - [~] 新增固定 cwd 的 `ProcessTerminalAdapter` 边界：必须先审批、输出上限、退出码、非零错误和 terminal result 已有 engine tests；Xterm.js/ptyctl 交互 stdin/resize/重连/进程取消仍待真实 PTY adapter。（2026-09-24；`terminal-adapter-test.log`）
 - [~] Web terminal 当前不提供任意命令入口；未来 terminal route 必须复用审批和 Safe Web Mode，不能绕过后端策略。（2026-09-24）
 
@@ -373,7 +375,7 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 
 - [ ] E2E：两个工作区间切换，布局、标签页、草稿和会话不串位，重启后恢复。（待多工作区 UI/desktop transport）
 - [ ] E2E：终端创建文件，文件树实时更新；搜索、打开、编辑和 Git Diff 状态一致。
-- [ ] E2E：附件上传成功、取消、超限、危险类型拒绝和自动清理。
+- [~] engine `AttachmentStager` 已覆盖分块写入、10 MiB/类型/路径策略和失败清理；真实 WebSocket 上传、取消/进度和最终 staging-to-workspace 审批移动仍待补。（2026-09-24；`attachment-stager-test.log`）
 - [~] `SqliteSessionStore` 本地 round-trip/schema reject/既有 journal policy 测试已通过；多进程、网络文件系统 fixture、busy retry 和迁移中断测试仍待真实 filesystem fixture。
 - [ ] 桌面宽屏和 Web 窄视口均验证布局；所有共享状态页面执行回归导航。
 
