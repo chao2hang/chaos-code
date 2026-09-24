@@ -180,7 +180,7 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 - [x] `ADR-001`：前后端逻辑协议；确定 Rust `chaos-engine` 作为 envelope 单一来源，Web/Desktop 共享逻辑协议，协议版本从 1 起步。（2026-09-24；`docs/architecture/adr-001-gui-walking-skeleton.md`）
 - [x] `ADR-002`：engine 边界；walking skeleton 先以 `chaos-engine` 协议 mock 验证 Web/Desktop seam，保留现有 headless 实现，后续通过 adapter 接入而不复制生命周期。（2026-09-24；`docs/architecture/adr-002-gui-engine-adapter.md`）**必须点名解决 headless 的物理位置问题**：`headless.rs`（1732 行）逻辑上无头——导入的几乎全是 `xai_grok_shell::*`，仅 3 处提及渲染相关标识符——但它住在依赖 `ratatui` 的 `xai-grok-pager` 里。GUI 若直接复用，会把整个终端渲染栈拖进桌面端和 Web 端。ADR 需在"把 headless 及其 `acp` 胶水下沉到引擎侧"与"在引擎侧新建入口、headless 保持原位"之间做出选择，并给出迁移与回滚方式。
 - [x] `ADR-003`：确定 M0 使用 engine 原子 JSON 快照验证恢复，后续 canonical SQLite store、迁移、备份和 NFS 策略按文档推进。（2026-09-24；`docs/architecture/adr-003-gui-persistence.md`）
-- [ ] `ADR-004`：远程拓扑；在“本地 Agent + 远程工具”和“远程 Agent + 远程工具”之间做出明确选择。
+- [x] `ADR-004`：M0/M1 先支持本地 Agent + 本地 workspace；远程 Agent/工具、SSH、端口转发和 detached Agent 明确留至 M4，不把 loopback 原型伪装成远程控制面。（2026-09-24；`docs/architecture/adr-004-remote-topology.md`）
 - [~] `ADR-005`：已冻结本地 Web 安全基线，见 `docs/architecture/adr-005-web-security.md`；桌面 IPC、远程连接和完整凭据边界待补。
 - [ ] `ADR-006`：前端来源与可维护性；决定直接移植、clean-room 重写及上游 UI 更新策略。
 
