@@ -10,7 +10,12 @@ fn resume_rejects_a_session_from_another_workspace() {
         workspace_id: None,
     });
     let (session_id, workspace_id) = match first.as_slice() {
-        [ServerMessage::SessionCreated { session_id, workspace_id }] => (*session_id, *workspace_id),
+        [
+            ServerMessage::SessionCreated {
+                session_id,
+                workspace_id,
+            },
+        ] => (*session_id, *workspace_id),
         other => panic!("unexpected {other:?}"),
     };
     let wrong_workspace = Uuid::new_v4();
@@ -28,7 +33,10 @@ fn resume_rejects_a_session_from_another_workspace() {
         session_id,
         workspace_id: Some(workspace_id),
     });
-    assert!(matches!(result.as_slice(), [ServerMessage::SessionSnapshot { .. }]));
+    assert!(matches!(
+        result.as_slice(),
+        [ServerMessage::SessionSnapshot { .. }]
+    ));
 }
 
 #[test]
@@ -41,7 +49,12 @@ fn persisted_session_keeps_workspace_binding_after_reopen() {
         workspace_id: None,
     });
     let (session_id, workspace_id) = match created.as_slice() {
-        [ServerMessage::SessionCreated { session_id, workspace_id }] => (*session_id, *workspace_id),
+        [
+            ServerMessage::SessionCreated {
+                session_id,
+                workspace_id,
+            },
+        ] => (*session_id, *workspace_id),
         other => panic!("unexpected {other:?}"),
     };
     drop(first);
@@ -51,5 +64,8 @@ fn persisted_session_keeps_workspace_binding_after_reopen() {
         session_id,
         workspace_id: Some(workspace_id),
     });
-    assert!(matches!(result.as_slice(), [ServerMessage::SessionSnapshot { .. }]));
+    assert!(matches!(
+        result.as_slice(),
+        [ServerMessage::SessionSnapshot { .. }]
+    ));
 }

@@ -40,7 +40,7 @@ export type ServerMessage =
   | { type: 'workspaces'; active_workspace_id: UUID; workspaces: WorkspaceInfo[] }
   | { type: 'workspace_archived'; workspace_id: UUID }
   | { type: 'workspace_switched'; workspace_id: UUID }
-  | { type: 'session_snapshot'; session_id: UUID; messages: TimelineMessage[]; sequence: number }
+  | { type: 'session_snapshot'; session_id: UUID; workspace_id: UUID | null; messages: TimelineMessage[]; sequence: number }
   | { type: 'ack'; client_msg_id: string }
   | { type: 'text_delta'; session_id: UUID; text: string; sequence: number }
   | { type: 'completed'; session_id: UUID; sequence: number }

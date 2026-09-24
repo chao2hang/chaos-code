@@ -518,6 +518,7 @@ pub enum ServerMessage {
     },
     SessionSnapshot {
         session_id: Uuid,
+        workspace_id: Option<Uuid>,
         messages: Vec<TimelineMessage>,
         sequence: u64,
     },
@@ -1456,6 +1457,7 @@ impl Engine {
                 Some(session) if workspace_id.is_none() || workspace_id == session.workspace_id => {
                     vec![ServerMessage::SessionSnapshot {
                         session_id,
+                        workspace_id: session.workspace_id,
                         messages: session.messages.clone(),
                         sequence: session.sequence,
                     }]

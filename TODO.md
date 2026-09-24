@@ -375,7 +375,7 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 
 ### M2.6 验收门禁
 
-- [~] engine/Web 已验证 session workspace 绑定、错误 workspace Resume 拒绝和重启后绑定恢复；布局、标签页、草稿、多工作区 UI 和 Desktop transport 仍待平台验收。（2026-09-24；`workspace_session.rs`）
+- [~] engine/Web 已验证 session workspace 绑定、错误 workspace Resume/Snapshot 拒绝、snapshot 返回 workspace_id 和重启后绑定恢复；布局、标签页、草稿、多工作区 UI 和 Desktop transport 仍待平台验收。（2026-09-24；`workspace_session.rs`）
 - [ ] E2E：终端创建文件，文件树实时更新；搜索、打开、编辑和 Git Diff 状态一致。
 - [~] engine `AttachmentStager` 已覆盖分块写入、10 MiB/类型/路径策略和失败清理；真实 WebSocket 上传、取消/进度与最终 staging-to-workspace 审批移动均有测试，上传后未批准不会写入 workspace。（2026-09-24；`attachment_flow.rs`）
 - [~] `SqliteSessionStore` 本地 round-trip/schema reject/既有 journal policy 测试已通过；多进程、网络文件系统 fixture、busy retry 和迁移中断测试仍待真实 filesystem fixture。
