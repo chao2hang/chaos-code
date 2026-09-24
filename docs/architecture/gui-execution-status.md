@@ -78,8 +78,8 @@ require platform runners, external services, or a later milestone.
 | Tauri Desktop | Open | Tauri three-platform builds and real desktop flow |
 | Browser E2E | Open | Playwright or equivalent installed and exercised at desktop/narrow viewports |
 | Provider/config/secrets | Partial | Non-secret settings/provider shape validation; real provider/keyring tests remain open |
-| M1 hunk/workspace Diff | Partial | Adapter boundaries and tests; real `xai-hunk-tracker`/workspace mutation integration remains open |
-| M2 persistence/workspace | Partial | SQLite/JSON boundaries, workspace/Git/terminal/attachment safety; multi-workspace UI, PTY, NFS/multiprocess and full migration remain open |
+| M1 hunk/workspace Diff | Partial | Adapter boundaries and real local workspace/Diff tests; production `xai-hunk-tracker` partial-hunk/binary integration remains open |
+| M2 persistence/workspace | Partial | SQLite/JSON boundaries, workspace/Git/terminal/attachment safety, Git edge fixtures and destructive-action confirmations; multi-workspace UI, PTY, NFS/multiprocess, remote Git auth and full migration remain open |
 | M3 ecosystem | Partial | Read-only marketplace discovery and root allowlist are tested; MCP/plugin install/execute, skill/workflow/subagent integration and credential-backed connection tests remain open |
 | M4 remote | Partial | Typed capability/host-key boundary; clean Linux remote, SSH transport and forwarding remain open |
 | M5 release | Partial | GUI CI, signing preflight, fail-closed installers and policy fixtures; packaging/signing assets/SBOM/performance/manual acceptance remain open |
