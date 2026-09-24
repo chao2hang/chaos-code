@@ -23,6 +23,13 @@ pub trait ToolAdapter: Send + Sync {
     fn execute(&self, tool: &str, summary: &str) -> Result<String, String>;
 }
 
+/// Boundary for applying a proposed file change. Implementations own the
+/// actual workspace and must make accept/rollback atomic for their backend.
+pub trait DiffAdapter: Send + Sync {
+    fn accept(&self, proposal_id: &str, summary: &str) -> Result<(), String>;
+    fn rollback(&self, proposal_id: &str) -> Result<(), String>;
+}
+
 /// Adapter that invokes the installed `chaos --headless` binary in JSON mode.
 /// The binary path is explicit so Web/Desktop hosts cannot accidentally execute
 /// an arbitrary command from a browser message.
@@ -98,6 +105,17 @@ pub enum ClientMessage {
         request_id: Uuid,
         reason: String,
     },
+    AcceptDiff {
+        client_msg_id: String,
+        session_id: Uuid,
+        proposal_id: String,
+        summary: String,
+    },
+    RollbackDiff {
+        client_msg_id: String,
+        session_id: Uuid,
+        proposal_id: String,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -149,6 +167,11 @@ pub enum ServerMessage {
         outcome: String,
         sequence: u64,
     },
+    DiffResolved {
+        proposal_id: String,
+        action: String,
+        sequence: u64,
+    },
     Error {
         code: String,
         message: String,
@@ -196,47 +219,53 @@ pub struct Engine {
     store_path: Option<Arc<PathBuf>>,
     adapter: Option<Arc<dyn PromptAdapter>>,
     tool_adapter: Option<Arc<dyn ToolAdapter>>,
+    diff_adapter: Option<Arc<dyn DiffAdapter>>,
 }
 
 impl Engine {
     pub fn new() -> Self {
-        Self::with_state(State::default(), None, None, None)
+        Self::with_state(State::default(), None, None, None, None)
     }
 
     pub fn with_adapter(adapter: impl PromptAdapter + 'static) -> Self {
-        Self::with_state(State::default(), None, Some(Arc::new(adapter)), None)
+        Self::with_state(State::default(), None, Some(Arc::new(adapter)), None, None)
     }
 
     pub fn with_adapter_arc(adapter: Arc<dyn PromptAdapter>) -> Self {
-        Self::with_state(State::default(), None, Some(adapter), None)
+        Self::with_state(State::default(), None, Some(adapter), None, None)
     }
 
     pub fn with_tool_adapter(adapter: impl ToolAdapter + 'static) -> Self {
-        Self::with_state(State::default(), None, None, Some(Arc::new(adapter)))
+        Self::with_state(State::default(), None, None, Some(Arc::new(adapter)), None)
     }
 
     pub fn with_adapters(
         prompt: Option<Arc<dyn PromptAdapter>>,
         tool: Option<Arc<dyn ToolAdapter>>,
     ) -> Self {
-        Self::with_state(State::default(), None, prompt, tool)
+        Self::with_state(State::default(), None, prompt, tool, None)
+    }
+
+    pub fn with_diff_adapter(adapter: impl DiffAdapter + 'static) -> Self {
+        Self::with_state(State::default(), None, None, None, Some(Arc::new(adapter)))
     }
 
     pub fn with_persistence(path: impl AsRef<Path>) -> std::io::Result<Self> {
-        Self::with_persistence_and_adapters(path, None, None)
+        Self::with_persistence_and_adapters(path, None, None, None)
     }
 
     pub fn with_persistence_and_adapter(
         path: impl AsRef<Path>,
         adapter: Option<Arc<dyn PromptAdapter>>,
     ) -> std::io::Result<Self> {
-        Self::with_persistence_and_adapters(path, adapter, None)
+        Self::with_persistence_and_adapters(path, adapter, None, None)
     }
 
     pub fn with_persistence_and_adapters(
         path: impl AsRef<Path>,
         adapter: Option<Arc<dyn PromptAdapter>>,
         tool_adapter: Option<Arc<dyn ToolAdapter>>,
+        diff_adapter: Option<Arc<dyn DiffAdapter>>,
     ) -> std::io::Result<Self> {
         let path = path.as_ref().to_path_buf();
         let state = if path.exists() {
@@ -244,7 +273,13 @@ impl Engine {
         } else {
             State::default()
         };
-        Ok(Self::with_state(state, Some(path), adapter, tool_adapter))
+        Ok(Self::with_state(
+            state,
+            Some(path),
+            adapter,
+            tool_adapter,
+            diff_adapter,
+        ))
     }
 
     fn with_state(
@@ -252,6 +287,7 @@ impl Engine {
         path: Option<PathBuf>,
         adapter: Option<Arc<dyn PromptAdapter>>,
         tool_adapter: Option<Arc<dyn ToolAdapter>>,
+        diff_adapter: Option<Arc<dyn DiffAdapter>>,
     ) -> Self {
         let (events, _) = broadcast::channel(256);
         Self {
@@ -260,6 +296,7 @@ impl Engine {
             store_path: path.map(Arc::new),
             adapter,
             tool_adapter,
+            diff_adapter,
         }
     }
 
@@ -289,7 +326,9 @@ impl Engine {
             | ClientMessage::Cancel { client_msg_id, .. }
             | ClientMessage::Snapshot { client_msg_id, .. }
             | ClientMessage::Approve { client_msg_id, .. }
-            | ClientMessage::Reject { client_msg_id, .. } => client_msg_id.clone(),
+            | ClientMessage::Reject { client_msg_id, .. }
+            | ClientMessage::AcceptDiff { client_msg_id, .. }
+            | ClientMessage::RollbackDiff { client_msg_id, .. } => client_msg_id.clone(),
         };
         let mut state = self.state.lock().expect("engine state lock");
         if !state.seen_client_messages.insert(client_msg_id.clone()) {
@@ -419,6 +458,31 @@ impl Engine {
                 request_id,
                 ..
             } => self.resolve_approval(&mut state, client_msg_id, request_id, false),
+            ClientMessage::AcceptDiff {
+                client_msg_id,
+                session_id,
+                proposal_id,
+                summary,
+            } => self.resolve_diff(
+                &mut state,
+                client_msg_id,
+                session_id,
+                proposal_id,
+                summary,
+                true,
+            ),
+            ClientMessage::RollbackDiff {
+                client_msg_id,
+                session_id,
+                proposal_id,
+            } => self.resolve_diff(
+                &mut state,
+                client_msg_id,
+                session_id,
+                proposal_id,
+                String::new(),
+                false,
+            ),
         };
         if let Err(error) = self.persist(&state) {
             return vec![error];
@@ -507,6 +571,65 @@ impl Engine {
         });
         events
     }
+    fn resolve_diff(
+        &self,
+        state: &mut State,
+        client_msg_id: String,
+        session_id: Uuid,
+        proposal_id: String,
+        summary: String,
+        accept: bool,
+    ) -> Vec<ServerMessage> {
+        let Some(session) = state.sessions.get_mut(&session_id) else {
+            return vec![Self::error("session_not_found", "会话不存在")];
+        };
+        let result = match &self.diff_adapter {
+            Some(adapter) => {
+                if accept {
+                    adapter.accept(&proposal_id, &summary)
+                } else {
+                    adapter.rollback(&proposal_id)
+                }
+            }
+            None => Err("没有配置 Diff adapter".into()),
+        };
+        session.sequence += 1;
+        let action = if accept {
+            "accept_diff"
+        } else {
+            "rollback_diff"
+        };
+        let outcome = if result.is_ok() {
+            "applied"
+        } else {
+            "rejected"
+        };
+        let mut events = vec![ServerMessage::Ack { client_msg_id }];
+        if let Err(message) = result {
+            events.push(ServerMessage::Error {
+                code: "diff_failed".into(),
+                message,
+            });
+        }
+        events.push(ServerMessage::DiffResolved {
+            proposal_id,
+            action: action.into(),
+            sequence: session.sequence,
+        });
+        session.audit.push(AuditEntry {
+            action: action.into(),
+            outcome: outcome.into(),
+            sequence: session.sequence,
+        });
+        events.push(ServerMessage::Audit {
+            session_id,
+            action: action.into(),
+            outcome: outcome.into(),
+            sequence: session.sequence,
+        });
+        events
+    }
+
     fn error(code: &str, message: &str) -> ServerMessage {
         ServerMessage::Error {
             code: code.into(),
@@ -752,6 +875,71 @@ mod tests {
         });
         assert!(resolved.iter().any(
             |event| matches!(event, ServerMessage::Error { code, .. } if code == "tool_unavailable")
+        ));
+    }
+
+    struct FixtureDiff;
+
+    impl DiffAdapter for FixtureDiff {
+        fn accept(&self, proposal_id: &str, summary: &str) -> Result<(), String> {
+            if proposal_id == "p1" && summary == "safe" {
+                Ok(())
+            } else {
+                Err("unexpected proposal".into())
+            }
+        }
+        fn rollback(&self, proposal_id: &str) -> Result<(), String> {
+            if proposal_id == "p1" {
+                Ok(())
+            } else {
+                Err("unknown proposal".into())
+            }
+        }
+    }
+
+    #[test]
+    fn diff_accept_and_rollback_use_session_scoped_adapter() {
+        let engine = Engine::with_diff_adapter(FixtureDiff);
+        let session_id = match engine.handle(ClientMessage::CreateSession {
+            client_msg_id: "diff-create".into(),
+        })[0]
+        {
+            ServerMessage::SessionCreated { session_id } => session_id,
+            _ => panic!(),
+        };
+        let accepted = engine.handle(ClientMessage::AcceptDiff {
+            client_msg_id: "diff-accept".into(),
+            session_id,
+            proposal_id: "p1".into(),
+            summary: "safe".into(),
+        });
+        assert!(accepted.iter().any(|event| matches!(event, ServerMessage::DiffResolved { action, .. } if action == "accept_diff")));
+        let rolled_back = engine.handle(ClientMessage::RollbackDiff {
+            client_msg_id: "diff-rollback".into(),
+            session_id,
+            proposal_id: "p1".into(),
+        });
+        assert!(rolled_back.iter().any(|event| matches!(event, ServerMessage::DiffResolved { action, .. } if action == "rollback_diff")));
+    }
+
+    #[test]
+    fn diff_without_adapter_fails_closed() {
+        let engine = Engine::new();
+        let session_id = match engine.handle(ClientMessage::CreateSession {
+            client_msg_id: "diff-create".into(),
+        })[0]
+        {
+            ServerMessage::SessionCreated { session_id } => session_id,
+            _ => panic!(),
+        };
+        let events = engine.handle(ClientMessage::AcceptDiff {
+            client_msg_id: "diff-accept".into(),
+            session_id,
+            proposal_id: "p1".into(),
+            summary: "safe".into(),
+        });
+        assert!(events.iter().any(
+            |event| matches!(event, ServerMessage::Error { code, .. } if code == "diff_failed")
         ));
     }
 

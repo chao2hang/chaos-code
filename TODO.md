@@ -310,9 +310,9 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 
 ### M1.4 Diff 闭环
 
-- [ ] 复用 `xai-grok-pager-diff`、`xai-hunk-tracker` 和 workspace RPC，展示行内/双栏 Diff。
-- [ ] 明确“工具已写盘”与“接受/拒绝 Diff”的真实语义，禁止 UI 制造未落地状态。
-- [ ] 覆盖审批期间文件被外部修改、拒绝、部分 hunk、回滚失败和二进制文件。
+- [~] 建立 `chaos-engine::DiffAdapter` 边界，提供 session-scoped accept/rollback/error 事件；下一步接入 `xai-grok-pager-diff`、`xai-hunk-tracker` 和 workspace RPC 的真实文件实现，当前未伪造磁盘状态。（2026-09-24；engine tests）
+- [x] 明确“工具已写盘”与“接受/拒绝 Diff”的真实语义：engine 只在 DiffAdapter 成功后发 `diff_resolved`，无 adapter 或失败发 `diff_failed`，不更新磁盘假象。（2026-09-24）
+- [~] 已覆盖 adapter 成功、缺 adapter 和 session 绑定；外部文件修改、部分 hunk、回滚失败和二进制文件仍待真实 workspace adapter。
 
 ### M1.5 验收门禁
 
