@@ -33,9 +33,20 @@ pub trait ToolAdapter: Send + Sync {
 
 /// Boundary for applying a proposed file change. Implementations own the
 /// actual workspace and must make accept/rollback atomic for their backend.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct DiffPreview {
+    pub proposal_id: String,
+    pub path: String,
+    pub before: Option<String>,
+    pub after: String,
+}
+
 pub trait DiffAdapter: Send + Sync {
     fn accept(&self, proposal_id: &str, summary: &str) -> Result<(), String>;
     fn rollback(&self, proposal_id: &str) -> Result<(), String>;
+    fn preview(&self, _proposal_id: &str) -> Result<DiffPreview, String> {
+        Err("Diff adapter 不支持预览".into())
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -464,6 +475,11 @@ pub enum ClientMessage {
         session_id: Uuid,
         proposal_id: String,
     },
+    PreviewDiff {
+        client_msg_id: String,
+        session_id: Uuid,
+        proposal_id: String,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -530,6 +546,10 @@ pub enum ServerMessage {
         proposal_id: String,
         action: String,
         sequence: u64,
+    },
+    DiffPreview {
+        session_id: Uuid,
+        preview: DiffPreview,
     },
     QuestionRequested {
         session_id: Uuid,
@@ -879,27 +899,54 @@ impl SqliteSessionStore {
         let mode = xai_sqlite_journal::JournalMode::for_db_path(&path);
         let conn = mode.open(&path)?;
         conn.execute_batch("CREATE TABLE IF NOT EXISTS gui_meta (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL); CREATE TABLE IF NOT EXISTS gui_sessions (id TEXT PRIMARY KEY NOT NULL, payload TEXT NOT NULL);")?;
-        let current: Option<u16> = conn
+        let current: Option<String> = conn
             .query_row(
                 "SELECT value FROM gui_meta WHERE key = 'schema_version'",
                 [],
                 |row| row.get::<_, String>(0),
             )
-            .optional()?
-            .map(|v| v.parse().unwrap_or(0));
+            .optional()?;
+        let current = current
+            .map(|version| {
+                version
+                    .parse::<u16>()
+                    .map_err(|_| rusqlite::Error::InvalidParameterName("invalid GUI schema".into()))
+            })
+            .transpose()?;
         match current {
             Some(version) if version > SQLITE_SCHEMA_VERSION => {
                 return Err(rusqlite::Error::InvalidParameterName(
                     "newer GUI schema".into(),
                 ));
             }
-            Some(_) => {}
+            Some(version) if version < SQLITE_SCHEMA_VERSION => {
+                let backup = path.with_extension(format!("schema-v{version}.bak"));
+                drop(conn);
+                std::fs::copy(&path, &backup)
+                    .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
+                let conn = mode.open(&path)?;
+                if let Err(error) = (|| {
+                    let transaction = conn.unchecked_transaction()?;
+                    transaction.execute(
+                        "UPDATE gui_meta SET value = ?1 WHERE key = 'schema_version'",
+                        [SQLITE_SCHEMA_VERSION.to_string()],
+                    )?;
+                    transaction.commit()
+                })() {
+                    drop(conn);
+                    std::fs::copy(&backup, &path).map_err(|restore_error| {
+                        rusqlite::Error::ToSqlConversionFailure(Box::new(restore_error))
+                    })?;
+                    return Err(error);
+                }
+            }
             None => {
                 conn.execute(
                     "INSERT INTO gui_meta(key,value) VALUES('schema_version', ?1)",
                     [SQLITE_SCHEMA_VERSION.to_string()],
                 )?;
             }
+            Some(_) => {}
         }
         Ok(Self {
             path: Arc::new(path),
@@ -1062,6 +1109,22 @@ impl Engine {
         Self::with_workspace_and_adapter(root, None)
     }
 
+    pub fn with_workspace_and_diff_adapter(
+        root: impl AsRef<Path>,
+        adapter: impl DiffAdapter + 'static,
+    ) -> std::io::Result<Self> {
+        let workspace = Arc::new(WorkspaceAdapter::new(root)?);
+        Ok(Self::with_state(
+            State::default(),
+            None,
+            None,
+            None,
+            Some(Arc::new(adapter)),
+            Some(workspace),
+            None,
+        ))
+    }
+
     pub fn with_workspace_and_adapter(
         root: impl AsRef<Path>,
         adapter: Option<Arc<dyn PromptAdapter>>,
@@ -1222,6 +1285,7 @@ impl Engine {
             | ClientMessage::RespondQuestion { client_msg_id, .. }
             | ClientMessage::AcceptDiff { client_msg_id, .. }
             | ClientMessage::RollbackDiff { client_msg_id, .. }
+            | ClientMessage::PreviewDiff { client_msg_id, .. }
             | ClientMessage::ListFiles { client_msg_id, .. }
             | ClientMessage::ReadFile { client_msg_id, .. }
             | ClientMessage::SearchFiles { client_msg_id, .. }
@@ -1487,6 +1551,11 @@ impl Engine {
                 String::new(),
                 false,
             ),
+            ClientMessage::PreviewDiff {
+                client_msg_id,
+                session_id,
+                proposal_id,
+            } => self.preview_diff(&mut state, client_msg_id, session_id, proposal_id),
             ClientMessage::ListFiles { relative_path, .. } => match &self.workspace {
                 Some(workspace) => workspace
                     .list(&relative_path)
@@ -2090,6 +2159,31 @@ impl Engine {
         ]
     }
 
+    fn preview_diff(
+        &self,
+        state: &mut State,
+        client_msg_id: String,
+        session_id: Uuid,
+        proposal_id: String,
+    ) -> Vec<ServerMessage> {
+        if !state.sessions.contains_key(&session_id) {
+            return vec![Self::error("session_not_found", "会话不存在")];
+        }
+        let Some(adapter) = &self.diff_adapter else {
+            return vec![Self::error("diff_failed", "没有配置 Diff adapter")];
+        };
+        match adapter.preview(&proposal_id) {
+            Ok(preview) => vec![
+                ServerMessage::Ack { client_msg_id },
+                ServerMessage::DiffPreview {
+                    session_id,
+                    preview,
+                },
+            ],
+            Err(message) => vec![Self::error("diff_failed", &message)],
+        }
+    }
+
     fn resolve_diff(
         &self,
         state: &mut State,
@@ -2516,6 +2610,15 @@ mod tests {
                 Err("unknown proposal".into())
             }
         }
+
+        fn preview(&self, proposal_id: &str) -> Result<DiffPreview, String> {
+            Ok(DiffPreview {
+                proposal_id: proposal_id.into(),
+                path: "hello.txt".into(),
+                before: Some("before".into()),
+                after: "after".into(),
+            })
+        }
     }
 
     #[test]
@@ -2529,6 +2632,15 @@ mod tests {
             ServerMessage::SessionCreated { session_id, .. } => session_id,
             _ => panic!(),
         };
+        let previewed = engine.handle(ClientMessage::PreviewDiff {
+            client_msg_id: "diff-preview".into(),
+            session_id,
+            proposal_id: "p1".into(),
+        });
+        assert!(previewed.iter().any(|event| matches!(
+            event,
+            ServerMessage::DiffPreview { preview, .. } if preview.path == "hello.txt" && preview.after == "after"
+        )));
         let accepted = engine.handle(ClientMessage::AcceptDiff {
             client_msg_id: "diff-accept".into(),
             session_id,
@@ -2571,6 +2683,36 @@ mod tests {
         assert!(SqliteSessionStore::open(&corrupt).is_err());
         let missing_parent = directory.path().join("missing").join("gui.db");
         assert!(SqliteSessionStore::open(&missing_parent).is_err());
+    }
+
+    #[test]
+    fn sqlite_store_upgrades_older_schema_with_backup_and_rejects_bad_version() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("gui.db");
+        {
+            let connection = rusqlite::Connection::open(&path).unwrap();
+            connection.execute_batch("CREATE TABLE gui_meta (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL); CREATE TABLE gui_sessions (id TEXT PRIMARY KEY NOT NULL, payload TEXT NOT NULL); INSERT INTO gui_meta(key,value) VALUES('schema_version','0');").unwrap();
+        }
+        let backup = directory.path().join("gui.schema-v0.bak");
+        let store = SqliteSessionStore::open(&path).unwrap();
+        assert!(backup.is_file());
+        assert_eq!(store.load(Uuid::new_v4()).unwrap(), None);
+        let connection = rusqlite::Connection::open(&path).unwrap();
+        let version: String = connection
+            .query_row(
+                "SELECT value FROM gui_meta WHERE key = 'schema_version'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(version, SQLITE_SCHEMA_VERSION.to_string());
+        connection
+            .execute(
+                "UPDATE gui_meta SET value = 'not-a-version' WHERE key = 'schema_version'",
+                [],
+            )
+            .unwrap();
+        assert!(SqliteSessionStore::open(&path).is_err());
     }
 
     #[test]

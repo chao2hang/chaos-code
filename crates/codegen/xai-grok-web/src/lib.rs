@@ -164,6 +164,7 @@ fn safe_mode_allows(message: &ClientMessage) -> bool {
             | ClientMessage::ReadFile { .. }
             | ClientMessage::SearchFiles { .. }
             | ClientMessage::ScanMarketplace { .. }
+            | ClientMessage::PreviewDiff { .. }
     )
 }
 

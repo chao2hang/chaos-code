@@ -312,13 +312,13 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 
 ### M1.4 Diff 闭环
 
-- [~] 建立 `chaos-engine::DiffAdapter` 边界，提供 session-scoped accept/rollback/error 事件；下一步接入 `xai-grok-pager-diff`、`xai-hunk-tracker` 和 workspace RPC 的真实文件实现，当前未伪造磁盘状态。（2026-09-24；engine tests）
+- [~] 建立 `chaos-engine::DiffAdapter` 边界，提供 session-scoped preview/accept/rollback/error 事件；WebSocket 已通过真实 workspace fixture 覆盖文件写入拒绝/批准、Diff 预览、接受和回滚，仍待接入 `xai-grok-pager-diff`、`xai-hunk-tracker` 与 workspace RPC 的生产级部分 hunk/二进制实现。（2026-09-24；`workspace_diff_flow.rs`）
 - [x] 明确“工具已写盘”与“接受/拒绝 Diff”的真实语义：engine 只在 DiffAdapter 成功后发 `diff_resolved`，无 adapter 或失败发 `diff_failed`，不更新磁盘假象。（2026-09-24）
 - [~] 已覆盖 adapter 成功、缺 adapter 和 session 绑定；外部文件修改、部分 hunk、回滚失败和二进制文件仍待真实 workspace adapter。
 
 ### M1.5 验收门禁
 
-- [ ] E2E：读取文件 → 请求修改 → 拒绝一次 → 再次批准 → 查看 Diff → 接受/回滚 → 确认磁盘状态。
+- [~] E2E：engine/WebSocket 已覆盖读取 workspace 文件 → 请求写入 → 拒绝一次 → 再次批准 → 预览 Diff → 接受 → 回滚并确认磁盘状态；浏览器/桌面人工验收和真实 hunk/二进制场景仍待平台 gate。（2026-09-24；`workspace_diff_flow.rs`）
 - [ ] E2E：审批时断网并重连；操作不能重复执行，审批状态必须一致。
 - [ ] 同时打开两个 Web 标签，验证同一审批只接受一个终态。
 - [ ] 验证 Safe Web Mode 无法通过直接 API/WS 调用绕过。
@@ -367,11 +367,11 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 
 ### M2.5 数据持久化与迁移
 
-- [~] `CHAOS_WEB_STATE` 保留为 transitional JSON；`CHAOS_WEB_SQLITE` 现正式选择 `SqliteSessionStore` Engine 入口，支持 schema reject/round-trip 和真实 Web sqlite entry 恢复测试；TUI fixture、多进程/NFS/迁移回滚仍须按 ADR-003 完成。（2026-09-24；`sqlite_entry_flow.rs`）
+- [~] `CHAOS_WEB_STATE` 保留为 transitional JSON；`CHAOS_WEB_SQLITE` 现正式选择 `SqliteSessionStore` Engine 入口，支持 schema reject/round-trip、旧 schema 升级备份/恢复和真实 Web sqlite entry 恢复测试；TUI fixture、多进程/NFS 仍须按 ADR-003 完成。（2026-09-24；engine migration fixture、`sqlite_entry_flow.rs`）
 - [ ] 保留 `$CHAOS_HOME`/`$GROK_HOME` 与旧目录兼容；路径变化必须提供一次性导入和回滚。
 - [~] 不宣称“无锁”：`SqliteSessionStore` 复用 `xai-sqlite-journal` 的 WAL/TRUNCATE 与 busy retry policy；NFS/多进程并发策略已有底层 journal 文档，但 GUI 真实并发 fixture 尚待补。
 - [ ] 用现有真实会话 fixture 验证 TUI→GUI 读取，以及 GUI 数据不破坏 TUI。
-- [~] SQLite store 已覆盖损坏 DB、新 schema、缺父目录和重启恢复；迁移中断/磁盘满/旧版本回退仍需真实 filesystem fault fixture，当前环境不能把普通 tempfile 测试冒充完成。（2026-09-24）
+- [~] SQLite store 已覆盖损坏 DB、新 schema、缺父目录、旧 schema 升级备份/恢复、非法版本和重启恢复；迁移中断/磁盘满、多进程/NFS 和 TUI 旧目录导入仍需真实 filesystem fault/TUI fixture，当前环境不能把普通 tempfile 测试冒充完成。（2026-09-24）
 
 ### M2.6 验收门禁
 

@@ -18,10 +18,11 @@ require platform runners, external services, or a later milestone.
 - M1 tool adapter boundary: approvals are resolved before a `ToolAdapter` can
   execute; missing adapters fail closed and tool output is recorded in the
   session timeline/audit.
-- M1 Diff adapter boundary: accept and rollback are session-scoped adapter calls;
-  success emits `diff_resolved`, failure emits `diff_failed`, and no UI event
-  claims a file was changed before the adapter reports success. WebSocket tests
-  assert ordered ACK/resolution/audit events for accept and rollback.
+- M1 Diff adapter boundary: preview, accept and rollback are session-scoped
+  adapter calls; success emits `diff_resolved`, failure emits `diff_failed`, and
+  no UI event claims a file was changed before the adapter reports success.
+  A real workspace WebSocket fixture covers rejected/approved writes, Diff
+  preview, accept and rollback with disk assertions.
 - M1 interaction events include question request/response, tool progress/result,
   file change, usage and structured errors; WebSocket tests cover ordered events,
   duplicate resolution rejection and missing-adapter failure.
@@ -41,8 +42,9 @@ require platform runners, external services, or a later milestone.
 - M2 ProcessGitAdapter fixes cwd and operation arguments for approval-gated
   stage/commit/checkout_branch/unstage/discard; push/pull/rollback remain disabled.
 - Transitional JSON snapshot and canonical `SqliteSessionStore` persistence, with
-  schema/version tests, corrupt/missing-parent rejection, legacy backup, and real
-  Web SQLite re-open recovery.
+  schema/version tests, corrupt/missing-parent rejection, old-schema upgrade
+  backup/restore, invalid-version rejection, legacy backup, and real Web SQLite
+  re-open recovery.
 - M3 settings seam exposes only non-secret Base URL/model fields, rejects unsafe
   URLs, and reports `has_api_key` as a boolean; provider shape validation returns
   `network_not_attempted` without touching credentials or making network calls.

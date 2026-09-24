@@ -30,6 +30,7 @@ export type ClientMessage =
   | { type: 'scan_marketplace'; client_msg_id: string; root: string }
   | { type: 'accept_diff'; client_msg_id: string; session_id: UUID; proposal_id: string; summary: string }
   | { type: 'rollback_diff'; client_msg_id: string; session_id: UUID; proposal_id: string }
+  | { type: 'preview_diff'; client_msg_id: string; session_id: UUID; proposal_id: string }
 
 export type ServerMessage =
   | { type: 'handshake'; protocol_version: number }
@@ -66,7 +67,9 @@ export type ServerMessage =
   | { type: 'terminal_result'; session_id: UUID; output: string; exit_code: number }
   | { type: 'git_mutation_result'; session_id: UUID; operation: string; result: string }
   | { type: 'error'; code: string; message: string }
+  | { type: 'diff_preview'; session_id: UUID; preview: DiffPreview }
 
+export type DiffPreview = { proposal_id: string; path: string; before: string | null; after: string }
 export type TimelineMessage = { role: string; text: string }
 export type WorkspaceInfo = { id: UUID; name: string; archived: boolean; last_used_sequence: number }
 export type MarketplaceEntry = { name: string; version: string | null; description: string | null; category: string | null; author: string | null; tags: string[]; keywords: string[]; domains: string[]; homepage: string | null; relative_path: string; skill_count: number; has_hooks: boolean; has_agents: boolean; has_mcp: boolean; remote_url?: string; remote_ref?: string; remote_sha?: string; remote_subdir?: string; components?: unknown }
