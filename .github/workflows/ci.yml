@@ -38,11 +38,13 @@ jobs:
 
       # apt's protobuf-compiler on ubuntu is too old for proto3 optional;
       # pin the same major as bin/protoc and release.yml.
+      - name: Install dotslash
+        run: |
+          curl -fsSL https://github.com/facebook/dotslash/releases/download/v0.5.3/dotslash-v0.5.3-x86_64-unknown-linux-musl -o /tmp/dotslash
+          sudo install -m 0755 /tmp/dotslash /usr/local/bin/dotslash
       - name: Install protoc
-        uses: arduino/setup-protoc@v3
-        with:
-          version: "29.3"
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          bin/protoc --version
 
       # Single source of truth: `rust-toolchain.toml` pins the channel, and the
       # release build reads it too. Duplicating the number in `env` is what let
@@ -161,6 +163,10 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      - name: Install dotslash
+        run: |
+          curl -fsSL https://github.com/facebook/dotslash/releases/download/v0.5.3/dotslash-v0.5.3-x86_64-unknown-linux-musl -o /tmp/dotslash
+          sudo install -m 0755 /tmp/dotslash /usr/local/bin/dotslash
       - name: Read pinned toolchain
         id: toolchain
         shell: bash

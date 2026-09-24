@@ -98,8 +98,10 @@ require platform runners, external services, or a later milestone.
   isolation, same-origin API/WebSocket/health development proxy, persisted layout
   controls, and narrow-viewport composer interaction. Repository Playwright E2E
   now repeats the desktop and 390×844 viewport flows against spawned Engine/Web
-  servers; the GitHub CI browser job is added but its first remote PR run remains
-  an external observation; the current workflow has no manual dispatch trigger. Tauri/WebDriver gates remain open.
+  servers; the GitHub CI browser job is added. Its first clean-runner attempt exposed that
+  the GUI jobs must install dotslash before building the workspace's `bin/protoc`
+  wrapper; this prerequisite is now added and the corrected workflow is awaiting
+  a fresh run. Tauri/WebDriver gates remain open. Tauri/WebDriver gates remain open.
 - Independent CI job for GUI Rust, protocol drift, frontend unit, typecheck and
   production build checks.
 - Release signing preflight, `require-sig` build feature, fail-closed Unix/
