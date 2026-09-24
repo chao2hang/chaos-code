@@ -273,7 +273,7 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 ### M0.6 验收门禁
 
 - [~] 自动测试覆盖提交成功、取消、重复 submission、断线、重连、snapshot fallback、无凭据和 provider 错误；当前已覆盖 engine submit/completed、Web health/handshake，剩余场景待协议接入后补齐。
-- [ ] 在 Tauri 中真实操作：创建会话 → 发送“你好” → 观察增量 → 取消另一请求 → 重启并恢复。
+- [ ] Desktop host 已通过共享 engine dispatch 单测；Tauri 真实入口、平台构建、增量/取消/重启恢复操作仍是 M0 gate。
 - [ ] 浏览器自动化环境不可用（本机无 Playwright/Chromium）；已用真实 WebSocket 集成测试和真实服务 curl 验证协议/认证，浏览器实测仍为 M0 gate。
 - [~] Linux engine/Web/前端实测已记录；macOS/Windows GUI runner 与 Tauri 冒烟尚待提供。
 - [x] 新增 `apps/chaos-ui/README.md`，记录 GUI 启动、`CHAOS_WEB_STATE`、测试和当前 provider/Tauri/远程限制。（2026-09-24）
