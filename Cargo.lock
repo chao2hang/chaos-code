@@ -1713,6 +1713,7 @@ name = "chaos-engine"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "rusqlite",
  "serde",
  "serde_json",
  "tempfile",
@@ -1720,6 +1721,7 @@ dependencies = [
  "tracing",
  "uuid",
  "walkdir",
+ "xai-sqlite-journal",
 ]
 
 [[package]]
