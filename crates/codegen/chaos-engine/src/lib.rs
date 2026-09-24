@@ -455,6 +455,11 @@ pub enum ClientMessage {
         client_msg_id: String,
         upload_id: Uuid,
     },
+    FinalizeAttachment {
+        client_msg_id: String,
+        upload_id: Uuid,
+        relative_path: String,
+    },
     ValidateProvider {
         client_msg_id: String,
         base_url: String,
@@ -707,6 +712,7 @@ struct SessionState {
     pending_approval: Option<PendingApproval>,
     pending_question: Option<Uuid>,
     pending_file_writes: HashMap<Uuid, (Uuid, String, String)>,
+    pending_attachment_moves: HashMap<Uuid, (Uuid, Uuid, String)>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -734,6 +740,7 @@ impl WorkspaceAdapter {
         if !root.is_dir() {
             return Err(std::io::Error::other("workspace root is not a directory"));
         }
+        std::fs::create_dir_all(root.join(".chaos-staging"))?;
         Ok(Self {
             root: Arc::new(root),
         })
@@ -762,6 +769,7 @@ impl WorkspaceAdapter {
                 message: "无法读取目录".into(),
             })?
             .filter_map(Result::ok)
+            .filter(|entry| entry.file_name() != ".chaos-staging")
             .filter_map(|entry| entry.file_name().into_string().ok())
             .collect::<Vec<_>>();
         entries.sort();
@@ -1299,6 +1307,7 @@ impl Engine {
             | ClientMessage::BeginAttachment { client_msg_id, .. }
             | ClientMessage::AttachmentChunk { client_msg_id, .. }
             | ClientMessage::CancelAttachment { client_msg_id, .. }
+            | ClientMessage::FinalizeAttachment { client_msg_id, .. }
             | ClientMessage::ValidateProvider { client_msg_id, .. }
             | ClientMessage::ScanMarketplace { client_msg_id, .. } => client_msg_id.clone(),
         };
@@ -1750,6 +1759,44 @@ impl Engine {
                     ServerMessage::AttachmentCancelled { upload_id },
                 ]
             }
+            ClientMessage::FinalizeAttachment {
+                client_msg_id,
+                upload_id,
+                relative_path,
+            } => {
+                let upload_session_id = self
+                    .attachments
+                    .lock()
+                    .unwrap()
+                    .get(&upload_id)
+                    .map(|upload| upload.session_id);
+                let Some(upload_session_id) = upload_session_id else {
+                    return vec![Self::error("attachment_not_found", "附件上传不存在")];
+                };
+                let request_id = Uuid::new_v4();
+                let Some(session) = state.sessions.get_mut(&upload_session_id) else {
+                    return vec![Self::error("session_not_found", "会话不存在")];
+                };
+                session.pending_approval = Some(PendingApproval {
+                    request_id,
+                    tool: "workspace.attach_attachment".into(),
+                    summary: format!("写入附件 {relative_path}"),
+                });
+                session
+                    .pending_attachment_moves
+                    .insert(request_id, (upload_session_id, upload_id, relative_path));
+                session.sequence += 1;
+                vec![
+                    ServerMessage::Ack { client_msg_id },
+                    ServerMessage::ToolApprovalRequested {
+                        session_id: upload_session_id,
+                        request_id,
+                        tool: "workspace.attach_attachment".into(),
+                        summary: "请求将已上传附件写入 workspace".into(),
+                        sequence: session.sequence,
+                    },
+                ]
+            }
             ClientMessage::ScanMarketplace { root, .. } => {
                 let requested = std::fs::canonicalize(&root).ok();
                 let allowed = requested.as_ref().is_some_and(|requested| {
@@ -1925,6 +1972,7 @@ impl Engine {
             .take()
             .expect("matched pending approval");
         let pending_file_write = session.pending_file_writes.remove(&request_id);
+        let pending_attachment_move = session.pending_attachment_moves.remove(&request_id);
         let mut events = vec![ServerMessage::Ack { client_msg_id }];
         let outcome = if let Some((write_session_id, relative_path, contents)) = pending_file_write
         {
@@ -1970,6 +2018,93 @@ impl Engine {
                     message: "没有配置 workspace".into(),
                 });
                 "unavailable"
+            }
+        } else if let Some((move_session_id, upload_id, relative_path)) = pending_attachment_move {
+            if !approved {
+                "rejected"
+            } else {
+                let upload = self.attachments.lock().unwrap().remove(&upload_id);
+                if let Some(upload) = upload {
+                    if upload.received != upload.expected {
+                        session.sequence += 1;
+                        events.push(ServerMessage::Error {
+                            code: "attachment_incomplete".into(),
+                            message: "附件仍未接收完整".into(),
+                        });
+                        "failed"
+                    } else if let Some(workspace) = &self.workspace {
+                        let staging = workspace
+                            .root
+                            .join(".chaos-staging")
+                            .join(format!("upload-{upload_id}.part"));
+                        let result = (|| {
+                            let mut file =
+                                std::fs::File::create(&staging).map_err(|e| e.to_string())?;
+                            use std::io::Write;
+                            for chunk in upload.chunks {
+                                file.write_all(&chunk).map_err(|e| e.to_string())?;
+                            }
+                            file.sync_all().map_err(|e| e.to_string())?;
+                            let bytes = upload.received;
+                            let destination = workspace.root.join(&relative_path);
+                            let parent = destination
+                                .parent()
+                                .ok_or_else(|| "invalid attachment path".to_string())?;
+                            let canonical_parent =
+                                std::fs::canonicalize(parent).map_err(|e| e.to_string())?;
+                            if !canonical_parent.starts_with(workspace.root.as_path()) {
+                                return Err("attachment path escapes workspace".into());
+                            }
+                            let target = canonical_parent.join(
+                                destination
+                                    .file_name()
+                                    .ok_or_else(|| "invalid attachment path".to_string())?,
+                            );
+                            std::fs::rename(&staging, &target).map_err(|e| e.to_string())?;
+                            Ok(bytes)
+                        })();
+                        match result {
+                            Ok(bytes) => {
+                                session.sequence += 1;
+                                events.push(ServerMessage::FileChanged {
+                                    session_id: move_session_id,
+                                    path: relative_path.clone(),
+                                    operation: "attachment_write".into(),
+                                    sequence: session.sequence,
+                                });
+                                events.push(ServerMessage::AttachmentCompleted {
+                                    session_id: move_session_id,
+                                    upload_id,
+                                    path: relative_path,
+                                    bytes,
+                                });
+                                "executed"
+                            }
+                            Err(message) => {
+                                session.sequence += 1;
+                                events.push(ServerMessage::Error {
+                                    code: "attachment_write_failed".into(),
+                                    message,
+                                });
+                                "failed"
+                            }
+                        }
+                    } else {
+                        session.sequence += 1;
+                        events.push(ServerMessage::Error {
+                            code: "workspace_unavailable".into(),
+                            message: "没有配置 workspace".into(),
+                        });
+                        "unavailable"
+                    }
+                } else {
+                    session.sequence += 1;
+                    events.push(ServerMessage::Error {
+                        code: "attachment_not_found".into(),
+                        message: "附件上传不存在".into(),
+                    });
+                    "failed"
+                }
             }
         } else if approved {
             session.sequence += 1;

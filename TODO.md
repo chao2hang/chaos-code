@@ -345,7 +345,7 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 
 - [~] 新增受 root confinement 保护的 `WorkspaceAdapter`，WebSocket 已支持 list/read/search 和“提议写入→审批→落盘”协议，越界/未审批写入被拒绝；后续接入现有 workspace RPC 的 range/get/put 能力，禁止复制业务协议。（2026-09-24；workspace engine/WebSocket tests）
 - [~] 已实现受限目录列表、文本读取和内容搜索（最多 100 个匹配、单文件 1 MiB）；增量文件树、模糊搜索和 `@` 文件候选待前端/M2 后续。
-- [~] 当前普通文本写入限制 1 MiB 并执行 root confinement；新增 attachment filename/content-type/10 MiB allowlist、`.chaos-staging` 分块写入/失败清理 stager，以及 Web/engine BeginAttachment/Chunk/Progress/Cancel/quota 协议测试；真实 staging-to-workspace 审批移动、断线续传和配额跨会话策略仍待补。（2026-09-24；`attachment_protocol.rs`、`attachment-stager-test.log`）
+- [~] 当前普通文本写入限制 1 MiB 并执行 root confinement；新增 attachment filename/content-type/10 MiB allowlist、`.chaos-staging` 分块写入/失败清理 stager，以及 Web/engine BeginAttachment/Chunk/Progress/Cancel/quota 协议测试；现已补 `FinalizeAttachment` 审批门控和 staging-to-workspace 原子落盘，WebSocket 覆盖拒绝/批准与磁盘状态；断线续传和配额跨会话策略仍待补。（2026-09-24；`attachment_flow.rs`）
 - [~] `WorkspaceAdapter` 对 root 和目标执行 canonicalization 并拒绝越界路径，WebSocket 已有真实越界测试；symlink escape、写入/删除和网络文件系统 fixture 待 M2 完整 adapter。
 - [~] Web 外部编辑器打开入口暂未暴露；workspace path/remote path 已区分并默认不生成本机深链接，handler/远程降级待 UI adapter。（2026-09-24）
 
@@ -377,7 +377,7 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 
 - [ ] E2E：两个工作区间切换，布局、标签页、草稿和会话不串位，重启后恢复。（待多工作区 UI/desktop transport）
 - [ ] E2E：终端创建文件，文件树实时更新；搜索、打开、编辑和 Git Diff 状态一致。
-- [~] engine `AttachmentStager` 已覆盖分块写入、10 MiB/类型/路径策略和失败清理；真实 WebSocket 上传、取消/进度和最终 staging-to-workspace 审批移动仍待补。（2026-09-24；`attachment-stager-test.log`）
+- [~] engine `AttachmentStager` 已覆盖分块写入、10 MiB/类型/路径策略和失败清理；真实 WebSocket 上传、取消/进度与最终 staging-to-workspace 审批移动均有测试，上传后未批准不会写入 workspace。（2026-09-24；`attachment_flow.rs`）
 - [~] `SqliteSessionStore` 本地 round-trip/schema reject/既有 journal policy 测试已通过；多进程、网络文件系统 fixture、busy retry 和迁移中断测试仍待真实 filesystem fixture。
 - [ ] 桌面宽屏和 Web 窄视口均验证布局；所有共享状态页面执行回归导航。
 

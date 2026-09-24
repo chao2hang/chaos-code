@@ -33,8 +33,9 @@ require platform runners, external services, or a later milestone.
   renders real list/switch/archive events; full multi-workspace UI/layout isolation remains open.
 - M2 attachment policy validates filename/content type/size; `AttachmentStager`
   writes bounded chunks into a root-local staging directory and cleans failures.
-  Engine/Web attachment protocol covers begin/chunk/progress/cancel/quota;
-  final move into workspace and resumable transfer remain open.
+  Engine/Web attachment protocol covers begin/chunk/progress/cancel/quota and
+  approval-gated final staging-to-workspace moves; rejected uploads never reach
+  the workspace. Resumable transfer and cross-session quota policy remain open.
 - M2 ProcessTerminalAdapter fixes cwd, requires approval, caps output and returns
   exit codes; existing `ptyctl` was audited and the typed `PtyCapability` boundary
   records approval/resize/reconnect/cancel requirements, while interactive PTY
