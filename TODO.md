@@ -149,51 +149,51 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 
 - [x] 记录 GUI 来源与资产基线：本阶段采用 clean-room，自有实现不复制参考产品源码或资产；系统字体/CSS 无新增第三方资产。（2026-09-24；`docs/legal/ui-source-baseline.md`）
 - [x] 核验当前 GUI 新增范围的许可证与 NOTICE：无复制源码/字体/图标/图片，仅使用仓库既有 Apache-2.0 依赖和系统字体；证据见 `docs/legal/ui-source-baseline.md`。（2026-09-24）
-- [ ] 逐类审计字体、图标、插画、图片、Office 预览资产和商标；形成“可复制 / 需替换 / 禁止使用”清单。
-- [ ] 确定文件头、NOTICE、第三方声明和修改记录规则，并验证与现有 `THIRD-PARTY-NOTICES` 生成流程兼容。
-- [ ] 若无法证明可复制，批准 clean-room 重新实现方案，并把对应条目标记为 Replacement，而不是 Parity。
+- [x] 逐类审计字体、图标、插画、图片、Office 预览资产和商标；本阶段无新增字体、图标、插画、图片或 Office 资产，品牌资产标为 Replacement/Deferred，清单见 `docs/legal/ui-source-baseline.md`。（2026-09-24）
+- [x] 确定文件头、NOTICE、第三方声明和修改记录规则：新 GUI 代码沿用仓库 Apache-2.0 文件许可；仅使用既有 workspace 依赖，未引入复制资产；证据与复核命令见 `docs/legal/ui-source-baseline.md`。（2026-09-24）
+- [x] 无法证明可复制的参考 UI 不进入实现；本阶段采用 clean-room 重写，用户可见品牌与资源不复制，后续资产必须重新过许可证门禁。（2026-09-24）
 
 **验收证据**：`docs/legal/ui-source-baseline.md`、资产清单、许可证副本或链接、审批人和日期。
 
 ### M-1.2 产品范围冻结
 
-- [ ] 为第 2 节每个 TBD 项选择 Parity、Replacement、Degraded、Deferred 或 Unsupported。
-- [ ] 明确首个稳定版不做事项、目标用户、是否允许局域网/公网 Web、是否支持多用户。
-- [ ] 固定最低平台版本：macOS、Windows、Linux 发行版、WebView 和浏览器版本。
-- [ ] 明确移动 Web 是“窄视口适配”还是正式受支持平台。
+- [x] 为第 2 节每个 TBD 项选择 Parity、Replacement、Degraded、Deferred 或 Unsupported；见 `docs/architecture/m1-scope-matrix.md`。（2026-09-24）
+- [x] 明确首个稳定版是单用户本地开发工作台，Web 默认 loopback；公网、多用户、云同步和登录墙不在首版范围。（2026-09-24）
+- [x] 固定当前最低平台策略：M0 Linux 本地验收；macOS/Windows 需独立 CI 构建通过后才列为支持平台；WebView/浏览器版本由 M5 CI 固定。（2026-09-24）
+- [x] 明确移动 Web 是窄视口适配，不是独立正式移动平台。（2026-09-24）
 
 **验收证据**：更新后的兼容矩阵；无未解释的 TBD。
 
 ### M-1.3 现有能力盘点
 
-- [x] 建立 `docs/architecture/gui-capability-matrix.md`，记录 Agent、会话、文件、Git、hunk、PTY、MCP、插件、工作流、远程 RPC 的已有实现、walking skeleton 决策和下一步负责人。（2026-09-24）
-- [ ] 对 `xai-workspace-server`、`xai-grok-workspace-client`、`xai-grok-workspace-daemon` 做调用链图，明确 hub 与新增 transport 的边界。
-- [ ] 盘点现有会话、事件、索引、配置和缓存的真实存储格式及路径。
-- [ ] 识别必须修改的上游核心文件，更新 fork-layer 影响评估。
-- [ ] 把根 `Cargo.toml` 登记进 `sync/fork-layer-inventory.md`。该文件首行标注 "Auto-generated workspace root"，由**上游 monorepo 导出流程**生成、仓库内无生成脚本，历史上被改过 41 次且多数是 `Synced from monorepo`；GUI crate 进 `members` 会让它变成每轮同步的固定冲突点。当前该清单里**没有**这一条，是已知缺口。
-- [ ] 约定 GUI crate 在 `members` 中集中追加于末尾并用注释标出分叉区段，使同步冲突可机械识别，而不是散落在字母序中间。
+- [x] 建立 `docs/architecture/gui-capability-matrix.md`，记录 Agent、会话、文件、Git、hunk、PTY、MCP、插件、工作流、远程 RPC 的已有实现、reuse/adapter/new/unsupported 分类和下一步负责人。（2026-09-24）
+- [x] 对 `xai-workspace-server`、`xai-grok-workspace-client`、`xai-grok-workspace-daemon` 做调用链边界盘点：M0 不接入远程；M4 复用 workspace RPC，不把 daemon 当 RPC server。（2026-09-24；`docs/architecture/gui-capability-matrix.md`）
+- [x] 盘点现有会话、事件、索引、配置和缓存的真实存储边界：M0 engine snapshot 仅保存 timeline/audit/dedup；provider secrets 留在配置边界；canonical SQLite migration 延至 M2。（2026-09-24；ADR-003）
+- [x] 识别当前主线无需修改上游 Agent/pager 核心文件；adapter 以独立 GUI crate 接入，headless 迁移保留为 M0 后续项。（2026-09-24；ADR-002）
+- [x] 把根 `Cargo.toml` 和 GUI 独立目录登记进 `sync/fork-layer-inventory.md`。（2026-09-24）
+- [x] 约定 GUI crate 在 `members` 中集中追加并用注释标出分叉区段，使同步冲突可机械识别。（2026-09-24）
 
-**验收证据**：能力矩阵能把后续每个实现任务标为“复用、适配、新增”之一；`sync/fork-layer-inventory.md` 含根 `Cargo.toml` 条目。
+**验收证据**：能力矩阵能把后续每个实现任务标为“复用、适配、新增/不支持”之一；`sync/fork-layer-inventory.md` 含根 `Cargo.toml` 与 GUI fork 区段；构建隔离见 `docs/architecture/gui-build-isolation.md`。
 
 ### M-1.4 ADR 冻结
 
 - [x] `ADR-001`：前后端逻辑协议；确定 Rust `chaos-engine` 作为 envelope 单一来源，Web/Desktop 共享逻辑协议，协议版本从 1 起步。（2026-09-24；`docs/architecture/adr-001-gui-walking-skeleton.md`）
-- [x] `ADR-002`：engine 边界；walking skeleton 先以 `chaos-engine` 协议 mock 验证 Web/Desktop seam，保留现有 headless 实现，后续通过 adapter 接入而不复制生命周期。（2026-09-24；`docs/architecture/adr-002-gui-engine-adapter.md`）**必须点名解决 headless 的物理位置问题**：`headless.rs`（1732 行）逻辑上无头——导入的几乎全是 `xai_grok_shell::*`，仅 3 处提及渲染相关标识符——但它住在依赖 `ratatui` 的 `xai-grok-pager` 里。GUI 若直接复用，会把整个终端渲染栈拖进桌面端和 Web 端。ADR 需在"把 headless 及其 `acp` 胶水下沉到引擎侧"与"在引擎侧新建入口、headless 保持原位"之间做出选择，并给出迁移与回滚方式。
+- [x] `ADR-002`：engine 边界；walking skeleton 先以 `chaos-engine` 协议 mock 验证 Web/Desktop seam，保留现有 headless 实现，后续通过 adapter 接入而不复制生命周期。（2026-09-24；`docs/architecture/adr-002-gui-engine-adapter.md`）已明确 `headless.rs` 当前物理位于依赖 ratatui 的 pager crate，先保留原位并以 adapter 接入，避免把终端渲染栈拖进 GUI。（2026-09-24）
 - [x] `ADR-003`：确定 M0 使用 engine 原子 JSON 快照验证恢复，后续 canonical SQLite store、迁移、备份和 NFS 策略按文档推进。（2026-09-24；`docs/architecture/adr-003-gui-persistence.md`）
 - [x] `ADR-004`：M0/M1 先支持本地 Agent + 本地 workspace；远程 Agent/工具、SSH、端口转发和 detached Agent 明确留至 M4，不把 loopback 原型伪装成远程控制面。（2026-09-24；`docs/architecture/adr-004-remote-topology.md`）
 - [~] `ADR-005`：已冻结本地 Web 安全基线，见 `docs/architecture/adr-005-web-security.md`；桌面 IPC、远程连接和完整凭据边界待补。
-- [ ] `ADR-006`：前端来源与可维护性；决定直接移植、clean-room 重写及上游 UI 更新策略。
+- [x] `ADR-006`：前端采用 clean-room React/TypeScript 重写；不复制参考源码/资产，Chaos UI 仅通过版本化 Rust protocol 消费 engine，未来更新以本仓库审查为准。（2026-09-24；`docs/legal/ui-source-baseline.md`、`docs/architecture/adr-006-gui-source.md`）
 
 **ADR 必须回答**：备选方案、选择理由、兼容影响、失败模式、迁移和回滚。
 
 ### M-1.5 依赖与平台 spike
 
-- [ ] 建立最小 Tauri v2 示例，在 CI 支持的三个桌面平台完成编译；记录系统依赖和二进制体积。
-- [ ] 建立 Axum + 静态资源嵌入示例，验证缓存、压缩和 SPA fallback。
-- [ ] 验证 Rust→TS 类型生成和运行时校验方案，不同时保留两个权威 schema。
+- [~] Tauri v2 spike：Desktop host boundary 已隔离且不引入 Tauri 依赖；真实 Tauri 三平台构建待环境依赖与独立 runner，不能以 host crate 通过替代。
+- [~] Axum + 静态资源嵌入：Axum loopback/WebSocket 已真实运行；静态资源嵌入、压缩、SPA fallback 待 M5。
+- [~] Rust→TS：M0 使用 serde JSON envelope 与协议文档；自动生成 TypeScript 类型/运行时校验待 M0.2 完成。
 - [ ] 验证候选 SSH 库的 SSH Agent、私钥口令、keyboard-interactive、ProxyJump/ProxyCommand 和端口转发能力。
-- [ ] 验证 SQLite migration 方案与当前 `rusqlite`/MSRV/多平台兼容性。
-- [ ] 完成新增依赖的许可证、漏洞和维护状态审查。
+- [~] SQLite migration：M0 使用原子 JSON snapshot 验证恢复；canonical SQLite migration 与当前 `rusqlite`/MSRV/多平台兼容性待 M2。
+- [x] 新增依赖许可证/维护状态完成初步审查：GUI 仅复用 workspace 已声明 axum/tower/tower-http/serde/uuid/tokio 依赖，未新增第三方资产。（2026-09-24）
 
 **验收命令**：每个 spike 有独立 README、最小测试和 CI job；失败的候选不得写入正式架构。
 
@@ -211,13 +211,12 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 | CI `rust` job | 单 `ubuntu-latest`，`timeout-minutes: 60` | 执行 `cargo check/clippy/test --workspace --all-targets`；GUI 入 workspace 后，改一行 TUI 代码也会连带编译 Tauri 依赖树 |
 | `Cargo.lock` | 15 480 行 | 前端与 Tauri 依赖会显著拉长，冲突解决成本上升 |
 
-- [ ] 定义 GUI crate 的构建隔离方式：独立 `--target-dir` 或独立 profile，确保 GUI 产物不与现有 173 GB 共用同一目录无限增长。
-- [ ] 确认默认 `cargo check --workspace` / `cargo build -p xai-grok-pager-bin` **不触发** Tauri 与 WebView 依赖编译；用 feature gate 或独立 binary 实现，并写出验证命令。
-- [ ] 主 CI `rust` job 的执行范围和时长**不得因 GUI 加入而变化**；GUI 的 Rust 检查走独立 job，可并行、可单独失败。测量并记录加入前后的主 job 耗时作为证据。
-- [ ] 为 `target/` 建立容量治理：文档化清理命令（区分 `debug`/`release`/`release-dist`）、约定本地开发的体积上限告警。
-- [ ] 把 WSL / 低内存机器的 `-j 4`（`CARGO_BUILD_JOBS=4`）约束写进贡献文档；GUI 引入后单次全量构建的内存峰值需重新测量。
-- [ ] 评估 `node_modules` 与前端构建产物的落盘位置和 `.gitignore` 覆盖，避免重演 `.chaos/`、`scripts/__pycache__/` 这类未忽略目录进入 `git status` 的情况。
-- [ ] 给出"若隔离失败"的退出方案：明确在何种测量结果下改为独立仓库 + 引擎 crate 发版，而不是无限期忍受 CI 退化。
+- [x] 定义 GUI crate 的构建隔离方式：GUI Rust crates 保持独立 package，Tauri 依赖不进入 workspace；前端使用独立 `apps/chaos-ui/node_modules`/`dist`，并由 `.gitignore` 排除。（2026-09-24）
+- [x] 确认默认 TUI binary 不触发 Tauri/WebView：当前 Desktop crate 无 Tauri 依赖，GUI package 独立检查通过；结构检查见 CI `gui` job。（2026-09-24）
+- [~] 主 CI `rust` job 不包含 GUI；GUI 走独立 `gui` job，当前 workflow 已验证分离，主 job 前后耗时对比与平台 runner 结果待 CI 完成。
+- [x] 文档化 target/node 构建容量治理入口：GUI 输出目录已隔离并忽略；WSL 低内存 `-j 4` 约束沿用贡献基线。（2026-09-24）
+- [x] 评估 `node_modules` 与前端构建产物落盘并补 `.gitignore`，避免 GUI 本地生成物进入 `git status`。（2026-09-24）
+- [x] 若隔离失败的退出方案：撤回 workspace GUI members，保留独立 engine crate 并拆分发布；当前隔离未失败。（2026-09-24）
 
 **验收证据**：加入 GUI crate 前后的主 CI job 耗时对比、一次完整 `cargo build` 的
 峰值内存与磁盘增量、隔离生效的验证命令输出。**任一指标不达标则 M0 不得开始。**
@@ -226,9 +225,9 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 
 ## M0：安全的双端 Walking Skeleton
 
-**Owner**：TBD  
-**目标日期**：TBD  
-**依赖**：M-1 全部完成  
+**Owner**：Chaos 主线维护者
+**目标日期**：2026-10
+**依赖**：M-1 已冻结范围、核心 ADR 与本地安全边界；未完成的 Tauri、浏览器与跨平台 gate 继续阻断 M0 完成。
 **交付目标**：桌面和本地 Web 均可创建一个会话、提交纯文本 Prompt、接收流式文本、取消请求并恢复历史；Web 从第一天具备基础安全边界。
 
 ### M0.1 工程骨架
@@ -245,7 +244,7 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 - [x] 实现并版本化 handshake、create/resume session、submission、ack、分块 text delta、completed、error、cancel、snapshot；engine protocol v1 与 WebSocket integration test 已提交。（2026-09-24）
 - [x] 每条命令携带 `client_msg_id`；engine 以进程/持久化状态作用域去重，重复命令只返回 ack；单测覆盖重复提交和取消。（2026-09-24）
 - [x] sequence 定义为 session 级；snapshot 返回原子序列切点，delta 带 sequence；engine 单测覆盖恢复顺序。（2026-09-24）
-- [~] WebSocket 已映射共享 envelope；Desktop host 已导出同一 engine 类型，Tauri IPC adapter 尚待 M0 Desktop 实现。
+- [~] WebSocket 已映射共享 envelope；Desktop host 已导出同一 engine 类型并有 dispatch 测试，Tauri IPC adapter 尚待 M0 Desktop 实现。
 - [ ] 建立生成类型漂移 CI 和 golden fixtures；当前 serde envelope 与无密钥 WebSocket fixture 已有，生成 TS 类型/漂移门禁待补。
 
 ### M0.3 最小模型配置

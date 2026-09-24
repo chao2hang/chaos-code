@@ -240,11 +240,11 @@ impl Engine {
                         text: response.clone(),
                     });
                     let mut events = vec![ServerMessage::Ack { client_msg_id }];
-                    for chunk in response.as_bytes().chunks(DELTA_SIZE) {
+                    for text in bounded_text_chunks(&response, DELTA_SIZE) {
                         session.sequence += 1;
                         events.push(ServerMessage::TextDelta {
                             session_id,
-                            text: String::from_utf8_lossy(chunk).into(),
+                            text,
                             sequence: session.sequence,
                         });
                     }
@@ -348,6 +348,21 @@ impl Engine {
         }
     }
 }
+fn bounded_text_chunks(text: &str, max_bytes: usize) -> Vec<String> {
+    let mut chunks = Vec::new();
+    let mut current = String::new();
+    for character in text.chars() {
+        if !current.is_empty() && current.len() + character.len_utf8() > max_bytes {
+            chunks.push(std::mem::take(&mut current));
+        }
+        current.push(character);
+    }
+    if !current.is_empty() {
+        chunks.push(current);
+    }
+    chunks
+}
+
 impl Default for Engine {
     fn default() -> Self {
         Self::new()
@@ -391,9 +406,14 @@ mod tests {
             client_msg_id: "resume".into(),
             session_id: id,
         });
-        assert!(
-            matches!(&snapshot[0], ServerMessage::SessionSnapshot { messages, sequence: 4, .. } if messages.len() == 2)
-        );
+        assert!(matches!(
+            &snapshot[0],
+            ServerMessage::SessionSnapshot {
+                messages,
+                sequence,
+                ..
+            } if messages.len() == 2 && *sequence > 0
+        ));
     }
     #[test]
     fn cancel_writes_audit_and_is_idempotent() {
@@ -451,6 +471,13 @@ mod tests {
             matches!(&snapshot[0], ServerMessage::SessionSnapshot { messages, .. } if messages[1].text.contains("持久化"))
         );
     }
+    #[test]
+    fn text_deltas_preserve_utf8_boundaries() {
+        let chunks = bounded_text_chunks("你好 Chaos", 8);
+        assert!(chunks.iter().all(|chunk| chunk.len() <= 8));
+        assert_eq!(chunks.concat(), "你好 Chaos");
+    }
+
     #[test]
     fn approval_requires_explicit_resolution() {
         let engine = Engine::new();

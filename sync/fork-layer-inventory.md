@@ -72,7 +72,15 @@ merge 前基线 = 本仓库 main（上次上游同步合并点）；目标 = `up
 - `crates/codegen/xai-grok-markdown/**`（表格换行）
 - `crates/codegen/xai-sqlite-journal/src/lib.rs`（busy retry）
 
-## 9. 文档
+## 9. Chaos GUI fork layer
+- `Cargo.toml`（workspace members 的 GUI fork 区段）
+- `crates/codegen/chaos-engine/**`
+- `crates/codegen/xai-grok-web/**`
+- `crates/codegen/xai-grok-desktop/**`
+- `apps/chaos-ui/**`
+- `docs/architecture/adr-00{1,2,3,4,5}-gui-*.md`
+
+## 10. 文档
 - `crates/codegen/xai-grok-pager/docs/**`（中文；上游新增章节视情况补译）
 - `crates/codegen/xai-grok-pager/docs/user-guide/**`（27 篇指南，`include_str!` 进二进制，
   首次启动解包到 `~/.chaos/docs/user-guide/`）
