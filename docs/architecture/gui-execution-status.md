@@ -39,7 +39,7 @@ require platform runners, external services, or a later milestone.
   records approval/resize/reconnect/cancel requirements, while interactive PTY
   transport remains a separate platform adapter.
 - M2 ProcessGitAdapter fixes cwd and operation arguments for approval-gated
-  stage/commit/checkout_branch; push/pull/discard/rollback remain disabled.
+  stage/commit/checkout_branch/unstage/discard; push/pull/rollback remain disabled.
 - Transitional JSON snapshot and canonical `SqliteSessionStore` persistence, with
   schema/version tests, corrupt/missing-parent rejection, legacy backup, and real
   Web SQLite re-open recovery.
@@ -51,8 +51,8 @@ require platform runners, external services, or a later milestone.
 - Web loopback HTTP/WebSocket transport with bearer authorization, Origin/Host
   checks, request-size limits, CSP, `nosniff`, and backend-enforced Safe Web Mode.
 - React client connected to the real WebSocket transport with reconnect/resume,
-  visible streaming state, cancel, approval/question cards, and generated
-  protocol types.
+  visible streaming state, cancel, approval/question cards, workspace registry UI,
+  and generated protocol types.
 - Independent CI job for GUI Rust, protocol drift, frontend unit, typecheck and
   production build checks.
 - Release signing preflight, `require-sig` build feature, fail-closed Unix/
@@ -66,7 +66,7 @@ require platform runners, external services, or a later milestone.
 | Browser E2E | Open | Playwright or equivalent installed and exercised at desktop/narrow viewports |
 | Provider/config/secrets | Partial | Non-secret settings/provider shape validation; real provider/keyring tests remain open |
 | M1 hunk/workspace Diff | Partial | Adapter boundaries and tests; real `xai-hunk-tracker`/workspace mutation integration remains open |
-| M2 persistence/workspace | Partial | SQLite/JSON boundaries, workspace/Git/terminal/attachment safety; multi-workspace, PTY, NFS/multiprocess and full migration remain open |
+| M2 persistence/workspace | Partial | SQLite/JSON boundaries, workspace/Git/terminal/attachment safety; multi-workspace UI, PTY, NFS/multiprocess and full migration remain open |
 | M3 ecosystem | Open | MCP/plugin/skill/workflow/subagent integration tests |
 | M4 remote | Partial | Typed capability/host-key boundary; clean Linux remote, SSH transport and forwarding remain open |
 | M5 release | Partial | GUI CI, signing preflight, fail-closed installers and policy fixtures; packaging/signing assets/SBOM/performance/manual acceptance remain open |
