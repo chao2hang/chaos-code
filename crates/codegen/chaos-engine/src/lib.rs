@@ -105,6 +105,11 @@ pub enum ClientMessage {
         request_id: Uuid,
         reason: String,
     },
+    RespondQuestion {
+        client_msg_id: String,
+        question_id: Uuid,
+        answer: String,
+    },
     AcceptDiff {
         client_msg_id: String,
         session_id: Uuid,
@@ -172,6 +177,47 @@ pub enum ServerMessage {
         action: String,
         sequence: u64,
     },
+    QuestionRequested {
+        session_id: Uuid,
+        question_id: Uuid,
+        prompt: String,
+        sequence: u64,
+    },
+    QuestionResolved {
+        session_id: Uuid,
+        question_id: Uuid,
+        answer: String,
+        sequence: u64,
+    },
+    ToolStarted {
+        session_id: Uuid,
+        tool: String,
+        sequence: u64,
+    },
+    ToolProgress {
+        session_id: Uuid,
+        tool: String,
+        progress: String,
+        sequence: u64,
+    },
+    ToolResult {
+        session_id: Uuid,
+        tool: String,
+        result: String,
+        sequence: u64,
+    },
+    FileChanged {
+        session_id: Uuid,
+        path: String,
+        operation: String,
+        sequence: u64,
+    },
+    Usage {
+        session_id: Uuid,
+        input_tokens: u64,
+        output_tokens: u64,
+        sequence: u64,
+    },
     Error {
         code: String,
         message: String,
@@ -204,6 +250,7 @@ struct SessionState {
     audit: Vec<AuditEntry>,
     sequence: u64,
     pending_approval: Option<PendingApproval>,
+    pending_question: Option<Uuid>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -327,6 +374,7 @@ impl Engine {
             | ClientMessage::Snapshot { client_msg_id, .. }
             | ClientMessage::Approve { client_msg_id, .. }
             | ClientMessage::Reject { client_msg_id, .. }
+            | ClientMessage::RespondQuestion { client_msg_id, .. }
             | ClientMessage::AcceptDiff { client_msg_id, .. }
             | ClientMessage::RollbackDiff { client_msg_id, .. } => client_msg_id.clone(),
         };
@@ -360,7 +408,23 @@ impl Engine {
                 if session.pending_approval.is_some() {
                     return vec![Self::error("approval_pending", "请先处理待审批操作")];
                 }
-                if let Some(summary) = prompt.strip_prefix("/approve-tool ") {
+                if session.pending_question.is_some() {
+                    return vec![Self::error("question_pending", "请先回答待处理问题")];
+                }
+                if let Some(question) = prompt.strip_prefix("/ask ") {
+                    let question_id = Uuid::new_v4();
+                    session.pending_question = Some(question_id);
+                    session.sequence += 1;
+                    vec![
+                        ServerMessage::Ack { client_msg_id },
+                        ServerMessage::QuestionRequested {
+                            session_id,
+                            question_id,
+                            prompt: question.into(),
+                            sequence: session.sequence,
+                        },
+                    ]
+                } else if let Some(summary) = prompt.strip_prefix("/approve-tool ") {
                     let request_id = Uuid::new_v4();
                     session.pending_approval = Some(PendingApproval {
                         request_id,
@@ -458,6 +522,11 @@ impl Engine {
                 request_id,
                 ..
             } => self.resolve_approval(&mut state, client_msg_id, request_id, false),
+            ClientMessage::RespondQuestion {
+                client_msg_id,
+                question_id,
+                answer,
+            } => self.resolve_question(&mut state, client_msg_id, question_id, answer),
             ClientMessage::AcceptDiff {
                 client_msg_id,
                 session_id,
@@ -571,6 +640,44 @@ impl Engine {
         });
         events
     }
+    fn resolve_question(
+        &self,
+        state: &mut State,
+        client_msg_id: String,
+        question_id: Uuid,
+        answer: String,
+    ) -> Vec<ServerMessage> {
+        let Some((session_id, session)) = state
+            .sessions
+            .iter_mut()
+            .find(|(_, session)| session.pending_question == Some(question_id))
+        else {
+            return vec![Self::error("question_not_found", "问题不存在或已回答")];
+        };
+        session.pending_question = None;
+        session.sequence += 1;
+        session.audit.push(AuditEntry {
+            action: "question".into(),
+            outcome: "answered".into(),
+            sequence: session.sequence,
+        });
+        vec![
+            ServerMessage::Ack { client_msg_id },
+            ServerMessage::QuestionResolved {
+                session_id: *session_id,
+                question_id,
+                answer,
+                sequence: session.sequence,
+            },
+            ServerMessage::Audit {
+                session_id: *session_id,
+                action: "question".into(),
+                outcome: "answered".into(),
+                sequence: session.sequence,
+            },
+        ]
+    }
+
     fn resolve_diff(
         &self,
         state: &mut State,
@@ -920,6 +1027,33 @@ mod tests {
             proposal_id: "p1".into(),
         });
         assert!(rolled_back.iter().any(|event| matches!(event, ServerMessage::DiffResolved { action, .. } if action == "rollback_diff")));
+    }
+
+    #[test]
+    fn question_requires_and_resolves_explicit_answer() {
+        let engine = Engine::new();
+        let session_id = match engine.handle(ClientMessage::CreateSession {
+            client_msg_id: "q-create".into(),
+        })[0]
+        {
+            ServerMessage::SessionCreated { session_id } => session_id,
+            _ => panic!(),
+        };
+        let requested = engine.handle(ClientMessage::Submit {
+            client_msg_id: "q-submit".into(),
+            session_id,
+            prompt: "/ask choose".into(),
+        });
+        let question_id = match requested[1] {
+            ServerMessage::QuestionRequested { question_id, .. } => question_id,
+            _ => panic!(),
+        };
+        let resolved = engine.handle(ClientMessage::RespondQuestion {
+            client_msg_id: "q-answer".into(),
+            question_id,
+            answer: "yes".into(),
+        });
+        assert!(resolved.iter().any(|event| matches!(event, ServerMessage::QuestionResolved { answer, .. } if answer == "yes")));
     }
 
     #[test]

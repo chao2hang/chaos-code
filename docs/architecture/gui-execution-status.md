@@ -17,6 +17,9 @@ require platform runners, external services, or a later milestone.
 - M1 Diff adapter boundary: accept and rollback are session-scoped adapter calls;
   success emits `diff_resolved`, failure emits `diff_failed`, and no UI event
   claims a file was changed before the adapter reports success.
+- M1 interaction events now include question request/response and explicit
+  protocol variants for tool progress, tool result, file change, and usage;
+  provider-backed production emission remains a later adapter task.
 - Axum loopback HTTP/WebSocket transport with bearer authorization, Origin
   checks, request-size limit, CSP, `nosniff`, and health endpoint.
 - Atomic JSON snapshot persistence used by the M0 engine.
