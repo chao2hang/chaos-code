@@ -484,13 +484,13 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 
 ### M5.1 CI
 
-- [ ] CI 增加前端 format/lint/typecheck/unit/build 和生成类型漂移检查。
-- [ ] 增加 Rust GUI/Web crates 的 fmt/check/clippy/test；统一 CI 与 `rust-toolchain.toml` 版本。按 M-1.6 的约定走**独立 job**，不并入主 `rust` job。
+- [~] 独立 `gui` CI 已运行前端 typecheck、Vitest unit 和 production build；format/lint 与生成类型漂移检查待接入 schema/typegen 后补齐。（2026-09-24）
+- [~] 独立 `gui` CI 已运行 Rust GUI/Web crates test（workspace pinned toolchain）和前端 typecheck/unit/build；GUI crate fmt/clippy 独立门禁与更细的 job 仍待补齐。（2026-09-24）
 - [ ] 复测主 `rust` job 耗时仍在 `timeout-minutes: 60` 内且未因 GUI 增长；超出则先修隔离，不得直接调高 timeout。
-- [ ] 增加 Playwright Web E2E；桌面端采用可维护的 Tauri/WebDriver 测试或指定平台自动化。
-- [ ] 配置 Rust 与 pnpm 缓存，以测量结果决定是否使用 `sccache`，不同时堆叠重复缓存。
-- [ ] 建立 SBOM、依赖许可证、漏洞扫描和前端 lockfile 审查。
-- [ ] 明确 ignored tests 是否属于本产品路径；稳定版相关 ignored test 必须恢复或有批准豁免。
+- [ ] 增加 Playwright Web E2E；当前环境无可用 Playwright/Chromium，React reducer 与真实 WebSocket 集成测试已作为降级证据；桌面端仍需 Tauri/WebDriver 平台自动化。
+- [~] GUI CI 已使用 npm cache 与 `package-lock.json`；pnpm/sccache 尚未引入，避免没有测量就叠加缓存系统。
+- [~] 现有 `THIRD-PARTY-NOTICES`、lockfile 和 secret scan 提供基础审查；SBOM、漏洞扫描和自动 license gate 尚待接入工具/CI runner。
+- [~] ignored inventory 已修复并纳入 Q4 CSV；稳定版相关 ignored test 的逐项 owner/豁免审查仍未完成，不能作为 release 通过依据。
 
 ### M5.2 桌面打包与签名
 

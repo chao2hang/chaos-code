@@ -181,7 +181,7 @@ jobs:
         run: cargo test -p chaos-engine -p xai-grok-web -p xai-grok-desktop --locked
       - name: Frontend checks
         working-directory: apps/chaos-ui
-        run: npm ci --ignore-scripts && npm run typecheck && npm run build
+        run: npm ci --ignore-scripts && npm run typecheck && npm test && npm run build
 
   npm-scripts:
     name: npm package scripts
