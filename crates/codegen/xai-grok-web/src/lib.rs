@@ -131,6 +131,7 @@ async fn create_session(State(state): State<Arc<WebState>>, headers: HeaderMap) 
     }
     let event = state.engine.handle(ClientMessage::CreateSession {
         client_msg_id: uuid::Uuid::new_v4().to_string(),
+        workspace_id: None,
     });
     secure_json(event)
 }
