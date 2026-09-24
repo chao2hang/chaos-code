@@ -1808,6 +1808,16 @@ mod tests {
     }
 
     #[test]
+    fn sqlite_store_rejects_corrupt_database_and_missing_parent() {
+        let directory = tempfile::tempdir().unwrap();
+        let corrupt = directory.path().join("corrupt.db");
+        std::fs::write(&corrupt, b"not sqlite").unwrap();
+        assert!(SqliteSessionStore::open(&corrupt).is_err());
+        let missing_parent = directory.path().join("missing").join("gui.db");
+        assert!(SqliteSessionStore::open(&missing_parent).is_err());
+    }
+
+    #[test]
     fn sqlite_store_round_trips_and_rejects_newer_schema() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("gui.db");

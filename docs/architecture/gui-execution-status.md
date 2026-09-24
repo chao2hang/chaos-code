@@ -39,24 +39,27 @@ require platform runners, external services, or a later milestone.
   API key storage remains outside the GUI protocol.
 - Axum loopback HTTP/WebSocket transport with bearer authorization, Origin
   checks, request-size limit, CSP, `nosniff`, and health endpoint.
-- Atomic JSON snapshot persistence used by the M0 engine.
+- Transitional JSON snapshot and canonical `SqliteSessionStore` persistence, with
+  schema/version tests, corrupt/missing-parent rejection, legacy backup, and real
+  Web SQLite re-open recovery.
 - React client connected to the real WebSocket transport with reconnect/resume,
-  visible streaming state, cancel, and approval card.
-- Independent CI job for GUI Rust and frontend checks.
+  visible streaming state, cancel, approval/question cards, and tested event
+  reducer projection.
+- Independent CI job for GUI Rust, frontend unit, typecheck, and build checks.
 
 ## Remaining gates
 
 | Area | State | Evidence required |
 |---|---|---|
-| Real Agent adapter | Open | Adapter tests driving the existing headless lifecycle |
+| Real Agent adapter | Partial | Explicit headless process adapter and Web integration tests; async provider lifecycle remains open |
 | Tauri Desktop | Open | Tauri three-platform builds and real desktop flow |
 | Browser E2E | Open | Playwright or equivalent installed and exercised at desktop/narrow viewports |
-| Provider/config/secrets | Open | M3 provider and keyring design plus failure tests |
-| M1 tools/Diff | Open | Real workspace/tool adapters, approval enforcement, rollback tests |
-| M2 persistence/workspace | Open | SQLite migration, workspace/file/search/terminal/Git tests |
+| Provider/config/secrets | Partial | Non-secret settings/provider shape validation; real provider/keyring tests remain open |
+| M1 tools/Diff | Partial | Tool/Diff adapters, approval, question, audit and ordered Web tests; real workspace hunk adapter remains open |
+| M2 persistence/workspace | Partial | Root-confined workspace, Git status, attachment policy, JSON/SQLite boundaries and Web recovery; terminal/full Git/migration concurrency remain open |
 | M3 ecosystem | Open | MCP/plugin/skill/workflow/subagent integration tests |
-| M4 remote | Open | Clean Linux remote, SSH host-key and forwarding tests |
-| M5 release | Open | CI packaging/signing/SBOM/performance/manual acceptance |
+| M4 remote | Partial | Typed capability/host-key boundary; clean Linux remote, SSH transport and forwarding remain open |
+| M5 release | Partial | GUI CI, signing preflight, fail-closed installers and policy fixtures; packaging/signing assets/SBOM/performance/manual acceptance remain open |
 
 The open rows are intentionally not marked complete in `TODO.md`. Mock engine
 responses, library tests, and a curl check prove the local protocol seam only;

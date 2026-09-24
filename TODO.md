@@ -192,7 +192,7 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 - [~] Axum + 静态资源嵌入：Axum loopback/WebSocket 已真实运行；静态资源嵌入、压缩、SPA fallback 待 M5。
 - [~] Rust→TS：M0 使用 serde JSON envelope 与协议文档；自动生成 TypeScript 类型/运行时校验待 M0.2 完成。
 - [ ] 验证候选 SSH 库的 SSH Agent、私钥口令、keyboard-interactive、ProxyJump/ProxyCommand 和端口转发能力。
-- [~] SQLite migration：M0 使用原子 JSON snapshot 验证恢复；canonical SQLite migration 与当前 `rusqlite`/MSRV/多平台兼容性待 M2。
+- [~] SQLite migration：M0 JSON transitional；`SqliteSessionStore` 已正式接入 Engine/Web，复用当前 `rusqlite`/`xai-sqlite-journal`，schema/损坏库/新版本/重启恢复测试通过；多进程/NFS/迁移回滚和 TUI fixture 仍待 M2 gate。（2026-09-24）
 - [x] 新增依赖许可证/维护状态完成初步审查：GUI 仅复用 workspace 已声明 axum/tower/tower-http/serde/uuid/tokio 依赖，未新增第三方资产。（2026-09-24）
 
 **验收命令**：每个 spike 有独立 README、最小测试和 CI job；失败的候选不得写入正式架构。
@@ -367,7 +367,7 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 - [ ] 保留 `$CHAOS_HOME`/`$GROK_HOME` 与旧目录兼容；路径变化必须提供一次性导入和回滚。
 - [~] 不宣称“无锁”：`SqliteSessionStore` 复用 `xai-sqlite-journal` 的 WAL/TRUNCATE 与 busy retry policy；NFS/多进程并发策略已有底层 journal 文档，但 GUI 真实并发 fixture 尚待补。
 - [ ] 用现有真实会话 fixture 验证 TUI→GUI 读取，以及 GUI 数据不破坏 TUI。
-- [ ] 模拟迁移中断、磁盘满、损坏 DB 和旧版本回退。
+- [~] SQLite store 已覆盖损坏 DB、新 schema、缺父目录和重启恢复；迁移中断/磁盘满/旧版本回退仍需真实 filesystem fault fixture，当前环境不能把普通 tempfile 测试冒充完成。（2026-09-24）
 
 ### M2.6 验收门禁
 
