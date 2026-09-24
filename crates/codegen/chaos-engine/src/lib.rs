@@ -48,8 +48,10 @@ pub trait TerminalAdapter: Send + Sync {
 
 pub trait GitAdapter: Send + Sync {
     fn stage(&self, path: &str) -> Result<(), String>;
+    fn unstage(&self, path: &str) -> Result<(), String>;
     fn commit(&self, message: &str) -> Result<String, String>;
     fn checkout_branch(&self, branch: &str) -> Result<(), String>;
+    fn discard(&self, path: &str) -> Result<(), String>;
 }
 
 pub struct ProcessGitAdapter {
@@ -109,6 +111,13 @@ impl GitAdapter for ProcessGitAdapter {
         self.run(&["add", "--", path]).map(|_| ())
     }
 
+    fn unstage(&self, path: &str) -> Result<(), String> {
+        if !Self::safe_path(path) {
+            return Err("git path rejected".into());
+        }
+        self.run(&["restore", "--staged", "--", path]).map(|_| ())
+    }
+
     fn commit(&self, message: &str) -> Result<String, String> {
         if message.trim().is_empty() || message.contains('\0') {
             return Err("git commit message rejected".into());
@@ -122,6 +131,13 @@ impl GitAdapter for ProcessGitAdapter {
             return Err("git branch rejected".into());
         }
         self.run(&["switch", branch]).map(|_| ())
+    }
+
+    fn discard(&self, path: &str) -> Result<(), String> {
+        if !Self::safe_path(path) {
+            return Err("git path rejected".into());
+        }
+        self.run(&["restore", "--worktree", "--", path]).map(|_| ())
     }
 }
 
@@ -1402,7 +1418,10 @@ impl Engine {
                 operation,
                 argument,
             } => {
-                let allowed = matches!(operation.as_str(), "stage" | "commit" | "checkout_branch");
+                let allowed = matches!(
+                    operation.as_str(),
+                    "stage" | "unstage" | "commit" | "checkout_branch" | "discard"
+                );
                 if !allowed || argument.contains('\0') || argument.contains("..") {
                     return vec![Self::error(
                         "git_operation_rejected",
@@ -1579,10 +1598,16 @@ impl Engine {
                         let operation = pending.tool.strip_prefix("git.").unwrap_or_default();
                         match operation {
                             "stage" => adapter.stage(&pending.summary).map(|_| "staged".into()),
+                            "unstage" => {
+                                adapter.unstage(&pending.summary).map(|_| "unstaged".into())
+                            }
                             "commit" => adapter.commit(&pending.summary),
                             "checkout_branch" => adapter
                                 .checkout_branch(&pending.summary)
                                 .map(|_| "checked out".into()),
+                            "discard" => adapter
+                                .discard(&pending.summary)
+                                .map(|_| "discarded".into()),
                             _ => Err("git operation unavailable".into()),
                         }
                     }
@@ -2234,6 +2259,9 @@ mod tests {
                 Err("bad path".into())
             }
         }
+        fn unstage(&self, path: &str) -> Result<(), String> {
+            self.stage(path)
+        }
         fn commit(&self, message: &str) -> Result<String, String> {
             Ok(format!("commit:{message}"))
         }
@@ -2243,6 +2271,9 @@ mod tests {
             } else {
                 Err("bad branch".into())
             }
+        }
+        fn discard(&self, path: &str) -> Result<(), String> {
+            self.stage(path)
         }
     }
 
