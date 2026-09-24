@@ -23,6 +23,9 @@ require platform runners, external services, or a later milestone.
 - M2 workspace boundary now canonicalizes a configured root and supports bounded
   list/read/search requests; path escapes and missing workspace adapters fail
   closed before any browser-controlled path reaches filesystem I/O.
+- M2 JSON snapshot persistence now carries a schema version, rejects newer
+  schemas, and backs up legacy raw snapshots before loading; SQLite migration
+  remains the production persistence gate.
 - Axum loopback HTTP/WebSocket transport with bearer authorization, Origin
   checks, request-size limit, CSP, `nosniff`, and health endpoint.
 - Atomic JSON snapshot persistence used by the M0 engine.

@@ -8,6 +8,7 @@ use tokio::sync::broadcast;
 use uuid::Uuid;
 
 pub const PROTOCOL_VERSION: u16 = 1;
+pub const STATE_SCHEMA_VERSION: u16 = 1;
 const DELTA_SIZE: usize = 8;
 
 /// Boundary for connecting the GUI session state to a real Agent runtime.
@@ -295,6 +296,12 @@ struct State {
     seen_client_messages: HashSet<String>,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct StateEnvelope {
+    schema_version: u16,
+    state: State,
+}
+
 #[derive(Clone)]
 pub struct WorkspaceAdapter {
     root: Arc<PathBuf>,
@@ -529,7 +536,23 @@ impl Engine {
     ) -> std::io::Result<Self> {
         let path = path.as_ref().to_path_buf();
         let state = if path.exists() {
-            serde_json::from_slice(&std::fs::read(&path)?).map_err(std::io::Error::other)?
+            let bytes = std::fs::read(&path)?;
+            match serde_json::from_slice::<StateEnvelope>(&bytes) {
+                Ok(envelope) if envelope.schema_version == STATE_SCHEMA_VERSION => envelope.state,
+                Ok(envelope) if envelope.schema_version > STATE_SCHEMA_VERSION => {
+                    return Err(std::io::Error::other(
+                        "session state was written by a newer version",
+                    ));
+                }
+                Ok(_) => return Err(std::io::Error::other("unsupported session state schema")),
+                Err(_) => {
+                    let legacy: State =
+                        serde_json::from_slice(&bytes).map_err(std::io::Error::other)?;
+                    let backup = path.with_extension("json.legacy.bak");
+                    std::fs::copy(&path, backup)?;
+                    legacy
+                }
+            }
         } else {
             State::default()
         };
@@ -571,8 +594,11 @@ impl Engine {
         let Some(path) = &self.store_path else {
             return Ok(());
         };
-        let bytes = serde_json::to_vec_pretty(state)
-            .map_err(|_| Self::error("persistence_failed", "无法编码会话状态"))?;
+        let bytes = serde_json::to_vec_pretty(&StateEnvelope {
+            schema_version: STATE_SCHEMA_VERSION,
+            state: state.clone(),
+        })
+        .map_err(|_| Self::error("persistence_failed", "无法编码会话状态"))?;
         let temporary = path.with_extension("tmp");
         std::fs::write(&temporary, bytes)
             .map_err(|_| Self::error("persistence_failed", "无法写入会话状态"))?;
@@ -1158,6 +1184,36 @@ mod tests {
             }]
         );
     }
+    #[test]
+    fn persistent_state_has_schema_and_rejects_newer_versions() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("sessions.json");
+        let engine = Engine::with_persistence(&path).unwrap();
+        engine.handle(ClientMessage::CreateSession {
+            client_msg_id: "schema-create".into(),
+        });
+        let value: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(value["schema_version"], STATE_SCHEMA_VERSION);
+        value.as_object().unwrap();
+        std::fs::write(
+            &path,
+            serde_json::json!({ "schema_version": STATE_SCHEMA_VERSION + 1, "state": {} })
+                .to_string(),
+        )
+        .unwrap();
+        assert!(Engine::with_persistence(&path).is_err());
+    }
+
+    #[test]
+    fn legacy_state_is_backed_up_before_loading() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("sessions.json");
+        std::fs::write(&path, serde_json::to_vec(&State::default()).unwrap()).unwrap();
+        Engine::with_persistence(&path).unwrap();
+        assert!(path.with_extension("json.legacy.bak").exists());
+    }
+
     #[test]
     fn persistent_engine_restores_snapshot_after_restart() {
         let dir = tempfile::tempdir().unwrap();
