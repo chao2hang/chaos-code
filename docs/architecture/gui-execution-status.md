@@ -28,6 +28,9 @@ require platform runners, external services, or a later milestone.
 - M2 JSON snapshot persistence now carries a schema version, rejects newer
   schemas, and backs up legacy raw snapshots before loading; SQLite migration
   remains the production persistence gate.
+- M2 attachment policy validates filename/content type/size before any upload,
+  and the workspace Git seam only runs fixed status arguments under the
+  canonical workspace root; full upload/Git mutation remains gated.
 - M3 settings seam exposes only non-secret Base URL/model fields, rejects unsafe
   URLs, and reports `has_api_key` as a boolean; API key storage remains outside
   the GUI protocol.

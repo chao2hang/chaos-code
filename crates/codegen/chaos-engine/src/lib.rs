@@ -139,6 +139,15 @@ pub enum ClientMessage {
         base_url: Option<String>,
         model: Option<String>,
     },
+    GetGitStatus {
+        client_msg_id: String,
+    },
+    ValidateAttachment {
+        client_msg_id: String,
+        filename: String,
+        byte_len: u64,
+        content_type: String,
+    },
     AcceptDiff {
         client_msg_id: String,
         session_id: Uuid,
@@ -272,6 +281,15 @@ pub enum ServerMessage {
     SettingsUpdated {
         base_url: Option<String>,
         model: Option<String>,
+    },
+    GitStatus {
+        branch: Option<String>,
+        entries: Vec<String>,
+    },
+    AttachmentValidated {
+        filename: String,
+        byte_len: u64,
+        content_type: String,
     },
     Error {
         code: String,
@@ -426,6 +444,35 @@ impl WorkspaceAdapter {
             code: "path_escape".into(),
             message: "路径超出 workspace 范围".into(),
         }
+    }
+
+    fn git_status(&self) -> Result<(Option<String>, Vec<String>), ServerMessage> {
+        let output = std::process::Command::new("git")
+            .args([
+                "-C",
+                self.root.to_string_lossy().as_ref(),
+                "status",
+                "--porcelain=v1",
+                "--branch",
+            ])
+            .output()
+            .map_err(|_| ServerMessage::Error {
+                code: "git_failed".into(),
+                message: "无法启动 git".into(),
+            })?;
+        if !output.status.success() {
+            return Err(ServerMessage::Error {
+                code: "git_failed".into(),
+                message: "workspace 不是可用 Git 仓库".into(),
+            });
+        }
+        let text = String::from_utf8_lossy(&output.stdout);
+        let mut lines = text.lines();
+        let branch = lines
+            .next()
+            .and_then(|line| line.strip_prefix("## "))
+            .map(str::to_string);
+        Ok((branch, lines.map(str::to_string).collect()))
     }
 
     fn search(&self, query: &str) -> Result<Vec<String>, ServerMessage> {
@@ -652,7 +699,9 @@ impl Engine {
             | ClientMessage::SearchFiles { client_msg_id, .. }
             | ClientMessage::ProposeFileWrite { client_msg_id, .. }
             | ClientMessage::GetSettings { client_msg_id }
-            | ClientMessage::UpdateSettings { client_msg_id, .. } => client_msg_id.clone(),
+            | ClientMessage::UpdateSettings { client_msg_id, .. }
+            | ClientMessage::GetGitStatus { client_msg_id }
+            | ClientMessage::ValidateAttachment { client_msg_id, .. } => client_msg_id.clone(),
         };
         let mut state = self.state.lock().expect("engine state lock");
         if !state.seen_client_messages.insert(client_msg_id.clone()) {
@@ -859,6 +908,60 @@ impl Engine {
                     .unwrap_or_else(|error| vec![error]),
                 None => vec![Self::error("workspace_unavailable", "没有配置 workspace")],
             },
+            ClientMessage::GetGitStatus { .. } => match &self.workspace {
+                Some(workspace) => workspace
+                    .git_status()
+                    .map(|(branch, entries)| vec![ServerMessage::GitStatus { branch, entries }])
+                    .unwrap_or_else(|error| vec![error]),
+                None => vec![Self::error("workspace_unavailable", "没有配置 workspace")],
+            },
+            ClientMessage::ValidateAttachment {
+                filename,
+                byte_len,
+                content_type,
+                ..
+            } => {
+                let extension_allowed = [
+                    "png", "jpg", "jpeg", "gif", "webp", "pdf", "txt", "md", "json",
+                ]
+                .iter()
+                .any(|extension| {
+                    filename
+                        .to_ascii_lowercase()
+                        .ends_with(&format!(".{extension}"))
+                });
+                let mime_allowed = [
+                    "image/png",
+                    "image/jpeg",
+                    "image/gif",
+                    "image/webp",
+                    "application/pdf",
+                    "text/plain",
+                    "text/markdown",
+                    "application/json",
+                ]
+                .contains(&content_type.as_str());
+                if filename.contains('/')
+                    || filename.contains('\\')
+                    || filename == "."
+                    || filename == ".."
+                    || !extension_allowed
+                    || !mime_allowed
+                    || byte_len == 0
+                    || byte_len > 10 * 1024 * 1024
+                {
+                    vec![Self::error(
+                        "attachment_rejected",
+                        "附件类型、名称或大小不符合允许策略",
+                    )]
+                } else {
+                    vec![ServerMessage::AttachmentValidated {
+                        filename,
+                        byte_len,
+                        content_type,
+                    }]
+                }
+            }
             ClientMessage::GetSettings { .. } => {
                 let settings = self.settings.lock().expect("settings lock").clone();
                 vec![ServerMessage::Settings {
@@ -1536,6 +1639,30 @@ mod tests {
             relative_path: "link.txt".into(),
         });
         assert!(matches!(&result[0], ServerMessage::Error { code, .. } if code == "path_escape"));
+    }
+
+    #[test]
+    fn attachment_policy_rejects_path_traversal_unknown_types_and_large_files() {
+        let engine = Engine::new();
+        let accepted = engine.handle(ClientMessage::ValidateAttachment {
+            client_msg_id: "attachment-ok".into(),
+            filename: "note.txt".into(),
+            byte_len: 5,
+            content_type: "text/plain".into(),
+        });
+        assert!(matches!(
+            accepted[0],
+            ServerMessage::AttachmentValidated { .. }
+        ));
+        let rejected = engine.handle(ClientMessage::ValidateAttachment {
+            client_msg_id: "attachment-bad".into(),
+            filename: "../secret.exe".into(),
+            byte_len: 11,
+            content_type: "application/octet-stream".into(),
+        });
+        assert!(
+            matches!(&rejected[0], ServerMessage::Error { code, .. } if code == "attachment_rejected")
+        );
     }
 
     #[test]

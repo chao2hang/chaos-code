@@ -272,8 +272,8 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 ### M0.6 验收门禁
 
 - [~] 自动测试覆盖提交成功、取消、重复 submission、断线、重连、snapshot fallback、无凭据和 provider 错误；当前已覆盖真实 WebSocket submit/completed/cancel、重复/dedup、UTF-8 delta、adapter error boundary、跨 engine 重启 resume、认证/Origin/Host 和安全头，浏览器与真实 provider 仍待补齐。（2026-09-24）
-- [ ] Desktop host 已通过共享 engine dispatch 单测；Tauri 真实入口、平台构建、增量/取消/重启恢复操作仍是 M0 gate。
-- [ ] 浏览器自动化环境不可用（本机无 Playwright/Chromium）；已用真实 WebSocket 集成测试和真实服务 curl 验证协议/认证，浏览器实测仍为 M0 gate。
+- [~] Desktop host 已通过共享 engine dispatch 单测；Tauri 真实入口、平台构建、增量/取消/重启恢复操作仍是 M0 gate。
+- [~] 浏览器自动化环境不可用（本机无 Playwright/Chromium）；已用真实 WebSocket 集成测试、React reducer unit tests 和真实服务运行验证协议/认证，浏览器可视交互仍为 M0 gate。
 - [~] Linux engine/Web/前端实测已记录；macOS/Windows GUI runner 与 Tauri 冒烟尚待提供。
 - [x] 新增 `apps/chaos-ui/README.md`，记录 GUI 启动、`CHAOS_WEB_STATE`、测试和当前 provider/Tauri/远程限制。（2026-09-24）
 
@@ -343,7 +343,7 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 
 - [~] 新增受 root confinement 保护的 `WorkspaceAdapter`，WebSocket 已支持 list/read/search 和“提议写入→审批→落盘”协议，越界/未审批写入被拒绝；后续接入现有 workspace RPC 的 range/get/put 能力，禁止复制业务协议。（2026-09-24；workspace engine/WebSocket tests）
 - [~] 已实现受限目录列表、文本读取和内容搜索（最多 100 个匹配、单文件 1 MiB）；增量文件树、模糊搜索和 `@` 文件候选待前端/M2 后续。
-- [~] 当前普通文本写入限制 1 MiB 并执行 root confinement；附件二进制白名单、分块/流式、取消、进度、清理和配额尚未实现。
+- [~] 当前普通文本写入限制 1 MiB 并执行 root confinement；新增 attachment filename/content-type/10 MiB allowlist validator，真实上传分块/流式、取消、进度、清理和配额尚未实现。（2026-09-24；engine test）
 - [~] `WorkspaceAdapter` 对 root 和目标执行 canonicalization 并拒绝越界路径，WebSocket 已有真实越界测试；symlink escape、写入/删除和网络文件系统 fixture 待 M2 完整 adapter。
 - [ ] Web “外部编辑器打开”只在本机路径可解析且 handler 可用时显示；远程路径明确降级。
 
@@ -356,7 +356,7 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 
 ### M2.4 Git 与变更审查
 
-- [ ] 实现状态、Diff、stage/unstage、commit、branch checkout 和 pull/push。
+- [~] engine 已提供固定 `git -C <canonical-root> status --porcelain=v1 --branch` 读取边界；Diff/stage/commit/branch/pull/push adapter 尚待接入，禁止从浏览器执行任意 git 参数。（2026-09-24）
 - [ ] push、覆盖性 checkout、discard 等共享/破坏性动作必须二次确认。
 - [ ] AI commit message 只是建议，提交前可编辑；失败不丢 staged state。
 - [ ] 验证非 Git 工作区、detached HEAD、冲突、无 remote 和认证失败。
