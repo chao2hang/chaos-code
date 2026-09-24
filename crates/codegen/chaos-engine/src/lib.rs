@@ -1515,11 +1515,26 @@ impl Engine {
                 workspace.archived = true;
                 let switch_to_fallback = state.active_workspace_id == Some(workspace_id);
                 if switch_to_fallback {
-                    state.active_workspace_id = state
+                    let fallback = state
                         .workspaces
                         .values()
-                        .find(|candidate| !candidate.archived && candidate.id != workspace_id)
+                        .filter(|candidate| !candidate.archived && candidate.id != workspace_id)
+                        .max_by_key(|candidate| (candidate.last_used_sequence, candidate.id))
                         .map(|candidate| candidate.id);
+                    state.active_workspace_id = Some(fallback.unwrap_or_else(|| {
+                        let fallback_id = Uuid::new_v4();
+                        state.workspaces.insert(
+                            fallback_id,
+                            WorkspaceInfo {
+                                id: fallback_id,
+                                name: "默认工作区".into(),
+                                archived: false,
+                                last_used_sequence: 0,
+                                last_session_id: None,
+                            },
+                        );
+                        fallback_id
+                    }));
                 }
                 let active_workspace_id = state.active_workspace_id;
                 let mut events = vec![ServerMessage::WorkspaceArchived { workspace_id }];

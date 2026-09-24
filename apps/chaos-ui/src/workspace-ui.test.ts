@@ -47,7 +47,7 @@ describe('workspace session isolation', () => {
     expect(archived.workspaces.find((workspace) => workspace.id === 'a')?.archived).toBe(true)
   })
 
-  it('projects a newly created workspace session and switches away without stale transcript', () => {
+  it('uses a newly-created workspace session, then switches away without stale transcript', () => {
     const created = applyServerMessage(initialSessionState, { type: 'session_created', session_id: 'session-new', workspace_id: 'workspace-new' })
     expect(created.activeWorkspaceId).toBe('workspace-new')
     expect(created.sessionId).toBe('session-new')
@@ -58,6 +58,24 @@ describe('workspace session isolation', () => {
     const switched = applyServerMessage({ ...listed, messages: [{ role: 'user', text: 'New workspace' }] }, { type: 'workspace_switched', workspace_id: 'workspace-new' })
     expect(switched.sessionId).toBe('session-new')
     expect(switched.messages).toEqual([])
+  })
+
+  it('clears active conversation state if the only workspace is archived', () => {
+    const state = { ...initialSessionState, workspaces: [workspaces[0]], activeWorkspaceId: 'a', sessionId: 'session-a', messages: [{ role: 'user', text: 'secret' }], busy: true }
+    const archived = applyServerMessage(state, { type: 'workspace_archived', workspace_id: 'a' })
+    expect(archived.activeWorkspaceId).toBeUndefined()
+    expect(archived.sessionId).toBeUndefined()
+    expect(archived.messages).toEqual([])
+    expect(archived.busy).toBe(false)
+  })
+
+  it('clears active UI state when the last workspace is archived', () => {
+    const state = { ...initialSessionState, workspaces: [workspaces[0]], activeWorkspaceId: 'a', sessionId: 'session-a', messages: [{ role: 'user', text: 'private' }], approval: { requestId: 'approval', tool: 'tool', summary: 'private' } }
+    const archived = applyServerMessage(state, { type: 'workspace_archived', workspace_id: 'a' })
+    expect(archived.activeWorkspaceId).toBeUndefined()
+    expect(archived.sessionId).toBeUndefined()
+    expect(archived.messages).toEqual([])
+    expect(archived.approval).toBeUndefined()
   })
 
   it('selects a new workspace without reusing another workspace session', () => {

@@ -41,10 +41,11 @@ require platform runners, external services, or a later milestone.
   its recent session; React clears the previous transcript, approvals, questions
   and busy state on switch, selects that workspace's session, and restores its
   snapshot. Empty workspaces receive a session on first switch; archiving the
-  active workspace switches to and snapshots a fallback session, while sessions
-  in archived workspaces reject Resume/Submit. Create/archive operations return
-  a refreshed registry. Reducer tests cover workspace-local selection. Full
-  tabs/layout isolation and Desktop flow remain open.
+  last workspace creates a new default workspace/session, while archiving one of
+  several switches to its most-recent active fallback. Sessions in archived
+  workspaces reject Resume/Submit and new file/Git/terminal mutations. Create/
+  archive operations return a refreshed registry. Reducer tests cover
+  workspace-local selection. Full tabs/layout isolation and Desktop flow remain open.
 - M2 attachment policy validates filename/content type/size; `AttachmentStager`
   writes bounded chunks into a root-local staging directory and cleans failures.
   Engine/Web attachment protocol covers begin/chunk/progress/cancel/quota and
