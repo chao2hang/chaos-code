@@ -109,9 +109,20 @@ async fn websocket_tool_approval_emits_ordered_ack_resolution_audit() {
     )
     .await;
     assert!(matches!(next(&mut socket).await, ServerMessage::Ack { .. }));
+    assert!(matches!(
+        next(&mut socket).await,
+        ServerMessage::ToolStarted { .. }
+    ));
     assert!(
-        matches!(next(&mut socket).await, ServerMessage::TextDelta { text, .. } if text == "tool-result")
+        matches!(next(&mut socket).await, ServerMessage::ToolProgress { progress, .. } if progress == "completed")
     );
+    assert!(
+        matches!(next(&mut socket).await, ServerMessage::ToolResult { result, .. } if result == "tool-result")
+    );
+    assert!(matches!(
+        next(&mut socket).await,
+        ServerMessage::Usage { .. }
+    ));
     assert!(matches!(
         next(&mut socket).await,
         ServerMessage::ApprovalResolved { approved: true, .. }

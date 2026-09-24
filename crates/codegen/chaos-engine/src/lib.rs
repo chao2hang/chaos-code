@@ -959,6 +959,18 @@ impl Engine {
                             text: format!("wrote {relative_path}"),
                         });
                         session.sequence += 1;
+                        events.push(ServerMessage::ToolStarted {
+                            session_id: write_session_id,
+                            tool: "workspace.write_file".into(),
+                            sequence: session.sequence,
+                        });
+                        session.sequence += 1;
+                        events.push(ServerMessage::FileChanged {
+                            session_id: write_session_id,
+                            path: relative_path.clone(),
+                            operation: "write".into(),
+                            sequence: session.sequence,
+                        });
                         events.push(ServerMessage::FileWritten {
                             session_id: write_session_id,
                             path: relative_path,
@@ -981,6 +993,12 @@ impl Engine {
                 "unavailable"
             }
         } else if approved {
+            session.sequence += 1;
+            events.push(ServerMessage::ToolStarted {
+                session_id: *session_id,
+                tool: pending.tool.clone(),
+                sequence: session.sequence,
+            });
             match &self.tool_adapter {
                 Some(adapter) => match adapter.execute(&pending.tool, &pending.summary) {
                     Ok(result) => {
@@ -989,9 +1007,24 @@ impl Engine {
                             text: result.clone(),
                         });
                         session.sequence += 1;
-                        events.push(ServerMessage::TextDelta {
+                        events.push(ServerMessage::ToolProgress {
                             session_id: *session_id,
-                            text: result,
+                            tool: pending.tool.clone(),
+                            progress: "completed".into(),
+                            sequence: session.sequence,
+                        });
+                        session.sequence += 1;
+                        events.push(ServerMessage::ToolResult {
+                            session_id: *session_id,
+                            tool: pending.tool.clone(),
+                            result,
+                            sequence: session.sequence,
+                        });
+                        session.sequence += 1;
+                        events.push(ServerMessage::Usage {
+                            session_id: *session_id,
+                            input_tokens: pending.summary.len() as u64,
+                            output_tokens: 1,
                             sequence: session.sequence,
                         });
                         "executed"
@@ -1355,6 +1388,34 @@ mod tests {
     }
 
     #[test]
+    fn approved_tool_emits_started_progress_result_sequence() {
+        let engine = Engine::with_tool_adapter(FixtureTool);
+        let session_id = match engine.handle(ClientMessage::CreateSession {
+            client_msg_id: "sequence-create".into(),
+        })[0]
+        {
+            ServerMessage::SessionCreated { session_id } => session_id,
+            _ => panic!(),
+        };
+        let requested = engine.handle(ClientMessage::Submit {
+            client_msg_id: "sequence-submit".into(),
+            session_id,
+            prompt: "/approve-tool write".into(),
+        });
+        let request_id = match requested[1] {
+            ServerMessage::ToolApprovalRequested { request_id, .. } => request_id,
+            _ => panic!(),
+        };
+        let events = engine.handle(ClientMessage::Approve {
+            client_msg_id: "sequence-approve".into(),
+            request_id,
+        });
+        assert!(matches!(events[1], ServerMessage::ToolStarted { .. }));
+        assert!(matches!(events[2], ServerMessage::ToolProgress { .. }));
+        assert!(matches!(events[3], ServerMessage::ToolResult { .. }));
+    }
+
+    #[test]
     fn approved_tool_runs_only_through_tool_adapter() {
         let engine = Engine::with_tool_adapter(FixtureTool);
         let id = match engine.handle(ClientMessage::CreateSession {
@@ -1377,7 +1438,7 @@ mod tests {
             client_msg_id: "approve-tool".into(),
             request_id,
         });
-        assert!(resolved.iter().any(|event| matches!(event, ServerMessage::TextDelta { text, .. } if text == "demo.tool:write")));
+        assert!(resolved.iter().any(|event| matches!(event, ServerMessage::ToolResult { result, .. } if result == "demo.tool:write")));
         assert!(resolved.iter().any(|event| matches!(
             event,
             ServerMessage::ApprovalResolved { approved: true, .. }
