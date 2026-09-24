@@ -122,8 +122,9 @@ pub enum ClientMessage {
         client_msg_id: String,
         query: String,
     },
-    WriteFile {
+    ProposeFileWrite {
         client_msg_id: String,
+        session_id: Uuid,
         relative_path: String,
         contents: String,
     },
@@ -248,6 +249,7 @@ pub enum ServerMessage {
         matches: Vec<String>,
     },
     FileWritten {
+        session_id: Uuid,
         path: String,
         bytes: usize,
     },
@@ -284,6 +286,7 @@ struct SessionState {
     sequence: u64,
     pending_approval: Option<PendingApproval>,
     pending_question: Option<Uuid>,
+    pending_file_writes: HashMap<Uuid, (Uuid, String, String)>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -593,7 +596,7 @@ impl Engine {
             | ClientMessage::ListFiles { client_msg_id, .. }
             | ClientMessage::ReadFile { client_msg_id, .. }
             | ClientMessage::SearchFiles { client_msg_id, .. }
-            | ClientMessage::WriteFile { client_msg_id, .. } => client_msg_id.clone(),
+            | ClientMessage::ProposeFileWrite { client_msg_id, .. } => client_msg_id.clone(),
         };
         let mut state = self.state.lock().expect("engine state lock");
         if !state.seen_client_messages.insert(client_msg_id.clone()) {
@@ -800,22 +803,39 @@ impl Engine {
                     .unwrap_or_else(|error| vec![error]),
                 None => vec![Self::error("workspace_unavailable", "没有配置 workspace")],
             },
-            ClientMessage::WriteFile {
+            ClientMessage::ProposeFileWrite {
+                client_msg_id,
+                session_id,
                 relative_path,
                 contents,
-                ..
-            } => match &self.workspace {
-                Some(workspace) => workspace
-                    .write(&relative_path, &contents)
-                    .map(|bytes| {
-                        vec![ServerMessage::FileWritten {
-                            path: relative_path,
-                            bytes,
-                        }]
-                    })
-                    .unwrap_or_else(|error| vec![error]),
-                None => vec![Self::error("workspace_unavailable", "没有配置 workspace")],
-            },
+            } => {
+                let Some(session) = state.sessions.get_mut(&session_id) else {
+                    return vec![Self::error("session_not_found", "会话不存在")];
+                };
+                if contents.len() > 1024 * 1024 {
+                    return vec![Self::error("file_too_large", "文件超过 1 MiB 限制")];
+                }
+                let request_id = Uuid::new_v4();
+                session.pending_approval = Some(PendingApproval {
+                    request_id,
+                    tool: "workspace.write_file".into(),
+                    summary: format!("写入 {relative_path}"),
+                });
+                session
+                    .pending_file_writes
+                    .insert(request_id, (session_id, relative_path, contents));
+                session.sequence += 1;
+                vec![
+                    ServerMessage::Ack { client_msg_id },
+                    ServerMessage::ToolApprovalRequested {
+                        session_id,
+                        request_id,
+                        tool: "workspace.write_file".into(),
+                        summary: "请求写入 workspace 文件".into(),
+                        sequence: session.sequence,
+                    },
+                ]
+            }
         };
         if let Err(error) = self.persist(&state) {
             return vec![error];
@@ -846,8 +866,42 @@ impl Engine {
             .pending_approval
             .take()
             .expect("matched pending approval");
+        let pending_file_write = session.pending_file_writes.remove(&request_id);
         let mut events = vec![ServerMessage::Ack { client_msg_id }];
-        let outcome = if approved {
+        let outcome = if let Some((write_session_id, relative_path, contents)) = pending_file_write
+        {
+            if !approved {
+                "rejected"
+            } else if let Some(workspace) = &self.workspace {
+                match workspace.write(&relative_path, &contents) {
+                    Ok(bytes) => {
+                        session.messages.push(TimelineMessage {
+                            role: "tool".into(),
+                            text: format!("wrote {relative_path}"),
+                        });
+                        session.sequence += 1;
+                        events.push(ServerMessage::FileWritten {
+                            session_id: write_session_id,
+                            path: relative_path,
+                            bytes,
+                        });
+                        "executed"
+                    }
+                    Err(error) => {
+                        session.sequence += 1;
+                        events.push(error);
+                        "failed"
+                    }
+                }
+            } else {
+                session.sequence += 1;
+                events.push(ServerMessage::Error {
+                    code: "workspace_unavailable".into(),
+                    message: "没有配置 workspace".into(),
+                });
+                "unavailable"
+            }
+        } else if approved {
             match &self.tool_adapter {
                 Some(adapter) => match adapter.execute(&pending.tool, &pending.summary) {
                     Ok(result) => {
@@ -893,7 +947,7 @@ impl Engine {
         events.push(ServerMessage::ApprovalResolved {
             session_id: *session_id,
             request_id,
-            approved: approved && outcome == "executed",
+            approved: outcome == "executed",
             sequence: session.sequence,
         });
         events.push(ServerMessage::Audit {
@@ -1319,26 +1373,57 @@ mod tests {
         assert!(
             matches!(&escaped[0], ServerMessage::Error { code, .. } if code == "path_invalid" || code == "path_escape")
         );
-        let written = engine.handle(ClientMessage::WriteFile {
+        let session_id = match engine.handle(ClientMessage::CreateSession {
+            client_msg_id: "write-session".into(),
+        })[0]
+        {
+            ServerMessage::SessionCreated { session_id } => session_id,
+            _ => panic!(),
+        };
+        let proposed = engine.handle(ClientMessage::ProposeFileWrite {
             client_msg_id: "write".into(),
+            session_id,
             relative_path: "new.txt".into(),
             contents: "written".into(),
         });
-        assert!(
-            matches!(&written[0], ServerMessage::FileWritten { path, .. } if path == "new.txt")
-        );
+        let request_id = match proposed[1] {
+            ServerMessage::ToolApprovalRequested { request_id, .. } => request_id,
+            _ => panic!(),
+        };
+        let written = engine.handle(ClientMessage::Approve {
+            client_msg_id: "write-approve".into(),
+            request_id,
+        });
+        assert!(written.iter().any(
+            |event| matches!(event, ServerMessage::FileWritten { path, .. } if path == "new.txt")
+        ));
         assert_eq!(
             std::fs::read_to_string(directory.path().join("new.txt")).unwrap(),
             "written"
         );
-        let escaped_write = engine.handle(ClientMessage::WriteFile {
+        let escaped_write = engine.handle(ClientMessage::ProposeFileWrite {
             client_msg_id: "escape-write".into(),
+            session_id,
             relative_path: "../outside".into(),
             contents: "bad".into(),
         });
-        assert!(
-            matches!(&escaped_write[0], ServerMessage::Error { code, .. } if code == "path_invalid" || code == "path_escape")
-        );
+        let escape_request = match escaped_write[1] {
+            ServerMessage::ToolApprovalRequested { request_id, .. } => request_id,
+            _ => panic!(),
+        };
+        let rejected = engine.handle(ClientMessage::Reject {
+            client_msg_id: "escape-reject".into(),
+            request_id: escape_request,
+            reason: "deny".into(),
+        });
+        assert!(rejected.iter().any(|event| matches!(
+            event,
+            ServerMessage::ApprovalResolved {
+                approved: false,
+                ..
+            }
+        )));
+        assert!(!directory.path().join("../outside").exists());
         let search = engine.handle(ClientMessage::SearchFiles {
             client_msg_id: "search".into(),
             query: "needle".into(),

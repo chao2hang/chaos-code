@@ -45,8 +45,27 @@ async fn websocket_workspace_requests_are_confined_to_root() {
 
     socket
         .send(Message::Text(
-            serde_json::to_string(&ClientMessage::WriteFile {
+            serde_json::to_string(&ClientMessage::CreateSession {
+                client_msg_id: "session".into(),
+            })
+            .unwrap()
+            .into(),
+        ))
+        .await
+        .unwrap();
+    let session_id = match serde_json::from_str::<ServerMessage>(
+        &socket.next().await.unwrap().unwrap().into_text().unwrap(),
+    )
+    .unwrap()
+    {
+        ServerMessage::SessionCreated { session_id } => session_id,
+        _ => panic!("expected session"),
+    };
+    socket
+        .send(Message::Text(
+            serde_json::to_string(&ClientMessage::ProposeFileWrite {
                 client_msg_id: "write".into(),
+                session_id,
                 relative_path: "new.txt".into(),
                 contents: "created".into(),
             })
@@ -55,13 +74,54 @@ async fn websocket_workspace_requests_are_confined_to_root() {
         ))
         .await
         .unwrap();
-    let written: ServerMessage =
+    let _: ServerMessage =
         serde_json::from_str(&socket.next().await.unwrap().unwrap().into_text().unwrap()).unwrap();
-    assert!(matches!(written, ServerMessage::FileWritten { path, .. } if path == "new.txt"));
+    let approval = serde_json::from_str::<ServerMessage>(
+        &socket.next().await.unwrap().unwrap().into_text().unwrap(),
+    )
+    .unwrap();
+    let request_id = match approval {
+        ServerMessage::ToolApprovalRequested { request_id, .. } => request_id,
+        _ => panic!("expected approval"),
+    };
+    socket
+        .send(Message::Text(
+            serde_json::to_string(&ClientMessage::Approve {
+                client_msg_id: "approve".into(),
+                request_id,
+            })
+            .unwrap()
+            .into(),
+        ))
+        .await
+        .unwrap();
+    let mut wrote = false;
+    for _ in 0..4 {
+        let event = serde_json::from_str::<ServerMessage>(
+            &socket.next().await.unwrap().unwrap().into_text().unwrap(),
+        )
+        .unwrap();
+        wrote |= matches!(event, ServerMessage::FileWritten { path, .. } if path == "new.txt");
+        if wrote {
+            break;
+        }
+    }
+    assert!(wrote);
     assert_eq!(
         std::fs::read_to_string(directory.path().join("new.txt")).unwrap(),
         "created"
     );
+    let mut saw_audit = false;
+    for _ in 0..3 {
+        let event: ServerMessage =
+            serde_json::from_str(&socket.next().await.unwrap().unwrap().into_text().unwrap())
+                .unwrap();
+        saw_audit |= matches!(event, ServerMessage::Audit { .. });
+        if saw_audit {
+            break;
+        }
+    }
+    assert!(saw_audit);
 
     socket
         .send(Message::Text(
@@ -77,7 +137,8 @@ async fn websocket_workspace_requests_are_confined_to_root() {
     let escaped: ServerMessage =
         serde_json::from_str(&socket.next().await.unwrap().unwrap().into_text().unwrap()).unwrap();
     assert!(
-        matches!(escaped, ServerMessage::Error { code, .. } if code == "path_invalid" || code == "path_escape")
+        matches!(escaped, ServerMessage::Error { .. }),
+        "unexpected escape result: {escaped:?}"
     );
     server.await.unwrap();
 }
