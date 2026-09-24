@@ -43,7 +43,8 @@ require platform runners, external services, or a later milestone.
   snapshot. Empty workspaces receive a session on first switch; archiving the
   last workspace creates a new default workspace/session, while archiving one of
   several switches to its most-recent active fallback. Sessions in archived
-  workspaces reject Resume/Submit and new file/Git/terminal mutations. Create/
+  workspaces reject Resume/Submit/Approve/RespondQuestion and new file/Git/terminal
+  mutations. Create/
   archive operations return a refreshed registry. Reducer tests cover
   workspace-local selection. Full tabs/layout isolation and Desktop flow remain open.
 - M2 attachment policy validates filename/content type/size; `AttachmentStager`

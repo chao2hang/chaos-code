@@ -2287,14 +2287,29 @@ impl Engine {
         request_id: Uuid,
         approved: bool,
     ) -> Vec<ServerMessage> {
-        let Some((session_id, session)) = state.sessions.iter_mut().find(|(_, session)| {
+        let Some(session_id) = state.sessions.iter().find_map(|(session_id, session)| {
             session
                 .pending_approval
                 .as_ref()
                 .is_some_and(|pending| pending.request_id == request_id)
+                .then_some(*session_id)
         }) else {
             return vec![Self::error("approval_not_found", "审批请求不存在或已处理")];
         };
+        let archived = state
+            .sessions
+            .get(&session_id)
+            .and_then(|session| session.workspace_id)
+            .is_some_and(|workspace_id| {
+                state
+                    .workspaces
+                    .get(&workspace_id)
+                    .is_some_and(|workspace| workspace.archived)
+            });
+        if archived {
+            return vec![Self::error("workspace_unavailable", "会话工作区已归档")];
+        }
+        let session = state.sessions.get_mut(&session_id).expect("session found");
         let pending = session
             .pending_approval
             .take()
@@ -2308,7 +2323,7 @@ impl Engine {
                 return vec![
                     ServerMessage::Ack { client_msg_id },
                     ServerMessage::ToolApprovalRequested {
-                        session_id: *session_id,
+                        session_id,
                         request_id,
                         tool: session
                             .pending_approval
@@ -2459,7 +2474,7 @@ impl Engine {
         } else if approved {
             session.sequence += 1;
             events.push(ServerMessage::ToolStarted {
-                session_id: *session_id,
+                session_id,
                 tool: pending.tool.clone(),
                 sequence: session.sequence,
             });
@@ -2488,7 +2503,7 @@ impl Engine {
                     Ok(result) => {
                         session.sequence += 1;
                         events.push(ServerMessage::GitMutationResult {
-                            session_id: *session_id,
+                            session_id,
                             operation: pending.tool.clone(),
                             result,
                         });
@@ -2509,7 +2524,7 @@ impl Engine {
                         Ok(result) => {
                             session.sequence += 1;
                             events.push(ServerMessage::TerminalResult {
-                                session_id: *session_id,
+                                session_id,
                                 output: result.output,
                                 exit_code: result.exit_code,
                             });
@@ -2543,21 +2558,21 @@ impl Engine {
                             });
                             session.sequence += 1;
                             events.push(ServerMessage::ToolProgress {
-                                session_id: *session_id,
+                                session_id,
                                 tool: pending.tool.clone(),
                                 progress: "completed".into(),
                                 sequence: session.sequence,
                             });
                             session.sequence += 1;
                             events.push(ServerMessage::ToolResult {
-                                session_id: *session_id,
+                                session_id,
                                 tool: pending.tool.clone(),
                                 result,
                                 sequence: session.sequence,
                             });
                             session.sequence += 1;
                             events.push(ServerMessage::Usage {
-                                session_id: *session_id,
+                                session_id,
                                 input_tokens: pending.summary.len() as u64,
                                 output_tokens: 1,
                                 sequence: session.sequence,
@@ -2593,13 +2608,13 @@ impl Engine {
             sequence: session.sequence,
         });
         events.push(ServerMessage::ApprovalResolved {
-            session_id: *session_id,
+            session_id,
             request_id,
             approved: outcome == "executed",
             sequence: session.sequence,
         });
         events.push(ServerMessage::Audit {
-            session_id: *session_id,
+            session_id,
             action: "tool_approval".into(),
             outcome: outcome.into(),
             sequence: session.sequence,
@@ -2613,13 +2628,25 @@ impl Engine {
         question_id: Uuid,
         answer: String,
     ) -> Vec<ServerMessage> {
-        let Some((session_id, session)) = state
-            .sessions
-            .iter_mut()
-            .find(|(_, session)| session.pending_question == Some(question_id))
-        else {
+        let Some(session_id) = state.sessions.iter().find_map(|(session_id, session)| {
+            (session.pending_question == Some(question_id)).then_some(*session_id)
+        }) else {
             return vec![Self::error("question_not_found", "问题不存在或已回答")];
         };
+        let archived = state
+            .sessions
+            .get(&session_id)
+            .and_then(|session| session.workspace_id)
+            .is_some_and(|workspace_id| {
+                state
+                    .workspaces
+                    .get(&workspace_id)
+                    .is_some_and(|workspace| workspace.archived)
+            });
+        if archived {
+            return vec![Self::error("workspace_unavailable", "会话工作区已归档")];
+        }
+        let session = state.sessions.get_mut(&session_id).expect("session found");
         session.pending_question = None;
         session.pending_question_prompt = None;
         session.sequence += 1;
@@ -2631,13 +2658,13 @@ impl Engine {
         vec![
             ServerMessage::Ack { client_msg_id },
             ServerMessage::QuestionResolved {
-                session_id: *session_id,
+                session_id,
                 question_id,
                 answer,
                 sequence: session.sequence,
             },
             ServerMessage::Audit {
-                session_id: *session_id,
+                session_id,
                 action: "question".into(),
                 outcome: "answered".into(),
                 sequence: session.sequence,
