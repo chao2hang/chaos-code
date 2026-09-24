@@ -256,8 +256,8 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 
 ### M0.4 前端最小闭环
 
-- [~] React 已接入真实 WebSocket，支持会话创建、纯文本 composer、时间线、流式 delta 和停止按钮；会话列表与多会话工作区待补。
-- [x] React 已有连接中/已连接、空态、生成中、连接错误和取消入口；WebSocket 断线自动重连并通过 resume 恢复历史。（2026-09-24；typecheck/build 通过）
+- [~] React 已接入真实 WebSocket，支持会话创建、纯文本 composer、时间线、流式 delta、审批/question 卡片和停止按钮；会话列表与多会话工作区待补。（2026-09-24；`src/session.ts` reducer 与 Vitest 覆盖事件投影）
+- [x] React 已有连接中/已连接、空态、生成中、连接错误和取消入口；WebSocket 断线自动重连并通过 resume 恢复历史。（2026-09-24；typecheck/build/Vitest 通过）
 - [~] 流式更新当前按 WebSocket delta 逐事件更新；UTF-8 安全分块与真实 WebSocket 测试已完成，按帧批处理和 benchmark 尚待 M5 性能门禁。
 - [~] Web 使用显式 WebSocket transport；Desktop 已有 engine host boundary，Tauri transport injection 待补。
 
@@ -304,7 +304,7 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 
 - [~] engine 已支持 ToolAdapter 边界：审批通过才执行、无 adapter 安全失败、执行结果写入 timeline/audit；真实命令、写文件、网络、MCP tool adapter 和通用提问对话框仍待补。（2026-09-24；engine tests）
 - [x] engine 审批记录绑定 session、tool、参数摘要、UUID request ID、结果和序列；ToolAdapter 只在批准后调用，测试覆盖执行、拒绝和无 adapter fail-closed。（2026-09-24）
-- [ ] 覆盖允许、拒绝、记住规则、超时、取消、断线恢复和多客户端竞争。
+- [~] WebSocket 工具审批真实集成测试已覆盖允许、拒绝基础路径和 ordered ack/resolution/audit；记住规则、超时、断线中的审批恢复和多客户端竞争仍待补。
 - [ ] Web 写操作增加 workspace 路径约束、CSRF/重放防护和本地审计日志；日志必须脱敏并轮转。
 - [ ] Safe Web Mode 禁止命令和写入，后端强制执行，不能只隐藏按钮。
 
@@ -320,7 +320,7 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 - [ ] E2E：审批时断网并重连；操作不能重复执行，审批状态必须一致。
 - [ ] 同时打开两个 Web 标签，验证同一审批只接受一个终态。
 - [ ] 验证 Safe Web Mode 无法通过直接 API/WS 调用绕过。
-- [ ] 桌面和 Web 均真实操作成功，周边会话列表和重启恢复无回归。
+- [~] Web 真实 WebSocket 工具审批/Diff/question 流程和 React reducer 已测试；Desktop/Tauri 真实操作与浏览器人工验证仍待平台 gate。
 
 ---
 

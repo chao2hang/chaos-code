@@ -16,7 +16,8 @@ require platform runners, external services, or a later milestone.
   session timeline/audit.
 - M1 Diff adapter boundary: accept and rollback are session-scoped adapter calls;
   success emits `diff_resolved`, failure emits `diff_failed`, and no UI event
-  claims a file was changed before the adapter reports success.
+  claims a file was changed before the adapter reports success. WebSocket tests
+  assert ordered ACK/resolution/audit events for accept and rollback.
 - M1 interaction events now include question request/response and explicit
   protocol variants for tool progress, tool result, file change, and usage;
   provider-backed production emission remains a later adapter task.
