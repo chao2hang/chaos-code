@@ -10,6 +10,7 @@ use tokio::sync::broadcast;
 use uuid::Uuid;
 
 pub mod protocol_schema;
+pub mod pty;
 pub mod remote;
 
 pub const PROTOCOL_VERSION: u16 = 1;

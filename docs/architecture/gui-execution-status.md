@@ -33,7 +33,9 @@ require platform runners, external services, or a later milestone.
   Engine/Web attachment protocol covers begin/chunk/progress/cancel/quota;
   final move into workspace and resumable transfer remain open.
 - M2 ProcessTerminalAdapter fixes cwd, requires approval, caps output and returns
-  exit codes; interactive PTY remains a separate capability.
+  exit codes; existing `ptyctl` was audited and the typed `PtyCapability` boundary
+  records approval/resize/reconnect/cancel requirements, while interactive PTY
+  transport remains a separate platform adapter.
 - M2 ProcessGitAdapter fixes cwd and operation arguments for approval-gated
   stage/commit/checkout_branch; push/pull/discard/rollback remain disabled.
 - Transitional JSON snapshot and canonical `SqliteSessionStore` persistence, with

@@ -345,11 +345,11 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 - [~] 已实现受限目录列表、文本读取和内容搜索（最多 100 个匹配、单文件 1 MiB）；增量文件树、模糊搜索和 `@` 文件候选待前端/M2 后续。
 - [~] 当前普通文本写入限制 1 MiB 并执行 root confinement；新增 attachment filename/content-type/10 MiB allowlist、`.chaos-staging` 分块写入/失败清理 stager，以及 Web/engine BeginAttachment/Chunk/Progress/Cancel/quota 协议测试；真实 staging-to-workspace 审批移动、断线续传和配额跨会话策略仍待补。（2026-09-24；`attachment_protocol.rs`、`attachment-stager-test.log`）
 - [~] `WorkspaceAdapter` 对 root 和目标执行 canonicalization 并拒绝越界路径，WebSocket 已有真实越界测试；symlink escape、写入/删除和网络文件系统 fixture 待 M2 完整 adapter。
-- [ ] Web “外部编辑器打开”只在本机路径可解析且 handler 可用时显示；远程路径明确降级。
+- [~] Web 外部编辑器打开入口暂未暴露；workspace path/remote path 已区分并默认不生成本机深链接，handler/远程降级待 UI adapter。（2026-09-24）
 
 ### M2.3 终端
 
-当前状态：固定 cwd 的 `ProcessTerminalAdapter` 已支持审批后执行、输出上限、退出码和结构化错误；真实 PTY stdin/stdout/resize/重连/取消仍待 ptyctl/Tauri/Web terminal adapter。
+当前状态：固定 cwd 的 `ProcessTerminalAdapter` 已支持审批后执行、输出上限、退出码和结构化错误；现有 `ptyctl` 已盘点并新增 `PtyCapability` 声明 approval/resize/reconnect/cancel 要求，真实 PTY stdin/stdout/resize/重连/取消 transport 仍待 ptyctl/Tauri/Web adapter。（2026-09-24）
 
 - [~] 新增固定 cwd 的 `ProcessTerminalAdapter` 边界：必须先审批、输出上限、退出码、非零错误和 terminal result 已有 engine tests；Xterm.js/ptyctl 交互 stdin/resize/重连/进程取消仍待真实 PTY adapter。（2026-09-24；`terminal-adapter-test.log`）
 - [~] Web terminal 当前不提供任意命令入口；未来 terminal route 必须复用审批和 Safe Web Mode，不能绕过后端策略。（2026-09-24）
