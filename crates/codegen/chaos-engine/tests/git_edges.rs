@@ -16,7 +16,8 @@ fn adapter_for(path: &std::path::Path) -> ProcessGitAdapter {
 }
 
 #[test]
-fn process_git_adapter_rejects_non_git_workspace_and_preserves_staged_state_on_validation_failure() {
+fn process_git_adapter_rejects_non_git_workspace_and_preserves_staged_state_on_validation_failure()
+{
     let non_git = tempdir().unwrap();
     let adapter = adapter_for(non_git.path());
     std::fs::write(non_git.path().join("note.txt"), "hello").unwrap();
@@ -36,12 +37,35 @@ fn process_git_adapter_rejects_non_git_workspace_and_preserves_staged_state_on_v
 fn process_git_adapter_reports_detached_head_and_missing_branch_without_mutating_head() {
     let repository = tempdir().unwrap();
     assert!(git(repository.path(), &["init", "-q"]).status.success());
-    assert!(git(repository.path(), &["config", "user.name", "Test User"]).status.success());
-    assert!(git(repository.path(), &["config", "user.email", "test@example.invalid"]).status.success());
+    assert!(
+        git(repository.path(), &["config", "user.name", "Test User"])
+            .status
+            .success()
+    );
+    assert!(
+        git(
+            repository.path(),
+            &["config", "user.email", "test@example.invalid"]
+        )
+        .status
+        .success()
+    );
     std::fs::write(repository.path().join("note.txt"), "hello").unwrap();
-    assert!(git(repository.path(), &["add", "--", "note.txt"]).status.success());
-    assert!(git(repository.path(), &["commit", "-m", "initial"]).status.success());
-    assert!(git(repository.path(), &["checkout", "--detach", "HEAD"]).status.success());
+    assert!(
+        git(repository.path(), &["add", "--", "note.txt"])
+            .status
+            .success()
+    );
+    assert!(
+        git(repository.path(), &["commit", "-m", "initial"])
+            .status
+            .success()
+    );
+    assert!(
+        git(repository.path(), &["checkout", "--detach", "HEAD"])
+            .status
+            .success()
+    );
 
     let adapter = adapter_for(repository.path());
     assert!(adapter.checkout_branch("missing-branch").is_err());
