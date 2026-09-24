@@ -13,6 +13,8 @@ require platform runners, external services, or a later milestone.
 - M0 protocol v1 for handshake, create/resume, submit, bounded UTF-8 deltas,
   completion, cancellation, snapshot, deduplication, approval, rejection, and
   audit events.
+- M0 real headless process adapter with explicit binary path and cwd; provider
+  credentials remain in the existing CLI/config boundary.
 - M1 tool adapter boundary: approvals are resolved before a `ToolAdapter` can
   execute; missing adapters fail closed and tool output is recorded in the
   session timeline/audit.
@@ -20,54 +22,50 @@ require platform runners, external services, or a later milestone.
   success emits `diff_resolved`, failure emits `diff_failed`, and no UI event
   claims a file was changed before the adapter reports success. WebSocket tests
   assert ordered ACK/resolution/audit events for accept and rollback.
-- M1 interaction events now include question request/response and explicit
-  protocol variants for tool progress, tool result, file change, and usage;
-  WebSocket tests assert tool started/progress/result/usage ordering. Provider-
-  backed production emission remains a later adapter task.
-- M2 workspace boundary now canonicalizes a configured root and supports bounded
-  list/read/search requests; path escapes and missing workspace adapters fail
-  closed before any browser-controlled path reaches filesystem I/O.
-- M2 JSON snapshot persistence now carries a schema version, rejects newer
-  schemas, and backs up legacy raw snapshots before loading. A canonical
-  `SqliteSessionStore` boundary now uses the existing journal-mode policy and
-  tests round-trip/newer-schema rejection; production engine wiring and full
-  migration/concurrency gates remain open.
-- M2 attachment policy validates filename/content type/size before any upload;
-  `AttachmentStager` now writes bounded chunks to a root-local staging directory
-  and cleans failed uploads. The workspace Git seam only runs fixed status
-  arguments under the canonical root; fixed-cwd terminal and approval-gated Git
-  mutation adapters have engine tests, while final upload/Git mutation/PTY remains gated.
-- M3 settings seam exposes only non-secret Base URL/model fields, rejects unsafe
-  URLs, and reports `has_api_key` as a boolean; provider shape validation returns
-  `network_not_attempted` without touching credentials or making network calls.
-  API key storage remains outside the GUI protocol.
-- Axum loopback HTTP/WebSocket transport with bearer authorization, Origin
-  checks, request-size limit, CSP, `nosniff`, and health endpoint.
+- M1 interaction events include question request/response, tool progress/result,
+  file change, usage and structured errors; WebSocket tests cover ordered events,
+  duplicate resolution rejection and missing-adapter failure.
+- M2 workspace boundary canonicalizes a configured root and supports bounded
+  list/read/search/write requests; path escapes, symlink escapes and missing
+  workspace adapters fail closed before browser-controlled paths reach I/O.
+- M2 attachment policy validates filename/content type/size; `AttachmentStager`
+  writes bounded chunks into a root-local staging directory and cleans failures.
+- M2 ProcessTerminalAdapter fixes cwd, requires approval, caps output and returns
+  exit codes; interactive PTY remains a separate capability.
+- M2 ProcessGitAdapter fixes cwd and operation arguments for approval-gated
+  stage/commit/checkout_branch; push/pull/discard/rollback remain disabled.
 - Transitional JSON snapshot and canonical `SqliteSessionStore` persistence, with
   schema/version tests, corrupt/missing-parent rejection, legacy backup, and real
   Web SQLite re-open recovery.
+- M3 settings seam exposes only non-secret Base URL/model fields, rejects unsafe
+  URLs, and reports `has_api_key` as a boolean; provider shape validation returns
+  `network_not_attempted` without touching credentials or making network calls.
+- M4 typed capability and host-key boundary: strict or fingerprinted TOFU policy,
+  detached Agent rejection, and explicit unsupported capabilities.
+- Web loopback HTTP/WebSocket transport with bearer authorization, Origin/Host
+  checks, request-size limits, CSP, `nosniff`, and backend-enforced Safe Web Mode.
 - React client connected to the real WebSocket transport with reconnect/resume,
-  visible streaming state, cancel, approval/question cards, and tested event
-  reducer projection.
-- Independent CI job for GUI Rust, frontend unit, typecheck, and build checks.
+  visible streaming state, cancel, approval/question cards, and generated
+  protocol types.
+- Independent CI job for GUI Rust, protocol drift, frontend unit, typecheck and
+  production build checks.
+- Release signing preflight, `require-sig` build feature, fail-closed Unix/
+  PowerShell/batch installers, and installer policy fixture.
 
 ## Remaining gates
 
 | Area | State | Evidence required |
 |---|---|---|
-| Real Agent adapter | Partial | Explicit headless process adapter and Web integration tests; async provider lifecycle remains open |
 | Tauri Desktop | Open | Tauri three-platform builds and real desktop flow |
 | Browser E2E | Open | Playwright or equivalent installed and exercised at desktop/narrow viewports |
 | Provider/config/secrets | Partial | Non-secret settings/provider shape validation; real provider/keyring tests remain open |
-| M1 tools/Diff | Partial | Tool/Diff adapters, approval, question, audit and ordered Web tests; real workspace hunk adapter remains open |
-| M2 persistence/workspace | Partial | Root-confined workspace, Git status, attachment policy, JSON/SQLite boundaries and Web recovery; terminal/full Git/migration concurrency remain open |
+| M1 hunk/workspace Diff | Partial | Adapter boundaries and tests; real `xai-hunk-tracker`/workspace mutation integration remains open |
+| M2 persistence/workspace | Partial | SQLite/JSON boundaries, workspace/Git/terminal/attachment safety; multi-workspace, PTY, NFS/multiprocess and full migration remain open |
 | M3 ecosystem | Open | MCP/plugin/skill/workflow/subagent integration tests |
 | M4 remote | Partial | Typed capability/host-key boundary; clean Linux remote, SSH transport and forwarding remain open |
 | M5 release | Partial | GUI CI, signing preflight, fail-closed installers and policy fixtures; packaging/signing assets/SBOM/performance/manual acceptance remain open |
+| Maintenance P1 | Open | Real GitHub signing preflight, Windows runner, npm ownership and release asset verification |
 
-The open rows are intentionally not marked complete in `TODO.md`. Mock engine
-responses, library tests, and a curl check prove the local protocol seam only;
-they do not prove the product milestones above. Existing TUI session persistence
-uses `xai-grok-shell` session directories and `summary.json` through its actor,
-so compatibility with GUI SQLite is an explicit migration task rather than an
-implicit format match.
+The open rows are intentionally not marked complete in `TODO.md`. Deterministic
+adapters, library tests, WebSocket tests, and curl checks prove local seams only;
+they do not prove the product milestones or external release gates above.
