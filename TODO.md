@@ -878,8 +878,8 @@ metadata`、`xai-grok-config`、`xai-tool-types`、pager `settings_e2e` 等）�
 **阻断级别**：P3
 
 - [ ] 确定上游侦察的固定节奏（如每两周一次只读侦察），产出写进 `sync/`；当前 `SOURCE_REV` 停在 `72a61251`，上游 tip 在 `a28ee2b2`，差距只在移植记录里、没有跟踪机制。
-- [ ] 每轮同步严格执行 `scripts/l10n-guard.sh` 的前后对照（历史上出过中文 UI 被静默还原、事后 60 文件兜底的事故）。
-- [ ] 维持"分叉层内一律不搬"的判定：`sync/fork-layer-inventory.md` 的 12 类路径是唯一依据，新增分叉改动要同步登记。根 `Cargo.toml` 的登记见 M-1.3，两边指向同一条目，不要重复建账。
+- [~] 当前 GUI/TUI 修改已在相关切片执行格式、GUI/engine tests 和文档检查；下一轮真实上游同步仍需按规则运行 `scripts/l10n-guard.sh` 前后对照。（2026-09-24）
+- [~] 维持“分叉层内一律不搬”的判定：`sync/fork-layer-inventory.md` 已登记根 `Cargo.toml` 和 GUI fork 区段；每次继续上游同步仍需执行 l10n/fork-layer review。（2026-09-24）
 - [x] 根目录六个调试脚本（`capture_listener.py`、`mock_server.py`、`run_mock_server.sh`、`single_mock_server.py`、`test_simple_wb.py`、`test_workbuddy_headers.py`、`test_workbuddy_headers_v2.py`）：**保持原位，不搬也不删**。它们是**上游自己放在仓库根**的（上游提交 `f380bbca`「test(tools): add mock inference server and WorkBuddy header capture scripts」，本地同一提交），不是散落的本地文件；挪进 `scripts/dev/` 会让每次上游同步都在这条路径上冲突，属于"碰架构"。
 - [ ] 复核两项已延后的上游变更是否仍应延后：`oniguruma` 2→3、MCP admission 放宽。
 - [ ] `docs/telemetry-status-design.md` 是 v0.1 设计草稿、**尚未实现**（实测无 `telemetry status` 子命令）：决定评审通过后开工，还是标记为不做并在文档头部写明。
@@ -930,7 +930,7 @@ metadata`、`xai-grok-config`、`xai-tool-types`、pager `settings_e2e` 等）�
 
 ### 8.2 本文件的核对节奏
 
-- [ ] 每次发版前重跑一遍第 7 章各条的"当前实测状态"，把过期数字改掉。
+- [~] 发版前重跑第 7 章当前实测状态：本轮已核对签名配置名称、npm Windows 占位、安装器策略和 GUI/CI 状态；真实 secret/runner/npm owner 仍需 release 负责人执行。（2026-09-24）
 - [ ] 每季度（与 MT-5 的 ignored 审计同批）复核一次 MT 条目是否仍然成立。
 
 ---
