@@ -291,7 +291,7 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 - [~] 增加 tool start/progress/result、question request/response、file change、usage 和 structured error；M1 engine 已落地 question/answer 事件，工具/Diff adapter 结果与 audit 事件，完整真实 provider/tool progress/file adapter 仍待接入。
 - [~] 已有有界 engine snapshot、session sequence、dedup 和 resume；客户端 cursor、追赶、TTL/容量预算与 snapshot/delta 竞争测试仍待补齐。
 - [x] 定义命令/交互在重复投递和 engine 重启时的状态机：client message 去重、question/approval 单次 resolve、snapshot resume 已有测试；超时/断线中的真实 Agent 状态仍待补齐。（2026-09-24）
-- [~] 覆盖重复与恢复；乱序、丢帧、snapshot/delta 竞争及多标签订阅测试待 Web client/真实浏览器阶段补齐。
+- [~] 覆盖重复与恢复；新增真实 WebSocket question request/response 测试，乱序、丢帧、snapshot/delta 竞争及多标签订阅测试待 Web client/真实浏览器阶段补齐。
 
 ### M1.2 对话 UI
 
