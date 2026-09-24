@@ -44,6 +44,7 @@ describe('workspace session isolation', () => {
     expect(archived.sessionId).toBe('session-b')
     expect(archived.messages).toEqual([])
     expect(archived.busy).toBe(false)
+    expect(archived.workspaces.find((workspace) => workspace.id === 'a')?.archived).toBe(true)
   })
 
   it('projects a newly created workspace session and switches away without stale transcript', () => {

@@ -1504,27 +1504,7 @@ impl Engine {
                     }
                 };
                 if let Some(session) = state.sessions.get(&session_id) {
-                    events.push(ServerMessage::SessionSnapshot {
-                        session_id,
-                        workspace_id: session.workspace_id,
-                        messages: session.messages.clone(),
-                        sequence: session.sequence,
-                        pending_approval: session.pending_approval.as_ref().map(|approval| {
-                            PendingApprovalSnapshot {
-                                request_id: approval.request_id,
-                                tool: approval.tool.clone(),
-                                summary: approval.summary.clone(),
-                                confirmations_required: approval.confirmations_required,
-                                confirmations: approval.confirmations,
-                            }
-                        }),
-                        pending_question: session.pending_question.map(|question_id| {
-                            QuestionSnapshot {
-                                question_id,
-                                prompt: session.pending_question_prompt.clone().unwrap_or_default(),
-                            }
-                        }),
-                    });
+                    events.push(Self::session_snapshot(session_id, session));
                 }
                 events
             }
@@ -1533,21 +1513,59 @@ impl Engine {
                     return vec![Self::error("workspace_unavailable", "工作区不存在")];
                 };
                 workspace.archived = true;
-                if state.active_workspace_id == Some(workspace_id) {
+                let switch_to_fallback = state.active_workspace_id == Some(workspace_id);
+                if switch_to_fallback {
                     state.active_workspace_id = state
                         .workspaces
                         .values()
                         .find(|candidate| !candidate.archived && candidate.id != workspace_id)
                         .map(|candidate| candidate.id);
                 }
-                let workspaces = state.workspaces.values().cloned().collect::<Vec<_>>();
-                vec![
-                    ServerMessage::WorkspaceArchived { workspace_id },
-                    ServerMessage::Workspaces {
-                        active_workspace_id: state.active_workspace_id.unwrap_or(Uuid::nil()),
+                let active_workspace_id = state.active_workspace_id;
+                let mut events = vec![ServerMessage::WorkspaceArchived { workspace_id }];
+                if let Some(active_workspace_id) = active_workspace_id {
+                    if switch_to_fallback {
+                        let session_id = match state
+                            .workspaces
+                            .get(&active_workspace_id)
+                            .and_then(|workspace| workspace.last_session_id)
+                        {
+                            Some(session_id) => session_id,
+                            None => {
+                                let session_id = Uuid::new_v4();
+                                state.sessions.insert(
+                                    session_id,
+                                    SessionState {
+                                        workspace_id: Some(active_workspace_id),
+                                        ..SessionState::default()
+                                    },
+                                );
+                                if let Some(workspace) =
+                                    state.workspaces.get_mut(&active_workspace_id)
+                                {
+                                    workspace.last_session_id = Some(session_id);
+                                    workspace.last_used_sequence =
+                                        workspace.last_used_sequence.saturating_add(1);
+                                }
+                                session_id
+                            }
+                        };
+                        events.push(ServerMessage::WorkspaceSwitched {
+                            workspace_id: active_workspace_id,
+                        });
+                        if let Some(session) = state.sessions.get(&session_id) {
+                            events.push(Self::session_snapshot(session_id, session));
+                        }
+                    }
+                    let mut workspaces = state.workspaces.values().cloned().collect::<Vec<_>>();
+                    workspaces
+                        .sort_by_key(|workspace| std::cmp::Reverse(workspace.last_used_sequence));
+                    events.push(ServerMessage::Workspaces {
+                        active_workspace_id,
                         workspaces,
-                    },
-                ]
+                    });
+                }
+                events
             }
             ClientMessage::Resume {
                 session_id,
@@ -1559,6 +1577,16 @@ impl Engine {
                 workspace_id,
                 ..
             } => match state.sessions.get(&session_id) {
+                Some(session)
+                    if session.workspace_id.is_some_and(|id| {
+                        state
+                            .workspaces
+                            .get(&id)
+                            .is_some_and(|workspace| workspace.archived)
+                    }) =>
+                {
+                    vec![Self::error("workspace_unavailable", "会话工作区已归档")]
+                }
                 Some(session) if workspace_id.is_none() || workspace_id == session.workspace_id => {
                     vec![ServerMessage::SessionSnapshot {
                         session_id,
@@ -1593,6 +1621,20 @@ impl Engine {
                 session_id,
                 prompt,
             } => {
+                let Some(workspace_id) = state
+                    .sessions
+                    .get(&session_id)
+                    .and_then(|session| session.workspace_id)
+                else {
+                    return vec![Self::error("session_not_found", "会话不存在")];
+                };
+                if state
+                    .workspaces
+                    .get(&workspace_id)
+                    .is_some_and(|workspace| workspace.archived)
+                {
+                    return vec![Self::error("workspace_unavailable", "会话工作区已归档")];
+                }
                 let Some(session) = state.sessions.get_mut(&session_id) else {
                     return vec![Self::error("session_not_found", "会话不存在")];
                 };
@@ -2080,6 +2122,20 @@ impl Engine {
                         "Git 操作或参数不在允许范围",
                     )];
                 }
+                let Some(workspace_id) = state
+                    .sessions
+                    .get(&session_id)
+                    .and_then(|session| session.workspace_id)
+                else {
+                    return vec![Self::error("session_not_found", "会话不存在")];
+                };
+                if state
+                    .workspaces
+                    .get(&workspace_id)
+                    .is_some_and(|workspace| workspace.archived)
+                {
+                    return vec![Self::error("workspace_unavailable", "会话工作区已归档")];
+                }
                 let Some(session) = state.sessions.get_mut(&session_id) else {
                     return vec![Self::error("session_not_found", "会话不存在")];
                 };
@@ -2112,6 +2168,20 @@ impl Engine {
                 session_id,
                 command,
             } => {
+                let Some(workspace_id) = state
+                    .sessions
+                    .get(&session_id)
+                    .and_then(|session| session.workspace_id)
+                else {
+                    return vec![Self::error("session_not_found", "会话不存在")];
+                };
+                if state
+                    .workspaces
+                    .get(&workspace_id)
+                    .is_some_and(|workspace| workspace.archived)
+                {
+                    return vec![Self::error("workspace_unavailable", "会话工作区已归档")];
+                }
                 let Some(session) = state.sessions.get_mut(&session_id) else {
                     return vec![Self::error("session_not_found", "会话不存在")];
                 };
@@ -2141,6 +2211,20 @@ impl Engine {
                 relative_path,
                 contents,
             } => {
+                let Some(workspace_id) = state
+                    .sessions
+                    .get(&session_id)
+                    .and_then(|session| session.workspace_id)
+                else {
+                    return vec![Self::error("session_not_found", "会话不存在")];
+                };
+                if state
+                    .workspaces
+                    .get(&workspace_id)
+                    .is_some_and(|workspace| workspace.archived)
+                {
+                    return vec![Self::error("workspace_unavailable", "会话工作区已归档")];
+                }
                 let Some(session) = state.sessions.get_mut(&session_id) else {
                     return vec![Self::error("session_not_found", "会话不存在")];
                 };
@@ -2546,6 +2630,30 @@ impl Engine {
         ]
     }
 
+    fn session_snapshot(session_id: Uuid, session: &SessionState) -> ServerMessage {
+        ServerMessage::SessionSnapshot {
+            session_id,
+            workspace_id: session.workspace_id,
+            messages: session.messages.clone(),
+            sequence: session.sequence,
+            pending_approval: session.pending_approval.as_ref().map(|approval| {
+                PendingApprovalSnapshot {
+                    request_id: approval.request_id,
+                    tool: approval.tool.clone(),
+                    summary: approval.summary.clone(),
+                    confirmations_required: approval.confirmations_required,
+                    confirmations: approval.confirmations,
+                }
+            }),
+            pending_question: session
+                .pending_question
+                .map(|question_id| QuestionSnapshot {
+                    question_id,
+                    prompt: session.pending_question_prompt.clone().unwrap_or_default(),
+                }),
+        }
+    }
+
     fn import_tui_session(root: &Path, session_id: &str) -> Vec<ServerMessage> {
         let session_root = root.join(session_id);
         let summary_path = session_root.join("summary.json");
@@ -2639,6 +2747,13 @@ impl Engine {
         let Some(session) = state.sessions.get_mut(&session_id) else {
             return vec![Self::error("session_not_found", "会话不存在")];
         };
+        if state
+            .workspaces
+            .get(&session.workspace_id.unwrap_or_default())
+            .is_some_and(|workspace| workspace.archived)
+        {
+            return vec![Self::error("workspace_unavailable", "会话工作区已归档")];
+        }
         let result = match &self.diff_adapter {
             Some(adapter) => {
                 if accept {
@@ -2751,13 +2866,14 @@ mod tests {
             })[0],
             ServerMessage::WorkspaceArchived { .. }
         ));
+        let resumed = engine.handle(ClientMessage::Resume {
+            client_msg_id: "resume".into(),
+            session_id,
+            workspace_id: None,
+        });
         assert!(matches!(
-            engine.handle(ClientMessage::Resume {
-                client_msg_id: "resume".into(),
-                session_id,
-                workspace_id: None
-            })[0],
-            ServerMessage::SessionSnapshot { .. }
+            &resumed[0],
+            ServerMessage::Error { code, .. } if code == "workspace_unavailable"
         ));
     }
 
