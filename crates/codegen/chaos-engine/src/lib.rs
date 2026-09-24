@@ -1,3 +1,4 @@
+use base64::Engine as Base64Engine;
 use rusqlite::OptionalExtension;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -141,12 +142,52 @@ impl GitAdapter for ProcessGitAdapter {
     }
 }
 
+struct AttachmentUpload {
+    #[allow(dead_code)]
+    session_id: Uuid,
+    #[allow(dead_code)]
+    filename: String,
+    #[allow(dead_code)]
+    content_type: String,
+    expected: u64,
+    chunks: Vec<Vec<u8>>,
+    received: u64,
+}
+
 pub struct AttachmentStager {
     root: Arc<PathBuf>,
     max_bytes: u64,
 }
 
 impl AttachmentStager {
+    pub fn validate_name_type_size(
+        filename: &str,
+        content_type: &str,
+        byte_len: u64,
+    ) -> Result<(), String> {
+        let allowed = [
+            (".txt", "text/plain"),
+            (".md", "text/markdown"),
+            (".json", "application/json"),
+            (".png", "image/png"),
+            (".jpg", "image/jpeg"),
+            (".jpeg", "image/jpeg"),
+            (".pdf", "application/pdf"),
+        ];
+        let valid_name = Path::new(filename)
+            .file_name()
+            .and_then(|name| name.to_str())
+            == Some(filename)
+            && !filename.is_empty();
+        let valid_type = allowed.iter().any(|(ext, mime)| {
+            filename.to_ascii_lowercase().ends_with(ext) && *mime == content_type
+        });
+        if !valid_name || !valid_type || byte_len == 0 || byte_len > 10 * 1024 * 1024 {
+            return Err("附件类型、名称或大小不符合允许策略".into());
+        }
+        Ok(())
+    }
+
     pub fn new(root: impl AsRef<Path>, max_bytes: u64) -> std::io::Result<Self> {
         let root = std::fs::canonicalize(root)?;
         std::fs::create_dir_all(root.join(".chaos-staging"))?;
@@ -172,20 +213,7 @@ impl AttachmentStager {
         if safe_name != filename || safe_name.is_empty() {
             return Err("attachment path escape rejected".into());
         }
-        let allowed = [
-            (".txt", "text/plain"),
-            (".md", "text/markdown"),
-            (".json", "application/json"),
-            (".png", "image/png"),
-            (".jpg", "image/jpeg"),
-            (".jpeg", "image/jpeg"),
-            (".pdf", "application/pdf"),
-        ];
-        if !allowed.iter().any(|(ext, mime)| {
-            safe_name.to_ascii_lowercase().ends_with(ext) && *mime == content_type
-        }) {
-            return Err("attachment type rejected".into());
-        }
+        Self::validate_name_type_size(safe_name, content_type, 1)?;
         let target = self
             .root
             .join(".chaos-staging")
@@ -383,6 +411,22 @@ pub enum ClientMessage {
         byte_len: u64,
         content_type: String,
     },
+    BeginAttachment {
+        client_msg_id: String,
+        session_id: Uuid,
+        filename: String,
+        content_type: String,
+        byte_len: u64,
+    },
+    AttachmentChunk {
+        client_msg_id: String,
+        upload_id: Uuid,
+        chunk: String,
+    },
+    CancelAttachment {
+        client_msg_id: String,
+        upload_id: Uuid,
+    },
     ValidateProvider {
         client_msg_id: String,
         base_url: String,
@@ -540,6 +584,24 @@ pub enum ServerMessage {
         filename: String,
         byte_len: u64,
         content_type: String,
+    },
+    AttachmentStarted {
+        session_id: Uuid,
+        upload_id: Uuid,
+        filename: String,
+    },
+    AttachmentProgress {
+        upload_id: Uuid,
+        received: u64,
+    },
+    AttachmentCompleted {
+        session_id: Uuid,
+        upload_id: Uuid,
+        path: String,
+        bytes: u64,
+    },
+    AttachmentCancelled {
+        upload_id: Uuid,
     },
     ProviderValidation {
         base_url: String,
@@ -852,6 +914,7 @@ pub struct Engine {
     diff_adapter: Option<Arc<dyn DiffAdapter>>,
     workspace: Option<Arc<WorkspaceAdapter>>,
     sqlite_store: Option<Arc<SqliteSessionStore>>,
+    attachments: Arc<Mutex<HashMap<Uuid, AttachmentUpload>>>,
     settings: Arc<Mutex<GuiSettings>>,
     terminal_adapter: Option<Arc<dyn TerminalAdapter>>,
     git_adapter: Option<Arc<dyn GitAdapter>>,
@@ -1037,6 +1100,7 @@ impl Engine {
             diff_adapter,
             workspace,
             sqlite_store,
+            attachments: Arc::new(Mutex::new(HashMap::new())),
             settings: Arc::new(Mutex::new(GuiSettings::default())),
             terminal_adapter: None,
             git_adapter: None,
@@ -1103,6 +1167,9 @@ impl Engine {
             | ClientMessage::UpdateSettings { client_msg_id, .. }
             | ClientMessage::GetGitStatus { client_msg_id }
             | ClientMessage::ValidateAttachment { client_msg_id, .. }
+            | ClientMessage::BeginAttachment { client_msg_id, .. }
+            | ClientMessage::AttachmentChunk { client_msg_id, .. }
+            | ClientMessage::CancelAttachment { client_msg_id, .. }
             | ClientMessage::ValidateProvider { client_msg_id, .. } => client_msg_id.clone(),
         };
         let mut state = self.state.lock().expect("engine state lock");
@@ -1386,6 +1453,92 @@ impl Engine {
                         content_type,
                     }]
                 }
+            }
+            ClientMessage::BeginAttachment {
+                client_msg_id,
+                session_id,
+                filename,
+                content_type,
+                byte_len,
+            } => {
+                if let Err(error) =
+                    AttachmentStager::validate_name_type_size(&filename, &content_type, byte_len)
+                {
+                    return vec![Self::error("attachment_rejected", &error)];
+                }
+                let upload_id = Uuid::new_v4();
+                self.attachments.lock().unwrap().insert(
+                    upload_id,
+                    AttachmentUpload {
+                        session_id,
+                        filename: filename.clone(),
+                        content_type,
+                        expected: byte_len,
+                        chunks: Vec::new(),
+                        received: 0,
+                    },
+                );
+                vec![
+                    ServerMessage::Ack { client_msg_id },
+                    ServerMessage::AttachmentStarted {
+                        session_id,
+                        upload_id,
+                        filename,
+                    },
+                ]
+            }
+            ClientMessage::AttachmentChunk {
+                client_msg_id,
+                upload_id,
+                chunk,
+            } => {
+                let bytes = match Base64Engine::decode(
+                    &base64::engine::general_purpose::STANDARD,
+                    chunk.as_bytes(),
+                ) {
+                    Ok(bytes) => bytes,
+                    Err(_) => {
+                        return vec![Self::error(
+                            "attachment_chunk_invalid",
+                            "附件分块不是有效 base64",
+                        )];
+                    }
+                };
+                let mut uploads = self.attachments.lock().unwrap();
+                let Some(upload) = uploads.get_mut(&upload_id) else {
+                    return vec![Self::error("attachment_not_found", "附件上传不存在")];
+                };
+                upload.received = upload.received.saturating_add(bytes.len() as u64);
+                if upload.received > upload.expected {
+                    uploads.remove(&upload_id);
+                    return vec![Self::error("attachment_quota_exceeded", "附件超过声明大小")];
+                }
+                upload.chunks.push(bytes);
+                vec![
+                    ServerMessage::Ack { client_msg_id },
+                    ServerMessage::AttachmentProgress {
+                        upload_id,
+                        received: upload.received,
+                    },
+                ]
+            }
+            ClientMessage::CancelAttachment {
+                client_msg_id,
+                upload_id,
+            } => {
+                let removed = self
+                    .attachments
+                    .lock()
+                    .unwrap()
+                    .remove(&upload_id)
+                    .is_some();
+                if !removed {
+                    return vec![Self::error("attachment_not_found", "附件上传不存在")];
+                }
+                vec![
+                    ServerMessage::Ack { client_msg_id },
+                    ServerMessage::AttachmentCancelled { upload_id },
+                ]
             }
             ClientMessage::GetSettings { .. } => {
                 let settings = self.settings.lock().expect("settings lock").clone();
