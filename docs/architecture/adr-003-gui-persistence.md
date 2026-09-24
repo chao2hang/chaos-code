@@ -14,5 +14,7 @@ configuration/secrets boundary.
 
 A session resume request is an explicit snapshot operation. On process restart,
 missing or corrupt storage returns a typed recovery error rather than silently
-creating a new session. TUI compatibility fixtures will be required before the
-persistent store is enabled.
+creating a new session. `CHAOS_WEB_SQLITE` now selects the canonical SQLite
+engine entry; `CHAOS_WEB_STATE` remains a transitional JSON fallback. TUI
+compatibility fixtures, multi-process/NFS coverage, and migration rollback are
+required before SQLite persistence is called production-complete.

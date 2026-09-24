@@ -363,7 +363,7 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 
 ### M2.5 数据持久化与迁移
 
-- [~] `CHAOS_WEB_STATE` 已接入真实 Web 入口，使用 engine 原子替换带 `schema_version` 的 JSON 快照并可跨进程恢复；新增 `SqliteSessionStore` canonical boundary：schema version、round-trip、newer-schema reject、journal policy 已有测试；Web engine 切换 SQLite、TUI fixture、多进程/NFS/迁移回滚仍须按 ADR-003 完成。（2026-09-24）
+- [~] `CHAOS_WEB_STATE` 保留为 transitional JSON；`CHAOS_WEB_SQLITE` 现正式选择 `SqliteSessionStore` Engine 入口，支持 schema reject/round-trip 和真实 Web sqlite entry 恢复测试；TUI fixture、多进程/NFS/迁移回滚仍须按 ADR-003 完成。（2026-09-24；`sqlite_entry_flow.rs`）
 - [ ] 保留 `$CHAOS_HOME`/`$GROK_HOME` 与旧目录兼容；路径变化必须提供一次性导入和回滚。
 - [~] 不宣称“无锁”：`SqliteSessionStore` 复用 `xai-sqlite-journal` 的 WAL/TRUNCATE 与 busy retry policy；NFS/多进程并发策略已有底层 journal 文档，但 GUI 真实并发 fixture 尚待补。
 - [ ] 用现有真实会话 fixture 验证 TUI→GUI 读取，以及 GUI 数据不破坏 TUI。

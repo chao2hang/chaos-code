@@ -13,14 +13,19 @@ async fn main() -> anyhow::Result<()> {
             std::env::var_os("CHAOS_AGENT_CWD").unwrap_or_else(|| ".".into()),
         )
     });
-    let engine = match workspace_root {
-        Some(root) => Engine::with_workspace_and_adapter(
+    let sqlite_path = std::env::var_os("CHAOS_WEB_SQLITE").map(std::path::PathBuf::from);
+    let engine = match (workspace_root, sqlite_path) {
+        (None, Some(path)) => Engine::with_sqlite_store(path)?,
+        (Some(_), Some(_)) => {
+            anyhow::bail!("CHAOS_WEB_SQLITE and CHAOS_WORKSPACE_ROOT cannot be used together")
+        }
+        (Some(root), None) => Engine::with_workspace_and_adapter(
             root,
             adapter.map(|value| {
                 std::sync::Arc::new(value) as std::sync::Arc<dyn chaos_engine::PromptAdapter>
             }),
         )?,
-        None => match std::env::var("CHAOS_WEB_STATE") {
+        (None, None) => match std::env::var("CHAOS_WEB_STATE") {
             Ok(path) => Engine::with_persistence_and_adapter(
                 path,
                 adapter.map(|value| {

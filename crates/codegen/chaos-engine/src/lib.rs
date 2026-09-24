@@ -562,6 +562,31 @@ impl SqliteSessionStore {
         Ok(())
     }
 
+    fn load_state(&self) -> rusqlite::Result<State> {
+        let mode = xai_sqlite_journal::JournalMode::for_db_path(self.path.as_path());
+        let conn = mode.open_readonly(self.path.as_path())?;
+        let payload: Option<String> = conn
+            .query_row(
+                "SELECT payload FROM gui_sessions ORDER BY rowid DESC LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+        match payload {
+            Some(payload) => {
+                let envelope: StateEnvelope = serde_json::from_str(&payload)
+                    .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
+                if envelope.schema_version != STATE_SCHEMA_VERSION {
+                    return Err(rusqlite::Error::InvalidParameterName(
+                        "unsupported GUI state schema".into(),
+                    ));
+                }
+                Ok(envelope.state)
+            }
+            None => Ok(State::default()),
+        }
+    }
+
     pub fn load(&self, session_id: Uuid) -> rusqlite::Result<Option<String>> {
         let mode = xai_sqlite_journal::JournalMode::for_db_path(self.path.as_path());
         let conn = mode.open_readonly(self.path.as_path())?;
@@ -583,6 +608,7 @@ pub struct Engine {
     tool_adapter: Option<Arc<dyn ToolAdapter>>,
     diff_adapter: Option<Arc<dyn DiffAdapter>>,
     workspace: Option<Arc<WorkspaceAdapter>>,
+    sqlite_store: Option<Arc<SqliteSessionStore>>,
     settings: Arc<Mutex<GuiSettings>>,
 }
 
@@ -595,7 +621,21 @@ struct GuiSettings {
 
 impl Engine {
     pub fn new() -> Self {
-        Self::with_state(State::default(), None, None, None, None, None)
+        Self::with_state(State::default(), None, None, None, None, None, None)
+    }
+
+    pub fn with_sqlite_store(path: impl AsRef<Path>) -> rusqlite::Result<Self> {
+        let store = Arc::new(SqliteSessionStore::open(path)?);
+        let state = store.load_state()?;
+        Ok(Self::with_state(
+            state,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(store),
+        ))
     }
 
     pub fn with_adapter(adapter: impl PromptAdapter + 'static) -> Self {
@@ -606,11 +646,20 @@ impl Engine {
             None,
             None,
             None,
+            None,
         )
     }
 
     pub fn with_adapter_arc(adapter: Arc<dyn PromptAdapter>) -> Self {
-        Self::with_state(State::default(), None, Some(adapter), None, None, None)
+        Self::with_state(
+            State::default(),
+            None,
+            Some(adapter),
+            None,
+            None,
+            None,
+            None,
+        )
     }
 
     pub fn with_tool_adapter(adapter: impl ToolAdapter + 'static) -> Self {
@@ -621,6 +670,7 @@ impl Engine {
             Some(Arc::new(adapter)),
             None,
             None,
+            None,
         )
     }
 
@@ -628,7 +678,7 @@ impl Engine {
         prompt: Option<Arc<dyn PromptAdapter>>,
         tool: Option<Arc<dyn ToolAdapter>>,
     ) -> Self {
-        Self::with_state(State::default(), None, prompt, tool, None, None)
+        Self::with_state(State::default(), None, prompt, tool, None, None, None)
     }
 
     pub fn with_diff_adapter(adapter: impl DiffAdapter + 'static) -> Self {
@@ -638,6 +688,7 @@ impl Engine {
             None,
             None,
             Some(Arc::new(adapter)),
+            None,
             None,
         )
     }
@@ -658,6 +709,7 @@ impl Engine {
             None,
             None,
             Some(workspace),
+            None,
         ))
     }
 
@@ -707,6 +759,7 @@ impl Engine {
             tool_adapter,
             diff_adapter,
             None,
+            None,
         ))
     }
 
@@ -717,6 +770,7 @@ impl Engine {
         tool_adapter: Option<Arc<dyn ToolAdapter>>,
         diff_adapter: Option<Arc<dyn DiffAdapter>>,
         workspace: Option<Arc<WorkspaceAdapter>>,
+        sqlite_store: Option<Arc<SqliteSessionStore>>,
     ) -> Self {
         let (events, _) = broadcast::channel(256);
         Self {
@@ -727,6 +781,7 @@ impl Engine {
             tool_adapter,
             diff_adapter,
             workspace,
+            sqlite_store,
             settings: Arc::new(Mutex::new(GuiSettings::default())),
         }
     }
@@ -736,6 +791,23 @@ impl Engine {
     }
 
     fn persist(&self, state: &State) -> Result<(), ServerMessage> {
+        if let Some(store) = &self.sqlite_store {
+            let payload = serde_json::to_string(&StateEnvelope {
+                schema_version: STATE_SCHEMA_VERSION,
+                state: state.clone(),
+            })
+            .map_err(|_| Self::error("persistence_failed", "无法编码会话状态"))?;
+            let session_id = state
+                .sessions
+                .keys()
+                .next()
+                .copied()
+                .unwrap_or_else(Uuid::nil);
+            store
+                .save(session_id, &payload)
+                .map_err(|_| Self::error("persistence_failed", "无法写入 SQLite 会话状态"))?;
+            return Ok(());
+        }
         let Some(path) = &self.store_path else {
             return Ok(());
         };
