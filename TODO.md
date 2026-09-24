@@ -386,10 +386,10 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 
 ### M3.1 设置与凭据
 
-- [ ] 基于 Chaos 实际配置 schema 生成/维护设置表单，不照搬不存在或无意义的 ZCode 配置。
+- [~] engine 已提供最小 settings envelope（Base URL/model），严格拒绝非 HTTPS 或含凭据 URL，并永不返回 API Key；完整 Chaos 配置 schema 表单仍待接入现有 config boundary。
 - [ ] 覆盖通用、外观、模型、Provider、权限、安全、快捷键、远程和更新。
-- [ ] API Key 使用经 M-1 选型的 OS keyring/加密方案；`xai-grok-secrets` 仅作为脱敏能力使用，除非其能力已扩展并测试。
-- [ ] 支持 Base URL、模型能力和连通性测试；测试请求有超时、取消和脱敏错误。
+- [ ] API Key 使用经 M-1 选型的 OS keyring/加密方案；本切片不接触或存储 API Key，完整凭据方案仍待维护线/安全 ADR。
+- [~] 已有 Base URL/model 更新校验和错误事件；provider 能力/连通性测试、超时/取消和脱敏网络错误待真实 provider adapter。
 - [ ] 配置变更定义即时生效或重启生效，并在 UI 明确提示；错误写入不得破坏旧配置。
 
 ### M3.2 MCP、插件与技能

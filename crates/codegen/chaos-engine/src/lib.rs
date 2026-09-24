@@ -129,6 +129,14 @@ pub enum ClientMessage {
         relative_path: String,
         contents: String,
     },
+    GetSettings {
+        client_msg_id: String,
+    },
+    UpdateSettings {
+        client_msg_id: String,
+        base_url: Option<String>,
+        model: Option<String>,
+    },
     AcceptDiff {
         client_msg_id: String,
         session_id: Uuid,
@@ -253,6 +261,15 @@ pub enum ServerMessage {
         session_id: Uuid,
         path: String,
         bytes: usize,
+    },
+    Settings {
+        base_url: Option<String>,
+        model: Option<String>,
+        has_api_key: bool,
+    },
+    SettingsUpdated {
+        base_url: Option<String>,
+        model: Option<String>,
     },
     Error {
         code: String,
@@ -447,6 +464,14 @@ pub struct Engine {
     tool_adapter: Option<Arc<dyn ToolAdapter>>,
     diff_adapter: Option<Arc<dyn DiffAdapter>>,
     workspace: Option<Arc<WorkspaceAdapter>>,
+    settings: Arc<Mutex<GuiSettings>>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct GuiSettings {
+    base_url: Option<String>,
+    model: Option<String>,
+    has_api_key: bool,
 }
 
 impl Engine {
@@ -583,6 +608,7 @@ impl Engine {
             tool_adapter,
             diff_adapter,
             workspace,
+            settings: Arc::new(Mutex::new(GuiSettings::default())),
         }
     }
 
@@ -622,7 +648,9 @@ impl Engine {
             | ClientMessage::ListFiles { client_msg_id, .. }
             | ClientMessage::ReadFile { client_msg_id, .. }
             | ClientMessage::SearchFiles { client_msg_id, .. }
-            | ClientMessage::ProposeFileWrite { client_msg_id, .. } => client_msg_id.clone(),
+            | ClientMessage::ProposeFileWrite { client_msg_id, .. }
+            | ClientMessage::GetSettings { client_msg_id }
+            | ClientMessage::UpdateSettings { client_msg_id, .. } => client_msg_id.clone(),
         };
         let mut state = self.state.lock().expect("engine state lock");
         if !state.seen_client_messages.insert(client_msg_id.clone()) {
@@ -829,6 +857,31 @@ impl Engine {
                     .unwrap_or_else(|error| vec![error]),
                 None => vec![Self::error("workspace_unavailable", "没有配置 workspace")],
             },
+            ClientMessage::GetSettings { .. } => {
+                let settings = self.settings.lock().expect("settings lock").clone();
+                vec![ServerMessage::Settings {
+                    base_url: settings.base_url,
+                    model: settings.model,
+                    has_api_key: settings.has_api_key,
+                }]
+            }
+            ClientMessage::UpdateSettings {
+                base_url, model, ..
+            } => {
+                if base_url
+                    .as_ref()
+                    .is_some_and(|url| url.contains('@') || !url.starts_with("https://"))
+                {
+                    return vec![Self::error(
+                        "invalid_base_url",
+                        "Base URL 必须是 https URL 且不能包含凭据",
+                    )];
+                }
+                let mut settings = self.settings.lock().expect("settings lock");
+                settings.base_url = base_url.clone();
+                settings.model = model.clone();
+                vec![ServerMessage::SettingsUpdated { base_url, model }]
+            }
             ClientMessage::ProposeFileWrite {
                 client_msg_id,
                 session_id,
@@ -1420,6 +1473,31 @@ mod tests {
             relative_path: "link.txt".into(),
         });
         assert!(matches!(&result[0], ServerMessage::Error { code, .. } if code == "path_escape"));
+    }
+
+    #[test]
+    fn settings_never_return_api_key_and_reject_unsafe_base_urls() {
+        let engine = Engine::new();
+        let updated = engine.handle(ClientMessage::UpdateSettings {
+            client_msg_id: "settings".into(),
+            base_url: Some("https://api.example.test/v1".into()),
+            model: Some("demo".into()),
+        });
+        assert!(matches!(updated[0], ServerMessage::SettingsUpdated { .. }));
+        let settings = engine.handle(ClientMessage::GetSettings {
+            client_msg_id: "get-settings".into(),
+        });
+        assert!(
+            matches!(&settings[0], ServerMessage::Settings { has_api_key: false, model, .. } if model.as_deref() == Some("demo"))
+        );
+        let unsafe_url = engine.handle(ClientMessage::UpdateSettings {
+            client_msg_id: "unsafe-settings".into(),
+            base_url: Some("http://user:pass@example.test".into()),
+            model: None,
+        });
+        assert!(
+            matches!(&unsafe_url[0], ServerMessage::Error { code, .. } if code == "invalid_base_url")
+        );
     }
 
     #[test]

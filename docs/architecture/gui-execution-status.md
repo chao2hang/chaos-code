@@ -26,6 +26,9 @@ require platform runners, external services, or a later milestone.
 - M2 JSON snapshot persistence now carries a schema version, rejects newer
   schemas, and backs up legacy raw snapshots before loading; SQLite migration
   remains the production persistence gate.
+- M3 settings seam exposes only non-secret Base URL/model fields, rejects unsafe
+  URLs, and reports `has_api_key` as a boolean; API key storage remains outside
+  the GUI protocol.
 - Axum loopback HTTP/WebSocket transport with bearer authorization, Origin
   checks, request-size limit, CSP, `nosniff`, and health endpoint.
 - Atomic JSON snapshot persistence used by the M0 engine.
