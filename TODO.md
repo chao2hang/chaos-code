@@ -190,9 +190,9 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 
 - [~] Tauri v2 spike：Desktop host boundary 已隔离且不引入 Tauri 依赖；真实 Tauri 三平台构建待环境依赖与独立 runner，不能以 host crate 通过替代。
 - [~] Axum + 静态资源嵌入：Axum loopback/WebSocket 已真实运行；静态资源嵌入、压缩、SPA fallback 待 M5。
-- [~] Rust→TS：M0 使用 serde JSON envelope 与协议文档；自动生成 TypeScript 类型/运行时校验待 M0.2 完成。
+- [x] Rust→TS：M0 使用 serde JSON envelope；`chaos-protocol-schema` 生成 TypeScript 类型并由 `scripts/ci/check-gui-protocol.sh` 执行漂移门禁，GUI CI 已运行；运行时 schema validation 仍待后续边界。（2026-09-24）
 - [ ] 验证候选 SSH 库的 SSH Agent、私钥口令、keyboard-interactive、ProxyJump/ProxyCommand 和端口转发能力。
-- [~] SQLite migration：M0 JSON transitional；`SqliteSessionStore` 已正式接入 Engine/Web，复用当前 `rusqlite`/`xai-sqlite-journal`，schema/损坏库/新版本/重启恢复测试通过；已核对 TUI 真实 session persistence 仍是 `xai-grok-shell` 的目录/summary actor，不与 GUI SQLite schema 直接兼容，需独立迁移 fixture；多进程/NFS/迁移回滚和 TUI fixture 仍待 M2 gate。（2026-09-24；`sqlite_entry_flow.rs`、`final-adversarial.log`）
+- [~] SQLite migration：M0 JSON transitional；`SqliteSessionStore` 已正式接入 Engine/Web，支持 schema/损坏库/新版本/重启恢复和旧 schema 备份升级；TUI 真实 `summary.json`/`updates.jsonl` 有只读 allowlisted import seam，但完整 ACP 更新转换、多进程/NFS/迁移中断回滚仍待 M2 gate。（2026-09-24；`sqlite_entry_flow.rs`、`tui_import.rs`）
 - [x] 新增依赖许可证/维护状态完成初步审查：GUI 仅复用 workspace 已声明 axum/tower/tower-http/serde/uuid/tokio 依赖，未新增第三方资产。（2026-09-24）
 
 **验收命令**：每个 spike 有独立 README、最小测试和 CI job；失败的候选不得写入正式架构。
@@ -237,7 +237,7 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 - [~] 按 `ADR-002` 的结论处理 headless：已新增 `chaos-engine::PromptAdapter` 和受显式路径控制的 `HeadlessProcessAdapter`，Web 可通过 `CHAOS_AGENT_BINARY` 接入真实 `chaos --headless --output-format json`；物理迁移 `headless.rs` 及其 ACP 胶水仍待独立回归批次，现有 CLI 行为未改。（2026-09-24；engine/Web adapter tests 通过）
 - [x] 创建 `xai-grok-desktop` 和 `xai-grok-web`，加入 workspace 末尾的分叉区段；Web 提供 loopback Axum health/handshake，Desktop 提供独立 host boundary。（2026-09-24；Rust check/test 与独立 `ci.yml` GUI job 已加入）
 - [x] 保证现有 `chaos` TUI/CLI 默认构建和行为不变；GUI crate 独立于 TUI binary，默认 workspace check 不引入 Tauri。（2026-09-24；GUI crate 独立 check 通过；完整 workspace 回归待 M0.6）
-- [ ] 回归验证 M-1.6 的隔离指标在真实 GUI crate 下依然成立（此前是最小 spike，此处是真实依赖树）：主 CI job 耗时无变化、默认构建不拉 Tauri 依赖。
+- [~] 真实 GUI crate 已通过独立 GUI CI、协议漂移、前端 typecheck/unit/build 和无 Tauri 依赖结构门禁；主 rust job 历史耗时对比与跨 runner 资源指标仍待 CI 维护者提供。（2026-09-24；`.github/workflows/ci.yml`、`check-gui-protocol.sh`）
 
 ### M0.2 最小协议
 
