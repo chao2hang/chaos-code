@@ -449,6 +449,10 @@ pub enum ClientMessage {
         base_url: String,
         model: String,
     },
+    ScanMarketplace {
+        client_msg_id: String,
+        root: String,
+    },
     AcceptDiff {
         client_msg_id: String,
         session_id: Uuid,
@@ -462,7 +466,7 @@ pub enum ClientMessage {
     },
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ServerMessage {
     Handshake {
@@ -636,6 +640,10 @@ pub enum ServerMessage {
         model: String,
         reachable: bool,
         error_code: Option<String>,
+    },
+    MarketplaceScan {
+        entries: Vec<xai_grok_plugin_marketplace::MarketplaceEntry>,
+        catalog_loaded: bool,
     },
     Error {
         code: String,
@@ -956,6 +964,7 @@ pub struct Engine {
     settings: Arc<Mutex<GuiSettings>>,
     terminal_adapter: Option<Arc<dyn TerminalAdapter>>,
     git_adapter: Option<Arc<dyn GitAdapter>>,
+    marketplace_roots: Arc<Vec<PathBuf>>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -1142,7 +1151,21 @@ impl Engine {
             settings: Arc::new(Mutex::new(GuiSettings::default())),
             terminal_adapter: None,
             git_adapter: None,
+            marketplace_roots: Arc::new(Vec::new()),
         }
+    }
+
+    pub fn with_marketplace_root(mut self, root: impl AsRef<Path>) -> std::io::Result<Self> {
+        let root = std::fs::canonicalize(root)?;
+        if !root.is_dir() {
+            return Err(std::io::Error::other("marketplace root is not a directory"));
+        }
+        let mut roots = (*self.marketplace_roots).clone();
+        if !roots.contains(&root) {
+            roots.push(root);
+        }
+        self.marketplace_roots = Arc::new(roots);
+        Ok(self)
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<ServerMessage> {
@@ -1212,7 +1235,8 @@ impl Engine {
             | ClientMessage::BeginAttachment { client_msg_id, .. }
             | ClientMessage::AttachmentChunk { client_msg_id, .. }
             | ClientMessage::CancelAttachment { client_msg_id, .. }
-            | ClientMessage::ValidateProvider { client_msg_id, .. } => client_msg_id.clone(),
+            | ClientMessage::ValidateProvider { client_msg_id, .. }
+            | ClientMessage::ScanMarketplace { client_msg_id, .. } => client_msg_id.clone(),
         };
         let mut state = self.state.lock().expect("engine state lock");
         if !state.seen_client_messages.insert(client_msg_id.clone()) {
@@ -1656,6 +1680,29 @@ impl Engine {
                     ServerMessage::Ack { client_msg_id },
                     ServerMessage::AttachmentCancelled { upload_id },
                 ]
+            }
+            ClientMessage::ScanMarketplace { root, .. } => {
+                let requested = std::fs::canonicalize(&root).ok();
+                let allowed = requested.as_ref().is_some_and(|requested| {
+                    self.marketplace_roots
+                        .iter()
+                        .any(|configured| requested == configured)
+                });
+                if !allowed {
+                    return vec![Self::error(
+                        "marketplace_root_not_allowed",
+                        "marketplace root is not configured",
+                    )];
+                }
+                let scan = xai_grok_plugin_marketplace::scan_marketplace(
+                    requested
+                        .as_deref()
+                        .expect("allowed marketplace root is canonical"),
+                );
+                vec![ServerMessage::MarketplaceScan {
+                    entries: scan.entries,
+                    catalog_loaded: scan.catalog_loaded,
+                }]
             }
             ClientMessage::GetSettings { .. } => {
                 let settings = self.settings.lock().expect("settings lock").clone();
@@ -2197,16 +2244,14 @@ mod tests {
                 .iter()
                 .any(|e| matches!(e, ServerMessage::TextDelta { sequence: 1, .. }))
         );
-        assert_eq!(
+        assert!(matches!(
             engine.handle(ClientMessage::Submit {
                 client_msg_id: "submit".into(),
                 session_id: id,
                 prompt: "重复".into()
-            }),
-            vec![ServerMessage::Ack {
-                client_msg_id: "submit".into()
-            }]
-        );
+            }).as_slice(),
+            [ServerMessage::Ack { client_msg_id }] if client_msg_id == "submit"
+        ));
         let snapshot = engine.handle(ClientMessage::Resume {
             client_msg_id: "resume".into(),
             session_id: id,
@@ -2240,15 +2285,10 @@ mod tests {
                 |e| matches!(e, ServerMessage::Audit { outcome, .. } if outcome == "accepted")
             )
         );
-        assert_eq!(
-            engine.handle(ClientMessage::Cancel {
-                client_msg_id: "x".into(),
-                session_id: id
-            }),
-            vec![ServerMessage::Ack {
-                client_msg_id: "x".into()
-            }]
-        );
+        assert!(matches!(
+            engine.handle(ClientMessage::Cancel { client_msg_id: "x".into(), session_id: id }).as_slice(),
+            [ServerMessage::Ack { client_msg_id }] if client_msg_id == "x"
+        ));
     }
     #[test]
     fn persistent_state_has_schema_and_rejects_newer_versions() {

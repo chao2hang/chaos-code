@@ -27,6 +27,7 @@ export type ClientMessage =
   | { type: 'get_git_status'; client_msg_id: string }
   | { type: 'validate_attachment'; client_msg_id: string; filename: string; byte_len: number; content_type: string }
   | { type: 'validate_provider'; client_msg_id: string; base_url: string; model: string }
+  | { type: 'scan_marketplace'; client_msg_id: string; root: string }
   | { type: 'accept_diff'; client_msg_id: string; session_id: UUID; proposal_id: string; summary: string }
   | { type: 'rollback_diff'; client_msg_id: string; session_id: UUID; proposal_id: string }
 
@@ -61,9 +62,11 @@ export type ServerMessage =
   | { type: 'git_status'; branch: string | null; entries: string[] }
   | { type: 'attachment_validated'; filename: string; byte_len: number; content_type: string }
   | { type: 'provider_validation'; base_url: string; model: string; reachable: boolean; error_code: string | null }
+  | { type: 'marketplace_scan'; entries: MarketplaceEntry[]; catalog_loaded: boolean }
   | { type: 'terminal_result'; session_id: UUID; output: string; exit_code: number }
   | { type: 'git_mutation_result'; session_id: UUID; operation: string; result: string }
   | { type: 'error'; code: string; message: string }
 
 export type TimelineMessage = { role: string; text: string }
 export type WorkspaceInfo = { id: UUID; name: string; archived: boolean; last_used_sequence: number }
+export type MarketplaceEntry = { name: string; version: string | null; description: string | null; category: string | null; author: string | null; tags: string[]; keywords: string[]; domains: string[]; homepage: string | null; relative_path: string; skill_count: number; has_hooks: boolean; has_agents: boolean; has_mcp: boolean; remote_url?: string; remote_ref?: string; remote_sha?: string; remote_subdir?: string; components?: unknown }

@@ -400,7 +400,7 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 
 ### M3.2 MCP、插件与技能
 
-- [~] MCP/插件/技能仍沿用现有 Rust crates，GUI 当前只保留 adapter/approval 边界，尚未宣称完整生态闭环；下一步需把列表、连接状态、来源校验和错误诊断映射到同一 engine audit/protocol。
+- [~] plugin marketplace 现已通过 `chaos-engine` 暴露只读 `ScanMarketplace` adapter，复用现有 catalog/scanner/path validation；扫描根目录必须由 host 显式配置，WebSocket 已覆盖允许/拒绝路径；危险安装/执行、来源权限、签名失败和 MCP 连接状态仍需 approval-gated adapter 与真实 registry/credential 环境。（2026-09-24；`crates/codegen/chaos-engine/tests/marketplace_scan.rs`、`crates/codegen/xai-grok-web/tests/marketplace_scan.rs`）
 - [ ] 安装或执行第三方扩展前显示来源和权限；覆盖恶意 manifest、路径穿越和签名/校验失败。
 
 ### M3.3 工作流与子代理

@@ -15,6 +15,7 @@ uuid.workspace = true
 walkdir = "2"
 rusqlite.workspace = true
 xai-sqlite-journal = { path = "../xai-sqlite-journal" }
+xai-grok-plugin-marketplace = { path = "../xai-grok-plugin-marketplace" }
 
 [dev-dependencies]
 tempfile.workspace = true

@@ -46,6 +46,10 @@ require platform runners, external services, or a later milestone.
 - M3 settings seam exposes only non-secret Base URL/model fields, rejects unsafe
   URLs, and reports `has_api_key` as a boolean; provider shape validation returns
   `network_not_attempted` without touching credentials or making network calls.
+- M3 marketplace discovery is read-only and reuses the existing catalog/scanner;
+  `Engine::with_marketplace_root` makes scan roots an explicit host allowlist, and
+  WebSocket coverage verifies discovery plus rejection of unconfigured roots.
+  Install/execute, MCP connection, signatures, and credentials remain open.
 - M4 typed capability and host-key boundary: strict or fingerprinted TOFU policy,
   detached Agent rejection, and explicit unsupported capabilities.
 - Web loopback HTTP/WebSocket transport with bearer authorization, Origin/Host
@@ -67,7 +71,7 @@ require platform runners, external services, or a later milestone.
 | Provider/config/secrets | Partial | Non-secret settings/provider shape validation; real provider/keyring tests remain open |
 | M1 hunk/workspace Diff | Partial | Adapter boundaries and tests; real `xai-hunk-tracker`/workspace mutation integration remains open |
 | M2 persistence/workspace | Partial | SQLite/JSON boundaries, workspace/Git/terminal/attachment safety; multi-workspace UI, PTY, NFS/multiprocess and full migration remain open |
-| M3 ecosystem | Open | MCP/plugin/skill/workflow/subagent integration tests |
+| M3 ecosystem | Partial | Read-only marketplace discovery and root allowlist are tested; MCP/plugin install/execute, skill/workflow/subagent integration and credential-backed connection tests remain open |
 | M4 remote | Partial | Typed capability/host-key boundary; clean Linux remote, SSH transport and forwarding remain open |
 | M5 release | Partial | GUI CI, signing preflight, fail-closed installers and policy fixtures; packaging/signing assets/SBOM/performance/manual acceptance remain open |
 | Maintenance P1 | Open | Real GitHub signing preflight, Windows runner, npm ownership and release asset verification |
