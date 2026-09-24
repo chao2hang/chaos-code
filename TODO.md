@@ -343,7 +343,7 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 
 - [~] 新增受 root confinement 保护的 `WorkspaceAdapter`，WebSocket 已支持 list/read/search 和“提议写入→审批→落盘”协议，越界/未审批写入被拒绝；后续接入现有 workspace RPC 的 range/get/put 能力，禁止复制业务协议。（2026-09-24；workspace engine/WebSocket tests）
 - [~] 已实现受限目录列表、文本读取和内容搜索（最多 100 个匹配、单文件 1 MiB）；增量文件树、模糊搜索和 `@` 文件候选待前端/M2 后续。
-- [~] 当前普通文本写入限制 1 MiB 并执行 root confinement；新增 attachment filename/content-type/10 MiB allowlist validator，真实上传分块/流式、取消、进度、清理和配额尚未实现。（2026-09-24；engine test）
+- [~] 当前普通文本写入限制 1 MiB 并执行 root confinement；新增 attachment filename/content-type/10 MiB allowlist validator 和 `.chaos-staging` 分块写入/失败清理 stager；真实 WebSocket 上传、取消、进度、配额和最终审批移动仍待补。（2026-09-24；`attachment-stager-test.log`）
 - [~] `WorkspaceAdapter` 对 root 和目标执行 canonicalization 并拒绝越界路径，WebSocket 已有真实越界测试；symlink escape、写入/删除和网络文件系统 fixture 待 M2 完整 adapter。
 - [ ] Web “外部编辑器打开”只在本机路径可解析且 handler 可用时显示；远程路径明确降级。
 

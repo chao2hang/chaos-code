@@ -51,6 +51,78 @@ pub trait GitAdapter: Send + Sync {
     fn checkout_branch(&self, branch: &str) -> Result<(), String>;
 }
 
+pub struct AttachmentStager {
+    root: Arc<PathBuf>,
+    max_bytes: u64,
+}
+
+impl AttachmentStager {
+    pub fn new(root: impl AsRef<Path>, max_bytes: u64) -> std::io::Result<Self> {
+        let root = std::fs::canonicalize(root)?;
+        std::fs::create_dir_all(root.join(".chaos-staging"))?;
+        Ok(Self {
+            root: Arc::new(root),
+            max_bytes,
+        })
+    }
+
+    pub fn stage_chunks<I>(
+        &self,
+        filename: &str,
+        content_type: &str,
+        chunks: I,
+    ) -> Result<PathBuf, String>
+    where
+        I: IntoIterator<Item = Result<Vec<u8>, String>>,
+    {
+        let safe_name = Path::new(filename)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| "attachment filename is invalid".to_string())?;
+        if safe_name != filename || safe_name.is_empty() {
+            return Err("attachment path escape rejected".into());
+        }
+        let allowed = [
+            (".txt", "text/plain"),
+            (".md", "text/markdown"),
+            (".json", "application/json"),
+            (".png", "image/png"),
+            (".jpg", "image/jpeg"),
+            (".jpeg", "image/jpeg"),
+            (".pdf", "application/pdf"),
+        ];
+        if !allowed.iter().any(|(ext, mime)| {
+            safe_name.to_ascii_lowercase().ends_with(ext) && *mime == content_type
+        }) {
+            return Err("attachment type rejected".into());
+        }
+        let target = self
+            .root
+            .join(".chaos-staging")
+            .join(format!("{safe_name}.part-{}", Uuid::new_v4()));
+        let mut file = std::fs::File::create(&target).map_err(|e| e.to_string())?;
+        let mut total = 0u64;
+        for chunk in chunks {
+            let chunk = chunk?;
+            total = total.saturating_add(chunk.len() as u64);
+            if total > self.max_bytes {
+                let _ = std::fs::remove_file(&target);
+                return Err("attachment exceeds size limit".into());
+            }
+            use std::io::Write;
+            file.write_all(&chunk).map_err(|e| {
+                let _ = std::fs::remove_file(&target);
+                e.to_string()
+            })?;
+        }
+        file.sync_all().map_err(|e| {
+            let _ = std::fs::remove_file(&target);
+            e.to_string()
+        })?;
+        Ok(target)
+    }
+}
+
 pub struct ProcessTerminalAdapter {
     cwd: PathBuf,
     max_output_bytes: usize,
@@ -2098,6 +2170,34 @@ mod tests {
                 Err("bad branch".into())
             }
         }
+    }
+
+    #[test]
+    fn attachment_stager_writes_chunks_and_cleans_failed_uploads() {
+        let directory = tempfile::tempdir().unwrap();
+        let stager = AttachmentStager::new(directory.path(), 8).unwrap();
+        let staged = stager
+            .stage_chunks(
+                "note.txt",
+                "text/plain",
+                vec![Ok(b"abc".to_vec()), Ok(b"def".to_vec())],
+            )
+            .unwrap();
+        assert_eq!(std::fs::read_to_string(&staged).unwrap(), "abcdef");
+        let rejected =
+            stager.stage_chunks("too.txt", "text/plain", vec![Ok(b"123456789".to_vec())]);
+        assert!(rejected.is_err());
+        assert_eq!(
+            std::fs::read_dir(directory.path().join(".chaos-staging"))
+                .unwrap()
+                .count(),
+            1
+        );
+        assert!(
+            stager
+                .stage_chunks("../escape.txt", "text/plain", vec![Ok(b"x".to_vec())])
+                .is_err()
+        );
     }
 
     #[test]

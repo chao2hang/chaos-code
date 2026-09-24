@@ -30,10 +30,11 @@ require platform runners, external services, or a later milestone.
   `SqliteSessionStore` boundary now uses the existing journal-mode policy and
   tests round-trip/newer-schema rejection; production engine wiring and full
   migration/concurrency gates remain open.
-- M2 attachment policy validates filename/content type/size before any upload,
-  and the workspace Git seam only runs fixed status arguments under the
-  canonical workspace root; fixed-cwd terminal and approval-gated Git mutation
-  adapters now have engine tests, while full upload/Git mutation/PTY remains gated.
+- M2 attachment policy validates filename/content type/size before any upload;
+  `AttachmentStager` now writes bounded chunks to a root-local staging directory
+  and cleans failed uploads. The workspace Git seam only runs fixed status
+  arguments under the canonical root; fixed-cwd terminal and approval-gated Git
+  mutation adapters have engine tests, while final upload/Git mutation/PTY remains gated.
 - M3 settings seam exposes only non-secret Base URL/model fields, rejects unsafe
   URLs, and reports `has_api_key` as a boolean; provider shape validation returns
   `network_not_attempted` without touching credentials or making network calls.
