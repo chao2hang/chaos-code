@@ -361,7 +361,7 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 当前状态：Git status 与 approval-gated stage/commit/checkout_branch adapter 边界已有 engine tests；真实 workspace mutation、stage/unstage/rollback 状态仍待接入。
 
 - [~] engine 已提供固定 `git -C <canonical-root>` status 和真实 `ProcessGitAdapter`：stage/unstage/commit/checkout_branch/discard 必须先审批，commit/checkout_branch/discard 还需第二次确认，WebSocket 临时 Git 仓库测试验证 stage 结果；仍未开放 push/pull、rollback 和冲突恢复。（2026-09-24；`git_real_flow.rs`、`git-real-flow.log`）
-- [~] commit、checkout_branch、discard 等破坏性 Git 操作现需两次独立审批；push、覆盖性 checkout、跨客户端二次确认 UI 仍待补。（2026-09-24；engine Git approval test）
+- [~] commit、checkout_branch、discard 等破坏性 Git 操作现需两次独立审批；WebSocket fixture 已在临时仓库确认第一次审批前 HEAD 不变、第二次后才提交；push、覆盖性 checkout 和浏览器确认 UI 仍待补。（2026-09-24；`git_confirmation_flow.rs`）
 - [ ] AI commit message 只是建议，提交前可编辑；失败不丢 staged state。
 - [~] 已补真实 fixture 覆盖非 Git 工作区、detached HEAD、缺失分支和无效 commit；失败不会丢 staged state。无 remote/认证失败需要远端或凭据环境，冲突恢复仍待 Git fixture。（2026-09-24；`crates/codegen/chaos-engine/tests/git_edges.rs`）
 

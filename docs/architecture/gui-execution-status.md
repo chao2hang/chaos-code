@@ -28,7 +28,9 @@ require platform runners, external services, or a later milestone.
   duplicate resolution rejection, missing-adapter failure, and two-client
   competition for one approval request. Resume snapshots now include pending
   approval/question data; a real WebSocket reconnect fixture resumes and
-  resolves a pending approval without losing or duplicating it.
+  resolves a pending approval without losing or duplicating it. Destructive Git
+  commit is tested through the real WebSocket flow: the first confirmation does
+  not move `HEAD`, and the second performs the commit.
 - M2 workspace boundary canonicalizes a configured root and supports bounded
   list/read/search/write requests; path escapes, symlink escapes and missing
   workspace adapters fail closed before browser-controlled paths reach I/O.
