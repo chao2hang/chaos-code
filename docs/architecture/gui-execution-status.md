@@ -25,7 +25,8 @@ require platform runners, external services, or a later milestone.
   preview, accept and rollback with disk assertions.
 - M1 interaction events include question request/response, tool progress/result,
   file change, usage and structured errors; WebSocket tests cover ordered events,
-  duplicate resolution rejection and missing-adapter failure.
+  duplicate resolution rejection, missing-adapter failure, and two-client
+  competition for one approval request.
 - M2 workspace boundary canonicalizes a configured root and supports bounded
   list/read/search/write requests; path escapes, symlink escapes and missing
   workspace adapters fail closed before browser-controlled paths reach I/O.
