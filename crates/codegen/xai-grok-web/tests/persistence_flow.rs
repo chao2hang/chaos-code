@@ -87,6 +87,7 @@ async fn websocket_resume_reads_snapshot_after_engine_restart() {
             serde_json::to_string(&ClientMessage::Resume {
                 client_msg_id: "resume".into(),
                 session_id,
+                workspace_id: None,
             })
             .unwrap()
             .into(),

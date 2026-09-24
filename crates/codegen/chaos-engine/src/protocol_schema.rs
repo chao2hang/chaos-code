@@ -9,10 +9,10 @@ export type ClientMessage =
   | { type: 'list_workspaces'; client_msg_id: string }
   | { type: 'archive_workspace'; client_msg_id: string; workspace_id: UUID }
   | { type: 'switch_workspace'; client_msg_id: string; workspace_id: UUID }
-  | { type: 'resume'; client_msg_id: string; session_id: UUID }
+  | { type: 'resume'; client_msg_id: string; session_id: UUID; workspace_id?: UUID }
   | { type: 'submit'; client_msg_id: string; session_id: UUID; prompt: string }
   | { type: 'cancel'; client_msg_id: string; session_id: UUID }
-  | { type: 'snapshot'; client_msg_id: string; session_id: UUID }
+  | { type: 'snapshot'; client_msg_id: string; session_id: UUID; workspace_id?: UUID }
   | { type: 'approve'; client_msg_id: string; request_id: UUID }
   | { type: 'reject'; client_msg_id: string; request_id: UUID; reason: string }
   | { type: 'respond_question'; client_msg_id: string; question_id: UUID; answer: string }

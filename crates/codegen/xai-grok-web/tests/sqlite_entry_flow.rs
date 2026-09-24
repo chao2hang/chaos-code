@@ -24,6 +24,7 @@ fn sqlite_engine_entry_restores_state_after_reopen() {
     let snapshot = second.handle(ClientMessage::Resume {
         client_msg_id: "resume".into(),
         session_id,
+        workspace_id: None,
     });
     assert!(
         matches!(&snapshot[0], ServerMessage::SessionSnapshot { messages, .. } if messages.iter().any(|message| message.text == "persist sqlite"))

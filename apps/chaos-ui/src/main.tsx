@@ -20,7 +20,7 @@ function App() {
     ws.onopen = () => {
       setSession((current) => ({ ...current, status: '已连接' }))
       send({ type: 'list_workspaces', client_msg_id: crypto.randomUUID() })
-      if (sessionRef.current) send({ type: 'resume', client_msg_id: crypto.randomUUID(), session_id: sessionRef.current })
+      if (sessionRef.current) send({ type: 'resume', client_msg_id: crypto.randomUUID(), session_id: sessionRef.current, workspace_id: session.activeWorkspaceId })
       else send({ type: 'create_session', client_msg_id: crypto.randomUUID(), workspace_id: null })
     }
     ws.onmessage = (event) => {

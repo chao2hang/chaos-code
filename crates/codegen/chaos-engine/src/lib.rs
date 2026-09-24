@@ -365,6 +365,8 @@ pub enum ClientMessage {
     Resume {
         client_msg_id: String,
         session_id: Uuid,
+        #[serde(default)]
+        workspace_id: Option<Uuid>,
     },
     Submit {
         client_msg_id: String,
@@ -378,6 +380,8 @@ pub enum ClientMessage {
     Snapshot {
         client_msg_id: String,
         session_id: Uuid,
+        #[serde(default)]
+        workspace_id: Option<Uuid>,
     },
     Approve {
         client_msg_id: String,
@@ -722,6 +726,8 @@ struct PendingApproval {
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 struct SessionState {
+    #[serde(default)]
+    workspace_id: Option<Uuid>,
     messages: Vec<TimelineMessage>,
     audit: Vec<AuditEntry>,
     sequence: u64,
@@ -1392,7 +1398,13 @@ impl Engine {
                     return vec![Self::error("workspace_unavailable", "工作区不存在或已归档")];
                 }
                 let id = Uuid::new_v4();
-                state.sessions.insert(id, SessionState::default());
+                state.sessions.insert(
+                    id,
+                    SessionState {
+                        workspace_id: Some(workspace_id),
+                        ..SessionState::default()
+                    },
+                );
                 vec![ServerMessage::SessionCreated {
                     session_id: id,
                     workspace_id,
@@ -1431,13 +1443,27 @@ impl Engine {
                 }
                 vec![ServerMessage::WorkspaceArchived { workspace_id }]
             }
-            ClientMessage::Resume { session_id, .. }
-            | ClientMessage::Snapshot { session_id, .. } => match state.sessions.get(&session_id) {
-                Some(session) => vec![ServerMessage::SessionSnapshot {
-                    session_id,
-                    messages: session.messages.clone(),
-                    sequence: session.sequence,
-                }],
+            ClientMessage::Resume {
+                session_id,
+                workspace_id,
+                ..
+            }
+            | ClientMessage::Snapshot {
+                session_id,
+                workspace_id,
+                ..
+            } => match state.sessions.get(&session_id) {
+                Some(session) if workspace_id.is_none() || workspace_id == session.workspace_id => {
+                    vec![ServerMessage::SessionSnapshot {
+                        session_id,
+                        messages: session.messages.clone(),
+                        sequence: session.sequence,
+                    }]
+                }
+                Some(_) => vec![Self::error(
+                    "workspace_session_mismatch",
+                    "会话不属于请求的工作区",
+                )],
                 None => vec![Self::error("session_not_found", "会话不存在")],
             },
             ClientMessage::Submit {
@@ -2604,7 +2630,8 @@ mod tests {
         assert!(matches!(
             engine.handle(ClientMessage::Resume {
                 client_msg_id: "resume".into(),
-                session_id
+                session_id,
+                workspace_id: None
             })[0],
             ServerMessage::SessionSnapshot { .. }
         ));
@@ -2642,6 +2669,7 @@ mod tests {
         let snapshot = engine.handle(ClientMessage::Resume {
             client_msg_id: "resume".into(),
             session_id: id,
+            workspace_id: None,
         });
         assert!(matches!(
             &snapshot[0],
@@ -2731,6 +2759,7 @@ mod tests {
         let snapshot = second.handle(ClientMessage::Resume {
             client_msg_id: "resume".into(),
             session_id: id,
+            workspace_id: None,
         });
         assert!(
             matches!(&snapshot[0], ServerMessage::SessionSnapshot { messages, .. } if messages[1].text.contains("持久化"))
