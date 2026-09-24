@@ -26,8 +26,10 @@ require platform runners, external services, or a later milestone.
   list/read/search requests; path escapes and missing workspace adapters fail
   closed before any browser-controlled path reaches filesystem I/O.
 - M2 JSON snapshot persistence now carries a schema version, rejects newer
-  schemas, and backs up legacy raw snapshots before loading; SQLite migration
-  remains the production persistence gate.
+  schemas, and backs up legacy raw snapshots before loading. A canonical
+  `SqliteSessionStore` boundary now uses the existing journal-mode policy and
+  tests round-trip/newer-schema rejection; production engine wiring and full
+  migration/concurrency gates remain open.
 - M2 attachment policy validates filename/content type/size before any upload,
   and the workspace Git seam only runs fixed status arguments under the
   canonical workspace root; full upload/Git mutation remains gated.

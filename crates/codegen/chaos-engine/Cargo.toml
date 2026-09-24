@@ -12,6 +12,8 @@ tokio = { workspace = true, features = ["sync"] }
 tracing.workspace = true
 uuid.workspace = true
 walkdir = "2"
+rusqlite.workspace = true
+xai-sqlite-journal = { path = "../xai-sqlite-journal" }
 
 [dev-dependencies]
 tempfile.workspace = true

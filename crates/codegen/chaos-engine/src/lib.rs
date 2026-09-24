@@ -1,3 +1,4 @@
+use rusqlite::OptionalExtension;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
@@ -11,6 +12,7 @@ pub mod remote;
 
 pub const PROTOCOL_VERSION: u16 = 1;
 pub const STATE_SCHEMA_VERSION: u16 = 1;
+const SQLITE_SCHEMA_VERSION: u16 = 1;
 const DELTA_SIZE: usize = 8;
 
 /// Boundary for connecting the GUI session state to a real Agent runtime.
@@ -512,6 +514,63 @@ impl WorkspaceAdapter {
             }
         }
         Ok(matches)
+    }
+}
+
+#[derive(Clone)]
+pub struct SqliteSessionStore {
+    path: Arc<PathBuf>,
+}
+
+impl SqliteSessionStore {
+    pub fn open(path: impl AsRef<Path>) -> rusqlite::Result<Self> {
+        let path = path.as_ref().to_path_buf();
+        let mode = xai_sqlite_journal::JournalMode::for_db_path(&path);
+        let conn = mode.open(&path)?;
+        conn.execute_batch("CREATE TABLE IF NOT EXISTS gui_meta (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL); CREATE TABLE IF NOT EXISTS gui_sessions (id TEXT PRIMARY KEY NOT NULL, payload TEXT NOT NULL);")?;
+        let current: Option<u16> = conn
+            .query_row(
+                "SELECT value FROM gui_meta WHERE key = 'schema_version'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+            .map(|v| v.parse().unwrap_or(0));
+        match current {
+            Some(version) if version > SQLITE_SCHEMA_VERSION => {
+                return Err(rusqlite::Error::InvalidParameterName(
+                    "newer GUI schema".into(),
+                ));
+            }
+            Some(_) => {}
+            None => {
+                conn.execute(
+                    "INSERT INTO gui_meta(key,value) VALUES('schema_version', ?1)",
+                    [SQLITE_SCHEMA_VERSION.to_string()],
+                )?;
+            }
+        }
+        Ok(Self {
+            path: Arc::new(path),
+        })
+    }
+
+    pub fn save(&self, session_id: Uuid, payload: &str) -> rusqlite::Result<()> {
+        let mode = xai_sqlite_journal::JournalMode::for_db_path(self.path.as_path());
+        let conn = mode.open(self.path.as_path())?;
+        conn.execute("INSERT INTO gui_sessions(id,payload) VALUES(?1,?2) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload", rusqlite::params![session_id.to_string(), payload])?;
+        Ok(())
+    }
+
+    pub fn load(&self, session_id: Uuid) -> rusqlite::Result<Option<String>> {
+        let mode = xai_sqlite_journal::JournalMode::for_db_path(self.path.as_path());
+        let conn = mode.open_readonly(self.path.as_path())?;
+        conn.query_row(
+            "SELECT payload FROM gui_sessions WHERE id = ?1",
+            [session_id.to_string()],
+            |row| row.get(0),
+        )
+        .optional()
     }
 }
 
@@ -1674,6 +1733,24 @@ mod tests {
             relative_path: "link.txt".into(),
         });
         assert!(matches!(&result[0], ServerMessage::Error { code, .. } if code == "path_escape"));
+    }
+
+    #[test]
+    fn sqlite_store_round_trips_and_rejects_newer_schema() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("gui.db");
+        let store = SqliteSessionStore::open(&path).unwrap();
+        let session = Uuid::new_v4();
+        store.save(session, "snapshot").unwrap();
+        assert_eq!(store.load(session).unwrap().as_deref(), Some("snapshot"));
+        let connection = rusqlite::Connection::open(&path).unwrap();
+        connection
+            .execute(
+                "UPDATE gui_meta SET value = '99' WHERE key = 'schema_version'",
+                [],
+            )
+            .unwrap();
+        assert!(SqliteSessionStore::open(&path).is_err());
     }
 
     #[test]

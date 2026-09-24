@@ -363,9 +363,9 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 
 ### M2.5 数据持久化与迁移
 
-- [~] `CHAOS_WEB_STATE` 已接入真实 Web 入口，使用 engine 原子替换带 `schema_version` 的 JSON 快照并可跨进程恢复；未知新版本拒绝、legacy raw snapshot 自动备份后加载已有 engine 测试；正式 SQLite migration、备份恢复和 TUI fixture 仍须按 ADR-003 实现。
+- [~] `CHAOS_WEB_STATE` 已接入真实 Web 入口，使用 engine 原子替换带 `schema_version` 的 JSON 快照并可跨进程恢复；新增 `SqliteSessionStore` canonical boundary：schema version、round-trip、newer-schema reject、journal policy 已有测试；Web engine 切换 SQLite、TUI fixture、多进程/NFS/迁移回滚仍须按 ADR-003 完成。（2026-09-24）
 - [ ] 保留 `$CHAOS_HOME`/`$GROK_HOME` 与旧目录兼容；路径变化必须提供一次性导入和回滚。
-- [ ] 不宣称“无锁”；明确 SQLite busy timeout、WAL/TRUNCATE、NFS 和多进程并发策略。
+- [~] 不宣称“无锁”：`SqliteSessionStore` 复用 `xai-sqlite-journal` 的 WAL/TRUNCATE 与 busy retry policy；NFS/多进程并发策略已有底层 journal 文档，但 GUI 真实并发 fixture 尚待补。
 - [ ] 用现有真实会话 fixture 验证 TUI→GUI 读取，以及 GUI 数据不破坏 TUI。
 - [ ] 模拟迁移中断、磁盘满、损坏 DB 和旧版本回退。
 
@@ -374,7 +374,7 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 - [ ] E2E：两个工作区间切换，布局、标签页、草稿和会话不串位，重启后恢复。
 - [ ] E2E：终端创建文件，文件树实时更新；搜索、打开、编辑和 Git Diff 状态一致。
 - [ ] E2E：附件上传成功、取消、超限、危险类型拒绝和自动清理。
-- [ ] 在本地文件系统与可用的网络文件系统 fixture 上执行数据库并发测试。
+- [~] `SqliteSessionStore` 本地 round-trip/schema reject/既有 journal policy 测试已通过；多进程、网络文件系统 fixture、busy retry 和迁移中断测试仍待真实 filesystem fixture。
 - [ ] 桌面宽屏和 Web 窄视口均验证布局；所有共享状态页面执行回归导航。
 
 ---
