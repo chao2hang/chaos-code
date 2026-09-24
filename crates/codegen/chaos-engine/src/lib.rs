@@ -1347,6 +1347,25 @@ mod tests {
         assert!(rolled_back.iter().any(|event| matches!(event, ServerMessage::DiffResolved { action, .. } if action == "rollback_diff")));
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn workspace_symlink_escape_is_rejected() {
+        let directory = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(outside.path().join("secret.txt"), "secret").unwrap();
+        std::os::unix::fs::symlink(
+            outside.path().join("secret.txt"),
+            directory.path().join("link.txt"),
+        )
+        .unwrap();
+        let engine = Engine::with_workspace(directory.path()).unwrap();
+        let result = engine.handle(ClientMessage::ReadFile {
+            client_msg_id: "symlink".into(),
+            relative_path: "link.txt".into(),
+        });
+        assert!(matches!(&result[0], ServerMessage::Error { code, .. } if code == "path_escape"));
+    }
+
     #[test]
     fn workspace_root_confinement_rejects_escape_and_reads_files() {
         let directory = tempfile::tempdir().unwrap();
