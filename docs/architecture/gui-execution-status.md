@@ -37,9 +37,11 @@ require platform runners, external services, or a later milestone.
   workspace adapters fail closed before browser-controlled paths reach I/O.
   Workspace registry has engine create/switch/archive/recent tests, session
   state persists its workspace binding, Resume/Snapshot reject cross-workspace
-  requests, and snapshots return the bound workspace ID; React now renders real
-  list/switch/archive events and includes the active workspace in resume. Full
-  multi-workspace UI/layout isolation remains open.
+  requests, and snapshots return the bound workspace ID. Each workspace records
+  its recent session; React clears the previous transcript, approvals, questions
+  and busy state on switch, selects that workspace's session, and restores its
+  snapshot. Reducer tests cover workspace-local session selection and empty-
+  workspace handling. Full tabs/layout isolation and Desktop flow remain open.
 - M2 attachment policy validates filename/content type/size; `AttachmentStager`
   writes bounded chunks into a root-local staging directory and cleans failures.
   Engine/Web attachment protocol covers begin/chunk/progress/cancel/quota and

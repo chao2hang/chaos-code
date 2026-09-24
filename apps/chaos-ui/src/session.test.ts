@@ -23,12 +23,38 @@ describe('session event projection', () => {
   })
 
   it('projects workspace list, switch, and archive events', () => {
-    let state = applyServerMessage(initialSessionState, { type: 'workspaces', active_workspace_id: 'w1', workspaces: [{ id: 'w1', name: '默认工作区', archived: false, last_used_sequence: 1 }, { id: 'w2', name: '项目', archived: false, last_used_sequence: 2 }] })
+    let state = applyServerMessage(initialSessionState, { type: 'workspaces', active_workspace_id: 'w1', workspaces: [{ id: 'w1', name: '默认工作区', archived: false, last_used_sequence: 1, last_session_id: null }, { id: 'w2', name: '项目', archived: false, last_used_sequence: 2, last_session_id: null }] })
     expect(state.workspaces).toHaveLength(2)
     state = applyServerMessage(state, { type: 'workspace_switched', workspace_id: 'w2' })
     expect(state.activeWorkspaceId).toBe('w2')
     state = applyServerMessage(state, { type: 'workspace_archived', workspace_id: 'w1' })
     expect(state.workspaces.find((workspace) => workspace.id === 'w1')?.archived).toBe(true)
+  })
+
+  it('isolates transcript and session selection when switching workspaces', () => {
+    let state = applyServerMessage(initialSessionState, { type: 'session_created', session_id: 'session-a', workspace_id: 'workspace-a' })
+    state = applyServerMessage(state, { type: 'text_delta', session_id: 'session-a', text: 'A transcript', sequence: 1 })
+    state = applyServerMessage(state, { type: 'session_created', session_id: 'session-b', workspace_id: 'workspace-b' })
+    state = applyServerMessage(state, { type: 'text_delta', session_id: 'session-b', text: 'B transcript', sequence: 1 })
+    state = applyServerMessage(state, { type: 'workspaces', active_workspace_id: 'workspace-b', workspaces: [
+      { id: 'workspace-a', name: 'A', archived: false, last_used_sequence: 1, last_session_id: 'session-a' },
+      { id: 'workspace-b', name: 'B', archived: false, last_used_sequence: 2, last_session_id: 'session-b' },
+    ] })
+    state = applyServerMessage(state, { type: 'workspace_switched', workspace_id: 'workspace-a' })
+    expect(state.activeWorkspaceId).toBe('workspace-a')
+    expect(state.sessionId).toBe('session-a')
+    expect(state.messages).toEqual([])
+    state = applyServerMessage(state, { type: 'session_snapshot', session_id: 'session-a', workspace_id: 'workspace-a', sequence: 1, pending_approval: null, pending_question: null, messages: [{ role: 'assistant', text: 'A transcript' }] })
+    expect(state.messages).toEqual([{ role: 'assistant', text: 'A transcript' }])
+    expect(state.sessionId).toBe('session-a')
+    expect(state.workspaceSessions).toEqual({ 'workspace-a': 'session-a', 'workspace-b': 'session-b' })
+    state = applyServerMessage(state, { type: 'workspaces', active_workspace_id: 'workspace-b', workspaces: [
+      { id: 'workspace-a', name: 'A', archived: false, last_used_sequence: 1, last_session_id: 'session-a' },
+      { id: 'workspace-b', name: 'B', archived: false, last_used_sequence: 2, last_session_id: 'session-b' },
+    ] })
+    expect(state.activeWorkspaceId).toBe('workspace-b')
+    expect(state.sessionId).toBe('session-b')
+    expect(state.messages).toEqual([])
   })
 
   it('uses snapshot as the reconnect source of truth', () => {

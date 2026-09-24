@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { applyServerMessage, initialSessionState, type Approval, type Message, type Question, type ServerMessage } from './session'
+import { selectWorkspaceSession } from './workspace-ui'
 import './style.css'
 
 function App() {
   const [session, setSession] = useState(initialSessionState)
   const [prompt, setPrompt] = useState('')
   const socket = useRef<WebSocket | null>(null)
-  const sessionRef = useRef<string | undefined>(undefined)
   const reconnectTimer = useRef<number | undefined>(undefined)
 
   const send = useCallback((message: object) => {
@@ -21,16 +21,12 @@ function App() {
     ws.onopen = () => {
       setSession((current) => ({ ...current, status: '已连接' }))
       send({ type: 'list_workspaces', client_msg_id: crypto.randomUUID() })
-      if (sessionRef.current) send({ type: 'resume', client_msg_id: crypto.randomUUID(), session_id: sessionRef.current, workspace_id: session.activeWorkspaceId })
+      if (session.sessionId && session.activeWorkspaceId) send({ type: 'resume', client_msg_id: crypto.randomUUID(), session_id: session.sessionId, workspace_id: session.activeWorkspaceId })
       else send({ type: 'create_session', client_msg_id: crypto.randomUUID(), workspace_id: null })
     }
     ws.onmessage = (event) => {
       const message = JSON.parse(event.data) as ServerMessage
-      setSession((current) => {
-        const next = applyServerMessage(current, message)
-        if (next.sessionId) sessionRef.current = next.sessionId
-        return next
-      })
+      setSession((current) => applyServerMessage(current, message))
     }
     ws.onerror = () => setSession((current) => ({ ...current, status: '连接错误' }))
     ws.onclose = () => { setSession((current) => ({ ...current, status: '连接断开，正在重连' })); reconnectTimer.current = window.setTimeout(connect, 500) }
@@ -39,7 +35,10 @@ function App() {
   useEffect(() => { connect(); return () => { if (reconnectTimer.current) window.clearTimeout(reconnectTimer.current); socket.current?.close() } }, [connect])
 
   function createWorkspace() { const name = window.prompt('工作区名称')?.trim(); if (name) send({ type: 'create_workspace', client_msg_id: crypto.randomUUID(), name }) }
-  function switchWorkspace(workspaceId: string) { send({ type: 'switch_workspace', client_msg_id: crypto.randomUUID(), workspace_id: workspaceId }) }
+  function switchWorkspace(workspaceId: string) {
+    setSession((current) => selectWorkspaceSession(current, workspaceId))
+    send({ type: 'switch_workspace', client_msg_id: crypto.randomUUID(), workspace_id: workspaceId })
+  }
   function archiveWorkspace(workspaceId: string) { send({ type: 'archive_workspace', client_msg_id: crypto.randomUUID(), workspace_id: workspaceId }) }
 
   function submit() {

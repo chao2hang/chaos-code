@@ -337,7 +337,7 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 
 当前状态：engine 已提供 workspace registry 的创建/切换/归档/最近使用协议；完整多工作区 UI、布局和 desktop 状态隔离仍待前端/桌面实现。
 
-- [~] engine 已实现 workspace 创建/切换/归档/最近使用协议与真实 state 测试；session 现持久化 workspace_id，Resume/Snapshot 拒绝错误 workspace，React resume 会携带活动 workspace；完整多会话 UI、布局和 Desktop 状态隔离仍待后续。（2026-09-24；`workspace_session.rs`、`session.test.ts`）
+- [~] engine 已实现 workspace 创建/切换/归档/最近使用协议，记录每个 workspace 最近 session 并在切换时发该会话 snapshot；session 持久化 workspace_id，Resume/Snapshot 拒绝错误 workspace；React 按 workspace 缓存 session、切换时清理旧 transcript 再恢复对应快照，reducer isolation 测试通过；完整多标签/布局和 Desktop 状态隔离仍待后续。（2026-09-24；`workspace_session.rs`、`workspace-ui.test.ts`）
 - [ ] 实现标签页、分屏、尺寸和主题持久化；定义损坏布局的安全回退。
 - [~] workspace registry 具备独立 workspace IDs；session cancellation/resource key、文件锁和 Git 锁的多工作区并发测试仍待真实 UI/desktop adapter。
 
@@ -375,7 +375,7 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 
 ### M2.6 验收门禁
 
-- [~] engine/Web 已验证 session workspace 绑定、错误 workspace Resume/Snapshot 拒绝、snapshot 返回 workspace_id 和重启后绑定恢复；布局、标签页、草稿、多工作区 UI 和 Desktop transport 仍待平台验收。（2026-09-24；`workspace_session.rs`）
+- [~] engine/Web/React 已验证 session workspace 绑定、错误 workspace Resume/Snapshot 拒绝、snapshot 返回 workspace_id、重启后绑定恢复以及 workspace 切换时 transcript/审批/question/busy 状态隔离并恢复各自 session；布局、标签页、草稿、多工作区人工 UI 和 Desktop transport 仍待平台验收。（2026-09-24；`workspace_session.rs`、`workspace-ui.test.ts`）
 - [ ] E2E：终端创建文件，文件树实时更新；搜索、打开、编辑和 Git Diff 状态一致。
 - [~] engine `AttachmentStager` 已覆盖分块写入、10 MiB/类型/路径策略和失败清理；真实 WebSocket 上传、取消/进度与最终 staging-to-workspace 审批移动均有测试，上传后未批准不会写入 workspace。（2026-09-24；`attachment_flow.rs`）
 - [~] `SqliteSessionStore` 本地 round-trip/schema reject/既有 journal policy 测试已通过；多进程、网络文件系统 fixture、busy retry 和迁移中断测试仍待真实 filesystem fixture。

@@ -707,6 +707,8 @@ pub struct WorkspaceInfo {
     pub name: String,
     pub archived: bool,
     pub last_used_sequence: u64,
+    #[serde(default)]
+    pub last_session_id: Option<Uuid>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -1386,6 +1388,7 @@ impl Engine {
                         name,
                         archived: false,
                         last_used_sequence: 0,
+                        last_session_id: None,
                     },
                 );
                 state.active_workspace_id = Some(id);
@@ -1404,6 +1407,7 @@ impl Engine {
                                     name: "默认工作区".into(),
                                     archived: false,
                                     last_used_sequence: 0,
+                                    last_session_id: None,
                                 },
                             );
                             state.active_workspace_id = Some(id);
@@ -1425,6 +1429,10 @@ impl Engine {
                         ..SessionState::default()
                     },
                 );
+                if let Some(workspace) = state.workspaces.get_mut(&workspace_id) {
+                    workspace.last_session_id = Some(id);
+                    workspace.last_used_sequence = workspace.last_used_sequence.saturating_add(1);
+                }
                 vec![ServerMessage::SessionCreated {
                     session_id: id,
                     workspace_id,
@@ -1447,7 +1455,40 @@ impl Engine {
                     return vec![Self::error("workspace_unavailable", "工作区不存在或已归档")];
                 }
                 state.active_workspace_id = Some(workspace_id);
-                vec![ServerMessage::WorkspaceSwitched { workspace_id }]
+                let session_id = state
+                    .workspaces
+                    .get(&workspace_id)
+                    .and_then(|workspace| workspace.last_session_id);
+                let mut events = vec![ServerMessage::WorkspaceSwitched { workspace_id }];
+                if let Some(session_id) = session_id {
+                    if let Some(session) = state.sessions.get(&session_id) {
+                        events.push(ServerMessage::SessionSnapshot {
+                            session_id,
+                            workspace_id: session.workspace_id,
+                            messages: session.messages.clone(),
+                            sequence: session.sequence,
+                            pending_approval: session.pending_approval.as_ref().map(|approval| {
+                                PendingApprovalSnapshot {
+                                    request_id: approval.request_id,
+                                    tool: approval.tool.clone(),
+                                    summary: approval.summary.clone(),
+                                    confirmations_required: approval.confirmations_required,
+                                    confirmations: approval.confirmations,
+                                }
+                            }),
+                            pending_question: session.pending_question.map(|question_id| {
+                                QuestionSnapshot {
+                                    question_id,
+                                    prompt: session
+                                        .pending_question_prompt
+                                        .clone()
+                                        .unwrap_or_default(),
+                                }
+                            }),
+                        });
+                    }
+                }
+                events
             }
             ClientMessage::ArchiveWorkspace { workspace_id, .. } => {
                 let Some(workspace) = state.workspaces.get_mut(&workspace_id) else {

@@ -77,5 +77,5 @@ export type DiffPreview = { proposal_id: string; path: string; before: string | 
 export type PendingApprovalSnapshot = { request_id: UUID; tool: string; summary: string; confirmations_required: number; confirmations: number }
 export type QuestionSnapshot = { question_id: UUID; prompt: string }
 export type TimelineMessage = { role: string; text: string }
-export type WorkspaceInfo = { id: UUID; name: string; archived: boolean; last_used_sequence: number }
+export type WorkspaceInfo = { id: UUID; name: string; archived: boolean; last_used_sequence: number; last_session_id: UUID | null }
 export type MarketplaceEntry = { name: string; version: string | null; description: string | null; category: string | null; author: string | null; tags: string[]; keywords: string[]; domains: string[]; homepage: string | null; relative_path: string; skill_count: number; has_hooks: boolean; has_agents: boolean; has_mcp: boolean; remote_url?: string; remote_ref?: string; remote_sha?: string; remote_subdir?: string; components?: unknown }
