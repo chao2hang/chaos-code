@@ -1392,7 +1392,25 @@ impl Engine {
                     },
                 );
                 state.active_workspace_id = Some(id);
-                let mut events = vec![ServerMessage::WorkspaceSwitched { workspace_id: id }];
+                let session_id = Uuid::new_v4();
+                state.sessions.insert(
+                    session_id,
+                    SessionState {
+                        workspace_id: Some(id),
+                        ..SessionState::default()
+                    },
+                );
+                if let Some(workspace) = state.workspaces.get_mut(&id) {
+                    workspace.last_session_id = Some(session_id);
+                    workspace.last_used_sequence = 1;
+                }
+                let mut events = vec![
+                    ServerMessage::WorkspaceSwitched { workspace_id: id },
+                    ServerMessage::SessionCreated {
+                        session_id,
+                        workspace_id: id,
+                    },
+                ];
                 let workspaces = state.workspaces.values().cloned().collect::<Vec<_>>();
                 events.push(ServerMessage::Workspaces {
                     active_workspace_id: id,

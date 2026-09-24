@@ -3,11 +3,13 @@ import { createRoot } from 'react-dom/client'
 import { applyServerMessage, initialSessionState, workspaceReconnectMessage, type Approval, type Message, type Question, type ServerMessage } from './session'
 import { selectWorkspaceSession } from './workspace-ui'
 import { webSocketUrl } from './transport'
+import { initialComposerHistory, navigatePromptHistory, recordPrompt, shouldSubmitOnKey } from './composer'
 import './style.css'
 
 function App() {
   const [session, setSession] = useState(initialSessionState)
   const [prompt, setPrompt] = useState('')
+  const [promptHistory, setPromptHistory] = useState(initialComposerHistory)
   const socket = useRef<WebSocket | null>(null)
   const sessionStateRef = useRef(session)
   const reconnectTimer = useRef<number | undefined>(undefined)
@@ -46,17 +48,44 @@ function App() {
     setSession((current) => selectWorkspaceSession(current, workspaceId))
     send({ type: 'switch_workspace', client_msg_id: crypto.randomUUID(), workspace_id: workspaceId })
   }
-  function archiveWorkspace(workspaceId: string) { send({ type: 'archive_workspace', client_msg_id: crypto.randomUUID(), workspace_id: workspaceId }) }
+  function archiveWorkspace(workspaceId: string) {
+    setSession((current) => current.activeWorkspaceId === workspaceId
+      ? { ...current, messages: [], approval: undefined, question: undefined, busy: false, status: '正在归档工作区' }
+      : current)
+    send({ type: 'archive_workspace', client_msg_id: crypto.randomUUID(), workspace_id: workspaceId })
+  }
 
   function submit() {
     const value = prompt.trim(); if (!value || session.busy || !session.sessionId) return
-    setSession((current) => ({ ...current, messages: [...current.messages, { role: 'user', text: value }, { role: 'assistant', text: '' }], busy: true })); setPrompt('')
+    setSession((current) => ({ ...current, messages: [...current.messages, { role: 'user', text: value }, { role: 'assistant', text: '' }], busy: true })); setPromptHistory((current) => recordPrompt(current, value)); setPrompt('')
     send({ type: 'submit', client_msg_id: crypto.randomUUID(), session_id: session.sessionId, prompt: value })
   }
   function cancel() { if (session.sessionId) send({ type: 'cancel', client_msg_id: crypto.randomUUID(), session_id: session.sessionId }) }
   function resolveApproval(approved: boolean) { if (!session.approval) return; send(approved ? { type: 'approve', client_msg_id: crypto.randomUUID(), request_id: session.approval.requestId } : { type: 'reject', client_msg_id: crypto.randomUUID(), request_id: session.approval.requestId, reason: '用户拒绝' }); setSession((current) => ({ ...current, approval: undefined })) }
   function answerQuestion(answer: string) { if (!session.question || !answer.trim()) return; send({ type: 'respond_question', client_msg_id: crypto.randomUUID(), question_id: session.question.questionId, answer }); setSession((current) => ({ ...current, question: undefined })) }
 
-  return <main className="shell"><header><strong>Chaos</strong><span>{session.status} · Web / Desktop</span></header><aside className="workspaces" aria-label="工作区"><button type="button" onClick={createWorkspace}>+ 新工作区</button>{session.workspaces.filter((workspace) => !workspace.archived).map((workspace) => <button type="button" key={workspace.id} className={workspace.id === session.activeWorkspaceId ? 'active' : ''} onClick={() => switchWorkspace(workspace.id)}>{workspace.name}<span><small>{workspace.id === session.activeWorkspaceId ? '当前' : '切换'}</small><small onClick={(event) => { event.stopPropagation(); archiveWorkspace(workspace.id) }}>归档</small></span></button>)}</aside><section className="timeline" aria-label="会话时间线">{session.messages.length === 0 && <p className="empty">创建会话后，在下方输入 Prompt。</p>}{session.messages.map((message, index) => <article className={message.role} key={index}><small>{message.role === 'user' ? '你' : 'Chaos'}</small><p>{message.text || '正在生成…'}</p></article>)}{session.approval && <article className="approval" aria-label="工具审批"><strong>需要审批：{session.approval.tool}</strong><p>{session.approval.summary}</p><div><button type="button" onClick={() => resolveApproval(true)}>允许</button><button type="button" onClick={() => resolveApproval(false)}>拒绝</button></div></article>}{session.question && <article className="approval" aria-label="问题"><strong>需要回答</strong><p>{session.question.prompt}</p><div><button type="button" onClick={() => answerQuestion('是')}>是</button><button type="button" onClick={() => answerQuestion('否')}>否</button></div></article>}</section><form onSubmit={(event) => { event.preventDefault(); submit() }}><textarea aria-label="Prompt" value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="输入 Prompt" /><button type="submit" disabled={session.busy || !prompt.trim()}>发送</button>{session.busy && <button type="button" onClick={cancel}>停止</button>}</form></main>
+  function handleComposerKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.nativeEvent.isComposing) return
+    if (event.key === 'ArrowUp' && !event.shiftKey && !event.nativeEvent.isComposing && event.currentTarget.selectionStart === 0) {
+      event.preventDefault()
+      const result = navigatePromptHistory(promptHistory, -1, prompt)
+      setPromptHistory(result.history)
+      setPrompt(result.value)
+      return
+    }
+    if (event.key === 'ArrowDown' && !event.shiftKey && !event.nativeEvent.isComposing && event.currentTarget.selectionEnd === event.currentTarget.value.length) {
+      event.preventDefault()
+      const result = navigatePromptHistory(promptHistory, 1, prompt)
+      setPromptHistory(result.history)
+      setPrompt(result.value)
+      return
+    }
+    if (shouldSubmitOnKey(event.nativeEvent)) {
+      event.preventDefault()
+      submit()
+    }
+  }
+
+  return <main className="shell" data-testid="app-shell"><header><strong>Chaos</strong><span>{session.status} · Web / Desktop</span></header><aside className="workspaces" aria-label="工作区" data-testid="workspace-list"><button type="button" onClick={createWorkspace}>+ 新工作区</button>{session.workspaces.filter((workspace) => !workspace.archived).map((workspace) => <button type="button" key={workspace.id} className={workspace.id === session.activeWorkspaceId ? 'active' : ''} onClick={() => switchWorkspace(workspace.id)}>{workspace.name}<span><small>{workspace.id === session.activeWorkspaceId ? '当前' : '切换'}</small><small onClick={(event) => { event.stopPropagation(); archiveWorkspace(workspace.id) }}>归档</small></span></button>)}</aside><section className="timeline" aria-label="会话时间线" data-testid="session-timeline">{session.messages.length === 0 && <p className="empty">创建会话后，在下方输入 Prompt。</p>}{session.messages.map((message, index) => <article className={message.role} key={index}><small>{message.role === 'user' ? '你' : 'Chaos'}</small><p>{message.text || '正在生成…'}</p></article>)}{session.approval && <article className="approval" aria-label="工具审批"><strong>需要审批：{session.approval.tool}</strong><p>{session.approval.summary}</p><div><button type="button" onClick={() => resolveApproval(true)}>允许</button><button type="button" onClick={() => resolveApproval(false)}>拒绝</button></div></article>}{session.question && <article className="approval" aria-label="问题"><strong>需要回答</strong><p>{session.question.prompt}</p><div><button type="button" onClick={() => answerQuestion('是')}>是</button><button type="button" onClick={() => answerQuestion('否')}>否</button></div></article>}</section><form onSubmit={(event) => { event.preventDefault(); submit() }}><textarea data-testid="composer-input" aria-label="Prompt" value={prompt} onChange={(event) => setPrompt(event.target.value)} onKeyDown={handleComposerKeyDown} placeholder="输入 Prompt（Enter 发送，Shift+Enter 换行）" /><button data-testid="composer-submit" type="submit" disabled={session.busy || !prompt.trim()}>发送</button>{session.busy && <button type="button" onClick={cancel}>停止</button>}</form></main>
 }
 createRoot(document.getElementById('root')!).render(<App />)

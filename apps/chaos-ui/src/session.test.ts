@@ -27,6 +27,7 @@ describe('session event projection', () => {
     expect(state.workspaces).toHaveLength(2)
     state = applyServerMessage(state, { type: 'workspace_switched', workspace_id: 'w2' })
     expect(state.activeWorkspaceId).toBe('w2')
+    expect(state.messages).toEqual([])
     state = applyServerMessage(state, { type: 'workspace_archived', workspace_id: 'w1' })
     expect(state.workspaces.find((workspace) => workspace.id === 'w1')?.archived).toBe(true)
   })

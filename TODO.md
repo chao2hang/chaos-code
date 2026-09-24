@@ -299,8 +299,8 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 
 - [ ] 移植或重写时间线、轮次分组、虚拟滚动、滚动锚点和行高缓存。
 - [ ] 实现 Markdown、代码块、reasoning 折叠、工具卡片和错误恢复。
-- [ ] 实现 composer 基础增强：多行、历史草稿、发送快捷键、`/` 命令；`@` 文件可延至 M2。
-- [ ] 为关键元素建立稳定 test-id，不盲目复制来源项目的全部测试 ID。
+- [~] composer 现支持多行输入、按 Enter 发送、Shift+Enter 换行、上/下箭头历史导航和发送后恢复未发送草稿；IME composition 与 keyCode 229 不触发提交；`/` 命令及 `@` 文件候选仍待补。（2026-09-24；`apps/chaos-ui/src/composer.ts`、`composer.test.ts`）
+- [~] Web 主流程现为 app shell、workspace list、session timeline、composer input/submit 建立稳定 `data-testid`，Vitest 覆盖独立 reducer/transport/composer 模型；关键工具审批卡和真实浏览器 DOM/E2E test-id 验收仍待 Playwright/Tauri 环境。（2026-09-24；`apps/chaos-ui/src/main.tsx`）
 
 ### M1.3 权限、提问与审计
 

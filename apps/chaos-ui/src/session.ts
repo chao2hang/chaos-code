@@ -40,10 +40,14 @@ export function applyServerMessage(state: SessionState, message: ServerMessage):
   }
   if (message.type === 'workspace_switched') return workspaceChanged(state, message.workspace_id)
   if (message.type === 'workspace_archived') {
-    const remaining = state.workspaces.filter((workspace) => workspace.id !== message.workspace_id && !workspace.archived)
-    const active = remaining.find((workspace) => workspace.id === state.activeWorkspaceId) ?? remaining[0]
     const nextState = { ...state, workspaces: state.workspaces.map((workspace) => workspace.id === message.workspace_id ? { ...workspace, archived: true } : workspace) }
-    return active ? workspaceChanged(nextState, active.id) : { ...nextState, activeWorkspaceId: undefined, sessionId: undefined, messages: [], approval: undefined, question: undefined, busy: false }
+    const candidates = nextState.workspaces.filter((workspace) => !workspace.archived && workspace.id !== message.workspace_id)
+    const active = candidates.find((workspace) => workspace.id === state.activeWorkspaceId) ?? candidates[0]
+    return state.activeWorkspaceId === message.workspace_id
+      ? active
+        ? workspaceChanged(nextState, active.id)
+        : { ...nextState, activeWorkspaceId: undefined, sessionId: undefined, messages: [], approval: undefined, question: undefined, busy: false }
+      : nextState
   }
   if (message.type === 'session_snapshot' && message.messages) return {
     ...state,

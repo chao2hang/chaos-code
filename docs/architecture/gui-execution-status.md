@@ -76,8 +76,9 @@ require platform runners, external services, or a later milestone.
 - Web loopback HTTP/WebSocket transport with bearer authorization, Origin/Host
   checks, request-size limits, CSP, `nosniff`, and backend-enforced Safe Web Mode.
 - React client connected to the real WebSocket transport with reconnect/resume,
-  visible streaming state, cancel, approval/question cards, workspace registry UI,
-  and generated protocol types.
+  workspace-isolated sessions, visible streaming state, cancel, approval/question
+  cards, stable test IDs for shell/workspace/timeline/composer entry points, and
+  generated protocol types. Browser DOM/E2E verification remains unavailable here.
 - Independent CI job for GUI Rust, protocol drift, frontend unit, typecheck and
   production build checks.
 - Release signing preflight, `require-sig` build feature, fail-closed Unix/

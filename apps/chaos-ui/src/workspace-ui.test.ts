@@ -46,6 +46,19 @@ describe('workspace session isolation', () => {
     expect(archived.busy).toBe(false)
   })
 
+  it('projects a newly created workspace session and switches away without stale transcript', () => {
+    const created = applyServerMessage(initialSessionState, { type: 'session_created', session_id: 'session-new', workspace_id: 'workspace-new' })
+    expect(created.activeWorkspaceId).toBe('workspace-new')
+    expect(created.sessionId).toBe('session-new')
+    const listed = applyServerMessage(created, { type: 'workspaces', active_workspace_id: 'workspace-new', workspaces: [
+      { id: 'workspace-new', name: 'New', archived: false, last_used_sequence: 1, last_session_id: 'session-new' },
+    ] })
+    expect(listed.workspaceSessions).toEqual({ 'workspace-new': 'session-new' })
+    const switched = applyServerMessage({ ...listed, messages: [{ role: 'user', text: 'New workspace' }] }, { type: 'workspace_switched', workspace_id: 'workspace-new' })
+    expect(switched.sessionId).toBe('session-new')
+    expect(switched.messages).toEqual([])
+  })
+
   it('selects a new workspace without reusing another workspace session', () => {
     const selected = selectWorkspaceSession({ ...initialSessionState, workspaces }, 'new')
     expect(selected.sessionId).toBeUndefined()
