@@ -391,7 +391,7 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 - [~] engine 已提供最小 settings envelope（Base URL/model），严格拒绝非 HTTPS 或含凭据 URL，并永不返回 API Key；完整 Chaos 配置 schema 表单仍待接入现有 config boundary。
 - [ ] 覆盖通用、外观、模型、Provider、权限、安全、快捷键、远程和更新。
 - [ ] API Key 使用经 M-1 选型的 OS keyring/加密方案；本切片不接触或存储 API Key，完整凭据方案仍待维护线/安全 ADR。
-- [~] 已有 Base URL/model 更新校验和错误事件；provider 能力/连通性测试、超时/取消和脱敏网络错误待真实 provider adapter。
+- [~] 已有 Base URL/model 更新校验和错误事件；新增 provider shape validation（HTTPS/no credentials/model length）且明确 `network_not_attempted`，不触碰 API Key；真实 provider 能力/连通性测试、超时/取消和脱敏网络错误待真实 provider adapter。（2026-09-24；engine tests）
 - [ ] 配置变更定义即时生效或重启生效，并在 UI 明确提示；错误写入不得破坏旧配置。
 
 ### M3.2 MCP、插件与技能

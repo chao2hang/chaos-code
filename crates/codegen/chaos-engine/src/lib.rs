@@ -148,6 +148,11 @@ pub enum ClientMessage {
         byte_len: u64,
         content_type: String,
     },
+    ValidateProvider {
+        client_msg_id: String,
+        base_url: String,
+        model: String,
+    },
     AcceptDiff {
         client_msg_id: String,
         session_id: Uuid,
@@ -290,6 +295,12 @@ pub enum ServerMessage {
         filename: String,
         byte_len: u64,
         content_type: String,
+    },
+    ProviderValidation {
+        base_url: String,
+        model: String,
+        reachable: bool,
+        error_code: Option<String>,
     },
     Error {
         code: String,
@@ -701,7 +712,8 @@ impl Engine {
             | ClientMessage::GetSettings { client_msg_id }
             | ClientMessage::UpdateSettings { client_msg_id, .. }
             | ClientMessage::GetGitStatus { client_msg_id }
-            | ClientMessage::ValidateAttachment { client_msg_id, .. } => client_msg_id.clone(),
+            | ClientMessage::ValidateAttachment { client_msg_id, .. }
+            | ClientMessage::ValidateProvider { client_msg_id, .. } => client_msg_id.clone(),
         };
         let mut state = self.state.lock().expect("engine state lock");
         if !state.seen_client_messages.insert(client_msg_id.clone()) {
@@ -915,6 +927,29 @@ impl Engine {
                     .unwrap_or_else(|error| vec![error]),
                 None => vec![Self::error("workspace_unavailable", "没有配置 workspace")],
             },
+            ClientMessage::ValidateProvider {
+                base_url, model, ..
+            } => {
+                let valid_url = base_url.starts_with("https://")
+                    && !base_url.contains('@')
+                    && !base_url.contains('#');
+                let valid_model = !model.trim().is_empty() && model.len() <= 200;
+                vec![ServerMessage::ProviderValidation {
+                    base_url,
+                    model,
+                    reachable: false,
+                    error_code: Some(
+                        if !valid_url {
+                            "invalid_base_url"
+                        } else if !valid_model {
+                            "invalid_model"
+                        } else {
+                            "network_not_attempted"
+                        }
+                        .into(),
+                    ),
+                }]
+            }
             ClientMessage::ValidateAttachment {
                 filename,
                 byte_len,
@@ -1639,6 +1674,27 @@ mod tests {
             relative_path: "link.txt".into(),
         });
         assert!(matches!(&result[0], ServerMessage::Error { code, .. } if code == "path_escape"));
+    }
+
+    #[test]
+    fn provider_validation_never_attempts_network_or_handles_credentials() {
+        let engine = Engine::new();
+        let result = engine.handle(ClientMessage::ValidateProvider {
+            client_msg_id: "provider".into(),
+            base_url: "http://user:pass@example.test".into(),
+            model: "demo".into(),
+        });
+        assert!(
+            matches!(&result[0], ServerMessage::ProviderValidation { reachable: false, error_code: Some(code), .. } if code == "invalid_base_url")
+        );
+        let valid_shape = engine.handle(ClientMessage::ValidateProvider {
+            client_msg_id: "provider-ok".into(),
+            base_url: "https://api.example.test/v1".into(),
+            model: "demo".into(),
+        });
+        assert!(
+            matches!(&valid_shape[0], ServerMessage::ProviderValidation { reachable: false, error_code: Some(code), .. } if code == "network_not_attempted")
+        );
     }
 
     #[test]

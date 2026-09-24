@@ -32,8 +32,9 @@ require platform runners, external services, or a later milestone.
   and the workspace Git seam only runs fixed status arguments under the
   canonical workspace root; full upload/Git mutation remains gated.
 - M3 settings seam exposes only non-secret Base URL/model fields, rejects unsafe
-  URLs, and reports `has_api_key` as a boolean; API key storage remains outside
-  the GUI protocol.
+  URLs, and reports `has_api_key` as a boolean; provider shape validation returns
+  `network_not_attempted` without touching credentials or making network calls.
+  API key storage remains outside the GUI protocol.
 - Axum loopback HTTP/WebSocket transport with bearer authorization, Origin
   checks, request-size limit, CSP, `nosniff`, and health endpoint.
 - Atomic JSON snapshot persistence used by the M0 engine.
