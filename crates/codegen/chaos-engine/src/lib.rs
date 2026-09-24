@@ -16,6 +16,13 @@ pub trait PromptAdapter: Send + Sync {
     fn run_prompt(&self, prompt: &str) -> Result<Vec<String>, String>;
 }
 
+/// Boundary for tools that require an explicit approval before execution.
+/// The adapter receives only the declared tool and summary, never browser
+/// transport objects or raw credentials.
+pub trait ToolAdapter: Send + Sync {
+    fn execute(&self, tool: &str, summary: &str) -> Result<String, String>;
+}
+
 /// Adapter that invokes the installed `chaos --headless` binary in JSON mode.
 /// The binary path is explicit so Web/Desktop hosts cannot accidentally execute
 /// an arbitrary command from a browser message.
@@ -162,11 +169,18 @@ pub struct AuditEntry {
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
+struct PendingApproval {
+    request_id: Uuid,
+    tool: String,
+    summary: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 struct SessionState {
     messages: Vec<TimelineMessage>,
     audit: Vec<AuditEntry>,
     sequence: u64,
-    pending_approval: Option<Uuid>,
+    pending_approval: Option<PendingApproval>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -181,28 +195,48 @@ pub struct Engine {
     state: Arc<Mutex<State>>,
     store_path: Option<Arc<PathBuf>>,
     adapter: Option<Arc<dyn PromptAdapter>>,
+    tool_adapter: Option<Arc<dyn ToolAdapter>>,
 }
 
 impl Engine {
     pub fn new() -> Self {
-        Self::with_state(State::default(), None, None)
+        Self::with_state(State::default(), None, None, None)
     }
 
     pub fn with_adapter(adapter: impl PromptAdapter + 'static) -> Self {
-        Self::with_state(State::default(), None, Some(Arc::new(adapter)))
+        Self::with_state(State::default(), None, Some(Arc::new(adapter)), None)
     }
 
     pub fn with_adapter_arc(adapter: Arc<dyn PromptAdapter>) -> Self {
-        Self::with_state(State::default(), None, Some(adapter))
+        Self::with_state(State::default(), None, Some(adapter), None)
+    }
+
+    pub fn with_tool_adapter(adapter: impl ToolAdapter + 'static) -> Self {
+        Self::with_state(State::default(), None, None, Some(Arc::new(adapter)))
+    }
+
+    pub fn with_adapters(
+        prompt: Option<Arc<dyn PromptAdapter>>,
+        tool: Option<Arc<dyn ToolAdapter>>,
+    ) -> Self {
+        Self::with_state(State::default(), None, prompt, tool)
     }
 
     pub fn with_persistence(path: impl AsRef<Path>) -> std::io::Result<Self> {
-        Self::with_persistence_and_adapter(path, None)
+        Self::with_persistence_and_adapters(path, None, None)
     }
 
     pub fn with_persistence_and_adapter(
         path: impl AsRef<Path>,
         adapter: Option<Arc<dyn PromptAdapter>>,
+    ) -> std::io::Result<Self> {
+        Self::with_persistence_and_adapters(path, adapter, None)
+    }
+
+    pub fn with_persistence_and_adapters(
+        path: impl AsRef<Path>,
+        adapter: Option<Arc<dyn PromptAdapter>>,
+        tool_adapter: Option<Arc<dyn ToolAdapter>>,
     ) -> std::io::Result<Self> {
         let path = path.as_ref().to_path_buf();
         let state = if path.exists() {
@@ -210,13 +244,14 @@ impl Engine {
         } else {
             State::default()
         };
-        Ok(Self::with_state(state, Some(path), adapter))
+        Ok(Self::with_state(state, Some(path), adapter, tool_adapter))
     }
 
     fn with_state(
         state: State,
         path: Option<PathBuf>,
         adapter: Option<Arc<dyn PromptAdapter>>,
+        tool_adapter: Option<Arc<dyn ToolAdapter>>,
     ) -> Self {
         let (events, _) = broadcast::channel(256);
         Self {
@@ -224,6 +259,7 @@ impl Engine {
             state: Arc::new(Mutex::new(state)),
             store_path: path.map(Arc::new),
             adapter,
+            tool_adapter,
         }
     }
 
@@ -287,7 +323,11 @@ impl Engine {
                 }
                 if let Some(summary) = prompt.strip_prefix("/approve-tool ") {
                     let request_id = Uuid::new_v4();
-                    session.pending_approval = Some(request_id);
+                    session.pending_approval = Some(PendingApproval {
+                        request_id,
+                        tool: "demo.tool".into(),
+                        summary: summary.to_string(),
+                    });
                     session.sequence += 1;
                     vec![
                         ServerMessage::Ack { client_msg_id },
@@ -397,36 +437,75 @@ impl Engine {
         request_id: Uuid,
         approved: bool,
     ) -> Vec<ServerMessage> {
-        let Some((session_id, session)) = state
-            .sessions
-            .iter_mut()
-            .find(|(_, session)| session.pending_approval == Some(request_id))
-        else {
+        let Some((session_id, session)) = state.sessions.iter_mut().find(|(_, session)| {
+            session
+                .pending_approval
+                .as_ref()
+                .is_some_and(|pending| pending.request_id == request_id)
+        }) else {
             return vec![Self::error("approval_not_found", "审批请求不存在或已处理")];
         };
-        session.pending_approval = None;
+        let pending = session
+            .pending_approval
+            .take()
+            .expect("matched pending approval");
+        let mut events = vec![ServerMessage::Ack { client_msg_id }];
+        let outcome = if approved {
+            match &self.tool_adapter {
+                Some(adapter) => match adapter.execute(&pending.tool, &pending.summary) {
+                    Ok(result) => {
+                        session.messages.push(TimelineMessage {
+                            role: "tool".into(),
+                            text: result.clone(),
+                        });
+                        session.sequence += 1;
+                        events.push(ServerMessage::TextDelta {
+                            session_id: *session_id,
+                            text: result,
+                            sequence: session.sequence,
+                        });
+                        "executed"
+                    }
+                    Err(error) => {
+                        session.sequence += 1;
+                        events.push(ServerMessage::Error {
+                            code: "tool_failed".into(),
+                            message: error,
+                        });
+                        "failed"
+                    }
+                },
+                None => {
+                    session.sequence += 1;
+                    events.push(ServerMessage::Error {
+                        code: "tool_unavailable".into(),
+                        message: "没有配置获准的工具 adapter".into(),
+                    });
+                    "unavailable"
+                }
+            }
+        } else {
+            "rejected"
+        };
         session.sequence += 1;
-        let outcome = if approved { "approved" } else { "rejected" };
         session.audit.push(AuditEntry {
             action: "tool_approval".into(),
             outcome: outcome.into(),
             sequence: session.sequence,
         });
-        vec![
-            ServerMessage::Ack { client_msg_id },
-            ServerMessage::ApprovalResolved {
-                session_id: *session_id,
-                request_id,
-                approved,
-                sequence: session.sequence,
-            },
-            ServerMessage::Audit {
-                session_id: *session_id,
-                action: "tool_approval".into(),
-                outcome: outcome.into(),
-                sequence: session.sequence,
-            },
-        ]
+        events.push(ServerMessage::ApprovalResolved {
+            session_id: *session_id,
+            request_id,
+            approved: approved && outcome == "executed",
+            sequence: session.sequence,
+        });
+        events.push(ServerMessage::Audit {
+            session_id: *session_id,
+            action: "tool_approval".into(),
+            outcome: outcome.into(),
+            sequence: session.sequence,
+        });
+        events
     }
     fn error(code: &str, message: &str) -> ServerMessage {
         ServerMessage::Error {
@@ -608,6 +687,72 @@ mod tests {
         let chunks = bounded_text_chunks("你好 Chaos", 8);
         assert!(chunks.iter().all(|chunk| chunk.len() <= 8));
         assert_eq!(chunks.concat(), "你好 Chaos");
+    }
+
+    struct FixtureTool;
+
+    impl ToolAdapter for FixtureTool {
+        fn execute(&self, tool: &str, summary: &str) -> Result<String, String> {
+            Ok(format!("{tool}:{summary}"))
+        }
+    }
+
+    #[test]
+    fn approved_tool_runs_only_through_tool_adapter() {
+        let engine = Engine::with_tool_adapter(FixtureTool);
+        let id = match engine.handle(ClientMessage::CreateSession {
+            client_msg_id: "create-tool".into(),
+        })[0]
+        {
+            ServerMessage::SessionCreated { session_id } => session_id,
+            _ => panic!(),
+        };
+        let requested = engine.handle(ClientMessage::Submit {
+            client_msg_id: "request-tool".into(),
+            session_id: id,
+            prompt: "/approve-tool write".into(),
+        });
+        let request_id = match requested[1] {
+            ServerMessage::ToolApprovalRequested { request_id, .. } => request_id,
+            _ => panic!(),
+        };
+        let resolved = engine.handle(ClientMessage::Approve {
+            client_msg_id: "approve-tool".into(),
+            request_id,
+        });
+        assert!(resolved.iter().any(|event| matches!(event, ServerMessage::TextDelta { text, .. } if text == "demo.tool:write")));
+        assert!(resolved.iter().any(|event| matches!(
+            event,
+            ServerMessage::ApprovalResolved { approved: true, .. }
+        )));
+    }
+
+    #[test]
+    fn approval_without_tool_adapter_fails_closed() {
+        let engine = Engine::new();
+        let id = match engine.handle(ClientMessage::CreateSession {
+            client_msg_id: "create-tool".into(),
+        })[0]
+        {
+            ServerMessage::SessionCreated { session_id } => session_id,
+            _ => panic!(),
+        };
+        let requested = engine.handle(ClientMessage::Submit {
+            client_msg_id: "request-tool".into(),
+            session_id: id,
+            prompt: "/approve-tool write".into(),
+        });
+        let request_id = match requested[1] {
+            ServerMessage::ToolApprovalRequested { request_id, .. } => request_id,
+            _ => panic!(),
+        };
+        let resolved = engine.handle(ClientMessage::Approve {
+            client_msg_id: "approve-tool".into(),
+            request_id,
+        });
+        assert!(resolved.iter().any(
+            |event| matches!(event, ServerMessage::Error { code, .. } if code == "tool_unavailable")
+        ));
     }
 
     #[test]

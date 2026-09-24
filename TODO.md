@@ -302,8 +302,8 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 
 ### M1.3 权限、提问与审计
 
-- [~] engine 支持演示工具审批请求/允许/拒绝，React 已有审批卡片；真实命令、写文件、网络、MCP tool adapter 和通用提问对话框待补。
-- [x] engine 审批记录绑定 session、tool、参数摘要、UUID request ID、结果和序列；测试覆盖拒绝路径。（2026-09-24）
+- [~] engine 已支持 ToolAdapter 边界：审批通过才执行、无 adapter 安全失败、执行结果写入 timeline/audit；真实命令、写文件、网络、MCP tool adapter 和通用提问对话框仍待补。（2026-09-24；engine tests）
+- [x] engine 审批记录绑定 session、tool、参数摘要、UUID request ID、结果和序列；ToolAdapter 只在批准后调用，测试覆盖执行、拒绝和无 adapter fail-closed。（2026-09-24）
 - [ ] 覆盖允许、拒绝、记住规则、超时、取消、断线恢复和多客户端竞争。
 - [ ] Web 写操作增加 workspace 路径约束、CSRF/重放防护和本地审计日志；日志必须脱敏并轮转。
 - [ ] Safe Web Mode 禁止命令和写入，后端强制执行，不能只隐藏按钮。

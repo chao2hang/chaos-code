@@ -11,6 +11,9 @@ require platform runners, external services, or a later milestone.
 - M0 protocol v1 for handshake, create/resume, submit, bounded UTF-8 deltas,
   completion, cancellation, snapshot, deduplication, approval, rejection, and
   audit events.
+- M1 tool adapter boundary: approvals are resolved before a `ToolAdapter` can
+  execute; missing adapters fail closed and tool output is recorded in the
+  session timeline/audit.
 - Axum loopback HTTP/WebSocket transport with bearer authorization, Origin
   checks, request-size limit, CSP, `nosniff`, and health endpoint.
 - Atomic JSON snapshot persistence used by the M0 engine.
