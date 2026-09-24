@@ -15,7 +15,8 @@ function App() {
   }, [])
 
   const connect = useCallback(() => {
-    const ws = new WebSocket(`ws://${location.hostname || '127.0.0.1'}:8787/ws`)
+    const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
+    const ws = new WebSocket(`${wsProtocol}//${location.hostname || '127.0.0.1'}:8787/ws`)
     socket.current = ws
     ws.onopen = () => {
       setSession((current) => ({ ...current, status: '已连接' }))

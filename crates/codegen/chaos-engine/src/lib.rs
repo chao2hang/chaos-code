@@ -751,6 +751,8 @@ struct SessionState {
     sequence: u64,
     pending_approval: Option<PendingApproval>,
     pending_question: Option<Uuid>,
+    #[serde(default)]
+    pending_question_prompt: Option<String>,
     pending_file_writes: HashMap<Uuid, (Uuid, String, String)>,
     pending_attachment_moves: HashMap<Uuid, (Uuid, Uuid, String)>,
 }
@@ -1489,11 +1491,7 @@ impl Engine {
                         pending_question: session.pending_question.map(|question_id| {
                             QuestionSnapshot {
                                 question_id,
-                                prompt: session
-                                    .messages
-                                    .last()
-                                    .map(|message| message.text.clone())
-                                    .unwrap_or_default(),
+                                prompt: session.pending_question_prompt.clone().unwrap_or_default(),
                             }
                         }),
                     }]
@@ -1521,6 +1519,7 @@ impl Engine {
                 if let Some(question) = prompt.strip_prefix("/ask ") {
                     let question_id = Uuid::new_v4();
                     session.pending_question = Some(question_id);
+                    session.pending_question_prompt = Some(question.to_owned());
                     session.sequence += 1;
                     vec![
                         ServerMessage::Ack { client_msg_id },
@@ -2437,6 +2436,7 @@ impl Engine {
             return vec![Self::error("question_not_found", "问题不存在或已回答")];
         };
         session.pending_question = None;
+        session.pending_question_prompt = None;
         session.sequence += 1;
         session.audit.push(AuditEntry {
             action: "question".into(),
