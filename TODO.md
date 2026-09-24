@@ -356,7 +356,7 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 
 ### M2.4 Git 与变更审查
 
-- [~] engine 已提供固定 `git -C <canonical-root> status --porcelain=v1 --branch` 读取边界；Diff/stage/commit/branch/pull/push adapter 尚待接入，禁止从浏览器执行任意 git 参数。（2026-09-24）
+- [~] engine 已提供固定 `git -C <canonical-root> status --porcelain=v1 --branch` 读取边界，且真实 WebSocket 测试通过；Diff/stage/commit/branch/pull/push adapter 尚待接入，禁止从浏览器执行任意 git 参数。（2026-09-24；`local_policy_flow.rs`）
 - [ ] push、覆盖性 checkout、discard 等共享/破坏性动作必须二次确认。
 - [ ] AI commit message 只是建议，提交前可编辑；失败不丢 staged state。
 - [ ] 验证非 Git 工作区、detached HEAD、冲突、无 remote 和认证失败。
