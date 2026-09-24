@@ -358,7 +358,7 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 
 当前状态：Git status 与 approval-gated stage/commit/checkout_branch adapter 边界已有 engine tests；真实 workspace mutation、stage/unstage/rollback 状态仍待接入。
 
-- [~] engine 已提供固定 `git -C <canonical-root> status --porcelain=v1 --branch` 读取边界；新增固定操作集合的 GitAdapter：stage/commit/checkout_branch 必须先审批，禁止 push/pull/任意参数，engine tests 已验证；真实 workspace Git mutation 和 stage/rollback 状态仍待接入。（2026-09-24；`local_policy_flow.rs`、`git-mutation-test.log`）
+- [~] engine 已提供固定 `git -C <canonical-root>` status 和真实 `ProcessGitAdapter`：stage/commit/checkout_branch 必须先审批，WebSocket 临时 Git 仓库测试验证 stage 结果；仍未开放 push/pull、discard、rollback 和冲突恢复。（2026-09-24；`git_real_flow.rs`、`git-real-flow.log`）
 - [ ] push、覆盖性 checkout、discard 等共享/破坏性动作必须二次确认。
 - [ ] AI commit message 只是建议，提交前可编辑；失败不丢 staged state。
 - [ ] 验证非 Git 工作区、detached HEAD、冲突、无 remote 和认证失败。

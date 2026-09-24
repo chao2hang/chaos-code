@@ -52,6 +52,79 @@ pub trait GitAdapter: Send + Sync {
     fn checkout_branch(&self, branch: &str) -> Result<(), String>;
 }
 
+pub struct ProcessGitAdapter {
+    cwd: PathBuf,
+}
+
+impl ProcessGitAdapter {
+    pub fn new(cwd: impl AsRef<Path>) -> std::io::Result<Self> {
+        let cwd = std::fs::canonicalize(cwd)?;
+        if !cwd.is_dir() {
+            return Err(std::io::Error::other("git cwd is not a directory"));
+        }
+        Ok(Self { cwd })
+    }
+
+    fn run(&self, args: &[&str]) -> Result<String, String> {
+        let output = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&self.cwd)
+            .args(args)
+            .output()
+            .map_err(|error| format!("无法启动 git: {error}"))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            return Err(if stderr.is_empty() {
+                format!("git exited with {}", output.status)
+            } else {
+                stderr
+            });
+        }
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    }
+
+    fn safe_path(path: &str) -> bool {
+        !path.is_empty()
+            && !path.contains('\0')
+            && !Path::new(path).is_absolute()
+            && !Path::new(path)
+                .components()
+                .any(|component| matches!(component, std::path::Component::ParentDir))
+    }
+
+    fn safe_branch(branch: &str) -> bool {
+        !branch.is_empty()
+            && !branch.starts_with('-')
+            && !branch.contains('\0')
+            && !branch.chars().any(char::is_whitespace)
+            && !branch.contains("..")
+    }
+}
+
+impl GitAdapter for ProcessGitAdapter {
+    fn stage(&self, path: &str) -> Result<(), String> {
+        if !Self::safe_path(path) {
+            return Err("git path rejected".into());
+        }
+        self.run(&["add", "--", path]).map(|_| ())
+    }
+
+    fn commit(&self, message: &str) -> Result<String, String> {
+        if message.trim().is_empty() || message.contains('\0') {
+            return Err("git commit message rejected".into());
+        }
+        self.run(&["commit", "-m", message])?;
+        self.run(&["rev-parse", "HEAD"])
+    }
+
+    fn checkout_branch(&self, branch: &str) -> Result<(), String> {
+        if !Self::safe_branch(branch) {
+            return Err("git branch rejected".into());
+        }
+        self.run(&["switch", branch]).map(|_| ())
+    }
+}
+
 pub struct AttachmentStager {
     root: Arc<PathBuf>,
     max_bytes: u64,
@@ -2199,6 +2272,26 @@ mod tests {
                 .stage_chunks("../escape.txt", "text/plain", vec![Ok(b"x".to_vec())])
                 .is_err()
         );
+    }
+
+    #[test]
+    fn process_git_adapter_executes_only_fixed_git_arguments() {
+        let directory = tempfile::tempdir().unwrap();
+        let run = |args: &[&str]| {
+            std::process::Command::new("git")
+                .args(["-C", directory.path().to_str().unwrap()])
+                .args(args)
+                .output()
+                .unwrap()
+        };
+        assert!(run(&["init", "-q"]).status.success());
+        std::fs::write(directory.path().join("note.txt"), "hello").unwrap();
+        let adapter = ProcessGitAdapter::new(directory.path()).unwrap();
+        adapter.stage("note.txt").unwrap();
+        let commit = adapter.commit("first").unwrap();
+        assert_eq!(commit.len(), 40);
+        assert!(adapter.stage("../outside").is_err());
+        assert!(adapter.checkout_branch("--orphan").is_err());
     }
 
     #[test]
