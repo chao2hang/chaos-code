@@ -270,11 +270,11 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 
 ### M0.6 验收门禁
 
-本机浏览器路径现有可重复的 Playwright Chromium E2E 与 GUI CI job；本地 desktop/mobile 两个项目各通过（全命令 4 tests passed），首次远端运行发现 GUI Rust 编译依赖 dotslash 未安装，现已将 clean-runner 预备步骤加入 CI 并待复跑；真实 provider 和 Tauri 桌面入口仍为独立 gate。
+本机浏览器路径现有可重复的 Playwright Chromium E2E 与 GUI CI job；本地 desktop/mobile 两个项目各通过（全命令 4 tests passed），首次远端运行发现 GUI Rust 编译依赖 dotslash 未安装，后续确认 release 资产 URL 404 并改为下载正式 archive，待复跑；真实 provider 和 Tauri 桌面入口仍为独立 gate。
 
 - [~] 自动测试覆盖提交成功、取消、重复 submission、断线、重连、snapshot fallback、无凭据和 provider 错误；当前已覆盖真实 WebSocket submit/completed/cancel、重复/dedup、UTF-8 delta、adapter error boundary、跨 engine 重启 resume、认证/Origin/Host 和安全头，浏览器与真实 provider 仍待补齐。（2026-09-24）
 - [~] Desktop host 已通过共享 engine dispatch 单测；Tauri 真实入口、平台构建、增量/取消/重启恢复操作仍是 M0 gate。
-- [~] 本地 Chromium 已通过仓库 Playwright 测试覆盖 workspace create/submit/switch/reload/archive、同源 health/handshake、空提示取消、desktop 与窄 viewport composer；CI browser job 已加入，本地 desktop/mobile 全量 E2E 命令重复通过；首次 GitHub CI 暴露新的 GUI job 未安装仓库 `bin/protoc` 所需 dotslash 的 clean-runner 缺口，正在修正 workflow 并复跑；真实 provider、Tauri 入口与平台 GUI gate 未完成。（2026-09-25；`apps/chaos-ui/e2e/workspace-flow.pw.ts`、goal scratch `playwright-all.log`）GUI Rust Clippy 严格命令目前被既存 `chaos-engine` collapsed-if、Windows canonicalize lint 等拒绝，非本轮引入；详情记入 scratch `rust-clippy-final.log`。
+- [~] 本地 Chromium 已通过仓库 Playwright 测试覆盖 workspace create/submit/switch/reload/archive、同源 health/handshake、空提示取消、desktop 与窄 viewport composer；CI browser job 已加入，本地 desktop/mobile 全量 E2E 命令重复通过；首次 GitHub CI 暴露新的 GUI job 未安装仓库 `bin/protoc` 所需 dotslash 的 clean-runner 缺口；第二次尝试因资产下载 URL 404 失败，当前使用正式 release archive 修正并复跑；真实 provider、Tauri 入口与平台 GUI gate 未完成。（2026-09-25；`apps/chaos-ui/e2e/workspace-flow.pw.ts`、goal scratch `playwright-all.log`）GUI Rust Clippy 严格命令目前被既存 `chaos-engine` collapsed-if、Windows canonicalize lint 等拒绝，非本轮引入；详情记入 scratch `rust-clippy-final.log`。
 - [~] Linux engine/Web/前端实测已记录；macOS/Windows GUI runner 与 Tauri 冒烟尚待提供。
 - [x] 新增 `apps/chaos-ui/README.md`，记录 GUI 启动、`CHAOS_WEB_STATE`、测试和当前 provider/Tauri/远程限制。（2026-09-24）
 

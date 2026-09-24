@@ -165,7 +165,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install dotslash
         run: |
-          curl -fsSL https://github.com/facebook/dotslash/releases/download/v0.5.3/dotslash-v0.5.3-x86_64-unknown-linux-musl -o /tmp/dotslash
+          curl -fsSL https://github.com/facebook/dotslash/releases/download/v0.5.3/dotslash-linux-musl.x86_64.v0.5.3.tar.gz -o /tmp/dotslash.tar.gz
+          tar -xzf /tmp/dotslash.tar.gz -C /tmp
           sudo install -m 0755 /tmp/dotslash /usr/local/bin/dotslash
       - name: Read pinned toolchain
         id: toolchain
@@ -197,6 +198,11 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+      - name: Install dotslash
+        run: |
+          curl -fsSL https://github.com/facebook/dotslash/releases/download/v0.5.3/dotslash-linux-musl.x86_64.v0.5.3.tar.gz -o /tmp/dotslash.tar.gz
+          tar -xzf /tmp/dotslash.tar.gz -C /tmp
+          sudo install -m 0755 /tmp/dotslash /usr/local/bin/dotslash
       - name: Read pinned toolchain
         id: toolchain
         shell: bash
