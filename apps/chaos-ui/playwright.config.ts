@@ -31,11 +31,11 @@ export default defineConfig({
   ],
   webServer: [
     {
-      command: `cargo run --locked --manifest-path ../../Cargo.toml -p xai-grok-web --bin chaos-web`,
+      command: `../../target/debug/chaos-web`,
       cwd: '.',
       url: `http://127.0.0.1:${backendPort}/health`,
       reuseExistingServer: false,
-      timeout: 180_000,
+      timeout: 60_000,
       env: { CHAOS_WEB_PORT: String(backendPort), CHAOS_WEB_TOKEN: '' },
     },
     {

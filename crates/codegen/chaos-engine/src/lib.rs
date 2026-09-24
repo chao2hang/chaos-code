@@ -3425,6 +3425,12 @@ mod tests {
                 .unwrap()
         };
         assert!(run(&["init", "-q"]).status.success());
+        assert!(run(&["config", "user.name", "Chaos Test"]).status.success());
+        assert!(
+            run(&["config", "user.email", "chaos-test@example.invalid"])
+                .status
+                .success()
+        );
         std::fs::write(directory.path().join("note.txt"), "hello").unwrap();
         let adapter = ProcessGitAdapter::new(directory.path()).unwrap();
         adapter.stage("note.txt").unwrap();

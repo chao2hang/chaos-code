@@ -100,9 +100,10 @@ require platform runners, external services, or a later milestone.
   now repeats the desktop and 390×844 viewport flows against spawned Engine/Web
   servers; the GitHub CI browser job is added. Its first clean-runner attempt exposed that
   the GUI jobs must install dotslash before building the workspace's `bin/protoc`
-  wrapper. The first fix used a nonexistent release asset URL; both jobs now
-  download the verified release archive and a fresh run is pending. Tauri/WebDriver
-  gates remain open. Tauri/WebDriver gates remain open.
+  wrapper. The first fix used a nonexistent release asset URL; the verified release
+  archive is now used. A later run exposed a repository-local Git identity fixture
+  gap and a cold Web host compile exceeding the browser startup timeout; both are
+  corrected locally and the next remote run is pending. Tauri/WebDriver gates remain open. Tauri/WebDriver gates remain open.
 - Independent CI job for GUI Rust, protocol drift, frontend unit, typecheck and
   production build checks.
 - Release signing preflight, `require-sig` build feature, fail-closed Unix/

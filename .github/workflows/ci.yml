@@ -40,7 +40,8 @@ jobs:
       # pin the same major as bin/protoc and release.yml.
       - name: Install dotslash
         run: |
-          curl -fsSL https://github.com/facebook/dotslash/releases/download/v0.5.3/dotslash-v0.5.3-x86_64-unknown-linux-musl -o /tmp/dotslash
+          curl -fsSL https://github.com/facebook/dotslash/releases/download/v0.5.3/dotslash-linux-musl.x86_64.v0.5.3.tar.gz -o /tmp/dotslash.tar.gz
+          tar -xzf /tmp/dotslash.tar.gz -C /tmp
           sudo install -m 0755 /tmp/dotslash /usr/local/bin/dotslash
       - name: Install protoc
         run: |
@@ -195,7 +196,7 @@ jobs:
   gui-browser-e2e:
     name: GUI browser E2E
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
       - name: Install dotslash
@@ -222,6 +223,8 @@ jobs:
       - name: Install frontend dependencies
         working-directory: apps/chaos-ui
         run: npm ci --ignore-scripts
+      - name: Build Web host before browser test
+        run: cargo build --locked -p xai-grok-web --bin chaos-web
       - name: Install Chromium
         working-directory: apps/chaos-ui
         run: npx playwright install --with-deps chromium
