@@ -23,6 +23,22 @@ async fn safe_web_mode_blocks_direct_mutation_protocol_calls() {
         serde_json::from_str(&socket.next().await.unwrap().unwrap().into_text().unwrap()).unwrap();
     socket
         .send(Message::Text(
+            serde_json::to_string(&ClientMessage::ProposeGitMutation {
+                client_msg_id: "git".into(),
+                session_id: uuid::Uuid::new_v4(),
+                operation: "discard".into(),
+                argument: "note.txt".into(),
+            })
+            .unwrap()
+            .into(),
+        ))
+        .await
+        .unwrap();
+    let result: ServerMessage =
+        serde_json::from_str(&socket.next().await.unwrap().unwrap().into_text().unwrap()).unwrap();
+    assert!(matches!(result, ServerMessage::Error { code, .. } if code == "safe_web_mode_blocked"));
+    socket
+        .send(Message::Text(
             serde_json::to_string(&ClientMessage::ProposeTerminal {
                 client_msg_id: "terminal".into(),
                 session_id: uuid::Uuid::new_v4(),
