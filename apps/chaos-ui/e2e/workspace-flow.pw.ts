@@ -56,13 +56,21 @@ test('workspace sessions stay isolated across create, submit, switch, reload, ar
   await expect(page.getByLabel('面板宽度')).toHaveValue('320')
   await expect(workspaceButton(page, second)).toHaveClass(/active/)
   await expect(page.locator('.empty')).toBeVisible()
-  const markdownPrompt = `beta after reload ${suffix} with **bold**, \`inline code\`, and a list:\n\n- first item\n- second item\n\n<script>document.documentElement.dataset.pwned='true'</script>\n\n[safe link](https://example.com) [blocked link](./config.toml) [bad scheme](javascript:alert(1))`
+  const imageRequestUrls: string[] = []
+  page.on('request', (request) => {
+    if (request.url() === 'https://example.com/tracker.png') imageRequestUrls.push(request.url())
+  })
+  const markdownPrompt = `beta after reload ${suffix} with **bold**, \`inline code\`, and a list:\n\n- first item\n- second item\n\n<script>document.documentElement.dataset.pwned='true'</script>\n\n[safe link](https://example.com) [blocked link](./config.toml) [bad scheme](javascript:alert(1))
+
+![remote image](https://example.com/tracker.png)`
   await sendPrompt(page, markdownPrompt, markdownPrompt)
   await expect(page.locator('.user ul > li')).toHaveCount(2)
   await expect(page.locator('.assistant strong')).toContainText('bold')
   await expect(page.locator('.assistant code')).toContainText('inline code')
   await expect(page.locator('.assistant li')).toHaveCount(2)
   await expect(page.locator('.assistant script, .assistant img')).toHaveCount(0)
+  await expect(page.locator('.assistant').getByText('remote image')).toBeVisible()
+  expect(imageRequestUrls).toEqual([])
   await expect(page.locator('html')).not.toHaveAttribute('data-pwned')
   const externalLink = page.locator('.assistant a[href="https://example.com"]')
   await expect(externalLink).toHaveAttribute('target', '_blank')

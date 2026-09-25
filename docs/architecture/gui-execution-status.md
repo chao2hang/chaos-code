@@ -102,7 +102,9 @@ require platform runners, external services, or a later milestone.
   servers; GitHub CI run `36133400667` passed, including the approval allow-to-adapter-failure case. Conversation messages render safe Markdown and GitHub-flavored tables/lists with
   raw HTML disabled; only in-page `#`, HTTP(S), and mailto links become anchors,
   external HTTP(S) links open a separate tab with `noopener noreferrer`, and relative
-  file paths or other schemes are rendered as text. Playwright verified actual Engine
+  file paths or other schemes are rendered as text. Markdown images render as inert
+  alt text; desktop/mobile Playwright confirms they create no `<img>` node or network
+  request. Playwright verified actual Engine
   responses, formatting, injected HTML inertness, blocked relative/javascript URLs,
   external link attributes, demo approval rejection, question response, and approval
   followed by the expected missing-adapter failure on desktop and narrow viewports.
