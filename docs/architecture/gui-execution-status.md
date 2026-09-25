@@ -99,7 +99,7 @@ require platform runners, external services, or a later milestone.
   isolation, same-origin API/WebSocket/health development proxy, persisted layout
   controls, and narrow-viewport composer interaction. Repository Playwright E2E
   now repeats the desktop and 390×844 viewport flows against spawned Engine/Web
-  servers; the GitHub CI browser job is added and the latest run passed. Conversation messages render safe Markdown and GitHub-flavored tables/lists with
+  servers; GitHub CI run `36133400667` passed, including the approval allow-to-adapter-failure case. Conversation messages render safe Markdown and GitHub-flavored tables/lists with
   raw HTML disabled; only in-page `#`, HTTP(S), and mailto links become anchors,
   external HTTP(S) links open a separate tab with `noopener noreferrer`, and relative
   file paths or other schemes are rendered as text. Playwright verified actual Engine
@@ -125,7 +125,7 @@ require platform runners, external services, or a later milestone.
 | Area | State | Evidence required |
 |---|---|---|
 | Tauri Desktop | Open | Tauri three-platform builds and real desktop flow |
-| Browser E2E | Partial | Repository Playwright tests verify create/submit/switch/reload/archive/transcript isolation, layout restore, health/handshake proxy, empty/cancel, safe Markdown, demo approval rejection and missing-adapter failure, question response, and narrow viewport; latest recorded CI run passed before the newest local changes, so rerun remote CI after push; Desktop/Tauri automation remains open |
+| Browser E2E | Partial | Repository Playwright tests and CI run `36133400667` verify create/submit/switch/reload/archive/transcript isolation, layout restore, health/handshake proxy, empty/cancel, safe Markdown, demo approval rejection and missing-adapter failure, question response, and narrow viewport; Desktop/Tauri automation remains open |
 | Provider/config/secrets | Partial | Non-secret settings/provider shape validation; real provider/keyring tests remain open |
 | M1 hunk/workspace Diff | Partial | Adapter boundaries and real local workspace/Diff tests; production `xai-hunk-tracker` partial-hunk/binary integration remains open |
 | M2 persistence/workspace | Partial | SQLite/JSON boundaries, single-root workspace/Git/terminal/attachment safety, Git edge fixtures and destructive-action confirmations; multi-root mapping, PTY, NFS/multiprocess, remote Git auth and full migration remain open |
