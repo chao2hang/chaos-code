@@ -48,6 +48,13 @@ test('workspace sessions stay isolated across create, submit, switch, reload, ar
   await expect(page.locator('.user p').first()).toContainText(`beta marker ${suffix}`)
   await expect(page.locator('.user p')).not.toContainText(`alpha marker ${suffix}`)
 
+  const archiveFirst = page.getByRole('button', { name: `归档工作区 ${first}` })
+  await archiveFirst.focus()
+  await expect(archiveFirst).toBeFocused()
+  await expect(archiveFirst).toHaveCSS('outline-style', 'solid')
+  await expect(archiveFirst).toHaveCSS('outline-width', '3px')
+  await expect(archiveFirst).toHaveAttribute('title', '归档此工作区')
+
   await page.getByRole('button', { name: /^主题：/ }).click()
   await page.getByLabel('面板宽度').fill('320')
   await page.reload()
@@ -92,7 +99,7 @@ test('workspace sessions stay isolated across create, submit, switch, reload, ar
     await expect(page.locator('.assistant p').last()).toContainText('mobile line one')
   }
 
-  await workspaceButton(page, first).getByText('归档').click()
+  await page.getByRole('button', { name: `归档工作区 ${first}` }).click()
   await expect(workspaceButton(page, first)).toHaveCount(0)
   await expect(workspaceButton(page, second)).toBeVisible()
   await expect(workspaceButton(page, second)).toHaveClass(/active/)
