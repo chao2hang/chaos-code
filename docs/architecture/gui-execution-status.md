@@ -103,7 +103,7 @@ require platform runners, external services, or a later milestone.
   wrapper. The first fix used a nonexistent release asset URL; the verified release
   archive is now used. A later run exposed a repository-local Git identity fixture
   gap and a cold Web host compile exceeding the browser startup timeout; both are
-  corrected; the latest remote run passes the browser E2E and GUI engine/Web/frontend/protocol jobs. The separate main Rust job still fails on pre-existing strict Clippy diagnostics in `chaos-engine`. Tauri/WebDriver gates remain open. Tauri/WebDriver gates remain open.
+  corrected; the latest remote run passes the browser E2E and GUI engine/Web/frontend/protocol jobs. The latest remote run passes browser and GUI Rust/frontend/protocol jobs; the separate main Rust job had failed on `chaos-engine` Clippy diagnostics. Those diagnostics are fixed locally, and the complete workspace strict Clippy/check/test suite now passes; remote rerun is pending. Tauri/WebDriver gates remain open.
 - Independent CI job for GUI Rust, protocol drift, frontend unit, typecheck and
   production build checks.
 - Release signing preflight, `require-sig` build feature, fail-closed Unix/

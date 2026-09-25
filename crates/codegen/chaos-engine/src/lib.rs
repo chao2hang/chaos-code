@@ -73,7 +73,7 @@ pub struct ProcessGitAdapter {
 
 impl ProcessGitAdapter {
     pub fn new(cwd: impl AsRef<Path>) -> std::io::Result<Self> {
-        let cwd = std::fs::canonicalize(cwd)?;
+        let cwd = dunce::canonicalize(cwd)?;
         if !cwd.is_dir() {
             return Err(std::io::Error::other("git cwd is not a directory"));
         }
@@ -201,7 +201,7 @@ impl AttachmentStager {
     }
 
     pub fn new(root: impl AsRef<Path>, max_bytes: u64) -> std::io::Result<Self> {
-        let root = std::fs::canonicalize(root)?;
+        let root = dunce::canonicalize(root)?;
         std::fs::create_dir_all(root.join(".chaos-staging"))?;
         Ok(Self {
             root: Arc::new(root),
@@ -260,7 +260,7 @@ pub struct ProcessTerminalAdapter {
 
 impl ProcessTerminalAdapter {
     pub fn new(cwd: impl AsRef<Path>, max_output_bytes: usize) -> std::io::Result<Self> {
-        let cwd = std::fs::canonicalize(cwd)?;
+        let cwd = dunce::canonicalize(cwd)?;
         if !cwd.is_dir() {
             return Err(std::io::Error::other("terminal cwd is not a directory"));
         }
@@ -782,7 +782,7 @@ pub struct WorkspaceAdapter {
 
 impl WorkspaceAdapter {
     pub fn new(root: impl AsRef<Path>) -> std::io::Result<Self> {
-        let root = std::fs::canonicalize(root)?;
+        let root = dunce::canonicalize(root)?;
         if !root.is_dir() {
             return Err(std::io::Error::other("workspace root is not a directory"));
         }
@@ -794,7 +794,7 @@ impl WorkspaceAdapter {
 
     fn confined(&self, relative: &str) -> Result<PathBuf, ServerMessage> {
         let candidate = self.root.join(relative);
-        let canonical = std::fs::canonicalize(&candidate).map_err(|_| ServerMessage::Error {
+        let canonical = dunce::canonicalize(&candidate).map_err(|_| ServerMessage::Error {
             code: "path_invalid".into(),
             message: "路径不存在或无法解析".into(),
         })?;
@@ -856,7 +856,7 @@ impl WorkspaceAdapter {
             code: "write_failed".into(),
             message: "无效父目录".into(),
         })?;
-        let canonical_parent = std::fs::canonicalize(parent).map_err(|_| ServerMessage::Error {
+        let canonical_parent = dunce::canonicalize(parent).map_err(|_| ServerMessage::Error {
             code: "write_failed".into(),
             message: "父目录不存在".into(),
         })?;
@@ -864,7 +864,7 @@ impl WorkspaceAdapter {
             return Err(Self::path_escape());
         }
         if candidate.exists() {
-            let canonical = std::fs::canonicalize(&candidate).map_err(|_| Self::path_escape())?;
+            let canonical = dunce::canonicalize(&candidate).map_err(|_| Self::path_escape())?;
             if !canonical.starts_with(self.root.as_path()) {
                 return Err(Self::path_escape());
             }
@@ -929,10 +929,10 @@ impl WorkspaceAdapter {
                 .unwrap_or(entry.path())
                 .display()
                 .to_string();
-            if let Ok(contents) = std::fs::read_to_string(entry.path()) {
-                if contents.contains(query) {
-                    matches.push(relative);
-                }
+            if let Ok(contents) = std::fs::read_to_string(entry.path())
+                && contents.contains(query)
+            {
+                matches.push(relative);
             }
             if matches.len() >= 100 {
                 break;
@@ -1276,7 +1276,7 @@ impl Engine {
     }
 
     pub fn with_tui_session_root(mut self, root: impl AsRef<Path>) -> std::io::Result<Self> {
-        let root = std::fs::canonicalize(root)?;
+        let root = dunce::canonicalize(root)?;
         if !root.is_dir() {
             return Err(std::io::Error::other("TUI session root is not a directory"));
         }
@@ -1289,7 +1289,7 @@ impl Engine {
     }
 
     pub fn with_marketplace_root(mut self, root: impl AsRef<Path>) -> std::io::Result<Self> {
-        let root = std::fs::canonicalize(root)?;
+        let root = dunce::canonicalize(root)?;
         if !root.is_dir() {
             return Err(std::io::Error::other("marketplace root is not a directory"));
         }
@@ -1472,10 +1472,10 @@ impl Engine {
                 }]
             }
             ClientMessage::SwitchWorkspace { workspace_id, .. } => {
-                if !state
+                if state
                     .workspaces
                     .get(&workspace_id)
-                    .is_some_and(|workspace| !workspace.archived)
+                    .is_none_or(|workspace| workspace.archived)
                 {
                     return vec![Self::error("workspace_unavailable", "工作区不存在或已归档")];
                 }
@@ -2046,7 +2046,7 @@ impl Engine {
             ClientMessage::ImportTuiSession {
                 root, session_id, ..
             } => {
-                let requested = std::fs::canonicalize(&root).ok();
+                let requested = dunce::canonicalize(&root).ok();
                 let allowed = requested.as_ref().is_some_and(|requested| {
                     self.tui_session_roots
                         .iter()
@@ -2067,7 +2067,7 @@ impl Engine {
                 }
             }
             ClientMessage::ScanMarketplace { root, .. } => {
-                let requested = std::fs::canonicalize(&root).ok();
+                let requested = dunce::canonicalize(&root).ok();
                 let allowed = requested.as_ref().is_some_and(|requested| {
                     self.marketplace_roots
                         .iter()
@@ -2417,7 +2417,7 @@ impl Engine {
                                 .parent()
                                 .ok_or_else(|| "invalid attachment path".to_string())?;
                             let canonical_parent =
-                                std::fs::canonicalize(parent).map_err(|e| e.to_string())?;
+                                dunce::canonicalize(parent).map_err(|e| e.to_string())?;
                             if !canonical_parent.starts_with(workspace.root.as_path()) {
                                 return Err("attachment path escapes workspace".into());
                             }

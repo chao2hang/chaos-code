@@ -36,10 +36,10 @@ impl RemoteEndpoint {
         if self.port == 0 {
             return Err("remote port is invalid".into());
         }
-        if let HostKeyPolicy::TrustOnFirstUse { fingerprint } = &self.host_key {
-            if fingerprint.trim().is_empty() {
-                return Err("TOFU requires a host fingerprint".into());
-            }
+        if let HostKeyPolicy::TrustOnFirstUse { fingerprint } = &self.host_key
+            && fingerprint.trim().is_empty()
+        {
+            return Err("TOFU requires a host fingerprint".into());
         }
         if self.capabilities.contains(&RemoteCapability::DetachedAgent) {
             return Err("detached Agent is not supported by the current topology".into());
