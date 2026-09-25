@@ -100,12 +100,14 @@ require platform runners, external services, or a later milestone.
   controls, and narrow-viewport composer interaction. Repository Playwright E2E
   now repeats the desktop and 390×844 viewport flows against spawned Engine/Web
   servers; the GitHub CI browser job is added and the latest run passed. Conversation messages render safe Markdown and GitHub-flavored tables/lists with
-  raw HTML disabled; only relative in-page, HTTP(S), and mailto links become anchors,
-  external HTTP(S) links open a separate tab with `noopener noreferrer`, and other
-  schemes/path links are rendered as text. Playwright verified actual Engine
-  responses, formatting, inline script inertness, blocked relative/javascript URLs,
-  external link attributes, and real demo approval-rejection/question-response flows
-  on desktop and mobile. Tool progress/result UI, approved mutation/Diff UI and
+  raw HTML disabled; only in-page `#`, HTTP(S), and mailto links become anchors,
+  external HTTP(S) links open a separate tab with `noopener noreferrer`, and relative
+  file paths or other schemes are rendered as text. Playwright verified actual Engine
+  responses, formatting, injected HTML inertness, blocked relative/javascript URLs,
+  external link attributes, demo approval rejection, question response, and approval
+  followed by the expected missing-adapter failure on desktop and narrow viewports.
+  These `/approve-tool` flows exercise the deterministic demo protocol, not production
+  tool execution. Tool progress/result cards, approved mutation/Diff UI and
   Desktop/Tauri DOM remain open.
   Full workspace Rust checks/tests pass locally and remote run `36094218127` (53m14s within its 60m limit). However the prescribed GUI-on/off resource comparison, peak RSS and disk delta are not available from these job summaries and remain open for runner telemetry owner review. Its first clean-runner attempt exposed that
   the GUI jobs must install dotslash before building the workspace's `bin/protoc`
@@ -123,7 +125,7 @@ require platform runners, external services, or a later milestone.
 | Area | State | Evidence required |
 |---|---|---|
 | Tauri Desktop | Open | Tauri three-platform builds and real desktop flow |
-| Browser E2E | Partial | Repository Playwright tests and Linux GitHub CI verify create/submit/switch/reload/archive/transcript isolation, layout restore, health/handshake proxy, empty/cancel states and narrow composer; Desktop/Tauri browser automation remains open |
+| Browser E2E | Partial | Repository Playwright tests verify create/submit/switch/reload/archive/transcript isolation, layout restore, health/handshake proxy, empty/cancel, safe Markdown, demo approval rejection and missing-adapter failure, question response, and narrow viewport; latest recorded CI run passed before the newest local changes, so rerun remote CI after push; Desktop/Tauri automation remains open |
 | Provider/config/secrets | Partial | Non-secret settings/provider shape validation; real provider/keyring tests remain open |
 | M1 hunk/workspace Diff | Partial | Adapter boundaries and real local workspace/Diff tests; production `xai-hunk-tracker` partial-hunk/binary integration remains open |
 | M2 persistence/workspace | Partial | SQLite/JSON boundaries, single-root workspace/Git/terminal/attachment safety, Git edge fixtures and destructive-action confirmations; multi-root mapping, PTY, NFS/multiprocess, remote Git auth and full migration remain open |

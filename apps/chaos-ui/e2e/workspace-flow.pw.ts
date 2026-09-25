@@ -104,7 +104,7 @@ test('approval rejection and question response follow the real WebSocket entry p
   await expect(approval).toContainText(`reject marker ${suffix}`)
   await approval.getByRole('button', { name: '拒绝' }).click()
   await expect(approval).toHaveCount(0)
-  await expect(page.locator('[data-testid="app-shell"] header')).toContainText('审批已处理')
+  await expect(page.locator('[data-testid="app-shell"] header')).toContainText('审批已拒绝')
 
   await composer.fill(`/ask question marker ${suffix}`)
   await page.getByTestId('composer-submit').click()
@@ -113,6 +113,22 @@ test('approval rejection and question response follow the real WebSocket entry p
   await question.getByRole('button', { name: '是' }).click()
   await expect(question).toHaveCount(0)
   await expect(page.locator('[data-testid="app-shell"] header')).toContainText('回答已提交')
+})
+
+test('approving a demo tool reports the missing adapter without claiming execution', async ({ page }) => {
+  const suffix = `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`
+  await page.goto('/')
+  await expect(page.locator('[data-testid="app-shell"] header')).toContainText('会话已创建')
+
+  const composer = page.getByTestId('composer-input')
+  await composer.fill(`/approve-tool allow marker ${suffix}`)
+  await page.getByTestId('composer-submit').click()
+  const approval = page.locator('article[aria-label="工具审批"]')
+  await expect(approval).toContainText(`allow marker ${suffix}`)
+  await approval.getByRole('button', { name: '允许' }).click()
+
+  await expect(approval).toHaveCount(0)
+  await expect(page.locator('[data-testid="app-shell"] header')).toContainText('工具执行失败')
 })
 
 test('empty workspace prompt cancellation and empty submission remain safe', async ({ page }) => {

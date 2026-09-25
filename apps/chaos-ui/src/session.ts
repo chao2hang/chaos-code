@@ -61,7 +61,11 @@ export function applyServerMessage(state: SessionState, message: ServerMessage):
   }
   if (message.type === 'tool_approval_requested' && message.request_id) return { ...state, busy: false, approval: { requestId: message.request_id, tool: message.tool ?? 'unknown', summary: message.summary ?? '' }, status: '等待审批' }
   if (message.type === 'question_requested' && message.question_id) return { ...state, busy: false, question: { questionId: message.question_id, prompt: message.prompt ?? '' }, status: '等待回答' }
-  if (message.type === 'approval_resolved') return { ...state, approval: undefined, status: '审批已处理' }
+  if (message.type === 'approval_resolved') return {
+    ...state,
+    approval: undefined,
+    status: message.approved ? '工具已执行' : state.status === '工具执行失败' ? '工具执行失败' : '审批已拒绝',
+  }
   if (message.type === 'question_resolved') return { ...state, question: undefined, status: '回答已提交' }
   if (message.type === 'text_delta') {
     const last = state.messages[state.messages.length - 1]
@@ -71,6 +75,9 @@ export function applyServerMessage(state: SessionState, message: ServerMessage):
     return { ...state, messages }
   }
   if (message.type === 'completed' || message.type === 'cancelled') return { ...state, busy: false }
-  if (message.type === 'error') return { ...state, busy: false, status: '请求错误' }
+  if (message.type === 'error') {
+    const toolFailure = ['tool_unavailable', 'tool_failed', 'terminal_unavailable', 'terminal_failed', 'git_failed'].includes(message.code ?? '')
+    return { ...state, busy: false, status: toolFailure ? '工具执行失败' : '请求错误' }
+  }
   return state
 }

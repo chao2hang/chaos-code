@@ -301,13 +301,13 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 - [ ] 移植或重写完整时间线、轮次分组、虚拟滚动、滚动锚点和行高缓存。Web timeline 当前消息量低且尚无完整轮次/虚拟列表设计；本轮会分离 Markdown 显示渲染并以实际 Engine 输出 E2E 验证，不宣称完成此长期条目。
 - [~] Shipped Web timeline 用 `react-markdown`+remark-gfm 渲染真实 Engine 消息；raw HTML 不产生 DOM，只有 in-page `#`/HTTP(S)/mailto href 可激活，相对文件路径和其他 schemes 保持 inert text，外站 link `noopener noreferrer` 新 tab。Playwright desktop/mobile 验证 markup/list/script DOM mutation/link policies。虚拟滚动/anchor/row cache/turn grouping/reasoning collapse仍未完成。（2026-09-25；`apps/chaos-ui/e2e/workspace-flow.pw.ts`）
 - [~] composer 现支持多行输入、按 Enter 发送、Shift+Enter 换行、上/下箭头历史导航和发送后恢复未发送草稿；IME composition 与 keyCode 229 不触发提交；`/` 命令及 `@` 文件候选仍待补。（2026-09-24；`apps/chaos-ui/src/composer.ts`、`composer.test.ts`）
-- [~] Web app shell/workspace/session/composer 有稳定 `data-testid` 和 Playwright desktop/narrow project E2E；同源 Vite `/api`/`health`/`ws` 走真实 Web Engine。Playwright 在 desktop/390×844 也覆盖 actual Engine demo protocol 的 approval rejection/question answer, 工作卡片的进入/退出状态, safe Markdown. Approval/question 已有 browser E2E；tool progress/result, actual approved mutation/Diff detail and Desktop/Tauri DOM flow remain open。（2026-09-25；`apps/chaos-ui/e2e/workspace-flow.pw.ts`、scratch `playwright-approval-final.log`）
+- [~] Web app shell/workspace/session/composer 有稳定 `data-testid` 和 Playwright desktop/narrow project E2E；同源 Vite `/api`/`health`/`ws` 走真实 Web Engine。Playwright 在 desktop/390×844 覆盖 demo protocol approval rejection、question answer，以及批准但因真实 ToolAdapter 未配置而 fail-closed 的可观察错误；不将 demo trigger 称为 production tools。safe Markdown 和拒绝/错误终态均有真实浏览器验证；tool progress/result cards、actual approved mutation/Diff detail and Desktop/Tauri DOM flow remain open。（2026-09-25；`apps/chaos-ui/e2e/workspace-flow.pw.ts`、scratch `playwright-approval-allow.log`）
 
 ### M1.3 权限、提问与审计
 
 - [~] engine 已支持 ToolAdapter 边界：审批通过才执行、无 adapter 安全失败、执行结果写入 timeline/audit；真实命令、写文件、网络、MCP tool adapter 和通用提问对话框仍待补。（2026-09-24；engine tests）
 - [x] engine 审批记录绑定 session、tool、参数摘要、UUID request ID、结果和序列；ToolAdapter 只在批准后调用，测试覆盖执行、拒绝和无 adapter fail-closed。（2026-09-24）
-- [~] WebSocket 工具审批真实集成测试已覆盖允许、拒绝、重复 question resolve、无 Diff adapter 结构化失败、ordered ack/resolution/audit 和双客户端竞争；Resume/Snapshot 现返回待审批详情与待回答问题 prompt，断线后审批和问题均可恢复并继续 resolve，重复 request 仍 fail-closed；审批超时/记住规则和浏览器人工验收仍待补。（2026-09-24；`approval_resume_flow.rs`、`question_resume_flow.rs`、`approval_competition_flow.rs`）
+- [~] WebSocket 工具审批真实集成测试已覆盖允许、拒绝、重复 question resolve、无 Diff adapter 结构化失败、ordered ack/resolution/audit 和双客户端竞争；Resume/Snapshot 现返回待审批详情与待回答问题 prompt，断线后审批和问题均可恢复并继续 resolve，重复 request 仍 fail-closed。Playwright desktop/390×844 覆盖 demo approval 拒绝及允许后无 adapter 的可观察失败；生产工具授权、审批超时/记住规则和真实浏览器多-tab竞争仍待补。（2026-09-25；`approval_resume_flow.rs`、`question_resume_flow.rs`、`approval_competition_flow.rs`、`apps/chaos-ui/e2e/workspace-flow.pw.ts`）
 - [~] Web 写操作已有 workspace root confinement、message dedup、Origin/Host/token 校验和 Safe Web Mode 后端 gate；CSRF/重放跨 HTTP 写操作防护、审计日志脱敏轮转仍待完整部署模式。
 - [x] Safe Web Mode 已由 WebSocket 后端强制执行：命令、文件写入、Git/Diff mutation、审批执行等 mutation message 在 `CHAOS_SAFE_WEB_MODE` 下直接返回 `safe_web_mode_blocked`；真实 WebSocket 测试覆盖 terminal 和 destructive Git direct call。（2026-09-24；`safe_mode_flow.rs`）
 
@@ -320,8 +320,8 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 ### M1.5 验收门禁
 
 - [~] E2E：engine/WebSocket 已覆盖读取 workspace 文件 → 请求写入 → 拒绝一次 → 再次批准 → 预览 Diff → 接受 → 回滚并确认磁盘状态；浏览器/桌面人工验收和真实 hunk/二进制场景仍待平台 gate。（2026-09-24；`workspace_diff_flow.rs`）
-- [~] WebSocket integration 已在 socket 断开后通过持久化 Engine reopen，恢复待审批 approval/question prompt，并验证批准/回答只完成一次；仓库 Playwright 目前未覆盖真实浏览器多-tab竞争/通知时序，该 UI gate 仍待补。（2026-09-24；`approval_resume_flow.rs`、`question_resume_flow.rs`）
-- [~] WebSocket 双客户端 fixture 已验证同一审批只接受一个终态，第二次 resolve 返回 `approval_not_found`；真实浏览器多标签人工/Playwright 验收仍待补充浏览器场景。（2026-09-24；`approval_competition_flow.rs`）
+- [~] WebSocket integration 已在 socket 断开后通过持久化 Engine reopen，恢复待审批 approval/question prompt，并验证批准/回答只完成一次；Playwright desktop/mobile 覆盖真实 Web 页面上的单客户端拒绝与允许后无 adapter 失败、问题回答，但未覆盖真实浏览器多-tab竞争/通知时序，该 UI gate 仍待补。（2026-09-25；`approval_resume_flow.rs`、`question_resume_flow.rs`、`apps/chaos-ui/e2e/workspace-flow.pw.ts`）
+- [~] WebSocket 双客户端 fixture 已验证同一审批只接受一个终态，第二次 resolve 返回 `approval_not_found`；真实浏览器多标签人工/Playwright 验收仍待补充浏览器场景。单页面 allow/reject path 已由 desktop/mobile Playwright 覆盖。（2026-09-25；`approval_competition_flow.rs`、`apps/chaos-ui/e2e/workspace-flow.pw.ts`）
 - [x] Safe Web Mode 已通过真实 WebSocket 直接发送 terminal 和 destructive Git mutation 验证无法绕过；当前 Playwright E2E 未新增 Safe Web Mode UI 场景。（2026-09-24；`safe_mode_flow.rs`）
 - [~] Web 真实 WebSocket 工具审批/Diff/question 流程和 React reducer 已测试；Desktop/Tauri 真实操作与浏览器人工验证仍待平台 gate。
 

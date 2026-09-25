@@ -6,10 +6,11 @@ product/platform acceptance gate has passed.
 
 ## Current status counts
 
-At the inventory start this pass scanned 156 `[ ]`/`[~]` lines. After further
-local work and reclassification, `TODO.md` currently has 66 unchecked and 85
-partial rows (including conditional criteria, future/dated work and rows with a
-completed slice plus an open gate). The full first-pass line export is preserved
+The current line-level inventory scans 151 `[ ]`/`[~]` rows: 66 unchecked and 85
+partial (including conditional criteria, future/dated work and rows with a
+completed slice plus an open gate). The reproducible command is
+`python3 scripts/ci/classify-open-todos.py`; its latest output is preserved in
+private goal scratch `open-items-current.tsv`. The initial audit export remains
 in private goal scratch `todo-open-items.txt`.
 
 | Roadmap group | Unchecked | Partial |
@@ -28,9 +29,9 @@ in private goal scratch `todo-open-items.txt`.
 | Item | Implementation/evidence |
 |---|---|
 | Contribution safety | `CONTRIBUTING.md` describes four-job Cargo concurrency and conservative WSL `target/` cleanup. |
-| Ignored-test guard | The existing Rust-aware parser has 8 fixtures; the new baseline checker adds add/remove negative fixtures. Live inventory: 434 ignored attrs, 218 bare attrs, zero delta against explicit package/path/function baseline. CI runs parser tests plus live bidirectional check. The baseline does not approve the 218 missing reasons/dates. |
+| Ignored-test guard | The existing Rust-aware parser has 8 fixtures; the new baseline checker adds add/remove negative fixtures. Live inventory: 434 ignored attrs, 218 bare attrs, zero delta against explicit package/path/function baseline. CI runs parser tests plus live bidirectional check. The baseline does not approve the 218 missing reasons/dates; `docs/ci-test-debt.md` and the Q4 summary now point to the repaired scanner and preserve the owner review as open. |
 | User-visible brand guard | `check-brand-protocol.py` checks bounded shipped CLI/help/reference-doc text and direct rendered UI source strings, not all source literals; it leaves crate/wire/env/home compatibility identifiers, history, comments and fixtures alone. Mutation tests prove CLI, docs and UI name regressions fail, while legacy compatibility prose passes. |
-| Conversation rendering | `react-markdown` and `remark-gfm` render actual Engine transcript text in Web timeline. Raw HTML is not parsed; only in-page anchors, HTTP(S), and mailto become links; external links use `noopener noreferrer`. Playwright desktop and 390×844 flows exercise bold/code/lists, injected DOM mutation, blocked relative/javascript URLs, external link attributes, session switching/reload/archive, mobile multiline composer, real approval-rejection card, and question response. Tool-progress/result, approved mutation/Diff forms and native Desktop cards remain open. |
+| Conversation rendering and approvals | `react-markdown` and `remark-gfm` render actual Engine transcript text in Web timeline. Raw HTML is not parsed; only in-page anchors, HTTP(S), and mailto become links; external links use `noopener noreferrer`. Playwright desktop and 390×844 flows exercise bold/code/lists, injected DOM mutation, blocked relative/javascript URLs, external link attributes, session switching/reload/archive, mobile multiline composer, demo approval rejection, allow followed by a visible missing-ToolAdapter failure, and question response. `/approve-tool` is a deterministic demo protocol, not production tool execution. Tool-progress/result cards, approved mutation/Diff forms and native Desktop cards remain open. |
 | Rust/CI gates | Full workspace `fmt`, all-target `check`, strict `clippy` and tests pass locally. Remote run `36094218127` passed all jobs (53m14s Rust job, under 60m); remote historical/peak RSS/disk comparison remains an Actions telemetry-owner prerequisite. New ignore-baseline/brand/Markdown/mutation/approval CI changes in this working patch pass the final local verification log and await remote CI triggered by the next push. |
 | Localization | `l10n-guard.sh --before main --after WORKTREE` passed with no regressions/shrinks/fortress breaches. |
 

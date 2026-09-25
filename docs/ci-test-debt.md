@@ -36,30 +36,37 @@ in their source files. See the "Ignored tests" section below for the inventory.
 
 The aggregate figure recorded when the job was introduced was roughly **209
 failing tests** across seven crates. After per-crate audit and repair, **all
-209 are resolved**: 0 non-ignored failures remain, with ~580 tests
-`#[ignore]`'d across the workspace (billing, connectors URL, PTY e2e,
-scripted scenarios, stress, concurrent convergence wiremock rewrite backlog).
+209 are resolved**: 0 non-ignored failures remain. The repaired 2026-09-25
+inventory reports 434 ignored attributes total, including 218 bare attributes;
+these are workspace-wide scanner counts, not the count of fork-specific entries
+in the table above.
 
 ## Ignored tests
 
 Tests marked `#[ignore]` are a separate debt. Their reasons must stay
 readable and be revisited periodically; a permanent `#[ignore]` is a deleted
-test with extra steps. CI runs the repository inventory scanner against
+test with extra steps. `python3 scripts/ci/ignored-tests.py --check-baseline
+scripts/ci/ignored-tests-baseline.tsv` checks the grandfathered bare-attribute
+inventory in both directions. The live scan currently reports 434 ignored
+attributes and 218 bare attributes; the checked-in CSV and per-source owner
+audit still determine review status. CI runs the repository inventory scanner against
 `scripts/ci/ignored-tests-baseline.tsv`; existing bare attributes are grandfathered
 by explicit package/path/function keys. Added attributes fail until reviewed and
 added to the baseline; stale entries for removed attributes also fail until the
 baseline is cleaned. The baseline does not approve reasons or replace the
-quarterly source-level audit.
+quarterly source-level audit. Current bare-ignore additions are rejected by the
+explicit package/path/function inventory gate; removing an existing ignored test
+requires removing its matching stale baseline key in the same change.
 
 > 口径说明：下表只列“Chaos fork 引入的债务”；全工作区清单见
 > [`ignored-audit-2026q4-summary.md`](ignored-audit-2026q4-summary.md)。初次统计工具输出并非可靠 CSV，
 > 解析逻辑还把行尾注释误判为 reason；之前记录的 452 / 228 / 49 / 403 数字撤回，不能用于治理。
-> 已生成的 CSV 快照同样不可靠，待修复统计器后重生成。
+> 当前修复后的可信快照和扫描口径见 `ignored-audit-2026q4-summary.md`。
 
 > 口径说明：下表只列"Chaos fork 引入的债务"；全工作区清单见
 > [`ignored-audit-2026q4-summary.md`](ignored-audit-2026q4-summary.md)。初次统计工具输出并非可靠 CSV，
 > 解析逻辑还把行尾注释误判为 reason；之前记录的 452 / 228 / 49 / 403 数字撤回，不能用于治理。
-> 已生成的 CSV 快照同样不可靠，待修复统计器后重生成。
+> 当前修复后的可信快照和扫描口径见 `ignored-audit-2026q4-summary.md`。
 
 | Crate | Fork 债务数 | 原因 | Owner | 下次重审 |
 | --- | ---: | --- | --- | --- |
@@ -113,10 +120,9 @@ quarterly source-level audit.
 每季度（1 月 / 4 月 / 7 月 / 10 月开头）开一次 ignore 审计：
 
 ```sh
-scripts/ci/ignored-tests.sh          # 全量统计 + 分 crate；发现裸 ignore 时退出 1
-scripts/ci/ignored-tests.sh --csv    # 机器可读 CSV；发现裸 ignore 时退出 1
-scripts/ci/ignored-tests.sh --stale  # 只列过期/未设 review date 的（同时拒绝裸 ignore）
-scripts/ci/ignored-tests.sh --csv > docs/ignored-audit-2026q4.csv  # 保存季度快照
+python3 scripts/ci/ignored-tests.py --csv > docs/ignored-audit-2026q4.csv
+python3 scripts/ci/ignored-tests.py --check-baseline scripts/ci/ignored-tests-baseline.tsv
+python3 scripts/ci/test-ignored-tests-baseline-fixture.py
 ```
 
 步骤：
@@ -130,16 +136,15 @@ scripts/ci/ignored-tests.sh --csv > docs/ignored-audit-2026q4.csv  # 保存季�
 
 ### 规则
 
-- 目标是**禁止新增**裸 `#[ignore]`。当前存量为 228 条（见 Q4 CSV）；新增门禁必须先
-  支持明确的存量基线/豁免，否则会让 CI 立即失败。清理存量时逐条补理由，不批量伪造原因。
-- Reason 里**必须**有 `review YYYY-MM` 或等价的重审日期。无日期的算
-  “永久债务”，需季度审计时处理。
+- 目标是**禁止未经审查新增**裸 `#[ignore]`。当前存量 218 条按 package/path/function 受双向 baseline gate 管理；新增、删除均需审查 baseline diff。清理存量时逐条补理由，不批量伪造原因。
+- 对带 reason 的 `#[ignore]`，Reason 里**必须**有 `review YYYY-MM` 或等价的重审日期。无日期的算
+  “永久债务”，需季度审计时处理。Bare attributes remain explicit legacy exceptions until that audit; the inventory baseline is not an approval.
 - 新增 fork 专属 ignore → 必须同时更新本节表格计数和原因描述。
 
-2026 Q4 审计暂缓：首次运行发现 `scripts/ci/ignored-tests.sh` 的 CSV 转义与尾部注释解析有缺陷，
-产生的数字与 `docs/ignored-audit-2026q4.csv` 均已撤回。详见
-[`ignored-audit-2026q4-summary.md`](ignored-audit-2026q4-summary.md)。修复解析器并用 fixture 验证前，
-不得据此批量更改属性或建立 CI 门禁。
+2026 Q4 source-by-source owner audit remains pending until the October review cycle.
+The parser is repaired and covered by fixtures, and the baseline gate prevents silent
+inventory drift; neither result is an approval or renewal of the existing ignore debt.
+See [`ignored-audit-2026q4-summary.md`](ignored-audit-2026q4-summary.md).
 
 ## 2026-09-22：一组「从不执行」的守护测试（已接回）
 
@@ -176,7 +181,7 @@ scripts/ci/ignored-tests.sh --csv > docs/ignored-audit-2026q4.csv  # 保存季�
 
 ### 同类残留：还有哪些 `#[cfg(all(test, feature = …))]` 不编译
 
-`scripts/ci/ignored-tests.sh` 数的是 `#[ignore]`，「根本没编译」的测试不在它的
+`scripts/ci/ignored-tests.py` 数的是 `#[ignore]`，「根本没编译」的测试不在它的
 视野里。按「模块特性 vs 有没有依赖边打开」对全仓扫一遍（2026-09-22，
 `grep -rn 'cfg(all(test, feature'` 对照各 `Cargo.toml` 的 `features = [...]`）：
 
