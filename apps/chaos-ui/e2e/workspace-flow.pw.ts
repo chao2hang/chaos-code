@@ -1,3 +1,4 @@
+import AxeBuilder from '@axe-core/playwright'
 import { expect, test, type Page } from '@playwright/test'
 
 function workspaceButton(page: Page, name: string) {
@@ -147,6 +148,25 @@ test('approving a demo tool reports the missing adapter without claiming executi
   await expect(approval).toHaveCount(0)
   await expect(page.getByRole('status')).toHaveAttribute('aria-live', 'polite')
   await expect(page.getByRole('status')).toHaveText('工具执行失败')
+})
+
+test('the empty app shell has no serious or critical axe violations', async ({ page }) => {
+  await page.goto('/')
+  await expect(page.getByTestId('session-status')).toHaveText('会话已创建')
+
+  const results = await new AxeBuilder({ page }).analyze()
+  expect(results.violations.filter(({ impact }) => impact === 'serious' || impact === 'critical')).toEqual([])
+})
+
+test('the workspace, composer and rendered message remain axe-clean after real interaction', async ({ page }) => {
+  const suffix = `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`
+  await page.goto('/')
+  await expect(page.getByTestId('session-status')).toHaveText('会话已创建')
+  await createWorkspace(page, `Axe ${suffix}`)
+  await sendPrompt(page, `Read **this** safely ${suffix}`, `Read **this** safely ${suffix}`)
+
+  const results = await new AxeBuilder({ page }).analyze()
+  expect(results.violations.filter(({ impact }) => impact === 'serious' || impact === 'critical')).toEqual([])
 })
 
 test('keyboard focus is visible and composer submission works without a pointer', async ({ page }) => {

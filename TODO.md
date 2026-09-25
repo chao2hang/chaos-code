@@ -417,7 +417,7 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 ### M3.4 品牌与本地化
 
 - [~] CLI/npm/manual-rendered app shell already display Chaos. `check-brand-protocol.py` CI scans ship CLI commands and embedded reference docs (`grok <user command>`) plus direct rendered UI source title/wordmark for `Grok Build` product label; fixtures prove it rejects CLI/doc/UI mutation but passes historical/compatibility text. It intentionally preserves crate/wire/env/path compatibility strings. No icon or native Tauri window branding is implemented; OS/manual accessibility review remains gated on Tauri platform acceptance.
-- [~] 已为 Chaos Web 交互控件加入深色/浅色适配的 `:focus-visible` 高对比轮廓；desktop/mobile Playwright 覆盖 Tab focus、工作区切换/归档独立语义操作和无鼠标 Enter 提交。完整 zh-CN/en-US 文案缺键、长文本、多 assistive-technology/browser 检查仍未完成。（2026-09-25；`apps/chaos-ui/src/style.css`、`e2e/workspace-flow.pw.ts`）
+- [~] 已为 Chaos Web 交互控件加入深/浅主题键盘焦点轮廓，工作区切换/归档是独立语义按钮；真实 desktop/mobile Playwright 覆盖 Tab/Enter 与工作区流程。axe-core 浏览器扫描检查空态及真实 WebSocket 消息/工作区状态，发现并修复 document title/lang 缺失；两态现无 serious/critical violations。完整中英文本地化缺键、长文本和真实 assistive-technology/platform 手工验收仍开放。（2026-09-25；`apps/chaos-ui/e2e/workspace-flow.pw.ts`、`apps/chaos-ui/index.html`、`src/style.css`）
 - [x] Added bounded `check-brand-protocol.py` CI guard: rejects obsolete shipped CLI commands (`grok <subcommand>`) and rendered UI source name `Grok Build`, while excluding internal comments/tests, history, crate/wire/env and `~/.grok` compatibility. Clean/negative CLI, doc, UI and compatibility fixtures pass; Rust-generated wire type IDs are covered by separate schema-drift check.
 
 ### M3.5 验收门禁
