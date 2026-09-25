@@ -657,9 +657,8 @@ fn needs_animation_gates_prompt_history_tick_delivery() {
         "an open prompt history overlay must request animation ticks"
     );
     let mut delivered = false;
-    // CI runners can starve the history-search daemon thread well past a
-    // fixed 1000×1ms budget; poll against a wall-clock deadline instead.
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    // CI runners can starve the history-search daemon thread under concurrent workspace tests.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
     while std::time::Instant::now() < deadline {
         if app.tick() && app.agents[&id].prompt.history_search.result_count() == 2 {
             delivered = true;
