@@ -108,6 +108,8 @@ require platform runners, external services, or a later milestone.
   responses, formatting, injected HTML inertness, blocked relative/javascript URLs,
   external link attributes, demo approval rejection, question response, and approval
   followed by the expected missing-adapter failure on desktop and narrow viewports.
+  Approval and question status changes are exposed through a dedicated polite live
+  status region for assistive technology.
   These `/approve-tool` flows exercise the deterministic demo protocol, not production
   tool execution. Tool progress/result cards, approved mutation/Diff UI and
   Desktop/Tauri DOM remain open.

@@ -20,6 +20,7 @@ describe('session event projection', () => {
     expect(resolved.status).toBe('工具已执行')
     const rejected = applyServerMessage(approval, { type: 'approval_resolved', session_id: 's1', request_id: 'r1', approved: false, sequence: 2 })
     expect(rejected.status).toBe('审批已拒绝')
+    expect(applyServerMessage(approval, { type: 'error', code: 'network_error', message: 'offline' }).status).toBe('请求错误')
     const failed = applyServerMessage(approval, { type: 'error', code: 'tool_unavailable', message: '没有配置获准的工具 adapter' })
     expect(failed.status).toBe('工具执行失败')
     const rejectedAfterFailure = applyServerMessage(failed, { type: 'approval_resolved', session_id: 's1', request_id: 'r1', approved: false, sequence: 2 })

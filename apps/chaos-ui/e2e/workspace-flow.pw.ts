@@ -27,7 +27,7 @@ test('workspace sessions stay isolated across create, submit, switch, reload, ar
 
   await page.goto('/')
   await expect(page.getByTestId('app-shell')).toBeVisible()
-  await expect(page.locator('[data-testid="app-shell"] header')).toContainText('会话已创建')
+  await expect(page.getByTestId('session-status')).toHaveText('会话已创建')
 
   const health = await page.request.get('/health')
   expect(health.ok()).toBeTruthy()
@@ -51,7 +51,7 @@ test('workspace sessions stay isolated across create, submit, switch, reload, ar
   await page.getByRole('button', { name: /^主题：/ }).click()
   await page.getByLabel('面板宽度').fill('320')
   await page.reload()
-  await expect(page.locator('[data-testid="app-shell"] header')).toContainText('会话已创建')
+  await expect(page.getByTestId('session-status')).toHaveText('会话已创建')
   await expect(page.getByRole('button', { name: /^主题：light$/ })).toBeVisible()
   await expect(page.getByLabel('面板宽度')).toHaveValue('320')
   await expect(workspaceButton(page, second)).toHaveClass(/active/)
@@ -102,7 +102,9 @@ test('workspace sessions stay isolated across create, submit, switch, reload, ar
 test('approval rejection and question response follow the real WebSocket entry path', async ({ page }) => {
   const suffix = `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`
   await page.goto('/')
-  await expect(page.locator('[data-testid="app-shell"] header')).toContainText('会话已创建')
+  const sessionStatus = page.getByRole('status')
+  await expect(sessionStatus).toHaveAttribute('aria-live', 'polite')
+  await expect(sessionStatus).toHaveText('会话已创建')
 
   const composer = page.getByTestId('composer-input')
   await composer.fill(`/approve-tool reject marker ${suffix}`)
@@ -112,7 +114,7 @@ test('approval rejection and question response follow the real WebSocket entry p
   await expect(approval).toContainText(`reject marker ${suffix}`)
   await approval.getByRole('button', { name: '拒绝' }).click()
   await expect(approval).toHaveCount(0)
-  await expect(page.locator('[data-testid="app-shell"] header')).toContainText('审批已拒绝')
+  await expect(page.getByTestId('session-status')).toHaveText('审批已拒绝')
 
   await composer.fill(`/ask question marker ${suffix}`)
   await page.getByTestId('composer-submit').click()
@@ -120,13 +122,13 @@ test('approval rejection and question response follow the real WebSocket entry p
   await expect(question).toContainText(`question marker ${suffix}`)
   await question.getByRole('button', { name: '是' }).click()
   await expect(question).toHaveCount(0)
-  await expect(page.locator('[data-testid="app-shell"] header')).toContainText('回答已提交')
+  await expect(page.getByTestId('session-status')).toHaveText('回答已提交')
 })
 
 test('approving a demo tool reports the missing adapter without claiming execution', async ({ page }) => {
   const suffix = `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`
   await page.goto('/')
-  await expect(page.locator('[data-testid="app-shell"] header')).toContainText('会话已创建')
+  await expect(page.getByTestId('session-status')).toHaveText('会话已创建')
 
   const composer = page.getByTestId('composer-input')
   await composer.fill(`/approve-tool allow marker ${suffix}`)
@@ -136,12 +138,13 @@ test('approving a demo tool reports the missing adapter without claiming executi
   await approval.getByRole('button', { name: '允许' }).click()
 
   await expect(approval).toHaveCount(0)
-  await expect(page.locator('[data-testid="app-shell"] header')).toContainText('工具执行失败')
+  await expect(page.getByRole('status')).toHaveAttribute('aria-live', 'polite')
+  await expect(page.getByRole('status')).toHaveText('工具执行失败')
 })
 
 test('empty workspace prompt cancellation and empty submission remain safe', async ({ page }) => {
   await page.goto('/')
-  await expect(page.locator('[data-testid="app-shell"] header')).toContainText('会话已创建')
+  await expect(page.getByTestId('session-status')).toHaveText('会话已创建')
   const createButton = page.getByRole('button', { name: '+ 新工作区' })
   page.once('dialog', (dialog) => dialog.dismiss())
   await createButton.click()
