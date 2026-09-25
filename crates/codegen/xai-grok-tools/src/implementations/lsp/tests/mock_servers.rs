@@ -800,6 +800,10 @@ def handle(msg, method):
     if method in ("textDocument/didOpen", "textDocument/didChange"):
         uri = msg["params"]["textDocument"]["uri"]
         version = msg["params"]["textDocument"]["version"]
+        # Toolchain-enabled CI can run many crate tests concurrently; allow the
+        # Rust analysis fixture extra time without changing what it publishes.
+        import time
+        time.sleep(0.05)
         publish_at(uri, "the check that only the push channel runs, pulls=%d" % state["pulls"], version)
     elif method == "textDocument/diagnostic":
         state["pulls"] += 1
