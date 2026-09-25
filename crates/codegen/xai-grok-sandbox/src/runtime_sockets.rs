@@ -112,19 +112,39 @@ fn materialize_runtime_socket_deny_paths_from(
             Ok(parent) => parent,
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
                 match std::fs::symlink_metadata(&candidate) {
-                    Err(metadata_error) if metadata_error.kind() == io::ErrorKind::NotFound => {
+                    Err(metadata_error)
+                        if matches!(
+                            metadata_error.kind(),
+                            io::ErrorKind::NotFound | io::ErrorKind::PermissionDenied
+                        ) =>
+                    {
                         continue;
                     }
                     Ok(_) => return Err(with_context(error)),
                     Err(metadata_error) => return Err(with_context(metadata_error)),
                 }
             }
+            // An inaccessible parent cannot expose a socket to this process; the per-spawn network filter remains authoritative.
+            Err(error) if error.kind() == io::ErrorKind::PermissionDenied => {
+                let parent_metadata = std::fs::symlink_metadata(parent).map_err(with_context)?;
+                if parent_metadata.is_dir() {
+                    continue;
+                }
+                return Err(with_context(error));
+            }
             Err(error) => return Err(with_context(error)),
         };
         let path = canonical_parent.join(file_name);
         let metadata = match std::fs::symlink_metadata(&path) {
             Ok(metadata) => metadata,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::NotFound | io::ErrorKind::PermissionDenied
+                ) =>
+            {
+                continue;
+            }
             Err(error) => return Err(with_context(error)),
         };
         if metadata.file_type().is_symlink() {

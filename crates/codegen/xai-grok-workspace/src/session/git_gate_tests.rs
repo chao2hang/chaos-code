@@ -408,7 +408,12 @@ async fn cancelled_leader_does_not_wedge_slot() {
 #[tokio::test]
 async fn invalidate_during_inflight_does_not_return_stale_walk() {
     let repo = init_temp_repo();
-    let gate = test_gate(Duration::from_secs(5), Duration::from_secs(5));
+    let gate = GitGate::with_config(
+        Duration::from_secs(5),
+        Duration::from_secs(5),
+        2,
+        Duration::from_secs(2),
+    );
     let walks = Arc::new(AtomicUsize::new(0));
     let release = tokio::sync::watch::channel(false).0;
 
@@ -443,6 +448,7 @@ async fn invalidate_during_inflight_does_not_return_stale_walk() {
         let walk = mk_walk(Arc::clone(&walks), release.clone());
         tokio::spawn(async move { gate.run(&root, status_op(), walk).await })
     };
+    wait_for_count(&walks, 2).await;
 
     release.send(true).unwrap();
     let after_invalidate = tokio::time::timeout(Duration::from_secs(2), second)

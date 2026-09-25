@@ -94,6 +94,29 @@ fn materialized_socket_paths_canonicalize_and_deduplicate_parent_aliases() {
 
 #[test]
 #[cfg(unix)]
+fn inaccessible_automatic_socket_parent_is_skipped() {
+    // This test needs filesystem permissions to be enforced; root bypasses mode bits.
+    // SAFETY: getuid is always safe.
+    if unsafe { libc::getuid() } == 0 {
+        return;
+    }
+    let root = temp_runtime_root("inaccessible-parent");
+    let blocked = root.join("blocked");
+    std::fs::create_dir(&blocked).unwrap();
+    let socket = blocked.join("docker.sock");
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&blocked, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+    let result = materialize_runtime_socket_deny_paths_from([socket]);
+
+    std::fs::set_permissions(&blocked, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let paths = result.unwrap();
+    assert!(paths.is_empty());
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+#[cfg(unix)]
 fn materialized_socket_path_canonicalizes_nested_parent_aliases() {
     let root = temp_runtime_root("nested-alias");
     let runtime = root.join("runtime");
