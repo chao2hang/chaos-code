@@ -36,5 +36,7 @@ small { color: #b5c3d7; }
 form { display: flex; gap: 12px; align-items: end; }
 textarea { flex: 1; min-height: var(--composer-height); resize: vertical; border: 1px solid #34445e; border-radius: 10px; padding: 12px; color: inherit; background: #172033; }
 button { border: 0; border-radius: 10px; padding: 12px 18px; color: white; background: #3276c3; }
+:focus-visible { outline: 3px solid #f6c453; outline-offset: 3px; }
+:root[data-theme='light'] :focus-visible { outline-color: #875a00; }
 button:disabled { opacity: .5; }
 @media (max-width: 600px) { .shell { padding: 16px; } header { flex-direction: column; gap: 4px; } article { max-width: 92%; } form { flex-direction: column; align-items: stretch; } }

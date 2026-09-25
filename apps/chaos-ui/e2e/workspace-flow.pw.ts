@@ -142,6 +142,30 @@ test('approving a demo tool reports the missing adapter without claiming executi
   await expect(page.getByRole('status')).toHaveText('工具执行失败')
 })
 
+test('keyboard focus is visible and composer submission works without a pointer', async ({ page }) => {
+  const suffix = `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`
+  await page.goto('/')
+  await expect(page.getByTestId('session-status')).toHaveText('会话已创建')
+
+  const createWorkspace = page.getByRole('button', { name: '+ 新工作区' })
+  await createWorkspace.focus()
+  await expect(createWorkspace).toBeFocused()
+  await expect(createWorkspace).toHaveCSS('outline-style', 'solid')
+  await expect(createWorkspace).toHaveCSS('outline-width', '3px')
+  await page.keyboard.press('Tab')
+
+  const composer = page.getByTestId('composer-input')
+  await composer.fill(`keyboard only ${suffix}`)
+  const submit = page.getByTestId('composer-submit')
+  await submit.focus()
+  await expect(submit).toBeFocused()
+  await expect(submit).toHaveCSS('outline-style', 'solid')
+  await page.keyboard.press('Enter')
+
+  await expect(page.locator('.user')).toContainText(`keyboard only ${suffix}`)
+  await expect(page.locator('.assistant')).toContainText(`keyboard only ${suffix}`)
+})
+
 test('empty workspace prompt cancellation and empty submission remain safe', async ({ page }) => {
   await page.goto('/')
   await expect(page.getByTestId('session-status')).toHaveText('会话已创建')
