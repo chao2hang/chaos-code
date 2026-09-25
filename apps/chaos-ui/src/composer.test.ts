@@ -29,6 +29,12 @@ describe('composer history and keyboard behavior', () => {
     expect(navigatePromptHistory(latest.history, 1, latest.value).value).toBe('unfinished follow-up')
   })
 
+  it('does not navigate prompt history during IME composition', () => {
+    const history = { entries: ['previous prompt'], index: 1, draft: 'draft in progress' }
+    expect(navigatePromptHistory(history, -1, 'draft in progress', true)).toEqual({ history, value: 'draft in progress' })
+    expect(navigatePromptHistory(history, 1, 'draft in progress', true)).toEqual({ history, value: 'draft in progress' })
+  })
+
   it('keeps blank submission history unchanged', () => {
     const history = recordPrompt({ entries: ['previous'], index: 1, draft: 'unsent' }, '   ')
     expect(history).toEqual({ entries: ['previous'], index: 1, draft: 'unsent' })

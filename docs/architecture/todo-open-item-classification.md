@@ -40,7 +40,7 @@ in private goal scratch `todo-open-items.txt`.
 
 These can be developed in bounded work after their behavior is specified; this pass deliberately did not create unapproved product contracts:
 
-- M1: message round grouping, virtual list/scroll anchor/cache, reasoning collapse, approval timeout/rules, client cursor/snapshot catch-up and multi-tab sequencing; tool cards need actual adapter payload/result forms. Markdown rendering is a slice, not the timeline milestone.
+- M1: message round grouping, virtual list/scroll anchor/cache, reasoning collapse, approval timeout/rules, client cursor/snapshot catch-up and multi-tab sequencing; tool cards need actual adapter payload/result forms. Composer Enter/IME guards and history projection are tested, including no history navigation during IME composition; browser-native IME candidate integration still depends on platform keyboard testing. Markdown rendering is a slice, not the timeline milestone.
 - M2: incremental file tree/`@` candidates and a real terminal route. The Engine has one host-configured workspace/Git root; multi-root needs an owner-approved host-owned root ID/map and a root provisioning/trust policy before implementing two-root access.
 - M3: settings/workflow views after settings schema and workflow/subagent event/state contracts are selected. The current demo `/ask` and `/approve-tool` prompt hooks are not production workflow execution.
 - MT-5: source-by-source reason/date cleanup of the legacy bare ignores. The CI baseline only stops invisible inventory drift.

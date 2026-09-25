@@ -13,7 +13,8 @@ export function recordPrompt(history: ComposerHistory, prompt: string): Composer
   return { entries, index: entries.length, draft: history.draft || prompt }
 }
 
-export function navigatePromptHistory(history: ComposerHistory, direction: -1 | 1, currentDraft: string): { history: ComposerHistory; value: string } {
+export function navigatePromptHistory(history: ComposerHistory, direction: -1 | 1, currentDraft: string, isComposing = false): { history: ComposerHistory; value: string } {
+  if (isComposing) return { history, value: currentDraft }
   const draft = history.draft || currentDraft
   const atLatest = history.index >= history.entries.length
   if (direction === -1) {

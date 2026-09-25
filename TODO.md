@@ -300,7 +300,7 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 
 - [ ] 移植或重写完整时间线、轮次分组、虚拟滚动、滚动锚点和行高缓存。Web timeline 当前消息量低且尚无完整轮次/虚拟列表设计；本轮会分离 Markdown 显示渲染并以实际 Engine 输出 E2E 验证，不宣称完成此长期条目。
 - [~] Shipped Web timeline 用 `react-markdown`+remark-gfm 渲染真实 Engine 消息；raw HTML 不产生 DOM，Markdown 图片也渲染为文字而不建立远程 image request，只有 in-page `#`/HTTP(S)/mailto href 可激活，相对文件路径和其他 schemes 保持 inert text，外站 link `noopener noreferrer` 新 tab。Playwright desktop/mobile 验证 markup/list/script DOM mutation/image 请求阻止/link policies；审批和问题变化通过独立 `role=status`/`aria-live=polite` 区域播报。虚拟滚动/anchor/row cache/turn grouping/reasoning collapse仍未完成。（2026-09-25；`apps/chaos-ui/e2e/workspace-flow.pw.ts`）
-- [~] composer 现支持多行输入、按 Enter 发送、Shift+Enter 换行、上/下箭头历史导航和发送后恢复未发送草稿；IME composition 与 keyCode 229 不触发提交；`/` 命令及 `@` 文件候选仍待补。（2026-09-24；`apps/chaos-ui/src/composer.ts`、`composer.test.ts`）
+- [~] composer 现支持多行输入、按 Enter 发送、Shift+Enter 换行、上/下箭头历史导航和发送后恢复未发送草稿；IME composition/keyCode 229 不触发 Enter 发送，composition 时上/下箭头也不切换历史；`/` 命令及 `@` 文件候选仍待补。（2026-09-25；`apps/chaos-ui/src/composer.ts`、`composer.test.ts`）
 - [~] Web app shell/workspace/session/composer 有稳定 `data-testid` 和 Playwright desktop/narrow project E2E；同源 Vite `/api`/`health`/`ws` 走真实 Web Engine。Playwright 在 desktop/390×844 覆盖 demo protocol approval rejection、question answer，以及批准但因真实 ToolAdapter 未配置而 fail-closed 的可观察错误；不将 demo trigger 称为 production tools。safe Markdown 和拒绝/错误终态均有真实浏览器验证；tool progress/result cards、actual approved mutation/Diff detail and Desktop/Tauri DOM flow remain open。（2026-09-25；`apps/chaos-ui/e2e/workspace-flow.pw.ts`、scratch `playwright-approval-allow.log`）
 
 ### M1.3 权限、提问与审计
