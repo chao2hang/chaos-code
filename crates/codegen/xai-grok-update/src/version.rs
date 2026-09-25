@@ -447,7 +447,13 @@ async fn fetch_gcs_channel_pointer(channel: &str, base_url: &str) -> Result<Stri
             }
         }
     }
-    Err(last_err.unwrap())
+    Err(last_err.unwrap_or_else(|| {
+        anyhow::anyhow!(
+            "{} channel pointer fetch failed for {} without a response",
+            channel,
+            url
+        )
+    }))
 }
 
 /// Fetch the latest version for the given installer type without writing the version cache.

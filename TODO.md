@@ -404,7 +404,7 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 - [~] plugin marketplace 现已通过 `chaos-engine` 暴露只读 `ScanMarketplace` adapter，复用现有 catalog/scanner/path validation；扫描根目录必须由 host 显式配置，WebSocket 已覆盖允许/拒绝路径；危险安装/执行、来源权限、签名失败和 MCP 连接状态仍需 approval-gated adapter 与真实 registry/credential 环境。（2026-09-24；`crates/codegen/chaos-engine/tests/marketplace_scan.rs`、`crates/codegen/xai-grok-web/tests/marketplace_scan.rs`）
 - [~] 已有只读 marketplace scanner 对 indexed relative path traversal/symlink escape 的 crate tests；GUI 尚无第三方安装/执行入口，来源/权限审批 UX、恶意 manifest/supply-chain signature fail gate 需先由维护者批准 extension trust/signature policy，之后接 approval-gated adapter。
 
-本轮盘点按 M/M-1/MT section audit 开放条目：起始扫描 156 `[ ]`/`[~]` rows；随后本地完成 brand 和 ignored CI guards、real Engine Markdown browser behavior、approval outcome UX/E2E、contribution docs 与 full Rust regressions，当前 exact recount 是 66 unchecked / 85 partial。Tauri/platform signature/provider keyring/real MCP/SSH/multi-root/release 与 scheduled review 按 external runner/credential/maintainer owner/deadline 继续 open。逐项 prerequisite 与 local-vs-external classification 见 [`docs/architecture/todo-open-item-classification.md`](docs/architecture/todo-open-item-classification.md)。
+本轮盘点按 M/M-1/MT section audit 开放条目：起始扫描 156 `[ ]`/`[~]` rows；随后本地完成 brand 和 ignored CI guards、real Engine Markdown browser behavior、approval outcome UX/E2E、contribution docs、一个 updater 错误分支 unwrap 收敛与 full Rust regressions，当前 exact recount 是 64 unchecked / 87 partial。Tauri/platform signature/provider keyring/real MCP/SSH/multi-root/release 与 scheduled review 按 external runner/credential/maintainer owner/deadline 继续 open。逐项 prerequisite 与 local-vs-external classification 见 [`docs/architecture/todo-open-item-classification.md`](docs/architecture/todo-open-item-classification.md)。
 
 ## M3.3 工作流与子代理
 
@@ -869,11 +869,11 @@ metadata`、`xai-grok-config`、`xai-tool-types`、pager `settings_e2e` 等）�
 `docs/audit-followup-report.md` §5 给了按投入产出比排的顺序，但没有任何勾选入口，
 结果是报告写完就停在那里。按原顺序落为任务：
 
-- [ ] B 批 unwrap 治理：`xai-grok-update` 6 个 + `xai-grok-sandbox` 28 个，量小、位置重要。
+- [~] B 批 unwrap 治理：本轮移除 `xai-grok-update::fetch_gcs_channel_pointer` 对重试错误状态的 `unwrap()`，增加无错误状态的结构化 fallback；现有 `gcs_pointer_connection_refused_is_retried_and_returns_error` 验证真实网络失败仍返回错误；对应单个集成测试和 update crate lib tests 均通过。更新 crate 余下 5 处是静态进度条模板解析；`docs/audit-followup-report.md` 的历史生产 unwrap 计数仍需全仓实测刷新；`xai-grok-sandbox` 旧计数 28 尚待逐项生产/测试分类和审查，未把整批标为完成。（2026-09-25；`crates/codegen/xai-grok-update/src/version.rs`、`crates/codegen/xai-grok-update/tests/test_network.rs`）
 - [ ] unsafe P0 审计：`xai-grok-sandbox` + `xai-tty-utils`，这两处是安全边界，优先于数量更大的 crate。
 - [ ] `xai-grok-shell` 的环境变量 `unsafe` 消除：一次可砍掉该 crate 约 60% 的 unsafe 数量（364 处关键字里 332 个是 `unsafe {}` 块）。
 - [ ] A 批 unwrap 治理：`xai-grok-shell` 约 1,270 个，必须分批，且每批要有独立的验收边界。
-- [ ] 每批完成后更新审计报告的数字；报告与实测对不上时，以重新统计为准。
+- [~] 已将单个 `xai-grok-update` 错误分支收敛写入审计跟进报告并实测 update crate lib 与集成路径；其余批次完成后仍须用当前源代码重算生产 unwrap/unsafe 分布，不能沿用 2026-08 旧计数。（2026-09-25；`docs/audit-followup-report.md`、scratch `mt6-update-unwrap-test.log`）
 
 ---
 

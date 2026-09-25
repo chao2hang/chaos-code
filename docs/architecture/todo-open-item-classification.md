@@ -6,9 +6,10 @@ product/platform acceptance gate has passed.
 
 ## Current status counts
 
-The current line-level inventory scans 151 `[ ]`/`[~]` rows: 66 unchecked and 85
+The current line-level inventory scans 151 `[ ]`/`[~]` rows: 64 unchecked and 87
 partial (including conditional criteria, future/dated work and rows with a
-completed slice plus an open gate). The reproducible command is
+completed slice plus an open gate). The current open/partial split for
+maintenance items reflects the MT-6 review/evidence partial rows. The reproducible command is
 `python3 scripts/ci/classify-open-todos.py`; its latest output is preserved in
 private goal scratch `open-items-current.tsv`. The initial audit export remains
 in private goal scratch `todo-open-items.txt`.
@@ -22,7 +23,7 @@ in private goal scratch `todo-open-items.txt`.
 | M3 | 6 | 7 |
 | M4 | 24 | 3 |
 | M5 | 18 | 9 |
-| Maintenance items / §8 | 16 | 9 |
+| Maintenance items / §8 | 14 | 11 |
 
 ## Locally delivered in this audit pass
 
@@ -43,7 +44,7 @@ These can be developed in bounded work after their behavior is specified; this p
 - M2: incremental file tree/`@` candidates and a real terminal route. The Engine has one host-configured workspace/Git root; multi-root needs an owner-approved host-owned root ID/map and a root provisioning/trust policy before implementing two-root access.
 - M3: settings/workflow views after settings schema and workflow/subagent event/state contracts are selected. The current demo `/ask` and `/approve-tool` prompt hooks are not production workflow execution.
 - MT-5: source-by-source reason/date cleanup of the legacy bare ignores. The CI baseline only stops invisible inventory drift.
-- MT-6: unwrap/unsafe audits can be done locally, but require small security-reviewed crate batches, measured current numbers, real error behavior and separate tests. None has been bulk-mass-edited here.
+- MT-6: a single `xai-grok-update` network retry-loop unwrap was replaced with a structured fallback and is covered by the existing connection-refused integration test. Remaining update progress-template unwraps and sandbox unwrap/unsafe sites are not bulk-edited; the old audit counts need fresh AST-aware classification and security review.
 
 ## External, decision, and schedule gates
 

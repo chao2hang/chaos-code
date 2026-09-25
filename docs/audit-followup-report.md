@@ -112,6 +112,16 @@
 | `xai-grok-sampling-types` | 50 | 22 | 37 | 2.2% |
 | `xai-grok-test-support` | 46 | 38 | 21 | 2.0% |
 | `xai-grok-sandbox` | 28 | 5 | 0 | 1.2% |
+
+The historical production-unwrap count for `xai-grok-update` was 6. A focused
+2026-09-25 change removed the retry-loop `last_err.unwrap()` in
+`version::fetch_gcs_channel_pointer`, retaining the real network-failure path
+and adding a structured fallback when no response/error was recorded. The
+focused connection-refused integration test and 160 update-library tests pass.
+The remaining five production unwraps are static progress-bar templates; their
+validity is currently guaranteed by constant literals, but the count must be
+rechecked with the current source before closing the batch. This is one audited
+slice, not completion of B batch or the separate sandbox unsafe review.
 | `xai-fsnotify` | 26 | 4 | 1 | 1.1% |
 | `xai-grok-pager-minimal` | 26 | 3 | 1 | 1.1% |
 | `xai-circuit-breaker` | 12 | 1 | 0 | 0.5% |
