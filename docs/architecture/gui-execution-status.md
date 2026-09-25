@@ -87,6 +87,7 @@ require platform runners, external services, or a later milestone.
   detached Agent rejection, and explicit unsupported capabilities.
 - Web loopback HTTP/WebSocket transport with bearer authorization, Origin/Host
   checks, request-size limits, CSP, `nosniff`, and backend-enforced Safe Web Mode.
+- Rust Desktop host boundary exports shared Engine dispatch, but no Tauri dependency, app binary, WebView or IPC transport is present; Desktop build/browser gates remain open.
 - React client connected to the real WebSocket transport with reconnect/resume,
   workspace-isolated sessions, visible streaming state, cancel, approval/question
   cards, stable test IDs for shell/workspace/timeline/composer entry points, and
@@ -98,7 +99,15 @@ require platform runners, external services, or a later milestone.
   isolation, same-origin API/WebSocket/health development proxy, persisted layout
   controls, and narrow-viewport composer interaction. Repository Playwright E2E
   now repeats the desktop and 390×844 viewport flows against spawned Engine/Web
-  servers; the GitHub CI browser job is added. Its first clean-runner attempt exposed that
+  servers; the GitHub CI browser job is added and the latest run passed. Conversation messages render safe Markdown and GitHub-flavored tables/lists with
+  raw HTML disabled; only relative in-page, HTTP(S), and mailto links become anchors,
+  external HTTP(S) links open a separate tab with `noopener noreferrer`, and other
+  schemes/path links are rendered as text. Playwright verified actual Engine
+  responses, formatting, inline script inertness, blocked relative/javascript URLs,
+  external link attributes, and real demo approval-rejection/question-response flows
+  on desktop and mobile. Tool progress/result UI, approved mutation/Diff UI and
+  Desktop/Tauri DOM remain open.
+  Full workspace Rust checks/tests pass locally and remote run `36094218127` (53m14s within its 60m limit). However the prescribed GUI-on/off resource comparison, peak RSS and disk delta are not available from these job summaries and remain open for runner telemetry owner review. Its first clean-runner attempt exposed that
   the GUI jobs must install dotslash before building the workspace's `bin/protoc`
   wrapper. The first fix used a nonexistent release asset URL; the verified release
   archive is now used. A later run exposed a repository-local Git identity fixture
@@ -114,7 +123,7 @@ require platform runners, external services, or a later milestone.
 | Area | State | Evidence required |
 |---|---|---|
 | Tauri Desktop | Open | Tauri three-platform builds and real desktop flow |
-| Browser E2E | Partial | Repository Playwright tests verify create/submit/switch/reload/archive/transcript isolation, layout restore, health/handshake proxy, empty/cancel states and narrow composer locally; GitHub CI first run and Desktop browser automation remain open |
+| Browser E2E | Partial | Repository Playwright tests and Linux GitHub CI verify create/submit/switch/reload/archive/transcript isolation, layout restore, health/handshake proxy, empty/cancel states and narrow composer; Desktop/Tauri browser automation remains open |
 | Provider/config/secrets | Partial | Non-secret settings/provider shape validation; real provider/keyring tests remain open |
 | M1 hunk/workspace Diff | Partial | Adapter boundaries and real local workspace/Diff tests; production `xai-hunk-tracker` partial-hunk/binary integration remains open |
 | M2 persistence/workspace | Partial | SQLite/JSON boundaries, single-root workspace/Git/terminal/attachment safety, Git edge fixtures and destructive-action confirmations; multi-root mapping, PTY, NFS/multiprocess, remote Git auth and full migration remain open |

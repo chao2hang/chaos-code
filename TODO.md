@@ -131,7 +131,7 @@ GUI 新代码默认只进入：
 清单，且上游同步只认一个仓库——成本高于收益。
 
 **但同仓有四项必须前置处理的代价**，分别落在 M-1.6（构建与 CI 隔离）、
-M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）。各子项当前仅部分完成；其中 M-1.6 的 Actions runner 资源对比/遥测仍待 CI maintainer，headless 物理迁移与 ACP 胶水仍待独立安全回归批次。GUI packages 已在独立隔离边界接入，不得把后续里程碑误标为全部通过。
+M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）。各子项当前仅部分完成；M-1.6 Actions runner telemetry/历史资源 baseline 仍需 CI maintainer 核验；headless 物理迁移和 ACP glue 需单独兼容/安全回归。GUI packages 已在独立隔离边界接入，不得把后续里程碑误标为全部通过。
 
 ---
 
@@ -180,7 +180,7 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 - [x] `ADR-002`：engine 边界；walking skeleton 先以 `chaos-engine` 协议 mock 验证 Web/Desktop seam，保留现有 headless 实现，后续通过 adapter 接入而不复制生命周期。（2026-09-24；`docs/architecture/adr-002-gui-engine-adapter.md`）已明确 `headless.rs` 当前物理位于依赖 ratatui 的 pager crate，先保留原位并以 adapter 接入，避免把终端渲染栈拖进 GUI。（2026-09-24）
 - [x] `ADR-003`：确定 M0 使用 engine 原子 JSON 快照验证恢复，后续 canonical SQLite store、迁移、备份和 NFS 策略按文档推进。（2026-09-24；`docs/architecture/adr-003-gui-persistence.md`）
 - [x] `ADR-004`：M0/M1 先支持本地 Agent + 本地 workspace；远程 Agent/工具、SSH、端口转发和 detached Agent 明确留至 M4，不把 loopback 原型伪装成远程控制面。（2026-09-24；`docs/architecture/adr-004-remote-topology.md`）
-- [~] `ADR-005`：已冻结本地 Web 安全基线，见 `docs/architecture/adr-005-web-security.md`；桌面 IPC、远程连接和完整凭据边界待补。
+- [~] `ADR-005` local Web security baseline frozen, see `docs/architecture/adr-005-web-security.md`; development `/health`/`/api`/`/ws` proxy only targets loopback backend, which enforces Host/Origin/token/Safe Web Mode. Production TLS termination/reverse proxy/token rotation/audit, Tauri IPC, remote links and secret storage remain separate host/security reviews.
 - [x] `ADR-006`：前端采用 clean-room React/TypeScript 重写；不复制参考源码/资产，Chaos UI 仅通过版本化 Rust protocol 消费 engine，未来更新以本仓库审查为准。（2026-09-24；`docs/legal/ui-source-baseline.md`、`docs/architecture/adr-006-gui-source.md`）
 
 **ADR 必须回答**：备选方案、选择理由、兼容影响、失败模式、迁移和回滚。
@@ -190,7 +190,7 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 - [~] Tauri v2 spike：Desktop host boundary 已隔离且不引入 Tauri 依赖；真实 Tauri 三平台构建待环境依赖与独立 runner，不能以 host crate 通过替代。
 - [~] Axum + 静态资源嵌入：Axum loopback/WebSocket 已真实运行；静态资源嵌入、压缩、SPA fallback 待 M5。
 - [x] Rust→TS：M0 使用 serde JSON envelope；`chaos-protocol-schema` 生成 TypeScript 类型并由 `scripts/ci/check-gui-protocol.sh` 执行漂移门禁，GUI CI 已运行；运行时 schema validation 仍待后续边界。（2026-09-24）
-- [ ] 验证候选 SSH 库的 SSH Agent、私钥口令、keyboard-interactive、ProxyJump/ProxyCommand 和端口转发能力。此项需先由 maintainer 选择候选依赖/支持的认证和代理范围（尤其 ProxyCommand 执行 arbitrary command 的 trust policy），再批准可控 SSH 测试主机、测试 key/agent 和 proxy/forward 环境；当前没有产品/安全决策或获批主机凭据，不能用本地 endpoint unit test 代替。
+- [ ] M-1/M4 SSH spike is intentionally blocked until maintainer selects candidate/auth scope and approves trust rules for ProxyCommand arbitrary execution, then provides controlled SSH host, disposable key/agent and proxy/forwarding lab. The current Linux session has no approval or host credentials; local `RemoteEndpoint` validation is not transport evidence.
 - [~] SQLite migration：M0 JSON transitional；`SqliteSessionStore` 已正式接入 Engine/Web，支持 schema/损坏库/新版本/重启恢复和旧 schema 备份升级；TUI 真实 `summary.json`/`updates.jsonl` 有只读 allowlisted import seam，但完整 ACP 更新转换、多进程/NFS/迁移中断回滚仍待 M2 gate。（2026-09-24；`sqlite_entry_flow.rs`、`tui_import.rs`）
 - [x] 新增依赖许可证/维护状态完成初步审查：GUI 仅复用 workspace 已声明 axum/tower/tower-http/serde/uuid/tokio 依赖，未新增第三方资产。（2026-09-24）
 
@@ -212,7 +212,7 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 
 - [x] 定义 GUI crate 的构建隔离方式：GUI Rust crates 保持独立 package，Tauri 依赖不进入 workspace；前端使用独立 `apps/chaos-ui/node_modules`/`dist`，并由 `.gitignore` 排除。（2026-09-24）
 - [x] 确认默认 TUI binary 不触发 Tauri/WebView：当前 Desktop crate 无 Tauri 依赖，GUI package 独立检查通过；结构检查见 CI `gui` job。（2026-09-24）
-- [~] 主 CI `rust` job 不包含 GUI；GUI 走独立 `gui` job，workflow 静态分离和本地 GUI crate tests 已验证；CI runner 上 rust job 历史耗时对比、峰值内存和磁盘 delta 必须由有 Actions runner telemetry/权限的 maintainer 核对。
+- [~] 主 CI `rust` job 不包含 GUI；GUI 和 Chromium 分走独立 jobs，workflow 静态隔离与真实 CI 全绿已验证。2026-09-25 CI run `36094218127` Rust job 53m14s，低于 `timeout-minutes: 60`；但主 job 加 GUI 前后的历史耗时对比及 peak RSS/disk delta 仍需有 Actions telemetry 权限的 maintainer 核对。
 - [x] 文档化 target/node 构建容量治理入口：GUI 输出目录已隔离并忽略；WSL 低内存 `-j 4` 约束沿用贡献基线。（2026-09-24）
 - [x] 评估 `node_modules` 与前端构建产物落盘并补 `.gitignore`，避免 GUI 本地生成物进入 `git status`。（2026-09-24）
 - [x] 若隔离失败的退出方案：撤回 workspace GUI members，保留独立 engine crate 并拆分发布；当前隔离未失败。（2026-09-24）
@@ -233,7 +233,7 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 
 - [x] 创建 `apps/chaos-ui`：Vite、React、TypeScript、Vitest 脚本和 npm lockfile；实现最小时间线/composer/演示响应。（2026-09-24；`npm run typecheck`、`npm run build` 通过）
 - [x] 创建 `crates/codegen/chaos-engine`，提供版本化 client/server envelope、session create、submit、ack、text delta、completed、cancel。（2026-09-24；crate tests 通过）
-- [~] 按 `ADR-002` 的结论处理 headless：已新增 `chaos-engine::PromptAdapter` 和受显式路径控制的 `HeadlessProcessAdapter`，Web 可通过 `CHAOS_AGENT_BINARY` 接入真实 `chaos --headless --output-format json`；物理迁移 `headless.rs` 及其 ACP 胶水仍待独立回归批次，现有 CLI 行为未改。（2026-09-24；engine/Web adapter tests 通过）
+- [~] 按 `ADR-002` 的结论处理 headless：`chaos-engine::PromptAdapter` / 显式路径 `HeadlessProcessAdapter` 已经 Web adapter tests 验证可接真实 `chaos --headless --output-format json`；物理迁移 `headless.rs` 及 ACP glue 仍待独立安全审计和兼容回归批次，不在本次 Clippy/CI 收尾顺带变更。
 - [x] 创建 `xai-grok-desktop` 和 `xai-grok-web`，加入 workspace 末尾的分叉区段；Web 提供 loopback Axum health/handshake，Desktop 提供独立 host boundary。（2026-09-24；Rust check/test 与独立 `ci.yml` GUI job 已加入）Chromium 发现 workspace create 前端在 backend client_msg_id 去重协议下必须先收到 ACK；已补 ACK，再发 workspace/session/registry events，并用真实浏览器流程验证。
 - [x] 保证现有 `chaos` TUI/CLI 默认构建和行为不变；GUI crate 独立于 TUI binary，默认 workspace check 不引入 Tauri。（2026-09-24；GUI crate 独立 check 通过；完整 workspace 回归待 M0.6）
 - [~] 真实 GUI crate 已通过独立 GUI CI、协议漂移、前端 typecheck/unit/build 和无 Tauri 依赖结构门禁；主 rust job 历史耗时对比与跨 runner 资源指标仍待 CI 维护者提供。（2026-09-24；`.github/workflows/ci.yml`、`check-gui-protocol.sh`）
@@ -257,8 +257,8 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 
 - [~] React 已接入真实 WebSocket，支持会话创建、纯文本 composer、时间线、流式 delta、审批/question 卡片和停止按钮；Chromium 已验证 workspace A/B 创建、发送、切回 transcript isolation 及移动窗口 composer。真实 browser flow 揭示两个运行时缺口并已修复：create_workspace 在 `client_msg_id` 去重协议下需要先 ACK；Vite dev server 需代理 `/ws`、`/api` 与 `/health` 到相同 loopback Web host routes，再由后端检查 Host、Origin、token 和 Safe Web Mode；production TLS termination/reverse proxy 未配置，仍待独立 host/security gate。（2026-09-25；`apps/chaos-ui/e2e/workspace-flow.pw.ts`、`src/transport.test.ts`）
 - [x] React 已有连接中/已连接、空态、生成中、连接错误和取消入口；WebSocket 断线自动重连并通过 resume 恢复历史。（2026-09-24；typecheck/build/Vitest 通过）
-- [~] 流式更新当前按 WebSocket delta 逐事件更新；UTF-8 安全分块与真实 WebSocket 测试已完成，按帧批处理和 benchmark 尚待 M5 性能门禁。
-- [~] Web 使用显式 WebSocket transport；Desktop 已有 engine host boundary，Tauri transport injection 待补。
+- [~] 流式文本使用 WebSocket delta 逐事件更新；UTF-8 安全分块和实际 Browser E2E 已完成，React timeline 现以安全 Markdown/GFM parser 显示真实 response。Delta batching semantics (flush/latency) remain undefined; require M5 reproducible p50/p95 benchmarks and target thresholds before implementing any batching.
+- [~] Web 已用显式 WebSocket transport 走真实 Engine；Desktop 目前仅 shared-engine host boundary，无 Tauri IPC transport injection。Tauri integration 要在 M0 desktop ADR/三平台启动验证后实现，不把 lib unit test 称真实桌面 flow。（2026-09-25）
 
 ### M0.5 Web 基础安全
 
@@ -273,8 +273,8 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 本机浏览器路径现有可重复的 Playwright Chromium E2E 与 GUI CI job；本地 desktop/mobile 两个项目各通过（全命令 4 tests passed）。远端已确认 clean-runner 缺 dotslash，且 Git test 未设置隔离 user identity；第三次运行 browser 首次编译超过 180 秒，现加入预编译和较长 timeout，远端 browser 与 GUI CI 已通过；当前 Clippy 修复的完整 Rust gate 已本地验证，commit `c324306f` 的远端 check/strict Clippy 已通过；full test job 暴露 sandbox 自动套接字 deny 在不可读容器运行时路径上的误报，以及 LSP mock push 在受压时快于 pending 标记的时序竞争。现已跳过不可读 endpoint（child network filter 仍负责网络隔离）、使 fixture 等待报告并为 mock analysis 加调度间隔；两个 targeted tests 均通过，完整 workspace 本地重跑已发现 Git invalidation fixture 未隔离全局 ODB permit并过早释放第二个 walk；fixture 改为两个 permit 且在 release 前等待第二 walk 开始，回归通过。workspace fmt/check/strict Clippy/test 全量已全部通过；输出见私有 goal scratch `rust-workspace-final-suite.log`。真实 provider 和 Tauri 桌面入口仍为独立 gate。
 
 - [~] 自动测试覆盖提交成功、取消、重复 submission、断线、重连、snapshot fallback、无凭据和 provider 错误；当前已覆盖真实 WebSocket submit/completed/cancel、重复/dedup、UTF-8 delta、adapter error boundary、跨 engine 重启 resume、认证/Origin/Host 和安全头，浏览器与真实 provider 仍待补齐。（2026-09-24）
-- [~] Desktop host 已通过共享 engine dispatch 单测；Tauri 真实入口、平台构建、增量/取消/重启恢复操作仍是 M0 gate。
-- [~] 本地 Chromium 已通过仓库 Playwright 测试覆盖 workspace create/submit/switch/reload/archive、同源 health/handshake、空提示取消、desktop 与窄 viewport composer；CI browser job 已加入，本地 desktop/mobile 全量 E2E 命令重复通过；前三次 GitHub CI 真实尝试发现 clean runner 未安装 `bin/protoc` 所需 dotslash、Dotslash archive URL 最初 404、Git test 缺本地 identity，以及 Web server 第一次 cold compile 超过 Playwright 默认启动时限；现更正 archive 地址，Git fixture 设置 repository-local identity，browser job 先编译 server 并扩充 job timeout。最新远端提交已通过 GUI browser E2E、GUI engine/Web/frontend、protocol 和文档门禁；此前 main Rust CI job 因 `chaos-engine` strict Clippy diagnostics 失败；本轮修复全部报告项并在本地完整通过 workspace fmt、all-target check、strict Clippy 和 workspace tests，远端 check/Clippy 已通过；sandbox socket deny 与 LSP test 两项失败已按目标路径修正并通过 targeted tests，workspace test 首轮本地重跑发现 Git invalidation fixture 未隔离全局 ODB permit 并过早释放第二个 walk；现为该用例设双 permit 且等待第二 walk 开始后再 release，targeted test 和最终完整 workspace fmt/check/strict Clippy/tests 均通过；GitHub CI run `36094218127` 的全部 jobs 亦通过。完整本地输出保存在 goal scratch `rust-workspace-final-suite.log`。真实 provider、Tauri 入口与平台 GUI gate 仍未完成。（2026-09-25；`apps/chaos-ui/e2e/workspace-flow.pw.ts`、goal scratch `playwright-all.log`、`github-browser-fourth.log`）Clippy 用的 `std::fs::canonicalize` 统一改为跨平台 `dunce::canonicalize`；合并条件分支、布尔表达式简化后，Clippy strict 全 workspace/all-targets、workspace check/test 已本地通过，证据：`rust-workspace-clippy-fix.log`、`rust-workspace-check-clippy-fix.log`、`rust-workspace-test-clippy-fix.log`。
+- [~] Desktop host 仅通过 shared Engine dispatch unit test；无 Tauri executable/desktop WebView entry point，不能从此 host boundary drive visible path。Tauri build/desktop restart/cancel/streaming 与 macOS/Windows/Linux checks remain gated on dependency/runner availability.
+- [~] Repository Playwright Chromium E2E 与 Linux CI 覆盖真实 browser→Vite→WebSocket→Engine flows。Desktop 与 narrow/mobile tests 验证 workspace create/submit/switch/reload/archive transcript isolation、layout restore、health/handshake、empty/cancel、multiline composer、GFM rendering、raw script not executed、external-link rel/target. Frontend checks/build pass. CI install fixes: dotslash/protoc, local Git identity test setup, prebuilt Web host and 35-minute cold browser build allowance. Engine Clippy warnings-as-errors 已修复（跨平台 dunce canonicalization、collapsed if、simplified boolean）；本地 strict workspace Clippy/check/test pass。首次 full workspace rerun 揭示 sandbox runtime socket inaccessible path 被 permission error 阻断及 LSP test pending/report event race、Git gate fixture permit race；已修正路径行为并添加回归/同步 fixtures，最终 full local run pass，CI run `36094218127` 全部 jobs pass。Local proofs `{SCRATCH}/playwright-markdown-final.log`、`frontend-final.log`、`ignored-tests-unit-final.log`、`ignored-baseline-final.log`、`rust-workspace-final-suite.log`、`final-l10n-guard.log`。真实 provider/keyring、Tauri host 和跨平台安装仍依赖平台/credentials。
 - [~] Linux engine/Web/前端实测已记录；macOS/Windows GUI runner 与 Tauri 冒烟尚待提供。
 - [x] 新增 `apps/chaos-ui/README.md`，记录 GUI 启动、`CHAOS_WEB_STATE`、测试和当前 provider/Tauri/远程限制。（2026-09-24）
 
@@ -289,19 +289,19 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 
 ### M1.1 会话投影与交互协议
 
-- [~] 增加 tool start/progress/result、question request/response、file change、usage 和 structured error；M1 engine/WebSocket 已真实覆盖 question、tool started/progress/result/usage、Diff、workspace file changed/write 和 fail-closed errors；完整真实 provider/MCP tool adapter 仍待接入。（2026-09-24；`tests/m1_flow.rs`、`m1-events-verify.log`）
+- [~] Rust protocol/Engine/WebSocket covers actual ToolAdapter start/progress/result/usage, question, file/Diff changes and fail-closed errors with real integration fixtures. Real provider/MCP command execution/tool sourcing is not part of this protocol/UI mock seam and needs approved adapters/credentials.
 - [~] 已有有界 engine snapshot、session sequence、dedup 和 resume；客户端 cursor、追赶、TTL/容量预算与 snapshot/delta 竞争测试仍待补齐。
 - [x] 定义命令/交互在重复投递和 engine 重启时的状态机：client message 去重、question/approval 单次 resolve、snapshot resume 已有测试；超时/断线中的真实 Agent 状态仍待补齐。（2026-09-24）
 - [~] 覆盖重复与恢复；真实 WebSocket question、工具审批、Diff 和 workspace 流程及 React reducer 事件投影均有测试，乱序、丢帧、snapshot/delta 竞争及多标签订阅测试待 Web client/真实浏览器阶段补齐。（2026-09-24；`m1-events-verify.log`）
 
 ### M1.2 对话 UI
 
-当前状态：`apps/chaos-ui/src/session.ts` 已提供真实 WebSocket 事件投影，覆盖 timeline、streaming、approval、question、completion/cancel 和 snapshot；虚拟滚动、Markdown/代码块、reasoning 折叠、完整错误恢复和稳定 test-id 仍待后续实现。
+当前状态：`apps/chaos-ui/src/session.ts` 提供真实 WebSocket timeline/streaming/approval/question/completion/cancel/snapshot 投影；`main.tsx` 现以 safe `react-markdown`/GFM 渲染真实 timeline，当前 Playwright 通过 Engine 输出验证。虚拟列表/锚点、round grouping、reasoning collapse、丰富工具卡和通用错误恢复仍待后续细化。
 
-- [ ] 移植或重写时间线、轮次分组、虚拟滚动、滚动锚点和行高缓存。
-- [ ] 实现 Markdown、代码块、reasoning 折叠、工具卡片和错误恢复。
+- [ ] 移植或重写完整时间线、轮次分组、虚拟滚动、滚动锚点和行高缓存。Web timeline 当前消息量低且尚无完整轮次/虚拟列表设计；本轮会分离 Markdown 显示渲染并以实际 Engine 输出 E2E 验证，不宣称完成此长期条目。
+- [~] Shipped Web timeline 用 `react-markdown`+remark-gfm 渲染真实 Engine 消息；raw HTML 不产生 DOM，只有 in-page `#`/HTTP(S)/mailto href 可激活，相对文件路径和其他 schemes 保持 inert text，外站 link `noopener noreferrer` 新 tab。Playwright desktop/mobile 验证 markup/list/script DOM mutation/link policies。虚拟滚动/anchor/row cache/turn grouping/reasoning collapse仍未完成。（2026-09-25；`apps/chaos-ui/e2e/workspace-flow.pw.ts`）
 - [~] composer 现支持多行输入、按 Enter 发送、Shift+Enter 换行、上/下箭头历史导航和发送后恢复未发送草稿；IME composition 与 keyCode 229 不触发提交；`/` 命令及 `@` 文件候选仍待补。（2026-09-24；`apps/chaos-ui/src/composer.ts`、`composer.test.ts`）
-- [~] Web 主流程现为 app shell、workspace list、session timeline、composer input/submit、逐 workspace 选择与归档操作建立稳定 `data-testid`/ARIA label；Vitest 与仓库 Playwright desktop/narrow viewport E2E 覆盖 workspace/session 模型及浏览器真实 composer 操作；同源 Vite proxy 对 `/api`、`/health`、`/ws` 已验证，关键工具审批卡和 Desktop DOM/E2E 仍待补。（2026-09-25；`apps/chaos-ui/e2e/workspace-flow.pw.ts`、`apps/chaos-ui/src/workspace-ui.test.ts`）
+- [~] Web app shell/workspace/session/composer 有稳定 `data-testid` 和 Playwright desktop/narrow project E2E；同源 Vite `/api`/`health`/`ws` 走真实 Web Engine。Playwright 在 desktop/390×844 也覆盖 actual Engine demo protocol 的 approval rejection/question answer, 工作卡片的进入/退出状态, safe Markdown. Approval/question 已有 browser E2E；tool progress/result, actual approved mutation/Diff detail and Desktop/Tauri DOM flow remain open。（2026-09-25；`apps/chaos-ui/e2e/workspace-flow.pw.ts`、scratch `playwright-approval-final.log`）
 
 ### M1.3 权限、提问与审计
 
@@ -340,7 +340,7 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 
 - [~] engine 已实现 workspace 创建/切换/归档/最近使用协议，记录每个 workspace 最近 session 并在切换时发该会话 snapshot；创建和切换到空 workspace 自动创建 session，归档活动 workspace 后切回/创建 fallback session，归档 session 的 Resume/Submit/Approve/RespondQuestion/写文件/Git/终端 mutation fail-closed；create/archive/switch 同步 workspace 列表；session 持久化 workspace_id，Resume/Snapshot 拒绝错误 workspace；React 按 workspace 缓存 session、切换时清理旧 transcript 再恢复对应快照；当前 Engine 仍只有一个 host-level `WorkspaceAdapter`/Git root，不能宣称 registry workspace 有各自独立文件根，需设计 host-owned root mapping 并对双 root files/Git/attachments 做真实安全验证后再宣布 multi-project。（2026-09-24；`archive_workspace_flow.rs`、`archive_last_workspace_flow.rs`、`archived_approval_flow.rs`、`workspace_session.rs`、`workspace-ui.test.ts`、`active_workspace_access` probe）
 - [~] React UI 已新增版本化 layout persistence helper 和面板/主题/尺寸控件，持久化 sidebar/composer 尺寸、theme 和 panel visibility；损坏 JSON、未知 schema、非法值及 storage denied 安全回退，无法保存时向用户显示提示。Chromium 已操作 theme/panel/size inputs 并 reload，验证 browser storage state 可恢复；完整 tabs/split 和 Tauri 桌面人工验收仍待平台。（2026-09-24；`apps/chaos-ui/src/layout.test.ts`、goal scratch screenshots/logs）
-- [~] workspace registry 具备独立 workspace IDs 和按 session 的 timeline/snapshot 隔离；**当前仍是单一 host-configured WorkspaceAdapter/ProcessGitAdapter root**，registry 中不同 workspace 的文件、Git、terminal、Diff/attachment mutation 不会自动进入独立物理路径。Multi-root mapping 尚未实现；创建普通 UI workspace 不应被表述为创建独立项目目录。需后续提供 host-owned workspace ID→canonical root mapping 后再开放多项目文件操作，并以双临时仓库 fixture 验收；绝不接受浏览器任意路径作为 root。（2026-09-24；单 root engine structure、`active_workspace_access` probe）
+- [~] UI registry isolates session/transcript selection only; current Engine binds one host workspace/Git root. Do not claim each listed workspace is a project/filesystem. Multi-root needs a host-owned root-ID map, root provisioning/trust policy and dual temp-repository file/Git/attachment threat fixtures. Browser-provided physical paths stay forbidden。（2026-09-25；source adapter structure、archive/session fixtures）
 
 ### M2.2 文件、搜索和附件
 
@@ -352,17 +352,17 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 
 ### M2.3 终端
 
-当前状态：固定 cwd 的 `ProcessTerminalAdapter` 已支持审批后执行、输出上限、退出码和结构化错误；现有 `ptyctl` 已盘点并新增 `PtyCapability` 声明 approval/resize/reconnect/cancel 要求，真实 PTY stdin/stdout/resize/重连/取消 transport 仍待 ptyctl/Tauri/Web adapter。（2026-09-24）
+当前可保证：固定 cwd 的 `ProcessTerminalAdapter` 仅经 approval-gated path 执行并限制输出/报告 exit status；PTY capability 类型描述 resize/reconnect/cancel 要求。尚无 Web/Tauri stdin+resize+process-lifecycle bridge，故当前不提供互动 Terminal GUI，不称 `ptyctl` 类型等于实际 transport。
 
 - [~] 新增固定 cwd 的 `ProcessTerminalAdapter` 边界：必须先审批、输出上限、退出码、非零错误和 terminal result 已有 engine tests；Xterm.js/ptyctl 交互 stdin/resize/重连/进程取消仍待真实 PTY adapter。（2026-09-24；`terminal-adapter-test.log`）
 - [~] Web terminal 当前不提供任意命令入口；未来 terminal route 必须复用审批和 Safe Web Mode，不能绕过后端策略。（2026-09-24）
 
 ### M2.4 Git 与变更审查
 
-当前状态：Git status 与 approval-gated stage/commit/checkout_branch adapter 边界已有 engine tests；真实 workspace mutation、stage/unstage/rollback 状态仍待接入。
+当前可保证：host-root `git status/stage/unstage/commit/checkout_branch/discard` 是 Engine 审批后的固定 Git adapter，与真实临时 repo WebSocket flows 测试；GUI 尚无 Git 状态/变更页面或确认表单，不得描述为已有 Git UI。
 
 - [~] engine 已提供固定 `git -C <canonical-root>` status 和真实 `ProcessGitAdapter`：stage/unstage/commit/checkout_branch/discard 必须先审批，commit/checkout_branch/discard 还需第二次确认，WebSocket 临时 Git 仓库测试验证 stage 结果；adapter cwd 仍是 single host root，workspace root mapping 未实现。仍未开放 push/pull、rollback 和冲突恢复。（2026-09-24；`git_real_flow.rs`、`git-real-flow.log`）
-- [~] commit、checkout_branch、discard 等破坏性 Git 操作现需两次独立审批；WebSocket fixture 已在临时仓库确认第一次审批前 HEAD 不变、第二次后才提交；push、覆盖性 checkout 和浏览器确认 UI 仍待补。（2026-09-24；`git_confirmation_flow.rs`）
+- [~] commit/branch checkout/discard destructive operations require two independent backend confirmations; temp repo WebSocket verifies HEAD stays put before second approval and changes only after. Current React UI approval card has allow/reject only, no typed double-confirmation/diff detail form; safe backend rejects/stages changes but GUI cannot yet drive destructive Git end-to-end. push/pull/conflict resolution also unopened.（2026-09-24；`git_confirmation_flow.rs`）
 - [~] `ProcessGitAdapter` 不丢 staged state 的失败路径已有临时仓库测试（stage 后无效 commit message）；AI commit-message 建议与 UI 编辑表单尚未实现，当前没有 LLM 自动改写提交信息。（2026-09-24；`tests/git_edges.rs`）
 - [~] 已补真实 fixture 覆盖非 Git 工作区、detached HEAD、缺失分支和无效 commit；失败不会丢 staged state。无 remote/认证失败需要远端或凭据环境，冲突恢复仍待 Git fixture。（2026-09-24；`crates/codegen/chaos-engine/tests/git_edges.rs`）
 
@@ -380,7 +380,7 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 - [~] 单 host-root Engine 上有已批准 file write→FileChanged/WebSocket 测试与临时 Git fixture；完整终端创建文件→增量 file tree 搜索/编辑/Diff 同状态 E2E 因无 PTY interactive adapter、无 workspace ID→多 canonical root mapping 而未覆盖，不能只凭 single-root 测试标完成。
 - [~] engine `AttachmentStager` 已覆盖分块写入、10 MiB/类型/路径策略和失败清理；真实 WebSocket 上传、取消/进度与最终 staging-to-workspace 审批移动均有测试，上传后未批准不会写入 workspace。（2026-09-24；`attachment_flow.rs`）
 - [~] `SqliteSessionStore` 本地 round-trip/schema reject、old-schema backup/forward-upgrade、损坏/非法版本拒绝和重启恢复测试已通过；多进程、网络文件系统/busy contention、磁盘满及进程中断 recovery 仍需要可控 filesystem fault/独立进程测试环境，未以普通 tempfile 伪报完成。该条仍需独立 storage fault scope，不被 UI layout/localStorage persistence 取代。
-- [ ] 桌面宽屏和 Web 窄视口均验证布局；所有共享状态页面执行回归导航。
+- [~] Web desktop-width and 390×844 browser state/routes for workspace/sidebar/theme/layout/composer are in Playwright, and all changed Web state surfaces pass. Remaining desktop window/WebView and shared settings/provider/approval routes do not exist; workflow/real desktop cross-navigation awaits corresponding feature contracts and Tauri entry.
 
 ---
 
@@ -404,25 +404,28 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 - [~] plugin marketplace 现已通过 `chaos-engine` 暴露只读 `ScanMarketplace` adapter，复用现有 catalog/scanner/path validation；扫描根目录必须由 host 显式配置，WebSocket 已覆盖允许/拒绝路径；危险安装/执行、来源权限、签名失败和 MCP 连接状态仍需 approval-gated adapter 与真实 registry/credential 环境。（2026-09-24；`crates/codegen/chaos-engine/tests/marketplace_scan.rs`、`crates/codegen/xai-grok-web/tests/marketplace_scan.rs`）
 - [~] 已有只读 marketplace scanner 对 indexed relative path traversal/symlink escape 的 crate tests；GUI 尚无第三方安装/执行入口，来源/权限审批 UX、恶意 manifest/supply-chain signature fail gate 需先由维护者批准 extension trust/signature policy，之后接 approval-gated adapter。
 
-### M3.3 工作流与子代理
+本轮盘点按 M/M-1/MT section audit 开放条目：起始扫描 156 `[ ]`/`[~]` rows；随后本地完成 brand 和 ignored CI guards、real Engine Markdown browser behavior、contribution docs 与 full Rust regressions，当前 exact recount 是 66 unchecked / 86 partial。Tauri/platform signature/provider keyring/real MCP/SSH/multi-root/release 与 scheduled review 按 external runner/credential/maintainer owner/deadline 继续 open。逐项 prerequisite 与 local-vs-external classification 见 [`docs/architecture/todo-open-item-classification.md`](docs/architecture/todo-open-item-classification.md)。
+
+## M3.3 工作流与子代理
 
 - [ ] 展示工作流阶段、状态、通知、产出物和取消操作。
 - [ ] 展示子代理列表、状态和允许暴露的上下文；敏感内容按权限过滤。
-- [~] 工作流/子代理暂未暴露 GUI 操作入口；engine 已提供取消、事件序号、恢复和审计基础，真实 workflow/subagent adapter 待后续阶段。
+
+- [~] Workflow/subagent GUI operations are not exposed. Existing Engine cancel/sequence/resume/audit operations are session-level only; there are no workflow/subagent lifecycle events/data contract. Design and approval-gated adapters are required before a status/artefact panel can represent actual work; do not present prompt text/mock as a production executor.
 - [ ] 覆盖部分失败、父任务取消、子代理超时和应用重启后的状态。
 
 ### M3.4 品牌与本地化
 
-- [ ] 按第 2.1 节替换用户可见品牌，同时运行兼容标识保留清单检查。
+- [~] CLI/npm/manual-rendered app shell already display Chaos. `check-brand-protocol.py` CI scans ship CLI commands and embedded reference docs (`grok <user command>`) plus direct rendered UI source title/wordmark for `Grok Build` product label; fixtures prove it rejects CLI/doc/UI mutation but passes historical/compatibility text. It intentionally preserves crate/wire/env/path compatibility strings. No icon or native Tauri window branding is implemented; OS/manual accessibility review remains gated on Tauri platform acceptance.
 - [ ] 完成 zh-CN/en-US 文案、缺键检测、长文本布局和基本无障碍检查。
-- [ ] 添加品牌/协议守卫，防止误改 crate 名、wire ID、环境变量和旧路径兼容。
+- [x] Added bounded `check-brand-protocol.py` CI guard: rejects obsolete shipped CLI commands (`grok <subcommand>`) and rendered UI source name `Grok Build`, while excluding internal comments/tests, history, crate/wire/env and `~/.grok` compatibility. Clean/negative CLI, doc, UI and compatibility fixtures pass; Rust-generated wire type IDs are covered by separate schema-drift check.
 
 ### M3.5 验收门禁
 
-- [ ] E2E：添加 OpenAI-compatible Provider → 测试连接 → 选择模型 → 新会话生效 → 重启后保留。
-- [ ] E2E：配置 MCP → 发现工具 → 触发审批 → 执行 → 禁用后不可调用。
-- [ ] E2E：安装测试插件/技能、执行测试工作流并观察子代理；取消和失败状态正确。
-- [ ] 配置文件损坏、只读、并发修改和凭据不可用均有可恢复行为。
+- [ ] M3 Provider E2E: after the OS keyring/config decision and provision of approved disposable credentials or an owner-approved contract test, add OpenAI-compatible Provider → test connection → select model → new session → restart persists config. Current engine validation deliberately reports `network_not_attempted`, so local shape tests cannot close this gate.
+- [ ] MCP execution E2E requires maintainer-approved tool origin/permissions/signature model and an actual credentialed disposable MCP endpoint; scanner discovery and the demo `/approve-tool` protocol do not prove a shipped server connection or post-disable revocation.
+- [ ] Plugin/skill/workflow/subagent E2E waits for approval-gated extension install/execute adapters, a test registry/signature fixture, and an agreed workflow/subagent state event contract; cancel/failure/restart cases follow that actual service model.
+- [~] GUI settings/provider shape validation、损坏/新 schema SQLite rejection/restore、旧 schema backup upgrade、无/坏 provider shapes 均有 engine/store tests；现无 settings UI/write-import 或 secret keyring integration，因此只读 config、concurrent user edits 与 credentials unavailable 的 page recovery 未作为 UI 已交付。接 config UI后按 actual file-I/O path 补回归。
 
 ---
 
@@ -436,18 +439,18 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 ### M4.1 远程 transport 与部署
 
 - [~] 新增 `chaos-engine::remote` capability/endpoint boundary：声明 workspace/tool/port-forward 能力，要求 Strict 或有 fingerprint 的 TOFU host-key policy，拒绝 detached Agent；真实 SSH/workspace transport 仍需远端主机与 SSH spike。（2026-09-24；remote unit test）
-- [ ] 明确复用 `xai-workspace-server` 的方式；`xai-grok-workspace-daemon` 只承担其已有的生命周期职责。
-- [ ] 实现架构/OS 探测、校验和原子部署；二进制放在版本化目录，权限最小化。
+- [ ] M4 topology decision must explicitly name RPC contract/server ownership: capability/client seam lists `xai-workspace-server` as candidate and daemon as lifecycle-only, but no maintainer-approved deployment/lifecycle/security design currently authorizes a remote adapter.
+- [ ] Requires an approved M4 supported-host/OS matrix, signed/versioned server artifact source and a remote deployment runner; then probe OS/architecture, verify hashes/signature, atomically install versioned server with least-privilege permissions and rollback.
 - [~] `chaos-engine::remote::RemoteEndpoint` 已提供 capability/host-key policy 校验边界；真实 client/server version negotiation、降级提示和传输仍需 M4 远端实现。
-- [ ] 实现心跳、有限重试、取消和明确的连接状态机。
+- [ ] Implement heartbeat, bounded retry/backoff, cancellation and connection states only after the SSH transport and version-negotiation contract is selected; acceptance needs a controlled endpoint capable of deterministic disconnect/upgrade failures.
 
 ### M4.2 SSH 安全
 
 - [ ] 支持 ADR/spike 已验证的认证方式；未验证的 ProxyCommand 等能力不得宣传。
 - [~] remote endpoint 类型已强制 Strict/带 fingerprint 的 TOFU policy，缺 fingerprint 或 detached Agent 会被拒绝；真实 SSH host-key 交换、变更阻断和凭据测试仍待 maintainer 选定候选库/auth policy 并提供获批远端 runner/test credentials。（2026-09-24；`gui-remote-status.md`）
-- [ ] 密钥、口令和 Token 不写日志、不同步到远端；Agent forwarding 默认关闭。
-- [ ] 远端 server 仅监听 Unix socket、stdio 或回环端口，并使用一次性握手凭据。
-- [ ] 对上传目录、daemon 权限、日志、pidfile 和升级回滚做威胁测试。
+- [ ] M4 credential forwarding gate: after auth modes/key handling are chosen, add recording test endpoints proving password/token/private-key material never enters logs or remote payloads; Agent forwarding default-off needs an actual SSH client option/security test.
+- [ ] Real remote-server bind/one-time-handshake gate requires M4 server implementation and Linux controlled runner: assert Unix socket/stdio/loopback only, external bind refusal, handshake replay rejection and credential expiry.
+- [ ] Remote threat test requires deployed test daemon/artifact and host-specific filesystem/process controls; exercise upload dir traversal, least privilege, secret-free logs/pidfiles, interrupted upgrade and rollback before enabling deployment.
 
 ### M4.3 远程能力
 
@@ -489,10 +492,10 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 
 ### M5.1 CI
 
-- [~] 独立 `gui` CI 已运行前端 typecheck、Vitest unit 和 production build；format/lint 与生成类型漂移检查待接入 schema/typegen 后补齐。（2026-09-24）
-- [~] 独立 `gui` CI 已运行 Rust GUI/Web crates test（workspace pinned toolchain）和前端 typecheck/unit/build；新增 Linux Chromium Playwright workspace E2E job。GUI crate fmt/clippy 独立门禁与更细的 job 仍待补齐，browser E2E 首次远端已通过；本轮修复 Clippy 后的 Rust 完整 job 远端复验待 push。（2026-09-25；本地 `playwright-desktop.log`、`playwright-mobile.log`）
-- [ ] 复测主 `rust` job 耗时仍在 `timeout-minutes: 60` 内且未因 GUI 增长；超出则先修隔离，不得直接调高 timeout。
-- [~] 仓库 Playwright Chromium E2E 现由 `npm run test:e2e` 重复驱动真实 Engine/WebSocket 和 Vite dev server，覆盖 desktop、390×844 viewport、workspace create/submit/switch/reload/archive/transcript isolation、layout restore、health/handshake proxy、空输入和取消提示。CI 新增独立 Linux Chromium gate；本地 desktop/mobile 项目通过，GitHub CI 首次执行仍是外部观察项，Tauri/WebDriver 与真实 provider 仍待平台/凭据。（2026-09-25；`apps/chaos-ui/e2e/workspace-flow.pw.ts`、goal scratch `playwright-desktop.log`、`playwright-mobile.log`）
+- [x] CI `36094218127` passed separate Linux GUI browser, GUI Rust/frontend/protocol jobs and main Rust `fmt`, all-target `check`, strict workspace `clippy`, and full workspace `test`; rust job elapsed 53m14s (<60m). Gate also executes ignored inventory and bounded brand drift checks. Local proof: `rust-workspace-final-suite.log`, `playwright-approval-final.log`, `final-local-verification-audit.log`。（2026-09-25）
+- [~] M-1.6 still has telemetry acceptance open: one current Rust job under budget is observed; historical GUI-on/off timings, peak RSS and disk delta need Actions telemetry owner. A green CI run does not prove zero GUI cost.
+- [x] Repository Playwright flows drive actual Engine/WebSocket/Vite desktop and narrow projects: workspace create/submit/switch/reload/archive, layout/theme, health/handshake, empty/cancel, real protocol approval rejection/question answer, GFM/inline+block formatting, injected HTML inertness, denied relative/javascript hrefs and hardened external hrefs. Linux browser CI passed run `36094218127`。（2026-09-25）
+- [~] Tauri/WebView browser automation, true tool adapter progress/results/approved mutation/Diff forms, and provider/keyring paths need app adapters, design/credentials and OS runner; current Web automation doesn't imply those modes.
 - [~] GUI CI 已使用 npm cache 与 `package-lock.json`；Rust cache 由现有 CI 提供，pnpm/sccache 尚未引入，避免没有测量就叠加缓存系统。（2026-09-24）
 - [~] 现有 `THIRD-PARTY-NOTICES`、lockfile 和 secret scan 提供基础审查；SBOM、漏洞扫描和自动 license gate 尚待接入工具/CI runner。
 - [~] ignored inventory 已修复并纳入 Q4 CSV；稳定版相关 ignored test 的逐项 owner/豁免审查仍未完成，不能作为 release 通过依据。
@@ -520,17 +523,17 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 
 ### M5.5 最终人工验收
 
-- [ ] 桌面和 Web：新建会话 → Prompt → 流式输出 → 工具 → 审批 → Diff → 终端/Git → 重启恢复。
-- [ ] 检查空态、错误态、断线、超长会话、大文件、无权限目录、磁盘满和损坏配置。
-- [ ] 检查多个工作区、多个标签页、主题、语言、宽屏和窄视口状态一致性。
-- [ ] 检查 macOS、Windows、Linux 的安装、首次启动、升级、回滚和卸载。
+- [~] Web browser E2E 现在覆盖真实 Engine workspace/session create/submit/stream/switch/archive/reload，Markdown safe rendering，demo-protocol approval rejection 和 question answer。Backend approval competition/resume 与 Diff 另有真实 WebSocket fixtures；Playwright 未把这些 faked prompt triggers 当 production tools。Terminal/Git shipped routes、approved mutation/Diff UI、Tauri flow 和真实 provider/tools 后完整 loop remain open.
+- [~] 当前 browser E2E 覆盖初始空 transcript/空 composer、prompt cancel、服务真实连接、reload snapshot、Markdown raw-HTML refusal 与 narrow viewport；large conversation performance、file display/permission/disk failure 和 corrupt runtime config UI recovery 仍待各自数据/I/O 边界接入。（2026-09-25）
+- [~] workspace create/switch/reload/archive、transcript isolation、layout/theme persistence 与 composer 已在 desktop/mobile Playwright CI 验证；真实多 tab 审批通知及 Tauri 页面仍待 gate。主题和宽窄视口已有当前覆盖，未声称共享状态所有界面完成一致性验收。（2026-09-25；Playwright run `36094218127`）
+- [ ] macOS、Windows 和 release package 安装/upgrade/rollback/uninstall 需各平台 runner、签名资源和产品 support matrix；现存 Linux CLI install 不等于 M5 GUI install，通过各对应 platform gate 验收。
 - [~] 前端 transport 已在 HTTPS 页面选择 `wss:`、HTTP 页面选择 `ws:` 并保留 host port/base path；生产 TLS 终止、proxy headers、Token 轮换和审计日志仍待真实部署拓扑验收。（2026-09-24；`src/transport.test.ts`）
 - [ ] 检查远程支持矩阵中的每种认证和故障路径；未支持能力无误导入口。
 
 ### M5.6 发布资料
 
-- [ ] 更新 README、用户指南、架构文档、配置参考、故障排查和安全说明。
-- [ ] 生成准确的 CHANGELOG、THIRD-PARTY-NOTICES、SBOM 和校验文件。
+- [ ] 稳定版发版时再更新 README、用户指南、架构文档、配置参考、故障排查和安全说明；当前 GUI seams/限制和 WSL build guidance 已记录于对应架构、CONTRIBUTING 与 audit docs，不能在产品/平台能力未定前写成功能交付。
+- [ ] 在 release owner 批准的实际产品版本/支持矩阵确定后生成匹配的 CHANGELOG、THIRD-PARTY-NOTICES、SBOM 和 artifact checksums；本轮未发新 version 或 platform artifact，不能为测试 commits 伪造 shipping inventory。
 - [ ] 发布说明列出支持平台、已知限制、数据迁移、回滚方式和 Deferred 项。
 - [ ] 发布前召开 go/no-go：P0/P1 为零，所有豁免有 owner 与截止日期。
 
@@ -645,7 +648,7 @@ npm 元包 `crates/codegen/xai-grok-pager/npm/chaos/package.json` 的版本已�
   结果为 `1.94.0`；除一处解释性注释外仓库内再无 `RUST_TOOLCHAIN` 引用。此后升级工具链
   只需改 `rust-toolchain.toml` 一个文件。
 - [x] **修复 npm 发布假成功与不完整元包风险**（本轮）：真实根因已从 `v0.3.1` Actions 日志确认——npm 对首个平台包返回 `E404`，脚本明确退出 1，但 workflow 的 `continue-on-error: true` 把步骤改成 `success`，导致 release package job 仍绿。已移除 `continue-on-error`，缺少 `NPM_TOKEN` 时明确失败；发布脚本对每个包执行 registry read-after-write 核验；只在六个平台归档都有效时发布元包，partial opt-in 只发布平台包。新增 `scripts/ci/test-publish-npm.sh` 覆盖空目录、`.gitkeep`、不完整集合、partial mode、完整集合及 registry 假阳性；CI 已接入。**新发现的硬阻塞**：npm 上 `chaos-code-win32-arm64` 与 `chaos-code-win32-x64` 是 `0.0.1-security` 占位包；要继续 npm 全平台发布，必须先由维护者通过 npm 支持取回包名，或选择新包名并迁移 pins。当前需要用户/包所有者介入，不能由我安全地擅自改品牌包名。已将 tag 发布默认改为 GitHub Release only；仓库变量 `CHAOS_NPM_PUBLISH_ENABLED=true` 显式启用 npm 后才会做占位探测与发布。npm 问题已隔离，不再阻塞二进制发版。
-- [ ] 在干净环境里实测 `npm install`（至少 linux-x64 一条路径）并跑通 `chaos --version`。—— 当前 Windows npm 包名仍为 `0.0.1-security` 占位，七个包不能安全完成真实安装发布；保留为 npm 所有者介入后的 release gate。
+- [ ] 在干净环境里实测官方 `npm install` 并跑通 `chaos --version`。已实测 Windows 两个子包名由 `0.0.1-security` placeholder 占用，元包的 all-six platform set 无法安全安装/发布；保留为 npm package owner 通过 support reclaim 或批准 rename/pin migration 的 release gate，不能替换为本地 tarball 模拟通过。
 
 **2026-09-24 复核与版本决策**：Cargo/npm 仍为 `0.4.2`，仓库已有 `v0.4.2` tag。release workflow 已强制签名/`require-sig`，installer 也默认 fail-closed；本轮确认真实 release dispatch 未执行，所以 GitHub signing preflight 的真实 secret public/private match 与 Windows installer runner 仍未验证。MT-1 七个 npm packages 仍受 Windows `0.0.1-security` placeholder 阻塞；未获包所有者处理、签名 secret/runner 及 release 负责人审批前，不创建 `0.4.3` tag/Release。
 
@@ -658,14 +661,14 @@ npm 元包 `crates/codegen/xai-grok-pager/npm/chaos/package.json` 的版本已�
 **Owner**：发布负责人（需在开工前指派具体维护者）  
 **阻断级别**：P1（涉及供应链完整性）
 
-`docs/audit-followup-report.md` §4 已于 2026-09-23 按实际代码与仓库配置状态更新；本轮已把 release workflow、installer 和 policy fixture 的可本地部分接通并验证。真实密钥匹配、signed release assets、Windows runner 和正式 dry-run 仍是 P1 外部门禁，不得以本地 fixture 代替。
+`docs/audit-followup-report.md` §4 已于 2026-09-23 按实际代码与仓库配置状态更新；本轮已把 release workflow、installer 和 policy fixture 的可本地部分接通并验证。该设计门禁与机器验证已在 workflow/fixture 完成；真实密钥匹配和正式 release dry-run 仍需 release owner 的受控密钥/签名资产，Windows installer runner 也仍是平台门禁。
 
 - [x] 更新 `docs/audit-followup-report.md` §4，记录签名接线、降级路径和未配置密钥时的真实状态。（2026-09-23；证据：本次复核）
-- [~] GitHub 配置项名称 `CHAOS_SIGNING_PRIVATE_KEY` / `CHAOS_SIGNING_PUBLIC_KEY` 已存在；本次只检查名称，未读取值。`signing-preflight` 会在真实 release workflow 中核验长度和公私钥匹配；在该 preflight 运行成功前不能创建补丁 tag。（2026-09-24）
-- [x] release workflow 强制要求签名密钥与 `require-sig` feature；新增 `signing-preflight` 校验 secret/variable 非空、Ed25519 公私钥匹配，配置缺失或不匹配时在构建前阻断。（2026-09-24；结构检查/本地 fixture 已运行；真实 GitHub secret match 未跑）
+- [~] signing-preflight implementation and local match/failure cryptographic fixtures pass; this environment did not read GitHub secrets or execute a real signed-release preflight. Actual key configuration/matching must remain release-owner verified; no secret values were accessed.
+- [x] release workflow 强制要求签名密钥与 `require-sig` feature；新增 `signing-preflight` 校验 secret/variable 非空、Ed25519 公私钥匹配，配置缺失或不匹配时在构建前阻断。（2026-09-24；workflow guard/本地 fixture 通过；真实签名资产流程未运行）
 - [x] Unix/PowerShell/batch installers 默认 fail-closed；新增 `scripts/ci/test-installer-signature-policy.py` 并接入 CI，缺少 signature/public key/cryptography 会失败，仅 `CHAOS_SKIP_SIGNATURE=1` 显式 opt-out。（2026-09-24；fixture 和 bash -n 通过；Windows runner 仍待运行）
-- [~] updater 现有单测覆盖有效/篡改/错误公钥/缺 sidecar；新增 `scripts/ci/test-installer-signature-policy.py` 锁住三安装器 fail-closed 结构，真实签名安装成功/错误/缺签名与 Windows PowerShell runner 仍待具备真实 release asset 的外部 gate。
-- [ ] 完成以上项后运行真实 release dry-run，确认各平台签名 sidecar 与编译内公钥匹配，再允许创建补丁版本 tag。
+- [~] updater tests cover valid/tampered/wrong-key/missing sidecar and installers have fail-closed structural CI fixtures; actual signed asset acceptance/rejection/missing-sidecar install plus Windows PowerShell run need release assets and Windows runner.
+- [ ] Release owner 在签名 secrets 和 Windows runner 可用后运行正式 release dry-run，验证实际 sidecar/embedded key match；在该真实受控 gate 完成前不创建新 tag。
 
 **本轮不代建或代存私钥**：该操作需要维护者控制的密钥生成环境和 GitHub secret 权限。
 
@@ -850,10 +853,10 @@ metadata`、`xai-grok-config`、`xai-tool-types`、pager `settings_e2e` 等）�
 
 - [x] 修复 `scripts/ci/ignored-tests.sh`：入口改用 Python 标准库 CSV 输出与 Rust 字符串转义解析；`#[ignore] // 注释` 仍识别为裸属性。四个 fixture 覆盖行尾注释、多行 reason/转义引号、CSV 逗号/引号/换行、空清单。（2026-09-23；`python3 scripts/ci/test-ignored-tests.py`：4 passed）
 - [x] 修复后重新生成 `docs/ignored-audit-2026q4.csv`，用标准 CSV reader 回读验证 434 行、5 列；盘点 218 个无理由属性与 37 条含日期 reason。已更新 `docs/ignored-audit-2026q4-summary.md`；Q3 使用不同扫描口径，不作直接差异比较。逐项 review 仍待维护者审查。
-- [ ] 复核所有 fork 债务的 `review 2026-10` 到期条目：逐条判定“修复 / 删除 / 续期并写明理由”，不允许无声续期。
-- [ ] 裸 `#[ignore]` 治理：先用可靠解析结果确定存量；再建显式存量基线/豁免的 CI 门禁拒绝新增；最后按 crate 分批补准确理由与 review date。不得把行尾注释自动当作属性 reason。
-- [ ] `xai-grok-update` 的 wiremock 重写队列：`test_concurrent_*` 系列 8 条是优先项（该 crate 现存 7 个 `#[ignore]`，与文档记的 48 条不符，需要先核对口径）。
-- [ ] 维持 `docs/ci-test-debt.md` 的"append-never, remove-only"规则；当前 `--exclude` 列表为空，任何新增都要在 PR 里被显式质询。
+- [ ] 2026-10 到期时，owner/reviewer 必须逐条判断仍有的 fork ignore debt：恢复、删除或说明理由/日期续期；当前日期（2026-09-25）尚未到季度 review。此轮实测 inventory/baseline 并不等于业务适用性 review；不得无声续期。
+- [~] 已修复忽略测试扫描器并保留 8 个解析器 fixtures；当前真实清点 434 项，其中 218 个裸 `#[ignore]`。CI baseline gate 按 package/path/function key 双向检查新增和 stale-removal；baseline fixes 对两种负向变异均断言退出 1，且 live repo 434/218 对照通过。现存 218 个裸属性仍需逐 crate 补 reason/review date，不把 baseline 误称审批。（2026-09-25；`scripts/ci/ignored-tests-baseline.tsv`、`test-ignored-tests-baseline-fixture.py`）
+- [~] `xai-grok-update` parser inventory reports 7 ignored attrs; old ledger says 8 `test_concurrent_*` family cases. These units are not yet mapped one-to-one: update owner should map each family member to actual attrs and inspect semantic reasons before deciding individual wiremock conversion; no network/HTTP tests altered this audit.
+- [x] 维持 `docs/ci-test-debt.md` 的“append-never, remove-only”规则；当前 `--exclude` 列表为空，CI 使用 `cargo test --workspace` 不含添加 exclusions；baseline gate 只限制 ignored inventory，不替代此规则。（2026-09-25；`.github/workflows/ci.yml`、`docs/ci-test-debt.md`）
 - [x] 确认 `registered_features_are_documented` 的 `internal-docs` feature 门控是长期方案还是临时绕过。**结论：是长期方案，且已写清理由。** 该 target `include_str!` 的是 `docs/internal/25-enterprise.md` 与 `docs/internal/22-environment-variables.md`，而 `docs/internal/` **在本仓库全部历史与 `origin/main` 里都不存在**（`git log --all -- crates/codegen/xai-grok-pager/docs/internal/**` 无输出），所以它在 cargo 下**根本无法编译**。`crates/codegen/xai-grok-pager/Cargo.toml` 的 `[[test]]` 条目旁已写明这一点，并给了持有内部文档者的跑法（`--features internal-docs`）。删掉它反而是信息损失：它是唯一把 `FEATURES` 与操作员表格对起来的检查。
 
 ---
@@ -883,10 +886,10 @@ metadata`、`xai-grok-config`、`xai-tool-types`、pager `settings_e2e` 等）�
 - [~] 当前 GUI/TUI 修改已在相关切片执行格式、GUI/engine tests 和文档检查；下一轮真实上游同步仍需按规则运行 `scripts/l10n-guard.sh` 前后对照。（2026-09-24）
 - [~] 维持“分叉层内一律不搬”的判定：`sync/fork-layer-inventory.md` 已登记根 `Cargo.toml` 和 GUI fork 区段；每次继续上游同步仍需执行 l10n/fork-layer review。（2026-09-24）
 - [x] 根目录六个调试脚本（`capture_listener.py`、`mock_server.py`、`run_mock_server.sh`、`single_mock_server.py`、`test_simple_wb.py`、`test_workbuddy_headers.py`、`test_workbuddy_headers_v2.py`）：**保持原位，不搬也不删**。它们是**上游自己放在仓库根**的（上游提交 `f380bbca`「test(tools): add mock inference server and WorkBuddy header capture scripts」，本地同一提交），不是散落的本地文件；挪进 `scripts/dev/` 会让每次上游同步都在这条路径上冲突，属于"碰架构"。
-- [ ] 复核两项已延后的上游变更是否仍应延后：`oniguruma` 2→3、MCP admission 放宽。
-- [ ] `docs/telemetry-status-design.md` 是 v0.1 设计草稿、**尚未实现**（实测无 `telemetry status` 子命令）：决定评审通过后开工，还是标记为不做并在文档头部写明。
-- [ ] `docs/known-issues/wsl-p9io-crash-20260728.md` 仍是本地存档未外发：决定补齐 Windows 主机信息后上报，还是明确只留档。
-- [ ] 在贡献文档里固化 WSL/低内存机器的 `-j 4` 约束（`CARGO_BUILD_JOBS=4`），避免新贡献者用默认并发把机器打爆。
+- [ ] 复核两项已延后的上游变更是否仍应延后：`oniguruma` 2→3、MCP admission 放宽。仅本地搜索表明 defer 依据见 curated sync 记录；实际依赖/安全取舍由下次上游 sync reviewer 决定，不机械更新。
+- [ ] **Owner decision** for `docs/telemetry-status-design.md`: keep/approve implementation of `chaos telemetry status` (and decide whether `disable` stays in scope), or mark explicitly deferred/not accepted. The CLI command is currently absent; a design draft is not an execution contract. This change needs the CLI/telemetry owner, not a local mechanical completion.
+- [ ] `docs/known-issues/wsl-p9io-crash-20260728.md` 明确为未外发本地存档；Windows 主机/wsl 版本、最小复现和完整 prior-boot logs 缺失。实际补充需 Windows host; 是否上报 external issue 由报告 owner 决策。
+- [x] 在贡献文档里固化 WSL/低内存机器的 `CARGO_BUILD_JOBS=4` 建议，避免并发编译耗尽内存/磁盘；注明 `target/` 清理仅限可再生成的 debug/incremental 产物并链接已归档事故。（2026-09-25；`CONTRIBUTING.md` §Low-memory builds）
 
 ---
 
@@ -933,7 +936,7 @@ metadata`、`xai-grok-config`、`xai-tool-types`、pager `settings_e2e` 等）�
 ### 8.2 本文件的核对节奏
 
 - [~] 发版前重跑第 7 章当前实测状态：本轮已核对签名配置名称、npm Windows 占位、安装器策略和 GUI/CI 状态；真实 secret/runner/npm owner 仍需 release 负责人执行。（2026-09-24）
-- [ ] 每季度（与 MT-5 的 ignored 审计同批）复核一次 MT 条目是否仍然成立。
+- [ ] Future due-date maintenance cycle: review MT rows each quarter alongside ignored-test debt. This pass is before 2026-10 and records remaining prerequisites/current CI proof, but it is not the Q4 per-debt owner renewal or release-go/no-go review.
 
 ---
 

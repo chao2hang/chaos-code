@@ -186,13 +186,13 @@ chaos --resume <session-id-or-title>
 
 它会显示：
 
-- 会话标题（设置过时）
+- 会话标题（若无标题则不显示）
 - Shell 版本
-- 认证方式（OAuth 还是 API key；API key 会话还会附一句建议你跑 `grok login` 用 SuperGrok 订阅——那是上游遗留的屏幕文本，本分叉没有账号登录，凭据请改用 `/provider` 配置）
+- 认证方式（OAuth 还是 API key；本分叉没有账号登录命令，API key 凭据请改用 `/provider` 配置）
 - 会话 ID
 - 工作目录
 - 模型（编码模型还会带上模型哈希）
-- API 后端与沙箱配置（设置过时）
+- API 后端标识和沙箱模式
 - 上下文窗口用量（已用与总 token 数，以及使用百分比）
 
 在 Session info 标签页上，点某个值即可复制它，或拖动选中一段（高亮与工具查看器一致）。`c` 复制会话 ID，`y` 复制整块。复制走的是与 Chaos 其他部分相同的剪贴板通道，包括 `chaos wrap`。

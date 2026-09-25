@@ -77,6 +77,14 @@ jobs:
       - name: cargo fmt
         run: cargo fmt --all -- --check
 
+      - name: ignored-test baseline
+        run: |
+          python3 scripts/ci/test-ignored-tests.py
+          python3 scripts/ci/test-ignored-tests-baseline-fixture.py
+          python3 scripts/ci/test-ignored-tests-baseline.py
+      - name: brand and protocol guard
+        run: python3 scripts/ci/check-brand-protocol.py
+
       # --all-targets is the point of this step: it compiles tests, benches and
       # examples, which a plain `cargo check` skips.
       - name: cargo check (all targets)

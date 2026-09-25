@@ -44,7 +44,12 @@ scripted scenarios, stress, concurrent convergence wiremock rewrite backlog).
 
 Tests marked `#[ignore]` are a separate debt. Their reasons must stay
 readable and be revisited periodically; a permanent `#[ignore]` is a deleted
-test with extra steps.
+test with extra steps. CI runs the repository inventory scanner against
+`scripts/ci/ignored-tests-baseline.tsv`; existing bare attributes are grandfathered
+by explicit package/path/function keys. Added attributes fail until reviewed and
+added to the baseline; stale entries for removed attributes also fail until the
+baseline is cleaned. The baseline does not approve reasons or replace the
+quarterly source-level audit.
 
 > 口径说明：下表只列“Chaos fork 引入的债务”；全工作区清单见
 > [`ignored-audit-2026q4-summary.md`](ignored-audit-2026q4-summary.md)。初次统计工具输出并非可靠 CSV，

@@ -88,6 +88,51 @@ def rust_string_value(value):
             out.extend(('\\', code)); i += 1
     return ''.join(out)
 
+def bare_ignore_key(row, root):
+    """Identify an approved bare ignore by package, path, and function.
+
+    Absolute paths are produced by isolated parser fixtures; normalize those to
+    the supplied scan root so the fixture tests exercise the same key shape.
+    """
+    path = Path(row[1])
+    if path.is_absolute():
+        scan_root = root.parent if root.name == 'crates' else root
+        try:
+            relative = path.resolve().relative_to(scan_root.resolve()).as_posix()
+        except ValueError:
+            relative = path.name
+    else:
+        relative = path.as_posix()
+    return f"{row[0]}\t{relative}\t{row[4]}"
+
+
+def compare_bare_ignore_baseline(rows, baseline_text, root=Path('crates')):
+    """Return newly added rows and stale baseline keys using multiset comparison."""
+    from collections import Counter
+
+    baseline_lines = [line for line in baseline_text.splitlines() if line and not line.startswith('#')]
+    invalid = [line for line in baseline_lines if len(line.split('\t')) != 3]
+    if invalid:
+        raise ValueError(f'ignored-test baseline contains malformed rows: {invalid[:3]!r}')
+    baseline = Counter(baseline_lines)
+    added = []
+    for row in rows:
+        if row[3] != 'NO_REASON':
+            continue
+        key = bare_ignore_key(row, root)
+        if baseline[key]:
+            baseline[key] -= 1
+        else:
+            added.append(row)
+    stale = list(baseline.elements())
+    return added, stale
+
+
+def new_bare_ignores(rows, baseline_text, root=Path('crates')):
+    """Return bare-ignore rows not present in the checked-in multiset baseline."""
+    return compare_bare_ignore_baseline(rows, baseline_text, root)[0]
+
+
 def package_name(path):
     for parent in (path.parent, *path.parents):
         cargo = parent / 'Cargo.toml'
@@ -119,10 +164,33 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--csv', action='store_true')
     parser.add_argument('--stale', action='store_true')
+    parser.add_argument('--check-baseline', metavar='PATH',
+                        help='fail if new bare #[ignore] attributes are missing from this baseline')
     parser.add_argument('--root', default='crates')
     args = parser.parse_args()
     root = Path(args.root)
     rows = [row for path in sorted(root.rglob('*.rs')) for row in scan(path)] if root.exists() else []
+    if args.check_baseline:
+        baseline_path = Path(args.check_baseline)
+        try:
+            baseline_text = baseline_path.read_text(encoding='utf-8')
+        except OSError as error:
+            print(f'ignored-tests: cannot read baseline {baseline_path}: {error}', file=sys.stderr)
+            return 2
+        try:
+            added, stale = compare_bare_ignore_baseline(rows, baseline_text, root)
+        except ValueError as error:
+            print(f'ignored-tests: invalid baseline: {error}', file=sys.stderr)
+            return 2
+        if added or stale:
+            for crate, path, line, reason, fn_name in added:
+                print(f'{path}:{line}: new bare #[ignore] in {crate}::{fn_name or "<unknown>"}', file=sys.stderr)
+            for key in stale:
+                print(f'ignored-tests: stale baseline entry: {key}', file=sys.stderr)
+            print('ignored-tests: update the baseline only after reviewing additions/removals', file=sys.stderr)
+            return 1
+        print(f'ignored-tests: baseline matches; {len(rows)} ignored attributes total')
+        return 0
     if args.stale:
         rows = [row for row in rows if not re.search(r'20\d{2}-\d{2}', row[3])]
     if args.csv:
@@ -135,4 +203,4 @@ def main():
             print(f'{row[0]}:{row[1]}:{row[2]}: {row[4]}: {row[3]}')
 
 if __name__ == '__main__':
-    main()
+    raise SystemExit(main())
