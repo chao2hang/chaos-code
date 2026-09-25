@@ -91,14 +91,14 @@ function App() {
 
   function handleComposerKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (event.nativeEvent.isComposing) return
-    if (event.key === 'ArrowUp' && !event.shiftKey && !event.nativeEvent.isComposing && event.currentTarget.selectionStart === 0) {
+    if (event.key === 'ArrowUp' && !event.shiftKey && event.currentTarget.selectionStart === 0) {
       event.preventDefault()
       const result = navigatePromptHistory(promptHistory, -1, prompt, event.nativeEvent.isComposing)
       setPromptHistory(result.history)
       setPrompt(result.value)
       return
     }
-    if (event.key === 'ArrowDown' && !event.shiftKey && !event.nativeEvent.isComposing && event.currentTarget.selectionEnd === event.currentTarget.value.length) {
+    if (event.key === 'ArrowDown' && !event.shiftKey && event.currentTarget.selectionEnd === event.currentTarget.value.length) {
       event.preventDefault()
       const result = navigatePromptHistory(promptHistory, 1, prompt, event.nativeEvent.isComposing)
       setPromptHistory(result.history)

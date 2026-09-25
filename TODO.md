@@ -404,7 +404,7 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 - [~] plugin marketplace 现已通过 `chaos-engine` 暴露只读 `ScanMarketplace` adapter，复用现有 catalog/scanner/path validation；扫描根目录必须由 host 显式配置，WebSocket 已覆盖允许/拒绝路径；危险安装/执行、来源权限、签名失败和 MCP 连接状态仍需 approval-gated adapter 与真实 registry/credential 环境。（2026-09-24；`crates/codegen/chaos-engine/tests/marketplace_scan.rs`、`crates/codegen/xai-grok-web/tests/marketplace_scan.rs`）
 - [~] 已有只读 marketplace scanner 对 indexed relative path traversal/symlink escape 的 crate tests；GUI 尚无第三方安装/执行入口，来源/权限审批 UX、恶意 manifest/supply-chain signature fail gate 需先由维护者批准 extension trust/signature policy，之后接 approval-gated adapter。
 
-本轮盘点按 M/M-1/MT section audit 开放条目：起始扫描 156 `[ ]`/`[~]` rows；随后本地完成 brand 和 ignored CI guards、real Engine Markdown browser behavior、approval outcome/live status UX/E2E、Markdown remote-image request suppression、contribution docs、一个 updater 错误分支 unwrap 收敛与 full Rust regressions，当前 exact recount 是 64 unchecked / 87 partial。Tauri/platform signature/provider keyring/real MCP/SSH/multi-root/release 与 scheduled review 按 external runner/credential/maintainer owner/deadline 继续 open。逐项 prerequisite 与 local-vs-external classification 见 [`docs/architecture/todo-open-item-classification.md`](docs/architecture/todo-open-item-classification.md)。
+本轮盘点按 M/M-1/MT section audit 开放条目：起始扫描 156 `[ ]`/`[~]` rows；随后本地完成 brand 和 ignored CI guards、real Engine Markdown browser behavior、approval outcome/live status UX/E2E、IME-safe history navigation、Markdown remote-image request suppression、contribution docs 与 updater 错误分支 unwrap 收敛。CI run `36165469964` 的 workspace tests 暴露 xai-grok-shell current-thread actor tests 在默认 2 MiB test thread stack 下 stack overflow；将 Rust CI `cargo test` job 的 `RUST_MIN_STACK` 调为 16 MiB 后，本地 xai-grok-shell lib tests（6,804 passed）和 full workspace tests passed；原 run failed job rerun 正在运行。当前 exact recount 是 64 unchecked / 87 partial。Tauri/platform signature/provider keyring/real MCP/SSH/multi-root/release 与 scheduled review 按 external runner/credential/maintainer owner/deadline 继续 open。逐项 prerequisite 与 local-vs-external classification 见 [`docs/architecture/todo-open-item-classification.md`](docs/architecture/todo-open-item-classification.md)。
 
 ## M3.3 工作流与子代理
 
@@ -873,7 +873,7 @@ metadata`、`xai-grok-config`、`xai-tool-types`、pager `settings_e2e` 等）�
 - [ ] unsafe P0 审计：`xai-grok-sandbox` + `xai-tty-utils`，这两处是安全边界，优先于数量更大的 crate。
 - [ ] `xai-grok-shell` 的环境变量 `unsafe` 消除：一次可砍掉该 crate 约 60% 的 unsafe 数量（364 处关键字里 332 个是 `unsafe {}` 块）。
 - [ ] A 批 unwrap 治理：`xai-grok-shell` 约 1,270 个，必须分批，且每批要有独立的验收边界。
-- [~] 已将单个 `xai-grok-update` 错误分支收敛写入审计跟进报告并实测 update crate lib 与集成路径；其余批次完成后仍须用当前源代码重算生产 unwrap/unsafe 分布，不能沿用 2026-08 旧计数。（2026-09-25；`docs/audit-followup-report.md`、scratch `mt6-update-unwrap-test.log`）
+- [~] 已将单个 `xai-grok-update` 错误分支收敛写入审计跟进报告并实测 update crate lib 与集成路径；其余批次完成后仍须用当前源代码重算生产 unwrap/unsafe 分布，不能沿用 2026-08 旧计数。另，GitHub run `36165469964` 暴露完整 workspace 里一个 `xai-grok-shell` current-thread actor 测试栈溢出；统一提高 CI 测试线程栈至 16 MiB 后 package tests 全数通过，正在验证本地/远端 workspace rerun。（2026-09-25；`docs/audit-followup-report.md`、scratch `mt6-update-unwrap-test.log`、`xai-grok-shell-lib-16m-after-cleanup.log`）
 
 ---
 
