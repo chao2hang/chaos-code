@@ -404,7 +404,7 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 - [~] plugin marketplace 现已通过 `chaos-engine` 暴露只读 `ScanMarketplace` adapter，复用现有 catalog/scanner/path validation；扫描根目录必须由 host 显式配置，WebSocket 已覆盖允许/拒绝路径；危险安装/执行、来源权限、签名失败和 MCP 连接状态仍需 approval-gated adapter 与真实 registry/credential 环境。（2026-09-24；`crates/codegen/chaos-engine/tests/marketplace_scan.rs`、`crates/codegen/xai-grok-web/tests/marketplace_scan.rs`）
 - [~] 已有只读 marketplace scanner 对 indexed relative path traversal/symlink escape 的 crate tests；GUI 尚无第三方安装/执行入口，来源/权限审批 UX、恶意 manifest/supply-chain signature fail gate 需先由维护者批准 extension trust/signature policy，之后接 approval-gated adapter。
 
-本轮盘点按 M/M-1/MT section audit 开放条目：起始扫描 156 `[ ]`/`[~]` rows；随后本地完成 brand 和 ignored CI guards、real Engine Markdown browser behavior、contribution docs 与 full Rust regressions，当前 exact recount 是 66 unchecked / 86 partial。Tauri/platform signature/provider keyring/real MCP/SSH/multi-root/release 与 scheduled review 按 external runner/credential/maintainer owner/deadline 继续 open。逐项 prerequisite 与 local-vs-external classification 见 [`docs/architecture/todo-open-item-classification.md`](docs/architecture/todo-open-item-classification.md)。
+本轮盘点按 M/M-1/MT section audit 开放条目：起始扫描 156 `[ ]`/`[~]` rows；随后本地完成 brand 和 ignored CI guards、real Engine Markdown browser behavior、approval outcome UX/E2E、contribution docs 与 full Rust regressions，当前 exact recount 是 66 unchecked / 85 partial。Tauri/platform signature/provider keyring/real MCP/SSH/multi-root/release 与 scheduled review 按 external runner/credential/maintainer owner/deadline 继续 open。逐项 prerequisite 与 local-vs-external classification 见 [`docs/architecture/todo-open-item-classification.md`](docs/architecture/todo-open-item-classification.md)。
 
 ## M3.3 工作流与子代理
 
