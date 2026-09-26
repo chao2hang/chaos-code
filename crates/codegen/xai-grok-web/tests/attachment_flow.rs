@@ -91,7 +91,53 @@ async fn websocket_upload_requires_approval_before_staging_into_workspace() {
     )
     .await;
     let _ = next(&mut socket).await;
-    let _ = next(&mut socket).await;
+    let progress = next(&mut socket).await;
+    assert!(matches!(
+        progress,
+        ServerMessage::AttachmentProgress { received, .. } if received == 5
+    ));
+    assert!(
+        std::fs::read_dir(directory.path().join(".chaos-staging"))
+            .unwrap()
+            .next()
+            .is_none()
+    );
+    send(
+        &mut socket,
+        ClientMessage::ReadFile {
+            client_msg_id: "read-staging-over-websocket".into(),
+            relative_path: ".chaos-staging/upload-secret.part".into(),
+        },
+    )
+    .await;
+    assert!(matches!(
+        next(&mut socket).await,
+        ServerMessage::Error { code, .. } if code == "path_escape"
+    ));
+    send(
+        &mut socket,
+        ClientMessage::ListFiles {
+            client_msg_id: "list-staging-over-websocket".into(),
+            relative_path: ".chaos-staging".into(),
+        },
+    )
+    .await;
+    assert!(matches!(
+        next(&mut socket).await,
+        ServerMessage::Error { code, .. } if code == "path_escape"
+    ));
+    send(
+        &mut socket,
+        ClientMessage::SearchFiles {
+            client_msg_id: "search-staging-over-websocket".into(),
+            query: "hello".into(),
+        },
+    )
+    .await;
+    assert!(matches!(
+        next(&mut socket).await,
+        ServerMessage::SearchResults { matches, .. } if matches.is_empty()
+    ));
     send(
         &mut socket,
         ClientMessage::FinalizeAttachment {
@@ -150,5 +196,64 @@ async fn websocket_upload_requires_approval_before_staging_into_workspace() {
         std::fs::read_to_string(directory.path().join("note.txt")).unwrap(),
         "hello"
     );
+
+    send(
+        &mut socket,
+        ClientMessage::BeginAttachment {
+            client_msg_id: "begin-cancelled-upload".into(),
+            session_id,
+            filename: "cancelled.txt".into(),
+            content_type: "text/plain".into(),
+            byte_len: 5,
+        },
+    )
+    .await;
+    let _ = next(&mut socket).await;
+    let _ = next(&mut socket).await;
+    let cancelled_upload_id = match next(&mut socket).await {
+        ServerMessage::AttachmentStarted { upload_id, .. } => upload_id,
+        other => panic!("unexpected {other:?}"),
+    };
+    send(
+        &mut socket,
+        ClientMessage::AttachmentChunk {
+            client_msg_id: "chunk-cancelled-upload".into(),
+            upload_id: cancelled_upload_id,
+            chunk: Base64Engine::encode(&base64::engine::general_purpose::STANDARD, b"abort"),
+        },
+    )
+    .await;
+    let _ = next(&mut socket).await;
+    assert!(matches!(
+        next(&mut socket).await,
+        ServerMessage::AttachmentProgress { received: 5, .. }
+    ));
+    send(
+        &mut socket,
+        ClientMessage::CancelAttachment {
+            client_msg_id: "cancel-upload".into(),
+            upload_id: cancelled_upload_id,
+        },
+    )
+    .await;
+    let _ = next(&mut socket).await;
+    assert!(matches!(
+        next(&mut socket).await,
+        ServerMessage::AttachmentCancelled { upload_id } if upload_id == cancelled_upload_id
+    ));
+    send(
+        &mut socket,
+        ClientMessage::FinalizeAttachment {
+            client_msg_id: "finalize-cancelled-upload".into(),
+            upload_id: cancelled_upload_id,
+            relative_path: "cancelled.txt".into(),
+        },
+    )
+    .await;
+    assert!(matches!(
+        next(&mut socket).await,
+        ServerMessage::Error { code, .. } if code == "attachment_not_found"
+    ));
+    assert!(!directory.path().join("cancelled.txt").exists());
     server.await.unwrap();
 }
