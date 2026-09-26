@@ -12,8 +12,9 @@ completed slice plus an open gate). This snapshot includes the local accessibili
 coverage row and a partial M2 file-browser UI row; neither clears the broader M3
 localization/accessibility acceptance nor any physical multi-root boundary. The current open/partial split for
 maintenance items reflects the MT-6 review/evidence partial rows. The reproducible command is
-`python3 scripts/ci/classify-open-todos.py`; its latest output is preserved in
-private goal scratch `open-items-current.tsv`. The initial audit export remains
+`python3 scripts/ci/classify-open-todos.py`; a current pre-final-audit output is
+preserved in private goal scratch `open-items-current.tsv`; the latest recount is
+`open-items-current-final.tsv`. The initial audit export remains
 in private goal scratch `todo-open-items.txt`. The 2026-09-25 basic axe-core check
 is now wired into Playwright for empty and populated Web timeline states; this
 changes an existing partial M3 accessibility row but does not close the full
@@ -25,10 +26,10 @@ localization/accessibility review.
 | M0 | 0 | 13 |
 | M1 | 1 | 15 |
 | M2 | 0 | 24 |
-| M3 | 6 | 6 |
+| M3 | 8 | 9 |
 | M4 | 24 | 3 |
 | M5 | 18 | 9 |
-| Maintenance items / §8 | 14 | 13 |
+| Maintenance items / §8 | 11 | 10 |
 
 ## Locally delivered in this audit pass
 
@@ -47,7 +48,7 @@ These can be developed in bounded work after their behavior is specified; this p
 
 - M1: message round grouping, virtual list/scroll anchor/cache, reasoning collapse, approval timeout/rules, client cursor/snapshot catch-up and multi-tab sequencing; tool cards need actual adapter payload/result forms. Composer Enter/IME guards and history projection are tested, including no history navigation during IME composition; browser-native IME candidate integration still depends on platform keyboard testing. Markdown rendering is a slice, not the timeline milestone.
 - M2: Engine/WebSocket already exposes bounded single-host-root list/read/search, but no rendered file-browser UI yet. `files_listed` currently sends filename strings only, so the client cannot identify directories safely without guessing from filename extensions; root-relative navigation, loading/error/empty states and search-result integration need an agreed view contract plus real E2E. Multi-root additionally requires an owner-approved host-owned root ID/map and root provisioning/trust policy. The complete interactive terminal route remains open.
-- M3: settings/workflow views after settings schema and workflow/subagent event/state contracts are selected. A local accessibility slice adds theme-aware visible keyboard focus and semantic separate workspace switch/archive buttons. Desktop/mobile Playwright covers keyboard actions; axe-core scans the empty page and an active workspace with a real conversation, catching/fixing missing document title and language. Full localization, long-text layout, human screen-reader/platform acceptance remain open. Automated browser scans cover the empty shell and a populated workspace/message state. The current demo `/ask` and `/approve-tool` prompt hooks are not production workflow execution.
+- M3: settings/workflow views after settings schema and workflow/subagent event/state contracts are selected. A local accessibility slice adds theme-aware visible keyboard focus and semantic separate workspace switch/archive buttons. Desktop/mobile Playwright covers keyboard actions; axe-core scans the empty page and an active workspace with a real conversation, catching/fixing missing document title, language and semantic main heading. Full localization, long-text layout, screen-reader and macOS/Windows/Tauri accessibility acceptance remain open. Automated browser scans of empty and populated workspace/message states explicitly enable WCAG 2.0/2.1 A/AA, WCAG 2.2 AA and best-practice tags. The current demo `/ask` and `/approve-tool` prompt hooks are not production workflow execution.
 - MT-5: source-by-source reason/date cleanup of the legacy bare ignores. The CI baseline only stops invisible inventory drift.
 - MT-6: a single `xai-grok-update` network retry-loop unwrap was replaced with a structured fallback and is covered by the existing connection-refused integration test. Remaining update progress-template unwraps and sandbox unwrap/unsafe sites are not bulk-edited; the old audit counts need fresh AST-aware classification and security review.
 

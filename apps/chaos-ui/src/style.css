@@ -14,7 +14,7 @@ header { display: flex; justify-content: space-between; gap: 16px; color: #aebbd
 .workspaces .workspace-archive { padding-inline: 10px; background: #29364a; }
 :root[data-theme='light'] .workspaces .workspace-archive { color: #172033; background: #e4eaf3; }
 :root[data-theme='dark'] .workspaces .workspace-archive { color: #fff; background: #29364a; }
-header strong { color: #fff; font-size: 1.2rem; }
+header h1 { margin: 0; color: #fff; font-size: 1.2rem; }
 .timeline { display: flex; flex-direction: column; gap: 12px; padding: 16px 0; min-width: 0; }
 .empty { margin: auto; color: #8290a5; }
 article { max-width: 78%; overflow-wrap: anywhere; padding: 12px 16px; border-radius: 12px; background: #1e293b; }

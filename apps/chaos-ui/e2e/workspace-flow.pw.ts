@@ -154,8 +154,8 @@ test('the empty app shell has no serious or critical axe violations', async ({ p
   await page.goto('/')
   await expect(page.getByTestId('session-status')).toHaveText('会话已创建')
 
-  const results = await new AxeBuilder({ page }).analyze()
-  expect(results.violations.filter(({ impact }) => impact === 'serious' || impact === 'critical')).toEqual([])
+  const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa', 'best-practice']).analyze()
+  expect(results.violations.map(({ id, impact, nodes }) => ({ id, impact, targets: nodes.map(({ target }) => target) }))).toEqual([])
 })
 
 test('the workspace, composer and rendered message remain axe-clean after real interaction', async ({ page }) => {
@@ -165,8 +165,8 @@ test('the workspace, composer and rendered message remain axe-clean after real i
   await createWorkspace(page, `Axe ${suffix}`)
   await sendPrompt(page, `Read **this** safely ${suffix}`, `Read **this** safely ${suffix}`)
 
-  const results = await new AxeBuilder({ page }).analyze()
-  expect(results.violations.filter(({ impact }) => impact === 'serious' || impact === 'critical')).toEqual([])
+  const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa', 'best-practice']).analyze()
+  expect(results.violations.map(({ id, impact, nodes }) => ({ id, impact, targets: nodes.map(({ target }) => target) }))).toEqual([])
 })
 
 test('keyboard focus is visible and composer submission works without a pointer', async ({ page }) => {
