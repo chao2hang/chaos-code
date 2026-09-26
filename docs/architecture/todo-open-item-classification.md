@@ -15,10 +15,12 @@ maintenance items reflects the MT-6 review/evidence partial rows. The reproducib
 `python3 scripts/ci/classify-open-todos.py`; a current pre-final-audit output is
 preserved in private goal scratch `open-items-current.tsv`; the latest recount is
 `open-items-current-final.tsv`. The initial audit export remains
-in private goal scratch `todo-open-items.txt`. The 2026-09-25 basic axe-core check
-is now wired into Playwright for empty and populated Web timeline states; this
-changes an existing partial M3 accessibility row but does not close the full
-localization/accessibility review.
+in private goal scratch `todo-open-items.txt`. An attempted broader `axe-core` check identified missing document metadata and
+main-heading issues, but its local-only fix scope would silently change every
+static render surface and needs the approved product-language/accessibility
+contract plus owner review. That experimental dependency/test is not shipped;
+the existing theme-aware focus and keyboard E2Es remain the bounded accessibility
+slice, while the wider M3 accessibility/localization gate stays open.
 
 | Roadmap group | Unchecked | Partial |
 |---|---:|---:|
