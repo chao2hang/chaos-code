@@ -12,6 +12,7 @@ use xai_grok_web::router;
 async fn websocket_upload_requires_approval_before_staging_into_workspace() {
     let directory = tempdir().unwrap();
     let engine = Engine::with_workspace(directory.path()).unwrap();
+    std::fs::create_dir(directory.path().join("nested")).unwrap();
     let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
         .await
         .unwrap();
@@ -73,6 +74,13 @@ async fn websocket_upload_requires_approval_before_staging_into_workspace() {
         ServerMessage::AttachmentStarted { upload_id, .. } => upload_id,
         other => panic!("unexpected {other:?}"),
     };
+    assert!(directory.path().join(".chaos-staging").exists());
+    assert!(
+        std::fs::read_dir(directory.path().join(".chaos-staging"))
+            .unwrap()
+            .next()
+            .is_none()
+    );
     send(
         &mut socket,
         ClientMessage::AttachmentChunk {
