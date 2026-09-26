@@ -68,7 +68,7 @@ test('workspace sessions stay isolated across create, submit, switch, reload, ar
   page.on('request', (request) => {
     if (request.url() === 'https://example.com/tracker.png') imageRequestUrls.push(request.url())
   })
-  const markdownPrompt = `beta after reload ${suffix} with **bold**, \`inline code\`, and a list:\n\n- first item\n- second item\n\n<script>document.documentElement.dataset.pwned='true'</script>\n\n[safe link](https://example.com) [blocked link](./config.toml) [bad scheme](javascript:alert(1))
+  const markdownPrompt = `beta after reload ${suffix} with **bold**, \`inline code\`, and a list:\n\n- first item\n- second item\n\n<script>document.documentElement.dataset.pwned='true'</script>\n\n[safe link](https://example.com) [blocked link](./config.toml) [bad scheme](javascript:alert(1)) [network path](//example.com/steal) [data url](data:text/html,hello) [fragment](#note) [email](mailto:support@example.com)
 
 ![remote image](https://example.com/tracker.png)`
   await sendPrompt(page, markdownPrompt, markdownPrompt)
@@ -83,9 +83,13 @@ test('workspace sessions stay isolated across create, submit, switch, reload, ar
   const externalLink = page.locator('.assistant a[href="https://example.com"]')
   await expect(externalLink).toHaveAttribute('target', '_blank')
   await expect(externalLink).toHaveAttribute('rel', 'noopener noreferrer')
-  await expect(page.locator('.assistant a[href="./config.toml"], .assistant a[href^="javascript:"]')).toHaveCount(0)
+  await expect(page.locator('.assistant a[href="./config.toml"], .assistant a[href^="javascript:"], .assistant a[href^="//"], .assistant a[href^="data:"]')).toHaveCount(0)
+  await expect(page.locator('.assistant a[href="#note"]')).toBeVisible()
+  await expect(page.locator('.assistant a[href="mailto:support@example.com"]')).toBeVisible()
   await expect(page.locator('.assistant').getByText('blocked link')).toBeVisible()
   await expect(page.locator('.assistant').getByText('bad scheme')).toBeVisible()
+  await expect(page.locator('.assistant').getByText('network path')).toBeVisible()
+  await expect(page.locator('.assistant').getByText('data url')).toBeVisible()
 
   if (isMobile) {
     const composer = page.getByTestId('composer-input')

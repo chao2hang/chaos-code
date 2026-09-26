@@ -8,19 +8,19 @@ product/platform acceptance gate has passed.
 
 The current line-level inventory scans 151 `[ ]`/`[~]` rows: 63 unchecked and 88
 partial (including conditional criteria, future/dated work and rows with a
-completed slice plus an open gate). This snapshot includes the local accessibility/axe
-coverage row and a partial M2 file-browser UI row; neither clears the broader M3
-localization/accessibility acceptance nor any physical multi-root boundary. The current open/partial split for
-maintenance items reflects the MT-6 review/evidence partial rows. The reproducible command is
+completed slice plus an open gate). This snapshot includes a bounded automated
+accessibility scan row and a partial M2 file-browser UI row; neither clears the
+broader M3 localization/accessibility acceptance nor any physical multi-root
+boundary. The current open/partial split for maintenance items reflects the MT-6
+review/evidence partial rows. The reproducible command is
 `python3 scripts/ci/classify-open-todos.py`; a current pre-final-audit output is
 preserved in private goal scratch `open-items-current.tsv`; the latest recount is
 `open-items-current-final.tsv`. The initial audit export remains
-in private goal scratch `todo-open-items.txt`. An attempted broader `axe-core` check identified missing document metadata and
-main-heading issues, but its local-only fix scope would silently change every
-static render surface and needs the approved product-language/accessibility
-contract plus owner review. That experimental dependency/test is not shipped;
-the existing theme-aware focus and keyboard E2Es remain the bounded accessibility
-slice, while the wider M3 accessibility/localization gate stays open.
+in private goal scratch `todo-open-items.txt`. Playwright runs `axe-core` checks
+on empty and populated real Web states for serious/critical violations under
+WCAG 2.0/2.1 A/AA, WCAG 2.2 AA and best-practice tags. Static document title,
+language and main heading are present; automated checks do not replace product
+language review, screen-reader testing or platform acceptance.
 
 | Roadmap group | Unchecked | Partial |
 |---|---:|---:|
@@ -40,7 +40,7 @@ slice, while the wider M3 accessibility/localization gate stays open.
 | Contribution safety | `CONTRIBUTING.md` describes four-job Cargo concurrency and conservative WSL `target/` cleanup. |
 | Ignored-test guard | The existing Rust-aware parser has 8 fixtures; the new baseline checker adds add/remove negative fixtures. Live inventory: 434 ignored attrs, 218 bare attrs, zero delta against explicit package/path/function baseline. CI runs parser tests plus live bidirectional check. The baseline does not approve the 218 missing reasons/dates; `docs/ci-test-debt.md` and the Q4 summary now point to the repaired scanner and preserve the owner review as open. |
 | User-visible brand guard | `check-brand-protocol.py` checks bounded shipped CLI/help/reference-doc text and direct rendered UI source strings, not all source literals; it leaves crate/wire/env/home compatibility identifiers, history, comments and fixtures alone. Mutation tests prove CLI, docs and UI name regressions fail, while legacy compatibility prose passes. |
-| Conversation rendering and approvals | `react-markdown` and `remark-gfm` render actual Engine transcript text in Web timeline. Raw HTML is not parsed; Markdown images render only inert alt text with no image node or network request; only in-page anchors, HTTP(S), and mailto become links; external links use `noopener noreferrer`. Playwright desktop and 390×844 flows exercise bold/code/lists, injected DOM mutation, blocked relative/javascript URLs, image request suppression, external link attributes, session switching/reload/archive, mobile multiline composer, demo approval rejection, allow followed by a visible missing-ToolAdapter failure, and question response, with status exposed through a polite live region. `/approve-tool` is a deterministic demo protocol, not production tool execution. Tool-progress/result cards, approved mutation/Diff forms and native Desktop cards remain open. |
+| Conversation rendering and approvals | `react-markdown` and `remark-gfm` render actual Engine transcript text in Web timeline. Raw HTML is not parsed; Markdown images render only inert alt text with no image node or network request; only in-page anchors, HTTP(S), and mailto become links; external links use `noopener noreferrer`. Playwright desktop and 390×844 flows exercise bold/code/lists, injected DOM mutation, blocked relative/javascript/protocol-relative/data URLs, permitted fragment/mailto links, image request suppression, external link attributes, session switching/reload/archive, mobile multiline composer, demo approval rejection, allow followed by a visible missing-ToolAdapter failure, and question response, with status exposed through a polite live region. `/approve-tool` is a deterministic demo protocol, not production tool execution. Tool-progress/result cards, approved mutation/Diff forms and native Desktop cards remain open. |
 | Rust/CI gates | Full workspace `fmt`, all-target `check`, strict `clippy` and tests passed locally. Remote run `36133400667` passed all jobs (42m33s Rust job, under 60m), including the approval-outcome browser path. Subsequent CI `36165469964` exposed `xai-grok-shell` current-thread actor test stack overflows with the Rust test harness default stack. Raising `RUST_MIN_STACK` in the CI test step to 16 MiB fixes the package's full library suite (6,804 passed), the full workspace tests locally, and GitHub CI run `36178108811` (Rust job 33m07s, under 60m). Docs-only CI run `36181915268` surfaced a pager history-daemon fixture that exceeded its fixed 10s deadline under remote load; isolated test passes locally, and after raising the finite polling budget to 60s, final GitHub run `36186580928` passed every CI job. Historical/peak RSS/disk comparison remains an Actions telemetry-owner prerequisite. Local ignore-baseline/brand/Markdown/mutation/approval gates passed in `final-verification-round3.log`. |
 | Localization | `l10n-guard.sh --before main --after WORKTREE` passed with no regressions/shrinks/fortress breaches. |
 
