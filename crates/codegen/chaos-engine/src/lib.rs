@@ -863,11 +863,15 @@ impl WorkspaceAdapter {
         if !canonical_parent.starts_with(self.root.as_path()) {
             return Err(Self::path_escape());
         }
-        if candidate.exists() {
-            let canonical = dunce::canonicalize(&candidate).map_err(|_| Self::path_escape())?;
-            if !canonical.starts_with(self.root.as_path()) {
-                return Err(Self::path_escape());
+        match std::fs::symlink_metadata(&candidate) {
+            Ok(_) => {
+                let canonical = dunce::canonicalize(&candidate).map_err(|_| Self::path_escape())?;
+                if !canonical.starts_with(self.root.as_path()) {
+                    return Err(Self::path_escape());
+                }
             }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return Err(Self::path_escape()),
         }
         let path = canonical_parent.join(candidate.file_name().ok_or_else(Self::path_escape)?);
         std::fs::write(&path, contents).map_err(|_| ServerMessage::Error {
@@ -3279,6 +3283,45 @@ mod tests {
             relative_path: "link.txt".into(),
         });
         assert!(matches!(&result[0], ServerMessage::Error { code, .. } if code == "path_escape"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn approved_write_rejects_dangling_symlink_escape() {
+        let directory = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let outside_target = outside.path().join("created-outside.txt");
+        std::os::unix::fs::symlink(&outside_target, directory.path().join("dangling.txt")).unwrap();
+        let engine = Engine::with_workspace(directory.path()).unwrap();
+        let session_id = match engine.handle(ClientMessage::CreateSession {
+            client_msg_id: "dangling-create".into(),
+            workspace_id: None,
+        })[0]
+        {
+            ServerMessage::SessionCreated { session_id, .. } => session_id,
+            _ => panic!("expected session"),
+        };
+        let proposed = engine.handle(ClientMessage::ProposeFileWrite {
+            client_msg_id: "dangling-propose".into(),
+            session_id,
+            relative_path: "dangling.txt".into(),
+            contents: "must stay inside workspace".into(),
+        });
+        let request_id = match proposed.as_slice() {
+            [
+                ServerMessage::Ack { .. },
+                ServerMessage::ToolApprovalRequested { request_id, .. },
+            ] => *request_id,
+            other => panic!("expected approval request, got {other:?}"),
+        };
+        let resolved = engine.handle(ClientMessage::Approve {
+            client_msg_id: "dangling-approve".into(),
+            request_id,
+        });
+        assert!(resolved.iter().any(
+            |event| matches!(event, ServerMessage::Error { code, .. } if code == "path_escape")
+        ));
+        assert!(!outside_target.exists());
     }
 
     #[test]
