@@ -15,7 +15,7 @@ async fn websocket_workspace_requests_are_confined_to_root() {
     std::fs::create_dir(directory.path().join(".chaos-staging")).unwrap();
     std::fs::write(
         directory.path().join(".chaos-staging").join("staged.tmp"),
-        "not a workspace file",
+        "workspace needle",
     )
     .unwrap();
     let engine = Engine::with_workspace(directory.path()).unwrap();
@@ -88,6 +88,25 @@ async fn websocket_workspace_requests_are_confined_to_root() {
     assert!(matches!(
         directory_read,
         ServerMessage::Error { code, .. } if code == "read_failed"
+    ));
+
+    socket
+        .send(Message::Text(
+            serde_json::to_string(&ClientMessage::SearchFiles {
+                client_msg_id: "search-workspace".into(),
+                query: "workspace needle".into(),
+            })
+            .unwrap()
+            .into(),
+        ))
+        .await
+        .unwrap();
+    let search: ServerMessage =
+        serde_json::from_str(&socket.next().await.unwrap().unwrap().into_text().unwrap()).unwrap();
+    assert!(matches!(
+        search,
+        ServerMessage::SearchResults { query, matches }
+            if query == "workspace needle" && matches == ["note.txt"]
     ));
 
     socket

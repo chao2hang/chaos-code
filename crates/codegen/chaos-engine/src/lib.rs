@@ -918,6 +918,7 @@ impl WorkspaceAdapter {
         for entry in walkdir::WalkDir::new(self.root.as_path())
             .follow_links(false)
             .into_iter()
+            .filter_entry(|entry| entry.file_name() != ".chaos-staging")
             .filter_map(Result::ok)
         {
             if !entry.file_type().is_file() {
