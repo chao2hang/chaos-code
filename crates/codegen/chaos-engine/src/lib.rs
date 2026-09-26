@@ -792,11 +792,13 @@ impl WorkspaceAdapter {
         })
     }
 
-    fn reject_staging_path(relative: &str) -> Result<(), ServerMessage> {
-        if Path::new(relative)
-            .components()
+    fn contains_staging_component(path: &Path) -> bool {
+        path.components()
             .any(|component| component.as_os_str() == ".chaos-staging")
-        {
+    }
+
+    fn reject_staging_path(relative: &str) -> Result<(), ServerMessage> {
+        if Self::contains_staging_component(Path::new(relative)) {
             return Err(Self::path_escape());
         }
         Ok(())
@@ -937,7 +939,7 @@ impl WorkspaceAdapter {
             .filter_entry(|entry| entry.file_name() != ".chaos-staging")
             .filter_map(Result::ok)
         {
-            if !entry.file_type().is_file() {
+            if Self::contains_staging_component(entry.path()) || !entry.file_type().is_file() {
                 continue;
             }
             let relative = entry
@@ -3339,6 +3341,17 @@ mod tests {
     #[test]
     fn workspace_file_access_rejects_attachment_staging_paths() {
         let directory = tempfile::tempdir().unwrap();
+        let nested = directory.path().join("repo");
+        std::fs::create_dir(&nested).unwrap();
+        std::fs::create_dir(directory.path().join(".chaos-staging")).unwrap();
+        std::fs::create_dir(nested.join(".chaos-staging")).unwrap();
+        std::fs::write(nested.join(".chaos-staging/nested-secret.part"), "staged").unwrap();
+        std::fs::write(
+            directory.path().join(".chaos-staging/root-secret.part"),
+            "staged",
+        )
+        .unwrap();
+        std::fs::write(nested.join("visible.txt"), "visible match").unwrap();
         let engine = Engine::with_workspace(directory.path()).unwrap();
         let session_id = match engine.handle(ClientMessage::CreateSession {
             client_msg_id: "staging-access-create".into(),
@@ -3364,6 +3377,23 @@ mod tests {
         assert!(matches!(
             list.as_slice(),
             [ServerMessage::Error { code, .. }] if code == "path_escape"
+        ));
+
+        let nested_read = engine.handle(ClientMessage::ReadFile {
+            client_msg_id: "nested-staging-read".into(),
+            relative_path: "repo/.chaos-staging/nested-secret.part".into(),
+        });
+        assert!(matches!(
+            nested_read.as_slice(),
+            [ServerMessage::Error { code, .. }] if code == "path_escape"
+        ));
+        let search = engine.handle(ClientMessage::SearchFiles {
+            client_msg_id: "staging-access-search".into(),
+            query: "staged".into(),
+        });
+        assert!(matches!(
+            search.as_slice(),
+            [ServerMessage::SearchResults { matches, .. }] if matches.is_empty()
         ));
 
         let proposed = engine.handle(ClientMessage::ProposeFileWrite {

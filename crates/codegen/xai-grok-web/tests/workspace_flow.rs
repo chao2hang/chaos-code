@@ -18,6 +18,15 @@ async fn websocket_workspace_requests_are_confined_to_root() {
         "workspace needle",
     )
     .unwrap();
+    std::fs::create_dir(directory.path().join("nested")).unwrap();
+    std::fs::create_dir(directory.path().join("nested/.chaos-staging")).unwrap();
+    std::fs::write(
+        directory
+            .path()
+            .join("nested/.chaos-staging/nested-staged.tmp"),
+        "workspace needle",
+    )
+    .unwrap();
     let engine = Engine::with_workspace(directory.path()).unwrap();
     let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
         .await
@@ -50,7 +59,7 @@ async fn websocket_workspace_requests_are_confined_to_root() {
         listed,
         ServerMessage::FilesListed { path, entries }
             if path == "."
-                && entries == ["empty-folder", "note.txt"]
+                && entries == ["empty-folder", "nested", "note.txt"]
                 && !entries.iter().any(|entry| entry == ".chaos-staging" || entry == "staged.tmp")
     ));
 
@@ -143,6 +152,24 @@ async fn websocket_workspace_requests_are_confined_to_root() {
         search,
         ServerMessage::SearchResults { query, matches }
             if query == "workspace needle" && matches == ["note.txt"]
+    ));
+
+    socket
+        .send(Message::Text(
+            serde_json::to_string(&ClientMessage::ReadFile {
+                client_msg_id: "read-nested-staged-file".into(),
+                relative_path: "nested/.chaos-staging/nested-staged.tmp".into(),
+            })
+            .unwrap()
+            .into(),
+        ))
+        .await
+        .unwrap();
+    let nested_staged_read: ServerMessage =
+        serde_json::from_str(&socket.next().await.unwrap().unwrap().into_text().unwrap()).unwrap();
+    assert!(matches!(
+        nested_staged_read,
+        ServerMessage::Error { code, .. } if code == "path_escape"
     ));
 
     socket
