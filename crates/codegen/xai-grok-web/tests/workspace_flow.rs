@@ -11,6 +11,13 @@ use xai_grok_web::router;
 async fn websocket_workspace_requests_are_confined_to_root() {
     let directory = tempdir().unwrap();
     std::fs::write(directory.path().join("note.txt"), "workspace needle").unwrap();
+    std::fs::create_dir(directory.path().join("empty-folder")).unwrap();
+    std::fs::create_dir(directory.path().join(".chaos-staging")).unwrap();
+    std::fs::write(
+        directory.path().join(".chaos-staging").join("staged.tmp"),
+        "not a workspace file",
+    )
+    .unwrap();
     let engine = Engine::with_workspace(directory.path()).unwrap();
     let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
         .await
@@ -39,9 +46,49 @@ async fn websocket_workspace_requests_are_confined_to_root() {
         .unwrap();
     let listed: ServerMessage =
         serde_json::from_str(&socket.next().await.unwrap().unwrap().into_text().unwrap()).unwrap();
-    assert!(
-        matches!(listed, ServerMessage::FilesListed { entries, .. } if entries.iter().any(|entry| entry == "note.txt"))
-    );
+    assert!(matches!(
+        listed,
+        ServerMessage::FilesListed { path, entries }
+            if path == "."
+                && entries == ["empty-folder", "note.txt"]
+                && !entries.iter().any(|entry| entry == ".chaos-staging" || entry == "staged.tmp")
+    ));
+
+    socket
+        .send(Message::Text(
+            serde_json::to_string(&ClientMessage::ListFiles {
+                client_msg_id: "list-empty-directory".into(),
+                relative_path: "empty-folder".into(),
+            })
+            .unwrap()
+            .into(),
+        ))
+        .await
+        .unwrap();
+    let empty_listed: ServerMessage =
+        serde_json::from_str(&socket.next().await.unwrap().unwrap().into_text().unwrap()).unwrap();
+    assert!(matches!(
+        empty_listed,
+        ServerMessage::FilesListed { path, entries } if path == "empty-folder" && entries.is_empty()
+    ));
+
+    socket
+        .send(Message::Text(
+            serde_json::to_string(&ClientMessage::ReadFile {
+                client_msg_id: "read-directory".into(),
+                relative_path: "empty-folder".into(),
+            })
+            .unwrap()
+            .into(),
+        ))
+        .await
+        .unwrap();
+    let directory_read: ServerMessage =
+        serde_json::from_str(&socket.next().await.unwrap().unwrap().into_text().unwrap()).unwrap();
+    assert!(matches!(
+        directory_read,
+        ServerMessage::Error { code, .. } if code == "read_failed"
+    ));
 
     socket
         .send(Message::Text(
