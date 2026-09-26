@@ -6,13 +6,16 @@ product/platform acceptance gate has passed.
 
 ## Current status counts
 
-The current line-level inventory scans 151 `[ ]`/`[~]` rows: 64 unchecked and 87
+The current line-level inventory scans 151 `[ ]`/`[~]` rows: 63 unchecked and 88
 partial (including conditional criteria, future/dated work and rows with a
 completed slice plus an open gate). The current open/partial split for
 maintenance items reflects the MT-6 review/evidence partial rows. The reproducible command is
 `python3 scripts/ci/classify-open-todos.py`; its latest output is preserved in
 private goal scratch `open-items-current.tsv`. The initial audit export remains
-in private goal scratch `todo-open-items.txt`.
+in private goal scratch `todo-open-items.txt`. The 2026-09-25 basic axe-core check
+is now wired into Playwright for empty and populated Web timeline states; this
+changes an existing partial M3 accessibility row but does not close the full
+localization/accessibility review.
 
 | Roadmap group | Unchecked | Partial |
 |---|---:|---:|
@@ -42,7 +45,7 @@ These can be developed in bounded work after their behavior is specified; this p
 
 - M1: message round grouping, virtual list/scroll anchor/cache, reasoning collapse, approval timeout/rules, client cursor/snapshot catch-up and multi-tab sequencing; tool cards need actual adapter payload/result forms. Composer Enter/IME guards and history projection are tested, including no history navigation during IME composition; browser-native IME candidate integration still depends on platform keyboard testing. Markdown rendering is a slice, not the timeline milestone.
 - M2: incremental file tree/`@` candidates and a real terminal route. The Engine has one host-configured workspace/Git root; multi-root needs an owner-approved host-owned root ID/map and a root provisioning/trust policy before implementing two-root access.
-- M3: settings/workflow views after settings schema and workflow/subagent event/state contracts are selected. A local accessibility slice adds theme-aware visible keyboard focus and semantic separate workspace switch/archive buttons. Desktop/mobile Playwright covers keyboard actions; axe-core scans the empty page and an active workspace with a real conversation, catching/fixing missing document title and language. Full localization, long-text layout, human screen-reader/platform acceptance remain open. Axe-core browser scans now cover the empty shell and a real populated workspace/message state. The current demo `/ask` and `/approve-tool` prompt hooks are not production workflow execution.
+- M3: settings/workflow views after settings schema and workflow/subagent event/state contracts are selected. A local accessibility slice adds theme-aware visible keyboard focus and semantic separate workspace switch/archive buttons. Desktop/mobile Playwright covers keyboard actions; axe-core scans the empty page and an active workspace with a real conversation, catching/fixing missing document title and language. Full localization, long-text layout, human screen-reader/platform acceptance remain open. Automated browser scans cover the empty shell and a populated workspace/message state. The current demo `/ask` and `/approve-tool` prompt hooks are not production workflow execution.
 - MT-5: source-by-source reason/date cleanup of the legacy bare ignores. The CI baseline only stops invisible inventory drift.
 - MT-6: a single `xai-grok-update` network retry-loop unwrap was replaced with a structured fallback and is covered by the existing connection-refused integration test. Remaining update progress-template unwraps and sandbox unwrap/unsafe sites are not bulk-edited; the old audit counts need fresh AST-aware classification and security review.
 
