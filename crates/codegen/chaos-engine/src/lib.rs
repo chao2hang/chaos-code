@@ -792,7 +792,18 @@ impl WorkspaceAdapter {
         })
     }
 
+    fn reject_staging_path(relative: &str) -> Result<(), ServerMessage> {
+        if Path::new(relative)
+            .components()
+            .any(|component| component.as_os_str() == ".chaos-staging")
+        {
+            return Err(Self::path_escape());
+        }
+        Ok(())
+    }
+
     fn confined(&self, relative: &str) -> Result<PathBuf, ServerMessage> {
+        Self::reject_staging_path(relative)?;
         let candidate = self.root.join(relative);
         let canonical = dunce::canonicalize(&candidate).map_err(|_| ServerMessage::Error {
             code: "path_invalid".into(),
@@ -841,6 +852,7 @@ impl WorkspaceAdapter {
     }
 
     fn write(&self, relative: &str, contents: &str) -> Result<usize, ServerMessage> {
+        Self::reject_staging_path(relative)?;
         if contents.len() > 1024 * 1024 {
             return Err(ServerMessage::Error {
                 code: "file_too_large".into(),
@@ -3322,6 +3334,64 @@ mod tests {
             |event| matches!(event, ServerMessage::Error { code, .. } if code == "path_escape")
         ));
         assert!(!outside_target.exists());
+    }
+
+    #[test]
+    fn workspace_file_access_rejects_attachment_staging_paths() {
+        let directory = tempfile::tempdir().unwrap();
+        let engine = Engine::with_workspace(directory.path()).unwrap();
+        let session_id = match engine.handle(ClientMessage::CreateSession {
+            client_msg_id: "staging-access-create".into(),
+            workspace_id: None,
+        })[0]
+        {
+            ServerMessage::SessionCreated { session_id, .. } => session_id,
+            _ => panic!("expected session"),
+        };
+
+        let read = engine.handle(ClientMessage::ReadFile {
+            client_msg_id: "staging-access-read".into(),
+            relative_path: ".chaos-staging/upload-secret.part".into(),
+        });
+        assert!(matches!(
+            read.as_slice(),
+            [ServerMessage::Error { code, .. }] if code == "path_escape"
+        ));
+        let list = engine.handle(ClientMessage::ListFiles {
+            client_msg_id: "staging-access-list".into(),
+            relative_path: ".chaos-staging".into(),
+        });
+        assert!(matches!(
+            list.as_slice(),
+            [ServerMessage::Error { code, .. }] if code == "path_escape"
+        ));
+
+        let proposed = engine.handle(ClientMessage::ProposeFileWrite {
+            client_msg_id: "staging-access-propose".into(),
+            session_id,
+            relative_path: ".chaos-staging/injected.part".into(),
+            contents: "must remain private".into(),
+        });
+        let approval_id = match proposed.as_slice() {
+            [
+                ServerMessage::Ack { .. },
+                ServerMessage::ToolApprovalRequested { request_id, .. },
+            ] => *request_id,
+            other => panic!("expected approval request, got {other:?}"),
+        };
+        let written = engine.handle(ClientMessage::Approve {
+            client_msg_id: "staging-access-approve".into(),
+            request_id: approval_id,
+        });
+        assert!(written.iter().any(
+            |event| matches!(event, ServerMessage::Error { code, .. } if code == "path_escape")
+        ));
+        assert!(
+            !directory
+                .path()
+                .join(".chaos-staging/injected.part")
+                .exists()
+        );
     }
 
     #[test]

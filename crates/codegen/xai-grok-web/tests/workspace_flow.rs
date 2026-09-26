@@ -56,6 +56,42 @@ async fn websocket_workspace_requests_are_confined_to_root() {
 
     socket
         .send(Message::Text(
+            serde_json::to_string(&ClientMessage::ReadFile {
+                client_msg_id: "read-staged-file".into(),
+                relative_path: ".chaos-staging/staged.tmp".into(),
+            })
+            .unwrap()
+            .into(),
+        ))
+        .await
+        .unwrap();
+    let staged_read: ServerMessage =
+        serde_json::from_str(&socket.next().await.unwrap().unwrap().into_text().unwrap()).unwrap();
+    assert!(matches!(
+        staged_read,
+        ServerMessage::Error { code, .. } if code == "path_escape"
+    ));
+
+    socket
+        .send(Message::Text(
+            serde_json::to_string(&ClientMessage::ListFiles {
+                client_msg_id: "list-staging-directory".into(),
+                relative_path: ".chaos-staging".into(),
+            })
+            .unwrap()
+            .into(),
+        ))
+        .await
+        .unwrap();
+    let staging_list: ServerMessage =
+        serde_json::from_str(&socket.next().await.unwrap().unwrap().into_text().unwrap()).unwrap();
+    assert!(matches!(
+        staging_list,
+        ServerMessage::Error { code, .. } if code == "path_escape"
+    ));
+
+    socket
+        .send(Message::Text(
             serde_json::to_string(&ClientMessage::ListFiles {
                 client_msg_id: "list-empty-directory".into(),
                 relative_path: "empty-folder".into(),
