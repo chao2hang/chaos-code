@@ -1,14 +1,20 @@
-# TODO open-item classification (2026-09-25)
+# TODO open-item classification (2026-09-26)
 
 This is a classification, not a claim that all remaining roadmap items are done.
 The source of truth remains `TODO.md`; an adapter seam/fixture does not mean a
-product/platform acceptance gate has passed.
+product/platform acceptance gate has passed. Counts below are grouped by the
+nearest `### Mx.n` heading (with `## M3.3` included in M3), and by `## MT-*` /
+`### 8.*` for maintenance. These categories are disjoint and sum to the
+classifier's line-level total.
 
 ## Current status counts
 
 The current line-level inventory scans 151 `[ ]`/`[~]` rows: 63 unchecked and 88
 partial (including conditional criteria, future/dated work and rows with a
-completed slice plus an open gate). This snapshot includes a bounded automated
+completed slice plus an open gate). The milestone group counts are M-1 1/5,
+M0 0/13, M1 1/15, M2 0/24, M3 8/9, M4 24/3, M5 18/9, and maintenance 11/10
+(unchecked/partial); unlike the previous table snapshot, all partial rows sum to
+88. This snapshot includes a bounded automated
 accessibility scan row and a partial M2 file-browser UI row; neither clears the
 broader M3 localization/accessibility acceptance nor any physical multi-root
 boundary. The current open/partial split for maintenance items reflects the MT-6
@@ -17,8 +23,9 @@ review/evidence partial rows. The reproducible command is
 preserved in private goal scratch `open-items-current.tsv`; the latest recount is
 `open-items-current-final.tsv`. The initial audit export remains
 in private goal scratch `todo-open-items.txt`. Playwright runs `axe-core` checks
-on empty and populated real Web states for serious/critical violations under
-WCAG 2.0/2.1 A/AA, WCAG 2.2 AA and best-practice tags. Static document title,
+on empty and populated real Web states and asserts there are no violations
+(including serious/critical) under WCAG 2.0/2.1 A/AA, WCAG 2.2 AA and
+best-practice tags. Static document title,
 language and main heading are present; automated checks do not replace product
 language review, screen-reader testing or platform acceptance.
 
