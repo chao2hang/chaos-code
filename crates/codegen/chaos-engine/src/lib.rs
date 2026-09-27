@@ -177,6 +177,9 @@ impl AttachmentStager {
         content_type: &str,
         byte_len: u64,
     ) -> Result<(), String> {
+        if filename.contains(['/', '\\']) {
+            return Err("attachment path separators are not allowed".into());
+        }
         let allowed = [
             (".txt", "text/plain"),
             (".md", "text/markdown"),
@@ -1895,6 +1898,13 @@ impl Engine {
                 content_type,
                 ..
             } => {
+                let valid_filename = Path::new(&filename)
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    == Some(filename.as_str())
+                    && !filename.is_empty()
+                    && filename != "."
+                    && filename != "..";
                 let extension_allowed = [
                     "png", "jpg", "jpeg", "gif", "webp", "pdf", "txt", "md", "json",
                 ]
@@ -1915,10 +1925,9 @@ impl Engine {
                     "application/json",
                 ]
                 .contains(&content_type.as_str());
-                if filename.contains('/')
+                if !valid_filename
+                    || filename.contains('/')
                     || filename.contains('\\')
-                    || filename == "."
-                    || filename == ".."
                     || !extension_allowed
                     || !mime_allowed
                     || byte_len == 0
@@ -3744,6 +3753,54 @@ mod tests {
         let adapter = ProcessTerminalAdapter::new(directory.path(), 1024).unwrap();
         let result = adapter.run("exit 7").unwrap();
         assert_eq!(result.exit_code, 7);
+    }
+
+    #[test]
+    fn attachment_validation_rejects_cross_platform_path_separators() {
+        let engine = Engine::new();
+        for filename in ["safe/../secret.txt", r"safe\..\secret.txt"] {
+            let rejected = engine.handle(ClientMessage::ValidateAttachment {
+                client_msg_id: format!("reject-{filename}"),
+                filename: filename.into(),
+                content_type: "text/plain".into(),
+                byte_len: 4,
+            });
+            assert!(
+                matches!(
+                    rejected.as_slice(),
+                    [ServerMessage::Error { code, .. }] if code == "attachment_rejected"
+                ),
+                "filename {filename:?} was not rejected: {rejected:?}"
+            );
+        }
+
+        let directory = tempfile::tempdir().unwrap();
+        let stager = AttachmentStager::new(directory.path(), 1024).unwrap();
+        for filename in ["safe/../secret.txt", r"safe\..\secret.txt"] {
+            assert!(
+                stager
+                    .stage_chunks(filename, "text/plain", [Ok(b"data".to_vec())],)
+                    .is_err(),
+                "stager must reject filename separators: {filename:?}"
+            );
+        }
+        assert!(
+            std::fs::read_dir(directory.path().join(".chaos-staging"))
+                .unwrap()
+                .next()
+                .is_none()
+        );
+
+        let accepted = engine.handle(ClientMessage::ValidateAttachment {
+            client_msg_id: "accept-basename".into(),
+            filename: "secret.txt".into(),
+            content_type: "text/plain".into(),
+            byte_len: 4,
+        });
+        assert!(matches!(
+            accepted.as_slice(),
+            [ServerMessage::AttachmentValidated { filename, .. }] if filename == "secret.txt"
+        ));
     }
 
     #[test]
