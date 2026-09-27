@@ -3660,6 +3660,18 @@ mod tests {
                 .stage_chunks("../escape.txt", "text/plain", vec![Ok(b"x".to_vec())])
                 .is_err()
         );
+        assert!(
+            stager
+                .stage_chunks(r"nested\escape.txt", "text/plain", vec![Ok(b"x".to_vec())])
+                .is_err()
+        );
+        assert_eq!(
+            std::fs::read_dir(directory.path().join(".chaos-staging"))
+                .unwrap()
+                .count(),
+            1,
+            "rejected separator paths must not leave partial files"
+        );
     }
 
     #[test]
