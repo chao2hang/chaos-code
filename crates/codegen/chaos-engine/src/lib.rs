@@ -844,13 +844,37 @@ impl WorkspaceAdapter {
             code: "read_failed".into(),
             message: "无法读取文件".into(),
         })?;
+        if !metadata.is_file() {
+            return Err(ServerMessage::Error {
+                code: "read_failed".into(),
+                message: "目标不是普通文件".into(),
+            });
+        }
         if metadata.len() > 1024 * 1024 {
             return Err(ServerMessage::Error {
                 code: "file_too_large".into(),
                 message: "文件超过 1 MiB 限制".into(),
             });
         }
-        std::fs::read_to_string(path).map_err(|_| ServerMessage::Error {
+        let file = std::fs::File::open(path).map_err(|_| ServerMessage::Error {
+            code: "read_failed".into(),
+            message: "文件不是可读文本".into(),
+        })?;
+        let mut contents = Vec::new();
+        let mut limited = std::io::Read::take(file, 1024 * 1024 + 1);
+        std::io::Read::read_to_end(&mut limited, &mut contents).map_err(|_| {
+            ServerMessage::Error {
+                code: "read_failed".into(),
+                message: "文件不是可读文本".into(),
+            }
+        })?;
+        if contents.len() > 1024 * 1024 {
+            return Err(ServerMessage::Error {
+                code: "file_too_large".into(),
+                message: "文件超过 1 MiB 限制".into(),
+            });
+        }
+        String::from_utf8(contents).map_err(|_| ServerMessage::Error {
             code: "read_failed".into(),
             message: "文件不是可读文本".into(),
         })
@@ -3873,13 +3897,19 @@ mod tests {
     fn workspace_root_confinement_rejects_escape_and_reads_files() {
         let directory = tempfile::tempdir().unwrap();
         std::fs::write(directory.path().join("hello.txt"), "needle").unwrap();
+        std::fs::create_dir(directory.path().join("empty-folder")).unwrap();
+        std::fs::write(
+            directory.path().join("large.txt"),
+            vec![b'x'; 1024 * 1024 + 1],
+        )
+        .unwrap();
         let engine = Engine::with_workspace(directory.path()).unwrap();
         let listed = engine.handle(ClientMessage::ListFiles {
             client_msg_id: "list".into(),
             relative_path: ".".into(),
         });
         assert!(
-            matches!(&listed[0], ServerMessage::FilesListed { entries, .. } if entries == &["hello.txt"])
+            matches!(&listed[0], ServerMessage::FilesListed { entries, .. } if entries == &["empty-folder", "hello.txt", "large.txt"])
         );
         let read = engine.handle(ClientMessage::ReadFile {
             client_msg_id: "read".into(),
@@ -3888,6 +3918,22 @@ mod tests {
         assert!(
             matches!(&read[0], ServerMessage::FileContents { contents, .. } if contents == "needle")
         );
+        let directory_read = engine.handle(ClientMessage::ReadFile {
+            client_msg_id: "read-directory".into(),
+            relative_path: "empty-folder".into(),
+        });
+        assert!(matches!(
+            directory_read.as_slice(),
+            [ServerMessage::Error { code, .. }] if code == "read_failed"
+        ));
+        let oversized = engine.handle(ClientMessage::ReadFile {
+            client_msg_id: "read-oversized".into(),
+            relative_path: "large.txt".into(),
+        });
+        assert!(matches!(
+            oversized.as_slice(),
+            [ServerMessage::Error { code, .. }] if code == "file_too_large"
+        ));
         let escaped = engine.handle(ClientMessage::ReadFile {
             client_msg_id: "escape".into(),
             relative_path: "../outside".into(),
