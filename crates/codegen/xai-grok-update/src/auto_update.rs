@@ -1024,6 +1024,13 @@ async fn publish_downloaded_artifact(tmp: &std::path::Path, dest: &std::path::Pa
 /// Files smaller than this are not worth fragmenting across parallel chunks.
 const PARALLEL_DOWNLOAD_MIN_BYTES: u64 = 16 * 1024 * 1024;
 
+fn progress_style_or_default(template: &str, fallback: ProgressStyle) -> ProgressStyle {
+    fallback.clone().template(template).unwrap_or_else(|error| {
+        tracing::warn!("Invalid updater progress template; using default style: {error}");
+        fallback
+    })
+}
+
 /// Pick chunk count from file size: 1 chunk per 16 MiB, capped at 8.
 fn parallel_chunk_count(size: u64) -> u64 {
     let size_mb = size / (1024 * 1024);
@@ -1062,12 +1069,10 @@ async fn try_parallel_download(
 
     let pb = if with_progress {
         let pb = ProgressBar::new(size);
-        pb.set_style(
-            ProgressStyle::default_bar()
-                .template("  {bar:30.cyan/dim} {bytes}/{total_bytes} ({eta})")
-                .unwrap()
-                .progress_chars("━╸─"),
-        );
+        pb.set_style(progress_style_or_default(
+            "  {bar:30.cyan/dim} {bytes}/{total_bytes} ({eta})",
+            ProgressStyle::default_bar().progress_chars("━╸─"),
+        ));
         Some(pb)
     } else {
         None
@@ -1182,20 +1187,17 @@ pub async fn download_with_progress(url: &str, dest: &std::path::Path) -> Result
 
     let pb = if let Some(size) = total_size {
         let pb = ProgressBar::new(size);
-        pb.set_style(
-            ProgressStyle::default_bar()
-                .template("  {bar:30.cyan/dim} {bytes}/{total_bytes} ({eta})")
-                .unwrap()
-                .progress_chars("━╸─"),
-        );
+        pb.set_style(progress_style_or_default(
+            "  {bar:30.cyan/dim} {bytes}/{total_bytes} ({eta})",
+            ProgressStyle::default_bar().progress_chars("━╸─"),
+        ));
         pb
     } else {
         let pb = ProgressBar::new_spinner();
-        pb.set_style(
-            ProgressStyle::default_spinner()
-                .template("  {spinner:.cyan} {bytes} downloaded")
-                .unwrap(),
-        );
+        pb.set_style(progress_style_or_default(
+            "  {spinner:.cyan} {bytes} downloaded",
+            ProgressStyle::default_spinner(),
+        ));
         pb.enable_steady_tick(Duration::from_millis(100));
         pb
     };
@@ -2642,11 +2644,10 @@ fn install_npm(target: Option<&str>, channel: &str, npm_registry: Option<&str>) 
     };
 
     let pb = ProgressBar::new_spinner();
-    pb.set_style(
-        ProgressStyle::default_spinner()
-            .template("  {spinner:.cyan} Installing via npm...")
-            .unwrap(),
-    );
+    pb.set_style(progress_style_or_default(
+        "  {spinner:.cyan} Installing via npm...",
+        ProgressStyle::default_spinner(),
+    ));
     pb.enable_steady_tick(Duration::from_millis(100));
 
     let mut cmd = Command::new("npm");
@@ -2756,11 +2757,10 @@ pub async fn run_update(
     }
 
     let pb = ProgressBar::new_spinner();
-    pb.set_style(
-        ProgressStyle::default_spinner()
-            .template("  {spinner:.cyan} 正在检查更新...")
-            .unwrap(),
-    );
+    pb.set_style(progress_style_or_default(
+        "  {spinner:.cyan} 正在检查更新...",
+        ProgressStyle::default_spinner(),
+    ));
     pb.enable_steady_tick(Duration::from_millis(100));
     let plan = fetch_update_plan(installer, update_config, &policy).await?;
     pb.finish_and_clear();

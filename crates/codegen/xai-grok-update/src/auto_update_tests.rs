@@ -1,6 +1,14 @@
 use super::*;
 
 #[test]
+fn invalid_updater_progress_template_falls_back_without_panicking() {
+    let fallback = ProgressStyle::default_spinner();
+    let expected_tick = fallback.get_tick_str(1).to_string();
+    let result = progress_style_or_default("{unknown_progress_key}", fallback);
+    assert_eq!(result.get_tick_str(1), expected_tick);
+}
+
+#[test]
 fn test_tmp_download_path_is_unique_per_version_and_per_attempt() {
     // The old `with_extension("tmp")` collapsed every 0.1.x versioned name onto a single `grok-0.1.tmp`
     // The helper must keep distinct versions distinct AND make repeated attempts (same process, e.g. concurrent tokio tasks) unique.
