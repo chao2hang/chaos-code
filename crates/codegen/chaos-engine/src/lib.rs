@@ -193,6 +193,8 @@ impl AttachmentStager {
             (".md", "text/markdown"),
             (".json", "application/json"),
             (".png", "image/png"),
+            (".gif", "image/gif"),
+            (".webp", "image/webp"),
             (".jpg", "image/jpeg"),
             (".jpeg", "image/jpeg"),
             (".pdf", "application/pdf"),
@@ -3828,6 +3830,26 @@ mod tests {
         assert!(matches!(
             accepted.as_slice(),
             [ServerMessage::AttachmentValidated { filename, .. }] if filename == "secret.txt"
+        ));
+        let accepted_image = engine.handle(ClientMessage::ValidateAttachment {
+            client_msg_id: "accept-image-gif".into(),
+            filename: "image.gif".into(),
+            content_type: "image/gif".into(),
+            byte_len: 4,
+        });
+        assert!(matches!(
+            accepted_image.as_slice(),
+            [ServerMessage::AttachmentValidated { filename, .. }] if filename == "image.gif"
+        ));
+        let accepted_webp = engine.handle(ClientMessage::ValidateAttachment {
+            client_msg_id: "accept-image-webp".into(),
+            filename: "image.webp".into(),
+            content_type: "image/webp".into(),
+            byte_len: 4,
+        });
+        assert!(matches!(
+            accepted_webp.as_slice(),
+            [ServerMessage::AttachmentValidated { filename, .. }] if filename == "image.webp"
         ));
     }
 
