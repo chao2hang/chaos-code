@@ -179,6 +179,23 @@ pub struct AttachmentStager {
     max_bytes: u64,
 }
 
+fn ensure_private_staging_dir(root: &Path) -> std::io::Result<()> {
+    let staging = root.join(".chaos-staging");
+    match std::fs::symlink_metadata(&staging) {
+        Ok(metadata) if metadata.file_type().is_dir() => {}
+        Ok(_) => return Err(std::io::Error::other("staging path is not a directory")),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            std::fs::create_dir(&staging)?;
+        }
+        Err(error) => return Err(error),
+    }
+    let canonical = dunce::canonicalize(&staging)?;
+    if canonical != staging || !canonical.starts_with(root) {
+        return Err(std::io::Error::other("staging path escapes workspace root"));
+    }
+    Ok(())
+}
+
 impl AttachmentStager {
     pub fn validate_name_type_size(
         filename: &str,
@@ -215,7 +232,7 @@ impl AttachmentStager {
 
     pub fn new(root: impl AsRef<Path>, max_bytes: u64) -> std::io::Result<Self> {
         let root = dunce::canonicalize(root)?;
-        std::fs::create_dir_all(root.join(".chaos-staging"))?;
+        ensure_private_staging_dir(&root)?;
         Ok(Self {
             root: Arc::new(root),
             max_bytes,
@@ -799,7 +816,7 @@ impl WorkspaceAdapter {
         if !root.is_dir() {
             return Err(std::io::Error::other("workspace root is not a directory"));
         }
-        std::fs::create_dir_all(root.join(".chaos-staging"))?;
+        ensure_private_staging_dir(&root)?;
         Ok(Self {
             root: Arc::new(root),
         })
@@ -3381,6 +3398,22 @@ mod tests {
             |event| matches!(event, ServerMessage::Error { code, .. } if code == "path_escape")
         ));
         assert!(!outside_target.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn workspace_and_attachment_stagers_reject_staging_symlink_escape() {
+        let directory = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::os::unix::fs::symlink(outside.path(), directory.path().join(".chaos-staging"))
+            .unwrap();
+
+        assert!(Engine::with_workspace(directory.path()).is_err());
+        assert!(AttachmentStager::new(directory.path(), 1024).is_err());
+
+        let missing_outside_target = outside.path().join("should-not-exist.part");
+        assert!(!missing_outside_target.exists());
+        assert!(std::fs::read_dir(outside.path()).unwrap().next().is_none());
     }
 
     #[test]
