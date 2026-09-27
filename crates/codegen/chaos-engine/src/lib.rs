@@ -1948,40 +1948,8 @@ impl Engine {
                 content_type,
                 ..
             } => {
-                let valid_filename = Path::new(&filename)
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    == Some(filename.as_str())
-                    && !filename.is_empty()
-                    && filename != "."
-                    && filename != "..";
-                let extension_allowed = [
-                    "png", "jpg", "jpeg", "gif", "webp", "pdf", "txt", "md", "json",
-                ]
-                .iter()
-                .any(|extension| {
-                    filename
-                        .to_ascii_lowercase()
-                        .ends_with(&format!(".{extension}"))
-                });
-                let mime_allowed = [
-                    "image/png",
-                    "image/jpeg",
-                    "image/gif",
-                    "image/webp",
-                    "application/pdf",
-                    "text/plain",
-                    "text/markdown",
-                    "application/json",
-                ]
-                .contains(&content_type.as_str());
-                if !valid_filename
-                    || filename.contains('/')
-                    || filename.contains('\\')
-                    || !extension_allowed
-                    || !mime_allowed
-                    || byte_len == 0
-                    || byte_len > 10 * 1024 * 1024
+                if AttachmentStager::validate_name_type_size(&filename, &content_type, byte_len)
+                    .is_err()
                 {
                     vec![Self::error(
                         "attachment_rejected",
@@ -3849,6 +3817,20 @@ mod tests {
                     [ServerMessage::Error { code, .. }] if code == "attachment_rejected"
                 ),
                 "filename {filename:?} was not rejected: {rejected:?}"
+            );
+            let rejected_begin = engine.handle(ClientMessage::BeginAttachment {
+                client_msg_id: format!("reject-begin-{filename}"),
+                session_id: Uuid::new_v4(),
+                filename: filename.into(),
+                content_type: "text/plain".into(),
+                byte_len: 4,
+            });
+            assert!(
+                matches!(
+                    rejected_begin.as_slice(),
+                    [ServerMessage::Error { code, .. }] if code == "attachment_rejected"
+                ),
+                "BeginAttachment accepted filename {filename:?}: {rejected_begin:?}"
             );
         }
 

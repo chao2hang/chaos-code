@@ -40,6 +40,46 @@ fn attachment_protocol_accepts_chunks_reports_progress_and_cancels() {
 }
 
 #[test]
+fn attachment_protocol_keeps_upload_available_after_invalid_base64_chunk() {
+    let engine = Engine::new();
+    let session_id = Uuid::new_v4();
+    let begin = engine.handle(ClientMessage::BeginAttachment {
+        client_msg_id: "begin-invalid-chunk".into(),
+        session_id,
+        filename: "note.txt".into(),
+        content_type: "text/plain".into(),
+        byte_len: 3,
+    });
+    let upload_id = match &begin[1] {
+        ServerMessage::AttachmentStarted { upload_id, .. } => *upload_id,
+        other => panic!("{other:?}"),
+    };
+
+    let invalid = engine.handle(ClientMessage::AttachmentChunk {
+        client_msg_id: "invalid-chunk".into(),
+        upload_id,
+        chunk: "%%%".into(),
+    });
+    assert!(matches!(
+        &invalid[0],
+        ServerMessage::Error { code, .. } if code == "attachment_chunk_invalid"
+    ));
+
+    let valid = engine.handle(ClientMessage::AttachmentChunk {
+        client_msg_id: "valid-after-invalid".into(),
+        upload_id,
+        chunk: base64::engine::general_purpose::STANDARD.encode(b"abc"),
+    });
+    assert!(matches!(
+        valid.as_slice(),
+        [
+            ServerMessage::Ack { client_msg_id },
+            ServerMessage::AttachmentProgress { received: 3, .. }
+        ] if client_msg_id == "valid-after-invalid"
+    ));
+}
+
+#[test]
 fn attachment_protocol_rejects_over_quota_and_unknown_upload() {
     let engine = Engine::new();
     let session_id = Uuid::new_v4();
