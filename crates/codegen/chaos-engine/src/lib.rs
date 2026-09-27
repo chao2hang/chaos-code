@@ -2027,6 +2027,9 @@ impl Engine {
                 upload_id,
                 relative_path,
             } => {
+                if let Err(error) = WorkspaceAdapter::reject_staging_path(&relative_path) {
+                    return vec![error];
+                }
                 let upload_session_id = self
                     .attachments
                     .lock()
@@ -3421,6 +3424,68 @@ mod tests {
                 .path()
                 .join(".chaos-staging/injected.part")
                 .exists()
+        );
+
+        let session_id = match engine.handle(ClientMessage::CreateSession {
+            client_msg_id: "staging-finalize-create".into(),
+            workspace_id: None,
+        })[0]
+        {
+            ServerMessage::SessionCreated { session_id, .. } => session_id,
+            _ => panic!("expected session"),
+        };
+        let upload_id = match engine.handle(ClientMessage::BeginAttachment {
+            client_msg_id: "staging-finalize-begin".into(),
+            session_id,
+            filename: "private.txt".into(),
+            content_type: "text/plain".into(),
+            byte_len: 5,
+        })[1]
+        {
+            ServerMessage::AttachmentStarted { upload_id, .. } => upload_id,
+            _ => panic!("expected upload"),
+        };
+        let chunked = engine.handle(ClientMessage::AttachmentChunk {
+            client_msg_id: "staging-finalize-chunk".into(),
+            upload_id,
+            chunk: Base64Engine::encode(&base64::engine::general_purpose::STANDARD, b"hello"),
+        });
+        assert!(
+            chunked.iter().any(|event| matches!(
+                event,
+                ServerMessage::AttachmentProgress { received: 5, .. }
+            ))
+        );
+        let finalize_rejected = engine.handle(ClientMessage::FinalizeAttachment {
+            client_msg_id: "staging-finalize-rejected".into(),
+            upload_id,
+            relative_path: "repo/.chaos-staging/exfiltrated.txt".into(),
+        });
+        assert!(matches!(
+            finalize_rejected.as_slice(),
+            [ServerMessage::Error { code, .. }] if code == "path_escape"
+        ));
+        assert!(!nested.join(".chaos-staging/exfiltrated.txt").exists());
+        let finalize_after_reject = engine.handle(ClientMessage::FinalizeAttachment {
+            client_msg_id: "staging-finalize-retry".into(),
+            upload_id,
+            relative_path: "repo/restored.txt".into(),
+        });
+        let approval_id = match finalize_after_reject.as_slice() {
+            [
+                ServerMessage::Ack { .. },
+                ServerMessage::ToolApprovalRequested { request_id, .. },
+            ] => *request_id,
+            other => panic!("expected retry approval, got {other:?}"),
+        };
+        let finalized = engine.handle(ClientMessage::Approve {
+            client_msg_id: "staging-finalize-approve".into(),
+            request_id: approval_id,
+        });
+        assert!(finalized.iter().any(|event| matches!(event, ServerMessage::AttachmentCompleted { path, .. } if path == "repo/restored.txt")));
+        assert_eq!(
+            std::fs::read(nested.join("restored.txt")).unwrap(),
+            b"hello"
         );
     }
 
