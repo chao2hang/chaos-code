@@ -44,6 +44,7 @@ language review, screen-reader testing or platform acceptance.
 
 | Item | Implementation/evidence |
 |---|---|
+| HTTP session creation retry safety | `POST /api/sessions` accepts a bounded `client_msg_id` request header and passes it to the real Engine deduplication handler; duplicate requests return `Ack` without creating a second session. Empty/overlong IDs fall back to a generated ID. Axum handler regressions cover these paths; the Web crate's seven library tests, real workspace WebSocket flow, strict Clippy and formatting pass (private goal scratch `web-session-create-idempotency-*.log`). |
 | Contribution safety | `CONTRIBUTING.md` describes four-job Cargo concurrency and conservative WSL `target/` cleanup. |
 | Ignored-test guard | The existing Rust-aware parser has 8 fixtures; the new baseline checker adds add/remove negative fixtures. Live inventory: 434 ignored attrs, 218 bare attrs, zero delta against explicit package/path/function baseline. CI runs parser tests plus live bidirectional check. The baseline does not approve the 218 missing reasons/dates; `docs/ci-test-debt.md` and the Q4 summary now point to the repaired scanner and preserve the owner review as open. |
 | User-visible brand guard | `check-brand-protocol.py` checks bounded shipped CLI/help/reference-doc text and direct rendered UI source strings, not all source literals; it leaves crate/wire/env/home compatibility identifiers, history, comments and fixtures alone. Mutation tests prove CLI, docs and UI name regressions fail, while legacy compatibility prose passes. |

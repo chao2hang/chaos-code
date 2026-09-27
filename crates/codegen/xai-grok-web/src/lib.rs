@@ -14,6 +14,7 @@ use tower_http::{cors::CorsLayer, limit::RequestBodyLimitLayer};
 
 const MAX_REQUEST_BYTES: usize = 64 * 1024;
 const DEV_ORIGINS: [&str; 2] = ["http://127.0.0.1:5173", "http://localhost:5173"];
+const REQUEST_ID: &str = "client_msg_id";
 
 #[derive(Clone)]
 pub struct WebState {
@@ -95,6 +96,15 @@ fn request_allowed(state: &WebState, headers: &HeaderMap) -> bool {
     host_allowed(headers) && origin_allowed(headers) && authorized(state, headers)
 }
 
+fn client_request_id(headers: &HeaderMap) -> String {
+    headers
+        .get(REQUEST_ID)
+        .and_then(|value| value.to_str().ok())
+        .filter(|value| !value.is_empty() && value.len() <= 128)
+        .map(str::to_owned)
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
+}
+
 fn secure_json<T: serde::Serialize>(value: T) -> Response {
     (
         [
@@ -130,7 +140,7 @@ async fn create_session(State(state): State<Arc<WebState>>, headers: HeaderMap) 
         return StatusCode::UNAUTHORIZED.into_response();
     }
     let event = state.engine.handle(ClientMessage::CreateSession {
-        client_msg_id: uuid::Uuid::new_v4().to_string(),
+        client_msg_id: client_request_id(&headers),
         workspace_id: None,
     });
     secure_json(event)
@@ -306,6 +316,78 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn session_creation_is_idempotent_for_a_valid_request_id() {
+        let engine = Engine::new();
+        let app = router(engine.clone(), "");
+        let make_request = || {
+            Request::post("/api/sessions")
+                .header(REQUEST_ID, "retry-1")
+                .body(Body::empty())
+                .unwrap()
+        };
+
+        let first = app.clone().oneshot(make_request()).await.unwrap();
+        let second = app.oneshot(make_request()).await.unwrap();
+        assert_eq!(first.status(), StatusCode::OK);
+        assert_eq!(second.status(), StatusCode::OK);
+        let first: serde_json::Value = serde_json::from_slice(
+            &axum::body::to_bytes(first.into_body(), MAX_REQUEST_BYTES)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        let second: serde_json::Value = serde_json::from_slice(
+            &axum::body::to_bytes(second.into_body(), MAX_REQUEST_BYTES)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert!(matches!(
+            first.as_array().and_then(|events| events.first()),
+            Some(serde_json::Value::Object(event))
+                if event.get("type").and_then(serde_json::Value::as_str) == Some("session_created")
+        ));
+        assert!(matches!(
+            second.as_array().and_then(|events| events.first()),
+            Some(serde_json::Value::Object(event))
+                if event.get("type").and_then(serde_json::Value::as_str) == Some("ack")
+        ));
+        let listed = engine.handle(ClientMessage::ListWorkspaces {
+            client_msg_id: "list-workspaces".into(),
+        });
+        assert!(matches!(
+            &listed[0],
+            ServerMessage::Workspaces { workspaces, .. } if workspaces.len() == 1
+        ));
+    }
+
+    #[tokio::test]
+    async fn invalid_session_request_id_falls_back_to_a_fresh_id() {
+        let engine = Engine::new();
+        let app = router(engine.clone(), "");
+        for request_id in ["", &"x".repeat(129)] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::post("/api/sessions")
+                        .header(REQUEST_ID, request_id)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+        }
+        let listed = engine.handle(ClientMessage::ListWorkspaces {
+            client_msg_id: "list-workspaces".into(),
+        });
+        assert!(matches!(
+            &listed[0],
+            ServerMessage::Workspaces { workspaces, .. } if workspaces.len() == 1
+        ));
     }
 
     #[tokio::test]
