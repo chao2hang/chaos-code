@@ -981,7 +981,10 @@ impl WorkspaceAdapter {
                 .unwrap_or(entry.path())
                 .display()
                 .to_string();
-            if let Ok(contents) = std::fs::read_to_string(entry.path())
+            if let Ok(file) = std::fs::File::open(entry.path())
+                && let Ok(contents) = read_workspace_bytes(file)
+                && contents.len() <= WORKSPACE_READ_LIMIT
+                && let Ok(contents) = String::from_utf8(contents)
                 && contents.contains(query)
             {
                 matches.push(relative);
@@ -3967,11 +3970,9 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         std::fs::write(directory.path().join("hello.txt"), "needle").unwrap();
         std::fs::create_dir(directory.path().join("empty-folder")).unwrap();
-        std::fs::write(
-            directory.path().join("large.txt"),
-            vec![b'x'; 1024 * 1024 + 1],
-        )
-        .unwrap();
+        let mut large_contents = vec![b'x'; WORKSPACE_READ_LIMIT + 1];
+        large_contents.extend_from_slice(b"needle");
+        std::fs::write(directory.path().join("large.txt"), large_contents).unwrap();
         let engine = Engine::with_workspace(directory.path()).unwrap();
         let listed = engine.handle(ClientMessage::ListFiles {
             client_msg_id: "list".into(),
@@ -4066,9 +4067,11 @@ mod tests {
             client_msg_id: "search".into(),
             query: "needle".into(),
         });
-        assert!(
-            matches!(&search[0], ServerMessage::SearchResults { matches, .. } if matches.iter().any(|path| path == "hello.txt"))
-        );
+        assert!(matches!(
+            &search[0],
+            ServerMessage::SearchResults { matches, .. }
+                if matches.as_slice() == ["hello.txt"]
+        ));
     }
 
     #[test]
