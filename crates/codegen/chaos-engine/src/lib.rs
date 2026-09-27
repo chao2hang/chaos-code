@@ -17,6 +17,14 @@ pub const PROTOCOL_VERSION: u16 = 1;
 pub const STATE_SCHEMA_VERSION: u16 = 1;
 const SQLITE_SCHEMA_VERSION: u16 = 1;
 const DELTA_SIZE: usize = 8;
+const WORKSPACE_READ_LIMIT: usize = 1024 * 1024;
+
+fn read_workspace_bytes(reader: impl std::io::Read) -> std::io::Result<Vec<u8>> {
+    let mut contents = Vec::new();
+    let mut limited = std::io::Read::take(reader, WORKSPACE_READ_LIMIT as u64 + 1);
+    std::io::Read::read_to_end(&mut limited, &mut contents)?;
+    Ok(contents)
+}
 
 /// Boundary for connecting the GUI session state to a real Agent runtime.
 /// Implementations return text chunks and never receive GUI credentials.
@@ -850,7 +858,7 @@ impl WorkspaceAdapter {
                 message: "目标不是普通文件".into(),
             });
         }
-        if metadata.len() > 1024 * 1024 {
+        if metadata.len() > WORKSPACE_READ_LIMIT as u64 {
             return Err(ServerMessage::Error {
                 code: "file_too_large".into(),
                 message: "文件超过 1 MiB 限制".into(),
@@ -860,15 +868,11 @@ impl WorkspaceAdapter {
             code: "read_failed".into(),
             message: "文件不是可读文本".into(),
         })?;
-        let mut contents = Vec::new();
-        let mut limited = std::io::Read::take(file, 1024 * 1024 + 1);
-        std::io::Read::read_to_end(&mut limited, &mut contents).map_err(|_| {
-            ServerMessage::Error {
-                code: "read_failed".into(),
-                message: "文件不是可读文本".into(),
-            }
+        let contents = read_workspace_bytes(file).map_err(|_| ServerMessage::Error {
+            code: "read_failed".into(),
+            message: "文件不是可读文本".into(),
         })?;
-        if contents.len() > 1024 * 1024 {
+        if contents.len() > WORKSPACE_READ_LIMIT {
             return Err(ServerMessage::Error {
                 code: "file_too_large".into(),
                 message: "文件超过 1 MiB 限制".into(),
@@ -3890,6 +3894,37 @@ mod tests {
         });
         assert!(
             matches!(&restored[0], ServerMessage::Settings { base_url, model, .. } if base_url.as_deref() == Some("https://persisted.example.test/v1") && model.as_deref() == Some("persisted-model"))
+        );
+    }
+
+    #[test]
+    fn workspace_read_stops_after_the_limit_plus_one_byte() {
+        struct CountingReader {
+            remaining: usize,
+            bytes_read: Arc<std::sync::atomic::AtomicUsize>,
+        }
+
+        impl std::io::Read for CountingReader {
+            fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+                let size = buffer.len().min(self.remaining);
+                buffer[..size].fill(b'x');
+                self.remaining -= size;
+                self.bytes_read
+                    .fetch_add(size, std::sync::atomic::Ordering::Relaxed);
+                Ok(size)
+            }
+        }
+
+        let bytes_read = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let reader = CountingReader {
+            remaining: WORKSPACE_READ_LIMIT * 4,
+            bytes_read: bytes_read.clone(),
+        };
+        let limited = read_workspace_bytes(reader).unwrap();
+        assert_eq!(limited.len(), WORKSPACE_READ_LIMIT + 1);
+        assert_eq!(
+            bytes_read.load(std::sync::atomic::Ordering::Relaxed),
+            WORKSPACE_READ_LIMIT + 1
         );
     }
 
