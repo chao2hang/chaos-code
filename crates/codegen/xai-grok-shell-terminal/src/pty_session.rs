@@ -898,6 +898,30 @@ mod tests {
 
     // Linux can retain a killed grandchild as a zombie until its adopter reaps it.
     // `kill(pid, 0)` still succeeds for zombies, although they cannot run or cause side effects.
+    #[cfg(target_os = "linux")]
+    fn linux_proc_stat_state(stat: &str) -> Option<char> {
+        stat.rsplit_once(')')?
+            .1
+            .split_whitespace()
+            .next()?
+            .chars()
+            .next()
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_proc_stat_state_handles_parenthesized_command_name() {
+        assert_eq!(
+            linux_proc_stat_state("42 (shell (helper)) Z 1 2 3"),
+            Some('Z')
+        );
+        assert_eq!(
+            linux_proc_stat_state("42 (shell (helper)) S 1 2 3"),
+            Some('S')
+        );
+        assert_eq!(linux_proc_stat_state("42 (unterminated Z 1"), None);
+    }
+
     fn process_is_alive(pid: libc::pid_t) -> bool {
         if unsafe { libc::kill(pid, 0) } == -1 {
             return std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH);
@@ -905,11 +929,9 @@ mod tests {
 
         #[cfg(target_os = "linux")]
         if let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat"))
-            && let Some(state) = stat
-                .rsplit_once(')')
-                .and_then(|(_, fields)| fields.split_whitespace().next())
+            && let Some(state) = linux_proc_stat_state(&stat)
         {
-            return state != "Z" && state != "X";
+            return state != 'Z' && state != 'X';
         }
 
         true
