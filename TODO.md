@@ -354,7 +354,7 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 
 当前可保证：固定 cwd 的 `ProcessTerminalAdapter` 仅经 approval-gated path 执行并限制输出/报告 exit status；PTY capability 类型描述 resize/reconnect/cancel 要求。尚无 Web/Tauri stdin+resize+process-lifecycle bridge，故当前不提供互动 Terminal GUI，不称 `ptyctl` 类型等于实际 transport。
 
-- [~] 新增固定 cwd 的 `ProcessTerminalAdapter` 边界：必须先审批、输出上限、退出码、非零错误和 terminal result 已有 engine tests；Xterm.js/ptyctl 交互 stdin/resize/重连/进程取消仍待真实 PTY adapter。（2026-09-24；`terminal-adapter-test.log`）
+- [~] 新增固定 cwd 的 `ProcessTerminalAdapter` 边界：必须先审批、输出上限、退出码、非零错误和 terminal result 已有 engine tests；现有真实 PTY close/scope teardown 测试验证杀死后台 job；Linux 检查按 `/proc` 状态排除已被终止但等待 init 回收的 zombie，避免误判为仍在运行。Xterm.js/ptyctl 交互 stdin/resize/重连/进程取消仍待真实 PTY adapter。（2026-09-27；`terminal-adapter-test.log`、`xai-grok-shell-terminal/src/pty_session.rs`）
 - [~] Web terminal 当前不提供任意命令入口；未来 terminal route 必须复用审批和 Safe Web Mode，不能绕过后端策略。（2026-09-24）
 
 ### M2.4 Git 与变更审查

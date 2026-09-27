@@ -896,6 +896,36 @@ mod tests {
             .collect()
     }
 
+    // Linux can retain a killed grandchild as a zombie until its adopter reaps it.
+    // `kill(pid, 0)` still succeeds for zombies, although they cannot run or cause side effects.
+    fn process_is_alive(pid: libc::pid_t) -> bool {
+        if unsafe { libc::kill(pid, 0) } == -1 {
+            return std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH);
+        }
+
+        #[cfg(target_os = "linux")]
+        if let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat"))
+            && let Some(state) = stat
+                .rsplit_once(')')
+                .and_then(|(_, fields)| fields.split_whitespace().next())
+        {
+            return state != "Z" && state != "X";
+        }
+
+        true
+    }
+
+    async fn assert_process_eventually_gone(pid: libc::pid_t, timeout: Duration) {
+        let deadline = std::time::Instant::now() + timeout;
+        while process_is_alive(pid) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "grandchild {pid} remained live through PTY close"
+            );
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+
     async fn wait_for_busy_events(
         notifications: &RecordedNotifications,
         pty_id: &str,
@@ -979,14 +1009,7 @@ mod tests {
 
                 close_pty(&pty_id).await.expect("close pty");
 
-                let deadline = std::time::Instant::now() + Duration::from_secs(5);
-                while unsafe { libc::kill(grandchild, 0) } == 0 {
-                    assert!(
-                        std::time::Instant::now() < deadline,
-                        "grandchild {grandchild} survived the pty close"
-                    );
-                    tokio::time::sleep(Duration::from_millis(50)).await;
-                }
+                assert_process_eventually_gone(grandchild, Duration::from_secs(5)).await;
             })
             .await;
     }
@@ -1023,14 +1046,7 @@ mod tests {
                 let _group = scope.enroll_terminal_pid(shell).expect("enroll");
                 scope.kill_all();
 
-                let deadline = std::time::Instant::now() + Duration::from_secs(5);
-                while unsafe { libc::kill(grandchild, 0) } == 0 {
-                    assert!(
-                        std::time::Instant::now() < deadline,
-                        "grandchild {grandchild} survived scope teardown"
-                    );
-                    tokio::time::sleep(Duration::from_millis(50)).await;
-                }
+                assert_process_eventually_gone(grandchild, Duration::from_secs(5)).await;
 
                 close_pty(&pty_id).await.expect("close pty");
             })
