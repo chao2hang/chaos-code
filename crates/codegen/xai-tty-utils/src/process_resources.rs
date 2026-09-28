@@ -342,10 +342,12 @@ mod tests {
                 cpu.self_time.expect("self cpu readable") > std::time::Duration::ZERO,
                 "a running test binary has burned some cpu"
             );
+            let self_time = cpu.self_time.expect("self cpu readable");
+            let user_time = cpu.self_user_time.expect("user split readable");
+            let system_time = cpu.self_system_time.expect("system split readable");
             assert_eq!(
-                cpu.self_user_time.expect("user split readable")
-                    + cpu.self_system_time.expect("system split readable"),
-                cpu.self_time.unwrap(),
+                user_time + system_time,
+                self_time,
                 "the split fields must sum to the total, same reading"
             );
         }
