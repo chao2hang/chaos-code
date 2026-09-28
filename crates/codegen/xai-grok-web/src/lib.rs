@@ -169,7 +169,6 @@ fn safe_mode_allows(message: &ClientMessage) -> bool {
             | ClientMessage::Cancel { .. }
             | ClientMessage::RespondQuestion { .. }
             | ClientMessage::GetSettings { .. }
-            | ClientMessage::UpdateSettings { .. }
             | ClientMessage::ListFiles { .. }
             | ClientMessage::ReadFile { .. }
             | ClientMessage::SearchFiles { .. }

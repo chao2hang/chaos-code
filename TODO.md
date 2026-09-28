@@ -263,7 +263,7 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 ### M0.5 Web 基础安全
 
 - [x] 默认仅绑定 `127.0.0.1`；当前 Web host 无非回环绑定入口，后续公网部署必须另立安全门禁。（2026-09-24）
-- [~] 实现 Token 和常量时间比较；当前支持通过 `CHAOS_WEB_TOKEN` 配置 bearer token，Token 不接受 query 参数；`CHAOS_SAFE_WEB_MODE` 已由 WebSocket 后端强制阻断 mutation；高熵生成/轮换和完整部署模式仍待完成。（2026-09-24）
+- [~] 实现 Token 和常量时间比较；当前支持通过 `CHAOS_WEB_TOKEN` 配置 bearer token，Token 不接受 query 参数；`CHAOS_SAFE_WEB_MODE` 在 WebSocket dispatch 前拒绝 Git、终端和设置更新等 mutation，真实 WebSocket regression 确认设置更新返回 `safe_web_mode_blocked` 且随后读取值不变；高熵生成/轮换和完整部署模式仍待完成。（2026-09-28；`safe_web_mode_blocks_direct_mutation_protocol_calls`）
 - [x] 校验 Origin/Host，设置 CSP、frame policy、`nosniff` 和 64 KiB HTTP/WS 消息上限；公网部署模式门禁仍需在公网能力启用前补齐。（2026-09-24；Web tests）
 - [x] HTTP `POST /api/sessions` 接受不超过 128 字节的 `client_msg_id` header，并复用 Engine dedup 语义；重复请求只建立一个 session，空/过长/无效 header 回退到新 ID。真实 Axum handler 测试断言首次响应含 SessionCreated、重试返回 Ack 且 workspace/session 状态只创建一次（`session_creation_is_idempotent_for_a_valid_request_id`、`invalid_session_request_id_falls_back_to_a_fresh_id`）。Web host strict Clippy、7 个 lib tests、真实 workspace WebSocket flow、fmt 和 classifier tests 通过；scratch evidence `web-session-create-idempotency-*.log`。（2026-09-28）
 - [x] WebSocket 握手和 HTTP API 使用同一 bearer/Origin 策略；单测覆盖未授权、错误 Origin 和安全响应头。（2026-09-24）

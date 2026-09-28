@@ -8,12 +8,14 @@ use xai_grok_web::router_with_safe_mode;
 
 #[tokio::test]
 async fn safe_web_mode_blocks_direct_mutation_protocol_calls() {
+    let engine = Engine::new();
     let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
         .await
         .unwrap();
     let address = listener.local_addr().unwrap();
+    let served_engine = engine.clone();
     let server = tokio::spawn(async move {
-        serve(listener, router_with_safe_mode(Engine::new(), "", true))
+        serve(listener, router_with_safe_mode(served_engine, "", true))
             .with_graceful_shutdown(async { tokio::time::sleep(Duration::from_millis(300)).await })
             .await
             .unwrap();
@@ -52,5 +54,40 @@ async fn safe_web_mode_blocks_direct_mutation_protocol_calls() {
     let result: ServerMessage =
         serde_json::from_str(&socket.next().await.unwrap().unwrap().into_text().unwrap()).unwrap();
     assert!(matches!(result, ServerMessage::Error { code, .. } if code == "safe_web_mode_blocked"));
+    socket
+        .send(Message::Text(
+            serde_json::to_string(&ClientMessage::UpdateSettings {
+                client_msg_id: "settings".into(),
+                base_url: Some("https://changed.example.test/v1".into()),
+                model: Some("changed-model".into()),
+            })
+            .unwrap()
+            .into(),
+        ))
+        .await
+        .unwrap();
+    let result: ServerMessage =
+        serde_json::from_str(&socket.next().await.unwrap().unwrap().into_text().unwrap()).unwrap();
+    assert!(matches!(result, ServerMessage::Error { code, .. } if code == "safe_web_mode_blocked"));
+    socket
+        .send(Message::Text(
+            serde_json::to_string(&ClientMessage::GetSettings {
+                client_msg_id: "read-settings".into(),
+            })
+            .unwrap()
+            .into(),
+        ))
+        .await
+        .unwrap();
+    let result: ServerMessage =
+        serde_json::from_str(&socket.next().await.unwrap().unwrap().into_text().unwrap()).unwrap();
+    assert!(matches!(
+        result,
+        ServerMessage::Settings {
+            base_url: None,
+            model: None,
+            ..
+        }
+    ));
     server.await.unwrap();
 }
