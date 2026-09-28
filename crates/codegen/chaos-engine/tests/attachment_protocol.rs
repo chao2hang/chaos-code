@@ -103,6 +103,15 @@ fn attachment_protocol_rejects_over_quota_and_unknown_upload() {
     assert!(
         matches!(&rejected[0], ServerMessage::Error { code, .. } if code == "attachment_quota_exceeded")
     );
+    let retry = engine.handle(ClientMessage::AttachmentChunk {
+        client_msg_id: "chunk-after-quota".into(),
+        upload_id,
+        chunk: base64::engine::general_purpose::STANDARD.encode(b"a"),
+    });
+    assert!(
+        matches!(&retry[0], ServerMessage::Error { code, .. } if code == "attachment_not_found"),
+        "over-quota uploads must be removed before another chunk can be accepted"
+    );
     let unknown = engine.handle(ClientMessage::CancelAttachment {
         client_msg_id: "unknown".into(),
         upload_id,
