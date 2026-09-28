@@ -3,7 +3,8 @@
 - Status: accepted for M0 local mode
 - Date: 2026-09-24
 
-The Web host binds to `127.0.0.1` by default. Health is public for process
+The Web host binds to `127.0.0.1` by default. Protected routes reject requests without a syntactically valid loopback `Host`
+authority; userinfo and malformed/out-of-range ports are rejected. Health is public for process
 supervision; session, handshake, HTTP create, and WebSocket routes require an
 `Authorization: Bearer` token when `CHAOS_WEB_TOKEN` is configured. Token
 comparison is constant-time and tokens are not accepted from query strings.

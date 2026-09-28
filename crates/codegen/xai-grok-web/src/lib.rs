@@ -81,15 +81,41 @@ fn origin_allowed(headers: &HeaderMap) -> bool {
         .unwrap_or(true)
 }
 
+fn invalid_port(authority: &str) -> bool {
+    let port = if authority.starts_with('[') {
+        authority.find(']').and_then(|close| {
+            authority
+                .get(close + 1..)
+                .filter(|suffix| suffix.starts_with(':'))
+                .map(|suffix| &suffix[1..])
+        })
+    } else {
+        authority.rsplit_once(':').map(|(_, port)| port)
+    };
+    port.is_some_and(|port| {
+        port.is_empty()
+            || !port.bytes().all(|byte| byte.is_ascii_digit())
+            || port.parse::<u16>().is_err()
+    })
+}
+
 fn host_allowed(headers: &HeaderMap) -> bool {
     let Some(host) = headers
         .get(header::HOST)
         .and_then(|value| value.to_str().ok())
     else {
-        return true;
+        return false;
     };
-    let hostname = host.rsplit_once(':').map_or(host, |(name, _)| name);
-    matches!(hostname, "127.0.0.1" | "localhost" | "[::1]" | "::1")
+    let Ok(authority) = host.parse::<axum::http::uri::Authority>() else {
+        return false;
+    };
+    if authority.as_str().contains('@') || invalid_port(authority.as_str()) {
+        return false;
+    }
+    matches!(
+        authority.host().to_ascii_lowercase().as_str(),
+        "127.0.0.1" | "localhost" | "[::1]" | "::1"
+    )
 }
 
 fn request_allowed(state: &WebState, headers: &HeaderMap) -> bool {
@@ -277,6 +303,7 @@ mod tests {
         let response = router(Engine::new(), "secret")
             .oneshot(
                 Request::get("/api/handshake")
+                    .header(header::HOST, "127.0.0.1")
                     .header("authorization", "Bearer secret")
                     .body(Body::empty())
                     .unwrap(),
@@ -295,6 +322,7 @@ mod tests {
         let response = router(Engine::new(), "")
             .oneshot(
                 Request::get("/api/handshake")
+                    .header(header::HOST, "127.0.0.1")
                     .header("origin", "https://evil.example")
                     .body(Body::empty())
                     .unwrap(),
@@ -308,10 +336,42 @@ mod tests {
         let response = router(Engine::new(), "")
             .oneshot(
                 Request::get("/api/handshake")
-                    .header("host", "evil.example")
+                    .header(header::HOST, "evil.example")
                     .body(Body::empty())
                     .unwrap(),
             )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn host_parser_rejects_malformed_or_credentialed_authorities() {
+        for host in [
+            "localhost:invalid",
+            "user@localhost",
+            "127.0.0.1:99999",
+            "localhost:",
+        ] {
+            let mut headers = HeaderMap::new();
+            headers.insert(header::HOST, HeaderValue::from_str(host).unwrap());
+            assert!(!host_allowed(&headers), "accepted Host header: {host}");
+        }
+        let mut headers = HeaderMap::new();
+        headers.insert(header::HOST, HeaderValue::from_static("LOCALHOST:3000"));
+        assert!(host_allowed(&headers));
+    }
+
+    #[tokio::test]
+    async fn protected_routes_reject_missing_host() {
+        let response = router(Engine::new(), "")
+            .oneshot(Request::get("/api/handshake").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+        let response = router(Engine::new(), "")
+            .oneshot(Request::post("/api/sessions").body(Body::empty()).unwrap())
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
@@ -323,6 +383,7 @@ mod tests {
         let app = router(engine.clone(), "");
         let make_request = || {
             Request::post("/api/sessions")
+                .header(header::HOST, "127.0.0.1")
                 .header(REQUEST_ID, "retry-1")
                 .body(Body::empty())
                 .unwrap()
@@ -372,6 +433,7 @@ mod tests {
                 .clone()
                 .oneshot(
                     Request::post("/api/sessions")
+                        .header(header::HOST, "127.0.0.1")
                         .header(REQUEST_ID, request_id)
                         .body(Body::empty())
                         .unwrap(),

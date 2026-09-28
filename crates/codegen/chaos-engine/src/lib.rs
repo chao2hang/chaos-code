@@ -2213,10 +2213,9 @@ impl Engine {
             ClientMessage::UpdateSettings {
                 base_url, model, ..
             } => {
-                if base_url
-                    .as_ref()
-                    .is_some_and(|url| url.contains('@') || !url.starts_with("https://"))
-                {
+                if base_url.as_ref().is_some_and(|url| {
+                    url.contains('@') || url.contains('#') || !url.starts_with("https://")
+                }) {
                     return vec![Self::error(
                         "invalid_base_url",
                         "Base URL 必须是 https URL 且不能包含凭据",
@@ -4024,6 +4023,24 @@ mod tests {
         assert!(
             matches!(&unsafe_url[0], ServerMessage::Error { code, .. } if code == "invalid_base_url")
         );
+        let fragment_url = engine.handle(ClientMessage::UpdateSettings {
+            client_msg_id: "fragment-settings".into(),
+            base_url: Some("https://api.example.test/v1#fragment".into()),
+            model: Some("should-not-persist".into()),
+        });
+        assert!(matches!(
+            &fragment_url[0],
+            ServerMessage::Error { code, .. } if code == "invalid_base_url"
+        ));
+        let settings_after_rejection = engine.handle(ClientMessage::GetSettings {
+            client_msg_id: "get-settings-after-rejection".into(),
+        });
+        assert!(matches!(
+            &settings_after_rejection[0],
+            ServerMessage::Settings { base_url, model, .. }
+                if base_url.as_deref() == Some("https://api.example.test/v1")
+                    && model.as_deref() == Some("demo")
+        ));
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("settings.json");
         let persisted = Engine::with_persistence(&path).unwrap();

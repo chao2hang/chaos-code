@@ -101,13 +101,10 @@ jobs:
       # See docs/ci-test-debt.md for the historical ledger and the current
       # ignored-test inventory.
       #
-      # 2026-08-13: All 7 previously-excluded crates (xai-grok-tools,
-      # xai-grok-shell-base, xai-grok-pager, xai-grok-pager-bin,
-      # xai-grok-pager-minimal, xai-grok-pager-pty-harness, xai-grok-update)
-      # were reintegrated after per-crate audit confirmed 0 non-ignored
-      # failures. ~580 tests remain `#[ignore]` across the workspace
-      # (PTY e2e / scripted scenarios run via `--ignored`; 47 update tests
-      # await wiremock rewrite for gh-release installer paths).
+      # 2026-08-13: All 7 previously-excluded crates were reintegrated after
+      # per-crate audit and repair. Current ignored-test totals are maintained
+      # in docs/ignored-audit-2026q4-summary.md and the baseline gate; do not
+      # rely on the historical counts from the original reintegration audit.
       #
       # `check --all-targets` and `clippy` above still cover every crate, which
       # is what stops test code drifting out of sync with production structs.

@@ -116,12 +116,19 @@
 The historical production-unwrap count for `xai-grok-update` was 6. A focused
 2026-09-25 change removed the retry-loop `last_err.unwrap()` in
 `version::fetch_gcs_channel_pointer`, retaining the real network-failure path
-and adding a structured fallback when no response/error was recorded. The
-focused connection-refused integration test and 160 update-library tests pass.
-The remaining five production unwraps are static progress-bar templates; their
-validity is currently guaranteed by constant literals, but the count must be
-rechecked with the current source before closing the batch. This is one audited
-slice, not completion of B batch or the separate sandbox unsafe review.
+and adding a structured fallback when no response/error was recorded. The five
+progress-template unwraps were subsequently replaced with `progress_style_or_default`,
+which logs a warning and returns the corresponding default style on invalid
+format strings. An actual helper test covers that fallback; the update library
+suite and strict Clippy pass. A current source review finds no production
+`.unwrap()` matches in the updater source files examined; test-module unwraps
+remain. This closes only the bounded updater progress-template and retry-error
+slices, not the full B batch or the separate sandbox unsafe review.
+
+This report's other production unwrap/unsafe counts and initial ignored-test
+inventory are historical and have not been refreshed by this bounded review.
+Use the Rust-aware CI ignored scanner and current audit tooling before citing
+those workspace-wide figures; do not infer current counts from this report.
 | `xai-fsnotify` | 26 | 4 | 1 | 1.1% |
 | `xai-grok-pager-minimal` | 26 | 3 | 1 | 1.1% |
 | `xai-circuit-breaker` | 12 | 1 | 0 | 0.5% |
@@ -157,6 +164,10 @@ slice, not completion of B batch or the separate sandbox unsafe review.
 ---
 
 ## 3. ignored 测试
+
+The initial inventory below is historical and superseded by the Rust-aware scanner
+and the current Q4 CSV/baseline referenced in `docs/ci-test-debt.md` and
+`docs/ignored-audit-2026q4-summary.md`. Do not cite its old counts as current.
 
 首次运行结果已过期。2026-09-23 重跑统计时发现 `scripts/ci/ignored-tests.sh` 的 CSV 转义和尾部注释判定有缺陷；初步输出已撤回，详见 `docs/ignored-audit-2026q4-summary.md`。
 

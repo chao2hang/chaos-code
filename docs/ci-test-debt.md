@@ -31,7 +31,7 @@ in their source files. See the "Ignored tests" section below for the inventory.
 | `xai-grok-pager-bin` | 2026-08-12 | 2 tests fixed: `is_managed_install` test updated for `chaos` binary name (was `grok`); dashboard-disabled assertion updated for Chinese error message. |
 | `xai-grok-pager-minimal` | 2026-08-13 | 2 tests fixed: CJK character-width alignment in bash-mode ("Shell 命 令") and thinking ("思 考") labels. |
 | `xai-grok-pager-pty-harness` | 2026-08-13 | 10 tests fixed: welcome screen sentinel "Quit"→"退出" (8 scroll_matrix + 1 plan_approval + 1 scroll_correctness); plan_approval_resume assertions translated ("request changes"→"请求修改", "quit plan"→"放弃计划", "approve"→"批准"). |
-| `xai-grok-update` | 2026-08-13 | Reinstated from the exclusion list. 47 gh-release tests were initially `#[ignore]`'d (`fetch_gh_release_version` switched from `gh` CLI to GitHub HTTP API). Rewrote with wiremock via `GhApiMockGuard`: 9 `fetch_gh_release_*` + 7 `check_update_status`/`auto_update_target` gh-release tests + 19 `install_internal_*` (GCS path, binary name `grok-`→`chaos-` fix) + 12 `downgrade_matrix` internal/disk-aware tests. Concurrent convergence tests (8) remain `#[ignore]` — next in the rewrite queue. |
+| `xai-grok-update` | 2026-08-13 | Reinstated from the exclusion list. 47 gh-release tests were initially `#[ignore]`'d (`fetch_gh_release_version` switched from `gh` CLI to GitHub HTTP API). Rewrote with wiremock via `GhApiMockGuard`: 9 `fetch_gh_release_*` + 7 `check_update_status`/`auto_update_target` gh-release tests + 19 `install_internal_*` (GCS path, binary name `grok-`→`chaos-` fix) + 12 `downgrade_matrix` internal/disk-aware tests. This is a historical rewrite account: the current scanner reports six updater `#[ignore]` attributes, five channel-parameterized expectations and one opt-in 100k stress test; review individual inventory rows before enabling or rewriting them. |
 | `xai-grok-pager` | 2026-08-13 | 142 tests fixed: lib 121 + settings_e2e 21. Root causes: (1) Chinese localization vs English assertions (~80); (2) billing features removed (16 `#[ignore]`); (3) real bugs in paste/links/scrollback/slash/acp_handler (~33); (4) settings meta-tests (~10); (5) CHAOS logo height + CJK spacing (~12). |
 
 The aggregate figure recorded when the job was introduced was roughly **209
@@ -49,7 +49,10 @@ test with extra steps. `python3 scripts/ci/ignored-tests.py --check-baseline
 scripts/ci/ignored-tests-baseline.tsv` checks the grandfathered bare-attribute
 inventory in both directions. The live scan currently reports 434 ignored
 attributes and 218 bare attributes; the checked-in CSV and per-source owner
-audit still determine review status. CI runs the repository inventory scanner against
+audit still determine review status. The Q4 CSV currently contains six
+`xai-grok-update` ignored attributes (five channel-parameterized upstream URL
+expectations and one opt-in stress test), which is distinct from historical
+counts of tests initially ignored during reinstatement. CI runs the repository inventory scanner against
 `scripts/ci/ignored-tests-baseline.tsv`; existing bare attributes are grandfathered
 by explicit package/path/function keys. Added attributes fail until reviewed and
 added to the baseline; stale entries for removed attributes also fail until the
