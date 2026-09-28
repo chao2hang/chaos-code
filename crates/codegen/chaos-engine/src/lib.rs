@@ -342,6 +342,7 @@ impl TerminalAdapter for ProcessTerminalAdapter {
         let status = child
             .wait()
             .map_err(|error| format!("等待终端命令失败: {error}"))?;
+        process_scope.kill_all();
         let (stdout, stdout_truncated) = stdout_reader
             .join()
             .map_err(|_| "读取终端标准输出失败".to_string())?
