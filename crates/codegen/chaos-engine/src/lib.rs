@@ -3755,11 +3755,15 @@ mod tests {
     fn terminal_process_adapter_runs_in_fixed_cwd_and_truncates_output() {
         let directory = tempfile::tempdir().unwrap();
         std::fs::write(directory.path().join("marker.txt"), "cwd").unwrap();
+        let cwd_adapter = ProcessTerminalAdapter::new(directory.path(), 1024).unwrap();
+        let cwd = cwd_adapter.run("pwd").unwrap();
+        assert_eq!(cwd.exit_code, 0);
+        assert_eq!(cwd.output.trim(), directory.path().to_str().unwrap());
+
         let adapter = ProcessTerminalAdapter::new(directory.path(), 8).unwrap();
-        let result = adapter.run("pwd; printf 123456789").unwrap();
-        assert_eq!(result.exit_code, 0);
-        assert!(result.output.len() <= 8 + "\n[output truncated]".len());
-        assert!(result.output.contains("output truncated") || result.output.contains("marker"));
+        let truncated = adapter.run("printf 123456789").unwrap();
+        assert_eq!(truncated.exit_code, 0);
+        assert_eq!(truncated.output, "12345678\n[output truncated]");
     }
 
     #[test]
