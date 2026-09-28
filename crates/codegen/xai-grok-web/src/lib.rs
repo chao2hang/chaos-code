@@ -46,8 +46,8 @@ pub fn router_with_safe_mode(
         .with_state(state)
 }
 
-async fn health() -> Json<serde_json::Value> {
-    Json(serde_json::json!({ "status": "ok" }))
+async fn health() -> Response {
+    secure_json(serde_json::json!({ "status": "ok" }))
 }
 
 fn constant_time_equal(left: &str, right: &str) -> bool {
@@ -396,5 +396,19 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response
+                .headers()
+                .get(header::CONTENT_SECURITY_POLICY)
+                .unwrap(),
+            "default-src 'self'; frame-ancestors 'none'"
+        );
+        assert_eq!(
+            response
+                .headers()
+                .get(header::X_CONTENT_TYPE_OPTIONS)
+                .unwrap(),
+            "nosniff"
+        );
     }
 }

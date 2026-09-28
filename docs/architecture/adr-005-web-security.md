@@ -8,7 +8,8 @@ supervision; session, handshake, HTTP create, and WebSocket routes require an
 `Authorization: Bearer` token when `CHAOS_WEB_TOKEN` is configured. Token
 comparison is constant-time and tokens are not accepted from query strings.
 Origins are limited to the local Vite origins, request bodies are capped at
-64 KiB, and JSON responses include CSP and `nosniff` headers.
+64 KiB, and every JSON response, including public `/health`, includes CSP and
+`nosniff` headers.
 
 Non-loopback binding, public deployment, user/token rotation, and full CSRF
 protection remain release gates. `CHAOS_SAFE_WEB_MODE` is now enforced in the
