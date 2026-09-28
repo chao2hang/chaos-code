@@ -1725,6 +1725,7 @@ dependencies = [
  "walkdir",
  "xai-grok-plugin-marketplace",
  "xai-sqlite-journal",
+ "xai-tty-utils",
 ]
 
 [[package]]
