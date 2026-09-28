@@ -217,7 +217,7 @@ slice, not completion of B batch or the separate sandbox unsafe review.
 
 1. **B 批 unwrap 治理**（`xai-grok-update` 6 个 + sandbox 28 个）
    — 量小、位置重要、1 天内能全清
-2. **unsafe P0 审计**（sandbox + tty-utils）—— 安全边界优先
+2. **unsafe P0 审计**（sandbox + tty-utils）—— 安全边界优先。2026-09-28 对 Linux seccomp installers 增加空程序和 >4096 指令长度拒绝的真实入口回归；这是局部边界修复，不代表逐项审计完成。
 3. **签名集成进 auto_update**（把代码接上真实下载链路）
 4. **shell crate env var unsafe 消除**（一次砍 ~60% 的 unsafe 数量）
 5. **A 批 unwrap 治理**（shell 的 1,270 个 —— 大工程，分批）

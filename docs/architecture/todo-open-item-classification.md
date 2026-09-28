@@ -9,12 +9,12 @@ classifier's line-level total.
 
 ## Current status counts
 
-The current line-level inventory scans 151 `[ ]`/`[~]` rows: 63 unchecked and 88
-partial (including conditional criteria, future/dated work and rows with a
-completed slice plus an open gate). The milestone group counts are M-1 1/5,
-M0 0/13, M1 1/15, M2 0/24, M3 8/9, M4 24/3, M5 18/9, and maintenance 11/10
-(unchecked/partial); unlike the previous table snapshot, all partial rows sum to
-88. This snapshot includes a bounded automated
+The line-level inventory as of 2026-09-28 is 62 unchecked and 89 partial
+(including conditional criteria, future/dated work and rows with a completed
+slice plus an open gate); the seccomp audit row moved one item from unchecked to
+partial. Recompute with `scripts/ci/classify-open-todos.py` after the next edit. The milestone group counts are M-1 1/5, M0 0/13, M1 1/15,
+M2 0/24, M3 8/9, M4 24/3, M5 18/9, and maintenance 10/11
+(unchecked/partial), summing to 151. This snapshot includes a bounded automated
 accessibility scan row and a partial M2 file-browser UI row; neither clears the
 broader M3 localization/accessibility acceptance nor any physical multi-root
 boundary. The current open/partial split for maintenance items reflects the MT-6
@@ -38,7 +38,7 @@ language review, screen-reader testing or platform acceptance.
 | M3 | 8 | 9 |
 | M4 | 24 | 3 |
 | M5 | 18 | 9 |
-| Maintenance items / §8 | 11 | 10 |
+| Maintenance items / §8 | 10 | 11 |
 
 ## Locally delivered in this audit pass
 
@@ -47,6 +47,7 @@ language review, screen-reader testing or platform acceptance.
 | HTTP session creation retry safety | `POST /api/sessions` accepts a bounded `client_msg_id` request header and passes it to the real Engine deduplication handler; duplicate requests return `Ack` without creating a second session. Empty/overlong IDs fall back to a generated ID. Axum handler regressions cover these paths; the Web crate's seven library tests, real workspace WebSocket flow, strict Clippy and formatting pass (private goal scratch `web-session-create-idempotency-*.log`). |
 | Attachment protocol validation | Engine `ValidateAttachment` and `BeginAttachment` now delegate to the shared filename/type/size validator, retaining the existing gif/webp MIME pairs while rejecting ASCII `/` and `\\` separators consistently. A real protocol test sends invalid Base64 through `Engine::handle`, asserts `attachment_chunk_invalid`, then confirms the same upload accepts a valid chunk and reports progress. Engine attachment validation, protocol tests, formatting, strict Clippy and the TODO classifier pass (private goal scratch `attachment-validator-*.log`). |
 | Terminal adapter output bounds | `ProcessTerminalAdapter` drains stdout and stderr concurrently while retaining no more than the configured number of bytes from either stream; failing commands with empty stdout return bounded stderr. Its real-process tests exercise simultaneous 64 KiB streams without deadlock, stderr fallback, zero limit, UTF-8 byte-boundary truncation and fixed cwd. Spawned processes are enrolled in `ProcessScope` for process-group cleanup. Targeted and full Engine tests, strict Clippy and formatting pass (`terminal-adapter-tests.log`, `terminal-engine-suite.log`, `terminal-clippy.log`, `terminal-fmt.log`). |
+| Seccomp filter length validation | Linux child-network and namespace-lockdown installers reject zero-length or more than 4096 instructions before narrowing the length to `sock_fprog::len`; the test calls both shipped installers with invalid inputs and observes `InvalidInput` before syscalls. This is one reviewed syscall-boundary hardening slice, not the full P0 unsafe audit (`seccomp-filter-length-test.log`, `seccomp-sandbox-tests.log`, `seccomp-clippy.log`). |
 | Contribution safety | `CONTRIBUTING.md` describes four-job Cargo concurrency and conservative WSL `target/` cleanup. |
 | Ignored-test guard | The existing Rust-aware parser has 8 fixtures; the new baseline checker adds add/remove negative fixtures. Live inventory: 434 ignored attrs, 218 bare attrs, zero delta against explicit package/path/function baseline. CI runs parser tests plus live bidirectional check. The baseline does not approve the 218 missing reasons/dates; `docs/ci-test-debt.md` and the Q4 summary now point to the repaired scanner and preserve the owner review as open. |
 | User-visible brand guard | `check-brand-protocol.py` checks bounded shipped CLI/help/reference-doc text and direct rendered UI source strings, not all source literals; it leaves crate/wire/env/home compatibility identifiers, history, comments and fixtures alone. Mutation tests prove CLI, docs and UI name regressions fail, while legacy compatibility prose passes. |

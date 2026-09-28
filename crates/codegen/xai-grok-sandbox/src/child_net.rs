@@ -145,6 +145,7 @@ mod ns_lockdown {
             prctl, sock_fprog,
         };
 
+        super::validate_filter_len(filter.len())?;
         let prog = sock_fprog {
             len: filter.len() as u16,
             filter: filter.as_mut_ptr(),
@@ -228,14 +229,26 @@ pub fn prebuilt_child_network_filter() -> &'static [libc::sock_filter] {
     FILTER.get_or_init(build_child_network_filter)
 }
 
+#[cfg(target_os = "linux")]
+const MAX_SECCOMP_FILTER_LEN: usize = 4096;
+
+#[cfg(target_os = "linux")]
+fn validate_filter_len(len: usize) -> std::io::Result<()> {
+    if len == 0 || len > MAX_SECCOMP_FILTER_LEN {
+        return Err(std::io::Error::from_raw_os_error(libc::EINVAL));
+    }
+    Ok(())
+}
+
 /// Install a parent-built child-network filter.
 ///
 /// # Safety
-/// After fork / before exec. Only async-signal-safe work is allowed here.
-/// This performs two `prctl` syscalls against the parent-built program and must never allocate, lock, log, format, or read the environment.
+/// Call only after fork and before exec, from the child whose networking is to be restricted. The filter must be a parent-built policy for this child, and the caller must ensure no other threads execute untrusted work while the filter is being installed. This performs two `prctl` syscalls and must not allocate, lock, log, format, or read the environment.
 #[cfg(target_os = "linux")]
 pub unsafe fn install_child_network_filter(filter: &[libc::sock_filter]) -> std::io::Result<()> {
     use libc::{PR_SET_NO_NEW_PRIVS, PR_SET_SECCOMP, SECCOMP_MODE_FILTER, prctl, sock_fprog};
+
+    validate_filter_len(filter.len())?;
 
     // PR_SET_SECCOMP copies the program into the kernel and never writes through this pointer; sock_fprog merely lacks a const field
     let prog = sock_fprog {
@@ -488,6 +501,30 @@ mod tests {
                 (libc::SYS_read as u32) | X32_SYSCALL_BIT,
                 0
             )));
+        }
+    }
+
+    #[test]
+    fn seccomp_installers_reject_empty_and_oversized_programs() {
+        for invalid_len in [0, super::MAX_SECCOMP_FILTER_LEN + 1] {
+            let child_program = vec![
+                libc::sock_filter {
+                    code: 0,
+                    jt: 0,
+                    jf: 0,
+                    k: 0,
+                };
+                invalid_len
+            ];
+            // SAFETY: both invalid lengths must be rejected before either seccomp syscall.
+            let child_error = unsafe { super::install_child_network_filter(&child_program) }
+                .expect_err("child installer must reject invalid lengths before syscalls");
+            assert_eq!(child_error.kind(), std::io::ErrorKind::InvalidInput);
+
+            let mut namespace_program = child_program;
+            let namespace_error = super::ns_lockdown::install(&mut namespace_program)
+                .expect_err("namespace installer must reject invalid lengths before syscalls");
+            assert_eq!(namespace_error.kind(), std::io::ErrorKind::InvalidInput);
         }
     }
 }
