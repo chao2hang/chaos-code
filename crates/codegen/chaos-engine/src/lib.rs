@@ -306,25 +306,84 @@ impl TerminalAdapter for ProcessTerminalAdapter {
         if command.trim().is_empty() || command.contains('\0') {
             return Err("terminal command is empty or invalid".into());
         }
-        let output = std::process::Command::new("sh")
+        let mut command_builder = std::process::Command::new("sh");
+        command_builder
             .arg("-c")
             .arg(command)
             .current_dir(&self.cwd)
-            .output()
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+        xai_tty_utils::detach_std_command(&mut command_builder);
+        let process_scope = xai_tty_utils::ProcessScope::new();
+        #[allow(clippy::disallowed_methods)]
+        let mut child = command_builder
+            .spawn()
             .map_err(|error| format!("无法启动终端命令: {error}"))?;
-        let mut text = String::from_utf8_lossy(&output.stdout).to_string();
-        if text.len() > self.max_output_bytes {
-            text.truncate(self.max_output_bytes);
+        let _process_group = match process_scope.enroll_std(&child) {
+            Ok(group) => group,
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("无法跟踪终端进程: {error}"));
+            }
+        };
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| "终端标准输出不可用".to_string())?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| "终端错误输出不可用".to_string())?;
+        let stdout_limit = self.max_output_bytes;
+        let stderr_limit = self.max_output_bytes;
+        let stdout_reader = std::thread::spawn(move || drain_output(stdout, stdout_limit));
+        let stderr_reader = std::thread::spawn(move || drain_output(stderr, stderr_limit));
+        let status = child
+            .wait()
+            .map_err(|error| format!("等待终端命令失败: {error}"))?;
+        let (stdout, stdout_truncated) = stdout_reader
+            .join()
+            .map_err(|_| "读取终端标准输出失败".to_string())?
+            .map_err(|error| format!("读取终端标准输出失败: {error}"))?;
+        let (stderr, stderr_truncated) = stderr_reader
+            .join()
+            .map_err(|_| "读取终端错误输出失败".to_string())?
+            .map_err(|error| format!("读取终端错误输出失败: {error}"))?;
+        let (bytes, truncated) = if !status.success() && stdout.is_empty() {
+            (stderr, stderr_truncated)
+        } else {
+            (stdout, stdout_truncated)
+        };
+        let mut text = String::from_utf8_lossy(&bytes).to_string();
+        if truncated {
+            while text.len() > self.max_output_bytes {
+                text.pop();
+            }
             text.push_str("\n[output truncated]");
-        }
-        if !output.status.success() && text.is_empty() {
-            text = String::from_utf8_lossy(&output.stderr).to_string();
         }
         Ok(TerminalResult {
             output: text,
-            exit_code: output.status.code().unwrap_or(-1),
+            exit_code: status.code().unwrap_or(-1),
         })
     }
+}
+
+fn drain_output(mut reader: impl std::io::Read, limit: usize) -> std::io::Result<(Vec<u8>, bool)> {
+    let mut retained = Vec::with_capacity(limit.min(8192));
+    let mut truncated = false;
+    let mut buffer = [0; 8192];
+    loop {
+        let count = reader.read(&mut buffer)?;
+        if count == 0 {
+            break;
+        }
+        let remaining = limit.saturating_sub(retained.len());
+        let retained_now = remaining.min(count);
+        retained.extend_from_slice(&buffer[..retained_now]);
+        truncated |= retained_now < count;
+    }
+    Ok((retained, truncated))
 }
 
 /// Adapter that invokes the installed `chaos --headless` binary in JSON mode.
@@ -3764,6 +3823,36 @@ mod tests {
         let truncated = adapter.run("printf 123456789").unwrap();
         assert_eq!(truncated.exit_code, 0);
         assert_eq!(truncated.output, "12345678\n[output truncated]");
+    }
+
+    #[test]
+    fn terminal_process_adapter_drains_both_streams_and_bounds_fallback_output() {
+        let directory = tempfile::tempdir().unwrap();
+        let adapter = ProcessTerminalAdapter::new(directory.path(), 8).unwrap();
+        let result = adapter
+            .run("head -c 65536 /dev/zero | tr '\\0' x; head -c 65536 /dev/zero | tr '\\0' y >&2; exit 9")
+            .unwrap();
+        assert_eq!(result.exit_code, 9);
+        assert_eq!(result.output, "xxxxxxxx\n[output truncated]");
+
+        let stderr = adapter
+            .run("head -c 65536 /dev/zero | tr '\\0' y >&2; exit 9")
+            .unwrap();
+        assert_eq!(stderr.exit_code, 9);
+        assert_eq!(stderr.output, "yyyyyyyy\n[output truncated]");
+    }
+
+    #[test]
+    fn terminal_process_adapter_respects_zero_limit_and_utf8_byte_boundary() {
+        let directory = tempfile::tempdir().unwrap();
+        let zero_limit = ProcessTerminalAdapter::new(directory.path(), 0).unwrap();
+        let empty = zero_limit.run("printf output").unwrap();
+        assert_eq!(empty.output, "\n[output truncated]");
+
+        let utf8_limit = ProcessTerminalAdapter::new(directory.path(), 3).unwrap();
+        let utf8 = utf8_limit.run("printf 'éé'").unwrap();
+        assert_eq!(utf8.output, "é\n[output truncated]");
+        assert!(utf8.output.starts_with('é'));
     }
 
     #[test]
