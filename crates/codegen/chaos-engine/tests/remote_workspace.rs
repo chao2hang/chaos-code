@@ -435,6 +435,41 @@ async fn one_credential_opens_one_session_over_a_real_socket() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Connecting late is not the same failure as connecting twice, and the server
+/// has to know the difference because it sweeps stale credentials before it
+/// redeems them: without that, the message a late client gets accuses it of
+/// replay.
+#[tokio::test]
+#[cfg(unix)]
+async fn a_late_client_is_told_its_credential_expired() {
+    let dir = short_socket_dir("x");
+    let socket = dir.join("s.sock");
+    let mut server = ServerProcess::start(Some(&socket), None, &["--token-ttl", "1"]).await;
+    let tokens = server.tokens().await;
+
+    // Past the lifetime, so the credential is stale by the time it is presented.
+    tokio::time::sleep(Duration::from_millis(1_300)).await;
+
+    let err = RemoteWorkspace::connect_unix(
+        &socket,
+        &server.endpoint,
+        &tokens[0],
+        RemoteWorkspaceConfig::new().capabilities(ALL_CAPABILITIES.to_vec()),
+    )
+    .await
+    .expect_err("the credential has expired");
+    let RemoteError::Unauthorized { reason } = &err else {
+        panic!("expected an authorization refusal, got {err:?}");
+    };
+    assert!(
+        reason.contains("expired"),
+        "a client that was merely late is not a replay: {reason}"
+    );
+
+    server.stop().await;
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A server with no allowlisted program can still serve files, and says so rather
 /// than running what it is handed.
 #[tokio::test]

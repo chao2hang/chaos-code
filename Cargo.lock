@@ -1715,6 +1715,7 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "dunce",
+ "libc",
  "reqwest 0.12.24",
  "rusqlite",
  "serde",

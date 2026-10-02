@@ -10,7 +10,7 @@
 //! token that was never used dies on its own, so a hand-off that went nowhere
 //! does not stay valid until somebody notices.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -78,6 +78,20 @@ impl std::fmt::Display for RedeemError {
 
 impl std::error::Error for RedeemError {}
 
+/// How a credential left circulation.
+///
+/// Worth remembering, because the server sweeps stale credentials before it
+/// redeems anything: if a swept credential were indistinguishable from a spent
+/// one, someone who took too long to connect would be told they had already
+/// connected.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Fate {
+    /// It opened a session. Presenting it again is a replay.
+    Redeemed,
+    /// Its lifetime passed without opening one.
+    Stale,
+}
+
 /// Issues credentials and takes them back out of circulation.
 pub struct TokenVault {
     ttl: Duration,
@@ -85,7 +99,7 @@ pub struct TokenVault {
     live: HashMap<String, Instant>,
     /// Spent or expired tokens, kept longest-first so the oldest can leave.
     retired: VecDeque<String>,
-    retired_set: HashSet<String>,
+    retired_set: HashMap<String, Fate>,
     now: Box<dyn Fn() -> Instant + Send + Sync>,
 }
 
@@ -99,7 +113,7 @@ impl TokenVault {
             ttl,
             live: HashMap::new(),
             retired: VecDeque::new(),
-            retired_set: HashSet::new(),
+            retired_set: HashMap::new(),
             now: Box::new(Instant::now),
         }
     }
@@ -134,24 +148,26 @@ impl TokenVault {
         let now = (self.now)();
         if let Some(issued_at) = self.live.get(token).copied() {
             if now.duration_since(issued_at) >= self.ttl {
-                // Expired, and now remembered as retired: an expired token is
-                // not evidence of replay, but it must not come back to life
-                // either, and forgetting it entirely would let a re-issue race
-                // look like a replay.
+                // Retired as stale rather than deleted: it must not come back to
+                // life, and a later attempt should still be told "expired"
+                // instead of "never issued".
                 self.live.remove(token);
-                self.retire(token);
+                self.retire(token, Fate::Stale);
                 return Err(RedeemError::Expired);
             }
             self.live.remove(token);
-            self.retire(token);
+            self.retire(token, Fate::Redeemed);
             return Ok(());
         }
-        if self.retired_set.contains(token) {
-            // Distinguishing reuse from never-issued is the whole point: one is
-            // an attack or a bug, the other is a typo.
-            return Err(RedeemError::Reused);
+        // Distinguishing reuse from never-issued is the whole point: one is an
+        // attack or a bug, the other is a typo. Stale keeps saying expired,
+        // because that is what actually happened to the person who connects
+        // late — the server has usually swept the token before they arrive.
+        match self.retired_set.get(token) {
+            Some(Fate::Redeemed) => Err(RedeemError::Reused),
+            Some(Fate::Stale) => Err(RedeemError::Expired),
+            None => Err(RedeemError::Unknown),
         }
-        Err(RedeemError::Unknown)
     }
 
     /// Credentials still waiting to be used.
@@ -174,18 +190,18 @@ impl TokenVault {
         let count = stale.len();
         for token in stale {
             self.live.remove(&token);
-            self.retire(&token);
+            self.retire(&token, Fate::Stale);
         }
         count
     }
 
-    fn retire(&mut self, token: &str) {
+    fn retire(&mut self, token: &str, fate: Fate) {
         if self.retired_set.len() >= SPENT_MEMORY
             && let Some(oldest) = self.retired.pop_front()
         {
             self.retired_set.remove(&oldest);
         }
-        if self.retired_set.insert(token.to_string()) {
+        if self.retired_set.insert(token.to_string(), fate).is_none() {
             self.retired.push_back(token.to_string());
         }
     }
@@ -195,9 +211,14 @@ impl TokenVault {
 ///
 /// The file is the hand-off, not the trust boundary: it is created `0600`, so
 /// reaching it means already being this user, which is the same thing reaching
-/// the socket means. Its contents are the unused tokens, one per line; a token
-/// is rewritten out of the file once the vault retires it, so a second reader
-/// cannot pick up what the first one spent.
+/// the socket means. Its contents are the issued tokens, one per line.
+///
+/// The server writes it once, at startup; it does not rewrite it as tokens are
+/// spent, because a partial rewrite would race with a client that is reading it
+/// right now. Removing the credential that was just spent is the client's job
+/// (see `bin::chaos-remote`), which is the one process that knows which line it
+/// actually used. Anyone else picking up a spent line gets a clear refusal, not
+/// a session.
 pub struct TokenFile {
     path: PathBuf,
 }
@@ -353,8 +374,25 @@ mod tests {
         assert_eq!(vault.redeem(second.as_str()), Err(RedeemError::Expired));
         assert_eq!(
             vault.redeem(second.as_str()),
-            Err(RedeemError::Reused),
-            "an expired token is retired, so it cannot be re-presented as fresh"
+            Err(RedeemError::Expired),
+            "a stale credential stays stale; it is not evidence anyone used it"
+        );
+    }
+
+    /// The server sweeps before it redeems, so in production the expired path is
+    /// reached through the retired set rather than the live one. If the sweep
+    /// remembered stale credentials the same way it remembers spent ones, anyone
+    /// who simply connected late would be told they had already connected.
+    #[test]
+    fn a_swept_token_is_still_reported_as_expired() {
+        let (mut vault, clock) = vault(Duration::from_millis(50));
+        let token = vault.issue();
+        clock.advance(51);
+        assert_eq!(vault.sweep_expired(), 1);
+        assert_eq!(
+            vault.redeem(token.as_str()),
+            Err(RedeemError::Expired),
+            "the sweep happens first, so this is the answer a late client actually gets"
         );
     }
 

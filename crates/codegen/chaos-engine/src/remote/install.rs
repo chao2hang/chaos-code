@@ -263,8 +263,23 @@ impl InstallLayout {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            if metadata.permissions().mode() & 0o111 == 0 {
+            let mode = metadata.permissions().mode();
+            if mode & 0o111 == 0 {
                 return Err(format!("{} is not executable", artifact.display()));
+            }
+            // The mode bits are only the file's own claim; the filesystem it sits on
+            // gets the last word. An artifact staged under a `noexec` mount has a
+            // normal 0755 mode and would become `current` while being impossible to
+            // start — the host would then look upgraded right up until the next
+            // person tried to use it. `access` asks the kernel the same question the
+            // `execve` will ask, mount flags included.
+            if !os_will_execute(&artifact) {
+                return Err(format!(
+                    "{} has mode {mode:#o} but cannot be executed from {}; its \
+                     filesystem may be mounted noexec",
+                    artifact.display(),
+                    self.dir().display()
+                ));
             }
         }
         Ok(())
@@ -356,9 +371,26 @@ fn set_executable(path: &Path) -> Result<(), String> {
 
 /// Windows has no executable bit; whether a file runs is its extension and the
 // operator's ACL, and there is nothing to set here.
-#[cfg(windows)]
+#[cfg(not(unix))]
 fn set_executable(_path: &Path) -> Result<(), String> {
     Ok(())
+}
+
+/// Whether this process could actually run `path`.
+///
+/// `access(2)` is the question the kernel asks at `execve` time, mount flags
+/// included, so it catches a file whose mode is fine but whose filesystem is
+/// mounted `noexec` — a real arrangement for a workspace on a container volume.
+#[cfg(unix)]
+fn os_will_execute(path: &Path) -> bool {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+
+    let Ok(c_path) = CString::new(path.as_os_str().as_bytes()) else {
+        return false;
+    };
+    // SAFETY: `c_path` is a valid NUL-terminated C string that outlives the call.
+    unsafe { libc::access(c_path.as_ptr(), libc::X_OK) == 0 }
 }
 
 #[cfg(test)]
@@ -529,6 +561,30 @@ mod tests {
                     .mode();
             assert_ne!(mode & 0o111, 0, "mode was {mode:#o}");
         }
+    }
+
+    /// The executable bit is the file's own claim; the kernel gets the last word.
+    /// An artifact this process cannot actually run must not become `current`,
+    /// because the host would then have reported an upgrade it cannot boot into.
+    /// A `noexec` mount is the case this catches and the mode check alone misses.
+    #[test]
+    #[cfg(unix)]
+    fn an_artifact_that_cannot_be_executed_fails_verification() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        install(dir.path(), "1.0.0", V1).unwrap();
+        let layout = InstallLayout::new(dir.path());
+        assert!(
+            layout.verify_current("1.0.0").is_ok(),
+            "a just-installed artifact should verify"
+        );
+
+        let artifact = layout.artifact_path("1.0.0");
+        std::fs::set_permissions(&artifact, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let err = layout
+            .verify_current("1.0.0")
+            .expect_err("nothing can run this artifact");
+        assert!(err.contains("executable"), "{err}");
     }
 
     /// `VERSION` travels with the artifact, so a directory can be identified

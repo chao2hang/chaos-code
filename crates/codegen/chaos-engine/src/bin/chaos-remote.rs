@@ -324,6 +324,14 @@ async fn dispatch(session: &mut AnySession, args: &Args) -> Result<u8, String> {
                 }))?;
             } else if outcome.current {
                 println!("installed {version} and made it current");
+                // Worth saying out loud: the process answering this call was
+                // started from the old artifact and keeps running. `install`
+                // changes what the next start runs, not what is running now, and
+                // an operator who misses that believes the host was upgraded.
+                eprintln!(
+                    "the server answering this session is still the previous build; \
+                     restart it to run {version}"
+                );
             } else {
                 println!(
                     "installed {version} but it did not become current; still on {:?}",

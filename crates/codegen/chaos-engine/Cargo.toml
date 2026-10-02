@@ -22,5 +22,8 @@ xai-sqlite-journal = { path = "../xai-sqlite-journal" }
 xai-grok-plugin-marketplace = { path = "../xai-grok-plugin-marketplace" }
 xai-tty-utils = { path = "../xai-tty-utils" }
 
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
 [dev-dependencies]
 tempfile.workspace = true
