@@ -112,14 +112,26 @@ fn seed_module_store(root: &Path, at: &Path) {
 }
 
 fn copy_tree(from: &Path, to: &Path) {
-    std::fs::create_dir_all(to).unwrap();
-    for entry in std::fs::read_dir(from).unwrap() {
+    std::fs::create_dir_all(to).unwrap_or_else(|e| panic!("create {}: {e}", to.display()));
+    for entry in std::fs::read_dir(from).unwrap_or_else(|e| panic!("read {}: {e}", from.display()))
+    {
         let entry = entry.unwrap();
         let (from, to) = (entry.path(), to.join(entry.file_name()));
-        if entry.file_type().unwrap().is_dir() {
+        let file_type = entry
+            .file_type()
+            .unwrap_or_else(|e| panic!("type {}: {e}", from.display()));
+        if file_type.is_dir() {
             copy_tree(&from, &to);
         } else {
-            std::fs::copy(&from, &to).unwrap();
+            std::fs::copy(&from, &to).unwrap_or_else(|e| {
+                panic!(
+                    "copy {} -> {}: {e} (source still there: {}, dest parent there: {})",
+                    from.display(),
+                    to.display(),
+                    from.exists(),
+                    to.parent().is_some_and(|p| p.exists()),
+                )
+            });
         }
     }
 }

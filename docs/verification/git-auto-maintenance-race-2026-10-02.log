@@ -1,0 +1,144 @@
+# Reproduce: cargo test --locked -p xai-test-utils --lib
+#           (the guard); the race itself needs a git new enough to start auto-maintenance,
+#            see the container loop below.
+# Host: Ubuntu 22.04 x86_64, host git 2.34.1. Container: ubuntu:24.04 + ppa:git-core/ppa,
+#       git 2.55.0 -- the same git the GitHub runners reported.
+# Commit under test: the commit that adds this transcript (previous HEAD 88903bf7).
+# Scope: why `rust check / clippy / test` went red on Linux, and with it why the macOS and
+#        Windows platform legs reported "skipped" instead of running.
+
+== the symptom
+
+CI run 36984856317 (commit 88903bf7, main, pushed 2026-10-02T08:35Z):
+
+    rust check / clippy / test           completed failure
+    npm package scripts                  completed success
+    GUI browser E2E                      completed success
+    docs localization / secret scan      completed success
+    platform tests (${{ matrix.os }})    completed skipped
+
+The platform legs are `needs: [rust]`, so one red test on Linux hides every macOS and
+Windows result. Out of 508 tests in the crate, one failed:
+
+    ---- git::safety::tests::reachability::snapshot_of_the_source_goes_when_the_source_still_holds_it stdout ----
+    thread '...' panicked at crates/codegen/xai-fast-worktree/src/git/safety_tests.rs:122:39:
+    called `Result::unwrap()` on an `Err` value: Os { code: 2, kind: NotFound, message: "No such file or directory" }
+
+The runs around it failed the same job on different tests (`commit::tests::...` in
+36972357636), which is what flakiness looks like from the outside. The panic text named no
+path, so nothing in CI said which file was missing.
+
+== step 1 -- make the fixture say which file it could not open
+
+`safety_tests.rs:122` is `std::fs::copy(&from, &to).unwrap()` inside the fixture's recursive
+`copy_tree`. `unwrap()` there reports the errno and nothing else. The helper now reports the
+source, the destination, whether the source still exists and whether the destination's
+parent exists.
+
+Then the test binary was run in a loop inside the container (git 2.55.0, the runner's git).
+Nothing about CI was needed to reproduce it:
+
+    /t.bin --test-threads=4      # 12 consecutive full runs of the crate's lib tests
+    run 1..3  ok
+    run 4  FAILED  git::safety::tests::git_dir::lfs_object_beside_the_store_keeps_the_worktree
+    run 5..10 ok
+    run 11 FAILED  git::safety::tests::reachability::the_worktree_cannot_be_its_own_surviving_repository
+    run 12 ok
+    -> 2 failures in 12 runs, on two different tests
+
+So the flake is in the repository's own test fixtures, not in the CI image. Which test loses
+is just which one happened to be copying at the wrong moment. With the new message, run 7
+of a second loop said:
+
+    copy /tmp/.tmpxdZ6CS/source/.git/objects/maintenance.lock -> /tmp/.tmpxdZ6CS/reset-hard/.git/objects/maintenance.lock:
+      No such file or directory (os error 2) (source still there: false, dest parent there: true)
+
+A file that was in the directory listing and was gone by the time it was opened, inside
+`.git/objects`, named `maintenance.lock`.
+
+== step 2 -- why a lock file appears in a listing at all
+
+`git commit` does not only commit: it schedules git's auto-maintenance in a detached child
+process. That child takes `.git/objects/maintenance.lock` and unlinks it when it finishes,
+so the lock outlives the `git commit` that spawned it -- the command has already returned and
+the test's `run_git` has already asserted success. A fixture that copies or walks `.git`
+immediately afterwards races a process nobody is waiting for.
+
+Four git configurations were measured, 15 commits each, with a busy poll for the lock after
+every commit (git 2.55.0):
+
+    | configuration                  | maintenance.lock seen |
+    |--------------------------------|-----------------------|
+    | default                        | 15/15                 |
+    | -c maintenance.auto=false      |  0/15                 |
+    | -c gc.writeCommitGraph=false   | 15/15                 |
+    | -c gc.auto=0                   |  0/15                 |
+    | all three                      |  0/15                 |
+
+Every default commit starts the child. Neither task has anything to do in a scratch
+repository that holds a handful of commits, so the test helper now starts neither.
+
+`gc.writeCommitGraph=false` is in the table because it was the obvious guess and is wrong:
+suppressing the commit-graph task does not stop the child, it only gives it less to do.
+
+== step 3 -- the fix
+
+`xai_test_utils::git::git_command_with_identity` already masks the machine's git
+configuration (`GIT_CONFIG_GLOBAL=/dev/null`, `GIT_CONFIG_NOSYSTEM=1`) and pins the locale.
+Background auto-maintenance is the same class of machine-dependent state, so it is pinned
+there too, through `GIT_CONFIG_COUNT` / `GIT_CONFIG_KEY_n` / `GIT_CONFIG_VALUE_n` rather
+than `-c`, so it also reaches the sub-commands git runs itself (`git stash` invoking
+`git update-index`):
+
+    GIT_CONFIG_COUNT=2  GIT_CONFIG_KEY_0=maintenance.auto  GIT_CONFIG_VALUE_0=false
+                        GIT_CONFIG_KEY_1=gc.auto           GIT_CONFIG_VALUE_1=0
+
+That covers every crate that shells out to git through the shared helper. The two other
+test-side recursive tree copiers (`xai-grok-workspace/src/session/git_tests.rs`,
+`xai-grok-pager/src/test_util.rs`) build their repositories with `git2`, which never spawns
+a maintenance child, and are not exposed to this.
+
+The guard is `xai-test-utils`'s own test:
+`git::tests::helper_git_does_not_schedule_background_auto_maintenance`. It asserts the
+configuration git actually resolves for a command from the helper (version-independent), and
+then polls the lock path for 50 ms after a real commit (the symptom).
+
+    $ cargo test --locked -p xai-test-utils --lib
+    test git::tests::helper_git_does_not_schedule_background_auto_maintenance ... ok
+    test result: ok. 1 passed; 0 failed
+
+It is load-bearing: with the five `.env(...)` lines deleted,
+
+    test git::tests::helper_git_does_not_schedule_background_auto_maintenance ... FAILED
+    git ["config", "--get", "maintenance.auto"] failed:
+
+and with them restored it passes again.
+
+== step 4 -- the loop again, after the fix
+
+Same binary source, same container, same git 2.55.0:
+
+    4-thread:  0 failures in 20 runs
+    16-thread: 0 failures in 10 runs
+
+against 2 failures in 12 runs before. The 16-thread arm is well past what CI runs (the
+runners have 4 vCPUs).
+
+== what this is NOT evidence about
+
+* It is not a re-run of CI. The green Linux job and the now-unblocked macOS/Windows legs are
+  still ahead; `docs/verification/platform-ci-2026-10-02.log` records what the platform legs
+  said before this fix.
+* It does not explain the other CI failure in this family,
+  `commit::tests::committed_edit_keeps_diff_line_backgrounds`
+  (`xai-grok-pager-minimal/src/commit_tests.rs:846`, run 36972357636). That test touches no
+  git repository; it renders a diff under `Theme::current()` and tripped its own
+  "the pinned theme must carry a real insert background" guard. It is in the same
+  cross-test-mutates-a-process-global family but has a different fix: the test now holds the
+  shared theme lock through the assertions (`20727366`, committed 07:34Z, after that run's
+  06:11Z commit), so it should not recur -- re-observing it green in CI is still ahead.
+* It does not cover the Windows `exit code 127` in run 36979345879. That was `rg` not being
+  where the CI step said it was, and was fixed on its own in 88903bf7.
+* The guard asserts the configuration and the absence of the lock. It cannot assert anything
+  about a git release old enough never to start the child -- host git 2.34.1 never created
+  the lock in the same probe, which is why the configuration half of the assertion exists.

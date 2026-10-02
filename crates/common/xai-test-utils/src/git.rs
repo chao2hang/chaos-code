@@ -113,7 +113,21 @@ fn git_command_with_identity(dir: &Path, args: &[&str]) -> std::process::Command
         .env("GIT_TERMINAL_PROMPT", "0")
         // Callers assert on git's own wording, so pin the language the same way
         // the configuration is pinned.
-        .env("LC_ALL", "C");
+        .env("LC_ALL", "C")
+        // `git commit` schedules auto-maintenance in a detached child, which takes
+        // `.git/objects/maintenance.lock` and unlinks it when it finishes -- so the
+        // lock outlives the command that spawned it. A fixture that copies or walks
+        // `.git` then races that child: the lock appears in a directory listing and
+        // is gone by the time it is opened, which surfaced as an `os error 2`
+        // failure in `xai-fast-worktree`'s snapshot fixtures. Neither task has
+        // anything to do in a scratch repository, so neither is started.
+        // Injected through the environment rather than `-c` so it also reaches the
+        // sub-commands git itself runs (`git stash` -> `git update-index`).
+        .env("GIT_CONFIG_COUNT", "2")
+        .env("GIT_CONFIG_KEY_0", "maintenance.auto")
+        .env("GIT_CONFIG_VALUE_0", "false")
+        .env("GIT_CONFIG_KEY_1", "gc.auto")
+        .env("GIT_CONFIG_VALUE_1", "0");
     cmd
 }
 
@@ -228,4 +242,74 @@ pub fn make_feature_branch(dir: &Path, picks: usize) -> String {
     run_git(dir, &["commit", "-m", "advance base"]);
     run_git(dir, &["checkout", "feature"]);
     base
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Scratch directory, deleted when the guard drops. Hand-rolled because this
+    /// crate is the git helper every other test crate depends on and carries no
+    /// dev-dependencies of its own.
+    struct Scratch(PathBuf);
+
+    impl Scratch {
+        fn new(label: &str) -> Self {
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_nanos())
+                .unwrap_or_default();
+            let at = std::env::temp_dir().join(format!(
+                "xai-test-utils-{label}-{}-{nanos}",
+                std::process::id()
+            ));
+            std::fs::create_dir_all(&at).expect("create scratch dir");
+            Self(at)
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// A fixture that copies or walks `.git` races the detached auto-maintenance
+    /// child that `git commit` starts: the child creates
+    /// `.git/objects/maintenance.lock` and unlinks it once it finishes, which is
+    /// after the command that spawned it has already returned. A copy that listed
+    /// the lock and then opened it failed with `os error 2` in
+    /// `xai-fast-worktree`'s snapshot fixtures. The resolved configuration is the
+    /// version-independent half of the guard; the lock is the symptom.
+    #[test]
+    fn helper_git_does_not_schedule_background_auto_maintenance() {
+        let scratch = Scratch::new("auto-maintenance");
+        let repo = scratch.0.join("repo");
+        std::fs::create_dir(&repo).expect("create repo dir");
+        run_git(&repo, &["init", "-b", "main"]);
+        run_git(&repo, &["config", "user.email", "test@test.com"]);
+        run_git(&repo, &["config", "user.name", "Test"]);
+
+        assert_eq!(
+            run_git(&repo, &["config", "--get", "maintenance.auto"]),
+            "false",
+            "`maintenance run --auto` must not be queueable by a test's git command"
+        );
+        assert_eq!(
+            run_git(&repo, &["config", "--get", "gc.auto"]),
+            "0",
+            "`gc --auto` must not be queueable by a test's git command"
+        );
+
+        let lock = repo.join(".git").join("objects").join("maintenance.lock");
+        git_commit_all(&repo, "first");
+        let window = std::time::Duration::from_millis(50);
+        let until = std::time::Instant::now() + window;
+        while std::time::Instant::now() < until {
+            assert!(
+                !lock.exists(),
+                "a maintenance child started by `git commit` held {lock:?} for a moment"
+            );
+        }
+    }
 }
