@@ -124,6 +124,54 @@ allow list on purpose: if a rule fires, the script gets rewritten.
 asserts the check still exits 1, because a scanner that stopped matching looks
 exactly like a repository that was fixed.
 
+## Remote workspace sessions
+
+Two binaries carry the remote-workspace transport
+(`crates/codegen/chaos-engine/src/remote/`):
+
+```sh
+# On the host that owns the workspace. It sees exactly one directory.
+chaos-remote-server --workspace ~/src/beeper --tcp 127.0.0.1:7788 \
+  --token-file ~/.chaos/remote-tokens --capability tool-execution --allow cargo
+
+# On the machine doing the work, through a tunnel whose local end is loopback.
+chaos-remote --tcp 127.0.0.1:17788 --token-file ~/.chaos/remote-tokens list src
+chaos-remote --tcp 127.0.0.1:17788 --token-file ~/.chaos/remote-tokens \
+  exec --timeout 600 -- cargo test -p beeper
+chaos-remote --tcp 127.0.0.1:17788 --token-file ~/.chaos/remote-tokens \
+  install 0.4.0 --from target/release/chaos-remote-server
+```
+
+Three properties are deliberate and are what the tests around this code exist
+to hold:
+
+- **Loopback only.** Both `--tcp` forms refuse a routable address at parse time.
+  The tunnel carries the trust; the transport does not attempt TLS, and a
+  `ssh -L`-style tunnel is assumed rather than implemented here.
+- **One-time credentials.** Each credential opens exactly one session. Reuse is
+  refused as reuse, a credential past its TTL is refused as expired, and the
+  client removes the credential it spent from the file it was given.
+- **Nothing is faked.** `--capability interactive-pty`, `port-forward` and
+  `detached-agent` are refused with a reason, and `exec` runs only programs
+  named by `--allow`.
+
+`scripts/remote-acceptance-in-docker.sh` is the gate for all of the above. It
+builds the artifacts here, then puts the server in a stock Debian container that
+has never seen this repository, reaches it through a `socat` tunnel, and checks
+reading, searching, writing, `git diff`, tool execution, path-escape refusals,
+credential handling, a full disk, an artifact on a `noexec` filesystem, and a
+dropped connection:
+
+```sh
+scripts/remote-acceptance-in-docker.sh 2>&1 | tee "remote-acceptance-$(date +%F).log"
+```
+
+A run leaves its transcript in the log you tee it to;
+[`docs/verification/remote-acceptance-linux-2026-10-02.log`](docs/verification/remote-acceptance-linux-2026-10-02.log)
+is a kept example. The lab is Linux-only and there is no SSH transport in this
+build, so it is not evidence about SSH host-key handling or about a macOS or
+Windows remote host.
+
 ## Upstream reconnaissance
 
 `scripts/upstream-recon.sh` records how far the ported `SOURCE_REV` has fallen

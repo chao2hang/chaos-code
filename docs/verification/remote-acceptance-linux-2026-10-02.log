@@ -1,0 +1,126 @@
+# Reproduce: bash scripts/remote-acceptance-in-docker.sh
+# Host: Ubuntu 22.04 x86_64, Docker 29.8.1; remote host container image chaos-verify:local (Debian 12, git, python3, ripgrep).
+# Commit under test: 2ccacd39. Tokens are 64-hex one-time credentials and are never printed by the script.
+
+
+== building the artifacts on this machine
+    Finished `dev` profile [unoptimized] target(s) in 0.39s
+
+== starting the clean remote host container (chaos-verify:local)
+   remote host: NAME="Debian GNU/Linux", x86_64
+   its only chaos binaries are the ones copied in: chaos-remote-server 
+   ok  the remote host's git will read the served repository
+
+== the artifacts run on a stock Linux that has never seen this repository
+   ok  the server artifact starts and reports a version
+   ok  the client artifact starts
+
+== a routable address is refused where it is parsed, on both sides
+   ok  the server refuses 0.0.0.0 as a listen address
+   ok  the client refuses a routable dial address
+   ok  a server with no transport is refused instead of guessing
+
+== starting the server, loopback-only, on the remote host
+   credentials published: 256
+   ok  the listener is reachable on loopback
+
+== version negotiation and the capabilities this session was granted
+   ok  ping reports the negotiated protocol
+   ok  info reports the server build
+   ok  info grants write
+   ok  info grants tool-execution
+
+== listing, reading and searching the remote workspace
+   ok  list shows the tracked files
+   ok  list does not expose the .git directory
+   ok  cat returns the committed bytes
+   ok  search reports a 1-based line number
+   ok  a read delivered the same bytes that are on the remote disk
+   ok  a Range read returns the requested window
+
+== a write through the tunnel lands on the remote disk
+   ok  write reports the bytes and the digest it stored
+   ok  the file is on the remote host with those bytes
+   ok  a stale digest is refused instead of overwriting
+   ok  the refused write left the file untouched
+
+== git diff is produced by the remote host's own git
+   ok  diff shows the uncommitted change
+
+== tool execution, and the edge of the allowlist
+   ok  an allowlisted program runs remotely
+   ok  the remote program's exit status is propagated
+   ok  a program that was not allowlisted is refused
+   ok  a program that hits its timeout is killed
+
+== paths that leave the served workspace are refused, not resolved
+   ok  refused: cat ../../etc/os-release
+   ok  refused: read /etc/passwd
+   ok  refused: cat ../../../etc/hostname
+   ok  refused: write ../escape.txt --text x --mkdir
+   ok  refused: write /etc/escape.txt --text x
+
+== credentials are one-time: a replayed one is refused
+   ok  the credential is accepted once
+   ok  the same credential refused a second time
+   ok  a credential the server never issued is refused
+
+== a credential past its ttl is refused
+   ok  an expired credential is refused as expired, not as a replay
+
+== the server log carries no credential material and no errors
+   ok  no credential-shaped secret appears in the server log
+   ok  no live credential appears in the server log
+   ok  no authorization header material in the log
+   ok  the server reported no error doing any of the above
+
+== capabilities this build does not implement are named, not faked
+   ok  --capability interactive-pty is refused by the client
+   ok  --capability port-forward is refused by the client
+   ok  --capability detached-agent is refused by the client
+   ok  an unknown capability name is refused
+
+== a server started with --no-write really cannot be written to
+   ok  the read-only server answers
+   ok  write is absent from the capabilities it granted
+   ok  a write against the read-only server is refused
+
+== two remote workspaces keep their own state
+   ok  the second server lists only its own file
+   ok  the second server cannot read the first workspace
+   ok  the first server still reads its own
+   ok  a credential published by one server opens nothing at the other
+
+== deploying a new server build over the session
+   ok  install publishes 9.9.9 and says the running process is still the old build
+   ok  the pointer on the remote host selects 9.9.9
+   ok  the version is recorded next to the artifact
+   ok  the deployed artifact is byte-identical to the uploaded one
+   ok  the deployed artifact starts on the remote host
+
+== an upload that fails part-way leaves the installed version alone
+   ok  the first deployment fits
+   ok  a small file is written before the disk fills
+   ok  a deployment that no longer fits is refused
+   ok  no version directory was published for the failed upload
+   ok  the pointer still selects the version that was working
+   ok  the installed artifact still starts after the failed upgrade
+   ok  a write that no longer fits is refused
+   ok  the failed write left no partial file behind
+   ok  the file written before the disk filled is still readable
+
+== an artifact the host will not execute is refused rather than published
+   ok  the workspace is a filesystem the host will not execute from
+   ok  and a 0755 file in it really is unrunnable
+   ok  an install the host could never start is refused
+   ok  no pointer was published for an artifact that cannot run
+   ok  the upgrade is refused and the pointer is put back, reported together
+   ok  the pointer still selects the version installed before the attempt
+
+== a dropped connection mid-session fails instead of hanging
+   ok  the in-flight exec failed after 2s with exit 1
+   ok  a new session works once the tunnel is back
+   ok  the server is still serving after the drop
+
+== summary
+all 73 M4 acceptance checks passed against chaos-verify:local
