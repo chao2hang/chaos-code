@@ -238,3 +238,125 @@ one-time credentials and are never printed by the script.
 
 == summary
 all 130 M4 acceptance checks passed against chaos-verify:local
+
+
+---
+
+## Re-run 2026-10-03: the signature call site is load-bearing, re-measured from scratch
+
+The 2026-10-02 run of this lab recorded that dropping the provenance call made tests
+fail, but the log it wrote down did not say *which line* had been mutated. An evidence
+entry that cannot be replayed is not evidence, so the experiment was performed again on
+`ef33dfd9` with the anchor, the replacement and the resulting diff written into the
+transcript itself before anything was run.
+
+**The mutation.** `InstallLayout::commit` is the only path by which an uploaded artifact
+acquires a permanent name on a host. Its checks run in a stated order -- length, digest,
+provenance, platform header, and only then `rename`. Exactly one line was removed:
+
+    --- a/crates/codegen/chaos-engine/src/remote/install.rs
+    +++ b/crates/codegen/chaos-engine/src/remote/install.rs
+    @@ -201,7 +201,7 @@
+                     "uploaded artifact has sha256 {actual}, expected {expected_sha256}"
+                 ));
+             }
+    -        self.provenance.check_file(staged, signature)?;
+    +        let _ = (staged, signature);
+
+Nothing else was touched: the length floor, the digest comparison, the platform-header
+read, the version directory, the atomic pointer move and the post-publish re-read all
+stay as they are. That is the realistic regression shape -- a reviewer resolves a conflict
+and the one call that consulted the signing policy disappears while everything around it
+still looks cared-for. The `let` binding is there so the mutation is a pure deletion
+rather than also an unused-variable error.
+
+**Baseline, measured before anything was touched** (so no question about stale artifacts
+can arise), `RUST_MIN_STACK=16777216 cargo test -p chaos-engine --offline --locked --lib -- <filter>`:
+
+    remote::install      test result: ok. 20 passed; 0 failed; ... 170 filtered out
+    remote::client       test result: ok. 30 passed; 0 failed; ... 160 filtered out
+    remote::provenance   test result: ok. 15 passed; 0 failed; ... 175 filtered out
+
+**With the line removed:**
+
+    remote::install      test result: FAILED. 16 passed; 4 failed; ... exit=101
+    remote::client       test result: FAILED. 28 passed; 2 failed; ... exit=101
+    remote::provenance   test result: ok. 15 passed; 0 failed; ... exit=0
+
+Six tests fail only under the mutation. Their panic messages are quoted verbatim, because
+the payload each one prints is the actual claim -- an `Ok` outcome where a refusal was
+required:
+
+    remote::install::tests::an_unsigned_artifact_never_reaches_a_permanent_name
+      panicked at crates/codegen/chaos-engine/src/remote/install.rs:748:14:
+      an unsigned artifact must not become current: CommitOutcome { version: "2.0.0", previous: Some("1.0.0"), rolled_back: false }
+
+    remote::install::tests::an_artifact_swapped_under_a_recomputed_digest_is_refused
+      panicked at crates/codegen/chaos-engine/src/remote/install.rs:784:14:
+      a matching digest is not a trusted artifact: CommitOutcome { version: "2.0.0", previous: None, rolled_back: false }
+
+    remote::install::tests::a_signature_from_a_key_this_host_does_not_trust_is_refused
+      panicked at crates/codegen/chaos-engine/src/remote/install.rs:802:10:
+      another publisher's signature is not this publisher's: CommitOutcome { version: "1.0.0", previous: None, rolled_back: false }
+
+    remote::install::tests::a_provenance_refusal_names_the_check_and_the_fix
+      panicked at crates/codegen/chaos-engine/src/remote/install.rs:838:14:
+      an unparseable signature is not a signature: CommitOutcome { version: "1.0.0", previous: None, rolled_back: false }
+
+    remote::client::tests::an_unsigned_deploy_is_refused_by_a_host_that_requires_provenance
+      panicked at crates/codegen/chaos-engine/src/remote/client.rs:1771:14:
+      this host does not install unsigned builds: InstallOutcome { version: "1.0.0", current: true, previous_version: None }
+
+    remote::client::tests::a_deploy_whose_bytes_were_swapped_keeps_the_previous_version
+      panicked at crates/codegen/chaos-engine/src/remote/client.rs:1822:14:
+      the digest matches the swap; the signature does not: InstallOutcome { version: "2.0.0", current: true, previous_version: Some("1.0.0") }
+
+`current: true` in the last two is the sentence this whole change exists to prevent: an
+artifact nobody can attribute has become the one the host boots.
+
+**`remote::provenance` staying green is the expected half of the result, and a trap for a
+reader.** Those 15 tests call `ProvenancePolicy::check`/`check_file` directly, so they
+describe the policy, not the wiring. Deleting the call site cannot redden them. "The
+provenance tests pass" therefore says nothing about whether the host enforces anything --
+enforcement lives or dies in `install.rs` and is covered by the `install`/`client` names
+above. Any future claim about this row has to cite those, not the policy's own tests.
+
+**Restore.** `sha256(pristine) = 938a8130f2ef7d993df76ad468a6c2b29dc48415bb088dc8fe8ec2d6944a25f1`;
+after copying the backup back, `sha256(after)` is the same value and `cmp` exits 0. The
+three filters were then run a third time -- `20 / 30 / 15 passed, 0 failed` again -- because
+byte-identical *source* sitting on top of a binary built from mutated source would still
+be a lie about the tree.
+
+**A defect in the mutation harness itself, found on the first attempt and worth recording.**
+The first version of the script mutated the file, ran the tests, restored, and only then
+ran the unmutated baseline. It reported the baseline as failing the same 4 + 2 tests as the
+mutation, i.e. it measured the mutation twice and called the second pass the control. Two
+independent causes, both of which can manufacture a green mutation run:
+
+- `shutil.copy2` deliberately restores the backup's *mtime*, which is older than the build
+  cargo produced from the mutated source. Cargo fingerprints sources by mtime, so it saw a
+  source older than its own artifact, skipped the rebuild, and re-ran the mutated binary.
+  Fix: `os.utime(path, None)` after every content change, including the restore.
+- Ordering. A baseline taken after the experiment is a claim about a tree that has already
+  been edited. Fix: measure the baseline first and refuse to continue if it is not green --
+  the script now exits 4 with `ABORT: the baseline is not green` rather than produce a
+  number nobody can interpret. That abort path was exercised for real by the first run.
+
+**Reproducing it by hand** (no scratch directory involved; `touch` is load-bearing, for the
+reason above):
+
+    f=crates/codegen/chaos-engine/src/remote/install.rs
+    cp "$f" /tmp/install.rs.pristine
+    sed -i 's|^        self\.provenance\.check_file(staged, signature)?;$|        let _ = (staged, signature);|' "$f"
+    touch "$f"
+    RUST_MIN_STACK=16777216 cargo test -p chaos-engine --offline --locked --lib -- remote::install
+    RUST_MIN_STACK=16777216 cargo test -p chaos-engine --offline --locked --lib -- remote::client
+    RUST_MIN_STACK=16777216 cargo test -p chaos-engine --offline --locked --lib -- remote::provenance
+    cp /tmp/install.rs.pristine "$f" && touch "$f" && cmp /tmp/install.rs.pristine "$f" && echo restored
+
+**What this re-run does not add.** It is a re-measurement, not a new capability: no new host
+was involved, no new artifact was signed, and the limits recorded above still stand -- every
+remote-deploy assertion in this file is Linux x86_64, and the Docker lab's 130 acceptance
+checks run against one container image. The claim stays "a host that requires provenance
+refuses an artifact it cannot attribute, and four install tests plus two client tests fail
+loudly if that enforcement is removed".

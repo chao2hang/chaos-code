@@ -2,6 +2,47 @@
 
 ## Unreleased
 
+### 证据复测：remote 签名「删掉那一行会红几条」被重新测了一遍，顺手挖出测量装置自己的洞
+
+`docs/verification/remote-provenance-linux-2026-10-02.log` 写着「把 provenance 调用删掉，会有一串测试
+转红」，却没写删的是**哪一行**。不能照着复现的证据不是证据，这一轮在 `ef33dfd9` 上重做：先把锚点、替换、
+以及真正落盘的 diff 写进日志，再跑任何东西。被删的只有 `InstallLayout::commit` 里的一行
+（`self.provenance.check_file(staged, signature)?;` → `let _ = (staged, signature);`），长度下限、摘要比对、
+平台头读取、版本目录、原子 `rename`、发布后复读一概不动——这正是真实的回归形状：一次冲突解决把唯一那句
+查签名策略的调用吞掉，而它周围每一样都看着仍被照顾。
+
+**结果**：基线（动手之前先量）`remote::install` 20 绿、`remote::client` 30 绿、`remote::provenance` 15 绿；
+删掉那一行之后 install 红 4、client 红 2、provenance **照绿 15**。六条红的 panic 载荷被逐字引进日志，因为它们
+印出来的正是被破坏的断言本体——`CommitOutcome { version: "2.0.0", previous: Some("1.0.0"), .. }` 与
+`InstallOutcome { version: "1.0.0", current: true, .. }`：一个无人能归属的产物成了主机要启动的那一个。
+
+**`remote::provenance` 那 15 条删不动，是结果的一半，也是给读者的陷阱。** 它们直接调
+`ProvenancePolicy::check`/`check_file`，测的是**策略**不是**接线**，删调用点不可能让它们红。所以「provenance
+的测试通过」对「这台主机到底执行不执行」零信息量——执行活在 `install.rs`，由上面那六条守着。今后这一行任何
+结论都必须引 install/client 的名字，不能引策略自己的测试。
+
+**第一次尝试暴露的缺陷在测量装置身上，值得单独记。** 脚本原本先变异、跑测试、还原，最后才跑未变异基线，
+于是它把同一次变异测了两遍、把第二遍当作对照组（基线报的正是那 4 + 2 条）。两个独立原因，每一个都足以凭空
+造出「变异全被抓」的绿色结论：
+
+- `shutil.copy2` 按设计连同备份的 **mtime** 一起还原，而那个时间戳比 cargo 用被变异源码产出的构建更旧。
+  cargo 按 mtime 做指纹，看到「源比它自己的产物还老」便跳过重编，于是所谓基线跑的是被变异的二进制。
+  修法：每次内容改动之后都 `os.utime(path, None)`，包括还原那一次；还原后再把三组过滤器跑一遍——
+  字节相同的源码压在一个由变异源码构建的二进制之上，仍然是在对树撒谎。
+- 顺序。放在实验之后的基线，说的是「已经被改过的树」。修法：基线先测，不绿即 `ABORT: the baseline is not
+  green` 退出 4，不再产出一个谁都无法解读的数字。这条退出分支被第一次运行真实踩过。
+
+还原证据：`sha256(pristine)=938a8130f2ef…4a25f1`，复制回来后 `sha256(after)` 同值、`cmp` 退出 0，三组过滤器
+第三次跑仍是 20 / 30 / 15 全绿。日志里另给了**不依赖任何临时目录**的手工复现序列，其中 `touch` 是承重的
+（原因见上）。
+
+**同轮另一条复测**：`scripts/install-sh-in-docker.sh` 在容器存活上限改为 `CHAOS_LAB_KEEPALIVE`（6 小时，启动
+时打印）之后重跑，19/19 全绿，`checksum OK 0ee7d6ee…`、`signature OK` 与 2026-10-02 逐项对上，摘要与
+`docs/verification/release-signature-v0.4.2-2026-10-02.log` 记录的同一个值一致，说明发布产物没在这两份记录
+底下被重传。被重跑的到底是哪个脚本也被钉住：`git log --oneline -1 -- scripts/install.sh` 仍指向 `88511413`，
+`cmp` `1487aded` 与 `ef33dfd9` 两个提交里的 `scripts/install.sh` 无差异。green 本身不是重点——修复夹具之后
+的 green 和修复之前的 green 说的是两件事，所以记录里写的是跑了哪个脚本，而不是默认沿用上一节。
+
 ### 修复：Web 主机重启后浏览器不能自愈——协议占位符被当成真工作区 id，丢失的会话无人接管
 
 给「浏览器层的断线/重连/snapshot fallback」补第一条真实故障注入的 Playwright 用例时，页面在主机重启之后

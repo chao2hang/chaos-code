@@ -144,3 +144,128 @@ script are looking at the same bytes.
   each with its own limits.
 - Version currency: `v0.4.2` is the newest published release; the repository is ahead
   of it. Re-run against the new tag after the next release.
+
+
+---
+
+## Re-run 2026-10-03: 19/19 again, and this time under a ceiling the harness owns
+
+`bash scripts/install-sh-in-docker.sh` was run again from a tree whose `scripts/install.sh` is
+byte-identical to `scripts/install.sh` at `1487aded` (proved with `cmp`), and whose published copy at
+`https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.sh` is byte-identical to
+that same file (`cmp` against a `curl -fsSL` of the URL, and the lab performs the same comparison
+itself as one of its 19 checks).
+
+**This is no longer the script the sections above tested.** The header of this file names `3ceac9b1`
+as the commit under test; that is now two changes behind. `download_github()` gained a
+`min_bytes` floor (`3cd03151`, then `88511413`): a released artifact is over 150 MB, so a `200` whose
+body is smaller than the floor is treated as a truncated transfer or a proxy body, the candidate is
+removed, and the reason is carried into the final error. Before that, a short 200 reached the checksum
+step and failed there, pointing at the digest for what was a transport problem. A run of this lab is
+only worth keeping if it says *which* installer it ran, which is why the commit is named above rather
+than assumed from the previous section.
+
+**Why a re-run was owed at all.** The 2026-10-02 run of this lab died inside the harness: every Docker
+lab in the repository kept its container alive with `--entrypoint sleep <image> 3600`, so the container's
+PID 1 exited one hour after start and SIGKILLed the `docker exec` in flight. On a 150 MB download the
+lab reported `install.sh exited 137 using only its built-in key` plus two "no OK line" failures -- three
+red checks about an installer that had not been given the chance to finish. The ceiling is now
+`CHAOS_LAB_KEEPALIVE` (six hours, printed at start so a transcript records the harness's own limit).
+The first line of the header below is that print. A green re-run after a harness fix is a different
+claim from a green run before it: it says the previous green and the intermediate red describe the
+same script.
+
+Transcript, verbatim (tail of `bash scripts/install-sh-in-docker.sh`):
+
+```
+== the machine doing the installing
+   image:        debian:bookworm-slim (stock Debian; no cargo, no repo, no prior install)
+   installer:    scripts/install.sh (working tree)
+   repo:         chao2hang/chaos-code
+   built-in key: A+938NxEPRqBrn6P/393upsO4Arcdwt3/H6F2eC8aHM=
+   keep-alive:   the container stops after 21600s; a longer download needs CHAOS_LAB_KEEPALIVE
+   ok  container is up: Linux 6.8.0-138-generic x86_64
+   ok  prerequisites install from distro packages: curl, python3, python3-cryptography
+   python3 3.11.2, cryptography 38.0.4
+   ok  no prior install to inherit: no ~/.chaos, no chaos on PATH, no cargo
+   ok  the built-in key is the repository's CHAOS_SIGNING_PUBLIC_KEY
+
+== the command README tells users to run
+   ok  the published https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.sh is byte-identical to the script under test
+     | Chaos installer
+     |   repo:    chao2hang/chaos-code
+     |   version: 0.4.2
+     |   asset:   chaos-linux-x64
+     |   store:   /root/.chaos/downloads/chaos-0.4.2-linux-x86_64
+     |   dest:    /root/.chaos/bin/chaos -> ../downloads/chaos-0.4.2-linux-x86_64
+     |   origin:  https://github.com/chao2hang/chaos-code/releases/download/v0.4.2/chaos-linux-x64
+     |   mirror:  origin first, then public fallbacks
+     | downloading...
+     |   try: https://github.com/chao2hang/chaos-code/releases/download/v0.4.2/chaos-linux-x64
+     |   from: https://github.com/chao2hang/chaos-code/releases/download/v0.4.2/chaos-linux-x64
+     |   try: https://github.com/chao2hang/chaos-code/releases/download/v0.4.2/SHA256SUMS
+     | checksum OK (0ee7d6ee3c92159d2b013c7d081cf2cc265d2d59a808ebb0fb9f2554a7b4bfa2)
+     | signature OK
+     | installed: /root/.chaos/bin/chaos -> ../downloads/chaos-0.4.2-linux-x86_64
+     | chaos 0.4.2 (8503250745ff)
+   ok  install.sh exited 0 with no CHAOS_SIGNING_PUBLIC_KEY in the environment
+   ok  the digest was checked: checksum OK (0ee7d6ee3c92159d2b013c7d081cf2cc265d2d59a808ebb0fb9f2554a7b4bfa2)
+   ok  the signature was checked: signature OK
+
+== what landed on disk
+   ok  the artifact is stored under the versioned name auto-update expects: /root/.chaos/downloads/chaos-0.4.2-linux-x86_64
+   ok  bin/chaos -> ../downloads/chaos-0.4.2-linux-x86_64 (relative, so it survives a bind-mount that remaps $HOME)
+   ok  bin/chaos resolves and is executable
+   ok  bin/agent points at the same artifact
+   ok  downloads/chaos-latest names the current version
+   ok  the installed binary runs and reports: chaos 0.4.2 (8503250745ff)
+   ok  PATH was configured in a shell rc
+
+== a second run
+   ok  re-running is a no-op: already installed: chaos 0.4.2 (8503250745ff)
+
+== controls: the signature check has to be able to say no
+   ok  the controls really do set CHAOS_SIGNING_PUBLIC_KEY in the child's environment
+   ok  a blank key is refused before any download starts
+     |   from: https://github.com/chao2hang/chaos-code/releases/download/v0.4.2/chaos-linux-x64
+     |   try: https://github.com/chao2hang/chaos-code/releases/download/v0.4.2/SHA256SUMS
+     | checksum OK (0ee7d6ee3c92159d2b013c7d081cf2cc265d2d59a808ebb0fb9f2554a7b4bfa2)
+     | error: signature verification FAILED for chaos-linux-x64
+     |   The binary may have been tampered with. Refusing to install.
+     |   To bypass (NOT recommended), set CHAOS_SKIP_SIGNATURE=1.
+   ok  a valid-but-foreign key is refused with 'signature verification FAILED'
+   ok  the refused install left the working artifact untouched (0ee7d6ee3c92159d2b013c7d081cf2cc265d2d59a808ebb0fb9f2554a7b4bfa2)
+
+all 19 check(s) passed
+```
+
+The blank-key control is placed before the download on purpose: refusing *after* fetching 150 MB would
+still be a refusal, but it would not prove the key is validated up front, which is the property that
+keeps a mistaken environment variable from spending the bandwidth and half-writing a store. The foreign-
+key control is the opposite half -- a key that parses as a valid Ed25519 key but did not sign this build
+must be refused by the signature check, not by the parse, and the transcript shows the checksum passing
+first and the signature line refusing after it. The third control in that section is the one that makes
+the other two worth reading: the refused install left the artifact already in the store at the same
+digest, so a failed control run does not poison the machine for the next one.
+
+Cross-checks after the run:
+
+- `gh release list` still reports `v0.4.2` as latest (published 2026-09-23T13:18:43Z), so the version
+  the lab installed is still the newest published one; the repository is ahead of it, unchanged from
+  the section above.
+- The digest the installer checked (`0ee7d6ee3c92159d2b013c7d081cf2cc265d2d59a808ebb0fb9f2554a7b4bfa2`)
+  is the same one recorded on 2026-10-02 and the same one in
+  `docs/verification/release-signature-v0.4.2-2026-10-02.log`, i.e. the published artifact has not been
+  re-uploaded underneath these transcripts.
+- `cmp` on the published raw `main` copy versus the tree copy: identical (the lab asserts the same thing
+  from inside the container, before it runs the installer).
+
+What this re-run does NOT change: every limit in "What this file is NOT evidence about" still applies
+unchanged -- `install.ps1` and `install.bat` have still never been executed, no macOS or arm64, mirrors
+and `CHAOS_CN=1` untouched, `CHAOS_SKIP_CHECKSUM`/`CHAOS_SKIP_SIGNATURE` unexercised, no upgrade across
+differing versions, and the escape hatches are asserted absent rather than tested present.
+
+`scripts/install.sh` has not been touched since that run: `git log --oneline -1 -- scripts/install.sh`
+still names `88511413`, and `cmp` of the file at `1487aded` against the file at `ef33dfd9` (the head
+pushed on 2026-10-03) reports no difference. So this transcript still describes the installer that is
+on `main`, and no re-run is owed for the commits since.
