@@ -464,6 +464,53 @@ def run_link_mapping_case() -> int:
     return 1
 
 
+def run_inline_code_link_case() -> int:
+    """Link syntax inside `backticks` is an example; prose is a claim.
+
+    Both halves drive the real `--links` mode over a throwaway directory: a file
+    whose only `](...)` occurrences are inside inline code and a fence must be
+    clean, and adding one prose link to the same directory must fail by name.
+    Without the second half this case would pass with a checker that ignores
+    every link, which is the failure it exists to prevent.
+    """
+    name = "links: inline-code syntax is an example, a prose link is still checked"
+
+    def run_links(tmp: str) -> tuple[int, str]:
+        proc = subprocess.run(
+            [sys.executable, GATE, "--links", "--glob", "*.md"],
+            cwd=tmp, capture_output=True, text=True)
+        return proc.returncode, proc.stdout
+
+    with tempfile.TemporaryDirectory() as tmp:
+        (Path(tmp) / "examples.md").write_text(
+            "# 说明\n\n"
+            "下列写法只是示例：`[信任](nope.md#信任)`、`](missing.md)`、"
+            "`](NN-xxx.md#...)`。\n\n"
+            "~~~\n[块内示例](also-missing.md)\n~~~\n"
+            "正文里的真链接：[指南](guide.md#安装)。\n",
+            encoding="utf-8")
+        (Path(tmp) / "guide.md").write_text("# 指南\n\n## 安装\n", encoding="utf-8")
+        examples_rc, examples_out = run_links(tmp)
+
+        (Path(tmp) / "prose.md").write_text(
+            "# 正文\n\n详见 [认证](missing-auth.md)。\n", encoding="utf-8")
+        prose_rc, prose_out = run_links(tmp)
+
+    ok = (
+        examples_rc == 0
+        and prose_rc != 0
+        and "prose.md: missing link target -> missing-auth.md" in prose_out
+        and "examples.md" not in prose_out
+    )
+    if ok:
+        print(f"ok   {name}")
+        return 0
+    print(f"FAIL {name}")
+    print(f"     examples rc={examples_rc} (want 0), prose rc={prose_rc} (want != 0)")
+    print("     " + (examples_out + prose_out).strip().replace("\n", "\n     ")[:600])
+    return 1
+
+
 def main() -> int:
     failures = sum(run_case(*case) for case in CASES)
     failures += sum(run_cell_case(*case) for case in CELL_CASES)
@@ -472,7 +519,8 @@ def main() -> int:
     failures += run_removal_case()
     failures += run_fix_anchors_case()
     failures += run_link_mapping_case()
-    total = (len(CASES) + len(CELL_CASES) + len(FORK_NAME_CASES) + 4)
+    failures += run_inline_code_link_case()
+    total = (len(CASES) + len(CELL_CASES) + len(FORK_NAME_CASES) + 5)
     print(f"\n{total - failures}/{total} self-test case(s) passed")
     return 1 if failures else 0
 

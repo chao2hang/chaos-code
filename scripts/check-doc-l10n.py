@@ -224,6 +224,24 @@ def link_targets(text: str) -> set[str]:
     return set(LINK.findall(strip_code(text)))
 
 
+def mask_inline(text: str) -> str:
+    """Blank inline code spans, leaving every other character where it was.
+
+    `--links` checks the links a reader can actually follow. A document that
+    shows what link syntax looks like -- the conventions notes carry
+    `](file.md#anchor)` and `](NN-xxx.md#...)` as examples, and a claims audit
+    quotes `](#minimal-and-fullscreen)` while describing it as a dead anchor --
+    is not asserting those targets exist, and the checker used to report all of
+    them as broken links. `strip_code` already blanks fenced blocks; a backticked
+    span is the same case one level down.
+
+    Only `check_links` uses this. The `--before/--after` invariants compare
+    inline spans *as content* (a translation must not silently alter an
+    identifier inside code), so masking there would hide real drift.
+    """
+    return INLINE.sub(lambda m: " " * (m.end() - m.start()), text)
+
+
 def numeric_literals(text: str) -> Counter[str]:
     """Prose numeric literals: default values, sizes, timeouts, versions.
 
@@ -595,7 +613,10 @@ def check_links(glob: str) -> int:
     slugs = {p: heading_slugs(Path(p).read_text(encoding="utf-8")) for p in paths}
     broken = 0
     for path in paths:
-        text = strip_code(Path(path).read_text(encoding="utf-8"))
+        # Fenced blocks blanked (they are examples, not claims) and inline code
+        # spans too -- see `mask_inline`. Heading slugs are still collected from
+        # the unmasked text, because a slug can only come from a real heading.
+        text = mask_inline(strip_code(Path(path).read_text(encoding="utf-8")))
         for target in sorted(link_targets(text)):
             if target.startswith(("http://", "https://", "mailto:")):
                 continue

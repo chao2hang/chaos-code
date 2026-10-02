@@ -381,6 +381,21 @@ jobs:
           # Every table cell is either translated or a decided literal.
           python3 scripts/check-doc-l10n.py --cells --strict --glob "$glob"
 
+      # Both localization guards are only as good as the day somebody checked
+      # that they still fail on purpose. `check-doc-l10n-selftest.py` existed but
+      # nothing invoked it -- so a check whose assertions had quietly stopped
+      # biting would have stayed green unnoticed -- and `l10n-guard.sh` needs
+      # its own, because its pass/fail call now depends on classifying a
+      # disappeared file as a move, a recorded removal, or a real loss. The last
+      # command runs the source-file guard over the real checkout, which is what
+      # catches a construct that parses on Linux CI but dies on bash 3.2.
+      - name: guard self-tests
+        run: |
+          set -euo pipefail
+          python3 scripts/l10n-guard-selftest.py
+          python3 scripts/check-doc-l10n-selftest.py
+          bash scripts/l10n-guard.sh --before HEAD --after HEAD --report "$RUNNER_TEMP/l10n"
+
   gui:
     name: GUI engine, Web host and frontend
     runs-on: ubuntu-latest

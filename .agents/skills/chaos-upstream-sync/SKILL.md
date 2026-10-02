@@ -240,9 +240,18 @@ bash scripts/l10n-guard.sh --before main --after HEAD
 
 | 文件 | 含义 | 触发失败 |
 |---|---|---|
-| `regressed.txt`     | 中文消失的文件(before ∖ after) | 任意一行 → exit 1 |
+| `regressed.txt`     | 中文消失且没有解释的文件 | 任意一行 → exit 1 |
+| `stale-allowlist.txt` | 登记的删除对应的文件仍在工作树里（删除没发生／已被还原） | 任意一行 → exit 1 |
 | `shrunk.txt`        | 中文字数减少的文件             | 任意一行 → exit 1 |
 | `fortress-breach.txt` | 强保护路径下中文被删(默认 pager views / slash / diagnostics / doctor_cmd / headless / acp) | 任意一行 → exit 1 |
+| `moved.txt`         | 文件消失但其中文逐行原样出现在别处（改名／拆 crate） | 说明性，不失败 |
+| `removed-recorded.txt` | 文件消失且删除已登记在 `scripts/ci/l10n-removed-allowlist.tsv` | 说明性，不失败 |
+
+`regressed.txt` 这一类**登记也救不了**：只要路径在 `--after` 还在、中文却没了（正是上游把
+中文换回英文的那种事故），就仍然硬失败；allowlist 只对「文件真的不在了」生效。上游合并时如果
+**故意**删掉一个带中文的文件（死代码、测试夹具），在 allowlist 加一行 `<path>\t<理由>`，
+理由要写清中文去哪了；同时 `scripts/l10n-guard.sh` 的改动必须过
+`python3 scripts/l10n-guard-selftest.py`（13 个用例，CI 与本仓库 Docker 入口都跑）。
 
 **强保护路径默认**: `crates/codegen/xai-grok-pager/src/{slash/commands,views,diagnostics,doctor_cmd,acp}` + `headless.rs` + `startup.rs` + `models.rs` + `crates/codegen/xai-grok-shell/src/agent`。可用 `--fortress <path>` 追加,`--exclude <path>` 排除(测试 fixture 等)。
 

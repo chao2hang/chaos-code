@@ -1,0 +1,292 @@
+l10n guard: classifying disappearance instead of flagging it
+Date: 2026-10-02  Host: linux (this workspace)
+Scope: scripts/l10n-guard.sh, scripts/ci/l10n-removed-allowlist.tsv (new),
+       scripts/l10n-guard-selftest.py (new), .github/workflows/ci.yml,
+       scripts/verify-in-docker.sh, sync/doc-l10n-conventions.md,
+       .agents/skills/chaos-upstream-sync/SKILL.md
+Every transcript below is verbatim from the commands run in this session.
+
+================================================================================
+1. WHY: the guard was red on this round's own tree, and `verify-in-docker.sh`
+   runs it as a gate (scripts/verify-in-docker.sh:134), so the round could not
+   be delivered without addressing it.
+================================================================================
+$ bash scripts/l10n-guard.sh
+  before Han files:  393
+  after  Han files:  395
+  regressed:         6
+  shrunk:            0
+  fortress-breach:   2
+
+FAIL — regressed (Chinese disappeared):
+crates/codegen/xai-grok-pager/src/app/dispatch/tests/usage_partial_failure.rs
+crates/codegen/xai-grok-pager/src/scrollback/blocks/credit_limit.rs
+crates/codegen/xai-grok-pager/src/views/dashboard/render_tests.rs
+crates/codegen/xai-grok-pager/src/views/dashboard/state_tests.rs
+crates/codegen/xai-grok-pager/src/views/usage_detail.rs
+crates/codegen/xai-grok-update/src/signature.rs
+
+FAIL — fortress breach (must-restore files):
+crates/codegen/xai-grok-pager/src/views/dashboard/render_tests.rs
+crates/codegen/xai-grok-pager/src/views/dashboard/state_tests.rs
+
+L10n Guard: FAIL — restore Chinese before merging.
+
+The guard compared by PATH only. Three different events collapse into that one
+verdict, and only one of them is the regression the guard exists for (an
+upstream merge leaving a file in place and stripping its Chinese).
+
+================================================================================
+2. ADJUDICATION OF THE SIX — was any user-visible Chinese actually lost?
+================================================================================
+Survival ratio = share of the file's unique Chinese-bearing lines that appear
+verbatim somewhere else in the tree after the change
+(`/tmp/grok-goal-ec37f68d1619/implementer/hanratio.py`, corpus = 4628 unique
+Han lines across `crates/**/*.rs`):
+
+  1.00   20/ 20  crates/codegen/xai-grok-update/src/signature.rs
+  0.00    0/ 57  crates/codegen/xai-grok-pager/src/views/usage_detail.rs
+  1.00    6/  6  crates/codegen/xai-grok-pager/src/views/dashboard/state_tests.rs
+  1.00    2/  2  crates/codegen/xai-grok-pager/src/views/dashboard/render_tests.rs
+  0.00    0/  2  crates/codegen/xai-grok-pager/src/app/dispatch/tests/usage_partial_failure.rs
+  0.00    0/ 11  crates/codegen/xai-grok-pager/src/scrollback/blocks/credit_limit.rs
+
+Checked individually rather than inferred from the ratio:
+
+* signature.rs — moved. `git show HEAD:.../signature.rs | rg '[\p{Han}]'` shows
+  `//! Ed25519 离线签名验证。` etc.; `rg -c '[\p{Han}]'
+  crates/codegen/xai-grok-signature/src/lib.rs` -> `30`. The crate split carried
+  the text with it.
+* dashboard/{state,render}_tests.rs — moved. Their Chinese was test *input*
+  (`"中\r\n文"`), and those exact lines exist in the host modules' inline
+  `mod tests` (1.00 ratio).
+* scrollback/blocks/credit_limit.rs — never compiled: `git show
+  HEAD:.../scrollback/blocks/mod.rs | rg -n credit_limit` -> `NOT DECLARED at
+  HEAD`. The live credit-limit copy is Chinese and shipped, in
+  `app/dispatch/billing.rs` `CreditLimitCopy`:
+      heading: "已达到消费上限。",           secondary_label: "提高限额",
+      heading: "已达到当前计划的额度上限。", secondary_label: "按量付费",
+  So no user-visible string was lost with the orphan.
+* views/usage_detail.rs — deleted dead overlay (its `fill_*` writers and the
+  `x.ai/usage/aggregate` effect no longer exist; `views/usage_modal.rs` is the
+  live surface, and the status-bar chip now dispatches `Action::ShowUsage`).
+* app/dispatch/tests/usage_partial_failure.rs — orphan test file (not declared
+  in `app/dispatch/tests/mod.rs` at HEAD), Chinese only in assertion text, and
+  the functions it drove are gone with the overlay above.
+
+Verdict: nothing user-visible lost its translation; every flag was a move or a
+deliberate removal. That is a guard defect, not a translation defect.
+
+================================================================================
+3. THE FIX — classify, with one property that must not be negotiable
+================================================================================
+New classification of `before ∖ after` (`moved.txt` / `removed-recorded.txt` /
+`regressed.txt`, raw set kept as `disappeared-raw.txt`):
+
+  moved    -- the path is gone and >= 90 % of its unique Chinese lines (>= 2 of
+              them) reappear verbatim at another path. Decided from CONTENT.
+  recorded -- the path is absent at --after and `scripts/ci/
+              l10n-removed-allowlist.tsv` has `<path>\t<reason>` for it.
+  regressed -- everything else, INCLUDING any path that still exists at --after
+              with no Chinese in it. The allow list is consulted only for
+              absent paths, so it has no power over an in-place strip.
+
+Real-tree result after the change:
+
+$ bash scripts/l10n-guard.sh --report .../l10n-run2
+  before Han files:  393
+  after  Han files:  395
+  moved:             3
+  removed-recorded:  3
+  regressed:         0
+  stale-allowlist:   0
+  shrunk:            0
+  fortress-breach:   0
+
+OK — moved (Chinese followed the file to a new path):
+crates/codegen/xai-grok-pager/src/views/dashboard/render_tests.rs(2 of 2 Chinese lines reappear at another path)
+crates/codegen/xai-grok-pager/src/views/dashboard/state_tests.rs(6 of 6 Chinese lines reappear at another path)
+crates/codegen/xai-grok-update/src/signature.rs(20 of 20 Chinese lines reappear at another path)
+
+OK — removed as recorded in l10n-removed-allowlist.tsv:
+crates/codegen/xai-grok-pager/src/app/dispatch/tests/usage_partial_failure.rs(从未被 dispatch/tests/mod.rs 声明的孤儿测试（不编译）；被测函数已随用量覆盖层删除，中文仅为断言文本)
+crates/codegen/xai-grok-pager/src/scrollback/blocks/credit_limit.rs(从未被 blocks/mod.rs 声明的孤儿（不编译）；额度上限文案在实际发射处 app/dispatch/billing.rs 的 CreditLimitCopy)
+crates/codegen/xai-grok-pager/src/views/usage_detail.rs(删除整块不可达的用量详情覆盖层；实际用量界面在 views/usage_modal.rs，chip 点击改派 Action::ShowUsage)
+
+OK — L10n Guard: PASS
+
+Two implementation defects found and fixed while building this:
+
+(a) `grep -c -Fxf -f "$tmp_lines" ...` -- the combined `-f` consumed the *next*
+    `-f` as its filename, so the pattern file was the literal string `-f` and
+    every match count was 0 (the run reported "0 of 20 Chinese lines reappear").
+    Caught by comparing against the standalone python measurement in §2.
+    Now `grep -c -Fx -f`.
+(b) staleness was judged with `exists_at "$AFTER"`, so a ref-vs-itself
+    comparison called every allow-list entry stale -- which is exactly what the
+    CI step I had just written (`--before HEAD --after HEAD`) printed:
+        FAIL — stale allow-list entries:
+        crates/codegen/xai-grok-pager/src/views/usage_detail.rs(path is back at HEAD; delete this entry)
+    Staleness is now a property of the working tree, not of the compared range:
+    an entry whose path is in the working tree records a removal that did not
+    happen. That also catches a file restored *later*, outside the range being
+    compared -- which the ref-based version missed.
+
+================================================================================
+4. NON-VACUITY: 13 cases driving the real script in throwaway git repos
+================================================================================
+$ python3 scripts/l10n-guard-selftest.py
+ok    untouched
+ok    clobber_in_place
+ok    clobber_cannot_be_allow_listed
+ok    rename_is_a_move
+ok    move_below_threshold_is_a_loss
+ok    unrecorded_deletion_fails
+ok    recorded_deletion_passes
+ok    removed_deletion_with_no_allow_list
+ok    stale_entry_fails
+ok    committed_replacement_survives_a_degenerate_range
+ok    shrunk_still_fails
+ok    allow_list_without_reason_fails
+ok    move_min_override
+
+13/13 l10n-guard cases passed
+
+`case_clobber_cannot_be_allow_listed` is the load-bearing one: it allow-lists
+the very path it strips and still requires exit 1 with the path under
+`regressed`. `case_committed_replacement_survives_a_degenerate_range` is the
+regression test for defect (b).
+
+Mutation proofs (each mutation applied to scripts/l10n-guard.sh, then restored
+with `cmp` reporting byte-identical):
+
+### MUTATION: allow list consulted before the exists check
+FAIL  clobber_in_place
+FAIL  clobber_cannot_be_allow_listed
+10/12 l10n-guard cases passed
+RESTORED_BYTE_IDENTICAL
+
+### MUTATION: move threshold dropped (any single line counts)
+FAIL  move_below_threshold_is_a_loss
+11/12 l10n-guard cases passed
+RESTORED_BYTE_IDENTICAL
+
+### MUTATION: stale allow-list check disabled
+FAIL  stale_entry_fails
+11/12 l10n-guard cases passed
+RESTORED_BYTE_IDENTICAL
+
+================================================================================
+5. WIRING -- a self-test nothing runs is not a guard
+================================================================================
+`scripts/check-doc-l10n-selftest.py` already existed (51 cases) and NOTHING
+invoked it: `rg -n "selftest" .github/workflows/*.yml scripts/*.sh` returned no
+hits. Both self-tests are now wired:
+
+* .github/workflows/ci.yml, `docs-l10n` job -> new "guard self-tests" step:
+  `l10n-guard-selftest.py`, `check-doc-l10n-selftest.py`, and
+  `bash scripts/l10n-guard.sh --before HEAD --after HEAD --report "$RUNNER_TEMP/l10n"`
+  (the last walks the real 393-file tree, so a construct that parses on Linux
+  CI but dies on bash 3.2 has somewhere to fail).
+* scripts/verify-in-docker.sh -> new gate
+  "localization guard self-tests: python3 scripts/l10n-guard-selftest.py &&
+  python3 scripts/check-doc-l10n-selftest.py".
+
+Both self-tests are green locally, including the previously unwired one:
+  51/51 self-test case(s) passed        (before §7 added its case; 52/52 after)
+
+Guards re-run after all edits:
+  $ python3 -c "import yaml; yaml.safe_load(open('.github/workflows/ci.yml'))"   -> YAML_OK
+  $ python3 scripts/ci/check-workflow-shells.py .github/workflows/ci.yml          -> OK
+  $ python3 scripts/ci/check-script-portability.py                                -> OK (23 shell script(s))
+  $ bash scripts/l10n-guard.sh --before HEAD --after HEAD --report ...            -> OK — L10n Guard: PASS
+
+Portability work in the same edit: `is_excluded` expanded `"${EXCLUDE[@]}"`
+under `set -u`, which is an unbound expansion on the bash 3.2 macOS still
+ships; now `${EXCLUDE[@]+"${EXCLUDE[@]}"}`. No `mapfile`/`realpath`/`grep -P`/
+`xargs -r` was introduced (portability gate above is the check).
+
+================================================================================
+6. COVERAGE LIMITS (what this does NOT prove)
+================================================================================
+* The move test is content-based on whole trimmed lines. A translation that
+  rewraps or rewords a sentence while moving it scores as a loss, not a move --
+  deliberately conservative: it fails loudly rather than guessing.
+* `removed-recorded.txt` trusts the reason text. Nothing here verifies prose in
+  a Chinese sentence; the guard only forces a reason to exist and refuses
+  entries without one (self-test `allow_list_without_reason_fails`). A wrong
+  reason is a review problem, and the allow list is 3 lines, all of which were
+  checked against the code in §2.
+* No browser/terminal surface was touched by this change, so the standing
+  browser-verification rule has no UI to exercise here; verification was the
+  self-test suite, the three mutations, the real-tree guard run, and the
+  pager/CLI test suites.
+* The guard still only reads `crates/**/*.rs`. Markdown is `check-doc-l10n.py`'s
+  job; that asymmetry is unchanged and documented in the skill.
+
+================================================================================
+7. SIDE FINDING: the doc checker reported link syntax that was never a claim
+================================================================================
+Widening `check-doc-l10n.py --links` to the glob CI never runs (`sync/**/*.md`)
+turned up 8 "broken links", all pre-existing (`diff` of the link lines between
+HEAD and the worktree: LINKS_UNCHANGED_BY_MY_EDIT):
+
+  sync/2026-09-18-curated-port.md: missing link target -> a.md#锚点
+  sync/2026-09-18-curated-port.md: missing link target -> 目标
+  sync/doc-claims-verification.md: dead anchor -> #minimal-and-fullscreen
+  sync/doc-l10n-conventions.md: dead anchor -> #...
+  sync/doc-l10n-conventions.md: missing link target -> ...
+  sync/doc-l10n-conventions.md: missing link target -> ../../../../CHAOS.md
+  sync/doc-l10n-conventions.md: missing link target -> 02-authentication.md
+  sync/doc-l10n-conventions.md: missing link target -> NN-xxx.md#...
+
+Seven of the eight were link syntax *inside inline code* -- the conventions doc
+lists `](...)` and `](NN-xxx.md#...)` as things to watch for, and
+`doc-claims-verification.md:190` quotes `](#minimal-and-fullscreen)` while
+describing it as a dead anchor. `strip_code` blanks fenced blocks, so the tool
+already understood "code is not a claim"; it just stopped at the fence boundary.
+
+Fix: `mask_inline()` blanks backticked spans positionally (same character count,
+so line/column reporting and every other mode are untouched) and `check_links`
+consumes it. Deliberately NOT applied to the `--before/--after` invariants,
+which compare inline spans *because* they are content.
+
+Non-vacuity: new case in `check-doc-l10n-selftest.py`
+(`links: inline-code syntax is an example, a prose link is still checked`) runs
+the real `--links` twice over one throwaway directory -- examples-only file must
+be clean, then adding a prose link must fail naming `prose.md`. Total is now
+52/52. Mutation (delete the `mask_inline` call):
+
+### MUTATION: --links ignores inline code spans again
+FAIL links: inline-code syntax is an example, a prose link is still checked
+RESTORED_BYTE_IDENTICAL
+
+The eighth was a real, if small, defect: a blockquote in the conventions doc
+quoting the authoritative config-root wording carried
+`[CHAOS.md](../../../../CHAOS.md)`, while the shipped guides use five levels
+(`rg "CHAOS\.md\)" crates/codegen/xai-grok-pager/docs/` -> `../../../../../` in
+02/03/05/README). The quoted depth was a mis-transcription and resolved from
+neither place; it now points at `../CHAOS.md`, which resolves from `sync/`.
+
+`--english` on `sync/**` then had 6 of its 8 lines from one cause: the recon
+records are *generated* by `scripts/upstream-recon.sh`, whose template was
+English. Template rewritten in Chinese (headings, intro, table labels, next
+steps) and the record regenerated against the live API:
+
+$ bash scripts/upstream-recon.sh
+upstream-recon: SOURCE_REV=72a61251f upstream=2bdd1d6a6 status=ahead ahead=9 behind=0
+upstream-recon: wrote sync/recon/2026-10-02-2bdd1d6a6.md
+
+Result on the previously unchecked glob:
+  --links   : 0 broken link(s)          (was 8)
+  --english : 2 lines                   (was 8)
+
+The 2 that remain are `sync/doc-claims-verification.md:80` and `:287`, both
+verbatim quotes of upstream English text inside 「…」 (a UI string
+"…leaving the session" and a quoted PR statement). Quoting an upstream sentence
+in its original language is the documented convention in
+`sync/doc-l10n-conventions.md`, so they are left as decided literals, not
+translated. `sync/**` is intentionally still not wired into CI -- it is
+maintainer notes, not text compiled into the binary -- but it is now clean
+enough that widening the check later is a one-line change rather than a cleanup
+project.

@@ -9,9 +9,14 @@
 #   l10n-guard.sh --before <ref> --after <ref> [options]
 #
 # Outputs (in --report dir, default /tmp/l10n-guard-$$):
-#   before-files.txt     files with Han chars at --before
-#   after-files.txt      files with Han chars at --after
-#   regressed.txt        before ∖ after  (Chinese disappeared)
+#   disappeared-raw.txt  before ∖ after, before classification
+#   moved.txt            of those, files whose Chinese lines survive verbatim
+#                        elsewhere at --after (renames / extracted modules)
+#   removed-recorded.txt of those, files whose Chinese is really gone, covered
+#                        by an entry in --allow-file
+#   regressed.txt        unexcused loss (FAIL)
+#   stale-allowlist.txt  --allow-file entries whose path is in the working
+#                        tree, i.e. a removal that did not happen (FAIL)
 #   shrunk.txt           files where Han count decreased
 #   fortress-breach.txt  fortress files missing at --after
 #
@@ -21,9 +26,13 @@
 set -euo pipefail
 
 # ---- Defaults & arg parsing ----------------------------------------------
+SCRIPT_DIR="$(cd -- "$(dirname -- "$0")" && pwd -P)"
 BEFORE="HEAD"
 AFTER="WORKTREE"
 REPORT_DIR=""
+ALLOW_FILE="$SCRIPT_DIR/ci/l10n-removed-allowlist.tsv"
+USE_ALLOW_LIST=1
+MOVE_MIN=90
 FORTRESS=()
 EXCLUDE=()
 
@@ -55,13 +64,31 @@ OPTIONS:
                        Repeatable. Default: pager high-risk paths.
   --exclude <path>     Path prefix to skip (e.g. tests/fixtures).
                        Repeatable.
+  --allow-file <path>  TSV of adjudicated removals (default: the
+                       scripts/ci/l10n-removed-allowlist.tsv next to this
+                       script). One "<path>\t<reason>" per line; "#" starts a
+                       comment. Excuses a path only if it is *absent* at
+                       --after -- see REPORTS below. An entry whose path is in
+                       the working tree is itself a failure.
+  --no-allow-list      Ignore the allow list entirely.
+  --move-min <percent> Minimum share of a disappeared file's unique Chinese
+                       lines that must reappear somewhere else at --after for
+                       it to count as moved (default: 90; at least 2 of them
+                       must match).
   --report <dir>       Output directory (default: /tmp/l10n-guard-PID)
   -h, --help           Show this help
 
 REPORTS (in --report):
-  before-files.txt     Files with Han chars at --before
-  after-files.txt      Files with Han chars at --after
-  regressed.txt        before ∖ after  (Chinese disappeared — FAIL)
+  disappeared-raw.txt  Files with Han at --before and none at --after
+  moved.txt            ... whose Chinese lines survive verbatim at another
+                       path: a rename or an extracted module (OK)
+  removed-recorded.txt ... whose removal is recorded in the allow list (OK)
+  regressed.txt        Unexcused loss (FAIL). A path that still exists at
+                       --after but lost its Chinese is always here -- the
+                       allow list cannot excuse it, because that is exactly
+                       the upstream-clobber case this guard exists for.
+  stale-allowlist.txt  Allow-list entries whose path is in the working tree,
+                       i.e. recording a removal that did not happen (FAIL)
   shrunk.txt           Files where Han count decreased (FAIL)
   fortress-breach.txt  Fortress files missing at --after (FAIL)
 
@@ -75,6 +102,9 @@ while [[ $# -gt 0 ]]; do
     --after)   AFTER="$2";  shift 2 ;;
     --fortress) FORTRESS+=("$2"); shift 2 ;;
     --exclude)  EXCLUDE+=("$2");  shift 2 ;;
+    --allow-file) ALLOW_FILE="$2"; shift 2 ;;
+    --no-allow-list) USE_ALLOW_LIST=0; shift ;;
+    --move-min) MOVE_MIN="$2"; shift 2 ;;
     --report)  REPORT_DIR="$2";  shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "l10n-guard: unknown arg: $1" >&2; usage; exit 64 ;;
@@ -104,6 +134,19 @@ fi
 [[ -z "$REPORT_DIR" ]] && REPORT_DIR="/tmp/l10n-guard-$$"
 mkdir -p "$REPORT_DIR"
 rm -f "$REPORT_DIR"/*.txt "$REPORT_DIR"/*.tsv
+
+# An allow-list entry without a reason is an unexplained exemption, which is the
+# thing the list is supposed to prevent. Reject the file rather than read it.
+if [[ "$USE_ALLOW_LIST" -eq 1 && -n "$ALLOW_FILE" && -f "$ALLOW_FILE" ]]; then
+  malformed=$(awk -F'\t' '/^[[:space:]]*#/ {next} NF == 0 {next} NF < 2 || $2 == "" {
+                 printf "%s:%d: %s\n", FILENAME, FNR, $0
+               }' "$ALLOW_FILE")
+  if [[ -n "$malformed" ]]; then
+    echo "l10n-guard: $ALLOW_FILE has entries without a reason (need \"<path>\\t<reason>\"):" >&2
+    printf '%s\n' "$malformed" >&2
+    exit 1
+  fi
+fi
 
 # ---- Helper: list all .rs files under crates/ at a ref --------------------
 # $1 = ref ("WORKTREE" or a commit-ish)
@@ -135,8 +178,10 @@ count_han_in() {
 
 # ---- Apply exclude filter (path prefix match) ----------------------------
 is_excluded() {
-  local file="$1"
-  for pat in "${EXCLUDE[@]}"; do
+  local file="$1" pat
+  # `${EXCLUDE[@]+...}` because an empty array is an unbound expansion under
+  # `set -u` on the bash 3.2 that macOS still ships.
+  for pat in ${EXCLUDE[@]+"${EXCLUDE[@]}"}; do
     # shellcheck disable=SC2053
     [[ "$file" == ${pat}* ]] && return 0
   done
@@ -172,6 +217,63 @@ build_manifest() {
     | sort -t$'\t' -k1,1 -n -r >> "$out"
 }
 
+# ---- Classification helpers ----------------------------------------------
+# Does the path exist at a ref?
+exists_at() {
+  # $1 = ref, $2 = path
+  if [[ "$1" == "WORKTREE" ]]; then
+    [[ -e "$2" ]]
+  else
+    git cat-file -e "${1}:${2}" 2>/dev/null
+  fi
+}
+
+# Unique, whitespace-trimmed lines containing Han, for one path at one ref.
+han_lines_at() {
+  local ref="$1" file="$2"
+  {
+    if [[ "$ref" == "WORKTREE" ]]; then
+      [[ -f "$file" ]] && cat -- "$file"
+    else
+      git show "${ref}:${file}" 2>/dev/null
+    fi
+  } | rg --no-filename '[\p{Han}]' 2>/dev/null \
+    | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | grep . | sort -u || true
+}
+
+# Every unique Han line in the whole after tree, deduped. A disappeared file's
+# lines are looked up in this pool to tell "moved" from "really gone".
+build_han_corpus() {
+  local ref="$1" files="$2" out="$3"
+  xargs -I{} -P 4 -n 1 bash -c '
+      ref="$1"; file="$2"
+      if [[ "$ref" == "WORKTREE" ]]; then
+        if [[ ! -f "$file" ]]; then exit 0; fi
+        rg --no-filename "[\p{Han}]" "$file" 2>/dev/null || true
+      else
+        git show "${ref}:${file}" 2>/dev/null | rg --no-filename "[\p{Han}]" || true
+      fi
+    ' _ "$ref" {} \
+    < "$files" \
+    | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | grep . | sort -u > "$out"
+}
+
+# Paths recorded in the allow list.
+allow_list_paths() {
+  [[ "$USE_ALLOW_LIST" -eq 1 && -n "$ALLOW_FILE" && -f "$ALLOW_FILE" ]] || return 0
+  awk -F'\t' '!/^[[:space:]]*#/ && NF >= 2 && $2 != "" {print $1}' "$ALLOW_FILE"
+}
+
+# Reason recorded for one path; non-zero exit when the path is not recorded.
+allow_reason() {
+  local path="$1"
+  [[ "$USE_ALLOW_LIST" -eq 1 && -n "$ALLOW_FILE" && -f "$ALLOW_FILE" ]] || return 1
+  awk -F'\t' -v p="$path" '
+    !/^[[:space:]]*#/ && $1 == p && $2 != "" { reason = $2; hit = 1 }
+    END { if (!hit) exit 1; print reason }
+  ' "$ALLOW_FILE"
+}
+
 # ---- Run -----------------------------------------------------------------
 echo "[l10n-guard] before=$BEFORE  after=$AFTER" >&2
 echo "[l10n-guard] report dir: $REPORT_DIR" >&2
@@ -185,9 +287,76 @@ awk -F'\t' '$1 > 0 {print $2}' "$REPORT_DIR/after.tsv"  > "$REPORT_DIR/after-fil
 sort -u "$REPORT_DIR/before-files.txt" > "$REPORT_DIR/before-files.sorted"
 sort -u "$REPORT_DIR/after-files.txt"  > "$REPORT_DIR/after-files.sorted"
 
-# regressed = before ∖ after
+# disappeared = before ∖ after
 comm -23 "$REPORT_DIR/before-files.sorted" "$REPORT_DIR/after-files.sorted" \
-  > "$REPORT_DIR/regressed.txt"
+  > "$REPORT_DIR/disappeared-raw.txt"
+
+# ---- Adjudicate the disappeared files ------------------------------------
+# "Chinese disappeared from this path" has three causes and only one of them is
+# the regression this guard was written for, so each is classified separately:
+#   moved    -- the path is gone but its Chinese lines are there verbatim at
+#               another path: a rename, or a module extracted into its own
+#               crate. Nothing lost its translation; the file changed address.
+#   recorded -- the path is gone and the Chinese really is gone, and someone
+#               wrote down why in the allow list (dead code retired, test-only
+#               fixture data that never rendered).
+#   regressed -- everything else. A path that still exists at --after but lost
+#               its Chinese always lands here whether or not it is allow-listed:
+#               the list is consulted only for absent paths, because an
+#               in-place strip is precisely the upstream-clobber case.
+build_han_corpus "$AFTER" "$REPORT_DIR/after-files.sorted" \
+  "$REPORT_DIR/after-han-lines.txt"
+
+: > "$REPORT_DIR/moved.txt"
+: > "$REPORT_DIR/removed-recorded.txt"
+: > "$REPORT_DIR/regressed.txt"
+: > "$REPORT_DIR/excused.txt"
+tmp_lines="$REPORT_DIR/.han-lines.$$"
+while IFS= read -r f; do
+  [[ -z "$f" ]] && continue
+  if exists_at "$AFTER" "$f"; then
+    printf '%s\t(path exists at %s with no Chinese in it)\n' "$f" "$AFTER" \
+      >> "$REPORT_DIR/regressed.txt"
+    continue
+  fi
+  han_lines_at "$BEFORE" "$f" > "$tmp_lines"
+  total=$(wc -l < "$tmp_lines" | tr -d ' ')
+  hits=$(grep -c -Fx -f "$tmp_lines" "$REPORT_DIR/after-han-lines.txt" 2>/dev/null || true)
+  hits=${hits:-0}
+  if [ "$hits" -ge 2 ] && [ $((hits * 100)) -ge $((total * MOVE_MIN)) ]; then
+    printf '%s\t(%s of %s Chinese lines reappear at another path)\n' \
+      "$f" "$hits" "$total" >> "$REPORT_DIR/moved.txt"
+    printf '%s\n' "$f" >> "$REPORT_DIR/excused.txt"
+    continue
+  fi
+  if reason=$(allow_reason "$f"); then
+    printf '%s\t(%s)\n' "$f" "$reason" >> "$REPORT_DIR/removed-recorded.txt"
+    printf '%s\n' "$f" >> "$REPORT_DIR/excused.txt"
+    continue
+  fi
+  printf '%s\t(%s of %s Chinese lines reappear elsewhere; no allow-list entry)\n' \
+    "$f" "$hits" "$total" >> "$REPORT_DIR/regressed.txt"
+done < "$REPORT_DIR/disappeared-raw.txt"
+rm -f "$tmp_lines"
+sort -u "$REPORT_DIR/excused.txt" -o "$REPORT_DIR/excused.txt"
+
+# An allow-list entry whose path is sitting in the working tree records a removal
+# that has not happened. Checked against the working tree rather than against
+# --after on purpose: judging it by the compared refs would make `--before HEAD
+# --after HEAD` call every entry stale (both sides still have the file), and
+# would miss the case that matters -- somebody restored the file later, outside
+# the range being compared. Either way the entry has to go, or the list quietly
+# turns into a permanent exemption nobody re-read.
+: > "$REPORT_DIR/stale-allowlist.txt"
+if [[ "$USE_ALLOW_LIST" -eq 1 && -n "$ALLOW_FILE" && -f "$ALLOW_FILE" ]]; then
+  while IFS= read -r p; do
+    [[ -z "$p" ]] && continue
+    if [[ -e "$p" ]]; then
+      printf '%s\t(path is in the working tree; the removal it records did not happen -- delete this entry)\n' "$p" \
+        >> "$REPORT_DIR/stale-allowlist.txt"
+    fi
+  done < <(allow_list_paths)
+fi
 
 # shrunk = file in both, after count < before count
 # Read before.tsv and after.tsv as: path -> count
@@ -204,13 +373,17 @@ awk -F'\t' '
 ' "$REPORT_DIR/before.tsv" "$REPORT_DIR/after.tsv" \
   | sort > "$REPORT_DIR/shrunk.txt"
 
-# fortress-breach = fortress files at BEFORE missing at AFTER
+# fortress-breach = fortress files at BEFORE missing at AFTER. A file the
+# classification already excused (moved, or a recorded removal) is not a
+# breach -- otherwise a rename inside a fortress path, or retiring dead code in
+# one, could never pass.
 : > "$REPORT_DIR/fortress-breach.txt"
 for pat in "${FORTRESS[@]}"; do
   # find files at BEFORE matching the path prefix
   while IFS= read -r f; do
     [[ -z "$f" ]] && continue
     is_excluded "$f" && continue
+    grep -Fxq -- "$f" "$REPORT_DIR/excused.txt" && continue
     # Check membership in after-files.sorted (exact match)
     if ! grep -Fxq -- "$f" "$REPORT_DIR/after-files.sorted"; then
       echo "$f" >> "$REPORT_DIR/fortress-breach.txt"
@@ -223,6 +396,9 @@ sort -u "$REPORT_DIR/fortress-breach.txt" -o "$REPORT_DIR/fortress-breach.txt"
 # ---- Report --------------------------------------------------------------
 n_before=$(wc -l < "$REPORT_DIR/before-files.txt" | tr -d ' ')
 n_after=$(wc -l < "$REPORT_DIR/after-files.txt" | tr -d ' ')
+n_moved=$(wc -l < "$REPORT_DIR/moved.txt" | tr -d ' ')
+n_recorded=$(wc -l < "$REPORT_DIR/removed-recorded.txt" | tr -d ' ')
+n_stale=$(wc -l < "$REPORT_DIR/stale-allowlist.txt" | tr -d ' ')
 n_regressed=$(wc -l < "$REPORT_DIR/regressed.txt" | tr -d ' ')
 n_shrunk=$(wc -l < "$REPORT_DIR/shrunk.txt" | tr -d ' ')
 n_fortress=$(wc -l < "$REPORT_DIR/fortress-breach.txt" | tr -d ' ')
@@ -231,15 +407,34 @@ echo "" >&2
 echo "=== L10n Guard Report ===" >&2
 echo "  before Han files:  $n_before" >&2
 echo "  after  Han files:  $n_after" >&2
+echo "  moved:             $n_moved" >&2
+echo "  removed-recorded:  $n_recorded" >&2
 echo "  regressed:         $n_regressed" >&2
+echo "  stale-allowlist:   $n_stale" >&2
 echo "  shrunk:            $n_shrunk" >&2
 echo "  fortress-breach:   $n_fortress" >&2
 
 failed=0
+if [[ "$n_moved" -gt 0 ]]; then
+  echo "" >&2
+  echo "OK — moved (Chinese followed the file to a new path):" >&2
+  cat "$REPORT_DIR/moved.txt" >&2
+fi
+if [[ "$n_recorded" -gt 0 ]]; then
+  echo "" >&2
+  echo "OK — removed as recorded in $(basename "$ALLOW_FILE"):" >&2
+  cat "$REPORT_DIR/removed-recorded.txt" >&2
+fi
 if [[ "$n_regressed" -gt 0 ]]; then
   echo "" >&2
-  echo "FAIL — regressed (Chinese disappeared):" >&2
+  echo "FAIL — regressed (Chinese disappeared, unexcused):" >&2
   cat "$REPORT_DIR/regressed.txt" >&2
+  failed=1
+fi
+if [[ "$n_stale" -gt 0 ]]; then
+  echo "" >&2
+  echo "FAIL — stale allow-list entries:" >&2
+  cat "$REPORT_DIR/stale-allowlist.txt" >&2
   failed=1
 fi
 if [[ "$n_shrunk" -gt 0 ]]; then

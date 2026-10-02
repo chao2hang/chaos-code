@@ -1,0 +1,30 @@
+# Files whose Chinese disappeared because the file itself was removed, and why
+# that removal was correct. Read by `scripts/l10n-guard.sh`.
+#
+# Format: <path>\t<reason>   ("#" starts a comment; a reason is mandatory)
+#
+# Two things this list can never do, by construction of the guard:
+#   * excuse a path that still exists at --after with its Chinese stripped out.
+#     That is the upstream-clobber case, and it is reported regardless of what
+#     is listed here;
+#   * keep working after the path comes back. An entry naming an existing path
+#     is reported as stale and has to be deleted, so the list cannot accumulate
+#     permanent exemptions.
+#
+# A rename is NOT listed here: if the Chinese lines reappear verbatim at another
+# path, the guard classifies it as `moved` on its own.
+
+# 用量详情页整块死代码：它的两个写入方（`fill_session_usage_detail` /
+# `fill_aggregate_usage_detail`）与 `x.ai/usage/aggregate` 效果都已不存在，实际界面是
+# `crates/codegen/xai-grok-pager/src/views/usage_modal.rs`；状态栏「累计 token」chip 改为派发
+# `Action::ShowUsage`（同 `/usage`），故不存在少译的界面。2026-10-02 复核并删除。
+crates/codegen/xai-grok-pager/src/views/usage_detail.rs	删除整块不可达的用量详情覆盖层；实际用量界面在 views/usage_modal.rs，chip 点击改派 Action::ShowUsage
+
+# 孤儿文件：HEAD 的 `scrollback/blocks/mod.rs` 里没有 `mod credit_limit`，从未参与编译。
+# 额度上限卡片实际的中文在 `app/dispatch/billing.rs` 的 `CreditLimitCopy`（已达到消费上限。/
+# 已达到当前计划的额度上限。/ 提高限额 / 按量付费…），2026-10-02 逐条核对过。
+crates/codegen/xai-grok-pager/src/scrollback/blocks/credit_limit.rs	从未被 blocks/mod.rs 声明的孤儿（不编译）；额度上限文案在实际发射处 app/dispatch/billing.rs 的 CreditLimitCopy
+
+# 孤儿测试文件：HEAD 的 `app/dispatch/tests/mod.rs` 未声明它，从未参与编译；11/11 用例的
+# 被测函数（`fill_*_usage_detail`）已随上面的覆盖层一起消失，其中文只出现在测试断言文本里。
+crates/codegen/xai-grok-pager/src/app/dispatch/tests/usage_partial_failure.rs	从未被 dispatch/tests/mod.rs 声明的孤儿测试（不编译）；被测函数已随用量覆盖层删除，中文仅为断言文本

@@ -130,7 +130,7 @@
    > 配置根按 `$CHAOS_HOME` → `$GROK_HOME` → 已有 `~/.chaos` → 已有
    > `~/.grok` → 默认 `~/.chaos` 的顺序解析；旧用户可继续使用
    > `~/.grok/config.toml`。项目级同样双读 `.chaos/` 与 `.grok/`，
-   > 同名时 Chaos 优先。详见仓库根 [CHAOS.md](../../../../CHAOS.md)。
+   > 同名时 Chaos 优先。详见仓库根 [CHAOS.md](../CHAOS.md)。
 
    权威表述在 `CHAOS.md`；不要在这里另创一套。
 3. **删除本分叉不存在的功能**，不要留占位或「上游有而此处没有」的说明：
@@ -238,7 +238,13 @@ python3 scripts/check-doc-l10n.py --fork-names --glob "$G/<本章>"
 4. 所有 `](...)` 目标仍然可达（文件名存在、锚点在同文件内存在）。
 5. 标题层级不跳级。
 6. `bash scripts/l10n-guard.sh --before main --after HEAD --report <dir>`
-   在 `regressed.txt` / `shrunk.txt` / `fortress-breach.txt` 上都是 0。
+   在 `regressed.txt` / `stale-allowlist.txt` / `shrunk.txt` /
+   `fortress-breach.txt` 上都是 0。`moved.txt`（文件换了路径，中文逐行原样
+   出现在别处）与 `removed-recorded.txt`（删除已记在
+   `scripts/ci/l10n-removed-allowlist.tsv`）是说明性的，不算失败；**故意删掉
+   一个带中文的文件时，必须在 allowlist 里加一行 `<path>\t<理由>`**，但要注意
+   它拦不住「文件还在、中文被换成英文」——那种情况无论是否登记都仍是硬失败。
+   改完这个守卫本身要跑 `python3 scripts/l10n-guard-selftest.py`（CI 也跑）。
 7. `cargo test -p xai-grok-shell --lib --features config-docs config_docs`
    仍通过（`26-config-reference.md` 是它的输入，表格结构不能破坏）。
 8. 行内代码 span **不许丢**。确需删除上游专有功能的表述（§4.3 的登录命令、
