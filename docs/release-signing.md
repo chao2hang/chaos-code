@@ -196,22 +196,29 @@ are shared in `scripts/ci/release-integrity-*.py`, deliberately, so the two inst
 cannot drift into being tested against different releases -- inside `unshare -rn`, where
 the only route is loopback and `github.com` resolves to nothing. It ends with the identical
 refusal set, plus two checks that came out of writing it. A truncated transfer is refused
-before hashing: `install.ps1` has always rejected an artifact under 1 MiB, and it turned
-out `install.sh` had no equivalent floor, so a body cut off mid-transfer reached the
-hasher. Both now refuse at 1 MiB, and a check in the shell lab fails if those two numbers
-drift apart. And when every candidate fails, both installers print up to four distinct
-reasons instead of only the last one -- before, a mirror answering 200 with an HTML error
-page was reported as a DNS failure at a public mirror that was never the problem.
+before hashing: `install.ps1` has always rejected an artifact under 1 MiB, `install.sh` had
+no equivalent floor so a body cut off mid-transfer reached the hasher, and `install.bat`
+used the same 1 MiB figure only to decide whether to sniff for HTML -- a short non-HTML body
+fell through to `certutil` and was reported as a checksum mismatch. All three now refuse
+under 1 MiB up front, and a check in the shell lab reads all three files and fails if those
+numbers drift apart. And when every candidate fails, both script installers print up to four
+distinct reasons instead of only the last one -- before, a mirror answering 200 with an HTML
+error page was reported as a DNS failure at a public mirror that was never the problem.
+
+Both labs run in CI now, in the `installer integrity labs` job, on every push. Neither has a
+skip path: a missing `pwsh`, a missing `python3-cryptography`, or a kernel that will not
+create a network namespace exits 2 with a named reason.
 
 Still unmeasured about the Windows installer, and the lab says so in its own header: which
 asset name `[RuntimeInformation]::OSArchitecture` asks for, whether Windows executes the
 bytes it wrote, and the registry `PATH` write (every run passes `-NoPath`).
-`install.bat` remains unexecuted entirely -- its guards and their ordering are known only
-from source, plus the structural assertions in
-`scripts/ci/test-installer-signature-policy.py` (that it embeds the key and that the key
-and the crypto probe precede the download in the PowerShell one) and the parse gate in
-`scripts/ci/check-powershell-syntax.py`, which is how the brace that had made
-`install.ps1` unparsable since `21f5a186` was found. So "the Windows installer puts a
+`install.bat` remains unexecuted entirely -- nothing on a Linux or macOS machine runs a
+batch file -- so what is known about it comes from its source plus three static guards: the
+floor check in the shell lab above, the structural assertions in
+`scripts/ci/test-installer-signature-policy.py` (that it embeds the key, and that the key
+and the crypto probe precede the download), and the fact that its PowerShell sibling is
+parse-checked by `scripts/ci/check-powershell-syntax.py`, which is how the brace that had
+made `install.ps1` unparsable since `21f5a186` was found. So "the Windows installer puts a
 working binary on PATH" is still an untested claim; "the Windows installer accepts these
 bytes and refuses those" is not.
 

@@ -397,17 +397,19 @@ fi
 
 expect_refusal empty-artifact empty-artifact "too small"
 
-# The artifact floor is the one integrity decision the two installers used to make
-# differently: install.ps1 refused anything under 1 MiB, install.sh accepted it and
-# let the checksum be the thing that complained. Both now refuse it up front, and a
-# future change to one of them should have to answer for the other.
+# The artifact floor is the one integrity decision the installers used to make
+# differently: install.ps1 refused anything under 1 MiB, install.sh accepted it and let
+# the checksum be the thing that complained, and install.bat used the size only to decide
+# whether to sniff for HTML -- so a short non-HTML body fell through to certutil. All
+# three now refuse it up front, and a future change to one has to answer for the others.
 bump
 sh_floor="$(sed -n 's/^USED_URL="\$(download_github "[^"]*" "\$TMP" [0-9]* [0-9]* \([0-9]*\))".*/\1/p' "$script_src")"
 ps1_floor="$(sed -n 's/.*-OutFile \$tmp -Headers \$headers -MinBytes \(1MB\).*/\1/p' "${script_src%.sh}.ps1")"
-if [ "$sh_floor" = "1048576" ] && [ "$ps1_floor" = "1MB" ]; then
-  ok "both installers refuse an artifact under 1 MiB before hashing it (install.sh ${sh_floor}, install.ps1 ${ps1_floor})"
+bat_floor="$(sed -n 's/^if defined SZ if !SZ! LSS \([0-9]*\) (.*/\1/p' "${script_src%.sh}.bat" | head -1)"
+if [ "$sh_floor" = "1048576" ] && [ "$ps1_floor" = "1MB" ] && [ "$bat_floor" = "1048576" ]; then
+  ok "all three installers refuse an artifact under 1 MiB before hashing it (install.sh ${sh_floor}, install.ps1 ${ps1_floor}, install.bat ${bat_floor})"
 else
-  failure "the artifact floors have drifted: install.sh says '${sh_floor}', install.ps1 says '${ps1_floor}'"
+  failure "the artifact floors have drifted: install.sh '${sh_floor}', install.ps1 '${ps1_floor}', install.bat '${bat_floor}'"
 fi
 
 header "what the two escape hatches actually cost"

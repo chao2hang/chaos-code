@@ -248,7 +248,10 @@ if errorlevel 1 (
   exit /b 1
 )
 
-rem Rough size check — HTML error pages are tiny
+rem A released artifact is over 150 MB, so anything under 1 MiB is a truncated transfer
+rem or a proxy body, not the binary -- install.sh and install.ps1 both refuse it outright.
+rem This used to gate only the HTML sniff, so a short non-HTML body fell through and the
+rem complaint the user got was a checksum mismatch over bytes that were never the release.
 for %%F in ("%TMP%") do set "SZ=%%~zF"
 if defined SZ if !SZ! LSS 1048576 (
   findstr /I /C:"<!DOCTYPE" /C:"<html" "%TMP%" >nul 2>&1
@@ -257,6 +260,10 @@ if defined SZ if !SZ! LSS 1048576 (
     echo error: download looks like HTML, not a binary: %URL%
     exit /b 1
   )
+  del /f /q "%TMP%" >nul 2>&1
+  echo error: download too small to be a release artifact: !SZ! bytes from %URL%
+  echo   The transfer was cut short or a proxy answered instead of the artifact.
+  exit /b 1
 )
 
 rem Integrity: verify against the release's published SHA256SUMS before the

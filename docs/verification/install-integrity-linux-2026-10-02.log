@@ -35,9 +35,13 @@
 #     (download_github's 5th argument), and check 35 is a drift guard that fails if
 #     the two numbers ever stop agreeing. The empty-artifact refusal text therefore
 #     changed from a checksum complaint to "too small (0 bytes) from <candidate>".
+#     That guard now reads install.bat as well, which held the third variant of this
+#     decision: it used the 1 MiB size only to decide whether to sniff for HTML, so a
+#     short non-HTML body fell through to certutil and came back as a checksum mismatch.
 #
-# The run below is 35/35, three consecutive times (the lab is deterministic; the second
-# and third runs were byte-identical apart from the container id).
+# The run below is 35/35, four consecutive times (the lab is deterministic; the later
+# runs were byte-identical apart from the container id). The check-35 line reads as it
+# does because install.bat joined it after the first three runs.
 #
 
 == the machine doing the installing
@@ -92,7 +96,7 @@ only chaos-linux-x64 , SHA256SUMS and the sidecar
    ok  html-sums: the guard that fired is the one that rejects proxy error pages, and nothing was installed
    ok  empty-artifact: refused (exit 1) -- why: too small (0 bytes) from http://127.0.0.1:8099/empty-artifact/https://g
    ok  empty-artifact: nothing installed behind the refusal
-   ok  both installers refuse an artifact under 1 MiB before hashing it (install.sh 1048576, install.ps1 1MB)
+   ok  all three installers refuse an artifact under 1 MiB before hashing it (install.sh 1048576, install.ps1 1MB, install.bat 1048576)
 
 == what the two escape hatches actually cost
    ok  with the checksum skipped, the tampered artifact is still refused by the signature

@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### 工程：两个完整性实验台从此每次 push 都会跑
+
+`install-integrity-in-docker.sh` 与新的 `install-integrity-powershell.sh` 此前都只在写出
+它们的那台机器上跑过。只有作者会跑的验收台，和已经被删掉的验收台没有区别——而它们守的
+恰恰是安装器的**校验逻辑**，那部分只在发版时才改动，是最糟糕的发现时机。CI 新增
+`installer integrity labs` 任务（ubuntu-latest）把两个都跑起来：运行期不需要网络、不需要
+release、不需要签名私钥，夹具自己生成密钥对并自签。`pwsh --version` 与 `unshare -rn true`
+在第一步就断言，runner 镜像哪天不再自带 pwsh 会当场点名，而不是三分钟后死在 docker 步骤里。
+两个实验台都没有跳过路径——缺 pwsh、缺 cryptography、或内核不肯建网络命名空间都是 exit 2
+并给出原因，所以这个任务不可能因为「什么都没测」而变绿。
+
 ### 新增：Windows 安装器第一次被真实执行（`scripts/install-integrity-powershell.sh`）
 
 `install.ps1` 的全部保障此前只被证明「能解析」：`check-powershell-syntax.py` 用真实
@@ -28,13 +39,15 @@ origin 或公共镜像 + 夹具只被取过产物 / `SHA256SUMS` / `.sig` 三个
 (mirror.ghproxy.com:443)`——把真正答话的候选（夹具返回的 404）说成是公共镜像的 DNS 故障。
 完整记录：`docs/verification/install-integrity-powershell-linux-2026-10-02.log`。
 
-### 修复：`install.sh` 会把截断的产物直接送去哈希
+### 修复：`install.sh` 与 `install.bat` 会把截断的产物直接送去哈希
 
 写上面那个实验台时发现 `install.ps1` 一直有 `-MinBytes 1MB`：产物不足 1 MiB 就在哈希
 之前拒掉。`install.sh` 没有对应闸门，一条被中途截断的响应体会被原样哈希、然后把结果
-报给用户。`download_github` 现在接受同样的下限（第 5 个参数，1048576），错误信息是
-`too small (N bytes) from <候选>`；shell 实验台新增第 35 项检查，专门盯两个安装器这两个
-数字不再漂移。同一轮也修掉 PowerShell 侧的同类报告缺陷（`install.sh` 的那半已在上一节
+报给用户；`install.bat` 是第三种版本——它用 1 MiB 这个数字**只**决定要不要去嗅探 HTML，
+所以一段被截断的非 HTML 响应体直接落到 `certutil` 上，最后以「摘要不匹配」的面目出现。
+`download_github` 现在接受同样的下限（第 5 个参数，1048576），错误信息是
+`too small (N bytes) from <候选>`；`install.bat` 在太小且不是 HTML 时直接拒收。shell
+实验台新增第 35 项检查，同时读三个安装脚本，盯住这三个数字不再漂移。同一轮也修掉 PowerShell 侧的同类报告缺陷（`install.sh` 的那半已在上一节
 记过）：所有候选都失败时两个安装器都只报**最后一个**的原因，现在各打印最多 4 条去重后的
 `why:`。
 

@@ -391,14 +391,25 @@ them on `PATH`.
 
 Building it found two things. `install.ps1` refuses any artifact under 1 MiB *before*
 hashing it; `install.sh` had no such floor and would happily hash a truncated body and
-report whatever the checksum said. `install.sh` now applies the same 1 MiB floor, and a
-check in the shell lab fails if the two numbers ever drift apart. And both installers had
+report whatever the checksum said; `install.bat` used the same 1 MiB number only to decide
+whether to sniff for HTML, so a short non-HTML body fell through to `certutil` and came
+back looking like a checksum mismatch. All three now refuse anything under 1 MiB up front,
+and a check in the shell lab reads all three files and fails if those numbers drift apart.
+And both script installers had
 the same reporting defect, found from opposite sides: when every candidate fails, only the
 *last* candidate's reason was shown, so a mirror that answers 200 with an HTML error page
 -- or a fixture that answers 404 -- got blamed on whichever public mirror's DNS failed
 last. Both now print up to four distinct reasons as `why:` lines. Deleting the loop from
 `install.ps1` makes exactly three of the 30 PowerShell checks fail, which is the evidence
 that those checks test something.
+
+Neither lab used to run anywhere but the machine that wrote it. The `installer integrity
+labs` job in CI runs both on every push -- no release, no signing key, and no network
+needed at run time -- and asserts `pwsh --version` and `unshare -rn true` in its first
+step, so a runner image that stops shipping one says so immediately instead of three
+minutes into the docker step. Neither lab has a skip path: a missing `pwsh`, a missing
+crypto binding, or a kernel that will not create a network namespace exits 2 with a named
+reason, so the job cannot go green by measuring nothing.
 
 `scripts/ci/check-powershell-syntax.py` is the cheap predecessor of that lab and still
 runs on the `platform tests` legs, where a parse error would otherwise go unnoticed: `install.ps1`
