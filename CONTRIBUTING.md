@@ -326,6 +326,16 @@ signature line honest: a valid-but-foreign key must refuse and leave the install
 artifact byte-identical, and a present-but-blank key must refuse *before* the download
 starts.
 
+`scripts/ci/check-powershell-syntax.py` covers the Windows installer as far as a
+non-Windows machine honestly can. `scripts/install.ps1` carried a stray closing brace for
+a stretch of history -- introduced by the commit that restructured its signature block --
+so the documented `irm .../install.ps1 | iex` died on a parse error before downloading
+anything, and nothing noticed: no Linux job runs it, and the macOS/Windows legs only
+build and test the Rust workspace. The gate parses every tracked `*.ps1` with a real
+PowerShell, and the `platform tests` legs run it with `--require` so it cannot pass by
+finding no PowerShell. Parsing is not installing: whether the Windows installer still
+puts a working binary on PATH remains a claim nothing here has measured.
+
 `scripts/npm-install-in-docker.sh` does the same for `npm install -g chaos-code`, in a
 stock `node` image, and asserts the container's own registry is
 `https://registry.npmjs.org/` — this host's npm points at a mirror, so a host-side run

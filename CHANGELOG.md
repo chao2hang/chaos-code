@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+### 修复：`install.ps1` 此前根本无法解析
+
+`scripts/install.ps1` 有一个多余的右花括号：`21f5a186`（重排验签块）把外层 `try`
+提前闭合了，留下一句没有 `try` 与之配对的 `} finally {`。PowerShell 7 的解析器报
+`The Try statement is missing its Catch or Finally block`（538 行）与
+`Unexpected token '}'`（541 行），也就是说 README 写的
+`irm https://raw.githubusercontent.com/.../install.ps1 | iex` 在下载任何东西之前就报错。
+用 `git show` 逐个解析历史版本定位到引入点：`74aa29ab` 及更早都是干净的。
+
+同一件事的另一面是「为什么没人发现」：Linux 上的任何 job 都不会执行它，而 macOS/Windows
+两条 platform leg 只构建和测试 Rust workspace。现在
+`scripts/ci/check-powershell-syntax.py` 用真实 PowerShell 解析仓库里每一个 `*.ps1`
+（四个文件：`scripts/install.ps1`、`scripts/test-platform.ps1`，以及 pager crate 里两个
+上游 grok 安装脚本），并在 `platform tests` 两条 leg 上以 `--require` 运行——没有
+PowerShell 就失败，而不是静默跳过。删改验证：给 `scripts/test-platform.ps1` 追加一段
+没有闭合的 `try {`，门禁立刻以两行错误失败，还原后恢复绿色。
+
+解析不等于安装：Windows 安装脚本能否真的把可用二进制放到 PATH，仍然没有任何实测。
+
 ### 修复：`install.sh` 从未真正比对 SHA256SUMS
 
 `install.sh` 里 `verify_checksum()` 定义了、但**没有任何调用点**：`curl | bash`

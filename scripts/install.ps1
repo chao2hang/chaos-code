@@ -535,7 +535,6 @@ print('signature OK')
                 if (Test-Path -LiteralPath $sigFile) { Remove-Item -Force -LiteralPath $sigFile -ErrorAction SilentlyContinue }
             }
         }
-    }
 
     Move-Item -Force -LiteralPath $tmp -Destination $dest
 } finally {

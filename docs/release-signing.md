@@ -180,6 +180,13 @@ the already-installed artifact byte-identical. Both controls are run against the
 real release in a stock Debian container by
 `scripts/install-sh-in-docker.sh`.
 
+Measured that way is `install.sh` only. `install.ps1` and `install.bat` have the
+same guards and the same ordering in source -- a structural test asserts the key
+and the crypto probe precede the download in the PowerShell one -- but nothing
+executes them: `scripts/ci/check-powershell-syntax.py` parses them with a real
+PowerShell, which is how the brace that had made `install.ps1` unparsable since
+`21f5a186` was found. Treat "the Windows installer works" as unmeasured.
+
 `CHAOS_SKIP_SIGNATURE=1` and `CHAOS_SKIP_CHECKSUM=1` are the installer escape
 hatches and print a warning when used; `CHAOS_REQUIRE_SIG=0` is the updater's.
 They exist to recover from a misconfigured release, not for routine use — an

@@ -142,6 +142,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The PowerShell installer is a documented entry point that no Linux job
+      # can exercise, and a stray closing brace -- left behind when the signature
+      # block was restructured in 21f5a186 -- made `irm .../install.ps1 | iex`
+      # fail to parse for every Windows user until it turned up here. Parsing
+      # costs a second, so it runs before the toolchain is even installed.
+      - name: Parse the PowerShell installers
+        shell: bash
+        run: |
+          set -euo pipefail
+          # bash here, PowerShell inside: the checker finds `pwsh` itself, and pinning
+          # bash keeps this step from depending on which shell GitHub would have picked.
+          py="$(command -v python3 || command -v python || true)"
+          test -n "$py" || { echo "::error::no python on PATH" >&2; exit 1; }
+          "$py" scripts/ci/check-powershell-syntax.py --require
+
       # Same protoc the Linux and release jobs use; apt's version is too old
       # for proto3 optional and the macos/windows images ship none.
       - name: Install protoc
