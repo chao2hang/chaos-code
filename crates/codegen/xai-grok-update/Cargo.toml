@@ -9,15 +9,14 @@ edition.workspace = true
 # auto-updater refuse unsigned/tampered binaries. Disabled by default during
 # the 0.3.x transition (env CHAOS_REQUIRE_SIG=1 still works to opt in).
 # Enable in release builds by passing `--features require-sig` (or set it as
-# default once all published releases carry .sig files).
+# default once all published releases carry .sig files). The switch itself
+# lives in xai-grok-signature, so this only forwards.
 default = []
-require-sig = []
+require-sig = ["xai-grok-signature/require-sig"]
 
 [dependencies]
 dunce = { workspace = true }
 anyhow = { workspace = true }
-base64 = { workspace = true }
-ed25519-dalek = { version = "2", features = ["rand_core"] }
 futures = { workspace = true }
 indicatif = { workspace = true }
 reqwest = { workspace = true }
@@ -32,6 +31,7 @@ tracing = { workspace = true }
 url = { workspace = true }
 xai-dirs = { workspace = true }
 xai-grok-shell = { workspace = true }
+xai-grok-signature = { workspace = true }
 xai-grok-telemetry = { workspace = true }
 xai-grok-tools = { workspace = true }
 xai-grok-version = { workspace = true }
@@ -42,6 +42,10 @@ zstd = { workspace = true }
 libc = { workspace = true }
 
 [dev-dependencies]
+base64 = { workspace = true }
+# The integration test and the verify example sign things themselves, which the
+# verify-only crate deliberately cannot do; the signing key comes from here.
+ed25519-dalek = { version = "2", features = ["rand_core"] }
 semver = { workspace = true }
 serde_json = { workspace = true }
 serial_test = { workspace = true }

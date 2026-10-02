@@ -1715,6 +1715,7 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "dunce",
+ "ed25519-dalek",
  "futures-util",
  "libc",
  "reqwest 0.12.24",
@@ -1730,6 +1731,7 @@ dependencies = [
  "walkdir",
  "xai-grok-extra-ca",
  "xai-grok-plugin-marketplace",
+ "xai-grok-signature",
  "xai-sqlite-journal",
  "xai-tty-utils",
 ]
@@ -14485,6 +14487,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "xai-grok-signature"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "ed25519-dalek",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tracing",
+]
+
+[[package]]
 name = "xai-grok-status-line"
 version = "0.1.0"
 dependencies = [
@@ -14727,6 +14740,7 @@ dependencies = [
  "xai-dirs",
  "xai-grok-extra-ca",
  "xai-grok-shell",
+ "xai-grok-signature",
  "xai-grok-telemetry",
  "xai-grok-test-support",
  "xai-grok-tools",

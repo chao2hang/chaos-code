@@ -5,12 +5,14 @@ lives, what consumes it, how to rotate it, what breaks when you do, and how to
 prove a published release is intact.
 
 Related code:
-[`signature.rs`](../crates/codegen/xai-grok-update/src/signature.rs) (verify
-side only),
+[`xai-grok-signature`](../crates/codegen/xai-grok-signature/src/lib.rs) (verify
+side only; re-exported as `xai_grok_update::signature`),
 [`release.yml`](../.github/workflows/release.yml) (sign side),
 [`install.sh`](../scripts/install.sh) /
 [`install.ps1`](../scripts/install.ps1) /
-[`install.bat`](../scripts/install.bat) (installer verify side).
+[`install.bat`](../scripts/install.bat) (installer verify side),
+[`remote/provenance.rs`](../crates/codegen/chaos-engine/src/remote/provenance.rs)
+(the same check on the `chaos-remote install` path).
 
 Latest measured run against a real release:
 [`docs/verification/release-signature-v0.4.2-2026-10-02.log`](verification/release-signature-v0.4.2-2026-10-02.log).
@@ -32,8 +34,12 @@ Latest measured run against a real release:
 The format is deliberately the smallest thing that works: raw Ed25519 over the
 whole file (no pre-hash), and the sidecar is the bare base64 of the 64-byte
 signature — no minisign armor, no trusted comment, no key id. The public key is
-the bare base64 of the 32-byte raw key. `signature.rs` documents the choice and
-only ever verifies; nothing in this repository can sign.
+the bare base64 of the 32-byte raw key. `xai-grok-signature` documents the choice
+and only ever verifies; nothing in this repository can sign. Its reader is
+forgiving about the one thing a shell pipeline is not: `... | base64` wraps those
+88 characters at column 76, and a wrapped sidecar is read back as the single
+signature it is. `-----` armor lines and minisign's `comment:` lines are skipped
+too, so a sidecar made by hand does not fail for being made by hand.
 
 Not covered by the signature:
 
@@ -226,6 +232,58 @@ bytes and refuses those" is not.
 hatches and print a warning when used; `CHAOS_REQUIRE_SIG=0` is the updater's.
 They exist to recover from a misconfigured release, not for routine use — an
 install through any of them is trusting the download.
+
+## The same key on the `chaos-remote install` path
+
+`chaos-remote install <version> --from FILE` puts a `chaos-remote-server` build onto
+the host it is connected to and points that host's `current` at it. It checked one
+thing: the sha256 the client computed over the bytes it was sending. That proves the
+upload arrived whole and nothing about who produced it, so a leaked credential or a
+tampered build pipeline could make its own bytes the next-starting server on a box.
+Now the same ed25519 key the release assets are signed with decides that question.
+
+The client reads a sidecar — `FILE.sig` next to the artifact, or whatever `--signature`
+names — and sends its base64 body in the optional `signature_b64` field of
+`InstallBegin`. A field that may be absent is not a protocol change, so an older client
+still deploys to a newer host and vice versa. The host's order is
+[digest → signature → platform header → first filesystem change], which is why a refusal
+leaves no version directory, no pointer movement and no half-written upload behind.
+
+| switch | effect |
+| --- | --- |
+| `--trust-signing-key <base64>` or `@path` | check offered signatures against this key |
+| `CHAOS_SIGNING_PUBLIC_KEY` | same, from the host's environment |
+| compiled-in `CHAOS_SIGNING_PUBLIC_KEY` | same, from the build; the all-zeros placeholder means "no key" |
+| `--allow-unsigned-artifact` | install unsigned builds; a signature that still arrives is checked |
+| `CHAOS_REMOTE_REQUIRE_SIGNATURE=0` | the same opt-out, for a unit file or a script |
+
+The default is the fail-closed one: a signature is required even when no key is
+configured, and such a host says at startup that every install will be refused. That is
+deliberate — "verify, but nobody told me against what" is not a state worth starting in,
+and a host that quietly accepted everything until someone remembered a key carries the
+old exposure invisibly. Refusals carry a reason code: `signature_missing`,
+`signature_malformed`, `signature_invalid`, `no_trusted_key`, `artifact_too_large`,
+`wrong_platform`.
+
+Why the host may take its key at runtime when the updater may not: the updater's trust
+anchor is chosen by the party that signed the binary it is replacing, so a runtime
+override there would let a hostile update server pick its own key. A remote host's key
+is chosen by that host's operator, on the command line or in its own environment, before
+any artifact is offered — the same relationship `CHAOS_REQUIRE_SIG` has for the updater,
+and the reason `parse_public_key_b64` is public while `public_key()` is not.
+
+`wrong_platform` belongs in the same paragraph because it closes the adjacent hole: an
+artifact that is intact and correctly signed but built for another CPU or another
+operating system. `chaos-remote-server` installs a build of itself, so the host reads the
+ELF / Mach-O / PE header and compares the target the file states with the platform it is
+actually running on. A file that states nothing readable — a shell wrapper, an architecture
+the table has no entry for — is not refused; the check exists to catch a mismatch it can
+name, not to guess.
+
+What this does not buy, said plainly: a session granted the `tool-execution` capability
+can already run the programs its server allowlisted, and a session with write access can
+already change files. Provenance protects the boundary "these bytes become the program
+that starts next", which is the one no capability grant implies and no digest covers.
 
 ## Checking a release you (or someone else) just published
 

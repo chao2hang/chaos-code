@@ -1,0 +1,24 @@
+[package]
+license = "Apache-2.0"
+name = "xai-grok-signature"
+version = "0.1.0"
+edition.workspace = true
+
+[features]
+# When enabled, `signature_required()` returns `true` by default, making the
+# auto-updater refuse unsigned/tampered binaries. Disabled by default during
+# the 0.3.x transition (env CHAOS_REQUIRE_SIG=1 still works to opt in).
+# Enable in release builds by passing `--features xai-grok-signature/require-sig`
+# (the release build asks for it through `xai-grok-update/require-sig`, which
+# forwards here).
+default = []
+require-sig = []
+
+[dependencies]
+base64 = { workspace = true }
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

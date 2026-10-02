@@ -1,5 +1,11 @@
 //! Ed25519 离线签名验证。
 //!
+//! 独立 crate 而不是 `xai-grok-update` 的一个模块，是因为验证者不止更新器一个：
+//! `chaos-engine::remote` 在接受「把 server 装到远端主机」这件事时也要问同一个问题
+//! （这堆字节是不是发布密钥签过的）。而 `xai-grok-update` 是上层 crate（它依赖
+//! shell/tools/telemetry），底层的 engine 不能反向依赖它。验签本身只需要
+//! ed25519-dalek + base64，所以它被放在这里，谁都能往下依赖。
+//!
 //! 签名格式（原始 ed25519，无 minisign 头）：
 //!
 //! ```text
@@ -35,6 +41,12 @@
 //! `rerun-if-env-changed` 就是保证这一点，否则第二次 `cargo build` 会
 //! 直接沿用上一次嵌入的密钥。
 //!
+//! [`public_key`] 是**更新器**的唯一信任锚，它故意不接受运行时覆盖：如果运行时能
+//! 换一把公钥，被攻破的更新服务器就顺手把新公钥一起发过来。[`parse_public_key_b64`]
+//! 把解析单独暴露出来，是给另一类验证者用的——远端主机的 operator 在自己的进程环境
+//! 里放 `CHAOS_SIGNING_PUBLIC_KEY`，用来信任自己签的构建。那条路上环境不是对手可控的
+//! （能改 server 环境的人本来就能改 server），三个安装脚本对内置默认公钥也是同样的覆盖规则。
+//!
 //! Gray-release switch:
 //!
 //! Set `CHAOS_REQUIRE_SIG=0` to temporarily skip signature verification
@@ -45,8 +57,13 @@
 
 use std::path::Path;
 
-use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+use ed25519_dalek::{Signature, Verifier};
 use thiserror::Error;
+
+// A verifier that keeps a key between calls (the remote host holds one for the
+// life of its config) needs to name the type; without this it would have to
+// depend on ed25519-dalek itself just to write a field type.
+pub use ed25519_dalek::VerifyingKey;
 
 /// Signature verification errors.
 ///
@@ -79,6 +96,10 @@ pub enum SignatureError {
 /// In production builds this gets overridden at compile time via
 /// `option_env!("CHAOS_SIGNING_PUBLIC_KEY")`.
 pub const PLACEHOLDER_PUBLIC_KEY_B64: &str = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+
+/// Base64 length of a 64-byte ed25519 signature — long enough that a sidecar line
+/// of this size is a whole signature, and shorter than one is only a piece of it.
+const SIGNATURE_BODY_B64_LEN: usize = 88;
 
 /// Compile-time public key for signature verification.
 ///
@@ -128,6 +149,28 @@ pub fn signature_required() -> bool {
     }
 }
 
+/// Ensure a signing public key is configured when signature verification
+/// is required.
+///
+/// Call this early in startup (before auto-update runs). When
+/// [`signature_required`] returns `true` (env `CHAOS_REQUIRE_SIG` is not
+/// `0`/`false`/`no`/`off`) but the build has no compiled-in public key
+/// ([`is_placeholder_key`] is `true`), this returns an error explaining
+/// how to fix it — preventing the updater from silently accepting
+/// unverified binaries.
+pub fn require_configured_public_key() -> Result<(), String> {
+    if signature_required() && is_placeholder_key() {
+        return Err(
+            "signature verification required (CHAOS_REQUIRE_SIG is enabled) but \
+             CHAOS_SIGNING_PUBLIC_KEY is not configured at build time. \
+             Rebuild with CHAOS_SIGNING_PUBLIC_KEY=<base64-32-byte-key> \
+             or set CHAOS_REQUIRE_SIG=0 to bypass during the transition."
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
 /// Verify a detached ed25519 signature against a binary blob.
 ///
 /// Returns `Ok(())` on valid, or a [`SignatureError`] otherwise. The error
@@ -175,7 +218,11 @@ pub fn verify_file(
 }
 
 /// Parse a base64-encoded ed25519 public key.
-fn parse_public_key_b64(b64: &str) -> Result<VerifyingKey, SignatureError> {
+///
+/// Public so a verifier with its own trust anchor — the remote host, which takes
+/// the key from its operator's environment — can use the same format rules as
+/// [`public_key`], including the all-zeros placeholder meaning "not configured".
+pub fn parse_public_key_b64(b64: &str) -> Result<VerifyingKey, SignatureError> {
     let bytes = base64_decode(b64).ok_or(SignatureError::InvalidPublicKey)?;
     let arr: [u8; 32] = bytes
         .try_into()
@@ -194,23 +241,43 @@ fn parse_public_key_b64(b64: &str) -> Result<VerifyingKey, SignatureError> {
 /// Decode a signature from its on-disk text format.
 ///
 /// Accepts either:
-/// - a minisign-style file with `untrusted comment:` header + body line
-/// - a bare base64 string (no header)
+/// - a minisign-style file with `untrusted comment:` header + body line, with or
+///   without the `trusted comment:` and public-key lines that follow it
+/// - a bare base64 string (no header), on one line or wrapped at any column
+///
+/// `-----` armor lines are skipped too, so a sidecar saved with a PEM-style header
+/// still yields its body.
 ///
 /// Returns the base64 signature body (still base64 — caller decodes).
-fn extract_signature_body(text: &str) -> Result<String, SignatureError> {
-    let lines: Vec<&str> = text.lines().collect();
-    for line in lines {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with("untrusted comment:") {
-            continue;
-        }
-        // The first non-comment, non-empty line is the signature.
-        // minisign has a trusted comment line after the sig body — we
-        // ignore it (we don't do trusted comments).
-        return Ok(line.to_string());
+///
+/// Public because a caller that has the sidecar's text, rather than a path and a
+/// key to check against, still has to read the same format: `chaos-remote install`
+/// picks the body out of a release `.sig` and sends it to a host that verifies on
+/// its own side of the connection.
+pub fn extract_signature_body(text: &str) -> Result<String, SignatureError> {
+    let lines: Vec<&str> = text
+        .lines()
+        .map(str::trim)
+        .filter(|line| {
+            !line.is_empty()
+                && !line.starts_with("untrusted comment:")
+                && !line.starts_with("trusted comment:")
+                && !line.starts_with("-----")
+        })
+        .collect();
+    let (first, rest) = lines
+        .split_first()
+        .ok_or(SignatureError::InvalidSignature)?;
+    // A minisign body is 88 characters of base64 on one line, and a signature
+    // piped through `base64` is the same text wrapped at 76. Anything shorter than
+    // one whole signature is therefore the first piece of one rather than one, so
+    // the following lines are joined back onto it. At full length only the first
+    // line is taken, which is what keeps the public key and trusted comment that
+    // follow a minisign body from being glued onto the signature.
+    if rest.is_empty() || first.len() >= SIGNATURE_BODY_B64_LEN {
+        return Ok((*first).to_string());
     }
-    Err(SignatureError::InvalidSignature)
+    Ok(format!("{first}{}", rest.concat()))
 }
 
 /// Decode a base64 signature string into 64 raw bytes.
@@ -433,6 +500,61 @@ mod tests {
         let text = format!("  \n{sig_b64}\n  \n");
         let body = extract_signature_body(&text).unwrap();
         assert_eq!(body, sig_b64);
+        assert!(verify_bytes(message, &body, &vk).is_ok());
+    }
+
+    /// `... | base64`, the shape every hint in this repository tells somebody to
+    /// run, wraps at 76 columns. It is still one signature, and a reader that
+    /// returned the first 76 characters was refusing good artifacts over a
+    /// formatting accident.
+    #[test]
+    fn a_sidecar_wrapped_at_76_columns_extracts_body() {
+        let (sk, vk) = test_keypair();
+        let message = b"wrapped b64";
+        let sig_b64 = b64_encode(&sk.sign(message).to_bytes());
+        let wrapped = sig_b64
+            .as_bytes()
+            .chunks(76)
+            .map(|chunk| std::str::from_utf8(chunk).unwrap())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            wrapped.lines().next().unwrap().len() < sig_b64.len(),
+            "the test only says anything if the text really is wrapped"
+        );
+        let body = extract_signature_body(&wrapped).unwrap();
+        assert_eq!(body, sig_b64);
+        assert!(verify_bytes(message, &body, &vk).is_ok());
+    }
+
+    /// Armor is decoration around the body, not the body — otherwise the first line
+    /// of the file becomes the signature and every check after it fails.
+    #[test]
+    fn an_armored_sidecar_extracts_body() {
+        let (sk, vk) = test_keypair();
+        let message = b"armored b64";
+        let sig_b64 = b64_encode(&sk.sign(message).to_bytes());
+        let text = format!("-----BEGIN SIGNATURE-----\n{sig_b64}\n-----END SIGNATURE-----\n");
+        let body = extract_signature_body(&text).unwrap();
+        assert_eq!(body, sig_b64);
+        assert!(verify_bytes(message, &body, &vk).is_ok());
+    }
+
+    /// The other half of the rule above: at full length only the first line is
+    /// read. A real minisign file carries the public key on the next line, and
+    /// joining it on would turn a valid signature into 96 bytes of nothing.
+    #[test]
+    fn a_minisign_file_yields_the_signature_not_the_key_after_it() {
+        let (sk, vk) = test_keypair();
+        let message = b"full minisign";
+        let sig_b64 = b64_encode(&sk.sign(message).to_bytes());
+        let text = format!(
+            "untrusted comment: minisign ed25519 signature, cast to base64\n{sig_b64}\n{}\n\
+             trusted comment: timestamp\t0x0\n",
+            b64_encode(&vk.to_bytes())
+        );
+        let body = extract_signature_body(&text).unwrap();
+        assert_eq!(body, sig_b64, "the key line must not join the body");
         assert!(verify_bytes(message, &body, &vk).is_ok());
     }
 
