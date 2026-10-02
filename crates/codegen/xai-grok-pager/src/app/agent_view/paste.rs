@@ -2002,11 +2002,13 @@ pub(super) mod paste_key_tests {
         );
     }
     /// A same-length in-place rewrite whose mtime does not move (coarse clock) must still retry a negative-cached failure.
-    /// The Unix stamp includes the inode and ctime, which a rewrite always advances.
+    /// The Unix stamp includes the inode and ctime, which a rewrite advances once the kernel's
+    /// coarse clock -- the one inode times are taken from -- has ticked.
     #[cfg(unix)]
     #[test]
     fn tool_media_same_length_same_mtime_rewrite_retries_failed_load() {
         use crate::terminal::image::{GraphicsProtocol, set_protocol_for_test};
+        use std::os::unix::fs::MetadataExt;
         let _g = set_protocol_for_test(GraphicsProtocol::Kitty);
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("slow-write.png");
@@ -2023,12 +2025,38 @@ pub(super) mod paste_key_tests {
         };
         std::fs::write(&path, vec![0u8; png.len()]).unwrap();
         pin_mtime(&path);
+        let before = std::fs::metadata(&path).unwrap();
         let mut agent = make_agent();
         let placement = tool_media_placement(path.clone());
         assert!(agent.build_inline_media_escapes(&placement).is_none());
         assert!(agent.inline_media_load_failed.contains_key(&path));
-        std::fs::write(&path, &png).unwrap();
-        pin_mtime(&path);
+        // The rewrite is only visible through ctime, and inode times are taken from the
+        // kernel's coarse clock (one tick wide). Until that tick passes, no stat call can
+        // tell the two files apart and there is nothing for the retry to key on, so the
+        // rewrite is repeated until ctime has moved.
+        for _ in 0..100 {
+            std::fs::write(&path, &png).unwrap();
+            pin_mtime(&path);
+            if std::fs::metadata(&path).unwrap().ctime() != before.ctime()
+                || std::fs::metadata(&path).unwrap().ctime_nsec() != before.ctime_nsec()
+            {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        let after = std::fs::metadata(&path).unwrap();
+        assert_ne!(
+            (after.ctime(), after.ctime_nsec()),
+            (before.ctime(), before.ctime_nsec()),
+            "ctime never moved; nothing here would look like a change to the stamp"
+        );
+        assert_eq!(after.ino(), before.ino(), "rewritten in place");
+        assert_eq!(after.len(), before.len(), "same length");
+        assert_eq!(
+            after.modified().unwrap(),
+            before.modified().unwrap(),
+            "mtime pinned throughout"
+        );
         assert!(
             agent.build_inline_media_escapes(&placement).is_some(),
             "a same-length same-mtime rewrite must retry and recover"
