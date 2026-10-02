@@ -28,8 +28,8 @@ pub mod protocol;
 pub mod server;
 
 pub use client::{
-    ExecOutcome, FileContents, InstallOutcome, ReadWindow, RemoteWorkspace, RemoteWorkspaceConfig,
-    SearchOutcome, WriteFile,
+    DEFAULT_HANDSHAKE_TIMEOUT, DialRetry, ExecOutcome, FileContents, InstallOutcome, ReadWindow,
+    RemoteWorkspace, RemoteWorkspaceConfig, SearchOutcome, SessionState, WriteFile,
 };
 pub use credentials::{RedeemError, SessionToken, TokenFile, TokenVault};
 pub use endpoint::{HostKeyPolicy, RemoteCapability, RemoteEndpoint, parse_capability};

@@ -12,6 +12,8 @@
 //! sees an answer to a different question knows the session has desynced
 //! instead of quietly returning the wrong file's contents.
 
+use std::time::Duration;
+
 use serde::{Deserialize, Serialize};
 
 use super::endpoint::RemoteCapability;
@@ -342,6 +344,14 @@ pub enum RemoteError {
     Install { reason: String, rolled_back: bool },
     /// The stream is not speakable as this protocol.
     Protocol { reason: String },
+    /// A reply did not arrive within the caller's deadline. The session is over:
+    /// the peer may still be working on that request, and a late answer would be
+    /// read as the answer to the next one.
+    Timeout { request: String, after: Duration },
+    /// This call was never sent, because an earlier one left the session
+    /// abandoned. Continuing would desync request ids, so the way forward is a
+    /// new session — which needs a credential the server has not handed out yet.
+    Abandoned { reason: String },
     /// Anything the host refused to explain further.
     Io { context: String, reason: String },
 }
@@ -391,9 +401,30 @@ impl std::fmt::Display for RemoteError {
                 }
             ),
             Self::Protocol { reason } => write!(f, "protocol error: {reason}"),
+            Self::Timeout { request, after } => write!(
+                f,
+                "no reply to {request} after {} \
+                 (the session is abandoned; a reply that arrives later would answer \
+                 the wrong question)",
+                seconds(*after)
+            ),
+            Self::Abandoned { reason } => write!(
+                f,
+                "session abandoned, nothing sent: {reason} (a credential is one-time, \
+                 so reconnecting means a new session and a new credential)"
+            ),
             Self::Io { context, reason } => write!(f, "{context}: {reason}"),
         }
     }
+}
+
+/// A duration in the shortest form worth reading in an error line.
+fn seconds(elapsed: Duration) -> String {
+    let millis = elapsed.as_millis();
+    if millis < 1000 {
+        return format!("{millis}ms");
+    }
+    format!("{}s", millis as f64 / 1000.0)
 }
 
 impl std::error::Error for RemoteError {}

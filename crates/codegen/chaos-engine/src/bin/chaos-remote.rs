@@ -23,7 +23,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use chaos_engine::remote::{
-    InstallOutcome, RemoteCapability, RemoteEndpoint, RemoteError, RemoteWorkspace,
+    DialRetry, InstallOutcome, RemoteCapability, RemoteEndpoint, RemoteError, RemoteWorkspace,
     RemoteWorkspaceConfig, SessionToken, TokenFile, WriteFile, parse_capability,
 };
 
@@ -43,6 +43,13 @@ credential (exactly one is required)
 
   --host <name>           the remote host this endpoint stands for (default buildbox)
   --port <port>           that host's own port (default 22); not the dial address
+  --connect-wait <secs>   keep re-dialling for this long while the transport (a
+                          tunnel, a socket-activated server) is not up yet; only
+                          the dial is repeated, never the credential
+  --reply-timeout <secs>  give up on a reply — the handshake's or a request's —
+                          that has not arrived, and end the session: a late reply
+                          would answer the wrong question, so this bounds being
+                          stuck rather than retrying a slow server
   --capability <name>     ask for less than everything; repeatable
   --json                  machine-readable output
   --quiet                 only what the command itself produces
@@ -441,6 +448,10 @@ struct Args {
     token_file: Option<PathBuf>,
     host: String,
     port: u16,
+    /// How long to keep re-dialling a transport that is not up yet.
+    connect_wait: Duration,
+    /// Per-request reply deadline; `None` waits, which is what `exec` needs.
+    reply_timeout: Option<Duration>,
     capabilities: Option<Vec<RemoteCapability>>,
     command: Command,
 }
@@ -506,6 +517,8 @@ impl Default for Args {
             token_file: None,
             host: "buildbox".into(),
             port: 22,
+            connect_wait: Duration::ZERO,
+            reply_timeout: None,
             capabilities: None,
             command: Command::Ping,
         }
@@ -538,6 +551,23 @@ impl Args {
                     args.token_file = Some(PathBuf::from(take(&argv, &mut index, "--token-file")?))
                 }
                 "--host" => args.host = take(&argv, &mut index, "--host")?,
+                "--connect-wait" => {
+                    let secs: u64 = take(&argv, &mut index, "--connect-wait")?
+                        .parse()
+                        .map_err(|e| format!("--connect-wait: {e}"))?;
+                    args.connect_wait = Duration::from_secs(secs);
+                }
+                "--reply-timeout" => {
+                    let secs: u64 = take(&argv, &mut index, "--reply-timeout")?
+                        .parse()
+                        .map_err(|e| format!("--reply-timeout: {e}"))?;
+                    if secs == 0 {
+                        return Err(
+                            "--reply-timeout 0 would abandon every request before its reply".into(),
+                        );
+                    }
+                    args.reply_timeout = Some(Duration::from_secs(secs));
+                }
                 "--port" => {
                     args.port = take(&argv, &mut index, "--port")?
                         .parse()
@@ -738,38 +768,71 @@ impl Args {
             capabilities: capabilities.clone(),
         };
         let token = SessionToken::from_text(&token);
-        let config = RemoteWorkspaceConfig::new().capabilities(capabilities);
-        let session = match transport {
-            #[cfg(unix)]
-            Transport::Unix(path) => AnySession::Unix(Box::new(
-                RemoteWorkspace::connect_unix(&path, &endpoint, &token, config)
-                    .await
-                    .map_err(describe)?,
-            )),
-            #[cfg(not(unix))]
-            Transport::Unix(path) => {
-                return Err(format!(
-                    "a Unix socket is not available on this platform, but {} was asked for",
-                    path.display()
-                ));
-            }
-            Transport::Tcp(addr) => AnySession::Tcp(Box::new(
-                RemoteWorkspace::connect_tcp(addr, &endpoint, &token, config)
-                    .await
-                    .map_err(describe)?,
-            )),
-        };
-        // Spent: the file must not offer it to the next run.
+        let config = RemoteWorkspaceConfig::new()
+            .capabilities(capabilities)
+            // The handshake waits for a reply like any other request, so the same
+            // bound covers it. A peer that accepts a connection and then says
+            // nothing is the case this is for, and it looks the same from here
+            // whether the tunnel reached a silent host or a wrong port.
+            .handshake_timeout(
+                self.reply_timeout
+                    .unwrap_or(chaos_engine::remote::DEFAULT_HANDSHAKE_TIMEOUT),
+            )
+            .request_timeout(self.reply_timeout);
+        // Dialed first, and only the dial is retried: presenting the credential
+        // twice is not possible even by accident, because the first attempt spends
+        // it whether or not a reply comes back.
+        let stream = self.dial(&transport).await?;
+        // The credential goes out of the file before it is sent, not after the
+        // handshake succeeds. Sending is spending: a hello that goes unanswered
+        // burned it just as surely as one that was answered, and a file that went
+        // on offering it would leave every later run refusing its own credential.
         if let Some(path) = &self.token_file
             && let Err(error) = TokenFile::new(path).write(&remaining)
         {
             eprintln!(
-                "chaos-remote: the credential was used but could not be removed from \
+                "chaos-remote: the credential was presented but could not be removed from \
                  {}: {error}",
                 path.display()
             );
         }
+        let session = match stream {
+            Dial::Unix(stream) => AnySession::Unix(Box::new(
+                RemoteWorkspace::connect(stream, &endpoint, &token, config)
+                    .await
+                    .map_err(describe)?,
+            )),
+            Dial::Tcp(stream) => AnySession::Tcp(Box::new(
+                RemoteWorkspace::connect(stream, &endpoint, &token, config)
+                    .await
+                    .map_err(describe)?,
+            )),
+        };
         Ok(session)
+    }
+
+    /// Open the stream, waiting out a transport that is not up yet.
+    ///
+    /// Kept apart from the handshake on purpose: `--connect-wait` repeats this and
+    /// only this, so waiting for a tunnel can never burn a one-time credential.
+    async fn dial(&self, transport: &Transport) -> Result<Dial, String> {
+        let retry = DialRetry::new(self.connect_wait);
+        match transport {
+            #[cfg(unix)]
+            Transport::Unix(path) => RemoteWorkspace::dial_unix_waiting(path, retry)
+                .await
+                .map(Dial::Unix)
+                .map_err(describe),
+            #[cfg(not(unix))]
+            Transport::Unix(path) => Err(format!(
+                "a Unix socket is not available on this platform, but {} was asked for",
+                path.display()
+            )),
+            Transport::Tcp(addr) => RemoteWorkspace::dial_tcp_waiting(*addr, retry)
+                .await
+                .map(Dial::Tcp)
+                .map_err(describe),
+        }
     }
 
     /// The credential to present, and the ones to leave in the file behind it.
@@ -795,6 +858,13 @@ enum Transport {
     #[allow(dead_code)]
     Unix(PathBuf),
     Tcp(std::net::SocketAddr),
+}
+
+/// A stream to the server that has not been handshaked over yet.
+enum Dial {
+    #[cfg(unix)]
+    Unix(tokio::net::UnixStream),
+    Tcp(tokio::net::TcpStream),
 }
 
 fn emit(value: &serde_json::Value) -> Result<(), String> {
@@ -1021,6 +1091,66 @@ mod tests {
             parse(&["--token-file", "/t", "--token", "t", "--unix", "/s", "ping"])
                 .unwrap_err()
                 .contains("not both")
+        );
+    }
+
+    /// The two waits are different things and are named differently: one is for a
+    /// transport that is not there yet and may be retried, the other is a bound on
+    /// a request that will never be retried.
+    #[test]
+    fn the_two_waits_are_separate_and_both_are_bounded() {
+        let args = parse(&[
+            "--connect-wait",
+            "20",
+            "--reply-timeout",
+            "3",
+            "--unix",
+            "/s",
+            "--token",
+            "t",
+            "ping",
+        ])
+        .expect("parsed");
+        assert_eq!(args.connect_wait, Duration::from_secs(20));
+        assert_eq!(args.reply_timeout, Some(Duration::from_secs(3)));
+
+        let default = parse(&["--unix", "/s", "--token", "t", "ping"]).expect("parsed");
+        assert_eq!(
+            default.connect_wait,
+            Duration::ZERO,
+            "nobody waits for a transport they did not ask to wait for"
+        );
+        assert_eq!(
+            default.reply_timeout, None,
+            "`exec` runs a command of any length, so no reply deadline by default"
+        );
+
+        assert!(
+            parse(&[
+                "--reply-timeout",
+                "0",
+                "--unix",
+                "/s",
+                "--token",
+                "t",
+                "ping"
+            ])
+            .unwrap_err()
+            .contains("--reply-timeout"),
+            "a zero deadline would abandon every request before its reply"
+        );
+        assert!(
+            parse(&[
+                "--connect-wait",
+                "soon",
+                "--unix",
+                "/s",
+                "--token",
+                "t",
+                "ping"
+            ])
+            .unwrap_err()
+            .contains("--connect-wait")
         );
     }
 

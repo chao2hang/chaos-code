@@ -140,6 +140,10 @@ chaos-remote --tcp 127.0.0.1:17788 --token-file ~/.chaos/remote-tokens \
   exec --timeout 600 -- cargo test -p beeper
 chaos-remote --tcp 127.0.0.1:17788 --token-file ~/.chaos/remote-tokens \
   install 0.4.0 --from target/release/chaos-remote-server
+
+# Through a tunnel that is still coming up, with a bound on being stuck.
+chaos-remote --tcp 127.0.0.1:17788 --token-file ~/.chaos/remote-tokens \
+  --connect-wait 30 --reply-timeout 120 ping
 ```
 
 Three properties are deliberate and are what the tests around this code exist
@@ -154,13 +158,25 @@ to hold:
 - **Nothing is faked.** `--capability interactive-pty`, `port-forward` and
   `detached-agent` are refused with a reason, and `exec` runs only programs
   named by `--allow`.
+- **Both waits are bounded, and they are different waits.** `--connect-wait` re-dials
+  for as long as it is told — the delay doubles up to 2s — and repeats *only* the dial,
+  so waiting for a tunnel that is still coming up can never burn a credential.
+  `--reply-timeout` bounds a reply instead: the handshake's and each request's. When a
+  request's reply does not arrive, the session ends rather than pauses
+  (`RemoteWorkspace::state()` reports `Abandoned`), because a late reply would answer
+  the wrong question and a request cannot be unsent. Nothing reconnects by itself, on
+  purpose: a credential is one-time, so reconnecting means a new session and a new
+  credential, which is a decision for whoever runs the command rather than a background
+  retry. A credential also leaves the token file the moment it is sent — including on a
+  run that dies in the handshake — so a failed run cannot poison the next one.
 
 `scripts/remote-acceptance-in-docker.sh` is the gate for all of the above. It
 builds the artifacts here, then puts the server in a stock Debian container that
 has never seen this repository, reaches it through a `socat` tunnel, and checks
 reading, searching, writing, `git diff`, tool execution, path-escape refusals,
-credential handling, a full disk, an artifact on a `noexec` filesystem, and a
-dropped connection:
+credential handling, a full disk, an artifact on a `noexec` filesystem, a dropped
+connection, and both clocks: a late reply, a tunnel that appears late, and a peer
+that accepts the connection and never speaks.
 
 ```sh
 scripts/remote-acceptance-in-docker.sh 2>&1 | tee "remote-acceptance-$(date +%F).log"

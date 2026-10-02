@@ -1,7 +1,7 @@
 # Reproduce: bash scripts/remote-acceptance-in-docker.sh
 # Host: Ubuntu 22.04 x86_64, Docker 29.8.1; remote host container image chaos-verify:local (Debian 12, git, python3, ripgrep).
-# Commit under test: 2ccacd39. Tokens are 64-hex one-time credentials and are never printed by the script.
-
+# Commit under test: the commit that adds these checks and this transcript together (previous HEAD 0e89f3fc). Tokens are 64-hex one-time credentials and are never printed by the script.
+# This run supersedes the 73-check one of the same lab. The 7 checks it adds are the two clocks a session runs on -- a reply that never arrives, a transport that appears late, a peer that accepts and never speaks -- and the state of the credential file after a run that dies.
 
 == building the artifacts on this machine
     Finished `dev` profile [unoptimized] target(s) in 0.39s
@@ -122,5 +122,18 @@
    ok  a new session works once the tunnel is back
    ok  the server is still serving after the drop
 
+== a reply that never arrives ends the session instead of hanging
+   ok  the 8s exec was abandoned after 2s, and named as exec
+   ok  the credential the abandoned run sent is out of the file (8 -> 7)
+   ok  a new session opens while the abandoned request still runs remotely
+
+== a transport that is not up yet can be waited for, and by default is not
+   ok  with no --connect-wait the dead port was refused after 0s
+   ok  3s in, still waiting with nothing to connect to
+   ok  the session opened 4s in, as soon as the tunnel appeared
+
+== a peer that accepts and never speaks is a timeout, not a hang
+   ok  the mute peer was given up on after 30s and reported as the handshake
+
 == summary
-all 73 M4 acceptance checks passed against chaos-verify:local
+all 80 M4 acceptance checks passed against chaos-verify:local

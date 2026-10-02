@@ -9,7 +9,9 @@
 # has never seen the repository, reaches it through a tunnel the way a real remote
 # session does, and checks what M4.6 asks about: deployment, version negotiation,
 # reading, searching, writing, git diff, tool execution, credential handling, path
-# escape, a failed upgrade, a dropped connection and an out-of-space remote disk.
+# escape, a failed upgrade, a dropped connection, an out-of-space remote disk and the
+# two clocks a session runs on -- the wait for a transport that is not up yet, and
+# the deadline on a reply that never comes.
 #
 # Two further containers stand in for hostile hosts rather than clean ones: one
 # whose disk fills mid-upload, and one whose workspace is mounted `noexec`, so that
@@ -72,9 +74,14 @@ tunnel_port="$((port_base + 1))"
 server2_port="$((port_base + 2))"
 tunnel2_port="$((port_base + 3))"
 expiry_port="$((port_base + 4))"
+# A port whose tunnel appears only later, and one where a peer accepts and then
+# says nothing. Both feed the checks about the two waits a session can be given.
+later_port="$((port_base + 5))"
+silent_port="$((port_base + 6))"
 
 tunnel_pid=""
 tunnel2_pid=""
+silent_pid=""
 failures=""
 checks=0
 capture_file=""
@@ -132,7 +139,9 @@ failure() {
 }
 
 stop_tunnels() {
-  for pid in "${tunnel_pid}" "${tunnel2_pid}"; do
+  # `silent_pid` is the mute peer, not a tunnel, but it is torn down the same way
+  # and for the same reason: `fork` leaves a child per accepted connection.
+  for pid in "${tunnel_pid}" "${tunnel2_pid}" "${silent_pid}"; do
     if [ -n "${pid}" ]; then
       # `socat ... fork` leaves a child per established connection; killing only
       # the parent would leave an open session and the run would prove nothing.
@@ -717,6 +726,120 @@ tunnel_pid="$(start_tunnel "${tunnel_port}" "${server_port}")"
 sleep 0.5
 expect_output "a new session works once the tunnel is back" "protocol" remote 'ping'
 expect_output "the server is still serving after the drop" "buildbox" remote 'cat README.md'
+
+# ------------------------------------------------------------------ the waits ----
+
+# Two clocks exist for two different failures. A transport that is not up yet can be
+# waited for, because dialling presents nothing; a request that has already been sent
+# cannot be, because its credential is spent and a reply arriving late would answer
+# the wrong question. Everything below drives both against the deployed binaries over
+# the real tunnel, so the numbers are the ones an operator gets.
+
+log "a reply that never arrives ends the session instead of hanging"
+top_up tokens token
+tokens_before="$(on_dev 'wc -l </shared/token' | tr -d ' ')"
+start="$(date +%s)"
+# The reply is genuinely late rather than synthetic: the server really does run
+# `sleep 8` and only then answers. The client has to stop at its own deadline.
+run_capture on_dev "/lab/bin/chaos-remote --tcp 127.0.0.1:${tunnel_port} \
+  --token-file /shared/token --reply-timeout 2 \
+  exec --timeout 120 -- sleep 8"
+elapsed=$(( $(date +%s) - start ))
+checks=$((checks + 1))
+if [ "${capture_status}" != "0" ] && grep -qi 'no reply to exec' "${capture_file}" \
+  && [ "${elapsed}" -ge 2 ] && [ "${elapsed}" -lt 15 ]; then
+  say "ok  the 8s exec was abandoned after ${elapsed}s, and named as exec"
+else
+  failure "a 2s reply-timeout did not bound an 8s exec (exit ${capture_status}, ${elapsed}s): \
+$(tr '\n' ' ' <"${capture_file}")"
+fi
+# The request died, but the credential was spent all the same. If it stayed in the
+# file, the next run would present a credential the server has already seen.
+tokens_after="$(on_dev 'wc -l </shared/token' | tr -d ' ')"
+checks=$((checks + 1))
+if [ "${tokens_after}" = "$((tokens_before - 1))" ]; then
+  say "ok  the credential the abandoned run sent is out of the file (${tokens_before} -> ${tokens_after})"
+else
+  failure "the abandoned run left ${tokens_after} credentials in the file (was ${tokens_before})"
+fi
+# Sessions are independent on the server side, so a request still running there must
+# not stop a new session from opening.
+expect_output "a new session opens while the abandoned request still runs remotely" \
+  "protocol" remote 'ping'
+
+log "a transport that is not up yet can be waited for, and by default is not"
+top_up tokens token
+start="$(date +%s)"
+run_capture on_dev "/lab/bin/chaos-remote --tcp 127.0.0.1:${later_port} \
+  --token-file /shared/token ping"
+elapsed=$(( $(date +%s) - start ))
+checks=$((checks + 1))
+if [ "${capture_status}" != "0" ] && [ "${elapsed}" -lt 10 ]; then
+  say "ok  with no --connect-wait the dead port was refused after ${elapsed}s"
+else
+  failure "a dial without --connect-wait took ${elapsed}s (exit ${capture_status}): \
+$(tr '\n' ' ' <"${capture_file}")"
+fi
+# The case the flag exists for: the tunnel is being set up while the client starts.
+# The status file is written by the container-side command when the client exits, so
+# "still waiting" is observed on the shared volume rather than inferred from a
+# process id on this machine.
+rm -f "${lab_root}/shared/wait.txt" "${lab_root}/shared/wait.status"
+start="$(date +%s)"
+set +e
+on_dev "/lab/bin/chaos-remote --tcp 127.0.0.1:${later_port} --token-file /shared/token \
+    --connect-wait 30 ping >/shared/wait.txt 2>&1; echo \$? >/shared/wait.status" \
+  >"${capture_file}" 2>&1 &
+late_job=$!
+set -e
+sleep 3
+checks=$((checks + 1))
+if [ ! -e "${lab_root}/shared/wait.status" ]; then
+  say "ok  3s in, still waiting with nothing to connect to"
+else
+  failure "the client stopped waiting before the tunnel existed ($(cat "${lab_root}/shared/wait.status"))"
+fi
+late_tunnel="$(start_tunnel "${later_port}" "${server_port}")"
+run_capture wait "${late_job}"
+elapsed=$(( $(date +%s) - start ))
+exit_code="$(cat "${lab_root}/shared/wait.status" 2>/dev/null || echo never)"
+checks=$((checks + 1))
+if [ "${exit_code}" = "0" ] && grep -qi 'protocol' "${lab_root}/shared/wait.txt" \
+  && [ "${elapsed}" -lt 25 ]; then
+  say "ok  the session opened ${elapsed}s in, as soon as the tunnel appeared"
+else
+  failure "waiting for a late tunnel failed (client exit ${exit_code}, ${elapsed}s): \
+$(tr '\n' ' ' <"${lab_root}/shared/wait.txt" 2>/dev/null)"
+fi
+kill "${late_tunnel}" 2>/dev/null || true
+
+log "a peer that accepts and never speaks is a timeout, not a hang"
+# `silent_port` has no server behind it at all: socat here stands in for a host that
+# takes the TCP connection and then has nothing to say, which is the shape of a
+# tunnel opened at the wrong port. The client's own default handshake deadline is
+# the thing under test, so no flag is passed and this check takes that long on
+# purpose -- it is the number an operator without any flags gets.
+top_up tokens token
+socat "TCP-LISTEN:${silent_port},reuseaddr,fork" SYSTEM:'sleep 60' >/dev/null 2>&1 &
+silent_pid=$!
+sleep 0.5
+start="$(date +%s)"
+run_capture on_dev "/lab/bin/chaos-remote --tcp 127.0.0.1:${silent_port} \
+  --token-file /shared/token ping"
+elapsed=$(( $(date +%s) - start ))
+checks=$((checks + 1))
+if [ "${capture_status}" != "0" ] && grep -qi 'no reply to the handshake' "${capture_file}" \
+  && [ "${elapsed}" -ge 28 ] && [ "${elapsed}" -lt 50 ]; then
+  say "ok  the mute peer was given up on after ${elapsed}s and reported as the handshake"
+else
+  failure "the default handshake deadline did not fire as expected (exit ${capture_status}, ${elapsed}s): \
+$(tr '\n' ' ' <"${capture_file}")"
+fi
+for child in $(pgrep -P "${silent_pid}" 2>/dev/null || true); do
+  kill "${child}" 2>/dev/null || true
+done
+kill "${silent_pid}" 2>/dev/null || true
+silent_pid=""
 
 # ----------------------------------------------------------------- summary ----
 

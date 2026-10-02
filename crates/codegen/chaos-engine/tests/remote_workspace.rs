@@ -732,6 +732,230 @@ async fn a_first_run_creates_the_directory_it_chose_for_its_credentials() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// `--connect-wait` is for the transport that is not up yet — a tunnel being
+/// brought up, a socket-activated server. The wait repeats the dial only: the
+/// credential is presented exactly once, which is what makes waiting safe at all.
+///
+/// The late arrival is a symlink put in place after the client started, against a
+/// server that has been running the whole time. That is the real shape of the
+/// race (the path the caller was told to use does not resolve yet), and it keeps
+/// the token with the server that will be asked to authenticate it.
+#[tokio::test]
+#[cfg(unix)]
+async fn the_client_waits_for_a_socket_that_appears_a_moment_later() {
+    let dir = short_socket_dir("late");
+    let real = dir.join("real.sock");
+    let announced = dir.join("chaos.sock");
+    std::fs::create_dir_all(&dir).expect("socket dir");
+
+    let mut server = ServerProcess::start(Some(&real), None, &[]).await;
+    let tokens = server.tokens().await;
+
+    let log = dir.join("client.log");
+    let log_file = std::fs::File::create(&log).expect("client log");
+    let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_chaos-remote"));
+    command
+        .args([
+            "--connect-wait",
+            "30",
+            "--unix",
+            &announced.display().to_string(),
+            "--token",
+            tokens[0].as_str(),
+            "ping",
+        ])
+        .stdout(Stdio::from(log_file.try_clone().expect("clone the log")))
+        .stderr(Stdio::from(log_file));
+    let scope = ProcessScope::new();
+    let (mut child, group) = scope.spawn(command).expect("start the client");
+
+    // The announced path resolves to nothing yet, so the client is still trying.
+    tokio::time::sleep(Duration::from_millis(700)).await;
+    assert!(
+        child.try_wait().expect("poll the client").is_none(),
+        "the client gave up on a transport it was told to wait for"
+    );
+    std::os::unix::fs::symlink(&real, &announced).expect("point the announced path at the server");
+
+    let status = tokio::time::timeout(Duration::from_secs(30), child.wait())
+        .await
+        .expect("the client finishes once the socket resolves")
+        .expect("wait");
+    let _ = group.kill();
+    let said = std::fs::read_to_string(&log).unwrap_or_default();
+    assert!(status.success(), "the session should have opened: {said}");
+    assert!(
+        said.contains("protocol"),
+        "ping reports what was negotiated: {said}"
+    );
+
+    server.stop().await;
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `--reply-timeout` bounds how long a caller can be stuck behind a peer that
+/// stops answering. The peer here answers the handshake — so the session is real —
+/// and then says nothing, which is what a wedged server looks like.
+#[tokio::test]
+async fn the_client_gives_up_on_a_peer_that_stops_answering() {
+    use chaos_engine::remote::protocol::{Envelope, recv, send};
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("loopback listener");
+    let addr = listener.local_addr().expect("addr");
+    let peer = tokio::spawn(async move {
+        let (mut stream, _peer) = listener.accept().await.expect("accept");
+        let hello: Envelope<chaos_engine::remote::Request> =
+            recv(&mut stream, chaos_engine::remote::MAX_FRAME_BYTES)
+                .await
+                .expect("hello")
+                .expect("a frame");
+        send(
+            &mut stream,
+            &Envelope::<chaos_engine::remote::Reply> {
+                id: hello.id,
+                body: Ok(Payload::Hello {
+                    protocol_version: chaos_engine::remote::PROTOCOL_VERSION,
+                    server: chaos_engine::remote::Implementation::local(),
+                    capabilities: ALL_CAPABILITIES.to_vec(),
+                    session_id: "wedged".into(),
+                    max_transfer_bytes: 1024 * 1024,
+                }),
+            },
+        )
+        .await
+        .expect("hello reply");
+        // Open, and silent from here.
+        tokio::time::sleep(Duration::from_secs(60)).await;
+    });
+
+    let dir = short_socket_dir("stall");
+    std::fs::create_dir_all(&dir).expect("dir");
+    let log = dir.join("client.log");
+    let log_file = std::fs::File::create(&log).expect("client log");
+    let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_chaos-remote"));
+    command
+        .args([
+            "--reply-timeout",
+            "1",
+            "--tcp",
+            &addr.to_string(),
+            "--token",
+            "0123456789abcdef0123456789abcdef",
+            "ping",
+        ])
+        .stdout(Stdio::from(log_file.try_clone().expect("clone the log")))
+        .stderr(Stdio::from(log_file));
+    let scope = ProcessScope::new();
+    let (mut child, group) = scope.spawn(command).expect("start the client");
+
+    let started = std::time::Instant::now();
+    let status = tokio::time::timeout(Duration::from_secs(25), child.wait())
+        .await
+        .expect("the deadline fires instead of the client waiting forever")
+        .expect("wait");
+    let elapsed = started.elapsed();
+    let _ = group.kill();
+    peer.abort();
+
+    let said = std::fs::read_to_string(&log).unwrap_or_default();
+    assert!(
+        !status.success(),
+        "an unanswered request must fail the run: {said}"
+    );
+    assert!(
+        said.contains("no reply to ping"),
+        "the message names the request that went unanswered: {said}"
+    );
+    assert!(
+        elapsed >= Duration::from_millis(900) && elapsed < Duration::from_secs(20),
+        "the caller waited about the second it asked for, not the default: {elapsed:?}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A peer that accepts the connection and never speaks is the other half of the
+/// same deadline: here nothing was ever answered, so the run dies at the
+/// handshake. What is being pinned down is the credential. Sending it spends it,
+/// so a run that dies this way has to take it out of the file anyway — otherwise
+/// the file goes on offering a credential the server has already seen, and every
+/// later run in that directory refuses its own credential as a replay.
+#[tokio::test]
+async fn a_run_that_dies_in_the_handshake_still_retires_its_credential() {
+    use chaos_engine::remote::{SessionToken, TokenFile};
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("loopback listener");
+    let addr = listener.local_addr().expect("addr");
+    let peer = tokio::spawn(async move {
+        let (_stream, _peer) = listener.accept().await.expect("accept");
+        // Open, and mute. The bytes the client sends are left unread.
+        tokio::time::sleep(Duration::from_secs(60)).await;
+    });
+
+    let dir = short_socket_dir("mute-peer");
+    std::fs::create_dir_all(&dir).expect("dir");
+    let spent = SessionToken::from_text("0123456789abcdef0123456789abcdef");
+    let keeper = SessionToken::from_text("fedcba9876543210fedcba9876543210");
+    let tokens = dir.join("tokens");
+    TokenFile::new(&tokens)
+        .write(&[spent.clone(), keeper.clone()])
+        .expect("token file");
+
+    let log = dir.join("client.log");
+    let log_file = std::fs::File::create(&log).expect("client log");
+    let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_chaos-remote"));
+    command
+        .args([
+            "--reply-timeout",
+            "1",
+            "--tcp",
+            &addr.to_string(),
+            "--token-file",
+            tokens.to_str().expect("utf-8 path"),
+            "ping",
+        ])
+        .stdout(Stdio::from(log_file.try_clone().expect("clone the log")))
+        .stderr(Stdio::from(log_file));
+    let scope = ProcessScope::new();
+    let (mut child, group) = scope.spawn(command).expect("start the client");
+
+    let started = std::time::Instant::now();
+    let status = tokio::time::timeout(Duration::from_secs(25), child.wait())
+        .await
+        .expect("the handshake deadline fires instead of waiting forever")
+        .expect("wait");
+    let elapsed = started.elapsed();
+    let _ = group.kill();
+    peer.abort();
+
+    let said = std::fs::read_to_string(&log).unwrap_or_default();
+    assert!(
+        !status.success(),
+        "a peer that never answers must fail the run: {said}"
+    );
+    assert!(
+        said.contains("no reply to the handshake"),
+        "the message says which wait went unanswered: {said}"
+    );
+    assert!(
+        elapsed >= Duration::from_millis(900) && elapsed < Duration::from_secs(20),
+        "the handshake got the --reply-timeout bound, not the 30s default: {elapsed:?}"
+    );
+
+    let left = TokenFile::new(&tokens)
+        .read()
+        .expect("token file still readable");
+    assert_eq!(
+        left.iter().map(SessionToken::as_str).collect::<Vec<_>>(),
+        vec![keeper.as_str()],
+        "the credential that went on the wire is gone; the one that did not stays"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// The payload types are named here so a change to the wire format has to be made
 /// in this file too, and noticed.
 #[allow(dead_code)]

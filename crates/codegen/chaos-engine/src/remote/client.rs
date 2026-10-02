@@ -25,6 +25,15 @@ use super::endpoint::{RemoteCapability, RemoteEndpoint};
 use super::install::sha256_hex;
 use super::protocol::*;
 
+/// How long a `hello` may go unanswered before the attempt is given up on.
+///
+/// The handshake is one small request and the peer is already reachable — a server
+/// that has accepted the connection and does not answer is not busy with somebody
+/// else's work, so a bound this generous only ever fires on a tunnel opened at the
+/// wrong thing. Callers with a tighter budget should set
+/// [`RemoteWorkspaceConfig::handshake_timeout`].
+pub const DEFAULT_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// How this side of the session behaves.
 ///
 /// Everything here is a limit the *client* imposes on itself. The server has its
@@ -45,6 +54,14 @@ pub struct RemoteWorkspaceConfig {
     pub read_window_bytes: Option<u64>,
     /// How much artifact to send per chunk when deploying a server build.
     pub chunk_bytes: usize,
+    /// How long to wait for the handshake. A server that has not answered a
+    /// `hello` in this time is not going to: it is doing no user's work yet, and
+    /// the usual reason is a tunnel that was opened at the wrong thing.
+    pub handshake_timeout: Duration,
+    /// How long to wait for one request's reply. `None` — the default — waits
+    /// forever, because `exec` runs a command whose length is the caller's
+    /// business. Anything with an interactive caller in front of it should set it.
+    pub request_timeout: Option<Duration>,
 }
 
 impl Default for RemoteWorkspaceConfig {
@@ -63,6 +80,8 @@ impl Default for RemoteWorkspaceConfig {
             max_frame_bytes: MAX_FRAME_BYTES,
             read_window_bytes: None,
             chunk_bytes: 512 * 1024,
+            handshake_timeout: DEFAULT_HANDSHAKE_TIMEOUT,
+            request_timeout: None,
         }
     }
 }
@@ -83,7 +102,28 @@ impl RemoteWorkspaceConfig {
         self
     }
 
+    /// How long to wait for the handshake. Zero is refused rather than treated as
+    /// "no wait", which would fail every connection.
+    pub fn handshake_timeout(mut self, timeout: Duration) -> Self {
+        self.handshake_timeout = timeout;
+        self
+    }
+
+    /// How long to wait for each request's reply. Once one expires the session is
+    /// abandoned, so this is a bound on how long a caller can be stuck, not a way
+    /// to retry a slow server.
+    pub fn request_timeout(mut self, timeout: Option<Duration>) -> Self {
+        self.request_timeout = timeout;
+        self
+    }
+
     pub fn validate(&self) -> Result<(), String> {
+        if self.handshake_timeout.is_zero() {
+            return Err("a handshake timeout of zero would fail before the hello is read".into());
+        }
+        if self.request_timeout == Some(Duration::ZERO) {
+            return Err("a request timeout of zero would fail before the reply is read".into());
+        }
         if self.max_frame_bytes < 1024 {
             return Err("the frame limit is too small to carry a handshake".into());
         }
@@ -184,6 +224,24 @@ pub struct RemoteWorkspace<S> {
     server: Implementation,
     granted: Vec<RemoteCapability>,
     session_id: String,
+    request_timeout: Option<Duration>,
+    /// Set once a request could not be completed, which makes every later one
+    /// unsafe to send. [`Self::state`] reports it.
+    abandoned: Option<String>,
+}
+
+/// Whether this session may still be used.
+///
+/// There is no "reconnecting" state here on purpose: a credential is spent by the
+/// handshake, so a session that has gone cannot be brought back — the caller opens
+/// a new one with a credential the server has not handed out yet.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SessionState {
+    /// Every request so far was answered.
+    Ready,
+    /// A request went unanswered or the stream desynced. Nothing more is sent on
+    /// this session; `reason` is what was last seen.
+    Abandoned { reason: String },
 }
 
 impl<S> RemoteWorkspace<S>
@@ -235,15 +293,26 @@ where
             token: token.as_str().to_string(),
             capabilities: config.capabilities.clone(),
         };
-        send(
-            &mut writer,
-            &Envelope {
-                id: 1,
-                body: &hello,
-            },
-        )
-        .await?;
-        let reply: Option<Envelope<Reply>> = recv(&mut reader, config.max_frame_bytes).await?;
+        // Bounded, because the failure this guards against is silent: a tunnel
+        // opened at something that never answers looks exactly like a slow server
+        // from here, and a caller stuck at "connecting" learns nothing.
+        let exchanged = async {
+            send(
+                &mut writer,
+                &Envelope {
+                    id: 1,
+                    body: &hello,
+                },
+            )
+            .await?;
+            recv::<Envelope<Reply>, _>(&mut reader, config.max_frame_bytes).await
+        };
+        let reply = tokio::time::timeout(config.handshake_timeout, exchanged)
+            .await
+            .map_err(|_| RemoteError::Timeout {
+                request: "the handshake".into(),
+                after: config.handshake_timeout,
+            })??;
         let reply = reply.ok_or_else(|| RemoteError::Protocol {
             reason: "the server closed the connection without answering the handshake".into(),
         })?;
@@ -312,6 +381,8 @@ where
             server,
             granted,
             session_id,
+            request_timeout: config.request_timeout,
+            abandoned: None,
         })
     }
 
@@ -348,6 +419,18 @@ where
 
     pub fn has(&self, capability: &RemoteCapability) -> bool {
         self.granted.contains(capability)
+    }
+
+    /// Whether another request may be sent. A session goes to
+    /// [`SessionState::Abandoned`] when a reply never arrived or answered a
+    /// different request; from there the only move is a new session.
+    pub fn state(&self) -> SessionState {
+        match &self.abandoned {
+            None => SessionState::Ready,
+            Some(reason) => SessionState::Abandoned {
+                reason: reason.clone(),
+            },
+        }
     }
 
     // ---- requests ----------------------------------------------------------
@@ -688,8 +771,42 @@ where
     /// desynced stream is caught at the first reply that answers the wrong
     /// question instead of being mistaken for the answer to this one.
     async fn request(&mut self, body: Request) -> Result<Payload, RemoteError> {
+        if let Some(reason) = &self.abandoned {
+            return Err(RemoteError::Abandoned {
+                reason: reason.clone(),
+            });
+        }
         let id = self.next_id;
         self.next_id += 1;
+        let limit = self.request_timeout;
+        let what = request_name(&body);
+        let round_trip = self.round_trip(id, body);
+        let outcome = match limit {
+            None => round_trip.await,
+            Some(limit) => match tokio::time::timeout(limit, round_trip).await {
+                Ok(outcome) => outcome,
+                Err(_) => Err(RemoteError::Timeout {
+                    request: what.clone(),
+                    after: limit,
+                }),
+            },
+        };
+        if let Err(error) = &outcome
+            && kills_the_session(error)
+        {
+            self.abandoned = Some(match error {
+                RemoteError::Timeout { after, .. } => {
+                    format!("no reply to request {id} ({what}) within {after:?}")
+                }
+                other => other.to_string(),
+            });
+        }
+        outcome
+    }
+
+    /// One send, one reply. Split out so [`Self::request`] can bound it by time
+    /// without the deadline logic getting tangled up in the checks.
+    async fn round_trip(&mut self, id: u64, body: Request) -> Result<Payload, RemoteError> {
         send(&mut self.writer, &Envelope { id, body: &body }).await?;
         let reply: Option<Envelope<Reply>> = recv(&mut self.reader, self.max_frame).await?;
         let reply = reply.ok_or_else(|| RemoteError::Protocol {
@@ -709,6 +826,21 @@ where
 }
 
 impl RemoteWorkspace<tokio::net::UnixStream> {
+    /// Dial a Unix socket, without handshaking.
+    ///
+    /// Dialling and handshaking are separate calls because only one of them is
+    /// safe to repeat: a dial that failed sent nothing, while a handshake spends
+    /// the one-time credential whether or not the reply arrives.
+    #[cfg(unix)]
+    pub async fn dial_unix(path: &Path) -> Result<tokio::net::UnixStream, RemoteError> {
+        tokio::net::UnixStream::connect(path)
+            .await
+            .map_err(|e| RemoteError::Io {
+                context: format!("connect {}", path.display()),
+                reason: e.to_string(),
+            })
+    }
+
     /// Connect to a Unix socket, the transport for a server on this machine.
     #[cfg(unix)]
     pub async fn connect_unix(
@@ -717,25 +849,30 @@ impl RemoteWorkspace<tokio::net::UnixStream> {
         token: &SessionToken,
         config: RemoteWorkspaceConfig,
     ) -> Result<Self, RemoteError> {
-        let stream = tokio::net::UnixStream::connect(path)
-            .await
-            .map_err(|e| RemoteError::Io {
-                context: format!("connect {}", path.display()),
-                reason: e.to_string(),
-            })?;
+        let stream = Self::dial_unix(path).await?;
         Self::connect(stream, endpoint, token, config).await
+    }
+
+    /// [`Self::dial_unix`], retrying within `retry`'s window.
+    #[cfg(unix)]
+    pub async fn dial_unix_waiting(
+        path: &Path,
+        retry: DialRetry,
+    ) -> Result<tokio::net::UnixStream, RemoteError> {
+        retry_dial(format!("connect {}", path.display()), retry, || {
+            Self::dial_unix(path)
+        })
+        .await
     }
 }
 
 impl RemoteWorkspace<tokio::net::TcpStream> {
-    /// Connect to a loopback TCP port. See [`super::server::require_loopback`] for
-    /// why a routable address is refused rather than merely discouraged.
-    pub async fn connect_tcp(
+    /// Dial a loopback TCP port, without handshaking. See
+    /// [`super::server::require_loopback`] for why a routable address is refused
+    /// rather than merely discouraged.
+    pub async fn dial_tcp(
         addr: std::net::SocketAddr,
-        endpoint: &RemoteEndpoint,
-        token: &SessionToken,
-        config: RemoteWorkspaceConfig,
-    ) -> Result<Self, RemoteError> {
+    ) -> Result<tokio::net::TcpStream, RemoteError> {
         super::server::require_loopback(addr)
             .map_err(|reason| RemoteError::InvalidRequest { reason })?;
         let stream = tokio::net::TcpStream::connect(addr)
@@ -748,7 +885,130 @@ impl RemoteWorkspace<tokio::net::TcpStream> {
             context: format!("set_nodelay {addr}"),
             reason: e.to_string(),
         })?;
+        Ok(stream)
+    }
+
+    /// Connect to a loopback TCP port.
+    pub async fn connect_tcp(
+        addr: std::net::SocketAddr,
+        endpoint: &RemoteEndpoint,
+        token: &SessionToken,
+        config: RemoteWorkspaceConfig,
+    ) -> Result<Self, RemoteError> {
+        let stream = Self::dial_tcp(addr).await?;
         Self::connect(stream, endpoint, token, config).await
+    }
+
+    /// [`Self::dial_tcp`], retrying within `retry`'s window. This is what a caller
+    /// waits on while it brings its own tunnel up.
+    pub async fn dial_tcp_waiting(
+        addr: std::net::SocketAddr,
+        retry: DialRetry,
+    ) -> Result<tokio::net::TcpStream, RemoteError> {
+        retry_dial(format!("connect {addr}"), retry, || Self::dial_tcp(addr)).await
+    }
+}
+
+/// How long to keep re-dialling a transport that is not there yet.
+///
+/// The wait is for the thing in front of us — an SSH tunnel or a socket-activated
+/// server — not for the server to become healthy: nothing has been sent, so no
+/// credential has been spent and no session exists.
+#[derive(Clone, Copy, Debug)]
+pub struct DialRetry {
+    pub patience: Duration,
+    pub first_delay: Duration,
+    pub max_delay: Duration,
+}
+
+impl DialRetry {
+    /// Wait up to `patience`, starting at 100 ms between attempts and doubling up
+    /// to 2 s. Zero patience means one attempt, which is what a caller that does
+    /// not want to wait asked for.
+    pub fn new(patience: Duration) -> Self {
+        Self {
+            patience,
+            first_delay: Duration::from_millis(100),
+            max_delay: Duration::from_secs(2),
+        }
+    }
+
+    /// How long to wait before the next attempt after `failures` failures, or
+    /// `None` when the window is spent. Pure, so the bound is testable without
+    /// sleeping through it.
+    pub fn delay(&self, failures: usize, elapsed: Duration) -> Option<Duration> {
+        if elapsed >= self.patience {
+            return None;
+        }
+        let scaled = self
+            .first_delay
+            .mul_f64(2f64.powi(failures.min(30) as i32))
+            .min(self.max_delay);
+        // Starting a wait that would end past the window would leave the caller
+        // still trying after its own patience had run out.
+        elapsed
+            .checked_add(scaled)
+            .filter(|until| *until <= self.patience)?;
+        Some(scaled)
+    }
+}
+
+/// Keep dialling until it works or the window closes.
+///
+/// Only `Io` failures are retried. Anything else — a routable address refused at
+/// parse time, a rejected credential — is a decision, not a race, and repeating it
+/// wastes the caller's time (or, for a credential, its one chance).
+async fn retry_dial<F, Fut, S>(
+    what: String,
+    retry: DialRetry,
+    mut dial: F,
+) -> Result<S, RemoteError>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<S, RemoteError>>,
+{
+    let started = std::time::Instant::now();
+    let mut failures = 0usize;
+    loop {
+        return match dial().await {
+            Ok(stream) => {
+                if failures > 0 {
+                    tracing::debug!(
+                        transport = %what,
+                        attempts = failures + 1,
+                        waited = ?started.elapsed(),
+                        "the transport took a few tries to come up"
+                    );
+                }
+                Ok(stream)
+            }
+            Err(error @ RemoteError::Io { .. }) => {
+                let Some(wait) = retry.delay(failures, started.elapsed()) else {
+                    return Err(match error {
+                        RemoteError::Io { context, reason } => RemoteError::Io {
+                            context: format!(
+                                "{context} (still failing after {} attempts in {:?})",
+                                failures + 1,
+                                started.elapsed()
+                            ),
+                            reason,
+                        },
+                        other => other,
+                    });
+                };
+                tracing::debug!(
+                    transport = %what,
+                    attempt = failures + 1,
+                    ?wait,
+                    %error,
+                    "transport not up yet"
+                );
+                tokio::time::sleep(wait).await;
+                failures += 1;
+                continue;
+            }
+            Err(error) => Err(error),
+        };
     }
 }
 
@@ -759,6 +1019,36 @@ fn require(granted: &[RemoteCapability], capability: RemoteCapability) -> Result
     // Refused without a round trip: the server would say the same thing, and a
     // caller that asked for the wrong capability gets the answer immediately.
     Err(RemoteError::CapabilityNotGranted { capability })
+}
+
+/// Whether a failed request leaves the stream unusable.
+///
+/// A server that says "no such path" answered the question, and the session is
+/// fine. A reply that never came, or answered a different request, means a later
+/// reply could be read as the answer to the next call — which is how a session
+/// ends up handing back the wrong file's contents.
+fn kills_the_session(error: &RemoteError) -> bool {
+    matches!(
+        error,
+        RemoteError::Protocol { .. } | RemoteError::Io { .. } | RemoteError::Timeout { .. }
+    )
+}
+
+/// What a request is, for a message a human will read.
+fn request_name(body: &Request) -> String {
+    match body {
+        Request::Hello { .. } => "hello".into(),
+        Request::List { .. } => "list".into(),
+        Request::Read { .. } => "read".into(),
+        Request::Search { .. } => "search".into(),
+        Request::Write { .. } => "write".into(),
+        Request::Diff { .. } => "diff".into(),
+        Request::Exec { .. } => "exec".into(),
+        Request::InstallBegin { .. } => "install_begin".into(),
+        Request::InstallChunk { .. } => "install_chunk".into(),
+        Request::InstallFinish { .. } => "install_finish".into(),
+        Request::Ping => "ping".into(),
+    }
 }
 
 fn refusal(host: &str) -> impl Fn(RemoteError) -> RemoteError + '_ {
@@ -829,16 +1119,27 @@ mod tests {
     }
 
     async fn session(config: ServerConfig) -> RemoteWorkspace<DuplexStream> {
+        session_with(config, RemoteWorkspaceConfig::new()).await
+    }
+
+    /// The same session, with the client's own config under the caller's control.
+    async fn session_with(
+        config: ServerConfig,
+        client: RemoteWorkspaceConfig,
+    ) -> RemoteWorkspace<DuplexStream> {
         let granted = config.capabilities.clone();
         let server = Arc::new(Server::new(config).expect("valid config"));
         let tokens = server.issue_tokens(4).await;
-        let (client, server_stream) = tokio::io::duplex(1024 * 1024);
+        let (client_stream, server_stream) = tokio::io::duplex(1024 * 1024);
         let task = serve(Arc::clone(&server), server_stream);
         let workspace = RemoteWorkspace::connect(
-            client,
+            client_stream,
             &endpoint(granted.clone()),
             &tokens[0],
-            RemoteWorkspaceConfig::new().capabilities(granted),
+            RemoteWorkspaceConfig {
+                capabilities: granted,
+                ..client
+            },
         )
         .await
         .expect("handshake");
@@ -1474,6 +1775,322 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    /// A peer that answers the handshake and then never answers anything else.
+    ///
+    /// This is what a wedged server, or a tunnel that swallowed the request, looks
+    /// like from the client — the case a deadline exists for. Answering the hello
+    /// by hand rather than through [`Server`] is the point: the real server always
+    /// replies, so it cannot produce a stall.
+    fn answers_hello_then_goes_quiet(mut stream: DuplexStream) -> tokio::task::JoinHandle<()> {
+        tokio::spawn(async move {
+            let hello: Envelope<Request> = recv(&mut stream, MAX_FRAME_BYTES)
+                .await
+                .expect("hello")
+                .expect("a first frame");
+            if !matches!(hello.body, Request::Hello { .. }) {
+                panic!("the first request was not a hello");
+            }
+            send(
+                &mut stream,
+                &Envelope::<Reply> {
+                    id: hello.id,
+                    body: Ok(Payload::Hello {
+                        protocol_version: PROTOCOL_VERSION,
+                        server: Implementation::local(),
+                        capabilities: RemoteCapability::all().to_vec(),
+                        session_id: "quiet-peer".into(),
+                        max_transfer_bytes: 1024 * 1024,
+                    }),
+                },
+            )
+            .await
+            .expect("hello reply");
+            // Held open with nothing more to say.
+            std::future::pending::<()>().await;
+        })
+    }
+
+    async fn quiet_session(limit: Duration) -> RemoteWorkspace<DuplexStream> {
+        let (client, peer) = tokio::io::duplex(64 * 1024);
+        let task = answers_hello_then_goes_quiet(peer);
+        let capabilities = RemoteCapability::all().to_vec();
+        let session = RemoteWorkspace::connect(
+            client,
+            &endpoint(capabilities.clone()),
+            &SessionToken::from_text("0123456789abcdef0123456789abcdef"),
+            RemoteWorkspaceConfig::new()
+                .capabilities(capabilities)
+                .request_timeout(Some(limit)),
+        )
+        .await
+        .expect("handshake");
+        drop(task);
+        session
+    }
+
+    /// A reply that never arrives is reported as a deadline, not as a hang, and
+    /// the session is finished by it.
+    #[tokio::test]
+    async fn a_request_that_never_gets_an_answer_ends_the_session() {
+        let mut session = quiet_session(Duration::from_millis(200)).await;
+        assert_eq!(session.state(), SessionState::Ready);
+
+        // Bounded from outside as well: were the deadline under test ever removed,
+        // this test must report that instead of waiting on a peer that never
+        // answers.
+        let error = tokio::time::timeout(Duration::from_secs(20), session.ping())
+            .await
+            .expect("the request deadline fires instead of waiting forever")
+            .expect_err("a peer that says nothing cannot answer");
+        match &error {
+            RemoteError::Timeout { request, after } => {
+                assert_eq!(request, "ping", "the message names the request");
+                assert_eq!(*after, Duration::from_millis(200));
+            }
+            other => panic!("expected a timeout, got {other}"),
+        }
+        assert!(
+            error.to_string().contains("abandoned"),
+            "the caller is told what the deadline means: {error}"
+        );
+
+        // Nothing further is sent: a reply to `ping` turning up late would be read
+        // as the answer to whatever came next, which is how a session ends up
+        // handing back the wrong file's contents.
+        let abandoned = match session.state() {
+            SessionState::Abandoned { reason } => reason,
+            SessionState::Ready => panic!("the session claims to still be usable"),
+        };
+        assert!(abandoned.contains("ping"), "{abandoned}");
+        let error = session
+            .ping()
+            .await
+            .expect_err("an abandoned session sends nothing");
+        match error {
+            RemoteError::Abandoned { reason } => assert!(reason.contains("ping"), "{reason}"),
+            other => panic!("expected abandoned, got {other}"),
+        }
+        // Not just `ping`: the rule is per session, so no call gets through.
+        let error = session
+            .list(None, None, None)
+            .await
+            .expect_err("an abandoned session sends nothing")
+            .to_string();
+        assert!(error.contains("abandoned"), "{error}");
+    }
+
+    /// The deadline has to be a wait, not a guess: a server that does answer is
+    /// unaffected by one being configured.
+    #[tokio::test]
+    async fn a_generous_deadline_leaves_a_working_session_alone() {
+        let (_dir, root) = workspace_dir();
+        let mut session = session_with(
+            config(&root).capabilities(vec![RemoteCapability::WorkspaceList]),
+            RemoteWorkspaceConfig::new().request_timeout(Some(Duration::from_secs(30))),
+        )
+        .await;
+        assert!(session.list(None, None, None).await.is_ok());
+        assert_eq!(session.ping().await.expect("pong"), PROTOCOL_VERSION);
+        assert_eq!(session.state(), SessionState::Ready);
+    }
+
+    /// A peer that accepts the connection and never speaks is the failure a
+    /// caller must not be stuck in, so the handshake is bounded by default.
+    #[tokio::test]
+    async fn a_peer_that_never_answers_the_handshake_is_a_timeout() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("loopback listener");
+        let addr = listener.local_addr().expect("addr");
+        let accepted = tokio::spawn(async move {
+            // Held, unanswered: the connect succeeds, which is exactly what makes
+            // this indistinguishable from a slow server without a deadline.
+            let (_stream, _peer) = listener.accept().await.expect("accept");
+            std::future::pending::<()>().await;
+        });
+
+        // Bounded from outside too: if the deadline under test were ever removed,
+        // this test would report that rather than waiting forever for a peer that
+        // never answers.
+        let outcome = tokio::time::timeout(
+            Duration::from_secs(20),
+            RemoteWorkspace::connect_tcp(
+                addr,
+                &endpoint(RemoteCapability::all().to_vec()),
+                &SessionToken::from_text("0123456789abcdef0123456789abcdef"),
+                RemoteWorkspaceConfig::new().handshake_timeout(Duration::from_millis(250)),
+            ),
+        )
+        .await
+        .expect("the handshake deadline fires instead of waiting forever")
+        .expect_err("a silent peer must not produce a session");
+        match outcome {
+            RemoteError::Timeout { request, after } => {
+                assert!(request.contains("handshake"), "{request}");
+                assert_eq!(after, Duration::from_millis(250));
+            }
+            other => panic!("expected a handshake timeout, got {other}"),
+        }
+        accepted.abort();
+    }
+
+    #[test]
+    fn a_zero_deadline_is_refused_rather_than_failing_every_call() {
+        let reason = RemoteWorkspaceConfig::new()
+            .handshake_timeout(Duration::ZERO)
+            .validate()
+            .expect_err("a zero handshake timeout fails every connection");
+        assert!(reason.contains("handshake"), "{reason}");
+        let reason = RemoteWorkspaceConfig::new()
+            .request_timeout(Some(Duration::ZERO))
+            .validate()
+            .expect_err("a zero request timeout fails every request");
+        assert!(reason.contains("request"), "{reason}");
+        assert!(
+            RemoteWorkspaceConfig::new().validate().is_ok(),
+            "the defaults are a bounded handshake and no request deadline"
+        );
+    }
+
+    /// Only a stream failure ends a session. A refusal is an answer.
+    #[test]
+    fn a_refusal_leaves_the_session_usable_and_a_stall_does_not() {
+        for error in [
+            RemoteError::NotFound { path: "a".into() },
+            RemoteError::PathRejected {
+                reason: "outside".into(),
+            },
+            RemoteError::Conflict {
+                expected_sha256: "a".into(),
+                actual_sha256: "b".into(),
+            },
+            RemoteError::CapabilityNotGranted {
+                capability: RemoteCapability::Git,
+            },
+            RemoteError::Exec {
+                reason: "exit 1".into(),
+            },
+        ] {
+            assert!(
+                !kills_the_session(&error),
+                "{error} was answered, so the session still works"
+            );
+        }
+        for error in [
+            RemoteError::Protocol {
+                reason: "desynced".into(),
+            },
+            RemoteError::Io {
+                context: "read frame".into(),
+                reason: "connection reset".into(),
+            },
+            RemoteError::Timeout {
+                request: "read".into(),
+                after: Duration::from_secs(1),
+            },
+        ] {
+            assert!(kills_the_session(&error), "{error} leaves no usable stream");
+        }
+    }
+
+    #[test]
+    fn the_dial_wait_doubles_stops_at_its_cap_and_ends_with_the_window() {
+        let retry = DialRetry::new(Duration::from_secs(30));
+        assert_eq!(
+            retry.delay(0, Duration::ZERO),
+            Some(Duration::from_millis(100))
+        );
+        assert_eq!(
+            retry.delay(1, Duration::ZERO),
+            Some(Duration::from_millis(200))
+        );
+        assert_eq!(
+            retry.delay(2, Duration::ZERO),
+            Some(Duration::from_millis(400))
+        );
+        assert_eq!(
+            retry.delay(40, Duration::ZERO),
+            Some(Duration::from_secs(2)),
+            "the doubling is capped, so a long wait is not one huge sleep"
+        );
+        assert_eq!(
+            retry.delay(0, Duration::from_secs(30)),
+            None,
+            "the window is spent"
+        );
+        assert_eq!(
+            DialRetry::new(Duration::ZERO).delay(0, Duration::ZERO),
+            None,
+            "no patience means one attempt"
+        );
+
+        // A wait that would end past the window is not started at all, or the
+        // caller would still be trying after its own patience had run out.
+        let tight = DialRetry::new(Duration::from_millis(150));
+        assert_eq!(
+            tight.delay(0, Duration::ZERO),
+            Some(Duration::from_millis(100))
+        );
+        assert_eq!(tight.delay(0, Duration::from_millis(60)), None);
+    }
+
+    /// A routable address is refused at parse time. Retrying that would be
+    /// retrying a decision, and every second spent on it is a second the caller
+    /// is not told what went wrong.
+    #[tokio::test]
+    async fn a_refused_address_is_not_retried() {
+        let started = std::time::Instant::now();
+        let error = RemoteWorkspace::dial_tcp_waiting(
+            "8.8.8.8:4100".parse().expect("routable addr"),
+            DialRetry::new(Duration::from_secs(30)),
+        )
+        .await
+        .expect_err("a routable address is never dialled");
+        assert!(
+            matches!(error, RemoteError::InvalidRequest { .. }),
+            "{error}"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "the refusal came back immediately, not after the window"
+        );
+    }
+
+    /// The reason the wait exists: the tunnel or socket-activated server is not up
+    /// yet, and the first attempt would otherwise be the only one.
+    #[tokio::test]
+    async fn a_transport_that_comes_up_later_is_waited_for() {
+        let probe = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("a port to reserve");
+        let addr = probe.local_addr().expect("addr");
+        drop(probe);
+
+        let appear = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(250)).await;
+            let listener = tokio::net::TcpListener::bind(addr)
+                .await
+                .expect("the reserved port comes free");
+            let (_stream, _peer) = listener.accept().await.expect("accept");
+        });
+
+        let started = std::time::Instant::now();
+        let stream =
+            RemoteWorkspace::dial_tcp_waiting(addr, DialRetry::new(Duration::from_secs(10)))
+                .await
+                .expect("the dial should keep trying until the port is there");
+        let elapsed = started.elapsed();
+        assert!(
+            stream.peer_addr().is_ok(),
+            "the returned stream is the connection"
+        );
+        assert!(
+            elapsed >= Duration::from_millis(200),
+            "at least one retry happened: the port was not there first time"
+        );
+        appear.await.expect("the peer task");
     }
 
     fn git(dir: &std::path::Path, args: &[&str]) -> Result<(), String> {
