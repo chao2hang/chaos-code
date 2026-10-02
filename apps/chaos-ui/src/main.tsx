@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { createRoot } from 'react-dom/client'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { applyServerMessage, fileChangeAffectsVisibleDirectory, initialSessionState, workspaceReconnectMessage, type ServerMessage } from './session'
+import { applyServerMessage, fileChangeAffectsVisibleDirectory, initialSessionState, sessionLossRecoveryMessage, workspaceReconnectMessage, type ServerMessage } from './session'
 import { selectWorkspaceSession } from './workspace-ui'
 import { webSocketUrl } from './transport'
 import { getComposerSuggestions, initialComposerHistory, moveSuggestionIndex, navigatePromptHistory, recordPrompt, shouldSubmitOnKey, type ComposerSuggestion } from './composer'
@@ -182,6 +182,8 @@ function App() {
         setWorkspaceWriteApprovalId(undefined)
         setWorkspaceWriteState('idle')
       }
+      const recovery = sessionLossRecoveryMessage(sessionStateRef.current, message)
+      if (recovery) send(recovery)
       if (message.type === 'approval_resolved' && message.request_id === workspaceWriteApprovalIdRef.current) {
         workspaceWriteApprovalIdRef.current = undefined
         setWorkspaceWriteApprovalId(undefined)

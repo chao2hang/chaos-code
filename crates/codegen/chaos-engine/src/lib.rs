@@ -1587,24 +1587,23 @@ impl Engine {
                 events
             }
             ClientMessage::CreateSession { workspace_id, .. } => {
-                let workspace_id =
-                    workspace_id
-                        .or(state.active_workspace_id)
-                        .unwrap_or_else(|| {
-                            let id = Uuid::new_v4();
-                            state.workspaces.insert(
+                let workspace_id = Self::selected_workspace(workspace_id)
+                    .or(state.active_workspace_id)
+                    .unwrap_or_else(|| {
+                        let id = Uuid::new_v4();
+                        state.workspaces.insert(
+                            id,
+                            WorkspaceInfo {
                                 id,
-                                WorkspaceInfo {
-                                    id,
-                                    name: "默认工作区".into(),
-                                    archived: false,
-                                    last_used_sequence: 0,
-                                    last_session_id: None,
-                                },
-                            );
-                            state.active_workspace_id = Some(id);
-                            id
-                        });
+                                name: "默认工作区".into(),
+                                archived: false,
+                                last_used_sequence: 0,
+                                last_session_id: None,
+                            },
+                        );
+                        state.active_workspace_id = Some(id);
+                        id
+                    });
                 if !state.workspaces.contains_key(&workspace_id)
                     || state
                         .workspaces
@@ -1770,7 +1769,10 @@ impl Engine {
                 {
                     vec![Self::error("workspace_unavailable", "会话工作区已归档")]
                 }
-                Some(session) if workspace_id.is_none() || workspace_id == session.workspace_id => {
+                Some(session)
+                    if Self::selected_workspace(workspace_id).is_none()
+                        || workspace_id == session.workspace_id =>
+                {
                     vec![ServerMessage::SessionSnapshot {
                         session_id,
                         workspace_id: session.workspace_id,
@@ -2993,6 +2995,15 @@ impl Engine {
             code: code.into(),
             message: message.into(),
         }
+    }
+
+    /// `Workspaces` reports `active_workspace_id` as the nil UUID when there is no
+    /// active workspace, because that wire field is not optional. A client that
+    /// echoes the placeholder back therefore means "none selected", not "a
+    /// workspace that happens to be missing"; reading it literally would answer
+    /// `create_session` with `workspace_unavailable`.
+    fn selected_workspace(workspace_id: Option<Uuid>) -> Option<Uuid> {
+        workspace_id.filter(|id| !id.is_nil())
     }
 }
 fn bounded_text_chunks(text: &str, max_bytes: usize) -> Vec<String> {

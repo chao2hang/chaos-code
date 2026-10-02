@@ -1,6 +1,16 @@
 import type { WorkspaceInfo } from './generated/protocol'
 import type { SessionState } from './session'
 
+// The host reports `active_workspace_id` as the nil UUID when it has no active
+// workspace, because the wire field is not optional. It is a placeholder, not an
+// id: echoing it back on `create_session`/`resume` is a lookup for a workspace
+// that never existed, which the host answers with `workspace_unavailable`.
+export const NIL_WORKSPACE_ID = '00000000-0000-0000-0000-000000000000'
+
+export function activeWorkspaceIdOrNull(workspaceId: string | undefined): string | null {
+  return workspaceId && workspaceId !== NIL_WORKSPACE_ID ? workspaceId : null
+}
+
 export function selectWorkspaceSession(state: SessionState, workspaceId: string): SessionState {
   const workspace = state.workspaces.find((item) => item.id === workspaceId)
   return {
@@ -20,12 +30,12 @@ export function selectWorkspaceSession(state: SessionState, workspaceId: string)
   }
 }
 
-export function workspaceChanged(state: SessionState, workspaceId: string): SessionState {
-  const workspace = state.workspaces.find((item) => item.id === workspaceId)
+export function workspaceChanged(state: SessionState, workspaceId?: string): SessionState {
+  const workspace = workspaceId ? state.workspaces.find((item) => item.id === workspaceId) : undefined
   return {
     ...state,
     activeWorkspaceId: workspaceId,
-    sessionId: state.workspaceSessions[workspaceId] ?? workspace?.last_session_id ?? undefined,
+    sessionId: workspaceId ? state.workspaceSessions[workspaceId] ?? workspace?.last_session_id : undefined,
     messages: [],
     approval: undefined,
     question: undefined,

@@ -8,7 +8,7 @@ export type PendingGitOperation = { requestId: string; sessionId: string; operat
 export type ServerMessage = ProtocolServerMessage
 
 import type { WorkspaceInfo } from './generated/protocol'
-import { workspaceChanged, workspaceSessionMap } from './workspace-ui'
+import { activeWorkspaceIdOrNull, NIL_WORKSPACE_ID, workspaceChanged, workspaceSessionMap } from './workspace-ui'
 
 export type SessionState = {
   messages: Message[]
@@ -64,11 +64,22 @@ export function fileChangeAffectsVisibleDirectory(state: SessionState, message: 
   return parentPath === listedPath
 }
 
-export function workspaceReconnectMessage(state: SessionState): ClientMessage {
-  if (state.sessionId && state.activeWorkspaceId) {
-    return { type: 'resume', client_msg_id: crypto.randomUUID(), session_id: state.sessionId, workspace_id: state.activeWorkspaceId }
+// Both codes mean the host no longer knows the session we hold; a host restart is
+// the usual cause, because sessions live in the process. Left alone, the composer
+// keeps pointing at an id nothing answers: submit() returns early without a session
+// id, so pressing send would do nothing at all.
+const lostSessionErrorCodes = ['session_not_found', 'workspace_session_mismatch']
+
+export function sessionLossRecoveryMessage(state: SessionState, message: ServerMessage): ClientMessage | null {
+  if (message.type !== 'error' || !lostSessionErrorCodes.includes(message.code)) return null
+  return { type: 'create_session', client_msg_id: crypto.randomUUID(), workspace_id: activeWorkspaceIdOrNull(state.activeWorkspaceId) }
+}
+
+export function workspaceReconnectMessage(state: SessionState): ClientMessage {  const workspaceId = activeWorkspaceIdOrNull(state.activeWorkspaceId)
+  if (state.sessionId && workspaceId) {
+    return { type: 'resume', client_msg_id: crypto.randomUUID(), session_id: state.sessionId, workspace_id: workspaceId }
   }
-  return { type: 'create_session', client_msg_id: crypto.randomUUID(), workspace_id: state.activeWorkspaceId ?? null }
+  return { type: 'create_session', client_msg_id: crypto.randomUUID(), workspace_id: workspaceId }
 }
 
 export function applyServerMessage(state: SessionState, message: ServerMessage): SessionState {
@@ -81,9 +92,10 @@ function applyServerMessageProjection(state: SessionState, message: ServerMessag
   if (message.type === 'workspaces') {
     const workspaceSessions = workspaceSessionMap(message.workspaces)
     const updated = { ...state, workspaces: message.workspaces, workspaceSessions }
-    return state.activeWorkspaceId !== message.active_workspace_id
-      ? workspaceChanged(updated, message.active_workspace_id)
-      : { ...updated, activeWorkspaceId: message.active_workspace_id }
+    const activeWorkspaceId = message.active_workspace_id === NIL_WORKSPACE_ID ? undefined : message.active_workspace_id
+    return state.activeWorkspaceId !== activeWorkspaceId
+      ? workspaceChanged(updated, activeWorkspaceId)
+      : { ...updated, activeWorkspaceId }
   }
   if (message.type === 'workspace_switched') return workspaceChanged(state, message.workspace_id)
   if (message.type === 'workspace_archived') {

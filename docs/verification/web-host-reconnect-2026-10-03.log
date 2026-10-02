@@ -1,0 +1,293 @@
+浏览器层的断线/重连/snapshot fallback 第一次被真正注入故障：抓出两个缺陷
+================================================================================
+
+日期：2026-10-03
+提交：fix(web): 主机重启后 UI 把「没有工作区」的占位 UUID 当成真工作区回传，且丢失的会话无人接管
+被记录的对象：
+  apps/chaos-ui/src/workspace-ui.ts                     新增 `NIL_WORKSPACE_ID` / `activeWorkspaceIdOrNull`，
+                                                        `workspaceChanged` 的 workspaceId 变为可选
+  apps/chaos-ui/src/session.ts                          新增 `sessionLossRecoveryMessage`；`workspaces` 分支
+                                                        把占位符读回「没有工作区」
+  apps/chaos-ui/src/main.tsx                            `ws.onmessage` 接上恢复消息
+  apps/chaos-ui/e2e/reconnect-snapshot.pw.ts            新增：浏览器级故障注入 3 例
+  apps/chaos-ui/playwright.config.ts                    testMatch 收录新文件
+  crates/codegen/chaos-engine/src/lib.rs                新增 `selected_workspace()`，入站 nil 读作「未选」
+  crates/codegen/chaos-engine/tests/workspace_session.rs 新增 2 例
+
+本文件是自包含的：每段输出都是从当轮真实运行里逐字抓下来的，命令写在 `$` 行上。
+Playwright 1.63.0（`package.json` 里是 `@playwright/test ^1.63.0`），Chromium，桌面 1440×1000 与移动 390×844 两个 project。
+
+
+第 1 节  这条开放边界本来写的是什么
+------------------------------------
+
+`TODO.md` 的「自动测试覆盖」那条在闭合时留了一句：
+
+    仍开放：浏览器层的断线/重连/snapshot fallback 观测目前只在 Node 侧 WS 测试与 React reducer 测试里，Playwright 未覆盖该故障注入。
+
+补它看起来只是加一个 e2e 文件：`page.routeWebSocket()` 拿到页面那一侧的套接字，关掉它，看页面自己能不能恢复。
+真跑起来之后它红了两次，每次都是一个此前没人知道的缺陷。两个都不是「测试写错了」：
+
+1. **UI 把协议里的占位符当成真 id 回传。** 主机在没有活动工作区时，`ServerMessage::Workspaces.active_workspace_id`
+   报的是 nil UUID —— 那个字段不是 optional，所以必须有个值。UI 把它照单全收存成 `activeWorkspaceId`，
+   重连时对主机回 `create_session workspace_id="00000000-0000-0000-0000-000000000000"`。主机只能在登记表里找这个 id，
+   找不到，回 `workspace_unavailable`。
+2. **没有任何东西接管「主机不再认识我的会话」。** 会话活在进程内存里，主机重启即全丢。重连后 UI 发
+   `resume(旧 session_id)`，主机回 `session_not_found`，UI 只是把徽标刷成「请求错误」就停在那儿。
+   `submit()` 在没有 session id 时直接 return，于是输入框按发送键什么都不做——不是报错，是静默失灵。
+
+第 2 节  根因是怎么抓到的：把每一帧打下来
+----------------------------------------
+
+前一次尝试直接在 e2e 里断言文本，红了但看不出为什么。换成先做记录：`routeWebSocket` 里把两侧每一条帧
+都存下来，`addInitScript` 里用 MutationObserver 把徽标出现过的每一个值记进 `window.__chaosStatusSeen`
+（恢复会在半秒内穿过 连接断开，正在重连 → 已连接 → 历史已恢复，轮询渲染文本会漏掉中间态——这个技巧保留在
+正式测试里）。然后 SIGKILL 掉真的 `chaos-web`，再起一个。
+
+    $ # 探针，跑在仓库配置生成的临时 config 上（webServers 与生产逐字相同）
+    PROBE3 first reply=["演示响应：probe3 marker"]
+    PROBE3 after kill status=连接断开，正在重连 legs=2
+    PROBE3 after restart status=请求错误 legs=4
+    PROBE3 sequence: ["连接中","已连接","工作区已切换","会话已创建","连接断开，正在重连","连接错误",
+                      "连接断开，正在重连","连接错误","连接断开，正在重连","已连接","工作区已切换","请求错误"]
+
+第一腿（重启前）是健康的，注意它的 `create_session` 带的是 `workspace_id: null`：
+
+    PROBE3 leg0 OUT ["{\"type\":\"list_workspaces\",...}",
+                     "{\"type\":\"create_session\",...,\"workspace_id\":null}",
+                     "{\"type\":\"submit\",...,\"session_id\":\"77358bfa-...\",\"prompt\":\"probe3 marker\"}"]
+    PROBE3 leg0 IN  ["{\"type\":\"handshake\",\"protocol_version\":1}",
+                     "{\"type\":\"workspaces\",\"active_workspace_id\":\"00000000-0000-0000-0000-000000000000\",\"workspaces\":[]}",
+                     "{\"type\":\"session_created\",\"session_id\":\"77358bfa-...\",\"workspace_id\":\"75cfebd1-...\"}",
+                     ... text_delta ×4 ... , "{\"type\":\"completed\",...}"]
+
+第四腿（重启之后）就是两个缺陷的现场：
+
+    PROBE3 leg3 OUT ["{\"type\":\"list_workspaces\",...}",
+                     "{\"type\":\"resume\",...,\"session_id\":\"77358bfa-...\",\"workspace_id\":\"75cfebd1-...\"}",
+                     "{\"type\":\"create_session\",...,\"workspace_id\":\"00000000-0000-0000-0000-000000000000\"}"]
+    PROBE3 leg3 IN  ["{\"type\":\"handshake\",\"protocol_version\":1}",
+                     "{\"type\":\"workspaces\",\"active_workspace_id\":\"00000000-0000-0000-0000-000000000000\",\"workspaces\":[]}",
+                     "{\"type\":\"error\",\"code\":\"session_not_found\",\"message\":\"会话不存在\"}",
+                     "{\"type\":\"error\",\"code\":\"workspace_unavailable\",\"message\":\"工作区不存在或已归档\"}"]
+
+三件事同时被这段输出钉死：`resume` 是合理的（它带的正是主机该认识的那个 id）；`session_not_found` 之后
+UI 发出的补救请求本身就是坏的（第二个错误是 UI 自己造成的）；徽标停在 `请求错误` 是因为补救失败之后没有下一步。
+
+顺带纠正了我自己对第一腿的读法：`session_created` 里的 `workspace_id` 是真的
+（`75cfebd1-…`），而 `active_workspace_id` 是占位符。也就是说这个工作区存在、但主机没有把它设成「活动的」。
+UI 从 `active_workspace_id` 而不是 `session_created.workspace_id` 取当前工作区，才把占位符捡了回来。
+
+
+第 3 节  修法
+--------------
+
+三处，两侧都要动，因为占位符是协议层的约定，不是某一侧的笔误。
+
+1. `workspace-ui.ts`：把占位符显式命名，并让「回传工作区 id」这一步过滤它。
+
+       export const NIL_WORKSPACE_ID = '00000000-0000-0000-0000-000000000000'
+
+       export function activeWorkspaceIdOrNull(workspaceId: string | undefined): string | null {
+         return workspaceId && workspaceId !== NIL_WORKSPACE_ID ? workspaceId : null
+       }
+
+   `workspaceChanged(state, workspaceId?)` 的第二个参数同时改成可选，并在没有工作区时把 `sessionId`
+   置为 `undefined`（原来是 `state.sessionId`，即把上一个工作区的会话留在原地）。
+
+2. `session.ts`：`workspaces` 分支进来就翻译一次，重连与恢复都走同一个过滤器。
+
+       const activeWorkspaceId = message.active_workspace_id === NIL_WORKSPACE_ID ? undefined : message.active_workspace_id
+
+       const lostSessionErrorCodes = ['session_not_found', 'workspace_session_mismatch']
+
+       export function sessionLossRecoveryMessage(state: SessionState, message: ServerMessage): ClientMessage | null {
+         if (message.type !== 'error' || !lostSessionErrorCodes.includes(message.code)) return null
+         return { type: 'create_session', client_msg_id: crypto.randomUUID(),
+                  workspace_id: activeWorkspaceIdOrNull(state.activeWorkspaceId) }
+       }
+
+   两个 code 都算「主机不再认识我的会话」：前者是重启，后者是 `resume` 带的工作区对不上。
+   `main.tsx` 里 `ws.onmessage` 收到就发回去（`sessionStateRef.current` 是每条消息同步更新的，这里是新鲜的）。
+
+3. `chaos-engine/src/lib.rs`：主机侧对称地读。入站 `workspace_id` 是 `Option<Uuid>`，收到 nil 也算「未选」。
+
+       fn selected_workspace(workspace_id: Option<Uuid>) -> Option<Uuid> {
+           workspace_id.filter(|id| !id.is_nil())
+       }
+
+   `CreateSession` 用 `Self::selected_workspace(workspace_id).or(state.active_workspace_id)`；
+   `Resume/Snapshot` 那条臂的守卫改成 `Self::selected_workspace(workspace_id).is_none() || workspace_id == session.workspace_id`。
+
+   这一处是必须的，不是防御性冗余：`workspace_unavailable` 与 `workspace_session_mismatch` 两个错误的
+   产生点都在主机侧，只改 UI 的话，同一个字符串从别的客户端发来仍然会红。
+
+
+第 4 节  修复之前的症状，在真实 shipped 路径上重放过
+----------------------------------------------------
+
+「修好了所以测试绿」不能证明测试原来抓得到东西。把 UI 那两处改回去（`main.tsx` 与 `workspace-ui.ts`
+先备份，`dist` 重新 build），跑正式 e2e 文件里那一条真实主机重启的用例：
+
+    $ CHAOS_E2E_BACKEND_PORT=… CHAOS_E2E_UI_PORT=… npx playwright test \
+        --grep "a real Web host restart" --project=desktop-chromium --project=mobile-chromium
+
+      ✘  1 [desktop-chromium] › e2e/reconnect-snapshot.pw.ts:204:1 › a real Web host restart reconnects,
+          reports the lost session and becomes usable again (6.6s)
+      ✘  2 [mobile-chromium] › e2e/reconnect-snapshot.pw.ts:204:1 › a real Web host restart reconnects,
+          reports the lost session and becomes usable again (6.5s)
+
+      Error: expect(locator).toHaveText(expected) failed
+      Expected: "会话已创建"
+      Received: "请求错误"
+
+      2 failed
+
+两个视口都红，红在第 3 个断言（恢复后应当重新可用）上，停在第 2 节预言的那个徽标值。
+然后写回原文，`cmp` 校验字节一致，重新 build。
+
+
+第 5 节  测试
+--------------
+
+`$ npm test`（apps/chaos-ui）：
+
+     ✓ src/workspace-ui.test.ts (6 tests) 4ms
+     ✓ src/session.test.ts (18 tests) 10ms
+     Test Files  5 passed (5)
+          Tests  38 passed (38)
+
+`session.test.ts` 从 16 例到 18 例，新增两条都是纯 reducer 级的：
+`treats the host placeholder for a missing active workspace as no workspace at all`
+（占位符 → `activeWorkspaceId`/`sessionId` 都是 undefined、消息清空、`workspaceReconnectMessage` 回
+`create_session workspace_id: null`）与
+`asks for a replacement session when the host no longer knows the current one`
+（两个 code 都能恢复；nil 工作区要翻成 `null`；`approval_pending`/`completed` 不触发）。
+
+`$ RUST_MIN_STACK=16777216 cargo test -p chaos-engine --test workspace_session --offline --locked`：
+
+    running 4 tests
+    test resume_rejects_a_session_from_another_workspace ... ok
+    test placeholder_active_workspace_id_round_trips_as_no_workspace_selected ... ok
+    test unknown_workspace_id_is_still_refused ... ok
+    test persisted_session_keeps_workspace_binding_after_reopen ... ok
+    test result: ok. 4 passed; 0 failed
+
+`placeholder_…` 走的是完整回环：`ListWorkspaces` → 断言报回的就是 nil → 拿它去 `CreateSession` →
+`SessionCreated` → 再拿它去 `Resume` → `SessionSnapshot`。`unknown_workspace_id_is_still_refused`
+是同一段代码的反向夹具：随机 id 必须仍然吃 `workspace_unavailable`，否则第 3 节的过滤就成了「什么都不校验」。
+
+浏览器层（正式 e2e，仓库配置，两个视口）：
+
+    $ cd apps/chaos-ui && CHAOS_E2E_BACKEND_PORT=18793 CHAOS_E2E_UI_PORT=15180 \
+        CHAOS_E2E_ORIGIN=http://127.0.0.1:15180 CHAOS_E2E_ALLOW_DYNAMIC_ORIGIN=1 \
+        npx playwright test --config playwright.config.ts \
+        --project=desktop-chromium --project=mobile-chromium \
+        --grep "reconnect|resume the host cannot answer|host restart"
+      ✓  1 [desktop-chromium] › e2e/reconnect-snapshot.pw.ts:121:1 › a dropped browser socket reconnects and restores the transcript from a server snapshot (1.8s)
+      ✓  2 [desktop-chromium] › e2e/reconnect-snapshot.pw.ts:164:1 › a resume the host cannot answer is refused visibly and leaves a usable session behind (1.4s)
+      ✓  3 [desktop-chromium] › e2e/reconnect-snapshot.pw.ts:204:1 › a real Web host restart reconnects, reports the lost session and becomes usable again (1.8s)
+      ✓  4 [mobile-chromium] › e2e/reconnect-snapshot.pw.ts:121:1 › a dropped browser socket reconnects and restores the transcript from a server snapshot (1.8s)
+      ✓  5 [mobile-chromium] › e2e/reconnect-snapshot.pw.ts:164:1 › a resume the host cannot answer is refused visibly and leaves a usable session behind (1.4s)
+      ✓  6 [mobile-chromium] › e2e/reconnect-snapshot.pw.ts:204:1 › a real Web host restart reconnects, reports the lost session and becomes usable again (1.7s)
+
+      6 passed (11.3s)
+
+三条的分工不一样，值得写清楚：
+第 1 条不重载页面，关掉套接字之后要求页面自己重连、发 `resume`（且 session id 与掉线前一致）、
+拿到 `session_snapshot`，并且快照里的文本就是掉线前那段——即恢复出来的 transcript 来自主机而不是页面缓存；
+第 2 条把 `resume` 里的 session id 改写成主机不认识的 id，要求错误被报出来、随后有一个新会话把输入框救活；
+第 3 条不 mock 任何东西，`spawn` 真的 `target/debug/chaos-web`，SIGKILL 掉，再起一个。
+
+第 3 条的两个进程断言是这轮改出来的，之前写错了一次：
+
+    expect(firstHost.signalCode, 'the original host stayed alive').toBe('SIGKILL')
+    expect(secondHost.exitCode, 'the replacement host died').toBeNull()
+    expect(secondHost.signalCode, 'the replacement host died').toBeNull()
+
+原本写的是 `expect(firstHost.exitCode).not.toBeNull()`，红了 `Received: null`。被信号停掉的进程
+`exitCode` 就是 `null`、`signalCode` 才有值，所以「有 exitCode」在这里什么也不证明；断言必须落在
+`signalCode === 'SIGKILL'` 上。`finally` 里的清理也跟着改：`if (child.exitCode === null && child.signalCode === null)`
+才 kill，否则会对已死进程补刀。
+
+
+第 6 节  变异证明（7 处）
+--------------------------
+
+跑法：把「改成」列写进真实源码，跑真实测试命令，记录退出码与被点名的测试，然后写回原文并 `cmp`。
+脚本 `/tmp/…/mutate-slice.py`，逐字记录 `/tmp/…/mutate-slice.log`。
+最终一轮：**7 处变异，0 处存活，0 处未还原**。
+
+| # | 源码位置 | 变异 | 改成 | 被点名的测试 |
+|---|---|---|---|---|
+| R1 | `lib.rs` CreateSession | 不翻译入站 nil | `let workspace_id = workspace_id` | `placeholder_active_workspace_id_round_trips_as_no_workspace_selected`，报 `workspace_unavailable` |
+| R2 | `lib.rs` Resume 臂守卫 | 拿原始 id 判空 | `if workspace_id.is_none()` | 同上，报 `workspace_session_mismatch` |
+| R3 | `lib.rs` `selected_workspace` | 过滤函数直接返回 None | `None` | `unknown_workspace_id_is_still_refused` |
+| U1 | `session.ts` workspaces 分支 | 不翻译占位符 | `const activeWorkspaceId = message.active_workspace_id` | `treats the host placeholder …` |
+| U2 | `workspace-ui.ts` `activeWorkspaceIdOrNull` | 不过滤占位符 | `return workspaceId ?? null` | `asks for a replacement session …` |
+| U3 | `session.ts` `lostSessionErrorCodes` | 少认一个 code | `['session_not_found']` | `asks for a replacement session …` |
+| U4 | `workspace-ui.ts` `workspaceChanged` | 无工作区时保留旧 sessionId | `: state.sessionId` | `treats the host placeholder …` |
+
+R1/R2 的报错原文（变异输出里逐字截的）：
+
+    unexpected [Error { code: "workspace_unavailable", message: "工作区不存在或已归档" }]
+    [Error { code: "workspace_session_mismatch", message: "会话不属于请求的工作区" }]
+
+U2 要单独说一句，因为它红的位置和直觉不一样。把 `activeWorkspaceIdOrNull` 的过滤去掉，
+`treats the host placeholder …` 那条**仍然是绿的**（它检查的是 `activeWorkspaceId` 的存储，而 U2 动的是回传路径）；
+真正红的是恢复那条：
+
+    FAIL  src/session.test.ts > session event projection > asks for a replacement session when the host no longer knows the current one
+    AssertionError: expected { type: 'create_session', …(2) } to match object { type: 'create_session', …(1) }
+    - Expected
+    + Received
+      {
+        "type": "create_session",
+    -   "workspace_id": null,
+    +   "workspace_id": "00000000-0000-0000-0000-000000000000",
+      }
+     ❯ src/session.test.ts:130:8
+     Tests  1 failed | 17 passed (18)
+
+差别正是这两个函数为什么要分开：一个管「主机报的占位符怎么存」，一个管「我回传时怎么说」。
+夹具必须两侧各有一条打得到，否则任意一侧被"简化"掉都还有测试绿着。
+
+
+第 7 节  正式测试里那句「关服务器侧的腿不算故障」，是验过的
+----------------------------------------------------------
+
+`reconnect-snapshot.pw.ts` 的注释里写着：Playwright 握着页面的那一侧，关掉它才是页面能观察到的断线；
+关掉服务器那一侧根本传不到页面。这句话在最开始写的时候只是「我记得是这样」。现在它有记录：
+
+    $ npx playwright test --config /tmp/…/playwright.probe4.ts --project=desktop-chromium
+    PROBE4 after server-side close: legs=1
+    PROBE4 badge after server-side close: "会话已创建"
+    PROBE4 leg1 outbound types after server-side close: list_workspaces,create_session
+    PROBE4 after page-side close: legs=2 badge="历史已恢复"
+    PROBE4 leg2 outbound types after page-side close: list_workspaces,resume
+      ✓  1 [desktop-chromium] › …/probe4.pw.ts:32:5 › closing the server-side leg is invisible to the page;
+          closing the page-side leg is not (5.4s)
+      1 passed (6.3s)
+
+同一个页面里连着做两次关闭：先 `server.close()`，等 4 秒，腿数仍然是 1、徽标仍然是 `会话已创建`、
+第一腿也没发出任何新帧；再 `route.close()`（页面侧），腿数立刻变 2，第二腿的出站是 `list_workspaces, resume`。
+探针本身不进仓库（它依赖的是 Playwright 的行为而不是本仓库的代码），但它证的那件事是正式测试的前提：
+如果关错了一侧，那 3 条 e2e 会全部"通过"而什么都没注入。
+
+
+第 8 节  仍未覆盖 / 边界
+-------------------------
+
+1. **Tauri 主机没有被覆盖。** 第 3 条用例起的是 `target/debug/chaos-web`，即 Web 主机。桌面壳里的
+   引擎走的是同一套 `ServerMessage`/`ClientMessage`，但套接字的存活周期不同（进程随窗口生死）。
+   「主机重启」这个故障在 Tauri 侧目前只能靠第 3 节的 Rust 用例覆盖协议层。
+2. **重连退避的节奏没有被钉住。** 探针的 `sequence` 里能看到 3 轮 `连接断开，正在重连` / `连接错误`
+   才接上新主机。这个次数是客户端实现的退避结果，测试只要求「最终接上」，不要求第几次接上——
+   把它钉成常数会让任何退避调参都变成测试改动。
+3. **只覆盖 `/ws` 这一条套接字。** 预览代理的 HMR 套接字（`xai-grok-web` 的 `preview_proxy`）有自己
+   的桥接与握手，那边是 Rust 集成测试覆盖的（`the_hmr_socket_is_bridged_with_its_own_handshake`），
+   浏览器侧的 HMR 断线不在这次的范围内。
+4. **`session_not_found` 之后的历史是真的丢了。** 恢复出来的是一个空会话，不是旧 transcript。
+   这是设计上的（会话活在内存里），但要写明白：UI 变绿不等于用户回到了原来的对话。
+5. 探针脚本与逐字输出留在临时目录（`probe3.log`、`probe4.log`、`e2e-prefix-defect.log`、
+   `mutate-slice.log`），不进仓库；本文件里引的是它们的内容。

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { applyServerMessage, fileChangeAffectsVisibleDirectory, initialSessionState, workspaceReconnectMessage } from './session'
+import { applyServerMessage, fileChangeAffectsVisibleDirectory, initialSessionState, sessionLossRecoveryMessage, workspaceReconnectMessage } from './session'
+import { NIL_WORKSPACE_ID } from './workspace-ui'
 
 describe('session event projection', () => {
   it('ignores late session-scoped events from a previous workspace session', () => {
@@ -100,6 +101,35 @@ describe('session event projection', () => {
     expect(workspaceReconnectMessage(selected)).toMatchObject({ type: 'resume', session_id: 'session-a', workspace_id: 'workspace-a' })
     const newWorkspace = { ...selected, activeWorkspaceId: 'workspace-new', sessionId: undefined }
     expect(workspaceReconnectMessage(newWorkspace)).toMatchObject({ type: 'create_session', workspace_id: 'workspace-new' })
+  })
+
+  it('treats the host placeholder for a missing active workspace as no workspace at all', () => {
+    const before = {
+      ...initialSessionState,
+      activeWorkspaceId: 'workspace-a',
+      sessionId: 'session-a',
+      workspaceSessions: { 'workspace-a': 'session-a' },
+      messages: [{ role: 'assistant' as const, text: '上一段对话' }],
+    }
+    const after = applyServerMessage(before, { type: 'workspaces', active_workspace_id: NIL_WORKSPACE_ID, workspaces: [] })
+    expect(after.activeWorkspaceId).toBeUndefined()
+    expect(after.sessionId).toBeUndefined()
+    expect(after.messages).toEqual([])
+    // Echoing the placeholder back would be answered with `workspace_unavailable`.
+    expect(workspaceReconnectMessage(after)).toMatchObject({ type: 'create_session', workspace_id: null })
+    expect(workspaceReconnectMessage({ ...after, sessionId: 'session-a' })).toMatchObject({ type: 'create_session', workspace_id: null })
+  })
+
+  it('asks for a replacement session when the host no longer knows the current one', () => {
+    const state = { ...initialSessionState, activeWorkspaceId: 'workspace-a', sessionId: 'session-a' }
+    expect(sessionLossRecoveryMessage(state, { type: 'error', code: 'session_not_found', message: '会话不存在' }))
+      .toMatchObject({ type: 'create_session', workspace_id: 'workspace-a' })
+    expect(sessionLossRecoveryMessage(state, { type: 'error', code: 'workspace_session_mismatch', message: '会话不属于请求的工作区' }))
+      .toMatchObject({ type: 'create_session', workspace_id: 'workspace-a' })
+    expect(sessionLossRecoveryMessage({ ...state, activeWorkspaceId: NIL_WORKSPACE_ID }, { type: 'error', code: 'session_not_found', message: '会话不存在' }))
+      .toMatchObject({ type: 'create_session', workspace_id: null })
+    expect(sessionLossRecoveryMessage(state, { type: 'error', code: 'approval_pending', message: '已有待审批操作' })).toBeNull()
+    expect(sessionLossRecoveryMessage(state, { type: 'completed', session_id: 'session-a', sequence: 1 })).toBeNull()
   })
 
   it('projects file browser loading, empty, and error transitions', () => {
