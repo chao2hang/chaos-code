@@ -576,6 +576,39 @@ pub fn process_not_running(pid: u32) -> bool {
     }
 }
 
+/// Windows has no zombies: a terminated process stops reporting `STILL_ACTIVE`
+/// the moment it exits, and its PID becomes reusable after that, so the
+/// zombie-tolerance the Unix side needs has no counterpart here. An unopenable
+/// PID counts as gone -- that is what happens to one that already exited --
+/// while a PID that cannot be read reports "running", matching the `ps(1)`
+/// branch above. A process that happens to exit with code 259 is mistaken for
+/// alive, which is the same class of error a recycled PID causes on Unix;
+/// callers poll against a deadline rather than trusting one sample.
+#[cfg(windows)]
+pub fn process_not_running(pid: u32) -> bool {
+    use windows::Win32::Foundation::{CloseHandle, STILL_ACTIVE};
+    use windows::Win32::System::Threading::{
+        GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+
+    // SAFETY: FFI with value arguments only; windows-rs returns Err when the
+    // process is absent or the rights cannot be granted.
+    let handle = match unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) } {
+        Err(_) => return true,
+        Ok(handle) => handle,
+    };
+    let mut exit_code = 0u32;
+    // SAFETY: `handle` is the live handle opened above and is closed on every
+    // path below; `exit_code` is a writable u32 that outlives the call.
+    let queried = unsafe { GetExitCodeProcess(handle, &mut exit_code) };
+    // SAFETY: `handle` was returned by OpenProcess and is not used afterwards.
+    let _ = unsafe { CloseHandle(handle) };
+    match queried {
+        Err(_) => false,
+        Ok(()) => exit_code != STILL_ACTIVE.0 as u32,
+    }
+}
+
 /// Configure a command so the spawned child becomes the leader of a new
 /// process group.
 pub fn new_process_group(cmd: &mut tokio::process::Command) {
@@ -1208,6 +1241,7 @@ fn is_wsl_from_inputs(env: &HashMap<String, String>, osrelease: Option<&str>) ->
 
 #[cfg(test)]
 mod tests {
+    #[cfg(target_os = "linux")]
     use std::sync::Mutex;
 
     use super::*;

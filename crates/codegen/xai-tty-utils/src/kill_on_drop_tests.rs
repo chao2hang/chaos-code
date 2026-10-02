@@ -3,10 +3,20 @@ use std::time::{Duration, Instant};
 
 use super::KillOnDrop;
 
+/// A child that outlives the test unless the guard ends it: `sleep` on Unix,
+/// `ping`'s own repeat counter on Windows. Both are the direct child, so the
+/// guard's `kill()` reaches the process whose PID the assertions follow.
 fn spawn_sleeper() -> std::process::Child {
-    let mut cmd = Command::new("sleep");
-    cmd.arg("300")
-        .stdin(Stdio::null())
+    let mut cmd = if cfg!(windows) {
+        let mut c = Command::new("ping");
+        c.args(["-n", "300", "127.0.0.1"]);
+        c
+    } else {
+        let mut c = Command::new("sleep");
+        c.arg("300");
+        c
+    };
+    cmd.stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
     crate::detach_std_command(&mut cmd);
@@ -55,16 +65,24 @@ fn into_inner_disarms_without_killing() {
 
 #[test]
 fn drop_after_in_handle_reap_is_a_no_op() {
-    let mut cmd = Command::new("true");
+    // Something that exits 0 at once. `cmd` runs its own `exit` builtin, so
+    // unlike `cmd /C <program>` there is no grandchild behind the guarded PID.
+    let mut cmd = if cfg!(windows) {
+        let mut c = Command::new("cmd");
+        c.args(["/C", "exit", "0"]);
+        c
+    } else {
+        Command::new("true")
+    };
     cmd.stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
     crate::detach_std_command(&mut cmd);
     #[allow(clippy::disallowed_methods)] // test fixture; reaped through the guard
-    let mut guard = KillOnDrop::new(cmd.spawn().expect("spawn true"));
+    let mut guard = KillOnDrop::new(cmd.spawn().expect("spawn the exit-0 fixture"));
 
     let status = guard.wait().expect("in-handle reap through the guard");
-    assert!(status.success(), "true exits 0");
+    assert!(status.success(), "the fixture exits 0");
 
     // Drop after the in-handle reap must not panic and must not signal a
     // recycled PID (std's Child::kill refuses already-waited children).

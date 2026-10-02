@@ -1,5 +1,12 @@
-use super::{park_blocking_workers, release_parked_workers, *};
+// Every use of these three is in a linux-only test (they park real worker
+// threads, which the runtime only does there), so importing them everywhere
+// would warn on every other platform.
+use super::*;
+#[cfg(target_os = "linux")]
+use super::{park_blocking_workers, release_parked_workers};
+#[cfg(target_os = "linux")]
 use std::sync::Arc;
+#[cfg(target_os = "linux")]
 use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
 

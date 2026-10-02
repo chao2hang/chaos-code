@@ -111,3 +111,61 @@ The macOS result is for commit a206ec33, which predates the ripgrep fix. That fi
 only the Windows branch of the step (`tar --strip-components=1` already flattened the same
 directory on the macOS/Linux branch), so the two legs are independent, but the numbers
 above are not numbers from a tree containing 88903bf7.
+
+== update: the rust job is green on the current tree, and the Windows leg then found a
+   compile break of its own
+
+Run 36995349578, commit 60e215fe16ccf2616a3afe161b7f0ca0c7317413,
+https://github.com/chao2hang/chaos-code/actions/runs/36995349578
+Fetched with: gh run view 36995349578 -R chao2hang/chaos-code --json headSha,startedAt,jobs
+              gh api --allow-escape-sequences repos/chao2hang/chaos-code/actions/jobs/110826866192/logs
+Host that fetched it: Ubuntu 22.04 x86_64, gh 2.x.
+
+  rust check / clippy / test              110814332839  completed/success  11:12:14Z -> 11:55:09Z
+  GUI engine, Web host and frontend                     completed/success
+  GUI browser E2E                                       completed/success
+  npm package scripts                                   completed/success
+  secret scan                                           completed/success
+  docs localization                                     completed/success
+  workflows present                                     completed/success
+  platform tests (macos-14)               110826866155  completed/success
+  platform tests (windows-latest)         110826866192  completed/failure
+
+The two runs between the ripgrep fix and this one -- 36993902337 on 21eb8e21 and
+36994408988 on 4d3eb266 -- were cancelled when newer pushes arrived, so this is the first
+run to reach a verdict on a tree containing that fix. The macOS leg is green a second
+time, on a tree that contains it.
+
+== the Windows failure this time is in the repository, not in the runner
+
+  error[E0425]: cannot find function `process_not_running` in the crate root
+     --> crates\codegen\xai-tty-utils\src\kill_on_drop_tests.rs:21:19
+  note: found an item that was configured out
+     --> crates\codegen\xai-tty-utils\src\lib.rs:549:8
+  ...
+  ##[error]Process completed with exit code 101.
+
+This time the ripgrep step passed and `cargo test` ran; it failed to build one test
+target. `kill_on_drop_tests.rs` is compiled on every platform but calls
+`xai_tty_utils::process_not_running`, which was `#[cfg(unix)]`-only, so the crate's test
+binary has never existed on Windows. The same file's fixtures also spawned `sleep 300` and
+`true`, i.e. Unix userland, so gating the module would have traded a red leg for a leg that
+checks nothing.
+
+The fix adds the Windows side of the probe (`OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION)`
+plus `GetExitCodeProcess`; an unopenable PID counts as gone, an unreadable one reports
+"running" so a caller notices) and gives the fixtures a process that exists on both
+platforms (`sleep 300` / `ping -n 300 127.0.0.1`, and `true` / `cmd /C exit 0`), both
+spawned directly so the guarded PID is the process that gets killed. Four `unused_imports`
+warnings in the same crate's test code -- imports whose only users are Linux-only tests --
+were gated too, because that leg had reported `xai-tty-utils (lib test) generated 4
+warnings`.
+
+Checked locally before pushing: `cargo check -p xai-tty-utils --all-targets` for
+x86_64-pc-windows-msvc, aarch64-pc-windows-msvc and x86_64-apple-darwin each finish with no
+warnings and no errors, `cargo test -p xai-tty-utils` is green on Linux (62 + 1 + 2), and
+`cargo clippy -p xai-tty-utils --all-targets -- -D warnings` is clean.
+
+What this file is still NOT evidence about: a Windows run of those three tests. The
+cross-compile says the target builds; only the next `platform tests (windows-latest)` leg
+says whether `KillOnDrop` behaves there.
