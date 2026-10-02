@@ -91,6 +91,38 @@ unsafe 的原因），并且会把密钥写进之后每个子进程（shell 工�
 （`Unset` / `Present` / `Cleared` 三态；`Cleared` 只屏蔽 `XAI_API_KEY`，保留 legacy
 变量，与原 `remove_var` 作用域一致），环境不再被运行时改写。
 
+### 1.4.2 2026-10-02 第二次刷新（env 写入收敛推广到四个 crate 后）
+
+同一天把 1.4.1 的 helper 继续搬到其余高频 crate。两组口径都给出，因为
+"关键字行"会把 `// SAFETY:`、`unsafe fn`、FFI 文档一并算进来，容易高估进展：
+
+| 指标 | 2026-10-02 第一次 | 2026-10-02 第二次 |
+|---|---:|---:|
+| `crates/codegen/*/src` `unsafe` 关键字行 | 904 | 763 |
+| `crates/**/*.rs` 中 `unsafe {` 块数（`git grep -c 'unsafe {'`） | 768 | 586 |
+| `crates/codegen` 内 `std::env::set_var/remove_var` 直接调用 | 417 | 222 |
+
+作为参照，上游 `SOURCE_REV 72a61251fcff` 的 `unsafe {` 块数是 **1028**，所以这条
+口径上本分支已经从 1028 降到 586。逐 crate（`unsafe {` 块数 / 裸 env 调用数）：
+
+| crate | 本步前 | 本步后 |
+|---|---|---|
+| `xai-grok-workspace` | 112 / 110 | 4 / 1 |
+| `xai-grok-update` | 27 / 30 | 1 / 0 |
+| `xai-fast-worktree` | 70 / 32 | 55 / 4 |
+| `xai-grok-pager` | 58 / 39 | 25 / 3 |
+
+`xai-fast-worktree` 只降了 15 个块，因为它的 `unsafe` 主要在
+`nfs/client.rs`（AF_UNIX socket、`poll`、`flock`）和 `api/gc/process_scan.rs`
+（procfs / `proc_vnodepathinfo`）这类 FFI 上，与环境变量无关；关键字行只从 74 降到
+72 也是同一个原因。剩余 222 处裸 env 调用里，有 5 处是**有意保留**的生产写入，
+因为加锁 helper 在 `xai-grok-test-support`，对 library/bin 的非 `cfg(test)` 代码来说
+它只是 dev-dependency，正常构建不可达。这 5 处各自带 `// SAFETY:` 或 `# Safety`
+说明（pager 3 处、workspace daemon bin 1 处、fast-worktree 的跨 crate 测试辅助
+`clear_auto_gc_env_for_test` 1 处）。要让它们也走同一入口，需要把写锁下沉到一个
+独立叶子 crate，或给 `xai-fast-worktree` 加 optional dependency + feature；两条路都会
+改变正常构建的依赖图，留作后续独立决定。
+
 ### 1.5 三类分类（初步）
 
 | 类别 | 估算占比 | 说明 |
