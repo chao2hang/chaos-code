@@ -7,7 +7,7 @@ use super::common::*;
 /// Ctrl+Enter with text mid-stream is cancel-and-send: the running turn is cancelled silently and the text runs as the next turn.
 /// That turn carries the interjection preamble, and turn-start adoption renders the text as a "❯ " user block.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_queue -- --ignored; review 2027-01"]
 async fn interjection_reaches_model_in_same_turn() {
     let content = ContentController::start().await.expect("start content");
     // Gate turn 1's final event so the typed text and the chord provably land mid-turn regardless of suite load

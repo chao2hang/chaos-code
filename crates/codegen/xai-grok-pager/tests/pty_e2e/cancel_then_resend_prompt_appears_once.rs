@@ -9,7 +9,7 @@ const UNFINISHED_TASKS_REMINDER: &str =
 
 /// Submit OLD, Ctrl+C rewind, send NEW: NEW's request must not contain OLD or interrupt framing.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_queue -- --ignored; review 2027-01"]
 async fn cancel_then_resend_prompt_appears_once() {
     const OLD_PROMPT: &str = "old prompt that gets yanked";
     const NEW_PROMPT: &str = "brand new question instead";

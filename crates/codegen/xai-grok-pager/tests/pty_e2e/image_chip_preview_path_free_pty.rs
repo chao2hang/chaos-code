@@ -4,7 +4,7 @@ use super::common::*;
 /// Pasting a bare image path on a PTY without graphics support renders the chip without the path and shows the preview metadata.
 /// Typing afterwards dismisses the preview but keeps the chip.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_clipboard -- --ignored; review 2027-01"]
 async fn image_chip_preview_path_free_pty() {
     let content = ContentController::start().await.expect("start content");
     content.set_response(format!("{MOCK_RESPONSE_SENTINEL} image preview turn."));

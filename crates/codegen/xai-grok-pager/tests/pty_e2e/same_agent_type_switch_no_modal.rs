@@ -5,7 +5,7 @@ use super::common::*;
 /// **Same agent_type switch: no modal, normal switch.**
 /// Switching between two models that share the same agent type (or no agent type) mid-session should succeed normally without any modal.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_config_ui -- --ignored; review 2027-01"]
 async fn same_agent_type_switch_no_modal() {
     // Both models have no agent_type, so both use the grok-build harness
     let content = ContentController::start_with_models(vec![

@@ -4,7 +4,7 @@ use super::common::*;
 
 /// A `!` command queued mid-turn is server-promoted after the turn ends; its output must render (the marker file proves execution out-of-band).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_queue -- --ignored; review 2027-01"]
 #[cfg(unix)]
 async fn queued_bash_promotion_renders_output_pty() {
     let content = ContentController::start().await.expect("start content");

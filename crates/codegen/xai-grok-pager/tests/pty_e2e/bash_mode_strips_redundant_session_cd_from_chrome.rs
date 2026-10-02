@@ -7,7 +7,7 @@ use super::common::*;
 /// The test starts a real session first so session_cwd is set and bash-mode runs as an execute tool with Run chrome.
 /// Without a session, `!` only writes a welcome-history line, and `#1 ! …` keeps the typed command.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_shell_tools -- --ignored; review 2027-01"]
 #[cfg(unix)]
 async fn bash_mode_strips_redundant_session_cd_from_chrome() {
     let content = ContentController::start().await.expect("start content");

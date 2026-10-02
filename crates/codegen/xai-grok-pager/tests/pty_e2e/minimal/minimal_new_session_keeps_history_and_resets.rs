@@ -11,7 +11,7 @@ use crate::common::*;
 /// The robust "new session" signal is then a *second* welcome card (two `Grok Build` banners across scrollback and screen).
 /// That signal is independent of exactly how content scrolled.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_minimal -- --ignored; review 2027-01"]
 async fn minimal_new_session_keeps_history_and_resets() {
     /// Substring printed once per minimal welcome card (see `minimal::welcome`).
     const WELCOME_BANNER: &str = "Grok Build";

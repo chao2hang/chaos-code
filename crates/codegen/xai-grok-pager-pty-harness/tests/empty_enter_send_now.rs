@@ -5,7 +5,7 @@
 //! ```
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore] // opt-in: real pager binary in a PTY (CI runs with --ignored)
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager-pty-harness --test empty_enter_send_now -- --ignored; review 2027-01"] // opt-in: real pager binary in a PTY (CI runs with --ignored)
 async fn empty_enter_force_sends_top_queued() {
     xai_grok_pager_pty_harness::scenarios::empty_enter_send_now::assert_empty_enter_force_sends_top_queued()
         .await

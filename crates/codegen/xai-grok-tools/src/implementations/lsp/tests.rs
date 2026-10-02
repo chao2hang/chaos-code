@@ -687,7 +687,7 @@ async fn e2e_multi_server_routing() {
 
 /// Requires `npx typescript-language-server` on PATH. Run with:
 /// `cargo test -p xai-grok-shell e2e_real_typescript_language_server -- --ignored`
-#[ignore]
+#[ignore = "requires typescript-language-server on PATH; run cargo test -p xai-grok-tools e2e_real_typescript_language_server -- --ignored; review 2027-01"]
 #[tokio::test(flavor = "current_thread")]
 async fn e2e_real_typescript_language_server() {
     let workspace = tempfile::tempdir().unwrap();
@@ -2154,7 +2154,7 @@ async fn drop_reaps_server_child_without_shutdown() {
 /// ROSLYN_DLL=/path/to/Microsoft.CodeAnalysis.LanguageServer.dll \
 ///   cargo test -p xai-grok-tools e2e_real_roslyn_survives_editing -- --ignored --nocapture
 /// ```
-#[ignore]
+#[ignore = "requires ROSLYN_DLL set to Microsoft.CodeAnalysis.LanguageServer.dll; run cargo test -p xai-grok-tools e2e_real_roslyn_survives_editing -- --ignored; review 2027-01"]
 #[tokio::test(flavor = "multi_thread")]
 async fn e2e_real_roslyn_survives_editing() {
     let Ok(dll) = std::env::var("ROSLYN_DLL") else {

@@ -9,7 +9,7 @@ use crate::common::*;
 /// must light a Chinese `计划` flag in the info bar that
 /// `crate::minimal::live::render_prompt_info` draws below the prompt.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_minimal -- --ignored; review 2027-01"]
 async fn minimal_shift_tab_shows_mode_in_info_bar() {
     let content = ContentController::start().await.expect("start content");
     let mut harness = spawn_minimal(&content);

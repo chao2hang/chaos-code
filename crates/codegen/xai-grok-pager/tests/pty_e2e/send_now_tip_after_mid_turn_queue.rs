@@ -5,7 +5,7 @@ use super::common::*;
 /// After queuing a follow-up mid-turn, the ephemeral tip advertises send-now (`… to send now`).
 /// Opt into contextual hints explicitly so the tip cannot be soft-disabled by remote defaults in CI.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_queue -- --ignored; review 2027-01"]
 async fn send_now_tip_after_mid_turn_queue() {
     let content = ContentController::start().await.expect("start content");
     content.set_chunk_delay(Some(Duration::from_millis(150)));

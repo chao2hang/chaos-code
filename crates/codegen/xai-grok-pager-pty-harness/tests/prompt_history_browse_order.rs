@@ -36,7 +36,7 @@ const EXPECTED_NEWEST_FIRST: [&str; 6] = [
 const SHELL_MODE_LABEL: &str = "Run shell command";
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore] // opt-in: spawns the real pager binary in a PTY (CI runs with --ignored)
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager-pty-harness --test prompt_history_browse_order -- --ignored; review 2027-01"] // opt-in: spawns the real pager binary in a PTY (CI runs with --ignored)
 async fn up_arrow_browse_interleaves_prompts_commands_and_notes() {
     run().await.expect("prompt-history browse-order e2e");
 }

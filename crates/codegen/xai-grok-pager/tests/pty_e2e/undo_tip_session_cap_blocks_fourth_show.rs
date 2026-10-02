@@ -8,7 +8,7 @@ use super::common::*;
 /// The slot must therefore clear via TTL expiry between shows, so each fresh show increments the in-memory count.
 /// The 4th wipe is then gated and shows no banner.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_config_ui -- --ignored; review 2027-01"]
 async fn undo_tip_session_cap_blocks_fourth_show() {
     let content = ContentController::start().await.expect("start content");
     let binary = pager_binary().expect("resolve pager binary");

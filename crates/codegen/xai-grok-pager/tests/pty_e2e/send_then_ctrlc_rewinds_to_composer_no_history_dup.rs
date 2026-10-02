@@ -9,7 +9,7 @@ use super::common::*;
 /// `set_text` + `remove_entry`; requires `cancel_rewind_enabled`, on by
 /// default via the initialize `cancelRewind` meta.)
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_queue -- --ignored; review 2027-01"]
 async fn send_then_ctrlc_rewinds_to_composer_no_history_dup() {
     const REWIND_PROMPT: &str = "rewind me home";
 

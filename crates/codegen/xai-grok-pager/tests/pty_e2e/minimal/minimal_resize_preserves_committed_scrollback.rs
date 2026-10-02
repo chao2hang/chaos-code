@@ -7,7 +7,7 @@ use crate::common::*;
 /// This test commits a tall response into native scrollback, then shrinks the terminal in both rows and cols.
 /// It asserts the committed content survives (not wiped, not double-printed), the pager does not panic or exit, and the prompt still works.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_minimal -- --ignored; review 2027-01"]
 async fn minimal_resize_preserves_committed_scrollback() {
     let content = ContentController::start().await.expect("start content");
     // The sentinel is on the first rendered row and the 80 code-block rows overflow the screen, so the head commits into native scrollback

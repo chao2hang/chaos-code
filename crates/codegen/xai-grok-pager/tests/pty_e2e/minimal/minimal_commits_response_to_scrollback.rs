@@ -9,7 +9,7 @@ use crate::common::*;
 /// Short responses stay on the visible static band above the live region (the content-anchored live region keeps them on screen).
 /// Only a response genuinely taller than the screen proves content reaches *scrollback* specifically.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_minimal -- --ignored; review 2027-01"]
 async fn minimal_commits_response_to_scrollback() {
     let content = ContentController::start().await.expect("start content");
     // `tall_response` puts the sentinel on the FIRST rendered row

@@ -29,7 +29,7 @@ const SIGINT_CANARY: &str = "SIGINTCANARY7";
 const ACK: &str = "ACKSENTINEL";
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore] // opt-in: spawns the real pager binary in a PTY (CI runs with --ignored)
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager-pty-harness --test prompt_history_durable_quit -- --ignored; review 2027-01"] // opt-in: spawns the real pager binary in a PTY (CI runs with --ignored)
 async fn prompt_history_durable_after_double_ctrl_c_and_recallable_on_resume() {
     run().await.expect("prompt-history durable-quit e2e");
 }
@@ -38,7 +38,7 @@ async fn prompt_history_durable_after_double_ctrl_c_and_recallable_on_resume() {
 /// same graceful quit: the prompt stays durable and the process exits 0.
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore] // opt-in: spawns the real pager binary in a PTY (CI runs with --ignored)
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager-pty-harness --test prompt_history_durable_quit -- --ignored; review 2027-01"] // opt-in: spawns the real pager binary in a PTY (CI runs with --ignored)
 async fn prompt_history_durable_after_real_sigint_graceful_quit() {
     run_sigint().await.expect("sigint graceful-quit e2e");
 }

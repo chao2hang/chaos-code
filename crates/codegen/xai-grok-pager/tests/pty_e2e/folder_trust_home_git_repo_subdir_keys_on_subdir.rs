@@ -7,7 +7,7 @@ use xai_grok_workspace::trust::{TRUST_FILE_NAME, TrustStore};
 /// The trust question must render for the subdir and the accepted grant must persist keyed on the subdir, never on `$HOME`.
 /// The reported bug resolved both up to `$HOME` because the git up-walk landed on the home repo root.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_shell_tools -- --ignored; review 2027-01"]
 async fn folder_trust_home_git_repo_subdir_keys_on_subdir() {
     let content = ContentController::start().await.expect("start content");
 

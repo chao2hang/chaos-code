@@ -34,7 +34,7 @@ const EXPECTED_ROWS: usize = 3;
 
 /// The `GROK_SCROLL_MODE` and `GROK_SCROLL_LINES` overrides must reach the live config: a 3-event burst scrolls the viewport up by exactly 3 rows.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_scroll_selection -- --ignored; review 2027-01"]
 async fn forced_wheel_mode_env_scrolls_exact_rows() {
     let (mut harness, _content, top_before) = spawn_bottom_pinned_marker_scrollback_with_env(
         MARKER_COUNT,

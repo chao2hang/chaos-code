@@ -4,7 +4,7 @@ use super::common::*;
 
 /// After receiving a long agent response, scrolling keeps the pager running and doesn't render a `panicked` string anywhere on screen.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_scroll_selection -- --ignored; review 2027-01"]
 async fn scroll_does_not_crash() {
     let content = ContentController::start().await.expect("start content");
     content.set_response(long_response(MOCK_RESPONSE_SENTINEL, 200));

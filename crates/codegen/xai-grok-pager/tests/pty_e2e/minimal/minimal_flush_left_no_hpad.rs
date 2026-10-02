@@ -7,7 +7,7 @@ use crate::common::*;
 /// They previously sat at `block_pad_left + accent`, 3 columns of blank gutter, which looked misaligned against the welcome box.
 /// Assert every non-blank visible row either is welcome-card chrome (border or logo interior) or starts at column 0.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_minimal -- --ignored; review 2027-01"]
 async fn minimal_flush_left_no_hpad() {
     let content = ContentController::start().await.expect("start content");
     content.set_response(format!(

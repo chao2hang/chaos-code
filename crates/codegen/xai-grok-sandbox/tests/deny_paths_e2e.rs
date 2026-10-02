@@ -216,7 +216,7 @@ fn profile_from_env() -> xai_grok_sandbox::ProfileName {
 }
 /// `#[ignore]`d: only runs when invoked by the parent test via `run_scenario` or `run_hook_write_deny_scenario`.
 #[test]
-#[ignore]
+#[ignore = "not a test: subprocess entry point the parent test re-invokes via SANDBOX_E2E_SCENARIO; returns early when that variable is unset; review 2027-01"]
 fn subprocess_entry() {
     let scenario = match std::env::var(SCENARIO_ENV) {
         Ok(s) => s,

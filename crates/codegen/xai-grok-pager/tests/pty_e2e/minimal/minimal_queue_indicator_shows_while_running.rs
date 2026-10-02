@@ -8,7 +8,7 @@ use crate::common::*;
 /// This runs standalone with no leader, so the queue is the client's own list of pending prompts.
 /// The queued prompt promotes and runs once the first turn finishes.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_minimal -- --ignored; review 2027-01"]
 async fn minimal_queue_indicator_shows_while_running() {
     let content = ContentController::start().await.expect("start content");
     // Pace turn 1 so it's still streaming when we queue behind it.

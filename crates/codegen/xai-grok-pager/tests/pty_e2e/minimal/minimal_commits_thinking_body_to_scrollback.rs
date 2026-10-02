@@ -8,7 +8,7 @@ const REASONING_SENTINEL: &str = "REASONINGSENTINEL";
 
 /// `[ui] show_thinking_blocks` is set explicitly so the test doesn't depend on the rollout default.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_minimal -- --ignored; review 2027-01"]
 async fn minimal_commits_thinking_body_to_scrollback() {
     // The model must run on the Responses backend; only the Responses API streams reasoning summary deltas (the scripted events below)
     let content = ContentController::start_with_models(vec![

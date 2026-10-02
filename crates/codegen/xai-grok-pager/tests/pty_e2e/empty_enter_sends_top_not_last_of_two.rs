@@ -6,7 +6,7 @@ use super::common::*;
 /// The running turn is cancelled silently and alpha runs as its own next turn, with the interjection preamble.
 /// Bravo stays queued and promotes afterwards.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_queue -- --ignored; review 2027-01"]
 async fn empty_enter_sends_top_not_last_of_two() {
     let content = ContentController::start().await.expect("start content");
     let mut turn_one = content.expect_agent_turn_blocked(

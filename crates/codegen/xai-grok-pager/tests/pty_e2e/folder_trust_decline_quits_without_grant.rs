@@ -6,7 +6,7 @@ use super::common::*;
 /// Same setup; pressing `n` exits the pager (the process ends) and writes NO grant.
 /// The product decision: decline quits rather than proceeding in a gated state.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_shell_tools -- --ignored; review 2027-01"]
 async fn folder_trust_decline_quits_without_grant() {
     let content = ContentController::start().await.expect("start content");
     let repo = git_repo_with_mcp_json();

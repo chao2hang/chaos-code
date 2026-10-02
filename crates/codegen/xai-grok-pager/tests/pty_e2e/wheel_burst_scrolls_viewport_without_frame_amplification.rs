@@ -34,7 +34,7 @@ const BURST_INTERVAL: Duration = Duration::from_millis(6);
 /// A closely spaced wheel-up burst over a marker transcript must scroll previously off-screen-top markers into view without a panic.
 /// It must produce at least one repaint frame and at most one frame per wheel event (no frame amplification).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_scroll_selection -- --ignored; review 2027-01"]
 async fn wheel_burst_scrolls_viewport_without_frame_amplification() {
     let (mut harness, _content, top_before) =
         spawn_bottom_pinned_marker_scrollback(MARKER_COUNT).await;

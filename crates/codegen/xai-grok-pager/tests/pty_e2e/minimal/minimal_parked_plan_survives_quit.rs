@@ -8,7 +8,7 @@ const TAG: &str = "QUIT";
 /// Quitting without answering a parked plan approval must still leave the whole plan in the terminal.
 /// The pinned live region is repainted and never retained, so only what was committed at park time survives the process.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_minimal -- --ignored; review 2027-01"]
 async fn minimal_parked_plan_survives_quit() {
     let content = ContentController::start().await.expect("start content");
     content.set_response(format!("{MOCK_RESPONSE_SENTINEL} first turn done."));

@@ -4,7 +4,7 @@ use super::common::*;
 
 /// **MCP menu loads in a project dir** (temp dir with a `.git` ancestor).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_shell_tools -- --ignored; review 2027-01"]
 async fn mcp_menu_loads_servers_in_project_dir() {
     let content = ContentController::start().await.expect("start content");
 

@@ -5,7 +5,7 @@ use super::common::*;
 /// With a queued prompt, Ctrl+C skips the rewind: the running turn A gets a standard cancel with a visible marker and never returns to the composer.
 /// The queued B promotes as the next turn, and each of A and B renders exactly once.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_queue -- --ignored; review 2027-01"]
 async fn ctrlc_with_queued_prompt_no_dup() {
     const PROMPT_A: &str = "alpha primary task";
     const PROMPT_B: &str = "bravo queued follow";

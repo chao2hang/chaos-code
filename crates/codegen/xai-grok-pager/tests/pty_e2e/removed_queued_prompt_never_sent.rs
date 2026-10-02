@@ -6,7 +6,7 @@ use super::common::*;
 /// Enter mid-turn queues; the queue pane lists rows as `#N`.
 /// Removing row 1 with `x` must keep its text out of every subsequent request, while the surviving prompt promotes FIFO after the turn ends.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_queue -- --ignored; review 2027-01"]
 async fn removed_queued_prompt_never_sent() {
     let content = ContentController::start().await.expect("start content");
     let mut turn_one = content.expect_agent_turn_blocked(

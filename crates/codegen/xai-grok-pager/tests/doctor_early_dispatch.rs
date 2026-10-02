@@ -20,7 +20,7 @@ fn pager_binary() -> Result<std::path::PathBuf, String> {
 }
 
 #[test]
-#[ignore = "spawns the real pager binary; CI/Bazel provides PAGER_BINARY"]
+#[ignore = "spawns the real pager binary; run with PAGER_BINARY set: cargo test -p xai-grok-pager --test doctor_early_dispatch -- --ignored; review 2027-01"]
 fn doctor_json_bypasses_unrelated_startup_state() {
     let binary = pager_binary().expect("real pager binary is required when this test is selected");
     let temp = tempfile::tempdir().expect("tempdir");
@@ -76,7 +76,7 @@ fn doctor_json_bypasses_unrelated_startup_state() {
 }
 
 #[test]
-#[ignore = "spawns the real pager binary; CI/Bazel provides PAGER_BINARY"]
+#[ignore = "spawns the real pager binary; run with PAGER_BINARY set: cargo test -p xai-grok-pager --test doctor_early_dispatch -- --ignored; review 2027-01"]
 fn doctor_fix_without_id_lists_tmux_fixes_from_current_probe_evidence() {
     let binary = pager_binary().expect("real pager binary is required when selected");
     let temp = tempfile::tempdir().unwrap();
@@ -117,7 +117,7 @@ fn doctor_fix_without_id_lists_tmux_fixes_from_current_probe_evidence() {
 }
 
 #[test]
-#[ignore = "spawns the real pager binary; CI/Bazel provides PAGER_BINARY"]
+#[ignore = "spawns the real pager binary; run with PAGER_BINARY set: cargo test -p xai-grok-pager --test doctor_early_dispatch -- --ignored; review 2027-01"]
 fn doctor_tmux_fix_probes_are_bounded_and_never_write_on_timeout() {
     let binary = pager_binary().expect("real pager binary is required when selected");
     let temp = tempfile::tempdir().unwrap();
@@ -167,7 +167,7 @@ fn doctor_tmux_fix_probes_are_bounded_and_never_write_on_timeout() {
 }
 
 #[test]
-#[ignore = "spawns the real pager binary; CI/Bazel provides PAGER_BINARY"]
+#[ignore = "spawns the real pager binary; run with PAGER_BINARY set: cargo test -p xai-grok-pager --test doctor_early_dispatch -- --ignored; review 2027-01"]
 fn doctor_tmux_fix_kills_background_pipe_holders_after_leader_exit() {
     let binary = pager_binary().expect("real pager binary is required when selected");
     let temp = tempfile::tempdir().unwrap();
@@ -212,7 +212,7 @@ fn doctor_tmux_fix_kills_background_pipe_holders_after_leader_exit() {
 
 #[cfg(unix)]
 #[test]
-#[ignore = "spawns the real pager binary; CI/Bazel provides PAGER_BINARY"]
+#[ignore = "spawns the real pager binary; run with PAGER_BINARY set: cargo test -p xai-grok-pager --test doctor_early_dispatch -- --ignored; review 2027-01"]
 fn doctor_tmux_fix_kills_term_ignoring_redirected_descendants() {
     use std::os::unix::fs::PermissionsExt as _;
 
@@ -278,7 +278,7 @@ fn doctor_tmux_fix_kills_term_ignoring_redirected_descendants() {
 }
 
 #[test]
-#[ignore = "spawns the real pager binary; CI/Bazel provides PAGER_BINARY"]
+#[ignore = "spawns the real pager binary; run with PAGER_BINARY set: cargo test -p xai-grok-pager --test doctor_early_dispatch -- --ignored; review 2027-01"]
 fn doctor_irrelevant_unsafe_byobu_does_not_break_ssh_or_plain_tmux() {
     let binary = pager_binary().expect("real pager binary is required when selected");
     let temp = tempfile::tempdir().unwrap();
@@ -321,7 +321,7 @@ fn doctor_irrelevant_unsafe_byobu_does_not_break_ssh_or_plain_tmux() {
 }
 
 #[test]
-#[ignore = "spawns the real pager binary; CI/Bazel provides PAGER_BINARY"]
+#[ignore = "spawns the real pager binary; run with PAGER_BINARY set: cargo test -p xai-grok-pager --test doctor_early_dispatch -- --ignored; review 2027-01"]
 #[allow(clippy::disallowed_methods)]
 fn doctor_hostile_home_and_byobu_create_no_config_files() {
     let binary =
@@ -353,7 +353,7 @@ fn doctor_hostile_home_and_byobu_create_no_config_files() {
 }
 
 #[test]
-#[ignore = "spawns the real pager binary; CI/Bazel provides PAGER_BINARY"]
+#[ignore = "spawns the real pager binary; run with PAGER_BINARY set: cargo test -p xai-grok-pager --test doctor_early_dispatch -- --ignored; review 2027-01"]
 fn doctor_fix_without_id_lists_only_applicable_automatic_fixes() {
     let binary = pager_binary().expect("real pager binary is required when selected");
     let temp = tempfile::tempdir().unwrap();
@@ -403,7 +403,7 @@ fn doctor_fix_without_id_lists_only_applicable_automatic_fixes() {
 }
 
 #[test]
-#[ignore = "spawns the real pager binary; CI/Bazel provides PAGER_BINARY"]
+#[ignore = "spawns the real pager binary; run with PAGER_BINARY set: cargo test -p xai-grok-pager --test doctor_early_dispatch -- --ignored; review 2027-01"]
 fn doctor_tmux_fix_yes_writes_only_actual_home_tmux_config() {
     let binary = pager_binary().expect("real pager binary is required when this test is selected");
     let temp = tempfile::tempdir().expect("tempdir");
@@ -463,7 +463,7 @@ fn doctor_tmux_fix_yes_writes_only_actual_home_tmux_config() {
 }
 
 #[test]
-#[ignore = "spawns the real pager binary; CI/Bazel provides PAGER_BINARY"]
+#[ignore = "spawns the real pager binary; run with PAGER_BINARY set: cargo test -p xai-grok-pager --test doctor_early_dispatch -- --ignored; review 2027-01"]
 fn doctor_fix_yes_writes_only_actual_home_shell_rc() {
     let binary = pager_binary().expect("real pager binary is required when this test is selected");
     let temp = tempfile::tempdir().expect("tempdir");
@@ -501,7 +501,7 @@ fn doctor_fix_yes_writes_only_actual_home_shell_rc() {
 }
 
 #[test]
-#[ignore = "spawns the real pager binary; CI/Bazel provides PAGER_BINARY"]
+#[ignore = "spawns the real pager binary; run with PAGER_BINARY set: cargo test -p xai-grok-pager --test doctor_early_dispatch -- --ignored; review 2027-01"]
 fn doctor_fix_safety_boundaries_are_process_isolated() {
     let binary = pager_binary().expect("real pager binary is required when selected");
     let temp = tempfile::tempdir().unwrap();
@@ -566,7 +566,7 @@ fn doctor_fix_safety_boundaries_are_process_isolated() {
 
 #[cfg(unix)]
 #[test]
-#[ignore = "spawns the real pager binary; CI/Bazel provides PAGER_BINARY"]
+#[ignore = "spawns the real pager binary; run with PAGER_BINARY set: cargo test -p xai-grok-pager --test doctor_early_dispatch -- --ignored; review 2027-01"]
 fn restrictive_umask_still_preserves_exact_rc_mode() {
     use std::os::unix::fs::PermissionsExt as _;
 
@@ -603,7 +603,7 @@ fn restrictive_umask_still_preserves_exact_rc_mode() {
 }
 
 #[test]
-#[ignore = "spawns the real pager binary; CI/Bazel provides PAGER_BINARY"]
+#[ignore = "spawns the real pager binary; run with PAGER_BINARY set: cargo test -p xai-grok-pager --test doctor_early_dispatch -- --ignored; review 2027-01"]
 fn wrap_non_tty_true_exec_preserves_argv_and_exit() {
     let binary = pager_binary().expect("real pager binary is required when selected");
     let temp = tempfile::tempdir().unwrap();

@@ -7,7 +7,7 @@ use super::common::*;
 /// once, NOT restored to the composer) and the "用户在"
 /// marker renders.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_queue -- --ignored; review 2027-01"]
 async fn ctrlc_after_activity_no_rewind_prompt_once() {
     const CANCEL_PROMPT: &str = "cancel after activity";
 

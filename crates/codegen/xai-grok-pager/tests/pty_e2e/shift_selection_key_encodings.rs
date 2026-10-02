@@ -76,7 +76,7 @@ fn select_and_type_over(
 
 /// `CSI 1;2D` (Shift+Left), the universal tier; five presses select "world".
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_smoke -- --ignored; review 2027-01"]
 async fn legacy_shift_arrow_selects_and_type_replaces() {
     let (_content, mut harness) = idle_session().await;
     select_and_type_over(
@@ -93,7 +93,7 @@ async fn legacy_shift_arrow_selects_and_type_replaces() {
 
 /// `CSI 1;4D` (Alt+Shift+Left) and `CSI 1;6D` (Ctrl+Shift+Left) word-extends.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_smoke -- --ignored; review 2027-01"]
 async fn legacy_word_extend_selects_alt_and_ctrl_variants() {
     let (_content, mut harness) = idle_session().await;
     select_and_type_over(
@@ -121,7 +121,7 @@ async fn legacy_word_extend_selects_alt_and_ctrl_variants() {
 
 /// `CSI 1;2H` / `CSI 1;2F` (Shift+Home / Shift+End): row-edge extends that work WITHOUT the Kitty protocol, unlike Cmd+Shift+arrows.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_smoke -- --ignored; review 2027-01"]
 async fn legacy_shift_home_end_select_to_row_edges() {
     let (_content, mut harness) = idle_session().await;
 
@@ -164,7 +164,7 @@ async fn legacy_shift_home_end_select_to_row_edges() {
 
 /// `CSI 1;2A` (Shift+Up) across a multiline draft (Alt+Enter arrives as ESC then CR).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_smoke -- --ignored; review 2027-01"]
 async fn legacy_shift_up_selects_across_lines() {
     let (_content, mut harness) = idle_session().await;
     harness.inject_keys(b"one").expect("line 1");
@@ -184,7 +184,7 @@ async fn legacy_shift_up_selects_across_lines() {
 
 /// KKP tier: `CSI 1;10D` (Cmd+Shift+Left) row-extend, then CSI-u `CSI 120;9u` (Cmd+X) cut and `CSI 99;9u` (Cmd+C) copy that keeps the highlight.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_smoke -- --ignored; review 2027-01"]
 async fn kitty_super_chords_row_extend_cut_and_copy() {
     let (_content, mut harness) = idle_session().await;
 
@@ -230,7 +230,7 @@ async fn kitty_super_chords_row_extend_cut_and_copy() {
 
 /// `ESC [ Z` (BackTab): one press must BOTH cycle the mode AND drop the highlight (pins the regression where BackTab bypassed the key registry).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_smoke -- --ignored; review 2027-01"]
 async fn backtab_with_selection_cycles_mode_and_drops_highlight() {
     let (_content, mut harness) = idle_session().await;
     harness.inject_keys(b"alpha beta").expect("type draft");

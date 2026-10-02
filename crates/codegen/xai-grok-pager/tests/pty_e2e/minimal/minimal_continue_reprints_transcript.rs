@@ -6,7 +6,7 @@ use crate::common::*;
 /// Minimal has no separate history pane (the terminal owns history), so a resumed session would otherwise look empty.
 /// This asserts the prior turn's content reappears after resume and a follow-up turn still works.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_minimal -- --ignored; review 2027-01"]
 async fn minimal_continue_reprints_transcript() {
     let content = ContentController::start().await.expect("start content");
     content.set_response(format!("{} first session payload.", turn_sentinel(1)));

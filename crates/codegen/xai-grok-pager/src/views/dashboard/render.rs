@@ -4225,7 +4225,7 @@ mod tests {
     ///     views::dashboard::render::tests::dashboard_visual_preview -- --ignored --nocapture
     /// ```
     #[test]
-    #[ignore]
+    #[ignore = "visual preview only: prints the rendered dashboard buffer with println! and asserts nothing, so it cannot fail into a signal; run with --ignored --nocapture; review 2027-01"]
     fn dashboard_visual_preview() {
         use std::path::PathBuf;
         use std::time::SystemTime;
@@ -4372,7 +4372,7 @@ mod tests {
     ///     -- --ignored --nocapture
     /// ```
     #[test]
-    #[ignore]
+    #[ignore = "visual preview only: prints the rendered session-overlay buffer with println! and asserts nothing; run with --ignored --nocapture; review 2027-01"]
     fn dashboard_overlay_visual_preview() {
         let mut buf = Buffer::empty(Rect::new(0, 0, 100, 12));
         let theme = Theme::current();

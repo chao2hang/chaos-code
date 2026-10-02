@@ -26,7 +26,7 @@ const CHUNK_DELAY: Duration = Duration::from_millis(30);
 /// Mid-stream: exact wheel pacing, wheel up, then observe with no further input.
 /// The parked marker's screen row must not move while the turn is still live (tail continues below).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_scroll_selection -- --ignored; review 2027-01"]
 async fn parked_marker_does_not_jolt_during_live_stream_after_wheel_up() {
     let (mut harness, _content, turn, top_start) = spawn_streaming_marker_turn(
         MARKER_COUNT,

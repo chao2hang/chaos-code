@@ -19,7 +19,7 @@ use super::common::*;
 ///
 /// On a macOS dev machine the real host clipboard may add an incidental image chip, so the asserts only check that the sentinels appear.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_clipboard -- --ignored; review 2027-01"]
 async fn paste_bracketed_then_immediate_enter_sends_intact() {
     const LINE_1: &str = "ZRACELINEONE pasted body first";
     const LINE_2: &str = "ZRACELINETWO pasted body second";

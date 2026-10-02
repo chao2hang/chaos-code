@@ -4,7 +4,7 @@ use super::common::*;
 
 /// Selecting "Yes" on the agent-type-mismatch modal creates a new session with the target model active.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_config_ui -- --ignored; review 2027-01"]
 async fn agent_type_mismatch_yes_starts_new_session() {
     let content = start_dual_agent_type_content().await;
     content.set_response(format!(

@@ -5,7 +5,7 @@
 //! ```
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore] // opt-in: real pager binary in a PTY (CI runs with --ignored)
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager-pty-harness --test x10_mouse_leak -- --ignored; review 2027-01"] // opt-in: real pager binary in a PTY (CI runs with --ignored)
 async fn x10_leak_defenses() {
     xai_grok_pager_pty_harness::scenarios::x10_mouse_leak::assert_x10_leak_defenses()
         .await

@@ -269,7 +269,7 @@ fn expand_thinking_to_show_sentinel(harness: &mut PtyHarness) {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_config_ui -- --ignored; review 2027-01"]
 async fn show_thinking_blocks_toggle_hides_existing_pty() {
     let content = ContentController::start().await.expect("start content");
     // The rollout default is off; opt in so the turn can create and show thinking first

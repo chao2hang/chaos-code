@@ -6,7 +6,7 @@ use super::common::*;
 /// It must NOT focus the scrollback (the old behavior) and must not panic or arm anything.
 /// Guards the `try_handle_esc_policy` final `Some(InputOutcome::Changed)` swallow branch on a fresh session.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_queue -- --ignored; review 2027-01"]
 async fn esc_idle_empty_no_messages_is_swallowed_noop() {
     let content = ContentController::start().await.expect("start content");
     content.set_response(format!("{MOCK_RESPONSE_SENTINEL} unused."));

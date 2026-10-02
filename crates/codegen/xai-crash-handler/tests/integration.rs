@@ -39,7 +39,7 @@ fn run_scenario(scenario: &str, crash_dir: &Path) -> (std::process::ExitStatus, 
 /// by the parent test via `run_scenario`. The `CRASH_TEST_SCENARIO` env
 /// var selects which scenario to execute.
 #[test]
-#[ignore]
+#[ignore = "not a test: subprocess entry point the parent test re-invokes via CRASH_TEST_SCENARIO; returns early when that variable is unset, so it must never run as a test; review 2027-01"]
 fn subprocess_entry() {
     let scenario = match std::env::var("CRASH_TEST_SCENARIO") {
         Ok(s) => s,

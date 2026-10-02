@@ -24,7 +24,7 @@ const MARKER_COUNT: usize = 120;
 /// **Env-on e2e.** `GROK_SCROLL_DEBUG=1` must paint the HUD (panel title and config echo) and track a finalized trackpad flood.
 /// The HUD must not eat the scroll input itself.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_scroll_selection -- --ignored; review 2027-01"]
 async fn scroll_debug_hud_env_shows_hud_and_tracks_flood() {
     let (mut harness, _content, top_before) = spawn_bottom_pinned_marker_scrollback_with_env(
         MARKER_COUNT,
@@ -99,7 +99,7 @@ async fn scroll_debug_hud_env_shows_hud_and_tracks_flood() {
 
 /// **Default-off e2e.** Without the env var no HUD text may appear.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_scroll_selection -- --ignored; review 2027-01"]
 async fn scroll_debug_hud_absent_without_env() {
     let (mut harness, _content, _top) = spawn_bottom_pinned_marker_scrollback(MARKER_COUNT).await;
 
@@ -119,7 +119,7 @@ async fn scroll_debug_hud_absent_without_env() {
 /// Enter with the dropdown open accepts the exact-match arg and then sends, the same submit either way.
 /// Dispatch `trim()`s leading text, so the Space that refocuses the prompt is harmless even if it were to land as a character.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_scroll_selection -- --ignored; review 2027-01"]
 async fn debug_scroll_command_toggles_hud_live() {
     let (mut harness, _content, _top) = spawn_bottom_pinned_marker_scrollback(MARKER_COUNT).await;
 

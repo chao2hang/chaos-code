@@ -4,7 +4,7 @@ use crate::common::*;
 
 /// `/minimal` from a fullscreen session switches in process: no re-exec, no resume replay; history commits into native scrollback plus a seam marker.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_minimal -- --ignored; review 2027-01"]
 async fn minimal_slash_switches_from_fullscreen() {
     let content = ContentController::start().await.expect("start content");
     let sentinel = turn_sentinel(1);

@@ -114,7 +114,7 @@ fn trailing_glob_read_write_grants_parent_directory() {
 
 /// Applies the sandbox (irreversible), so this runs only as a subprocess of the test above.
 #[test]
-#[ignore]
+#[ignore = "not a test: subprocess entry point the parent test re-invokes via the SANDBOX_E2E_* variables; returns early when they are unset; review 2027-01"]
 fn subprocess_entry() {
     let Ok(root) = std::env::var(ROOT_ENV) else {
         return;

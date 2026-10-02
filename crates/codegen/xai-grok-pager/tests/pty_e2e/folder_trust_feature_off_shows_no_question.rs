@@ -5,7 +5,7 @@ use super::common::*;
 /// 15. **Feature off means no trust question.**
 /// With `GROK_FOLDER_TRUST=0` (explicit opt-out) the feature is off, so booting in the repo goes straight to the welcome (the default is on).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_shell_tools -- --ignored; review 2027-01"]
 async fn folder_trust_feature_off_shows_no_question() {
     let content = ContentController::start().await.expect("start content");
     let repo = git_repo_with_mcp_json();

@@ -5,7 +5,7 @@ use super::common::*;
 /// Submitting a prompt produces the mock server's response text on screen.
 /// This is the full loop: the pager sends to the shell agent, which hits mock inference, streams chunks back, and the pager renders them.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_smoke -- --ignored; review 2027-01"]
 async fn agent_response() {
     let content = ContentController::start().await.expect("start content");
     content.set_response(format!(

@@ -49,7 +49,7 @@ const MOVEMENT_CHARS_FLOOR: usize = 10;
 /// A trackpad-like flood over a marker transcript must scroll the viewport with every captured frame painting real movement:
 /// at least two coalesced frames (the burst spans many 16ms cadence slots), at most one frame per event, and no frame below the movement char floor.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_scroll_selection -- --ignored; review 2027-01"]
 async fn wheel_flood_paints_no_ghost_frames() {
     // The capture window spans the burst plus the post-burst residual and finalize flushes (the update() below outlasts the 80ms stream gap)
     let (mut harness, _content, top_before) =

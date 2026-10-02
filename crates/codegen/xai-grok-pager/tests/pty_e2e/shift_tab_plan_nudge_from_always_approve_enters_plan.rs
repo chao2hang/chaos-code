@@ -5,7 +5,7 @@ use super::common::*;
 /// With Always-Approve active and the plan nudge up, one Shift+Tab enters Plan (not Normal).
 /// The tip advertises `shift+tab` for plan mode; with the nudge up that chord must jump from Always-Approve rather than taking the next ring step.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_queue -- --ignored; review 2027-01"]
 async fn shift_tab_plan_nudge_from_always_approve_enters_plan() {
     let content = ContentController::start().await.expect("start content");
     content.set_response(format!("{MOCK_RESPONSE_SENTINEL} turn done."));

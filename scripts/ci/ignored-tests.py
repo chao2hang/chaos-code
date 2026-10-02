@@ -166,10 +166,25 @@ def main():
     parser.add_argument('--stale', action='store_true')
     parser.add_argument('--check-baseline', metavar='PATH',
                         help='fail if new bare #[ignore] attributes are missing from this baseline')
+    parser.add_argument('--require-reasons', action='store_true',
+                        help='fail if any #[ignore] attribute has no reason string')
     parser.add_argument('--root', default='crates')
     args = parser.parse_args()
     root = Path(args.root)
     rows = [row for path in sorted(root.rglob('*.rs')) for row in scan(path)] if root.exists() else []
+    if args.require_reasons:
+        # An empty `#[ignore = ""]` explains as little as a bare one.
+        missing = [row for row in rows if row[3] == 'NO_REASON' or not row[3].strip()]
+        for crate, path, line, _reason, fn_name in missing:
+            print(f'{path}:{line}: bare #[ignore] in {crate}::{fn_name or "<unknown>"} '
+                  'needs a reason string', file=sys.stderr)
+        if missing:
+            # CI never passes --ignored, so an unexplained ignore is invisible debt.
+            print(f'ignored-tests: {len(missing)} ignored attribute(s) without a reason',
+                  file=sys.stderr)
+            return 1
+        print(f'ignored-tests: all {len(rows)} ignored attributes carry a reason')
+        return 0
     if args.check_baseline:
         baseline_path = Path(args.check_baseline)
         try:

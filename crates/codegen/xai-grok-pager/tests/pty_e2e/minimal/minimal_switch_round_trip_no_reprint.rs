@@ -5,7 +5,7 @@ use crate::common::*;
 /// A round trip from fullscreen to minimal and back retains the committed frontier.
 /// The second minimal stint must not re-print blocks already committed by the first.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_minimal -- --ignored; review 2027-01"]
 async fn minimal_switch_round_trip_no_reprint() {
     let content = ContentController::start().await.expect("start content");
     let sentinel_one = turn_sentinel(1);

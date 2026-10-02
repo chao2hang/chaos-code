@@ -18,7 +18,7 @@ const TIMEOUT_SECS: &str = "2";
 const HOLD_SECS: &str = "120";
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore] // opt-in: spawns the real pager binary in a PTY (CI runs with --ignored)
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager-pty-harness --test exit_timeout -- --ignored; review 2027-01"] // opt-in: spawns the real pager binary in a PTY (CI runs with --ignored)
 async fn double_ctrl_c_exits_within_deadline_when_teardown_hangs() -> Result<()> {
     let (mut pager, _project) = spawn_pager_with_teardown_hold().await?;
 
@@ -32,7 +32,7 @@ async fn double_ctrl_c_exits_within_deadline_when_teardown_hangs() -> Result<()>
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore] // opt-in: spawns the real pager binary in a PTY (CI runs with --ignored)
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager-pty-harness --test exit_timeout -- --ignored; review 2027-01"] // opt-in: spawns the real pager binary in a PTY (CI runs with --ignored)
 async fn single_sighup_exits_within_deadline_when_teardown_hangs() -> Result<()> {
     let (mut pager, _project) = spawn_pager_with_teardown_hold().await?;
 

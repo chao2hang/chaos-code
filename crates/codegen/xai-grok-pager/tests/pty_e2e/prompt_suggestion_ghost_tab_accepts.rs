@@ -15,7 +15,7 @@ const ACCEPT_HINT: &str = "accept suggestion";
 /// Typing a non-matching char hides it, and clearing the input brings it back.
 /// Tab accepts it into the prompt: the hint goes away and the text is editable (extending it and observing the echo proves that).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_config_ui -- --ignored; review 2027-01"]
 async fn prompt_suggestion_ghost_tab_accepts() {
     let content = ContentController::start_with_models(vec![MockModel::new("test-model")])
         .await

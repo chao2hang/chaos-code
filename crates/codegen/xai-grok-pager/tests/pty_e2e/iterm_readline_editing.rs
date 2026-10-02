@@ -35,7 +35,7 @@ fn click_visible_text(harness: &mut PtyHarness, text: &str) {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "PTY e2e; CI runs the ignored pty_e2e suite"]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_config_ui -- --ignored; review 2027-01"]
 async fn iterm_raw_readline_sequences_edit_picker_and_dashboard_rename() {
     let content = ContentController::start().await.expect("start content");
     content.set_response(format!("{MOCK_RESPONSE_SENTINEL} iTerm editing turn."));

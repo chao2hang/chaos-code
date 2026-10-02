@@ -5,7 +5,7 @@ use super::common::*;
 /// Switching mid-session between models whose agent types differ shows the "requires starting a new session" modal in both directions.
 /// This drives the reverse leg, cursor to grok-build.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_config_ui -- --ignored; review 2027-01"]
 async fn reverse_agent_type_mismatch_cursor_to_default() {
     let content = ContentController::start_with_models(vec![
         MockModel::with_agent_type("cursor-model", "cursor"),

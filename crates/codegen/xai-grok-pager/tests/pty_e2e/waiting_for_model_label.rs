@@ -6,7 +6,7 @@ use super::common::*;
 /// That label is `WaitingReason::Model`: `resolve_turn_activity` reports it when nothing has streamed and neither bash nor a subagent is running.
 /// A 3s delay on every mock SSE event holds the turn in that state long enough to observe.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_smoke -- --ignored; review 2027-01"]
 async fn waiting_for_model_label_shows_before_first_token() {
     let content = ContentController::start().await.expect("start content");
     content.set_response(format!("{MOCK_RESPONSE_SENTINEL} done."));

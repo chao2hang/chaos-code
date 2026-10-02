@@ -4,7 +4,7 @@ use super::common::*;
 
 /// A reorder must change the order the shell drains rows in, so this asserts on the recorded requests, not on the pane.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_queue -- --ignored; review 2027-01"]
 async fn queue_reorder_moves_row_up() {
     let content = ContentController::start().await.expect("start content");
     // Gate turn 1 so both prompts provably queue while it is still the running turn.

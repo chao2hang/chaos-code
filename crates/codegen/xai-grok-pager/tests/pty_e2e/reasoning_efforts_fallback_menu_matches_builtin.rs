@@ -5,7 +5,7 @@ use super::common::*;
 /// Regression guard: a reasoning model with NO server `reasoning_efforts` list falls back to today's built-in `/effort` rows, descriptions included.
 /// The feature is a no-op until a server opts in.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_config_ui -- --ignored; review 2027-01"]
 async fn reasoning_efforts_fallback_menu_matches_builtin() {
     let content = ContentController::start_with_models(vec![
         MockModel::new("grok-4.5").with_supports_reasoning_effort(true),

@@ -50,7 +50,7 @@ const TRAVEL_FLOOR: usize = 20;
 /// A dense wheel-classified flood at high scroll speed must deliver its travel in viewport-capped per-frame steps.
 /// It must never land as one uncapped multi-hundred-row jump.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_scroll_selection -- --ignored; review 2027-01"]
 async fn misclassified_wheel_flood_does_not_teleport_viewport() {
     let (mut harness, _content, top_before) = spawn_bottom_pinned_marker_scrollback_with_env(
         MARKER_COUNT,

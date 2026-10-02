@@ -8,7 +8,7 @@ use super::common::*;
 /// test asserts distinctive fragments from the full logo appear intact in the
 /// PTY screen buffer (regression guard for encoding / layout regressions).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_smoke -- --ignored; review 2027-01"]
 async fn welcome_screen_braille_logo_renders_correctly() {
     let content = ContentController::start().await.expect("start content");
 

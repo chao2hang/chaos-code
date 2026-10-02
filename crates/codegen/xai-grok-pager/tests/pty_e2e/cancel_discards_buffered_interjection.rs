@@ -10,7 +10,7 @@ use super::common::*;
 /// its "用户在" marker — the consumed send-now expectation
 /// must never suppress a real user cancel.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_queue -- --ignored; review 2027-01"]
 async fn cancel_discards_buffered_interjection() {
     let content = ContentController::start().await.expect("start content");
     content.set_chunk_delay(Some(Duration::from_millis(150)));

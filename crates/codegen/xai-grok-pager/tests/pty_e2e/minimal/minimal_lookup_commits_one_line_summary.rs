@@ -9,7 +9,7 @@ const DONE_SENTINEL: &str = "LOOKUP_TURN_DONE";
 /// Only xai-grok-tools' own test targets ship `@ripgrep_hermetic//:rg`.
 /// A failed `rg` spawn degrades to a zero-match result that vacuously passes the absence assert.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_minimal -- --ignored; review 2027-01"]
 async fn minimal_lookup_commits_one_line_summary() {
     let content = ContentController::start().await.expect("start content");
 

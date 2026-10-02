@@ -5,7 +5,7 @@ use super::common::*;
 /// 16. **`--continue` resumes the latest session.**
 /// History must render exactly once (duplicate replay and empty pane both fail) and the resumed session must accept a follow-up turn.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_persistence -- --ignored; review 2027-01"]
 async fn continue_resumes_session_with_history() {
     let content = ContentController::start().await.expect("start content");
     content.set_response(format!("{} first session payload.", turn_sentinel(1)));

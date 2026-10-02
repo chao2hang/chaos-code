@@ -8,7 +8,7 @@ use super::common::*;
 /// The trace artifact must survive the outage (parked, without spamming retries) and land once storage accepts the bearer again.
 /// Before parking existed, the artifact was permanently dropped after one refresh retry.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_persistence -- --ignored; review 2027-01"]
 async fn storage_upload_parks_on_401_and_drains_after_recovery() {
     let content = ContentController::start().await.expect("start content");
     content.set_response(format!("{MOCK_RESPONSE_SENTINEL} park e2e response."));

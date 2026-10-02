@@ -10,7 +10,7 @@ use super::common::*;
 /// the forwarded BackTab resolved to `Action::CycleMode` pre-session.
 /// Cycle with the auto gate on (client default): Normal → Plan → Auto → …
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_smoke -- --ignored; review 2027-01"]
 async fn shift_tab_on_welcome_starts_session_in_plan_mode() {
     let content = ContentController::start().await.expect("start content");
 

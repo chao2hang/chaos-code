@@ -29,13 +29,13 @@ const OPT_IN: &str = "[Opt in]";
 const ACK: &str = "BANNERACK";
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore] // opt-in: spawns the real pager binary in a PTY (CI runs with --ignored)
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager-pty-harness --test privacy_banner_e2e -- --ignored; review 2027-01"] // opt-in: spawns the real pager binary in a PTY (CI runs with --ignored)
 async fn privacy_banner_welcome_opt_out_ack_persists() {
     run_opt_out().await.expect("privacy banner opt-out e2e");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore] // opt-in: spawns the real pager binary in a PTY (CI runs with --ignored)
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager-pty-harness --test privacy_banner_e2e -- --ignored; review 2027-01"] // opt-in: spawns the real pager binary in a PTY (CI runs with --ignored)
 async fn privacy_banner_persists_into_agent_view_and_opt_in_shares() {
     run_opt_in().await.expect("privacy banner opt-in e2e");
 }

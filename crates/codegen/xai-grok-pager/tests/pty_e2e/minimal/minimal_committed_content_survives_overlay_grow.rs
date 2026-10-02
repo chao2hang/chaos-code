@@ -6,7 +6,7 @@ use crate::common::*;
 /// Shrinking it back when the overlay closes must leave them intact.
 /// The test commits a tall response, opens the slash dropdown over the committed rows, closes it, and asserts the head survived in scrollback.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_minimal -- --ignored; review 2027-01"]
 async fn minimal_committed_content_survives_overlay_grow() {
     let content = ContentController::start().await.expect("start content");
     // The sentinel sits on the first rendered row; 80 code-block rows overflow the screen so the head reaches native scrollback

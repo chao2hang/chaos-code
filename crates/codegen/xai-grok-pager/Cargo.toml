@@ -224,8 +224,9 @@ harness = false
 
 # PTY integration tests are split into coherent scheduling families. The test
 # modules remain under tests/pty_e2e/; these roots only define which cases share
-# one Cargo/Bazel process. All cases stay #[ignore]d for ordinary Cargo runs.
-# Selected Cargo runs must provide PAGER_BINARY; Bazel wires the sibling binary.
+# one Cargo process. All cases stay #[ignore]d for ordinary Cargo runs, and CI
+# does not pass --ignored, so they run only when invoked explicitly.
+# The caller must provide PAGER_BINARY; this fork has no Bazel wiring.
 [[test]]
 name = "doctor_early_dispatch"
 path = "tests/doctor_early_dispatch.rs"

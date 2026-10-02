@@ -12,7 +12,7 @@ use std::process::Command;
 const SOCKET_ENV: &str = "CHILD_NET_E2E_SOCKET";
 
 #[test]
-#[ignore]
+#[ignore = "not a test: subprocess entry point the parent test re-invokes via CHILD_NET_E2E_SOCKET; returns early when that variable is unset; review 2027-01"]
 #[allow(clippy::disallowed_methods)]
 fn subprocess_entry() {
     let Ok(path) = std::env::var(SOCKET_ENV) else {

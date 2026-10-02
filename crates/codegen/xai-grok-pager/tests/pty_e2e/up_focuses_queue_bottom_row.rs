@@ -4,7 +4,7 @@ use super::common::*;
 
 /// Up on an empty composer moves focus into the queue on its BOTTOM row rather than opening prompt history.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_queue -- --ignored; review 2027-01"]
 async fn up_focuses_queue_bottom_row() {
     const PROMPT_A: &str = "alpha primary task";
     const QUEUED_FIRST: &str = "bravo queued first";

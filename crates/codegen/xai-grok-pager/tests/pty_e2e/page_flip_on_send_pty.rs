@@ -58,7 +58,7 @@ async fn drive_to_second_send(content: &ContentController) -> (PtyHarness, Agent
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_scroll_selection -- --ignored; review 2027-01"]
 async fn send_page_flips_by_default() {
     let content = ContentController::start().await.expect("start content");
     let (mut harness, second_turn) = drive_to_second_send(&content).await;
@@ -83,7 +83,7 @@ async fn send_page_flips_by_default() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_scroll_selection -- --ignored; review 2027-01"]
 async fn send_keeps_viewport_when_page_flip_disabled() {
     let content = ContentController::start().await.expect("start content");
     seed_ui_config(&content, "page_flip_on_send = false");

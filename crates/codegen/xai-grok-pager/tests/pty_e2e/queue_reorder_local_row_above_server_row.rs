@@ -4,7 +4,7 @@ use super::common::*;
 
 /// A slash command is a client row and the pane draws every shell row first, so moving one up must cross that boundary.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_queue -- --ignored; review 2027-01"]
 async fn queue_reorder_local_row_above_server_row() {
     let content = ContentController::start().await.expect("start content");
     // Gate the turn so both rows provably queue while it is still running.

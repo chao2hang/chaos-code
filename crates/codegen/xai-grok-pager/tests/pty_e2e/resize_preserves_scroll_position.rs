@@ -161,7 +161,7 @@ fn park_marker_mid(h: &mut PtyHarness) -> Option<(u16, u16)> {
 /// Then resize the WIDTH only. The marker must stay at ~the same viewport row across the reflow.
 /// Without the scroll-anchor fix it jumps (stale `scroll_offset`), which is the bug.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_scroll_selection -- --ignored; review 2027-01"]
 async fn resize_preserves_scroll_position() {
     let content = ContentController::start().await.expect("start content");
     content.set_response(scroll_anchor_response());

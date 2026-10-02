@@ -69,7 +69,7 @@ const COMPRESSED_BURST_FRAMES_MAX: u64 = 12;
 /// A dense trackpad flood at high scroll speed must move the viewport by at least [`TRAVEL_FLOOR`] rows.
 /// The proportional per-flush cap keeps up with gesture demand, and the finalize flush drains the backlog instead of discarding the flick's tail.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_scroll_selection -- --ignored; review 2027-01"]
 async fn trackpad_flood_does_not_under_travel() {
     let (mut harness, _content, top_before) = spawn_bottom_pinned_marker_scrollback_with_env(
         MARKER_COUNT,

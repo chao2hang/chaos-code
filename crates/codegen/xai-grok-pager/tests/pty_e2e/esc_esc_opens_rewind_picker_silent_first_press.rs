@@ -12,7 +12,7 @@ use super::common::*;
 ///
 /// Uses [`spawn_esc_double_press_pager`] so a slow inter-press round-trip can't expire the arm.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_queue -- --ignored; review 2027-01"]
 async fn esc_esc_opens_rewind_picker_silent_first_press() {
     let content = ContentController::start().await.expect("start content");
     content.set_response(format!("{MOCK_RESPONSE_SENTINEL} done."));

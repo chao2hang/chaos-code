@@ -5,7 +5,7 @@ use crate::common::*;
 /// In minimal mode, `Ctrl+G` hands the draft to a local non-interactive editor script.
 /// The pager restores the native-scrollback live region and keeps the edited text in the composer until the user explicitly submits it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_minimal -- --ignored; review 2027-01"]
 async fn minimal_external_editor_round_trip() {
     let content = ContentController::start().await.expect("start content");
     content.set_response(format!("{MOCK_RESPONSE_SENTINEL} edited prompt received."));

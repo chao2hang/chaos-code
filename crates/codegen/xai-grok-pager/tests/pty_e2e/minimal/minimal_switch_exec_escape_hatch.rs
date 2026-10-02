@@ -4,7 +4,7 @@ use crate::common::*;
 
 /// `GROK_SCREEN_MODE_SWITCH=exec` forces the legacy switch that quits, execs, and resumes, keeping that fallback covered end to end.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_minimal -- --ignored; review 2027-01"]
 async fn minimal_switch_exec_escape_hatch() {
     let content = ContentController::start().await.expect("start content");
     let sentinel = turn_sentinel(1);

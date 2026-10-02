@@ -6,7 +6,7 @@ use super::common::*;
 /// No keystrokes are injected.
 /// The full loop runs: CLI positional, TUI launch, NewSession, SendPrompt, shell agent, mock inference, streamed chunks, pager render.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_smoke -- --ignored; review 2027-01"]
 async fn initial_prompt_positional_auto_submits() {
     let content = ContentController::start().await.expect("start content");
     content.set_response(format!(

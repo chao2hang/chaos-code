@@ -8,7 +8,7 @@ use super::common::*;
 /// Run 2 reuses the SAME `$HOME` and does ONE wipe: the tip MUST appear, which only holds if the count reset to 0.
 /// A persisted count sitting at the cap would suppress Run 2.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_config_ui -- --ignored; review 2027-01"]
 async fn undo_tip_resets_each_new_session() {
     let content = ContentController::start().await.expect("start content");
     let binary = pager_binary().expect("resolve pager binary");

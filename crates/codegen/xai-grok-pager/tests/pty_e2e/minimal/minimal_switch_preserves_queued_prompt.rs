@@ -4,7 +4,7 @@ use crate::common::*;
 
 /// A prompt queued behind a running turn survives `/minimal` (the queue is client memory the legacy re-exec dropped).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_minimal -- --ignored; review 2027-01"]
 async fn minimal_switch_preserves_queued_prompt() {
     let content = ContentController::start().await.expect("start content");
     let turn_one = content.expect_agent_turn_blocked(

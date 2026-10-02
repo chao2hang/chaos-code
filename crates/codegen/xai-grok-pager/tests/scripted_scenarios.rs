@@ -51,7 +51,7 @@ async fn run_scenario(name: &str) {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "scripted YAML scenario against the built pager binary; run cargo test -p xai-grok-pager --test scripted_scenarios -- --ignored; review 2027-01"]
 async fn scripted_welcome_screen() {
     run_scenario("welcome.yaml").await;
 }
@@ -64,13 +64,13 @@ async fn scripted_slash_resize_storm() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "scripted YAML scenario against the built pager binary; run cargo test -p xai-grok-pager --test scripted_scenarios -- --ignored; review 2027-01"]
 async fn scripted_release_notes_scroll() {
     run_scenario("release_notes_scroll.yaml").await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "scripted YAML scenario against the built pager binary; run cargo test -p xai-grok-pager --test scripted_scenarios -- --ignored; review 2027-01"]
 async fn scripted_mock_response() {
     run_scenario("mock_response.yaml").await;
 }
@@ -83,25 +83,25 @@ async fn scripted_dashboard_overlay_agents_esc() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "scripted YAML scenario against the built pager binary; run cargo test -p xai-grok-pager --test scripted_scenarios -- --ignored; review 2027-01"]
 async fn scripted_input_modalities() {
     run_scenario("input_modalities.yaml").await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "scripted YAML scenario against the built pager binary; run cargo test -p xai-grok-pager --test scripted_scenarios -- --ignored; review 2027-01"]
 async fn scripted_ansi_execute_output() {
     run_scenario("ansi_execute_output.yaml").await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "scripted YAML scenario against the built pager binary; run cargo test -p xai-grok-pager --test scripted_scenarios -- --ignored; review 2027-01"]
 async fn scripted_copy_selection() {
     run_scenario("copy_selection.yaml").await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "scripted YAML scenario against the built pager binary; run cargo test -p xai-grok-pager --test scripted_scenarios -- --ignored; review 2027-01"]
 async fn scripted_table_cell_selection() {
     run_scenario("table_cell_selection.yaml").await;
 }
@@ -146,7 +146,7 @@ async fn scripted_paste_chip_repaste() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "scripted YAML scenario against the built pager binary; run cargo test -p xai-grok-pager --test scripted_scenarios -- --ignored; review 2027-01"]
 async fn scripted_image_inputs() {
     run_scenario("image_inputs.yaml").await;
 }

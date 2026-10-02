@@ -5,7 +5,7 @@ use super::common::*;
 /// 5. **Agent type mismatch: modal appears on `/model` switch.**
 /// After sending a prompt (turn_count > 0), switching to a model with a different agent type shows the question modal instead of a raw error.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_config_ui -- --ignored; review 2027-01"]
 async fn agent_type_mismatch_modal_on_model_switch() {
     let content = start_dual_agent_type_content().await;
     content.set_response(format!(

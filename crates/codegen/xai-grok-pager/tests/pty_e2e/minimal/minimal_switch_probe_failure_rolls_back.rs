@@ -4,7 +4,7 @@ use crate::common::*;
 
 /// An unanswered inline cursor-position (CPR) probe rolls `/minimal` back to a working fullscreen session instead of a half-switched terminal.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_minimal -- --ignored; review 2027-01"]
 async fn minimal_switch_probe_failure_rolls_back() {
     let content = ContentController::start().await.expect("start content");
     let sentinel_one = turn_sentinel(1);

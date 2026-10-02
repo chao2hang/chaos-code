@@ -5,7 +5,7 @@ use super::common::*;
 /// Ctrl+Enter in the queue pane sends the selected `!` row now: it runs as its own bash turn and silently cancels the running turn.
 /// The row must execute as real bash, never reach the model as prompt text, and never render a "❯ !…" block.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_queue -- --ignored; review 2027-01"]
 #[cfg(unix)]
 async fn verify_bashq_claim2_force_interject() {
     let content = ContentController::start().await.expect("start content");

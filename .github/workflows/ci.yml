@@ -82,6 +82,11 @@ jobs:
           python3 scripts/ci/test-ignored-tests.py
           python3 scripts/ci/test-ignored-tests-baseline-fixture.py
           python3 scripts/ci/test-ignored-tests-baseline.py
+          python3 scripts/ci/test-ignored-tests-reasons.py
+          # CI runs this workflow without `--ignored`, so every skipped test is
+          # invisible here. A reason string is what makes the skip auditable.
+          python3 scripts/ci/ignored-tests.py --require-reasons
+          python3 scripts/ci/ignored-tests.py --check-baseline scripts/ci/ignored-tests-baseline.tsv
       - name: brand and protocol guard
         run: python3 scripts/ci/check-brand-protocol.py
 

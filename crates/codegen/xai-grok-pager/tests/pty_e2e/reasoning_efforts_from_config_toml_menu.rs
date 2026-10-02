@@ -5,7 +5,7 @@ use super::common::*;
 /// The `reasoning_efforts` menu is settable from the client config TOML, not just the server.
 /// A `[model.<id>]` override renders in `/effort`, independent of what the server sent.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_config_ui -- --ignored; review 2027-01"]
 async fn reasoning_efforts_from_config_toml_menu() {
     let content = ContentController::start_with_models(vec![
         MockModel::new("grok-4.5").with_supports_reasoning_effort(true),

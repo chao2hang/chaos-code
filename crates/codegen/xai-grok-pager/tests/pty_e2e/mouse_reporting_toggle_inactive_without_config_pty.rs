@@ -4,7 +4,7 @@ use super::common::*;
 
 /// With neither the config nor the env var enabling it, scrollback Ctrl+R must not toggle mouse reporting.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_scroll_selection -- --ignored; review 2027-01"]
 async fn mouse_reporting_toggle_inactive_without_config_pty() {
     let content = ContentController::start().await.expect("start content");
     seed_mouse_reporting_toggle_config(&content, false);

@@ -112,7 +112,7 @@ fn inference_tool_names(server: &MockInferenceServer) -> Vec<String> {
 /// Smoke test: the binary loads and exits without crashing.
 /// This does NOT require the mock server — it's the absolute minimum bar.
 #[tokio::test]
-#[ignore] // requires pre-built binary; run with --ignored
+#[ignore = "requires a pre-built chaos binary via GROK_BINARY/PAGER_BINARY; run cargo test -p xai-grok-shell --test test_built_binary_e2e -- --ignored; review 2027-01"] // requires pre-built binary; run with --ignored
 async fn test_version_exits_zero() {
     let binary = grok_binary();
     let output = Command::new(&binary)
@@ -132,7 +132,7 @@ async fn test_version_exits_zero() {
 /// Exercises install() (sigaction, sigaltstack, mmap, ucontext struct layouts)
 /// on every platform the binary is built for.
 #[tokio::test]
-#[ignore] // requires pre-built binary; run with --ignored
+#[ignore = "requires a pre-built chaos binary via GROK_BINARY/PAGER_BINARY; run cargo test -p xai-grok-shell --test test_built_binary_e2e -- --ignored; review 2027-01"] // requires pre-built binary; run with --ignored
 async fn test_version_with_crash_handler_exits_zero() {
     let binary = grok_binary();
     let output = Command::new(&binary)
@@ -156,7 +156,7 @@ async fn test_version_with_crash_handler_exits_zero() {
 /// This catches the recurring libgit2/OpenSSL dynamic linking bug that has
 /// caused ~5 broken releases.
 #[tokio::test]
-#[ignore] // requires pre-built binary; run with --ignored
+#[ignore = "requires a pre-built chaos binary via GROK_BINARY/PAGER_BINARY; run cargo test -p xai-grok-shell --test test_built_binary_e2e -- --ignored; review 2027-01"] // requires pre-built binary; run with --ignored
 async fn test_headless_session_in_git_repo() {
     let server = MockInferenceServer::start()
         .await
@@ -181,7 +181,7 @@ async fn test_headless_session_in_git_repo() {
 /// Verify grok works in a non-git directory (exercises the fallback codepath
 /// where libgit2 discovers there's no repo instead of initializing one).
 #[tokio::test]
-#[ignore] // requires pre-built binary; run with --ignored
+#[ignore = "requires a pre-built chaos binary via GROK_BINARY/PAGER_BINARY; run cargo test -p xai-grok-shell --test test_built_binary_e2e -- --ignored; review 2027-01"] // requires pre-built binary; run with --ignored
 async fn test_headless_session_in_non_git_dir() {
     let server = MockInferenceServer::start()
         .await
@@ -196,7 +196,7 @@ async fn test_headless_session_in_non_git_dir() {
 }
 
 #[tokio::test]
-#[ignore] // requires pre-built binary; run with --ignored
+#[ignore = "requires a pre-built chaos binary via GROK_BINARY/PAGER_BINARY; run cargo test -p xai-grok-shell --test test_built_binary_e2e -- --ignored; review 2027-01"] // requires pre-built binary; run with --ignored
 async fn test_headless_tools_allowlist_keeps_enabled_web_tools() {
     let server = grok_build_server().await;
     server.preset_allow_access();
@@ -254,7 +254,7 @@ async fn test_headless_tools_allowlist_keeps_enabled_web_tools() {
 }
 
 #[tokio::test]
-#[ignore] // requires pre-built binary; run with --ignored
+#[ignore = "requires a pre-built chaos binary via GROK_BINARY/PAGER_BINARY; run cargo test -p xai-grok-shell --test test_built_binary_e2e -- --ignored; review 2027-01"] // requires pre-built binary; run with --ignored
 async fn test_headless_tools_allowlist_does_not_fail_open_for_disabled_web_fetch() {
     let server = grok_build_server().await;
     server.set_settings(serde_json::json!({
@@ -294,7 +294,7 @@ async fn test_headless_tools_allowlist_does_not_fail_open_for_disabled_web_fetch
 }
 
 #[tokio::test]
-#[ignore] // requires pre-built binary; run with --ignored
+#[ignore = "requires a pre-built chaos binary via GROK_BINARY/PAGER_BINARY; run cargo test -p xai-grok-shell --test test_built_binary_e2e -- --ignored; review 2027-01"] // requires pre-built binary; run with --ignored
 async fn test_headless_terminal_only_allowlist_is_foreground_only() {
     let server = grok_build_server().await;
     let workdir = git_workdir();
@@ -332,7 +332,7 @@ async fn test_headless_terminal_only_allowlist_is_foreground_only() {
 /// code reaches the pager embedded in the flattened error text (no
 /// structured plumbing), so this exercises the whole detection path.
 #[tokio::test]
-#[ignore] // requires pre-built binary; run with --ignored
+#[ignore = "requires a pre-built chaos binary via GROK_BINARY/PAGER_BINARY; run cargo test -p xai-grok-shell --test test_built_binary_e2e -- --ignored; review 2027-01"] // requires pre-built binary; run with --ignored
 async fn test_headless_free_usage_exhausted_prints_paywall_message() {
     let server = MockInferenceServer::start()
         .await
@@ -382,7 +382,7 @@ async fn test_headless_free_usage_exhausted_prints_paywall_message() {
 /// Verify the streaming JSON output format works end-to-end.
 /// This is the format used by programmatic integrations (`--output-format streaming-json`).
 #[tokio::test]
-#[ignore] // requires pre-built binary; run with --ignored
+#[ignore = "requires a pre-built chaos binary via GROK_BINARY/PAGER_BINARY; run cargo test -p xai-grok-shell --test test_built_binary_e2e -- --ignored; review 2027-01"] // requires pre-built binary; run with --ignored
 async fn test_headless_streaming_json_output() {
     let server = MockInferenceServer::start()
         .await
@@ -448,7 +448,7 @@ async fn test_headless_streaming_json_output() {
 /// `streaming-messages-json` emits `system`/`init`, message wrapped assistant
 /// messages, and a terminal `result`.
 #[tokio::test]
-#[ignore] // requires pre-built binary; run with --ignored
+#[ignore = "requires a pre-built chaos binary via GROK_BINARY/PAGER_BINARY; run cargo test -p xai-grok-shell --test test_built_binary_e2e -- --ignored; review 2027-01"] // requires pre-built binary; run with --ignored
 async fn test_headless_streaming_messages_json_output() {
     let server = MockInferenceServer::start()
         .await
@@ -505,7 +505,7 @@ async fn test_headless_streaming_messages_json_output() {
 /// The Messages backend reports message id, thinking signature, verbatim stop
 /// reason, and per-response usage; all four must land on the assistant frame.
 #[tokio::test]
-#[ignore] // requires pre-built binary; run with --ignored
+#[ignore = "requires a pre-built chaos binary via GROK_BINARY/PAGER_BINARY; run cargo test -p xai-grok-shell --test test_built_binary_e2e -- --ignored; review 2027-01"] // requires pre-built binary; run with --ignored
 async fn test_headless_streaming_messages_json_carries_per_response_metadata() {
     use serde_json::json;
     use xai_grok_test_support::scripted::{ScriptedResponse, SseEvent};
@@ -618,7 +618,7 @@ async fn test_headless_streaming_messages_json_carries_per_response_metadata() {
 /// real `message.stop_sequence`. Drives the actual wire (a scripted
 /// `message_delta`), not a hand-built reducer event.
 #[tokio::test]
-#[ignore] // requires pre-built binary; run with --ignored
+#[ignore = "requires a pre-built chaos binary via GROK_BINARY/PAGER_BINARY; run cargo test -p xai-grok-shell --test test_built_binary_e2e -- --ignored; review 2027-01"] // requires pre-built binary; run with --ignored
 async fn test_headless_streaming_messages_json_carries_stop_sequence() {
     use serde_json::json;
     use xai_grok_test_support::scripted::{ScriptedResponse, SseEvent};
@@ -697,7 +697,7 @@ async fn test_headless_streaming_messages_json_carries_stop_sequence() {
 }
 
 #[tokio::test]
-#[ignore] // requires pre-built binary; run with --ignored
+#[ignore = "requires a pre-built chaos binary via GROK_BINARY/PAGER_BINARY; run cargo test -p xai-grok-shell --test test_built_binary_e2e -- --ignored; review 2027-01"] // requires pre-built binary; run with --ignored
 async fn test_headless_json_reports_server_cost() {
     use xai_grok_test_support::scripted::SseEvent;
 
@@ -759,7 +759,7 @@ async fn test_headless_json_reports_server_cost() {
 }
 
 #[tokio::test]
-#[ignore] // requires pre-built binary; run with --ignored
+#[ignore = "requires a pre-built chaos binary via GROK_BINARY/PAGER_BINARY; run cargo test -p xai-grok-shell --test test_built_binary_e2e -- --ignored; review 2027-01"] // requires pre-built binary; run with --ignored
 async fn test_headless_json_reports_usage_on_max_turns() {
     let server = single_model_server(CHAT_COMPLETIONS_MODEL, "chat_completions").await;
     server.enqueue_response(
@@ -800,7 +800,7 @@ async fn test_headless_json_reports_usage_on_max_turns() {
 }
 
 #[tokio::test]
-#[ignore] // requires pre-built binary; run with --ignored
+#[ignore = "requires a pre-built chaos binary via GROK_BINARY/PAGER_BINARY; run cargo test -p xai-grok-shell --test test_built_binary_e2e -- --ignored; review 2027-01"] // requires pre-built binary; run with --ignored
 async fn test_headless_streaming_json_usage() {
     let server = single_model_server(CHAT_COMPLETIONS_MODEL, "chat_completions").await;
     let workdir = git_workdir();
@@ -835,7 +835,7 @@ async fn test_headless_streaming_json_usage() {
 /// `response_format`, and the model's final JSON answer surfaces as
 /// `structuredOutput`. The StructuredOutput tool is NOT used.
 #[tokio::test]
-#[ignore] // requires pre-built binary; run with --ignored
+#[ignore = "requires a pre-built chaos binary via GROK_BINARY/PAGER_BINARY; run cargo test -p xai-grok-shell --test test_built_binary_e2e -- --ignored; review 2027-01"] // requires pre-built binary; run with --ignored
 async fn headless_json_schema_chat_completions_uses_response_format() {
     let server = single_model_server(CHAT_COMPLETIONS_MODEL, "chat_completions").await;
     server.set_response(r#"{"name":"Alice","age":30}"#);
@@ -894,7 +894,7 @@ async fn headless_json_schema_chat_completions_uses_response_format() {
 /// Responses backend: native schema rides `text.format` (not the tool), and the
 /// final JSON answer surfaces as `structuredOutput`.
 #[tokio::test]
-#[ignore] // requires pre-built binary; run with --ignored
+#[ignore = "requires a pre-built chaos binary via GROK_BINARY/PAGER_BINARY; run cargo test -p xai-grok-shell --test test_built_binary_e2e -- --ignored; review 2027-01"] // requires pre-built binary; run with --ignored
 async fn headless_json_schema_responses_uses_text_format() {
     let server = single_model_server("grok-4.5", "responses").await;
     server.set_response(r#"{"name":"Alice","age":30}"#);
@@ -947,7 +947,7 @@ async fn headless_json_schema_responses_uses_text_format() {
 /// Verifies the tool reaches the wire and its validated args surface as
 /// `structuredOutput`.
 #[tokio::test]
-#[ignore] // requires pre-built binary; run with --ignored
+#[ignore = "requires a pre-built chaos binary via GROK_BINARY/PAGER_BINARY; run cargo test -p xai-grok-shell --test test_built_binary_e2e -- --ignored; review 2027-01"] // requires pre-built binary; run with --ignored
 async fn headless_json_schema_messages_backend_uses_structured_output_tool() {
     let server = single_model_server("messages-compatible-model", "messages").await;
     server.enqueue_response(
@@ -1032,7 +1032,7 @@ const NAME_AGE_SCHEMA: &str = r#"{"type":"object","properties":{"name":{"type":"
 /// prose: the turn-end fallback still validates the text against the schema and
 /// surfaces `structuredOutput` (closes the "unvalidated fallback" gap).
 #[tokio::test]
-#[ignore] // requires pre-built binary; run with --ignored
+#[ignore = "requires a pre-built chaos binary via GROK_BINARY/PAGER_BINARY; run cargo test -p xai-grok-shell --test test_built_binary_e2e -- --ignored; review 2027-01"] // requires pre-built binary; run with --ignored
 async fn headless_json_schema_messages_validates_text_when_tool_not_called() {
     let server = single_model_server("messages-compatible-model", "messages").await;
     server.set_response(r#"{"name":"Cara","age":7}"#);
@@ -1072,7 +1072,7 @@ async fn headless_json_schema_messages_validates_text_when_tool_not_called() {
 /// the agent feeds the error back and the model's retry conforms. Exercises the
 /// validation + bounded-retry path.
 #[tokio::test]
-#[ignore] // requires pre-built binary; run with --ignored
+#[ignore = "requires a pre-built chaos binary via GROK_BINARY/PAGER_BINARY; run cargo test -p xai-grok-shell --test test_built_binary_e2e -- --ignored; review 2027-01"] // requires pre-built binary; run with --ignored
 async fn headless_json_schema_messages_retries_on_schema_violation() {
     let server = single_model_server("messages-compatible-model", "messages").await;
     server.enqueue_response(
@@ -1118,7 +1118,7 @@ async fn headless_json_schema_messages_retries_on_schema_violation() {
 /// An invalid `--json-schema` (valid JSON object, but fails schema compilation)
 /// disables both structured-output paths and surfaces the compile error.
 #[tokio::test]
-#[ignore] // requires pre-built binary; run with --ignored
+#[ignore = "requires a pre-built chaos binary via GROK_BINARY/PAGER_BINARY; run cargo test -p xai-grok-shell --test test_built_binary_e2e -- --ignored; review 2027-01"] // requires pre-built binary; run with --ignored
 async fn invalid_json_schema_disables_structured_output_and_surfaces_error() {
     let server = single_model_server(CHAT_COMPLETIONS_MODEL, "chat_completions").await;
     server.set_response(r#"{"name":"Alice","age":30}"#);
@@ -1193,7 +1193,7 @@ async fn invalid_json_schema_disables_structured_output_and_surfaces_error() {
 /// Verifies the agent boots, authenticates with a test API key, creates a
 /// session (libgit2 init), and completes a prompt round-trip to the mock server.
 #[tokio::test]
-#[ignore] // requires pre-built binary; run with --ignored
+#[ignore = "requires a pre-built chaos binary via GROK_BINARY/PAGER_BINARY; run cargo test -p xai-grok-shell --test test_built_binary_e2e -- --ignored; review 2027-01"] // requires pre-built binary; run with --ignored
 async fn test_stdio_full_session_lifecycle() {
     with_local_set(|| async {
         let server = MockInferenceServer::start().await.expect("start mock server");
@@ -1238,7 +1238,7 @@ async fn test_stdio_full_session_lifecycle() {
 /// Creates a session, closes it via ext_method, then verifies session/info
 /// returns an empty response (session no longer exists).
 #[tokio::test]
-#[ignore] // requires pre-built binary; run with --ignored
+#[ignore = "requires a pre-built chaos binary via GROK_BINARY/PAGER_BINARY; run cargo test -p xai-grok-shell --test test_built_binary_e2e -- --ignored; review 2027-01"] // requires pre-built binary; run with --ignored
 async fn test_stdio_session_close() {
     with_local_set(|| async {
         let server = MockInferenceServer::start()
@@ -1304,7 +1304,7 @@ async fn test_stdio_session_close() {
 }
 
 #[tokio::test]
-#[ignore] // requires pre-built binary; run with --ignored
+#[ignore = "requires a pre-built chaos binary via GROK_BINARY/PAGER_BINARY; run cargo test -p xai-grok-shell --test test_built_binary_e2e -- --ignored; review 2027-01"] // requires pre-built binary; run with --ignored
 async fn test_stdio_prompt_then_immediate_load_session() {
     with_local_set(|| async {
         let server = MockInferenceServer::start().await.expect("start mock server");
@@ -1386,7 +1386,7 @@ fn line_with_escaped_method(req: &serde_json::Value, method: &str) -> String {
 /// request hung forever. Drives the built binary with the raw wire bytes and
 /// asserts every escaped-method request gets a response.
 #[tokio::test]
-#[ignore] // requires pre-built binary; run with --ignored
+#[ignore = "requires a pre-built chaos binary via GROK_BINARY/PAGER_BINARY; run cargo test -p xai-grok-shell --test test_built_binary_e2e -- --ignored; review 2027-01"] // requires pre-built binary; run with --ignored
 async fn test_stdio_xcode_escaped_slash_methods_get_responses() {
     let server = MockInferenceServer::start()
         .await
@@ -1496,7 +1496,7 @@ async fn test_stdio_xcode_escaped_slash_methods_get_responses() {
 /// reads stdin again). Guards the `spawn_stdin_line_reader` → stdin_closed →
 /// simplex-shutdown → `handle_io` completion chain end to end.
 #[tokio::test]
-#[ignore] // requires pre-built binary; run with --ignored
+#[ignore = "requires a pre-built chaos binary via GROK_BINARY/PAGER_BINARY; run cargo test -p xai-grok-shell --test test_built_binary_e2e -- --ignored; review 2027-01"] // requires pre-built binary; run with --ignored
 async fn test_stdio_agent_exits_on_stdin_eof() {
     use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _};
 
@@ -1618,7 +1618,7 @@ impl ConfigTestHarness {
 /// endpoint + env_key. Mock rejects unauthenticated requests with 401.
 /// Regression guard for the 0.1.220 authentication regression.
 #[tokio::test]
-#[ignore] // requires pre-built binary; run with --ignored
+#[ignore = "requires a pre-built chaos binary via GROK_BINARY/PAGER_BINARY; run cargo test -p xai-grok-shell --test test_built_binary_e2e -- --ignored; review 2027-01"] // requires pre-built binary; run with --ignored
 async fn test_headless_managed_config_byok_sends_authorized_requests() {
     let server = MockInferenceServer::start_with_required_auth(
         vec![MockModelEntry::new("grok-4.5")],
@@ -1670,7 +1670,7 @@ default = "grok-4.5"
 /// path the wire effort comes from the legacy scalar, not from the list; the
 /// list→default derivation is unit-tested in `acp_model_meta_*`.
 #[tokio::test]
-#[ignore] // requires pre-built binary; run with --ignored
+#[ignore = "requires a pre-built chaos binary via GROK_BINARY/PAGER_BINARY; run cargo test -p xai-grok-shell --test test_built_binary_e2e -- --ignored; review 2027-01"] // requires pre-built binary; run with --ignored
 async fn headless_reasoning_efforts_payload_parses_and_legacy_effort_rides_wire() {
     let server = MockInferenceServer::start_with_models(vec![
         MockModelEntry::new(CHAT_COMPLETIONS_MODEL)
@@ -1810,7 +1810,7 @@ fn enqueue_background_task_turn(server: &MockInferenceServer, pid_file: &std::pa
 /// orphaning it.
 #[cfg(unix)]
 #[tokio::test]
-#[ignore] // requires pre-built binary; run with --ignored
+#[ignore = "requires a pre-built chaos binary via GROK_BINARY/PAGER_BINARY; run cargo test -p xai-grok-shell --test test_built_binary_e2e -- --ignored; review 2027-01"] // requires pre-built binary; run with --ignored
 async fn test_headless_timeout_exit_kills_pending_background_task() {
     let server = MockInferenceServer::start()
         .await
@@ -1851,7 +1851,7 @@ async fn test_headless_timeout_exit_kills_pending_background_task() {
 /// task — tracked despite the flag — must still be killed, not leaked.
 #[cfg(unix)]
 #[tokio::test]
-#[ignore] // requires pre-built binary; run with --ignored
+#[ignore = "requires a pre-built chaos binary via GROK_BINARY/PAGER_BINARY; run cargo test -p xai-grok-shell --test test_built_binary_e2e -- --ignored; review 2027-01"] // requires pre-built binary; run with --ignored
 async fn test_headless_no_wait_exit_kills_background_task() {
     let server = MockInferenceServer::start()
         .await
@@ -1888,7 +1888,7 @@ async fn test_headless_no_wait_exit_kills_background_task() {
 /// nothing reaped.
 #[cfg(unix)]
 #[tokio::test]
-#[ignore] // requires pre-built binary; run with --ignored
+#[ignore = "requires a pre-built chaos binary via GROK_BINARY/PAGER_BINARY; run cargo test -p xai-grok-shell --test test_built_binary_e2e -- --ignored; review 2027-01"] // requires pre-built binary; run with --ignored
 async fn test_headless_waits_for_short_background_task_and_exits_clean() {
     let server = MockInferenceServer::start()
         .await

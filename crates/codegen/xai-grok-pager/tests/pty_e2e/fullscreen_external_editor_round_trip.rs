@@ -6,7 +6,7 @@ use super::common::*;
 /// The palette route hands the existing draft to a local non-interactive editor script and restores the TUI.
 /// The edited text stays in the composer until the user submits it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_smoke -- --ignored; review 2027-01"]
 async fn fullscreen_external_editor_round_trip() {
     let content = ContentController::start().await.expect("start content");
     content.set_response(format!("{MOCK_RESPONSE_SENTINEL} edited prompt received."));

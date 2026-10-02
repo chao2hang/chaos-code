@@ -8,7 +8,7 @@ use super::common::*;
 /// Idle input was then not serviced until an unrelated poll timer fired (crossterm #936).
 /// Reading input on a dedicated thread behind a cancellation-safe channel fixes the wake; this test FAILS without that fix.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_smoke -- --ignored; review 2027-01"]
 async fn input_echoes_at_idle_prompt() {
     let content = ContentController::start().await.expect("start content");
     content.set_response(format!("{MOCK_RESPONSE_SENTINEL} short idle reply."));

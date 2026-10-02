@@ -555,7 +555,7 @@ async fn doomed_then_empty_content_coexist() {
 /// cargo test -p xai-grok-shell --test test_doom_loop_recovery -- --ignored
 /// ```
 #[tokio::test]
-#[ignore] // requires pre-built binary; run with --ignored
+#[ignore = "requires a pre-built chaos binary; run cargo test -p xai-grok-shell --test test_doom_loop_recovery -- --ignored; review 2027-01"] // requires pre-built binary; run with --ignored
 async fn headless_config_enables_doom_loop_check_header() {
     let models = vec![MockModelEntry::new(MODEL).with_api_backend("responses")];
     let server = MockInferenceServer::start_with_models(models)

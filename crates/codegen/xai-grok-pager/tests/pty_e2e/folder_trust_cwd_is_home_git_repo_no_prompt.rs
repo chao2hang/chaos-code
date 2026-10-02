@@ -7,7 +7,7 @@ use super::common::*;
 /// store, so `decide` resolves Trusted rather than prompting on a key that could never persist.
 /// The pager boots straight to the normal welcome; the trust question would otherwise render (and re-appear every session).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_shell_tools -- --ignored; review 2027-01"]
 async fn folder_trust_cwd_is_home_git_repo_no_prompt() {
     let content = ContentController::start().await.expect("start content");
 

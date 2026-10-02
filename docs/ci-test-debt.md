@@ -36,8 +36,8 @@ in their source files. See the "Ignored tests" section below for the inventory.
 
 The aggregate figure recorded when the job was introduced was roughly **209
 failing tests** across seven crates. After per-crate audit and repair, **all
-209 are resolved**: 0 non-ignored failures remain. The repaired 2026-10-01
-inventory reports 429 ignored attributes total, including 218 bare attributes;
+209 are resolved**: 0 non-ignored failures remain. The 2026-10-02
+inventory reports 428 ignored attributes total and **0 bare attributes**;
 these are workspace-wide scanner counts, not the count of fork-specific entries
 in the table above.
 
@@ -47,9 +47,10 @@ Tests marked `#[ignore]` are a separate debt. Their reasons must stay
 readable and be revisited periodically; a permanent `#[ignore]` is a deleted
 test with extra steps. `python3 scripts/ci/ignored-tests.py --check-baseline
 scripts/ci/ignored-tests-baseline.tsv` checks the grandfathered bare-attribute
-inventory in both directions. The live scan currently reports 429 ignored
-attributes and 218 bare attributes; the checked-in CSV and per-source owner
-audit still determine review status. The Q4 CSV currently contains one
+inventory in both directions; that baseline is now intentionally empty. The live
+scan reports 428 ignored attributes and 0 bare attributes, and
+`--require-reasons` fails CI if any attribute loses its reason. The checked-in
+CSV and per-source owner audit still determine review status. The Q4 CSV currently contains one
 `xai-grok-update` ignored attribute: the opt-in 100k stress test. Five tests
 that asserted upstream installation URLs were replaced with running tests of
 the Chaos fork's actual `reinstall_hint` behavior; this source-level correction
@@ -138,9 +139,9 @@ python3 scripts/ci/test-ignored-tests-baseline-fixture.py
 
 ### 规则
 
-- 目标是**禁止未经审查新增**裸 `#[ignore]`。当前存量 218 条按 package/path/function 受双向 baseline gate 管理；新增、删除均需审查 baseline diff。清理存量时逐条补理由，不批量伪造原因。
+- 目标是**禁止未经审查新增**裸 `#[ignore]`。2026-10-02 存量 218 条已全部就地补上 reason（理由取自该测试所属 Cargo target 与 harness，不是手写猜测），baseline 因此清空；`--require-reasons` 门禁无豁免表，缺 reason 的属性（含 `#[ignore = ""]`）直接让 CI 失败。新增、删除仍需审查 baseline diff。
 - 对带 reason 的 `#[ignore]`，Reason 里**必须**有 `review YYYY-MM` 或等价的重审日期。无日期的算
-  “永久债务”，需季度审计时处理。Bare attributes remain explicit legacy exceptions until that audit; the inventory baseline is not an approval.
+  “永久债务”，需季度审计时处理。裸属性已不是合法例外：CI 不传 `--ignored`，被跳过的测试在 CI 里完全不可见，reason 字符串是唯一让跳过行为可追溯的东西。
 - 新增 fork 专属 ignore → 必须同时更新本节表格计数和原因描述。
 
 2026 Q4 source-by-source owner audit is due as of 2026-10-01 and remains pending;

@@ -5,7 +5,7 @@ use crate::common::*;
 /// CLI `--minimal` / `--fullscreen` must not write `[ui] screen_mode` to config.toml.
 /// Mode flags last for one session; only a manual config.toml edit should make a mode stick across plain `grok` launches.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_minimal -- --ignored; review 2027-01"]
 async fn minimal_cli_screen_mode_does_not_persist() {
     let content = ContentController::start().await.expect("start content");
     content.set_response(format!("{} no-sticky payload.", turn_sentinel(1)));

@@ -8,7 +8,7 @@ use super::common::*;
 /// The test is hermetic on Linux, where the bracketed clipboard probe is compiled out (it is cfg(macos/windows)).
 /// On a macOS dev machine an incidental host-clipboard image chip may attach, so the asserts only look for unique sentinel substrings.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_clipboard -- --ignored; review 2027-01"]
 async fn paste_bracketed_chip_text_sends_full_payload() {
     const FIRST: &str = "PASTECHIPFIRST leading sentinel line";
     const LAST: &str = "PASTECHIPLAST trailing sentinel line";

@@ -8,7 +8,7 @@ use crate::common::*;
 /// Proof the pager ran on the transcript: the turn's sentinel appears **twice**, once in the live conversation and once in the dumped transcript.
 /// The inline TUI restores to idle after.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_minimal -- --ignored; review 2027-01"]
 async fn minimal_transcript_opens_in_pager() {
     let content = ContentController::start().await.expect("start content");
     content.set_response(format!("{MOCK_RESPONSE_SENTINEL} transcript body."));

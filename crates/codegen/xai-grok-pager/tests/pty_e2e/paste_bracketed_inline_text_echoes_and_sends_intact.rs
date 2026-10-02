@@ -9,7 +9,7 @@ use super::common::*;
 /// On a macOS dev machine the probe MAY read the real host clipboard and attach an incidental image chip.
 /// Every assert is therefore a contains check on a unique sentinel, never whole-prompt or whole-message equality.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_clipboard -- --ignored; review 2027-01"]
 async fn paste_bracketed_inline_text_echoes_and_sends_intact() {
     const LINE_A: &str = "PASTEECHOAAA first pasted line";
     const LINE_B: &str = "PASTEECHOBBB second pasted line";

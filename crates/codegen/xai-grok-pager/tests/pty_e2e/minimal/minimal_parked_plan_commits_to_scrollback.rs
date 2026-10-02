@@ -45,7 +45,7 @@ fn park_plan(
 ///
 /// Also pins the revision path: a revised plan is a fresh `exit_plan_mode` with a new `tool_call_id`, and must commit as its own block exactly once.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_minimal -- --ignored; review 2027-01"]
 async fn minimal_parked_plan_commits_to_scrollback() {
     let content = ContentController::start().await.expect("start content");
     content.set_response(format!("{MOCK_RESPONSE_SENTINEL} first turn done."));

@@ -54,7 +54,7 @@ async fn settle() {
 /// - the next Tab finds exactly one candidate inside the directory and accepts it immediately, closing the quote;
 /// - Enter runs the completed command through the real shell; the sentinel content reaching the scrollback proves the quoting produced a valid command.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_shell_tools -- --ignored; review 2027-01"]
 #[cfg(unix)]
 async fn bash_mode_file_completion_shell_like() {
     let project = tempfile::tempdir().expect("create project dir");

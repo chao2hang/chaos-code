@@ -6,7 +6,7 @@ use crate::common::*;
 /// With an empty composer and a mid-turn queued follow-up it must send that row now instead of opening the transcript pager remap.
 /// Send-now cancels turn 1 silently and runs the row as its own next turn, with the interjection preamble.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_queue -- --ignored; review 2027-01"]
 async fn minimal_ctrl_o_send_now_queued_apple_terminal() {
     let content = ContentController::start().await.expect("start content");
     let mut turn_one = content.expect_agent_turn_blocked(

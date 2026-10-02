@@ -8,7 +8,7 @@ use crate::common::*;
 /// A rewind would leave the printed block on screen AND refill the composer, showing the prompt twice.
 /// Standard cancel instead: the block renders exactly once and the cancel marker is visible.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_minimal -- --ignored; review 2027-01"]
 async fn minimal_double_esc_committed_queued_prompt_single_render() {
     const QUEUED_PROMPT: &str = "bravo promoted block";
 

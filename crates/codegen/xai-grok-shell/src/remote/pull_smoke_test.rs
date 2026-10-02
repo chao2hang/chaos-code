@@ -22,7 +22,7 @@ mod tests {
     /// Creates a `RemoteSync`, queues ACP notifications, flushes, and verifies the backend row.
     /// Then pulls the session back and verifies local hydration and the storage adapter load.
     #[tokio::test]
-    #[ignore]
+    #[ignore = "fork gap: needs an auth.json that the Chaos fork never creates (Chaos does not sign in to xAI), so it panics 'No auth.json' unless an OAuth entry is seeded first; measured 2026-10-02 via cargo test -p xai-grok-shell --lib -- --ignored; review 2027-01"]
     async fn smoke_push_pull_round_trip() {
         use crate::remote::sync::RemoteSync;
         use crate::session::export::ExportedMetadata;

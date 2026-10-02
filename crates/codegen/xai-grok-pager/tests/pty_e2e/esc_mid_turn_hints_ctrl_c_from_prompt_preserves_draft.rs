@@ -6,7 +6,7 @@ use super::common::*;
 /// Ctrl+C then remains the cancel gesture (clear-first with a draft, cancel on the empty prompt).
 /// Proves the real binary routes a bare Esc through `try_handle_esc_policy`'s turn-running branch (hint, not cancel) before the idle clear and rewind branches.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_queue -- --ignored; review 2027-01"]
 async fn esc_mid_turn_hints_ctrl_c_from_prompt_preserves_draft() {
     let content = ContentController::start().await.expect("start content");
     // Stream a long paced response so the turn is still visibly running when Esc lands

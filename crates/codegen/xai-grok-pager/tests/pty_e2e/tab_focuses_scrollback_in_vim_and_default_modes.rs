@@ -45,7 +45,7 @@ async fn assert_tab_focuses_scrollback(content: &ContentController) {
 /// Tab focuses scrollback with `[ui].vim_mode = true` (scrollback vim nav on), `[ui].simple_mode = false`.
 /// Tab stays the focus key independent of vim mode.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_smoke -- --ignored; review 2027-01"]
 async fn tab_focuses_scrollback_vim_mode() {
     let content = ContentController::start().await.expect("start content");
     seed_ui_config(&content, "vim_mode = true\nsimple_mode = false");
@@ -55,7 +55,7 @@ async fn tab_focuses_scrollback_vim_mode() {
 /// Tab focuses scrollback under the default config (no `[ui]` overrides).
 /// This proves the focus key is Tab regardless of the (default-off) vim/simple modes.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_smoke -- --ignored; review 2027-01"]
 async fn tab_focuses_scrollback_default_config() {
     let content = ContentController::start().await.expect("start content");
     assert_tab_focuses_scrollback(&content).await;
@@ -64,7 +64,7 @@ async fn tab_focuses_scrollback_default_config() {
 /// `[ui].simple_mode = true` (non-vim prompt editor) must not change the Esc policy or the Tab focus key; the policy is independent of `simple_mode`.
 /// The test proves on the real binary: idle Esc Esc clears a draft (clear policy), then Tab (not Esc) focuses the scrollback.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_smoke -- --ignored; review 2027-01"]
 async fn esc_policy_and_tab_focus_work_in_simple_mode() {
     let content = ContentController::start().await.expect("start content");
     seed_ui_config(&content, "simple_mode = true");

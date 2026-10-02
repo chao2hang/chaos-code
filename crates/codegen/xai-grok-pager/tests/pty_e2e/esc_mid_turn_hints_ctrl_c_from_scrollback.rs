@@ -4,7 +4,7 @@ use super::common::*;
 
 /// A bare Esc from the SCROLLBACK pane never cancels a running turn in the default (non-vim) config: it shows the Ctrl+C hint and the stream keeps going.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_queue -- --ignored; review 2027-01"]
 async fn esc_mid_turn_hints_ctrl_c_from_scrollback() {
     let content = ContentController::start().await.expect("start content");
     let long_response = format!(

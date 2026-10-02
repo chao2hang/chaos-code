@@ -5,7 +5,7 @@ use super::common::*;
 /// While a turn is streaming, Esc on an open slash dropdown dismisses the dropdown and does NOT cancel the turn.
 /// The pane-level slash handler returns `Changed` before `try_handle_esc_policy` ever runs, so the key never reaches the mid-turn Esc policy.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_queue -- --ignored; review 2027-01"]
 async fn mid_turn_slash_dropdown_esc_dismisses_not_cancel() {
     let content = ContentController::start().await.expect("start content");
     let long_response = format!(

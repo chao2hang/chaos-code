@@ -29,7 +29,7 @@ fn first_content_row(harness: &PtyHarness, when: &str) -> u16 {
 /// At `SHORT_ROWS`: auto-compact removes the padding and the status bar lands on row 0.
 /// Back tall: the padding (and the blank row 0) comes back.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_smoke -- --ignored; review 2027-01"]
 async fn auto_compact_top_row() {
     let content = ContentController::start().await.expect("start content");
     content.set_response(format!("{MOCK_RESPONSE_SENTINEL} auto-compact probe."));
@@ -104,7 +104,7 @@ async fn auto_compact_top_row() {
 /// Spawning already tiny (no resize event ever fires) must still land the status bar on row 0.
 /// Only the startup read of `crossterm::terminal::size()` into the initial appearance can have derived the compact flag.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_smoke -- --ignored; review 2027-01"]
 async fn auto_compact_at_startup() {
     let content = ContentController::start().await.expect("start content");
     content.set_response(format!("{MOCK_RESPONSE_SENTINEL} startup probe."));

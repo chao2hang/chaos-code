@@ -6,7 +6,7 @@ use crate::common::*;
 /// The grown live viewport hosts it through the same app-modal host that renders settings, so minimal renders the whole `ActiveModal` family.
 /// Esc dismisses it back to the prompt.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_minimal -- --ignored; review 2027-01"]
 async fn minimal_help_opens_command_palette() {
     let content = ContentController::start().await.expect("start content");
     let mut harness = spawn_minimal(&content);

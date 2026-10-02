@@ -4,7 +4,7 @@ use crate::common::*;
 
 /// `/fullscreen` from a minimal session switches in place (no re-exec); the in-memory conversation renders in the alt-screen scrollback pane.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_minimal -- --ignored; review 2027-01"]
 async fn minimal_slash_switches_to_fullscreen() {
     let content = ContentController::start().await.expect("start content");
     let sentinel = turn_sentinel(1);

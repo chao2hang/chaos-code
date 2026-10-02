@@ -6,7 +6,7 @@ use super::common::*;
 /// Prove the full path is on screen AND the PTY stream carries an OSC 8 hyperlink whose `file://` URL encodes the space (`%20`).
 /// The click target then spans the whole filename, not a truncated prefix.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_shell_tools -- --ignored; review 2027-01"]
 async fn file_path_with_space_emits_full_osc8_hyperlink() {
     // Synthetic macOS app-bundle path with a space in the final segment.
     const PATH_PREFIX: &str = "/Users/alice/src/app/release/mac-arm64/Demo";

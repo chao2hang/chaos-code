@@ -16,7 +16,7 @@ const TIP_TEXT: &str = "Tight on space? Try /compact-mode";
 const BAND_ROWS: u16 = 24;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_smoke -- --ignored; review 2027-01"]
 async fn small_screen_tip_survives_slow_turn() {
     let content = ContentController::start().await.expect("start content");
     // ~12 words at 400ms per SSE chunk holds the turn open ~5s, comfortably past the tip's ~3s TTL, like a real inference turn

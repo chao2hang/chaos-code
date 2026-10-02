@@ -5,7 +5,7 @@ use super::common::*;
 /// **Agent type mismatch: "No" returns to current session.**
 /// Selecting "No" dismisses the modal and keeps the current session with its original model.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_config_ui -- --ignored; review 2027-01"]
 async fn agent_type_mismatch_no_keeps_current_session() {
     let content = start_dual_agent_type_content().await;
     content.set_response(format!(

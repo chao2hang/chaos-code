@@ -10,7 +10,7 @@ use super::common::*;
 /// - Reboot with the *same* campaign env; the welcome shows the **config** model.
 ///   This proves the dismissal persisted (an explicit pick beats the nudge).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_config_ui -- --ignored; review 2027-01"]
 async fn campaign_nudges_default_until_dismissed_by_model_pick() {
     const CONFIG_MODEL: &str = "config-model";
     const CAMPAIGN_MODEL: &str = "campaign-model";

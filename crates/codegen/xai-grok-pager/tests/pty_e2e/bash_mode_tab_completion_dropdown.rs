@@ -41,7 +41,7 @@ fn seed_history(content: &ContentController) -> std::path::PathBuf {
 /// - Down + Tab accepts the second item into the prompt without clobbering it.
 ///   A trailing typed char composes with the spliced token, and the other candidate vanishes with the closed dropdown.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_shell_tools -- --ignored; review 2027-01"]
 #[cfg(unix)]
 async fn bash_mode_tab_accepts_dropdown_item_in_place() {
     let project = tempfile::tempdir().expect("create project dir");

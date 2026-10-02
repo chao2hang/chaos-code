@@ -38,7 +38,7 @@ fn attach_overlay(h: &mut PtyHarness) {
 ///   - **Tab then a neutral scrollback Esc** backs out.
 /// Each back-out is re-verified against a freshly re-attached overlay.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_config_ui -- --ignored; review 2027-01"]
 async fn dashboard_overlay_tab_esc_backout_and_ctrl_backslash() {
     let content = ContentController::start().await.expect("start content");
     content.set_response(format!("{MOCK_RESPONSE_SENTINEL} dashboard overlay turn."));

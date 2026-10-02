@@ -47,7 +47,7 @@ const CHUNK_DELAY: Duration = Duration::from_millis(30);
 /// Mid-stream: wheel up to exit follow, wheel back down past the bottom, and the viewport must resume following.
 /// The stream's final chunk appears with no further input.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_scroll_selection -- --ignored; review 2027-01"]
 async fn wheel_overscroll_at_bottom_reengages_follow_mid_stream() {
     // The helper spawns under the forced-wheel env (see the header) and returns a gated, paced transcript that is provably mid-turn
     let (mut harness, _content, mut turn, top_start) = spawn_streaming_marker_turn(

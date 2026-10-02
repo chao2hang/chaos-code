@@ -63,7 +63,7 @@ fn wait_for_raw_bytes(harness: &mut PtyHarness, needle: &[u8], timeout: Duration
 
 /// With an unknown brand the probe fires; the harness's scripted reply shows up in `/doctor`, never as screen garbage.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_xtversion -- --ignored --nocapture; review 2027-01"]
 async fn unknown_brand_probe_round_trip() {
     let binary = pager_binary().expect("resolve pager binary");
     let mut harness =
@@ -98,7 +98,7 @@ async fn unknown_brand_probe_round_trip() {
 /// With an allowlisted brand (`TERM_PROGRAM=WezTerm`) the query is written and the reply shows up.
 /// The env is scrubbed and overridden so the runner's own markers can't flip the gate.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_xtversion -- --ignored --nocapture; review 2027-01"]
 async fn allowlisted_brand_probe_fires() {
     let binary = pager_binary().expect("resolve pager binary");
     let mut env = UNKNOWN_BRAND_ENV.to_vec();
@@ -130,7 +130,7 @@ async fn allowlisted_brand_probe_fires() {
 
 /// A non-allowlisted brand (`TERM_PROGRAM=vscode`) writes no query, regardless of whatever else is in the runner's env (deliberately no scrub).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_xtversion -- --ignored --nocapture; review 2027-01"]
 async fn non_allowlisted_brand_skips_probe() {
     let binary = pager_binary().expect("resolve pager binary");
     let mut harness = PtyHarness::new_inherited_env(
@@ -159,7 +159,7 @@ async fn non_allowlisted_brand_skips_probe() {
 /// records.
 /// Later env entries override the UNKNOWN_BRAND_ENV scrub.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_xtversion -- --ignored --nocapture; review 2027-01"]
 async fn multiplexer_skips_probe() {
     let binary = pager_binary().expect("resolve pager binary");
     let mut env = UNKNOWN_BRAND_ENV.to_vec();
@@ -182,7 +182,7 @@ async fn multiplexer_skips_probe() {
 
 /// A silent terminal (no XTVERSION, no DA1) still starts cleanly after the deadline: no hang, no xtversion line.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_xtversion -- --ignored --nocapture; review 2027-01"]
 async fn unknown_brand_no_reply_starts_cleanly() {
     let binary = pager_binary().expect("resolve pager binary");
     let mut harness =
@@ -211,7 +211,7 @@ async fn unknown_brand_no_reply_starts_cleanly() {
 
 /// An unterminated DCS reply and DA1: the event filter drops the stalled fragment, no identity, no garbage.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_xtversion -- --ignored --nocapture; review 2027-01"]
 async fn unknown_brand_malformed_reply_is_discarded() {
     let binary = pager_binary().expect("resolve pager binary");
     let mut harness =
@@ -248,7 +248,7 @@ async fn unknown_brand_malformed_reply_is_discarded() {
 
 /// A late reply (~1s after startup, well past any blocking window) is still swallowed by the event filter and recorded, never rendered.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_xtversion -- --ignored --nocapture; review 2027-01"]
 async fn unknown_brand_late_reply_swallowed_and_recorded() {
     let binary = pager_binary().expect("resolve pager binary");
     let mut harness =
@@ -283,7 +283,7 @@ async fn unknown_brand_late_reply_swallowed_and_recorded() {
 
 /// Keystrokes typed around the reply survive; the reply does not.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_xtversion -- --ignored --nocapture; review 2027-01"]
 async fn unknown_brand_keystrokes_interleaved_with_reply() {
     let binary = pager_binary().expect("resolve pager binary");
     let mut harness =
@@ -316,7 +316,7 @@ async fn unknown_brand_keystrokes_interleaved_with_reply() {
 
 /// A reply split across writes (slow trickling link) is still detected.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_xtversion -- --ignored --nocapture; review 2027-01"]
 async fn unknown_brand_split_reply_round_trip() {
     let binary = pager_binary().expect("resolve pager binary");
     let mut harness =

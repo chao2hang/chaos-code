@@ -9,7 +9,7 @@ use super::common::*;
 /// The sibling `bracketed_ime_paste_skips_clipboard_image_macos` covers the agent prompt, where the bug was reported, on a real pasteboard.
 #[cfg(target_os = "linux")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_clipboard -- --ignored; review 2027-01"]
 async fn bracketed_ime_paste_skips_clipboard_image_linux() {
     use std::os::unix::fs::PermissionsExt as _;
 

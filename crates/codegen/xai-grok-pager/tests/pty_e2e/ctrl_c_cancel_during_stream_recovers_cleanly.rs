@@ -8,7 +8,7 @@ use super::common::*;
 /// The pane must stay usable afterwards: no `TurnCancelling` latch, the next typed prompt runs.
 /// Cancel is via Ctrl+C, which works in every mode.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_queue -- --ignored; review 2027-01"]
 async fn ctrl_c_cancel_during_stream_recovers_cleanly() {
     let content = ContentController::start().await.expect("start content");
     // A long, paced response keeps the turn visibly streaming while Ctrl+C is pressed

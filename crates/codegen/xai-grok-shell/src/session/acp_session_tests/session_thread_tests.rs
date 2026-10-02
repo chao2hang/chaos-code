@@ -26,7 +26,6 @@ fn session_thread_detects_normal_exit() {
 }
 
 #[test]
-#[ignore]
 fn session_thread_detects_panic() {
     let t = SessionThread::from_handle(std::thread::spawn(|| {
         panic!("intentional test panic");

@@ -7,7 +7,7 @@ use super::common::*;
 /// The chord is cancel-and-send: turn 1 is cancelled silently and I1 runs as its own turn.
 /// The final request's user-message sequence must be exactly [prompt, I1 (with the interjection preamble), P2] with P1 absent everywhere.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_queue -- --ignored; review 2027-01"]
 async fn queue_and_interjection_lifecycle() {
     let content = ContentController::start().await.expect("start content");
     // Gate turn 1's terminal event so the ENTIRE mid-turn setup provably lands while turn 1 is still the running turn, even under heavy suite load

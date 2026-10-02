@@ -12,7 +12,7 @@ use super::common::*;
 /// A prior TEXT clipboard is restored on exit; a prior IMAGE cannot be.
 #[cfg(target_os = "macos")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_clipboard -- --ignored; review 2027-01"]
 #[serial_test::serial(host_clipboard)]
 async fn bracketed_ime_paste_skips_clipboard_image_macos() {
     use xai_grok_pager_pty_harness::host_clipboard::{

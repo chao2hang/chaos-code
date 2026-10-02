@@ -11,7 +11,7 @@ use super::common::*;
 /// The queued message carries a pasted image (as in the original report), which is what forces it onto the LOCAL queue.
 /// Mid-turn plain text takes the server-authoritative immediate-send path instead (`immediate_server_send_eligible`) and never reaches the code path under test.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_queue -- --ignored; review 2027-01"]
 async fn edit_interject_lone_queued_row_keeps_tui_alive() {
     let content = ContentController::start().await.expect("start content");
     content.set_chunk_delay(Some(Duration::from_millis(150)));

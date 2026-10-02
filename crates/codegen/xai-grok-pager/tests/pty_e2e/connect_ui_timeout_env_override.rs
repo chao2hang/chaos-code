@@ -70,7 +70,7 @@ async fn boot_and_read_budget_line(env_value: &str, ctx_needle: &str) -> String 
 /// With the env set to `45`, startup completes under the raised budget and the pager records the raw value plus what it resolved to.
 /// That proves the override resolved from the env end-to-end, durable even though this run happened to succeed.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_smoke -- --ignored; review 2027-01"]
 async fn connect_ui_timeout_env_override_logs_and_boots() {
     let line = boot_and_read_budget_line("45", "\"timeout_secs\":45").await;
     assert!(
@@ -87,7 +87,7 @@ async fn connect_ui_timeout_env_override_logs_and_boots() {
 /// An unparsable value resolves to the default 30s and startup still completes.
 /// The entry records the rejected input next to the default it resolved to; a presence check, with no ordering argument about shared buffers.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_smoke -- --ignored; review 2027-01"]
 async fn connect_ui_timeout_env_garbage_logs_default_and_boots() {
     let line = boot_and_read_budget_line("garbage", "\"timeout_secs\":30").await;
     assert!(

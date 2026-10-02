@@ -5,7 +5,7 @@ use crate::common::*;
 /// `/settings` opens the full settings editor inline in minimal mode, and Esc closes it back to the prompt.
 /// The editor is hosted in the grown live viewport and reuses the real `render_settings_modal`, so behavior matches the full TUI.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_minimal -- --ignored; review 2027-01"]
 async fn minimal_settings_modal_opens_and_closes() {
     let content = ContentController::start().await.expect("start content");
     let mut harness = spawn_minimal(&content);

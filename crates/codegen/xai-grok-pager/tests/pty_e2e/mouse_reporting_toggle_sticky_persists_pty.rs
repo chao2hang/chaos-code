@@ -14,7 +14,7 @@ use super::common::*;
 ///
 /// The product's primary path is Ctrl+R with the scrollback focused (`When::ScrollbackFocused`).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_scroll_selection -- --ignored; review 2027-01"]
 async fn mouse_reporting_toggle_sticky_persists_pty() {
     let content = ContentController::start().await.expect("start content");
     seed_mouse_reporting_toggle_config(&content, true);

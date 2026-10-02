@@ -23,7 +23,7 @@ const ALT_S: &[u8] = b"\x1bs";
 const CTRL_S: &[u8] = b"\x13";
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore] // opt-in: spawns the real pager binary in a PTY (CI runs with --ignored)
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager-pty-harness --test prompt_stash -- --ignored; review 2027-01"] // opt-in: spawns the real pager binary in a PTY (CI runs with --ignored)
 async fn chord_bytes_stash_and_restore_the_draft() {
     run().await.expect("stash/pop e2e");
 }

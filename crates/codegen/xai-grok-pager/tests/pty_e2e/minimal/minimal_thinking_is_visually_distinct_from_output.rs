@@ -114,7 +114,7 @@ fn styled_rows_with(harness: &PtyHarness, needle: &str) -> Vec<String> {
 /// There is no blank-row separator, no indent, and under `NO_COLOR` no color delta at all.
 /// The test checks three orthogonal cues, present on the body rows and absent on the assistant rows.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_minimal -- --ignored; review 2027-01"]
 async fn minimal_thinking_is_visually_distinct_from_output() {
     let Turn { mut harness, .. } = run_reasoning_turn(false).await;
 
@@ -188,7 +188,7 @@ async fn minimal_thinking_is_visually_distinct_from_output() {
 
 /// The collapsed header advertises the only way back into the body, and `Ctrl+E` must honour the advertisement by re-printing it in full.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_minimal -- --ignored; review 2027-01"]
 async fn minimal_collapse_thinking_toggle_folds_and_ctrl_e_reopens() {
     let Turn { mut harness, .. } = run_reasoning_turn(true).await;
 

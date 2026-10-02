@@ -4,7 +4,7 @@ use crate::common::*;
 
 /// A turn still running across `/minimal` survives the in-process switch.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_minimal -- --ignored; review 2027-01"]
 async fn minimal_switch_mid_turn_keeps_streaming() {
     let content = ContentController::start().await.expect("start content");
     // Gated turn: provably still running when the switch lands.

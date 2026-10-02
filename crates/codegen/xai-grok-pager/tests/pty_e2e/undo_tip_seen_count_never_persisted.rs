@@ -6,7 +6,7 @@ use super::common::*;
 /// After triggering the tip, the persisted config must not carry the tip key.
 /// The old code wrote `[hints] undo_tip_shown_count` to `config.toml` from this path.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_config_ui -- --ignored; review 2027-01"]
 async fn undo_tip_seen_count_never_persisted() {
     let content = ContentController::start().await.expect("start content");
     let binary = pager_binary().expect("resolve pager binary");

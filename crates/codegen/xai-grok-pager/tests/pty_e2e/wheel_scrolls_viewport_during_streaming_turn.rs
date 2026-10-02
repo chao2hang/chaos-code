@@ -46,7 +46,7 @@ const CHUNK_DELAY: Duration = Duration::from_millis(30);
 /// Scrolling means the topmost visible marker index strictly decreases.
 /// The turn must then complete cleanly on release.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_scroll_selection -- --ignored; review 2027-01"]
 async fn wheel_scrolls_viewport_during_streaming_turn() {
     // Gated, paced, provably mid-turn transcript with setup guards taken; see the helper for the construction and the baseline's meaning
     let (mut harness, _content, mut turn, top_before) =

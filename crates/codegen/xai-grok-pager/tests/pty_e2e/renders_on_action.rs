@@ -5,7 +5,7 @@ use super::common::*;
 /// A resize after the splash forces the pager to emit at least one synchronized-update frame (`CSI ? 2026 h/l`).
 /// The pager draws only in response to events and never emits idle frames, so the test drives a resize rather than asserting `frame_count > 0` from boot.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_smoke -- --ignored; review 2027-01"]
 async fn renders_on_action() {
     let content = ContentController::start().await.expect("start content");
 

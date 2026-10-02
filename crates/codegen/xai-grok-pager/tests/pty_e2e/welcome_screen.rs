@@ -5,7 +5,7 @@ use super::common::*;
 /// 1. **Welcome screen.**
 /// The pager boots and draws its welcome screen within the timeout.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_smoke -- --ignored; review 2027-01"]
 async fn welcome_screen() {
     let content = ContentController::start().await.expect("start content");
 

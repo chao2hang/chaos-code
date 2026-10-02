@@ -7,7 +7,7 @@ use crate::common::*;
 /// A second Ctrl+C within the window exits.
 /// (Ctrl+Q / Ctrl+D arm the same way; the hint is rendered by `minimal::live::render_exit_hint`.)
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_minimal -- --ignored; review 2027-01"]
 async fn minimal_ctrl_c_arms_and_quits() {
     let content = ContentController::start().await.expect("start content");
     let mut harness = spawn_minimal(&content);

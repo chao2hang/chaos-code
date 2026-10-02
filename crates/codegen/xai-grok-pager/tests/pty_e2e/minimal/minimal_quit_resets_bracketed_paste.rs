@@ -8,7 +8,7 @@ use crate::common::*;
 /// Gating therefore left `?2004` on in the user's shell after every clean minimal exit.
 /// Minimal is the only mode where the flag is false by design, so it is the only place the bug is reachable without fault injection.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_minimal -- --ignored; review 2027-01"]
 async fn minimal_quit_resets_bracketed_paste() {
     const RESET: &str = "\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1015l\x1b[?1006l\x1b[?2004l";
 

@@ -14,7 +14,7 @@ use super::common::*;
 /// Assertions read scrollback and screen after the commit: head/tail sentinels and every payload row present exactly once, wide-char markers intact.
 /// Dropped or doubled emissions change the count.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_minimal -- --ignored; review 2027-01"]
 async fn ansi_scrollback_content_integrity() {
     const HEAD: &str = "HEADSENTINEL7431";
     const TAIL: &str = "TAILSENTINEL7431";

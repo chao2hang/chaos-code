@@ -6,7 +6,7 @@ use super::common::*;
 /// The running turn is cancelled silently and the row runs as its own next turn.
 /// It arrives on the wire as a standard `<user_query>` prompt with the interjection preamble.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_queue -- --ignored; review 2027-01"]
 async fn empty_enter_force_sends_top_queued() {
     let content = ContentController::start().await.expect("start content");
     let mut turn_one = content

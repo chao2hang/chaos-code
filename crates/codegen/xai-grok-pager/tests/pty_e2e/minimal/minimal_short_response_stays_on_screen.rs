@@ -12,7 +12,7 @@ use crate::common::*;
 /// - the always-focused prompt (the cursor) sits HIGH on the screen, directly after the short conversation, the rest of the window blank below it;
 ///   bottom-pin would instead put the cursor near the last row.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_minimal -- --ignored; review 2027-01"]
 async fn minimal_short_response_stays_on_screen() {
     let content = ContentController::start().await.expect("start content");
     // A short answer: a couple of rendered rows, far shorter than the 50-row screen, so it never needs to scroll into native history

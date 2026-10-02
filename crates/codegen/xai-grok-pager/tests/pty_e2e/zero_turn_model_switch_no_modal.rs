@@ -4,7 +4,7 @@ use super::common::*;
 
 /// Switching to a model with a different agent type before any prompts are sent should succeed silently (shell auto-rebuilds at turn_count == 0).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_config_ui -- --ignored; review 2027-01"]
 async fn zero_turn_model_switch_no_modal() {
     let content = start_dual_agent_type_content().await;
 

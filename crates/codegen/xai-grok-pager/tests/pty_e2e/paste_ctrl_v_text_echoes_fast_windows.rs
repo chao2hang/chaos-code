@@ -12,7 +12,7 @@ use super::common::*;
 /// The prior TEXT contents are restored best-effort on exit (drop guard, panic included); a prior IMAGE clipboard cannot be restored.
 #[cfg(target_os = "windows")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_clipboard -- --ignored; review 2027-01"]
 #[serial_test::serial(host_clipboard)]
 async fn paste_ctrl_v_text_echoes_fast_windows() {
     const SENTINEL: &str = "PASTEKEYFASTWWW echo sentinel";

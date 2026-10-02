@@ -5,7 +5,7 @@ use super::common::*;
 /// Server-driven reasoning-effort menu: a model carrying a `reasoning_efforts` list renders the server labels in `/effort`.
 /// Selecting a remap row sends the mapped canonical value on the wire (`deep` maps to `xhigh`).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_config_ui -- --ignored; review 2027-01"]
 async fn reasoning_efforts_menu_renders_and_remaps_on_wire() {
     let content = ContentController::start_with_models(vec![
         MockModel::new("grok-4.5")

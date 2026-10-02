@@ -8,7 +8,7 @@ use super::common::*;
 /// A TCP listener that accepts but never replies stands in for that endpoint, so every startup HTTP call stalls until the client's own timeout fires.
 /// The welcome screen must render anyway; a hang here means some boot path went unbounded.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_smoke -- --ignored; review 2027-01"]
 async fn embedded_mode_boots_without_hanging_on_blocked_backend() {
     // Accept connections but never respond, holding the streams open.
     let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");

@@ -14,7 +14,7 @@ use super::common::*;
 /// A prior IMAGE clipboard cannot be restored because `pbpaste` only reads text.
 #[cfg(target_os = "macos")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_clipboard -- --ignored; review 2027-01"]
 #[serial_test::serial(host_clipboard)]
 async fn paste_ctrl_v_image_keeps_ui_responsive_macos() {
     const ECHO: &str = "ZRESPONSIVEZ";

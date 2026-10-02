@@ -20,7 +20,7 @@ const FRAME_DELAY_MS: &str = "40";
 /// The round trip: a burst of composer edits, `/transcript`, a real `less` (alt screen and `rmcup`), then `q`.
 /// Asserts the restored screen is exactly the idle live region: one status row, one info row, no stale draft/command text, no torn escape fragments.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_minimal -- --ignored; review 2027-01"]
 async fn minimal_transcript_pager_restore_no_artifacts() {
     // A real interactive pager is the point (alt screen and rmcup restore)
     if std::process::Command::new("less")

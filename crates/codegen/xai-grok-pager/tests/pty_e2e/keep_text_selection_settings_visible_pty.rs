@@ -4,7 +4,7 @@ use super::common::*;
 /// Seed `[ui] keep_text_selection = "hold"`, open Settings (F2) after a turn, and assert the Mouse row label is visible.
 /// That only proves the settings modal registers the row; the flash and hold behaviors are covered by unit tests (UiConfig / cache / dispatch).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_scroll_selection -- --ignored; review 2027-01"]
 async fn keep_text_selection_settings_visible_pty() {
     let content = ContentController::start().await.expect("start content");
     seed_keep_text_selection_config(&content);

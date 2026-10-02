@@ -6,7 +6,7 @@ use super::common::*;
 /// Feature on, an untrusted git repo with `.mcp.json`, and an empty store: the trust question renders BEFORE any session.
 /// Pressing `y` writes the grant to `trusted_folders.toml` and lets the session proceed (prompt streams back).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_shell_tools -- --ignored; review 2027-01"]
 async fn folder_trust_question_renders_and_accept_persists_grant() {
     let content = ContentController::start().await.expect("start content");
     content.set_response(format!("{MOCK_RESPONSE_SENTINEL} trusted and running."));

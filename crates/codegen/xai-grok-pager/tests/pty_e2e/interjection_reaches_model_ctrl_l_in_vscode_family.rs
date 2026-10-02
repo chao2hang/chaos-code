@@ -6,7 +6,7 @@ use super::common::*;
 /// The running turn is cancelled silently and the composer text runs as its own next turn (with the interjection preamble).
 /// The harness strips `TERM_PROGRAM` then applies env; pass `vscode` so defaults bind the chord to Ctrl+L.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore]
+#[ignore = "PTY e2e against the built pager binary; run cargo test -p xai-grok-pager --test pty_e2e_queue -- --ignored; review 2027-01"]
 async fn interjection_reaches_model_ctrl_l_in_vscode_family() {
     let content = ContentController::start().await.expect("start content");
     // Gate turn 1's terminal event so the typed text and chord provably land mid-turn regardless of suite load
