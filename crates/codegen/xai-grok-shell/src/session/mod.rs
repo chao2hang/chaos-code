@@ -442,6 +442,8 @@ pub(crate) mod acp_mcp;
 pub(crate) mod acp_session;
 pub(crate) mod agent_rebuild;
 pub(crate) mod chat_persistence;
+/// 动态上下文裁剪（DCP）配置：策略选择、三层提醒阈值、自动策略与受保护内容。
+pub mod dcp_config;
 pub(crate) mod events;
 pub mod export;
 pub mod feedback;

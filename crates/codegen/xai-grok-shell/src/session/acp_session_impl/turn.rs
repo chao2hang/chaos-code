@@ -1121,7 +1121,7 @@ impl SessionActor {
                     self.set_goal_loop_active_resource(goal_loop_active).await;
                 }
                 let round = self
-                    .process_conversation_turn_with_recovery(
+                    .process_conversation_turn_with_incomplete_end_turn_retry(
                         prompt_id,
                         round_trace.take(),
                         round_artifact.take(),
@@ -1984,6 +1984,96 @@ impl SessionActor {
             }
         }
     }
+    /// Wraps [`Self::process_conversation_turn_with_recovery`] with the opt-in
+    /// incomplete-`end_turn` retry.
+    ///
+    /// A completed turn that ran read-only tools only and trailed off in
+    /// plan-shaped prose gets a recovery reminder pushed as a user message and
+    /// is sampled again, up to [`incomplete_end_turn::MAX_RETRIES`] times per
+    /// prompt. Gated on `[session].auto_retry_incomplete_end_turn`, resolved at
+    /// spawn; any other outcome (cancellation, refusal, truncation, stationarity)
+    /// passes through untouched.
+    #[tracing::instrument(
+        name = "session.process_conversation_turn_with_incomplete_end_turn_retry",
+        skip_all,
+        err,
+        fields(req_id = %req_id, session_id = %self.session_info.id.0)
+    )]
+    pub(super) async fn process_conversation_turn_with_incomplete_end_turn_retry(
+        self: &Arc<Self>,
+        req_id: &str,
+        trace_gcs_config: Option<crate::session::repo_changes::TraceExportConfig>,
+        artifact_tracker: Option<crate::upload::manifest::ArtifactTracker>,
+        json_schema: Option<serde_json::Value>,
+        salvage: &mut super::length_salvage::LengthSalvage,
+    ) -> Result<TurnOutcome, acp::Error> {
+        let mut result = self
+            .process_conversation_turn_with_recovery(
+                req_id,
+                trace_gcs_config.clone(),
+                artifact_tracker.clone(),
+                json_schema.clone(),
+                salvage,
+            )
+            .await;
+        if !self.auto_retry_incomplete_end_turn {
+            return result;
+        }
+        let mut retries_so_far: u8 = 0;
+        loop {
+            let Ok(TurnOutcome::Completed {
+                tools_called,
+                stop: CompletedStop::EndTurn,
+                ..
+            }) = &result
+            else {
+                return result;
+            };
+            let tools_called = tools_called.clone();
+            let last_assistant_text = incomplete_end_turn::last_assistant_text_from_conversation(
+                &self.chat_state_handle.get_conversation().await,
+            );
+            let Some(reason) = incomplete_end_turn::should_retry_incomplete_end_turn(
+                &incomplete_end_turn::IncompleteEndTurnInput {
+                    enabled: true,
+                    retries_so_far,
+                    max_retries: incomplete_end_turn::MAX_RETRIES,
+                    tools_called: &tools_called,
+                    last_assistant_text: &last_assistant_text,
+                },
+            ) else {
+                return result;
+            };
+            retries_so_far += 1;
+            tracing::info!(
+                reason = reason.as_str(),
+                attempt = u32::from(retries_so_far),
+                "Incomplete end_turn for session {}: injecting the recovery reminder and sampling again",
+                self.session_info.id.0,
+            );
+            self.send_xai_notification(XaiSessionUpdate::AutoRecoveryStarted {
+                attempt: u32::from(retries_so_far),
+                max_retries: u32::from(incomplete_end_turn::MAX_RETRIES),
+                error: format!("Turn ended on a plan without writing: {}", reason.as_str()),
+                delay_ms: 0,
+            })
+            .await;
+            salvage.round_boundary();
+            self.chat_state_handle
+                .push_user_message(ConversationItem::auto_recovery(
+                    incomplete_end_turn::INCOMPLETE_END_TURN_RECOVERY_PROMPT,
+                ));
+            result = self
+                .process_conversation_turn_with_recovery(
+                    req_id,
+                    trace_gcs_config.clone(),
+                    artifact_tracker.clone(),
+                    json_schema.clone(),
+                    salvage,
+                )
+                .await;
+        }
+    }
     pub(super) fn is_first_turn_memory_score_visible(score: f64) -> bool {
         format!("{score:.2}") != "0.00"
     }
@@ -2509,6 +2599,9 @@ impl SessionActor {
             }
             if !salvage.awaiting_continuation() {
                 self.maybe_inject_mcp_reminder().await;
+                if self.compaction.dcp_active() {
+                    self.maybe_inject_selective_compaction_nudge().await;
+                }
             }
             if self.tool_context.task_output_token_budget.is_none()
                 && self.two_pass_active()
@@ -2576,6 +2669,9 @@ impl SessionActor {
                     ),
                     parameters: schema,
                 });
+            }
+            if self.compaction.dcp_active() {
+                effective_tools.push(selective_compaction::compress_tool_definition().into());
             }
             let build_req_start = std::time::Instant::now();
             let request = self
@@ -3387,6 +3483,13 @@ impl SessionActor {
                         tool_name: step_tool_name.clone(),
                     },
                 );
+            }
+            // DCP's `compress` is implemented by the session itself, not the tool
+            // bridge, so intercept it before the bridge sees an unknown tool.
+            if self.compaction.dcp_active()
+                && self.run_session_compress_calls(&mut tool_calls).await?
+            {
+                continue;
             }
             let tool_call_responses: Vec<ToolCallResponse> = tool_calls
                 .into_iter()

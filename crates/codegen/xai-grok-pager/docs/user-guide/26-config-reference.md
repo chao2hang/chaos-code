@@ -112,6 +112,12 @@ Chaos 还会读取以下各层，靠后的行优先，除非 requirements 的 pi
 | `cli.use_leader` | `boolean` | `pin` | `user` | 用 leader 进程处理配置重载与 MCP 监视。 |
 | `cli.worktree_type` | `string` | `yes` | `user` | 设为 `linked`、`standalone` 或 `git` 时的创建模式。写法 `grove`、`grove-fuse`、`grove-nfs`、`nfs`、`copy` 也会喂给会话 / `-w` 的 Grove 闸门（同 `cli.grove_worktree`）；它们不是创建模式的取值。 |
 
+### `compaction`
+
+| 键 | 类型 / 取值 | requirements.toml 可否设置 | managed_config.toml 是否生效 | 说明 |
+| --- | --- | --- | --- | --- |
+| `compaction.strategy` | `threshold / dynamic / both` | `no` | `user` | 启用哪套压缩子系统。`threshold`（默认）只按 `session.auto_compact_threshold_percent` 全量压缩；`dynamic` 只启用模型驱动的 `compress` 工具、裁剪提醒与自动策略；`both` 两者共存。见 `dcp.*` 与「动态上下文裁剪」。 |
+
 ### `compat`
 
 | 键 | 类型 / 取值 | requirements.toml 可否设置 | managed_config.toml 是否生效 | 说明 |
@@ -135,6 +141,23 @@ Chaos 还会读取以下各层，靠后的行优先，除非 requirements 的 pi
 | --- | --- | --- | --- | --- |
 | `dashboard.enabled` | `boolean` | `yes` | `user` | 显示代理仪表盘。 |
 | `dashboard.grouping` | `state / directory` | `yes` | `user` | 仪表盘行的分组方式。 |
+
+### `dcp`
+
+模型驱动裁剪（`compaction.strategy = "dynamic"` 或 `"both"`）才读取这些键。
+
+| 键 | 类型 / 取值 | requirements.toml 可否设置 | managed_config.toml 是否生效 | 说明 |
+| --- | --- | --- | --- | --- |
+| `dcp.min_context_limit` | `float` | `no` | `user` | 上下文占用达到该比例（0.0–1.0，默认 `0.30`）后注入提醒层裁剪提醒。 |
+| `dcp.max_context_limit` | `float` | `no` | `user` | 达到该比例（默认 `0.90`）后改为紧急层提醒，并不再受轮次限流约束。 |
+| `dcp.nudge_frequency` | `integer` | `no` | `user` | 提醒层之间的最小采样轮数（默认 `5`），也决定迭代层提醒的频率。 |
+| `dcp.nudge_force` | `boolean` | `no` | `user` | 忽略轮次限流，每轮都注入提醒。 |
+| `dcp.strategies_enabled` | `boolean` | `no` | `user` | 自动策略（重复输出合并、过期错误结果清除），无需模型参与。 |
+| `dcp.purge_errors_turns` | `integer` | `no` | `user` | 错误结果之后经过多少个会话条目才可被清除（默认 `10`）。 |
+| `dcp.protected.turn_protection` | `integer` | `no` | `user` | 最近 N 轮（默认 `3`）的条目不参与裁剪。 |
+| `dcp.protected.protect_user_messages` | `boolean` | `no` | `user` | 保护真实用户消息（默认开启）。 |
+| `dcp.protected.protected_tools` | `array<string>` | `no` | `user` | 这些工具的调用与结果不受裁剪，默认 `write`、`edit`、`task`、`skill`、`todowrite`。 |
+| `dcp.protected.protected_tags` | `array<string>` | `no` | `user` | 额外受保护的内容标签。 |
 
 ### `default_auto_mode`
 
@@ -234,6 +257,12 @@ Chaos 还会读取以下各层，靠后的行优先，除非 requirements 的 pi
 | `features.web_fetch` | `boolean` | `pin` | `user` | 启用或禁用 `web_fetch`。默认 false。另见 `GROK_WEB_FETCH`。 |
 | `features.write_file` | `boolean` | `pin` | `user` | 启用或禁用 `write_file`。默认 true。另见 `GROK_WRITE_FILE`。 |
 | `features.zdr_access_enabled` | `boolean` | `pin` | `user` | 团队启用 Zero Data Retention 时宣传与 ZDR 不兼容的工具。另见 `GROK_ZDR_ACCESS_ENABLED`。 |
+
+### `fallback`
+
+| 键 | 类型 / 取值 | requirements.toml 可否设置 | managed_config.toml 是否生效 | 说明 |
+| --- | --- | --- | --- | --- |
+| `fallback.models` | `string[]` | `no` | `user` | 会话模型不可用时的备用顺序。取第一个当前账号能选中的条目（按 catalog key 或路由 slug 写都行，跳过当前模型与不可选项）；空数组表示沿用内置选择（同族任一可用模型）。只覆盖「模型不可用」，不是单请求重试链。用 `/fallback set a,b` 读写。 |
 
 ### `feedback`
 
@@ -470,6 +499,7 @@ Chaos 还会读取以下各层，靠后的行优先，除非 requirements 的 pi
 | 键 | 类型 / 取值 | requirements.toml 可否设置 | managed_config.toml 是否生效 | 说明 |
 | --- | --- | --- | --- | --- |
 | `session.auto_compact_threshold_percent` | `integer` | `yes` | `user` | 上下文用量达到该百分比时自动压缩（0–100）。 |
+| `session.auto_retry_incomplete_end_turn` | `boolean` | `no` | `user` | 默认关闭。开启后，若某轮调用过工具却没有任何写/编辑工具落地、且收尾文本读起来像「接下来我要做 X」的计划（或工具跑了不少于 2 个而收尾不足 80 字符），注入一条恢复提醒并重新采样，每次 prompt 最多 2 次。子 agent 会话不受该开关影响。可在 `/settings` 里切换。 |
 | `session.load_envrc` | `boolean` | `yes` | `user` | 把 `.envrc` 变量注入 bash。 |
 
 ### `shell_environment_policy`

@@ -120,6 +120,7 @@ async fn persist_ack_waits_for_disk_flush_before_success() {
                 repo_status_prefetch:
                     crate::session::repo_status_prefix::RepoStatusPrefetchState::default(),
                 transient_retry_enabled: true,
+                auto_retry_incomplete_end_turn: false,
                 transient_retries_prompt_total: std::cell::Cell::new(0),
                 transient_episode_start: std::cell::Cell::new(None),
                 status_wake: Default::default(),
@@ -178,6 +179,9 @@ async fn persist_ack_waits_for_disk_flush_before_success() {
                 startup_hints: StartupHints::default(),
                 forked_tool_override: None,
                 compaction: crate::session::compaction_config::CompactionConfig {
+                    strategy: Default::default(),
+                    dcp: Default::default(),
+                    dcp_runtime: Default::default(),
                     threshold_percent: std::cell::Cell::new(85),
                     force_compact: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
                     context_window_override: None,
@@ -712,6 +716,7 @@ async fn first_turn_memory_injection_disabled_does_not_persist_to_chat_history()
                 repo_status_prefetch:
                     crate::session::repo_status_prefix::RepoStatusPrefetchState::default(),
                 transient_retry_enabled: true,
+                auto_retry_incomplete_end_turn: false,
                 transient_retries_prompt_total: std::cell::Cell::new(0),
                 transient_episode_start: std::cell::Cell::new(None),
                 status_wake: Default::default(),
@@ -770,6 +775,9 @@ async fn first_turn_memory_injection_disabled_does_not_persist_to_chat_history()
                 startup_hints: StartupHints::default(),
                 forked_tool_override: None,
                 compaction: crate::session::compaction_config::CompactionConfig {
+                    strategy: Default::default(),
+                    dcp: Default::default(),
+                    dcp_runtime: Default::default(),
                     threshold_percent: std::cell::Cell::new(85),
                     force_compact: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
                     context_window_override: None,
@@ -1036,6 +1044,7 @@ async fn cancel_running_task_teardown_clears_running_and_pending_work() {
             let actor = SessionActor {
                 repo_status_prefetch: crate::session::repo_status_prefix::RepoStatusPrefetchState::default(),
                 transient_retry_enabled: true,
+                auto_retry_incomplete_end_turn: false,
                 transient_retries_prompt_total: std::cell::Cell::new(0),
                 transient_episode_start: std::cell::Cell::new(None),
                 status_wake: Default::default(),
@@ -1093,6 +1102,9 @@ async fn cancel_running_task_teardown_clears_running_and_pending_work() {
                 startup_hints: StartupHints::default(),
                 forked_tool_override: None,
                 compaction: crate::session::compaction_config::CompactionConfig {
+                    strategy: Default::default(),
+                    dcp: Default::default(),
+                    dcp_runtime: Default::default(),
                     threshold_percent: std::cell::Cell::new(85),
                     force_compact: std::sync::Arc::new(
                         std::sync::atomic::AtomicBool::new(false),
@@ -2635,6 +2647,7 @@ async fn cancel_propagates_to_sampler_handle_so_no_further_emission() {
             let actor = SessionActor {
                 repo_status_prefetch: crate::session::repo_status_prefix::RepoStatusPrefetchState::default(),
                 transient_retry_enabled: true,
+                auto_retry_incomplete_end_turn: false,
                 transient_retries_prompt_total: std::cell::Cell::new(0),
                 transient_episode_start: std::cell::Cell::new(None),
                 status_wake: Default::default(),
@@ -2692,6 +2705,9 @@ async fn cancel_propagates_to_sampler_handle_so_no_further_emission() {
                 startup_hints: StartupHints::default(),
                 forked_tool_override: None,
                 compaction: crate::session::compaction_config::CompactionConfig {
+                    strategy: Default::default(),
+                    dcp: Default::default(),
+                    dcp_runtime: Default::default(),
                     threshold_percent: std::cell::Cell::new(85),
                     force_compact: std::sync::Arc::new(
                         std::sync::atomic::AtomicBool::new(false),

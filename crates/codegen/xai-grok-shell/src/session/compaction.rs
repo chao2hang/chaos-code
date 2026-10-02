@@ -187,7 +187,7 @@ impl SessionActor {
     }
     /// Per-turn prefire decision: usage has reached `threshold - lead` (so there is still runway before the hard auto-compact line at `threshold`).
     pub(crate) async fn should_prefire_two_pass(&self) -> bool {
-        if self.compaction.is_suppressed() {
+        if self.compaction.is_suppressed() || !self.compaction.strategy.threshold_active() {
             return false;
         }
         let sampling_cfg = self.chat_state_handle.get_sampling_config().await;
@@ -1931,6 +1931,12 @@ impl SessionActor {
         total_tokens: u64,
         context_window: std::num::NonZeroU64,
     ) -> Option<AutoCompactTriggerInfo> {
+        // `[compaction] strategy = "dynamic"` turns the percentage path off
+        // entirely; every automatic threshold trigger funnels through here.
+        // Manual `/compact` does not, so it stays available in every strategy.
+        if !self.compaction.strategy.threshold_active() {
+            return None;
+        }
         let cw = context_window.get();
         if xai_token_estimation::exceeds_threshold(
             total_tokens,

@@ -236,6 +236,10 @@ impl JsonlStorageAdapter {
     fn announcement_state_file(&self, info: &Info) -> PathBuf {
         self.session_dir(info).join(super::ANNOUNCEMENT_STATE_FILE)
     }
+    fn selective_compaction_file(&self, info: &Info) -> PathBuf {
+        self.session_dir(info)
+            .join(super::SELECTIVE_COMPACTION_FILE)
+    }
     fn goal_mode_state_file(&self, info: &Info) -> PathBuf {
         self.session_dir(info).join(super::GOAL_STATE_FILE)
     }
@@ -1442,6 +1446,15 @@ impl StorageAdapter for JsonlStorageAdapter {
             serde_json::to_vec(state).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
         super::write_bytes_atomic_async(&self.announcement_state_file(info), json).await
     }
+    async fn write_selective_compaction_state(
+        &self,
+        info: &Info,
+        state: &xai_grok_compaction::selective::SelectiveState,
+    ) -> io::Result<()> {
+        let json = serde_json::to_vec_pretty(state)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        super::write_bytes_atomic_async(&self.selective_compaction_file(info), json).await
+    }
     async fn write_goal_mode_state(
         &self,
         info: &Info,
@@ -1546,6 +1559,10 @@ impl StorageAdapter for JsonlStorageAdapter {
             .read_optional_json_sync::<crate::session::announcement_state::AnnouncementState>(
                 &self.announcement_state_file(info),
             )?;
+        let selective_compaction = self
+            .read_optional_json_sync::<xai_grok_compaction::selective::SelectiveState>(
+                &self.selective_compaction_file(info),
+            )?;
         let goal_mode_state = self
             .read_optional_json_sync::<crate::session::goal_tracker::GoalOrchestration>(
                 &self.goal_mode_state_file(info),
@@ -1561,6 +1578,7 @@ impl StorageAdapter for JsonlStorageAdapter {
             rewind_points,
             signals,
             announcement_state,
+            selective_compaction,
             goal_mode_state,
             workflow_runs,
         };
@@ -1600,6 +1618,10 @@ impl StorageAdapter for JsonlStorageAdapter {
             .read_optional_json_sync::<crate::session::announcement_state::AnnouncementState>(
                 &self.announcement_state_file(info),
             )?;
+        let selective_compaction = self
+            .read_optional_json_sync::<xai_grok_compaction::selective::SelectiveState>(
+                &self.selective_compaction_file(info),
+            )?;
         let goal_mode_state = self
             .read_optional_json_sync::<crate::session::goal_tracker::GoalOrchestration>(
                 &self.goal_mode_state_file(info),
@@ -1612,6 +1634,7 @@ impl StorageAdapter for JsonlStorageAdapter {
             plan_mode_state,
             signals,
             announcement_state,
+            selective_compaction,
             goal_mode_state,
             workflow_runs,
         };

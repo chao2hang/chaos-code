@@ -265,6 +265,9 @@ pub enum PersistenceMsg {
     },
     /// Persist announcement tracking state (MCP and skill announcement dedup).
     AnnouncementState(crate::session::announcement_state::AnnouncementState),
+    /// Persist the request-only dynamic context projection blocks (DCP `compress`).
+    /// The canonical history is untouched; only the projection metadata is stored.
+    SelectiveCompaction(xai_grok_compaction::selective::SelectiveState),
     GoalModeState(crate::session::goal_tracker::GoalOrchestration),
     DeleteGoalModeState {
         respond_to: tokio::sync::oneshot::Sender<io::Result<()>>,
@@ -2139,6 +2142,15 @@ impl SessionPersistence {
                         tracing::warn!(?e, "failed to write announcement state");
                     }
                 }
+                PersistenceMsg::SelectiveCompaction(state) => {
+                    if let Err(e) = self
+                        .storage
+                        .write_selective_compaction_state(&self.info, &state)
+                        .await
+                    {
+                        tracing::warn!(?e, "failed to write selective compaction state");
+                    }
+                }
                 PersistenceMsg::Feedback(entry) => {
                     if let Err(e) = self.storage.append_feedback(&self.info, &entry).await {
                         tracing::warn!(?e, "failed to write feedback entry");
@@ -2668,6 +2680,9 @@ pub struct PersistedInfo {
     pub signals: Option<SessionSignals>,
     /// Persisted announcement tracking state (None for sessions before this feature)
     pub announcement_state: Option<crate::session::announcement_state::AnnouncementState>,
+    /// Committed DCP compression blocks, re-applied to the request projection on
+    /// resume (None when the session never compressed anything).
+    pub selective_compaction: Option<xai_grok_compaction::selective::SelectiveState>,
     /// Persisted goal mode orchestration state (None for sessions without goal mode)
     pub goal_mode_state: Option<crate::session::goal_tracker::GoalOrchestration>,
     pub workflow_runs: Vec<crate::session::workflow::store::RestoredWorkflowRun>,
@@ -2733,6 +2748,7 @@ pub(crate) async fn load_light(
         rewind_points_file_path,
         signals: persisted.signals,
         announcement_state: persisted.announcement_state,
+        selective_compaction: persisted.selective_compaction,
         goal_mode_state: persisted.goal_mode_state,
         workflow_runs: persisted.workflow_runs,
     };

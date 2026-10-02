@@ -258,6 +258,7 @@ pub(crate) struct SessionSpawnOptions<'a> {
     pub persisted_announcement_state: Option<
         crate::session::announcement_state::AnnouncementState,
     >,
+    pub persisted_selective_compaction: Option<xai_grok_compaction::selective::SelectiveState>,
     pub session_meta: Option<&'a acp::Meta>,
     pub model_agent_type: Option<&'a str>,
     pub session_model_id: acp::ModelId,
@@ -434,6 +435,7 @@ pub(crate) fn chat_session_spawn_options<'a>(
         persisted_goal_mode: None,
         persisted_workflow_runs: Vec::new(),
         persisted_announcement_state: None,
+        persisted_selective_compaction: None,
         session_meta,
         model_agent_type,
         session_model_id,

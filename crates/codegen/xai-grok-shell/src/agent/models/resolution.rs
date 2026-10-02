@@ -35,6 +35,29 @@ pub(crate) fn selectable_catalog_key_for_persisted(
     resolve_catalog_key(models, id).filter(|key| available.contains_key(key))
 }
 
+/// The first `[fallback] models` entry that can actually be served right now.
+///
+/// Every entry is mapped through the same routing-slug-to-catalog-key resolution
+/// as a persisted session model, so the chain may name either spelling. An entry
+/// the account cannot select, or one that resolves to the model being replaced,
+/// is skipped rather than ending the walk: a chain is an ordered preference, and
+/// a stale or duplicate entry must not consume it.
+pub(crate) fn first_selectable_fallback(
+    models: &IndexMap<String, ModelEntry>,
+    available: &IndexMap<acp::ModelId, acp::ModelInfo>,
+    chain: &[String],
+    replacing: &acp::ModelId,
+) -> Option<acp::ModelId> {
+    chain.iter().find_map(|entry| {
+        let candidate = selectable_catalog_key_for_persisted(
+            models,
+            available,
+            &acp::ModelId::new(entry.clone()),
+        )?;
+        (candidate != *replacing).then_some(candidate)
+    })
+}
+
 /// A "campaign-only" preferred flip: the default changed and either side's value is an active campaign default.
 pub(crate) fn is_campaign_only_flip(
     old_preferred: &Option<String>,

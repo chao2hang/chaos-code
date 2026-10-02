@@ -1089,6 +1089,58 @@ impl acp::Agent for MvpAgent {
                         "prompt: failed to restore previously-unavailable model; continuing with the session's current model"
                     );
                 }
+            } else if let Some(chain_model) =
+                self.select_fallback_model(&models, &available, &unavailable_model)
+            {
+                tracing::info!(
+                    session_id = %arguments.session_id.0,
+                    unavailable_model = %unavailable_model.0,
+                    fallback_model = %chain_model.0,
+                    "prompt: session model still missing from the catalog; applying the [fallback] models chain"
+                );
+                xai_grok_telemetry::unified_log::info(
+                    "prompt: applying the fallback chain to an unavailable session model",
+                    Some(arguments.session_id.0.as_ref()),
+                    Some(
+                        serde_json::json!({
+                        "unavailable_model": unavailable_model.0.as_ref(),
+                        "fallback_model": chain_model.0.as_ref(),
+                    }),
+                    ),
+                );
+                self.session_registry.take_unavailable_model(&arguments.session_id);
+                if let Err(e) = crate::agent::handlers::model_switch::apply(
+                        self,
+                        acp::SetSessionModelRequest::new(
+                            arguments.session_id.clone(),
+                            chain_model.clone(),
+                        ),
+                        crate::agent::handlers::model_switch::SwitchEffort::Preserve,
+                        crate::agent::handlers::model_switch::ConfigNotice::Send,
+                    )
+                    .await
+                {
+                    tracing::warn!(
+                        session_id = %arguments.session_id.0,
+                        model_id = %chain_model.0,
+                        error = ?e,
+                        "prompt: the fallback-chain model could not be applied; blocking prompts again"
+                    );
+                    self.session_registry
+                        .set_unavailable_model(&arguments.session_id, unavailable_model.clone());
+                    self.send_model_auto_switched(
+                            &arguments.session_id,
+                            &acp::ModelId::new(String::new()),
+                            &acp::ModelId::new(String::new()),
+                            &format!(
+                                "Your model is no longer available and the fallback model \"{}\" \
+                                 could not be applied. Please start a new session.",
+                                chain_model.0,
+                            ),
+                        )
+                        .await;
+                    return Ok(acp::PromptResponse::new(acp::StopReason::EndTurn));
+                }
             } else {
                 tracing::warn!(
                     session_id = %arguments.session_id.0,

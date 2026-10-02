@@ -81,6 +81,7 @@ async fn create_test_actor(
         repo_status_prefetch: crate::session::repo_status_prefix::RepoStatusPrefetchState::default(
         ),
         transient_retry_enabled: true,
+        auto_retry_incomplete_end_turn: false,
         transient_retries_prompt_total: std::cell::Cell::new(0),
         transient_episode_start: std::cell::Cell::new(None),
         status_wake: Default::default(),
@@ -127,6 +128,9 @@ async fn create_test_actor(
         startup_hints: StartupHints::default(),
         forked_tool_override: None,
         compaction: crate::session::compaction_config::CompactionConfig {
+            strategy: Default::default(),
+            dcp: Default::default(),
+            dcp_runtime: Default::default(),
             threshold_percent: std::cell::Cell::new(threshold_percent),
             force_compact: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             context_window_override: None,
@@ -1843,6 +1847,60 @@ async fn test_model_switch_compaction_triggers_on_downgrade() {
             ));
             let prev = actor.compaction.previous_model.take().unwrap();
             assert!(prev.context_window <= cfg.context_window.get());
+        })
+        .await;
+}
+/// `[compaction] strategy` decides whether the percentage-threshold path runs at
+/// all: the shipped default and `both` keep the safety net, `dynamic` is
+/// model-driven only and must leave every automatic threshold trigger alone.
+#[tokio::test(flavor = "current_thread")]
+async fn test_strategy_decides_the_threshold_path() {
+    use crate::session::dcp_config::CompactionStrategy;
+    let local = tokio::task::LocalSet::new();
+    local
+        .run_until(async {
+            let (gateway_tx, _) = mpsc::unbounded_channel::<xai_acp_lib::AcpClientMessage>();
+            let (persistence_tx, _) = mpsc::unbounded_channel::<PersistenceMsg>();
+            let mut actor =
+                create_test_actor(90_000, 100_000, 85, gateway_tx, persistence_tx).await;
+            let cw = actor
+                .chat_state_handle
+                .get_sampling_config()
+                .await
+                .unwrap()
+                .context_window;
+            let total = actor.chat_state_handle.get_estimated_total_tokens().await;
+            assert_eq!(total, 90_000, "fixture must sit above the 85% threshold");
+
+            for strategy in [CompactionStrategy::Threshold, CompactionStrategy::Both] {
+                actor.compaction.strategy = strategy;
+                assert!(
+                    actor.should_auto_compact(total, cw).is_some(),
+                    "{strategy:?} must keep the percentage-threshold safety net"
+                );
+                assert!(
+                    actor.check_auto_compact_needed().await.is_some(),
+                    "{strategy:?} must keep the pre-sampling auto-compact check"
+                );
+                assert!(
+                    actor.should_prefire_two_pass().await,
+                    "{strategy:?} must keep the two-pass prefire"
+                );
+            }
+
+            actor.compaction.strategy = CompactionStrategy::Dynamic;
+            assert!(
+                actor.should_auto_compact(total, cw).is_none(),
+                "dynamic must not run the percentage-threshold full replacement"
+            );
+            assert!(
+                actor.check_auto_compact_needed().await.is_none(),
+                "dynamic must not queue an automatic compaction either"
+            );
+            assert!(
+                !actor.should_prefire_two_pass().await,
+                "dynamic must not prefire the two-pass compaction"
+            );
         })
         .await;
 }

@@ -53,10 +53,14 @@ impl ChatPersistence for ChannelChatPersistence {
 
     fn persist_selective_compaction(
         &mut self,
-        _state: &xai_grok_compaction::selective::SelectiveState,
+        state: &xai_grok_compaction::selective::SelectiveState,
     ) {
-        // No-op: the session persistence channel does not carry selective
-        // compaction metadata; it is persisted by the chat-state actor.
+        // The blocks are a request-only projection of `chat_history.jsonl`, so
+        // they get their own file rather than a history rewrite. Losing the
+        // write only costs the projection; the history is unaffected.
+        let _ = self
+            .tx
+            .send(PersistenceMsg::SelectiveCompaction(state.clone()));
     }
 
     fn replace_history_for_strip_and_ack(
@@ -167,5 +171,37 @@ mod tests {
         persistence.flush();
         let msg = rx.recv().await.unwrap();
         assert!(matches!(msg, PersistenceMsg::Flush));
+    }
+
+    /// The projection is written through this adapter and nowhere else: if the
+    /// method degrades to a no-op again, compression silently stops persisting.
+    #[tokio::test]
+    async fn channel_persistence_sends_selective_compaction() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let mut persistence = ChannelChatPersistence::new(tx);
+        let mut state = xai_grok_compaction::selective::SelectiveState::default();
+        state
+            .compress(
+                4,
+                vec![xai_grok_compaction::selective::CompressionRange {
+                    start: 2,
+                    end: 3,
+                    topic: "旧探索".to_string(),
+                    summary: "已完成的读取。".to_string(),
+                    tokens_before: 400,
+                    tokens_after: 40,
+                }],
+                &std::collections::BTreeSet::new(),
+            )
+            .expect("the range must be accepted");
+
+        persistence.persist_selective_compaction(&state);
+
+        match rx.recv().await.expect("a message must reach the actor") {
+            PersistenceMsg::SelectiveCompaction(received) => {
+                assert_eq!(&received, &state, "the state must arrive intact");
+            }
+            other => panic!("expected a SelectiveCompaction message, got {other:?}"),
+        }
     }
 }

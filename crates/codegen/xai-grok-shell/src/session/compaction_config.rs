@@ -180,6 +180,14 @@ pub(crate) struct CompactionConfig {
     pub prefix_released: AtomicBool,
     /// User/stop cancel for the current compact generation.
     pub cancel: CompactCancelGate,
+    /// 动态上下文裁剪（DCP）策略：阈值全量替换、模型驱动裁剪，或两者共存。
+    /// Resolved once at spawn from `[compaction] strategy`; a flip applies to
+    /// sessions started after the write.
+    pub strategy: super::dcp_config::CompactionStrategy,
+    /// 模型驱动裁剪的阈值、提醒频率与受保护内容，来自 `[dcp]`。
+    pub dcp: super::dcp_config::DcpConfig,
+    /// DCP 运行时计数（提醒限流、用户轮次间隔），不持久化。
+    pub dcp_runtime: super::dcp_config::DcpRuntimeState,
 }
 
 impl CompactionConfig {
@@ -188,6 +196,12 @@ impl CompactionConfig {
     /// sibling path; manual `/compact` stays exempt.
     pub(crate) fn is_suppressed(&self) -> bool {
         self.auto_compact_suppressed.load(Ordering::Relaxed) != SUPPRESS_NONE
+    }
+
+    /// Whether the model-driven DCP subsystem (`compress` tool + nudges +
+    /// automatic strategies) runs for this session.
+    pub(crate) fn dcp_active(&self) -> bool {
+        self.strategy.dcp_active()
     }
 }
 

@@ -2582,3 +2582,67 @@ async fn corrupt_usage_json_does_not_read_as_missing() {
     assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "{not-json");
 }
+/// DCP blocks are request-only projection metadata, but they must survive a
+/// restart: both load paths read `selective_compaction.json` back, and a
+/// missing or torn file reads as "no projection" instead of failing the resume.
+#[tokio::test]
+async fn selective_compaction_state_round_trips_through_both_load_paths() {
+    use std::collections::BTreeSet;
+    use xai_grok_compaction::selective::{CompressionRange, SelectiveState};
+    let temp_dir = TempDir::new().unwrap();
+    let info = create_test_info();
+    let adapter = JsonlStorageAdapter::with_root(temp_dir.path().to_path_buf());
+    adapter.init_session(&info, default_model_id()).await.unwrap();
+    assert!(
+        adapter
+            .load_session_without_updates(&info)
+            .await
+            .unwrap()
+            .selective_compaction
+            .is_none(),
+        "a session that never compressed must load cleanly"
+    );
+    let mut state = SelectiveState::default();
+    state
+        .compress(
+            6,
+            vec![CompressionRange {
+                start: 2,
+                end: 3,
+                topic: "旧的构建日志探索".to_string(),
+                summary: "读取了构建日志，确认全部为已通过的编译输出。".to_string(),
+                tokens_before: 400,
+                tokens_after: 40,
+            }],
+            &BTreeSet::new(),
+        )
+        .expect("the range must be accepted");
+    adapter
+        .write_selective_compaction_state(&info, &state)
+        .await
+        .unwrap();
+    assert!(adapter.selective_compaction_file(&info).exists());
+    let light = adapter.load_session_without_updates(&info).await.unwrap();
+    assert_eq!(
+        light
+            .selective_compaction
+            .as_ref()
+            .map(|loaded| loaded.active_blocks().count()),
+        Some(1),
+        "the resume path must read the projection back"
+    );
+    let full = adapter.load_session(&info).await.unwrap();
+    assert_eq!(full.selective_compaction, light.selective_compaction);
+
+    // A torn file is the one case the projection can afford to ignore.
+    std::fs::write(adapter.selective_compaction_file(&info), b"{ torn").unwrap();
+    assert!(
+        adapter
+            .load_session_without_updates(&info)
+            .await
+            .unwrap()
+            .selective_compaction
+            .is_none(),
+        "a torn projection file must read as no projection, not as a load failure"
+    );
+}

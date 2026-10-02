@@ -133,8 +133,14 @@ pub(crate) use interjection::*;
 mod laziness;
 #[cfg(test)]
 pub(crate) use laziness::*;
+#[path = "acp_session_impl/incomplete_end_turn.rs"]
+mod incomplete_end_turn;
 #[path = "acp_session_impl/queue_mutation.rs"]
 mod queue_mutation;
+/// 动态上下文裁剪（DCP）：`compress` 工具、三层提醒与自动压缩策略。
+/// Gated by `[compaction] strategy`; see `session::dcp_config`.
+#[path = "acp_session_impl/selective_compaction.rs"]
+mod selective_compaction;
 use queue_mutation::{InputOrigin, QueueMutationPolicy};
 #[path = "acp_session_impl/prompt_queue.rs"]
 mod prompt_queue;
@@ -700,6 +706,9 @@ pub(crate) struct SessionActor {
     /// Transient turn-retry kill switch, resolved once at spawn; flips apply to new sessions.
     /// Off for subagents in the first release; headless is enforced per turn via `attach_non_interactive`.
     pub(crate) transient_retry_enabled: bool,
+    /// Incomplete-`end_turn` auto-retry switch, from `[session].auto_retry_incomplete_end_turn`.
+    /// Resolved once at spawn, so a flip applies to sessions started after the write.
+    pub(crate) auto_retry_incomplete_end_turn: bool,
     /// Cumulative transient resubmits this prompt.
     /// Prompt-scoped on the actor: auto-recovery, stop-hook continuations, and the goal loop re-enter the turn loop within one prompt.
     /// A loop-local counter would reset the cap (exhaustion itself triggers auto-recovery).
@@ -1993,6 +2002,10 @@ mod cancel_running_task_tests;
 #[cfg(test)]
 #[path = "acp_session_tests/turn/chat_history_integrity_tests.rs"]
 mod chat_history_integrity_tests;
+/// DCP (`compress` tool + nudge) wiring against a scripted mock server.
+#[cfg(test)]
+#[path = "acp_session_tests/turn/dcp_compress_loop_tests.rs"]
+mod dcp_compress_loop_tests;
 #[cfg(test)]
 #[path = "acp_session_tests/turn/disk_full_tests.rs"]
 mod disk_full_tests;
@@ -2005,6 +2018,10 @@ mod idle_resume_tests;
 #[cfg(test)]
 #[path = "acp_session_tests/image_strip_tests.rs"]
 mod image_strip_tests;
+/// Turn-level incomplete-`end_turn` auto-retry against a scripted mock server.
+#[cfg(test)]
+#[path = "acp_session_tests/turn/incomplete_end_turn_loop_tests.rs"]
+mod incomplete_end_turn_loop_tests;
 #[cfg(test)]
 #[path = "acp_session_tests/inline_auto_compact_flow_tests.rs"]
 mod inline_auto_compact_flow_tests;

@@ -541,6 +541,7 @@ impl MvpAgent {
                     persisted_goal_mode: None,
                     persisted_workflow_runs: Vec::new(),
                     persisted_announcement_state: None,
+                    persisted_selective_compaction: None,
                     session_meta: arguments.meta.as_ref(),
                     model_agent_type: model_agent_type.as_deref(),
                     session_model_id,
@@ -882,6 +883,7 @@ impl MvpAgent {
             rewind_points_file_path,
             signals: persisted_signals,
             announcement_state: persisted_announcement_state,
+            selective_compaction: persisted_selective_compaction,
             goal_mode_state: _persisted_goal_mode,
             workflow_runs: persisted_workflow_runs,
         } = persistence_info;
@@ -1004,6 +1006,7 @@ impl MvpAgent {
                     persisted_goal_mode: _persisted_goal_mode,
                     persisted_workflow_runs,
                     persisted_announcement_state,
+                    persisted_selective_compaction,
                     session_meta: request_meta.as_ref(),
                     model_agent_type: persisted_agent_name.as_deref(),
                     session_model_id: summary.current_model_id.clone(),
@@ -1344,8 +1347,24 @@ impl MvpAgent {
             .await;
         }
     }
+    /// The first `[fallback] models` entry this account can actually select, or
+    /// `None` when no chain is configured or none of it is selectable. The chain
+    /// is a preference, so an unservable entry is skipped rather than fatal.
+    pub(super) fn select_fallback_model(
+        &self,
+        models: &indexmap::IndexMap<String, crate::agent::config::ModelEntry>,
+        available: &indexmap::IndexMap<acp::ModelId, acp::ModelInfo>,
+        replacing: &acp::ModelId,
+    ) -> Option<acp::ModelId> {
+        let chain = self.cfg.borrow().fallback.models.clone();
+        if chain.is_empty() {
+            return None;
+        }
+        crate::agent::models::first_selectable_fallback(models, available, &chain, replacing)
+    }
+
     /// Model-restore phase: point the actor at the persisted model without writing the global `current_model_id` (shared across leader clients).
-    /// A vanished model falls back within its family, or blocks prompts.
+    /// A vanished model falls back to the `[fallback] models` chain, then within its family, or blocks prompts.
     pub(super) async fn restore_persisted_model(
         &self,
         session_id: &acp::SessionId,
@@ -1413,6 +1432,30 @@ impl MvpAgent {
                 })),
             );
             persisted_model
+        } else if let Some(fallback) =
+            self.select_fallback_model(&models, &available, &persisted_model)
+        {
+            tracing::warn!(
+                session_id = %session_id.0,
+                previous = %persisted_model.0,
+                new = %fallback.0,
+                "Persisted model no longer available, using the [fallback] models chain"
+            );
+            xai_grok_telemetry::unified_log::warn(
+                "load_session: persisted model unavailable, applying the fallback chain",
+                Some(session_id.0.as_ref()),
+                Some(serde_json::json!({
+                    "persisted_model": persisted_model.0.as_ref(),
+                    "fallback_model": fallback.0.as_ref(),
+                })),
+            );
+            let reason = format!(
+                "Model \"{}\" is no longer available; switched to \"{}\" from your fallback chain.",
+                persisted_model.0, fallback.0,
+            );
+            self.send_model_auto_switched(&session_id, &persisted_model, &fallback, &reason)
+                .await;
+            fallback
         } else if let Some(fallback) = same_family_fallback {
             tracing::warn!(
                 session_id = %session_id.0,
@@ -1688,5 +1731,48 @@ mod session_kind_claim_tests {
                 "{kind} must not be stamped"
             );
         }
+    }
+}
+
+/// `[fallback] models` is only a preference if it is consulted before the
+/// arbitrary pick and at both places a missing model is resolved. Both call sites
+/// need an `MvpAgent` and a live catalog to drive, so the wiring itself is
+/// asserted here rather than left to a reader's memory.
+#[cfg(test)]
+mod fallback_wiring_tests {
+
+    #[test]
+    fn the_fallback_chain_is_consulted_where_a_missing_model_is_resolved() {
+        let here = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/agent/mvp_agent/session_setup.rs"
+        ))
+        .expect("this file is readable");
+        let agent = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/agent/mvp_agent/acp_agent.rs"
+        ))
+        .expect("the prompt path is readable");
+
+        let chain_at = here
+            .find("self.select_fallback_model(")
+            .expect("resuming a session with a vanished model must try the chain");
+        let family_at = here
+            .find("else if let Some(fallback) = same_family_fallback")
+            .expect("the same-family pick must still be there as the fallback of last resort");
+        assert!(
+            chain_at < family_at,
+            "the user's chain must be consulted before the product picks a model for them"
+        );
+
+        let prompt_at = agent
+            .find("self.select_fallback_model(")
+            .expect("a session blocked on an unavailable model must try the chain before telling the user to start over");
+        let window = &agent[prompt_at..prompt_at + 3_000];
+        assert!(
+            window.contains("set_unavailable_model"),
+            "if the chain model cannot be applied, the session must stay blocked rather \
+             than run prompts against a model the catalog does not have"
+        );
     }
 }

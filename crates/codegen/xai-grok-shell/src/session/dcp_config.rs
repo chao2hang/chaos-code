@@ -162,3 +162,106 @@ impl MessageId {
             .and_then(|rest| rest.parse::<usize>().ok())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Debug, Deserialize)]
+    struct StrategyFile {
+        strategy: CompactionStrategy,
+    }
+
+    #[test]
+    fn default_strategy_keeps_dcp_off_and_the_threshold_path_on() {
+        let strategy = CompactionStrategy::default();
+        assert_eq!(
+            strategy,
+            CompactionStrategy::Threshold,
+            "an unset strategy must keep the shipped threshold-only behaviour"
+        );
+        assert!(
+            !strategy.dcp_active(),
+            "Threshold must not advertise compress"
+        );
+        assert!(strategy.threshold_active());
+
+        assert!(CompactionStrategy::Dynamic.dcp_active());
+        assert!(
+            !CompactionStrategy::Dynamic.threshold_active(),
+            "Dynamic alone must not run the percentage-threshold replacement"
+        );
+        assert!(CompactionStrategy::Both.dcp_active());
+        assert!(CompactionStrategy::Both.threshold_active());
+    }
+
+    #[test]
+    fn strategy_parses_the_toml_spellings() {
+        for (text, want) in [
+            ("threshold", CompactionStrategy::Threshold),
+            ("dynamic", CompactionStrategy::Dynamic),
+            ("both", CompactionStrategy::Both),
+        ] {
+            let parsed: StrategyFile =
+                toml::from_str(&format!("strategy = \"{text}\"\n")).expect("parse strategy");
+            assert_eq!(parsed.strategy, want, "`{text}` must map to the strategy");
+        }
+        let err = toml::from_str::<StrategyFile>("strategy = \"sometimes\"\n")
+            .expect_err("an unknown strategy must be rejected, not defaulted");
+        assert!(
+            err.to_string().contains("sometimes"),
+            "the rejection should name the bad value: {err}"
+        );
+    }
+
+    #[test]
+    fn dcp_defaults_are_documented_and_conservative() {
+        let cfg = DcpConfig::default();
+        assert!(
+            cfg.min_context_limit < cfg.max_context_limit,
+            "reminder tier must trigger before the emergency tier: {cfg:?}"
+        );
+        assert!((0.0..=1.0).contains(&cfg.min_context_limit));
+        assert!((0.0..=1.0).contains(&cfg.max_context_limit));
+        assert!(cfg.strategies_enabled);
+        assert!(!cfg.nudge_force, "rate limiting is on unless forced");
+        assert!(cfg.protected.protect_user_messages);
+        assert!(cfg.protected.turn_protection > 0);
+        for tool in ["write", "edit", "task"] {
+            assert!(
+                cfg.protected.protected_tools.contains(tool),
+                "mutators must be protected from compression by default, missing {tool}"
+            );
+        }
+    }
+
+    #[test]
+    fn dcp_config_reads_partial_toml_and_keeps_other_defaults() {
+        let cfg: DcpConfig = toml::from_str("max_context_limit = 0.75\n")
+            .expect("a partial [dcp] table must deserialize over defaults");
+        assert_eq!(cfg.max_context_limit, 0.75);
+        assert_eq!(
+            cfg.min_context_limit,
+            DcpConfig::default().min_context_limit,
+            "unset keys must fall back to the shipped defaults"
+        );
+        assert_eq!(
+            cfg.nudge_frequency,
+            DcpConfig::default().nudge_frequency,
+            "nested defaults must survive a partial table"
+        );
+    }
+
+    #[test]
+    fn message_ids_round_trip_through_the_mnnnn_spelling() {
+        for index in [0usize, 1, 7, 9999] {
+            let id = MessageId::from_index(index);
+            assert_eq!(id.as_str().len(), 5, "m + 4 digits: {id:?}");
+            assert_eq!(id.to_index(), Some(index));
+        }
+        assert_eq!(MessageId::from_index(10000).as_str(), "m10000");
+        assert_eq!(MessageId("m12".into()).to_index(), Some(12));
+        assert_eq!(MessageId("12".into()).to_index(), None);
+        assert_eq!(MessageId("mabc".into()).to_index(), None);
+    }
+}

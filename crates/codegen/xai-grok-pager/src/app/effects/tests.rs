@@ -821,6 +821,141 @@ async fn persist_setting_unknown_key_returns_err() {
         Ok(()) => panic!("expected Err for unknown key"),
     }
 }
+/// Every literal key a dispatcher hands to `Effect::PersistSetting` must have an
+/// arm in `persist_setting`. An unhandled key never warns at compile time: the
+/// spawned write returns "unknown setting key", `SettingPersistFailed` rolls the
+/// toggle back, and the setting silently never persists. That is exactly how
+/// `session.auto_retry_incomplete_end_turn` shipped — a `/settings` row whose
+/// write had no arm.
+///
+/// Keys built at runtime (a variable rather than a literal) are counted but not
+/// checked; every dispatch site in `src/` uses a literal today.
+#[test]
+fn every_persist_setting_key_has_a_persist_arm() {
+    /// End offset (exclusive) of the `{ … }` block that `s` starts with, counting
+    /// depth and skipping string literals. `None` when something closes that was
+    /// never opened, or the block never closes.
+    fn block_end(s: &str) -> Option<usize> {
+        let b = s.as_bytes();
+        if b.first() != Some(&b'{') {
+            return None;
+        }
+        let (mut depth, mut i) = (0usize, 0usize);
+        while i < b.len() {
+            match b[i] {
+                b'"' => {
+                    i += 1;
+                    while i < b.len() {
+                        match b[i] {
+                            b'\\' => i += 1,
+                            b'"' => break,
+                            _ => {}
+                        }
+                        i += 1;
+                    }
+                }
+                b'{' => depth += 1,
+                b'}' => {
+                    depth = depth.checked_sub(1)?;
+                    if depth == 0 {
+                        return Some(i + 1);
+                    }
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        None
+    }
+
+    let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let helpers = std::fs::read_to_string(src.join("app/effects/helpers.rs"))
+        .expect("the effects helpers are readable");
+    let body = helpers
+        .find("async fn persist_setting")
+        .expect("persist_setting is defined in the helpers");
+    let tail = helpers[body..]
+        .find("unknown setting key for persist")
+        .expect("persist_setting rejects unknown keys");
+    let body = &helpers[body..body + tail];
+    let handled = |key: &str| body.contains(&format!("\"{key}\" =>"));
+
+    let mut unhandled: Vec<(String, String)> = Vec::new();
+    let (mut sites, mut checked, mut dynamic) = (0usize, 0usize, 0usize);
+    let mut stack = vec![src];
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir).expect("source directory is readable") {
+            let path = entry.expect("a readable directory entry").path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path).expect("a readable source");
+            if !text.contains("Effect::PersistSetting") {
+                continue;
+            }
+            let file = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("unknown")
+                .to_string();
+            let mut rest = text.as_str();
+            while let Some(at) = rest.find("Effect::PersistSetting") {
+                rest = &rest[at + "Effect::PersistSetting".len()..];
+                let Some(brace) = rest.find('{') else { break };
+                // Only whitespace may separate the path from the brace. Prose
+                // that merely names the effect — this suite's own docs and
+                // assert text, and a quoted mention in
+                // `app/dispatch/tests/settings.rs` — always has something else
+                // in between, and used to be mistaken for a dispatch site.
+                if !rest[..brace].chars().all(char::is_whitespace) {
+                    continue;
+                }
+                let Some(end) = block_end(&rest[brace..]) else {
+                    continue;
+                };
+                let literal = &rest[brace..brace + end];
+                sites += 1;
+                if let Some(key_at) = literal.find("key:")
+                    && let Some(open) = literal[key_at..].find('"')
+                    && let Some(close) = literal[key_at + open + 1..].find('"')
+                {
+                    let key = &literal[key_at + open + 1..][..close];
+                    checked += 1;
+                    if !handled(key) {
+                        unhandled.push((key.to_string(), file.clone()));
+                    }
+                } else {
+                    dynamic += 1;
+                }
+                rest = &rest[brace + end..];
+            }
+        }
+    }
+    // Without this, a scanner that silently parsed nothing would report a clean
+    // sweep. Every struct literal found must have been classified.
+    assert_eq!(
+        checked + dynamic,
+        sites,
+        "the scan classified {} of {sites} `Effect::PersistSetting` sites; the \
+         scanner is broken, so the check below proves nothing",
+        checked + dynamic
+    );
+    assert!(
+        sites > 50,
+        "only {sites} dispatch sites were scanned; the walk no longer reaches the \
+         settings dispatchers, so this check proves nothing"
+    );
+    assert!(
+        unhandled.is_empty(),
+        "{} PersistSetting key(s) have no arm in `persist_setting`, so toggling \
+         them in /settings can never persist: {unhandled:?}",
+        unhandled.len()
+    );
+}
 /// Type-mismatch returns Err, not panic: the parser runs inside spawned tasks.
 #[tokio::test]
 async fn persist_setting_type_mismatch_errors_compact_mode() {

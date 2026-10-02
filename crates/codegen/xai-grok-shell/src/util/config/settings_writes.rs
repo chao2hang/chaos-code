@@ -322,6 +322,13 @@ pub async fn set_ask_user_question_timeout_enabled(value: bool) -> Result<()> {
     update_config(|cfg| cfg.ask_user_question.timeout_enabled = Some(value)).await
 }
 
+/// Persist `[session].auto_retry_incomplete_end_turn` via `update_config`.
+/// The session resolves it once at spawn, so a flip applies to sessions
+/// started after the write (the settings modal says "restart to apply").
+pub async fn set_auto_retry_incomplete_end_turn(value: bool) -> Result<()> {
+    update_config(|cfg| cfg.session.auto_retry_incomplete_end_turn = Some(value)).await
+}
+
 /// Persist `[ui].group_tool_verbs` via `update_config`.
 pub async fn set_group_tool_verbs(value: bool) -> Result<()> {
     update_config(|cfg| cfg.ui.group_tool_verbs = Some(value)).await

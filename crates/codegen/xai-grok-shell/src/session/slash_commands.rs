@@ -497,6 +497,7 @@ pub(crate) fn build_tools_meta(tool_names: &[String]) -> acp::Meta {
 /// Synced by pager contract tests (`pager_builtin_triggers_are_reserved_in_shell`, `pager_blocked_acp_names_are_reserved_in_shell`).
 /// Add names here when adding a pager builtin or a pager-blocked shell command.
 pub const PAGER_COMMAND_KEYS: &[&str] = &[
+    "adhd",
     "agents",
     "agents-dashboard",
     "always-approve",
@@ -527,6 +528,7 @@ pub const PAGER_COMMAND_KEYS: &[&str] = &[
     "exit",
     "expand",
     "export",
+    "fallback",
     "feedback",
     "find",
     "fork",

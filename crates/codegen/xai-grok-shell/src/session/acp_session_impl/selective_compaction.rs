@@ -580,6 +580,35 @@ impl SessionActor {
         }
     }
 
+    /// Run every `compress` call in this step and drop them from `tool_calls`.
+    /// Returns `true` when nothing is left for the tool bridge, so the caller goes
+    /// straight back to sampling instead of executing an empty step.
+    pub(super) async fn run_session_compress_calls(
+        &self,
+        tool_calls: &mut Vec<xai_grok_sampling_types::conversation::ToolCall>,
+    ) -> Result<bool, acp::Error> {
+        if !tool_calls.iter().any(|tc| tc.name == COMPRESS_TOOL_NAME) {
+            return Ok(false);
+        }
+        let compress_calls: Vec<crate::sampling::types::ToolCallResponse> = tool_calls
+            .iter()
+            .filter(|tc| tc.name == COMPRESS_TOOL_NAME)
+            .map(|tc| crate::sampling::types::ToolCallResponse {
+                id: tc.id.as_ref().to_owned(),
+                kind: "function".to_string(),
+                function: crate::sampling::types::ToolCallFunction {
+                    name: tc.name.clone(),
+                    arguments: tc.arguments.as_ref().to_owned(),
+                },
+            })
+            .collect();
+        for call in &compress_calls {
+            self.execute_compress_tool(call).await?;
+        }
+        tool_calls.retain(|tc| tc.name != COMPRESS_TOOL_NAME);
+        Ok(tool_calls.is_empty())
+    }
+
     pub(super) async fn execute_compress_tool(
         &self,
         call: &crate::sampling::types::ToolCallResponse,
@@ -706,6 +735,70 @@ enum NudgeTier {
     Emergency,
     Reminder,
     Iteration,
+}
+
+/// Re-apply the blocks a previous process committed, so a resumed session keeps
+/// the projection the model built instead of silently paying those tokens back.
+///
+/// Blocks are replayed through the same `compress` commit path the model uses,
+/// which re-checks the indices against the restored history and recomputes the
+/// token counts. A history that moved under the saved state (rewind, truncated
+/// file) therefore drops the affected blocks instead of corrupting the
+/// projection. Returns the number of blocks the restored projection carries.
+pub(crate) async fn restore_selective_blocks(
+    chat_state_handle: &xai_chat_state::ChatStateHandle,
+    state: &xai_grok_compaction::selective::SelectiveState,
+) -> usize {
+    let mut ranges: Vec<CompressionRange> = state
+        .active_blocks()
+        .map(|block| CompressionRange {
+            start: block.start,
+            end: block.end,
+            topic: block.topic.clone(),
+            summary: block.summary.clone(),
+            tokens_before: block.tokens_before,
+            tokens_after: block.tokens_after,
+        })
+        .collect();
+    if ranges.is_empty() {
+        return 0;
+    }
+    // The commit path requires ordered, non-overlapping ranges. Active blocks
+    // are non-overlapping by construction, but the file is user-visible state.
+    ranges.sort_by_key(|range| (range.start, range.end));
+    let saved = ranges.len();
+
+    // `protected_items` is empty on purpose: the chat-state actor adds its own
+    // structural protection here, and the DCP-side rules (recent turns,
+    // write/edit tools) were already satisfied when the block was committed.
+    if chat_state_handle
+        .apply_selective_compression(ranges.clone(), BTreeSet::new())
+        .await
+        .is_ok()
+    {
+        tracing::info!(blocks = saved, "restored the dynamic context projection");
+        return saved;
+    }
+
+    // One stale block must not cost the whole projection.
+    let mut restored = 0;
+    for range in ranges {
+        let label = (range.start, range.end);
+        match chat_state_handle
+            .apply_selective_compression(vec![range], BTreeSet::new())
+            .await
+        {
+            Ok(_) => restored += 1,
+            Err(e) => tracing::debug!(?e, range = ?label, "dropping a stale compression block"),
+        }
+    }
+    if restored > 0 {
+        tracing::info!(
+            restored,
+            "restored part of the dynamic context projection; the rest no longer fits the history"
+        );
+    }
+    restored
 }
 
 #[cfg(test)]
@@ -864,5 +957,205 @@ mod nudge_tier_tests {
     fn quiet_below_all_thresholds() {
         let config = DcpConfig::default();
         assert!(determine_nudge_tier(0.1, &config, &runtime(100, 0)).is_none());
+    }
+}
+
+#[cfg(test)]
+mod restore_tests {
+    use super::restore_selective_blocks;
+    use std::collections::BTreeSet;
+    use xai_chat_state::{ChatStateActor, ChatStateHandle, NullChatPersistence};
+    use xai_grok_compaction::selective::CompressionRange;
+    use xai_grok_sampling_types::{ConversationItem, SamplingConfig};
+
+    fn sampling_config() -> SamplingConfig {
+        SamplingConfig {
+            base_url: "http://localhost".to_string(),
+            model: "test".to_string(),
+            max_completion_tokens: None,
+            temperature: None,
+            top_p: None,
+            api_backend: Default::default(),
+            extra_headers: Default::default(),
+            query_params: Default::default(),
+            env_http_headers: Default::default(),
+            context_window: std::num::NonZeroU64::new(128_000).expect("non-zero"),
+            reasoning_effort: None,
+            stream_tool_calls: None,
+            extract_inline_thinking: None,
+            is_workbuddy: false,
+        }
+    }
+
+    fn spawn_chat_state(conversation: Vec<ConversationItem>) -> ChatStateHandle {
+        let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
+        ChatStateActor::spawn(
+            conversation,
+            sampling_config(),
+            Box::new(NullChatPersistence),
+            event_tx,
+            tokio_util::sync::CancellationToken::new(),
+        )
+    }
+
+    /// A closed read round at indices 2–3, long enough to be worth compressing.
+    fn history(reads: usize) -> Vec<ConversationItem> {
+        let mut items = vec![
+            ConversationItem::system("system prompt"),
+            ConversationItem::user("first task"),
+        ];
+        for round in 0..reads {
+            items.push(ConversationItem::assistant_tool_calls(vec![
+                xai_grok_sampling_types::ToolCall {
+                    id: format!("call_read_{round}").into(),
+                    name: "read_file".to_string(),
+                    arguments: format!(r#"{{"target_file":"log{round}.txt"}}"#).into(),
+                },
+            ]));
+            items.push(ConversationItem::tool_result(
+                format!("call_read_{round}"),
+                format!("compiled artifact line {round} ").repeat(240),
+            ));
+        }
+        items.push(ConversationItem::assistant("noted"));
+        items.push(ConversationItem::user("second task"));
+        items
+    }
+
+    fn range(start: usize, end: usize) -> CompressionRange {
+        CompressionRange {
+            start,
+            end,
+            topic: "旧的构建日志探索".to_string(),
+            summary: "读取了构建日志，确认全部为已通过的编译输出。".to_string(),
+            tokens_before: 0,
+            tokens_after: 0,
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn committed_blocks_are_reapplied_to_a_fresh_session() {
+        let saved_history = history(1);
+        let before = spawn_chat_state(saved_history.clone());
+        before
+            .apply_selective_compression(vec![range(2, 3)], BTreeSet::new())
+            .await
+            .expect("the read round must be compressible");
+        let saved = before.get_selective_compaction().await;
+        assert_eq!(saved.active_blocks().count(), 1);
+
+        // A new process: same history, projection starting from nothing.
+        let after = spawn_chat_state(saved_history);
+        assert_eq!(
+            after
+                .get_selective_compaction()
+                .await
+                .active_blocks()
+                .count(),
+            0
+        );
+
+        assert_eq!(restore_selective_blocks(&after, &saved).await, 1);
+        let restored = after.get_selective_compaction().await;
+        let block = restored
+            .active_blocks()
+            .next()
+            .expect("the block must be active again");
+        assert_eq!((block.start, block.end), (2, 3));
+        assert_eq!(block.topic, "旧的构建日志探索");
+        assert!(
+            restored.total_tokens_saved() > 0,
+            "a resumed session must not silently pay the saved tokens back"
+        );
+    }
+
+    /// The restore is worthless unless session startup calls it: assert the call
+    /// site exists and is fed the state loaded for this session.
+    #[test]
+    fn session_startup_reapplies_the_saved_projection() {
+        let src = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/session/acp_session_impl/spawn.rs"
+        ))
+        .expect("spawn.rs is readable from the crate source");
+        let at = src
+            .find("restore_selective_blocks(")
+            .expect("spawn must re-apply the projection saved by the last process");
+        let window = &src[at.saturating_sub(500)..at];
+        assert!(
+            window.contains("persisted_selective_compaction"),
+            "the restore must be driven by the state loaded for this session"
+        );
+        assert!(
+            src.contains("persisted_selective_compaction: Option<"),
+            "spawn must accept the persisted projection as a parameter"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_block_that_no_longer_fits_the_history_is_dropped() {
+        let saved = {
+            let handle = spawn_chat_state(history(1));
+            handle
+                .apply_selective_compression(vec![range(2, 3)], BTreeSet::new())
+                .await
+                .expect("compressible");
+            handle.get_selective_compaction().await
+        };
+
+        // The history was rewound back to before the round that was compressed.
+        let after = spawn_chat_state(vec![
+            ConversationItem::system("system prompt"),
+            ConversationItem::user("first task"),
+        ]);
+        assert_eq!(restore_selective_blocks(&after, &saved).await, 0);
+        assert_eq!(
+            after
+                .get_selective_compaction()
+                .await
+                .active_blocks()
+                .count(),
+            0,
+            "a stale block must not be projected over a history it does not describe"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn one_stale_block_does_not_cost_the_healthy_ones() {
+        let saved = {
+            let handle = spawn_chat_state(history(2));
+            handle
+                .apply_selective_compression(vec![range(2, 3)], BTreeSet::new())
+                .await
+                .expect("first round compressible");
+            handle
+                .apply_selective_compression(vec![range(4, 5)], BTreeSet::new())
+                .await
+                .expect("second round compressible");
+            handle.get_selective_compaction().await
+        };
+        assert_eq!(saved.active_blocks().count(), 2);
+
+        // The history came back with the second round missing, so only the
+        // first block still describes it.
+        let shortened = vec![
+            ConversationItem::system("system prompt"),
+            ConversationItem::user("first task"),
+            history(1)[2].clone(),
+            history(1)[3].clone(),
+            ConversationItem::user("third task"),
+        ];
+        let after = spawn_chat_state(shortened);
+        assert_eq!(
+            restore_selective_blocks(&after, &saved).await,
+            1,
+            "the valid block must survive the stale one"
+        );
+        let restored = after.get_selective_compaction().await;
+        let blocks: Vec<(usize, usize)> = restored
+            .active_blocks()
+            .map(|block| (block.start, block.end))
+            .collect();
+        assert_eq!(blocks, vec![(2, 3)]);
     }
 }

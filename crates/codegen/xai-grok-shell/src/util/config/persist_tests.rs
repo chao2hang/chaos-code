@@ -377,6 +377,7 @@ fn merge_section_session_explicit_value_does_not_drag_load_envrc() {
     let cfg = crate::agent::config::SessionConfig {
         auto_compact_threshold_percent: Some(70),
         load_envrc: None,
+        auto_retry_incomplete_end_turn: None,
     };
     merge_section(&mut table, "session", &cfg);
     let session = table.get("session").unwrap().as_table().unwrap();
@@ -854,6 +855,7 @@ fn merge_section_session_load_envrc_does_not_drag_auto_compact() {
     let cfg = crate::agent::config::SessionConfig {
         load_envrc: Some(true),
         auto_compact_threshold_percent: None,
+        auto_retry_incomplete_end_turn: None,
     };
     merge_section(&mut table, "session", &cfg);
     let s = table.get("session").unwrap().as_table().unwrap();
@@ -862,6 +864,52 @@ fn merge_section_session_load_envrc_does_not_drag_auto_compact() {
         s.get("auto_compact_threshold_percent").is_none(),
         "default auto_compact_threshold_percent: None must not serialize \
          when only load_envrc is being committed"
+    );
+}
+/// `/settings` writes this key, and the session reads it at spawn. The write
+/// must therefore land under `[session]` and load back as `Some(_)`.
+#[test]
+fn session_auto_retry_incomplete_end_turn_round_trips() {
+    let raw_config: TomlValue = toml::from_str(
+        r#"
+            [session]
+            auto_retry_incomplete_end_turn = true
+            "#,
+    )
+    .unwrap();
+    let cfg = load_config_from_toml(&raw_config);
+    assert_eq!(
+        cfg.session.auto_retry_incomplete_end_turn,
+        Some(true),
+        "explicit auto_retry_incomplete_end_turn = true on disk must load as Some(true)"
+    );
+    let mut table = TomlMap::new();
+    merge_section(&mut table, "session", &cfg.session);
+    let s = table.get("session").unwrap().as_table().unwrap();
+    assert_eq!(
+        s.get("auto_retry_incomplete_end_turn")
+            .and_then(|v| v.as_bool()),
+        Some(true),
+        "the toggled value must survive a save under [session]"
+    );
+}
+/// An unset switch stays off disk: `None` means "user never toggled it", and
+/// the session default (off) must not be written as an explicit `false`.
+#[test]
+fn session_auto_retry_incomplete_end_turn_unset_stays_off_disk() {
+    let mut table = TomlMap::new();
+    let cfg = crate::agent::config::SessionConfig {
+        auto_retry_incomplete_end_turn: None,
+        ..Default::default()
+    };
+    merge_section(&mut table, "session", &cfg);
+    let written = table
+        .get("session")
+        .and_then(|s| s.as_table())
+        .and_then(|s| s.get("auto_retry_incomplete_end_turn").cloned());
+    assert!(
+        written.is_none(),
+        "None must not serialize as an explicit false, got {written:?}"
     );
 }
 mod resolve_auto_compact {

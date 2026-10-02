@@ -1757,6 +1757,7 @@ pub(crate) async fn run(
     app.show_tips = config_session_bools.show_tips;
     app.auto_update = config_session_bools.auto_update;
     app.ask_user_question_timeout_enabled = config_session_bools.ask_user_question_timeout_enabled;
+    app.auto_retry_incomplete_end_turn = config_session_bools.auto_retry_incomplete_end_turn;
     // Prime thread-local caches so first render doesn't hit disk.
     crate::appearance::cache::prime(&app.current_ui);
     // Apply the remote soft default for text selection (flash | hold | word_select) when the user has set none locally
@@ -3331,6 +3332,7 @@ struct InitialConfigSessionBools {
     show_tips: Option<bool>,
     auto_update: Option<bool>,
     ask_user_question_timeout_enabled: Option<bool>,
+    auto_retry_incomplete_end_turn: Option<bool>,
 }
 
 fn load_initial_config_session_bools() -> InitialConfigSessionBools {
@@ -3345,6 +3347,10 @@ fn load_initial_config_session_bools() -> InitialConfigSessionBools {
             .get("toolset")
             .and_then(|t| t.get("ask_user_question"))
             .and_then(|a| a.get("timeout_enabled"))
+            .and_then(|v| v.as_bool()),
+        auto_retry_incomplete_end_turn: root
+            .get("session")
+            .and_then(|s| s.get("auto_retry_incomplete_end_turn"))
             .and_then(|v| v.as_bool()),
     }
 }

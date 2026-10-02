@@ -1,4 +1,5 @@
 //! Each command lives in its own submodule. This module re-exports command structs and provides `builtin_commands()` for registry construction.
+pub mod adhd;
 pub mod always_approve;
 pub mod announcements;
 pub mod auto;
@@ -21,6 +22,7 @@ pub mod effort_levels;
 pub mod exit;
 pub mod expand;
 pub mod export;
+pub mod fallback;
 pub mod feedback;
 pub mod find;
 pub mod fork;
@@ -89,6 +91,7 @@ pub fn builtin_commands() -> Vec<Arc<dyn SlashCommand>> {
         // Per turn.
         Arc::new(effort::EffortCommand),
         Arc::new(model::ModelCommand),
+        Arc::new(fallback::FallbackCommand),
         Arc::new(context::ContextCommand),
         Arc::new(compact::CompactCommand),
         Arc::new(fork::ForkCommand),
@@ -126,6 +129,7 @@ pub fn builtin_commands() -> Vec<Arc<dyn SlashCommand>> {
         // Settings and display.
         Arc::new(theme::ThemeCommand),
         Arc::new(auto::AutoCommand),
+        Arc::new(adhd::AdhdCommand),
         Arc::new(always_approve::AlwaysApproveCommand),
         Arc::new(vim_mode::VimModeCommand),
         Arc::new(multiline::MultilineCommand),
@@ -807,6 +811,98 @@ mod tests {
             "pager BLOCKED_ACP_NAMES missing from PAGER_COMMAND_KEYS; \
              a skill with one of these names is advertised bare and then \
              dropped: {missing:?}"
+        );
+    }
+
+    /// Files here that are deliberately not declared, with what has to happen
+    /// first. Empty today: the last entry was `fallback`, whose `[fallback] models`
+    /// key had no reader, and the reader now exists (`MvpAgent::select_fallback_model`).
+    /// A new name here needs a reason as good as that one was.
+    const DELIBERATELY_UNDECLARED: &[(&str, &str)] = &[];
+
+    #[test]
+    fn every_command_file_in_this_directory_is_declared() {
+        // An undeclared `.rs` file is not an error to the compiler: it stays out of
+        // the binary while keeping its own tests green and its author convinced the
+        // command exists. That is how `/adhd` disappeared from a released build.
+        //
+        // Declarations are gathered from every file in the directory, not just
+        // `mod.rs`: a sibling may host its own tests through
+        // `#[cfg(test)] #[path = "workflow_tests.rs"] mod tests;`, and with a
+        // `#[path]` the file stem appears only in the attribute, never as `mod x;`.
+        let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/slash/commands");
+        let mut declarations = String::new();
+        let mut present: Vec<String> = Vec::new();
+        for entry in std::fs::read_dir(&directory).expect("the command directory is readable") {
+            let path = entry.expect("a readable directory entry").path();
+            if path.extension().and_then(|ext| ext.to_str()) != Some("rs") {
+                continue;
+            }
+            present.push(
+                path.file_stem()
+                    .and_then(|stem| stem.to_str())
+                    .expect("a utf-8 file stem")
+                    .to_string(),
+            );
+            declarations.push_str(&std::fs::read_to_string(&path).expect("a readable source"));
+        }
+        let mut undeclared: Vec<String> = Vec::new();
+        for stem in &present {
+            if stem == "mod"
+                || declarations.contains(&format!("mod {stem};"))
+                || declarations.contains(&format!("\"{stem}.rs\""))
+            {
+                continue;
+            }
+            if DELIBERATELY_UNDECLARED.iter().any(|(name, _)| name == stem) {
+                continue;
+            }
+            undeclared.push(stem.clone());
+        }
+        assert!(
+            undeclared.is_empty(),
+            "{} file(s) in src/slash/commands/ are named by no `mod` declaration, so \
+             nothing compiles them and their commands do not exist: {undeclared:?}",
+            undeclared.len(),
+        );
+        // An exception kept after the file is gone would hide the next one.
+        let stale: Vec<&str> = DELIBERATELY_UNDECLARED
+            .iter()
+            .map(|(name, _)| *name)
+            .filter(|name| !present.iter().any(|stem| stem == name))
+            .collect();
+        assert!(
+            stale.is_empty(),
+            "DELIBERATELY_UNDECLARED names file(s) that are no longer here: {stale:?}; \
+             delete the exception rather than leave an empty allowance behind",
+        );
+    }
+
+    #[test]
+    fn the_adhd_toggle_is_reachable_through_the_registry() {
+        // `/adhd` shipped in release 0.2.123, lost its declaration in a later sync,
+        // and the `[adhd] enabled` key it writes is still read by session setup --
+        // a feature with no way to switch it on. This is the shipped lookup path.
+        let registry = crate::slash::registry::CommandRegistry::new(builtin_commands());
+        assert!(
+            registry.get("adhd").is_some(),
+            "/adhd is not registered, so the ADHD rule injection in acp/mod.rs can \
+             only be enabled by editing config.toml by hand"
+        );
+    }
+
+    #[test]
+    fn the_fallback_chain_is_reachable_through_the_registry() {
+        // The declaration guard above proves the file is compiled; it cannot see a
+        // dropped `Arc::new` line, which would leave a compiled command nobody can
+        // invoke. `/fallback` is the writer of `[fallback] models`, which the shell
+        // reads when a session's model goes away — without it the setting is
+        // hand-edited only.
+        let registry = crate::slash::registry::CommandRegistry::new(builtin_commands());
+        assert!(
+            registry.get("fallback").is_some(),
+            "/fallback is not registered, so `[fallback] models` — read by \
+             MvpAgent::select_fallback_model — has no way to be edited in-app"
         );
     }
 }

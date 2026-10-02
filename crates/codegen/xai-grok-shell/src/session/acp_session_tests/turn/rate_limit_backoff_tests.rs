@@ -84,6 +84,28 @@ pub(super) async fn actor_under_test(
     session: SessionKind,
     retry_policy: xai_grok_sampler::RetryPolicy,
     transient_retry_enabled: bool,
+    auto_retry_incomplete_end_turn: bool,
+) -> (Arc<SessionActor>, CapturedRetries) {
+    actor_under_test_with(
+        server,
+        session,
+        retry_policy,
+        transient_retry_enabled,
+        |actor| {
+            actor.auto_retry_incomplete_end_turn = auto_retry_incomplete_end_turn;
+        },
+    )
+    .await
+}
+
+/// Same harness, with a hook to set actor switches that must be in place before
+/// the actor is shared behind the `Arc`.
+pub(super) async fn actor_under_test_with(
+    server: &MockInferenceServer,
+    session: SessionKind,
+    retry_policy: xai_grok_sampler::RetryPolicy,
+    transient_retry_enabled: bool,
+    tune: impl FnOnce(&mut SessionActor),
 ) -> (Arc<SessionActor>, CapturedRetries) {
     let sampler_max_retries = retry_policy.max_retries;
     let sampling_cfg = xai_grok_sampler::SamplerConfig {
@@ -109,6 +131,7 @@ pub(super) async fn actor_under_test(
     actor.sampler_handle = sampler_handle;
     actor.startup_hints.is_subagent = matches!(session, SessionKind::Subagent);
     actor.transient_retry_enabled = transient_retry_enabled;
+    tune(&mut actor);
     // The per-turn config push carries the shell's max_retries; mirror the policy.
     actor.max_retries = sampler_max_retries;
 
@@ -167,9 +190,14 @@ async fn subagent_429_wait_is_owned_and_capped_by_the_pacer() {
                 .expect("mock inference server");
             server.enqueue_response("/v1/responses", rate_limited_reply(90));
 
-            let (actor, _retries) =
-                actor_under_test(&server, SessionKind::Subagent, sampler_surfaces_429(), true)
-                    .await;
+            let (actor, _retries) = actor_under_test(
+                &server,
+                SessionKind::Subagent,
+                sampler_surfaces_429(),
+                true,
+                false,
+            )
+            .await;
             let request = conversation_request(&actor).await;
             let requests_before = server.request_count();
             let mut budget = actor.rate_limit_wait_budget();
@@ -217,9 +245,14 @@ async fn paced_wait_notifies_the_client_with_a_retrying_state() {
                 .expect("mock inference server");
             server.enqueue_response("/v1/responses", rate_limited_reply(1));
 
-            let (actor, retries) =
-                actor_under_test(&server, SessionKind::Subagent, sampler_surfaces_429(), true)
-                    .await;
+            let (actor, retries) = actor_under_test(
+                &server,
+                SessionKind::Subagent,
+                sampler_surfaces_429(),
+                true,
+                false,
+            )
+            .await;
             let request = conversation_request(&actor).await;
             let mut budget = actor.rate_limit_wait_budget();
 
@@ -274,9 +307,14 @@ async fn exhausted_subagent_budget_notifies_exhausted_with_the_attempts_taken() 
                 server.enqueue_response("/v1/responses", rate_limited_reply(1));
             }
 
-            let (actor, retries) =
-                actor_under_test(&server, SessionKind::Subagent, sampler_surfaces_429(), true)
-                    .await;
+            let (actor, retries) = actor_under_test(
+                &server,
+                SessionKind::Subagent,
+                sampler_surfaces_429(),
+                true,
+                false,
+            )
+            .await;
             let request = conversation_request(&actor).await;
             let mut budget = actor.rate_limit_wait_budget();
 
@@ -337,8 +375,14 @@ async fn main_session_429_is_owned_by_the_sampler_never_the_pacer() {
                     server.enqueue_response("/v1/responses", rate_limited_reply(1));
                 }
 
-                let (actor, _retries) =
-                    actor_under_test(&server, SessionKind::Main, sampler_retries_429(), true).await;
+                let (actor, _retries) = actor_under_test(
+                    &server,
+                    SessionKind::Main,
+                    sampler_retries_429(),
+                    true,
+                    false,
+                )
+                .await;
                 let request = conversation_request(&actor).await;
                 let requests_before = server.request_count();
                 let mut budget = actor.rate_limit_wait_budget();
@@ -401,8 +445,14 @@ async fn run_burst(n: usize, cap: usize) -> BurstMetrics {
 
     let mut turns = Vec::with_capacity(n);
     for _ in 0..n {
-        let (actor, _retries) =
-            actor_under_test(&server, SessionKind::Subagent, sampler_surfaces_429(), true).await;
+        let (actor, _retries) = actor_under_test(
+            &server,
+            SessionKind::Subagent,
+            sampler_surfaces_429(),
+            true,
+            false,
+        )
+        .await;
         let request = conversation_request(&actor).await;
         turns.push((actor, request));
     }

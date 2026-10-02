@@ -2306,6 +2306,85 @@ fn selectable_prefers_exact_key_over_later_slug_match() {
     assert_eq!(key.0.as_ref(), "grok-build");
 }
 
+/// `[fallback] models` is an ordered preference, so a chain entry the account
+/// cannot select must be stepped over rather than ending the search.
+#[test]
+fn fallback_chain_walks_to_the_first_entry_that_can_be_served() {
+    let mut models = IndexMap::new();
+    models.insert("grok-4.3".to_string(), make_model_entry("grok-4.3"));
+    models.insert("grok-4-fast".to_string(), make_model_entry("grok-4-fast"));
+    models.insert(
+        "enterprise-grok-build".to_string(),
+        make_model_entry("grok-build"),
+    );
+
+    let available = test_available_keys(&["grok-4.3", "grok-4-fast", "enterprise-grok-build"]);
+    let chain: Vec<String> = ["gone-model", "grok-4-fast", "grok-4.3"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+
+    let picked = first_selectable_fallback(
+        &models,
+        &available,
+        &chain,
+        &acp::ModelId::new("grok-build"),
+    )
+    .expect("an unservable first entry must not end the walk");
+    assert_eq!(
+        picked.0.as_ref(),
+        "grok-4-fast",
+        "the walk must land on the first chain entry the account can select"
+    );
+}
+
+/// A chain entry is matched through the same routing-slug resolution as a
+/// persisted session model, and must never hand back the model being replaced —
+/// that would re-run the request the switch was meant to get away from.
+#[test]
+fn fallback_chain_resolves_slugs_and_skips_the_replaced_model() {
+    let mut models = IndexMap::new();
+    models.insert(
+        "enterprise-grok-build".to_string(),
+        make_model_entry("grok-build"),
+    );
+    models.insert("grok-4.3".to_string(), make_model_entry("grok-4.3"));
+
+    let available = test_available_keys(&["enterprise-grok-build", "grok-4.3"]);
+
+    let slug_chain: Vec<String> = vec!["grok-build".to_string()];
+    assert!(
+        first_selectable_fallback(
+            &models,
+            &available,
+            &slug_chain,
+            &acp::ModelId::new("enterprise-grok-build"),
+        )
+        .is_none(),
+        "a slug that resolves back to the replaced model must select nothing"
+    );
+
+    let past_it: Vec<String> = vec!["grok-build".to_string(), "grok-4.3".to_string()];
+    let picked = first_selectable_fallback(
+        &models,
+        &available,
+        &past_it,
+        &acp::ModelId::new("enterprise-grok-build"),
+    )
+    .expect("the walk must continue past the replaced model");
+    assert_eq!(picked.0.as_ref(), "grok-4.3");
+}
+
+#[test]
+fn empty_fallback_chain_selects_nothing() {
+    let models = IndexMap::new();
+    let available = test_available_keys(&["grok-4.3"]);
+    assert!(
+        first_selectable_fallback(&models, &available, &[], &acp::ModelId::new("gone")).is_none(),
+        "no chain means the caller keeps its own pick"
+    );
+}
+
 fn test_available_keys(keys: &[&str]) -> IndexMap<acp::ModelId, acp::ModelInfo> {
     keys.iter()
         .map(|k| {

@@ -978,6 +978,10 @@ pub struct FeedbackUserConfig {
 pub struct CompactionConfig {
     pub memory_flush: Option<crate::config::MemoryFlushSettings>,
     pub pruning: Option<crate::config::PruningSettings>,
+    /// Which compaction subsystems run: `[compaction] strategy = "threshold"
+    /// | "dynamic" | "both"`. Unset keeps the shipped behaviour — percentage
+    /// threshold only, no model-driven `compress` tool.
+    pub strategy: Option<crate::session::dcp_config::CompactionStrategy>,
 }
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -1402,12 +1406,26 @@ pub struct AdhdConfig {
     pub enabled: bool,
 }
 
+/// Chaos-fork: `[fallback] models` — the ordered models a session may be moved to
+/// when its current one can no longer be served. `/fallback` writes the list; the
+/// model-restore paths (`restore_persisted_model`, the unavailable-model latch in
+/// `prompt`) read it. Entries the account cannot currently select are skipped.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct FallbackConfig {
+    #[serde(default)]
+    pub models: Vec<String>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Config {
     pub features: Features,
     /// Chaos-fork: `[adhd]` section for ADHD-friendly UI rules.
     #[serde(default)]
     pub adhd: AdhdConfig,
+    /// Chaos-fork: `[fallback] models`, the chain used when the session's model
+    /// can't be served. See [`FallbackConfig`].
+    #[serde(default)]
+    pub fallback: FallbackConfig,
     /// `[goal]` section: canonical `/goal` configuration. See [`GoalConfig`].
     #[serde(default)]
     pub goal: GoalConfig,
@@ -1512,6 +1530,11 @@ pub struct Config {
     pub memory: crate::config::MemorySettings,
     #[serde(default, skip_serializing)]
     pub compaction: CompactionConfig,
+    /// `[dcp]`: thresholds, nudge cadence and protected content for the
+    /// model-driven context-compaction subsystem. Read from config.toml only;
+    /// consulted when `[compaction] strategy` enables DCP.
+    #[serde(default, skip_serializing)]
+    pub dcp: crate::session::dcp_config::DcpConfig,
     #[serde(default, skip_serializing)]
     pub managed_mcps: crate::config::ManagedMcpsConfig,
     /// `[auth]` alias: consumed by `expand_auth_alias` before serde.
@@ -1819,6 +1842,13 @@ pub struct SessionConfig {
     /// `Option<bool>` so `None` round-trips as absent on disk (managed config wins over default).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub load_envrc: Option<bool>,
+    /// Opt-in: re-run a prompt turn that ended with `end_turn` after read-only
+    /// tools only (no write/edit landed) with a plan-shaped trailing message.
+    /// The session injects a recovery reminder and samples again.
+    /// Defaults to `false` when unset; resolved at session spawn, so a flip
+    /// applies to sessions started after the write.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_retry_incomplete_end_turn: Option<bool>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -1854,6 +1884,7 @@ impl Default for Config {
         let mut cfg = Self {
             features: Features::default(),
             adhd: AdhdConfig::default(),
+            fallback: FallbackConfig::default(),
             goal: GoalConfig::default(),
             workflows: WorkflowsConfig::default(),
             doom_loop_recovery: crate::util::config::DoomLoopRecoverySettings::default(),
@@ -1897,6 +1928,7 @@ impl Default for Config {
             subagents: crate::config::SubagentsConfig::default(),
             memory: crate::config::MemorySettings::default(),
             compaction: CompactionConfig::default(),
+            dcp: crate::session::dcp_config::DcpConfig::default(),
             managed_mcps: crate::config::ManagedMcpsConfig::default(),
             auth: None,
             desktop: None,

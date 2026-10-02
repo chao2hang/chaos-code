@@ -236,6 +236,7 @@ pub(crate) async fn spawn_session_actor(
     persisted_goal_mode: Option<crate::session::goal_tracker::GoalOrchestration>,
     persisted_workflow_runs: Vec<crate::session::workflow::store::RestoredWorkflowRun>,
     persisted_announcement_state: Option<crate::session::announcement_state::AnnouncementState>,
+    persisted_selective_compaction: Option<xai_grok_compaction::selective::SelectiveState>,
     memory_config: Option<crate::config::MemoryConfig>,
     loc_tracking_enabled: bool,
     feedback_flags: crate::session::feedback_manager::FeedbackFlags,
@@ -583,6 +584,13 @@ pub(crate) async fn spawn_session_actor(
         chat_state_handle.restore_snapshot(snap);
     }
     chat_state_handle.update_credentials(credentials);
+    // A resume must not silently pay back the compression the model committed in
+    // an earlier process. Blocks that no longer describe the restored history are
+    // dropped by the commit path rather than projected over the wrong items.
+    if let Some(saved_projection) = persisted_selective_compaction.as_ref() {
+        super::selective_compaction::restore_selective_blocks(&chat_state_handle, saved_projection)
+            .await;
+    }
     let state = TokioMutex::new(State {
         running_task: None,
         finalization_gate: Default::default(),
@@ -1740,6 +1748,11 @@ pub(crate) async fn spawn_session_actor(
                     .as_ref()
                     .and_then(|r| r.turn_transient_retry),
             ),
+        auto_retry_incomplete_end_turn: !startup_hints.is_subagent
+            && effective_config
+                .session
+                .auto_retry_incomplete_end_turn
+                .unwrap_or(false),
         transient_retries_prompt_total: std::cell::Cell::new(0),
         transient_episode_start: std::cell::Cell::new(None),
         auth_method_id,
@@ -1794,6 +1807,9 @@ pub(crate) async fn spawn_session_actor(
             prefire: crate::session::compaction_config::PrefireState::default(),
             prefix_released: std::sync::atomic::AtomicBool::new(false),
             cancel: Default::default(),
+            strategy: effective_config.compaction.strategy.unwrap_or_default(),
+            dcp: effective_config.dcp.clone(),
+            dcp_runtime: Default::default(),
         },
         memory: super::memory_state::SessionMemory {
             flush_config: memory_config.as_ref().map_or_else(
@@ -2448,6 +2464,7 @@ pub(crate) async fn spawn_session_on_thread(
     persisted_goal_mode: Option<crate::session::goal_tracker::GoalOrchestration>,
     persisted_workflow_runs: Vec<crate::session::workflow::store::RestoredWorkflowRun>,
     persisted_announcement_state: Option<crate::session::announcement_state::AnnouncementState>,
+    persisted_selective_compaction: Option<xai_grok_compaction::selective::SelectiveState>,
     memory_config: Option<crate::config::MemoryConfig>,
     loc_tracking_enabled: bool,
     feedback_flags: crate::session::feedback_manager::FeedbackFlags,
@@ -2628,6 +2645,7 @@ pub(crate) async fn spawn_session_on_thread(
                         persisted_goal_mode,
                         persisted_workflow_runs,
                         persisted_announcement_state,
+                        persisted_selective_compaction,
                         memory_config,
                         loc_tracking_enabled,
                         feedback_flags,

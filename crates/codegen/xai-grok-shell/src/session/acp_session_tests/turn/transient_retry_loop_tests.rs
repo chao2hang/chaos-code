@@ -69,8 +69,14 @@ async fn run_turn(
     Duration,
     usize,
 ) {
-    let (actor, retries) =
-        actor_under_test(server, SessionKind::Main, sampler_surfaces_5xx(), enabled).await;
+    let (actor, retries) = actor_under_test(
+        server,
+        SessionKind::Main,
+        sampler_surfaces_5xx(),
+        enabled,
+        false,
+    )
+    .await;
     // Drive the real turn loop; the request is built inside it.
     let requests_before = server.request_count();
     let started = tokio::time::Instant::now();
@@ -211,8 +217,14 @@ fn prompt_budget_spans_turn_loop_reentries() {
                 server.enqueue_response("/v1/responses", overloaded_503());
             }
 
-            let (actor, _retries) =
-                actor_under_test(&server, SessionKind::Main, sampler_surfaces_5xx(), true).await;
+            let (actor, _retries) = actor_under_test(
+                &server,
+                SessionKind::Main,
+                sampler_surfaces_5xx(),
+                true,
+                false,
+            )
+            .await;
             let requests_before = server.request_count();
             for entry in 0..5 {
                 let outcome = tokio::time::timeout(

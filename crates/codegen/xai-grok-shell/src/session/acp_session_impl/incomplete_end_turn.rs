@@ -4,6 +4,10 @@
 //! Opt-in via `[session] auto_retry_incomplete_end_turn` (default off).
 //! See issue #6: model ends with a plan-only message after tools, no writes.
 
+/// Max recovery reminders injected per prompt. Each retry costs one full
+/// sampling round, so this stays small; the detector counts attempts against it.
+pub(crate) const MAX_RETRIES: u8 = 2;
+
 /// Reminder injected as [`ConversationItem::auto_recovery`] when retrying.
 pub(crate) const INCOMPLETE_END_TURN_RECOVERY_PROMPT: &str = "\
 [System] The previous response ended before finishing the user's request \

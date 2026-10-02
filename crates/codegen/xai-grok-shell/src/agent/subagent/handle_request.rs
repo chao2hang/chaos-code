@@ -1317,6 +1317,7 @@ pub(crate) async fn run_shell_child(
         None,
         Vec::new(),
         None,
+        None,
         if verbatim_mirror_fork {
             None
         } else if let Some(scope) = agent_memory_scope {

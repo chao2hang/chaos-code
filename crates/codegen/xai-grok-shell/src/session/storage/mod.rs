@@ -34,6 +34,8 @@ pub(crate) const SIGNALS_FILE: &str = "signals.json";
 pub(crate) const USAGE_FILE: &str = "usage.json";
 pub(crate) const GOAL_STATE_FILE: &str = "goal/state.json";
 pub(crate) const ANNOUNCEMENT_STATE_FILE: &str = "announcement_state.json";
+/// Request-only dynamic context projection blocks (DCP `compress`).
+pub(crate) const SELECTIVE_COMPACTION_FILE: &str = "selective_compaction.json";
 pub(crate) const CHAT_HISTORY_FILE: &str = "chat_history.jsonl";
 pub(crate) const UPDATES_FILE: &str = "updates.jsonl";
 
@@ -792,6 +794,8 @@ pub struct PersistedData {
     pub signals: Option<SessionSignals>,
     /// Persisted announcement tracking state (None for sessions before this feature)
     pub announcement_state: Option<crate::session::announcement_state::AnnouncementState>,
+    /// Committed DCP compression blocks (None when nothing was ever compressed).
+    pub selective_compaction: Option<xai_grok_compaction::selective::SelectiveState>,
     /// Persisted goal mode orchestration state (None for sessions without goal mode)
     pub goal_mode_state: Option<crate::session::goal_tracker::GoalOrchestration>,
     pub workflow_runs: Vec<crate::session::workflow::store::RestoredWorkflowRun>,
@@ -810,6 +814,8 @@ pub struct PersistedDataLight {
     pub signals: Option<SessionSignals>,
     /// Persisted announcement tracking state (None for sessions before this feature)
     pub announcement_state: Option<crate::session::announcement_state::AnnouncementState>,
+    /// Committed DCP compression blocks (None when nothing was ever compressed).
+    pub selective_compaction: Option<xai_grok_compaction::selective::SelectiveState>,
     /// Persisted goal mode orchestration state (None for sessions without goal mode)
     pub goal_mode_state: Option<crate::session::goal_tracker::GoalOrchestration>,
     pub workflow_runs: Vec<crate::session::workflow::store::RestoredWorkflowRun>,
@@ -1288,6 +1294,14 @@ pub trait StorageAdapter: Send + Sync {
         &self,
         info: &Info,
         state: &crate::session::announcement_state::AnnouncementState,
+    ) -> io::Result<()>;
+
+    /// Persist the request-only dynamic context projection blocks (DCP `compress`).
+    /// Written on every committed compression, read back on session resume.
+    async fn write_selective_compaction_state(
+        &self,
+        info: &Info,
+        state: &xai_grok_compaction::selective::SelectiveState,
     ) -> io::Result<()>;
 
     async fn write_goal_mode_state(

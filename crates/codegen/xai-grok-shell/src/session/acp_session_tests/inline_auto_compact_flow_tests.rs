@@ -76,6 +76,7 @@ async fn create_test_actor(
         repo_status_prefetch: crate::session::repo_status_prefix::RepoStatusPrefetchState::default(
         ),
         transient_retry_enabled: true,
+        auto_retry_incomplete_end_turn: false,
         transient_retries_prompt_total: std::cell::Cell::new(0),
         transient_episode_start: std::cell::Cell::new(None),
         status_wake: Default::default(),
@@ -126,6 +127,9 @@ async fn create_test_actor(
         startup_hints: StartupHints::default(),
         forked_tool_override: None,
         compaction: crate::session::compaction_config::CompactionConfig {
+            strategy: Default::default(),
+            dcp: Default::default(),
+            dcp_runtime: Default::default(),
             threshold_percent: std::cell::Cell::new(threshold_percent),
             force_compact: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             context_window_override: None,
@@ -498,6 +502,7 @@ async fn create_test_actor_with_memory(
         repo_status_prefetch: crate::session::repo_status_prefix::RepoStatusPrefetchState::default(
         ),
         transient_retry_enabled: true,
+        auto_retry_incomplete_end_turn: false,
         transient_retries_prompt_total: std::cell::Cell::new(0),
         transient_episode_start: std::cell::Cell::new(None),
         status_wake: Default::default(),
@@ -545,6 +550,9 @@ async fn create_test_actor_with_memory(
         startup_hints: StartupHints::default(),
         forked_tool_override: None,
         compaction: crate::session::compaction_config::CompactionConfig {
+            strategy: Default::default(),
+            dcp: Default::default(),
+            dcp_runtime: Default::default(),
             threshold_percent: std::cell::Cell::new(threshold_percent),
             force_compact: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             context_window_override: None,
@@ -1103,6 +1111,9 @@ async fn test_e2e_idle_resume_refreshes_model_metadata() {
                 startup_hints: StartupHints::default(),
                 forked_tool_override: None,
                 compaction: crate::session::compaction_config::CompactionConfig {
+                    strategy: Default::default(),
+                    dcp: Default::default(),
+                    dcp_runtime: Default::default(),
                     threshold_percent: std::cell::Cell::new(85),
                     force_compact: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
                     context_window_override: None,
@@ -1255,6 +1266,7 @@ async fn test_e2e_idle_resume_refreshes_model_metadata() {
                 repo_status_prefetch:
                     crate::session::repo_status_prefix::RepoStatusPrefetchState::default(),
                 transient_retry_enabled: true,
+                auto_retry_incomplete_end_turn: false,
                 transient_retries_prompt_total: std::cell::Cell::new(0),
                 transient_episode_start: std::cell::Cell::new(None),
                 status_wake: Default::default(),
