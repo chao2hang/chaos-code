@@ -1,0 +1,415 @@
+CI guard wiring + TODO status document lockstep - evidence, 2026-10-03
+workspace: /home/chaos/hunt/dev/projects/chaos-code
+python: Python 3.10.12
+
+==============================================================================
+1. The failure being fixed: a fixture nobody ran, red for an unknown time
+==============================================================================
+`scripts/ci/test-classify-open-todos.py` asserted that
+docs/architecture/todo-open-item-classification.md matches TODO.md. It was
+committed, never invoked by CI or by scripts/verify-in-docker.sh, and was
+failing. This is the committed state reproduced in a detached worktree of
+HEAD (nothing here is quoted from memory):
+
+$ python3 scripts/ci/test-classify-open-todos.py
+[exit 1]
+F.
+======================================================================
+FAIL: test_classification_document_counts_match_real_todo (__main__.OpenTodoClassificationTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/grok-goal-ec37f68d1619/implementer/head-worktree/scripts/ci/test-classify-open-todos.py", line 72, in test_classification_document_counts_match_real_todo
+    self.assertEqual(documented, groups)
+AssertionError: {'M-1[65 chars]l': 13}, 'M1': {'unchecked': 0, 'partial': 16}[211 chars] 14}} != {'M-1[65 chars]l': 12}, 'M1': {'unchecked': 0, 'partial': 16}[211 chars] 16}}
+Diff is 1004 characters long. Set self.maxDiff to None to see it.
+
+----------------------------------------------------------------------
+Ran 2 tests in 0.044s
+
+FAILED (failures=1)
+
+The document claimed 51 unchecked / 98 partial / 149 rows and a table of
+M0 0/13, M3 8/9, M4 24/3, M5 13/14, Maintenance 6/14, while its own prose said
+maintenance 5/14. Real at the time of the recount: 23/113/136, i.e. the table
+was 13 rows off and one row (M4) was transposed relative to its own prose. It
+also pointed at three files in private goal scratch as its evidence, and carried
+a 429/218 ignored-test figure that the scanner has since replaced with 428
+ignored attributes and 0 bare attributes:
+
+$ python3 scripts/ci/ignored-tests.py --require-reasons
+[exit 0]
+ignored-tests: all 428 ignored attributes carry a reason
+
+$ python3 scripts/ci/ignored-tests.py --check-baseline scripts/ci/ignored-tests-baseline.tsv
+[exit 0]
+ignored-tests: baseline matches; 428 ignored attributes total
+
+==============================================================================
+2. Which guards had no caller (measured, not assumed)
+==============================================================================
+Every file in scripts/ci/ was checked for a caller. These had none in a
+workflow or in the Docker entry point:
+  classify-open-todos.py, test-classify-open-todos.py, test-brand-protocol.py
+Three more were reachable only through a lab script (legitimate):
+  release-integrity-fixture.py, release-integrity-request-log.py, release-integrity-serve.py
+One is exempt as a thin alias:
+  ignored-tests.sh  (execs ignored-tests.py, which is wired; two audit docs quote the alias)
+
+$ python3 scripts/ci/check-guard-wiring.py
+[exit 0]
+check-guard-wiring: OK (32 files in scripts/ci/, 32 reachable, 16 also run by scripts/verify-in-docker.sh, 1 exempt)
+
+==============================================================================
+3. The new checker and its fixtures
+==============================================================================
+
+$ python3 scripts/ci/test-check-guard-wiring.py
+[exit 0]
+test_every_gate_in_the_real_repo_is_reachable (__main__.RealRepositoryTests) ... ok
+test_a_comment_mention_is_not_an_invocation (__main__.SyntheticTreeTests) ... ok
+test_a_dangling_call_site_is_named (__main__.SyntheticTreeTests) ... ok
+test_a_docstring_mention_is_not_an_invocation (__main__.SyntheticTreeTests) ... ok
+test_a_documentation_mention_is_not_an_invocation (__main__.SyntheticTreeTests) ... ok
+test_a_gate_reached_through_a_script_ci_runs_counts (__main__.SyntheticTreeTests) ... ok
+test_a_real_gate_wired_only_in_the_docker_entry_point_counts (__main__.SyntheticTreeTests) ... ok
+test_an_exemption_for_a_deleted_file_is_an_error (__main__.SyntheticTreeTests) ... ok
+test_an_unwired_gate_is_named (__main__.SyntheticTreeTests) ... ok
+
+----------------------------------------------------------------------
+Ran 9 tests in 0.340s
+
+OK
+
+$ python3 scripts/ci/check-guard-wiring.py
+[exit 0]
+check-guard-wiring: OK (32 files in scripts/ci/, 32 reachable, 16 also run by scripts/verify-in-docker.sh, 1 exempt)
+
+==============================================================================
+4. The classifier: three modes over the real TODO.md
+==============================================================================
+
+$ python3 scripts/ci/classify-open-todos.py --groups
+[exit 0]
+M-1	1	5
+M0	0	12
+M1	0	16
+M2	0	24
+M3	6	11
+M4	5	13
+M5	9	16
+Maintenance items / §8	3	16
+
+$ python3 scripts/ci/classify-open-todos.py | tail -1
+[exit 0]
+(the full row-level output is the committed docs/verification/todo-open-items-2026-10-03.tsv)
+TOTAL	unchecked=24	partial=113	rows=137
+
+$ python3 scripts/ci/classify-open-todos.py --check-doc docs/architecture/todo-open-item-classification.md
+[exit 0]
+classify-open-todos: todo-open-item-classification.md matches TODO.md (137 open/partial rows)
+
+$ python3 scripts/ci/test-classify-open-todos.py
+[exit 0]
+test_a_duplicated_group_row_is_refused (__main__.DocumentGuardTests) ... ok
+test_a_missing_group_row_is_refused (__main__.DocumentGuardTests) ... ok
+test_a_non_numeric_count_is_refused (__main__.DocumentGuardTests) ... ok
+test_one_wrong_number_fails_and_names_the_group (__main__.DocumentGuardTests) ... ok
+test_the_real_document_matches_the_real_todo (__main__.DocumentGuardTests) ... ok
+test_groups_map_headings_to_milestone_buckets (__main__.InventoryTests) ... ok
+test_heading_no_group_owns_is_refused_not_dropped (__main__.InventoryTests) ... ok
+test_lists_every_open_row_with_line_section_and_totals (__main__.InventoryTests) ... ok
+
+----------------------------------------------------------------------
+Ran 8 tests in 0.233s
+
+OK
+
+The row-level export is committed at
+docs/verification/todo-open-items-2026-10-03.tsv (137 rows + TOTAL),
+regenerated by `python3 scripts/ci/classify-open-todos.py`.
+
+==============================================================================
+5. The guard proves itself: a TODO edit without a document edit goes red
+==============================================================================
+Three MT-7 rows were added to TODO.md in this slice (two `[x]`, one `[ ]`),
+which is the state the document had not caught up with. That transition is
+reproduced here by setting the document's Maintenance row back to the value it
+held before the TODO edit, running the guard, and putting the correct value back:
+
+$ python3 scripts/ci/classify-open-todos.py --check-doc docs/architecture/todo-open-item-classification.md
+[exit 1]
+classify-open-todos: todo-open-item-classification.md does not match TODO.md
+  Maintenance items / §8 unchecked: document says 2, TODO.md has 3
+  total rows: document says 136, TODO.md has 137
+recompute with: python3 scripts/ci/classify-open-todos.py --groups
+
+$ python3 scripts/ci/test-classify-open-todos.py
+[exit 1]
+test_a_duplicated_group_row_is_refused (__main__.DocumentGuardTests) ... ok
+test_a_missing_group_row_is_refused (__main__.DocumentGuardTests) ... ok
+test_a_non_numeric_count_is_refused (__main__.DocumentGuardTests) ... ok
+test_one_wrong_number_fails_and_names_the_group (__main__.DocumentGuardTests) ... ok
+test_the_real_document_matches_the_real_todo (__main__.DocumentGuardTests) ... FAIL
+test_groups_map_headings_to_milestone_buckets (__main__.InventoryTests) ... ok
+test_heading_no_group_owns_is_refused_not_dropped (__main__.InventoryTests) ... ok
+test_lists_every_open_row_with_line_section_and_totals (__main__.InventoryTests) ... ok
+
+======================================================================
+FAIL: test_the_real_document_matches_the_real_todo (__main__.DocumentGuardTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/chaos/hunt/dev/projects/chaos-code/scripts/ci/test-classify-open-todos.py", line 116, in test_the_real_document_matches_the_real_todo
+    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+AssertionError: 1 != 0 : classify-open-todos: todo-open-item-classification.md does not match TODO.md
+  Maintenance items / §8 unchecked: document says 2, TODO.md has 3
+  total rows: document says 136, TODO.md has 137
+recompute with: python3 scripts/ci/classify-open-todos.py --groups
+
+
+----------------------------------------------------------------------
+Ran 8 tests in 0.236s
+
+FAILED (failures=1)
+
+With the table back at 3/16:
+
+$ python3 scripts/ci/classify-open-todos.py --check-doc docs/architecture/todo-open-item-classification.md
+[exit 0]
+classify-open-todos: todo-open-item-classification.md matches TODO.md (137 open/partial rows)
+
+==============================================================================
+6. Mutation transcripts
+==============================================================================
+### baseline
+Ran 8 tests in 0.233s
+
+OK
+classify-open-todos: todo-open-item-classification.md matches TODO.md (136 open/partial rows)
+=================== M1 check_doc ignores every drift ===================
+FAILED (failures=1)
+FAIL: test_one_wrong_number_fails_and_names_the_group (__main__.DocumentGuardTests)
+Ran 8 tests in 0.230s
+--- guard itself ---
+rc=0
+classify-open-todos: todo-open-item-classification.md matches TODO.md (136 open/partial rows)
+=================== M2 unowned milestone rows dropped ===================
+FAILED (failures=1)
+FAIL: test_heading_no_group_owns_is_refused_not_dropped (__main__.InventoryTests)
+Ran 8 tests in 0.213s
+--- guard itself ---
+rc=0
+classify-open-todos: todo-open-item-classification.md matches TODO.md (136 open/partial rows)
+=================== M3 duplicated table row accepted (last wins) ===================
+FAILED (failures=1)
+FAIL: test_a_duplicated_group_row_is_refused (__main__.DocumentGuardTests)
+Ran 8 tests in 0.230s
+--- guard itself ---
+rc=0
+classify-open-todos: todo-open-item-classification.md matches TODO.md (136 open/partial rows)
+=================== M4 missing group row tolerated ===================
+FAILED (failures=1)
+FAIL: test_a_missing_group_row_is_refused (__main__.DocumentGuardTests)
+Ran 8 tests in 0.265s
+--- guard itself ---
+rc=0
+classify-open-todos: todo-open-item-classification.md matches TODO.md (136 open/partial rows)
+=================== M5 non-numeric count read as zero ===================
+FAILED (failures=1)
+FAIL: test_a_non_numeric_count_is_refused (__main__.DocumentGuardTests)
+Ran 8 tests in 0.255s
+--- guard itself ---
+rc=0
+classify-open-todos: todo-open-item-classification.md matches TODO.md (136 open/partial rows)
+=================== M6 real document one number stale ===================
+FAILED (failures=1)
+FAIL: test_the_real_document_matches_the_real_todo (__main__.DocumentGuardTests)
+Ran 8 tests in 0.252s
+--- guard itself ---
+rc=1
+classify-open-todos: todo-open-item-classification.md does not match TODO.md
+  M5 partial: document says 14, TODO.md has 16
+  total rows: document says 134, TODO.md has 136
+recompute with: python3 scripts/ci/classify-open-todos.py --groups
+=================== M7 M3.3 heading dropped from GROUP_PREFIXES ===================
+FAILED (failures=5)
+FAIL: test_a_duplicated_group_row_is_refused (__main__.DocumentGuardTests)
+FAIL: test_a_missing_group_row_is_refused (__main__.DocumentGuardTests)
+FAIL: test_a_non_numeric_count_is_refused (__main__.DocumentGuardTests)
+FAIL: test_one_wrong_number_fails_and_names_the_group (__main__.DocumentGuardTests)
+FAIL: test_the_real_document_matches_the_real_todo (__main__.DocumentGuardTests)
+Ran 8 tests in 0.223s
+--- guard itself ---
+rc=1
+TODO rows are not assigned to a milestone group, so the classification document cannot count them:
+  line 414: ## M3.3 工作流与子代理
+  line 415: ## M3.3 工作流与子代理
+  line 417: ## M3.3 工作流与子代理
+### final baseline after restores
+Ran 8 tests in 0.226s
+
+OK
+both files byte-identical to pre-mutation
+
+### baseline
+Ran 9 tests in 0.344s
+
+OK
+check-guard-wiring: OK (32 files in scripts/ci/, 32 reachable, 16 also run by scripts/verify-in-docker.sh, 1 exempt)
+=================== G1 a # comment counted as an invocation ===================
+FAILED (failures=1)
+FAIL: test_a_comment_mention_is_not_an_invocation (__main__.SyntheticTreeTests)
+Ran 9 tests in 0.344s
+fixtures rc=1
+--- checker on the real repo ---
+rc=0
+check-guard-wiring: OK (32 files in scripts/ci/, 32 reachable, 16 also run by scripts/verify-in-docker.sh, 1 exempt)
+=================== G2 helpers reached only through a lab script are orphaned ===================
+FAILED (failures=3)
+FAIL: test_a_gate_reached_through_a_script_ci_runs_counts (__main__.SyntheticTreeTests)
+FAIL: test_a_real_gate_wired_only_in_the_docker_entry_point_counts (__main__.SyntheticTreeTests)
+FAIL: test_every_gate_in_the_real_repo_is_reachable (__main__.RealRepositoryTests)
+Ran 9 tests in 0.224s
+fixtures rc=1
+--- checker on the real repo ---
+rc=1
+  scripts/ci/local-publish-host.sh is not invoked by any workflow or by scripts/verify-in-docker.sh; wire it into a CI step and the `gates` array, or record why in EXEMPT
+  scripts/ci/release-integrity-fixture.py is not invoked by any workflow or by scripts/verify-in-docker.sh; wire it into a CI step and the `gates` array, or record why in EXEMPT
+  scripts/ci/release-integrity-request-log.py is not invoked by any workflow or by scripts/verify-in-docker.sh; wire it into a CI step and the `gates` array, or record why in EXEMPT
+  scripts/ci/release-integrity-serve.py is not invoked by any workflow or by scripts/verify-in-docker.sh; wire it into a CI step and the `gates` array, or record why in EXEMPT
+check-guard-wiring: 4 problem(s)
+=================== G3 a workflow naming a deleted script is fine ===================
+FAILED (failures=1)
+FAIL: test_a_dangling_call_site_is_named (__main__.SyntheticTreeTests)
+Ran 9 tests in 0.341s
+fixtures rc=1
+--- checker on the real repo ---
+rc=0
+check-guard-wiring: OK (32 files in scripts/ci/, 32 reachable, 16 also run by scripts/verify-in-docker.sh, 1 exempt)
+=================== G4 an exemption for a deleted file is fine ===================
+FAILED (failures=1)
+FAIL: test_an_exemption_for_a_deleted_file_is_an_error (__main__.SyntheticTreeTests)
+Ran 9 tests in 0.342s
+fixtures rc=1
+--- checker on the real repo ---
+rc=0
+check-guard-wiring: OK (32 files in scripts/ci/, 32 reachable, 16 also run by scripts/verify-in-docker.sh, 1 exempt)
+=================== G5 a mention in docs/ counts as a caller ===================
+FAILED (failures=1)
+FAIL: test_a_documentation_mention_is_not_an_invocation (__main__.SyntheticTreeTests)
+Ran 9 tests in 0.341s
+fixtures rc=1
+--- checker on the real repo ---
+rc=0
+check-guard-wiring: OK (32 files in scripts/ci/, 32 reachable, 16 also run by scripts/verify-in-docker.sh, 1 exempt)
+=================== G6 a Python docstring counted as an invocation ===================
+FAILED (failures=1)
+FAIL: test_a_docstring_mention_is_not_an_invocation (__main__.SyntheticTreeTests)
+Ran 9 tests in 0.228s
+fixtures rc=1
+--- checker on the real repo ---
+rc=0
+check-guard-wiring: OK (32 files in scripts/ci/, 32 reachable, 16 also run by scripts/verify-in-docker.sh, 1 exempt)
+=================== G7 test-brand-protocol.py unwired in the real repo ===================
+FAILED (failures=1)
+FAIL: test_every_gate_in_the_real_repo_is_reachable (__main__.RealRepositoryTests)
+Ran 9 tests in 0.337s
+fixtures rc=1
+--- checker on the real repo ---
+rc=1
+  scripts/ci/test-brand-protocol.py is not invoked by any workflow or by scripts/verify-in-docker.sh; wire it into a CI step and the `gates` array, or record why in EXEMPT
+check-guard-wiring: 1 problem(s)
+all three files byte-identical to pre-mutation
+### final baseline
+Ran 9 tests in 0.336s
+
+OK
+check-guard-wiring: OK (32 files in scripts/ci/, 32 reachable, 16 also run by scripts/verify-in-docker.sh, 1 exempt)
+
+Note on the guard-wiring run: mutation G7 removes test-brand-protocol.py's
+two real call sites and must turn `test_every_gate_in_the_real_repo_is_reachable`
+red. The first version of the checker passed that mutation, because its own
+docstring named the file; the prose filter now removes `#` lines, trailing
+comments and Python docstrings before matching.
+
+==============================================================================
+7. Wiring
+==============================================================================
+
+$ grep -n -A3 TODO status document matches TODO.md .github/workflows/ci.yml
+[exit 0]
+411:      - name: TODO status document matches TODO.md
+412-        run: |
+413-          set -euo pipefail
+414-          python3 scripts/ci/test-classify-open-todos.py
+
+$ grep -n -A4 name: brand and protocol guard .github/workflows/ci.yml
+[exit 0]
+94:      - name: brand and protocol guard
+95-        run: |
+96-          set -euo pipefail
+97-          python3 scripts/ci/check-brand-protocol.py
+98-          python3 scripts/ci/test-brand-protocol.py
+
+$ grep -n guard-wiring .github/workflows/ci.yml
+[exit 0]
+609:          python3 scripts/ci/test-check-guard-wiring.py
+610:          python3 scripts/ci/check-guard-wiring.py
+
+$ grep -n -E brand/protocol guard|TODO status doc|CI guard wiring scripts/verify-in-docker.sh
+[exit 0]
+131:  "brand/protocol guard: python3 scripts/ci/check-brand-protocol.py && python3 scripts/ci/test-brand-protocol.py"
+132:  "TODO status doc: python3 scripts/ci/test-classify-open-todos.py && python3 scripts/ci/classify-open-todos.py --check-doc docs/architecture/todo-open-item-classification.md"
+133:  "CI guard wiring: python3 scripts/ci/test-check-guard-wiring.py && python3 scripts/ci/check-guard-wiring.py"
+
+==============================================================================
+8. Surrounding guards on the changed surface
+==============================================================================
+
+$ python3 scripts/ci/check-workflow-shells.py .github/workflows/ci.yml
+[exit 0]
+check-workflow-shells: .github/workflows/ci.yml: OK
+
+$ python3 scripts/ci/check-script-portability.py
+[exit 0]
+script-portability: OK (23 shell script(s))
+
+$ python3 scripts/ci/check-brand-protocol.py
+[exit 0]
+brand/protocol guard: no obsolete upstream CLI command names in selected shipped text
+
+$ python3 scripts/ci/test-brand-protocol.py
+[exit 0]
+brand protocol guard: compatibility identifiers pass; CLI/doc/UI mutations fail
+
+$ python3 scripts/check-doc-l10n.py --links
+[exit 0]
+
+0 broken link(s)
+
+$ python3 scripts/check-doc-l10n.py --english
+[exit 0]
+
+0 English prose line(s) remaining
+
+$ bash scripts/l10n-guard.sh
+[exit 0]
+[l10n-guard] before=HEAD  after=WORKTREE
+[l10n-guard] report dir: /tmp/l10n-guard-1316060
+
+=== L10n Guard Report ===
+  before Han files:  395
+  after  Han files:  395
+  moved:             0
+  removed-recorded:  0
+  regressed:         0
+  stale-allowlist:   0
+  shrunk:            0
+  fortress-breach:   0
+
+OK — L10n Guard: PASS
+
+$ bash -n scripts/verify-in-docker.sh
+[exit 0]
+
+$ git diff --check
+[exit 0]

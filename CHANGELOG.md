@@ -2,6 +2,58 @@
 
 ## Unreleased
 
+### 新增：`scripts/ci/` 里不允许再有没人调用的守卫；TODO 状态文档与 `TODO.md` 从此逐格对齐
+
+`scripts/ci/test-classify-open-todos.py` 断言
+`docs/architecture/todo-open-item-classification.md` 的分组计数等于 `TODO.md`。它被提交、被引用，
+却没有任何地方跑过它，而且是红的——本轮是从别的方向撞上看见的，不是门禁报的。文档因此一路漂到
+声称 51 unchecked / 98 partial / 149 行，表里写 `M0 0/13`、`M3 8/9`、`M4 24/3`、maintenance 6/14，
+而**同一个文件的正文写的是 maintenance 5/13**；真实值是 `unchecked=23 partial=113 rows=136`，
+`M4` 那一行相对它自己的正文还是转置的。它把三份私有 goal scratch 当证据路径，还沿用已作废的
+429/218 ignore 数字（现场重测：428 个 `#[ignore]` 属性、0 条裸属性，`--require-reasons` 通过）。
+
+`classify-open-todos.py` 改成三种模式。默认模式输出逐行清单（行号 / 状态 / 最近标题 / 原文 +
+`TOTAL`）；`--groups` 按里程碑分组，**任何一行不属于任何组就直接失败并列出 `line N: <heading>`**，
+新增 `### M6.` 段不会被静默排除在全部计数之外；`--check-doc` 把文档表格与 `TODO.md` 逐格比对，
+差异按 `M4 unchecked: document says 3, TODO.md has 5` 这种可执行的形式打印，并附上重算命令。
+文档表格、两处过时正文数字、以及指向私有 scratch 的三处证据指针全部改掉，逐行导出改为随仓库提交的
+`docs/verification/todo-open-items-2026-10-03.tsv`。
+
+真正的新东西是第二个检查，因为「没人跑」这一类缺陷此前没有任何东西守着，本轮已连着撞上四个：
+`classify-open-todos.py` 与它的 fixture、`test-brand-protocol.py`（brand 守卫的自测，CI 只跑被检对象）、
+以及更早的 `check-doc-l10n-selftest.py`。`scripts/ci/check-guard-wiring.py` 的规则是可达性而不是名单：
+根 = `.github/workflows/*.yml` + `scripts/verify-in-docker.sh`，再沿「已被可达文件点名的 `scripts/`
+内文件」做不动点传播，于是 CI 跑 `install-integrity-in-docker.sh`、后者启动 `release-integrity-serve.py`
+这条链算可达。**散文不算调用者**——`#` 行、行尾注释、Python docstring 三者在匹配前一律抹掉。
+这条规则是被变异逼出来的：第一版只在非 Python 侧过滤 `#`，结果它自己的 docstring 里点了四个守卫的名字，
+于是在 `test-brand-protocol.py` 确实没接线的真实仓库上报 OK。`docs/` 同样不扫——
+`ignored-tests.sh` 被两份审计报告引用、无人执行，正是这条规则要拒绝的舒适区。反向也查：workflow 或
+Docker 入口点名的 `scripts/...` 路径必须存在；白名单条目必须仍描述一个存在的文件，防止它烂成退役守卫的墓地。
+
+测试：分类器 8 条（逐行输出与 `TOTAL` 精确匹配、`--groups` 精确匹配、无主标题两种模式都拒绝、
+真实文档必须通过、某组两列对调必须失败并点名该组、缺行 / 重行 / 非数字各自拒绝），其中 TODO 侧的数字
+**是现场跑 `--groups` 读出来的而不是抄文档**，否则两侧一起错也不会红；接线检查 9 条（真实仓库必须 OK、
+未接线守卫被点名、经实验室脚本可达算数、`#` 注释不算、docstring 不算、`docs/` 提及不算、悬空调用点被点名、
+为已删文件保留的豁免被拒、只接在 Docker 入口也算）。变异 14 个全部转红、还原后 `cmp` 字节一致：
+分类器 7 个（`check_doc` 永不报漂移、静默丢弃无主行、容忍重复行、容忍缺行、非数字读成 0、真实文档改一个
+数字、从 `GROUP_PREFIXES` 删掉 `## M3.3`），接线检查 7 个（把 `#` 注释当调用、去掉传递跳、容忍悬空调用点、
+容忍豁免腐烂、把 `docs/` 当调用者、把 docstring 当代码，以及在真实仓库删掉 `test-brand-protocol.py`
+的两处真实接线——最后这个就是该检查存在的理由本身）。证据日志第 5 节记的是本轮真实走过的顺序：
+三条 MT-7 条目落进 `TODO.md` 后，文档表格没跟上，门禁立刻以
+`Maintenance items / §8 unchecked: document says 2, TODO.md has 3` 报红。
+
+接线：`ci.yml` docs-l10n 作业新增「TODO status document matches TODO.md」步骤，`workflows present`
+作业新增 `test-check-guard-wiring.py` + `check-guard-wiring.py`，brand 守卫步骤补跑它自己的 fixture，
+`scripts/verify-in-docker.sh` 增加 `TODO status doc` 与 `CI guard wiring` 两条门禁并把 brand fixture
+并入 brand 门禁。当前覆盖：`scripts/ci/` 32 个文件全部可达，16 个同时被 Docker 入口跑，1 个豁免。
+留下的口子记在 TODO：Docker 入口只镜像了一半守卫，`check-guard-wiring.py` 打印同时被跑的数量但不据此
+失败——哪些必须留在 CI（npm 发布、目标 OS runner、外网）需要逐个定策。（2026-10-03；
+`scripts/ci/check-guard-wiring.py`、`scripts/ci/test-check-guard-wiring.py`、
+`scripts/ci/classify-open-todos.py`、`scripts/ci/test-classify-open-todos.py`、
+`docs/architecture/todo-open-item-classification.md`、`docs/verification/todo-open-items-2026-10-03.tsv`、
+`docs/verification/ci-guard-wiring-2026-10-03.log`、`.github/workflows/ci.yml`、`scripts/verify-in-docker.sh`）
+
+
 ### 修复：Windows 那条 CI 腿把 WSL 启动器当成 bash，installer 的四条平台分支从此真被执行
 
 `scripts/ci/test-installer-asset-names.py` 比对的是一件事：四个地方（`install.sh` 的 bash

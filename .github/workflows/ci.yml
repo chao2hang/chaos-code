@@ -92,7 +92,10 @@ jobs:
           python3 scripts/ci/ignored-tests.py --require-reasons
           python3 scripts/ci/ignored-tests.py --check-baseline scripts/ci/ignored-tests-baseline.tsv
       - name: brand and protocol guard
-        run: python3 scripts/ci/check-brand-protocol.py
+        run: |
+          set -euo pipefail
+          python3 scripts/ci/check-brand-protocol.py
+          python3 scripts/ci/test-brand-protocol.py
 
       # --all-targets is the point of this step: it compiles tests, benches and
       # examples, which a plain `cargo check` skips.
@@ -399,6 +402,18 @@ jobs:
           python3 scripts/check-doc-l10n-selftest.py
           bash scripts/l10n-guard.sh --before HEAD --after HEAD --report "$RUNNER_TEMP/l10n"
 
+      # The TODO status document tells its reader to "recompute after the next
+      # edit" and then sat 13 rows off -- 149 claimed against 136 real, with one
+      # row reading 24/3 while the prose in the same file said 5/13 -- because
+      # that instruction was only ever followed by hand. `--check-doc` is the
+      # same comparison made into an exit code, and the fixtures prove it still
+      # fails on a transposed column, a missing row and a non-numeric count.
+      - name: TODO status document matches TODO.md
+        run: |
+          set -euo pipefail
+          python3 scripts/ci/test-classify-open-todos.py
+          python3 scripts/ci/classify-open-todos.py --check-doc docs/architecture/todo-open-item-classification.md
+
   gui:
     name: GUI engine, Web host and frontend
     runs-on: ubuntu-latest
@@ -584,3 +599,12 @@ jobs:
           # surfaces after a tag is public: the updater compares a --version
           # string from one file against a feed built from another.
           python3 scripts/ci/check-version-lockstep.py
+          # Who runs the guards? Three of them had been committed, documented and
+          # never invoked -- which is how the TODO status document drifted 13 rows
+          # from TODO.md while a checker that would have caught it sat unused.
+          # This walks `.github/workflows/*.yml` plus scripts/verify-in-docker.sh,
+          # follows the calls into lab scripts, and refuses a gate in scripts/ci/
+          # that nothing executes. Its own fixtures are what prove the walk still
+          # treats a comment, a doc and a real invocation differently.
+          python3 scripts/ci/test-check-guard-wiring.py
+          python3 scripts/ci/check-guard-wiring.py
