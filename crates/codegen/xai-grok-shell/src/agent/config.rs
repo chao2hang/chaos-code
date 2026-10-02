@@ -2684,7 +2684,7 @@ impl Config {
     pub(crate) fn is_two_pass_compaction_enabled(&self) -> bool {
         self.is_feature_enabled(Feature::TwoPassCompaction)
     }
-    pub(crate) fn resolve_telemetry_mode(&self) -> Resolved<TelemetryMode> {
+    pub fn resolve_telemetry_mode(&self) -> Resolved<TelemetryMode> {
         if let Some(mode) = self.requirements.telemetry.pinned() {
             return Resolved::new(mode, ConfigSource::Requirement);
         }
@@ -2706,7 +2706,7 @@ impl Config {
         }
         Resolved::new(TelemetryMode::Disabled, ConfigSource::Default)
     }
-    pub(crate) fn resolve_trace_upload(&self) -> Resolved<bool> {
+    pub fn resolve_trace_upload(&self) -> Resolved<bool> {
         let mode = self.resolve_telemetry_mode();
         let ff = if mode.value.is_disabled() {
             None

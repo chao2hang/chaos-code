@@ -45,6 +45,8 @@ pub enum Command {
     },
     /// 管理 MCP 服务器配置
     Mcp(crate::mcp_cmd::McpArgs),
+    /// 查看遥测配置状态（只读）。
+    Telemetry(TelemetryArgs),
     /// 管理插件与市场源
     Plugin(crate::plugin_cmd::PluginArgs),
     /// 管理跨会话记忆
@@ -151,6 +153,23 @@ Apple Terminal）时，复制仍能正常工作。被包装命令的终端也会
     /// 当 `~/.chaos/config.toml` 中设置 `[dashboard].enabled = false`，或设置了 `GROK_AGENT_DASHBOARD=0` 环境变量时禁用。
     Dashboard,
 }
+/// Arguments for the telemetry status command.
+#[derive(Debug, clap::Args, Clone)]
+pub struct TelemetryArgs {
+    #[command(subcommand)]
+    pub command: TelemetryCommand,
+}
+
+#[derive(Debug, Subcommand, Clone)]
+pub enum TelemetryCommand {
+    /// 显示有效遥测状态，不触发遥测或网络请求。
+    Status {
+        /// 输出机器可读 JSON，不包含密钥或端点凭据。
+        #[arg(long)]
+        json: bool,
+    },
+}
+
 /// Arguments for the `wrap` subcommand: the command to run, then its args.
 #[derive(Debug, clap::Args, Clone)]
 pub struct WrapArgs {

@@ -25,6 +25,7 @@ mod jemalloc_malloc_conf {
     static MALLOC_CONF: MallocConfPtr = MallocConfPtr(CONF.as_ptr());
 }
 use anyhow::Result;
+mod telemetry_status;
 use std::net::SocketAddr;
 use std::num::NonZeroUsize;
 use tokio_util::sync::CancellationToken;
@@ -59,6 +60,7 @@ fn process_identity(command: Option<&Command>, is_interactive: bool) -> Option<P
             | Command::Leader(_)
             | Command::Logout
             | Command::Mcp(_)
+            | Command::Telemetry(_)
             | Command::Plugin(_)
             | Command::Memory(_)
             | Command::Models
@@ -101,6 +103,7 @@ fn command_needs_pre_sandbox_policy_heal(command: Option<&Command>) -> bool {
             | Command::Logout
             | Command::Login { .. }
             | Command::Mcp(_)
+            | Command::Telemetry(_)
             | Command::Plugin(_)
             | Command::Memory(_)
             | Command::Sessions(_)
@@ -2211,6 +2214,10 @@ async fn async_main(args: PagerArgs) -> Result<()> {
                 run_setup_command(json).await;
                 return Ok(());
             }
+            Command::Telemetry(telemetry_args) => {
+                let xai_grok_pager::app::TelemetryCommand::Status { json } = telemetry_args.command;
+                return telemetry_status::run(json);
+            }
             Command::Mcp(mcp_args) => {
                 init_tracing_simple("cli");
                 return xai_grok_pager::mcp_cmd::run(mcp_args).await;
@@ -2759,6 +2766,25 @@ mod tests {
             );
         }
     }
+    #[test]
+    fn telemetry_status_cli_parses_json_and_human_output_modes() {
+        let json = PagerArgs::try_parse_from(["chaos", "telemetry", "status", "--json"]).unwrap();
+        assert!(matches!(
+            json.command,
+            Some(Command::Telemetry(xai_grok_pager::app::TelemetryArgs {
+                command: xai_grok_pager::app::TelemetryCommand::Status { json: true }
+            }))
+        ));
+
+        let human = PagerArgs::try_parse_from(["chaos", "telemetry", "status"]).unwrap();
+        assert!(matches!(
+            human.command,
+            Some(Command::Telemetry(xai_grok_pager::app::TelemetryArgs {
+                command: xai_grok_pager::app::TelemetryCommand::Status { json: false }
+            }))
+        ));
+    }
+
     #[test]
     fn default_caps_the_core_count() {
         let nz = |n| NonZeroUsize::new(n).unwrap();

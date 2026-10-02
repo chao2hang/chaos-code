@@ -540,6 +540,8 @@ items = ["cwd", "model", "context"]
 
 ### 遥测
 
+用 `chaos telemetry status` 查看当前生效的产品遥测、Mixpanel、trace upload 与外部 OTEL 状态；`chaos telemetry status --json` 输出机器可读 JSON。此命令只读取有效配置，不触发遥测或网络请求；输出不会包含 token、collector URL 或 headers。它不修改配置；目前 CLI 不提供遥测开关写入命令。
+
 这些是彼此独立的开关（见[用量监控](24-monitoring-usage.md#相关设置)）：
 
 - **`[features] telemetry`** / `GROK_TELEMETRY_ENABLED` —— 产品分析的总开关。`/privacy` 不改动它。

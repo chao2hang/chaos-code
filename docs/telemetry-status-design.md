@@ -1,13 +1,13 @@
 # `chaos telemetry status` / `disable` 设计
 
-> 状态：设计草稿 v0.1，**尚未实现**。等本设计评审通过后再开工。
+> 状态：`chaos telemetry status` 只读子命令已实现；本设计后续版本规划的 `disable`/`enable` 写配置命令仍未实现，且不得在安全评审前加入。实现范围/当前 JSON schema 见 `docs/architecture/todo-open-item-classification.md` 和 `TODO.md` 的 MT-7。
 > 关联：[`telemetry-policy.md`](./telemetry-policy.md) 7.2 段。
 
 ## 1. 目标
 
 让用户用一行命令看清：
 
-1. 当前三个子系统的**有效状态**（产品遥测 / trace upload / 外部 OTEL）
+1. 当前有效状态：产品遥测 mode、Mixpanel、trace upload 与 external OTEL exporter
 2. 状态**从哪儿来**（config / env / requirement / default）
 3. 怎么**永久关掉**（`disable` 子命令）
 
@@ -21,13 +21,11 @@
 
 ```
 $ chaos telemetry status
-telemetry mode:   disabled             (source: default)
-                  └─ resolution: [features].telemetry=∅, env=∅, requirements=∅
-mixpanel:         disabled             (no token configured)
-trace upload:     disabled             (source: [telemetry] trace_upload=∅, default=false)
-external otel:    disabled             (GROK_EXTERNAL_OTEL unset, OTEL_EXPORTER_OTLP_ENDPOINT unset)
-config root:      /home/u/.chaos       (CHAOS_HOME)
-auth module:      enabled              (auth.json not loaded, but AuthManager constructed)
+config root: /home/u/.chaos
+telemetry: disabled (source: default)
+mixpanel: disabled (disabled_or_no_token)
+trace upload: disabled (source: default)
+external OTEL: disabled (source: disabled_or_not_configured)
 ```
 
 ```
@@ -35,22 +33,16 @@ $ chaos telemetry status --json
 {
   "config_root": "/home/u/.chaos",
   "subsystems": {
-    "telemetry": {
-      "mode": "disabled",
-      "source": "default",
-      "resolution_chain": [
-        {"layer": "requirement", "value": null, "winner": false},
-        {"layer": "env", "name": "GROK_TELEMETRY_ENABLED", "value": null, "winner": false},
-        {"layer": "config", "name": "[features].telemetry", "value": null, "winner": false},
-        {"layer": "remote", "value": null, "winner": false},
-        {"layer": "default", "value": "disabled", "winner": true}
-      ]
-    },
-    "mixpanel": {"enabled": false, "reason": "no token configured"},
+    "telemetry": {"mode": "disabled", "source": "default"},
+    "mixpanel": {"enabled": false, "reason": "disabled_or_no_token"},
     "trace_upload": {"enabled": false, "source": "default"},
-    "external_otel": {"enabled": false, "master_switch": false, "endpoint": null}
-  },
-  "auth_module": {"constructed": true, "auth_json_loaded": false}
+    "external_otel": {
+      "enabled": false,
+      "source": "disabled_or_not_configured",
+      "metrics_exporter": null,
+      "logs_exporter": null
+    }
+  }
 }
 ```
 
@@ -91,9 +83,9 @@ $ chaos telemetry disable --project
 | 子系统 | 怎么判 | 文件 |
 |---|---|---|
 | 产品遥测 mode | `cfg.resolve_telemetry_mode()` | `xai-grok-shell/src/agent/config.rs:2680` |
-| mixpanel enabled | `cfg.telemetry.mixpanel_enabled && cfg.telemetry.mixpanel_token.is_some()` | `xai-grok-telemetry/src/config.rs:99` |
+| mixpanel enabled | `cfg.telemetry.mixpanel_enabled && token is non-empty` | `xai-grok-pager-bin/src/telemetry_status.rs` |
 | trace upload | `cfg.resolve_trace_upload()` | `xai-grok-shell/src/agent/config.rs:2702` |
-| external otel | `std::env::var_os("GROK_EXTERNAL_OTEL").is_some() && (OTEL_EXPORTER_OTLP_ENDPOINT \| OTEL_EXPORTER_OTLP_TRACES_ENDPOINT)` | `xai-grok-telemetry/src/external/config.rs` |
+| external OTEL | `resolve_external_otel_config`，完整复用双重 opt-in 与 exporter 选择规则；仅报告开关和 exporter 名称 | `xai-grok-telemetry/src/external/config.rs` |
 
 ### 3.3 `disable` 写 config 的安全约束
 
@@ -108,7 +100,7 @@ $ chaos telemetry disable --project
 
 ### 3.4 输出 / 日志
 
-- `status` 默认走 stdout，`--json` 走 stdout（仍人类可读）
+- `status` 默认走 stdout，`--json` 走 stdout（JSON object）
 - `disable` 的"wrote ..."行走 stdout，警告（如 requirements 锁定）走 stderr
 - **不**写 chaos 自己的日志文件（避免自我遥测）
 - **不**触发 `track_event` / `log_event`（避免自我引用循环）
@@ -129,7 +121,7 @@ $ chaos telemetry disable --project
 | 单元 | `disable` 在 requirements 锁定时拒绝并报错 |
 | 单元 | `disable` 用 `toml_edit` 不破坏已有 `[features]` 其他字段 |
 | 单元 | `disable` 后回读校验失败时回滚（mock 失败注入） |
-| 集成 | `chaos telemetry status --json` 输出 schema 稳定（snapshot test） |
+| 集成 | `chaos telemetry status --json` 真实 binary test 验证解析字段、配置来源和密钥/collector URL 不泄露 |
 | 集成 | `--local-only` 不创建 `.chaos/config.toml` 在 cwd |
 | 集成 | `--project` 创建 `.chaos/config.toml` 而不动 `~/.chaos/config.toml` |
 
@@ -144,9 +136,9 @@ $ chaos telemetry disable --project
 
 | 版本 | 内容 |
 |---|---|
-| 0.2.137 | 本设计落地。**只**加 `status` 子命令（只读） |
-| 0.2.138 | 加 `disable` 子命令（带 backup + rollback） |
-| 0.2.139 | 加 `chaos telemetry enable`（高级用户；走 [telemetry] 段写出明确的 opt-in 注释，避免用户误开） |
+| 当前分支 | 只读 `status` 子命令已实现；`--json` schema 与隔离配置实测由 `crates/codegen/xai-grok-pager-bin/tests/telemetry_status.rs` 回归测试保护 |
+| 后续评审后 | `disable`/`enable` 写配置命令仍未实现；先冻结 precedence pin、写入原子性、保留用户注释与 rollback contract，再进行安全评审 |
+
 
 `enable` 放最后、单独发版，因为"教用户怎么开"比"教用户怎么关"风险高，
 需要更多 review。
