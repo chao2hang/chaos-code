@@ -156,6 +156,10 @@ jobs:
           py="$(command -v python3 || command -v python || true)"
           test -n "$py" || { echo "::error::no python on PATH" >&2; exit 1; }
           "$py" scripts/ci/check-powershell-syntax.py --require
+          # `--require` here, not on the ubuntu job: this is the pair of legs where a
+          # missing PowerShell must stop the build rather than downgrade the asset-name
+          # check to reading string literals out of install.ps1.
+          "$py" scripts/ci/test-installer-asset-names.py --require
 
       # Same protoc the Linux and release jobs use; apt's version is too old
       # for proto3 optional and the macos/windows images ship none.
@@ -516,6 +520,12 @@ jobs:
           # bare "command not found" on a contributor's machine.
           python3 scripts/ci/check-script-portability.py
           python3 scripts/ci/test-script-portability.py
+          # Four consumers derive a release asset name -- install.sh, install.ps1,
+          # install.bat and the auto-updater -- and one workflow publishes it. A rename
+          # on the publisher's side is invisible to all four until an install or an
+          # upgrade 404s, which reads as "no such version". This compares the four
+          # against the `copy_one` lines, executing the two that can run here.
+          python3 scripts/ci/test-installer-asset-names.py
           # The release version lives in the npm meta package, and four other
           # places have to equal it (six platform packages, the pins, the two
           # crates that build the binary, the CHANGELOG section). A drift only

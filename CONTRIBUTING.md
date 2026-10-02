@@ -297,6 +297,19 @@ Everything a user can hold has to carry that same number:
 
 `scripts/ci/check-version-lockstep.py` checks all of that and runs in CI.
 
+The other thing a release has to get right about its artifacts is not the number but the
+name, and it is spread over one more place per installer. `.github/workflows/release.yml`
+decides the names in six `copy_one` lines; `install.sh` derives one from a bash `case`,
+`install.ps1` from a PowerShell function with an environment-variable fallback,
+`install.bat` from three `set` lines, and `chaos update` from `version.rs`'s
+`gh_release_asset_name` (whose test reads the workflow file rather than restating it).
+`scripts/ci/test-installer-asset-names.py` compares all of them against the `copy_one`
+lines, executing `detect_platform` and `Get-AssetName` where the host can run them, and it
+runs in CI -- on the `platform tests` legs with `--require`, so a runner without PowerShell
+fails instead of quietly checking less. Rename one asset on either side and this is the
+check that says so, rather than a Windows user's install returning a 404 that looks like a
+missing version.
+
 Four crates deliberately do **not** follow the release version, and the check fails if
 this list and that paragraph drift apart: `xai-grok-web` and `xai-grok-desktop` are
 versioned by their own bundles, `chaos-engine` is versioned by the protocol it speaks,

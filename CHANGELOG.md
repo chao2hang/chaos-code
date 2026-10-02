@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### 工程：发行物文件名从此四处对齐（`scripts/ci/test-installer-asset-names.py`）
+
+一个 release 的产物名由 `.github/workflows/release.yml` 的六行 `copy_one` 决定，而问它要
+文件的一共有四处：`install.sh` 用 bash `case` 拼、`install.ps1` 用一个 PowerShell 函数
+（还带环境变量兜底）、`install.bat` 用三行 `set`、`chaos update` 用 `version.rs` 里的
+`gh_release_asset_name`。任何一边改名，另外几边都不会知道，直到用户装的时候吃到一个 404，
+而 404 看起来像「没有这个版本」，不像「这两个文件对不上」。新增的检查把四处逐一对照
+`copy_one` 列表：本机跑得动的两处（`detect_platform`、`Get-AssetName`）是真的执行，跑不动
+的分支（arm64）用字面量覆盖；Rust 侧的测试不再复述名字，而是真的去读 release.yml。检查已挂进
+CI（`workflows-present`，以及 platform legs 上带 `--require`——那两条腿上缺 PowerShell 必须
+让构建失败，而不是退化成只读字面量）。两次变异验证都能被抓住：把 release.yml 里的
+`chaos-win32-arm64.exe` 改名 → `install.ps1` 与 `install.bat` 两条同时红；把 `install.bat` 的
+`.exe` 去掉 → 只有它自己红。
+
 ### 工程：两个完整性实验台从此每次 push 都会跑
 
 `install-integrity-in-docker.sh` 与新的 `install-integrity-powershell.sh` 此前都只在写出

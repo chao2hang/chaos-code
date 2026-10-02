@@ -255,6 +255,11 @@ Exit status: 0 verified, 1 refused, 2 no public key compiled in.
 1. `python3 scripts/ci/check-version-lockstep.py` — the version the release is
    built from has to be the version the updater will compare against
    ([CONTRIBUTING.md](../CONTRIBUTING.md), *Release versioning*).
+   `python3 scripts/ci/test-installer-asset-names.py` is its sibling for the other half
+   of an artifact's identity: the four places that ask a release for a file
+   (`install.sh`, `install.ps1`, `install.bat`, `chaos update`) have to ask for names this
+   workflow actually publishes. Both also run in CI, so this step is a pre-flight, not the
+   only place they are checked.
 2. `scripts/verify-release-signature.sh --tag <previous> --all` against the last
    release. This is the pre-flight on the key pair: if the current variable no
    longer verifies the last published artifacts, the secret and the variable have

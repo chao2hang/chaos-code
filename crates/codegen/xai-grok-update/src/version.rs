@@ -767,6 +767,47 @@ mod tests {
         );
     }
 
+    /// The asserts above are this file's opinion about the names. This one reads the
+    /// publisher: `.github/workflows/release.yml` decides what a release actually
+    /// carries, in its `copy_one` lines. The two sides are edited by different people
+    /// in different languages, and a rename on either one is invisible until a
+    /// `chaos update` 404s -- which surfaces as "version not found", not as "the
+    /// updater asked for a file nobody publishes".
+    #[test]
+    fn gh_release_asset_names_are_names_the_workflow_publishes() {
+        let workflow = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../.github/workflows/release.yml");
+        let text = std::fs::read_to_string(&workflow)
+            .unwrap_or_else(|err| panic!("cannot read {}: {err}", workflow.display()));
+        let published: Vec<&str> = text
+            .lines()
+            .filter_map(|line| {
+                let rest = line.trim().strip_prefix("copy_one ")?;
+                rest.split_whitespace().nth(2)
+            })
+            .collect();
+        assert_eq!(
+            published.len(),
+            6,
+            "expected six published assets in release.yml, found {published:?}"
+        );
+        for (os, arch) in [
+            ("linux", "x86_64"),
+            ("linux", "aarch64"),
+            ("macos", "x86_64"),
+            ("macos", "aarch64"),
+            ("windows", "x86_64"),
+            ("windows", "aarch64"),
+        ] {
+            let name = gh_release_asset_name(os, arch).unwrap();
+            assert!(
+                published.contains(&name.as_str()),
+                "gh_release_asset_name({os:?}, {arch:?}) = {name}, which release.yml \
+                 does not publish; it publishes {published:?}"
+            );
+        }
+    }
+
     #[test]
     fn test_gh_release_asset_url() {
         assert_eq!(
