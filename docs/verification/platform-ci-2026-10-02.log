@@ -252,3 +252,133 @@ container behind forever.
 What this file is still NOT evidence about: a green `installer integrity labs` job on a
 runner. The routes are proven on Linux here; the next push's run is what shows the job
 passing where it previously could not.
+
+================================================================================
+
+2026-10-03 -- the Windows leg moved past the installer step and stopped inside our
+own fixture; macOS is green again on the current HEAD
+
+Run 37061975515 (head `22683f8c`) is the first run in this file that reached
+`completed` with every job created, so for the first time the table below is a whole
+picture rather than a table of cancellations:
+
+    $ gh run view 37061975515 --json jobs \
+        --jq '.jobs[] | "\(.name) | \(.status)/\(.conclusion)"'
+    secret scan | completed/success
+    GUI browser E2E | completed/success
+    GUI engine, Web host and frontend | completed/success
+    docs localization | completed/failure
+    npm package scripts | completed/success
+    rust check / clippy / test | completed/success
+    workflows present | completed/success
+    installer integrity labs | completed/success
+    platform tests (macos-14) | completed/success
+    platform tests (windows-latest) | completed/failure
+
+`platform tests (macos-14)` is green on this head as well as on `60e215fe`, so the
+macOS fixes (short socket root, `resolve_rg`, the local release endpoint, the theme
+pin) are holding across two consecutive heads rather than having passed once.
+`docs localization` is the ripgrep provisioning hole; it is recorded in full in
+`docs/verification/workflow-toolchain-2026-10-03.log` and is not a platform result.
+
+Windows: the previous root cause was real but incomplete
+
+Step conclusions for job 111036711922:
+
+    1 | Set up job | success
+    2 | Run actions/checkout@v4 | success
+    3 | Parse the PowerShell installers | failure
+    4 | Install protoc | skipped
+    5 | Read pinned toolchain | skipped
+    6 | Install Rust | skipped
+    7 | Run Swatinem/rust-cache@v2 | skipped
+    8 | Provide ripgrep for the search tools | skipped
+    9 | cargo test (target-OS crates) | skipped
+    10 | Report failure environment | success
+
+The WSL-launcher diagnosis in `docs/verification/installer-asset-probe-2026-10-03.log`
+did its job -- `find_bash()` is in this head (`git show 22683f8c:scripts/ci/test-installer-asset-names.py`
+contains it) and the step now gets a usable interpreter:
+
+    ok  executing install.sh's detect_platform with C:\Program Files\Git\bin\bash.exe
+    ok  every asset arm names a published asset when run: Linux/x86_64->chaos-linux-x64,
+        Linux/aarch64->chaos-linux-arm64, Darwin/x86_64->chaos-darwin-x64, Darwin/arm64->chaos-darwin-arm64
+    ok  and is refused as designed on MINGW64_NT-10.0, FreeBSD, Linux
+    note  this host's uname is a Windows one, so detect_platform refuses, as designed
+    8 check(s), 0 failure(s)
+
+What fails is the fixture that runs next, not the check:
+
+    FAIL: test_the_rest_of_the_check_still_runs_when_bash_is_found (__main__.DegradedLookupTests.test_the_rest_of_the_check_still_runs_when_bash_is_found)
+    Traceback (most recent call last):
+      File "D:\a\chaos-code\chaos-code\scripts\ci\test-installer-bash-resolution.py", line 182, in test_the_rest_of_the_check_still_runs_when_bash_is_found
+        self.assertIn("this host's own uname", out.getvalue())
+    AssertionError: "this host's own uname" not found in "   ok  release.yml publishes 6 assets: ...
+        \n   note  this host's uname is a Windows one, so detect_platform refuses, as designed\n"
+    Ran 13 tests in 1.610s
+    FAILED (failures=1, skipped=10)
+
+This is a defect in the test this repository added on 2026-10-03 to stop exactly this
+kind of Windows breakage, and the Windows leg is what found it. The install.sh leg of
+the asset-name check has two terminal sentences and the host decides which one runs:
+
+    res.note("this host's uname is a Windows one, so detect_platform refuses, as designed")
+    res.ok(f"this host's own uname picks {host.stdout.strip()!r}, which is published")
+
+The fixture asserted the second one unconditionally, so it was a Linux-only test wearing
+a cross-platform name. Every one of its 12 siblings passed on Windows; this one had
+never been run anywhere but Linux. Writing "the Windows leg is now unblocked" without
+running it is the same mistake one fewer step earlier.
+
+Fix. The host leg's outcome is not the test's choice, so the test must stop pinning one
+wording and instead require that exactly one of the two was reported:
+
+    def assertHostOutcome(self, out: str) -> str:
+        chosen = [marker for marker in (POSIX_HOST_OUTCOME, WINDOWS_HOST_OUTCOME) if marker in out]
+        self.assertEqual(len(chosen), 1, ...)
+        return chosen[0]
+
+and the two sentences are pinned separately, by driving the branch on any host. The
+probe arms call `run_detect_platform` while the host leg calls `run_shipped`, so
+monkeypatching only the latter selects the branch without disturbing anything else:
+
+    for stderr, want in (
+        ("", POSIX_HOST_OUTCOME),
+        ("install.sh: this host needs install.ps1 -- use PowerShell to install\n", WINDOWS_HOST_OUTCOME),
+    ):
+        ...
+        asset_names.run_shipped = lambda *_a, **_k: subprocess.CompletedProcess(
+            args=["bash"], returncode=0 if not stderr else 1, stdout="chaos-linux-x64", stderr=stderr)
+
+Proof against the captured CI output, rather than against a guess about it: the verbatim
+Windows transcript above was fed to the new assertion.
+
+    old assertion "this host's own uname" present? False
+    new assertion accepts it and picks: "this host's uname is a Windows one"
+    picks (POSIX run): "this host's own uname picks"
+    rejected as expected: 0 != 1 : the host uname leg must report exactly one outcome, got [] from:
+    rejected as expected: 2 != 1 : the host uname leg must report exactly one outcome, got [...] from:
+
+Five mutations, each written back and `cmp`-verified byte-identical; 0 survived:
+
+| # | mutation | fixture that goes red |
+|---|---|---|
+| B1 | pinned Windows sentence wrong (`...is a BSD one`) | `test_each_host_outcome_is_reachable_and_pinned` |
+| B2 | fake never refuses, so the Windows branch is unreachable | same |
+| B3 | the checker rewords its Windows note | same |
+| B4 | the Windows refusal stops being a note (`if False and …`) | same |
+| B5 | the selection stops selecting (markers not filtered by presence) | `test_each_host_outcome_is_reachable_and_pinned`, `test_the_rest_of_the_check_still_runs_when_bash_is_found` |
+
+B1/B2/B3/B4 are the ones that matter for the original bug: they show the Windows branch
+is genuinely driven here, and that a wording change on either side of the seam is caught
+on Linux instead of on a Windows runner five pushes later. `Ran 14 tests ... OK` locally
+after the change (13 before, plus the pinned-branch test).
+
+What this section is still not evidence about
+
+`cargo test (target-OS crates)` has still never executed on Windows. Step 9 is `skipped`
+in this run just as in the four before it, so the honest count is: macOS has produced
+real results, Windows has produced none, and the fifth consecutive head has a Windows
+failure that is about our tooling rather than the product. Fixing step 3 makes step 9
+reachable; it does not make it pass, and this row cannot be closed by anything recorded
+in this file.

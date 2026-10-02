@@ -2,6 +2,108 @@
 
 ## Unreleased
 
+### 修复：Web 主机重启后浏览器不能自愈——协议占位符被当成真工作区 id，丢失的会话无人接管
+
+给「浏览器层的断线/重连/snapshot fallback」补第一条真实故障注入的 Playwright 用例时，页面在主机重启之后
+停在「请求错误」再也不动。两个独立缺陷：
+
+**一、UI 把协议里的占位符当成真 id 回传。** `ServerMessage::Workspaces.active_workspace_id` 不是
+optional，主机在没有活动工作区时必须给个值，于是报 nil UUID。UI 照单全收存成 `activeWorkspaceId`，
+重连时回 `create_session workspace_id="00000000-0000-0000-0000-000000000000"`；主机只能在登记表里找这个
+id，找不到，回 `workspace_unavailable`。修法是把占位符显式命名为 `NIL_WORKSPACE_ID`，回传前经
+`activeWorkspaceIdOrNull()` 过滤，`workspaceChanged` 的 `workspaceId` 改为可选、无工作区时把 `sessionId`
+置空（原来保留的是上一个工作区的会话）。两侧都要动：`chaos-engine` 新增 `selected_workspace()`，把**入站**
+nil 也读作「未选」，因为 `workspace_unavailable` 与 `workspace_session_mismatch` 两个错误的产生点都在
+主机侧，只改 UI 会留下「别的客户端发同一字符串仍然红」。这不是防御性冗余。
+
+**二、没有任何东西接管「主机不再认识我的会话」。** 会话活在进程内存里，主机重启即全丢。重连后 UI 发
+`resume(旧 session_id)`，主机回 `session_not_found`，UI 只是把徽标刷成「请求错误」就停在那儿。而
+`submit()` 在没有 session id 时直接 return——**输入框按发送键什么都不做，不是报错，是静默失灵**。
+修法：`sessionLossRecoveryMessage()` 对 `session_not_found` 与 `workspace_session_mismatch` 主动申请一个
+主机能答的新会话。凡 early-return 于「状态不完整」的入口，都值得问一句有没有东西会让状态**永久**不完整。
+
+**根因不是读代码读出来的，是把每一帧打下来看到的**：`routeWebSocket` 两侧帧落盘，`addInitScript` 里用
+MutationObserver 把状态徽标出现过的每个值记进 `window.__chaosStatusSeen`（恢复会在半秒内穿过
+连接断开，正在重连 → 已连接 → 历史已恢复，轮询渲染文本会漏掉中间态——这个技巧保留在正式测试里）。
+重启后那条腿的出站是 `resume(旧 id)` → `create_session(workspace_id=占位符)`，入站是
+`session_not_found` → `workspace_unavailable`：第二个错误是 UI 自己造成的。
+
+**修复前的症状在真实 shipped 路径上重放过**（把 UI 两处改回去、`dist` 重新 build）：
+`Expected: "会话已创建" / Received: "请求错误"`，桌面与移动两个视口同时红；然后写回原文 `cmp` 校验字节一致。
+
+**7 处变异，0 存活，0 处未还原**。其中一处值得记：把 `activeWorkspaceIdOrNull` 的过滤去掉，
+「占位符视为无工作区」那条测试**仍然绿**——它测的是存储路径，变异动的是回传路径；红的是恢复测试里的
+`workspace_id: null` 断言。两个函数必须分开、两侧各要有一条夹具，否则任意一侧被"简化"掉都还有测试绿着。
+另一处被变异纠正的是我自己的断言：`expect(firstHost.exitCode).not.toBeNull()` 在 SIGKILL 之后必然红，
+因为被信号停掉的进程 `exitCode` 本就是 `null`、`signalCode` 才有值。正式测试注释里那句「关服务器那一侧的
+腿传不到页面」原本只是「我记得」，现在有记录：同一页面里先 `server.close()` 等 4 秒（腿数仍 1、徽标不变、
+无新帧），再 `route.close()`（腿数立刻 2、出站 `list_workspaces, resume`）——关错一侧的话这 3 条会全部
+「通过」而什么都没注入。
+
+`npm test` 38 通过/5 文件（`session.test.ts` 16→18 例）、
+`cargo test -p chaos-engine --test workspace_session` 4 通过（一条走 `ListWorkspaces`→断言占位符→
+`CreateSession`→`Resume` 完整回环，另一条是同一段代码的反向夹具，防止「过滤」退化成「不校验」）、
+Playwright 6 通过（桌面+移动 ×3 条，11.3s）。边界：Tauri 主机未被 e2e 覆盖；重连退避的次数没钉成常数；
+恢复出来的是空会话而非旧 transcript（UI 变绿不等于用户回到原来的对话）。
+见 `docs/verification/web-host-reconnect-2026-10-03.log`。
+
+### 新增门禁：作业需要的工具，必须在触发它的那个步骤之前装好
+
+CI 的 `docs localization` 作业每天都红，根因是它需要的工具那个 runner 上根本没有——
+`scripts/l10n-guard.sh` 要 `rg`，而 `docs-l10n` 作业**从来不装 ripgrep**，前置检查命中后 `exit 64`、
+17 例夹具全红。全仓扫一遍供给：`rust` 作业 apt 装了 `ripgrep`、`platform tests` 下载它的 release 包、
+`gui`/`gui-browser-e2e`/`npm-scripts` 都有 `actions/setup-node`。只有 `docs-l10n` 什么都没装，而它需要的
+恰好是别的作业为了完全不同的原因顺手装上的那两个之一——这个洞在任何一次「照着别的作业抄一段」里都不会
+被发现。因果方向要写清：**这个红是上一轮 l10n fail-closed 改造的成果，不是新引入的坏**。改造之前 `rg`
+缺失会让列清单的管道吐出空集，而空集在本守卫的语义里等于「没有中文丢失 = 通过」，那天的 CI 于是绿着、
+什么也没测；改造之后它拒绝出结论，作业才红。红是对的，缺的是那个 apt 步骤（已加在 checkout 之后）。
+
+新增 `scripts/ci/check-workflow-toolchain.py`，让这类事不再靠人记得。规则只读 `run:` 正文：整行注释与
+`#` 尾注在匹配前一律去掉（`strip_trailing_comment()` 一个函数负责，它跳过引号内的 `#`，
+`…/releases/#anchor` 这种 URL 不能被剪断）、步骤 `name:` 不算脚本、`node|npm|npx` 必须出现在行首或
+`;`/`&`/`|` 之后、跨步骤比索引且同一脚本内比行号（`apt-get install ripgrep` 写在守卫之后仍然算
+「跑不了守卫」）、`uses: actions/setup-node` 算 node 的供给、点名的 workflow 不存在或一个都没找到都直接
+退出 1。工具表**故意只有两条**（ripgrep、node），每条都是已经咬过一口的，没有一条来自「看起来像需要」。
+15 例夹具的第一条就是真实仓库，它在修 `ci.yml` 之前红而**只红这一条**——其余 14 例全绿说明红的是仓库
+缺工具，不是新检查算错。**11 处变异，0 存活**；W6/W7/W9 顺带把真实仓库那条弄红，正是「放宽规则会误伤
+真实 workflow」的直接证据。
+
+两轮等价变异揪出守卫自己的两个缺陷。W3 关掉的注释过滤是**死代码**：`strip_trailing_comment()` 对整行
+注释本来就先在 `#` 处截成空串，那层过滤永远轮不到起作用——一处永远不影响结果、读代码的人却以为它在起
+作用的条件，处置是删掉而不是补测试。W5 不红是**夹具写错**：那条夹具的步骤名少了 `scripts/` 前缀，而触发
+词是路径 `scripts/l10n-guard.sh`，所以它无论守卫怎么写都绿；补齐触发串后 W5 立刻转红——「步骤 `name:`
+里的守卫名不算需求」这句话在写下的时候并没有被验证过。顺手记一条 CI 语义，免得「CI 全被取消」再被读成
+CI 坏了：`cancel-in-progress: false` 只保证**正在跑**的作业不被掐掉，不保证排队中的作业活着，GitHub 在
+同组排进新作业时会取消组里已在排队的旧 run。见 `docs/verification/workflow-toolchain-2026-10-03.log`。
+
+### 修复：Windows 腿过了安装器那一步，却被本仓库自己的夹具绊住——一条 Linux-only 测试挂着跨平台的名字
+
+run `37061975515` 的 `platform tests (windows-latest)` 终于走通了 `Parse the PowerShell
+installers` 的解释器问题（`ok executing install.sh's detect_platform with
+C:\\Program Files\\Git\\bin\\bash.exe`、`8 check(s), 0 failure(s)`），然后在紧接着跑的夹具上红了：
+
+    AssertionError: "this host's own uname" not found in "...（前面几行略，全文见证据文件）"
+         note  this host's uname is a Windows one, so detect_platform refuses, as designed
+
+被打印出来的 actual 里那一行好端端地在那儿。install.sh 那一腿有**两句终点语，由主机决定走
+哪句**：POSIX 主机 `ok this host's own uname picks '<asset>', which is published`，Windows 主机
+`note this host's uname is a Windows one, …`（`install.sh` 对 Windows 用户的正确行为就是让他去跑
+`install.ps1`）。夹具无条件断言 POSIX 那一句，于是它是一条**挂着跨平台名字的 Linux-only 测试**——
+同批 13 条里另外 12 条在 Windows 上全过。讽刺的是它正是上一轮为了「别让 Windows 再被环境绊倒」
+而加的；教训写成一句话：**在 Windows runner 上跑过之前，任何「Windows 已解锁」的说法都不成立**。
+
+修法承认主机腿的结论不由测试决定：不再钉某一个措辞，而是要求**恰好报告了两句之一**（0 句或
+2 句都判失败），并把两句话分别钉住——探针臂调 `run_detect_platform`、主机腿调 `run_shipped`，
+只 monkeypatch 后者就能在**任意主机**上驱动目标分支，不惊动其它检查。证据不是推测：CI 抓到的
+Windows 原文被直接喂给新断言，旧断言 `present? False`、新断言接受并选出 Windows 那句。**5 处
+变异 0 存活**，其中 B1 钉错措辞、B2 让分支不可达、B3 改守卫侧措辞、B4 把 Windows 拒绝从 note
+改成 failure 四条都让新夹具转红——它们才是「两侧任一改词都会在 Linux 上被抓到，而不是第五次
+push 才在 Windows runner 上爆」的论据。本机 `Ran 14 tests … OK`。
+
+**边界要说白**：`cargo test (target-OS crates)` 在 Windows 上仍然一次也没执行过（这一步在
+`cargo test` 之前，step 9 本次依旧 `skipped`）。macOS 已有真实结论，Windows 没有。
+见 `docs/verification/platform-ci-2026-10-02.log` 的 2026-10-03 一节。
+
 ### 修复：`GitGate` 解析不出仓库时那次 invalidate 是空转，在飞的 git walk 会被当成新读返回
 
 `GitGate::invalidate(root)` 的契约是「工作区变了，作废缓存，之后的读必须是新 walk」。它解析不出

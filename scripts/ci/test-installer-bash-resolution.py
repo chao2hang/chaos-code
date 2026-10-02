@@ -24,6 +24,7 @@ import importlib.util
 import io
 import os
 import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -35,6 +36,12 @@ SPEC = importlib.util.spec_from_file_location(
 asset_names = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
 SPEC.loader.exec_module(asset_names)
+
+# The two terminal sentences of install.sh's host-uname leg, copied from
+# test-installer-asset-names.py. They are asserted literally so a wording change has to
+# be a deliberate edit here too; neither is a substring of the other.
+POSIX_HOST_OUTCOME = "this host's own uname picks"
+WINDOWS_HOST_OUTCOME = "this host's uname is a Windows one"
 
 SH = shutil.which("sh") or "/bin/sh"
 GOOD = f'exec "{SH}" "$@"'
@@ -179,7 +186,45 @@ class DegradedLookupTests(unittest.TestCase):
             asset_names.check_install_sh(res, published)
         self.assertEqual(res.failures, [], res.failures)
         self.assertIn("executing install.sh's detect_platform", out.getvalue())
-        self.assertIn("this host's own uname", out.getvalue())
+        # The host leg ends in one of two sentences, and which one is not this test's
+        # choice: a POSIX host picks its own asset, a Windows host is refused by design
+        # because install.sh sends that user to install.ps1. Pinning either sentence
+        # makes the test Linux-only -- that is exactly how the windows leg broke, with
+        # `AssertionError: "this host's own uname" not found in` a correct Windows run.
+        self.assertHostOutcome(out.getvalue())
+
+    def assertHostOutcome(self, out: str) -> str:
+        """Require exactly one of the two terminal host-leg sentences, and return it."""
+        chosen = [marker for marker in (POSIX_HOST_OUTCOME, WINDOWS_HOST_OUTCOME) if marker in out]
+        self.assertEqual(
+            len(chosen),
+            1,
+            f"the host uname leg must report exactly one outcome, got {chosen} from:\n{out}",
+        )
+        return chosen[0]
+
+    def test_each_host_outcome_is_reachable_and_pinned(self):
+        # Both branches, driven here regardless of the host this runs on: the branch is
+        # chosen by whether install.sh refuses, so faking that answer selects it. Without
+        # these, the two sentences could drift and the test above would still pass.
+        for stderr, want in (
+            ("", POSIX_HOST_OUTCOME),
+            ("install.sh: this host needs install.ps1 -- use PowerShell to install\n", WINDOWS_HOST_OUTCOME),
+        ):
+            with self.subTest(outcome=want):
+                res = asset_names.Result()
+                original = asset_names.run_shipped
+                asset_names.run_shipped = lambda *_a, **_k: subprocess.CompletedProcess(
+                    args=["bash"], returncode=0 if not stderr else 1, stdout="chaos-linux-x64", stderr=stderr
+                )
+                try:
+                    out = io.StringIO()
+                    with contextlib.redirect_stdout(out):
+                        published = asset_names.published_assets(res)
+                        asset_names.check_install_sh(res, published)
+                finally:
+                    asset_names.run_shipped = original
+                self.assertEqual(self.assertHostOutcome(out.getvalue()), want)
 
 
 class RealHostTests(unittest.TestCase):
