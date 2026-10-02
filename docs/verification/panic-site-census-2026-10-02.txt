@@ -1,0 +1,158 @@
+$ date -u
+Fri Oct  2 04:26:07 PM UTC 2026
+
+$ python3 scripts/ci/panic-site-census.py
+crate                             unwrap  expect  panic!  unsafe  all .unwrap
+xai-grok-pager                        57     133      30      17         5476
+xai-grok-shell                        46     116      29      13         8167
+xai-grok-tools                        16     122       8      19         3397
+xai-grok-test-support                 56      40      22       7          172
+xai-grok-workspace                    47      26       3       3         2810
+xai-grok-sandbox                      42       4       1      19          225
+xai-computer-hub-sdk                   1      45       1       0           50
+xai-grok-pager-render                  8       8       4      27          438
+xai-grok-pager-pty-harness             0      15       3       2           27
+xai-grok-agent                         5       9       0       0          818
+xai-test-utils                         6       5       3       1            6
+chaos-engine                           5       8       0       1          419
+xai-codebase-graph                     4       7       2       1          142
+xai-grok-shell-terminal                9       3       0       0          124
+xai-fast-worktree                      8       0       2      52         2172
+xai-grok-telemetry                     0      10       0       0          256
+xai-ratatui-textarea                   4       0       5       0          115
+xai-tool-runtime                       7       1       0       0           56
+ptyctl                                 6       0       1       0           37
+xai-grok-web                           5       2       0       0          665
+xai-fuzzy-file-search                  4       2       0       1            7
+xai-grok-mcp                           2       4       0       3          126
+xai-chat-state                         0       1       4       0          171
+xai-grok-http                          0       5       0       0            2
+xai-grok-pager-bin                     1       3       1      21           95
+xai-compaction-transcript              3       0       1       0            3
+xai-grok-shared                        0       4       0      17          120
+xai-computer-hub-mcp-adapter           0       4       0       0           26
+xai-grok-compaction                    0       0       4       0           51
+xai-file-utils                         0       3       0       0          407
+xai-grok-markdown                      1       2       0       1           97
+xai-grok-sampling-types                0       2       1       0          120
+xai-grok-session-search                0       2       1       0          216
+xai-grok-secrets                       0       1       1       0            1
+xai-grok-voice                         0       2       0       0           42
+xai-grok-workspace-daemon              2       0       0      16          104
+xai-hunk-tracker                       2       0       0       0          185
+xai-tty-utils                          1       0       1      52           12
+xai-tool-types                         1       1       0       0           62
+xai-acp-lib                            0       1       0       2           14
+xai-grok-config                        0       0       1       4          544
+xai-grok-config-types                  0       0       1       0           80
+xai-grok-extra-ca                      0       1       0       0            6
+xai-grok-hooks                         0       1       0       0          118
+xai-grok-mermaid                       0       1       0       1            0
+xai-grok-models                        0       1       0       0            0
+xai-grok-pager-diff                    0       0       1       0            9
+xai-grok-pager-minimal                 1       0       0       0           35
+xai-grok-sampler                       0       0       1       0          129
+xai-grok-tools-api                     1       0       0       0            3
+xai-grok-workspace-client              0       1       0       0            8
+xai-proto-build                        0       0       0       0            6
+ptyctl-cli                             0       0       0       0            0
+xai-agent-lifecycle                    0       0       0       0            0
+xai-crash-handler                      0       0       0      58            1
+xai-dirs                               0       0       0       0            9
+xai-fsnotify                           0       0       0       0          261
+xai-gix-status                         0       0       0       1            2
+xai-grok-active-sessions               0       0       0       3           33
+xai-grok-announcements                 0       0       0       0            5
+xai-grok-auth                          0       0       0       0           15
+xai-grok-bundle                        0       0       0       0          137
+xai-grok-dashboard-store               0       0       0       0          192
+xai-grok-desktop                       0       0       0       0            0
+xai-grok-diag-server                   0       0       0       0            0
+xai-grok-env                           0       0       0       0            0
+xai-grok-foreign-sessions              0       0       0      21          339
+xai-grok-gboom                         0       0       0       0            3
+fuzz                                   0       0       0       0            0
+xai-grok-markdown-core                 0       0       0       0            0
+xai-grok-memory                        0       0       0       5          654
+xai-grok-paths                         0       0       0       0           17
+xai-grok-plugin-marketplace            0       0       0       0          227
+xai-grok-session-events                0       0       0       0           27
+xai-grok-shell-base                    0       0       0      13           96
+xai-grok-shell-session-support         0       0       0       0           16
+xai-grok-signature                     0       0       0       0           15
+xai-grok-status-line                   0       0       0       0            7
+xai-grok-subagent-resolution           0       0       0       0           38
+xai-grok-update                        0       0       0       1          565
+xai-grok-version                       0       0       0       0            0
+xai-grok-workspace-types               0       0       0       0          113
+xai-hooks-plugins-types                0       0       0       0           28
+xai-mixpanel                           0       0       0       0            1
+xai-prompt-queue                       0       0       0       0            7
+xai-ratatui-inline                     0       0       0       3           44
+xai-sqlite-journal                     0       0       0       6           52
+xai-system-power                       0       0       0      29            0
+xai-token-estimation                   0       0       0       0            4
+xai-tracing-macros                     0       0       0       0            0
+xai-workflow                           0       0       0       0           59
+xai-circuit-breaker                    0       0       0       0           16
+xai-computer-hub-core                  0       0       0       0            6
+xai-interjection-core                  0       0       0       0            0
+xai-message-delivery-core              0       0       0       0            0
+xai-tool-protocol                      0       0       0       0          236
+xai-tracing                            0       0       0       0           25
+TOTAL                                351     596     132     420        31621
+
+31621 .unwrap() calls in all, 351 of them outside any cfg(test) span (1%); 654 unsafe sites, 420 in production.
+unsafe by kind, every build: 596 block, 25 fn, 7 impl, 26 extern
+
+12 .rs files under crates/ are compiled by nothing: no crate root reaches them, so every site in them is counted nowhere.
+   crates/codegen/xai-grok-pager/src/app/dispatch/tests/usage_partial_failure.rs
+   crates/codegen/xai-grok-pager/src/scrollback/blocks/credit_limit.rs
+   crates/codegen/xai-grok-pager/src/slash/commands/fallback.rs
+   crates/codegen/xai-grok-pager/src/views/dashboard/render_tests.rs
+   crates/codegen/xai-grok-pager/src/views/dashboard/state_tests.rs
+   crates/codegen/xai-grok-pager/src/views/shortcuts_help_tests.rs
+   crates/codegen/xai-grok-shell/src/session/acp_session_impl/incomplete_end_turn.rs
+   crates/codegen/xai-grok-shell/src/session/acp_session_impl/selective_compaction.rs
+   crates/codegen/xai-grok-shell/src/session/dcp_config.rs
+   crates/common/xai-grok-compaction/src/strategies/deduplication.rs
+   crates/common/xai-grok-compaction/src/strategies/mod.rs
+   crates/common/xai-grok-compaction/src/strategies/purge_errors.rs
+A test file in that state is coverage someone believes they have; wire the module up or delete the file.
+
+$ python3 scripts/ci/panic-site-census.py --check-uncompiled scripts/ci/uncompiled-sources.txt
+uncompiled set holds: 12 files, exactly as recorded
+
+$ python3 scripts/ci/panic-site-census.py --check-baseline scripts/ci/panic-site-baseline.tsv
+baseline holds: 97 crates, 0 fewer production sites than recorded
+
+=== follow-up: the /adhd regression fixed, and the crate-local guard proven non-vacuous ===
+
+$ date -u
+Fri Oct  2 04:35:45 PM UTC 2026
+
+$ cargo test -p xai-grok-pager --offline --lib slash::commands::tests   # after 'pub mod adhd;' + PAGER_COMMAND_KEYS
+test slash::commands::tests::pager_builtin_triggers_are_reserved_in_shell ... ok
+test slash::commands::tests::the_adhd_toggle_is_reachable_through_the_registry ... ok
+test slash::commands::tests::every_command_file_in_this_directory_is_declared ... ok
+test result: ok. 48 passed; 0 failed; 0 ignored; 0 measured; 9176 filtered out; finished in 0.16s
+
+$ cargo test -p xai-grok-pager --offline --lib slash::commands::adhd
+test slash::commands::adhd::tests::an_unknown_argument_is_rejected_without_touching_the_config ... ok
+test slash::commands::adhd::tests::toggling_preserves_every_other_key ... ok
+test slash::commands::adhd::tests::absent_or_unparsable_config_reads_as_off ... ok
+test slash::commands::adhd::tests::the_toggle_round_trips_through_the_real_config_file ... ok
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 9223 filtered out; finished in 0.01s
+
+=== mutation probe: drop an undeclared file into the directory ===
+$ echo '// probe' > crates/codegen/xai-grok-pager/src/slash/commands/zz_undeclared_probe.rs
+$ cargo test -p xai-grok-pager --offline --lib every_command_file_in_this_directory_is_declared
+1 file(s) in src/slash/commands/ are named by no `mod` declaration, so nothing compiles them and their commands do not exist: ["zz_undeclared_probe"]
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 9226 filtered out; finished in 0.17s
+  (exit 101)
+
+$ rm crates/codegen/xai-grok-pager/src/slash/commands/zz_undeclared_probe.rs
+$ cargo test -p xai-grok-pager --offline --lib every_command_file_in_this_directory_is_declared
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 9226 filtered out; finished in 0.16s
+  (exit 0: with the probe file removed, the allowance holds again)

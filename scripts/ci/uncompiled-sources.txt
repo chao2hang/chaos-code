@@ -1,0 +1,3 @@
+# Files under crates/ that no build compiles, from scripts/ci/panic-site-census.py.
+# Each is a module no crate root reaches. Every line is a decision somebody
+# has to revisit: wire it up, or delete the file and its tests with it.

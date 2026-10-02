@@ -539,6 +539,16 @@ jobs:
           # bare "command not found" on a contributor's machine.
           python3 scripts/ci/check-script-portability.py
           python3 scripts/ci/test-script-portability.py
+          # Two ratchets over the Rust sources, both from one scanner. The first
+          # refuses a crate that gains a production `.unwrap()`, `.expect()`,
+          # `panic!` or `unsafe` site; the definition of "production" it uses
+          # (reachability from a crate root, minus `cfg(test)` spans) is pinned by
+          # scripts/ci/test-panic-site-census.py. The second refuses a `.rs` file
+          # that no crate root reaches, which is how `/adhd` vanished from a
+          # released build: an undeclared module is not an error to the compiler.
+          python3 scripts/ci/test-panic-site-census.py
+          python3 scripts/ci/panic-site-census.py --check-baseline scripts/ci/panic-site-baseline.tsv
+          python3 scripts/ci/panic-site-census.py --check-uncompiled scripts/ci/uncompiled-sources.txt
           # Four consumers derive a release asset name -- install.sh, install.ps1,
           # install.bat and the auto-updater -- and one workflow publishes it. A rename
           # on the publisher's side is invisible to all four until an install or an
