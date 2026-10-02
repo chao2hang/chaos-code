@@ -866,7 +866,7 @@ fn spawn_with_argv(
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped());
 
-            xai_grok_sandbox::child_net::restrict_child_network(cmd);
+            xai_grok_sandbox::restrict_child_network(cmd);
         });
         // setsid: detach from the TTY and start a new process group for tree teardown
         cmd.wrap(ProcessSession);

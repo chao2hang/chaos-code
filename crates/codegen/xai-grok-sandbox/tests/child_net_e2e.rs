@@ -1,10 +1,11 @@
 //! E2E: the child network seccomp filter denies connecting to a unix socket regardless of when the socket was created.
 //! The launch-time socket bind masks only cover endpoints that existed at startup.
 //! So this per-spawn filter is what holds across daemon start and unlink/recreate.
+//! Restricted children must not inherit connected network descriptors: the filter
+//! blocks socket creation/connect/send syscalls, while ordinary descriptor I/O is needed.
 
 #![cfg(target_os = "linux")]
 
-use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -12,6 +13,7 @@ const SOCKET_ENV: &str = "CHILD_NET_E2E_SOCKET";
 
 #[test]
 #[ignore]
+#[allow(clippy::disallowed_methods)]
 fn subprocess_entry() {
     let Ok(path) = std::env::var(SOCKET_ENV) else {
         return;
@@ -32,12 +34,7 @@ fn spawn_probe(socket: &Path, filtered: bool) -> std::process::Output {
     cmd.env(SOCKET_ENV, socket)
         .args(["--ignored", "--exact", "--nocapture", "subprocess_entry"]);
     if filtered {
-        // Built in the parent, as production spawns do: the post-fork install must not allocate
-        let filter = xai_grok_sandbox::child_net::prebuilt_child_network_filter();
-        // SAFETY: the closure only runs prctl against the parent-built program.
-        unsafe {
-            cmd.pre_exec(move || xai_grok_sandbox::child_net::install_child_network_filter(filter));
-        }
+        xai_grok_sandbox::restrict_child_network_std(&mut cmd);
     }
     cmd.output().expect("spawn probe")
 }
@@ -56,7 +53,16 @@ fn unique_socket_path() -> PathBuf {
 }
 
 #[test]
+#[allow(clippy::disallowed_methods)]
 fn filtered_child_cannot_connect_to_socket_created_after_launch() {
+    let manager = xai_grok_sandbox::SandboxManager::new(
+        xai_grok_sandbox::ProfileName::ReadOnly,
+        Path::new("/tmp"),
+    );
+    assert!(!manager.is_applied(), "no kernel apply in this test");
+    manager.install();
+    assert!(xai_grok_sandbox::should_restrict_child_network());
+
     // The socket appears only now, after this process (the "session") started
     // That mirrors a daemon that starts or unlink/recreates its endpoint mid-session, which no launch-time bind mask can cover
     let sock = unique_socket_path();
@@ -86,6 +92,7 @@ fn filtered_child_cannot_connect_to_socket_created_after_launch() {
 /// `restrict_child_network_std` is the exact call the LSP client, notification hooks, and `.envrc` evaluators make.
 /// This covers the degraded state (Landlock unavailable, apply failed) where the per-spawn filter is the only remaining child-network control.
 #[test]
+#[allow(clippy::disallowed_methods)]
 fn restrict_child_network_std_arms_from_config_without_apply() {
     let manager = xai_grok_sandbox::SandboxManager::new(
         xai_grok_sandbox::ProfileName::ReadOnly,
@@ -104,7 +111,7 @@ fn restrict_child_network_std_arms_from_config_without_apply() {
     let mut cmd = Command::new(exe);
     cmd.env(SOCKET_ENV, &sock)
         .args(["--ignored", "--exact", "--nocapture", "subprocess_entry"]);
-    xai_grok_sandbox::child_net::restrict_child_network_std(&mut cmd);
+    xai_grok_sandbox::restrict_child_network_std(&mut cmd);
     let denied = cmd.output().expect("spawn probe");
     assert_eq!(
         denied.status.code(),

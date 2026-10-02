@@ -450,7 +450,10 @@ mod stop_gate_snapshot_tests {
         let entry = stop_entry_from_subagent(&summary);
         assert_eq!(entry.r#type, BackgroundTaskType::Subagent);
         assert_eq!(entry.agent_type.as_deref(), Some("explore"));
-        let description = entry.description.unwrap();
+        let description = entry
+            .description
+            .as_deref()
+            .expect("subagent stop description");
         assert!(description.ends_with("… [+1000 chars]"));
         assert!(entry.command.is_none());
     }

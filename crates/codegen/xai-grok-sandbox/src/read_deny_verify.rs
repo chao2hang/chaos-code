@@ -170,6 +170,7 @@ fn fstatvfs_is_read_only(fd: std::os::fd::RawFd, path: &Path) -> Result<bool, St
     // SAFETY: fd is open for the duration of the call; buf is a valid
     // zero-initialized out-pointer.
     let mut buf: libc::statvfs = unsafe { std::mem::zeroed() };
+    // SAFETY: `fd` remains borrowed for the call and `buf` is writable output storage.
     if unsafe { libc::fstatvfs(fd, &mut buf) } != 0 {
         return Err(format!(
             "bwrap sentinel statvfs on {} failed: {}",

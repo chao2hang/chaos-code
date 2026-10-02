@@ -332,6 +332,31 @@ async fn test_turn_end_snapshot_first_turn() {
 }
 
 #[tokio::test]
+async fn snapshot_with_buffered_itl_intervals_reports_timing_statistics() {
+    let (handle, actor) = SessionSignalsActor::new();
+    let actor_handle = tokio::spawn(actor.run());
+
+    handle.record_inference_metrics(InferenceLatencyStats {
+        time_to_first_token_ms: Some(100),
+        time_to_last_byte_ms: 900,
+        chunk_count: 4,
+        itl_intervals_ms: vec![12, 24, 48],
+        itl_p50_ms: Some(24),
+        itl_p99_ms: Some(48),
+        itl_max_ms: Some(48),
+        itl_mean_ms: Some(28),
+        attempts: 0,
+    });
+
+    let snapshot = handle.snapshot().await.unwrap();
+    assert_eq!(snapshot.itl_max_ms, Some(48));
+    assert_eq!(snapshot.itl_mean_ms, Some(28));
+
+    handle.shutdown();
+    actor_handle.await.unwrap();
+}
+
+#[tokio::test]
 async fn test_inference_metrics_single_response() {
     let (handle, actor) = SessionSignalsActor::new();
     let actor_handle = tokio::spawn(actor.run());

@@ -3,7 +3,7 @@
 //! `/run`, `/var`, and the home directory stay readable in restricted profiles (DNS/NSS, tool config).
 //! That leaves container-runtime API sockets path-reachable, so profile resolution denies the well-known endpoints that exist at launch.
 //! These launch-time masks are defense in depth only: they cannot cover sockets created or unlinked/recreated after startup.
-//! The session-long guarantee is the per-spawn child network filter ([`crate::child_net::restrict_child_network`]).
+//! The session-long guarantee is the per-spawn child network filter ([`crate::restrict_child_network`]).
 
 use std::io;
 use std::path::{Path, PathBuf};

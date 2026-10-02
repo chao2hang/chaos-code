@@ -108,7 +108,7 @@ impl AsyncTerminalRunner for LocalTerminalRunner {
         // Detach from the controlling terminal so child processes (e.g. GPG pinentry) cannot open /dev/tty and corrupt the TUI.
         // (This also makes the child its own session/group leader, which the ProcessGroup attach below relies on.)
         xai_grok_tools::util::detach_command(&mut cmd);
-        xai_grok_sandbox::child_net::restrict_child_network(&mut cmd);
+        xai_grok_sandbox::restrict_child_network(&mut cmd);
 
         #[allow(clippy::disallowed_methods)]
         // The child is killed via its process group on timeout; an unreapable (D-state) child is abandoned to the runtime's orphan reaper

@@ -4811,7 +4811,7 @@ pub async fn start_mcp_server(
                 cmd.kill_on_drop(true).args(&spawn_args);
                 apply_stdio_env(&mut cmd, &env, ctx.session_id);
                 xai_grok_tools::util::detach_command(&mut cmd);
-                xai_grok_sandbox::child_net::restrict_child_network(&mut cmd);
+                xai_grok_sandbox::restrict_child_network(&mut cmd);
                 cmd
             };
 

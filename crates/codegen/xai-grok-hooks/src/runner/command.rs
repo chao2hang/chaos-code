@@ -148,7 +148,7 @@ pub async fn run_command_hook(
     };
 
     xai_grok_tools::util::detach_command(&mut cmd);
-    xai_grok_sandbox::child_net::restrict_child_network(&mut cmd);
+    xai_grok_sandbox::restrict_child_network(&mut cmd);
 
     #[cfg(not(unix))]
     let env_root = {

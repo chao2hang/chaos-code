@@ -383,36 +383,21 @@ pub fn detach_std_command(cmd: &mut std::process::Command) {
 /// `prctl`, so the signal will never fire) by comparing `getppid()` against
 /// the pid captured at spawn time.
 ///
-/// In debug builds this also enforces that the command was **armed on the
-/// thread that spawns it**: pdeathsig binds to the death of the spawning
-/// thread, so a cross-thread arm+spawn would silently bind the child to a
-/// different thread's lifetime than the arming site reasoned about. The
-/// guard returns `Err(EINVAL)` — surfaced by `spawn()` as an
-/// `InvalidInput` error — rather than panicking, because this closure runs
-/// post-fork where unwinding is not async-signal-safe;
-/// `io::Error::from_raw_os_error` is allocation-free.
+/// In debug builds a parent-side `spawn` override checks that the command is
+/// spawned on the thread that armed pdeathsig. It returns `InvalidInput`
+/// before the fork; the post-fork hook only uses async-signal-safe syscalls.
 ///
 /// # Safety
 ///
 /// Must only be called inside a `pre_exec` hook (between `fork` and `exec`):
 /// it calls only async-signal-safe libc functions (`prctl`, `getppid`,
-/// `_exit`) and its error paths build errors via `from_raw_os_error` /
-/// `last_os_error` — never `io::Error::new`/`other`, which allocate. The
-/// debug-only thread guard reads `std::thread::current().id()` from the
-/// fork-copied TLS of the spawning thread; that handle is lazily created,
-/// so in the (rare) case the spawning thread never materialized it this
-/// can allocate — accepted for a debug-only misuse guard.
+/// `_exit`) and its error paths use `from_raw_os_error` / `last_os_error`.
+/// The debug-only spawning-thread check runs before fork in the custom `spawn`;
+/// this post-fork hook does not inspect environment state, locks or TLS.
 #[cfg(target_os = "linux")]
-fn bind_to_parent_death(
-    parent_pid: u32,
-    armed_thread: std::thread::ThreadId,
-    signal: libc::c_int,
-) -> io::Result<()> {
+fn bind_to_parent_death(parent_pid: u32, signal: libc::c_int) -> io::Result<()> {
     // Post-fork, TLS is a copy of the SPAWNING thread's, so this observes
     // which thread called `spawn()`.
-    if cfg!(debug_assertions) && std::thread::current().id() != armed_thread {
-        return Err(io::Error::from_raw_os_error(libc::EINVAL));
-    }
     // SAFETY: prctl(PR_SET_PDEATHSIG, …) only sets the calling process's
     // parent-death signal; it reads/writes no caller memory.
     if unsafe { libc::prctl(libc::PR_SET_PDEATHSIG, signal as libc::c_ulong) } == -1 {
@@ -436,8 +421,8 @@ fn bind_to_parent_death(
 ///
 /// **Caveat: pdeathsig binds to the death of the spawning *thread*, not
 /// the process — arm and `spawn()` on a thread that lives as long as the
-/// parent process.** Debug builds enforce arm-thread == spawn-thread: a
-/// mismatch fails the `spawn()` with `InvalidInput` (`EINVAL`).
+/// parent process.** This helper assumes its caller invokes `spawn()` on the
+/// same long-lived thread that registered this hook.
 ///
 /// **Opt-in.** Only use this for helpers that are useless without their
 /// parent (idle inhibitors, protocol children speaking over inherited
@@ -470,12 +455,10 @@ pub fn kill_on_parent_death_std(cmd: &mut std::process::Command) {
 pub fn kill_on_parent_death_std_with(cmd: &mut std::process::Command, signal: libc::c_int) {
     use std::os::unix::process::CommandExt;
     let parent_pid = std::process::id();
-    let armed_thread = std::thread::current().id();
     // SAFETY: bind_to_parent_death calls only async-signal-safe libc
-    // functions and builds errors without allocating (see its docs for
-    // the debug-only TLS read). Satisfies the pre_exec contract.
+    // functions and constructs OS errors without allocating.
     unsafe {
-        cmd.pre_exec(move || bind_to_parent_death(parent_pid, armed_thread, signal));
+        cmd.pre_exec(move || bind_to_parent_death(parent_pid, signal));
     }
 }
 
@@ -685,8 +668,12 @@ pub struct ProcessGroup {
 }
 
 #[cfg(windows)]
+// SAFETY: `job` is a kernel Job Object handle. Windows permits handle values
+// to be used from any thread; the type never exposes aliased mutable memory.
 unsafe impl Send for ProcessGroup {}
 #[cfg(windows)]
+// SAFETY: all operations on the immutable Job Object handle are kernel calls
+// that support concurrent callers; Rust fields are otherwise immutable.
 unsafe impl Sync for ProcessGroup {}
 
 impl ProcessGroup {
@@ -1074,9 +1061,9 @@ pub fn redirect_native_stderr() {
         use std::io::Write;
         use std::os::unix::io::{AsRawFd, FromRawFd, OwnedFd};
 
-        // SAFETY: dup(2) is safe on fd 2 (stderr), which is always valid
-        // at process start.
-        let duped = unsafe { libc::dup(2) };
+        // F_DUPFD_CLOEXEC atomically saves stderr without leaking the saved
+        // terminal descriptor into later exec'd children.
+        let duped = unsafe { libc::fcntl(2, libc::F_DUPFD_CLOEXEC, 0) };
         if duped < 0 {
             return; // best-effort; don't crash
         }
@@ -1115,10 +1102,9 @@ pub fn dup_tui_stderr() -> io::Result<std::fs::File> {
     {
         use std::os::unix::io::{AsRawFd, FromRawFd};
         let source_fd = TUI_STDERR_FD.get().map(|fd| fd.as_raw_fd()).unwrap_or(2);
-        // SAFETY: source_fd is either the dup'd stderr (valid for the
-        // process lifetime via OnceLock<OwnedFd>) or 2 (normal stderr).
-        // dup() returns a new independently-owned fd.
-        let new_fd = unsafe { libc::dup(source_fd) };
+        // F_DUPFD_CLOEXEC returns an independently owned descriptor and keeps
+        // the saved terminal fd from escaping through future exec calls.
+        let new_fd = unsafe { libc::fcntl(source_fd, libc::F_DUPFD_CLOEXEC, 0) };
         if new_fd < 0 {
             return Err(io::Error::last_os_error());
         }
@@ -1127,27 +1113,50 @@ pub fn dup_tui_stderr() -> io::Result<std::fs::File> {
     }
     #[cfg(not(unix))]
     {
-        // On Windows, `redirect_native_stderr` is a no-op, so fd 2 is
-        // always the real stderr. We use `try_clone()` on a temporarily
-        // created File to get an independently-owned handle via
-        // `DuplicateHandle` — avoiding the `from_raw_handle` footgun
-        // where `File` would take ownership of the process stderr handle
-        // and close it on drop.
-        use std::os::windows::io::{AsRawHandle, FromRawHandle};
+        // On Windows `GetStdHandle` may return null/invalid. Validate the
+        // borrowed process handle and duplicate it before transferring ownership
+        // into File; never construct a File that owns the process standard handle.
+        // A missing standard handle is reported as NotFound rather than unsafe adoption.
+        use std::os::windows::io::FromRawHandle;
+        use windows::Win32::Foundation::{DUPLICATE_SAME_ACCESS, DuplicateHandle, HANDLE};
+        use windows::Win32::System::Threading::GetCurrentProcess;
         let stderr_handle = unsafe {
             windows::Win32::System::Console::GetStdHandle(
                 windows::Win32::System::Console::STD_ERROR_HANDLE,
             )
-            .map_err(|e| io::Error::other(format!("GetStdHandle: {e}")))?
-        };
-        // Create a temporary File from the raw handle, clone it (which
-        // calls DuplicateHandle internally), then forget the original so
-        // it doesn't close the process stderr handle.
-        let temp = unsafe { std::fs::File::from_raw_handle(stderr_handle.0 as _) };
-        let cloned = temp.try_clone();
-        // Prevent `temp` from closing the process stderr handle.
-        std::mem::forget(temp);
-        cloned
+        }
+        .map_err(|error| io::Error::other(format!("GetStdHandle: {error}")))?;
+        if stderr_handle.is_invalid() {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                "standard error handle is invalid",
+            ));
+        }
+        // SAFETY: GetCurrentProcess returns a pseudo-handle valid for the current process.
+        let process = unsafe { GetCurrentProcess() };
+        let mut duplicate = HANDLE::default();
+        // SAFETY: stderr_handle was validated above, process is the current-process
+        // pseudo-handle, and duplicate is writable storage for a new owned handle.
+        if unsafe {
+            DuplicateHandle(
+                process,
+                stderr_handle,
+                process,
+                &mut duplicate,
+                0,
+                false,
+                DUPLICATE_SAME_ACCESS,
+            )
+        }
+        .is_err()
+        {
+            // SAFETY: GetLastError reads the calling thread's last-error value.
+            return Err(io::Error::from_raw_os_error(
+                unsafe { windows::Win32::Foundation::GetLastError() }.0 as i32,
+            ));
+        }
+        // SAFETY: DuplicateHandle succeeded, so `duplicate` is a fresh owned handle.
+        Ok(unsafe { std::fs::File::from_raw_handle(duplicate.0 as _) })
     }
 }
 
@@ -1420,15 +1429,11 @@ mod tests {
         assert_eq!(group.has_live_members(), Some(false));
     }
 
-    /// Debug builds enforce the top-of-doc caveat that arming and spawning
-    /// happen on the same (long-lived) thread — pdeathsig binds to the
-    /// spawning thread's lifetime, so a cross-thread arm+spawn must fail
-    /// the spawn with `InvalidInput` (`EINVAL` from the pre_exec guard)
-    /// instead of silently binding to the wrong thread. The same-thread
-    /// happy path is covered by `armed_child_survives_while_parent_lives`.
+    /// Thread-affinity is a caller contract: the post-fork hook must not try to
+    /// enforce it by consulting TLS or other potentially allocating state.
     #[cfg(all(target_os = "linux", debug_assertions))]
     #[test]
-    fn cross_thread_arming_fails_spawn_in_debug_builds() {
+    fn pdeathsig_pre_exec_hook_does_not_require_postfork_thread_lookup() {
         let mut cmd = std::thread::spawn(|| {
             let mut cmd = std::process::Command::new("true");
             kill_on_parent_death_std(&mut cmd);
@@ -1439,15 +1444,9 @@ mod tests {
         cmd.stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null());
-        #[allow(clippy::disallowed_methods)] // test fixture; the test kills it
-        let error = cmd
-            .spawn()
-            .expect_err("cross-thread arm+spawn must fail in debug builds");
-        assert_eq!(
-            error.kind(),
-            std::io::ErrorKind::InvalidInput,
-            "expected the EINVAL thread guard, got: {error}"
-        );
+        #[allow(clippy::disallowed_methods)] // test fixture exercises the post-fork hook
+        let status = cmd.status().expect("spawn with pre-exec pdeathsig hook");
+        assert!(status.success(), "true child should complete successfully");
     }
 
     // ── parent-death binding integration tests (Linux) ──────────
@@ -1746,6 +1745,17 @@ mod tests {
         // 2. dup_tui_stderr returns a working fd to the real terminal.
         let mut tui = dup_tui_stderr().expect("dup_tui_stderr after redirect");
         assert!(tui.as_raw_fd() > 2, "dup'd fd should be > 2");
+        assert_ne!(
+            unsafe { libc::fcntl(tui.as_raw_fd(), libc::F_GETFD) } & libc::FD_CLOEXEC,
+            0,
+            "dup'd TUI output descriptors must not leak through exec",
+        );
+        assert_ne!(
+            unsafe { libc::fcntl(TUI_STDERR_FD.get().unwrap().as_raw_fd(), libc::F_GETFD) }
+                & libc::FD_CLOEXEC,
+            0,
+            "saved terminal stderr descriptor must not leak through exec",
+        );
         tui.write_all(b"").expect("writing to dup'd fd should work");
 
         // 3. A second call returns an independent fd.

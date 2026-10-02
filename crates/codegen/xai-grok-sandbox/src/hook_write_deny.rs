@@ -374,7 +374,9 @@ pub fn path_is_effectively_readonly(path: &Path) -> Result<bool, HookWriteDenyEr
             path: path.to_path_buf(),
             detail: "path contains interior NUL".into(),
         })?;
+    // SAFETY: statvfs is an OS output struct; all-zero is a valid initial buffer.
     let mut buf: libc::statvfs = unsafe { std::mem::zeroed() };
+    // SAFETY: c_path is NUL terminated and buf is writable for the syscall duration.
     let rc = unsafe { libc::statvfs(c_path.as_ptr(), &mut buf) };
     if rc != 0 {
         let err = std::io::Error::last_os_error();

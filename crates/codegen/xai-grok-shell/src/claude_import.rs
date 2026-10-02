@@ -1093,27 +1093,20 @@ fn apply_hooks_to_dir(hooks_dir: &Path, items: &[ImportableItem]) -> anyhow::Res
             continue;
         }
 
-        let mut handler = serde_json::json!({
-            "type": "command",
-            "command": command,
-        });
-        if let Some(t) = timeout {
-            handler
-                .as_object_mut()
-                .unwrap()
-                .insert("timeout".to_string(), serde_json::json!(t));
+        let mut handler = serde_json::Map::from_iter([
+            ("type".to_string(), serde_json::json!("command")),
+            ("command".to_string(), serde_json::json!(command)),
+        ]);
+        if let Some(timeout) = timeout {
+            handler.insert("timeout".to_string(), serde_json::json!(timeout));
         }
 
-        let mut group = serde_json::json!({
-            "hooks": [handler],
-        });
-        if let Some(m) = matcher {
-            group
-                .as_object_mut()
-                .unwrap()
-                .insert("matcher".to_string(), serde_json::json!(m));
+        let mut group =
+            serde_json::Map::from_iter([("hooks".to_string(), serde_json::json!([handler]))]);
+        if let Some(matcher) = matcher {
+            group.insert("matcher".to_string(), serde_json::json!(matcher));
         }
-        groups.push(group);
+        groups.push(serde_json::Value::Object(group));
         count += 1;
     }
 

@@ -367,11 +367,11 @@ async fn blitz_fuzz_bounded() {
     fuzz_loop(120, 0x9E3779B97F4A7C15).await;
 }
 
-/// The "test it a million times, cancelling at every point" stress run.
-/// Gated behind `#[ignore]`; invoke via `just blitz-stress` or `cargo nextest run -p xai-grok-update --run-ignored all`.
+/// The 100,000-iteration stress run that injects cancellation and corruption.
+/// Gated behind `#[ignore]`; invoke via `scripts/test-blitz-stress.sh` or `cargo test -p xai-grok-update --test test_blitz_cancel blitz_fuzz_stress -- --ignored`.
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
-#[ignore = "stress: 100k iterations, run via `just blitz-stress`"]
+#[ignore = "stress: 100k iterations, run via `scripts/test-blitz-stress.sh`"]
 async fn blitz_fuzz_stress() {
     if !can_exec_shell_scripts() {
         eprintln!("skipping: shell scripts cannot execute in this sandbox");

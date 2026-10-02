@@ -501,18 +501,19 @@ pub(super) async fn run_auth_flow_steps(
                 "disk_expired": disk_expired,
             })),
         );
-        if disk_auth.as_ref().is_some_and(|d| {
-            !crate::auth::is_expired(d) && is_cached_credential_compatible(d, grok_com_config)
+        if disk_auth.as_ref().is_some_and(|auth| {
+            !crate::auth::is_expired(auth) && is_cached_credential_compatible(auth, grok_com_config)
         }) {
             xai_grok_telemetry::unified_log::info(
                 "auth run_auth_flow using valid disk token",
                 None,
                 None,
             );
-            let d = disk_auth.unwrap();
-            let ret = d.clone();
-            auth_manager.hot_swap(d);
-            return Ok((ret, false));
+            if let Some(disk_auth) = disk_auth {
+                let ret = disk_auth.clone();
+                auth_manager.hot_swap(disk_auth);
+                return Ok((ret, false));
+            }
         }
         drop(file_lock);
         match auth_manager.auth().await {

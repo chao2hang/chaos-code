@@ -24,7 +24,10 @@
 //! sandbox.install();
 //! ```
 mod allow_path;
-pub mod child_net;
+mod child_net;
+#[cfg(all(target_os = "linux", test))]
+pub(crate) use child_net::{install_child_network_filter, prebuilt_child_network_filter};
+pub use child_net::{restrict_child_network, restrict_child_network_std};
 mod deny;
 mod hook_write_deny;
 mod logging;

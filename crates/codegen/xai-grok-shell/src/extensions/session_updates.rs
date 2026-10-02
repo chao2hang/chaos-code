@@ -79,15 +79,15 @@ struct TailPage {
 }
 
 fn page_bounds(request: &Request, total_count: usize) -> PageBounds {
+    let total_count_i64 = i64::try_from(total_count).unwrap_or(i64::MAX);
     let start = match request.offset {
-        Some(off) if off < 0 => (total_count as i64 + off).max(0) as usize,
-        Some(off) => (off as usize).min(total_count),
+        Some(off) if off < 0 => (total_count_i64.saturating_add(off)).max(0) as usize,
+        Some(off) => usize::try_from(off).unwrap_or(usize::MAX).min(total_count),
         None => 0,
     };
-    let end = match request.limit {
-        Some(lim) => (start + lim).min(total_count),
-        None => total_count,
-    };
+    let end = request.limit.map_or(total_count, |limit| {
+        start.saturating_add(limit).min(total_count)
+    });
     PageBounds { start, end }
 }
 
@@ -126,6 +126,7 @@ fn try_stream_tail_page(request: &Request, updates_path: &Path) -> io::Result<Op
     if is_turn_index {
         // One pass reads lines, detects rewinds, and computes prompt boundaries, avoiding a second traversal
         let mut has_rewinds = false;
+        let mut total_count = 0usize;
         let mut all_lines = Vec::new();
         let mut prompt_starts = Vec::new();
         let mut in_user = false;
@@ -135,6 +136,7 @@ fn try_stream_tail_page(request: &Request, updates_path: &Path) -> io::Result<Op
             if line.trim().is_empty() {
                 continue;
             }
+            total_count = total_count.saturating_add(1);
             has_rewinds |= line.contains(&*REWIND_MARKER);
             let is_user = is_user_message_chunk(&line);
             if is_user && !in_user {
@@ -149,23 +151,23 @@ fn try_stream_tail_page(request: &Request, updates_path: &Path) -> io::Result<Op
             let refs: Vec<&str> = all_lines.iter().map(|s| s.as_str()).collect();
             let live = crate::session::storage::filter_rewind_lines(refs);
             let owned: Vec<String> = live.into_iter().map(|s| s.to_owned()).collect();
+            total_count = owned.len();
             let ps = compute_prompt_starts(&owned);
             (owned, ps)
         } else {
             (all_lines, prompt_starts)
         };
-        let total_count = all_lines.len();
-
-        let tail_n = request.turn_index.unwrap();
+        let Some(tail_n) = request.turn_index.filter(|&count| count > 0) else {
+            return Ok(None);
+        };
         let start = if tail_n >= prompt_starts.len() {
             0
         } else {
             prompt_starts[prompt_starts.len() - tail_n]
         };
-        let end = match request.limit {
-            Some(lim) => (start + lim).min(total_count),
-            None => total_count,
-        };
+        let end = request.limit.map_or(total_count, |limit| {
+            start.saturating_add(limit).min(total_count)
+        });
         let has_more = start > 0;
         let lines = all_lines[start..end].to_vec();
         Ok(Some(TailPage {
@@ -176,7 +178,10 @@ fn try_stream_tail_page(request: &Request, updates_path: &Path) -> io::Result<Op
         }))
     } else {
         // Negative-offset path: a ring buffer keeps only the last N lines in memory
-        let tail_n = (-request.offset.unwrap()) as usize;
+        let Some(offset) = request.offset.filter(|offset| *offset < 0) else {
+            return Ok(None);
+        };
+        let tail_n = usize::try_from(offset.unsigned_abs()).unwrap_or(usize::MAX);
         let mut total_count = 0usize;
         let mut has_rewinds = false;
         let mut tail = std::collections::VecDeque::new();
@@ -187,7 +192,7 @@ fn try_stream_tail_page(request: &Request, updates_path: &Path) -> io::Result<Op
                 continue;
             }
             has_rewinds |= line.contains(&*REWIND_MARKER);
-            total_count += 1;
+            total_count = total_count.saturating_add(1);
             tail.push_back(line);
             if tail.len() > tail_n {
                 tail.pop_front();
@@ -411,10 +416,9 @@ pub async fn handle(
         } else {
             prompt_starts[prompt_starts.len() - tail_n]
         };
-        let end = match request.limit {
-            Some(lim) => (start + lim).min(total_count),
-            None => total_count,
-        };
+        let end = request.limit.map_or(total_count, |limit| {
+            start.saturating_add(limit).min(total_count)
+        });
         (PageBounds { start, end }, start > 0)
     } else {
         let b = page_bounds(&request, total_count);
@@ -557,6 +561,74 @@ mod tests {
         assert_eq!(json["updates"].as_array().unwrap().len(), 2);
         assert_eq!(json["updates"][0]["params"]["seq"], 4);
         assert_eq!(json["updates"][1]["params"]["seq"], 5);
+    }
+
+    #[tokio::test]
+    async fn handle_extreme_negative_offset_returns_available_tail_without_overflow() {
+        let cwd_tmp = tempfile::TempDir::new().unwrap();
+        let cwd = cwd_tmp.path().to_string_lossy().to_string();
+        let session_id = "tail-extreme-negative-offset";
+        let session_info = crate::session::info::Info {
+            id: acp::SessionId::new(session_id),
+            cwd: cwd.clone(),
+        };
+        let session_dir = crate::session::persistence::session_dir(&session_info);
+        std::fs::create_dir_all(&session_dir).unwrap();
+        std::fs::write(
+            session_dir.join("updates.jsonl"),
+            [
+                r#"{"timestamp":1,"method":"session/update","params":{"seq":1}}"#,
+                r#"{"timestamp":2,"method":"session/update","params":{"seq":2}}"#,
+                r#"{"timestamp":3,"method":"session/update","params":{"seq":3}}"#,
+            ]
+            .join("\n")
+                + "\n",
+        )
+        .unwrap();
+
+        let response = handle(
+            &make_request(session_id, &cwd, Some(i64::MIN), None),
+            &dummy_gateway(),
+        )
+        .await
+        .unwrap();
+        let json = parse_response(response);
+        assert_eq!(json["totalCount"], 3);
+        assert_eq!(json["updates"].as_array().unwrap().len(), 3);
+        assert_eq!(json["updates"][0]["params"]["seq"], 1);
+        assert_eq!(json["updates"][2]["params"]["seq"], 3);
+
+        let limited = handle(
+            &make_request(session_id, &cwd, Some(-2), Some(usize::MAX)),
+            &dummy_gateway(),
+        )
+        .await
+        .unwrap();
+        let limited = parse_response(limited);
+        assert_eq!(limited["updates"].as_array().unwrap().len(), 2);
+        assert_eq!(limited["updates"][0]["params"]["seq"], 2);
+        assert_eq!(limited["updates"][1]["params"]["seq"], 3);
+    }
+
+    #[tokio::test]
+    async fn turn_index_limit_saturates_before_clamping_to_transcript_length() {
+        let cwd_tmp = tempfile::TempDir::new().unwrap();
+        let cwd = cwd_tmp.path().to_string_lossy().to_string();
+        let session_id = "turn-limit-saturates";
+        write_session(session_id, &cwd, &[user_chunk("p1"), agent_chunk("r1")]);
+
+        let response = handle(
+            &make_turn_index_request(session_id, &cwd, 1, None, Some(usize::MAX)),
+            &dummy_gateway(),
+        )
+        .await
+        .unwrap();
+        let json = parse_response(response);
+        let updates = json["updates"].as_array().unwrap();
+        assert_eq!(json["totalCount"], 2);
+        assert_eq!(updates.len(), 2);
+        assert_eq!(updates[0]["params"]["update"]["content"]["text"], "p1");
+        assert_eq!(updates[1]["params"]["update"]["content"]["text"], "r1");
     }
 
     #[tokio::test]

@@ -1553,7 +1553,7 @@ impl SessionSignalsActor {
                     self.signals.session_duration_seconds = self.session_start.elapsed().as_secs();
 
                     // If the current turn has buffered intervals, merge them temporarily for accurate percentiles (without clearing the buffer)
-                    if !self.turn_itl_intervals.is_empty() {
+                    if let Some(turn_max) = self.turn_itl_intervals.iter().copied().max() {
                         let temp_digest = TDigest::from_values(
                             self.turn_itl_intervals.iter().map(|&v| v as f64).collect(),
                         );
@@ -1568,7 +1568,6 @@ impl SessionSignalsActor {
                             Some(combined_digest.estimate_quantile(0.99) as u64);
 
                         // Also update max and mean with buffered data
-                        let turn_max = *self.turn_itl_intervals.iter().max().unwrap();
                         self.signals.itl_max_ms = Some(
                             self.signals
                                 .itl_max_ms

@@ -218,15 +218,18 @@ fn build_child_network_filter() -> Vec<libc::sock_filter> {
     f
 }
 
-/// The child-network BPF program, built once in the parent process.
+/// The fixed child-network deny BPF program, built once before child spawn.
 ///
 /// `pre_exec` closures run between `fork` and `exec` in a multi-threaded process.
 /// Another thread can hold the allocator lock at fork, so any heap allocation there can deadlock the child.
-/// Install therefore only references this parent-built buffer.
+/// Installation only reads this already-initialized buffer.
 #[cfg(target_os = "linux")]
-pub fn prebuilt_child_network_filter() -> &'static [libc::sock_filter] {
-    static FILTER: std::sync::OnceLock<Vec<libc::sock_filter>> = std::sync::OnceLock::new();
-    FILTER.get_or_init(build_child_network_filter)
+static CHILD_NETWORK_FILTER: std::sync::OnceLock<Vec<libc::sock_filter>> =
+    std::sync::OnceLock::new();
+
+#[cfg(target_os = "linux")]
+pub(crate) fn prebuilt_child_network_filter() -> &'static [libc::sock_filter] {
+    CHILD_NETWORK_FILTER.get_or_init(build_child_network_filter)
 }
 
 #[cfg(target_os = "linux")]
@@ -240,12 +243,19 @@ fn validate_filter_len(len: usize) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Install a parent-built child-network filter.
+/// Install the built-in child-network deny filter in a forked child.
 ///
 /// # Safety
-/// Call only after fork and before exec, from the child whose networking is to be restricted. The filter must be a parent-built policy for this child, and the caller must ensure no other threads execute untrusted work while the filter is being installed. This performs two `prctl` syscalls and must not allocate, lock, log, format, or read the environment.
+/// Call only inside `pre_exec`, from the child whose networking is to be
+/// restricted; the caller must ensure no other thread runs untrusted work while
+/// the filter is installed. The parent-built filter slice must remain live until
+/// this returns. This performs syscalls only and must not allocate, lock, log,
+/// format, or read the environment. The policy slice must be the crate-built
+/// deny filter; callers must use `restrict_child_network*` to obtain it.
 #[cfg(target_os = "linux")]
-pub unsafe fn install_child_network_filter(filter: &[libc::sock_filter]) -> std::io::Result<()> {
+pub(crate) unsafe fn install_child_network_filter(
+    filter: &[libc::sock_filter],
+) -> std::io::Result<()> {
     use libc::{PR_SET_NO_NEW_PRIVS, PR_SET_SECCOMP, SECCOMP_MODE_FILTER, prctl, sock_fprog};
 
     validate_filter_len(filter.len())?;
@@ -277,7 +287,12 @@ pub unsafe fn install_child_network_filter(filter: &[libc::sock_filter]) -> std:
 /// Ordinary process creation uses legacy clone after clone3 returns ENOSYS.
 ///
 /// # Safety
-/// Process-wide; call after bwrap re-exec / at apply.
+/// Irreversibly installs a TSYNC seccomp policy on every thread in the current
+/// process. Call only after the bwrap re-exec / at apply point, after all threads
+/// and mount setup needed by this process exist; later mount/namespace syscalls
+/// are intentionally denied. Do not call when the process still needs to create
+/// or modify namespaces or mounts. Installation permanently tightens the
+/// process's syscall policy and cannot be rolled back.
 #[cfg(target_os = "linux")]
 pub unsafe fn install_namespace_lockdown_filter() -> std::io::Result<()> {
     let mut filter = ns_lockdown::build_namespace_lockdown_filter();
@@ -300,27 +315,34 @@ pub unsafe fn install_namespace_lockdown_filter() -> std::io::Result<()> {
 pub fn restrict_child_network(cmd: &mut tokio::process::Command) {
     #[cfg(target_os = "linux")]
     if crate::should_restrict_child_network() {
-        let filter = prebuilt_child_network_filter();
-        // SAFETY: the closure only runs prctl against the parent-built
-        // program — async-signal-safe, no allocation or locking after fork.
+        // Initialize the fixed policy before `Command::spawn` forks.
+        let _ = prebuilt_child_network_filter();
+        // SAFETY: the closure only reads the parent-built policy and performs
+        // async-signal-safe syscalls without allocation or locking.
         unsafe {
-            cmd.pre_exec(move || install_child_network_filter(filter));
+            cmd.pre_exec(move || match CHILD_NETWORK_FILTER.get() {
+                Some(filter) => install_child_network_filter(filter),
+                None => Err(std::io::Error::from_raw_os_error(libc::EINVAL)),
+            });
         }
     }
     #[cfg(not(target_os = "linux"))]
     let _ = cmd;
 }
 
-/// Std twin of [`restrict_child_network`] with the same gate and parent-built filter.
+/// Std twin of [`restrict_child_network`] with the same gate and fixed deny policy.
 pub fn restrict_child_network_std(cmd: &mut std::process::Command) {
     #[cfg(target_os = "linux")]
     if crate::should_restrict_child_network() {
         use std::os::unix::process::CommandExt;
-        let filter = prebuilt_child_network_filter();
-        // SAFETY: the closure only runs prctl against the parent-built
-        // program — async-signal-safe, no allocation or locking after fork.
+        let _ = prebuilt_child_network_filter();
+        // SAFETY: the closure only reads the parent-built policy and performs
+        // async-signal-safe syscalls without allocation or locking.
         unsafe {
-            cmd.pre_exec(move || install_child_network_filter(filter));
+            cmd.pre_exec(move || match CHILD_NETWORK_FILTER.get() {
+                Some(filter) => install_child_network_filter(filter),
+                None => Err(std::io::Error::from_raw_os_error(libc::EINVAL)),
+            });
         }
     }
     #[cfg(not(target_os = "linux"))]
@@ -328,7 +350,9 @@ pub fn restrict_child_network_std(cmd: &mut std::process::Command) {
 }
 
 /// # Safety
-/// Process-wide; call after bwrap re-exec / at apply.
+/// This platform implementation is a no-op. On Linux the corresponding
+/// operation irreversibly installs a process-wide TSYNC policy; keep the call
+/// site after re-exec/apply so behavior remains consistent across platforms.
 #[cfg(not(target_os = "linux"))]
 pub unsafe fn install_namespace_lockdown_filter() -> std::io::Result<()> {
     Ok(())
@@ -505,26 +529,13 @@ mod tests {
     }
 
     #[test]
-    fn seccomp_installers_reject_empty_and_oversized_programs() {
+    fn seccomp_filter_length_guard_rejects_empty_and_oversized_programs() {
         for invalid_len in [0, super::MAX_SECCOMP_FILTER_LEN + 1] {
-            let child_program = vec![
-                libc::sock_filter {
-                    code: 0,
-                    jt: 0,
-                    jf: 0,
-                    k: 0,
-                };
-                invalid_len
-            ];
-            // SAFETY: both invalid lengths must be rejected before either seccomp syscall.
-            let child_error = unsafe { super::install_child_network_filter(&child_program) }
-                .expect_err("child installer must reject invalid lengths before syscalls");
-            assert_eq!(child_error.kind(), std::io::ErrorKind::InvalidInput);
-
-            let mut namespace_program = child_program;
-            let namespace_error = super::ns_lockdown::install(&mut namespace_program)
-                .expect_err("namespace installer must reject invalid lengths before syscalls");
-            assert_eq!(namespace_error.kind(), std::io::ErrorKind::InvalidInput);
+            let error = super::validate_filter_len(invalid_len)
+                .expect_err("seccomp length guard must reject invalid lengths before syscalls");
+            assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
         }
+        assert!(super::validate_filter_len(1).is_ok());
+        assert!(super::validate_filter_len(super::MAX_SECCOMP_FILTER_LEN).is_ok());
     }
 }
