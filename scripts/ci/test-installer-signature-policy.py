@@ -99,6 +99,23 @@ class InstallerSignaturePolicyTests(unittest.TestCase):
             'install.sh must finish both checks before making the artifact executable',
         )
 
+    def test_script_installers_name_every_failed_candidate(self):
+        # When every download candidate fails, which one actually answered is the
+        # whole diagnosis: a proxy returning 200 with an HTML error page is a
+        # different problem from DNS failing at a mirror, and both installers used to
+        # print only the last attempt, which sent users off changing mirrors that were
+        # never the issue. install.bat is deliberately absent -- a cmd subroutine
+        # cannot carry per-candidate reasons back to the caller, so it names the URL
+        # it gave up on and nothing more.
+        sh = (ROOT / 'scripts/install.sh').read_text()
+        ps = (ROOT / 'scripts/install.ps1').read_text()
+        self.assertIn('why: ', sh, 'install.sh no longer reports per-candidate reasons')
+        self.assertIn('!seen[$0]++', sh,
+                      'install.sh must report each distinct reason, not each attempt')
+        self.assertIn('why: ', ps, 'install.ps1 no longer reports per-candidate reasons')
+        self.assertIn('Select-Object -Unique', ps,
+                      'install.ps1 must report each distinct reason, not each attempt')
+
     def test_every_installer_reports_a_verified_digest(self):
         # The three installers verify the same release asset; each has to say so, in
         # the same words, on the path that runs (the .sh one is inside a function,
