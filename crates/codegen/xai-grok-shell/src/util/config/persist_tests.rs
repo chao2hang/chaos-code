@@ -924,7 +924,7 @@ mod resolve_auto_compact {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             let prev = std::env::var(ENV_AUTO_COMPACT_THRESHOLD_PERCENT).ok();
-            unsafe { std::env::set_var(ENV_AUTO_COMPACT_THRESHOLD_PERCENT, value) };
+            xai_grok_test_support::env::set_var(ENV_AUTO_COMPACT_THRESHOLD_PERCENT, value);
             Self { _lock: lock, prev }
         }
         fn unset() -> Self {
@@ -932,15 +932,17 @@ mod resolve_auto_compact {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             let prev = std::env::var(ENV_AUTO_COMPACT_THRESHOLD_PERCENT).ok();
-            unsafe { std::env::remove_var(ENV_AUTO_COMPACT_THRESHOLD_PERCENT) };
+            xai_grok_test_support::env::remove_var(ENV_AUTO_COMPACT_THRESHOLD_PERCENT);
             Self { _lock: lock, prev }
         }
     }
     impl Drop for EnvVarGuard {
         fn drop(&mut self) {
             match self.prev.take() {
-                Some(v) => unsafe { std::env::set_var(ENV_AUTO_COMPACT_THRESHOLD_PERCENT, v) },
-                None => unsafe { std::env::remove_var(ENV_AUTO_COMPACT_THRESHOLD_PERCENT) },
+                Some(v) => {
+                    xai_grok_test_support::env::set_var(ENV_AUTO_COMPACT_THRESHOLD_PERCENT, v)
+                }
+                None => xai_grok_test_support::env::remove_var(ENV_AUTO_COMPACT_THRESHOLD_PERCENT),
             }
         }
     }

@@ -398,6 +398,7 @@ pub unsafe fn apply_process_env_strip(requirements: &toml::Value) -> Vec<String>
     let names = pins.names_to_strip();
     for name in &names {
         // SAFETY: caller contract — single-threaded, no concurrent getenv.
+        // SAFETY: caller contract — single-threaded, no concurrent getenv.
         unsafe { std::env::remove_var(name) };
     }
     names

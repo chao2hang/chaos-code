@@ -158,7 +158,7 @@ mod show_thinking_blocks_tests {
         let g = super::SHOW_THINKING_BLOCKS_ENV_LOCK
             .lock()
             .unwrap_or_else(|p| p.into_inner());
-        unsafe { std::env::remove_var(ENV_SHOW_THINKING_BLOCKS) };
+        xai_grok_test_support::env::remove_var(ENV_SHOW_THINKING_BLOCKS);
         g
     }
 
@@ -202,23 +202,23 @@ mod show_thinking_blocks_tests {
     #[test]
     fn env_overrides_config_and_remote() {
         let _g = guard();
-        unsafe { std::env::set_var(ENV_SHOW_THINKING_BLOCKS, "0") };
+        xai_grok_test_support::env::set_var(ENV_SHOW_THINKING_BLOCKS, "0");
         let on = toml_ui(true);
         let r = resolve_show_thinking_blocks(None, Some(&on), None, Some(&remote(Some(true))));
         assert!(!r.value, "env must override config + remote");
         assert_eq!(r.source, ConfigSource::Env);
-        unsafe { std::env::remove_var(ENV_SHOW_THINKING_BLOCKS) };
+        xai_grok_test_support::env::remove_var(ENV_SHOW_THINKING_BLOCKS);
     }
 
     #[test]
     fn requirement_beats_env() {
         let _g = guard();
-        unsafe { std::env::set_var(ENV_SHOW_THINKING_BLOCKS, "0") };
+        xai_grok_test_support::env::set_var(ENV_SHOW_THINKING_BLOCKS, "0");
         let on = toml_ui(true);
         let r = resolve_show_thinking_blocks(Some(&on), None, None, None);
         assert!(r.value, "requirement must beat env");
         assert_eq!(r.source, ConfigSource::Requirement);
-        unsafe { std::env::remove_var(ENV_SHOW_THINKING_BLOCKS) };
+        xai_grok_test_support::env::remove_var(ENV_SHOW_THINKING_BLOCKS);
     }
 
     #[test]
@@ -245,7 +245,7 @@ mod group_tool_verbs_tests {
         let g = super::GROUP_TOOL_VERBS_ENV_LOCK
             .lock()
             .unwrap_or_else(|p| p.into_inner());
-        unsafe { std::env::remove_var(ENV_GROUP_TOOL_VERBS) };
+        xai_grok_test_support::env::remove_var(ENV_GROUP_TOOL_VERBS);
         g
     }
 
@@ -275,11 +275,11 @@ mod group_tool_verbs_tests {
         let r = resolve_group_tool_verbs(Some(&off), None, None, None);
         assert!(!r.value);
         assert_eq!(r.source, ConfigSource::Requirement);
-        unsafe { std::env::set_var(ENV_GROUP_TOOL_VERBS, "0") };
+        xai_grok_test_support::env::set_var(ENV_GROUP_TOOL_VERBS, "0");
         let r = resolve_group_tool_verbs(None, None, None, None);
         assert!(!r.value, "env disable must beat the true default");
         assert_eq!(r.source, ConfigSource::Env);
-        unsafe { std::env::remove_var(ENV_GROUP_TOOL_VERBS) };
+        xai_grok_test_support::env::remove_var(ENV_GROUP_TOOL_VERBS);
         let r = resolve_group_tool_verbs(None, Some(&off), None, None);
         assert!(!r.value);
         assert_eq!(r.source, ConfigSource::Config);
@@ -294,23 +294,23 @@ mod group_tool_verbs_tests {
     #[test]
     fn env_overrides_config_and_remote() {
         let _g = guard();
-        unsafe { std::env::set_var(ENV_GROUP_TOOL_VERBS, "0") };
+        xai_grok_test_support::env::set_var(ENV_GROUP_TOOL_VERBS, "0");
         let on = toml_ui(true);
         let r = resolve_group_tool_verbs(None, Some(&on), None, Some(&remote(Some(true))));
         assert!(!r.value, "env must override config + remote");
         assert_eq!(r.source, ConfigSource::Env);
-        unsafe { std::env::remove_var(ENV_GROUP_TOOL_VERBS) };
+        xai_grok_test_support::env::remove_var(ENV_GROUP_TOOL_VERBS);
     }
 
     #[test]
     fn requirement_beats_env() {
         let _g = guard();
-        unsafe { std::env::set_var(ENV_GROUP_TOOL_VERBS, "0") };
+        xai_grok_test_support::env::set_var(ENV_GROUP_TOOL_VERBS, "0");
         let on = toml_ui(true);
         let r = resolve_group_tool_verbs(Some(&on), None, None, None);
         assert!(r.value, "requirement must beat env");
         assert_eq!(r.source, ConfigSource::Requirement);
-        unsafe { std::env::remove_var(ENV_GROUP_TOOL_VERBS) };
+        xai_grok_test_support::env::remove_var(ENV_GROUP_TOOL_VERBS);
     }
 
     #[test]
@@ -336,7 +336,7 @@ mod collapsed_edit_blocks_tests {
         let g = super::COLLAPSED_EDIT_BLOCKS_ENV_LOCK
             .lock()
             .unwrap_or_else(|p| p.into_inner());
-        unsafe { std::env::remove_var(ENV_COLLAPSED_EDIT_BLOCKS) };
+        xai_grok_test_support::env::remove_var(ENV_COLLAPSED_EDIT_BLOCKS);
         g
     }
 
@@ -366,11 +366,11 @@ mod collapsed_edit_blocks_tests {
         let r = resolve_collapsed_edit_blocks(Some(&on), None, None, None);
         assert!(r.value);
         assert_eq!(r.source, ConfigSource::Requirement);
-        unsafe { std::env::set_var(ENV_COLLAPSED_EDIT_BLOCKS, "1") };
+        xai_grok_test_support::env::set_var(ENV_COLLAPSED_EDIT_BLOCKS, "1");
         let r = resolve_collapsed_edit_blocks(None, None, None, None);
         assert!(r.value, "env enable must beat the false default");
         assert_eq!(r.source, ConfigSource::Env);
-        unsafe { std::env::remove_var(ENV_COLLAPSED_EDIT_BLOCKS) };
+        xai_grok_test_support::env::remove_var(ENV_COLLAPSED_EDIT_BLOCKS);
         let r = resolve_collapsed_edit_blocks(None, Some(&on), None, None);
         assert!(r.value);
         assert_eq!(r.source, ConfigSource::Config);
@@ -385,23 +385,23 @@ mod collapsed_edit_blocks_tests {
     #[test]
     fn env_overrides_config_and_remote() {
         let _g = guard();
-        unsafe { std::env::set_var(ENV_COLLAPSED_EDIT_BLOCKS, "0") };
+        xai_grok_test_support::env::set_var(ENV_COLLAPSED_EDIT_BLOCKS, "0");
         let on = toml_ui(true);
         let r = resolve_collapsed_edit_blocks(None, Some(&on), None, Some(&remote(Some(true))));
         assert!(!r.value, "env must override config + remote");
         assert_eq!(r.source, ConfigSource::Env);
-        unsafe { std::env::remove_var(ENV_COLLAPSED_EDIT_BLOCKS) };
+        xai_grok_test_support::env::remove_var(ENV_COLLAPSED_EDIT_BLOCKS);
     }
 
     #[test]
     fn requirement_beats_env() {
         let _g = guard();
-        unsafe { std::env::set_var(ENV_COLLAPSED_EDIT_BLOCKS, "1") };
+        xai_grok_test_support::env::set_var(ENV_COLLAPSED_EDIT_BLOCKS, "1");
         let off = toml_ui(false);
         let r = resolve_collapsed_edit_blocks(Some(&off), None, None, None);
         assert!(!r.value, "requirement must beat env");
         assert_eq!(r.source, ConfigSource::Requirement);
-        unsafe { std::env::remove_var(ENV_COLLAPSED_EDIT_BLOCKS) };
+        xai_grok_test_support::env::remove_var(ENV_COLLAPSED_EDIT_BLOCKS);
     }
 
     #[test]

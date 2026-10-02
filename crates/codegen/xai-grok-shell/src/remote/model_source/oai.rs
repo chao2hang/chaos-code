@@ -140,7 +140,7 @@ mod tests {
             "GROK_XAI_API_BASE_URL",
             "GROK_MODELS_LIST_URL",
         ] {
-            unsafe { std::env::remove_var(k) };
+            xai_grok_test_support::env::remove_var(k);
         }
         let cfg = EndpointsConfig::from_config_value(
             &toml::from_str(

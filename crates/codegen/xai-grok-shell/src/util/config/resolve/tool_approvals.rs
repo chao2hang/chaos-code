@@ -114,7 +114,7 @@ mod remember_tool_approvals_gate_tests {
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
     fn guard() -> std::sync::MutexGuard<'static, ()> {
         let g = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-        unsafe { std::env::remove_var(ENV_REMEMBER_TOOL_APPROVALS) };
+        xai_grok_test_support::env::remove_var(ENV_REMEMBER_TOOL_APPROVALS);
         g
     }
 
@@ -198,23 +198,23 @@ mod remember_tool_approvals_gate_tests {
     #[test]
     fn env_overrides_config_and_remote() {
         let _g = guard();
-        unsafe { std::env::set_var(ENV_REMEMBER_TOOL_APPROVALS, "1") };
+        xai_grok_test_support::env::set_var(ENV_REMEMBER_TOOL_APPROVALS, "1");
         let off = toml_ui(false);
         let r = resolve_remember_tool_approvals(None, Some(&off), None, Some(&remote(Some(false))));
         assert!(r.value, "env must override config + remote");
         assert_eq!(r.source, ConfigSource::Env);
-        unsafe { std::env::remove_var(ENV_REMEMBER_TOOL_APPROVALS) };
+        xai_grok_test_support::env::remove_var(ENV_REMEMBER_TOOL_APPROVALS);
     }
 
     #[test]
     fn requirement_beats_env() {
         let _g = guard();
-        unsafe { std::env::set_var(ENV_REMEMBER_TOOL_APPROVALS, "1") };
+        xai_grok_test_support::env::set_var(ENV_REMEMBER_TOOL_APPROVALS, "1");
         let off = toml_ui(false);
         let r = resolve_remember_tool_approvals(Some(&off), None, None, None);
         assert!(!r.value, "requirement (managed/MDM floor) must beat env");
         assert_eq!(r.source, ConfigSource::Requirement);
-        unsafe { std::env::remove_var(ENV_REMEMBER_TOOL_APPROVALS) };
+        xai_grok_test_support::env::remove_var(ENV_REMEMBER_TOOL_APPROVALS);
     }
 
     #[test]

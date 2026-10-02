@@ -28,11 +28,77 @@ pub const XAI_API_KEY_ENV_VAR: &str = "XAI_API_KEY";
 /// Checked as a fallback when `XAI_API_KEY` is not set, so existing deployments that use the old name keep working.
 pub const LEGACY_XAI_API_KEY_ENV_VAR: &str = "GROK_CODE_XAI_API_KEY";
 
+/// Runtime API-key state, deliberately kept out of the process environment.
+///
+/// Both runtime publishers used to call `std::env::set_var("XAI_API_KEY", ..)`:
+/// `initialize()` republished the key read from `auth.json`, and the
+/// `x.ai/setApiKey` extension rewrote it on every change. That wrote to the
+/// process-global environment while unrelated threads kept calling
+/// `std::env::var` — the exact race edition 2024 makes `set_var` `unsafe` for —
+/// and it also leaked the secret into the environment block of every child
+/// process spawned afterwards (shell tools, hooks, MCP servers).
+#[derive(Clone)]
+enum RuntimeApiKey {
+    /// Nothing published a key at runtime, so the inherited environment wins.
+    Unset,
+    /// A key was published at runtime and wins over the inherited environment.
+    Present(String),
+    /// `clear_api_key` ran, so an inherited `XAI_API_KEY` must stop being
+    /// honoured for the rest of the process.
+    Cleared,
+}
+
+static RUNTIME_API_KEY: std::sync::RwLock<RuntimeApiKey> =
+    std::sync::RwLock::new(RuntimeApiKey::Unset);
+
+fn runtime_api_key() -> RuntimeApiKey {
+    RUNTIME_API_KEY
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
+}
+
+/// Publish an API key for the rest of the process without mutating the
+/// inherited environment.
+pub(crate) fn set_runtime_api_key(key: impl Into<String>) {
+    let mut slot = RUNTIME_API_KEY
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    *slot = RuntimeApiKey::Present(key.into());
+}
+
+/// Forget any runtime key and stop honouring an inherited `XAI_API_KEY`.
+///
+/// The legacy `GROK_CODE_XAI_API_KEY` is left alone, matching the previous
+/// behaviour of removing only `XAI_API_KEY`.
+pub(crate) fn clear_runtime_api_key() {
+    let mut slot = RUNTIME_API_KEY
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    *slot = RuntimeApiKey::Cleared;
+}
+
+/// Put the runtime key back to "environment wins", so a test that drove a
+/// production publisher cannot leak into the next one.
+#[cfg(test)]
+pub(crate) fn reset_runtime_api_key_for_test() {
+    let mut slot = RUNTIME_API_KEY
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    *slot = RuntimeApiKey::Unset;
+}
+
 /// Read the API key from the environment.
 ///
 /// Checks `XAI_API_KEY` first, then falls back to the legacy `GROK_CODE_XAI_API_KEY` for backward compatibility.
+/// A key published through [`set_runtime_api_key`] / [`clear_runtime_api_key`] takes precedence over `XAI_API_KEY`.
 pub(crate) fn read_xai_api_key_env() -> Result<String, std::env::VarError> {
-    std::env::var(XAI_API_KEY_ENV_VAR).or_else(|_| std::env::var(LEGACY_XAI_API_KEY_ENV_VAR))
+    match runtime_api_key() {
+        RuntimeApiKey::Present(key) => Ok(key),
+        RuntimeApiKey::Cleared => std::env::var(LEGACY_XAI_API_KEY_ENV_VAR),
+        RuntimeApiKey::Unset => std::env::var(XAI_API_KEY_ENV_VAR)
+            .or_else(|_| std::env::var(LEGACY_XAI_API_KEY_ENV_VAR)),
+    }
 }
 
 /// Returns `true` if either `XAI_API_KEY` or `GROK_CODE_XAI_API_KEY` is set.
@@ -421,6 +487,107 @@ pub fn oidc_auth_method(issuer: &str, label: Option<&str>) -> acp::AuthMethod {
         acp::AuthMethodAgent::new(acp::AuthMethodId::new(OIDC_METHOD_ID), name.clone())
             .description(Some(format!("Sign in with {name}"))),
     )
+}
+
+#[cfg(test)]
+mod runtime_api_key_tests {
+    //! The runtime key replaced `std::env::set_var("XAI_API_KEY", ..)`, so these
+    //! drive the real reader and assert the environment is never touched.
+    use super::*;
+    use serial_test::serial;
+
+    /// Restores "environment wins" so a test cannot leak the cell.
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            reset_runtime_api_key_for_test();
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn unset_cell_leaves_the_environment_authoritative() {
+        let _reset = Reset;
+        reset_runtime_api_key_for_test();
+        xai_grok_test_support::env::with_write_lock(|| {
+            xai_grok_test_support::env::set_var(XAI_API_KEY_ENV_VAR, "from-environment");
+            xai_grok_test_support::env::remove_var(LEGACY_XAI_API_KEY_ENV_VAR);
+            assert_eq!(read_xai_api_key_env().as_deref(), Ok("from-environment"));
+
+            xai_grok_test_support::env::remove_var(XAI_API_KEY_ENV_VAR);
+            assert_eq!(
+                read_xai_api_key_env(),
+                Err(std::env::VarError::NotPresent),
+                "no runtime key and no env var must read as absent"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn runtime_key_overrides_the_inherited_environment() {
+        let _reset = Reset;
+        reset_runtime_api_key_for_test();
+        xai_grok_test_support::env::with_write_lock(|| {
+            xai_grok_test_support::env::set_var(XAI_API_KEY_ENV_VAR, "stale-env-key");
+            set_runtime_api_key("key-from-auth-json");
+            assert_eq!(read_xai_api_key_env().as_deref(), Ok("key-from-auth-json"));
+            // The whole point of the change: the secret never lands in the env
+            // block that every child process would inherit.
+            assert_eq!(
+                std::env::var(XAI_API_KEY_ENV_VAR).as_deref(),
+                Ok("stale-env-key"),
+                "publishing a runtime key must not rewrite the environment"
+            );
+            xai_grok_test_support::env::remove_var(XAI_API_KEY_ENV_VAR);
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn clearing_the_runtime_key_masks_an_inherited_key_but_keeps_legacy() {
+        let _reset = Reset;
+        reset_runtime_api_key_for_test();
+        xai_grok_test_support::env::with_write_lock(|| {
+            xai_grok_test_support::env::set_var(XAI_API_KEY_ENV_VAR, "inherited-key");
+            xai_grok_test_support::env::set_var(LEGACY_XAI_API_KEY_ENV_VAR, "legacy-key");
+            clear_runtime_api_key();
+            assert_eq!(
+                read_xai_api_key_env().as_deref(),
+                Ok("legacy-key"),
+                "clearing masks XAI_API_KEY only, matching the old remove_var scope"
+            );
+
+            xai_grok_test_support::env::remove_var(LEGACY_XAI_API_KEY_ENV_VAR);
+            assert_eq!(
+                read_xai_api_key_env(),
+                Err(std::env::VarError::NotPresent),
+                "after clearing, an inherited XAI_API_KEY must not be honoured"
+            );
+            xai_grok_test_support::env::remove_var(XAI_API_KEY_ENV_VAR);
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn concurrent_reads_and_writes_of_the_cell_never_tear() {
+        let _reset = Reset;
+        reset_runtime_api_key_for_test();
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                for i in 0..2_000 {
+                    set_runtime_api_key(format!("key-{i}"));
+                    clear_runtime_api_key();
+                }
+            });
+            for _ in 0..2_000 {
+                // `read_xai_api_key_env` must stay callable while another thread
+                // publishes; a plain `static mut` env write is what this replaced.
+                let _ = read_xai_api_key_env();
+            }
+        });
+        reset_runtime_api_key_for_test();
+    }
 }
 
 #[cfg(any())]

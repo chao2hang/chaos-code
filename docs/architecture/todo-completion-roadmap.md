@@ -5,7 +5,7 @@
 
 ## 完成目标与现实边界
 
-目标是让 `TODO.md` 中所有仍被接受的工作达到其自身 Definition of Done，或经授权明确标为延期/不适用；不能靠把部分完成改成完成、降低验收标准、假装外部测试已运行来达到“全绿”。截至 2026-10-02，`TODO.md` 分类器输出 52 条未完成、98 条部分完成状态行（分类脚本逐次重算；行数不是功能数）。Q4 ignore inventory 本日刷新为 429 条（218 条无 reason）；其中五个 xai-grok-update 的上游 URL 假设改为 Chaos 安装器实际行为测试，当前该 crate 只剩 opt-in stress ignore。此源码修正不替代 owner/reviewer 按源文件逐条复核。
+目标是让 `TODO.md` 中所有仍被接受的工作达到其自身 Definition of Done，或经授权明确标为延期/不适用；不能靠把部分完成改成完成、降低验收标准、假装外部测试已运行来达到“全绿”。截至 2026-10-02，`TODO.md` 分类器输出 51 条未完成、98 条部分完成状态行（分类脚本逐次重算；行数不是功能数）。Q4 ignore inventory 本日刷新为 429 条（218 条无 reason）；其中五个 xai-grok-update 的上游 URL 假设改为 Chaos 安装器实际行为测试，当前该 crate 只剩 opt-in stress ignore。此源码修正不替代 owner/reviewer 按源文件逐条复核。
 
 下文的阶段顺序是依赖顺序，不是工期承诺。每个阶段开始前，应在 TODO 模板中填入具体 Owner、Reviewer、目标日期、issue/ADR、预算和运行环境。缺这些信息的阶段只做准备/小型无风险修复，不做产品或安全策略猜测。
 

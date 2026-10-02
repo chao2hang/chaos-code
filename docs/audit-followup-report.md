@@ -63,6 +63,34 @@
 4. **`xai-grok-sandbox` 只有 18 处** —— 比预期少，说明沙箱的 unsafe
    边界控制得不错。
 
+### 1.4.1 2026-10-02 实测刷新（`xai-grok-shell` env unsafe 收敛后）
+
+上表是 2026-08 的静态计数，此后未刷新。按当前源码重算（`crates/codegen/*/src`
+下 `*.rs` 的 `unsafe` 关键字命中行数）：
+
+| 指标 | 2026-08 报告 | 2026-10-02 实测 |
+|---|---:|---:|
+| 全仓 `unsafe` 关键字行 | 1141 | 904 |
+| `xai-grok-shell` `unsafe` 关键字行 | 364 | 49 |
+| crate 内 `unsafe { std::env::set_var/remove_var }` | 332 块（含 241 处 env） | 1（`apply_process_env_strip`，本身是带 caller contract 的 `pub unsafe fn`） |
+| 全仓 `std::env::set_var/remove_var` 直接调用 | ~671 | 417 |
+
+`xai-grok-shell` 的收敛方式不是删检查，而是把环境写操作收进
+`xai-grok-test-support::env` 的单一入口：一把进程级写锁 + 线程本地重入计数，
+`set_var`/`remove_var`/`var_os` 各只有一个带 `// SAFETY:` 的块，成对的读改写用
+`with_write_lock` 包住以保证原子。因此 1.4 第 1 条"大头是 env var"在其余 crate
+仍然成立：剩余 417 处直接调用集中在 `xai-grok-workspace`（136 处 unsafe 关键字行）、
+`xai-fast-worktree`（74）、`xai-grok-pager`（70）等，helper 已经放在共享 crate 里，
+可以按 crate 继续搬。
+
+同批还修掉一个真实缺陷：`initialize()` 从 `auth.json` 读到 API key、以及
+`x.ai/setApiKey` 扩展原本都调用 `std::env::set_var("XAI_API_KEY", ..)`。那是与
+其他线程 `std::env::var` 并发的进程全局写（正是 edition 2024 把 `set_var` 判为
+unsafe 的原因），并且会把密钥写进之后每个子进程（shell 工具、hook、MCP server）
+的 env block。现改为 `agent/auth_method.rs` 内 `RwLock` 保护的 runtime key cell
+（`Unset` / `Present` / `Cleared` 三态；`Cleared` 只屏蔽 `XAI_API_KEY`，保留 legacy
+变量，与原 `remove_var` 作用域一致），环境不再被运行时改写。
+
 ### 1.5 三类分类（初步）
 
 | 类别 | 估算占比 | 说明 |

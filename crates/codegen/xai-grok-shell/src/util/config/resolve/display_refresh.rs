@@ -342,10 +342,8 @@ mod tests {
         let g = DISPLAY_REFRESH_ENV_LOCK
             .lock()
             .unwrap_or_else(|p| p.into_inner());
-        unsafe {
-            std::env::remove_var(ENV_DISPLAY_REFRESH_PROBE_ENABLED);
-            std::env::remove_var(ENV_DISPLAY_REFRESH_AUTO_CADENCE);
-        }
+        xai_grok_test_support::env::remove_var(ENV_DISPLAY_REFRESH_PROBE_ENABLED);
+        xai_grok_test_support::env::remove_var(ENV_DISPLAY_REFRESH_AUTO_CADENCE);
         g
     }
 
@@ -421,10 +419,8 @@ mod tests {
     #[test]
     fn env_overrides_probe_and_auto() {
         let _g = guard();
-        unsafe {
-            std::env::set_var(ENV_DISPLAY_REFRESH_PROBE_ENABLED, "0");
-            std::env::set_var(ENV_DISPLAY_REFRESH_AUTO_CADENCE, "1");
-        }
+        xai_grok_test_support::env::set_var(ENV_DISPLAY_REFRESH_PROBE_ENABLED, "0");
+        xai_grok_test_support::env::set_var(ENV_DISPLAY_REFRESH_AUTO_CADENCE, "1");
         let on = toml_nested("probe_enabled = true\nauto_cadence_enabled = false\n");
         let remote = remote_object(DisplayRefreshSettings {
             probe_enabled: Some(true),
@@ -434,27 +430,21 @@ mod tests {
         let p = resolve_display_refresh(None, Some(&on), None, Some(&remote));
         assert!(!p.probe_enabled);
         assert!(p.auto_cadence_enabled);
-        unsafe {
-            std::env::remove_var(ENV_DISPLAY_REFRESH_PROBE_ENABLED);
-            std::env::remove_var(ENV_DISPLAY_REFRESH_AUTO_CADENCE);
-        }
+        xai_grok_test_support::env::remove_var(ENV_DISPLAY_REFRESH_PROBE_ENABLED);
+        xai_grok_test_support::env::remove_var(ENV_DISPLAY_REFRESH_AUTO_CADENCE);
     }
 
     #[test]
     fn requirement_beats_env() {
         let _g = guard();
-        unsafe {
-            std::env::set_var(ENV_DISPLAY_REFRESH_PROBE_ENABLED, "0");
-            std::env::set_var(ENV_DISPLAY_REFRESH_AUTO_CADENCE, "0");
-        }
+        xai_grok_test_support::env::set_var(ENV_DISPLAY_REFRESH_PROBE_ENABLED, "0");
+        xai_grok_test_support::env::set_var(ENV_DISPLAY_REFRESH_AUTO_CADENCE, "0");
         let req = toml_nested("probe_enabled = true\nauto_cadence_enabled = true\n");
         let p = resolve_display_refresh(Some(&req), None, None, None);
         assert!(p.probe_enabled);
         assert!(p.auto_cadence_enabled);
-        unsafe {
-            std::env::remove_var(ENV_DISPLAY_REFRESH_PROBE_ENABLED);
-            std::env::remove_var(ENV_DISPLAY_REFRESH_AUTO_CADENCE);
-        }
+        xai_grok_test_support::env::remove_var(ENV_DISPLAY_REFRESH_PROBE_ENABLED);
+        xai_grok_test_support::env::remove_var(ENV_DISPLAY_REFRESH_AUTO_CADENCE);
     }
 
     #[test]

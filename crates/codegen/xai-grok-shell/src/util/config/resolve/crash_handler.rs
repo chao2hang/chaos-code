@@ -96,7 +96,7 @@ mod crash_handler_gate_tests {
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
     fn guard() -> std::sync::MutexGuard<'static, ()> {
         let g = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-        unsafe { std::env::remove_var(ENV_CRASH_HANDLER) };
+        xai_grok_test_support::env::remove_var(ENV_CRASH_HANDLER);
         g
     }
 
@@ -180,34 +180,34 @@ mod crash_handler_gate_tests {
     #[test]
     fn env_overrides_config_and_remote() {
         let _g = guard();
-        unsafe { std::env::set_var(ENV_CRASH_HANDLER, "1") };
+        xai_grok_test_support::env::set_var(ENV_CRASH_HANDLER, "1");
         let off = toml_diag(false);
         let r = resolve_crash_handler_enabled(None, Some(&off), None, Some(&remote(Some(false))));
         assert!(r.value, "env must override config + remote");
         assert_eq!(r.source, ConfigSource::Env);
-        unsafe { std::env::remove_var(ENV_CRASH_HANDLER) };
+        xai_grok_test_support::env::remove_var(ENV_CRASH_HANDLER);
     }
 
     #[test]
     fn env_can_force_disable_over_config() {
         let _g = guard();
-        unsafe { std::env::set_var(ENV_CRASH_HANDLER, "0") };
+        xai_grok_test_support::env::set_var(ENV_CRASH_HANDLER, "0");
         let on = toml_diag(true);
         let r = resolve_crash_handler_enabled(None, Some(&on), None, Some(&remote(Some(true))));
         assert!(!r.value, "env=0 must override config + remote");
         assert_eq!(r.source, ConfigSource::Env);
-        unsafe { std::env::remove_var(ENV_CRASH_HANDLER) };
+        xai_grok_test_support::env::remove_var(ENV_CRASH_HANDLER);
     }
 
     #[test]
     fn requirement_beats_env() {
         let _g = guard();
-        unsafe { std::env::set_var(ENV_CRASH_HANDLER, "1") };
+        xai_grok_test_support::env::set_var(ENV_CRASH_HANDLER, "1");
         let off = toml_diag(false);
         let r = resolve_crash_handler_enabled(Some(&off), None, None, None);
         assert!(!r.value, "requirement must beat env");
         assert_eq!(r.source, ConfigSource::Requirement);
-        unsafe { std::env::remove_var(ENV_CRASH_HANDLER) };
+        xai_grok_test_support::env::remove_var(ENV_CRASH_HANDLER);
     }
 
     #[test]

@@ -204,7 +204,7 @@ mod tests {
         let g = CONTEXTUAL_HINTS_ENV_LOCK
             .lock()
             .unwrap_or_else(|p| p.into_inner());
-        unsafe { std::env::remove_var(ENV_CONTEXTUAL_HINTS) };
+        xai_grok_test_support::env::remove_var(ENV_CONTEXTUAL_HINTS);
         g
     }
 
@@ -299,7 +299,7 @@ mod tests {
     #[test]
     fn contextual_hints_env_master_forces_all_on() {
         let _g = contextual_hints_guard();
-        unsafe { std::env::set_var(ENV_CONTEXTUAL_HINTS, "1") };
+        xai_grok_test_support::env::set_var(ENV_CONTEXTUAL_HINTS, "1");
         let ui = ContextualHints {
             undo: Some(false),
             plan_mode: Some(false),
@@ -328,13 +328,13 @@ mod tests {
                 && resolved.export_copy
                 && resolved.ssh_wrap
         );
-        unsafe { std::env::remove_var(ENV_CONTEXTUAL_HINTS) };
+        xai_grok_test_support::env::remove_var(ENV_CONTEXTUAL_HINTS);
     }
 
     #[test]
     fn contextual_hints_env_master_zero_forces_all_off() {
         let _g = contextual_hints_guard();
-        unsafe { std::env::set_var(ENV_CONTEXTUAL_HINTS, "0") };
+        xai_grok_test_support::env::set_var(ENV_CONTEXTUAL_HINTS, "0");
         let ui = ContextualHints {
             undo: Some(true),
             plan_mode: Some(true),
@@ -357,6 +357,6 @@ mod tests {
                 && !resolved.export_copy
                 && !resolved.ssh_wrap
         );
-        unsafe { std::env::remove_var(ENV_CONTEXTUAL_HINTS) };
+        xai_grok_test_support::env::remove_var(ENV_CONTEXTUAL_HINTS);
     }
 }

@@ -239,7 +239,7 @@ mod auto_permission_mode_gate_tests {
         let g = super::AUTO_PERMISSION_MODE_ENV_LOCK
             .lock()
             .unwrap_or_else(|p| p.into_inner());
-        unsafe { std::env::remove_var(ENV_AUTO_PERMISSION_MODE) };
+        xai_grok_test_support::env::remove_var(ENV_AUTO_PERMISSION_MODE);
         g
     }
 
@@ -367,7 +367,7 @@ mod auto_permission_mode_gate_tests {
     #[test]
     fn env_overrides_config_and_remote() {
         let _g = guard();
-        unsafe { std::env::set_var(ENV_AUTO_PERMISSION_MODE, "1") };
+        xai_grok_test_support::env::set_var(ENV_AUTO_PERMISSION_MODE, "1");
         let off = toml_features_auto(false);
         let r = resolve_auto_permission_mode_enabled(
             None,
@@ -377,18 +377,18 @@ mod auto_permission_mode_gate_tests {
         );
         assert!(r.value, "env must override config + remote");
         assert_eq!(r.source, ConfigSource::Env);
-        unsafe { std::env::remove_var(ENV_AUTO_PERMISSION_MODE) };
+        xai_grok_test_support::env::remove_var(ENV_AUTO_PERMISSION_MODE);
     }
 
     #[test]
     fn requirement_beats_env() {
         let _g = guard();
-        unsafe { std::env::set_var(ENV_AUTO_PERMISSION_MODE, "1") };
+        xai_grok_test_support::env::set_var(ENV_AUTO_PERMISSION_MODE, "1");
         let off = toml_features_auto(false);
         let r = resolve_auto_permission_mode_enabled(Some(&off), None, None, None);
         assert!(!r.value, "requirement (managed/MDM floor) must beat env");
         assert_eq!(r.source, ConfigSource::Requirement);
-        unsafe { std::env::remove_var(ENV_AUTO_PERMISSION_MODE) };
+        xai_grok_test_support::env::remove_var(ENV_AUTO_PERMISSION_MODE);
     }
 
     #[test]
@@ -402,12 +402,12 @@ mod auto_permission_mode_gate_tests {
         cache_remote_auto_permission_mode_enabled(None);
         assert_eq!(cached_remote_auto_permission_mode_enabled(), None);
         // The disk reader wires the env layer (highest deterministic source).
-        unsafe { std::env::set_var(ENV_AUTO_PERMISSION_MODE, "1") };
+        xai_grok_test_support::env::set_var(ENV_AUTO_PERMISSION_MODE, "1");
         assert!(
             auto_permission_mode_enabled_from_disk(),
             "from_disk must honor the env layer"
         );
-        unsafe { std::env::remove_var(ENV_AUTO_PERMISSION_MODE) };
+        xai_grok_test_support::env::remove_var(ENV_AUTO_PERMISSION_MODE);
         cache_remote_auto_mode(None);
     }
 

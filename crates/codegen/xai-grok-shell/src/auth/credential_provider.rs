@@ -467,8 +467,9 @@ mod tests {
             let lock = EARLY_INVALIDATION_LOCK
                 .lock()
                 .unwrap_or_else(|e| e.into_inner());
-            let previous = std::env::var("GROK_AUTH_EARLY_INVALIDATION_SECS").ok();
-            unsafe { std::env::set_var("GROK_AUTH_EARLY_INVALIDATION_SECS", "300") };
+            let previous = xai_grok_test_support::env::var_os("GROK_AUTH_EARLY_INVALIDATION_SECS")
+                .and_then(|v| v.into_string().ok());
+            xai_grok_test_support::env::set_var("GROK_AUTH_EARLY_INVALIDATION_SECS", "300");
             Self {
                 _lock: lock,
                 previous,
@@ -477,12 +478,12 @@ mod tests {
     }
     impl Drop for EarlyInvalidationGuard {
         fn drop(&mut self) {
-            unsafe {
-                match self.previous.take() {
-                    Some(prev) => std::env::set_var("GROK_AUTH_EARLY_INVALIDATION_SECS", prev),
-                    None => std::env::remove_var("GROK_AUTH_EARLY_INVALIDATION_SECS"),
+            xai_grok_test_support::env::with_write_lock(|| match self.previous.take() {
+                Some(prev) => {
+                    xai_grok_test_support::env::set_var("GROK_AUTH_EARLY_INVALIDATION_SECS", prev)
                 }
-            }
+                None => xai_grok_test_support::env::remove_var("GROK_AUTH_EARLY_INVALIDATION_SECS"),
+            });
         }
     }
     fn make_auth(key: &str, expires_in: ChronoDuration) -> GrokAuth {

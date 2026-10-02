@@ -2,20 +2,14 @@
 use super::*;
 fn with_env_var<T>(name: &str, value: &str, f: impl FnOnce() -> T) -> T {
     let previous = std::env::var(name).ok();
-    unsafe {
-        std::env::set_var(name, value);
-    }
+        xai_grok_test_support::env::set_var(name, value);
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
     match previous {
         Some(prev) => {
-            unsafe {
-                std::env::set_var(name, prev);
-            }
+                        xai_grok_test_support::env::set_var(name, prev);
         }
         None => {
-            unsafe {
-                std::env::remove_var(name);
-            }
+                        xai_grok_test_support::env::remove_var(name);
         }
     }
     match result {
@@ -100,13 +94,13 @@ static MEMORY_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 fn with_env_var_opt<T>(name: &str, value: Option<&str>, f: impl FnOnce() -> T) -> T {
     let previous = std::env::var(name).ok();
     match value {
-        Some(v) => unsafe { std::env::set_var(name, v) }
-        None => unsafe { std::env::remove_var(name) }
+        Some(v) =>  xai_grok_test_support::env::set_var(name, v),
+        None =>  xai_grok_test_support::env::remove_var(name),
     }
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
     match previous {
-        Some(prev) => unsafe { std::env::set_var(name, prev) }
-        None => unsafe { std::env::remove_var(name) }
+        Some(prev) =>  xai_grok_test_support::env::set_var(name, prev),
+        None =>  xai_grok_test_support::env::remove_var(name),
     }
     result.unwrap_or_else(|p| std::panic::resume_unwind(p))
 }
@@ -3095,7 +3089,7 @@ fn enterprise_two_file_merge_routes_deployment_key_to_proxy() {
         "GROK_CLI_CHAT_PROXY_BASE_URL",
         "GROK_TRACE_UPLOAD_ENDPOINT_URL",
     ] {
-        unsafe { std::env::remove_var(k) };
+                xai_grok_test_support::env::remove_var(k);
     }
     let managed = toml::from_str(
             r#"

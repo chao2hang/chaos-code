@@ -77,19 +77,16 @@ fn handle_set_api_key(args: &acp::ExtRequest) -> ExtResult {
         if k.is_empty() {
             crate::auth::clear_api_key(&grok_home)
                 .map_err(|e| acp::Error::internal_error().data(e.to_string()))?;
-            // SAFETY: ext_method is single-threaded per agent
-            unsafe { std::env::remove_var("XAI_API_KEY") };
+            crate::agent::auth_method::clear_runtime_api_key();
         } else {
             crate::auth::store_api_key(&grok_home, k)
                 .map_err(|e| acp::Error::internal_error().data(e.to_string()))?;
-            // SAFETY: ext_method is single-threaded per agent
-            unsafe { std::env::set_var("XAI_API_KEY", k) };
+            crate::agent::auth_method::set_runtime_api_key(k);
         }
     } else {
         crate::auth::clear_api_key(&grok_home)
             .map_err(|e| acp::Error::internal_error().data(e.to_string()))?;
-        // SAFETY: ext_method is single-threaded per agent
-        unsafe { std::env::remove_var("XAI_API_KEY") };
+        crate::agent::auth_method::clear_runtime_api_key();
     }
     ExtMethodResult::success(serde_json::json!({ "ok": true }))
         .to_ext_response()

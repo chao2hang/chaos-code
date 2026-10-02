@@ -904,9 +904,9 @@ fn deployment_config_url_uses_cli_chat_proxy_when_not_overridden() {
         "GROK_MANAGED_CONFIG_URL",
         "GROK_XAI_API_BASE_URL",
     ] {
-        unsafe { std::env::remove_var(k) };
+        xai_grok_test_support::env::remove_var(k);
     }
-    unsafe { std::env::set_var("GROK_DEPLOYMENT_KEY", "xai-token-ENTERPRISE") };
+    xai_grok_test_support::env::set_var("GROK_DEPLOYMENT_KEY", "xai-token-ENTERPRISE");
     let managed: toml::Value = toml::from_str(
         r#"[endpoints]
             deployment_key = "xai-token-ENTERPRISE"
@@ -929,7 +929,7 @@ fn deployment_config_url_uses_cli_chat_proxy_when_not_overridden() {
         EndpointsConfig::from_config_value(&pinned).resolve_managed_config_url(),
         "https://proxy.acme-corp.example/v1/deployment/config"
     );
-    unsafe { std::env::remove_var("GROK_DEPLOYMENT_KEY") };
+    xai_grok_test_support::env::remove_var("GROK_DEPLOYMENT_KEY");
 }
 #[derive(Clone)]
 struct DualBundleServerState {

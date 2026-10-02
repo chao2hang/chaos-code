@@ -1308,10 +1308,10 @@ mod tests {
         //
         // Drives the real `resolve_and_record` and `project_scope_allowed`
         // Force the feature on via env (highest precedence) so the test does not depend on the host's folder-trust config
-        unsafe { std::env::set_var("GROK_FOLDER_TRUST", "1") };
+        xai_grok_test_support::env::set_var("GROK_FOLDER_TRUST", "1");
         // Simulate a release-stamped build
         // An unstamped local/dev build (as in CI, no GROK_VERSION) auto-trusts, so the gate would never engage without this
-        unsafe { std::env::set_var(xai_grok_version::TEST_VERSION_ENV, "0.0.0-sim") };
+        xai_grok_test_support::env::set_var(xai_grok_version::TEST_VERSION_ENV, "0.0.0-sim");
         let tmp = repo_tmp();
 
         // Empty repo: nothing to gate, so allowed, but left UNRECORDED (provisional)
@@ -1332,8 +1332,8 @@ mod tests {
         );
         assert!(!project_scope_allowed(tmp.path()));
 
-        unsafe { std::env::remove_var(xai_grok_version::TEST_VERSION_ENV) };
-        unsafe { std::env::remove_var("GROK_FOLDER_TRUST") };
+        xai_grok_test_support::env::remove_var(xai_grok_version::TEST_VERSION_ENV);
+        xai_grok_test_support::env::remove_var("GROK_FOLDER_TRUST");
     }
 
     #[test]

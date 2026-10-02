@@ -631,7 +631,7 @@ mod tests {
         let _g = crate::util::config::resolve::AUTO_PERMISSION_MODE_ENV_LOCK
             .lock()
             .unwrap_or_else(|p| p.into_inner());
-        unsafe { std::env::set_var("GROK_AUTO_PERMISSION_MODE", "1") };
+        xai_grok_test_support::env::set_var("GROK_AUTO_PERMISSION_MODE", "1");
         assert!(effective_auto_for_launch(
             false,
             Some("auto"),
@@ -654,7 +654,7 @@ mod tests {
             None,
             PermissionMode::Ask
         ));
-        unsafe { std::env::remove_var("GROK_AUTO_PERMISSION_MODE") };
+        xai_grok_test_support::env::remove_var("GROK_AUTO_PERMISSION_MODE");
     }
 
     /// The authoritative agent-side gate (used at the `set_auto_mode` call site).
@@ -686,7 +686,7 @@ mod tests {
         let _g = crate::util::config::resolve::AUTO_PERMISSION_MODE_ENV_LOCK
             .lock()
             .unwrap_or_else(|p| p.into_inner());
-        unsafe { std::env::set_var("GROK_AUTO_PERMISSION_MODE", "0") };
+        xai_grok_test_support::env::set_var("GROK_AUTO_PERMISSION_MODE", "0");
         assert!(
             !effective_auto_for_launch(false, Some("auto"), None, PermissionMode::Ask),
             "gate OFF: explicit --permission-mode auto must not activate auto"
@@ -699,7 +699,7 @@ mod tests {
             !effective_auto_for_launch(false, None, None, PermissionMode::Auto),
             "gate OFF: an Auto unset-default must be inert"
         );
-        unsafe { std::env::remove_var("GROK_AUTO_PERMISSION_MODE") };
+        xai_grok_test_support::env::remove_var("GROK_AUTO_PERMISSION_MODE");
     }
 
     #[test]
@@ -707,7 +707,7 @@ mod tests {
         let _g = crate::util::config::resolve::AUTO_PERMISSION_MODE_ENV_LOCK
             .lock()
             .unwrap_or_else(|p| p.into_inner());
-        unsafe { std::env::remove_var(ENV_DEFAULT_PERMISSION_MODE) };
+        xai_grok_test_support::env::remove_var(ENV_DEFAULT_PERMISSION_MODE);
         assert_eq!(
             default_interactive_permission_mode(),
             DEFAULT_INTERACTIVE_PERMISSION_MODE,
@@ -719,7 +719,7 @@ mod tests {
             ("always-approve", DEFAULT_INTERACTIVE_PERMISSION_MODE),
             ("garbage", DEFAULT_INTERACTIVE_PERMISSION_MODE),
         ] {
-            unsafe { std::env::set_var(ENV_DEFAULT_PERMISSION_MODE, raw) };
+            xai_grok_test_support::env::set_var(ENV_DEFAULT_PERMISSION_MODE, raw);
             assert_eq!(
                 default_interactive_permission_mode(),
                 expected,
@@ -735,13 +735,13 @@ mod tests {
             Some(PermissionMode::Ask),
         );
 
-        unsafe { std::env::set_var("GROK_AUTO_PERMISSION_MODE", "1") };
-        unsafe { std::env::set_var(ENV_DEFAULT_PERMISSION_MODE, "auto") };
+        xai_grok_test_support::env::set_var("GROK_AUTO_PERMISSION_MODE", "1");
+        xai_grok_test_support::env::set_var(ENV_DEFAULT_PERMISSION_MODE, "auto");
         let unset = default_interactive_permission_mode();
         assert!(!effective_auto_for_launch(false, Some("ask"), None, unset));
         assert!(!effective_auto_for_launch(true, None, None, unset));
-        unsafe { std::env::remove_var(ENV_DEFAULT_PERMISSION_MODE) };
-        unsafe { std::env::remove_var("GROK_AUTO_PERMISSION_MODE") };
+        xai_grok_test_support::env::remove_var(ENV_DEFAULT_PERMISSION_MODE);
+        xai_grok_test_support::env::remove_var("GROK_AUTO_PERMISSION_MODE");
     }
 
     // Pure tests for the policy predicate itself live next to its canonical definition in `xai_grok_workspace::permission::resolution`

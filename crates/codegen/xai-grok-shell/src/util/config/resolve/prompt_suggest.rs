@@ -236,7 +236,7 @@ mod tests {
         let guard = ENV_LOCK
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        unsafe { std::env::remove_var(ENV_PROMPT_SUGGESTIONS) };
+        xai_grok_test_support::env::remove_var(ENV_PROMPT_SUGGESTIONS);
         guard
     }
 

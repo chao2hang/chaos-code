@@ -632,9 +632,7 @@ async fn upload_harness_trace_turns_build_per_turn_manifest() {
 #[serial_test::serial]
 fn resolve_agent_definition_defaults_to_grok_build() {
     let prev = std::env::var("GROK_AGENT").ok();
-    unsafe {
-        std::env::remove_var("GROK_AGENT");
-    }
+        xai_grok_test_support::env::remove_var("GROK_AGENT");
     let tmp = tempfile::tempdir().unwrap();
     let def = MvpAgent::resolve_agent_definition(
         tmp.path(),
@@ -645,7 +643,7 @@ fn resolve_agent_definition_defaults_to_grok_build() {
     );
     assert_eq!(def.name, config::DEFAULT_AGENT_TYPE);
     if let Some(v) = prev {
-        unsafe { std::env::set_var("GROK_AGENT", v) }
+                xai_grok_test_support::env::set_var("GROK_AGENT", v);
     }
 }
 /// When model_agent_type = Some("codex"), the codex agent is selected even though the default chain would return grok-build.
@@ -653,9 +651,7 @@ fn resolve_agent_definition_defaults_to_grok_build() {
 #[serial_test::serial]
 fn resolve_agent_definition_model_agent_type_overrides_default() {
     let prev = std::env::var("GROK_AGENT").ok();
-    unsafe {
-        std::env::remove_var("GROK_AGENT");
-    }
+        xai_grok_test_support::env::remove_var("GROK_AGENT");
     let tmp = tempfile::tempdir().unwrap();
     let def = MvpAgent::resolve_agent_definition(
         tmp.path(),
@@ -666,7 +662,7 @@ fn resolve_agent_definition_model_agent_type_overrides_default() {
     );
     assert_eq!(def.name, "codex");
     if let Some(v) = prev {
-        unsafe { std::env::set_var("GROK_AGENT", v) }
+                xai_grok_test_support::env::set_var("GROK_AGENT", v);
     }
 }
 /// When model_agent_type is None, the chain-resolved default agent is NOT overridden.
@@ -675,9 +671,7 @@ fn resolve_agent_definition_model_agent_type_overrides_default() {
 #[serial_test::serial]
 fn resolve_agent_definition_none_agent_type_does_not_override() {
     let prev = std::env::var("GROK_AGENT").ok();
-    unsafe {
-        std::env::remove_var("GROK_AGENT");
-    }
+        xai_grok_test_support::env::remove_var("GROK_AGENT");
     let tmp = tempfile::tempdir().unwrap();
     let def = MvpAgent::resolve_agent_definition(
         tmp.path(),
@@ -688,7 +682,7 @@ fn resolve_agent_definition_none_agent_type_does_not_override() {
     );
     assert_eq!(def.name, config::DEFAULT_AGENT_TYPE);
     if let Some(v) = prev {
-        unsafe { std::env::set_var("GROK_AGENT", v) }
+                xai_grok_test_support::env::set_var("GROK_AGENT", v);
     }
 }
 /// Regression for the web-client devbox bug: an ACP profile must win when the model's `agent_type` is the default value.
@@ -696,9 +690,7 @@ fn resolve_agent_definition_none_agent_type_does_not_override() {
 #[serial_test::serial]
 fn resolve_agent_definition_acp_profile_wins_when_model_agent_type_is_default() {
     let prev = std::env::var("GROK_AGENT").ok();
-    unsafe {
-        std::env::remove_var("GROK_AGENT");
-    }
+        xai_grok_test_support::env::remove_var("GROK_AGENT");
     let tmp = tempfile::tempdir().unwrap();
     let acp_profile = xai_grok_agent::AgentDefinition::from_json(&serde_json::json!(
         { "name" : "custom-devbox-profile", "description" :
@@ -718,7 +710,7 @@ fn resolve_agent_definition_acp_profile_wins_when_model_agent_type_is_default() 
         "ACP _meta.agentProfile must win when model_agent_type is the default value"
     );
     if let Some(v) = prev {
-        unsafe { std::env::set_var("GROK_AGENT", v) }
+                xai_grok_test_support::env::set_var("GROK_AGENT", v);
     }
 }
 /// Regression: `DEFAULT_AGENT_TYPE` flipped to `grok-build-plan`.
@@ -728,9 +720,7 @@ fn resolve_agent_definition_acp_profile_wins_when_model_agent_type_is_default() 
 #[serial_test::serial]
 fn resolve_agent_definition_acp_profile_wins_for_explicit_grok_build_family() {
     let prev = std::env::var("GROK_AGENT").ok();
-    unsafe {
-        std::env::remove_var("GROK_AGENT");
-    }
+        xai_grok_test_support::env::remove_var("GROK_AGENT");
     let tmp = tempfile::tempdir().unwrap();
     let acp_profile = xai_grok_agent::AgentDefinition::from_json(&serde_json::json!({
         "name": "custom-devbox-profile",
@@ -751,7 +741,7 @@ fn resolve_agent_definition_acp_profile_wins_for_explicit_grok_build_family() {
         );
     }
     if let Some(v) = prev {
-        unsafe { std::env::set_var("GROK_AGENT", v) }
+                xai_grok_test_support::env::set_var("GROK_AGENT", v);
     }
 }
 /// A non-strict (stock / vision-capable) model leaves the template alone, so such models keep native image input.
@@ -781,9 +771,7 @@ fn inherited_harness_template_respects_explicit_template() {
 #[serial_test::serial]
 fn resolve_agent_definition_cli_agent_profile_wins_when_model_agent_type_is_default() {
     let prev = std::env::var("GROK_AGENT").ok();
-    unsafe {
-        std::env::remove_var("GROK_AGENT");
-    }
+        xai_grok_test_support::env::remove_var("GROK_AGENT");
     let tmp = tempfile::tempdir().unwrap();
     let profile_path = tmp.path().join("cli-profile.md");
     std::fs::write(
@@ -800,7 +788,7 @@ fn resolve_agent_definition_cli_agent_profile_wins_when_model_agent_type_is_defa
     );
     assert_eq!(def.name, "cli-profile");
     if let Some(v) = prev {
-        unsafe { std::env::set_var("GROK_AGENT", v) }
+                xai_grok_test_support::env::set_var("GROK_AGENT", v);
     }
 }
 /// Agent profile with `model: Override(id)` preserves the field through resolution.
@@ -808,9 +796,7 @@ fn resolve_agent_definition_cli_agent_profile_wins_when_model_agent_type_is_defa
 #[serial_test::serial]
 fn resolve_agent_definition_agent_profile_with_model_override() {
     let prev = std::env::var("GROK_AGENT").ok();
-    unsafe {
-        std::env::remove_var("GROK_AGENT");
-    }
+        xai_grok_test_support::env::remove_var("GROK_AGENT");
     let tmp = tempfile::tempdir().unwrap();
     let agents_dir = tmp.path().join(".grok").join("agents");
     std::fs::create_dir_all(&agents_dir).unwrap();
@@ -833,8 +819,8 @@ fn resolve_agent_definition_agent_profile_with_model_override() {
         "agent profile model override must be preserved through resolution"
     );
     match prev {
-        Some(v) => unsafe { std::env::set_var("GROK_AGENT", v) },
-        None => unsafe { std::env::remove_var("GROK_AGENT") },
+        Some(v) =>  xai_grok_test_support::env::set_var("GROK_AGENT", v),
+        None =>  xai_grok_test_support::env::remove_var("GROK_AGENT"),
     }
 }
 #[test]
@@ -2612,10 +2598,10 @@ async fn test_unknown_session_id_returns_session_required() {
 mod parse_json_object_env_tests {
     use super::parse_json_object_env;
     unsafe fn set(k: &str, v: &str) {
-        unsafe { std::env::set_var(k, v) };
+                xai_grok_test_support::env::set_var(k, v);
     }
     unsafe fn unset(k: &str) {
-        unsafe { std::env::remove_var(k) };
+                xai_grok_test_support::env::remove_var(k);
     }
     #[test]
     #[serial_test::serial]

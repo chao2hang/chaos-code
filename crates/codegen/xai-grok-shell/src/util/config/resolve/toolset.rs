@@ -161,7 +161,7 @@ mod login_shell_capture_tests {
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
     fn guard() -> std::sync::MutexGuard<'static, ()> {
         let g = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-        unsafe { std::env::remove_var(ENV_LOGIN_SHELL_CAPTURE) };
+        xai_grok_test_support::env::remove_var(ENV_LOGIN_SHELL_CAPTURE);
         g
     }
 
@@ -207,27 +207,27 @@ mod login_shell_capture_tests {
     #[test]
     fn env_beats_config_and_remote() {
         let _g = guard();
-        unsafe { std::env::set_var(ENV_LOGIN_SHELL_CAPTURE, "0") };
+        xai_grok_test_support::env::set_var(ENV_LOGIN_SHELL_CAPTURE, "0");
         let off = resolve_login_shell_capture_tiers(LoginShellCaptureTiers {
             user: Some(&cfg(true)),
             remote: Some(true),
             ..Default::default()
         });
-        unsafe { std::env::remove_var(ENV_LOGIN_SHELL_CAPTURE) };
+        xai_grok_test_support::env::remove_var(ENV_LOGIN_SHELL_CAPTURE);
         assert!(!off);
     }
 
     #[test]
     fn requirements_win_outright() {
         let _g = guard();
-        unsafe { std::env::set_var(ENV_LOGIN_SHELL_CAPTURE, "1") };
+        xai_grok_test_support::env::set_var(ENV_LOGIN_SHELL_CAPTURE, "1");
         let off = resolve_login_shell_capture_tiers(LoginShellCaptureTiers {
             requirements: Some(&cfg(false)),
             user: Some(&cfg(true)),
             remote: Some(true),
             ..Default::default()
         });
-        unsafe { std::env::remove_var(ENV_LOGIN_SHELL_CAPTURE) };
+        xai_grok_test_support::env::remove_var(ENV_LOGIN_SHELL_CAPTURE);
         assert!(!off);
     }
 
@@ -284,12 +284,12 @@ mod login_shell_capture_tests {
     fn env_beats_overlay() {
         let _g = guard();
         // `GROK_LOGIN_ENV` outranks the overlay
-        unsafe { std::env::set_var(ENV_LOGIN_SHELL_CAPTURE, "1") };
+        xai_grok_test_support::env::set_var(ENV_LOGIN_SHELL_CAPTURE, "1");
         let on = resolve_login_shell_capture_tiers(LoginShellCaptureTiers {
             env_overlay: Some(&cfg(false)),
             ..Default::default()
         });
-        unsafe { std::env::remove_var(ENV_LOGIN_SHELL_CAPTURE) };
+        xai_grok_test_support::env::remove_var(ENV_LOGIN_SHELL_CAPTURE);
         assert!(on);
     }
 }
@@ -351,7 +351,7 @@ mod scheduler_background_loops_tests {
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
     fn guard() -> std::sync::MutexGuard<'static, ()> {
         let g = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-        unsafe { std::env::remove_var(ENV_SCHEDULER_BACKGROUND_LOOPS) };
+        xai_grok_test_support::env::remove_var(ENV_SCHEDULER_BACKGROUND_LOOPS);
         g
     }
 
@@ -401,7 +401,7 @@ mod scheduler_background_loops_tests {
     #[test]
     fn env_beats_config_and_remote() {
         let _g = guard();
-        unsafe { std::env::set_var(ENV_SCHEDULER_BACKGROUND_LOOPS, "0") };
+        xai_grok_test_support::env::set_var(ENV_SCHEDULER_BACKGROUND_LOOPS, "0");
         let off = resolve_scheduler_background_loops_tiers(
             None,
             Some(&cfg(true)),
@@ -409,14 +409,14 @@ mod scheduler_background_loops_tests {
             None,
             Some(true),
         );
-        unsafe { std::env::remove_var(ENV_SCHEDULER_BACKGROUND_LOOPS) };
+        xai_grok_test_support::env::remove_var(ENV_SCHEDULER_BACKGROUND_LOOPS);
         assert!(!off);
     }
 
     #[test]
     fn requirements_win_outright() {
         let _g = guard();
-        unsafe { std::env::set_var(ENV_SCHEDULER_BACKGROUND_LOOPS, "1") };
+        xai_grok_test_support::env::set_var(ENV_SCHEDULER_BACKGROUND_LOOPS, "1");
         let off = resolve_scheduler_background_loops_tiers(
             Some(&cfg(false)),
             Some(&cfg(true)),
@@ -424,7 +424,7 @@ mod scheduler_background_loops_tests {
             None,
             Some(true),
         );
-        unsafe { std::env::remove_var(ENV_SCHEDULER_BACKGROUND_LOOPS) };
+        xai_grok_test_support::env::remove_var(ENV_SCHEDULER_BACKGROUND_LOOPS);
         assert!(!off);
     }
 }
@@ -742,8 +742,8 @@ mod ask_user_question_timeout_tests {
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
     fn guard() -> std::sync::MutexGuard<'static, ()> {
         let g = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-        unsafe { std::env::remove_var(ENV_ASK_USER_QUESTION_TIMEOUT_ENABLED) };
-        unsafe { std::env::remove_var(RESPONSE_TIMEOUT_ENV) };
+        xai_grok_test_support::env::remove_var(ENV_ASK_USER_QUESTION_TIMEOUT_ENABLED);
+        xai_grok_test_support::env::remove_var(RESPONSE_TIMEOUT_ENV);
         g
     }
 

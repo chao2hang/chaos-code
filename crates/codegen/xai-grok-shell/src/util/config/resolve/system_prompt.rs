@@ -67,11 +67,11 @@ mod system_prompt_label_tests {
         let _guard = ENV_LOCK.lock().unwrap();
         let prev = std::env::var(ENV_SYSTEM_PROMPT_LABEL).ok();
         // Safety: test-only, locked.
-        unsafe { std::env::remove_var(ENV_SYSTEM_PROMPT_LABEL) };
+        xai_grok_test_support::env::remove_var(ENV_SYSTEM_PROMPT_LABEL);
         let r = f();
         match prev {
-            Some(v) => unsafe { std::env::set_var(ENV_SYSTEM_PROMPT_LABEL, v) },
-            None => unsafe { std::env::remove_var(ENV_SYSTEM_PROMPT_LABEL) },
+            Some(v) => xai_grok_test_support::env::set_var(ENV_SYSTEM_PROMPT_LABEL, v),
+            None => xai_grok_test_support::env::remove_var(ENV_SYSTEM_PROMPT_LABEL),
         }
         r
     }
@@ -150,14 +150,14 @@ mod system_prompt_label_tests {
     fn env_wins_over_all_tiers() {
         let _guard = ENV_LOCK.lock().unwrap();
         // Safety: test-only, locked.
-        unsafe { std::env::set_var(ENV_SYSTEM_PROMPT_LABEL, "FromEnv") };
+        xai_grok_test_support::env::set_var(ENV_SYSTEM_PROMPT_LABEL, "FromEnv");
         let got = resolve_system_prompt_label_from_tiers(
             Some("PerModel".into()),
             Some("Global".into()),
             Some("GbPer".into()),
             Some("GbGlobal".into()),
         );
-        unsafe { std::env::remove_var(ENV_SYSTEM_PROMPT_LABEL) };
+        xai_grok_test_support::env::remove_var(ENV_SYSTEM_PROMPT_LABEL);
         assert_eq!(got, "FromEnv");
     }
 

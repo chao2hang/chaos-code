@@ -390,7 +390,7 @@ worktree_type = "invalid"
     }
 
     fn clear_worktree_type_env() {
-        unsafe { std::env::remove_var(ENV_WORKTREE_TYPE) };
+        xai_grok_test_support::env::remove_var(ENV_WORKTREE_TYPE);
     }
 
     fn remote_unset() -> RemoteSettings {
@@ -463,10 +463,10 @@ worktree_type = "invalid"
     fn resolve_grove_worktree_env_wins_over_local() {
         clear_worktree_type_env();
         let remote = remote_unset();
-        unsafe { std::env::set_var(ENV_WORKTREE_TYPE, "grove") };
+        xai_grok_test_support::env::set_var(ENV_WORKTREE_TYPE, "grove");
         let root: TomlValue = toml::from_str("[cli]\ngrove_worktree = false").unwrap();
         assert_eq!(resolve_grove_worktree(&root, Some(&remote)), (true, "env"));
-        unsafe { std::env::set_var(ENV_WORKTREE_TYPE, "copy") };
+        xai_grok_test_support::env::set_var(ENV_WORKTREE_TYPE, "copy");
         let root: TomlValue = toml::from_str("[cli]\ngrove_worktree = true").unwrap();
         assert_eq!(resolve_grove_worktree(&root, Some(&remote)), (false, "env"));
         clear_worktree_type_env();
@@ -517,7 +517,7 @@ worktree_type = "invalid"
             gate_grove_worktree(Some(true), &root, Some(&remote)),
             (false, "remote_kill")
         );
-        unsafe { std::env::set_var(ENV_WORKTREE_TYPE, "grove") };
+        xai_grok_test_support::env::set_var(ENV_WORKTREE_TYPE, "grove");
         assert_eq!(
             gate_grove_worktree(Some(true), &root, None),
             (false, "remote_unavailable")
@@ -529,7 +529,7 @@ worktree_type = "invalid"
     #[serial]
     fn resolve_grove_worktree_remote_kill_switch_wins() {
         clear_worktree_type_env();
-        unsafe { std::env::set_var(ENV_WORKTREE_TYPE, "grove") };
+        xai_grok_test_support::env::set_var(ENV_WORKTREE_TYPE, "grove");
         let root: TomlValue = toml::from_str("[cli]\ngrove_worktree = true").unwrap();
         let remote = RemoteSettings {
             grove_worktree: Some(false),

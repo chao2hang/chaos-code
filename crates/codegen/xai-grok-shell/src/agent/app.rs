@@ -1425,10 +1425,10 @@ mod tests {
         use xai_grok_telemetry::external::{
             is_settings_gate_open, mark_external_otel_settings_resolved,
         };
-        unsafe fn set_or_clear(key: &str, value: Option<std::ffi::OsString>) {
+        fn set_or_clear(key: &str, value: Option<std::ffi::OsString>) {
             match value {
-                Some(v) => unsafe { std::env::set_var(key, v) },
-                None => unsafe { std::env::remove_var(key) },
+                Some(v) => xai_grok_test_support::env::set_var(key, v),
+                None => xai_grok_test_support::env::remove_var(key),
             }
         }
         /// Restores the api-key env and reopens the gate on drop so no state leaks.
@@ -1439,11 +1439,11 @@ mod tests {
         }
         impl Drop for Restore {
             fn drop(&mut self) {
-                unsafe {
+                xai_grok_test_support::env::with_write_lock(|| {
                     set_or_clear(XAI_API_KEY_ENV_VAR, self.key.take());
                     set_or_clear(LEGACY_XAI_API_KEY_ENV_VAR, self.legacy.take());
                     set_or_clear(PROXY_ENV_VAR, self.proxy.take());
-                }
+                });
                 mark_external_otel_settings_resolved();
             }
         }
@@ -1454,11 +1454,9 @@ mod tests {
             proxy: std::env::var_os(PROXY_ENV_VAR),
         };
         let cfg = GrokComConfig::default();
-        unsafe {
-            std::env::set_var(XAI_API_KEY_ENV_VAR, "test-key");
-            std::env::remove_var(LEGACY_XAI_API_KEY_ENV_VAR);
-            std::env::remove_var(PROXY_ENV_VAR);
-        }
+        xai_grok_test_support::env::set_var(XAI_API_KEY_ENV_VAR, "test-key");
+        xai_grok_test_support::env::remove_var(LEGACY_XAI_API_KEY_ENV_VAR);
+        xai_grok_test_support::env::remove_var(PROXY_ENV_VAR);
         let session = GrokAuth {
             expires_at: chrono::DateTime::from_timestamp(9_999_999_999, 0),
             auth_mode: AuthMode::Oidc,

@@ -778,26 +778,25 @@ mod tests {
     fn with_api_key_env<F: FnOnce()>(key: Option<&str>, f: F) {
         let prev = std::env::var("XAI_API_KEY").ok();
         let prev_legacy = std::env::var("GROK_CODE_XAI_API_KEY").ok();
-        // SAFETY: serial_test ensures no concurrent env mutation.
-        unsafe {
-            std::env::remove_var("XAI_API_KEY");
-            std::env::remove_var("GROK_CODE_XAI_API_KEY");
+        xai_grok_test_support::env::with_write_lock(|| {
+            xai_grok_test_support::env::remove_var("XAI_API_KEY");
+            xai_grok_test_support::env::remove_var("GROK_CODE_XAI_API_KEY");
             if let Some(k) = key {
-                std::env::set_var("XAI_API_KEY", k);
+                xai_grok_test_support::env::set_var("XAI_API_KEY", k);
             }
-        }
+        });
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
         // Restore original state.
-        unsafe {
-            std::env::remove_var("XAI_API_KEY");
-            std::env::remove_var("GROK_CODE_XAI_API_KEY");
+        xai_grok_test_support::env::with_write_lock(|| {
+            xai_grok_test_support::env::remove_var("XAI_API_KEY");
+            xai_grok_test_support::env::remove_var("GROK_CODE_XAI_API_KEY");
             if let Some(v) = prev {
-                std::env::set_var("XAI_API_KEY", v);
+                xai_grok_test_support::env::set_var("XAI_API_KEY", v);
             }
             if let Some(v) = prev_legacy {
-                std::env::set_var("GROK_CODE_XAI_API_KEY", v);
+                xai_grok_test_support::env::set_var("GROK_CODE_XAI_API_KEY", v);
             }
-        }
+        });
         if let Err(e) = result {
             std::panic::resume_unwind(e);
         }

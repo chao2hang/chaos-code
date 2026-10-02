@@ -42,16 +42,19 @@ pub(crate) fn ensure_hermetic_git_on_path() {
             };
             if let Some(dir) = p.parent() {
                 let cur = std::env::var("PATH").unwrap_or_default();
-                unsafe {
-                    std::env::set_var("PATH", format!("{}:{}", dir.display(), cur));
+                xai_grok_test_support::env::with_write_lock(|| {
+                    xai_grok_test_support::env::set_var(
+                        "PATH",
+                        format!("{}:{}", dir.display(), cur),
+                    );
                     // git-minimal spawns subcommands (`git stash` invokes `git update-index`) through its exec path
                     // That path is baked to a build-machine prefix
                     // Helpers live next to the binary, so point the exec path there
                     // Skip the host-fallback wrapper: host git must keep its own exec path
                     if p.file_name().is_some_and(|name| name == "git") {
-                        std::env::set_var("GIT_EXEC_PATH", dir);
+                        xai_grok_test_support::env::set_var("GIT_EXEC_PATH", dir);
                     }
-                }
+                });
             }
         }
     });
