@@ -1,0 +1,24 @@
+# Guards under scripts/ci/ that run in CI but deliberately NOT in the local
+# Docker entry point (scripts/verify-in-docker.sh), and what makes them need
+# something a clean container off this repository does not have. Read by
+# scripts/ci/check-guard-wiring.py, which fails on any scripts/ci/ guard that is
+# neither mirrored into the entry point nor listed here -- so the gap has to be
+# decided per guard and cannot silently widen.
+#
+# Format: <name>\t<reason>   ("#" starts a comment; a reason is mandatory)
+#
+# "Mirror" means the guard's file name appears in a path position in the `gates`
+# array, or in a path position in a file the entry point already runs
+# (transitively, the same rule as reachability). Three guards are mirrored that
+# way without having a gate line of their own: publish-npm.sh,
+# local-publish-host.sh and stamp-npm-version.mjs are each named by the harness
+# in test-publish-npm.sh, which is mirrored. Of the three the harness really
+# exercises publish-npm.sh; local-publish-host.sh runs as far as its
+# missing-binary check, and stamp-npm-version.mjs sits behind a --version the
+# harness never passes -- so nothing the local entry point runs rewrites the npm
+# package.json files, and the tree the run checksums stays as it was.
+check-gui-protocol.sh	Regenerates apps/chaos-ui/src/generated/protocol.ts by building chaos-engine in the dev profile (`cargo run --bin chaos-protocol-schema`); the entry point's own cargo gates stop at check/clippy, and CI runs this in the job that has already built the engine.
+check-powershell-syntax.py	`--require` needs a real PowerShell to parse scripts/install.ps1; the verify image is Debian bookworm-slim, which has no pwsh in the pocket it installs from, and adding one means the Microsoft package feed. Running the installer is the target-OS leg's job either way.
+release-integrity-fixture.py	Release-integrity lab fixture, reached only through scripts/install-integrity-in-docker.sh, which serves assembled release artifacts and needs a build's worth of inputs the entry point does not produce.
+release-integrity-request-log.py	Release-integrity lab helper, reached only through scripts/install-integrity-in-docker.sh.
+release-integrity-serve.py	Release-integrity lab server, reached only through scripts/install-integrity-in-docker.sh.

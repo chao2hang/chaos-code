@@ -27,6 +27,12 @@ ENV DEBIAN_FRONTEND=noninteractive
 # every https endpoint while a developer box passes. cmake and ninja-build are
 # needed by crate build scripts that a prebuilt `rust:` image already carries.
 # python3 and git are consumed by the guard scripts and by tests that shell out.
+# nodejs is what lets the npm-side guards run here at all: `node --check` parses
+# the shipped `postinstall.js` and launcher (they run on every user's
+# `npm install chaos-code`), and `test-publish-npm.sh` drives `publish-npm.sh`
+# through a fake `npm` that resolves versions with `node -p`. Debian's build is
+# older than the CI runner's, which is fine for a parse check and enough for that
+# harness; it is not a claim that the release publishes on Node 18.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         build-essential \
@@ -42,6 +48,7 @@ RUN apt-get update \
         ninja-build \
         unzip \
         xz-utils \
+        nodejs \
     && rm -rf /var/lib/apt/lists/*
 
 # `bin/protoc` is a dotslash launcher, not a binary; apt's protobuf-compiler is

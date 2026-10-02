@@ -91,6 +91,19 @@ This container covers the Linux gates only. It is not platform evidence: a Linux
 container cannot run the macOS or Windows code paths, and it does not exercise
 signing, installers, or a real TLS-terminating deployment.
 
+It also runs part of `scripts/ci/`, and that part is now a rule rather than a
+habit. `scripts/ci/check-guard-wiring.py` classifies every guard as **mirrored**
+(the `gates` array names it, or a script the entry point runs does) or **CI-only**,
+and a guard in neither set fails the check. The CI-only set lives in
+`scripts/ci/docker-entry-ci-only.tsv`, one `<name><TAB><reason>` row per guard, and
+the reasons are all the same shape: something a clean container off this repository
+does not have. Today that is a dev-profile build of `chaos-engine`
+(`check-gui-protocol.sh`), a real PowerShell (`check-powershell-syntax.py --require`),
+and assembled release artifacts (the release-integrity lab helpers). `--list-mirror`
+prints the classification. When you add a guard, add it to the `gates` array or add
+a row; adding it to CI alone is the one option the check refuses, because that is
+how a local run quietly stops covering what it used to.
+
 The other labs (`install-sh-in-docker.sh`, `install-integrity-in-docker.sh`,
 `npm-install-in-docker.sh`, `remote-acceptance-in-docker.sh`) start their containers
 idle and drive every step with `docker exec`, so each container's lifetime is whatever

@@ -1,0 +1,447 @@
+Docker 入口的 CI 门禁镜像：把「本地跑的就是 CI 跑的那串命令」变成一条会红的规则
+==============================================================================
+
+日期：2026-10-03
+提交：feat(guard): Docker 入口与 CI 的门禁镜像变成一条会红的规则，镜像项 16 → 26
+被记录的对象：
+  scripts/ci/check-guard-wiring.py        二选一分类规则（新增 mirrored()/ci_only()/--list-mirror）
+  scripts/ci/docker-entry-ci-only.tsv     新增，5 行不镜像清单 + 每行理由
+  scripts/ci/test-check-guard-wiring.py   9 例 → 16 例
+  scripts/verify-in-docker.sh             gates 数组 16 项镜像 → 26 项
+  docker/verify.Dockerfile                镜像里装上 nodejs
+  CONTRIBUTING.md                         新增「镜像是一条规则」一段
+
+本文件是自包含的：每段输出都是从当轮真实运行里逐字抓下来的，命令写在 `$` 行上。
+所有容器运行都指向一个干净克隆（`git clone` 出来的、有自己的 `.git` 目录的仓库），
+不是 git worktree —— worktree 的 `.git` 是指回主仓库的文件，绑挂载进容器时那个路径
+在容器里不存在，git 会打印 `fatal: not a git repository`，那与门禁本身无关，会把转录弄脏。
+
+
+第 1 节  改造前后：同一棵树上分类到底变了什么
+----------------------------------------------
+
+改造前 `scripts/ci/` 有 32 个守卫，全部可达（其中 1 个靠豁免），但只有 16 个同时出现在
+`scripts/verify-in-docker.sh` 的 `gates` 数组里。上一轮接线的检查把「同时被跑的数量」打印出来
+却不据此失败，所以这个差距可以任意扩大。改造后每个守卫必须恰好落进两类之一：被镜像，或登记
+CI-only。分类由 `--list-mirror` 打印：
+
+$ python3 scripts/ci/check-guard-wiring.py --list-mirror
+check-guard-wiring: OK (32 files in scripts/ci/, 31 reachable, 26 run by scripts/verify-in-docker.sh, 5 recorded CI-only, 1 exempt)
+mirrored  check-brand-protocol.py
+mirrored  check-guard-wiring.py
+ci-only   check-gui-protocol.sh  -- Regenerates apps/chaos-ui/src/generated/protocol.ts by building chaos-engine in the dev profile (`cargo run --bin chaos-protocol-schema`); the entry point's own cargo gates stop at check/clippy, and CI runs this in the job that has already built the engine.
+ci-only   check-powershell-syntax.py  -- `--require` needs a real PowerShell to parse scripts/install.ps1; the verify image is Debian bookworm-slim, which has no pwsh in the pocket it installs from, and adding one means the Microsoft package feed. Running the installer is the target-OS leg's job either way.
+mirrored  check-script-portability.py
+mirrored  check-version-lockstep.py
+mirrored  check-versions.sh
+mirrored  check-workflow-shells.py
+mirrored  classify-open-todos.py
+mirrored  ignored-tests.py
+exempt    ignored-tests.sh
+mirrored  local-publish-host.sh
+mirrored  panic-site-census.py
+mirrored  publish-npm.sh
+ci-only   release-integrity-fixture.py  -- Release-integrity lab fixture, reached only through scripts/install-integrity-in-docker.sh, which serves assembled release artifacts and needs a build's worth of inputs the entry point does not produce.
+ci-only   release-integrity-request-log.py  -- Release-integrity lab helper, reached only through scripts/install-integrity-in-docker.sh.
+ci-only   release-integrity-serve.py  -- Release-integrity lab server, reached only through scripts/install-integrity-in-docker.sh.
+mirrored  secret-scan.sh
+mirrored  stamp-npm-version.mjs
+mirrored  test-brand-protocol.py
+mirrored  test-check-guard-wiring.py
+mirrored  test-classify-open-todos.py
+mirrored  test-ignored-tests-baseline-fixture.py
+mirrored  test-ignored-tests-baseline.py
+mirrored  test-ignored-tests-reasons.py
+mirrored  test-ignored-tests.py
+mirrored  test-installer-asset-names.py
+mirrored  test-installer-bash-resolution.py
+mirrored  test-installer-signature-policy.py
+mirrored  test-panic-site-census.py
+mirrored  test-publish-npm.sh
+mirrored  test-script-portability.py
+check-guard-wiring: OK (32 files in scripts/ci/, 31 reachable, 26 run by scripts/verify-in-docker.sh, 5 recorded CI-only, 1 exempt)
+
+同一份输出里那行汇总就是改造前后的对照：`26 run by scripts/verify-in-docker.sh`，
+上一轮归档在 `TODO.md`/`CHANGELOG.md` 里的数字是 `16`。
+
+第 2 节  新规则跑在改造前的入口上：它抓到的就是本轮真正补上的那 10 条
+----------------------------------------------------------------------
+这一步是这条规则的非空证明，而且用的是真实树、不是合成仓库：把本轮新写的
+`check-guard-wiring.py` 和那份 5 行的 `docker-entry-ci-only.tsv` 原样拷进改造前那一版
+（`22683f8c`，入口的 `gates` 数组一个字没改），看它报什么。它报出的 10 条正是本轮补进
+`gates` 的那 10 个文件——既没有多报一条，也没有少报一条。
+
+$ git log --oneline -1        # 改造前那一版
+22683f8c fix(guard): l10n 守卫在 Docker 入口静默失败的根因修掉，四处 fail-open 改为 fail-closed
+$ cp <本轮的 scripts/ci/check-guard-wiring.py> scripts/ci/check-guard-wiring.py
+$ cp <本轮的 scripts/ci/docker-entry-ci-only.tsv> scripts/ci/docker-entry-ci-only.tsv
+# 新规则 + 本轮那份 5 行 CI-only 清单，原样跑在改造前的入口上；入口的 gates 数组没动过。
+
+$ python3 scripts/ci/check-guard-wiring.py
+  scripts/ci/check-version-lockstep.py runs in CI but not in scripts/verify-in-docker.sh; mirror it into the `gates` array or record what it needs in scripts/ci/docker-entry-ci-only.tsv
+  scripts/ci/check-versions.sh runs in CI but not in scripts/verify-in-docker.sh; mirror it into the `gates` array or record what it needs in scripts/ci/docker-entry-ci-only.tsv
+  scripts/ci/local-publish-host.sh runs in CI but not in scripts/verify-in-docker.sh; mirror it into the `gates` array or record what it needs in scripts/ci/docker-entry-ci-only.tsv
+  scripts/ci/panic-site-census.py runs in CI but not in scripts/verify-in-docker.sh; mirror it into the `gates` array or record what it needs in scripts/ci/docker-entry-ci-only.tsv
+  scripts/ci/publish-npm.sh runs in CI but not in scripts/verify-in-docker.sh; mirror it into the `gates` array or record what it needs in scripts/ci/docker-entry-ci-only.tsv
+  scripts/ci/stamp-npm-version.mjs runs in CI but not in scripts/verify-in-docker.sh; mirror it into the `gates` array or record what it needs in scripts/ci/docker-entry-ci-only.tsv
+  scripts/ci/test-installer-signature-policy.py runs in CI but not in scripts/verify-in-docker.sh; mirror it into the `gates` array or record what it needs in scripts/ci/docker-entry-ci-only.tsv
+  scripts/ci/test-panic-site-census.py runs in CI but not in scripts/verify-in-docker.sh; mirror it into the `gates` array or record what it needs in scripts/ci/docker-entry-ci-only.tsv
+  scripts/ci/test-publish-npm.sh runs in CI but not in scripts/verify-in-docker.sh; mirror it into the `gates` array or record what it needs in scripts/ci/docker-entry-ci-only.tsv
+  scripts/ci/test-script-portability.py runs in CI but not in scripts/verify-in-docker.sh; mirror it into the `gates` array or record what it needs in scripts/ci/docker-entry-ci-only.tsv
+check-guard-wiring: 10 problem(s)
+$ echo $?
+1
+
+第 3 节  两条匹配规则各自挡掉了什么（2×2 实测，不是回忆）
+----------------------------------------------------------------------
+可达性靠「某个可达文件的文本里出现了这个守卫的名字」判定。这个名字怎么算出现、
+哪些文件有资格算调用者，两件事各有一个规则，规则没定死的时候检查会去咬自己的清单。
+下面是在本轮提交后的树上，把两个开关各拨到两档跑出来的 2×2：
+
+# 2x2：匹配规则（路径位置 / 裸名子串） x 谁能当调用者（仅 .py .sh .mjs .yml / 任何文件）
+# 在新树（本轮提交 35f762a4）上跑 mirrored()，看有多少 CI-only 守卫被误判成「入口在跑」
+
+匹配规则           调用者范围                 镜像数        误判数  被误判的守卫
+路径位置           代码类后缀                  26          0  无
+路径位置           任何文件                   26          0  无
+裸名子串           代码类后缀                  30          3  ['check-gui-protocol.sh', 'check-powershell-syntax.py', 'release-integrity-serve.py']
+裸名子串           任何文件                   32          5  ['check-gui-protocol.sh', 'check-powershell-syntax.py', 'release-integrity-fixture.py', 'release-integrity-request-log.py', 'release-integrity-serve.py']
+
+CI-only 清单总共 5 条：['check-gui-protocol.sh', 'check-powershell-syntax.py', 'release-integrity-fixture.py', 'release-integrity-request-log.py', 'release-integrity-serve.py']
+
+读法：只有「路径位置 + 代码类后缀」这一格是干净的（误判 0）。裸名子串那一行说明：
+即便只放宽后缀，本检查新写的真实树用例里那行断言也会把 `check-gui-protocol.sh`、
+`check-powershell-syntax.py` 点名成镜像；两条都放宽时 5 条 CI-only 守卫全部被吞掉、
+镜像数从 26 虚涨到 32，而检查自己会打印 OK。
+
+裸名规则的另一处代价可以在改造前的树上直接量出来：
+
+# 同一棵改造前的树（22683f8c），分别用改造前后的可达性规则算一遍 scripts/ci/ 的可达守卫
+# 旧规则按裸文件名子串匹配，新规则要求名字出现在路径位置（前面必须有 /）
+
+旧规则认为可达的守卫数 : 32
+新规则认为可达的守卫数 : 31
+丢掉的那一个         : ['ignored-tests.sh']
+
+它为什么之前算可达：旧版检查自己的 EXEMPT 字典里写着它的裸文件名，而检查自己当然是可达的
+  check-guard-wiring.py 里含裸名 "ignored-tests.sh" 的行：
+   line 25: - Docs are not scanned at all. `ignored-tests.sh` is quoted in two audit reports
+   line 56:     "ignored-tests.sh": "`exec` alias for ignored-tests.py, which is wired; the docs quote the alias",
+  同一份文件里含路径形式 "/ignored-tests.sh" 的行数： 0
+
+所以 `ignored-tests.sh` 的「可达」一直是检查自己点名自己。它现在走 EXEMPT，那条豁免必须
+描述一个存在的文件，否则 `test_an_exemption_for_a_deleted_file_is_an_error` 会红。
+
+第 4 节  真实树反向实验：删掉门禁 / 写坏清单，检查点名谁
+------------------------------------------------------
+
+合成仓库证明的是逻辑分支，这一节证明的是**这条规则对本次真实接线有效**。四个实验都在
+本轮的工作树上做完后立刻按字节还原（`cmp` 返回 0）：
+
+=== baseline: the worktree as it stands ===
+check-guard-wiring: OK (32 files in scripts/ci/, 31 reachable, 26 run by scripts/verify-in-docker.sh, 5 recorded CI-only, 1 exempt)
+exit=0
+
+=== mutation: delete the `version lockstep` gate line from the gates array ===
+scripts/ci/check-version-lockstep.py runs in CI but not in scripts/verify-in-docker.sh; mirror it into the `gates` array or record what it needs in scripts/ci/docker-entry-ci-only.tsv
+  scripts/ci/check-versions.sh runs in CI but not in scripts/verify-in-docker.sh; mirror it into the `gates` array or record what it needs in scripts/ci/docker-entry-ci-only.tsv
+check-guard-wiring: 2 problem(s)
+exit=1
+names every orphan: yes
+restore cmp: verify=0 tsv=0
+
+=== mutation: delete the `npm package guards` gate line, which is the only thing that mirrors publish-npm.sh ===
+scripts/ci/local-publish-host.sh runs in CI but not in scripts/verify-in-docker.sh; mirror it into the `gates` array or record what it needs in scripts/ci/docker-entry-ci-only.tsv
+  scripts/ci/publish-npm.sh runs in CI but not in scripts/verify-in-docker.sh; mirror it into the `gates` array or record what it needs in scripts/ci/docker-entry-ci-only.tsv
+  scripts/ci/stamp-npm-version.mjs runs in CI but not in scripts/verify-in-docker.sh; mirror it into the `gates` array or record what it needs in scripts/ci/docker-entry-ci-only.tsv
+  scripts/ci/test-publish-npm.sh runs in CI but not in scripts/verify-in-docker.sh; mirror it into the `gates` array or record what it needs in scripts/ci/docker-entry-ci-only.tsv
+check-guard-wiring: 4 problem(s)
+exit=1
+names every orphan: yes
+restore cmp: verify=0 tsv=0
+
+=== mutation: add a CI-only row for a guard the entry point does run ===
+docker-entry-ci-only.tsv: check-brand-protocol.py is listed as CI-only but scripts/verify-in-docker.sh runs it; drop the row so the coverage count is not inflated
+check-guard-wiring: 1 problem(s)
+exit=1
+names every orphan: yes
+restore cmp: verify=0 tsv=0
+
+=== mutation: keep a CI-only row for a guard that does not exist ===
+docker-entry-ci-only.tsv: check-brand-protocol-removed.py no longer exists in scripts/ci/, drop the row
+check-guard-wiring: 1 problem(s)
+exit=1
+names every orphan: yes
+restore cmp: verify=0 tsv=0
+
+=== after restoring both files ===
+check-guard-wiring: OK (32 files in scripts/ci/, 31 reachable, 26 run by scripts/verify-in-docker.sh, 5 recorded CI-only, 1 exempt)
+exit=0
+=== git status --porcelain ===
+M CHANGELOG.md
+ M CONTRIBUTING.md
+ M TODO.md
+ M docker/verify.Dockerfile
+ M docs/architecture/todo-open-item-classification.md
+ M docs/verification/todo-open-items-2026-10-03.tsv
+ M scripts/ci/check-guard-wiring.py
+ M scripts/ci/test-check-guard-wiring.py
+ M scripts/verify-in-docker.sh
+?? scripts/ci/docker-entry-ci-only.tsv
+
+第三个实验值得多说一句：`publish-npm.sh`、`local-publish-host.sh`、`stamp-npm-version.mjs`
+在 `gates` 数组里没有自己的行，它们是从 `test-publish-npm.sh` 那一条传递过来的。删掉那一行
+后检查一次点名 4 个文件，说明「经已镜像脚本传递」这条通道是真的在算，不是文档里的说法。
+
+第 5 节  变异测试：六个变异各让哪一例转红
+----------------------------------------
+
+夹具与检查一起被改，改完写回原文并 `cmp` 确认字节一致：
+
+=== baseline (unmutated) ===
+exit=0
+OK
+
+=== mutation M1-report-the-mirror-gap-but-do-not-fail-on-it ===
+exit=1
+failing cases: ['FAIL: test_a_guard_the_mirror_skips_and_nobody_recorded_is_named']
+Ran 16 tests in 0.876s
+FAILED (failures=1)
+
+=== mutation M2-tolerate-a-row-for-a-deleted-guard ===
+exit=1
+failing cases: ['FAIL: test_a_list_row_for_a_deleted_guard_is_an_error']
+Ran 16 tests in 0.858s
+FAILED (failures=1)
+
+=== mutation M3-tolerate-a-row-for-a-guard-the-entry-point-runs ===
+exit=1
+failing cases: ['FAIL: test_a_list_row_for_a_mirrored_guard_is_an_error']
+Ran 16 tests in 0.863s
+FAILED (failures=1)
+
+=== mutation M4-skip-a-malformed-row-instead-of-stopping ===
+exit=1
+failing cases: ['FAIL: test_a_list_row_without_a_reason_is_rejected']
+Ran 16 tests in 0.901s
+FAILED (failures=1)
+
+=== mutation M5-let-a-data-file-count-as-a-caller ===
+exit=1
+failing cases: ['FAIL: test_a_data_file_naming_a_guard_is_not_an_invocation']
+Ran 16 tests in 0.909s
+FAILED (failures=1)
+
+=== mutation M6-match-a-bare-name-instead-of-a-path ===
+exit=1
+failing cases: ['FAIL: test_every_gate_in_the_real_repo_is_reachable', 'FAIL: test_the_real_classification_is_the_one_the_lists_claim']
+Ran 16 tests in 0.948s
+FAILED (failures=2)
+
+restored: True
+
+M5 第一次没红，这本身就是信息。原因是双重的：夹具里那一行当初写的是裸文件名（被路径位置
+规则挡在门外），而且没有任何调用者会去读那个 `.tsv`（遍历根本到不了它）。把夹具改成
+「行里写 `scripts/ci/helper.py`」并在合成 workflow 里加一步 `cat scripts/ci/notes.tsv`
+之后，M5 才按预期转红。一条没红的变异比十条红变异更值得记录。
+
+第 6 节  用例清单（16 例，容器内运行）
+--------------------------------------
+
+## 0. node toolchain inside the image (docker/verify.Dockerfile adds nodejs)
+v18.20.4
+v18.20.4
+container exit=0
+
+## 1. version lockstep: bash scripts/ci/check-versions.sh && python3 scripts/ci/check-version-lockstep.py
+check-versions: Cargo crates/codegen/xai-grok-pager-bin/Cargo.toml -> 0.4.2
+check-versions: OK — Cargo and all npm packages agree on 0.4.2
+== the release version and everything that must equal it
+   ok    release.yml resolves the version from the npm meta package
+   ok    crates/codegen/xai-grok-pager/npm/chaos/package.json version 0.4.2 is a plain semver
+   ok    all six platform packages carry the release version
+   ok    six optionalDependencies pins all equal 0.4.2
+   ok    xai-grok-pager and xai-grok-pager-bin match the release version
+   ok    CHANGELOG.md describes 0.4.2
+
+== crates that are deliberately not the release version
+   ok    4 independently versioned crates are documented
+   note  xai-grok-web       0.1.0              served assets; versioned by its own bundle
+   note  xai-grok-desktop   0.1.0              native shell; versioned by its own bundle
+   note  chaos-engine       0.1.0              engine protocol crate; versioned by the protocol it speaks
+   note  xai-grok-update    0.1.220-alpha.4    updater; version numbers inherited from upstream
+
+7 check(s), 0 failure(s)
+gate exit=0
+
+## 2. script portability: check-script-portability.py && test-script-portability.py
+script-portability: OK (23 shell script(s))
+.....
+----------------------------------------------------------------------
+Ran 5 tests in 0.689s
+
+OK
+gate exit=0
+
+## 3. workflow shells (no argument, same as the CI step)
+check-workflow-shells: .github/workflows/ci.yml: OK
+check-workflow-shells: .github/workflows/release.yml: OK
+gate exit=0
+
+## 4. installer guards (signature-policy self-test now mirrored too)
+== the asset a release publishes, and the four places that ask for it
+   ok  release.yml publishes 6 assets: chaos-darwin-arm64, chaos-darwin-x64, chaos-linux-arm64, chaos-linux-x64, chaos-win32-arm64.exe, chaos-win32-x64.exe
+   ok  install.sh's 4 possible assets (chaos-darwin-arm64, chaos-darwin-x64, chaos-linux-arm64, chaos-linux-x64) are all published
+   ok  executing install.sh's detect_platform with /usr/bin/bash
+   ok  every asset arm names a published asset when run: Linux/x86_64->chaos-linux-x64, Linux/aarch64->chaos-linux-arm64, Darwin/x86_64->chaos-darwin-x64, Darwin/arm64->chaos-darwin-arm64
+   ok  and is refused as designed on MINGW64_NT-10.0, FreeBSD, Linux
+   ok  this host's own uname picks 'chaos-linux-x64', which is published
+   ok  install.ps1's asset literals (chaos-win32-arm64.exe, chaos-win32-x64.exe) are all published
+   note  no pwsh on PATH; install.ps1 was checked by literals only
+   ok  install.bat's asset names (chaos-win32-arm64.exe, chaos-win32-x64.exe) are all published
+
+8 check(s), 0 failure(s)
+test_bash_env_var_wins_over_path (__main__.CandidateRuleTests.test_bash_env_var_wins_over_path) ... ok
+test_broken_bash_on_path_is_not_returned (__main__.CandidateRuleTests.test_broken_bash_on_path_is_not_returned) ... ok
+test_broken_preferred_candidate_yields_the_next_usable_one (__main__.CandidateRuleTests.test_broken_preferred_candidate_yields_the_next_usable_one) ... ok
+test_candidate_that_is_a_directory_is_skipped (__main__.CandidateRuleTests.test_candidate_that_is_a_directory_is_skipped) ... ok
+test_git_install_wins_over_what_path_resolves (__main__.CandidateRuleTests.test_git_install_wins_over_what_path_resolves) ... ok
+test_launcher_that_only_prints_to_stdout_is_not_usable (__main__.CandidateRuleTests.test_launcher_that_only_prints_to_stdout_is_not_usable) ... ok
+test_no_candidates_at_all_returns_none (__main__.CandidateRuleTests.test_no_candidates_at_all_returns_none) ... ok
+test_system32_bash_is_never_chosen_on_windows (__main__.CandidateRuleTests.test_system32_bash_is_never_chosen_on_windows) ... ok
+test_system32_bash_is_skipped_even_when_named_by_bash_var (__main__.CandidateRuleTests.test_system32_bash_is_skipped_even_when_named_by_bash_var) ... ok
+test_system32_is_not_filtered_on_posix (__main__.CandidateRuleTests.test_system32_is_not_filtered_on_posix) ... ok
+test_a_posix_host_says_so_as_a_failure (__main__.DegradedLookupTests.test_a_posix_host_says_so_as_a_failure) ... ok
+test_the_rest_of_the_check_still_runs_when_bash_is_found (__main__.DegradedLookupTests.test_the_rest_of_the_check_still_runs_when_bash_is_found) ... ok
+test_this_host_offers_a_usable_bash (__main__.RealHostTests.test_this_host_offers_a_usable_bash) ... ok
+
+----------------------------------------------------------------------
+Ran 13 tests in 0.052s
+
+OK
+........
+----------------------------------------------------------------------
+Ran 8 tests in 0.002s
+
+OK
+gate exit=0
+
+## 5. npm package guards: node --check x3 + test-publish-npm.sh
+publish-npm guards: OK (empty, partial and complete platform sets)
+gate exit=0
+
+## 6. panic-site census: fixture + both ratchets
+all census fixture checks passed
+baseline holds: 97 crates, 0 fewer production sites than recorded
+uncompiled set holds: 0 files, exactly as recorded
+gate exit=0
+
+## 7. CI guard wiring: the check that enforces the mirror
+test_every_gate_in_the_real_repo_is_reachable (__main__.RealRepositoryTests.test_every_gate_in_the_real_repo_is_reachable) ... ok
+test_the_real_classification_is_the_one_the_lists_claim (__main__.RealRepositoryTests.test_the_real_classification_is_the_one_the_lists_claim) ... ok
+test_a_comment_mention_is_not_an_invocation (__main__.SyntheticTreeTests.test_a_comment_mention_is_not_an_invocation) ... ok
+test_a_dangling_call_site_is_named (__main__.SyntheticTreeTests.test_a_dangling_call_site_is_named) ... ok
+test_a_data_file_naming_a_guard_is_not_an_invocation (__main__.SyntheticTreeTests.test_a_data_file_naming_a_guard_is_not_an_invocation) ... ok
+test_a_docstring_mention_is_not_an_invocation (__main__.SyntheticTreeTests.test_a_docstring_mention_is_not_an_invocation) ... ok
+test_a_documentation_mention_is_not_an_invocation (__main__.SyntheticTreeTests.test_a_documentation_mention_is_not_an_invocation) ... ok
+test_a_gate_reached_through_a_script_ci_runs_counts (__main__.SyntheticTreeTests.test_a_gate_reached_through_a_script_ci_runs_counts) ... ok
+test_a_guard_reached_through_a_mirrored_guard_counts_as_mirrored (__main__.SyntheticTreeTests.test_a_guard_reached_through_a_mirrored_guard_counts_as_mirrored) ... ok
+test_a_guard_the_mirror_skips_and_nobody_recorded_is_named (__main__.SyntheticTreeTests.test_a_guard_the_mirror_skips_and_nobody_recorded_is_named) ... ok
+test_a_list_row_for_a_deleted_guard_is_an_error (__main__.SyntheticTreeTests.test_a_list_row_for_a_deleted_guard_is_an_error) ... ok
+test_a_list_row_for_a_mirrored_guard_is_an_error (__main__.SyntheticTreeTests.test_a_list_row_for_a_mirrored_guard_is_an_error) ... ok
+test_a_list_row_without_a_reason_is_rejected (__main__.SyntheticTreeTests.test_a_list_row_without_a_reason_is_rejected) ... ok
+test_a_real_gate_wired_only_in_the_docker_entry_point_counts (__main__.SyntheticTreeTests.test_a_real_gate_wired_only_in_the_docker_entry_point_counts) ... ok
+test_an_exemption_for_a_deleted_file_is_an_error (__main__.SyntheticTreeTests.test_an_exemption_for_a_deleted_file_is_an_error) ... ok
+test_an_unwired_gate_is_named (__main__.SyntheticTreeTests.test_an_unwired_gate_is_named) ... ok
+
+----------------------------------------------------------------------
+Ran 16 tests in 0.794s
+
+OK
+check-guard-wiring: OK (32 files in scripts/ci/, 31 reachable, 26 run by scripts/verify-in-docker.sh, 5 recorded CI-only, 1 exempt)
+gate exit=0
+
+## 8. the classification --list-mirror prints, straight from the container
+mirrored  check-brand-protocol.py
+mirrored  check-guard-wiring.py
+ci-only   check-gui-protocol.sh  -- Regenerates apps/chaos-ui/src/generated/protocol.ts by building chaos-engine in the dev profile (`cargo run --bin chaos-protocol-schema`); the entry point's own cargo gates stop at check/clippy, and CI runs this in the job that has already built the engine.
+ci-only   check-powershell-syntax.py  -- `--require` needs a real PowerShell to parse scripts/install.ps1; the verify image is Debian bookworm-slim, which has no pwsh in the pocket it installs from, and adding one means the Microsoft package feed. Running the installer is the target-OS leg's job either way.
+mirrored  check-script-portability.py
+mirrored  check-version-lockstep.py
+mirrored  check-versions.sh
+mirrored  check-workflow-shells.py
+mirrored  classify-open-todos.py
+mirrored  ignored-tests.py
+exempt    ignored-tests.sh
+mirrored  local-publish-host.sh
+mirrored  panic-site-census.py
+mirrored  publish-npm.sh
+ci-only   release-integrity-fixture.py  -- Release-integrity lab fixture, reached only through scripts/install-integrity-in-docker.sh, which serves assembled release artifacts and needs a build's worth of inputs the entry point does not produce.
+ci-only   release-integrity-request-log.py  -- Release-integrity lab helper, reached only through scripts/install-integrity-in-docker.sh.
+ci-only   release-integrity-serve.py  -- Release-integrity lab server, reached only through scripts/install-integrity-in-docker.sh.
+mirrored  secret-scan.sh
+mirrored  stamp-npm-version.mjs
+mirrored  test-brand-protocol.py
+mirrored  test-check-guard-wiring.py
+mirrored  test-classify-open-todos.py
+mirrored  test-ignored-tests-baseline-fixture.py
+mirrored  test-ignored-tests-baseline.py
+mirrored  test-ignored-tests-reasons.py
+mirrored  test-ignored-tests.py
+mirrored  test-installer-asset-names.py
+mirrored  test-installer-bash-resolution.py
+mirrored  test-installer-signature-policy.py
+mirrored  test-panic-site-census.py
+mirrored  test-publish-npm.sh
+mirrored  test-script-portability.py
+check-guard-wiring: OK (32 files in scripts/ci/, 31 reachable, 26 run by scripts/verify-in-docker.sh, 5 recorded CI-only, 1 exempt)
+gate exit=0
+
+## 9. did any gate touch the tree? (files / sum before -> after)
+before: 3913 files, sum 2920199986
+after:  3913 files, sum 2920199986
+TREE UNCHANGED (cmp: identical)
+--- git status --porcelain after the run ---
+
+
+第 7 节  本地守卫全绿（改造后的树）
+----------------------------------
+
+$ bash scripts/l10n-guard.sh                                    # OK — L10n Guard: PASS（395 个含汉字文件，before/after 同一集合）
+$ python3 scripts/check-doc-l10n.py --links                     # 0 broken link(s)
+$ python3 scripts/check-doc-l10n.py --english                   # 0 English prose line(s) remaining
+$ python3 scripts/ci/check-script-portability.py                # OK (23 shell script(s))
+$ python3 scripts/ci/check-workflow-shells.py                   # ci.yml: OK / release.yml: OK
+$ python3 scripts/ci/check-guard-wiring.py                      # OK (32 files, 31 reachable, 26 run by scripts/verify-in-docker.sh, 5 recorded CI-only, 1 exempt)
+$ python3 scripts/ci/classify-open-todos.py --check-doc docs/architecture/todo-open-item-classification.md
+                                                                # matches TODO.md (136 open/partial rows)
+$ python3 scripts/ci/test-check-guard-wiring.py                 # Ran 16 tests ... OK
+$ git diff --check HEAD                                         # 无输出
+
+本轮还顺手发现并修掉了 `docs/verification/todo-open-items-2026-10-03.tsv` 的腐烂：它是
+逐行导出的快照，但没有导出者，上一轮加进 `TODO.md` 第 950 行的补充没进快照，
+`TOTAL` 也停在 137。现在重新导出并验证幂等：
+
+$ python3 scripts/ci/classify-open-todos.py > docs/verification/todo-open-items-2026-10-03.tsv
+$ python3 scripts/ci/classify-open-todos.py | cmp - docs/verification/todo-open-items-2026-10-03.tsv && echo idempotent
+idempotent
+
+第 8 节  这条规则不覆盖什么
+--------------------------
+
+1. 「镜像」说的是入口能到达这个脚本，不是入口把它的每条分支都跑一遍。`test-publish-npm.sh`
+   把 `publish-npm.sh` 跑到空/部分/完整三种平台集，但 `local-publish-host.sh` 只走到
+   缺二进制的早退分支，`stamp-npm-version.mjs` 在从未被传入的 `--version` 之后——这三句
+   写在 `scripts/ci/docker-entry-ci-only.tsv` 的文件头注释里，不是等读者自己去读夹具。
+2. 本文件的容器转录里 `check-versions.sh`、`check-version-lockstep.py` 等跑的是 Debian 的
+   Node 18（`node -v` 见第 6 节第 0 段），CI runner 上的不是这个版本。镜像里装 nodejs 的
+   目的是让 `node --check` 与假 `npm` 夹具能跑，不是「发布跑在 Node 18 上」的主张，
+   `docker/verify.Dockerfile` 的注释里写明了这一点。
+3. 5 条 CI-only 守卫仍然只在 CI 跑，理由逐行写在清单里：一个要 dev profile 编译
+   `chaos-engine`，一个要真 PowerShell，三个要装配好的发布产物。本文件不主张它们应当
+   被镜像，只主张「不镜像必须写下来」。
+4. 容器仍只覆盖 Linux 门禁：macOS/Windows 代码路径、签名、真实安装器、TLS 终结部署都不
+   在这里，这一点没有因为本轮而改变。
+5. 本轮没有跑 `cargo`：新镜像的 5 条门禁都不需要编译，容器里那 5 段全部是脚本级检查。
+   `verify-in-docker.sh --full` 的完整一轮（含 `cargo test --workspace`）是另一份证据，
+   见 `docs/verification/verify-in-docker-2026-10-03.log`。

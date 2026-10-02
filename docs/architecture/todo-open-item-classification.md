@@ -12,7 +12,7 @@ classifier's line-level total.
 The line-level inventory as of 2026-10-03, after the DCP/fallback revivals, the
 orphan-test verdicts, the panic-site census, the uncompiled-source guard and the
 installer trust-chain work, the TODO/classifier lockstep and the CI guard-wiring
-check, is 24 unchecked and 113 partial
+check, the Docker-entry gate mirror, is 23 unchecked and 113 partial
 (including conditional criteria, future/dated work and rows with a completed
 slice plus an open gate); the seccomp audit and one bounded utility-test cleanup
 remain partial rather than closing their larger audit rows. The ignored-test
@@ -22,8 +22,8 @@ inventory now reports 428 ignored attributes and 0 bare attributes, reconciled b
 owner/reviewer gate is due as of 2026-10-01, and these counts are inventory
 evidence, not the per-row decision. Recompute with
 `scripts/ci/classify-open-todos.py` after the next edit. The milestone group counts are M-1 1/5, M0 0/12, M1 0/16,
-M2 0/24, M3 6/11, M4 5/13, M5 9/16, and maintenance 3/16
-(unchecked/partial), summing to 137. This snapshot includes a bounded automated
+M2 0/24, M3 6/11, M4 5/13, M5 9/16, and maintenance 2/16
+(unchecked/partial), summing to 136. This snapshot includes a bounded automated
 accessibility scan row and a partial M2 file-browser UI row; neither clears the
 broader M3 localization/accessibility acceptance nor any physical multi-root
 boundary. The current open/partial split for maintenance items reflects the MT-6
@@ -50,7 +50,7 @@ language review, screen-reader testing or platform acceptance.
 | M3 | 6 | 11 |
 | M4 | 5 | 13 |
 | M5 | 9 | 16 |
-| Maintenance items / §8 | 3 | 16 |
+| Maintenance items / §8 | 2 | 16 |
 
 ## Locally delivered in this audit pass
 

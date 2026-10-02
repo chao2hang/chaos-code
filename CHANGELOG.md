@@ -2,6 +2,67 @@
 
 ## Unreleased
 
+### 改进：Docker 入口与 CI 的门禁镜像从「数量差不多」变成一条会红的规则
+
+`scripts/verify-in-docker.sh` 的卖点是「在本地跑的就是 CI 跑的那串命令」，但这句话此前无人执行：
+`scripts/ci/` 的 32 个守卫里有 16 个出现在 `gates` 数组，其余（版本 lockstep、panic-site 两条棘轮、
+installer 签名策略、npm 侧、GUI 协议漂移）只在 `ci.yml` 跑。`check-guard-wiring.py` 上一轮接线时
+只保证「有人跑」——它把同时被跑的数量打印出来，却不据此失败，于是这个差距可以任意扩大而无人报警。
+差距真正的代价不是少跑了几个脚本，而是**每条只在 CI 跑的门禁都缺少"提交前本地能红"这一层**：
+CI 红的时候人已经在写下一个改动了。
+
+**规则而不是名单**：每个守卫必须恰好落进两类之一。**被镜像**——`gates` 数组在路径位置点名它，或入口
+已经跑的脚本在路径位置点名它（与可达性同一条传递规则）；或者**登记为 CI-only**——
+`scripts/ci/docker-entry-ci-only.tsv` 里一行 `<名>\t<理由>`，理由必须写清它需要的是干净容器里没有的
+什么东西。两边都不在就报红并点名它，`--list-mirror` 打印整份分类供人核对。反向也查两条：清单里为已删除
+的守卫保留的行、以及清单说 CI-only 但入口其实会跑的行，都是错误——前者防清单烂成退役守卫的墓地，
+后者防"登记"变成绕过门禁的后门。**CONTRIBUTING.md 里明说：只加进 `ci.yml` 是这条检查唯一拒绝的选项。**
+
+镜像项 16 → **26**。新增的都是本地无凭据就能跑、此前却只在 CI 跑的：version lockstep
+（`check-versions.sh` + `check-version-lockstep.py`）、panic-site 的两条棘轮**连同它的自测夹具**、
+`test-script-portability.py`（守卫早就在跑、它的自测不在——正是这条规则该抓的形状）、
+installer 签名策略、以及 npm 侧 `node --check` ×3 + `test-publish-npm.sh`；为此
+`docker/verify.Dockerfile` 装上 Debian 的 `nodejs`，Dockerfile 注释写明它只用于解析检查与假 npm 夹具，
+不是「发布也跑在这个 Node 版本上」的主张（Debian 的比 CI runner 的老）。不镜像的只剩 5 条，理由同形：
+`check-gui-protocol.sh` 要 dev profile 编译 `chaos-engine`（入口的 cargo 门有意止步于 check/clippy），
+`check-powershell-syntax.py --require` 要真 PowerShell（bookworm-slim 引它得挂 Microsoft 源），
+三条 release-integrity 实验室脚本要装配好的发布产物。
+
+**两条新规则是被实测和变异逼出来的，不是设计出来的。** 其一，可达性一直按**裸文件名**子串匹配，
+代价在真实树上看得见：本检查自己的 `EXEMPT` 那一行也算"点名"，于是上一轮报的「32/32 可达」里有 1 个是
+它自己点名自己——同一棵树上分别跑新旧两套规则实测：32 → 31，丢掉的正是 `ignored-tests.sh`，而它本来就该
+靠豁免而不是靠自点名。同一类误判这轮又出现在自己新写的真实树用例上：那条用例断言 `check-gui-protocol.sh`、
+`check-powershell-syntax.py` 属于 CI-only，而那行断言本身把两者"点名"成了镜像。现在要求名字出现在
+**路径位置**（前面必须有 `/`），`"$(dirname "$0")/helper.py"` 仍算调用；真实树随之变成 31 可达 + 1 豁免。
+其二，`scripts/ci/` 下还有 `.tsv`/`.txt` 数据文件，把数据当调用者会让本检查新加的 ci-only 清单把自己豁免的
+守卫标成"入口在跑"：2×2 实测（匹配规则 × 谁能当调用者）——两条都放宽时 5 条 CI-only 守卫**全部**误判、
+镜像数从 26 虚涨到 32；只放宽一条也各误判 3 条；两条都收紧时为 0。检查差点把自己的清单咬了一遍。
+现在只有 `.py`/`.sh`/`.mjs`/`.yml` 能点名别的脚本。
+顺带修掉一个真实的镜像偏差：入口的 `workflow shells` 门禁原先只查 `ci.yml`，而 CI 那一步不带参数，
+而这个检查存在的理由——Windows 矩阵——在 `release.yml` 里；现在两边一样。
+
+**验证**：`test-check-guard-wiring.py` 由 9 例增至 **16 例**，其中一条直接断言真实树的分类与两份清单一致
+（`publish-npm.sh` 等必须算镜像、`check-gui-protocol.sh` 等必须算 CI-only），另六条各造一个仓库：未镜像且
+未登记被点名、登记已删除的守卫被点名、登记一个入口其实会跑的守卫被点名、缺理由的行点名行号并拒绝、
+数据文件点名不算调用、经已镜像守卫传递到达算镜像。六个变异（不因镜像缺口失败 / 容忍已删除的行 /
+容忍与入口冲突的行 / 跳过缺理由的行 / 把数据文件当调用者 / 退回裸名匹配）各让对应用例转红、
+还原后 `cmp` 字节一致；"数据文件当调用者"那个变异第一次没红，补出"行里写路径 + CI 步骤 `cat` 这个数据文件"
+两步之后才红——变异没红的原因本身也是一条关于夹具的信息。新镜像的每条门禁都在容器里真跑过（version
+lockstep 7 check 0 failure、portability OK(23) + 5 tests、workflow shells 两份 workflow OK、installer
+8 check + 2 OK、`node -v` v18 下 `node --check` ×3 与 `publish-npm guards: OK`、panic-site 97 crates
+baseline holds + uncompiled 0 files），且 `test-publish-npm.sh` 跑完后 `git status --porcelain` 与跑前逐字节
+相同——npm 夹具不写开发者的树，这是它能进绑挂载入口的前提。
+
+边界：镜像说的是"入口能到达这个脚本"，不等于"入口把它的每条分支都跑一遍"。`publish-npm.sh`、
+`local-publish-host.sh`、`stamp-npm-version.mjs` 是经 `test-publish-npm.sh` 的夹具到达的，其中后两条只在
+缺二进制的早退分支和从未被传入的 `--version` 分支上被碰到，这一点写在清单的文件头注释里而不是藏在
+"已镜像"三个字后面。容器只覆盖 Linux 门禁这一事实没有改变。
+
+（2026-10-03；`scripts/ci/check-guard-wiring.py`、`scripts/ci/test-check-guard-wiring.py`、
+`scripts/ci/docker-entry-ci-only.tsv`、`scripts/verify-in-docker.sh`、`docker/verify.Dockerfile`、
+`CONTRIBUTING.md`、`TODO.md`、`docs/architecture/todo-open-item-classification.md`、
+`docs/verification/todo-open-items-2026-10-03.tsv`、`docs/verification/docker-gate-mirror-2026-10-03.log`）
+
 ### 修复：中文化守卫在 Docker 入口里静默失败，四处 fail-open 一并改为 fail-closed
 
 `scripts/verify-in-docker.sh --full` 有一轮整场只有 `docs localization` 一个门禁红，而那一节的输出止于
