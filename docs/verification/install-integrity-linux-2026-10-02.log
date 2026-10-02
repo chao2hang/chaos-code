@@ -17,6 +17,28 @@
 # answers 200 with an HTML error page was blamed on whichever public mirror failed last.
 # The run below is after that fix.
 #
+# --- 2026-10-02, second run (the one recorded below, 35 checks) ---------------------
+#
+# Two things changed since the 34-check run above, both of them consequences of
+# building the sibling lab scripts/install-integrity-powershell.sh, which runs the
+# Windows installer against the same fixture:
+#
+#  1. The fixture generator, the mirror and the request-log assertion moved out of
+#     heredocs inside this script into scripts/ci/release-integrity-{fixture,serve,
+#     request-log}.py, so both installers are now offered the *same* release rather
+#     than two hand-written lookalikes. The asset name is computed in shell from
+#     `uname` instead of being baked into the Python, which is why the log line reads
+#     "fixture built for this host's asset: chaos-linux-x64" as before.
+#  2. install.ps1 turned out to refuse any artifact under 1 MiB before hashing it, and
+#     install.sh had no such floor -- it would happily hash a truncated 130-byte body
+#     and report whatever the checksum said. install.sh now takes the same 1 MiB floor
+#     (download_github's 5th argument), and check 35 is a drift guard that fails if
+#     the two numbers ever stop agreeing. The empty-artifact refusal text therefore
+#     changed from a checksum complaint to "too small (0 bytes) from <candidate>".
+#
+# The run below is 35/35, three consecutive times (the lab is deterministic; the second
+# and third runs were byte-identical apart from the container id).
+#
 
 == the machine doing the installing
    image:      chaos-install-lab:local
@@ -68,8 +90,9 @@ only chaos-linux-x64 , SHA256SUMS and the sidecar
    ok  no-sums-entry: nothing installed behind the refusal
    ok  html-sums: refused a manifest served as an HTML error page (exit 1)
    ok  html-sums: the guard that fired is the one that rejects proxy error pages, and nothing was installed
-   ok  empty-artifact: refused (exit 1) -- error: download failed for https://github.com/chao2hang/chaos-code/releases/
+   ok  empty-artifact: refused (exit 1) -- why: too small (0 bytes) from http://127.0.0.1:8099/empty-artifact/https://g
    ok  empty-artifact: nothing installed behind the refusal
+   ok  both installers refuse an artifact under 1 MiB before hashing it (install.sh 1048576, install.ps1 1MB)
 
 == what the two escape hatches actually cost
    ok  with the checksum skipped, the tampered artifact is still refused by the signature
@@ -77,7 +100,7 @@ only chaos-linux-x64 , SHA256SUMS and the sidecar
    note  both hatches together install a tampered artifact, which is what 'you are then trusting the download' means; no document in this repo sets either
 
 == summary
-   34 checks run against a release this lab built itself, in a container with no route to the network
+   35 checks run against a release this lab built itself, in a container with no route to the network
    notes:
   - both hatches together install a tampered artifact, which is what 'you are then trusting the download' means; no document in this repo sets either
-all 34 release-integrity checks passed
+all 35 release-integrity checks passed

@@ -35,6 +35,7 @@ base_image="debian:bookworm-slim"
 container_name="chaos-install-integrity-$$"
 keep=0
 script_src="$(cd "$(dirname "$0")" && pwd)/install.sh"
+ci_src="$(cd "$(dirname "$0")" && pwd)/ci"
 version="9.9.9"
 port=8099
 
@@ -149,191 +150,26 @@ fi
 # the fixture
 # ---------------------------------------------------------------------------
 
-cat > "${WORK_DIR}/shared/make-release.py" <<'PYEOF'
-"""Build a complete fake release, signed, plus one mutated copy per scenario.
-
-Nothing here fakes what the installer is supposed to do: it produces exactly the
-files the release workflow publishes for one asset, and the scenarios then break one
-of them the way a bad mirror or a hostile publisher would.
-"""
-import base64
-import hashlib
-import os
-import sys
-
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-
-root = sys.argv[1]
-version = sys.argv[2]
-out = os.path.join(root, "releases")
-
-arch = {
-    "x86_64": ("x64", "x86_64"),
-    "amd64": ("x64", "x86_64"),
-    "aarch64": ("arm64", "aarch64"),
-    "arm64": ("arm64", "aarch64"),
-}[os.uname().machine]
-asset = "chaos-{}-{}".format(os.uname().sysname.lower(), arch[0])
-
-ARTIFACT = """#!/bin/sh
-# Stand-in for the released binary. The installer chmod +x and runs --version on it,
-# and the second-run check compares that output against the requested version.
-case "$1" in
-  --version|-V) echo "chaos %s" ;;
-  --help) echo "usage: chaos" ;;
-  *) echo "chaos %s: this fixture does nothing else" ;;
-esac
-""" % (version, version)
-
-
-def keypair(tag):
-    private = Ed25519PrivateKey.generate()
-    # Positional, and no public_bytes_raw(): the distro build of cryptography in
-    # the lab image is 38.x, which is what a Debian user gets.
-    public = private.public_key().public_bytes(
-        serialization.Encoding.Raw, serialization.PublicFormat.Raw
-    )
-    with open(os.path.join(root, tag), "w") as handle:
-        handle.write(base64.b64encode(public).decode() + "\n")
-    return private
-
-
-def sign(private, payload):
-    return (base64.b64encode(private.sign(payload)).decode() + "\n").encode()
-
-
-def write(case, name, payload):
-    directory = os.path.join(out, case)
-    os.makedirs(directory, exist_ok=True)
-    with open(os.path.join(directory, name), "wb") as handle:
-        handle.write(payload)
-
-
-ours = keypair("pubkey-ours")
-theirs = keypair("pubkey-other")
-artifact = ARTIFACT.encode()
-digest = hashlib.sha256(artifact).hexdigest()
-sums = "{}  {}\n".format(digest, asset).encode()
-signature = sign(ours, artifact)
-
-write("good", asset, artifact)
-write("good", "SHA256SUMS", sums)
-write("good", asset + ".sig", signature)
-
-# A mirror that serves different bytes than it advertises. The digest and the
-# signature still describe the original, so the checksum is what catches it.
-tampered = artifact.replace(b"does nothing else", b"does something else")
-write("tampered", asset, tampered)
-write("tampered", "SHA256SUMS", sums)
-write("tampered", asset + ".sig", signature)
-
-# The mirror also recomputes SHA256SUMS. Only the signature stands in the way now,
-# which is the check this scenario exists to isolate.
-forged = "{}  {}\n".format(hashlib.sha256(tampered).hexdigest(), asset).encode()
-write("forged-sums", asset, tampered)
-write("forged-sums", "SHA256SUMS", forged)
-write("forged-sums", asset + ".sig", signature)
-
-# A release whose sidecar is missing.
-write("no-sig", asset, artifact)
-write("no-sig", "SHA256SUMS", sums)
-
-# The asset is not listed: a well-formed manifest for some other platform.
-write("no-sums-entry", asset, artifact)
-write("no-sums-entry", "SHA256SUMS", "{}  chaos-plan9-mips\n".format(digest).encode())
-write("no-sums-entry", asset + ".sig", signature)
-
-# A proxy that answers 200 with an HTML error page instead of the checksums.
-write("html-sums", asset, artifact)
-write("html-sums", "SHA256SUMS",
-      (b"<!DOCTYPE html><html><head><title>502 Bad Gateway</title></head>"
-       b"<body><h1>502 Bad Gateway</h1></body></html>\n"))
-write("html-sums", asset + ".sig", signature)
-
-# A truncated download: 200 OK with no body.
-write("empty-artifact", asset, b"")
-write("empty-artifact", "SHA256SUMS", sums)
-write("empty-artifact", asset + ".sig", signature)
-
-print(asset)
-PYEOF
-
-cat > "${WORK_DIR}/shared/serve.py" <<'PYEOF'
-"""Serve the fixture the way a ghproxy-style mirror does.
-
-install.sh asks for `${CHAOS_GITHUB_MIRROR}/https://github.com/<repo>/releases/
-download/v<version>/<file>`. The path segment before the embedded origin URL names the
-scenario directory, so one listener can present every scenario at once. Each request is
-appended to a log the checks read back, so "nothing else was fetched" is an assertion
-rather than a hope.
-"""
-import http.server
-import os
-import sys
-
-root = sys.argv[1]
-log_path = sys.argv[2]
-
-
-class Handler(http.server.BaseHTTPRequestHandler):
-    def do_GET(self):
-        head, found, rest = self.path.lstrip("/").partition("/https://github.com/")
-        case, _, extra = head.partition("/")
-        name = rest.rsplit("/", 1)[-1].split("?")[0]
-
-        def record(line):
-            with open(log_path, "a") as handle:
-                handle.write(line + "\n")
-
-        if not found or extra or not name:
-            record("rejected " + self.path)
-            self.send_error(404)
-            return
-        record("{} {}".format(case, name))
-        path = os.path.join(root, case, name)
-        if not os.path.isfile(path):
-            self.send_error(404)
-            return
-        with open(path, "rb") as handle:
-            body = handle.read()
-        self.send_response(200)
-        self.send_header("Content-Type", "application/octet-stream")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-    def log_message(self, fmt, *args):
-        pass
-
-
-http.server.ThreadingHTTPServer(("127.0.0.1", int(sys.argv[3])), Handler).serve_forever()
-PYEOF
-
-cat > "${WORK_DIR}/shared/only-good.py" <<'PYEOF'
-"""Assert the requests the fixture saw were only the three files of the good release."""
-import sys
-
-asset = sys.argv[1]
-allowed = {asset, "SHA256SUMS", asset + ".sig"}
-bad = []
-for line in open("/lab/requests.log"):
-    parts = line.split()
-    if len(parts) != 2 or parts[0] != "good" or parts[1] not in allowed:
-        bad.append(line.strip())
-if bad:
-    print("unexpected: " + " | ".join(bad))
-    sys.exit(1)
-print("only {} , SHA256SUMS and the sidecar".format(asset))
-PYEOF
+# The fixture, the mirror and the request-log assertion live in scripts/ci/ so that
+# the PowerShell lab offers the installer under test exactly the same release.
+for helper in release-integrity-fixture.py release-integrity-serve.py \
+            release-integrity-request-log.py; do
+  if [ ! -f "${ci_src}/${helper}" ]; then
+    echo "missing ${ci_src}/${helper}" >&2
+    exit 2
+  fi
+  cp "${ci_src}/${helper}" "${WORK_DIR}/shared/${helper}"
+done
 
 in_container mkdir -p /lab
 docker cp "${WORK_DIR}/." "${container_name}:/lab" >/dev/null
 
 bump
-fixture_out="$(in_container_sh "cd /lab && python3 shared/make-release.py /lab ${version} 2>&1" || true)"
-asset_name="$(printf '%s\n' "$fixture_out" | tail -1)"
+# The same asset name install.sh would ask for on this machine, so the fixture is the
+# one thing in the run that is not under test.
+asset_name="$(in_container_sh "os=\$(uname -s | tr 'A-Z' 'a-z'); m=\$(uname -m); case \$m in x86_64|amd64) a=x64 ;; aarch64|arm64) a=arm64 ;; *) exit 1 ;; esac; echo \"chaos-\$os-\$a\"" || true)"
 case "$asset_name" in chaos-*) ;; *) asset_name="" ;; esac
+fixture_out="$(in_container_sh "cd /lab && python3 shared/release-integrity-fixture.py --root /lab --version ${version} --asset ${asset_name:-chaos-none} 2>&1" || true)"
 if [ -n "$asset_name" ] \
   && in_container_sh "test -f /lab/releases/good/${asset_name} \
   && test -f /lab/releases/good/SHA256SUMS \
@@ -372,7 +208,7 @@ else
   failure "the fixture key and the built-in key are not distinct; a 'signature OK' here would be ambiguous"
 fi
 
-in_container_sh "nohup python3 /lab/shared/serve.py /lab/releases /lab/requests.log ${port} >/lab/serve.err 2>&1 &
+in_container_sh "nohup python3 /lab/shared/release-integrity-serve.py /lab/releases /lab/requests.log ${port} >/lab/serve.err 2>&1 &
 for i in \$(seq 1 100); do
   curl -fsS -o /dev/null 'http://127.0.0.1:${port}/probe/https://github.com/o/r/releases/download/v${version}/${asset_name}' && exit 0
   sleep 0.2
@@ -484,7 +320,7 @@ else
   failure "the download order was not what CHAOS_GITHUB_MIRROR promises: $(grep -m3 'try:' "${log_dir}/good.log" | tr '\n' ' | ')"
 fi
 bump
-if in_container_sh "python3 /lab/shared/only-good.py ${asset_name}"; then
+if in_container_sh "python3 /lab/shared/release-integrity-request-log.py /lab/requests.log ${asset_name}"; then
   ok "the only files the fixture ever served were the artifact, SHA256SUMS and the sidecar"
 else
   failure "unexpected requests reached the fixture: $(in_container_sh 'tr "\n" " " < /lab/requests.log')"
@@ -559,7 +395,20 @@ else
   failure "html-sums: refused, but not by the HTML guard, or it installed anyway"
 fi
 
-expect_refusal empty-artifact empty-artifact "download failed"
+expect_refusal empty-artifact empty-artifact "too small"
+
+# The artifact floor is the one integrity decision the two installers used to make
+# differently: install.ps1 refused anything under 1 MiB, install.sh accepted it and
+# let the checksum be the thing that complained. Both now refuse it up front, and a
+# future change to one of them should have to answer for the other.
+bump
+sh_floor="$(sed -n 's/^USED_URL="\$(download_github "[^"]*" "\$TMP" [0-9]* [0-9]* \([0-9]*\))".*/\1/p' "$script_src")"
+ps1_floor="$(sed -n 's/.*-OutFile \$tmp -Headers \$headers -MinBytes \(1MB\).*/\1/p' "${script_src%.sh}.ps1")"
+if [ "$sh_floor" = "1048576" ] && [ "$ps1_floor" = "1MB" ]; then
+  ok "both installers refuse an artifact under 1 MiB before hashing it (install.sh ${sh_floor}, install.ps1 ${ps1_floor})"
+else
+  failure "the artifact floors have drifted: install.sh says '${sh_floor}', install.ps1 says '${ps1_floor}'"
+fi
 
 header "what the two escape hatches actually cost"
 # CHAOS_SKIP_CHECKSUM=1 is documented as leaving you trusting the download. That is only

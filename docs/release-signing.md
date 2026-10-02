@@ -190,12 +190,30 @@ line above is known to be a check rather than a message. That lab also measured 
 of the two escape hatches: skipping the checksum alone still leaves the signature refusing
 the tampered artifact; skipping both installs it.
 
-Measured that way is `install.sh` only. `install.ps1` and `install.bat` have the
-same guards and the same ordering in source -- a structural test asserts the key
-and the crypto probe precede the download in the PowerShell one -- but nothing
-executes them: `scripts/ci/check-powershell-syntax.py` parses them with a real
-PowerShell, which is how the brace that had made `install.ps1` unparsable since
-`21f5a186` was found. Treat "the Windows installer works" as unmeasured.
+`install.ps1` is now executed the same way, by `scripts/install-integrity-powershell.sh`:
+pwsh on Linux against the *same* fixture -- the generator, mirror and request-log assertion
+are shared in `scripts/ci/release-integrity-*.py`, deliberately, so the two installers
+cannot drift into being tested against different releases -- inside `unshare -rn`, where
+the only route is loopback and `github.com` resolves to nothing. It ends with the identical
+refusal set, plus two checks that came out of writing it. A truncated transfer is refused
+before hashing: `install.ps1` has always rejected an artifact under 1 MiB, and it turned
+out `install.sh` had no equivalent floor, so a body cut off mid-transfer reached the
+hasher. Both now refuse at 1 MiB, and a check in the shell lab fails if those two numbers
+drift apart. And when every candidate fails, both installers print up to four distinct
+reasons instead of only the last one -- before, a mirror answering 200 with an HTML error
+page was reported as a DNS failure at a public mirror that was never the problem.
+
+Still unmeasured about the Windows installer, and the lab says so in its own header: which
+asset name `[RuntimeInformation]::OSArchitecture` asks for, whether Windows executes the
+bytes it wrote, and the registry `PATH` write (every run passes `-NoPath`).
+`install.bat` remains unexecuted entirely -- its guards and their ordering are known only
+from source, plus the structural assertions in
+`scripts/ci/test-installer-signature-policy.py` (that it embeds the key and that the key
+and the crypto probe precede the download in the PowerShell one) and the parse gate in
+`scripts/ci/check-powershell-syntax.py`, which is how the brace that had made
+`install.ps1` unparsable since `21f5a186` was found. So "the Windows installer puts a
+working binary on PATH" is still an untested claim; "the Windows installer accepts these
+bytes and refuses those" is not.
 
 `CHAOS_SKIP_SIGNATURE=1` and `CHAOS_SKIP_CHECKSUM=1` are the installer escape
 hatches and print a warning when used; `CHAOS_REQUIRE_SIG=0` is the updater's.
@@ -249,3 +267,8 @@ Exit status: 0 verified, 1 refused, 2 no public key compiled in.
    artifact and then tries to make the installer accept a wrong one. Run it after
    step 5, not instead of it -- a fixture only proves the refusals, the real feed
    only proves the acceptance.
+7. `scripts/install-integrity-powershell.sh` whenever `install.ps1` or the shared
+   fixture changed. Same fixture as step 6, no Windows and no network needed; needs
+   `pwsh` and `unshare`. It is the only thing that executes the Windows installer's
+   download-and-verify path, so an `install.ps1` change checked only by step 6 is a
+   change to untested code.

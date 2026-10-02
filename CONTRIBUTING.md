@@ -370,17 +370,43 @@ a manifest with no row for this asset; a manifest served as a 200-with-HTML erro
 empty download. Every refusal is checked twice -- for the reason and for `bin/chaos` being
 absent -- and the two documented escape hatches are measured rather than trusted: skipping
 the checksum alone still leaves the signature refusing the tampered artifact, while
-skipping both installs it, which is what "you are then trusting the download" means.
+skipping both installs it, which is what "you are then trusting the download" means. The
+fixture, the mirror and the request-log assertion live in `scripts/ci/release-integrity-{fixture,serve,request-log}.py`
+so that the Windows installer below is offered the *same* release rather than a
+hand-written lookalike of it.
 
-`scripts/ci/check-powershell-syntax.py` covers the Windows installer as far as a
-non-Windows machine honestly can. `scripts/install.ps1` carried a stray closing brace for
-a stretch of history -- introduced by the commit that restructured its signature block --
-so the documented `irm .../install.ps1 | iex` died on a parse error before downloading
-anything, and nothing noticed: no Linux job runs it, and the macOS/Windows legs only
-build and test the Rust workspace. The gate parses every tracked `*.ps1` with a real
-PowerShell, and the `platform tests` legs run it with `--require` so it cannot pass by
-finding no PowerShell. Parsing is not installing: whether the Windows installer still
-puts a working binary on PATH remains a claim nothing here has measured.
+`scripts/install-integrity-powershell.sh` runs that other installer, `install.ps1`, for
+real: pwsh on Linux, no Windows and no docker, against the shared fixture. It re-execs
+itself inside `unshare -rn`, so the run has no route but loopback -- a trap worth knowing
+about, because a fresh namespace has loopback *down*, and binding `127.0.0.1` succeeds
+while every connect is refused. It covers the download-and-verify path the same way the
+shell lab does: install, then seven refusals each checked for the reason and for nothing
+landing in `~/.chaos/bin`, then the two hatches. It does not cover the three things a real
+Windows box adds, and says so in its own header: which asset name
+`[RuntimeInformation]::OSArchitecture` would ask for, running a PE binary, and the
+registry `PATH` write (every run passes `-NoPath`). So the honest remaining claim is
+narrow: the Windows installer is now measured to put the *right bytes* on disk and to
+refuse the wrong ones, and still unmeasured on whether Windows will execute them or put
+them on `PATH`.
+
+Building it found two things. `install.ps1` refuses any artifact under 1 MiB *before*
+hashing it; `install.sh` had no such floor and would happily hash a truncated body and
+report whatever the checksum said. `install.sh` now applies the same 1 MiB floor, and a
+check in the shell lab fails if the two numbers ever drift apart. And both installers had
+the same reporting defect, found from opposite sides: when every candidate fails, only the
+*last* candidate's reason was shown, so a mirror that answers 200 with an HTML error page
+-- or a fixture that answers 404 -- got blamed on whichever public mirror's DNS failed
+last. Both now print up to four distinct reasons as `why:` lines. Deleting the loop from
+`install.ps1` makes exactly three of the 30 PowerShell checks fail, which is the evidence
+that those checks test something.
+
+`scripts/ci/check-powershell-syntax.py` is the cheap predecessor of that lab and still
+runs on the `platform tests` legs, where a parse error would otherwise go unnoticed: `install.ps1`
+once carried a stray closing brace for a stretch of history, so the documented
+`irm .../install.ps1 | iex` died before downloading anything and nothing noticed, because
+no Linux job executes it and those legs only build and test the Rust workspace.
+It parses every tracked `*.ps1` with a real PowerShell and the legs run it with
+`--require` so it cannot pass by finding no PowerShell.
 
 `scripts/npm-install-in-docker.sh` does the same for `npm install -g chaos-code`, in a
 stock `node` image, and asserts the container's own registry is

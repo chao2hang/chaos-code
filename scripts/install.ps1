@@ -311,6 +311,7 @@ function Download-GitHubFile {
 
     $candidates = Get-GitHubUrlCandidates -OriginUrl $OriginUrl
     $lastErr = $null
+    $reasons = New-Object System.Collections.Generic.List[string]
     foreach ($cand in $candidates) {
         try {
             if (Test-Path -LiteralPath $OutFile) {
@@ -322,6 +323,7 @@ function Download-GitHubFile {
             $len = (Get-Item -LiteralPath $OutFile).Length
             if ($len -lt $MinBytes) {
                 $lastErr = "too small ($len bytes) from $cand"
+                $reasons.Add($lastErr)
                 Remove-Item -Force -LiteralPath $OutFile -ErrorAction SilentlyContinue
                 continue
             }
@@ -330,6 +332,7 @@ function Download-GitHubFile {
                 $head = Get-Content -LiteralPath $OutFile -TotalCount 1 -ErrorAction SilentlyContinue
                 if ($head -match "<!DOCTYPE|<html") {
                     $lastErr = "HTML response from $cand"
+                    $reasons.Add($lastErr)
                     Remove-Item -Force -LiteralPath $OutFile -ErrorAction SilentlyContinue
                     continue
                 }
@@ -337,10 +340,17 @@ function Download-GitHubFile {
             return $cand
         } catch {
             $lastErr = $_.Exception.Message
+            $reasons.Add($lastErr)
             if (Test-Path -LiteralPath $OutFile) {
                 Remove-Item -Force -LiteralPath $OutFile -ErrorAction SilentlyContinue
             }
         }
+    }
+    # Every distinct reason, in order. The candidate that actually answered -- an HTML
+    # error page, a truncated body -- is the one worth seeing, and origin is tried
+    # before the public fallbacks, so reporting only the final failure hides it.
+    foreach ($why in ($reasons | Select-Object -Unique | Select-Object -First 4)) {
+        Write-Host "  why: $why"
     }
     throw ("download failed for $OriginUrl. last error: $lastErr. " +
            "Tip: set `$env:CHAOS_GITHUB_MIRROR='https://ghfast.top' or `$env:CHAOS_CN='1'")

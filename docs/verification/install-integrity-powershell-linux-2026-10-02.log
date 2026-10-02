@@ -1,0 +1,120 @@
+# What this is: the PowerShell release-integrity lab -- scripts/install.ps1, the Windows
+# installer, driven for real by pwsh 7.4.6 on Linux against the same self-built release
+# fixture that scripts/install-integrity-in-docker.sh offers to scripts/install.sh.
+#
+# Reproduce with:  scripts/install-integrity-powershell.sh
+#                  (needs pwsh, python3 with `cryptography`, curl, sha256sum, ip and
+#                  unshare; no docker, no Windows, and nothing downloaded. The script
+#                  re-execs itself once inside `unshare -rn`, so the whole run is in a
+#                  network namespace whose only route is loopback.)
+#
+# Host: Ubuntu 22.04 x86_64, pwsh 7.4.6 (/usr/local/bin/pwsh), python3-cryptography
+# 3.4.8 (the distro build). Commit under test: 4aa337a7 plus the working-tree changes
+# to scripts/install.ps1 and scripts/install.sh that this lab found.
+#
+# Why this exists: `check-powershell-syntax.py` can only say install.ps1 parses, and
+# before this lab nothing had ever executed its download-and-verify path. Parsing is
+# not installing -- see the two defects below.
+#
+# What this lab does NOT cover, stated up front rather than left to the reader:
+#   - [RuntimeInformation]::OSArchitecture asset selection. The asset name is pinned to
+#     chaos-win32-x64.exe and served by the fixture; which name a real Windows host
+#     would ask for is not exercised.
+#   - Executing the artifact. The fixture's "binary" is a POSIX shell script, so the
+#     post-install version check is not run; the lab asserts byte-for-byte equality of
+#     what landed at ~/.chaos/bin/chaos.exe instead.
+#   - The registry PATH write. Every run passes -NoPath.
+#
+# --- how it went, because the interesting part is the four runs that failed ----------
+#
+# Run 1 died at preflight: `python3: unbound variable`. The interpreter was resolved
+# after the namespace hop, where PATH is rebuilt; resolved at the top of the file now.
+#
+# Runs 2 and 3 got 100 x `curl: (7) Couldn't connect to server`. Two separate causes
+# stacked on top of each other: the readiness probe asked for a /probe/ path the
+# mirror deliberately 404s, so `-fsS` never succeeded and the run started anyway; and,
+# underneath that, a fresh network namespace has loopback DOWN -- binding to
+# 127.0.0.1 succeeds while lo is down, connecting is refused. The probe now asks a real
+# scenario for a real 200, and `ip link set lo up` is itself an asserted check.
+#
+# Run 4: every scenario failed, each blaming the last candidate's DNS error. The
+# fixture artifact was ~130 bytes and install.ps1 refuses anything under `-MinBytes
+# 1MB` before hashing it. Padding the fixture past 1 MiB fixed the lab and exposed the
+# real asymmetry: install.sh had no size floor at all and would hash a truncated body.
+# install.sh now takes the same 1 MiB floor, and check 35 of the shell lab fails if the
+# two installers' floors ever drift apart.
+#
+# Run 5: three failures, all in the lab rather than the installer. The installed file
+# is $BinName (`bin/chaos.exe`), not the asset name -- the digests had in fact matched;
+# the no_sig needle missed because pwsh wraps a thrown message with a `| ` gutter and
+# emits ANSI codes, which the log flattener now strips; and the both-hatches case fell
+# through to a spurious exit 1.
+#
+# Run 6 was 30/30. Run 7, the one recorded below, is byte-identical.
+#
+# --- is the lab capable of failing? -------------------------------------------------
+#
+# Mutation test: the `foreach ($why in ($reasons | Select-Object -Unique ...))` block
+# in install.ps1's Download-GitHubFile was deleted and the lab re-run. Exit 1, with
+# exactly three failures -- html_sums, empty_artifact and the 404-visibility check --
+# and all 27 other checks still passing. The error the user then sees is
+# "last error: Resource temporarily unavailable (mirror.ghproxy.com:443)", i.e. the
+# public mirror, while the candidate that actually answered was the fixture with a 404.
+# install.ps1 was restored from backup and re-verified (grep -c 'why:' == 1) before the
+# run below.
+#
+
+entering a network namespace with no route to anything but loopback
+
+== the machine doing the installing
+   pwsh:       7.4.6
+   installer:  /home/chaos/hunt/dev/projects/chaos-code/scripts/install.ps1 (working tree)
+   python:     /usr/bin/python3 (reached through a `python` shim on PATH)
+   release:    /tmp/grok-goal-ec37f68d1619/implementer/ps1lab-final/releases, version 9.9.9 (never published)
+   network:    fresh network namespace; loopback only
+   ok  loopback is up, which is all the fake release endpoint needs
+   ok  github.com cannot be resolved from this namespace (curl exit 6)
+   ok  fixture built for chaos-win32-x64.exe: artifact, SHA256SUMS entry and signature
+   ok  the fixture's own signature verifies against its own key before any installer runs
+   ok  three distinct keys are in play: the installer's built-in one, the fixture's, and a second valid one
+   ok  the fake release endpoint answers 200 on 127.0.0.1:8098
+
+== the path a user actually takes
+   ok  install from the fixture completed (exit 0)
+   ok  checksum OK, against SHA256SUMS served by the fixture
+   ok  signature OK, over the artifact bytes, under the key passed in the environment
+   ok  the bytes that landed at bin/chaos.exe are the fixture's, digest for digest
+   ok  the fixture was the first candidate tried and no public mirror or origin was ever attempted
+   ok  the only files the fixture ever served were the artifact, SHA256SUMS and the sidecar
+
+== refusals, each checked twice: right reason, and nothing installed
+   ok  tampered: refused (exit 1) -- checksum mismatch
+checksum mismatch
+   ok  tampered: nothing installed behind the refusal
+   ok  forged_sums: refused (exit 1) -- signature verification FAILED
+signature verification FAILED
+   ok  forged_sums: nothing installed behind the refusal
+   ok  no_sig: refused (exit 1) -- download failed for https://github.com/chao2hang/chaos-code/releases/downloa
+   ok  no_sig: nothing installed behind the refusal
+   ok  other_key: refused (exit 1) -- signature verification FAILED
+signature verification FAILED
+   ok  other_key: nothing installed behind the refusal
+   ok  no_sums_entry: refused (exit 1) -- has no entry for chaos-win32-x64.exe
+   ok  no_sums_entry: nothing installed behind the refusal
+   ok  html_sums: refused (exit 1) -- HTML response from
+   ok  html_sums: nothing installed behind the refusal
+   ok  empty_artifact: refused (exit 1) -- too small
+   ok  empty_artifact: nothing installed behind the refusal
+   ok  the candidate that actually answered is still named: why: Response status code does not indicate success: 404 (Not Fou
+   ok  a set-but-blank public key is refused before any request is made: the fixture saw 0 request(s)
+
+== what the two escape hatches actually cost
+   ok  with the checksum skipped, the tampered artifact is still refused by the signature
+   ok  skipping the signature alone still verifies the checksum
+   note  both hatches together install a tampered artifact, which is what 'you are then trusting the download' means; no document in this repo sets either
+
+== summary
+   30 checks run against a release this lab built itself, with no route to the network
+   notes:
+  - both hatches together install a tampered artifact, which is what 'you are then trusting the download' means; no document in this repo sets either
+all 30 PowerShell release-integrity checks passed

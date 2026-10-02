@@ -282,7 +282,12 @@ download_github() {
   local dest="$2"
   local connect_timeout="${3:-12}"
   local max_time="${4:-0}"
-  local cand http_code curl_args=()
+  # A released artifact is over 150 MB, so anything under this is a truncated transfer
+  # or a proxy body, not the binary. install.ps1 has always applied the same floor;
+  # without it a 200 with a short body reached the checksum step and failed there for a
+  # reason that pointed at the wrong thing.
+  local min_bytes="${5:-1}"
+  local cand http_code size curl_args=()
   local last_err="" reasons=""
 
   curl_args=(-fL --retry 2 --retry-delay 1 --connect-timeout "$connect_timeout")
@@ -297,7 +302,15 @@ download_github() {
     http_code="$(
       curl "${curl_args[@]}" -o "$dest" -w '%{http_code}' "$cand" 2>/dev/null
     )" || http_code="000"
-    if [[ "$http_code" == "200" && -s "$dest" ]]; then
+    if [[ "$http_code" == "200" ]]; then
+      size="$(wc -c < "$dest" 2>/dev/null | tr -d '[:space:]')"
+      [[ -n "$size" ]] || size=0
+      if [[ "$size" -lt "$min_bytes" ]]; then
+        last_err="too small (${size} bytes) from ${cand}"
+        reasons="${reasons}${last_err}"$'\n'
+        rm -f "$dest"
+        continue
+      fi
       # Reject tiny HTML error pages from broken proxies
       if head -c 16 "$dest" 2>/dev/null | grep -qi '<!DOCTYPE\|<html'; then
         last_err="HTML response from ${cand}"
@@ -508,7 +521,7 @@ require_signature_prerequisites
 echo "downloading..."
 # Large binary: short connect timeout for failover; no overall max-time once
 # the transfer is moving (140MB+ assets).
-USED_URL="$(download_github "$ORIGIN_URL" "$TMP" 12 0)" || exit 1
+USED_URL="$(download_github "$ORIGIN_URL" "$TMP" 12 0 1048576)" || exit 1
 echo "  from: ${USED_URL}"
 
 # Integrity: verify against the release's published SHA256SUMS BEFORE the binary

@@ -2,6 +2,42 @@
 
 ## Unreleased
 
+### 新增：Windows 安装器第一次被真实执行（`scripts/install-integrity-powershell.sh`）
+
+`install.ps1` 的全部保障此前只被证明「能解析」：`check-powershell-syntax.py` 用真实
+PowerShell 解析每个 `*.ps1`，但解析不等于安装。新脚本在 Linux 上用 pwsh 7.4.6 直接跑
+`install.ps1`，不需要 Windows 也不需要 docker；脚本把自己 re-exec 进 `unshare -rn`，
+于是整个运行只有一条 loopback 路由，github.com 解析不出任何东西（这一条同样被断言）。
+它面对的 release 与 shell 实验台**完全相同**——生成器、镜像、请求日志断言都抽到
+`scripts/ci/release-integrity-{fixture,serve,request-log}.py` 共用，故意不给两个安装器
+各写一份近似但不同的夹具。30 项检查：一条正路（`checksum OK` + `signature OK` +
+落 `~/.chaos/bin/chaos.exe` 的字节与夹具摘要逐个对上 + 夹具是第一个候选、从未尝试
+origin 或公共镜像 + 夹具只被取过产物 / `SHA256SUMS` / `.sig` 三个文件），七种拒绝各种
+两问（为什么拒、拒后什么都没装）：产物被改、`SHA256SUMS` 被重算、`.sig` 缺失、公钥
+合法但不是我们的、manifest 无本资产行、manifest 是 HTML 错误页、下载体过小；外加公钥
+设为空串时夹具记录到 0 次请求，以及两个逃生开关的代价。
+
+它明确不覆盖三件事（脚本头部自己写着）：`[RuntimeInformation]::OSArchitecture` 会选哪个
+资产名、Windows 会不会真的执行这些字节、以及注册表 `PATH` 写入（每次运行都带
+`-NoPath`）。所以「Windows 安装器把可执行文件放上 PATH」仍是未测断言；「Windows 安装器
+接受这串字节、拒绝那串」已经不是了。
+
+实验台是否可能失败是被验证过的：把 `install.ps1` 里 `Download-GitHubFile` 打印
+`why:` 的那段循环删掉重跑，恰好 3 项失败（`html_sums`、`empty_artifact`、404 可见性），
+其余 27 项照绿，用户此时看到的最后一行是 `last error: Resource temporarily unavailable
+(mirror.ghproxy.com:443)`——把真正答话的候选（夹具返回的 404）说成是公共镜像的 DNS 故障。
+完整记录：`docs/verification/install-integrity-powershell-linux-2026-10-02.log`。
+
+### 修复：`install.sh` 会把截断的产物直接送去哈希
+
+写上面那个实验台时发现 `install.ps1` 一直有 `-MinBytes 1MB`：产物不足 1 MiB 就在哈希
+之前拒掉。`install.sh` 没有对应闸门，一条被中途截断的响应体会被原样哈希、然后把结果
+报给用户。`download_github` 现在接受同样的下限（第 5 个参数，1048576），错误信息是
+`too small (N bytes) from <候选>`；shell 实验台新增第 35 项检查，专门盯两个安装器这两个
+数字不再漂移。同一轮也修掉 PowerShell 侧的同类报告缺陷（`install.sh` 的那半已在上一节
+记过）：所有候选都失败时两个安装器都只报**最后一个**的原因，现在各打印最多 4 条去重后的
+`why:`。
+
 ### 新增：离线的发行物完整性验收台（`scripts/install-integrity-in-docker.sh`）
 
 `scripts/install-sh-in-docker.sh` 已经会用 README 头条那条命令装**真实** release，并确认
@@ -13,8 +49,8 @@
 ed25519 `.sig`，再用 `install.sh` 本来就支持的 ghproxy 镜像路径
 （`${CHAOS_GITHUB_MIRROR}/https://github.com/...`）把它端出去。容器跑在
 `--network none` 下：loopback 可用、DNS 什么都解析不出来，所以安装器消费的每个字节都
-来自这份夹具，github.com 是物理不可达的（这一条本身是被断言的，不是假设）。34 项检查
-覆盖一条正路（`checksum OK` + `signature OK` + 落地可执行 + 相对 symlink 布局 + 二次运行
+来自这份夹具，github.com 是物理不可达的（这一条本身是被断言的，不是假设）。35 项检查
+（初版 34 项，第 35 项是上面那对 1 MiB 下限的防漂移断言）覆盖一条正路（`checksum OK` + `signature OK` + 落地可执行 + 相对 symlink 布局 + 二次运行
 不重复下载 + 夹具只被取过那三个文件）与这些拒绝：产物被改一个字节、`SHA256SUMS` 被
 按篡改后的字节**重算**（此时只剩签名拦着）、`.sig` 缺失、公钥合法但不是我们的、公钥
 存在但为空串（且在发起任何请求之前就拒，夹具记录到零次请求）、manifest 里没有本资产
