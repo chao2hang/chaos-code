@@ -8,6 +8,32 @@ const workspaces = [
 ]
 
 describe('workspace session isolation', () => {
+  it('clears workspace-rooted files, editor, and search state when switching projects', () => {
+    const source = {
+      ...initialSessionState,
+      workspaces,
+      files: { path: 'src', entries: ['main.tsx'], directories: [] },
+      filesLoading: true,
+      filesError: 'stale directory error',
+      activeFile: { path: 'src/main.tsx', contents: 'stale file' },
+      fileLoading: true,
+      fileError: 'stale read error',
+      searchResults: { query: 'old', matches: ['src/main.tsx'] },
+      searchLoading: true,
+      searchError: 'stale search error',
+    }
+    const switched = workspaceChanged(source, 'a')
+    expect(switched.files).toBeUndefined()
+    expect(switched.filesLoading).toBe(false)
+    expect(switched.filesError).toBeUndefined()
+    expect(switched.activeFile).toBeUndefined()
+    expect(switched.fileLoading).toBe(false)
+    expect(switched.fileError).toBeUndefined()
+    expect(switched.searchResults).toBeUndefined()
+    expect(switched.searchLoading).toBe(false)
+    expect(switched.searchError).toBeUndefined()
+  })
+
   it('selects each workspace session and clears the previous transcript before the snapshot arrives', () => {
     const state = {
       ...initialSessionState,
@@ -16,7 +42,7 @@ describe('workspace session isolation', () => {
       workspaceSessions: { a: 'session-a', b: 'session-b' },
       sessionId: 'session-b',
       messages: [{ role: 'assistant', text: 'workspace B private transcript' }],
-      approval: { requestId: 'approval-b', tool: 'tool', summary: 'B only' },
+      approval: { requestId: 'approval-b', tool: 'tool', summary: 'B only', confirmationStep: 1 },
       question: { questionId: 'question-b', prompt: 'B only' },
       busy: true,
     }

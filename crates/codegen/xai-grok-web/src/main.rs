@@ -1,4 +1,4 @@
-use chaos_engine::{Engine, HeadlessProcessAdapter};
+use chaos_engine::{Engine, HeadlessProcessAdapter, ProcessGitAdapter, ProcessTerminalAdapter};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -14,17 +14,21 @@ async fn main() -> anyhow::Result<()> {
         )
     });
     let sqlite_path = std::env::var_os("CHAOS_WEB_SQLITE").map(std::path::PathBuf::from);
-    let engine = match (workspace_root, sqlite_path) {
+    let engine = match (workspace_root.clone(), sqlite_path) {
         (None, Some(path)) => Engine::with_sqlite_store(path)?,
         (Some(_), Some(_)) => {
             anyhow::bail!("CHAOS_WEB_SQLITE and CHAOS_WORKSPACE_ROOT cannot be used together")
         }
-        (Some(root), None) => Engine::with_workspace_and_adapter(
-            root,
-            adapter.map(|value| {
+        (Some(root), None) => {
+            let prompt_adapter = adapter.map(|value| {
                 std::sync::Arc::new(value) as std::sync::Arc<dyn chaos_engine::PromptAdapter>
-            }),
-        )?,
+            });
+            let git = ProcessGitAdapter::new(&root)?;
+            let terminal = ProcessTerminalAdapter::new(&root, 256 * 1024)?;
+            Engine::with_workspace_and_adapter(root, prompt_adapter)?
+                .with_git_adapter(git)
+                .with_terminal_adapter(terminal)
+        }
         (None, None) => match std::env::var("CHAOS_WEB_STATE") {
             Ok(path) => Engine::with_persistence_and_adapter(
                 path,
@@ -36,12 +40,14 @@ async fn main() -> anyhow::Result<()> {
         },
     };
     eprintln!("Chaos Web listening on http://127.0.0.1:{port}");
-    xai_grok_web::serve_loopback_with_safe_mode(
+    let assets_dir = std::env::var_os("CHAOS_WEB_ASSETS_DIR").map(std::path::PathBuf::from);
+    xai_grok_web::serve_loopback_with_assets_and_safe_mode(
         engine,
         port,
         std::env::var("CHAOS_SAFE_WEB_MODE")
             .map(|value| value != "0" && value != "false")
             .unwrap_or(false),
+        assets_dir,
     )
     .await
 }

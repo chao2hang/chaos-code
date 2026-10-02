@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { initialComposerHistory, navigatePromptHistory, recordPrompt, shouldSubmitOnKey } from './composer'
+import { getComposerSuggestions, initialComposerHistory, moveSuggestionIndex, navigatePromptHistory, recordPrompt, shouldSubmitOnKey } from './composer'
 
 describe('composer history and keyboard behavior', () => {
   it('records unique adjacent prompts and restores the draft after navigating back', () => {
@@ -40,10 +40,30 @@ describe('composer history and keyboard behavior', () => {
     expect(history).toEqual({ entries: ['previous'], index: 1, draft: 'unsent' })
   })
 
+  it('wraps keyboard selection over available suggestions and handles empty lists', () => {
+    expect(moveSuggestionIndex(-1, 3, 1)).toBe(0)
+    expect(moveSuggestionIndex(0, 3, -1)).toBe(2)
+    expect(moveSuggestionIndex(1, 3, 1)).toBe(2)
+    expect(moveSuggestionIndex(0, 0, 1)).toBe(0)
+  })
+
   it('submits Enter but preserves Shift+Enter and IME composition input', () => {
     expect(shouldSubmitOnKey({ key: 'Enter', shiftKey: false, isComposing: false })).toBe(true)
     expect(shouldSubmitOnKey({ key: 'Enter', shiftKey: true, isComposing: false })).toBe(false)
     expect(shouldSubmitOnKey({ key: 'Enter', shiftKey: false, isComposing: true })).toBe(false)
     expect(shouldSubmitOnKey({ key: 'Enter', shiftKey: false, isComposing: false, keyCode: 229 })).toBe(false)
+  })
+
+  it('filters slash commands and file mentions for autocomplete', () => {
+      const slashMatches = getComposerSuggestions('/app')
+      expect(slashMatches.some((cmd) => cmd.label === '/approve-tool')).toBe(true)
+      expect(slashMatches.every((cmd) => cmd.kind === 'command')).toBe(true)
+
+      const fileMatches = getComposerSuggestions('check this @main', ['src/main.tsx', 'src/style.css', 'README.md'])
+      expect(fileMatches).toHaveLength(1)
+      expect(fileMatches[0].label).toBe('@src/main.tsx')
+      expect(fileMatches[0].insert).toBe('check this @src/main.tsx ')
+
+    expect(getComposerSuggestions('regular prompt')).toEqual([])
   })
 })

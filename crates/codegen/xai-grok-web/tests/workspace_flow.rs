@@ -57,9 +57,10 @@ async fn websocket_workspace_requests_are_confined_to_root() {
         serde_json::from_str(&socket.next().await.unwrap().unwrap().into_text().unwrap()).unwrap();
     assert!(matches!(
         listed,
-        ServerMessage::FilesListed { path, entries }
+        ServerMessage::FilesListed { path, entries, directories }
             if path == "."
                 && entries == ["empty-folder", "nested", "note.txt"]
+                && directories == ["empty-folder", "nested"]
                 && !entries.iter().any(|entry| entry == ".chaos-staging" || entry == "staged.tmp")
     ));
 
@@ -114,7 +115,7 @@ async fn websocket_workspace_requests_are_confined_to_root() {
         serde_json::from_str(&socket.next().await.unwrap().unwrap().into_text().unwrap()).unwrap();
     assert!(matches!(
         empty_listed,
-        ServerMessage::FilesListed { path, entries } if path == "empty-folder" && entries.is_empty()
+        ServerMessage::FilesListed { path, entries, directories } if path == "empty-folder" && entries.is_empty() && directories.is_empty()
     ));
 
     socket

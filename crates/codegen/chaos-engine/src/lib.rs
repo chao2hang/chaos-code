@@ -702,6 +702,7 @@ pub enum ServerMessage {
     FilesListed {
         path: String,
         entries: Vec<String>,
+        directories: Vec<String>,
     },
     FileContents {
         path: String,
@@ -910,19 +911,29 @@ impl WorkspaceAdapter {
         Ok(canonical)
     }
 
-    fn list(&self, relative: &str) -> Result<Vec<String>, ServerMessage> {
+    fn list(&self, relative: &str) -> Result<(Vec<String>, Vec<String>), ServerMessage> {
         let path = self.confined(relative)?;
-        let mut entries = std::fs::read_dir(path)
+        let mut listed = std::fs::read_dir(path)
             .map_err(|_| ServerMessage::Error {
                 code: "list_failed".into(),
                 message: "无法读取目录".into(),
             })?
             .filter_map(Result::ok)
             .filter(|entry| entry.file_name() != ".chaos-staging")
-            .filter_map(|entry| entry.file_name().into_string().ok())
+            .filter_map(|entry| {
+                let name = entry.file_name().into_string().ok()?;
+                let is_directory = entry.file_type().is_ok_and(|kind| kind.is_dir());
+                Some((name, is_directory))
+            })
             .collect::<Vec<_>>();
-        entries.sort();
-        Ok(entries)
+        listed.sort_by(|left, right| left.0.cmp(&right.0));
+        let directories = listed
+            .iter()
+            .filter(|(_, is_directory)| *is_directory)
+            .map(|(name, _)| name.clone())
+            .collect();
+        let entries = listed.into_iter().map(|(name, _)| name).collect();
+        Ok((entries, directories))
     }
 
     fn read(&self, relative: &str) -> Result<String, ServerMessage> {
@@ -1042,6 +1053,9 @@ impl WorkspaceAdapter {
     }
 
     fn search(&self, query: &str) -> Result<Vec<String>, ServerMessage> {
+        if query.is_empty() {
+            return Ok(Vec::new());
+        }
         let mut matches = Vec::new();
         for entry in walkdir::WalkDir::new(self.root.as_path())
             .follow_links(false)
@@ -1944,10 +1958,11 @@ impl Engine {
             ClientMessage::ListFiles { relative_path, .. } => match &self.workspace {
                 Some(workspace) => workspace
                     .list(&relative_path)
-                    .map(|entries| {
+                    .map(|(entries, directories)| {
                         vec![ServerMessage::FilesListed {
                             path: relative_path,
                             entries,
+                            directories,
                         }]
                     })
                     .unwrap_or_else(|error| vec![error]),
@@ -4061,6 +4076,20 @@ mod tests {
     }
 
     #[test]
+    fn workspace_search_empty_query_returns_no_matches() {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(directory.path().join("note.txt"), "ordinary content").unwrap();
+        let engine = Engine::with_workspace(directory.path()).unwrap();
+        let messages = engine.handle(ClientMessage::SearchFiles {
+            client_msg_id: "empty-search".into(),
+            query: String::new(),
+        });
+        assert!(
+            matches!(messages.as_slice(), [ServerMessage::SearchResults { matches, .. }] if matches.is_empty())
+        );
+    }
+
+    #[test]
     fn workspace_read_stops_after_the_limit_plus_one_byte() {
         struct CountingReader {
             remaining: usize,
@@ -4105,7 +4134,7 @@ mod tests {
             relative_path: ".".into(),
         });
         assert!(
-            matches!(&listed[0], ServerMessage::FilesListed { entries, .. } if entries == &["empty-folder", "hello.txt", "large.txt"])
+            matches!(&listed[0], ServerMessage::FilesListed { entries, directories, .. } if entries == &["empty-folder", "hello.txt", "large.txt"] && directories == &["empty-folder"])
         );
         let read = engine.handle(ClientMessage::ReadFile {
             client_msg_id: "read".into(),

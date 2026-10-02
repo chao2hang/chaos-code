@@ -99,10 +99,12 @@ async fn destructive_git_commit_requires_two_approvals_before_head_changes() {
     let second_confirmation = match next(&mut socket).await {
         ServerMessage::ToolApprovalRequested {
             request_id: same_id,
+            tool,
             summary,
             ..
         } => {
             assert_eq!(same_id, request_id);
+            assert_eq!(tool, "git.commit");
             assert!(summary.contains("再次确认"));
             same_id
         }

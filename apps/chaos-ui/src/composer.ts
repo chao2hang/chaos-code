@@ -27,6 +27,48 @@ export function navigatePromptHistory(history: ComposerHistory, direction: -1 | 
   return { history: { ...history, index, draft }, value }
 }
 
+export function moveSuggestionIndex(current: number, count: number, direction: -1 | 1): number {
+  if (count <= 0) return 0
+  return (current + direction + count) % count
+}
+
 export function shouldSubmitOnKey(event: Pick<KeyboardEvent, 'key' | 'shiftKey' | 'isComposing'> & { keyCode?: number }): boolean {
   return event.key === 'Enter' && !event.shiftKey && !event.isComposing && event.keyCode !== 229
+}
+
+export type ComposerSuggestion = {
+  kind: 'command' | 'file'
+  label: string
+  insert: string
+  description: string
+}
+
+export const SLASH_COMMANDS: ComposerSuggestion[] = [
+  { kind: 'command', label: '/approve-tool', insert: '/approve-tool ', description: '发起工具审批请求' },
+  { kind: 'command', label: '/ask', insert: '/ask ', description: '向用户发起确认问题' },
+  { kind: 'command', label: '/review', insert: '/review ', description: '审查当前工作区代码变更' },
+  { kind: 'command', label: '/explain', insert: '/explain ', description: '解释选中或打开的文件' },
+  { kind: 'command', label: '/test', insert: '/test ', description: '生成并验证单元测试' },
+]
+
+export function getComposerSuggestions(input: string, fileEntries: string[] = []): ComposerSuggestion[] {
+  const trimmed = input.trimStart()
+  if (trimmed.startsWith('/') && !trimmed.includes(' ')) {
+    const query = trimmed.toLowerCase()
+    return SLASH_COMMANDS.filter((cmd) => cmd.label.startsWith(query))
+  }
+  const atMatch = /(?:^|\s)@([^\s]*)$/.exec(input)
+  if (atMatch) {
+    const query = atMatch[1].toLowerCase()
+    return fileEntries
+      .filter((entry) => entry.toLowerCase().includes(query))
+      .slice(0, 8)
+      .map((entry) => ({
+        kind: 'file' as const,
+        label: `@${entry}`,
+        insert: input.replace(/@([^\s]*)$/, `@${entry} `),
+        description: '工作区文件引用',
+      }))
+  }
+  return []
 }

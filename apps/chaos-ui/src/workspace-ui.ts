@@ -12,6 +12,11 @@ export function selectWorkspaceSession(state: SessionState, workspaceId: string)
     question: undefined,
     busy: false,
     status: '正在切换工作区',
+    toolActivities: [],
+    gitLoading: false,
+    gitError: undefined,
+    terminalLoading: false,
+    terminalError: undefined,
   }
 }
 
@@ -24,8 +29,25 @@ export function workspaceChanged(state: SessionState, workspaceId: string): Sess
     messages: [],
     approval: undefined,
     question: undefined,
+    files: undefined,
+    filesLoading: false,
+    filesError: undefined,
+    activeFile: undefined,
+    fileLoading: false,
+    fileError: undefined,
+    searchResults: undefined,
+    searchLoading: false,
+    searchError: undefined,
     busy: false,
     status: '工作区已切换',
+    toolActivities: [],
+    gitStatus: undefined,
+    gitMutationResult: undefined,
+    gitLoading: false,
+    gitError: undefined,
+    terminalResult: undefined,
+    terminalLoading: false,
+    terminalError: undefined,
   }
 }
 

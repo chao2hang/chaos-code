@@ -12,14 +12,17 @@ path = "src/main.rs"
 anyhow.workspace = true
 axum.workspace = true
 chaos-engine = { path = "../chaos-engine" }
+dunce.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tower.workspace = true
 tokio = { workspace = true, features = ["net", "rt-multi-thread", "macros"] }
-tower-http = { workspace = true, features = ["cors", "limit"] }
+tower-http = { workspace = true, features = ["cors", "limit", "fs", "set-header"] }
+sha2.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+flate2.workspace = true
 futures-util.workspace = true
 base64.workspace = true
 tokio-tungstenite.workspace = true

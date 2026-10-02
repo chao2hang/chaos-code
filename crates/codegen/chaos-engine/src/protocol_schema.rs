@@ -56,7 +56,7 @@ export type ServerMessage =
   | { type: 'tool_result'; session_id: UUID; tool: string; result: string; sequence: number }
   | { type: 'file_changed'; session_id: UUID; path: string; operation: string; sequence: number }
   | { type: 'usage'; session_id: UUID; input_tokens: number; output_tokens: number; sequence: number }
-  | { type: 'files_listed'; path: string; entries: string[] }
+  | { type: 'files_listed'; path: string; entries: string[]; directories: string[] }
   | { type: 'file_contents'; path: string; contents: string }
   | { type: 'search_results'; query: string; matches: string[] }
   | { type: 'file_written'; session_id: UUID; path: string; bytes: number }
