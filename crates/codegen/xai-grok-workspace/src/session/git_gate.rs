@@ -248,6 +248,16 @@ impl GitGate {
                 );
                 ROOT_CACHE.lock().clear();
                 let mut state = self.inner.state.lock();
+                // `epochs` only ever gains a key from this function, so for a repository
+                // this gate has never invalidated the loop below would bump nothing, and
+                // `decide` reads a missing key as epoch 0 -- the walk already in flight
+                // stays joinable and its result is handed to a caller that asked for a
+                // fresh read *after* the invalidate. Seed an epoch for every root that has
+                // a slot so the bump lands on the flights that actually exist.
+                let in_use: Vec<PathBuf> = state.slots.keys().map(|key| key.root.clone()).collect();
+                for root in in_use {
+                    state.epochs.entry(root).or_insert(0);
+                }
                 for epoch in state.epochs.values_mut() {
                     *epoch = epoch.saturating_add(1);
                 }

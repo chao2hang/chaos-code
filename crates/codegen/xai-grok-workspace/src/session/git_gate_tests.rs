@@ -461,6 +461,79 @@ async fn invalidate_during_inflight_does_not_return_stale_walk() {
     let _ = first.await;
 }
 
+/// The same guarantee, reached through the branch that cannot name the repository.
+///
+/// `ROOT_CACHE` is one process-global map shared by every `GitGate`, and under
+/// `cfg(test)` its entry lives 80 ms. So the entry for this repository can already be
+/// gone by the time a caller invalidates it -- a TTL expiry, the `MAX_ROOT_CACHE`
+/// clear, or another gate's invalidate-all. `invalidate` then cannot map the path to a
+/// flight key and falls back to "invalidate everything this gate knows about", which
+/// has to cover the walk that is already in flight. Before the seed in `invalidate`,
+/// the fallback bumped `epochs`, found it empty, and changed nothing: this second
+/// `run` joined the pre-invalidate walk and reported its value as if nothing had
+/// happened. That is the shape of the failure, not just a slow assertion.
+#[tokio::test]
+async fn invalidate_with_an_unresolved_root_still_supersedes_an_inflight_walk() {
+    let repo = init_temp_repo();
+    // Never opened through this gate, so `invalidate` cannot resolve it and must take
+    // the invalidate-all branch. No sleeping, no TTL racing: the miss is structural.
+    let unrelated = init_temp_repo();
+    let gate = GitGate::with_config(
+        Duration::from_secs(5),
+        Duration::from_secs(5),
+        2,
+        Duration::from_secs(2),
+    );
+    let walks = Arc::new(AtomicUsize::new(0));
+    let release = tokio::sync::watch::channel(false).0;
+
+    let mk_walk = |walks: Arc<AtomicUsize>, release: tokio::sync::watch::Sender<bool>| {
+        move || {
+            let walks = Arc::clone(&walks);
+            let mut rx = release.subscribe();
+            async move {
+                let n = walks.fetch_add(1, Ordering::SeqCst) + 1;
+                while !*rx.borrow() {
+                    if rx.changed().await.is_err() {
+                        break;
+                    }
+                }
+                Ok(n)
+            }
+        }
+    };
+
+    let first = {
+        let gate = gate.clone();
+        let root = repo.path().to_path_buf();
+        let walk = mk_walk(Arc::clone(&walks), release.clone());
+        tokio::spawn(async move { gate.run(&root, status_op(), walk).await })
+    };
+    wait_for_count(&walks, 1).await;
+
+    gate.invalidate(unrelated.path());
+
+    let second = {
+        let gate = gate.clone();
+        let root = repo.path().to_path_buf();
+        let walk = mk_walk(Arc::clone(&walks), release.clone());
+        tokio::spawn(async move { gate.run(&root, status_op(), walk).await })
+    };
+    wait_for_count(&walks, 2).await;
+
+    release.send(true).unwrap();
+    let after_invalidate = tokio::time::timeout(Duration::from_secs(2), second)
+        .await
+        .expect("post-invalidate-all status hung")
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        after_invalidate, 2,
+        "the second status returned a walk that started before the invalidate"
+    );
+    let _ = first.await;
+}
+
 #[tokio::test]
 async fn waiter_timeout_after_invalidate_does_not_return_stale_ok() {
     let repo = init_temp_repo();

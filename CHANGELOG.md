@@ -2,6 +2,52 @@
 
 ## Unreleased
 
+### 修复：`GitGate` 解析不出仓库时那次 invalidate 是空转，在飞的 git walk 会被当成新读返回
+
+`GitGate::invalidate(root)` 的契约是「工作区变了，作废缓存，之后的读必须是新 walk」。它解析不出
+这是哪个仓库时走 `None` 分支，意图保守地把这个 gate 知道的一切作废：把 `state.epochs` 里每个 epoch +1。
+但 `state.epochs` **只有 `invalidate` 自己会写**——`decide()` 读 epoch 用
+`state.epochs.get(&key.root).copied().unwrap_or(0)`，从不插入。于是对一个从没被 invalidate 过的仓库，
+这条分支遍历的是空 map，**一个字节都没改**：epoch 仍是 0，`decide()` 认为在飞的那条 walk epoch 匹配，
+返回 `Decision::Join`，调用方拿到的是**改动之前**那次 walk 的结果。清快照救不了——快照本来就没写，
+能被复用的是在飞的那一个。
+
+**这条分支在生产里是常规路径，不是边角**：`ROOT_CACHE` 是进程级 `static`，`ROOT_CACHE_TTL` 生产取 30 s，
+另有 `MAX_ROOT_CACHE = 1024` 满表时 `retain` 过期项、装不下就整表 `clear()`。会话开着仓库、读过一次 git
+状态、三十秒后改了工作区再 `invalidate(git_root)`——`session/git.rs` 的四个调用点（`:111`、`:2773`、
+`:3159`、`:3353`）走的正是这条路——缓存项早过期，invalidate 于是空转；此刻恰有一个 walk 在飞，它就拦不住。
+**修法不引入新机制**，用的还是这个模块本来就有的 epoch 比较：`None` 分支在整体 +1 之前，先给每一个当前
+有 slot 的 root `epochs.entry(root).or_insert(0)`，让这次 bump 落到真实存在的在飞请求上。`evict_slots`
+本来就保留 `inflight.is_some()` 的 slot，补出来的条目不会被顺手清掉；已排队的 waiter 仍由 `finish_wait`
+的 `epoch != current_epoch → WaitEnd::Retry` 处理。`Some(canon)` 分支不动，它自己已经 `or_insert(0)`。
+
+**发现方式是本地 Docker 入口第一次跑 `--full`**，前 17 个门禁全绿，最后的 `cargo test` 报
+`invalidate_during_inflight_does_not_return_stale_walk` 失败于 `timed out waiting for walk count 2
+(have 1)`，`1933 passed; 1 failed`。`have 1` 说明第二次 `run` 没起新 walk，直接并进了 invalidate 之前
+那条。**先排除环境因素**：`git_gate` 模块单跑 15 次全绿——不是这条测试自己的时序，是同进程里别的测试
+把它依赖的状态弄坏了。把「不稳定的测试」当输入而不是结论，才让这一轮落到真 bug 上；如果当时选择重跑一次
+看看，这个缺陷会继续留在发布分支上。
+
+**回归测试 `invalidate_with_an_unresolved_root_still_supersedes_an_inflight_walk` 不靠 sleep 撞 TTL**——
+那正是上一轮 l10n 事故里「坏仪器看起来像测出了结果」的同族写法。它拿一个本 gate **从没打开过**的第二个
+临时仓库去 `invalidate`，使 `lookup_cached_root` 结构上必然 miss、`epochs` 结构上必然为空，从而必然走到
+`None` 分支；断言第二次 `run` 起了新 walk，且交回的是新 walk 的结果（`2` 而非 `1`）。两个变异各写回原文并
+`cmp` 确认字节一致：A 删掉补 epoch 的那段（即修复前发布的代码），B 算出列表但一条都不 apply，两者都让新
+测试转红，失败信息与 `--full` 里那条**逐字相同**（`timed out waiting for walk count 2 (have 1)`）——这条
+测试的论据不是「某个断言变红了」，而是把同一次故障在受控条件下重造了出来。格式检查第一次就抓出手写换行
+不合 rustfmt；改后 `cargo fmt --all -- --check` 退出 0、`cargo clippy -p xai-grok-workspace --all-targets
+--locked -- -D warnings` 无诊断、整包 `--lib` **连跑 8 次全绿**（`1935 passed; 0 failed` ×8），
+`session::git_gate` 模块 16 例全绿。
+
+边界：没有端到端驱动 `git.rs` 那四个生产调用点，本节证明的是 `GitGate` 单元在「root 解析不出来」时的
+语义，不是「真实工作区改动后 GUI 看到的 git 状态一定新」（后者需要贯穿 Engine 的会话级回归）；
+`MAX_ROOT_CACHE` 撑满触发的整表 `clear()` 与 `store_cached_root` 的 `retain` 分支仍无任何测试驱动——
+新测试是**结构性**走到 `None` 分支，不是制造缓存压力；变异与 8 次连跑只在 Linux/x86_64 容器，macOS 上
+`TMPDIR` 经 `/var`→`/private/var`，`dunce::canonicalize` 之后路径形状不同，那条路径走到 `None` 分支的
+概率只高不低，但未实测。（2026-10-03；`crates/codegen/xai-grok-workspace/src/session/git_gate.rs`、
+`crates/codegen/xai-grok-workspace/src/session/git_gate_tests.rs`、
+`docs/verification/git-gate-invalidate-all-2026-10-03.log`）
+
 ### 改进：Docker 入口与 CI 的门禁镜像从「数量差不多」变成一条会红的规则
 
 `scripts/verify-in-docker.sh` 的卖点是「在本地跑的就是 CI 跑的那串命令」，但这句话此前无人执行：
