@@ -39,7 +39,10 @@ echo "cargo        : $(cargo -V 2>/dev/null || echo missing)"
 echo "logical cpus : $(getconf _NPROCESSORS_ONLN 2>/dev/null || echo unknown)"
 echo "RUST_MIN_STACK: $RUST_MIN_STACK"
 echo "git commit   : $(git rev-parse HEAD 2>/dev/null || echo unknown)"
-git status --porcelain | head -1
+# A dirty tree means the log does not describe the pushed commit, so say so.
+if [ -n "$(git status --porcelain 2>/dev/null | head -1)" ]; then
+  echo 'working tree : dirty (log does not describe a pushed commit)'
+fi
 echo "crates       : ${crates[*]}"
 echo
 

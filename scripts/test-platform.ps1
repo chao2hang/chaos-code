@@ -29,18 +29,41 @@ $ErrorActionPreference = 'Stop'
 # Large actor tests exceed the default 2 MiB test-thread stack; CI uses 16 MiB.
 if (-not $env:RUST_MIN_STACK) { $env:RUST_MIN_STACK = '16777216' }
 
+function Get-FirstOutput {
+    param([scriptblock]$Body)
+    try {
+        $value = & $Body 2>$null
+        if ($value) { return ($value -join ' ') }
+    } catch { }
+    return 'unknown'
+}
+
 Write-Output '== platform report =='
-$os = Get-CimInstance Win32_OperatingSystem
-Write-Output ("os           : Windows {0} ({1}) build {2}" -f $os.Caption, $os.Architecture, $os.BuildNumber)
-Write-Output ("hostname     : $env:COMPUTERNAME")
-$rustcVersion = (& rustc -V 2>&1) -join ' '
-$cargoVersion = (& cargo -V 2>&1) -join ' '
-Write-Output ("rustc        : $rustcVersion")
-Write-Output ("cargo        : $cargoVersion")
-Write-Output ("logical cpus : $env:NUMBER_OF_PROCESSORS")
-Write-Output ("RUST_MIN_STACK: $env:RUST_MIN_STACK")
-$commit = (& git rev-parse HEAD 2>$null)
-if ($commit) { Write-Output "git commit   : $commit" } else { Write-Output 'git commit   : unknown' }
+# The Win32_OperatingSystem class only exists on Windows. Fall back to the
+# portable runtime info so the same script is runnable (and testable) on
+# PowerShell Core anywhere, while still reporting the full Windows caption.
+$osLine = Get-FirstOutput {
+    $os = Get-CimInstance Win32_OperatingSystem
+    'Windows {0} ({1}) build {2}' -f $os.Caption, $os.Architecture, $os.BuildNumber
+}
+if ($osLine -eq 'unknown') {
+    $rid = [System.Runtime.InteropServices.RuntimeInformation]::OSDescription
+    $arch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
+    $osLine = '{0} ({1})' -f $rid, $arch
+}
+Write-Output "os           : $osLine"
+
+$hostName = if ($env:COMPUTERNAME) { $env:COMPUTERNAME } else { [System.Net.Dns]::GetHostName() }
+Write-Output "hostname     : $hostName"
+Write-Output ("rustc        : " + (Get-FirstOutput { rustc -Vv }))
+Write-Output ("cargo        : " + (Get-FirstOutput { cargo -V }))
+$cpus = if ($env:NUMBER_OF_PROCESSORS) { $env:NUMBER_OF_PROCESSORS } else { [Environment]::ProcessorCount }
+Write-Output "logical cpus : $cpus"
+Write-Output "RUST_MIN_STACK: $env:RUST_MIN_STACK"
+Write-Output ("git commit   : " + (Get-FirstOutput { git rev-parse HEAD }))
+# A dirty tree means the log does not describe the pushed commit, so say so.
+$dirty = Get-FirstOutput { git status --porcelain }
+if ($dirty -and $dirty -ne 'unknown') { Write-Output 'working tree : dirty (log does not describe a pushed commit)' }
 Write-Output "crates       : $($Crates -join ', ')"
 Write-Output ''
 
