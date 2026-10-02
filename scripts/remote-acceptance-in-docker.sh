@@ -9,13 +9,17 @@
 # has never seen the repository, reaches it through a tunnel the way a real remote
 # session does, and checks what M4.6 asks about: deployment, version negotiation,
 # reading, searching, writing, git diff, tool execution, credential handling, path
-# escape, a failed upgrade, a dropped connection, an out-of-space remote disk, port
-# forwarding and the two clocks a session runs on -- the wait for a transport that is
-# not up yet, and the deadline on a reply that never comes.
+# escape, a failed upgrade, a dropped connection, an out-of-space remote disk, the
+# provenance an artifact has to carry before a host will run it, port forwarding and
+# the two clocks a session runs on -- the wait for a transport that is not up yet,
+# and the deadline on a reply that never comes.
 #
 # Two further containers stand in for hostile hosts rather than clean ones: one
 # whose disk fills mid-upload, and one whose workspace is mounted `noexec`, so that
-# an artifact which can never start is refused instead of published.
+# an artifact which can never start is refused instead of published. Three more
+# servers, on unix sockets in the same shared volume, stand in for three operators:
+# one who named a signing key the artifacts must carry, one who never named one, and
+# one who said plainly that unsigned builds are fine here.
 #
 # Topology. The transport dials loopback only -- deliberately, because the tunnel is
 # what carries the security (ADR-004). Both containers therefore use `--network
@@ -60,7 +64,7 @@ for arg in "$@"; do
   case "$arg" in
     --keep) KEEP=1 ;;
     -h | --help)
-      sed -n '2,39p' "$0"
+      sed -n '2,47p' "$0"
       exit 0
       ;;
     *)
@@ -133,9 +137,15 @@ served_host_dir="${lab_root}/host/workspace"
 # The same directory seen from the two sides of the tunnel.
 served_in="/lab/workspace"
 installed_in="${served_in}/.chaos-server"
+# The workspace of the host started with --trust-signing-key, kept separate so its
+# install directory is not mixed with the one the deployments above use.
+served_in3="/lab/workspace3"
+installed_in3="${served_in3}/.chaos-server"
 # `work` stays outside the bind mounts: the containers write as root, and this is
 # the script's own scratch for captured output.
 mkdir -p "${lab_root}/host/bin" "${served_host_dir}" "${lab_root}/host/workspace2" \
+  "${lab_root}/host/workspace3" "${lab_root}/host/workspace4" "${lab_root}/host/workspace5" \
+  "${lab_root}/host/workspace6" \
   "${lab_root}/host/service" \
   "${lab_root}/dev/bin" "${lab_root}/dev/local" "${lab_root}/shared" "${lab_root}/disk" \
   "${lab_root}/noexec" "${lab_root}/work"
@@ -495,14 +505,24 @@ expect_refused "a server with no transport is refused instead of guessing" "unix
   on_host "/lab/bin/chaos-remote-server --workspace ${served_in}"
 
 log "starting the server, loopback-only, on the remote host"
+# `--allow-unsigned-artifact` because every artifact this lab deploys was built on
+# this machine seconds ago by the same person running the lab, which is exactly the
+# case that switch is for. The hosts that do not pass it are below, and they refuse;
+# the deployments in this section would otherwise be refused for a reason that has
+# nothing to do with what they are testing.
 on_host_d "exec /lab/bin/chaos-remote-server \
   --workspace ${served_in} \
   --tcp 127.0.0.1:${server_port} \
   --token-file /shared/tokens \
   --capability tool-execution --allow echo --allow sleep --allow false \
+  --allow-unsigned-artifact \
   --tokens 256 --token-ttl 3600 \
   >/shared/server.log 2>&1"
 wait_for_file "${lab_root}/shared/tokens" "the published credentials"
+# A host whose policy nobody can read is a host somebody will misdiagnose, so the
+# two states have to be distinguishable from the log alone.
+check_on_host "the host says at startup that it accepts unsigned artifacts" \
+  "grep -q 'artifacts: unsigned artifacts are allowed' /shared/server.log"
 say "credentials published: $(on_host 'wc -l < /shared/tokens' | tr -d ' ')"
 expect_output "the listener is reachable on loopback" "open" \
   on_host "(exec 3<>/dev/tcp/127.0.0.1/${server_port}) 2>/dev/null && echo open || echo closed"
@@ -695,7 +715,7 @@ cp "${repo_root}/target/debug/chaos-remote" "${lab_root}/disk/chaos-remote"
 head -c 3000000 /dev/zero >"${lab_root}/disk/blob"
 docker exec -d "${disk_container}" bash -c \
   "exec /lab/chaos-remote-server --workspace /lab/workspace --unix /shared/disk.sock \
-   --token-file /shared/tokens-disk --tokens 16 --token-ttl 3600 \
+   --token-file /shared/tokens-disk --allow-unsigned-artifact --tokens 16 --token-ttl 3600 \
    >/shared/server-disk.log 2>&1"
 wait_for_file "${lab_root}/shared/tokens-disk" "the deployment server's credentials"
 expect_output "the first deployment fits" '9.9.9' \
@@ -736,7 +756,7 @@ check_in_noexec "and a 0755 file in it really is unrunnable" \
    && ! test -x /lab/workspace/probe"
 docker exec -d "${noexec_container}" bash -c \
   "exec /lab/chaos-remote-server --workspace /lab/workspace --unix /shared/noexec.sock \
-   --token-file /shared/tokens-noexec --tokens 16 --token-ttl 3600 \
+   --token-file /shared/tokens-noexec --allow-unsigned-artifact --tokens 16 --token-ttl 3600 \
    >/shared/server-noexec.log 2>&1"
 wait_for_file "${lab_root}/shared/tokens-noexec" "the noexec host's credentials"
 expect_refused "an install the host could never start is refused" "execut\|noexec" \
@@ -763,6 +783,183 @@ $(tr '\n' ' ' <"${capture_file}")"
 fi
 check_in_noexec "the pointer still selects the version installed before the attempt" \
   "test \"\$(tr -d '\n' </lab/workspace/.chaos-server/current)\" = 1.0.0"
+
+# ------------------------------------------------------------ provenance ----
+
+log "an artifact is installed only if a key the host was told about signed these bytes"
+# The digest a deploy carries is computed by whoever sends the artifact, so it says the
+# bytes arrived intact and nothing about who built them. Three more hosts run here:
+# one told to trust a key, one that was never given a key, and the server at the top of
+# this script, which opted out by name. The keys are made on this machine because the
+# publisher is a build machine, not the remote host.
+publisher_pem="${lab_root}/work/publisher.pem"
+rogue_pem="${lab_root}/work/rogue.pem"
+openssl genpkey -algorithm ed25519 -out "${publisher_pem}" 2>/dev/null
+openssl genpkey -algorithm ed25519 -out "${rogue_pem}" 2>/dev/null
+# The raw 32 key bytes, not the DER encoding of them: `--trust-signing-key` takes the
+# same text as CHAOS_SIGNING_PUBLIC_KEY, which is what a release publishes.
+publisher_pub="$(openssl pkey -in "${publisher_pem}" -pubout -outform DER 2>/dev/null \
+  | tail -c 32 | openssl base64 -A)"
+printf '%s\n' "${publisher_pub}" >"${lab_root}/shared/publisher.pub"
+checks=$((checks + 1))
+if [ "${#publisher_pub}" = "44" ]; then
+  say "ok  the publisher key is 32 raw ed25519 bytes, base64"
+else
+  failure "the publisher key is ${#publisher_pub} base64 characters, not the 44 of a \
+32-byte key"
+fi
+
+# `unsigned-build` is a copy with no sidecar next to it, so the client has nothing to
+# offer; `swapped-build` has one byte appended after signing, and because the client
+# digests whatever it is handed, that one passes integrity by construction and can only
+# be stopped by provenance.
+for name in signed-build swapped-build unsigned-build; do
+  cp "${lab_root}/dev/bin/chaos-remote-server" "${lab_root}/dev/local/${name}"
+done
+printf 'a byte that was not in the release\n' >>"${lab_root}/dev/local/swapped-build"
+# The wrapped form that `| base64` produces is what an operator will actually have on
+# disk, so this is the shipped reader reassembling it, not a single-line convenience.
+openssl pkeyutl -sign -rawin -in "${lab_root}/dev/local/signed-build" \
+  -inkey "${publisher_pem}" | base64 >"${lab_root}/dev/local/signed-build.sig"
+openssl pkeyutl -sign -rawin -in "${lab_root}/dev/local/signed-build" \
+  -inkey "${rogue_pem}" | base64 >"${lab_root}/dev/local/rogue.sig"
+printf 'not a signature\n' >"${lab_root}/dev/local/nonsense.sig"
+checks=$((checks + 1))
+if [ "$(wc -l <"${lab_root}/dev/local/signed-build.sig")" -gt 1 ]; then
+  say "ok  the sidecar is the wrapped base64 a shell pipeline leaves behind"
+else
+  # Not a failure: the reader has to accept both. It does mean this run only proved
+  # the single-line form, which is worth knowing when reading the log.
+  say "??  the sidecar came out on one line, so the wrapped form went unexercised"
+fi
+
+on_sig() {
+  docker exec "${dev_container}" bash -c \
+    "if [ ! -s /shared/token-sig ]; then head -n 8 /shared/tokens-sig >/shared/token-sig; fi
+     /lab/bin/chaos-remote --unix /shared/sig.sock --token-file /shared/token-sig $*"
+}
+on_nosig() {
+  docker exec "${dev_container}" bash -c \
+    "if [ ! -s /shared/token-nosig ]; then head -n 8 /shared/tokens-nosig >/shared/token-nosig; fi
+     /lab/bin/chaos-remote --unix /shared/nosig.sock --token-file /shared/token-nosig $*"
+}
+on_envopt() {
+  docker exec "${dev_container}" bash -c \
+    "if [ ! -s /shared/token-envopt ]; then head -n 8 /shared/tokens-envopt >/shared/token-envopt; fi
+     /lab/bin/chaos-remote --unix /shared/envopt.sock --token-file /shared/token-envopt $*"
+}
+on_keyopt() {
+  docker exec "${dev_container}" bash -c \
+    "if [ ! -s /shared/token-keyopt ]; then head -n 8 /shared/tokens-keyopt >/shared/token-keyopt; fi
+     /lab/bin/chaos-remote --unix /shared/keyopt.sock --token-file /shared/token-keyopt $*"
+}
+
+on_host_d "exec /lab/bin/chaos-remote-server --workspace /lab/workspace3 \
+  --unix /shared/sig.sock --token-file /shared/tokens-sig \
+  --trust-signing-key @/shared/publisher.pub --tokens 32 --token-ttl 3600 \
+  >/shared/server-sig.log 2>&1"
+wait_for_file "${lab_root}/shared/tokens-sig" "the host with a trusted key's credentials"
+check_on_host "that host says at startup whose signature it will accept" \
+  "grep -q 'artifacts: a signature from' /shared/server-sig.log"
+
+expect_refused "an artifact with no signature is refused by a host with a key" \
+  "signature_missing" on_sig 'install 5.5.4 --from /lab/local/unsigned-build'
+expect_output "the same build is installed once its sidecar is there" '5.5.5' \
+  on_sig 'install 5.5.5 --from /lab/local/signed-build'
+check_on_host "the sidecar was found next to the artifact, not named on the command line" \
+  "test \"\$(tr -d '\n' <${installed_in3}/current)\" = 5.5.5"
+expect_refused "a signature from a key this host was never told about is refused" \
+  "signature_invalid" \
+  on_sig 'install 6.6.6 --from /lab/local/signed-build --signature /lab/local/rogue.sig'
+expect_refused "bytes changed after signing are refused though their digest is correct" \
+  "signature_invalid" \
+  on_sig 'install 7.7.7 --from /lab/local/swapped-build --signature /lab/local/signed-build.sig'
+expect_refused "a file that is not a signature at all is refused by name" \
+  "signature_malformed" \
+  on_sig 'install 8.8.8 --from /lab/local/signed-build --signature /lab/local/nonsense.sig'
+check_on_host "the four refusals published nothing" \
+  "test ! -e ${installed_in3}/5.5.4 -a ! -e ${installed_in3}/6.6.6 \
+   -a ! -e ${installed_in3}/7.7.7 -a ! -e ${installed_in3}/8.8.8"
+check_on_host "and left no half-written upload behind in the install directory" \
+  "test -z \"\$(ls -A ${installed_in3} | grep '^\\.' || true)\""
+checks=$((checks + 1))
+kept_digest="$(on_host "sha256sum ${installed_in3}/5.5.5/chaos-remote-server" | cut -c1-64)"
+signed_digest="$(sha256sum "${lab_root}/dev/local/signed-build" | cut -c1-64)"
+if [ -n "${kept_digest}" ] && [ "${kept_digest}" = "${signed_digest}" ]; then
+  say "ok  what it did install is byte-identical to what the key signed"
+else
+  failure "installed ${kept_digest}, the signed build is ${signed_digest}"
+fi
+
+# The control that makes the four refusals above mean something: the very same bytes
+# go straight in on a host that opted out, so the refusals were about provenance and
+# not about the artifact, the socket or the version string.
+expect_output "the same unsigned build installs on the host that opted out" '9.9.8' \
+  remote 'install 9.9.8 --from /lab/local/unsigned-build'
+
+# With no flag and no key: the host cannot check a signature, so it checks nothing and
+# installs nothing. That includes the correctly signed artifact, which is the honest
+# consequence of "verify" with nobody to verify against.
+on_host_d "exec /lab/bin/chaos-remote-server --workspace /lab/workspace4 \
+  --unix /shared/nosig.sock --token-file /shared/tokens-nosig --tokens 16 --token-ttl 3600 \
+  >/shared/server-nosig.log 2>&1"
+wait_for_file "${lab_root}/shared/tokens-nosig" "the keyless host's credentials"
+check_on_host "a keyless host says at startup that every install will be refused" \
+  "grep -q 'artifacts: a signature is required but no key is configured' \
+   /shared/server-nosig.log"
+expect_refused "a keyless host refuses an unsigned deploy" "signature_missing" \
+  on_nosig 'install 1.1.1 --from /lab/local/unsigned-build'
+expect_refused "and refuses a correctly signed one too, because it has nothing to \
+check it against" "no_trusted_key" \
+  on_nosig 'install 1.1.2 --from /lab/local/signed-build --signature /lab/local/signed-build.sig'
+check_on_host "the keyless host published nothing at all" \
+  "test ! -e /lab/workspace4/.chaos-server/current"
+
+# The same opt-out through the environment, which is how a unit file or an installer
+# would say it rather than a person typing a command line.
+on_host_d "CHAOS_REMOTE_REQUIRE_SIGNATURE=0 /lab/bin/chaos-remote-server \
+  --workspace /lab/workspace5 --unix /shared/envopt.sock \
+  --token-file /shared/tokens-envopt --tokens 16 --token-ttl 3600 \
+  >/shared/server-envopt.log 2>&1"
+wait_for_file "${lab_root}/shared/tokens-envopt" "the opted-out host's credentials"
+check_on_host "the environment switch is reported at startup as well" \
+  "grep -q 'artifacts: unsigned artifacts are allowed' /shared/server-envopt.log"
+expect_output "CHAOS_REMOTE_REQUIRE_SIGNATURE=0 installs the unsigned build" '3.3.3' \
+  on_envopt 'install 3.3.3 --from /lab/local/unsigned-build'
+expect_refused "opting out of the requirement does not let a host accept a signature \
+it cannot check" "no_trusted_key" \
+  on_envopt 'install 3.3.4 --from /lab/local/signed-build --signature /lab/local/rogue.sig'
+
+# Opting out of the *requirement* is not the same as switching verification off. This
+# host said unsigned is fine and still named a key, so a signature that arrives is
+# checked against it and a wrong one is refused on the merits.
+on_host_d "CHAOS_REMOTE_REQUIRE_SIGNATURE=0 /lab/bin/chaos-remote-server \
+  --workspace /lab/workspace6 --unix /shared/keyopt.sock \
+  --token-file /shared/tokens-keyopt --trust-signing-key @/shared/publisher.pub \
+  --tokens 16 --token-ttl 3600 >/shared/server-keyopt.log 2>&1"
+wait_for_file "${lab_root}/shared/tokens-keyopt" "the opted-out host that holds a key"
+check_on_host "that host says both things at once: unsigned is accepted, a key is held" \
+  "grep -q 'artifacts: unsigned artifacts are allowed; a signature is checked against' \
+   /shared/server-keyopt.log"
+expect_output "it installs the unsigned build, because that is what it opted into" '2.2.2' \
+  on_keyopt 'install 2.2.2 --from /lab/local/unsigned-build'
+expect_refused "and still refuses a signature its own key did not make" \
+  "signature_invalid" \
+  on_keyopt 'install 2.2.3 --from /lab/local/signed-build --signature /lab/local/rogue.sig'
+expect_output "while the build that key did sign still installs" '2.2.4' \
+  on_keyopt 'install 2.2.4 --from /lab/local/signed-build --signature /lab/local/signed-build.sig'
+
+# A build for another platform arrives whole and, on this host, is allowed to be
+# unsigned, so the file header is the only thing that knows. It has to be refused here
+# rather than at the next start, which is the failure the checks above cannot see.
+printf '\xcf\xfa\xed\xfe\x0c\x00\x00\x01' >"${lab_root}/dev/local/foreign-build"
+head -c 4096 /dev/zero >>"${lab_root}/dev/local/foreign-build"
+expect_refused "a build for another platform is refused by the host it was sent to" \
+  "wrong_platform" on_envopt 'install 4.4.4 --from /lab/local/foreign-build'
+check_on_host "the platform refusal published nothing" \
+  "test ! -e /lab/workspace5/.chaos-server/4.4.4"
+check_on_host "and the host is still pointing at what it had" \
+  "test \"\$(tr -d '\n' </lab/workspace5/.chaos-server/current)\" = 3.3.3"
 
 log "a dropped connection mid-session fails instead of hanging"
 start="$(date +%s)"

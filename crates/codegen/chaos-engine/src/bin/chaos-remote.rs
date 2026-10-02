@@ -19,7 +19,7 @@
 //! was already used.
 
 use std::io::{Read as _, Write as _};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use chaos_engine::remote::{
@@ -66,7 +66,11 @@ commands
   write <path> (--from FILE | --text TEXT | --stdin) [--mkdir] [--expect SHA256]
   diff [path] [--staged] [--context N]
   exec [--cwd PATH] [--timeout SECONDS] -- <program> [args...]
-  install <version> --from FILE
+  install <version> --from FILE [--signature FILE]
+                          put a server build on the host and make it current; the
+                          signature is the release sidecar, read from --signature or
+                          from FILE.sig when that flag is absent. A host requires one
+                          unless it was started with --allow-unsigned-artifact
   forward --to HOST:PORT [--listen ADDR] [--connections N] [--ttl SECONDS]
                           (default --listen 0, i.e. a free loopback port, up to
                           16 connections, for 1800s — both of which the server
@@ -328,11 +332,16 @@ async fn dispatch(session: &mut AnySession, args: &Args) -> Result<u8, String> {
                 None => 1,
             })
         }
-        Command::Install { version, from } => {
+        Command::Install {
+            version,
+            from,
+            signature,
+        } => {
             let artifact =
                 std::fs::read(from).map_err(|e| format!("read {}: {e}", from.display()))?;
+            let signature = offer_sidecar(from, signature.as_deref())?;
             let outcome: InstallOutcome = session
-                .install_artifact(version, &artifact)
+                .install_artifact(version, &artifact, signature.as_deref())
                 .await
                 .map_err(describe)?;
             if args.json {
@@ -473,7 +482,7 @@ impl AnySession {
             -> Result<chaos_engine::remote::ExecOutcome, RemoteError>
     );
     proxy!(
-        install_artifact(version: &str, artifact: &[u8])
+        install_artifact(version: &str, artifact: &[u8], signature: Option<&str>)
             -> Result<InstallOutcome, RemoteError>
     );
     proxy!(
@@ -582,6 +591,7 @@ enum Command {
     Install {
         version: String,
         from: PathBuf,
+        signature: Option<PathBuf>,
     },
     Forward {
         target: ForwardTarget,
@@ -681,9 +691,9 @@ impl Args {
         }
         let command = argv[index].as_str();
         let rest = argv[index + 1..].to_vec();
-        let (parsed, allowed, positionals): (Command, &[&str], usize) = match command {
-            "ping" => (Command::Ping, &[][..], 0),
-            "info" => (Command::Info, &[][..], 0),
+        let (parsed, positionals): (Command, usize) = match command {
+            "ping" => (Command::Ping, 0),
+            "info" => (Command::Info, 0),
             "list" => (
                 Command::List {
                     path: positional(&rest, 0),
@@ -694,14 +704,12 @@ impl Args {
                         .map(|d| d.parse().map_err(|e| format!("--max: {e}")))
                         .transpose()?,
                 },
-                &["--depth", "--max"],
                 1,
             ),
             "cat" => (
                 Command::Cat {
                     path: require_positional(&rest, 0, "cat needs a path")?,
                 },
-                &[],
                 1,
             ),
             "read" => (
@@ -715,7 +723,6 @@ impl Args {
                         .transpose()?,
                     out: value_of(&rest, "--out")?.map(PathBuf::from),
                 },
-                &["--offset", "--length", "--out"],
                 1,
             ),
             "search" => (
@@ -727,7 +734,6 @@ impl Args {
                         .transpose()?,
                     case_sensitive: rest.iter().any(|arg| arg == "--case-sensitive"),
                 },
-                &["--max", "--case-sensitive"],
                 2,
             ),
             "write" => (
@@ -739,7 +745,6 @@ impl Args {
                     mkdir: rest.iter().any(|arg| arg == "--mkdir"),
                     expect: value_of(&rest, "--expect")?,
                 },
-                &["--from", "--text", "--stdin", "--mkdir", "--expect"],
                 1,
             ),
             "diff" => (
@@ -750,7 +755,6 @@ impl Args {
                         .map(|d| d.parse().map_err(|e| format!("--context: {e}")))
                         .transpose()?,
                 },
-                &["--staged", "--context"],
                 1,
             ),
             "exec" => {
@@ -771,7 +775,6 @@ impl Args {
                             })
                             .transpose()?,
                     },
-                    &["--cwd", "--timeout"],
                     // The program and its arguments are the command's own, so there
                     // is no count to check past the divider.
                     usize::MAX,
@@ -781,15 +784,11 @@ impl Args {
                 Command::Install {
                     version: require_positional(&rest, 0, "install needs a version")?,
                     from: PathBuf::from(value_of(&rest, "--from")?.ok_or("install needs --from")?),
+                    signature: value_of(&rest, "--signature")?.map(PathBuf::from),
                 },
-                &["--from"],
                 1,
             ),
-            "forward" => (
-                forward_command(&rest)?,
-                &["--to", "--listen", "--connections", "--ttl"],
-                0,
-            ),
+            "forward" => (forward_command(&rest)?, 0),
             other => {
                 return Err(format!("unknown command {other:?}\n\n{USAGE}"));
             }
@@ -812,7 +811,7 @@ impl Args {
                 _ => {}
             }
         }
-        check_command_flags(&flags, allowed, command)?;
+        check_command_flags(&flags, allowed_flags(command), command)?;
         let given = positional_count(&flags);
         if given > positionals {
             return Err(format!(
@@ -973,6 +972,41 @@ enum Dial {
     #[cfg(unix)]
     Unix(tokio::net::UnixStream),
     Tcp(tokio::net::TcpStream),
+}
+
+/// Read the signature to offer for `artifact`.
+///
+/// Named by `--signature`, or found beside the artifact as `<artifact>.sig` — which
+/// is the name a release publishes, so the usual case is no flag at all. A missing
+/// sidecar is not this program's error to raise: the host owns the decision about
+/// unsigned artifacts and refuses with its own reason. A sidecar that exists but
+/// cannot be read *is* an error, because proceeding would replace "no signature"
+/// with the confusion of a deploy that fails for a reason the caller could have seen
+/// before opening a session.
+fn offer_sidecar(artifact: &Path, named: Option<&Path>) -> Result<Option<String>, String> {
+    let path = match named {
+        Some(path) => path.to_path_buf(),
+        None => {
+            let mut path = artifact.as_os_str().to_os_string();
+            path.push(".sig");
+            PathBuf::from(path)
+        }
+    };
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound && named.is_none() => {
+            eprintln!(
+                "chaos-remote: no signature at {}; the host decides whether that \
+                 is installable",
+                path.display()
+            );
+            return Ok(None);
+        }
+        Err(e) => return Err(format!("read {}: {e}", path.display())),
+    };
+    let body = xai_grok_signature::extract_signature_body(&text)
+        .map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok(Some(body))
 }
 
 fn emit(value: &serde_json::Value) -> Result<(), String> {
@@ -1146,6 +1180,63 @@ fn require_positional(argv: &[String], nth: usize, message: &str) -> Result<Stri
 /// A flag the command does not take is refused rather than ignored. Silently
 /// dropping a misspelled `--json` would hand a script text where it expected JSON,
 /// which is worse than an error at the point of the mistake.
+/// Command flags whose next argument is their value rather than another flag or a
+/// positional. A value flag missing from this list is not a cosmetic slip: the
+/// argument it eats is counted as a positional instead, and a command that allows
+/// two value flags then refuses itself as having too many arguments.
+const VALUE_FLAGS: &[&str] = &[
+    "--depth",
+    "--max",
+    "--offset",
+    "--length",
+    "--out",
+    "--from",
+    "--signature",
+    "--text",
+    "--expect",
+    "--context",
+    "--cwd",
+    "--timeout",
+    "--to",
+    "--listen",
+    "--connections",
+    "--ttl",
+];
+
+/// Command flags that are their own whole decision and take no argument.
+/// `--json` and `--quiet` are deliberately absent: they belong to no command and
+/// are accepted on every one, so no allowed-list mentions them.
+///
+/// Only the test below reads this and `COMMANDS`: the parser needs to know which
+/// flags eat an argument and nothing else, so the rest of the pairing is checked
+/// against them rather than lived by.
+#[cfg(test)]
+const BOOL_FLAGS: &[&str] = &["--case-sensitive", "--stdin", "--mkdir", "--staged"];
+
+/// The flags one command accepts, so that the check below and the check that every
+/// command's own list is made of flags this program actually knows live from one
+/// list rather than two that have to be kept in step by hand.
+fn allowed_flags(command: &str) -> &'static [&'static str] {
+    match command {
+        "ping" | "info" | "cat" => &[],
+        "list" => &["--depth", "--max"],
+        "read" => &["--offset", "--length", "--out"],
+        "search" => &["--max", "--case-sensitive"],
+        "write" => &["--from", "--text", "--stdin", "--mkdir", "--expect"],
+        "diff" => &["--staged", "--context"],
+        "exec" => &["--cwd", "--timeout"],
+        "install" => &["--from", "--signature"],
+        "forward" => &["--to", "--listen", "--connections", "--ttl"],
+        _ => &[],
+    }
+}
+
+/// The commands a person can name, in the order the usage text lists them.
+#[cfg(test)]
+const COMMANDS: &[&str] = &[
+    "ping", "info", "list", "cat", "read", "search", "write", "diff", "exec", "install", "forward",
+];
+
 fn check_command_flags(rest: &[String], allowed: &[&str], command: &str) -> Result<(), String> {
     for token in rest {
         if !token.starts_with("--") {
@@ -1170,25 +1261,8 @@ fn positional_count(argv: &[String]) -> usize {
     while index < argv.len() {
         let arg = &argv[index];
         if arg.starts_with("--") {
-            let takes_value = matches!(
-                arg.split_once('=').map_or(arg.as_str(), |(head, _)| head),
-                "--depth"
-                    | "--max"
-                    | "--offset"
-                    | "--length"
-                    | "--out"
-                    | "--from"
-                    | "--text"
-                    | "--expect"
-                    | "--context"
-                    | "--cwd"
-                    | "--timeout"
-                    | "--to"
-                    | "--listen"
-                    | "--connections"
-                    | "--ttl"
-            );
-            index += usize::from(takes_value) + 1;
+            let name = arg.split_once('=').map_or(arg.as_str(), |(head, _)| head);
+            index += usize::from(VALUE_FLAGS.contains(&name)) + 1;
             continue;
         }
         count += 1;
@@ -1540,5 +1614,107 @@ mod tests {
             }
             other => panic!("wrong command: {other:?}"),
         }
+    }
+
+    /// `install` names two paths, and a flag whose value is a path is not itself a
+    /// path. Counting one wrongly means the ordinary way of deploying a signed build
+    /// — artifact and sidecar both named — is refused before it reaches the network.
+    #[test]
+    fn install_names_its_artifact_and_may_name_its_signature() {
+        let args = parse(&[
+            "--unix",
+            "/s",
+            "--token",
+            "t",
+            "install",
+            "1.2.3",
+            "--from",
+            "/build/chaos",
+            "--signature",
+            "/build/chaos.sig",
+        ])
+        .expect("parsed");
+        match args.command {
+            Command::Install {
+                version,
+                from,
+                signature,
+            } => {
+                assert_eq!(version, "1.2.3");
+                assert_eq!(from, std::path::Path::new("/build/chaos"));
+                assert_eq!(
+                    signature.as_deref(),
+                    Some(std::path::Path::new("/build/chaos.sig"))
+                );
+            }
+            other => panic!("wrong command: {other:?}"),
+        }
+        // The two paths are flags' values, so a third one is the surplus it claims.
+        assert!(
+            parse(&[
+                "--unix",
+                "/s",
+                "--token",
+                "t",
+                "install",
+                "1.2.3",
+                "--from",
+                "/build/chaos",
+                "extra"
+            ])
+            .is_err_and(|err| err.contains("at most 1 argument"))
+        );
+    }
+
+    /// The list of what each command accepts and the list of which of those consume
+    /// an argument are two different questions, and a flag in the first but not the
+    /// second makes a command reject its own documented form. Neither list can be
+    /// checked against the flags a command reads without being checked against the
+    /// other, so this checks them against each other.
+    #[test]
+    fn every_allowed_flag_is_known_to_consume_a_value_or_to_consume_nothing() {
+        for command in COMMANDS {
+            for flag in allowed_flags(command) {
+                let known = VALUE_FLAGS.contains(flag) || BOOL_FLAGS.contains(flag);
+                assert!(known, "{command} allows {flag}, which is in neither table");
+            }
+        }
+        // And neither table is carrying a flag no command will accept.
+        for flag in VALUE_FLAGS.iter().chain(BOOL_FLAGS.iter()) {
+            let used = COMMANDS
+                .iter()
+                .any(|command| allowed_flags(command).contains(flag));
+            assert!(used, "{flag} is in a table but no command allows it");
+        }
+    }
+
+    /// A command the parser knows that the usage does not mention is a command
+    /// nobody finds; one the usage mentions but the parser does not is a promise
+    /// broken at the terminal. Both are caught here rather than by someone typing.
+    #[test]
+    fn the_usage_lists_exactly_the_commands_there_are() {
+        let documented: Vec<&str> = USAGE
+            .lines()
+            .skip_while(|line| *line != "commands")
+            .filter(|line| {
+                line.starts_with("  ")
+                    && !line.starts_with("   ")
+                    && !line.starts_with('-')
+                    && !line.trim().is_empty()
+            })
+            .map(|line| line.trim().split([' ', '\t']).next().unwrap_or(""))
+            .filter(|word| !word.starts_with(['-', '<', '[']))
+            .collect();
+        for command in COMMANDS {
+            assert!(
+                documented.contains(command),
+                "{command} is a command but the usage does not list it: {documented:?}"
+            );
+        }
+        assert_eq!(
+            documented.len(),
+            COMMANDS.len(),
+            "usage lists {documented:?} against {COMMANDS:?}"
+        );
     }
 }

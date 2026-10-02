@@ -88,3 +88,42 @@ host's disk, a target outside the allowlist is refused although a listener reall
 there, a WebSocket service on the remote host completes its handshake through the
 tunnel and answers with a file the developer container cannot read, and a
 two-connection grant is seen to close its own listener.
+
+## What an installed artifact has to prove (2026-10-02)
+
+`install` is the one command in this topology that changes what the remote host *runs*,
+as opposed to what it reads or writes, so it is checked as such. Three things are known
+about an artifact before any file is moved, and each answers a question the previous one
+cannot:
+
+1. **Did it arrive whole** — the sha256 the client sent. Necessary, and useless on its
+   own: the digest is computed by whoever is sending the bytes.
+2. **Who produced it** — an ed25519 signature over those bytes, checked against a key
+   this host was told to trust. This is the release key (`CHAOS_SIGNING_PUBLIC_KEY`,
+   `--trust-signing-key`), which is why the topology adds no second trust anchor and no
+   second ceremony.
+3. **Whether this machine could start it at all** — the target the file's own ELF /
+   Mach-O / PE header states, compared with the platform the host is running on. An
+   intact, correctly signed build for another CPU is still not an upgrade.
+
+The host requires a signature by default, including when it has no key to check one
+against: a host that installs whatever it is handed until someone remembers to configure
+a key has the same exposure as having no check, and has it invisibly. `--allow-unsigned-artifact`
+and `CHAOS_REMOTE_REQUIRE_SIGNATURE=0` are the named opt-outs, for the case they exist
+for — an operator deploying a build they produced — and a signature that arrives at such a
+host is verified anyway. Either way the host prints its policy at startup, because a policy
+nobody can read is a policy that gets misdiagnosed.
+
+Ordering is the part that is easy to get wrong and impossible to notice later: all three
+checks run on the staged upload, before the version directory exists and before the
+`current` pointer moves. A refusal therefore leaves the previous version selected, the
+bytes it ran unchanged, and no half-written artifact to be discovered by the next
+operator. The failure that motivated this — an upload whose digest was recomputed over
+swapped bytes — passes check 1 by construction, which is why check 2 is not treated as a
+nicer error message for a check 1 failure.
+
+What is deliberately *not* claimed: provenance does not restrict what an authorised
+session may do. A session holding `tool-execution` can already run the programs its
+server allowlisted, and one holding `write` can already change workspace files. What
+these checks close is the step no capability implies — these bytes becoming the program
+that starts next.

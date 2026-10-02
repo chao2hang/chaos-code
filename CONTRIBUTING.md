@@ -194,6 +194,23 @@ to hold:
   client removes the credential it spent from the file it was given.
 - **Nothing is faked.** `--capability interactive-pty` and `detached-agent` are
   refused with a reason, and `exec` runs only programs named by `--allow`.
+- **An installed artifact has to say who signed it and which machine it is for.**
+  `install` sends the artifact with its release sidecar — `--signature FILE`, or
+  `FILE.sig` found beside the artifact when that flag is absent — and the host checks,
+  in that order and all of it before the first `mkdir`: the sha256 of the bytes it
+  actually received, then an ed25519 signature from a key *that host* was told about
+  (`--trust-signing-key <base64|@file>` or `CHAOS_SIGNING_PUBLIC_KEY`), then the file's
+  own ELF / Mach-O / PE header against the host's OS and architecture. A host with no
+  key configured refuses every install rather than accepting whatever arrives;
+  `--allow-unsigned-artifact` or `CHAOS_REMOTE_REQUIRE_SIGNATURE=0` opts out of the
+  requirement, not out of checking a signature that is offered. A host says which of
+  these it is doing at startup, on its `artifacts: …` line. Every refusal names its
+  reason — `signature_missing`, `signature_malformed`, `signature_invalid`,
+  `no_trusted_key`, `artifact_too_large`, `wrong_platform` — and publishes nothing: no
+  version directory, no moved pointer, no half-written upload left in the install root.
+  What it does not buy: provenance is not a permission. An artifact that passes all
+  three checks still only does what the session's capabilities allow, and `exec` stays
+  behind `--allow`.
 - **Forwarding is the operator's call, not the session's.** A server with no
   `--allow-forward-to` has nowhere a forward may go and refuses to start when asked
   to advertise the capability anyway. A forward is authorised by a *ticket* kept in
@@ -219,7 +236,13 @@ has never seen this repository, reaches it through a `socat` tunnel, and checks
 reading, searching, writing, `git diff`, tool execution, path-escape refusals,
 credential handling, a full disk, an artifact on a `noexec` filesystem, a dropped
 connection, and both clocks: a late reply, a tunnel that appears late, and a peer
-that accepts the connection and never speaks. Forwarding is checked the same way: a
+that accepts the connection and never speaks. Provenance is checked the same way and
+with keys generated inside the run: an unsigned artifact is refused by a host holding
+a key, the same bytes install once their sidecar is there, a signature from a key the
+host was never told about is refused, bytes changed after signing are refused although
+their digest is correct, a Mach-O arm64 header is refused on a Linux x86-64 host, a
+keyless host refuses both an unsigned artifact and a correctly signed one, and a host
+that opted out of the requirement still refuses a bad signature. Forwarding is checked the same way: a
 `python3 -m http.server` on the remote host is fetched through a forward from the
 other container and the digest compared against the file on that host's disk, an
 unlisted target is refused although something really is listening on it, a grant of
@@ -387,7 +410,8 @@ not fix — see the npm row under `## Running the installers the way a user does
 
 `scripts/verify-release-signature.sh` downloads the artifact, the `.sig` sidecar and
 `SHA256SUMS` from a published release, recomputes the digest, and runs
-`xai_grok_update::signature::verify_file` — the shipped verifier — over the real bytes.
+`xai_grok_signature::verify_file` — the shipped verifier, in the leaf crate the
+updater and `chaos-remote install` both link — over the real bytes.
 
 ```sh
 scripts/verify-release-signature.sh                 # latest release, host platform

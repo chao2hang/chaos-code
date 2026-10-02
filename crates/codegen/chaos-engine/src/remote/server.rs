@@ -842,7 +842,14 @@ impl Server {
                 version,
                 sha256,
                 total_bytes,
-            } => self.install_begin(version, sha256, *total_bytes, upload),
+                signature_b64,
+            } => self.install_begin(
+                version,
+                sha256,
+                *total_bytes,
+                signature_b64.as_deref(),
+                upload,
+            ),
             Request::InstallChunk { seq, data_b64 } => self.install_chunk(*seq, data_b64, upload),
             Request::InstallFinish { version } => self.install_finish(version, upload),
             Request::ForwardOpen => Err(RemoteError::Protocol {
@@ -1282,6 +1289,7 @@ impl Server {
         version: &str,
         sha256: &str,
         total_bytes: u64,
+        signature: Option<&str>,
         upload: &mut Option<Upload>,
     ) -> Result<Payload, RemoteError> {
         if upload.is_some() {
@@ -1313,6 +1321,13 @@ impl Server {
         *upload = Some(Upload {
             version: version.to_string(),
             sha256: sha256.trim().to_string(),
+            // An empty string on the wire is "none offered": the refusal then reads
+            // `signature_missing`, which is what the caller actually sent, rather
+            // than blaming the bytes of a signature that is not there.
+            signature: signature
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string),
             total_bytes,
             received_bytes: 0,
             next_seq: 0,
@@ -1395,11 +1410,12 @@ impl Server {
                 state.received_bytes, state.total_bytes
             )));
         }
-        match self
-            .config
-            .install
-            .commit(&state.version, &state.staged, &state.sha256)
-        {
+        match self.config.install.commit(
+            &state.version,
+            &state.staged,
+            &state.sha256,
+            state.signature.as_deref(),
+        ) {
             Ok(outcome) => {
                 tracing::info!(version = %outcome.version, previous = ?outcome.previous, "server artifact installed");
                 Ok(Payload::InstallFinish {
@@ -1488,6 +1504,10 @@ impl Server {
 struct Upload {
     version: String,
     sha256: String,
+    /// The signature the caller offered with `install_begin`, already checked for
+    /// emptiness. Kept on the session rather than checked at `install_begin`: the
+    /// bytes it signs have not arrived yet.
+    signature: Option<String>,
     total_bytes: u64,
     received_bytes: u64,
     next_seq: u64,

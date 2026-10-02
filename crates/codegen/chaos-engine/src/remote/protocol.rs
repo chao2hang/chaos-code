@@ -236,6 +236,13 @@ pub enum Request {
         version: String,
         sha256: String,
         total_bytes: u64,
+        /// The detached ed25519 signature over the artifact, in the same text a
+        /// release `.sig` sidecar holds. Optional on the wire — a client that has
+        /// none sends `None`, and the host's policy decides whether that is
+        /// acceptable — so this is not a protocol version bump: an older peer's
+        /// missing field means exactly what it says.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        signature_b64: Option<String>,
     },
     /// One chunk of that artifact. `seq` is checked so a dropped or reordered
     /// frame corrupts the install loudly instead of silently.

@@ -22,8 +22,8 @@ use std::path::PathBuf;
 
 use chaos_engine::remote::{
     DEFAULT_INSTALL_DIR, ForwardLimits, ForwardTarget, Implementation, InstallLayout,
-    RemoteCapability, Server, ServerConfig, TokenFile, parse_capability, parse_forward_target,
-    parse_loopback_host,
+    ProvenancePolicy, RemoteCapability, Server, ServerConfig, TokenFile, parse_capability,
+    parse_forward_target, parse_loopback_host, requirement_requested_by_env,
 };
 
 const USAGE: &str = "\
@@ -38,6 +38,16 @@ chaos-remote-server — serve one workspace to one authorised client at a time
                           (list, read, search, write, git, tool-execution)
   --no-write              do not offer file writes or deployments
   --install-dir <name>    artifact directory under the workspace (default .chaos-server)
+  --trust-signing-key <base64|@FILE>
+                          the ed25519 public key an artifact must be signed by: the
+                          bare base64 of the 32-byte key, or @path to read that text
+                          from a file. Without it the key is CHAOS_SIGNING_PUBLIC_KEY,
+                          and before that the key this build was compiled with
+  --allow-unsigned-artifact
+                          install an artifact that offers no signature. Off by
+                          default: a host requires a signature and refuses with the
+                          reason it checked (signature_missing, signature_invalid,
+                          no_trusted_key). Also CHAOS_REMOTE_REQUIRE_SIGNATURE=0
   --token-ttl <seconds>   how long an unused credential stays usable (default 600)
   --tokens <count>        how many one-time credentials to publish at startup
                           (default 8; each session spends one)
@@ -83,6 +93,7 @@ async fn run() -> Result<(), String> {
         return Ok(());
     }
     let options = options.into_config()?;
+    let provenance = provenance_policy(&options)?;
 
     let config = ServerConfig::new(&options.workspace)
         .capabilities(options.capabilities)
@@ -92,11 +103,16 @@ async fn run() -> Result<(), String> {
         .forward_targets(options.forward_targets.clone())
         .forward_limits(options.forward_limits)
         .forward_connect_timeout(options.forward_connect_timeout)
-        .install_layout(InstallLayout::with_dir_name(
-            &options.workspace,
-            &options.install_dir,
-        ));
+        .install_layout(
+            InstallLayout::with_dir_name(&options.workspace, &options.install_dir)
+                .with_provenance(provenance.clone()),
+        );
     let server = Server::new(config)?;
+
+    // Said before the first credential exists: what an `install` will be held to is
+    // the thing an operator most often has to check when a deploy fails, and it
+    // cannot be recovered from the log afterwards.
+    println!("artifacts: {}", provenance.describe());
 
     // Credentials before the listener: a session that arrives a millisecond after
     // bind must find something to authenticate with, or the first connect fails for
@@ -179,6 +195,9 @@ struct Options {
     allowed: Vec<String>,
     capabilities: Vec<RemoteCapability>,
     install_dir: String,
+    /// The signing key as it was typed: base64, or `@path` naming a file to read.
+    signing_key: Option<String>,
+    allow_unsigned_artifact: bool,
     token_ttl_secs: u64,
     max_exec_output_bytes: usize,
     initial_tokens: usize,
@@ -210,6 +229,8 @@ impl Options {
         ];
         let mut offer_write = true;
         let mut install_dir = DEFAULT_INSTALL_DIR.to_string();
+        let mut signing_key: Option<String> = None;
+        let mut allow_unsigned_artifact = false;
         let mut token_ttl_secs = 600u64;
         let mut max_exec_output_bytes = 256 * 1024usize;
         // A credential is spent by one session, so a script that runs several
@@ -256,6 +277,10 @@ impl Options {
                 }
                 "--no-write" => offer_write = false,
                 "--install-dir" => install_dir = take(&argv, &mut index, "--install-dir")?,
+                "--trust-signing-key" => {
+                    signing_key = Some(take(&argv, &mut index, "--trust-signing-key")?)
+                }
+                "--allow-unsigned-artifact" => allow_unsigned_artifact = true,
                 "--token-ttl" => {
                     token_ttl_secs = take(&argv, &mut index, "--token-ttl")?
                         .parse()
@@ -323,6 +348,8 @@ impl Options {
                 allowed,
                 capabilities,
                 install_dir,
+                signing_key,
+                allow_unsigned_artifact,
                 token_ttl_secs,
                 max_exec_output_bytes,
                 initial_tokens,
@@ -341,6 +368,8 @@ impl Options {
             allowed,
             capabilities,
             install_dir,
+            signing_key,
+            allow_unsigned_artifact,
             token_ttl_secs,
             max_exec_output_bytes,
             initial_tokens,
@@ -413,6 +442,45 @@ fn default_token_path(socket: &Option<PathBuf>, workspace: &std::path::Path) -> 
         Some(path) => path.with_extension("tokens"),
         None => workspace.join(".chaos-server").join("tokens"),
     }
+}
+
+/// The key material behind `--trust-signing-key`: base64 typed straight in, or
+/// `@path` for a file, which is how a key that came out of a vault gets passed
+/// without landing in a shell history line.
+fn read_signing_key(value: &str) -> Result<String, String> {
+    let Some(path) = value.strip_prefix('@') else {
+        return Ok(value.to_string());
+    };
+    if path.is_empty() {
+        return Err("--trust-signing-key wants @path or the base64 key itself".to_string());
+    }
+    std::fs::read_to_string(path)
+        .map_err(|e| format!("--trust-signing-key: read {path}: {e}"))
+        .map(|text| text.trim().to_string())
+}
+
+/// What this host will require of an artifact before it becomes current.
+///
+/// The key comes from the flag, then `CHAOS_SIGNING_PUBLIC_KEY`, then the build;
+/// whether a signature must be present comes from `--allow-unsigned-artifact` and
+/// `CHAOS_REMOTE_REQUIRE_SIGNATURE`. A key that was typed out wrong is a startup
+/// failure here rather than a policy that refuses every install later — the operator
+/// learns about it while they can still fix it.
+fn provenance_policy(options: &Options) -> Result<ProvenancePolicy, String> {
+    let policy = match options.signing_key.as_deref() {
+        Some(typed) => {
+            let key = read_signing_key(typed)?;
+            ProvenancePolicy::trusting_key_b64(&key)
+                .map_err(|e| format!("--trust-signing-key: {e}"))?
+                .with_requirement(requirement_requested_by_env())
+        }
+        None => ProvenancePolicy::from_env(),
+    };
+    Ok(if options.allow_unsigned_artifact {
+        policy.with_requirement(false)
+    } else {
+        policy
+    })
 }
 
 #[cfg(test)]

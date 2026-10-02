@@ -11,7 +11,11 @@
 //!   it cannot be opened on the wrong machine;
 //! - [`credentials`]: the one-time session credential and its expiry;
 //! - `server` and `client`: the two ends;
-//! - [`install`]: putting a server build onto its host, and taking it back off.
+//! - [`install`]: putting a server build onto its host, and taking it back off;
+//! - [`provenance`]: whether the build being installed came from a key the host
+//!   trusts, which is a different question from whether it arrived whole;
+//! - [`artifact_format`]: which platform the build being installed says it is for,
+//!   since a whole and signed build for another CPU still cannot start here.
 //!
 //! The topology itself is the one ADR-004 allows: a local agent driving a remote
 //! workspace. Reasoning about a detached agent — an agent that keeps running with
@@ -19,6 +23,7 @@
 //! refuses to advertise one so the gap cannot be closed by a typo in a config
 //! file.
 
+pub mod artifact_format;
 pub mod client;
 pub mod credentials;
 pub mod endpoint;
@@ -26,6 +31,7 @@ pub mod forward;
 pub mod install;
 pub mod path;
 pub mod protocol;
+pub mod provenance;
 pub mod server;
 
 pub use client::{
@@ -44,5 +50,9 @@ pub use path::{PathRejection, RemotePath};
 pub use protocol::{
     Entry, Implementation, MAX_FRAME_BYTES, PROTOCOL_VERSION, Payload, RemoteError, Reply, Request,
     SearchHit, VersionMismatch, VersionRange, negotiate,
+};
+pub use provenance::{
+    MAX_VERIFIED_ARTIFACT_BYTES, ProvenancePolicy, REQUIRE_SIGNATURE_ENV, SIGNING_PUBLIC_KEY_ENV,
+    requirement_requested_by_env,
 };
 pub use server::{Server, ServerConfig, parse_loopback_host, require_loopback};
