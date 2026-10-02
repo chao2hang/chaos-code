@@ -371,6 +371,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # `l10n-guard.sh` compares the two sides of a docs rename by counting Han
+      # characters, and it has no fallback for that: without `rg` it prints
+      # `l10n-guard: rg (ripgrep) not found` and 16 of its 17 self-test cases
+      # fail. The runner image does not ship ripgrep, while the Docker entry
+      # installs it -- so every push red on this job and green locally, which is
+      # how the failure was read as a docs problem rather than a missing package.
+      - name: Install ripgrep
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ripgrep
+          rg --version
+
       - name: user guide, reference docs and tutorials
         run: |
           set -euo pipefail
@@ -565,6 +578,14 @@ jobs:
           # does -- and by then the tag is already public. The first v0.4.0 tag
           # failed exactly this way, on two of six builds.
           python3 scripts/ci/check-workflow-shells.py
+          # A step's `run:` block may only use a binary the job actually
+          # provisions. This is the rule the `docs localization` job broke on
+          # 2026-10-02: its guard needs ripgrep, no step installed it, and the
+          # job stayed red on every push while every local gate was green.
+          # `scripts/ci/test-check-workflow-toolchain.py` pins what counts as a
+          # need and what counts as provisioning one.
+          python3 scripts/ci/test-check-workflow-toolchain.py
+          python3 scripts/ci/check-workflow-toolchain.py
           # Every `scripts/**.sh` has to run on the stock macOS shell too, not
           # just the Linux runner this job executes on: `scripts/test-platform.sh`
           # is the documented macOS entry point. bash 3.2 + BSD userland has no

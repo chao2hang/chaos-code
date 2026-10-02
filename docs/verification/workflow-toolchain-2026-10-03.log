@@ -1,0 +1,246 @@
+CI 的 `docs localization` 作业每天都红：守卫要的 rg 那个 runner 上根本没有
+================================================================================
+
+日期：2026-10-03
+提交：fix(ci): docs-l10n 作业装上 ripgrep；新增「步骤需要的工具必须由作业先装」门禁
+被记录的对象：
+  .github/workflows/ci.yml                          docs-l10n 作业新增 Install ripgrep 步骤；
+                                                    workflows-present 作业接上新门禁
+  scripts/ci/check-workflow-toolchain.py            新增：作业需要的工具必须在触发步骤之前装好
+  scripts/ci/test-check-workflow-toolchain.py       新增夹具 15 例
+  scripts/verify-in-docker.sh                       gates 数组新增一条镜像门禁
+
+本文件是自包含的：每段输出都是从当轮真实运行里逐字抓下来的。
+CI 侧的证据用 `gh api` / `gh run view` 从 GitHub 拉，本地侧的证据跑在 `chaos-verify:local`。
+
+
+第 1 节  现象：连续五次 push 的 CI 结果里没有一条可用
+----------------------------------------------------
+
+    $ gh run list --branch main --limit 6 \
+        --json databaseId,headSha,status,conclusion --jq '.[] | "\(.databaseId) \(.headSha[0:8]) \(.status)/\(.conclusion)"'
+    37066345380 1487aded pending/
+    37064187465 950ce77d completed/cancelled
+    37061975515 22683f8c in_progress/
+    37060343678 0f1b8818 completed/cancelled
+    37059411089 a6984491 completed/cancelled
+    37057265940 bc64cf5c completed/cancelled
+
+四条 `cancelled` 里没有任何一个 job 被创建过：
+
+    $ gh run view 37064187465 --json jobs --jq '.jobs[] | "\(.name) | \(.status)/\(.conclusion)"'
+    （空输出）
+
+原因是 concurrency 组的语义，不是仓库配置错了。`ci.yml` 里那一段是上一轮改对的：
+
+    concurrency:
+      group: ci-${{ github.workflow }}-${{ github.ref }}
+      # Only supersede a pull request. Cancelling an in-flight main push throws
+      # away the only full-run evidence for that commit ...
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+`cancel-in-progress: false` 只保证**正在跑**的作业不被新 push 掐掉；它不保证排队中的作业活着——
+GitHub 在一个 concurrency 组里排进新作业时，会把组里**已在排队**的旧作业直接取消。45 分钟内推 4 次，
+就只剩第一个作业真的跑起来，其余四条在还没拿到 runner 的时候被取消，`platform tests`（`needs: rust`）
+于是一次也没跑。这一条不是 bug，是我推送的节奏；它记在这里是因为「CI 全被取消」看起来太像 CI 坏了。
+
+真正的问题是那条 in_progress 的作业里的一个 job。
+
+
+第 2 节  `docs localization` 每天都红，而且红得没有 diff 可指
+-------------------------------------------------------------
+
+    $ gh run view 37061975515 --json jobs --jq '.jobs[] | "\(.name) | \(.status)/\(.conclusion)"'
+    secret scan | completed/success
+    GUI browser E2E | completed/success
+    GUI engine, Web host and frontend | completed/success
+    docs localization | completed/failure
+    npm package scripts | completed/success
+    rust check / clippy / test | in_progress/
+    workflows present | completed/success
+    installer integrity labs | completed/success
+
+失败的作业还在跑，日志取不到（`run ... is still in progress; logs will be available when it is
+complete`），但同样红过的一次已经完成（`37055782083`，commit `e85f21ca`），日志能下载：
+
+    $ gh run view 37055782083 --log-failed
+
+    == guard self-tests 步骤的输出 ==
+    FAIL  untouched
+          untouched: exit 64, want 0
+          l10n-guard: rg (ripgrep) not found
+
+    FAIL  clobber_in_place
+          clobber: exit 64, want 1
+          l10n-guard: rg (ripgrep) not found
+    ...（17 例全同款）...
+
+    == 真实树守卫那一行 ==
+    l10n-guard: rg (ripgrep) not found
+
+三行就够定性：`scripts/l10n-guard.sh` 第 141 行的前置检查
+
+    if ! command -v rg >/dev/null 2>&1; then
+      echo "l10n-guard: rg (ripgrep) not found" >&2
+      exit 64
+    fi
+
+在 runner 上命中了。**`docs-l10n` 这个作业从来不装 ripgrep。** 全仓扫一遍依赖与安装：
+
+    $ python3 scripts/ci/check-workflow-toolchain.py --verbose .github/workflows/*.yml
+      need ripgrep (rg)   .github/workflows/ci.yml:398: [docs-l10n] guard self-tests
+      need node           .github/workflows/ci.yml:448: [gui] Frontend checks
+      need node           .github/workflows/ci.yml:479: [gui-browser-e2e] Install frontend dependencies
+      ...
+    check-workflow-toolchain: .github/workflows/ci.yml:398: [docs-l10n] guard self-tests needs
+      ripgrep (rg), which no earlier step in job 'docs-l10n' installs -- ...
+
+`rust` 作业 apt 装了 `ripgrep`（它要编译进二进制里的搜索工具），`platform tests` 作业下载
+ripgrep 的 release 包（同一个理由的 macOS/Windows 版本），`gui`/`gui-browser-e2e`/`npm-scripts`
+都有 `actions/setup-node`。**只有 `docs-l10n` 什么都没装**——它需要的工具恰好是别的作业为了
+完全不同的原因顺手装上的那两个之一，所以这个洞在任何一次「照着别的作业抄一段」里都不会被发现。
+
+还要记一句因果方向：**这个红是上一轮 fail-closed 改造的成果，不是新引入的坏。** 改造之前 `rg` 缺失
+会让列清单的管道吐出空集，而空集在本守卫的语义里等于「没有中文丢失 = 通过」；那天的 CI 于是绿着，
+什么也没测。改造之后它拒绝出结论，作业于是红。红是对的，缺的是那个 apt 步骤。
+
+
+第 3 节  修法与新增的门禁
+------------------------
+
+三处改动：
+
+1. `.github/workflows/ci.yml` 的 `docs-l10n` 作业，在 checkout 之后装 ripgrep；
+2. 新增 `scripts/ci/check-workflow-toolchain.py`：**作业需要的工具，必须在触发它的那个步骤之前装好**；
+3. 新门禁同时接进 `workflows-present` 作业与 `scripts/verify-in-docker.sh` 的 `gates` 数组
+   （`check-guard-wiring.py` 会拒绝任何没人跑的守卫，所以接线不是可选项）。
+
+规则本身很短，所以全部难度都在别的地方：
+
+- **只读 `run:` 的正文**。步骤的 `name:` 里写着 `scripts/l10n-guard.sh`、或者 `run:` 里把它写在
+  注释里，都不算「这个步骤需要 rg」。这条规则是 `check-guard-wiring.py` 上一轮用自己的 docstring
+  换来的，这里原样继承：整行注释与 `#` 尾注在匹配前一律去掉，去掉的动作由 `strip_trailing_comment()`
+  一个函数完成（整行注释在它那里同样先在 `#` 处截成空串），并且它会跳过引号内的 `#`
+  （`.../releases/#anchor` 这种 URL 不能被剪断）。第 4.2 节记录了我如何先用变异验证「只有一个函数在做事」
+  这件事，并因此删掉了另一处永远不影响结果的过滤条件。
+- **顺序要紧**。`apt-get install ripgrep` 写在守卫之后仍然是「这个作业跑不了守卫」。跨步骤比索引，
+  同一个脚本内部比行号：`install` 那行必须早于触发那行。把安装写在后面是最容易被误当成修好的形状，
+  所以它单独有一条夹具。
+- **命令位置才算**。`node`/`npm`/`npx` 必须出现在行首或 `;`/`&`/`|` 之后。上一节那份临时扫描脚本
+  就是反面教材：它把「作业文本里出现过 npm 字样」当成需要 node，于是把 `workflows-present` 判成
+  缺 Node——那个作业只是 `grep -q 'chaos-code' crates/codegen/xai-grok-pager/npm/chaos/package.json`。
+  误报的门禁会在第一次红的时候教会维护者去 ignore 它。
+- **fail closed**：点名的 workflow 文件不存在、或者一个都没找到，都直接退出 1，而不是「没查到 = 通过」。
+
+工具表故意只有两条（ripgrep、node），每条都是已经咬过一口的：rg 是本轮这个作业，node 是
+`docker/verify.Dockerfile` 上一轮为了 `node --check` 与假 npm 夹具才装的那个。表是白名单而不是
+猜测——没有一条规则来自「看起来像需要」。
+
+
+第 4 节  夹具与变异证明
+----------------------
+
+`scripts/ci/test-check-workflow-toolchain.py` 15 例。第一条就是真实仓库：
+
+    def test_real_workflows_provision_everything_they_run(self) -> None:
+
+它在修 `ci.yml` 之前红，且只红这一条——其余 14 例全绿，说明红的是仓库缺工具，不是新检查算错：
+
+    $ python3 test-check-workflow-toolchain.py       # 修复之前
+    FAIL: test_real_workflows_provision_everything_they_run
+    AssertionError: 1 != 0 : real workflows are missing a tool:
+    check-workflow-toolchain: .../ci.yml:398: [docs-l10n] guard self-tests needs ripgrep (rg),
+      which no earlier step in job 'docs-l10n' installs -- ...
+    Ran 15 tests ... FAILED (failures=1)
+
+其余 14 例分别钉住：apt 装在前面算数 / tarball 装在前面算数 / 装在守卫之后不算 / 同一脚本里装在前算
+而后装不算 / `uses: actions/setup-node` 算 node 的供给 / 缺 setup-node 时点名 node 并给出修法 /
+`run:` 整行注释里的守卫名不算需求 / `#` 尾注里的守卫名不算需求 / 步骤 `name:` 里的守卫名不算需求 /
+路径里含 `npm` 不算 node 程序 / 点名的 workflow 不存在要红 / 一个 workflow 都没找到要红。
+
+十一处变异，每处写回原文并 `cmp` 校验字节一致。第一轮跑出的两处存活见 4.2 节，它们改完之后才有下面这份全红的表。
+
+### 4.1 十一处变异（每处只改判定的一句话）
+
+跑法：把 `scripts/ci/check-workflow-toolchain.py` 按下面「变异」列原文替换成「改成」列，跑
+`python3 scripts/ci/test-check-workflow-toolchain.py`，记下退出码与转红的夹具名，然后写回原文并 `cmp`。
+脚本 `/tmp/.../mutate-workflow-toolchain.py`（临时），逐字记录 `/tmp/.../mutate-workflow-toolchain.log`。
+最终一轮：**11 处变异，0 处存活，0 处未还原**。
+
+| # | 变异 | 改成 | 转红的夹具 |
+|---|---|---|---|
+| W1 | 同一脚本内不比行号 | `if own_line is not None:` | `test_install_later_in_the_same_script_does_not_count` |
+| W2 | 跨步骤不比索引 | `if False:`（原 `if earlier.index >= step.index: continue`） | `test_install_after_the_guard_does_not_count`、`test_install_later_in_the_same_script_does_not_count` |
+| W3 | 步骤正文不再剥注释 | `return list(step.body)` | `test_comment_mentioning_the_guard_is_not_a_need`、`test_trailing_comment_is_not_a_need`、`test_real_workflows_provision_everything_they_run` |
+| W4 | 只剥整行注释、不剥 `#` 尾注 | `elif False:`（原 `elif char == "#" and …`） | `test_trailing_comment_is_not_a_need` |
+| W5 | 步骤 `name:` 也算脚本 | `lines = executable_lines(step) + ([step.name] if step.name else [])` | `test_step_name_mentioning_the_guard_is_not_a_need` |
+| W6 | node 匹配丢掉命令位置锚 | `r"(?:node\|npm\|npx)"` | `test_the_string_npm_in_a_path_is_not_a_node_program`、`test_real_workflows_provision_everything_they_run` |
+| W7 | `uses: actions/setup-node` 不算供给 | `if False and any(` | `test_node_step_with_setup_node_counts`、`test_real_workflows_provision_everything_they_run` |
+| W8 | release tarball 不算装 ripgrep | `r"ripgrep/never-ships-here"` | `test_tarball_install_before_the_guard_counts` |
+| W9 | `apt-get install ripgrep` 不算装 | `r"apt-get install[^\n]*\bnot-a-package\b"` | `test_apt_install_before_the_guard_counts`、`test_install_earlier_in_the_same_script_counts`、`test_real_workflows_provision_everything_they_run` |
+| W10 | 点名的 workflow 不存在就跳过 | 删掉 `problems.append(...)` | `test_named_missing_workflow_fails` |
+| W11 | 一个 workflow 都没找到不算失败 | `if False:`（原 `if not targets:`） | `test_no_workflows_at_all_refuses_to_pass` |
+
+逐字输出（每条只截转红那几行）：
+
+    W1 ... exit=1 red=['test_install_later_in_the_same_script_does_not_count']
+    W2 ... exit=1 red=['test_install_after_the_guard_does_not_count',
+                       'test_install_later_in_the_same_script_does_not_count']
+    W3 ... exit=1 red=['test_comment_mentioning_the_guard_is_not_a_need',
+                       'test_real_workflows_provision_everything_they_run',
+                       'test_trailing_comment_is_not_a_need']
+    W4 ... exit=1 red=['test_trailing_comment_is_not_a_need']
+    W5 ... exit=1 red=['test_step_name_mentioning_the_guard_is_not_a_need']
+    W6 ... exit=1 red=['test_the_string_npm_in_a_path_is_not_a_node_program',
+                       'test_real_workflows_provision_everything_they_run']
+    W7 ... exit=1 red=['test_node_step_with_setup_node_counts',
+                       'test_real_workflows_provision_everything_they_run']
+    W8 ... exit=1 red=['test_tarball_install_before_the_guard_counts']
+    W9 ... exit=1 red=['test_apt_install_before_the_guard_counts',
+                       'test_install_earlier_in_the_same_script_counts',
+                       'test_real_workflows_provision_everything_they_run']
+    W10 ... exit=1 red=['test_named_missing_workflow_fails']
+    W11 ... exit=1 red=['test_no_workflows_at_all_refuses_to_pass']
+
+W6/W7/W9 顺带把真实仓库那条也弄红了，这三条正是「放宽规则会误伤真实 workflow」的直接证据：命令位置
+锚、`uses:` 供给、`apt-get` 供给这三条规则不是装饰，去掉任何一条，`ci.yml` 与 `release.yml` 都会
+被判成缺工具。
+
+
+### 4.2 变异揪出来的两处自身缺陷（先于本节表格发生）
+
+第一轮跑变异时有两条**存活**，各自暴露一个真问题。两条都不是「夹具没写」，而是夹具看着在测、其实没测：
+
+1. **W3 第一轮是等价变异。** 原 `executable_lines()` 同时做两件事：`if not COMMENT_ONLY.match(line)`
+   过滤整行注释，再对剩下的行调 `strip_trailing_comment()`。而 `strip_trailing_comment()` 对整行注释
+   本来就先在 `#` 处截断（`index == 0` 或前一个字符是空白 → 返回 `line[:index]`，即 `""`），
+   所以 `COMMENT_ONLY` 那层永远轮不到起作用——把它的条件改成 `if True`，15 例全绿、真实树全绿。
+   一处永远不影响结果的过滤条件，读代码的人会以为它在起作用：这就是等价变异的意义。**处置是删掉**
+   （`COMMENT_ONLY` 常量与那行过滤一起去掉），注释语义由 `strip_trailing_comment()` 单独承担，
+   并由 W3（不剥注释 → 两条注释夹具同时红）与 W4（只少剥尾注 → 尾注夹具红）从两侧钉住。
+   删除后 `python3 scripts/ci/test-check-workflow-toolchain.py` 15/15 绿、
+   `python3 scripts/ci/check-workflow-toolchain.py` OK。
+2. **W5 第一轮也是等价变异，但原因是夹具写错了。** 那条夹具的步骤名原本写作
+   `Re-run the l10n-guard.sh from a cached report`，而触发词是 `scripts/l10n-guard\.sh`——
+   名字里少了 `scripts/` 前缀，所以「把 name 当脚本」根本不会被触发，这条夹具**无论守卫怎么写都绿**。
+   夹具改成携带完整触发串 `Re-run scripts/l10n-guard.sh from a cached report` 之后，W5 立刻转红。
+   这一条值得单独记：上一节说「步骤 `name:` 里的守卫名不算需求」，写那句话的时候它并没有被验证过。
+
+
+
+第 5 节  仍未覆盖 / 边界
+----------------------
+
+1. 工具表只有两条规则。`protoc`、`pwsh`、`cargo` 都在 workflow 里被用，本检查**不**管：
+   `protoc` 有专门的 `arduino/setup-protoc` 步骤且历史上一装就灵，`pwsh` 在 macOS/Windows runner
+   上是预装软件，`cargo` 由 rust 作业的工具链步骤提供——三条都还没有「装了 ≠ 装在前面」这类
+   实际事故支撑，先不写进表里凑数。加一条规则的正确时机是它咬到第二次。
+2. 本检查只看 job 内部的步骤顺序。`needs: rust` 之类的作业依赖不会把另一个作业装好的工具算作供给，
+   这是故意的：job 之间不共享文件系统，`rust` 作业 apt 装的东西 `docs-l10n` 一行也用不上。
+3. 「作业装了但没人用」不检查。apt 一行装六个包是常态，反向规则会把正常写法逼成一包一行。
+4. 新门禁本身在两个地方跑（`workflows-present` 作业与 Docker 入口）。它读的是 YAML 文本，
+   因此不依赖任何 runner 环境——这是它能在本地入口做镜像门禁的原因。
+5. 那份 CI 侧证据来自 commit `e85f21ca` 的完整日志，而不是仍在跑的 `37061975515`：GitHub 在作业
+   结束前不提供日志下载（`is still in progress; logs will be available when it is complete`）。
+   两者是同一个失败，`gh api .../actions/jobs/<id>` 的 step 结论一致（`guard self-tests` → failure）；
+   把这一点写清楚，是因为「拿旧一次运行的日志证明这一次的失败」这句话需要证据。

@@ -147,6 +147,7 @@ gates=(
   # ci.yml alone left release.yml -- the workflow with the Windows matrix, which is
   # the whole reason the check exists -- unexamined locally.
   "workflow shells: python3 scripts/ci/check-workflow-shells.py"
+  "workflow toolchain: python3 scripts/ci/test-check-workflow-toolchain.py && python3 scripts/ci/check-workflow-toolchain.py"
   "script portability: python3 scripts/ci/check-script-portability.py && python3 scripts/ci/test-script-portability.py"
   "panic-site census: python3 scripts/ci/test-panic-site-census.py && python3 scripts/ci/panic-site-census.py --check-baseline scripts/ci/panic-site-baseline.tsv && python3 scripts/ci/panic-site-census.py --check-uncompiled scripts/ci/uncompiled-sources.txt"
   "version lockstep: bash scripts/ci/check-versions.sh && python3 scripts/ci/check-version-lockstep.py"
