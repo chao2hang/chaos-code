@@ -21,6 +21,29 @@ transitional JSON 会话快照。设置
 headless Agent；可用 `CHAOS_AGENT_CWD` 固定工作目录。该进程边界不会把浏览器
 请求转换成任意 shell 命令。
 
+未配置 `CHAOS_AGENT_BINARY` 时，可改用任意 OpenAI 兼容推理端点，凭据只从
+Web host 进程环境读取，浏览器协议里不出现 API Key：
+
+```bash
+CHAOS_PROVIDER_BASE_URL=http://127.0.0.1:8080/v1 \
+CHAOS_PROVIDER_MODEL=qwen2.5-7b-instruct \
+CHAOS_PROVIDER_API_KEY=sk-... \
+cargo run -p xai-grok-web
+```
+
+`CHAOS_PROVIDER_BASE_URL` 必须以 `/v1` 之类的版本路径结尾，adapter 在其上拼接
+`/chat/completions` 与 `/models`；`http:` 明文只允许 loopback（`127.0.0.1`、
+`::1`、`localhost` 及 `*.localhost`），其余主机必须使用 `https:`，URL 里带
+`user:pass@`、query 或 fragment 会被拒绝。`CHAOS_PROVIDER_API_KEY` 可省略，
+省略时不发送 `Authorization` 头。启动时 host 会请求 `/models` 并打印一行结果
+（`Provider ... ready: N model(s) listed, configured model <slug> is listed`
+或 `not reachable: <原因>`），配置无效则直接以非零码退出、不监听端口。TLS 校验
+走仓库统一的 rustls 策略，因此企业代理或私有 CA 可用 `GROK_EXTRA_CA_BUNDLE`
+追加根证书。401/403/404/429/5xx、连接失败、超时、坏帧、端内错误帧和空响应都会
+转成 `agent_failed` 错误事件并附带可操作中文提示，日志与错误文本里的 Key 一律
+替换为 `[redacted]`。GUI 配置表单与操作系统钥匙串存储仍未实现，因此这条路径
+目前只由服务端环境变量配置。
+
 生产静态部署可设置 `CHAOS_WEB_ASSETS_DIR=/path/to/vite-dist`，由 Web binary 提供该目录资产并对未知页面路径回退 `index.html`；`/api`、`/health`、`/ws` 始终使用后端受保护路由。静态目录支持 gzip/Brotli 预压缩协商、按资源字节生成 ETag 与条件请求；资产目录仍需显式配置，release pipeline/内嵌 assets 与 CDN 缓存失效策略尚未接线。
 
 ## 性能采集
@@ -29,5 +52,5 @@ headless Agent；可用 `CHAOS_AGENT_CWD` 固定工作目录。该进程边界�
 
 该采集器当前报告页面就绪时间、合成 DOM 添加调度延迟和 Node runner RSS，不是完整 WebSocket/React streaming、Chromium/Web 子进程 RSS、冷启动、10 万文件搜索或大 Diff 基线。它不定义回归阈值，也不上传 CI artifact；不要把本地结果解释为稳定版性能门禁。完整采样范围与限制见 [`../../docs/performance/benchmark-environment.md`](../../docs/performance/benchmark-environment.md)。
 
-当前限制：真实 provider 仍由 headless Agent 的本地配置负责；adapter 是同步进程边界，取消/超时尚需异步 Agent 适配器；
+当前限制：provider 由 Web host 进程环境配置（headless Agent 或 OpenAI 兼容端点二选一），GUI 内没有配置表单，凭据也未接入系统钥匙串；headless adapter 是同步进程边界，取消/超时尚需异步 Agent 适配器；
 Desktop host 尚未接入 Tauri；远程 workspace 与公共 Web 部署均未启用。文件浏览、搜索、Git、设置和市场面板通过现有 protocol 暴露；文件列表/读取/搜索、审批写入和工具进度/结果可见。配置 `CHAOS_WORKSPACE_ROOT` 时 Web host 装配固定在该 canonical 根目录的 Git/终端 adapter；未配置 workspace 时不会开启这些 adapter。终端命令仍须 Engine 审批并受 Safe Web Mode 限制，输出上限 256 KiB。工作区列表尚未映射为多个独立物理文件根。

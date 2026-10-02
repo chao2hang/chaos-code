@@ -566,7 +566,23 @@ async fn websocket_session(mut socket: WebSocket, engine: Engine, safe_web_mode:
                         .await;
                     continue;
                 }
-                for event in engine.handle(message) {
+                // Prompt adapters block on a subprocess or an HTTPS round trip,
+                // so they run on their own OS thread: a dedicated thread keeps
+                // the shared async worker free and, unlike a blocking-pool
+                // thread, carries no ambient runtime for the adapter to trip
+                // over. Ordering within a connection is preserved by awaiting.
+                let blocking_engine = engine.clone();
+                let (tx, rx) = tokio::sync::oneshot::channel();
+                std::thread::spawn(move || {
+                    let _ = tx.send(blocking_engine.handle(message));
+                });
+                let events = rx.await.unwrap_or_else(|_| {
+                    vec![ServerMessage::Error {
+                        code: "agent_failed".into(),
+                        message: "Agent 处理线程已终止".into(),
+                    }]
+                });
+                for event in events {
                     let _ = socket
                         .send(Message::Text(serde_json::to_string(&event).unwrap().into()))
                         .await;

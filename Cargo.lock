@@ -1715,6 +1715,7 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "dunce",
+ "reqwest 0.12.24",
  "rusqlite",
  "serde",
  "serde_json",
@@ -1723,6 +1724,7 @@ dependencies = [
  "tracing",
  "uuid",
  "walkdir",
+ "xai-grok-extra-ca",
  "xai-grok-plugin-marketplace",
  "xai-sqlite-journal",
  "xai-tty-utils",
@@ -14776,6 +14778,7 @@ dependencies = [
  "tower",
  "tower-http",
  "uuid",
+ "xai-grok-test-support",
 ]
 
 [[package]]

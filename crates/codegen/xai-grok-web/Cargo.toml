@@ -16,7 +16,7 @@ dunce.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tower.workspace = true
-tokio = { workspace = true, features = ["net", "rt-multi-thread", "macros"] }
+tokio = { workspace = true, features = ["net", "rt-multi-thread", "macros", "sync"] }
 tower-http = { workspace = true, features = ["cors", "limit", "fs", "set-header"] }
 sha2.workspace = true
 uuid.workspace = true
@@ -27,3 +27,5 @@ futures-util.workspace = true
 base64.workspace = true
 tokio-tungstenite.workspace = true
 tempfile.workspace = true
+# Mock inference endpoint for the real-provider WebSocket tests.
+xai-grok-test-support = { workspace = true }

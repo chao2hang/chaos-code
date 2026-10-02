@@ -10,6 +10,7 @@ use tokio::sync::broadcast;
 use uuid::Uuid;
 
 pub mod protocol_schema;
+pub mod provider;
 pub mod pty;
 pub mod remote;
 
@@ -1244,6 +1245,26 @@ impl Engine {
             state,
             None,
             None,
+            None,
+            None,
+            None,
+            Some(store),
+        ))
+    }
+
+    /// [`Self::with_sqlite_store`] plus an explicit prompt adapter, so a host
+    /// that persists sessions in SQLite still answers with the provider its
+    /// operator configured instead of the development responder.
+    pub fn with_sqlite_store_and_adapter(
+        path: impl AsRef<Path>,
+        adapter: Option<Arc<dyn PromptAdapter>>,
+    ) -> rusqlite::Result<Self> {
+        let store = Arc::new(SqliteSessionStore::open(path)?);
+        let state = store.load_state()?;
+        Ok(Self::with_state(
+            state,
+            None,
+            adapter,
             None,
             None,
             None,
