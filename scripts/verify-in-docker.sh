@@ -79,6 +79,18 @@ run_args=(
   # Without this the `--full` mode fails on a clean machine for a reason that has nothing
   # to do with the change under test.
   --env RUST_MIN_STACK=16777216
+  # Git ownership, applied to *every* gate rather than per command line. The repo
+  # is bind-mounted from a host uid, so git inside the container refuses to read
+  # it ("detected dubious ownership in repository at '/src'") until told otherwise.
+  # Gates that need git carry a `bootstrap` prefix, and `docs localization` did not
+  # -- so `scripts/l10n-guard.sh` ran its listing against a git that could not open
+  # the repository. In the 2026-10-03 `--full` run that gate reported FAIL with
+  # nothing printed after "report dir", which is what a broken instrument looks
+  # like, not what a verdict looks like. Trust is a property of this container, not
+  # of one command in it, so it is set here where no gate can forget it.
+  --env GIT_CONFIG_COUNT=1
+  --env GIT_CONFIG_KEY_0=safe.directory
+  --env GIT_CONFIG_VALUE_0=/src
 )
 
 if [ "${MODE}" = "shell" ]; then
@@ -134,7 +146,7 @@ gates=(
   "workflow shells: python3 scripts/ci/check-workflow-shells.py .github/workflows/ci.yml"
   "script portability: python3 scripts/ci/check-script-portability.py"
   "installer asset names: python3 scripts/ci/test-installer-asset-names.py && python3 scripts/ci/test-installer-bash-resolution.py"
-  "docs localization: bash scripts/l10n-guard.sh && python3 scripts/check-doc-l10n.py --links && python3 scripts/check-doc-l10n.py --english"
+  "docs localization: ${bootstrap}; bash scripts/l10n-guard.sh && python3 scripts/check-doc-l10n.py --links && python3 scripts/check-doc-l10n.py --english"
   "localization guard self-tests: python3 scripts/l10n-guard-selftest.py && python3 scripts/check-doc-l10n-selftest.py"
   "secret scan: ${bootstrap}; bash scripts/ci/secret-scan.sh"
   "cargo check: cargo check --workspace --all-targets --locked"
@@ -144,6 +156,23 @@ gates=(
 if [ "${MODE}" = "full" ]; then
   gates+=("cargo test: ${bootstrap}; cargo test --workspace --locked --no-fail-fast")
 fi
+
+# Preflight: the instrument before the measurements. Several gates read the repo
+# through git (`l10n-guard.sh`, `check-doc-l10n.py`, the secret scan, `cargo`
+# itself for git dependencies). If the container cannot open the bind-mounted
+# repository, no gate verdict below means anything, so stop here rather than
+# collect a dozen failures whose only cause is one config line -- and say what to
+# fix, because the failure otherwise surfaces as a guard that prints nothing.
+echo
+echo "== preflight: container can read the repository"
+if ! docker run "${run_args[@]}" "${IMAGE_TAG}" \
+  bash -c 'set -e; git -C /src rev-parse --short HEAD >/dev/null; git -C /src status --porcelain >/dev/null'; then
+  echo "preflight: FAIL -- git inside the container cannot read /src." >&2
+  echo "           Check the bind mount of ${repo_root} and the GIT_CONFIG_* safe.directory" >&2
+  echo "           entry in this script; a gate that reads git cannot pass without it." >&2
+  exit 1
+fi
+echo "preflight: OK"
 
 failed=""
 for gate in "${gates[@]}"; do

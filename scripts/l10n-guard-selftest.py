@@ -15,6 +15,14 @@ Each case builds a throwaway git repo, runs the real script against it, and
 asserts on the exit code *and* on which section the file was reported in. A case
 that merely asserted "exit 0" would pass with a guard that checks nothing.
 
+The last four cases are about the other half of the bargain: a guard that cannot
+do its comparison must refuse to answer. Listing used to be read through a
+process substitution, which discards the exit status, so a `git` that died left
+both sides empty and every "did the Chinese disappear?" test then passed
+vacuously. Same for a killed `rg` (counted as zero Han, dropping the file from
+one side) and for an unreadable file at the ref. Those cases put a hostile helper
+on PATH and require a non-zero exit, a `NO VERDICT` line, and *no* report.
+
 Run:  python3 scripts/l10n-guard-selftest.py
 """
 
@@ -91,7 +99,11 @@ class Case:
     def set_allow(self, text: str) -> None:
         self.allow.write_text(text, encoding="utf-8")
 
-    def run(self, extra: list[str] | None = None) -> tuple[int, str]:
+    def run(
+        self,
+        extra: list[str] | None = None,
+        env: dict[str, str] | None = None,
+    ) -> tuple[int, str]:
         argv = [
             "bash", GUARD,
             "--before", "HEAD", "--after", "WORKTREE",
@@ -103,6 +115,7 @@ class Case:
             argv += extra
         proc = subprocess.run(
             argv, cwd=self.repo, capture_output=True, text=True,
+            env=env if env is not None else os.environ.copy(),
         )
         return proc.returncode, proc.stdout + proc.stderr
 
@@ -342,6 +355,156 @@ def case_move_min_override() -> list[str]:
         c.cleanup()
 
 
+def case_death_is_announced() -> list[str]:
+    """A broken helper must produce a loud failure, never a verdict.
+
+    `set -e` alone made this indistinguishable from an interrupted run -- which is
+    exactly how the 2026-10-03 Docker gate log reads: `FAIL`, then nothing. Worse,
+    the listing used to be read through a process substitution, so a `git` that
+    died (137 = 128+SIGKILL, the OOM shape below) produced *no files on either
+    side* and every disappeared-file comparison then passed vacuously. The guard
+    must name the broken side, say it reached no verdict, and exit non-zero.
+    """
+    c = Case("death")
+    try:
+        shim = c.root / "shim"
+        shim.mkdir()
+        fake_git = shim / "git"
+        fake_git.write_text("#!/bin/sh\nexit 137\n", encoding="utf-8")
+        fake_git.chmod(0o755)
+        env = os.environ.copy()
+        env["PATH"] = f"{shim}{os.pathsep}{os.environ['PATH']}"
+        rc, out = c.run(env=env)
+        errs: list[str] = []
+        if rc == 0:
+            errs.append("death: a guard whose git helper dies must not pass\n" + out)
+        if "NO VERDICT" not in out:
+            errs.append("death: no NO VERDICT line, so the failure is silent\n" + out)
+        if "cannot list .rs files at HEAD" not in out:
+            errs.append("death: the broken side is not named\n" + out)
+        if "L10n Guard Report" in out:
+            errs.append("death: a report was printed although no comparison ran\n" + out)
+        return errs
+    finally:
+        c.cleanup()
+
+
+def case_killed_counter_is_announced() -> list[str]:
+    """`rg` dying on a real file must not be read as "this file has no Chinese".
+
+    The counter runs once per file under `xargs`. Before the exit-status check, a
+    killed rg yielded an empty count, which drops the file from one side of the
+    comparison -- and "missing from one side" is the very signal this guard
+    reports, so the failure lands as a wrong verdict rather than an error.
+    The shim answers the preflight probe (bare `-o [\p{Han}]` on stdin) and dies
+    on every real count.
+    """
+    c = Case("killed-counter")
+    try:
+        shim = c.root / "shim"
+        shim.mkdir()
+        fake_rg = shim / "rg"
+        fake_rg.write_text(
+            "#!/bin/sh\n"
+            'if [ "$*" = "-o [\\p{Han}]" ]; then echo 中; exit 0; fi\n'
+            "exit 137\n",
+            encoding="utf-8",
+        )
+        fake_rg.chmod(0o755)
+        env = os.environ.copy()
+        env["PATH"] = f"{shim}{os.pathsep}{os.environ['PATH']}"
+        rc, out = c.run(env=env)
+        errs: list[str] = []
+        if rc == 0:
+            errs.append("killed-counter: a guard whose counter dies must not pass\n" + out)
+        if "cannot count Han" not in out:
+            errs.append("killed-counter: the dead counter is not named\n" + out)
+        if "NO VERDICT" not in out:
+            errs.append("killed-counter: no NO VERDICT line, so the failure is silent\n" + out)
+        if "L10n Guard Report" in out:
+            errs.append("killed-counter: a report was printed although no counting ran\n" + out)
+        return errs
+    finally:
+        c.cleanup()
+
+
+def case_unreadable_at_ref_is_announced() -> list[str]:
+    """A file that cannot be read at the ref must stop the run, not vanish.
+
+    Listing works here and only `git show` fails, which is the shape of a
+    corrupted object or a repo the caller may not read. Counting that file as zero
+    Han drops it from the `--before` side, and a path missing from one side is
+    classified as moved/removed -- a wrong verdict with a confident-looking label.
+    """
+    c = Case("unreadable-ref")
+    try:
+        shim = c.root / "shim"
+        shim.mkdir()
+        real_git = shutil.which("git")
+        assert real_git, "git not on PATH"
+        fake_git = shim / "git"
+        fake_git.write_text(
+            "#!/bin/sh\n"
+            'if [ "$1" = "show" ]; then echo "shim: object unreadable" >&2; exit 128; fi\n'
+            f"exec {real_git} \"$@\"\n",
+            encoding="utf-8",
+        )
+        fake_git.chmod(0o755)
+        env = os.environ.copy()
+        env["PATH"] = f"{shim}{os.pathsep}{os.environ['PATH']}"
+        rc, out = c.run(env=env)
+        errs: list[str] = []
+        if rc == 0:
+            errs.append("unreadable-ref: an unreadable file at the ref must not pass\n" + out)
+        if "cannot read" not in out:
+            errs.append("unreadable-ref: the unreadable path is not named\n" + out)
+        if "NO VERDICT" not in out:
+            errs.append("unreadable-ref: no NO VERDICT line, so the failure is silent\n" + out)
+        if "L10n Guard Report" in out:
+            errs.append("unreadable-ref: a report was printed despite the read failure\n" + out)
+        return errs
+    finally:
+        c.cleanup()
+
+
+def case_empty_listing_is_refused() -> list[str]:
+    """An empty side is not a clean comparison; it is a broken one.
+
+    Here `git` succeeds but lists nothing (a bad pathspec, a repo checked out
+    somewhere unexpected). Both manifests come back empty, so nothing looks
+    disappeared, nothing looks shrunk, and the guard certifies a tree it never
+    read. The 395-Han-file fork cannot legitimately have zero `.rs` files under
+    `crates/` on either side, so refusing is the only sound answer.
+    """
+    c = Case("empty-listing")
+    try:
+        shim = c.root / "shim"
+        shim.mkdir()
+        real_git = shutil.which("git")
+        assert real_git, "git not on PATH"
+        fake_git = shim / "git"
+        fake_git.write_text(
+            "#!/bin/sh\n"
+            'if [ "$1" = "ls-files" ] || [ "$1" = "ls-tree" ]; then exit 0; fi\n'
+            f"exec {real_git} \"$@\"\n",
+            encoding="utf-8",
+        )
+        fake_git.chmod(0o755)
+        env = os.environ.copy()
+        env["PATH"] = f"{shim}{os.pathsep}{os.environ['PATH']}"
+        rc, out = c.run(env=env)
+        errs: list[str] = []
+        if rc == 0:
+            errs.append("empty-listing: an unread tree must not pass\n" + out)
+        if "no .rs files listed at" not in out:
+            errs.append("empty-listing: the empty side is not named\n" + out)
+        if "L10n Guard Report" in out:
+            errs.append("empty-listing: a verdict was reached from two empty sides\n" + out)
+        return errs
+    finally:
+        c.cleanup()
+
+
 CASES = [
     case_untouched,
     case_clobber_in_place,
@@ -356,6 +519,10 @@ CASES = [
     case_shrunk_still_fails,
     case_allow_list_without_reason_fails,
     case_move_min_override,
+    case_death_is_announced,
+    case_killed_counter_is_announced,
+    case_unreadable_at_ref_is_announced,
+    case_empty_listing_is_refused,
 ]
 
 

@@ -1,6 +1,6 @@
 ---
 name: chaos-upstream-sync
-version: 1.3.0
+version: 1.3.1
 description: "跟踪 GitHub 上 xai-org/grok-build（Grok Build）的更新，并安全移植到本仓库 chaos-code（Chaos 分支）。**仅当用户明确提到「上游 / grok-build / upstream」时才触发**；否则不触发。触发词：当用户说「同步上游」「看 grok build 更新」「移植上游改动」「merge grok」「对齐 SOURCE_REV」「上游有没有新版本」时使用。覆盖：查 releases/tags/commits/changelog、对照本地 SOURCE_REV 与版本号、分流可移植 vs Chaos 专属冲突、分批 cherry-pick/merge、编译与单测、更新日志。"
 metadata:
   requires:
@@ -257,7 +257,11 @@ bash scripts/l10n-guard.sh --before main --after HEAD
 中文换回英文的那种事故），就仍然硬失败；allowlist 只对「文件真的不在了」生效。上游合并时如果
 **故意**删掉一个带中文的文件（死代码、测试夹具），在 allowlist 加一行 `<path>\t<理由>`，
 理由要写清中文去哪了；同时 `scripts/l10n-guard.sh` 的改动必须过
-`python3 scripts/l10n-guard-selftest.py`（13 个用例，CI 与本仓库 Docker 入口都跑）。
+`python3 scripts/l10n-guard-selftest.py`（17 个用例，CI 与本仓库 Docker 入口都跑）。后四个用例
+守的是「守卫做不了比较时必须拒绝回答」：把 `git` / `rg` 换成会死的替身，要求守卫**非零退出 +
+打 `NO VERDICT` + 不出报告**。列出文件那一步以前走的是进程替换（`< <(...)`，退出码被丢掉），
+`git` 一旦死掉两侧都是空集合，「中文有没有消失」就变成一句空话——这正是 2026-10-03 那次
+Docker 门禁只留下 `FAILED gates: docs localization`、报告一行都没有的形状。
 
 **强保护路径默认**: `crates/codegen/xai-grok-pager/src/{slash/commands,views,diagnostics,doctor_cmd,acp}` + `headless.rs` + `startup.rs` + `models.rs` + `crates/codegen/xai-grok-shell/src/agent`。可用 `--fortress <path>` 追加,`--exclude <path>` 排除(测试 fixture 等)。
 

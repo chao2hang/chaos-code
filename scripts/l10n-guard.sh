@@ -25,6 +25,28 @@
 # Run from repo root. Requires: git, rg (ripgrep with Unicode support).
 set -euo pipefail
 
+# A guard that dies part-way must say so. `set -e` on its own leaves no trace:
+# the 2026-10-03 run of scripts/verify-in-docker.sh recorded this gate as FAIL
+# with nothing printed after "report dir" -- the same shape as a run that was
+# interrupted, and unlike a verdict no reader can act on. errtrace keeps the
+# trap alive inside the functions and subshells below, where the work happens.
+# The once-marker is a file rather than a variable because the deaths this guards
+# against happen in subshells, where an in-shell flag never comes back.
+set -E
+_DEATH_MARK="${TMPDIR:-/tmp}/l10n-guard-death-$$"
+on_err() {
+  local rc=$?
+  if [[ -e "$_DEATH_MARK" ]]; then
+    return 0
+  fi
+  : >"$_DEATH_MARK" 2>/dev/null || true
+  printf 'l10n-guard: NO VERDICT -- died at line %s (exit %s) while running: %s\n' \
+    "${BASH_LINENO[0]:-?}" "$rc" "${BASH_COMMAND:-unknown}" >&2
+  printf 'l10n-guard: partial output is in %s\n' "${REPORT_DIR:-<not yet chosen>}" >&2
+}
+trap on_err ERR
+trap 'rm -f "$_DEATH_MARK"' EXIT
+
 # ---- Defaults & arg parsing ----------------------------------------------
 SCRIPT_DIR="$(cd -- "$(dirname -- "$0")" && pwd -P)"
 BEFORE="HEAD"
@@ -150,29 +172,16 @@ fi
 
 # ---- Helper: list all .rs files under crates/ at a ref --------------------
 # $1 = ref ("WORKTREE" or a commit-ish)
+# No `2>/dev/null` here: git's own complaint is the only clue a reader gets when
+# a side of the comparison comes back empty for a reason that has nothing to do
+# with the change under test (dangling ref, foreign owner, killed helper).
 list_rs_files() {
   local ref="$1"
   if [[ "$ref" == "WORKTREE" ]]; then
-    git ls-files -co --exclude-standard -- 'crates/**/*.rs' 2>/dev/null
+    git ls-files -co --exclude-standard -- 'crates/**/*.rs'
   else
-    git ls-tree -r --name-only "$ref" -- 'crates/' 2>/dev/null \
-      | grep -E '\.rs$' || true
-  fi
-}
-
-# ---- Helper: count Han chars in a single file at a ref --------------------
-# $1 = ref, $2 = path
-count_han_in() {
-  local ref="$1" file="$2"
-  if [[ "$ref" == "WORKTREE" ]]; then
-    if [[ -f "$file" ]]; then
-      rg -o --no-filename '[\p{Han}]' "$file" 2>/dev/null | wc -l
-    else
-      echo 0
-    fi
-  else
-    git show "${ref}:${file}" 2>/dev/null \
-      | rg -o '[\p{Han}]' | wc -l
+    git ls-tree -r --name-only "$ref" -- 'crates/' \
+      | { grep -E '\.rs$' || true; }
   fi
 }
 
@@ -194,10 +203,26 @@ build_manifest() {
   local ref="$1" out="$2"
   : > "$out"
   local files=()
+  # The listing is captured, not piped through a process substitution, because
+  # `< <(...)` throws away the exit status: a killed or misconfigured git then
+  # looks like "this side has no files", which makes every disappeared-file
+  # comparison vacuously pass. An empty side is a failure, never a clean run.
+  local listing
+  if ! listing="$(list_rs_files "$ref")"; then
+    printf 'l10n-guard: cannot list .rs files at %s -- refusing to compare against a broken side\n' "$ref" >&2
+    return 1
+  fi
   # `mapfile` is bash 4; macOS still ships 3.2.
-  while IFS= read -r line; do files+=("$line"); done < <(list_rs_files "$ref" | sort -u)
+  local sorted line
+  sorted="$(printf '%s\n' "$listing" | sort -u)"
+  while IFS= read -r line; do
+    if [[ -n "$line" ]]; then
+      files+=("$line")
+    fi
+  done <<<"$sorted"
   if [ "${#files[@]}" -eq 0 ]; then
-    return
+    printf 'l10n-guard: no .rs files listed at %s -- an empty side cannot prove anything\n' "$ref" >&2
+    return 1
   fi
   # xargs parallel count; emit "<n>\t<path>" only when n > 0
   printf '%s\n' "${files[@]}" \
@@ -205,11 +230,27 @@ build_manifest() {
         ref="$1"; file="$2"
         if [[ "$ref" == "WORKTREE" ]]; then
           if [[ ! -f "$file" ]]; then exit 0; fi
-          n=$(rg -o --no-filename "[\p{Han}]" "$file" 2>/dev/null | wc -l)
+          chars=$(rg -o --no-filename "[\p{Han}]" "$file" 2>/dev/null); rc=$?
         else
-          n=$(git show "${ref}:${file}" 2>/dev/null | rg -o "[\p{Han}]" | wc -l)
+          # A file listed at the ref must be readable at the ref. Counting zero
+          # because git failed would drop it from that side silently, and a file
+          # missing from one side is exactly the signal this guard reports on.
+          if ! chars=$(git show "${ref}:${file}"); then
+            printf "l10n-guard: cannot read %s at %s\n" "$file" "$ref" >&2
+            exit 9
+          fi
+          chars=$(printf "%s\n" "$chars" | rg -o "[\p{Han}]"); rc=$?
         fi
-        n=${n:-0}
+        # rg exits 1 for "no match", which is a real answer; anything above 1 is
+        # rg itself failing (killed, bad pattern, unreadable file).
+        if [[ "$rc" -gt 1 ]]; then
+          printf "l10n-guard: cannot count Han in %s (rg exit %s)\n" "$file" "$rc" >&2
+          exit 9
+        fi
+        if [[ -z "$chars" ]]; then
+          exit 0
+        fi
+        n=$(printf "%s\n" "$chars" | grep -c "")
         if [[ "$n" -gt 0 ]]; then
           printf "%s\t%s\n" "$n" "$file"
         fi

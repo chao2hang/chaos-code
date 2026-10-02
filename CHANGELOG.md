@@ -2,6 +2,54 @@
 
 ## Unreleased
 
+### 修复：中文化守卫在 Docker 入口里静默失败，四处 fail-open 一并改为 fail-closed
+
+`scripts/verify-in-docker.sh --full` 有一轮整场只有 `docs localization` 一个门禁红，而那一节的输出止于
+「report dir」——既没有报告，也没有报错；同一轮 `cargo test --workspace` 全绿、守卫自测 13/13 通过，
+所以坏的不是判定逻辑，是守卫的**输入**。根因在两处叠在一起：`verify-in-docker.sh` 里每个用 git 的门禁
+都带 `bootstrap` 前缀（`git config --global --add safe.directory /src`），唯独这条没有，而仓库是以宿主
+uid 1003 bind-mount 进容器、容器内进程是 uid 0，git 于是拒绝打开仓库；旧守卫又恰好把列清单的 stderr 吞掉
+且不检查退出码，两侧清单都成了空集。「仪器坏了」和「测出了不合格」在日志里长得一模一样（两行头 + 非零
+退出）。CI 永远看不见这个洞——GitHub runner 的 checkout 归 runner 用户所有，宿主机上也不会抱怨。
+
+接线层：`GIT_CONFIG_COUNT=1 / GIT_CONFIG_KEY_0=safe.directory / GIT_CONFIG_VALUE_0=/src` 提到 `run_args`，
+所有门禁共用（故意不设 `safe.directory=*`，只信 `/src` 这一个明确路径）；「不一致的门禁清单」本身就是这次
+事故的成因，所以 `docs localization` 也补上与其它 git 门禁相同的 `bootstrap` 前缀，即使全局 env 已经够用；
+门禁循环之前加一条 preflight，
+容器里的 git 读不出 `/src` 就整轮直接退出并说明要检查 bind mount 与 `GIT_CONFIG_*`，否则同类接线漂移的表现
+依旧是「十几个门禁一起红，没人说为什么」。守卫层堵掉四处 fail-open：列清单走 `< <(list_rs_files …)` 进程替换，
+退出码不进 `set -e`，git 一死该侧就是空集，而空集在本守卫的语义里等于「没有文件消失 = 通过」——改成先捕获
+再判状态，失败即点名是哪一侧；空清单曾被当作合法输入，一个 395 个含汉字文件的仓库任一侧列出 0 个 `.rs`
+只可能是仪器坏了，现在直接拒绝；计数用 `… | rg … | wc -l`，管道末端的 `wc` 把 rg 的死活（137）盖成 0，
+而「文件从一侧消失」恰恰是本守卫要报的信号，坏仪器因此产出**看起来合理的错判决**——现在分别取 rg 的退出码，
+>1 报错退出，1 保留为「没有匹配」这个真答案；`--before` 侧读不出文件内容时同样静默计 0，现在 `git show`
+失败即报出路径并终止。另外加 `set -E` + ERR trap（死点常在子 shell 里，进程内变量传不回来，因此用一次性
+marker 文件 + `trap … EXIT` 清理），任何非预期退出打印
+`NO VERDICT -- died at line <N> (exit <rc>) while running: <命令>`；顺带删掉无调用者的死函数 `count_han_in()`，
+它内部正是上面第三、四处那种写法，留着迟早被复用。
+
+`scripts/l10n-guard-selftest.py` 由 13 例增至 17 例，四个新例各把一个 helper 换成敌意替身（PATH 前置 shim），
+断言「非零退出 + 点名坏在哪 + 不产出报告」：`death_is_announced`（git 一律 exit 137，OOM 的形状）、
+`killed_counter_is_announced`（rg 通过预检探针、对真实文件 exit 137）、`unreadable_at_ref_is_announced`
+（只让 `git show` 失败）、`empty_listing_is_refused`（git 成功但列出空集，pathspec 或 checkout 位置不对）。
+五处硬化逐一反向改回去：注释掉 ERR trap → 三例红（14/17）；忽略清单退出码 → `death_is_announced` 红；
+删掉 rg 退出码检查 → `killed_counter_is_announced` 红；删掉 `git show` 检查 → `unreadable_at_ref_is_announced` 红；
+接受空侧 → `empty_listing_is_refused` 红。每次写回原文并 `cmp` 确认字节一致。改造前后是同一容器、同一份仓库上
+的两次真实运行：把 `HEAD:scripts/l10n-guard.sh` 抽出来挂进去原样跑，退出 1、只有两行头、报告目录 8 个产物
+**全是 0 字节**（不是「测出 0 个问题」，是根本没测）；换改造后的守卫且仍不带 `GIT_CONFIG_*`，
+`fatal: detected dubious ownership…` + `cannot list .rs files at HEAD` + `NO VERDICT -- died at line 322`
+第一次被写进日志；补上 `GIT_CONFIG_*` 之后这条门禁在容器里第一次真跑出判定（before/after 各 395 个含汉字文件、
+`0 broken link(s)`、`0 English prose line(s)`、gate exit=0）。
+
+**验证**：`l10n-guard-selftest.py` **17/17**、`check-doc-l10n-selftest.py` 52/52、`check-script-portability.py`
+OK(23)、`check-workflow-shells.py` OK、`bash -n` 两份脚本通过；真实树 `bash scripts/l10n-guard.sh`
+（HEAD vs WORKTREE）与 `--before HEAD --after HEAD` 均 PASS 395/395。门禁接线没有新增——
+`l10n-guard-selftest.py` 早已在 `ci.yml` 的 `docs-l10n` 作业与 Docker 入口的「localization guard self-tests」里跑。
+边界：ERR trap 只负责把「没有结论」变成有位置、有命令名的一条错误，它不改变判定逻辑，也不改变通过条件，
+真正的 fail-closed 是上面那四处。（2026-10-03；`scripts/l10n-guard.sh`、`scripts/l10n-guard-selftest.py`、
+`scripts/verify-in-docker.sh`、`.agents/skills/chaos-upstream-sync/SKILL.md`、
+`docs/verification/l10n-guard-fail-closed-2026-10-03.log`）
+
 ### 新增：`scripts/ci/` 里不允许再有没人调用的守卫；TODO 状态文档与 `TODO.md` 从此逐格对齐
 
 `scripts/ci/test-classify-open-todos.py` 断言

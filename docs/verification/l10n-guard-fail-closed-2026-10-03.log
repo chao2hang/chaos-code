@@ -1,0 +1,333 @@
+l10n-guard 静默失败与四处 fail-open 形态的硬化记录
+日期：2026-10-03
+范围：scripts/l10n-guard.sh、scripts/l10n-guard-selftest.py、scripts/verify-in-docker.sh
+
+本记录自包含：所有引用的输出都逐字贴在下面，不需要读任何私有目录。
+
+-------------------------------------------------------------------------------
+§1 触发点：Docker 入口的 docs localization 门禁红，但一句话都没说
+-------------------------------------------------------------------------------
+
+`scripts/verify-in-docker.sh --full` 的一次完整运行里，`FAILED gates:` 只有
+`docs localization`，而那一节的输出止于「report dir」——既没有报告，也没有报错：
+
+    == docs localization
+    [l10n-guard] before=HEAD  after=WORKTREE
+    [l10n-guard] report dir: /tmp/l10n-guard-8
+
+    == localization guard self-tests
+    ...
+    (整轮其余 15 个门禁全绿，含 cargo check / clippy / cargo test --workspace)
+
+    FAILED gates: docs localization
+
+同一轮 `cargo test --workspace` 全绿、`l10n-guard-selftest.py` 13/13 通过，所以「守卫的
+判定逻辑坏了」不成立：坏的是守卫的**输入**。下面 §2 是复现。
+
+-------------------------------------------------------------------------------
+§2 根因：容器里的 git 读不了 bind-mount 的仓库，而门禁没给它 trust
+-------------------------------------------------------------------------------
+
+仓库以宿主 uid（1003）bind-mount 进容器，容器内进程是 root（uid 0），于是容器里的 git
+拒绝打开仓库。`verify-in-docker.sh` 里每个用 git 的门禁都带 `bootstrap` 前缀
+（`git config --global --add safe.directory /src`），唯独 `docs localization` 没有：
+
+    $ docker run --rm --workdir /src -v $PWD:/src chaos-verify:local \
+        bash -c 'id -u; stat -c "%u %n" /src/.git; git ls-files "*.rs"'
+    0
+    1003 /src/.git
+    fatal: detected dubious ownership in repository at '/src'
+    To add an exception for this directory, call:
+
+    	git config --global --add safe.directory /src
+
+改造前那版脚本把列清单的 stderr 吞掉，也不看退出码，两侧清单于是都是空集。下面两段是
+把改造前的脚本（`git show HEAD:scripts/l10n-guard.sh`）挂进容器原样跑的真实输出——
+退出码 1，一行解释都没有；它留下的报告目录 8 个产物全是 0 字节，也就是「根本没测」，
+而不是「测出 0 个问题」：
+
+    $ TMP=$(mktemp -d); git show HEAD:scripts/l10n-guard.sh > "$TMP/l10n-guard.orig.sh"   # 宿主机
+    $ docker run --rm --workdir /src -v $PWD:/src -v "$TMP":/orig:ro chaos-verify:local \
+        bash -c 'bash /orig/l10n-guard.orig.sh --report /tmp/rep-orig; echo "exit=$?"'
+    [l10n-guard] before=HEAD  after=WORKTREE
+    [l10n-guard] report dir: /tmp/rep-orig
+    exit=1
+
+    $ docker run --rm --workdir /src -v $PWD:/src -v "$TMP":/orig:ro chaos-verify:local \
+        bash -c 'bash /orig/l10n-guard.orig.sh --report /tmp/rep-orig >/dev/null 2>&1; echo "exit=$?"
+                  ls -la /tmp/rep-orig
+                  echo "非零字节产物数: $(find /tmp/rep-orig -type f -size +0c | wc -l)"'
+    exit=1
+    total 8
+    drwxr-xr-x 2 root root 4096 Oct  2 20:35 .
+    drwxrwxrwt 1 root root 4096 Oct  2 20:35 ..
+    -rw-r--r-- 1 root root    0 Oct  2 20:35 after-files.sorted
+    -rw-r--r-- 1 root root    0 Oct  2 20:35 after-files.txt
+    -rw-r--r-- 1 root root    0 Oct  2 20:35 after-han-lines.txt
+    -rw-r--r-- 1 root root    0 Oct  2 20:35 after.tsv
+    -rw-r--r-- 1 root root    0 Oct  2 20:35 before-files.sorted
+    -rw-r--r-- 1 root root    0 Oct  2 20:35 before-files.txt
+    -rw-r--r-- 1 root root    0 Oct  2 20:35 before.tsv
+    -rw-r--r-- 1 root root    0 Oct  2 20:35 disappeared-raw.txt
+    非零字节产物数: 0
+
+同一个容器、同一份仓库、改造后的脚本（仍不带 `GIT_CONFIG_*`，即「只修守卫、不修接线」
+的中间状态），git 的抱怨与「没有结论」第一次被明确写进日志：
+
+    $ docker run --rm --workdir /src -v $PWD:/src chaos-verify:local \
+        bash -c 'bash scripts/l10n-guard.sh --report /tmp/rep-new; echo "exit=$?"'
+    [l10n-guard] before=HEAD  after=WORKTREE
+    [l10n-guard] report dir: /tmp/rep-new
+    fatal: detected dubious ownership in repository at '/src'
+    To add an exception for this directory, call:
+
+    	git config --global --add safe.directory /src
+    l10n-guard: cannot list .rs files at HEAD -- refusing to compare against a broken side
+    l10n-guard: NO VERDICT -- died at line 322 (exit 1) while running: return 1
+    l10n-guard: partial output is in /tmp/rep-new
+    exit=1
+
+修好接线（`GIT_CONFIG_COUNT/KEY_0/VALUE_0=safe.directory=/src` 提到 `run_args`，
+所有门禁共用）之后，这条门禁在容器里第一次真正跑起来并给出判定：
+
+    $ docker run --rm --workdir /src -v $PWD:/src \
+        --env GIT_CONFIG_COUNT=1 --env GIT_CONFIG_KEY_0=safe.directory \
+        --env GIT_CONFIG_VALUE_0=/src chaos-verify:local \
+        bash -c 'bash scripts/l10n-guard.sh --report /tmp/rep-fixed \
+        && python3 scripts/check-doc-l10n.py --links \
+        && python3 scripts/check-doc-l10n.py --english; echo "gate exit=$?"'
+    [l10n-guard] before=HEAD  after=WORKTREE
+    [l10n-guard] report dir: /tmp/rep-fixed
+
+    === L10n Guard Report ===
+      before Han files:  395
+      after  Han files:  395
+      moved:             0
+      removed-recorded:  0
+      regressed:         0
+      stale-allowlist:   0
+      shrunk:            0
+      fortress-breach:   0
+
+    OK — L10n Guard: PASS
+
+    0 broken link(s)
+
+    0 English prose line(s) remaining
+    gate exit=0
+
+改造前，「仪器坏了」和「测出了不合格」在日志里长得一模一样（都是两行头 + 非零退出）；
+改造后前者会点名坏在哪一侧、哪一行、哪条命令。
+
+CI 看不见这个洞：GitHub runner 上仓库归 runner 用户所有，git 不会抱怨；宿主机上也
+不会。只有「用 Docker 复现文档里的步骤」这条路会撞上——而这条路正是这个脚本存在的
+理由。
+
+-------------------------------------------------------------------------------
+§3 顺带修掉的四处 fail-open（守卫内部）
+-------------------------------------------------------------------------------
+
+1) 列清单走进程替换，退出码被丢掉：
+       while IFS= read -r line; do files+=("$line"); done < <(list_rs_files "$ref" | sort -u)
+   `< <(...)` 的退出状态不进 `set -e`。git 一旦失败，这一侧就是空集，而「空集」在
+   本守卫的语义里等于「没有文件消失 = 通过」。现在先捕获再判状态，失败即点名是哪一侧。
+
+2) 空清单被当作合法输入（`if [ ${#files[@]} -eq 0 ]; then return; fi`）。一个 395 个
+   含汉字文件的仓库，任何一侧列出 0 个 `.rs` 都只能是仪器坏了。现在直接拒绝。
+
+3) 计数用 `... | rg ... | wc -l`：管道末端的 `wc` 把 rg 的死活（137）盖成 0，文件从
+   一侧消失——这恰好是本守卫要报的信号，于是坏仪器产出的是**看起来合理的错判决**。
+   现在分别取 rg 的退出码，>1（rg 自己失败）就报错退出；1 保留为「没有匹配」这个真答案。
+
+4) `--before` 侧读不出文件内容时同样静默计 0。现在 `git show` 失败即报出路径并终止。
+
+另外删掉了 `count_han_in()`：无调用者的死函数，且内部就是上面 3)/4) 的写法，留着迟早被复用。
+
+守卫现在带 ERR trap（`set -E` + 一次性 marker 文件；死点常在子 shell 里，进程内变量
+传不回来），任何非预期退出都会打印：
+
+    l10n-guard: NO VERDICT -- died at line <N> (exit <rc>) while running: <命令>
+
+-------------------------------------------------------------------------------
+§4 新增夹具：守卫做不了比较时必须拒绝回答（17/17）
+-------------------------------------------------------------------------------
+
+`python3 scripts/l10n-guard-selftest.py` 由 13 例增至 17 例，四个新例各把一个 helper
+换成敌意替身（PATH 前置 shim），断言「非零退出 + 点名坏在哪 + 不产出报告」：
+
+  death_is_announced            git 一律 exit 137（OOM 的形状）
+  killed_counter_is_announced   rg 通过预检探针、对真实文件 exit 137
+  unreadable_at_ref_is_announced  git 只让 `git show` 失败（对象读不出）
+  empty_listing_is_refused      git 成功但列出空集（pathspec/checkout 位置不对）
+
+-------------------------------------------------------------------------------
+§5 变异记录：五处硬化逐一反向改回去，各自点名一个用例
+-------------------------------------------------------------------------------
+
+每个变异改完立刻跑真实 `scripts/l10n-guard-selftest.py`（不是子集），跑完写回原文并
+`cmp` 确认字节一致（`restore cmp: 0`）。
+
+=== baseline: the shipped script ===
+exit=0
+ok    untouched
+ok    clobber_in_place
+ok    clobber_cannot_be_allow_listed
+ok    rename_is_a_move
+ok    move_below_threshold_is_a_loss
+ok    unrecorded_deletion_fails
+ok    recorded_deletion_passes
+ok    removed_deletion_with_no_allow_list
+ok    stale_entry_fails
+ok    committed_replacement_survives_a_degenerate_range
+ok    shrunk_still_fails
+ok    allow_list_without_reason_fails
+ok    move_min_override
+ok    death_is_announced
+ok    killed_counter_is_announced
+ok    unreadable_at_ref_is_announced
+ok    empty_listing_is_refused
+17/17 l10n-guard cases passed
+
+=== mutation M1-comment-out-the-err-trap ===
+failing cases: ['FAIL  death_is_announced', 'FAIL  killed_counter_is_announced', 'FAIL  unreadable_at_ref_is_announced']
+exit=1
+ok    untouched
+ok    clobber_in_place
+ok    clobber_cannot_be_allow_listed
+ok    rename_is_a_move
+ok    move_below_threshold_is_a_loss
+ok    unrecorded_deletion_fails
+ok    recorded_deletion_passes
+ok    removed_deletion_with_no_allow_list
+ok    stale_entry_fails
+ok    committed_replacement_survives_a_degenerate_range
+ok    shrunk_still_fails
+ok    allow_list_without_reason_fails
+ok    move_min_override
+FAIL  death_is_announced
+FAIL  killed_counter_is_announced
+FAIL  unreadable_at_ref_is_announced
+ok    empty_listing_is_refused
+14/17 l10n-guard cases passed
+
+=== mutation M2-ignore-the-listing-exit-status ===
+failing cases: ['FAIL  death_is_announced']
+exit=1
+ok    untouched
+ok    clobber_in_place
+ok    clobber_cannot_be_allow_listed
+ok    rename_is_a_move
+ok    move_below_threshold_is_a_loss
+ok    unrecorded_deletion_fails
+ok    recorded_deletion_passes
+ok    removed_deletion_with_no_allow_list
+ok    stale_entry_fails
+ok    committed_replacement_survives_a_degenerate_range
+ok    shrunk_still_fails
+ok    allow_list_without_reason_fails
+ok    move_min_override
+FAIL  death_is_announced
+ok    killed_counter_is_announced
+ok    unreadable_at_ref_is_announced
+ok    empty_listing_is_refused
+16/17 l10n-guard cases passed
+
+=== mutation M3-delete-the-rg-exit-status-check ===
+failing cases: ['FAIL  killed_counter_is_announced']
+exit=1
+ok    untouched
+ok    clobber_in_place
+ok    clobber_cannot_be_allow_listed
+ok    rename_is_a_move
+ok    move_below_threshold_is_a_loss
+ok    unrecorded_deletion_fails
+ok    recorded_deletion_passes
+ok    removed_deletion_with_no_allow_list
+ok    stale_entry_fails
+ok    committed_replacement_survives_a_degenerate_range
+ok    shrunk_still_fails
+ok    allow_list_without_reason_fails
+ok    move_min_override
+ok    death_is_announced
+FAIL  killed_counter_is_announced
+ok    unreadable_at_ref_is_announced
+ok    empty_listing_is_refused
+16/17 l10n-guard cases passed
+
+=== mutation M4-delete-the-git-show-read-check ===
+failing cases: ['FAIL  unreadable_at_ref_is_announced']
+exit=1
+ok    untouched
+ok    clobber_in_place
+ok    clobber_cannot_be_allow_listed
+ok    rename_is_a_move
+ok    move_below_threshold_is_a_loss
+ok    unrecorded_deletion_fails
+ok    recorded_deletion_passes
+ok    removed_deletion_with_no_allow_list
+ok    stale_entry_fails
+ok    committed_replacement_survives_a_degenerate_range
+ok    shrunk_still_fails
+ok    allow_list_without_reason_fails
+ok    move_min_override
+ok    death_is_announced
+ok    killed_counter_is_announced
+FAIL  unreadable_at_ref_is_announced
+ok    empty_listing_is_refused
+16/17 l10n-guard cases passed
+
+=== mutation M5-accept-an-empty-side ===
+failing cases: ['FAIL  empty_listing_is_refused']
+exit=1
+ok    untouched
+ok    clobber_in_place
+ok    clobber_cannot_be_allow_listed
+ok    rename_is_a_move
+ok    move_below_threshold_is_a_loss
+ok    unrecorded_deletion_fails
+ok    recorded_deletion_passes
+ok    removed_deletion_with_no_allow_list
+ok    stale_entry_fails
+ok    committed_replacement_survives_a_degenerate_range
+ok    shrunk_still_fails
+ok    allow_list_without_reason_fails
+ok    move_min_override
+ok    death_is_announced
+ok    killed_counter_is_announced
+ok    unreadable_at_ref_is_announced
+FAIL  empty_listing_is_refused
+16/17 l10n-guard cases passed
+
+-------------------------------------------------------------------------------
+§6 真实树与既有范围形状复验
+-------------------------------------------------------------------------------
+
+    $ bash scripts/l10n-guard.sh                      # HEAD vs WORKTREE
+      before Han files:  395 / after Han files:  395
+      moved 0  removed-recorded 0  regressed 0  stale-allowlist 0  shrunk 0  fortress-breach 0
+      OK — L10n Guard: PASS      (exit 0)
+
+    $ bash scripts/l10n-guard.sh --before HEAD --after HEAD
+      OK — L10n Guard: PASS      (exit 0)
+
+同轮：`bash -n scripts/l10n-guard.sh`、`bash -n scripts/verify-in-docker.sh` 通过；
+`python3 scripts/ci/check-script-portability.py` OK(23)；`check-workflow-shells.py` OK。
+Docker 侧门禁复现见 §2（395/395、0 broken links、0 English prose lines、gate exit=0）。
+
+`verify-in-docker.sh` 另加一条 preflight：镜像构建后先确认容器里的 git 真能打开 /src，
+不能就整轮直接退出并说明要检查 bind mount 与 `GIT_CONFIG_*`。否则同类接线漂移的表现
+仍然是「十几个门禁一起红，没人说为什么」。`docs localization` 这条也补上了与其它 git
+门禁相同的 `bootstrap` 前缀——「门禁清单不一致」正是本次事故的成因，全局 env 与逐条前缀
+少任何一处都还会红，只是红得更晚。
+
+-------------------------------------------------------------------------------
+§7 边界
+-------------------------------------------------------------------------------
+
+- §1 那次运行的直接死因是 §2 的容器 git 所有权问题，已复现并修掉；同一轮里没有第二个
+  失败原因（其余 15 个门禁全绿）。
+- ERR trap 只负责把「没有结论」变成有位置、有命令名的一条错误；它不改变判定逻辑，
+  也不改变通过条件。真正的 fail-closed 是 §3 那四处。
+- `check-doc-l10n.py` 的 `--links` 也会 `git ls-tree`（本仓库内 line ~933），所以它
+  同样依赖 §2 的全局 trust；该门禁现在的 `--links`/`--english` 两步在容器里都是 0。
+- 没有把 `safe.directory` 设成 `*`：只信任 `/src` 这一个明确路径。
