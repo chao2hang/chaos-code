@@ -65,6 +65,14 @@ xai-tool-protocol = { workspace = true }
 xai-tool-runtime = { workspace = true }
 xai-tool-types = { workspace = true }
 
+# Wire-level MCP peer for `tests/real_mcp_server_e2e.rs`: a second OS process
+# that really speaks JSON-RPC over stdio, so the test drives the shipped client
+# instead of a mock inside the test process. `CARGO_BIN_EXE_mock-mcp-server`
+# makes its path available to the integration test. Not a shipped binary.
+[[bin]]
+name = "mock-mcp-server"
+path = "src/bin/mock-mcp-server.rs"
+
 [target.'cfg(unix)'.dependencies]
 libc = { workspace = true }
 
