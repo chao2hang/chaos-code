@@ -12,7 +12,11 @@ permissions:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Only supersede a pull request. Cancelling an in-flight main push throws
+  # away the only full-run evidence for that commit: `platform-tests` has
+  # `needs: rust` and starts last, so a rapid push sequence leaves it cancelled
+  # and never produces a macOS/Windows result at all.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -179,6 +183,22 @@ jobs:
             -p xai-grok-update \
             -p xai-grok-tools \
             -p xai-grok-pager-bin
+
+      # Job logs need repository admin rights, but check-run annotations are
+      # public. Reporting which tools actually landed on PATH is enough to tell
+      # a broken setup step from a broken test run without log access.
+      - name: Report failure environment
+        if: failure()
+        shell: bash
+        run: |
+          set +u
+          echo "::error::os=${RUNNER_OS} arch=${RUNNER_ARCH}"
+          for tool in rustc cargo rustup protoc; do
+            echo "::error::${tool}: $(command -v "${tool}" || echo 'not on PATH')"
+          done
+          echo "::error::rustc: $(rustc -V 2>&1 | head -1)"
+          echo "::error::cargo: $(cargo -V 2>&1 | head -1)"
+          echo "::error::protoc: $(protoc --version 2>&1 | head -1)"
 
   # Local hooks are opt-in per clone (scripts/install-hooks.sh), so this job is
   # what actually enforces the rule. e9d8fa9 pushed 24 environment dumps with
