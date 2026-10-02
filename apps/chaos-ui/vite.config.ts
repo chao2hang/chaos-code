@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite'
+import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 
 const backendPort = process.env.CHAOS_E2E_BACKEND_PORT || 8787
@@ -37,5 +37,12 @@ export default defineConfig({
         },
       },
     },
+  },
+  test: {
+    // Vitest's default pattern also matches the root-level `node:test` files
+    // (perf-benchmark.test.mjs). Importing one under Vitest runs its suites as
+    // a side effect and then reports "No test suite found", which fails
+    // `npm test`. Those files belong to `npm run test:perf`.
+    include: ['src/**/*.test.ts'],
   },
 })
