@@ -1,0 +1,138 @@
+# Reproduce: scripts/verify-release-signature.sh --tag v0.4.2 --all
+# Host: Ubuntu 22.04 x86_64; needs `gh` (to read the release's public-key variable) and network to github.com.
+# Commit under test: the commit that adds this script and this transcript together (previous HEAD 88903bf7).
+# Scope: whether the signature the auto-updater checks before activating a build actually accepts a real published release.
+
+== why this was not already known
+
+`signature::public_key()` resolves `CHAOS_SIGNING_PUBLIC_KEY` through `option_env!`, so
+the trusted key is fixed when the crate is compiled and a test build can only ever carry
+the all-zero placeholder. The suite therefore had good coverage of the refusal side --
+wrong key, wrong length, malformed base64, missing sidecar, tampered binary -- and no way
+at all to exercise the accept side. That left the question "does a real release pass the
+real verifier?" answered only by whether a user's upgrade worked.
+
+It is answerable without any private key. The trusted key is a repository *variable*
+(`gh variable list` shows it in clear text; it is the key every installed binary already
+trusts, so reading it reveals nothing about the private half), and release `v0.4.2`
+publishes `chaos-<platform>`, `chaos-<platform>.sig` and `SHA256SUMS`. So the real bytes,
+the real sidecar and the real key can all be put in front of
+`xai_grok_update::signature::verify_file` -- the shipped function, not a re-implementation.
+
+== the run
+
+Reproduce with: `scripts/verify-release-signature.sh --tag v0.4.2` (one asset) and
+`scripts/verify-release-signature.sh --tag v0.4.2 --all` (every asset in `SHA256SUMS`).
+
+Single asset (`chaos-linux-x64`), 7 checks:
+
+  == published digest
+     ok  the artifact matches the published SHA256SUMS (0ee7d6ee3c92159d2b013c7d081cf2cc265d2d59a808ebb0fb9f2554a7b4bfa2)
+     ok  every published artifact in v0.4.2 has a .sig sidecar
+
+  == build the updater example with the release key
+     ok  the example built against the configured key
+
+  == verify the real signature
+     ok  the key the release used is the key this build embeds
+     ok  xai_grok_update::signature::verify_file accepted the real v0.4.2 sidecar
+     ok  the same verifier refuses the same artifact with one byte flipped
+
+  == a build with no key
+     ok  without a compiled-in key the build refuses instead of trusting the download
+
+  all 7 check(s) passed
+
+All six assets, 16 checks. Same digest check per asset plus the shared controls:
+
+  == verify the real signature
+     ok  chaos-darwin-arm64 matches its published digest
+     ok  xai_grok_update::signature::verify_file accepted the real sidecar for chaos-darwin-arm64
+     ok  chaos-darwin-x64 matches its published digest
+     ok  xai_grok_update::signature::verify_file accepted the real sidecar for chaos-darwin-x64
+     ok  chaos-linux-arm64 matches its published digest
+     ok  xai_grok_update::signature::verify_file accepted the real sidecar for chaos-linux-arm64
+     ok  chaos-linux-x64 matches its published digest
+     ok  xai_grok_update::signature::verify_file accepted the real sidecar for chaos-linux-x64
+     ok  chaos-win32-arm64.exe matches its published digest
+     ok  xai_grok_update::signature::verify_file accepted the real sidecar for chaos-win32-arm64.exe
+     ok  chaos-win32-x64.exe matches its published digest
+     ok  xai_grok_update::signature::verify_file accepted the real sidecar for chaos-win32-x64.exe
+     ok  the same verifier refuses the same artifact with one byte flipped
+
+  == a build with no key
+     ok  without a compiled-in key the build refuses instead of trusting the download
+
+  all 16 check(s) passed
+
+Every published artifact for `v0.4.2` -- including the two Windows `.exe` assets and both
+Darwin assets -- verifies under the repository's public key with the shipped verifier, and
+one flipped byte in the artifact is refused. The tamper control and the unkeyed-build
+control run once, on the Linux x86_64 asset, not per asset.
+
+The artifact is 161,233,728 bytes; `SHA256SUMS` lists six artifacts
+(`chaos-darwin-arm64`, `chaos-darwin-x64`, `chaos-linux-arm64`, `chaos-linux-x64`,
+`chaos-win32-arm64.exe`, `chaos-win32-x64.exe`) and the release carries a `.sig` for each.
+
+== why the tamper control is in the same run as the success
+
+`verify=ok` on its own is also what a verifier that accepts everything prints. Flipping
+one byte in the middle of the same 161 MB artifact and getting
+
+  verify[tampered]=refused: signature verification failed
+
+is what distinguishes a working check from one that always says yes. Both outcomes come
+from the same binary in the same invocation.
+
+== why the unkeyed build matters, and the build.rs this added
+
+The third check drops `CHAOS_SIGNING_PUBLIC_KEY`, rebuilds, and requires the result to
+refuse with `public_key=absent` rather than report the signature as valid. Writing it
+surfaced a hazard worth fixing in the product rather than around in the script: Cargo
+tracks no environment variables unless a build script names them, so a rebuild after
+changing `CHAOS_SIGNING_PUBLIC_KEY` can relink nothing and silently keep whichever key
+the previous build embedded. `crates/codegen/xai-grok-update/build.rs` now emits
+
+  cargo:rerun-if-env-changed=CHAOS_SIGNING_PUBLIC_KEY
+
+and `signature::tests::the_build_script_makes_the_embedded_key_rebuild` asserts the
+directive stays there. This run is the first time that sequence was exercised; nothing
+was observed to have gone wrong before the fix, so this closes a hazard rather than
+reporting a defect.
+
+The module doc in `signature.rs` also referenced a `PUBLIC_KEY` constant that the code
+long ago renamed to a `public_key()` function; that link is fixed.
+
+== two assertions in the script that were wrong, and how they were caught
+
+Recorded because both were plausible and both would have made this document lie if the
+script had not actually been run.
+
+- "every published artifact has a sidecar" first counted `.sig` lines inside
+  `SHA256SUMS`. They are not there -- `SHA256SUMS` lists the six artifacts only, and the
+  signatures are separate assets. The check now reads the release's asset list from the
+  GitHub API. As written it reported "0 sidecars for 6 artifacts", i.e. it would have
+  failed a healthy release.
+- The tamper control read the example's exit status backwards: exit 0 with `--tamper`
+  means "accepted the real one, refused the corrupt one", which is the pass. The first
+  run therefore printed "a one-byte-corrupted artifact was accepted" against a verifier
+  that had in fact done exactly the right thing. It now parses the two result lines.
+
+== what this file is NOT evidence about
+
+- That the private key is held safely, or that only the release workflow can use it. The
+  private half was never read here and cannot be from a repository variable.
+- That the Darwin and Windows binaries *run* on those systems. All six assets were fetched
+  and their signatures checked -- a signature is over bytes, so this needs no target OS --
+  but only the Linux x86_64 binary could be executed here, and none of the five others
+  were. Behaviour on macOS/Windows still comes from CI and from the user's own machines.
+- The `chaos update` code path end to end against GitHub. This calls `verify_file` on
+  downloaded bytes; it does not run `run_update` with `CHAOS_REQUIRE_SIG=1` pointed at
+  the real feed. That path, including the `.exe` rename on Windows, is covered against a
+  loopback feed by `tests/test_update_feed_e2e.rs` (see
+  `docs/verification/updater-feed-e2e-2026-10-02.log`), and only against that feed.
+- Which release npm serves, or whether the installers verify correctly. Those are separate
+  claims with their own runs: `docs/verification/npm-install-linux-2026-10-02.log` and
+  `docs/verification/install-sh-linux-2026-10-02.log`.
+- v0.4.2 is the newest published release; the repository is ahead of it. A future release
+  has to be checked by re-running the script against its own tag.

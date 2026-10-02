@@ -462,3 +462,9 @@ jobs:
           # bare "command not found" on a contributor's machine.
           python3 scripts/ci/check-script-portability.py
           python3 scripts/ci/test-script-portability.py
+          # The release version lives in the npm meta package, and four other
+          # places have to equal it (six platform packages, the pins, the two
+          # crates that build the binary, the CHANGELOG section). A drift only
+          # surfaces after a tag is public: the updater compares a --version
+          # string from one file against a feed built from another.
+          python3 scripts/ci/check-version-lockstep.py

@@ -226,6 +226,133 @@ chain and checks the handshake, the credential, the declared-name rules, a real
 the backend is unreachable from anywhere but the proxy. It is a deployment-shape
 check on Linux; it is not a certificate-authority, CDN or multi-tenant review.
 
+## Auto-update tests
+
+`cargo test -p xai-grok-update` runs the whole updater against fake feeds it starts
+itself, so it needs no network and no GitHub token. Two things about it surprise people:
+
+- `tests/test_update_feed_e2e.rs` drives the shipped `run_update`, the same entry point
+  `chaos update` reaches, with `CHAOS_GH_API_BASE` pointed at a wiremock server and
+  `CHAOS_GH_DOWNLOAD_BASE` at a raw HTTP server that can cut a transfer mid-body
+  (`tests/common/artifact_server.rs`). The artifacts it installs are `/bin/sh` scripts
+  that append to a marker file, so "was this build actually executed" is a fact about a
+  file rather than about a log line. Each test calls `assert_feed_is_loopback()` before
+  updating: an earlier draft released its mock guard early, cleared the override, and
+  installed a real release off github.com. If you touch that file, keep that assertion.
+- The tests mutate process environment (`GROK_HOME`, the two feed overrides,
+  `CHAOS_REQUIRE_SIG`), so they are `#[serial]`. `tests/common/mod.rs::reset_home()`
+  removes `CHAOS_GH_API_BASE` and `CHAOS_GH_DOWNLOAD_BASE` on purpose — a guard dropped
+  late would otherwise re-point the next test at a dead server.
+
+`chaos update` verifies a `.sig` sidecar against a public key that is fixed at build
+time, so no in-tree test can produce a signature its own build accepts. What the suite
+can prove is the refusal half; the accept half has to run against a real published
+release, which is what `scripts/verify-release-signature.sh` does.
+
+## Release versioning
+
+One number is the release version, and it lives in
+`crates/codegen/xai-grok-pager/npm/chaos/package.json`. `release.yml`'s
+`resolve-version` step reads it when the dispatch form left the version blank, so that
+file decides the tag, the `GROK_VERSION` stamped into the binaries, and the npm versions
+`scripts/ci/stamp-npm-version.mjs` writes.
+
+Everything a user can hold has to carry that same number:
+
+- the six `npm/chaos-<platform>/package.json` files and the meta package's
+  `optionalDependencies` pins, because a pin npm cannot resolve makes
+  `npm install chaos-code` succeed with no binary inside;
+- `xai-grok-pager` and `xai-grok-pager-bin`, because those two crates build the binary
+  whose `chaos --version` output the auto-updater compares against a release feed;
+- a `## <version>` section in `CHANGELOG.md`, so a tag is never cut for a version this
+  repository does not describe.
+
+`scripts/ci/check-version-lockstep.py` checks all of that and runs in CI.
+
+Four crates deliberately do **not** follow the release version, and the check fails if
+this list and that paragraph drift apart: `xai-grok-web` and `xai-grok-desktop` are
+versioned by their own bundles, `chaos-engine` is versioned by the protocol it speaks,
+and `xai-grok-update` still carries the numbering it inherited from upstream. None of
+them publishes an artifact of its own, so nothing a user installs reads their version.
+Bumping one of them to match the release version is not a fix and the check will not ask
+for it.
+
+With `--published` the same script also asks npm registry what it serves for the seven
+names. That half is opt-in because it needs network; run it before a release. It reports a
+name whose published versions are merely behind the repository as a note (normal between
+releases), and fails on a name npm holds as a security placeholder, which publishing does
+not fix — see the npm row under `## Running the installers the way a user does`.
+
+## Checking a published release
+
+`scripts/verify-release-signature.sh` downloads the artifact, the `.sig` sidecar and
+`SHA256SUMS` from a published release, recomputes the digest, and runs
+`xai_grok_update::signature::verify_file` — the shipped verifier — over the real bytes.
+
+```sh
+scripts/verify-release-signature.sh                 # latest release, host platform
+scripts/verify-release-signature.sh --tag v0.4.2    # a specific release
+scripts/verify-release-signature.sh --tag v0.4.2 --all   # every artifact in SHA256SUMS
+```
+
+It needs `curl` and `gh` (the trusted key is a repository *variable*, so `gh variable
+get` reads it in plain text; nothing secret is involved) and it downloads a
+hundred-ish megabyte artifact into a temp directory. It also checks two things that make
+the first check worth anything: a one-byte corruption of the same artifact must be
+refused, and a build given no key must refuse rather than accept.
+
+Because the key is baked in by `option_env!`, `crates/codegen/xai-grok-update/build.rs`
+declares `cargo:rerun-if-env-changed=CHAOS_SIGNING_PUBLIC_KEY`. Without it, rebuilding
+after changing that variable relinks nothing and silently keeps whichever key the
+previous build embedded. The script's third check is what notices if that directive is
+ever removed.
+
+Key generation, the exact secret and variable names, who can sign, and what rotating the
+pair does to already-installed binaries is in [docs/release-signing.md](docs/release-signing.md).
+
+## Running the installers the way a user does
+
+The release path has three halves, and the last two are only checkable by installing.
+
+`scripts/install-sh-in-docker.sh` copies the working-tree `install.sh` into a stock
+`debian:bookworm-slim` container whose only packages are `curl`, `python3` and
+`python3-cryptography` — no cargo, no repo, no prior install — and runs it against the
+real published release. It asserts the parts that are easy to fake: that the checksum and
+signature checks both reported OK rather than silently skipped, that `bin/chaos` is a
+*relative* symlink (so it survives a bind mount that remaps `$HOME`), that the stored
+artifact uses the `linux-x86_64` name `chaos update` expects rather than the
+`chaos-linux-x64` asset name, and that a second run is a no-op. Two controls keep the
+signature line honest: a valid-but-foreign key must refuse and leave the installed
+artifact byte-identical, and a present-but-blank key must refuse *before* the download
+starts.
+
+`scripts/npm-install-in-docker.sh` does the same for `npm install -g chaos-code`, in a
+stock `node` image, and asserts the container's own registry is
+`https://registry.npmjs.org/` — this host's npm points at a mirror, so a host-side run
+would have tested the mirror. Because npm filters optional dependencies by platform,
+`npm install --os=win32 --cpu=x64` asks the Windows question from Linux: the two Windows
+platform packages are pinned to a version that has never been published under those names,
+npm skips what it cannot resolve, and the install reports success with no binary. The
+script fails on exactly that and says which pins are missing.
+
+Both scripts download a hundred-ish megabyte artifact; `install-sh-in-docker.sh
+--skip-wrong-key` trades the foreign-key control for one fewer download.
+
+### Why the installers embed the signing key
+
+`install.sh`, `install.ps1` and `install.bat` verify the signature and fail closed when
+they cannot, and they used to take the key *only* from `CHAOS_SIGNING_PUBLIC_KEY` — which
+no documented install command sets, so `curl -fsSL .../install.sh | bash` could not
+complete an install on any machine. Each installer now ships the public key as
+`DEFAULT_SIGNING_PUBLIC_KEY` / `$DefaultSigningPublicKey`, overridable by that environment
+variable for anyone signing their own releases. Setting the variable to an empty string is
+still an error, which keeps the fail-closed branch reachable and testable.
+
+`scripts/ci/test-installer-signature-policy.py` checks that all three installers embed the
+same 32-byte key and that the key plus the crypto prerequisites are resolved *before* the
+download, since the artifact is 150 MB+. `install-sh-in-docker.sh` additionally checks the
+embedded value against the `CHAOS_SIGNING_PUBLIC_KEY` repository variable.
+
 ## Upstream reconnaissance
 
 `scripts/upstream-recon.sh` records how far the ported `SOURCE_REV` has fallen

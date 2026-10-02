@@ -1,5 +1,81 @@
 # Changelog
 
+## Unreleased
+
+### 修复：`install.sh` 从未真正比对 SHA256SUMS
+
+`install.sh` 里 `verify_checksum()` 定义了、但**没有任何调用点**：`curl | bash`
+传完 100–150MB 之后不会去取 release 的 `SHA256SUMS`，直接就安装。函数里每一条错误
+（mismatch、缺条目、取不到 sums）都不可达，而它上方的注释写的是相反的行为。
+`install.ps1` 与 `install.bat` 是内联实现，两者都真的执行了比对，只有 sh 版本漏了。
+
+这条是 `scripts/install-sh-in-docker.sh` 在干净 Debian 容器里跑真实 release 时报出来的
+（断言里包含「必须出现 `checksum OK`，而不是被静默跳过」）。现在 `verify_checksum` 在
+`verify_signature` 之前调用，两者都在 `chmod +x` 之前；
+`scripts/ci/test-installer-signature-policy.py` 加了结构性断言把这类缺陷钉住：两个检查
+都必须有顶层调用点、顺序正确、且早于产物被赋予执行权限。
+
+### 修复：文档里的安装命令原本装不完
+
+`install.sh` / `install.ps1` / `install.bat` 验签所需的公钥此前**只**来自
+`CHAOS_SIGNING_PUBLIC_KEY` 环境变量，而三处验签都是 fail closed。README 头条的
+`curl -fsSL https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.sh | bash`
+不会设置这个变量，因此这条被文档推荐的命令在任何干净机器上都无法完成安装——用户要先等
+100–150MB 传完，才看到一句「缺少 CHAOS_SIGNING_PUBLIC_KEY」。
+
+- 三个安装脚本现在内置同一把发布公钥（`DEFAULT_SIGNING_PUBLIC_KEY` /
+  `$DefaultSigningPublicKey`），`CHAOS_SIGNING_PUBLIC_KEY` 仍可覆盖，供自行签名的 fork 使用。
+  公钥本就是公开信息（同一值已在公开 repo variable 中），签名依赖的是只存在于 Actions
+  secret 的私钥半边。显式把该变量设为空字符串仍按错误处理，以保证 fail-closed 分支可达。
+- 公钥与 `python3` + `cryptography` 的检查移到**下载开始之前**：无法验签的安装应当立刻失败。
+- 新增 `scripts/ci/test-installer-signature-policy.py` 断言：三端内置同一把 32 字节公钥、
+  且前置检查排在下载之前。
+- 新增 `scripts/install-sh-in-docker.sh`：在 stock Debian 容器里按 README 那条命令真实安装
+  真实 release，并验证「外来公钥被拒且不动已装产物」「空白公钥在下载前即失败」两个反向对照。
+- 新增 `scripts/verify-release-signature.sh`（配 `xai-grok-update` 的
+  `verify_release_artifact` example）：用 shipped 的 `signature::verify_file` 校验真实发布产物。
+  `--tag v0.4.2 --all` 下六个产物（含两个 Windows `.exe`）全部接受，翻转一字节即拒收。
+- 新增 `crates/codegen/xai-grok-update/build.rs`：公钥经 `option_env!` 编译期注入，而 Cargo
+  默认不跟踪环境变量，改公钥后重新构建可能静默沿用旧公钥；现由
+  `cargo:rerun-if-env-changed=CHAOS_SIGNING_PUBLIC_KEY` 固定。
+- 自动更新下载现在校验字节数（`check_complete_body` 与 range 字节数检查）。此前截断的
+  响应体可被当成完整产物继续安装，`set_len` 预分配还会在短读的 range 请求里留下静默零洞。
+
+### npm
+
+- Windows 平台包名仍被 npm 的 `0.0.1-security` 占位，元包 pin 的版本从未存在，而 npm 对
+  不可解析的 optional 依赖是静默跳过：Windows 上 `npm install -g chaos-code` 会成功，
+  但每次执行 `chaos` 都失败。新增 `scripts/npm-install-in-docker.sh` 用
+  `npm install --os=win32 --cpu=x64` 从 Linux 复现并报出该状态。
+- 启动器在缺少平台二进制时的提示改为点名 pin 的版本并给出 `npm view <pkg> versions`；
+  原文案只提 `--no-optional` 与「平台不支持」，两种都不是此处真因。
+
+### 发布流程与版本
+
+- 版本的唯一可信源是 npm meta 包 `crates/codegen/xai-grok-pager/npm/chaos/package.json`。
+  必须与它相等的集合——六个 `chaos-code-<platform>` 包版本、meta 里对应的
+  `optionalDependencies` pin、构建二进制的 `xai-grok-pager` + `xai-grok-pager-bin`、
+  以及本文件的 `## <version>` 段落——现由 `scripts/ci/check-version-lockstep.py` 逐项比回
+  该文件，并挂在 `ci.yml` 的 `workflows-present` 上；`--published`（需网络，非门禁）另比
+  npm 上真实存在的版本。规则与四个独立版本 crate 的原因写在 `CONTRIBUTING.md`
+  「Release versioning」。漂移之所以危险：更新器拿一个文件里的 `--version` 字符串去比
+  另一个文件生成的 feed，公开标签之后才暴露。
+- 新增 `docs/release-signing.md`（签名 runbook）：六个被签产物与 `.sig` 格式、私钥所在
+  secret 与公钥所在 variable 的确切名称、跨 cryptography 版本可用的密钥生成片段、谁能签、
+  以及轮换的真实后果——公钥经 `option_env!` 编译期固定，一个二进制只认它构建时那把钥匙，
+  无 key id、无并行窗口、无吊销，因此跨轮换边界的 `chaos update` 必然拒签。
+- `scripts/verify-release-signature.sh --tag v0.4.2 --all` 的 16 项实测记录归档在
+  `docs/verification/release-signature-v0.4.2-2026-10-02.log`。
+
+### 工程
+
+- `xai-test-utils` 的 git 辅助函数禁用 `maintenance.auto` 与 `gc.auto`：`git commit` 会
+  detach 一个后台维护子进程，它创建 `.git/objects/maintenance.lock` 并在结束时删除，
+  于是拷贝 `.git` 的 fixture 与它竞态——lock 出现在目录列表里、被打开时已消失。CI 上
+  `xai-fast-worktree` 的 snapshot 用例因此随机 `os error 2` 失败，而 rust job 一红，
+  macOS/Windows 两条 platform leg 直接报 skipped，这才是它们至今没跑出证据的原因。
+  容器内（git 2.55.0，与 runner 同版本）改前 12 次跑挂 2 次、改后 30 次跑 0 挂。
+
 ## 0.4.2 — 2026-09-23
 
 本版本修复发布流水线与 npm 发布安全性，并默认将 npm 发布与 GitHub Release 解耦；功能内容延续 0.4.1。
