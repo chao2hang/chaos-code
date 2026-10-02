@@ -14,6 +14,21 @@ fn test_cwd() -> &'static std::path::Path {
     std::path::Path::new("/test/session")
 }
 
+/// Makes the theme deterministic for the whole test and holds the theme cache's
+/// test lock while it runs.
+///
+/// Two things here are process-global and other tests in this binary change them:
+/// the active theme (including the terminal-native cap, under which
+/// `Theme::current()` deliberately answers with the no-color theme) and the
+/// terminal's color level. A test that reads `Theme::current()` and then compares
+/// rendered cells against it is only meaningful if both stay put between the read
+/// and the render — otherwise the two halves are resolved under different rules
+/// and no cell can match. Pinning also stops the ambient environment (`NO_COLOR`,
+/// `TERM`) from silently turning the color assertions into no-ops.
+fn theme_guard() -> std::sync::MutexGuard<'static, ()> {
+    xai_grok_pager::theme::cache::pin_theme()
+}
+
 fn finalized(text: &str) -> ScrollbackEntry {
     ScrollbackEntry::new(RenderBlock::stub(text, Color::Blue))
 }
@@ -555,6 +570,7 @@ fn assert_committed_fits_entry(label: &str, entry: &ScrollbackEntry, width: u16)
 fn committed_block_uses_owning_session_cwd_for_tool_paths() {
     use ratatui::buffer::Buffer;
 
+    let _theme_guard = theme_guard();
     let cwd = std::path::Path::new("/alternate/worktree");
     let mut entry =
         ScrollbackEntry::new(RenderBlock::edit("/alternate/worktree/src/main.rs", None));
@@ -721,6 +737,7 @@ fn large_commit_is_capped_with_footer() {
     use ratatui::buffer::Buffer;
     use ratatui::layout::Rect;
 
+    let _theme_guard = theme_guard();
     let theme = Theme::current();
     let appearance = committed_appearance(&AppearanceConfig::default());
     // A tall block: a fenced code block keeps each line on its own row (markdown would otherwise join soft-wrapped prose into one paragraph)
@@ -760,6 +777,7 @@ fn small_commit_is_not_capped() {
     use ratatui::buffer::Buffer;
     use ratatui::layout::Rect;
 
+    let _theme_guard = theme_guard();
     let theme = Theme::current();
     let appearance = committed_appearance(&AppearanceConfig::default());
     let mut entry = ScrollbackEntry::new(RenderBlock::agent_message("one short line"));
@@ -792,6 +810,7 @@ fn committed_edit_keeps_diff_line_backgrounds() {
     use ratatui::layout::Rect;
     use similar::ChangeTag;
 
+    let _theme_guard = theme_guard();
     let hunk = vec![
         DiffLine {
             text: "let x = 1;\n".into(),
@@ -821,6 +840,14 @@ fn committed_edit_keeps_diff_line_backgrounds() {
     let block = RenderBlock::edit_with_hunks("src/main.rs", vec![hunk]);
     let mut entry = ScrollbackEntry::new(block);
     let theme = Theme::current();
+    // Guards the assertions below: `diff_insert_bg` is `Reset` in the no-color theme,
+    // and comparing rendered cells against `Reset` would pass on a buffer painted
+    // with nothing at all.
+    assert_ne!(
+        theme.diff_insert_bg,
+        Color::Reset,
+        "the pinned theme must carry a real insert background"
+    );
     let appearance = committed_appearance(&AppearanceConfig::default());
     entry.set_display_mode(minimal_commit_display_mode(&entry.block, &appearance));
     let renderer = minimal_renderer(&entry, &theme, appearance, test_cwd(), COMMITTED_TICK);
@@ -835,21 +862,38 @@ fn committed_edit_keeps_diff_line_backgrounds() {
     // Otherwise an added / removed line is indistinguishable from context
     let mut saw_insert = false;
     let mut saw_delete = false;
+    let mut painted: Vec<Color> = Vec::new();
     for y in 0..h {
         for x in 0..width {
             if let Some(cell) = buf.cell((x, y)) {
                 saw_insert |= cell.bg == theme.diff_insert_bg;
                 saw_delete |= cell.bg == theme.diff_delete_bg;
+                if !painted.contains(&cell.bg) {
+                    painted.push(cell.bg);
+                }
             }
         }
     }
+    // A failure here has historically meant the theme and the render were resolved
+    // under different rules, so say which rules were in force and what was painted.
+    let conditions = format!(
+        "theme {:?}, color level {:?}, terminal-native lock {}",
+        Theme::current_kind(),
+        xai_grok_pager::theme::color_support::get(),
+        xai_grok_pager::theme::cache::terminal_native_locked(),
+    );
+    let painted: Vec<String> = painted.iter().map(|c| format!("{c:?}")).collect();
     assert!(
         saw_insert,
-        "committed edit lost the insert (green) diff background"
+        "committed edit lost the insert (green) diff background: wanted {:?}, \
+         the buffer only had {painted:?} ({conditions})",
+        theme.diff_insert_bg,
     );
     assert!(
         saw_delete,
-        "committed edit lost the delete (red) diff background"
+        "committed edit lost the delete (red) diff background: wanted {:?}, \
+         the buffer only had {painted:?} ({conditions})",
+        theme.diff_delete_bg,
     );
 }
 
@@ -857,6 +901,7 @@ fn committed_edit_keeps_diff_line_backgrounds() {
 /// One column is the whole cost of the rail, which is why restoring it is height-safe.
 #[test]
 fn only_thinking_spends_the_accent_column() {
+    let _theme_guard = theme_guard();
     let theme = Theme::current();
     let appearance = committed_appearance(&AppearanceConfig::default());
     let chrome = |entry: &ScrollbackEntry| {
@@ -1097,6 +1142,7 @@ fn collapsed_thinking_commit_is_one_advertised_row() {
     use ratatui::buffer::Buffer;
     use ratatui::layout::Rect;
 
+    let _theme_guard = theme_guard();
     minimal_api::set_show_thinking_blocks(true);
     let theme = Theme::current();
     let appearance = committed_appearance(&AppearanceConfig::default());
