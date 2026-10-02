@@ -5548,9 +5548,9 @@ fn env_var_force_disables() {
     // SAFETY: the test temporarily mutates a process-wide env var.
     // `serial_test`'s lock ensures no other test marked with the
     // same `GROK_AGENT_DASHBOARD` key reads it concurrently.
-    unsafe { std::env::set_var("GROK_AGENT_DASHBOARD", "0") };
+        xai_grok_test_support::env::set_var("GROK_AGENT_DASHBOARD", "0");
     assert!(!super::super::dashboard_enabled());
-    unsafe { std::env::remove_var("GROK_AGENT_DASHBOARD") };
+        xai_grok_test_support::env::remove_var("GROK_AGENT_DASHBOARD");
 }
 
 // ── Location picker ─────────────────────────────────────────────

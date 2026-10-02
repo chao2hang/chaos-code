@@ -944,6 +944,9 @@ pub async fn run(
         ),
     );
     if args.log_sampling {
+        // SAFETY: CLI startup, before any worker thread is spawned. Stays a raw
+        // write because this is production code and the locked writer lives in
+        // the dev-only `xai-grok-test-support` crate.
         unsafe { std::env::set_var("GROK_LOG_SAMPLING", "1") };
     }
     let tracing_handle = crate::tracing::init_tracing();

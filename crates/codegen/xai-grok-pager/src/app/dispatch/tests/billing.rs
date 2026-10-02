@@ -801,7 +801,7 @@ fn manage_billing_gates_on_consumer_billing_surface() {
     let out = std::env::temp_dir().join(format!("grok-manage-billing-{}.txt", std::process::id()));
     let _ = std::fs::remove_file(&out);
     // SAFETY: serialized via `serial_test` so no other test races the env var.
-    unsafe { std::env::set_var("GROK_TEST_OPEN_URL_FILE", &out) };
+    xai_grok_test_support::env::set_var("GROK_TEST_OPEN_URL_FILE", &out);
     let mut app = test_app_with_agent();
     dispatch(Action::ManageBilling, &mut app);
     let opened = std::fs::read_to_string(&out).unwrap_or_default();
@@ -1491,7 +1491,7 @@ fn open_url_shows_manual_url_when_browser_unavailable() {
         std::process::id()
     ));
     // SAFETY: serialized via `serial_test` so no other test races the env var.
-    unsafe { std::env::set_var("GROK_TEST_OPEN_URL_FILE", &bad) };
+    xai_grok_test_support::env::set_var("GROK_TEST_OPEN_URL_FILE", &bad);
 
     let mut app = test_app_with_agent();
     let before = agent_scrollback_len(&app);
@@ -1516,7 +1516,7 @@ fn open_url_shows_manual_url_when_browser_unavailable() {
     assert_eq!(toast, Some("Browser unavailable - URL shown above"));
 
     // SAFETY: serialized via `serial_test`; restore the env for other tests.
-    unsafe { std::env::remove_var("GROK_TEST_OPEN_URL_FILE") };
+    xai_grok_test_support::env::remove_var("GROK_TEST_OPEN_URL_FILE");
 }
 
 /// A successful open (the `GROK_TEST_OPEN_URL_FILE` write succeeds) must not spam a fallback system message.
@@ -1528,7 +1528,7 @@ fn open_url_does_not_show_fallback_when_opener_succeeds() {
         std::env::temp_dir().join(format!("grok-open-url-ok-{}.txt", std::process::id()));
     let _ = std::fs::remove_file(&url_file);
     // SAFETY: serialized via `serial_test`.
-    unsafe { std::env::set_var("GROK_TEST_OPEN_URL_FILE", &url_file) };
+    xai_grok_test_support::env::set_var("GROK_TEST_OPEN_URL_FILE", &url_file);
 
     let mut app = test_app_with_agent();
     let before = agent_scrollback_len(&app);
@@ -1547,7 +1547,7 @@ fn open_url_does_not_show_fallback_when_opener_succeeds() {
     );
 
     // SAFETY: serialized via `serial_test`.
-    unsafe { std::env::remove_var("GROK_TEST_OPEN_URL_FILE") };
+    xai_grok_test_support::env::remove_var("GROK_TEST_OPEN_URL_FILE");
     let _ = std::fs::remove_file(&url_file);
 }
 
@@ -1561,7 +1561,7 @@ fn open_url_welcome_toasts_single_line_url_when_browser_unavailable() {
         std::process::id()
     ));
     // SAFETY: serialized via `serial_test` so no other test races the env var.
-    unsafe { std::env::set_var("GROK_TEST_OPEN_URL_FILE", &bad) };
+    xai_grok_test_support::env::set_var("GROK_TEST_OPEN_URL_FILE", &bad);
 
     let mut app = test_app();
     assert!(
@@ -1604,7 +1604,7 @@ fn open_url_welcome_toasts_single_line_url_when_browser_unavailable() {
     );
 
     // SAFETY: serialized via `serial_test`; restore the env for other tests.
-    unsafe { std::env::remove_var("GROK_TEST_OPEN_URL_FILE") };
+    xai_grok_test_support::env::remove_var("GROK_TEST_OPEN_URL_FILE");
 }
 
 /// Credit-limit upsell Q&A submit routes through OpenUrl; when the browser is unavailable the full option URL must land in scrollback.
@@ -1621,7 +1621,7 @@ fn credit_limit_upsell_submit_shows_url_when_browser_unavailable() {
         std::process::id()
     ));
     // SAFETY: serialized via `serial_test`.
-    unsafe { std::env::set_var("GROK_TEST_OPEN_URL_FILE", &bad) };
+    xai_grok_test_support::env::set_var("GROK_TEST_OPEN_URL_FILE", &bad);
 
     let mut app = test_app_with_agent();
     open_upsell_qa(&mut app, CreditLimitUpsellMode::UnifiedCredits);
@@ -1658,7 +1658,7 @@ fn credit_limit_upsell_submit_shows_url_when_browser_unavailable() {
     );
 
     // SAFETY: serialized via `serial_test`.
-    unsafe { std::env::remove_var("GROK_TEST_OPEN_URL_FILE") };
+    xai_grok_test_support::env::remove_var("GROK_TEST_OPEN_URL_FILE");
 }
 
 #[test]

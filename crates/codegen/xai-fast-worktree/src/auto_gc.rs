@@ -30,6 +30,10 @@ pub const ENV_AUTO_GC_REBUILD: &str = "GROK_WORKTREE_AUTO_GC_REBUILD";
 /// # Safety
 /// `remove_var` is unsound under concurrent environment access. The caller must
 /// hold its env test lock and run no other thread that touches the environment.
+/// This stays `unsafe` (rather than routing through
+/// `xai_grok_test_support::env::remove_var`) because it is exported from the
+/// library, so the shared test-support crate is only a dev-dependency here and
+/// is not reachable from a normal build.
 #[doc(hidden)]
 pub unsafe fn clear_auto_gc_env_for_test() {
     unsafe {
@@ -989,7 +993,7 @@ mod tests {
         ] {
             clear_auto_gc_env();
             if env_kill {
-                unsafe { std::env::set_var(ENV_AUTO_GC, "0") };
+                xai_grok_test_support::env::set_var(ENV_AUTO_GC, "0");
             }
             let tmp = tempfile::TempDir::new().unwrap();
             let db = WorktreeDb::open(tmp.path()).unwrap();
@@ -1032,7 +1036,7 @@ mod tests {
             ("enabled", false),
         ] {
             clear_auto_gc_env();
-            unsafe { std::env::set_var(ENV_AUTO_GC, val) };
+            xai_grok_test_support::env::set_var(ENV_AUTO_GC, val);
             assert_eq!(
                 env_auto_gc_disabled(),
                 disabled,
@@ -1058,7 +1062,7 @@ mod tests {
             ("nope", false),
         ] {
             clear_auto_gc_env();
-            unsafe { std::env::set_var(ENV_AUTO_GC_DRY_RUN, val) };
+            xai_grok_test_support::env::set_var(ENV_AUTO_GC_DRY_RUN, val);
             assert_eq!(
                 env_auto_gc_dry_run(),
                 on,
@@ -1075,7 +1079,7 @@ mod tests {
         // deletion) when the env forces it inside maybe_auto_gc.
         let _g = env_guard();
         clear_auto_gc_env();
-        unsafe { std::env::set_var(ENV_AUTO_GC_DRY_RUN, "1") };
+        xai_grok_test_support::env::set_var(ENV_AUTO_GC_DRY_RUN, "1");
         let tmp = tempfile::TempDir::new().unwrap();
         let db = WorktreeDb::open(tmp.path()).unwrap();
         let dir = tmp.path().join("would-expire");
@@ -1386,7 +1390,7 @@ mod tests {
             } = case;
             clear_auto_gc_env();
             for (k, v) in &env {
-                unsafe { std::env::set_var(k, v) };
+                xai_grok_test_support::env::set_var(k, v);
             }
             eprintln!("resolve layer case: {name}");
             let policy = resolve_worktree_auto_gc_from_layers(local.as_ref(), remote.as_ref());
@@ -1725,7 +1729,7 @@ mod tests {
     fn env_rebuild_reapplied_inside_maybe_auto_gc() {
         let _g = env_guard();
         clear_auto_gc_env();
-        unsafe { std::env::set_var(ENV_AUTO_GC_REBUILD, "1") };
+        xai_grok_test_support::env::set_var(ENV_AUTO_GC_REBUILD, "1");
         let fx = crate::db::GrokHomeFixture::new();
         let db = WorktreeDb::open(&fx.home).unwrap();
         let wt = fx.home.join("worktrees/repo/env-rebuild-sess");

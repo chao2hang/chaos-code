@@ -2120,7 +2120,9 @@ pub(crate) async fn run(
     // `grok dashboard` startup: open the dashboard view immediately
     // The CLI subcommand wrote a `GROK_OPEN_DASHBOARD_AT_STARTUP=1` env var so we don't have to thread a flag through every arg struct
     if std::env::var("GROK_OPEN_DASHBOARD_AT_STARTUP").as_deref() == Ok("1") {
-        // SAFETY: we are pre-multithreaded init for this app loop.
+        // SAFETY: we are pre-multithreaded init for this app loop. Stays a raw
+        // write because this is production code and the locked writer lives in
+        // the dev-only `xai-grok-test-support` crate.
         unsafe { std::env::remove_var("GROK_OPEN_DASHBOARD_AT_STARTUP") };
         if app.session_startup_allowed() {
             let effs = dispatch::dispatch(Action::OpenDashboard, &mut app);

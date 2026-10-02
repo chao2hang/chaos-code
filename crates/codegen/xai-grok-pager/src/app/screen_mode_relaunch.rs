@@ -320,7 +320,9 @@ pub(crate) fn take_screen_mode_env_override() -> Option<super::ScreenMode> {
         // SAFETY: called once during pager startup, before the event loop and
         // before this process spawns threads that read the environment. Any
         // set value is removed (even an unparseable one) so children never
-        // inherit the override.
+        // inherit the override. Stays a raw write because this is production
+        // code and the locked writer lives in the dev-only
+        // `xai-grok-test-support` crate.
         unsafe { std::env::remove_var(GROK_SCREEN_MODE_ENV) };
     }
     parse_screen_mode(raw.as_deref().and_then(OsStr::to_str))
@@ -737,7 +739,7 @@ mod tests {
     fn take_env_override_consumes_the_variable() {
         // The override is one-shot: children of the relaunched process must not inherit a forced screen mode
         // Sole test touching this env var
-        unsafe { std::env::set_var(GROK_SCREEN_MODE_ENV, "minimal") };
+        xai_grok_test_support::env::set_var(GROK_SCREEN_MODE_ENV, "minimal");
         assert_eq!(
             take_screen_mode_env_override(),
             Some(super::super::ScreenMode::Minimal)
@@ -747,7 +749,7 @@ mod tests {
             "env var must be removed after being read"
         );
         // Unparseable values are still removed (never leak to children).
-        unsafe { std::env::set_var(GROK_SCREEN_MODE_ENV, "bogus") };
+        xai_grok_test_support::env::set_var(GROK_SCREEN_MODE_ENV, "bogus");
         assert_eq!(take_screen_mode_env_override(), None);
         assert!(std::env::var_os(GROK_SCREEN_MODE_ENV).is_none());
         // Absent stays absent.

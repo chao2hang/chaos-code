@@ -2210,7 +2210,7 @@ async fn tool_state_upload_is_noop_when_flag_off() {
     let _env = crate::session::tool_config::TOOL_STATE_ENV_LOCK
         .lock()
         .unwrap_or_else(|e| e.into_inner());
-    unsafe { std::env::remove_var("GROK_WORKSPACE_TOOL_STATE_ENABLED") };
+    xai_grok_test_support::env::remove_var("GROK_WORKSPACE_TOOL_STATE_ENABLED");
     let factory = Arc::new(TestSessionContextFactory::new());
     let cwd = factory.temp.path().to_path_buf();
     let queue_home = tempfile::TempDir::new().unwrap();
@@ -2248,7 +2248,7 @@ async fn tool_state_upload_is_noop_when_data_collection_disabled() {
     let _env = crate::session::tool_config::TOOL_STATE_ENV_LOCK
         .lock()
         .unwrap_or_else(|e| e.into_inner());
-    unsafe { std::env::set_var("GROK_WORKSPACE_TOOL_STATE_ENABLED", "true") };
+    xai_grok_test_support::env::set_var("GROK_WORKSPACE_TOOL_STATE_ENABLED", "true");
     let factory = Arc::new(TestSessionContextFactory::new());
     let cwd = factory.temp.path().to_path_buf();
     let queue_home = tempfile::TempDir::new().unwrap();
@@ -2268,7 +2268,7 @@ async fn tool_state_upload_is_noop_when_data_collection_disabled() {
         .enqueued
         .load(std::sync::atomic::Ordering::Relaxed);
     handle.spawn_tool_state_upload("main", 1);
-    unsafe { std::env::remove_var("GROK_WORKSPACE_TOOL_STATE_ENABLED") };
+    xai_grok_test_support::env::remove_var("GROK_WORKSPACE_TOOL_STATE_ENABLED");
     drop(_env);
     tokio::task::yield_now().await;
     assert_eq!(
@@ -7819,11 +7819,11 @@ async fn tool_state_upload_registers_producer() {
     let _env = crate::session::tool_config::TOOL_STATE_ENV_LOCK
         .lock()
         .unwrap_or_else(|e| e.into_inner());
-    unsafe { std::env::set_var("GROK_WORKSPACE_TOOL_STATE_ENABLED", "true") };
+    xai_grok_test_support::env::set_var("GROK_WORKSPACE_TOOL_STATE_ENABLED", "true");
     let (handle, _queue, _home) = make_handle_with_queue(false);
     assert_eq!(handle.shared.producer_tasks.len(), 0);
     handle.spawn_tool_state_upload("main", 1);
-    unsafe { std::env::remove_var("GROK_WORKSPACE_TOOL_STATE_ENABLED") };
+    xai_grok_test_support::env::remove_var("GROK_WORKSPACE_TOOL_STATE_ENABLED");
     drop(_env);
     assert_eq!(
         handle.shared.producer_tasks.len(),

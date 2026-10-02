@@ -614,7 +614,7 @@ fn announcements_open_cta_opens_promo_and_noops_under_critical() {
     use xai_grok_telemetry::events::AnnouncementCtaSurface;
     let url_file = std::env::temp_dir().join(format!("grok-cta-open-{}.txt", std::process::id()));
     let _ = std::fs::remove_file(&url_file);
-    unsafe { std::env::set_var("GROK_TEST_OPEN_URL_FILE", &url_file) };
+    xai_grok_test_support::env::set_var("GROK_TEST_OPEN_URL_FILE", &url_file);
     let opened = || std::fs::read_to_string(&url_file).unwrap_or_default();
     let mut app = test_app_with_agent();
     app.active_announcements = vec![promo_announcement("promo-open")];
@@ -655,7 +655,7 @@ fn announcements_open_cta_opens_promo_and_noops_under_critical() {
         &mut app,
     );
     assert!(opened().trim().is_empty(), "no cta → no open");
-    unsafe { std::env::remove_var("GROK_TEST_OPEN_URL_FILE") };
+    xai_grok_test_support::env::remove_var("GROK_TEST_OPEN_URL_FILE");
     let _ = std::fs::remove_file(&url_file);
 }
 /// `AnnouncementCtaShown` latches once per (announcement, surface) pair.

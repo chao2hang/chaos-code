@@ -926,9 +926,7 @@ fn spawn_fake_acp_agent(
 /// Redirect `GROK_HOME` to a tempdir for test isolation.
 fn setup_grok_home_in_tempdir() -> tempfile::TempDir {
     let tmp = tempfile::tempdir().expect("tempdir creation");
-    unsafe {
-        std::env::set_var("GROK_HOME", tmp.path());
-    }
+        xai_grok_test_support::env::set_var("GROK_HOME", tmp.path());
     tmp
 }
 fn register_session_in(root: &std::path::Path, id: &str) -> acp::SessionId {

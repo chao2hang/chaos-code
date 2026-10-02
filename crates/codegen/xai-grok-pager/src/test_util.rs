@@ -103,21 +103,21 @@ impl EnvVarGuard {
     /// Override `key` to `value` (paths, URLs, flags, anything that converts to `OsStr`), returning a guard that restores the original on drop.
     pub fn set(key: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
         let original = std::env::var_os(key);
-        unsafe {
-            std::env::set_var(key, value);
-        }
+        xai_grok_test_support::env::set_var(key, value);
         Self { key, original }
     }
 }
 impl Drop for EnvVarGuard {
     fn drop(&mut self) {
-        unsafe {
+        // One lock acquisition for the restore, so a peer test never sees the
+        // key half-restored.
+        xai_grok_test_support::env::with_write_lock(|| {
             if let Some(value) = &self.original {
-                std::env::set_var(self.key, value);
+                xai_grok_test_support::env::set_var(self.key, value);
             } else {
-                std::env::remove_var(self.key);
+                xai_grok_test_support::env::remove_var(self.key);
             }
-        }
+        });
     }
 }
 /// Shared GROK_HOME boundary fixture for the resume-by-title startup and pre-sandbox tests.
@@ -147,7 +147,7 @@ impl Default for GrokHomeFixture {
 impl GrokHomeFixture {
     pub fn new() -> Self {
         let home = tempfile::tempdir().expect("home tempdir");
-        unsafe { std::env::set_var("GROK_HOME", home.path()) };
+        xai_grok_test_support::env::set_var("GROK_HOME", home.path());
         let cwd = tempfile::tempdir().expect("cwd tempdir");
         Self {
             _home: home,

@@ -99,13 +99,13 @@ impl TestEnvGuard {
     /// Set `key` to `val`, restoring the prior value on drop.
     pub(crate) fn set(key: &'static str, val: &std::path::Path) -> Self {
         let prev = std::env::var_os(key);
-        unsafe { std::env::set_var(key, val) };
+        xai_grok_test_support::env::set_var(key, val);
         Self { key, prev }
     }
     /// Unset `key`, restoring the prior value on drop.
     pub(crate) fn unset(key: &'static str) -> Self {
         let prev = std::env::var_os(key);
-        unsafe { std::env::remove_var(key) };
+        xai_grok_test_support::env::remove_var(key);
         Self { key, prev }
     }
 }
@@ -113,8 +113,8 @@ impl TestEnvGuard {
 impl Drop for TestEnvGuard {
     fn drop(&mut self) {
         match self.prev.take() {
-            Some(prev) => unsafe { std::env::set_var(self.key, prev) },
-            None => unsafe { std::env::remove_var(self.key) },
+            Some(prev) => xai_grok_test_support::env::set_var(self.key, prev),
+            None => xai_grok_test_support::env::remove_var(self.key),
         }
     }
 }

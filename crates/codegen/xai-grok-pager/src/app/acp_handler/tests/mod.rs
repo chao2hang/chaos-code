@@ -1658,9 +1658,7 @@ pub(super) fn replay_disk_test_home() -> &'static std::path::Path {
     static HOME: OnceLock<tempfile::TempDir> = OnceLock::new();
     HOME.get_or_init(|| {
             let tmp = tempfile::tempdir().expect("tempdir creation");
-            unsafe {
-                std::env::set_var("GROK_HOME", tmp.path());
-            }
+                        xai_grok_test_support::env::set_var("GROK_HOME", tmp.path());
             tmp
         })
         .path()

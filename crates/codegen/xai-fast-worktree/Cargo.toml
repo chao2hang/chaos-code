@@ -71,6 +71,9 @@ uuid = { workspace = true, optional = true }
 tempfile = { workspace = true }
 serde_json = { workspace = true }
 xai-test-utils = { workspace = true }
+# Locked process-environment writer, so env-mutating tests cannot race each
+# other's `set_var`/`remove_var` (both are `unsafe` since edition 2024).
+xai-grok-test-support = { workspace = true }
 # Unconditional because cargo doesn't support feature-gated dev-deps cleanly.
 # Only used by tests behind #[cfg(feature = "metadata")] in db/tests.rs.
 rusqlite = { version = "0.37", features = ["bundled"] }

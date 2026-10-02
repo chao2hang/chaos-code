@@ -322,9 +322,9 @@ mod tests {
         let _env = crate::nfs::GROVE_ENV_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        unsafe { std::env::set_var("GROVE_DATA_DIR", &data) };
+        xai_grok_test_support::env::set_var("GROVE_DATA_DIR", &data);
         let report = try_nfs_remove(&harmless);
-        unsafe { std::env::remove_var("GROVE_DATA_DIR") };
+        xai_grok_test_support::env::remove_var("GROVE_DATA_DIR");
         assert!(
             victim_backing.join("SECRET").exists(),
             "victim backing must survive planted decoy: {report:?}"
@@ -360,9 +360,9 @@ mod tests {
         let _env = crate::nfs::GROVE_ENV_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        unsafe { std::env::set_var("GROVE_DATA_DIR", &data) };
+        xai_grok_test_support::env::set_var("GROVE_DATA_DIR", &data);
         let found = lookup_nfs_meta(&dest);
-        unsafe { std::env::remove_var("GROVE_DATA_DIR") };
+        xai_grok_test_support::env::remove_var("GROVE_DATA_DIR");
         let found = found.expect("marker must resolve dest");
         assert_eq!(found.worktree_id.as_deref(), Some(id));
     }
@@ -392,9 +392,9 @@ mod tests {
         let _env = crate::nfs::GROVE_ENV_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        unsafe { std::env::set_var("GROVE_DATA_DIR", &data) };
+        xai_grok_test_support::env::set_var("GROVE_DATA_DIR", &data);
         let found = lookup_from_markers(&dest);
-        unsafe { std::env::remove_var("GROVE_DATA_DIR") };
+        xai_grok_test_support::env::remove_var("GROVE_DATA_DIR");
         let found = found.expect("marker recovery");
         assert_eq!(found.worktree_id.as_deref(), Some(id));
         assert_eq!(found.data_dir.as_deref(), Some(data.as_path()));

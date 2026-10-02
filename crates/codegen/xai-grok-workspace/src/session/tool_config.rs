@@ -993,15 +993,15 @@ mod tests {
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         let var = "GROK_WORKSPACE_TOOL_STATE_ENABLED";
-        unsafe { std::env::remove_var(var) };
+        xai_grok_test_support::env::remove_var(var);
         assert!(!tool_state_enabled(), "unset → disabled");
-        unsafe { std::env::set_var(var, "false") };
+        xai_grok_test_support::env::set_var(var, "false");
         assert!(!tool_state_enabled(), "false → disabled");
-        unsafe { std::env::set_var(var, "1") };
+        xai_grok_test_support::env::set_var(var, "1");
         assert!(!tool_state_enabled(), "1 → disabled (only \"true\")");
-        unsafe { std::env::set_var(var, "true") };
+        xai_grok_test_support::env::set_var(var, "true");
         assert!(tool_state_enabled(), "true → enabled");
-        unsafe { std::env::remove_var(var) };
+        xai_grok_test_support::env::remove_var(var);
     }
     /// With a tool-state home set, state is rooted at `<home>/sessions/<session_id>/tool_state.json` and the dir is created.
     #[test]

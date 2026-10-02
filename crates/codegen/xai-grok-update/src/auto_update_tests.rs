@@ -1629,25 +1629,25 @@ impl InstallerEnvGuard {
             "NPM_TOKEN",
         ];
         let prev: Vec<_> = VARS.iter().map(|k| (*k, std::env::var_os(k))).collect();
-        unsafe {
+        xai_grok_test_support::env::with_write_lock(|| {
             for k in VARS {
-                std::env::remove_var(k);
+                xai_grok_test_support::env::remove_var(k);
             }
-        }
+        });
         Self { prev }
     }
 }
 
 impl Drop for InstallerEnvGuard {
     fn drop(&mut self) {
-        unsafe {
+        xai_grok_test_support::env::with_write_lock(|| {
             for (k, v) in &self.prev {
                 match v {
-                    Some(val) => std::env::set_var(k, val),
-                    None => std::env::remove_var(k),
+                    Some(val) => xai_grok_test_support::env::set_var(k, val),
+                    None => xai_grok_test_support::env::remove_var(k),
                 }
             }
-        }
+        });
     }
 }
 
@@ -1662,7 +1662,7 @@ fn test_env_installer_no_vars_returns_none() {
 #[serial_test::serial]
 fn test_env_installer_explicit_npm() {
     let _g = InstallerEnvGuard::isolate();
-    unsafe { std::env::set_var("GROK_INSTALLER", "npm") };
+    xai_grok_test_support::env::set_var("GROK_INSTALLER", "npm");
     assert_eq!(env_installer(), Some("npm"));
 }
 
@@ -1670,7 +1670,7 @@ fn test_env_installer_explicit_npm() {
 #[serial_test::serial]
 fn test_env_installer_explicit_internal() {
     let _g = InstallerEnvGuard::isolate();
-    unsafe { std::env::set_var("GROK_INSTALLER", "internal") };
+    xai_grok_test_support::env::set_var("GROK_INSTALLER", "internal");
     assert_eq!(env_installer(), Some("internal"));
 }
 
@@ -1678,7 +1678,7 @@ fn test_env_installer_explicit_internal() {
 #[serial_test::serial]
 fn test_env_installer_explicit_gh_release() {
     let _g = InstallerEnvGuard::isolate();
-    unsafe { std::env::set_var("GROK_INSTALLER", "gh-release") };
+    xai_grok_test_support::env::set_var("GROK_INSTALLER", "gh-release");
     assert_eq!(env_installer(), Some("gh-release"));
 }
 
@@ -1687,7 +1687,7 @@ fn test_env_installer_explicit_gh_release() {
 fn test_env_installer_explicit_gh_alias() {
     // `gh` is shorthand for `gh-release`.
     let _g = InstallerEnvGuard::isolate();
-    unsafe { std::env::set_var("GROK_INSTALLER", "gh") };
+    xai_grok_test_support::env::set_var("GROK_INSTALLER", "gh");
     assert_eq!(env_installer(), Some("gh-release"));
 }
 
@@ -1695,10 +1695,10 @@ fn test_env_installer_explicit_gh_alias() {
 #[serial_test::serial]
 fn test_env_installer_explicit_uppercase_normalized() {
     let _g = InstallerEnvGuard::isolate();
-    unsafe { std::env::set_var("GROK_INSTALLER", "NPM") };
+    xai_grok_test_support::env::set_var("GROK_INSTALLER", "NPM");
     assert_eq!(env_installer(), Some("npm"));
 
-    unsafe { std::env::set_var("GROK_INSTALLER", "Gh-Release") };
+    xai_grok_test_support::env::set_var("GROK_INSTALLER", "Gh-Release");
     assert_eq!(env_installer(), Some("gh-release"));
 }
 
@@ -1709,9 +1709,9 @@ fn test_env_installer_explicit_unknown_value_returns_none() {
     // This means we do NOT fall through to the other env vars or to config
     // So `GROK_INSTALLER=brew` disables the env-installer detection entirely
     let _g = InstallerEnvGuard::isolate();
-    unsafe { std::env::set_var("GROK_INSTALLER", "brew") };
+    xai_grok_test_support::env::set_var("GROK_INSTALLER", "brew");
     // Even if MANAGED_BY_NPM is also set, the explicit var wins (and rejects).
-    unsafe { std::env::set_var("GROK_MANAGED_BY_NPM", "1") };
+    xai_grok_test_support::env::set_var("GROK_MANAGED_BY_NPM", "1");
     assert_eq!(
         env_installer(),
         None,
@@ -1723,7 +1723,7 @@ fn test_env_installer_explicit_unknown_value_returns_none() {
 #[serial_test::serial]
 fn test_env_installer_explicit_empty_returns_none() {
     let _g = InstallerEnvGuard::isolate();
-    unsafe { std::env::set_var("GROK_INSTALLER", "") };
+    xai_grok_test_support::env::set_var("GROK_INSTALLER", "");
     assert_eq!(env_installer(), None);
 }
 
@@ -1731,7 +1731,7 @@ fn test_env_installer_explicit_empty_returns_none() {
 #[serial_test::serial]
 fn test_env_installer_managed_by_npm() {
     let _g = InstallerEnvGuard::isolate();
-    unsafe { std::env::set_var("GROK_MANAGED_BY_NPM", "1") };
+    xai_grok_test_support::env::set_var("GROK_MANAGED_BY_NPM", "1");
     assert_eq!(env_installer(), Some("npm"));
 }
 
@@ -1740,7 +1740,7 @@ fn test_env_installer_managed_by_npm() {
 fn test_env_installer_managed_by_npm_any_value() {
     // The check is `is_some`, so any value (including empty) wins
     let _g = InstallerEnvGuard::isolate();
-    unsafe { std::env::set_var("GROK_MANAGED_BY_NPM", "") };
+    xai_grok_test_support::env::set_var("GROK_MANAGED_BY_NPM", "");
     assert_eq!(env_installer(), Some("npm"));
 }
 
@@ -1748,7 +1748,7 @@ fn test_env_installer_managed_by_npm_any_value() {
 #[serial_test::serial]
 fn test_env_installer_managed_by_internal() {
     let _g = InstallerEnvGuard::isolate();
-    unsafe { std::env::set_var("GROK_MANAGED_BY_INTERNAL", "1") };
+    xai_grok_test_support::env::set_var("GROK_MANAGED_BY_INTERNAL", "1");
     assert_eq!(env_installer(), Some("internal"));
 }
 
@@ -1758,12 +1758,10 @@ fn test_env_installer_npm_config_user_agent_implies_npm() {
     // npm sets npm_config_user_agent in the env of any process it spawns.
     // The trampoline relies on this fallback when MANAGED_BY_NPM was lost.
     let _g = InstallerEnvGuard::isolate();
-    unsafe {
-        std::env::set_var(
-            "npm_config_user_agent",
-            "npm/10.2.0 node/v20.11.0 darwin arm64 workspaces/false",
-        )
-    };
+    xai_grok_test_support::env::set_var(
+        "npm_config_user_agent",
+        "npm/10.2.0 node/v20.11.0 darwin arm64 workspaces/false",
+    );
     assert_eq!(env_installer(), Some("npm"));
 }
 #[test]
@@ -1771,10 +1769,8 @@ fn test_env_installer_npm_config_user_agent_implies_npm() {
 fn test_env_installer_explicit_internal_wins_over_npm_managed() {
     // GROK_INSTALLER=internal must override an inherited MANAGED_BY_NPM.
     let _g = InstallerEnvGuard::isolate();
-    unsafe {
-        std::env::set_var("GROK_INSTALLER", "internal");
-        std::env::set_var("GROK_MANAGED_BY_NPM", "1");
-    }
+    xai_grok_test_support::env::set_var("GROK_INSTALLER", "internal");
+    xai_grok_test_support::env::set_var("GROK_MANAGED_BY_NPM", "1");
     assert_eq!(env_installer(), Some("internal"));
 }
 
@@ -1795,7 +1791,7 @@ fn test_create_temp_npmrc_no_token_returns_none() {
 fn test_create_temp_npmrc_empty_token_returns_none() {
     // An empty token is not a real token, so no file is written
     let _g = InstallerEnvGuard::isolate();
-    unsafe { std::env::set_var("NPM_TOKEN", "") };
+    xai_grok_test_support::env::set_var("NPM_TOKEN", "");
     let result = create_temp_npmrc(None).unwrap();
     assert!(result.is_none(), "empty NPM_TOKEN must yield None");
 }
@@ -1805,7 +1801,7 @@ fn test_create_temp_npmrc_empty_token_returns_none() {
 fn test_create_temp_npmrc_whitespace_only_token_returns_none() {
     // Whitespace-only is treated as empty after trim.
     let _g = InstallerEnvGuard::isolate();
-    unsafe { std::env::set_var("NPM_TOKEN", "   \t\n  ") };
+    xai_grok_test_support::env::set_var("NPM_TOKEN", "   \t\n  ");
     let result = create_temp_npmrc(None).unwrap();
     assert!(result.is_none(), "whitespace NPM_TOKEN must yield None");
 }
@@ -1814,7 +1810,7 @@ fn test_create_temp_npmrc_whitespace_only_token_returns_none() {
 #[serial_test::serial]
 fn test_create_temp_npmrc_default_registry() {
     let _g = InstallerEnvGuard::isolate();
-    unsafe { std::env::set_var("NPM_TOKEN", "secret123") };
+    xai_grok_test_support::env::set_var("NPM_TOKEN", "secret123");
     let path = create_temp_npmrc(None).unwrap().expect("file written");
     let body = std::fs::read_to_string(&path).unwrap();
 
@@ -1833,7 +1829,7 @@ fn test_create_temp_npmrc_default_registry() {
 #[serial_test::serial]
 fn test_create_temp_npmrc_token_trimmed() {
     let _g = InstallerEnvGuard::isolate();
-    unsafe { std::env::set_var("NPM_TOKEN", "  padded-token  ") };
+    xai_grok_test_support::env::set_var("NPM_TOKEN", "  padded-token  ");
     let path = create_temp_npmrc(None).unwrap().expect("file written");
     let body = std::fs::read_to_string(&path).unwrap();
     assert!(
@@ -1851,7 +1847,7 @@ fn test_create_temp_npmrc_token_trimmed() {
 #[serial_test::serial]
 fn test_create_temp_npmrc_custom_registry_extracts_host_and_path() {
     let _g = InstallerEnvGuard::isolate();
-    unsafe { std::env::set_var("NPM_TOKEN", "tok") };
+    xai_grok_test_support::env::set_var("NPM_TOKEN", "tok");
     let path = create_temp_npmrc(Some("https://npm.example.com/repository/npm/"))
         .unwrap()
         .expect("file written");
@@ -1871,7 +1867,7 @@ fn test_create_temp_npmrc_custom_registry_extracts_host_and_path() {
 #[serial_test::serial]
 fn test_create_temp_npmrc_custom_registry_with_port() {
     let _g = InstallerEnvGuard::isolate();
-    unsafe { std::env::set_var("NPM_TOKEN", "tok") };
+    xai_grok_test_support::env::set_var("NPM_TOKEN", "tok");
     let path = create_temp_npmrc(Some("https://npm.example.com:8443/"))
         .unwrap()
         .expect("file written");
@@ -1888,7 +1884,7 @@ fn test_create_temp_npmrc_custom_registry_with_port() {
 fn test_create_temp_npmrc_invalid_registry_url_falls_back_to_default() {
     // If the registry string doesn't parse as a URL, fall back to the public npm host so the auth token isn't silently lost
     let _g = InstallerEnvGuard::isolate();
-    unsafe { std::env::set_var("NPM_TOKEN", "tok") };
+    xai_grok_test_support::env::set_var("NPM_TOKEN", "tok");
     let path = create_temp_npmrc(Some("not a url"))
         .unwrap()
         .expect("file written");
@@ -1907,7 +1903,7 @@ fn test_create_temp_npmrc_file_perms_are_0600() {
     // The file contains an auth token, so it must be readable only by owner
     use std::os::unix::fs::PermissionsExt;
     let _g = InstallerEnvGuard::isolate();
-    unsafe { std::env::set_var("NPM_TOKEN", "secret") };
+    xai_grok_test_support::env::set_var("NPM_TOKEN", "secret");
     let path = create_temp_npmrc(None).unwrap().expect("file written");
 
     let perms = std::fs::metadata(&path).unwrap().permissions();
@@ -1925,7 +1921,7 @@ fn test_create_temp_npmrc_file_perms_are_0600() {
 fn test_create_temp_npmrc_unique_path_per_pid() {
     // Two parallel installs would clobber each other if the path didn't include the PID
     let _g = InstallerEnvGuard::isolate();
-    unsafe { std::env::set_var("NPM_TOKEN", "tok") };
+    xai_grok_test_support::env::set_var("NPM_TOKEN", "tok");
     let path = create_temp_npmrc(None).unwrap().expect("file written");
     let pid = std::process::id().to_string();
     let name = path.file_name().unwrap().to_string_lossy().to_string();
@@ -2437,10 +2433,8 @@ fn test_env_installer_managed_by_npm_wins_over_npm_config_user_agent() {
     // so MANAGED_BY_NPM wins. (Result is the same — both → npm — but the
     // resolution path matters for future maintainers.)
     let _g = InstallerEnvGuard::isolate();
-    unsafe {
-        std::env::set_var("GROK_MANAGED_BY_NPM", "1");
-        std::env::set_var("npm_config_user_agent", "npm/10");
-    }
+    xai_grok_test_support::env::set_var("GROK_MANAGED_BY_NPM", "1");
+    xai_grok_test_support::env::set_var("npm_config_user_agent", "npm/10");
     assert_eq!(env_installer(), Some("npm"));
 }
 

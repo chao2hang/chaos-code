@@ -103,9 +103,9 @@ mod tests {
         // SAFETY: the test temporarily mutates a process-wide env var.
         // `serial_test`'s lock ensures no other test marked with the same
         // `GROK_AGENT_DASHBOARD` key reads it concurrently.
-        unsafe { std::env::set_var("GROK_AGENT_DASHBOARD", "0") };
+        xai_grok_test_support::env::set_var("GROK_AGENT_DASHBOARD", "0");
         assert_eq!(session_switch_hint_command(true), Some("/resume"));
-        unsafe { std::env::remove_var("GROK_AGENT_DASHBOARD") };
+        xai_grok_test_support::env::remove_var("GROK_AGENT_DASHBOARD");
     }
 
     /// Outside minimal the hint mirrors the dashboard flag.
@@ -115,9 +115,9 @@ mod tests {
     #[test]
     fn switch_hint_non_minimal_follows_dashboard_flag() {
         // SAFETY: see above; serialized on the GROK_AGENT_DASHBOARD key
-        unsafe { std::env::set_var("GROK_AGENT_DASHBOARD", "0") };
+        xai_grok_test_support::env::set_var("GROK_AGENT_DASHBOARD", "0");
         assert_eq!(session_switch_hint_command(false), None);
-        unsafe { std::env::remove_var("GROK_AGENT_DASHBOARD") };
+        xai_grok_test_support::env::remove_var("GROK_AGENT_DASHBOARD");
         assert_eq!(
             session_switch_hint_command(false),
             dashboard_enabled().then_some("/dashboard")

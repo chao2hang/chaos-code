@@ -4,7 +4,7 @@ use crate::app::dispatch::session::lifecycle::dispatch_accept_consent;
 /// Simulate a release-stamped build so folder-trust is active (a local/dev build auto-trusts and persists nothing).
 /// Mirrors this module's raw env idiom.
 fn simulate_release_build() {
-    unsafe { std::env::set_var(xai_grok_version::TEST_VERSION_ENV, "0.0.0-sim") };
+    xai_grok_test_support::env::set_var(xai_grok_version::TEST_VERSION_ENV, "0.0.0-sim");
 }
 #[test]
 fn voice_on_welcome_creates_session_and_records() {
@@ -1286,7 +1286,7 @@ fn a_consent_link_opens_the_url_its_label_stands_for() {
     let url_file =
         std::env::temp_dir().join(format!("grok-consent-open-{}.txt", std::process::id()));
     let _ = std::fs::remove_file(&url_file);
-    unsafe { std::env::set_var("GROK_TEST_OPEN_URL_FILE", &url_file) };
+    xai_grok_test_support::env::set_var("GROK_TEST_OPEN_URL_FILE", &url_file);
     let opened = || std::fs::read_to_string(&url_file).unwrap_or_default();
     let mut app = test_app();
     app.consent_state = painted_notice("tos-2026", 3);
@@ -1317,7 +1317,7 @@ fn a_consent_link_opens_the_url_its_label_stands_for() {
     app.consent_state = ConsentState::Done;
     dispatch(Action::OpenConsentLink(0), &mut app);
     assert!(opened().trim().is_empty(), "got {:?}", opened());
-    unsafe { std::env::remove_var("GROK_TEST_OPEN_URL_FILE") };
+    xai_grok_test_support::env::remove_var("GROK_TEST_OPEN_URL_FILE");
     let _ = std::fs::remove_file(&url_file);
 }
 /// Accepting the trust question (its `finish_trust` tail) resolves trust and replays the deferred startup when auth is already done.
@@ -1354,7 +1354,7 @@ fn finish_trust_resolves_and_replays_startup() {
 fn trust_folder_grants_and_resolves() {
     use xai_grok_workspace::trust::{TrustStore, workspace_key};
     let home = tempfile::tempdir().expect("home tempdir");
-    unsafe { std::env::set_var("GROK_HOME", home.path()) };
+    xai_grok_test_support::env::set_var("GROK_HOME", home.path());
     simulate_release_build();
     let repo = tempfile::tempdir().expect("repo tempdir");
     let workspace = workspace_key(repo.path());

@@ -268,6 +268,9 @@ fn main() -> anyhow::Result<()> {
     };
     #[cfg(unix)]
     if should_set_reset_child_oom(oom_protection.is_ok(), args.oom_protect) {
+        // SAFETY: still on the original startup thread, before the tokio
+        // runtime below is built, so no other thread can read the environment
+        // concurrently.
         unsafe { std::env::set_var(xai_tty_utils::RESET_CHILD_OOM_ENV, "1") };
     }
     let mut builder = tokio::runtime::Builder::new_multi_thread();
@@ -809,7 +812,7 @@ mod tests {
     }
     #[test]
     fn project_lsp_trust_defaults_off_and_is_opt_in() {
-        unsafe { std::env::remove_var("GROK_WORKSPACE_PROJECT_LSP_TRUSTED") };
+        xai_grok_test_support::env::remove_var("GROK_WORKSPACE_PROJECT_LSP_TRUSTED");
         let args = Args::try_parse_from(["xai-workspace-server"]).unwrap();
         assert!(!args.project_lsp_trusted);
         let args = Args::try_parse_from(["xai-workspace-server", "--project-lsp-trusted", "true"])

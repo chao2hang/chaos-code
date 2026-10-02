@@ -505,9 +505,7 @@ impl GrokHomeFixture {
         // race fix.
         let _ = WorktreeDb::open(&home);
         let prev = std::env::var_os("GROK_HOME");
-        // SAFETY: the fixture holds the GROK_HOME env lock for its whole
-        // lifetime, so no other test thread reads or writes the environment.
-        unsafe { std::env::set_var("GROK_HOME", &home) };
+        xai_grok_test_support::env::set_var("GROK_HOME", &home);
         Self {
             _lock: lock,
             prev,
@@ -532,11 +530,9 @@ impl GrokHomeFixture {
         let xdg = self._tmp.path().join("xdg-data");
         let grove = xdg.join("grove");
         std::fs::create_dir_all(&grove).unwrap();
-        unsafe {
-            std::env::set_var("XDG_DATA_HOME", &xdg);
-            std::env::remove_var("GROVE_DATA_DIR");
-            std::env::set_var("HOME", self._tmp.path());
-        }
+        xai_grok_test_support::env::set_var("XDG_DATA_HOME", &xdg);
+        xai_grok_test_support::env::remove_var("GROVE_DATA_DIR");
+        xai_grok_test_support::env::set_var("HOME", self._tmp.path());
         grove
     }
 }
@@ -544,28 +540,29 @@ impl GrokHomeFixture {
 #[cfg(test)]
 impl Drop for GrokHomeFixture {
     fn drop(&mut self) {
-        // SAFETY: the fixture still holds the GROK_HOME env lock here, so no
-        // other test thread reads or writes the environment during restore.
-        unsafe {
+        // One lock acquisition for the whole restore, so no peer test observes
+        // GROK_HOME reverted while the other keys are still pointing at the
+        // fixture's temporary home.
+        xai_grok_test_support::env::with_write_lock(|| {
             match self.prev.take() {
-                Some(p) => std::env::set_var("GROK_HOME", p),
-                None => std::env::remove_var("GROK_HOME"),
+                Some(p) => xai_grok_test_support::env::set_var("GROK_HOME", p),
+                None => xai_grok_test_support::env::remove_var("GROK_HOME"),
             }
             if self.touched_grove_env {
                 match self.prev_xdg_data_home.take() {
-                    Some(p) => std::env::set_var("XDG_DATA_HOME", p),
-                    None => std::env::remove_var("XDG_DATA_HOME"),
+                    Some(p) => xai_grok_test_support::env::set_var("XDG_DATA_HOME", p),
+                    None => xai_grok_test_support::env::remove_var("XDG_DATA_HOME"),
                 }
                 match self.prev_grove_data_dir.take() {
-                    Some(p) => std::env::set_var("GROVE_DATA_DIR", p),
-                    None => std::env::remove_var("GROVE_DATA_DIR"),
+                    Some(p) => xai_grok_test_support::env::set_var("GROVE_DATA_DIR", p),
+                    None => xai_grok_test_support::env::remove_var("GROVE_DATA_DIR"),
                 }
                 match self.prev_home.take() {
-                    Some(p) => std::env::set_var("HOME", p),
-                    None => std::env::remove_var("HOME"),
+                    Some(p) => xai_grok_test_support::env::set_var("HOME", p),
+                    None => xai_grok_test_support::env::remove_var("HOME"),
                 }
             }
-        }
+        });
     }
 }
 

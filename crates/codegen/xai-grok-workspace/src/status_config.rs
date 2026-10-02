@@ -720,8 +720,8 @@ mod tests {
         let enabled_var = "GROK_WORKSPACE_PREVIEW_STATE_REPORTER_ENABLED";
         let interval_var = "GROK_WORKSPACE_PREVIEW_STATE_POLL_INTERVAL_MS";
 
-        unsafe { std::env::set_var(enabled_var, "true") };
-        unsafe { std::env::set_var(interval_var, "0") };
+        xai_grok_test_support::env::set_var(enabled_var, "true");
+        xai_grok_test_support::env::set_var(interval_var, "0");
         let cfg = StatusConfig::from_env();
         assert!(cfg.preview_state_reporter_enabled);
         assert_eq!(
@@ -730,8 +730,8 @@ mod tests {
             "zero interval must be floored, not busy-loop"
         );
 
-        unsafe { std::env::set_var(enabled_var, "yes") };
-        unsafe { std::env::set_var(interval_var, "2500") };
+        xai_grok_test_support::env::set_var(enabled_var, "yes");
+        xai_grok_test_support::env::set_var(interval_var, "2500");
         let cfg = StatusConfig::from_env();
         assert!(
             !cfg.preview_state_reporter_enabled,
@@ -739,8 +739,8 @@ mod tests {
         );
         assert_eq!(cfg.preview_state_poll_interval, Duration::from_millis(2500));
 
-        unsafe { std::env::remove_var(enabled_var) };
-        unsafe { std::env::remove_var(interval_var) };
+        xai_grok_test_support::env::remove_var(enabled_var);
+        xai_grok_test_support::env::remove_var(interval_var);
         let cfg = StatusConfig::from_env();
         assert!(!cfg.preview_state_reporter_enabled);
     }
@@ -750,34 +750,34 @@ mod tests {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let var = "GROK_WORKSPACE_PREVIEW_STATE_WAIT_SECS";
 
-        unsafe { std::env::remove_var(var) };
+        xai_grok_test_support::env::remove_var(var);
         assert_eq!(
             StatusConfig::from_env().preview_state_wait,
             Duration::ZERO,
             "unset ⇒ long-poll disabled"
         );
 
-        unsafe { std::env::set_var(var, "10") };
+        xai_grok_test_support::env::set_var(var, "10");
         assert_eq!(
             StatusConfig::from_env().preview_state_wait,
             Duration::from_secs(10)
         );
 
-        unsafe { std::env::set_var(var, "60") };
+        xai_grok_test_support::env::set_var(var, "60");
         assert_eq!(
             StatusConfig::from_env().preview_state_wait,
             Duration::from_secs(MAX_PREVIEW_STATE_WAIT_SECS),
             "the proxy clamps ?wait to 15s; a larger value only inflates the client timeout"
         );
 
-        unsafe { std::env::set_var(var, "not-a-number") };
+        xai_grok_test_support::env::set_var(var, "not-a-number");
         assert_eq!(
             StatusConfig::from_env().preview_state_wait,
             Duration::ZERO,
             "unparseable falls back to the disabled default"
         );
 
-        unsafe { std::env::remove_var(var) };
+        xai_grok_test_support::env::remove_var(var);
     }
 
     #[test]
@@ -785,48 +785,48 @@ mod tests {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let var = "GROK_WORKSPACE_PREVIEW_DISCOVERY_REFRESH_MS";
 
-        unsafe { std::env::remove_var(var) };
+        xai_grok_test_support::env::remove_var(var);
         assert_eq!(
             StatusConfig::from_env().preview_discovery_refresh_ms(),
             None,
             "unset ⇒ the supervisor omits --discovery-refresh-ms"
         );
 
-        unsafe { std::env::set_var(var, "0") };
+        xai_grok_test_support::env::set_var(var, "0");
         assert_eq!(
             StatusConfig::from_env().preview_discovery_refresh_ms(),
             None,
             "explicit zero is the documented omit switch"
         );
 
-        unsafe { std::env::set_var(var, "500") };
+        xai_grok_test_support::env::set_var(var, "500");
         assert_eq!(
             StatusConfig::from_env().preview_discovery_refresh_ms(),
             Some(500)
         );
 
-        unsafe { std::env::set_var(var, "50") };
+        xai_grok_test_support::env::set_var(var, "50");
         assert_eq!(
             StatusConfig::from_env().preview_discovery_refresh_ms(),
             Some(MIN_PREVIEW_DISCOVERY_REFRESH_MS),
             "sub-floor values would near-busy-loop the proxy's /proc scan"
         );
 
-        unsafe { std::env::set_var(var, "60000") };
+        xai_grok_test_support::env::set_var(var, "60000");
         assert_eq!(
             StatusConfig::from_env().preview_discovery_refresh_ms(),
             Some(MAX_PREVIEW_DISCOVERY_REFRESH_MS),
             "a seconds-for-ms typo is repaired to the ceiling"
         );
 
-        unsafe { std::env::set_var(var, "abc") };
+        xai_grok_test_support::env::set_var(var, "abc");
         assert_eq!(
             StatusConfig::from_env().preview_discovery_refresh_ms(),
             None,
             "unparseable falls back to the omit default"
         );
 
-        unsafe { std::env::remove_var(var) };
+        xai_grok_test_support::env::remove_var(var);
     }
 
     /// Uses a uniquely-named var so it never collides with other tests' env writes.
@@ -834,7 +834,7 @@ mod tests {
     fn parse_or_unset_returns_default() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let var = "GROK_WORKSPACE_TEST_PARSE_OR_UNSET";
-        unsafe { std::env::remove_var(var) };
+        xai_grok_test_support::env::remove_var(var);
         assert_eq!(parse_or::<u32>(var, 5), 5);
     }
 
@@ -842,37 +842,37 @@ mod tests {
     fn parse_or_valid_parses() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let var = "GROK_WORKSPACE_TEST_PARSE_OR_VALID";
-        unsafe { std::env::set_var(var, "42") };
+        xai_grok_test_support::env::set_var(var, "42");
         assert_eq!(parse_or::<u32>(var, 5), 42);
-        unsafe { std::env::remove_var(var) };
+        xai_grok_test_support::env::remove_var(var);
     }
 
     #[test]
     fn parse_or_invalid_falls_back_without_panic() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let var = "GROK_WORKSPACE_TEST_PARSE_OR_INVALID";
-        unsafe { std::env::set_var(var, "not-a-number") };
+        xai_grok_test_support::env::set_var(var, "not-a-number");
         assert_eq!(parse_or::<u32>(var, 5), 5);
-        unsafe { std::env::remove_var(var) };
+        xai_grok_test_support::env::remove_var(var);
     }
 
     #[test]
     fn secs_or_parses_into_duration() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let var = "GROK_WORKSPACE_TEST_SECS_OR_VALID";
-        unsafe { std::env::set_var(var, "120") };
+        xai_grok_test_support::env::set_var(var, "120");
         assert_eq!(
             secs_or(var, Duration::from_secs(30)),
             Duration::from_secs(120)
         );
-        unsafe { std::env::remove_var(var) };
+        xai_grok_test_support::env::remove_var(var);
     }
 
     #[test]
     fn secs_or_unset_returns_default() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let var = "GROK_WORKSPACE_TEST_SECS_OR_UNSET";
-        unsafe { std::env::remove_var(var) };
+        xai_grok_test_support::env::remove_var(var);
         assert_eq!(
             secs_or(var, Duration::from_secs(30)),
             Duration::from_secs(30)
@@ -883,36 +883,36 @@ mod tests {
     fn secs_or_invalid_falls_back_without_panic() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let var = "GROK_WORKSPACE_TEST_SECS_OR_INVALID";
-        unsafe { std::env::set_var(var, "12.5") };
+        xai_grok_test_support::env::set_var(var, "12.5");
         assert_eq!(
             secs_or(var, Duration::from_secs(30)),
             Duration::from_secs(30)
         );
-        unsafe { std::env::remove_var(var) };
+        xai_grok_test_support::env::remove_var(var);
     }
 
     #[test]
     fn ms_or_parses_into_duration() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let var = "GROK_WORKSPACE_TEST_MS_OR_VALID";
-        unsafe { std::env::set_var(var, "250") };
+        xai_grok_test_support::env::set_var(var, "250");
         assert_eq!(
             ms_or(var, Duration::from_millis(100)),
             Duration::from_millis(250)
         );
-        unsafe { std::env::remove_var(var) };
+        xai_grok_test_support::env::remove_var(var);
     }
 
     #[test]
     fn ms_or_invalid_falls_back_without_panic() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let var = "GROK_WORKSPACE_TEST_MS_OR_INVALID";
-        unsafe { std::env::set_var(var, "abc") };
+        xai_grok_test_support::env::set_var(var, "abc");
         assert_eq!(
             ms_or(var, Duration::from_millis(100)),
             Duration::from_millis(100)
         );
-        unsafe { std::env::remove_var(var) };
+        xai_grok_test_support::env::remove_var(var);
     }
 
     /// This is the one test that touches the real (non-`_TEST_`-prefixed) var names: it `remove_var`s all of them before reading them.
@@ -950,7 +950,7 @@ mod tests {
             "GROK_RESUME_NUDGE_DISABLED",
             "GROK_COMPUTER_SESSION_RESUMED_EMIT",
         ] {
-            unsafe { std::env::remove_var(var) };
+            xai_grok_test_support::env::remove_var(var);
         }
         let cfg = StatusConfig::from_env();
         let default = StatusConfig::default();
@@ -1001,11 +1001,11 @@ mod tests {
     #[test]
     fn from_env_reads_session_restored_true_only() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        unsafe { std::env::set_var("GROK_SESSION_RESTORED", "true") };
+        xai_grok_test_support::env::set_var("GROK_SESSION_RESTORED", "true");
         let restored = StatusConfig::from_env().session_restored;
-        unsafe { std::env::set_var("GROK_SESSION_RESTORED", "1") };
+        xai_grok_test_support::env::set_var("GROK_SESSION_RESTORED", "1");
         let non_canonical = StatusConfig::from_env().session_restored;
-        unsafe { std::env::remove_var("GROK_SESSION_RESTORED") };
+        xai_grok_test_support::env::remove_var("GROK_SESSION_RESTORED");
         assert!(restored);
         assert!(!non_canonical);
     }
@@ -1013,11 +1013,11 @@ mod tests {
     #[test]
     fn from_env_reads_revive_script_configured_true_only() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        unsafe { std::env::set_var("GROK_REVIVE_SCRIPT_CONFIGURED", "true") };
+        xai_grok_test_support::env::set_var("GROK_REVIVE_SCRIPT_CONFIGURED", "true");
         let configured = StatusConfig::from_env().revive_script_configured;
-        unsafe { std::env::set_var("GROK_REVIVE_SCRIPT_CONFIGURED", "1") };
+        xai_grok_test_support::env::set_var("GROK_REVIVE_SCRIPT_CONFIGURED", "1");
         let non_canonical = StatusConfig::from_env().revive_script_configured;
-        unsafe { std::env::remove_var("GROK_REVIVE_SCRIPT_CONFIGURED") };
+        xai_grok_test_support::env::remove_var("GROK_REVIVE_SCRIPT_CONFIGURED");
         assert!(configured);
         assert!(!non_canonical);
     }
@@ -1025,11 +1025,11 @@ mod tests {
     #[test]
     fn from_env_reads_resume_nudge_disabled_true_only() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        unsafe { std::env::set_var("GROK_RESUME_NUDGE_DISABLED", "true") };
+        xai_grok_test_support::env::set_var("GROK_RESUME_NUDGE_DISABLED", "true");
         let disabled = StatusConfig::from_env().resume_nudge_disabled;
-        unsafe { std::env::set_var("GROK_RESUME_NUDGE_DISABLED", "1") };
+        xai_grok_test_support::env::set_var("GROK_RESUME_NUDGE_DISABLED", "1");
         let non_canonical = StatusConfig::from_env().resume_nudge_disabled;
-        unsafe { std::env::remove_var("GROK_RESUME_NUDGE_DISABLED") };
+        xai_grok_test_support::env::remove_var("GROK_RESUME_NUDGE_DISABLED");
         assert!(disabled);
         assert!(!non_canonical);
     }
@@ -1037,11 +1037,11 @@ mod tests {
     #[test]
     fn from_env_reads_computer_session_resumed_emit_true_only() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        unsafe { std::env::set_var("GROK_COMPUTER_SESSION_RESUMED_EMIT", "true") };
+        xai_grok_test_support::env::set_var("GROK_COMPUTER_SESSION_RESUMED_EMIT", "true");
         let enabled = StatusConfig::from_env().computer_session_resumed_emit;
-        unsafe { std::env::set_var("GROK_COMPUTER_SESSION_RESUMED_EMIT", "1") };
+        xai_grok_test_support::env::set_var("GROK_COMPUTER_SESSION_RESUMED_EMIT", "1");
         let non_canonical = StatusConfig::from_env().computer_session_resumed_emit;
-        unsafe { std::env::remove_var("GROK_COMPUTER_SESSION_RESUMED_EMIT") };
+        xai_grok_test_support::env::remove_var("GROK_COMPUTER_SESSION_RESUMED_EMIT");
         assert!(enabled);
         assert!(!non_canonical);
     }
@@ -1049,27 +1049,32 @@ mod tests {
     #[test]
     fn from_env_reads_idle_ignore_background_true() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        unsafe { std::env::set_var("GROK_WORKSPACE_IDLE_IGNORE_BACKGROUND_TASKS", "true") };
+        xai_grok_test_support::env::set_var("GROK_WORKSPACE_IDLE_IGNORE_BACKGROUND_TASKS", "true");
         let cfg = StatusConfig::from_env();
-        unsafe { std::env::remove_var("GROK_WORKSPACE_IDLE_IGNORE_BACKGROUND_TASKS") };
+        xai_grok_test_support::env::remove_var("GROK_WORKSPACE_IDLE_IGNORE_BACKGROUND_TASKS");
         assert!(cfg.idle_ignores_background);
     }
 
     #[test]
     fn from_env_reads_preview_activity_window() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        unsafe { std::env::set_var("GROK_WORKSPACE_PREVIEW_ACTIVITY_WINDOW_MS", "120000") };
+        xai_grok_test_support::env::set_var("GROK_WORKSPACE_PREVIEW_ACTIVITY_WINDOW_MS", "120000");
         let cfg = StatusConfig::from_env();
-        unsafe { std::env::remove_var("GROK_WORKSPACE_PREVIEW_ACTIVITY_WINDOW_MS") };
+        xai_grok_test_support::env::remove_var("GROK_WORKSPACE_PREVIEW_ACTIVITY_WINDOW_MS");
         assert_eq!(cfg.preview_activity_window, Duration::from_millis(120_000));
     }
 
     #[test]
     fn from_env_reads_preview_activity_scrape_interval() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        unsafe { std::env::set_var("GROK_WORKSPACE_PREVIEW_ACTIVITY_SCRAPE_INTERVAL_MS", "5000") };
+        xai_grok_test_support::env::set_var(
+            "GROK_WORKSPACE_PREVIEW_ACTIVITY_SCRAPE_INTERVAL_MS",
+            "5000",
+        );
         let cfg = StatusConfig::from_env();
-        unsafe { std::env::remove_var("GROK_WORKSPACE_PREVIEW_ACTIVITY_SCRAPE_INTERVAL_MS") };
+        xai_grok_test_support::env::remove_var(
+            "GROK_WORKSPACE_PREVIEW_ACTIVITY_SCRAPE_INTERVAL_MS",
+        );
         assert_eq!(
             cfg.preview_activity_scrape_interval,
             Duration::from_millis(5_000)
@@ -1124,18 +1129,18 @@ mod tests {
     #[test]
     fn from_env_reads_rpc_activity_window() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        unsafe { std::env::set_var("GROK_WORKSPACE_RPC_ACTIVITY_WINDOW_MS", "30000") };
+        xai_grok_test_support::env::set_var("GROK_WORKSPACE_RPC_ACTIVITY_WINDOW_MS", "30000");
         let cfg = StatusConfig::from_env();
-        unsafe { std::env::remove_var("GROK_WORKSPACE_RPC_ACTIVITY_WINDOW_MS") };
+        xai_grok_test_support::env::remove_var("GROK_WORKSPACE_RPC_ACTIVITY_WINDOW_MS");
         assert_eq!(cfg.rpc_activity_window, Duration::from_millis(30_000));
     }
 
     #[test]
     fn from_env_reads_presence_activity_window() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        unsafe { std::env::set_var("GROK_WORKSPACE_PRESENCE_ACTIVITY_WINDOW_MS", "45000") };
+        xai_grok_test_support::env::set_var("GROK_WORKSPACE_PRESENCE_ACTIVITY_WINDOW_MS", "45000");
         let cfg = StatusConfig::from_env();
-        unsafe { std::env::remove_var("GROK_WORKSPACE_PRESENCE_ACTIVITY_WINDOW_MS") };
+        xai_grok_test_support::env::remove_var("GROK_WORKSPACE_PRESENCE_ACTIVITY_WINDOW_MS");
         assert_eq!(cfg.presence_activity_window, Duration::from_millis(45_000));
     }
 
@@ -1145,13 +1150,13 @@ mod tests {
         let enabled_var = "GROK_WORKSPACE_PRESENCE_KEEPALIVE_ENABLED";
         let window_var = "GROK_WORKSPACE_PRESENCE_ACTIVITY_WINDOW_MS";
 
-        unsafe { std::env::remove_var(enabled_var) };
-        unsafe { std::env::set_var(window_var, "45000") };
+        xai_grok_test_support::env::remove_var(enabled_var);
+        xai_grok_test_support::env::set_var(window_var, "45000");
         let cfg = StatusConfig::from_env();
         assert!(!cfg.presence_keepalive_enabled);
         assert_eq!(cfg.effective_presence_activity_window(), Duration::ZERO);
 
-        unsafe { std::env::set_var(enabled_var, "true") };
+        xai_grok_test_support::env::set_var(enabled_var, "true");
         let cfg = StatusConfig::from_env();
         assert!(cfg.presence_keepalive_enabled);
         assert_eq!(
@@ -1159,15 +1164,15 @@ mod tests {
             Duration::from_millis(45_000)
         );
 
-        unsafe { std::env::set_var(enabled_var, "yes") };
+        xai_grok_test_support::env::set_var(enabled_var, "yes");
         let cfg = StatusConfig::from_env();
         assert!(
             !cfg.presence_keepalive_enabled,
             "non-bool spelling falls back to the OFF default"
         );
 
-        unsafe { std::env::remove_var(enabled_var) };
-        unsafe { std::env::remove_var(window_var) };
+        xai_grok_test_support::env::remove_var(enabled_var);
+        xai_grok_test_support::env::remove_var(window_var);
     }
 
     #[test]
@@ -1246,7 +1251,7 @@ mod tests {
     fn backoff_schedule_unset_returns_none() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let var = "GROK_WORKSPACE_TEST_BACKOFF_UNSET";
-        unsafe { std::env::remove_var(var) };
+        xai_grok_test_support::env::remove_var(var);
         assert_eq!(backoff_schedule_from_env(var), None);
     }
 
@@ -1255,7 +1260,7 @@ mod tests {
     fn backoff_schedule_valid_list_parses_in_order() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let var = "GROK_WORKSPACE_TEST_BACKOFF_VALID";
-        unsafe { std::env::set_var(var, "100, 200,500,1000") };
+        xai_grok_test_support::env::set_var(var, "100, 200,500,1000");
         assert_eq!(
             backoff_schedule_from_env(var),
             Some(vec![
@@ -1265,14 +1270,14 @@ mod tests {
                 Duration::from_millis(1000),
             ])
         );
-        unsafe { std::env::remove_var(var) };
+        xai_grok_test_support::env::remove_var(var);
     }
 
     #[test]
     fn frac_or_unset_returns_default() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let var = "GROK_WORKSPACE_TEST_FRAC_OR_UNSET";
-        unsafe { std::env::remove_var(var) };
+        xai_grok_test_support::env::remove_var(var);
         assert_eq!(frac_or(var, 0.6, |v| v > 0.0 && v < 1.0), 0.6);
     }
 
@@ -1280,35 +1285,35 @@ mod tests {
     fn frac_or_valid_parses() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let var = "GROK_WORKSPACE_TEST_FRAC_OR_VALID";
-        unsafe { std::env::set_var(var, "0.75") };
+        xai_grok_test_support::env::set_var(var, "0.75");
         assert_eq!(frac_or(var, 0.6, |v| v > 0.0 && v < 1.0), 0.75);
-        unsafe { std::env::remove_var(var) };
+        xai_grok_test_support::env::remove_var(var);
     }
 
     #[test]
     fn frac_or_garbage_falls_back_to_default() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let var = "GROK_WORKSPACE_TEST_FRAC_OR_GARBAGE";
-        unsafe { std::env::set_var(var, "not-a-fraction") };
+        xai_grok_test_support::env::set_var(var, "not-a-fraction");
         assert_eq!(frac_or(var, 0.6, |v| v > 0.0 && v < 1.0), 0.6);
-        unsafe { std::env::remove_var(var) };
+        xai_grok_test_support::env::remove_var(var);
     }
 
     #[test]
     fn frac_or_out_of_range_falls_back_to_default() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let var = "GROK_WORKSPACE_TEST_FRAC_OR_RANGE";
-        unsafe { std::env::set_var(var, "0") };
+        xai_grok_test_support::env::set_var(var, "0");
         assert_eq!(frac_or(var, 0.6, |v| v > 0.0 && v < 1.0), 0.6);
-        unsafe { std::env::set_var(var, "1") };
+        xai_grok_test_support::env::set_var(var, "1");
         assert_eq!(frac_or(var, 0.6, |v| v > 0.0 && v < 1.0), 0.6);
-        unsafe { std::env::set_var(var, "1.5") };
+        xai_grok_test_support::env::set_var(var, "1.5");
         assert_eq!(frac_or(var, 0.6, |v| v > 0.0 && v < 1.0), 0.6);
-        unsafe { std::env::set_var(var, "-0.1") };
+        xai_grok_test_support::env::set_var(var, "-0.1");
         assert_eq!(frac_or(var, 0.2, |v| (0.0..=0.5).contains(&v)), 0.2);
-        unsafe { std::env::set_var(var, "0.6") };
+        xai_grok_test_support::env::set_var(var, "0.6");
         assert_eq!(frac_or(var, 0.2, |v| (0.0..=0.5).contains(&v)), 0.2);
-        unsafe { std::env::remove_var(var) };
+        xai_grok_test_support::env::remove_var(var);
     }
 
     #[test]
@@ -1321,24 +1326,30 @@ mod tests {
             "GROK_WORKSPACE_OIDC_REFRESH_SAFETY_MARGIN_SECS",
             "GROK_WORKSPACE_OIDC_MIN_REFRESH_INTERVAL_SECS",
         ] {
-            unsafe { std::env::remove_var(var) };
+            xai_grok_test_support::env::remove_var(var);
         }
         let cfg = ProactiveRefreshConfig::from_env();
         assert_eq!(cfg, ProactiveRefreshConfig::default());
         assert!(cfg.enabled);
 
-        unsafe { std::env::set_var("GROK_WORKSPACE_OIDC_PROACTIVE_REFRESH_ENABLED", "false") };
+        xai_grok_test_support::env::set_var(
+            "GROK_WORKSPACE_OIDC_PROACTIVE_REFRESH_ENABLED",
+            "false",
+        );
         let cfg = ProactiveRefreshConfig::from_env();
         assert!(
             !cfg.enabled,
             "explicit false is the env kill-switch and must still win"
         );
 
-        unsafe { std::env::set_var("GROK_WORKSPACE_OIDC_PROACTIVE_REFRESH_ENABLED", "true") };
-        unsafe { std::env::set_var("GROK_WORKSPACE_OIDC_REFRESH_FRACTION", "0.7") };
-        unsafe { std::env::set_var("GROK_WORKSPACE_OIDC_REFRESH_JITTER_FRACTION", "0.1") };
-        unsafe { std::env::set_var("GROK_WORKSPACE_OIDC_REFRESH_SAFETY_MARGIN_SECS", "90") };
-        unsafe { std::env::set_var("GROK_WORKSPACE_OIDC_MIN_REFRESH_INTERVAL_SECS", "30") };
+        xai_grok_test_support::env::set_var(
+            "GROK_WORKSPACE_OIDC_PROACTIVE_REFRESH_ENABLED",
+            "true",
+        );
+        xai_grok_test_support::env::set_var("GROK_WORKSPACE_OIDC_REFRESH_FRACTION", "0.7");
+        xai_grok_test_support::env::set_var("GROK_WORKSPACE_OIDC_REFRESH_JITTER_FRACTION", "0.1");
+        xai_grok_test_support::env::set_var("GROK_WORKSPACE_OIDC_REFRESH_SAFETY_MARGIN_SECS", "90");
+        xai_grok_test_support::env::set_var("GROK_WORKSPACE_OIDC_MIN_REFRESH_INTERVAL_SECS", "30");
         let cfg = ProactiveRefreshConfig::from_env();
         assert!(cfg.enabled);
         assert_eq!(cfg.fraction, 0.7);
@@ -1346,8 +1357,8 @@ mod tests {
         assert_eq!(cfg.safety_margin, Duration::from_secs(90));
         assert_eq!(cfg.min_refresh_interval, Duration::from_secs(30));
 
-        unsafe { std::env::set_var("GROK_WORKSPACE_OIDC_REFRESH_FRACTION", "nope") };
-        unsafe { std::env::set_var("GROK_WORKSPACE_OIDC_REFRESH_JITTER_FRACTION", "9") };
+        xai_grok_test_support::env::set_var("GROK_WORKSPACE_OIDC_REFRESH_FRACTION", "nope");
+        xai_grok_test_support::env::set_var("GROK_WORKSPACE_OIDC_REFRESH_JITTER_FRACTION", "9");
         let cfg = ProactiveRefreshConfig::from_env();
         assert_eq!(cfg.fraction, 0.6);
         assert_eq!(cfg.jitter_fraction, 0.2);
@@ -1359,7 +1370,7 @@ mod tests {
             "GROK_WORKSPACE_OIDC_REFRESH_SAFETY_MARGIN_SECS",
             "GROK_WORKSPACE_OIDC_MIN_REFRESH_INTERVAL_SECS",
         ] {
-            unsafe { std::env::remove_var(var) };
+            xai_grok_test_support::env::remove_var(var);
         }
     }
 
@@ -1459,10 +1470,10 @@ mod tests {
     fn oidc_min_refresh_interval_zero_env_is_floored() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let var = "GROK_WORKSPACE_OIDC_MIN_REFRESH_INTERVAL_SECS";
-        unsafe { std::env::set_var(var, "0") };
+        xai_grok_test_support::env::set_var(var, "0");
         let cfg = ProactiveRefreshConfig::from_env();
         assert_eq!(cfg.min_refresh_interval, MIN_OIDC_MIN_REFRESH_INTERVAL);
-        unsafe { std::env::remove_var(var) };
+        xai_grok_test_support::env::remove_var(var);
     }
 
     #[test]
@@ -1470,19 +1481,19 @@ mod tests {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let var = "GROK_WORKSPACE_WS_LIVENESS_DEADLINE_SECS";
 
-        unsafe { std::env::remove_var(var) };
+        xai_grok_test_support::env::remove_var(var);
         assert_eq!(StatusConfig::from_env().ws_liveness_deadline, None);
 
-        unsafe { std::env::set_var(var, "90") };
+        xai_grok_test_support::env::set_var(var, "90");
         assert_eq!(
             StatusConfig::from_env().ws_liveness_deadline,
             Some(Duration::from_secs(90))
         );
 
-        unsafe { std::env::set_var(var, "not-a-number") };
+        xai_grok_test_support::env::set_var(var, "not-a-number");
         assert_eq!(StatusConfig::from_env().ws_liveness_deadline, None);
 
-        unsafe { std::env::remove_var(var) };
+        xai_grok_test_support::env::remove_var(var);
     }
 
     /// A malformed element makes the whole schedule fall back to `None` (and warns) rather than silently dropping entries.
@@ -1490,8 +1501,8 @@ mod tests {
     fn backoff_schedule_malformed_returns_none() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let var = "GROK_WORKSPACE_TEST_BACKOFF_MALFORMED";
-        unsafe { std::env::set_var(var, "100,not-a-number,500") };
+        xai_grok_test_support::env::set_var(var, "100,not-a-number,500");
         assert_eq!(backoff_schedule_from_env(var), None);
-        unsafe { std::env::remove_var(var) };
+        xai_grok_test_support::env::remove_var(var);
     }
 }

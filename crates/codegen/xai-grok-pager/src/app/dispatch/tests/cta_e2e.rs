@@ -503,9 +503,7 @@ fn plugin_cta_catalog_load_recomputes_match_for_typed_draft() {
         static HOME: OnceLock<tempfile::TempDir> = OnceLock::new();
         HOME.get_or_init(|| {
             let tmp = tempfile::tempdir().expect("tempdir creation");
-            unsafe {
-                std::env::set_var("GROK_HOME", tmp.path());
-            }
+            xai_grok_test_support::env::set_var("GROK_HOME", tmp.path());
             tmp
         });
     }
@@ -1649,9 +1647,7 @@ mod cta_e2e {
         static HOME: OnceLock<tempfile::TempDir> = OnceLock::new();
         HOME.get_or_init(|| {
             let tmp = tempfile::tempdir().expect("tempdir creation");
-            unsafe {
-                std::env::set_var("GROK_HOME", tmp.path());
-            }
+            xai_grok_test_support::env::set_var("GROK_HOME", tmp.path());
             tmp
         });
     }
