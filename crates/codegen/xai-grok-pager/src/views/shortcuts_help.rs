@@ -3586,4 +3586,80 @@ mod tests {
             "empty help must render no description line even when expanded"
         );
     }
+
+    /// `build_entries` is registry-driven — "all registered actions are included".
+    /// Nothing enforced that, so an action could gain a keybinding and never appear
+    /// in the cheatsheet. Walks the real registry rather than a hand-written list.
+    #[test]
+    fn every_keybound_registry_action_gets_a_cheatsheet_row() {
+        let registry = ActionRegistry::defaults();
+        let entries = build_entries(&all_contexts(), &registry, true);
+        let listed: std::collections::HashSet<ActionId> = entries
+            .iter()
+            .filter_map(|e| match e {
+                ShortcutsHelpEntry::Hint {
+                    action_id: Some(id),
+                    ..
+                } => Some(*id),
+                _ => None,
+            })
+            .collect();
+
+        let mut unlisted: Vec<String> = Vec::new();
+        for def in registry.all() {
+            // Same condition the shipped builder uses: a slash-only action has no
+            // chord to advertise, so its absence is correct.
+            if def.default_key == key!(Null) && def.alt_keys.is_empty() {
+                continue;
+            }
+            if def.id == ActionId::VoiceToggle && !crate::app::voice_mode_enabled() {
+                continue;
+            }
+            if listed.contains(&def.id) {
+                continue;
+            }
+            // Per-category dedup drops a row whose default key already rendered.
+            // Legitimate only when the winning row is itself a listed action.
+            let shadowed = registry.all().iter().any(|other| {
+                other.id != def.id
+                    && other.category == def.category
+                    && other.default_key == def.default_key
+                    && listed.contains(&other.id)
+            });
+            if !shadowed {
+                unlisted.push(format!("{:?} (label {:?})", def.id, def.label));
+            }
+        }
+        assert!(
+            unlisted.is_empty(),
+            "keybound actions with no row in the shortcuts cheatsheet: {unlisted:?}"
+        );
+    }
+
+    #[test]
+    fn build_entries_lists_prompt_stash_with_ctrl_s_and_alt_s() {
+        let registry = ActionRegistry::defaults();
+        let entries = build_entries(&[When::PromptFocused], &registry, false);
+        let alt = if cfg!(target_os = "macos") {
+            "Opt"
+        } else {
+            "Alt"
+        };
+
+        let (item, dimmed) = entries
+            .iter()
+            .find_map(|e| match e {
+                ShortcutsHelpEntry::Hint {
+                    item,
+                    dimmed,
+                    action_id: Some(ActionId::StashPrompt),
+                    ..
+                } => Some((item, *dimmed)),
+                _ => None,
+            })
+            .expect("StashPrompt must be listed in the shortcuts window");
+
+        assert!(!dimmed, "stash must be lit while the prompt is focused");
+        assert_eq!(hint_key_pretty(item), format!("Ctrl+s / {alt}+s"));
+    }
 }
