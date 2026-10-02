@@ -2,6 +2,54 @@
 
 ## Unreleased
 
+### 修复：Windows 那条 CI 腿把 WSL 启动器当成 bash，installer 的四条平台分支从此真被执行
+
+`scripts/ci/test-installer-asset-names.py` 比对的是一件事：四个地方（`install.sh` 的 bash
+`case`、`install.ps1`、`install.bat`、`chaos update`）各自拼出来的 release 资产名，是否都
+在 `release.yml` 那六行 `copy_one` 真正上传的名字里。它对 `install.sh` 原本只做「本机跑一次」
+的验证：`subprocess.run(["bash", "-c", ...])`。`platform tests (windows-latest)` 就红在这一句，
+run 313 的原文是 `FAILED running the shipped detect_platform failed:`——冒号后面**什么都没有**，
+即退出码非 0 而 stderr 为空。`install.sh` 拒绝 Windows 时是往 stderr 打
+`error: use PowerShell scripts/install.ps1 on Windows` 的，代码里那句
+`if "use PowerShell" in proc.stderr` 的按设计豁免因此不可能触发；CRLF（本机复现：rc=2 且
+bash 语法错误可见）与打桩 `uname` 走 MINGW 分支（rc=1 且消息在）两条无辜解释都被逐一排除。
+剩下的是解释器本身：Windows runner 的 `PATH` 把 `C:\Windows\System32` 排在
+`C:\Program Files\Git\bin` 之前，而 `System32\bash.exe` 是 WSL 启动器、不是这台机器的 bash，
+没装发行版时它退出非 0、抱怨写在 **stdout** 上。Linux/macOS 两条腿看不见这个形状，所以同一份
+代码在三分之二的腿上是绿的。
+
+取 bash 的地方新增 `find_bash()`：`$BASH` 优先（`shell: bash` 那一步里它就是正在执行这一步的
+解释器），其次按 `ProgramFiles` / `ProgramFiles(x86)` / `LOCALAPPDATA` 找 Git for Windows，
+最后才信 `PATH`；Windows 上路径含 `system32` 的候选直接丢弃；**每个候选都要真跑一条
+`printf ok`**——「路径存在」和「是 bash」不是一回事。取不到时不再静默降级：POSIX 主机记
+failure，Windows 主机记 note（`install.sh` 本来就不是 Windows 的安装入口）。失败信息现在
+把退出码、stderr、stdout 三者都印出来，这类故障下次会自报家门。
+
+顺带补掉一处覆盖空洞：本机那一次探针只覆盖本机走得到的分支，另外三条平台分支此前是靠正则读
+`OS_KEY=` / `ARCH_KEY=` **赋值推**出来的。现在 `uname -s`/`uname -m` 打桩，`detect_platform`
+的七条分支**逐条真跑**：linux/darwin × x64/arm64 四条出资产的断言 `ASSET` 与 `PLATFORM`
+（自动更新存盘用的那套 `macos-aarch64` 名字）都等于预期且资产名在 `copy_one` 集合内；
+Git Bash / FreeBSD / `ppc64le` 三条断言退出非 0 且报错原文含 `use PowerShell` /
+`unsupported OS` / `unsupported arch`。桩由 bash 自己 `mktemp -d` 写出——Git for Windows 里
+python 的临时目录是 DOS 路径，拼进 `PATH` 解析不了。`case` 里若新增一个 `OS_KEY=` 而探针表
+没有对应行，判失败而不是跳过；本机探针保留。
+
+新增 `scripts/ci/test-installer-bash-resolution.py`（13 用例）钉住取 bash 的规则：退出非 0 的、
+只往 stdout 抱怨（WSL 启动器的形状）的、是个目录的候选都不能中选；`System32` 下**能用**的
+bash 在 Windows 上必须落选（从 `PATH` 与 `$BASH` 两侧各进一次），在 POSIX 上又必须照常可用；
+取不到 bash 时 POSIX 必须失败、Windows 只记 note，且 `check_install_sh` 其余部分照常跑。
+五个变异逐个注入：删 `system32` 过滤 → 2 用例红；候选不执行即接受 → 3 用例红；探针表写错
+Darwin/arm64 → 检查红；`install.sh` 把 `ARCH_KEY` 写成 `x86` → 检查 4 条红；改掉
+`use PowerShell` 措辞 → 检查红。每次改回后 `cmp` 校验逐字节一致。第一版的 System32 用例
+**删掉过滤也不会红**（那个排列里 Git 候选本来就排在 PATH 之前），是变异测出来才改对的。
+两条腿都接上：`platform tests` 的 `Parse the PowerShell installers` 步骤与 ubuntu `rust`
+任务的脚本检查串，外加 `scripts/verify-in-docker.sh` 新增 `installer asset names` 门禁。
+证据见 `docs/verification/installer-asset-probe-2026-10-03.log`；Windows 腿的真实结论要由
+下一次 push 的 platform job 给出，本机无法替它作保。（2026-10-03；
+`scripts/ci/test-installer-asset-names.py`、`scripts/ci/test-installer-bash-resolution.py`、
+`.github/workflows/ci.yml`、`scripts/verify-in-docker.sh`）
+
+
 ### 修复：中文化守卫把「改名/删死代码」当成「中文被冲掉」，且两份守卫自测没人跑
 
 `scripts/l10n-guard.sh` 守的是上游合并把 fork 的中文 UI 冲回英文这类事故，按

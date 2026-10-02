@@ -131,6 +131,7 @@ gates=(
   "brand/protocol guard: python3 scripts/ci/check-brand-protocol.py"
   "workflow shells: python3 scripts/ci/check-workflow-shells.py .github/workflows/ci.yml"
   "script portability: python3 scripts/ci/check-script-portability.py"
+  "installer asset names: python3 scripts/ci/test-installer-asset-names.py && python3 scripts/ci/test-installer-bash-resolution.py"
   "docs localization: bash scripts/l10n-guard.sh && python3 scripts/check-doc-l10n.py --links && python3 scripts/check-doc-l10n.py --english"
   "localization guard self-tests: python3 scripts/l10n-guard-selftest.py && python3 scripts/check-doc-l10n-selftest.py"
   "secret scan: ${bootstrap}; bash scripts/ci/secret-scan.sh"

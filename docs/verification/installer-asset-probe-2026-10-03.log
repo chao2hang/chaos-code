@@ -1,0 +1,161 @@
+# installer asset names: the Windows CI leg, the WSL launcher, and the probe that replaced it
+#
+# host: Linux x86_64, bash 5, python3 (this file's outputs are all from that host)
+# commit under test: e85f21ca plus the working-tree change described here
+# commands:
+#   python3 scripts/ci/test-installer-asset-names.py
+#   python3 scripts/ci/test-installer-bash-resolution.py
+#   bash <scratch>/mutate-bash-resolution.sh          (section 4)
+
+## 1. the failure being fixed
+
+`platform tests (windows-latest)` of CI, step "Parse the PowerShell installers", runs
+`python3 scripts/ci/test-installer-asset-names.py --require`. Run 313 (id 37023603649)
+failed it with exactly one line and nothing after the colon:
+
+      FAILED running the shipped detect_platform failed:
+      6 check(s), 1 failure(s)
+
+The old probe was `subprocess.run(["bash", "-c", body + "\ndetect_platform\n..."])`.
+A non-zero exit with an EMPTY stderr rules out the two innocent explanations:
+
+- install.sh's by-design Windows refusal writes `error: use PowerShell
+  scripts/install.ps1 on Windows` to stderr, and the code has an exemption keyed on
+  exactly that string; reproduced locally with a stub `uname` printing
+  MINGW64_NT-10.0-26100, that path gives rc=1 with the message present, so it prints
+  a `note`, not a `FAILED`.
+- CRLF line endings: reproduced by rewriting the probe with \r\n, which gives rc=2 and
+  a *visible* bash syntax error, not a silent one.
+
+What is left is the interpreter. On a Windows runner `PATH` lists
+`C:\Windows\System32` before `C:\Program Files\Git\bin`, and `System32\bash.exe` is the
+WSL launcher, not a bash for this machine's files. With no distro installed it exits
+non-zero and writes its complaint to stdout, so `stderr` is empty and the failure reads
+as "install.sh is broken". Linux and macOS cannot show this, which is why the same code
+was green on two of three legs.
+
+## 2. what the check does now (this host, after the fix)
+
+- `find_bash()`: `$BASH` (the interpreter a `shell: bash` step runs), then Git for
+  Windows under ProgramFiles / ProgramFiles(x86) / LOCALAPPDATA, then PATH; anything
+  containing `system32` is dropped on Windows; every candidate must actually run
+  `printf ok`.
+- All seven arms of the shipped `detect_platform` are *executed* under a stubbed
+  `uname` (four asset arms assert both ASSET and the auto-update PLATFORM key, three
+  refusal arms assert exit != 0 and the exact wording), instead of the four names being
+  inferred by regex from the `OS_KEY=`/`ARCH_KEY=` assignments.
+- A refusal or a bad exit now quotes rc plus stderr plus stdout, so this class of
+  failure names itself next time.
+
+== the asset a release publishes, and the four places that ask for it
+   ok  release.yml publishes 6 assets: chaos-darwin-arm64, chaos-darwin-x64, chaos-linux-arm64, chaos-linux-x64, chaos-win32-arm64.exe, chaos-win32-x64.exe
+   ok  install.sh's 4 possible assets (chaos-darwin-arm64, chaos-darwin-x64, chaos-linux-arm64, chaos-linux-x64) are all published
+   ok  executing install.sh's detect_platform with /usr/bin/bash
+   ok  every asset arm names a published asset when run: Linux/x86_64->chaos-linux-x64, Linux/aarch64->chaos-linux-arm64, Darwin/x86_64->chaos-darwin-x64, Darwin/arm64->chaos-darwin-arm64
+   ok  and is refused as designed on MINGW64_NT-10.0, FreeBSD, Linux
+   ok  this host's own uname picks 'chaos-linux-x64', which is published
+   ok  install.ps1's asset literals (chaos-win32-arm64.exe, chaos-win32-x64.exe) are all published
+   ok  the shipped Get-AssetName returns 'chaos-win32-x64.exe' under pwsh, and it is published
+   ok  install.bat's asset names (chaos-win32-arm64.exe, chaos-win32-x64.exe) are all published
+
+9 check(s), 0 failure(s)
+[exit 0]
+
+
+## 3. scripts/ci/test-installer-bash-resolution.py (13 cases)
+
+Generated executables per rule: exits non-zero, mimics the launcher's stdout-only
+complaint, is a directory, a *working* bash under System32 that must still lose on
+Windows (from both the `PATH` and the `$BASH` side), and must still win on POSIX.
+Plus what check_install_sh reports when nothing is usable: a failure on POSIX, a note on
+Windows, and the rest of the check still running when a bash is found.
+
+test_bash_env_var_wins_over_path (__main__.CandidateRuleTests) ... ok
+test_broken_bash_on_path_is_not_returned (__main__.CandidateRuleTests) ... ok
+test_broken_preferred_candidate_yields_the_next_usable_one (__main__.CandidateRuleTests) ... ok
+test_candidate_that_is_a_directory_is_skipped (__main__.CandidateRuleTests) ... ok
+test_git_install_wins_over_what_path_resolves (__main__.CandidateRuleTests) ... ok
+test_launcher_that_only_prints_to_stdout_is_not_usable (__main__.CandidateRuleTests) ... ok
+test_no_candidates_at_all_returns_none (__main__.CandidateRuleTests) ... ok
+test_system32_bash_is_never_chosen_on_windows (__main__.CandidateRuleTests) ... ok
+test_system32_bash_is_skipped_even_when_named_by_bash_var (__main__.CandidateRuleTests) ... ok
+test_system32_is_not_filtered_on_posix (__main__.CandidateRuleTests) ... ok
+test_a_posix_host_says_so_as_a_failure (__main__.DegradedLookupTests) ... ok
+test_the_rest_of_the_check_still_runs_when_bash_is_found (__main__.DegradedLookupTests) ... ok
+test_this_host_offers_a_usable_bash (__main__.RealHostTests) ... ok
+
+----------------------------------------------------------------------
+Ran 13 tests in 0.062s
+
+OK
+[exit 0]
+
+
+## 4. mutation proof (each injected, run, restored, then cmp'd byte-identically)
+
+The first version of the System32 fixture passed with the filter deleted, because the
+Git candidate already sorted ahead of PATH in that arrangement; the fixtures below are
+the corrected ones, where removing the filter is what turns them red.
+
+=== M1: drop the System32 filter from find_bash
+fixtures: Ran 13 tests in 0.057s  FAILED (failures=2) 
+check:    9 check(s), 0 failure(s)|
+   restored byte-identical: scripts/ci/test-installer-asset-names.py
+   restored byte-identical: scripts/ci/test-installer-bash-resolution.py
+   restored byte-identical: scripts/install.sh
+
+=== M2: accept any candidate without executing it
+fixtures: Ran 13 tests in 0.054s  FAILED (failures=3) 
+check:    9 check(s), 0 failure(s)|
+   restored byte-identical: scripts/ci/test-installer-asset-names.py
+   restored byte-identical: scripts/ci/test-installer-bash-resolution.py
+   restored byte-identical: scripts/install.sh
+
+=== M3: make one probe arm expect the wrong asset name
+fixtures: Ran 13 tests in 0.055s  FAILED (failures=1) 
+check:       FAILED detect_platform on Darwin/arm64 picked 'chaos-darwin-arm64' stored as 'macos-aarch64', expected 'chaos-darwin-x64' stored as 'macos-x86_64'|9 check(s), 1 failure(s)|
+   restored byte-identical: scripts/ci/test-installer-asset-names.py
+   restored byte-identical: scripts/ci/test-installer-bash-resolution.py
+   restored byte-identical: scripts/install.sh
+
+=== M4: ship a wrong ARCH_KEY from install.sh
+fixtures: Ran 13 tests in 0.056s  FAILED (failures=2) 
+check:       FAILED install.sh can ask for ['chaos-darwin-x86', 'chaos-linux-x86'], which release.yml does not publish|   FAILED detect_platform on Linux/x86_64 picked 'chaos-linux-x86' stored as 'linux-x86_64', expected 'chaos-linux-x64' stored as 'linux-x86_64'|   FAILED detect_platform on Darwin/x86_64 picked 'chaos-darwin-x86' stored as 'macos-x86_64', expected 'chaos-darwin-x64' stored as 'macos-x86_64'|   FAILED this host's detect_platform picked 'chaos-linux-x86', which release.yml does not publish|
+   restored byte-identical: scripts/ci/test-installer-asset-names.py
+   restored byte-identical: scripts/ci/test-installer-bash-resolution.py
+   restored byte-identical: scripts/install.sh
+
+=== M5: change the Windows-refusal wording install.ps1 relies on
+fixtures: Ran 13 tests in 0.057s  FAILED (failures=1) 
+check:       FAILED detect_platform on MINGW64_NT-10.0/x86_64 exited 1 without 'use PowerShell': 'error: windows not supported'|9 check(s), 1 failure(s)|
+   restored byte-identical: scripts/ci/test-installer-asset-names.py
+   restored byte-identical: scripts/ci/test-installer-bash-resolution.py
+   restored byte-identical: scripts/install.sh
+
+=== baseline after restore
+Ran 13 tests in 0.055s  OK 
+ 9 check(s), 0 failure(s) 
+ M .github/workflows/ci.yml
+ M scripts/ci/test-installer-asset-names.py
+ M scripts/verify-in-docker.sh
+?? scripts/ci/test-installer-bash-resolution.py
+
+
+## 5. wiring
+
+`platform tests` step "Parse the PowerShell installers" runs the fixtures on both
+platform legs (POSIX-shape fixtures skip under a native Windows python; RealHostTests
+still asserts that host can produce a usable bash); the ubuntu `rust` job runs both
+files; `scripts/verify-in-docker.sh` has a new `installer asset names` gate.
+
+.github/workflows/ci.yml:165:          "$py" scripts/ci/test-installer-bash-resolution.py
+.github/workflows/ci.yml:580:          python3 scripts/ci/test-installer-bash-resolution.py
+scripts/verify-in-docker.sh:134:  "installer asset names: python3 scripts/ci/test-installer-asset-names.py && python3 scripts/ci/test-installer-bash-resolution.py"
+[exit 0]
+
+script-portability: OK (23 shell script(s))
+[exit 0]
+
+check-workflow-shells: .github/workflows/ci.yml: OK
+check-workflow-shells: .github/workflows/release.yml: OK
+[exit 0]

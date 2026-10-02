@@ -160,6 +160,9 @@ jobs:
           # missing PowerShell must stop the build rather than downgrade the asset-name
           # check to reading string literals out of install.ps1.
           "$py" scripts/ci/test-installer-asset-names.py --require
+          # Which bash the check above chooses is a Windows-specific decision, so its
+          # rules are asserted here as well as on the Linux job.
+          "$py" scripts/ci/test-installer-bash-resolution.py
 
       # Same protoc the Linux and release jobs use; apt's version is too old
       # for proto3 optional and the macos/windows images ship none.
@@ -570,6 +573,11 @@ jobs:
           # upgrade 404s, which reads as "no such version". This compares the four
           # against the `copy_one` lines, executing the two that can run here.
           python3 scripts/ci/test-installer-asset-names.py
+          # Which bash that check executes install.sh through is itself a decision with
+          # rules: $BASH beats PATH, Git for Windows beats PATH, and anything under
+          # System32 (the WSL launcher) is not a bash. Fixtures, because no Linux host
+          # has a WSL launcher to be fooled by.
+          python3 scripts/ci/test-installer-bash-resolution.py
           # The release version lives in the npm meta package, and four other
           # places have to equal it (six platform packages, the pins, the two
           # crates that build the binary, the CHANGELOG section). A drift only
