@@ -32,3 +32,7 @@ __pycache__/
 # Frontend dependencies and build output
 apps/chaos-ui/node_modules/
 apps/chaos-ui/dist/
+
+# ripgrep that scripts/test-platform.{sh,ps1} downloads when the host has none;
+# a fetched binary is machine-local, never repo content.
+.platform-tools/

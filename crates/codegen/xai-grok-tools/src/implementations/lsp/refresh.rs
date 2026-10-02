@@ -87,6 +87,17 @@ impl RefreshTarget {
     pub fn take_invalidated(&self) -> bool {
         self.invalidated.swap(false, Ordering::Acquire)
     }
+
+    /// Whether a refresh is waiting to be acted on, without acting on it.
+    ///
+    /// Whoever is about to consume the flag needs to know it is set first; a
+    /// test that wants the drain to be the one that sees the announcement cannot
+    /// afford to take it on the way in.
+    #[cfg(test)]
+    #[must_use]
+    pub fn is_invalidated(&self) -> bool {
+        self.invalidated.load(Ordering::Acquire)
+    }
 }
 
 #[cfg(test)]

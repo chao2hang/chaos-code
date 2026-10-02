@@ -55,18 +55,17 @@ fn assert_materialized_auto_socket_denies(profile: &SandboxProfile) {
     );
 }
 
+/// Fixture root for a socket test.
+///
+/// Two properties are load-bearing, and a plain `temp_dir()` child gives you
+/// neither on a macOS runner: the bound path must fit in `sun_path`, and the
+/// root must be canonical, because the policy comparisons here are
+/// canonical-vs-canonical and `/var` is a symlink to `/private/var` on macOS,
+/// which makes an alias of a fixture path look like an unrelated deny.
+/// [`crate::test_util::short_socket_root`] provides both.
 #[cfg(unix)]
 fn temp_runtime_root(tag: &str) -> PathBuf {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let root = std::env::temp_dir().join(format!(
-        "grok-runtime-sockets-{tag}-{}-{nanos}",
-        std::process::id()
-    ));
-    std::fs::create_dir_all(&root).unwrap();
-    root
+    crate::test_util::short_socket_root("grok-rss", tag)
 }
 
 #[test]

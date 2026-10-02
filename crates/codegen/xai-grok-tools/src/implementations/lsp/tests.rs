@@ -34,6 +34,23 @@ async fn wait_until(what: &str, mut ready: impl FnMut() -> bool) {
     panic!("timed out waiting for {what}");
 }
 
+/// `wait_until` for state that lives behind the manager's lock.
+async fn wait_until_manager(
+    mgr: &tokio::sync::Mutex<LspManager>,
+    what: &str,
+    mut ready: impl FnMut(&LspManager) -> bool,
+) {
+    let deadline = tokio::time::Instant::now() + WAIT_TIMEOUT;
+    while tokio::time::Instant::now() < deadline {
+        let lsp = mgr.lock().await;
+        if ready(&lsp) {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    panic!("timed out waiting for {what}");
+}
+
 /// A file is held for this long in tests that are about letting go of one.
 /// Long enough not to race a mock server's own latency, short enough that a
 /// test can wait it out.
@@ -1812,7 +1829,9 @@ async fn a_server_that_announces_it_is_ready_is_waited_on_again() {
     // letting go of files.
     mgr.pending_policy = super::pending::PendingPolicy {
         verdict_ttl: std::time::Duration::from_secs(30),
-        server_patience: std::time::Duration::from_millis(80),
+        // Well under the server's 400 ms of silence, so the "we have given up
+        // on it" state has a window a poll can actually observe.
+        server_patience: std::time::Duration::from_millis(30),
     };
     let mgr = tokio::sync::Mutex::new(mgr);
 
@@ -1822,10 +1841,30 @@ async fn a_server_that_announces_it_is_ready_is_waited_on_again() {
         .await
         .notify_file_changed(&file, "const y = 1;\n");
 
-    // Past the first pull (refused, leaving the server looking silent) and the
-    // announcement that followed it. The re-pull that announcement queued is in
-    // flight but has not answered yet.
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    // The window this test is about: the client has stopped blocking on a
+    // server it judges silent, and the announcement has to start the wait
+    // again. A fixed sleep cannot name either half of that moment — the patience
+    // window is tens of milliseconds, the same order as a loaded runner's
+    // process start-up, so the drain used to begin either before the
+    // announcement or after the restarted window had already run out.
+    //
+    // Both halves are waited for, and both are states that hold *before* the
+    // drain runs, because restarting the clock is the drain's own first act:
+    // watching for it from outside would wait for something only the drain can
+    // do. Each poll only reads, and neither state can fall back once reached, so
+    // there is no window for a loaded runner to slip through.
+    wait_until_manager(
+        &mgr,
+        "the silent server to stop being worth blocking on",
+        |lsp| lsp.has_pending_diagnostics() && !lsp.worth_blocking_for_diagnostics(),
+    )
+    .await;
+    wait_until_manager(
+        &mgr,
+        "the readiness announcement to be waiting for the drain",
+        |lsp| lsp.refresh_announced(),
+    )
+    .await;
 
     let summary = drain_lsp_diagnostics(&mgr, std::time::Duration::from_secs(2))
         .await

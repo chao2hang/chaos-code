@@ -51,6 +51,37 @@ space is needed. Preserve source, caches outside `target/`, and user data.
 The observed WSL2 9P shutdown incident and its environment-specific evidence are
 recorded in [`docs/known-issues/wsl-p9io-crash-20260728.md`](docs/known-issues/wsl-p9io-crash-20260728.md).
 
+## Clean-container verification
+
+A passing local run is not proof that the documented steps work: a warm
+`target/`, a globally installed `protoc`, a hand-installed toolchain or an OS
+trust store that already has the right roots can each hide a step that a fresh
+clone would need. `scripts/verify-in-docker.sh` builds
+[`docker/verify.Dockerfile`](docker/verify.Dockerfile) and runs the same command
+list as the `rust` job in `.github/workflows/ci.yml` inside it:
+
+```sh
+scripts/verify-in-docker.sh          # fmt, guard scripts, check, clippy
+scripts/verify-in-docker.sh --full   # the above plus cargo test --workspace
+scripts/verify-in-docker.sh --shell  # same image, interactive
+```
+
+The image installs its toolchain through rustup from `rust-toolchain.toml` and
+asserts `rustc -V` against that pin at build time, so the pin stays the only
+source of truth and a silent fallback to another compiler fails the build.
+Cargo's registry and `target/` live in named volumes rather than the bind mount,
+so a root-owned build tree cannot break the host build afterwards.
+
+Behind a registry mirror, point the build at your own base image:
+
+```sh
+BASE_IMAGE=your-mirror.example.com/library/debian:bookworm-slim scripts/verify-in-docker.sh
+```
+
+This container covers the Linux gates only. It is not platform evidence: a Linux
+container cannot run the macOS or Windows code paths, and it does not exercise
+signing, installers, or a real TLS-terminating deployment.
+
 ## Platform-specific checks
 
 Several crates select behaviour by `cfg(unix)` / `cfg(windows)` /

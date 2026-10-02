@@ -937,8 +937,9 @@ def handle(msg, method):
                 "error": {"code": -32603, "message": "still loading"}
             })
             # Some time later — long enough that a client watching the clock
-            # has given up on it — the solution is open.
-            time.sleep(0.1)
+            # has given up on it — the solution is open. The caller's patience
+            # is 30 ms, so this silence is the observable window it waits for.
+            time.sleep(0.4)
             notify("workspace/projectInitializationComplete", None)
             return
         time.sleep(0.25)

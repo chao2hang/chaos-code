@@ -4,11 +4,7 @@ use crate::test_util::skip_if_host_hook_write_deny_unresolvable;
 use std::path::PathBuf;
 
 fn temp_workspace(tag: &str, toml_body: &str) -> PathBuf {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let ws = std::env::temp_dir().join(format!("grok-rdv-{tag}-{}-{nanos}", std::process::id()));
+    let ws = crate::test_util::short_socket_root("grok-rdv", tag);
     let grok = ws.join(".grok");
     std::fs::create_dir_all(&grok).unwrap();
     std::fs::write(
@@ -194,16 +190,7 @@ fn empty_deny_set_fails_without_sentinel_mount() {
 }
 
 fn temp_parent(tag: &str) -> PathBuf {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let dir = std::env::temp_dir().join(format!(
-        "grok-sentinel-{tag}-{}-{nanos}",
-        std::process::id()
-    ));
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
+    crate::test_util::short_socket_root("grok-sentinel", tag)
 }
 
 /// A symlink sentinel must be rejected at the `O_NOFOLLOW` open, before the target's filesystem is ever consulted.

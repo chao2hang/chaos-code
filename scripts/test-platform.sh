@@ -51,5 +51,45 @@ for crate in "${crates[@]}"; do
   select_args+=(-p "$crate")
 done
 
+# The search tools shell out to ripgrep. Release builds embed it; debug builds —
+# what `cargo test` produces — use the host's, and RG_BIN_PATH is how you point
+# at one. Rather than have every grep/glob test die at spawn on a machine whose
+# PATH has no rg, provision the same pinned release the release build embeds.
+rg_ver="15.0.0"
+if [ -n "${RG_BIN_PATH:-}" ]; then
+  echo "ripgrep      : \$RG_BIN_PATH ($RG_BIN_PATH)"
+elif command -v rg >/dev/null 2>&1; then
+  RG_BIN_PATH="$(command -v rg)"
+  export RG_BIN_PATH
+  echo "ripgrep      : $RG_BIN_PATH"
+else
+  case "$(uname -s)/$(uname -m)" in
+    Darwin/arm64) rg_triple="aarch64-apple-darwin" ;;
+    Darwin/x86_64) rg_triple="x86_64-apple-darwin" ;;
+    Linux/x86_64) rg_triple="x86_64-unknown-linux-musl" ;;
+    Linux/aarch64) rg_triple="aarch64-unknown-linux-gnu" ;;
+    *) rg_triple='' ;;
+  esac
+  if [ -z "$rg_triple" ]; then
+    echo "ripgrep      : none found and no release for $(uname -s)/$(uname -m); install ripgrep or set RG_BIN_PATH" >&2
+    exit 1
+  fi
+  tools_dir="${GROK_PLATFORM_TOOLS_DIR:-.platform-tools}"
+  mkdir -p "$tools_dir"
+  if [ ! -x "$tools_dir/rg" ]; then
+    echo "== provisioning ripgrep $rg_ver ($rg_triple) =="
+    curl -fsSL \
+      "https://github.com/BurntSushi/ripgrep/releases/download/$rg_ver/ripgrep-$rg_ver-$rg_triple.tar.gz" \
+      -o "$tools_dir/ripgrep.tar.gz"
+    tar -xzf "$tools_dir/ripgrep.tar.gz" -C "$tools_dir" --strip-components=1 \
+      "ripgrep-$rg_ver-$rg_triple/rg"
+    rm -f "$tools_dir/ripgrep.tar.gz"
+  fi
+  RG_BIN_PATH="$(pwd)/$tools_dir/rg"
+  export RG_BIN_PATH
+  echo "ripgrep      : $RG_BIN_PATH (downloaded $rg_ver)"
+fi
+echo
+
 echo "== cargo test =="
 cargo test --locked --no-fail-fast "${select_args[@]}"

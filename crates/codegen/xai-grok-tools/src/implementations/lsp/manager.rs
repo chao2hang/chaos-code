@@ -346,11 +346,24 @@ impl LspManager {
     /// server owing us one has been silent for longer than
     /// [`super::pending::SERVER_PATIENCE`], which lets the drain return immediately
     /// instead of blocking for its whole timeout.
-    fn worth_blocking_for_diagnostics(&self) -> bool {
+    pub(crate) fn worth_blocking_for_diagnostics(&self) -> bool {
         let now = Instant::now();
         self.pending_diagnostics_by_server
             .values()
             .any(|pending| pending.worth_blocking(now))
+    }
+
+    /// Whether a server has told us its answers are out of date and we have not
+    /// acted on it yet.
+    ///
+    /// [`drain_lsp_diagnostics`] re-opens the invalidated questions as its first
+    /// act, so this is how a caller can tell that the drain will be the one to
+    /// see the announcement.
+    #[cfg(test)]
+    pub(crate) fn refresh_announced(&self) -> bool {
+        self.clients
+            .values()
+            .any(|client| client.refresh.is_invalidated())
     }
 
     /// Ask again about every open document of any server that has told us its

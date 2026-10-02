@@ -70,6 +70,41 @@ Write-Output ''
 $select = @()
 foreach ($crate in $Crates) { $select += @('-p', $crate) }
 
+# The search tools shell out to ripgrep. Release builds embed it; debug builds -
+# what `cargo test` produces - use the host's, and RG_BIN_PATH is how you point
+# at one. Rather than have every grep/glob test die at spawn on a machine whose
+# PATH has no rg, provision the same pinned release the release build embeds.
+$rgVersion = '15.0.0'
+if ($env:RG_BIN_PATH) {
+    Write-Output "ripgrep      : `$env:RG_BIN_PATH ($($env:RG_BIN_PATH))"
+} elseif (Get-Command rg -ErrorAction SilentlyContinue) {
+    $env:RG_BIN_PATH = (Get-Command rg).Source
+    Write-Output "ripgrep      : $($env:RG_BIN_PATH)"
+} else {
+    $rgArch = if ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq 'Arm64') {
+        'aarch64'
+    } else {
+        'x86_64'
+    }
+    $rgTriple = "$rgArch-pc-windows-msvc"
+    $toolsDir = if ($env:GROK_PLATFORM_TOOLS_DIR) { $env:GROK_PLATFORM_TOOLS_DIR } else { '.platform-tools' }
+    New-Item -ItemType Directory -Force -Path $toolsDir | Out-Null
+    $rgExe = Join-Path $toolsDir 'rg.exe'
+    if (-not (Test-Path $rgExe)) {
+        Write-Output "== provisioning ripgrep $rgVersion ($rgTriple) =="
+        $zip = Join-Path $toolsDir 'ripgrep.zip'
+        $uri = "https://github.com/BurntSushi/ripgrep/releases/download/$rgVersion/ripgrep-$rgVersion-$rgTriple.zip"
+        Invoke-WebRequest -UseBasicParsing -Uri $uri -OutFile $zip
+        Expand-Archive -LiteralPath $zip -DestinationPath $toolsDir -Force
+        Move-Item -Force -Path (Join-Path $toolsDir "ripgrep-$rgVersion-$rgTriple\rg.exe") -Destination $rgExe
+        Remove-Item -Force -Path $zip, (Join-Path $toolsDir "ripgrep-$rgVersion-$rgTriple") -ErrorAction SilentlyContinue
+    }
+    $env:RG_BIN_PATH = (Resolve-Path $rgExe).Path
+    Write-Output "ripgrep      : $($env:RG_BIN_PATH) (downloaded $rgVersion)"
+}
+& $env:RG_BIN_PATH --version | Select-Object -First 1
+Write-Output ''
+
 Write-Output '== cargo test =='
 & cargo test --locked --no-fail-fast @select
 exit $LASTEXITCODE

@@ -549,6 +549,9 @@ struct LocalTerminalActor {
 
     persistent_shell: bool,
 
+    /// Only read on unix, where login-shell env capture exists; the public
+    /// constructors take it on every platform so callers need no cfg of their own.
+    #[cfg_attr(not(unix), allow(dead_code))]
     login_shell_capture: bool,
 
     /// Baked in at construction, not read from a process-global, so a subagent
@@ -1518,6 +1521,8 @@ impl LocalTerminalActor {
     }
 
     async fn collect_shell_state_dumps(&mut self, task_ids: &[String]) {
+        #[cfg(not(unix))]
+        let _ = task_ids;
         #[cfg(unix)]
         if self.persistent_shell {
             for task_id in task_ids {
@@ -4745,6 +4750,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_parse_login_env_capture() {
         let stdout = "motd noise\n\x01/opt/rc/bin:/usr/bin\x01\
@@ -4775,6 +4781,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_parse_login_env_capture_path_only() {
         let (path, env) = parse_login_env_capture("\x01/usr/bin\x01");
