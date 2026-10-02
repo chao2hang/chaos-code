@@ -73,6 +73,66 @@
 
 > A/B/C 数字是粗估。精确分类需要逐文件审。
 
+### 1.7 2026-09-30 P0 unsafe review (sandbox + tty-utils)
+
+A bounded source review covered every current unsafe block/function/impl/extern in
+`xai-grok-sandbox` and `xai-tty-utils`, including platform-gated code. It is not a
+security sign-off: Windows/macOS compilation and reviewer approval remain open.
+
+- Sandbox production sites reviewed: seccomp `prctl`/`syscall`, pre-exec child
+  filter registration, runtime `getuid`, fd-relative sentinel opening/ownership,
+  `statvfs`/`fstatvfs`, and fd-pinned `statx`. The invalid filter length guard
+  remains bounded at 1..=4096. Review found that a public restricted-network
+  installer accepted caller-supplied arbitrary BPF, so callers could install an
+  allow-all policy while assuming the crate's network-deny guarantee. The
+  low-level installer and BPF builder are crate-private within `child_net`; the
+  sandbox crate has a private module and re-exports only the safe
+  `restrict_child_network` / `_std` command configuration helpers. Their pre-exec
+  closures fetch only the already-built fixed deny policy from a `OnceLock`; no
+  downstream caller can provide an arbitrary filter to the restricted spawn API.
+  All repository call sites (workspace envrc, MCP servers, pager command/hooks,
+  shell terminal/tools/LSP and hook runner) were migrated to those wrappers and
+  compile together under `cargo check --all-targets`.
+  Namespace lockdown's unsafe contract now explicitly documents irreversible
+  TSYNC effects on all threads and subsequent namespace/mount denials. Local
+  `statvfs` output-pointer SAFETY comments were added.
+- TTY utility production sites reviewed: Unix OOM/pre-exec/parent-death calls,
+  pipe fd ownership, Windows Job Object handle operations and Send/Sync,
+  process-resource FFI, and stderr descriptor ownership. `redirect_native_stderr`
+  and `dup_tui_stderr` used `dup`, which made saved terminal stderr descriptors
+  inheritable across exec. They now use `F_DUPFD_CLOEXEC`; the actual subprocess
+  redirect regression asserts both descriptors carry `FD_CLOEXEC`. Windows
+  `GetStdHandle` is validated before ownership conversion and duplicated into a
+  new owned handle with `DuplicateHandle`, avoiding `File::from_raw_handle` on a
+  possibly invalid or borrowed standard handle. Job Object Send/Sync contracts
+  gained explicit safety rationale. A later check removed the debug-only
+  `std::thread::current().id()` call from the pdeathsig pre-exec hook: lazy
+  TLS initialization can allocate after fork, so same-thread arm/spawn remains
+  a caller contract instead of a post-fork runtime check. Its subprocess
+  regression exercises that pre-exec path.
+- Evidence: private goal scratch `verification/mt6-sandbox-tty-check.log`,
+  `mt6-sandbox-tests-final3.log`, `mt6-child-net-e2e-profile-gating.log`,
+  `mt6-child-net-e2e-final-clean.log`, `mt6-sandbox-ignored-tests.log`,
+  `mt6-tty-utils-tests-final.log`, `mt6-tty-stderr-cloexec-regression.log`,
+  `mt6-pdeath-signal-safety-regression.log`, `mt6-tty-tests-final-portfolio.log`,
+  `mt6-sandbox-tests-final-portfolio.log`, `mt6-p0-check-portfolio.log`,
+  `mt6-p0-clippy-portfolio.log`, `mt6-p0-fmt-portfolio.log`,
+  `mt6-child-net-e2e-final-ack.log`, `mt6-unsafe-clippy-final-ack.log`,
+  `verification/final-rust-workspace-tests-after-api.log` (31,172 passed, 0 failed,
+  490 ignored; CI thread stack configured).
+  Linux sandbox/TTY tests, check, strict
+  Clippy and fmt pass. The two sandbox integration tests normally marked ignored
+  were explicitly invoked: their `subprocess_entry` probes pass under the
+  default test namespace. The network filter blocks connect/send syscalls but
+  permits fd `write` for stdio, so its network-denial contract assumes restricted
+  children do not inherit already-connected network sockets. Auditing all restricted
+  spawn sites and fd inheritance remains required before signoff. A whole-crate grep also shows TTY's test-only OOM env
+  mutation is enclosed only by a local mutex used by its sibling tests; that
+  does not serialize unrelated environment readers in parallel Rust tests. The
+  mutating test itself does a short set→hook-select→remove sequence and passes,
+  but moving the check to a helper subprocess is safer follow-up work.
+  Windows/macOS paths were source-reviewed only; runner tests remain unverified. All in-repository restricted-spawn consumers were migrated to the root safe helpers; their combined all-target checks and child-spawn E2E gates passed. The subsequent full Rust workspace suite also passed with the CI-required 16 MiB test-thread stack (31,172 passed, zero failed, 490 ignored; private goal scratch `verification/rust-workspace-mt6-final.log`).
+
 ### 1.6 高价值审计 crate（先动的 5 个）
 
 按"影响力 × 风险密度"排：

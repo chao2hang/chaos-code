@@ -1,7 +1,9 @@
 # M-1 scope matrix
 
-Date: 2026-09-24. The first stable GUI target is a single-user local developer
-workbench. It is not a public multi-user service.
+Date: 2026-10-01. The first stable GUI target is a single-user local developer
+workbench. It is not a public multi-user service. First-stable boundaries were
+made explicit in [ADR-007](adr-007-first-stable-product-scope.md); that scope
+decision does not substitute for implementation or platform acceptance.
 
 | Capability | Decision | Initial support |
 |---|---|---|
@@ -10,14 +12,14 @@ workbench. It is not a public multi-user service.
 | Tools, questions, approval | Replacement using Chaos engine envelope | M1 |
 | Diff review/rollback | Replacement using existing Rust diff/hunk crates | M1/M2 |
 | Files/search/Git/terminal | Replacement using workspace/PTY adapters | M2 |
-| Settings/provider/model | Replacement using Chaos config boundary | M3 |
-| MCP/plugins/skills/workflows/subagents | Replacement using existing Rust crates | M3 |
-| Remote workspace | Degraded/explicit M4 | M4 |
-| Remote interactive PTY | Deferred | post-M4 evaluation |
-| Detached remote Agent | Deferred | post-M4 evaluation |
-| Embedded browser/CDP | Unsupported for first stable | post-M5 review |
-| Cloud sharing/sync/login wall | Unsupported for first stable | product review |
-| Voice/CUA/idle automation | Deferred | separate review |
+| Settings/provider/model | Accepted roadmap target; not yet fully supported | Complete settings UX; real credential storage and Provider acceptance require reviewed security design and provider evidence |
+| MCP/plugins/skills/workflows/subagents | Accepted roadmap targets; not yet supported | Reviewed trust policy, approval-gated adapters, real lifecycle contracts, and end-to-end acceptance |
+| Remote workspace | Deferred; excluded from first stable | Reconsider after approved remote threat model, authenticated transport, server ownership, and controlled-host acceptance |
+| Remote interactive PTY | Unsupported for first stable | Separate product/security review and platform acceptance |
+| Detached remote Agent | Unsupported for first stable | Separate product/security review and platform acceptance |
+| Embedded browser/CDP | Unsupported for first stable | Reconsider only after dedicated security review and host acceptance |
+| Cloud sharing/sync/login wall | Unsupported for first stable | Reconsider only after separately approved product, privacy, and operations design |
+| Voice/CUA/idle automation | Deferred; not part of first stable | Separate product and security review |
 
 Platform scope: Linux desktop is the local development/acceptance platform for
 M0; macOS and Windows require independent CI build jobs before being supported.

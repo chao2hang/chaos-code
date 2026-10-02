@@ -361,7 +361,7 @@ xai-grok-pager-pty-harness,crates/codegen/xai-grok-pager-pty-harness/tests/promp
 xai-grok-pager-pty-harness,crates/codegen/xai-grok-pager-pty-harness/tests/settings_locked_row_e2e.rs,43,NO_REASON,zdr_team_locks_row_and_suppresses_banner
 xai-grok-pager-pty-harness,crates/codegen/xai-grok-pager-pty-harness/tests/settings_locked_row_e2e.rs,49,NO_REASON,team_member_sees_admin_managed_row_and_no_banner
 xai-grok-pager-pty-harness,crates/codegen/xai-grok-pager-pty-harness/tests/x10_mouse_leak.rs,8,NO_REASON,x10_leak_defenses
-xai-grok-sandbox,crates/codegen/xai-grok-sandbox/tests/child_net_e2e.rs,14,NO_REASON,subprocess_entry
+xai-grok-sandbox,crates/codegen/xai-grok-sandbox/tests/child_net_e2e.rs,15,NO_REASON,subprocess_entry
 xai-grok-sandbox,crates/codegen/xai-grok-sandbox/tests/deny_paths_e2e.rs,219,NO_REASON,subprocess_entry
 xai-grok-sandbox,crates/codegen/xai-grok-sandbox/tests/read_write_trailing_glob_e2e.rs,117,NO_REASON,subprocess_entry
 xai-grok-session-search,crates/codegen/xai-grok-session-search/src/bootstrap_tests.rs,322,flaky under workspace-wide parallelism: concurrent lease acquisition race; passes when crate runs alone,test_concurrent_gates_single_flight
@@ -436,11 +436,6 @@ xai-grok-tools,crates/codegen/xai-grok-tools/tests/cgroup_memory_test.rs,231,req
 xai-grok-tools,crates/codegen/xai-grok-tools/tests/cgroup_memory_test.rs,277,requires Linux cgroupv2 with delegation,test_background_task_oom
 xai-grok-tools,crates/codegen/xai-grok-tools/tests/cgroup_memory_test.rs,339,requires Linux cgroupv2 with delegation,test_gradual_allocation_oom
 xai-grok-tools,crates/codegen/xai-grok-tools/tests/test_subagent_soak.rs,619,subagent soak; run with --ignored (SUBAGENT_SOAK_CYCLES bounds the measured window),subagent_lifecycle_soak_bounds_threads_open_files_and_heap
-xai-grok-update,crates/codegen/xai-grok-update/src/auto_update_tests.rs,932,asserts upstream x.ai channel-parameterized install URLs; Chaos fork installs from chao2hang/chaos-code with a single release channel,test_reinstall_hint_gh_release_mentions_gh_command
-xai-grok-update,crates/codegen/xai-grok-update/src/auto_update_tests.rs,946,asserts upstream x.ai channel-parameterized install URLs; Chaos fork installs from chao2hang/chaos-code with a single release channel,test_reinstall_hint_internal_mentions_platform_installer
-xai-grok-update,crates/codegen/xai-grok-update/src/auto_update_tests.rs,973,asserts upstream x.ai channel-parameterized install URLs; Chaos fork installs from chao2hang/chaos-code with a single release channel,test_reinstall_hint_internal_alpha_sets_channel
-xai-grok-update,crates/codegen/xai-grok-update/src/auto_update_tests.rs,991,asserts upstream x.ai channel-parameterized install URLs; Chaos fork installs from chao2hang/chaos-code with a single release channel,test_reinstall_hint_enterprise_uses_enterprise_script
-xai-grok-update,crates/codegen/xai-grok-update/src/auto_update_tests.rs,1006,asserts upstream x.ai channel-parameterized install URLs; Chaos fork installs from chao2hang/chaos-code with a single release channel,test_reinstall_hint_malformed_channel_falls_back_to_stable
 xai-grok-update,crates/codegen/xai-grok-update/tests/test_blitz_cancel.rs,374,"stress: 100k iterations, run via `just blitz-stress`",blitz_fuzz_stress
 xai-grok-workspace-daemon,crates/codegen/xai-grok-workspace-daemon/src/daemonize.rs,898,known CI flake: process signal timing in containers,take_over_declines_when_lock_is_never_released
 xai-grok-workspace-daemon,crates/codegen/xai-grok-workspace-daemon/src/daemonize.rs,987,known CI flake: process signal timing in containers,take_over_acquires_cleanly_when_predecessor_releases

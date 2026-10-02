@@ -31,13 +31,13 @@ in their source files. See the "Ignored tests" section below for the inventory.
 | `xai-grok-pager-bin` | 2026-08-12 | 2 tests fixed: `is_managed_install` test updated for `chaos` binary name (was `grok`); dashboard-disabled assertion updated for Chinese error message. |
 | `xai-grok-pager-minimal` | 2026-08-13 | 2 tests fixed: CJK character-width alignment in bash-mode ("Shell 命 令") and thinking ("思 考") labels. |
 | `xai-grok-pager-pty-harness` | 2026-08-13 | 10 tests fixed: welcome screen sentinel "Quit"→"退出" (8 scroll_matrix + 1 plan_approval + 1 scroll_correctness); plan_approval_resume assertions translated ("request changes"→"请求修改", "quit plan"→"放弃计划", "approve"→"批准"). |
-| `xai-grok-update` | 2026-08-13 | Reinstated from the exclusion list. 47 gh-release tests were initially `#[ignore]`'d (`fetch_gh_release_version` switched from `gh` CLI to GitHub HTTP API). Rewrote with wiremock via `GhApiMockGuard`: 9 `fetch_gh_release_*` + 7 `check_update_status`/`auto_update_target` gh-release tests + 19 `install_internal_*` (GCS path, binary name `grok-`→`chaos-` fix) + 12 `downgrade_matrix` internal/disk-aware tests. This is a historical rewrite account: the current scanner reports six updater `#[ignore]` attributes, five channel-parameterized expectations and one opt-in 100k stress test; review individual inventory rows before enabling or rewriting them. |
+| `xai-grok-update` | 2026-08-13 | Reinstated from the exclusion list. 47 gh-release tests were initially `#[ignore]`'d (`fetch_gh_release_version` switched from `gh` CLI to GitHub HTTP API). Rewrote with wiremock via `GhApiMockGuard`: 9 `fetch_gh_release_*` + 7 `check_update_status`/`auto_update_target` gh-release tests + 19 `install_internal_*` (GCS path, binary name `grok-`→`chaos-` fix) + 12 `downgrade_matrix` internal/disk-aware tests. This is a historical rewrite account: the 2026-10-01 scanner reports one updater `#[ignore]` attribute, the opt-in 100k stress test; five stale channel-parameterized URL expectations were replaced with running Chaos installer-contract tests. |
 | `xai-grok-pager` | 2026-08-13 | 142 tests fixed: lib 121 + settings_e2e 21. Root causes: (1) Chinese localization vs English assertions (~80); (2) billing features removed (16 `#[ignore]`); (3) real bugs in paste/links/scrollback/slash/acp_handler (~33); (4) settings meta-tests (~10); (5) CHAOS logo height + CJK spacing (~12). |
 
 The aggregate figure recorded when the job was introduced was roughly **209
 failing tests** across seven crates. After per-crate audit and repair, **all
-209 are resolved**: 0 non-ignored failures remain. The repaired 2026-09-25
-inventory reports 434 ignored attributes total, including 218 bare attributes;
+209 are resolved**: 0 non-ignored failures remain. The repaired 2026-10-01
+inventory reports 429 ignored attributes total, including 218 bare attributes;
 these are workspace-wide scanner counts, not the count of fork-specific entries
 in the table above.
 
@@ -47,12 +47,13 @@ Tests marked `#[ignore]` are a separate debt. Their reasons must stay
 readable and be revisited periodically; a permanent `#[ignore]` is a deleted
 test with extra steps. `python3 scripts/ci/ignored-tests.py --check-baseline
 scripts/ci/ignored-tests-baseline.tsv` checks the grandfathered bare-attribute
-inventory in both directions. The live scan currently reports 434 ignored
+inventory in both directions. The live scan currently reports 429 ignored
 attributes and 218 bare attributes; the checked-in CSV and per-source owner
-audit still determine review status. The Q4 CSV currently contains six
-`xai-grok-update` ignored attributes (five channel-parameterized upstream URL
-expectations and one opt-in stress test), which is distinct from historical
-counts of tests initially ignored during reinstatement. CI runs the repository inventory scanner against
+audit still determine review status. The Q4 CSV currently contains one
+`xai-grok-update` ignored attribute: the opt-in 100k stress test. Five tests
+that asserted upstream installation URLs were replaced with running tests of
+the Chaos fork's actual `reinstall_hint` behavior; this source-level correction
+does not constitute the Q4 owner/reviewer audit. The remaining updater stress ignore has a runnable `scripts/test-blitz-stress.sh` entry point; that script's real test passed at 120 iterations. The full default 100k run completed on 2026-10-01: 1 passed, 0 failed in 4306.69 seconds through `scripts/test-blitz-stress.sh` (private goal scratch `blitz-stress-100k.log`). Test completion does not substitute for the Q4 source-by-source owner/reviewer audit. CI runs the repository inventory scanner against
 `scripts/ci/ignored-tests-baseline.tsv`; existing bare attributes are grandfathered
 by explicit package/path/function keys. Added attributes fail until reviewed and
 added to the baseline; stale entries for removed attributes also fail until the
@@ -77,12 +78,10 @@ requires removing its matching stale baseline key in the same change.
 | `xai-grok-shell` | 28 | agent/config 等上游 xAI 默认值；cli_models 默认值；grok.com 登录；app.rs `PRODUCTION_ENDPOINTS`；external_auth SSO；远程 settings 抓取路径（BYOK 下不可达，见下节）。 | @chaos-devs | 2026-10 |
 | `xai-grok-shell-base` | 1 | Fork empties `PROD_CLI_CHAT_PROXY_BASE_URL`. | @chaos-devs | 2026-10 |
 | `xai-chat-state` | 1 | Pre-existing fork gap: selective-compaction projection. | @chaos-devs | 2026-10 |
-| `xai-grok-update` | 5 | `fetch_gh_release_version` 用 GitHub HTTP API 而非 `gh` CLI；并发收敛类用例等 wiremock 重写。 | @chaos-devs | 2026-09 |
+| `xai-grok-update` | 0 | Five stale upstream-URL expectations now exercise the Chaos fork's real installer hint; the remaining 100k stress test is not a fork-specific exclusion. | @chaos-devs | 2026-10 |
 | `xai-fast-worktree` | 2 | Grove pin 后端缺失（`pin_exists` 恒 `Ok(false)`、`delete_pin_ref_gated` 拒绝），pin 剪除类用例无法运行。 | @chaos-devs | 2026-10 |
 
-**Fork 债务合计：56**（2026-09-22 复核修正）。全部带
-`#[ignore = "reason; review YYYY-MM"]` 注释，review date 已补全到
-`2026-10`。
+**Fork 债务合计：51**（2026-10-01 清除五条过期 updater installer-URL ignored expectations 后重算）。现有 fork-specific ignored tests 带有 review reason/date；Q4 是否续期或恢复仍需各 owner/reviewer 逐条决定。
 
 ## 2026-09-22：本地全量基线清账
 
@@ -144,7 +143,8 @@ python3 scripts/ci/test-ignored-tests-baseline-fixture.py
   “永久债务”，需季度审计时处理。Bare attributes remain explicit legacy exceptions until that audit; the inventory baseline is not an approval.
 - 新增 fork 专属 ignore → 必须同时更新本节表格计数和原因描述。
 
-2026 Q4 source-by-source owner audit remains pending until the October review cycle.
+2026 Q4 source-by-source owner audit is due as of 2026-10-01 and remains pending;
+no source-by-source owner/reviewer decisions are recorded in this inventory refresh.
 The parser is repaired and covered by fixtures, and the baseline gate prevents silent
 inventory drift; neither result is an approval or renewal of the existing ignore debt.
 See [`ignored-audit-2026q4-summary.md`](ignored-audit-2026q4-summary.md).
@@ -339,11 +339,11 @@ With the full workspace now tested in CI, logic regressions in the TUI
 (`pager`), the updater (`xai-grok-update`), and the PTY harness are caught
 automatically. The remaining risk is in the `#[ignore]`'d tests: they compile
 but never execute, so a production code change that breaks them won't be
-flagged. The largest block (48 in `xai-grok-update`) should be revisited when
-the wiremock rewrite is prioritized.
+flagged. The updater's obsolete installer URL expectations were replaced with
+fork-contract tests; its remaining ignored stress test is intentionally opt-in.
 
 ## Related
 
 - `version.rs` in `xai-grok-update` was refactored to support
-  `CHAOS_GH_API_BASE` env var, enabling a future `wiremock`-based test rewrite
-  that would un-ignore the 48 update tests.
+  `CHAOS_GH_API_BASE` env var, enabling the completed `wiremock`-based rewrite
+  of the updater's GitHub API tests; the remaining 100k stress test stays opt-in.

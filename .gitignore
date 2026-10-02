@@ -16,6 +16,11 @@
 # skills) can still be committed deliberately.
 /.chaos/uploads/
 
+# Playwright run artifacts: `outputDir` in `apps/chaos-ui/playwright.config.ts`
+# and the reporter's default `test-results/` directory.
+/.chaos/playwright-results/
+/test-results/
+
 # Windows-path leaked temp artifacts (accidental redirect targets)
 # The colon-looking char is U+F03A (PUA), produced by some Windows shell
 # quirk that replaced ':' when a Windows path became a filename.

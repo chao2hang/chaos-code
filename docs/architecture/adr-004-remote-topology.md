@@ -1,7 +1,8 @@
 # ADR-004: remote topology and current support boundary
 
-- Status: accepted boundary, remote implementation deferred
-- Date: 2026-09-24
+- Status: accepted security boundary; remote implementation Deferred outside first stable
+- Decision record: [ADR-007](adr-007-first-stable-product-scope.md)
+- Date: 2026-10-01
 
 The first supported topology is local Agent plus local workspace. Web and
 Desktop transports do not expose remote execution, arbitrary file writes,
