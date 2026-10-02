@@ -51,8 +51,9 @@ if [[ "${PUBLISH_NPM_ALLOW_PARTIAL:-0}" == "1" ]]; then
   echo "warning: partial publish enabled; only the host platform package will be assembled; the meta package will not be published" >&2
 fi
 for platform in "${REQUIRED_BINARIES[@]}"; do
-  key="CHAOS_${platform^^}"
-  key="${key//-/_}"
+  # `tr` instead of `${var^^}`/`${var//-/}`: the case/regex expansions are bash 4
+  # and macOS still ships 3.2.
+  key="CHAOS_$(printf '%s' "$platform" | tr '[:lower:]' '[:upper:]' | tr - _)"
   if [[ -z "${!key:-}" || ! -f "${!key}" ]]; then
     echo "missing $key: provide the binary before publishing" >&2
     exit 1
@@ -65,8 +66,7 @@ fi
 
 echo "host platform: $PLATFORM"
 for platform in "${REQUIRED_BINARIES[@]}"; do
-  key="CHAOS_${platform^^}"
-  key="${key//-/_}"
+  key="CHAOS_$(printf '%s' "$platform" | tr '[:lower:]' '[:upper:]' | tr - _)"
   printf '%-24s %s (%s)\n' "$key" "${!key}" "$(du -h "${!key}" | awk '{print $1}')"
   export "$key"
 done

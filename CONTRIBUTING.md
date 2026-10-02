@@ -74,6 +74,25 @@ Both print the toolchain/OS report first and then run the same crate set the
 crate names to narrow the run. Keep the log: it is the evidence a platform row in
 `TODO.md` needs, and a Linux log never substitutes for it.
 
+When a run fails, send the whole log rather than the last few lines. The header
+the scripts print (OS build, `rustc -Vv`, logical CPU count, `RUST_MIN_STACK`,
+commit, and a `working tree : dirty` marker) is what tells a reader whether the
+failure is the checked-in code or a local edit, so a truncated tail usually
+cannot be diagnosed.
+
+### Shell script portability
+
+`scripts/test-platform.sh` and the other scripts under `scripts/` run on the
+contributor's machine, not only on the Linux CI runner. macOS still ships
+bash 3.2 and BSD userland, so `mapfile`, `readarray`, `declare -A`, `${var^^}`,
+GNU `sed -i`, `nproc`, `readlink -f`, `grep -P`/`--include` and `timeout` all
+fail there with a bare "command not found" or a silently half-done file.
+`scripts/ci/check-script-portability.py` rejects those constructs, and it has no
+allow list on purpose: if a rule fires, the script gets rewritten.
+`scripts/ci/test-script-portability.py` injects one violation per rule and
+asserts the check still exits 1, because a scanner that stopped matching looks
+exactly like a repository that was fixed.
+
 ## Upstream reconnaissance
 
 `scripts/upstream-recon.sh` records how far the ported `SOURCE_REV` has fallen

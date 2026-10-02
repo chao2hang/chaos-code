@@ -148,9 +148,10 @@ is_excluded() {
 build_manifest() {
   local ref="$1" out="$2"
   : > "$out"
-  local files
-  mapfile -t files < <(list_rs_files "$ref" | sort -u)
-  if [[ ${#files[@]} -eq 0 ]]; then
+  local files=()
+  # `mapfile` is bash 4; macOS still ships 3.2.
+  while IFS= read -r line; do files+=("$line"); done < <(list_rs_files "$ref" | sort -u)
+  if [ "${#files[@]}" -eq 0 ]; then
     return
   fi
   # xargs parallel count; emit "<n>\t<path>" only when n > 0

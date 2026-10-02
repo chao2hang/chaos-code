@@ -62,14 +62,22 @@ ALLOW_RE='CANARY|LEAK[A-Z]*|EXAMPLE|REDACTED|PLACEHOLDER|DUMMY|FAKE|NOTAREAL|sec
 # partially staged file (git add -p) is judged by what is actually being
 # committed. The hook uses it; CI, which has no index of its own, does not.
 mode=tree
+# `mapfile` is bash 4; macOS still ships 3.2. Read the NUL-free list in a loop
+# so the scan runs on the stock shell instead of failing with "command not found".
+files=()
 case "${1:-}" in
     --staged)
         mode=staged
-        mapfile -t files < <(git diff --cached --name-only --diff-filter=ACMR)
+        while IFS= read -r line; do files+=("$line"); done < <(git diff --cached --name-only --diff-filter=ACMR)
         ;;
-    --stdin) mapfile -t files ;;
-    *) mapfile -t files < <(git ls-files) ;;
+    --stdin) while IFS= read -r line; do files+=("$line"); done ;;
+    *) while IFS= read -r line; do files+=("$line"); done < <(git ls-files) ;;
 esac
+if [ "${#files[@]}" -eq 0 ]; then
+    # `"${files[@]}"` is an unbound-variable error under `set -u` on bash 3.2.
+    echo "secret-scan: clean (0 files)"
+    exit 0
+fi
 
 read_file() {
     if [ "$mode" = staged ]; then git show ":$1" 2>/dev/null; else cat "$1"; fi

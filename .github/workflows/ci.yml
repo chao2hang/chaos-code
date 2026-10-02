@@ -359,3 +359,10 @@ jobs:
           # does -- and by then the tag is already public. The first v0.4.0 tag
           # failed exactly this way, on two of six builds.
           python3 scripts/ci/check-workflow-shells.py
+          # Every `scripts/**.sh` has to run on the stock macOS shell too, not
+          # just the Linux runner this job executes on: `scripts/test-platform.sh`
+          # is the documented macOS entry point. bash 3.2 + BSD userland has no
+          # `mapfile`, `${var^^}` or GNU `sed -i`, and the failure there is a
+          # bare "command not found" on a contributor's machine.
+          python3 scripts/ci/check-script-portability.py
+          python3 scripts/ci/test-script-portability.py
