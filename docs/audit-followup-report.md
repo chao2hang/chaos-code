@@ -326,14 +326,62 @@ and the current Q4 CSV/baseline referenced in `docs/ci-test-debt.md` and
 - `install.sh` 对存在的签名执行验证，签名缺失时仍可继续；`install.ps1` 同样仅在 Python、cryptography、公钥和签名文件均可用时验证，缺少条件时跳过。`install.bat` 调用 PowerShell 安装流程。
 - **实测配置状态**：2026-09-23，`gh secret list` / `gh variable list` 未列出 `CHAOS_SIGNING_PRIVATE_KEY` 或 `CHAOS_SIGNING_PUBLIC_KEY`。这里只检查名称，不读取任何密钥值。
 
-### 4.2 发布阻断项（P1，未完成）
+### 4.1b 2026-10-02 复核：上列四条已被实测推翻
 
-- 生成并安全配置匹配的 `CHAOS_SIGNING_PRIVATE_KEY` secret 与 `CHAOS_SIGNING_PUBLIC_KEY` repository variable；执行真实签名和验证闭环。
-- 为正式 release 构建启用 `require-sig`，并确认编译进二进制的公钥非占位值；未配置密钥时 release 必须失败，而非静默发布无签名二进制。
-- 将安装脚本验签保证统一：支持平台应在存在签名配置时拒绝缺失/无效签名；若环境依赖（如 Windows Python/cryptography）不可用，明确安全策略并提供可验证实现。
-- 增加端到端发布/安装测试：有效签名接受、签名不匹配拒绝、签名缺失拒绝、错误密钥拒绝；覆盖自动更新和安装脚本。
+下面每条都由当天可复跑的指令得出，原始 transcript 见
+`docs/verification/release-signature-v0.4.2-2026-10-02.log` 与
+`docs/verification/install-sh-linux-2026-10-02.log`。
 
-这些项目需要仓库维护者配置并保管供应链密钥。当前不能声称签名链路已满足发布门禁；完成前不得创建新 release tag。
+- **密钥确实已配置**。`gh secret list -R chao2hang/chaos-code` 列出 `CHAOS_SIGNING_PRIVATE_KEY`（created 2026-08-14）与 `NPM_TOKEN`；`gh variable list` 列出 `CHAOS_SIGNING_PUBLIC_KEY`。4.1 记录的「未列出」与本次观测矛盾，且私钥创建时间早于该次复核，因此那句要么当时命令作用在错误的仓库/凭据上，要么当时未认证；保留原文不删，但**不得**再作为现状引用。
+- **`release.yml` 已不再允许静默发布未签名产物**：`Sign binaries` 与构建步骤都对两个变量做 `test -n` 并以 `::error::` 失败退出，release 构建使用 `--features xai-grok-update/require-sig`。4.1 的「缺任一项时会跳过签名」不成立。
+- **安装脚本已 fail closed**：sidecar 缺失、公钥缺失、python/cryptography 缺失三种情况在 `install.sh` / `install.ps1` / `install.bat` 中都是报错退出，只有显式 `CHAOS_SKIP_SIGNATURE=1` 才降级；由 `scripts/ci/test-installer-signature-policy.py` 固定。
+- **真实闭环已跑通**：`v0.4.2` 的六个产物全部带 `.sig`，`signature::verify_file` 在仓库公钥下逐个接受，翻转一字节即拒收（`scripts/verify-release-signature.sh`，16 项检查全绿）。
+
+### 4.1c 本轮新发现的真实缺陷：文档里的安装命令原本装不完
+
+4.2 第 4 条要求端到端安装测试；把它写出来并真的跑一次之后，暴露出一个此前任何文本断言都看不到的缺陷：
+
+- `install.sh` / `install.ps1` / `install.bat` 验签所需公钥**只**来自 `CHAOS_SIGNING_PUBLIC_KEY` 环境变量，而 README 头条命令 `curl -fsSL https://raw.githubusercontent.com/.../install.sh | bash` 不会设置它。三者都在验签处 fail closed，因此这条被文档推荐的命令在任何干净机器上都无法完成安装。
+- 更糟的是失败时机：公钥与 python 依赖的检查原本写在**下载之后**，用户要先等 150 MB+ 传完才看到「缺少公钥」。
+- 修复：三个安装脚本内置同一把公钥（`DEFAULT_SIGNING_PUBLIC_KEY`，`CHAOS_SIGNING_PUBLIC_KEY` 仍可覆盖，供自签名的 fork 使用），并把前置检查移到下载之前。公钥本就是公开信息（同一值已在公开 repo variable 里），签名依赖的是只在 Actions secret 中的私钥半边。
+- 「设置成空字符串」仍按错误处理，所以 fail-closed 分支依然可达、可测。
+
+### 4.1d 把安装脚本真的跑起来之后，又暴露两个缺陷（2026-10-02）
+
+4.1c 的修复仍然只停留在「文本层正确」。把 `scripts/install-sh-in-docker.sh` 跑到第二次，
+才看到下面两条：
+
+- **`install.sh` 从未调用 `verify_checksum()`**。函数在，`SHA256SUMS` 的抓取、比对、
+  三条错误路径都在，但没有任何调用点（`git show 73a9d7c8:scripts/install.sh` 里只有
+  `verify_signature` 被调用）。也就是说 `curl | bash` 传完 160MB 之后根本不查摘要就装；
+  函数上方注释写的是相反的行为。`install.ps1` / `install.bat` 是内联实现，不受影响。
+  修复：`verify_checksum` 在 `verify_signature` 之前、`chmod +x` 之前调用；
+  `test-installer-signature-policy.py` 增加结构性断言（两个检查各必须有且只有一个顶层
+  调用点、顺序正确、且早于 `chmod +x "$TMP"`），删掉调用行即失败，证明断言有效。
+- **对照实验自己也在说谎**。`install-sh-in-docker.sh` 用
+  `in_container sh -c 'CHAOS_SIGNING_PUBLIC_KEY=""; bash ...'` 传环境变量，而
+  `VAR=x; cmd` 只给 shell 赋值、不会带进子进程，于是「空白公钥快速失败」用了内置公钥跑完并
+  exit 0，「外来公钥拒收」同样会假绿。改为 `env VAR= cmd`，并加一条前置探针断言控制变量
+  确实进了子进程环境，探针不过就直接终止。
+- 修好之后的完整运行：19 项全绿，含 `checksum OK (0ee7d6ee…a7b4bfa2)`（与
+  `verify-release-signature.sh` 独立重算的摘要一致）、空白公钥在下载前即失败、外来公钥
+  拒收且已装产物字节不变。原始 transcript：
+  `docs/verification/install-sh-linux-2026-10-02.log`。
+- 同一轮用真实 PowerShell 解析 `scripts/install.ps1`，发现它自 `21f5a186` 起就无法解析
+  （多余右花括号导致 `The Try statement is missing its Catch or Finally block`），
+  README 的 `irm … | iex` 从未可能成功。修复于 `4d3eb266`，并由
+  `scripts/ci/check-powershell-syntax.py` 在 `platform tests` 两条 leg 上以 `--require`
+  把住。**注意**：解析不等于安装，`install.ps1` / `install.bat` 至今没有任何真实执行证据。
+
+### 4.2 发布阻断项（P1，剩余部分）
+
+- ~~生成并安全配置匹配的 secret 与 repository variable；执行真实签名和验证闭环~~ → 已完成，见 4.1b。
+- ~~为正式 release 构建启用 `require-sig`，并确认编译进二进制的公钥非占位值；未配置密钥时 release 必须失败~~ → `release.yml` 已如此；未注入公钥的构建会在 `signature::public_key()` 处返回 `NoPublicKey` 而拒绝下载，这一行为由 `scripts/verify-release-signature.sh` 的第 7 项检查真实验证（不带变量重新编译 example，确认其拒绝）。
+- ~~将安装脚本验签保证统一~~ → 已完成，见 4.1c。
+- ~~增加端到端发布/安装测试：有效签名接受、签名不匹配拒绝、签名缺失拒绝、错误密钥拒绝~~ → 覆盖情况：有效接受与错误密钥拒绝由 `scripts/verify-release-signature.sh`（真实产物）与 `scripts/install-sh-in-docker.sh`（真实安装流程 + 内置公钥 + 外来公钥拒收 + 空白公钥快速失败）执行；签名缺失拒绝由 `crates/codegen/xai-grok-update/tests/test_update_feed_e2e.rs` 的 loopback feed 驱动 `run_update` 覆盖。**仍未覆盖**：`install.ps1` / `install.bat` 的真实执行（无 Windows 环境，只有文本策略测试）。
+- 仍未完成：`CHAOS_REQUIRE_SIG=0` 绕过的保留策略评审（见 4.3）；`chaos update` 在 Windows 上的 `.exe` 改名路径。
+
+原结语句「这些项目需要仓库维护者配置并保管供应链密钥……完成前不得创建新 release tag」已被事实越过：密钥已在仓库中，`v0.4.2`（2026-09-23，标记 Latest）已发布带签名的六个产物。保留此段仅为记录当时的判断依据。
 
 ### 4.3 格式与开关决策
 

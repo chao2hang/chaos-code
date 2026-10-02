@@ -1,0 +1,146 @@
+# install.sh on a machine that has never seen this repository -- 2026-10-02
+
+Reproduce: `scripts/install-sh-in-docker.sh`
+Host: Ubuntu 22.04 x86_64, Docker 29.8.1, container image `debian:bookworm-slim`.
+Commit under test: the working tree whose `scripts/install.sh` is byte-identical to
+`scripts/install.sh` at `3ceac9b1` (verified with `cmp` against `git show
+3ceac9b1:scripts/install.sh`).
+Scope: whether the command the README puts on its front page installs a verified
+binary on a clean Linux machine, and whether the two integrity checks it claims to
+perform are actually performed.
+
+## Why this was not already known
+
+The installers had only been checked by
+`scripts/ci/test-installer-signature-policy.py`, which reads the script as text and
+asserts that certain error strings exist in it. Text assertions cannot tell you that
+the function containing them is never called, and one of them was not.
+
+`scripts/install.sh` defined `verify_checksum()` -- fetch `SHA256SUMS`, find the entry
+for the asset, compare, exit 1 on mismatch -- and had no call site for it. Before the
+fix, `git show 73a9d7c8:scripts/install.sh | grep -n 'verify_checksum\|verify_signature'`
+printed:
+
+    478:verify_checksum() {          <- definition
+    521:verify_signature() {
+    585:verify_signature             <- the only integrity check that runs
+
+so `curl -fsSL .../install.sh | bash` downloaded the ~160 MB artifact, printed nothing
+about the published digest, and installed. Every error path inside the function
+(`could not fetch SHA256SUMS`, `SHA256SUMS has no entry for`, `checksum mismatch`, and
+the `checksum OK` success line) was unreachable, and the comment above it said the
+opposite of the truth. `install.ps1` and `install.bat` do the same work inline, so
+only the sh installer was affected.
+
+## Run 1: what the clean-machine run reported
+
+`scripts/install-sh-in-docker.sh` installs into a stock `debian:bookworm-slim`
+container whose only added packages are `curl`, `python3`, `python3-cryptography` --
+no cargo, no repository, no prior `~/.chaos`, and no `CHAOS_SIGNING_PUBLIC_KEY` passed
+in. Two checks failed:
+
+    FAILED no 'checksum OK' line: the published SHA256SUMS was not consulted
+    FAILED a blank key did not fail fast (exit 0); output was: Chaos installer ...
+
+The first is the defect above. The second was a bug in the harness, and it mattered
+more than it looks:
+
+    install_out=$(in_container sh -c "CHAOS_SIGNING_PUBLIC_KEY=\"\"; bash ... ")
+
+`VAR=x; cmd` assigns a shell variable and then runs the command *without* it, so
+neither fail-closed control ever reached the installer. The blank-key run used the
+built-in key and exited 0; the foreign-key control, which was next in line and had not
+run yet, would have done the same -- i.e. the two checks that exist to prove the
+signature line is not vacuous were themselves vacuous. `run_install` now goes through
+`env` (`env CHAOS_SIGNING_PUBLIC_KEY= bash ...`), and the script refuses to continue
+until a probe confirms the controls can reach the child's environment:
+
+    ok  the controls really do set CHAOS_SIGNING_PUBLIC_KEY in the child's environment
+
+## Fixes
+
+1. `verify_checksum` is called before `verify_signature`, both before `chmod +x`.
+2. `scripts/ci/test-installer-signature-policy.py` asserts structurally that a
+   definition is not enough: each of `verify_checksum` / `verify_signature` must appear
+   exactly once as a top-level call, in that order, and before `chmod +x "$TMP"`.
+   Mutation-verified -- deleting the call line makes the test fail with
+   `verify_checksum must be called exactly once at the top level (found 0 call sites)`,
+   and restoring it makes the suite pass (7 tests).
+
+## Run 2: 19 checks, all passing
+
+    == the machine doing the installing
+       ok  container is up: Linux 6.8.0-138-generic x86_64
+       ok  prerequisites install from distro packages: curl, python3, python3-cryptography
+           python3 3.11.2, cryptography 38.0.4
+       ok  no prior install to inherit: no ~/.chaos, no chaos on PATH, no cargo
+       ok  the built-in key is the repository's CHAOS_SIGNING_PUBLIC_KEY
+
+    == the command README tells users to run
+       ok  install.sh exited 0 with no CHAOS_SIGNING_PUBLIC_KEY in the environment
+       ok  the digest was checked: checksum OK (0ee7d6ee3c92159d2b013c7d081cf2cc265d2d59a808ebb0fb9f2554a7b4bfa2)
+       ok  the signature was checked: signature OK
+
+    == what landed on disk
+       ok  the artifact is stored under the versioned name auto-update expects: /root/.chaos/downloads/chaos-0.4.2-linux-x86_64
+       ok  bin/chaos -> ../downloads/chaos-0.4.2-linux-x86_64 (relative, so it survives a bind-mount that remaps $HOME)
+       ok  bin/chaos resolves and is executable
+       ok  bin/agent points at the same artifact
+       ok  downloads/chaos-latest names the current version
+       ok  the installed binary runs and reports: chaos 0.4.2 (8503250745ff)
+       ok  PATH was configured in a shell rc
+
+    == a second run
+       ok  re-running is a no-op: already installed: chaos 0.4.2 (8503250745ff)
+
+    == controls: the signature check has to be able to say no
+       ok  the controls really do set CHAOS_SIGNING_PUBLIC_KEY in the child's environment
+       ok  a blank key is refused before any download starts
+       ok  a valid-but-foreign key is refused with 'signature verification FAILED'
+       ok  the refused install left the working artifact untouched (0ee7d6ee3c92159d2b013c7d081cf2cc265d2d59a808ebb0fb9f2554a7b4bfa2)
+
+    all 19 check(s) passed
+
+Two details worth keeping. The foreign-key run prints `checksum OK` and *then*
+refuses, which is the intended order -- the digest catches a corrupt or swapped
+transfer, the signature is what establishes provenance, and neither is load-bearing
+alone. And the digest above is the same `0ee7d6ee…a7b4bfa2` that
+`scripts/verify-release-signature.sh --tag v0.4.2` recomputed independently from the
+release page (see `release-signature-v0.4.2-2026-10-02.log`), so the installer and that
+script are looking at the same bytes.
+
+## Cross-checks after the run
+
+- `cmp` says the script that ran in the container is identical to
+  `scripts/install.sh` at `3ceac9b1`, so the transcript describes committed content.
+- `https://raw.githubusercontent.com/chao2hang/chaos-code/main/scripts/install.sh`
+  is now byte-identical to the working tree. During run 1 it was not (that run printed
+  a note about it), because `main` still had the version without the checksum call:
+  the one-liner a reader copies from the README was behind the fix until `3ceac9b1`
+  was pushed.
+- The `built-in key is the repository's CHAOS_SIGNING_PUBLIC_KEY` check reads the
+  Actions variable with `gh variable get` and compares it to
+  `DEFAULT_SIGNING_PUBLIC_KEY` in the script under test, so the key the installer ships
+  and the key the release signs against cannot drift apart silently.
+
+## What this file is NOT evidence about
+
+- `install.ps1` and `install.bat`. Nothing has executed either one. Separately found
+  in this round: `install.ps1` did not even parse (`The Try statement is missing its
+  Catch or Finally block`) since `21f5a186`; fixed in `4d3eb266` and now gated by
+  `scripts/ci/check-powershell-syntax.py`. Parsing is not installing.
+- macOS, or Linux on arm64. The container was x86_64 Debian and picked
+  `chaos-linux-x64`.
+- The mirror paths. The run used the origin URL; `CHAOS_GITHUB_MIRROR`, `CHAOS_CN=1`
+  and the public fallback list were not exercised.
+- The escape hatches. `CHAOS_SKIP_CHECKSUM=1` and `CHAOS_SKIP_SIGNATURE=1` were not
+  exercised -- the run asserts the opposite, that no skip line appeared.
+- The upgrade path over an existing install of a *different* version, or a
+  pre-existing `~/.chaos` written by an older release. The container started clean and
+  the second run was the same version, i.e. a no-op.
+- That `chaos update` afterwards verifies and installs a newer release. That is
+  `docs/verification/updater-feed-e2e-2026-10-02.log` (loopback feed) and
+  `docs/verification/release-signature-v0.4.2-2026-10-02.log` (real bytes, real key),
+  each with its own limits.
+- Version currency: `v0.4.2` is the newest published release; the repository is ahead
+  of it. Re-run against the new tag after the next release.

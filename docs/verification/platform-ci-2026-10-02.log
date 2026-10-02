@@ -2,6 +2,7 @@
 # reason the Windows one did not run a single test.
 # Source: run 36979345879 on commit a206ec33, https://github.com/chao2hang/chaos-code/actions/runs/36979345879
 # Fetched with: gh api --allow-escape-sequences repos/chao2hang/chaos-code/actions/jobs/110761942421/logs
+#               and .../actions/jobs/110761942438/logs for the macOS leg quoted below.
 # Host that fetched it: Ubuntu 22.04 x86_64, gh 2.x. No Windows or macOS machine ran here.
 
 == why this run matters
@@ -21,6 +22,7 @@ platform legs were reported as skipped and never produced evidence. On this run 
   workflows present                          completed/success
   platform tests (windows-latest)            completed/failure
   platform tests (macos-14)                  in progress at the time of writing
+                                             (it finished green; see the update below)
 
 == the Windows failure, step by step
 
@@ -68,8 +70,44 @@ expected; it is the proof the file is now where the step says it is. Before the 
 the same run failed earlier with 127 "No such file or directory", which is the error
 the Windows runner reported.
 
+== update: the macOS leg finished, and it is green
+
+Job 110761942438, `platform tests (macos-14)`, on the same run 36979345879, completed
+with conclusion `success`. This is the first time any test in this repository has run on
+Apple hardware.
+
+From that job's own log:
+
+  host: aarch64-apple-darwin
+  1.94.0-aarch64-apple-darwin installed - rustc 1.94.0 (4a4ef493e 2026-03-02)
+  ripgrep 15.0.0 (rev 3a612f88b8)
+  RG_BIN_PATH=/var/folders/s6/…/T//ripgrep-15.0.0/rg
+  cargo test --locked --no-fail-fast \
+    -p xai-tty-utils -p xai-grok-sandbox -p xai-grok-shell-terminal \
+    -p xai-grok-update -p xai-grok-tools -p xai-grok-pager-bin
+
+Totals across the 33 suite summaries that step printed (21 integration binaries, 6 unit
+binaries, 5 doc-test runs):
+
+  3763 passed; 0 failed; 22 ignored
+
+The 22 ignored are the ones `scripts/ci/ignored-tests.py` enumerates with an in-source
+reason (cgroupv2 delegation, soak runs, container signal-timing flakes and similar).
+The toolchain came from `rust-toolchain.toml`, not from whatever the runner image happened
+to carry, so this is the pinned 1.94.0.
+
 == what this file is NOT evidence about
 
-No Windows or macOS test result. The Windows leg never reached `cargo test`, and the
-macOS leg's outcome is not in this transcript. Both remain to be produced by a run of
-this fixed workflow.
+No Windows test result. The Windows leg failed in its ripgrep step and skipped
+`cargo test`; the fix above was pushed as 88903bf7 and its own run is what has to settle
+it.
+
+The macOS leg covers the six target-OS crates it passes to `cargo test`. It says nothing
+about `chaos-engine`, `chaos-web` or the GUI crates, which only the Linux `rust` job
+builds, and nothing about a signed `.dmg`, an installed bundle, or a real
+`chaos update` against GitHub's release feed.
+
+The macOS result is for commit a206ec33, which predates the ripgrep fix. That fix touches
+only the Windows branch of the step (`tar --strip-components=1` already flattened the same
+directory on the macOS/Linux branch), so the two legs are independent, but the numbers
+above are not numbers from a tree containing 88903bf7.
