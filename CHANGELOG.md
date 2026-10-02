@@ -2,6 +2,84 @@
 
 ## Unreleased
 
+### 新增：离线的发行物完整性验收台（`scripts/install-integrity-in-docker.sh`）
+
+`scripts/install-sh-in-docker.sh` 已经会用 README 头条那条命令装**真实** release，并确认
+摘要与签名都报 OK。但一台只会拿到正确产物的机器回答不了唯一要紧的问题：字节不对的
+时候它怎么办。装完之后才发现「摘要不匹配」根本不可能触发，和摘要检查被静默跳过，是
+同一个结果。
+
+新实验台因此自己造一份 release：产物、`SHA256SUMS` 里的一行、以及对产物字节签名的
+ed25519 `.sig`，再用 `install.sh` 本来就支持的 ghproxy 镜像路径
+（`${CHAOS_GITHUB_MIRROR}/https://github.com/...`）把它端出去。容器跑在
+`--network none` 下：loopback 可用、DNS 什么都解析不出来，所以安装器消费的每个字节都
+来自这份夹具，github.com 是物理不可达的（这一条本身是被断言的，不是假设）。34 项检查
+覆盖一条正路（`checksum OK` + `signature OK` + 落地可执行 + 相对 symlink 布局 + 二次运行
+不重复下载 + 夹具只被取过那三个文件）与这些拒绝：产物被改一个字节、`SHA256SUMS` 被
+按篡改后的字节**重算**（此时只剩签名拦着）、`.sig` 缺失、公钥合法但不是我们的、公钥
+存在但为空串（且在发起任何请求之前就拒，夹具记录到零次请求）、manifest 里没有本资产
+这一行、manifest 被换成 200 的 HTML 错误页、下载体为空；每个拒绝都同时断言
+`bin/chaos` 没有留下。两个逃生开关的代价也被量化：只跳摘要时篡改仍被签名拦住，两个
+都跳则真的装进去（这正是文档里「你就是在信任这次下载」的含义）。
+
+第一次运行是 33/34，`html-sums` 那一项拒了却没说为什么——顺着它挖出
+`download_github` 的真实缺陷（见下）。完整记录：
+`docs/verification/install-integrity-linux-2026-10-02.log`。
+
+### 修复：Windows 上编译不过的 kill-on-drop 测试，以及镜像失败原因被吞掉
+
+`xai-tty-utils` 的 `kill_on_drop_tests.rs` 调用 `#[cfg(unix)]` 的
+`process_not_running`，Windows 上整个测试目标编译失败（`E0425`），CI 的 Windows platform
+leg 因此在 ripgrep 修好之后仍然一步测试都没跑。现在补上 Windows 侧的实现
+（`OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION)` + `GetExitCodeProcess`，打不开即视为已消失，
+读不到退出码则报「仍在运行」让调用方自己发现），测试夹具也换成两平台都有的常驻进程
+（`sleep 300` / `ping -n 300 127.0.0.1`）与立刻退 0 的夹具（`true` / `cmd /C exit 0`），
+Windows 由此真正执行这三个用例而不是被 `#[cfg(unix)]` 跳过。同轮清掉该 crate 在
+Windows 上的 4 个 unused-import 警告。`cargo check --all-targets` 在
+x86_64/aarch64-pc-windows-msvc 与 x86_64-apple-darwin 三个目标上均零警告零错误。
+
+`install.sh` 的 `download_github` 原先只报**最后一个**候选源的失败原因：镜像返回 200 却
+是一段 HTML 错误页时，用户看到的是「HTTP 000 from 最后一个公共镜像」，跟
+`tip:` 建议再换一个镜像，于是永远看不到真正的原因。现在按顺序打印去重后的前四条原因
+（`why:`），`last:` 一行保持原样。这个缺陷是上面那个实验台的 `html-sums` 检查第一次
+运行时暴露的。
+
+同一轮还修掉一处时间性 flake：`xai-grok-pager` 的
+`tool_media_same_length_same_mtime_rewrite_retries_failed_load` 假设「原地重写一定会推进
+ctime」，而内核给 inode 时间戳打的是粗粒度时钟——本机实测 2000 次连续原地重写里有
+1896 次 ctime 纹丝不动，也就是说这个用例此前只在两次写恰好跨过时钟刻度时才通过。
+现在它重复重写直到 ctime 真的移动，并断言长度、inode、mtime 三者全程不变。
+
+### 新增：本地端口转发（`chaos-remote forward`）
+
+远程 workspace 会话此前只能读写文件和跑命令：远端主机上的服务（评审环境的
+web 端口、只监听本机 loopback 的数据库）从开发机上是够不到的，而
+`--capability port-forward` 是一个被点名拒绝的占位能力。现在它是真的。
+
+语义取 `ssh -L`：`chaos-remote forward --to HOST:PORT` 在**执行命令的那台机器**上
+开一个 loopback 监听口，每来一条连接就在 tunnel 的另一头重新拨一次 server、以
+forward ticket 完成握手，然后把连接变成裸字节双向搬运。因此 HTTP 与 WebSocket 都能
+原样穿过。反方向的 remote forwarding（`ssh -R`，由 server 开放监听口回连客户机）是
+另一种信任方向，本 build 不实现：endpoint 类型 `remote-forward` 保留名字但直接拒绝，
+并指向 `port-forward`，避免配置写反方向时静默按另一个方向生效。
+
+四条规则把「会话可以开任意 socket」与这件事区分开：目标由运维方的
+`--allow-forward-to host:port`（可重复、默认为空）决定，空列表只能一律拒绝，所以只给
+`--capability port-forward` 而不列目标的 server 直接拒绝启动，列了目标则自动带上该能力；
+forward ticket 存在与 session 凭据分开的 vault 里、签发时即绑死一个 `host:port`、
+只授予 `port-forward` 一项能力（读不到也写不了它顺路连上的 workspace）；授予的
+连接数与寿命由 server 用 `--forward-max-uses` / `--forward-ttl` 封顶后回答，用完或到期
+本地监听口自行关闭，且关闭会话即撤回 ticket；本地端只允许 loopback，`--listen 0`
+向系统要一个空闲端口并在有人连进来之前先打印出来，端口被占用是点名拒绝而不是换个
+端口继续。
+
+证据：`chaos-engine` 单测 16 项（`src/remote/forward.rs`，含 WebSocket 握手穿过隧道、
+预算耗尽、目标不可达、ticket 不是 session 凭据），CLI 各 10 项，以及
+`scripts/remote-acceptance-in-docker.sh` 在部署环境里的 22 项实测——远端容器起
+`python3 -m http.server` 与一个按 RFC 6455 手写的 WebSocket 回显服务，另一侧容器经转发取回
+的文件与该主机磁盘上的摘要一致、握手成功并读回只存在于远端主机上的字符串（lab 先断言开发机
+容器 `grep` 不到它），未列出的目标虽然确有监听口仍被拒绝，两次连接用完即监听口自行释放。
+
 ### 修复：`install.ps1` 此前根本无法解析
 
 `scripts/install.ps1` 有一个多余的右花括号：`21f5a186`（重排验签块）把外层 `try`
