@@ -182,7 +182,7 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 - [x] `ADR-002`：engine 边界；walking skeleton 先以 `chaos-engine` 协议 mock 验证 Web/Desktop seam，保留现有 headless 实现，后续通过 adapter 接入而不复制生命周期。（2026-09-24；`docs/architecture/adr-002-gui-engine-adapter.md`）已明确 `headless.rs` 当前物理位于依赖 ratatui 的 pager crate，先保留原位并以 adapter 接入，避免把终端渲染栈拖进 GUI。（2026-09-24）
 - [x] `ADR-003`：确定 M0 使用 engine 原子 JSON 快照验证恢复，后续 canonical SQLite store、迁移、备份和 NFS 策略按文档推进。（2026-09-24；`docs/architecture/adr-003-gui-persistence.md`）
 - [x] `ADR-004`：M0/M1 先支持本地 Agent + 本地 workspace；远程 Agent/工具、SSH、端口转发和 detached Agent 明确留至 M4，不把 loopback 原型伪装成远程控制面。（2026-09-24；`docs/architecture/adr-004-remote-topology.md`）
-- [~] `ADR-005` local Web security baseline frozen, see `docs/architecture/adr-005-web-security.md`; development `/health`/`/api`/`/ws` proxy only targets loopback backend, which enforces Host/Origin/token/Safe Web Mode. Production TLS termination/reverse proxy/token rotation/audit, Tauri IPC, remote links and secret storage remain separate host/security reviews.
+- [~] `ADR-005` local Web security baseline frozen, see `docs/architecture/adr-005-web-security.md`; development `/health`/`/api`/`/ws` proxy only targets loopback backend, which enforces Host/Origin/token/Safe Web Mode. Proxy-fronted TLS is now a supported shape rather than an impossibility: `CHAOS_WEB_PUBLIC_ORIGIN` declares the public name (bare `https` origin, requires `CHAOS_WEB_TOKEN`), the `https` Origin is accepted only for that name and only with `X-Forwarded-Proto: https`, and every 401 says which rule fired; a Docker lab drives the built binary behind stock nginx over a lab-issued certificate chain and covers credential rotation and a real `wss:` session (`scripts/web-deployment-in-docker.sh`, transcript `docs/verification/web-deployment-tls-linux-2026-10-02.log`). Still separate reviews: certificate issuance/revocation, CDN behaviour, rate limiting, audit-log retention, Tauri IPC, remote links and secret storage.
 - [x] `ADR-006`：前端采用 clean-room React/TypeScript 重写；不复制参考源码/资产，Chaos UI 仅通过版本化 Rust protocol 消费 engine，未来更新以本仓库审查为准。（2026-09-24；`docs/legal/ui-source-baseline.md`、`docs/architecture/adr-006-gui-source.md`）
 
 **ADR 必须回答**：备选方案、选择理由、兼容影响、失败模式、迁移和回滚。
@@ -257,7 +257,7 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 
 ### M0.4 前端最小闭环
 
-- [~] React 已接入真实 WebSocket，支持会话、timeline、streaming、审批/问题、停止和工具活动卡片；Chromium desktop/mobile 验证 workspace isolation、文件流和 composer。E2E runner 自动选择空闲 UI/backend 端口并通过受控 Origin 配置连接；Vite 代理 `/ws`、`/api`、`/health` 到 loopback Web routes，由后端检查 Host/Origin/token/Safe Web Mode。production TLS termination、reverse proxy 和正式部署安全仍待独立 gate。（2026-09-29；`apps/chaos-ui/e2e-runner.mjs`、`e2e/workspace-flow.pw.ts`、`e2e/tool-activity.pw.ts`）
+- [~] React 已接入真实 WebSocket，支持会话、timeline、streaming、审批/问题、停止和工具活动卡片；Chromium desktop/mobile 验证 workspace isolation、文件流和 composer。E2E runner 自动选择空闲 UI/backend 端口并通过受控 Origin 配置连接；Vite 代理 `/ws`、`/api`、`/health` 到 loopback Web routes，由后端检查 Host/Origin/token/Safe Web Mode。Proxy-fronted TLS 部署形态已实现并被 Docker lab 驱动验证（`CHAOS_WEB_PUBLIC_ORIGIN` + `X-Forwarded-Proto` 规则、401 带拒绝原因码、真实 `wss:` 会话、credential 轮换）；证书签发/吊销、CDN、限速与审计日志留存仍是独立 gate。（2026-10-02；`apps/chaos-ui/e2e-runner.mjs`、`e2e/workspace-flow.pw.ts`、`e2e/tool-activity.pw.ts`、`scripts/web-deployment-in-docker.sh`）
 - [x] React 已有连接中/已连接、空态、生成中、连接错误和取消入口；WebSocket 断线自动重连并通过 resume 恢复历史。（2026-09-24；typecheck/build/Vitest 通过）
 - [~] 流式文本使用 WebSocket delta 逐事件更新；UTF-8 安全分块和实际 Browser E2E 已完成，React timeline 现以安全 Markdown/GFM parser 显示真实 response。Delta batching semantics (flush/latency) remain undefined; require M5 reproducible p50/p95 benchmarks and target thresholds before implementing any batching.
 - [~] Web 已用显式 WebSocket transport 走真实 Engine；Desktop 目前仅 shared-engine host boundary，无 Tauri IPC transport injection。Tauri integration 要在 M0 desktop ADR/三平台启动验证后实现，不把 lib unit test 称真实桌面 flow。（2026-09-25）
@@ -468,8 +468,8 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 
 - [ ] 将“远端服务映射到本地端口”正确建模为 local forwarding；另行定义真正的 remote forwarding。
 - [ ] 支持端口冲突检测、随机本地端口、隧道生命周期和 WebSocket 转发。
-- [ ] 区分桌面本机浏览器和远程部署的 Web 浏览器；Web 场景不得错误使用浏览器机器的 `localhost`。
-- [ ] 预览代理处理 Host、Origin、Cookie、WebSocket 和鉴权；默认不公开暴露。
+- [~] Web 场景不得错误使用浏览器机器的 `localhost`：`webSocketUrl()` 只从页面自身的 `location` 取 protocol/hostname/port/base path（`hostname` 为空时才回落 `127.0.0.1`），Vitest 覆盖 https+非默认端口+子路径、HTTP 默认端口与 IPv6 三种形态，Docker TLS lab 再以真实 `wss://chaos.test:8443/ws` 会话验证同一 URL 形状可通。「区分桌面本机浏览器与远程部署浏览器」的另一半仍无对象可区分：本 build 里没有桌面 shell（M5 的 macOS/Windows 打包行仍未完成），因此保持部分完成。（2026-10-02；`apps/chaos-ui/src/transport.ts`、`src/transport.test.ts`、`docs/verification/web-deployment-tls-linux-2026-10-02.log`）
+- [ ] 预览代理处理 Host、Origin、Cookie、WebSocket 和鉴权；默认不公开暴露。仍然成立的原因未变：仓库里没有任何把用户应用端口映射进 Web UI 的 preview proxy 实现（`crates/codegen/xai-grok-web` 只有 `/health`、`/api/handshake`、`/api/sessions`、`/ws` 与静态资源路由）。已具备的是它所依赖的宿主侧规则并被 Docker lab 真实验证：默认只绑 loopback、同网段另一台机器完全连不上、Host/Origin/Bearer 三道检查与拒绝原因码。「默认不公开暴露」因此对 Web host 本身已是事实，对尚不存在的预览代理仍是待实现项。
 
 ### M4.5 WSL 与容器
 
@@ -530,7 +530,7 @@ M-1.4 的 `ADR-002`（headless 下沉）和 M-1.3（`Cargo.toml` 分叉登记）
 - [~] 当前 browser E2E 覆盖初始空 transcript/空 composer、prompt cancel、服务真实连接、reload snapshot、safe Markdown 与 narrow viewport；新增的 approved file write/deny/re-read、terminal/Git operation 和 invalid Provider shape 错误路径均有真实 Web browser regression。Large-conversation performance、跨平台 display/OS error、disk-full 和 corrupt runtime config recovery 仍待各自数据/I/O/平台 gate。（2026-09-29；`apps/chaos-ui/e2e/workspace-flow.pw.ts`、`e2e/approved-workspace-ops.pw.ts`）
 - [~] workspace create/switch/reload/archive、transcript isolation、layout/theme persistence 与 composer 已在 desktop/mobile Playwright CI 验证；真实多 tab 审批通知及 Tauri 页面仍待 gate。主题和宽窄视口已有当前覆盖，未声称共享状态所有界面完成一致性验收。（2026-09-25；Playwright run `36094218127`）
 - [ ] macOS、Windows 和 release package 安装/upgrade/rollback/uninstall 需各平台 runner、签名资源和产品 support matrix；现存 Linux CLI install 不等于 M5 GUI install，通过各对应 platform gate 验收。
-- [~] 前端 transport 已在 HTTPS 页面选择 `wss:`、HTTP 页面选择 `ws:` 并保留 host port/base path；生产 TLS 终止、proxy headers、Token 轮换和审计日志仍待真实部署拓扑验收。（2026-09-24；`src/transport.test.ts`）
+- [~] 前端 transport 已在 HTTPS 页面选择 `wss:`、HTTP 页面选择 `ws:`，并沿用页面自身的 hostname 与 port（不写回浏览器机器的 `localhost`）与 base path；`src/transport.test.ts` 覆盖 https+端口+子路径、默认端口与 IPv6 三种形态。后端侧的 TLS 终止/proxy headers/Token 轮换现已由 Docker 部署 lab 真实驱动验证（`scripts/web-deployment-in-docker.sh`）；审计日志留存与 CDN 行为仍待真实部署验收。（2026-10-02；`src/transport.test.ts`、`docs/verification/web-deployment-tls-linux-2026-10-02.log`）
 - [ ] 检查远程支持矩阵中的每种认证和故障路径；未支持能力无误导入口。
 
 ### M5.6 发布资料

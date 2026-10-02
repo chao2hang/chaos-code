@@ -27,5 +27,8 @@ futures-util.workspace = true
 base64.workspace = true
 tokio-tungstenite.workspace = true
 tempfile.workspace = true
+# Startup-refusal tests must not block forever if a guard regresses and the host
+# simply starts serving.
+wait-timeout = { workspace = true }
 # Mock inference endpoint for the real-provider WebSocket tests.
 xai-grok-test-support = { workspace = true }

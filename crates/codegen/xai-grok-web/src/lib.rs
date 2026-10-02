@@ -194,7 +194,86 @@ fn approved_dynamic_dev_origin(
     (loopback_host && port != 0).then(|| format!("http://{authority}"))
 }
 
+/// Parse the origin the operator says this deployment is reached through.
+///
+/// Strict on purpose: the value decides which `Host` and `Origin` headers are
+/// accepted from outside loopback, so a typo must fail loudly rather than
+/// quietly widen what the server answers.
+pub fn public_origin_authority(declared: &str) -> Result<String, String> {
+    let trimmed = declared.trim().trim_end_matches('/');
+    if trimmed.is_empty() {
+        return Err("empty".to_string());
+    }
+    let uri = trimmed
+        .parse::<axum::http::Uri>()
+        .map_err(|error| format!("not a valid URI: {error}"))?;
+    // `https:` only: the point of this setting is a TLS terminator in front of
+    // the loopback server, and an `http:` value would accept a plaintext origin
+    // the frontend never sends (it picks `wss:` exactly when the page is https).
+    if uri.scheme_str() != Some("https") {
+        return Err("must be an https: origin".to_string());
+    }
+    let authority = uri.authority().ok_or("missing host")?;
+    if authority.as_str().contains('@') {
+        return Err("must not contain credentials".to_string());
+    }
+    if authority.host().is_empty() || invalid_port(authority.as_str()) {
+        return Err("host or port is not valid".to_string());
+    }
+    if !matches!(uri.path(), "" | "/") || uri.query().is_some() || trimmed.contains('#') {
+        return Err("must not contain a path, query, or fragment".to_string());
+    }
+    Ok(authority.as_str().to_ascii_lowercase())
+}
+
+/// The declared public origin's authority, or `None` when unset or unusable.
+/// Read per request like [`dev_origins`], so the checks have no cached state.
+fn configured_public_authority() -> Option<String> {
+    let declared = std::env::var("CHAOS_WEB_PUBLIC_ORIGIN").ok()?;
+    if declared.trim().is_empty() {
+        return None;
+    }
+    match public_origin_authority(&declared) {
+        Ok(authority) => Some(authority),
+        Err(reason) => {
+            eprintln!("CHAOS_WEB_PUBLIC_ORIGIN ignored: {reason}");
+            None
+        }
+    }
+}
+
+/// Whether a header's authority is exactly the one the operator declared.
+fn configured_public_authority_matches(
+    declared: Option<&str>,
+    seen: &axum::http::uri::Authority,
+) -> bool {
+    declared.is_some_and(|declared| seen.as_str().eq_ignore_ascii_case(declared))
+}
+
+/// Whether the proxy told us the browser's side of the connection was TLS.
+///
+/// This is an extra condition, not an authorization source: the backend binds
+/// to loopback, so only the local proxy can set it, and the operator's declared
+/// origin plus the bearer token still have to match.
+fn forwarded_proto_https(headers: &HeaderMap) -> bool {
+    headers
+        .get("x-forwarded-proto")
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| {
+            value
+                .split(',')
+                .next()
+                .unwrap_or_default()
+                .trim()
+                .eq_ignore_ascii_case("https")
+        })
+}
+
 fn origin_allowed(headers: &HeaderMap) -> bool {
+    origin_allowed_against(headers, configured_public_authority().as_deref())
+}
+
+fn origin_allowed_against(headers: &HeaderMap, public_authority: Option<&str>) -> bool {
     let Some(origin) = headers
         .get(header::ORIGIN)
         .and_then(|value| value.to_str().ok())
@@ -207,6 +286,19 @@ fn origin_allowed(headers: &HeaderMap) -> bool {
     let Ok(origin_uri) = origin.parse::<axum::http::Uri>() else {
         return false;
     };
+    // A page served over HTTPS sends an `https:` origin, which can never be
+    // same-origin with the `http` request Host the backend actually sees. It is
+    // accepted only when the operator named that exact origin and the proxy
+    // reported TLS, so a random `https://elsewhere` page is still refused.
+    if origin_uri.scheme_str() == Some("https") {
+        let seen = origin_uri.authority();
+        return seen.is_some_and(|seen| {
+            !seen.as_str().contains('@')
+                && !invalid_port(seen.as_str())
+                && configured_public_authority_matches(public_authority, seen)
+                && forwarded_proto_https(headers)
+        });
+    }
     let Some(request_host) = headers
         .get(header::HOST)
         .and_then(|value| value.to_str().ok())
@@ -422,6 +514,10 @@ fn if_none_match(headers: &HeaderMap, etag: &str) -> bool {
 }
 
 fn host_allowed(headers: &HeaderMap) -> bool {
+    host_allowed_against(headers, configured_public_authority().as_deref())
+}
+
+fn host_allowed_against(headers: &HeaderMap, public_authority: Option<&str>) -> bool {
     let Some(host) = headers
         .get(header::HOST)
         .and_then(|value| value.to_str().ok())
@@ -434,14 +530,61 @@ fn host_allowed(headers: &HeaderMap) -> bool {
     if authority.as_str().contains('@') || invalid_port(authority.as_str()) {
         return false;
     }
+    // Loopback stays valid — the proxy dials it and may or may not rewrite Host,
+    // and health checks still arrive that way. The public name is additionally
+    // valid only because the operator typed it.
     matches!(
         authority.host().to_ascii_lowercase().as_str(),
         "127.0.0.1" | "localhost" | "[::1]" | "::1"
-    )
+    ) || configured_public_authority_matches(public_authority, &authority)
 }
 
-fn request_allowed(state: &WebState, headers: &HeaderMap) -> bool {
-    host_allowed(headers) && origin_allowed(headers) && authorized(state, headers)
+/// Why a request is not allowed, or `None` when it is.
+///
+/// The code goes into the 401 body because these rules fail identically from
+/// outside: a proxy forwarding a name nobody declared, a proxy that stays quiet
+/// about TLS, and a missing credential all look like "the page never connects",
+/// and only one of them is fixed by editing the proxy.
+fn refusal_reason(state: &WebState, headers: &HeaderMap) -> Option<&'static str> {
+    if !host_allowed(headers) {
+        return Some("host_not_allowed");
+    }
+    if !origin_allowed(headers) {
+        return Some(origin_refusal(headers));
+    }
+    if !authorized(state, headers) {
+        return Some("credential_required");
+    }
+    None
+}
+
+/// Split the one origin refusal an operator can act on from the rest.
+fn origin_refusal(headers: &HeaderMap) -> &'static str {
+    let names_the_declared_host = headers
+        .get(header::ORIGIN)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|origin| origin.parse::<axum::http::Uri>().ok())
+        .filter(|uri| uri.scheme_str() == Some("https"))
+        .is_some_and(|uri| {
+            uri.authority().is_some_and(|seen| {
+                configured_public_authority_matches(configured_public_authority().as_deref(), seen)
+            })
+        });
+    if names_the_declared_host && !forwarded_proto_https(headers) {
+        "origin_requires_forwarded_proto"
+    } else {
+        "origin_not_allowed"
+    }
+}
+
+fn unauthorized(reason: &'static str) -> Response {
+    let mut response = secure_json(serde_json::json!({ "error": reason }));
+    *response.status_mut() = StatusCode::UNAUTHORIZED;
+    response
+}
+
+fn reject(state: &WebState, headers: &HeaderMap) -> Option<Response> {
+    refusal_reason(state, headers).map(unauthorized)
 }
 
 fn client_request_id(headers: &HeaderMap) -> String {
@@ -475,8 +618,8 @@ fn secure_json<T: serde::Serialize>(value: T) -> Response {
 }
 
 async fn handshake(State(state): State<Arc<WebState>>, headers: HeaderMap) -> Response {
-    if !request_allowed(&state, &headers) {
-        return StatusCode::UNAUTHORIZED.into_response();
+    if let Some(rejection) = reject(&state, &headers) {
+        return rejection;
     }
     secure_json(ServerMessage::Handshake {
         protocol_version: PROTOCOL_VERSION,
@@ -484,8 +627,8 @@ async fn handshake(State(state): State<Arc<WebState>>, headers: HeaderMap) -> Re
 }
 
 async fn create_session(State(state): State<Arc<WebState>>, headers: HeaderMap) -> Response {
-    if !request_allowed(&state, &headers) {
-        return StatusCode::UNAUTHORIZED.into_response();
+    if let Some(rejection) = reject(&state, &headers) {
+        return rejection;
     }
     let event = state.engine.handle(ClientMessage::CreateSession {
         client_msg_id: client_request_id(&headers),
@@ -499,8 +642,8 @@ async fn websocket(
     headers: HeaderMap,
     upgrade: WebSocketUpgrade,
 ) -> Response {
-    if !request_allowed(&state, &headers) {
-        return StatusCode::UNAUTHORIZED.into_response();
+    if let Some(rejection) = reject(&state, &headers) {
+        return rejection;
     }
     let engine = state.engine.clone();
     let safe_web_mode = state.safe_web_mode;
@@ -620,6 +763,24 @@ pub async fn serve_loopback_with_assets_and_safe_mode(
     assets_dir: Option<std::path::PathBuf>,
 ) -> anyhow::Result<()> {
     let token = std::env::var("CHAOS_WEB_TOKEN").unwrap_or_default();
+    // Naming a public origin means the server is expected to answer requests
+    // addressed to that name through a proxy, so it must not be anonymous and
+    // the value must be well-formed rather than silently ignored.
+    if let Some(declared) = std::env::var("CHAOS_WEB_PUBLIC_ORIGIN")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+    {
+        let authority = public_origin_authority(&declared)
+            .map_err(|reason| anyhow::anyhow!("CHAOS_WEB_PUBLIC_ORIGIN 无效：{reason}"))?;
+        if token.is_empty() {
+            anyhow::bail!(
+                "CHAOS_WEB_PUBLIC_ORIGIN={authority} 让服务对 loopback 之外的地址生效，必须同时设置 CHAOS_WEB_TOKEN"
+            );
+        }
+        eprintln!(
+            "accepting Host and Origin for {authority}; the proxy in front of this server must set X-Forwarded-Proto: https"
+        );
+    }
     let listener = tokio::net::TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], port))).await?;
     axum::serve(
         listener,
@@ -665,6 +826,89 @@ mod tests {
                 .contains_key(header::CONTENT_SECURITY_POLICY)
         );
     }
+    /// Every refusal names the rule that fired, because the three of them look
+    /// identical to a user ("the page never connects") and only one of them is
+    /// fixed by editing the proxy.
+    async fn refusal_code(app: axum::Router, request: axum::extract::Request) -> String {
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            response
+                .headers()
+                .get(header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok()),
+            Some("application/json"),
+            "the reason has to be machine-readable"
+        );
+        let body = axum::body::to_bytes(response.into_body(), 1024)
+            .await
+            .unwrap();
+        serde_json::from_slice::<serde_json::Value>(&body)
+            .expect("refusal body")
+            .get("error")
+            .and_then(serde_json::Value::as_str)
+            .expect("error field")
+            .to_owned()
+    }
+
+    #[tokio::test]
+    async fn refusals_name_the_rule_that_blocked_the_request() {
+        // These four cases are about an operator who declared nothing. Rather
+        // than silently passing under an environment that did declare a public
+        // origin, say which assumption is broken.
+        assert_eq!(
+            configured_public_authority(),
+            None,
+            "CHAOS_WEB_PUBLIC_ORIGIN is set in this environment; unset it to run this test"
+        );
+
+        let undeclared_host = refusal_code(
+            router(Engine::new(), "secret"),
+            Request::get("/api/handshake")
+                .header(header::HOST, "chaos.example.test:8443")
+                .header("authorization", "Bearer secret")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(undeclared_host, "host_not_allowed");
+
+        let no_credential = refusal_code(
+            router(Engine::new(), "secret"),
+            Request::get("/api/handshake")
+                .header(header::HOST, "127.0.0.1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(no_credential, "credential_required");
+
+        let foreign_page = refusal_code(
+            router(Engine::new(), "secret"),
+            Request::get("/api/handshake")
+                .header(header::HOST, "127.0.0.1")
+                .header(header::ORIGIN, "http://evil.example")
+                .header("authorization", "Bearer secret")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(foreign_page, "origin_not_allowed");
+
+        // The order matters for diagnosis: a request that fails the Host rule is
+        // not also reported as lacking a credential, or the operator fixes the
+        // wrong thing.
+        let both = refusal_code(
+            router(Engine::new(), "secret"),
+            Request::post("/api/sessions")
+                .header(header::HOST, "elsewhere.test")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(both, "host_not_allowed");
+    }
+
     #[test]
     fn dynamic_development_origin_is_debug_only_explicit_loopback_and_origin_only() {
         assert_eq!(
@@ -747,6 +991,113 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(header::HOST, HeaderValue::from_static("LOCALHOST:3000"));
         assert!(host_allowed(&headers));
+    }
+
+    /// A proxy that forwards the public `Host` is only believed when the
+    /// operator named that host; nothing changes when the setting is absent.
+    #[test]
+    fn a_declared_public_host_is_accepted_and_everything_else_still_is_not() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::HOST,
+            HeaderValue::from_static("chaos.example.com:8443"),
+        );
+        assert!(
+            !host_allowed_against(&headers, None),
+            "an undeclared public Host must stay refused"
+        );
+        assert!(host_allowed_against(
+            &headers,
+            Some("chaos.example.com:8443")
+        ));
+        assert!(
+            !host_allowed_against(&headers, Some("other.example.com")),
+            "declaring one host must not accept another"
+        );
+        // Loopback keeps working, because the proxy dials it and health checks
+        // arrive there directly.
+        headers.insert(header::HOST, HeaderValue::from_static("127.0.0.1:8787"));
+        assert!(host_allowed_against(
+            &headers,
+            Some("chaos.example.com:8443")
+        ));
+    }
+
+    /// The browser's `Origin` on an HTTPS page can never match the `http` Host
+    /// the backend sees, so the declared origin is what makes it same-origin.
+    #[test]
+    fn an_https_origin_is_accepted_only_for_the_declared_host_over_tls() {
+        let request = |origin: &str, proto: Option<&str>| {
+            let mut headers = HeaderMap::new();
+            headers.insert(header::ORIGIN, HeaderValue::from_str(origin).unwrap());
+            headers.insert(header::HOST, HeaderValue::from_static("127.0.0.1:8787"));
+            if let Some(proto) = proto {
+                headers.insert("x-forwarded-proto", HeaderValue::from_str(proto).unwrap());
+            }
+            headers
+        };
+        let declared = Some("chaos.example.com:8443");
+
+        assert!(
+            !origin_allowed_against(&request("https://chaos.example.com:8443", None), declared),
+            "an https origin without a TLS claim from the proxy must be refused"
+        );
+        assert!(origin_allowed_against(
+            &request("https://chaos.example.com:8443", Some("https")),
+            declared
+        ));
+        assert!(origin_allowed_against(
+            &request("HTTPS://Chaos.Example.com:8443", Some("HTTPS, http")),
+            declared
+        ));
+        assert!(
+            !origin_allowed_against(&request("https://evil.example", Some("https")), declared),
+            "any other https page must stay refused"
+        );
+        assert!(
+            !origin_allowed_against(
+                &request("https://chaos.example.com:8443", Some("http")),
+                declared
+            ),
+            "the proxy must report TLS"
+        );
+        assert!(
+            !origin_allowed_against(
+                &request("https://chaos.example.com:8443", Some("https")),
+                None,
+            ),
+            "with nothing declared, an https origin has no matching deployment"
+        );
+        // The plaintext same-origin rule is untouched.
+        let mut http = request("http://127.0.0.1:8787", None);
+        http.insert(header::HOST, HeaderValue::from_static("127.0.0.1:8787"));
+        assert!(origin_allowed_against(&http, None));
+    }
+
+    /// A typo in the one setting that widens the accept list has to be loud.
+    #[test]
+    fn a_public_origin_is_only_accepted_as_a_bare_https_origin() {
+        assert_eq!(
+            public_origin_authority("https://chaos.example.com:8443/").as_deref(),
+            Ok("chaos.example.com:8443")
+        );
+        for rejected in [
+            "http://chaos.example.com",
+            "chaos.example.com",
+            "https://user@chaos.example.com",
+            "https://chaos.example.com/app",
+            "https://chaos.example.com?token=abc",
+            "https://chaos.example.com#frag",
+            "https://chaos.example.com:99999",
+            "https://chaos.example.com:",
+            "https://",
+            "",
+        ] {
+            assert!(
+                public_origin_authority(rejected).is_err(),
+                "accepted public origin: {rejected:?}"
+            );
+        }
     }
 
     #[tokio::test]

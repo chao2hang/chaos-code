@@ -1,0 +1,80 @@
+# Reproduce: bash scripts/web-deployment-in-docker.sh
+# Host: Ubuntu 22.04 x86_64, Docker 29.8.1. Backend image chaos-verify:local (Debian 12); TLS terminator is stock nginx:1.27-alpine sharing the backend network namespace, serving a leaf issued by a lab CA with SAN DNS:chaos.test,IP:127.0.0.1.
+# Commit under test: the commit that adds this script and transcript together (previous HEAD a206ec33); it carries CHAOS_WEB_PUBLIC_ORIGIN and the refusal reason codes.
+# The Bearer credential is generated per run and is never printed; the lab asserts its absence from both logs.
+
+
+== building the Web host on this machine
+    Finished `dev` profile [unoptimized] target(s) in 0.48s
+   the container runs this binary: 19M
+
+== issuing a lab CA and a certificate for chaos.test
+   chain verifies: Oct  4 08:04:58 2026 GMT
+
+== starting the backend, the proxy, and a machine that should stay outside
+   backend address on the shared network: 172.19.0.2:8787
+   the backend listens on loopback only, and nginx shares that namespace
+
+== a browser that trusts only the lab CA can reach the deployment
+   ok  TLS 1.3 handshake verified against the lab CA alone
+   ok  the health route answers through the terminator
+   ok  the terminator added HSTS
+   ok  TLS 1.2 is still available for older clients
+   ok  TLS 1.1 and older are refused
+   ok  the TLS port will not speak plaintext HTTP
+
+== the credential is required, and is never taken from a URL
+   ok  an unauthenticated API call stays closed
+   ok  and says the credential is what is missing
+   ok  a wrong credential is refused
+   ok  naming the credential again rather than the Host
+   ok  the credential in a query string is not accepted
+   ok  the bearer credential opens the API when the proxy presents the loopback name
+   ok  the handshake carries the protocol version
+
+== the public name is refused until the operator declares it
+   ok  a Host the operator never declared is refused, credential and all
+   ok  and says the Host is the rule that fired
+   ok  another machine on the same network cannot reach the backend at all
+
+== declaring the deployment's origin
+   ok  the backend says out loud which public name it will answer for
+   ok  the declared public Host is now served over TLS
+   ok  a different public name is still refused
+   ok  naming the Host, not the credential
+   ok  a page from another https origin is refused
+   ok  and says the Origin is the rule that fired
+   ok  the declared origin still needs the proxy to report TLS
+   ok  and says so in the words the proxy operator needs
+
+== a real session runs over wss: through the terminator
+   ok  the WebSocket upgrade completes over wss: with a verified certificate
+   ok  the negotiated protocol is TLS 1.2 or newer
+   ok  the reply streams back over the encrypted session
+   ok  without a credential the upgrade never happens
+   ok  and the refusal names the missing credential
+
+== the proxy that rewrites Host and stays quiet about TLS
+   ok  a request with no Origin still works through a host-rewriting proxy
+   ok  the same proxy breaks the WebSocket, and only the WebSocket
+   ok  and it is the missing TLS claim the session is refused for
+
+== a spoofed client address grants nothing
+   ok  forwarding headers do not substitute for the credential
+
+== rotating the credential
+   ok  the new credential works through the proxy
+   ok  the credential it replaced is dead
+
+== Safe Web Mode still blocks a mutation that arrives through a proxy
+   ok  a settings mutation over wss: is refused with a code
+   ok  the refusal is the documented safe_web_mode_blocked code
+
+== no credential appears in any log
+   ok  the proxy logged requests and never the credential
+   ok  the requests really were logged, so the absence above means something
+   ok  the backend log is free of the credential too
+   ok  the backend did log, so that absence is not an empty file
+
+== summary
+all 41 TLS deployment checks passed against nginx:1.27-alpine + chaos-verify:local

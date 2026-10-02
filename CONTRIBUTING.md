@@ -172,6 +172,44 @@ is a kept example. The lab is Linux-only and there is no SSH transport in this
 build, so it is not evidence about SSH host-key handling or about a macOS or
 Windows remote host.
 
+## Serving the Web host behind TLS
+
+`chaos-web` binds `127.0.0.1` and stays that way: a TLS terminator in front of it
+is the deployment, not a `--bind 0.0.0.0` flag. Because the proxy dials loopback,
+it has to share the backend's network namespace (a sidecar pod, or
+`docker run --network container:<web>`), and it forwards headers the backend has
+never seen from a local browser:
+
+- `Host: chaos.example.com` — refused unless you declare it, because the Host
+  check is what stops DNS rebinding against a loopback server.
+- `Origin: https://chaos.example.com:8443` — an `https` origin can never be
+  same-origin with the `http` request the backend actually receives, so it is
+  accepted only for a declared name.
+
+`CHAOS_WEB_PUBLIC_ORIGIN=https://<name>[:<port>]` is that declaration. It must be
+a bare `https` origin — no path, query, fragment or credentials — and it requires
+`CHAOS_WEB_TOKEN`: a server that answers a public name is never anonymous. The
+proxy must then set `X-Forwarded-Proto: https`; without that claim the `https`
+origin is refused, so a plaintext hop cannot present itself as the TLS deployment.
+`X-Forwarded-For` is not used for any authorization decision.
+
+A proxy that "fixes" the 401 by rewriting `Host` to the upstream
+(`proxy_set_header Host $proxy_host;`) makes plain requests work while the
+WebSocket keeps failing, because a WebSocket handshake always carries an `Origin`.
+Every refusal says which rule fired in its JSON body — `host_not_allowed`,
+`origin_not_allowed`, `origin_requires_forwarded_proto` or `credential_required` —
+so the operator edits the thing that is actually wrong.
+
+```sh
+scripts/web-deployment-in-docker.sh 2>&1 | tee "web-deployment-$(date +%F).log"
+```
+
+That lab runs the built binary behind stock nginx with a lab-issued certificate
+chain and checks the handshake, the credential, the declared-name rules, a real
+`wss:` session, a credential rotation, Safe Web Mode through the proxy, and that
+the backend is unreachable from anywhere but the proxy. It is a deployment-shape
+check on Linux; it is not a certificate-authority, CDN or multi-tenant review.
+
 ## Upstream reconnaissance
 
 `scripts/upstream-recon.sh` records how far the ported `SOURCE_REV` has fallen

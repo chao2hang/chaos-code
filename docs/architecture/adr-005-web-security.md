@@ -24,3 +24,32 @@ reverse proxy. The Vite development server proxies the same `/health`, `/api`, a
 `/ws` routes to the loopback Web host; these routes remain subject to its ordinary
 Host, Origin, token, and Safe Web Mode checks. Public HTTPS deployments still need
 separately reviewed host and proxy configuration.
+
+## Proxy-fronted TLS (2026-10-02)
+
+A deployment that terminates TLS in front of the loopback host used to be
+impossible rather than merely unreviewed: `Host` was refused unless it was a
+loopback authority, and an `https` `Origin` was refused unconditionally, because
+same-origin could only ever be `http` against the request's own `Host`. The React
+client had already chosen `wss:` for HTTPS pages, so the two halves disagreed.
+
+`CHAOS_WEB_PUBLIC_ORIGIN` is now the operator's declaration of the origin the
+deployment is reached through. It is a bare `https` origin — path, query,
+fragment and credentials are rejected, and a malformed value stops startup rather
+than being ignored — and it requires `CHAOS_WEB_TOKEN`. With it set, that exact
+authority is accepted in `Host`, and an `https` `Origin` matching it is accepted
+only when the proxy also sends `X-Forwarded-Proto: https`. Loopback `Host` values
+stay valid, since the proxy dials them and supervision checks arrive there;
+nothing is accepted when the variable is unset. `X-Forwarded-For` remains unused
+for authorization. A refusal names the rule that fired in its 401 body
+(`host_not_allowed`, `origin_not_allowed`, `origin_requires_forwarded_proto`,
+`credential_required`); the rules fail identically to a user, and only one of
+them is fixed in the proxy.
+
+`scripts/web-deployment-in-docker.sh` drives the built binary behind nginx with a
+lab certificate chain and covers the handshake, the credential (including
+rotation and never reading it from a query string or a log), the declared-name
+rules in both directions, a real `wss:` session, Safe Web Mode through the proxy,
+and the backend being unreachable from another machine on the same network.
+Remaining gates: certificate issuance and revocation, CDN behaviour, rate
+limiting, audit-log retention, and review of an operator's actual proxy config.
