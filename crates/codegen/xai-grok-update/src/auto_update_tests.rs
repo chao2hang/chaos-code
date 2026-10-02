@@ -9,6 +9,23 @@ fn invalid_updater_progress_template_falls_back_without_panicking() {
 }
 
 #[test]
+fn a_short_body_is_rejected_and_a_whole_one_is_not() {
+    let url = "http://127.0.0.1:1/v1.2.3/chaos-linux-x64";
+    let err = check_complete_body(4_000, Some(10_000), url)
+        .expect_err("half a body arrived, so the artifact must not be published");
+    let msg = err.to_string();
+    assert!(msg.contains("download incomplete"), "{msg}");
+    assert!(msg.contains("4000 of 10000 bytes"), "{msg}");
+
+    // A longer body is equally not the thing that was advertised.
+    assert!(check_complete_body(10_001, Some(10_000), url).is_err());
+    assert!(check_complete_body(10_000, Some(10_000), url).is_ok());
+    // Nothing was advertised, so there is nothing to compare against; the
+    // transport's own framing decides.
+    assert!(check_complete_body(7, None, url).is_ok());
+}
+
+#[test]
 fn test_tmp_download_path_is_unique_per_version_and_per_attempt() {
     // The old `with_extension("tmp")` collapsed every 0.1.x versioned name onto a single `grok-0.1.tmp`
     // The helper must keep distinct versions distinct AND make repeated attempts (same process, e.g. concurrent tokio tasks) unique.

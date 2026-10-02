@@ -23,13 +23,17 @@
 //!
 //! 公钥来源：
 //!
-//! [`PUBLIC_KEY`] 是编译期常量，**默认值是占位符**（全 0 字节，表示
+//! [`public_key`] 是编译期常量，**默认值是占位符**（全 0 字节，表示
 //! "未配置签名，验证永远失败"）。正式发版时通过
 //! `CHAOS_SIGNING_PUBLIC_KEY` 环境变量注入：
 //!
 //! ```sh
 //! CHAOS_SIGNING_PUBLIC_KEY=<base64> cargo build -p xai-grok-pager-bin --release
 //! ```
+//!
+//! 因为它是 `option_env!`，改这个变量必须触发重编；`build.rs` 里的
+//! `rerun-if-env-changed` 就是保证这一点，否则第二次 `cargo build` 会
+//! 直接沿用上一次嵌入的密钥。
 //!
 //! Gray-release switch:
 //!
@@ -430,5 +434,21 @@ mod tests {
         let body = extract_signature_body(&text).unwrap();
         assert_eq!(body, sig_b64);
         assert!(verify_bytes(message, &body, &vk).is_ok());
+    }
+
+    /// The embedded key cannot be swapped at runtime, so the only way to change it
+    /// is to rebuild. Cargo rebuilds only what it knows to be env-sensitive, so the
+    /// build script has to name this variable or the second build silently keeps the
+    /// first build's key.
+    #[test]
+    fn the_build_script_makes_the_embedded_key_rebuild() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/build.rs");
+        let script =
+            std::fs::read_to_string(path).unwrap_or_else(|e| panic!("{path} must exist: {e}"));
+        assert!(
+            script.contains("cargo:rerun-if-env-changed=CHAOS_SIGNING_PUBLIC_KEY"),
+            "{path} must emit cargo:rerun-if-env-changed=CHAOS_SIGNING_PUBLIC_KEY, \
+             otherwise changing the key does not relink the crate"
+        );
     }
 }

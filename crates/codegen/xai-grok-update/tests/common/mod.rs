@@ -71,6 +71,10 @@ pub fn reset_home() {
         std::env::remove_var("GROK_TEST_VERSION");
         std::env::remove_var("NPM_TOKEN");
         std::env::remove_var("GROK_INSTALLER");
+        // A leaked feed override from a test whose guard was dropped late (or
+        // never dropped) would silently re-point the next test at that server.
+        std::env::remove_var("CHAOS_GH_API_BASE");
+        std::env::remove_var("CHAOS_GH_DOWNLOAD_BASE");
     }
 }
 
@@ -381,6 +385,17 @@ impl GhApiMockGuard {
         self.prev_download = std::env::var("CHAOS_GH_DOWNLOAD_BASE").ok();
         // SAFETY: tests using this helper must be `#[serial]`.
         unsafe { std::env::set_var("CHAOS_GH_DOWNLOAD_BASE", self.server.uri()) };
+        self
+    }
+
+    /// Point `CHAOS_GH_DOWNLOAD_BASE` at `uri`, which is a *different* server
+    /// from the API mock. Needed when the asset bytes need controls wiremock
+    /// does not have (mid-body truncation, early close), while the release API
+    /// still comes from [`GhApiMockGuard::stub_latest`].
+    pub fn with_download_base_at(mut self, uri: &str) -> Self {
+        self.prev_download = std::env::var("CHAOS_GH_DOWNLOAD_BASE").ok();
+        // SAFETY: tests using this helper must be `#[serial]`.
+        unsafe { std::env::set_var("CHAOS_GH_DOWNLOAD_BASE", uri) };
         self
     }
 

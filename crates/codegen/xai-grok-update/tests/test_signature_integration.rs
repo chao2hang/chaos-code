@@ -1,16 +1,18 @@
-//! Integration tests for the auto-update signature verification chain.
+//! Integration tests for the signature-verification primitives that the
+//! auto-update path is built on.
 //!
-//! These tests exercise [`auto_update::verify_downloaded_artifact`] against
-//! a wiremock server that serves `.sig` sidecar files, covering the three
-//! key scenarios: valid signature, tampered binary, and missing .sig file.
+//! These call the `signature` API directly — [`signature::verify_file`] on a
+//! real binary plus a real `.sig` sidecar on disk, [`signature::verify_bytes`]
+//! on malformed inputs, and the two switches (`CHAOS_REQUIRE_SIG`, the
+//! compile-time key) that decide whether verification happens at all.
 //!
-//! The signature verification logic itself is unit-tested in
-//! `signature::tests`; here we test the *integration* — that the download
-//! pipeline correctly fetches the .sig and gates on the result.
+//! They do not drive the download pipeline: the trusted key is baked in with
+//! `option_env!("CHAOS_SIGNING_PUBLIC_KEY")`, so a test build cannot present a
+//! `.sig` the pipeline would accept. That side — refusing an update before its
+//! bytes are ever exec'd — is covered end-to-end through `run_update` in
+//! `test_update_feed_e2e.rs`.
 
 #![cfg(unix)]
-
-use std::sync::OnceLock;
 
 mod common;
 use common::{reset_home, test_home};
@@ -234,7 +236,3 @@ async fn require_configured_public_key_fails_when_required_but_no_key() {
         }
     }
 }
-
-// Suppress unused-import warning for OnceLock (kept for future use).
-#[allow(dead_code)]
-const _: OnceLock<()> = OnceLock::new();

@@ -1010,6 +1010,24 @@ fn unique_temp_sibling(base: &std::path::Path, ext: &str) -> std::path::PathBuf 
     base.with_file_name(name)
 }
 
+/// A body that ends early is not a download.
+///
+/// The HTTP stack normally surfaces a premature close as a stream error, but
+/// that is a property of the client and the transfer encoding, not of the
+/// artifact. Comparing what arrived against the advertised length is what makes
+/// "never publish half a binary" a rule this crate owns.
+fn check_complete_body(written: u64, advertised: Option<u64>, url: &str) -> Result<()> {
+    if let Some(total) = advertised
+        && written != total
+    {
+        anyhow::bail!(
+            "download incomplete: got {written} of {total} bytes from {url}; \
+             the artifact was not installed"
+        );
+    }
+    Ok(())
+}
+
 /// Set `+x` on the temp file before renaming onto `dest`, so a concurrent same-version installer never execs `dest` while it is still 0644.
 async fn publish_downloaded_artifact(tmp: &std::path::Path, dest: &std::path::Path) -> Result<()> {
     #[cfg(unix)]
@@ -1148,6 +1166,15 @@ async fn download_range(
         }
         buf.extend_from_slice(&chunk);
     }
+    // A short chunk would leave the pre-allocated hole (zeros) in the reassembled
+    // file, so the range's own byte count is checked rather than trusted.
+    let expected = end - start + 1;
+    if buf.len() as u64 != expected {
+        anyhow::bail!(
+            "range bytes={start}-{end} returned {} of {expected} bytes from {url}",
+            buf.len()
+        );
+    }
     let dest = dest.to_owned();
     tokio::task::spawn_blocking(move || -> std::io::Result<()> {
         use std::io::{Seek, SeekFrom, Write};
@@ -1207,15 +1234,18 @@ pub async fn download_with_progress(url: &str, dest: &std::path::Path) -> Result
     let mut file = tokio::fs::File::create(&tmp).await?;
     let mut stream = resp.bytes_stream();
 
+    let mut written: u64 = 0;
     while let Some(chunk) = stream.next().await {
         let chunk = chunk?;
         file.write_all(&chunk).await?;
+        written += chunk.len() as u64;
         pb.inc(chunk.len() as u64);
     }
     file.flush().await?;
     drop(file);
 
     pb.finish_and_clear();
+    check_complete_body(written, total_size, url)?;
 
     publish_downloaded_artifact(&tmp, dest).await?;
     Ok(())
@@ -1238,17 +1268,21 @@ pub async fn download_silent(url: &str, dest: &std::path::Path) -> Result<()> {
         anyhow::bail!("Download failed: HTTP {}", resp.status());
     }
 
+    let total_size = resp.content_length();
     let tmp = tmp_download_path(dest);
     let mut file = tokio::fs::File::create(&tmp).await?;
     let mut stream = resp.bytes_stream();
 
+    let mut written: u64 = 0;
     while let Some(chunk) = stream.next().await {
         let chunk = chunk?;
         file.write_all(&chunk).await?;
+        written += chunk.len() as u64;
     }
     file.flush().await?;
     drop(file);
 
+    check_complete_body(written, total_size, url)?;
     publish_downloaded_artifact(&tmp, dest).await?;
     Ok(())
 }

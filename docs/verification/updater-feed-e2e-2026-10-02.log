@@ -1,0 +1,155 @@
+# Reproduce: cargo test -p xai-grok-update --offline --locked
+# Host: Ubuntu 22.04 x86_64, rustc 1.94.0 (4a4ef493e), no network access used by the tests.
+# Commit under test: the commit that adds these tests and this transcript together (previous HEAD 88903bf7).
+# Scope: the auto-update download-and-activate pipeline in crates/codegen/xai-grok-update, driven against a self-hosted release feed on 127.0.0.1.
+
+== what the new suite drives
+
+`crates/codegen/xai-grok-update/tests/test_update_feed_e2e.rs` calls the shipped
+`auto_update::run_update` -- the same entry point `chaos update` reaches -- against a
+feed made of two loopback servers:
+
+- a wiremock server answering `GET /repos/chao2hang/chaos-code/releases/latest`,
+  reached through the production override `CHAOS_GH_API_BASE`;
+- `tests/common/artifact_server.rs`, a plain `TcpListener` that serves the release
+  asset bytes and the `.sig` next to them, reached through `CHAOS_GH_DOWNLOAD_BASE`.
+  wiremock cannot be used for the asset bytes because it buffers a whole response
+  body, and the truncating mode that the interrupted-download case needs has to cut a
+  stream that is already in flight.
+
+Before any update is attempted, `assert_feed_is_loopback()` re-reads both variables and
+panics unless both resolve to `127.0.0.1`. That check exists because an earlier draft of
+this file dropped the API guard on return, which cleared `CHAOS_GH_API_BASE`, and the
+test then went and installed a real release (0.2.5 -> 0.4.2) off github.com while
+believing it was talking to itself. `reset_home()` in `tests/common/mod.rs` now also
+removes both variables so a guard dropped late cannot re-point the next test at a
+dead server.
+
+Each case asserts on state the process actually left behind: which build `bin/chaos`
+resolves to, whether the served artifact was executed (the artifacts are `/bin/sh`
+scripts that append to a marker file, so the count is a fact about exec, not about a log
+line), which bytes are in the versioned file under `downloads/`, and whether the user's
+`config.toml` and `sessions/` survived.
+
+== the six cases, and what each one pins
+
+  running 6 tests
+  test result: ok. 6 passed; 0 failed; 0 ignored
+
+1. `an_upgrade_activates_the_feed_artifact_and_keeps_user_state`
+   A 0.2.5 install updates to the 0.2.7 the feed advertises. Exactly one asset GET;
+   `bin/chaos` resolves to the served bytes; the smoke test really exec'd the new build
+   and never exec'd the old one; `config.toml` keeps `show_tips = false` and the
+   user-authored `[mcp_servers.docs]` table while gaining `gh-release`; `sessions/` is
+   byte-identical; `version.json` and `installed_on_disk_version()` both say 0.2.7; the
+   0.2.5 build is still on disk to fall back to.
+
+2. `an_unverifiable_feed_is_refused_before_its_artifact_runs`
+   With `CHAOS_REQUIRE_SIG=1`, a feed that cannot produce a signature this build can
+   check is refused. The error names `CHAOS_SIGNING_PUBLIC_KEY`; the marker file does not
+   exist, so the artifact was downloaded and never exec'd; the old build is still active.
+   The request count proves the refusal happens after the download and before the exec,
+   which is the only ordering that matters here.
+   Limit recorded in the test's own doc comment: the public key is baked in at compile
+   time (`option_env!`), so no test in this crate can produce an artifact whose signature
+   *verifies*. A test build resolves the placeholder key to `SignatureError::NoPublicKey`.
+   This case therefore proves the refusal half of the signing gate, not the accept half,
+   and the accept half cannot come from this suite at all.
+   It was later covered outside it: `scripts/verify-release-signature.sh --tag v0.4.2
+   --all` runs the shipped `signature::verify_file` over all six published artifacts under
+   the repository's real public key and accepts every one, refusing a one-byte corruption
+   of the same file. See `docs/verification/release-signature-v0.4.2-2026-10-02.log`.
+   What remains uncovered is the combination -- `run_update` with `CHAOS_REQUIRE_SIG=1`
+   against a feed whose artifact genuinely verifies -- because no test binary can hold a
+   key that accepts anything.
+
+3. `an_interrupted_download_never_becomes_the_active_build`
+   The asset server advertises the full length and sends a prefix of it. The update
+   returns an error, nothing is staged at `downloads/chaos-0.2.7-<platform>`, the
+   artifact was never exec'd, and the previous build still serves.
+
+4. `an_artifact_that_cannot_start_is_discarded_and_the_old_build_stays`
+   The feed serves an artifact that exits 1. The smoke test did exec it; the error says
+   `downloaded binary failed to run` and `Your current version is unchanged`; the rejected
+   file is deleted; the asset was fetched exactly once, i.e. a build that will not start
+   is not re-downloaded on the same call.
+
+5. `a_retried_update_succeeds_once_the_feed_recovers`
+   The truncating feed fails once, then the same `run_update` (no reset, no `--force`)
+   succeeds against a healthy feed and leaves 0.2.7 active with 0.2.5 retained. This is
+   the rollback-adjacent guarantee in the direction that is actually implemented: a
+   half-finished attempt leaves no state that poisons the next one.
+
+6. `the_post_install_sweep_keeps_rollback_and_clears_old_and_legacy_files`
+   Seeded with `chaos-0.2.3`, `grok-0.2.4`, `grok-0.2.2` and a `chaos-0.1.9-x.tmp`
+   backdated past `STALE_TMP_AGE`, then updated. After the update: the version you rolled
+   back to (0.2.5) is kept, the older `chaos-` build is gone, the newest other-brand build
+   is kept, the older one is gone, the stale `.tmp` is gone, a `.tmp` that is still fresh
+   survives, and the whole update still fetched the asset exactly once.
+
+== a real gap this found, and the fix in auto_update.rs
+
+Nothing in this crate checked that a download delivered the bytes it advertised. A
+truncated body was published as an installed build and only stopped, if at all, by
+whatever happened to be in the truncated bytes. The truncating fixture had to be built
+with a *runnable prefix* (a valid `#!/bin/sh` program followed by 8 KiB of `#` comments)
+before the suite noticed, because a half-cut script usually fails to exec and the smoke
+test then hides the hole.
+
+So `auto_update.rs` now has `check_complete_body(written, advertised, url)`, called after
+the stream ends in both `download_with_progress` and `download_silent`, and
+`download_range` bails when a ranged GET returns fewer bytes than the range asked for --
+the parallel path pre-allocates with `set_len`, so a short chunk used to leave a silent
+zero hole in the middle of the artifact. `download_silent` did not even read
+`content_length()` before.
+
+`crates/codegen/xai-grok-update/src/auto_update_tests.rs::a_short_body_is_rejected_and_a_whole_one_is_not`
+unit-tests the new helper directly: a short body and an over-long body are both errors, an
+exact body is fine, and a response with no `Content-Length` is not treated as a failure.
+
+== the checks were confirmed to be load-bearing by breaking them
+
+Both mutations were applied to `auto_update.rs`, the suite re-run, and the source restored
+(the restored file was confirmed against a pre-edit copy by `diff -u`, which showed only
+`check_complete_body`, its two call sites, and the `download_range` byte-count check).
+
+  M1  remove the verify_downloaded_artifact call from install_gh_release
+      -> exactly one failure: an_unverifiable_feed_is_refused_before_its_artifact_runs
+         (the unsigned artifact was exec'd)
+
+  M2  swallow the stream error and delete the check_complete_body calls
+      -> two failures: an_interrupted_download_never_becomes_the_active_build and
+         a_retried_update_succeeds_once_the_feed_recovers
+            a truncated artifact must fail the update: Some("0.2.7")
+
+M2 is the one that mattered. It survived an earlier version of the test, which is the
+reason the fixture is built with a runnable prefix.
+
+== the whole crate, after the fix
+
+  cargo test -p xai-grok-update --offline --locked
+  165 unit + 4 blitz (1 stress ignored) + 5 + 10 + 24 + 19 + 7 + 9 + 28 network
+  + 8 signature + 28 subprocess + 6 feed e2e, doc-tests 0
+  313 passed; 0 failed; 1 ignored   (exit 0, no compiler warnings)
+
+The pre-existing blitz truncation matrices in `tests/test_blitz_cancel.rs` still pass with
+the new byte-count checks in place; that file's stale comment, which described a
+byte-count guard and an error classification that did not exist, has been replaced with
+the three guards that are really there. `tests/test_signature_integration.rs` carried a
+module doc claiming it drove `verify_downloaded_artifact` against a mock `.sig` server; it
+does not -- it calls `signature::verify_file`/`verify_bytes` and the two switches -- so the
+header now says that and points here for the pipeline side.
+
+== what this file is NOT evidence about
+
+- The accept half of signature verification *inside this suite* (see case 2's limitation).
+  The accept half itself is now evidenced separately, against real published artifacts, in
+  `docs/verification/release-signature-v0.4.2-2026-10-02.log`.
+- Anything on Windows: the file is `#![cfg(unix)]` because the artifacts are `/bin/sh`
+  scripts. The Windows asset name and the `.exe` rename path are not exercised here.
+- A real GitHub release feed or a real CDN. `GROK_INSTALLER=gh-release` is set by the
+  tests, so the install-script branch is not what these six cases ran.
+  The `install.sh` handoff against the real published release is a different run with its
+  own transcript: `docs/verification/install-sh-linux-2026-10-02.log`.
+- Old-data migration beyond what case 1 asserts (config merging and `sessions/` bytes).
+  On-disk formats from versions this repository no longer builds are not covered.
