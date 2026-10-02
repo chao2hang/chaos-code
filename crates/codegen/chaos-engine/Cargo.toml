@@ -27,3 +27,7 @@ libc.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+# The port-forward tests carry a real WebSocket handshake through the tunnel, so
+# they need something on both ends that speaks it, plus the traits that drive it.
+tokio-tungstenite.workspace = true
+futures-util.workspace = true

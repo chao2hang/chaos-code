@@ -20,7 +20,19 @@ pub enum RemoteCapability {
     WorkspaceWrite,
     Git,
     ToolExecution,
+    /// A port on the *client* machine that carries each connection to a target
+    /// reachable from the server — SSH's local forwarding (`-L`), which is what
+    /// "expose a service on the remote host to my laptop" actually means.
     PortForward,
+    /// A port on the *server* machine that carries each connection back to a
+    /// target reachable from the client — SSH's remote forwarding (`-R`).
+    ///
+    /// Named separately from [`RemoteCapability::PortForward`] because the trust
+    /// question is opposite: a local forward asks "may I reach that service from
+    /// there", a remote forward asks "may I make something reachable *to everyone
+    /// who can reach this host*", which is a different decision and not one the
+    /// workspace grant implies.
+    RemoteForward,
     InteractivePty,
     DetachedAgent,
 }
@@ -28,9 +40,9 @@ pub enum RemoteCapability {
 impl RemoteCapability {
     /// The capabilities a session can be granted by anything that exists today.
     ///
-    /// The other three variants are named by the protocol so that an endpoint can
-    /// refuse them by name, not because something implements them; listing them
-    /// here would advertise them.
+    /// The others are named by the protocol so that an endpoint can refuse them
+    /// by name, not because something implements them; listing them here would
+    /// advertise them.
     pub fn all() -> &'static [RemoteCapability] {
         &[
             RemoteCapability::WorkspaceList,
@@ -39,6 +51,7 @@ impl RemoteCapability {
             RemoteCapability::WorkspaceWrite,
             RemoteCapability::Git,
             RemoteCapability::ToolExecution,
+            RemoteCapability::PortForward,
         ]
     }
 
@@ -52,6 +65,7 @@ impl RemoteCapability {
             RemoteCapability::Git => "git",
             RemoteCapability::ToolExecution => "tool-execution",
             RemoteCapability::PortForward => "port-forward",
+            RemoteCapability::RemoteForward => "remote-forward",
             RemoteCapability::InteractivePty => "interactive-pty",
             RemoteCapability::DetachedAgent => "detached-agent",
         }
@@ -76,6 +90,7 @@ pub fn parse_capability(text: &str) -> Result<RemoteCapability, String> {
         "write" | "workspace_write" => RemoteCapability::WorkspaceWrite,
         "git" => RemoteCapability::Git,
         "tool_execution" => RemoteCapability::ToolExecution,
+        "port_forward" => RemoteCapability::PortForward,
         _ => {
             return Err(format!(
                 "unknown capability {text:?}; expected {}",
@@ -92,8 +107,14 @@ pub fn parse_capability(text: &str) -> Result<RemoteCapability, String> {
 /// Why a name the protocol carries has nothing behind it.
 fn unavailable_capability(name: &str) -> Option<&'static str> {
     match name {
-        "port-forward" => Some("port forwarding is not implemented by this build"),
         "interactive-pty" => Some("interactive PTY is not implemented by this build"),
+        "remote-forward" => Some(
+            "remote forwarding (a port on the remote host pointing back at this \
+             machine) is not implemented: it publishes a service to whoever can reach \
+             that host, which the workspace grant does not authorise. A local forward \
+             (--capability port-forward) is the one that maps a remote service onto a \
+             local port",
+        ),
         "detached-agent" => Some(
             "detached agents are not part of the supported topology: the agent runs \
              locally and a remote host serves a workspace",
@@ -140,6 +161,16 @@ impl RemoteEndpoint {
         if self.capabilities.contains(&RemoteCapability::DetachedAgent) {
             return Err("detached Agent is not supported by the current topology".into());
         }
+        // Nothing implements it, and unlike the others it would publish something
+        // on the remote host rather than reach out from it — so it is refused here
+        // too, which is the path a hand-written config file takes.
+        if self.capabilities.contains(&RemoteCapability::RemoteForward) {
+            return Err(
+                "remote forwarding is not implemented; port-forward maps a remote \
+                 service onto a local port"
+                    .into(),
+            );
+        }
         Ok(())
     }
 }
@@ -177,5 +208,49 @@ mod tests {
             capabilities: vec![RemoteCapability::WorkspaceRead],
         };
         assert_eq!(endpoint.validate(), Err("remote port is invalid".into()));
+    }
+
+    /// The point of listing a capability in `all()` is that a session may be
+    /// granted it, so this is the assertion that port forwarding is real.
+    #[test]
+    fn port_forwarding_is_advertised_because_it_is_implemented() {
+        assert!(RemoteCapability::all().contains(&RemoteCapability::PortForward));
+        assert_eq!(
+            parse_capability("port-forward"),
+            Ok(RemoteCapability::PortForward)
+        );
+        assert_eq!(
+            parse_capability("port_forward"),
+            Ok(RemoteCapability::PortForward)
+        );
+        let endpoint = RemoteEndpoint {
+            host: "buildbox".into(),
+            port: 22,
+            host_key: HostKeyPolicy::Strict,
+            capabilities: vec![RemoteCapability::PortForward],
+        };
+        assert!(endpoint.validate().is_ok());
+    }
+
+    /// The other direction of forwarding is named so that the refusal can explain
+    /// the difference instead of leaving someone to guess that they mistyped the
+    /// one that works.
+    #[test]
+    fn remote_forwarding_is_named_but_refused_with_the_alternative() {
+        assert!(!RemoteCapability::all().contains(&RemoteCapability::RemoteForward));
+        let reason = parse_capability("remote-forward").expect_err("not implemented");
+        assert!(
+            reason.contains("port-forward"),
+            "the refusal should point at the thing that does the job: {reason}"
+        );
+        let endpoint = RemoteEndpoint {
+            host: "buildbox".into(),
+            port: 22,
+            host_key: HostKeyPolicy::Strict,
+            // A config file does not go through `parse_capability`, so this is the
+            // path that has to catch it as well.
+            capabilities: vec![RemoteCapability::RemoteForward],
+        };
+        assert!(endpoint.validate().is_err());
     }
 }

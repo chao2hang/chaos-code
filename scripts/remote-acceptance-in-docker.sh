@@ -9,9 +9,9 @@
 # has never seen the repository, reaches it through a tunnel the way a real remote
 # session does, and checks what M4.6 asks about: deployment, version negotiation,
 # reading, searching, writing, git diff, tool execution, credential handling, path
-# escape, a failed upgrade, a dropped connection, an out-of-space remote disk and the
-# two clocks a session runs on -- the wait for a transport that is not up yet, and
-# the deadline on a reply that never comes.
+# escape, a failed upgrade, a dropped connection, an out-of-space remote disk, port
+# forwarding and the two clocks a session runs on -- the wait for a transport that is
+# not up yet, and the deadline on a reply that never comes.
 #
 # Two further containers stand in for hostile hosts rather than clean ones: one
 # whose disk fills mid-upload, and one whose workspace is mounted `noexec`, so that
@@ -78,9 +78,21 @@ expiry_port="$((port_base + 4))"
 # says nothing. Both feed the checks about the two waits a session can be given.
 later_port="$((port_base + 5))"
 silent_port="$((port_base + 6))"
+# Forwarding needs a server of its own: the operator's allowlist is fixed when the
+# process starts, so the run needs one server that has a target and one that has
+# none. The service is the thing being reached, and the local port is the end the
+# developer machine connects to.
+fwd_service_port="$((port_base + 7))"
+fwd_server_port="$((port_base + 8))"
+fwd_tunnel_port="$((port_base + 9))"
+fwd_local_port="$((port_base + 10))"
+# A second service, because an HTTP server cannot show that an upgraded connection
+# survives the tunnel.
+fwd_ws_port="$((port_base + 11))"
 
 tunnel_pid=""
 tunnel2_pid=""
+fwd_tunnel_pid=""
 silent_pid=""
 failures=""
 checks=0
@@ -116,6 +128,7 @@ installed_in="${served_in}/.chaos-server"
 # `work` stays outside the bind mounts: the containers write as root, and this is
 # the script's own scratch for captured output.
 mkdir -p "${lab_root}/host/bin" "${served_host_dir}" "${lab_root}/host/workspace2" \
+  "${lab_root}/host/service" \
   "${lab_root}/dev/bin" "${lab_root}/dev/local" "${lab_root}/shared" "${lab_root}/disk" \
   "${lab_root}/noexec" "${lab_root}/work"
 capture_file="${lab_root}/work/capture.txt"
@@ -141,7 +154,7 @@ failure() {
 stop_tunnels() {
   # `silent_pid` is the mute peer, not a tunnel, but it is torn down the same way
   # and for the same reason: `fork` leaves a child per accepted connection.
-  for pid in "${tunnel_pid}" "${tunnel2_pid}" "${silent_pid}"; do
+  for pid in "${tunnel_pid}" "${tunnel2_pid}" "${fwd_tunnel_pid}" "${silent_pid}"; do
     if [ -n "${pid}" ]; then
       # `socat ... fork` leaves a child per established connection; killing only
       # the parent would leave an open session and the run would prove nothing.
@@ -186,6 +199,7 @@ trap teardown EXIT
 on_host() { docker exec "${host_container}" bash -c "$*"; }
 on_host_d() { docker exec -d "${host_container}" bash -c "$*"; }
 on_dev() { docker exec "${dev_container}" bash -c "$*"; }
+on_dev_d() { docker exec -d "${dev_container}" bash -c "$*"; }
 
 # The server removes a credential from its published file as it redeems one, and
 # the client removes it from the file it was pointed at. Handing the client some
@@ -223,6 +237,23 @@ remote() {
 remote2() {
   top_up tokens2 token2
   on_dev "/lab/bin/chaos-remote --tcp 127.0.0.1:${tunnel2_port} --token-file /shared/token2 $*"
+}
+# The server whose operator listed a forward target. Its own credentials, because a
+# credential is only good at the server that published it -- and its own cursor,
+# because `tokens-fwd` is a fresh file published late in a run whose lab-wide cursor
+# has already advanced through the first server's list.
+fwd_handed=0
+fwd_top_up() {
+  if [ ! -s "${lab_root}/shared/token-fwd" ]; then
+    on_host "sed -n '$((fwd_handed + 1)),$((fwd_handed + 8))p' /shared/tokens-fwd \
+      >/shared/token-fwd"
+    fwd_handed=$((fwd_handed + 8))
+  fi
+  return 0
+}
+fwdremote() {
+  fwd_top_up
+  on_dev "/lab/bin/chaos-remote --tcp 127.0.0.1:${fwd_tunnel_port} --token-file /shared/token-fwd $*"
 }
 in_disk() { docker exec "${disk_container}" bash -c "$*"; }
 on_disk() {
@@ -378,6 +409,23 @@ wait_for_file() {
 start_tunnel() {
   socat "TCP-LISTEN:${1},reuseaddr,fork" "TCP:127.0.0.1:${2}" >/dev/null 2>&1 &
   echo $!
+}
+
+# Something is answering on a loopback port of the remote host. `/dev/tcp` is used
+# rather than a client from this machine, because the question is about the remote
+# host's own listener.
+wait_for_port() {
+  local port="$1" what="$2" tries=0
+  while ! on_host "(exec 3<>/dev/tcp/127.0.0.1/${port}) 2>/dev/null"; do
+    tries=$((tries + 1))
+    if [ "${tries}" -gt 80 ]; then
+      echo "timed out waiting for ${what} on port ${port}" >&2
+      on_host 'tail -n 20 /shared/service.log /shared/ws.log /shared/server-fwd.log' >&2 || true
+      exit 1
+    fi
+    sleep 0.25
+  done
+  return 0
 }
 
 # ---------------------------------------------------------------- artifacts ----
@@ -558,7 +606,9 @@ check_absent "the server reported no error doing any of the above" \
 # --------------------------------------------------- capability boundaries ----
 
 log "capabilities this build does not implement are named, not faked"
-for missing in interactive-pty port-forward detached-agent; do
+# `port-forward` is not in this list any more: it is implemented, and the forwarding
+# section below exercises it against a server rather than only checking the name.
+for missing in interactive-pty detached-agent; do
   expect_refused "--capability ${missing} is refused by the client" "not\|unsupported\|refus" \
     on_dev "/lab/bin/chaos-remote --tcp 127.0.0.1:${tunnel_port} --token-file /shared/token \
       --capability ${missing} ping"
@@ -841,6 +891,331 @@ done
 kill "${silent_pid}" 2>/dev/null || true
 silent_pid=""
 
+# --------------------------------------------------------------- forwarding ----
+
+log "port forwarding: the operator's allowlist picks the target, not the client"
+# The service runs on the remote host. The local end of the forward is a port that
+# has had nothing else behind it for the whole run, so bytes coming back from it can
+# only have travelled through the session -- there is no second explanation on this
+# machine for the port to have given them.
+head -c 262144 /dev/urandom | base64 >"${lab_root}/host/service/payload.bin"
+printf 'served on the remote host only\n' >"${lab_root}/host/service/note.txt"
+# Every text frame this answers carries the contents of a file that exists only on
+# the remote host, so whatever comes back through the forward can only have come
+# from there. `/shared` is mounted in both containers; `/lab` is not the same
+# directory in each, which is the whole point of that choice.
+printf 'only-on-the-remote-host\n' >"${lab_root}/host/service/handshake.txt"
+cat >"${lab_root}/shared/ws-echo.py" <<'PY'
+"""Answer a WebSocket upgrade and repeat a host-local secret in every reply.
+
+Written against RFC 6455 by hand rather than with a library, because the point is
+that both ends of the tunnel speak the protocol and the tunnel is the thing under
+test -- not that a particular WebSocket library works.
+"""
+import base64, hashlib, socket, sys
+
+host, port, secret_path = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+with open(secret_path, "rb") as handle:
+    answer = handle.read().strip()
+GUID = b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+
+
+def read_exactly(sock, count):
+    got = b""
+    while len(got) < count:
+        chunk = sock.recv(count - len(got))
+        if not chunk:
+            break
+        got += chunk
+    return got
+
+
+listener = socket.socket()
+listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+listener.bind((host, port))
+listener.listen(8)
+while True:
+    conn, _ = listener.accept()
+    request = b""
+    while b"\r\n\r\n" not in request:
+        chunk = conn.recv(4096)
+        if not chunk:
+            break
+        request += chunk
+    key = None
+    for line in request.split(b"\r\n"):
+        if line.lower().startswith(b"sec-websocket-key:"):
+            key = line.split(b":", 1)[1].strip()
+    if key is None:
+        conn.close()
+        continue
+    accept = base64.b64encode(hashlib.sha1(key + GUID).digest()).decode()
+    conn.sendall(
+        (
+            "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n"
+            "Connection: Upgrade\r\nSec-WebSocket-Accept: %s\r\n\r\n" % accept
+        ).encode()
+    )
+    while True:
+        header = read_exactly(conn, 2)
+        if len(header) < 2:
+            break
+        opcode, length = header[0] & 0x0F, header[1] & 0x7F
+        if length == 126:
+            length = int.from_bytes(read_exactly(conn, 2), "big")
+        elif length == 127:
+            length = int.from_bytes(read_exactly(conn, 8), "big")
+        if header[1] & 0x80:  # a client frame is masked; the answer below is not
+            mask = read_exactly(conn, 4)
+            payload = bytes(
+                b ^ mask[i % 4] for i, b in enumerate(read_exactly(conn, length))
+            )
+        else:
+            payload = read_exactly(conn, length)
+        if opcode == 8:
+            conn.sendall(bytes([0x88, 0]))
+            break
+        if opcode == 9:
+            conn.sendall(bytes([0x8A, len(answer)]) + answer)
+            continue
+        conn.sendall(bytes([0x81, len(answer)]) + answer)
+    conn.close()
+PY
+cat >"${lab_root}/shared/ws-get.py" <<'PY'
+"""Open one WebSocket, send one text frame, print the reply, and hang up."""
+import base64, os, socket, sys
+
+host, port, ask = sys.argv[1], int(sys.argv[2]), sys.argv[3].encode()
+sock = socket.create_connection((host, port), timeout=30)
+sock.sendall(
+    (
+        "GET /ws HTTP/1.1\r\nHost: %s:%d\r\nUpgrade: websocket\r\n"
+        "Connection: Upgrade\r\nSec-WebSocket-Key: %s\r\n"
+        "Sec-WebSocket-Version: 13\r\n\r\n"
+        % (host, port, base64.b64encode(os.urandom(16)).decode())
+    ).encode()
+)
+response = b""
+while b"\r\n\r\n" not in response:
+    chunk = sock.recv(4096)
+    if not chunk:
+        sys.exit("the peer closed before finishing the handshake")
+    response += chunk
+if b" 101 " not in response.split(b"\r\n", 1)[0] + b" ":
+    sys.exit("no 101 Switching Protocols: %r" % response.split(b"\r\n", 1)[0])
+mask = os.urandom(4)
+sock.sendall(
+    bytes([0x81, 0x80 | len(ask)]) + mask
+    + bytes(b ^ mask[i % 4] for i, b in enumerate(ask))
+)
+header = sock.recv(2)
+if len(header) < 2:
+    sys.exit("no frame came back")
+length = header[1] & 0x7F
+if length == 126:
+    length = int.from_bytes(sock.recv(2), "big")
+elif length == 127:
+    length = int.from_bytes(sock.recv(8), "big")
+payload = b""
+while len(payload) < length:
+    chunk = sock.recv(length - len(payload))
+    if not chunk:
+        break
+    payload += chunk
+print(payload.decode())
+PY
+on_host_d "cd /lab/service && exec python3 -m http.server --bind 127.0.0.1 \
+  ${fwd_service_port} >/shared/service.log 2>&1"
+on_host_d "exec python3 /shared/ws-echo.py 127.0.0.1 ${fwd_ws_port} \
+  /lab/service/handshake.txt >/shared/ws.log 2>&1"
+wait_for_port "${fwd_service_port}" "the service on the remote host"
+wait_for_port "${fwd_ws_port}" "the WebSocket service on the remote host"
+checks=$((checks + 1))
+if on_dev "(exec 3<>/dev/tcp/127.0.0.1/${fwd_local_port}) 2>/dev/null \
+    && echo open || echo closed" | grep -q closed; then
+  say "ok  nothing answers on the local forward port yet"
+else
+  failure "something already answers on 127.0.0.1:${fwd_local_port}"
+fi
+# The server running this whole lab was started with `--capability tool-execution`,
+# so it never offered port-forward at all.
+expect_refused "a session that was not granted port-forward opens no forward" "capab" \
+  remote "forward --to 127.0.0.1:${fwd_service_port} --listen ${fwd_local_port}"
+
+log "a server that would forward nothing refuses to start"
+expect_refused "the capability on its own is refused, because it can only refuse" \
+  "allow-forward-to" \
+  on_host "timeout 20 /lab/bin/chaos-remote-server --workspace ${served_in} \
+    --tcp 127.0.0.1:${fwd_server_port} --token-file /shared/tokens-refused \
+    --capability port-forward"
+expect_refused "a grant allowed zero connections is refused" "max-uses" \
+  on_host "timeout 20 /lab/bin/chaos-remote-server --workspace ${served_in} \
+    --tcp 127.0.0.1:${fwd_server_port} --token-file /shared/tokens-refused \
+    --allow-forward-to 127.0.0.1:${fwd_service_port} --forward-max-uses 0"
+expect_refused "a grant with a zero lifetime is refused" "forward-ttl" \
+  on_host "timeout 20 /lab/bin/chaos-remote-server --workspace ${served_in} \
+    --tcp 127.0.0.1:${fwd_server_port} --token-file /shared/tokens-refused \
+    --allow-forward-to 127.0.0.1:${fwd_service_port} --forward-ttl 0"
+
+log "the server whose operator named a target forwards to it, and only to it"
+# `--forward-max-uses 64 --forward-ttl 300` are ceilings the checks below read back:
+# what a client asks for is a request, and the number that comes back is the answer.
+on_host_d "exec /lab/bin/chaos-remote-server --workspace ${served_in} \
+  --tcp 127.0.0.1:${fwd_server_port} --token-file /shared/tokens-fwd \
+  --allow-forward-to 127.0.0.1:${fwd_service_port} \
+  --allow-forward-to 127.0.0.1:${fwd_ws_port} \
+  --forward-max-uses 64 --forward-ttl 300 \
+  --tokens 64 --token-ttl 3600 >/shared/server-fwd.log 2>&1"
+wait_for_file "${lab_root}/shared/tokens-fwd" "the forwarding server's credentials"
+check_on_host "the server says out loud what it will forward to" \
+  "grep -q 'forwarding: 127.0.0.1:${fwd_service_port}' /shared/server-fwd.log"
+fwd_tunnel_pid="$(start_tunnel "${fwd_tunnel_port}" "${fwd_server_port}")"
+sleep 0.5
+expect_output "naming a target brings the capability with it" "port-forward" \
+  fwdremote 'info --json'
+checks=$((checks + 1))
+if grep -q '"write"' "${capture_file}"; then
+  say "ok  forwarding did not cost the session its access to the workspace"
+else
+  failure "--allow-forward-to changed the capabilities the server grants"
+fi
+# The target is refused here although a server really is listening on that port, so
+# a bypassed allowlist would have produced a working tunnel rather than a silence.
+expect_refused "a target the operator did not list is refused, though something listens there" \
+  "not somewhere this server will connect to" \
+  fwdremote "forward --to 127.0.0.1:${server_port} --listen ${fwd_local_port}"
+expect_refused "the local end may not sit on a routable address" "loopback" \
+  fwdremote "forward --to 127.0.0.1:${fwd_service_port} --listen 0.0.0.0:${fwd_local_port}"
+checks=$((checks + 1))
+if on_dev "(exec 3<>/dev/tcp/127.0.0.1/${fwd_local_port}) 2>/dev/null \
+    && echo open || echo closed" | grep -q closed; then
+  say "ok  neither refused forward left a listener behind"
+else
+  failure "a refused forward still left 127.0.0.1:${fwd_local_port} open"
+fi
+
+# Starts a forward in the dev container and waits for the line naming its local
+# port. The process id goes on the shared volume because the process is in another
+# container and this machine cannot signal it by name.
+start_forward() {
+  local listen="$1" target="$2" connections="$3" ttl="$4" tag="$5" tries=0
+  fwd_top_up
+  rm -f "${lab_root}/shared/${tag}.log" "${lab_root}/shared/${tag}.pid"
+  on_dev_d "/lab/bin/chaos-remote --tcp 127.0.0.1:${fwd_tunnel_port} \
+    --token-file /shared/token-fwd --json forward --to 127.0.0.1:${target} \
+    --listen ${listen} --connections ${connections} --ttl ${ttl} \
+    >/shared/${tag}.log 2>&1 & echo \$! >/shared/${tag}.pid; wait"
+  while ! grep -q "forwarding ${listen} ->" "${lab_root}/shared/${tag}.log" 2>/dev/null; do
+    tries=$((tries + 1))
+    if [ "${tries}" -gt 80 ]; then
+      echo "timed out waiting for the forward on port ${listen}" >&2
+      sed 's/^/  | /' "${lab_root}/shared/${tag}.log" >&2 || true
+      exit 1
+    fi
+    sleep 0.25
+  done
+  return 0
+}
+forward_pid() { cat "${lab_root}/shared/${1}.pid"; }
+
+log "the bytes a forward carries are the bytes on the remote host"
+start_forward "127.0.0.1:${fwd_local_port}" "${fwd_service_port}" 8 600 wide
+checks=$((checks + 1))
+if grep -q "agreed to 8 connection(s) for 300s" "${lab_root}/shared/wide.log"; then
+  say "ok  the client asked for 600s and was given the server's 300s ceiling"
+else
+  failure "the grant did not come back at the server's ceiling: \
+$(tr '\n' ' ' <"${lab_root}/shared/wide.log")"
+fi
+run_capture on_dev "curl -s --max-time 30 -o /lab/local/through-the-forward.bin \
+  http://127.0.0.1:${fwd_local_port}/payload.bin"
+fetched_digest="$(on_dev 'sha256sum /lab/local/through-the-forward.bin' | cut -c1-64)"
+served_digest="$(on_host 'sha256sum /lab/service/payload.bin' | cut -c1-64)"
+checks=$((checks + 1))
+if [ "${capture_status}" = "0" ] && [ -n "${fetched_digest}" ] \
+  && [ "${fetched_digest}" = "${served_digest}" ]; then
+  say "ok  the served file came back with the digest it has on the remote disk"
+else
+  failure "through the forward ${fetched_digest}, the served file is ${served_digest} \
+(exit ${capture_status})"
+fi
+expect_output "a second connection to the same forward is answered" "remote host only" \
+  on_dev "curl -s --max-time 30 http://127.0.0.1:${fwd_local_port}/note.txt"
+# The 404 is written by the served program, not by the tunnel or by curl, so seeing
+# it proves the request reached the target and the target's own reply came back.
+expect_output "the target's own 404 comes back through the tunnel" "404" \
+  on_dev "curl -s --max-time 30 -i http://127.0.0.1:${fwd_local_port}/no-such-file"
+
+log "the grant is what ends a forward, and the local port goes with it"
+on_dev "kill $(forward_pid wide)" >/dev/null 2>&1 || true
+sleep 0.5
+checks=$((checks + 1))
+if on_dev "(exec 3<>/dev/tcp/127.0.0.1/${fwd_local_port}) 2>/dev/null \
+    && echo open || echo closed" | grep -q closed; then
+  say "ok  the port came back when the forward was stopped"
+else
+  failure "127.0.0.1:${fwd_local_port} was still open after the forward was stopped"
+fi
+# Two connections were agreed and two are used, so the forward ends by itself: no
+# signal, no timeout, just a spent grant. Binding the same port again is the proof
+# that the first one really let go of it.
+start_forward "127.0.0.1:${fwd_local_port}" "${fwd_service_port}" 2 120 narrow
+expect_output "the first of the two connections works" "remote host only" \
+  on_dev "curl -s --max-time 30 http://127.0.0.1:${fwd_local_port}/note.txt"
+expect_output "the second works too" "remote host only" \
+  on_dev "curl -s --max-time 30 http://127.0.0.1:${fwd_local_port}/note.txt"
+tries=0
+while [ ! -s "${lab_root}/shared/narrow.log" ] \
+  || ! grep -q '"connections"' "${lab_root}/shared/narrow.log"; do
+  tries=$((tries + 1))
+  if [ "${tries}" -gt 60 ]; then
+    failure "the forward stayed open after its grant was spent"
+    break
+  fi
+  sleep 0.25
+done
+check_text "it counted the two connections it carried" "${lab_root}/shared/narrow.log" \
+  '"connections": *2'
+checks=$((checks + 1))
+if on_dev "(exec 3<>/dev/tcp/127.0.0.1/${fwd_local_port}) 2>/dev/null \
+    && echo open || echo closed" | grep -q closed; then
+  say "ok  a spent grant leaves nothing listening on the local port"
+else
+  failure "the forward was still listening after its grant was spent"
+fi
+
+log "an upgraded connection survives the tunnel, which is what a Web page needs"
+# One authorised connection, so this forward closes itself as soon as the WebSocket
+# session is over. What the client has to read back is the contents of a file that
+# exists only on the remote host, so the answer cannot have come from anywhere else.
+ws_secret="$(cat "${lab_root}/host/service/handshake.txt")"
+checks=$((checks + 1))
+if on_dev "grep -rq '${ws_secret}' /lab" >/dev/null 2>&1; then
+  failure "the developer machine can read that secret itself, so the answer proves nothing"
+else
+  say "ok  what it will look for is unreadable from the developer machine"
+fi
+start_forward "127.0.0.1:${fwd_local_port}" "${fwd_ws_port}" 1 120 upgraded
+expect_output "a WebSocket handshake completes through the forward" "${ws_secret}" \
+  on_dev "python3 /shared/ws-get.py 127.0.0.1 ${fwd_local_port} does-the-upgrade-survive"
+tries=0
+while [ ! -s "${lab_root}/shared/upgraded.log" ] \
+  || ! grep -q '"connections"' "${lab_root}/shared/upgraded.log"; do
+  tries=$((tries + 1))
+  if [ "${tries}" -gt 60 ]; then
+    failure "the forward outlived the one connection it was granted"
+    break
+  fi
+  sleep 0.25
+done
+checks=$((checks + 1))
+if on_dev "(exec 3<>/dev/tcp/127.0.0.1/${fwd_local_port}) 2>/dev/null \
+    && echo open || echo closed" | grep -q closed; then
+  say "ok  and the port is gone once the session that used it is over"
+else
+  failure "127.0.0.1:${fwd_local_port} outlived the WebSocket connection it granted"
+fi
+
 # ----------------------------------------------------------------- summary ----
 
 log "summary"
@@ -853,6 +1228,9 @@ if [ -n "${failures}" ]; then
   echo "  - a macOS or Windows remote host. Both containers are Linux; those hosts" >&2
   echo "    are what the platform legs of CI are for." >&2
   echo "  - many sessions at once against one server." >&2
+  echo "  - a forward to a target reached beyond the remote host's own loopback, and" >&2
+  echo "    remote forwarding (the server listening for the client). The second is" >&2
+  echo "    not in this build: it is refused by name and points at port-forward." >&2
   exit 1
 fi
 echo "all ${checks} M4 acceptance checks passed against ${IMAGE}"

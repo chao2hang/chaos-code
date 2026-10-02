@@ -206,6 +206,31 @@ pub enum Request {
         #[serde(default)]
         timeout_ms: Option<u64>,
     },
+    /// Ask this session to authorise a local port forward, and get back the
+    /// credential a forwarded connection presents in place of a session one.
+    ///
+    /// The grant is a separate request rather than a property of the session
+    /// because the two things that need to be decided are decided at different
+    /// times: the session says *what it may use*, this says *where a connection
+    /// may be pointed* — and the answer is the server's allowlist, not the
+    /// caller's preference.
+    ForwardGrant {
+        host: String,
+        port: u16,
+        /// How long the ticket should stay valid. The server clamps this to its
+        /// own maximum rather than trusting the number.
+        ttl_secs: u64,
+        /// How many forwarded connections the ticket may open. Each connection
+        /// spends one use, so this is the budget, not a hint.
+        max_uses: usize,
+    },
+    /// Present on a fresh connection whose credential is a forward ticket:
+    /// connect to the target the ticket was minted for, after which neither side
+    /// frames anything — the bytes of the two sockets are simply piped together.
+    ///
+    /// It carries no target on purpose. The ticket already names one, so a
+    /// credential minted for `127.0.0.1:5432` cannot be spent on anything else.
+    ForwardOpen,
     /// Begin streaming a server artifact to the host.
     InstallBegin {
         version: String,
@@ -288,6 +313,25 @@ pub enum Payload {
         /// Output past the cap is dropped and this is set.
         truncated: bool,
     },
+    /// A forward was authorised. The ticket is the credential a forwarded
+    /// connection presents; it is scoped to this one target, spent per
+    /// connection, and dies when the session that asked for it ends.
+    ForwardGrant {
+        ticket: String,
+        /// What the ticket may reach, echoed back so the client can print the
+        /// truth about its listener rather than what it hoped for.
+        host: String,
+        port: u16,
+        expires_in_secs: u64,
+        max_uses: usize,
+    },
+    /// The target has been connected from the server's side, and the stream is
+    /// about to stop carrying frames. `host`/`port` are what was actually
+    /// dialled, which is the target the ticket named — not what was asked for.
+    ForwardOpen {
+        host: String,
+        port: u16,
+    },
     InstallBegin {
         received_bytes: u64,
     },
@@ -342,6 +386,10 @@ pub enum RemoteError {
     /// The artifact stream or the install step failed; what is current did not
     /// change, or was put back.
     Install { reason: String, rolled_back: bool },
+    /// A forward was refused. This covers both "that is not somewhere this server
+    /// will connect to" and "that ticket has nothing left to spend": the reason
+    /// says which, because the operator's fix is different for each.
+    ForwardDenied { reason: String },
     /// The stream is not speakable as this protocol.
     Protocol { reason: String },
     /// A reply did not arrive within the caller's deadline. The session is over:
@@ -400,6 +448,7 @@ impl std::fmt::Display for RemoteError {
                     ""
                 }
             ),
+            Self::ForwardDenied { reason } => write!(f, "port forward refused: {reason}"),
             Self::Protocol { reason } => write!(f, "protocol error: {reason}"),
             Self::Timeout { request, after } => write!(
                 f,
@@ -650,6 +699,53 @@ mod tests {
         assert_eq!(
             reply,
             serde_json::json!({"kind": "write", "bytes_written": 3, "sha256": "ab"})
+        );
+    }
+
+    /// A forward grant is the one reply that carries a credential, so its shape is
+    /// pinned: a renamed field would silently break every client's forward.
+    #[test]
+    fn a_forward_grant_names_the_target_it_buys() {
+        let request = serde_json::to_value(Request::ForwardGrant {
+            host: "db.internal".into(),
+            port: 5432,
+            ttl_secs: 60,
+            max_uses: 4,
+        })
+        .unwrap();
+        assert_eq!(
+            request,
+            serde_json::json!({
+                "method": "forward_grant",
+                "host": "db.internal",
+                "port": 5432,
+                "ttl_secs": 60,
+                "max_uses": 4
+            })
+        );
+        let reply = serde_json::to_value(Payload::ForwardGrant {
+            ticket: "t".into(),
+            host: "db.internal".into(),
+            port: 5432,
+            expires_in_secs: 60,
+            max_uses: 4,
+        })
+        .unwrap();
+        assert_eq!(reply["kind"], "forward_grant");
+        assert_eq!(reply["port"], 5432);
+    }
+
+    /// `forward_open` taking no target is the design, not an oversight: the
+    /// ticket decided where the connection may go.
+    #[test]
+    fn a_forward_open_carries_no_target_to_point_at() {
+        let request = serde_json::to_value(Request::ForwardOpen).unwrap();
+        assert_eq!(request, serde_json::json!({"method": "forward_open"}));
+        let text = serde_json::to_string(&request).unwrap();
+        assert!(
+            !text.contains("host") && !text.contains("port"),
+            "a client that could name a target here could aim a ticket somewhere \
+             else: {text}"
         );
     }
 

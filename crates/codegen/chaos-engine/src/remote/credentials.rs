@@ -38,6 +38,17 @@ impl SessionToken {
     pub fn from_text(text: &str) -> Self {
         Self(text.trim().to_string())
     }
+
+    /// A credential that came back from a forward grant rather than from the
+    /// server's token file.
+    ///
+    /// It goes into the same field of the hello, because it is the same *kind* of
+    /// thing on the wire — a bearer string the server decides the meaning of. It
+    /// cannot open a workspace session: the session vault has never heard of it,
+    /// and that is a property of the two stores, not of this conversion.
+    pub fn from_forward_ticket(ticket: &ForwardTicket) -> Self {
+        Self(ticket.as_str().to_string())
+    }
 }
 
 impl std::fmt::Debug for SessionToken {
@@ -311,6 +322,310 @@ fn write_private_tmp(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Where a forwarded connection is allowed to go, spelled the way the server's
+/// allowlist spells it.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct ForwardTarget {
+    pub host: String,
+    pub port: u16,
+}
+
+impl ForwardTarget {
+    pub fn new(host: impl Into<String>, port: u16) -> Self {
+        Self {
+            host: host.into(),
+            port,
+        }
+    }
+
+    /// The form worth printing: bracketed for IPv6, so `::1:80` does not read as
+    /// two addresses.
+    pub fn to_text(&self) -> String {
+        if self.host.contains(':') {
+            format!("[{}]:{}", self.host, self.port)
+        } else {
+            format!("{}:{}", self.host, self.port)
+        }
+    }
+}
+
+impl std::fmt::Display for ForwardTarget {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.to_text())
+    }
+}
+
+/// A credential for one forwarded connection.
+///
+/// Same rules as a session credential about not printing itself, for the same
+/// reason: it is presented over a socket and passed through handshake code.
+#[derive(Clone, PartialEq, Eq)]
+pub struct ForwardTicket(String);
+
+impl ForwardTicket {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// Read one that arrived over the wire.
+    pub fn from_text(text: &str) -> Self {
+        Self(text.trim().to_string())
+    }
+}
+
+impl std::fmt::Debug for ForwardTicket {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "ForwardTicket({}…)",
+            self.0.chars().take(4).collect::<String>()
+        )
+    }
+}
+
+/// The ceilings a forward grant is clamped to, whatever the caller asked for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ForwardLimits {
+    pub max_ttl: Duration,
+    pub max_uses: usize,
+}
+
+impl Default for ForwardLimits {
+    fn default() -> Self {
+        Self {
+            // Long enough to survive a build or a debugging session, short enough
+            // that a forgotten tunnel stops working by itself.
+            max_ttl: Duration::from_secs(30 * 60),
+            // A browser opening a page can legitimately produce a dozen
+            // connections; a port scanner produces thousands.
+            max_uses: 256,
+        }
+    }
+}
+
+/// Why a forward ticket did not buy a connection.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ForwardTicketError {
+    /// Never issued, or issued by a different server.
+    Unknown,
+    /// Issued, but every use had been spent.
+    Exhausted,
+    /// Issued, but its lifetime had passed.
+    Expired,
+    /// Issued by a session that has since closed.
+    Revoked,
+}
+
+impl std::fmt::Display for ForwardTicketError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Unknown => write!(f, "the forward ticket was not issued by this server"),
+            Self::Exhausted => write!(
+                f,
+                "the forward ticket has no connections left to open; ask for another grant"
+            ),
+            Self::Expired => write!(f, "the forward ticket has expired"),
+            Self::Revoked => write!(
+                f,
+                "the session that authorised this forward has closed, so the forward \
+                 closed with it"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for ForwardTicketError {}
+
+/// How a forward ticket left circulation. Kept so a later attempt is told the
+/// truth rather than "not issued", which would send someone looking for a typo.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ForwardFate {
+    Exhausted,
+    Expired,
+    Revoked,
+}
+
+const FORWARD_MEMORY: usize = 4096;
+
+/// Authorised forwards, and the budget each one has.
+///
+/// A forward ticket differs from a session credential in exactly one way, and it
+/// is a deliberate one: it is *budgeted* rather than one-time, because a listener
+/// has to accept more than one connection and there is no way to hand each
+/// connection its own credential ahead of time. Everything else is stricter, not
+/// looser — it is bound to one target, it expires, and it cannot outlive the
+/// session that asked for it.
+pub struct ForwardVault {
+    limits: ForwardLimits,
+    live: HashMap<String, LiveForward>,
+    /// So closing a session can retire the forwards it authorised.
+    by_session: HashMap<String, Vec<String>>,
+    retired: VecDeque<String>,
+    retired_set: HashMap<String, ForwardFate>,
+    now: Box<dyn Fn() -> Instant + Send + Sync>,
+}
+
+struct LiveForward {
+    target: ForwardTarget,
+    session_id: String,
+    issued_at: Instant,
+    /// This ticket's own lifetime, which is what was asked for clamped to the
+    /// server's maximum — not the maximum itself.
+    ttl: Duration,
+    uses_left: usize,
+}
+
+impl ForwardVault {
+    pub fn new(limits: ForwardLimits) -> Self {
+        Self {
+            limits,
+            live: HashMap::new(),
+            by_session: HashMap::new(),
+            retired: VecDeque::new(),
+            retired_set: HashMap::new(),
+            now: Box::new(Instant::now),
+        }
+    }
+
+    pub fn with_clock(mut self, now: impl Fn() -> Instant + Send + Sync + 'static) -> Self {
+        self.now = Box::new(now);
+        self
+    }
+
+    pub fn limits(&self) -> ForwardLimits {
+        self.limits
+    }
+
+    /// Authorise a forward and say what was actually agreed.
+    ///
+    /// The caller asked for a lifetime and a connection budget; the numbers
+    /// returned are the ones in force, so a client is never told "30 minutes" by
+    /// a server that caps forwards at five.
+    pub fn issue(
+        &mut self,
+        target: ForwardTarget,
+        session_id: &str,
+        ttl: Duration,
+        max_uses: usize,
+    ) -> (ForwardTicket, Duration, usize) {
+        let ticket = format!(
+            "{}{}",
+            uuid::Uuid::new_v4().simple(),
+            uuid::Uuid::new_v4().simple()
+        );
+        let granted_ttl = ttl.min(self.limits.max_ttl).max(Duration::from_millis(1));
+        let granted_uses = max_uses.min(self.limits.max_uses).max(1);
+        let issued_at = (self.now)();
+        self.live.insert(
+            ticket.clone(),
+            LiveForward {
+                target,
+                session_id: session_id.to_string(),
+                issued_at,
+                ttl: granted_ttl,
+                uses_left: granted_uses,
+            },
+        );
+        self.by_session
+            .entry(session_id.to_string())
+            .or_default()
+            .push(ticket.clone());
+        (ForwardTicket(ticket), granted_ttl, granted_uses)
+    }
+
+    /// Spend one use of a ticket, and say where the connection may go.
+    ///
+    /// The target comes *out* of the vault rather than in from the caller: that is
+    /// what makes a ticket unusable as a way to reach something it was not issued
+    /// for, however the request is worded.
+    pub fn spend(&mut self, ticket: &str) -> Result<(ForwardTarget, String), ForwardTicketError> {
+        self.sweep_expired();
+        let last_use = self
+            .live
+            .get_mut(ticket)
+            .map(|entry| {
+                entry.uses_left -= 1;
+                entry.uses_left == 0
+            })
+            .unwrap_or(false);
+        if let Some(entry) = self.live.get(ticket) {
+            let spent = (entry.target.clone(), entry.session_id.clone());
+            if last_use {
+                self.drop_ticket(ticket, ForwardFate::Exhausted);
+            }
+            return Ok(spent);
+        }
+        match self.retired_set.get(ticket) {
+            Some(ForwardFate::Exhausted) => Err(ForwardTicketError::Exhausted),
+            Some(ForwardFate::Expired) => Err(ForwardTicketError::Expired),
+            Some(ForwardFate::Revoked) => Err(ForwardTicketError::Revoked),
+            None => Err(ForwardTicketError::Unknown),
+        }
+    }
+
+    /// Retire every forward a session authorised. Called when that session ends,
+    /// which is what makes a closed session take its port forward with it instead
+    /// of leaving a way in behind.
+    pub fn revoke_session(&mut self, session_id: &str) -> usize {
+        let Some(tickets) = self.by_session.remove(session_id) else {
+            return 0;
+        };
+        let mut count = 0;
+        for ticket in tickets {
+            if self.live.remove(&ticket).is_some() {
+                self.retire(&ticket, ForwardFate::Revoked);
+                count += 1;
+            }
+        }
+        count
+    }
+
+    pub fn live_count(&self) -> usize {
+        self.live.len()
+    }
+
+    /// Tickets whose lifetime has passed, whether or not anyone presented them.
+    pub fn sweep_expired(&mut self) -> usize {
+        let now = (self.now)();
+        let stale: Vec<String> = self
+            .live
+            .iter()
+            .filter(|(_, entry)| now.duration_since(entry.issued_at) >= entry.ttl)
+            .map(|(ticket, _)| ticket.clone())
+            .collect();
+        let count = stale.len();
+        for ticket in stale {
+            self.drop_ticket(&ticket, ForwardFate::Expired);
+        }
+        count
+    }
+
+    /// Take a ticket out of circulation and out of the by-session index, so the
+    /// index does not outlive the thing it points at.
+    fn drop_ticket(&mut self, ticket: &str, fate: ForwardFate) {
+        if let Some(entry) = self.live.remove(ticket)
+            && let Some(tickets) = self.by_session.get_mut(&entry.session_id)
+        {
+            tickets.retain(|live| live != ticket);
+            if tickets.is_empty() {
+                self.by_session.remove(&entry.session_id);
+            }
+        }
+        self.retire(ticket, fate);
+    }
+
+    fn retire(&mut self, ticket: &str, fate: ForwardFate) {
+        if self.retired_set.len() >= FORWARD_MEMORY
+            && let Some(oldest) = self.retired.pop_front()
+        {
+            self.retired_set.remove(&oldest);
+        }
+        if self.retired_set.insert(ticket.to_string(), fate).is_none() {
+            self.retired.push_back(ticket.to_string());
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -500,5 +815,195 @@ mod tests {
             "the path is a real file now, not a redirect to somewhere else"
         );
         assert_eq!(file_mode(&link), 0o600);
+    }
+
+    fn forward_vault(ttl: Duration) -> (ForwardVault, FakeClock) {
+        let clock = FakeClock::default();
+        let probe = clock.clone();
+        let vault = ForwardVault::new(ForwardLimits {
+            max_ttl: ttl,
+            max_uses: 8,
+        })
+        .with_clock(move || probe.instant());
+        (vault, clock)
+    }
+
+    /// A listener has to accept more than one connection, so a forward ticket is
+    /// budgeted rather than one-time. The budget is still a hard number.
+    #[test]
+    fn a_forward_ticket_opens_exactly_the_connections_it_buys() {
+        let (mut vault, _clock) = forward_vault(Duration::from_secs(60));
+        let (ticket, _, uses) = vault.issue(
+            ForwardTarget::new("db.internal", 5432),
+            "session-1",
+            Duration::from_secs(60),
+            3,
+        );
+        assert_eq!(uses, 3);
+        for _ in 0..3 {
+            assert_eq!(
+                vault.spend(ticket.as_str()).unwrap().0,
+                ForwardTarget::new("db.internal", 5432)
+            );
+        }
+        assert_eq!(
+            vault.spend(ticket.as_str()),
+            Err(ForwardTicketError::Exhausted),
+            "the fourth connection is the one the budget exists to stop"
+        );
+        assert_eq!(vault.live_count(), 0, "a spent ticket is not left behind");
+    }
+
+    /// The target comes out of the vault, so there is nothing for a request to
+    /// point a ticket at.
+    #[test]
+    fn a_forward_ticket_reaches_only_what_it_was_issued_for() {
+        let (mut vault, _clock) = forward_vault(Duration::from_secs(60));
+        let (db, _, _) = vault.issue(
+            ForwardTarget::new("db.internal", 5432),
+            "session-1",
+            Duration::from_secs(60),
+            4,
+        );
+        let (metrics, _, _) = vault.issue(
+            ForwardTarget::new("127.0.0.1", 9090),
+            "session-1",
+            Duration::from_secs(60),
+            4,
+        );
+        assert_ne!(db, metrics);
+        assert_eq!(
+            vault.spend(db.as_str()).unwrap().0,
+            ForwardTarget::new("db.internal", 5432)
+        );
+        assert_eq!(
+            vault.spend(metrics.as_str()).unwrap().0,
+            ForwardTarget::new("127.0.0.1", 9090)
+        );
+    }
+
+    /// Closing the session is what closes the forward. Without this, a ticket
+    /// outlives the tunnel it was minted for and the host keeps a way in.
+    #[test]
+    fn a_forward_ticket_dies_with_the_session_that_minted_it() {
+        let (mut vault, _clock) = forward_vault(Duration::from_secs(60));
+        let (mine, _, _) = vault.issue(
+            ForwardTarget::new("127.0.0.1", 8080),
+            "session-1",
+            Duration::from_secs(60),
+            8,
+        );
+        let (theirs, _, _) = vault.issue(
+            ForwardTarget::new("127.0.0.1", 8080),
+            "session-2",
+            Duration::from_secs(60),
+            8,
+        );
+        assert_eq!(vault.revoke_session("session-1"), 1);
+        assert_eq!(vault.spend(mine.as_str()), Err(ForwardTicketError::Revoked));
+        assert!(
+            vault.spend(theirs.as_str()).is_ok(),
+            "another session's forward is not yours to close"
+        );
+    }
+
+    #[test]
+    fn a_forward_ticket_expires_even_if_nobody_presents_it() {
+        let (mut vault, clock) = forward_vault(Duration::from_millis(100));
+        let (ticket, _, _) = vault.issue(
+            ForwardTarget::new("127.0.0.1", 8080),
+            "session-1",
+            Duration::from_millis(100),
+            8,
+        );
+        clock.advance(99);
+        assert!(vault.spend(ticket.as_str()).is_ok());
+        clock.advance(2);
+        assert_eq!(vault.sweep_expired(), 1);
+        assert_eq!(
+            vault.spend(ticket.as_str()),
+            Err(ForwardTicketError::Expired),
+            "a tunnel nobody closed stops working on its own"
+        );
+    }
+
+    /// The server decides how long and how many; a client's number is a request.
+    #[test]
+    fn a_grant_is_clamped_to_what_the_server_will_agree_to() {
+        let (mut vault, _clock) = forward_vault(Duration::from_millis(500));
+        let (_ticket, ttl, uses) = vault.issue(
+            ForwardTarget::new("127.0.0.1", 8080),
+            "session-1",
+            Duration::from_secs(86_400),
+            100_000,
+        );
+        assert_eq!(ttl, Duration::from_millis(500));
+        assert_eq!(uses, 8);
+        let (_zero, ttl, uses) = vault.issue(
+            ForwardTarget::new("127.0.0.1", 8080),
+            "session-1",
+            Duration::ZERO,
+            0,
+        );
+        assert!(ttl > Duration::ZERO && uses >= 1, "{ttl:?} / {uses}");
+    }
+
+    /// The two credential kinds live in separate stores on purpose: a session
+    /// credential must not open a forward, and a forward ticket must not open a
+    /// session.
+    #[test]
+    fn a_forward_ticket_is_not_a_session_credential_or_vice_versa() {
+        let (mut sessions, _clock) = vault(Duration::from_secs(60));
+        let (mut forwards, _clock) = forward_vault(Duration::from_secs(60));
+        let session_token = sessions.issue();
+        let (ticket, _, _) = forwards.issue(
+            ForwardTarget::new("127.0.0.1", 8080),
+            "session-1",
+            Duration::from_secs(60),
+            2,
+        );
+        assert_eq!(sessions.redeem(ticket.as_str()), Err(RedeemError::Unknown));
+        assert_eq!(
+            forwards.spend(session_token.as_str()),
+            Err(ForwardTicketError::Unknown)
+        );
+    }
+
+    #[test]
+    fn forward_tickets_are_not_printed_and_targets_are() {
+        let (mut vault, _clock) = forward_vault(Duration::from_secs(60));
+        let (ticket, _, _) = vault.issue(
+            ForwardTarget::new("db.internal", 5432),
+            "session-1",
+            Duration::from_secs(60),
+            2,
+        );
+        let debug = format!("{ticket:?}");
+        assert!(!debug.contains(ticket.as_str()), "{debug}");
+        assert_eq!(
+            ForwardTarget::new("db.internal", 5432).to_text(),
+            "db.internal:5432"
+        );
+        assert_eq!(ForwardTarget::new("::1", 8080).to_text(), "[::1]:8080");
+    }
+
+    /// The index that lets a session revoke its own forwards must not outlive
+    /// them, or a long session accumulates a list of dead tickets.
+    #[test]
+    fn a_spent_forward_leaves_nothing_indexed() {
+        let (mut vault, _clock) = forward_vault(Duration::from_secs(60));
+        let (ticket, _, _) = vault.issue(
+            ForwardTarget::new("127.0.0.1", 1),
+            "session-1",
+            Duration::from_secs(60),
+            1,
+        );
+        vault.spend(ticket.as_str()).unwrap();
+        assert!(vault.by_session.is_empty(), "the index kept a dead ticket");
+        assert_eq!(vault.revoke_session("session-1"), 0);
+        assert_eq!(
+            vault.spend(ticket.as_str()),
+            Err(ForwardTicketError::Exhausted)
+        );
     }
 }

@@ -1,10 +1,11 @@
 # Reproduce: bash scripts/remote-acceptance-in-docker.sh
 # Host: Ubuntu 22.04 x86_64, Docker 29.8.1; remote host container image chaos-verify:local (Debian 12, git, python3, ripgrep).
-# Commit under test: the commit that adds these checks and this transcript together (previous HEAD 0e89f3fc). Tokens are 64-hex one-time credentials and are never printed by the script.
-# This run supersedes the 73-check one of the same lab. The 7 checks it adds are the two clocks a session runs on -- a reply that never arrives, a transport that appears late, a peer that accepts and never speaks -- and the state of the credential file after a run that dies.
+# Commit under test: the commit that adds these checks and this transcript together (previous HEAD 60e215fe). Tokens are 64-hex one-time credentials and are never printed by the script. The one-time credential of the forwarding server lives in /shared/tokens-fwd and is likewise never echoed.
+# This run supersedes the 80-check one of the same lab. It adds local port forwarding, 22 checks: a python3 http.server on the remote host is fetched through a forward started from the other container and the digest compared against the file on that host's disk; a hand-written RFC 6455 service is reached the same way and returns a file that exists only on the remote host, unreadable from the developer machine, so a completed WebSocket session through the tunnel is observed rather than assumed; the operator's --allow-forward-to list is shown to decide the target (an unlisted target is refused although a server really is listening on that port, and a server asked to advertise port-forward with no target listed refuses to start, as are zero ceilings); the lifetime the server answers with is its own ceiling rather than the client's request; a spent grant closes its own local listener and the port is bindable again. One check leaves the net +22 rather than +23: `port-forward` is no longer in the list of capabilities the client refuses outright, because it is now implemented.
+
 
 == building the artifacts on this machine
-    Finished `dev` profile [unoptimized] target(s) in 0.39s
+    Finished `dev` profile [unoptimized] target(s) in 0.59s
 
 == starting the clean remote host container (chaos-verify:local)
    remote host: NAME="Debian GNU/Linux", x86_64
@@ -76,7 +77,6 @@
 
 == capabilities this build does not implement are named, not faked
    ok  --capability interactive-pty is refused by the client
-   ok  --capability port-forward is refused by the client
    ok  --capability detached-agent is refused by the client
    ok  an unknown capability name is refused
 
@@ -135,5 +135,40 @@
 == a peer that accepts and never speaks is a timeout, not a hang
    ok  the mute peer was given up on after 30s and reported as the handshake
 
+== port forwarding: the operator's allowlist picks the target, not the client
+   ok  nothing answers on the local forward port yet
+   ok  a session that was not granted port-forward opens no forward
+
+== a server that would forward nothing refuses to start
+   ok  the capability on its own is refused, because it can only refuse
+   ok  a grant allowed zero connections is refused
+   ok  a grant with a zero lifetime is refused
+
+== the server whose operator named a target forwards to it, and only to it
+   ok  the server says out loud what it will forward to
+   ok  naming a target brings the capability with it
+   ok  forwarding did not cost the session its access to the workspace
+   ok  a target the operator did not list is refused, though something listens there
+   ok  the local end may not sit on a routable address
+   ok  neither refused forward left a listener behind
+
+== the bytes a forward carries are the bytes on the remote host
+   ok  the client asked for 600s and was given the server's 300s ceiling
+   ok  the served file came back with the digest it has on the remote disk
+   ok  a second connection to the same forward is answered
+   ok  the target's own 404 comes back through the tunnel
+
+== the grant is what ends a forward, and the local port goes with it
+   ok  the port came back when the forward was stopped
+   ok  the first of the two connections works
+   ok  the second works too
+   ok  it counted the two connections it carried
+   ok  a spent grant leaves nothing listening on the local port
+
+== an upgraded connection survives the tunnel, which is what a Web page needs
+   ok  what it will look for is unreadable from the developer machine
+   ok  a WebSocket handshake completes through the forward
+   ok  and the port is gone once the session that used it is over
+
 == summary
-all 80 M4 acceptance checks passed against chaos-verify:local
+all 102 M4 acceptance checks passed against chaos-verify:local

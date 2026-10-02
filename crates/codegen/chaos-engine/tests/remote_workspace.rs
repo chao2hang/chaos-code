@@ -972,5 +972,7 @@ fn payloads_are_exhaustive(payload: Payload) -> &'static str {
         Payload::InstallChunk { .. } => "install_chunk",
         Payload::InstallFinish { .. } => "install_finish",
         Payload::Pong { .. } => "pong",
+        Payload::ForwardGrant { .. } => "forward_grant",
+        Payload::ForwardOpen { .. } => "forward_open",
     }
 }

@@ -19,11 +19,13 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use base64::Engine as _;
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, join};
 use tokio::sync::Mutex;
 use xai_tty_utils::ProcessScope;
 
-use super::credentials::{SessionToken, TokenVault};
+use super::credentials::{
+    ForwardLimits, ForwardTarget, ForwardTicketError, ForwardVault, SessionToken, TokenVault,
+};
 use super::endpoint::RemoteCapability;
 use super::install::{InstallLayout, sha256_hex};
 use super::path::RemotePath;
@@ -60,6 +62,16 @@ pub struct ServerConfig {
     pub exec_max_timeout: Duration,
     /// The only programs `exec` may run.
     pub allowed_executables: Vec<String>,
+    /// The only places a port forward may be pointed.
+    ///
+    /// Empty means forwards cannot be granted at all, which is the default: the
+    /// server's operator decides where connections may go, because a server that
+    /// connects wherever a client asks is a proxy, and a proxy that anyone can
+    /// authorise is an SSRF with good manners.
+    pub forward_targets: Vec<ForwardTarget>,
+    pub forward_limits: ForwardLimits,
+    /// How long a forward may wait for its target to answer.
+    pub forward_connect_timeout: Duration,
     /// Directories the listing and the search do not descend into.
     pub skip_dirs: Vec<String>,
     pub install: InstallLayout,
@@ -96,6 +108,9 @@ impl ServerConfig {
             exec_default_timeout: Duration::from_secs(30),
             exec_max_timeout: Duration::from_secs(600),
             allowed_executables: Vec::new(),
+            forward_targets: Vec::new(),
+            forward_limits: ForwardLimits::default(),
+            forward_connect_timeout: Duration::from_secs(10),
             skip_dirs: [".git", "target", "node_modules", ".venv", "__pycache__"]
                 .iter()
                 .map(|name| name.to_string())
@@ -119,6 +134,27 @@ impl ServerConfig {
 
     pub fn token_ttl(mut self, ttl: Duration) -> Self {
         self.token_ttl = ttl;
+        self
+    }
+
+    /// The only targets a port forward may be pointed at.
+    ///
+    /// Names are matched as written, after trimming and lower-casing, with the
+    /// brackets around an IPv6 literal dropped. Because a name can be made to
+    /// resolve anywhere, an operator who means to pin a target should put the
+    /// address in the allowlist rather than a hostname.
+    pub fn forward_targets(mut self, targets: Vec<ForwardTarget>) -> Self {
+        self.forward_targets = targets;
+        self
+    }
+
+    pub fn forward_limits(mut self, limits: ForwardLimits) -> Self {
+        self.forward_limits = limits;
+        self
+    }
+
+    pub fn forward_connect_timeout(mut self, timeout: Duration) -> Self {
+        self.forward_connect_timeout = timeout;
         self
     }
 
@@ -179,7 +215,31 @@ impl ServerConfig {
                 ));
             }
         }
+        for target in &self.forward_targets {
+            if target.host.trim().is_empty() {
+                return Err("a forward target has no host to connect to".into());
+            }
+            if target.port == 0 {
+                return Err(format!(
+                    "forward target {target} has a port of 0, which is not something \
+                     to connect to"
+                ));
+            }
+        }
         Ok(())
+    }
+
+    /// Whether this server will connect to `host:port` on someone's behalf.
+    ///
+    /// Matching is on the literal, normalised the same way on both sides, so
+    /// `localhost` and `127.0.0.1` are different answers — deliberately, because
+    /// deciding they are the same host is a decision about the network, not about
+    /// strings, and the allowlist is the operator's.
+    fn allows_forward(&self, host: &str, port: u16) -> bool {
+        let wanted_host = normalize_forward_host(host);
+        self.forward_targets.iter().any(|target| {
+            target.port == port && normalize_forward_host(&target.host) == wanted_host
+        })
     }
 
     /// The capability a request needs, if it needs one.
@@ -191,6 +251,12 @@ impl ServerConfig {
             Request::Write { .. } => Some(RemoteCapability::WorkspaceWrite),
             Request::Diff { .. } => Some(RemoteCapability::Git),
             Request::Exec { .. } => Some(RemoteCapability::ToolExecution),
+            // Both halves of forwarding are the same capability: one asks for the
+            // permission, the other spends it. Which target is allowed is a
+            // separate question the allowlist answers.
+            Request::ForwardGrant { .. } | Request::ForwardOpen => {
+                Some(RemoteCapability::PortForward)
+            }
             // Deploying a new server build is a write to the host, and nothing
             // less than that: a session that may edit files may stage a file.
             Request::InstallBegin { .. }
@@ -201,11 +267,26 @@ impl ServerConfig {
     }
 }
 
+/// How this connection was authorised, which decides what it may then ask for.
+enum Auth {
+    /// A workspace session, opened with a one-time credential.
+    Session,
+    /// A connection opened with a forward ticket. The only thing it may do is
+    /// reach the one target that ticket was minted for.
+    Forward { target: ForwardTarget },
+}
+
 /// A running server: its configuration, its credentials, and the process scope
 /// its tool children belong to.
 pub struct Server {
     config: ServerConfig,
     vault: Arc<Mutex<TokenVault>>,
+    /// The port forwards that have been authorised and not yet spent, closed or
+    /// expired. Separate from the session vault on purpose: a forward ticket must
+    /// not open a workspace session, and a session credential must not open a
+    /// forward, so neither store is consulted as a fallback for the other's
+    /// *success*.
+    forwards: Arc<Mutex<ForwardVault>>,
     scope: ProcessScope,
 }
 
@@ -223,9 +304,11 @@ impl Server {
     pub fn new(config: ServerConfig) -> Result<Arc<Self>, String> {
         config.validate()?;
         let ttl = config.token_ttl;
+        let forward_limits = config.forward_limits;
         Ok(Arc::new(Self {
             config,
             vault: Arc::new(Mutex::new(TokenVault::new(ttl))),
+            forwards: Arc::new(Mutex::new(ForwardVault::new(forward_limits))),
             scope: ProcessScope::new(),
         }))
     }
@@ -375,8 +458,8 @@ impl Server {
             }
         };
 
-        let granted = match self.redeem(&token).await {
-            Ok(()) => self.grant(&requested),
+        let auth = match self.authenticate(&token).await {
+            Ok(auth) => auth,
             Err(e) => {
                 // Which credential was refused is not worth a log line; that one
                 // address has been refused twice is a different matter, and that
@@ -384,6 +467,19 @@ impl Server {
                 tracing::debug!(client = %client.name, reason = %e, "session refused");
                 let _ = send(&mut writer, &error_envelope(hello.id, &e)).await;
                 return Err(e);
+            }
+        };
+        let granted = match &auth {
+            Auth::Session => self.grant(&requested),
+            // A forwarded connection gets the one capability that describes it,
+            // and only if it asked for it. It is not a workspace session that
+            // happens to carry bytes.
+            Auth::Forward { .. } => {
+                if requested.contains(&RemoteCapability::PortForward) {
+                    vec![RemoteCapability::PortForward]
+                } else {
+                    Vec::new()
+                }
             }
         };
 
@@ -415,34 +511,73 @@ impl Server {
         // inside the dispatch call that starts it.
         let mut upload: Option<Upload> = None;
 
-        loop {
-            let Some(envelope) = recv::<Envelope<Request>, _>(&mut reader, max_frame).await? else {
-                return Ok(());
-            };
-            let id = envelope.id;
-            let reply = if matches!(envelope.body, Request::Hello { .. }) {
-                Err(RemoteError::Unauthorized {
-                    reason: "this session is already authorised; a second hello is not \
-                             how re-authentication would work"
-                        .into(),
-                })
-            } else {
-                self.dispatch(id, envelope.body, &granted, &mut upload)
-                    .await
-            };
-            let reply = match reply {
-                Ok(payload) => Envelope {
-                    id,
-                    body: Ok(payload),
-                },
-                Err(error) => {
-                    if !matches!(error, RemoteError::CapabilityNotGranted { .. }) {
-                        tracing::debug!(session = %session_id, error = %error, "request refused");
-                    }
-                    error_envelope(id, &error)
+        let served = async {
+            loop {
+                let Some(envelope) = recv::<Envelope<Request>, _>(&mut reader, max_frame).await?
+                else {
+                    return Ok(());
+                };
+                let id = envelope.id;
+                // Opening a forward is the one request after which the stream stops
+                // carrying frames, so it cannot take the answer-and-continue path
+                // below: its reply has to be the last thing either side frames.
+                if matches!(envelope.body, Request::ForwardOpen) {
+                    return self.open_forward(&mut reader, &mut writer, id, &auth).await;
                 }
-            };
-            send(&mut writer, &reply).await?;
+                let reply = if matches!(envelope.body, Request::Hello { .. }) {
+                    Err(RemoteError::Unauthorized {
+                        reason: "this session is already authorised; a second hello is not \
+                                 how re-authentication would work"
+                            .into(),
+                    })
+                } else {
+                    self.dispatch(id, envelope.body, &granted, &mut upload, &auth, &session_id)
+                        .await
+                };
+                let reply = match reply {
+                    Ok(payload) => Envelope {
+                        id,
+                        body: Ok(payload),
+                    },
+                    Err(error) => {
+                        if !matches!(error, RemoteError::CapabilityNotGranted { .. }) {
+                            tracing::debug!(session = %session_id, error = %error, "request refused");
+                        }
+                        error_envelope(id, &error)
+                    }
+                };
+                send(&mut writer, &reply).await?;
+            }
+        }
+        .await;
+
+        // Closing the session takes the forwards it authorised with it. Without
+        // this, a tunnel would outlive the session whose grant was the only thing
+        // that justified it, and "close the session, the port is released" would be
+        // true of only one of the two ends.
+        if matches!(auth, Auth::Session) {
+            self.revoke_forwards(&session_id).await;
+        }
+        served
+    }
+
+    /// Decide which of the two credential kinds this connection presented.
+    ///
+    /// A session credential is tried first: it is the common case, and the order
+    /// is also what keeps a forward ticket from ever being read as permission to
+    /// touch a workspace. A token that the forward store knows about but will not
+    /// honour gets the forward's own refusal, because "not issued" would send
+    /// someone looking for a typo in a ticket that simply ran out.
+    async fn authenticate(&self, token: &str) -> Result<Auth, RemoteError> {
+        match self.redeem(token).await {
+            Ok(()) => Ok(Auth::Session),
+            Err(session_refusal) => match self.forwards.lock().await.spend(token) {
+                Ok((target, _)) => Ok(Auth::Forward { target }),
+                Err(ForwardTicketError::Unknown) => Err(session_refusal),
+                Err(e) => Err(RemoteError::ForwardDenied {
+                    reason: e.to_string(),
+                }),
+            },
         }
     }
 
@@ -465,14 +600,163 @@ impl Server {
             .collect()
     }
 
+    /// Authorise one local port forward, if this server connects there.
+    ///
+    /// The allowlist is consulted here rather than at connect time so that the
+    /// refusal arrives as a typed answer to the request that asked — a client that
+    /// is told "granted" and then fails on the first connection has been told a
+    /// lie about its own listener.
+    async fn forward_grant(
+        &self,
+        host: &str,
+        port: u16,
+        ttl_secs: u64,
+        max_uses: usize,
+        session_id: &str,
+    ) -> Result<Payload, RemoteError> {
+        let target = ForwardTarget::new(normalize_forward_host(host), port);
+        if !self.config.allows_forward(&target.host, target.port) {
+            return Err(RemoteError::ForwardDenied {
+                reason: format!(
+                    "{target} is not somewhere this server will connect to; the operator \
+                     lists {} forward target(s){listed}",
+                    self.config.forward_targets.len(),
+                    listed = if self.config.forward_targets.is_empty() {
+                        ", and there are none".to_string()
+                    } else {
+                        format!(
+                            ": {}",
+                            self.config
+                                .forward_targets
+                                .iter()
+                                .map(ForwardTarget::to_text)
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        )
+                    }
+                ),
+            });
+        }
+        // Clamped before it reaches the vault, and the vault clamps again: the
+        // number a client sends is a request, not an agreement.
+        let ttl = Duration::from_secs(ttl_secs.min(60 * 60 * 24));
+        let (ticket, granted_ttl, granted_uses) =
+            self.forwards
+                .lock()
+                .await
+                .issue(target.clone(), session_id, ttl, max_uses);
+        tracing::debug!(session = %session_id, target = %target, uses = granted_uses, "port forward authorised");
+        Ok(Payload::ForwardGrant {
+            ticket: ticket.as_str().to_string(),
+            host: target.host.clone(),
+            port: target.port,
+            expires_in_secs: granted_ttl.as_secs().max(1),
+            max_uses: granted_uses,
+        })
+    }
+
+    /// Answer a `forward_open` and then stop speaking the protocol.
+    ///
+    /// The reply is sent before a byte of the target is moved, because the client
+    /// cannot tell "the tunnel is up" from "the target was slow" any other way.
+    /// After it, the two streams are simply joined: nothing inspects the bytes, so
+    /// a WebSocket upgrade, a database handshake and an HTTP request all get the
+    /// same treatment — which is the point of forwarding rather than proxying.
+    async fn open_forward<R, W>(
+        &self,
+        reader: &mut R,
+        writer: &mut W,
+        id: u64,
+        auth: &Auth,
+    ) -> Result<(), RemoteError>
+    where
+        R: AsyncRead + Unpin,
+        W: AsyncWrite + Unpin,
+    {
+        let Auth::Forward { target } = auth else {
+            let error = RemoteError::ForwardDenied {
+                reason: "a forward is opened with the ticket it was granted; this \
+                         connection was authorised as a workspace session, which does \
+                         not get to choose a target"
+                    .into(),
+            };
+            let _ = send(writer, &error_envelope(id, &error)).await;
+            return Err(error);
+        };
+        let timeout = self.config.forward_connect_timeout;
+        let (host, port) = (target.host.clone(), target.port);
+        let dialled = tokio::time::timeout(timeout, tokio::net::TcpStream::connect((host, port)));
+        let mut target_stream = match dialled.await {
+            Ok(Ok(stream)) => stream,
+            Ok(Err(e)) => {
+                let error = RemoteError::ForwardDenied {
+                    reason: format!("{target} did not accept a connection: {e}"),
+                };
+                let _ = send(writer, &error_envelope(id, &error)).await;
+                return Err(error);
+            }
+            Err(_) => {
+                let error = RemoteError::ForwardDenied {
+                    reason: format!(
+                        "{target} had not accepted a connection after {}s",
+                        timeout.as_secs()
+                    ),
+                };
+                let _ = send(writer, &error_envelope(id, &error)).await;
+                return Err(error);
+            }
+        };
+        send(
+            writer,
+            &Envelope {
+                id,
+                body: Ok::<Payload, RemoteError>(Payload::ForwardOpen {
+                    host: target.host.clone(),
+                    port: target.port,
+                }),
+            },
+        )
+        .await?;
+        let (to_target, to_client) = match tokio::io::copy_bidirectional(
+            &mut target_stream,
+            &mut join(reader, writer),
+        )
+        .await
+        {
+            Ok(copied) => copied,
+            Err(e) if super::forward::ended_cleanly(&e) => return Ok(()),
+            Err(e) => {
+                return Err(RemoteError::Io {
+                    context: format!("forward to {target}"),
+                    reason: e.to_string(),
+                });
+            }
+        };
+        tracing::debug!(target = %target, to_target, to_client, "port forward closed");
+        Ok(())
+    }
+
+    /// Take back every forward a session authorised, which is what closing a
+    /// session means on the server's side.
+    async fn revoke_forwards(&self, session_id: &str) {
+        let revoked = self.forwards.lock().await.revoke_session(session_id);
+        if revoked > 0 {
+            tracing::debug!(session = %session_id, revoked, "port forwards closed with the session");
+        }
+    }
+
     async fn dispatch(
         &self,
         id: u64,
         request: Request,
         granted: &[RemoteCapability],
         upload: &mut Option<Upload>,
+        auth: &Auth,
+        session_id: &str,
     ) -> Result<Payload, RemoteError> {
-        let result = self.dispatch_granted(&request, granted, upload).await;
+        let result = self
+            .dispatch_granted(&request, granted, upload, auth, session_id)
+            .await;
         if let Err(error) = &result
             && matches!(error, RemoteError::Io { .. })
         {
@@ -488,7 +772,20 @@ impl Server {
         request: &Request,
         granted: &[RemoteCapability],
         upload: &mut Option<Upload>,
+        auth: &Auth,
+        session_id: &str,
     ) -> Result<Payload, RemoteError> {
+        // A forwarded connection is not a workspace session, so nothing in this
+        // list is for it. Its one request (`forward_open`) is answered by the
+        // session loop, which has the stream to hand over.
+        if let Auth::Forward { target } = auth {
+            return Err(RemoteError::Unauthorized {
+                reason: format!(
+                    "this connection was authorised for one forward to {target}; it is \
+                     not a workspace session"
+                ),
+            });
+        }
         if let Some(capability) = ServerConfig::required_capability(request)
             && !granted.contains(&capability)
         {
@@ -499,6 +796,15 @@ impl Server {
                 server: self.config.implementation.clone(),
                 protocol_version: self.config.protocol.max,
             }),
+            Request::ForwardGrant {
+                host,
+                port,
+                ttl_secs,
+                max_uses,
+            } => {
+                self.forward_grant(host, *port, *ttl_secs, *max_uses, session_id)
+                    .await
+            }
             Request::List {
                 path,
                 depth,
@@ -539,6 +845,11 @@ impl Server {
             } => self.install_begin(version, sha256, *total_bytes, upload),
             Request::InstallChunk { seq, data_b64 } => self.install_chunk(*seq, data_b64, upload),
             Request::InstallFinish { version } => self.install_finish(version, upload),
+            Request::ForwardOpen => Err(RemoteError::Protocol {
+                reason: "a forward open is answered by the session loop, because it \
+                         ends the framed part of the stream"
+                    .into(),
+            }),
             Request::Hello { .. } => Err(RemoteError::Unauthorized {
                 reason: "a second hello is not how re-authentication would work".into(),
             }),
@@ -1289,6 +1600,22 @@ fn relative_of(path: &Path, root: &Path) -> String {
 /// who can route to the port. Tunnelling is somebody else's job and is the intended
 /// arrangement: an SSH-forwarded loopback port is how this is reached from another
 /// machine.
+/// The way a forward host is spelled when two of them are being compared.
+///
+/// Brackets around an IPv6 literal are dropped, because a URL-ish
+/// `[::1]:8080` and the address `::1` mean the same place, and case is dropped
+/// because hostnames are case-insensitive on the wire even when a shell is not.
+fn normalize_forward_host(host: &str) -> String {
+    let trimmed = host.trim().to_ascii_lowercase();
+    match trimmed
+        .strip_prefix('[')
+        .and_then(|inner| inner.strip_suffix(']'))
+    {
+        Some(inner) => inner.to_string(),
+        None => trimmed,
+    }
+}
+
 pub fn require_loopback(addr: SocketAddr) -> Result<(), String> {
     if addr.ip().is_loopback() {
         return Ok(());

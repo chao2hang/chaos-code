@@ -21,8 +21,9 @@
 use std::path::PathBuf;
 
 use chaos_engine::remote::{
-    DEFAULT_INSTALL_DIR, Implementation, InstallLayout, RemoteCapability, Server, ServerConfig,
-    TokenFile, parse_capability, parse_loopback_host,
+    DEFAULT_INSTALL_DIR, ForwardLimits, ForwardTarget, Implementation, InstallLayout,
+    RemoteCapability, Server, ServerConfig, TokenFile, parse_capability, parse_forward_target,
+    parse_loopback_host,
 };
 
 const USAGE: &str = "\
@@ -41,9 +42,19 @@ chaos-remote-server — serve one workspace to one authorised client at a time
   --tokens <count>        how many one-time credentials to publish at startup
                           (default 8; each session spends one)
   --max-exec-output <bytes>  output cap for one tool run (default 262144)
+  --allow-forward-to <host:port>
+                          a service a session may reach through a forwarded local
+                          port; repeatable, and the only way forwarding is enabled
+  --forward-ttl <seconds> longest grant the server will agree to (default 1800)
+  --forward-max-uses <count>  connections one grant may open (default 256)
+  --forward-connect-timeout <seconds>  how long a forward may wait for its target
+                          to answer (default 10)
 
 By default list, read, search, write and git are offered. Tool execution is not,
 because it needs an `--allow` list to mean anything, and an empty one runs nothing.
+Port forwarding is not offered either: with no `--allow-forward-to` there is nowhere
+a forward would be allowed to go, and a server advertising it would only collect
+refusals.
 
 Without --unix or --tcp there is nowhere to connect, which is refused rather than
 silently defaulting to a port.";
@@ -78,6 +89,9 @@ async fn run() -> Result<(), String> {
         .allowed_executables(options.allowed)
         .token_ttl(std::time::Duration::from_secs(options.token_ttl_secs))
         .max_exec_output_bytes(options.max_exec_output_bytes)
+        .forward_targets(options.forward_targets.clone())
+        .forward_limits(options.forward_limits)
+        .forward_connect_timeout(options.forward_connect_timeout)
         .install_layout(InstallLayout::with_dir_name(
             &options.workspace,
             &options.install_dir,
@@ -125,6 +139,23 @@ async fn run() -> Result<(), String> {
         println!("listening: tcp://{addr}");
         accepting.spawn(server.clone().accept_tcp(listener));
     }
+    if !options.forward_targets.is_empty() {
+        // Said out loud because it is the line that tells someone reading the
+        // startup output why a port exists on this host at all.
+        println!(
+            "forwarding: {} (a grant opens up to {} connections for up to {}s, \
+             target must answer within {}s)",
+            options
+                .forward_targets
+                .iter()
+                .map(ForwardTarget::to_text)
+                .collect::<Vec<_>>()
+                .join(", "),
+            options.forward_limits.max_uses,
+            options.forward_limits.max_ttl.as_secs(),
+            options.forward_connect_timeout.as_secs(),
+        );
+    }
     if accepting.is_empty() {
         return Err("nowhere to connect: pass --unix <path> and/or --tcp <host:port>".into());
     }
@@ -151,6 +182,10 @@ struct Options {
     token_ttl_secs: u64,
     max_exec_output_bytes: usize,
     initial_tokens: usize,
+    /// The only services a forwarded local port may be pointed at.
+    forward_targets: Vec<ForwardTarget>,
+    forward_limits: ForwardLimits,
+    forward_connect_timeout: std::time::Duration,
 }
 
 impl Options {
@@ -180,6 +215,12 @@ impl Options {
         // A credential is spent by one session, so a script that runs several
         // commands needs one per command.
         let mut initial_tokens = 8usize;
+        // Forwarding is off until the operator names somewhere it may go, which is
+        // the same rule `--allow` enforces for `exec`: a capability with an empty
+        // list behind it can only ever refuse.
+        let mut forward_targets: Vec<ForwardTarget> = Vec::new();
+        let mut forward_limits = ForwardLimits::default();
+        let mut forward_connect_timeout = std::time::Duration::from_secs(10);
 
         let mut index = 0;
         while index < argv.len() {
@@ -230,6 +271,30 @@ impl Options {
                         .parse()
                         .map_err(|e| format!("--max-exec-output: {e}"))?
                 }
+                "--allow-forward-to" => {
+                    let text = take(&argv, &mut index, "--allow-forward-to")?;
+                    forward_targets.push(
+                        parse_forward_target(&text)
+                            .map_err(|e| format!("--allow-forward-to: {e}"))?,
+                    );
+                }
+                "--forward-ttl" => {
+                    let secs: u64 = take(&argv, &mut index, "--forward-ttl")?
+                        .parse()
+                        .map_err(|e| format!("--forward-ttl: {e}"))?;
+                    forward_limits.max_ttl = std::time::Duration::from_secs(secs);
+                }
+                "--forward-max-uses" => {
+                    forward_limits.max_uses = take(&argv, &mut index, "--forward-max-uses")?
+                        .parse()
+                        .map_err(|e| format!("--forward-max-uses: {e}"))?
+                }
+                "--forward-connect-timeout" => {
+                    let secs: u64 = take(&argv, &mut index, "--forward-connect-timeout")?
+                        .parse()
+                        .map_err(|e| format!("--forward-connect-timeout: {e}"))?;
+                    forward_connect_timeout = std::time::Duration::from_secs(secs);
+                }
                 other => {
                     return Err(format!("unknown argument {other:?}\n\n{USAGE}"));
                 }
@@ -261,6 +326,9 @@ impl Options {
                 token_ttl_secs,
                 max_exec_output_bytes,
                 initial_tokens,
+                forward_targets,
+                forward_limits,
+                forward_connect_timeout,
             });
         }
         Ok(Self {
@@ -276,11 +344,14 @@ impl Options {
             token_ttl_secs,
             max_exec_output_bytes,
             initial_tokens,
+            forward_targets,
+            forward_limits,
+            forward_connect_timeout,
         })
     }
 
     /// Anything the flag parser could not judge without the server's own rules.
-    fn into_config(self) -> Result<Self, String> {
+    fn into_config(mut self) -> Result<Self, String> {
         if self.socket_path.is_none() && self.tcp_addr.is_none() {
             return Err("nowhere to connect: pass --unix <path> and/or --tcp <host:port>".into());
         }
@@ -292,6 +363,36 @@ impl Options {
         }
         if self.capabilities.is_empty() {
             return Err("every capability has been turned off; there is no server left".into());
+        }
+        // Naming a target *is* the decision to forward; asking for the capability on
+        // top of that would be two ways to say one thing.
+        if !self.forward_targets.is_empty()
+            && !self.capabilities.contains(&RemoteCapability::PortForward)
+        {
+            self.capabilities.push(RemoteCapability::PortForward);
+        }
+        if self.forward_targets.is_empty()
+            && self.capabilities.contains(&RemoteCapability::PortForward)
+        {
+            return Err(
+                "--capability port-forward with no --allow-forward-to would refuse \
+                        every forward; name at least one target (host:port), or drop the \
+                        capability"
+                    .into(),
+            );
+        }
+        if self.forward_limits.max_uses == 0 {
+            return Err("--forward-max-uses 0 would refuse every forward before it started".into());
+        }
+        if self.forward_limits.max_ttl.is_zero() {
+            return Err("--forward-ttl 0 would expire a grant before it could be used".into());
+        }
+        if self.forward_connect_timeout.is_zero() {
+            return Err(
+                "--forward-connect-timeout 0 would refuse a target before it had a \
+                        chance to answer"
+                    .into(),
+            );
         }
         Ok(self)
     }
@@ -362,17 +463,129 @@ mod tests {
     /// would send the operator looking for a typo in a missing feature.
     #[test]
     fn a_capability_that_does_not_exist_says_which_one_and_why() {
-        for (name, fragment) in [
-            ("port-forward", "port forwarding"),
-            ("interactive-pty", "PTY"),
-            ("detached-agent", "detached"),
-        ] {
+        for (name, fragment) in [("interactive-pty", "PTY"), ("detached-agent", "detached")] {
             let err = parse(&["--workspace", ".", "--capability", name]).expect_err("not offered");
             assert!(err.contains(fragment), "{name}: {err}");
         }
         let err = parse(&["--workspace", ".", "--capability", "telepathy"])
             .expect_err("not a capability");
         assert!(err.contains("tool-execution"), "{err}");
+    }
+
+    /// Forwarding is off until a target is named, and naming one is enough: the
+    /// capability follows the allowlist rather than being a second thing to remember.
+    #[test]
+    fn forwarding_stays_off_until_a_target_is_named_and_then_comes_on() {
+        let plain = parse(&["--workspace", ".", "--unix", "/tmp/s"]).expect("defaults");
+        assert!(plain.forward_targets.is_empty());
+        assert!(
+            !plain.capabilities.contains(&RemoteCapability::PortForward),
+            "{:?}",
+            plain.capabilities
+        );
+
+        let options = parse(&[
+            "--workspace",
+            ".",
+            "--allow-forward-to",
+            "127.0.0.1:8090",
+            "--allow-forward-to",
+            "[::1]:6379",
+            "--unix",
+            "/tmp/s",
+        ])
+        .expect("parsed")
+        .into_config()
+        .expect("a target is a decision to forward");
+        assert_eq!(
+            options
+                .forward_targets
+                .iter()
+                .map(ForwardTarget::to_text)
+                .collect::<Vec<_>>(),
+            vec!["127.0.0.1:8090", "[::1]:6379"]
+        );
+        assert!(
+            options
+                .capabilities
+                .contains(&RemoteCapability::PortForward),
+            "{:?}",
+            options.capabilities
+        );
+    }
+
+    /// The ceilings are the server's, so they are worth being able to set; and a
+    /// ceiling of zero is a refusal waiting to happen, which is refused now.
+    #[test]
+    fn the_forward_ceilings_can_be_raised_but_not_zeroed() {
+        let options = parse(&[
+            "--workspace",
+            ".",
+            "--allow-forward-to",
+            "127.0.0.1:8090",
+            "--forward-ttl",
+            "90",
+            "--forward-max-uses",
+            "3",
+            "--forward-connect-timeout",
+            "2",
+            "--unix",
+            "/tmp/s",
+        ])
+        .expect("parsed");
+        assert_eq!(options.forward_limits.max_ttl.as_secs(), 90);
+        assert_eq!(options.forward_limits.max_uses, 3);
+        assert_eq!(options.forward_connect_timeout.as_secs(), 2);
+
+        for (flag, value) in [
+            ("--forward-ttl", "0"),
+            ("--forward-max-uses", "0"),
+            ("--forward-connect-timeout", "0"),
+        ] {
+            let err = parse(&[
+                "--workspace",
+                ".",
+                "--allow-forward-to",
+                "127.0.0.1:8090",
+                flag,
+                value,
+                "--unix",
+                "/tmp/s",
+            ])
+            .expect("parsed")
+            .into_config()
+            .expect_err("a zero ceiling forwards nothing");
+            assert!(err.contains(flag), "{flag}={value}: {err}");
+        }
+    }
+
+    /// Advertising forwarding with nowhere allowed to go collects refusals; the
+    /// operator is told which flag is missing instead.
+    #[test]
+    fn the_capability_alone_is_refused_because_it_can_only_refuse() {
+        let err = parse(&[
+            "--workspace",
+            ".",
+            "--capability",
+            "port-forward",
+            "--unix",
+            "/tmp/s",
+        ])
+        .expect("parsed")
+        .into_config()
+        .expect_err("no targets");
+        assert!(err.contains("--allow-forward-to"), "{err}");
+
+        let err = parse(&[
+            "--workspace",
+            ".",
+            "--allow-forward-to",
+            "8090",
+            "--unix",
+            "/tmp/s",
+        ])
+        .expect_err("a port with no host is not a target");
+        assert!(err.contains("--allow-forward-to"), "{err}");
     }
 
     #[test]

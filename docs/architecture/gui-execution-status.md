@@ -134,7 +134,7 @@ require platform runners, external services, or a later milestone.
 | M1 hunk/workspace Diff | Partial | Adapter boundaries and real local workspace/Diff tests; production `xai-hunk-tracker` partial-hunk/binary integration remains open |
 | M2 persistence/workspace | Partial | SQLite/JSON boundaries, single-root workspace/Git/terminal/attachment safety, Git edge fixtures and destructive-action confirmations; multi-root mapping, PTY, NFS/multiprocess, remote Git auth and full migration remain open |
 | M3 ecosystem | Partial | Read-only marketplace discovery and root allowlist are tested; MCP/plugin install/execute, skill/workflow/subagent integration and credential-backed connection tests remain open |
-| M4 remote | Partial | Typed capability/host-key boundary; clean Linux remote, SSH transport and forwarding remain open |
+| M4 remote | Partial | Typed capability/host-key boundary; the CLI transport is lab-verified on clean Linux including local port forwarding, while SSH transport and any remote surface in this UI remain open |
 | M5 release | Partial | GUI CI, signing preflight, fail-closed installers and policy fixtures; packaging/signing assets/SBOM/performance/manual acceptance remain open |
 | Maintenance P1 | Open | Real GitHub signing preflight, Windows runner, npm ownership and release asset verification |
 

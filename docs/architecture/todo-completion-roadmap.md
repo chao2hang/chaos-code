@@ -101,7 +101,7 @@
 2. 实现版本协商、签名 server 部署、loopback/stdio/Unix socket 绑定、一次性握手、replay 防护和回滚。
 3. 按批准策略实现连接状态、heartbeat、backoff、cancel、重连、凭据失效；在真实受控主机故障注入。
 4. 把文件、Range、搜索、写入审批、Git、Diff、附件与 Agent 请求挂在同一已认证远程 workspace session；路径类型防止远程路径进入本机 API/deep link。
-5. 端口转发独立明确 local vs remote forwarding，处理冲突、随机本地端口、WebSocket、Host/Origin/Cookie/auth 和 session teardown。
+5. 端口转发独立明确 local vs remote forwarding，处理冲突、随机本地端口、WebSocket、Host/Origin/Cookie/auth 和 session teardown。其中转发性质的部分已交付（`chaos-remote forward`：`--allow-forward-to` 白名单、ticket 绑定目标、占用即点名拒绝、`--listen 0` 随机端口、WebSocket 与 HTTP 均穿过隧道、授权用完本地监听口自关，remote forwarding 方向保留名字但拒绝）；Host/Origin/Cookie/auth 属于把用户应用端口映射进 Web UI 的 preview proxy，本仓库尚无该实现，仍开放。
 6. WSL 先做 capability/transport spike；Docker/Podman 只有单独 Owner/威胁模型/runner 获批才加入。
 
 **通过条件**：由独立受控 Linux host 完成安装/升级/回滚/文件/Git/Diff/审批流程；错误 host key、错误凭据、断线、磁盘满、服务器升级失败均拒绝并恢复；本地端口/子进程/临时凭据在结束后清理；Unsupported PTY/detached Agent 明确显示不支持。

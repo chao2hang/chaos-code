@@ -22,17 +22,23 @@
 pub mod client;
 pub mod credentials;
 pub mod endpoint;
+pub mod forward;
 pub mod install;
 pub mod path;
 pub mod protocol;
 pub mod server;
 
 pub use client::{
-    DEFAULT_HANDSHAKE_TIMEOUT, DialRetry, ExecOutcome, FileContents, InstallOutcome, ReadWindow,
-    RemoteWorkspace, RemoteWorkspaceConfig, SearchOutcome, SessionState, WriteFile,
+    DEFAULT_HANDSHAKE_TIMEOUT, DialRetry, ExecOutcome, FileContents, ForwardGrant, ForwardPipe,
+    InstallOutcome, ReadWindow, RemoteWorkspace, RemoteWorkspaceConfig, SearchOutcome,
+    SessionState, WriteFile,
 };
-pub use credentials::{RedeemError, SessionToken, TokenFile, TokenVault};
+pub use credentials::{
+    ForwardLimits, ForwardTarget, ForwardTicket, ForwardTicketError, ForwardVault, RedeemError,
+    SessionToken, TokenFile, TokenVault,
+};
 pub use endpoint::{HostKeyPolicy, RemoteCapability, RemoteEndpoint, parse_capability};
+pub use forward::{ForwardStats, ForwardTunnel, parse_forward_target, parse_listen_endpoint};
 pub use install::{ARTIFACT_NAME, CommitOutcome, DEFAULT_INSTALL_DIR, InstallLayout, sha256_hex};
 pub use path::{PathRejection, RemotePath};
 pub use protocol::{

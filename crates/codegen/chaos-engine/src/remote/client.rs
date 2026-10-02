@@ -18,9 +18,9 @@ use std::path::Path;
 use std::time::Duration;
 
 use base64::Engine as _;
-use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, ReadHalf, WriteHalf};
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, ReadHalf, WriteHalf, join};
 
-use super::credentials::SessionToken;
+use super::credentials::{ForwardTarget, ForwardTicket, SessionToken};
 use super::endpoint::{RemoteCapability, RemoteEndpoint};
 use super::install::sha256_hex;
 use super::protocol::*;
@@ -210,6 +210,25 @@ pub struct InstallOutcome {
     pub current: bool,
     pub previous_version: Option<String>,
 }
+
+/// What a forward grant agreed to, as the server stated it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ForwardGrant {
+    pub ticket: ForwardTicket,
+    /// What the ticket may reach. The server echoes the normalised form, so a
+    /// listener can print the truth about where it points.
+    pub target: ForwardTarget,
+    /// How long the ticket will be honoured. A tunnel should treat this as its own
+    /// deadline, because the server will.
+    pub expires_in: Duration,
+    /// How many connections the ticket may open. One per TCP connection accepted,
+    /// not one per session — a page that loads twelve assets spends twelve.
+    pub max_uses: usize,
+}
+
+/// The two halves of a session stream, joined back into the single byte stream a
+/// forwarded connection has become.
+pub type ForwardPipe<S> = tokio::io::Join<ReadHalf<S>, WriteHalf<S>>;
 
 /// An authorised session with a remote workspace.
 #[derive(Debug)]
@@ -763,6 +782,72 @@ where
         })
     }
 
+    // ---- forwarding --------------------------------------------------------
+
+    /// Authorise a local port forward to `target` and get the credential a
+    /// forwarded connection will present.
+    ///
+    /// The answer is the operator's, not this client's wish: the target has to be
+    /// one the server was told it may connect to, and the lifetime and connection
+    /// budget come back clamped to what it will agree to. What is returned is
+    /// therefore what a listener is allowed to claim, which is why the caller reads
+    /// the numbers off this reply rather than off its own arguments.
+    pub async fn forward_grant(
+        &mut self,
+        target: &ForwardTarget,
+        ttl: Duration,
+        max_uses: usize,
+    ) -> Result<ForwardGrant, RemoteError> {
+        require(&self.granted, RemoteCapability::PortForward)?;
+        let payload = self
+            .request(Request::ForwardGrant {
+                host: target.host.clone(),
+                port: target.port,
+                // Seconds are the unit on the wire; sub-second grants are
+                // meaningless for a tunnel, so this rounds up rather than to zero.
+                ttl_secs: ttl.as_secs().max(1),
+                max_uses,
+            })
+            .await?;
+        let Payload::ForwardGrant {
+            ticket,
+            host,
+            port,
+            expires_in_secs,
+            max_uses,
+        } = payload
+        else {
+            return Err(wrong_reply("forward_grant", &payload));
+        };
+        Ok(ForwardGrant {
+            ticket: ForwardTicket::from_text(&ticket),
+            target: ForwardTarget::new(host, port),
+            expires_in: Duration::from_secs(expires_in_secs),
+            max_uses,
+        })
+    }
+
+    /// Spend a forward ticket: have the server connect the target the ticket was
+    /// minted for, then take back the stream.
+    ///
+    /// After this returns, nothing on the stream is framed any more — it carries
+    /// the target's bytes. That is why this consumes the session: a
+    /// [`RemoteWorkspace`] that could still send a request would be a value whose
+    /// next reply is somebody else's payload.
+    pub async fn into_forward_stream(
+        mut self,
+    ) -> Result<(ForwardTarget, ForwardPipe<S>), RemoteError> {
+        require(&self.granted, RemoteCapability::PortForward)?;
+        let payload = self.request(Request::ForwardOpen).await?;
+        let Payload::ForwardOpen { host, port } = payload else {
+            return Err(wrong_reply("forward_open", &payload));
+        };
+        Ok((
+            ForwardTarget::new(host, port),
+            join(self.reader, self.writer),
+        ))
+    }
+
     // ---- the loop ----------------------------------------------------------
 
     /// Send one request and return its successful payload.
@@ -1044,6 +1129,8 @@ fn request_name(body: &Request) -> String {
         Request::Write { .. } => "write".into(),
         Request::Diff { .. } => "diff".into(),
         Request::Exec { .. } => "exec".into(),
+        Request::ForwardGrant { .. } => "forward_grant".into(),
+        Request::ForwardOpen => "forward_open".into(),
         Request::InstallBegin { .. } => "install_begin".into(),
         Request::InstallChunk { .. } => "install_chunk".into(),
         Request::InstallFinish { .. } => "install_finish".into(),
@@ -1080,6 +1167,8 @@ fn wrong_reply(wanted: &str, got: &Payload) -> RemoteError {
                 Payload::Write { .. } => "write",
                 Payload::Diff { .. } => "diff",
                 Payload::Exec { .. } => "exec",
+                Payload::ForwardGrant { .. } => "forward_grant",
+                Payload::ForwardOpen { .. } => "forward_open",
                 Payload::InstallBegin { .. } => "install_begin",
                 Payload::InstallChunk { .. } => "install_chunk",
                 Payload::InstallFinish { .. } => "install_finish",

@@ -23,8 +23,9 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use chaos_engine::remote::{
-    DialRetry, InstallOutcome, RemoteCapability, RemoteEndpoint, RemoteError, RemoteWorkspace,
-    RemoteWorkspaceConfig, SessionToken, TokenFile, WriteFile, parse_capability,
+    DialRetry, ForwardTarget, ForwardTunnel, InstallOutcome, RemoteCapability, RemoteEndpoint,
+    RemoteError, RemoteWorkspace, RemoteWorkspaceConfig, SessionToken, TokenFile, WriteFile,
+    parse_capability, parse_forward_target, parse_listen_endpoint,
 };
 
 const USAGE: &str = "\
@@ -66,6 +67,17 @@ commands
   diff [path] [--staged] [--context N]
   exec [--cwd PATH] [--timeout SECONDS] -- <program> [args...]
   install <version> --from FILE
+  forward --to HOST:PORT [--listen ADDR] [--connections N] [--ttl SECONDS]
+                          (default --listen 0, i.e. a free loopback port, up to
+                          16 connections, for 1800s — both of which the server
+                          answers with what it will actually agree to)
+                          listen on a local port and carry every connection that
+                          arrives there to that service, through the session;
+                          the listener is on loopback and goes when the grant
+                          does, so nothing is left forwarding behind
+
+forwarding is the client's local end: the service it names is somewhere the
+*server* can reach, and the server only agrees to targets its operator listed.
 
 Exit status: 0 on success, 1 when the request failed. `exec` alone propagates the
 remote program's exit status, so a failing build and a failing connection are
@@ -347,6 +359,70 @@ async fn dispatch(session: &mut AnySession, args: &Args) -> Result<u8, String> {
             }
             Ok(if outcome.current { 0 } else { 1 })
         }
+        Command::Forward {
+            target,
+            listen,
+            connections,
+            ttl,
+        } => {
+            // The grant is asked for first, so a refusal — a target the operator
+            // did not list, a capability this session does not hold — arrives
+            // before anything is listening that would suggest otherwise.
+            let grant = session
+                .forward_grant(target, *ttl, *connections)
+                .await
+                .map_err(describe)?;
+            let (allowed, lifetime) = (grant.max_uses, grant.expires_in);
+            let (endpoint, config) = args.endpoint_and_config();
+            let mut tunnel = ForwardTunnel::bind(endpoint, grant, config, *listen)
+                .await
+                .map_err(describe)?;
+            let local = tunnel.local_addr().map_err(describe)?;
+            // The port is only known once the listener exists, and whoever started
+            // the forward needs it before they can use it. It goes to stderr so
+            // that stdout stays a single thing to parse.
+            eprintln!(
+                "chaos-remote: forwarding {local} -> {target} (the server agreed to \
+                 {allowed} connection(s) for {}s); Ctrl-C or closing the session stops it",
+                lifetime.as_secs()
+            );
+            let stats = match args.transport()? {
+                #[cfg(unix)]
+                Transport::Unix(path) => {
+                    let mut dial = move || Box::pin(redial_unix(path.clone()));
+                    tunnel.serve(&mut dial).await
+                }
+                Transport::Tcp(addr) => {
+                    let mut dial = move || Box::pin(redial_tcp(addr));
+                    tunnel.serve(&mut dial).await
+                }
+            }
+            .map_err(describe)?;
+            if args.json {
+                emit(&serde_json::json!({
+                    "listen": local.to_string(),
+                    "target": target.to_string(),
+                    "connections": stats.connections,
+                    "refused": stats.refused,
+                    "bytes_to_target": stats.bytes_to_target,
+                    "bytes_to_client": stats.bytes_to_client,
+                }))?;
+            } else if !args.quiet {
+                println!(
+                    "forwarded {} connection(s) to {target}: {} bytes to the target, \
+                     {} back{}",
+                    stats.connections,
+                    stats.bytes_to_target,
+                    stats.bytes_to_client,
+                    if stats.refused == 0 {
+                        String::new()
+                    } else {
+                        format!(", {} refused", stats.refused)
+                    },
+                );
+            }
+            Ok(0)
+        }
     }
 }
 
@@ -399,6 +475,10 @@ impl AnySession {
     proxy!(
         install_artifact(version: &str, artifact: &[u8])
             -> Result<InstallOutcome, RemoteError>
+    );
+    proxy!(
+        forward_grant(target: &ForwardTarget, ttl: Duration, max_uses: usize)
+            -> Result<chaos_engine::remote::ForwardGrant, RemoteError>
     );
 
     fn protocol_version(&self) -> u32 {
@@ -502,6 +582,12 @@ enum Command {
     Install {
         version: String,
         from: PathBuf,
+    },
+    Forward {
+        target: ForwardTarget,
+        listen: std::net::SocketAddr,
+        connections: usize,
+        ttl: Duration,
     },
 }
 
@@ -699,6 +785,11 @@ impl Args {
                 &["--from"],
                 1,
             ),
+            "forward" => (
+                forward_command(&rest)?,
+                &["--to", "--listen", "--connections", "--ttl"],
+                0,
+            ),
             other => {
                 return Err(format!("unknown command {other:?}\n\n{USAGE}"));
             }
@@ -751,34 +842,10 @@ impl Args {
 
     /// Open the session: one transport, one credential, one handshake.
     async fn connect(&self) -> Result<AnySession, String> {
-        let transport = match (&self.unix, &self.tcp) {
-            (Some(path), None) => Transport::Unix(path.clone()),
-            (None, Some(addr)) => Transport::Tcp(*addr),
-            _ => return Err("no transport chosen".into()),
-        };
+        let transport = self.transport()?;
         let (token, remaining) = self.credential()?;
-        let capabilities = self
-            .capabilities
-            .clone()
-            .unwrap_or_else(|| RemoteCapability::all().to_vec());
-        let endpoint = RemoteEndpoint {
-            host: self.host.clone(),
-            port: self.port,
-            host_key: chaos_engine::remote::HostKeyPolicy::Strict,
-            capabilities: capabilities.clone(),
-        };
+        let (endpoint, config) = self.endpoint_and_config();
         let token = SessionToken::from_text(&token);
-        let config = RemoteWorkspaceConfig::new()
-            .capabilities(capabilities)
-            // The handshake waits for a reply like any other request, so the same
-            // bound covers it. A peer that accepts a connection and then says
-            // nothing is the case this is for, and it looks the same from here
-            // whether the tunnel reached a silent host or a wrong port.
-            .handshake_timeout(
-                self.reply_timeout
-                    .unwrap_or(chaos_engine::remote::DEFAULT_HANDSHAKE_TIMEOUT),
-            )
-            .request_timeout(self.reply_timeout);
         // Dialed first, and only the dial is retried: presenting the credential
         // twice is not possible even by accident, because the first attempt spends
         // it whether or not a reply comes back.
@@ -809,6 +876,47 @@ impl Args {
             )),
         };
         Ok(session)
+    }
+
+    /// Which server this invocation talks to, and with what agreement.
+    ///
+    /// Shared with `forward` because a forwarded connection is a second connection
+    /// to the same server: the endpoint and the config have to match the session's
+    /// or the grant would be presented under different terms than it was issued.
+    fn endpoint_and_config(&self) -> (RemoteEndpoint, RemoteWorkspaceConfig) {
+        let capabilities = self
+            .capabilities
+            .clone()
+            .unwrap_or_else(|| RemoteCapability::all().to_vec());
+        let endpoint = RemoteEndpoint {
+            host: self.host.clone(),
+            port: self.port,
+            host_key: chaos_engine::remote::HostKeyPolicy::Strict,
+            capabilities: capabilities.clone(),
+        };
+        (
+            endpoint,
+            RemoteWorkspaceConfig::new()
+                .capabilities(capabilities)
+                // The handshake waits for a reply like any other request, so the same
+                // bound covers it. A peer that accepts a connection and then says
+                // nothing is the case this is for, and it looks the same from here
+                // whether the tunnel reached a silent host or a wrong port.
+                .handshake_timeout(
+                    self.reply_timeout
+                        .unwrap_or(chaos_engine::remote::DEFAULT_HANDSHAKE_TIMEOUT),
+                )
+                .request_timeout(self.reply_timeout),
+        )
+    }
+
+    /// The transport named on the command line, exactly one of them.
+    fn transport(&self) -> Result<Transport, String> {
+        match (&self.unix, &self.tcp) {
+            (Some(path), None) => Ok(Transport::Unix(path.clone())),
+            (None, Some(addr)) => Ok(Transport::Tcp(*addr)),
+            _ => Err("no transport chosen".into()),
+        }
     }
 
     /// Open the stream, waiting out a transport that is not up yet.
@@ -903,6 +1011,89 @@ fn describe(error: RemoteError) -> String {
     }
 }
 
+/// Port 0: ask the operating system for whatever is free.
+const DEFAULT_FORWARD_LISTEN: &str = "0";
+
+/// How many connections a `forward` asks for when it was not told. A page load can
+/// reasonably produce a dozen; a port scan produces thousands, and the server's own
+/// ceiling is what actually decides.
+const DEFAULT_FORWARD_CONNECTIONS: usize = 16;
+
+/// How long a `forward` asks its grant to last when it was not told. The server
+/// clamps it, so this is only the longest the client will hope for.
+const DEFAULT_FORWARD_TTL: Duration = Duration::from_secs(30 * 60);
+
+/// Read the `forward` command.
+///
+/// All four of its flags describe the grant rather than the conversation, and the
+/// part worth writing down is what each one defaults to: the target is the only
+/// thing with no sensible default, and the local end defaults to a free loopback
+/// port rather than a fixed one, because a fixed one is a collision waiting to
+/// happen on a machine already running something.
+fn forward_command(rest: &[String]) -> Result<Command, String> {
+    let target = parse_forward_target(
+        &value_of(rest, "--to")?
+            .ok_or("forward needs --to HOST:PORT, the service as the *server* reaches it")?,
+    )?;
+    let listen = parse_listen_endpoint(
+        &value_of(rest, "--listen")?.unwrap_or_else(|| DEFAULT_FORWARD_LISTEN.to_string()),
+    )?;
+    let connections = match value_of(rest, "--connections")? {
+        Some(text) => {
+            let uses: usize = text.parse().map_err(|e| format!("--connections: {e}"))?;
+            if uses == 0 {
+                return Err("--connections 0 would forward nothing".into());
+            }
+            uses
+        }
+        None => DEFAULT_FORWARD_CONNECTIONS,
+    };
+    let ttl = match value_of(rest, "--ttl")? {
+        Some(text) => {
+            let secs: u64 = text.parse().map_err(|e| format!("--ttl: {e}"))?;
+            if secs == 0 {
+                return Err(
+                    "--ttl 0 would let the grant expire before anything could use it".into(),
+                );
+            }
+            Duration::from_secs(secs)
+        }
+        None => DEFAULT_FORWARD_TTL,
+    };
+    Ok(Command::Forward {
+        target,
+        listen,
+        connections,
+        ttl,
+    })
+}
+
+/// Dial the server again for one forwarded connection.
+///
+/// A forward is not a second command on the session's own connection: each
+/// connection that arrives on the local port gets its own, handshaked with the
+/// forward ticket rather than the session token. The session that asked for the
+/// grant stays open meanwhile, because closing it is what revokes them.
+#[cfg(unix)]
+async fn redial_unix(path: PathBuf) -> Result<tokio::net::UnixStream, RemoteError> {
+    tokio::net::UnixStream::connect(&path)
+        .await
+        .map_err(|e| RemoteError::Io {
+            context: format!("dial {} again for a forwarded connection", path.display()),
+            reason: e.to_string(),
+        })
+}
+
+/// The TCP form of [`redial_unix`].
+async fn redial_tcp(addr: std::net::SocketAddr) -> Result<tokio::net::TcpStream, RemoteError> {
+    tokio::net::TcpStream::connect(addr)
+        .await
+        .map_err(|e| RemoteError::Io {
+            context: format!("dial {addr} again for a forwarded connection"),
+            reason: e.to_string(),
+        })
+}
+
 fn take(argv: &[String], index: &mut usize, flag: &str) -> Result<String, String> {
     *index += 1;
     argv.get(*index)
@@ -931,6 +1122,10 @@ fn positional(argv: &[String], nth: usize) -> Option<String> {
                     | "--context"
                     | "--cwd"
                     | "--timeout"
+                    | "--to"
+                    | "--listen"
+                    | "--connections"
+                    | "--ttl"
             );
             index += usize::from(takes_value) + 1;
             continue;
@@ -988,6 +1183,10 @@ fn positional_count(argv: &[String]) -> usize {
                     | "--context"
                     | "--cwd"
                     | "--timeout"
+                    | "--to"
+                    | "--listen"
+                    | "--connections"
+                    | "--ttl"
             );
             index += usize::from(takes_value) + 1;
             continue;
@@ -1019,6 +1218,109 @@ mod tests {
 
     fn parse(argv: &[&str]) -> Result<Args, String> {
         Args::parse(argv.iter().map(|arg| (*arg).to_string()).collect())
+    }
+
+    /// A forward needs exactly one thing from the person typing it: the service.
+    /// Everything else has a default that cannot collide with anything, and the
+    /// server's answer — not these numbers — is what the tunnel is finally bound by.
+    #[test]
+    fn a_forward_needs_only_the_service_it_points_at() {
+        let args = parse(&[
+            "--tcp",
+            "127.0.0.1:4100",
+            "--token",
+            "t",
+            "forward",
+            "--to",
+            "10.0.0.7:6379",
+        ])
+        .expect("parsed");
+        match args.command {
+            Command::Forward {
+                target,
+                listen,
+                connections,
+                ttl,
+            } => {
+                assert_eq!(target.to_text(), "10.0.0.7:6379");
+                assert_eq!(listen.port(), 0, "the default local end is a free port");
+                assert!(listen.ip().is_loopback(), "{listen} is not local");
+                assert_eq!(connections, DEFAULT_FORWARD_CONNECTIONS);
+                assert_eq!(ttl, DEFAULT_FORWARD_TTL);
+            }
+            other => panic!("wrong command: {other:?}"),
+        }
+    }
+
+    /// The two ends are different questions and are spelled separately: where to
+    /// listen here, what to reach there.
+    #[test]
+    fn each_end_of_a_forward_is_named_separately_and_a_positional_is_refused() {
+        let args = parse(&[
+            "--tcp",
+            "127.0.0.1:4100",
+            "--token",
+            "t",
+            "forward",
+            "--to",
+            "[::1]:8080",
+            "--listen",
+            "8081",
+            "--connections",
+            "3",
+            "--ttl",
+            "60",
+        ])
+        .expect("parsed");
+        match args.command {
+            Command::Forward {
+                target,
+                listen,
+                connections,
+                ttl,
+            } => {
+                assert_eq!(target.to_text(), "[::1]:8080");
+                assert_eq!(listen.to_string(), "127.0.0.1:8081", "a bare port is local");
+                assert_eq!(connections, 3);
+                assert_eq!(ttl, Duration::from_secs(60));
+            }
+            other => panic!("wrong command: {other:?}"),
+        }
+
+        // A value taken from a flag must not be counted as an argument of the
+        // command, which is the difference between this and a refusal.
+        assert!(
+            parse(&[
+                "--tcp",
+                "127.0.0.1:4100",
+                "--token",
+                "t",
+                "forward",
+                "--to",
+                "h:1",
+                "extra"
+            ])
+            .expect_err("forward takes no positional")
+            .contains("at most 0"),
+        );
+    }
+
+    /// A forward that would forward nothing is a typo, and the listener is refused
+    /// before it exists rather than after.
+    #[test]
+    fn a_forward_that_could_forward_nothing_is_refused_before_it_starts() {
+        let refused = |extra: &[&str]| {
+            let mut argv = vec!["--tcp", "127.0.0.1:4100", "--token", "t", "forward"];
+            argv.extend_from_slice(extra);
+            parse(&argv).expect_err("nothing here should start a forward")
+        };
+        assert!(refused(&[]).contains("--to"), "no target at all");
+        assert!(refused(&["--to", ""]).contains("host:port"));
+        assert!(refused(&["--to", "redis-only"]).contains("host:port"));
+        assert!(refused(&["--to", "h:0"]).contains("cannot be 0"));
+        assert!(refused(&["--to", "h:1", "--connections", "0"]).contains("--connections"));
+        assert!(refused(&["--to", "h:1", "--ttl", "0"]).contains("--ttl"));
+        assert!(refused(&["--to", "h:1", "--listen", "0.0.0.0:8080"]).contains("loopback"));
     }
 
     /// `exec` is the one command whose arguments are not ours, and the only way to
