@@ -283,6 +283,45 @@ jobs:
   # Local hooks are opt-in per clone (scripts/install-hooks.sh), so this job is
   # what actually enforces the rule. e9d8fa9 pushed 24 environment dumps with
   # live API keys to the public remote; nothing in CI would have noticed.
+  # Both installers refuse a bad release, and both prove it against a release this
+  # repository built itself -- `install.sh` in a container with `--network none`,
+  # `install.ps1` under pwsh inside a network namespace whose only route is loopback.
+  # Neither had run anywhere but the machine that wrote them, and a lab nobody else
+  # executes is indistinguishable from a check that was deleted. This job runs both
+  # on every push. It needs no network at run time, no release and no signing key:
+  # the fixture generates its own key pair and signs its own artifact, and the two
+  # labs deliberately share that fixture so the installers cannot be tested against
+  # two different releases.
+  installer-integrity:
+    name: installer integrity labs
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      # The fixture signs with Ed25519 through python3-cryptography, which the runner
+      # image does not carry. apt rather than pip: the Ubuntu 24.04 image marks its
+      # interpreter externally managed, and the lab wants the same distro build a
+      # Debian user would have anyway. Neither lab has a skip path -- a missing
+      # `pwsh`, a missing crypto binding, or a kernel that will not create a network
+      # namespace exits 2 with a named reason, so the job cannot go green by absence.
+      - name: Install the crypto binding the fixture signs with
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends python3-cryptography
+          python3 -c 'import cryptography; print("cryptography", cryptography.__version__)'
+          # Recorded here rather than left to the lab, so a runner-image change shows up
+          # at once instead of three minutes into the docker step.
+          pwsh --version
+          unshare -rn true
+
+      - name: install.sh refuses a bad release (container, no network)
+        run: ./scripts/install-integrity-in-docker.sh
+
+      - name: install.ps1 refuses a bad release (pwsh, loopback-only namespace)
+        run: ./scripts/install-integrity-powershell.sh
+
   secret-scan:
     name: secret scan
     runs-on: ubuntu-latest
