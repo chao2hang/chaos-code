@@ -180,6 +180,16 @@ the already-installed artifact byte-identical. Both controls are run against the
 real release in a stock Debian container by
 `scripts/install-sh-in-docker.sh`.
 
+That run can only ever see a correct release, so `scripts/install-integrity-in-docker.sh`
+supplies the other half: it builds a release of its own (artifact, `SHA256SUMS` row,
+`.sig` over the artifact bytes), serves it through the mirror path the installer already
+supports, and runs in a container with `--network none`. A tampered artifact, a
+`SHA256SUMS` recomputed to match the tampering, a missing sidecar and a valid-but-foreign
+key are each refused there, with nothing installed behind any of them -- so the accepting
+line above is known to be a check rather than a message. That lab also measured the cost
+of the two escape hatches: skipping the checksum alone still leaves the signature refusing
+the tampered artifact; skipping both installs it.
+
 Measured that way is `install.sh` only. `install.ps1` and `install.bat` have the
 same guards and the same ordering in source -- a structural test asserts the key
 and the crypto probe precede the download in the PowerShell one -- but nothing
@@ -234,3 +244,8 @@ Exit status: 0 verified, 1 refused, 2 no public key compiled in.
 5. `scripts/install-sh-in-docker.sh` if the installers or the key changed: it is
    the only check that installs the published artifact on a machine that has
    never seen this repository, using only the key the script ships with.
+6. `scripts/install-integrity-in-docker.sh` whenever the installer's *verification
+   logic* changed. It needs no network and no release: it builds and signs its own
+   artifact and then tries to make the installer accept a wrong one. Run it after
+   step 5, not instead of it -- a fixture only proves the refusals, the real feed
+   only proves the acceptance.

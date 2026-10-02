@@ -283,7 +283,7 @@ download_github() {
   local connect_timeout="${3:-12}"
   local max_time="${4:-0}"
   local cand http_code curl_args=()
-  local last_err=""
+  local last_err="" reasons=""
 
   curl_args=(-fL --retry 2 --retry-delay 1 --connect-timeout "$connect_timeout")
   if [[ "$max_time" -gt 0 ]]; then
@@ -301,6 +301,7 @@ download_github() {
       # Reject tiny HTML error pages from broken proxies
       if head -c 16 "$dest" 2>/dev/null | grep -qi '<!DOCTYPE\|<html'; then
         last_err="HTML response from ${cand}"
+        reasons="${reasons}${last_err}"$'\n'
         rm -f "$dest"
         continue
       fi
@@ -308,10 +309,15 @@ download_github() {
       return 0
     fi
     last_err="HTTP ${http_code} from ${cand}"
+    reasons="${reasons}${last_err}"$'\n'
     rm -f "$dest"
   done < <(github_url_candidates "$origin_url")
 
   echo "error: download failed for ${origin_url}" >&2
+  # Every distinct reason, in order: the candidate that answered at all -- an HTML
+  # error page, a 404, a truncated body -- is the one worth reading, and origin is
+  # tried last, so reporting only the final failure hides it.
+  printf '%s' "$reasons" | awk 'NF && !seen[$0]++ { print "  why: " $0 }' | head -4 >&2
   echo "  last: ${last_err}" >&2
   echo "  tip: set CHAOS_GITHUB_MIRROR=https://ghfast.top  or  CHAOS_CN=1" >&2
   return 1

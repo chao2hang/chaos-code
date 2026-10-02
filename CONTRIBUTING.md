@@ -146,18 +146,40 @@ chaos-remote --tcp 127.0.0.1:17788 --token-file ~/.chaos/remote-tokens \
   --connect-wait 30 --reply-timeout 120 ping
 ```
 
+A service on the remote host can be reached from here the way `ssh -L` reaches it.
+The server decides which services are reachable at all, by address and port, and
+naming one is the only way to enable forwarding:
+
+```sh
+# On the remote host: forward to the review app it can already reach.
+chaos-remote-server --workspace ~/src/beeper --tcp 127.0.0.1:7788 \
+  --token-file ~/.chaos/remote-tokens --allow-forward-to 127.0.0.1:3000
+
+# On the machine doing the work: a local loopback port, gone when the grant is.
+chaos-remote --tcp 127.0.0.1:17788 --token-file ~/.chaos/remote-tokens \
+  forward --to 127.0.0.1:3000 --listen 0
+```
+
 Three properties are deliberate and are what the tests around this code exist
 to hold:
 
 - **Loopback only.** Both `--tcp` forms refuse a routable address at parse time.
   The tunnel carries the trust; the transport does not attempt TLS, and a
-  `ssh -L`-style tunnel is assumed rather than implemented here.
+  `ssh -L`-style tunnel is assumed rather than implemented here. The local end of a
+  forward is held to the same rule, because a forwarded service on a routable
+  interface is a published service.
 - **One-time credentials.** Each credential opens exactly one session. Reuse is
   refused as reuse, a credential past its TTL is refused as expired, and the
   client removes the credential it spent from the file it was given.
-- **Nothing is faked.** `--capability interactive-pty`, `port-forward` and
-  `detached-agent` are refused with a reason, and `exec` runs only programs
-  named by `--allow`.
+- **Nothing is faked.** `--capability interactive-pty` and `detached-agent` are
+  refused with a reason, and `exec` runs only programs named by `--allow`.
+- **Forwarding is the operator's call, not the session's.** A server with no
+  `--allow-forward-to` has nowhere a forward may go and refuses to start when asked
+  to advertise the capability anyway. A forward is authorised by a *ticket* kept in
+  its own vault, bound to one `host:port`, valid for a bounded number of
+  connections, and withdrawn when the session that asked for it closes; it opens no
+  session and reads nothing. Remote forwarding (`ssh -R`, the server listening on
+  the client's behalf) is not implemented and is refused by name.
 - **Both waits are bounded, and they are different waits.** `--connect-wait` re-dials
   for as long as it is told — the delay doubles up to 2s — and repeats *only* the dial,
   so waiting for a tunnel that is still coming up can never burn a credential.
@@ -176,7 +198,13 @@ has never seen this repository, reaches it through a `socat` tunnel, and checks
 reading, searching, writing, `git diff`, tool execution, path-escape refusals,
 credential handling, a full disk, an artifact on a `noexec` filesystem, a dropped
 connection, and both clocks: a late reply, a tunnel that appears late, and a peer
-that accepts the connection and never speaks.
+that accepts the connection and never speaks. Forwarding is checked the same way: a
+`python3 -m http.server` on the remote host is fetched through a forward from the
+other container and the digest compared against the file on that host's disk, an
+unlisted target is refused although something really is listening on it, a grant of
+two connections is seen to end the forward and release the local port by itself, and
+a hand-written RFC 6455 service on the remote host completes a WebSocket handshake
+through the tunnel and returns a file the developer container cannot read.
 
 ```sh
 scripts/remote-acceptance-in-docker.sh 2>&1 | tee "remote-acceptance-$(date +%F).log"
@@ -326,6 +354,24 @@ signature line honest: a valid-but-foreign key must refuse and leave the install
 artifact byte-identical, and a present-but-blank key must refuse *before* the download
 starts.
 
+A feed that only ever serves correct artifacts cannot say what the checks do when the
+bytes are wrong, and a refusal you cannot trigger looks exactly like a check that was
+skipped. `scripts/install-integrity-in-docker.sh` is the negative half, and it needs
+neither the network nor the signing key. It builds its own release -- an artifact, its
+`SHA256SUMS` row, and an Ed25519 `.sig` over the artifact bytes -- and serves it through the
+ghproxy-style mirror path `install.sh` already supports
+(`${CHAOS_GITHUB_MIRROR}/https://github.com/...`), so the code under test is the real
+download path with only its origin replaced. The container runs with `--network none`:
+loopback works, DNS resolves nothing, and the run asserts that `github.com` is unreachable
+before it installs anything. Scenarios: a tampered artifact; `SHA256SUMS` *recomputed* to
+match the tampered bytes so that only the signature stands in the way; a missing sidecar;
+a valid key that is not ours; a blank key (which must refuse with zero requests logged);
+a manifest with no row for this asset; a manifest served as a 200-with-HTML error page; an
+empty download. Every refusal is checked twice -- for the reason and for `bin/chaos` being
+absent -- and the two documented escape hatches are measured rather than trusted: skipping
+the checksum alone still leaves the signature refusing the tampered artifact, while
+skipping both installs it, which is what "you are then trusting the download" means.
+
 `scripts/ci/check-powershell-syntax.py` covers the Windows installer as far as a
 non-Windows machine honestly can. `scripts/install.ps1` carried a stray closing brace for
 a stretch of history -- introduced by the commit that restructured its signature block --
@@ -347,6 +393,8 @@ script fails on exactly that and says which pins are missing.
 
 Both scripts download a hundred-ish megabyte artifact; `install-sh-in-docker.sh
 --skip-wrong-key` trades the foreign-key control for one fewer download.
+`install-integrity-in-docker.sh` downloads nothing at all -- its artifact is a shell script
+-- so it is the one to run when there is no network or no access to the release feed.
 
 ### Why the installers embed the signing key
 

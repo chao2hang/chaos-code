@@ -1,0 +1,83 @@
+# What this is: the release-integrity lab -- scripts/install.sh driven against a release
+# this repository built itself, inside a container that has no route to the network.
+#
+# Reproduce with:  scripts/install-integrity-in-docker.sh
+#                  (needs docker only; building chaos-install-lab:local is the single
+#                  step that touches the network, and the lab image is Debian bookworm
+#                  slim plus curl, python3 and python3-cryptography)
+#
+# Host: Ubuntu 22.04 x86_64, Docker 29.8.1, python3-cryptography 38.0.4 inside the
+# container (the distro build, i.e. what a Debian user would have).
+# Commit under test: 60e215fe plus the working-tree change to scripts/install.sh this
+# lab's own html-sums check called for.
+#
+# The first run of this lab was 33/34: `html-sums` refused the release but the log did
+# not say why, and investigating that is what found the defect now fixed in
+# download_github -- only the last candidate's reason was reported, so a mirror that
+# answers 200 with an HTML error page was blamed on whichever public mirror failed last.
+# The run below is after that fix.
+#
+
+== the machine doing the installing
+   image:      chaos-install-lab:local
+   installer:  /home/chaos/hunt/dev/projects/chaos-code/scripts/install.sh (working tree)
+   release:    a fixture built inside the container, version 9.9.9 (never published)
+   network:    --network none
+   ok  github.com is unreachable from this container (curl exit 6, could not resolve host)
+   ok  loopback is up, which is all the fake release endpoint needs
+   ok  no prior install to inherit: no ~/.chaos, no chaos on PATH, no cargo
+   ok  fixture built for this host's asset: chaos-linux-x64
+fixture signature verifies
+   ok  the fixture's own signature verifies against its own key before any installer runs
+   ok  three distinct keys are in play: the installer's built-in one, the fixture's, and a second valid one
+   ok  the fake release endpoint is listening on 127.0.0.1:8099
+
+== the path a user actually takes
+   ok  install from the fixture completed (exit 0)
+   ok  checksum OK, against SHA256SUMS served by the fixture
+   ok  signature OK, over the artifact bytes, under the key passed in the environment
+   ok  what landed on disk runs and reports 9.9.9
+   ok  bin/chaos and bin/agent are relative symlinks to downloads/chaos-9.9.9-linux-x86_64, with chaos-latest beside it
+   ok  the fixture was the first candidate tried and no public mirror or origin was ever attempted
+only chaos-linux-x64 , SHA256SUMS and the sidecar
+   ok  the only files the fixture ever served were the artifact, SHA256SUMS and the sidecar
+   ok  a second run is a no-op instead of a second download
+
+== what a wrong byte does
+   ok  tampered: refused (exit 1) -- error: checksum mismatch for chaos-linux-x64
+   ok  tampered: nothing installed behind the refusal
+
+== what a recomputed SHA256SUMS does
+   ok  forged-sums: refused (exit 1) -- error: signature verification FAILED for chaos-linux-x64
+   ok  forged-sums: nothing installed behind the refusal
+
+== what a missing sidecar does
+   ok  no-sig: refused (exit 1) -- error: required signature sidecar unavailable for chaos-linux-x64
+   ok  no-sig: nothing installed behind the refusal
+
+== what a valid key that is not ours does
+   ok  wrong-key: refused (exit 1) -- error: signature verification FAILED for chaos-linux-x64
+   ok  wrong-key: nothing installed behind the refusal
+
+== what a blank key does, and when
+   ok  present-but-blank key is refused with the reason, not treated as unset
+   ok  it refused before requesting anything: the fixture served zero files
+
+== what an unusable manifest or a truncated transfer does
+   ok  no-sums-entry: refused (exit 1) -- error: SHA256SUMS has no entry for chaos-linux-x64
+   ok  no-sums-entry: nothing installed behind the refusal
+   ok  html-sums: refused a manifest served as an HTML error page (exit 1)
+   ok  html-sums: the guard that fired is the one that rejects proxy error pages, and nothing was installed
+   ok  empty-artifact: refused (exit 1) -- error: download failed for https://github.com/chao2hang/chaos-code/releases/
+   ok  empty-artifact: nothing installed behind the refusal
+
+== what the two escape hatches actually cost
+   ok  with the checksum skipped, the tampered artifact is still refused by the signature
+   ok  skipping the signature alone still verifies the checksum
+   note  both hatches together install a tampered artifact, which is what 'you are then trusting the download' means; no document in this repo sets either
+
+== summary
+   34 checks run against a release this lab built itself, in a container with no route to the network
+   notes:
+  - both hatches together install a tampered artifact, which is what 'you are then trusting the download' means; no document in this repo sets either
+all 34 release-integrity checks passed
