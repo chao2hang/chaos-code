@@ -80,6 +80,20 @@ impl AgentView {
                     self.last_context_click_at = Some(now);
                     return InputOutcome::Action(Action::ShowContextInfo);
                 }
+                // The accumulated-token chip advertises itself as clickable
+                // (it dims/brightens on hover), so it has to do the thing:
+                // `/usage`, the same surface the prompt command opens.
+                if self.hit_total_tokens.contains(mouse.column, mouse.row) {
+                    let now = Instant::now();
+                    let too_soon = self.last_usage_chip_click_at.is_some_and(|t| {
+                        now.duration_since(t).as_millis() < CONTEXT_CLICK_DEBOUNCE_MS
+                    });
+                    if too_soon {
+                        return InputOutcome::Unchanged;
+                    }
+                    self.last_usage_chip_click_at = Some(now);
+                    return InputOutcome::Action(Action::ShowUsage);
+                }
                 if self.hit_plan_button.contains(mouse.column, mouse.row) {
                     if self.plan_approval_view.is_some() {
                         self.reopen_plan_approval();
@@ -1635,5 +1649,67 @@ mod tests {
             "double-click must expand the chip"
         );
         assert_eq!(agent.prompt.textarea.text(), text);
+    }
+
+    /// The accumulated-token chip brightens on hover, which promises that
+    /// clicking it does something. It has to run `/usage`: the popup this chip
+    /// used to open was retired, and with it the only branch that read these
+    /// clicks, leaving a hoverable chip that answered nothing.
+    #[test]
+    fn accumulated_token_chip_click_opens_usage() {
+        use crate::app::agent_view::test_fixtures::make_agent;
+        let mut agent = make_agent();
+        agent.hit_total_tokens.rect = Some(Rect::new(70, 0, 12, 1));
+        let outcome = agent.handle_mouse(&MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 74,
+            row: 0,
+            modifiers: KeyModifiers::empty(),
+        });
+        assert!(
+            matches!(outcome, InputOutcome::Action(Action::ShowUsage)),
+            "a chip click must open /usage, got {outcome:?}"
+        );
+    }
+
+    /// Same debounce the context bar uses, so one double-click cannot fire two
+    /// `session/usage` requests in minimal mode.
+    #[test]
+    fn accumulated_token_chip_click_is_debounced() {
+        use crate::app::agent_view::test_fixtures::make_agent;
+        let mut agent = make_agent();
+        agent.hit_total_tokens.rect = Some(Rect::new(70, 0, 12, 1));
+        let click = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 74,
+            row: 0,
+            modifiers: KeyModifiers::empty(),
+        };
+        assert!(matches!(
+            agent.handle_mouse(&click),
+            InputOutcome::Action(Action::ShowUsage)
+        ));
+        assert!(
+            matches!(agent.handle_mouse(&click), InputOutcome::Unchanged),
+            "the second click of a double-click must not fire a second request"
+        );
+    }
+
+    /// The chip is only clickable where it was actually drawn.
+    #[test]
+    fn click_outside_the_accumulated_token_chip_is_not_usage() {
+        use crate::app::agent_view::test_fixtures::make_agent;
+        let mut agent = make_agent();
+        agent.hit_total_tokens.rect = Some(Rect::new(70, 0, 12, 1));
+        let outcome = agent.handle_mouse(&MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 82,
+            row: 0,
+            modifiers: KeyModifiers::empty(),
+        });
+        assert!(
+            !matches!(outcome, InputOutcome::Action(Action::ShowUsage)),
+            "a click one cell past the chip must not open /usage"
+        );
     }
 }

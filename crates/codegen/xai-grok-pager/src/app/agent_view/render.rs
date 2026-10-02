@@ -4611,17 +4611,6 @@ impl AgentView {
             self.hit_goal_close.rect = close_rect;
             self.frame_occluder_rects.push(overlay_rect);
         }
-        if let Some(ref usage) = self.usage_detail {
-            let overlay_rect = crate::views::usage_detail::usage_detail_area(area, usage);
-            let close_rect = crate::views::usage_detail::render_usage_detail(
-                buf,
-                overlay_rect,
-                usage,
-                self.hit_usage_close.hovered,
-            );
-            self.hit_usage_close.rect = close_rect;
-            self.frame_occluder_rects.push(overlay_rect);
-        }
         if self.show_workflows {
             let runs = self.workflow_runs_newest_first();
             let mut view = self.workflows_view.clone();
@@ -5079,7 +5068,7 @@ mod feedback_input_tests {
     }
     /// Substring check that ignores the wide-glyph continuation cells: a CJK glyph occupies two cells, and the
     /// trailing one reads `" "` when the buffer is flattened cell-by-cell, so `发送` comes back as `发 送`
-    /// (the same artifact `views::usage_detail` documents for its `contains` helper).
+    /// and a plain `str::contains` over the flattened screen would miss it.
     fn screen_contains(screen: &str, needle: &str) -> bool {
         let strip = |s: &str| s.replace(' ', "");
         strip(screen).contains(&strip(needle))

@@ -1738,15 +1738,12 @@ pub struct AgentView {
         agent_client_protocol::SessionUpdate,
         crate::acp::meta::NotificationMeta,
     )>,
-    /// Accumulated-token chip in the status bar (click opens `usage_detail`).
+    /// Accumulated-token chip in the status bar. Clicking it dispatches
+    /// [`crate::actions::Action::ShowUsage`], the same surface `/usage` opens.
     pub hit_total_tokens: HitArea,
-    pub hit_usage_close: HitArea,
-    /// Full-screen usage overlay; `Some` while open.
-    pub usage_detail: Option<crate::views::usage_detail::UsageDetail>,
-    /// Monotonic request generation for the usage overlay. Incremented on
-    /// every open so a late result from a previously closed overlay cannot
-    /// populate a newly opened one.
-    pub(crate) usage_detail_generation: u64,
+    /// Timestamp of the last accepted accumulated-token chip click, debounced
+    /// like the context bar so one double-click cannot fire two fetches.
+    pub last_usage_chip_click_at: Option<Instant>,
     /// Largest total-token count seen across turns (drives the status chip).
     pub max_total_tokens_seen: u64,
     /// The wake turn currently streaming, if any. See [`RunningWakeTurn`].

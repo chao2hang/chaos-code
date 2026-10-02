@@ -42,7 +42,6 @@ impl AgentView {
             || self.block_viewer.is_some()
             || self.gboom.is_some()
             || self.show_goal_detail
-            || self.usage_detail.is_some()
             || self.btw_focused
             || self.blocking_card().is_some()
             || self.plan_approval_view.is_some()
@@ -138,7 +137,6 @@ impl AgentView {
             && self.highlighted_link_idx.is_none()
             && !self.show_goal_detail
             && !self.show_workflows
-            && self.usage_detail.is_none()
             && self.rewind_state.is_none()
             && self.btw_state.is_none()
             && self.jump_state.is_none()
@@ -540,41 +538,6 @@ impl AgentView {
             if let Event::Mouse(mouse) = ev
                 && matches!(mouse.kind, MouseEventKind::Moved)
                 && self.hit_goal_close.update_hover(mouse.column, mouse.row)
-            {
-                return InputOutcome::Changed;
-            }
-            if matches!(ev, Event::Mouse(_) | Event::Paste(_)) {
-                return InputOutcome::Changed;
-            }
-        }
-        if self.usage_detail.is_some() {
-            if let Event::Key(key) = ev
-                && key.kind != KeyEventKind::Release
-            {
-                match key.code {
-                    KeyCode::Esc | KeyCode::Char('q') => {
-                        self.close_usage_detail();
-                        return InputOutcome::Changed;
-                    }
-                    _ => {
-                        return InputOutcome::Changed;
-                    }
-                }
-            }
-            // The close button, and the status chip that opened it — the
-            // overlay is centered, so the chip stays visible and clicking it
-            // again reads as a toggle. Both go through the same close helper.
-            if let Event::Mouse(mouse) = ev
-                && matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
-                && (self.hit_usage_close.contains(mouse.column, mouse.row)
-                    || self.hit_total_tokens.contains(mouse.column, mouse.row))
-            {
-                self.close_usage_detail();
-                return InputOutcome::Changed;
-            }
-            if let Event::Mouse(mouse) = ev
-                && matches!(mouse.kind, MouseEventKind::Moved)
-                && self.hit_usage_close.update_hover(mouse.column, mouse.row)
             {
                 return InputOutcome::Changed;
             }
@@ -2606,119 +2569,6 @@ mod rich_textarea_paste_routing_tests {
             Some("a中\nlineb")
         );
         assert_eq!(agent.prompt.text(), "hidden prompt");
-    }
-}
-#[cfg(test)]
-mod usage_detail_tests {
-    use super::test_fixtures::make_agent;
-    use super::{AgentPane, AgentView};
-    use crate::actions::ActionRegistry;
-    use crate::app::app_view::InputOutcome;
-    use crate::views::usage_detail::UsageDetail;
-    use crossterm::event::{
-        Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
-    };
-    use ratatui::layout::Rect;
-
-    fn key(code: KeyCode) -> Event {
-        Event::Key(KeyEvent::new(code, KeyModifiers::NONE))
-    }
-
-    fn click(col: u16, row: u16) -> Event {
-        Event::Mouse(MouseEvent {
-            kind: MouseEventKind::Down(MouseButton::Left),
-            column: col,
-            row,
-            modifiers: KeyModifiers::NONE,
-        })
-    }
-
-    /// An agent with the usage overlay open, focused on the prompt (the state
-    /// a chip click leaves behind).
-    fn overlay_agent() -> AgentView {
-        let mut agent = make_agent();
-        agent.set_active_pane(AgentPane::Prompt, true);
-        agent.usage_detail = Some(UsageDetail::Loading);
-        agent
-    }
-
-    #[test]
-    fn esc_closes_the_overlay() {
-        let mut agent = overlay_agent();
-        let reg = ActionRegistry::defaults();
-        assert!(matches!(
-            agent.handle_input(&key(KeyCode::Esc), &reg),
-            InputOutcome::Changed
-        ));
-        assert!(agent.usage_detail.is_none(), "Esc must close the overlay");
-    }
-
-    #[test]
-    fn q_closes_the_overlay() {
-        let mut agent = overlay_agent();
-        let reg = ActionRegistry::defaults();
-        agent.handle_input(&key(KeyCode::Char('q')), &reg);
-        assert!(agent.usage_detail.is_none());
-    }
-
-    /// The overlay swallows every other key — typing behind it must not reach
-    /// the prompt.
-    #[test]
-    fn other_keys_do_not_reach_the_prompt() {
-        let mut agent = overlay_agent();
-        let reg = ActionRegistry::defaults();
-        agent.handle_input(&key(KeyCode::Char('x')), &reg);
-        assert!(agent.usage_detail.is_some(), "overlay stays open");
-        assert_eq!(
-            agent.prompt.text(),
-            "",
-            "keystroke must not reach the prompt"
-        );
-    }
-
-    #[test]
-    fn close_button_click_closes_the_overlay() {
-        let mut agent = overlay_agent();
-        let reg = ActionRegistry::defaults();
-        agent.hit_usage_close.rect = Some(Rect::new(50, 3, 3, 1));
-        agent.handle_input(&click(51, 3), &reg);
-        assert!(agent.usage_detail.is_none());
-        assert!(
-            agent.hit_usage_close.rect.is_none(),
-            "the close-button rect must not outlive the popup"
-        );
-    }
-
-    /// The status chip is still visible under the centered overlay, so a
-    /// second click on it reads as a toggle.
-    #[test]
-    fn second_chip_click_closes_the_overlay() {
-        let mut agent = overlay_agent();
-        let reg = ActionRegistry::defaults();
-        agent.hit_total_tokens.rect = Some(Rect::new(70, 0, 10, 1));
-        agent.handle_input(&click(72, 0), &reg);
-        assert!(agent.usage_detail.is_none());
-    }
-
-    /// A click anywhere else is swallowed, not passed through to the
-    /// scrollback underneath.
-    #[test]
-    fn stray_click_is_swallowed() {
-        let mut agent = overlay_agent();
-        let reg = ActionRegistry::defaults();
-        assert!(matches!(
-            agent.handle_input(&click(5, 5), &reg),
-            InputOutcome::Changed
-        ));
-        assert!(agent.usage_detail.is_some());
-    }
-
-    /// While open, the overlay owns Esc — the dashboard back-out guard must
-    /// not steal it.
-    #[test]
-    fn overlay_is_an_esc_consumer() {
-        let agent = overlay_agent();
-        assert!(!agent.no_esc_consumer_pending());
     }
 }
 /// Pasting while the scrollback pane holds the keyboard (prompt unfocused) must land in the composer.

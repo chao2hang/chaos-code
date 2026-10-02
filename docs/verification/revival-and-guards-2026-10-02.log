@@ -1,0 +1,203 @@
+Verification log — never-compiled file verdicts, cheatsheet registry guard,
+usage-chip click repair, persist-arm guard fix.
+Date: 2026-10-02. Host: Linux, cargo --offline, RUST_MIN_STACK=16777216,
+CARGO_BUILD_JOBS=2. Every mutation below was reverted with `cmp` verifying a
+byte-identical restore.
+
+=======================================================================
+1. Never-compiled ("orphan") test files — compile probe
+=======================================================================
+Method: restore each file from HEAD, append a temporary
+`#[cfg(test)] #[path = "…"] mod …_probe;` declaration to its host, run
+`cargo check -p xai-grok-pager --offline --lib --tests`, count error sites
+attributed to that file, then restore the host from a .bak copy (trap EXIT).
+
+  cargo_check_exit=101
+  distinct error codes: 30
+  app/dispatch/tests/usage_partial_failure.rs : 27 error sites   <- WRONG HOST, see §2
+  views/dashboard/render_tests.rs             : 0  error sites
+  views/dashboard/state_tests.rs              : 0  error sites
+  views/shortcuts_help_tests.rs               : 3  error sites   (E0425 x3)
+
+  restored mod.rs / render.rs / state.rs / shortcuts_help.rs
+  WORKING_TREE_UNCHANGED   (before/after `git status --porcelain` diff empty)
+
+=======================================================================
+2. usage_partial_failure.rs — corrected host, then coverage-set comparison
+=======================================================================
+Real host is app/dispatch/tests/mod.rs (app/dispatch/mod.rs:71 is a plain
+`mod tests;`). That mod declares 20 siblings (auth, billing, cta_e2e,
+dashboard, jump, modes, notes, permissions, prompt, queue_release, rewind,
+router, session, settings, status, status_line, task_result, transcript,
+turn, voice) and does NOT declare usage_partial_failure.
+
+  orphan fns: 17 unique names, 11 of them #[test] fns
+  comm -23 orphan-vs-(all 20 siblings)  -> 11 test names + 6 local helpers
+  orphan-only tests: 11 / 11  (zero coverage anywhere else)
+
+Verdict: NOT duplicated coverage. Deleted because the code it drives is gone:
+  $ grep -rn 'fn fill_session_usage_detail\|fn fill_aggregate_usage_detail' src/
+  (no output — no such definitions remain anywhere in the crate)
+/usage is served by views::usage_modal via open_usage_info_modal; there is no
+aggregate-usage fetch effect at all (`grep 'Usage' app/effects/mod.rs` shows
+only Effect::FetchSessionUsage -> TaskResult::SessionUsageComplete/Failed).
+
+That search exposed the dead surface fixed in §5.
+
+=======================================================================
+3. dashboard render_tests / state_tests — superseded by inline tests
+=======================================================================
+  render_tests : 234 fn hits, 120 unique names vs host render.rs
+                 (8,774 lines, 277 fn/test hits) -> orphan-only 0
+  state_tests  : 511 fn hits, 265 unique names vs host state.rs
+                 (10,652 lines, 547 hits)        -> orphan-only 0
+Both compile (0 error sites) but assert nothing the inline modules do not
+already assert. Deleted.
+
+=======================================================================
+4. shortcuts_help_tests.rs — 12 orphan-only names, adjudicated one by one
+=======================================================================
+3 error sites are E0425 for UNDO_LONG_HELP / REDO_LONG_HELP /
+SCROLLBACK_SEARCH_LONG_HELP. Live file defines only PASTE_LONG_HELP:
+  $ grep -oE '[A-Z][A-Z_0-9]*_LONG_HELP' views/shortcuts_help.rs | sort -u
+  PASTE_LONG_HELP
+and grep -i 'undo|redo|stash|history' over the non-test part of the live file
+returns nothing.
+
+  superseded — behaviour deliberately inverted since:
+    enter_on_search_pseudo_row_opens_detail
+      -> live has enter_on_search_pseudo_row_does_not_open_detail
+    search_pseudo_row_expands
+      -> live has search_pseudo_row_does_not_expand
+    build_entries_includes_find_search_in_simple_mode
+      -> live has build_entries_omits_scrollback_search_in_simple_mode
+  obsolete — feature removed:
+    build_entries_lists_undo_and_redo,
+    build_entries_includes_history_row_in_both_modes,
+    build_entries_dims_editor_pseudo_rows_outside_prompt_and_dashboard
+    (no undo/redo pseudo rows; no History/Undo/Redo ActionId variants)
+  still valid — PORTED into the live inline module:
+    build_entries_lists_prompt_stash_with_ctrl_s_and_alt_s
+    ActionId::StashPrompt still carries a full ActionDef with Ctrl+S and
+    Alt+S (actions/defaults.rs:713) and is handled in
+    app/agent_view/prompt.rs:629.
+
+New guard added next to it — build_entries is registry-driven ("All
+registered actions are included") and nothing walked the registry, so a newly
+bound action could stay invisible in the cheatsheet forever:
+  views::shortcuts_help::tests::every_keybound_registry_action_gets_a_cheatsheet_row
+
+  $ cargo test -p xai-grok-pager --offline --lib -- views::shortcuts_help
+  test views::shortcuts_help::tests::build_entries_lists_prompt_stash_with_ctrl_s_and_alt_s ... ok
+  test views::shortcuts_help::tests::every_keybound_registry_action_gets_a_cheatsheet_row ... ok
+  test result: ok. 67 passed; 0 failed; 0 ignored; 9176 filtered out
+
+Non-vacuity — inject into build_entries (file restored byte-identically):
+  if def.id == crate::actions::ActionId::StashPrompt { continue; }
+
+  test views::shortcuts_help::tests::build_entries_lists_prompt_stash_with_ctrl_s_and_alt_s ... FAILED
+  test views::shortcuts_help::tests::every_keybound_registry_action_gets_a_cheatsheet_row ... FAILED
+  keybound actions with no row in the shortcuts cheatsheet: ["StashPrompt (label \"暂存\")"]
+  test result: FAILED. 0 passed; 2 failed
+  RESTORED_BYTE_IDENTICAL
+
+=======================================================================
+5. Dead usage_detail overlay; accumulated-token chip click repaired
+=======================================================================
+Evidence the overlay was unreachable from any user action:
+  $ grep -rn 'usage_detail = ' src/            # production writes
+  app/agent_view/viewer.rs:  self.usage_detail = None;      # the only one
+  $ grep -rn 'usage_detail_generation' src/
+  session.rs init to 0 and the field declaration only — never incremented
+  $ grep -rn 'hit_total_tokens' src/
+  render.rs  : rect written every frame; hover drives chip styling
+  input.rs   : hover updated every frame
+  input.rs   : the ONLY click branch lived inside `if self.usage_detail.is_some()`
+So the chip highlighted on hover and clicking it did nothing.
+
+Repair (app/mouse.rs, next to the hit_context handler):
+  if self.hit_total_tokens.contains(mouse.column, mouse.row) {
+      … debounce with last_usage_chip_click_at / CONTEXT_CLICK_DEBOUNCE_MS …
+      return InputOutcome::Action(Action::ShowUsage);
+  }
+ShowUsage is the action `/usage` itself produces (dispatch/router.rs:1034 ->
+dispatch_show_usage), so no second usage surface was invented.
+
+Removed as dead: views/usage_detail.rs (849 lines) + its `pub mod`,
+fields usage_detail / hit_usage_close / usage_detail_generation and their
+initializers, close_usage_detail, the render block, the notices.rs tip-occlusion
+term, the input.rs key-swallow + no_esc_consumer_pending term, the panes.rs
+wheel guard, the minimal/api.rs surface term, and the 6 tests that set
+`agent.usage_detail = Some(UsageDetail::Loading)` by hand.
+
+  $ grep -rn 'usage_detail' --include=*.rs crates/     # after
+  (no output)
+
+Tests, driven through the real AgentView::handle_mouse entry:
+  $ cargo test -p xai-grok-pager --offline --lib -- app::mouse::tests accumulated_token
+  test app::mouse::tests::accumulated_token_chip_click_opens_usage ... ok
+  test app::mouse::tests::accumulated_token_chip_click_is_debounced ... ok
+  test app::mouse::tests::click_outside_the_accumulated_token_chip_is_not_usage ... ok
+  test result: ok. 14 passed; 0 failed; 9211 filtered out
+
+=======================================================================
+6. every_persist_setting_key_has_a_persist_arm — scanner was panicking
+=======================================================================
+Written this round; first full-suite run failed:
+
+  thread '…every_persist_setting_key_has_a_persist_arm' panicked at
+  app/effects/tests.rs:868:36: begin <= end (474 <= 171) when slicing
+  ` but apply_setting_rollback has \` …
+  test result: FAILED. 9199 passed; 1 failed
+
+Cause: the block was taken as "nearest { to nearest }", so prose that merely
+names the effect (this suite's own doc comment, and the assert text in
+app/dispatch/tests/settings.rs:1222) was parsed as a dispatch site.
+
+Fix: only whitespace may separate `Effect::PersistSetting` from `{`; the block
+end is found by depth counting that skips string literals; plus two
+self-checks — every struct literal must be classified (literal key or
+runtime-built) and the site count must exceed 50, otherwise the test reports
+that the scanner itself is broken rather than reporting a clean sweep.
+
+  $ cargo test -p xai-grok-pager --offline --lib -- every_persist_setting_key_has_a_persist_arm
+  test app::effects::tests::every_persist_setting_key_has_a_persist_arm ... ok
+  test result: ok. 1 passed; 0 failed
+
+  Real dispatch sites in the crate: 97
+  $ grep -rn 'Effect::PersistSetting {' --include=*.rs src/ | wc -l
+
+Non-vacuity — rename the persist arm's key in app/effects/helpers.rs
+(restored byte-identically):
+  "session.auto_retry_incomplete_end_turn" => {   ->   "…_TYPO" => {
+
+  1 PersistSetting key(s) have no arm in `persist_setting`, so toggling them
+  in /settings can never persist:
+  [("session.auto_retry_incomplete_end_turn", "setters.rs")]
+  test result: FAILED. 0 passed; 1 failed
+  RESTORED_BYTE_IDENTICAL
+
+=======================================================================
+7. Census state after the deletions and the wiring
+=======================================================================
+  $ python3 scripts/ci/panic-site-census.py --write-uncompiled scripts/ci/uncompiled-sources.txt
+  wrote scripts/ci/uncompiled-sources.txt (0 files)
+  $ python3 scripts/ci/panic-site-census.py --check-uncompiled scripts/ci/uncompiled-sources.txt
+  uncompiled set holds: 0 files, exactly as recorded
+  $ python3 scripts/ci/panic-site-census.py --check-baseline scripts/ci/panic-site-baseline.tsv
+  baseline holds: 97 crates, 0 fewer production sites than recorded
+
+scripts/ci/uncompiled-sources.txt is empty: no source file in this workspace is
+unreachable from a crate root, so every .rs file is seen by the compiler and by
+clippy. Production panic-site counts did not rise anywhere.
+
+=======================================================================
+Coverage limits (stated, not hidden)
+=======================================================================
+* No terminal is available in this environment, so the chip's visual styling
+  and the disappearance of the old popup are proven by handle_mouse's return
+  value and by source reachability, not by a rendered frame.
+* The `/usage` fetch + render path after Action::ShowUsage is covered by the
+  existing usage-modal tests; this round did not modify it.
+* The cheatsheet guard reads the built-in registry; a registry assembled at
+  runtime with user keymap overrides is not exercised.
