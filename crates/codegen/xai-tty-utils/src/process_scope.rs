@@ -194,6 +194,10 @@ impl ProcessScope {
     /// the child together with the owning `Arc<ProcessGroup>`, which the caller
     /// must keep alive for the scope to be able to reap the child.
     ///
+    /// The `ProcessScope` handle itself must also outlive the child: dropping
+    /// the last handle reaps every group the scope still owns, so a scope held
+    /// only across the spawn call kills the child it just started.
+    ///
     /// [`prepare`]: Self::prepare
     /// [`enroll`]: Self::enroll
     #[must_use = "the returned Arc<ProcessGroup> must be kept alive or the scope cannot reap the child"]

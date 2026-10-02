@@ -129,6 +129,12 @@ impl Implementation {
     }
 }
 
+impl std::fmt::Display for Implementation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} {}", self.name, self.version)
+    }
+}
+
 /// A request from the side that opened the session.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "method")]
@@ -242,6 +248,9 @@ pub enum Payload {
         /// broader than what the client asked for.
         capabilities: Vec<RemoteCapability>,
         session_id: String,
+        /// What one read or one write may carry. Said at handshake rather than
+        /// discovered by a large file being refused halfway through a transfer.
+        max_transfer_bytes: u64,
     },
     List {
         entries: Vec<Entry>,
@@ -320,7 +329,10 @@ pub enum RemoteError {
     /// The request itself is not sensible.
     InvalidRequest { reason: String },
     /// The file on disk is not the one the caller meant to replace.
-    Conflict { expected_sha256: String, actual_sha256: String },
+    Conflict {
+        expected_sha256: String,
+        actual_sha256: String,
+    },
     /// A `git` invocation could not be run or did not succeed.
     Git { reason: String },
     /// A program could not be run.
@@ -412,20 +424,14 @@ where
             context: "write frame length".into(),
             reason: e.to_string(),
         })?;
-    writer
-        .write_all(bytes)
-        .await
-        .map_err(|e| RemoteError::Io {
-            context: "write frame body".into(),
-            reason: e.to_string(),
-        })?;
-    writer
-        .flush()
-        .await
-        .map_err(|e| RemoteError::Io {
-            context: "flush frame".into(),
-            reason: e.to_string(),
-        })
+    writer.write_all(bytes).await.map_err(|e| RemoteError::Io {
+        context: "write frame body".into(),
+        reason: e.to_string(),
+    })?;
+    writer.flush().await.map_err(|e| RemoteError::Io {
+        context: "flush frame".into(),
+        reason: e.to_string(),
+    })
 }
 
 /// Read one frame, refusing anything over [`MAX_FRAME_BYTES`].
@@ -468,10 +474,9 @@ where
     T: Serialize,
     W: tokio::io::AsyncWrite + Unpin,
 {
-    let bytes =
-        serde_json::to_vec(value).map_err(|e| RemoteError::Protocol {
-            reason: format!("serialise: {e}"),
-        })?;
+    let bytes = serde_json::to_vec(value).map_err(|e| RemoteError::Protocol {
+        reason: format!("serialise: {e}"),
+    })?;
     write_frame(writer, &bytes).await
 }
 
@@ -549,9 +554,15 @@ mod tests {
             offset: Some(3),
             len: Some(9),
         };
-        send(&mut a, &Envelope { id: 7, body: &request })
-            .await
-            .unwrap();
+        send(
+            &mut a,
+            &Envelope {
+                id: 7,
+                body: &request,
+            },
+        )
+        .await
+        .unwrap();
         let got: Envelope<Request> = recv(&mut b, MAX_FRAME_BYTES).await.unwrap().unwrap();
         assert_eq!(got.id, 7);
         assert_eq!(got.body, request);
@@ -561,8 +572,17 @@ mod tests {
     async fn a_clean_end_of_stream_is_not_an_error() {
         let (a, mut b) = tokio::io::duplex(64);
         drop(a);
-        assert!(recv::<Envelope<Request>, _>(&mut b, MAX_FRAME_BYTES).await.is_ok());
-        assert!(recv::<Envelope<Request>, _>(&mut b, MAX_FRAME_BYTES).await.unwrap().is_none());
+        assert!(
+            recv::<Envelope<Request>, _>(&mut b, MAX_FRAME_BYTES)
+                .await
+                .is_ok()
+        );
+        assert!(
+            recv::<Envelope<Request>, _>(&mut b, MAX_FRAME_BYTES)
+                .await
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[tokio::test]
@@ -572,14 +592,15 @@ mod tests {
         let handle = tokio::spawn(async move {
             // Announce 1 GiB and never send it. A reader that trusted the
             // length would allocate before knowing anything about the peer.
-            a.write_all(&(1024u32 * 1024 * 1024).to_be_bytes()).await.unwrap();
+            a.write_all(&(1024u32 * 1024 * 1024).to_be_bytes())
+                .await
+                .unwrap();
             a.flush().await.unwrap();
         });
-        let err = read_frame(&mut b, MAX_FRAME_BYTES).await.expect_err("must refuse");
-        assert!(
-            matches!(err, RemoteError::Protocol { .. }),
-            "{err:?}"
-        );
+        let err = read_frame(&mut b, MAX_FRAME_BYTES)
+            .await
+            .expect_err("must refuse");
+        assert!(matches!(err, RemoteError::Protocol { .. }), "{err:?}");
         handle.abort();
     }
 
@@ -603,8 +624,7 @@ mod tests {
 
     #[test]
     fn a_missing_optional_field_reads_as_none() {
-        let request: Request =
-            serde_json::from_str(r#"{"method":"read","path":"a.txt"}"#).unwrap();
+        let request: Request = serde_json::from_str(r#"{"method":"read","path":"a.txt"}"#).unwrap();
         assert_eq!(
             request,
             Request::Read {

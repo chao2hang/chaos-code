@@ -12,9 +12,10 @@ reqwest.workspace = true
 xai-grok-extra-ca = { workspace = true }
 serde.workspace = true
 serde_json.workspace = true
-tokio = { workspace = true, features = ["sync"] }
+tokio = { workspace = true, features = ["sync", "net", "io-util", "process", "time", "rt", "rt-multi-thread", "macros", "fs"] }
 tracing.workspace = true
 uuid.workspace = true
+sha2.workspace = true
 walkdir = "2"
 rusqlite.workspace = true
 xai-sqlite-journal = { path = "../xai-sqlite-journal" }

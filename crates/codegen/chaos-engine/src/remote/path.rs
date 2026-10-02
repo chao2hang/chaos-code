@@ -76,7 +76,9 @@ impl RemotePath {
         if parts.is_empty() {
             return Err(PathRejection::Empty);
         }
-        let joined = parts.iter().fold(root.to_path_buf(), |acc, part| acc.join(part));
+        let joined = parts
+            .iter()
+            .fold(root.to_path_buf(), |acc, part| acc.join(part));
         // The root is canonicalised because a caller may hand us `/var/…` while
         // the OS reports `/private/var/…`; comparing an unresolved root to a
         // resolved target would reject every path on macOS.
@@ -94,7 +96,9 @@ impl RemotePath {
     /// a `PathBuf` out of a `RemotePath` is to say which workspace it belongs
     /// to, so a remote path cannot quietly be handed to a local file API.
     pub fn to_local(&self, root: &Path) -> PathBuf {
-        self.0.split('/').fold(root.to_path_buf(), |acc, part| acc.join(part))
+        self.0
+            .split('/')
+            .fold(root.to_path_buf(), |acc, part| acc.join(part))
     }
 }
 
@@ -221,8 +225,14 @@ mod tests {
     #[test]
     fn an_empty_path_is_refused() {
         let root = root();
-        assert_eq!(RemotePath::parse(root.path(), "   "), Err(PathRejection::Empty));
-        assert_eq!(RemotePath::parse(root.path(), "."), Err(PathRejection::Empty));
+        assert_eq!(
+            RemotePath::parse(root.path(), "   "),
+            Err(PathRejection::Empty)
+        );
+        assert_eq!(
+            RemotePath::parse(root.path(), "."),
+            Err(PathRejection::Empty)
+        );
     }
 
     /// The textual checks are not enough on their own: a link written by an
