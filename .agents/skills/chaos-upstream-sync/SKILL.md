@@ -1,6 +1,6 @@
 ---
 name: chaos-upstream-sync
-version: 1.2.0
+version: 1.3.0
 description: "跟踪 GitHub 上 xai-org/grok-build（Grok Build）的更新，并安全移植到本仓库 chaos-code（Chaos 分支）。**仅当用户明确提到「上游 / grok-build / upstream」时才触发**；否则不触发。触发词：当用户说「同步上游」「看 grok build 更新」「移植上游改动」「merge grok」「对齐 SOURCE_REV」「上游有没有新版本」时使用。覆盖：查 releases/tags/commits/changelog、对照本地 SOURCE_REV 与版本号、分流可移植 vs Chaos 专属冲突、分批 cherry-pick/merge、编译与单测、更新日志。"
 metadata:
   requires:
@@ -33,7 +33,7 @@ metadata:
 | 上游公开源 | `https://github.com/xai-org/grok-build`（默认分支 `main`） |
 | 本项目 | `chaos-code`，产物二进制包名 **`xai-grok-pager-bin`**，可执行文件 **`chaos`**（`target/release/chaos`） |
 | 上游对齐标记 | 仓库根 `SOURCE_REV` = 上游 monorepo 同步时的 commit SHA |
-| 产品版本 | `crates/codegen/xai-grok-version/Cargo.toml` 的 `version`（与 pager/shell 等 lockstep） |
+| 产品版本（唯一可信源） | npm 元包 `crates/codegen/xai-grok-pager/npm/chaos/package.json` 的 `version`——`release.yml` 的 `resolve-version` 读它；`xai-grok-version`、`xai-grok-pager`、`xai-grok-pager-bin` 与六个平台包子版本必须与它相等，`python3 scripts/ci/check-version-lockstep.py` 逐项比对（决定记录在 `CONTRIBUTING.md`「Release versioning」） |
 | 用户可见更新日志缓存 | `~/.grok/CHANGELOG.md` + `CHANGELOG.json`（CDN 失败时靠磁盘） |
 | 仓库内 changelog 源 | `crates/codegen/xai-grok-shell/changelogs/<version>.{md,json}` + `crates/codegen/xai-grok-shell/CHANGELOG.md` |
 | Chaos 专属说明 | 根目录 [`CHAOS.md`](../../../../CHAOS.md) |
@@ -61,7 +61,13 @@ cargo build -p xai-grok-pager-bin --release
 
 ## 工作流 A — 侦察（默认只读，可直接做）
 
-目标：回答「上游相对我们落后多少、有什么值得合」。
+目标：回答「上游领先我们多少、我们领先上游多少、有什么值得合」。
+**方向与口径别写反**：`SOURCE_REV` 是上游的祖先提交，正常形态是「上游领先我们 N 个、我们领先
+上游 0 个」；`git rev-list --left-right --count "$SRC"...upstream/main` 左边是「我们领先」、
+右边是「上游领先」。本分叉自己的提交数（`git rev-list --count upstream/main..HEAD`，2026-10-03
+实测 969）是**分叉规模**，不是落后量，不要填进「落后」栏——同一轮就留下过一条无法复现的
+「ahead=1 behind=124」：那个上游 SHA 在对象库里根本不存在，124 也不是任何口径能算出来的数。
+凡是要写进记录的数字，把命令和输出一起记下。
 
 ### A1. 本地基线
 
@@ -125,7 +131,7 @@ git diff --stat "$(cat SOURCE_REV)"..upstream/main | tail -40
 - 本地版本 (xai-grok-version): …
 - 上游 main tip: … (date)
 - 上游 SOURCE_REV 文件: …
-- 落后概况: N commits / 主要目录 …
+- 领先/落后: 我们领先 A 个、上游领先 B 个 (`git rev-list --left-right --count "$SRC"...upstream/main`) / 窗口规模 N files +X/−Y / 主要目录 …
 - 高价值变更（建议移植）: …
 - 高风险 / 与 Chaos 冲突: …
 - 建议动作: 仅观察 | 分批 cherry-pick | 完整 merge 窗口

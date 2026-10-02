@@ -128,3 +128,4 @@ cargo build -p xai-grok-pager --release
 | 测试断言英文 UI | 改测试期望为中文，或改测 key |
 | 用户仍见旧 UI | 未重链 bin 或未重启进程 |
 | 更新日志仍旧 | 刷新 `~/.grok/CHANGELOG.*`；CDN 可能盖回旧文案时可设离线缓存策略 |
+| 上游拆出去的测试文件与本分叉内联的 `mod tests` 撞名 | 上游把测试外部化成 `x_tests.rs`，靠宿主文件末尾的 `#[cfg(test)]` + `#[path = "x_tests.rs"] mod tests;` 挂上（例：`views/dashboard/render.rs:3168`）。本分叉不少地方仍是**内联**同名模块（同一文件 `render.rs:4029` 起就是 116 个 `#[test]`）。整文件 `git checkout upstream/main -- 宿主文件` 会带来第二个同名 `mod tests`（`E0428: the name \`tests\` is defined multiple times`）；只搬声明不搬文件是硬编译错误。要收就得把内联模块挪出去并按 B4 手工合流——两侧测试内容已经分叉，别当成机械挪位。**反向事故**（文件搬进来了、声明没搬 → 一条测试都不跑，编译器不报错）由 `python3 scripts/ci/panic-site-census.py --check-uncompiled scripts/ci/uncompiled-sources.txt` 兜：它按「从 crate 根可达 + 扣除 `cfg(test)` 区间」判定未编译源，棘轮基线现为空集，移植后必须仍是空集 |
