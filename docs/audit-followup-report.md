@@ -205,9 +205,47 @@ security sign-off: Windows/macOS compilation and reviewer approval remain open.
 | P1 | `xai-crash-handler` | 65 处，10 个 unsafe fn + 9 个 extern，crash dump 路径。 |
 | P2 | `xai-grok-shell` | 364 处量太大，但有 2/3 是 env var。先把 env var 模式做掉，数字直接砍 60%。 |
 
+### 1.8 2026-10-02 全仓实测（可复现口径）
+
+上面 1.1–1.6 与 1.4.1/1.4.2 都是 `grep` 关键字行数，1.4.1/1.4.2 连命令都没有记录，
+因此无法复现。2026-10-02 起统一用 `scripts/ci/panic-site-census.py`（口径见 §2.5）：
+它把 unsafe 分成 `unsafe {}` 块 / `unsafe fn` / `unsafe impl` / `unsafe extern` 四类，
+并且和 unwrap 一样区分"生产"与"任意构建"。
+
+```
+$ python3 scripts/ci/panic-site-census.py            # 逐 crate 表格
+unsafe by kind, every build: 596 block, 25 fn, 7 impl, 26 extern
+654 unsafe sites in all, 420 in production
+```
+
+1.3 的"模式分类"表（`libc::*` / `std::ptr::*` / `transmute` / `static mut`）不在这个
+口径内 —— 那是一张**风险类型**表而不是**位置**表，仍只能当 2026-08 的快照读；生产
+unsafe 的位置与数量以本节为准。生产 unsafe 的 top 10：
+
+| Crate | 生产 unsafe | 主要来源 |
+|---|---:|---|
+| `xai-crash-handler` | 58 | crash dump 路径，`unsafe fn` + `extern` 集中 |
+| `xai-fast-worktree` | 52 | AF_UNIX / `poll` / `flock` / procfs FFI |
+| `xai-tty-utils` | 52 | PTY raw mode |
+| `xai-system-power` | 29 | 平台 FFI |
+| `xai-grok-pager-render` | 27 | 终端 ioctl / 终端能力探测 |
+| `xai-grok-pager-bin` | 21 | 入口处的平台调用 |
+| `xai-grok-foreign-sessions` | 21 | 外部会话集成 |
+| `xai-grok-tools` | 19 | 进程 spawn |
+| `xai-grok-sandbox` | 19 | 安全边界（1.6 的 P0 项，量级没变） |
+| `xai-grok-shared` / `xai-grok-pager` | 17 / 17 | |
+
+与 1.2 的 2026-08 表对比要小心口径：1.2 数的是**关键字行**（把 `// SAFETY:` 注释、
+文档、字符串里的 `unsafe` 也算进来），census 数的是**真实构造**，且只算被某个 crate
+root 可达的文件。两个方向都有偏差，所以只有"同一口径下的前后对比"有意义，跨口径
+对比没有意义 —— 这正是 §2.5 存在的理由。
+
 ---
 
 ## 2. unwrap 分布
+
+> 2.1 与 2.2 是 2026-08 的手工口径（口径本身没有记录下来，因此无法复现，也无法与
+> 后续任何一次测量比较）。2026-10-02 起以 **§2.5** 为准。
 
 ### 2.1 总量
 
@@ -281,6 +319,132 @@ those workspace-wide figures; do not infer current counts from this report.
 > 562 个总 unwrap，但 556 个在测试里。是的，生产代码几乎都用了 proper
 > error handling。这是个好消息。
 
+### 2.5 2026-10-02 全仓实测（可复现口径）
+
+2.1–2.4 无法复现：2,292 / 27,696 这两个数没有任何记录说明"排除 `#[cfg(test)]`"
+到底是怎么判定的，因此既不能重跑，也不能和以后任何一次测量比较。本节换一个
+写进口径的扫描器，并把当天的数字固化成 CI 棘轮。
+
+**口径**（`scripts/ci/panic-site-census.py`）：
+
+1. 扫描对象：`crates/**/*.rs`。
+2. 每个文件先做**保位空白化**：注释、字符串、字节串、raw string、字符字面量
+   的内容替换成空格（长度不变，行号不变），因此 `"unwrap"`、`// expect(` 之类
+   不再命中，而 `.unwrap()` 的偏移仍然对得上原文。
+3. **是否属于测试**按三条规则判定，任一成立即算测试：
+   - 位置：`tests/` / `benches/` / `examples/` 目录下的文件；
+   - 整文件门控：文件级 `#![cfg(test)]`，或整个文件体被一个 `cfg(test)` 属性包住；
+   - 区间门控：命中点落在某个 `cfg(...)` 属性区间内，且该 `cfg` 表达式提到 `test`。
+     `#[cfg_attr(not(test), deny(unused))]` 这类**否定式**明确不算测试门控；
+     `#[cfg(all(test, unix))]` 算。`#[cfg(test)] #[path = "x_tests.rs"] mod tests;`
+     这种本仓最常见的形状会被解析成"声明边被 test 门控 + 目标文件整文件算测试"。
+4. **可达性**：只有被某个 crate root 通过 `mod` 链可达的文件才计入。crate root 取
+   cargo 的约定（`src/lib.rs`、`src/main.rs`、`src/bin/*.rs`、`src/bin/*/main.rs`、
+   `build.rs`、`tests/*.rs`、`tests/*/main.rs`、`benches/`、`examples/`）加上
+   `Cargo.toml` 里 `[[bin]]/[[test]]/[[example]] path = "….rs"` 显式声明的文件。
+   子模块查找遵循 rustc 规则：crate root 的 `mod x;` 找 `../x.rs`，普通模块的
+   `mod x;` 找 `<stem>/x.rs`，`mod.rs` 用父目录。测试门控的边不参与"生产可达"，
+   但参与"任意构建可达"。
+5. 计数项：`.unwrap()`、`.expect(`、`panic!/unreachable!/todo!/unimplemented!`、
+   `unsafe {}` 块 / `unsafe fn` / `unsafe impl` / `unsafe extern`。
+
+**复现命令**：
+
+```
+$ python3 scripts/ci/panic-site-census.py                    # 逐 crate 表格 + 汇总
+$ python3 scripts/ci/panic-site-census.py --json             # 机器可读
+$ python3 scripts/ci/panic-site-census.py --list CRATE       # 某 crate 的逐文件明细
+$ python3 scripts/ci/test-panic-site-census.py               # 生成 fixture 自测（非空转证明）
+$ python3 scripts/ci/panic-site-census.py --check-baseline scripts/ci/panic-site-baseline.tsv
+$ python3 scripts/ci/panic-site-census.py --check-uncompiled scripts/ci/uncompiled-sources.txt
+```
+
+后两条已进 `.github/workflows/ci.yml` 的 guards step：生产位点数**只允许减少**
+（变多即 CI 失败，变少会打印出来），"没有任何构建会编译的源文件"集合**一字不许变**
+（新增文件、或某条记录其实又被编译了，都失败）。
+
+**2026-10-02 实测**（完整输出与时间戳见 `docs/verification/panic-site-census-2026-10-02.txt`）：
+
+| 指标 | 2.1 的 2026-08 口径 | 2026-10-02 口径 |
+|---|---:|---:|
+| 全部 `.unwrap()` | 27,696 | 31,621 |
+| 生产 `.unwrap()` | 2,292（8.3%） | **351（1.1%）** |
+| 生产 `.expect()` | 未统计总量 | 596 |
+| 生产 `panic!/unreachable!/todo!/unimplemented!` | 未统计总量 | 132 |
+| unsafe 位点（任意构建 / 生产） | 未统计总量 | 654 / **420** |
+
+生产位点最多的 crate（前 10，全部为**生产**数）：
+
+| Crate | unwrap | expect | panic! | unsafe | 全量 `.unwrap()` |
+|---|---:|---:|---:|---:|---:|
+| `xai-grok-pager` | 57 | 133 | 30 | 17 | 5,476 |
+| `xai-grok-shell` | 46 | 116 | 29 | 13 | 8,167 |
+| `xai-grok-test-support` | 56 | 40 | 22 | 7 | 172 |
+| `xai-grok-workspace` | 47 | 26 | 3 | 3 | 2,810 |
+| `xai-grok-tools` | 16 | 122 | 8 | 19 | 3,397 |
+| `xai-grok-sandbox` | 42 | 4 | 1 | 19 | 225 |
+| `xai-grok-pager-render` | 8 | 8 | 4 | 27 | 438 |
+| `xai-computer-hub-sdk` | 1 | 45 | 1 | 0 | 50 |
+| `xai-grok-pager-pty-harness` | 0 | 15 | 3 | 2 | 27 |
+| `xai-grok-agent` | 5 | 9 | 0 | 0 | 818 |
+
+`xai-grok-test-support` 的"生产"数看着反常（172 个 unwrap 里 56 个算生产），因为它
+本身就是测试基础设施：它的 `src/` 不是 `cfg(test)`，但只作为 dev-dependency 被链接。
+读表时要把它当成"生产形态的测试代码"，2.4 的治理优先级不应把它排进去。
+
+2.3 的几条结论在新口径下大多不再成立：shell 不再是"55% 的生产 unwrap"，全仓生产
+unwrap 只有 351 个，其中 `xai-grok-pager` + `xai-grok-shell` 合计 103 个（29%）；
+`expect` 现在整体多于 `unwrap`（596 vs 351），说明历史上"该写理由的地方基本写了"。
+
+**扫描器本身发现的、比数字更重要的一类问题**：12 个 `.rs` 文件**没有任何构建会编译
+它们** —— 没有 crate root 能通过 `mod` 链走到。测试文件处于这个状态就等于"有人以为
+自己有这份覆盖"。清单固化在 `scripts/ci/uncompiled-sources.txt`：
+
+```
+crates/codegen/xai-grok-pager/src/app/dispatch/tests/usage_partial_failure.rs
+crates/codegen/xai-grok-pager/src/scrollback/blocks/credit_limit.rs
+crates/codegen/xai-grok-pager/src/slash/commands/fallback.rs
+crates/codegen/xai-grok-pager/src/views/dashboard/render_tests.rs        (4333 行)
+crates/codegen/xai-grok-pager/src/views/dashboard/state_tests.rs         (6101 行)
+crates/codegen/xai-grok-pager/src/views/shortcuts_help_tests.rs          (2316 行)
+crates/codegen/xai-grok-shell/src/session/acp_session_impl/incomplete_end_turn.rs
+crates/codegen/xai-grok-shell/src/session/acp_session_impl/selective_compaction.rs
+crates/codegen/xai-grok-shell/src/session/dcp_config.rs
+crates/common/xai-grok-compaction/src/strategies/mod.rs
+crates/common/xai-grok-compaction/src/strategies/deduplication.rs
+crates/common/xai-grok-compaction/src/strategies/purge_errors.rs
+```
+
+其中 `/adhd` 是**已确认的用户可见回归**并已修好：`slash/commands/adhd.rs`（106 行）
+随 release `480aa28a "release 0.2.123: #15 #16 /fallback /adhd"` 发出去过，但
+`commands/mod.rs` 里从来没有 `mod adhd;`（`git log -S"mod adhd"` 对该文件返回空），
+所以该命令在发布构建里根本不存在；同时 `[adhd].enabled` 仍被
+`xai-grok-shell/src/agent/config.rs` 解析、并在 `xai-grok-pager/src/acp/mod.rs` 注入。
+现已补上 `pub mod adhd;` 与 `builtin_commands()` 里的注册，并加两个守护测试：
+`every_command_file_in_this_directory_is_declared()`（目录里每个 `*.rs` 必须被声明，
+例外要在 `DELIBERATELY_UNDECLARED` 里写明理由，例外若指向已不存在的文件也失败）与
+`the_adhd_toggle_is_reachable_through_the_registry()`。
+
+`/fallback` **故意没有复活**：全仓没有任何代码解析 `[fallback] models`，采样器没有
+fallback 链，声明它只会 advertised 一个静默无操作的命令；理由写在那个例外表里，
+TODO 也登记了。`xai-grok-compaction/src/strategies/` 三个文件的"确实没被编译"是
+经验证而不是推断的：给 `mod.rs` 追加 `fn deliberately_broken(({{{ not rust` 之后
+`cargo check -p xai-grok-compaction --offline` 依然干净通过（文件随后按字节还原）。
+
+**扫描器的非空转证明**：对固定 fixture（`scripts/ci/test-panic-site-census.py` 生成的
+`demo` crate，含 `src/bin/tool.rs` 兄弟子模块、`#[path]` 声明、`cfg(all(test, unix))`、
+`cfg_attr(not(test), …)`、`#![cfg(test)]` 整文件、`tests/common/mod.rs`、以及一个
+故意不被声明的文件）逐个注入错误实现，每次都必须有检查失败：
+
+| 注入的错误口径 | 失败的检查数 |
+|---|---:|
+| 不承认任何文件是 crate root | 9 |
+| 忽略"哪些 `mod` 边被 test 门控" | 5 |
+| 把每个文件都当作 crate root | 5 |
+| 把"无构建编译"的文件也计入位点 | 4 |
+| 同一文件里只要有 test 声明就把整个文件的声明都判为 test 门控 | 4 |
+| 忽略普通（非 test 门控）声明 | 4 |
+
 ---
 
 ## 3. ignored 测试
@@ -320,7 +484,7 @@ and the current Q4 CSV/baseline referenced in `docs/ci-test-debt.md` and
 
 ### 4.1 已落地（2026-09-23 复核）
 
-- `crates/codegen/xai-grok-update/src/signature.rs` 提供 Ed25519 `verify_bytes` / `verify_file`；公钥通过编译期 `CHAOS_SIGNING_PUBLIC_KEY` 注入，未配置时使用占位公钥。
+- `crates/codegen/xai-grok-signature/src/lib.rs`（2026-10-02 自 `xai-grok-update/src/signature.rs` 抽成叶子 crate，原路径以 `pub use xai_grok_signature as signature` 保留）提供 Ed25519 `verify_bytes` / `verify_file`；公钥通过编译期 `CHAOS_SIGNING_PUBLIC_KEY` 注入，未配置时使用占位公钥。
 - `auto_update.rs` 下载后会读取 `.sig` 并调用 `verify_file`；是否强制验签由 `CHAOS_REQUIRE_SIG` 或 `require-sig` feature 决定。
 - `release.yml` 会在私钥 secret 和公钥 variable 均配置时签名二进制；缺任一项时会跳过签名，workflow 仍允许发布未签名产物。
 - `install.sh` 对存在的签名执行验证，签名缺失时仍可继续；`install.ps1` 同样仅在 Python、cryptography、公钥和签名文件均可用时验证，缺少条件时跳过。`install.bat` 调用 PowerShell 安装流程。
@@ -392,21 +556,32 @@ and the current Q4 CSV/baseline referenced in `docs/ci-test-debt.md` and
 
 ## 5. 下一步建议
 
-按"投入产出比"排：
+按"投入产出比"排（2026-10-02 按 §2.5 的实测数重排；此前条目引用的 2.1/2.2 数字
+已不可复现，括号里给的是新口径下的量级）：
 
-1. **B 批 unwrap 治理**（`xai-grok-update` 6 个 + sandbox 28 个）
-   — 量小、位置重要、1 天内能全清
-2. **unsafe P0 审计**（sandbox + tty-utils）—— 安全边界优先。2026-09-28 对 Linux seccomp installers 增加空程序和 >4096 指令长度拒绝的真实入口回归；这是局部边界修复，不代表逐项审计完成。
-3. **签名集成进 auto_update**（把代码接上真实下载链路）
-4. **shell crate env var unsafe 消除**（一次砍 ~60% 的 unsafe 数量）
-5. **A 批 unwrap 治理**（shell 的 1,270 个 —— 大工程，分批）
+1. **清掉 12 个"无构建编译"的文件**（§2.5）—— 不是数字问题而是覆盖假象，
+   每个文件要么接上 `mod`、要么删；`/adhd` 已经证明这一类里藏着真实的用户可见回归。
+2. **生产 unwrap 治理**（全仓 351 个，pager 57 + shell 46 + test-support 56）
+   —— 比原计划的"1,270 个"小两个数量级，可以先做 `panic!`/`unreachable!` 那 132 处。
+3. **unsafe P0 审计**（sandbox 19 处 + tty-utils 52 处）—— 安全边界优先。2026-09-28
+   对 Linux seccomp installers 增加空程序和 >4096 指令长度拒绝的真实入口回归；
+   这是局部边界修复，不代表逐项审计完成。
+4. **签名集成进 auto_update**（把代码接上真实下载链路）
+5. **shell crate env var unsafe 消除**（一次砍 ~60% 的 unsafe 数量）
+   —— 已完成大半，见 1.4.1 / 1.4.2；剩余按 §1.8 的位置表推进。
 
 ---
 
 ## 6. 脚本 / 方法
 
 - `scripts/ci/ignored-tests.sh`：ignore 统计
-- unsafe 分布：bash one-liner（见 `crates/` 下 `grep -rE '\bunsafe\b'`）
-- unwrap 生产/测试拆分：临时 Python 脚本（`/tmp/count_unwrap.py`，约 50
-  行，用 brace-depth 跟踪 `#[cfg(test)]` 模块边界）。如需保留可归档到
-  `scripts/dev/`。
+- unsafe / unwrap / panic! 位点统计与生产-测试拆分：**统一为**
+  `scripts/ci/panic-site-census.py`（口径见 §2.5），配
+  `scripts/ci/test-panic-site-census.py`（fixture 自测）、
+  `scripts/ci/panic-site-baseline.tsv`（生产位点棘轮）、
+  `scripts/ci/uncompiled-sources.txt`（"无构建编译"集合棘轮），
+  三条命令已在 `.github/workflows/ci.yml` 的 guards step 里。
+  当天完整输出：`docs/verification/panic-site-census-2026-10-02.txt`。
+- 本节原先记录的 2026-08 方法（`grep -rE '\bunsafe\b'` 的 bash one-liner、
+  未归档的临时 `/tmp/count_unwrap.py`）已被上一条取代：两者口径都没有记录，
+  因此产物数字不再被引用。

@@ -2,6 +2,329 @@
 
 ## Unreleased
 
+### 修复：中文化守卫把「改名/删死代码」当成「中文被冲掉」，且两份守卫自测没人跑
+
+`scripts/l10n-guard.sh` 守的是上游合并把 fork 的中文 UI 冲回英文这类事故，按
+`crates/**/*.rs` 里「哪些文件有中文」比对两个 ref。它只看**路径**，于是三种完全不同的事
+都落成同一个 FAIL：文件改名（中文跟着搬走）、故意删掉死代码、以及它真正要抓的那一种
+（文件还在、中文没了）。本轮自己的树就被判成 6 个 regressed + 2 个 fortress breach，
+而 `scripts/verify-in-docker.sh:134` 把它当门禁跑，等于本轮交付被自己的守卫挡住。
+
+六个文件逐个查实（先量「该文件独有的中文行有多少在别处逐行原样出现」，再对着代码核）：
+`xai-grok-update/src/signature.rs` 是改名——拆出的 `xai-grok-signature/src/lib.rs` 里
+30 行中文都在（20/20 行存活）；`views/dashboard/{state,render}_tests.rs` 的中文是测试输入
+`"中\r\n文"`，那些行原样活到了宿主模块的内联 `mod tests`（6/6、2/2）；
+`scrollback/blocks/credit_limit.rs` 在 HEAD 的 `blocks/mod.rs` 里根本没有 `mod credit_limit`，
+**从没编译过**，额度上限卡片的中文在实际发射处 `app/dispatch/billing.rs` 的 `CreditLimitCopy`
+（「已达到消费上限。」「已达到当前计划的额度上限。」「提高限额」「按量付费」）；
+`views/usage_detail.rs` 与孤儿测试 `dispatch/tests/usage_partial_failure.rs` 随不可达的用量
+覆盖层一起删除。**没有一条用户可见文案失去翻译**——这是守卫的判定粒度问题，不是翻译问题。
+
+改法是把「中文消失」拆开判：中文行 ≥ 90 %（且 ≥ 2 行）在别处逐行原样出现 → `moved`，
+由**内容**决定而不是文件名；路径确实不在且已登记在 `scripts/ci/l10n-removed-allowlist.tsv`
+（`<path>\t<理由>`，理由必填、缺理由直接失败）→ `removed-recorded`；其余 → `regressed`。
+**登记也救不了硬失败**：allowlist 只对「路径真的不在了」生效，只要文件还在、中文没了，
+无论是否登记都仍然 exit 1。fortress 检查跳过已判为 moved/recorded 的文件，否则在强保护
+目录里改名或删死代码永远过不去。登记项的失效口径改成看**工作树**而不是 `--after`：
+指向工作树里仍存在之文件的条目即「记录的删除没发生」，必须删掉条目——原来的 ref 口径既会让
+`--before HEAD --after HEAD` 把每条登记都判成失效（这是加 CI 步骤时本地先跑出来的），也漏掉
+「文件在比对范围之外被还原」这种真正的腐烂。
+
+守卫本身新增 `scripts/l10n-guard-selftest.py`：13 个用例各自建一个临时 git 仓库、跑真实
+脚本、同时断言退出码与文件落在哪一节（只断言 exit 0 的自测，对一个什么都不查的守卫也会通过）。
+其中 `clobber_cannot_be_allow_listed` 是承重的：它把被抽掉中文的那个路径本身就登记进
+allowlist，仍要求 exit 1 且该路径出现在 `regressed`。三条变异各自让对应用例变红
+（把「先查存在再查登记」颠倒 → 2 用例红；去掉改名判定阈值 → 阈值用例红；关掉失效检查 →
+失效用例红），每次改回后 `cmp` 校验逐字节一致。实现过程中修掉两个自己的错：
+`grep -c -Fxf -f` 里组合的 `-f` 把后面那个 `-f` 当成文件名吃掉，模式文件成了字面量 `-f`，
+所有匹配数恒为 0（报告里写着「0 of 20 行在别处出现」）；`is_excluded` 在 `set -u` 下展开空数组
+`${EXCLUDE[@]}`，macOS 自带的 bash 3.2 会当作未绑定变量，改成 `${EXCLUDE[@]+"${EXCLUDE[@]}"}`。
+
+顺带清掉一类「有守卫却没人跑」的洞：`scripts/check-doc-l10n-selftest.py`（51 用例）此前
+**没有任何地方调用**（`rg -n "selftest" .github/workflows/*.yml scripts/*.sh` 零命中），
+它的断言就算早已咬不动也照样绿。现在两份自测都进了 CI 的 `docs-l10n` 作业与
+`scripts/verify-in-docker.sh` 门禁，CI 里还额外跑一次 `l10n-guard.sh --before HEAD --after HEAD`
+——它会遍历真实的 393 个中文文件，是能在 Linux 之外（bash 3.2）挂掉的那类结构的落脚检查。
+文档同步：`sync/doc-l10n-conventions.md` 验收口径第 6 条与上游同步 skill 的报告表都补齐了
+新的六份输出、登记要求，以及「登记拦不住就地换成英文」这条边界。
+证据见 `docs/verification/l10n-guard-classification-2026-10-02.log`（含存活率实测表、
+13/13 自测、三份变异记录、YAML/端口性/workflow shell 三项复验）。
+
+顺带把同一类噪音从文档检查器里清掉：把 `check-doc-l10n.py --links` 扩到 CI 从没跑过的
+`sync/**/*.md`，报出 8 条「死链」，逐条查下来 7 条是**行内代码里的链接语法**——约定文档把
+`](...)`、`](NN-xxx.md#...)` 当作「要盯的写法」列出来，`doc-claims-verification.md` 更是
+**在描述某个锚点已死**时引用它。`strip_code` 已经会让围栏代码块失效，只是止步于围栏边界，
+没有覆盖到一个反引号的跨度。新增 `mask_inline()` 原位抹平行内代码（保持字符数不变，行列报告
+与其它模式不受影响），仅 `check_links` 使用；`--before/--after` 那几项**故意不抹**，因为它们
+正是靠比对行内 span 来发现标识符被改。自测加一条双向用例（同一目录跑两次：只有示例必须干净，
+补一条正文真链必须点名失败），总数 **52/52**；删掉 `mask_inline` 调用即让该用例变红。
+第 8 条是真错：约定文档里引用权威表述的那段引文带着 `[CHAOS.md](../../../../CHAOS.md)`，
+而发行的指南实际用五层（`../../../../../CHAOS.md`），这个深度在哪边都解析不到，已改为
+`../CHAOS.md`。`--english` 侧 8 行里有 6 行同源：`sync/recon/*.md` 是
+`scripts/upstream-recon.sh` **生成**的，而模板是英文——模板改为中文并对真实 API 重跑生成，
+`sync/**` 现为 `--links` 0 条、`--english` 仅剩 2 行「…」内的上游原文引用（按约定保留原文）。
+
+**没覆盖到**：改名判定按整行比对，翻译时重新断句或改写会算成「丢失」而不是「改名」——这是
+有意的保守，宁可响亮地失败也不猜；`removed-recorded` 信任理由文字本身，守卫只强制理由必须
+存在，不会读中文句子判断它对不对；`l10n-guard.sh` 仍只看 `crates/**/*.rs`，Markdown 归
+`check-doc-l10n.py`，这个不对称没变。本改动不碰任何界面，故浏览器验证口径在此无对象可跑。
+
+### 新增：模型「只报计划不收尾」的自动重试（opt-in，默认关闭）
+
+`session/acp_session_impl/incomplete_end_turn.rs` 和它的测试之前同属「没有任何构建会编译它」
+那一类：文件在，检测器写得完整，但没人调用，开关也不存在。本轮把它接成一条真能开的功能。
+
+判据是纯函数 `should_retry_incomplete_end_turn`，只在**这一轮跑过工具、却没有任何写/编辑工具
+落地**时才考虑重试：写工具名按 `WRITE_TOOL_NAMES` 认（`search_replace`、`write`、`hashline_edit`、
+`apply_patch`、`edit`/`Edit`/`Write`/`MultiEdit`/`NotebookEdit` 等，覆盖本仓与 codex/opencode/Claude
+风格别名）。命中两种理由之一才重试——收尾文本读起来像「接下来我要做 X」的计划
+（`intent_without_write`），或本轮工具数 ≥ 2 而收尾文本 ≤ 80 字符（`short_after_tools`）。
+两组误报防护是实打实写出来的：命中「已完成」类措辞会压掉计划判定（`接下来我已完成所有修改`
+不该重试），收尾文本为空一律交给别的恢复路径。每条 prompt 最多 2 次（`MAX_RETRIES`），因为每次
+重试就是一整轮采样。
+
+接线：`[session] auto_retry_incomplete_end_turn`（默认 `false`）→ `spawn.rs` 解析成会话字段，
+**子 agent 会话强制关闭**（委派出去的子任务由父会话负责判断做没做完，不该各自重试）→
+`turn.rs` 的包装循环 `process_conversation_turn_with_incomplete_end_turn_retry` 在判定命中时
+注入 `ConversationItem::auto_recovery` 提醒再采样。提醒文案直接点名「不要只复述计划，需要改
+就调工具」，避免重试只是把同一段计划再说一遍。
+
+顺带修掉一个真实缺陷：`/settings` 里这一行会发 `Effect::PersistSetting`，但 `persist_setting`
+**没有对应 arm**——也就是说这个开关在 UI 上能拨、当场生效，写盘却返回 "unknown setting key"，
+回滚后 `config.toml` 里永远没有它，下次启动回到默认 off。现已补 arm 并配 `session` 文档行
+（`26-config-reference.md`）。同时修好本轮自己写坏的守护测试
+`every_persist_setting_key_has_a_persist_arm`：它扫源码找 `Effect::PersistSetting { key: "…" }`，
+却用「最近的 `{` 到最近的 `}`」取块，被只提这个名字的散文（自己的文档注释、
+`app/dispatch/tests/settings.rs` 的 assert 文案）带成 `begin <= end (474 <= 171)` panic。现在要求
+路径与 `{` 之间只能有空白，块边界用深度计数求匹配并跳过字符串字面量；另加两条自我约束——
+每个结构字面量都必须被归类为「字面键」或「运行时构造」，且扫到的分发点数必须 > 50（全仓实测
+97 处），否则直接报「扫描器坏了，下面的断言证明不了任何事」。
+
+测试：`incomplete_end_turn.rs` 内联检测器用例（两种理由、写工具名识别、已完成措辞压报、空文本、
+重试上限）+ 新文件 `acp_session_tests/turn/incomplete_end_turn_loop_tests.rs`（343 行，驱动真实的
+包装循环）+ `util/config/persist_tests.rs::session_auto_retry_incomplete_end_turn_round_trips`
+（配置往返）+ pager 侧守护。守护非空转的注入变异（按字节 `cmp` 还原）：把 `persist_setting` 里该
+arm 的键名改成 `…_TYPO` → 守护失败并点名 `("session.auto_retry_incomplete_end_turn", "setters.rs")`。
+覆盖限制：真端到端「模型真的只给计划」需要活的采样端，本环境无法复现；判定与循环用真实函数驱动，
+`/settings` 拨动到落盘的完整链路只由 round-trip 测试与守护共同覆盖。
+
+### 修复：快捷键窗口漏列已绑定的命令，「累计 token」状态栏 chip 点了没反应
+
+同一批「没有任何构建会编译它」的孤儿测试文件，逐个判定后收口为**空集**
+（`scripts/ci/uncompiled-sources.txt` 现为 0 个文件，`DELIBERATELY_UNDECLARED` 例外表同时清空）。
+判定不靠猜：把文件临时声明进各自宿主跑 `cargo check`，再把它自己的测试函数名集合与宿主内联
+`mod tests` 求差。
+
+`views/dashboard/render_tests.rs`（4,333 行）与 `state_tests.rs`（6,101 行）报 **0 个错误位点**
+——它们本来就能编译，被删的理由是覆盖集合：`render_tests.rs` 的 120 个函数名与宿主内联测试
+**完全重合**，`state_tests.rs` 的 265 个 vs 宿主 384 个，两者 **orphan-only 均为 0**。
+`views/shortcuts_help_tests.rs` 有 12 个 orphan-only 名字，逐条回读源码：三条断言的行为已被
+**有意反转**（活文件里是 `enter_on_search_pseudo_row_does_not_open_detail`、
+`search_pseudo_row_does_not_expand`、`build_entries_omits_scrollback_search_in_simple_mode`），
+undo/redo/history 三条对应的常量与 `ActionId` 变体早已不存在（`shortcuts_help.rs` 的
+`*_LONG_HELP` 只剩 `PASTE_LONG_HELP`）；唯一仍成立的 `build_entries_lists_prompt_stash_with_ctrl_s_and_alt_s`
+已移植回活文件——`ActionId::StashPrompt` 至今带着 Ctrl+S / Alt+S 的完整 `ActionDef` 且有真实处理方。
+
+移植时补上这批文件一直在掩盖的那一类缺口：`build_entries` 是 registry 驱动（函数文档原文
+"All registered actions are included"），但**没有任何测试遍历 registry**，所以一个绑了键的新命令
+可以永远不在快捷键窗口里出现、而全套测试照常绿。新增
+`every_keybound_registry_action_gets_a_cheatsheet_row`：遍历真实 `ActionRegistry::defaults()`，
+只允许三种有依据的缺席（无键的 slash-only、voice 门控关闭时的 `VoiceToggle`、被同类目同键
+dedup 让位且让位对象确实上榜），其余一律红。`xai-grok-pager --lib views::shortcuts_help`
+**67 passed / 0 failed**。非空转注入变异（按字节 `cmp` 还原）：给 `build_entries` 加一行
+`if def.id == ActionId::StashPrompt { continue; }` → 守护与被移植的用例同时红，报错原文
+`keybound actions with no row in the shortcuts cheatsheet: ["StashPrompt (label "暂存")"]`。
+
+`app/dispatch/tests/usage_partial_failure.rs` 的 11 个测试**全部 orphan-only**（`tests/` 下 20 个
+兄弟模块 0 覆盖），但驱动的是已经不存在的函数：`fill_session_usage_detail` /
+`fill_aggregate_usage_detail` 及其 `_failed` 变体在源码里没有任何定义。顺着这条线查出**一个
+用户可见的真实缺陷**：状态栏「累计 token」chip 悬停会高亮（`hit_total_tokens` 的 rect 每帧写入、
+hover 每帧更新并改变配色），可全仓唯一的点击处理分支写在 `if self.usage_detail.is_some() { … }`
+里，而 `usage_detail` 这个字段在生产代码里**只有 `= None` 一处写入**、从未被置成 `Some`，
+`usage_detail_generation` 也从不自增。于是 `views/usage_detail.rs`（849 行）连同它的 `[✗]`
+关闭按钮 hit-rect、Esc/`q`/滚轮吞键分支，是一整套任何操作路径都进不去的死面；配套的 6 条测试
+靠手工 `agent.usage_detail = Some(UsageDetail::Loading)` 摆出生产根本造不出来的状态来测处理逻辑。
+
+修法按现有产品事实：被 `views::usage_modal`（`open_usage_info_modal`）取代的弹层不复活，
+改为让 chip 兑现自己的承诺——`app/mouse.rs` 中紧邻 `hit_context` 处新增分支，点击
+`hit_total_tokens` 返回 `InputOutcome::Action(Action::ShowUsage)`，正是 `/usage` 自己走的
+dispatch；沿用 `CONTEXT_CLICK_DEBOUNCE_MS`，但用独立的 `last_usage_chip_click_at`，避免两个
+chip 共用时间戳时先点一个会吞掉另一个 300ms 内的点击。死面一并删除：该视图模块与其声明、
+`usage_detail` / `hit_usage_close` / `usage_detail_generation` 三个字段及初始化、
+`close_usage_detail`、render 的弹层分支、`notices.rs` 的提示遮挡判定、`input.rs` 的吞键分支与
+Esc 消费者判定、`panes.rs` 的滚轮吞掉、`minimal/api.rs` 的表面可用性判定，以及那 6 条自摆状态的
+测试；`render.rs` 里指涉该模块的注释改为直接说明宽字符伪空格本身。全仓 `grep usage_detail`
+命中 0。3 条新测试经**真实 `handle_mouse` 入口**驱动：chip 内点击必须返回 `Action::ShowUsage`、
+连点第二次必须被 debounce 吞成 `Unchanged`、chip 右边界外一格不得触发。
+
+顺带修掉本轮自己写坏的一条守护测试：`every_persist_setting_key_has_a_persist_arm` 扫源码找
+`Effect::PersistSetting { key: "…" }`，但用「最近的一个 `{` 到最近的一个 `}`」取块，遇到只提这个名字
+的散文（本套件自己的文档注释、`app/dispatch/tests/settings.rs` 里的 assert 文案）就
+`begin <= end (474 <= 171)` 直接 panic。改为：`{` 之前出现 `}` 即判为散文跳过，块边界用深度计数
+求匹配并跳过字符串字面量；再加两条自我约束——每个结构字面量都必须被归类（字面键 / 运行时构造），
+且扫到的站点数必须 > 50，否则报「扫描器坏了，下面的断言证明不了任何事」。全仓 97 处真实分发点。
+覆盖限制：chip 的可见效果（配色、弹层消失后的行为）只能靠 `handle_mouse` 的返回值与源码可达性
+证明，本环境无终端可跑 TUI；`/usage` 之后的取数与渲染由既有用量模态测试覆盖，本轮未改动它。
+
+### 新增：备用模型链终于有了读取方（`/fallback` 复活）
+
+`/fallback` 写 `[fallback] models`，全仓没有任何代码读它。因为这个，命令被**故意**留在未
+声明状态——`slash/commands/mod.rs` 的 `DELIBERATELY_UNDECLARED` 里写的就是这条理由：
+advertise 一个改变不了任何行为的开关，比不 advertise 更糟。它掩盖的真实缺口是：当会话的
+模型不可用时，产品的做法是 `available.keys().find(…)`，即同族里 HashMap 迭代顺序碰到的第一
+个模型；同族没有可选项就直接把会话标成 unavailable，之后每次 prompt 都返回「请开新会话」。
+用户在这两件事上都没有发言权，而那个「第一个」本身还不稳定。
+
+`[fallback]` 现在是一等配置：`agent::config::FallbackConfig { models: Vec<String> }`，
+`/fallback` 写它，`MvpAgent::select_fallback_model` 读它。挑选集中在
+`agent::models::first_selectable_fallback`：逐条按 persisted 模型同一套 catalog key / 路由
+slug 解析，跳过账号当前选不中的，也跳过它正要替换的那个模型，取第一个真能服务的。接线落在
+「模型不见了」被解决的两处——`restore_persisted_model`（排在内置的同族自选**之前**：用户
+显式说过要什么，就不该先被一次随机选择代替），以及 `prompt()` 里「模型在 load 时就不可用」
+的那条阻塞路径（换不上就重新 latch，绝不带着一个 catalog 里没有的模型继续跑 prompt）。
+
+范围说清楚：这条链管的是**可用性**，不是单请求重试。turn 中途跨 family 切换会让历史里
+model-minted 的 reasoning 条目失效（`encrypted_content_mismatch` 那条错误就是这个形状），
+所以限流与 5xx 仍走各自的 retry 与终态路径；`/fallback` 的提示语与 `fallback.models` 的文
+档行都按这个写，不留下「配了就会自动兜底」的想象空间。
+
+测试：pager 侧 7 项——缺文件 / 坏 TOML / 非数组一律读成空链，`set|add|remove|clear` 在真
+实 `config.toml` 上往返并保留其他键，无参数形态必须说明「只在不可用时切换」，被拒的参数不
+得创建文件，`parse_models` 去重；其中 `the_written_chain_is_read_by_the_shell_config_loader`
+直接调 `Config::new_from_toml_cfg`，写方与读方的形状对不上就红。shell 侧 3 项——跳过不可
+选项、按 slug 解析、绝不返回被替换的那个模型、空链什么都不选。外加两条守护：
+`every_command_file_in_this_directory_is_declared` 的例外表已清空（本仓最后一份「无构建编
+译」的源码到此归零），`the_fallback_chain_is_reachable_through_the_registry` 盯 `Arc::new`
+那一行——声明守护看不见它被删。`fallback` 同时进 `PAGER_COMMAND_KEYS`，否则同名 skill 会把
+它遮蔽。非空转由五处注入变异证明（每次一处，文件按字节还原）：去掉「跳过被替换模型」→
+slug 用例红；只取链首不 walk → walk 与 slug 两用例红；把链分支挪到同族自选之后 → 结构守护
+红；写方键名改成 `chain` → 往返、报告与跨 crate 读取三项红；删掉 `Arc::new(…)` 注册 → 注册
+表守护红。覆盖限制：两个接线的调用点都需要活的
+`MvpAgent` 与真 catalog，只有结构守护，未端到端驱动。
+
+### 修复：动态上下文裁剪（DCP）从「文档说它一直在跑、其实没被编译」到能用
+
+`CHAOS.md` 写着 DCP「约 60% 上下文时自动注入裁剪提醒」，读起来像默认行为；实际上
+`session/dcp_config.rs` 与 `session/acp_session_impl/selective_compaction.rs` 两个文件
+**没有任何构建会编译它们**（crate root 的 `mod` 链到不了），文档描述的那套东西在二进制里不
+存在。真实取值也不是 60%：30% 提醒档（带 `m0001` 形式的索引提纲）、90% 应急档（隔轮重新注
+入）、外加按 turn 数触发的 iteration 档，而整套子系统的总开关是
+`[compaction] strategy = "threshold"(默认) | "dynamic" | "both"`。文档现在按这些写。
+
+`strategy` 之前只管工具那一半，阈值路径完全不听：`Compaction::should_auto_compact` 与
+`should_prefire_two_pass` 没有任何 strategy 判断，于是 `strategy = "dynamic"` 的用户照样被
+百分比触发的全量压缩打断——这正是他关掉的那套。两个入口现在都先过
+`strategy.threshold_active()`；手动 `/compact` 不走这两个判断，任何 strategy 下都还在。
+
+turn 循环侧的三个 hook（提醒注入、工具定义下推、`compress` 派发）之前分散三处、且其中两处
+与门控隔得太远，守护测试只能整体放松；现在派发收敛为
+`selective_compaction::run_session_compress_calls`，turn.rs 只在 `self.compaction.dcp_active()`
+后调用它。顺带修掉一个假阳性：`advertised` 原本在整个请求体里搜工具名，而模型自己发出的
+`compress` 调用会被回显进后续请求体，于是「默认配置不该 advertise 该工具」的断言永远为真——
+改成只看 `tools[].name`。
+
+真实缺陷：`ChannelChatPersistence::persist_selective_compaction` 是空实现，注释说这件事由
+chat-state actor 负责，而 actor 成功提交块之后恰恰是回调这里——模型 commit 的裁剪块从来没有
+落过盘，resume 之后那些 token 悄悄还回来了。现在它经
+`PersistenceMsg::SelectiveCompaction` 写进会话目录的 `selective_compaction.json`（独立文
+件，不改写 `chat_history.jsonl`：块只是历史的一次请求期投影，写失败只损失投影），
+`load_session` 与 `load_session_without_updates` 都会带出来，`spawn` 在 chat-state 建好之后
+调 `restore_selective_blocks` 重新施加；某个块与恢复后的历史不再吻合时逐块丢弃，不让一个陈
+旧块赔掉整份投影，最终仍由 chat-state actor 的结构保护规则复核。
+
+测试 27 项通过（`--lib -- dcp restore_tests strategy selective_compaction
+channel_persistence_sends_selective`），新增的包括：strategy 决定阈值路径的四格断言、
+`SelectiveState` 经两条 load 路径的往返（含撕裂文件读成 `None`）、恢复路径用真实
+`ChatStateActor` 驱动的三个用例、以及 spawn 调用点的结构守护。非空转三处：删掉
+`threshold_active()` 门 → strategy 测试红；工具定义下推改成无条件 → 「默认不 advertise」与
+门控守护双双失败；派发同理。覆盖限制：persistence actor 那四行分支未被直接驱动，spawn 的调
+用点只有结构守护。
+
+### 新增：remote 部署的产物要先说清「谁签的、给哪台机器」
+
+`chaos-remote install` 的验收清单上原本只有一项完整性检查：sha256。而那个摘要正是
+**发送字节的人自己算的**——它只能证明字节完整到达，证不了字节是谁产的。拿到一次凭据、
+或者能碰到构建流水线的人，于是可以让自己的字节变成目标机上下一启动的
+`chaos-remote-server`，全程没有任何东西说「不」。仓库里其实**早有**签名基础设施
+（release 的 ed25519 `.sig` sidecar、`CHAOS_SIGNING_PUBLIC_KEY`、
+`docs/release-signing.md`、`scripts/verify-release-signature.sh`），缺的一直只是
+remote 这条路径；TODO 里「本仓库没有签名基础设施」那句话是错的，已连同它掩盖的真实缺口
+一起改正。
+
+验签原语先被抽成叶子 crate `crates/codegen/xai-grok-signature`：`chaos-engine` 只被
+`xai-grok-web`/`xai-grok-desktop` 依赖，而 `xai-grok-update` 依赖 `xai-grok-shell`，
+让 engine 反向依赖 update 是一条形状错误的边（近似环）。`xai-grok-update` 以
+`pub use xai_grok_signature as signature` 保留原来的 `signature::` 路径，调用方与
+`tests/test_signature_integration.rs` 一行没改；`require-sig` feature 转发给新 crate。
+新 crate 只做验证，公钥仍只能在编译期由 `CHAOS_SIGNING_PUBLIC_KEY` 固定（运行期可换的
+信任锚等于把选择权交给被更新的远端），但把 `parse_public_key_b64` 与
+`extract_signature_body` 露了出来，供「操作员在自己的环境/命令行里指定 key」的宿主使用。
+
+`commit()` 的顺序就是它的安全性质：digest → 签名 → 平台文件头 → 才第一次 `mkdir`/
+`rename`。host 默认 fail-closed（没配 key 也照样要求签名，并说明它无从校验），唯一退出口
+是具名的 `--allow-unsigned-artifact` / `CHAOS_REMOTE_REQUIRE_SIGNATURE=0`，而关掉「必须
+有」并不等于接受一个坏签名——送上门的签名照旧验。启动横幅打印本机策略，因为一台读不到
+自己策略的 host 会在凌晨三点被误诊。拒绝理由带原因码：`signature_missing`、
+`signature_malformed`、`signature_invalid`、`no_trusted_key`、`artifact_too_large`、
+`wrong_platform`。平台那一查读 ELF/Mach-O/PE 头部自己声明的 target，与
+`std::env::consts` 不符即在发布指针前拒绝；`access(X_OK)` 只回答「允不允许 exec」，
+一个 0755 的错误架构文件照样通过，而分类不了的脚本包装**不拒**——错的方向是拦掉今天
+能用的部署。
+
+顺带修掉 sidecar 读取里一个会让人白跑一趟的坑：`openssl ... | base64` 会把 64 字节签名
+折成两行，而 `extract_signature_body` 取第一行，于是好签名被当成 `signature_malformed`；
+现在折行会被拼回来，`-----` armor 与 minisign 的 `trusted comment:` 行不再被当成签名体。
+
+测试：`xai-grok-signature` 20 项、`chaos-engine --lib` 190 项、
+`tests/remote_workspace.rs` 13 项（真 socket、真 CLI、真协议）。变异验证：把 `commit`
+里的验签一行去掉 → 6 项 lib + 2 项集成测试红（未签名产物真的成了 current）；
+`SIGNATURE_BODY_B64_LEN` 取 0 / 取 `usize::MAX` / 去掉 `trusted comment:` 过滤 →
+各自恰好红一项。Docker 验收台 `scripts/remote-acceptance-in-docker.sh` 加了三种操作员
+（给了 key 的、从没给过的、明说接受未签名的）与签名/未签名/换 key 签/改字节重算摘要/
+非签名文件/跨平台产物六类部署，2026-10-02 在干净的 Debian 容器里实跑 **130 项检查全通过、
+0 失败**（含「装上的东西与密钥签名的字节逐字节相同」「同一份未签名产物在 opted-out 的
+host 上装得上、在 keyless host 上被拒」这类配对断言）。仍未覆盖：Linux 之外的远端主机
+（platform CI 那两条腿跑的是单机测试），以及 exec capability 本身——那是一道独立的边界，
+本改动不假装关闭它。
+
+### 修复：`/adhd` 在发布构建里根本不存在
+
+`crates/codegen/xai-grok-pager/src/slash/commands/adhd.rs` 随 release 0.2.123 发出去过，
+但 `slash/commands/mod.rs` 里从来没有 `mod adhd;`（`git log -S"mod adhd"` 对该文件返回
+空）。rustc 对"目录里有个 .rs 文件却没人声明它"完全静默：它不参与编译、不报错、不进
+二进制，而文件自己的测试照常绿。结果是半接线状态——`[adhd].enabled` 仍被
+`xai-grok-shell/src/agent/config.rs` 解析、`xai-grok-pager/src/acp/mod.rs` 仍按它注入
+ADHD 规则，但用户没有任何命令可以打开它，只能手改 `config.toml`。现已补上 `pub mod adhd;`
+与 `builtin_commands()` 注册，并按 shell 侧既有契约把 `adhd` 加进
+`xai-grok-shell/src/session/slash_commands.rs::PAGER_COMMAND_KEYS`（漏掉这一步的话，同名
+skill 会遮蔽或被遮蔽——仓库里那条 `pager_builtin_triggers_are_reserved_in_shell` 正是这样
+发现遗漏的）。同批把该文件里一条只做 `assert!(!false)` 的占位测试换成四条真实回归：缺
+文件/坏 TOML/非 bool 一律读成 off、`/adhd` 与 `on|true|1|yes|off|false|0|no` 在真实
+`config.toml` 上往返、切换保留其他键、未知参数经**真实 `AdhdCommand::run` 入口**返回带
+用法的错误且不创建配置文件；持久化逻辑改为接受显式路径（`run` 只是用真实 config home 调
+它），测试因此不碰用户自己的 `~/.chaos`。`/fallback` 同批**故意不复活**：全仓没有任何代码
+解析 `[fallback] models`，采样器也没有 fallback 链，声明它只会 advertised 一个静默无操作
+的命令——这个例外连同理由一起写进了守护测试的 `DELIBERATELY_UNDECLARED` 表。
+
+### 新增：panic-site census 与两条 CI 棘轮（含「没有任何构建会编译的源文件」清单）
+
+`docs/audit-followup-report.md` §2 的「2,292 个生产 unwrap」是 2026-08 手工 grep 出来的，
+口径没有记录，既不能重跑也不能和以后比较。`scripts/ci/panic-site-census.py` 把它换成可
+复现口径：先对注释/字符串/字符字面量做保位空白化，再按三分法判定测试归属（位于
+`tests|benches|examples` / 整文件 `#![cfg(test)]` / 命中点落在提及 `test` 的 `cfg(...)`
+区间内，`cfg_attr(not(test), …)` 明确**不**算），最后只统计被 crate root 经 `mod` 链可达
+的文件。2026-10-02 实测：31,621 个 `.unwrap()` 里 **351 个在生产（1.1%）**，生产
+`expect` 596、生产 `panic!` 类 132，unsafe 位点 654（596 block / 25 fn / 7 impl /
+26 extern）其中生产 420。两条棘轮进 `ci.yml`：生产位点只许降不许升
+（`panic-site-baseline.tsv`，97 个 crate），以及"无构建编译的文件"集合一字不许变
+（`uncompiled-sources.txt`，登记当时是 12 个；随后几轮判定完毕并清空，见上面那条快捷键
+窗口的条目）。扫描器本身由
+`scripts/ci/test-panic-site-census.py` 的 fixture 加六组注入变异证明非空转（最严重的
+一次——"不承认任何文件是 crate root"——红 9 条检查）。清单里 12 个文件当下都是**已知**
+状态而非新缺陷：`/adhd` 是其中唯一已证实的用户可见回归（见上一条），`/fallback` 是有意
+保留，其余 10 个（含 12,750 行未编译的 dashboard/shortcuts 测试）在 TODO MT-6 逐条登记待
+判定"接上还是删"。
+
 ### 新增：预览代理（`/preview/<port>/`，`crates/codegen/xai-grok-web/src/preview.rs`）
 
 跑在 `127.0.0.1:3000` 上的 dev server 对「按名字访问这台 host」的浏览器是不可达的，
