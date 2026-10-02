@@ -207,6 +207,10 @@ jobs:
               # is present on every Windows runner.
               ( cd "$tools_dir" && powershell.exe -NoProfile -Command \
                   "Expand-Archive -LiteralPath ripgrep.zip -DestinationPath ." )
+              # The zip holds everything under `ripgrep-<ver>-<triple>/`, which is
+              # what --strip-components=1 flattens on the other legs. Git Bash `mv`
+              # does the same here, so `RG_BIN_PATH` names one file either way.
+              mv "$tools_dir/ripgrep-$rg_ver-$rg_triple/$rg_binary" "$tools_dir/$rg_binary"
               ;;
             *)
               curl -fsSL -o "$tools_dir/ripgrep.tar.gz" \
@@ -215,6 +219,13 @@ jobs:
                 "ripgrep-$rg_ver-$rg_triple/$rg_binary"
               ;;
           esac
+          # A missing binary here would otherwise surface as an exit 127 from the
+          # version line below, which says nothing about the archive layout.
+          if [ ! -f "$tools_dir/$rg_binary" ]; then
+            echo "$rg_binary is not where this step assumes the archive puts it:" >&2
+            find "$tools_dir" -maxdepth 3 -type f | head -20 >&2
+            exit 1
+          fi
           chmod +x "$tools_dir/$rg_binary" 2>/dev/null || true
           "$tools_dir/$rg_binary" --version | head -1
           if command -v cygpath >/dev/null 2>&1; then

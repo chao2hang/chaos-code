@@ -1,0 +1,75 @@
+# What this is: the first run in which the platform legs actually started, and the
+# reason the Windows one did not run a single test.
+# Source: run 36979345879 on commit a206ec33, https://github.com/chao2hang/chaos-code/actions/runs/36979345879
+# Fetched with: gh api --allow-escape-sequences repos/chao2hang/chaos-code/actions/jobs/110761942421/logs
+# Host that fetched it: Ubuntu 22.04 x86_64, gh 2.x. No Windows or macOS machine ran here.
+
+== why this run matters
+
+`platform tests` has `needs: rust`, so for as long as the `rust` job was red the two
+platform legs were reported as skipped and never produced evidence. On this run the
+`rust` job passed and both legs started for the first time.
+
+== job results
+
+  rust check / clippy / test                 completed/success
+  GUI engine, Web host and frontend          completed/success
+  GUI browser E2E                            completed/success
+  npm package scripts                        completed/success
+  secret scan                                completed/success
+  docs localization                          completed/success
+  workflows present                          completed/success
+  platform tests (windows-latest)            completed/failure
+  platform tests (macos-14)                  in progress at the time of writing
+
+== the Windows failure, step by step
+
+  7 Provide ripgrep for the search tools: failure
+  8 cargo test (target-OS crates):          skipped
+
+Nothing of the product was executed. The step that failed is the one that downloads
+the pinned ripgrep the search tools need in a debug build.
+
+  D:\a\_temp\2e84eeab-90d5-47f4-80f9-f1e2f9b7bd38.sh: line 40:
+      /d/a/_temp/ripgrep-15.0.0/rg.exe: No such file or directory
+  ##[error]Process completed with exit code 127.
+
+== cause
+
+The Windows branch downloaded `ripgrep-15.0.0-x86_64-pc-windows-msvc.zip` and ran
+`Expand-Archive -DestinationPath .`, then executed `$tools_dir/rg.exe`. The archive
+holds its files under a top-level `ripgrep-15.0.0-x86_64-pc-windows-msvc/` directory,
+so `rg.exe` landed one level down and the path the step used had never existed. The
+tarball branch was unaffected because `tar --strip-components=1` flattens that same
+directory.
+
+`scripts/test-platform.ps1`, which does the same job for a developer-run Windows
+check, already handled this with `Move-Item`; only the inline workflow step was wrong.
+
+== the fix, and what was checked here
+
+The workflow step now moves the binary out of the archive's directory the way
+`--strip-components=1` does for the tarball, and fails with a directory listing if
+the binary is not at the path it is about to export, instead of exit 127 from an
+unexplained exec.
+
+Reproduced locally (Ubuntu 22.04) by taking the step's own script text out of
+`.github/workflows/ci.yml` and running its Windows branch, substituting only the
+extraction primitive -- PowerShell's `Expand-Archive` for `python3 -m zipfile -e`,
+which writes the same tree:
+
+  rg.exe at the path the step exports: True
+  PE binary: True bytes: 4265472
+  moved out of the archive's directory: True
+  exit: 126  cannot execute binary file: Exec format error
+
+That exit 126 is this Linux machine declining to *run* a Windows binary and is
+expected; it is the proof the file is now where the step says it is. Before the fix
+the same run failed earlier with 127 "No such file or directory", which is the error
+the Windows runner reported.
+
+== what this file is NOT evidence about
+
+No Windows or macOS test result. The Windows leg never reached `cargo test`, and the
+macOS leg's outcome is not in this transcript. Both remain to be produced by a run of
+this fixed workflow.
