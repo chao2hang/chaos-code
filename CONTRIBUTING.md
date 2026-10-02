@@ -51,6 +51,38 @@ space is needed. Preserve source, caches outside `target/`, and user data.
 The observed WSL2 9P shutdown incident and its environment-specific evidence are
 recorded in [`docs/known-issues/wsl-p9io-crash-20260728.md`](docs/known-issues/wsl-p9io-crash-20260728.md).
 
+## Platform-specific checks
+
+Several crates select behaviour by `cfg(unix)` / `cfg(windows)` /
+`cfg(target_os = ...)`: the TTY stderr-handle handling, the sandbox's seccomp and
+namespace paths versus the Windows Job Object paths, PTY descendant teardown, the
+updater's per-OS installer hint, and child-process spawning. A green Linux run
+says nothing about those paths, so run the target machine's own entry point:
+
+```sh
+# macOS / Linux
+scripts/test-platform.sh 2>&1 | tee "platform-test-$(uname -s).log"
+```
+
+```powershell
+# Windows (PowerShell)
+./scripts/test-platform.ps1 *>&1 | Tee-Object platform-test-windows.log
+```
+
+Both print the toolchain/OS report first and then run the same crate set the
+`platform-tests` CI job uses (`macos-14` and `windows-latest`), and both accept
+crate names to narrow the run. Keep the log: it is the evidence a platform row in
+`TODO.md` needs, and a Linux log never substitutes for it.
+
+## Upstream reconnaissance
+
+`scripts/upstream-recon.sh` records how far the ported `SOURCE_REV` has fallen
+behind `xai-org/grok-build` into `sync/recon/`. It is read-only: it queries
+`git ls-remote` and the GitHub compare API, writes nothing outside `sync/recon/`,
+and exits non-zero rather than writing a record when the network is unavailable.
+Recording a gap is not a port — each upstream change still needs the curated-port
+review in `sync/` before it touches ported source.
+
 ## Security reports
 
 Please report security issues through the process described in

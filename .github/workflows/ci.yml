@@ -116,6 +116,65 @@ jobs:
         run: |
           cargo test --workspace --locked --no-fail-fast
 
+  # Platform-specific code paths (`xai-tty-utils` handle duplication, the
+  # sandbox's Linux seccomp/namespaces vs Windows Job Object, the updater's
+  # per-OS installer hint, PTY teardown) only compile on their target OS, so a
+  # Linux-only job cannot claim they work. `release.yml` already runs on
+  # macos-14 and windows-latest; this job runs the same crates' tests there.
+  platform-tests:
+    name: platform tests (${{ matrix.os }})
+    needs: rust
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      # Same protoc the Linux and release jobs use; apt's version is too old
+      # for proto3 optional and the macos/windows images ship none.
+      - name: Install protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          version: "29.3"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Read pinned toolchain
+        id: toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          channel="$(sed -n 's/^channel[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' rust-toolchain.toml)"
+          test -n "$channel" || { echo "no channel pinned in rust-toolchain.toml" >&2; exit 1; }
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: chaos-platform
+          key: ${{ matrix.os }}
+
+      - name: cargo test (target-OS crates)
+        shell: bash
+        env:
+          # Same 16 MiB test-thread stack the Linux job needs.
+          RUST_MIN_STACK: "16777216"
+        run: |
+          set -euo pipefail
+          cargo test --locked --no-fail-fast \
+            -p xai-tty-utils \
+            -p xai-grok-sandbox \
+            -p xai-grok-shell-terminal \
+            -p xai-grok-update \
+            -p xai-grok-tools \
+            -p xai-grok-pager-bin
+
   # Local hooks are opt-in per clone (scripts/install-hooks.sh), so this job is
   # what actually enforces the rule. e9d8fa9 pushed 24 environment dumps with
   # live API keys to the public remote; nothing in CI would have noticed.
