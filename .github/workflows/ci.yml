@@ -507,6 +507,12 @@ jobs:
           # and tutorials; losing it would be silent, which is the same reason
           # this step exists at all.
           grep -q 'docs-l10n' .github/workflows/ci.yml
+          # Same reasoning for the two installer gates added on 2026-10-02. Both are
+          # slow enough that deleting them would look like an improvement, and both
+          # guard code that only gets exercised by a user with a bad download -- i.e.
+          # never, during development.
+          grep -q 'installer-integrity' .github/workflows/ci.yml
+          grep -q 'test-installer-asset-names.py' .github/workflows/ci.yml
           # Every `run:` step in a Windows-capable job must pin `shell: bash`
           # (or opt out with an `if: runner.os` guard). This job is ubuntu-only,
           # so nothing here can catch such a mistake the way the release matrix
