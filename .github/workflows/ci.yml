@@ -458,6 +458,17 @@ jobs:
         run: cargo test -p chaos-engine -p xai-grok-web -p xai-grok-desktop --locked
       - name: Protocol type drift
         run: ./scripts/ci/check-gui-protocol.sh
+      - name: Protocol mirror coverage
+        run: |
+          set -euo pipefail
+          # `Protocol type drift` above compares the committed protocol.ts with a
+          # string constant, so both sides are the same hand-written text: it
+          # cannot see a message added to ClientMessage/ServerMessage and never
+          # mirrored. Six attachment messages lived that way -- spoken by the
+          # engine, covered by Rust tests, invisible to the browser. This parses
+          # the real enums and checks tags and field names in both directions.
+          python3 scripts/ci/test-check-protocol-mirror.py
+          python3 scripts/ci/check-protocol-mirror.py
       - name: Frontend checks
         working-directory: apps/chaos-ui
         run: npm ci --ignore-scripts && npm run typecheck && npm test && npm run build

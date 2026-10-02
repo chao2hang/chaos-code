@@ -26,6 +26,11 @@ export type ClientMessage =
   | { type: 'update_settings'; client_msg_id: string; base_url: string | null; model: string | null }
   | { type: 'get_git_status'; client_msg_id: string }
   | { type: 'validate_attachment'; client_msg_id: string; filename: string; byte_len: number; content_type: string }
+  | { type: 'begin_attachment'; client_msg_id: string; session_id: UUID; filename: string; content_type: string; byte_len: number }
+  // `chunk` is standard base64 of one slice of the file; keep each slice well
+  // under the server's WebSocket text-frame limit.
+  | { type: 'attachment_chunk'; client_msg_id: string; upload_id: UUID; chunk: string }
+  | { type: 'cancel_attachment'; client_msg_id: string; upload_id: UUID }
   | { type: 'finalize_attachment'; client_msg_id: string; upload_id: UUID; relative_path: string }
   | { type: 'import_tui_session'; client_msg_id: string; root: string; session_id: string }
   | { type: 'validate_provider'; client_msg_id: string; base_url: string; model: string }
@@ -64,8 +69,11 @@ export type ServerMessage =
   | { type: 'settings_updated'; base_url: string | null; model: string | null }
   | { type: 'git_status'; branch: string | null; entries: string[] }
   | { type: 'attachment_validated'; filename: string; byte_len: number; content_type: string }
+  | { type: 'attachment_started'; session_id: UUID; upload_id: UUID; filename: string }
+  | { type: 'attachment_progress'; upload_id: UUID; received: number }
   | { type: 'provider_validation'; base_url: string; model: string; reachable: boolean; error_code: string | null }
   | { type: 'attachment_completed'; session_id: UUID; upload_id: UUID; path: string; bytes: number }
+  | { type: 'attachment_cancelled'; upload_id: UUID }
   | { type: 'tui_session_import'; session_id: string; cwd: string; title: string | null; message_count: number; source_unchanged: boolean }
   | { type: 'marketplace_scan'; entries: MarketplaceEntry[]; catalog_loaded: boolean }
   | { type: 'terminal_result'; session_id: UUID; output: string; exit_code: number }

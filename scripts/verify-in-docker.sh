@@ -141,6 +141,7 @@ gates=(
   "cargo fmt: ${bootstrap}; cargo fmt --all -- --check"
   "ignored-test baseline: ${bootstrap}; python3 scripts/ci/test-ignored-tests.py && python3 scripts/ci/test-ignored-tests-baseline-fixture.py && python3 scripts/ci/test-ignored-tests-baseline.py && python3 scripts/ci/test-ignored-tests-reasons.py && python3 scripts/ci/ignored-tests.py --require-reasons && python3 scripts/ci/ignored-tests.py --check-baseline scripts/ci/ignored-tests-baseline.tsv"
   "brand/protocol guard: python3 scripts/ci/check-brand-protocol.py && python3 scripts/ci/test-brand-protocol.py"
+  "protocol mirror coverage: python3 scripts/ci/test-check-protocol-mirror.py && python3 scripts/ci/check-protocol-mirror.py"
   "TODO status doc: python3 scripts/ci/test-classify-open-todos.py && python3 scripts/ci/classify-open-todos.py --check-doc docs/architecture/todo-open-item-classification.md"
   "CI guard wiring: python3 scripts/ci/test-check-guard-wiring.py && python3 scripts/ci/check-guard-wiring.py"
   # No argument on purpose: the CI step runs it with none, and pointing this one at
