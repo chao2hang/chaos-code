@@ -101,7 +101,11 @@ trap cleanup EXIT
 # before anything is printed, because the registry line below asks the container what
 # registry it is configured for -- a host-side mirror would make the run about
 # something other than the public registry.
-docker run -d --name "$container_name" --entrypoint sleep "$image" 3600 >/dev/null
+# See scripts/install-sh-in-docker.sh: the idle container needs a ceiling so an
+# interrupted run cannot leave one behind, and that ceiling has to outlast a slow but
+# successful run or the containers stop underneath a check and the failure points at
+# the wrong thing.
+docker run -d --name "$container_name" --entrypoint sleep "$image" "${CHAOS_LAB_KEEPALIVE:-21600}" >/dev/null
 
 in_container() {
   docker exec "$container_name" "$@"

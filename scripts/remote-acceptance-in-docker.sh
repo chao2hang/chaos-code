@@ -46,6 +46,14 @@ set -euo pipefail
 IMAGE="${IMAGE:-chaos-verify:local}"
 WORK_DIR="${WORK_DIR:-}"
 CARGO_ARGS="${CARGO_ARGS:---offline --locked}"
+# How long each container keeps itself alive. These containers run no service of their
+# own -- every step is a `docker exec` against an idle machine -- so the idle command
+# needs a ceiling, otherwise a run killed hard enough to skip the cleanup trap leaves
+# containers behind forever. The ceiling has to be longer than a slow successful run
+# though: when it expires the containers stop underneath whichever check is in flight,
+# and that arrives as a killed process rather than as a lab failure. Override with
+# CHAOS_LAB_KEEPALIVE.
+container_keepalive="${CHAOS_LAB_KEEPALIVE:-21600}"
 KEEP=0
 
 for arg in "$@"; do
@@ -454,10 +462,10 @@ printf 'the second workspace\n' >"${lab_root}/host/workspace2/other.txt"
 log "starting the clean remote host container (${IMAGE})"
 docker run -d --name "${host_container}" --network host \
   -v "${lab_root}/host:/lab" -v "${lab_root}/shared:/shared" \
-  "${IMAGE}" sleep 3600 >/dev/null
+  "${IMAGE}" sleep "${container_keepalive}" >/dev/null
 docker run -d --name "${dev_container}" --network host \
   -v "${lab_root}/dev:/lab" -v "${lab_root}/shared:/shared" \
-  "${IMAGE}" sleep 3600 >/dev/null
+  "${IMAGE}" sleep "${container_keepalive}" >/dev/null
 say "remote host: $(on_host 'sed -n 2p /etc/os-release'), $(on_host uname -m)"
 say "its only chaos binaries are the ones copied in: $(on_host 'ls /lab/bin | tr "\n" " "')"
 
@@ -681,7 +689,7 @@ log "an upload that fails part-way leaves the installed version alone"
 docker run -d --name "${disk_container}" --network host \
   -v "${lab_root}/disk:/lab" -v "${lab_root}/shared:/shared" \
   --tmpfs "/lab/workspace:size=32m,exec" \
-  "${IMAGE}" sleep 3600 >/dev/null
+  "${IMAGE}" sleep "${container_keepalive}" >/dev/null
 cp "${repo_root}/target/debug/chaos-remote-server" "${lab_root}/disk/chaos-remote-server"
 cp "${repo_root}/target/debug/chaos-remote" "${lab_root}/disk/chaos-remote"
 head -c 3000000 /dev/zero >"${lab_root}/disk/blob"
@@ -718,7 +726,7 @@ log "an artifact the host will not execute is refused rather than published"
 docker run -d --name "${noexec_container}" --network host \
   -v "${lab_root}/noexec:/lab" -v "${lab_root}/shared:/shared" \
   --tmpfs /lab/workspace:size=32m \
-  "${IMAGE}" sleep 3600 >/dev/null
+  "${IMAGE}" sleep "${container_keepalive}" >/dev/null
 cp "${repo_root}/target/debug/chaos-remote-server" "${lab_root}/noexec/chaos-remote-server"
 cp "${repo_root}/target/debug/chaos-remote" "${lab_root}/noexec/chaos-remote"
 check_in_noexec "the workspace is a filesystem the host will not execute from" \

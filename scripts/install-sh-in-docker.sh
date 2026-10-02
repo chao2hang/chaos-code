@@ -116,8 +116,24 @@ cleanup() {
 }
 trap cleanup EXIT
 
-docker run -d --name "$container_name" --entrypoint sleep "$image" 3600 >/dev/null
+# How long the container keeps itself alive. `sleep` is the only reason this container
+# exists -- there is no service in it -- so that sleep needs a ceiling of its own:
+# without one, a run killed hard enough to skip the EXIT trap above leaves a container
+# behind forever. The ceiling also has to be longer than a slow but successful run.
+# An hour was not: the release artifact is over 150 MB, a throttled link can put that
+# download past an hour on its own, and when the sleep expired the container stopped
+# underneath the checks. curl inside the installer then died with SIGKILL and the lab
+# reported "install.sh exited 137", which reads as a defect in the installer and is a
+# defect in this harness. Override with CHAOS_LAB_KEEPALIVE for a deliberately short
+# experiment.
+container_keepalive="${CHAOS_LAB_KEEPALIVE:-21600}"
+docker run -d --name "$container_name" --entrypoint sleep "$image" "$container_keepalive" >/dev/null
 in_container() { docker exec "$container_name" "$@"; }
+# Whether the machine is still there to be blamed for what it reported. See
+# container_keepalive below.
+container_alive() {
+  [ "$(docker inspect -f '{{.State.Status}}' "$container_name" 2>/dev/null)" = "running" ]
+}
 # docker exec only forwards stdin with -i; without it the installer would arrive empty.
 in_container_write() { docker exec -i "$container_name" sh -c "cat > $1"; }
 
@@ -126,6 +142,7 @@ say "image:        ${image} (stock Debian; no cargo, no repo, no prior install)"
 say "installer:    ${script_src} (working tree)"
 say "repo:         ${repo}"
 say "built-in key: ${embedded_key}"
+say "keep-alive:   the container stops after ${container_keepalive}s; a longer download needs CHAOS_LAB_KEEPALIVE"
 
 bump
 if in_container uname -a >/dev/null 2>&1; then
@@ -221,6 +238,10 @@ printf '%s\n' "$install_out" | sed 's/^/     | /'
 bump
 if [ "$install_status" = "0" ]; then
   ok "install.sh exited 0 with no CHAOS_SIGNING_PUBLIC_KEY in the environment"
+elif ! container_alive; then
+  # 137/143 here mean the container stopped underneath the installer. Reporting that as
+  # "install.sh exited 137" blames a script that never got the chance to fail.
+  failure "the container stopped mid-install (installer killed with ${install_status} after ${container_keepalive}s of keep-alive); this says nothing about install.sh"
 else
   failure "install.sh exited ${install_status} using only its built-in key"
 fi

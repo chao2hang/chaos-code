@@ -307,8 +307,9 @@ jobs:
       # image does not carry. apt rather than pip: the Ubuntu 24.04 image marks its
       # interpreter externally managed, and the lab wants the same distro build a
       # Debian user would have anyway. Neither lab has a skip path -- a missing
-      # `pwsh`, a missing crypto binding, or a kernel that will not create a network
-      # namespace exits 2 with a named reason, so the job cannot go green by absence.
+      # `pwsh`, a missing crypto binding, or a machine that will not create a network
+      # namespace by either route exits 2 with a named reason, so the job cannot go
+      # green by absence.
       - name: Install the crypto binding the fixture signs with
         run: |
           set -euo pipefail
@@ -318,7 +319,19 @@ jobs:
           # Recorded here rather than left to the lab, so a runner-image change shows up
           # at once instead of three minutes into the docker step.
           pwsh --version
-          unshare -rn true
+          # Which namespace route this runner allows, printed and not asserted. These
+          # images refuse unprivileged user namespaces (`unshare -rn` fails writing
+          # /proc/self/uid_map) while root can still create one, and asserting the
+          # unprivileged route in this step is what used to take the container lab down
+          # with it: the PowerShell lab resolves its own route and exits 2 if there is
+          # none, which is where that verdict belongs.
+          if unshare -rn true 2>/dev/null; then
+            echo "namespace route: unprivileged unshare -rn"
+          elif sudo -n unshare -n true 2>/dev/null; then
+            echo "namespace route: root unshare -n (unprivileged user namespaces are off)"
+          else
+            echo "namespace route: none -- the PowerShell lab will refuse to run"
+          fi
 
       - name: install.sh refuses a bad release (container, no network)
         run: ./scripts/install-integrity-in-docker.sh

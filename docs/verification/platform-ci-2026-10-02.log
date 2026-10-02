@@ -169,3 +169,86 @@ warnings and no errors, `cargo test -p xai-tty-utils` is green on Linux (62 + 1 
 What this file is still NOT evidence about: a Windows run of those three tests. The
 cross-compile says the target builds; only the next `platform tests (windows-latest)` leg
 says whether `KillOnDrop` behaves there.
+
+## Run 37014349712 (commit 834d19e0) and why `installer integrity labs` could not go green
+
+Observed at 15:05 UTC on the run for `834d19e0`:
+
+| job | outcome |
+|---|---|
+| workflows present | success |
+| docs localization | success |
+| secret scan | success |
+| npm package scripts | success |
+| GUI browser E2E | success |
+| GUI engine, Web host and frontend | success |
+| installer integrity labs | failure, 15 s |
+| rust check / clippy / test | in progress at the time of writing |
+| platform tests (macos/windows) | not started; they `need:` the rust job |
+
+The failing job died in its prerequisite step, so both lab steps were skipped:
+
+```
+   step: Install the crypto binding the fixture signs with
+   pwsh --version                     -> PowerShell 7.6.6
+   unshare -rn true
+   unshare: write failed /proc/self/uid_map: Operation not permitted
+   ##[error]Process completed with exit code 1.
+```
+
+That answers the question this file had been carrying about whether `unshare -rn` works
+on GitHub-hosted ubuntu runners: it does not. The images have unprivileged user-namespace
+creation off, and the probe was written into the step that installs the crypto binding,
+so refusing it took down the sibling lab in the same job -- `install-integrity-in-docker.sh`,
+which isolates with `docker run --network none` and needs no user namespace at all. One
+runner limitation was being reported as two lab failures.
+
+The fix keeps the property the job was designed around -- neither lab may go green by
+absence, so an unavailable precondition exits 2 naming the reason -- and moves the
+decision into the lab that needs it:
+
+- The workflow step prints which route the machine allows and asserts nothing.
+- `install-integrity-powershell.sh` resolves a route itself: `unshare -rn` where an
+  unprivileged user namespace is allowed, otherwise `sudo -n unshare -n`.
+- The root route is `unshare -n` and not `unshare -rn`, which was established by running
+  it rather than reasoned about. With `-r` the lab lands in a child user namespace, where
+  a process has no privileges over resources outside it; on this machine the repository
+  sits under a `drwxr-x---` home directory and the inner half failed with
+  `Permission denied` reading its own script. Root with a network namespace only keeps
+  normal access to the tree, and can still bring `lo` up because the new namespace
+  belongs to root's own user namespace.
+
+Both routes were then run for real, on a machine that allows both, via
+`CHAOS_PS1_LAB_NS_ROUTE` -- which exists so the CI-only branch is testable somewhere
+instead of being shipped untested:
+
+```
+CHAOS_PS1_LAB_NS_ROUTE=unshare  -> all 30 PowerShell release-integrity checks passed
+CHAOS_PS1_LAB_NS_ROUTE=sudo     -> all 30 PowerShell release-integrity checks passed
+```
+
+In each transcript the two premises that make the run meaningful are the same:
+
+```
+   ok  loopback is up, which is all the fake release endpoint needs
+   ok  github.com cannot be resolved from this namespace (curl exit 6)
+```
+
+so the root route is not a weaker isolation with a green tick on top: the installer still
+provably cannot reach the real feed. The lab directory was removed in both runs
+(`ls /tmp/chaos-install-integrity-ps1.*` empty afterwards), which the root route has to
+earn by cleaning up as the same user that wrote it -- the cleanup trap lives in the
+inner half, which is the half that runs as root.
+
+A third runner defect is recorded alongside this one: every Docker lab in this repository
+kept its containers alive with `--entrypoint sleep <image> 3600`, so the container's PID 1
+exited after one hour and SIGKILLed whichever `docker exec` was in flight.
+`install-sh-in-docker.sh` hit it on a 150 MB release download and reported
+`install.sh exited 137 using only its built-in key`, plus two "no OK line" failures, all of
+which attributed a harness timeout to the installer. The ceiling is now `CHAOS_LAB_KEEPALIVE`
+(six hours, printed at start), kept finite on purpose so an interrupted run cannot leave a
+container behind forever.
+
+What this file is still NOT evidence about: a green `installer integrity labs` job on a
+runner. The routes are proven on Linux here; the next push's run is what shows the job
+passing where it previously could not.

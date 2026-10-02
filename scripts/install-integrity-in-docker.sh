@@ -110,8 +110,12 @@ cp "$script_src" "${WORK_DIR}/install.sh"
 log_dir="${WORK_DIR}/logs"
 mkdir -p "$log_dir"
 
+# See scripts/install-sh-in-docker.sh: the idle container needs a ceiling so an
+# interrupted run cannot leave one behind, and that ceiling has to outlast a slow but
+# successful run or the container stops underneath a check and the failure points at the
+# wrong thing. This one serves no requests from the network, so it is also offline.
 docker run -d --name "$container_name" --network none \
-  --entrypoint sleep "$image" 3600 >/dev/null
+  --entrypoint sleep "$image" "${CHAOS_LAB_KEEPALIVE:-21600}" >/dev/null
 in_container() { docker exec "$container_name" "$@"; }
 in_container_sh() { docker exec "$container_name" bash -c "$1"; }
 

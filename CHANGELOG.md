@@ -2,6 +2,91 @@
 
 ## Unreleased
 
+### 新增：预览代理（`/preview/<port>/`，`crates/codegen/xai-grok-web/src/preview.rs`）
+
+跑在 `127.0.0.1:3000` 上的 dev server 对「按名字访问这台 host」的浏览器是不可达的，
+而常见答案——把 3000 端口一起开放——等于把一台没有鉴权的服务器放到网络上。
+`CHAOS_WEB_PREVIEW_PORTS=3000,5173` 现在把每个被点名的端口挂到 `/preview/<port>/`
+后面，宿主侧原有的 `Host`/`Origin`/loopback 规则一并生效。挂在前缀下会坏四样，
+重写这四样正是它作为代理存在的理由：`Host` 与 `Origin` 改成上游自己的
+（没带 `Origin` 的请求补一个上游同源值——直连它本来就是这个样子），`Set-Cookie` 的
+`Path` 收窄到前缀并丢掉 `Domain`，`Location` 放回前缀之内，WebSocket upgrade 由代理
+用自己的握手桥接（浏览器的 `Sec-WebSocket-Key`/版本/`Connection`/`Upgrade` 属于另一条
+连接，不转发；子协议 offer 与 Cookie 转发）。请求体按 32 MiB 缓冲，不再吃 API 那条
+64 KiB 上限。
+
+安全上的取舍写进 ADR-005：这条路径**前后都不带**宿主的 bearer token——本机上一个
+应用对「认证本服务器的凭据」没有索取权，而浏览器对页面里的任何子资源请求都不会附
+`Authorization`，要求它只会拒掉页面而不是保护页面；作为代价，`/preview/<port>/` 底下
+与 dev server 本身一样不设认证，因此端口白名单默认为空、默认只从 loopback 可达，
+即使声明了 `CHAOS_WEB_PUBLIC_ORIGIN` 也要另一个开关（`CHAOS_WEB_PREVIEW_ALLOW_PUBLIC=1`）
+才允许走公开名字——公开这台 host 和公开某个项目的 dev server 是两个决定。从别的机器
+访问的正路仍是 `chaos-remote forward`。代理也无法重写应用自己 HTML 里写死的
+`/main.js`，这条限制连同 `X-Forwarded-Prefix` 一起写在模块文档与 `CONTRIBUTING.md` 里。
+
+测试面对的是两个真东西：一个 axum stand-in 像 Vite 一样拒绝不属于它的 `Host` 与
+`Origin`（重写退化为透传时，测试会看到 app 的 403 而不是代理的 200），一个 raw socket
+服务器逐字节读代理发出的握手、并用**它实际收到的 key** 推导 accept（复用浏览器的 key
+在这里会直接握手失败）。15 项单测 + 14 项集成测试。变异验证抓到五处：外层 `Host`
+透传、`Set-Cookie` 的 Path 不收窄、loopback 默认被关（两条测试各自抓到）、`Location`
+不加前缀、bearer 被转发上游。另有八处变异是等价变异，没有改变线上一个字节：
+`tungstenite` 的 `generate_request` 对 `Host`/`Connection`/`Upgrade`/
+`Sec-WebSocket-Version`/`Sec-WebSocket-Key` 这五个头名各取 map 里的**第一个**值写上线、
+把该名字的其余值全部丢掉（`HeaderMap::remove` 一次清空），所以「不丢外层值」「改用
+append」「不 push 重写后的 Host」都不会有可观测差异；复用浏览器 key 那条则是另一回事
+——每一跳都拿自己实际发出的 key 去校验 accept，换了源头也测不出来。代码注释原先把前者
+写成「会拒绝带重复头的请求」，那是错的，已按事实改正，并新增一条测试钉住这个依赖的实际
+行为：故意让 URI（3000）与 header map（9999）不一致，断言上线的是 map 的值——这既证明
+重写确实是 app 看到的那个值，也说明上面八处变异为什么不可见。将来依赖行为变了，这条
+测试会在原地报出来。
+
+### 修复：CI 的 `installer integrity labs` 作业在这台 runner 上永远红
+
+CI run `37014349712` 里这个作业 15 秒就失败，而且两个 lab 步骤全被跳过——红的是前置步骤
+`Install the crypto binding the fixture signs with`，最后一行是 `unshare -rn true`：
+
+```
+unshare: write failed /proc/self/uid_map: Operation not permitted
+```
+
+GitHub 托管的 ubuntu runner 关掉了非特权用户命名空间，`unshare -rn` 在那里根本走不通，
+而这一句被放在前置步骤里，于是它把同作业内那个本来能跑的容器 lab（`--network none`，
+不依赖用户命名空间）也一起拖死了。现在：前置步骤只打印这台机器允许哪条路（不再断言），
+命名空间由 lab 自己解析——先试 `unshare -rn`，不行再用 `sudo -n unshare -n`，两条都没有
+才照旧 exit 2 并报出原因（「没有跳过路径」这个性质保留）。root 那条刻意不带 `-r`：加
+`-r` 会把 lab 放进子用户命名空间，那里的进程对命名空间外的任何资源都没有特权，主目录是
+`drwxr-x---` 时连本仓库都读不到（这台机器上实测就是 `Permission denied`）；只建网络命名空间
+的 root 仍保留正常访问，而 `ip link set lo up` 依然可行，因为该网络命名空间属于 root 自己的
+用户命名空间。`CHAOS_PS1_LAB_NS_ROUTE` 可以钉住走哪条：CI 只会走 root 那条，所以本机
+（两条都允许）用它把 root 分支真跑了一遍——`unshare` 与 `sudo` 两条各 30/30 全绿，
+`loopback is up` 与 `github.com cannot be resolved from this namespace (curl exit 6)`
+两条前提在两条路上都真实通过，跑完 `/tmp` 下不留残余。
+
+### 工程：Docker lab 的容器不再在一小时后从检查脚下消失
+
+四个 lab（`install-sh-in-docker.sh`、`install-integrity-in-docker.sh`、
+`npm-install-in-docker.sh`、`remote-acceptance-in-docker.sh`，共六处）都用
+`docker run -d --entrypoint sleep <image> 3600` 把容器空跑起来，后续每一步都是
+`docker exec`。那个 `3600` 是容器 PID 1 的寿命：一小时一到，`sleep` 退出、容器停止，
+正在跑的 `docker exec` 被 SIGKILL。`install-sh-in-docker.sh` 真的撞上了——release 产物
+150 MB 起，限速链路光下载就超过一小时，于是 lab 报的是
+`FAILED install.sh exited 137 using only its built-in key`，外加两条「checksum/signature
+没有 OK 行」，看起来像安装器坏了，实际是这套 harness 自己把机器撤掉了。现在时长改成
+`CHAOS_LAB_KEEPALIVE`（默认 6 小时）并在头部打印出来：保留上限是因为如果进程被杀到连
+`trap cleanup EXIT` 都没跑，无限寿命的容器会永久留在机器上；上限又必须长过一次慢但成功
+的运行。`install-sh` 额外加了归因：安装器以 137/143 死掉且容器已不在 running 时，报的是
+「容器停在半路，这说明不了 install.sh 的任何事」，而不是把退出码当作产品结论。
+
+### 工程：`scripts/verify-in-docker.sh` 给自己的运行签指纹
+
+容器 bind-mount 的是活动工作树，门禁读到的是别人正在写的文件。一次 `--full` 运行的
+`cargo test` 就是这样红的：rustdoc 报一个尚未写完的模块缺 `reqwest`，其余门禁全绿，
+而这次失败无法归因给任何 commit。脚本现在在第一个门禁之前、最后一个门禁之后各做一次
+全量 `cksum`（tracked 与未 ignored 的 untracked 都算，新模块正是会被撞上的那类文件），
+不一致就打印 `UNATTRIBUTABLE`、列出差异路径并以非零退出——一次和编辑撞车的运行既不能
+算 commit 的结论，也不能算干净的通过。顺带把 CI 两个 job 都设的 `RUST_MIN_STACK` 补进
+容器环境，否则「跑 CI 同一串命令」这句话在 `xai-grok-shell` 的 actor 测试上不成立。
+
 ### 工程：发行物文件名从此四处对齐（`scripts/ci/test-installer-asset-names.py`）
 
 一个 release 的产物名由 `.github/workflows/release.yml` 的六行 `copy_one` 决定，而问它要

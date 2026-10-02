@@ -70,7 +70,16 @@ The image installs its toolchain through rustup from `rust-toolchain.toml` and
 asserts `rustc -V` against that pin at build time, so the pin stays the only
 source of truth and a silent fallback to another compiler fails the build.
 Cargo's registry and `target/` live in named volumes rather than the bind mount,
-so a root-owned build tree cannot break the host build afterwards.
+so a root-owned build tree cannot break the host build afterwards. `RUST_MIN_STACK`
+is set to the value both CI jobs set it to, because `xai-grok-shell` has actor tests
+that overflow the harness default and the lab's claim is that it runs CI's command
+list.
+
+The run checksums every tracked and untracked file before the first gate and again
+after the last one. A mismatch prints `UNATTRIBUTABLE` and exits non-zero: the
+container reads the live working tree, so a run that overlapped an edit describes
+neither a commit nor a clean tree, and a `cargo test` leg that raced an editor looks
+exactly like a genuine failure. Run it with the tree at rest.
 
 Behind a registry mirror, point the build at your own base image:
 
@@ -81,6 +90,18 @@ BASE_IMAGE=your-mirror.example.com/library/debian:bookworm-slim scripts/verify-i
 This container covers the Linux gates only. It is not platform evidence: a Linux
 container cannot run the macOS or Windows code paths, and it does not exercise
 signing, installers, or a real TLS-terminating deployment.
+
+The other labs (`install-sh-in-docker.sh`, `install-integrity-in-docker.sh`,
+`npm-install-in-docker.sh`, `remote-acceptance-in-docker.sh`) start their containers
+idle and drive every step with `docker exec`, so each container's lifetime is whatever
+idle command it was started with. Keep two things in mind when you touch that. The idle
+command needs a ceiling: if the lab is killed hard enough that its cleanup trap never
+runs, a container with no ceiling stays on the machine forever. And the ceiling needs to
+outlast a slow but successful run — when it expires the containers stop underneath
+whichever check is in flight, and the lab reports a killed process instead of a
+verdict. `install-sh-in-docker.sh` downloaded a 150 MB release for an hour, hit exactly
+that, and blamed `install.sh` for exiting 137. All four now take `CHAOS_LAB_KEEPALIVE`
+(default six hours) and print the value they are using.
 
 ## Platform-specific checks
 
@@ -253,6 +274,44 @@ chain and checks the handshake, the credential, the declared-name rules, a real
 `wss:` session, a credential rotation, Safe Web Mode through the proxy, and that
 the backend is unreachable from anywhere but the proxy. It is a deployment-shape
 check on Linux; it is not a certificate-authority, CDN or multi-tenant review.
+
+## Previewing a dev server through the Web host
+
+`CHAOS_WEB_PREVIEW_PORTS=3000,5173` maps each named port to `http://127.0.0.1:<port>`
+and serves it under `/preview/<port>/`, so a browser that reaches this host by name
+can use a dev server that has no authentication of its own without that server
+becoming reachable by anyone else. Only what a prefix actually breaks is rewritten:
+`Host` and `Origin` become the upstream's own (a request that carried no `Origin` is
+given the upstream's, which is what a direct request would have looked like),
+`Set-Cookie` is scoped to the prefix with `Domain` dropped, `Location` is put back
+under the prefix, and a WebSocket upgrade is bridged with the proxy's own handshake.
+The browser's `Sec-WebSocket-Key`, `Sec-WebSocket-Version`, `Connection` and
+`Upgrade` belong to the other connection and are not forwarded; its subprotocol offer
+and its cookies are. Request bodies are buffered up to 32 MiB rather than capped at
+the API's 64 KiB, because uploading to a dev server is a thing dev servers do.
+
+Two things to know before blaming the proxy:
+
+- The app has to build its own URLs under the prefix — Vite's
+  `base: '/preview/3000/'`, webpack's `publicPath`. No proxy can rewrite a
+  `/main.js` that the app's own HTML already resolved against this host.
+  `X-Forwarded-Prefix` is sent on every request so a server-rendered app can do the
+  same, and the app's HMR client picks its own socket host and port, so a dev server
+  that hard-codes its port produces a socket that bypasses this host.
+- A preview is refused unless the request arrived over loopback, even when
+  `CHAOS_WEB_PUBLIC_ORIGIN` is set (`preview_loopback_only`). Publishing this host
+  and publishing someone's dev server are two different decisions; the second one is
+  `CHAOS_WEB_PREVIEW_ALLOW_PUBLIC=1`. From another machine the answer is usually
+  `chaos-remote forward`, which puts the remote preview behind this machine's
+  loopback instead.
+
+Refusals are JSON with a reason code — `preview_disabled`, `preview_port_not_allowed`,
+`preview_loopback_only`, `preview_target_invalid`, `preview_upstream_unreachable`,
+`preview_body_too_large`, `preview_upstream_failed`, `preview_upgrade_unsupported` —
+and `GET /preview` lists what is enabled. `cargo test -p xai-grok-web` drives the
+built binary against a stand-in dev server that refuses a `Host` or `Origin` that is
+not its own, and against a raw socket server that reads the proxied handshake
+byte-for-byte and answers with the accept key derived from the key it was handed.
 
 ## Auto-update tests
 

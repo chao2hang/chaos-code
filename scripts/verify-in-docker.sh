@@ -16,6 +16,11 @@
 #   BASE_IMAGE   base image for docker/verify.Dockerfile (default rust:1-bookworm)
 #   IMAGE_TAG    image tag to build and run (default chaos-verify:local)
 #
+# The source tree is checksummed before the first gate and again after the last
+# one, and a mismatch is reported as UNATTRIBUTABLE rather than as a result: the
+# container reads the live working tree, so a run that overlapped an edit says
+# nothing about any commit. Re-run it with nothing writing to the tree.
+#
 # Capture evidence with:
 #   scripts/verify-in-docker.sh --full 2>&1 | tee verify-in-docker-$(date +%Y%m%d).log
 set -euo pipefail
@@ -29,7 +34,7 @@ for arg in "$@"; do
     --full) MODE="full" ;;
     --shell) MODE="shell" ;;
     -h | --help)
-      sed -n '2,20p' "$0"
+      sed -n '2,25p' "$0"
       exit 0
       ;;
     *)
@@ -65,10 +70,46 @@ run_args=(
   --volume chaos-verify-cargo-registry:/usr/local/cargo/registry
   --volume chaos-verify-cargo-git:/usr/local/cargo/git
   --volume chaos-verify-target:/src/target
+  # The test step in both CI jobs sets this, and this script's whole claim is that it
+  # runs "the same command list as the `rust` job". `xai-grok-shell`'s library suite has
+  # current-thread actor tests that overflow the harness default stack -- documented in
+  # docs/architecture/todo-open-item-classification.md, where it cost CI run 36165469964.
+  # Without this the `--full` mode fails on a clean machine for a reason that has nothing
+  # to do with the change under test.
+  --env RUST_MIN_STACK=16777216
 )
 
 if [ "${MODE}" = "shell" ]; then
   exec docker run -it "${run_args[@]}" "${IMAGE_TAG}" bash
+fi
+
+# Checksums of every file the gates can read, taken before and after the run.
+#
+# This is a bind mount of a live working tree, so a gate can read a file while an
+# editor still has it open. That is not hypothetical: a `--full` run on 2026-10-02
+# failed its `cargo test` leg on a rustdoc error naming a module that was being
+# edited at that moment, every other gate was green, and the failure could not be
+# attributed to any commit. Contents are checksummed rather than mtimes because an
+# editor can restore an mtime, and untracked files count because a new module is
+# exactly the kind of file a run races with.
+tree_dir="$(mktemp -d)"
+trap 'rm -rf "${tree_dir}"' EXIT
+tree_before="${tree_dir}/before.sums"
+tree_after="${tree_dir}/after.sums"
+
+fingerprint() { # fingerprint <output-file>
+  ( cd "${repo_root}" && git ls-files -co --exclude-standard -z | xargs -0 cksum ) >"$1"
+}
+
+sum_of() { cksum <"$1" | cut -d' ' -f1; }
+
+fingerprint "${tree_before}"
+echo "== source tree: $(grep -c '' "${tree_before}") files, checksum $(sum_of "${tree_before}")"
+# `grep -c` over `wc -l`: `wc` pads its count on some BSDs, which would make a
+# clean tree compare unequal to `0` below.
+dirty="$(cd "${repo_root}" && git status --porcelain 2>/dev/null | grep -c '' || true)"
+if [ -n "${dirty}" ] && [ "${dirty}" != "0" ]; then
+  echo "   ${dirty} path(s) differ from HEAD, so this run describes the working tree, not a commit"
 fi
 
 # The repo is bind-mounted from a host user, so git inside the container sees a
@@ -112,6 +153,24 @@ done
 echo
 if [ -n "${failed}" ]; then
   echo "FAILED gates:${failed}"
+else
+  echo "all gates passed in ${IMAGE_TAG}"
+fi
+
+# The verdict is only about the tree the gates actually saw. If it moved under
+# them, say so and refuse to hand out a pass.
+fingerprint "${tree_after}"
+moved=""
+if ! cmp -s "${tree_before}" "${tree_after}"; then
+  moved="$(diff "${tree_before}" "${tree_after}" | sed -n 's/^[<>] [0-9][0-9]* [0-9][0-9]* //p' | sort -u)"
+  echo
+  echo "UNATTRIBUTABLE: the source tree changed while the gates ran."
+  echo "  checksum $(sum_of "${tree_before}") -> $(sum_of "${tree_after}"); these paths differ:"
+  echo "${moved}" | sed -n '1,20p' | sed 's/^/    /'
+  echo "  nothing in this run can be attributed to a commit; re-run it with the tree at rest."
   exit 1
 fi
-echo "all gates passed in ${IMAGE_TAG}"
+
+if [ -n "${failed}" ]; then
+  exit 1
+fi

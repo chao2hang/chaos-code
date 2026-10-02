@@ -13,8 +13,13 @@ anyhow.workspace = true
 axum.workspace = true
 chaos-engine = { path = "../chaos-engine" }
 dunce.workspace = true
+# The preview proxy dials the developer's own dev server: an HTTP client for
+# plain requests and a WebSocket client for the HMR socket.
+futures-util.workspace = true
+reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+tokio-tungstenite.workspace = true
 tower.workspace = true
 tokio = { workspace = true, features = ["net", "rt-multi-thread", "macros", "sync"] }
 tower-http = { workspace = true, features = ["cors", "limit", "fs", "set-header"] }
@@ -23,9 +28,7 @@ uuid.workspace = true
 
 [dev-dependencies]
 flate2.workspace = true
-futures-util.workspace = true
 base64.workspace = true
-tokio-tungstenite.workspace = true
 tempfile.workspace = true
 # Startup-refusal tests must not block forever if a guard regresses and the host
 # simply starts serving.

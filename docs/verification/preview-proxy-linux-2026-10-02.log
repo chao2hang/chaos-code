@@ -1,0 +1,370 @@
+# Preview proxy -- 2026-10-02
+
+Reproduce: `RUST_MIN_STACK=16777216 cargo test -p xai-grok-web --offline --locked`
+(unit tests in `crates/codegen/xai-grok-web/src/preview.rs`, integration tests in
+`crates/codegen/xai-grok-web/tests/preview_proxy.rs`). The HTTP walkthrough in
+section 4 is the script at the bottom of this file's "how the walkthrough was run"
+note; it starts the shipped `chaos-web` binary and a stand-in dev server and drives
+them with `curl`.
+Host: Ubuntu 22.04 x86_64, Linux 6.8.0-138-generic, rustc 1.94.0, cargo 1.94.0.
+Docker 29.8.1 is present on this host but this particular feature needed no container.
+Commit under test: `834d19e0` plus the working-tree changes that add
+`crates/codegen/xai-grok-web/src/preview.rs` (1518 lines) and
+`crates/codegen/xai-grok-web/tests/preview_proxy.rs` (1606 lines).
+Scope: whether `/preview/<port>/` on the Web host can be put in front of a dev server
+without leaking the host's credential, without letting the previewed app widen its
+cookie scope, and without breaking the four things a prefix proxy is known to break
+(`Host`, `Origin`, `Location`, `Set-Cookie`) or the HMR socket.
+
+## What each part is for
+
+`TODO.md` M4.4 asked for a preview proxy that "handles Host, Origin, Cookie, WebSocket
+and authentication, and is not publicly exposed by default". The implementation is
+`xai-grok-web`'s `preview` module; the security reasoning is ADR-005's
+"Preview proxy" section. What follows is the evidence for it, in three layers: unit
+tests over the pure rewrite functions, integration tests that run the built binary
+against stand-in dev servers, and a `curl` walkthrough of the running host.
+
+Two stand-ins carry weight here, and both exist so that a wrong rewrite fails loudly
+instead of passing quietly:
+
+- An axum server that refuses a `Host` or `Origin` that is not its own, the way Vite's
+  `allowedHosts` does. If the rewrite degraded to passthrough, the test sees the app's
+  403 rather than a 200 that happens to carry the right bytes.
+- A raw-socket server that reads the proxied upgrade request byte for byte and replies
+  with the accept value derived from the `Sec-WebSocket-Key` it *actually received*.
+  Reusing the browser's key across both hops, or sending a key that does not match the
+  one it validates against, fails the handshake rather than passing unnoticed.
+
+## 1. Unit tests (15)
+
+`cargo test -p xai-grok-web --lib -- preview::`
+
+    Finished `test` profile [unoptimized] target(s) in 0.40s
+     Running unittests src/lib.rs (target/debug/deps/xai_grok_web-6b2c604f54e8d50c)
+
+running 15 tests
+test preview::tests::a_redirect_stays_under_the_prefix ... ok
+test preview::tests::a_cookie_is_scoped_to_its_own_preview ... ok
+test preview::tests::a_referer_loses_the_prefix_and_keeps_the_query ... ok
+test preview::tests::an_environment_value_names_the_variable_it_failed_on ... ok
+test preview::tests::an_upgrade_gets_its_own_handshake_instead_of_a_copy ... ok
+test preview::tests::a_subprotocol_is_only_echoed_back_if_the_browser_asked_for_it ... ok
+test preview::tests::a_preview_url_resolves_only_to_a_named_port ... ok
+test preview::tests::an_upgrade_is_recognised_by_its_two_tokens_not_by_a_substring ... ok
+test preview::tests::a_request_that_carried_no_origin_is_given_the_upstreams_own ... ok
+test preview::tests::response_headers_keep_every_value_and_rewrite_the_two_that_matter ... ok
+test preview::tests::request_headers_are_rewritten_to_the_upstreams_own_authority ... ok
+test preview::tests::only_the_machine_itself_may_ask_for_a_preview ... ok
+test preview::tests::the_allowlist_parser_accepts_only_a_port_list ... ok
+test preview::tests::the_summary_lists_what_is_enabled ... ok
+test preview::tests::the_websocket_client_puts_one_of_its_own_headers_on_the_wire ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.00s
+
+## 2. Integration tests (14)
+
+`cargo test -p xai-grok-web --test preview_proxy`. Each test starts the real
+`chaos-web` binary as a child process with its own `CHAOS_WEB_TOKEN`, so what is under
+test is the shipped router and middleware stack, not a reconstruction of it.
+
+   Compiling xai-grok-web v0.1.0 (/home/chaos/hunt/dev/projects/chaos-code/crates/codegen/xai-grok-web)
+    Finished `test` profile [unoptimized] target(s) in 2.76s
+     Running tests/preview_proxy.rs (target/debug/deps/preview_proxy-9c45c4a9f47e1f4e)
+
+running 14 tests
+test the_upgrade_request_the_bridge_sends_is_one_the_app_can_answer ... ok
+test a_forged_loopback_hostname_is_not_loopback ... ok
+test a_page_from_another_site_cannot_reach_a_preview ... ok
+test the_hmr_socket_is_bridged_with_its_own_handshake ... ok
+test an_upgrade_that_is_not_websocket_is_refused_by_name ... ok
+test a_preview_that_was_never_enabled_says_so ... ok
+test a_subprotocol_nobody_offered_is_not_echoed_back ... ok
+test an_unnamed_port_and_a_dead_dev_server_are_told_apart ... ok
+test a_previewed_post_is_not_bounded_by_the_api_request_cap ... ok
+test a_cookie_from_the_previewed_app_cannot_escape_its_prefix ... ok
+test the_previewed_app_sees_its_own_authority_and_not_the_hosts_credential ... ok
+test a_redirect_from_the_previewed_app_stays_under_the_prefix ... ok
+test a_preview_is_not_reachable_through_the_public_name ... ok
+test preview_routes_leave_the_rest_of_the_host_alone ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.38s
+
+## 3. Mutation verification
+
+Each row below breaks one specific thing in `preview.rs`, runs the integration test
+that is supposed to care about it, and restores the file. A row that still passes is
+reported as VACUOUS rather than quietly dropped from the tally.
+
+| # | mutation | outcome |
+|---|---|---|
+| M1 | outer `Host` forwarded instead of the app's own | CAUGHT |
+| M2 | `Set-Cookie` `Path` left unscoped | CAUGHT |
+| M3 | loopback-only guard disabled | CAUGHT (two separate tests) |
+| M4 | `Upgrade` removed from the hop-by-hop list | VACUOUS (equivalent mutant) |
+| M5 | `Location` left unprefixed | CAUGHT |
+| M6 | browser's `Sec-WebSocket-Key` reused upstream | VACUOUS (equivalent mutant) |
+| M7 | host bearer token forwarded upstream | CAUGHT |
+| M8 | the client's own five headers appended rather than inserted | VACUOUS (equivalent mutant) |
+| M9 | upstream `Upgrade` left alongside the browser's copy | VACUOUS (equivalent mutant) |
+| M10 | upstream `Host` left alongside the browser's copy | VACUOUS (equivalent mutant) |
+| M11 | `Connection` neither dropped nor replaced | VACUOUS (equivalent mutant) |
+| M12 | browser's `Host` neither dropped nor replaced | VACUOUS (equivalent mutant) |
+| M13 | rewritten `Host` not pushed at all | VACUOUS (equivalent mutant) |
+
+Five real defects are caught. The eight equivalent mutants have two separate causes,
+and both were only found by running the mutations -- the code comments had asserted a
+third cause that turned out to be false.
+
+**M4, M8, M9, M10, M11, M12, M13 -- one cause.** `tungstenite`'s
+`handshake::client::generate_request` writes `Host`, `Connection`, `Upgrade`,
+`Sec-WebSocket-Version` and `Sec-WebSocket-Key` itself, and for each name it calls
+`HeaderMap::remove`, which returns the first value and removes *every* value under that
+name. Extra copies are therefore dropped silently, and the `Error::Protocol(
+InvalidHeader)` branch that looks for a surviving second copy is unreachable through a
+`HeaderMap`. The earlier comment in `bridge_websocket` claimed the client "rejects a
+request that carries a second copy", which is what the `for (k, v) in headers` loop in
+that function appears to say and is not what happens in practice. It has been corrected
+to describe the first-value-wins behavior.
+
+M12 and M13 have one further reason: `into_client_request()` seeds the header map with
+the authority from the URI, and the bridge builds that URI from the same `target.port`
+the rewrite uses, so the two ways of producing `Host` always agree and no integration
+test can tell them apart.
+
+Both facts are now pinned by a unit test rather than asserted in prose.
+`the_websocket_client_puts_one_of_its_own_headers_on_the_wire` calls `generate_request`
+directly, appends a second value under each of the five names, and makes the URI (port
+3000) disagree with the header map (port 9999). The assertion that goes on the wire is
+`host: 127.0.0.1:9999` -- the map wins, which is what makes the rewrite the value the
+app reads -- and no `a-second-copy` appears anywhere. If a future `tungstenite` joins
+values instead of taking the first, or prefers the URI over the map, that test fails in
+place of this paragraph.
+
+**M6 -- a different cause.** Each hop validates `Sec-WebSocket-Accept` against the key
+it actually sent, and the raw-socket stand-in derives its answer from the received key,
+so reusing the browser's key upstream is not observable as a failure. It is also
+harmless: both hops would compute the same accept value. Recorded as an equivalent
+mutant rather than a coverage gap.
+
+The raw transcript. Two artifacts in it are explained rather than edited away: the
+`mutate1.sh: No such file or directory` line is a first attempt at the combined run
+that pointed at a name the pass-1 script never had (it is `mutate.sh`, and pass 1 runs
+again below it), and the pass-1 block appears twice because `mutate.sh` re-prints its
+collected results as its own summary at the end. Every line is output.
+
+===== pass 1 =====
+bash: /tmp/grok-goal-ec37f68d1619/implementer/mutate1.sh: No such file or directory
+===== pass 2 =====
+VACUOUS  M4 Upgrade not hop-by-hop on the upgrade path
+VACUOUS  M6 browser's Sec-WebSocket-Key forwarded
+CAUGHT   M7 host credential forwarded upstream
+           thread 'the_upgrade_request_the_bridge_sends_is_one_the_app_can_answer' (4124857) panicked at crates/codegen/xai-grok-web/tests/preview_proxy.rs:1253:5:
+           assertion `left == right` failed: the host's credential stays on this side of the proxy: GET /ws HTTP/1.1
+tree restored
+===== pass 3 =====
+CAUGHT   M7 host credential forwarded upstream
+           thread 'the_upgrade_request_the_bridge_sends_is_one_the_app_can_answer' (4125443) panicked at crates/codegen/xai-grok-web/tests/preview_proxy.rs:1253:5:
+           assertion `left == right` failed: the host's credential stays on this side of the proxy: GET /ws HTTP/1.1
+           Upgrade: websocket
+VACUOUS  M8 the five client headers appended, not replaced
+VACUOUS  M9 Upgrade left alongside the browser's copy
+VACUOUS  M10 Host left alongside the browser's copy
+tree restored
+===== pass 4 =====
+VACUOUS  M11 Connection neither dropped nor replaced
+MUTATION TARGET NOT UNIQUE (0): '                &header::HOST\n                    | &header::ORIGIN\n            '
+tree restored
+===== PASS 1 (mutate.sh) 2026-10-02T22:36:10+08:00 =====
+CAUGHT   M1 outer Host forwarded  [the_previewed_app_sees_its_own_authority_and_not_the_hosts_credential]
+           test the_previewed_app_sees_its_own_authority_and_not_the_hosts_credential ... FAILED
+           thread 'the_previewed_app_sees_its_own_authority_and_not_the_hosts_credential' (4129931) panicked at crates/codegen/xai-grok-web/tests/preview_proxy.rs:731:5:
+           test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 13 filtered out; finished in 0.08s
+CAUGHT   M2 cookie Path unscoped  [a_cookie_from_the_previewed_app_cannot_escape_its_prefix]
+           test a_cookie_from_the_previewed_app_cannot_escape_its_prefix ... FAILED
+           thread 'a_cookie_from_the_previewed_app_cannot_escape_its_prefix' (4130547) panicked at crates/codegen/xai-grok-web/tests/preview_proxy.rs:792:5:
+           assertion `left == right` failed: Path is scoped to the preview and Domain is dropped
+           test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 13 filtered out; finished in 0.08s
+CAUGHT   M3 loopback-only guard off  [a_preview_is_not_reachable_through_the_public_name]
+           test a_preview_is_not_reachable_through_the_public_name ... FAILED
+           thread 'a_preview_is_not_reachable_through_the_public_name' (4131128) panicked at crates/codegen/xai-grok-web/tests/preview_proxy.rs:1474:5:
+           assertion `left == right` failed: (200, [("content-type", "text/plain; charset=utf-8"), ("content-length", "150"), ("date", "Fri, 02 Oct 2026 14:36:19 GMT"), ("connection", "close")], "host=127.0.0.1:38741|origin=http://127.0.0.1:38741|referer=|auth=|cookie=|prefix=/preview/38741|fwd_host=chaos.example.test:8443|fwd_proto=https|body=")
+           test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 13 filtered out; finished in 0.08s
+CAUGHT   M3 loopback-only guard off  [a_forged_loopback_hostname_is_not_loopback]
+           test a_forged_loopback_hostname_is_not_loopback ... FAILED
+           thread 'a_forged_loopback_hostname_is_not_loopback' (4131185) panicked at crates/codegen/xai-grok-web/tests/preview_proxy.rs:1538:5:
+           assertion `left == right` failed: (200, [("content-type", "text/plain; charset=utf-8"), ("content-length", "148"), ("date", "Fri, 02 Oct 2026 14:36:19 GMT"), ("connection", "close")], "host=127.0.0.1:40205|origin=http://127.0.0.1:40205|referer=|auth=|cookie=|prefix=/preview/40205|fwd_host=127.0.0.1.evil.example|fwd_proto=http|body=")
+           test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 13 filtered out; finished in 0.07s
+VACUOUS  M4 Upgrade duplicated on the wire  [the_hmr_socket_is_bridged_with_its_own_handshake] still passed
+CAUGHT   M5 Location un-prefixed  [a_redirect_from_the_previewed_app_stays_under_the_prefix]
+           test a_redirect_from_the_previewed_app_stays_under_the_prefix ... FAILED
+           thread 'a_redirect_from_the_previewed_app_stays_under_the_prefix' (4132371) panicked at crates/codegen/xai-grok-web/tests/preview_proxy.rs:834:5:
+           assertion `left == right` failed: a root-relative redirect is relative to the app, not to this host
+           test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 13 filtered out; finished in 0.08s
+--- restored; tree identical to backup:
+clean
+CAUGHT   M1 outer Host forwarded  [the_previewed_app_sees_its_own_authority_and_not_the_hosts_credential]
+           test the_previewed_app_sees_its_own_authority_and_not_the_hosts_credential ... FAILED
+           thread 'the_previewed_app_sees_its_own_authority_and_not_the_hosts_credential' (4129931) panicked at crates/codegen/xai-grok-web/tests/preview_proxy.rs:731:5:
+           test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 13 filtered out; finished in 0.08s
+CAUGHT   M2 cookie Path unscoped  [a_cookie_from_the_previewed_app_cannot_escape_its_prefix]
+           test a_cookie_from_the_previewed_app_cannot_escape_its_prefix ... FAILED
+           thread 'a_cookie_from_the_previewed_app_cannot_escape_its_prefix' (4130547) panicked at crates/codegen/xai-grok-web/tests/preview_proxy.rs:792:5:
+           assertion `left == right` failed: Path is scoped to the preview and Domain is dropped
+           test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 13 filtered out; finished in 0.08s
+CAUGHT   M3 loopback-only guard off  [a_preview_is_not_reachable_through_the_public_name]
+           test a_preview_is_not_reachable_through_the_public_name ... FAILED
+           thread 'a_preview_is_not_reachable_through_the_public_name' (4131128) panicked at crates/codegen/xai-grok-web/tests/preview_proxy.rs:1474:5:
+           assertion `left == right` failed: (200, [("content-type", "text/plain; charset=utf-8"), ("content-length", "150"), ("date", "Fri, 02 Oct 2026 14:36:19 GMT"), ("connection", "close")], "host=127.0.0.1:38741|origin=http://127.0.0.1:38741|referer=|auth=|cookie=|prefix=/preview/38741|fwd_host=chaos.example.test:8443|fwd_proto=https|body=")
+           test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 13 filtered out; finished in 0.08s
+CAUGHT   M3 loopback-only guard off  [a_forged_loopback_hostname_is_not_loopback]
+           test a_forged_loopback_hostname_is_not_loopback ... FAILED
+           thread 'a_forged_loopback_hostname_is_not_loopback' (4131185) panicked at crates/codegen/xai-grok-web/tests/preview_proxy.rs:1538:5:
+           assertion `left == right` failed: (200, [("content-type", "text/plain; charset=utf-8"), ("content-length", "148"), ("date", "Fri, 02 Oct 2026 14:36:19 GMT"), ("connection", "close")], "host=127.0.0.1:40205|origin=http://127.0.0.1:40205|referer=|auth=|cookie=|prefix=/preview/40205|fwd_host=127.0.0.1.evil.example|fwd_proto=http|body=")
+           test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 13 filtered out; finished in 0.07s
+VACUOUS  M4 Upgrade duplicated on the wire  [the_hmr_socket_is_bridged_with_its_own_handshake] still passed
+CAUGHT   M5 Location un-prefixed  [a_redirect_from_the_previewed_app_stays_under_the_prefix]
+           test a_redirect_from_the_previewed_app_stays_under_the_prefix ... FAILED
+           thread 'a_redirect_from_the_previewed_app_stays_under_the_prefix' (4132371) panicked at crates/codegen/xai-grok-web/tests/preview_proxy.rs:834:5:
+           assertion `left == right` failed: a root-relative redirect is relative to the app, not to this host
+           test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 13 filtered out; finished in 0.08s
+--- restored; tree identical to backup:
+clean
+
+===== PASS 5 (mutate5.sh) 2026-10-02T22:36:25+08:00 =====
+VACUOUS  M12 Host neither dropped nor replaced on the upgrade path
+VACUOUS  M13 Host not rewritten on the upgrade path
+tree restored
+
+After the last mutation the working tree was verified byte-identical to the
+pre-mutation backup (`diff -q` clean), and the 15 unit tests were re-run and passed.
+
+## 4. The running host over HTTP
+
+No browser tool is available in this environment, so this is the substitute allowed by
+the project rule: the shipped `chaos-web` binary is started with a real token and two
+allowlisted ports, one of which has a stand-in dev server behind it (a Vite-like Python
+server that refuses a `Host` or `Origin` that is not its own, and logs what it received
+as JSON), and everything below is `curl` output. Ports were allocated at run time; the
+ones in this transcript are from that run.
+
+== what the host said at startup
+Chaos Web listening on http://127.0.0.1:32945
+accepting Host and Origin for chaos.example.test:8443; the proxy in front of this server must set X-Forwarded-Proto: https
+previewing dev servers on loopback only: http://127.0.0.1:39757 -> /preview/39757/, http://127.0.0.1:44947 -> /preview/44947/
+
+== 1. the index of what is previewed
+HTTP/1.1 200 OK
+
+{"previews":[{"port":39757,"url":"/preview/39757/"},{"port":44947,"url":"/preview/44947/"}],"upstream":"127.0.0.1"}
+== 2. the page, through the prefix (no credential attached)
+HTTP/1.1 200 OK
+content-type: text/html; charset=utf-8
+set-cookie: sid=abc; Path=/preview/39757/; HttpOnly
+<!doctype html><title>dev app</title><p>host=127.0.0.1:39757</p><script src="/preview/39757/main.js"></script>
+== 3. an asset under the prefix
+HTTP/1.1 200 OK
+
+console.log('hmr-ready');
+
+== 4. a redirect the app issued stays under the prefix
+HTTP/1.1 302 Found
+location: /preview/39757/main.js
+
+== 5. a page on another site may not drive requests into the dev server
+HTTP/1.1 401 Unauthorized
+
+{"error":"origin_not_allowed","detail":"the page that issued this request is not this host"}
+== 6. a port nobody named, and a named port with nothing behind it
+HTTP/1.1 403 Forbidden
+
+{"error":"preview_port_not_allowed","detail":"port 9999; enabled: 39757,44947"}HTTP/1.1 502 Bad Gateway
+
+{"error":"preview_upstream_unreachable","detail":"http://127.0.0.1:44947/: error sending request for url (http://127.0.0.1:44947/)"}
+== 7. the same host reached by its public name refuses previews
+HTTP/1.1 401 Unauthorized
+
+{"error":"preview_loopback_only","detail":"previews are reachable through 127.0.0.1/localhost only; set CHAOS_WEB_PREVIEW_ALLOW_PUBLIC=1 to also serve them through the declared public origin"}
+== 8. and with the opt-in, the public name serves them
+HTTP/1.1 200 OK
+
+<!doctype html><title>dev app</title><p>host=127.0.0.1:39757</p><script src="/preview/39757/main.js"></script>
+
+== 9. what the dev server actually received
+{"method": "GET", "host": "127.0.0.1:39757", "origin": "http://127.0.0.1:39757", "referer": "", "authorization": "", "cookie": "", "x-forwarded-prefix": "/preview/39757", "path": "/", "body_bytes": 0}
+{"method": "GET", "host": "127.0.0.1:39757", "origin": "http://127.0.0.1:39757", "referer": "", "authorization": "", "cookie": "", "x-forwarded-prefix": "/preview/39757", "path": "/", "body_bytes": 0}
+{"method": "GET", "host": "127.0.0.1:39757", "origin": "http://127.0.0.1:39757", "referer": "", "authorization": "", "cookie": "", "x-forwarded-prefix": "/preview/39757", "path": "/main.js", "body_bytes": 0}
+{"method": "GET", "host": "127.0.0.1:39757", "origin": "http://127.0.0.1:39757", "referer": "", "authorization": "", "cookie": "", "x-forwarded-prefix": "/preview/39757", "path": "/go", "body_bytes": 0}
+{"method": "GET", "host": "127.0.0.1:39757", "origin": "http://127.0.0.1:39757", "referer": "", "authorization": "", "cookie": "", "x-forwarded-prefix": "/preview/39757", "path": "/", "body_bytes": 0}
+
+== 10. the rest of the host still behaves as before
+HTTP/1.1 200 OK
+HTTP/1.1 401 Unauthorized
+
+{"error":"credential_required"}HTTP/1.1 200 OK
+HTTP/1.1 413 Payload Too Large
+HTTP/1.1 200 OK
+
+Reading of the parts that matter:
+
+- Line 1: the host says at startup what it will preview and over which reach
+  (`loopback only`), so the enabled set is not something you have to probe for.
+- Line 2: `set-cookie: sid=abc; Path=/preview/39757/; HttpOnly` -- the app asked for
+  `Path=/`; the rewrite scoped it to the preview and dropped `Domain`, so the app
+  cannot set a cookie the `/api/*` routes would receive.
+- Line 4: the app's `Location: /main.js` became `/preview/39757/main.js`. Left alone it
+  would have pointed at this host's root, i.e. at a route that is not the app's.
+- Lines 5-7: `origin_not_allowed`, `preview_port_not_allowed` (naming what *is*
+  enabled, which is deliberate -- a bare 403 here sends people to the config file),
+  `preview_upstream_unreachable`, and `preview_loopback_only` distinguished from each
+  other rather than collapsed into one 500.
+- Line 7/8: the same host by its declared public name refuses previews until
+  `CHAOS_WEB_PREVIEW_ALLOW_PUBLIC=1` is set. Forging `Host: 127.0.0.1.evil.example` is
+  not loopback either; that is a unit test and an integration test of its own
+  (`a_forged_loopback_hostname_is_not_loopback`).
+- Line 9: what the dev server recorded. `host` and `origin` are its own authority, not
+  the host's; `authorization`, `referer` and `cookie` are all empty in both directions;
+  `x-forwarded-prefix` carries the prefix so a server-rendered app can build its URLs
+  under it.
+- Line 10: `/health` still 200, `/api/sessions` still 401 without a credential, and the
+  API's 64 KiB body cap still returns 413 at 70 KiB while a 200 KiB POST through the
+  preview succeeds -- the preview path does not inherit the API's request-body limit,
+  and the API path does not lose its own.
+
+## What this does not cover
+
+- **No real browser.** There is no browser automation in this environment, so cookie
+  scoping is checked on the `Set-Cookie` value the proxy returns, not by a browser jar
+  deciding what to send back to `/api/*`. The rewrite is the part under test; the
+  browser honoring `Path=/preview/3000/` is RFC 6265 behavior this repo does not
+  implement.
+- **No real Vite.** The stand-in is a Python/axum server configured with Vite's
+  strictness (`Host`/`Origin` checked, one named subprotocol offered). A real Vite HMR
+  client decides for itself which host and port its socket connects to; a dev server
+  that hard-codes its own port produces a socket that bypasses this host. That is the
+  app's code, not the proxy's, and it is written down as a limitation in the module
+  docs and in `CONTRIBUTING.md` rather than claimed as working. Prefix proxying needs
+  `base: '/preview/3000/'` on the app side.
+- **`permessage-deflate` is not bridged.** `Sec-WebSocket-Extensions` is dropped on the
+  upstream hop, so the upstream connection is uncompressed. Frames still cross the
+  bridge correctly (the bridge moves decoded messages, not bytes); nothing negotiates
+  compression with the dev server.
+- **No cross-site test with a real second origin in a browser.** The `Origin` refusal is
+  exercised over HTTP with a hand-set header, which is the actual code path -- the
+  browser would set the same header.
+- **The bridge is message-level, so a mid-frame TCP reset on one hop is not propagated
+  as a close code on the other.** Both hops see an error; the specific code may not
+  survive. Not exercised.
+
+## How the walkthrough was run
+
+The script and the stand-in dev server are not committed (they duplicate what the
+integration tests drive with more moving parts); the transcript above is their output.
+In outline: build `chaos-web`, start `fake_dev_server.py` on a port chosen at run time
+(it refuses a `Host`/`Origin` that is not its own and appends one JSON line per request
+to a log), start `chaos-web` bound to `127.0.0.1:0` with `CHAOS_WEB_TOKEN`,
+`CHAOS_WEB_PREVIEW_PORTS` set to the dev server's port plus one dead port, and
+`CHAOS_WEB_PUBLIC_ORIGIN=chaos.example.test:8443`, then issue the requests above with
+`curl --resolve` for the public-name cases, restart with
+`CHAOS_WEB_PREVIEW_ALLOW_PUBLIC=1` for case 8, and print the dev server's log at the
+end.

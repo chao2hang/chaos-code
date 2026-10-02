@@ -18,6 +18,10 @@ use std::{
 use tower_http::services::{ServeDir, ServeFile};
 use tower_http::{cors::CorsLayer, limit::RequestBodyLimitLayer};
 
+pub mod preview;
+
+use preview::PreviewConfig;
+
 const MAX_REQUEST_BYTES: usize = 64 * 1024;
 const DEV_ORIGINS: [&str; 4] = [
     "http://127.0.0.1:5173",
@@ -32,6 +36,9 @@ pub struct WebState {
     pub engine: Engine,
     pub token: Arc<String>,
     pub safe_web_mode: bool,
+    /// Dev-server ports an operator named at startup. Empty means `/preview`
+    /// answers with a reason code and dials nothing.
+    pub previews: PreviewConfig,
 }
 pub fn router(engine: Engine, token: impl Into<String>) -> Router {
     router_with_safe_mode(engine, token, false)
@@ -51,10 +58,29 @@ pub fn router_with_assets_and_safe_mode(
     safe_web_mode: bool,
     assets_dir: Option<std::path::PathBuf>,
 ) -> Router {
+    router_with_previews(
+        engine,
+        token,
+        safe_web_mode,
+        assets_dir,
+        PreviewConfig::disabled(),
+    )
+}
+
+/// The full constructor. `previews` is a parameter rather than an environment
+/// read so that a test can enable a port without touching process state.
+pub fn router_with_previews(
+    engine: Engine,
+    token: impl Into<String>,
+    safe_web_mode: bool,
+    assets_dir: Option<std::path::PathBuf>,
+    previews: PreviewConfig,
+) -> Router {
     let state = Arc::new(WebState {
         engine,
         token: Arc::new(token.into()),
         safe_web_mode,
+        previews,
     });
     let router = Router::new()
         .route("/health", get(health))
@@ -70,6 +96,11 @@ pub fn router_with_assets_and_safe_mode(
             ),
         )
         .layer(RequestBodyLimitLayer::new(MAX_REQUEST_BYTES))
+        // Merged after the layers above on purpose. `RequestBodyLimitLayer`
+        // caps this server's own JSON API at 64 KiB; a previewed app POSTing a
+        // form or uploading a file is not that API, and the preview module sets
+        // its own documented bound.
+        .merge(preview::routes())
         .with_state(state);
     if let Some(assets_dir) = assets_dir {
         router
@@ -533,10 +564,17 @@ fn host_allowed_against(headers: &HeaderMap, public_authority: Option<&str>) -> 
     // Loopback stays valid — the proxy dials it and may or may not rewrite Host,
     // and health checks still arrive that way. The public name is additionally
     // valid only because the operator typed it.
+    loopback_authority(&authority)
+        || configured_public_authority_matches(public_authority, &authority)
+}
+
+/// The addresses this server considers "the machine itself", as opposed to a name
+/// other machines can be pointed at.
+pub(crate) fn loopback_authority(authority: &axum::http::uri::Authority) -> bool {
     matches!(
         authority.host().to_ascii_lowercase().as_str(),
         "127.0.0.1" | "localhost" | "[::1]" | "::1"
-    ) || configured_public_authority_matches(public_authority, &authority)
+    )
 }
 
 /// Why a request is not allowed, or `None` when it is.
@@ -782,9 +820,33 @@ pub async fn serve_loopback_with_assets_and_safe_mode(
         );
     }
     let listener = tokio::net::TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], port))).await?;
+    // A preview allowlist that does not parse must stop startup. Half a list
+    // would mean the app a user expected to reach through this host is not
+    // reachable, and the symptom is a preview that never loads.
+    let previews = PreviewConfig::from_env().map_err(|reason| {
+        anyhow::anyhow!(
+            "预览代理配置无效：{reason}（CHAOS_WEB_PREVIEW_PORTS 为逗号分隔的端口，例如 3000,5173，不设置即关闭预览代理）"
+        )
+    })?;
+    if previews.is_enabled() {
+        eprintln!(
+            "previewing dev servers{}: {}",
+            if previews.allow_public {
+                " through the declared public origin as well"
+            } else {
+                " on loopback only"
+            },
+            previews
+                .ports()
+                .iter()
+                .map(|port| format!("http://127.0.0.1:{port} -> /preview/{port}/"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
     axum::serve(
         listener,
-        router_with_assets_and_safe_mode(engine, token, safe_web_mode, assets_dir),
+        router_with_previews(engine, token, safe_web_mode, assets_dir, previews),
     )
     .await?;
     Ok(())

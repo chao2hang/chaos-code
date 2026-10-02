@@ -28,7 +28,9 @@
 #   CHAOS_PS1_LAB_DIR=DIR                              # build the fixture in DIR
 #
 # Needs: pwsh (PowerShell 7+), python3 with the cryptography package, and unshare
-# (util-linux) able to create a network namespace. Nothing is downloaded: there is no
+# (util-linux) able to create a network namespace -- as the calling user where the
+# machine allows unprivileged user namespaces, otherwise as root via passwordless sudo,
+# which is what Ubuntu 24.04 images need. Nothing is downloaded: there is no
 # need to be able to reach the network for this to run, and it refuses to run if it
 # could.
 
@@ -389,9 +391,52 @@ if [ ! -f "$script_src" ]; then
   echo "cannot find ${script_src}" >&2
   exit 2
 fi
-if ! unshare -rn true >/dev/null 2>&1; then
-  echo "unshare -rn cannot create a network namespace here." >&2
-  echo "The lab is only worth running if the installer provably cannot reach github.com." >&2
+# What it takes to get a network namespace with no route but loopback. Unprivileged
+# user-namespace creation is turned off on Ubuntu 24.04 -- GitHub-hosted runners among
+# them, where `unshare -rn` fails writing /proc/self/uid_map -- while root can still
+# create one. The root route is `unshare -n` and deliberately not `unshare -rn`: the
+# `-r` would put the lab in a child user namespace, where a process has no privileges
+# over anything outside it and could not even read this repository when the home
+# directory is group-readable rather than world-readable. Root with a network namespace
+# only keeps its normal access to the tree, and `ip link set lo up` inside the namespace
+# still works because the namespace belongs to root's own user namespace. A machine that
+# can do neither is told so and the lab does not run: that is the point of it.
+# CHAOS_PS1_LAB_NS_ROUTE pins the route; CI can only take the root one, so a machine
+# that allows both uses it to run that branch on purpose rather than trusting it.
+ns_route="${CHAOS_PS1_LAB_NS_ROUTE:-}"
+case "$ns_route" in
+  "" | auto) ns_route="" ;;
+  unshare | sudo) ;;
+  *)
+    echo "CHAOS_PS1_LAB_NS_ROUTE must be auto, unshare or sudo, not '${ns_route}'." >&2
+    exit 2
+    ;;
+esac
+# Whether each route is available on this machine.
+ns_unshare_works=no
+ns_sudo_works=no
+unshare -rn true >/dev/null 2>&1 && ns_unshare_works=yes
+command -v sudo >/dev/null 2>&1 && sudo -n unshare -n true >/dev/null 2>&1 && ns_sudo_works=yes
+if [ -z "$ns_route" ]; then
+  if [ "$ns_unshare_works" = "yes" ]; then
+    ns_route="unshare"
+  elif [ "$ns_sudo_works" = "yes" ]; then
+    ns_route="sudo"
+    say "this machine refuses unprivileged user namespaces, so the network namespace is made as root"
+  else
+    echo "cannot create a network namespace here: unshare -rn was refused and neither is passwordless sudo." >&2
+    echo "The lab is only worth running if the installer provably cannot reach github.com." >&2
+    exit 2
+  fi
+fi
+# A pinned route is checked too, so asking for the root one on a machine that turns
+# passwordless sudo off fails here rather than halfway through the run.
+case "$ns_route" in
+  unshare) [ "$ns_unshare_works" = "yes" ] || pinned_route_broken=yes ;;
+  sudo) [ "$ns_sudo_works" = "yes" ] || pinned_route_broken=yes ;;
+esac
+if [ "${pinned_route_broken:-no}" = "yes" ]; then
+  echo "CHAOS_PS1_LAB_NS_ROUTE=${ns_route} but that route is not available on this machine." >&2
   exit 2
 fi
 
@@ -409,5 +454,13 @@ done
   --root "$WORK_DIR" --version "$version" --asset "$asset" >/dev/null
 
 echo "entering a network namespace with no route to anything but loopback"
-CHAOS_PS1_LAB_NS=1 keep="$keep" unshare -rn bash "${script_dir}/install-integrity-powershell.sh" \
-  --port "$port"
+if [ "$ns_route" = "sudo" ]; then
+  # sudo does not carry the caller's environment across, so the three things the inner
+  # half needs are named. The lab then runs as root, which is also what removes the lab
+  # directory it wrote -- the cleanup trap lives in the inner half.
+  sudo -n env CHAOS_PS1_LAB_NS=1 "keep=${keep}" "WORK_DIR=${WORK_DIR}" "PATH=${PATH}" \
+    unshare -n bash "${script_dir}/install-integrity-powershell.sh" --port "$port"
+else
+  CHAOS_PS1_LAB_NS=1 keep="$keep" unshare -rn bash "${script_dir}/install-integrity-powershell.sh" \
+    --port "$port"
+fi
