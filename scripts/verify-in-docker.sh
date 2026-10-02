@@ -19,7 +19,9 @@
 # The source tree is checksummed before the first gate and again after the last
 # one, and a mismatch is reported as UNATTRIBUTABLE rather than as a result: the
 # container reads the live working tree, so a run that overlapped an edit says
-# nothing about any commit. Re-run it with nothing writing to the tree.
+# nothing about any commit. It is said ahead of the gate verdict, because the
+# movement is usually the explanation for whatever failed. Re-run it with nothing
+# writing to the tree.
 #
 # Capture evidence with:
 #   scripts/verify-in-docker.sh --full 2>&1 | tee verify-in-docker-$(date +%Y%m%d).log
@@ -151,6 +153,22 @@ for gate in "${gates[@]}"; do
   fi
 done
 
+# The verdict is only about the tree the gates actually saw, so this is taken
+# before any verdict is printed. Two reasons it comes first: a run that overlapped
+# an edit explains its own failures, and a reader who met `FAILED gates` alone would
+# blame the code; and the second checksum can itself fail while the tree is being
+# rewritten underneath it (a path renamed mid-`cksum`), which must read as
+# "unattributable", not as a silent death after the gate summary.
+fingerprint_ok=yes
+fingerprint "${tree_after}" || fingerprint_ok=no
+
+moved=""
+if [ "${fingerprint_ok}" != "yes" ]; then
+  moved="(the tree could not be checksummed: a path appeared, disappeared or was renamed mid-run)"
+elif ! cmp -s "${tree_before}" "${tree_after}"; then
+  moved="$(diff "${tree_before}" "${tree_after}" | sed -n 's/^[<>] [0-9][0-9]* [0-9][0-9]* //p' | sort -u)"
+fi
+
 echo
 if [ -n "${failed}" ]; then
   echo "FAILED gates:${failed}"
@@ -158,12 +176,7 @@ else
   echo "all gates passed in ${IMAGE_TAG}"
 fi
 
-# The verdict is only about the tree the gates actually saw. If it moved under
-# them, say so and refuse to hand out a pass.
-fingerprint "${tree_after}"
-moved=""
-if ! cmp -s "${tree_before}" "${tree_after}"; then
-  moved="$(diff "${tree_before}" "${tree_after}" | sed -n 's/^[<>] [0-9][0-9]* [0-9][0-9]* //p' | sort -u)"
+if [ -n "${moved}" ]; then
   echo
   echo "UNATTRIBUTABLE: the source tree changed while the gates ran."
   echo "  checksum $(sum_of "${tree_before}") -> $(sum_of "${tree_after}"); these paths differ:"

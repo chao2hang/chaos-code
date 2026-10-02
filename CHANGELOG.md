@@ -84,7 +84,10 @@ GitHub 托管的 ubuntu runner 关掉了非特权用户命名空间，`unshare -
 而这次失败无法归因给任何 commit。脚本现在在第一个门禁之前、最后一个门禁之后各做一次
 全量 `cksum`（tracked 与未 ignored 的 untracked 都算，新模块正是会被撞上的那类文件），
 不一致就打印 `UNATTRIBUTABLE`、列出差异路径并以非零退出——一次和编辑撞车的运行既不能
-算 commit 的结论，也不能算干净的通过。顺带把 CI 两个 job 都设的 `RUST_MIN_STACK` 补进
+算 commit 的结论，也不能算干净的通过。这段声明现在印在门禁结论**之前**：移动本身就是
+失败最可能的解释，而只看到 `FAILED gates` 的人会先去怪代码；第二次 `cksum` 自己失败
+（有路径恰好在求和时被改名或删掉）也归为 unattributable，而不是在结论之后静默中止。
+顺带把 CI 两个 job 都设的 `RUST_MIN_STACK` 补进
 容器环境，否则「跑 CI 同一串命令」这句话在 `xai-grok-shell` 的 actor 测试上不成立。
 
 ### 工程：发行物文件名从此四处对齐（`scripts/ci/test-installer-asset-names.py`）
