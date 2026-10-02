@@ -290,6 +290,12 @@ jobs:
       - name: Install frontend dependencies
         working-directory: apps/chaos-ui
         run: npm ci --ignore-scripts
+      - name: Build frontend assets
+        # e2e/static-host.pw.ts copies apps/chaos-ui/dist into a temp dir and
+        # serves it through chaos-web, so the built bundle is test input. This
+        # job is separate from the `gui` job, so nothing else produces it here.
+        working-directory: apps/chaos-ui
+        run: npm run build
       - name: Build Web host before browser test
         run: cargo build --locked -p xai-grok-web --bin chaos-web
       - name: Install Chromium
