@@ -15,6 +15,10 @@
 *.bat text eol=crlf
 *.ps1 text eol=crlf
 scripts/install.bat -text
+# `git diff --check` counts the CR in a CRLF ending as trailing whitespace. These
+# files must keep CRLF (see above), so tell the whitespace rules the CR belongs there.
+*.bat whitespace=cr-at-eol
+*.ps1 whitespace=cr-at-eol
 
 # Binary — never touch.
 *.ttf binary

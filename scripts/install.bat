@@ -317,7 +317,11 @@ if not "%CHAOS_SKIP_SIGNATURE%"=="1" (
     echo   To bypass ^(NOT recommended^), set CHAOS_SKIP_SIGNATURE=1.
     exit /b 1
   )
-  if not defined CHAOS_SIGNING_PUBLIC_KEY (
+  rem Public half of the release signing keypair (the private half is an Actions
+  rem secret). install.sh and install.ps1 carry the same value; a fork that signs its
+  rem own releases overrides it by setting CHAOS_SIGNING_PUBLIC_KEY.
+  if not defined CHAOS_SIGNING_PUBLIC_KEY set "CHAOS_SIGNING_PUBLIC_KEY=A+938NxEPRqBrn6P/393upsO4Arcdwt3/H6F2eC8aHM="
+  if "%CHAOS_SIGNING_PUBLIC_KEY%"=="" (
     echo error: CHAOS_SIGNING_PUBLIC_KEY is required for signature verification.
     echo   To bypass ^(NOT recommended^), set CHAOS_SKIP_SIGNATURE=1.
     exit /b 1

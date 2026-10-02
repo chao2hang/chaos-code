@@ -47,6 +47,15 @@ DEFAULT_GITHUB_MIRRORS=(
   "https://mirror.ghproxy.com"
 )
 
+# Public half of the release signing keypair. The private half is an Actions secret
+# and never appears here; this value is public by design -- it is also a public
+# repository variable and is compiled into released binaries via CHAOS_SIGNING_PUBLIC_KEY,
+# and scripts/verify-release-signature.sh checks a published release against it.
+# scripts/ci/test-installer-signature-policy.py checks install.sh, install.ps1 and
+# install.bat carry the same value. A fork that signs its own releases overrides it
+# by exporting CHAOS_SIGNING_PUBLIC_KEY.
+DEFAULT_SIGNING_PUBLIC_KEY='A+938NxEPRqBrn6P/393upsO4Arcdwt3/H6F2eC8aHM='
+
 usage() {
   # Under `curl ... | bash -s -- --help` there is no script file to read
   # ($0 is "bash"), so only self-read when $0 is a real file.
@@ -466,6 +475,30 @@ TMP="$(mktemp "${DOWNLOAD_DIR}/${STORED_NAME}.XXXXXX.tmp")"
 cleanup() { rm -f "$TMP"; }
 trap cleanup EXIT
 
+# Resolve the signing key and check the verification tools BEFORE the download.
+# The artifact is 150 MB+; someone who has no way to verify it should find out in
+# the first second, not after a full transfer.
+require_signature_prerequisites() {
+  if [[ "${CHAOS_SKIP_SIGNATURE:-0}" == "1" ]]; then
+    return 0
+  fi
+  # Unset means "use the key this script ships with". Set-but-empty is a caller
+  # mistake and stays an error, so the fail-closed guard below is reachable.
+  signing_pubkey="${CHAOS_SIGNING_PUBLIC_KEY-$DEFAULT_SIGNING_PUBLIC_KEY}"
+  if [[ -z "$signing_pubkey" ]]; then
+    echo "error: CHAOS_SIGNING_PUBLIC_KEY is required for signature verification" >&2
+    echo "  Unset it to use the key built into this script, or set it to your own." >&2
+    exit 1
+  fi
+  if ! command -v python3 >/dev/null 2>&1 || ! python3 -c "from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey" >/dev/null 2>&1; then
+    echo "error: python3 with cryptography is required for signature verification" >&2
+    echo "  On Debian/Ubuntu: apt-get install -y python3-cryptography" >&2
+    echo "  To bypass (NOT recommended), set CHAOS_SKIP_SIGNATURE=1." >&2
+    exit 1
+  fi
+}
+require_signature_prerequisites
+
 echo "downloading..."
 # Large binary: short connect timeout for failover; no overall max-time once
 # the transfer is moving (140MB+ assets).
@@ -514,6 +547,7 @@ verify_checksum() {
   fi
   echo "checksum OK (${actual})"
 }
+verify_checksum
 
 # Signature verification is mandatory unless the user explicitly sets
 # CHAOS_SKIP_SIGNATURE=1. Missing sidecars, public keys, or verification
@@ -532,37 +566,16 @@ verify_signature() {
     exit 1
   fi
 
-  # The compiled-in public key is embedded in the chaos binary itself;
-  # for the installer we use the CHAOS_SIGNING_PUBLIC_KEY env var (same
-  # base64 32-byte key injected at build time).
-  local pubkey
-  pubkey="${CHAOS_SIGNING_PUBLIC_KEY:-}"
-  if [[ -z "$pubkey" ]]; then
-    rm -f "$sig_tmp"
-    echo "error: CHAOS_SIGNING_PUBLIC_KEY is required for signature verification" >&2
-    exit 1
-  fi
-  if ! command -v python3 >/dev/null 2>&1 || ! python3 -c "from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey" >/dev/null 2>&1; then
-    rm -f "$sig_tmp"
-    echo "error: python3 with cryptography is required for signature verification" >&2
-    echo "  To bypass (NOT recommended), set CHAOS_SKIP_SIGNATURE=1." >&2
-    exit 1
-  fi
-
+  # The key and the crypto tooling were settled before the download by
+  # require_signature_prerequisites; $signing_pubkey is that decision.
+  #
   # Verify with Python's cryptography library (ed25519, raw — no pre-hash).
   # The .sig file contains a bare base64-encoded 64-byte signature.
-  # Probe first: if python3 or the cryptography package is missing, skip
-  # silently (the checksum already ran) — a missing tool must NOT be
-  # reported as a tampered binary.
-  if ! python3 -c "from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey" >/dev/null 2>&1; then
-    rm -f "$sig_tmp"
-    return 0
-  fi
   if python3 -c "
 import base64, sys
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
-pubkey = base64.b64decode('$pubkey')
+pubkey = base64.b64decode('$signing_pubkey')
 pk = Ed25519PublicKey.from_public_bytes(pubkey)
 
 with open('$TMP', 'rb') as f:

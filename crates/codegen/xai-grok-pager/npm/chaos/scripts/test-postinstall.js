@@ -1166,6 +1166,66 @@ if (process.platform !== 'win32') {
     });
 }
 
+// ─── The shipped launcher, actually executed, with no platform binary ──────
+//
+// Everything above mirrors logic. This runs the real bin/chaos in a child node and
+// only stubs which platform node reports, because the case worth testing -- Windows --
+// cannot be produced on this machine. It is the only way to know the message a user
+// sees comes from the file that ships rather than from a copy kept in this test.
+{
+    const { spawnSync } = require('child_process');
+    const pkgRoot = path.join(__dirname, '..');
+    const pinned = JSON.parse(fs.readFileSync(path.join(pkgRoot, 'package.json'), 'utf8'))
+        .optionalDependencies;
+
+    function runLauncherAs(platform, arch) {
+        const home = makeTmpDir();
+        try {
+            const probe = path.join(home, 'probe.js');
+            fs.writeFileSync(probe, [
+                `Object.defineProperty(process, 'platform', { value: ${JSON.stringify(platform)} });`,
+                `Object.defineProperty(process, 'arch', { value: ${JSON.stringify(arch)} });`,
+                `require(${JSON.stringify(path.join(pkgRoot, 'bin', 'chaos'))});`,
+            ].join('\n'));
+            const res = spawnSync(process.execPath, [probe], {
+                encoding: 'utf8',
+                env: { ...process.env, CHAOS_HOME: home, GROK_HOME: '' },
+            });
+            return { status: res.status, stderr: res.stderr || '' };
+        } finally {
+            cleanup(home);
+        }
+    }
+
+    test('a platform with no published sibling is reported, not silently ignored', () => {
+        // win32-x64 is the case that matters: npm holds chaos-code-win32-x64 under a
+        // security placeholder, so `npm install -g chaos-code` succeeds there and every
+        // later `chaos` run lands on this branch.
+        if (!pinned || !pinned['chaos-code-win32-x64']) {
+            throw new Error('package.json no longer pins chaos-code-win32-x64; update this test');
+        }
+        const out = runLauncherAs('win32', 'x64');
+        assert.strictEqual(out.status, 1, `launcher must fail, got ${out.status}: ${out.stderr}`);
+        assert.ok(out.stderr.includes('no platform binary installed for win32-x64'),
+            `stderr must name the platform: ${out.stderr}`);
+        assert.ok(out.stderr.includes(`chaos-code-win32-x64@${pinned['chaos-code-win32-x64']}`),
+            `stderr must name the pinned version so an unpublished sibling is distinguishable: ${out.stderr}`);
+        assert.ok(out.stderr.includes('npm view chaos-code-win32-x64 versions'),
+            `stderr must give the command that settles it: ${out.stderr}`);
+        assert.ok(!out.stderr.includes('    at '),
+            `must be a written message, not a stack trace: ${out.stderr}`);
+    });
+
+    test('an unpublished platform reaches the same report with the same exit', () => {
+        // Control: a platform that can never resolve, so the branch is exercised even if
+        // a real win32 sibling is ever vendored into this tree.
+        const out = runLauncherAs('plan9', 'riscv64');
+        assert.strictEqual(out.status, 1, `launcher must fail, got ${out.status}`);
+        assert.ok(out.stderr.includes('no platform binary installed for plan9-riscv64'),
+            out.stderr);
+    });
+}
+
 // ─── Summary ───────────────────────────────────────────────────────────
 
 console.log(`\n${passed} passed, ${failed} failed`);

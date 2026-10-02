@@ -188,6 +188,20 @@ for /f "tokens=2*" %%A in ('reg query "HKCU\Environment" /v Path 2^>nul') do set
 | [`scripts/install.ps1`](scripts/install.ps1) | Windows PowerShell |
 | [`scripts/install.bat`](scripts/install.bat) | Windows cmd（无 iex） |
 
+### 完整性校验
+
+下载完成后安装器做两件事，都在二进制被赋予执行权限**之前**：先比对 release 的 `SHA256SUMS`，再用 release 的 `<asset>.sig` 做 ed25519 验签。任一步不过就直接退出，不会留下半成品安装。
+
+| 变量 | 作用 |
+|------|------|
+| `CHAOS_SIGNING_PUBLIC_KEY` | 覆盖安装脚本内置的发布公钥。**通常不需要设置**——三个安装脚本都内置了与 release 相同的公钥，只有自行签名的 fork 才需要覆盖；显式设成空字符串会被当作错误拒绝 |
+| `CHAOS_SKIP_CHECKSUM=1` | 跳过 sha256 比对（此时你在无条件信任下载源） |
+| `CHAOS_SKIP_SIGNATURE=1` | 跳过验签（同上） |
+
+验签需要 `python3`（Windows 为 `python`）加 `cryptography`，Debian/Ubuntu 可 `apt-get install -y python3-cryptography`。公钥与这些依赖是否齐备是在**下载开始之前**检查的：产物有 100–150MB，无法验签的安装应当立刻失败，而不是传完之后才说。缺 sidecar、缺公钥、缺 `cryptography` 三种情况一律报错退出，只有显式设置上表的跳过变量才会降级。
+
+安装脚本自身的这些保证由 `scripts/ci/test-installer-signature-policy.py`（策略与三端公钥一致性）和 `scripts/install-sh-in-docker.sh`（在干净 Debian 容器里按上文一条命令真实安装，并验证「外来公钥被拒」「空白公钥在下载前即失败」两个反向对照）固定。
+
 ### 国内 / 受限网络加速
 
 Release 二进制约 **100–150MB**，直连 `github.com` 在国内常很慢或超时。安装脚本支持 **GitHub 镜像前缀**（`ghproxy` 风格：`镜像/https://github.com/...`）：
@@ -199,7 +213,7 @@ Release 二进制约 **100–150MB**，直连 `github.com` 在国内常很慢或
 | （默认） | 先官方，失败后再试公共镜像 |
 
 内置公共镜像（可能变动，仅作回退）：`ghfast.top`、`ghproxy.net`、`mirror.ghproxy.com`。  
-下载后仍会用 **SHA256SUMS** 校验，镜像篡改无法静默安装。
+下载后仍会先比对官方 **SHA256SUMS**，再用官方 release 的 `.sig` 验签，镜像换掉的产物无法静默安装（见[完整性校验](#完整性校验)）。
 
 **macOS / Linux（推荐国内一键）：**
 

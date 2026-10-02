@@ -1,0 +1,145 @@
+# Reproduce: scripts/npm-install-in-docker.sh
+# Host: Ubuntu 22.04 x86_64, Docker 29.8.1. Needs network to registry.npmjs.org.
+# Repo HEAD at the time of the run: 88903bf7 (the script is uncommitted in this run).
+# Result: 12 of 13 checks passed. The 13th fails, and that failure is the point -- see
+# "the one red check" below.
+
+== why this ran in a container
+
+`chaos-code` on npm is a meta package: a JS trampoline plus six optional
+platform-specific packages that each carry the real binary. All of it had only been
+exercised by `scripts/ci/test-publish-npm.sh`, which hands the publish script directories
+of fake tarballs and checks what it would upload. Nothing had asked the public registry
+for the package and run what came back. A container is the only way to make that claim
+mean something, because the install has to happen on a machine with no `~/.npm` cache,
+no repo, and no host mirror -- this host's npm is pointed at `registry.npmmirror.com`, so
+an install run here would have tested a mirror, not the registry every user hits.
+
+The container's own configured registry is printed as the first line for that reason:
+`https://registry.npmjs.org/`.
+
+== the run
+
+  == the machine doing the installing
+     image:      node:22-bookworm-slim (stock, no repo, no npm cache)
+     package:    chaos-code
+     registry:   https://registry.npmjs.org/ (as the container sees it)
+     repo HEAD:  88903bf7
+     ok  the container is up: node v22.23.3, npm 10.9.9
+     ok  the container starts with no npm content cache (/root/.npm/_cacache is absent)
+
+  == install from the public registry
+     ok  npm install -g chaos-code succeeded
+       | added 3 packages in 31s
+     ok  the registry served chaos-code@0.2.110
+     note  repository version: 0.4.2
+
+  == what got installed
+     ok  exactly one platform package landed on disk: chaos-code-linux-x64
+     ok  the one that landed is the one for this machine's os/cpu (chaos-code-linux-x64)
+
+  == the binary on PATH
+     ok  the shim is on PATH: /usr/local/bin/chaos
+     ok  chaos --version ran: chaos 0.2.110 (4055b47)
+     ok  the platform package carries the binary:
+         /usr/local/lib/node_modules/chaos-code/node_modules/chaos-code-linux-x64/bin chaos
+
+  == a real command, not just --version
+     ok  chaos doctor starts and prints JSON
+
+  == the same install asked to resolve for a foreign platform
+       | added 2 packages in 192ms
+     note  for win32-x64 npm exited 0 and installed no platform package: the optional
+           dependency was skipped, not resolved
+     ok  with no win32 binary present the launcher fails loudly (exit 1):
+         chaos-code: no platform binary installed for win32-x64.
+     FAILED pinned but unpublished platform packages (npm installs these silently):
+       - chaos-code-win32-arm64@0.2.110 (published: 0.0.1-security)
+       - chaos-code-win32-x64@0.2.110 (published: 0.0.1-security)
+
+  13 check(s) run, at least one failed
+
+== what the green half establishes
+
+`npm install -g chaos-code` from the public registry works on a clean Linux box, and the
+thing that runs afterwards is the platform package's binary rather than the JS trampoline:
+exactly one platform package landed, it is the one for this machine's `os`/`cpu`, the
+payload directory under it is non-empty, and `chaos --version` reports
+`chaos 0.2.110 (4055b47)` -- a build string, which the trampoline could not have produced.
+`chaos doctor --json` also starts and prints JSON, so this is not only the `--version`
+fast path.
+
+Two facts worth recording rather than asserting: npm serves **0.2.110** while the
+repository is at **0.4.2**, so the published npm path is roughly two minors behind the
+GitHub releases; and the platform package nests under the meta package's own
+`node_modules`, which is why an `npm ls`-based check is useless here (`npm ls --json`
+lists declared-but-skipped optional dependencies, so it reports all six platforms as
+though they were installed -- the installed directory tree is what can answer the
+question).
+
+== the one red check, and why it stayed red
+
+The meta package declares all six platform packages as optional dependencies pinned to its
+own version. Two of those names are held by npm's own security placeholders:
+
+  chaos-code-linux-x64    latest 0.2.110   (0.2.109, 0.2.110)
+  chaos-code-linux-arm64  latest 0.2.110   (0.2.110)
+  chaos-code-darwin-x64   latest 0.2.110   (0.2.110)
+  chaos-code-darwin-arm64 latest 0.2.110   (0.2.110)
+  chaos-code-win32-x64    latest 0.0.1-security   (0.0.1-security only)
+  chaos-code-win32-arm64  latest 0.0.1-security   (0.0.1-security only)
+
+So `chaos-code-win32-x64@0.2.110`, the exact string the meta package pins, has never
+existed. npm treats an unresolvable *optional* dependency as skippable, which is the
+whole problem: asked to resolve for Windows the install reports success --
+
+  npm install -g --prefix /tmp/win32-x64-prefix --os=win32 --cpu=x64 chaos-code
+  -> "added 2 packages", exit 0, no platform package on disk (vs. "added 3 packages"
+     with one, for the host platform)
+
+-- and the failure only surfaces when the user runs `chaos`:
+
+  chaos-code: no platform binary installed for win32-x64.
+    Expected sibling package chaos-code-win32-x64@0.4.2.
+    ...
+        npm view chaos-code-win32-x64 versions
+
+That output is from the shipped launcher with only node's `process.platform`/`arch`
+overridden, since a Windows host is not available here; the resolution logic, the message
+and the exit code are the shipped file's. `crates/codegen/xai-grok-pager/npm/chaos/scripts/test-postinstall.js`
+runs the real `bin/chaos` in a child node and asserts the report names the platform, names
+the pinned version, prints the `npm view` command that settles it, exits 1, and is not a
+stack trace. Deleting the pinned version from the message turns that test red, so the
+assertion is load-bearing.
+
+Before this round the launcher's message read "this usually means npm skipped
+optionalDependencies (e.g. --no-optional) or the platform is not supported" -- both wrong
+diagnoses for the actual cause here, which is that the version was never published under
+that name. That is why the message now names the pinned version and gives the
+`npm view` command.
+
+The check was left failing rather than downgraded to a note. It is the same condition
+`release.yml` already refuses to publish under
+
+  ::error::npm package name $reserved is reserved by npm security placeholder;
+  resolve it before enabling npm publication.
+
+so a permanently-red check here is consistent with a workflow that already blocks on it.
+Unblocking needs an external action -- an npm support request to reclaim the two names, or
+a decision to rename the Windows packages and migrate the pin -- neither of which can be
+done from this machine.
+
+== what this file is NOT evidence about
+
+- That `npm install -g chaos-code` works on Windows or macOS. Only Linux x86_64 was
+  installed and executed. The Windows case was resolved *for* win32-x64 with npm's
+  `--os`/`--cpu` filters and then run through the launcher under a stubbed platform, which
+  shows what the launcher does when its sibling package is absent; it is not a Windows
+  install.
+- That 0.4.2 can be published to npm. Nothing was published here, and the reserved-name
+  problem above would hit the next publish of either Windows package.
+- That the npm payload is signed or checksum-verified. This run checked that the install
+  produced a working binary. Signature handling on the npm path is a separate claim; the
+  signed-GitHub-release path is `docs/verification/release-signature-v0.4.2-2026-10-02.log`.
+- Anything about `update` behaviour through npm (`GROK_MANAGED_BY_NPM` is set by the
+  launcher, but no update was performed).

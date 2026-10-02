@@ -37,6 +37,14 @@ function readLocalVersion() {
     try { return require('../package.json').version; } catch { return undefined; }
 }
 
+// The version this package pinned for a platform sibling, for the error message only.
+function readOptionalDependencyVersion(platformPkg) {
+    try {
+        const pkg = require('../package.json');
+        return (pkg.optionalDependencies || {})[platformPkg];
+    } catch { return undefined; }
+}
+
 // Returns null when npm skipped the matching optional dependency
 // (unsupported platform, or --no-optional).
 function resolvePlatformPackageDir() {
@@ -113,10 +121,21 @@ function resolveBinary() {
 
     const platformDir = resolvePlatformPackageDir();
     if (!platformDir) {
+        // npm skips an optional dependency it cannot resolve instead of failing the
+        // install, so `npm install` can report success with no binary present. Naming the
+        // pinned version is what lets a user tell "skipped optional deps" apart from
+        // "that version was never published under this name" without guessing.
+        const platformPkg = `${pkgName}-${process.platform}-${process.arch}`;
+        let pinned = readOptionalDependencyVersion(platformPkg);
         console.error(`${pkgName}: no platform binary installed for ${process.platform}-${process.arch}.`);
-        console.error(`  Expected sibling package chaos-code-${process.platform}-${process.arch}.`);
-        console.error(`  This usually means npm skipped optionalDependencies (e.g. --no-optional)`);
-        console.error(`  or the platform is not supported.`);
+        console.error(`  Expected sibling package ${platformPkg}${pinned ? `@${pinned}` : ''}.`);
+        console.error(`  npm installs optional dependencies best-effort, so this package can install`);
+        console.error(`  cleanly with no binary. Causes, most common first:`);
+        console.error(`    - npm was run with --no-optional or --omit=optional`);
+        console.error(`    - ${pinned ? `${platformPkg}@${pinned}` : platformPkg} is not published under that name`);
+        console.error(`      (npm squats some names with a security placeholder); check with:`);
+        console.error(`        npm view ${platformPkg} versions`);
+        console.error(`    - ${process.platform}-${process.arch} is not a published platform`);
         process.exit(1);
     }
 

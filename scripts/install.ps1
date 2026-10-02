@@ -402,6 +402,42 @@ if ((Test-Path -LiteralPath $dest) -and -not $Force) {
 }
 
 New-Item -ItemType Directory -Force -Path $Dir | Out-Null
+
+# Public half of the release signing keypair; the private half is an Actions secret
+# and is not in this repository. It is public by design -- it is also a public
+# repository variable and is compiled into released binaries via
+# CHAOS_SIGNING_PUBLIC_KEY. install.sh, install.bat and this file must carry the same
+# value (scripts/ci/test-installer-signature-policy.py checks that, and
+# scripts/verify-release-signature.sh checks a published release against it).
+# Override with $env:CHAOS_SIGNING_PUBLIC_KEY if you sign your own releases.
+$DefaultSigningPublicKey = "A+938NxEPRqBrn6P/393upsO4Arcdwt3/H6F2eC8aHM="
+
+# Settle the key and probe the crypto tooling BEFORE the download. The artifact is
+# 150 MB+ and an install that cannot be verified should fail in the first second
+# rather than after a full transfer.
+if ($env:CHAOS_SKIP_SIGNATURE -eq "1") {
+    $signingPubKey = $null
+} else {
+    # An unset variable means "use the key this script ships with"; set-but-blank is a
+    # caller mistake and stays an error, so the guard below is reachable.
+    if ($null -eq $env:CHAOS_SIGNING_PUBLIC_KEY) {
+        $signingPubKey = $DefaultSigningPublicKey
+    } else {
+        $signingPubKey = $env:CHAOS_SIGNING_PUBLIC_KEY
+    }
+    if ([string]::IsNullOrWhiteSpace($signingPubKey)) {
+        throw "CHAOS_SIGNING_PUBLIC_KEY is required for signature verification. Clear it to use the key built into this script. To bypass (NOT recommended), set CHAOS_SKIP_SIGNATURE=1."
+    }
+    $python = Get-Command python -ErrorAction SilentlyContinue
+    if (-not $python) {
+        throw "python is required for signature verification. Install Python with the cryptography package. To bypass (NOT recommended), set CHAOS_SKIP_SIGNATURE=1."
+    }
+    & python -c "from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey" 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        throw "Python package cryptography is required for signature verification. Run: python -m pip install cryptography. To bypass (NOT recommended), set CHAOS_SKIP_SIGNATURE=1."
+    }
+}
+
 $tmp = Join-Path $env:TEMP ("chaos-install-" + [guid]::NewGuid().ToString("n") + ".exe")
 
 try {
@@ -459,22 +495,12 @@ try {
     }
 
     # Signature verification is mandatory unless the user explicitly sets
-    # CHAOS_SKIP_SIGNATURE=1. Missing prerequisites or a missing sidecar fail
-    # closed instead of silently downgrading to checksum-only.
+    # CHAOS_SKIP_SIGNATURE=1. A missing sidecar fails closed instead of silently
+    # downgrading to checksum-only. The key and the python/cryptography probe were
+    # settled before the download; $signingPubKey is that decision.
     if ($env:CHAOS_SKIP_SIGNATURE -eq "1") {
         Write-Warning "signature verification skipped (CHAOS_SKIP_SIGNATURE=1)"
     } else {
-        $python = Get-Command python -ErrorAction SilentlyContinue
-        $pubKey = $env:CHAOS_SIGNING_PUBLIC_KEY
-        # Probe cryptography availability; missing prerequisites fail closed.
-        $cryptoAvail = $false
-        if ($python) {
-            & python -c "from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey" 2>$null
-            $cryptoAvail = ($LASTEXITCODE -eq 0)
-        }
-        if (-not $python) { throw "python is required for signature verification. To bypass (NOT recommended), set CHAOS_SKIP_SIGNATURE=1." }
-        if (-not $cryptoAvail) { throw "Python package cryptography is required for signature verification. To bypass (NOT recommended), set CHAOS_SKIP_SIGNATURE=1." }
-        if (-not $pubKey) { throw "CHAOS_SIGNING_PUBLIC_KEY is required for signature verification. To bypass (NOT recommended), set CHAOS_SKIP_SIGNATURE=1." }
         $sigFile = Join-Path $env:TEMP ("chaos-sig-" + [guid]::NewGuid().ToString("n") + ".sig")
         try {
             [void](Download-GitHubFile -OriginUrl $sigOrigin -OutFile $sigFile -Headers $headers -MinBytes 16)
@@ -485,7 +511,7 @@ try {
 import base64, sys
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
-pubkey = base64.b64decode('$pubKey')
+pubkey = base64.b64decode('$signingPubKey')
 pk = Ed25519PublicKey.from_public_bytes(pubkey)
 
 with open(r'$tmp', 'rb') as f:

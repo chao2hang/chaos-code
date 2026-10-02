@@ -48,8 +48,13 @@ docker build "${image_args[@]}" -f "${repo_root}/docker/verify.Dockerfile" \
 
 # Separate named volumes, not a bind mount: cargo writes ~40 GB of build output
 # and a bind-mounted target/ owned by root would break the host build afterwards.
+# `git` belongs alongside `registry` in that cache: Cargo.lock pins two git
+# dependencies (async-openai from our-forks, nucleo), and with only `registry` mounted
+# every run re-clones both, which is what made `cargo check` sit for ~9 minutes per
+# repository behind a `spurious network error` retry line.
 echo "== preparing cargo cache volumes"
 docker volume create chaos-verify-cargo-registry >/dev/null
+docker volume create chaos-verify-cargo-git >/dev/null
 docker volume create chaos-verify-target >/dev/null
 
 run_args=(
@@ -58,6 +63,7 @@ run_args=(
   --workdir /src
   --volume "${repo_root}:/src"
   --volume chaos-verify-cargo-registry:/usr/local/cargo/registry
+  --volume chaos-verify-cargo-git:/usr/local/cargo/git
   --volume chaos-verify-target:/src/target
 )
 
