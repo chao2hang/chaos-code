@@ -23,6 +23,7 @@ export type ClientMessage =
   | { type: 'propose_terminal'; client_msg_id: string; session_id: UUID; command: string }
   | { type: 'propose_git_mutation'; client_msg_id: string; session_id: UUID; operation: string; argument: string }
   | { type: 'get_settings'; client_msg_id: string }
+  | { type: 'get_host_info'; client_msg_id: string }
   | { type: 'update_settings'; client_msg_id: string; base_url: string | null; model: string | null }
   | { type: 'get_git_status'; client_msg_id: string }
   | { type: 'validate_attachment'; client_msg_id: string; filename: string; byte_len: number; content_type: string }
@@ -67,6 +68,7 @@ export type ServerMessage =
   | { type: 'file_written'; session_id: UUID; path: string; bytes: number }
   | { type: 'settings'; base_url: string | null; model: string | null; has_api_key: boolean }
   | { type: 'settings_updated'; base_url: string | null; model: string | null }
+  | { type: 'host_info'; info: HostInfo }
   | { type: 'git_status'; branch: string | null; entries: string[] }
   | { type: 'attachment_validated'; filename: string; byte_len: number; content_type: string }
   | { type: 'attachment_started'; session_id: UUID; upload_id: UUID; filename: string }
@@ -81,6 +83,12 @@ export type ServerMessage =
   | { type: 'error'; code: string; message: string }
   | { type: 'diff_preview'; session_id: UUID; preview: DiffPreview }
 
+/// The configuration the serving process started with. Read-only by
+/// construction: every field is a decision the host made before binding a
+/// socket, and the engine overwrites any host attempt to set `state_backend`,
+/// deriving it from the store the engine was actually handed.
+export type HostInfo = { host_version: string; protocol_version: number; bind_addr: string; state_backend: 'memory' | 'json_file' | 'sqlite'; safe_web_mode: boolean; workspace_root: string | null; token_required: boolean; public_origin: string | null; preview_proxy: 'disabled' | 'named_only' | 'any_origin'; preview_ports: number[]; update_mode: 'self_update' | 'external'; safe_mode_refusals: SafeModeRefusal[] }
+export type SafeModeRefusal = { message: string; capability: string }
 export type DiffPreview = { proposal_id: string; path: string; before: string | null; after: string }
 export type PendingApprovalSnapshot = { request_id: UUID; tool: string; summary: string; confirmations_required: number; confirmations: number }
 export type QuestionSnapshot = { question_id: UUID; prompt: string }

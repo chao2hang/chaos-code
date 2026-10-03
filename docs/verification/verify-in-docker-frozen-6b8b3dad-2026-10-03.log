@@ -1,0 +1,132 @@
+在冻结的已提交树上跑完整 Docker 全轮：25 道门 + 1 次 preflight，385 个测试结果块，31 532 条通过，0 条失败
+================================================================================================================================
+
+日期：2026-10-03
+被验证的提交：`6b8b3dad`（`docs: 把这一批的机制、数字和「这些不是证据」的边界一起写下来`）
+被记录的对象：
+  scripts/verify-in-docker.sh   整轮入口（`--full`：quick 的 24 道门 + `cargo test --workspace`）
+  该提交下的整份工作树          3 942 个文件，内容指纹 798877101
+
+本文件自包含：每段输出都从当轮真实运行里逐字抄下，命令写在 `$` 行上。完整原始转录 3.0 MB /
+35 450 行没有入库（`docs/verification/` 里最大的入库证据是 29 KB 量级），入库的是判决行与门列表，
+第 5 节写清怎样重现并拿到原文。
+
+
+第 1 节  为什么跑在一个自包含的克隆里
+--------------------------------------
+
+`scripts/verify-in-docker.sh` bind-mount 的是**它自己所在的仓库根**，并在开跑与收尾各打一次工作树内容
+指纹；两次对不上就打印 `UNATTRIBUTABLE: the source tree changed while the gates ran.`。这一轮我要在
+同一台机器上继续改设置面板的代码，所以在仓库里跑就等于让一次 43 分钟的全轮去归属一棵一直在变的树——
+那种结果谁都不能引用。
+
+`git worktree` 走不通：脚本第一件事是 preflight，让容器用 git 读一遍 bind-mount 进来的 `/src`，而
+worktree 的 `.git` 是指向仓库内文件的纯文本指针，容器里读不到，preflight 直接拦下。可行的是自包含克隆：
+
+    $ git clone <本仓库> /var/tmp/verify-frozen        # 路径随意，仓库外的任何目录都行
+    $ cd /var/tmp/verify-frozen && git checkout --detach 6b8b3dad
+    HEAD is now at 6b8b3dad docs: 把这一批的机制、数字和「这些不是证据」的边界一起写下来
+    $ IMAGE_TAG=chaos-verify:frozen ./scripts/verify-in-docker.sh --full > verify-full-frozen.log 2>&1; echo "DOCKER-FULL-EXIT=$?"
+    DOCKER-FULL-EXIT=0
+
+克隆自带 `.git`，preflight 就能过；`--detach` 保证树是那一颗提交而不是任何分支头。跑之前/之后
+`git status --porcelain` 都是空，所以指纹 798877101 归属的就是 `6b8b3dad`。
+
+
+第 2 节  判决
+--------------
+
+    == building chaos-verify:frozen from docker.io/library/debian:bookworm-slim
+    == preparing cargo cache volumes
+    == source tree: 3942 files, checksum 798877101
+
+    == preflight: container can read the repository
+    preflight: OK
+
+    == toolchain matches the pin
+    rustc 1.94.0 (4a4ef493e 2026-03-02)
+    cargo 1.94.0 (85eff7c80 2026-01-15)
+
+    == pinned protoc launcher
+    libprotoc 29.3
+
+收尾两行原文（第二行是我加在命令末尾的 `echo`，不是脚本打的）：
+
+    all gates passed in chaos-verify:frozen
+    DOCKER-FULL-EXIT=0
+
+收尾**没有**打印 `UNATTRIBUTABLE`——脚本在最后一道门之后再打一次同一个指纹，只有对不上才出声，所以
+"没有那句话"就是"这 31 532 条通过归属于指纹 798877101 那一棵树、中途没人改过文件"。整轮 2 607 秒
+（43 分 27 秒），编译只占前一段，因为 cargo 的 registry/git 与 target 走三个具名卷
+（`chaos-verify-cargo-registry`、`chaos-verify-cargo-git`、`chaos-verify-target`），不是冷编译。
+
+
+第 3 节  门列表（转录里 `== ` 行的原样顺序）
+---------------------------------------------
+
+`gates` 数组的 24 道 quick 门 + `--full` 追加的 `cargo test` = 25 道，另有一次不属于门的 preflight。
+有些门自己会再打印 `== ` 子标题（`version lockstep`、`installer guards` 各两条/一条），所以下面按缩进
+保留层次：
+
+    == preflight: container can read the repository
+    == toolchain matches the pin
+    == pinned protoc launcher
+    == cargo fmt
+    == ignored-test baseline
+    == brand/protocol guard
+    == protocol mirror coverage
+    == TODO status doc
+    == evidence paths in docs
+    == CI guard wiring
+    == workflow shells
+    == workflow toolchain
+    == workflow yaml
+    == script portability
+    == panic-site census
+    == cwd-change census
+    == spawn-cwd portability
+    == version lockstep
+       == the release version and everything that must equal it
+       == crates that are deliberately not the release version
+    == installer guards
+       == the asset a release publishes, and the four places that ask for it
+    == npm package guards
+    == docs localization
+    == localization guard self-tests
+    == secret scan
+    == cargo check
+    == cargo clippy
+    == cargo test
+
+这一轮跑在 `6b8b3dad` 上，那次提交里 `gates` 数组还没有 GUI 协议那道门（本轮才加进 `--full`，见
+`CHANGELOG.md` 同日「门禁」节），所以这里数出来是 24+1 而不是 25+1。`check-guard-wiring.py` 在那一刻
+打印的分类是 `38 run by scripts/verify-in-docker.sh, 5 recorded CI-only`。
+
+
+第 4 节  `cargo test` 那一道的规模
+-----------------------------------
+
+    $ grep -c "^test result: ok" verify-full-frozen.log
+    385
+    $ grep -oE "^test result: ok\. [0-9]+" verify-full-frozen.log | awk '{s+=$4} END {print "passed:", s}'
+    passed: 31532
+    $ grep -c "^test result: FAILED" verify-full-frozen.log
+    0
+
+`--no-fail-fast` 是这道门的固定写法，所以"0 条 FAILED"是扫完 385 个块之后的结论，不是中途停下。
+`cargo check --workspace --all-targets` 与 `cargo clippy --workspace --all-targets -- -D warnings`
+在它之前各自单独跑过，因此这 31 532 条不是在"连编译都没过"的树上数的。
+
+
+第 5 节  这份记录不是什么
+---------------------------
+
+- **不含本轮的设置面板切片。** 被验证的是已提交的 `6b8b3dad`；设置面板、`get_host_info`、快捷键表那些
+  改动在写这份记录时还没提交。它们各自的证据在 `docs/verification/settings-panel-2026-10-03.log`，
+  两者的边界不要混着读。
+- **不跑浏览器。** `verify-in-docker.sh` 的 25 道门里没有 Playwright，镜像里也没有 node_modules 与
+  浏览器二进制。所以"全轮通过"与"桌面/390×844 的浏览器流程通过"是两条独立的结论，不能互相顶替。
+- **不是冷编译，也不是冷镜像。** `IMAGE_TAG=chaos-verify:frozen` 只是给这次 build 换个标签，
+  docker layer 与 cargo 卷都是复用的；换一台干净的机器时间会明显变长，别把 43 分钟当基线。
+- **只有 Linux。** 这一条入口跑的是容器里的 Debian bookworm-slim；macOS/Windows 的结论只能来自
+  各自 runner（见 `docs/verification/platform-ci-2026-10-02.log` 与 CI 上的 platform job）。

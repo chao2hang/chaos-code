@@ -688,34 +688,16 @@ async fn websocket(
     upgrade.on_upgrade(move |socket| websocket_session(socket, engine, safe_web_mode))
 }
 
-/// Messages a Safe Web Mode client may send.
+/// Whether a Safe Web Mode client may send this message.
 ///
-/// The line drawn here is "no workspace or host mutation, not even behind an
-/// approval prompt": `propose_file_write`, `propose_terminal` and
-/// `propose_git_mutation` are refused although the engine would ask the user
-/// first. `finalize_attachment` used to sit on this list, which made it
-/// unreachable rather than permissive — an `upload_id` only comes from
-/// `begin_attachment`, which is refused — so the one attachment step that writes
-/// into the workspace was allowlisted while the three that merely stage bytes
-/// were not. The flow is now refused as a unit, and stays refused from either
-/// end.
+/// The policy lives beside the protocol enum in `chaos_engine`, next to the list
+/// the settings panel renders, because a host that enforced a policy without also
+/// reporting it produced a panel that promised nothing while the socket refused
+/// nineteen messages. That is `safe_mode_refusals` in the engine, and
+/// `the_refusal_list_matches_what_the_socket_actually_refuses` in
+/// `tests/host_info_flow.rs` is what keeps the two from drifting.
 fn safe_mode_allows(message: &ClientMessage) -> bool {
-    matches!(
-        message,
-        ClientMessage::CreateSession { .. }
-            | ClientMessage::Resume { .. }
-            | ClientMessage::Snapshot { .. }
-            | ClientMessage::Submit { .. }
-            | ClientMessage::Cancel { .. }
-            | ClientMessage::RespondQuestion { .. }
-            | ClientMessage::GetSettings { .. }
-            | ClientMessage::ListFiles { .. }
-            | ClientMessage::ReadFile { .. }
-            | ClientMessage::SearchFiles { .. }
-            | ClientMessage::ScanMarketplace { .. }
-            | ClientMessage::PreviewDiff { .. }
-            | ClientMessage::ImportTuiSession { .. }
-    )
+    chaos_engine::safe_mode_allows(message)
 }
 
 async fn websocket_session(mut socket: WebSocket, engine: Engine, safe_web_mode: bool) {
@@ -792,7 +774,7 @@ async fn websocket_session(mut socket: WebSocket, engine: Engine, safe_web_mode:
     }
 }
 
-pub async fn serve_loopback(engine: Engine, port: u16) -> anyhow::Result<()> {
+pub async fn serve_loopback(engine: Engine, port: u16) -> anyhow::Result<std::net::SocketAddr> {
     serve_loopback_with_safe_mode(engine, port, false).await
 }
 
@@ -800,16 +782,22 @@ pub async fn serve_loopback_with_safe_mode(
     engine: Engine,
     port: u16,
     safe_web_mode: bool,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<std::net::SocketAddr> {
     serve_loopback_with_assets_and_safe_mode(engine, port, safe_web_mode, None).await
 }
 
+/// Serves on loopback until the process is stopped, and returns the address it
+/// actually bound.
+///
+/// The address comes back rather than being reconstructed from `port`, because
+/// `port` 0 is a legitimate request for any free port and a settings panel that
+/// reported `127.0.0.1:0` would be reporting a place nobody can reach.
 pub async fn serve_loopback_with_assets_and_safe_mode(
     engine: Engine,
     port: u16,
     safe_web_mode: bool,
     assets_dir: Option<std::path::PathBuf>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<std::net::SocketAddr> {
     let token = std::env::var("CHAOS_WEB_TOKEN").unwrap_or_default();
     // Naming a public origin means the server is expected to answer requests
     // addressed to that name through a proxy, so it must not be anonymous and
@@ -830,6 +818,11 @@ pub async fn serve_loopback_with_assets_and_safe_mode(
         );
     }
     let listener = tokio::net::TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], port))).await?;
+    let bound = listener.local_addr()?;
+    // Reported here rather than by the caller, because only this function knows
+    // what the socket actually took: `port` 0 means "any", and an operator
+    // told `http://127.0.0.1:0` cannot open it.
+    eprintln!("Chaos Web listening on http://{bound}");
     // A preview allowlist that does not parse must stop startup. Half a list
     // would mean the app a user expected to reach through this host is not
     // reachable, and the symptom is a preview that never loads.
@@ -854,12 +847,47 @@ pub async fn serve_loopback_with_assets_and_safe_mode(
                 .join(", ")
         );
     }
+    // The settings panel reports what this process decided above, so the facts
+    // are collected here rather than re-read from the environment later: a panel
+    // that re-read `std::env::var` could disagree with the middleware that was
+    // built from the value captured at startup.
+    let token_required = !token.is_empty();
+    let declared_origin = std::env::var("CHAOS_WEB_PUBLIC_ORIGIN")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let preview_state = if !previews.is_enabled() {
+        chaos_engine::PreviewProxyState::Disabled
+    } else if previews.allow_public {
+        chaos_engine::PreviewProxyState::AnyOrigin
+    } else {
+        chaos_engine::PreviewProxyState::NamedOnly
+    };
+    let preview_ports = previews.ports().to_vec();
+    let engine = engine.with_host_info(|info| {
+        info.host_version = host_version().to_string();
+        info.bind_addr = bound.to_string();
+        info.safe_web_mode = safe_web_mode;
+        info.token_required = token_required;
+        info.public_origin = declared_origin;
+        info.preview_proxy = preview_state;
+        info.preview_ports = preview_ports;
+    });
     axum::serve(
         listener,
         router_with_previews(engine, token, safe_web_mode, assets_dir, previews),
     )
     .await?;
-    Ok(())
+    Ok(bound)
+}
+
+/// The version the browser is told it is talking to.
+///
+/// This crate's own, not the engine's: the panel labels the field "the process
+/// serving the browser", and that process is `chaos-web`.
+#[must_use]
+pub fn host_version() -> &'static str {
+    env!("CARGO_PKG_VERSION")
 }
 
 #[cfg(test)]

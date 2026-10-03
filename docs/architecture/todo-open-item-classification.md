@@ -25,11 +25,14 @@ inventory now reports 429 ignored attributes and 0 bare attributes, reconciled b
 owner/reviewer gate is due as of 2026-10-01, and these counts are inventory
 evidence, not the per-row decision. Recompute with
 `scripts/ci/classify-open-todos.py` after the next edit. The milestone group counts are M-1 1/5, M0 0/11, M1 0/16,
-M2 0/24, M3 6/11, M4 5/13, M5 9/16, and maintenance 3/17
+M2 0/24, M3 5/12, M4 5/13, M5 9/16, and maintenance 3/17
 (unchecked/partial), summing to 137. This snapshot includes a bounded automated
 accessibility scan row and a partial M2 file-browser UI row; neither clears the
 broader M3 localization/accessibility acceptance nor any physical multi-root
-boundary. The current open/partial split for maintenance items reflects the MT-6
+boundary. The M3 partial count also covers the settings panel, whose nine areas
+now render entirely out of the serving process's `get_host_info` reply while only
+theme, Base URL and model are editable; credential storage and the full settings
+schema stay open. The current open/partial split for maintenance items reflects the MT-6
 review/evidence partial rows. The third unchecked maintenance row is a
 deliberate non-gate: a probe of repo-relative paths cited in documentation reported 32
 distinct paths / 61 hits, and on inspection most are regex artifacts, placeholder paths
@@ -55,7 +58,7 @@ language review, screen-reader testing or platform acceptance.
 | M0 | 0 | 11 |
 | M1 | 0 | 16 |
 | M2 | 0 | 24 |
-| M3 | 6 | 11 |
+| M3 | 5 | 12 |
 | M4 | 5 | 13 |
 | M5 | 9 | 16 |
 | Maintenance items / §8 | 3 | 17 |
@@ -83,6 +86,7 @@ language review, screen-reader testing or platform acceptance.
 | Web UI multi-panel IDE views & protocol wiring | Extended `apps/chaos-ui` with tabbed Chat, Files, Git, Terminal, Settings, Marketplace and Diff views. Files protocol now returns explicit directory names (no filename-extension guessing); UI supports workspace-relative directory navigation/breadcrumbs, file reads, search, and explicit loading/empty/error states. Real Engine/WebSocket Playwright flow covers nested directory, file read/search, write proposal→approval/rejection→disk re-read, empty directory/parent navigation, and approved terminal/Git stage operations on desktop and 390×844 mobile. At this audit pass, frontend has 35 Vitest tests, TypeScript/build pass, browser suite has 26 tests per desktop/mobile project including keyboard-selected nested `@` candidates, approved file/terminal/Git operations, built-static-host root/asset/SPA/API/health/WebSocket session creation (including gzip bundle negotiation, ETag/If-None-Match 304 and cache headers), provider-shape error display and tool activity events; axe scans cover IDE panel navigation including provider-validation error state, and scrollable panel/Git list regions are keyboard-focusable. The Web binary only installs Git/terminal adapters when a host workspace root is explicitly configured; terminal is a bounded one-shot command, not an interactive PTY. The opt-in static directory host is now tested from a real built binary and Playwright page through asset bytes/MIME, SPA fallback, missing asset, health/API and WebSocket session creation. Static assets support precompressed gzip/Brotli variants with `Vary: Accept-Encoding` and cache revalidation; assets carry a SHA-256 ETag based on the actually negotiated precompressed or identity file bytes (with `.gz`/`.br` representation suffix); the real router test verifies matching `If-None-Match` returns an empty 304 and modified content returns 200 with a new ETag. Browser tests confirm real gzip/Brotli responses each have the validator of their selected on-disk representation and that matching conditional requests return 304; an actual router unit test covers quality-weighted/case-insensitive selection and the `x-gzip` alias; a built-host browser test confirms the alias serves the same gzip variant with the same ETag. Conditional 304 evaluation is restricted to GET/HEAD, while POST still follows ServeDir's method rejection; the router test covers this distinction. SPA `index.html` uses `no-cache` and varies on accepted compression encodings. This remains a single host-configured root, not per-workspace multi-root; Diff detail, multi-root, interactive terminal, embedded binary assets, CDN cache invalidation policy and release wiring remain follow-up. |
 | Rust/CI gates | Full workspace `fmt`, all-target `check`, strict `clippy` and tests passed locally. Remote run `36133400667` passed all jobs (42m33s Rust job, under 60m), including the approval-outcome browser path. Subsequent CI `36165469964` exposed `xai-grok-shell` current-thread actor test stack overflows with the Rust test harness default stack. Raising `RUST_MIN_STACK` in the CI test step to 16 MiB fixes the package's full library suite (6,804 passed), the full workspace tests locally, and GitHub CI run `36178108811` (Rust job 33m07s, under 60m). Docs-only CI run `36181915268` surfaced a pager history-daemon fixture that exceeded its fixed 10s deadline under remote load; isolated test passes locally, and after raising the finite polling budget to 60s, final GitHub run `36186580928` passed every CI job. Historical/peak RSS/disk comparison remains an Actions telemetry-owner prerequisite. Local ignore-baseline/brand/Markdown/mutation/approval gates passed in `final-verification-round3.log`. |
 | Localization | `l10n-guard.sh --before main --after WORKTREE` passed with no regressions/shrinks/fortress breaches; the added telemetry status CLI user-guide note is included. |
+| Settings panel host self-report | New Engine request `get_host_info` answers with what the serving process actually is: version, protocol, bound address, state backend, workspace root, token/preview/update posture and the Safe Web Mode refusal inventory. The Engine overwrites a host-supplied `state_backend`, `workspace_root` or emptied refusal list with what it really does (`crates/codegen/xai-grok-web/tests/host_info_flow.rs`, which also drives a real safe-mode socket per listed tag). `apps/chaos-ui/src/settings.ts` builds the nine M3.1 areas out of that reply only; real desktop/390×844 Playwright reads the numbers off the live process and reloads (`e2e/settings-panel.pw.ts`, transcript `docs/verification/settings-panel-2026-10-03.log`). Editable controls stay theme, Base URL and model; credential storage and the full settings schema remain open. |
 
 ## Remaining items with local code surface
 

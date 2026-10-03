@@ -109,8 +109,14 @@ class RealRepositoryTests(unittest.TestCase):
         # stops at its missing-binary check and the stamper waits for --version.
         self.assertEqual(state.get('local-publish-host.sh'), 'mirrored')
         self.assertEqual(state.get('stamp-npm-version.mjs'), 'mirrored')
-        for name in ('check-gui-protocol.sh', 'check-powershell-syntax.py', 'release-integrity-serve.py'):
+        for name in ('check-powershell-syntax.py', 'release-integrity-serve.py'):
             self.assertEqual(state.get(name), 'ci-only', f'{name} needs something the image lacks')
+        # The mirror check needs a built chaos-engine, so it rides the `--full` gate
+        # list right after `cargo test` rather than the quick one. Counting it as
+        # ci-only would claim the local entry point never looks at the shipped
+        # TypeScript protocol mirror, which stopped being true when --full grew
+        # a workspace build.
+        self.assertEqual(state.get('check-gui-protocol.sh'), 'mirrored')
         self.assertNotIn('check-versions.sh', [n for n, c in state.items() if c != 'mirrored'])
         self.assertEqual(state.get('panic-site-census.py'), 'mirrored')
 

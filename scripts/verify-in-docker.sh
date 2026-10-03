@@ -167,6 +167,12 @@ gates=(
 
 if [ "${MODE}" = "full" ]; then
   gates+=("cargo test: ${bootstrap}; cargo test --workspace --locked --no-fail-fast")
+  # Deliberately full-only, and deliberately after `cargo test`: the check works by
+  # `cargo run --bin chaos-protocol-schema`, so in this mode the binary is already
+  # built and the gate costs a comparison. In quick mode it would be a dev build of
+  # chaos-engine added to a run that otherwise stops at check/clippy, which is the
+  # whole reason quick mode is quick.
+  gates+=("GUI protocol types: ${bootstrap}; bash scripts/ci/check-gui-protocol.sh")
 fi
 
 # Preflight: the instrument before the measurements. Several gates read the repo

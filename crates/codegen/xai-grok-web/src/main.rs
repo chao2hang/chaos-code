@@ -73,8 +73,8 @@ async fn main() -> anyhow::Result<()> {
             Err(_) => adapter.map_or_else(Engine::new, Engine::with_adapter_arc),
         },
     };
-    eprintln!("Chaos Web listening on http://127.0.0.1:{port}");
     let assets_dir = std::env::var_os("CHAOS_WEB_ASSETS_DIR").map(std::path::PathBuf::from);
+    // The bound address is reported by the server itself once the socket exists.
     xai_grok_web::serve_loopback_with_assets_and_safe_mode(
         engine,
         port,
@@ -83,5 +83,6 @@ async fn main() -> anyhow::Result<()> {
             .unwrap_or(false),
         assets_dir,
     )
-    .await
+    .await?;
+    Ok(())
 }

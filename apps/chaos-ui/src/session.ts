@@ -1,4 +1,4 @@
-import type { ClientMessage, DiffPreview, MarketplaceEntry, ServerMessage as ProtocolServerMessage, TimelineMessage } from './generated/protocol'
+import type { ClientMessage, DiffPreview, HostInfo, MarketplaceEntry, ServerMessage as ProtocolServerMessage, TimelineMessage } from './generated/protocol'
 
 export type Message = TimelineMessage
 export type Approval = { requestId: string; tool: string; summary: string; confirmationStep: number }
@@ -47,6 +47,8 @@ export type SessionState = {
   terminalLoading: boolean
   terminalError?: string
   settings?: { baseUrl: string | null; model: string | null; hasApiKey: boolean }
+  /** What the serving process says about itself; undefined until it answers `get_host_info`. */
+  hostInfo?: HostInfo
   providerValidation?: { baseUrl: string; model: string; reachable: boolean; errorCode: string | null }
   diffPreview?: DiffPreview
   marketplaceEntries?: MarketplaceEntry[]
@@ -199,6 +201,10 @@ function applyServerMessageProjection(state: SessionState, message: ServerMessag
   if (message.type === 'search_results') return { ...state, searchResults: { query: message.query, matches: message.matches }, searchLoading: false, searchError: undefined }
   if (message.type === 'git_status') return { ...state, gitStatus: { branch: message.branch, entries: message.entries }, gitLoading: false, gitError: undefined }
   if (message.type === 'settings') return { ...state, settings: { baseUrl: message.base_url, model: message.model, hasApiKey: message.has_api_key } }
+  // Every row of the settings panel other than the model/provider fields is read
+  // from here, so a host that never answers leaves the panel saying so instead of
+  // showing a plausible-looking default that describes a different process.
+  if (message.type === 'host_info') return { ...state, hostInfo: message.info }
   if (message.type === 'settings_updated') return { ...state, settings: { baseUrl: message.base_url, model: message.model, hasApiKey: state.settings?.hasApiKey ?? false }, status: '设置已更新' }
   if (message.type === 'diff_preview') return { ...state, diffPreview: message.preview }
   if (message.type === 'diff_resolved') return { ...state, diffPreview: undefined, status: `Diff ${message.action}` }

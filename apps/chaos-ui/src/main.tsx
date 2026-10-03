@@ -8,9 +8,13 @@ import { webSocketUrl } from './transport'
 import { getComposerSuggestions, initialComposerHistory, moveSuggestionIndex, navigatePromptHistory, recordPrompt, shouldSubmitOnKey, type ComposerSuggestion } from './composer'
 import { defaultLayoutState, loadLayoutState, saveLayoutState, type LayoutState } from './layout'
 import { attachmentChunkMessages, beginAttachmentMessage, cancelAttachmentMessage, describeUpload, finalizeAttachmentMessage, MAX_ATTACHMENT_BYTES, validateAttachmentMessage, type AttachmentSource } from './attachments'
+import { buildSettingsCategories, nextTheme, refusalSummary, THEME_ORDER, themeLabel } from './settings'
+import { ariaShortcut, formatShortcut, matchShortcut, SHORTCUTS, tabForShortcut, type ShortcutTab } from './shortcuts'
 import './style.css'
 
-type Tab = 'chat' | 'files' | 'git' | 'terminal' | 'settings' | 'marketplace' | 'diff'
+// The shortcut table owns the tab list, so `Ctrl/Cmd + <n>` can never point at a
+// tab the shell does not have.
+type Tab = ShortcutTab
 
 function safeMarkdownHref(href: string | undefined): { href: string; external: boolean } | undefined {
   if (!href) return undefined
@@ -66,6 +70,7 @@ function App() {
   const [uploadPickError, setUploadPickError] = useState<string>()
 
   const socket = useRef<WebSocket | null>(null)
+  const composerRef = useRef<HTMLTextAreaElement | null>(null)
   const timelineRef = useRef<HTMLElement | null>(null)
   const timelineAnchorRef = useRef<{ atBottom: boolean; scrollTop: number } | null>({ atBottom: true, scrollTop: 0 })
   const timelineWorkspaceIdRef = useRef(session.activeWorkspaceId)
@@ -159,6 +164,57 @@ function App() {
 
   const send = useCallback((message: object) => {
     if (socket.current?.readyState === WebSocket.OPEN) socket.current.send(JSON.stringify(message))
+  }, [])
+
+  // The spelling of `Mod` in the settings panel. Outside a browser there is no
+  // platform to ask, and `formatShortcut` falls back to the non-Apple spelling.
+  const platform = typeof navigator === 'undefined' ? '' : navigator.platform
+
+  function fetchHostInfo() {
+    send({ type: 'get_host_info', client_msg_id: crypto.randomUUID() })
+  }
+
+  // Entering a tab is where its data is fetched, so the keyboard shortcut and the
+  // header button land on the same view with the same contents.
+  function goToTab(tab: Tab) {
+    setActiveTab(tab)
+    if (tab === 'chat') {
+      updateSession((current) => ({ ...current, activeFile: undefined }))
+      return
+    }
+    if (tab === 'files') refreshFiles(dirPath)
+    if (tab === 'git') refreshGitStatus()
+    if (tab === 'marketplace') scanMarketplace()
+    if (tab === 'settings') {
+      fetchSettings()
+      fetchHostInfo()
+    }
+  }
+
+  function runShortcut(id: string) {
+    const tab = tabForShortcut(id)
+    if (tab) return goToTab(tab)
+    if (id === 'theme:cycle') return setLayout((current) => ({ ...current, theme: nextTheme(current.theme) }))
+    if (id === 'run:cancel') return cancel()
+    if (id === 'composer:focus') return composerRef.current?.focus()
+  }
+
+  const tabBinding = (tab: Tab) => SHORTCUTS.find((shortcut) => shortcut.id === `tab:${tab}`)?.keys ?? ''
+
+  // The listener is installed once, so the action is read through a ref refreshed
+  // on every render: a press has to cancel the session current at press time, not
+  // the one that was current when the effect first ran.
+  const runShortcutRef = useRef(runShortcut)
+  useEffect(() => { runShortcutRef.current = runShortcut })
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const id = matchShortcut(event)
+      if (!id) return
+      event.preventDefault()
+      runShortcutRef.current(id)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
   }, [])
 
   const connect = useCallback(() => {
@@ -445,6 +501,14 @@ function App() {
   const activeWorkspaceName = activeWorkspace ? activeWorkspace.name : '默认工作区'
   const isRightbarOpen = activeTab !== 'chat' || Boolean(session.activeFile)
   const rightbarWidth = isRightbarOpen ? 420 : 0
+  const settingsCategories = buildSettingsCategories({
+    host: session.hostInfo ?? null,
+    theme: layout.theme,
+    model: session.settings?.model ?? null,
+    baseUrl: session.settings?.baseUrl ?? null,
+    hasApiKey: session.settings?.hasApiKey ?? false,
+    platform,
+  })
 
   return (
     <main
@@ -587,74 +651,56 @@ function App() {
             <button
               type="button"
               className={`header-tab-btn ${activeTab === 'chat' && !session.activeFile ? 'active' : ''}`}
-              onClick={() => {
-                setActiveTab('chat')
-                updateSession((c) => ({ ...c, activeFile: undefined }))
-              }}
+              aria-keyshortcuts={ariaShortcut(tabBinding('chat'), platform)}
+              onClick={() => goToTab('chat')}
             >
               💬 对话
             </button>
             <button
               type="button"
               className={`header-tab-btn ${activeTab === 'files' ? 'active' : ''}`}
-              onClick={() => {
-                const next = activeTab === 'files' ? 'chat' : 'files'
-                setActiveTab(next)
-                if (next === 'files') refreshFiles(dirPath)
-              }}
+              aria-keyshortcuts={ariaShortcut(tabBinding('files'), platform)}
+              onClick={() => goToTab(activeTab === 'files' ? 'chat' : 'files')}
             >
               📁 文件
             </button>
             <button
               type="button"
               className={`header-tab-btn ${activeTab === 'git' ? 'active' : ''}`}
-              onClick={() => {
-                const next = activeTab === 'git' ? 'chat' : 'git'
-                setActiveTab(next)
-                if (next === 'git') refreshGitStatus()
-              }}
+              aria-keyshortcuts={ariaShortcut(tabBinding('git'), platform)}
+              onClick={() => goToTab(activeTab === 'git' ? 'chat' : 'git')}
             >
               🌿 Git
             </button>
             <button
               type="button"
               className={`header-tab-btn ${activeTab === 'terminal' ? 'active' : ''}`}
-              onClick={() => {
-                const next = activeTab === 'terminal' ? 'chat' : 'terminal'
-                setActiveTab(next)
-              }}
+              aria-keyshortcuts={ariaShortcut(tabBinding('terminal'), platform)}
+              onClick={() => goToTab(activeTab === 'terminal' ? 'chat' : 'terminal')}
             >
               💻 终端
             </button>
             <button
               type="button"
               className={`header-tab-btn ${activeTab === 'settings' ? 'active' : ''}`}
-              onClick={() => {
-                const next = activeTab === 'settings' ? 'chat' : 'settings'
-                setActiveTab(next)
-                if (next === 'settings') fetchSettings()
-              }}
+              aria-keyshortcuts={ariaShortcut(tabBinding('settings'), platform)}
+              onClick={() => goToTab(activeTab === 'settings' ? 'chat' : 'settings')}
             >
               ⚙️ 设置
             </button>
             <button
               type="button"
               className={`header-tab-btn ${activeTab === 'marketplace' ? 'active' : ''}`}
-              onClick={() => {
-                const next = activeTab === 'marketplace' ? 'chat' : 'marketplace'
-                setActiveTab(next)
-                if (next === 'marketplace') scanMarketplace()
-              }}
+              aria-keyshortcuts={ariaShortcut(tabBinding('marketplace'), platform)}
+              onClick={() => goToTab(activeTab === 'marketplace' ? 'chat' : 'marketplace')}
             >
               🧩 插件
             </button>
             <button
               type="button"
               className={`header-tab-btn ${activeTab === 'diff' ? 'active' : ''}`}
-              onClick={() => {
-                const next = activeTab === 'diff' ? 'chat' : 'diff'
-                setActiveTab(next)
-              }}
+              aria-keyshortcuts={ariaShortcut(tabBinding('diff'), platform)}
+              onClick={() => goToTab(activeTab === 'diff' ? 'chat' : 'diff')}
             >
               🔍 差异{session.diffPreview ? ' (1)' : ''}
             </button>
@@ -858,6 +904,7 @@ function App() {
               <textarea
                 className="composer-textarea"
                 data-testid="composer-input"
+                ref={composerRef}
                 aria-label="Prompt"
                 aria-autocomplete={suggestions.length > 0 ? 'list' : undefined}
                 aria-controls={suggestions.length > 0 ? 'composer-suggestion-list' : undefined}
@@ -1217,49 +1264,110 @@ function App() {
 
           {/* Tab: 设置 (Settings) */}
           {activeTab === 'settings' && (
-            <section className="panel-view" aria-label="设置面板">
+            <section className="panel-view" aria-label="设置面板" data-testid="settings-panel">
               <div className="panel-header">
-                <h2>模型与服务设置</h2>
-                <button type="button" onClick={fetchSettings}>重新获取设置</button>
+                <h2>设置</h2>
+                <button type="button" onClick={() => { fetchSettings(); fetchHostInfo() }}>
+                  重新获取设置
+                </button>
               </div>
-              <div className="panel-section">
-                <label>
-                  Provider Base URL:
-                  <input
-                    className="panel-input"
-                    aria-label="Provider Base URL"
-                    placeholder="https://api.openai.com/v1"
-                    value={settingsBaseUrl}
-                    onChange={(e) => setSettingsBaseUrl(e.target.value)}
-                  />
-                </label>
-                <label>
-                  模型 (Model):
-                  <input
-                    className="panel-input"
-                    aria-label="Provider Model"
-                    placeholder="gpt-4o / llama-3.3-70b"
-                    value={settingsModel}
-                    onChange={(e) => setSettingsModel(e.target.value)}
-                  />
-                </label>
-                <p>
-                  API Key 状态：
-                  <strong>{session.settings?.hasApiKey ? '已配置 API Key' : '未检测到 API Key'}</strong>
+              {!session.hostInfo && (
+                <p className="settings-pending" data-testid="settings-host-pending" role="status">
+                  还没收到 host 的自述（<code>get_host_info</code>）。通用、权限、安全、更新这四个分类的值都来自它，在那之前只显示「host 尚未回报」。
                 </p>
-                {session.providerValidation && (
-                  <p>
-                    Provider 状态：
-                    <span className={`validation-badge ${session.providerValidation.reachable ? 'success' : 'fail'}`}>
-                      {session.providerValidation.reachable ? '连通正常' : `校验未通过 (${session.providerValidation.errorCode ?? 'unknown'})`}
-                    </span>
-                  </p>
-                )}
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  <button type="button" onClick={saveSettings}>保存设置</button>
-                  <button type="button" onClick={validateProvider}>验证 Provider 连接</button>
+              )}
+              {settingsCategories.map((category) => (
+                <div className="panel-section settings-category" data-testid={`settings-category-${category.id}`} key={category.id}>
+                  <h2>{category.title}</h2>
+                  <dl className="settings-rows">
+                    {category.rows.map((row) => (
+                      <div className={`settings-row${row.warn ? ' warn' : ''}`} data-testid={row.id} key={row.id}>
+                        <dt>{row.label}</dt>
+                        <dd>{row.value}</dd>
+                        {row.locked && <dd className="settings-row-note">{row.locked}</dd>}
+                      </div>
+                    ))}
+                  </dl>
+                  {category.control === 'appearance' && (
+                    <div className="settings-control" role="group" aria-label="主题">
+                      {THEME_ORDER.map((theme) => (
+                        <button
+                          type="button"
+                          key={theme}
+                          data-testid={`theme-${theme}`}
+                          aria-pressed={layout.theme === theme}
+                          onClick={() => setLayout((current) => ({ ...current, theme }))}
+                        >
+                          {themeLabel(theme)}
+                        </button>
+                      ))}
+                      <button type="button" data-testid="theme-cycle" onClick={() => runShortcut('theme:cycle')}>
+                        轮换（{formatShortcut('Mod+Shift+L', platform)}）
+                      </button>
+                    </div>
+                  )}
+                  {category.control === 'model' && (
+                    <div className="settings-control">
+                      <label>
+                        模型 (Model):
+                        <input
+                          className="panel-input"
+                          data-testid="settings-model"
+                          aria-label="Provider Model"
+                          placeholder="gpt-4o / llama-3.3-70b"
+                          value={settingsModel}
+                          onChange={(e) => setSettingsModel(e.target.value)}
+                        />
+                      </label>
+                      <p className="settings-row-note">和下面的 Base URL 一起由「Provider」分类的「保存设置」写回 host。</p>
+                    </div>
+                  )}
+                  {category.control === 'provider' && (
+                    <div className="settings-control">
+                      <label>
+                        Provider Base URL:
+                        <input
+                          className="panel-input"
+                          data-testid="settings-base-url"
+                          aria-label="Provider Base URL"
+                          placeholder="https://api.openai.com/v1"
+                          value={settingsBaseUrl}
+                          onChange={(e) => setSettingsBaseUrl(e.target.value)}
+                        />
+                      </label>
+                      {session.providerValidation && (
+                        <p>
+                          Provider 状态：
+                          <span className={`validation-badge ${session.providerValidation.reachable ? 'success' : 'fail'}`}>
+                            {session.providerValidation.reachable ? '连通正常' : `校验未通过 (${session.providerValidation.errorCode ?? 'unknown'})`}
+                          </span>
+                        </p>
+                      )}
+                      <div className="settings-actions">
+                        <button type="button" onClick={saveSettings}>保存设置</button>
+                        <button type="button" onClick={validateProvider}>验证 Provider 连接</button>
+                      </div>
+                    </div>
+                  )}
+                  {category.refusals && (
+                    <div className="settings-refusals-wrap">
+                      <p className="settings-row-note" data-testid="safe-mode-refusal-summary">
+                        {refusalSummary(session.hostInfo ?? null)}
+                      </p>
+                      {session.hostInfo && category.refusals.length > 0 && (
+                        <ul className="settings-refusals" data-testid="safe-mode-refusals">
+                          {category.refusals.map((refusal) => (
+                            <li key={refusal.message}>
+                              <code>{refusal.message}</code>
+                              <span>{refusal.capability}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  )}
                 </div>
-              </div>
+              ))}
 
               <div className="panel-section">
                 <h2>导入已有 TUI 会话</h2>

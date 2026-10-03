@@ -520,6 +520,12 @@ pub enum ClientMessage {
     GetSettings {
         client_msg_id: String,
     },
+    /// Ask what the serving process actually started with. Read-only, and
+    /// answerable in Safe Web Mode, because the browser is entitled to know
+    /// which capabilities were withheld from it and why.
+    GetHostInfo {
+        client_msg_id: String,
+    },
     UpdateSettings {
         client_msg_id: String,
         base_url: Option<String>,
@@ -737,6 +743,9 @@ pub enum ServerMessage {
         base_url: Option<String>,
         model: Option<String>,
     },
+    HostInfo {
+        info: HostInfo,
+    },
     GitStatus {
         branch: Option<String>,
         entries: Vec<String>,
@@ -801,6 +810,221 @@ pub struct WorkspaceInfo {
     pub last_used_sequence: u64,
     #[serde(default)]
     pub last_session_id: Option<Uuid>,
+}
+
+/// How the serving process keeps what it has learned between restarts.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum StateBackend {
+    /// Nothing survives the process; a restart loses every session.
+    #[default]
+    Memory,
+    /// The transitional JSON snapshot at a path the operator set at startup.
+    JsonFile,
+    /// SQLite.
+    Sqlite,
+}
+
+/// Whether the process serving the browser replaces its own binary.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum UpdateMode {
+    /// The process swaps its own binary and restarts.
+    SelfUpdate,
+    /// Something outside the process owns updates: `cargo`, `npm`, an installer.
+    #[default]
+    External,
+}
+
+/// Which origins the preview proxy will forward to a forwarded port.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PreviewProxyState {
+    /// No port is forwarded, so every `/preview` request is refused.
+    #[default]
+    Disabled,
+    /// Ports are forwarded, and only the declared public name may reach them.
+    NamedOnly,
+    /// Ports are forwarded and an operator opted into loopback-only origins too.
+    AnyOrigin,
+}
+
+/// One client message Safe Web Mode refuses, and what it would have done.
+///
+/// `message` is the wire tag rather than a paraphrase, so a client can hide the
+/// control that would have sent it instead of letting the user click and be
+/// refused.
+/// The wire tag of a client message, matching the serde `rename_all` on the
+/// enum. Exhaustive on purpose: a new variant does not compile until it is
+/// classified.
+pub fn safe_mode_tag(message: &ClientMessage) -> &'static str {
+    match message {
+        ClientMessage::CreateSession { .. } => "create_session",
+        ClientMessage::CreateWorkspace { .. } => "create_workspace",
+        ClientMessage::ListWorkspaces { .. } => "list_workspaces",
+        ClientMessage::ArchiveWorkspace { .. } => "archive_workspace",
+        ClientMessage::SwitchWorkspace { .. } => "switch_workspace",
+        ClientMessage::Resume { .. } => "resume",
+        ClientMessage::Submit { .. } => "submit",
+        ClientMessage::Cancel { .. } => "cancel",
+        ClientMessage::Snapshot { .. } => "snapshot",
+        ClientMessage::Approve { .. } => "approve",
+        ClientMessage::Reject { .. } => "reject",
+        ClientMessage::RespondQuestion { .. } => "respond_question",
+        ClientMessage::ListFiles { .. } => "list_files",
+        ClientMessage::ReadFile { .. } => "read_file",
+        ClientMessage::SearchFiles { .. } => "search_files",
+        ClientMessage::ProposeFileWrite { .. } => "propose_file_write",
+        ClientMessage::ProposeTerminal { .. } => "propose_terminal",
+        ClientMessage::ProposeGitMutation { .. } => "propose_git_mutation",
+        ClientMessage::GetSettings { .. } => "get_settings",
+        ClientMessage::GetHostInfo { .. } => "get_host_info",
+        ClientMessage::UpdateSettings { .. } => "update_settings",
+        ClientMessage::GetGitStatus { .. } => "get_git_status",
+        ClientMessage::ValidateAttachment { .. } => "validate_attachment",
+        ClientMessage::BeginAttachment { .. } => "begin_attachment",
+        ClientMessage::AttachmentChunk { .. } => "attachment_chunk",
+        ClientMessage::CancelAttachment { .. } => "cancel_attachment",
+        ClientMessage::FinalizeAttachment { .. } => "finalize_attachment",
+        ClientMessage::ImportTuiSession { .. } => "import_tui_session",
+        ClientMessage::ValidateProvider { .. } => "validate_provider",
+        ClientMessage::ScanMarketplace { .. } => "scan_marketplace",
+        ClientMessage::AcceptDiff { .. } => "accept_diff",
+        ClientMessage::RollbackDiff { .. } => "rollback_diff",
+        ClientMessage::PreviewDiff { .. } => "preview_diff",
+    }
+}
+
+/// Every client message Safe Web Mode refuses, with what it would have done.
+///
+/// This is the refusal policy, not a description of it: [`safe_mode_allows`]
+/// returns false for exactly these tags. The browser renders it verbatim, so a
+/// refusal the panel does not list is a refusal the user finds by clicking, and
+/// the panel is tested against the protocol mirror to keep that from happening.
+pub const SAFE_MODE_REFUSALS: &[(&str, &str)] = &[
+    ("create_workspace", "新建工作区"),
+    ("list_workspaces", "列出工作区"),
+    ("archive_workspace", "归档工作区"),
+    ("switch_workspace", "切换工作区"),
+    ("approve", "批准待审操作"),
+    ("reject", "驳回待审操作"),
+    ("propose_file_write", "把文件写进工作区"),
+    ("propose_terminal", "在工作区执行命令"),
+    ("propose_git_mutation", "执行 Git 变更"),
+    ("update_settings", "修改设置"),
+    ("get_git_status", "读取 Git 状态"),
+    ("validate_attachment", "校验附件"),
+    ("begin_attachment", "开始上传附件"),
+    ("attachment_chunk", "上传附件分片"),
+    ("cancel_attachment", "取消附件上传"),
+    ("finalize_attachment", "把附件落进工作区"),
+    ("validate_provider", "探测 Provider 连通性"),
+    ("accept_diff", "接受 Diff"),
+    ("rollback_diff", "回滚 Diff"),
+];
+
+/// Whether Safe Web Mode lets a client send this message.
+///
+/// The line drawn here is "no workspace or host mutation, not even behind an
+/// approval prompt": `propose_file_write`, `propose_terminal` and
+/// `propose_git_mutation` are refused although the engine would ask the user
+/// first. `finalize_attachment` used to sit on the allowlist, which made it
+/// unreachable rather than permissive — an `upload_id` only comes from
+/// `begin_attachment`, which is refused — so the one attachment step that writes
+/// into the workspace was allowlisted while the three that merely stage bytes
+/// were not. The flow is refused as a unit, from either end.
+///
+/// This lives beside the enum it classifies, and beside [`SAFE_MODE_REFUSALS`],
+/// the list the browser renders. A host that enforced a policy without reporting
+/// it produced a settings panel that promised nothing while the socket refused
+/// nineteen messages; `the_refusal_list_matches_what_the_socket_actually_refuses`
+/// in `xai-grok-web/tests/host_info_flow.rs` drives a real socket against the
+/// list to keep the two from drifting apart.
+#[must_use]
+pub fn safe_mode_allows(message: &ClientMessage) -> bool {
+    !SAFE_MODE_REFUSALS
+        .iter()
+        .any(|(tag, _)| *tag == safe_mode_tag(message))
+}
+
+/// [`SAFE_MODE_REFUSALS`] as a wire payload.
+#[must_use]
+pub fn safe_mode_refusals() -> Vec<SafeModeRefusal> {
+    SAFE_MODE_REFUSALS
+        .iter()
+        .map(|(tag, capability)| SafeModeRefusal {
+            message: (*tag).to_string(),
+            capability: (*capability).to_string(),
+        })
+        .collect()
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct SafeModeRefusal {
+    /// Wire tag of the refused client message, `propose_file_write`.
+    pub message: String,
+    /// What it would have done, in the browser's own words.
+    pub capability: String,
+}
+
+/// The configuration the serving process actually started with.
+///
+/// Nothing here is chosen by the browser: each field is a decision the host had
+/// to make before it could bind a socket, and the host fills this in once, at
+/// startup. It exists because most of the settings panel's categories have no
+/// editable field to show — the answer is a fact about the deployment, and the
+/// honest control surface says which fact and why the browser cannot change it,
+/// rather than rendering an input that goes nowhere.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct HostInfo {
+    /// Version of the binary serving the browser, which is not the version of
+    /// the bundle the browser loaded.
+    pub host_version: String,
+    /// The wire protocol the handshake agreed on.
+    pub protocol_version: u16,
+    /// The address the socket really bound, `127.0.0.1:8787` for the loopback
+    /// host. Reachability beyond that is a property of the proxy in front.
+    pub bind_addr: String,
+    pub state_backend: StateBackend,
+    /// Safe Web Mode is on: the refusals listed in `safe_mode_refusals` are in
+    /// force right now, not merely available as a policy.
+    pub safe_web_mode: bool,
+    /// Absolute path of the bound workspace. `None` means the browser can read,
+    /// search, write or run in no workspace at all.
+    pub workspace_root: Option<String>,
+    /// A token has to accompany every request.
+    pub token_required: bool,
+    /// The public name declared for this host, if any. The `Host`/`Origin` rules
+    /// key off it, so the browser is shown the value instead of inferring it
+    /// from `location.host`, which a proxy may have rewritten.
+    pub public_origin: Option<String>,
+    pub preview_proxy: PreviewProxyState,
+    /// Ports the preview proxy forwards; empty unless it is enabled.
+    pub preview_ports: Vec<u16>,
+    pub update_mode: UpdateMode,
+    /// What Safe Web Mode withholds, each paired with the error code it returns.
+    /// Populated whether or not Safe Web Mode is on, so the panel can say what
+    /// turning it on would cost.
+    pub safe_mode_refusals: Vec<SafeModeRefusal>,
+}
+
+impl Default for HostInfo {
+    fn default() -> Self {
+        Self {
+            host_version: env!("CARGO_PKG_VERSION").to_string(),
+            protocol_version: PROTOCOL_VERSION,
+            bind_addr: String::new(),
+            state_backend: StateBackend::default(),
+            safe_web_mode: false,
+            workspace_root: None,
+            token_required: false,
+            public_origin: None,
+            preview_proxy: PreviewProxyState::default(),
+            preview_ports: Vec::new(),
+            update_mode: UpdateMode::default(),
+            safe_mode_refusals: safe_mode_refusals(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -882,6 +1106,14 @@ impl WorkspaceAdapter {
         Ok(Self {
             root: Arc::new(root),
         })
+    }
+
+    /// The canonical path this adapter is confined to. Reported to the browser
+    /// so the settings panel can name the workspace it is talking about instead
+    /// of the workspace it assumes.
+    #[must_use]
+    pub fn root(&self) -> &Path {
+        &self.root
     }
 
     fn contains_staging_component(path: &Path) -> bool {
@@ -1214,6 +1446,7 @@ pub struct Engine {
     git_adapter: Option<Arc<dyn GitAdapter>>,
     marketplace_roots: Arc<Vec<PathBuf>>,
     tui_session_roots: Arc<Vec<PathBuf>>,
+    host_info: Arc<HostInfo>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -1424,6 +1657,17 @@ impl Engine {
     ) -> Self {
         let initial_settings = state.settings.clone();
         let (events, _) = broadcast::channel(256);
+        // Derived before `path` and `sqlite_store` are moved into the struct.
+        let state_backend = if sqlite_store.is_some() {
+            StateBackend::Sqlite
+        } else if path.is_some() {
+            StateBackend::JsonFile
+        } else {
+            StateBackend::Memory
+        };
+        let workspace_root = workspace
+            .as_ref()
+            .map(|adapter| adapter.root().display().to_string());
         Self {
             events,
             state: Arc::new(Mutex::new(state)),
@@ -1439,7 +1683,40 @@ impl Engine {
             git_adapter: None,
             marketplace_roots: Arc::new(Vec::new()),
             tui_session_roots: Arc::new(Vec::new()),
+            host_info: Arc::new(HostInfo {
+                state_backend,
+                workspace_root,
+                ..HostInfo::default()
+            }),
         }
+    }
+
+    /// Fill in the parts of [`HostInfo`] that only the serving process knows.
+    ///
+    /// `state_backend` and `workspace_root` are derived by the engine from the
+    /// store and workspace it was actually handed, and any value the host sets
+    /// for them is ignored: a panel claiming SQLite, or naming a workspace the
+    /// engine cannot reach, would be worse than no panel at all.
+    #[must_use]
+    pub fn with_host_info(mut self, configure: impl FnOnce(&mut HostInfo)) -> Self {
+        let mut info = (*self.host_info).clone();
+        configure(&mut info);
+        info.state_backend = if self.sqlite_store.is_some() {
+            StateBackend::Sqlite
+        } else if self.store_path.is_some() {
+            StateBackend::JsonFile
+        } else {
+            StateBackend::Memory
+        };
+        info.workspace_root = self
+            .workspace
+            .as_ref()
+            .map(|workspace| workspace.root().display().to_string());
+        // Same reason: the refusal list is what the transport enforces, and a
+        // host that cleared it would show a Safe Web Mode user an empty panel.
+        info.safe_mode_refusals = safe_mode_refusals();
+        self.host_info = Arc::new(info);
+        self
     }
 
     pub fn with_tui_session_root(mut self, root: impl AsRef<Path>) -> std::io::Result<Self> {
@@ -1530,6 +1807,7 @@ impl Engine {
             | ClientMessage::ProposeTerminal { client_msg_id, .. }
             | ClientMessage::ProposeGitMutation { client_msg_id, .. }
             | ClientMessage::GetSettings { client_msg_id }
+            | ClientMessage::GetHostInfo { client_msg_id }
             | ClientMessage::UpdateSettings { client_msg_id, .. }
             | ClientMessage::GetGitStatus { client_msg_id }
             | ClientMessage::ValidateAttachment { client_msg_id, .. }
@@ -2246,6 +2524,11 @@ impl Engine {
                     base_url: settings.base_url,
                     model: settings.model,
                     has_api_key: settings.has_api_key,
+                }]
+            }
+            ClientMessage::GetHostInfo { .. } => {
+                vec![ServerMessage::HostInfo {
+                    info: (*self.host_info).clone(),
                 }]
             }
             ClientMessage::UpdateSettings {
@@ -4045,6 +4328,242 @@ mod tests {
         assert!(
             matches!(&rejected[0], ServerMessage::Error { code, .. } if code == "attachment_rejected")
         );
+    }
+
+    /// One message per wire tag, so the Safe Web Mode policy is checked against
+    /// every message the socket can receive rather than a sample of them.
+    fn every_client_message() -> Vec<ClientMessage> {
+        let session = Uuid::new_v4();
+        let workspace = Uuid::new_v4();
+        let request = Uuid::new_v4();
+        let upload = Uuid::new_v4();
+        let id = |n: u32| format!("msg-{n}");
+        vec![
+            ClientMessage::CreateSession {
+                client_msg_id: id(1),
+                workspace_id: None,
+            },
+            ClientMessage::CreateWorkspace {
+                client_msg_id: id(2),
+                name: "workspace".into(),
+            },
+            ClientMessage::ListWorkspaces {
+                client_msg_id: id(3),
+            },
+            ClientMessage::ArchiveWorkspace {
+                client_msg_id: id(4),
+                workspace_id: workspace,
+            },
+            ClientMessage::SwitchWorkspace {
+                client_msg_id: id(5),
+                workspace_id: workspace,
+            },
+            ClientMessage::Resume {
+                client_msg_id: id(6),
+                session_id: session,
+                workspace_id: None,
+            },
+            ClientMessage::Submit {
+                client_msg_id: id(7),
+                session_id: session,
+                prompt: "prompt".into(),
+            },
+            ClientMessage::Cancel {
+                client_msg_id: id(8),
+                session_id: session,
+            },
+            ClientMessage::Snapshot {
+                client_msg_id: id(9),
+                session_id: session,
+                workspace_id: None,
+            },
+            ClientMessage::Approve {
+                client_msg_id: id(10),
+                request_id: request,
+            },
+            ClientMessage::Reject {
+                client_msg_id: id(11),
+                request_id: request,
+                reason: "reason".into(),
+            },
+            ClientMessage::RespondQuestion {
+                client_msg_id: id(12),
+                question_id: request,
+                answer: "answer".into(),
+            },
+            ClientMessage::ListFiles {
+                client_msg_id: id(13),
+                relative_path: ".".into(),
+            },
+            ClientMessage::ReadFile {
+                client_msg_id: id(14),
+                relative_path: "a.txt".into(),
+            },
+            ClientMessage::SearchFiles {
+                client_msg_id: id(15),
+                query: "query".into(),
+            },
+            ClientMessage::ProposeFileWrite {
+                client_msg_id: id(16),
+                session_id: session,
+                relative_path: "a.txt".into(),
+                contents: "contents".into(),
+            },
+            ClientMessage::ProposeTerminal {
+                client_msg_id: id(17),
+                session_id: session,
+                command: "true".into(),
+            },
+            ClientMessage::ProposeGitMutation {
+                client_msg_id: id(18),
+                session_id: session,
+                operation: "stage".into(),
+                argument: ".".into(),
+            },
+            ClientMessage::GetSettings {
+                client_msg_id: id(19),
+            },
+            ClientMessage::GetHostInfo {
+                client_msg_id: id(20),
+            },
+            ClientMessage::UpdateSettings {
+                client_msg_id: id(21),
+                base_url: None,
+                model: None,
+            },
+            ClientMessage::GetGitStatus {
+                client_msg_id: id(22),
+            },
+            ClientMessage::ValidateAttachment {
+                client_msg_id: id(23),
+                filename: "a.txt".into(),
+                byte_len: 1,
+                content_type: "text/plain".into(),
+            },
+            ClientMessage::BeginAttachment {
+                client_msg_id: id(24),
+                session_id: session,
+                filename: "a.txt".into(),
+                content_type: "text/plain".into(),
+                byte_len: 1,
+            },
+            ClientMessage::AttachmentChunk {
+                client_msg_id: id(25),
+                upload_id: upload,
+                chunk: "AA==".into(),
+            },
+            ClientMessage::CancelAttachment {
+                client_msg_id: id(26),
+                upload_id: upload,
+            },
+            ClientMessage::FinalizeAttachment {
+                client_msg_id: id(27),
+                upload_id: upload,
+                relative_path: "a.txt".into(),
+            },
+            ClientMessage::ImportTuiSession {
+                client_msg_id: id(28),
+                root: ".".into(),
+                session_id: "tui".into(),
+            },
+            ClientMessage::ValidateProvider {
+                client_msg_id: id(29),
+                base_url: "https://api.example.test/v1".into(),
+                model: "model".into(),
+            },
+            ClientMessage::ScanMarketplace {
+                client_msg_id: id(30),
+                root: ".".into(),
+            },
+            ClientMessage::AcceptDiff {
+                client_msg_id: id(31),
+                session_id: session,
+                proposal_id: "proposal".into(),
+                summary: "summary".into(),
+            },
+            ClientMessage::RollbackDiff {
+                client_msg_id: id(32),
+                session_id: session,
+                proposal_id: "proposal".into(),
+            },
+            ClientMessage::PreviewDiff {
+                client_msg_id: id(33),
+                session_id: session,
+                proposal_id: "proposal".into(),
+            },
+        ]
+    }
+
+    #[test]
+    fn safe_mode_tags_are_the_serde_wire_tags_of_every_message() {
+        use std::collections::HashSet;
+        // The panel renders these tags and the refusal list is written in them, so a
+        // tag that drifted from serde would silently un-refuse a message.
+        let mut tags = HashSet::new();
+        for message in every_client_message() {
+            let encoded = serde_json::to_value(&message).expect("client message serialises");
+            let wire = encoded
+                .get("type")
+                .and_then(serde_json::Value::as_str)
+                .expect("internally tagged enum")
+                .to_owned();
+            assert_eq!(wire.as_str(), safe_mode_tag(&message), "tag for {wire}");
+            assert!(
+                tags.insert(wire.clone()),
+                "two messages share the tag {wire}"
+            );
+        }
+        assert_eq!(tags.len(), 33, "one sample per protocol message");
+    }
+
+    #[test]
+    fn safe_mode_policy_never_refuses_the_read_only_surface() {
+        let messages = every_client_message();
+        for (tag, capability) in SAFE_MODE_REFUSALS {
+            assert!(
+                !capability.trim().is_empty(),
+                "{tag} has no capability text"
+            );
+            let refused = messages
+                .iter()
+                .find(|message| safe_mode_tag(message) == *tag)
+                .unwrap_or_else(|| {
+                    panic!("{tag} is listed as refused but no client message carries that tag")
+                });
+            assert!(
+                !safe_mode_allows(refused),
+                "{tag} is listed but the policy allows it"
+            );
+        }
+        let allowed: Vec<&'static str> = messages
+            .iter()
+            .filter(|message| safe_mode_allows(message))
+            .map(safe_mode_tag)
+            .collect();
+        for expected in [
+            "create_session",
+            "submit",
+            "cancel",
+            "snapshot",
+            "list_files",
+            "read_file",
+            "search_files",
+            "get_settings",
+            "get_host_info",
+            "respond_question",
+            "scan_marketplace",
+            "import_tui_session",
+            "preview_diff",
+        ] {
+            assert!(
+                allowed.contains(&expected),
+                "{expected} must stay reachable in Safe Web Mode"
+            );
+        }
+        // The two halves have to cover the protocol exactly once, so a refusal can
+        // neither overlap the allowed set nor point at nothing.
+        assert_eq!(messages.len(), SAFE_MODE_REFUSALS.len() + allowed.len());
+        assert_eq!(safe_mode_refusals().len(), SAFE_MODE_REFUSALS.len());
     }
 
     #[test]

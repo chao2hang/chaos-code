@@ -2,6 +2,108 @@
 
 ## Unreleased
 
+### 功能：设置面板九个区域第一次由「应答浏览器的那个进程」供值，Safe Web Mode 的拦截清单搬进引擎
+
+设置页此前只有 model 与 Base URL 两个输入框，TODO M3.1 那条「覆盖通用、外观、模型、Provider、权限、
+安全、快捷键、远程和更新」因此一直是 `[ ]`。真正的难点不是画九个卡片，而是**面板凭什么说自己是对的**：
+版本、绑定地址、状态后端、工作区根、是否要求 token、预览代理放到哪一档、Safe Web Mode 到底拦下哪些操作——
+只有服务端进程知道。前端自己抄一份常量，就会在主机其实只拦 18 类的时候继续显示 19 类，而读者会把这句话
+当成安全边界来读。所以这一轮全部设计围绕一件事：**面板只能转述应答它的那个进程说的话**。
+
+**协议上新增一次一问一答。** `ClientMessage::GetHostInfo { client_msg_id }` → `ServerMessage::HostInfo
+{ info }`，`GetHostInfo` 一并进 `client_msg_id` 去重分支（HTTP 建会话那轮已经证明不去重的重试会让同一件事
+发生两次）。`HostInfo` 的 12 个字段里，`SafeModeRefusal { message, capability }` 是成对给出的：既说
+「`propose_file_write` 被拒」，也说「你因此少了*把文件写进工作区*」，因为只报前者对用户没有意义。
+TypeScript 镜像仍由 `cargo run -p chaos-engine --bin chaos-protocol-schema` 生成，两道门都过：
+`check-gui-protocol.sh` 比字节（`GUI protocol types are up to date`），`check-protocol-mirror.py`
+解析真实 Rust 枚举做双向核对（`the mirror covers every protocol message and field`）。
+
+**拦截策略从 Web crate 上提进引擎。** Safe Web Mode 的判定原本写在 `xai-grok-web` 里，现在
+`safe_mode_tag`（穷尽 33 个变体的 `match`）与 `SAFE_MODE_REFUSALS`（19 条）住在 `chaos-engine`，
+Web crate 的 `safe_mode_allows` 只剩一行委托。理由不是洁癖：拦截发生在传输层，而「拦了什么」这句话现在要
+被面板引用，两处各写一份必然漂移。两条引擎测试钉住它——一条把 33 个变体各造一条样例消息，要求
+`safe_mode_tag()` 的返回值与 serde 真正打出的 wire tag 逐个相同（键写错一个字母，拦截就会静默失配）；
+另一条要求清单里每个 tag 都真由某条消息产生，且 13 个只读 tag（含 `get_host_info` 自己）必须放行。
+
+**引擎不许拼装 host 的人谎报。** `with_host_info` 收尾时会**重新推导** `state_backend`、
+`workspace_root`、`safe_mode_refusals` 三项，调用方写进去的值会被覆盖。`host_info_flow.rs` 就是照着这三项
+撒三个谎（`Sqlite`、`/somewhere/else`、空清单），再断言回来的是引擎的真实值；另一个用例开一个真的
+Safe Web Mode socket，把清单里每个 tag 对应的消息真发一遍，要求「清单说有但 socket 放行了」与
+「socket 拒了但清单没列」两个集合都为空，另加 `listed.len() >= 15` 防止清单被清空后两轮循环同时空转通过。
+第四个用例驱动 `chaos-web` 真正调用的 `serve_loopback_with_assets_and_safe_mode`，核对
+`host_info.bind_addr` 就是 socket 实际拿到的地址、`host_version` 就是这个二进制的版本。
+
+**九个区域，`host === null` 时每行都是同一句「host 尚未回报」。** `settings.ts` 的输入是
+`{host, theme, model, baseUrl, hasApiKey, platform}`，输出 general/appearance/model/provider/permissions/
+security/shortcuts/remote/updates 九个区域；红色告警是判断不是文案（绑定非回环、仅内存后端、未设 token、
+预览代理放开任意来源、Safe Web Mode 已开启），拦截清单的条数直接取自清单长度。快捷键区域是**只读**展示
+当前真实生效的 10 条绑定（`Mod+1..7` 切面板、`Mod+Shift+L` 换主题、`Mod+.` 取消、`Mod+K` 聚焦输入框），
+`aria-keyshortcuts` 用 `Meta`/`Control` 拼写，与屏幕上写的 `Cmd`/`Ctrl` 分别由 `ariaShortcut` 与
+`formatShortcut` 产生——两者不同形是故意的，屏幕给人看，ARIA 给读屏软件和 Windows/Mac 差异看。
+
+**axe 抓到的两处都是新结构造成的真问题。** `workspace-flow.pw.ts:256` 每切一个面板跑一次 axe，新设置页
+让它红了两个视口：`definition-list`（serious，我在 `<dl>` 里放了一个 `<p>` 说明）与
+`scrollable-region-focusable`（serious，拦截清单写了 `max-height + overflow-y: auto` 却没给 `tabindex`，
+键盘用户滚不动它）。两条都成立：说明改成第二个 `<dd>`，内层滚动整个去掉（清单只有 19 条，撑不爆面板）。
+修法带来的第二次红也一并记下：e2e 的 `rowValue()` 原本取 `locator('dd')`，第二个 `<dd>` 一出现就撞
+Playwright strict mode（`resolved to 2 elements`）四例全红——那是测试写法，改成取第一个 `<dd>` 后 8/8 恢复。
+
+**顺带修掉自己埋的一条测试抖动。** `host_info_flow.rs` 里「驱动真实 serve 路径」那条测试要先占一个端口再
+释放、再让被测函数去绑同一个端口，因此启动瞬间可能 `ConnectionRefused`。它写着重试循环，但循环包的是
+`first_answer()`，而那个函数第一次 connect 被拒就 `unwrap()` panic——**重试形同虚设**。这一轮在本机被
+并发负载压出 load 32 时真的红了（`Io(Os { code: 111, kind: ConnectionRefused })`）。现在拆成
+`ask()` 返回 `Result`，循环真能重试，超时后把最后一次失败原因与服务任务是否已退出一起打印。非空证明是把
+服务改到 `port + 1`：
+
+    the server never answered get_host_info; last attempt: connect to 127.0.0.1:38159:
+    IO error: Connection refused (os error 111); serve task already finished: false
+    test result: FAILED. 0 passed; 1 failed; ... finished in 20.01s
+
+**非空证明共五处，全部改生产代码、跑真测试、`cmp` 还原。** 清单里 `approve`→`aproove` →
+`aproove is listed as refused but no client message carries that tag`；清单条数写成常量 `9` →
+`Expected: "2 类操作" / Received: "…下面 9 类操作会被直接拒绝…"`；删掉 shell 里 `theme:cycle` 那一行分发 →
+`performs every action the table advertises` 红；`Ctrl/Cmd 只能有一个` 放宽成 `modCount < 1` →
+`AssertionError: expected 'run:cancel' to be null`；以及上面那条端口错位。
+
+**测试。** `chaos-engine` + `xai-grok-web` 全量 39 个 target **342 通过 / 0 失败**；
+`cargo clippy --all-targets -- -D warnings` 两个 crate 干净；前端 `vitest` **85 通过 / 9 文件**
+（新增 `settings.test.ts` 14、`shortcuts.test.ts` 11、`session.test.ts` 4），`tsc --noEmit` 含 `e2e/`
+无输出；Playwright `settings-panel` 两视口 **8 通过**，全套 **47 通过 / 0 失败**（同一套在机器被
+cargo 整批压满时另有一次 45/2，抖的是 `tool-activity` 与时间线锚定这两条时序类用例，与本轮改动无代码交集，
+`docs/verification/settings-panel-2026-10-03.log` 第 9 节把负载数字一并留下，没有把它算作通过）。
+
+**仍未闭合。** 面板**能读不等于能改**：九区里可写的只有主题（写本机 localStorage）、model 与 Base URL，
+API Key 那一行只显示 host 侧配没配，凭据存储仍等 M-1 的 keyring 选型；快捷键区域是只读展示，不是可编辑的
+按键映射表。`host_info` 证明的是「面板说的就是进程知道的」，至于这些值在真实反代部署里是否正确，属
+`web-deployment-tls-linux-2026-10-02.log` 那条线。浏览器证据全部来自 Linux Chromium 的两个视口，
+macOS/Windows/Tauri WebView 未参与，axe 也不替代屏幕阅读器实机验收。逐字转录见
+`docs/verification/settings-panel-2026-10-03.log`。（2026-10-03；`crates/codegen/chaos-engine/src/lib.rs`、
+`crates/codegen/chaos-engine/src/protocol_schema.rs`、`crates/codegen/xai-grok-web/src/lib.rs`、
+`crates/codegen/xai-grok-web/tests/host_info_flow.rs`、`apps/chaos-ui/src/{settings,shortcuts,session,main}.ts(x)`、
+`apps/chaos-ui/src/style.css`、`apps/chaos-ui/e2e/settings-panel.pw.ts`、`TODO.md`、
+`docs/architecture/todo-open-item-classification.md`）
+
+### 门禁：TypeScript 协议镜像检查从「只能在 CI 跑」搬进本地 Docker 全轮
+
+`scripts/ci/check-gui-protocol.sh` 用 `cargo run --bin chaos-protocol-schema` 重新生成
+`apps/chaos-ui/src/generated/protocol.ts` 再逐字节比对，此前被登记在
+`scripts/ci/docker-entry-ci-only.tsv` 里，登记理由是「本地入口的 cargo 门只到 check/clippy，这道门需要一次
+dev 构建」。这条理由在 `--full` 下已经站不住：`--full` 本来就要跑 `cargo test --workspace --locked
+--no-fail-fast`，那道门跑完时 `chaos-protocol-schema` 早就在 target 卷里了，镜像检查只剩一次 `cmp`。现在它
+被追加在 `cargo test` 之后（顺序是有意的：先让 workspace 构建把二进制焐热），quick 模式不带它，因此
+「quick 为什么 quick」没有被牺牲。`scripts/ci/docker-entry-ci-only.tsv` 相应少一行，分类从
+`38 run / 5 CI-only` 变成 **`39 run / 4 CI-only`**（`check-guard-wiring: OK (44 files in scripts/ci/,
+43 reachable, 39 run by scripts/verify-in-docker.sh, 4 recorded CI-only, 1 exempt)`）。
+
+非空证明是把新加的那一行删掉：真实仓库的两条用例同时红，且点名的正是这道门——
+
+      AssertionError: 1 != 0 :   scripts/ci/check-gui-protocol.sh runs in CI but not in scripts/verify-in-docker.sh;
+      mirror it into the `gates` array or record what it needs in scripts/ci/docker-entry-ci-only.tsv
+
+还原后 16 条用例全绿、`bash -n` 通过、文件按字节一致。这条也顺手说明 `docker-entry-ci-only.tsv` 不是
+一次性登记：`check-guard-wiring.py` 对「清单里有、入口其实跑了」和「入口没跑、清单也没写」两个方向都表态，
+所以搬门必须同时改两处，改一处就会红。
+
 ### 修复：Windows 平台腿第一次跑到测试，45m15s 里有 16m43s 卡在一个字符串上
 
 `platform tests (windows-latest)` 此前的三种死法（解析、构建、撞作业上限）都在测试之前。上限抬到 75

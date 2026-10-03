@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { applyServerMessage, fileChangeAffectsVisibleDirectory, initialSessionState, sessionLossRecoveryMessage, workspaceReconnectMessage } from './session'
 import { NIL_WORKSPACE_ID } from './workspace-ui'
+import type { HostInfo } from './generated/protocol'
 
 describe('session event projection', () => {
   it('ignores late session-scoped events from a previous workspace session', () => {
@@ -376,5 +377,45 @@ describe('attachment upload projection', () => {
 
   it('ignores attachment events belonging to another session', () => {
     expect(applyServerMessage(validating, { type: 'attachment_started', session_id: 'other', upload_id: 'u1', filename: 'note.txt' })).toBe(validating)
+  })
+})
+
+const reported: HostInfo = {
+  host_version: '0.4.0',
+  protocol_version: 9,
+  bind_addr: '127.0.0.1:8787',
+  state_backend: 'sqlite',
+  safe_web_mode: true,
+  workspace_root: null,
+  token_required: false,
+  public_origin: null,
+  preview_proxy: 'disabled',
+  preview_ports: [],
+  update_mode: 'external',
+  safe_mode_refusals: [{ message: 'approve', capability: '批准待审操作' }],
+}
+
+describe('host self-report', () => {
+  it('stores the report even before a session exists', () => {
+    const state = applyServerMessage(initialSessionState, { type: 'host_info', info: reported })
+    expect(state.hostInfo).toEqual(reported)
+    expect(state.sessionId).toBeUndefined()
+  })
+
+  it('replaces the previous report so the newest answer wins', () => {
+    const first = applyServerMessage(initialSessionState, { type: 'host_info', info: { ...reported, bind_addr: '127.0.0.1:1111' } })
+    const second = applyServerMessage(first, { type: 'host_info', info: { ...reported, bind_addr: '127.0.0.1:2222' } })
+    expect(second.hostInfo?.bind_addr).toBe('127.0.0.1:2222')
+  })
+
+  it('leaves the report alone for every other host message', () => {
+    const reportedState = applyServerMessage(initialSessionState, { type: 'host_info', info: reported })
+    const withSession = applyServerMessage(reportedState, { type: 'session_created', session_id: 's1', workspace_id: 'w1' })
+    expect(withSession.hostInfo).toEqual(reported)
+    expect(applyServerMessage(withSession, { type: 'settings', base_url: null, model: 'gpt-4o', has_api_key: true }).hostInfo).toEqual(reported)
+  })
+
+  it('starts with no report so the panel cannot describe a host it never asked', () => {
+    expect(initialSessionState.hostInfo).toBeUndefined()
   })
 })
