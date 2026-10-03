@@ -95,7 +95,7 @@ mod tests {
             task_id: task_id.to_string(),
             command: "echo hello".to_string(),
             display_command: None,
-            cwd: "/tmp".to_string(),
+            cwd: std::env::temp_dir().display().to_string(),
             start_time: SystemTime::now(),
             end_time: if completed {
                 Some(SystemTime::now())

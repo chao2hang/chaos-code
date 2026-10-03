@@ -107,11 +107,36 @@ fn run_update(base: &str, config_toml: &str, extra_args: &[&str]) -> std::proces
         .env("HOME", home.path())
         .env("GROK_HOME", home.path())
         .env("PATH", std::env::var("PATH").unwrap_or_default())
+        .envs(platform_essentials())
         .env("GROK_CLI_BASE_URL", base)
         .env("CHAOS_GH_API_BASE", base)
         .env("CHAOS_GH_DOWNLOAD_BASE", base)
         .output()
         .expect("spawn grok update")
+}
+
+/// Environment a Windows child needs in order to open a socket at all.
+///
+/// `env_clear` is the isolation this file is about -- no inherited credentials, no real
+/// home -- but Winsock refuses to initialise without the system directory in the
+/// environment, and the failure surfaces as a connect error on the *loopback* endpoint:
+/// `tcp open error: The requested service provider could not be loaded or initialized.
+/// (os error 10106)`, which reads like a broken test server rather than a stripped
+/// environment. These are the same keys
+/// `xai-grok-test-support::sandbox::platform_allowlist` keeps for spawned children. On
+/// unix the list is empty, so the isolation here is unchanged on the host that can verify
+/// it.
+#[cfg(windows)]
+fn platform_essentials() -> Vec<(&'static str, std::ffi::OsString)> {
+    ["PATHEXT", "SystemRoot", "WINDIR", "ComSpec", "TEMP", "TMP"]
+        .into_iter()
+        .filter_map(|key| std::env::var_os(key).map(|value| (key, value)))
+        .collect()
+}
+
+#[cfg(not(windows))]
+fn platform_essentials() -> Vec<(&'static str, std::ffi::OsString)> {
+    Vec::new()
 }
 
 /// The valid run proves the environment resolves to success, so a nonzero corrupt run can only mean a config failure aborted the update.

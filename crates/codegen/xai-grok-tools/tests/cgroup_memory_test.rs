@@ -24,7 +24,6 @@
 //! 5. A gradual allocator that slowly ramps up past the limit
 
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::time::Duration;
 
 use xai_grok_tools::computer::local::LocalTerminalBackend;
@@ -54,7 +53,7 @@ fn make_request(command: &str, timeout_secs: u64) -> TerminalRunRequest {
 
     TerminalRunRequest {
         command: command.to_string(),
-        working_directory: PathBuf::from("/tmp"),
+        working_directory: std::env::temp_dir(),
         env: HashMap::new(),
         timeout: Duration::from_secs(timeout_secs),
         output_byte_limit: 1024 * 1024,

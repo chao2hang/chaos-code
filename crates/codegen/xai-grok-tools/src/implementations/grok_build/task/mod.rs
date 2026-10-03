@@ -833,6 +833,26 @@ mod tests {
         }
     }
 
+    /// A directory that exists on every host the tests run on.
+    ///
+    /// `/tmp` is not one. `TaskTool::run` reads the `cwd` fixture through
+    /// `Path::new(p).is_dir()`, and that single check decides between two branches:
+    /// reject `cwd` + `isolation=worktree`, or clear the `cwd` and spawn a subagent. A
+    /// fixture written to mean "some existing directory" therefore changes which branch
+    /// it exercises when the host has no `/tmp` -- which is how one string literal cost
+    /// three failures and one 16-minute hang on the Windows leg.
+    fn existing_dir() -> String {
+        std::env::temp_dir().display().to_string()
+    }
+
+    /// How long an argument-validation call may take before the test calls it a hang.
+    ///
+    /// These tests hand in input that production is supposed to reject before it spawns
+    /// anything, so their receiver `rx` is never read. Take the spawn branch by accident
+    /// and the request sits unread while the tool awaits a response nobody sends: the test
+    /// stops producing output for the rest of the job budget instead of failing.
+    const VALIDATION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
     #[tokio::test]
     async fn depth_limit_exceeded() {
         let (backend, _rx) = make_backend();
@@ -2380,23 +2400,27 @@ mod tests {
         resources.insert(SessionIdResource("parent".to_string()));
         resources.insert(CurrentPromptIdResource("prompt-1".to_string()));
 
-        let result = xai_tool_runtime::Tool::run(
-            &TaskTool,
-            test_ctx(resources.into_shared()),
-            TaskToolInput {
-                description: "test cwd conflict".into(),
-                prompt: "work".into(),
-                subagent_type: "general-purpose".into(),
-                run_in_background: false,
-                capability_mode: None,
-                isolation: Some(SubagentIsolationMode::Worktree),
-                resume_from: None,
-                cwd: Some("/tmp".into()),
-                model: None,
-                task_id: None,
-            },
+        let result = tokio::time::timeout(
+            VALIDATION_TIMEOUT,
+            xai_tool_runtime::Tool::run(
+                &TaskTool,
+                test_ctx(resources.into_shared()),
+                TaskToolInput {
+                    description: "test cwd conflict".into(),
+                    prompt: "work".into(),
+                    subagent_type: "general-purpose".into(),
+                    run_in_background: false,
+                    capability_mode: None,
+                    isolation: Some(SubagentIsolationMode::Worktree),
+                    resume_from: None,
+                    cwd: Some(existing_dir()),
+                    model: None,
+                    task_id: None,
+                },
+            ),
         )
-        .await;
+        .await
+        .expect("cwd + worktree must be rejected by validation, not wait on a subagent");
 
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
@@ -2621,23 +2645,27 @@ mod tests {
         resources.insert(SessionIdResource("parent".to_string()));
         resources.insert(CurrentPromptIdResource("prompt-1".to_string()));
 
-        let result = xai_tool_runtime::Tool::run(
-            &TaskTool,
-            test_ctx(resources.into_shared()),
-            TaskToolInput {
-                description: "test nonexistent cwd no worktree".into(),
-                prompt: "work".into(),
-                subagent_type: "general-purpose".into(),
-                run_in_background: false,
-                capability_mode: None,
-                isolation: None,
-                resume_from: None,
-                cwd: Some("/nonexistent/path/that/does/not/exist".into()),
-                model: None,
-                task_id: None,
-            },
+        let result = tokio::time::timeout(
+            VALIDATION_TIMEOUT,
+            xai_tool_runtime::Tool::run(
+                &TaskTool,
+                test_ctx(resources.into_shared()),
+                TaskToolInput {
+                    description: "test nonexistent cwd no worktree".into(),
+                    prompt: "work".into(),
+                    subagent_type: "general-purpose".into(),
+                    run_in_background: false,
+                    capability_mode: None,
+                    isolation: None,
+                    resume_from: None,
+                    cwd: Some("/nonexistent/path/that/does/not/exist".into()),
+                    model: None,
+                    task_id: None,
+                },
+            ),
         )
-        .await;
+        .await
+        .expect("a non-existent cwd must be rejected by validation, not wait on a subagent");
 
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
@@ -2715,9 +2743,10 @@ mod tests {
         resources.insert(CurrentPromptIdResource("prompt-1".to_string()));
 
         let shared = resources.into_shared();
+        let dir = existing_dir();
         let handle = tokio::spawn(async move {
             let request = unwrap_spawn(rx.recv().await.unwrap());
-            assert_eq!(request.cwd.as_deref(), Some("/tmp"));
+            assert_eq!(request.cwd.as_deref(), Some(dir.as_str()));
             request
                 .respond_with(|request| SubagentResult {
                     success: true,
@@ -2740,7 +2769,7 @@ mod tests {
                 capability_mode: None,
                 isolation: None,
                 resume_from: None,
-                cwd: Some("/tmp".into()),
+                cwd: Some(existing_dir()),
                 model: None,
                 task_id: None,
             },
@@ -2759,7 +2788,9 @@ mod tests {
 
     #[tokio::test]
     async fn cwd_strips_stray_leading_quote() {
-        // Regression: model-emitted `"/tmp` should reach the backend as `/tmp`.
+        // Regression: a model-emitted leading quote must be gone by the time the
+        // backend sees the cwd. The directory itself has to exist on the host -- see
+        // `existing_dir()`, because production rejects a cwd it cannot stat.
         let (backend, mut rx) = make_backend();
         let mut resources = Resources::new();
         resources.insert(backend);
@@ -2768,11 +2799,12 @@ mod tests {
         resources.insert(CurrentPromptIdResource("prompt-1".to_string()));
 
         let shared = resources.into_shared();
+        let dir = existing_dir();
         let handle = tokio::spawn(async move {
             let request = unwrap_spawn(rx.recv().await.unwrap());
             assert_eq!(
                 request.cwd.as_deref(),
-                Some("/tmp"),
+                Some(dir.as_str()),
                 "stray leading quote should be stripped before reaching the backend",
             );
             request
@@ -2797,7 +2829,7 @@ mod tests {
                 capability_mode: None,
                 isolation: None,
                 resume_from: None,
-                cwd: Some("\"/tmp".into()),
+                cwd: Some(format!("\"{}", existing_dir())),
                 model: None,
                 task_id: None,
             },
@@ -2824,9 +2856,10 @@ mod tests {
         resources.insert(CurrentPromptIdResource("prompt-1".to_string()));
 
         let shared = resources.into_shared();
+        let dir = existing_dir();
         let handle = tokio::spawn(async move {
             let request = unwrap_spawn(rx.recv().await.unwrap());
-            assert_eq!(request.cwd.as_deref(), Some("/tmp"));
+            assert_eq!(request.cwd.as_deref(), Some(dir.as_str()));
             request
                 .respond_with(|request| SubagentResult {
                     success: true,
@@ -2849,7 +2882,7 @@ mod tests {
                 capability_mode: None,
                 isolation: Some(SubagentIsolationMode::None),
                 resume_from: None,
-                cwd: Some("/tmp".into()),
+                cwd: Some(existing_dir()),
                 model: None,
                 task_id: None,
             },
@@ -2870,10 +2903,15 @@ mod tests {
         resources.insert(CurrentPromptIdResource("prompt-1".to_string()));
 
         let shared = resources.into_shared();
+        // A resume skips the `is_dir()` validation entirely, so this one only has to be a
+        // plausible string -- but it is threaded to the backend verbatim, so both sides of
+        // the comparison derive it from the same host answer rather than agreeing on `/tmp`.
+        let resume_cwd = format!("{}/some-dir", std::env::temp_dir().display());
+        let want_cwd = resume_cwd.clone();
         let handle = tokio::spawn(async move {
             let request = unwrap_spawn(rx.recv().await.unwrap());
             // Both values are threaded through — coordinator decides precedence.
-            assert_eq!(request.cwd.as_deref(), Some("/tmp/some-dir"));
+            assert_eq!(request.cwd.as_deref(), Some(want_cwd.as_str()));
             assert_eq!(request.resume_from.as_deref(), Some("prev-id"));
             request
                 .respond_with(|request| SubagentResult {
@@ -2897,7 +2935,7 @@ mod tests {
                 capability_mode: None,
                 isolation: None,
                 resume_from: Some("prev-id".into()),
-                cwd: Some("/tmp/some-dir".into()),
+                cwd: Some(resume_cwd),
                 model: None,
                 task_id: None,
             },

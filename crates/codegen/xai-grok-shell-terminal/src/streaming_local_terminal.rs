@@ -1231,7 +1231,20 @@ mod tests {
                 );
 
                 let result = handle.await.unwrap().unwrap();
+                // A killed child is reported in the host's own terms. `signal` is filled
+                // from `ExitStatusExt::signal`, which has no Windows equivalent: there a
+                // terminated child carries an exit code and no signal at all, so pinning
+                // the unix wording failed the leg without anything being wrong. What both
+                // hosts must agree on is that the runner says how the child ended.
+                #[cfg(unix)]
                 assert_eq!(result.signal, Some("signal 9".to_string()));
+                #[cfg(not(unix))]
+                assert!(
+                    result.exit_code.is_some(),
+                    "a killed child must report how it ended, got exit_code={:?} signal={:?}",
+                    result.exit_code,
+                    result.signal
+                );
 
                 let statuses = extract_statuses(&notifier.notifications.lock().await);
                 assert_eq!(statuses.last(), Some(&acp::ToolCallStatus::Failed));

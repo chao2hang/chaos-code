@@ -6,7 +6,7 @@ use xai_grok_tools::notification::types::ToolNotificationHandle;
 fn make_tracked_task(command: &str) -> TrackedTask {
     TrackedTask {
         command: command.to_string(),
-        cwd: "/tmp".to_string(),
+        cwd: std::env::temp_dir().display().to_string(),
         output_file: PathBuf::from("/tmp/out.log"),
         ..Default::default()
     }
@@ -122,7 +122,7 @@ fn scripted_gateway(outputs: Vec<(String, bool)>) -> GatewaySender {
 fn background_request(output_file: PathBuf) -> TerminalRunRequest {
     TerminalRunRequest {
         command: "watch-something".into(),
-        working_directory: PathBuf::from("/tmp"),
+        working_directory: std::env::temp_dir(),
         env: HashMap::new(),
         timeout: Duration::from_secs(60),
         output_byte_limit: 1024 * 1024,

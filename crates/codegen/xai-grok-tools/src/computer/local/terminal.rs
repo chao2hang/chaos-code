@@ -3315,7 +3315,6 @@ fn extract_exit_status(status: std::process::ExitStatus) -> ExitStatus {
 mod tests {
     use super::*;
     use crate::computer::types::TaskKind;
-    use std::path::PathBuf;
 
     fn make_request(command: &str) -> TerminalRunRequest {
         let output_file = std::env::temp_dir().join(format!(
@@ -3329,7 +3328,7 @@ mod tests {
 
         TerminalRunRequest {
             command: command.to_string(),
-            working_directory: PathBuf::from("/tmp"),
+            working_directory: std::env::temp_dir(),
             env: HashMap::new(),
             timeout: Duration::from_secs(30),
             output_byte_limit: 10000,
@@ -3343,6 +3342,31 @@ mod tests {
             owner_session_id: None,
             description: None,
         }
+    }
+
+    /// Spell a path the way every shell this crate drives accepts it, unquoted.
+    ///
+    /// The Windows leg runs Git Bash, which treats a bare `\` as an escape character, so
+    /// `cd C:\Users\me\tmp` would reach `cd` as `C:Userstmp`. Forward slashes are accepted
+    /// unchanged by bash, zsh and cmd, and are already what `pwd` prints.
+    fn shell_path(path: &std::path::Path) -> String {
+        path.display().to_string().replace('\\', "/")
+    }
+
+    /// Whether `pwd` output names `dir`, comparing the component the request chose.
+    ///
+    /// Each host spells its own temp directory differently -- macOS prints
+    /// `/private/var/folders/...` for what `env::temp_dir()` reports under `/var`, and
+    /// Git Bash prints `/c/Users/...` for what Rust reports as `C:\Users\...` -- so no
+    /// literal string can be pinned against `pwd`. The previous assertion pinned `/tmp`
+    /// plus a macOS special case and could not hold anywhere else.
+    fn pwd_reports_dir(printed: &str, dir: &std::path::Path) -> bool {
+        let Some(want) = dir.file_name() else {
+            return false;
+        };
+        let got = printed.trim().replace('\\', "/");
+        let last = got.rsplit('/').next().unwrap_or_default();
+        !want.is_empty() && last.eq_ignore_ascii_case(&want.to_string_lossy())
     }
 
     #[tokio::test]
@@ -3487,7 +3511,7 @@ mod tests {
 
         let request = TerminalRunRequest {
             command: "sleep 60".to_string(),
-            working_directory: PathBuf::from("/tmp"),
+            working_directory: std::env::temp_dir(),
             env: HashMap::new(),
             timeout: Duration::from_millis(200),
             output_byte_limit: 10000,
@@ -3518,7 +3542,7 @@ mod tests {
 
         let request = TerminalRunRequest {
             command: "sleep 60".to_string(),
-            working_directory: PathBuf::from("/tmp"),
+            working_directory: std::env::temp_dir(),
             env: HashMap::new(),
             timeout: Duration::from_millis(500),
             output_byte_limit: 10000,
@@ -3573,7 +3597,7 @@ mod tests {
 
         let request = TerminalRunRequest {
             command: "sleep 60".to_string(),
-            working_directory: PathBuf::from("/tmp"),
+            working_directory: std::env::temp_dir(),
             env: HashMap::new(),
             timeout: Duration::from_secs(60),
             output_byte_limit: 10000,
@@ -3644,7 +3668,7 @@ mod tests {
 
         let request = TerminalRunRequest {
             command: "sleep 60".to_string(),
-            working_directory: PathBuf::from("/tmp"),
+            working_directory: std::env::temp_dir(),
             env: HashMap::new(),
             timeout: Duration::from_secs(3600),
             output_byte_limit: 10000,
@@ -3706,7 +3730,7 @@ mod tests {
 
         let request = TerminalRunRequest {
             command: "sleep 60".to_string(),
-            working_directory: PathBuf::from("/tmp"),
+            working_directory: std::env::temp_dir(),
             env: HashMap::new(),
             timeout: Duration::from_millis(500),
             output_byte_limit: 10000,
@@ -3748,7 +3772,7 @@ mod tests {
 
         let request = TerminalRunRequest {
             command: "sleep 60".to_string(),
-            working_directory: PathBuf::from("/tmp"),
+            working_directory: std::env::temp_dir(),
             env: HashMap::new(),
             timeout: Duration::from_secs(3600),
             output_byte_limit: 10000,
@@ -3797,7 +3821,7 @@ mod tests {
 
         let request = TerminalRunRequest {
             command: "sleep 60".to_string(),
-            working_directory: PathBuf::from("/tmp"),
+            working_directory: std::env::temp_dir(),
             env: HashMap::new(),
             timeout: Duration::from_millis(800),
             output_byte_limit: 10000,
@@ -3844,7 +3868,7 @@ mod tests {
 
         let request = TerminalRunRequest {
             command: "yes".to_string(),
-            working_directory: PathBuf::from("/tmp"),
+            working_directory: std::env::temp_dir(),
             env: HashMap::new(),
             timeout: Duration::from_secs(30),
             output_byte_limit: 10_000,
@@ -3890,7 +3914,7 @@ mod tests {
 
         let request = TerminalRunRequest {
             command: "echo background_test && sleep 0.1".to_string(),
-            working_directory: PathBuf::from("/tmp"),
+            working_directory: std::env::temp_dir(),
             env: HashMap::new(),
             timeout: Duration::from_secs(30),
             output_byte_limit: 10000,
@@ -3928,7 +3952,7 @@ mod tests {
 
         let request = TerminalRunRequest {
             command: "sleep 60".to_string(),
-            working_directory: PathBuf::from("/tmp"),
+            working_directory: std::env::temp_dir(),
             env: HashMap::new(),
             timeout: Duration::from_secs(300),
             output_byte_limit: 10000,
@@ -4263,7 +4287,7 @@ mod tests {
 
         let request = TerminalRunRequest {
             command: "sleep 60".to_string(),
-            working_directory: PathBuf::from("/tmp"),
+            working_directory: std::env::temp_dir(),
             env: HashMap::new(),
             timeout: Duration::from_millis(200),
             output_byte_limit: 10000,
@@ -4292,7 +4316,7 @@ mod tests {
 
         let request = TerminalRunRequest {
             command: "echo before_timeout; sleep 60".to_string(),
-            working_directory: PathBuf::from("/tmp"),
+            working_directory: std::env::temp_dir(),
             env: HashMap::new(),
             timeout: Duration::from_secs(2),
             output_byte_limit: 10000,
@@ -4322,7 +4346,7 @@ mod tests {
         let backend = LocalTerminalBackend::new();
         let request = TerminalRunRequest {
             command: "sleep 300 &\nsleep 1\necho done".to_string(),
-            working_directory: PathBuf::from("/tmp"),
+            working_directory: std::env::temp_dir(),
             env: HashMap::new(),
             timeout: Duration::from_secs(30),
             output_byte_limit: 10000,
@@ -4553,14 +4577,21 @@ mod tests {
     async fn test_persistent_shell_cd_persists() {
         let backend = LocalTerminalBackend::with_persistent_shell();
 
-        let result = backend.run(make_request("cd /tmp")).await.unwrap();
+        let scratch = tempfile::TempDir::new().unwrap();
+        let result = backend
+            .run(make_request(&format!(
+                "cd '{}'",
+                shell_path(scratch.path())
+            )))
+            .await
+            .unwrap();
         assert_eq!(result.exit_code, Some(0));
 
         let result = backend.run(make_request("pwd")).await.unwrap();
         assert_eq!(result.exit_code, Some(0));
         let pwd = result.combined_output.trim();
         assert!(
-            pwd == "/tmp" || pwd == "/private/tmp",
+            pwd_reports_dir(pwd, scratch.path()),
             "cwd should persist across commands, got: {pwd}"
         );
     }
@@ -4649,7 +4680,10 @@ mod tests {
 
         let scratch = tempfile::TempDir::new().unwrap();
         let result = backend
-            .run(make_request(&format!("cd {}", scratch.path().display())))
+            .run(make_request(&format!(
+                "cd '{}'",
+                shell_path(scratch.path())
+            )))
             .await
             .unwrap();
         assert_eq!(result.exit_code, Some(0));
@@ -4664,7 +4698,7 @@ mod tests {
         );
         let pwd = output.lines().last().unwrap_or_default().trim();
         assert!(
-            pwd == "/tmp" || pwd == "/private/tmp",
+            pwd_reports_dir(pwd, &std::env::temp_dir()),
             "command must run in the request working directory, got: {pwd:?}"
         );
 
@@ -4683,7 +4717,10 @@ mod tests {
 
         let scratch = tempfile::TempDir::new().unwrap();
         let result = backend
-            .run(make_request(&format!("cd {}", scratch.path().display())))
+            .run(make_request(&format!(
+                "cd '{}'",
+                shell_path(scratch.path())
+            )))
             .await
             .unwrap();
         assert_eq!(result.exit_code, Some(0));
@@ -4735,7 +4772,10 @@ mod tests {
 
         let scratch = tempfile::TempDir::new().unwrap();
         let result = backend
-            .run(make_request(&format!("cd {}", scratch.path().display())))
+            .run(make_request(&format!(
+                "cd '{}'",
+                shell_path(scratch.path())
+            )))
             .await
             .unwrap();
         assert_eq!(result.exit_code, Some(0));
@@ -4745,7 +4785,7 @@ mod tests {
         assert_eq!(result.exit_code, Some(0));
         let pwd = result.combined_output.trim();
         assert!(
-            pwd == "/tmp" || pwd == "/private/tmp",
+            pwd_reports_dir(pwd, &std::env::temp_dir()),
             "spawns must use the request cwd, got: {pwd:?}"
         );
     }

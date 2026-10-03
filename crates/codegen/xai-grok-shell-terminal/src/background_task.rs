@@ -310,7 +310,7 @@ mod tests {
             task_id: task_id.to_string(),
             tool_call_id: format!("tc-{}", task_id),
             command: "echo hello".to_string(),
-            cwd: "/tmp".to_string(),
+            cwd: std::env::temp_dir().display().to_string(),
             start_time: Utc::now(),
             end_time: None,
             output: String::new(),
@@ -520,7 +520,7 @@ mod tests {
             display_command: None,
             output_file: PathBuf::from(format!("/tmp/sessions/tasks/{task_id}.log")),
             start_time: std::time::SystemTime::now() - Duration::from_secs(secs_ago),
-            cwd: "/home/user".to_string(),
+            cwd: std::env::temp_dir().display().to_string(),
             kind: xai_grok_tools::computer::types::TaskKind::Bash,
         }
     }
