@@ -174,6 +174,21 @@ impl Shell {
             _ => None,
         }
     }
+
+    /// How the shell went away. A teardown that kills the shell before it forwarded the
+    /// hangup and one whose hangup never arrived look identical from outside, but the
+    /// signal the shell died of separates them.
+    #[cfg(test)]
+    fn death(&self) -> String {
+        match self {
+            Shell::Running { .. } => "still running".to_string(),
+            Shell::Reaped(Some(status)) => match status.signal() {
+                Some(signal) => format!("killed by {signal}"),
+                None => format!("exited {}", status.exit_code()),
+            },
+            Shell::Reaped(None) => "gone, status unknown".to_string(),
+        }
+    }
 }
 
 /// A shell not yet in the registry, where teardown would never find it.
@@ -643,20 +658,33 @@ pub async fn close_pty(pty_id: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Dropping the master would not hang the shell up: the reader and writer hold their own dups of it, and SIGHUP needs the last one closed.
+/// Hangs the shell up while its terminal is still there, and only then closes the terminal.
+///
+/// Job control gives each background job its own process group, which no `killpg` here holds,
+/// so the hangup the shell forwards is the only signal those jobs ever get. Closing the master
+/// first loses that forwarding: the measured failure rounds all ended with the shell's own
+/// status `exited 0` — the way a shell leaves when its stdin reports EOF, jobs still alive and
+/// reparented to init — while every round that signalled first ended with the shell
+/// `killed by Hangup` and no survivor. The reader's and writer's dups keep the terminal open
+/// across the hangup for that reason.
 fn reap(entry: &Arc<Mutex<PtySession>>) {
-    let hung_up = {
-        let mut session = entry.blocking_lock();
-        session.master.take();
-        // Ends the writer loop, which holds the other dup of the master.
-        session.input_tx.take();
-        session.shell.hangup()
-    };
+    let hung_up = entry.blocking_lock().shell.hangup();
     if hung_up && wait_for_exit(entry, xai_tty_utils::HANGUP_GRACE) {
+        close_terminal(entry);
         return;
     }
     entry.blocking_lock().shell.kill();
     wait_for_exit(entry, REAP_GRACE);
+    close_terminal(entry);
+}
+
+/// Releases the master this side holds and ends the writer loop, whose dup of the master is
+/// what keeps the shell's stdin from reporting EOF. The reader holds a third dup and releases
+/// it when its read fails, so the terminal can still outlive this.
+fn close_terminal(entry: &Arc<Mutex<PtySession>>) {
+    let mut session = entry.blocking_lock();
+    session.master.take();
+    session.input_tx.take();
 }
 
 /// Polls rather than blocking on `wait`, re-locking each turn: a shell that ignores its hangup must not wedge teardown or stall the pty's own I/O.
@@ -937,14 +965,101 @@ mod tests {
         true
     }
 
-    async fn assert_process_eventually_gone(pid: libc::pid_t, timeout: Duration) {
+    /// Parent, group and session of a process, taken from the fields after the
+    /// parenthesized command name — the same split [`linux_proc_stat_state`] relies on.
+    #[cfg(target_os = "linux")]
+    fn linux_proc_stat_peers(stat: &str) -> Option<(i32, i32, i32)> {
+        let mut fields = stat.rsplit_once(')')?.1.split_whitespace();
+        let _state = fields.next()?;
+        let ppid = fields.next()?.parse().ok()?;
+        let pgrp = fields.next()?.parse().ok()?;
+        let session = fields.next()?.parse().ok()?;
+        Some((ppid, pgrp, session))
+    }
+
+    /// Signal dispositions: a shell that ignores SIGHUP and a shell that never received
+    /// one are different bugs with the same symptom.
+    #[cfg(target_os = "linux")]
+    fn linux_signal_masks(pid: libc::pid_t) -> String {
+        let Ok(status) = std::fs::read_to_string(format!("/proc/{pid}/status")) else {
+            return "signals unreadable".to_string();
+        };
+        let mask = |key: &str| {
+            status
+                .lines()
+                .find_map(|line| line.strip_prefix(key))
+                .map_or("absent", str::trim)
+        };
+        format!("SigIgn={} SigCgt={}", mask("SigIgn:"), mask("SigCgt:"))
+    }
+
+    /// A process described the way a teardown failure needs it described: what it is still
+    /// attached to, the group a signal would have to reach, and whether it was ever going
+    /// to listen.
+    #[cfg(unix)]
+    fn describe_process(pid: libc::pid_t) -> String {
+        #[cfg(target_os = "linux")]
+        {
+            match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
+                Ok(stat) => {
+                    let state = linux_proc_stat_state(&stat).unwrap_or('?');
+                    let (ppid, pgrp, session) =
+                        linux_proc_stat_peers(&stat).unwrap_or((-1, -1, -1));
+                    format!(
+                        "{pid}(state={state} ppid={ppid} pgid={pgrp} session={session} {})",
+                        linux_signal_masks(pid)
+                    )
+                }
+                Err(_) => format!("{pid}(no /proc entry)"),
+            }
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            format!(
+                "{pid}({})",
+                if process_is_alive(pid) {
+                    "live"
+                } else {
+                    "gone"
+                }
+            )
+        }
+    }
+
+    /// Signals the survivor's own group, never ours — the invariant `ProcessGroupId::new`
+    /// holds for every other signal this code sends.
+    #[cfg(unix)]
+    fn put_down(pid: libc::pid_t) {
+        let group = unsafe { libc::getpgid(pid) };
+        if group > 1 && group != unsafe { libc::getpgrp() } {
+            unsafe { libc::killpg(group, libc::SIGKILL) };
+        }
+    }
+
+    /// The job can only die from the hangup the shell was asked to forward, so a survivor
+    /// is the evidence that the forwarding never happened. Say everything the reader
+    /// cannot infer afterwards, then put the survivor down: a live job holds the pty open
+    /// and the reader task cannot leave while one does, which would otherwise turn a
+    /// failed assertion into a wait for the job's own timeout.
+    async fn assert_process_eventually_gone(
+        pid: libc::pid_t,
+        shell: libc::pid_t,
+        shell_death: &str,
+        timeout: Duration,
+    ) {
         let deadline = std::time::Instant::now() + timeout;
         while process_is_alive(pid) {
-            assert!(
-                std::time::Instant::now() < deadline,
-                "grandchild {pid} remained live through PTY close"
+            if std::time::Instant::now() < deadline {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                continue;
+            }
+            let report = format!(
+                "grandchild {pid} remained live through PTY close: grandchild {} / shell {} ({shell_death})",
+                describe_process(pid),
+                describe_process(shell),
             );
-            tokio::time::sleep(Duration::from_millis(50)).await;
+            put_down(pid);
+            panic!("{report}");
         }
     }
 
@@ -1015,14 +1130,8 @@ mod tests {
                 let grandchild = wait_for_reported_pid(&pty_id).await;
 
                 // Without job control the job shares the shell's group and the group kill alone would pass this test
-                let shell = require_pty(&pty_id)
-                    .await
-                    .expect("pty")
-                    .lock()
-                    .await
-                    .shell
-                    .pid()
-                    .expect("shell pid") as i32;
+                let entry = require_pty(&pty_id).await.expect("pty");
+                let shell = entry.lock().await.shell.pid().expect("shell pid") as i32;
                 assert_ne!(
                     unsafe { libc::getpgid(grandchild) },
                     unsafe { libc::getpgid(shell) },
@@ -1031,7 +1140,9 @@ mod tests {
 
                 close_pty(&pty_id).await.expect("close pty");
 
-                assert_process_eventually_gone(grandchild, Duration::from_secs(5)).await;
+                let death = entry.lock().await.shell.death();
+                assert_process_eventually_gone(grandchild, shell, &death, Duration::from_secs(5))
+                    .await;
             })
             .await;
     }
@@ -1050,14 +1161,8 @@ mod tests {
                     .expect("write command");
                 let grandchild = wait_for_reported_pid(&pty_id).await;
 
-                let shell = require_pty(&pty_id)
-                    .await
-                    .expect("pty")
-                    .lock()
-                    .await
-                    .shell
-                    .pid()
-                    .expect("shell pid");
+                let entry = require_pty(&pty_id).await.expect("pty");
+                let shell = entry.lock().await.shell.pid().expect("shell pid");
                 assert_ne!(
                     unsafe { libc::getpgid(grandchild) },
                     unsafe { libc::getpgid(shell as i32) },
@@ -1068,7 +1173,14 @@ mod tests {
                 let _group = scope.enroll_terminal_pid(shell).expect("enroll");
                 scope.kill_all();
 
-                assert_process_eventually_gone(grandchild, Duration::from_secs(5)).await;
+                let death = entry.lock().await.shell.death();
+                assert_process_eventually_gone(
+                    grandchild,
+                    shell as i32,
+                    &death,
+                    Duration::from_secs(5),
+                )
+                .await;
 
                 close_pty(&pty_id).await.expect("close pty");
             })
