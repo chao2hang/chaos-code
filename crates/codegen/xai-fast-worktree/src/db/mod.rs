@@ -480,6 +480,11 @@ static GROK_HOME_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 #[cfg(test)]
 pub(crate) struct GrokHomeFixture {
     _lock: std::sync::MutexGuard<'static, ()>,
+    /// `GROVE_ENV_LOCK`, taken by [`GrokHomeFixture::isolate_xdg_grove_data`].
+    /// Production code re-reads `GROVE_DATA_DIR`/`XDG_DATA_HOME`/`HOME` on every
+    /// call, so the `nfs::remove` tests that write `GROVE_DATA_DIR` under that lock
+    /// must not interleave with a fixture that reads them.
+    _grove_lock: Option<std::sync::MutexGuard<'static, ()>>,
     prev: Option<std::ffi::OsString>,
     prev_xdg_data_home: Option<std::ffi::OsString>,
     prev_grove_data_dir: Option<std::ffi::OsString>,
@@ -508,6 +513,7 @@ impl GrokHomeFixture {
         xai_grok_test_support::env::set_var("GROK_HOME", &home);
         Self {
             _lock: lock,
+            _grove_lock: None,
             prev,
             prev_xdg_data_home: None,
             prev_grove_data_dir: None,
@@ -519,8 +525,17 @@ impl GrokHomeFixture {
     }
 
     /// Point grove lookup at `$XDG_DATA_HOME/grove` with `GROVE_DATA_DIR` unset
-    /// and `HOME` confined to this fixture so pin-GC cannot touch the host.
+    /// and `HOME` confined to this fixture so pin-GC cannot touch the host. Also
+    /// holds `nfs::GROVE_ENV_LOCK` for the fixture's lifetime, because those three
+    /// keys are read again on every production call rather than captured once.
     pub(crate) fn isolate_xdg_grove_data(&mut self) -> PathBuf {
+        if self._grove_lock.is_none() {
+            self._grove_lock = Some(
+                crate::nfs::GROVE_ENV_LOCK
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner()),
+            );
+        }
         if !self.touched_grove_env {
             self.prev_xdg_data_home = std::env::var_os("XDG_DATA_HOME");
             self.prev_grove_data_dir = std::env::var_os("GROVE_DATA_DIR");

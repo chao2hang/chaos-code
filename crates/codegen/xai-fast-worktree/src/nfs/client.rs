@@ -947,16 +947,24 @@ mod tests {
         lock_file
     }
 
+    /// Start the mock daemon and return only once it reaches its accept loop.
+    ///
+    /// `bind` is synchronous, so a connect would already succeed here, but the
+    /// request the test is about to send is only answered once this thread is in
+    /// `accept()`. Callers used to `sleep(20ms)` for that, which under a loaded
+    /// machine is a race the test loses at random.
     fn spawn_server(sock: PathBuf, script: Script) -> thread::JoinHandle<()> {
         let listener = UnixListener::bind(&sock).unwrap();
         listener.set_nonblocking(false).unwrap();
-        thread::spawn(move || {
+        let (reached_accept, waiting) = std::sync::mpsc::channel();
+        let handle = thread::spawn(move || {
             let runtime = sock.parent().map(Path::to_path_buf);
             let mut lock_guard = if script.hold_lock_until_exit {
                 runtime.as_deref().map(hold_daemon_lock)
             } else {
                 None
             };
+            let _ = reached_accept.send(());
             for incoming in listener.incoming() {
                 let Ok(mut stream) = incoming else { break };
                 let mut reader = BufReader::new(&stream);
@@ -1015,7 +1023,11 @@ mod tests {
                     break;
                 }
             }
-        })
+        });
+        waiting
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the mock daemon reaches its accept loop");
+        handle
     }
 
     fn plan_at(tmp: &TempDir, dest_name: &str, nfs: NfsWorktreeOpts) -> WorktreePlan {
@@ -1118,7 +1130,6 @@ mod tests {
             ..Default::default()
         };
         let _h = spawn_server(sock.clone(), script.clone());
-        thread::sleep(Duration::from_millis(20));
         let o = opts(&sock, tmp.path());
         let client = NfsWorktreeClient::from_opts(&o);
         let plan = plan_at(&tmp, "d", o);
@@ -1143,7 +1154,6 @@ mod tests {
             ..Default::default()
         };
         let _h = spawn_server(sock.clone(), script.clone());
-        thread::sleep(Duration::from_millis(20));
         let o = opts(&sock, tmp.path());
         let client = NfsWorktreeClient::from_opts(&o);
         let plan = plan_at(&tmp, "d", o);
@@ -1170,7 +1180,6 @@ mod tests {
             ..Default::default()
         };
         let _h = spawn_server(sock.clone(), script.clone());
-        thread::sleep(Duration::from_millis(20));
         let o = opts(&sock, tmp.path());
         let client = NfsWorktreeClient::from_opts(&o);
         let plan = plan_at(&tmp, "d", o);
@@ -1199,7 +1208,6 @@ mod tests {
             ..Default::default()
         };
         let _h = spawn_server(sock.clone(), script.clone());
-        thread::sleep(Duration::from_millis(20));
         let o = opts(&sock, tmp.path());
         let client = NfsWorktreeClient::from_opts(&o);
         let plan = plan_at(&tmp, "d", o);
@@ -1229,7 +1237,6 @@ mod tests {
             ..Default::default()
         };
         let _h = spawn_server(sock.clone(), script);
-        thread::sleep(Duration::from_millis(20));
         let o = opts(&sock, tmp.path());
         let client = NfsWorktreeClient::from_opts(&o);
         let plan = plan_at(&tmp, "d", o);
@@ -1253,7 +1260,6 @@ mod tests {
             ..Default::default()
         };
         let _h = spawn_server(sock.clone(), script);
-        thread::sleep(Duration::from_millis(20));
         let o = opts(&sock, tmp.path());
         let client = NfsWorktreeClient::from_opts(&o);
         let plan = plan_at(&tmp, "d", o);
@@ -1278,7 +1284,6 @@ mod tests {
             ..Default::default()
         };
         let _h = spawn_server(sock.clone(), script.clone());
-        thread::sleep(Duration::from_millis(20));
         let o = opts(&sock, tmp.path());
         let client = NfsWorktreeClient::from_opts(&o);
         let plan = plan_at(&tmp, "d", o);
@@ -1303,7 +1308,6 @@ mod tests {
             ..Default::default()
         };
         let _h = spawn_server(sock.clone(), script.clone());
-        thread::sleep(Duration::from_millis(20));
         let o = opts(&sock, tmp.path());
         let client = NfsWorktreeClient::from_opts(&o);
         let plan = plan_at(&tmp, "d", o);
@@ -1327,7 +1331,6 @@ mod tests {
             ..Default::default()
         };
         let _h = spawn_server(sock.clone(), script);
-        thread::sleep(Duration::from_millis(20));
         let o = opts(&sock, tmp.path());
         let client = NfsWorktreeClient::from_opts(&o);
         let plan = plan_at(&tmp, "d", o);
@@ -1349,7 +1352,6 @@ mod tests {
             ..Default::default()
         };
         let _h = spawn_server(sock.clone(), script.clone());
-        thread::sleep(Duration::from_millis(20));
         let o = timeout_opts(&sock, tmp.path());
         let lock_file = hold_daemon_lock(tmp.path());
         let client = NfsWorktreeClient::from_opts(&o);
@@ -1377,7 +1379,6 @@ mod tests {
             ..Default::default()
         };
         let _h = spawn_server(sock.clone(), script.clone());
-        thread::sleep(Duration::from_millis(20));
         let o = timeout_opts(&sock, tmp.path());
         let lock_file = hold_daemon_lock(tmp.path());
         let client = NfsWorktreeClient::from_opts(&o);
@@ -1409,7 +1410,6 @@ mod tests {
             ..Default::default()
         };
         let _h = spawn_server(sock.clone(), script.clone());
-        thread::sleep(Duration::from_millis(20));
         let o = timeout_opts(&sock, tmp.path());
         let lock_file = hold_daemon_lock(tmp.path());
         let client = NfsWorktreeClient::from_opts(&o);
@@ -1446,7 +1446,6 @@ mod tests {
             ..Default::default()
         };
         let _h = spawn_server(sock.clone(), script.clone());
-        thread::sleep(Duration::from_millis(20));
         let o = opts(&sock, tmp.path());
         let client = NfsWorktreeClient::from_opts(&o);
         let plan = plan_at(&tmp, "d", o);
@@ -1471,7 +1470,6 @@ mod tests {
         std::fs::create_dir(&dest).unwrap();
         let script = lost_create_script();
         let _h = spawn_server(sock.clone(), script.clone());
-        thread::sleep(Duration::from_millis(20));
         let o = timeout_opts(&sock, tmp.path());
         let lock_file = hold_daemon_lock(tmp.path());
         let client = NfsWorktreeClient::from_opts(&o);
@@ -1506,10 +1504,17 @@ mod tests {
         let script = Script {
             die_after_create: true,
             hold_lock_until_exit: true,
+            // Dying is what ends the create reply, so the mock drops the flock
+            // and unlinks the sock *before* the client's blocking read returns.
+            // Every state the client then probes was therefore established
+            // before the probe. A non-zero hold made that ordering contingent on
+            // wall-clock instead: the 80ms create/query/ping budgets expired
+            // first and the flock check raced the mock thread resuming from the
+            // hold, which lost 2 runs in 51 under load.
+            create_hold: Duration::ZERO,
             ..lost_create_script()
         };
         let _h = spawn_server(sock.clone(), script.clone());
-        thread::sleep(Duration::from_millis(20));
         let o = timeout_opts(&sock, tmp.path());
         let client = NfsWorktreeClient::from_opts(&o);
         let plan = plan_at(&tmp, "d", o);
@@ -1522,6 +1527,54 @@ mod tests {
             client.is_provably_dead(),
             "after the mock exits, flock must be free and sock gone"
         );
+        // The daemon mkdir's dest before its first journal write, so a create
+        // lost this way leaves an empty directory behind and `git worktree add`
+        // refuses a dest that already exists. Fallback is only usable if that
+        // empty leftover is cleared.
+        assert!(
+            !dest.exists(),
+            "a fallback onto an unmounted dest must clear the empty leftover that \
+             would otherwise make `git worktree add` fail"
+        );
+    }
+
+    #[test]
+    fn timeout_dead_daemon_nonempty_leftover_dest_refuses_fallback() {
+        // Same provably-dead daemon as the fallback case above, but the leftover
+        // dest has bytes in it. They may be a partial NFS projection the dead
+        // daemon was writing, so the client must neither delete them nor
+        // copy-fallback on top of them.
+        let tmp = TempDir::new().unwrap();
+        let sock = tmp.path().join("c.sock");
+        let dest = tmp.path().join("d");
+        std::fs::create_dir(&dest).unwrap();
+        std::fs::write(dest.join("partial"), b"not mine").unwrap();
+        let script = Script {
+            die_after_create: true,
+            hold_lock_until_exit: true,
+            create_hold: Duration::ZERO,
+            ..lost_create_script()
+        };
+        let _h = spawn_server(sock.clone(), script.clone());
+        let o = timeout_opts(&sock, tmp.path());
+        let client = NfsWorktreeClient::from_opts(&o);
+        let plan = plan_at(&tmp, "d", o);
+        match client.create_worktree(&plan) {
+            Err(NfsTryError::InFlight { phase }) => {
+                assert_eq!(
+                    phase, "dest-exists",
+                    "a non-empty leftover must be reported as such, not as a \
+                     generic unknown phase"
+                );
+            }
+            other => panic!("non-empty leftover dest must not copy-fallback, got {other:?}"),
+        }
+        assert_eq!(script.creates.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            std::fs::read(dest.join("partial")).unwrap(),
+            b"not mine",
+            "the client must not touch bytes it did not write"
+        );
     }
 
     #[test]
@@ -1531,7 +1584,6 @@ mod tests {
         std::fs::create_dir(tmp.path().join("d")).unwrap();
         let script = lost_create_script();
         let _h = spawn_server(sock.clone(), script.clone());
-        thread::sleep(Duration::from_millis(20));
         let o = timeout_opts(&sock, tmp.path());
         let client = NfsWorktreeClient::from_opts(&o);
         let plan = plan_at(&tmp, "d", o);
@@ -1552,7 +1604,6 @@ mod tests {
             ..lost_create_script()
         };
         let _h = spawn_server(sock.clone(), script.clone());
-        thread::sleep(Duration::from_millis(20));
         let o = timeout_opts(&sock, tmp.path());
         let lock_file = hold_daemon_lock(tmp.path());
         let client = NfsWorktreeClient::from_opts(&o);
@@ -1580,7 +1631,6 @@ mod tests {
             ..lost_create_script()
         };
         let _h = spawn_server(sock.clone(), script.clone());
-        thread::sleep(Duration::from_millis(20));
         let o = timeout_opts(&sock, tmp.path());
         let client = NfsWorktreeClient::from_opts(&o);
         let mut plan = plan_at(&tmp, "d", o);
@@ -1631,7 +1681,6 @@ mod tests {
             ..Default::default()
         };
         let _h = spawn_server(sock.clone(), script.clone());
-        thread::sleep(Duration::from_millis(20));
         let o = opts(&sock, tmp.path());
         let client = NfsWorktreeClient::from_opts(&o);
         let plan = plan_at(&tmp, "d", o);

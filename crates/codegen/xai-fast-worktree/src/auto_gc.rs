@@ -738,6 +738,19 @@ mod tests {
         }
     }
 
+    /// A grok-home fixture whose grove lookup is confined to the fixture.
+    ///
+    /// A rebuild pass unions `nfs::candidate_data_dirs()`, which includes the host's
+    /// real `$HOME/.local/share/grove`. Left alone, the pass registers whatever the
+    /// machine running the tests happens to have staged there, so `discovered` /
+    /// `registered` counts and the dead-record sweep depend on unrelated host state
+    /// instead of what the test planted.
+    fn isolated_fixture() -> crate::db::GrokHomeFixture {
+        let mut fx = crate::db::GrokHomeFixture::new();
+        fx.isolate_xdg_grove_data();
+        fx
+    }
+
     /// Git repo + stale linked-worktree registration (working tree deleted).
     fn plant_stale_git_worktree(repo: &Path, wt: &Path) {
         std::fs::create_dir_all(repo).unwrap();
@@ -1403,7 +1416,7 @@ mod tests {
     fn include_rebuild_true_registers_untracked_under_grok_home() {
         let _g = env_guard();
         clear_auto_gc_env();
-        let fx = crate::db::GrokHomeFixture::new();
+        let fx = isolated_fixture();
         let db = WorktreeDb::open(&fx.home).unwrap();
 
         let wt = fx.home.join("worktrees/repo/untracked-sess");
@@ -1438,7 +1451,7 @@ mod tests {
             let case = format!("include_rebuild={include_rebuild} dry_run={dry_run}");
             let _g = env_guard();
             clear_auto_gc_env();
-            let fx = crate::db::GrokHomeFixture::new();
+            let fx = isolated_fixture();
             let db = WorktreeDb::open(&fx.home).unwrap();
 
             // An untracked tree a rebuild *would* register.
@@ -1491,7 +1504,7 @@ mod tests {
     fn rebuild_throttled_independently_of_gc() {
         let _g = env_guard();
         clear_auto_gc_env();
-        let fx = crate::db::GrokHomeFixture::new();
+        let fx = isolated_fixture();
         let db = WorktreeDb::open(&fx.home).unwrap();
 
         let opts = ResolvedWorktreeAutoGc {
@@ -1532,7 +1545,7 @@ mod tests {
         // dead-path GC still work so reclaim continues after rebuild Err.
         let _g = env_guard();
         clear_auto_gc_env();
-        let fx = crate::db::GrokHomeFixture::new();
+        let fx = isolated_fixture();
         let db = WorktreeDb::open(&fx.home).unwrap();
 
         db.register(&make_rec(
@@ -1585,7 +1598,7 @@ mod tests {
             let case = format!("dead_source={dead_source}");
             let _g = env_guard();
             clear_auto_gc_env();
-            let fx = crate::db::GrokHomeFixture::new();
+            let fx = isolated_fixture();
             let db = WorktreeDb::open(&fx.home).unwrap();
 
             let repo = fx.home.join("src-repo");
@@ -1630,7 +1643,7 @@ mod tests {
         // Rebuild meta must stay unset so the next pass can re-discover.
         let _g = env_guard();
         clear_auto_gc_env();
-        let fx = crate::db::GrokHomeFixture::new();
+        let fx = isolated_fixture();
         let db = WorktreeDb::open(&fx.home).unwrap();
         db.register(&make_rec(
             "alive-missing-path",
@@ -1694,7 +1707,7 @@ mod tests {
     fn rebuild_set_meta_failure_still_continues_gc() {
         let _g = env_guard();
         clear_auto_gc_env();
-        let fx = crate::db::GrokHomeFixture::new();
+        let fx = isolated_fixture();
         let db = WorktreeDb::open(&fx.home).unwrap();
         db.register(&make_rec(
             "dead-stamp",
@@ -1730,7 +1743,7 @@ mod tests {
         let _g = env_guard();
         clear_auto_gc_env();
         xai_grok_test_support::env::set_var(ENV_AUTO_GC_REBUILD, "1");
-        let fx = crate::db::GrokHomeFixture::new();
+        let fx = isolated_fixture();
         let db = WorktreeDb::open(&fx.home).unwrap();
         let wt = fx.home.join("worktrees/repo/env-rebuild-sess");
         std::fs::create_dir_all(wt.join(".git")).unwrap();
@@ -1756,7 +1769,7 @@ mod tests {
     fn gc_throttled_short_circuits_rebuild() {
         let _g = env_guard();
         clear_auto_gc_env();
-        let fx = crate::db::GrokHomeFixture::new();
+        let fx = isolated_fixture();
         let db = WorktreeDb::open(&fx.home).unwrap();
         // GC recently stamped; rebuild never stamped and would be due.
         db.set_meta(META_LAST_AUTO_GC_AT, &now_epoch_secs().to_string())
@@ -1780,13 +1793,83 @@ mod tests {
         );
     }
 
+    /// A rebuild pass scans whatever `nfs::candidate_data_dirs()` returns, so the
+    /// fixture every rebuild test uses has to hide every grove directory outside
+    /// itself. This pins the isolation rather than a count that merely happens to
+    /// depend on it: the candidate list is built without touching the disk, and a
+    /// rebuild only notices the leak once that directory holds staged worktrees,
+    /// so the count assertions stay green on a machine where it happens to be
+    /// empty. The read happens while the fixture holds `GROVE_ENV_LOCK`, so it
+    /// cannot interleave with the tests that write the grove environment.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn a_fixture_hides_any_grove_dir_outside_itself() {
+        let _g = env_guard();
+        clear_auto_gc_env();
+        let fx = isolated_fixture();
+        let root = fx.home.parent().unwrap().to_path_buf();
+
+        let candidates = crate::nfs::candidate_data_dirs();
+        assert!(
+            candidates.iter().any(|dir| dir.starts_with(&root)),
+            "an isolated fixture lists no grove directory of its own, so the check \
+             below would pass on a list of foreign ones: {candidates:?}"
+        );
+        let outside: Vec<_> = candidates
+            .into_iter()
+            .filter(|dir| !dir.starts_with(&root))
+            .collect();
+        assert!(
+            outside.is_empty(),
+            "an isolated fixture still lets a grove directory outside itself be \
+             scanned by a rebuild pass: {outside:?}"
+        );
+    }
+
+    /// `GROVE_DATA_DIR` outranks the other candidates, so a fixture that only
+    /// redirects `XDG_DATA_HOME` still leaks: a rebuild pass would scan a grove
+    /// directory the test never created. The variable is planted before the
+    /// fixture exists, which is how a test binary ends up with it set — an
+    /// earlier nfs test wrote it process-wide.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn a_fixture_clears_a_grove_data_dir_that_was_already_set() {
+        let _g = env_guard();
+        clear_auto_gc_env();
+        let plant = tempfile::TempDir::new().unwrap();
+        let planted = plant.path().join("grove");
+        std::fs::create_dir_all(&planted).unwrap();
+        let prev = std::env::var_os("GROVE_DATA_DIR");
+        xai_grok_test_support::env::set_var("GROVE_DATA_DIR", &planted);
+        {
+            let mut fx = crate::db::GrokHomeFixture::new();
+            let grove = fx.isolate_xdg_grove_data();
+            let candidates = crate::nfs::candidate_data_dirs();
+            assert!(
+                candidates.contains(&grove),
+                "an isolated fixture lists no grove directory at all: {candidates:?}"
+            );
+            assert!(
+                !candidates.iter().any(|dir| dir.starts_with(plant.path())),
+                "an isolated fixture left an inherited GROVE_DATA_DIR in the \
+                 rebuild scan: {candidates:?}"
+            );
+        }
+        // The fixture restores what it found, which is this test's own value, so
+        // the ambient one goes back only after the fixture is gone.
+        match prev {
+            Some(value) => xai_grok_test_support::env::set_var("GROVE_DATA_DIR", value),
+            None => xai_grok_test_support::env::remove_var("GROVE_DATA_DIR"),
+        }
+    }
+
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[test]
     fn rebuild_same_pass_does_not_age_expire_new_registration() {
         let _g = env_guard();
         let _cwd_lock = crate::api::cwd_test_guard();
         clear_auto_gc_env();
-        let fx = crate::db::GrokHomeFixture::new();
+        let fx = isolated_fixture();
         let db = WorktreeDb::open(&fx.home).unwrap();
         let wt = fx.home.join("worktrees/repo/fresh-rebuild");
         std::fs::create_dir_all(wt.join(".git")).unwrap();

@@ -168,6 +168,25 @@ fn answer_within(
     }
 }
 
+/// The whole error chain of a failed `gix::open`, joined with `: `.
+///
+/// `gix::open::Error` builds its `Display` from the path alone, so all eleven
+/// discovery causes print the same sentence, and `{:#}` is no better because the
+/// derive puts no source in the template. Walking `source()` by hand is what
+/// says whether the git dir was unreadable (errno), incomplete (which file), or
+/// raced out from under the gate.
+fn open_error_chain(error: &gix::open::Error) -> String {
+    use std::error::Error as _;
+    let mut chain = error.to_string();
+    let mut cause = error.source();
+    while let Some(current) = cause {
+        chain.push_str(": ");
+        chain.push_str(&current.to_string());
+        cause = current.source();
+    }
+    chain
+}
+
 fn decide_safety(worktree: &Path, surviving: Option<&Path>, captured: Captured<'_>) -> Safety {
     let repo = match gix::open(worktree) {
         Ok(repo) => repo,
@@ -181,7 +200,9 @@ fn decide_safety(worktree: &Path, surviving: Option<&Path>, captured: Captured<'
             };
             tracing::warn!(
                 path = %worktree.display(),
-                %error,
+                // The outer message is the same for every cause; only the chain
+                // says whether the git dir was unreadable, incomplete, or raced.
+                error = %open_error_chain(&error),
                 ?reason,
                 "path did not open as a git repository"
             );
