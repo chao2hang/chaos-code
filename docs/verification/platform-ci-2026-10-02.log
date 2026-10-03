@@ -382,3 +382,340 @@ real results, Windows has produced none, and the fifth consecutive head has a Wi
 failure that is about our tooling rather than the product. Fixing step 3 makes step 9
 reachable; it does not make it pass, and this row cannot be closed by anything recorded
 in this file.
+
+---
+
+# What this section is: two different reasons a run came back `cancelled`, and only one
+# of them was concurrency.
+# Source: runs 37059411089 .. 37074944913 on main, https://github.com/chao2hang/chaos-code
+# Fetched with: gh run list / gh api repos/chao2hang/chaos-code/actions/runs/<id>/jobs
+# Host that fetched it: Ubuntu 22.04 x86_64, gh 2.x. No Windows or macOS machine ran here.
+
+== 1. Eight heads, three real runs, five thrown away before a runner
+
+    $ gh run list --branch main --limit 8 \
+        --json databaseId,headSha,status,conclusion \
+        --jq '.[] | "\(.databaseId) \(.headSha[0:8]) \(.status)/\(.conclusion)"'
+    37074944913 f585f59d completed/cancelled
+    37072608076 4db25faf completed/cancelled
+    37071514793 ef33dfd9 completed/cancelled
+    37066345380 1487aded completed/failure
+    37064187465 950ce77d completed/cancelled
+    37061975515 22683f8c completed/failure
+    37060343678 0f1b8818 completed/cancelled
+    37059411089 a6984491 completed/cancelled
+
+Five of the eight never started a job. The count is taken from the API rather than from
+the conclusion string, because `cancelled` alone does not distinguish "queued and then
+thrown away" from "ran and was stopped":
+
+    $ for r in 37072608076 37071514793 37064187465 37060343678 37059411089; do
+        printf "%s jobs=" $r
+        gh api repos/chao2hang/chaos-code/actions/runs/$r/jobs --jq '.jobs | length'
+      done
+    37072608076 jobs=0
+    37071514793 jobs=0
+    37064187465 jobs=0
+    37060343678 jobs=0
+    37059411089 jobs=0
+
+Zero jobs means the run never got a runner. That is the `concurrency` group doing what it
+is configured to do -- `cancel-in-progress: false` only protects a run that is *already
+running*; a newer push still discards runs sitting in the queue for the same ref:
+
+    concurrency:
+      group: ci-${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+Nothing here is a code defect, and `timeout-minutes` or `needs` would not change it. The
+cost is real though: `rust` takes ~42 min on the runner (see the timings below), the
+platform legs hang off it, and three commits pushed inside one hour produced no platform
+evidence at all. The corrective is procedural -- push a batch of finished slices rather
+than one push per slice -- and it is why the section after this one is appended before
+the push that carries it.
+
+== 2. The newest head was not a concurrency casualty: the Windows leg hit its own cap
+
+Run 37074944913 is `f585f59d`, the last push, and it did run:
+
+    $ gh api repos/chao2hang/chaos-code/actions/runs/37074944913 \
+        --jq '{status,conclusion,created_at,run_started_at,updated_at}'
+    {"conclusion":"cancelled","created_at":"2026-10-02T22:54:22Z","run_started_at":"2026-10-02T22:54:22Z","status":"completed","updated_at":"2026-10-03T00:32:47Z"}
+
+    $ gh api repos/chao2hang/chaos-code/actions/runs/37074944913/jobs \
+        --jq '.jobs[] | "\(.name) | \(.status)/\(.conclusion) | started=\(.started_at) completed=\(.completed_at)"'
+    GUI browser E2E | completed/success | started=2026-10-02T23:05:09Z completed=2026-10-02T23:10:01Z
+    docs localization | completed/success | started=2026-10-02T23:05:09Z completed=2026-10-02T23:06:04Z
+    rust check / clippy / test | completed/success | started=2026-10-02T23:05:09Z completed=2026-10-02T23:47:30Z
+    secret scan | completed/success | started=2026-10-02T23:05:09Z completed=2026-10-02T23:05:37Z
+    workflows present | completed/success | started=2026-10-02T23:05:09Z completed=2026-10-02T23:06:20Z
+    GUI engine, Web host and frontend | completed/success | started=2026-10-02T23:05:09Z completed=2026-10-02T23:12:36Z
+    installer integrity labs | completed/success | started=2026-10-02T23:05:09Z completed=2026-10-02T23:06:42Z
+    npm package scripts | completed/success | started=2026-10-02T23:05:09Z completed=2026-10-02T23:05:23Z
+    platform tests (windows-latest) | completed/cancelled | started=2026-10-02T23:47:32Z completed=2026-10-03T00:32:47Z
+    platform tests (macos-14) | completed/success | started=2026-10-02T23:47:39Z completed=2026-10-03T00:18:56Z
+
+Two things follow. First, `docs localization` is green, which closes the standing red
+described in section 3 below. Second, the run's `cancelled` conclusion comes from exactly
+one job -- `platform tests (windows-latest)`, which ran 45m15s and then stopped. Its steps
+say where the time went:
+
+    $ gh api repos/chao2hang/chaos-code/actions/runs/37074944913/jobs \
+        --jq '.jobs[] | select(.name | contains("windows"))
+              | .steps[] | "\(.number) \(.name) | \(.status)/\(.conclusion)"'
+
+    1 Set up job                          | completed/success
+    2 Run actions/checkout@v4             | completed/success
+    3 Parse the PowerShell installers     | completed/success
+    4 Install protoc                      | completed/success
+    5 Read pinned toolchain               | completed/success
+    6 Install Rust                        | completed/success
+    7 Run Swatinem/rust-cache@v2          | completed/success
+    8 Provide ripgrep for the search tools| completed/success
+    9 cargo test (target-OS crates)       | completed/cancelled
+    10 Report failure environment         | completed/skipped
+    19 Post Run Swatinem/rust-cache@v2    | completed/skipped
+    20 Post Run actions/checkout@v4       | completed/success
+    21 Complete job                       | completed/success
+
+`timeout-minutes: 45` was set on this job in da5e1ee0, when the leg was written, as a guess
+and never checked against a run. The measured macOS leg -- same crates, same cache key, an
+arm64 runner that is the faster of the two -- finishes in 31m17s. Windows spent its entire
+budget inside the test step, so this leg has now produced three consecutive shapes of "no
+Windows result": a parse failure (step 3), a build failure (step 9, ~80 s), and a cap hit
+(step 9, 45m15s). The first two were fixed in earlier sections; the third is the cap, and a
+leg that always dies at the cap is indistinguishable from a leg that was deleted. Raised to
+75 minutes in this commit, with the two measurements written above the setting.
+
+This is still not evidence that the Windows tests pass. It is evidence about *why* they
+have never reported, and the next push is the first one in which the step is expected to
+reach a verdict.
+
+== 3. `docs localization`: what the standing red was, and what closed it
+
+`37061975515` (`22683f8c`) had this shape while it was still in progress -- job list from
+`gh run view --json jobs`, failing step from `gh api repos/.../actions/jobs/111025001684`:
+
+    docs localization | completed/failure
+    4 guard self-tests | completed/failure
+    5 TODO status document matches TODO.md | completed/skipped
+
+The step log, taken from an already-finished run with the same failure (`37055782083`,
+`e85f21ca`; GitHub does not serve logs for a run that has not ended):
+
+    FAIL  untouched
+          untouched: exit 64, want 0
+          l10n-guard: rg (ripgrep) not found
+    FAIL  clobber_in_place
+          clobber: exit 64, want 1
+          l10n-guard: rg (ripgrep) not found
+    (17 cases, same three lines each)
+
+No translation file was broken. The guard needs `rg`, that runner has no ripgrep, and the
+guard refuses to conclude without it -- `exit 64` is the fail-closed behaviour added in the
+previous round, so this red was the guard working. What was missing was an `apt-get install
+ripgrep` step in the job that runs it, and nothing in `ci.yml` paired "tools a step needs"
+with "tools the job installs"; that gap is now a guard of its own. Root cause, fix and the
+new guard: [`workflow-toolchain-2026-10-03.log`](workflow-toolchain-2026-10-03.log).
+
+Consequence for platform evidence, stated precisely because it is easy to get wrong:
+`platform tests` has `needs: rust` and no dependency on `docs localization`, so this red
+never cancelled the platform legs. What it did do was make `main` carry a permanent red,
+which turns "did this round's CI actually run?" into an unanswerable question -- and an
+unanswerable question is what let the Windows cap hide for five heads.
+
+== 4. What this section is still not evidence about
+
+No Windows or macOS machine was used to produce anything above; every number comes from the
+Actions API for runs other machines executed. The Windows test suite has still never
+reported a result of its own, so nothing here says the six target-OS crates pass on
+Windows -- only that the leg is now given a budget it can plausibly finish inside, and that
+the two causes of silence (queued-run cancellation, per-job timeout) are named separately
+instead of being filed together as "CI is flaky".
+
+== 5. The Windows leg finally reached the tests, and 16m43s of that leg was one string
+
+Run `37074944913` / job `111075816970` (`f585f59d`) is the first Windows run that got as far
+as executing tests. Section 2 read it as "spent its entire budget inside the test step" and
+stopped there because the step-level breakdown was all that was available then. The step log
+has since been fetched, and it does not say "slow"; it says one test never returned.
+
+The step's own timeline, from the job log:
+
+    23:48:37            step 9 starts: cargo test --locked --no-fail-fast
+    00:14:20.97         first `test result:` line (compile took 25m43s)
+    00:14:21 - 00:14:24 five other test binaries finish, within ~4 s of each other
+    00:14:24.04         xai_grok_tools-c0c13642df1bb12b.exe starts: `running 3087 tests`
+    00:15:45.28         test ...cwd_and_worktree_isolation_are_mutually_exclusive has been
+                        running for over 60 seconds
+    00:15:59.27         last verdict printed by any thread
+    00:32:42.02         ##[error]The operation was canceled.
+
+    # verdict lines inside the xai_grok_tools test binary only (the 3087-test block)
+    grep -c '\.\.\. ok'          -> 2960
+    grep -c '\.\.\. FAILED'      -> 124
+    grep -c '\.\.\. ignored'     -> 2
+                                    # +1 that never returned = 3087
+
+2960 + 124 + 2 = 3086 of the 3087 launched. The missing one is named verbatim in the log:
+
+    2026-10-03T00:15:45.2830227Z test implementations::grok_build::task::tests::cwd_and_worktree_isolation_are_mutually_exclusive has been running for over 60 seconds
+
+After that line, 16m43s of nothing, then the job cap. libtest prints each verdict as its
+thread finishes and prints the `test result:` summary only once every thread has returned. A
+binary with one stuck test therefore prints no summary -- and no `failures:` section, which
+is where the assertion text lives. That is why the 124 failures below have names but no
+messages: the messages were never written. It is inferred from libtest's printing order, not
+quoted from a source I can point at; what is quoted is the absence -- 124 `FAILED` verdicts
+and zero `panicked at` lines for the tools binary.
+
+== 5a. The hang: one fixture string selected a different branch on Windows
+
+`TaskTool::run` validates `cwd` + `isolation="worktree"` mutual exclusion through a single
+existence check (`crates/codegen/xai-grok-tools/src/implementations/grok_build/task/mod.rs`,
+the branch at line 468):
+
+    let cwd = if cwd.is_some() && input.isolation == Some(SubagentIsolationMode::Worktree) {
+        if cwd.as_deref().is_some_and(|p| std::path::Path::new(p).is_dir()) {
+            return Err(ToolError::invalid_arguments("cwd and isolation=\"worktree\" ..."));
+        }
+        None                     // non-existent path: clear cwd, worktree wins
+    } else { cwd };
+
+The test passed `cwd: Some("/tmp".into())` meaning "an existing directory". On Linux and
+macOS `/tmp` exists, the branch returns `Err`, the test asserts on the error and finishes in
+milliseconds. On `windows-latest` there is no `C:\tmp`, `is_dir()` is false, the `cwd` is
+cleared, and the tool goes on to spawn a subagent -- into a backend whose response receiver
+the test never reads, because a test that expects validation to reject the input has nothing
+to read. `Tool::run` then awaits a response that is never sent. That is a hang, not a
+failure, and it is indistinguishable from a slow machine from outside the box.
+
+Proof that the test is not vacuous was run on Linux by mutating the branch, not the test.
+Replacing the condition with `is_some_and(|_p| false)` -- i.e. making the production code
+take exactly the path Windows took -- turns the test red in precisely the way the theory
+predicts:
+
+    running 1 test
+    test implementations::grok_build::task::tests::cwd_and_worktree_isolation_are_mutually_exclusive ... FAILED
+    ...
+    thread '...cwd_and_worktree_isolation_are_mutually_exclusive' panicked at
+      crates/codegen/xai-grok-tools/src/implementations/grok_build/task/mod.rs:2423:10:
+    cwd + worktree must be rejected by validation, not wait on a subagent: Elapsed(())
+
+    test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3163 filtered out; finished in 30.00s
+
+Reverting the mutation restores `test result: ok. 1 passed; ... finished in 0.00s`, and the
+restored file was compared byte-for-byte against a pre-mutation copy (`cmp` reports no
+difference). The 30-second ceiling is new, not incidental: see the fix below.
+
+== 5b. The same string, three tests sideways, and the rest of the fixture family
+
+Three sibling tests in the same module failed for the same reason and did not hang, because
+they assert on the spawned request rather than on a rejection -- on Windows the `cwd` they
+expected had been silently cleared:
+
+    implementations::grok_build::task::tests::cwd_strips_stray_leading_quote ... FAILED
+    implementations::grok_build::task::tests::cwd_threads_to_request ... FAILED
+    implementations::grok_build::task::tests::cwd_with_isolation_none_is_allowed ... FAILED
+
+The tests that passed on Windows in the same module are the evidence for the mechanism: the
+ones using `/nonexistent/...` or a `/tmp/some-dir` + `resume_from` combination never touch
+`is_dir()` meaningfully, so they behave identically on both hosts. Existence-dependence of
+the fixture, not the choice of `/tmp` as a name, is what made those tests host-specific.
+
+The fix is to stop writing "an existing directory" as a literal. In `xai-grok-tools`, a
+test-module helper `existing_dir()` returns `std::env::temp_dir().display().to_string()` and
+the five `cwd:` fixtures use it; the two validation tests additionally wrap the call in
+`tokio::time::timeout(VALIDATION_TIMEOUT, ..)` (30 s) so that taking the spawn branch by
+accident fails with a named message instead of eating the job budget. The same fixture
+family was replaced in eight more places that only display or thread the path through --
+`xai-grok-shell-terminal/src/adapter_tests.rs`, `background_task.rs` (two sites),
+`xai-grok-tools/src/computer/types.rs` (two), `implementations/task_output/tool.rs`,
+`implementations/grok_build/task_output/mod.rs` -- plus the 54-failure block in
+`computer/local/terminal.rs` (14 sites, behind `shell_path()` / `pwd_reports_dir()` helpers
+so the assertion still checks the real `pwd` output rather than a path string).
+
+The other two Windows failures with readable text, both fixed in the same pass:
+
+    streaming_local_terminal::tests::test_kill_returns_signal
+      panicked at crates\codegen\xai-grok-shell-terminal\src\streaming_local_terminal.rs:1234:17
+      left: None, right: Some("signal 9")      -- Windows kills do not report a signal
+    update_never_blocked_by_config::corrupt_config_never_changes_update_outcome
+      os error 10106                           -- Winsock unavailable: the test stripped the
+                                                 environment the updater needs to init it
+
+The 124 failures are grouped below by module, because that is the level the log supports.
+Their assertion text does not exist anywhere in this run, so no cause is claimed for any
+group beyond the three lines above whose text was actually printed:
+
+    54  computer::local::terminal::tests                    -- host-pinned /tmp, fixed above
+    38  implementations::lsp::*                             -- text unknown, read next run
+     7  types::skill_discovery_tracker::skill_path_suggestion::tests
+     5  types::resources::tests                             -- resolve_model_path_*
+     5  implementations::grok_build::read_file::tests
+     3  implementations::grok_build::task::tests            -- fixed above
+     3  implementations::grok_build::bash::tests
+     2  implementations::skills::discovery::tests
+     1  each: opencode::bash, grok_build::web_fetch::{client,error,overflow},
+            grok_build::grep::ripgrep, grok_build::enter_plan_mode, gitignore::tests
+
+== 5c. Structural changes so a hang can never again erase five crates' verdicts
+
+`cargo test --locked --no-fail-fast -p ... -p xai-grok-tools` ran all six target-OS crates in
+one step, so one stuck test in the largest crate consumed the remaining budget *and* the
+`test result:` summary of everything already compiled. The step is now split in
+`.github/workflows/ci.yml` into `cargo test (target-OS crates: except xai-grok-tools)` and
+`cargo test (target-OS crates: xai-grok-tools)`, each `timeout-minutes: 35` with `if:
+always()` on the second, inside the job's 75-minute budget. A hang in `xai-grok-tools` can
+now cost that crate its own verdict and nothing else.
+
+Two guards came out of authoring that split:
+
+* `scripts/ci/check-workflow-yaml.py` -- the new step names contain `": "`, and unquoted that
+  is a YAML mapping separator: PyYAML refused the file at line 293, which would have meant a
+  workflow that parses to nothing and runs **no jobs at all**. `check-workflow-shells.py` and
+  `check-workflow-toolchain.py` both reported OK on the broken file, because both extract
+  `run:` blocks with a regex and never ask whether the document is a valid mapping. The new
+  guard tracks block-scalar state, strips comments the way YAML does, and flags a `": "` in a
+  plain scalar; its self-tests cross-check every fixture against `yaml.safe_load`.
+* `scripts/ci/check-spawn-cwd-portability.py` -- the guard that now fails a `-p xai-grok-tools`
+  test whose `cwd`/`working_directory`/`.current_dir()` is a POSIX-absolute path under a root
+  no Windows host has. Extending it to the `cwd:` field (the `TaskToolInput` form) is what
+  would have caught this class the first time. It reads the crate list by unioning every
+  `cargo test (target-OS crates: ...)` step, so the split above cannot silently drop a crate
+  out of its scan, and it fails closed if a `cargo test -p` step exists on the platform job
+  that the step-name prefix does not cover.
+
+Both are wired into `.github/workflows/ci.yml` (`workflows-present`) and
+`scripts/verify-in-docker.sh`, and `check-guard-wiring.py` enforces that pairing.
+
+== 5d. The macOS leg, which is green and was never the problem
+
+Same job set, all three recent heads, taken from `gh api .../actions/runs/<id>/jobs`:
+
+    37074944913  platform tests (macos-14)  23:47:39 -> 00:18:56  31m17s  success
+    37066345380  platform tests (macos-14)  22:37:04 -> 23:05:06  28m02s  success
+    37061975515  platform tests (macos-14)  21:26:28 -> 21:52:28  26m00s  success
+
+On the two older runs the Windows leg died early (72 s and 105 s, both build failures covered
+in earlier sections). Nothing here suggests macOS needed any of the changes in 5b or 5c.
+
+== 5e. What section 5 is still not evidence about
+
+* No Windows machine was used. Every Windows number above is read out of the log of a run
+  another machine executed; the mutation proof in 5a was run on Linux against the same
+  production branch. Whether the fixes make the Windows leg green is answered by the next
+  push, not by this file.
+* The 67 failures left after the two fixed groups (124 − 54 terminal − 3 task) have no
+  assertion text in this
+  run and no stated cause. They are listed so the next Windows log can be diffed against a
+  known set, not because they are understood. The `test_kill_returns_signal` and
+  `corrupt_config_never_changes_update_outcome` failures quoted in 5b are not part of the 124
+  -- they come from the `xai-grok-shell-terminal` and `xai-grok-pager-bin` binaries.
+* The "one stuck test erases the whole binary's summary" mechanism is inferred from libtest's
+  documented printing order plus the observed absence of a summary line; I did not reproduce
+  a hung libtest run to watch it happen.
+* Whether 35 + 35 minutes is enough for the two split steps on Windows: the 25m43s of that
+  45m15s was compilation, which is shared and cached, so the split estimate applies to the
+  test phase only. This is an estimate, and the split makes the next measurement readable
+  either way.

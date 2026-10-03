@@ -1,0 +1,174 @@
+# 证据：新增门禁 `cwd-change-census`——谁能改整个进程的当前目录，改完谁负责放回去
+
+    记录时间：2026-10-03
+    主机：Ubuntu 22.04 x86_64，Python 3.10，28 核
+    相关：docs/verification/fast-worktree-safety-gate-flake-2026-10-03.log（这条门禁要防的那个偶发的成因）
+    产物：scripts/ci/cwd-change-census.py、scripts/ci/cwd-change-baseline.tsv、
+          scripts/ci/test-cwd-change-census.py
+
+## 1. 为什么这条只能静态查
+
+`fast-worktree-safety-gate-flake-2026-10-03.log` 第 5 节查明的机制是：`gix-discover-0.51.0/src/is.rs:36`
+在 `is_git()` 的**开头**无条件执行 `gix_fs::current_dir(false)`，与传进去的路径无关；进程的当前目录一旦
+被 unlink，同进程里**每一次** `gix::open` 都会以 `NotARepository` 失败，安全门于是回答 `CheckFailed`。
+libtest 的所有测试跑在同一个进程里，所以「A 测试把自己站着的目录删了」会表现成 B、C、D 三十几条测试红，
+而 A 自己是绿的。
+
+这个形状有两件事让运行时检查无能为力：
+
+1. **报错的测试永远不是闯祸的测试**。要判案得看整仓一轮里红的那批是不是共享一个「刚刚有人 chdir」的前因，
+   而这在 CI 里读不出来（CI 只有那三十几条堆栈）。
+2. **单跑复现不出来**。同一条测试单独跑永远是绿的（这也是它当时被放过的原因）。
+
+能静态查的只有一件：**谁有权改进程级状态，改完有没有把恢复动作绑定在同一作用域上**。这条门禁就是把这句
+话变成一张表加四条失败形状。
+
+## 2. 现在的清单（原文）
+
+    $ python3 scripts/ci/cwd-change-census.py | column -t -s$'\t'
+    path                                                           line  role     item                                                  guard
+    crates/codegen/xai-fast-worktree/src/api.rs                    24    test     drop                                                  drop-restore
+    crates/codegen/xai-fast-worktree/src/api/gc/process_scan.rs    258   test     live_process_cwds_includes_own_cwd_after_chdir        CwdGuard
+    crates/codegen/xai-fast-worktree/src/auto_gc.rs                898   test     maybe_auto_gc_protects_process_cwd                    CwdGuard
+    crates/codegen/xai-fast-worktree/src/git/safety_tests/gate.rs  124   test     drop                                                  drop-restore
+    crates/codegen/xai-fast-worktree/src/git/safety_tests/gate.rs  179   test     a_child_that_loses_its_cwd_still_checks_the_worktree  RestoreCwd
+    crates/codegen/xai-grok-pager/src/app/cli.rs                   904   product  apply_cwd_from
+    crates/codegen/xai-grok-pager/src/app/effects/mod.rs           80    product  execute
+
+    $ python3 scripts/ci/cwd-change-census.py --check-baseline scripts/ci/cwd-change-baseline.tsv
+    cwd-change-census: 7 call site(s) match cwd-change-baseline.tsv (2 production, 5 test), every test site guarded
+
+3 秒。扫描范围是仓库根往下的全部 `.rs`，只跳过 `target/`、`.git/`、`node_modules/`、`dist/`、
+`test-results/`——工作区成员里有 `crates/` 之外的（`prod/mc/cli-chat-proxy-types` 与四个 `third_party/*`），
+只从 `crates/` 走会把 cargo 真编的那部分当成不存在。深解析（注释/字符串抹除、`cfg(test)` 跨度、模块图）
+只对「有调用点」以及「声明了通向它的模块」的文件做，全仓抹一遍要几分钟，慢到没人跑的门禁等于没有门禁。
+
+四条失败形状（前两条是清单漂移，第三条是结构规则，第四条是理由列）：
+
+| 形状 | 报错原文里会出现 |
+| --- | --- |
+| 出现一个不在 baseline 里的调用点 | `changes the process cwd but is not in cwd-change-baseline.tsv` |
+| baseline 里那行往下/往上找不到调用了 | `lists <path>:<line> but no call is there any more` |
+| 测试位置的 chdir 前面没有绑 guard | `is a test call site with no CwdGuard/RestoreCwd bound before it` |
+| role／guard 列与实测不符、理由列是空的 | `is role=test by the rules in this file but …` / `no reason worth reading` |
+
+**结构规则不吃 baseline**：`--check-baseline` 对「测试站点前面必须已经绑了 `CwdGuard`／`RestoreCwd`（或者
+这行本身就是它们的 `Drop`）」的判定不来自 baseline，删行、改列都躲不过去——baseline 正是赶时间的人会被
+允许改的那个文件。
+
+## 3. 真实树上的变异矩阵（G1–G5）
+
+每条都是改真文件、跑门禁、再逐字节还原。还原证明：G1/G3 用 `cmp` 与注入前副本比；G2/G4 比 baseline 的
+注入前副本；G5 用 `git status --porcelain` 该文件为空。**五条都红，五条都还原。**
+
+**G1 — 把 `auto_gc.rs:897` 的 guard 绑定换成同样行数的一条普通语句**（行号不动，只有 guard 消失）：
+
+    $ python3 scripts/ci/cwd-change-census.py --check-baseline scripts/ci/cwd-change-baseline.tsv
+    cwd-change-census: 2 problem(s)
+      crates/codegen/xai-fast-worktree/src/auto_gc.rs:898 binds no guard before the call, cwd-change-baseline.tsv says CwdGuard
+      crates/codegen/xai-fast-worktree/src/auto_gc.rs:898 is a test call site with no CwdGuard/RestoreCwd bound before it; a test that leaves the process cwd inside a directory another test deletes breaks every sibling in the binary (see docs/verification/fast-worktree-safety-gate-flake-2026-10-03.log)
+    recount with: python3 scripts/ci/cwd-change-census.py --write-baseline scripts/ci/cwd-change-baseline.tsv
+
+    $ cmp <注入前副本> crates/codegen/xai-fast-worktree/src/auto_gc.rs && echo RESTORED_BYTE_IDENTICAL
+    RESTORED_BYTE_IDENTICAL
+
+两条都报是对的：第一条是「baseline 说的和代码不一致」，第二条才是真正的规则；只有第二条会在「baseline 也
+跟着被改掉」时仍然红。
+
+**G2 — 把危险站点（`gate.rs:179`，会 unlink 自己当前目录那条）在 baseline 里声明成 `product`**，
+即「把它归类成产品代码，就不需要恢复了」这条逃生路：
+
+    cwd-change-census: 1 problem(s)
+      crates/codegen/xai-fast-worktree/src/git/safety_tests/gate.rs:179 is role=test by the rules in this file but cwd-change-baseline.tsv says product
+
+**G3 — 在真实文件末尾加一条没有 guard 的测试 chdir**（模拟「新写了个要 chdir 的测试」）：
+
+    cwd-change-census: 1 problem(s)
+      crates/codegen/xai-fast-worktree/src/git/checkout.rs:1374 changes the process cwd but is not in cwd-change-baseline.tsv; role=test guard=none -- a test site needs a guard bound before the call, and either way the baseline row must say why the change is safe
+
+**G4 — 把 `app/cli.rs` 那行的理由列改成 `TODO`**（清单齐、形状对，只是没人写为什么安全）：
+
+    cwd-change-census: 1 problem(s)
+      crates/codegen/xai-grok-pager/src/app/cli.rs:904 has no reason worth reading in cwd-change-baseline.tsv (need at least 20 characters: who puts the cwd back, or why it may stay)
+
+**G5 — 反方向：把同一个函数名只写进注释里**（一条行注释 + 一条块注释），门禁**不许**多报：
+
+    $ python3 scripts/ci/cwd-change-census.py | grep "app/cli.rs"
+    crates/codegen/xai-grok-pager/src/app/cli.rs                   904   product  apply_cwd_from
+    $ python3 scripts/ci/cwd-change-census.py --check-baseline scripts/ci/cwd-change-baseline.tsv
+    cwd-change-census: 7 call site(s) match cwd-change-baseline.tsv (2 production, 5 test), every test site guarded
+
+    $ git status --porcelain crates/codegen/xai-grok-pager/src/app/cli.rs   # 还原后为空
+    (empty status = restored)
+
+## 4. 夹具（`python3 scripts/ci/test-cwd-change-census.py`，14 条全绿）
+
+夹具不是「能不能数出 7 行」，而是逐条把逃生路堵死。原文：
+
+    test_sites_roles_and_guards (__main__.MeasuredSites) ... ok
+    test_prose_mention_is_load_bearing (__main__.MeasuredSites) ... ok
+    test_guard_bound_after_the_call_is_not_a_restore (__main__.MeasuredSites) ... ok
+    test_shipped_baseline_matches_the_shipped_sources (__main__.BaselineCheck) ... ok
+    test_real_test_only_file_is_not_resolved_by_its_directory_name (__main__.BaselineCheck) ... ok
+    test_clean_tree_passes (__main__.BaselineCheck) ... ok
+    test_new_test_site_needs_a_row (__main__.BaselineCheck) ... ok
+    test_moved_line_is_drift (__main__.BaselineCheck) ... ok
+    test_removed_guard_fails_with_the_row_left_alone (__main__.BaselineCheck) ... ok
+    test_dropping_the_row_is_not_an_escape (__main__.BaselineCheck) ... ok
+    test_declaring_a_test_site_as_product_is_drift (__main__.BaselineCheck) ... ok
+    test_guard_column_is_cross_checked (__main__.BaselineCheck) ... ok
+    test_stub_reason_fails (__main__.BaselineCheck) ... ok
+    test_writer_leaves_the_reason_column_empty (__main__.BaselineCheck) ... ok
+    Ran 14 tests in 11.192s
+    OK
+
+其中三条值得单独说：
+
+* `test_prose_mention_is_load_bearing` 先证明「模块文档 + 行注释 + 日志字符串里提到这个函数」不算站点，
+  紧接着**把其中一处改成真代码**，同一份夹具立刻多出一行。没有后半段，前半段可能只是「扫描器什么都没找到」。
+* `test_guard_bound_after_the_call_is_not_a_restore` 把 guard 与 chdir 两行**互换**（行数、行号都不变，
+  baseline 也不会漂），门禁必须报「前面没有 guard」。换到后面去的 guard 恢复不了已经被留在删除目录里的
+  当前目录，所以这条不是形式主义。
+* `test_real_test_only_file_is_not_resolved_by_its_directory_name` 把「目录名里带 tests 就算测试」这条
+  捷径关掉，只留模块图，仍然要求 `git/safety_tests/gate.rs` 判成 test——它是被 `git/safety.rs` 里
+  `#[cfg(test)] #[path = "safety_tests.rs"]` 拉进来的，文件自己一个属性都没有。这条挂掉，危险站点就会
+  被当成产品代码，而产品代码不要求恢复。
+
+## 5. 写这条门禁时，夹具抓出来的两个扫描器缺陷（不是理论，是当场红出来的）
+
+1. **普通字符串的终止符写成了找 `""`**。第一版把 `"abc"` 的结束按 `find('""')` 算，找不到就把文件剩下的
+   全部抹掉——`auto_gc.rs` 里 `set_current_dir` 明明在第 898 行，表里却是空的（`clean lines with site: []`）。
+   这条是 `test_sites_roles_and_guards` 期望 5 行、实际 0 行暴露的。
+2. **`#[path = "..."]` 里的文件名被自己的抹除器抹掉了**。抹除在结构分析之前跑，`PATH_ATTR` 于是永远匹配
+   不上，`cases.rs` 判成 `product`（`('crates/two/src/inner/cases.rs', 5, 'product', 'drop-restore')`）。
+   真实仓库当时**没有**暴露它：`gate.rs` 恰好父目录叫 `safety_tests`，被目录名捷径救了一次。修法是结构与
+   字符串分开读（位置对齐，结构读抹除后的文本，`#[path]` 读原文），并补上第 4 节那条把目录名捷径关掉的测试。
+
+顺带一个性能事实：`re.match(pattern, text[i:])` 每前进一步都会拷贝一次剩余文本，480 KB 的文件要 9 秒；
+改成 `pattern.match(text, i)` 之后全仓 3 秒。这条记在这里是因为「慢到没人跑」本身就是一条缺陷。
+
+## 6. 接线
+
+`check-guard-wiring.py` 双向都查：`.github/workflows/ci.yml` 的脚本检查步骤与
+`scripts/verify-in-docker.sh` 的 `gates=(…)` 必须同时有它。
+
+    $ python3 scripts/ci/check-guard-wiring.py
+    check-guard-wiring: OK (40 files in scripts/ci/, 39 reachable, 34 run by scripts/verify-in-docker.sh, 5 recorded CI-only, 1 exempt)
+
+    $ python3 scripts/ci/check-workflow-toolchain.py
+    check-workflow-toolchain: OK (2 workflow file(s), 2 tool rule(s))
+
+门禁只需要 `python3`（标准库），没有引入新的工具链需求，所以 toolchain 检查的规则数没变。
+
+## 7. 这条门禁不能证明什么
+
+* 它不看数据流：`let g = make_guard(); g.restore_later();` 这种自造恢复机制不会被认出来，会被报成
+  「没有 guard」——方向是保守的（宁可多问一句），但代价是自定义写法必须改用 `CwdGuard`／`RestoreCwd`
+  或者把站点记进 baseline 并写清理由。
+* 它不查**谁删掉了目录**。第 5.3 节那两个待查问题（谁 unlink 了那个目录；工作树路径自己消失那种裸
+  `ENOENT` 形状）不在它的能力范围内，这条门禁只是保证不会再有人在没有恢复动作的情况下改进程级 cwd。
+* 它不能证明那 7 个站点当前是对的：`auto_gc`／`process_scan` 两条的行为证据在
+  `fast-worktree-grove-isolation-2026-10-03.log` 与 `fast-worktree-safety-gate-flake-2026-10-03.log` 里，
+  baseline 的理由列只是给人读的说明。
+* 「测试站点前面绑了 guard」不等于「恢复一定跑得到」：`std::process::exit()` 会绕过 `Drop`。本仓库的这三条
+  测试路径上没有 exit，但这是**读代码得出的**，不是这条门禁保证的。

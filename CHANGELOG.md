@@ -2,6 +2,379 @@
 
 ## Unreleased
 
+### 修复：Windows 平台腿第一次跑到测试，45m15s 里有 16m43s 卡在一个字符串上
+
+`platform tests (windows-latest)` 此前的三种死法（解析、构建、撞作业上限）都在测试之前。上限抬到 75
+分钟之后，run `37074944913` / job `111075816970` 第一次真的执行了测试，也把「Windows 上读不到失败
+原文」这件事的原因一并暴露出来：
+
+    23:48:37      步骤 9 起步：cargo test --locked --no-fail-fast
+    00:14:20.97   第一条 `test result:`（编译花了 25m43s）
+    00:14:24.04   xai_grok_tools-c0c13642df1bb12b.exe 起，running 3087 tests
+    00:15:45.28   test ...cwd_and_worktree_isolation_are_mutually_exclusive has been running
+                  for over 60 seconds
+    00:15:59.27   任何线程的最后一条判决
+    00:32:42.02   ##[error]The operation was canceled.
+
+2960 ok / 124 FAILED / 2 ignored，加上**永不返回的那 1 条**正好是 3087。libtest 是逐条打印判决、
+却要等全部线程返回才打印 `test result:` 汇总的，所以一个挂住的测试顺手抹掉了整个二进制的汇总和
+`failures:` 段——那 124 条失败在全日志里一句断言原文都没有（该二进制输出中 `grep -c 'panicked at'`
+是 0）。「没有原文」是被直接观察到的缺失，机制本身则按 libtest 的打印顺序推得。
+
+**挂起点是一行存在性检查。** `TaskTool::run` 判断 `cwd` 与 `isolation="worktree"` 是否互斥，只看
+`is_some_and(|p| std::path::Path::new(p).is_dir())`：
+
+    let cwd = if cwd.is_some() && input.isolation == Some(SubagentIsolationMode::Worktree) {
+        if cwd.as_deref().is_some_and(|p| std::path::Path::new(p).is_dir()) {
+            return Err(ToolError::invalid_arguments("cwd and isolation=\"worktree\" ..."));
+        }
+        None                     // 路径不存在：清掉 cwd，worktree 赢
+    } else { cwd };
+
+测试写 `cwd: Some("/tmp".into())`，想说的是「某个已存在的目录」。Linux/macOS 上 `/tmp` 在，走「拒绝」
+分支，毫秒返回；`windows-latest` 没有 `C:\tmp`，于是走「清掉 cwd 去 spawn 子代理」分支——而这类测试
+**从不读自己的响应接收端 `rx`**（它预期在校验阶段就被拒），`Tool::run` 从此等待一个永远不会发出的响应。
+挂起在盒子外面看，和机器慢完全一样。
+
+**非空证明改的是生产分支，不是测试。** 把条件换成 `is_some_and(|_p| false)`，即让生产代码走 Windows
+实际走过的那条路，本机该测试立刻红成理论预测的样子：
+
+    cwd + worktree must be rejected by validation, not wait on a subagent: Elapsed(())
+    test result: FAILED. 0 passed; 1 failed; ... finished in 30.00s
+
+还原后 `1 passed ... finished in 0.00s`，且还原文件与变异前副本 `cmp` 逐字节一致。那 30 秒是本轮新加的
+`VALIDATION_TIMEOUT`：两条校验测试的调用现在包在 `tokio::time::timeout(..)` 里，将来再误入 spawn 分支会
+**带着自己的名字失败**，而不是吃掉整个作业预算。
+
+**同一个字符串还放倒了三条，而它们的形态反过来证实了机制。** `cwd_strips_stray_leading_quote`、
+`cwd_threads_to_request`、`cwd_with_isolation_none_is_allowed` 在 Windows 上是 FAILED 不是挂起——它们
+断言「spawn 出去的请求里 cwd 是什么」，而那个 cwd 已被静默清掉；同模块用 `/nonexistent/...` 与
+`/tmp/some-dir` + `resume_from` 的几条两端都绿。**危险从来不是 `/tmp` 这个名字，而是夹具依赖「存在」
+这件事。** 修法因此不是把 `/tmp` 换成 `/var/tmp`，而是不再把「已存在的目录」写成字面量：`xai-grok-tools`
+测试模块加 `existing_dir()`（`std::env::temp_dir().display().to_string()`），5 处 `cwd:` 夹具改用它；
+同族夹具另在 8 处替换；`computer/local/terminal.rs` 那 14 处（就是 54 条失败那一族）改走 `shell_path()`
+与 `pwd_reports_dir()`，断言仍然校验真实的 `pwd` 输出，而不是一个路径字符串。
+
+另外两条**有原文可读**的 Windows 失败同轮修掉：`test_kill_returns_signal` 断言
+`Some("signal 9")`，而 Windows 的 kill 不上报信号号（现按平台分别断言）；pager-bin 的
+`corrupt_config_never_changes_update_outcome` 报 `os error 10106`（Winsock 不可用），因为测试把 updater
+初始化所需的系统环境变量一起剥掉了，现由 `platform_essentials()` 透传。
+
+**结构改动：一条挂起的测试不该有资格抹掉另外五个 crate 的结论。** 那条步骤原本一次跑六个 crate；现拆成
+`cargo test (target-OS crates: except xai-grok-tools)` 与 `cargo test (target-OS crates: xai-grok-tools)`，
+各自 `timeout-minutes: 35`、第二条带 `if: always()`，作业总预算仍是 75 分钟。124 条里除去 54 + 3 之后的
+约 67 条（lsp 38、skill_discovery 7、`resolve_model_path` 5、read_file 5、bash 3、skills 2，其余各 1）
+**没有断言原文，本轮也不给它们安根因**；分组列出来只为下一次 Windows 日志有一个可比对的已知集合。
+本轮没有任何 Windows 机器参与：数字读自别的机器执行的运行日志，变异证明在本机对同一生产分支做的。
+逐条时间线、分组明细与「本节不能证明什么」见 `docs/verification/platform-ci-2026-10-02.log` 的 `== 5.` 节。
+
+### 新增门禁：workflow 得先证明自己是合法 YAML，才有资格决定今天跑哪些 job
+
+上面那次拆分差点让整条 CI 静默消失。新步骤名写成
+
+    - name: cargo test (target-OS crates: xai-grok-tools)
+
+未加引号的 `": "` 是 YAML 的映射分隔符，PyYAML 在 `ci.yml` 第 293 行直接拒绝整个文件。**解析不过的
+workflow 不跑任何 job**——比一条测试失败严重得多，因为它看起来像「今天还没跑」。更糟的是当时两个已有
+守卫都报 OK：`check-workflow-shells.py` 与 `check-workflow-toolchain.py` 都用正则抠 `run:` 块，从不问
+这份文档是不是一个合法的映射。
+
+`scripts/ci/check-workflow-yaml.py` 补的正是这一层。它自己跟踪块标量状态（`run: |`、`run: >-` 之后的
+更深缩进行不参与判断），按 YAML 的规则剥注释（引号内的 `#` 不是注释，引号外的还要求前置空格），再对
+剩下的纯标量检查 `": "` 与结尾的 `:`。它**刻意不带引号感知**——这不是偷懒：`run: echo "a: b"` 在 YAML 里
+同样是纯标量、同样会被解析器拒绝，加了引号感知就会把真缺陷判成 OK。12 条夹具各自带期望退出码，另有一条
+夹具把 12 份样本逐个交给真实 `yaml.safe_load` 交叉核对裁决（环境没有 PyYAML 时打印说明并跳过），再加两条
+块标量终止条件（块标量结束后第一行回归普通键值行必须正常判定）。两个守卫在破损文件上同时报 OK 这个事实，
+本身也说明「regex 抽取」类检查不能互为替代，故两者都保留。已接入 `.github/workflows/ci.yml` 的
+`workflows-present` 与 `scripts/verify-in-docker.sh` 的 `workflow yaml` 门禁，由 `check-guard-wiring.py`
+双向锁定。
+
+### 改进：`check-spawn-cwd-portability.py` 的两个盲区，其中一个本该拦住上面那次挂起
+
+守卫早已存在，却对上面这件事完全无感，原因有两条。
+
+**一，它只认 `working_directory` 字段和 `.current_dir()` 调用，不认 `TaskToolInput` 的 `cwd:` 字段**——
+而这次把 Windows 平台腿钉住的字符串就写在 `cwd:` 里。新增第三个 sink 后，如何避免把合法夹具一并判红成了
+主要问题：`cwd: Some("/nonexistent/does-not-exist")` 是**必要**的夹具（它测的正是「路径不存在」这条分支），
+任何主机都不存在的路径不该管。判据因此是「顶级目录是否只存在于 POSIX 主机」——`tmp`/`var`/`usr`/`home`/
+`private`/`Users`/`Library` 等一组根名；`/old`、`/new/dir` 这类哨兵照常放行。
+
+**二，它取 crate 列表的方式会静默少拿一个 crate，而少拿的那个恰好是守卫最需要看的。** 旧正则要求 `-p`
+前面是行首或续行反斜杠，于是单行写法的 `cargo test … -p xai-grok-tools` 被整体漏过：守卫扫 5 个 crate、
+报「全绿」，而第 6 个从未被看过。现改为**并集**平台作业里所有名字匹配 `cargo test (target-OS crates` 的
+步骤——这也是上面那次步骤拆分不会把某个 crate 悄悄排除在扫描之外的原因——并在四种情况下 fail closed：
+没有 `platform-tests:` 作业、没有任何匹配步骤、crate 列表为空、平台上存在一条带 `-p` 的 `cargo test`
+步骤而该前缀覆盖不到它（错误消息直接点名那个步骤）。解析器本轮踩到的三个坑各有夹具钉住：作业结束条件不能
+写成 `^  \S`（下一个 job 之前常有两空格缩进的注释块，会被当成作业定义结束）、列表项缩进是 `steps:` 的
+缩进 + 2、`-p` 的左边界必须允许空格。夹具从 14 条增至 19 条，新增的 5 条分别证明「拆开的两步都会被扫到
+（并且那一步独有的 crate 真的被扫过）」「改名平台作业必须 fail closed」「步骤前缀漏掉一条 `cargo test -p`
+必须 fail closed」「`cwd:` 写真实目录必须红」「`cwd:` 写任何主机都没有的路径必须绿」。
+
+### 修复：`git::safety` 那条偶发红了一百多轮都说不出原因——原因被挡在两层之外，其中一层是本仓库自己写的 `{:#}`
+
+`git::safety::tests::gate::snapshot_under_a_foreign_clean_filter`（父测试
+`git_configuration_in_the_environment_does_not_reach_the_snapshot` 用 `--exact --ignored
+--test-threads=1` 重新执行自己的测试二进制来跑它）在整仓 lib 测试里每隔几十轮红一次，报错只有一个
+verdict 枚举值：`left: Keep(CheckFailed)` / `right: Delete`。`CheckFailed` 是 `decide_safety` 四条路共同
+的兜底答案，每条只写一行 `tracing::warn!`，而测试二进制里**没装任何 subscriber**，四行 warn 全被丢弃。
+装一个只给子测试用的 WARN 订阅者 `log_child_diagnostics()`（`with_test_writer` 平时静默；`run_child`
+本来就会把子进程 stderr 拼进父测试的 panic，不需要新管道），同机同命令 20 轮里第 10 轮就抓到原因：
+
+    WARN xai_fast_worktree::git::safety: path did not open as a git repository path=/tmp/.tmpmCoMtO/inherits-a-filter error="/tmp/.tmpmCoMtO/inherits-a-filter" does not appear to be a git repository reason=CheckFailed
+
+范围从「四条路」收到一条：`gix::open` 失败，而 `.git` 当时存在（否则 reason 会是 `NoRepo`）。
+
+**第二层遮蔽才是本轮要记的：本轮早先的改动把 warn 从 `%error` 换成 `%format!("{error:#}")`，
+以为是打印错误链，实际是个空操作。** `gix-0.83.0/src/open/mod.rs` 的
+`#[error("\"{path}\" does not appear to be a git repository")]` 模板里根本没有 `{source}`，thiserror 的
+`Alternate` 走同一个模板；`gix-discover-0.51.0/src/lib.rs:47` 那 11 个 `is_git::Error` 变体（其中 5 个带
+`std::io::Error`）全被压成同一句话。换成手走 `source()` 的 `open_error_chain()` 之后，再加一条能区分
+两者的测试：它构造 `NotARepository → MissingCommonDir → io::Error(EMFILE)` 这条**三层**链，断言日志里
+既有「哪个文件」也有「哪个 errno」。三条变异跑过（跑完 `cmp` 字节还原）：函数体换回
+`format!("{error:#}")` → 红，报错尾部只有外层那一句；`push_str(&current.to_string())` 换成
+`let _ = current;`（遍历但不打印）→ 红，尾部是 `…: : `，说明链被走完两层只是没印；另两条改法编译不过
+（E0282/E0596），不算变异。还原后 `git::safety` 全绿（当时计数 49 passed / 0 failed / 2 ignored）。
+
+**根因**：带错误链的二进制按原复现命令跑到第 26、94 轮各红一次，链的第二层是
+`is_git::Error::CurrentDir`、第三层是 `ENOENT`。`gix-discover-0.51.0/src/is.rs:36` 在 `is_git()` 的
+**开头**无条件执行 `gix_fs::current_dir(false)`，与传进去的路径是绝对还是相对无关。所以红的那一刻
+要说的不是「这个目录不是仓库」，而是**调用方的当前目录已经被删掉了**；`gix::open` 把它包装成
+`NotARepository`，安全门于是回答 `CheckFailed`。`run_child` 重新执行测试二进制时不指定 `current_dir`，
+子进程于是继承了那个已经不存在的 cwd——把子进程钉到 `temp_dir()` 即修好，并加一条永久测试
+`the_child_does_not_depend_on_the_cwd_it_inherits`。「删掉自己当前目录」这个动作放在一个只跑它自己的
+子进程里：第一版写在父进程，它确实红了，但同时把同模块另外 32 条测试一起弄红（`17 passed; 33 failed`），
+那是用制造缺陷的方式测试缺陷。两条变异（跑完 `cmp` 字节还原）：去掉钉住的那一行 → **逐字复现历史
+偶发**（同测试名、同 verdict 对、同三层链）；让那个临时目录不被删除 → 红在「cwd 确实已被 unlink」
+这条前置断言上，说明前提本身是活的。还原后 `git::safety` **50 passed / 0 failed / 3 ignored**，默认与
+`--features metadata` 两种配置相同。本行交付的不是「不再红」：**谁删掉了那个目录**仍然匿名，另一种
+「工作树路径自己消失」的形状（链里只有裸 `ENOENT`）本轮也没解释，两者都记在证据文件第 5.3 节作为待查，
+不写成结论；该测试对 `CheckFailed` 的严格断言刻意不放宽（放宽会连带放过 filter 泄漏）。
+钉住之后再跑同样的 120 轮整仓：**0 红**（`flaky10/`）；但同一份证据文件算过，即便修法完全无效，
+120 轮全绿的概率也在 40% 上下，所以这个 0 只能读成「没有出现更糟的形状」，不能读成归零。
+（2026-10-03；`crates/codegen/xai-fast-worktree/src/git/safety.rs`、`src/git/safety_tests/gate.rs`、
+`docs/verification/fast-worktree-safety-gate-flake-2026-10-03.log`）
+
+### 新增门禁：谁能改整个进程的当前目录，改完谁负责放回去——这条只能静态查
+
+上一条那个偶发的形状决定了运行时抓不到它：报错的测试永远不是闯祸的测试，而单跑那条测试永远绿。
+新增 `scripts/ci/cwd-change-census.py`，把「改进程级 cwd 的每一处 + 它的恢复动作」变成一张表加四条失败
+形状：新调用点不在清单里、清单里的行漂了、**测试位置的 chdir 前面没绑 `CwdGuard`/`RestoreCwd`（结构规则，
+不受清单支配）**、role 或 guard 列与实测不符／理由列是空的。实测 7 处（2 产品 5 测试）。角色判定不是数
+属性：`git/safety_tests/gate.rs` 一个属性都没有，只有解析 `git/safety.rs` 里
+`#[cfg(test)] #[path = "safety_tests.rs"]` 这条模块声明才能认出它只进测试构建——判错就会把那条故意删除
+自己 cwd 的测试当成产品代码，而产品代码不要求恢复。**真实树 5 个变异逐个红、逐个还原**（抽掉 guard 绑定／
+把危险站点声明成 product／新加一条无 guard 的测试 chdir／理由列写 `TODO`／反方向只写进注释必须不多报），
+夹具 14 条全绿。夹具当场抓出扫描器自己的两个缺陷：普通字符串的终止符写成查找 `""`，第一个字符串起把整个
+文件后半抹平（站点表变成空表）；`#[path = "..."]` 里的文件名被自家抹除器抹掉——真实仓库被「父目录名里带
+tests」这条捷径救了一次，是把目录名捷径关掉只留模块图才暴露。扫描范围是仓库根全部 `.rs`，因为工作区成员
+含 `crates/` 之外的 `prod/mc/cli-chat-proxy-types` 与四个 `third_party/*`。门禁只用标准库（3 秒），
+接线由 `check-guard-wiring.py` 双向把关。它不查「谁删了目录」，也不证明那 7 处行为正确——那两条待查仍在
+上一条评论里挂着。（2026-10-03；`scripts/ci/cwd-change-census.py`、`scripts/ci/cwd-change-baseline.tsv`、
+`scripts/ci/test-cwd-change-census.py`、`.github/workflows/ci.yml`、`scripts/verify-in-docker.sh`、
+`docs/verification/cwd-change-census-2026-10-03.log`）
+
+### 修复：nfs「daemon 已死就本地拷贝兜底」那条测试每隔几十轮红一次——红因是夹具自己把判决时刻放进了 30 ms 的校时误差里
+
+`nfs::client::tests::timeout_dead_daemon_unmounted_dest_is_fallback_without_second_create` 在整仓
+lib 测试 120 轮里红 2 次（第 43、50 轮），两次逐字相同：
+
+    called `Result::unwrap()` on an `Err` value: InFlight { phase: "unknown" }
+
+产品没有判错，是**夹具让被测判决去赌调度器**。夹具 `lost_create_script()` 让 mock daemon 先睡
+`create_hold = 300ms` 才 drop flock、unlink sock；客户端那侧的判决时刻 ≈ `create_timeout`(80ms) +
+`query_phase` 的 socket 下限 `QUERY_PHASE_MIN_TIMEOUT`(250ms) ≈ 330ms。两者只差 30ms，满载机器上
+线程从睡眠里醒过来的延迟轻易超过它，于是 `is_provably_dead()`（sock 不存在或 ping 不通 **且** flock
+已释放）在判决那一刻看到的仍然是「锁被持有」，客户端回答 `InFlight`。改成 `create_hold:
+Duration::ZERO`：mock 先 drop flock、先 unlink sock、再关掉连接，而客户端那次阻塞读**正是因为**连接
+被关掉才返回——被探测的两个状态因此在探测开始之前就已成立，不再与墙钟赛跑。产品代码一行未动，
+`die_after_create` 仍是无回包的丢失响应，被断言的仍是 `poll_after_lost_reply → deadline_decision`
+这条真实判决路径。
+
+**因果配对方**：只把这一行改回 `300ms`、其余一行不动，重编一个二进制，用同一条整仓命令再跑 120 轮
+→ 第 79 轮红，报错与历史偶发**逐字相同**；含修复的那份在同样 120 轮里 `nfs::client` 0 红。红过 /
+没红过是这一对的结论，1/120 与 0/120 的**速率**差不作为任何结论——按上面的算术这是「硬币贴着边立不
+立得住」的问题，样本量撑不起更细的说法。测量诚实性也写在证据文件里：**单条测试单线程 300 次、整模块
+24 个 CPU spinner 200 轮（而且是带着缺陷重编的对照二进制）都是 0 红**，所以这些形状不能用来证明修复，
+只有整仓 `--lib` + `--test-threads=$(nproc)` 复现得起来。
+
+**顺带补上两条此前无人看管的产品行为**：`deadline_decision` 一直会在 daemon 确定已死且 dest 不是
+挂载点时清掉**空**的残留目录（daemon 写第一条 journal 之前就会 mkdir dest，而 `git worktree add`
+拒绝已存在的目录，不清掉兜底直接失败），并且**拒绝**在**非空**残留上拷贝兜底（`InFlight { phase:
+"dest-exists" }`——那可能是死掉 daemon 正在写的半成品投影，既不能删也不能盖）。改造前兜底那条测试
+只看判决、压根不看 dest，两条都没有测试。现在加 `assert!(!dest.exists(), …)` 与新测试
+`timeout_dead_daemon_nonempty_leftover_dest_refuses_fallback`（种 `dest/partial="not mine"`，断言
+phase **等于** `dest-exists` 而不是泛化的 `unknown`、`creates == 1`、字节未被触碰）。**变异矩阵 3 行**
+（跑完 `cmp` 字节还原）：N1 `is_provably_dead()` 取反 → 两条都红，且兜底那条的报错与历史偶发逐字相同
+（这同时反证历史偶发走的就是这条路径）；N2 去掉空残留的 `remove_dir` → 只有 dest 断言红；N3 `if empty`
+改成 `if true` → 只有拒绝那条红。
+（2026-10-03；`crates/codegen/xai-fast-worktree/src/nfs/client.rs`、
+`docs/verification/fast-worktree-nfs-dead-daemon-race-2026-10-03.log`）
+
+### 修复：Windows 平台腿每次都死在自己的作业超时上，而 CI 给整条 run 的结论只写着 `cancelled`
+
+`platform tests (windows-latest)` 在 `f585f59d` 上把 45 分钟预算全花在第 9 步
+`cargo test (target-OS crates)`（前 8 步全绿，第 9 步在 45m15s 被取消），同一条 run 的 macOS 腿
+31m17s 跑完，其余 8 个作业全绿。作业超时被 GitHub 记成该作业 `cancelled`，于是整条 run 的总结论也是
+`cancelled`——看上去和被并发取消是同一个形状，实际不是。`timeout-minutes: 45` 是 `da5e1ee0` 写这条腿时
+猜的，从来没跟一次真实运行对过；现在改成 75，两条实测数字写在设置上方。同一轮把两类静因分开记清：
+main 上那五条 `cancelled` 里，`gh api .../runs/<id>/jobs` 返回的作业数是 `0`——那是并发组丢弃了**排在
+队列里**的运行（`cancel-in-progress: false` 只保护已经在跑的运行），与超时无关，代价是那三个 commit
+一条平台证据都没拿到，处置是把可交付切片攒成一批再推。证据（run／job／step 三个层级的 API 原文）见
+`docs/verification/platform-ci-2026-10-02.log` 的 2026-10-03 一节。这条**不是**「Windows 测试通过」的
+证据：它只说明这一步第一次拿到一个可能跑得完的预算，此前连续五次 head 的 Windows 失败都在我们的工具链
+上而不是产品上。
+（2026-10-03；`.github/workflows/ci.yml`、`docs/verification/platform-ci-2026-10-02.log`）
+
+### 新增门禁：提交进仓库的文档不允许把证据放在只存在于一次会话里的目录
+
+`docs/` 下的证据文档是给人复查的，但审计发现有 40 处指向只存在于一次会话里的目录：一类写「详见会话
+scratch」，另一类直接给出会话 scratch 根目录下的绝对路径。那些目录随会话结束删除，读者照着找不到任何
+东西，文档等于自己宣布不可复核。新增 `scripts/ci/check-evidence-paths.py`（+ 16 条自测）：`os.walk` 跳过
+`.git`/`target`/`node_modules`/`dist`/`build`（首版用 `rglob("*")` 会走进 `target/`，一次扫描挂住不返回），
+扫全部 `*.md` 加 `docs/` 下的 `*.tsv`——**生成的** tsv 也扫，`scripts/ci/*.tsv` 与
+`docs/verification/*.log` 不扫（日志里本来就要抄命令）。四条模式逐条写在
+`scripts/ci/check-evidence-paths.py` 的 `PATTERNS` 里（中英文两种「scratch 是证据所在」的说法、把
+scratch 根目录写成绝对路径的前缀、以及两种把会话目录称作 scratch 的英文写法），这里**不复述字面量**：
+本条改动第一次提交时，门禁就在这一段描述里红了三处，因为它对「描述规则」和「使用规则」不加区分——
+这条自我命中本身就是它不是空转的最直接证据。今天 275 个文件 0 命中。唯一豁免是一条
+**具名**条目（`xai-grok-shell` 里随产品发布的 prompt 模板，它教模型怎么用 scratch）；豁免条目一旦从
+扫描集里消失，门禁自己红，防止有人删了规则却留着豁免。
+
+40 处指针分两遍清：第一遍脚本替换留下的句子读不通、还漏了一处绝对路径，第二遍逐条手写。
+变异矩阵 6 行里 **M5/M6 两行是绿的**——「把 `target/` 也走一遍」与「删掉中文那条模式」在今天的树上
+都不改变结果，只有夹具能证明它们被覆盖，这两行如实记着，不写成红。门禁同时进
+`.github/workflows/ci.yml` 与 `scripts/verify-in-docker.sh` 的 `gates=()`，由 `check-guard-wiring.py`
+双向钉住（漏镜像或留悬空调用点都会红）。
+（2026-10-03；`scripts/ci/check-evidence-paths.py`、`scripts/ci/test-check-evidence-paths.py`、
+`.github/workflows/ci.yml`、`scripts/verify-in-docker.sh`）
+
+
+### 新增：浏览器第一次真的把文件当附件上传进 workspace；顺带 e2e 抓出一处会吞掉错误的状态写法
+
+协议与主机侧早就完备（`crates/codegen/chaos-engine/tests/attachment_protocol.rs`、Web 主机的策略测试），
+缺的是浏览器这一侧**根本没有客户端**：协议类型还漏着 6 条消息，UI 里也没有任何入口。补上之后，一次上传
+是 `validate_attachment` → `begin_attachment` → `attachment_chunk`×N → `finalize_attachment` → 审批
+`workspace.attach_attachment` → `file_changed` + `attachment_completed`，写入这一步隔着一次真实审批。
+
+**真正卡人的是帧上限，不是文件大小。** Web 主机每帧硬上限
+`crates/codegen/xai-grok-web/src/lib.rs:25`（`MAX_REQUEST_BYTES = 64 * 1024`），超了回
+`message_too_large`，而 base64 又把载荷放大 4/3，所以每片装多少字节是算出来的：
+47 KiB 原文 → 64,172 个 base64 字符 + 144 字节 JSON 外框 = 64,316 < 65,536；48 KiB → 65,680 就超。
+`UPLOAD_CHUNK_BYTES` 因此从**两侧**被测试夹住（写大了失败，写小了浪费带宽）。早期写的是 32 KiB，理由
+「肯定装得下」——那次 `chunkFrameBytes(32768 + 1024)` 报 45,200，离上限还远，说明那条断言压根没证明上限
+是约束所在。10 MiB 上限的整份文件切成 218 片后，同样断言每片都非空、每片都装得下、且切片覆盖每一字节
+恰好一次；`MAX_ATTACHMENT_BYTES` 与 `UPLOAD_CHUNK_BYTES` 由测试**回读 Rust 源文件**核对，避免客户端以为的
+上限与主机执行的上限各自漂移。
+
+**e2e 抓到的缺陷不在上传里，在状态写入里。** 第 3 例红在状态行根本不存在，即 `session.upload` 是
+`undefined`。根因：`ws.onmessage` 先推进 `sessionStateRef.current` 再 `setSession`，而点击上传用的是 React
+的函数式更新——函数式更新只改 React 状态，那个 ref 要等下一次渲染后的 effect 才跟上。主机最早的回复
+（`attachment_rejected`）正好落在这个窗口里，于是它被应用在一个**没有 `upload` 的旧状态**上，失败分支根本不
+执行，而它算出的 `next` 又把排队的 `validating` 覆盖掉。用户看到的是徽标刷成一行通用错误、面板忘记这次
+上传——一次静默失灵，而 `submit()` 那类「状态不完整就 early-return」的入口有同样的形状。修法不是给上传打
+补丁，而是消掉两份真相：新增 `updateSession()`，一次调用里同时推进 ref 与 React 状态，19 处函数式写法 +
+1 处 `(c) =>` 写法全部改过去，并留 `apps/chaos-ui/src/session-wiring.test.ts` 一条结构钉子（读 `main.tsx`
+源码断言不再有任何 `setSession((`；把任意一处改回去它当场红，还原后 `cmp` 字节一致）。
+
+**主机侧新测试**：`websocket_upload_lands_file_bytes_in_the_workspace_after_approval` 先发一片**故意**超过
+64 KiB 的帧（原文 96,257 字节 → base64 128,344 字符）断言 `message_too_large`，再按 47 KiB 切三片
+（48,128 + 48,128 + 3,744 = 100,000）让累计 `received` 等于 100,000，审批后 `fs::read` 逐字节比对、并断言
+`.chaos-staging` 不残留分片——上限于是第一次被真实触发过，且证明主机拒的是**那一帧**不是整段上传。
+`safe_web_mode_refuses_every_step_of_an_attachment_upload` 先证明安全模式下 `create_session` 仍成功（否则
+「被拒」只是因为压根没有会话），再逐一断言五个步骤各回 `safe_web_mode_blocked`。同轮删掉
+`safe_mode_allows` 里的 `ClientMessage::FinalizeAttachment`：它不是更宽的口子而是**永远走不到的死条目**
+（安全模式下 `begin_attachment` 已被拒，客户端拿不到 `upload_id`），留着反而让人以为安全模式对上传开了洞。
+
+**验证**：真实 Playwright 在 desktop 1440×1000 与 mobile 390×844 各跑 3 例共 6 条全绿（`setInputFiles` 真的
+塞文件、审批点「允许」、状态行逐字等于 `附件已写入 nested/<name>.txt（122880 字节）`、磁盘逐字节比对、再换
+workspace 内容搜索与编辑器这**第二条代码路径**复读一次；取消例等到「正在上传」才点取消并在 300 ms 后复断
+文件仍不存在；`.exe` 例证明客户端不轻信自己的校验——本地不做扩展名白名单，主机的 `attachment_rejected`
+被如实呈现）。plumbing 影响所有会话写入，故整套 e2e 重跑 **39 passed / 53.2s**（含真把 `chaos-web` 杀掉重启
+的 `reconnect-snapshot`、第二个标签页不能替当前页审批的 `approval-competition`、两条 axe 无障碍用例），无一
+转红；`npx vitest run` **56 passed**、`npm run typecheck` 干净、`cargo test -p xai-grok-web --test
+local_policy_flow --test safe_mode_flow` 3 + 2 全绿。非空洞性：把 `pumpUpload` 改成只发第一片，第 1 例当场
+转红（字节数停在第一片的累计值）而另两例仍绿，还原后 `cmp` 字节一致。全记录见
+`docs/verification/web-attachment-upload-2026-10-03.log`。（2026-10-03；`apps/chaos-ui/src/attachments.ts`、
+`apps/chaos-ui/src/attachments.test.ts`、`src/session.ts`、`src/session.test.ts`、`src/main.tsx`、
+`src/session-wiring.test.ts`、`e2e/attachment-upload.pw.ts`、`playwright.config.ts`、
+`crates/codegen/xai-grok-web/src/lib.rs`、`tests/local_policy_flow.rs`、`tests/safe_mode_flow.rs`、
+`docs/verification/web-attachment-upload-2026-10-03.log`）
+
+**提交前复跑抓到一条真偶发红，红的是那条断言自己的形状。** 上面「取消例等到『正在上传』才点取消」用的
+是 `toContainText('正在上传')`，而 `正在上传` 是瞬态：取消例的文件只有 4 KiB，正好一片，`begin_attachment`
+回来后一片就发完，状态行在下一次轮询之前已经走到 `附件已传完，等待审批写入：…`。`toContainText` 看的是
+**当下**的 DOM，没有「出现过」这个概念——于是这条测试实际在测 loopback 有多快，实测 6 轮红 2 轮（两次都是
+mobile 那一遍）。改法与 `reconnect-snapshot` 同一招：`addInitScript` 挂 MutationObserver 把状态行显示过的
+每个文本记进 `window.__chaosUploadSeen`，断言改为 `expect.poll` 轮询**这份记录**；取消的点击仍排在这条等待
+之后，所以「取消的是真传输」这个前提没被削弱。把观察者监听的 testid 改错，两个视口都红在
+`上传状态里从未出现过「正在上传」`（跑完写回、`cmp` 字节一致）；记录形式连跑 5 轮 30 条全绿，轮询形式同机
+连跑 5 轮红 1 轮。见同一日志第 9 节。
+
+### 新增门禁：`check-gui-protocol.sh` 证明「文件重新生成过」，证明不了「镜像没漏写」——事实上门户漏了 6 条
+
+浏览器那份协议类型来自 `crates/codegen/chaos-engine/src/protocol_schema.rs` 里手写的
+`pub const TYPESCRIPT`，导出成 `apps/chaos-ui/src/generated/protocol.ts`。已有的
+`scripts/ci/check-gui-protocol.sh` 把导出结果与那段字符串比对，两个输入是**同一段手写文本**，所以它证明的
+仅是「文件被重新生成过」；镜像本身漏写了什么，它结构上无从得知。附件上传就是漏的——客户端要发
+`begin_attachment`/`attachment_chunk`/`cancel_attachment`、主机要回 `attachment_started`/
+`attachment_progress`/`attachment_cancelled`，浏览器类型里一条都没有，而引擎那一侧有一整组协议测试在发这些
+消息。把镜像退回漏写前那 6 行再跑新守卫，得到 `ClientMessage: 29 of 32 / ServerMessage: 37 of 40` 加逐条
+点名；**同一次运行里旧检查照样打印 `GUI protocol types are up to date`**。
+
+`scripts/ci/check-protocol-mirror.py` 解析真的 Rust 枚举（花括号配平取 body、变体→字段名集合、复刻 heck 的
+`rename_all = "snake_case"` 所以 `HTTPStatus` → `http_status`），与镜像里两个 union **双向**比对：缺 tag、多
+tag、每条消息缺字段/多字段、重复 tag、带 tag 条目写在 union 之外、两个变体在 snake_case 下塌成同一个 tag、
+union 整个缺失。字段**类型**刻意不在范围内——`UUID` 对 `Uuid` 是另一个量级的翻译问题，且类型不符会在
+反序列化处当场失败，不会静默；会静默的只有「有这条消息」与「有这些字段」，范围就收在这里。
+
+两处解析细节是写夹具时才逼出来的，都有测试钉住：字段名只认行首声明**且冒号不能是路径分隔符**（`(?!:)`），
+因为 rustfmt 会把放不下的泛型换行，`serde_json::Value,` 也是「小写词 + 冒号」开头，早先的版本据此凭空造出
+一个字段 `serde_json` 并报「镜像缺字段 serde_json」；`//` 也要跳过，设计稿里抄一份 `pub enum ClientMessage`
+是常见写法，读注释那份会让守卫在真枚举缺消息时仍然绿。夹具 **26 条**，最后一组是关键——它**从真镜像里逐条
+删掉那 6 条中的每一条**并要求守卫变红且点名那条，证明守卫读的是 CI 真正检查的文件而非自己的夹具。**17 个
+变异体 16 个被抓**，唯一存活的 `field-anywhere-in-line`（`re.match` → `re.search`）是有据可查的等价变异：
+在「守卫会看到的输入」这个集合上两者行为相同，而它第一轮同样存活时**没有** `(?!:)`，那时换行类型真的会造出
+幽灵字段——那个真实缺陷现由 `test_a_wrapped_type_line_does_not_become_a_wire_field` 钉住。
+`comments-not-stripped` 第一轮也存活，补了「注释里抄了一份枚举」这条双向夹具（镜像完好必须绿 + 真 tag 缺失
+仍要点名）之后被抓。还原全部由 `cmp` 逐字节确认，pristine/after sha256 同为 `114f154f4930…f5af`。接线两个
+入口都有：`ci.yml` GUI job 的「Protocol mirror coverage」步骤与 `scripts/verify-in-docker.sh` 同名 gate
+（`check-guard-wiring.py` 会拒绝写了没人跑的守卫）。全记录含 17 行变异锚点表见
+`docs/verification/protocol-mirror-coverage-2026-10-03.log`。（2026-10-03；
+`crates/codegen/chaos-engine/src/protocol_schema.rs`、`apps/chaos-ui/src/generated/protocol.ts`、
+`scripts/ci/check-protocol-mirror.py`、`scripts/ci/test-check-protocol-mirror.py`、`.github/workflows/ci.yml`、
+`scripts/verify-in-docker.sh`、`docs/verification/protocol-mirror-coverage-2026-10-03.log`）
+
+### 修复：`xai-fast-worktree` 的测试会扫描开发者真实的 grove 目录，`auto_gc` 因此随机红
+
+`verify-in-docker.sh --full` 的 `cargo test` 门禁在容器里报
+`auto_gc::tests::rebuild_same_pass_does_not_age_expire_new_registration` 失败于 `auto_gc.rs:1804`
+（`503 passed; 1 failed`），本地测量复现率 3/20 与 5/34。单跑该模块全绿——把「不稳定的测试」当输入而不是
+结论，才看见真正坏的是隔离：重建那一路会 union `nfs::candidate_data_dirs()`，而它包含主机真实的
+`$HOME/.local/share/grove`。夹具自己只登记 1 个 worktree，开发机上多一个无关 grove 条目就把 `registered`
+从 1 变成 2，断言于是取决于**跑测试的那台机器装了什么**。诊断打印出的 `candidates` 里同时列着
+`/home/chaos/.local/share/grove` 与夹具目录，是这条链的直接证据。
+
+修法沿用该 crate 已有的隔离机制而不是新造一个：`auto_gc.rs` 的 10 处夹具构造改走
+`isolated_fixture()`，它调用 `GrokHomeFixture::isolate_xdg_grove_data()` 把 grove 查找限制在夹具内；该
+方法先取 `nfs::GROVE_ENV_LOCK`——`GROVE_DATA_DIR` 是进程级环境变量，`nfs/remove.rs` 里三条测试也写它，
+不共享一把锁的话两个测试会互相看到对方的设置（无嵌套获取，故不构成死锁）。**验证**：单跑
+`cargo test -p xai-fast-worktree --offline --locked --features metadata --lib` **504 passed / 0 failed**，
+随后按原复现命令连续 30 轮全绿（`RED 0 / 30`），与修复前同一命令的 `RED 3 / 20` 对照；逐轮日志与
+环境变量快照见 `docs/verification/fast-worktree-grove-isolation-2026-10-03.log`。
+补的两条测试不读开发者目录的内容，把「隔离」这件事钉在夹具上而不是钉在计数上：
+`a_fixture_hides_any_grove_dir_outside_itself`（先断言候选列表里**有**一个落在夹具之内的目录——正向
+锚点，防止「列表恰好为空」让后半句空转——再断言没有任何一个落在夹具之外）与
+`a_fixture_clears_a_grove_data_dir_that_was_already_set`（夹具创建**之前**就种好 `GROVE_DATA_DIR`，
+这正是测试进程会带上它的方式）。变异矩阵 5 行证明这个锚点不是装饰：只改产品代码不再认
+`XDG_DATA_HOME`（M4）时新测试红，而**同时删掉正向锚点（M5）两条测试一起变绿**；原来的
+`registered == 1` 计数断言在五组变异里**全程绿**，也就是它本来就看不见这个缺陷。
+
+同一轮之后又按原复现命令跑了 120 轮整仓：`auto_gc` 这一类 **0 红**，但另有两类各红 2 次
+（`nfs::client` 与 `git::safety`），是两条与本行无关的独立缺陷，各自有自己的证据文件——这张表因此
+同时说明本轮**没有**修完该 crate 的偶发失败。全仓测试数从本行写下时的 504 涨到 508。
+（2026-10-03；`crates/codegen/xai-fast-worktree/src/auto_gc.rs`、`src/db/mod.rs`、
+`docs/verification/fast-worktree-grove-isolation-2026-10-03.log`）
+
 ### 证据复测：remote 签名「删掉那一行会红几条」被重新测了一遍，顺手挖出测量装置自己的洞
 
 `docs/verification/remote-provenance-linux-2026-10-02.log` 写着「把 provenance 调用删掉，会有一串测试
@@ -307,14 +680,14 @@ OK(23)、`check-workflow-shells.py` OK、`bash -n` 两份脚本通过；真实�
 却没有任何地方跑过它，而且是红的——本轮是从别的方向撞上看见的，不是门禁报的。文档因此一路漂到
 声称 51 unchecked / 98 partial / 149 行，表里写 `M0 0/13`、`M3 8/9`、`M4 24/3`、maintenance 6/14，
 而**同一个文件的正文写的是 maintenance 5/13**；真实值是 `unchecked=23 partial=113 rows=136`，
-`M4` 那一行相对它自己的正文还是转置的。它把三份私有 goal scratch 当证据路径，还沿用已作废的
+`M4` 那一行相对它自己的正文还是转置的。它把三份未留存日志当证据路径，还沿用已作废的
 429/218 ignore 数字（现场重测：428 个 `#[ignore]` 属性、0 条裸属性，`--require-reasons` 通过）。
 
 `classify-open-todos.py` 改成三种模式。默认模式输出逐行清单（行号 / 状态 / 最近标题 / 原文 +
 `TOTAL`）；`--groups` 按里程碑分组，**任何一行不属于任何组就直接失败并列出 `line N: <heading>`**，
 新增 `### M6.` 段不会被静默排除在全部计数之外；`--check-doc` 把文档表格与 `TODO.md` 逐格比对，
 差异按 `M4 unchecked: document says 3, TODO.md has 5` 这种可执行的形式打印，并附上重算命令。
-文档表格、两处过时正文数字、以及指向私有 scratch 的三处证据指针全部改掉，逐行导出改为随仓库提交的
+文档表格、两处过时正文数字、以及指向会话私有临时目录日志的三处证据指针全部改掉，逐行导出改为随仓库提交的
 `docs/verification/todo-open-items-2026-10-03.tsv`。
 
 真正的新东西是第二个检查，因为「没人跑」这一类缺陷此前没有任何东西守着，本轮已连着撞上四个：

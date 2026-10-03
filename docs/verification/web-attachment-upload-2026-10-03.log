@@ -1,0 +1,293 @@
+附件上传第一次真的从浏览器跑通：122880 字节分三片、审批、落盘逐字节比对；顺带被 e2e 抓出一个会吞掉错误的一行状态写法
+================================================================================================================================
+
+日期：2026-10-03
+提交：feat(web): 浏览器能把文件作为附件上传进 workspace（分片/审批/取消），并修掉一处会吞掉上传错误的状态写法
+被记录的对象：
+  apps/chaos-ui/src/attachments.ts                  新增：分片计划、base64、消息构造、错误码集合、状态文案
+  apps/chaos-ui/src/attachments.test.ts             新增 10 条
+  apps/chaos-ui/src/session.ts                      `Upload` 投影（5 条附件消息 + 审批两条分支 + 错误优先分支）
+  apps/chaos-ui/src/session.test.ts                 新增 7 条
+  apps/chaos-ui/src/main.tsx                        文件页「附件上传」面板；`updateSession()`（见第 5 节）
+  apps/chaos-ui/src/session-wiring.test.ts          新增 1 条结构性钉子
+  apps/chaos-ui/e2e/attachment-upload.pw.ts         新增 3 例（两个视口共 6 次运行）
+  apps/chaos-ui/playwright.config.ts                三处 testMatch 收录新文件
+  crates/codegen/xai-grok-web/src/lib.rs            `safe_mode_allows` 去掉一条永远走不到的条目
+  crates/codegen/xai-grok-web/tests/local_policy_flow.rs  新增 2 例（含 100000 字节真实分片落盘）
+  crates/codegen/xai-grok-web/tests/safe_mode_flow.rs     新增 1 例（五个步骤逐一被拒）
+
+本文件自包含：每段输出都从当轮真实运行里逐字抄下，命令写在 `$` 行上。
+
+
+第 1 节  之前是什么状态
+-----------------------
+
+协议与主机侧早就完备：引擎有 `crates/codegen/chaos-engine/tests/attachment_protocol.rs`，Web 主机的
+`tests/local_policy_flow.rs` 里也已经验过 `validate_attachment`/`begin_attachment` 的策略。缺的是**浏览器这一侧
+根本没有客户端**——协议类型还漏了 6 条消息（见 `docs/verification/protocol-mirror-coverage-2026-10-03.log`），
+UI 里也没有任何入口。所以「GUI 能上传附件」在 TODO 上是一条不能勾选的开放项。
+
+一次上传在协议里是五步，且写入这一步**必须经过审批**：
+
+    validate_attachment{filename, byte_len, content_type}  → attachment_validated | error attachment_rejected
+    begin_attachment{session_id, filename, …}              → ack + attachment_started{upload_id, filename}
+    attachment_chunk{upload_id, chunk=base64}              → ack + attachment_progress{upload_id, received}
+    finalize_attachment{upload_id, relative_path}          → ack + tool_approval_requested
+                                                             {tool: "workspace.attach_attachment"}
+    approve(request_id)                                    → file_changed{operation:"attachment_write"}
+                                                           + attachment_completed{path, bytes}
+
+
+第 2 节  真正卡人的是帧上限，不是文件大小
+------------------------------------------
+
+Web 主机对每一帧有硬上限：
+
+    crates/codegen/xai-grok-web/src/lib.rs:25   const MAX_REQUEST_BYTES: usize = 64 * 1024
+
+超过就回 `message_too_large`，且二进制帧被静默丢弃（`let Message::Text(text) = message else { continue }`）。
+base64 又把载荷放大 4/3，所以**每片能装多少字节是算出来的，不是猜的**：
+
+    47 KiB 原文 → base64 64,172 字符 + JSON 外框 144 = 64,316 字节 < 65,536
+    48 KiB 原文 → 65,680 字节 > 65,536
+
+`UPLOAD_CHUNK_BYTES = 47 * 1024` 因此被从**两侧**钉住，写小也是失败（浪费线上带宽）：
+
+    expect(chunkFrameBytes(UPLOAD_CHUNK_BYTES)).toBeLessThan(MAX_FRAME_BYTES)
+    expect(chunkFrameBytes(UPLOAD_CHUNK_BYTES + 1024)).toBeGreaterThan(MAX_FRAME_BYTES)
+
+同一文件里还有：整个 10 MiB 上限的文件切成 218 片后，每一片的帧都必须小于上限、每片都非空、
+且切片覆盖每一字节恰好一次；`MAX_ATTACHMENT_BYTES` 与 `UPLOAD_CHUNK_BYTES` 都取自 Rust 侧
+（`AttachmentStager::validate_name_type_size`、`MAX_REQUEST_BYTES`），测试直接读那两个源文件比对，
+避免「客户端以为的上限」与「主机执行的上限」各自漂移。
+
+早期写的是 32 KiB，理由是「肯定装得下」。`chunkFrameBytes(32768 + 1024)` 当时报 45,200——离上限还很远，
+于是那条断言根本没能证明上限是约束所在。改成分两侧夹逼之后，常量才真正被线住。
+
+
+第 3 节  客户端的形状
+---------------------
+
+投影是纯函数，发送集中在 `ws.onmessage`（这是本 UI 既有的一致做法）：
+
+- `session.ts`：`attachment_validated` → `beginning`；`attachment_started` → 建 `Upload`（拿到 `upload_id`）；
+  `attachment_progress` → 只有 `upload_id` 匹配才更新 `sentBytes`；`attachment_cancelled` 同理；
+  `attachment_completed` → `done` 带 `path`/`bytes`；`tool_approval_requested` 且 tool 为
+  `workspace.attach_attachment` → `awaiting_approval`；`approval_resolved` 被拒 → `cancelled`。
+- 错误分支**第一行**就是上传判定：`isUploadFailure(code, status)`。错误码分两组是必要的：
+  `attachment_rejected/_chunk_invalid/_not_found/_quota_exceeded/_incomplete/_write_failed` 加上主机层的
+  `message_too_large`、`safe_web_mode_blocked` 只要落在上传期间就是终止性的；而
+  `path_invalid`/`path_escape`/`workspace_unavailable` 只在 `uploading`/`awaiting_approval` 时才属于这次上传——
+  它们在别的时刻是别的功能的错，不该把上传判死。两组码同样由测试回读引擎与主机源码核对，不是抄清单。
+- 主机侧两种拒绝的差别被保留：`attachment_quota_exceeded` 会丢掉该 upload，`attachment_chunk_invalid` 不会。
+
+
+第 4 节  主机侧新测试：100000 字节真分片（含一片故意超限的帧）+ 取消 + 安全模式
+--------------------------------------------------------------------------------
+
+    $ cargo test --offline --locked -p xai-grok-web --test local_policy_flow --test safe_mode_flow
+    running 3 tests
+    test websocket_git_status_is_read_only_and_attachment_policy_is_enforced ... ok
+    test websocket_cancelled_upload_cannot_be_finalized ... ok
+    test websocket_upload_lands_file_bytes_in_the_workspace_after_approval ... ok
+    test result: ok. 3 passed; 0 failed; … finished in 20.01s
+
+    running 2 tests
+    test safe_web_mode_blocks_direct_mutation_protocol_calls ... ok
+    test safe_web_mode_refuses_every_step_of_an_attachment_upload ... ok
+    test result: ok. 2 passed; 0 failed; … finished in 5.00s
+
+`websocket_upload_lands_file_bytes_in_the_workspace_after_approval` 里有一处是**故意**的：先发一片超过
+64 KiB 的帧（原文 `47 KiB × 2 + 1` = 96,257 字节，base64 之后 128,344 字符），断言拿到 `message_too_large`，
+然后再按 47 KiB 切三片（48,128 + 48,128 + 3,744 = 100,000 字节）让它们全部落地。这样第 2 节那条
+上限不再只是常量注释——它在这一条测试里被真实触发过一次，而且证明主机拒的是**那一帧**、不是整段上传。
+随后是累计 `received` 必须等于 100,000、写入目标 `notes/note.txt`（父目录已存在，走一遍父目录
+confinement）、审批 `workspace.attach_attachment`、`attachment_completed`，最后 `fs::read` 逐字节比对，
+并断言 `<workspace>/.chaos-staging` 里不残留分片。
+
+`safe_web_mode_refuses_every_step_of_an_attachment_upload` 先证明安全模式下 `create_session` 仍然成功
+（否则「被拒」可能只是因为压根没有会话），再逐一断言五个步骤各回 `safe_web_mode_blocked`，并确认 workspace 里
+没有出现那个文件。
+
+同轮把 `safe_mode_allows` 里的 `ClientMessage::FinalizeAttachment { .. }` 去掉了。它不是一条更宽松的口子，
+而是一条**永远走不到的死条目**：安全模式下 `begin_attachment` 已被拒，客户端拿不到 `upload_id`，
+finalize 不可能成功。留着它让人以为安全模式对上传开了一个洞。安全模式这条线的分界一直是「不允许任何改动，
+哪怕隔着一次审批」（`propose_file_write` 等同族一律拒），上传作为整体按同一分界处理。
+
+
+第 5 节  e2e 抓到的真缺陷：一次会话状态写入让上传错误凭空消失
+--------------------------------------------------------------
+
+    $ npm run test:e2e -- attachment-upload.pw.ts --project=desktop-chromium
+      ✘  1 › an approved browser upload writes the file into the workspace
+      ✓  2 › a cancelled upload is abandoned before the approval can write it
+      ✘  3 › the host refuses an attachment type it does not accept
+      2 failed, 1 passed
+
+第 3 例红在 `upload-status` 这个元素**根本不存在**（`Error: element(s) not found`）。当时的 DOM 快照里
+`上传附件` 按钮既不是禁用态、也没有任何状态行——也就是说 `session.upload` 是 `undefined`。
+
+根因是一行看似无害的写法。`ws.onmessage` 是这样推进状态的：
+
+    const previous = sessionStateRef.current
+    const next = applyServerMessage(previous, message)
+    sessionStateRef.current = next          // ref 立刻推进
+    setSession(next)
+
+而点击上传用的却是 React 的函数式更新：
+
+    setSession((current) => ({ ...current, upload: { …, status: 'validating' } }))
+
+函数式更新只改 React 的状态，`sessionStateRef.current` 要等下一次渲染后的 effect 才跟上。
+`validate_attachment` 的拒绝是本次上传**最早**回来的回复：它落在「effect 还没跑」的窗口里，于是
+(a) 被应用在一个没有 `upload` 的旧状态上，`isUploadFailure` 那一路根本不执行；
+(b) 它自己算出的 `next` 又把排队的 `validating` 覆盖掉。结果是徽标刷成一行通用错误、面板忘记这次上传，
+用户看不到「这个文件被主机拒了」——一次静默失灵。
+
+修法不是给上传打补丁，而是消掉「两份真相」：所有会话状态写入统一走一个同时推进 ref 的帮手，
+19 处函数式写法 + 1 处 `(c) =>` 写法全部改过去（`onmessage` 原本就是先推进 ref 再 `setSession`，无需改）：
+
+    const updateSession = useCallback((update: (current: SessionState) => SessionState) => {
+      const next = update(sessionStateRef.current)
+      sessionStateRef.current = next
+      setSession(next)
+    }, [])
+
+第 1 例当时也红了，但那是断言写错了而非应用错了：`session-status` 停在 `工具已执行`。原因是引擎在
+`approve` 之后先推 `file_changed`、`attachment_completed`，最后推审批的 `approval_resolved`，
+后者的通用徽标文案自然地覆盖了前一条。徽标只反映「最后一件事」，细节由专门的 `upload-status` 行承载，
+这是预期行为；断言改成读那一行 + 审批卡片消失。
+
+顺带留下 `apps/chaos-ui/src/session-wiring.test.ts`：读 `main.tsx` 源码，断言不存在任何
+`setSession((` 形式的调用。它不是装饰——把任意一处改回函数式写法它当场变红：
+
+    $ # 把一处 updateSession((current) => …) 改回 setSession((current) => …)
+    FAIL  src/session-wiring.test.ts > session state plumbing > writes session state through the ref-synchronising helper only
+    - Expected:   + Received:
+      13|     expect(MAIN_SOURCE).not.toMatch(/setSession\(\(/)
+    $ cp <pristine 备份> src/main.tsx && cmp <pristine 备份> src/main.tsx && echo RESTORED_BYTE_IDENTICAL
+    RESTORED_BYTE_IDENTICAL
+
+
+第 6 节  浏览器里到底验了什么
+----------------------------
+
+    $ npm run test:e2e -- attachment-upload.pw.ts
+      ✓  1 [desktop-chromium] › an approved browser upload writes the file into the workspace (1.2s)
+      ✓  2 [desktop-chromium] › a cancelled upload is abandoned before the approval can write it (1.2s)
+      ✓  3 [desktop-chromium] › the host refuses an attachment type it does not accept (710ms)
+      ✓  4 [mobile-chromium]  › an approved browser upload writes the file into the workspace (1.3s)
+      ✓  5 [mobile-chromium]  › a cancelled upload is abandoned before the approval can write it (1.1s)
+      ✓  6 [mobile-chromium]  › the host refuses an attachment type it does not accept (567ms)
+      6 passed (7.5s)
+
+三个视口共用同一份 spec：桌面 1440×1000 与移动 390×844（`isMobile`/`hasTouch`）各跑一遍。
+
+1. **120 KiB 的文件走完整条路。** `setInputFiles` 真的把文件塞进 `<input type=file>`（不是脚本代发的假事件），
+   填目标路径 `nested/<随机名>.txt`（父目录是 fixture 里已有的 `nested/`，因此这条断言同时过一遍主机对
+   父目录的 confinement 检查），点上传，断言按钮进入禁用态、状态行到达「附件已传完，等待审批写入」，
+   审批卡片出现并点名 `workspace.attach_attachment`，点「允许」，状态行必须逐字等于
+   `附件已写入 nested/<name>.txt（122880 字节）`。那个字节数只有三片全部被接收且主机累加了
+   `attachment_progress` 才可能出现。然后从磁盘读回逐字节比对，并换**第二条代码路径**再看一次：
+   用 workspace 内容搜索（它真的读盘）搜文件里的唯一 token，命中 `nested/<name>.txt`，点进去编辑器
+   标题为 `文件编辑：nested/<name>.txt` 且正文含该 token。
+2. **取消。** 等到状态行出现「正在上传」——这三个字意味着主机已经发回 `upload_id`、切片已经上线，
+   取消针对的是一段真实存在的传输。点「取消上传」后状态行必须等于 `上传已取消：<name>`，
+   取消按钮本身消失。此时审批卡片仍在（finalize 先于取消到达），点「拒绝」，卡片消失、状态行仍是已取消，
+   然后先断言文件不存在、再等 300 ms 复断一次——晚到的写入也要被这条抓住。
+3. **主机不认的类型。** 选一个 `.exe` 点上传，状态行必须变成 `上传失败：<name>`、出现
+   `role="alert"` 的失败文案、徽标为「上传失败」、按钮重新可用，且磁盘上什么都没有。
+   这一例是「客户端不轻信自己的校验」的证据：本地不做扩展名白名单，主机的 `attachment_rejected`
+   必须被如实呈现。
+
+改动的 plumbing 影响所有会话写入，因此整套 e2e 重跑了一遍：
+
+    $ npm run test:e2e
+      39 passed (53.2s)
+
+包含 `reconnect-snapshot`（真把 `chaos-web` 杀掉重启）、`approval-competition`（第二个标签页不能替当前
+标签页审批）、`static-host`、`tool-activity`、`workspace-flow` 的两条 axe 无障碍用例。两个视口 + observer
+共 39 条，无一转红。
+
+单元层：
+
+    $ npx vitest run
+     Test Files  7 passed (7)
+          Tests  56 passed (56)
+
+
+第 7 节  非空洞性证据
+---------------------
+
+- e2e 第 1 例：把 `pumpUpload` 改成只发第一片
+  （`attachmentChunkMessages(…).slice(0, 1)`），重跑 → 该例当场转红（`expect(locator).toHaveText` 失败，
+  字节数停在第一片的累计值），另外两例仍绿。还原后 `cmp` 确认 `main.tsx` 字节相同。
+- e2e 第 3 例的「应用坏掉就会红」不是事后编的：第 5 节那次失败就是它。
+- `session-wiring.test.ts` 的反证见第 5 节末尾。
+- 分片常量与上限的关系由第 2 节那对两侧夹逼的断言承担；把 `UPLOAD_CHUNK_BYTES` 抬高 1 KiB，
+  该断言立刻红。
+
+
+第 8 节  复现
+-------------
+
+    $ cargo test --offline --locked -p xai-grok-web --test local_policy_flow --test safe_mode_flow
+    $ (cd apps/chaos-ui && npx vitest run && npm run typecheck)
+    $ (cd apps/chaos-ui && npm run test:e2e -- attachment-upload.pw.ts)   # 两个视口 6 条
+    $ (cd apps/chaos-ui && npm run test:e2e)                              # 全套 39 条
+
+e2e 的主机是 Playwright 自己起的真 `target/debug/chaos-web`
+（`CHAOS_WEB_TOKEN=''`、`CHAOS_WORKSPACE_ROOT=apps/chaos-ui/e2e/fixtures/workspace`），端口由
+`e2e-runner.mjs` 现场挑空闲端口，不依赖任何预置服务。上传写进 fixture 的文件在 spec 的 `finally` 里删除，
+`nested/` 与 `empty/` 目录本身是仓库里的 fixture。
+
+未能在此覆盖的部分：`.chaos-staging` 的分片文件只在**审批通过的那一刻**才落盘（`AttachmentUpload` 的切片
+在内存里，`approve` 时才 `File::create` + `sync_all` + `rename`），因此「取消/拒绝后 staging 目录留有半截
+文件」这一形状在当前实现里不存在；本日志第 4 节断言的是审批通过后目录为空（分片被 `rename` 走了）。
+
+第 9 节  提交前复跑抓到的一条真偶发红：那条断言在**轮询**一个瞬态
+-------------
+
+上面第 8 节的复现命令在提交前重跑时红了一次：
+
+    [mobile-chromium] › e2e/attachment-upload.pw.ts:73:1 › a cancelled upload is abandoned
+                       before the approval can write it
+      Error: expect(locator).toContainText(text) failed
+    > 88 |     await expect(page.getByTestId('upload-status')).toContainText('正在上传')
+
+不是产品缺陷，是这条断言本身的形状错了。`describeUpload()` 的八种状态里 `正在上传`（`uploading`）
+是瞬态：取消测试用的是 4 KiB，正好一片，`begin_attachment` 回来之后一片就能发完，状态行在 Playwright
+下一次轮询之前已经从 `正在上传 …` 走到 `附件已传完，等待审批写入：…`。`toContainText` 看的是**当下**
+的 DOM，它没有「出现过」这个概念，于是这条测试实际在测 loopback WebSocket 有多快。
+
+改法与 `reconnect-snapshot.pw.ts` 用的是同一招：`addInitScript` 里挂 MutationObserver，把状态行
+显示过的每一个文本按顺序记进 `window.__chaosUploadSeen`，断言改为轮询**这份记录**：
+
+    await expect
+      .poll(async () => (await uploadStatuses(page)).some((text) => text.includes(needle)), {
+        message: `上传状态里从未出现过「${needle}」`,
+      })
+      .toBe(true)
+
+记录而不是轮询，才能表达「出现过」；每一次状态变化都各自是一个任务（每个 host 往返一个 await），
+MutationObserver 的微任务在两次变化之间必然跑到，因此每个不同的值都被看见。
+
+这一点也不能只靠「我记得它红了」来定。把 `waitUploadStatusShown` 换回原来的
+`toContainText` 形式，同机同命令连跑 5 轮：**第 1 轮红，其余 4 轮全绿**（连同本节开头那次，
+共 2 红 / 6 轮，两次都是 mobile 那一遍的这条）。改回记录形式后连跑 5 轮 30 条全绿。
+样本只有几轮，说「概率性」比说「万分之几」诚实。
+
+断言本身非空的证明（改的是被测夹具，不是产品代码）：把观察者监听的 testid 改成
+`upload-status-MUTANT`，两个视口都红在
+
+    Error: 上传状态里从未出现过「正在上传」
+
+即这条等待真的要求「状态行显示过 `正在上传`」，观察者接不上、或客户端真的没进入过上传态，都会红。
+跑完写回原文，`cmp` 校验逐字节一致。
+
+顺序仍然被保住：取消的点击在这条等待**之后**，所以测试仍然只会在主机已经发回 `upload_id`
+（`uploading` 只在 `begin_attachment` 返回之后才可能出现在状态行上）时才去点取消——这正是第 4 节
+「取消的是真传输，不是还没开始的传输」那句话的依据。
+
+    $ (cd apps/chaos-ui && npm run test:e2e -- attachment-upload)   # 两个视口 6 条，5/5 轮全绿
+    $ (cd apps/chaos-ui && npx tsc -p tsconfig.json --noEmit)       # 0 error

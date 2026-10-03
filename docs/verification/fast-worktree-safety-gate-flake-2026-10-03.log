@@ -1,0 +1,351 @@
+`git::safety` 那条偶发红了 100 多轮都没人能说出原因，因为原因被挡在两层之外：一层在子进程里，
+一层在 gix 错误的外层消息里
+
+日期：2026-10-03
+提交：本轮（test(xai-fast-worktree): 让偶发红自己解释自己；重建隔离的变异矩阵）
+被记录的对象：
+  crates/codegen/xai-fast-worktree/src/git/safety_tests/gate.rs   子测试装 `log_child_diagnostics()`
+  crates/codegen/xai-fast-worktree/src/git/safety.rs              `decide_safety` 的 warn 打印错误链
+
+本文件自包含：每段输出都从当轮真实运行里逐字抄下。结论写在最后一节，前面每一节只下一个台阶。
+文件名里的 flake 指 `git::safety` 的安全门（safety gate），与 `git/probe.rs` 的探测无关。
+
+
+第 1 节  症状：整仓 lib 测试里每隔十几轮红一次，红的是一个子进程断言
+--------------------------------------------------------------------
+
+失败的测试名有两个，因为这是一对父子：`git_configuration_in_the_environment_does_not_reach_the_snapshot`
+（`safety_tests/gate.rs`）用 `--exact --ignored --test-threads=1` 重新执行自己的测试二进制跑子测试
+`snapshot_under_a_foreign_clean_filter`，并把子进程的 stdout+stderr 拼进自己的 panic 里。
+改造前留存的日志里，子测试那一段长这样（两份一模一样）：
+
+    ---- git::safety::tests::gate::snapshot_under_a_foreign_clean_filter stdout ----
+
+    thread 'git::safety::tests::gate::snapshot_under_a_foreign_clean_filter' (3257129) panicked at crates/codegen/xai-fast-worktree/src/git/safety_tests/gate.rs:242:5:
+    assertion `left == right` failed
+      left: Keep(CheckFailed)
+     right: Delete
+
+子测试做的事：种一个带外来 clean filter 的仓库，快照工作树到 ref，然后断言
+`safe_to_delete_worktree_after_snapshot(...) == Safety::Delete`。快照那一步是**成功**的——它前面的
+一条断言（ref 里的字节 = 原文）每次都过。红的是最后那个判决：安全门回答「我不能确定」
+（`CheckFailed`），而不是「可以删」。
+
+
+第 2 节  为什么它红了一百多轮仍然没有人知道原因
+------------------------------------------------
+
+`CheckFailed` 是产品代码的兜底答案，`decide_safety` 里四条路都会走到它，每条都只写一行
+`tracing::warn!`。而测试二进制里**没有安装任何 tracing subscriber**，那四行 warn 全部被丢弃。
+于是报错里只剩一个 verdict 枚举值，原因那一层从来没到过读者眼前。
+
+在装上诊断之前，被排除掉的假设（都有实测，不是推理）：
+
+| 假设 | 实验 | 结果 |
+| --- | --- | --- |
+| 夹具把 `HOME` 收进临时目录，影响了这条测试 | 单独跑父测试 30 次：真实 `HOME`、指向临时空目录、指向不存在目录各 10 次 | 30 次全绿 |
+| 线程/进程数被别的测试耗尽，`std::thread::Builder::spawn` 起不动安全门 | 24 个 CPU spinner + `--test-threads=64`，整仓跑 25 轮 | 0 红（`diag2b/loaded/`） |
+| 快照用的临时索引文件名撞车 | 读 `scratch_index_path()`：pid + 纳秒 + 进程内计数 | 不可能撞车，且与 gix 打开路径无关 |
+| 快照/传输把 `GIT_*` 带进了进程环境，gix 打开时被环境变量带跑 | `grep` 全 crate 无测试在进程内写 `GIT_*`（只有 `Command::env` 给子进程）；且同文件另一条测试 `verdict_under_a_foreign_git_dir` 早就钉住「外来 `GIT_DIR` 不改变判决」 | 环境变量这一路是干净的 |
+| 探测（probe）在负载下超时 | 同第 2 行的满载 25 轮 | 0 红 |
+
+红日志的分布本身也是信息。早前一轮留存的 6 份红日志按失败测试名分类：
+
+    flaky/run-006.log   auto_gc::tests::rebuild_same_pass_does_not_age_expire_new_registration
+    flaky/run-008.log   nfs::client::tests::timeout_dead_daemon_unmounted_dest_is_fallback_without_second_create
+    flaky/run-022.log   本条 + 同一轮还红了 nfs::client 那条
+    flaky/run-025.log   auto_gc::…rebuild_same_pass…
+    flaky/run-027.log   auto_gc::…rebuild_same_pass…
+    flaky/run-034.log   本条
+
+`auto_gc` 那一类已经定位并修掉（见
+[`fast-worktree-grove-isolation-2026-10-03.log`](fast-worktree-grove-isolation-2026-10-03.log)），
+本文件只管剩下这一类。
+
+
+第 3 节  第一件事不是猜，是让下一次红自带原因
+----------------------------------------------
+
+产品代码里那四行 warn 是对的，缺的只是「测试进程里没人接」。所以补的不是 22 行临时 `eprintln!`
+（本轮确实先打过、随后按 `cmp` 逐字节还原了 6 个文件），而是让**子测试**自己接住日志：
+
+    /// … The child runs alone, so a global subscriber is cheap; the test writer means it stays
+    /// silent unless the child fails, and then the log lines travel back through
+    /// `run_child`, which appends the child's stderr to its own panic.
+    fn log_child_diagnostics() {
+        let _ = tracing::subscriber::set_global_default(
+            tracing_subscriber::fmt()
+                .with_test_writer()
+                .with_max_level(tracing::Level::WARN)
+                .finish(),
+        );
+    }
+
+三条性质是选它而不是选 `eprintln!` 的理由：只在子测试里装（子进程只跑一条测试，全局订阅者不会
+污染别的测试）；`with_test_writer` 平时静默、只在失败时随 libtest 的回显出现；日志经
+`run_child` 已有的「把子进程 stderr 拼进 panic」这条通道回来，不需要新管道。
+
+装上之后，同一台机器、同一条命令，20 轮里第 10 轮就抓到原因（`flaky4/run-010.log`）：
+
+    ---- git::safety::tests::gate::snapshot_under_a_foreign_clean_filter stdout ----
+    2026-10-02T23:44:43.973338Z  WARN xai_fast_worktree::git::safety: path did not open as a git repository path=/tmp/.tmpmCoMtO/inherits-a-filter error="/tmp/.tmpmCoMtO/inherits-a-filter" does not appear to be a git repository reason=CheckFailed
+
+同一轮第 13 轮再红一次，形状完全相同（`flaky4/run-013.log`）。这一句把范围从「四条路」收到一条：
+`gix::open(worktree)` 失败，而 `git_entry_definitely_absent()` 说 `.git` 在（否则 reason 会是
+`NoRepo`）。同一次运行 21 轮里红 2 轮，与改造前同比例——**诊断没有改变行为**，这是它可信的前提。
+
+
+第 4 节  第二层遮蔽：gix 的外层消息是恒定的，原因在 source 链里
+----------------------------------------------------------------
+
+上面那句 WARN 仍然没有给出原因，因为 `gix::open` 的错误长这样
+（`gix-0.83.0/src/open/mod.rs:49`）：
+
+    #[error("\"{path}\" does not appear to be a git repository")]
+    NotARepository { source: gix_discover::is_git::Error, path: PathBuf },
+
+外层消息与原因无关——`gix-discover-0.51.0/src/lib.rs:47` 的 `is_git::Error` 有 11 个变体，
+`NotARepository` 把它们全塞进同一个外层文案里：
+
+    FindHeadRef(find::existing::Error)   MissingHead   MisplacedHead{name}
+    MissingObjectsDirectory{missing}     MissingCommonDir{missing, io::Error}
+    MissingRefsDirectory{missing}        GitFile(from_gitdir_file::Error)
+    Metadata{io::Error, path}            Inconclusive   CurrentDir(io::Error)
+
+其中 5 个自带 `std::io::Error`（`MissingCommonDir`、`Metadata`、`CurrentDir`、以及两个 `#[from]`
+转发）。`MissingCommonDir` 与 `Metadata` 正是「`.git` 在、但读不动/读不全」的形状，也是本条偶发
+的候选。而 `decide_safety` 用的是 `%error`，只印 Display，`source` 永远看不见。
+
+第一版改动印的是 `format!("{error:#}")`——**这是个空操作，本文件的上一版在这里写错了**。
+`thiserror` 的 `#[error("…")]` 模板里没有 `{source}`，`Display` 与 `Alternate Display` 走的是同一个
+模板，加 `#` 不会追加来源链。这一点不是推理，是本轮新加的测试抓出来的：
+
+    // safety_tests/gate.rs
+    #[test]
+    fn the_open_failure_log_carries_the_cause_and_not_only_the_path() {
+        let error = gix::open::Error::NotARepository {
+            source: gix::discover::is_git::Error::MissingCommonDir {
+                missing: "/w/.git/worktrees/x/commondir".into(),
+                source: std::io::Error::from_raw_os_error(24),   // EMFILE
+            },
+            path: "/w".into(),
+        };
+        let plain = format!("{error}");
+        assert!(!plain.contains("commondir"), "…: {plain}");
+        let logged = open_error_chain(&error);
+        assert!(logged.contains("commondir") && logged.contains("Too many open files"),
+            "the form the warn uses must name the cause and its errno: {logged}");
+    }
+
+用 `{:#}` 时它红在第二句断言。本轮把「`{:#}` 是空操作」这句话本身做成了实验：把
+`open_error_chain` 换成 `format!("{error:#}")` 再跑同一条测试，红——
+
+    thread '…the_open_failure_log_carries_the_cause_and_not_only_the_path' panicked at
+    crates/codegen/xai-fast-worktree/src/git/safety_tests/gate.rs:221:5:
+    the form the warn uses must name the cause and its errno: "/w" does not appear to be a git repository
+
+印出来的仍然只有外层那一句，`MissingCommonDir` 的 commondir 路径与 EMFILE 都不在里面。
+改成自己走 `source()`：
+
+    /// The whole error chain of a failed `gix::open`, joined with `: `.
+    fn open_error_chain(error: &gix::open::Error) -> String {
+        use std::error::Error as _;
+        let mut chain = error.to_string();
+        let mut cause = error.source();
+        while let Some(current) = cause {
+            chain.push_str(": ");
+            chain.push_str(&current.to_string());
+            cause = current.source();
+        }
+        chain
+    }
+
+warn 处只换值不换字段名（还叫 `error`），行为不变：
+
+    tracing::warn!(
+        path = %worktree.display(),
+        error = %open_error_chain(&error),
+        ?reason,
+        "path did not open as a git repository"
+    );
+
+上面那个测试是**三层**链（`NotARepository` → `MissingCommonDir` → `io::Error`），断言同时要求
+「哪个文件」和「哪个 errno」，所以只走一层也会红。`cargo test -p xai-fast-worktree --features
+metadata --lib git::safety` → 49 passed / 0 failed / 2 ignored。
+
+变异矩阵（每行改完立刻还原，`cmp` 确认与改动前字节一致，还原后重跑为绿）：
+
+| 变异 | 结果 |
+| --- | --- |
+| A1 整个函数体换成 `format!("{error:#}")`（第一版的写法） | **红**，报错见上文（来源链根本没进字符串） |
+| A2 `chain.push_str(&current.to_string())` → `let _ = current;`（遍历但不打印） | **红** `…gate.rs:221:5`，`0 passed; 1 failed`，报错尾部是 `"/w" does not appear to be a git repository: : `——两个分隔符说明链被走完两层，只是没印出来 |
+| A3 `let mut cause = None;` | 编译不过（E0282 类型推断失败），不构成有效变异 |
+| A4 去掉 `let mut` | 编译不过（E0596 cannot borrow as mutable），同上 |
+
+A1 与 A2 是两条不同的漏法：A1 是「压根没去拿来源」，A2 是「拿到了但不印」；两者都红，说明断言
+卡的是最终那行日志的内容，不是函数被调用过。A3/A4 写在这里是为了不让人以为矩阵有四行红：
+能编译的红是两行。
+
+
+第 5 节  错误链第一次说出原因：进程的当前目录已经不在了
+--------------------------------------------------------
+
+带错误链的二进制（同一条复现命令，逐轮记录失败测试名，轮次目录 `flaky8/`）跑到第 26 轮又红了，
+这一次 WARN 带着链：
+
+    2026-10-03T00:25:45.550355Z  WARN xai_fast_worktree::git::safety: path did not open as a git repository path=/tmp/.tmpqOnO4C/inherits-a-filter error="/tmp/.tmpqOnO4C/inherits-a-filter" does not appear to be a git repository: Could not obtain current directory for resolving the '.' repository path: No such file or directory (os error 2) reason=CheckFailed
+
+链的第二层是 `is_git::Error::CurrentDir`，第三层是 `ENOENT`。查 `gix-discover-0.51.0/src/is.rs:36`：
+
+    let cwd = gix_fs::current_dir(false)?;
+
+这一行在 `is_git()` 的**开头**，无条件执行，与传进来的路径是绝对还是相对**无关**。所以结论不是
+「那个目录不是 git 仓库」，而是：**调用 `gix::open` 的那个进程的当前目录已经被删掉了**，
+`is_git()` 在还没看参数之前就失败了，`gix::open` 把它包装成 `NotARepository`，安全门于是回答
+`CheckFailed`。第 1 节那条报错与第 3 节那条报错因此是同一件事的两个阶段：`.git` 确实在，
+路径也确实是仓库——只是没人能读出当前目录。
+
+为什么测试进程会「身处一个已被删除的目录」：`cargo test` 的 500 多条测试跑在**同一个进程**里，
+而 cwd 是进程级的。本 crate 有两条测试会 `set_current_dir` 进自己的临时目录
+（`auto_gc::tests::maybe_auto_gc_protects_process_cwd`、
+`api::gc::process_scan::tests::live_process_cwds_includes_own_cwd_after_chdir`，
+两条都用 `CwdGuard` 在退出时把 cwd 换回去，并共用 `CWD_TEST_LOCK`）。
+一旦 cwd 指向的那个目录在某个时刻不存在，**同进程内任何线程**的 `gix::open` 都会在那一瞬间失败——
+这正是「只在整仓并发时出现、单跑永不复现」的形状。
+
+同一轮测量里还出现了第二种形状（`flaky8/run-011.log`，红的是另一对父子
+`git_dir_in_the_environment_does_not_change_the_verdict` / `verdict_under_a_foreign_git_dir`）：
+
+    2026-10-03T00:22:38.021448Z  WARN xai_fast_worktree::git::safety: path did not open as a git repository path=/tmp/.tmpdj4pcu/inherits-a-git-dir error=No such file or directory (os error 2) reason=CheckFailed
+
+这一条链只有一层，就是裸的 `ENOENT`：不是读不到当前目录，而是**工作树路径自己不存在了**
+（断言 `left: Keep(CheckFailed)` / `right: Keep(Unpushed)`）。它是「有人删了别人的目录」这个更大问题
+的另一种表现，本轮**没有**解释它，见第 5.3 节。
+
+
+第 5.1 节  这条测试该不该容忍 `CheckFailed`
+--------------------------------------------
+
+不该。`CheckFailed` 的字面含义是「看不出来」，产品侧因此保留工作树——那是正确的保守行为，
+也正是这条测试要区分的东西：它要证明的是「快照已经把字节收进 ref，所以判决是 Delete」。
+把断言改成「Delete 或 CheckFailed 都算过」，等于把 filter 泄漏（另一种会被误判成 Keep 的形状）
+一起放过。宁可留一条会红的测试，也不留一条会放过缺陷的测试。
+
+
+第 5.2 节  把偶发变成确定复现，然后修掉子进程这一侧
+--------------------------------------------------
+
+`run_child` 用 `Command::new(current_exe())` 重新执行测试二进制，**没有**指定 `current_dir`，
+于是子进程继承父进程的 cwd——也就继承了「可能已被删除的当前目录」。修法是把子进程的 cwd 钉住：
+
+    child
+        .args([test, "--exact", "--ignored", "--test-threads=1"])
+        .env(CHILD_WORKTREE, worktree)
+        .env(CHILD_SOURCE, source)
+        // … a child spawned here can inherit a cwd that has already been
+        // deleted — and then every `gix::open` in the child fails with
+        // `NotARepository`, which the gate reports as `CheckFailed`.
+        .current_dir(std::env::temp_dir());
+
+选 `temp_dir()` 而不是夹具目录：子进程原本 cwd 是「任何仓库之外」的普通目录（继承来的 `/tmp`），
+钉到 `/tmp` 保持同一类语义；钉进被测工作树会让那条专门验证「环境里的 `GIT_DIR` 不改变判决」的
+子测试换一个 cwd 类别，属于无谓的风险。`temp_dir()` 在本 crate 内无人改写 `TMPDIR`（已 `grep`
+确认），因此它总是存在。
+
+配套的测试 `the_child_does_not_depend_on_the_cwd_it_inherits` 把偶发变成确定的。第一版写在**父进程**
+里：拿住 `CWD_TEST_LOCK`、`set_current_dir` 进一个临时目录、`drop` 掉它、再照常 `run_child`。它确实
+红了——但同一次运行里还有另外 32 条一起红：
+
+    test result: FAILED. 17 passed; 33 failed; 2 ignored; 0 measured; 461 filtered out; finished in 0.91s
+
+同一进程、同一个被删掉的 cwd，本模块其余测试的 `gix::open` 在那一段时间里全部返回
+`NotARepository`。这既是机制最有力的一次证明（一次红 33 条，报错形状与整仓偶发一致），也说明这条
+测试**不能**留在父进程里：它靠把邻居一起弄红来通过，等于用制造缺陷的方式测试缺陷。最终形状是把
+「删掉自己的当前目录」挪进一个只跑它自己的子进程——`a_child_that_loses_its_cwd_still_checks_the_worktree`
+（`#[ignore]`，由父测试指名跑）。父测试照常 `run_child` 到它；它在自己的进程里 `set_current_dir`
+进临时目录、`drop` 掉、断言 `current_dir()` 此时**报错**（否则它是在为错误的理由通过），然后再
+`run_child` 一次到孙进程 `snapshot_under_a_foreign_clean_filter`。危险与判决之间还是同一条继承链，
+被删掉的 cwd 只影响那个一次性进程。顺带去掉了 `feature = "metadata"` 门控：机制与 feature 无关，
+默认配置下这条也该跑。
+
+变异矩阵（每条跑完 `cmp` 字节还原，均报 `RESTORED_BYTE_IDENTICAL`）：
+
+| 变异 | 结果 |
+| --- | --- |
+| C1 去掉 `run_child` 的 `.current_dir(std::env::temp_dir());` | **红**，逐字复现历史偶发 |
+| C2 `drop(doomed);` 改成 `let _keep_the_cwd_alive = &doomed;` | **红**于 `gate.rs:164` 的前置条件断言 |
+
+C1（`mut-gate-cwd-grandchild.log`）：
+
+    ---- git::safety::tests::gate::snapshot_under_a_foreign_clean_filter stdout ----
+    2026-10-03T00:41:00.395986Z  WARN xai_fast_worktree::git::safety: path did not open as a git repository path=/tmp/.tmpplRBKo/inherits-a-filter error="/tmp/.tmpplRBKo/inherits-a-filter" does not appear to be a git repository: Could not obtain current directory for resolving the '.' repository path: No such file or directory (os error 2) reason=CheckFailed
+    thread 'git::safety::tests::gate::snapshot_under_a_foreign_clean_filter' (996131) panicked at crates/codegen/xai-fast-worktree/src/git/safety_tests/gate.rs:376:5:
+    assertion `left == right` failed
+      left: Keep(CheckFailed)
+     right: Delete
+    note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+同一个测试名、同一个 verdict 对、同一条三层链——被钉住的那一行确实在起作用。C2
+（`mut-gate-cwd-precond.log`）红在这里：
+
+    the reproduction needs a cwd that has been unlinked; otherwise the grandchild passes for the wrong reason
+
+即「当前目录真的被删了」这个前提是活的；将来 gix 或 libtest 改了行为，这条测试会红，不会悄悄退化成
+永远通过的空壳。改动后的计数：`cargo test -p xai-fast-worktree --lib git::safety` 在默认与
+`--features metadata` 两种配置下都是 50 passed / 0 failed / 3 ignored，整仓
+`--features metadata --lib` 是 509 passed / 0 failed / 5 ignored。
+
+
+第 5.3 节  仍未回答的两个问题
+--------------------------
+
+1. **谁删掉了那个目录。** 继承这个坏 cwd 的一侧现在有名字了（`run_child` 重新执行测试二进制时不指定
+   `current_dir`），也已经修掉并被 C1 钉住；但**制造**它的一侧仍然匿名：本 crate 内 `set_current_dir`
+   只有三处（两条测试 + `CwdGuard::drop`），两条测试都按正确的声明顺序在退出前换回 cwd，所以「谁
+   unlink 了那个目录」本轮没查到名字。已知的是：**只要它再发生一次，同进程里任何别的 `gix::open`
+   调用者都会跟着误判**，产品代码里也有 `gix::open`。要继续查，可行的是给递归删除加日志（`tracing`
+   记 `remove_dir_all` 的目标），或给那两条 chdir 测试换用**不会被删除**的目录。
+2. **run-011 那种「路径本身消失」的形状。** 它不是 cwd 问题（链里只有裸 `ENOENT`），
+   说明有代码删了不属于自己的目录；`grep` 到本 crate 的递归删除点有 20 余处，
+   其中 `api.rs` 与 `worktree/mod.rs` 的删除目标是**从数据库记录里读出来的路径**，
+   与「测试进程共享同一个环境变量决定的 grove 目录」是已知可能串台的组合
+   （见 [`fast-worktree-grove-isolation-2026-10-03.log`](fast-worktree-grove-isolation-2026-10-03.log)
+   里关于 `GROVE_DATA_DIR` 是进程级变量、必须共用 `GROVE_ENV_LOCK` 的那一段）。
+   本轮没有证据把两者连起来，所以写成待查，不写成结论。
+
+整仓同形状 120 轮复测（`flaky8/`，该二进制含错误链、不含 `run_child` 的 cwd 钉住；计数来自
+`flaky8/summary.txt`，每轮一行，红的那行带失败测试名）：**红 3 次，三次都是本文件这一对父子**。
+
+| 轮次 | 红的父子对 | 链的形状 |
+| --- | --- | --- |
+| 11 | `git_dir_in_the_environment_does_not_change_the_verdict` / `verdict_under_a_foreign_git_dir` | 一层，裸 `ENOENT`（第 5 节末） |
+| 26 | `git_configuration_in_the_environment_does_not_reach_the_snapshot` / `snapshot_under_a_foreign_clean_filter` | 三层，`CurrentDir` + `ENOENT`（本轮已修） |
+| 94 | 同第 26 轮 | 同上 |
+
+`nfs::client` 与 `auto_gc` 各 0 次。对照改前基线（`flaky5/`，120 轮红 4 次：nfs 2、safety 2）：
+两组**不能**拿来比大小——这 120 轮跑的同时本机还有别的 `cargo` 任务在编译，负载与 flaky5 那一轮
+不同；能比的是红的**种类**：同一个模块里两种形状各自独立复现，其中带三层链的那一种现在有确定
+复现（第 5.2 节）也有修法，剩下的第 11 轮那种仍然只有一句裸 `ENOENT`。
+
+改完 `run_child` 之后再跑同样 120 轮的二进制（含 cwd 钉住与 `/proc/self/cwd` 诊断，`flaky10/`）：
+**红 0 次**（`flaky10/summary.txt` 最后一行 `DONE 0 red of 120`，每轮一行 `run NNN ok`，逐轮日志
+`flaky10/run-001.log`…`run-120.log`）。这 120 轮里 `git::safety`、`nfs::client`、`auto_gc` 三类各 0 次。
+
+这一行**不能**读成「偶发失败已经归零」：flaky8 那 120 轮里带三层链的形状出现 2 次，按二项分布的
+粗略估计，同样概率下跑 120 轮全绿的期望命中数约 0.8，全绿的概率约 45%——也就是说，即使修法完全
+无效，这一轮也有接近一半的机会长成这样。它能证明的是**没有出现更糟的形状**（尤其是第 11 轮那种
+裸 `ENOENT`，本轮 0 次），以及本文件第 5.2 节那条确定复现（变异 C1 会把它原文打回来）在正常二进制
+下确实不发生。要把「修好了」和「120 轮没撞上」分开，只能继续加轮数或者把成因查到有名有姓，
+两者本轮都没做，所以第 5.3 节的两个问题照旧挂着。
+
+第 6 节  复现
+-------------
+
+    # 整仓跑，别单跑（单跑复现不出来，这是它最难的地方）
+    $ RUST_MIN_STACK=16777216 cargo test -p xai-fast-worktree --offline --locked --features metadata --lib
+    # 只看这一对父子（子进程需要 --ignored）
+    $ RUST_MIN_STACK=16777216 target/debug/deps/xai_fast_worktree-<hash> \
+        git::safety::tests::gate::git_configuration_in_the_environment_does_not_reach_the_snapshot --exact
+
+红的时候子测试那一段会带着 WARN 行一起出现（第 3 节那一处改动之后）。要验证诊断本身有效，
+把 `log_child_diagnostics()` 那一行删掉再复现一次——WARN 会消失，只剩裸的 verdict。

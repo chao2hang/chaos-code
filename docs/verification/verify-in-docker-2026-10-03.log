@@ -1,0 +1,130 @@
+`scripts/verify-in-docker.sh --full` 在冻结的工作树上跑完整轮：24 个门、385 个测试结果块、
+31 532 条测试通过、0 条失败
+
+日期：2026-10-03
+提交：本轮（attachments 上传切片 + fast-worktree 三处夹具 + 若干 CI 门，见 CHANGELOG 同日条目）
+被记录的对象：
+  scripts/verify-in-docker.sh            整轮入口（`--full`，24 个门 + 前后两次源码指纹）
+  整份工作树                              3 937 个文件，指纹 2980148305
+
+本文件自包含：每段输出都从当轮真实运行里逐字抄下。完整原始转录 2.9 MB / 35 327 行，没有入库
+（`docs/verification/` 里最大的入库证据是 29 KB，把 2.9 MB 的原样塞进来会淹掉目录里其余文件），
+本文件抄的是判决行与每个门的收尾行；下面第 5 节写清怎样重现并拿到原文。
+
+
+第 1 节  跑的是什么
+------------------
+
+命令（工作树根目录，Docker 可用；脚本自己 build 镜像、自己 bind-mount 当前工作树）：
+
+    $ scripts/verify-in-docker.sh --full 2>&1 | tee verify-in-docker-2026-10-03.log
+
+镜像 `chaos-verify:local` 从 `docker.io/library/debian:bookworm-slim` 构建；cargo 的 git/registry
+与 target 目录走三个具名卷（`chaos-verify-cargo-git`、`chaos-verify-cargo-registry`、
+`chaos-verify-target`），所以这一轮不是冷编译：30 分钟量级里编译只占前一段。
+
+开跑第一件事是给整棵源码树按内容打指纹（不是 mtime）：
+
+    == source tree: 3937 files, checksum 2980148305
+
+收尾打印判决：
+
+    all gates passed in chaos-verify:local
+    EXIT=0
+
+脚本还会在最后一个门之后再打一次同样的指纹，只有对不上时才打印 `UNATTRIBUTABLE: the source
+tree changed while the gates ran.`。这一轮的收尾里没有这一段 —— 也就是说这 31 532 条通过结果
+归属于指纹 2980148305 那一棵树，中途没有文件被改过。这一条是"打印了两次指纹"的反面：
+第二个指纹只在异常时出声，读者要用"没有 UNATTRIBUTABLE"来读它。
+
+
+第 2 节  24 个门，按脚本里 `gates=(...)` 的顺序
+----------------------------------------------
+
+下面是转录里每一个 `== 门名` 行的原样顺序（`grep -n '^== ' 转录` 的产物，去掉了时间戳没有的
+编译细节行）：
+
+    == preflight: container can read the repository
+    == toolchain matches the pin
+    == pinned protoc launcher
+    == cargo fmt
+    == ignored-test baseline
+    == brand/protocol guard
+    == protocol mirror coverage
+    == TODO status doc
+    == evidence paths in docs
+    == CI guard wiring
+    == workflow shells
+    == workflow toolchain
+    == script portability
+    == panic-site census
+    == cwd-change census
+    == version lockstep
+    == installer guards
+    == npm package guards
+    == docs localization
+    == localization guard self-tests
+    == secret scan
+    == cargo check
+    == cargo clippy
+    == cargo test
+
+`== cargo check` 与 `== cargo clippy` 都是 `--workspace --all-targets --locked`，clippy 带
+`-D warnings`；`== cargo test` 是 `cargo test --workspace --locked --no-fail-fast`，带
+`RUST_MIN_STACK=16777216`。
+
+
+第 3 节  数字
+------------
+
+把转录里所有 `test result:` 行的三列加起来（同一轮，含 doctest）：
+
+    $ grep -o "^test result: [a-zA-Z]*\. [0-9]* passed; [0-9]* failed; [0-9]* ignored" \
+        verify-in-docker-2026-10-03.log \
+        | awk '{p+=$4; f+=$6; i+=$8} END {print "passed="p, "failed="f, "ignored="i}'
+    passed=31532 failed=0 ignored=485
+
+    $ grep -c "^test result:" verify-in-docker-2026-10-03.log
+    385
+
+385 个结果块对应 lib / bin / integration / doc 各类测试目标。0 failed 是 `--no-fail-fast`
+之下的真 0：任何一条红都会出现在 `f=` 里。
+
+`ignored=485` 与 `docs/ci-test-debt.md` 里的 **429** 不是同一把尺子，别当成互相打脸：429 数的
+是源码里的 `#[ignore]` **属性**（`scripts/ci/ignored-tests.py --check-baseline` 的口径，一个属性
+可以盖住同一函数上的多个 `#[cfg]` 变体），485 数的是本轮 libtest 实际**跳过的测试条目**。
+
+本轮第一次在容器里跑到的门是 `== cwd-change census`，它的收尾行：
+
+    Ran 14 tests in 9.958s
+
+    OK
+    cwd-change-census: 7 call site(s) match cwd-change-baseline.tsv (2 production, 5 test), every test site guarded
+
+
+第 4 节  这一轮没有证明什么
+--------------------------
+
+四条，按会被误读的程度排：
+
+1. **它不包含本轮之后新加的两个门。** 这一轮跑的是加 `spawn-cwd portability` 与
+   `workflow yaml` 之前、平台测试步骤还没拆分之时的脚本。那两个门各自的夹具与在真树上的判决
+   另见 `platform-ci-2026-10-02.log` 同日追加的段落。整轮要在下一次 push 之前再跑一次才算覆盖。
+2. **它是 Linux 容器，不是 macOS/Windows。** 容器是 debian bookworm：`xai-tty-utils`、
+   `xai-grok-sandbox` 的 Windows Job Object 分支、`xai-grok-update` 的每 OS 安装器提示、PTY
+   teardown 这些只在目标 OS 编译的代码，这一轮连编译都没碰到。平台覆盖只有 GitHub 的
+   `platform-tests` 那条腿，见 `platform-ci-2026-10-02.log`。
+3. **它不含浏览器 E2E。** 整份转录里 `playwright`/`chromium` 出现 0 次；`apps/chaos-ui` 的
+   Playwright 用例只在 GitHub 的 `gui-browser-e2e` 作业里跑（那边装 Chromium）。attachment
+   上传切片的浏览器判决因此来自 `web-attachment-upload-2026-10-03.log`，不是这一轮。
+4. **0 failed 不等于没有慢。** 本轮没有采集每条测试的耗时分布，也没有采墙钟预算；Windows 腿
+   那次 16m43s 的静默在这份数字里完全看不见（它压根不是 Linux 的运行）。慢与挂必须单独量。
+
+
+第 5 节  怎么拿到原始转录
+------------------------
+
+原始 2.9 MB 转录是当次会话的临时产物（会话结束即删），可复现的重取方式就是第 1 节那条命令：
+容器 bind-mount 的是**当前**工作树，所以重跑前请先 `git status --porcelain` 确认干净，并核对
+打印出来的 `== source tree: N files, checksum M`。指纹只与同一棵树可比，不与同一提交可比：
+工作树里任何未提交文件都算进指纹。

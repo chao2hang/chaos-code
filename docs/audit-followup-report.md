@@ -170,7 +170,7 @@ security sign-off: Windows/macOS compilation and reviewer approval remain open.
   TLS initialization can allocate after fork, so same-thread arm/spawn remains
   a caller contract instead of a post-fork runtime check. Its subprocess
   regression exercises that pre-exec path.
-- Evidence: private goal scratch `verification/mt6-sandbox-tty-check.log`,
+- Evidence: not-retained log `verification/mt6-sandbox-tty-check.log`,
   `mt6-sandbox-tests-final3.log`, `mt6-child-net-e2e-profile-gating.log`,
   `mt6-child-net-e2e-final-clean.log`, `mt6-sandbox-ignored-tests.log`,
   `mt6-tty-utils-tests-final.log`, `mt6-tty-stderr-cloexec-regression.log`,
@@ -191,7 +191,7 @@ security sign-off: Windows/macOS compilation and reviewer approval remain open.
   does not serialize unrelated environment readers in parallel Rust tests. The
   mutating test itself does a short set→hook-select→remove sequence and passes,
   but moving the check to a helper subprocess is safer follow-up work.
-  Windows/macOS paths were source-reviewed only; runner tests remain unverified. All in-repository restricted-spawn consumers were migrated to the root safe helpers; their combined all-target checks and child-spawn E2E gates passed. The subsequent full Rust workspace suite also passed with the CI-required 16 MiB test-thread stack (31,172 passed, zero failed, 490 ignored; private goal scratch `verification/rust-workspace-mt6-final.log`).
+  Windows/macOS paths were source-reviewed only; runner tests remain unverified. All in-repository restricted-spawn consumers were migrated to the root safe helpers; their combined all-target checks and child-spawn E2E gates passed. The subsequent full Rust workspace suite also passed with the CI-required 16 MiB test-thread stack (31,172 passed, zero failed, 490 ignored; not-retained log `verification/rust-workspace-mt6-final.log`).
 
 ### 1.6 高价值审计 crate（先动的 5 个）
 

@@ -1,0 +1,241 @@
+nfs 客户端「daemon 已死就拷贝兜底」那条测试每隔几十轮红一次：夹具让 mock daemon 延迟 300ms
+再死，而客户端的判决时刻正好落在这 300ms 的末尾
+
+日期：2026-10-03
+提交：本轮（test(xai-fast-worktree): 让「daemon 已死」这件事在探测之前就已经成立）
+被记录的对象：
+  crates/codegen/xai-fast-worktree/src/nfs/client.rs   夹具的 `create_hold`；两条 dest 残留断言
+  crates/codegen/xai-fast-worktree/src/nfs/client.rs   `deadline_decision` 的空/非空残留分支（未改，
+                                                       本轮才第一次被测试钉住）
+
+本文件自包含：每段输出都从当轮真实运行里逐字抄下。文件名里的 race 指夹具线程与客户端线程
+对「flock 是否已释放」的读写次序，不是产品代码里的并发缺陷。
+
+
+第 1 节  症状：修完就绪信号之后，120 轮里它仍红 2 次
+----------------------------------------------------
+
+`nfs::client::tests::timeout_dead_daemon_unmounted_dest_is_fallback_without_second_create`
+在整仓 lib 测试的第 43 轮与第 50 轮各红一次（120 轮，红日志目录 `flaky5/`）：
+
+    ---- nfs::client::tests::timeout_dead_daemon_unmounted_dest_is_fallback_without_second_create stdout ----
+    thread 'nfs::client::tests::timeout_dead_daemon_unmounted_dest_is_fallback_without_second_create' (2618476) panicked at crates/codegen/xai-fast-worktree/src/nfs/client.rs:1513:45:
+    called `Result::unwrap()` on an `Err` value: InFlight { phase: "unknown" }
+
+（第 50 轮那一处除线程号外逐字相同。）这条测试要证的东西很硬：daemon 已经确定死了、dest
+不是挂载点，那么客户端应该回答 `Fallback`（走本地拷贝），而不是 `InFlight`（既不拷贝也不报错，
+把这次创建工作树卡住）。`unwrap()` 拿到 `InFlight { phase: "unknown" }` 就是客户端没认出「死了」。
+
+它和 `spawn_server()` 里那 19 处 `thread::sleep(20ms)` 是**两个不同的机制**。上一轮的
+`mpsc` 就绪信号解决的是「daemon 线程有没有开始 `accept()`」；本条红发生在请求已经被处理之后。
+所以第一版改动对它毫无作用，这也是为什么必须先量一轮再动手。
+
+
+第 2 节  判决时刻落在校时误差里：把两边的时间线摆出来
+----------------------------------------------------
+
+客户端侧的预算（测试夹具 `timeout_opts()`，`client.rs:1065`）：
+
+    ping_timeout   = 80ms
+    create_timeout = 80ms
+    query_timeout  = 80ms      // poll_after_lost_reply 的 deadline = 进入时 + 80ms
+    query_interval = 15ms
+    QUERY_PHASE_MIN_TIMEOUT = 250ms   // client.rs:26，query_phase 的 socket 超时下限
+
+夹具侧（`lost_create_script()`，`client.rs:1071`）：`create_hold = 300ms`——mock daemon 处理
+`create_worktree` 时先睡 300ms，然后 `drop(flock)` → `remove_file(sock)` → 不给回包直接结束
+（`client.rs:991` 起）。
+
+把两条时间线对齐（t=0 是客户端发出 create）：
+
+| 时刻 | 客户端 | 夹具线程 |
+| --- | --- | --- |
+| 0 | 发 `create_worktree`，阻塞读回包 | 收到，开始睡 `create_hold` = 300ms |
+| ~80ms | 读超时 → 进 `poll_after_lost_reply`，deadline = 现在 + 80ms | 仍在睡 |
+| ~80ms | 第一次 `query_phase`：sock **还在**，connect 成功但没人回，socket 超时取 `max(ping_timeout, 250ms)` = 250ms | 仍在睡 |
+| ~330ms | 查询失败 → 过 deadline → `deadline_decision()` → `is_provably_dead()` | **300ms 到期**，才 drop flock、unlink sock |
+
+判决时刻 ≈ 330ms，夹具释放状态的时刻 = 300ms + 夹具线程被调度的延迟。两者相差 30ms，
+而满载机器上唤醒延迟轻易就超过 30ms。也就是说：**这条测试的结果由调度器决定**，
+`is_provably_dead()`（`client.rs:534`：sock 不存在或 ping 不通 **且** flock 已释放）在判决那一刻
+看到的仍是「锁被持有」，于是 `InFlight { phase: "unknown" }`——和历史报错一模一样。
+
+实测复现率：这一类在 120 轮整仓里红 2 次（约 1/60），单跑该测试 30 次 0 红（第 4 节）。
+「单跑不红、整仓红」正是时序贴边而不是逻辑错误的特征。
+
+
+第 3 节  修法：让「死了」成为客户端读到的**原因**，而不是与读并行的巧合
+--------------------------------------------------------------------
+
+夹具改成 `create_hold: Duration::ZERO`（`client.rs:1504` 起，注释写在改动的地方）：
+
+        let script = Script {
+            die_after_create: true,
+            hold_lock_until_exit: true,
+            // Dying is what ends the create reply, so the mock drops the flock
+            // and unlinks the sock *before* the client's blocking read returns.
+            // Every state the client then probes was therefore established
+            // before the probe. A non-zero hold made that ordering contingent on
+            // wall-clock instead: the 80ms create/query/ping budgets expired
+            // first and the flock check raced the mock thread resuming from the
+            // hold, which lost 2 runs in 51 under load.
+            create_hold: Duration::ZERO,
+            ..lost_create_script()
+        };
+
+次序上的差别：`create_hold = 0` 时，mock 是先 drop flock、先 unlink sock、再结束这条连接；
+客户端那次阻塞读之所以返回，**就是因为**连接被关掉了。因此「sock 没了」「flock 释放了」这两件
+事在客户端开始探测之前已经成立（flock 与 unlink 是内核状态，跨线程立即可见），
+`is_provably_dead()` 不再和任何墙钟赛跑。
+
+这不是把测试改成「一定过」：`die_after_create` 仍然是**没有回包**的丢失响应，客户端仍然要走
+`poll_after_lost_reply` → `deadline_decision`，被断言的仍是那条真实判决路径。改的只有夹具内部
+的次序，产品代码一行未动（`deadline_decision` / `is_provably_dead` 都没改）。
+
+
+第 4 节  顺带补上的两条断言：产品代码有这段行为，之前没有任何测试钉住它
+--------------------------------------------------------------------
+
+`deadline_decision`（`client.rs:500` 起）里本来就有两个分支：
+
+    if self.is_provably_dead() && dest_is_known_unmounted(&plan.dest) {
+        if plan.dest.exists() {
+            let empty = …read_dir()….next().is_none()…;
+            if empty { let _ = std::fs::remove_dir(&plan.dest); }      // ①
+            else { return Err(InFlight { phase: "dest-exists" }); }    // ②
+        }
+        return Ok(Fallback);
+    }
+
+daemon 在写第一条 journal 之前就会 mkdir dest，所以「create 丢失 + daemon 已死」这个组合必然
+留下一个空目录，而 `git worktree add` 拒绝已存在的目录：①如果不清掉，兜底拷贝会直接失败。
+②则是反过来——残留目录里有字节时，那可能是死掉的 daemon 正在写的半成品投影，既不能删也不能
+盖上去。改造前**这两条都没有测试**：原有的兜底测试只断言判决是 `Fallback`，压根没看 dest。
+
+改动一：在兜底测试末尾加 dest 断言（`client.rs:1534` 起）
+
+        assert!(
+            !dest.exists(),
+            "a fallback onto an unmounted dest must clear the empty leftover that \
+             would otherwise make `git worktree add` fail"
+        );
+
+改动二：新增一条测试，把 ②钉住（`client.rs:1542` 起）
+
+    #[test]
+    fn timeout_dead_daemon_nonempty_leftover_dest_refuses_fallback() {
+        …  // 与兜底那条同一个「已死」夹具，只是先往 dest 里写一个 partial 文件
+        std::fs::write(dest.join("partial"), b"not mine").unwrap();
+        match client.create_worktree(&plan) {
+            Err(NfsTryError::InFlight { phase }) => {
+                assert_eq!(phase, "dest-exists", "…not as a generic unknown phase");
+            }
+            other => panic!("non-empty leftover dest must not copy-fallback, got {other:?}"),
+        }
+        assert_eq!(script.creates.load(Ordering::SeqCst), 1);   // 没有第二次 create
+        assert_eq!(std::fs::read(dest.join("partial")).unwrap(), b"not mine",
+            "the client must not touch bytes it did not write");
+    }
+
+phase 断言写成 `== "dest-exists"` 而不是 `contains`，是因为「不知道」也会给出
+`phase: "unknown"`；这条测试要区分的正是「知道是残留目录」与「什么都不知道」。
+
+
+第 5 节  变异矩阵：三条断言各自防的是哪一种漏法
+------------------------------------------------
+
+每行改完立刻还原，`cmp` + sha256 确认与改动前字节一致，还原后重跑为绿。跑法：
+
+    $ RUST_MIN_STACK=16777216 cargo test -p xai-fast-worktree --offline --locked --features metadata \
+        --lib nfs::client::tests::timeout_dead_daemon --  --test-threads=1
+
+| 变异 | 结果 |
+| --- | --- |
+| N1 `is_provably_dead()` 的返回值取反 | **两条都红** |
+| N2 去掉空残留的 `remove_dir` | 只有兜底那条红（dest 断言） |
+| N3 `if empty` 改成 `if true`（非空也删） | 只有拒绝那条红 |
+
+红时逐字：
+
+    N1  …timeout_dead_daemon_nonempty_leftover_dest_refuses_fallback' panicked at …/client.rs:1564:17:
+        assertion `left == right` failed: a non-empty leftover must be reported as such, not as a generic unknown phase
+          left: "unknown"
+         right: "dest-exists"
+        …timeout_dead_daemon_unmounted_dest_is_fallback_without_second_create' panicked at …/client.rs:1521:45:
+        called `Result::unwrap()` on an `Err` value: InFlight { phase: "unknown" }
+        test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 509 filtered out
+    N2  …timeout_dead_daemon_unmounted_dest_is_fallback_without_second_create' panicked at …/client.rs:1533:9:
+        a fallback onto an unmounted dest must clear the empty leftover that would otherwise make `git worktree add` fail
+        test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 509 filtered out
+    N3  …timeout_dead_daemon_nonempty_leftover_dest_refuses_fallback' panicked at …/client.rs:1570:22:
+        non-empty leftover dest must not copy-fallback, got Ok(Fallback)
+        test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 509 filtered out
+
+N1 值得单独看：把 `is_provably_dead()` 取反之后，兜底那条测试的报错和第 1 节那条历史偶发报错
+**逐字相同**（`InFlight { phase: "unknown" }`，同一个 `unwrap()` 站点）。这说明历史偶发红确实
+就是「客户端没认出 daemon 已死」这一条路径，而不是断言写错或夹具搭错。
+
+
+第 6 节  压力测量：改前 / 改后各按同一形状跑
+----------------------------------------------
+
+先说清哪一种形状**测不出来**，否则下面几组的数字会被读反。
+
+1. 单条测试单线程跑：改后二进制 300 次 0 红（`flaky6/` single 阶段）。
+2. 整模块并发跑（`--test-threads=64`，24 个 CPU spinner 常驻）：改后二进制 40 轮 0 红
+   （`flaky6/` module 阶段）。**关键的对照实验**：把夹具的 `create_hold: Duration::ZERO` 那一行删掉
+   （于是继承 `lost_create_script()` 的 300ms，即改前的行为），重编一个二进制，在同样的 24-spinner
+   条件下按第 2 组同样的形状跑 200 轮（`flaky9/`）——**也是 0 红**。
+3. 配对 A/B：改前二进制与改后二进制交替单跑本条各 250 次（`flaky7/`，24 spinner 常驻）
+   ——**两边都 0 红**。
+
+这三组因此**都不能**用来证明修复：带着缺陷也复现不出来。原因是第 2 节那个 30ms 贴边需要
+**同一进程内**有大量别的测试线程与 mock daemon 线程抢 CPU，才会把夹具线程的唤醒推迟到判决之后；
+单跑或只跑 24 条测试时，28 核机器上总有空核，推迟量到不了 30ms。唯一复现得起来的形状是
+**整仓 `--lib` 一次跑完、`--test-threads=$(nproc)`**，也就是第 4 组。
+
+4. 改前基线（`flaky5/`）：整仓 `--lib`，`--test-threads=$(nproc)`，120 轮 → **红 4 轮**，
+   按测试名分类：本条 nfs 2 轮（第 43、50 轮）、`git::safety` 那对父子 2 轮（见
+   [`fast-worktree-safety-gate-flake-2026-10-03.log`](fast-worktree-safety-gate-flake-2026-10-03.log)）、
+   `auto_gc` 0 轮（上一轮已修）。
+5. 改后同形状复测（`flaky8/`）：与第 4 组同一条命令、同一轮数、同一构建来源（当前树的测试二进制）：
+   **120 轮里 `nfs::client` 0 红**（改前同一类红 2 次）。同一批 120 轮里红的是别的模块——
+   `git::safety` 那对父子红 3 次（第 11、26、94 轮），`auto_gc` 0 次；那三次的外来者是一个**已被
+   unlink 的进程当前目录**，与本节的 `create_hold` 无关，记在
+   [`fast-worktree-safety-gate-flake-2026-10-03.log`](fast-worktree-safety-gate-flake-2026-10-03.log)
+   第 5 节。这里写全它，是为了让「0 红」不被读成「整仓干净」。
+6. 因果配对方（`flaky9/`，`summary-full.txt`）：与第 4、5 组**完全同形状**，唯一区别是二进制里
+   夹具的 `create_hold` 恢复成 300ms（其余一行未动）：**120 轮红 2 次，其中第 79 轮就是本节这条**，
+   逐字与第 1 节的历史偶发相同（同一 unwrap 站点、同一个 `InFlight { phase: "unknown" }`）：
+
+       thread 'nfs::client::tests::timeout_dead_daemon_unmounted_dest_is_fallback_without_second_create' (2205763) panicked at crates/codegen/xai-fast-worktree/src/nfs/client.rs:1520:45:
+       called `Result::unwrap()` on an `Err` value: InFlight { phase: "unknown" }
+
+   （另一次是第 75 轮的 `git::safety` 那对父子，与本节无关：那个二进制同样不含 cwd 钉住，行号与
+   第 5 组那份日志对得上。）站点行号从 1513 变成 1520，是因为第 3 节那段注释把文件往下推了 7 行。
+
+   **这一组才是本节结论的支柱**：把 `create_hold` 一行改回去，同一个二进制就重新长出同一个缺陷；
+   改回 0 的那份（第 5 组）在同样 120 轮里 0 次红在 `nfs::client` 上。至于 1/120 与 2/120 的**速率**
+   差别，本文件不据以下任何结论——按第 2 节的算术，这是一枚硬币贴着边立不立得住的问题，样本量撑不起
+   比「红过 / 没红过」更细的说法。
+
+第 5、6 两组与第 4 组同时在跑，两两互为对方的机器负载。这一点必须写明：它使三方都比第 4 组的
+历史基线**更**受压（更容易红），因此「改后不红」不是靠机器空着换来的；代价是三方之间才是严格可比，
+与历史基线只能算同形状而不同机器占用。
+
+`cargo test -p xai-fast-worktree --offline --locked --features metadata --lib`：
+`test result: ok. 508 passed; 0 failed; 4 ignored`（本轮记录为 504 passed 时算起，本 crate 净增 2 条
+测试：拒绝非空残留那条、以及安全门日志错误链那条）。
+
+
+第 7 节  复现
+-------------
+
+    # 整仓跑才有进程内并发压力，单跑/只跑一个模块都复现不出来（第 6 节第 1–3 组）
+    $ RUST_MIN_STACK=16777216 cargo test -p xai-fast-worktree --offline --locked --features metadata --lib
+    # 只看这两条（一条命令跑一对）
+    $ RUST_MIN_STACK=16777216 cargo test -p xai-fast-worktree --offline --locked --features metadata --lib nfs::client::tests::timeout_dead_daemon
+
+要做因果配对方（第 6 节第 6 组）：删掉 `client.rs:1514` 那一行 `create_hold: Duration::ZERO,`
+（该文件里共三处同样的字面量，`Script::default()` 与另一条测试各一处，别删错），
+重编测试二进制后按第 4 组的循环跑，跑完 `cmp` 还原。第 6 节第 6 组那张表就是这么来的。

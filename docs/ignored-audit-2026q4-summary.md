@@ -1,8 +1,8 @@
 # 2026 Q4 ignored test audit
 
-> Status: reviewed on 2026-10-02. Every `#[ignore]` attribute now carries an in-source reason, and CI rejects any attribute that lacks one. The per-family disposition is below. Executing the skipped suites is still not done: 426 of 428 need a built binary, an external tool, or a specific OS capability, and this repository's CI runs none of them (see “CI does not run ignored tests”).
+> Status: reviewed on 2026-10-02. Every `#[ignore]` attribute now carries an in-source reason, and CI rejects any attribute that lacks one. The per-family disposition is below. Executing the skipped suites is still not done: 426 of the 428 attributes the 2026-10-02 review covered need a built binary, an external tool, or a specific OS capability, and this repository's CI runs none of them (see “CI does not run ignored tests”). A rescan on 2026-10-03 reports **429** attributes with **0** bare ones; the one addition is recorded in “Rescan on 2026-10-03” below and changes no family's disposition.
 
-Inventory regenerated on 2026-10-02 with `scripts/ci/ignored-tests.py`; the machine-readable result is `docs/ignored-audit-2026q4.csv`.
+Inventory regenerated on 2026-10-02 with `scripts/ci/ignored-tests.py`; the machine-readable result is `docs/ignored-audit-2026q4.csv`, regenerated on 2026-10-03 and read back with the standard `csv` reader as 429 data rows × 5 columns.
 
 ## What changed on 2026-10-02
 
@@ -19,6 +19,32 @@ One attribute was deleted outright. `xai-grok-shell`'s `session_thread_detects_p
 
 One attribute gained a reason from a measured failure. `remote::pull_smoke_test::tests::smoke_push_pull_round_trip` was run with `--ignored` and fails at `pull_smoke_test.rs:33` with `No auth.json — Chaos does not sign in to xAI`. That is the recorded reason: the fork never creates the auth file this smoke test expects, so it needs a seeded OAuth entry before it can be restored.
 
+## Rescan on 2026-10-03
+
+`python3 scripts/ci/ignored-tests.py --require-reasons` → `all 429 ignored attributes carry a
+reason`; `--check-baseline scripts/ci/ignored-tests-baseline.tsv` → `baseline matches; 429
+ignored attributes total`. The CSV was regenerated from the same scan.
+
+Diffing the regenerated CSV against the 2026-10-02 one row-by-row (crate, file, function)
+rather than by line number, because line numbers move with every unrelated edit:
+
+* Added: 1 — `xai-fast-worktree` `crates/codegen/xai-fast-worktree/src/git/safety_tests/gate.rs`,
+  `a_child_that_loses_its_cwd_still_checks_the_worktree`, reason
+  `run by the_child_does_not_depend_on_the_cwd_it_inherits`.
+* Removed: 0.
+* Line-number drift only: 9 entries (LSP e2e ×2, cgroup OOM ×5, blitz fuzz ×1, and two
+  `gate.rs` cases) whose crate/file/function are unchanged.
+
+The addition belongs to the existing “Not a test: subprocess entry point or helper invoked by
+a parent test” family, which is why that row below now reads 8 rather than 7. It is ignored
+for the same structural reason as that family's other members, not because it is untested:
+it unlinks the process cwd, which libtest shares with the ~50 other tests in the same binary,
+so the parent test runs it as a separate `cargo test -- --exact --ignored` child. Its
+coverage is real and runs on every CI pass — the ignore exists to keep it out of the parent
+process, and the parent would fail if the child stopped being registered.
+
+Family totals therefore move from 428 to 429 with no other row changing.
+
 ## Disposition by family
 
 Counts are from the regenerated CSV. Every family's disposition is recorded on the attribute itself; the table is the summary.
@@ -29,7 +55,7 @@ Counts are from the regenerated CSV. Every family's disposition is recorded on t
 | Fork removed the feature the test asserts (billing/subscription, upstream xAI login and endpoint defaults, connectors URL band, Grove pin backend) | 33 | Keep ignored; the asserted behaviour does not exist in this fork. Restore only if the feature returns | project owner | 2027-01 |
 | Manual, soak, or performance measurement | 8 | Keep ignored; prints or measures rather than asserting a verdict | project owner | 2027-01 |
 | Flaky under parallel execution, or needs single-process isolation | 7 | Keep ignored; run with `--test-threads=1` as the reason states | project owner | 2027-01 |
-| Not a test: subprocess entry point or helper invoked by a parent test | 7 | Keep ignored permanently; these must be registered as `#[test]` only so the binary contains them, and they return early when their env var is unset | project owner | 2027-01 |
+| Not a test: subprocess entry point or helper invoked by a parent test | 8 | Keep ignored permanently; these must be registered as `#[test]` only so the binary contains them, and they return early when their env var is unset. 7 as reviewed on 2026-10-02, +1 from the 2026-10-03 rescan | project owner | 2027-01 |
 | Needs a specific OS capability (Linux cgroupv2 delegation, X11) | 5 | Keep ignored; conditional on the host | project owner | 2027-01 |
 | Needs an external language server (`typescript-language-server`, `ROSLYN_DLL`) | 2 | Keep ignored; needs a third-party binary | project owner | 2027-01 |
 | Reads the real `$HOME` for user-scope skills | 1 | Keep ignored; host-dependent | project owner | 2027-01 |

@@ -38,7 +38,11 @@ The aggregate figure recorded when the job was introduced was roughly **209
 failing tests** across seven crates. After per-crate audit and repair, **all
 209 are resolved**: 0 non-ignored failures remain. The 2026-10-02
 inventory reports 428 ignored attributes total and **0 bare attributes**;
-these are workspace-wide scanner counts, not the count of fork-specific entries
+the 2026-10-03 rescan reports **429** and still **0 bare** — the single addition
+is a subprocess entry point a parent test drives via `--exact --ignored`, so it
+joins the "not a test" family rather than changing any disposition
+(`docs/ignored-audit-2026q4-summary.md`, "Rescan on 2026-10-03"). Either figure
+is a workspace-wide scanner count, not the count of fork-specific entries
 in the table above.
 
 ## Ignored tests
@@ -48,13 +52,15 @@ readable and be revisited periodically; a permanent `#[ignore]` is a deleted
 test with extra steps. `python3 scripts/ci/ignored-tests.py --check-baseline
 scripts/ci/ignored-tests-baseline.tsv` checks the grandfathered bare-attribute
 inventory in both directions; that baseline is now intentionally empty. The live
-scan reports 428 ignored attributes and 0 bare attributes, and
+scan of 2026-10-03 reports 429 ignored attributes and 0 bare attributes
+(428 on 2026-10-02; the CSV in `docs/ignored-audit-2026q4.csv` was regenerated
+from the newer scan), and
 `--require-reasons` fails CI if any attribute loses its reason. The checked-in
 CSV and per-source owner audit still determine review status. The Q4 CSV currently contains one
 `xai-grok-update` ignored attribute: the opt-in 100k stress test. Five tests
 that asserted upstream installation URLs were replaced with running tests of
 the Chaos fork's actual `reinstall_hint` behavior; this source-level correction
-does not constitute the Q4 owner/reviewer audit. The remaining updater stress ignore has a runnable `scripts/test-blitz-stress.sh` entry point; that script's real test passed at 120 iterations. The full default 100k run completed on 2026-10-01: 1 passed, 0 failed in 4306.69 seconds through `scripts/test-blitz-stress.sh` (private goal scratch `blitz-stress-100k.log`). Test completion does not substitute for the Q4 source-by-source owner/reviewer audit. CI runs the repository inventory scanner against
+does not constitute the Q4 owner/reviewer audit. The remaining updater stress ignore has a runnable `scripts/test-blitz-stress.sh` entry point; that script's real test passed at 120 iterations. The full default 100k run completed on 2026-10-01: 1 passed, 0 failed in 4306.69 seconds through `scripts/test-blitz-stress.sh` (not-retained log `blitz-stress-100k.log`). Test completion does not substitute for the Q4 source-by-source owner/reviewer audit. CI runs the repository inventory scanner against
 `scripts/ci/ignored-tests-baseline.tsv`; existing bare attributes are grandfathered
 by explicit package/path/function keys. Added attributes fail until reviewed and
 added to the baseline; stale entries for removed attributes also fail until the

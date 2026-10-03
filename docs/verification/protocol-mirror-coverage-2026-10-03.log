@@ -1,0 +1,205 @@
+浏览器那份协议类型漏了 6 条引擎一直在说的消息，而原有校验看得见「有没有重新生成」、看不见「有没有漏写」
+================================================================================================
+
+日期：2026-10-03
+提交：f585f59d（feat(guard): 浏览器协议镜像漏了 6 条引擎在说的消息，而 check-gui-protocol.sh 看不见）
+被记录的对象：
+  crates/codegen/chaos-engine/src/protocol_schema.rs      补 6 条镜像条目 + union 内两行注释
+  apps/chaos-ui/src/generated/protocol.ts                 重新生成，diff 只有那 6 条与那两行注释
+  scripts/ci/check-protocol-mirror.py                     新增守卫
+  scripts/ci/test-check-protocol-mirror.py                新增夹具，26 条
+  .github/workflows/ci.yml                                GUI job 新 step「Protocol mirror coverage」
+  scripts/verify-in-docker.sh                             gates 数组镜像同一条
+
+本文件自包含：每段输出都从当轮真实运行里逐字抄下，命令写在 `$` 行上。
+
+
+第 1 节  漏掉的是什么，以及为什么原来的检查看不见
+--------------------------------------------------
+
+引擎在 `crates/codegen/chaos-engine/src/lib.rs` 里用一对 serde 枚举定义线上协议：
+
+    #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+    #[serde(tag = "type", rename_all = "snake_case")]
+    pub enum ClientMessage { … }
+
+浏览器侧对应的是 `crates/codegen/chaos-engine/src/protocol_schema.rs` 里那个手写的
+`pub const TYPESCRIPT: &str = r#"…"#`，由 `cargo run -p chaos-engine --bin chaos-protocol-schema`
+原样导出成 `apps/chaos-ui/src/generated/protocol.ts`。
+
+已有的 `scripts/ci/check-gui-protocol.sh` 只做一件事：把导出结果与 `protocol_schema.rs` 里那段字符串比对，
+证明「文件确实重新生成过」。它的两个输入是同一段手写文本，因此**镜像本身漏写了什么，它结构上无从得知**。
+
+附件上传（`crates/codegen/chaos-engine/tests/attachment_protocol.rs` 里有一整组协议测试）就是漏的：
+客户端要发 `begin_attachment` / `attachment_chunk` / `cancel_attachment`，主机要回
+`attachment_started` / `attachment_progress` / `attachment_cancelled`，浏览器类型里一条都没有。
+把当前镜像里这 6 行删掉（也就是把它退回提交前的状态）再跑新守卫：
+
+    $ python3 - <<'PY'
+    # 从 protocol_schema.rs 里删掉 6 条 type: '<tag>' 行，写到临时文件
+    PY
+    removed 6 lines
+    $ python3 scripts/ci/check-protocol-mirror.py \
+        --mirror /tmp/…/protocol_schema_before.rs --print
+    check-protocol-mirror: ClientMessage is spoken by the engine but absent from the mirror: 'attachment_chunk'
+      (Rust AttachmentChunk), 'begin_attachment' (Rust BeginAttachment), 'cancel_attachment' (Rust CancelAttachment)
+    check-protocol-mirror: ServerMessage is spoken by the engine but absent from the mirror: 'attachment_cancelled'
+      (Rust AttachmentCancelled), 'attachment_progress' (Rust AttachmentProgress), 'attachment_started'
+      (Rust AttachmentStarted)
+    check-protocol-mirror: the TypeScript mirror in
+      crates/codegen/chaos-engine/src/protocol_schema.rs
+    does not describe the protocol in
+      crates/codegen/chaos-engine/src/lib.rs
+    Add the entries there, then regenerate with:
+      cargo run -p chaos-engine --bin chaos-protocol-schema > apps/chaos-ui/src/generated/protocol.ts
+    ClientMessage: 29 of 32 variants mirrored
+    ServerMessage: 37 of 40 variants mirrored
+    exit=1
+
+同一次运行里旧的检查是绿的：
+
+    $ bash scripts/ci/check-gui-protocol.sh
+    GUI protocol types are up to date
+
+这句话在漏了 6 条消息的树上照样打印。这就是本守卫存在的理由。
+
+
+第 2 节  守卫比什么，以及刻意不比什么
+--------------------------------------
+
+解析真的 Rust 枚举（`enum_body()` 按花括号配平取 body；`rust_variants()` 把变体名映射到字段名集合；
+`snake_case()` 复刻 heck 的 `rename_all = "snake_case"`：连续大写里最后一个大写字母若后接小写则自成一词，
+所以 `HTTPStatus` → `http_status`），再解析镜像里的 `export type ClientMessage = …` /
+`export type ServerMessage = …` 两个 union（`mirror_unions()` 按 union 分命名空间，因为同一个 tag
+可以合法地同时出现在收发两侧），然后双向比较：
+
+- 引擎会说、镜像没有的 tag；
+- 镜像写了、但没有任何 Rust 变体产生该 tag（浏览器发出去只会在反序列化处被拒）；
+- 每个 tag 下的**字段名**双向差集；
+- 同一 union 里重复的 tag、写在 union 之外的带 tag 条目、两个变体在 snake_case 下撞成同一个 tag、
+  union 整个缺失。
+
+字段**类型**刻意不在范围内，守卫的文件头把这句话写死了：`UUID` 对 `Uuid`、`number` 对 `u64`、
+`WorkspaceInfo` 这类具名类型是第二个更大的翻译问题，而且类型错了会在反序列化处当场失败，不会静默。
+会静默的是「有这条消息」与「有这些字段」，所以范围收在这里。
+
+两处解析细节是写夹具时才逼出来的，都有测试钉住：
+
+- 字段名只认「行首的声明」，且冒号不能是路径分隔符（`(?!:)`）。rustfmt 会把放不下的泛型换行，
+  于是有一行会长成 `serde_json::Value,`——它也是「小写标识符 + 冒号」开头，早先的版本据此凭空造出一个
+  字段 `serde_json`，并报「镜像缺字段 serde_json」。
+- `ts_object_keys()` 只看最外层花括号。内联嵌套类型（`meta: { seq: number }`）描述的是一个值的形状，
+  不是线上字段，它的键不能拿去和 Rust 字段名比。
+
+
+第 3 节  夹具（26 条）
+----------------------
+
+    $ python3 scripts/ci/test-check-protocol-mirror.py
+    Ran 26 tests in 0.611s
+
+    OK
+
+三类：解析器单元（`snake_case` 的 `HTTPStatus`/`HttpGetFile`/`Ack`/`AttachmentChunk`、变体字段集合、
+TS 键在正确深度收住、union 按枚举分开）；漂移注入（缺 tag、多 tag、缺字段、多字段、重复 tag、
+`SsEvent`/`SSEvent` 这种 snake_case 撞车、union 改名、带 tag 条目写在 union 外、枚举未闭合、
+可选字段写法 `reason?: string`、嵌套 TS 对象、泛型实参、换行后的类型路径、注释里的枚举副本）；
+以及真仓库（shipped 镜像通过、6 条附件 tag 逐条在场、**从真镜像里逐条删掉这 6 条中的每一条都会让守卫变红并
+点名那条**、删掉 `attachment_progress` 的 `received: number` 会报缺字段、`--print` 两侧覆盖数相等）。
+
+最后那组是关键：它证明守卫读的是 CI 真正检查的文件，而不只是它自己的夹具。
+
+
+第 4 节  变异测试：把守卫本身改瞎，看夹具抓不抓
+------------------------------------------------
+
+夹具自己也要证明不是装饰品。做法是把守卫源码逐处改成「一种失明方式」（每处都是唯一锚点上的单行替换），
+每处都跑一遍夹具，跑完按字节还原并用 `cmp` 确认。17 个变异体的锚点与替换在下面逐条给出，任何一处都可以在
+工作树里手工重现，第 6 节给了两条完整的手工序列：
+
+    $ python3 mutate-mirror-guard.py
+    baseline: guard passes its suite (OK)
+    pristine sha256: 114f154f4930db60792d7424358022798c8c88488868c917d8dca5af9fd3f5af
+    ignore-missing-tags                CAUGHT   FAIL: test_a_commented_out_copy_of_the_enum_is_not_parsed
+    ignore-mirror-only-tags            CAUGHT   FAIL: test_acronym_spelling_must_match_serde
+    ignore-absent-fields               CAUGHT   FAIL: test_missing_field_is_refused
+    ignore-extra-fields                CAUGHT   FAIL: test_extra_field_is_refused
+    naive-snake-case-acronyms          CAUGHT   FAIL: test_variant_pair_colliding_under_snake_case_is_refused
+    field-anywhere-in-line             SURVIVED OK
+    phantom-field-from-type-path       CAUGHT   FAIL: test_a_wrapped_type_line_does_not_become_a_wire_field
+    nested-ts-keys-count               CAUGHT   FAIL: test_nested_ts_object_keys_are_not_wire_fields
+    allow-duplicate-tags               CAUGHT   FAIL: test_duplicate_tag_is_refused
+    allow-tags-outside-unions          CAUGHT   FAIL: test_tagged_entry_outside_a_union_is_refused
+    allow-snake-case-collisions        CAUGHT   FAIL: test_variant_pair_colliding_under_snake_case_is_refused
+    allow-missing-union                CAUGHT   FAIL: test_missing_union_is_refused
+    optional-keys-not-recognised       CAUGHT   FAIL: test_optional_field_spelling_still_counts
+    type-key-counted-as-field          CAUGHT   FAIL: test_a_commented_out_copy_of_the_enum_is_not_parsed
+    union-header-needs-assignment      CAUGHT   FAIL: test_a_commented_out_copy_of_the_enum_is_not_parsed
+    comments-not-stripped              CAUGHT   FAIL: test_a_commented_out_copy_of_the_enum_is_not_parsed
+    restored sha256: 114f154f4930db60792d7424358022798c8c88488868c917d8dca5af9fd3f5af
+    byte-identical: True
+    SURVIVORS (1): field-anywhere-in-line
+
+17 个变异体，16 个被抓。还原由 `cmp` 逐字节确认（脚本在每个变异体之后都跑一次 `cmp` 与一次真仓库守卫，
+任一不符即以非零退出）。变异清单如下，每一行的「改成」都是对「锚点」的唯一一次替换（锚点在守卫源码里只出现一次，
+脚本对此有断言，找不到唯一锚点即记为失败而不是跳过）：
+
+| 变异体 | 锚点（守卫源码） | 改成 | 结果 |
+| --- | --- | --- | --- |
+| ignore-missing-tags | `missing = sorted(set(tagged) - set(mirrored))` | `missing = []` | 被抓 |
+| ignore-mirror-only-tags | `for tag in sorted(set(mirrored) - set(tagged)):` | `for tag in []:` | 被抓 |
+| ignore-absent-fields | `absent = sorted(rust_fields - ts_fields)` | `absent = []` | 被抓 |
+| ignore-extra-fields | `extra = sorted(ts_fields - rust_fields)` | `extra = []` | 被抓 |
+| naive-snake-case-acronyms | `if not starts_word and index + 1 < len(chars) and chars[index + 1].islower():` | 条件前置 `False and` | 被抓 |
+| field-anywhere-in-line | `field = re.match(r"(?:pub\s+)?([a-z][a-z0-9_]*)\s*:(?!:)", stripped)` | `re.search` | 存活（等价，见下） |
+| phantom-field-from-type-path | 同上 | 去掉 `(?!:)` | 被抓 |
+| nested-ts-keys-count | `elif depth == 1:` | `elif depth >= 0:` | 被抓 |
+| allow-duplicate-tags | `if tag.group(1) in entries:` | `if False:` | 被抓 |
+| allow-tags-outside-unions | `if current is None:` | `if False:` | 被抓 |
+| allow-snake-case-collisions | `if len(tagged) != len(variants):` | `if False:` | 被抓 |
+| allow-missing-union | `if enum_name not in unions:` | `if False:` | 被抓 |
+| optional-keys-not-recognised | `r"[{}]|([A-Za-z_][A-Za-z0-9_]*)\??\s*:"` | 去掉 `\??` | 被抓 |
+| type-key-counted-as-field | `keys.discard("type")` | `pass` | 被抓 |
+| union-header-needs-assignment | `re.match(r"\s*export\s+type\s+([A-Za-z0-9_]+)\s*=\s*$", line)` | 结尾 `\s*=\s*[^\s]`（要求同行有内容） | 被抓 |
+| comments-not-stripped | `strip_comments()` 首行之前 | 插入 `return text`（整个函数变空操作） | 被抓 |
+
+
+**唯一存活的 `field-anywhere-in-line`（把字段正则从 `re.match` 换成 `re.search`）是有据可查的等价变异，
+不是漏网。** 一行 Rust 字段声明要么以 `名字:` 开头——此时 match 与 search 命中的是同一段文本；
+要么不以它开头，此时 rustfmt 产出的真实源码里唯一还有别处的「小写词 + 冒号」的形态就是
+`路径::开头,` 这一类，而 `(?!:)` 已经把它排除了。也就是说，在「守卫会看到的输入」这个集合上，
+两个函数行为相同。第一轮跑的时候它同样存活，但那时**没有** `(?!:)`，换行类型是真的会造出幽灵字段——
+那个真实缺陷由 `phantom-field-from-type-path` 这个变异体现在会被
+`test_a_wrapped_type_line_does_not_become_a_wire_field` 抓红来证明已经修掉。
+
+`comments-not-stripped` 在第一轮也存活（关掉注释剥离，夹具仍全绿）。补了「设计稿里抄了一份 `pub enum
+ClientMessage`」这条夹具之后它被抓：那条夹具同时断言两件事——镜像完好时守卫必须绿（否则读到的是注释里那份），
+以及真实 tag 缺失时仍要点名（证明它读的是编译的那一份）。
+
+
+第 5 节  接线
+-------------
+
+两个入口都得有，缺一个就会被绕过：
+
+    .github/workflows/ci.yml          GUI job 里紧跟「Protocol type drift」新增「Protocol mirror coverage」，
+                                      先跑夹具再跑守卫
+    scripts/verify-in-docker.sh       gates 数组加同名条目
+                                      "protocol mirror coverage: python3 scripts/ci/test-check-protocol-mirror.py
+                                       && python3 scripts/ci/check-protocol-mirror.py"
+
+`scripts/ci/check-guard-wiring.py` 会拒绝「写了但没接进两个入口」的守卫，本轮输出：
+
+    $ python3 scripts/ci/check-guard-wiring.py
+    check-guard-wiring: OK (36 files in scripts/ci/, 35 reachable, 30 run by scripts/verify-in-docker.sh, 5 recorded CI-only, 1 exempt)
+
+
+第 6 节  复现
+-------------
+
+    $ python3 scripts/ci/test-check-protocol-mirror.py        # 26 绿
+    $ python3 scripts/ci/check-protocol-mirror.py --print     # 32 of 32 / 40 of 40
+    $ python3 scripts/ci/check-gui-protocol.sh                # GUI protocol types are up to date
+
+要重看「漏 6 条」长什么样，不必用临时目录：把 `protocol_schema.rs` 里那 6 行 `| { type: '…'; … }`
+删掉跑 `check-protocol-mirror.py`，应当得到第 1 节那两段点名输出与 `exit=1`；`git checkout` 还原即可。

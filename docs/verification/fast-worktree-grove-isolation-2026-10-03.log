@@ -1,0 +1,227 @@
+`xai-fast-worktree` 的测试会去扫描开发者真实的 grove 目录，`auto_gc` 的重建断言因此取决于跑测试的那台机器
+
+日期：2026-10-03
+提交：本轮（fix(test): 重建扫描会读到开发者真实的 grove 目录，auto_gc 断言因此随机红）
+被记录的对象：
+  crates/codegen/xai-fast-worktree/src/auto_gc.rs   夹具构造改走 `isolated_fixture()`（10 处）+ 新增隔离机制测试
+  crates/codegen/xai-fast-worktree/src/db/mod.rs    `GrokHomeFixture` 持有 `nfs::GROVE_ENV_LOCK`
+
+本文件自包含：每段输出都从当轮真实运行里逐字抄下，命令写在 `$` 行上。
+
+
+第 1 节  症状：本地 Docker 入口的 cargo test 门禁红，本地单独跑却全绿
+--------------------------------------------------------------------
+
+`scripts/verify-in-docker.sh --full` 走到最后一个门禁 `cargo test` 时报：
+
+    test auto_gc::tests::rebuild_same_pass_does_not_age_expire_new_registration ... FAILED
+
+    ---- auto_gc::tests::rebuild_same_pass_does_not_age_expire_new_registration stdout ----
+
+    thread 'auto_gc::tests::rebuild_same_pass_does_not_age_expire_new_registration' (62959) panicked at crates/codegen/xai-fast-worktree/src/auto_gc.rs:1804:9:
+    assertion failed: report.rebuild.as_ref().is_some_and(|r| r.registered == 1)
+
+    test result: FAILED. 503 passed; 1 failed; 4 ignored; 0 measured; 0 filtered out; finished in 12.47s
+
+同一棵树上单独跑该 crate 的 lib 测试是绿的。前 17 个门禁也全绿，所以这不是环境缺东西。
+（该行号 1804 是当时的位置；本轮新增测试帮手之后同一条断言在 `auto_gc.rs:1817`。）
+
+
+第 2 节  把「不稳定的测试」当输入而不是结论
+--------------------------------------------
+
+单跑 15 次全绿 ≠ 测试自己有时序问题。这条断言的内容是「一次重建登记了 1 个 worktree」，
+而夹具只种了 1 个——多出来的那一个必须有个来源。重建那一路在
+`crates/codegen/xai-fast-worktree/src/discovery.rs:209` 调的是：
+
+    rebuild_worktree_db_from_grove_dirs(db, grok_home, &crate::nfs::candidate_data_dirs())
+
+`candidate_data_dirs()`（`nfs/liveness.rs:27`）按四个来源拼列表，每次都重新读环境，不缓存：
+
+    GROVE_DATA_DIR                       → 直接用
+    XDG_DATA_HOME                        → $XDG_DATA_HOME/grove
+    xai_dirs::home_dir()                 → $HOME/.local/share/grove      ← 这一条
+    xai_dirs::resolve_grok_home()        → $GROK_HOME/grove
+
+`GrokHomeFixture::new()` 只设 `GROK_HOME`。于是 `$HOME/.local/share/grove` —— **开发者机器上
+那个真实的 grove 目录** —— 一直在被扫描。它是不是空的，取决于这台机器有没有用过 grove/NFS 工作树；
+测试红不红也就跟着取决于此。
+
+为了不让这一步停留在推理里，在测试里打了一行状态快照（诊断用，随后删掉）。一次失败样本：
+
+    DIAG rebuild_same_pass rebuild=Some(RebuildReport { discovered: 2, registered: 2, already_tracked: 0 }) outcome=Ran gc=Some((1, 0, 0)) wt_exists=true meta_probe=Ok(Some("1790982607")) resolve_home=Ok("/tmp/.tmpDOZd9e/grok-home") direct=Ok(Ok(RebuildReport { discovered: 1, registered: 0, already_tracked: 1 })) GROK_HOME=Some("/tmp/.tmpDOZd9e/grok-home") CHAOS_HOME=None HOME=Some("/home/chaos") XDG_DATA_HOME=None GROVE_DATA_DIR=None candidates=["/home/chaos/.local/share/grove", "/tmp/.tmpDOZd9e/grok-home/grove"] cwd=Ok("/home/chaos/hunt/dev/projects/chaos-code/crates/codegen/xai-fast-worktree") fds=102 envn=95
+
+`candidates` 里两个目录并列：夹具的那个，和 `/home/chaos/.local/share/grove`。
+`discovered: 2` / `registered: 2` 对 `direct=… discovered: 1, registered: 0`（只扫夹具目录时）
+的差值，就是主机目录里那条无关记录。失败不是随机的，是**按机器**确定的：换一台没装过 grove 的机器，
+这条测试就永远绿——坏的不是断言，是隔离。
+
+
+第 3 节  修法：复用该 crate 已有的隔离机制，而不是新造一个
+----------------------------------------------------------
+
+`GrokHomeFixture::isolate_xdg_grove_data()`（`db/mod.rs`）早就存在，做的就是这件事：把
+`XDG_DATA_HOME` 指进夹具、清掉 `GROVE_DATA_DIR`、并把 `HOME` 收进夹具，于是上面四个来源全部
+落在夹具内。此前只有 `nfs/remove.rs` 的三条测试调用它。
+
+改动两处：
+
+1. `auto_gc.rs` 的测试帮手
+
+       /// A grok-home fixture whose grove lookup is confined to the fixture.
+       /// … A rebuild pass unions `nfs::candidate_data_dirs()`, which includes the host's
+       /// real `$HOME/.local/share/grove`. …
+       fn isolated_fixture() -> crate::db::GrokHomeFixture {
+           let mut fx = crate::db::GrokHomeFixture::new();
+           fx.isolate_xdg_grove_data();
+           fx
+       }
+
+   10 处 `crate::db::GrokHomeFixture::new()` 全部换成 `isolated_fixture()`（不是只换报错的那条：
+   泄漏是夹具的性质，不是某条测试的性质，留着别处就等于留着下一次红）。
+
+2. `GrokHomeFixture` 在 `isolate_xdg_grove_data()` 里取 `nfs::GROVE_ENV_LOCK` 并按夹具生命周期
+   持有（新增字段 `_grove_lock`）。这三个键是每次生产调用都重读的，`nfs/remove.rs` 里三条测试也写
+   `GROVE_DATA_DIR`；不共享同一把锁，夹具的读与它们的写会互相看见对方的中间状态。该锁
+   （`nfs/mod.rs:38`，`#[cfg(test)] pub(crate) static`）本来就由那三条测试持有，两处获取顺序一致
+   且无嵌套，不构成死锁。
+
+夹具的 `Drop` 原本就在 `xai_grok_test_support::env::with_write_lock` 里**一次性**回滚
+`GROK_HOME`/`XDG_DATA_HOME`/`GROVE_DATA_DIR`/`HOME` 四个键，所以恢复也是原子的。
+
+第 2 节末尾那行诊断打印随之删除，恢复原样。
+
+
+第 4 节  新增的两条机制测试：把隔离本身钉住，而不是钉一个恰好依赖它的计数
+----------------------------------------------------------------------------
+
+只靠「重跑 30 次不红」证明不了泄漏被堵住：重建扫描的是**候选目录列表**，而
+`candidate_data_dirs()` 根本不碰磁盘——只有当那个目录里恰好放着暂存的 worktree 时，
+计数才会变。跑变异矩阵这一轮，这台机器的 `/home/chaos/.local/share/grove` 只剩下一个
+`pin_gc_orphans.json`，于是五条变异里 `rebuild_same_pass_does_not_age_expire_new_registration`
+**全程绿**：原来那条断言看不见这个缺陷。补的两条测试不读开发者目录的内容，确定复现：
+
+    a_fixture_hides_any_grove_dir_outside_itself
+        走 `isolated_fixture()` 本身（泄漏是夹具的性质，测试就该钉在夹具上）。
+        先断言候选列表里**有**一个落在夹具之内的目录——正向锚点，防止「列表恰好为空」
+        让后半句空转；再断言没有任何一个落在夹具之外。
+    a_fixture_clears_a_grove_data_dir_that_was_already_set
+        在夹具创建**之前**把 `GROVE_DATA_DIR` 种到夹具外的临时目录，这正是测试进程会带上
+        该变量的方式（前一条 nfs 测试在进程内写过它），断言隔离之后候选列表里不再它有。
+        夹具 `Drop` 归还的是它看到的那个值（即本测试种下的），所以测试末尾再把环境变量
+        交还给进入本测试时的原值。
+
+变异矩阵（每行改完立刻还原，`cmp` + sha256 确认与改动前字节一致）：
+
+| 变异（各删掉一行） | 新增的机制测试 | 原来的计数断言 |
+| --- | --- | --- |
+| M1 `isolated_fixture()` 不再调用 `isolate_xdg_grove_data()` | `a_fixture_hides_any_…` 红 | 绿 |
+| M2 `isolate_xdg_grove_data()` 不再 `set_var("HOME", …)` | `a_fixture_hides_any_…` 红 | 绿 |
+| M3 同上不再 `remove_var("GROVE_DATA_DIR")` | 两条新测试都红 | 绿 |
+| M4 `candidate_data_dirs()` 不再读 `XDG_DATA_HOME` | `a_fixture_clears_…` 红（正向锚点拦下） | 绿 |
+| M5 = M4 再删掉正向锚点那条断言 | **两条都绿**（漏检） | 绿 |
+
+红时的报错逐字：
+
+    M1  panicked at crates/codegen/xai-fast-worktree/src/auto_gc.rs:1821:9:
+        an isolated fixture still lets a grove directory outside itself be scanned by a
+        rebuild pass: ["/home/chaos/.local/share/grove"]
+    M3  panicked at crates/codegen/xai-fast-worktree/src/auto_gc.rs:1852:13:
+        an isolated fixture left an inherited GROVE_DATA_DIR in the rebuild scan:
+        ["/tmp/.tmpFcvACn/grove", "/tmp/.tmpMfgvHi/xdg-data/grove", …]
+    M4  panicked at crates/codegen/xai-fast-worktree/src/auto_gc.rs:1848:13:
+        an isolated fixture lists no grove directory at all:
+        ["/tmp/.tmpKJnVf1/.local/share/grove", "/tmp/.tmpKJnVf1/grok-home/grove"]
+    M5  test result: ok. 2 passed; 0 failed
+
+M1 的报错里就是第 2 节那个主机目录；M3 报错里的 `/tmp/.tmpFcvACn/grove` 是本测试自己种下的目录。
+M4→M5 这一对是正向锚点的存在理由：没有它，「产品代码不再认 `XDG_DATA_HOME`」这类改动会让两条
+测试一起变绿。复现命令在第 6 节。
+
+
+第 5 节  测量：按失败测试名分类的前后对照
+------------------------------------------
+
+命令（每轮跑一次完整 lib 测试并把失败测试名记进 `summary.txt`）：
+
+    $ RUST_MIN_STACK=16777216 cargo test -p xai-fast-worktree --offline --locked --features metadata --lib
+
+| 测量 | 轮数 | 红轮数 | `auto_gc::…rebuild_same_pass…` | `git::safety::…snapshot_under_a_foreign_clean_filter` | `nfs::client::…timeout_dead_daemon…` |
+| --- | --- | --- | --- | --- | --- |
+| 改造前（较早一轮） | 34 | 6 | 3 | 2 | 2 |
+| 改造前（本轮基线） | 20 | 3 | 1 | 2 | 0 |
+| 只改隔离 | 30 | 3 | **0** | 3 | 0 |
+| 隔离 + `nfs::client` 就绪信号 + 子测试诊断 | 120 | 4 | 0 | 2 | 2 |
+| 上一行 + 打开失败带完整错误链 + nfs `create_hold` 归零（`flaky8/`） | 120 | 3 | 0 | 3 | 0 |
+| 上一行 + `run_child` 钉住子进程 cwd + `/proc/self/cwd` 诊断（`flaky10/`） | 120 | 0 | 0 | 0 | 0 |
+
+**这两行不能与上面几行比大小。** 每一轮的负载都不一样（`flaky8` 那 120 轮本机同时还有 `cargo`
+在编译，`flaky10` 那 120 轮是独占机器的最后一轮），而红轮数在 120 轮这个量级上的差别，
+按二项分布算完全可能来自运气：flaky8 里 `git::safety` 出现 3 次，即使成因完全没变，
+flaky10 全绿的概率也在 40% 上下。能读出来的是**形状**：`flaky8` 的 3 次里有 2 次是三层链
+（`CurrentDir` + `ENOENT`，成因已查明并被永久测试钉住），1 次是裸 `ENOENT`（仍未查明）；
+`flaky10` 两种形状都是 0 次。逐测试的定性过程见
+[`fast-worktree-safety-gate-flake-2026-10-03.log`](fast-worktree-safety-gate-flake-2026-10-03.log)
+第 5 节与第 5.3 节。
+
+`auto_gc` 那一类：改造前 4/54 轮，改造后 0/30 轮。
+
+**日志留存要写清楚**：上表前三行是本轮早期的测量，脚本每轮只写 `run-NNN.log` 与 `summary.txt`，
+其中绿轮的日志在后续排查中被清掉，今天仍在盘上的只有改造前那一轮的 6 份红日志
+（第 2 节列出的 `flaky/run-006…034.log`，按测试名可逐一核对）与改造后的
+`flaky4/`（21 轮全量日志）、`diag2b/run/`（19 轮）、`diag2b/loaded/`（25 轮满载）。
+所以前三行的红轮**分类**可复核，总数只能靠 `summary.txt` 的计数（也已随 scratch 清理）——
+读这张表时应把它当作计数记录，而不是当作可逐字复查的产物。最后一行的 120 份逐轮日志
+（`summary.txt` + `run-001.log`…`run-120.log`）在本轮记录时仍在盘上，但 scratch 不随仓库留存，
+能长期依赖的是这一行的计数与第 6 节的复现命令。
+
+**这张表诚实的部分**：同一张表也说明本轮**没有**修完这个 crate 的偶发失败。剩下的
+`git::safety::tests::gate::snapshot_under_a_foreign_clean_filter`（父测试
+`git_configuration_in_the_environment_does_not_reach_the_snapshot` 里的子进程断言，
+`Safety::Keep(CheckFailed)` 而非 `Safety::Delete`）在改造前后同比例出现（`flaky8` 之前各轮 2/120
+与 3/120），`flaky10` 那 120 轮才是 0 次——按上一段说的理由，0/120 不足以宣布它被修好，
+尤其其中一种形状（三层链）已经有确定复现与永久测试，另一种（裸 `ENOENT`）仍然只有一句原文。
+它是**另一条独立的缺陷**，与本行无关，本行不因它而保持开放——它自己的定性见
+[`fast-worktree-safety-gate-flake-2026-10-03.log`](fast-worktree-safety-gate-flake-2026-10-03.log)。
+
+`nfs::client` 那一类**在这张表之后才算修完**，而且分两次：
+
+1. 第一次改动是 `spawn_server()` 里 19 处 `thread::sleep(20ms)`——它们是在等 mock daemon 的线程
+   被调度到 `accept()`，改成 `mpsc` 就绪信号，`spawn_server` 收到信号才返回（daemon 线程在
+   `bind` 之后、进入 `incoming()` 之前发信号；`listen` 队列保证这一瞬间到达的请求不会丢）。
+   剩下 3 处 sleep 保留，它们是**被测行为**本身（`query_interval` 轮询、模拟 daemon 的
+   `ping_delay`/`create_hold` 延迟）。
+2. 但上表最后一行说明这次改动**没有**修完这一类：120 轮里 `timeout_dead_daemon_unmounted_dest_is_fallback_without_second_create`
+   仍红 2 次（第 43、50 轮），失败点是客户端把「daemon 刚死」判成 `InFlight { phase: "unknown" }`
+   而不是走拷贝兜底。这是与就绪信号无关的**第二个机制**（夹具自己的 `create_hold` 与客户端
+   超时预算相互竞争）。它的定性、修复与变异矩阵见
+   [`fast-worktree-nfs-dead-daemon-race-2026-10-03.log`](fast-worktree-nfs-dead-daemon-race-2026-10-03.log)。
+
+也不能反过来说改造让第二类变多了：2/20 与 3/30 在样本上不可区分。这一点必须写明，因为
+`isolate_xdg_grove_data()` 会在夹具存活期间把 `HOME` 指向临时目录，读者有理由怀疑它影响了
+别的测试；实测把该测试单独跑 30 次（真实 `HOME`、指向临时空目录的 `HOME`、指向不存在目录的
+`HOME` 各 10 次）全绿，说明它不读 `HOME`：
+
+    $ for i in $(seq 10); do HOME=/tmp/definitely-not-here target/debug/deps/xai_fast_worktree-<hash> \
+        git::safety::tests::gate::git_configuration_in_the_environment_does_not_reach_the_snapshot --exact; done
+    test result: ok. 1 passed; 0 failed; …   （10 次）
+
+
+第 6 节  复现
+-------------
+
+    $ RUST_MIN_STACK=16777216 cargo test -p xai-fast-worktree --offline --locked --features metadata --lib
+    $ RUST_MIN_STACK=16777216 cargo test -p xai-fast-worktree --offline --locked --features metadata --lib \
+        a_fixture -- --test-threads=1
+
+变异矩阵就是逐条删掉这一行再跑上面第二条命令（跑完还原）：
+
+    auto_gc.rs   fx.isolate_xdg_grove_data();                              （M1）
+    db/mod.rs    xai_grok_test_support::env::set_var("HOME", self._tmp.path());       （M2）
+    db/mod.rs    xai_grok_test_support::env::remove_var("GROVE_DATA_DIR");            （M3）
+    nfs/liveness.rs  `if let Ok(xdg) = std::env::var("XDG_DATA_HOME") { … }` 整段      （M4）
+    auto_gc.rs   正向锚点 `assert!(candidates.contains(&grove), …)`                      （M5 = M4 + 这条）
+
+要看泄漏本身，不必改代码：把 `HOME` 指到一个装有 grove 记录的目录再跑重建那条测试，
+`registered` 就会变成 2。或者读一眼 `candidate_data_dirs()` 的四条来源与
+`GrokHomeFixture::new()` 设了哪些变量——差集就是泄漏面。
