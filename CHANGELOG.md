@@ -2,6 +2,60 @@
 
 ## Unreleased
 
+### 修复：关闭 PTY 时先松开终端、后发挂断，shell 于是走 EOF 路径 `exit 0`，把后台 job 永远留在世上
+
+`pty_session::tests::close_pty_kills_a_background_grandchild` 在 run `37091358203`（commit `6b8b3dad`）
+又红了一次，而那一步报 `finished in 300.22s`——这条断言自己的超时只有 5 秒。`TODO.md` 此前把它按
+「负载抖动」结案（run `36368578937` 红过一次、`36381870574` 全量通过、本地连续 25 次重跑通过），
+可 300 秒这个数与抖动毫无关系。把 `6b8b3dad` 那份文件原样取回工作区，用同一负载形状跑到第 4 轮：
+红，wall `300.10s`，通过轮 `0.09–0.14s`。**300 就是那条 `sleep 300` 自己睡醒的时刻**——幸存者占着最后
+一个 slave fd，而 reader 任务持有 master 的一份 dup，pty 的规则是只要还有 slave fd 开着，master 上的
+`read()` 就不返回 EIO，于是阻塞任务不结束、runtime 收不了尾，红一次的代价被拖成 300 秒。同一份 panic，
+在 panic 之前先把幸存者收掉，三次红的 libtest 时间是 `5.08 / 5.12 / 5.07s`。
+
+**job 是被谁杀死的必须先钉清楚，否则「修 close 路径」没有着力点。** 测试本来就有 `assert_ne!` 钉住前提：
+job control 把后台 job 放进了它自己的进程组，`killpg(shell_pgid, …)` 结构上打不到它。给通过轮套一层
+strace，三次的信号面一字不差：本仓库只发 `kill(-shell, SIGHUP)` 与 `kill(-shell, SIGCONT)`，紧接着
+`1017300 kill(-1017310, SIGHUP)`——那是 **bash 自己**发给 job 所在进程组的——然后它 `kill(self, SIGHUP)`
+把自己打死。本仓库对那个 job 一个信号都没发过，**shell 的转发是唯一通路**。
+
+**红的那几轮，shell 是「自己走出去的」。** 旧断言只报一个裸 pid，改进后的报告把两边的 `/proc` 状态和
+shell 的死法一起打出来，三轮红形状一字不差：job 是 `state=S ppid=1 pgid=自己 session=shell 的 pid
+SigIgn=0 SigCgt=0`（独立进程组、已被 init 收养、没把 SIGHUP 设成忽略、也从未被信号过——这把「job 自己
+免疫」和「job 没收到」分开了），shell 是 `(no /proc entry) (exited 0)`。`exited 0` 就是全部线索：
+`reap()` 原先先 `master.take()` 并结束 writer（两份 dup 里的两份）再挂断，终端先没，shell 的 stdin 就能
+报 EOF，它按用户敲 Ctrl-D 那条路离开，而转发不在那条路上。改后的 `reap()` 只 `hangup()`，确认 shell 退出
+之后才 `close_terminal()`——reader 与 writer 的 dup 让终端在这一步仍然开着，shell 只能以 SIGHUP 的方式
+离开，于是走到转发。
+
+**交替抽样 800 对：改前 19 红、改后 0 红。** 主证据不用「先后各跑一段」：两支二进制各构建一次（唯一
+差异是 `reap()` 里那两行的顺序，测试代码一字未改、无诊断注入），负载只起一次，之后 A、B、A、B 逐轮
+交替，判决取 libtest 汇总行**与**进程退出码两者。环境漂移因此同时落在两支上。加上顺序抽样的几轮，
+改前 41/2241 ≈ 1.8%、改后 5/3200 ≈ 0.16%。
+
+**没有归零，而且残余是另一种形状，这一条写在这里而不是藏进「已通过」。** 改后残余的红里 shell 的死法是
+`killed by Hangup`（改前是 `exited 0`）：它确实被挂断打死了，却没有转发。给改后的顺序套 strace 抓到一轮，
+整条 trace 只有 104 次 `kill`，**从头到尾没有 `kill(-job_pgid, SIGHUP)`**——bash 收到挂断后直接对自己
+重新举起，本仓库的 SIGKILL 是在那之后才到的，只改变了记录到的死法。要闭合它需要一个能覆盖整个会话的
+机制（扫 `/proc` 找 `session == shell pid`，或 cgroup 整组回收），而那比这条测试要的语义更宽：
+`nohup`/`disown` 而未 `setsid` 的进程也在同一个会话里，今天终端关窗时它们是活的——这是未决的产品语义
+决定，不是能夹在偶发修复里的改动。另一个**未验证**假设也记在 TODO 里：那条 trace 里 SIGCONT 先于 SIGHUP
+送达（通过轮是 SIGHUP 先到），而 `ProcessGroup::hangup()` 是无条件补 SIGCONT 的；分辨它需要每支几千轮
+成对抽样，且该函数还被 `Shell::reap_now()` 与 `ProcessScope::kill_all()` 共用，因此本轮没有动。同样没有
+被改动的是 `HANGUP_GRACE`：不带 strace 的 910+ 轮死法计数里只出现过 `killed by Hangup` 与 `exited 0`；
+带 strace 抓到的那一轮虽然记成 `Killed`，但 SIGKILL 明显到得比 bash 自己的重新举起更晚，它没有抢走转发。
+
+**测试侧那两处不是装饰。** 报告里每一项都被用过一次：`SigIgn`/`SigCgt` 排除「job 免疫」，`ppid=1` 与
+`pgid==pid` 说明它已无人可管，`session` 是「扫会话能捞到它」的依据，shell 的死法把改前/改后两次红分
+成两条不同的通路。`put_down()` 把一次红的代价从 300 秒压回 5 秒，且只打幸存者**自己**的进程组
+（`group > 1 && group != getpgrp()` 才动手），绝不打测试自己所在的组。诊断辅助全部挂在 `#[cfg(test)]`
+下，产品路径与 panic 站点基线都不受影响。本地覆盖不到非 Linux 分支：
+`cargo check --target x86_64-apple-darwin -p xai-grok-shell-terminal --tests` 红在依赖 `aws-lc-sys` 的 C
+交叉编译上（本机无 macOS 工具链），而 CI 的 `platform tests` 在这次 run 里是 `skipped`——前置 job 先红了。
+
+（2026-10-03；`crates/codegen/xai-grok-shell-terminal/src/pty_session.rs`、
+`docs/verification/pty-hangup-terminal-eof-2026-10-03.log`）
+
 ### 功能：设置面板九个区域第一次由「应答浏览器的那个进程」供值，Safe Web Mode 的拦截清单搬进引擎
 
 设置页此前只有 model 与 Base URL 两个输入框，TODO M3.1 那条「覆盖通用、外观、模型、Provider、权限、

@@ -1,0 +1,382 @@
+PTY 关闭时先松开终端、后发挂断：shell 于是走 EOF 路径自己 exit 0，后台 job 从此收不到任何信号，一次断言失败被拖成 300 秒
+================================================================================================
+
+日期：2026-10-03
+提交：f4b6aaa6（fix(terminal): 关闭 pty 时先发挂断再松开终端，否则 shell 走 EOF 路径把 job 留在世上）
+被记录的对象：
+  crates/codegen/xai-grok-shell-terminal/src/pty_session.rs
+      产品侧：reap() 改为「向 shell 发挂断 → 确认 shell 退出 → 才释放 master 与写端」，新增 close_terminal()
+      测试侧：新增 Shell::death()、describe_process()、linux_proc_stat_peers()、linux_signal_masks()、put_down()；
+              assert_process_eventually_gone() 的报告带上 shell 的死法与两边的 /proc 状态，panic 前收掉幸存者
+
+本文件自包含：每段输出都从当轮真实运行里逐字抄下，命令写在 `$` 行上。
+机器：Linux，28 核，单台。所有本地对照都在这台机器上跑。
+
+
+第 1 节  CI 里红的是什么
+------------------------
+
+GitHub Actions run `37091358203`（commit `6b8b3dad`，`chao2hang/chaos-code`）：
+
+    $ gh api repos/chao2hang/chaos-code/actions/runs/37091358203 \
+        --jq '[.id,.run_number,.head_sha,.status,.conclusion,.html_url]|@tsv'
+    37091358203 3246 6b8b3dadb86e5849fcc64666c13a49865f254751 completed failure https://github.com/chao2hang/chaos-code/actions/runs/37091358203
+    $ gh api "repos/chao2hang/chaos-code/actions/runs/37091358203/jobs?per_page=100" \
+        --jq '.jobs[] | [.name,.conclusion] | @tsv'
+    GUI browser E2E                     success
+    installer integrity labs            success
+    secret scan                         success
+    npm package scripts                 success
+    workflows present                   success
+    GUI engine, Web host and frontend   success
+    rust check / clippy / test          failure
+    docs localization                   success
+    platform tests (${{ matrix.os }})   skipped
+
+失败的那一步里只有这一条红：
+
+    2026-10-03T03:33:43.2682235Z test pty_session::tests::scope_teardown_kills_a_background_grandchild ... ok
+    2026-10-03T03:34:12.1770514Z test pty_session::tests::close_pty_kills_a_background_grandchild has been running for over 60 seconds
+    2026-10-03T03:38:12.2406915Z test pty_session::tests::close_pty_kills_a_background_grandchild ... FAILED
+    2026-10-03T03:38:12.2410411Z thread 'pty_session::tests::close_pty_kills_a_background_grandchild' (112678) panicked at crates/codegen/xai-grok-shell-terminal/src/pty_session.rs:943:13:
+    2026-10-03T03:38:12.2412173Z grandchild 112763 remained live through PTY close
+    2026-10-03T03:38:12.2416175Z test result: FAILED. 75 passed; 1 failed; 1 ignored; 0 measured; 0 filtered out; finished in 300.22s
+
+`TODO.md` M2.3 那一行此前写着：历史 run `36368578937` 红过一次，之后 run `36381870574` 全量通过，本地
+单独运行、crate 全量、连续 25 次重跑也都通过——也就是把它当成负载抖动结案（这句引用的原文与本文件的
+改写属于同一批提交，所以在当前 `TODO.md` 里已经找不到这段话）。本轮要推翻的就是这个结论，
+理由有两条，都在这段输出里：
+
+一、`finished in 300.22s` 与断言自己的超时矛盾。那条断言是
+`assert_process_eventually_gone(grandchild, Duration::from_secs(5))`，5 秒就该 panic；红一次要花 300 秒，
+说明红的代价不在断言上，而在进程退出上。
+
+二、同一轮里 `scope_teardown_kills_a_background_grandchild` 是 ok。它和红的那条几乎一样：同样
+`sleep 300 &`、同样断言孙进程消失。区别只有一处——`scope_teardown_…` 走本地 scope 的
+`kill_all`，此刻会话还持有终端；`close_pty_…` 走 `close_pty()`，teardown 自己决定什么时候松手。
+「负载抖动」解释不了这个成对差异，「关闭顺序」可以。
+
+
+第 2 节  红一次的代价是 300 秒，而 300 就是那条 `sleep 300` 自己结束的时刻
+--------------------------------------------------------------------------
+
+测试写进 pty 的命令是 `sleep 300 & echo pid=$!`。把出错那一版的文件原样取回工作区，用能复现的负载
+形状跑（见第 6 节的负载定义），第 4 轮红：
+
+    $ git show 6b8b3dad:crates/codegen/xai-grok-shell-terminal/src/pty_session.rs > \
+        crates/codegen/xai-grok-shell-terminal/src/pty_session.rs
+    $ taskset -c 0-3 env RUST_MIN_STACK=16777216 timeout 340 \
+        target/debug/deps/xai_grok_shell_terminal-1fb0eceb59366efd \
+        pty_session::tests::close_pty_kills_a_background_grandchild --test-threads=1 --nocapture
+    round 4 FAILED in 300.10s rc=101
+        thread 'pty_session::tests::close_pty_kills_a_background_grandchild' (960611) panicked at crates/codegen/xai-grok-shell-terminal/src/pty_session.rs:943:13:
+        grandchild 960622 remained live through PTY close
+        test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 76 filtered out; finished in 300.06s
+    --- elapsed seconds, passing rounds ---
+    n=3 min=0.09 median=0.11 max=0.14
+
+上面两条 `$` 行是那轮复现脚本实际执行的步骤，`round 4 FAILED in 300.10s` 与那行计时是脚本自己打印的；
+每轮都是重新起一个测试进程（`--test-threads=1`，只跑这一条测试）。
+
+同一份 panic，在 panic 之前先把幸存者收掉（本轮测试侧新增的 `put_down()`，见第 8 节），三次红的
+libtest 时间是这样：
+
+    grandchild 953857 …   test result: FAILED. … finished in 5.08s
+    grandchild 958121 …   test result: FAILED. … finished in 5.12s
+    grandchild 959099 …   test result: FAILED. … finished in 5.07s
+
+两组唯一的差别是「panic 的那一刻幸存者还在不在」。所以那 300 秒不是断言在等，是**测试进程退出被拖住**：
+reader 任务持有 master 的一份 dup，阻塞在 `read()` 上；pty 的规则是只要有任何一个 slave fd 还开着，
+master 上的 `read()` 就不会返回 EIO，于是这份 dup 不释放、阻塞任务不结束、runtime 收不了尾。红的那一刻
+唯一还开着的 slave fd，就是那个活着的 `sleep 300`——300.06 秒正是它自己睡醒的时刻。CI 上那条
+`has been running for over 60 seconds`（03:34:12，开跑后 60 秒的看门狗）到 `FAILED`（03:38:12）之间
+正好 240 秒，也对得上同一件事。
+
+这一段里被直接证明的是时间关系与那个可逆开关（收掉幸存者 ⇒ 300 秒回到 5 秒）；pty `read()` 的语义是
+既定规则，本轮没有为它单独做实验。
+
+
+第 3 节  job 到底是谁杀死的：不是本仓库杀的
+-------------------------------------------
+
+这点必须先钉清楚，否则「修 close 路径」没有着力点。测试本来就有一条 `assert_ne!` 钉住前提：job control
+把后台 job 放进了它自己的进程组，所以 `killpg(shell_pgid, …)` 结构上打不到它。给通过轮套一层 strace：
+
+    $ taskset -c 0-3 env RUST_MIN_STACK=16777216 timeout 120 strace -f -qq -e trace=signal \
+        -o strace-1.txt target/debug/deps/xai_grok_shell_terminal-1fb0eceb59366efd \
+        pty_session::tests::close_pty_kills_a_background_grandchild --test-threads=1 --nocapture
+    run 1 rc=0 verdict=test result: ok
+    run 2 rc=0 verdict=test result: ok
+    run 3 rc=0 verdict=test result: ok
+
+三次的信号面完全一致（shell=1017300，job=1017310）：
+
+    1017311 kill(-1017300, SIGHUP)          = 0
+    1017311 kill(-1017300, SIGCONT <unfinished ...>
+    1017300 --- SIGHUP {si_signo=SIGHUP, si_code=SI_USER, si_pid=1017298, si_uid=1003} ---
+    1017300 --- SIGCONT {si_signo=SIGCONT, si_code=SI_USER, si_pid=1017298, si_uid=1003} ---
+    …
+    1017300 kill(-1017310, SIGHUP)          = 0
+    1017300 kill(1017300, SIGHUP)           = 0
+    --- exits ---
+    1017310 +++ killed by SIGHUP +++
+    1017300 +++ killed by SIGHUP +++
+
+全部信号只有四条：本仓库发的 `kill(-shell, SIGHUP)` 与 `kill(-shell, SIGCONT)`，然后 **shell 自己**
+发了一条 `kill(-1017310, SIGHUP)`（目标正是 job 自己的进程组）和一条打给自己的 `kill(1017300, SIGHUP)`
+（bash 复位处置后重新举起，所以它的退出状态是「被 SIGHUP 打死」而不是「自己退出」）。
+
+也就是说：本仓库对那个 job 一个信号都没发过，job 收到过且只可能收到来自 shell 的转发。挂断转发是唯一
+通路，这句话不是推测。
+
+
+第 4 节  机制：红的那几轮，shell 是「自己走出去的」
+--------------------------------------------------
+
+旧断言只报一个裸 pid，说不出这些。改进后的断言把两边的 `/proc` 状态与 shell 的死法一起打出来；把产品侧
+改回改前的顺序、保留这条断言，在能复现的负载下跑 241 轮，红 3 轮，逐字如下：
+
+    ----- failing round 22 (of 260; failure #1) -----
+    grandchild 953857 remained live through PTY close: grandchild 953857(state=S ppid=1 pgid=953857 session=953838 SigIgn=0000000000000000 SigCgt=0000000000000000) / shell 953838(no /proc entry) (exited 0)
+    thread 'pty_session::tests::close_pty_kills_a_background_grandchild' (953837) panicked at crates/codegen/xai-grok-shell-terminal/src/pty_session.rs:1065:13:
+    test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 76 filtered out; finished in 5.08s
+
+    ----- failing round 201 (of 260; failure #2) -----
+    grandchild 958121 remained live through PTY close: grandchild 958121(state=S ppid=1 pgid=958121 session=958111 SigIgn=0000000000000000 SigCgt=0000000000000000) / shell 958111(no /proc entry) (exited 0)
+    test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 76 filtered out; finished in 5.12s
+
+    ----- failing round 241 (of 260; failure #3) -----
+    grandchild 959099 remained live through PTY close: grandchild 959099(state=S ppid=1 pgid=959099 session=959089 SigIgn=0000000000000000 SigCgt=0000000000000000) / shell 959089(no /proc entry) (exited 0)
+    test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 76 filtered out; finished in 5.07s
+
+三轮的形状一字不差：
+
+* `pgid` 等于自己的 pid —— 独立进程组，`killpg(shell_pgid)` 从来打不到它（与第 3 节那条 `assert_ne!` 一致）；
+* `session` 等于 shell 的 pid —— 它仍在那个会话里，可它的会话首领已经没了；
+* `ppid=1` —— 已被 init 收养；
+* `SigIgn=0 SigCgt=0` —— 它没有把 SIGHUP 设成忽略，也从未装过处理器。也就是说它**根本没被信号过**，
+  这条把「job 自己免疫」和「job 没收到」分开了；
+* `shell …(no /proc entry) (exited 0)` —— shell 的等待状态是**退出码 0**，不是被信号打死。
+
+对照第 3 节：通过轮的 shell 一律 `killed by Hangup`，并且在死之前发过那条转发。改前的顺序先
+`master.take()`（连同写端 dup），此刻 shell 的 stdin 可以报 EOF 了；shell 于是按 EOF 的方式离开——
+退出码 0，正是用户敲 Ctrl-D 时的那条路——而第 3 节那条转发根本不在那条路上。job 就留下来了。
+
+改后的顺序反过来：`hangup()` 时 master 与写端 dup 都还在（reader 还另持一份），shell 的 stdin 不会
+报 EOF，它只能以 SIGHUP 的方式离开，于是走到转发。`reap()` 现在长这样：
+
+    fn reap(entry: &Arc<Mutex<PtySession>>) {
+        let hung_up = entry.blocking_lock().shell.hangup();
+        if hung_up && wait_for_exit(entry, xai_tty_utils::HANGUP_GRACE) {
+            close_terminal(entry);
+            return;
+        }
+        entry.blocking_lock().shell.kill();
+        wait_for_exit(entry, REAP_GRACE);
+        close_terminal(entry);
+    }
+
+被证明的是这两种顺序下「shell 的退出状态」与「job 是否存活」的对应关系，以及第 7 节的概率差；bash
+内部具体走哪一段代码，本轮没有读 bash 源码去证明。
+
+
+第 5 节  排除掉的两条解释，以及一次无效的对照
+--------------------------------------------
+
+**解释 A：「`HANGUP_GRACE` 只有 200 ms，升级用的 SIGKILL 抢在转发之前把 bash 打死了。」** 时间不够这个
+方向不成立，但要说准确：升级确实会发生——第 7 节那条 trace 里就有 `kill(-shell, SIGKILL)`，那一轮 shell
+的等待状态因此是 `killed by Killed`。可那条 trace 同时显示，在本仓库发 SIGKILL **之前**，bash 已经
+自己 `kill(self, SIGHUP)` 决定exit 了，转发该在那之前发生；也就是说 SIGKILL 只改变了「记录到的死法」，
+没有抢走转发。其余所有记录了死法的轮次——钉核负载下逐轮打印死法的 510 轮（改前 60 + 改前 150 + 改后 300）、
+不钉核 A/B 里逐轮打印死法的 400 轮（改前 200 + 改后 200）、改后 1200 轮里的 2 个红轮、241 轮取样里的
+3 个红轮——死法只有 `killed by Hangup` 与 `exited 0` 两种。常量没有被改动。
+
+**解释 B：一个把两条顺序直接写出来的 Python 模型。** 它的结论与真实代码相反（关掉 master 再发信号的
+那支反而不遗留，留着 dup 的那支反而遗留），原因是模型只有一份 master fd：关掉它就等于走了内核的
+vhangup 通路，而真实代码在同一时刻还留着 reader 那份 dup，终端并没有真的挂断。模型给出的遗留率在
+25%–85% 之间，真实代码是 0.2%–1.8%，量级都不对。本轮放弃用模型做判断，改为一律在真实代码路径上加
+仪器测量；这个模型留下的唯一用处，是提醒「关掉 master」在真实代码里不是一个原子事件。
+
+**一次无效的对照（记在这里，免得它被当成证据复用）。** 最早那三轮 60/150/300 的对照把负载也钉在
+0-3 核上（`taskset -c 0-3 bash -c 'while :; do :; done' ×16`），改前改后都 0 红——这个形状本身不复现，
+所以它的 0 什么都不能说明。之后所有对照都改成「16 个不钉核的忙循环铺在 28 核上 + 测试钉在 0-3」。
+
+
+第 6 节  等概率对照：只改 reap() 的两行顺序
+------------------------------------------
+
+负载定义（两支共用，唯一变量是 `reap()` 的顺序）：16 个 `bash -c 'while :; do :; done'` 忙循环**不钉核**
+铺在 28 核上，测试进程 `taskset -c 0-3`。每支都是 `timeout 120`，判决取 libtest 自己的汇总行**与**进程
+退出码，两者都记。两支都从同一条 `cargo test --no-run` 命令构建，测试代码一字未改（无诊断注入）。
+
+    $ bash pty-ab2.sh 200        # 每支 200 轮
+    --- arm B fixed (signal, then close): 200 rounds (rc, libtest verdict) ---
+        200 rc=0  test result: ok
+    --- arm A pre-fix (close, then signal): 200 rounds (rc, libtest verdict) ---
+        199 rc=0  test result: ok
+          1 rc=101  test result: FAILED
+
+    $ bash pty-ab2.sh 1000       # 每支 1000 轮
+    --- arm B fixed (signal, then close): 1000 rounds (rc, libtest verdict) ---
+        997 rc=0  test result: ok
+          3 rc=101  test result: FAILED
+    arm A: reap() in the pre-fix order
+    --- arm A pre-fix (close, then signal): 1000 rounds (rc, libtest verdict) ---
+        982 rc=0  test result: ok
+         18 rc=101  test result: FAILED
+
+汇总本轮所有真实代码轮次（各次运行的负载形状与是否带仪器不同，故分开列，不做加权）：
+
+| 顺序 | 运行 | 轮数 | 红 |
+| --- | --- | --- | --- |
+| 改前 | 交替抽样 `pty-ab3.sh 800` | 800 | 19 |
+| 改前 | 241 轮取样（带死法仪器） | 241 | 3 |
+| 改前 | `pty-ab2.sh 200` | 200 | 1 |
+| 改前 | `pty-ab2.sh 1000` | 1000 | 18 |
+| 改前 | 第 2 节那份原样文件 | 4 | 1 |
+| 改后 | 交替抽样 `pty-ab3.sh 800` | 800 | 0 |
+| 改后 | `pty-ab2.sh 200` | 200 | 0 |
+| 改后 | `pty-ab2.sh 1000` | 1000 | 3 |
+| 改后 | 残余取样 `pty-residual.sh 1200` | 1200 | 2 |
+
+最上面两行是本轮的主证据，因为它是**交替抽样**：两支二进制各构建一次（`cp` 出两个文件，之后不再重建），
+负载只起一次，然后 A、B、A、B 一轮一轮交替跑，机器上任何环境漂移都同时落在两支上。
+
+    $ bash pty-ab3.sh 800
+    === interleaved rounds: 1600 (800 per arm) ===
+        800 fixed  rc=0  test result: ok
+        781 prefix  rc=0  test result: ok
+         19 prefix  rc=101  test result: FAILED
+
+19 : 0，且这 19 轮散在 30、119、189、207、284、421…798 各处，不聚成一段。改前 41/2241 ≈ 1.8%，
+改后 5/3200 ≈ 0.16%，约 11 倍。若改后仍是改前的 1.8% 速率，交替那 800 轮全绿的概率是
+0.982^800 ≈ 5×10⁻⁸；19:0 的 Fisher 精确检验 p ≈ 5×10⁻⁵。
+
+口径还是要说清：改后的 5 次红全部来自**顺序跑**的那两次（3/1000、2/1200），交替那 800 轮一次也没抓到，
+与 0.16% 的速率一致（期望 1.3 次），但不足以单独确定它。也就是说：**改前那条通路被整段拿掉了，这一点
+证据很强；改后残余 0.16% 这个数字本身，精度只到「千分之一量级」。** 残余是什么，见第 7 节。
+
+
+第 7 节  残余：shell 被 SIGHUP 打死了，却没有转发
+--------------------------------------------------
+
+改后仍然红的轮次，报告与改前**不一样**，这一句是关键：
+
+    ----- fixed-order failing round 198 (rc=101; failure #1 of 1200 rounds) -----
+    grandchild 1021590 remained live through PTY close: grandchild 1021590(state=S ppid=1 pgid=1021590 session=1021580 SigIgn=0000000000000000 SigCgt=0000000000000000) / shell 1021580(no /proc entry) (killed by Hangup)
+    test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 76 filtered out; finished in 5.08s
+
+    ----- fixed-order failing round 1083 (rc=101; failure #2 of 1200 rounds) -----
+    grandchild 1038900 remained live through PTY close: grandchild 1038900(state=S ppid=1 pgid=1038900 session=1038890 SigIgn=0000000000000000 SigCgt=0000000000000000) / shell 1038890(no /proc entry) (killed by Hangup)
+    test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 76 filtered out; finished in 5.07s
+
+改前红轮的 shell 是 `exited 0`（走了 EOF 那条路，谈不上转发）；改后红轮的 shell 是
+`killed by Hangup`，也就是它**确实是被挂断打死的，却没能把挂断转发出去**（job 那边依旧
+`SigIgn=0 SigCgt=0`、`ppid=1`，一个信号都没收到）。这是第二条独立的通路，本轮没有把它修掉：
+
+「没有转发」这件事不必靠推断。给改后的顺序套上 strace 跑，第 419 轮红（那一轮 shell 的死法是
+`killed by Killed`，与上面两轮的 `killed by Hangup` 又不同），整条 trace 只有 104 次 `kill` 调用，
+信号面逐条如下（`1049775`=测试进程，`1049776`=它的主线程，`1049777`=shell，`1049787`=job，
+`1049788`=teardown 的 blocking 线程）：
+
+    $ taskset -c 0-3 env RUST_MIN_STACK=16777216 timeout 120 strace -f -qq -e trace=signal \
+        -o fail-trace.txt target/debug/deps/xai_grok_shell_terminal-1fb0eceb59366efd \
+        pty_session::tests::close_pty_kills_a_background_grandchild --test-threads=1
+    FAILED at round 419 (rc=101)
+
+    1049788 kill(-1049777, SIGHUP)          = 0
+    1049788 kill(-1049777, SIGCONT)         = 0
+    1049777 --- SIGCONT {si_signo=SIGCONT, si_code=SI_USER, si_pid=1049775, si_uid=1003} ---
+    1049777 --- SIGHUP  {si_signo=SIGHUP,  si_code=SI_USER, si_pid=1049775, si_uid=1003} ---
+    1049777 kill(1049777, SIGHUP)           = 0
+    1049777 --- SIGHUP  {si_signo=SIGHUP,  si_code=SI_USER, si_pid=1049777, si_uid=1003} ---
+    1049788 kill(-1049777, SIGKILL)         = 0
+    1049777 +++ killed by SIGKILL +++
+    …
+    1049776 kill(1049787, 0)                = 0        （同样的行共 99 条：断言每 50 ms 探一次存活）
+    1049776 kill(-1049787, SIGKILL)         = 0        （put_down() 收场）
+    1049787 +++ killed by SIGKILL +++
+
+与第 3 节通过轮那份只差一行，而这一行就是全部：**这条 trace 里从头到尾没有出现过
+`kill(-1049787, SIGHUP)`**（`grep -c` 结果是 0）。bash 收到挂断之后直接对自己重新举起，转发动作根本没
+发生；本仓库的 SIGKILL 是在那之后才到的，它只把记录到的死法改成 `Killed`，没有抢走任何东西。
+
+三处可对照的差异里，有一处值得下一轮去试，但它现在只是假设：**这条 trace 里 SIGCONT 先于 SIGHUP 送达**
+（发出去是 SIGHUP 在前），而通过轮是 SIGHUP 先到、SIGCONT 后到。`ProcessGroup::hangup()` 现在无条件补
+一发 SIGCONT，注释写的理由是「被停住的 shell 要醒来才转得动挂断」，可一个正在跑的 shell 并不需要它。
+「只对停止态补 SIGCONT」是不是那条不转发快路径的开关，本轮没有证据支持，因此没有改：要分辨 0.2% 上下的
+速率差需要每支几千轮的成对抽样，而它动的 `xai-tty-utils::ProcessGroup::hangup()` 同时被
+`Shell::reap_now()` 与 `ProcessScope::kill_all()` 使用。这一条以未验证假设的形式写进 `TODO.md`。
+
+
+它也让「这条契约到底有多硬」这件事必须说清楚：转发是 shell（bash）这个合作者在它自己的退出路径上做的
+事，本仓库手里只有 shell 那一个进程组。要让「关掉 pty ⇒ shell 起的一切都得死」成为确定性的，需要的是一个
+能覆盖整个会话的机制（Linux 上例如扫 `/proc` 找 `session == shell pid` 的进程，或把 shell 放进可整组回收
+的 cgroup），而不是把 `HANGUP_GRACE` 调大——第 5 节已经排除了时间不够这个方向。本轮没有做这件事，因为
+它的语义比这条测试要的更宽：`disown`/`nohup` 但没 `setsid` 的进程也留在同一个会话里，扫会话会把它们一起
+杀掉，而真实终端关窗时它们今天是活的。这是一个需要单独决定的产品语义问题，不是一个可以顺手夹在偶发修复
+里的改动。`TODO.md` 对应那行因此仍保持 `[~]`，并把这条残余写进去。
+
+
+第 8 节  测试侧那些改动不是装饰
+------------------------------
+
+`assert_process_eventually_gone()` 的报告里每一部分都被用过一次：`SigIgn`/`SigCgt` 把「job 免疫」
+排除掉，`ppid=1` 与 `pgid==pid` 说明它已无人可管，`session` 给出「扫会话能捞到它」这件事的依据，
+shell 的死法把改前/改后两次红区分成两条不同的通路（第 7 节正是靠它）。旧断言只报 pid，红了只能重跑。
+
+`put_down()` 让一次红的代价从 300 秒回到 5 秒（第 2 节的对照就是它两侧）。它只打幸存者**自己**的
+进程组：先 `getpgid(pid)`，再要求 `group > 1 && group != getpgrp()` 才 `killpg`，也就是绝不打测试自己
+所在的组——这与本仓库其他地方每次发信号前经 `ProcessGroupId::new` 持有的不变量一致。
+
+诊断函数本身不进产品路径：`Shell::death()` 与四个 `describe_process` 用到的辅助都挂在
+`#[cfg(test)]` / `#[cfg(all(test, unix))] mod tests` 下，`panic-site-census.py` 的基线因此不受影响。
+
+
+第 9 节  常规验证
+----------------
+
+    $ cargo fmt --all -- --check          # 空输出
+    FMT_CLEAN_RC=0
+
+    $ cargo clippy --offline -p xai-grok-shell-terminal --all-targets -- -D warnings
+    CLIPPY_RC=0
+
+    $ cargo test --offline -p xai-grok-shell-terminal -p xai-tty-utils
+    TEST_RC=0
+    test result: ok. 76 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 2.58s   # xai_grok_shell_terminal lib
+    test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 61 filtered out; finished in 0.00s
+    test result: ok. 62 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.02s    # xai_tty_utils lib
+    test result: ok. 0 passed; 0 failed; …                                                          # doc-tests xai_grok_shell_terminal
+    test result: ok. 2 passed; 0 failed; …                                                          # doc-tests xai_tty_utils
+
+想给非 Linux 分支（`describe_process` 的 `live`/`gone` 那一支）拿一次编译覆盖，没能拿到：
+
+    $ cargo check --offline --target x86_64-apple-darwin -p xai-grok-shell-terminal --tests
+    cargo:warning=ToolExecError: command did not execute successfully (status code exit status: 1):
+      LC_ALL="C" "cc" "-O0" … "-arch" "x86_64" "-mmacosx-version-min=10.7" … aws-lc-sys-0.39.1/…/p521_jscalarmul.S
+      error occurred in cc-rs: command did not execute successfully
+
+红在依赖 `aws-lc-sys` 的 C 交叉编译上，与本 crate 无关（本机没有 macOS 工具链）。非 Linux 那条分支因此
+没有本地编译覆盖，仍由 CI 的 `platform tests` 负责——而它在上面那次 run 里是 `skipped`，因为前置的
+`rust check / clippy / test` 先失败了。Windows/macOS 的真实结论要等下一次 run。
+
+
+第 10 节  这份记录不是什么
+-------------------------
+
+* **不是「这条偶发已归零」。** 改后仍有 5/3200 的红，且那几轮的 shell 死法与改前不同（第 7 节），
+  是另一条通路。本轮只解释并关掉了 `exited 0` 这一条。
+* **不是速率的精确测量。** 交替抽样那 800 对是本轮唯一消除了时间漂移的比较，其余是顺序抽样；负载形状是
+  合成的（16 个忙循环），CI 上那次是整仓并行负载下的一次命中，与这里的单测形状不能互换。改前 1.8% /
+  改后 0.16% 里，前者稳，后者只到「千分之一量级」。
+* **不是 bash 内部机制的源码级证明。** 本轮的证据是信号面（谁发了哪个信号、谁死于哪个信号）与等待状态；
+  「EOF 那条路不转发」是从这些观测加上 shell 的两种死法反推出来的，没有读 bash 源码。
+* **不是跨平台结论。** 全部本地数据来自一台 Linux；`describe_process` 的非 Linux 分支连编译都没在本地
+  覆盖过（第 9 节）。
+* **不是整仓回归证明。** 本节只跑了被改动的两个 crate。整仓、Docker 全轮与浏览器 e2e 的证据属于
+  同一批里另一个 commit（`docs/verification/verify-in-docker-frozen-6b8b3dad-2026-10-03.log`、
+  `docs/verification/settings-panel-2026-10-03.log`），本轮没有改动它们覆盖的任何文件。
+* **不是「teardown 契约已被保证」。** 契约仍然依赖 shell 配合转发；`HANGUP_GRACE` 之后升级的
+  `kill()` 只能打到 shell 自己的进程组，任何没被 shell 转发到的 job 从此无人能信号，这是本轮没有
+  解决的部分。
