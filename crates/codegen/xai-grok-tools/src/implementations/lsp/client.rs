@@ -35,6 +35,7 @@ use super::documents::{Documents, Update, end_position};
 use super::pull::PullDiagnostics;
 use super::refresh::{ProjectInitializationComplete, RefreshTarget};
 use super::server_stderr::ServerStderr;
+use super::startup_trace::{StartupTrace, TraceReader, TraceWriter};
 use super::watched_files::{self, WatchedFiles};
 use super::{DiagnosticsNotify, LspError, LspMainLoop, file_uri, workspace_open};
 use crate::util::{ProcessGroup, ProcessScope};
@@ -206,11 +207,12 @@ async fn spawn_transport(
     config: &LspServerConfig,
     main_loop: LspMainLoop,
     stderr: &ServerStderr,
+    trace: &StartupTrace,
 ) -> Result<TransportHandles, LspError> {
     match config.transport {
         LspTransport::Stdio => {
             let (handle, stderr_task, child) =
-                LspClient::start_stdio(server_name, config, main_loop, stderr).await?;
+                LspClient::start_stdio(server_name, config, main_loop, stderr, trace).await?;
             Ok((handle, stderr_task, Some(child)))
         }
         LspTransport::Socket => {
@@ -285,15 +287,19 @@ fn launch_description(config: &LspServerConfig) -> String {
     }
 }
 
-/// Why the server could not answer: an exit status if it already has one, and
-/// whatever it said on its way out.
+/// Why the server could not answer: an exit status if it already has one, the
+/// bytes exchanged while it failed, and whatever it said on its way out.
 ///
 /// Without this a missing or misinstalled server binary reads as
 /// `LSP initialization failed: service stopped`, which names neither the server
-/// nor the reason, and sends the reader to a log at debug level.
+/// nor the reason, and sends the reader to a log at debug level. The byte
+/// exchange covers what an exit status and a stderr tail cannot: a server that
+/// answered in framing the parser rejected, and a handshake whose request never
+/// reached the server at all.
 async fn startup_failure_detail(
     child: &mut Option<std::process::Child>,
     stderr: &ServerStderr,
+    trace: &StartupTrace,
 ) -> String {
     let mut detail = String::new();
     if let Some(child) = child.as_mut() {
@@ -318,6 +324,9 @@ async fn startup_failure_detail(
                 _ => break,
             }
         }
+        // Only for a process we started. The socket transport has no stdin and no
+        // stdout, so a clause about bytes sent would be a lie there.
+        detail.push_str(&trace.summary());
     }
     detail.push_str(&stderr.summary(STDERR_GRACE).await);
     detail
@@ -387,18 +396,25 @@ impl LspClient {
         );
 
         let stderr_tail = ServerStderr::default();
+        let trace = StartupTrace::default();
         let (main_loop_handle, stderr_task, mut child_process) =
-            spawn_transport(&server_name, &config, main_loop, &stderr_tail).await?;
+            spawn_transport(&server_name, &config, main_loop, &stderr_tail, &trace).await?;
 
         let init_params = build_initialize_params(&config, workspace_root);
 
         let init_result =
             match initialize_with_timeout(&server_name, &config, &mut server, init_params).await {
-                Ok(result) => result,
+                Ok(result) => {
+                    // The answer arrived, so the byte copies have told all they
+                    // know and the streams are left alone from here on.
+                    trace.disarm();
+                    result
+                }
                 Err(LspError::InitFailed(reason)) => {
                     // Read the exit status and the last lines *before* tearing
                     // the transport down; neither is available after the kill.
-                    let detail = startup_failure_detail(&mut child_process, &stderr_tail).await;
+                    let detail =
+                        startup_failure_detail(&mut child_process, &stderr_tail, &trace).await;
                     abort_transport(&main_loop_handle, &mut child_process);
                     return Err(LspError::InitFailed(format!(
                         "'{server_name}' [{}] {reason}{detail}",
@@ -516,6 +532,7 @@ impl LspClient {
         config: &LspServerConfig,
         main_loop: LspMainLoop,
         stderr_tail: &ServerStderr,
+        trace: &StartupTrace,
     ) -> Result<
         (
             tokio::task::JoinHandle<()>,
@@ -574,12 +591,17 @@ impl LspClient {
             .map_err(|e| LspError::SpawnFailed(format!("stdout async wrap: {e}")))?;
         let async_stdin = tokio::process::ChildStdin::from_std(child_stdin)
             .map_err(|e| LspError::SpawnFailed(format!("stdin async wrap: {e}")))?;
+        // Both streams are copied into `trace` until `initialize` is answered, so
+        // a server that answered in bytes no parser accepted is distinguishable
+        // from one that never answered, and from a request that never left here.
+        let traced_stdout = TraceReader::new(async_stdout, trace.clone());
+        let traced_stdin = TraceWriter::new(async_stdin, trace.clone());
 
         let name = server_name.to_string();
         let handle = tokio::spawn(async move {
             use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
             if let Err(e) = main_loop
-                .run_buffered(async_stdout.compat(), async_stdin.compat_write())
+                .run_buffered(traced_stdout.compat(), traced_stdin.compat_write())
                 .await
             {
                 tracing::warn!(server = %name, error = %e, "LSP main loop exited with error");

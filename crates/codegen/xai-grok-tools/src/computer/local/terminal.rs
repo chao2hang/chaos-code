@@ -2231,11 +2231,55 @@ impl LocalTerminalActor {
 // Handle (public API)
 // ============================================================================
 
+/// Whether a persistent shell can be built on this platform at all.
+///
+/// The persistent shell is one long-lived `bash` whose cwd, exported variables,
+/// functions and aliases are read back after every command. Reading them back is
+/// `shell_state`, and `shell_state` speaks through a fifo and a `/proc`-visible
+/// pid, so the whole path is `#[cfg(unix)]`: see the gated branch in
+/// [`LocalTerminalActor::spawn_command`] and the gated `shell_state` field of the
+/// actor. Before this predicate existed, the request simply vanished behind that
+/// `cfg` on Windows and the caller could not tell the two behaviours apart.
+pub fn persistent_shell_supported() -> bool {
+    cfg!(unix)
+}
+
+/// Reconcile a requested persistent shell with what this platform can build,
+/// reporting the gap through `report` at most once per `unreported` latch.
+///
+/// The latch says "not yet reported": it starts out set and the first report
+/// clears it, so a process-wide latch gives one warning per process however many
+/// sessions ask.
+///
+/// The decision and its reporting are deliberately free of any `cfg`: the only
+/// platform-dependent input is `supported`, which the callers pass through
+/// [`persistent_shell_supported`]. That seam is what lets a Linux and a Windows
+/// run exercise the same "asked for one, cannot have one" path, rather than the
+/// Windows path existing only in a build nobody tests locally.
+fn reconcile_persistent_shell(
+    requested: bool,
+    supported: bool,
+    unreported: &std::sync::atomic::AtomicBool,
+    report: impl FnOnce(),
+) -> bool {
+    if !requested || supported {
+        return requested;
+    }
+    if unreported.swap(false, std::sync::atomic::Ordering::Relaxed) {
+        report();
+    }
+    false
+}
+
 /// Channel handle to the terminal actor; the public `TerminalBackend` API.
 #[derive(Clone)]
 pub struct LocalTerminalBackend {
     cmd_tx: mpsc::Sender<TerminalCommand>,
     cancel_token: CancellationToken,
+    /// The persistent-shell request *after* the platform was consulted, which is
+    /// what the actor was actually started with. `requested_persistent_shell` is
+    /// not recorded because no caller can ask for it after construction.
+    persistent_shell: bool,
 }
 
 /// Grouped inputs for [`LocalTerminalBackend::new_inner`]; constructors override
@@ -2277,6 +2321,10 @@ impl LocalTerminalBackend {
 
     /// Env vars, cwd, functions, and aliases persist across commands; the login
     /// shell's rc files load once on first command.
+    ///
+    /// Where no persistent shell is implemented, this degrades to
+    /// [`LocalTerminalBackend::new`]'s behaviour and logs one warning; see
+    /// [`LocalTerminalBackend::persistent_shell_effective`].
     pub fn with_persistent_shell() -> Self {
         Self::new_inner(LocalTerminalConfig {
             persistent_shell: true,
@@ -2317,6 +2365,10 @@ impl LocalTerminalBackend {
         })
     }
 
+    /// Session-scoped persistent shell on a current-thread runtime. The platform
+    /// caveat in [`LocalTerminalBackend::with_persistent_shell`] applies here too;
+    /// the session asks for one unconditionally, so this is the constructor whose
+    /// request is most often reconciled away.
     pub fn new_local_with_persistent_shell(
         search_shadows: SearchShadowConfig,
         shell_env_policy: Option<crate::util::ShellEnvironmentPolicy>,
@@ -2405,6 +2457,22 @@ impl LocalTerminalBackend {
             scope,
             settings,
         } = config;
+        // Consulted once per process, because a session that cannot have one will
+        // not get one by asking again, and a warning per session would bury it.
+        static PERSISTENT_SHELL_UNREPORTED: std::sync::atomic::AtomicBool =
+            std::sync::atomic::AtomicBool::new(true);
+        let persistent_shell = reconcile_persistent_shell(
+            persistent_shell,
+            persistent_shell_supported(),
+            &PERSISTENT_SHELL_UNREPORTED,
+            || {
+                tracing::warn!(
+                    "persistent shell was requested but is not implemented on this platform; \
+                     every command runs in its own shell, so cwd, exported variables, aliases \
+                     and shell functions will not carry over between commands"
+                );
+            },
+        );
         let (cmd_tx, cmd_rx) = mpsc::channel(COMMAND_CHANNEL_SIZE);
         let actor_tx = cmd_tx.downgrade();
         let cancel_token = CancellationToken::new();
@@ -2445,7 +2513,18 @@ impl LocalTerminalBackend {
         Self {
             cmd_tx,
             cancel_token,
+            persistent_shell,
         }
+    }
+
+    /// Whether this backend actually runs commands in one persistent shell.
+    ///
+    /// This is the reconciled answer, not the constructor that was called: on a
+    /// platform without `shell_state`, `with_persistent_shell` returns a backend
+    /// that answers `false` here and warns once, instead of quietly behaving like
+    /// [`LocalTerminalBackend::new`].
+    pub fn persistent_shell_effective(&self) -> bool {
+        self.persistent_shell
     }
 
     pub fn cancel(&self) {
@@ -4595,6 +4674,79 @@ mod tests {
     // ================================================================
     // Persistent shell tests
     // ================================================================
+
+    /// The predicate and the gate it describes must not drift: the persistent shell
+    /// *is* the `#[cfg(unix)]` `shell_state` path in the actor, and a predicate that
+    /// claimed otherwise would let a backend report a behaviour it does not have.
+    /// Compiles everywhere on purpose, so the Windows build checks it too.
+    #[test]
+    fn persistent_shell_support_is_the_platform_the_actor_gate_uses() {
+        assert_eq!(persistent_shell_supported(), cfg!(unix));
+    }
+
+    #[test]
+    fn a_persistent_request_where_supported_is_kept_and_silent() {
+        let latch = std::sync::atomic::AtomicBool::new(true);
+        let mut reports = 0;
+        let effective = reconcile_persistent_shell(true, true, &latch, || reports += 1);
+        assert!(effective);
+        assert_eq!(
+            reports, 0,
+            "a platform that has a persistent shell has nothing to warn about"
+        );
+    }
+
+    /// The Windows shape of the request, driven on any host: the refusal and the
+    /// one-time reporting are plain code, and `supported` is the only platform input.
+    #[test]
+    fn a_persistent_request_without_a_persistent_shell_is_refused_and_said_once() {
+        let latch = std::sync::atomic::AtomicBool::new(true);
+        let mut reports = 0;
+        for _ in 0..3 {
+            let effective = reconcile_persistent_shell(true, false, &latch, || reports += 1);
+            assert!(
+                !effective,
+                "no persistent shell exists here, so none is handed out"
+            );
+        }
+        assert_eq!(
+            reports, 1,
+            "the gap is stated once per process, not once per session"
+        );
+        assert!(
+            !latch.load(std::sync::atomic::Ordering::Relaxed),
+            "reporting the gap has to spend the latch, or the next session hears it again"
+        );
+    }
+
+    /// A caller that never asked must not be told it got a one-shell-per-command
+    /// fallback it did not request.
+    #[test]
+    fn a_request_for_no_persistent_shell_never_reports_a_gap() {
+        let latch = std::sync::atomic::AtomicBool::new(true);
+        let mut reports = 0;
+        assert!(!reconcile_persistent_shell(false, false, &latch, || {
+            reports += 1
+        }));
+        assert_eq!(reports, 0);
+    }
+
+    /// The real constructor, not the helper: what the caller can observe has to
+    /// match what the actor will do, on the platform the caller is on.
+    #[tokio::test]
+    async fn the_backend_reports_the_shell_mode_it_actually_got() {
+        let requested = LocalTerminalBackend::with_persistent_shell();
+        assert_eq!(
+            requested.persistent_shell_effective(),
+            persistent_shell_supported(),
+            "the backend has to say what it will do, not what it was asked to do"
+        );
+        let plain = LocalTerminalBackend::new();
+        assert!(
+            !plain.persistent_shell_effective(),
+            "the default constructor asks for nothing, so it must not claim one"
+        );
+    }
 
     /// The persistent shell is unix-only: `spawn_command` gates it behind
     /// `cfg(unix)` and ignores the flag elsewhere, so there is no state to

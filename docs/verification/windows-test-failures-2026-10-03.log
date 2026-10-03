@@ -1,0 +1,371 @@
+# Windows leg: the last 42 red tests, traced to five mechanisms and fixed at the root (2026-10-03)
+
+Baseline for everything below is run `37126354066` (head `9e77c6d0`), job
+`111218903002`, `platform tests (windows-latest)`. Both test steps of that job are
+quoted as the runner printed them. That job had no other Windows failure, so 42
+tests is the whole remainder of the Windows debt this batch deals with.
+
+== 0. What the leg said before any of this
+
+    $ cargo test (target-OS crates: except xai-grok-tools)   # --lib, per crate
+        test result: FAILED. 67 passed; 1 failed; 0 ignored; ... finished in 13.28s
+            local_terminal::tests::test_basic_command_output
+
+    $ cargo test (target-OS crates: xai-grok-tools)          # --lib
+        test result: FAILED. 3054 passed; 41 failed; ...
+            37  implementations::lsp::tests
+             3  implementations::grok_build::read_file::tests
+             1  implementations::lsp::watched_files::tests
+
+The 42 split into five mechanisms. Four of them were product or test-fixture
+defects with an identifiable root cause; one (section 6) was the test's own budget.
+None of them needed a Windows machine to fix, and every one of them is now covered
+by a test that runs on Linux.
+
+== 1. Cluster A, 37 tests: the mock LSP servers framed their answers in text mode
+
+Every one of the 37 reported the same one-clause symptom:
+
+    LSP initialization failed: '<name>' [<cmdline>] service stopped
+
+`service stopped` is what async-lsp says when the stream ends without a parseable
+message. The client's previous diagnostics work (commit `91085571` era, see
+`docs/verification/platform-ci-2026-10-02.log` section 6) had already added the
+server name, the command line, the exit code and the last stderr lines, and on
+Windows all of that was useless: the exit code was 0 and the stderr tail was empty,
+because the server had run correctly, answered, and been refused.
+
+The mechanism is in the fixtures, not in the product. Each mock server wrote its
+frames through Python's text-mode `sys.stdout`:
+
+    print("Content-Length: %d\r\n\r\n%s" % (len(body), body))
+
+On Windows, text mode rewrites every `\n` written to a pipe as `\r\n`. The header
+terminator therefore left the interpreter as `\r\r\n\r\r\n`, which is not the
+`\r\n\r\n` the protocol specifies. The parser refused it, the client stopped
+reading and dropped its handle to the child's stdin, Python read EOF and exited 0.
+Nothing in that chain raises an error, which is why 37 tests failed with a message
+containing no facts.
+
+The mechanism was confirmed on Linux by feeding the client the bytes Windows
+produces. The durable form of that fixture is
+`crates/codegen/xai-grok-tools/src/implementations/lsp/tests/mock_servers.rs::write_translated_newline_server`,
+which overrides the framing helper with
+
+    chunk.replace(b'\n', b'\r\n')
+
+and the assertion is
+`crates/codegen/xai-grok-tools/src/implementations/lsp/tests.rs::a_server_whose_bytes_are_wrong_shows_the_bytes`.
+Run against the pre-fix client it failed with exactly the Windows sentence:
+
+    LSP initialization failed: 'translated' [python3 -u .../translated_lsp.py]
+    service stopped; the process exited with code 0
+
+Fix: all five mock servers now frame in binary. Reads go through
+`sys.stdin.buffer.readline()`, header keys are compared as bytes, and the write
+path is
+
+    def send_message(msg):
+        body = json.dumps(msg).encode('utf-8')
+        sys.stdout.buffer.write(b"Content-Length: %d\r\n\r\n" % len(body) + body)
+        sys.stdout.buffer.flush()
+
+The module doc of `tests/mock_servers.rs` states the rule and this failure, so the
+next mock server written here does not rediscover it.
+
+== 2. The interpreter probe: a name on PATH is not an interpreter
+
+The fixtures pick an interpreter rather than assuming `python3`. Answering
+`--version` with exit 0 is not sufficient evidence, because that is exactly what
+the Microsoft Store execution alias does: it exists, it exits 0, it runs nothing.
+A candidate is now an interpreter only if it executes a script, and the probe
+requires a marker in the raw stdout of
+
+    <candidate> [-3] -u -c "import sys; sys.stdout.write('chaos-lsp-probe-ok'); sys.stdout.flush()"
+
+The three refusal clauses name the candidate and say which test it failed:
+`cannot run a script` (could not spawn), `refused a script (<exit>, stderr: ...)`
+(non-zero exit), `exited 0 on a script without running it (output: ...)`. The last
+clause is the Store alias. The marker is matched against the untrimmed stdout, so a
+stub that prints a banner first cannot slip past on a trimmed tail. Every refusal
+is kept and printed when all candidates are rejected; `every_rejected_candidate_is_named_in_the_refusals`
+asserts that two bad candidates produce two named refusals rather than one
+aggregate message.
+
+== 2b. Making those tests run on the platform whose alias they describe
+
+The four tests above were `#[cfg(unix)]` at the time of the inventory in
+`docs/verification/platform-gated-tests-2026-10-03.log`, and they had to be: a candidate that
+"spawns, complains and leaves" was built as a shell script with a `#!` line and `chmod 755`, which
+is not spawnable on Windows. So the test for a Windows-only failure mode was the one thing Windows
+never ran. Two of those rows sat in the ledger as `assumptions=none` gates.
+
+The stub is now built out of the interpreter the host has already proved works, which needs no
+platform-specific file at all. Python consumes the first `-c` and treats everything after it as
+`sys.argv`, so
+
+    python -c "<stub body>" -u -c "<the probe's own script>"
+
+runs the stub body and never reaches the script the probe handed it. That is the alias's shape:
+spawns, prints, exits. `alias_args()` builds the candidate's argument list by taking the host
+interpreter's own pre-args (`-3` where the launcher needs it) and appending the stub body, so the
+test never hard-codes an interpreter name.
+
+The second lesson cost a wasted mutation round. A refusal quotes the candidate's whole command
+line, and the first version of these fixtures put the stub's message inside the `-c` body. The
+message was therefore in the refusal whether or not the probe had read a single byte of output, and
+`assert!(refusal.contains(ALIAS_NOTICE))` proved nothing about the code under test. Two mutations
+survived for exactly that reason (section 8). The fixtures now carry the message in a file the stub
+reads at run time (`stub_that_echoes()` / `message_file()`), and the file is deliberately named
+`a.txt` so that no substring the assertions look for can be satisfied by the quoted path either.
+After that change the same mutations are killed.
+
+Four tests lost their `#[cfg(unix)]`; two of them were ledger rows, which is why the ledger is 1,106
+rows instead of 1,108 and the assumption-free count is 441 instead of 443. Both budgets were
+lowered to match, in `.github/workflows/ci.yml` and in `scripts/verify-in-docker.sh`, and the
+lowering is checked in section 10 of the platform-gated log.
+
+== 3. What a server actually sent: the startup trace
+
+Even with correct fixtures, the next server to fail this way on any machine would
+have produced the same useless report. `client.rs` now wraps both stdio streams of
+a stdio server (`TraceReader` / `TraceWriter` in
+`crates/codegen/xai-grok-tools/src/implementations/lsp/startup_trace.rs`) and, on a
+startup failure only, appends what went out and what came back. The first 200 bytes
+are kept, the rest is counted; recording stops the moment `initialize` is answered,
+so a healthy long-lived server costs one relaxed atomic load per read and keeps
+nothing. Control characters are spelled out, because a raw `\r` in a CI log is
+invisible and `\r` is precisely the byte this exists to reveal.
+
+The message the shipped code produces for the section 1 fixture, captured from a
+run against the real client and real child process:
+
+    LSP initialization failed: 'translated' [python3 -u /tmp/.tmpyiwGPa/translated_framing_lsp.py]
+    service stopped; the process exited with code 0; 777 bytes were sent to it;
+    it wrote 104 bytes on stdout: "Content-Length: 80\r\r\n\r\r\n{\"jsonrpc\": \"2.0\",
+    \"id\": 0, \"result\": {\"capabilities\": {\"textDocumentSync\": 1}}}"
+
+Before, the same event was `service stopped`. Now the doubled carriage return is
+readable, and `777 bytes were sent to it` separately rules out the other hypothesis
+(that the client never wrote the request).
+
+== 4. Cluster D, 3 tests: the error message blamed a path the tool never used
+
+    left:  "Error: C:/wrong/root/review/SKILL.md does not exist.\nNote: your current
+            working directory is C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\.tmp7fupvh..."
+    right: "Error: /wrong/root/review/SKILL.md does not exist.\n..."
+
+The tool resolves a model-supplied path with `resolve_model_path`
+(`crates/codegen/xai-grok-tools/src/types/resources.rs`), which deliberately places
+a rooted-but-not-absolute argument *inside* the working directory. The message that
+announces where it looked was built with `PathBuf::join`, and on Windows `push`
+"replaces everything except for the prefix (if any) of self" when the argument has
+a root. `cwd.join("/wrong/root/x")` therefore yielded `C:/wrong/root/x`: an error
+message naming a file that no lookup ever opened. `Path::is_absolute()` is false for
+that argument on Windows and true on Unix, which is the entire reason no Linux run
+could see this.
+
+Fix: `crates/codegen/xai-grok-tools/src/util/fs.rs::join_announced_path`, which
+returns the argument verbatim when it is absolute here and otherwise appends it one
+component at a time. Seven announcement sites in `read_file`, `search_replace` and
+`grok_build_hashline::edit` now use it, so announcement and lookup agree by
+construction instead of by coincidence.
+
+The three fixtures were also wrong, in a way that hid the defect on Linux: they
+passed `/wrong/root/...` and expected it to name a path outside the workspace, which
+is precisely the claim Windows rejects. They now create a second `TempDir` and ask
+for a file genuinely outside the announced working directory on every platform, so
+the assertion tests the announcement rather than a platform accident.
+
+Honest limit: on Linux `join_announced_path` and `push` return the same string for
+every input. No Linux assertion can distinguish them, and this batch does not claim
+otherwise. What is proven locally is that the fixtures observe the join at all
+(mutation M7 in section 8), and that the component walk they depend on
+(`join_relative`) keeps the base in front of a rooted argument.
+
+== 5. Cluster E, 1 test: a glob with an unresolvable base was applied to everything
+
+    implementations::lsp::tests::... panicked at watched_files.rs:447:9:
+    assertion failed: !watched.watches(&root/App.dll, FileChangeType::CHANGED)
+
+`GlobPattern::Relative` carries a `baseUri`. When the client could not turn that URI
+into a local path, the code fell back to the workspace root, which silently widens
+the server's pattern to the whole workspace. A real server sending `**/*.dll` with a
+base this client cannot name would have had every `App.dll` in the project watched
+and reported. On Windows the fallback was reachable from a server that had behaved
+perfectly on Linux, because `file:///` URIs without a drive do not resolve there.
+
+Fix: there is no fallback. An unresolvable base yields no base and `in_workspace` is
+computed from the base the client actually has. The new test
+`an_unresolvable_base_uri_is_never_treated_as_the_workspace` feeds
+`"baseUri": "https://example.invalid/packages"` with pattern `**/*` and asserts both
+that the registration is accepted and that nothing in the workspace is watched by
+it; the sibling `out_of_workspace_globs_never_match` keeps the original Windows
+assertion.
+
+== 6. Cluster B, 1 test: the shell was fine, the test's budget was not
+
+`local_terminal::tests::test_basic_command_output` printed
+
+    assertion `left == right` failed
+      left: ""
+     right: "hello"
+
+and that message hid the actual event. The `FAILED` line for this test is stamped
+`14:30:45.913` while the previous completion in the same binary is stamped
+`14:30:35.924`, and the binary as a whole reports `finished in 13.28s`. The gap is
+the test's own 10-second request timeout, so the run had been killed and the pipes
+closed with nothing read. `assert_eq!` reported the first of two assertions and
+never got as far as `exit_code`, which was `None`, or `timed_out`, which was `true`.
+
+The machine could run the command. In the same job, the same step, the sibling test
+`streaming_local_terminal::tests::test_streaming_sends_status_updates` runs the same
+`echo` through the streaming runner with a 30-second budget and passes, and it is
+that test's duration that accounts for most of the 13.28s the binary reported. The
+first shell of a Windows CI job pays for whatever the host does to an executable it
+has never run; 10 seconds was less than that.
+
+Fix, in `crates/codegen/xai-grok-shell-terminal/src/local_terminal.rs`:
+the request budget matches the sibling (30s, with the measured numbers in the
+comment), and a failure now prints the shell it reached, the elapsed time, the exit
+code, `timed_out`, `truncated`, the byte count and the raw output. On Unix the
+command timeout the bash tool actually hands down is 120s, so this bounds the test
+and not the product. The underlying question of what the first PowerShell start on
+a cold Windows host costs is not answered here and is not claimed to be.
+
+== 7. Persistent shell: the request used to vanish (TODO row for M2.3)
+
+`crates/codegen/xai-grok-tools/src/computer/local/terminal.rs` gates its persistent
+shell on `#[cfg(unix)]` inside the actor, so on Windows a caller that asked for one
+got one shell per command with no error, no log, and no test able to say which of
+the two behaviours it had. The row allowed either an explicit failure or at least
+one `warn`; the gap is now both observable and testable off Unix:
+
+    persistent_shell_supported()            -> the platform predicate, one place
+    reconcile_persistent_shell(..)          -> cfg-free decision, reports through a
+                                               caller-supplied closure at most once
+                                               per latch
+    LocalTerminalBackend::persistent_shell_effective()  -> what the caller can ask
+
+The decision and its reporting contain no `cfg`; `supported` is the only platform
+input, which is what lets the Windows path run in a Linux test. The warn fires once
+per process however many sessions ask, and
+`a_persistent_request_without_a_persistent_shell_is_refused_and_said_once` drives
+three requests through it and asserts one report and a spent latch.
+`the_backend_reports_the_shell_mode_it_actually_got` drives the real constructor,
+so a backend cannot report a mode its actor does not have.
+
+The Windows *implementation* of a persistent shell is still not done. This closes
+the "silently ignored" part, not the "no persistent shell on Windows" part; the TODO
+row stays open on that half.
+
+== 8. Non-vacuity: 11 mutations against the shipped code and the fixtures
+
+Each mutation is an exact-string edit to the production or fixture source, followed
+by the real test binary, followed by a restore verified with `cmp`.
+
+    M1  startup_trace: ignore the disarm flag
+        recording_stops_when_startup_is_settled ... FAILED
+    M2  startup_trace: count the bytes but keep none of them
+        the_first_bytes_are_kept_and_the_rest_is_only_counted ... FAILED
+        the_bytes_that_came_back_survive_into_the_message ... FAILED
+    M3  startup_trace: keep every byte (drop the 200-byte cap)
+        the_first_bytes_are_kept_and_the_rest_is_only_counted ... FAILED
+    M4  startup_trace: write the preview without escaping
+        the_bytes_that_came_back_survive_into_the_message ... FAILED
+    M5  mock_servers: accept a candidate that exits 0 without running the script
+        a_stub_that_answers_version_but_runs_nothing_is_not_an_interpreter ... FAILED
+        every_rejected_candidate_is_named_in_the_refusals ... FAILED
+    M6  watched_files: restore the workspace-root fallback
+        an_unresolvable_base_uri_is_never_treated_as_the_workspace ... FAILED
+    M7  fs: drop the is_absolute early return from join_announced_path
+        missing_skill_read_uses_display_path ... FAILED
+        missing_skill_read_suggests_registered_path ... FAILED
+        missing_skill_read_omits_ambiguous_suggestion ... FAILED
+        missing_skill_read_omits_stale_registered_path ... FAILED
+    M8  terminal: hand out the persistent shell that was requested regardless of
+        support (the old behaviour)
+        a_persistent_request_without_a_persistent_shell_is_refused_and_said_once ... FAILED
+    M9  mock_servers: stop trying candidates after the first refusal
+        a_stub_that_refuses_to_run_is_not_an_interpreter ... FAILED
+        every_rejected_candidate_is_named_in_the_refusals ... FAILED
+    M10 mock_servers: drop what the candidate printed from the refusal
+        a_stub_that_answers_version_but_runs_nothing_is_not_an_interpreter ... FAILED
+        every_rejected_candidate_is_named_in_the_refusals ... FAILED
+    M11 mock_servers: treat a non-zero exit as a fine answer
+        every_rejected_candidate_is_named_in_the_refusals ... FAILED
+
+M9, M10 and M11 target `probe_python` / `resolve_python`, which live in the test-support module
+rather than in shipped product code. That is still the right thing to weaken here: that resolver is
+what decided which interpreter 37 LSP tests ran under, and a regression in it reproduces the exact
+blindness this batch is about. It is stated plainly so nobody reads these three as evidence about
+shipped interpreter discovery, which does not exist.
+
+M7 is the one that needed reading afterwards rather than trusting the driver: on
+Linux it cannot fail the Windows-specific unit test, and it is the four rewritten
+fixtures that go red, which is the evidence that they observe the join.
+
+M10 and M11 are also the two mutations that initially survived, and the reason is the most
+transferable thing in this batch. The refusal text quotes the candidate's command line, and the
+stub's message had been written into the `-c` body of that command line, so the assertion
+`refusal.contains(message)` was satisfied by the fixture's own spelling no matter what the probe
+captured. `probe treats a non-zero exit as fine` survived for the related reason that a message
+present in the refusal is not the same fact as a refusal being produced. Both fixtures now read the
+message from a file at run time (section 2b), and under the same drivers each mutation exits 101
+with the tests named above failing and `cmp` confirming the byte-identical restore:
+
+    summary: probe accepts a candidate that runs nothing: rc=101; resolver gives up after the
+    first refusal: rc=101; refusal drops what the candidate said: rc=101; probe treats a
+    non-zero exit as fine: rc=101
+    === restored tree: rc=0
+
+One trap worth recording, because it produced a false result rather than a false
+green. The driver restored each file with `shutil.copy2`, which puts the
+*pre-mutation* mtime back. Cargo's fingerprint compares mtimes, so it called the
+already-built mutated binary fresh and re-ran it. A restored tree was therefore
+tested against mutated code, and one test correctly failed for the wrong reason.
+The fix is to bump the mtime after restoring; the run in section 9 is from a tree
+where that was done and the crate was rebuilt from source.
+
+== 9. Local verification after the restore
+
+Re-run once on the final tree, after the interpreter fixtures were rewritten
+(section 2b) and after every mutated file had been restored and rebuilt:
+
+    $ cargo fmt --check -p xai-grok-tools -p xai-grok-shell-terminal
+        (no output)
+    $ cargo test -p xai-grok-tools --lib
+        test result: ok. 3201 passed; 0 failed; 3 ignored; finished in 95.68s
+    $ cargo test -p xai-grok-shell-terminal --lib
+        test result: ok. 76 passed; 0 failed; 1 ignored; finished in 2.65s
+    $ cargo clippy -p xai-grok-tools -p xai-grok-shell-terminal --all-targets -- -D warnings
+        Finished `dev` profile [unoptimized] target(s) in 1m 09s
+
+Filters, all against the same build:
+
+    interpreter_tests                    5 passed  / 0 failed / 0 ignored
+    implementations::lsp::             125 passed  / 0 failed / 2 ignored
+    util::fs::tests                     14 passed  / 0 failed / 0 ignored
+    computer::local::terminal::tests    71 passed  / 0 failed / 0 ignored
+    read_file::tests                   120 passed  / 0 failed / 0 ignored
+
+`util::fs::tests` is 14 and not 15 because one of the three tests this batch adds there,
+`a_plain_push_would_mix_separators`, is `#[cfg(windows)]`: it asserts the thing a Windows
+path join does, so there is nothing for it to check here. It is compiled by CI and carries a
+row in `scripts/ci/platform-gated-tests.tsv` (runs-on `windows`, assumption `drive-path`) rather
+than pretending to be covered by the Linux number.
+
+Seventeen tests are new in this batch (5 startup trace, 1 wrong-framing
+end-to-end, 2 interpreter resolution, 1 watched files, 3 announced-path,
+5 persistent shell), one existing test gained an assertion, one fixture is new, and
+one test was rewritten.
+
+== 10. What is still not established
+
+There is no Windows machine here. The claim of this batch is narrower than "the
+Windows leg is green": for each of the 42 red tests the mechanism is identified, the
+code that produced it is changed, and a test that runs on Linux now exercises that
+mechanism. Whether the Windows leg is actually green is decided by the run this push
+triggers, and `#[cfg(windows)]`-gated code in these files is still compiled only by
+CI. The `local_terminal` item in section 6 is explicitly a test-budget change, not a
+finding about Windows shell startup.

@@ -225,6 +225,31 @@ pub fn join_relative(base: &Path, relative: &Path) -> PathBuf {
     joined
 }
 
+/// Put the announced working directory in front of a path argument as the model
+/// wrote it, so an error message names the place the tool actually looked.
+///
+/// Tools answer "where did you look?" by joining the cwd they were told onto the
+/// argument as written, and `PathBuf::push` cannot be trusted with that: on
+/// Windows an argument with a root but no prefix (`/work/plan.md`, which is both
+/// what a model means when it copies a path out of cross-platform history and
+/// what `Path::is_absolute()` refuses to call absolute) "replaces everything
+/// except for the prefix (if any) of `self`". The announced cwd is discarded and
+/// only its drive survives, so the message blames `C:/work/plan.md` for an
+/// argument that [`resolve_model_path`](crate::types::resources::resolve_model_path)
+/// had in fact placed inside the workspace. Three `read_file` tests on the
+/// 2026-10-03 Windows leg failed on exactly that disagreement.
+///
+/// The rule that travels to every platform: an argument that *is* absolute here
+/// replaces the base, as `push` does, and anything else is appended one component
+/// at a time so the base stays in front of it. On Unix the two are the same
+/// string for every input, which is why no Linux run could see this.
+pub fn join_announced_path(base: &Path, argument: &Path) -> PathBuf {
+    if argument.is_absolute() {
+        return argument.to_path_buf();
+    }
+    join_relative(base, argument)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -258,6 +283,65 @@ mod tests {
             join_posix_relative(base, PLAN_LIKE).to_string_lossy(),
             r"C:\workspace\my-project\.grok\plan.md"
         );
+    }
+
+    /// An argument that is absolute on this platform replaces the announced cwd,
+    /// which is what `push` does and what the caller means: the model asked for
+    /// `/etc/hosts`, so the message says `/etc/hosts`.
+    #[test]
+    fn an_absolute_argument_replaces_the_announced_cwd() {
+        let base = Path::new("/workspace/my-project");
+        // Absolute *here*: a drive letter is what makes an argument absolute on
+        // Windows, and on Unix a leading separator already is one.
+        let absolute = if cfg!(windows) {
+            PathBuf::from(r"D:\etc\hosts")
+        } else {
+            PathBuf::from("/etc/hosts")
+        };
+        assert_eq!(join_announced_path(base, &absolute), absolute);
+    }
+
+    #[test]
+    fn a_relative_argument_keeps_the_announced_cwd_in_front() {
+        let base = Path::new("/workspace/my-project");
+        assert_eq!(
+            join_announced_path(base, Path::new(PLAN_LIKE)),
+            base.join(".grok").join("plan.md")
+        );
+    }
+
+    /// The Windows argument this exists for: `/work/plan.md` has a root but no
+    /// prefix, so `Path::is_absolute()` is false there and `push` keeps only the
+    /// drive. That argument cannot be written on Unix, where a leading separator is
+    /// absolute, so the two halves are asserted apart: the component walk that the
+    /// non-absolute branch delegates to runs on every platform, and the branch
+    /// itself is asserted wherever the platform has the argument.
+    #[test]
+    fn an_argument_rooted_without_a_drive_keeps_the_announced_cwd() {
+        let base = Path::new("/workspace/my-project");
+        let rooted = Path::new("/work/plan.md");
+        // The shared helper is what puts the argument inside the base, by dropping
+        // `RootDir` rather than letting it reset the path. `resolve_model_path`
+        // depends on the same behavior, which is what keeps the announcement and
+        // the lookup pointing at one place.
+        assert_eq!(
+            join_relative(base, rooted),
+            base.join("work").join("plan.md"),
+            "a rooted argument is appended to the announced cwd, never substituted"
+        );
+        if rooted.has_root() && !rooted.is_absolute() {
+            assert_eq!(
+                join_announced_path(base, rooted),
+                base.join("work").join("plan.md"),
+                "the announced cwd must not collapse to a bare drive letter"
+            );
+        } else {
+            assert_eq!(
+                join_announced_path(base, rooted),
+                rooted,
+                "where the argument is absolute, the announcement follows `push`"
+            );
+        }
     }
 
     #[test]

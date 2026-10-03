@@ -1,0 +1,199 @@
+# Panic-site census: two scanner defects, one hiding production sites and one inventing them (2026-10-04)
+
+`scripts/ci/panic-site-census.py` decides, for every `.unwrap()`, `.expect()`,
+`panic!` and `unsafe` in `crates/**/*.rs`, whether the site can be attributed to a
+test build. Everything it cannot attribute is production, because the direction of
+the error it is built to avoid is a real panic shipping unnoticed. Two rules in it
+were wrong, in opposite directions, and both were found by the gate reacting to new
+code rather than by reading the numbers.
+
+== 0. The two defects in one paragraph each
+
+Literal scanning. `blank_noise()` erases comments and string literals so that a
+message containing `.unwrap()` is not counted as a call. It ended a literal at the
+first `"`, which is wrong for Rust: a backslash escapes the next character, so a
+literal whose last character is an escaped quote keeps going past the quote the
+scanner stopped at. The real terminator was then left in the scanned text, where it
+opened a second literal that ran to the next quote in the file, erasing whatever it
+covered. When what it covered was a `#[cfg(test)]` attribute, the test module below
+it lost its only marker and every panic inside it was reported as one that ships;
+when it covered a `{`, the brace walk that closes the module came out unbalanced.
+
+`cfg` classification. The rule was "the argument text mentions `test`". The correct
+question is whether `test` is *required*. `all(unix, test)` is a test gate;
+`any(target_os = "linux", all(unix, test))` is not, because the Linux branch alone
+builds the item, and a file carrying that attribute is in the released Linux binary
+with its panics attached. `cfg_attr(test, allow(dead_code))` is not one either,
+because `cfg_attr` always builds the item and only swaps attributes in and out.
+
+== 1. What triggered the hunt
+
+    $ bash scripts/verify-gates.sh
+        FAIL panic-site census
+        xai-grok-tools: production sites grew [16, 122, 8, 19] -> [18, ...]
+
+The two new sites were `crates/codegen/xai-grok-tools/src/implementations/lsp/startup_trace.rs:296`
+and `:297`, both `.unwrap()` calls inside `mod tests`. The module is gated
+`#[cfg(test)]`, the attribute was in the file, and the census did not see it.
+
+The file contains
+
+    out.push_str("\\\"");
+
+which is the shape described in section 0. Instrumenting the old scanner over that
+file showed the literal opened at `push_str` running to the next quote 30 lines
+later, and `test_spans()` returning an empty list for the whole file.
+
+== 2. Fixture, and the first attempt that proved nothing
+
+The fixture in `scripts/ci/test-panic-site-census.py` now includes
+`crates/demo/src/escaped_quotes.rs`, whose literal ends in an escaped quote and
+whose `#[cfg(test)] mod tests` sits below it.
+
+The first fixture written for this was vacuous and did not fail at all. Its message
+was `"a message with \"escaped quotes\" and {braces} inside"`, where the escaped
+quotes happen to keep the quote parity intact, so the old scanner recovered on the
+next literal and still found the test span. The fixture was rebuilt from the shape
+that actually broke the file. With the escape walk reverted to `source.find(terminator, first + 1)`,
+the self-test reports three failures:
+
+    $ python3 scripts/ci/test-panic-site-census.py        # scanner reverted
+        FAIL all unwraps counted at all: got 23, want 24
+        FAIL the file no crate root declares is compiled by nothing, so its
+             .unwrap() is counted in neither column: got (1, 11), want (1, 12)
+        FAIL the whole-file cfg(test) files, the declared test mod and tests/
+             are not production: got 11, want 12
+
+    $ python3 scripts/ci/test-panic-site-census.py        # as committed
+        all census fixture checks passed
+
+The second rule is covered by `crates/demo/src/cfg_shapes.rs`: a
+`#[cfg(any(target_os = "linux", all(unix, test)))]` item, a
+`#[cfg(any(test, feature = "gated"))]` item, a `#[cfg_attr(test, allow(dead_code))]`
+item, all three of which have to count as production, and a
+`#[cfg(any(all(test, unix), all(test, windows)))]` module that has to count as test.
+Reverting the evaluator to "mentions `test`" fails four checks:
+
+    $ python3 scripts/ci/test-panic-site-census.py        # rule reverted
+        FAIL production unwraps: got 10, want 12
+        FAIL the file no crate root declares is compiled by nothing, so its
+             .unwrap() is counted in neither column: got (1, 14), want (1, 12)
+        FAIL the whole-file cfg(test) files, the declared test mod and tests/
+             are not production: got 14, want 12
+        FAIL baseline records the production row: got 'demo\t10\t0\t0\t4',
+             want 'demo\t12\t0\t0\t4'
+
+A separate mutation that lets `cfg_attr` gate an item again is *not* observable
+through the fixture: every realistic trailing attribute list also contains a token
+that is not `test`, which the correct evaluator already rejects. The skip is kept as
+a guard for shapes that would fail in the dangerous direction, and it is recorded
+here as unobserved rather than counted as covered.
+
+== 3. Whole-workspace effect, measured
+
+    $ python3 scripts/ci/panic-site-census.py                  # both fixes
+        TOTAL   300  594  130  429   32005
+        32005 .unwrap() calls in all, 300 of them outside any cfg(test) span (0%);
+        658 unsafe sites, 429 in production.
+
+The three columns of `unwrap / expect / panic / unsafe` in production, per state of
+the scanner:
+
+    scanner state                unwrap  expect  panic  unsafe
+    before either fix (2026-10-02 numbers)     351     596    132     420
+    literal-escape fix only                    294     589    130     420
+    both fixes                                 300     594    130     429
+
+So the loose literal scanner had invented 57 production `.unwrap()` sites, 7
+`.expect()` sites and 2 `panic!` sites; the `cfg` rule then moved 6 of them back,
+revealed 5 more `.expect()` sites and 9 `unsafe` sites that the loose rule had been
+hiding.
+
+Per crate, every changed row, from `--write-baseline` plus a diff:
+
+    crate                       before       escapes      both
+    xai-circuit-breaker      0 0 0 0        0 0 0 0      0 1 0 0
+    xai-grok-bundle          0 0 0 0        0 0 0 0      3 0 0 0
+    xai-grok-env             0 0 0 0        0 0 0 0      0 0 0 5
+    xai-grok-pager          57 133 30 17   57 135 30 17 57 135 30 21
+    xai-grok-sandbox        42 4 1 19      0 2 0 19     0 2 0 19
+    xai-grok-shared          0 4 0 17       0 8 0 17     0 8 0 17
+    xai-grok-shell          46 116 29 13   43 116 28 13 46 116 28 13
+    xai-grok-tools          16 122 8 19    16 118 8 19  16 118 8 19
+    xai-grok-workspace      47 26 3 3      35 19 3 3    35 23 3 3
+
+`xai-grok-sandbox` is the row to read carefully. It went 42 -> 0 because the whole
+crate is built out of files whose header is a gate like
+
+    #[cfg(any(target_os = "linux", all(unix, test), all(feature = "enforce", unix)))]
+
+which the old rule read as "mentions test", so 42 sites in the security-boundary
+crate were being reported as test code while the file sat in the Linux release
+build. `scripts/ci/panic-site-baseline.tsv` was regenerated from the corrected
+scanner; the ratchet still only allows these numbers to fall.
+
+== 4. Every newly revealed site was read, not assumed
+
+Production now, and correct on inspection:
+
+    crates/common/xai-circuit-breaker/src/clock.rs:47
+        #[cfg(any(test, feature = "test-hooks"))] impl MockClock, an overflow
+        `.expect()`; a feature build compiles it, so it is not attributable to test.
+    crates/codegen/xai-grok-bundle/src/lib.rs:519,521,522
+        `#[cfg(any(test, feature = "test-support"))] pub mod test_helpers`.
+    crates/codegen/xai-grok-env/src/lib.rs:158,159,165,173,174
+        `#[cfg(any(test, feature = "test-support"))] struct EnvVarGuard`, five
+        `unsafe { std::env::set_var(..) }` / `remove_var(..)` sites.
+    crates/codegen/xai-grok-pager/src/app/mod.rs:1260,1268,1294,1308
+        `#[cfg(any(windows, test))] mod win_native_selection`, whose Windows branch
+        declares `unsafe extern "system"` for `GetStdHandle` / `GetConsoleMode` /
+        `SetConsoleMode` and calls them. This is console-mode FFI in the shipped
+        pager that no unsafe figure in the audit included.
+    crates/codegen/xai-grok-shell/src/agent/models/startup_prefetch.rs:218,253,259
+        `#[cfg(any(test, feature = "test-support"))] #[doc(hidden)] pub fn clear_for_tests`.
+    crates/codegen/xai-grok-shared/src/clipboard.rs:1656,1685,1698,1760
+        `#[cfg(target_os = "linux")]` clipboard helpers.
+    crates/codegen/xai-grok-workspace/src/handle.rs:5086,5093
+        `pub fn for_test()` / `for_test_in(root)` on a handle type that is compiled
+        into the crate, not behind `cfg(test)`.
+
+Also newly hidden, and correct that way: 17 sites in
+`xai-grok-workspace/src/permission/auto_mode/mod.rs` and
+`bash_command_splitting.rs`, 3 in
+`xai-grok-shell/src/agent/config_model_override_parse.rs`, and the `.unwrap()`
+clusters in `xai-grok-sandbox/src/deny/glob.rs` from line 712 down. All of them are
+inside `mod tests` blocks that the literal scanner had been cutting the marker away
+from.
+
+== 5. The census fixtures' own baseline moved
+
+`scripts/ci/test-panic-site-census.py` asserts the fixture crate's row end to end,
+including the baseline line `demo\t12\t0\t0\t4`, so a scanner change that moved a
+classification without anyone noticing cannot pass by quietly re-recording numbers.
+
+== 6. Local verification
+
+    $ python3 scripts/ci/test-panic-site-census.py
+        all census fixture checks passed
+    $ python3 scripts/ci/panic-site-census.py --check-baseline scripts/ci/panic-site-baseline.tsv
+        (clean, rc 0)
+    $ python3 scripts/ci/panic-site-census.py --check-uncompiled scripts/ci/uncompiled-sources.txt
+        (clean, rc 0)
+    $ python3 scripts/ci/check-guard-wiring.py
+        (clean, rc 0)
+
+The gate command itself is unchanged (`scripts/verify-in-docker.sh` and
+`.github/workflows/ci.yml` both already run the self-test before the two ratchets),
+so what ships here is the corrected measurement plus the regenerated ratchet, not a
+relaxed budget.
+
+== 7. What is still open after this
+
+The classification is now "cannot be attributed to a test build", which by design
+counts `cfg_attr(test, ..)` items and `any(test, feature = ..)` helpers as
+production. That is the right default for a ratchet, but it means a slice of the
+production figure is test infrastructure that is compiled in release form, in the
+same way `xai-grok-test-support` already was. `docs/audit-followup-report.md` §2.6
+names which crates those are, so the next governance pass can sort "panic that can
+fire in the binary" from "panic in a helper that only a feature build links"
+without re-deriving it from the scanner.

@@ -247,16 +247,79 @@ mod tests {
         );
     }
 
+    /// Budget for a command that does nothing but print a line.
+    ///
+    /// Deliberately not [`crate::DEFAULT_TIMEOUT`]: the first shell of a CI job pays
+    /// for whatever the host does to an executable it has never run, and on the
+    /// `windows-latest` runner that cost was measured at 13.3s on 2026-10-03, which
+    /// is the whole wall-clock of the test binary
+    /// (`test result: FAILED. 67 passed; 1 failed; finished in 13.28s`). In that same
+    /// job the sibling `echo` in
+    /// `streaming_local_terminal::tests::test_streaming_sends_status_updates`
+    /// succeeded inside its 30s budget, so the machine could run the command and
+    /// only a shorter bound had said no. 30s matches that sibling; the timeout the
+    /// bash tool actually hands down is 120s, so this bounds the test, not the product.
+    const SHELL_STARTUP_BUDGET: std::time::Duration = std::time::Duration::from_secs(30);
+
+    /// What the runner is about to exec.
+    ///
+    /// A failure here is worth nothing if it cannot say which shell was reached:
+    /// Windows picks between pwsh, powershell.exe, Git Bash and cmd.exe at run time,
+    /// and only one of those four misbehaves.
+    fn shell_invocation() -> String {
+        #[cfg(unix)]
+        {
+            format!("{} -lc <command>", crate::default_shell_path())
+        }
+        #[cfg(not(unix))]
+        {
+            let inv = xai_grok_config::shell::shell_command_argv("echo hello");
+            let env: Vec<String> = inv.env.iter().map(|(k, v)| format!("{k}={v}")).collect();
+            format!("{} {} [{}]", inv.program, inv.args.join(" "), env.join(" "))
+        }
+    }
+
+    /// The result as one line, for an assertion that has already failed.
+    ///
+    /// The empty-output case was previously indistinguishable from the
+    /// never-exited case, because the first assertion fired before the exit code was
+    /// ever looked at. Both are reported, along with the elapsed time, so a timeout
+    /// says `timed_out: true` and takes the blame itself.
+    fn describe(result: &TerminalRunResult, elapsed: std::time::Duration) -> String {
+        format!(
+            "invocation {} | elapsed {elapsed:?} | exit {:?} | timed_out {} | truncated {} \
+             | {} bytes, read as {:?}",
+            shell_invocation(),
+            result.exit_code,
+            result.timed_out,
+            result.truncated,
+            result.combined_output.len(),
+            result.combined_output,
+        )
+    }
+
     /// Basic regression: commands still produce output and exit normally.
     #[tokio::test]
     async fn test_basic_command_output() {
-        let result = LocalTerminalRunner
-            .run(make_request("echo hello"))
-            .await
-            .unwrap();
+        let mut request = make_request("echo hello");
+        request.timeout = SHELL_STARTUP_BUDGET;
 
-        assert_eq!(result.combined_output.trim(), "hello");
-        assert_eq!(result.exit_code, Some(0));
+        let started = std::time::Instant::now();
+        let result = LocalTerminalRunner.run(request).await.unwrap();
+        let elapsed = started.elapsed();
+
+        assert_eq!(
+            result.combined_output.trim(),
+            "hello",
+            "the shell printed something other than one `hello`: {}",
+            describe(&result, elapsed)
+        );
+        assert_eq!(
+            result.exit_code,
+            Some(0),
+            "the shell did not exit cleanly: {}",
+            describe(&result, elapsed)
+        );
     }
 
     /// Timing out a command whose grandchild inherited the output pipes must return promptly.

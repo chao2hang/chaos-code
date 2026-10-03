@@ -334,9 +334,12 @@ those workspace-wide figures; do not infer current counts from this report.
 3. **是否属于测试**按三条规则判定，任一成立即算测试：
    - 位置：`tests/` / `benches/` / `examples/` 目录下的文件；
    - 整文件门控：文件级 `#![cfg(test)]`，或整个文件体被一个 `cfg(test)` 属性包住；
-   - 区间门控：命中点落在某个 `cfg(...)` 属性区间内，且该 `cfg` 表达式提到 `test`。
-     `#[cfg_attr(not(test), deny(unused))]` 这类**否定式**明确不算测试门控；
-     `#[cfg(all(test, unix))]` 算。`#[cfg(test)] #[path = "x_tests.rs"] mod tests;`
+   - 区间门控：命中点落在某个 `cfg(...)` 属性区间内，且该 `cfg` 表达式**要求**
+     `test`（2026-10-04 之前的口径是"表达式里出现 `test`"，那是错的，见 §2.6）。
+     `all` 继承任一分量的要求，`any` 只继承全部分量的要求，`not(..)` 不要求任何东西：
+     因此 `#[cfg(all(test, unix))]` 是测试门控，
+     `#[cfg(any(target_os = "linux", all(unix, test)))]` 与
+     `#[cfg_attr(test, allow(dead_code))]` 都不是。`#[cfg(test)] #[path = "x_tests.rs"] mod tests;`
      这种本仓最常见的形状会被解析成"声明边被 test 门控 + 目标文件整文件算测试"。
 4. **可达性**：只有被某个 crate root 通过 `mod` 链可达的文件才计入。crate root 取
    cargo 的约定（`src/lib.rs`、`src/main.rs`、`src/bin/*.rs`、`src/bin/*/main.rs`、
@@ -444,6 +447,110 @@ TODO 也登记了。`xai-grok-compaction/src/strategies/` 三个文件的"确实
 | 把"无构建编译"的文件也计入位点 | 4 |
 | 同一文件里只要有 test 声明就把整个文件的声明都判为 test 门控 | 4 |
 | 忽略普通（非 test 门控）声明 | 4 |
+
+### 2.6 2026-10-04 口径修正：扫描器两处判错，一处凭空造出 69 个生产位点，一处把写着 `not(test)` 的位点判成测试代码
+
+2026-10-04 那批 Windows 修复触发了 census 门禁报"生产位点变多"，追下去发现两个新位点根本在
+`#[cfg(test)] mod tests` 里 —— 也就是说门禁红是因为扫描器**看不见**那个门控。顺着这条线查出两处
+口径错误，两处都会改变上面所有数字，因此这一节取代 §1.8 与 §2.5 表里的绝对值（**口径**没变，变的是
+实现；两张表的"相对结论"仍然成立，但 §2.4 的 A 批按新数已经不存在）。完整过程、逐位点核对与变异证据见
+`docs/verification/panic-site-census-2026-10-04.log`。
+
+**缺陷 1：字符串字面量在第一个 `"` 处结束。** Rust 里反斜杠转义下一个字符，因此以 `\"` 收尾的字面量
+在扫描器眼里没有结束，真正的收尾引号被留在待扫描文本里，转而**开启**第二个字面量，一路吞到下一个引号，
+把它覆盖的字节全部空白化。被覆盖的如果是一个 `#[cfg(test)]`，那个测试模块就失去了唯一标记，里面每个
+panic 都被判成生产；被覆盖的是 `{` 时，闭合测试模块的括号走查直接失衡。触发它的真实代码是
+`out.push_str("\\\"");`。
+
+**缺陷 2：判定"这条 `cfg` 是不是测试门控"用的是"表达式里出现 `test`"。** 正确的问题是
+"`test` 是不是**被要求**"：`all` 继承任一分量的要求，`any` 只继承全部分量的要求，`not(..)` 不要求任何
+东西，`cfg_attr` 因为**永远**构建该条目而永远不是门控。最刺眼的一条实证是
+`xai-fast-worktree/src/nfs/mod.rs:271` 的 `#[cfg(all(target_os = "linux", not(test)))]` —— 这条属性
+自己写着 `not(test)`，旧规则却因为它"提到了 test"而把里面的 `unsafe { libc::access(...) }` 判成测试代码。
+
+**修正后的实测**（同一条命令，同一棵树）：
+
+```
+$ python3 scripts/ci/panic-site-census.py
+    TOTAL   300  594  130  429   32005
+    32005 .unwrap() calls in all, 300 of them outside any cfg(test) span (0%);
+    658 unsafe sites, 429 in production.
+```
+
+下表三行跑的是**同一棵 2026-10-04 的树**，唯一变量是扫描器；最后一行就是门禁里的基线。
+
+| 扫描器状态 | unwrap | expect | panic | unsafe |
+|---|---:|---:|---:|---:|
+| 两处都未修 | 353 | 596 | 132 | 420 |
+| 只修字面量转义 | 294 | 589 | 130 | 419 |
+| 两处都修 | **300** | **594** | **130** | **429** |
+
+（§1.8 与 §2.5 的 351 是在 2026-10-02 那棵树上量的；与第一行差的那 2 个 `.unwrap()` 来自本批新增的
+`startup_trace.rs:296,297`，旧扫描器把它们判成生产，修好之后判成测试。）
+
+**两处缺陷的作用方向不同，必须分开记。** 按 `path:line:kind` 逐位点比对：
+
+| 修复 | 新计入生产 | 不再计入生产 | 净变化 |
+|---|---:|---:|---:|
+| 缺陷 1（字面量转义） | 8 个 `.expect()` | 59 unwrap + 15 expect + 2 panic + 1 unsafe = 77 | **−69** |
+| 缺陷 2（`cfg` 规则） | 6 unwrap + 5 expect + 10 unsafe = 21 | 0 | **+21** |
+
+那 59 里有一行是 `xai-grok-shell/src/agent/config_model_override_parse.rs:879`，同一行两个
+`.unwrap()`，按行去重的清单会少算一个 —— 这类"看起来是 58 其实是 59"的差一位，只有逐位点比对能发现。
+
+还有一个数字方向值得单独记：旧扫描器在全树里只认出 **31,752** 个 `.unwrap()`，修好之后是 **32,007**，
+unsafe 位点从 657 到 658。也就是说缺陷 1 不只是把测试位点算成生产，它同时**抹掉了** 255 个调用 ——
+一个既会虚报又会漏报的扫描器，它的任何一个数字都不能单独引用。
+
+**缺陷 1 修好后才第一次被算进生产的 8 个位点，逐条读过**（全部是 `.expect()`）：
+
+| 位点 | 为什么它确实在发布构建里 |
+|---|---|
+| `xai-grok-pager/src/app/acp_handler/session_notification.rs:235`、`xai-grok-pager/src/scrollback/text_selection.rs:1259` | 前者是 `app.agents.get_mut(&id).expect("find_session_match returned an existing AgentId")`，后者是模块级 `static URL_RE: LazyLock<Regex>` 的 `.expect("URL regex must compile")`；两条都在普通代码里，此前是被吞掉的引号连带把上面的 `#[cfg(test)]` 标记一起吃掉了 |
+| `xai-grok-sandbox/src/deny/glob.rs:370,521` | `matches.lock().expect(..)` 与 `matches.into_inner().expect(..)`，所在函数门控是 `#[cfg(all(feature = "enforce", target_os = "linux"))]`（`insert_match` 与被 `393` 行门控的收集函数），`mod tests` 从 527 行才开始；同文件另外 46 个位点确实全在 `mod tests` 内，所以这个 crate 同时是"多算"和"漏算"的样本 |
+| `xai-grok-shared/src/clipboard.rs:1656,1685,1698,1760` | `#[cfg(not(target_os = "macos"))] mod platform` 里的 `run_pipe_in`、`run_capture_out_with_status`（两处）、`read_x11_primary_with_tools`，分别是 `argv.split_first().expect("argv non-empty")` 两次、`child.stdout.take().expect("stdout piped")`、`.expect("X11 PRIMARY tool must define read argv")`。门控属性里**根本没有 `test`** —— 所以这 4 个与缺陷 2 无关，纯粹是被缺陷 1 吞掉了标记 |
+
+**缺陷 2 修好后才第一次被算进生产的 21 个位点，逐条读过**：
+
+| 位点 | 门控与内容 |
+|---|---|
+| `xai-fast-worktree/src/nfs/mod.rs:278` | `#[cfg(all(target_os = "linux", not(test)))] fn grove_fuse_ready()` 里的 `unsafe { libc::access("/dev/fuse", W_OK) }`。属性明写 `not(test)`，旧规则仍判为测试 |
+| `xai-grok-pager/src/app/mod.rs:1260,1268,1294,1308` | `#[cfg(any(windows, test))] mod win_native_selection` 里 `#[cfg(windows)] mod imp` 的 `unsafe extern "system"` 声明与 `GetStdHandle` / `GetConsoleMode` / `SetConsoleMode` 调用；审计里此前没有任何一个 unsafe 数字包含这段控制台模式 FFI |
+| `xai-grok-env/src/lib.rs:158,159,165,173,174` | `#[cfg(any(test, feature = "test-support"))] struct EnvVarGuard` 的 5 处 `unsafe { set_var / remove_var }` |
+| `xai-grok-bundle/src/lib.rs:519,521,522`、`xai-grok-shell/src/agent/models/startup_prefetch.rs:218,253,259` | `#[cfg(any(test, feature = "test-support"))]` 的 helper，`.unwrap()` |
+| `common/xai-circuit-breaker/src/clock.rs:47`、`xai-grok-workspace/src/handle.rs:5086,5093`、`.../session/tool_config.rs:548,572` | `any(test, feature = "test-hooks"/"test-support")` 形状的 helper，`.expect()`。它们算"生产"是口径**故意**保守的结果：feature 一开就编译进去，扫描器无权假设没人开 |
+
+反过来被**正确移出**生产的（缺陷 1 之前凭空算进来的）：`xai-grok-sandbox/src/deny/glob.rs` 46 处
+（41 unwrap / 4 expect / 1 panic）与 `deny/mod.rs:417`、`xai-grok-workspace/src/permission/auto_mode/mod.rs`
+14 处与 `bash_command_splitting.rs` 5 处、`xai-grok-shell/src/agent/config_model_override_parse.rs`
+3 处、`xai-grok-tools/src/reminders/task_completion.rs` 4 处，全部在 `mod tests` 内。落到 crate 级别，
+与门禁基线（`HEAD` 提交的 `panic-site-baseline.tsv`）逐行比对：
+
+| Crate | 基线（2026-10-02） | 现在 | 差 |
+|---|---|---|---|
+| `xai-grok-sandbox` | 42 / 4 / 1 / 19 | **0** / 2 / 0 / 19 | −42 unwrap、−2 expect、−1 panic |
+| `xai-grok-workspace` | 47 / 26 / 3 / 3 | 35 / 23 / 3 / 3 | −12 unwrap、−3 expect |
+| `xai-grok-tools` | 16 / 122 / 8 / 19 | 16 / 118 / 8 / 19 | −4 expect |
+| `xai-grok-shell` | 46 / 116 / 29 / 13 | 46 / 116 / 28 / 13 | −1 panic |
+| `xai-grok-pager` | 57 / 133 / 30 / 17 | 57 / **135** / 30 / **21** | +2 expect、+4 unsafe |
+| `xai-grok-shared` | 0 / 4 / 0 / 17 | 0 / **8** / 0 / 17 | +4 expect |
+| `xai-grok-bundle` | 0 / 0 / 0 / 0 | **3** / 0 / 0 / 0 | +3 unwrap |
+| `xai-grok-env` | 0 / 0 / 0 / 0 | 0 / 0 / 0 / **5** | +5 unsafe |
+| `xai-circuit-breaker` | 0 / 0 / 0 / 0 | 0 / **1** / 0 / 0 | +1 expect |
+| 合计 | 351 / 596 / 132 / 420 | **300 / 594 / 130 / 429** | −51 / −2 / −2 / +9 |
+
+**结论层面的影响，三条**：
+
+1. §2.4 的 A 批理由是"`xai-grok-sandbox` 28 个生产 unwrap，安全边界，量小"。§2.5 实测该 crate 是 42
+   个，修正之后是 **0** 个 —— 那 42 个全部在 `mod tests` 里。A 批剩下的 auth 与 secrets 本来就是 0，
+   所以**这一批没有对象**；如果还要按安全边界排序，正确的输入是 `unsafe` 数（sandbox 19，没变）而不是
+   unwrap 数。
+2. `xai-grok-pager`（57）与 `xai-grok-shell`（46）仍是生产 unwrap 最多的两个 crate，C/D 两批的排序
+   不受影响；受影响的是所有**小于** 12 的数，它们都可能整体挪动。
+3. **"生产"在这个口径下的含义要说清楚** —— 它是"无法证明只在测试构建里编译"，而不是"一定会在用户机器上
+   执行"。上表最后两行的 feature 门控 helper 与 `xai-grok-test-support` 属于前者中的前者，做下一轮治理
+   排序时应先按"feature 是否真的在发布 profile 里开"过一遍；反过来 `not(test)` 门控的那些（第 1 行的
+   `grove_fuse_ready`）是**只有**发布构建才编译的代码，优先级应该高于同数量级的普通位点。
 
 ---
 

@@ -401,7 +401,11 @@ pub(crate) async fn run_read_file(
             let display_dcwd = display_cwd_or_cwd(&cwd, display_cwd.as_deref());
             return Ok(ReadFileOutput::FileReadError(format!(
                 "Error: {} is ignored by .gitignore and cannot be read.",
-                display_dcwd.join(&input.path).display()
+                crate::util::fs::join_announced_path(
+                    &display_dcwd,
+                    std::path::Path::new(&input.path)
+                )
+                .display()
             )));
         }
     }
@@ -415,7 +419,10 @@ pub(crate) async fn run_read_file(
                 ));
             }
             let display_dcwd = display_cwd_or_cwd(&cwd, display_cwd.as_deref());
-            let display_path = display_dcwd.join(&input.path);
+            let display_path = crate::util::fs::join_announced_path(
+                &display_dcwd,
+                std::path::Path::new(&input.path),
+            );
             let kind = e.io_error_kind();
             return Ok(match kind {
                 Some(std::io::ErrorKind::NotFound) => {
@@ -902,16 +909,19 @@ mod tests {
             disable_model_invocation: true,
             ..SkillInfo::default()
         }]));
-        let requested = "/wrong/root/skills/code-review/SKILL.md";
-        let msg = not_found_msg(resources, requested).await;
+        // A second workspace: the missing file is outside the announced cwd on
+        // every platform. A POSIX `/wrong/root/...` is not — on Windows that
+        // argument is relative, and the resolver places it inside the cwd.
+        let elsewhere = TempDir::new().unwrap();
+        let requested = elsewhere.path().join("skills/code-review/SKILL.md");
+        let msg = not_found_msg(resources, &requested.to_string_lossy()).await;
         assert_eq!(
             msg,
             format!(
                 "Error: {} does not exist.\n\
                  The skill you are looking for is registered at:\n{}",
-                // The message repeats the path through `Path::display`, which on
-                // Windows spells a drive-relative argument with the current drive.
-                std::path::Path::new(requested).display(),
+                // The message repeats the argument through `Path::display`.
+                requested.display(),
                 skill_path.display()
             )
         );
@@ -939,13 +949,18 @@ mod tests {
             None,
         );
         resources.insert(manager);
-        let msg = not_found_msg(resources, "/wrong/root/review/SKILL.md").await;
+        // A second workspace: the missing file is outside the announced cwd on
+        // every platform. A POSIX `/wrong/root/...` is not — on Windows that
+        // argument is relative, and the resolver places it inside the cwd.
+        let elsewhere = TempDir::new().unwrap();
+        let requested = elsewhere.path().join("review/SKILL.md");
+        let msg = not_found_msg(resources, &requested.to_string_lossy()).await;
         assert_eq!(
             msg,
             format!(
                 "Error: {} does not exist.\n\
                  The skill you are looking for is registered at:\n{}",
-                std::path::Path::new("/wrong/root/review/SKILL.md").display(),
+                requested.display(),
                 // Built the way the suggestion builds it: `/display/project`
                 // with each remaining component pushed on, so the separators are
                 // the host's throughout rather than a mix of both.
@@ -981,13 +996,18 @@ mod tests {
                 ..SkillInfo::default()
             },
         ]));
-        let msg = not_found_msg(resources, "/wrong/root/review/SKILL.md").await;
+        // A second workspace: the missing file is outside the announced cwd on
+        // every platform. A POSIX `/wrong/root/...` is not — on Windows that
+        // argument is relative, and the resolver places it inside the cwd.
+        let elsewhere = TempDir::new().unwrap();
+        let requested = elsewhere.path().join("review/SKILL.md");
+        let msg = not_found_msg(resources, &requested.to_string_lossy()).await;
         assert_eq!(
             msg,
             format!(
                 "Error: {} does not exist.\n\
                  Note: your current working directory is {}",
-                std::path::Path::new("/wrong/root/review/SKILL.md").display(),
+                requested.display(),
                 tmp.path().display()
             )
         );
@@ -1003,13 +1023,18 @@ mod tests {
             path: stale_path.to_string_lossy().into_owned(),
             ..SkillInfo::default()
         }]));
-        let msg = not_found_msg(resources, "/wrong/root/review/SKILL.md").await;
+        // A second workspace: the missing file is outside the announced cwd on
+        // every platform. A POSIX `/wrong/root/...` is not — on Windows that
+        // argument is relative, and the resolver places it inside the cwd.
+        let elsewhere = TempDir::new().unwrap();
+        let requested = elsewhere.path().join("review/SKILL.md");
+        let msg = not_found_msg(resources, &requested.to_string_lossy()).await;
         assert_eq!(
             msg,
             format!(
                 "Error: {} does not exist.\n\
                  Note: your current working directory is {}",
-                std::path::Path::new("/wrong/root/review/SKILL.md").display(),
+                requested.display(),
                 tmp.path().display()
             )
         );

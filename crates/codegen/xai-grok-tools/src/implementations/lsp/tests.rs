@@ -646,6 +646,53 @@ async fn a_server_that_dies_on_the_way_up_says_which_one_and_why() {
         text.contains("cannot start: no such root"),
         "the server's own explanation has to be relayed, got: {text}"
     );
+    assert!(
+        text.contains("it wrote nothing on stdout"),
+        "a server that died before answering is a different diagnosis from one \
+         that answered wrongly, and the message has to tell them apart, got: {text}"
+    );
+}
+
+/// The 2026-10-03 Windows leg reported `service stopped; the process exited with
+/// code 0` and nothing else for 37 LSP tests at once. The cause was the fixture
+/// writing its framing through a text stream, which on Windows rewrites every
+/// `\n` to `\r\n`; the parser never saw a header it recognised. That shape is
+/// reproducible on any platform, and the point of this test is that the client
+/// now says so: the bytes it refused are in the message, escaped, next to the
+/// count of what was sent the other way.
+#[tokio::test(flavor = "current_thread")]
+async fn a_server_whose_bytes_are_wrong_shows_the_bytes() {
+    let (_dir, script_path) = write_translated_newline_server();
+    let workspace = tempfile::tempdir().unwrap();
+    let notify = Arc::new(tokio::sync::Notify::new());
+
+    let err = LspClient::start(
+        "translated".to_string(),
+        1,
+        mock_server_config(&script_path),
+        workspace.path(),
+        notify,
+    )
+    .await
+    .expect_err("framing whose newlines were translated is not a header");
+    let text = err.to_string();
+
+    assert!(matches!(err, LspError::InitFailed(_)), "got: {text}");
+    assert!(
+        text.contains("Content-Length"),
+        "the answer that was refused has to be quoted, or the reader is left with \
+         `service stopped` and a guess, got: {text}"
+    );
+    assert!(
+        text.contains("\\r\\r\\n"),
+        "the doubled carriage return is the whole defect and has to survive into \
+         the message escaped rather than as a byte nobody can see, got: {text:?}"
+    );
+    assert!(
+        text.contains("bytes were sent to it"),
+        "whether the request left this side at all is the other half of the split, \
+         got: {text}"
+    );
 }
 
 /// A signal is a different story from a code: nothing the server itself decided.

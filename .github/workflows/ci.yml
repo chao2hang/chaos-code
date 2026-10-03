@@ -719,8 +719,8 @@ jobs:
           python3 scripts/ci/test-platform-gated-tests.py
           python3 scripts/ci/platform-gated-tests.py --quiet \
             --check-baseline scripts/ci/platform-gated-tests.tsv \
-            --max-unreviewed 1108 --max-blind-windows 74 --max-blind-macos 11 \
-            --max-assumption-free 443
+            --max-unreviewed 1106 --max-blind-windows 74 --max-blind-macos 11 \
+            --max-assumption-free 441
           # Four consumers derive a release asset name -- install.sh, install.ps1,
           # install.bat and the auto-updater -- and one workflow publishes it. A rename
           # on the publisher's side is invisible to all four until an install or an

@@ -5,6 +5,17 @@
 //! against the *shapes* real servers come in — full versus incremental sync,
 //! push versus pull diagnostics, save with or without text — without needing
 //! any of those servers installed.
+//!
+//! One rule every script here obeys and none can be forgiven for breaking: LSP
+//! framing leaves through `sys.stdout.buffer`, never through a text stream.
+//! Python's text mode rewrites every `\n` to `\r\n` on Windows, so a header
+//! terminator spelled `"\r\n\r\n"` arrives as `\r\r\n\r\r\n`, which no LSP parser
+//! accepts; the client gives up on the response, drops the server's stdin, the
+//! server reads EOF and exits 0, and the entire evidence is `service stopped; the
+//! process exited with code 0` with nothing on stderr. Every mock in the
+//! 2026-10-03 Windows leg failed that way at once while passing on Linux. Real
+//! servers write bytes for the same reason `Content-Length` counts bytes: the
+//! body is encoded before it is measured.
 
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -35,39 +46,89 @@ const PYTHON_CANDIDATES: &[(&str, &[&str])] = &[
 /// interpreter. On Windows `python3` can resolve to a launcher stub that spawns
 /// successfully, prints a notice, and exits, which leaves the client past
 /// `spawn` and reporting only that the server stopped; the 2026-10-03 Windows CI
-/// leg failed that way for 38 tests at once. A `--version` probe is what tells
-/// an interpreter apart from a stub that will never start one.
+/// leg failed that way for 38 tests at once. A `--version` probe does not catch
+/// that shape, because answering `--version` is exactly what such a stub is built
+/// to do, so the probe here hands the candidate a script and asks for its output.
 fn python_program() -> &'static PythonProgram {
     static PYTHON: OnceLock<PythonProgram> = OnceLock::new();
     PYTHON.get_or_init(|| {
-        resolve_python(PYTHON_CANDIDATES).unwrap_or_else(|| {
+        resolve_python(PYTHON_CANDIDATES).unwrap_or_else(|refusals| {
             panic!(
-                "the LSP mock servers are Python scripts and no interpreter answered `--version`; \
-                 tried {:?}",
-                PYTHON_CANDIDATES
+                "the LSP mock servers are Python scripts and none of {:?} runs one: {}",
+                PYTHON_CANDIDATES,
+                refusals.join("; ")
             )
         })
     })
 }
 
-/// The first candidate that runs `--version` successfully.
-fn resolve_python(candidates: &[(&str, &[&str])]) -> Option<PythonProgram> {
-    candidates
-        .iter()
-        .find(|(program, pre)| {
-            std::process::Command::new(program)
-                .args(*pre)
-                .arg("--version")
-                .stdin(std::process::Stdio::null())
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status()
-                .is_ok_and(|status| status.success())
-        })
-        .map(|(program, pre)| PythonProgram {
-            program: (*program).to_owned(),
-            pre_args: (*pre).iter().map(|arg| (*arg).to_owned()).collect(),
-        })
+/// The word a probe script prints for its own sake.
+const PROBE_MARKER: &str = "chaos-lsp-probe-ok";
+
+/// Prints [`PROBE_MARKER`] and nothing else.
+///
+/// `-c` rather than a file, because the question is whether this program runs the
+/// code it is handed. That is the one thing a launcher stub cannot fake: it knows
+/// `--version` by heart and executes nothing else.
+const PROBE_SCRIPT: &str = "import sys; sys.stdout.write('chaos-lsp-probe-ok'); sys.stdout.flush()";
+
+/// Ask one candidate to run a script, and say in one clause why it will not do.
+fn probe_python(program: &str, pre: &[&str]) -> Result<(), String> {
+    let spelled = if pre.is_empty() {
+        program.to_owned()
+    } else {
+        format!("{program} {}", pre.join(" "))
+    };
+    let output = std::process::Command::new(program)
+        .args(pre)
+        .arg("-u")
+        .arg("-c")
+        .arg(PROBE_SCRIPT)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .map_err(|e| format!("{spelled} cannot run a script: {e}"))?;
+    if !output.status.success() {
+        let exit = match output.status.code() {
+            Some(code) => format!("exit code {code}"),
+            None => "a signal".to_owned(),
+        };
+        let said = trim_to(String::from_utf8_lossy(&output.stderr).trim(), 200);
+        return Err(format!(
+            "{spelled} refused a script ({exit}, stderr: {said})"
+        ));
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    if !stdout.contains(PROBE_MARKER) {
+        // Matched against the whole output: a stub that talks first and runs
+        // nothing after would otherwise slip past on a trimmed tail.
+        return Err(format!(
+            "{spelled} exited 0 on a script without running it (output: {})",
+            trim_to(stdout.trim(), 200)
+        ));
+    }
+    Ok(())
+}
+
+/// Short enough for one panic message, without cutting a character in half.
+fn trim_to(text: &str, max: usize) -> String {
+    text.chars().take(max).collect()
+}
+
+/// The first candidate that runs a script, or why each candidate was not one.
+fn resolve_python(candidates: &[(&str, &[&str])]) -> Result<PythonProgram, Vec<String>> {
+    let mut refusals = Vec::new();
+    for (program, pre) in candidates {
+        match probe_python(program, pre) {
+            Ok(()) => {
+                return Ok(PythonProgram {
+                    program: (*program).to_owned(),
+                    pre_args: (*pre).iter().map(|arg| (*arg).to_owned()).collect(),
+                });
+            }
+            Err(reason) => refusals.push(reason),
+        }
+    }
+    Err(refusals)
 }
 
 /// `command` for a mock server's [`super::super::config::LspServerConfig`].
@@ -90,26 +151,23 @@ import json, sys
 def read_message():
     headers = {}
     while True:
-        line = sys.stdin.readline()
+        line = sys.stdin.buffer.readline()
         if not line:
             return None
-        if line.strip() == '':
+        if line.strip() == b'':
             break
-        if ':' in line:
-            key, value = line.split(':', 1)
+        if b':' in line:
+            key, value = line.split(b':', 1)
             headers[key.strip()] = value.strip()
-    length = int(headers.get('Content-Length', 0))
+    length = int(headers.get(b'Content-Length', 0))
     if length == 0:
         return None
-    body = sys.stdin.read(length)
-    return json.loads(body)
+    return json.loads(sys.stdin.buffer.read(length))
 
 def send_message(msg):
-    body = json.dumps(msg)
-    header = f"Content-Length: {len(body)}\r\n\r\n"
-    sys.stdout.write(header)
-    sys.stdout.write(body)
-    sys.stdout.flush()
+    body = json.dumps(msg).encode('utf-8')
+    sys.stdout.buffer.write(b"Content-Length: %d\r\n\r\n" % len(body) + body)
+    sys.stdout.buffer.flush()
 
 def send_diagnostics(uri):
     send_message({
@@ -230,23 +288,23 @@ import json, sys, time
 def read_message():
     headers = {}
     while True:
-        line = sys.stdin.readline()
+        line = sys.stdin.buffer.readline()
         if not line:
             return None
-        if line.strip() == '':
+        if line.strip() == b'':
             break
-        if ':' in line:
-            key, value = line.split(':', 1)
+        if b':' in line:
+            key, value = line.split(b':', 1)
             headers[key.strip()] = value.strip()
-    length = int(headers.get('Content-Length', 0))
+    length = int(headers.get(b'Content-Length', 0))
     if length == 0:
         return None
-    return json.loads(sys.stdin.read(length))
+    return json.loads(sys.stdin.buffer.read(length))
 
 def send_message(msg):
-    body = json.dumps(msg)
-    sys.stdout.write(f"Content-Length: {len(body)}\r\n\r\n{body}")
-    sys.stdout.flush()
+    body = json.dumps(msg).encode('utf-8')
+    sys.stdout.buffer.write(b"Content-Length: %d\r\n\r\n" % len(body) + body)
+    sys.stdout.buffer.flush()
 
 while True:
     msg = read_message()
@@ -302,23 +360,23 @@ pub(super) fn write_slow_init_server(delay_ms: u64) -> (tempfile::TempDir, PathB
 def read_message():
     headers = {{}}
     while True:
-        line = sys.stdin.readline()
+        line = sys.stdin.buffer.readline()
         if not line:
             return None
-        if line.strip() == '':
+        if line.strip() == b'':
             break
-        if ':' in line:
-            key, value = line.split(':', 1)
+        if b':' in line:
+            key, value = line.split(b':', 1)
             headers[key.strip()] = value.strip()
-    length = int(headers.get('Content-Length', 0))
+    length = int(headers.get(b'Content-Length', 0))
     if length == 0:
         return None
-    return json.loads(sys.stdin.read(length))
+    return json.loads(sys.stdin.buffer.read(length))
 
 def send_message(msg):
-    body = json.dumps(msg)
-    sys.stdout.write(f"Content-Length: {{len(body)}}\r\n\r\n{{body}}")
-    sys.stdout.flush()
+    body = json.dumps(msg).encode('utf-8')
+    sys.stdout.buffer.write(b"Content-Length: %d\r\n\r\n" % len(body) + body)
+    sys.stdout.buffer.flush()
 
 while True:
     msg = read_message()
@@ -378,23 +436,23 @@ INIT_ERROR = json.loads("{init_error_payload}")
 def read_message():
     headers = {{}}
     while True:
-        line = sys.stdin.readline()
+        line = sys.stdin.buffer.readline()
         if not line:
             return None
-        if line.strip() == '':
+        if line.strip() == b'':
             break
-        if ':' in line:
-            key, value = line.split(':', 1)
+        if b':' in line:
+            key, value = line.split(b':', 1)
             headers[key.strip()] = value.strip()
-    length = int(headers.get('Content-Length', 0))
+    length = int(headers.get(b'Content-Length', 0))
     if length == 0:
         return None
-    return json.loads(sys.stdin.read(length))
+    return json.loads(sys.stdin.buffer.read(length))
 
 def send_message(msg):
-    body = json.dumps(msg)
-    sys.stdout.write(f"Content-Length: {{len(body)}}\r\n\r\n{{body}}")
-    sys.stdout.flush()
+    body = json.dumps(msg).encode('utf-8')
+    sys.stdout.buffer.write(b"Content-Length: %d\r\n\r\n" % len(body) + body)
+    sys.stdout.buffer.flush()
 
 def increment_attempts():
     attempts = 0
@@ -453,24 +511,23 @@ state = {"saves": 0, "pulls": 0}
 def read_message():
     headers = {}
     while True:
-        line = sys.stdin.readline()
+        line = sys.stdin.buffer.readline()
         if not line:
             return None
-        if line.strip() == '':
+        if line.strip() == b'':
             break
-        if ':' in line:
-            key, value = line.split(':', 1)
+        if b':' in line:
+            key, value = line.split(b':', 1)
             headers[key.strip()] = value.strip()
-    length = int(headers.get('Content-Length', 0))
+    length = int(headers.get(b'Content-Length', 0))
     if length == 0:
         return None
-    return json.loads(sys.stdin.read(length))
+    return json.loads(sys.stdin.buffer.read(length))
 
 def send_message(msg):
-    body = json.dumps(msg)
-    sys.stdout.write(f"Content-Length: {len(body)}\r\n\r\n")
-    sys.stdout.write(body)
-    sys.stdout.flush()
+    body = json.dumps(msg).encode('utf-8')
+    sys.stdout.buffer.write(b"Content-Length: %d\r\n\r\n" % len(body) + body)
+    sys.stdout.buffer.flush()
 
 def one_diagnostic(message):
     return [{
@@ -539,6 +596,33 @@ pub(super) fn write_dying_server() -> (tempfile::TempDir, PathBuf) {
 sys.stderr.write("cannot start: no such root\n")
 sys.stderr.flush()
 sys.exit(3)
+"#,
+    )
+}
+
+/// A server whose answer is written as text instead of bytes: every `\n` in the
+/// framing becomes `\r\n` on the way out.
+///
+/// This is not a hypothetical shape. It is what a Python mock does on its own on
+/// Windows, where `sys.stdout` is a text stream and text mode rewrites `\n` as
+/// `\r\n`, so the `\r\n\r\n` terminator between headers and body arrives as
+/// `\r\r\n\r\r\n`. Every mock in the 2026-10-03 Windows leg failed that way at
+/// once while passing on Linux, and the entire report was `service stopped; the
+/// process exited with code 0`: the client stopped reading, dropped the server's
+/// stdin, and the server read EOF and exited 0 without writing a word to stderr.
+/// Reproducing the byte sequence here gives the diagnostic that names it a test
+/// on every platform, rather than one more fact that only a Windows run can check.
+pub(super) fn write_translated_newline_server() -> (tempfile::TempDir, PathBuf) {
+    write_python_server(
+        "translated_framing_lsp.py",
+        r#"
+def send_message(msg):
+    body = json.dumps(msg).encode('utf-8')
+    for chunk in (b"Content-Length: %d\r\n\r\n" % len(body), body):
+        sys.stdout.buffer.write(chunk.replace(b'\n', b'\r\n'))
+        sys.stdout.buffer.flush()
+
+serve({"textDocumentSync": 1}, lambda msg, method: None)
 "#,
     )
 }
@@ -1159,48 +1243,168 @@ while True:
 mod interpreter_tests {
     use super::*;
 
-    #[cfg(unix)]
-    fn write_script(dir: &Path, name: &str, body: &str) -> PathBuf {
-        let path = dir.join(name);
-        std::fs::write(&path, format!("#!/bin/sh\n{body}")).unwrap();
-        let mut perms = std::fs::metadata(&path).unwrap().permissions();
-        std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o755);
-        std::fs::set_permissions(&path, perms).unwrap();
+    /// The notice the Windows Store alias prints in place of an interpreter.
+    const ALIAS_NOTICE: &str =
+        "Python was not found; run without arguments to install from the Microsoft Store";
+
+    /// The host interpreter spelled as a candidate that runs nothing.
+    ///
+    /// Python takes the first `-c` and treats everything after it as `sys.argv`,
+    /// so code placed here runs and the probe's own script is never reached. That
+    /// is the alias's shape, and building the stub from the interpreter the host
+    /// already proved is what lets these tests run on Windows, where the alias
+    /// lives: a `chmod 755` shell script with a `#!` line could only ever have
+    /// run somewhere else.
+    fn alias_args<'a>(body: &'a str) -> Vec<&'a str> {
+        let mut pre: Vec<&'a str> = python_program()
+            .pre_args
+            .iter()
+            .map(|arg| arg.as_str())
+            .collect();
+        pre.push("-c");
+        pre.push(body);
+        pre
+    }
+
+    /// The host interpreter as a candidate, which is the one that does run the
+    /// script it is handed.
+    fn real_args<'a>() -> Vec<&'a str> {
+        python_program()
+            .pre_args
+            .iter()
+            .map(|arg| arg.as_str())
+            .collect()
+    }
+
+    /// A stub whose output comes out of `message_file` rather than out of its own
+    /// command line.
+    ///
+    /// This matters for what the tests can prove. A refusal quotes the candidate's
+    /// command line, so a message written into the body is in the refusal no
+    /// matter what the probe did with the process; asserting that the refusal
+    /// repeats such a message says nothing about the probe. Read from a file, the
+    /// message can only reach the refusal by way of what the stub printed.
+    fn stub_that_echoes(message_file: &Path, exit_code: i32) -> String {
+        let path = message_file.to_string_lossy().into_owned();
+        if exit_code == 0 {
+            format!("import sys; sys.stdout.write(open({path:?}).read())")
+        } else {
+            format!("import sys; sys.stderr.write(open({path:?}).read()); sys.exit({exit_code})")
+        }
+    }
+
+    /// `text` in a file named `name`, for [`stub_that_echoes`]. Named without any
+    /// substring the assertions look for, so a path in the quoted command line
+    /// cannot satisfy them either.
+    fn message_file(dir: &tempfile::TempDir, name: &str, text: &str) -> PathBuf {
+        let path = dir.path().join(name);
+        std::fs::write(&path, text).expect("the stub's message has to be readable");
         path
+    }
+
+    /// Runs the shipped resolver over candidates whose argument lists are owned.
+    fn resolve(candidates: &[(&str, Vec<&str>)]) -> Result<PythonProgram, Vec<String>> {
+        let spelled: Vec<(&str, &[&str])> = candidates
+            .iter()
+            .map(|(program, pre)| (*program, pre.as_slice()))
+            .collect();
+        resolve_python(&spelled)
     }
 
     /// The Windows Store alias is exactly this shape: it spawns, complains, and
     /// leaves. Nothing downstream can tell that apart from a real interpreter
     /// unless the probe looks at the exit status.
-    #[cfg(unix)]
     #[test]
     fn a_stub_that_refuses_to_run_is_not_an_interpreter() {
-        let dir = tempfile::tempdir().unwrap();
-        let stub = write_script(
-            dir.path(),
-            "store-alias",
-            "echo 'Python was not found; run without arguments to install from the Microsoft Store' >&2\nexit 9009\n",
+        let program = python_program().program.as_str();
+        let body = format!("import sys; sys.stderr.write({ALIAS_NOTICE:?}); sys.exit(9009)");
+        let resolved = resolve(&[(program, alias_args(&body)), (program, real_args())])
+            .expect("the host runs at least one interpreter that executes a script");
+        assert_eq!(
+            resolved.pre_args,
+            python_program().pre_args,
+            "the candidate that only prints must lose to the one that runs the script: {:?}",
+            resolved
         );
-        let real = write_script(
-            dir.path(),
-            "real-python",
-            "case \" $* \" in *' --version '*) echo 'Python 3.12.10'; exit 0;; esac\nexit 1\n",
-        );
-        let stub_str = stub.to_str().unwrap().to_owned();
-        let real_str = real.to_str().unwrap().to_owned();
-        let resolved = resolve_python(&[(&stub_str, &[] as &[&str]), (&real_str, &["-3"])])
-            .expect("the second candidate is a working interpreter");
-        assert_eq!(resolved.program, real_str);
-        assert_eq!(resolved.pre_args, vec!["-3".to_owned()]);
     }
 
-    #[cfg(unix)]
+    /// The shape a `--version` probe waves through: answers `--version`, then runs
+    /// nothing. That is what the Microsoft Store alias does, and it is why the
+    /// probe hands the candidate a script instead of asking it what version it is.
+    /// The premise is checked rather than narrated: the stub is asked its version
+    /// first, and a `--version` probe really would have taken it.
+    #[test]
+    fn a_stub_that_answers_version_but_runs_nothing_is_not_an_interpreter() {
+        let dir = tempfile::tempdir().unwrap();
+        let notice = message_file(&dir, "a.txt", ALIAS_NOTICE);
+        let program = python_program().program.as_str();
+        let body = format!(
+            "import sys; sys.stdout.write('Python 3.12.10' if '--version' in sys.argv \
+             else open({notice:?}).read())"
+        );
+        let alias = alias_args(&body);
+        let answered = std::process::Command::new(program)
+            .args(&alias)
+            .arg("--version")
+            .output()
+            .expect("the stub spawns; that is the whole problem with it");
+        assert_eq!(
+            String::from_utf8_lossy(&answered.stdout).trim(),
+            "Python 3.12.10",
+            "the premise is that a version probe gets an answer: {:?}",
+            String::from_utf8_lossy(&answered.stdout)
+        );
+        let refusals = resolve(&[(program, alias)])
+            .expect_err("a candidate that runs no script is not an interpreter");
+        assert_eq!(refusals.len(), 1, "{refusals:?}");
+        assert!(
+            refusals[0].contains(program) && refusals[0].contains("without running it"),
+            "the refusal has to name the candidate and the check it failed: {refusals:?}"
+        );
+        assert!(
+            refusals[0].contains(ALIAS_NOTICE),
+            "what the stub said instead is the actionable half: {refusals:?}"
+        );
+    }
+
+    /// One refusal per candidate, in candidate order, each carrying what that
+    /// candidate printed, because the panic that ends the run is the only report a
+    /// runner without these fixtures ever gets.
+    #[test]
+    fn every_rejected_candidate_is_named_in_the_refusals() {
+        let dir = tempfile::tempdir().unwrap();
+        let first_said = "candidate-one-refused-this-way";
+        let second_said = "candidate-two-printed-and-left";
+        let one = message_file(&dir, "a.txt", first_said);
+        let two = message_file(&dir, "b.txt", second_said);
+        let program = python_program().program.as_str();
+        let refusals = resolve(&[
+            (program, alias_args(&stub_that_echoes(&one, 1))),
+            (program, alias_args(&stub_that_echoes(&two, 0))),
+        ])
+        .expect_err("neither candidate runs a script");
+        assert_eq!(refusals.len(), 2, "{refusals:?}");
+        assert!(
+            refusals[0].contains(first_said) && !refusals[0].contains(second_said),
+            "the first refusal describes the first candidate only: {refusals:?}"
+        );
+        assert!(
+            refusals[1].contains(second_said) && !refusals[1].contains(first_said),
+            "the second refusal describes the second candidate only: {refusals:?}"
+        );
+    }
+
     #[test]
     fn a_candidate_that_cannot_even_be_spawned_is_skipped() {
         let dir = tempfile::tempdir().unwrap();
         let missing = dir.path().join("not-there");
         let missing_str = missing.to_str().unwrap().to_owned();
-        assert!(resolve_python(&[(&missing_str, &[] as &[&str])]).is_none());
+        let refusals = resolve(&[(missing_str.as_str(), vec![])])
+            .expect_err("nothing on this host is named `not-there`");
+        assert!(
+            refusals[0].contains("cannot run a script"),
+            "a candidate that is not there has to be reported as that: {refusals:?}"
+        );
     }
 
     #[test]

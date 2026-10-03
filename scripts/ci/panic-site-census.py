@@ -11,8 +11,10 @@ What counts as production: a `.rs` file under a crate's `src/`, minus the spans 
 file itself marks as test. A span is test when
 
   * the file is under `tests/`, `benches/` or `examples/`, or begins `#![cfg(test)]`;
-  * it sits inside an item that carries `#[cfg(test)]` (or `cfg_attr(test, ...)`),
-    including a `mod tests { ... }` block found that way;
+  * it sits inside an item whose `cfg` expression *requires* `test`, including a
+    `mod tests { ... }` found that way. `all` inherits the requirement from any
+    part and `any` only from every part, so `all(unix, test)` is a test gate while
+    `any(target_os = "linux", all(unix, test))` is not;
   * it sits in a file pulled in by a `#[cfg(test)] mod name;` declaration, which is
     how `src/handle_tests.rs` and friends are reached.
 
@@ -23,7 +25,11 @@ counted one only costs whoever reads it a look at the file.
 Limits, stated because they change the numbers: a raw string holding Rust source
 (`r#"..."#`) is blanked like any string, so an `.unwrap()` written inside one is
 invisible here; a `mod tests` without a `cfg(test)` attribute is counted as
-production, which is what it looks like to the compiler as well.
+production, which is what it looks like to the compiler as well. A backslash
+escapes the next character inside a non-raw literal, which matters because a
+literal ending in `\"` would otherwise end at the escaped quote and hand its real
+terminator to the next literal, taking the `cfg(test)` attribute in between with
+it.
 
     scripts/ci/panic-site-census.py                  # tables, sorted by production unwraps
     scripts/ci/panic-site-census.py --json           # the same rows as JSON
@@ -41,7 +47,10 @@ from pathlib import Path
 # parentheses from here, because `cfg(all(test, not(unix)))` nests and a
 # character-class regex cannot see the `test` inside it.
 CFG_OPEN = re.compile(r"#\s*!?\s*\[\s*cfg(?:_attr)?\s*\(")
-MENTIONS_TEST = re.compile(r"(?<![A-Za-z0-9_])test(?![A-Za-z0-9_])")
+# Tokens of a `cfg(...)` argument list: condition names, `key = "value"` halves,
+# and the punctuation that nests them. Strings are already blanked to spaces by
+# the time an argument list is read, so a missing value has to parse as one.
+CFG_TOKEN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*|\(|\)|,|=")
 # A whole character literal: `'}'`, `'\n'`, `'\u{1f600}'`, `'\''`. Anything else
 # starting with `'` is a lifetime.
 CHAR_LITERAL = re.compile(r"'(?:\\.|[^\\'])'|'\\u\{[0-9a-fA-F]+\}'")
@@ -59,7 +68,6 @@ MOD_DECL = re.compile(r"\bmod\s+([A-Za-z_][A-Za-z0-9_]*)\s*;")
 # the blanked text can be sliced out of the original at the same positions.
 PATH_ATTR = re.compile(r'#\[path\s*=\s*"([^"]+)"\s*\]')
 ONLY_INNER_ATTRS = re.compile(r"(?:\s*#!\[[^\]]*\]\s*)*", re.S)
-NEGATION = re.compile(r"not\s*\([^()]*\)")
 # `[[bin]] path = "src/bin/cli.rs"` and friends: Cargo names compilation units
 # outside its conventions all over this workspace, and each of those is a root.
 CARGO_TARGET_PATH = re.compile(r'path\s*=\s*"([^"]+\.rs)"')
@@ -129,8 +137,23 @@ def blank_noise(source: str) -> str:
                     hashes += 1
                     k -= 1
                 terminator = '"' + "#" * hashes
-                end = source.find(terminator, first + 1)
-                end = n if end < 0 else end + len(terminator)
+                # A `\"` inside a literal is not the end of it. Stopping at the
+                # first quote would leave the rest of the literal in the scanned
+                # text, where a `{` or `}` in a message unbalances the brace walk
+                # that closes a test module.
+                raw = "r" in source[i:first]
+                j = first + 1
+                end = -1
+                while j < n:
+                    if source.startswith(terminator, j):
+                        end = j + len(terminator)
+                        break
+                    if not raw and source[j] == "\\":
+                        j += 2
+                        continue
+                    j += 1
+                if end < 0:
+                    end = n
                 blank(i, end)
                 i = end
             else:
@@ -218,13 +241,55 @@ def cfg_attribute(clean: str, open_at: int) -> tuple[str, int] | None:
 
 
 def gated_by_test(args: str) -> bool:
-    """Does a `cfg(...)` argument list apply to a test build?
+    """Does a `cfg(...)` argument list apply only to a test build?
 
-    `not(test)` is subtracted first, because `cfg_attr(not(test), deny(...))` names
-    `test` while describing the opposite of a test build; counting its span as test
-    code would hide production panics, which is the one error worth avoiding here.
+    The question is whether `test` is *required*, not whether the word appears.
+    `all` requires whatever any of its parts requires, because rustc builds the
+    item only when every part holds; `any` requires only whatever every part
+    requires, because one branch alone is enough to build it. So `all(unix, test)`
+    is a test gate and `any(target_os = "linux", all(unix, test))` is not, and a
+    file carrying the second one is in the Linux release build with its panics
+    attached. `not(...)` requires nothing, so `cfg(not(test))` marks code that
+    ships precisely when tests are off.
     """
-    return bool(MENTIONS_TEST.search(NEGATION.sub("", args)))
+    tokens = CFG_TOKEN.findall(args)
+
+    def condition(index: int) -> tuple[bool, int]:
+        """Whether one condition requires `test`, and where the tokens go on."""
+        name = tokens[index]
+        if index + 1 < len(tokens) and tokens[index + 1] == "=":
+            return False, index + 2
+        if name in ("all", "any", "not") and index + 1 < len(tokens) and tokens[index + 1] == "(":
+            parts, after = branch(index + 2)
+            if name == "all":
+                return any(parts), after
+            if name == "any":
+                return bool(parts) and all(parts), after
+            return False, after
+        return name == "test", index + 1
+
+    def branch(index: int) -> tuple[list[bool], int]:
+        """The requirement of each comma-separated part, and where the list ends."""
+        parts: list[bool] = []
+        while index < len(tokens):
+            if tokens[index] == ")":
+                return parts, index + 1
+            if tokens[index] == ",":
+                index += 1
+                continue
+            part, index = condition(index)
+            parts.append(part)
+        return parts, index
+
+    top: list[bool] = []
+    index = 0
+    while index < len(tokens):
+        if tokens[index] in (",", ")"):
+            index += 1
+            continue
+        part, index = condition(index)
+        top.append(part)
+    return bool(top) and all(top)
 
 
 def test_spans(clean: str) -> list[tuple[int, int]]:
@@ -235,6 +300,11 @@ def test_spans(clean: str) -> list[tuple[int, int]]:
     """
     spans: list[tuple[int, int]] = []
     for opening in CFG_OPEN.finditer(clean):
+        if "_attr" in opening.group(0):
+            # `cfg_attr(cond, attrs)` always builds the item and only swaps the
+            # listed attributes in or out, so it never puts anything under the
+            # test cfg, whatever the condition says.
+            continue
         read = cfg_attribute(clean, opening.start())
         if read is None:
             continue

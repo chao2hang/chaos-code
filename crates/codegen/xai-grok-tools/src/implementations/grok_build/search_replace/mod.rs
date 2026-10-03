@@ -330,7 +330,10 @@ async fn handle_new_file_creation(
         return Ok(match e.io_error_kind() {
             Some(std::io::ErrorKind::NotFound) => {
                 let display_dcwd = display_cwd_or_cwd(cwd, display_cwd);
-                let display_path = display_dcwd.join(&input.file_path);
+                let display_path = crate::util::fs::join_announced_path(
+                    &display_dcwd,
+                    std::path::Path::new(&input.file_path),
+                );
                 let msg = crate::util::format_not_found_error(
                     &display_path,
                     path,
@@ -539,7 +542,10 @@ async fn handle_replacement(
             let output = match e.io_error_kind() {
                 Some(std::io::ErrorKind::NotFound) => {
                     let display_dcwd = display_cwd_or_cwd(cwd, display_cwd);
-                    let display_path = display_dcwd.join(&input.file_path);
+                    let display_path = crate::util::fs::join_announced_path(
+                        &display_dcwd,
+                        std::path::Path::new(&input.file_path),
+                    );
                     let msg = crate::util::format_not_found_error(
                         &display_path,
                         path,

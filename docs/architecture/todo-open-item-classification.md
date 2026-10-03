@@ -18,9 +18,10 @@ browser-level host-restart fault injection and the workflow-toolchain guard, the
 timeline turn-grouping pass, the first full Windows CI verdict, the load-bearing
 feature guard and the two CI failures that guard then exposed, the drive-less model
 path fold decided and then executed against a Windows target, the unpin/title
-lost update closed inside the persistence actor itself, and the platform gating
-that turned that Windows leg green now inventoried row by row, is
-23 unchecked and 114 partial
+lost update closed inside the persistence actor itself, the platform gating that turned that Windows
+leg green, and the five mechanisms that accounted for the 42 Windows test failures left over after
+that gating, now inventoried row by row, is
+22 unchecked and 115 partial
 (including conditional criteria, future/dated work and rows with a completed
 slice plus an open gate); the seccomp audit and one bounded utility-test cleanup
 remain partial rather than closing their larger audit rows. The ignored-test
@@ -30,7 +31,7 @@ inventory now reports 429 ignored attributes and 0 bare attributes, reconciled b
 owner/reviewer gate is due as of 2026-10-01, and these counts are inventory
 evidence, not the per-row decision. Recompute with
 `scripts/ci/classify-open-todos.py` after the next edit. The milestone group counts are M-1 1/5, M0 0/11, M1 0/16,
-M2 1/24, M3 5/12, M4 5/13, M5 9/16, and maintenance 2/17
+M2 0/25, M3 5/12, M4 5/13, M5 9/16, and maintenance 2/17
 (unchecked/partial), summing to 137. Four unchecked rows were added on
 2026-10-03 and two of them closed in the passes that followed. `resolve_model_path`
 folded a model path that looked absolute but carried no drive onto the current
@@ -39,14 +40,23 @@ Windows at all; both now have a written product answer, a component-wise fix, an
 assertions executed against a Windows target. The title/unpin lost update is closed
 as well: an auto title refused by a manual pin is now held by the persistence actor
 and replayed when the unpin blanks the title, so "an unpin leaves a title on disk"
-no longer depends on the caller remembering to compensate. One remains open as a
-deliberate Windows defect identified while triaging that CI leg and left open
-rather than written around: `ProcessTerminal`'s persistent-shell request is
-silently ignored on the platforms where the persistent shell does not exist. The
+no longer depends on the caller remembering to compensate. The Windows defect that
+leg surfaced is now a partial rather than an open row: `ProcessTerminal`'s
+persistent-shell request used to be silently ignored on the platforms where the
+persistent shell does not exist, and that silence is gone -- the decision is
+cfg-free, a request the platform cannot honour is refused and reported once per
+process, and the backend exposes the mode it actually got -- while the Windows
+persistent shell itself, and the eleven assertions that need an equivalent form
+there, are still open. The
 `#[cfg(unix)]` attributes added to make that leg pass were themselves a coverage
 debt with no ledger, unlike `#[ignore]` which has one; that ledger now exists as
-`scripts/ci/platform-gated-tests.py` with 1,108 rows, and it names 443 gated tests
-whose own body shows nothing platform-specific. M1 has no unchecked row left: the last one was the
+`scripts/ci/platform-gated-tests.py` with 1,106 rows, and it names 441 gated tests
+whose own body shows nothing platform-specific. Both numbers are down from the
+1,108 and 443 recorded at import, because the same batch removed two gates rather
+than editing rows: the two interpreter-probe tests in the LSP mock-server fixtures
+lost their `#[cfg(unix)]` (the stub is now built from the host interpreter rather
+than from a `chmod 755` script), so the test for the Microsoft Store alias failure
+now runs on the platform that has the alias. M1 has no unchecked row left: the last one was the
 phone drawer's missing focus trap -- at 390px the sidebar is an overlay drawer whose scrim
 only stops pointer input, so keyboard Tab still reached the conversation behind it -- and it
 closed on 2026-10-03 behind two independent gates (`inert` on the covered regions plus a Tab
@@ -89,7 +99,7 @@ language review, screen-reader testing or platform acceptance.
 | M-1 | 1 | 5 |
 | M0 | 0 | 11 |
 | M1 | 0 | 16 |
-| M2 | 1 | 24 |
+| M2 | 0 | 25 |
 | M3 | 5 | 12 |
 | M4 | 5 | 13 |
 | M5 | 9 | 16 |

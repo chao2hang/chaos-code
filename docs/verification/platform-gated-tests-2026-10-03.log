@@ -179,13 +179,14 @@ checked, not printed, so all four numbers can only move down.
 == 5. Fixture suite
 
     $ python3 scripts/ci/test-platform-gated-tests.py
-    Ran 35 tests in 19.850s
+    Ran 41 tests in 28.420s
 
     OK
 
 The classes are `Scanner` (cfg parsing: gates, `all`/`any`/`not`, per-OS spellings, inherited
 module and file-level gates, feature `cfg` landing in `extra_cfg`), `EvaluatorUnits`, `Ledger` (row
-identity, staleness in each direction, duplicate rows, short reasons), `BlindFiles`, and
+identity, staleness in each direction, duplicate rows, short reasons), `BlindFiles`, `BudgetParsing`
+(where a budget number is allowed to come from; section 11) and
 `PlatformAssumptions` (marker found; portable body stays `none`; the Windows direction; a marker
 that appears only inside a comment does not count; the budget fails and names; `--list-assumption-free`
 prints the names; and growing a POSIX assumption makes the row stale rather than silently accepted).
@@ -315,6 +316,9 @@ because the assumptions column is the only consumer that needs string contents.
       --max-unreviewed 1108 --max-blind-windows 74 --max-blind-macos 11 \
       --max-assumption-free 443
 
+The two budgets in that block are the values as imported; section 10 records the pair they were
+lowered to on 2026-10-04 and shows the lowering being checked.
+
 `scripts/verify-in-docker.sh` carries the same two commands as one entry in its `gates=()` array, so
 the local Docker entry and CI run the same guard with the same budgets. `check-guard-wiring.py`
 enforces both directions of that mirror -- that a script in `scripts/ci/` is reachable, and that a
@@ -341,3 +345,184 @@ reachable one is either run by the Docker entry or recorded in `scripts/ci/docke
     out in section 4.
   * the 1,108 rows carry the import marker, so this first commit records the debt without pretending
     each gate was reviewed. Reviewing one means replacing its reason and lowering `--max-unreviewed`.
+    Section 10 records the first two rows coming off and the first budget going down.
+
+
+== 10. 2026-10-04: two gates actually paid off, and the two budgets that can only fall went down
+
+The budgets in this file are ratchets, so the first honest test of that claim is whether a later
+batch can lower them. The 2026-10-04 Windows batch lowered two of them, and it did so by removing
+gating rather than by editing rows.
+
+Which two rows left, by comparing the ledger against `HEAD` on row identity (`kind`, `file`,
+`function`, `runs_on`, `extra_cfg`, `assumptions`), so line-number churn above each row does not
+show up as a change:
+
+    $ git show HEAD:scripts/ci/platform-gated-tests.tsv > pgt-head.tsv
+    $ cut -f1,3,5,6,7,8 pgt-head.tsv | tail -n +2 | sort > head.key
+    $ cut -f1,3,5,6,7,8 scripts/ci/platform-gated-tests.tsv | tail -n +2 | sort > now.key
+    $ comm -23 head.key now.key              # rows in HEAD that are gone
+    cfg-gate  .../lsp/tests/mock_servers.rs  a_candidate_that_cannot_even_be_spawned_is_skipped
+              linux+macos+other-unix  none
+    cfg-gate  .../lsp/tests/mock_servers.rs  a_stub_that_refuses_to_run_is_not_an_interpreter
+              linux+macos+other-unix  none
+    $ comm -13 head.key now.key              # rows that appeared
+    (nothing)
+
+Both were `#[cfg(unix)]` tests guarding the interpreter probe, and both were `assumptions=none`,
+which is why removing them moved the named count by the same two. They are the worst kind of row in
+this ledger: the failure they guard is the Microsoft Store execution alias, which exists only on
+Windows, and the gate is exactly what kept Windows from ever running them. Un-gating them is the
+point of the whole inventory, not a number going down for its own sake.
+
+The blocker was the fixture, not the assertion. Building a candidate that "spawns, complains, and
+leaves" meant writing a shell script with a `#!` line and `chmod 755`-ing it, which is not something
+Windows can spawn. The stub is now built out of the interpreter the host has already proved works:
+Python takes the first `-c` and treats everything after it as `sys.argv`, so
+
+    python -c "<stub body>" -u -c "<the probe's own script>"
+
+runs the stub body and never reaches the probe's script, which is precisely the alias's shape. That
+is portable, so the tests no longer need a platform. `docs/verification/windows-test-failures-2026-10-03.log`
+section 2 carries the fixture detail, including why the stub's message had to move into a file.
+
+Measured after, same command as section 3:
+
+    $ python3 scripts/ci/platform-gated-tests.py
+    platform-gated tests: 1080 in 249 files
+    platform-conditional #[ignore] (exists there, skipped there): 26
+    gated and also #[ignore]d everywhere: 0
+    gated with no platform assumption in the body: 441 in 99 files
+    would compile on:
+      linux       988 of 1080
+      macos       850 of 1080
+      other-unix  809 of 1080
+      windows     62 of 1080
+      other       29 of 1080
+    files with gated tests and no test that runs on the platform:
+      windows     74
+      macos       11
+      linux       10
+
+The ledger file is 1,107 lines, 1,106 rows under the header: 1,080 gates plus the 26
+platform-conditional `#[ignore]`s. `mock_servers.rs` is no longer one of the blind files, which is
+why the file count fell 250 to 249 while `windows` blind files stayed at 74 -- that file had no
+Windows-running test before and has no gated test now, so it left one column and never was in the
+other. Windows coverage is 62 of 1,080 rather than 62 of 1,082: two tests moved from "not built
+here" to "built and run here", which does not change the numerator.
+
+Both budgets were lowered at both wiring points, and the lowering is checked in both directions:
+
+    $ python3 scripts/ci/platform-gated-tests.py --quiet \
+        --check-baseline scripts/ci/platform-gated-tests.tsv \
+        --max-unreviewed 1106 --max-blind-windows 74 --max-blind-macos 11 \
+        --max-assumption-free 441
+    (rc=0)
+    $ python3 scripts/ci/platform-gated-tests.py --quiet \
+        --check-baseline scripts/ci/platform-gated-tests.tsv \
+        --max-unreviewed 1105 --max-blind-windows 74 --max-blind-macos 11 \
+        --max-assumption-free 441
+    FAIL: 1106 rows still carry the import marker, over the budget of 1105
+    (rc=1)
+
+So section 8's command line is superseded by the one above; the budgets that were 1108 and 443 are
+now 1106 and 441, and the next batch that un-gates something has to lower them again.
+
+Lowering them meant editing two files. The third file that had them written in it was not edited,
+and that is what section 11 is about.
+
+== 11. 2026-10-04, later: the lowering broke the gate, and the thing that was stale was the test
+
+The full local sweep over the tree of section 10 ran every guard in
+`scripts/verify-gates.sh`. One gate failed, and it was this one:
+
+    $ bash scripts/verify-gates.sh
+    ...
+    FAIL: test_the_shipped_ledger_carries_unreviewed_rows_for_the_budget_to_mean_anything
+              (__main__.LiveRepository)
+        AssertionError: 1106 != 1108
+
+    FAIL: test_the_shipped_ledger_names_gates_with_nothing_to_gate
+              (__main__.LiveRepository)
+        AssertionError: 441 != 443
+
+    Ran 35 tests in 11.307s
+    FAILED (failures=2)
+    ...
+    FAILED gates: platform-gated tests
+    26 gate(s) run, 4 skipped, 1 failed
+
+Nothing was wrong with the ledger or with the guard. The two numbers were written down in three
+places -- `.github/workflows/ci.yml`, `scripts/verify-in-docker.sh`, and a pair of module constants
+at the top of `scripts/ci/test-platform-gated-tests.py` -- and section 10 had updated the first two.
+So the case whose stated job is "the shipped ledger is exactly at the cap CI enforces" was
+comparing the ledger against its own stale copy and reporting the ledger as the thing that had
+moved. The gate was right to fail the sweep: a cap written in three places had just silently
+diverged in two of them.
+
+The fix removes the third copy rather than restating it. `call_site` reads the gate's own command
+out of a call site (anchored on the invocation, backslash continuations joined) and `wired_budgets`
+pulls the four `--max-*` values from it; the live-repository cases run at whatever the wiring says.
+
+    scripts/ci/test-platform-gated-tests.py:82-118   call_site / wired_budgets / BUDGETS
+
+Two live-repository cases came out of the same incident. The first is the one that had been missing
+in another direction: ci.yml and verify-in-docker.sh each pass the four budgets, and
+`check-guard-wiring.py` only proves both name the gate, never that they say the same numbers, so
+the leg nobody runs locally could have been enforcing a different cap from the leg that blocks
+merges.
+
+    def test_the_two_call_sites_pass_the_same_four_numbers(self) -> None:
+        first, second = (BUDGETS[rel] for rel in CALL_SITES)
+        self.assertEqual(first, second, {rel: BUDGETS[rel] for rel in CALL_SITES})
+
+The second asks whether the caps still bite at all, because a cap that has drifted far above the
+debt passes every check above and polices nothing. One run, all four caps lowered together; the
+guard reports every budget it exceeded, so this one run covers all four numbers:
+
+    $ python3 scripts/ci/platform-gated-tests.py --quiet \
+        --check-baseline scripts/ci/platform-gated-tests.tsv \
+        --max-unreviewed 1105 --max-blind-windows 73 --max-blind-macos 10 \
+        --max-assumption-free 440
+    FAIL: 1106 rows still carry the import marker, over the budget of 1105
+    FAIL: 74 files have platform-gated tests and nothing that runs on Windows, over the budget of 73
+    FAIL: 11 files have platform-gated tests and nothing that runs on macOS, over the budget of 10
+    FAIL: 441 gated tests show no platform assumption in their body, over the budget of 440; ...
+    (rc=1)
+
+Four fixtures cover the reader itself, because "read the number from the command" has the same
+shape as every other claim here: a reader that searched the file instead of the command would find
+a comment quoting an older budget and assert a number nothing enforces. A prose mention of all four
+flags above the real command must not be what gets parsed; a later step's `--max-unreviewed 9` in
+the same job must not be either; a file that never runs the guard is an error; a call site missing
+one of the four flags is an error naming the flag.
+
+    $ python3 scripts/ci/test-platform-gated-tests.py
+    Ran 41 tests in 28.420s
+
+    OK
+
+Six mutations against the shipped files, each restored byte-identically and cmp-verified:
+
+    M1 ci.yml alone raises --max-unreviewed to 1107
+       failed: the_two_call_sites_pass_the_same_four_numbers,
+               the_shipped_ledger_carries_unreviewed_rows..., every_shipped_budget_is_exactly...
+    M2 both call sites raise it to 1107 together
+       failed: the_shipped_ledger_carries_unreviewed_rows..., every_shipped_budget_is_exactly...
+       (the agreement case stays green, which is the point: it is not a restatement of the others)
+    M3 both call sites set every cap far above the debt (5000/500/500/2000)
+       failed: every_shipped_budget_is_exactly_at_the_measured_debt,
+               the_shipped_ledger_carries_unreviewed_rows..., names_gates_with_nothing_to_gate
+    M4 budgets read from the whole file instead of the command
+       failed: test_a_prose_mention_of_a_flag_is_not_the_budget,
+               test_a_file_that_never_runs_the_gate_is_an_error
+    M4b anchoring dropped (reader starts at the top of the file)
+       failed: the module does not load at all -- the real ci.yml's first line is a comment,
+               so the window is one line and carries no flags (rc=1, no test result lines)
+    M5 reader keeps reading past the end of the command
+       failed: test_the_window_stops_at_the_command
+
+M4b is worth keeping in the record for the shape of the failure rather than its severity: the first
+attempt at it was reported as "killed" by a driver that only looked for `FAIL:` lines, and what had
+actually happened was an import-time error and zero tests run. A mutation harness that cannot tell
+"the tests failed" from "the tests never ran" is the same bug this section is about, one layer up.

@@ -2,6 +2,252 @@
 
 ## Unreleased
 
+### 门禁：四个预算写在三个地方，降预算那一步只改了两处，说谎的是没改的那份
+
+先说触发点。把被平台 `cfg` 挡在构建外的台账从 1,108 降到 1,106 行、`assumptions` 为 `none` 的那份从
+443 降到 441 之后，全量门禁 26 个门里唯一变红的恰好是这个门，而红的不是守护脚本，是它的自测：
+
+          FAIL: test_the_shipped_ledger_carries_unreviewed_rows_for_the_budget_to_mean_anything
+              AssertionError: 1106 != 1108
+          FAIL: test_the_shipped_ledger_names_gates_with_nothing_to_gate
+              AssertionError: 441 != 443
+
+台账没错，守护也没错。那四个数字写在**三个**地方：`.github/workflows/ci.yml`、
+`scripts/verify-in-docker.sh`，以及 `scripts/ci/test-platform-gated-tests.py` 顶部的一对常量，而降
+预算那一步只改了前两个。于是「台账恰好停在 CI 所强制的上限上」这条用例其实在拿台账跟自己的过期副本
+比，还把改动正确的那一侧报告成出错的那一侧。
+
+修法是删掉第三份，不是把它抄对：`call_site` 从被接线处把这条门自己的命令读出来（锚在
+`platform-gated-tests.py --quiet` 上，反斜杠续行拼接），`wired_budgets` 再从命令里取那四个 `--max-*`
+值，活体用例一律按接线处的数字跑。顺带补上两条此前不存在、而这次事故各指向其一的用例。
+
+其一是两个被接线处的四个数字必须相同：`check-guard-wiring.py` 证明两处都**调用**了这个门，从来不比较
+数字，所以本地不跑的那条腿完全可能强制着另一个上限。
+
+          def test_the_two_call_sites_pass_the_same_four_numbers(self) -> None:
+              first, second = (BUDGETS[rel] for rel in CALL_SITES)
+              self.assertEqual(first, second, {rel: BUDGETS[rel] for rel in CALL_SITES})
+
+其二是这些上限是否还在咬人 —— 漂到债务之上很远的上限能通过前面所有检查却不再管任何事。四个上限一次性
+各下调 1，守护会把超了的预算**全部**报出来，所以一次运行就覆盖四个数字（真实输出里 440 那条还接着列
+前 40 个候选，此处截断；另有同格式的 74 与 11 两条）：
+
+          $ python3 scripts/ci/platform-gated-tests.py --quiet \
+              --check-baseline scripts/ci/platform-gated-tests.tsv \
+              --max-unreviewed 1105 --max-blind-windows 73 --max-blind-macos 10 \
+              --max-assumption-free 440
+          FAIL: 1106 rows still carry the import marker, over the budget of 1105
+          FAIL: 441 gated tests show no platform assumption in their body, over the budget of 440
+
+解析器自身也配了四个夹具，因为「从命令里读数字」跟本仓库其他主张一样有形状：改成整文件搜索的读法会
+先撞上注释里引用的旧预算，于是没人强制的数字会被当成 CI 的上限来断言。六条变异打在 shipped 文件上全
+部被杀（`ci.yml` 单独抬高一档、两处同步抬高同一档、两处一起把四个上限抬到债务之上很远、预算改从整文
+件读、去掉锚点、读取越过命令末尾；还原逐字节 `cmp` 复核）。最后那条之前被驱动误报成「杀掉」，因为
+驱动只找 `FAIL:` 行，而实际发生的是导入期异常、零条测试运行 —— **驱动若不能区分「测试失败」与「测试
+根本没跑」，就没资格报告非空洞性**。自测从 35 条增加到 41 条，接线处的四个数字仍是 1106 / 74 / 11 /
+441，本轮没有改动台账。
+（2026-10-04；`scripts/ci/test-platform-gated-tests.py`、`scripts/ci/platform-gated-tests.py`、
+`docs/verification/platform-gated-tests-2026-10-03.log`、`docs/ci-test-debt.md`）
+
+### 门禁：census 扫描器两处判错，一处凭空造出 69 个生产位点，另一处把写着 `not(test)` 的位点判成测试代码
+
+先说触发点，因为它看起来只是一次普通的红灯：Windows 那批改动落地后 `scripts/verify-gates.sh` 报
+`panic-site census` 失败，`xai-grok-tools: production sites grew [16, 122, 8, 19] -> [18, ...]`，点名
+`implementations/lsp/startup_trace.rs:296` 与 `:297`。那两行确实在，但它们写在 `#[cfg(test)] mod tests`
+里 —— 门禁没算错，是扫描器**看不见**那个门控。顺着这条线查出两处口径错误，方向还相反。
+
+**缺陷 1：字符串字面量在第一个 `"` 处结束。** Rust 里反斜杠转义下一个字符，以 `\"` 收尾的字面量在扫描器
+眼里因此没有结束，真正的收尾引号被留在待扫描文本里、转而**开启**第二个字面量，把它覆盖的字节全部空白化。
+被吞掉的是 `#[cfg(test)]` 时，那个测试模块失去唯一标记，里面每个 panic 都判成生产；被吞掉的是 `{` 时，
+闭合测试模块的括号走查直接失衡。触发它的真实代码是 `out.push_str("\\\"");`。
+
+**缺陷 2：判定「这条 `cfg` 是不是测试门控」用的是「表达式里出现过 `test`」。** 该问的是 `test` 是不是
+**被要求**：`all` 继承任一分量的要求，`any` 只继承全部分量的要求，`not(..)` 不要求任何东西，`cfg_attr`
+因为**永远**构建该条目而永远不是门控。最刺眼的实证是 `xai-fast-worktree/src/nfs/mod.rs:271` 的
+`#[cfg(all(target_os = "linux", not(test)))]` —— 属性自己写着 `not(test)`，旧规则仍把里面的
+`unsafe { libc::access("/dev/fuse", W_OK) }` 判成测试代码。
+
+同一棵树、同一份 `measure()`，只换扫描器：
+
+          扫描器状态                unwrap  expect  panic  unsafe
+          两处都未修                   353     596    132     420
+          只修字面量转义               294     589    130     419
+          两处都修（新基线）           300     594    130     429
+
+按 `path:line:kind` 逐位点比对才能把两处分开量：缺陷 1 修好后**不再计入**生产 77 个位点（59 unwrap、
+15 expect、2 panic、1 unsafe），**新计入** 8 个 `.expect()`，净 **−69**；缺陷 2 修好后**新计入** 21 个
+（6 unwrap、5 expect、10 unsafe），**不再计入** 0 个。那 59 里有一行
+（`xai-grok-shell/src/agent/config_model_override_parse.rs:879`）同一行写着两个 `.unwrap()`，按行去重的
+清单会少算一个 —— 差一位这种事只有逐位点比对抓得到。还有个更该警惕的方向：旧扫描器在全树只认出
+**31,752** 个 `.unwrap()`，修好之后是 **32,007** —— 缺陷 1 不只虚报，它还**抹掉**了 255 个调用；一个
+同时会虚报和漏报的扫描器，它的任何单个数字都不能单独引用。
+
+被藏掉的 21 个位点逐条回读过，三条最值得记（完整表在 `docs/audit-followup-report.md` §2.6）：
+`xai-grok-pager/src/app/mod.rs:1260,1268,1294,1308` 这 4 处在
+`#[cfg(any(windows, test))] mod win_native_selection` 的 `#[cfg(windows)] mod imp` 里面，是
+`GetStdHandle` / `GetConsoleMode` / `SetConsoleMode` 的调用，此前审计里没有任何一个 unsafe 数字包含
+这段控制台 FFI；`xai-grok-env/src/lib.rs` 的 5 处 `unsafe { set_var / remove_var }` 在
+`#[cfg(any(test, feature = "test-support"))] struct EnvVarGuard` 里面；
+`xai-circuit-breaker/src/clock.rs:47`、`xai-grok-workspace/src/handle.rs:5086,5093` 与
+`xai-grok-workspace/src/session/tool_config.rs:548,572` 都是 `any(test, feature = ..)` 形状的
+helper，算生产是口径**故意**保守。
+
+反过来被**正确移出**生产的 77 个里，`xai-grok-sandbox` 一个 crate 占 47 个：`deny/glob.rs` 的 46 个位点
+全在 `mod tests`（该文件的 `mod tests` 从 527 行开始）加上 `deny/mod.rs:417`。**审计 §2.4 治理优先级表
+A 批的理由是「`xai-grok-sandbox` 28 个生产 unwrap，安全边界，量小」**，2026-10-02 实测是 42 个，修完是
+**0 个** —— 那一批没有对象了；真要按安全边界排序，正确的输入是该 crate 的 `unsafe` 数（19，没变）。
+`xai-grok-pager`（57）与 `xai-grok-shell`（46）仍是最多的两个 crate，C/D 两批的排序不受影响。
+
+非空洞性这一段先是写错了一次，值得记下来。第一版 fixture 的字面量是
+`"a message with \"escaped quotes\" and {braces} inside"` —— 它自己的引号是**配对**的，旧扫描器在 `\"`
+处跑偏之后会在下一个真引号处重新对齐，自己把自己治好，于是那条用例改口径前后都是绿的。真实触发形态是
+`out.push_str("\\\"");`：整个文件只剩这一个引号，谁也自愈不了。换成它之后，把转义走查退回
+`source.find(terminator, first + 1)`，自测打三条指定行的红：
+
+          $ python3 scripts/ci/test-panic-site-census.py        # 缺陷 1 退回
+          FAIL all unwraps counted at all: got 23, want 24
+          FAIL the file no crate root declares is compiled by nothing, so its
+               .unwrap() is counted in neither column: got (1, 11), want (1, 12)
+          FAIL the whole-file cfg(test) files, the declared test mod and tests/
+               are not production: got 11, want 12
+
+规则那一半由 fixture 演示 crate 里的 `cfg_shapes` 模块覆盖，它专放四种形状：
+`any(target_os = "linux", all(unix, test))`、`any(test, feature = "gated")`、`cfg_attr(test, allow(..))`
+三种都必须算生产，`any(all(test, unix), all(test, windows))` 必须算测试。把判定退回「表达式里出现过
+`test`」打四条红：
+
+          $ python3 scripts/ci/test-panic-site-census.py        # 缺陷 2 退回
+          FAIL production unwraps: got 10, want 12
+          FAIL the file no crate root declares is compiled by nothing, so its
+               .unwrap() is counted in neither column: got (1, 14), want (1, 12)
+          FAIL the whole-file cfg(test) files, the declared test mod and tests/
+               are not production: got 14, want 12
+          FAIL baseline records the production row: got 'demo\t10\t0\t0\t4',
+               want 'demo\t12\t0\t0\t4'
+
+有一处诚实要写下：让 `cfg_attr` 重新能门控条目这个变异**观察不到**——任何现实的属性列表里都还有别的
+token，正确的求值器本来就会拒绝，所以那个 `continue` 是**守卫**而不是被测行为。它记在这里而不是算作覆盖。
+
+`--check-baseline`（97 个 crate，`baseline holds`）与 `--check-uncompiled` 都在修好后的树上跑过，基线
+按新口径重新生成；口径文档同步三处：报告 §2.5 第 3 条改写成「要求 `test`」的规则、新增 §2.6 记录两处缺陷
+与逐位点归因、`docs/verification/panic-site-census-2026-10-04.log` 保存全部命令与原始输出。
+（2026-10-04；`scripts/ci/panic-site-census.py`、`scripts/ci/test-panic-site-census.py`、
+`scripts/ci/panic-site-baseline.tsv`、`docs/audit-followup-report.md`、
+`docs/verification/panic-site-census-2026-10-04.log`）
+
+### 修复：Windows 腿剩下的 42 条红全部落到五个机制上，其中一个根本不是产品的错，另有一个根本不是代码的错
+
+基线是 run `37126354066`（head `9e77c6d0`）job `111218903002`：`cargo test (target-OS crates:
+xai-grok-tools)` 的 `--lib` 是 3054 通过/41 失败，另一个步骤是 67 通过/1 失败，合起来 42 条，按
+机制分成五簇。分成五簇不是分类癖好，而是这 42 条里**只有两簇是同一个原因**，其余三条各自独立，
+逐条处理的结果是每一条都找到了能说出真因的测试，而不是再给它们加一层 `#[cfg(unix)]`。
+
+**A 37 条 LSP**：症状依旧只有 `service stopped`，而这一句在 Windows 上格外没用——上一轮加上去的
+退出码与 stderr 尾巴都在场，退出码是 0、尾巴是空的，因为服务器跑得完全正确、答了、然后被拒绝。
+真因在夹具自己身上：五个 mock 服务器都从 Python 的**文本模式** `sys.stdout` 写帧，而 Windows 的
+文本模式会把写入管道的每个 `\n` 改写成 `\r\n`，于是协议要求的 `\r\n\r\n` 头终止符离开解释器时是
+`\r\r\n\r\r\n`。解析器拒绝，客户端停止读取并松开子进程的 stdin，Python 读到 EOF 退出 0——这条链上
+没有任何一环会报错。夹具现在一律以二进制成帧（`sys.stdin.buffer` 读、字节比较头名、
+`sys.stdout.buffer.write` 写），`tests/mock_servers.rs` 的模块 doc 把这条规则和这次失败写在那里，
+理由很直白：下一个在这里写 mock 服务器的人不该重新发现它。机制在 Linux 上也被真实复现：
+夹具 `write_translated_newline_server` 把成帧改成 `chunk.replace(b'\n', b'\r\n')`，
+`a_server_whose_bytes_are_wrong_shows_the_bytes` 就断言那份字节被说清楚。修完之后同一台机器
+上同一条链路的真实诊断是：
+
+          LSP initialization failed: 'translated' [python3 -u /tmp/.tmpyiwGPa/translated_framing_lsp.py]
+          service stopped; the process exited with code 0; 777 bytes were sent to it;
+          it wrote 104 bytes on stdout: "Content-Length: 80\r\r\n\r\r\n{...}"
+
+**为什么客户端也要改**：夹具修好只是让这一轮的绿灯是真的，下一个这样失败的服务器（无论是哪一个
+实现）在任何一个平台上都还会给出同一句空话。`implementations/lsp/startup_trace.rs` 给 stdio 服务器的
+两条流各套一层记录器，只在**启动失败**时把「发出去多少」与「回过来的是什么」拼进错误：前 200 字节
+保留、其余只计数，`initialize` 一有答复就停止记录，于是长命服务器稳态代价是每次读一次 relaxed 原子
+载入。控制字符一律转义写出来，因为日志里一个裸的 `\r` 是看不见的，而 `\r` 恰恰是这段诊断存在的理由。
+`777 bytes were sent to it` 还独立否掉了另一个假设（客户端根本没把请求写出去）。
+
+**D 3 条 read_file**：断言两边是 `C:/wrong/root/review/SKILL.md` 对 `/wrong/root/review/SKILL.md`。
+工具解析模型给的路径走 `resolve_model_path`，它**刻意**把「有根但没有驱动器前缀」的实参放到工作目录
+**里面**；而报错时宣布「我看过哪里」用的是 `PathBuf::join`，Windows 上 `push` 对带根实参会「替换掉 self
+除前缀以外的一切」，于是错误消息点名了一个查询从未打开过的文件。`Path::is_absolute()` 对这种实参在
+Windows 上是 false、在 Unix 上是 true，这就是 Linux 永远看不见它的全部原因。新增
+`util/fs.rs::join_announced_path`（本机绝对则原样返回，否则逐分量追加），接管 `read_file`、
+`search_replace`、`grok_build_hashline::edit` 里七处宣布点，让宣布与查找**由构造一致**而不是巧合一致。
+三条夹具本身也是错的，而且错的方式正好把缺陷盖在 Linux 上：它们传 `/wrong/root/...` 并指望那代表
+工作目录之外的路径，而那正是 Windows 不接受的说法；现在它们另开一个 `TempDir`，要的文件的的确确在
+宣布出去的工作目录之外，每个平台都是。有一条边界要说明白：在 Linux 上 `join_announced_path` 与 `push`
+对任何输入给出同一个字符串，所以本轮不声称 Linux 能区分这两者——本轮证明的是那四条夹具确实在看这个
+join（变异 M7），以及它们依赖的分量走查 `join_relative` 会把基路径留在带根实参前面。新增 3 条宣布路径
+用例里有 1 条（`a_plain_push_would_mix_separators`）自己就是 `#[cfg(windows)]`：它断言的正是 Windows 上
+`push` 会混分隔符这件事，在 Linux 上没有可断言的对象，因此它在台账里占一行（runs-on `windows`、标记
+`drive-path`），Linux 上那 14 个绿灯不为它背书。
+
+**E 1 条 watched_files**：`GlobPattern::Relative` 带着 `baseUri`，客户端把它换算不出本地路径时旧代码
+**回落到工作区根**，等于悄悄把服务器的模式放大到整个工作区；一个老实巴交的服务器发 `**/*.dll` 就能让
+项目里每个 `App.dll` 都被监视并上报，而 Windows 上 `file:///` 这种不带驱动器的 URI 换算不出来，所以
+这条路在 Linux 上表现完美的服务器手里也是可达的。现在没有回落：换算不出就是没有基路径，
+`in_workspace` 只由客户端真正拿到的基路径决定。新用例喂 `"baseUri": "https://example.invalid/packages"`
+加 `**/*`，同时断言这条注册被接受、以及工作区里没有任何文件因它而被监视。
+
+**B 1 条 local_terminal**：断言打印的是 `left: "" right: "hello"`，而这句话把真正的事件藏起来了。这条
+测试的 `FAILED` 行盖在 `14:30:45.913`，同一个二进制里上一条完成是 `14:30:35.924`，整个二进制报
+`finished in 13.28s`——那道空档就是它自己那 10 秒请求超时，也就是说这次运行是被杀掉之后管道里什么都没
+读到才结束的；`assert_eq!` 报了两个断言里的第一个，根本没走到 `exit_code`（`None`）和 `timed_out`
+（`true`）。这台机器**能**跑这条命令：同一个 job 同一步骤里，兄弟用例
+`streaming_local_terminal::tests::test_streaming_sends_status_updates` 用 30 秒预算跑同一条 `echo` 并且
+通过，而它占掉的时间正是那 13.28s 的大头。于是这里改的是测试自己：预算与兄弟对齐（30 秒，注释里放着
+实测数字），失败时打印它到达的是哪个 shell、耗时、退出码、`timed_out`、`truncated`、字节数与原始输出。
+Unix 上 bash 工具真正下发的命令超时是 120 秒，所以这个预算约束的是测试而不是产品。**冷启动一台 Windows
+主机上第一次 PowerShell 启动到底要多久，本轮没有回答，也不声称回答过。**
+
+**常驻 shell 的静默忽略**（M2.3 那一行的一半）：`computer/local/terminal.rs` 的常驻分支在 actor 里带
+`#[cfg(unix)]`，Windows 上请求常驻的调用方得到「每条命令一个新 shell」，没有错误、没有日志、也没有
+任何测试能说出拿到了哪一种。现在决策与上报都不带 `cfg`，`supported` 是唯一的平台输入，因此 Windows
+那条路能在 Linux 上被驱动：`persistent_shell_supported()` 是被门控的那个谓词本身（有一条用例专门钉住
+两者不得漂移），`reconcile_persistent_shell(..)` 至多每个闩上报一次，
+`LocalTerminalBackend::persistent_shell_effective()` 让调用方问得到自己实际拿到了什么，另有用例直接驱动
+真实构造函数。**Windows 侧常驻 shell 的实现仍然没有做**，本轮关掉的是「静默」，那一行因此不关闭。
+
+非空洞性：11 个变异逐个改真实文件、跑真实测试二进制、还原并 `cmp` 校验，11/11 都有指定用例变红
+（M1 忽略 disarm、M2 只计数不保留、M3 去掉 200 字节上限、M4 不转义、M5 接受退出 0 却什么都没跑的
+解释器、M6 恢复工作区根回落、M7 去掉 `is_absolute` 提前返回、M8 平台不支持也照发常驻 shell、
+M9 解析器被一个候选拒绝就放弃其余、M10 拒绝理由里不再重复候选说了什么、M11 非零退出当作没问题）。
+M9–M11 打在 `mock_servers.rs` 的 `probe_python` / `resolve_python` 上，那是测试工装而不是出货代码，
+说清楚是为了不让人把它读成「产品里的解释器发现被测过了」——产品里根本没有解释器发现；之所以仍然值得
+打，是这个解析器决定了那 37 条 LSP 测试跑在哪个解释器上，它退回去就是本轮要消除的那种失明本身。
+其中 M7 只能靠事后读日志而不是靠驱动器：它在 Linux 上打不到那条 Windows 专属单元测试，红的是那四条
+改写过的夹具，而这就是「夹具确实在看这个 join」的证据。**M10 与 M11 是最初活下来、后来才被打死的两条，
+而它们活下来的理由是本轮最值钱的一条教训**：拒绝理由会把候选的**整条命令行**引用进去，而夹具最初把
+stub 要说的话写在 `-c` 的正文里，于是那句话无论探针有没有读到输出一律在拒绝理由里，
+`refusal.contains(消息)` 于是不证明被测试的代码做任何事；改成把消息放进文件、由 stub 在运行时读出来之后，
+同样的变异每条 rc=101。**顺带一个必须记下的坑**：还原用
+`shutil.copy2` 会把变异前的 mtime 一起写回去，cargo 的新鲜度就是比 mtime，于是它判定没有变化、直接复用
+**带着变异**的二进制——内容已还原的树测出了红色。危险不在这一条红，而在它恰好不红的那些情形：那会被
+记成等价变异，把一条真实有效的守卫误判成空转。做法因此固定为还原后顶 mtime、且还原后第一轮跑被改动
+crate 的全量。详见 `docs/ci-test-debt.md` 新增一节。
+
+本轮新增 17 条测试（启动记录 5、错误成帧端到端 1、解释器判定 2、watched_files 1、宣布路径 3、
+常驻 shell 5），另有一条既有用例加了断言与预算、一个新夹具、两条既有用例被改写；另有**两条既有用例
+去掉了 `#[cfg(unix)]`**——Store 别名只存在于 Windows，而那条测试此前恰恰是 Windows 不跑的，挡路的
+是夹具只能用 `chmod 755` 的 `#!` 脚本造出「能启动、抱怨、走掉」的候选，现在候选改由宿主解释器自己扮演
+（Python 取第一个 `-c` 执行、把其余当作 `sys.argv`），于是门可以去掉。`scripts/ci/platform-gated-tests.tsv`
+因此从 1,108 行降到 1,106 行，被点名的「看不出平台假设」从 443 降到 441，两个只能降的预算同步收紧为
+`--max-unreviewed 1106` 与 `--max-assumption-free 441`。还原并重编之后的本地结论（解释器夹具改写之后
+整批重跑过一遍，原始输出在证据日志 §9）：
+`cargo test -p xai-grok-tools --lib` **3201 通过 / 0 失败 / 3 忽略**、
+`cargo test -p xai-grok-shell-terminal --lib` **76 通过 / 0 失败 / 1 忽略**、`cargo fmt --check` 与
+`cargo clippy --all-targets -- -D warnings` 干净。**本机没有任何 Windows 机器**，`#[cfg(windows)]` 门住的
+代码至今只被 CI 编译过；本轮对那 42 条的主张是「机制已定位、产出它的代码已改、Linux 上现在有测试钉住
+它」，Windows 腿是否真的全绿由本次 push 触发的运行决定。（2026-10-03；
+`crates/codegen/xai-grok-tools/src/implementations/lsp/startup_trace.rs`、
+`crates/codegen/xai-grok-tools/src/implementations/lsp/client.rs`、
+`crates/codegen/xai-grok-tools/src/implementations/lsp/tests/mock_servers.rs`、
+`crates/codegen/xai-grok-tools/src/implementations/lsp/tests.rs`、
+`crates/codegen/xai-grok-tools/src/implementations/lsp/watched_files.rs`、
+`crates/codegen/xai-grok-tools/src/util/fs.rs`、
+`crates/codegen/xai-grok-tools/src/computer/local/terminal.rs`、
+`crates/codegen/xai-grok-shell-terminal/src/local_terminal.rs`、`docs/ci-test-debt.md`、
+`docs/verification/windows-test-failures-2026-10-03.log`）
+
 ### 门禁：被平台 cfg 挡在构建外的 1,108 条测试第一次有了台账，而其中 443 条的门禁挡不住任何平台特定的东西
 
 `#[ignore]` 一直有 `scripts/ci/ignored-tests.py` 与基线文件：没有理由的 ignored 测试过不了构建。带

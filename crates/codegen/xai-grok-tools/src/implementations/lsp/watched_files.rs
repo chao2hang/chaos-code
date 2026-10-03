@@ -203,10 +203,18 @@ impl WatchedFiles {
                 }
             }
             GlobPattern::Relative(relative) => {
-                let base = base_uri_path(&relative.base_uri)
-                    .unwrap_or_else(|| self.workspace_root.as_path().to_path_buf());
-                let in_workspace = is_under(&self.workspace_root, &base);
-                (Some(base), relative.pattern, in_workspace)
+                // A `baseUri` this client cannot turn into a local path names a
+                // directory it cannot name, and that directory is not the
+                // workspace. Treating it as the workspace hands the server's
+                // glob to the whole workspace: a NuGet pattern like `**/*.dll`
+                // then matches `App.dll` next to the `.csproj`. `file:///` URIs
+                // without a drive are unresolvable on Windows, so this branch is
+                // reachable from a server that behaved itself perfectly on Linux.
+                let base = base_uri_path(&relative.base_uri);
+                let in_workspace = base
+                    .as_ref()
+                    .is_some_and(|base| is_under(&self.workspace_root, base));
+                (base, relative.pattern, in_workspace)
             }
         };
         if !in_workspace {
@@ -449,6 +457,34 @@ mod tests {
             Path::new("/tmp/fake-nuget/packages/foo/lib.dll"),
             FileChangeType::CHANGED
         ));
+    }
+
+    /// A `baseUri` that cannot be resolved to a local path names a directory this
+    /// client cannot name, which is not the workspace. `https` is unresolvable on
+    /// every platform, so this pins the rule itself rather than one platform's
+    /// reading of a `file:///` URI without a drive — the shape that made a NuGet
+    /// `**/*.dll` pattern match files in the workspace on the 2026-10-03 Windows
+    /// leg while passing here.
+    #[test]
+    fn an_unresolvable_base_uri_is_never_treated_as_the_workspace() {
+        let root = workspace();
+        let watched = WatchedFiles::new(root.path().to_path_buf());
+        watched.accept(&[file_watch(
+            "remote",
+            serde_json::json!({
+                "baseUri": "https://example.invalid/packages",
+                "pattern": "**/*"
+            }),
+        )]);
+        assert_eq!(
+            watched.accepted(),
+            1,
+            "the server still holds the registration, so an unregister by id stays exact"
+        );
+        assert!(
+            !watched.watches(&root.path().join("Program.cs"), FileChangeType::CHANGED),
+            "a glob for a directory we cannot name must not be applied to the workspace"
+        );
     }
 
     #[test]

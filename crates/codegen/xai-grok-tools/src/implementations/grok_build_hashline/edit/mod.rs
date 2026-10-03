@@ -332,7 +332,10 @@ impl xai_tool_runtime::Tool for HashlineEditTool {
                         && let HashlineOp::Write { ref content } = input.edits[0]
                     {
                         if let Err(e) = fs.write_file(&joined_path, content.as_bytes()).await {
-                            let display_path = display_dcwd.join(&input.file_path);
+                            let display_path = crate::util::fs::join_announced_path(
+                                &display_dcwd,
+                                std::path::Path::new(&input.file_path),
+                            );
                             return Ok(match e.io_error_kind() {
                                 Some(std::io::ErrorKind::NotFound) => {
                                     Self::file_not_found(
@@ -361,7 +364,10 @@ impl xai_tool_runtime::Tool for HashlineEditTool {
                         ));
                     }
 
-                    let display_path = display_dcwd.join(&input.file_path);
+                    let display_path = crate::util::fs::join_announced_path(
+                        &display_dcwd,
+                        std::path::Path::new(&input.file_path),
+                    );
                     return Ok(Self::file_not_found(
                         &display_path,
                         &joined_path,
@@ -378,7 +384,10 @@ impl xai_tool_runtime::Tool for HashlineEditTool {
         let file_bytes = match fs.read_file(&path).await {
             Ok(b) => b,
             Err(e) => {
-                let display_path = display_dcwd.join(&input.file_path);
+                let display_path = crate::util::fs::join_announced_path(
+                    &display_dcwd,
+                    std::path::Path::new(&input.file_path),
+                );
                 return Ok(match e.io_error_kind() {
                     Some(std::io::ErrorKind::NotFound) => {
                         Self::file_not_found(

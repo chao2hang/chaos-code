@@ -80,6 +80,8 @@ pub mod shared;
 // The rest of the fixture's files, declared the way a real crate declares them:
 // reachability from a crate root is what decides whether a file is compiled at all.
 pub mod unsafe_parts;
+pub mod escaped_quotes;
+pub mod cfg_shapes;
 pub mod path_declared;
 pub mod nested;
 pub mod mixed;
@@ -104,6 +106,69 @@ mod shared_as_test;
     # written above it, which is the common shape in this workspace.
     (src / "after_attr.rs").write_text(
         '#![allow(dead_code)]\n#![cfg(test)]\nfn also_only_tests() {\n    gone().unwrap();\n}\n',
+        encoding="utf-8",
+    )
+    # A literal whose last character is an escaped quote. A scanner that ends the
+    # literal at the first `"` it sees leaves the real terminator to open a second
+    # literal, which then runs to the next quote in the file and takes the
+    # `cfg(test)` attribute below it with it. That attribute is how the module's
+    # `.unwrap()` is recognised as test code, so losing it reports a test panic as
+    # one that ships, and moves whatever brace the swallowed text was inside.
+    (src / "escaped_quotes.rs").write_text(
+        r'''pub fn quotes() -> u32 {
+    let mut out = String::new();
+    out.push_str("\\\"");
+    quoted().unwrap();
+    14
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn a_test_after_a_literal_ending_in_an_escaped_quote() {
+        out.push('"');
+        in_a_test().unwrap();
+    }
+}
+''',
+        encoding="utf-8",
+    )
+    # A `cfg` gate that only mentions `test` in one branch still builds in a
+    # normal build, so its panics ship. Reading the word `test` anywhere in the
+    # condition as "test code" is how a file like
+    # `#[cfg(any(target_os = "linux", all(unix, test)))]` left the census while
+    # sitting in the released Linux binary.
+    (src / "cfg_shapes.rs").write_text(
+        """// One branch of the `any` holds without `test`, so this is in the release build.
+#[cfg(any(target_os = "linux", all(unix, test)))]
+pub fn built_on_linux_without_tests() -> u32 {
+    linux_thing().unwrap();
+    21
+}
+
+// A feature alone is enough to build this one.
+#[cfg(any(test, feature = "gated"))]
+pub fn built_for_a_feature_too() -> u32 {
+    feature_thing().unwrap();
+    22
+}
+
+// `cfg_attr` only swaps attributes in and out; the item is compiled either way.
+#[cfg_attr(test, allow(dead_code))]
+pub fn attribute_swaps_but_item_ships() -> u32 {
+    attr_swapped().unwrap();
+    23
+}
+
+// Every branch needs `test`, so nothing here reaches a release build.
+#[cfg(any(all(test, unix), all(test, windows)))]
+mod only_under_test {
+    pub fn either_os() -> u32 {
+        either_os_thing().unwrap();
+        24
+    }
+}
+""",
         encoding="utf-8",
     )
     (src / "unsafe_parts.rs").write_text(
@@ -220,19 +285,19 @@ def main() -> int:
         # lib.rs: two production unwraps (the shipped one and the not(test) one);
         # four more sit in comments, a string and a raw string and count nowhere;
         # the rest are inside cfg(test) spans or test-only files.
-        check("production unwraps", row["unwrap_prod"], 8)
-        check("all unwraps counted at all", row["unwrap"], 18)
+        check("production unwraps", row["unwrap_prod"], 12)
+        check("all unwraps counted at all", row["unwrap"], 24)
         check(
             "the file no crate root declares is compiled by nothing, so its "
             ".unwrap() is counted in neither column",
             (row["uncompiled_files"], row["unwrap"] - row["unwrap_prod"]),
-            (1, 10),
+            (1, 12),
         )
         check(
             "the whole-file cfg(test) files, the declared test mod and tests/ "
             "are not production",
             row["unwrap"] - row["unwrap_prod"],
-            10,
+            12,
         )
         check("unsafe sites total", row["unsafe"], 5)
         check("unsafe sites in production", row["unsafe_prod"], 4)
@@ -247,7 +312,7 @@ def main() -> int:
             (2, 1, 1, 1),
         )
         check("files counted as test code", row["test_files"], 8)
-        check("files seen", row["files"], 18)
+        check("files seen", row["files"], 20)
 
         # The baseline is the ratchet, so it has to fail when a crate gains a way
         # to panic and pass when one is removed.
@@ -268,7 +333,7 @@ def main() -> int:
         check(
             "baseline records the production row",
             baseline.read_text(encoding="utf-8").splitlines()[-1],
-            "demo\t8\t0\t0\t4",
+            "demo\t12\t0\t0\t4",
         )
         checker = [
             sys.executable,

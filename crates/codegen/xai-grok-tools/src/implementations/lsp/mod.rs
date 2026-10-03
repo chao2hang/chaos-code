@@ -11,6 +11,7 @@ pub mod pull;
 pub mod refresh;
 pub mod restart;
 pub mod server_stderr;
+mod startup_trace;
 mod types;
 mod watched_files;
 pub mod workspace_open;

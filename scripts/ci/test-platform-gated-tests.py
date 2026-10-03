@@ -32,7 +32,9 @@ a gate can stop meaning anything, and each has to stay red:
 
 One case runs the guard over this repository with its shipped ledger, so a source change that
 outruns the ledger fails here as well as in CI, and one re-derives the `none` rows from the sources
-instead of trusting the shipped column.
+instead of trusting the shipped column. The budgets those cases are run at are parsed out of the
+two call sites that enforce them, one case checks the two call sites say the same thing, and one
+checks each budget is one above a violation rather than far above the debt.
 
     python3 scripts/ci/test-platform-gated-tests.py
 """
@@ -40,6 +42,7 @@ instead of trusting the shipped column.
 from __future__ import annotations
 
 import importlib.util
+import re
 import subprocess
 import sys
 import tempfile
@@ -60,12 +63,59 @@ ALL = "linux+macos+other-unix+windows+other"
 UNIX = "linux+macos+other-unix"
 REVIEWED = "Only builds with ptrace; the container this gate runs in has no CAP_SYS_PTRACE."
 
-# Caps the repository is held to today. Raising any of them is a review, and the live-repository
-# cases below fail if the sources drift past them. Measured on the tree of 2026-10-03.
-LIVE_MAX_BLIND_WINDOWS = "74"
-LIVE_MAX_BLIND_MACOS = "11"
-LIVE_MAX_UNREVIEWED = "1108"
-LIVE_MAX_ASSUMPTION_FREE = "443"
+# The four budgets are read from the call sites that enforce them instead of being restated here.
+# They were restated, and on 2026-10-04 the ledger was lowered from 1108 to 1106 rows and the two
+# call sites were updated while this file kept the old pair: the case meant to catch the ledger
+# outrunning the caps then failed for holding the stale ones. Raising a budget is still a review --
+# the gate itself fails the build at the cap -- and `the_two_call_sites_pass_the_same_four_numbers`
+# is what keeps the two halves of the wiring from parting company.
+BUDGET_FLAGS = (
+    "--max-unreviewed",
+    "--max-blind-windows",
+    "--max-blind-macos",
+    "--max-assumption-free",
+)
+CALL_SITES = (".github/workflows/ci.yml", "scripts/verify-in-docker.sh")
+INVOCATION = "platform-gated-tests.py --quiet"
+
+
+def call_site(rel: str, root: Path = REPO) -> str:
+    """The gate's own command in `rel`, with backslash continuations joined.
+
+    Anchored on the invocation rather than searched for file-wide, so a comment or a
+    docstring that quotes `--max-unreviewed` cannot become the source of the number.
+    """
+    text = (root / rel).read_text(encoding="utf-8")
+    at = text.find(INVOCATION)
+    if at < 0:
+        raise AssertionError(f"{rel} does not invoke {INVOCATION}")
+    lines: list[str] = []
+    for line in text[at:].splitlines():
+        stripped = line.strip()
+        lines.append(stripped.rstrip("\\"))
+        if not stripped.endswith("\\"):
+            break
+    return " ".join(lines)
+
+
+def wired_budgets(rel: str, root: Path = REPO) -> dict[str, str]:
+    """The four `--max-*` values passed by the call site in `rel`, keyed by flag."""
+    site = call_site(rel, root)
+    out: dict[str, str] = {}
+    for flag in BUDGET_FLAGS:
+        found = re.search(re.escape(flag) + r" +(\d+)(?![0-9])", site)
+        if found is None:
+            raise AssertionError(f"{rel} runs the gate without {flag}: {site}")
+        out[flag] = found.group(1)
+    return out
+
+
+BUDGETS: dict[str, dict[str, str]] = {rel: wired_budgets(rel) for rel in CALL_SITES}
+LIVE = BUDGETS[CALL_SITES[0]]
+LIVE_MAX_BLIND_WINDOWS = LIVE["--max-blind-windows"]
+LIVE_MAX_BLIND_MACOS = LIVE["--max-blind-macos"]
+LIVE_MAX_UNREVIEWED = LIVE["--max-unreviewed"]
+LIVE_MAX_ASSUMPTION_FREE = LIVE["--max-assumption-free"]
 
 MIXED = '''\
 //! Notes. A doc comment mentioning `#[cfg(unix)]` and `#[test]` must not count as gating.
@@ -581,6 +631,73 @@ class PlatformAssumptions(unittest.TestCase):
         self.assertIn("std-os-unix", out.stderr)
 
 
+class BudgetParsing(unittest.TestCase):
+    """The reader that pulls the four budgets out of the call sites.
+
+    Fixtures, because the thing to pin down is where the number is allowed to come from: a
+    file-wide search would happily read a comment that quotes a flag, which is how a guard ends up
+    asserting a number nothing enforces.
+    """
+
+    def parse(self, text: str) -> dict[str, str]:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "ci.yml").write_text(text, encoding="utf-8")
+            return wired_budgets("ci.yml", root)
+
+    def test_a_prose_mention_of_a_flag_is_not_the_budget(self) -> None:
+        prose = (
+            "# The budgets were `--max-unreviewed 9999 --max-blind-windows 8 --max-blind-macos 9\n"
+            "# --max-assumption-free 7` before the ledger was imported.\n"
+            "          python3 scripts/ci/platform-gated-tests.py --quiet \\\n"
+            "            --check-baseline scripts/ci/platform-gated-tests.tsv \\\n"
+            "            --max-unreviewed 1106 --max-blind-windows 74 --max-blind-macos 11 \\\n"
+            "            --max-assumption-free 441\n"
+            "          python3 scripts/ci/next-gate.py --max-unreviewed 3\n"
+        )
+        self.assertEqual(
+            self.parse(prose),
+            {
+                "--max-unreviewed": "1106",
+                "--max-blind-windows": "74",
+                "--max-blind-macos": "11",
+                "--max-assumption-free": "441",
+            },
+        )
+
+    def test_the_window_stops_at_the_command(self) -> None:
+        """A later step in the same job must not be able to supply a flag either."""
+        prose = (
+            "          python3 scripts/ci/platform-gated-tests.py --quiet \\\n"
+            "            --max-unreviewed 1 --max-blind-windows 2 --max-blind-macos 3 \\\n"
+            "            --max-assumption-free 4\n"
+            "          python3 scripts/ci/other.py --max-unreviewed 9\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "ci.yml").write_text(prose, encoding="utf-8")
+            site = call_site("ci.yml", root)
+            self.assertNotIn("other.py", site)
+            self.assertEqual(wired_budgets("ci.yml", root)["--max-unreviewed"], "1")
+
+    def test_a_file_that_never_runs_the_gate_is_an_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "ci.yml").write_text("python3 scripts/ci/other.py\n", encoding="utf-8")
+            with self.assertRaises(AssertionError) as caught:
+                wired_budgets("ci.yml", root)
+        self.assertIn(INVOCATION, str(caught.exception))
+
+    def test_a_call_site_missing_one_budget_is_an_error(self) -> None:
+        prose = (
+            "python3 scripts/ci/platform-gated-tests.py --quiet \\\n"
+            "  --max-unreviewed 1 --max-blind-windows 2 --max-assumption-free 4\n"
+        )
+        with self.assertRaises(AssertionError) as caught:
+            self.parse(prose)
+        self.assertIn("--max-blind-macos", str(caught.exception))
+
+
 class LiveRepository(unittest.TestCase):
     """The shipped ledger against the shipped sources, at the caps CI enforces."""
 
@@ -607,6 +724,46 @@ class LiveRepository(unittest.TestCase):
             LIVE_MAX_ASSUMPTION_FREE,
         )
         self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+
+    def test_the_two_call_sites_pass_the_same_four_numbers(self) -> None:
+        """ci.yml and verify-in-docker.sh each pass the budgets, and nothing compared them.
+
+        `check-guard-wiring.py` proves both name the gate; it says nothing about the numbers, so
+        the local entry point could hold one set and CI another, and the leg nobody runs locally
+        would be the one enforcing the real cap.
+        """
+        first, second = (BUDGETS[rel] for rel in CALL_SITES)
+        self.assertEqual(first, second, {rel: BUDGETS[rel] for rel in CALL_SITES})
+
+    def test_every_shipped_budget_is_exactly_at_the_measured_debt(self) -> None:
+        """Each cap is one above a violation, so none of the four has gone slack.
+
+        One run with all four caps lowered together: the gate reports every budget it exceeded, so
+        this asks for all four messages and proves each number is load-bearing on today's tree. A
+        cap set far above the debt would pass the check above and police nothing.
+        """
+        lowered = []
+        for flag in BUDGET_FLAGS:
+            lowered += [flag, str(int(LIVE[flag]) - 1)]
+        out = run(
+            "--quiet",
+            "--check-baseline",
+            str(LEDGER),
+            *lowered,
+        )
+        self.assertEqual(out.returncode, 1, out.stdout + out.stderr)
+        text = out.stdout + out.stderr
+        for flag, phrase in (
+            ("--max-unreviewed", "rows still carry the import marker"),
+            ("--max-blind-windows", "nothing that runs on Windows"),
+            ("--max-blind-macos", "nothing that runs on macOS"),
+            ("--max-assumption-free", "candidates to un-gate"),
+        ):
+            with self.subTest(flag=flag):
+                self.assertIn(phrase, text)
+        for flag in BUDGET_FLAGS:
+            with self.subTest(flag=flag):
+                self.assertIn(f"over the budget of {int(LIVE[flag]) - 1}", text)
 
     def test_the_shipped_ledger_names_gates_with_nothing_to_gate(self) -> None:
         """The third thing the debt note asked for: name the gated tests with no POSIX assumption.
