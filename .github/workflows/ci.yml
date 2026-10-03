@@ -137,7 +137,13 @@ jobs:
     name: platform tests (${{ matrix.os }})
     needs: rust
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+    # 45 was a guess made when the leg was written (da5e1ee0) and it was never
+    # enough for Windows: on f585f59d the macos-14 job finished in 31m17s while
+    # windows-latest burned its whole budget inside `cargo test` (steps 1-8 all
+    # green, step 9 cancelled at 45m15s), which reports as a *cancelled* run
+    # whose log names no failing test. A leg that always dies at the cap produces
+    # no platform evidence at all, which is the failure this job exists to prevent.
+    timeout-minutes: 75
     strategy:
       fail-fast: false
       matrix:
@@ -259,7 +265,18 @@ jobs:
             echo "RG_BIN_PATH=$tools_dir/$rg_binary" >> "$GITHUB_ENV"
           fi
 
-      - name: cargo test (target-OS crates)
+      # Split in two, on the Windows job log rather than on a hunch. On f585f59d
+      # one step ran all six crates: the compile took 25m43s (23:48:37 -> the
+      # first `test result:` at 00:14:20), five test binaries finished inside
+      # four seconds, and `xai_grok_tools-c0c13642df1bb12b.exe` -- 3087 tests --
+      # then printed its last completed test at 00:15:59 and went silent for
+      # 16m43s until the job cap cancelled it. A cap that fires mid-binary erases
+      # the verdict of every crate in the step, so the five healthy legs were
+      # reported as nothing but "cancelled". Per-step caps mean a hang in one
+      # crate can only cost that crate its own verdict. `if: always()` because a
+      # step that failed or timed out must not hide the other answer.
+      - name: "cargo test (target-OS crates: except xai-grok-tools)"
+        timeout-minutes: 35
         shell: bash
         env:
           # Same 16 MiB test-thread stack the Linux job needs.
@@ -271,8 +288,17 @@ jobs:
             -p xai-grok-sandbox \
             -p xai-grok-shell-terminal \
             -p xai-grok-update \
-            -p xai-grok-tools \
             -p xai-grok-pager-bin
+
+      - name: "cargo test (target-OS crates: xai-grok-tools)"
+        timeout-minutes: 35
+        if: always()
+        shell: bash
+        env:
+          RUST_MIN_STACK: "16777216"
+        run: |
+          set -euo pipefail
+          cargo test --locked --no-fail-fast -p xai-grok-tools
 
       # Job logs need repository admin rights, but check-run annotations are
       # public. Reporting which tools actually landed on PATH is enough to tell
@@ -426,6 +452,18 @@ jobs:
           set -euo pipefail
           python3 scripts/ci/test-classify-open-todos.py
           python3 scripts/ci/classify-open-todos.py --check-doc docs/architecture/todo-open-item-classification.md
+      # 40 pointers across 8 committed documents told their reader to open an
+      # evidence log "in the private goal scratch" -- a per-session temporary
+      # directory deleted when the session that wrote it ends. Nothing failed,
+      # because nothing looked, so the claim of evidence was unverifiable by
+      # anyone but the session that made it. This refuses that wording in
+      # Markdown and in the generated TODO export; captured transcripts are
+      # left alone because they quote the command line that actually ran.
+      - name: Committed docs do not cite scratch paths
+        run: |
+          set -euo pipefail
+          python3 scripts/ci/test-check-evidence-paths.py
+          python3 scripts/ci/check-evidence-paths.py
 
   gui:
     name: GUI engine, Web host and frontend
@@ -597,6 +635,14 @@ jobs:
           # need and what counts as provisioning one.
           python3 scripts/ci/test-check-workflow-toolchain.py
           python3 scripts/ci/check-workflow-toolchain.py
+          # A workflow file GitHub cannot parse runs no jobs at all: the push looks
+          # untested rather than broken, and every guard in the file stops existing for
+          # it. Both checks above walk the file by line and both said OK to a step name
+          # carrying `crates: xai-grok-tools`, which YAML reads as a mapping separator.
+          # This is the parser-shaped check they are not, and its fixtures cross-check
+          # every verdict against a real YAML parser when one is installed.
+          python3 scripts/ci/test-check-workflow-yaml.py
+          python3 scripts/ci/check-workflow-yaml.py
           # Every `scripts/**.sh` has to run on the stock macOS shell too, not
           # just the Linux runner this job executes on: `scripts/test-platform.sh`
           # is the documented macOS entry point. bash 3.2 + BSD userland has no
@@ -614,6 +660,22 @@ jobs:
           python3 scripts/ci/test-panic-site-census.py
           python3 scripts/ci/panic-site-census.py --check-baseline scripts/ci/panic-site-baseline.tsv
           python3 scripts/ci/panic-site-census.py --check-uncompiled scripts/ci/uncompiled-sources.txt
+          # A test that changes the process working directory and leaves it inside a
+          # directory something else deletes breaks every sibling in the same libtest
+          # process: gix_discover::is_git calls current_dir() before it looks at the
+          # path it was given, so after that, every gix::open in the process fails.
+          # The poisoned test is never the guilty one, so the shape has to be caught
+          # statically -- see scripts/ci/test-cwd-change-census.py for the dodges.
+          python3 scripts/ci/test-cwd-change-census.py
+          python3 scripts/ci/cwd-change-census.py --check-baseline scripts/ci/cwd-change-baseline.tsv
+          # A working directory handed to the OS has to exist on the host running the
+          # test. The macos/windows legs found out the expensive way: one fixture line
+          # (`working_directory: PathBuf::from("/tmp")`) lost 54 tests at once on
+          # windows-latest, after 26 minutes of build, and the run reported only
+          # "cancelled". The crate list is read from the platform step below, so this
+          # gate cannot drift away from the legs it protects.
+          python3 scripts/ci/test-check-spawn-cwd-portability.py
+          python3 scripts/ci/check-spawn-cwd-portability.py
           # Four consumers derive a release asset name -- install.sh, install.ps1,
           # install.bat and the auto-updater -- and one workflow publishes it. A rename
           # on the publisher's side is invisible to all four until an install or an

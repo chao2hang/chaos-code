@@ -1,0 +1,13 @@
+# Every `set_current_dir` call in the Rust sources, re-measured by
+# scripts/ci/cwd-change-census.py, which refuses a site missing from this file, a
+# row whose call is gone, and a test site with no guard bound before the call.
+# Columns: path, line, role, guard, reason. The guard column is the restore type
+# bound *before* the call (`drop-restore` when the call is itself the Drop impl);
+# the reason column is the human part and is the only thing not derived.
+crates/codegen/xai-fast-worktree/src/api.rs	24	test	drop-restore	`CwdGuard::drop` is the restore itself, not a site that needs one; the item carries `#[cfg(all(test, feature = "metadata"))]`, so nothing of it ships.
+crates/codegen/xai-fast-worktree/src/api/gc/process_scan.rs	258	test	CwdGuard	Chdirs into its own temp dir so the live-cwd scan has to find its own process; the guard is bound before the call and drops while the temp dir still exists, so the process cwd is never left inside a deleted directory.
+crates/codegen/xai-fast-worktree/src/auto_gc.rs	898	test	CwdGuard	Chdirs into a registered worktree so auto-gc has to refuse to reclaim it; same shape as the process_scan site -- guard bound first, restores before the TempDir is removed.
+crates/codegen/xai-fast-worktree/src/git/safety_tests/gate.rs	124	test	drop-restore	`RestoreCwd::drop`, the restore half of the pair used by the hazard site below. The file is compiled only under cfg(test), reached through `git/safety_tests.rs`, which is why it carries no attribute of its own.
+crates/codegen/xai-fast-worktree/src/git/safety_tests/gate.rs	179	test	RestoreCwd	Deliberate hazard: the test unlinks the very directory it is standing in, to reproduce the flake where a deleted process cwd made every gix::open fail. RestoreCwd is bound before the chdir, the doomed TempDir is dropped explicitly while the guard is live, and the cwd is back before the test returns; it also runs as the only test of its own libtest process, so no sibling can be poisoned during the window in between.
+crates/codegen/xai-grok-pager/src/app/cli.rs	904	product	none	`--cwd` at startup: the CLI is meant to keep running from the directory it was handed, so there is no restore by design; a failed chdir is fatal to startup and reported as such.
+crates/codegen/xai-grok-pager/src/app/effects/mod.rs	80	product	none	The GUI's change-location action moves the process working directory and stays there; a failed chdir is logged and leaves the previous cwd intact.

@@ -106,7 +106,7 @@ def rust_variants(body: str) -> dict[str, set[str]]:
     current: str | None = None
     for line in body.splitlines():
         stripped = line.strip()
-        if not stripped or stripped.startswith(("#", "///", "//!", "/*", "*")):
+        if not stripped or stripped.startswith(("#", "//", "///", "//!", "/*", "*")):
             continue
         if depth == 0:
             head = re.match(r"([A-Z][A-Za-z0-9_]*)\s*[{(;,]?", stripped)
@@ -114,10 +114,11 @@ def rust_variants(body: str) -> dict[str, set[str]]:
                 current = head.group(1)
                 variants.setdefault(current, set())
         elif current is not None:
-            # Only a declaration at the start of the line is a field name; a
-            # type like `Vec<serde_json::Value>` would otherwise contribute the
-            # bogus field `serde_json`.
-            field = re.match(r"(?:pub\s+)?([a-z][a-z0-9_]*)\s*:", stripped)
+            # Only a declaration at the start of the line is a field name, and the
+            # colon must not be a path separator: a long generic type that rustfmt
+            # wrapped onto its own line (`serde_json::Value,`) would otherwise
+            # contribute the bogus field `serde_json`.
+            field = re.match(r"(?:pub\s+)?([a-z][a-z0-9_]*)\s*:(?!:)", stripped)
             if field:
                 variants[current].add(field.group(1))
         depth += line.count("{") - line.count("}")

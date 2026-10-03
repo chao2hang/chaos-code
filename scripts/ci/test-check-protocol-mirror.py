@@ -141,6 +141,20 @@ class ParserTests(unittest.TestCase):
         variants = guard.rust_variants(guard.enum_body(ENGINE_SRC, 'ServerMessage'))
         self.assertEqual(variants['Scan'], {'entries', 'catalog_loaded'})
 
+    def test_rust_field_names_ignore_a_wrapped_type_path(self):
+        # rustfmt puts a type that does not fit on one line onto its own line, and
+        # such a line begins with an identifier followed by `::`.
+        body = """
+            Catalog {
+                entries: Vec<
+                    serde_json::Value,
+                >,
+                catalog_loaded: bool,
+            },
+        """
+        self.assertEqual(
+            guard.rust_variants(body)['Catalog'], {'entries', 'catalog_loaded'})
+
     def test_ts_keys_stop_at_the_outer_brace(self):
         keys = guard.ts_object_keys(
             "  | { type: 'ack'; client_msg_id: string; meta: { seq: number } }"
@@ -265,6 +279,29 @@ class DriftTests(FixtureHarness):
             result = run(engine_path, mirror_path)
             self.assertEqual(result.returncode, 1, result.stdout)
             self.assertIn('no `pub enum ServerMessage`', result.stderr + result.stdout)
+
+    def test_a_wrapped_type_line_does_not_become_a_wire_field(self):
+        wrapped = ENGINE_SRC.replace(
+            '        entries: Vec<serde_json::Value>,\n',
+            '        entries: Vec<\n            serde_json::Value,\n        >,\n')
+        self.assertIn('entries: Vec<\n', wrapped)
+        self.assert_clean(wrapped, MIRROR_SRC)
+
+    def test_a_commented_out_copy_of_the_enum_is_not_parsed(self):
+        # Design notes quote the enum; the guard must still read the compiled one.
+        decoy = (
+            '// Sketch from the design notes, never compiled:\n'
+            '// pub enum ClientMessage {\n'
+            '//     Legacy { old_field: String },\n'
+            '// }\n'
+            + ENGINE_SRC)
+        self.assert_clean(decoy, MIRROR_SRC)
+        self.assert_drift(
+            lambda text: text.replace(
+                "  | { type: 'cancel'; client_msg_id: string }\n", ''),
+            "'cancel' (Rust Cancel)",
+            engine=decoy,
+        )
 
 
 class RealRepositoryTests(unittest.TestCase):

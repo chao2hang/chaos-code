@@ -143,14 +143,18 @@ gates=(
   "brand/protocol guard: python3 scripts/ci/check-brand-protocol.py && python3 scripts/ci/test-brand-protocol.py"
   "protocol mirror coverage: python3 scripts/ci/test-check-protocol-mirror.py && python3 scripts/ci/check-protocol-mirror.py"
   "TODO status doc: python3 scripts/ci/test-classify-open-todos.py && python3 scripts/ci/classify-open-todos.py --check-doc docs/architecture/todo-open-item-classification.md"
+  "evidence paths in docs: python3 scripts/ci/test-check-evidence-paths.py && python3 scripts/ci/check-evidence-paths.py"
   "CI guard wiring: python3 scripts/ci/test-check-guard-wiring.py && python3 scripts/ci/check-guard-wiring.py"
   # No argument on purpose: the CI step runs it with none, and pointing this one at
   # ci.yml alone left release.yml -- the workflow with the Windows matrix, which is
   # the whole reason the check exists -- unexamined locally.
   "workflow shells: python3 scripts/ci/check-workflow-shells.py"
   "workflow toolchain: python3 scripts/ci/test-check-workflow-toolchain.py && python3 scripts/ci/check-workflow-toolchain.py"
+  "workflow yaml: python3 scripts/ci/test-check-workflow-yaml.py && python3 scripts/ci/check-workflow-yaml.py"
   "script portability: python3 scripts/ci/check-script-portability.py && python3 scripts/ci/test-script-portability.py"
   "panic-site census: python3 scripts/ci/test-panic-site-census.py && python3 scripts/ci/panic-site-census.py --check-baseline scripts/ci/panic-site-baseline.tsv && python3 scripts/ci/panic-site-census.py --check-uncompiled scripts/ci/uncompiled-sources.txt"
+  "cwd-change census: python3 scripts/ci/test-cwd-change-census.py && python3 scripts/ci/cwd-change-census.py --check-baseline scripts/ci/cwd-change-baseline.tsv"
+  "spawn-cwd portability: python3 scripts/ci/test-check-spawn-cwd-portability.py && python3 scripts/ci/check-spawn-cwd-portability.py"
   "version lockstep: bash scripts/ci/check-versions.sh && python3 scripts/ci/check-version-lockstep.py"
   "installer guards: python3 scripts/ci/test-installer-asset-names.py && python3 scripts/ci/test-installer-bash-resolution.py && python3 scripts/ci/test-installer-signature-policy.py"
   "npm package guards: node --check crates/codegen/xai-grok-pager/npm/chaos/scripts/assemble-platform-packages.js && node --check crates/codegen/xai-grok-pager/npm/chaos/bin/postinstall.js && node --check crates/codegen/xai-grok-pager/npm/chaos/bin/chaos && bash scripts/ci/test-publish-npm.sh"
