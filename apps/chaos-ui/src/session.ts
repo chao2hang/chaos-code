@@ -5,9 +5,20 @@ export type Approval = { requestId: string; tool: string; summary: string; confi
 export type Question = { questionId: string; prompt: string }
 export type ToolActivity = { id: string; tool: string; status: 'running' | 'completed'; progress?: string; result?: string }
 export type PendingGitOperation = { requestId: string; sessionId: string; operation: string }
+export type Upload = {
+  filename: string
+  byteLen: number
+  uploadId?: string
+  sentBytes: number
+  status: UploadStatus
+  path?: string
+  bytes?: number
+  error?: string
+}
 export type ServerMessage = ProtocolServerMessage
 
 import type { WorkspaceInfo } from './generated/protocol'
+import { isUploadFailure, type UploadStatus } from './attachments'
 import { activeWorkspaceIdOrNull, NIL_WORKSPACE_ID, workspaceChanged, workspaceSessionMap } from './workspace-ui'
 
 export type SessionState = {
@@ -44,6 +55,7 @@ export type SessionState = {
   usage?: { inputTokens: number; outputTokens: number }
   toolActivities: ToolActivity[]
   pendingGitOperation?: PendingGitOperation
+  upload?: Upload
 }
 
 export const initialSessionState: SessionState = { messages: [], workspaceSessions: {}, workspaces: [], busy: false, status: '连接中', filesLoading: false, fileLoading: false, searchLoading: false, gitLoading: false, terminalLoading: false, toolActivities: [] }
@@ -127,6 +139,7 @@ function applyServerMessageProjection(state: SessionState, message: ServerMessag
       busy: false,
       approval,
       pendingGitOperation: gitOperation ? { requestId: approval.requestId, sessionId: message.session_id, operation: gitOperation } : state.pendingGitOperation,
+      upload: approval.tool === 'workspace.attach_attachment' && state.upload ? { ...state.upload, status: 'awaiting_approval' } : state.upload,
       status: '等待审批',
     }
   }
@@ -137,6 +150,7 @@ function applyServerMessageProjection(state: SessionState, message: ServerMessag
       ...state,
       approval: undefined,
       pendingGitOperation: message.request_id === state.pendingGitOperation?.requestId && !message.approved ? undefined : state.pendingGitOperation,
+      upload: state.upload?.status === 'awaiting_approval' && !message.approved ? { ...state.upload, status: 'cancelled' } : state.upload,
       status: message.approved
         ? workspaceWrite ? (state.status.startsWith('文件已写入：') ? state.status : '等待文件写入完成')
           : state.status.startsWith('终端执行完成') || state.status.startsWith('Git ') ? state.status
@@ -171,6 +185,15 @@ function applyServerMessageProjection(state: SessionState, message: ServerMessag
     return { ...state, messages }
   }
   if (message.type === 'files_listed') return { ...state, files: { path: message.path, entries: message.entries, directories: message.directories }, filesLoading: false, filesError: undefined }
+  if (message.type === 'attachment_validated') return state.upload?.status === 'validating' ? { ...state, upload: { ...state.upload, status: 'beginning' } } : state
+  if (message.type === 'attachment_started') return { ...state, upload: { filename: message.filename, byteLen: state.upload?.byteLen ?? 0, uploadId: message.upload_id, sentBytes: 0, status: 'uploading' }, status: `正在上传 ${message.filename}` }
+  if (message.type === 'attachment_progress') return state.upload?.uploadId === message.upload_id ? { ...state, upload: { ...state.upload, sentBytes: message.received } } : state
+  if (message.type === 'attachment_cancelled') return state.upload?.uploadId === message.upload_id ? { ...state, upload: { ...state.upload, status: 'cancelled' }, status: '上传已取消' } : state
+  if (message.type === 'attachment_completed') return {
+    ...state,
+    upload: { filename: state.upload?.filename ?? message.path, byteLen: state.upload?.byteLen ?? message.bytes, uploadId: message.upload_id, sentBytes: message.bytes, status: 'done', path: message.path, bytes: message.bytes },
+    status: `附件已写入 ${message.path}（${message.bytes} 字节）`,
+  }
   if (fileChangeAffectsVisibleDirectory(state, message)) return { ...state, filesLoading: true, filesError: undefined }
   if (message.type === 'file_contents') return { ...state, activeFile: { path: message.path, contents: message.contents }, fileLoading: false, fileError: undefined }
   if (message.type === 'search_results') return { ...state, searchResults: { query: message.query, matches: message.matches }, searchLoading: false, searchError: undefined }
@@ -197,6 +220,7 @@ function applyServerMessageProjection(state: SessionState, message: ServerMessag
   }
   if (message.type === 'completed' || message.type === 'cancelled') return { ...state, busy: false }
   if (message.type === 'error') {
+    if (state.upload && isUploadFailure(message.code ?? '', state.upload.status)) return { ...state, busy: false, upload: { ...state.upload, status: 'failed', error: message.message }, status: '上传失败' }
     const toolFailure = ['tool_unavailable', 'tool_failed', 'terminal_unavailable', 'terminal_failed', 'git_failed'].includes(message.code ?? '')
     if (state.gitLoading && message.code === 'git_failed') return { ...state, pendingGitOperation: undefined, gitLoading: false, gitError: message.message, status: 'Git 操作失败' }
     if (state.terminalLoading && ['terminal_unavailable', 'terminal_failed'].includes(message.code ?? '')) return { ...state, terminalLoading: false, terminalError: message.message, status: '终端执行失败' }

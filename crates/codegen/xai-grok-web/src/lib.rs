@@ -688,6 +688,17 @@ async fn websocket(
     upgrade.on_upgrade(move |socket| websocket_session(socket, engine, safe_web_mode))
 }
 
+/// Messages a Safe Web Mode client may send.
+///
+/// The line drawn here is "no workspace or host mutation, not even behind an
+/// approval prompt": `propose_file_write`, `propose_terminal` and
+/// `propose_git_mutation` are refused although the engine would ask the user
+/// first. `finalize_attachment` used to sit on this list, which made it
+/// unreachable rather than permissive — an `upload_id` only comes from
+/// `begin_attachment`, which is refused — so the one attachment step that writes
+/// into the workspace was allowlisted while the three that merely stage bytes
+/// were not. The flow is now refused as a unit, and stays refused from either
+/// end.
 fn safe_mode_allows(message: &ClientMessage) -> bool {
     matches!(
         message,
@@ -703,7 +714,6 @@ fn safe_mode_allows(message: &ClientMessage) -> bool {
             | ClientMessage::SearchFiles { .. }
             | ClientMessage::ScanMarketplace { .. }
             | ClientMessage::PreviewDiff { .. }
-            | ClientMessage::FinalizeAttachment { .. }
             | ClientMessage::ImportTuiSession { .. }
     )
 }

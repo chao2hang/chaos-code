@@ -305,3 +305,76 @@ describe('session event projection', () => {
     expect(state.status).toBe('文件已写入：README.md（1024 字节）')
   })
 })
+
+describe('attachment upload projection', () => {
+  const validating = {
+    ...initialSessionState,
+    sessionId: 's1',
+    upload: { filename: 'note.txt', byteLen: 100, sentBytes: 0, status: 'validating' as const },
+  }
+
+  it('walks validate, begin, slices, approval and the completed write', () => {
+    let state = applyServerMessage(validating, { type: 'attachment_validated', filename: 'note.txt', byte_len: 100, content_type: 'text/plain' })
+    expect(state.upload?.status).toBe('beginning')
+
+    state = applyServerMessage(state, { type: 'attachment_started', session_id: 's1', upload_id: 'u1', filename: 'note.txt' })
+    expect(state.upload).toEqual({ filename: 'note.txt', byteLen: 100, uploadId: 'u1', sentBytes: 0, status: 'uploading' })
+    expect(state.status).toBe('正在上传 note.txt')
+
+    state = applyServerMessage(state, { type: 'attachment_progress', upload_id: 'u1', received: 64 })
+    expect(state.upload?.sentBytes).toBe(64)
+    state = applyServerMessage(state, { type: 'attachment_progress', upload_id: 'u1', received: 100 })
+    expect(state.upload?.sentBytes).toBe(100)
+
+    state = applyServerMessage(state, { type: 'tool_approval_requested', session_id: 's1', request_id: 'r1', tool: 'workspace.attach_attachment', summary: '请求将已上传附件写入 workspace', sequence: 3 })
+    expect(state.upload?.status).toBe('awaiting_approval')
+    expect(state.approval?.tool).toBe('workspace.attach_attachment')
+
+    state = applyServerMessage(state, { type: 'approval_resolved', session_id: 's1', request_id: 'r1', approved: true, sequence: 4 })
+    expect(state.upload?.status).toBe('awaiting_approval')
+
+    state = applyServerMessage(state, { type: 'attachment_completed', session_id: 's1', upload_id: 'u1', path: 'docs/note.txt', bytes: 100 })
+    expect(state.upload).toEqual({ filename: 'note.txt', byteLen: 100, uploadId: 'u1', sentBytes: 100, status: 'done', path: 'docs/note.txt', bytes: 100 })
+    expect(state.status).toBe('附件已写入 docs/note.txt（100 字节）')
+  })
+
+  it('keeps progress and cancellation tied to the upload they name', () => {
+    const uploading = { ...validating, upload: { ...validating.upload, uploadId: 'u1', status: 'uploading' as const } }
+    expect(applyServerMessage(uploading, { type: 'attachment_progress', upload_id: 'other', received: 99 })).toBe(uploading)
+    expect(applyServerMessage(uploading, { type: 'attachment_cancelled', upload_id: 'other' })).toBe(uploading)
+    const cancelled = applyServerMessage(uploading, { type: 'attachment_cancelled', upload_id: 'u1' })
+    expect(cancelled.upload?.status).toBe('cancelled')
+    expect(cancelled.status).toBe('上传已取消')
+  })
+
+  it('fails the upload when the host refuses a slice', () => {
+    const uploading = { ...validating, upload: { ...validating.upload, uploadId: 'u1', status: 'uploading' as const } }
+    const failed = applyServerMessage(uploading, { type: 'error', code: 'attachment_quota_exceeded', message: '附件超过声明大小' })
+    expect(failed.upload?.status).toBe('failed')
+    expect(failed.upload?.error).toBe('附件超过声明大小')
+    expect(failed.status).toBe('上传失败')
+  })
+
+  it('only reads a shared path error as an upload failure after the bytes are staged', () => {
+    const uploading = { ...validating, upload: { ...validating.upload, uploadId: 'u1', status: 'uploading' as const } }
+    expect(applyServerMessage(validating, { type: 'error', code: 'path_escape', message: '路径越界' }).upload).toBe(validating.upload)
+    expect(applyServerMessage(uploading, { type: 'error', code: 'path_escape', message: '路径越界' }).upload?.status).toBe('failed')
+  })
+
+  it('leaves an unrelated error off the upload', () => {
+    const uploading = { ...validating, upload: { ...validating.upload, uploadId: 'u1', status: 'uploading' as const } }
+    const state = applyServerMessage({ ...uploading, busy: true }, { type: 'error', code: 'git_failed', message: 'git 失败' })
+    expect(state.upload?.status).toBe('uploading')
+    expect(state.busy).toBe(false)
+  })
+
+  it('treats a rejected approval as a cancelled upload', () => {
+    const awaiting = { ...validating, upload: { ...validating.upload, uploadId: 'u1', status: 'awaiting_approval' as const } }
+    const state = applyServerMessage(awaiting, { type: 'approval_resolved', session_id: 's1', request_id: 'r1', approved: false, sequence: 5 })
+    expect(state.upload?.status).toBe('cancelled')
+  })
+
+  it('ignores attachment events belonging to another session', () => {
+    expect(applyServerMessage(validating, { type: 'attachment_started', session_id: 'other', upload_id: 'u1', filename: 'note.txt' })).toBe(validating)
+  })
+})

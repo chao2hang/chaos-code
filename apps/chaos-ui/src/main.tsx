@@ -2,11 +2,12 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { createRoot } from 'react-dom/client'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { applyServerMessage, fileChangeAffectsVisibleDirectory, initialSessionState, sessionLossRecoveryMessage, workspaceReconnectMessage, type ServerMessage } from './session'
+import { applyServerMessage, fileChangeAffectsVisibleDirectory, initialSessionState, sessionLossRecoveryMessage, workspaceReconnectMessage, type ServerMessage, type SessionState } from './session'
 import { selectWorkspaceSession } from './workspace-ui'
 import { webSocketUrl } from './transport'
 import { getComposerSuggestions, initialComposerHistory, moveSuggestionIndex, navigatePromptHistory, recordPrompt, shouldSubmitOnKey, type ComposerSuggestion } from './composer'
 import { defaultLayoutState, loadLayoutState, saveLayoutState, type LayoutState } from './layout'
+import { attachmentChunkMessages, beginAttachmentMessage, cancelAttachmentMessage, describeUpload, finalizeAttachmentMessage, MAX_ATTACHMENT_BYTES, validateAttachmentMessage, type AttachmentSource } from './attachments'
 import './style.css'
 
 type Tab = 'chat' | 'files' | 'git' | 'terminal' | 'settings' | 'marketplace' | 'diff'
@@ -60,6 +61,9 @@ function App() {
   const [workspaceWriteError, setWorkspaceWriteError] = useState<string>()
   const [workspaceWriteState, setWorkspaceWriteState] = useState<'idle' | 'pending' | 'saved'>('idle')
   const [workspaceWriteApprovalId, setWorkspaceWriteApprovalId] = useState<string>()
+  const [uploadPick, setUploadPick] = useState<File | null>(null)
+  const [uploadTargetPath, setUploadTargetPath] = useState('')
+  const [uploadPickError, setUploadPickError] = useState<string>()
 
   const socket = useRef<WebSocket | null>(null)
   const timelineRef = useRef<HTMLElement | null>(null)
@@ -70,8 +74,22 @@ function App() {
   const sessionStateRef = useRef(session)
   const reconnectTimer = useRef<number | undefined>(undefined)
   const workspaceWriteApprovalIdRef = useRef<string | undefined>(undefined)
+  // The bytes stay out of SessionState on purpose: a 10 MiB file copied on every
+  // reducer step would dominate the timeline's update cost. It is dropped once
+  // the slices are on the wire.
+  const uploadSourceRef = useRef<(AttachmentSource & { targetPath: string }) | null>(null)
 
   useEffect(() => { sessionStateRef.current = session }, [session])
+
+  // The message handler reads `sessionStateRef`, and a functional `setSession`
+  // only reaches that ref after the next render. A host reply that arrives in
+  // between would then be applied to a stale state, and its own write would
+  // clobber the queued one, so every write goes through here instead.
+  const updateSession = useCallback((update: (current: SessionState) => SessionState) => {
+    const next = update(sessionStateRef.current)
+    sessionStateRef.current = next
+    setSession(next)
+  }, [])
   useLayoutEffect(() => {
     timelineAnchorRef.current = {
       atBottom: true,
@@ -100,7 +118,7 @@ function App() {
   }, [activeTab, session.activeWorkspaceId, session.messages, session.toolActivities, session.approval, session.question])
   useEffect(() => {
     if (typeof window === 'undefined') return
-    try { saveLayoutState(window.localStorage, layout) } catch { setSession((current) => ({ ...current, status: '布局未保存（本地存储不可用）' })) }
+    try { saveLayoutState(window.localStorage, layout) } catch { updateSession((current) => ({ ...current, status: '布局未保存（本地存储不可用）' })) }
   }, [layout])
   useEffect(() => {
     document.documentElement.dataset.theme = layout.theme
@@ -147,7 +165,7 @@ function App() {
     const ws = new WebSocket(webSocketUrl(location, import.meta.env.VITE_CHAOS_E2E_BACKEND_PORT || import.meta.env.VITE_CHAOS_WS_PORT || '8787', import.meta.env.VITE_CHAOS_E2E_ORIGIN_PATH))
     socket.current = ws
     ws.onopen = () => {
-      setSession((current) => ({ ...current, status: '已连接' }))
+      updateSession((current) => ({ ...current, status: '已连接' }))
       send({ type: 'list_workspaces', client_msg_id: crypto.randomUUID() })
       send(workspaceReconnectMessage(sessionStateRef.current))
     }
@@ -164,6 +182,11 @@ function App() {
         setWorkspaceWriteApprovalId(message.request_id)
         setWorkspaceWriteState('pending')
       }
+      if (message.type === 'attachment_validated' && uploadSourceRef.current) {
+        const sessionId = sessionStateRef.current.sessionId
+        if (sessionId) send(beginAttachmentMessage(crypto.randomUUID(), sessionId, uploadSourceRef.current))
+      }
+      if (message.type === 'attachment_started' && uploadSourceRef.current) pumpUpload(message.upload_id)
       if (fileChangeAffectsVisibleDirectory(sessionStateRef.current, message)) {
         refreshFiles(sessionStateRef.current.files?.path ?? '.')
       }
@@ -190,24 +213,24 @@ function App() {
         if (!message.approved) setWorkspaceWriteState('idle')
       }
     }
-    ws.onerror = () => setSession((current) => ({ ...current, status: '连接错误' }))
-    ws.onclose = () => { setSession((current) => ({ ...current, status: '连接断开，正在重连' })); reconnectTimer.current = window.setTimeout(connect, 500) }
-  }, [send])
+    ws.onerror = () => updateSession((current) => ({ ...current, status: '连接错误' }))
+    ws.onclose = () => { updateSession((current) => ({ ...current, status: '连接断开，正在重连' })); reconnectTimer.current = window.setTimeout(connect, 500) }
+  }, [send, updateSession])
 
   useEffect(() => { connect(); return () => { if (reconnectTimer.current) window.clearTimeout(reconnectTimer.current); socket.current?.close() } }, [connect])
 
   function createWorkspace() {
     const name = window.prompt('工作区名称')?.trim()
     if (!name) return
-    setSession((current) => ({ ...current, messages: [], approval: undefined, question: undefined, busy: false, status: '正在创建工作区' }))
+    updateSession((current) => ({ ...current, messages: [], approval: undefined, question: undefined, busy: false, status: '正在创建工作区' }))
     send({ type: 'create_workspace', client_msg_id: crypto.randomUUID(), name })
   }
   function switchWorkspace(workspaceId: string) {
-    setSession((current) => selectWorkspaceSession(current, workspaceId))
+    updateSession((current) => selectWorkspaceSession(current, workspaceId))
     send({ type: 'switch_workspace', client_msg_id: crypto.randomUUID(), workspace_id: workspaceId })
   }
   function archiveWorkspace(workspaceId: string) {
-    setSession((current) => current.activeWorkspaceId === workspaceId
+    updateSession((current) => current.activeWorkspaceId === workspaceId
       ? { ...current, messages: [], approval: undefined, question: undefined, busy: false, status: '正在归档工作区' }
       : current)
     send({ type: 'archive_workspace', client_msg_id: crypto.randomUUID(), workspace_id: workspaceId })
@@ -222,15 +245,15 @@ function App() {
         scrollTop: timeline.scrollTop,
       }
     }
-    setSession((current) => ({ ...current, messages: [...current.messages, { role: 'user', text: value }, { role: 'assistant', text: '' }], busy: true }))
+    updateSession((current) => ({ ...current, messages: [...current.messages, { role: 'user', text: value }, { role: 'assistant', text: '' }], busy: true }))
     setPromptHistory((current) => recordPrompt(current, value))
     setPrompt('')
     setSuggestions([])
     send({ type: 'submit', client_msg_id: crypto.randomUUID(), session_id: session.sessionId, prompt: value })
   }
   function cancel() { if (session.sessionId) send({ type: 'cancel', client_msg_id: crypto.randomUUID(), session_id: session.sessionId }) }
-  function resolveApproval(approved: boolean) { if (!session.approval) return; send(approved ? { type: 'approve', client_msg_id: crypto.randomUUID(), request_id: session.approval.requestId } : { type: 'reject', client_msg_id: crypto.randomUUID(), request_id: session.approval.requestId, reason: '用户拒绝' }); setSession((current) => ({ ...current, approval: undefined })) }
-  function answerQuestion(answer: string) { if (!session.question || !answer.trim()) return; send({ type: 'respond_question', client_msg_id: crypto.randomUUID(), question_id: session.question.questionId, answer }); setSession((current) => ({ ...current, question: undefined })) }
+  function resolveApproval(approved: boolean) { if (!session.approval) return; send(approved ? { type: 'approve', client_msg_id: crypto.randomUUID(), request_id: session.approval.requestId } : { type: 'reject', client_msg_id: crypto.randomUUID(), request_id: session.approval.requestId, reason: '用户拒绝' }); updateSession((current) => ({ ...current, approval: undefined })) }
+  function answerQuestion(answer: string) { if (!session.question || !answer.trim()) return; send({ type: 'respond_question', client_msg_id: crypto.randomUUID(), question_id: session.question.questionId, answer }); updateSession((current) => ({ ...current, question: undefined })) }
 
   function handleComposerKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (event.nativeEvent.isComposing) return
@@ -278,17 +301,48 @@ function App() {
 
   // IDE Actions
   function refreshFiles(path = dirPath) {
-    setSession((current) => ({ ...current, filesLoading: true, filesError: undefined, files: undefined }))
+    updateSession((current) => ({ ...current, filesLoading: true, filesError: undefined, files: undefined }))
     send({ type: 'list_files', client_msg_id: crypto.randomUUID(), relative_path: path })
   }
   function openFile(path: string) {
-    setSession((current) => ({ ...current, fileLoading: true, fileError: undefined, activeFile: undefined }))
+    updateSession((current) => ({ ...current, fileLoading: true, fileError: undefined, activeFile: undefined }))
     send({ type: 'read_file', client_msg_id: crypto.randomUUID(), relative_path: path })
   }
   function searchFiles() {
     if (!fileSearchQuery.trim()) return
-    setSession((current) => ({ ...current, searchLoading: true, searchError: undefined, searchResults: undefined }))
+    updateSession((current) => ({ ...current, searchLoading: true, searchError: undefined, searchResults: undefined }))
     send({ type: 'search_files', client_msg_id: crypto.randomUUID(), query: fileSearchQuery.trim() })
+  }
+
+  // The transfer is driven by the host's own answers (see ws.onmessage): validate
+  // → begin → attachment_started carries the upload_id → slices → finalize. The
+  // write itself is the approval the host asks for after finalize.
+  async function startUpload() {
+    const file = uploadPick
+    if (!file) { setUploadPickError('请先选择文件'); return }
+    if (!sessionStateRef.current.sessionId) { setUploadPickError('请先创建会话'); return }
+    if (file.size === 0) { setUploadPickError('空文件不能作为附件上传'); return }
+    if (file.size > MAX_ATTACHMENT_BYTES) { setUploadPickError(`附件不能超过 ${Math.floor(MAX_ATTACHMENT_BYTES / (1024 * 1024))} MiB`); return }
+    setUploadPickError(undefined)
+    const bytes = new Uint8Array(await file.arrayBuffer())
+    uploadSourceRef.current = { filename: file.name, contentType: file.type, bytes, targetPath: uploadTargetPath.trim() || file.name }
+    updateSession((current) => ({ ...current, upload: { filename: file.name, byteLen: bytes.length, sentBytes: 0, status: 'validating' }, status: '正在校验附件' }))
+    send(validateAttachmentMessage(crypto.randomUUID(), uploadSourceRef.current))
+  }
+
+  function pumpUpload(uploadId: string) {
+    const source = uploadSourceRef.current
+    if (!source) return
+    for (const message of attachmentChunkMessages(uploadId, source.bytes, () => crypto.randomUUID())) send(message)
+    send(finalizeAttachmentMessage(crypto.randomUUID(), uploadId, source.targetPath))
+    uploadSourceRef.current = null
+  }
+
+  function cancelUpload() {
+    const uploadId = sessionStateRef.current.upload?.uploadId
+    uploadSourceRef.current = null
+    if (uploadId) { send(cancelAttachmentMessage(crypto.randomUUID(), uploadId)); return }
+    updateSession((current) => ({ ...current, upload: undefined, status: '上传已取消' }))
   }
   function openDirectory(entry: string) {
     const base = session.files?.path ?? dirPath
@@ -318,12 +372,12 @@ function App() {
   }
 
   function refreshGitStatus() {
-    setSession((current) => ({ ...current, gitLoading: true, gitError: undefined }))
+    updateSession((current) => ({ ...current, gitLoading: true, gitError: undefined }))
     send({ type: 'get_git_status', client_msg_id: crypto.randomUUID() })
   }
   function executeGitMutation() {
     if (!session.sessionId || !gitArg.trim()) return
-    setSession((current) => ({ ...current, gitLoading: true, gitError: undefined }))
+    updateSession((current) => ({ ...current, gitLoading: true, gitError: undefined }))
     send({
       type: 'propose_git_mutation',
       client_msg_id: crypto.randomUUID(),
@@ -335,7 +389,7 @@ function App() {
 
   function executeTerminalCommand() {
     if (!session.sessionId || !terminalCmd.trim()) return
-    setSession((current) => ({ ...current, terminalLoading: true, terminalError: undefined }))
+    updateSession((current) => ({ ...current, terminalLoading: true, terminalError: undefined }))
     send({
       type: 'propose_terminal',
       client_msg_id: crypto.randomUUID(),
@@ -535,7 +589,7 @@ function App() {
               className={`header-tab-btn ${activeTab === 'chat' && !session.activeFile ? 'active' : ''}`}
               onClick={() => {
                 setActiveTab('chat')
-                setSession((c) => ({ ...c, activeFile: undefined }))
+                updateSession((c) => ({ ...c, activeFile: undefined }))
               }}
             >
               💬 对话
@@ -879,7 +933,7 @@ function App() {
             title="关闭侧栏"
             onClick={() => {
               setActiveTab('chat')
-              setSession((current) => ({ ...current, activeFile: undefined }))
+              updateSession((current) => ({ ...current, activeFile: undefined }))
             }}
           >
             ✕
@@ -983,6 +1037,49 @@ function App() {
                   )}
                 </div>
               )}
+
+              <div className="panel-section" aria-label="附件上传">
+                <h2>附件上传</h2>
+                <label>
+                  选择文件：
+                  <input
+                    type="file"
+                    className="panel-input"
+                    aria-label="选择附件文件"
+                    data-testid="upload-file-input"
+                    onChange={(e) => { setUploadPick(e.target.files?.[0] ?? null); setUploadTargetPath(''); setUploadPickError(undefined) }}
+                  />
+                </label>
+                <label>
+                  写入路径：
+                  <input
+                    className="panel-input"
+                    aria-label="附件写入路径"
+                    data-testid="upload-target-path"
+                    value={uploadTargetPath}
+                    placeholder={uploadPick?.name ?? 'workspace 内的相对路径'}
+                    onChange={(e) => setUploadTargetPath(e.target.value)}
+                  />
+                </label>
+                <button
+                  type="button"
+                  data-testid="upload-submit"
+                  onClick={startUpload}
+                  disabled={!uploadPick || (session.upload !== undefined && !['done', 'failed', 'cancelled'].includes(session.upload.status))}
+                >
+                  上传附件
+                </button>
+                {session.upload && !['done', 'failed', 'cancelled'].includes(session.upload.status) && (
+                  <button type="button" data-testid="upload-cancel" onClick={cancelUpload}>取消上传</button>
+                )}
+                {uploadPickError && <p role="alert">{uploadPickError}</p>}
+                {session.upload && (
+                  <>
+                    <p role="status" data-testid="upload-status">{describeUpload(session.upload)}</p>
+                    {session.upload.error && <p role="alert">上传失败：{session.upload.error}</p>}
+                  </>
+                )}
+              </div>
 
               {session.fileLoading && <p role="status">正在读取文件…</p>}
               {session.fileError && <p role="alert">文件读取失败：{session.fileError}</p>}
