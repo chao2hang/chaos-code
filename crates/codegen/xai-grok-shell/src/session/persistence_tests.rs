@@ -86,6 +86,7 @@ fn test_actor_with_sampler(
             last_usage_live: None,
             last_usage_turn: None,
             last_incoming_turn: None,
+            pending_auto_title: None,
         }
         .run(),
     );
@@ -1927,6 +1928,271 @@ async fn reset_title_to_auto_adopts_in_flight_generation_as_auto() {
         !on_disk.title_is_manual,
         "in-flight adopt after unpin must stay auto"
     );
+    actor.stop().await;
+}
+
+/// Reads the summary the actor's storage writes, as the shipped type.
+fn read_summary(path: &std::path::Path) -> crate::session::persistence::Summary {
+    serde_json::from_slice(&std::fs::read(path).unwrap())
+        .expect("summary.json must parse as the shipped Summary")
+}
+
+/// The ordering the in-flight test above cannot produce: the generated title reaches the actor
+/// while the pin is still on disk, `set_generated_title_if_absent` refuses it, and the unpin's blank
+/// lands afterwards. Nothing else re-offers a refused title, so this left the session with no title
+/// at all until some later turn regenerated one.
+///
+/// `GeneratedTitle` is sent directly because it is the message the generator's spawned task sends,
+/// and the unpin's blank is a storage write that does not go through this actor at all
+/// (`extensions::session_admin::reset_session_title_to_auto`). A test cannot order those two from
+/// outside; the actor's own queue is the only place where the ordering exists.
+#[tokio::test]
+async fn unpin_replays_the_auto_title_that_lost_the_race() {
+    const MANUAL: &str = "Pinned manual";
+    const STALE_AUTO: &str = "Title that lost the race";
+
+    let info = Info {
+        id: acp::SessionId::new("unpin-replays-held-title"),
+        cwd: "/test".into(),
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let storage = Arc::new(JsonlStorageAdapter::with_explicit_session_dir(
+        dir.path().to_path_buf(),
+    ));
+    storage
+        .init_session(&info, default_model_id())
+        .await
+        .unwrap();
+    storage
+        .update_session_title(&info, MANUAL.to_owned())
+        .await
+        .unwrap();
+
+    let actor = test_actor(info.clone(), storage.clone());
+    let summary_path = dir.path().join("summary.json");
+
+    actor
+        .handle
+        .tx
+        .send(PersistenceMsg::GeneratedTitle(STALE_AUTO.into()))
+        .unwrap();
+    flush_ack(&actor.handle).await.unwrap();
+    let after_reject = read_summary(&summary_path);
+    assert_eq!(
+        after_reject.display_title(),
+        MANUAL,
+        "a refused auto title must not reach disk while the pin stands"
+    );
+    assert!(
+        after_reject.title_is_manual,
+        "the refusal must not demote the manual pin"
+    );
+
+    assert!(storage.reset_title_to_auto(&info).await.unwrap());
+    let blank = read_summary(&summary_path);
+    assert!(
+        blank.display_title().trim().is_empty(),
+        "precondition for the lost update: the unpin must blank the title, got {:?}",
+        blank.display_title()
+    );
+
+    actor
+        .handle
+        .tx
+        .send(PersistenceMsg::ResetTitleToAuto)
+        .unwrap();
+    flush_ack(&actor.handle).await.unwrap();
+
+    let replayed = read_summary(&summary_path);
+    assert_eq!(
+        replayed.display_title(),
+        STALE_AUTO,
+        "the unpin left the session titleless; the refused auto title was never replayed"
+    );
+    assert!(
+        !replayed.title_is_manual,
+        "a replayed auto title is still an auto title, not a re-pin"
+    );
+    actor.stop().await;
+}
+
+/// The replay is bounded to the unpin. A refused auto title must not sneak in on some later
+/// message, or the manual `/rename` that beat it would silently lose.
+#[tokio::test]
+async fn rejected_auto_title_is_not_adopted_without_an_unpin() {
+    const MANUAL: &str = "Pinned manual";
+    const STALE_AUTO: &str = "Title that lost the race";
+
+    let info = Info {
+        id: acp::SessionId::new("held-title-waits-for-unpin"),
+        cwd: "/test".into(),
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let storage = Arc::new(JsonlStorageAdapter::with_explicit_session_dir(
+        dir.path().to_path_buf(),
+    ));
+    storage
+        .init_session(&info, default_model_id())
+        .await
+        .unwrap();
+    storage
+        .update_session_title(&info, MANUAL.to_owned())
+        .await
+        .unwrap();
+
+    let actor = test_actor(info.clone(), storage.clone());
+    let summary_path = dir.path().join("summary.json");
+
+    actor
+        .handle
+        .tx
+        .send(PersistenceMsg::GeneratedTitle(STALE_AUTO.into()))
+        .unwrap();
+    flush_ack(&actor.handle).await.unwrap();
+
+    for text in ["still pinned", "still pinned again"] {
+        actor
+            .handle
+            .tx
+            .send(PersistenceMsg::Update(neutral_update(&info, text)))
+            .unwrap();
+        flush_ack(&actor.handle).await.unwrap();
+        let on_disk = read_summary(&summary_path);
+        assert_eq!(
+            on_disk.display_title(),
+            MANUAL,
+            "the held title must not be adopted by an unrelated message ({text:?})"
+        );
+        assert!(on_disk.title_is_manual, "{text:?} must not demote the pin");
+    }
+    actor.stop().await;
+}
+
+/// The replayed title is provisional, not a freeze. The same unpin reopens the whole-conversation
+/// refresh (`SessionCommand::TitleRenamed { manual: false }`), which lands as `RegenerateTitle` and
+/// is not gated on an empty title, so an early title cannot pin itself in place.
+#[tokio::test]
+async fn replayed_held_title_is_overwritten_by_the_refresh_it_reopens() {
+    const MANUAL: &str = "Pinned manual";
+    const STALE_AUTO: &str = "Title that lost the race";
+    const REFRESHED: &str = "Title from the whole conversation";
+
+    let info = Info {
+        id: acp::SessionId::new("held-title-then-refresh"),
+        cwd: "/test".into(),
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let storage = Arc::new(JsonlStorageAdapter::with_explicit_session_dir(
+        dir.path().to_path_buf(),
+    ));
+    storage
+        .init_session(&info, default_model_id())
+        .await
+        .unwrap();
+    storage
+        .update_session_title(&info, MANUAL.to_owned())
+        .await
+        .unwrap();
+
+    let actor = test_actor(info.clone(), storage.clone());
+    let summary_path = dir.path().join("summary.json");
+
+    actor
+        .handle
+        .tx
+        .send(PersistenceMsg::GeneratedTitle(STALE_AUTO.into()))
+        .unwrap();
+    flush_ack(&actor.handle).await.unwrap();
+    assert!(storage.reset_title_to_auto(&info).await.unwrap());
+    actor
+        .handle
+        .tx
+        .send(PersistenceMsg::ResetTitleToAuto)
+        .unwrap();
+    flush_ack(&actor.handle).await.unwrap();
+    assert_eq!(read_summary(&summary_path).display_title(), STALE_AUTO);
+
+    actor
+        .handle
+        .tx
+        .send(PersistenceMsg::RegenerateTitle(REFRESHED.into()))
+        .unwrap();
+    flush_ack(&actor.handle).await.unwrap();
+
+    let on_disk = read_summary(&summary_path);
+    assert_eq!(
+        on_disk.display_title(),
+        REFRESHED,
+        "the replayed title must stay replaceable by the refresh the unpin reopens"
+    );
+    assert!(!on_disk.title_is_manual);
+    actor.stop().await;
+}
+
+/// The hold is spent by the replay. A later unpin that nothing raced must not resurrect a title from
+/// an earlier generation; the whole-conversation refresh that the unpin reopens is what titles the
+/// session in that case.
+#[tokio::test]
+async fn a_spent_held_title_is_not_replayed_by_a_later_unpin() {
+    const MANUAL_ONE: &str = "Pinned first";
+    const MANUAL_TWO: &str = "Pinned again";
+    const STALE_AUTO: &str = "Title that lost the first race";
+
+    let info = Info {
+        id: acp::SessionId::new("unpin-replays-held-title-once"),
+        cwd: "/test".into(),
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let storage = Arc::new(JsonlStorageAdapter::with_explicit_session_dir(
+        dir.path().to_path_buf(),
+    ));
+    storage
+        .init_session(&info, default_model_id())
+        .await
+        .unwrap();
+    let summary_path = dir.path().join("summary.json");
+
+    let actor = test_actor(info.clone(), storage.clone());
+
+    storage
+        .update_session_title(&info, MANUAL_ONE.to_owned())
+        .await
+        .unwrap();
+    actor
+        .handle
+        .tx
+        .send(PersistenceMsg::GeneratedTitle(STALE_AUTO.into()))
+        .unwrap();
+    flush_ack(&actor.handle).await.unwrap();
+    assert!(storage.reset_title_to_auto(&info).await.unwrap());
+    actor
+        .handle
+        .tx
+        .send(PersistenceMsg::ResetTitleToAuto)
+        .unwrap();
+    flush_ack(&actor.handle).await.unwrap();
+    assert_eq!(read_summary(&summary_path).display_title(), STALE_AUTO);
+
+    // Re-pin, then unpin with nothing in flight this time.
+    storage
+        .update_session_title(&info, MANUAL_TWO.to_owned())
+        .await
+        .unwrap();
+    assert!(storage.reset_title_to_auto(&info).await.unwrap());
+    actor
+        .handle
+        .tx
+        .send(PersistenceMsg::ResetTitleToAuto)
+        .unwrap();
+    flush_ack(&actor.handle).await.unwrap();
+
+    let on_disk = read_summary(&summary_path);
+    assert!(
+        on_disk.display_title().trim().is_empty(),
+        "a consumed hold must not resurface as the title of a later unpin, got {:?}",
+        on_disk.display_title()
+    );
+    assert!(!on_disk.title_is_manual);
     actor.stop().await;
 }
 

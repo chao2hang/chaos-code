@@ -2,6 +2,52 @@
 
 ## Unreleased
 
+### 修复：取消置顶不再把会话留在没有标题的状态，被置顶拒绝的自动标题现在由 actor 重放
+
+`/rename --auto` 与自动标题是两条互不知情的写路径。自动标题由 `session/summary.rs` 在第一个 content chunk
+上 `tokio::spawn` 的任务产出，回到 actor 变成 `GeneratedTitle`，由 `set_generated_title_if_absent` 落盘：
+它只在没有标题时写，而这正是手动 `/rename` 不被慢一步的 LLM 标题覆盖的原因。取消置顶走的是另一条，
+`extensions/session_admin.rs::reset_session_title_to_auto` 自己调 `storage.reset_title_to_auto` 把
+`generated_title` 与 `session_summary` 清空，之后才把 `ResetTitleToAuto` 排进 actor 队列。两者之间没有任何
+顺序：空白先落盘，标题正常采纳；标题先落到还压着置顶的盘上就被拒，紧接着盘被清空，而这个标题再没有人重新递
+一次。
+
+之前维持这条不变式的是调用方的自觉：resident 会话补发 `TitleRenamed { manual: false }`、休眠会话把
+`title_refresh_idx` 写回 0，两条都重开整会话重命名，于是「总会有一个标题」；`SummaryGenerator::reset` 把状
+态退回 `Idle`，让下一条 chunk 能重试。代价同样明确：重命名要等下一次 prompt，所以空窗期是产品行为，不是竞
+态窗口。
+
+改法是把顺序放回唯一看得见它的地方：actor 同时收到「被拒」与「重置」两个事实，于是它把被拒的标题留住
+（`pending_auto_title`），在处理 `ResetTitleToAuto` 时重放（`replay_held_auto_title`）——用同一个
+`set_generated_title_if_absent` 递进去，成功后走同一个 `announce_adopted_title`，客户端、远端缓存与
+registry 看到的就是一次普通的自动标题采纳。一条留住的标题只重放一次（`take()`）。两个采纳分支不清这个字
+段，因为那里清不到：被拒之后只有盘被清空才可能写成功，而清空就是那次重置，已经把它取走了。
+
+这一条不是上一轮记录的顾虑「接受晚到的自动标题等于把标题永久冻在第 1 轮」，而且这点是被执行验证的：触发重
+放的同一次取消置顶也会把重命名水位归零（`on_title_renamed(false)` 写 `next_title_refresh_idx = 0`），下一
+次 prompt 因此跑整会话重命名并送出 `RegenerateTitle`；那条路径落到 `regenerate_generated_title`，它覆盖自
+动标题并且不要求标题为空，所以留住的标题天然是临时的。
+
+四条新测试都在 `session::persistence::durable_update_tests`，驱动的是真实 actor。`GeneratedTitle` 在测试里
+是直接发的，而不是让真实 sampler 产出，因为取消置顶那次清空根本不经过 actor：两种顺序只有在 actor 自己的队
+列里才可能被强制出来，而强制顺序正是「测代码」与「测调度器」的分界。
+`cargo test -p xai-grok-shell --lib session::persistence` 是 `140 passed; 0 failed`。三个变异逐个注入、逐
+个还原并逐字节校验，基线与还原后都是 42 passed：MG 删掉重放调用，红 3 条；MH 在被拒当场直接
+`update_session_title` 写盘而不是留住，红 2 条，其中一条正是
+`rejected_auto_title_is_not_adopted_without_an_unpin`；MI 把重放改成 `clone()`（留住的标题永不花掉），只
+被 `a_spent_held_title_is_not_replayed_by_a_later_unpin` 抓住。四条测试各自至少抓住一个变异。
+
+边界：休眠会话没有 actor，也就没有留得住的标题，但它同样没有在飞的生成，因此没有可丢的更新，它的标题来自
+`title_refresh_idx = 0` 水位在下次 resume 时生效，这条改动不覆盖也不声称覆盖那条路径。「取消置顶之后没有标
+题落盘」目前仍只有测试断言，没有指标：在留空分支上打 `warn` 会在正常的取消置顶上响，那种情况本来就没有标题
+在竞逐、标题由重命名提供，是噪音不是信号。清空标题的那次写入仍然不经过 actor；把每一条标题写入都收进
+`PersistenceMsg` 是更大的改动，这次做的是让顺序不再必要，而不是让它不可能。
+
+（2026-10-03；`crates/codegen/xai-grok-shell/src/session/persistence.rs`、
+`crates/codegen/xai-grok-shell/src/session/persistence_tests.rs`、
+`crates/codegen/xai-grok-shell/src/extensions/session_admin.rs`、
+`docs/verification/title-unpin-held-auto-title-2026-10-03.log`）
+
 ### 修复：模型写出的「没有驱动器的绝对路径」不再掉到驱动器根，第三条缺陷与全部结论改由 Windows 二进制打印
 
 `resolve_model_path` 是模型给的路径通往权限判定与文件读写的同一个漏斗：Read、Write、Edit、search_replace、

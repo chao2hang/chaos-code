@@ -1,0 +1,139 @@
+# Unpin left the session with no title: the lost update between a generated title and the blank
+
+Date: 2026-10-03. Host: Linux, no Windows or macOS involved. Crate: `xai-grok-shell`.
+Row closed: `TODO.md`, "GeneratedTitle 与取消置顶之间的盘级 lost-update 仍靠调用方各自兜".
+
+== 1. Two writers, no shared order
+
+An auto title and an unpin both write the session title, and they do it from different places:
+
+- The title. `SummaryGenerator::update` (`session/summary.rs`) spawns a task on the first content
+  chunk; that task calls the sampler and sends `PersistenceMsg::GeneratedTitle` back. The actor writes
+  it with `set_generated_title_if_absent`, which refuses when a title is already present. The refusal is
+  the point: a manual `/rename` must never be clobbered by a slower LLM title.
+- The unpin. `extensions/session_admin.rs::reset_session_title_to_auto` calls
+  `storage.reset_title_to_auto(&info)` itself, blanking `generated_title` and `session_summary` so that
+  `display_title()` is empty, and only afterwards enqueues `PersistenceMsg::ResetTitleToAuto` (which
+  resets the generator and clears the remote cache).
+
+Nothing orders those two writes. The blank is a direct storage call from the extension; the title is a
+message in the actor's queue. Both interleavings are reachable:
+
+      blank lands first    GeneratedTitle arrives against a blank title -> adopted. Fine.
+      title lands first    GeneratedTitle arrives while the pin is still on disk -> refused,
+                           then the blank lands, and nothing offers that title again.
+
+The second row is the defect. From the outside the symptom is a session that was unpinned and stayed
+untitled until some later turn regenerated a title.
+
+== 2. What was holding the invariant up before
+
+Only the caller. `reset_session_title_to_auto` compensates in two branches: a resident session gets
+`SessionCommand::TitleRenamed { manual: false }`, a dormant one gets `title_refresh_idx` written back to
+0. Both reopen the whole-conversation refresh, so a title eventually arrives. `SummaryGenerator::reset`
+returns the generator to `Idle` so a later `ContentChunk` can retry.
+
+That is discipline, not a guarantee. It also has a cost that is easy to miss: the refresh has to wait
+for the next prompt, so the blank window is a property of the product, not of the race.
+
+== 3. The fix
+
+The actor already sees both facts, the rejection and the reset, in its own queue. So it holds the
+refused title and replays it at the reset (`session/persistence.rs`):
+
+      PersistenceMsg::GeneratedTitle(title) => ...
+          Ok(false) => {
+              // Held for the unpin path, which is the only thing that can order
+              // this rejection against the write that blanks the title.
+              self.pending_auto_title = Some(title);
+
+      PersistenceMsg::ResetTitleToAuto => {
+          self.summary.reset();
+          if let Some(sync) = &self.remote_sync {
+              sync.clear_title();
+          }
+          self.replay_held_auto_title().await;
+      }
+
+`replay_held_auto_title` takes the held title (so one rejection is replayed at most once), offers it
+through the same `set_generated_title_if_absent`, and announces it through the same
+`announce_adopted_title` an adoption uses, so the client, the remote cache and the registry see it
+exactly as they would see any adopted auto title. `Ok(false)` there is still possible and still means a
+title is present; it is logged at debug, not written.
+
+There is one writer of the field and one consumer of it. The adoption arms do not clear it, because
+clearing there is unreachable: a rejection can only be followed by a successful if-absent write after a
+blank, and the blank is the reset, which already consumed the hold.
+
+== 4. Why this is not the freeze that the row was afraid of
+
+The earlier row declined to accept late auto titles on the grounds that it would pin the title at the
+first turn. That objection holds for an unconditional accept; it does not hold here, and it was checked
+rather than argued.
+
+The same unpin that triggers the replay also resets the refresh watermark:
+`on_title_renamed(false)` sets `next_title_refresh_idx` to 0 and persists it
+(`acp_session_impl/title_refresh.rs`). The next prompt therefore runs the whole-conversation refresh,
+which sends `PersistenceMsg::RegenerateTitle` (line 114 of the same file). `RegenerateTitle` goes to
+`regenerate_generated_title`, which overwrites an auto title and is not gated on the title being empty.
+The replayed title is provisional by construction, and
+`replayed_held_title_is_overwritten_by_the_refresh_it_reopens` asserts exactly that on the shipped
+actor: replay the held title, then send `RegenerateTitle`, then read `summary.json` and require the
+refreshed title on disk with `title_is_manual == false`.
+
+== 5. The four tests, and which mutation each one catches
+
+All four are in `session::persistence::durable_update_tests` and drive the shipped actor through the
+messages production sends. `GeneratedTitle` is sent directly rather than produced by a live sampler
+because the unpin's blank does not go through the actor at all: the actor's own queue is the only place
+where the two orderings can be forced, and forcing them is the difference between testing the ordering
+and testing the scheduler.
+
+    $ cargo test -p xai-grok-shell --lib session::persistence
+    test result: ok. 140 passed; 0 failed; 1 ignored; 0 measured; 6752 filtered out
+
+      test                                            caught
+      unpin_replays_the_auto_title_that_lost_the_race MG, MH
+      rejected_auto_title_is_not_adopted_without_an_unpin  MH
+      replayed_held_title_is_overwritten_by_the_refresh_it_reopens  MG
+      a_spent_held_title_is_not_replayed_by_a_later_unpin  MG, MI
+
+Every test catches at least one mutation, which is the check that none of them is a description of the
+code rather than a constraint on it.
+
+== 6. The mutation batch
+
+      MG drop `self.replay_held_auto_title().await;` from the reset handler
+         RED, 3 failed: the replay test, the refresh test, the spent-hold test
+      MH write the refused title at rejection time (`update_session_title`) instead of holding it
+         RED, 2 failed: rejected_auto_title_is_not_adopted_without_an_unpin and the replay test
+      MI replay with `clone()` instead of `take()`, so the hold is never spent
+         RED, 1 failed: a_spent_held_title_is_not_replayed_by_a_later_unpin
+
+MH is the one that decides whether `rejected_auto_title_is_not_adopted_without_an_unpin` is a guard or a
+comment: it is the only test besides the replay test that notices an auto title overwriting a manual
+pin. MI is caught by exactly one test, which is why the spent-hold test exists.
+
+    baseline: exit=0, 42 passed; 0 failed
+    restored byte-identically: True
+    final run after restore: exit=0, 42 passed; 0 failed
+
+Each mutation is applied by writing the file and reverted by copying the saved pristine bytes back, and
+the last comparison is a byte comparison rather than a re-read of the file.
+
+== 7. Boundaries of what was closed
+
+- A dormant session has no actor, so nothing can hold a title for it. It also has no in-flight
+  generation for the same reason, so there is no lost update to lose; its title comes from the
+  `title_refresh_idx = 0` watermark on the next resume. This change does not reach that path and does not
+  claim to.
+- The replay can only run where a `PersistenceMsg` can be delivered. `reset_session_title_to_auto`
+  enqueues it when `resident_handle` returns a handle, which requires a hosted presence
+  (`agent/mvp_agent/session_registry.rs:353`), and a hosted presence is the same condition under which a
+  hold can exist at all. The dormant branch therefore has no hold to replay, not a hold it forgot about.
+- There is still no metric or warning for "an unpin finished with no title available". A `warn` on the
+  empty-hold branch would fire on the ordinary unpin, where no title raced and the refresh will supply
+  the title, so it would be noise rather than a signal. The invariant now lives in the test suite.
+- The write that blanks the title still does not go through the actor. Moving it would be the larger
+  change (every title write routed through `PersistenceMsg`), and the replay makes the ordering
+  unnecessary rather than making it impossible.

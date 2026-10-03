@@ -1324,6 +1324,11 @@ struct SessionPersistence {
     last_usage_live: Option<crate::session::usage_file::UsageSummary>,
     last_usage_turn: Option<u32>,
     last_incoming_turn: Option<u32>,
+    /// The last auto title storage refused because a title was already present.
+    /// An unpin blanks the title through `extensions::session_admin`, not through this actor,
+    /// so the rejection and the blank are unordered and only this actor can pair them up.
+    /// Replayed by [`Self::replay_held_auto_title`].
+    pending_auto_title: Option<String>,
 }
 
 impl SessionPersistence {
@@ -1723,6 +1728,43 @@ impl SessionPersistence {
 
     /// Announce a newly adopted auto title (first generation or refresh) to the client, remote store, and session registry.
     /// Called only after the title actually landed on disk, so a title rejected for racing a manual `/rename` is never announced.
+    /// Adopt the auto title that an earlier `GeneratedTitle` could not write, once an unpin has
+    /// removed the title that blocked it.
+    ///
+    /// `/rename --auto` blanks the title through `extensions::session_admin`, which writes straight
+    /// to storage and only then enqueues `ResetTitleToAuto`. A title generated while the pin was
+    /// still on disk is therefore rejected by `set_generated_title_if_absent`, and the blank lands
+    /// afterwards, so nothing re-offers it: the session keeps no title until some later turn
+    /// regenerates one. Replaying here is what makes "an unpin leaves a title on disk" a property of
+    /// this path rather than of each caller remembering to compensate.
+    ///
+    /// The held title is provisional by design. The retitle that the same unpin reopens
+    /// (`SessionCommand::TitleRenamed { manual: false }`) overwrites it through `RegenerateTitle`,
+    /// which is not gated on an empty title, so the fold cannot pin an early title in place.
+    async fn replay_held_auto_title(&mut self) {
+        let Some(title) = self.pending_auto_title.take() else {
+            return;
+        };
+        match self
+            .storage
+            .set_generated_title_if_absent(&self.info, title.clone())
+            .await
+        {
+            Ok(true) => {
+                tracing::debug!("replayed an auto title that had lost the race to a manual pin");
+                self.announce_adopted_title(title);
+            }
+            Ok(false) => {
+                tracing::debug!(
+                    "held auto title still blocked; a title is present after the reset"
+                );
+            }
+            Err(e) => {
+                tracing::warn!(?e, "failed to replay held auto title after title reset");
+            }
+        }
+    }
+
     fn announce_adopted_title(&self, title: String) {
         crate::session::summary::notify_client(&self.gateway, &self.info, &title);
         if let Some(sync) = &self.remote_sync {
@@ -2023,6 +2065,9 @@ impl SessionPersistence {
                     {
                         Ok(true) => self.announce_adopted_title(title),
                         Ok(false) => {
+                            // Held for the unpin path, which is the only thing that can order
+                            // this rejection against the write that blanks the title.
+                            self.pending_auto_title = Some(title);
                             tracing::debug!(
                                 "skipped auto-generated title; session already has a title"
                             );
@@ -2063,6 +2108,7 @@ impl SessionPersistence {
                     if let Some(sync) = &self.remote_sync {
                         sync.clear_title();
                     }
+                    self.replay_held_auto_title().await;
                 }
                 PersistenceMsg::LastTurnSummary(summary) => {
                     if let Err(e) = self
@@ -2579,6 +2625,7 @@ pub(crate) async fn new(
             last_usage_live: None,
             last_usage_turn: None,
             last_incoming_turn: None,
+            pending_auto_title: None,
         };
         persistence.run().await;
     });
@@ -2658,6 +2705,7 @@ pub(crate) async fn new_with_explicit_dir(
             last_usage_live: None,
             last_usage_turn: None,
             last_incoming_turn: None,
+            pending_auto_title: None,
         };
         persistence.run().await;
     });
@@ -2789,6 +2837,7 @@ pub(crate) async fn load_light(
             last_usage_live: None,
             last_usage_turn: None,
             last_incoming_turn: None,
+            pending_auto_title: None,
         };
         persistence.run().await;
     });
