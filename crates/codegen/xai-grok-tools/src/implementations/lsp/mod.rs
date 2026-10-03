@@ -29,7 +29,7 @@ pub use types::{
 
 // ── Shared types used across submodules ─────────────────────────────────
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use async_lsp::lsp_types::{Position, TextDocumentIdentifier, TextDocumentPositionParams, Url};
@@ -62,6 +62,18 @@ pub type LspMainLoop = async_lsp::MainLoop<async_lsp::router::Router<()>>;
 
 pub fn file_uri(path: &Path) -> Result<Url, LspError> {
     Url::from_file_path(path).map_err(|_| LspError::InvalidPath)
+}
+
+/// The path a `file:` URI names, the inverse of [`file_uri`].
+///
+/// Removing the `file://` prefix by hand is not the same operation and was a
+/// bug: on Windows a document URI is `file:///C:/dir/file.ts`, so what is left
+/// after the prefix is `/C:/dir/file.ts`, which the OS resolves under the root
+/// of the current drive rather than where the document is; and on every platform
+/// the percent escapes in a name like `a b.ts` survive as `%20`. Anything that
+/// turns a stored URI back into a path has to decode it.
+pub fn path_for_file_uri(uri: &str) -> Option<PathBuf> {
+    Url::parse(uri).ok()?.to_file_path().ok()
 }
 
 pub fn text_document_position(

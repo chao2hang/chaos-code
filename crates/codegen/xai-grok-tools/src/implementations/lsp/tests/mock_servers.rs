@@ -504,9 +504,32 @@ while True:
 
 /// `read_message` / `send_message` / `publish` — the same for every mock.
 const MOCK_PREAMBLE: &str = r#"
-import json, sys
+import json, os, sys
+from urllib.parse import urlparse
+from urllib.request import url2pathname
 
 state = {"saves": 0, "pulls": 0}
+
+def local_path(uri):
+    # Decoded, never sliced. A Windows document URI is file:///C:/dir/file, and
+    # cutting off "file://" leaves /C:/dir/file, which Python opens under the
+    # root of the current drive; a sliced Unix URI also keeps its %20.
+    return url2pathname(urlparse(uri).path)
+
+def touch_beside(uri, name):
+    # Signals a test through the filesystem: the marker lands next to the
+    # document the message is about. Dying here rather than carrying on is about
+    # what the mock claims, not about the error message: a mock that could not
+    # locate its document must not go on answering for it. Measured on 2026-10-04,
+    # this stderr line is not what a failing run shows -- ServerStderr only quotes
+    # the tail when a startup fails -- so the test's own wait is what reports it.
+    directory = os.path.dirname(local_path(uri))
+    try:
+        open(os.path.join(directory, name), 'w').close()
+    except OSError as failure:
+        sys.stderr.write("cannot write marker %s beside %s: %s\n" % (name, directory, failure))
+        sys.stderr.flush()
+        raise
 
 def read_message():
     headers = {}
@@ -754,7 +777,7 @@ pub(super) fn write_slow_pull_server() -> (tempfile::TempDir, PathBuf) {
     write_python_server(
         "slow_pull_lsp.py",
         r#"
-import os, time
+import time
 
 state["revisions"] = 0
 
@@ -765,8 +788,7 @@ def handle(msg, method):
         state["pulls"] += 1
         asked_about = state["revisions"]
         if state["pulls"] == 1:
-            path = msg["params"]["textDocument"]["uri"][len("file://"):]
-            open(os.path.join(os.path.dirname(path), "first-pull-started"), "w").close()
+            touch_beside(msg["params"]["textDocument"]["uri"], "first-pull-started")
         time.sleep(0.3)
         reply(msg, {
             "kind": "full",
@@ -802,7 +824,7 @@ pub(super) fn write_stale_clean_pull_server() -> (tempfile::TempDir, PathBuf) {
     write_python_server(
         "stale_clean_pull_lsp.py",
         r#"
-import os, time
+import time
 
 def handle(msg, method):
     if method == "textDocument/diagnostic":
@@ -812,8 +834,7 @@ def handle(msg, method):
             reply(msg, {"kind": "full", "resultId": "r1",
                         "items": one_diagnostic("the problem")})
         elif state["pulls"] == 2:
-            path = msg["params"]["textDocument"]["uri"][len("file://"):]
-            open(os.path.join(os.path.dirname(path), "second-pull-started"), "w").close()
+            touch_beside(msg["params"]["textDocument"]["uri"], "second-pull-started")
             time.sleep(0.3)
             reply(msg, {"kind": "full", "resultId": "clean", "items": []})
         elif previous == "clean":

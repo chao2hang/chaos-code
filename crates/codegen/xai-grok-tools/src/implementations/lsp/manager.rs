@@ -83,7 +83,13 @@ impl CollectedDiagnostics {
             return;
         }
 
-        let display_path = uri.strip_prefix("file://").unwrap_or(uri); // Unix-only
+        // The header is the only place a reader learns which file these
+        // diagnostics belong to, so it has to name a real path: slicing the
+        // scheme off here left `/C:/dir/file.ts` on Windows and `%20` in any
+        // name that needed escaping.
+        let display_path = super::path_for_file_uri(uri)
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| uri.to_owned());
         self.lines.push(format!("{display_path}:"));
         self.file_count += 1;
         self.shown += showing.len();
@@ -795,5 +801,37 @@ mod tests {
         collected.append_file("file:///a.cs", errors(3));
         assert_eq!(collected.trimmed_note(), None);
         assert_eq!(collected.file_count, 1);
+    }
+
+    /// The header is read by a person who then has to open that file, so it has
+    /// to be a path and not a URI with its scheme hacked off. The escaped space
+    /// survives slicing on every platform; on Windows the leftover leading `/`
+    /// also turned `C:\dir\a.cs` into `/C:/dir/a.cs`, which resolves under the
+    /// root of whatever drive is current.
+    #[test]
+    fn a_header_decodes_the_uri_instead_of_cutting_the_scheme_off() {
+        let mut collected = CollectedDiagnostics::default();
+        collected.append_file("file:///dir/a%20b.cs", errors(1));
+
+        let header = collected.lines[0].trim_end_matches(':');
+        assert!(
+            !header.contains("%20"),
+            "the reader was handed the escaped form: {header}"
+        );
+        // Checked as a suffix in this host's separator, so the assertion says
+        // "a native path to this file" without pinning how a scheme-less
+        // `file:///dir/` looks on each platform.
+        let sep = std::path::MAIN_SEPARATOR;
+        assert!(
+            header.ends_with(&format!("{sep}dir{sep}a b.cs")),
+            "{header} is not a path a reader can open"
+        );
+        assert_eq!(
+            std::path::Path::new(header)
+                .file_name()
+                .and_then(|n| n.to_str()),
+            Some("a b.cs"),
+            "{header} does not name the file these diagnostics are about"
+        );
     }
 }

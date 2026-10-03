@@ -314,12 +314,17 @@ async fn an_answer_about_the_previous_revision_does_not_settle_the_new_one() {
     let (_dir, script_path) = write_slow_pull_server();
     let (workspace, mut client) = start_client_with(&script_path).await;
 
-    let file = workspace.path().join("test.ts");
+    // The directory is part of the test: the mock writes its marker next to the
+    // document, so a name that has to be escaped in the URI is only reachable if
+    // the mock decoded the URI instead of cutting the scheme off.
+    let nested = workspace.path().join("a dir");
+    std::fs::create_dir(&nested).unwrap();
+    let file = nested.join("test.ts");
     std::fs::write(&file, "let x = 1;\n").unwrap();
     client.notify_file_change(&file, "let x = 1;\n", "typescript");
 
     // Edit again while the server is working on the first pull.
-    let marker = workspace.path().join(FIRST_PULL_MARKER);
+    let marker = nested.join(FIRST_PULL_MARKER);
     wait_until("the server to start its first pull", || marker.exists()).await;
     let second_edit = client
         .notify_file_change(&file, "let x = 2;\n", "typescript")
@@ -2177,6 +2182,74 @@ async fn e2e_restart_replay_requeues_pending_diagnostics() {
     assert_eq!(summary.file_count, 1);
 
     mgr.lock().await.shutdown().await;
+}
+
+/// A stored URI is decoded before it is opened, not sliced.
+///
+/// `replay_tracked_documents` used to remove the `file://` prefix by hand and
+/// read the remainder. Every URI it is handed came out of `file_uri`, so a name
+/// containing a space came back with `%20` still in it and the read failed; on
+/// Windows a document URI is `file:///C:/dir/file.ts`, so what remained was
+/// `/C:/dir/file.ts`, which names a path under the current drive's root. Both
+/// failures land in the same `?`, so the document was skipped and a restarted
+/// server was told about none of the files it had been serving. The 2026-10-04
+/// Windows leg caught this there; a space in the name reproduces it here.
+#[tokio::test(flavor = "current_thread")]
+async fn a_replayed_document_whose_name_needs_escaping_reaches_the_new_server() {
+    let (_dir, script_path) = write_pull_diagnostics_server();
+    let (workspace, mut client) = start_client_with(&script_path).await;
+
+    let file = workspace.path().join("a b.ts");
+    std::fs::write(&file, "let x = 1;\n").unwrap();
+    client.notify_file_change(&file, "let x = 1;\n", "typescript");
+
+    let tracked = client.tracked_documents();
+    assert_eq!(tracked.len(), 1, "{tracked:?}");
+    assert!(
+        tracked[0].0.contains("%20"),
+        "the document has to be stored under an escaped URI or this tests nothing: {}",
+        tracked[0].0
+    );
+
+    let replayed = super::restart::replay_tracked_documents(&mut client, &tracked);
+    assert_eq!(
+        replayed.len(),
+        1,
+        "the replay skipped a document whose URI had to be decoded"
+    );
+    assert_eq!(
+        replayed[0].0,
+        file_uri(&file).expect("an absolute path makes a URI")
+    );
+
+    client.shutdown().await;
+}
+
+/// `file_uri` and `path_for_file_uri` are one round trip, on every platform.
+///
+/// The cases are built from a real path on the host, so on Windows this is the
+/// drive-letter case: `file_uri` yields `file:///C:/…` and hand-stripping the
+/// scheme returns `/C:/…`, which is not the path that went in. That is why there
+/// is no separately platform-gated Windows case here — a gated test only runs on
+/// the platform it names, whereas this one already fails there.
+#[test]
+fn a_file_uri_decodes_back_to_the_path_it_was_made_from() {
+    let dir = tempfile::tempdir().unwrap();
+    for name in [
+        "plain.ts",
+        "a space.ts",
+        "hash#tag.ts",
+        "unicode ünïcode.ts",
+    ] {
+        let path = dir.path().join(name);
+        std::fs::write(&path, "x\n").unwrap();
+        let uri = file_uri(&path).expect("an absolute path makes a URI");
+        assert_eq!(
+            super::path_for_file_uri(uri.as_str()).as_deref(),
+            Some(path.as_path()),
+            "{name} did not survive its own URI"
+        );
+    }
 }
 
 /// Polls `try_wait` until the child is reaped or the budget expires; a live

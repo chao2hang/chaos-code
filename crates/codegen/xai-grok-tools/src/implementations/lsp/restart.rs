@@ -43,10 +43,13 @@ pub(super) fn replay_tracked_documents(
     tracked_docs
         .iter()
         .filter_map(|(uri_str, lang_id)| {
-            let path = uri_str
-                .strip_prefix("file://")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| PathBuf::from(uri_str));
+            // Decoded, not sliced. Hand-stripping `file://` was the bug: the
+            // URIs here were produced by `file_uri`, so on Windows the leftover
+            // `/C:/dir/file.ts` names nothing and a document with a space in its
+            // name still carried `%20`. Either way `read_to_string` failed, the
+            // `?` dropped the document, and a restarted server came back
+            // knowing nothing, silently, because skipping is legal here.
+            let path = super::path_for_file_uri(uri_str)?;
             let content = std::fs::read_to_string(&path).ok()?;
             let uri = file_uri(&path).ok()?;
             let version = restarted_client.notify_file_change(&path, &content, lang_id)?;
