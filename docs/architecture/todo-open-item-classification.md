@@ -31,9 +31,12 @@ inventory now reports 429 ignored attributes and 0 bare attributes, reconciled b
 owner/reviewer gate is due as of 2026-10-01, and these counts are inventory
 evidence, not the per-row decision. Recompute with
 `scripts/ci/classify-open-todos.py` after the next edit. The milestone group counts are M-1 1/5, M0 0/11, M1 0/16,
-M2 0/25, M3 5/12, M4 5/13, M5 9/16, and maintenance 2/17
-(unchecked/partial), summing to 137. Four unchecked rows were added on
-2026-10-03 and two of them closed in the passes that followed. `resolve_model_path`
+M2 0/25, M3 5/12, M4 5/13, M5 9/16, and maintenance 1/17
+(unchecked/partial), summing to 136. Four unchecked rows were added on
+2026-10-03 and two of them closed in the passes that followed; on 2026-10-04 the
+§8.2 Q4 maintenance-cycle row closed with a source-by-source review of every
+maintenance line (`docs/maintenance-line-review-2026-10-04.md`, evidence
+`docs/verification/maintenance-line-review-2026-10-04.log`). `resolve_model_path`
 folded a model path that looked absolute but carried no drive onto the current
 drive root, and the recovery branch for an omitted leading slash never ran on
 Windows at all; both now have a written product answer, a component-wise fix, and
@@ -78,15 +81,26 @@ distinct tokens -- `.chaos/config.toml`, `upstream/main`, `desktop/mobile` -- wh
 row objected to, and precision came from structure rather than exemptions: only `[text](target)`
 targets and code spans whose whole content is one path are scanned, a link inside a code span is a
 quoted mention, patterns are not paths, and a mention must start at a tracked top-level name while a
-link is exempt from that last test. Five references were genuinely broken and are fixed. The other
-46 dangling mentions are recorded with a category and a reason in
+link is exempt from that last test. Five references were genuinely broken and are fixed. The remaining dangling mentions (47 on
+2026-10-04, covered by 25 ledger rows) are recorded with a category and a reason in
 `scripts/ci/doc-path-refs-allowlist.tsv`, which the gate also proves still dangles. MT-5 Q4 owner/reviewer sign-off is due as of this snapshot and remains pending. The reproducible command is
 `python3 scripts/ci/classify-open-todos.py`, and
 `python3 scripts/ci/classify-open-todos.py --check-doc docs/architecture/todo-open-item-classification.md`
 is run by CI, so this table can no longer drift from `TODO.md` unnoticed; the
 row-level export behind this snapshot is committed at
-`docs/verification/todo-open-items-2026-10-03.tsv`, one
+`docs/verification/todo-open-items.tsv`, one
 `LINE<TAB>STATE<TAB>SECTION<TAB>TEXT` line per open row plus a trailing `TOTAL`.
+That export used to carry the date it was generated in its name, which meant it went stale
+the first time `TODO.md` was edited afterwards and no check noticed; it is now undated and
+`python3 scripts/ci/classify-open-todos.py --check-export`, also run by CI, fails if it
+ever stops matching `TODO.md`. Refresh it with
+`python3 scripts/ci/classify-open-todos.py --write-export`. Each exported line names the
+`TODO.md` line number it came from, so any prose edit above an open row shifts every row
+below it and makes the export wrong by that amount: regenerate it after the last
+`TODO.md` edit of a session, never before it. A `--check-export` pass ahead of the final
+edit says nothing about what gets committed -- seen on 2026-10-04, where the gate failed
+with "14 of 137 exported lines differ from TODO.md" right after dated review lines were
+added to the maintenance sections.
 Playwright runs `axe-core` checks
 on empty and populated real Web states and asserts there are no violations
 (including serious/critical) under WCAG 2.0/2.1 A/AA, WCAG 2.2 AA and
@@ -103,7 +117,7 @@ language review, screen-reader testing or platform acceptance.
 | M3 | 5 | 12 |
 | M4 | 5 | 13 |
 | M5 | 9 | 16 |
-| Maintenance items / §8 | 2 | 17 |
+| Maintenance items / §8 | 1 | 17 |
 
 ## Locally delivered in this audit pass
 

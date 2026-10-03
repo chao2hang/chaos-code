@@ -16,6 +16,15 @@ but the session that wrote it, and it rotted silently. Evidence that matters
 belongs under `docs/verification/` in the repository; evidence that was thrown
 away should say so instead of naming a path.
 
+The fifth pattern is the same failure in a shape nothing matched: a row that
+cites `{SCRATCH}/updater-progress-style-test.log`. The harness substitutes that
+placeholder when it renders a plan, so inside a plan it names a real directory;
+copied into a committed row it stays a template, and nobody can open it -- not a
+reader, and not the session that wrote it either once that session is over.
+Those four phrases at least point at a directory that existed once; this one
+never existed anywhere, which is why the product prompt that *defines* the
+spelling is exempt while a citation that uses it is not.
+
 Scope is prose: tracked `*.md` plus the generated `*.tsv` exports under
 `docs/verification/`. Captured command transcripts (`docs/verification/*.log`)
 are deliberately *not* scanned -- they quote the absolute scratch path of the
@@ -53,6 +62,10 @@ PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
         "plan working directory named as the place evidence lives",
         re.compile(r"\bplan scratch\b", re.IGNORECASE),
     ),
+    (
+        "unresolved plan placeholder cited as an evidence path",
+        re.compile(r"\{SCRATCH[A-Z_]*\}\s*/"),
+    ),
 )
 
 # Tracked documents allowed to contain a matched phrase, with the reason. An
@@ -62,6 +75,9 @@ EXEMPT: dict[str, str] = {
     "crates/codegen/xai-grok-shell/src/session/templates/goal_strategist_prompt.md":
         "ships to the model as product vocabulary: `{SCRATCH_ROOT}` is documented "
         "as the per-goal scratch root the agent is told to write into",
+    "crates/codegen/xai-grok-shell/src/session/templates/goal_planner_prompt.md":
+        "ships to the model as product vocabulary: it is the file that defines the "
+        "`{SCRATCH}/out.log` spelling the planner is told to write into plans",
 }
 
 SCAN_SUFFIXES = frozenset({".md", ".tsv"})

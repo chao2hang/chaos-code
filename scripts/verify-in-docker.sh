@@ -142,7 +142,7 @@ gates=(
   "ignored-test baseline: ${bootstrap}; python3 scripts/ci/test-ignored-tests.py && python3 scripts/ci/test-ignored-tests-baseline-fixture.py && python3 scripts/ci/test-ignored-tests-baseline.py && python3 scripts/ci/test-ignored-tests-reasons.py && python3 scripts/ci/ignored-tests.py --require-reasons && python3 scripts/ci/ignored-tests.py --check-baseline scripts/ci/ignored-tests-baseline.tsv"
   "brand/protocol guard: python3 scripts/ci/check-brand-protocol.py && python3 scripts/ci/test-brand-protocol.py"
   "protocol mirror coverage: python3 scripts/ci/test-check-protocol-mirror.py && python3 scripts/ci/check-protocol-mirror.py"
-  "TODO status doc: python3 scripts/ci/test-classify-open-todos.py && python3 scripts/ci/classify-open-todos.py --check-doc docs/architecture/todo-open-item-classification.md"
+  "TODO status doc: python3 scripts/ci/test-classify-open-todos.py && python3 scripts/ci/classify-open-todos.py --check-doc docs/architecture/todo-open-item-classification.md && python3 scripts/ci/classify-open-todos.py --check-export"
   "evidence paths in docs: python3 scripts/ci/test-check-evidence-paths.py && python3 scripts/ci/check-evidence-paths.py"
   "docs path references: python3 scripts/ci/test-check-doc-path-refs.py && python3 scripts/ci/check-doc-path-refs.py"
   "CI guard wiring: python3 scripts/ci/test-check-guard-wiring.py && python3 scripts/ci/check-guard-wiring.py"
@@ -169,6 +169,9 @@ gates=(
   # tier-2 targets installed would otherwise turn it into a Linux-only no-op.
   "load-bearing features: ${bootstrap}; rustup target add x86_64-pc-windows-msvc aarch64-apple-darwin && python3 scripts/ci/test-check-load-bearing-features.py && python3 scripts/ci/check-load-bearing-features.py"
   "version lockstep: bash scripts/ci/check-versions.sh && python3 scripts/ci/check-version-lockstep.py"
+  # The recon record is named by date + upstream tip, so a second same-day run used to
+  # overwrite the first; these fixtures drive the shipped script and pin that it cannot.
+  "upstream recon: python3 scripts/ci/test-upstream-recon.py"
   "installer guards: python3 scripts/ci/test-installer-asset-names.py && python3 scripts/ci/test-installer-bash-resolution.py && python3 scripts/ci/test-installer-signature-policy.py"
   "npm package guards: node --check crates/codegen/xai-grok-pager/npm/chaos/scripts/assemble-platform-packages.js && node --check crates/codegen/xai-grok-pager/npm/chaos/bin/postinstall.js && node --check crates/codegen/xai-grok-pager/npm/chaos/bin/chaos && bash scripts/ci/test-publish-npm.sh"
   "docs localization: ${bootstrap}; bash scripts/l10n-guard.sh && python3 scripts/check-doc-l10n.py --links && python3 scripts/check-doc-l10n.py --english"

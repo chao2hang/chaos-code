@@ -2,6 +2,83 @@
 
 ## Unreleased
 
+### 修复：重启后新服务器被通知的文件，是一个把协议头砍掉剩下的字符串
+
+`platform tests (windows-latest)` 上 `xai-grok-tools` 的三条失败（run 37141224569，3111
+passed / 3 failed）是本机复现不出来那一种，而三条名字都不指向真因：两条超时，第三条只报
+「marker 没出现」。
+
+产品侧的真因只有一行写法。`replay_tracked_documents` 把存下来的文档 URI 变回路径时用的是
+`strip_prefix("file://")`，而它拿到的每一条 URI 都由 `file_uri` 产出。于是 Windows 上
+`file:///C:/dir/file.ts` 变成 `/C:/dir/file.ts`，带前导斜杠的盘符会去当前盘的根下面找；
+任何平台上文件名里的空格都还留着 `%20`。`read_to_string` 失败，`?` 把文档丢掉，重启后的服务
+器被通知的文件数是零，而它之前正在服务这些文件。同一处写法也在
+`CollectedDiagnostics::append_file` 里造诊断摘要的表头，读摘要的人同样拿到
+`/C:/dir/file.ts` 或 `%20`——那是给人看、然后照着去打开文件的一行字。修法收成一处：
+
+          pub fn path_for_file_uri(uri: &str) -> Option<PathBuf> {
+              Url::parse(uri).ok()?.to_file_path().ok()
+          }
+
+第二个真因在夹具里：两个 Python mock 语言服务器各写了一遍 `uri[len("file://"):]`，再把就绪
+marker 写进那个结果的 `dirname`，marker 落在 workspace 外面，测试就只能等到超时。
+`MOCK_PREAMBLE` 现在提供 `local_path()`（`url2pathname(urlparse(uri).path)`）与
+`touch_beside()`；其中一条测试把自己的文档挪进一个名字需要转义的目录（`a dir/test.ts`），
+这个夹具 bug 于是在 Linux 上也会红，而不是等一台 Windows runner。
+
+变异矩阵，每次只改一处、只观察一条具名测试、改完 `cmp` 逐字节确认还原：
+
+          KILLED  W1 重启重放手砍 file://    a_replayed_document_whose_name_needs_escaping…
+          KILLED  W2 辅助函数手砍而非解析    a_file_uri_decodes_back_to_the_path_it_was_made_from
+          KILLED  W3 诊断表头砍掉协议头      a_header_decodes_the_uri_instead_of_cutting_the_scheme_off
+          KILLED  W4 mock 切片而非解码      an_answer_about_the_previous_revision_does_not_settle…
+
+W5（删掉 `touch_beside` 里 `except OSError` 的 `raise`）活了下来，那是一条惰性变异，不是测试
+的洞：URI 解码正确时那个分支根本不会走。真正该量的两条是 W4（切片 + raise）与 W5a（切片 +
+吞掉），两条都被杀，报同一句 `timed out waiting for the server to start its first pull`，而
+mock 的 stderr 那行在两种情况下都没有出现在测试输出里——`ServerStderr` 只在启动失败时才引用
+stderr 尾部。原注释写着「mock 会自己说清楚」是错的，已改成事实：mock 该死，是因为一个找不到
+自己文档的 mock 不该继续替它作答，而报告失败的一直是测试自己的等待。
+
+表头那条测试的第一版拿 `path_for_file_uri` 的输出去比表头，那是循环论证，改成三条互不依赖的
+断言（不含 `%20`、以 `MAIN_SEPARATOR` 拼出的路径结尾、`file_name()` 等于 `a b.cs`），W3 仍然
+被杀。这批测试的初版写成 `#[cfg(unix)]` / `#[cfg(windows)]`，把 `platform-gated-tests.py` 的
+点名数从 441 顶到 442、让它当场变红；预算只许降，于是三条全部改写成平台无关写法，Windows
+的盘符情形交给非门控的那一条在 Windows 上失败。
+
+本机：`cargo test -p xai-grok-tools --lib lsp::` → 128 passed / 0 failed / 2 ignored。
+（2026-10-04；`crates/codegen/xai-grok-tools/src/implementations/lsp/mod.rs`、
+`crates/codegen/xai-grok-tools/src/implementations/lsp/restart.rs`、
+`crates/codegen/xai-grok-tools/src/implementations/lsp/manager.rs`、
+`crates/codegen/xai-grok-tools/src/implementations/lsp/tests.rs`、
+`crates/codegen/xai-grok-tools/src/implementations/lsp/tests/mock_servers.rs`、
+`docs/verification/maintenance-line-review-2026-10-04.log` §10）
+
+### 改进：只在夹具里跑过的侦察脚本，第一次真跑就同时兑现了设计、也暴露了自己
+
+`scripts/upstream-recon.sh` 到今天只被自己的夹具跑过。今天它在真实仓库上跑了一次（起因是一次
+误操作，证据日志 §12 记着它的原样），两件事同时发生。
+
+设计兑现了：`sync/recon/2026-10-03-2bdd1d6a6.md` 已存在且内容不同，脚本没有盖掉它，而是另写
+一份带后缀的记录。「侦察记录永不覆盖」第一次不是夹具里的断言，而是仓库里的一次落盘。
+
+它也暴露了自己：那份新记录是 `0600`。`mktemp` 建临时文件时就是 0600，`cp` 把这个模式带到目标
+文件上，于是一份给别的维护者读的文档被写成了私有的。修法是 `cp` 之后一行 `chmod 644`，夹具
+断言管的是权限位而不是文件名：
+
+          mode = (self.recon_dir / name).stat().st_mode & 0o777
+          self.assertEqual(mode & 0o044, 0o044,
+                           f'{oct(mode)}: a record other maintainers must read was '
+                           'written private')
+
+把 `chmod 644` 去掉，`test_first_run_writes_the_record_named_by_date_and_tip` 报
+`0 != 36 : 0o600: a record other maintainers must read was written private`，还原后
+`scripts/ci/test-upstream-recon.py` 10 条全绿。同一轮顺手更正了这条线上一处写反的旧记录：
+GitHub compare 以 `SOURCE_REV` 为 base、上游为 head，脚本打印的是
+`status=ahead ahead=9 behind=0`，9 在 ahead 一侧，而记录里那句写成了 `ahead=0 behind=9`。
+（2026-10-04；`scripts/upstream-recon.sh`、`scripts/ci/test-upstream-recon.py`、
+`docs/verification/maintenance-line-review-2026-10-04.log` §11、§12）
+
 ### 门禁：两处都在跑同一个门，却可以问它要不同的数字，两条绿灯还互相掩护
 
 上一条删掉了预算的第三份副本，代价写在这里：自测从此按接线处的数字跑，也就再没有任何
@@ -1773,7 +1850,7 @@ baseline holds + uncompiled 0 files），且 `test-publish-npm.sh` 跑完后 `gi
 （2026-10-03；`scripts/ci/check-guard-wiring.py`、`scripts/ci/test-check-guard-wiring.py`、
 `scripts/ci/docker-entry-ci-only.tsv`、`scripts/verify-in-docker.sh`、`docker/verify.Dockerfile`、
 `CONTRIBUTING.md`、`TODO.md`、`docs/architecture/todo-open-item-classification.md`、
-`docs/verification/todo-open-items-2026-10-03.tsv`、`docs/verification/docker-gate-mirror-2026-10-03.log`）
+`docs/verification/todo-open-items.tsv`、`docs/verification/docker-gate-mirror-2026-10-03.log`）
 
 ### 修复：中文化守卫在 Docker 入口里静默失败，四处 fail-open 一并改为 fail-closed
 
@@ -1838,7 +1915,7 @@ OK(23)、`check-workflow-shells.py` OK、`bash -n` 两份脚本通过；真实�
 新增 `### M6.` 段不会被静默排除在全部计数之外；`--check-doc` 把文档表格与 `TODO.md` 逐格比对，
 差异按 `M4 unchecked: document says 3, TODO.md has 5` 这种可执行的形式打印，并附上重算命令。
 文档表格、两处过时正文数字、以及指向会话私有临时目录日志的三处证据指针全部改掉，逐行导出改为随仓库提交的
-`docs/verification/todo-open-items-2026-10-03.tsv`。
+`docs/verification/todo-open-items.tsv`。
 
 真正的新东西是第二个检查，因为「没人跑」这一类缺陷此前没有任何东西守着，本轮已连着撞上四个：
 `classify-open-todos.py` 与它的 fixture、`test-brand-protocol.py`（brand 守卫的自测，CI 只跑被检对象）、
@@ -1871,7 +1948,7 @@ Docker 入口点名的 `scripts/...` 路径必须存在；白名单条目必须�
 失败——哪些必须留在 CI（npm 发布、目标 OS runner、外网）需要逐个定策。（2026-10-03；
 `scripts/ci/check-guard-wiring.py`、`scripts/ci/test-check-guard-wiring.py`、
 `scripts/ci/classify-open-todos.py`、`scripts/ci/test-classify-open-todos.py`、
-`docs/architecture/todo-open-item-classification.md`、`docs/verification/todo-open-items-2026-10-03.tsv`、
+`docs/architecture/todo-open-item-classification.md`、`docs/verification/todo-open-items.tsv`、
 `docs/verification/ci-guard-wiring-2026-10-03.log`、`.github/workflows/ci.yml`、`scripts/verify-in-docker.sh`）
 
 

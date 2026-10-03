@@ -1,0 +1,418 @@
+# Maintenance line (MT-1..MT-7) review, 2026-10-04
+
+Evidence for `docs/maintenance-line-review-2026-10-04.md`. Every command below was run
+today on a Linux x86_64 host at HEAD `058726e5`, whose working tree additionally carried
+the Windows LSP fix described in section 10. Section 9 is the release-gate half of the
+same review: one full container run of the committed commit.
+
+Two kinds of honesty notes are recorded here on purpose: the commands that were invoked
+wrong and produced a misleading exit code (section 12), and one mutation that survived
+because it was inert rather than because a test was missing (section 10).
+
+== 1. What was measured where
+
+    MT-1..MT-7 claims      this host, no cargo
+    release gates          scripts/verify-in-docker.sh --full on 058726e5 (section 9)
+    npm registry state     host npm against registry.npmjs.org
+    GitHub surface         gh api, names only; no secret value was read
+
+    $ git rev-parse --short HEAD
+    058726e5
+
+== 2. MT-1 version lockstep, and what the registry actually holds
+
+    $ bash scripts/ci/check-versions.sh
+    check-versions: Cargo crates/codegen/xai-grok-pager-bin/Cargo.toml -> 0.4.2
+    check-versions: OK -- Cargo and all npm packages agree on 0.4.2
+
+    $ python3 -c "import json; d=json.load(open('crates/codegen/xai-grok-pager/npm/chaos/package.json'));\
+                    print('meta', d['version']); print('pins', sorted(set(d['optionalDependencies'].values())))"
+    meta 0.4.2
+    pins ['0.4.2']
+
+    $ npm view chaos-code version
+    0.2.110
+    $ npm view chaos-code-linux-x64 versions
+    0.2.110
+    $ npm view chaos-code-win32-x64 versions
+    0.0.1-security
+    $ npm view chaos-code-win32-x64@0.4.2
+    npm error code E404
+
+    Read: inside the repository the version has exactly one source and the snapshot
+    cannot drift silently any more. Outside it nothing has been published since
+    0.2.110, and the two Windows names are still npm security placeholders, so the
+    "installs fine, then chaos fails" shape is still true on Windows today. That half
+    is an owner action against npm, not a repository fix.
+
+== 3. MT-2 signing surface
+
+    $ gh api repos/:owner/:repo/actions/secrets --jq '.secrets[].name' | sort
+    CHAOS_SIGNING_PRIVATE_KEY
+    NPM_TOKEN
+    $ gh api repos/:owner/:repo/actions/variables --jq '[.variables[].name]|sort|.[]'
+    CHAOS_SIGNING_PUBLIC_KEY
+
+    Only names were queried. A first attempt piped the secrets response through a jq
+    expression that expected an object and returned nothing; the array is under
+    `.secrets`, which is why the query above spells it out.
+
+    $ gh release view v0.4.2 --json assets -q '.assets[].name' | sort
+    chaos-darwin-arm64      chaos-darwin-arm64.sig
+    chaos-darwin-x64        chaos-darwin-x64.sig
+    chaos-linux-arm64       chaos-linux-arm64.sig
+    chaos-linux-x64         chaos-linux-x64.sig
+    chaos-win32-arm64.exe   chaos-win32-arm64.exe.sig
+    chaos-win32-x64.exe     chaos-win32-x64.exe.sig
+    SHA256SUMS
+    -> 13 assets: six binaries, six sidecars, one checksum file
+
+    $ python3 scripts/ci/test-installer-signature-policy.py
+    Ran 8 tests in 0.003s ... OK
+    $ python3 scripts/ci/check-powershell-syntax.py
+    powershell-syntax: OK (4 script(s) parsed by /usr/local/bin/pwsh)
+
+    Read: unchanged from the 2026-10-02 record. Still unverified here: one release
+    dry-run on a Windows runner (the .exe has only ever been signature-verified,
+    never executed) and the tag actions themselves.
+
+== 4. MT-3 worktree
+
+    $ git status --porcelain | wc -l
+    18
+    $ git ls-files --error-unmatch TODO.md
+    TODO.md
+    $ git check-ignore -v .chaos/uploads/x.png
+    .gitignore:17:/.chaos/uploads/.chaos/uploads/x.png
+
+    All 18 entries are this session's own work (LSP fix, guards, docs). The three
+    open decisions this row used to carry are all closed, so MT-3 closes.
+
+== 5. MT-4 localization gates
+
+    $ bash scripts/l10n-guard.sh --before HEAD --after HEAD
+      before Han files: 395   after Han files: 395
+      moved: 0  removed-recorded: 0  regressed: 0  stale-allowlist: 0
+      shrunk: 0  fortress-breach: 0
+    OK -- L10n Guard: PASS
+
+    $ python3 scripts/check-doc-l10n.py --english | tail -1
+    0 English prose line(s) remaining
+    $ python3 scripts/check-doc-l10n.py --links | tail -1
+    0 broken link(s)
+    $ python3 scripts/check-doc-l10n.py --fork-names --strict | tail -1
+    0 upstream name(s) remaining
+    $ python3 scripts/check-doc-l10n.py --cells | tail -1
+    0 prose cell(s), 0 short cell(s) to decide, 4 note(s)
+
+    $ python3 scripts/l10n-guard-selftest.py | tail -1
+    17/17 l10n-guard cases passed
+    $ python3 scripts/check-doc-l10n-selftest.py | tail -1
+    52/52 self-test case(s) passed
+
+    Read: the guide line is clean and both self-tests still bite. What keeps MT-4
+    open is not measurement but scope: the short code-side copy (modal footers,
+    toasts, error strings) still has no inventory of user-visible emission points,
+    and `--fork-names` still never scans `crates/**/*.rs`.
+
+== 6. MT-5 ledgers, including a gate that fired on this session's own tests
+
+    $ python3 scripts/ci/ignored-tests.py --require-reasons | tail -1
+    ignored-tests: all 429 ignored attributes carry a reason
+    $ python3 scripts/ci/ignored-tests.py --check-baseline scripts/ci/ignored-tests-baseline.tsv | tail -1
+    ignored-tests: baseline matches; 429 ignored attributes total
+
+    $ python3 scripts/ci/platform-gated-tests.py \
+        --check-baseline scripts/ci/platform-gated-tests.tsv \
+        --max-unreviewed 1106 --max-blind-windows 74 --max-blind-macos 11 \
+        --max-assumption-free 441
+    platform-gated tests: 1080 in 249 files
+    platform-conditional #[ignore] (exists there, skipped there): 26
+    gated and also #[ignore]d everywhere: 0
+    gated with no platform assumption in the body: 441 in 99 files
+    would compile on:  linux 988  macos 850  other-unix 809  windows 62  other 29
+    files with gated tests and no test that runs on the platform:  windows 74
+    rc=0
+
+    The same command run half an hour earlier was red with four problems:
+
+      FAIL: unlisted platform-gated test .../lsp/manager.rs:829 a_unix_header_is_the_unix_path
+      FAIL: unlisted platform-gated test .../lsp/manager.rs:839 a_windows_header_names_a_windows_path
+      FAIL: unlisted platform-gated test .../lsp/tests.rs:2254 a_windows_document_uri_names_the_windows_path
+      FAIL: 442 gated tests show no platform assumption in their body, over the budget of 441
+
+    Those three tests were the regression tests written for the Windows LSP fix in
+    section 10, and the first version of them was platform-gated. Raising the two
+    budgets was not an option (they are ratchets), so the tests were rewritten to be
+    platform-portable instead: a URI is decoded into this host's own path spelling,
+    asserted through MAIN_SEPARATOR and Path::file_name rather than a literal that
+    only one OS can check. The Windows drive-letter case did not lose coverage -- the
+    ungated round-trip test builds its cases from a real temp path, so on Windows it
+    compares `C:\...` against what hand-stripping returns (`\C:\...`) and fails there.
+    Gating a test takes it away from the very platform whose bug it documents; the
+    gate is what said so, in its own vocabulary, on the day it was written.
+
+== 7. MT-6 panic-site ratchets
+
+    $ python3 scripts/ci/panic-site-census.py --check-baseline scripts/ci/panic-site-baseline.tsv | tail -1
+    baseline holds: 97 crates, 0 fewer production sites than recorded
+    $ python3 scripts/ci/panic-site-census.py --check-uncompiled scripts/ci/uncompiled-sources.txt | tail -1
+    uncompiled set holds: 0 files, exactly as recorded
+    $ python3 scripts/ci/test-panic-site-census.py | tail -1
+    all census fixture checks passed
+
+== 8. MT-7 upstream window, and one number that had to be corrected
+
+    $ cat SOURCE_REV
+    72a61251fcffb464bcc687aeb5a998e5a98ec0c9
+    $ git rev-parse --short upstream/main
+    2bdd1d6a
+    $ git rev-list --count "$(cat SOURCE_REV)..upstream/main"
+    9
+    $ git rev-list --count upstream/main..HEAD
+    996
+
+    TODO.md:1003 describes the 2026-10-03 recon run as `ahead=0 behind=9`. The script
+    prints `status=$status ahead=$ahead behind=$behind` straight from the GitHub
+    compare API with base=SOURCE_REV and head=upstream/main, and both the 2026-10-02
+    sentence in the same row and the record table in
+    `sync/recon/2026-10-03-2bdd1d6a6.md` ("upstream ahead 9 / fork ahead 0") say 9 is
+    on the ahead side. The prose had the two sides swapped; corrected.
+
+    The same record's fork scale, 969, is measured again today as 996. That number
+    moves with every commit, so any citation of it must carry its date; the review
+    document says so explicitly.
+
+    $ python3 scripts/ci/check-doc-path-refs.py | tail -1
+    check-doc-path-refs: 274 Markdown documents scanned against 3981 tracked paths,
+    46 dangling mention(s), 24 recorded; every link resolves and every dangling
+    mention is recorded and live
+    $ python3 scripts/ci/check-guard-wiring.py | tail -1
+    check-guard-wiring: OK (51 files in scripts/ci/, 50 reachable, 46 run by
+    scripts/verify-in-docker.sh, 4 recorded CI-only, 1 exempt)
+    $ python3 scripts/ci/check-evidence-paths.py | tail -1
+    check-evidence-paths: 275 markdown/tsv files scanned, none points at a
+    session-private scratch directory
+    $ python3 scripts/ci/classify-open-todos.py --check-doc docs/architecture/todo-open-item-classification.md | tail -1
+    classify-open-todos: todo-open-item-classification.md matches TODO.md (137 open/partial rows)
+    $ python3 scripts/ci/classify-open-todos.py --check-export | tail -1
+    classify-open-todos: todo-open-items.tsv matches TODO.md (137 open rows plus TOTAL)
+
+== 9. Release-gate evidence: one full container run of the committed tree
+
+    $ scripts/verify-in-docker.sh --full            # 058726e5, fixed named volumes
+    33 gate sections, ending:
+    all gates passed in chaos-verify:v5
+    rc=0
+
+    Gate headings in order:
+      building chaos-verify:v5 / preparing cargo cache volumes / source tree 3982
+      files checksum 2343724928 / preflight: container can read the repository /
+      toolchain matches the pin / pinned protoc launcher / cargo fmt / ignored-test
+      baseline / brand-protocol guard / protocol mirror coverage / TODO status doc /
+      evidence paths in docs / docs path references / CI guard wiring / host gate
+      runner self-test / workflow shells / workflow toolchain / workflow yaml /
+      script portability / panic-site census / cwd-change census / spawn-cwd
+      portability / platform-gated tests / load-bearing features / version lockstep /
+      the release version and everything that must equal it / crates that are
+      deliberately not the release version / installer guards / the asset a release
+      publishes and the four places that ask for it / npm package guards / docs
+      localization / localization guard self-tests / secret scan / cargo check /
+      cargo clippy / cargo test / GUI protocol types
+
+    cargo test totals across every suite in that run:
+
+      suites=386  passed=31582  failed=0  ignored=485
+
+    The container log itself was not committed: it is roughly 35,000 lines of cargo
+    output. The counts above were summed from the `test result:` lines of the log held
+    in the session scratch directory, which is deleted when the session ends -- read
+    this section as the transcript of that run rather than as a pointer to an artifact.
+
+== 10. The Windows LSP defect this review turned into a fix
+
+    Symptom: run 37141224569 on origin/main had every job green except
+    `platform tests (windows-latest)`, step `cargo test (target-OS crates:
+    xai-grok-tools)`: 3111 passed, 3 failed. The three failures were
+      an_answer_about_the_previous_revision_does_not_settle_the_new_one
+      an_answer_the_store_refused_leaves_no_result_id_behind
+      e2e_restart_replay_requeues_pending_diagnostics
+
+    Root cause 1 (product): `replay_tracked_documents` turned a stored document URI
+    back into a path with `strip_prefix("file://")`. Every URI it is handed came out
+    of `file_uri`, so on Windows `file:///C:/dir/file.ts` became `/C:/dir/file.ts`,
+    which resolves under the root of the current drive, and on every platform a name
+    with a space kept its `%20`. `read_to_string` failed, `?` dropped the document,
+    and a restarted server was silently told about none of the files it had been
+    serving. `CollectedDiagnostics::append_file` built its header the same way, so
+    the reader of a diagnostics summary was handed `/C:/dir/file.ts` or `%20` too.
+    Fixed by one helper, `path_for_file_uri`, which parses and decodes.
+
+    Root cause 2 (fixture): two Python mocks did `uri[len("file://"):]` and then
+    wrote their readiness marker into `dirname` of that result. On Windows the marker
+    landed outside the workspace, so the test waited out its budget and reported only
+    that a marker never appeared. Fixed by `local_path()` / `touch_beside()` in the
+    shared mock preamble, and one of the two tests now keeps its document inside a
+    directory whose name needs escaping, so this fixture bug fails on Linux too
+    instead of waiting for a Windows runner.
+
+    Mutation matrix (each mutation applied, one named test observed, file restored and
+    compared byte for byte; `cmp` after every single one):
+
+      KILLED    W1 restart replay hand-strips file:// instead of decoding it
+                a_replayed_document_whose_name_needs_escaping_reaches_the_new_server failed
+      KILLED    W2 path_for_file_uri hand-strips instead of parsing
+                a_file_uri_decodes_back_to_the_path_it_was_made_from failed
+      KILLED    W3 diagnostics header cuts the scheme off the URI
+                a_header_decodes_the_uri_instead_of_cutting_the_scheme_off failed
+      KILLED    W4 mock server slices the URI instead of decoding it
+                an_answer_about_the_previous_revision_does_not_settle_the_new_one failed
+      SURVIVED  W5 mock server hides the fact that it could not write its marker
+
+    W5 alone is an inert mutation, not a coverage gap: it deletes the `raise` inside
+    `except OSError`, and with a correctly decoded URI that branch is never taken. A
+    driver that cannot tell "the test failed" from "the branch never ran" would have
+    reported it as a hole in the tests. What actually matters was measured instead:
+
+      KILLED    W4  sliced URI, mock raises
+                mock stderr line in output: False
+                panicked at tests.rs:34: timed out waiting for the server to start
+                its first pull
+      KILLED    W5a sliced URI, mock swallows the OSError
+                mock stderr line in output: False
+                panicked at tests.rs:34: timed out waiting for the server to start
+                its first pull
+
+    Two facts follow. Detection does not depend on the `raise`: the test fails either
+    way, with the same message. And the mock's stderr line reaches the test output in
+    neither case -- `ServerStderr` only quotes the tail when a startup fails -- so the
+    comment that claimed "the mock says so" was wrong about the payoff and was
+    rewritten to say what is true: the mock dies because a mock that cannot locate
+    its own document must not go on answering for it, and the test's own wait is what
+    reports the failure.
+
+    After the fix, on this host:
+
+    $ cargo test -p xai-grok-tools --lib lsp::
+    test result: ok. 128 passed; 0 failed; 2 ignored; 0 measured; 3077 filtered out
+    rc=0
+
+    W3 was re-run after the header test was rewritten to be platform-portable:
+      KILLED implementations::lsp::manager::tests::a_header_decodes_the_uri_instead_of_cutting_the_scheme_off
+    restored byte for byte: True
+
+== 11. The recon record, run for real for the first time
+
+    `scripts/upstream-recon.sh` had only ever been exercised by its own fixtures. It
+    ran against the real repository today (section 12 explains how) and behaved as
+    designed:
+
+      upstream-recon: sync/recon/2026-10-03-2bdd1d6a6.md already existed with
+      different content; a recon record is never overwritten, so this one went to
+      sync/recon/2026-10-03-2bdd1d6a6-2.md
+
+    The stray file was deleted; nothing tracked was touched. The same run showed the
+    record landing as 0600, because `mktemp` creates it private and `cp` carries that
+    mode onto a new file. A recon record is a document other maintainers read, so the
+    script now does `chmod 644` after placing it, and the fixture asserts it:
+
+    $ python3 scripts/ci/test-upstream-recon.py
+    Ran 10 tests in 0.865s ... OK
+
+    Mutation, restored and compared byte for byte:
+      rc with chmod removed: 1
+      AssertionError: 0 != 36 : 0o600: a record other maintainers must read was
+      written private
+      RESTORED True
+      rc after restore: 0
+
+== 12. How this review was wrong before it was right
+
+    These are recorded because each one produced either a misleading exit code or a
+    side effect, and a reader of the numbers above should know which ones were
+    re-taken.
+
+    a) Two commands were invoked without their required argument and still exited 0
+       because the pipeline ended in `tail`:
+
+         $ python3 scripts/ci/ignored-tests.py --check-baseline | tail -3
+         ignored-tests.py: error: argument --check-baseline: expected one argument
+         rc=0
+         $ python3 scripts/ci/classify-open-todos.py --check-doc | tail -3
+         classify-open-todos.py: error: argument --check-doc: expected one argument
+         rc=0
+
+       argparse exits 2, `tail` exits 0, and the measurement script reported rc=0 for
+       every line it ran. Both were re-run with their paths (sections 6 and 8). The
+       general lesson: a gate runner that prints the exit code of the last stage of a
+       pipeline is not reporting the gate's verdict.
+
+    b) `git rev-list --count SOURCE_REV..upstream/main` failed: SOURCE_REV is a file
+       name, not a revision. Correct form is
+       `git rev-list --count "$(cat SOURCE_REV)..upstream/main"`.
+
+    c) The worst one: the measurement script ran `bash scripts/ci/test-upstream-recon.py`
+       instead of `python3 ...`. Bash executed the Python source as shell, which
+       reached a line that calls the real `scripts/upstream-recon.sh` against the real
+       repository and the real GitHub API. It created one untracked file,
+       `sync/recon/2026-10-03-2bdd1d6a6-2.md`; nothing tracked was modified and the
+       file was removed the same session. Two things are worth keeping from the
+       accident: a fixture file is not a script to be handed to an arbitrary
+       interpreter, and a harness line that begins `bash <something>.py` is a defect
+       the reader should not have to discover by outcome. The review document cites
+       that file name in an inline code span, so it is recorded in
+       `scripts/ci/doc-path-refs-allowlist.tsv` as `recorded-absent`: the path gate
+       cannot tell a deleted run artifact from a pointer that rotted, and the citing
+       sentence is the place that says which one it is.
+
+    d) `gh api .../actions/jobs/<id>/logs` earlier in this work returned nothing until
+       `--allow-escape-sequences` was added, and `gh` only expands `:owner/:repo` when
+       run inside the repository.
+
+    e) One mutation in the earlier recon matrix reported SURVIVED for a reason that was
+       a driver bug, not a coverage gap: mutating `test -n "$tip"` to
+       `test -n "${tip-yes}"` is inert, because the `-` form only substitutes for an
+       unset variable and `tip=$(...)` always sets it. Replaced with a mutation that
+       changes behaviour (`true || {`), which was killed.
+
+== 13. Verdicts recorded in TODO.md
+
+    MT-3 closed. MT-1, MT-2, MT-4, MT-5, MT-6 stay open with the reasons above, one
+    dated review line each in `TODO.md`. MT-7 keeps its open rows and gains the two
+    corrections in section 8. `TODO.md` section 8.2's Q4 row, which asked for this
+    review plus refreshed release-gate evidence, is checked with both halves cited.
+
+== 14. Final host sweep, and the one thing it caught
+
+    The cheap gate list was run on this tree with the repository's own runner, which
+    reads the `gates=()` array out of `scripts/verify-in-docker.sh` rather than a copy:
+
+    $ bash scripts/verify-gates.sh
+    ...
+    all gates passed on the host (27 run, 4 skipped)
+    rc=0
+
+    The four skips are the build gates (`cargo check`, `cargo clippy`, `cargo test`,
+    GUI protocol types), which `--with-build` runs and which the container run in
+    section 9 covers. `cargo fmt --all -- --check` is one of the 27 and passed.
+
+    The first pass of this sweep failed, and it was a true positive, not noise:
+
+      FAIL  TODO status doc (exit 1)
+      AssertionError: classify-open-todos: todo-open-items.tsv is stale --
+        14 of 137 exported lines differ from TODO.md
+
+    The export carries a TODO.md line number per row, so every line inserted into a
+    maintenance section above an open row shifts the rows below it and makes the
+    committed export wrong by that amount. The gate reported exactly that, and the fix
+    was to regenerate, not to edit the export:
+
+    $ python3 scripts/ci/classify-open-todos.py --write-export docs/verification/todo-open-items.tsv
+    classify-open-todos: updated docs/verification/todo-open-items.tsv
+    $ python3 scripts/ci/test-classify-open-todos.py
+    Ran 14 tests ... OK
+
+    What to keep: an export keyed by line numbers has to be the last thing written in a
+    session that edits `TODO.md`, and a `--check-export` run placed before the final
+    prose edit proves nothing. This is the same failure shape as section 12a -- a check
+    that passed at a moment that was not the moment being shipped.

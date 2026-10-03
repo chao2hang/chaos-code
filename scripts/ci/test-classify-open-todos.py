@@ -169,5 +169,80 @@ class DocumentGuardTests(unittest.TestCase):
         self.assertIn('non-numeric', result.stdout + result.stderr)
 
 
+class ExportGuardTests(unittest.TestCase):
+    """The committed row-level export must be what the script prints today.
+
+    It was `todo-open-items-2026-10-03.tsv`: a generated view of `TODO.md` named after
+    the day it happened to be generated, so the next edit to `TODO.md` left a committed
+    document describing rows that no longer read that way, and no check said so.
+    """
+
+    def test_the_committed_export_matches_the_real_todo(self):
+        result = run('--check-export')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('matches TODO.md', result.stdout)
+
+    def test_the_committed_export_is_the_default_output_byte_for_byte(self):
+        # Not "contains the same rows": a reader opens the file, so the file has to be
+        # the listing, trailing newline included.
+        listing = subprocess.run(
+            ['python3', str(SCRIPT)], capture_output=True, text=True
+        )
+        self.assertEqual(listing.returncode, 0, listing.stderr)
+        self.assertEqual(
+            (REPO / 'docs' / 'verification' / 'todo-open-items.tsv').read_text(encoding='utf-8'),
+            listing.stdout,
+        )
+
+    def test_the_export_is_not_named_after_a_day(self):
+        # The date in the name is what made the staleness invisible: it advertised a
+        # snapshot, so nobody expected it to still match after TODO.md moved.
+        export_dir = REPO / 'docs' / 'verification'
+        dated = sorted(p.name for p in export_dir.glob('todo-open-items-*.tsv'))
+        self.assertEqual(dated, [], f'regression to a dated export: {dated}')
+        self.assertTrue((export_dir / 'todo-open-items.tsv').is_file())
+
+    def test_a_stale_export_fails_and_shows_both_sides(self):
+        # The real shape of the rot: TODO.md gained a row after the export was written.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            todo = write(root / 'TODO.md', '### M2.1 something\n- [ ] first\n')
+            export = root / 'export.tsv'
+            wrote = run('--todo', todo, '--write-export', export)
+            self.assertEqual(wrote.returncode, 0, wrote.stderr)
+            self.assertEqual(run('--todo', todo, '--check-export', export).returncode, 0)
+            write(todo, '### M2.1 something\n- [ ] first\n- [~] added later\n')
+            result = run('--todo', todo, '--check-export', export)
+            self.assertNotEqual(result.returncode, 0)
+            out = result.stdout + result.stderr
+            self.assertIn('is stale', out)
+            self.assertIn('added later', out)
+            self.assertIn('--write-export', out, 'the failure has to say how to fix it')
+
+    def test_a_missing_export_is_refused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            todo = write(root / 'TODO.md', '### M2.1 something\n- [ ] first\n')
+            result = run('--todo', todo, '--check-export', root / 'gone.tsv')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('--write-export', result.stdout + result.stderr)
+
+    def test_writing_the_export_twice_does_not_accumulate(self):
+        # A generator that appends would quietly grow the file on every refresh.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            todo = write(root / 'TODO.md', '### M2.1 something\n- [ ] first\n- [ ] second\n')
+            export = root / 'export.tsv'
+            for _ in range(2):
+                self.assertEqual(run('--todo', todo, '--write-export', export).returncode, 0)
+            once = export.read_text(encoding='utf-8')
+            self.assertEqual(once.splitlines(), [
+                '2\tunchecked\t### M2.1 something\t- [ ] first',
+                '3\tunchecked\t### M2.1 something\t- [ ] second',
+                'TOTAL\tunchecked=2\tpartial=0\trows=2',
+            ])
+            self.assertEqual(once.count('TOTAL'), 1)
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

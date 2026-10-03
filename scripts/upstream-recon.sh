@@ -3,8 +3,10 @@
 # `SOURCE_REV` has fallen behind upstream, into `sync/recon/`.
 #
 # It never fetches into the local repository, never mutates a working tree and
-# never writes outside `sync/recon/`. Network failure exits non-zero instead of
-# writing a record that would look like a completed review.
+# never writes outside `sync/recon/`. It also never overwrites a record: a run
+# whose output would differ from an existing same-day record writes beside it.
+# Network failure exits non-zero instead of writing a record that would look like
+# a completed review.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -51,10 +53,13 @@ PY
 
 out_dir="$repo_root/sync/recon"
 mkdir -p "$out_dir"
-out_file="$out_dir/$(date -u +%Y-%m-%d)-${tip:0:9}.md"
+stamp="$(date -u +%Y-%m-%d)"
+out_file="$out_dir/${stamp}-${tip:0:9}.md"
 
+record="$(mktemp)"
+trap 'rm -f "$compare_json" "$record"' EXIT
 {
-  echo "# 上游侦察 $(date -u +%Y-%m-%d)"
+  echo "# 上游侦察 $stamp"
   echo
   echo "由 \`scripts/upstream-recon.sh\` 生成的只读清点。**记录差距不等于移植**："
   echo "上游的每一项改动在进入本分叉之前，仍然要走 curated-port 评审。"
@@ -75,7 +80,36 @@ out_file="$out_dir/$(date -u +%Y-%m-%d)-${tip:0:9}.md"
   echo "- 把比对窗口内的提交分成三类：直接移植、需改造后移植、跳过"
   echo "  （fork 层架构、已被移除的特性、涉及安全的改动）。"
   echo "- 在改动任何被移植的源文件之前，先把结论写进 \`sync/\`。"
-} >"$out_file"
+} >"$record"
+
+# A recon record is a record, not a scratch file. The name is stable within a UTC
+# day, so a second run used to overwrite the first: on 2026-10-03 the documented
+# command replaced a hand-enriched record (ancestor check, fork scale, the count
+# of changed files inside the l10n-protected paths) with the generated table, and
+# `git status` was the only thing that said so. Identical content is a no-op;
+# anything else lands beside it as `-2`, `-3`, so both readings survive.
+action="written"
+target="$out_file"
+if [ -f "$out_file" ] && cmp -s "$record" "$out_file"; then
+  action="unchanged"
+else
+  seq=2
+  while [ -f "$target" ]; do
+    target="$out_dir/${stamp}-${tip:0:9}-${seq}.md"
+    seq=$((seq + 1))
+  done
+  cp "$record" "$target"
+  # mktemp made the record 0600 and cp carries that mode to a new file. A recon
+  # record is a document other maintainers read, not a secret.
+  chmod 644 "$target"
+fi
 
 echo "upstream-recon: SOURCE_REV=${source_rev:0:9} upstream=${tip:0:9} status=$status ahead=$ahead behind=$behind"
-echo "upstream-recon: wrote ${out_file#"$repo_root"/}"
+if [ "$action" = unchanged ]; then
+  echo "upstream-recon: ${out_file#"$repo_root"/} already holds this exact record"
+else
+  echo "upstream-recon: wrote ${target#"$repo_root"/}"
+  if [ "$target" != "$out_file" ]; then
+    echo "upstream-recon: ${out_file#"$repo_root"/} already existed with different content; a recon record is never overwritten, so this one went to ${target#"$repo_root"/}" >&2
+  fi
+fi

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Print every open/partial TODO line grouped by nearest Markdown heading.
 
-Three modes:
+Modes:
 
 - (default) one line per open/partial row: `LINE<TAB>STATE<TAB>SECTION<TAB>TEXT`, plus a
   `TOTAL` line. This is the inventory a person reads.
@@ -16,6 +16,14 @@ Three modes:
 
 `--todo <path>` points at another TODO file, which is what the fixtures use: they run this
 same file against a generated tree instead of copying its logic.
+
+`--check-export <path>` compares a committed copy of the row-level inventory against what
+this script would print right now, and `--write-export <path>` refreshes that copy. The
+export exists so a reader can see the rows behind the document's table without running
+anything; dated once as `todo-open-items-2026-10-03.tsv`, it then drifted the moment
+`TODO.md` was edited and nothing said so -- the same rot pattern as the count table, in a
+file whose whole purpose is to be current. It is therefore undated and self-policing: the
+gate re-renders it and fails on any difference.
 """
 
 from __future__ import annotations
@@ -28,6 +36,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_TODO = ROOT / "TODO.md"
 DEFAULT_DOC = ROOT / "docs/architecture/todo-open-item-classification.md"
+DEFAULT_EXPORT = ROOT / "docs/verification/todo-open-items.tsv"
 
 MAINTENANCE = "Maintenance items / §8"
 # Order matters: `### M-1.` must be tried before `### M1.`, and the group a section maps
@@ -141,11 +150,72 @@ def check_doc(doc_path: Path, actual: dict[str, dict[str, int]]) -> int:
     return 1
 
 
+def render(found: list[tuple[int, str, str, str]], counts: dict[str, dict[str, int]]) -> str:
+    """The row-level inventory exactly as the committed export stores it."""
+    lines = [
+        f"{number}\t{state}\t{section}\t{line}"
+        for number, state, section, line in found
+    ]
+    unchecked = sum(c["unchecked"] for c in counts.values())
+    partial = sum(c["partial"] for c in counts.values())
+    lines.append(f"TOTAL\tunchecked={unchecked}\tpartial={partial}\trows={unchecked + partial}")
+    return "\n".join(lines) + "\n"
+
+
+def check_export(export_path: Path, expected: str) -> int:
+    """Exit 0 when the committed export equals what this script renders today."""
+    if not export_path.is_file():
+        print(
+            f"classify-open-todos: {export_path.name} is missing\n"
+            "recreate with: python3 scripts/ci/classify-open-todos.py --write-export"
+        )
+        return 1
+    actual = export_path.read_text(encoding="utf-8")
+    if actual == expected:
+        print(
+            f"classify-open-todos: {export_path.name} matches TODO.md "
+            f"({len(expected.splitlines()) - 1} open rows plus TOTAL)"
+        )
+        return 0
+    want, got = expected.splitlines(), actual.splitlines()
+    differing = sum(1 for i in range(min(len(want), len(got))) if want[i] != got[i])
+    differing += abs(len(want) - len(got))
+    first = next((i for i in range(min(len(want), len(got))) if want[i] != got[i]),
+                 min(len(want), len(got)))
+    shown = (
+        f"  export line {first + 1}: "
+        f"{got[first][:150] + '…' if first < len(got) else '(absent)'}\n"
+        f"  TODO.md line {first + 1}: "
+        f"{want[first][:150] + '…' if first < len(want) else '(absent)'}"
+    )
+    print(
+        f"classify-open-todos: {export_path.name} is stale -- {differing} of "
+        f"{max(len(want), len(got))} exported lines differ from TODO.md\n{shown}"
+    )
+    print("refresh with: python3 scripts/ci/classify-open-todos.py --write-export")
+    return 1
+
+
+def write_export(export_path: Path, expected: str) -> int:
+    """Rewrite the generated export; it has no hand-written content to preserve."""
+    export_path.parent.mkdir(parents=True, exist_ok=True)
+    existed = export_path.is_file()
+    export_path.write_text(expected, encoding="utf-8")
+    print(f"classify-open-todos: {'updated' if existed else 'wrote'} {export_path}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--todo", type=Path, default=DEFAULT_TODO, help="TODO file to read")
     parser.add_argument("--groups", action="store_true", help="print per-milestone counts")
     parser.add_argument("--check-doc", type=Path, metavar="PATH", help="compare a classification document to --todo")
+    parser.add_argument("--check-export", type=Path, metavar="PATH", nargs="?",
+                        const=DEFAULT_EXPORT,
+                        help="fail when a committed row-level export differs from --todo")
+    parser.add_argument("--write-export", type=Path, metavar="PATH", nargs="?",
+                        const=DEFAULT_EXPORT,
+                        help="rewrite the committed row-level export from --todo")
     args = parser.parse_args(argv)
 
     found = rows(args.todo)
@@ -158,11 +228,12 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{group}\t{states['unchecked']}\t{states['partial']}")
         return 0
 
-    for number, state, section, line in found:
-        print(f"{number}\t{state}\t{section}\t{line}")
-    unchecked = sum(c["unchecked"] for c in counts.values())
-    partial = sum(c["partial"] for c in counts.values())
-    print(f"TOTAL\tunchecked={unchecked}\tpartial={partial}\trows={unchecked + partial}")
+    listing = render(found, counts)
+    if args.check_export:
+        return check_export(args.check_export, listing)
+    if args.write_export:
+        return write_export(args.write_export, listing)
+    sys.stdout.write(listing)
     return 0
 
 

@@ -464,11 +464,14 @@ jobs:
       # that instruction was only ever followed by hand. `--check-doc` is the
       # same comparison made into an exit code, and the fixtures prove it still
       # fails on a transposed column, a missing row and a non-numeric count.
+      # `--check-export` covers the row-level export beside it: dated once, that
+      # file went stale the first time TODO.md moved afterwards and stayed stale.
       - name: TODO status document matches TODO.md
         run: |
           set -euo pipefail
           python3 scripts/ci/test-classify-open-todos.py
           python3 scripts/ci/classify-open-todos.py --check-doc docs/architecture/todo-open-item-classification.md
+          python3 scripts/ci/classify-open-todos.py --check-export
       # 40 pointers across 8 committed documents told their reader to open an
       # evidence log "in the private goal scratch" -- a per-session temporary
       # directory deleted when the session that wrote it ends. Nothing failed,
@@ -738,6 +741,14 @@ jobs:
           # surfaces after a tag is public: the updater compares a --version
           # string from one file against a feed built from another.
           python3 scripts/ci/check-version-lockstep.py
+          # The recon script is the one command a maintainer runs against upstream, and
+          # its record is named by date plus the upstream tip, so a second run on the
+          # same UTC day used to redirect over the first. On 2026-10-03 that replaced a
+          # hand-enriched record with the generated table and nothing failed. These
+          # fixtures drive the shipped script against a local bare repo and a loopback
+          # compare API, pinning both promises in its header: a record is never
+          # overwritten, and a comparison that failed writes no record at all.
+          python3 scripts/ci/test-upstream-recon.py
           # Who runs the guards? Three of them had been committed, documented and
           # never invoked -- which is how the TODO status document drifted 13 rows
           # from TODO.md while a checker that would have caught it sat unused.
