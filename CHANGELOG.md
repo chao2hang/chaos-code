@@ -2,6 +2,71 @@
 
 ## Unreleased
 
+### 修复：390px 下滚动的是整页而不是对话；侧栏一收起，对话就掉进宽 0 的那一列
+
+窄屏下 `.shell` 是 `flex/column/overflow-y: auto`，侧栏整块横躺在对话上方独占一屏，`.center-col { min-height:
+500px }` 再往下顶，实测 `scrollHeight` 1344 对 `clientHeight` 844。发一条 prompt 之后 `scrollTop` 从 0 变成
+500，也就是**整页被推上去 500px**；输入框的固有底边是 1271，本来就在 844 的首屏之外，「点发送把整页推上去」
+当时是把它推回视口的唯一手段。同一时刻时间线内部早已可滚（`scrollHeight` 溢出 4786）——两层滚动器叠在一起，
+「阅读位置」因此没有单一答案，上一轮那条锚点断言只能改成量时间线内部来绕开它。
+
+**修法不是加补偿，而是让外壳不滚。** 手机块里 `.shell` 换成单列网格加定高加 `overflow: hidden`，`100dvh` 包在
+`@supports` 里（真机 `100vh` 不含浏览器自身工具栏，composer 底边会压在折叠线下），侧栏改为覆盖式抽屉
+（`position: fixed` + `.sidebar-backdrop` 遮罩，形态与右栏一致），时间线成为唯一滚动区。可见性从「停靠偏好
+单一真相」改为 `resolveSidebarVisibility({ compact, drawerOpen, panelOpen })`（`layout.ts` 新增纯函数，
+`compact` 由 `useCompactViewport()` 走 `matchMedia`）：手机上开抽屉**不写** `layout.panelOpen`，否则一次误触
+就把「收起侧栏」永久存下来，回到宽屏时旁边真的没有侧栏了。
+
+**`display: none` 会把网格项从自动摆放里整个撤走。** 这是宽屏上一直存在、从没被测到的 bug：三列此前全靠自动
+摆放，侧栏收起时 `display: none` 使它不再是网格项目，`.center-col` 于是被放进第 1 列，而第 1 列宽
+`var(--sidebar-width)` 收起时正好是 0——对话被挤成一条缝。修法是把列号显式钉住（`grid-column: 1/2/3`）。
+
+**抽屉顺带藏掉了三样不该藏的东西。** 连接状态徽标原本在侧栏页脚：抽屉默认关着时 socket 断了毫无可见信号，而
+输入框还在，表现为「发了没反应」；徽标搬到头部，侧栏那份删掉，避免出现第二个 `role="status"` 活动区被念两遍。
+`<h1 className="brand-text">` 也在侧栏里，`display: none` 子树不进可访问性树，导致窄屏整页没有一级标题，axe
+只在 mobile 报 `page-has-heading-one`；改为侧栏不可见时由头部承载，与侧栏那份互斥渲染。徽标进头部后被上一轮为「标签够
+不到」加的 DOM 遍历**一个字没改就**报出新回归 `div.header-left 57<92`（`.header-left { min-width: 0 }` 允许
+收缩，标签条 `flex-shrink: 1` 一直吃宽度），窄屏改为 `flex-shrink: 0`。第四件事是交互上的：覆盖在对话上的抽屉
+点完工作区还盖着，得再手动关一次，于是 `workspace-item` 的 `onClick` 加上 `if (compact) setSidebarDrawerOpen(false)`。
+
+**全套绿灯之后，实拍截图又逮到两个断言覆盖不到的。** 其一，头部标签条在窄屏把「对话」显示成上下两个字：标签条被
+允许收缩滚动之后，按钮自己也被压缩，实测标签行盒数 3、按钮高 65px，而头部只有 52px——是标签**溢出**头部下沿，
+不是撑高头部，而 DOM 裁剪遍历只查横向溢出。修法是 `.header-tab-btn { flex-shrink: 0; white-space: nowrap }`，
+让横向滚动承担全部挤压（实测 `scrollWidth` 488 对 `clientWidth` 159，滚动本就是此处的既定手段）。其二，宽屏收起
+侧栏之后整页没有一级标题：品牌 `<h1>` 复制到头部时用的是 `compact` 条件，宽屏收起态 `compact` 为假、侧栏又
+`display: none`，两份 `<h1>` 一个不剩，而这个状态此前没有任何 axe 扫描经过。改为与侧栏 `display` 同一条
+`!sidebarVisible` 决定存亡，并把 axe 那例扩成「载入态与切换侧栏可见性之后各扫一遍」，两个视口各两态。两条各配
+守卫：标签的行盒数必须为 1、头部高度与其中最高控件之差 ≤ 24；`layout.test.ts` 断言头部品牌的渲染条件必须正是
+`!sidebarVisible`。删掉那两行 CSS、把条件改回 `compact` 两个变异分别 red（后者同时让 desktop 收起态 axe 与结构
+守卫 red，窄屏仍 green）。
+
+**遮罩挡住指针，键盘要过两道闸才挡住。** 抽屉化留下的待办是：键盘 Tab 能走进遮罩背后的对话。两道闸缺一
+不可。第一道 `inert`：抽屉打开时给被覆盖的 `.center-col` 与 `.rightbar-col` 加 `inert={drawerCoversShell}`，它们
+既不可聚焦也不进可访问性树。这里有一条语义容易写错，而且是先写错才发现的：**`inert` 不是继承属性**，
+`element.inert` 只反映元素自己的 content attribute，所以一个已经在惰性子树里的 `composerInput.inert` 仍是
+`false`——断言必须写在被覆盖的区域上，外加「区域里的控件调用 `focus()` 不生效」这条真正与用户相关的行为。
+第二道是焦点折返：只有 `inert` 时「走出去」被挡住而「回来」没有路，焦点到抽屉最后一个控件再按 Tab 会离开文档
+进浏览器自己的界面；这条被 M17 单独证明（只删 `onKeyDown`，此时对话已被 `inert` 挡住，Tab 第 7、15 次却落在
+`page:body`）。判定收在 `layout.ts` 的纯函数 `resolveFocusWrap` 里，并把抽屉自身 `tabIndex={-1}` 计为第 0 位，
+否则从它身上按 Shift+Tab 会直接退到文档外；遮罩刻意不在循环内，它跟抽屉自带的「收起侧边栏」与 `Escape` 重复。
+打开时焦点进抽屉、关闭时交还展开按钮也一并钉住（留在已卸载的节点上等于键盘从页面消失）。同一轮把跨断点那条
+限制也收掉：`compact` 翻回宽屏时强制关抽屉，否则窗口拖窄时遮罩自己复活；新测试真的改视口
+（390→1440→390），宽屏那段还断言侧栏计算 `position` 是 `static`。M16–M21 六个变异各打红一条断言。
+
+**抽屉化让一批规格开始测一个已下线的旧形态。** 新增 `e2e/support/shell.ts` 把「抽屉怎么开怎么关」收成一个入口：
+**任何**在 390px 下访问侧栏控件的 spec 都必须先开抽屉，各写各的迟早漂移成「其实只有桌面在测」。
+`workspace-flow.pw.ts` 6 例因此改为经它访问，这同时让 mobile 那几例真的在走抽屉。`phone-shell.pw.ts` 新增 9 例
+（外壳定高且时间线是唯一滚动区、composer 恒在首屏、抽屉完整生命周期含遮罩/收起按钮/`Escape`、点选工作区交还
+屏幕、宽屏停靠与持久化、窄屏连接状态可见、焦点不外泄、跨断点不留遮罩、标签不竖排、侧栏可见与不可见两态各扫一遍
+axe），`layout.test.ts` 7 例含 CSS/JS 断点漂移守卫与 `resolveFocusWrap` 真值表。22 个变异里两条 green 各有原因：只回退 `.shell` 的那条是**弱变异**（`.sidebar-col` 仍是
+`position: fixed`，抽屉行为未退化，无从可红），改以整体回退替代——`style.css` 与 `main.tsx` 整体退回改前提交而规格
+一字不改，10 例里 **5 例红**；另一条 `.center-col` 去掉 `min-height: 0` 是**等价变异**（基础规则已有
+`overflow: hidden`，溢出非 `visible` 的网格项自动最小尺寸即为 0），该行由这条对照实验判定为冗余而非被测试覆盖。
+同一棵树上全套 e2e **69 passed / 6 skipped (1.9m)**、vitest 9 文件 **106 passed**、typecheck 干净、生产构建通过。
+全记录见 `docs/verification/phone-shell-2026-10-03.log`。（2026-10-03；`apps/chaos-ui/src/{layout.ts,main.tsx,style.css}`、
+`apps/chaos-ui/e2e/support/shell.ts`、`apps/chaos-ui/e2e/phone-shell.pw.ts`、`apps/chaos-ui/e2e/workspace-flow.pw.ts`、
+`apps/chaos-ui/playwright.config.ts`）
+
 ### 修复：流式回答会自己吞掉中间一段——ref 被「刚渲染的值」回抄，下一帧于是接在被回退的文本后面
 
 症状是答案看着在动，最后一帧落定却少了中间一截，而且**没有任何报错**。引擎对没有 adapter 的裸 prompt 固定回

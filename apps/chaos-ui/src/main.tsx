@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { createRoot } from 'react-dom/client'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -6,7 +6,7 @@ import { applyServerMessage, appendLocalPrompt, fileChangeAffectsVisibleDirector
 import { selectWorkspaceSession } from './workspace-ui'
 import { webSocketUrl } from './transport'
 import { getComposerSuggestions, initialComposerHistory, moveSuggestionIndex, navigatePromptHistory, recordPrompt, shouldSubmitOnKey, type ComposerSuggestion } from './composer'
-import { defaultLayoutState, loadLayoutState, saveLayoutState, type LayoutState } from './layout'
+import { COMPACT_VIEWPORT_QUERY, defaultLayoutState, loadLayoutState, resolveFocusWrap, resolveSidebarVisibility, saveLayoutState, type LayoutState } from './layout'
 import { attachmentChunkMessages, beginAttachmentMessage, cancelAttachmentMessage, describeUpload, finalizeAttachmentMessage, MAX_ATTACHMENT_BYTES, validateAttachmentMessage, type AttachmentSource } from './attachments'
 import { buildSettingsCategories, nextTheme, refusalSummary, THEME_ORDER, themeLabel } from './settings'
 import { ariaShortcut, formatShortcut, matchShortcut, SHORTCUTS, tabForShortcut, type ShortcutTab } from './shortcuts'
@@ -61,6 +61,28 @@ function MarkdownText({ text }: { text: string }) {
   )
 }
 
+/**
+ * True while the shell is narrow enough that the sidebar cannot sit beside the
+ * conversation. The query string is the one `style.css` switches its own layout on,
+ * so the affordance and the stylesheet cannot disagree about what "narrow" means.
+ */
+function useCompactViewport(): boolean {
+  const [compact, setCompact] = useState(() =>
+    typeof window.matchMedia === 'function' ? window.matchMedia(COMPACT_VIEWPORT_QUERY).matches : false,
+  )
+  useEffect(() => {
+    if (typeof window.matchMedia !== 'function') return
+    const query = window.matchMedia(COMPACT_VIEWPORT_QUERY)
+    const onChange = (event: MediaQueryListEvent) => setCompact(event.matches)
+    query.addEventListener('change', onChange)
+    return () => query.removeEventListener('change', onChange)
+  }, [])
+  return compact
+}
+
+// Tab-reachable controls inside the drawer, used to decide when Tab would leave it.
+const FOCUSABLE_SELECTOR = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+
 function App() {
   const [session, setSession] = useState(initialSessionState)
   const [activeTab, setActiveTab] = useState<Tab>('chat')
@@ -94,6 +116,11 @@ function App() {
   const [uploadPick, setUploadPick] = useState<File | null>(null)
   const [uploadTargetPath, setUploadTargetPath] = useState('')
   const [uploadPickError, setUploadPickError] = useState<string>()
+  const compact = useCompactViewport()
+  const [sidebarDrawerOpen, setSidebarDrawerOpen] = useState(false)
+  const sidebarRef = useRef<HTMLElement | null>(null)
+  const expandButtonRef = useRef<HTMLButtonElement | null>(null)
+  const drawerWasOpenRef = useRef(false)
 
   const socket = useRef<WebSocket | null>(null)
   const composerRef = useRef<HTMLTextAreaElement | null>(null)
@@ -383,6 +410,62 @@ function App() {
   }
 
   const togglePanel = () => setLayout((current) => ({ ...current, panelOpen: !current.panelOpen }))
+
+  // On a phone the sidebar is an overlay drawer with its own ephemeral state, because
+  // the persisted `panelOpen` describes a docked column: honouring it there would
+  // cover the conversation on load, and writing the drawer back to it would leave the
+  // docked sidebar closed the next time the window is wide.
+  const sidebarVisible = resolveSidebarVisibility({ compact, drawerOpen: sidebarDrawerOpen, panelOpen: layout.panelOpen })
+  const toggleSidebar = () => {
+    if (compact) setSidebarDrawerOpen((current) => !current)
+    else togglePanel()
+  }
+
+  useEffect(() => {
+    if (!compact || !sidebarDrawerOpen) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setSidebarDrawerOpen(false)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [compact, sidebarDrawerOpen])
+
+  // The drawer only exists at phone width, so leaving that width closes it. Otherwise
+  // `sidebarDrawerOpen` stays true while it has no visible effect, and a window dragged
+  // back down to phone width resurrects an overlay nobody opened or dismissed.
+  useEffect(() => {
+    if (!compact) setSidebarDrawerOpen(false)
+  }, [compact])
+
+  const drawerCoversShell = compact && sidebarDrawerOpen
+
+  // A scrim stops the pointer but not the keyboard: without `inert` on what it covers,
+  // Tab walks straight into the conversation behind the drawer. `inert` also removes
+  // those regions from the accessibility tree, which is what "modal" should mean here.
+  useEffect(() => {
+    const open = compact && sidebarDrawerOpen
+    if (open) sidebarRef.current?.focus()
+    else if (drawerWasOpenRef.current && compact) expandButtonRef.current?.focus()
+    drawerWasOpenRef.current = open
+  }, [compact, sidebarDrawerOpen])
+
+  // Wraps Tab at both ends of the drawer. The scrim is deliberately not in this cycle:
+  // it duplicates the drawer's own collapse button and Escape for pointer users, and a
+  // keyboard user reaching it would mean the trap had already let focus out.
+  const trapDrawerFocus = (event: ReactKeyboardEvent<HTMLElement>) => {
+    if (event.key !== 'Tab') return
+    const controls = Array.from(event.currentTarget.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter((control) => control.getClientRects().length > 0)
+    const active = document.activeElement
+    // Focus resting on the drawer itself counts as its first control: `tabIndex={-1}` is
+    // not in the sequential order, so Shift+Tab from there would otherwise step out to
+    // the browser's own chrome.
+    const activeIndex = active === event.currentTarget ? 0 : active instanceof HTMLElement ? controls.indexOf(active) : -1
+    const target = resolveFocusWrap({ count: controls.length, activeIndex, shiftKey: event.shiftKey })
+    if (!target) return
+    event.preventDefault()
+    ;(target === 'first' ? controls[0] : controls[controls.length - 1]).focus()
+  }
+
   const cycleTheme = () => setLayout((current) => ({ ...current, theme: current.theme === 'dark' ? 'light' : current.theme === 'light' ? 'system' : 'dark' }))
 
   // IDE Actions
@@ -555,11 +638,20 @@ function App() {
       {/* =========================================================
           1. Left Column: ZCode Workspace & Session Sidebar
           ========================================================= */}
+      {/* The drawer covers the conversation, so the rest of the page gets a real
+          dismiss control rather than an unlabelled click target. */}
+      {compact && sidebarDrawerOpen && (
+        <button type="button" className="sidebar-backdrop" data-testid="sidebar-backdrop" aria-label="关闭侧边栏" onClick={() => setSidebarDrawerOpen(false)} />
+      )}
       <aside
         className="sidebar-col"
+        id="workspace-sidebar"
         data-shell-column="sidebar"
         aria-label="工作区侧边栏"
-        style={{ display: layout.panelOpen ? 'flex' : 'none' }}
+        ref={sidebarRef}
+        tabIndex={-1}
+        onKeyDown={trapDrawerFocus}
+        style={{ display: sidebarVisible ? 'flex' : 'none' }}
       >
         <div className="sidebar-header">
           <div className="brand-identity" onClick={() => setActiveTab('chat')}>
@@ -573,7 +665,7 @@ function App() {
             className="sidebar-toggle-btn"
             aria-label="收起侧边栏"
             title="收起侧边栏"
-            onClick={togglePanel}
+            onClick={toggleSidebar}
           >
             ◧
           </button>
@@ -598,7 +690,12 @@ function App() {
                       type="button"
                       data-testid={`workspace-${workspace.id}`}
                       className={`workspace-item ${isActive ? 'active' : ''}`}
-                      onClick={() => switchWorkspace(workspace.id)}
+                      onClick={() => {
+                        switchWorkspace(workspace.id)
+                        // On a phone the list is an overlay over the conversation, so
+                        // picking a workspace has to hand the screen back.
+                        if (compact) setSidebarDrawerOpen(false)
+                      }}
                     >
                       <span aria-hidden="true">{isActive ? '📁' : '📂'}</span>
                       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -642,31 +739,46 @@ function App() {
               />
             </label>
           </div>
-          <div className="sidebar-footer-row">
-            <span data-testid="session-status" role="status" aria-live="polite" className="session-status-badge">
-              {session.status}
-            </span>
-          </div>
         </div>
       </aside>
 
       {/* =========================================================
           2. Center Column: ZCode Conversation Stream & InputBar
           ========================================================= */}
-      <div className={`center-col${suggestions.length > 0 ? ' has-composer-suggestions' : ''}`} data-shell-column="center">
+      <div
+        className={`center-col${suggestions.length > 0 ? ' has-composer-suggestions' : ''}`}
+        data-shell-column="center"
+        inert={drawerCoversShell}
+      >
         {/* Top Conversation Header */}
         <header className="conversation-header">
           <div className="header-left">
-            {!layout.panelOpen && (
-              <button
-                type="button"
-                className="sidebar-toggle-btn"
-                aria-label="展开侧边栏"
-                title="展开侧边栏"
-                onClick={togglePanel}
-              >
-                ◨
-              </button>
+            {/* The brand is the page's only level-1 heading and it normally sits in the
+                sidebar. Whenever the sidebar is hidden -- a closed drawer below the compact
+                breakpoint, or a collapsed dock on a desktop -- that subtree leaves the
+                accessibility tree and the page is left without an h1; the top bar carries it
+                instead. Only one of the two renders. */}
+            {!sidebarVisible && (
+              <>
+                <h1 className="brand-text header-brand">
+                  <span className="brand-icon" aria-hidden="true">
+                    <ZCodeWhaleLogo />
+                  </span>
+                  Chaos
+                </h1>
+                <button
+                  type="button"
+                  className="sidebar-toggle-btn"
+                  aria-label="展开侧边栏"
+                  title="展开侧边栏"
+                  aria-controls="workspace-sidebar"
+                  aria-expanded="false"
+                  ref={expandButtonRef}
+                  onClick={toggleSidebar}
+                >
+                  ◨
+                </button>
+              </>
             )}
             <div className="header-breadcrumbs">
               <strong>{activeWorkspaceName}</strong>
@@ -675,6 +787,12 @@ function App() {
               <span>/</span>
               <span>{session.sessionId ? session.sessionId.slice(0, 8) : '新会话'}</span>
             </div>
+            {/* The live connection state used to sit in the sidebar footer. Below the
+                compact breakpoint the sidebar is a closed drawer, which left no visible
+                sign that the socket had dropped, so it lives in the header now. */}
+            <span data-testid="session-status" role="status" aria-live="polite" className="session-status-badge">
+              {session.status}
+            </span>
           </div>
 
           <div className="header-right-tools">
@@ -969,6 +1087,7 @@ function App() {
       <aside
         className="rightbar-col"
         data-shell-column="details"
+        inert={drawerCoversShell}
         style={{ display: isRightbarOpen ? 'flex' : 'none' }}
         aria-label="工具面板"
       >

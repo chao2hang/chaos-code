@@ -2,17 +2,7 @@ import AxeBuilder from '@axe-core/playwright'
 import { mkdir, rm } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { expect, test, type Page } from '@playwright/test'
-
-function workspaceButton(page: Page, name: string) {
-  return page.locator('button[data-testid^="workspace-"]').filter({ hasText: name })
-}
-
-async function createWorkspace(page: Page, name: string) {
-  page.once('dialog', (dialog) => dialog.accept(name))
-  await page.getByRole('button', { name: '+ 新工作区' }).click()
-  await expect(workspaceButton(page, name)).toBeVisible()
-  await expect(workspaceButton(page, name)).toHaveClass(/active/)
-}
+import { createWorkspace, dismissDrawer, openSidebar, withSidebar, workspaceButton } from './support/shell'
 
 async function sendPrompt(page: Page, prompt: string, response: string) {
   const firstLine = prompt.split('\n', 1)[0].replace(/[*`_]/g, '')
@@ -44,14 +34,15 @@ test('workspace sessions stay isolated across create, submit, switch, reload, ar
   await createWorkspace(page, second)
   await sendPrompt(page, `beta marker ${suffix}`, `beta marker ${suffix}`)
 
-  await workspaceButton(page, first).click()
+  await withSidebar(page, () => workspaceButton(page, first).click())
   await expect(page.locator('.user p').first()).toContainText(`alpha marker ${suffix}`)
   await expect(page.locator('.user p')).not.toContainText(`beta marker ${suffix}`)
-  await workspaceButton(page, second).click()
+  await withSidebar(page, () => workspaceButton(page, second).click())
   await expect(page.locator('.user p').first()).toContainText(`beta marker ${suffix}`)
   await expect(page.locator('.user p')).not.toContainText(`alpha marker ${suffix}`)
 
   const archiveFirst = page.getByRole('button', { name: `归档工作区 ${first}` })
+  await openSidebar(page)
   await archiveFirst.focus()
   await expect(archiveFirst).toBeFocused()
   await expect(archiveFirst).toHaveCSS('outline-style', 'solid')
@@ -62,9 +53,13 @@ test('workspace sessions stay isolated across create, submit, switch, reload, ar
   await page.getByLabel('面板宽度').fill('320')
   await page.reload()
   await expect(page.getByTestId('session-status')).toHaveText('会话已创建')
+  // A reload brings a phone back with the drawer closed; the persisted controls live
+  // behind it again.
+  await openSidebar(page)
   await expect(page.getByRole('button', { name: /^主题：light$/ })).toBeVisible()
   await expect(page.getByLabel('面板宽度')).toHaveValue('320')
   await expect(workspaceButton(page, second)).toHaveClass(/active/)
+  await dismissDrawer(page)
   await expect(page.locator('.empty')).toBeVisible()
   const imageRequestUrls: string[] = []
   page.on('request', (request) => {
@@ -106,10 +101,12 @@ test('workspace sessions stay isolated across create, submit, switch, reload, ar
     await expect(page.locator('.assistant p').last()).toContainText('mobile line one')
   }
 
-  await page.getByRole('button', { name: `归档工作区 ${first}` }).click()
-  await expect(workspaceButton(page, first)).toHaveCount(0)
-  await expect(workspaceButton(page, second)).toBeVisible()
-  await expect(workspaceButton(page, second)).toHaveClass(/active/)
+  await withSidebar(page, async () => {
+    await page.getByRole('button', { name: `归档工作区 ${first}` }).click()
+    await expect(workspaceButton(page, first)).toHaveCount(0)
+    await expect(workspaceButton(page, second)).toBeVisible()
+    await expect(workspaceButton(page, second)).toHaveClass(/active/)
+  })
   await expect(page.locator('.user p').filter({ hasText: `beta after reload ${suffix}` })).toBeVisible()
 })
 
@@ -370,12 +367,14 @@ test('keyboard focus is visible and composer submission works without a pointer'
   await page.goto('/')
   await expect(page.getByTestId('session-status')).toHaveText('会话已创建')
 
-  const createWorkspace = page.getByRole('button', { name: '+ 新工作区' })
-  await createWorkspace.focus()
-  await expect(createWorkspace).toBeFocused()
-  await expect(createWorkspace).toHaveCSS('outline-style', 'solid')
-  await expect(createWorkspace).toHaveCSS('outline-width', '3px')
+  const createWorkspaceButton = page.getByRole('button', { name: '+ 新工作区' })
+  await openSidebar(page)
+  await createWorkspaceButton.focus()
+  await expect(createWorkspaceButton).toBeFocused()
+  await expect(createWorkspaceButton).toHaveCSS('outline-style', 'solid')
+  await expect(createWorkspaceButton).toHaveCSS('outline-width', '3px')
   await page.keyboard.press('Tab')
+  await dismissDrawer(page)
 
   const composer = page.getByTestId('composer-input')
   await composer.fill('/')
@@ -405,7 +404,9 @@ test('empty workspace prompt cancellation and empty submission remain safe', asy
   await expect(page.getByTestId('session-status')).toHaveText('会话已创建')
   const createButton = page.getByRole('button', { name: '+ 新工作区' })
   page.once('dialog', (dialog) => dialog.dismiss())
+  await openSidebar(page)
   await createButton.click()
+  await dismissDrawer(page)
   await expect(page.getByTestId('composer-submit')).toBeDisabled()
   await expect(page.getByText('创建会话后，在下方输入 Prompt。')).toBeVisible()
 })

@@ -158,6 +158,10 @@ html, body {
    1. Left Sidebar (ZCode SidebarRoot & Workspaces Rail)
    ========================================================= */
 .sidebar-col {
+  /* Explicit columns: a collapsed sidebar sets `display: none`, which takes the aside
+     out of grid auto-placement entirely, and the conversation would then land in the
+     0px first column instead of the wide one. */
+  grid-column: 1;
   background: var(--dsw-specific-sidebar-fill);
   border-right: 1px solid var(--dsw-alias-border-l2);
   display: flex;
@@ -198,6 +202,13 @@ html, body {
   margin: 0;
   display: flex;
   align-items: center;
+}
+
+/* Rendered only while the sidebar is hidden (closed drawer or collapsed dock), so the
+   page never ends up without its level-1 heading and never shows the brand twice. */
+.header-brand {
+  gap: 8px;
+  flex-shrink: 0;
 }
 
 .sidebar-toggle-btn {
@@ -409,6 +420,10 @@ html, body {
   gap: 6px;
   font-size: 12px;
   color: var(--dsw-alias-label-secondary);
+  /* Sits in the header next to a breadcrumb that absorbs the pressure; the state text
+     must never be the thing that gets squeezed away. */
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .session-status-badge::before {
@@ -423,6 +438,7 @@ html, body {
    2. Center Conversation Column (ConversationMainPanel)
    ========================================================= */
 .center-col {
+  grid-column: 2;
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -1051,6 +1067,7 @@ article.approval button:first-child {
    4. Right Column: Inspector Details Drawer (ZCode rightbarCol)
    ========================================================= */
 .rightbar-col {
+  grid-column: 3;
   background: var(--dsw-alias-bg-layer-1);
   border-left: 1px solid var(--dsw-alias-border-l2);
   display: flex;
@@ -1451,26 +1468,44 @@ article.approval button:first-child {
 
 /* Responsive Overrides */
 @media (max-width: 768px) {
+  /* The shell used to turn into one scrolling column here: the sidebar stacked above
+     the conversation (measured `scrollHeight` 1344 inside an 844 viewport) and the
+     composer fell below the fold, so the reading position could only ever be stable
+     inside the timeline. The shell keeps a fixed height and only the regions scroll;
+     the sidebar becomes an overlay drawer, the way the right bar already is. */
   .shell {
-    display: flex;
-    flex-direction: column;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
     height: 100vh;
-    overflow-y: auto;
+    overflow: hidden;
+  }
+  /* On a real phone `100vh` is the viewport *without* the browser's own toolbar, so
+     the bottom of the composer sat under the fold. */
+  @supports (height: 100dvh) {
+    .shell {
+      height: 100dvh;
+    }
   }
   .sidebar-col {
-    width: 100% !important;
-    min-height: auto;
-    flex-shrink: 0;
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: min(86vw, 340px);
+    z-index: 300;
+  }
+  .sidebar-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 290;
+    padding: 0;
+    border: 0;
+    background: rgb(0 0 0 / 45%);
   }
   .center-col {
-    flex: 1;
-    min-height: 500px;
+    grid-column: 1;
     width: 100%;
-  }
-  .conversation-header {
-    position: sticky;
-    top: 0;
-    z-index: 200;
+    min-height: 0;
   }
   /* Seven tabs plus the breadcrumb path need 508px, and `.center-col` clips with
      `overflow: hidden`, so the last tabs were cut off with no scrollbar to reach
@@ -1483,6 +1518,13 @@ article.approval button:first-child {
   .header-breadcrumbs {
     display: none;
   }
+  /* With the breadcrumb gone there is nothing variable-length left in the left group,
+     so it must stop yielding width to the tab strip; otherwise the tab strip's
+     `flex-shrink: 1` squeezes the expand button and the status badge into a box narrower
+     than their content and clips them with no scrollbar. */
+  .header-left {
+    flex-shrink: 0;
+  }
   .header-right-tools {
     flex-shrink: 1;
     min-width: 0;
@@ -1491,6 +1533,12 @@ article.approval button:first-child {
   }
   .header-right-tools::-webkit-scrollbar {
     display: none;
+  }
+  /* The strip scrolls, so an individual tab must never be squeezed: without this the
+     label breaks one character per line and the header grows to several times its height. */
+  .header-tab-btn {
+    flex-shrink: 0;
+    white-space: nowrap;
   }
   .rightbar-header {
     position: relative;

@@ -1,0 +1,354 @@
+390px 下整页在滚动：修外壳带出的九个缺陷，以及「侧栏收起」为什么会连带删掉页面的标题和连接状态
+================================================================================================
+
+日期：2026-10-03
+提交：本轮（`apps/chaos-ui/src/{layout.ts,main.tsx,style.css}` 手机形态外壳，
+      `apps/chaos-ui/e2e/phone-shell.pw.ts` 新增 9 例，`e2e/support/shell.ts` 新增共享抽屉入口，
+      `e2e/workspace-flow.pw.ts` 6 例改为经抽屉访问侧栏控件）
+被记录的对象：
+  apps/chaos-ui/src/layout.ts      `COMPACT_BREAKPOINT_PX`、`COMPACT_VIEWPORT_QUERY`、`resolveSidebarVisibility`、`resolveFocusWrap`
+  apps/chaos-ui/src/main.tsx       `useCompactViewport()`、抽屉状态与 `Escape` 关闭、点选工作区后收起抽屉、
+                                   连接状态徽标从侧栏搬到头部、品牌 `<h1>` 在侧栏不可见时由头部接管、
+                                   抽屉的 `inert` 覆盖、焦点进出与 Tab 折返、跨断点强制关闭抽屉
+  apps/chaos-ui/src/style.css      `@media (max-width: 768px)` 内 `.shell` 改为定高网格；三列显式 `grid-column`；
+                                   `.sidebar-col` 改为覆盖式抽屉并新增 `.sidebar-backdrop`；`.header-left` 不再让位；
+                                   `.header-tab-btn` 不随标签条一起被压缩
+  apps/chaos-ui/e2e/support/shell.ts    抽屉的 `openSidebar` / `dismissDrawer` / `withSidebar` 共享入口
+  apps/chaos-ui/e2e/phone-shell.pw.ts   9 例：外壳高度与唯一滚动区、抽屉生命周期、点选后交还屏幕、
+                                        宽屏停靠与持久化、窄屏连接状态可见、焦点不外泄、跨断点不留遮罩、
+                                        标签不竖排、侧栏各态 axe
+  apps/chaos-ui/e2e/workspace-flow.pw.ts  侧栏控件一律经共享入口访问
+
+本文件自包含：每段输出都从当轮真实运行里逐字抄下，命令写在 `$` 行上。
+
+
+第 1 节  缺陷本体：手机宽度下滚的是外壳，不是对话
+--------------------------------------------------
+
+上一轮把阅读锚点断言改成「在时间线内部度量」时留了一句附注：窄屏下 `.shell` 自己会滚动，点发送会让整列移动。
+附注被留成待办，本轮把它量清楚。量法是起真实 `chaos-web` 与真实 Vite，在 390×844 里建工作区、发一条把转录本
+撑高的 prompt（`'这里补足一段足够长的中文回答内容用来把对话撑高。'.repeat(80)`，约 1900 字节），然后读布局
+数字。同一段探针跑两遍：改前把 `style.css` 与 `main.tsx` 整体 `git checkout` 回上一个提交，改后跑当前工作树。
+
+    $ node measure-shell.cjs before.tsv          # 一次性探针，未进入仓库；判定逻辑已被第 5 节的测试接管
+
+    label          width height shellOverflow shellScrollTop timelineOverflow composer            aside
+    phone-390x844  390   844    500           500            4786             y=723 h=48 (底 771)  x=0 y=-500 w=390 h=844
+    desktop-1440   1440  1000   0             0              1573             y=879 h=48 (底 927)  x=0 y=0    w=240 h=1000
+
+`shellOverflow = 500` 拆开就是 `scrollHeight 1344` 对 `clientHeight 844`，与待办里记下的 1344 一字不差。
+机制写在 `aside` 那一列上：`position: static`、宽 390、高 844——侧栏整块横躺在对话上方，独占一屏；
+`.center-col { min-height: 500px }` 再往下顶，`.shell` 因此长到 1344。发送 composer 里那条 prompt 之后
+`shellScrollTop` 从 0 变成 500，也就是**整页被推上去 500px**，侧栏被推到 `y = -500` 完全看不见。
+
+composer 的位置要说清楚，否则容易读反：`y = 723` 是**滚动之后**的量。滚动前它的视口纵坐标是 `723 + 500`，
+底边 `1223 + 48 = 1271 > 844`。也就是说输入框本来就落在首屏之外，「点发送把整页推上去」当时是把它推回视口的
+唯一手段。
+
+`timelineOverflow = 4786` 说明该滚的一直都能滚，只是滚错了元素：时间线内部早已可滚，外壳又叠了一层。
+两层滚动器叠在一起，「阅读位置」这件事就没有单一答案——上一轮那条锚点断言之所以先改成量时间线内部，正是为了
+绕开这层歧义；本轮把歧义本身删掉。
+
+
+第 2 节  修法：外壳定高、只有区域滚动、侧栏变覆盖式抽屉
+------------------------------------------------------
+
+`@media (max-width: 768px)` 里 `.shell` 从 `flex/column/overflow-y: auto` 换成单列网格 + 定高 + 裁剪：
+
+    .shell {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      height: 100vh;
+      overflow: hidden;
+    }
+    /* On a real phone `100vh` is the viewport *without* the browser's own toolbar, so
+       the bottom of the composer sat under the fold. */
+    @supports (height: 100dvh) {
+      .shell {
+        height: 100dvh;
+      }
+    }
+
+侧栏不再参与流式布局，改为覆盖在对话之上的抽屉，形态与右栏此前已有的做法一致：
+
+    .sidebar-col {
+      position: fixed;
+      top: 0;
+      bottom: 0;
+      left: 0;
+      width: min(86vw, 340px);
+      z-index: 300;
+    }
+    .sidebar-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 290;
+      padding: 0;
+      border: 0;
+      background: rgb(0 0 0 / 45%);
+    }
+    .center-col {
+      grid-column: 1;
+      width: 100%;
+      min-height: 0;
+    }
+
+可见性不再由「停靠偏好」单独决定。`layout.ts` 里新增一个纯函数，把两种形态的区别写成一行可单测的真值表：
+
+    export function resolveSidebarVisibility({ compact, drawerOpen, panelOpen }: SidebarVisibility): boolean {
+      return compact ? drawerOpen : panelOpen
+    }
+
+`main.tsx` 用 `useCompactViewport()`（`matchMedia(COMPACT_VIEWPORT_QUERY)` 加 `change` 监听）取 `compact`；
+抽屉开关是**独立的** `sidebarDrawerOpen` state，手机上开抽屉绝不写 `layout.panelOpen`——否则一次误触就把
+「收起侧栏」这个偏好永久存下来，回到宽屏时对话旁边就真的没有侧栏了（M6 就是这条）。断点常量也只有一处：
+`COMPACT_VIEWPORT_QUERY` 由 `COMPACT_BREAKPOINT_PX` 拼出，CSS 侧由 `layout.test.ts` 的漂移守卫钉住（M7）。
+
+
+第 3 节  第一个附带缺陷：`display: none` 会把网格项从自动摆放里整个撤走
+------------------------------------------------------------------------
+
+第一版跑起来，宽屏 1440×1000 上点「收起侧边栏」之后，对话整列被挤到左边只剩一条缝，输入框几乎看不见。
+
+根因不在媒体查询里。`.shell` 是三列网格，而这三列此前**全靠自动摆放**：`.sidebar-col`、`.center-col`、
+`.rightbar-col` 依次落进第 1/2/3 列。侧栏收起时写的是 `display: none`——被移除的元素不再是网格项目，自动摆放
+于是把 `.center-col` 放进了第 1 列，而第 1 列的宽度是 `var(--sidebar-width)`，收起时正好为 0。这个 bug 与手机
+无关，宽屏上一直存在，只是此前没有任何测试收起侧栏再看布局。
+
+修法是显式钉住列号，让某个项目消失时其余项目原地不动：
+
+    .sidebar-col {
+      /* Explicit columns: a collapsed sidebar sets `display: none`, which takes the aside
+         out of grid auto-placement entirely, and the conversation would then land in the
+         0px first column instead of the wide one. */
+      grid-column: 1;
+      …
+    }
+    .center-col   { grid-column: 2; … }
+    .rightbar-col { grid-column: 3; … }
+
+`phone-shell.pw.ts` 的「宽屏仍停靠并持久化该偏好」一例把这条钉住：收起后 reload 仍收起、展开后 reload 仍展开，
+中间断言 `.center-col` 与 composer 的几何位置（M2 让它在第 1 列宽 0 的形态下立刻红）。
+
+
+第 4 节  抽屉顺带藏掉了三样不该藏的东西
+--------------------------------------
+
+抽屉是本轮要的行为，但它把侧栏里几样**不该跟着藏**的东西一起藏了。三处都是 mobile 跑出来的，desktop 无感。
+
+**(a) 连接状态徽标。** `session-status` 原本在 `.sidebar-footer` 里。抽屉默认关着，于是手机上它整体不可见：
+socket 断了没有任何可见信号，而输入框还在，用户看到的只是「发了没反应」。徽标因此搬到头部 `.header-left`，
+加 `flex-shrink: 0` 与 `white-space: nowrap`，让本来就在截断的面包屑去吸收挤压。同时把侧栏那份**删掉**，
+避免出现第二个 `role="status"` 活动区被屏幕阅读器念两遍。
+
+`e2e/workspace-flow.pw.ts` 里一条既有断言其实早就在管这件事，只是此前被别的失败盖住：
+
+      const sessionStatus = page.getByRole('status')
+      await expect(sessionStatus).toHaveAttribute('aria-live', 'polite')
+
+`getByRole` 只匹配可访问性树里的元素，`display: none` 子树不在树内，所以徽标一旦回到抽屉里，这条在 mobile 就是
+`element(s) not found`（第 5 节 M10 正是这样红的）。
+
+**(b) 页面的 `<h1>`。** `<h1 className="brand-text">Chaos</h1>` 也在侧栏里。抽屉关着时整个页面**没有一级标题**，
+axe 的 `page-has-heading-one` 只在 mobile 报出来：
+
+    - Array []
+    + Array [
+    +   Object {
+    +     "id": "page-has-heading-one",
+    +     "impact": "moderate",
+    +     "targets": Array [ Array [ "html" ] ]
+    +   },
+    + ]
+
+修法是头部在窄屏补一个品牌 `<h1>`（`{compact && …}`），与侧栏那份**互斥渲染**，任何时刻页面上都只有一份。
+宽屏顶部条虽然放得下，但那里已有面包屑，多一个常驻品牌属于添乱而不是修缺陷。
+
+**(c) 头部因此被挤。** 徽标进头部后，上一轮为「标签够不到」加的那条 DOM 遍历**一个字都没改**，却当场报出新回归：
+
+    - Array []
+    + Array [
+    +   "div.header-left 57<92",
+    + ]
+
+`.header-left { min-width: 0 }` 允许它收缩，而标签条 `flex-shrink: 1` 会一直吃宽度，左组被压到 57px 而内容需要
+92px。窄屏下面包屑已 `display: none`，左组里再没有变长元素，因此它不该继续让位：
+
+      .header-left {
+        flex-shrink: 0;
+      }
+
+**(d) 抽屉要在选完之后把屏幕交还。** 覆盖在对话上的抽屉，点一下工作区还盖着，用户得再手动关一次才能看见对话。
+`workspace-item` 的 `onClick` 因此加一行 `if (compact) setSidebarDrawerOpen(false)`。
+
+
+第 5 节  测试与非空洞性证明
+--------------------------
+
+新增 `apps/chaos-ui/e2e/support/shell.ts`，把「抽屉怎么开、怎么关」收成一个入口。共享的理由是：抽屉化之后，
+**任何**在 390px 下访问侧栏控件的 spec 都必须先开抽屉；写在各文件里迟早各自漂移成「其实只有桌面在测」。
+`withSidebar(page, fn)` 在窄屏开抽屉、执行、把抽屉收掉，宽屏完全不动——收起停靠侧栏会写持久偏好，一个只想让
+覆盖层消失的测试不该翻动它。`workspace-flow.pw.ts` 里 6 例因此改为经它访问侧栏，这同时让 mobile 那几例真的在
+走抽屉，而不是走一个已经下线的旧形态。
+
+`phone-shell.pw.ts` 9 例 × desktop/mobile 两个视口：外壳不自滚且时间线是唯一滚动区、composer 恒在首屏、
+抽屉完整生命周期（载入时关闭 → 展开带遮罩 → 点遮罩关 → 展开后用「收起侧边栏」关 → 展开后按 `Escape` 关）、
+点选工作区交还屏幕、宽屏停靠与持久化、窄屏连接状态可见、焦点不外泄（含焦点陷阱与跨断点）、标签不竖排、
+侧栏可见与不可见两态各扫一遍 axe。`layout.test.ts` 另有 7 例纯函数与结构断言，含 CSS/JS 断点漂移守卫、
+「头部品牌必须与侧栏可见性同条件」与 `resolveFocusWrap` 真值表。
+
+每个变异只改生产代码一处，测试文件一字未动，跑完立即还原并 `cmp` 比对字节。
+
+| 变异 | 改法 | 结果 |
+| --- | --- | --- |
+| M1 | 只把 `.shell` 从网格退回 `flex/column/overflow-y: auto`，保留 `.sidebar-col: fixed` | **green：变异太弱**，抽屉行为未退化，已被 M1b/M1c 取代 |
+| M1b | `@media (max-width: 768px)` 整块还原为改前字节 | red：2 failed |
+| M1c | `style.css` + `main.tsx` 整体 `git checkout` 回改前提交（真实「之前」） | red：**5 failed / 1 passed** |
+| M2 | `.center-col` 丢掉 `grid-column: 2` | red：2 failed（宽屏收起后的对话列与 composer） |
+| M3 | `resolveSidebarVisibility` 改回 `return panelOpen` | red：e2e 3 failed；vitest 真值表 1 failed |
+| M4 | `Escape` 分支的键名改成永不匹配 | red：1 failed |
+| M5 | 遮罩渲染条件短路成 `false &&` | red：2 failed |
+| M6 | 抽屉内「收起侧边栏」改调 `togglePanel`（写停靠偏好） | 第一轮：e2e 6 passed（**弱**）、vitest 结构断言 1 failed；把生命周期例扩到真的点「收起侧边栏」之后重跑 → red：1 failed |
+| M7 | `COMPACT_BREAKPOINT_PX` 768 → 700 | red：vitest 漂移守卫 1 failed |
+| M8 | `.center-col` 丢掉 `min-height: 0` | **green：等价变异**（见下） |
+| M9 | 抽屉 `z-index: 300` → `1` | red：2 failed |
+| M10 | 连接状态徽标搬回侧栏页脚 | red：3 failed（窄屏连接状态 1 例 + `getByRole('status')` 两条既有断言） |
+| M11 | 窄屏头部品牌 `<h1>` 条件短路成 `false &&` | red：2 failed（axe `page-has-heading-one`） |
+| M12 | 点选工作区不再 `setSidebarDrawerOpen(false)` | red：1 failed |
+| M13 | `.header-left` 的 `flex-shrink: 0` 改回 `1` | red：1 failed（`div.header-left 57<92`） |
+| M14 | 删掉窄屏 `.header-tab-btn { flex-shrink: 0; white-space: nowrap }` | red：1 failed（mobile 视口标签逐字竖排；desktop 仍 green，宽屏装得下） |
+| M15 | 头部品牌 `<h1>` 的条件从 `!sidebarVisible` 改回 `compact` | red：desktop「侧栏收起」态 axe `page-has-heading-one`；vitest 结构守卫同时 red |
+
+两条 green 的说明。M1 是**弱变异**而非测试失效：只回退 `.shell` 时 `.sidebar-col` 仍是 `position: fixed`，
+抽屉行为没有退化，所以那组断言无从可红；第一轮发现它弱之后，改为整体回退（M1b 回退整个媒体查询、M1c 回退两个
+生产文件），两者都红。M8 是**等价变异**：`.center-col` 的基础规则里已有 `overflow: hidden`，而溢出非 `visible`
+的网格项其自动最小尺寸即为 0，所以手机块里的 `min-height: 0` 此刻不为任何行为负责。该行留在原地当作显式声明，
+但它是经这条对照实验判定为冗余的，不是被测试覆盖着的。
+
+M1c 是整套里最重要的一条：两个生产文件整体退回改前提交，规格文件一字未改，10 例里 5 例红。
+
+同一棵树上的其余数字：
+
+    $ npx playwright test                      # 全部 11 个规格文件 × desktop / mobile
+      69 passed (1.9m)
+      6 skipped
+    $ npx vitest run
+      Test Files  9 passed (9)
+      Tests  106 passed (106)
+    $ npm run typecheck
+      (干净)
+    $ npm run build
+      dist/assets/index-CDdQFpJ5.css  25.45 kB │ gzip: 4.71 kB
+      dist/assets/index-Bzk1GNhv.js  440.82 kB │ gzip: 134.12 kB
+
+改前/改后对照（同一探针、同一 prompt、同一视口）：
+
+    label        shellOverflow  shellScrollTop  timelineOverflow  composer 底边  aside.position  aside 初始可见  状态徽标
+    改前 390     500            500             4786              771（固有 1271） static          是            侧栏 y=315
+    改后 390     0              0               4442              771              fixed           否            头部 y=17
+    改前 1440    0              0               1573              927              static          是            侧栏 y=971
+    改后 1440    0              0               1573              927              static          是            头部 y=17
+
+宽屏四列逐项不变（外壳不滚、时间线 1573、composer 底边 927、侧栏 240×1000），唯一变化是状态徽标从侧栏页脚
+（y=971）移到头部（y=17）。窄屏 `timelineOverflow` 由 4786 降到 4442，差值来自侧栏不再占据流内高度。
+
+
+第 6 节  截图复核带出的两个后续缺陷：竖排的标签，与收起侧栏后消失的标题
+------------------------------------------------------------------------------------------------
+
+前 5 节的断言全绿之后，把 390×844 与 1440×1000 的实拍图看了一遍——断言只覆盖写得出断言的东西，
+这一眼看出两个没被任何断言覆盖的问题。两个都在生产代码里修掉，并且各补一条会红的守卫。
+
+**其一，头部标签逐字竖排。** 改后的 390 截图里 `对话` 显示成 `对` 换行 `话`。机制：窄屏块里
+`.header-right-tools` 被给了 `flex-shrink: 1; overflow-x: auto`（第 4 节为了不再裁掉展开按钮与状态
+徽标而做的让步），于是标签按钮本身也被压缩，两字中文标签折成三行。`workspace-flow.pw.ts` 里那条
+裁剪走查看不见它——横向上没有任何东西溢出，溢出发生在纵向。
+
+同一段探针在 M14（删掉修复）与修复后各跑一遍，`lines` 是标签文字占了几个行盒：
+
+    $ node header-probe.cjs      # 一次性探针，未进入仓库
+
+    viewport   修复前                          修复后
+                        headerH  tabH  lines  scrollW/clientW   headerH  tabH  lines  scrollW/clientW
+    1440×1000     52      32        1     488 / 488                52      32      1     488 / 488
+     390×844      52      65        3     291 / 159                52      32      1     488 / 159
+     320×568      52      65        3     291 /  89                52      32      1     488 /  89
+
+修复前 `headerH 52` 而 `tabH 65`：头部并没有被撑高，是标签**溢出**了头部下沿 13px，压到对话区上。
+`Git` 只有一行半所以是 2 行 44px。宽屏三种状态下都装得下，因此这条缺陷只在窄屏出现，也只在窄屏被测出。
+修法即 `.header-tab-btn { flex-shrink: 0; white-space: nowrap }`，让横向滚动承担全部挤压——
+`scrollWidth 488 / clientWidth 159` 说明滚动条本就是这里的既定手段。守卫是 `phone-shell.pw.ts`
+新增一例：每个标签的行盒数必须为 1，且头部高度与其中最高控件之差 ≤ 24（实测 20）。M14 让它 red。
+
+**其二，宽屏收起侧栏后整页没有 level-1 标题。** 品牌 `<h1>` 原本只在侧栏里，第 3 节把它复制进头部时
+用的是 `compact` 条件。宽屏收起侧栏时 `compact` 为假、侧栏又 `display: none`，两个 `<h1>` 一个都不剩。
+这个状态此前没有任何 axe 扫描经过：原 `phone-shell.pw.ts` 的 axe 例只在宽屏停靠态与窄屏抽屉打开态扫。
+把该例扩成「载入态扫一遍，切换侧栏可见性之后再扫一遍」，两个视口各两态，缺口立刻现形。
+修法是把头部品牌与展开按钮并进同一个 `!sidebarVisible` 条件（同一条 `display` 决定它们的存亡），
+`layout.test.ts` 另加一条结构守卫：头部品牌必须存在且其渲染条件必须是 `!sidebarVisible`。
+M15 让 axe 与结构守卫同时 red（desktop `toggled` 态报 `page-has-heading-one`，窄屏仍 green）。
+
+两条都属于「同一轮改动带出的、断言覆盖不到的缺陷」，因此记在本文件里而不是另开证据。
+
+
+第 7 节  焦点：遮罩挡住指针，键盘要过两道闸才挡住
+--------------------------------------------------
+
+抽屉化留下的最后一件事写在待办里：遮罩只挡鼠标与触摸，键盘 Tab 照样能走进遮罩背后的对话。
+本轮把它做完，两道闸缺一不可。
+
+**第一道是 `inert`。** 抽屉打开时给被覆盖的两块（`.center-col` 与 `.rightbar-col`）加 `inert`，
+它们既不可聚焦也不进可访问性树——这正是「modal」本该有的意思。这里有一个容易写错的细节：
+`inert` **不是继承属性**，`element.inert` 只反映元素自己的 content attribute，所以
+`composerInput.inert === false` 即使它已经在一个惰性子树里。断言因此写在两块地方：区域本身的
+`inert` 属性，加上「区域里的控件 `focus()` 不生效」这个真正与用户相关的行为。
+
+**第二道是焦点陷阱。** 光有 `inert` 只挡住「走出去」，没给「回来」的路：焦点到抽屉最后一个控件再按
+Tab，会离开文档进浏览器自己的界面，普通用户不知道怎么走回来。`onKeyDown` 在抽屉的边界折返
+（判定在 `layout.ts` 的纯函数 `resolveFocusWrap` 里），把抽屉自身 `tabIndex={-1}` 计为第 0 位——
+否则从它身上按 Shift+Tab 会直接退到文档外。遮罩刻意不在这个循环里：它与抽屉自带的「收起侧边栏」和
+`Escape` 重复，键盘用户若能走到它，说明陷阱已经漏了。
+
+M17 单独证明这道闸的必要性：只删 `onKeyDown` 一行，Tab 到第 7 次与第 15 次落在 `page:body`
+（即离开文档），而对话此时**已经**被 `inert` 挡住——两道闸各管一段，谁也替不了谁。
+
+另外两条与焦点有关的行为一并钉住：打开抽屉时焦点进入抽屉（否则用户接下来的按键全落在被盖住的对话上），
+关闭时交还给展开按钮（否则焦点留在已卸载的节点上，键盘等于从页面上消失）。
+
+跨断点的那条限制也一并收掉：`compact` 翻回宽屏时强制 `setSidebarDrawerOpen(false)`，
+否则 `sidebarDrawerOpen` 在一个不可见的形态下留着 true，窗口拖窄时遮罩会自己复活。
+新增的测试真的改视口（390 → 1440 → 390）而不是重开页面，宽屏那一段还断言侧栏的计算
+`position` 是 `static`，即由网格摆放而不是被钉在视口上。
+
+| 变异 | 改法 | 结果 |
+| --- | --- | --- |
+| M16 | `.center-col` 去掉 `inert={drawerCoversShell}` | red：1 failed（区域的 `inert` 与 composer 可聚焦两条断言） |
+| M17 | 去掉 `onKeyDown={trapDrawerFocus}` | red：1 failed（`tab 7 -> page:body`、`tab 15 -> page:body`） |
+| M18 | 打开抽屉不再 `sidebarRef.current?.focus()` | red：1 failed（`toBeFocused`） |
+| M19 | `if (!compact) setSidebarDrawerOpen(false)` 短路 | red：1 failed（拖回 390 后遮罩复活） |
+| M20 | 关闭时不归还焦点 | red：1 failed（`toBeFocused` 落在展开按钮） |
+| M21 | `drawerCoversShell` 常量改成 `false` | red：1 failed |
+
+本轮把「断言写在哪」这件事暴露得很清楚：第一版断言写成 `composer-input` 的 `inert === true`，
+在真实修复下直接 red——不是修复没生效，是 `inert` 的语义不是那样。改成量区域本身加量能否聚焦之后，
+同一条测试 both 通过并且在 M16 下 red。
+
+
+第 8 节  本轮没有覆盖的部分
+--------------------------
+
+- 引擎只跑了 Chromium（`Desktop Chrome`，窄屏为 390×844 + `isMobile` + `hasTouch` 的仿真）。`100dvh`、
+  `min(86vw, 340px)` 与 `rgb(0 0 0 / 45%)` 在 WebKit 上的表现没有本机可验证的手段；`@supports` 包裹本身就是
+  为此留的退路。
+- 真机触摸手势没有测：抽屉没有做拖拽跟手与滑动关闭，只有点遮罩、`Escape`、抽屉内收起按钮三条路径。
+- `inert` 与焦点陷阱只在 Chromium 上验证。该属性在各主流浏览器均已可用，但本机没有可运行的 WebKit/Firefox
+  手段去确认它们的行为一致；焦点折返是自建逻辑，跨浏览器差异（尤其是 Shift+Tab 从 `tabindex="-1"` 元素出发的
+  落点）未实测。
+- 读屏软件下的表现没有测：`inert` 会把被覆盖区域移出可访问性树，但「打开抽屉时朗读什么、关闭后焦点念回哪里」
+  需要真实 AT 才能判断，浏览器断言只能证明 DOM 与焦点事实。
+- Tab 循环只测了 15 次按键（多于抽屉内控件数量，足以越过一次折返），没有穷举每个停靠点的双向转移。
+- 视口跨断点只断言 390 → 1440 → 390 这条一次跳转（含宽屏段的 `position: static`），连续逐像素拖动过程中的
+  中间帧没有断言；`layout.panelOpen` 在整个过程中保持不变，这一条也被顺带钉住。
+- 断点本身（768）沿用既有 CSS 的事实，不是本轮的产品判断；tablet（769～1023）形态没有改动。
+- 测量探针 `measure-shell.cjs` 与 `header-probe.cjs` 是一次性工具，未进入仓库。它们负责产出第 1、5、6 节的
+  数字；判定这些数字的职责在各节对应的浏览器规格里，仓库不依赖探针本身。
