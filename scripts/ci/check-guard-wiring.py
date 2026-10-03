@@ -40,6 +40,15 @@ transitive rule as above) or recorded in `scripts/ci/docker-entry-ci-only.tsv`
 with what it needs that a clean container does not have. `--list-mirror` prints
 the resulting classification, one guard per line.
 
+The third rule is about the arguments. Mirroring says both places run a guard; it
+does not say they ask the same thing of it. `platform-gated-tests.py` is held to
+four budgets written at both call sites, and on 2026-10-04 a lowering reached
+ci.yml while the local entry point kept the older, looser numbers: a leg nobody
+runs locally enforcing a cap two rows above the one that blocks merges, with every
+check green. So a flag one place passes and the other does not stays a choice
+(`--require` is deliberately Windows-leg-only), but a flag both pass has to carry
+the same values in both.
+
 Usage: python3 scripts/ci/check-guard-wiring.py [--root DIR] [--list-mirror]
 Exit: 0 = every gate reachable, mirrored or recorded, no dangling call site.
 """
@@ -211,6 +220,124 @@ def mirrored(root: Path, by_name: dict[str, list[Path]]) -> set[str]:
     return live
 
 
+# The mirror above says a guard is run in both places. It says nothing about the two
+# places asking for the same thing. `platform-gated-tests.py` is held to four budgets,
+# written at both call sites, and on 2026-10-04 a lowering reached ci.yml and
+# `--max-unreviewed 1106` while the local entry point still said `1108`: the leg nobody
+# runs locally was enforcing a cap two rows looser than the one that blocks merges, and
+# every check stayed green doing it. So: a flag one root passes and the other does not is
+# a choice (`--require` is deliberately Windows-leg-only), but a flag both pass has to
+# carry the same values in both.
+COMMAND_SPLIT_RE = re.compile(r"&&|\|\||[;|]")
+FLAG_RE = re.compile(r"--[a-z][a-z0-9_-]+")
+
+
+def command_units(path: Path) -> list[str]:
+    """Executable lines, with backslash continuations joined.
+
+    A YAML step splits its command over lines; the budgets that have to agree routinely
+    sit on the continuation, so joining first is what makes the comparison real rather
+    than nominal. Prose is already gone -- `executable_lines` dropped it.
+    """
+    units: list[str] = []
+    pending = ""
+    for line in executable_lines(path).splitlines():
+        stripped = line.strip()
+        if not stripped:
+            if pending:
+                units.append(pending.strip())
+                pending = ""
+            continue
+        if stripped.endswith("\\"):
+            pending += stripped[:-1].strip() + " "
+            continue
+        units.append((pending + stripped).strip())
+        pending = ""
+    if pending:
+        units.append(pending.strip())
+    return units
+
+
+def flags_by_gate(root: Path, gate_names: set[str]) -> dict[Path, dict[str, dict[str, set[str]]]]:
+    """Per root: gate -> flag -> the values that root passes for it.
+
+    Flags belong to the invocation in front of them, so the text is cut at the shell
+    connectives first: `verify-in-docker.sh` keeps `test-x.py && x.py --check-baseline y`
+    on one line, and attributing those flags to the test file as well would compare the
+    wrong thing. Values keep the shell's own quoting (`"...tsv"` closes the `gates` array
+    element), which is stripped before anything is compared.
+    """
+    patterns = {name: name_pattern(name) for name in gate_names}
+    out: dict[Path, dict[str, dict[str, set[str]]]] = {}
+    for path in roots(root):
+        per_gate = out.setdefault(path, {})
+        for unit in command_units(path):
+            for segment in COMMAND_SPLIT_RE.split(unit):
+                hits = []
+                for name, pattern in patterns.items():
+                    found = pattern.search(segment)
+                    if found is not None:
+                        hits.append((found.start(), name))
+                if not hits:
+                    continue
+                hits.sort()
+                stop = hits[1][0] if len(hits) > 1 else len(segment)
+                tokens = segment[hits[0][0] : stop].split()
+                name = hits[0][1]
+                flags = per_gate.setdefault(name, {})
+                index = 0
+                while index < len(tokens):
+                    token = tokens[index].strip().strip("\"'")
+                    flag, _, inline = token.partition("=")
+                    if not FLAG_RE.fullmatch(flag):
+                        index += 1
+                        continue
+                    value = inline
+                    if not inline and index + 1 < len(tokens):
+                        following = tokens[index + 1].strip().strip("\"'")
+                        if not following.startswith("-"):
+                            value = following
+                            index += 1
+                    flags.setdefault(flag.strip("\"'"), set()).add(value)
+                    index += 1
+    return out
+
+
+def disagreeing_flags(root: Path, gate_names: set[str]) -> list[str]:
+    """Flag values the local entry point and a workflow do not agree on."""
+    per_root = flags_by_gate(root, gate_names)
+    verify = root / VERIFY_SCRIPT
+    if verify not in per_root:
+        return []
+    problems: list[str] = []
+    for workflow in sorted(set(per_root) - {verify}):
+        from_verify, from_workflow = per_root[verify], per_root[workflow]
+        for gate in sorted(set(from_verify) & set(from_workflow)):
+            for flag in sorted(set(from_verify[gate]) & set(from_workflow[gate])):
+                local_values, workflow_values = from_verify[gate][flag], from_workflow[gate][flag]
+                if local_values == workflow_values:
+                    continue
+                problems.append(
+                    f"  {gate} {flag} is passed as {_say(workflow_values)} by {_show(workflow, root)} "
+                    f"but {_say(local_values)} by {VERIFY_SCRIPT}; a budget only has to be raised once, "
+                    "so both call sites have to move together"
+                )
+    return problems
+
+
+def _show(path: Path, root: Path) -> str:
+    """`path` relative to `root`, without tripping over how either was spelled."""
+    try:
+        return str(path.relative_to(root))
+    except ValueError:
+        return str(path)
+
+
+def _say(values: set[str]) -> str:
+    shown = sorted(v if v else "(no value)" for v in values)
+    return " / ".join(repr(v) for v in shown)
+
+
 def ci_only(root: Path) -> dict[str, str]:
     """Guards kept out of the local entry point, each with what it needs.
 
@@ -257,6 +384,7 @@ def check(root: Path, list_mirror: bool = False) -> int:
     # coverage that the next reader would trust.
     stale_ci_only = sorted(name for name in keep if not (root / GATE_DIR / name).is_file())
     mirrored_but_listed = sorted(name for name in keep if name in mirror and (root / GATE_DIR / name).is_file())
+    flag_problems = disagreeing_flags(root, gate_names)
 
     for line in dangling:
         print(line)
@@ -279,9 +407,11 @@ def check(root: Path, list_mirror: bool = False) -> int:
             f"  {CI_ONLY_TSV}: {name} is listed as CI-only but {VERIFY_SCRIPT} runs it; "
             "drop the row so the coverage count is not inflated"
         )
+    for line in flag_problems:
+        print(line)
 
     problems = len(dangling) + len(stale_exemptions) + len(orphans) + len(unmirrored)
-    problems += len(stale_ci_only) + len(mirrored_but_listed)
+    problems += len(stale_ci_only) + len(mirrored_but_listed) + len(flag_problems)
     if problems:
         print(f"check-guard-wiring: {problems} problem(s)")
         return 1

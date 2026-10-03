@@ -2,6 +2,68 @@
 
 ## Unreleased
 
+### 门禁：两处都在跑同一个门，却可以问它要不同的数字，两条绿灯还互相掩护
+
+上一条删掉了预算的第三份副本，代价写在这里：自测从此按接线处的数字跑，也就再没有任何
+检查去过问「这两处该不该一致」。而这个仓库里最容易被单独改动的东西，恰好就是这两个被接
+线处 —— 2026-10-04 那次降预算只改到 `ci.yml`，本地腿仍停在 1108，全树绿着。
+
+`scripts/ci/check-guard-wiring.py` 因此多了第三条规则：一个 flag 只有一处传，那是选择
+（`--require` 就只属于 Windows 那条腿，本地容器满足不了它）；两处都传的 flag，值必须相同。
+
+判据得落在真实仓库上才有意义。把 `ci.yml` 抬到 1107、本地入口留在 1106，三个判决（下面
+两段引文按本条的列宽折过行、省略号为本文所加，完整原文见证据日志）：
+
+          $ python3 <HEAD 版的同一个脚本> --root .
+          check-guard-wiring: OK (50 files in scripts/ci/, 49 reachable, 45 run by
+            scripts/verify-in-docker.sh, 4 recorded CI-only, 1 exempt)
+
+          $ python3 scripts/ci/check-guard-wiring.py
+            platform-gated-tests.py --max-unreviewed is passed as '1107' by .github/workflows/ci.yml
+              but '1106' by scripts/verify-in-docker.sh; a budget only has to be raised once, …
+          check-guard-wiring: 1 problem(s)
+
+          $ python3 scripts/ci/platform-gated-tests.py --quiet \
+              --check-baseline scripts/ci/platform-gated-tests.tsv \
+              --max-unreviewed 1107 --max-blind-windows 74 --max-blind-macos 11 \
+              --max-assumption-free 441
+          [exit 0]
+
+拿着这笔预算的那个门自己根本没法报这件事 —— 1107 是它愿意执行的一个上限，出错的是这一
+对，而站在任何一个被接线处里面都看不见另一个。
+
+实现里有四个归属决定，每一个在第一版里都是错的。`ci.yml` 的四个预算不在点名守护那一行，
+而在它下面四条反斜杠续行里：逐行读会让 workflow 看起来什么都没传，而「只有一处出现」的
+flag 不参与比较，规则于是恰好对它本来要抓的那种情形保持沉默。`verify-in-docker.sh`
+把整条门写在一个数组元素里，好几条还是 `test-x.py --flag && x.py --预算 N`：只按守护名
+切会把预算记到前面那个测试文件上，第一版还因此凭空造出一条 `--require` 的分歧，它第二边
+的值是字符串 `&&`。两处都有解释预算来路的注释：注释若算数，门禁就会去报告两个句子之间
+的分歧，而吵闹的门禁只会被人关掉。数组元素的收尾 `"` 会让这一行最后一个值带着引号进比较。
+
+还有一个决定是被一条失败的夹具逼出来的，不是想出来的：比较是「本地入口 vs 每一个
+workflow」，从不 workflow 之间。两两比较会让第二条合法地想要不同上限的腿根本加不上来，
+而按名字只认 `ci.yml` 又会让第二条腿随便漂。
+
+`scripts/ci/test-check-guard-wiring.py` 新增 `FlagAgreementTests` 八条，另加一条活体：它
+读真仓库，断言那四个 `--max-*` 确实出现在被比较的集合里、而 `--require` 确实不在。它不复
+述任何数字 —— 上一条的教训恰恰是复述的那一份会变成下一个过期的。
+
+          test_a_budget_written_on_a_continued_line_still_counts
+          test_a_flag_after_a_shell_connective_belongs_to_the_next_command
+          test_a_commented_out_number_is_not_a_call_site
+          test_the_real_repo_actually_compares_the_four_budgets
+
+九条变异全部被杀：七条改 checker（不切连接符、只比 `ci.yml`、把单边 flag 也纳入比较、不
+拼接续行、连注释一起读、只比是否出现而不比值、把分歧打印出来却不计数），两条改真实被接
+线处（`ci.yml` 单独抬到 1107、把 CI 指向另一份确实存在的台账）。后者特意指向一个存在的
+文件，好让「悬空调用点」那条规则不可能是让它变红的原因。A1、A4、A6 还同时杀掉活体那条：
+在这棵真树上预算既在续行之后又在 `&&` 之后，破坏任一处都会让本地这一侧再也读不到它们，
+而这正是这类规则变得只有形式没有作用的方式。最阴的是 A7 —— 行照打、计数不加、退出码仍是
+0 —— 被断言退出码而不是输出的那条夹具抓住。九次还原全部逐字节 `cmp` 复核。自测从 17 条增
+加到 25 条。
+（2026-10-04；`scripts/ci/check-guard-wiring.py`、`scripts/ci/test-check-guard-wiring.py`、
+`docs/verification/guard-wiring-flag-agreement-2026-10-04.log`）
+
 ### 门禁：四个预算写在三个地方，降预算那一步只改了两处，说谎的是没改的那份
 
 先说触发点。把被平台 `cfg` 挡在构建外的台账从 1,108 降到 1,106 行、`assumptions` 为 `none` 的那份从

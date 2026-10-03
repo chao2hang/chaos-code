@@ -1,0 +1,279 @@
+# Guard wiring: two call sites, one argument, and the drift neither of them could see (2026-10-04)
+
+`scripts/ci/check-guard-wiring.py` used to answer two questions: does every guard
+under `scripts/ci/` get run by something, and does the local Docker entry point run
+the guards CI runs. Both were reachability questions. Neither looked at what the two
+call sites *ask* of a guard once they agree to run it, which is the half where the
+2026-10-04 budget incident actually lives: `platform-gated-tests.py` is held to four
+budgets, the numbers are written once in `.github/workflows/ci.yml` and once in
+`scripts/verify-in-docker.sh`, and a lowering reached one of the two files. CI blocked
+at `--max-unreviewed 1106` while the leg developers run locally still accepted 1108.
+Every check in the repository was green while that was true.
+
+The rule added here: a flag one call site passes and the other never mentions stays a
+choice -- `--require` is deliberately Windows-leg-only, and demanding it locally would
+ask the container for something it cannot do. A flag both pass has to carry the same
+values in both.
+
+== 0. Where the incident had already left a scar
+
+The same drift was fixed earlier the same day from the other direction.
+`scripts/ci/test-platform-gated-tests.py` had re-typed the budgets into its own
+constants to check the ledger against them, so when the call sites moved to 1106 and
+441 the self-test went red on `1106 != 1108` and `441 != 443`. That fix removed the
+third copy of the numbers and derived them from the wiring instead:
+
+    docs/verification/platform-gated-tests-2026-10-03.log   section `== 11.`
+
+Deriving them means the self-test can no longer disagree with the call sites, which is
+correct, and also means nothing was left comparing the two call sites to each other.
+The self-test now reports what both roots ask for; it has no position on whether they
+should agree. That gap is what this file is about.
+
+== 1. What the rule compares on this repository
+
+The reader is `flags_by_gate()` in `scripts/ci/check-guard-wiring.py`. It walks the
+same roots the reachability rule walks -- `.github/workflows/*.yml` and
+`scripts/verify-in-docker.sh` -- and builds, per root, a map of guard to flag to the
+set of values that root passes. Dumped against the shipped tree:
+
+$ python3 /tmp/grok-goal-ec37f68d1619/implementer/dump_flag_map.py
+    -- .github/workflows/ci.yml
+       check-powershell-syntax.py       --require              ['']
+       classify-open-todos.py           --check-doc            ['docs/architecture/todo-open-item-classification.md']
+       cwd-change-census.py             --check-baseline       ['scripts/ci/cwd-change-baseline.tsv']
+       ignored-tests.py                 --check-baseline       ['scripts/ci/ignored-tests-baseline.tsv']
+       ignored-tests.py                 --require-reasons      ['']
+       panic-site-census.py             --check-baseline       ['scripts/ci/panic-site-baseline.tsv']
+       panic-site-census.py             --check-uncompiled     ['scripts/ci/uncompiled-sources.txt']
+       platform-gated-tests.py          --check-baseline       ['scripts/ci/platform-gated-tests.tsv']
+       platform-gated-tests.py          --max-assumption-free  ['441']
+       platform-gated-tests.py          --max-blind-macos      ['11']
+       platform-gated-tests.py          --max-blind-windows    ['74']
+       platform-gated-tests.py          --max-unreviewed       ['1106']
+       platform-gated-tests.py          --quiet                ['']
+       test-installer-asset-names.py    --require              ['']
+    -- .github/workflows/release.yml
+    -- scripts/verify-in-docker.sh
+       classify-open-todos.py           --check-doc            ['docs/architecture/todo-open-item-classification.md']
+       cwd-change-census.py             --check-baseline       ['scripts/ci/cwd-change-baseline.tsv']
+       ignored-tests.py                 --check-baseline       ['scripts/ci/ignored-tests-baseline.tsv']
+       ignored-tests.py                 --require-reasons      ['']
+       panic-site-census.py             --check-baseline       ['scripts/ci/panic-site-baseline.tsv']
+       panic-site-census.py             --check-uncompiled     ['scripts/ci/uncompiled-sources.txt']
+       platform-gated-tests.py          --check-baseline       ['scripts/ci/platform-gated-tests.tsv']
+       platform-gated-tests.py          --max-assumption-free  ['441']
+       platform-gated-tests.py          --max-blind-macos      ['11']
+       platform-gated-tests.py          --max-blind-windows    ['74']
+       platform-gated-tests.py          --max-unreviewed       ['1106']
+       platform-gated-tests.py          --quiet                ['']
+
+    -- compared at both: 12 (gate, flag) pairs
+       classify-open-todos.py           --check-doc
+       cwd-change-census.py             --check-baseline
+       ignored-tests.py                 --check-baseline
+       ignored-tests.py                 --require-reasons
+       panic-site-census.py             --check-baseline
+       panic-site-census.py             --check-uncompiled
+       platform-gated-tests.py          --check-baseline
+       platform-gated-tests.py          --max-assumption-free
+       platform-gated-tests.py          --max-blind-macos
+       platform-gated-tests.py          --max-blind-windows
+       platform-gated-tests.py          --max-unreviewed
+       platform-gated-tests.py          --quiet
+    [exit 0]
+
+Twelve pairs, of which the four budgets are the ones that were observed to drift.
+`release.yml` runs no guard with an argument, so it contributes nothing to compare.
+The two `--require` rows appear on the CI side only and are therefore not compared,
+which is the deliberate asymmetry the rule has to preserve.
+
+== 2. The drift, replayed against the tree
+
+`ci.yml` was edited to `--max-unreviewed 1107`, the local entry point left at 1106,
+and three verdicts collected. The scratch copy of the checker is `HEAD`'s version, so
+the first verdict is what the repository does today:
+
+$ grep -n 'max-unreviewed' .github/workflows/ci.yml scripts/verify-in-docker.sh
+    .github/workflows/ci.yml:722:            --max-unreviewed 1107 --max-blind-windows 74 --max-blind-macos 11 \
+    scripts/verify-in-docker.sh:166:  "platform-gated tests: python3 scripts/ci/test-platform-gated-tests.py && python3 scripts/ci/platform-gated-tests.py --quiet --check-baseline scripts/ci/platform-gated-tests.tsv --max-unreviewed 1106 --max-blind-windows 74 --max-blind-macos 11 --max-assumption-free 441"
+    [exit 0]
+
+-- the checker as it stood at HEAD, i.e. before this rule existed:
+
+$ python3 /tmp/grok-goal-ec37f68d1619/implementer/check-guard-wiring.head.py --root /home/chaos/hunt/dev/projects/chaos-code
+    check-guard-wiring: OK (50 files in scripts/ci/, 49 reachable, 45 run by scripts/verify-in-docker.sh, 4 recorded CI-only, 1 exempt)
+    [exit 0]
+
+-- the same tree against the checker with the agreement rule:
+
+$ python3 scripts/ci/check-guard-wiring.py
+      platform-gated-tests.py --max-unreviewed is passed as '1107' by .github/workflows/ci.yml but '1106' by scripts/verify-in-docker.sh; a budget only has to be raised once, so both call sites have to move together
+    check-guard-wiring: 1 problem(s)
+    [exit 1]
+
+-- and the platform-gated gate itself, which is what would have had to disagree:
+
+$ python3 scripts/ci/platform-gated-tests.py --quiet --check-baseline scripts/ci/platform-gated-tests.tsv --max-unreviewed 1107 --max-blind-windows 74 --max-blind-macos 11 --max-assumption-free 441
+    [exit 0]
+
+The gate that owns the budget cannot report this at all: 1107 is a cap it is willing
+to enforce. It is the pair that is wrong, and pairs are not visible from inside one
+call site. `ci.yml` was restored byte-identically after the replay and its mtime
+bumped.
+
+== 3. Four attribution decisions, each of which was wrong in a first draft
+
+Backslash continuations. The budgets in `ci.yml` do not sit on the line that names the
+guard; they are on four continuation lines below it. Read line by line, the workflow
+appears to pass no budget at all, and a flag present on one side only is not compared,
+so the rule would have gone quiet on the exact case it exists for. `command_units()`
+joins continuations before anything is matched.
+
+Shell connectives. `verify-in-docker.sh` keeps a whole gate on one array line, and
+several gates are `test-x.py --flag && x.py --budget N`. Splitting only at guard names
+attributes the budget to the test file in front of it, which changes which pair is
+being compared -- and in the first draft it also invented a disagreement on `--require`
+whose second value was the string `&&`. Each command unit is cut at `&&`, `||`, `;` and
+`|` first, and flags are attributed to the invocation ahead of them.
+
+Comments. Both roots carry old numbers in prose explaining how a budget got here. If
+those counted, the checker would report a disagreement between two sentences, and a
+noisy gate is a gate that gets disabled. `command_units()` reuses `executable_lines()`,
+which already strips YAML and shell prose, so the same rule that keeps docstrings from
+counting as invocations keeps comments from counting as arguments.
+
+Quoting. A gates-array element ends in `"`, so the last value on the line arrives as
+`scripts/ci/platform-gated-tests.tsv"`. Values and flag names are stripped of shell
+quoting before comparison, or every baseline path would disagree with itself.
+
+One more decision was forced by a fixture that failed rather than by reasoning. The
+comparison is the local entry point against *each* workflow, never workflow against
+workflow: comparing all roots pairwise would make a second leg that legitimately wants
+a different value impossible to add, and comparing only `ci.yml` by name would let a
+second leg drift freely. Two workflows that both run a mirrored guard are therefore
+each compared with the entry point.
+
+== 4. Fixtures
+
+`scripts/ci/test-check-guard-wiring.py`, class `FlagAgreementTests`, eight cases plus
+one live case in `RealRepositoryTests`. Each pins one of the decisions above:
+
+    test_the_same_value_at_both_call_sites_is_accepted
+    test_a_value_raised_at_one_call_site_only_is_named
+    test_a_flag_only_one_call_site_passes_is_a_choice
+    test_a_budget_written_on_a_continued_line_still_counts
+    test_a_flag_after_a_shell_connective_belongs_to_the_next_command
+    test_a_baseline_only_one_call_site_reads_is_named
+    test_a_commented_out_number_is_not_a_call_site
+    test_a_second_workflow_has_to_agree_with_the_entry_point_too
+    test_the_real_repo_actually_compares_the_four_budgets
+
+The last one is the non-vacuity case, and it reads this repository rather than a
+fixture. If the reader stopped matching the real call sites, all eight synthetic trees
+could still pass while the four budgets went unwatched, so it asserts the four
+platform-gated budgets really appear in the compared set, and that `--require` really
+does not. It does not restate any number: after the lesson in section 0, a test that
+re-typed `1106` would be the next thing to go stale.
+
+$ python3 scripts/ci/test-check-guard-wiring.py -v
+    ...
+    Ran 25 tests in 1.756s
+
+    OK
+    [exit 0]
+
+Seventeen fixtures before, twenty-five now.
+
+== 5. Mutation record
+
+`scripts/ci/check-guard-wiring.py` was mutated seven times in place; each time the
+whole self-test ran and the file was restored byte-identically and `cmp`-verified. Two
+further mutations moved a real call site, which is the only way to show the rule bites
+on this repository and not only on fixtures. Every case reports the fixture it killed.
+
+$ python3 /tmp/grok-goal-ec37f68d1619/implementer/mutate_flag_agreement.py
+    baseline self-test: rc=0 1 lines, failures=[]
+    baseline checker: rc=0 check-guard-wiring: OK (50 files in scripts/ci/, 49 reachable, 45 run by scripts/verify-in-docker.sh, 4 recorded CI-only, 1 exempt)
+    A1 flags stop being cut at the shell connectives: rc=1 killed=['test_a_flag_after_a_shell_connective_belongs_to_the_next_command'] others=['test_a_baseline_only_one_call_site_reads_is_named', 'test_a_budget_written_on_a_continued_line_still_counts', 'test_a_flag_after_a_shell_connective_belongs_to_the_next_command', 'test_a_second_workflow_has_to_agree_with_the_entry_point_too', 'test_a_value_raised_at_one_call_site_only_is_named', 'test_the_real_repo_actually_compares_the_four_budgets']
+        restored check-guard-wiring.py byte-identically: True
+    A2 only ci.yml is compared, a second leg is ignored: rc=1 killed=['test_a_second_workflow_has_to_agree_with_the_entry_point_too'] others=['test_a_second_workflow_has_to_agree_with_the_entry_point_too']
+        restored check-guard-wiring.py byte-identically: True
+    A3 a flag one side never passes is compared anyway: rc=1 killed=['test_a_flag_only_one_call_site_passes_is_a_choice'] others=['test_a_flag_only_one_call_site_passes_is_a_choice', 'test_every_gate_in_the_real_repo_is_reachable', 'test_the_real_classification_is_the_one_the_lists_claim']
+        restored check-guard-wiring.py byte-identically: True
+    A4 backslash continuations stop being joined: rc=1 killed=['test_a_budget_written_on_a_continued_line_still_counts'] others=['test_a_budget_written_on_a_continued_line_still_counts', 'test_every_gate_in_the_real_repo_is_reachable', 'test_the_real_classification_is_the_one_the_lists_claim', 'test_the_real_repo_actually_compares_the_four_budgets']
+        restored check-guard-wiring.py byte-identically: True
+    A5 command_units reads raw text, comments and all: rc=1 killed=['test_a_commented_out_number_is_not_a_call_site'] others=['test_a_commented_out_number_is_not_a_call_site']
+        restored check-guard-wiring.py byte-identically: True
+    A6 presence is compared instead of values: rc=1 killed=['test_a_value_raised_at_one_call_site_only_is_named', 'test_a_baseline_only_one_call_site_reads_is_named'] others=['test_a_baseline_only_one_call_site_reads_is_named', 'test_a_budget_written_on_a_continued_line_still_counts', 'test_a_flag_after_a_shell_connective_belongs_to_the_next_command', 'test_a_second_workflow_has_to_agree_with_the_entry_point_too', 'test_a_value_raised_at_one_call_site_only_is_named']
+        restored check-guard-wiring.py byte-identically: True
+    A7 the disagreements are printed but not counted: rc=1 killed=['test_a_value_raised_at_one_call_site_only_is_named'] others=['test_a_baseline_only_one_call_site_reads_is_named', 'test_a_budget_written_on_a_continued_line_still_counts', 'test_a_flag_after_a_shell_connective_belongs_to_the_next_command', 'test_a_second_workflow_has_to_agree_with_the_entry_point_too', 'test_a_value_raised_at_one_call_site_only_is_named']
+        restored check-guard-wiring.py byte-identically: True
+        checker as CI runs it: rc=1
+            platform-gated-tests.py --max-unreviewed is passed as '1107' by .github/workflows/ci.yml but '1106' by scripts/verify-in-docker.sh; a budget only has to be raised once, so both call sites have to move together
+            check-guard-wiring: 1 problem(s)
+    B1 ci.yml raises --max-unreviewed on its own: rc=1 killed=['test_every_gate_in_the_real_repo_is_reachable'] others=['test_every_gate_in_the_real_repo_is_reachable', 'test_the_real_classification_is_the_one_the_lists_claim']
+        restored ci.yml byte-identically: True
+        checker as CI runs it: rc=1
+            platform-gated-tests.py --check-baseline is passed as 'scripts/ci/ignored-tests-baseline.tsv' by .github/workflows/ci.yml but 'scripts/ci/platform-gated-tests.tsv' by scripts/verify-in-docker.sh; a budget only has to be raised once, so both call sites have to move together
+            check-guard-wiring: 1 problem(s)
+    B2 the local entry point reads a different baseline than CI does: rc=1 killed=['test_every_gate_in_the_real_repo_is_reachable'] others=['test_every_gate_in_the_real_repo_is_reachable', 'test_the_real_classification_is_the_one_the_lists_claim']
+        restored ci.yml byte-identically: True
+    final self-test: rc=0 failures=[]
+    [exit 0]
+
+Two of these are worth reading closely. A1, A4 and A6 also kill the live case, because
+on the real tree the budgets are behind both a continuation and a `&&`: break either
+and `flags_by_gate()` loses them from the local side, which is precisely how a rule
+like this becomes decorative without anything failing. B2 points CI at
+`scripts/ci/ignored-tests-baseline.tsv`, a file that exists, so the dangling-call-site
+rule cannot be what turns the checker red; the only thing that can is the disagreement
+itself. A7 is the quietest mutation in the set -- the line still prints, the count does
+not grow, and the exit status stays 0 -- and it is caught by the fixture that asserts
+the exit status rather than the output.
+
+== 6. Local verification
+
+Both commands below run against the working tree this batch produces, and the second is
+the whole self-test rather than the new class alone, because the reachability and mirror
+rules read the same files the new reader reads.
+
+$ python3 scripts/ci/check-guard-wiring.py
+    check-guard-wiring: OK (50 files in scripts/ci/, 49 reachable, 45 run by scripts/verify-in-docker.sh, 4 recorded CI-only, 1 exempt)
+    [exit 0]
+
+$ python3 scripts/ci/test-check-guard-wiring.py
+    ----------------------------------------------------------------------
+    Ran 25 tests in 2.869s
+    OK
+    [exit 0]
+
+The 2.869s run is a separate invocation from the 1.756s `-v` run quoted in section 4;
+both are reported as they came out. The replay in section 2 and the mutations in
+section 5 each ended with `cmp` reporting the file identical to the copy taken before
+the edit, and the working tree afterwards held only the files this batch changes:
+
+$ git status --porcelain
+     M CHANGELOG.md
+     M TODO.md
+     M docs/ci-test-debt.md
+     M scripts/ci/check-guard-wiring.py
+     M scripts/ci/test-check-guard-wiring.py
+    ?? docs/verification/guard-wiring-flag-agreement-2026-10-04.log
+
+== 7. What is still open after this
+
+The rule compares values, so it catches "one file was edited" and "one file was edited
+differently". It cannot catch a budget that is right at both call sites and wrong in
+principle -- a number nobody re-measured, or one that was lowered against a ledger that
+had itself gone stale. That end is covered elsewhere: `scripts/ci/platform-gated-tests.py`
+fails when the measured debt no longer matches, and its self-test now asserts that each
+cap sits exactly one above the measured figure, which is what caught the drift in
+`platform-gated-tests-2026-10-03.log` section 11.
+
+What is not covered anywhere: a guard that two call sites both run with *no* argument
+today, and later start passing different ones, is caught the moment the flag appears at
+both -- but a flag that is added to only one side stays a choice the rule cannot judge.
+That is the intended limit. A gate that needs different things on Linux and Windows is
+a real thing in this repository, and a checker that forbade it would be worked around
+rather than obeyed.

@@ -104,6 +104,16 @@ prints the classification. When you add a guard, add it to the `gates` array or 
 a row; adding it to CI alone is the one option the check refuses, because that is
 how a local run quietly stops covering what it used to.
 
+Mirroring says both places run a guard; it does not say they ask the same thing of
+it. That was the shape of the first drift the rule caught: the four budgets of
+`platform-gated-tests.py` are written at both call sites, one lowering edited one of
+the two files, and the leg nobody runs locally went on enforcing a looser cap while
+every check stayed green. The same check therefore compares flag values between the
+entry point and each workflow. A flag only one side passes stays legal, because
+`--require` is deliberately Windows-leg-only and the container cannot satisfy it, but
+a flag both sides pass has to carry the same values in both -- which means lowering a
+budget is a one-commit change to two files.
+
 ## Fast local gate loop
 
 The container answers "does a fresh clone work?". It does not answer "did my edit

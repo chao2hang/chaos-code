@@ -14,9 +14,18 @@ weaker with nothing to say so. The list of CI-only guards is data in
 `scripts/ci/docker-entry-ci-only.tsv`, and it rots in two directions: a row for a
 deleted guard, and a row for a guard the entry point runs anyway.
 
+The last class covers the third rule, the one the first two left open: both call
+sites run a guard, but with what arguments. Four budgets for
+`platform-gated-tests.py` were written at both, one lowering reached one of them,
+and the repository stayed green with the two call sites asking for different
+numbers. So a value both places pass has to be the same value, and that rule needs
+its own fixtures -- which call sites count, which do not, and what happens when the
+number is not where a line-by-line reader would look for it.
+
     python3 scripts/ci/test-check-guard-wiring.py
 """
 
+import importlib.util
 import subprocess
 import sys
 import tempfile
@@ -82,6 +91,44 @@ def run(*args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run([sys.executable, str(SCRIPT), *[str(a) for a in args]], capture_output=True, text=True)
 
 
+def add_step(root: Path, *lines: str, name: str = 'the budget', workflow: str = 'ci.yml') -> None:
+    """Append a step to a workflow. Two lines means a backslash continuation.
+
+    The real ci.yml keeps `platform-gated-tests.py` on one line and its four
+    budgets on the next four, so a fixture that only ever writes single-line
+    commands would leave the joining untested.
+    """
+    run_line = ' \\\n          '.join(lines)
+    path = root / '.github' / 'workflows' / workflow
+    path.write_text(
+        path.read_text(encoding='utf-8') + f'      - name: {name}\n        run: {run_line}\n', encoding='utf-8'
+    )
+
+
+def add_workflow(root: Path, name: str, *steps: str) -> Path:
+    """A second workflow, for the case where two legs legitimately differ."""
+    body = ''.join(f'      - name: step {index}\n        run: {step}\n' for index, step in enumerate(steps, 1))
+    path = root / '.github' / 'workflows' / name
+    header = f'name: {name}\non: push\njobs:\n  leg:\n    runs-on: ubuntu-latest\n    steps:\n'
+    path.write_text(header + body, 'utf-8')
+    return path
+
+
+def add_gate(root: Path, command: str) -> None:
+    """Append one entry to the `gates` array of the local entry point."""
+    verify = root / 'scripts' / 'verify-in-docker.sh'
+    verify.write_text(
+        verify.read_text(encoding='utf-8').replace('gates=(\n', f'gates=(\n  "{command}"\n', 1), encoding='utf-8'
+    )
+
+
+def set_budget(root: Path, workflow_value: str, local_value: str) -> None:
+    """Write the same flag at both call sites with the two given values."""
+    add_step(root, 'python3 scripts/ci/wired.py --max-unreviewed ' + workflow_value)
+    add_gate(root, 'budget: python3 scripts/ci/wired.py --max-unreviewed ' + local_value)
+    return root
+
+
 class RealRepositoryTests(unittest.TestCase):
     def test_every_gate_in_the_real_repo_is_reachable(self):
         result = run('--root', REPO)
@@ -119,6 +166,34 @@ class RealRepositoryTests(unittest.TestCase):
         self.assertEqual(state.get('check-gui-protocol.sh'), 'mirrored')
         self.assertNotIn('check-versions.sh', [n for n, c in state.items() if c != 'mirrored'])
         self.assertEqual(state.get('panic-site-census.py'), 'mirrored')
+
+    def test_the_real_repo_actually_compares_the_four_budgets(self):
+        # The rule has to have teeth on this repository, not only on fixtures. If
+        # the reader stopped matching the real call sites, every synthetic case
+        # could still pass while the actual budgets went unwatched -- so assert
+        # they are genuinely seen at both, and that the one flag deliberately
+        # passed on one side only genuinely stays out of the comparison.
+        spec = importlib.util.spec_from_file_location('check_guard_wiring', SCRIPT)
+        self.assertIsNotNone(spec)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        seen = {
+            str(path.relative_to(REPO)): flags
+            for path, flags in module.flags_by_gate(REPO, {g.name for g in module.gate_files(REPO)}).items()
+        }
+        workflow = seen.get('.github/workflows/ci.yml', {})
+        local = seen.get('scripts/verify-in-docker.sh', {})
+        compared = {
+            (gate, flag)
+            for gate in set(workflow) & set(local)
+            for flag in set(workflow[gate]) & set(local[gate])
+        }
+        for flag in ('--max-unreviewed', '--max-blind-windows', '--max-blind-macos', '--max-assumption-free'):
+            self.assertIn(('platform-gated-tests.py', flag), compared, f'{flag} is no longer compared')
+        # ci.yml alone passes this one, and that asymmetry is intentional; if it
+        # ever reached the comparison the check would demand a flag the container
+        # has no way to satisfy.
+        self.assertNotIn(('test-installer-asset-names.py', '--require'), compared)
 
 
 class SyntheticTreeTests(unittest.TestCase):
@@ -295,6 +370,127 @@ class SyntheticTreeTests(unittest.TestCase):
             result = run('--root', root, '--list-mirror')
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn('mirrored  deep.py', result.stdout)
+
+
+class FlagAgreementTests(unittest.TestCase):
+    """The third rule: where both call sites run a guard, they must ask the same thing."""
+
+    def test_the_same_value_at_both_call_sites_is_accepted(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = build(Path(directory))
+            set_budget(root, '1106', '1106')
+            result = run('--root', root)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_a_value_raised_at_one_call_site_only_is_named(self):
+        # The incident itself: 1106 in the workflow, 1108 still in the entry
+        # point. Nothing else in the pipeline can see the pair.
+        with tempfile.TemporaryDirectory() as directory:
+            root = build(Path(directory))
+            set_budget(root, '1106', '1108')
+            result = run('--root', root)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("wired.py --max-unreviewed is passed as '1106'", result.stdout)
+            self.assertIn("but '1108' by scripts/verify-in-docker.sh", result.stdout)
+
+    def test_a_flag_only_one_call_site_passes_is_a_choice(self):
+        # `--require` is passed by the Windows leg and by no Linux run, on
+        # purpose. Comparing flags one side never mentions would demand the
+        # container satisfy an argument it cannot.
+        with tempfile.TemporaryDirectory() as directory:
+            root = build(Path(directory))
+            set_budget(root, '1106', '1106')
+            add_step(root, 'python3 scripts/ci/wired.py --require', name='windows only')
+            result = run('--root', root)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_a_budget_written_on_a_continued_line_still_counts(self):
+        # ci.yml keeps the command on one line and the budgets on the lines
+        # below it. Read line by line, the workflow would appear to pass no
+        # budget at all, and a budget counts as compared only where the numbers
+        # are actually found.
+        with tempfile.TemporaryDirectory() as directory:
+            root = build(Path(directory))
+            add_step(root, 'python3 scripts/ci/wired.py --quiet', '--max-unreviewed 1106')
+            add_gate(root, 'budget: python3 scripts/ci/wired.py --quiet --max-unreviewed 1108')
+            result = run('--root', root)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('wired.py --max-unreviewed', result.stdout)
+
+    def test_a_flag_after_a_shell_connective_belongs_to_the_next_command(self):
+        # The entry point keeps `test-x.py && x.py --budget N` on one line. The
+        # budget belongs to `wired.py`; attributing it to the test file instead
+        # compares the wrong pair and hides the drift it exists to catch.
+        with tempfile.TemporaryDirectory() as directory:
+            root = build(Path(directory))
+            (root / 'scripts' / 'ci' / 'test-wired.py').write_text('#!/usr/bin/env python3\n', encoding='utf-8')
+            add_step(root, 'python3 scripts/ci/test-wired.py --require', name='the test')
+            add_step(root, 'python3 scripts/ci/wired.py --max-unreviewed 1106')
+            add_gate(
+                root,
+                'budget: python3 scripts/ci/test-wired.py --require'
+                ' && python3 scripts/ci/wired.py --max-unreviewed 1108',
+            )
+            result = run('--root', root)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('wired.py --max-unreviewed', result.stdout)
+            # One problem, not two: `--require` is passed the same way at both and
+            # must not be swept into the report by the command it sits in front of.
+            self.assertIn('1 problem(s)', result.stdout)
+
+    def test_a_baseline_only_one_call_site_reads_is_named(self):
+        # The rule is about values, not about numbers: a `--check-baseline` that
+        # points at a different file on each side is the same class of drift, and
+        # the two documents would then be maintained one at a time.
+        with tempfile.TemporaryDirectory() as directory:
+            root = build(Path(directory))
+            for name in ('a.tsv', 'b.tsv'):
+                (root / 'scripts' / 'ci' / name).write_text('name\tvalue\n', encoding='utf-8')
+            add_step(root, 'python3 scripts/ci/wired.py --check-baseline scripts/ci/a.tsv')
+            add_gate(root, 'budget: python3 scripts/ci/wired.py --check-baseline scripts/ci/b.tsv')
+            result = run('--root', root)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("is passed as 'scripts/ci/a.tsv'", result.stdout)
+            self.assertIn("but 'scripts/ci/b.tsv' by scripts/verify-in-docker.sh", result.stdout)
+
+    def test_a_commented_out_number_is_not_a_call_site(self):
+        # Both roots carry old numbers in comments explaining how a budget got
+        # here. If prose counted, the check would report a disagreement between
+        # two sentences -- and would then be ignored like any other noisy gate.
+        with tempfile.TemporaryDirectory() as directory:
+            root = build(Path(directory))
+            set_budget(root, '1106', '1106')
+            commented = 'python3 scripts/ci/wired.py --max-unreviewed {n} {note}'
+            ci = root / '.github' / 'workflows' / 'ci.yml'
+            ci.write_text(
+                ci.read_text(encoding='utf-8')
+                + '      # ' + commented.format(n='9999', note='was refused') + '\n',
+                encoding='utf-8',
+            )
+            verify = root / 'scripts' / 'verify-in-docker.sh'
+            verify.write_text(
+                verify.read_text(encoding='utf-8')
+                + '# ' + commented.format(n='8888', note='the old debt') + '\n',
+                encoding='utf-8',
+            )
+            result = run('--root', root)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_a_second_workflow_has_to_agree_with_the_entry_point_too(self):
+        # Every workflow that runs a mirrored guard is compared with the local
+        # entry point, not just the merge leg: a release leg that quietly loosens
+        # a cap is the same drift, one file over. ci.yml agrees here, so exactly
+        # one line is reported -- two would mean workflows were compared against
+        # each other, which would make a legitimate second leg impossible.
+        with tempfile.TemporaryDirectory() as directory:
+            root = build(Path(directory))
+            set_budget(root, '1106', '1106')
+            add_workflow(root, 'release.yml', 'python3 scripts/ci/wired.py --max-unreviewed 4000')
+            result = run('--root', root)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("is passed as '4000' by .github/workflows/release.yml", result.stdout)
+            self.assertIn('1 problem(s)', result.stdout)
+            self.assertNotIn('by .github/workflows/ci.yml', result.stdout)
 
 
 if __name__ == '__main__':
