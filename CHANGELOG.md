@@ -2,6 +2,93 @@
 
 ## Unreleased
 
+### 门禁：被平台 cfg 挡在构建外的 1,108 条测试第一次有了台账，而其中 443 条的门禁挡不住任何平台特定的东西
+
+`#[ignore]` 一直有 `scripts/ci/ignored-tests.py` 与基线文件：没有理由的 ignored 测试过不了构建。带
+`#[cfg(unix)]` 的测试却被跳过得**更彻底**——它连编译都没有，于是不出现在任何 runner 的跳过列表里，
+也不出现在任何平台的绿灯计数里。2026-10-03 的 Windows 腿把这件事变成了具体的债：persistent shell
+那一族 11 条断言在 `windows-latest` 上红，让那条腿变绿的做法是给它们加上 `#[cfg(unix)]`。测试套件
+从此全绿，而一个行为都没有被修，且此后仓库里没有任何东西能说出哪些测试被门掉了、Windows 上不再有
+什么被运行。本行原来用 grep 数出「397 条」，那个数在两个方向上都不对：只看了两种拼法（按单个 OS、
+`all(not(..))`、从 `#[cfg(unix)] mod tests` 继承、文件级 `#![cfg(..)]`、`cfg_attr(<平台>, ignore)` 全部
+看不见），完全没看同一棵树上 Windows 与 macOS 那一侧；而它把「文件里出现过这串字符」当成「这条测试
+被门控」，这本身就不是同一件事。
+
+新门禁 `scripts/ci/platform-gated-tests.py` 是静态扫描。一条测试的平台集是**所有作用到它身上的 cfg 的
+交集**，不是 `fn` 上那一个属性：`#[cfg(unix)] mod tests { .. }` 门掉里面每一条，文件开头
+`#![cfg(unix)]` 门掉整个文件。`cfg_attr(<平台>, ignore = "..")` 是**反极性**——测试在那里存在却不被
+运行，Runs-on 集合是补集而不是交集——所以它自成一类 `cfg-attr-ignore`；两个都占的是
+`cfg-gate-and-ignore`，即任何平台都不执行的测试。feature 这类非平台 cfg 不缩小平台集，但它有自己的
+`extra_cfg` 列：一条同时被 feature 和平台门掉的测试被两个独立的开关藏着，台账必须能说得出这件事。
+
+台账拒绝五类漂移：新增门控没有行（要先写理由才能合入）；行的落点没了，或者它下面的平台集、非平台
+cfg、标记集合被改写（行被人从测试底下抽走，或者测试被人在行底下重写）；理由为空或短于 20 字符，
+以及 `--max-unreviewed` 花光之后还带着导入标记；平台盲文件数超过 `--max-blind-windows` 与
+`--max-blind-macos`；体内看不出任何平台假设的门控测试超过 `--max-assumption-free`，超出的那些**点名**
+而不是只报一个数。盲文件的定义是「有门控测试、且没有任何一条测试会在该平台运行」。行身份是
+`(file, function, runs_on, kind, extra_cfg, assumptions)`，**行号刻意不在身份里**：它只是跳转提示，由
+`--write-baseline` 重新生成，否则门控测试上方的每一次编辑都会要求一次「diff 里什么都没说」的台账
+重写。比较是多集合比较（与 `scripts/ci/ignored-tests.py` 同形），因为同一个测试名可以在一个文件里被
+两个模块合法地各写一遍。
+
+          $ python3 scripts/ci/platform-gated-tests.py
+          platform-gated tests: 1082 in 250 files
+          platform-conditional #[ignore] (exists there, skipped there): 26
+          gated and also #[ignore]d everywhere: 0
+          gated with no platform assumption in the body: 443 in 100 files
+          would compile on:
+            linux       990 of 1082
+            macos       852 of 1082
+            other-unix  811 of 1082
+            windows     62 of 1082
+            other       29 of 1082
+          files with gated tests and no test that runs on the platform:
+            windows     74
+            macos       11
+            linux       10
+
+值得读的是后两组数。1,082 条里只有 62 条会在 Windows 上被编译，即 Windows 腿跑的是 Linux 腿 5.7% 的
+覆盖，而这个比例在写下这份门禁之前从没被记在任何地方；另有 74 个文件有门控测试却在 Windows 上一条
+都不跑。台账本身 1,108 行 = 1,082 条门控 + 26 条平台条件 `#[ignore]`。
+
+`assumptions` 列回答本行真正问的那个问题：哪些门控测试跟它被门到的那个平台**没关系**。它列出测试体内
+（注释被空白化、字符串保留）与文件名里看得见的 POSIX 或 Windows 事物，`none` 表示一个都没找到。标记
+是被加宽到不再丢人之后才定下来的：第一版 14 个标记留下 580 条 `none`，清单里躺着调 `xclip`、`flock`、
+`from_raw_os_error` 和 x11 类型代码的测试，也就是明显该留的门被报成「可以拆掉」，这样的清单读一次就会
+被丢掉——而这份债正是这样活下来的。现在 POSIX 22 个、Windows 10 个标记，外加路径里出现平台名词时的
+`file-name` 标记，剩下 443 条。可移植的拼法**刻意不是**标记：`child.kill()`、`start_kill()`、
+`Command::new("git")` 都出现在真的需要一个平台的测试里，把它们算成标记会让 `none` 变成毫无意义的词。
+因此 `none` 只是关于「测试自己的文本」的断言，它会在两处出错（假设在被调用的 helper 里，扫描不跟进
+调用；假设在被测的生产代码里，扫描根本不读），这两条写在门禁的 docstring 里而不是藏起来。四个数字
+全部是被检查的而不是被打印的，所以只能往下降。
+
+非空洞性分两层。fixture `scripts/ci/test-platform-gated-tests.py` 35 例
+（`Ran 35 tests in 19.850s / OK`），每个负向用例旁边都放着同形的正向用例，一个变瞎的扫描器会被
+什么东西打到而不是把所有东西放过。真实树上的 12 个变异各自改一个真实文件、跑出货命令、还原并用
+`cmp` 证明还原，12/12 全部拒绝合入，其中三条最值得记：M4 把某条已记行上的 `#[cfg(unix)]` 删掉
+（**这是还债**），门禁仍然红，因为那一行必须由还掉它的人删掉——一行悄悄消失，就是 1,108 行悄悄消失
+的方式；M5 让一条记为 `none` 的测试长出 `std::os::unix::fs::symlink`，行因此变陈旧而不是被默默接受，
+这就是把 `assumptions` 放进行身份的理由；M7 给一条未门控的测试加
+`#[cfg_attr(windows, ignore = ...)]`，检查的正是 runs-on 取的是补集。门禁自己也踩到一个性能坑：
+逐字符空白化注释让整树扫描慢到它是所在 job 最慢的一步，换成一条编译好的跳转正则后等价性是被证明
+的而不是目测的——400 个真实 `.rs` 文件两种模式 800 次比较无差异，整树两次扫描的**每一行每一列**
+完全相同（8.5 s 对 18.2 s）。
+
+接线两处：`.github/workflows/ci.yml` 与 `scripts/verify-in-docker.sh` 的 `gates=()` 数组跑同样的两条
+命令、同样的四个预算，`check-guard-wiring.py` 双向检查这面镜子，结果
+`OK (50 files in scripts/ci/, 49 reachable, 45 run by scripts/verify-in-docker.sh)`。
+
+边界，每一条都是「新门控可以长得很普通」的一条路：宏里施加的 cfg（`include!`、自定义测试属性宏）
+看不见；被平台门控的 `mod` 声明拉进来的文件**不继承**那道门，所以只在 unix 上编译的文件读起来是未
+门控的；`cfg(not(unix))` 按它真实的覆盖面算，同时覆盖 `other` 与 `windows`；这里没有任何东西声称某个
+runner 跑过什么，台账记的是源码排除了什么，那与「某条平台腿执行了什么」是两个事实，也替代不了平台腿。
+1,108 行目前全部带着导入标记，也就是说这份提交记下债、但不假装每道门都被审过：审一条的做法是替掉它的
+理由并把 `--max-unreviewed` 调低一格。（2026-10-03；`scripts/ci/platform-gated-tests.py`、
+`scripts/ci/platform-gated-tests.tsv`、`scripts/ci/test-platform-gated-tests.py`、
+`.github/workflows/ci.yml`、`scripts/verify-in-docker.sh`、
+`docs/verification/platform-gated-tests-2026-10-03.log`）
+
+
 ### 修复：取消置顶不再把会话留在没有标题的状态，被置顶拒绝的自动标题现在由 actor 重放
 
 `/rename --auto` 与自动标题是两条互不知情的写路径。自动标题由 `session/summary.rs` 在第一个 content chunk

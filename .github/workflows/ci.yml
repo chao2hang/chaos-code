@@ -711,6 +711,16 @@ jobs:
           # gate cannot drift away from the legs it protects.
           python3 scripts/ci/test-check-spawn-cwd-portability.py
           python3 scripts/ci/check-spawn-cwd-portability.py
+          # Every `#[cfg(unix)]` on a test deletes it from another platform's build: it is not
+          # "skipped", so no runner counts it and no green leg mentions it. The ledger is what
+          # stops a red platform leg being made green by adding a gate, and it also names the
+          # gated tests whose body contains no platform assumption at all. The four numbers are
+          # today's measured debt and can only move down.
+          python3 scripts/ci/test-platform-gated-tests.py
+          python3 scripts/ci/platform-gated-tests.py --quiet \
+            --check-baseline scripts/ci/platform-gated-tests.tsv \
+            --max-unreviewed 1108 --max-blind-windows 74 --max-blind-macos 11 \
+            --max-assumption-free 443
           # Four consumers derive a release asset name -- install.sh, install.ps1,
           # install.bat and the auto-updater -- and one workflow publishes it. A rename
           # on the publisher's side is invisible to all four until an install or an
