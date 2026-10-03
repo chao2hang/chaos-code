@@ -2,6 +2,60 @@
 
 ## Unreleased
 
+### 门禁：文档里指向不存在文件的路径第一次有人查；噪声从 3,935 条压到 42 条，靠的是结构而不是豁免
+
+committed 文档里「点开是 404」的链接此前没有任何机制会拦：`check-evidence-paths.py` 只管证据文件在不
+在，`check-doc-l10n.py --links` 只管中英两份文档的链接是否成对。想做存在性门禁的人会被第一步劝退——
+按「抓任何含 `/` 的类路径 token」这条最直觉的规则扫全部 Markdown，得到 **3,935 处命中 / 2,263 个不同
+token**，前三名是 `.chaos/config.toml`（43，产品运行时写的用户配置树）、`upstream/main`（29，分支名）、
+`desktop/mobile`（22，平台矩阵），另有 `go/no-go`、`tok/s`、`I/O` 一整批。这份清单没人会读。
+
+**新门禁 `scripts/ci/check-doc-path-refs.py` 把精度放在结构上，一条豁免都不买来路。** 只扫两种位置
+（`[文本](目标)` 的目标、以及整体就是一个路径的行内代码），围栏代码块整块抹白、自由散文一律不扫；行内
+代码里的 `[x](y)` 判为「引用一段写法」而非链接；含 `* ? [ ] < > $ % ~ …` 或结尾 `-` 的不是路径，而大括号
+内全是完整文件名的要展开；提及必须声称在本仓库内（剥掉 `./` 后第一段得是 `git ls-files` 里的顶层名），
+链接豁免这一条，因为同目录链接是最常见的坏链。结果是 274 份文档剩 46 处悬空提及加全部链接：
+
+      check-doc-path-refs: 274 Markdown documents scanned against 3959 tracked paths, 46 dangling
+      mention(s), 24 recorded; every link resolves and every dangling mention is recorded and live
+
+白名单 `scripts/ci/doc-path-refs-allowlist.tsv` 是记档而不是豁免，三条纪律让它不能变成逃生舱：坏链接
+一律不得记档（记档只作用于提及）、每条记档必须还悬着（修好了不删条目即 exit 1）、理由必须 ≥20 字符且
+类别限定六类。第二条纪律当场收了一次费：规则 4 补上 `./` 剥离之后，6 条运行时路径记档立刻被判陈旧并
+强制删除。
+
+**它当场查出 5 个真缺陷。** `.agents/skills/chaos-upstream-sync/SKILL.md:39` 的
+`../../../../CHAOS.md` 多写一层（4 层不可达、3 层可达）；`third_party/README.md` 与 `third_party/NOTICE`
+记着一条从未 vendored 的 `nfsserve`（`git log --all -- third_party/nfsserve` 0 行、`Cargo.toml` 与
+`Cargo.lock` 内 0 命中），删掉记载并写明真要 vendor 必须「表格行 + NOTICE 条目 + 许可证文件」同一次提交；
+`CONTRIBUTING.md:441` 与 `TODO.md:709` 指向 `xai-grok-update/build.rs`，它已由 `76cf8928` 以 `R100`
+rename 到 `xai-grok-signature/build.rs`；`docs/telemetry-policy.md:149` 指向根本不在仓库里的
+`docs/release-process.md`；`TODO.md:656` 与 `sync/fork-layer-inventory.md:57` 的
+`scripts/assemble-platform-packages.js` 补全为它在 pager npm 包下的真实路径。
+
+**非空证明是 12 个变异，逐个变红、逐个 `cmp` 逐字节还原**（链接一律视为可解析、不剥锚点、顶层名测试恒真、
+理由长度归零、类别不校验、不再查陈旧条目、反引号里的链接也算链接、只按仓库根解析、抹白后不以 `\n` 拼回、
+用 `splitlines()` 数行、行号从 0 起、删掉一条记档）。第一批有一条**存活**，查清是无效变异：`blank_out`
+里「保留换行」那一支是死代码，因为 `strip_fences` 先按 `\n` 切、最后按 `\n` 拼回，`blank_out` 永远拿不到
+带换行的行——删掉死代码，并把当年那次真实事故（第一次写这文件时把 `\n` 一起抹掉，`docs/telemetry-policy.md`
+从 158 行折成 125 行，害得门禁把一份文档报在 116 行而不是 149 行）的说明搬到风险真正所在的 `join` 上；
+等价变异改成 `"\n".join` → `"".join`，fixture 与真实仓库双双变红。同一次存活还暴露 `lines_of` 的
+docstring 承诺「行号与 `grep -n` 一致」却无测试钉住（`split("\n")` 换成 `splitlines()` 当时全绿），补
+`test_line_numbers_match_grep_on_text_with_odd_breaks`：把 U+2028 与 `\x0c` 放在被引用行上方，先断言这段
+文本确实让两种数法分歧，再分别钉住提及与链接两条路径报出的行号。夹具 36 例（每个负向用例都配一个同形但
+必须报的对照），接线由 `check-guard-wiring.py` 双向把关：
+`check-guard-wiring: OK (46 files in scripts/ci/, 45 reachable, 41 run by scripts/verify-in-docker.sh, 4 recorded CI-only, 1 exempt)`。
+
+开发中两次失败咬的都是门禁自己而不是文档：锚点剥离只认 ASCII 会把 `CHAOS.md:40` 与
+`crates/codegen/xai-grok-pager/docs/custom-hooks.md:57` 两条**正常**的中文锚点链接报成坏链；`./` 前缀绕过
+顶层名测试。两次改的都是扫描器。查不到的部分写进证据日志第 9 节：围栏内路径不扫、Windows 反斜杠路径不认、
+无扩展名名字与分支名同形不可区分、crate 内简写不算断言、锚点存在性不查；并且当前 274 份文档里一个生僻换行
+符都没有（实测 0 份），那条 `splitlines` 变异眼下是行数不变式兜的底，不能算在新 fixture 头上。最后一条值得
+说的是这道门第一次跑全量门禁轮时**唯一变红的就是它**，7 条报错全部落在本轮自己刚写的那两段说明文字上——它
+们把修好的三个旧值放进反引号，于是"提及"了三个不存在的路径。取舍是照设计记档（`quoted-text` 两条 +
+`recorded-absent` 一条，记档因此从 21 条涨到 24 条），既不给刚写的文字开后门，也不靠去掉反引号变绿：自由
+散文结构性不被扫，去掉反引号等于靠降低可读性通过检查。（2026-10-03；`scripts/ci/check-doc-path-refs.py`、`scripts/ci/doc-path-refs-allowlist.tsv`、`scripts/ci/test-check-doc-path-refs.py`、`.github/workflows/ci.yml`、`scripts/verify-in-docker.sh`、`.agents/skills/chaos-upstream-sync/SKILL.md`、`CONTRIBUTING.md`、`TODO.md`、`docs/telemetry-policy.md`、`sync/fork-layer-inventory.md`、`third_party/README.md`、`third_party/NOTICE`、`docs/verification/doc-path-refs-2026-10-03.log`）
+
 ### 修复：390px 下滚动的是整页而不是对话；侧栏一收起，对话就掉进宽 0 的那一列
 
 窄屏下 `.shell` 是 `flex/column/overflow-y: auto`，侧栏整块横躺在对话上方独占一屏，`.center-col { min-height:

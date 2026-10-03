@@ -1,0 +1,66 @@
+# Dangling path references in committed Markdown that are legitimately unresolvable,
+# and why. Read by `scripts/ci/check-doc-path-refs.py`.
+#
+# Format: <path>\t<category>\t<reason>   ("#" starts a comment)
+#
+# Categories, and what each one is claiming:
+#   runtime-path     the product creates this at run time (in the user's home, or in the
+#                    directory it was started in); it is not repository content;
+#   recorded-absent  the citing sentence itself says the file is missing, was removed, or
+#                    never existed in this repository;
+#   historical       the citation was true when written and the tree has moved since; the
+#                    sentence is a record, not a pointer;
+#   other-root       the name is relative to a different root than the repository: the
+#                    pager crate's docs/ tree, upstream's tree, or the reader's own project;
+#   planned          the file is meant to be created later by the plan that names it;
+#   quoted-text      the span is text *about* a path (a bare depth fragment, or a link whose
+#                    depth is the subject of the sentence), not a pointer to open.
+#
+# Four things this list can never do, by construction of the guard:
+#   * excuse a broken Markdown link. Only inline code mentions can be recorded here; a
+#     link that resolves nowhere is a defect and is reported whatever this file says;
+#   * keep working after the reference is fixed. An entry with no live dangling hit is
+#     reported as stale and has to be deleted, so this cannot collect permanent waivers;
+#   * carry an unnamed exemption: the category has to be one of the six above and the
+#     reason has to be at least 20 characters;
+#   * excuse the same path twice. A duplicate path fails outright.
+
+# No entry may use a category loosely: the guard refuses an unknown category, a reason
+# under 20 characters, and a duplicate path. `runtime-path` currently has no entry,
+# because the guard's anchor rule already drops runtime trees structurally (their
+# top-level directory owns no tracked content); it stays in the vocabulary for a runtime
+# path that would be written under a top-level entry that does, such as `./.agents/`.
+
+# --- Text about a path, rather than a pointer to one -------------------------------
+../../../../	quoted-text	sync/2026-09-18-curated-port.md:182 quotes the two depths side by side to describe a link-depth fix; a bare depth is not a file
+../../../../../	quoted-text	same sentence as the line above: the fragment is the thing being discussed, which is why the fix moved to five levels
+../../../../../CHAOS.md	quoted-text	CHANGELOG.md:1147 and TODO.md:978 recount a dead link that was fixed; naming a dead link is not a dead link
+../../../../CHAOS.md	quoted-text	CHANGELOG.md and TODO.md name the dead 4-level link they are describing; naming a dead link is not a dead link
+../CHAOS.md	quoted-text	CHANGELOG.md:1148 and TODO.md:978 state what the link was changed to, as written inside another file's directory
+scripts/assemble-platform-packages.js	quoted-text	the wrong short form quoted beside the real path under the pager npm package; the wrong form is the subject of the sentence
+../x.rs	quoted-text	rustc's module-file rule quoted in docs/audit-followup-report.md:345 and TODO.md:949; not a path in this tree
+scripts/dev/	quoted-text	TODO.md:991 gives the hypothetical destination the root debug scripts were deliberately not moved into
+
+# --- Recorded as absent by the sentence that cites it ------------------------------
+docs/internal/	recorded-absent	this tree never had the directory; the gate `registered_features_are_documented` is feature-gated on exactly that fact
+docs/internal/25-enterprise.md	recorded-absent	include_str! target that has never existed here, named by the row explaining the internal-docs feature gate
+docs/internal/22-environment-variables.md	recorded-absent	the second include_str! target of the same test, absent from this fork's whole history and origin/main
+crates/codegen/xai-grok-shell/AGENTS.md	recorded-absent	docs/ci-test-debt.md:179 says in the same breath that the file is not in this fork and never was
+docs/release-process.md	recorded-absent	named as the document that is absent here; the real release/signing notes live in docs/release-signing.md
+
+# --- True when written, moved since ------------------------------------------------
+crates/codegen/xai-grok-update/build.rs	historical	moved to crates/codegen/xai-grok-signature/build.rs by 76cf8928; CHANGELOG.md:1694 records the original addition
+
+# --- Names relative to another root ------------------------------------------------
+docs/custom-hooks.md	other-root	pager-crate docs path (crates/codegen/xai-grok-pager/docs/custom-hooks.md) cited by its upstream-relative name in l10n rows
+docs/hooks-and-plugins.md	other-root	same as above: the pager crate's docs subtree, named the way the upstream changelog names it
+docs/tutorial/	other-root	the pager crate's docs/tutorial tree; the citing rows quote the full glob right next to this short name
+docs/user-guide/	other-root	the pager crate's docs/user-guide tree, used as the section heading of MT-4 and in doc-l10n-progress.md
+bin/safe-shell.sh	other-root	hook script the reader is told to write in their own project, in the 10-hooks.md hardening example
+bin/workspace_server.rs	other-root	crate-relative shorthand inside a row whose evidence block cites the full crates/codegen/xai-grok-workspace/src/bin path
+
+# --- To be created later by the plan that names it ---------------------------------
+crates/codegen/xai-grok-code-mode/	planned	proposed crate in the DSH port proposal; the proposal records P1 code mode as needing a decision, and no crate was created
+crates/codegen/xai-grok-ralph/	planned	proposed leaf crate in the same DSH port proposal; the Ralph loop shipped as a workflow instead of a crate
+crates/codegen/xai-grok-preset-files/	planned	proposed preset-discovery crate in the same proposal; never created, the plan lists it as future work
+docs/plan/code-mode-plan.md	planned	plan document the proposal says will be opened after the user confirms that section; it has not been opened

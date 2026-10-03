@@ -1,0 +1,401 @@
+文档里的路径引用：把 3,935 条噪声压到 42 条真信息的门禁，以及它当场查出的 5 个失效路径
+================================================================================================
+
+日期：2026-10-03
+提交：本轮（新增 `scripts/ci/check-doc-path-refs.py`、`scripts/ci/doc-path-refs-allowlist.tsv`、
+      `scripts/ci/test-check-doc-path-refs.py` 36 例，接线到 `.github/workflows/ci.yml` 的 `docs-l10n`
+      job 与 `scripts/verify-in-docker.sh` 的 gates 数组）
+被记录的对象：
+  scripts/ci/check-doc-path-refs.py        两条不同强度：链接目标零豁免，行内代码提及要么解析得了要么被记档
+  scripts/ci/doc-path-refs-allowlist.tsv   24 条形如 `<path>\t<category>\t<reason>` 的记档，六类
+  scripts/ci/test-check-doc-path-refs.py   36 例，每个负向用例都配一个"同形但必须报"的对照
+  修好的文档：`.agents/skills/chaos-upstream-sync/SKILL.md`、`CONTRIBUTING.md`、`TODO.md`、
+              `docs/telemetry-policy.md`、`sync/fork-layer-inventory.md`、`third_party/README.md`、
+              `third_party/NOTICE`
+
+本文件自包含：每段输出都从当轮真实运行里逐字抄下，命令写在 `$` 行上。
+
+
+第 1 节  缺陷本体：committed 文档指出的路径，没有任何东西检查它存不存在
+------------------------------------------------------------------------
+
+`TODO.md:968` 那一行早就记下过这个怀疑，但没有数字。先补数字。仓库里 274 份 Markdown 提到的路径，
+历史上出过三类问题，而三类都没有任何机制会在第 N+1 次引入时报错：
+
+- 文件搬走之后，指向它的句子还在原地（本轮抓到 `crates/codegen/xai-grok-update/build.rs`）；
+- 引用写错一层目录，读者点开是 404（本轮抓到 `[CHAOS.md](../../../../CHAOS.md)`）；
+- 文档记载了一个从未进过本仓库的东西（本轮抓到 `third_party/nfsserve` 的整块版权声明）。
+
+`check-evidence-paths.py` 只管"证据文件在不在"，`check-doc-l10n.py --links` 只管中英两份文档的链接
+是否成对，两者都不会因为一条链接指向了不存在的文件而变红。
+
+
+第 2 节  为什么"扫一遍看路径存不存在"这条直觉路线是废的
+--------------------------------------------------------
+
+第一版探针就是这条直觉：`os.walk` 全部 Markdown，正则抓任何含 `/` 的类路径 token，逐个查存在性。
+
+```
+$ python3 path-probe.py | head -1
+distinct=2263 total=3935
+```
+
+3,935 处命中、2,263 个不同 token。排前几名是这样的：
+
+```
+ 43  .chaos/config.toml        # 产品运行时写的用户配置树，本来就不在仓库里
+ 29  upstream/main             # 分支名
+ 22  desktop/mobile            # 平台矩阵
+ ...  upstream 的 `go/no-go`、`tok/s`、`session/new`、`I/O`
+```
+
+也就是说朴素扫描给出的清单里，绝大多数不是"文档写错了"，而是"扫描器不知道什么不可能是路径"。
+这正是 `TODO.md:968` 反对的做法，也解释了为什么这类门禁一直没人写：写出来没人会去读它的清单。
+
+第二版探针把判定收窄成结构而不是白名单：
+
+```
+$ python3 path-probe3.py | head -1
+scanned=281 dangling_refs=60 distinct=31
+$ python3 path-probe4.py | head -1
+repo-relative markdown links checked: 83, dangling: 5
+```
+
+3,935 → 60 条悬空提及 / 83 条链接里 5 条悬空。收窄靠的是四条规则，不是靠加豁免。
+
+
+第 3 节  门禁的四条结构性规则，以及每条规则被 fixture 钉住的那个反例
+--------------------------------------------------------------------
+
+规则 1，只扫两种位置：`[文本](目标)` 的目标，以及内容整体就是一个路径的行内代码。围栏代码块整块
+抹白，自由散文一律不扫。散文里 `go/no-go`、`tok/s` 这类词从此不可能被当成路径，因为它们不在
+行内代码里。反例 fixture：`test_prose_slash_is_not_a_reference`（散文里的 `a/b` 必须静默）与
+`test_backticked_path_is_checked`（同一句里被反引号包起来的 `docs/missing.md` 必须报）。
+
+规则 2，行内代码里出现的 `[x](y)` 是"引用一段写法"，不是链接。`CHANGELOG.md:1146` 与 `TODO.md:978`
+就是在讨论那条写错层数的链接本身，如果把它们当链接，等于要求文档为了讨论缺陷而删除缺陷。
+反例 fixture：`test_quoted_link_is_not_a_link`，它同时断言"去掉反引号就必须报"。
+
+规则 3，含模式字符的不是路径：`* ? [ ] < > $ % ~ …`、结尾的 `-` 一律出局。但 `src/{a.rs,b.rs}` 这种
+大括号里全是完整文件名的要展开；大括号里没有逗号的是占位符（`docs/{name}.md`），继续跳过。
+反例 fixture：`test_pattern_is_not_a_path` / `test_brace_set_of_files_expands` /
+`test_brace_set_of_things_that_are_not_files_is_a_pattern`。
+
+规则 4，提及必须"声称在本仓库内"：去掉 `./` 之后的第一段必须是 `git ls-files` 里出现过的顶层名。
+`xai-grok-workspace/src/bin/x.rs` 是 crate 相对简写、`~/.cargo/config.toml` 是用户树、
+`.chaos/config.toml` 是产品运行时目录，三者都不是关于本仓库的断言。链接不做这一步：
+`[guide](guide.md)` 这种同目录链接是最常见的坏链，要求它从顶层名起等于对所有同目录链接失明。
+反例 fixture：`test_untracked_top_level_name_is_not_a_claim`（同形但顶层名未被跟踪 → 静默）与
+紧随其后的 `scripts/gone.rs`（同形但顶层名被跟踪 → 必须报）。
+
+解析按"先文档所在目录、再仓库根"两趟，比对的对象是 `git ls-files` ∪ `git ls-files --others
+--exclude-standard`。所以 `.chaos/`、`.grok/`、`target/` 这些被 ignore 的树是结构性地不在集合里，
+不是被豁免掉的。
+
+```
+$ python3 scripts/ci/check-doc-path-refs.py
+check-doc-path-refs: 274 Markdown documents scanned against 3959 tracked paths, 46 dangling mention(s), 24 recorded; every link resolves and every dangling mention is recorded and live
+```
+
+36 例 fixture 全绿：
+
+```
+$ python3 scripts/ci/test-check-doc-path-refs.py 2>&1 | tail -3
+Ran 36 tests in 1.491s
+
+OK
+```
+
+
+第 4 节  白名单的语义：它记档，它不豁免链接，而且它自己也得还有效
+------------------------------------------------------------------
+
+24 条形如 `<path>\t<category>\t<reason>` 的记档，六类各管一件事：
+
+| 类别 | 条数 | 含义 |
+| --- | --- | --- |
+| `quoted-text` | 8 | 文档在讨论这段写法本身（`../../../../`、`../x.rs`、`scripts/dev/`） |
+| `other-root` | 6 | 路径属于别的根：产品文档树 `docs/user-guide/`、上游 `bin/safe-shell.sh` |
+| `recorded-absent` | 5 | 有意记载"本仓库没有这个"（`docs/internal/` 系列、`docs/release-process.md`） |
+| `planned` | 4 | 尚未落地的规划路径（`crates/codegen/xai-grok-code-mode/` 等） |
+| `historical` | 1 | 曾经存在、已被 git 记录地搬走（`xai-grok-update/build.rs`） |
+| `runtime-path` | 0 | 运行时树：规则 4 已结构性排除，因此一条都不需要 |
+
+其中 3 条是本轮**自己写下的文字**被门禁拦下之后补记的，见第 11 节。
+
+三条纪律让这张表不可能退化成逃生舱：
+
+1. 坏链接一律不能靠记档抹掉。记档只对"提及"生效，链接是作者写给读者点的，写错了就得改。
+   fixture `test_broken_link_cannot_be_recorded_away` 钉住这条。
+2. 记档条目必须还悬着。修好了却不删条目 → exit 1 并打印 `has no dangling reference left; the text
+   was fixed, so the entry is stale`。这条规则在本次开发中真的删掉了 6 条条目：规则 4 加上 `./`
+   剥离之后，那 6 条运行时路径不再被提及，于是被判定为陈旧。
+   fixture `test_stale_entry_fails`。
+3. 类别必须是六类之一，理由必须 ≥20 字符，路径不得重复，列数不足即 exit 2。"理由要够长"是为了
+   让这张表不能只写"知道"两个字。
+
+`--list` 打印被扫的文档集合（274 份），`--all` 把已记档的 46 处也一并列出（46 problem(s)，其中
+unrecorded 计数为 0）。这两个出口是给门禁的 fixture 用的：`test_scan_set_covers_the_citing_documents`
+断言 TODO.md、CHANGELOG.md、CONTRIBUTING.md、third_party/README.md、docs/telemetry-policy.md 与那份
+skill 都在集合里，`test_scan_set_is_not_trivially_small` 断言集合 >150 份，防止"其实什么都没扫"。
+
+
+第 5 节  门禁当场查出的 5 个真缺陷，逐个给出判据
+------------------------------------------------
+
+缺陷 1，`.agents/skills/chaos-upstream-sync/SKILL.md:39` 多写一层目录，链接跳出仓库。
+
+```
+$ python3 scripts/ci/check-doc-path-refs.py    # 修复前
+check-doc-path-refs: .agents/skills/chaos-upstream-sync/SKILL.md:39: broken link target `../../../../CHAOS.md` resolves to nothing in the repository
+```
+
+该文件在 `.agents/skills/chaos-upstream-sync/`，到根目录是 3 层。改法：
+
+```diff
+-| Chaos 专属说明 | 根目录 [`CHAOS.md`](../../../../CHAOS.md) |
++| Chaos 专属说明 | 根目录 [`CHAOS.md`](../../../CHAOS.md) |
+```
+
+缺陷 2 与 3，`third_party/README.md` 与 `third_party/NOTICE` 记着一条从未 vendored 的依赖
+`nfsserve`：表格一行、正文一个子句、NOTICE 里整一块（含 `Path: third_party/nfsserve/` 与
+`License file: …/LICENSE`）。判据是三条都为空/不存在：
+
+```
+$ git log --all --oneline -- third_party/nfsserve | wc -l
+0
+$ grep -rn nfsserve --include=Cargo.toml --include=Cargo.lock . 2>/dev/null | wc -l
+0
+```
+
+不是"改个路径"能了结的，因为根本没有路径可指。改法是删掉那块，并在 README 里明写它没有被 vendored、
+将来真要 vendor 必须"表格行 + NOTICE 条目 + 许可证文件"同一次提交补齐。删记载是有代价的（读者会
+去找 NFS 相关说明），所以补的那一段比删掉的两处更重要。
+
+缺陷 4，`CONTRIBUTING.md:441` 指向一个已被 rename 走的 build.rs。判据是 rename 记录本身：
+
+```
+$ git log --oneline --follow --name-status -- crates/codegen/xai-grok-signature/build.rs | head -2
+76cf8928 refactor(signing): 把 ed25519 验签从 xai-grok-update 拆成独立 crate
+R100crates/codegen/xai-grok-update/build.rscrates/codegen/xai-grok-signature/build.rs
+$ grep -c "rerun-if-env-changed=CHAOS_SIGNING_PUBLIC_KEY" crates/codegen/xai-grok-signature/build.rs
+1
+```
+
+```diff
+-Because the key is baked in by `option_env!`, `crates/codegen/xai-grok-update/build.rs`
++Because the key is baked in by `option_env!`, `crates/codegen/xai-grok-signature/build.rs`
+```
+
+同一批还修了 `TODO.md:709`：那句用的是现在时（「现由 … 的 `cargo:rerun-if-env-changed` 固定」），
+所以除了改路径，还要把"它原来在哪个 crate、随哪个提交搬走"写进句子，否则读者拿这段去
+`git log` 那个 crate 会一无所获。
+
+缺陷 5，`docs/telemetry-policy.md:149` 指向一份不存在的文档。`docs/release-process.md` 根本不在
+仓库里，实际写签名做法的是 `docs/release-signing.md`：
+
+```
+$ ls docs/release-signing.md docs/release-process.md
+ls: cannot access 'docs/release-process.md': No such file or directory
+docs/release-signing.md
+```
+
+```diff
+-- 用户**不**信任 GitHub Release 上游账号能完美不泄露（参见
+-  `docs/release-process.md` 的代码签名计划）
++- 用户**不**信任 GitHub Release 上游账号能完美不泄露（签名与验签的实际做法见
++  `docs/release-signing.md`）
+```
+
+另有 2 处同一缺陷的其他副本一并修掉：`TODO.md:656` 与 `sync/fork-layer-inventory.md:57` 都写
+`scripts/assemble-platform-packages.js`，而该脚本的真实位置是
+`crates/codegen/xai-grok-pager/npm/chaos/scripts/assemble-platform-packages.js`（它属于 pager 的 npm
+元包，`scripts/` 下没有同名文件）。
+
+作为对照，门禁**没有**要求改的两条链接值得单独说，因为它们正是"扫描器错、文档对"的样子：
+
+```
+$ sed -n '40p' CHAOS.md
+`install.bat`（无需 `iex`）见根目录 [README.md](README.md#安装)。
+$ sed -n '57p' crates/codegen/xai-grok-pager/docs/custom-hooks.md
+配置文件里的钩子用 TOML 形式表达同一套 schema；详见[钩子用户指南](user-guide/10-hooks.md#配置文件中的钩子)。
+```
+
+两条都有效。若锚点剥离只认 ASCII（`#安装`、`#配置文件中的钩子` 不剥），门禁会把这两条好链接报成
+坏链，并把作者引向"去改一份没坏的文档"。这就是第 6 节 `ANCHOR_RE` 必须对任何文字的 `#` 生效的原因，
+`anchor-strip` 那个变异拦住的也正是这两条。
+
+
+第 6 节  规则 4 之后又冒出来的两个门禁缺陷（是门禁错了，不是文档错了）
+----------------------------------------------------------------------
+
+写 fixture 的过程中，有两条失败暴露的是门禁自己的错，改的是门禁：
+
+其一，同目录链接无法解析。`README.md#安装` 这类中文锚点没被剥掉，于是每一条形如
+`[安装](README.md#安装)` 的链接都被判为坏链——被误报的是文档里本来正确的链接（第 5 节末列出的
+`CHAOS.md:40` 与 `crates/codegen/xai-grok-pager/docs/custom-hooks.md:57`），要改的是扫描器。
+修法是加 `ANCHOR_RE = re.compile(r"#.*$")`（对任何文字的 `#` 都生效，不只 ASCII）。
+
+其二，`./` 前缀的提及绕过了顶层名测试。`./.chaos/skills/` 指的是产品运行时目录，但字面第一段是 `.`,
+被 `head in (".", "..")` 直接放行。修法是在 `claims_repo` 里先剥 `./`；这条改动让 6 条运行时路径
+记档立刻变成陈旧条目，被第 4 节纪律 2 强制删除——即门禁自己发现了自己的账对不上。
+
+还有一条被 fixture 挡住的正则错误：`docs/{name}.md` 会被当成"大括号集合"展开。修法是大括号内必须
+有逗号才算集合，否则是占位符。
+
+
+第 7 节  非空证明：12 个变异，逐个变红，逐个逐字节还原
+------------------------------------------------------
+
+门禁"跑通了"不等于门禁"会拦"。逐个把规则改坏，要求 fixture 或真实仓库至少一边变红。
+每个变异都从 `cp` 出来的副本还原并用 `cmp` 校验。
+
+| 变异 | 改坏的东西 | fixture | 真实仓库 | 谁拦住的 |
+| --- | --- | --- | --- | --- |
+| link-blind | 链接一律视为可解析 | 1 | 0 | 5 例（含 `RealRepository`） |
+| anchor-strip | 不剥 `#锚点` | 1 | 1 | 3 例，且真实报出 `CHAOS.md:40` |
+| anchor-test | 顶层名测试恒真 | 1 | 1 | 5 例，真实仓库噪声涨回噪声 |
+| reason-min | 理由长度下限归零 | 1 | 0 | `test_short_reason_is_refused` |
+| category-check | 类别不校验 | 1 | 0 | `test_unknown_category_is_refused` |
+| staleness-rule | 不再检查陈旧条目 | 1 | 0 | `test_stale_entry_fails` |
+| quoted-link-rule | 反引号里的链接也算链接 | 1 | 1 | 2 例，真实报出 CHANGELOG/TODO 的 quoted 行 |
+| doc-dir-resolution | 只按仓库根解析 | 1 | 1 | 6 例（同目录链接全瞎） |
+| fence-join-folds | 围栏抹白后不以 `\n` 拼回 | 1 | 1 | 行数不变式 + 两例行号 fixture |
+| splitlines-splits | 用 `str.splitlines()` 数行 | 1 | 1 | 新加的生僻换行 fixture（见第 8 节） |
+| lineno-off-by-one | 行号从 0 起 | 1 | 0 | 3 例行号 fixture |
+| ledger-row-deleted | 删掉一条记档 | 1 | 1 | `RealRepository` + 门禁点名该 mention 未记档 |
+
+变异 12 删掉的是 `crates/codegen/xai-grok-update/build.rs` 那条 `historical` 记档，门禁的自述立刻变成：
+
+```
+$ python3 scripts/ci/check-doc-path-refs.py
+check-doc-path-refs: CHANGELOG.md:1744: `crates/codegen/xai-grok-update/build.rs` resolves to nothing in the repository (unrecorded)
+check-doc-path-refs: 274 Markdown documents scanned against 3959 tracked paths, 46 dangling mention(s), 23 recorded; 1 problem(s)
+```
+
+全部还原之后的收尾状态（同一次运行打印）：
+
+```
+Ran 36 tests in 1.486s
+OK
+check-doc-path-refs: 274 Markdown documents scanned against 3959 tracked paths, 46 dangling mention(s), 24 recorded; every link resolves and every dangling mention is recorded and live
+gate exit=0
+tree matches pre-mutation copies
+```
+
+
+第 8 节  一次无效变异，以及它顺手挖出来的两处东西
+--------------------------------------------------
+
+第一批 10 个变异里有一个存活：把 `blank_out()` 的函数体从
+
+```python
+    body = line.rstrip("\n")
+    return " " * len(body) + line[len(body):]
+```
+
+换成 `return " " * len(line)`，fixture 与真实仓库都不红。原因不是变异测不出，而是**它根本不是变异**：
+`strip_fences` 先用 `lines_of()`（`split("\n")`）切行、最后用 `"\n".join()` 拼回，所以 `blank_out`
+永远拿不到带换行的行，`line[len(body):]` 是死代码。那处"保留换行"的防御写在了一个不可能触发的位置，
+而真正的风险在 `strip_fences` 的 `join` 上。
+
+处理：把 `blank_out` 化简成 `" " * len(line)`，把当年那个真实事故（第一次写这文件时用
+`" " * len(line)` 抹白，把 `\n` 一起抹掉，`docs/telemetry-policy.md` 从 158 行折成 125 行，于是门禁
+把 `docs/release-process.md` 报在 116 行而不是 149 行）的说明搬到 `strip_fences` 上——风险在哪一行，
+注释就在哪一行。等价变异改用真正会改变行为的那一处：`"\n".join(out)` → `"".join(out)`，结果
+fixture 与真实仓库双双变红（表中 `fence-join-folds`）。
+
+第二处：`lines_of` 的 docstring 承诺"行号必须与 `grep -n` 一致"，但当时没有任何 fixture 钉它——
+`text.split("\n")` 换成 `text.splitlines()` 也能过全部 fixture（这正是"文档写了、测试没钉"的典型）。
+补了 `test_line_numbers_match_grep_on_text_with_odd_breaks`：把 U+2028 与 `\x0c`（`splitlines` 视为换行、
+`grep -n` 不视为换行）放在被引用行上方，先断言这段文本确实让两种数法产生分歧，再分别钉住提及路径
+与链接路径报出的行号都是 4。
+
+诚实记录一点：**当前 committed 的 274 份文档里一个这样的字符都没有**（实测 0 份），所以
+`splitlines-splits` 这个变异在真实仓库变红的机制不是"生僻换行"，而是 `splitlines()` 丢掉文件末尾
+空行导致行数不变式在结尾有空行的文档上开火：
+
+```
+check-doc-path-refs: crates/codegen/xai-grok-agent/README.md: internal error: fence masking changed the line count
+check-doc-path-refs: CHANGELOG.md: internal error: fence masking changed the line count
+```
+
+也就是说：那个新 fixture 是为将来的文档钉住风险的，眼下是行数不变式兜住了底。两条都要，
+但不能把兜底说成前者拦的。
+
+
+第 9 节  这个门禁查不到什么（写下来，免得后来人把它当全知）
+------------------------------------------------------------
+
+- 围栏代码块里的路径一律不扫。README 里的示例目录树因此永远不会被检查，这是刻意的：那里的
+  `src/`、`tests/` 是示意结构，扫它就把第 2 节的噪声请回来了。
+- 反斜杠路径不认。Windows 写法 `crates\codegen\x` 在门禁眼里不是路径。本仓库文档目前没有这种写法，
+  但 CI 日志类文档一旦引用 Windows 路径就会漏检。
+- 无扩展名的名字与分支名不可区分。`sync/curated-port-20260918` 是分支，`docs/internal/` 是记档缺失，
+  两者形状一样；门禁靠"第一段是不是顶层名 + 是否存在"区分，一个恰好与真实目录同形的分支名会被
+  当成存在，从而漏检它作为分支的错。
+- crate 相对简写不算断言。`src/session/workflows/deep_research.rhai` 从 `crates/` 起写才是本仓库断言，
+  从 `src/` 起写不是（规则 4）。这是为了避免把每个 crate 内部的 `src/lib.rs` 都拖进扫描，代价是
+  写错的 crate 内简写不会被发现。
+- 链接只做"文件在不在"，不做锚点在不在。`guide.md#没有这个标题` 会判为通过。
+- `docs/custom-hooks.md` 一类"从产品安装根看是对的"的路径被记为 `other-root`。门禁承认它悬空，
+  不承认它正确。
+
+
+第 10 节  接线
+--------------
+
+`check-guard-wiring.py` 是双向检查的：门禁文件必须被可达地调用，且 `verify-in-docker.sh` 的每一条
+gate 必须能在 CI 里找到对应步骤。
+
+```
+$ python3 scripts/ci/test-check-guard-wiring.py 2>&1 | tail -3
+Ran 16 tests in 2.095s
+
+OK
+$ python3 scripts/ci/check-guard-wiring.py
+check-guard-wiring: OK (46 files in scripts/ci/, 45 reachable, 41 run by scripts/verify-in-docker.sh, 4 recorded CI-only, 1 exempt)
+$ python3 scripts/ci/check-workflow-yaml.py
+workflow yaml: 2 file(s), no unquoted scalar with a mapping separator
+$ python3 scripts/ci/check-workflow-shells.py
+check-workflow-shells: .github/workflows/ci.yml: OK
+check-workflow-shells: .github/workflows/release.yml: OK
+```
+
+新 step 加在 `docs-l10n` job 的"Committed docs do not cite scratch paths"之后，先跑 fixture 再跑门禁；
+`scripts/verify-in-docker.sh` 的 gates 数组新增同名一条 `"docs path references: …"`。
+
+
+第 11 节  第一次全量门禁轮里唯一变红的，是这道刚写完的门咬到本轮自己写的文字
+------------------------------------------------------------------------------
+
+门禁与文档写完之后跑本地全量门禁轮（22 条，含这道新门）。21 条 PASS，唯一 FAIL 就是它，而 7 条报错
+全部落在本轮**刚刚写下**的那两段（`CHANGELOG.md` 的新条目与 `TODO.md:969` 那条结案说明）：
+
+```
+AssertionError: 1 != 0 : check-doc-path-refs: CHANGELOG.md:28: `../../../../CHAOS.md` resolves to nothing in the repository (unrecorded)
+check-doc-path-refs: CHANGELOG.md:33: `docs/release-process.md` resolves to nothing in the repository (unrecorded)
+check-doc-path-refs: CHANGELOG.md:34: `scripts/assemble-platform-packages.js` resolves to nothing in the repository (unrecorded)
+check-doc-path-refs: TODO.md:969: `../../../../CHAOS.md` resolves to nothing in the repository (unrecorded)
+check-doc-path-refs: TODO.md:969: `docs/release-process.md` resolves to nothing in the repository (unrecorded)
+check-doc-path-refs: TODO.md:969: `scripts/assemble-platform-packages.js` resolves to nothing in the repository (unrecorded)
+check-doc-path-refs: TODO.md:969: `docs/release-process.md` resolves to nothing in the repository (unrecorded)
+check-doc-path-refs: 274 Markdown documents scanned against 3959 tracked paths, 46 dangling mention(s), 21 recorded; 7 problem(s)
+```
+
+这三个值正是第 5 节修掉的那三个缺陷的**旧值**。写结案说明时把它们放进反引号，句子于是"提及"了三个
+不存在的路径。这不是门禁判错：规则 1 对行内代码的定义就是不区分"我要指向它"与"我在说它"，区分它们的
+是记档里的类别，而不是扫描器的猜测。
+
+处理方式的取舍值得写下来。三条路里：
+
+- 给新写的文字临时豁免：等于第 4 节那三条纪律形同虚设，第一个用它绕过的就是写它的人；
+- 去掉反引号：自由散文结构性不被扫（第 3 节规则 1），去掉反引号能立刻变绿，但那是靠降低可读性通过
+  检查——路径在正文里失去等宽排版，读者更难分辨哪段是路径；
+- 记档：`quoted-text` 两条（`../../../../CHAOS.md`、`scripts/assemble-platform-packages.js`）与
+  `recorded-absent` 一条（`docs/release-process.md`），各自带一句 ≥20 字符的理由说明"这句在说的就是
+  这个不存在的值"。
+
+选了记档。悬空提及因此从 39 处变成 46 处、记档从 21 条变成 24 条，`quoted-text` 从 6 条涨到 8 条。
+这条也说明第 4 节的"条目必须还悬着"与门禁的自述不是空转：门禁在同一轮里既拦住了新写的文字，也拦住了
+本轮自己刚写的文档，说明它不只对旧账有效。

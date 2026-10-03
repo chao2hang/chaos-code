@@ -54,7 +54,8 @@ merge 前基线 = 本仓库 main（上次上游同步合并点）；目标 = `up
 - `crates/codegen/xai-grok-version/Cargo.toml`、`xai-grok-pager/Cargo.toml`、
   `xai-grok-pager-bin/Cargo.toml`、`xai-grok-shell/Cargo.toml`（lockstep 0.4.0）
 - `crates/codegen/xai-grok-pager/npm/chaos/package.json`（npm 元包，版本跟 crate 版本线；
-  六个 `chaos-<平台>/package.json` 的版本由 `scripts/assemble-platform-packages.js`
+  六个 `chaos-<平台>/package.json` 的版本由
+  `crates/codegen/xai-grok-pager/npm/chaos/scripts/assemble-platform-packages.js`
   打包时按元包盖写，仓库里的值是占位，不必手改）
   - **已知不一致（未修）**：元包 `optionalDependencies` 里六个平台包仍钉在 `0.2.121`，
     0.3.1 那一跳就没跟着改；而 assemble 脚本会把平台包盖成元包版本，两者对不上，

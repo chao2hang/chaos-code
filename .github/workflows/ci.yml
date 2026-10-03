@@ -465,6 +465,24 @@ jobs:
           python3 scripts/ci/test-check-evidence-paths.py
           python3 scripts/ci/check-evidence-paths.py
 
+      # A naive "does this string look like a path and does it exist" scan of
+      # the docs found 3,919 hits across 2,266 tokens, all of them junk (`I/O`,
+      # `go/no-go`, `session/new`, `upstream/main`). That ratio is why path
+      # rot is never checked. Restricting the scan to `[text](target)` links and
+      # to code spans whose entire content is one path, and requiring the first
+      # segment to be a tracked top-level entry, brings it to a list a human can
+      # read: 3 broken links and 39 dangling mentions. Three of the links were
+      # real -- a doc skill pointing four levels up out of the repository, a
+      # vendored-notice block for a crate that was never vendored, and a build.rs
+      # that moved crates two years of commits ago -- and all three were fixed.
+      # The remaining 39 are recorded with a reason in the allowlist, which the
+      # check also proves still dangles.
+      - name: Docs path references resolve or are recorded
+        run: |
+          set -euo pipefail
+          python3 scripts/ci/test-check-doc-path-refs.py
+          python3 scripts/ci/check-doc-path-refs.py
+
   gui:
     name: GUI engine, Web host and frontend
     runs-on: ubuntu-latest

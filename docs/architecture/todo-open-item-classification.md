@@ -26,8 +26,8 @@ inventory now reports 429 ignored attributes and 0 bare attributes, reconciled b
 owner/reviewer gate is due as of 2026-10-01, and these counts are inventory
 evidence, not the per-row decision. Recompute with
 `scripts/ci/classify-open-todos.py` after the next edit. The milestone group counts are M-1 1/5, M0 0/11, M1 0/16,
-M2 0/24, M3 5/12, M4 5/13, M5 9/16, and maintenance 3/17
-(unchecked/partial), summing to 137. M1 has no unchecked row left: the last one was the
+M2 0/24, M3 5/12, M4 5/13, M5 9/16, and maintenance 2/17
+(unchecked/partial), summing to 136. M1 has no unchecked row left: the last one was the
 phone drawer's missing focus trap -- at 390px the sidebar is an overlay drawer whose scrim
 only stops pointer input, so keyboard Tab still reached the conversation behind it -- and it
 closed on 2026-10-03 behind two independent gates (`inert` on the covered regions plus a Tab
@@ -42,12 +42,16 @@ boundary. The M3 partial count also covers the settings panel, whose nine areas
 now render entirely out of the serving process's `get_host_info` reply while only
 theme, Base URL and model are editable; credential storage and the full settings
 schema stay open. The current open/partial split for maintenance items reflects the MT-6
-review/evidence partial rows. The third unchecked maintenance row is a
-deliberate non-gate: a probe of repo-relative paths cited in documentation reported 32
-distinct paths / 61 hits, and on inspection most are regex artifacts, placeholder paths
-used as examples in a skill reference, or files the docs record as absent on purpose. The
-row stays open until those three classes are separated from real breakage, because an
-existence gate that must whitelist three exception kinds is not a gate. MT-5 Q4 owner/reviewer sign-off is due as of this snapshot and remains pending. The reproducible command is
+review/evidence partial rows. The unchecked maintenance row that used to sit here asked for the
+three classes behind a documentation path probe to be separated before any gate was written; that
+row closed on 2026-10-03 and the gate exists. Its first probe measured 3,935 hits across 2,263
+distinct tokens -- `.chaos/config.toml`, `upstream/main`, `desktop/mobile` -- which is the noise the
+row objected to, and precision came from structure rather than exemptions: only `[text](target)`
+targets and code spans whose whole content is one path are scanned, a link inside a code span is a
+quoted mention, patterns are not paths, and a mention must start at a tracked top-level name while a
+link is exempt from that last test. Five references were genuinely broken and are fixed. The other
+46 dangling mentions are recorded with a category and a reason in
+`scripts/ci/doc-path-refs-allowlist.tsv`, which the gate also proves still dangles. MT-5 Q4 owner/reviewer sign-off is due as of this snapshot and remains pending. The reproducible command is
 `python3 scripts/ci/classify-open-todos.py`, and
 `python3 scripts/ci/classify-open-todos.py --check-doc docs/architecture/todo-open-item-classification.md`
 is run by CI, so this table can no longer drift from `TODO.md` unnoticed; the
@@ -70,7 +74,7 @@ language review, screen-reader testing or platform acceptance.
 | M3 | 5 | 12 |
 | M4 | 5 | 13 |
 | M5 | 9 | 16 |
-| Maintenance items / §8 | 3 | 17 |
+| Maintenance items / §8 | 2 | 17 |
 
 ## Locally delivered in this audit pass
 

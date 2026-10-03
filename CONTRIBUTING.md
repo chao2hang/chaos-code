@@ -438,7 +438,7 @@ hundred-ish megabyte artifact into a temp directory. It also checks two things t
 the first check worth anything: a one-byte corruption of the same artifact must be
 refused, and a build given no key must refuse rather than accept.
 
-Because the key is baked in by `option_env!`, `crates/codegen/xai-grok-update/build.rs`
+Because the key is baked in by `option_env!`, `crates/codegen/xai-grok-signature/build.rs`
 declares `cargo:rerun-if-env-changed=CHAOS_SIGNING_PUBLIC_KEY`. Without it, rebuilding
 after changing that variable relinks nothing and silently keeps whichever key the
 previous build embedded. The script's third check is what notices if that directive is

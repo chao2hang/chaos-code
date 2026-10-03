@@ -145,8 +145,8 @@ Chaos fork 的遥测设计前提：
 
 - 用户**有能力**检查本地配置（能打开 `config.toml`）
 - 用户**有能力**看网络流量（可信 OS / 能装 tcpdump）
-- 用户**不**信任 GitHub Release 上游账号能完美不泄露（参见
-  `docs/release-process.md` 的代码签名计划）
+- 用户**不**信任 GitHub Release 上游账号能完美不泄露（签名与验签的实际做法见
+  `docs/release-signing.md`）
 
 在这些前提都不成立的环境（比如不可审计的受管部署）里，应当**走 requirements
 锁定 + 全局防火墙**，而不是依赖客户端开关。

@@ -144,6 +144,7 @@ gates=(
   "protocol mirror coverage: python3 scripts/ci/test-check-protocol-mirror.py && python3 scripts/ci/check-protocol-mirror.py"
   "TODO status doc: python3 scripts/ci/test-classify-open-todos.py && python3 scripts/ci/classify-open-todos.py --check-doc docs/architecture/todo-open-item-classification.md"
   "evidence paths in docs: python3 scripts/ci/test-check-evidence-paths.py && python3 scripts/ci/check-evidence-paths.py"
+  "docs path references: python3 scripts/ci/test-check-doc-path-refs.py && python3 scripts/ci/check-doc-path-refs.py"
   "CI guard wiring: python3 scripts/ci/test-check-guard-wiring.py && python3 scripts/ci/check-guard-wiring.py"
   # No argument on purpose: the CI step runs it with none, and pointing this one at
   # ci.yml alone left release.yml -- the workflow with the Windows matrix, which is

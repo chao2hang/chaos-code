@@ -36,7 +36,7 @@ metadata:
 | 产品版本（唯一可信源） | npm 元包 `crates/codegen/xai-grok-pager/npm/chaos/package.json` 的 `version`——`release.yml` 的 `resolve-version` 读它；`xai-grok-version`、`xai-grok-pager`、`xai-grok-pager-bin` 与六个平台包子版本必须与它相等，`python3 scripts/ci/check-version-lockstep.py` 逐项比对（决定记录在 `CONTRIBUTING.md`「Release versioning」） |
 | 用户可见更新日志缓存 | `~/.grok/CHANGELOG.md` + `CHANGELOG.json`（CDN 失败时靠磁盘） |
 | 仓库内 changelog 源 | `crates/codegen/xai-grok-shell/changelogs/<version>.{md,json}` + `crates/codegen/xai-grok-shell/CHANGELOG.md` |
-| Chaos 专属说明 | 根目录 [`CHAOS.md`](../../../../CHAOS.md) |
+| Chaos 专属说明 | 根目录 [`CHAOS.md`](../../../CHAOS.md) |
 
 **编译可执行文件务必：**
 
