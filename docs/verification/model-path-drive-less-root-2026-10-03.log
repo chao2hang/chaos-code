@@ -1,0 +1,433 @@
+# A model path that is absolute on one platform and relative on the other
+
+`resolve_model_path` is the single funnel through which a model-supplied path reaches both the
+permission decision and the filesystem, for Read, Write, Edit, search_replace, glob, the shell tool's
+creation paths, and `xai-grok-workspace`'s `edit_target_protection`. Two of its Windows behaviours were
+recorded on 2026-10-03 as identified-but-unfixed, because the product question behind them had not been
+answered. This file records the answer, the code that follows from it, what could be proven on a Linux
+host, and what could not.
+
+== 1. What was recorded, and the code that produced it
+
+The row in `TODO.md` (written in Chinese, as that file is) claimed two Windows-only defects, both
+reachable only through one branch: that the "the model dropped the leading slash" recovery branch
+fabricates `format!("/{}", expanded)`, which on Windows conjures a path on the current drive that is
+neither cwd-relative nor where the user meant; and that `cwd.join(input_path)`, given a drive-less
+rooted argument like `\home\user\...`, drops the whole cwd per `PathBuf::push` semantics.
+
+Both stop at the same question: on Windows, is a path that looks absolute but carries no drive
+absolute (resolve against the current drive) or relative (resolve against cwd)? The code, before:
+
+    if !input_path.is_absolute() && !expanded.is_empty() {
+        let as_absolute = std::path::PathBuf::from(format!("/{}", expanded.as_ref()));
+        let effective_base = display_cwd.unwrap_or(cwd);
+        if as_absolute.starts_with(effective_base)
+            && let Ok(suffix) = as_absolute.strip_prefix(effective_base)
+        {
+            return crate::util::fs::join_relative(cwd, suffix);
+        }
+    }
+    cwd.join(input_path)
+
+== 2. What Windows actually does with these two shapes, from std itself
+
+No Windows machine was needed for this part: `std::path` documents and implements it in one place. The
+pinned toolchain's own source, `library/std/src/path.rs`, on `PathBuf::push`:
+
+      On Windows:
+      * if `path` has a root but no prefix (e.g., `\windows`), it
+        replaces everything except for the prefix (if any) of `self`.
+      * if `path` has a prefix but no root, it replaces `self`.
+
+and in the body of `_push`, the branch that implements the first bullet, with std's own comment:
+
+      // `path` has a root but no prefix, e.g., `\windows` (Windows only)
+      } else if path.has_root() {
+          let prefix_len = self.components().prefix_remaining();
+          self.inner.truncate(prefix_len);
+
+`Path::has_root` settles which spellings land in that branch: on Windows a path has a root if it has no
+prefix and begins with a separator (`\windows`), or has a prefix followed by a separator (`c:\windows`
+but not `c:windows`), or has any non-disk prefix (`\\server\share`). `is_absolute` is the stricter
+question, and it is the one every caller asks. The gap between the two is the defect:
+
+    spelling                     has_root  prefix  is_absolute   push's rule
+    \src\main.rs                 yes       none    false         keep drive, drop cwd path
+    /src/main.rs                 yes       none    false         keep drive, drop cwd path
+    C:work\plan.md               no        C:      false         replace the whole base
+    C:\work\plan.md              yes       C:      true          replace the whole base
+    \\server\share\plan.md       yes       UNC     true          replace the whole base
+
+The raw bytes that branch leaves are `<prefix>` concatenated with the argument: `prefix_remaining` is the
+length of the `Prefix` component alone, and the separator after a drive letter parses as part of the
+following `RootDir`, so truncating to the prefix leaves `D:` and the argument's own separator is the only
+one. `D:\worktree\abc` plus `\src\main.rs` is therefore `D:\src\main.rs`. Section 8 prints this from a
+Windows binary rather than from reading `_push`; the first draft of this log recorded a doubled separator
+here, which is what reading the truncate without running it produced.
+
+The row's second claim is therefore exactly right. Its first is right that a `/`-prefixed candidate is
+fabricated and wrong about what it does with it: `as_absolute` is only ever compared against a base and
+never returned, so on Windows the recovery branch conjured nothing and simply never ran. That is a third
+defect, in section 4, rather than the one that was described. From a cwd of `D:\worktree\abc`, an
+argument of `\src\main.rs` produced `D:\src\main.rs`: outside the workspace, reached from an argument
+that every caller still classifies as relative.
+
+== 3. The decision
+
+A model path that this platform does not consider absolute is resolved inside the announced cwd, after
+the `display_cwd` fold has had its chance. Nothing is resolved against the drive root, and nothing is
+resolved against the process's current directory on some drive.
+
+- The drive-root reading cannot be what a model means. `\src\main.rs` is what a transcript produces
+  when a path crosses between POSIX-shaped history and a Windows cwd, or when a tool result rendered
+  with `/` separators lost its front; in neither case did anyone intend the drive root.
+- The result of this function is used twice, for the permission decision and for the I/O, so folding
+  cannot smuggle an edit past `edit_target_protection`: protection is evaluated on the folded path, and
+  the folded path is the path that gets opened. The drive-root reading has the opposite property, it
+  moves the file out from under a decision that was already made.
+- The `display_cwd` fold is the existing precedent for the same instinct: a path from conversation
+  history is rewritten onto the real worktree rather than taken literally.
+- The recovery branch already existed to undo a dropped front. It just did not work where it was needed.
+
+Concretely, for a cwd of `D:\worktree\abc` and a display cwd of `C:\home\user\project`:
+
+    input                                  before                  now
+    \src\main.rs                           D:\src\main.rs          D:\worktree\abc\src\main.rs
+    /src/main.rs                           D:\src\main.rs          D:\worktree\abc\src\main.rs
+    \home\user\project\src\main.rs         D:\home\user\...        D:\worktree\abc\src\main.rs
+    home\user\project\src\main.rs          doubled path            D:\worktree\abc\src\main.rs
+    C:work\plan.md                         C:work\plan.md          D:\worktree\abc\work\plan.md
+    C:\etc\hosts                           unchanged               unchanged
+    \\fileserver\share\plan.md             unchanged               unchanged
+    src\main.rs                            unchanged               unchanged
+
+Both columns are printed by a Windows binary in section 8: the `before` column is section 8's table 2,
+which is the `cwd.join(input)` tail the old code fell through to, and the `now` column is its tables 3, 5
+and 6, which run the shipped component match and the shipped component-by-component join. The rows whose
+`before` value is not in that printout are the last three, which neither branch touches.
+
+== 4. The third defect, which the same branch hid
+
+The `format!("/{}", input)` candidate could not fail to match on a POSIX base and could not succeed on a
+Windows one: a path built as `/\home\user\project\src\main.rs` carries no `C:` prefix, so
+`starts_with(display_cwd)` was false against every Windows `display_cwd`. The recovery branch, which
+three tests in `types/resources.rs` exist to protect, was dead code on Windows. That is why the doubled
+path those tests were written against:
+
+    $ grep -n "forgot_leading_slash" crates/codegen/xai-grok-tools/src/types/resources.rs | head
+    resolve_model_path_forgot_leading_slash_exact_cwd
+    resolve_model_path_forgot_leading_slash_subpath
+    resolve_model_path_forgot_leading_slash_with_display
+
+...was the live Windows behaviour all along: `home\user\project\src\main.rs` against a cwd of
+`D:\worktree\abc` produced `D:\worktree\abc\home\user\project\src\main.rs`.
+
+The replacement compares components instead of rebuilding a candidate, so it needs no invented path and
+works the same on both platforms. `recover_dropped_root(body, base)` matches `base`'s components below
+its own root off the front of `body` and returns what is left; the two spellings that reach it (the
+separator dropped, or the separator and the drive together) are then the same question.
+
+One deliberate difference came out of the component rewrite. The old branch prepended `/` to the raw
+string *before* parsing, which silently deleted a leading `.`: an input of `./home/user/project/x` was
+folded as if it had been `home/user/project/x`. A path that starts with `./` is relative on purpose, so
+it is now left where the model put it, pinned by
+`resolve_model_path_explicitly_relative_dot_is_not_folded`.
+
+Three existing tests had to be re-spelled rather than re-expected, because their literals were POSIX
+shapings of "an absolute path somewhere else": `resolve_model_path_absolute_non_matching`,
+`resolve_model_path_partial_prefix_no_match`, `resolve_model_path_sensitive_edit_spellings`. On Windows
+their `/etc/hosts` is the drive-less case, so it is now folded into the cwd; each now builds its fixture
+with the `root()`/`root_str()` helpers that re-root a path onto `C:\` there, which keeps the intent (an
+absolute path outside the announced cwd passes through untouched) true on both platforms. No assertion
+about behaviour was weakened: on Linux the helpers are the identity, and those three tests assert the
+same strings they did before.
+
+== 5. What a Linux host can reach, and what it cannot
+
+On Linux every leading-separator path is absolute, so the new `rooted_without_drive` branch is
+unreachable from any input. That is not an opinion about coverage, it is visible in the parse. The probe
+of section 8, compiled for this host instead, prints:
+
+    $ ./model-path-windows-probe | head -12
+    platform: linux
+
+    == 1. is_absolute, and what the components look like ==
+    input                              absolute     components
+    C:\work\proj                       false        Normal(C:\work\proj)
+    \src\main.rs                       false        Normal(\src\main.rs)
+    /src/main.rs                       true         RootDir Normal(src) Normal(main.rs)
+    \\fileserver\share\plan.md         false        Normal(\\fileserver\share\plan.md)
+    C:work\plan.md                     false        Normal(C:work\plan.md)
+
+`Normal(\src\main.rs)` is the whole story: on Linux the backslash is an ordinary character, so there is
+no root, no prefix, and no way to express the Windows question at all. What Linux can prove is the
+component matching, the two helpers, and the platform-neutral parts of the decision; the five
+`#[cfg(windows)]` tests are the only thing that pins the Windows branch itself, and section 8 runs them on
+a Windows target rather than leaving them compiled out.
+
+== 6. The mutation batch, on both targets, including the one that escaped on Linux
+
+Each mutation is injected into the real file, the module is run, and the file is restored and `cmp`-ed.
+Baseline and post-restore runs: `62 passed; 0 failed`.
+
+    MA  recover_dropped_root always declines
+        RED, 4 failures: the three forgot_leading_slash tests and the helper test
+    MB  a base with nothing below its root declines
+        RED, 1 failure: recover_dropped_root_matches_whole_components_from_the_start
+    MC  any component counts as a match (equality guard dropped)
+        RED, 14 failures, including dotdot_relative, colon_prefixed_display_path,
+        interior_quotes_preserved and the eight other relative-path pins
+    MD  rooted_without_drive never matches
+        RED, 1 failure: rooted_without_drive_only_matches_a_bare_leading_root
+    ME  resolve_model_path stops stripping the leading root
+        GREEN, 62 passed  <- escaped
+
+ME is not a hole in the batch, it is the result section 5 predicts: dropping the drive-less handling
+outright changes no Linux-observable behaviour, because no Linux input can reach it. ME is exactly the
+mutation that `resolve_model_path_rooted_without_a_drive_stays_inside_cwd` and
+`resolve_model_path_drive_less_display_path_still_folds_to_the_worktree` exist to catch, and those run only
+on Windows.
+
+Recording that escape was the point of the section, and it did not stay an escape. The same batch was run
+again through the container of section 8, so the module under mutation is a Windows build executed by
+wine; baseline `67 passed; 0 failed`, restored byte-identically, final run `67 passed; 0 failed`:
+
+    mutation                                  Linux      Windows
+    MA recover_dropped_root always declines   4 failed   9 failed
+    MB a base with nothing below its root     1 failed   1 failed
+    MC any component counts as a match        14 failed  19 failed
+    MD rooted_without_drive never matches     1 failed   4 failed
+    ME stops stripping the leading root       escaped    3 failed
+
+ME's three Windows failures are `resolve_model_path_drive_less_display_path_still_folds_to_the_worktree`,
+`resolve_model_path_quoted_literal_backslash_n` and `resolve_model_path_trailing_newline`. The first is the
+test written for it; the other two are pre-existing POSIX-shaped tests that were already exercising the
+fold without being about it, which is worth knowing about the suite as well. The boundary section 5 drew
+for the Linux suite is therefore closed by execution rather than argued around: the mutation that escaped
+there is caught on the platform the branch belongs to.
+
+== 7. The consumer that decides whether this is a security change
+
+`xai-grok-workspace`'s permission manager calls `resolve_model_path` before
+`edit_target_protection`, for `AccessKind::Edit` and for the creation paths of a `Bash` access that
+changes directory. 666 permission tests pass unchanged:
+
+    $ RUST_MIN_STACK=16777216 cargo test -p xai-grok-workspace --lib permission::
+    test result: ok. 666 passed; 0 failed; 0 ignored; 1269 filtered out
+
+and the fixtures in that path use `tempfile` directories, i.e. absolute cwds, which is why none of them
+moves. The property that matters is the one in section 3: because protection is evaluated on this
+function's output and the same output is handed to the I/O, folding a drive-less path into the cwd
+cannot make a protected file reachable that was reachable before. It can only make a path that would
+have failed at the drive root instead hit a real file inside the workspace, which is the behaviour the
+`display_cwd` fold has always had for forked sessions.
+
+== 8. Executed on a Windows binary
+
+Everything above is a claim about Windows, so it was executed there instead of argued from
+documentation. `docs/verification/model-path-windows-probe.rs` calls the same `std::path` API the shipped
+code uses, plus verbatim transcriptions of `crate::util::fs::join_relative` and of the component match in
+`recover_dropped_root`, and is compiled twice: once for this host, once for `x86_64-pc-windows-gnu`.
+`docs/verification/model-path-windows-probe.Dockerfile` builds the cross image, and
+`docs/verification/model-path-windows-probe-shim.c` is explained below.
+
+    $ docker build -t chaos-winprobe:local -f docs/verification/model-path-windows-probe.Dockerfile .
+    Need to get 214 MB of archives
+    ...
+    rustc 1.94.0 (4a4ef493e 2026-03-02)
+    x86_64-w64-mingw32-gcc (GCC) 12-win32
+    wine-8.0
+
+Three environment facts cost an attempt each and are worth recording:
+
+- Debian bookworm's `wine64` installs no `wine` wrapper on `PATH`. The entry point is
+  `/usr/lib/wine/wine64`, which `dpkg -L wine64` shows; a build step that ran
+  `command -v wine || command -v wine64` died on exit 127 for exactly this reason.
+- Every binary rustc produces for `x86_64-pc-windows-gnu` imports one function from a DLL wine 8.0 does
+  not ship:
+
+      $ x86_64-w64-mingw32-objdump -x probe.exe | grep -A3 "DLL Name: bcryptprimitives"
+      DLL Name: bcryptprimitives.dll
+      vma:  Hint/Ord Member-Name Bound-To
+      d18e8    1  ProcessPrng
+
+  Running one anyway exits 53, which is 0xC0000135 STATUS_DLL_NOT_FOUND truncated, and `fn main() {}`
+  compiled the same way fails identically, so nothing Rust-produced can load. A trivial C program from
+  the same mingw runs fine (exit 7), which localises the gap to that single import:
+  `bcryptprimitives.dll` is the Windows 10 split of `bcrypt.dll` and wine grew it after 8.0.
+
+- That gap was closed with the shim file above, a mingw-built DLL exporting `ProcessPrng` that prints one
+  line to stderr on every call:
+
+      $ x86_64-w64-mingw32-gcc -shared -o bcryptprimitives.dll model-path-windows-probe-shim.c
+      $ cd "$(dirname probe.exe)" && /usr/lib/wine/wine64 probe.exe
+      wine exit: 0
+
+  The run's stderr holds no `SHIM ProcessPrng called` line, so the shim was loaded and never invoked. It
+  is a loader requirement, not part of what is measured: every row below comes out of std's own Windows
+  parser.
+
+The tables are the Windows run, one per question. Table 1 is what the platform thinks each spelling is:
+
+    platform: windows
+
+    == 1. is_absolute, and what the components look like ==
+    input                              absolute     components
+    C:\work\proj                       true         Prefix(Disk(67)) RootDir Normal(work) Normal(proj)
+    \src\main.rs                       false        RootDir Normal(src) Normal(main.rs)
+    /src/main.rs                       false        RootDir Normal(src) Normal(main.rs)
+    \\fileserver\share\plan.md         true         Prefix(UNC("fileserver", "share")) RootDir Normal(plan.md)
+    C:work\plan.md                     false        Prefix(Disk(67)) Normal(work) Normal(plan.md)
+    src\main.rs                        false        Normal(src) Normal(main.rs)
+    C:\                                true         Prefix(Disk(67)) RootDir
+    \                                  false        RootDir
+    //fileserver/share/plan.md         true         Prefix(UNC("fileserver", "share")) RootDir Normal(plan.md)
+    ~/x                                false        Normal(~) Normal(x)
+
+`has_root` without `is_absolute` for four of these, which is section 2's gap in one printout, and both
+separatives (`\src` and `/src`) fall in it. Table 2 is the tail the old code fell through to, i.e. the
+`before` column of section 3:
+
+    == 2. the tail the old code fell through to: cwd.join(input) ==
+    input                              cwd.join(input)
+    \src\main.rs                       D:\src\main.rs
+    /src/main.rs                       D:/src/main.rs
+    \home\user\project\src\main.rs     D:\home\user\project\src\main.rs
+    home\user\project\src\main.rs      D:\worktree\abc\home\user\project\src\main.rs
+    C:work\plan.md                     C:work\plan.md
+    src\main.rs                        D:\worktree\abc\src\main.rs
+    \\fileserver\share\plan.md         \\fileserver\share\plan.md
+    C:\Users\me\.ssh\config            C:\Users\me\.ssh\config
+
+Three things only the run says. The drive-less rows land outside `D:\worktree\abc` with no doubled
+separator, so section 2's correction above stands. `/src/main.rs` is a second spelling of the same
+escape, with the separator it was typed with preserved. `C:work\plan.md` never gets joined at all: the
+base is discarded before anything is appended, which is `push`'s second rule and why that shape needed
+its own row in section 3.
+
+Table 3 is the join the fix uses, table 4 is the old recovery branch measured against the component
+match, and tables 5 and 6 are the drive-less fold:
+
+    == 3. joining component by component instead (join_relative) ==
+    relative body                      join_relative(cwd, body)
+    src\main.rs                        D:\worktree\abc\src\main.rs
+    src/main.rs                        D:\worktree\abc\src\main.rs
+    C:work\plan.md                     D:\worktree\abc\work\plan.md
+    \src\main.rs                       D:\worktree\abc\src\main.rs
+
+    == 4. the recovery branch, old candidate vs component match ==
+    body (drive/separator dropped)           old        component match
+    home\user\project\src\main.rs            false      Some(src\main.rs)
+    /home/user/project/src/main.rs           false      None
+    home\user\projectX\main.rs               false      None
+    other\main.rs                            false      None
+
+    == 5. the rooted form, after its leading separator is dropped ==
+    rooted input                                 recover_dropped_root(body, display)
+    \home\user\project\src\main.rs               Some(src\main.rs)
+    /home/user/project/src/main.rs               Some(src\main.rs)
+    \other\main.rs                               None
+
+    == 6. what the fold onto cwd produces for each of those ==
+    \home\user\project\src\main.rs               D:\worktree\abc\src\main.rs
+    /home/user/project/src/main.rs               D:\worktree\abc\src\main.rs
+    \other\main.rs                               D:\worktree\abc\other\main.rs
+    \src\main.rs                                 D:\worktree\abc\src\main.rs
+
+Table 4's `old` column is all `false`: the third defect of section 4 is now executed rather than
+inferred. Table 3 shows the property the fix depends on, that joining component by component cannot move
+the result off `base` even for a body carrying a root or a drive, and table 6 is section 3's `now`
+column. The same file compiled for Linux prints the same tables with the other platform's answers, and
+the contrast is the point: there table 2's first row is `D:\worktree\abc/\src\main.rs`, one ordinary
+component appended to the base, because the question does not exist there.
+
+The same container runs the shipped module's own tests, not only a transcription of two loops. The crate
+that stopped the `x86_64-pc-windows-msvc` route is not an obstacle for the gnu target once it is handed a
+Windows C toolchain:
+
+    $ cargo build -p aws-lc-sys --target x86_64-pc-windows-gnu
+    Compiling aws-lc-sys v0.39.1
+    Finished `dev` profile [unoptimized] target(s) in 12.68s
+
+With `CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc` plus a `CARGO_TARGET_..._RUNNER`
+that copies the shim beside the executable and execs `/usr/lib/wine/wine64`, the real test binary runs:
+
+    $ cargo test -p xai-grok-tools --lib types::resources:: --target x86_64-pc-windows-gnu
+    test result: ok. 67 passed; 0 failed; 0 ignored; 0 measured; 3030 filtered out
+
+67 against Linux's 62, the difference being exactly the five `#[cfg(windows)]` tests, which execute here
+for the first time. Two caveats stay in the open. The harness does reach the shim, one
+`SHIM ProcessPrng called with 16 bytes` line per test where libtest seeds a hasher, which is why the shim
+forwards to wine's own `BCryptGenRandom` instead of filling the buffer itself; no test reads randomness.
+And a wine prefix is not Windows: it is Debian's wine 8.0, so anything depending on real NTFS semantics,
+real access control, or a real per-process drive state remains CI's `platform tests (windows-latest)` leg
+to decide. The path arithmetic in this row depends on none of those.
+
+== 9. The neighbouring assertion that pinned the separator it was meant to ignore
+
+`resolve_plan_file_path`, in the same file as the code above, builds the plan file's model-visible path with
+`crate::util::fs::join_posix_relative`, component-wise, because `PLAN_FILE_RELATIVE_PATH` carries `/` and a
+plain `join` on Windows yields `C:\proj\.grok/plan.md`. That shipped in the previous round, and the Windows
+leg of CI turned red over the tests rather than the code:
+
+    run 37118762740  head d0313952  windows-latest  cargo test (target-OS crates: xai-grok-tools)
+      3043 passed; 44 failed
+    run 37108083983  head dc389877  windows-latest  same step
+      3006 passed; 79 failed
+
+Diffing the failing test names is what makes those two numbers readable: 39 fixed, 3 newly broken, all three
+in `implementations::grok_build::exit_plan_mode::tests` (`exit_with_plan_content`,
+`prompt_format_includes_plan_content`, `sends_plan_mode_exited_notification_with_content`).
+
+Each asserted `plan_file_path.ends_with(".grok/plan.md")`. On Linux the two separators are the same
+character, so that assertion could never tell the location apart from the spelling; on Windows it failed
+precisely when the display path started being assembled correctly. It was pinning the mixed-separator
+string that `join_posix_relative` exists to prevent. The compared string is now built for the target:
+
+    crates/codegen/xai-grok-tools/src/implementations/grok_build/exit_plan_mode/mod.rs
+
+      fn plan_file_suffix() -> String {
+          std::path::Path::new(".grok").join("plan.md").to_string_lossy().into_owned()
+      }
+
+Whether the re-spelled assertions still guard the production call site was settled by one mutation, run on
+both targets. `MF` puts the plain join back:
+
+    -        crate::util::fs::join_posix_relative(&cwd.0, PLAN_FILE_RELATIVE_PATH)
+    +        cwd.0.join(PLAN_FILE_RELATIVE_PATH)
+
+    filter: implementations::grok_build::exit_plan_mode
+
+      target                    baseline            MF                after restore
+      linux (host)              17 passed; 0 failed GREEN (escaped)   17 passed; 0 failed
+      x86_64-pc-windows-gnu     17 passed; 0 failed RED, 3 failed     17 passed; 0 failed
+
+`restored byte-identically: True` on both. The Linux escape is the finding rather than a gap: `/` is the
+separator there, so `join` and the component-wise join cannot differ, which means an assertion that
+tolerates `MF` on Linux and fails on it on Windows is guarding the fix and nothing else. The three names
+below are the three names the CI run reported, which is where the wine run stops being a paraphrase of the
+CI record:
+
+    $ cargo test -p xai-grok-tools --lib implementations::grok_build::exit_plan_mode \
+          --target x86_64-pc-windows-gnu
+    test implementations::grok_build::exit_plan_mode::tests::exit_with_plan_content ... FAILED
+    test implementations::grok_build::exit_plan_mode::tests::prompt_format_includes_plan_content ... FAILED
+    test implementations::grok_build::exit_plan_mode::tests::sends_plan_mode_exited_notification_with_content ... FAILED
+    test result: FAILED. 14 passed; 3 failed; 0 ignored; 0 measured; 3080 filtered out
+
+One caution about reading CI in general: runs `37114697856` and `37110356858` have the platform job
+`skipped`, so their green steps are the absence of a measurement, not a result.
+
+== 10. Left open on purpose
+
+- `recover_dropped_root` matches case-sensitively, like the `strip_prefix` fold it replaces. Windows
+  path comparison is case-insensitive, so `HOME\User\Project` against a display cwd of
+  `C:\home\user\project` is not folded. Making it case-insensitive is a decision about the fold as a
+  whole, not about this branch, and it would change forked-session behaviour for POSIX-shaped histories.
+- A drive-less path that does not match the display cwd is joined onto the cwd verbatim, which can land
+  on a file that exists (`\src\a.rs` becoming `D:\worktree\abc\src\a.rs`). That is intended, it is the
+  recovery, but it means a model that once typed a drive-less path can now reach a workspace file
+  instead of failing at the drive root. Nothing in the permission layer distinguishes those two.
+- The `C:`-relative spelling (`C:work\plan.md`) is folded by dropping the drive. An alternative is to
+  refuse it as ambiguous. It has never been observed in a transcript, and the row it came from did not
+  name it, so it got the uniform rule rather than its own.

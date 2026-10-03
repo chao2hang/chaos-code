@@ -218,6 +218,18 @@ mod tests {
         resources
     }
 
+    /// The plan file's own suffix spelled the way this platform spells it. The
+    /// display path is assembled component-wise by `util::fs::join_posix_relative`,
+    /// so on Windows it reads `.grok\plan.md`. A literal `/` assertion would pin
+    /// the separator rather than the location, and would have kept passing on the
+    /// mixed-separator string that helper exists to prevent.
+    fn plan_file_suffix() -> String {
+        std::path::Path::new(".grok")
+            .join("plan.md")
+            .to_string_lossy()
+            .into_owned()
+    }
+
     #[test]
     fn tool_name_and_description() {
         let tool = ExitPlanModeTool;
@@ -269,7 +281,7 @@ mod tests {
                 assert!(plan_content.contains("Do thing A"));
                 assert!(plan_content.contains("Do thing B"));
                 // Cwd fallback now displays the resolved absolute path (shared resolver).
-                assert!(plan_file_path.ends_with(".grok/plan.md"));
+                assert!(plan_file_path.ends_with(&plan_file_suffix()));
             }
             other => panic!("Expected PlanReady, got {:?}", other),
         }
@@ -344,7 +356,7 @@ mod tests {
             ToolNotification::PlanModeExited(exited) => {
                 assert_eq!(exited.tool_call_id, "call-99");
                 assert_eq!(exited.plan_content, Some("The plan".to_string()));
-                assert!(exited.plan_file_path.ends_with(".grok/plan.md"));
+                assert!(exited.plan_file_path.ends_with(&plan_file_suffix()));
             }
             other => panic!("Expected PlanModeExited, got {:?}", other),
         }
@@ -390,7 +402,7 @@ mod tests {
         let prompt = output.to_prompt_format();
         assert!(prompt.contains("Step 1"));
         assert!(prompt.contains("Step 2"));
-        assert!(prompt.contains(".grok/plan.md"));
+        assert!(prompt.contains(&plan_file_suffix()));
     }
 
     // -- PlanFilePath resource tests --

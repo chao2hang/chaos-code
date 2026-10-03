@@ -213,8 +213,10 @@ pub fn join_relative(base: &Path, relative: &Path) -> PathBuf {
     let mut joined = base.to_path_buf();
     for component in relative.components() {
         match component {
-            // `push` drops everything it already holds when the argument is
-            // rooted, so a root here would silently discard `base`. Callers pass
+            // `push` erases the path `base` holds when the argument is
+            // absolute, and on Windows keeps only base's drive when the
+            // argument has a root but no prefix (`\work\plan.md`), so either
+            // kind here would silently move the result off `base`. Callers pass
             // a stripped, relative path; a root can only be a caller mistake.
             std::path::Component::Prefix(_) | std::path::Component::RootDir => continue,
             other => joined.push(other.as_os_str()),

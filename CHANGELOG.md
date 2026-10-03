@@ -2,6 +2,108 @@
 
 ## Unreleased
 
+### 修复：模型写出的「没有驱动器的绝对路径」不再掉到驱动器根，第三条缺陷与全部结论改由 Windows 二进制打印
+
+`resolve_model_path` 是模型给的路径通往权限判定与文件读写的同一个漏斗：Read、Write、Edit、search_replace、
+glob、shell 工具的创建路径，以及 `xai-grok-workspace` 的 `edit_target_protection` 都问它要答案。它有两个只
+在 Windows 上成立的行为在 2026-10-03 被记成「识别但没修」，卡在同一个产品问题没答：Windows 上一条看起来绝
+对却没有驱动器的路径，算绝对（按当前驱动器解析）还是算相对 cwd。现在的答案写进了函数文档：**当前平台不认为
+是绝对的路径，一律解析进宣布过的 cwd**，先让 `display_cwd` 折叠一次，既不落到驱动器根，也不落到「某个驱动
+器上的进程当前目录」。
+
+依据不靠回忆，取自 std 自己。`PathBuf::push` 的文档对 Windows 写着两条规则，`_push` 里则有 std 自己注释的
+那个分支：
+
+      实参「有 root 无 prefix」（例如 `\windows`）→ 只保留 base 的前缀
+      实参「有 prefix 无 root」（例如 `C:work`）→ 整个替换掉 base
+
+而 `is_absolute()` 对这两个形状都回答 false，那恰好是每个调用点唯一在问的问题。于是 cwd 为
+`D:\worktree\abc` 时，实参 `\src\main.rs` 得到 `D:\src\main.rs`：工作区之外的文件，被一个「按
+`is_absolute()` 算相对」的实参够到了。原记录第二条完全正确；第一条说对了伪造 `format!("/{}", expanded)`，
+说错了后果：伪造出的串只参与比较、从不返回，所以那个恢复分支在 Windows 上**从来就没执行过**，这是第三条缺
+陷，`types/resources.rs` 里三条 `forgot_leading_slash_*` 测试防的「路径被拼两遍」，在 Windows 上一直是活的
+行为。本仓库第一版记录在这里写的是 `D:\\src\main.rs`，那是读 `_push` 里那次 `truncate` 推出来的，被真机打
+印否掉了：`prefix_remaining()` 只算 `Prefix` 一个分量，驱动器字母后面的分隔符归在 `RootDir` 名下，截到前缀
+只剩 `D:`，实参自带的分隔符是唯一的分隔符。
+
+改法是不再伪造候选路径，而是比较组件：`rooted_without_drive` 取出「有 root 无 prefix」的实体，
+`recover_dropped_root` 把 base 自己 root 以下的组件从实参开头剥掉，于是「只掉了分隔符」与「连驱动器一起
+掉」两种写法归成同一个问题，最后统一交给 `crate::util::fs::join_relative` 逐组件拼接；`util/fs.rs` 里那条
+把 push 描述成「丢掉全部」的注释也按 std 原话改准。一处刻意的行为差别随之出现：旧分支先给原始串补一个 `/`
+再解析，等于把开头的 `.` 抹掉，`./home/user/project/x` 会被当作 `home/user/project/x` 折叠；`./` 开头是明
+确声明相对，现在留在模型放的位置，由 `resolve_model_path_explicitly_relative_dot_is_not_folded` 钉住。
+
+三条既有测试是**改写拼法**而不是改期望：`resolve_model_path_absolute_non_matching`、
+`_partial_prefix_no_match`、`_sensitive_edit_spellings` 里的 `/etc/hosts` 在 Windows 上正是无盘符那一条，
+现在改用本文件既有的 `root()`/`root_str()` 夹具在 Windows 上重新落到 `C:\`；Linux 上这两个新函数是恒等，三
+条断言的字符串一字未动。
+
+非空洞性靠五个变异，逐个注入、逐个 `cmp` 还原，Linux 与 Windows 两个 target **各跑一遍**，两次的基线与还原
+后都是逐字节一致：
+
+      变异                       linux             windows
+      MA 恢复分支永不匹配         红 4 条           红 4 条
+      MB base 只有 root 时拒折叠   红 1 条           红 1 条
+      MC 任何组件都算匹配          红 14 条          红 14 条
+      MD 无盘符 root 永不识别      红 1 条           红 1 条
+      ME 完全不剥无盘符 root       全绿（真逃掉了）   红 3 条
+
+ME 在 Linux 上逃掉不是漏判，而是覆盖边界：POSIX 上任何以分隔符开头的路径都已经是绝对路径，
+`rooted_without_drive` 不可能被 Linux 上的任何实参到达。是 Windows 那一列把它抓住了，代价是本轮搭了一条能
+在 Linux 上真正执行 Windows 二进制的路：`rust:1.94.0-bookworm` 装 `gcc-mingw-w64-x86-64` 与 `wine64`，加
+`x86_64-pc-windows-gnu` target，再把 `CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUNNER` 指向一个「把 shim DLL 复
+制到 exe 旁边、然后 `exec /usr/lib/wine/wine64`」的脚本。三个环境事实各吃掉一次失败：bookworm 的 wine 包不
+往 PATH 放 `wine`，入口是 `/usr/lib/wine/wine64`，第一步因此死在 exit 127；rustc 产出的**每一个**
+windows-gnu 二进制都导入 `bcryptprimitives.dll!ProcessPrng`，wine 8.0 没有这个 DLL，于是任何 Rust 程序都
+exit 53（`0xC0000135`，STATUS_DLL_NOT_FOUND），而同容器里一个 mingw 编的 C 程序跑得正常；解决办法是仓库里
+提交的 shim，它打印一行调用记录再转发给真的 `BCryptGenRandom`。交叉编译本身从来不是障碍：
+`cargo build -p aws-lc-sys --target x86_64-pc-windows-gnu` 用 mingw 12.68 秒编过，上一轮试的 msvc 路线则
+在 363 个 crate 之后正好死在这里。
+
+于是这些数字是被打印出来的，不是推出来的。探针 `docs/verification/model-path-windows-probe.rs`（只用 std，
+逐字抄了 `join_relative` 与 `recover_dropped_root`）给出 `\src\main.rs` 的 `is_absolute()` 为 false、
+`cwd.join` 落到 `D:\src\main.rs`、`C:work\plan.md` 把 base 整个丢掉、旧恢复逻辑在四种形状上全是 false、修
+复后是 `D:\worktree\abc\src\main.rs`；真实套件
+`cargo test -p xai-grok-tools --lib types::resources:: --target x86_64-pc-windows-gnu` 是
+`67 passed; 0 failed`，Linux 侧同一模块 `62 passed`、`util::fs::` 11 passed、clippy 干净、消费侧
+`cargo test -p xai-grok-workspace --lib permission::` 666 passed 未动。因为权限判定与实际 I/O 用的是同一个
+返回值，折叠进 cwd 不可能让原本够不到的受保护文件变得可写，只会让原本要在驱动器根上失败的写入落进工作区。
+边界照旧记全：wine 的前缀不是 Windows，最终判决仍来自 CI 的 `platform tests (windows-latest)`；组件匹配沿
+用 `strip_prefix` 的大小写敏感语义（Windows 的路径比较不区分大小写）；`C:work\plan.md` 这种驱动器相对写法
+目前按同一条规则折进 cwd 而不是显式拒绝。
+
+（2026-10-03；`crates/codegen/xai-grok-tools/src/types/resources.rs`、
+`crates/codegen/xai-grok-tools/src/util/fs.rs`、
+`docs/verification/model-path-drive-less-root-2026-10-03.log`、
+`docs/verification/model-path-windows-probe.rs`、`docs/verification/model-path-windows-probe-shim.c`、
+`docs/verification/model-path-windows-probe.Dockerfile`）
+
+### 修复：3 条 Windows 测试变红，因为断言钉住的是那个缺陷本身的拼法
+
+上一轮加的 `util/fs.rs::join_posix_relative` 让 plan 文件的显示路径逐组件拼接：常量
+`PLAN_FILE_RELATIVE_PATH` 自带 `/`，在 Windows 上直接 `join` 会产出 `C:\proj\.grok/plan.md` 并且这个串是要
+展示给模型的，那正是那个 helper 存在的理由。它同时也让 Windows 腿变红了。run `37118762740`（head
+`d0313952`）macOS success、windows-latest failure，`cargo test … xai-grok-tools` 那一步是
+`3043 passed; 44 failed`；与上一次完整判决的 run `37108083983`（head `dc389877`，
+`3006 passed; 79 failed`）按失败测试名逐条比对，结论是**修好 39 条、新坏 3 条**，三条全在
+`implementations::grok_build::exit_plan_mode::tests`：`exit_with_plan_content`、
+`prompt_format_includes_plan_content`、`sends_plan_mode_exited_notification_with_content`。
+
+三条断言写的是 `ends_with(".grok/plan.md")`，钉住的正是被修掉的混用拼法：Linux 上 `\` 与 `/` 同义所以永远
+绿，Windows 上一旦显示路径被正确拼成 `.grok\plan.md` 就当场失败。断言想说的是「plan 文件落在 `.grok` 目录
+下的 `plan.md`」，实际钉住的却是分隔符，所以改的是断言：让它按本机拼法自己构造被比较的串，
+`plan_file_suffix()` 用 `Path::new(".grok").join("plan.md")`，三处一起改，字面量不再出现在这个文件里。
+
+这批改动的非空洞性由同一个变异证明。`MF` 把生产代码里的 `join_posix_relative` 换回普通 `join`：Linux 上**
+全绿**，因为 Linux 分不出两种拼法，而这正是「这条改动只在 Windows 上成立」的定义；Windows target 上它必须
+红，而且红在刚改过拼法的那三条上。基线在 Windows 上是 `17 passed; 0 failed`，注入、还原、复跑在同一个容器
+里完成，`cmp` 确认逐字节一致。顺带一条读日志的注意：run `37114697856` 与 `37110356858` 的 platform job 是
+skipped，它们那些看起来通过的步骤不构成证据。
+
+（2026-10-03；`crates/codegen/xai-grok-tools/src/implementations/grok_build/exit_plan_mode/mod.rs`、
+`crates/codegen/xai-grok-tools/src/types/resources.rs`、
+`docs/verification/model-path-drive-less-root-2026-10-03.log`）
+
 ### 门禁：本地跑一遍门禁的门禁，顺手让证据里的门禁表可以被重跑
 
 `scripts/verify-in-docker.sh` 是「冷克隆能不能跑通」的仪器，交付前该跑它。它不该是「我改十行有没有

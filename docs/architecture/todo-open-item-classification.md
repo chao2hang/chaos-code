@@ -16,8 +16,9 @@ check, the Docker-entry gate mirror, the GitGate invalidate-all fix, the
 browser-level host-restart fault injection and the workflow-toolchain guard, the
 `xai-fast-worktree` grove-isolation fix, the safety-gate self-diagnosis row and the
 timeline turn-grouping pass, the first full Windows CI verdict, the load-bearing
-feature guard and the two CI failures that guard then exposed, is
-26 unchecked and 114 partial
+feature guard and the two CI failures that guard then exposed, the drive-less model
+path fold decided and then executed against a Windows target, is
+25 unchecked and 114 partial
 (including conditional criteria, future/dated work and rows with a completed
 slice plus an open gate); the seccomp audit and one bounded utility-test cleanup
 remain partial rather than closing their larger audit rows. The ignored-test
@@ -27,16 +28,18 @@ inventory now reports 429 ignored attributes and 0 bare attributes, reconciled b
 owner/reviewer gate is due as of 2026-10-01, and these counts are inventory
 evidence, not the per-row decision. Recompute with
 `scripts/ci/classify-open-todos.py` after the next edit. The milestone group counts are M-1 1/5, M0 0/11, M1 0/16,
-M2 2/24, M3 5/12, M4 5/13, M5 9/16, and maintenance 4/17
-(unchecked/partial), summing to 140. The four unchecked rows added on
-2026-10-03 are all deliberate: three are Windows defects identified while
-triaging the Windows CI leg and left open rather than written around
-(`resolve_model_path` fabricates a leading slash for a model name that omitted one
-and `cwd.join()` then discards the base when the argument is already rooted,
-`ProcessTerminal`'s persistent-shell request is
+M2 1/24, M3 5/12, M4 5/13, M5 9/16, and maintenance 4/17
+(unchecked/partial), summing to 139. Four unchecked rows were added on
+2026-10-03 and one of them closed in the pass that followed: `resolve_model_path`
+folded a model path that looked absolute but carried no drive onto the current
+drive root, and the recovery branch for an omitted leading slash never ran on
+Windows at all; both now have a written product answer, a component-wise fix, and
+assertions executed against a Windows target. Two of the four remain open as
+deliberate Windows defects identified while triaging that CI leg and left open
+rather than written around: `ProcessTerminal`'s persistent-shell request is
 silently ignored on the platforms where the persistent shell does not exist, and the
 `#[cfg(unix)]` attributes added to make that leg pass are themselves a coverage debt with
-no ledger, unlike `#[ignore]` which has one). The fourth is not a platform defect:
+no ledger, unlike `#[ignore]` which has one. The fourth is not a platform defect:
 the title/unpin race whose test was made deterministic in this pass is still unguarded
 at the storage layer, where `generated_title_if_absent` refuses a late auto title,
 nothing retries it, and the invariant is held only by the one production caller that
@@ -83,7 +86,7 @@ language review, screen-reader testing or platform acceptance.
 | M-1 | 1 | 5 |
 | M0 | 0 | 11 |
 | M1 | 0 | 16 |
-| M2 | 2 | 24 |
+| M2 | 1 | 24 |
 | M3 | 5 | 12 |
 | M4 | 5 | 13 |
 | M5 | 9 | 16 |

@@ -478,6 +478,15 @@ pub struct DenyReadGlobs(pub Vec<String>);
 /// - Leading `~`/`~/` is expanded to the current user's home directory
 ///   before applying the above rules. `~username` is not expanded.
 /// - Relative paths are always joined onto `cwd`.
+/// - Anything the current platform does not consider absolute is joined onto
+///   `cwd` as well, once the `display_cwd` fold has had its chance. That
+///   includes the drive-less rooted spellings a Windows run can only get from
+///   a model: see [`rooted_without_drive`].
+///
+/// Callers use the result for both the permission decision and the I/O, so
+/// folding a drive-less path into `cwd` cannot smuggle an edit past path
+/// protection; it decides which file the tool reaches, and protection is then
+/// evaluated on that same file.
 pub fn resolve_model_path(
     cwd: &std::path::Path,
     display_cwd: Option<&std::path::Path>,
@@ -498,15 +507,79 @@ pub fn resolve_model_path(
         return input_path.to_path_buf();
     }
     if !input_path.is_absolute() && !expanded.is_empty() {
-        let as_absolute = std::path::PathBuf::from(format!("/{}", expanded.as_ref()));
-        let effective_base = display_cwd.unwrap_or(cwd);
-        if as_absolute.starts_with(effective_base)
-            && let Ok(suffix) = as_absolute.strip_prefix(effective_base)
-        {
-            return crate::util::fs::join_relative(cwd, suffix);
-        }
+        // The two non-absolute shapes are one mistake: the front of an
+        // absolute path was dropped, either the separator alone
+        // (`home/user/proj/plan.md`) or the separator together with the drive
+        // (`\work\plan.md` on Windows). Strip the leading separator if there is
+        // one, then ask the same question of the remainder.
+        let body = rooted_without_drive(input_path).unwrap_or(input_path);
+        let base = display_cwd.unwrap_or(cwd);
+        let suffix = recover_dropped_root(body, base).unwrap_or_else(|| body.to_path_buf());
+        // Joining component by component rather than with `PathBuf::push` is
+        // what keeps the announced cwd: for an argument carrying a root but no
+        // prefix, `push` truncates the base to its drive before appending.
+        return crate::util::fs::join_relative(cwd, &suffix);
     }
     cwd.join(input_path)
+}
+/// The body of a path this platform reads as rooted but not absolute.
+///
+/// On Windows a leading separator with no drive (`\work\plan.md`, and the
+/// POSIX-style `/work/plan.md` a model copies out of cross-platform history)
+/// has a root and no prefix, so `Path::has_root()` accepts it while
+/// `Path::is_absolute()` rejects it. That pair is what breaks `push`, whose
+/// documented Windows rule for an argument with a root but no prefix is that it
+/// "replaces everything except for the prefix (if any) of `self`": joining
+/// `\work\plan.md` onto `D:\worktree\abc` yields `D:\work\plan.md`. The drive
+/// survives and the announced cwd does not, so the result sits outside the
+/// workspace while every caller still calls the argument relative, because
+/// `is_absolute()` is what they ask and it answers relative.
+///
+/// On Unix every leading-separator path is absolute, so the caller's
+/// `!is_absolute()` guard means this returns `None` there for every input.
+fn rooted_without_drive(input: &std::path::Path) -> Option<&std::path::Path> {
+    let mut components = input.components();
+    if matches!(components.next(), Some(std::path::Component::RootDir)) {
+        Some(components.as_path())
+    } else {
+        None
+    }
+}
+/// The tail of `body` once the components of `base` have been matched off it.
+///
+/// `body` is a path that lost the front of its absolute spelling, so it starts
+/// with the part of `base` that comes after `base`'s own root:
+/// `home/user/proj/plan.md` against a cwd of `/home/user/proj` leaves
+/// `plan.md`. Matching components instead of rebuilding a candidate path is
+/// what makes this work on Windows, where the previous branch's
+/// `format!("/{}", input)` could not carry a `C:\` prefix and therefore
+/// silently never matched a Windows `display_cwd`.
+///
+/// A `base` with no components below its root (a bare `/`) matches everything,
+/// leaving `body` intact, as the branch this replaces did. Matching is
+/// case-sensitive, like the `strip_prefix` fold in [`resolve_model_path`].
+fn recover_dropped_root(body: &std::path::Path, base: &std::path::Path) -> Option<PathBuf> {
+    let below_base: Vec<_> = base
+        .components()
+        .filter(|component| {
+            !matches!(
+                component,
+                std::path::Component::Prefix(_) | std::path::Component::RootDir
+            )
+        })
+        .collect();
+    let mut rest = body.components();
+    for expected in &below_base {
+        match rest.next() {
+            Some(found) if found == *expected => {}
+            _ => return None,
+        }
+    }
+    let mut suffix = PathBuf::new();
+    for component in rest {
+        suffix.push(component.as_os_str());
+    }
+    Some(suffix)
 }
 /// Strip surrounding whitespace (e.g. a trailing newline from block-form
 /// tool args) and quotes that models occasionally emit around path args.
@@ -1245,12 +1318,17 @@ mod tests {
         let result = super::resolve_model_path(&cwd, Some(&display), &input);
         assert_eq!(result, root("/worktree/abc/src/main.rs"));
     }
+    /// Absolute paths that don't match the display cwd pass through. Spelled
+    /// with `root_str` because on Windows only a path carrying a drive is
+    /// absolute; the drive-less `/etc/hosts` belongs to
+    /// `resolve_model_path_rooted_without_a_drive_stays_inside_cwd` instead.
     #[test]
     fn resolve_model_path_absolute_non_matching() {
-        let cwd = std::path::Path::new("/worktree/abc");
-        let display = std::path::Path::new("/home/user/project");
-        let result = super::resolve_model_path(cwd, Some(display), "/etc/hosts");
-        assert_eq!(result, std::path::PathBuf::from("/etc/hosts"));
+        let cwd = root("/worktree/abc");
+        let display = root("/home/user/project");
+        let input = root_str("/etc/hosts");
+        let result = super::resolve_model_path(&cwd, Some(&display), &input);
+        assert_eq!(result, root("/etc/hosts"));
     }
     #[test]
     fn resolve_model_path_relative_with_display() {
@@ -1303,10 +1381,11 @@ mod tests {
     /// e.g., display="/testbed/cache" but input="/testbed/cacheXYZ/foo" — no match.
     #[test]
     fn resolve_model_path_partial_prefix_no_match() {
-        let cwd = std::path::Path::new("/worktree/abc");
-        let display = std::path::Path::new("/testbed/cache");
-        let result = super::resolve_model_path(cwd, Some(display), "/testbed/cacheXYZ/foo");
-        assert_eq!(result, std::path::PathBuf::from("/testbed/cacheXYZ/foo"));
+        let cwd = root("/worktree/abc");
+        let display = root("/testbed/cache");
+        let input = root_str("/testbed/cacheXYZ/foo");
+        let result = super::resolve_model_path(&cwd, Some(&display), &input);
+        assert_eq!(result, root("/testbed/cacheXYZ/foo"));
     }
     /// Dotdot traversal in relative path — should join as-is (no normalization).
     #[test]
@@ -1431,13 +1510,22 @@ mod tests {
         let result = super::resolve_model_path(&cwd, Some(&display), &input);
         assert_eq!(result, root("/worktree/abc/src/main.rs"));
     }
+    /// Every spelling of one absolute path must resolve to the same file, or a
+    /// protected target slips past the check that runs on the resolved path.
+    /// [`root_str`] keeps the path absolute on Windows, where a bare leading
+    /// separator would be the drive-less case instead.
     #[test]
     fn resolve_model_path_sensitive_edit_spellings() {
-        let cwd = std::path::Path::new("/worktree/abc");
-        for input in ["  /etc/hosts  ", "\"/etc/hosts\\n\"", "'/etc/hosts\\r\\t'"] {
+        let cwd = root("/worktree/abc");
+        let target = root_str("/etc/hosts");
+        for input in [
+            format!("  {target}  "),
+            format!("\"{target}\\n\""),
+            format!("'{target}\\r\\t'"),
+        ] {
             assert_eq!(
-                super::resolve_model_path(cwd, None, input),
-                std::path::PathBuf::from("/etc/hosts"),
+                super::resolve_model_path(&cwd, None, &input),
+                root("/etc/hosts"),
                 "{input:?}"
             );
         }
@@ -1579,6 +1667,208 @@ mod tests {
         assert_eq!(
             result,
             std::path::PathBuf::from("/worktree/abc/src/main.rs"),
+        );
+    }
+    /// A path that starts with `./` is relative on purpose, even when what
+    /// follows happens to repeat the cwd. The branch this replaces prepended a
+    /// `/` to the raw string before comparing, which dropped the `.` and folded
+    /// such a path onto the worktree root; matching components keeps the `.` and
+    /// leaves the path where the model put it.
+    #[test]
+    fn resolve_model_path_explicitly_relative_dot_is_not_folded() {
+        let cwd = std::path::Path::new("/worktree/abc");
+        let display = std::path::Path::new("/home/user/project");
+        let expected = cwd.join("home/user/project/src/main.rs");
+        assert_eq!(
+            super::resolve_model_path(cwd, Some(display), "./home/user/project/src/main.rs"),
+            expected,
+        );
+    }
+    /// The Unix tests above pin the recovery, where the doubled path was first
+    /// reported. On Windows the branch could not fire at all: it rebuilt the
+    /// candidate with `format!("/{}", input)`, which carries no drive, so
+    /// against a `C:\`-style display path nothing ever matched and the same
+    /// input produced `D:\worktree\abc\home\user\project\src\main.rs`.
+    #[cfg(windows)]
+    #[test]
+    fn resolve_model_path_forgot_leading_slash_with_display_on_windows() {
+        let cwd = std::path::Path::new(r"D:\worktree\abc");
+        let display = std::path::Path::new(r"C:\home\user\project");
+        assert_eq!(
+            super::resolve_model_path(cwd, Some(display), r"home\user\project\src\main.rs"),
+            std::path::PathBuf::from(r"D:\worktree\abc\src\main.rs"),
+        );
+    }
+    /// A leading separator with no drive behind it is not absolute on Windows,
+    /// and `PathBuf::push` replaces everything but the drive with it, so both
+    /// spellings used to land at the root of the cwd's drive: `D:\src\main.rs`
+    /// from a cwd of `D:\worktree\abc`. They are joined onto the announced cwd
+    /// instead, which is the directory the permission decision for this very
+    /// path was computed against.
+    #[cfg(windows)]
+    #[test]
+    fn resolve_model_path_rooted_without_a_drive_stays_inside_cwd() {
+        let cwd = std::path::Path::new(r"D:\worktree\abc");
+        let display = std::path::Path::new(r"C:\home\user\project");
+        let expected = std::path::PathBuf::from(r"D:\worktree\abc\src\main.rs");
+        for input in [r"\src\main.rs", "/src/main.rs", r"\src/main.rs"] {
+            assert_eq!(
+                super::resolve_model_path(cwd, Some(display), input),
+                expected,
+                "{input:?} with a display cwd",
+            );
+            assert_eq!(
+                super::resolve_model_path(cwd, None, input),
+                expected,
+                "{input:?} without a display cwd",
+            );
+        }
+    }
+    /// The drive-less rooted spelling is the announced path missing its drive,
+    /// so the display fold still applies to it: the file belongs at the worktree
+    /// root, not under a `home\user\project` directory invented inside it.
+    #[cfg(windows)]
+    #[test]
+    fn resolve_model_path_drive_less_display_path_still_folds_to_the_worktree() {
+        let cwd = std::path::Path::new(r"D:\worktree\abc");
+        let display = std::path::Path::new(r"C:\home\user\project");
+        for input in [
+            r"\home\user\project\src\main.rs",
+            "/home/user/project/src/main.rs",
+        ] {
+            assert_eq!(
+                super::resolve_model_path(cwd, Some(display), input),
+                std::path::PathBuf::from(r"D:\worktree\abc\src\main.rs"),
+                "{input:?}",
+            );
+        }
+    }
+    /// The other half of `push`'s Windows rules: an argument with a prefix but
+    /// no root (`C:work\plan.md`) replaces the whole base, leaving a path
+    /// relative to whatever the current directory on drive `C:` happens to be,
+    /// which a model cannot observe either. The drive is dropped and the rest is
+    /// joined onto cwd. A UNC path, by contrast, is absolute, and passes
+    /// through untouched.
+    #[cfg(windows)]
+    #[test]
+    fn resolve_model_path_drive_relative_letter_is_joined_onto_cwd() {
+        let cwd = std::path::Path::new(r"D:\worktree\abc");
+        assert_eq!(
+            super::resolve_model_path(cwd, None, r"C:work\plan.md"),
+            std::path::PathBuf::from(r"D:\worktree\abc\work\plan.md"),
+        );
+        assert_eq!(
+            super::resolve_model_path(cwd, None, r"\\fileserver\share\plan.md"),
+            std::path::PathBuf::from(r"\\fileserver\share\plan.md"),
+        );
+    }
+    #[test]
+    fn rooted_without_drive_only_matches_a_bare_leading_root() {
+        assert_eq!(
+            super::rooted_without_drive(std::path::Path::new("/a/b")),
+            Some(std::path::Path::new("a/b")),
+        );
+        // Repeated separators are collapsed by `components`, so the body is
+        // rebuilt from components and cannot carry an empty one.
+        assert_eq!(
+            super::rooted_without_drive(std::path::Path::new("/a//b")),
+            Some(std::path::Path::new("a/b")),
+        );
+        assert_eq!(
+            super::rooted_without_drive(std::path::Path::new("/")),
+            Some(std::path::Path::new("")),
+        );
+        assert_eq!(
+            super::rooted_without_drive(std::path::Path::new("a/b")),
+            None,
+        );
+        assert_eq!(super::rooted_without_drive(std::path::Path::new("")), None);
+        assert_eq!(
+            super::rooted_without_drive(std::path::Path::new("./a")),
+            None,
+        );
+        assert_eq!(
+            super::rooted_without_drive(std::path::Path::new("../a")),
+            None,
+        );
+        // A drive is a `Prefix`, not a root, on the platform that reads it as a
+        // drive; elsewhere the whole thing is one ordinary component.
+        assert_eq!(
+            super::rooted_without_drive(std::path::Path::new("C:\\a")),
+            None,
+        );
+    }
+    #[test]
+    fn recover_dropped_root_matches_whole_components_from_the_start() {
+        // The spelling that motivated the branch.
+        assert_eq!(
+            super::recover_dropped_root(
+                std::path::Path::new("home/user/project/src/main.rs"),
+                std::path::Path::new("/home/user/project"),
+            ),
+            Some(PathBuf::from("src/main.rs")),
+        );
+        // Naming the base itself leaves nothing to append.
+        assert_eq!(
+            super::recover_dropped_root(
+                std::path::Path::new("home/user/project"),
+                std::path::Path::new("/home/user/project"),
+            ),
+            Some(PathBuf::new()),
+        );
+        // A shared text prefix that is not a component boundary is not a match,
+        // so a sibling directory is never folded.
+        assert_eq!(
+            super::recover_dropped_root(
+                std::path::Path::new("home/user/projectX/main.rs"),
+                std::path::Path::new("/home/user/project"),
+            ),
+            None,
+        );
+        // Shorter than the base, so the base is not matched off.
+        assert_eq!(
+            super::recover_dropped_root(
+                std::path::Path::new("home/user"),
+                std::path::Path::new("/home/user/project"),
+            ),
+            None,
+        );
+        // Traversal is not a dropped prefix; `..` never matches a component.
+        assert_eq!(
+            super::recover_dropped_root(
+                std::path::Path::new("../etc/passwd"),
+                std::path::Path::new("/worktree"),
+            ),
+            None,
+        );
+        assert_eq!(
+            super::recover_dropped_root(
+                std::path::Path::new("worktree/../etc/passwd"),
+                std::path::Path::new("/worktree"),
+            ),
+            Some(PathBuf::from("../etc/passwd")),
+        );
+        // A base with nothing below its root matches anything and leaves `body`
+        // intact, which is what the branch this replaces did.
+        assert_eq!(
+            super::recover_dropped_root(
+                std::path::Path::new("etc/hosts"),
+                std::path::Path::new("/")
+            ),
+            Some(PathBuf::from("etc/hosts")),
+        );
+    }
+    /// A model that copies a path across platforms mixes separators; component
+    /// matching sees one path, and the rebuilt suffix uses this platform's.
+    #[cfg(windows)]
+    #[test]
+    fn recover_dropped_root_ignores_which_separator_was_typed() {
+        assert_eq!(
+            super::recover_dropped_root(
+                std::path::Path::new(r"home/user\project/src\main.rs"),
+                std::path::Path::new(r"C:\home\user\project"),
+            ),
+            Some(PathBuf::from("src\\main.rs")),
         );
     }
     /// Normal relative paths that don't match the cwd prefix are unaffected.
