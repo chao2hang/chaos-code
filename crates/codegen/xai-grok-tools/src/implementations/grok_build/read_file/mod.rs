@@ -325,6 +325,33 @@ pub fn extract_file_content_lines(
         extracted_images,
     }
 }
+/// The structured error a failed read turns into, or `None` for the kinds that
+/// have no shape of their own.
+///
+/// `is_directory` is asked separately from the error kind because the platforms
+/// disagree: `fs::read` on a directory reports `IsADirectory` on Unix and
+/// `PermissionDenied` on Windows. Taking the kind at face value tells a Windows
+/// reader that a folder they can perfectly well list is a permissions problem.
+fn classify_unreadable(
+    kind: Option<std::io::ErrorKind>,
+    is_directory: bool,
+    display_path: &std::path::Path,
+) -> Option<ReadFileOutput> {
+    let shown = display_path.display().to_string();
+    match kind {
+        Some(std::io::ErrorKind::IsADirectory) => Some(ReadFileOutput::IsADirectory(format!(
+            "Error: {shown} is a directory, not a file."
+        ))),
+        Some(std::io::ErrorKind::PermissionDenied) if is_directory => Some(
+            ReadFileOutput::IsADirectory(format!("Error: {shown} is a directory, not a file.")),
+        ),
+        Some(std::io::ErrorKind::PermissionDenied) => Some(ReadFileOutput::PermissionDenied(
+            format!("Permission denied: {shown}"),
+        )),
+        _ => None,
+    }
+}
+
 /// Core read-file logic shared by `ReadFileTool` and `ReadFileConciseTool`.
 ///
 /// Always uses the padded `content` field. Concise post-processing
@@ -389,7 +416,8 @@ pub(crate) async fn run_read_file(
             }
             let display_dcwd = display_cwd_or_cwd(&cwd, display_cwd.as_deref());
             let display_path = display_dcwd.join(&input.path);
-            return Ok(match e.io_error_kind() {
+            let kind = e.io_error_kind();
+            return Ok(match kind {
                 Some(std::io::ErrorKind::NotFound) => {
                     let skill_suggestion = {
                         let res = resources.lock().await;
@@ -417,17 +445,19 @@ pub(crate) async fn run_read_file(
                     }
                     ReadFileOutput::FileNotFound(msg)
                 }
-                Some(std::io::ErrorKind::IsADirectory) => ReadFileOutput::IsADirectory(format!(
-                    "Error: {} is a directory, not a file.",
-                    display_path.display()
-                )),
-                Some(std::io::ErrorKind::PermissionDenied) => ReadFileOutput::PermissionDenied(
-                    format!("Permission denied: {}", display_path.display()),
-                ),
-                _ => ReadFileOutput::FileReadError(format!(
-                    "Failed to read file: {}, {e}",
-                    display_path.display()
-                )),
+                _ => {
+                    // The two platforms disagree about directories: reading one is
+                    // `IsADirectory` on Unix and `Access Denied` on Windows, so the
+                    // error kind alone would blame permissions for a plain folder.
+                    let is_directory = matches!(kind, Some(std::io::ErrorKind::PermissionDenied))
+                        && fs.is_directory(&path).await.unwrap_or(false);
+                    classify_unreadable(kind, is_directory, &display_path).unwrap_or_else(|| {
+                        ReadFileOutput::FileReadError(format!(
+                            "Failed to read file: {}, {e}",
+                            display_path.display()
+                        ))
+                    })
+                }
             });
         }
     };
@@ -872,12 +902,16 @@ mod tests {
             disable_model_invocation: true,
             ..SkillInfo::default()
         }]));
-        let msg = not_found_msg(resources, "/wrong/root/skills/code-review/SKILL.md").await;
+        let requested = "/wrong/root/skills/code-review/SKILL.md";
+        let msg = not_found_msg(resources, requested).await;
         assert_eq!(
             msg,
             format!(
-                "Error: /wrong/root/skills/code-review/SKILL.md does not exist.\n\
+                "Error: {} does not exist.\n\
                  The skill you are looking for is registered at:\n{}",
+                // The message repeats the path through `Path::display`, which on
+                // Windows spells a drive-relative argument with the current drive.
+                std::path::Path::new(requested).display(),
                 skill_path.display()
             )
         );
@@ -908,9 +942,20 @@ mod tests {
         let msg = not_found_msg(resources, "/wrong/root/review/SKILL.md").await;
         assert_eq!(
             msg,
-            "Error: /wrong/root/review/SKILL.md does not exist.\n\
-             The skill you are looking for is registered at:\n\
-             /display/project/.grok/skills/review/SKILL.md"
+            format!(
+                "Error: {} does not exist.\n\
+                 The skill you are looking for is registered at:\n{}",
+                std::path::Path::new("/wrong/root/review/SKILL.md").display(),
+                // Built the way the suggestion builds it: `/display/project`
+                // with each remaining component pushed on, so the separators are
+                // the host's throughout rather than a mix of both.
+                std::path::PathBuf::from("/display/project")
+                    .join(".grok")
+                    .join("skills")
+                    .join("review")
+                    .join("SKILL.md")
+                    .display()
+            )
         );
     }
     #[tokio::test]
@@ -940,8 +985,9 @@ mod tests {
         assert_eq!(
             msg,
             format!(
-                "Error: /wrong/root/review/SKILL.md does not exist.\n\
+                "Error: {} does not exist.\n\
                  Note: your current working directory is {}",
+                std::path::Path::new("/wrong/root/review/SKILL.md").display(),
                 tmp.path().display()
             )
         );
@@ -961,8 +1007,9 @@ mod tests {
         assert_eq!(
             msg,
             format!(
-                "Error: /wrong/root/review/SKILL.md does not exist.\n\
+                "Error: {} does not exist.\n\
                  Note: your current working directory is {}",
+                std::path::Path::new("/wrong/root/review/SKILL.md").display(),
                 tmp.path().display()
             )
         );
@@ -997,6 +1044,57 @@ mod tests {
             other => panic!("Expected legacy FileReadError, got {:?}", other),
         }
     }
+    /// The Windows half of the classification, testable anywhere: a read that
+    /// failed with `Access Denied` on something that is a directory is a
+    /// directory, not a permission problem.
+    #[test]
+    fn access_denied_on_a_directory_is_reported_as_a_directory() {
+        let out = classify_unreadable(
+            Some(std::io::ErrorKind::PermissionDenied),
+            true,
+            std::path::Path::new("/work/subdir"),
+        );
+        match out {
+            Some(ReadFileOutput::IsADirectory(msg)) => {
+                assert!(
+                    msg.contains("/work/subdir is a directory, not a file."),
+                    "{msg}"
+                );
+            }
+            other => panic!("Expected IsADirectory, got {other:?}"),
+        }
+    }
+
+    /// The other direction: the probe must not turn a real permission denial into
+    /// a friendly "that is a directory".
+    #[test]
+    fn access_denied_on_a_file_stays_a_permission_denial() {
+        let out = classify_unreadable(
+            Some(std::io::ErrorKind::PermissionDenied),
+            false,
+            std::path::Path::new("/work/secret.txt"),
+        );
+        match out {
+            Some(ReadFileOutput::PermissionDenied(msg)) => {
+                assert!(msg.contains("Permission denied: /work/secret.txt"), "{msg}");
+            }
+            other => panic!("Expected PermissionDenied, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn kinds_without_a_shape_of_their_own_fall_through() {
+        assert!(
+            classify_unreadable(
+                Some(std::io::ErrorKind::Other),
+                false,
+                std::path::Path::new("/x")
+            )
+            .is_none()
+        );
+        assert!(classify_unreadable(None, true, std::path::Path::new("/x")).is_none());
+    }
+
     #[tokio::test]
     async fn current_read_file_is_directory_returns_structured_error() {
         let tmp = TempDir::new().unwrap();

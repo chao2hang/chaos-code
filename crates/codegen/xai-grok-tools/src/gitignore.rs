@@ -25,7 +25,10 @@ pub fn is_ignored(gitignore: &Gitignore, path: &Path, git_root: Option<&Path>) -
         None => {
             // Absolute path + no git root → can't strip to repo-relative;
             // the `ignore` crate panics on absolute paths not under root.
-            if path.is_absolute() {
+            // `is_absolute` alone is not enough on Windows, where a leading
+            // `/` is drive-relative rather than absolute; `has_root` is the
+            // condition `ignore::gitignore` actually asserts against.
+            if path.is_absolute() || path.has_root() {
                 return false;
             }
             path
@@ -107,7 +110,11 @@ mod tests {
         let gi = build_gitignore(Path::new("."), &["node_modules/", "*.log"]);
         let abs_path = Path::new("/Users/someone/home/AGENTS.md");
 
-        // Proves the raw crate panics with these inputs.
+        // Proves the raw crate panics with these inputs. Unix only: the crate's
+        // precondition is `!path.has_root()`, and the windows-latest leg showed
+        // the call returning normally there, so the panic demonstration is a
+        // unix path-parsing fact rather than part of this crate's contract.
+        #[cfg(unix)]
         assert!(
             std::panic::catch_unwind(|| {
                 gi.matched_path_or_any_parents(abs_path, false);
@@ -115,7 +122,24 @@ mod tests {
             .is_err()
         );
 
-        // Our wrapper guards against it.
+        // Our wrapper guards against it on every platform.
         assert!(!is_ignored(&gi, abs_path, None));
+    }
+
+    /// The guard has to cover exactly what `ignore::gitignore` asserts against,
+    /// which is `has_root()` rather than `is_absolute()`: on Windows a leading
+    /// `/` is drive-relative and not absolute, so a root-shaped path could
+    /// otherwise reach a matcher that only accepts repo-relative paths.
+    #[test]
+    fn a_root_shaped_path_never_reaches_the_matcher() {
+        let gi = build_gitignore(Path::new("."), &["build/"]);
+        for rooted in ["/Users/someone/home/build/out.o", "/build/out.o"] {
+            let path = Path::new(rooted);
+            assert!(path.has_root(), "{rooted} is not root-shaped");
+            assert!(
+                !is_ignored(&gi, path, None),
+                "{rooted} is outside any repo, so no repo rule can ignore it"
+            );
+        }
     }
 }

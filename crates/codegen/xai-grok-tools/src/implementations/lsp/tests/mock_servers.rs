@@ -6,7 +6,83 @@
 //! push versus pull diagnostics, save with or without text — without needing
 //! any of those servers installed.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
+
+/// An interpreter to run the mock servers with, and the flags it needs before
+/// the script's own arguments (`-3` for the Windows launcher).
+#[derive(Debug, PartialEq, Eq)]
+struct PythonProgram {
+    program: String,
+    pre_args: Vec<String>,
+}
+
+/// Spellings tried in order.
+///
+/// `python3` is what every Linux and macOS box has and what these fixtures have
+/// always named. `py -3` is last because the Windows launcher is the one that
+/// still finds an interpreter when neither bare name is on `PATH`.
+const PYTHON_CANDIDATES: &[(&str, &[&str])] = &[
+    ("python3", &[]),
+    ("python", &[]),
+    #[cfg(windows)]
+    ("py", &["-3"]),
+];
+
+/// The interpreter, worked out once per test binary.
+///
+/// The reason to look rather than to assume: a name on `PATH` is not proof of an
+/// interpreter. On Windows `python3` can resolve to a launcher stub that spawns
+/// successfully, prints a notice, and exits, which leaves the client past
+/// `spawn` and reporting only that the server stopped; the 2026-10-03 Windows CI
+/// leg failed that way for 38 tests at once. A `--version` probe is what tells
+/// an interpreter apart from a stub that will never start one.
+fn python_program() -> &'static PythonProgram {
+    static PYTHON: OnceLock<PythonProgram> = OnceLock::new();
+    PYTHON.get_or_init(|| {
+        resolve_python(PYTHON_CANDIDATES).unwrap_or_else(|| {
+            panic!(
+                "the LSP mock servers are Python scripts and no interpreter answered `--version`; \
+                 tried {:?}",
+                PYTHON_CANDIDATES
+            )
+        })
+    })
+}
+
+/// The first candidate that runs `--version` successfully.
+fn resolve_python(candidates: &[(&str, &[&str])]) -> Option<PythonProgram> {
+    candidates
+        .iter()
+        .find(|(program, pre)| {
+            std::process::Command::new(program)
+                .args(*pre)
+                .arg("--version")
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .is_ok_and(|status| status.success())
+        })
+        .map(|(program, pre)| PythonProgram {
+            program: (*program).to_owned(),
+            pre_args: (*pre).iter().map(|arg| (*arg).to_owned()).collect(),
+        })
+}
+
+/// `command` for a mock server's [`super::super::config::LspServerConfig`].
+pub(super) fn python_command() -> String {
+    python_program().program.clone()
+}
+
+/// `args` for a mock server's config: the script, unbuffered.
+pub(super) fn python_args(script_path: &Path) -> Vec<String> {
+    let program = python_program();
+    let mut args = program.pre_args.clone();
+    args.push("-u".to_owned());
+    args.push(script_path.to_string_lossy().into_owned());
+    args
+}
 
 const MOCK_LSP_SERVER: &str = r#"
 import json, sys
@@ -450,6 +526,34 @@ pub(super) fn write_python_server(file_name: &str, body: &str) -> (tempfile::Tem
     let script_path = dir.path().join(file_name);
     std::fs::write(&script_path, format!("{MOCK_PREAMBLE}\n{body}")).unwrap();
     (dir, script_path)
+}
+
+/// A server that says why it will not run and exits with a status.
+///
+/// The shape of a missing or misinstalled binary: the spawn itself succeeds, so
+/// nothing is reported until `initialize` goes unanswered.
+pub(super) fn write_dying_server() -> (tempfile::TempDir, PathBuf) {
+    write_python_server(
+        "dies_lsp.py",
+        r#"
+sys.stderr.write("cannot start: no such root\n")
+sys.stderr.flush()
+sys.exit(3)
+"#,
+    )
+}
+
+/// A server killed by a signal rather than exiting on its own, which is how an
+/// out-of-memory kill or a `kill -9` looks from the client's side.
+#[cfg(unix)]
+pub(super) fn write_killed_server() -> (tempfile::TempDir, PathBuf) {
+    write_python_server(
+        "killed_lsp.py",
+        r#"
+import os, signal
+os.kill(os.getpid(), signal.SIGKILL)
+"#,
+    )
 }
 
 /// A server that declares **incremental** sync (`textDocumentSync: 2`), like
@@ -1049,4 +1153,65 @@ while True:
         dump("register_reply.json", msg)
 "#,
     )
+}
+
+#[cfg(test)]
+mod interpreter_tests {
+    use super::*;
+
+    #[cfg(unix)]
+    fn write_script(dir: &Path, name: &str, body: &str) -> PathBuf {
+        let path = dir.join(name);
+        std::fs::write(&path, format!("#!/bin/sh\n{body}")).unwrap();
+        let mut perms = std::fs::metadata(&path).unwrap().permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o755);
+        std::fs::set_permissions(&path, perms).unwrap();
+        path
+    }
+
+    /// The Windows Store alias is exactly this shape: it spawns, complains, and
+    /// leaves. Nothing downstream can tell that apart from a real interpreter
+    /// unless the probe looks at the exit status.
+    #[cfg(unix)]
+    #[test]
+    fn a_stub_that_refuses_to_run_is_not_an_interpreter() {
+        let dir = tempfile::tempdir().unwrap();
+        let stub = write_script(
+            dir.path(),
+            "store-alias",
+            "echo 'Python was not found; run without arguments to install from the Microsoft Store' >&2\nexit 9009\n",
+        );
+        let real = write_script(
+            dir.path(),
+            "real-python",
+            "case \" $* \" in *' --version '*) echo 'Python 3.12.10'; exit 0;; esac\nexit 1\n",
+        );
+        let stub_str = stub.to_str().unwrap().to_owned();
+        let real_str = real.to_str().unwrap().to_owned();
+        let resolved = resolve_python(&[(&stub_str, &[] as &[&str]), (&real_str, &["-3"])])
+            .expect("the second candidate is a working interpreter");
+        assert_eq!(resolved.program, real_str);
+        assert_eq!(resolved.pre_args, vec!["-3".to_owned()]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_candidate_that_cannot_even_be_spawned_is_skipped() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("not-there");
+        let missing_str = missing.to_str().unwrap().to_owned();
+        assert!(resolve_python(&[(&missing_str, &[] as &[&str])]).is_none());
+    }
+
+    #[test]
+    fn the_script_comes_last_and_unbuffered() {
+        let args = python_args(Path::new("/tmp/mock_lsp.py"));
+        assert_eq!(args.last().unwrap(), "/tmp/mock_lsp.py");
+        let position = args.iter().position(|a| a == "-u").expect("-u is passed");
+        assert_eq!(
+            position,
+            args.len() - 2,
+            "-u goes directly before the script"
+        );
+    }
 }

@@ -731,7 +731,8 @@ async fn prepare_grep(
         && e.kind() == std::io::ErrorKind::NotFound
     {
         let display_path = if let Ok(suffix) = workdir.strip_prefix(&cwd) {
-            display_base.join(suffix)
+            // Component-wise: `suffix` carries the separators of `workdir`.
+            crate::util::fs::join_relative(&display_base, suffix)
         } else {
             workdir.clone()
         };

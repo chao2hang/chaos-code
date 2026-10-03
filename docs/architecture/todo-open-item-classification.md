@@ -15,8 +15,9 @@ installer trust-chain work, the TODO/classifier lockstep and the CI guard-wiring
 check, the Docker-entry gate mirror, the GitGate invalidate-all fix, the
 browser-level host-restart fault injection and the workflow-toolchain guard, the
 `xai-fast-worktree` grove-isolation fix, the safety-gate self-diagnosis row and the
-timeline turn-grouping pass, is
-23 unchecked and 114 partial
+timeline turn-grouping pass, the first full Windows CI verdict and the load-bearing
+feature guard, is
+25 unchecked and 114 partial
 (including conditional criteria, future/dated work and rows with a completed
 slice plus an open gate); the seccomp audit and one bounded utility-test cleanup
 remain partial rather than closing their larger audit rows. The ignored-test
@@ -26,8 +27,15 @@ inventory now reports 429 ignored attributes and 0 bare attributes, reconciled b
 owner/reviewer gate is due as of 2026-10-01, and these counts are inventory
 evidence, not the per-row decision. Recompute with
 `scripts/ci/classify-open-todos.py` after the next edit. The milestone group counts are M-1 1/5, M0 0/11, M1 0/16,
-M2 0/24, M3 5/12, M4 5/13, M5 9/16, and maintenance 2/17
-(unchecked/partial), summing to 136. M1 has no unchecked row left: the last one was the
+M2 2/24, M3 5/12, M4 5/13, M5 9/16, and maintenance 3/17
+(unchecked/partial), summing to 139. The three unchecked rows added on
+2026-10-03 are all Windows defects identified while triaging the Windows CI leg and
+deliberately left open rather than written around: `resolve_model_path` fabricates a
+leading slash for a model name that omitted one and `cwd.join()` then discards the base
+when the argument is already rooted, `ProcessTerminal`'s persistent-shell request is
+silently ignored on the platforms where the persistent shell does not exist, and the
+`#[cfg(unix)]` attributes added to make that leg pass are themselves a coverage debt with
+no ledger, unlike `#[ignore]` which has one. M1 has no unchecked row left: the last one was the
 phone drawer's missing focus trap -- at 390px the sidebar is an overlay drawer whose scrim
 only stops pointer input, so keyboard Tab still reached the conversation behind it -- and it
 closed on 2026-10-03 behind two independent gates (`inert` on the covered regions plus a Tab
@@ -70,11 +78,11 @@ language review, screen-reader testing or platform acceptance.
 | M-1 | 1 | 5 |
 | M0 | 0 | 11 |
 | M1 | 0 | 16 |
-| M2 | 0 | 24 |
+| M2 | 2 | 24 |
 | M3 | 5 | 12 |
 | M4 | 5 | 13 |
 | M5 | 9 | 16 |
-| Maintenance items / §8 | 2 | 17 |
+| Maintenance items / §8 | 3 | 17 |
 
 ## Locally delivered in this audit pass
 

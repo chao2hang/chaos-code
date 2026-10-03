@@ -79,7 +79,11 @@ impl SkillManager {
             let display_path = match display_mapping {
                 Some((real, display)) => skill_path
                     .strip_prefix(real)
-                    .map(|relative| Path::new(display).join(relative))
+                    // Folded component by component: `relative` keeps the
+                    // separators of the registered path, and a plain `join`
+                    // would show the model something like
+                    // `C:\work\.grok/skills/review/SKILL.md`.
+                    .map(|relative| crate::util::fs::join_relative(Path::new(display), relative))
                     .unwrap_or_else(|_| skill_path.to_path_buf()),
                 None => skill_path.to_path_buf(),
             };

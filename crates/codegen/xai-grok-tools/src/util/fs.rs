@@ -194,9 +194,106 @@ async fn try_resolve_unicode_filename_inner(path: &Path) -> Option<UnicodePathMa
     }
 }
 
+/// Join a `/`-separated relative path onto `base` using this platform's
+/// separator for every component.
+///
+/// `PathBuf::push` only substitutes the separator at the point it joins, so
+/// `base.join(".grok/plan.md")` on Windows yields `C:\proj\.grok/plan.md`: a
+/// path that mixes the two, shown to the model and then handed back to us. The
+/// constants that name a file inside the workspace are written with `/` because
+/// that is how they read in the prompts, so the join has to split them.
+pub fn join_posix_relative(base: &Path, relative: &str) -> PathBuf {
+    join_relative(base, Path::new(relative))
+}
+
+/// Same contract as [`join_posix_relative`], for a relative path that already is
+/// a [`Path`] — typically the output of [`Path::strip_prefix`], whose internal
+/// separators are whatever the input string used.
+pub fn join_relative(base: &Path, relative: &Path) -> PathBuf {
+    let mut joined = base.to_path_buf();
+    for component in relative.components() {
+        match component {
+            // `push` drops everything it already holds when the argument is
+            // rooted, so a root here would silently discard `base`. Callers pass
+            // a stripped, relative path; a root can only be a caller mistake.
+            std::path::Component::Prefix(_) | std::path::Component::RootDir => continue,
+            other => joined.push(other.as_os_str()),
+        }
+    }
+    joined
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The plan file's own constant, spelled the way the constants in
+    /// `types::resources` are.
+    const PLAN_LIKE: &str = ".grok/plan.md";
+
+    /// The property that travels to every platform: the result is the join built
+    /// one component at a time. On Linux the naive `push` gives the same string,
+    /// which is precisely why this defect needed a Windows run to be seen.
+    #[test]
+    fn every_component_gets_the_platform_separator() {
+        let base = Path::new("/workspace/my-project");
+        let joined = join_posix_relative(base, PLAN_LIKE);
+        assert_eq!(joined, base.join(".grok").join("plan.md"));
+        assert_eq!(joined.file_name().and_then(|n| n.to_str()), Some("plan.md"));
+    }
+
+    /// What a plain `push` of the same constant produces, next to what this
+    /// helper produces. This is the assertion that would have caught the bug.
+    #[cfg(windows)]
+    #[test]
+    fn a_plain_push_would_mix_separators() {
+        let base = Path::new(r"C:\workspace\my-project");
+        assert_eq!(
+            base.join(PLAN_LIKE).to_string_lossy(),
+            r"C:\workspace\my-project\.grok/plan.md"
+        );
+        assert_eq!(
+            join_posix_relative(base, PLAN_LIKE).to_string_lossy(),
+            r"C:\workspace\my-project\.grok\plan.md"
+        );
+    }
+
+    #[test]
+    fn a_single_component_join_is_a_plain_push() {
+        assert_eq!(
+            join_posix_relative(Path::new("/tmp/base"), "plan.md"),
+            Path::new("/tmp/base").join("plan.md")
+        );
+    }
+
+    /// `/a//b` and a leading `/` are normalised away rather than becoming empty
+    /// components, which `push` would have ignored anyway.
+    #[test]
+    fn empty_components_are_dropped() {
+        assert_eq!(
+            join_posix_relative(Path::new("/base"), "/.grok//plan.md"),
+            Path::new("/base").join(".grok").join("plan.md")
+        );
+    }
+
+    /// The `Path` form is fed by `strip_prefix` results, whose separators came
+    /// from the input string. A rooted argument must not throw the base away --
+    /// `PathBuf::push` would, which is why this folds components itself.
+    #[test]
+    fn join_relative_keeps_the_base_against_a_rooted_argument() {
+        let base = Path::new("/display/project");
+        assert_eq!(
+            join_relative(base, Path::new(".grok/skills/review/SKILL.md")),
+            base.join(".grok")
+                .join("skills")
+                .join("review")
+                .join("SKILL.md")
+        );
+        assert_eq!(
+            join_relative(base, Path::new("/escaped/SKILL.md")),
+            base.join("escaped").join("SKILL.md")
+        );
+    }
 
     #[tokio::test]
     async fn canonicalize_falls_back_on_nonexistent_path() {

@@ -425,7 +425,9 @@ pub(crate) fn resolve_plan_file_path(res: &Resources) -> (Option<PathBuf>, Strin
     let path = if let Some(configured) = res.get::<PlanFilePath>() {
         configured.0.clone()
     } else if let Some(cwd) = res.get::<Cwd>() {
-        cwd.0.join(PLAN_FILE_RELATIVE_PATH)
+        // Component-wise, because the constant carries `/`: a plain `join` on
+        // Windows yields `C:\proj\.grok/plan.md` and shows that to the model.
+        crate::util::fs::join_posix_relative(&cwd.0, PLAN_FILE_RELATIVE_PATH)
     } else {
         PathBuf::from(PLAN_FILE_RELATIVE_PATH)
     };
@@ -488,7 +490,10 @@ pub fn resolve_model_path(
         && input_path.is_absolute()
     {
         if let Ok(suffix) = input_path.strip_prefix(display) {
-            return cwd.join(suffix);
+            // Folded component by component: `suffix` keeps the separators the
+            // model typed, and mixing them into `cwd` is what produced
+            // `C:\work\.grok/plan.md`-style paths on Windows.
+            return crate::util::fs::join_relative(cwd, suffix);
         }
         return input_path.to_path_buf();
     }
@@ -498,7 +503,7 @@ pub fn resolve_model_path(
         if as_absolute.starts_with(effective_base)
             && let Ok(suffix) = as_absolute.strip_prefix(effective_base)
         {
-            return cwd.join(suffix);
+            return crate::util::fs::join_relative(cwd, suffix);
         }
     }
     cwd.join(input_path)
@@ -960,6 +965,37 @@ impl std::fmt::Debug for McpResourceAccess {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Re-root a POSIX-shaped fixture literal so that `Path::is_absolute` holds
+    /// on the host OS.
+    ///
+    /// A Windows path is only absolute with a drive prefix, and the display-cwd
+    /// remap is gated on absoluteness, so a `/`-rooted fixture never reaches the
+    /// branch it is meant to exercise there. On unix this is the identity, so the
+    /// Linux run exercises exactly the values it always did.
+    fn root(path: &str) -> std::path::PathBuf {
+        let parsed = std::path::Path::new(path);
+        if !cfg!(windows) {
+            return parsed.to_path_buf();
+        }
+        let mut rooted = std::path::PathBuf::from("C:\\");
+        for component in parsed.components() {
+            if matches!(
+                component,
+                std::path::Component::Prefix(_) | std::path::Component::RootDir
+            ) {
+                continue;
+            }
+            rooted.push(component.as_os_str());
+        }
+        rooted
+    }
+
+    /// [`root`] in the form a path argument takes, so a fixture can keep the
+    /// trailing newline or quotes attached to the re-rooted path.
+    fn root_str(path: &str) -> String {
+        root(path).to_string_lossy().into_owned()
+    }
     #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
     struct EditConfig {
         skip_read_before_edit: bool,
@@ -1203,14 +1239,11 @@ mod tests {
     }
     #[test]
     fn resolve_model_path_absolute_matching_display() {
-        let cwd = std::path::Path::new("/worktree/abc");
-        let display = std::path::Path::new("/home/user/project");
-        let result =
-            super::resolve_model_path(cwd, Some(display), "/home/user/project/src/main.rs");
-        assert_eq!(
-            result,
-            std::path::PathBuf::from("/worktree/abc/src/main.rs")
-        );
+        let cwd = root("/worktree/abc");
+        let display = root("/home/user/project");
+        let input = root_str("/home/user/project/src/main.rs");
+        let result = super::resolve_model_path(&cwd, Some(&display), &input);
+        assert_eq!(result, root("/worktree/abc/src/main.rs"));
     }
     #[test]
     fn resolve_model_path_absolute_non_matching() {
@@ -1231,10 +1264,11 @@ mod tests {
     }
     #[test]
     fn resolve_model_path_root_itself() {
-        let cwd = std::path::Path::new("/worktree/abc");
-        let display = std::path::Path::new("/home/user/project");
-        let result = super::resolve_model_path(cwd, Some(display), "/home/user/project");
-        assert_eq!(result, std::path::PathBuf::from("/worktree/abc"));
+        let cwd = root("/worktree/abc");
+        let display = root("/home/user/project");
+        let input = root_str("/home/user/project");
+        let result = super::resolve_model_path(&cwd, Some(&display), &input);
+        assert_eq!(result, cwd);
     }
     /// Kimi sent a bare colon as grep path. Should be treated as relative
     /// (joined onto cwd), NOT produce a worktree-path leak.
@@ -1289,13 +1323,11 @@ mod tests {
     /// handles this because Path normalizes trailing slashes.
     #[test]
     fn resolve_model_path_display_trailing_slash() {
-        let cwd = std::path::Path::new("/worktree/abc");
-        let display = std::path::Path::new("/testbed/cache");
-        let result = super::resolve_model_path(cwd, Some(display), "/testbed/cache/src/main.rs");
-        assert_eq!(
-            result,
-            std::path::PathBuf::from("/worktree/abc/src/main.rs")
-        );
+        let cwd = root("/worktree/abc");
+        let display = root("/testbed/cache");
+        let input = root_str("/testbed/cache/src/main.rs");
+        let result = super::resolve_model_path(&cwd, Some(&display), &input);
+        assert_eq!(result, root("/worktree/abc/src/main.rs"));
     }
     /// Trailing newline (from block-form tool args) must be stripped so the
     /// path targets `foo`, not a file literally named `foo\n`.
@@ -1322,14 +1354,11 @@ mod tests {
     /// absolute prefix match would otherwise fail on `...main.rs\n`).
     #[test]
     fn resolve_model_path_trailing_newline_with_display() {
-        let cwd = std::path::Path::new("/worktree/abc");
-        let display = std::path::Path::new("/home/user/project");
-        let result =
-            super::resolve_model_path(cwd, Some(display), "/home/user/project/src/main.rs\n");
-        assert_eq!(
-            result,
-            std::path::PathBuf::from("/worktree/abc/src/main.rs")
-        );
+        let cwd = root("/worktree/abc");
+        let display = root("/home/user/project");
+        let input = format!("{}\n", root_str("/home/user/project/src/main.rs"));
+        let result = super::resolve_model_path(&cwd, Some(&display), &input);
+        assert_eq!(result, root("/worktree/abc/src/main.rs"));
     }
     /// Leading/trailing spaces and tabs are trimmed.
     #[test]
@@ -1396,14 +1425,11 @@ mod tests {
     /// The literal-escape stripping must not defeat the display-cwd rewrite.
     #[test]
     fn resolve_model_path_quoted_literal_backslash_n_with_display() {
-        let cwd = std::path::Path::new("/worktree/abc");
-        let display = std::path::Path::new("/home/user/project");
-        let result =
-            super::resolve_model_path(cwd, Some(display), "\"/home/user/project/src/main.rs\\n\"");
-        assert_eq!(
-            result,
-            std::path::PathBuf::from("/worktree/abc/src/main.rs")
-        );
+        let cwd = root("/worktree/abc");
+        let display = root("/home/user/project");
+        let input = format!("\"{}\\n\"", root_str("/home/user/project/src/main.rs"));
+        let result = super::resolve_model_path(&cwd, Some(&display), &input);
+        assert_eq!(result, root("/worktree/abc/src/main.rs"));
     }
     #[test]
     fn resolve_model_path_sensitive_edit_spellings() {

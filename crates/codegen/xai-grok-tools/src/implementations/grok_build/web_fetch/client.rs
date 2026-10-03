@@ -888,7 +888,9 @@ mod tests {
         assert_eq!(processed.bytes, expected.len());
         assert!(!processed.content.contains(tail));
         assert!(expected.contains(tail));
-        let artifact = tmp.path().join("web_fetch/1.md");
+        // Joined component by component because the message embeds the path the
+        // writer produced, and that one carries the host's separators.
+        let artifact = tmp.path().join("web_fetch").join("1.md");
         assert!(
             processed
                 .content

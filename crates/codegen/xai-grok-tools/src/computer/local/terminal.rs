@@ -3172,6 +3172,16 @@ fn apply_child_env(
     crate::util::apply_grok_agent_marker(cmd);
 }
 
+/// A spawn failure that says which directory it was asked to run in.
+///
+/// The OS text does not: on Windows a working directory that has vanished is
+/// `The directory name is invalid. (os error 267)`, which leaves no way to find
+/// out *which* directory. Unix happens to name it, so both platforms are given
+/// the same message rather than relying on whichever one the OS chose to add.
+fn spawn_failed_in(e: &std::io::Error, cwd: &std::path::Path) -> std::io::Error {
+    std::io::Error::new(e.kind(), format!("spawn shell in {}: {e}", cwd.display()))
+}
+
 /// Attaches the child to a [`ProcessGroup`] for whole-tree teardown.
 fn spawn_shell_command(
     command: &str,
@@ -3259,9 +3269,7 @@ fn spawn_shell_command(
     let mut group = crate::util::ProcessGroup::new()?;
     #[cfg(unix)]
     #[allow(clippy::disallowed_methods)] // attached to the process group built above
-    let child = cmd.spawn().map_err(|e| {
-        std::io::Error::new(e.kind(), format!("spawn shell in {}: {e}", cwd.display()))
-    })?;
+    let child = cmd.spawn().map_err(|e| spawn_failed_in(&e, cwd))?;
 
     #[cfg(not(unix))]
     #[allow(clippy::disallowed_methods)] // attached to the process group built in this block
@@ -3279,10 +3287,10 @@ fn spawn_shell_command(
                 );
                 drop(cmd);
                 let mut cmd = build_cmd(false);
-                let child = cmd.spawn()?;
+                let child = cmd.spawn().map_err(|e| spawn_failed_in(&e, cwd))?;
                 (child, group)
             }
-            Err(e) => return Err(e),
+            Err(e) => return Err(spawn_failed_in(&e, cwd)),
         }
     };
 
@@ -3346,9 +3354,10 @@ mod tests {
 
     /// Spell a path the way every shell this crate drives accepts it, unquoted.
     ///
-    /// The Windows leg runs Git Bash, which treats a bare `\` as an escape character, so
-    /// `cd C:\Users\me\tmp` would reach `cd` as `C:Userstmp`. Forward slashes are accepted
-    /// unchanged by bash, zsh and cmd, and are already what `pwd` prints.
+    /// The Windows shell is picked by cascade (pwsh, powershell.exe, Git Bash,
+    /// cmd.exe) rather than by cfg, and Git Bash treats a bare `\` as an escape
+    /// character, so `cd C:\Users\me\tmp` can reach `cd` as `C:Userstmp`. Forward
+    /// slashes are accepted unchanged by bash, zsh, cmd and PowerShell.
     fn shell_path(path: &std::path::Path) -> String {
         path.display().to_string().replace('\\', "/")
     }
@@ -3896,6 +3905,10 @@ mod tests {
         let _ = tokio::fs::remove_file(&output_file).await;
     }
 
+    /// `>&2` is POSIX redirection; the tool's Windows shell is a cascade (pwsh,
+    /// powershell.exe, Git Bash, cmd.exe) with no single redirection spelling, so
+    /// stderr capture there is still uncovered rather than passing elsewhere.
+    #[cfg(unix)]
     #[tokio::test]
     async fn test_stderr_captured() {
         let backend = LocalTerminalBackend::new();
@@ -3975,6 +3988,9 @@ mod tests {
         let _ = tokio::fs::remove_file(&output_file).await;
     }
 
+    /// The paced `for` loop is POSIX shell syntax; see `test_stderr_captured` for
+    /// why a per-OS command string cannot be chosen by cfg alone.
+    #[cfg(unix)]
     #[tokio::test]
     async fn chunk_notifications_sent_during_execution() {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
@@ -4038,6 +4054,9 @@ mod tests {
         assert!(result.combined_output.contains("chunk_3"));
     }
 
+    /// `seq`, `printf` and `sleep` are POSIX utilities, unavailable in the
+    /// PowerShell and cmd.exe arms of the Windows shell cascade.
+    #[cfg(unix)]
     #[tokio::test]
     async fn chunk_notifications_keep_flowing_after_truncation() {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
@@ -4523,6 +4542,10 @@ mod tests {
         });
     }
 
+    /// The fixture backgrounds a `sleep 1`. On the windows-latest leg the missing
+    /// `sleep` left one group enrolled after the task completed, so the reap
+    /// assertion measured the fixture's failure instead of the reap sweep.
+    #[cfg(unix)]
     #[test]
     fn reaped_background_child_leaves_scope_empty() {
         let rt = tokio::runtime::Builder::new_current_thread()
@@ -4573,6 +4596,10 @@ mod tests {
     // Persistent shell tests
     // ================================================================
 
+    /// The persistent shell is unix-only: `spawn_command` gates it behind
+    /// `cfg(unix)` and ignores the flag elsewhere, so there is no state to
+    /// persist on Windows yet (tracked in TODO.md).
+    #[cfg(unix)]
     #[tokio::test]
     async fn test_persistent_shell_cd_persists() {
         let backend = LocalTerminalBackend::with_persistent_shell();
@@ -4596,6 +4623,8 @@ mod tests {
         );
     }
 
+    /// Persistent shell is unix-only; `export` is POSIX on top of that.
+    #[cfg(unix)]
     #[tokio::test]
     async fn test_persistent_shell_env_var_persists() {
         let backend = LocalTerminalBackend::with_persistent_shell();
@@ -4618,6 +4647,9 @@ mod tests {
         );
     }
 
+    /// Persistent shell is unix-only; this one passed on Windows only because a
+    /// fresh shell has no GPG_TTY to begin with.
+    #[cfg(unix)]
     #[tokio::test]
     async fn test_persistent_shell_clears_gpg_tty() {
         let backend = LocalTerminalBackend::with_persistent_shell();
@@ -4636,6 +4668,8 @@ mod tests {
         );
     }
 
+    /// Persistent shell is unix-only; a shell function needs one.
+    #[cfg(unix)]
     #[tokio::test]
     async fn test_persistent_shell_function_persists() {
         let backend = LocalTerminalBackend::with_persistent_shell();
@@ -4655,6 +4689,8 @@ mod tests {
         );
     }
 
+    /// Persistent shell is unix-only, and `$()` capture is POSIX syntax.
+    #[cfg(unix)]
     #[tokio::test]
     async fn test_persistent_shell_variable_capture() {
         let backend = LocalTerminalBackend::with_persistent_shell();
@@ -4674,6 +4710,9 @@ mod tests {
         );
     }
 
+    /// Persistent shell is unix-only: the fallback it exercises has no Windows
+    /// counterpart yet.
+    #[cfg(unix)]
     #[tokio::test]
     async fn test_persistent_shell_deleted_cwd_falls_back_to_request_cwd() {
         let backend = LocalTerminalBackend::with_persistent_shell();
@@ -4829,6 +4868,9 @@ mod tests {
         assert!(env.is_empty());
     }
 
+    /// `export` and `${VAR:-empty}` are POSIX; the non-persistent contract itself
+    /// is platform-neutral but has no PowerShell spelling here.
+    #[cfg(unix)]
     #[tokio::test]
     async fn test_non_persistent_shell_no_state() {
         let backend = LocalTerminalBackend::new();

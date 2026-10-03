@@ -719,3 +719,320 @@ in earlier sections). Nothing here suggests macOS needed any of the changes in 5
   45m15s was compilation, which is shared and cached, so the split estimate applies to the
   test phase only. This is an estimate, and the split makes the next measurement readable
   either way.
+
+== 6. The Windows leg produced a verdict, and 80 failures split into five causes
+
+Run `37103293277`, head `3f76c93d04d2f7e8b3882d44b3b7ea47e2c98597` (committed
+2026-10-03 14:30:29 +0800), job `111153650914` = `platform tests (windows-latest)`,
+`2026-10-03T07:14:40Z -> 07:46:09Z`, 31m29s, conclusion `failure`.
+
+    gh api repos/chao2hang/chaos-code/actions/runs/37103293277/jobs
+    gh api repos/chao2hang/chaos-code/actions/jobs/111153650914
+    gh api --allow-escape-sequences \
+      repos/chao2hang/chaos-code/actions/jobs/111153650914/logs
+
+The log used below is that last command with `\r` expanded and ANSI colours
+stripped; 3,959 lines after normalisation.
+
+== 6a. The verdict, and what the step split from 5c bought
+
+    step  9  cargo test (target-OS crates: except xai-grok-tools)  07:15:36 -> 07:39:45  success
+    step 10  cargo test (target-OS crates: xai-grok-tools)         07:39:45 -> 07:46:03  failure
+The split added in `== 5c` paid for itself the first time it ran. Five crates gave
+a green verdict in 24m09s and *kept* it; in run `37074944913` those same five were
+cancelled along with the big crate and produced no verdict at all. The big crate
+then ran for 6m18s and printed its own verdict instead of swallowing the others.
+
+Step 10's verdicts:
+
+    xai_grok_tools --lib                        3006 passed; 79 failed; 2 ignored  (97.45s)
+    --test path_suggestions_production             17 passed;  1 failed; 0 ignored  (0.03s)
+    five other test binaries                    all `test result: ok`
+    doc-tests                                      0 passed;  0 failed; 9 ignored
+
+    error: 2 targets failed:
+        `-p xai-grok-tools --lib`
+        `-p xai-grok-tools --test path_suggestions_production`
+    ##[error]Process completed with exit code 101.
+
+Two numbers worth keeping. The whole job took 31m29s against the 75-minute budget
+raised in section 4, whose comment justified 75 by a 31m17s macOS measurement --
+the `macos-14` leg of this same run took 31m20s (07:14:45 -> 07:46:05, success),
+so Windows is now within a minute of macOS rather than over its cap. And unlike
+the 124 failures in `== 5b`, every one of the 79 + 1 here has assertion text in
+the log, because no test hung and so libtest printed the `failures:` section.
+
+== 6b. The 80 failures, grouped by cause rather than by file
+
+    A  38  the LSP mock servers never completed a handshake
+    B  11  tests that need a POSIX shell
+    C   9  production paths assembled by pushing a stripped remainder
+    D   8  fixtures whose POSIX-absolute paths mean something else on Windows
+    E  14  seven unrelated one-off causes
+          80
+
+Cluster is decided by the failure's own text and site, not by the module it lives
+in: cluster E contains tests from seven different modules, and cluster C contains
+both production defects and the test expectations that copied the defect.
+
+== 6c. Cluster A (38): `python3` spawned, then stopped
+
+The observable difference from Linux is one string. Fifteen of the 38 carry it
+verbatim -- `handshake failed: InitFailed("service stopped")` -- and the rest
+surfaced as downstream symptoms of the same dead server (`no summary mentioning
+"refresh answered=" within the deadline`, `no entry found for key`).
+
+The important part is what is *not* there: not `SpawnFailed`. `LspError::SpawnFailed`
+is what `start_stdio` returns when `Command::spawn` itself fails, so `python3`
+resolved to *something* that started, was past `spawn`, and exited without ever
+answering `initialize`. Nothing else in the message says what it was, because the
+client captured the server's stderr into `tracing::debug!` and threw the lines
+away. 38 tests, one line each, and the line told you nothing you could act on.
+
+Three changes, all in `crates/codegen/xai-grok-tools/src/implementations/lsp/`:
+
+* `server_stderr.rs` (new) keeps the last 12 lines, each truncated at 300
+  characters, and exposes an awaitable "the reader finished" signal. A process can
+  have lines still in its pipe after it exits, so the tail is read after a wait
+  bounded at 250 ms rather than at the instant of failure; a hung server that never
+  reaches EOF costs the grace and nothing more.
+* `client.rs` names what it tried and what happened. A failed `initialize` now
+  produces, from the same fixture on Linux:
+
+      LSP initialization failed: 'dying' [python3 -u /tmp/.tmp5fLyAP/dies_lsp.py]
+      service stopped; the process exited with code 3;
+      last stderr: cannot start: no such root
+
+  Before, the entire message was `LSP initialization failed: service stopped`.
+  The exit status is polled for the same 250 ms grace rather than read once: the
+  first version called `try_wait()` a single time, which returns `Ok(None)` often
+  enough under a parallel test run to drop the one fact that matters. That race
+  was found by the new test, on Linux, on the first full run.
+* `tests/mock_servers.rs` stops assuming an interpreter. `python_command()` probes
+  `python3`, `python` and, on Windows, `py -3`, and accepts one only if
+  `--version` exits 0. A name on `PATH` is not proof of an interpreter -- that is
+  exactly the difference between `SpawnFailed` and `InitFailed("service stopped")`
+  above -- and if none answers, the fixtures panic and say which names were tried.
+
+== 6d. Cluster B (11): the persistent shell does not exist on Windows
+
+`ProcessTerminal::spawn_command` guards its persistent-shell branch with
+`#[cfg(unix)]`, so on Windows the `persistent_shell` flag is accepted and then
+ignored. Every failure in this cluster is a test asserting state that only a
+persistent shell can carry -- `cd` persisting, an `export` persisting, a function
+surviving to the next command -- against fixtures that are POSIX shell scripts.
+
+The tests are now `#[cfg(unix)]` with a one-line reason each, not deleted. The
+product gap is recorded as a TODO row rather than papered over: a caller on
+Windows asks for a persistent shell and gets a fresh shell per command with no
+error, no log line, and no test that can say which happened.
+
+== 6e. Cluster C (9): `push` of a stripped remainder, so `/` survives next to `\`
+
+The pattern, from four production sites:
+
+    left: "/workspace/my-project\\.grok/plan.md"   right: "/workspace/my-project/.grok/plan.md"
+
+`PathBuf::push` inserts exactly one native separator, so joining a remainder that
+was produced by stripping a prefix and keeping the `/` characters inside it yields
+`C:\proj\.grok/plan.md`. Worse, `push` on a rooted argument discards the base.
+`util/fs.rs` has `join_relative(base, relative)` now: it drops `Prefix` and
+`RootDir` components and pushes the rest, so every separator is the host's and a
+rooted remainder cannot eat the base. Adopted at the four sites that build a
+display path from a stripped remainder -- the `display_path` remap in
+`skill_path_suggestion.rs`, `util/path_suggestions.rs`, `grep/mod.rs`, and both
+`cwd.join(suffix)` calls in `resources.rs::resolve_model_path`.
+
+`util/fs.rs` tests pin both halves of the contract: `every_component_gets_the_
+platform_separator`, `a_single_component_join_is_a_plain_push`,
+`empty_components_are_dropped`, `join_relative_keeps_the_base_against_a_rooted_
+argument`, and `#[cfg(windows)] a_plain_push_would_mix_separators`, which is the
+test that would fail if someone "simplifies" `join_relative` back to `join`.
+
+== 6f. Cluster D (8): fixtures that pass a POSIX-absolute path meaning something else
+
+`resolve_model_path_absolute_matching_display` asserted
+`left: "/home/user/project/src/main.rs"  right: "/worktree/abc/src/main.rs"`. On
+Windows `/home/user/project` is drive-relative to whatever the current drive is,
+so the "absolute path under the display root" the fixture describes does not
+exist, and `is_absolute()` is false for it. Five of the eight are in
+`resources.rs`, three in `skill_path_suggestion_tests.rs`.
+
+These are fixtures, not product. Both modules now build their paths through a
+local `root()`/`root_str()` that keeps the string identical off Windows and
+re-roots it under `C:\` on Windows, so the tests exercise the same *relationship*
+on both hosts.
+
+Two adjacent Windows-only defects were deliberately left open, because fixing them
+means deciding product behaviour rather than fixing a test: `resources.rs`
+fabricates `format!("/{expanded}")` for the "model forgot the leading slash"
+recovery, which on Windows invents a path on the current drive; and
+`cwd.join(input_path)` on a drive-less rooted input truncates the cwd away.
+Both are TODO rows now.
+
+== 6g. Cluster E (14): seven causes
+
+1. **A directory read on Windows is `PermissionDenied`, not `IsADirectory`.**
+   `fs::read` on a folder reports `IsADirectory` on Unix and access-denied on
+   Windows, so the tool told the model that a perfectly listable folder was a
+   permissions problem. This is a product defect and is fixed as one:
+   `AsyncFileSystem::is_directory` (new, with a default that returns
+   `Unsupported` like its siblings) is consulted when the error kind is
+   `PermissionDenied`, and `classify_unreadable` turns it into `IsADirectory`.
+2. **`gitignore`'s guard was too narrow.** `ignore::gitignore` asserts
+   `!path.has_root()` after stripping, which is not the same condition as
+   `is_absolute()` on either platform. The guard is now
+   `path.is_absolute() || path.has_root()`. Separately: the test that *demonstrated*
+   the raw crate panics on such a path was itself the failure -- Windows does not
+   panic -- so that demonstration is `#[cfg(unix)]` and the platform-neutral
+   contract assertion (`a_root_shaped_path_never_reaches_the_matcher`) stands on
+   both hosts.
+3. **ripgrep's candidate dirs were not absolute on Windows.**
+   `Path::new("/opt/homebrew/bin").is_absolute()` is false on Windows -- it is
+   drive-relative -- so `install_dirs_are_absolute_and_cover_the_known_package_
+   managers` failed on the assertion, not on the layout. `rg_install_dirs` is
+   per-OS now, and the Windows list names the managers a Windows user actually
+   uses: `C:\ProgramData\chocolatey\bin`, `<home>/scoop/shims`,
+   `<home>/AppData/Local/Microsoft/WinGet/Links`, plus `<home>/.cargo/bin` on both.
+   `a_gui_session_path_still_finds_a_standard_install` describes a macOS
+   scenario with no Windows counterpart and is `#[cfg(unix)]`.
+4. **`which` needs `PATHEXT`.** `which_detects_gh_in_dir` wrote a file named `gh`;
+   on Windows the lookup only accepts a name carrying `std::env::consts::EXE_SUFFIX`.
+5. **Needles joined with `/`.** `web_fetch`'s two artifact assertions built
+   `tmp.path().join("web_fetch/1.md")` and then looked for it in a message that
+   carried the writer's real path; `discovery.rs` looked for `"/.grok/"` inside a
+   path that came from the filesystem. Both now join component by component, and
+   `discovery.rs` gained `path_contains_components`, which matches a run of
+   `Path::components()` instead of a substring.
+6. **The bash streaming tests were comparing one shell error to itself.** With no
+   persistent shell the "streaming" fixture produced the same failure text on both
+   sides of every comparison, and `bash_streaming_progress_includes_final_drain`
+   was *passing while proving nothing*: both sides were copies of the same message
+   and `exit_code` was never inspected. Four tests are `#[cfg(unix)]` with that
+   noted.
+7. **`serde_json/preserve_order` only existed on two of the three targets.** See
+   6h; this is the one that produced a wrong MCP elicitation form rather than a
+   red test.
+
+== 6h. The feature that existed on Linux and macOS and not on Windows
+
+`mcp_elicitation::schema::tests::preserves_schema_property_order` reported
+`left: ["alpha", "zeta"]  right: ["zeta", "alpha"]` on Windows. The test builds a
+form by walking a JSON Schema `properties` object; `serde_json` keeps insertion
+order only when built with `preserve_order`, and stores members in a `BTreeMap`
+otherwise. `xai-grok-tools` never asked for the feature. It arrived through
+`xai-grok-sandbox`, whose `nono` dependency requests it -- and `nono` is declared
+under `[target.'cfg(unix)'.dependencies]` in that crate.
+
+Reproduced locally without a Windows machine, by reading the resolved graph per
+target (`cargo tree -e features -i serde_json -p xai-grok-tools --target <t>`,
+counting lines that name the feature):
+
+    BEFORE the fix   x86_64-unknown-linux-gnu: 3    x86_64-pc-windows-msvc: 0
+    AFTER  the fix   x86_64-unknown-linux-gnu: 3    x86_64-pc-windows-msvc: 3
+
+with `x86_64-unknown-linux-gnu` unchanged, which is the point: the declaration
+changed and the Linux build did not, so nothing that was green could show this.
+`cargo tree --target x86_64-pc-windows-msvc -p xai-grok-tools | grep -c nono` is
+0, and the same on `x86_64-unknown-linux-gnu` is 1.
+
+A whole-tree diff across the three targets finds 58 feature differences on the
+current tree and all 58 are deliberate (`nix`'s per-OS feature lists, `tokio`'s
+`windows-sys`, the feature sets of platform-only dependencies), so a gate over all
+of them would be silenced inside a week. `scripts/ci/check-load-bearing-features.py`
+therefore checks only the rows this repository writes down in
+`scripts/ci/load-bearing-features.tsv`, one per behaviour that depends on a
+dependency being built a certain way, and fails when the feature is missing on a
+named target, when the dependency has vanished from a target, when the row
+describes a feature nothing enables, or when a named target is not installed --
+fail, not skip, because skipping is the silence that hid this. Its 25 fixtures
+include a real run of the shipped table against the real graph. Against the
+pre-fix `Cargo.toml` it reports:
+
+    check-load-bearing-features: `xai-grok-tools` builds `serde_json` without
+    `preserve_order` on x86_64-pc-windows-msvc (enabled on:
+    x86_64-unknown-linux-gnu, aarch64-apple-darwin).
+
+Two bugs in the guard were found by its own fixtures while writing it: the parser
+did not strip the ` (*)` marker `cargo tree` puts on a subtree it already printed,
+so a feature appearing only in that form read as absent; and a target where the
+dependency is not built at all was also reported as "built without the feature",
+which is false.
+
+== 6i. Proof the new LSP diagnostic tests are not vacuous
+
+Five mutations, each weakening one fact the message carries. After each, the file
+was restored and `cmp`-verified byte-identical.
+
+    M1   the stderr tail is not appended          a_server_that_dies_on_the_way_up
+    M2   the exit status is not appended          a_server_that_dies_on_the_way_up and
+                                                  a_server_killed_by_a_signal_says_so
+    M3b  the server name replaced by a literal    a_server_that_dies_on_the_way_up
+    M4   the exit code is not named               a_server_that_dies_on_the_way_up
+    M5   the args dropped from the launch line    a_server_that_dies_on_the_way_up
+
+Each mutation removes one fact from the message; the test named is the one whose
+assertion covers that fact, so no mutation could be answered by a weaker fixture.
+
+Unmutated, the filtered run is `7 passed; 0 failed`, and each mutation produced
+`FAILED` naming exactly the test whose assertion covers that fact. M3b replaced an
+earlier attempt that removed the name and the launch description together; rustc
+rejected that as `argument never used`, so it proved nothing and is not counted.
+
+The whole LSP module was then run five times in a row to check the new timing
+dependence is not itself a flake:
+
+    run 1: test result: ok. 116 passed; 0 failed; 2 ignored (10.14s)
+    run 2: test result: ok. 116 passed; 0 failed; 2 ignored (10.09s)
+    run 3: test result: ok. 116 passed; 0 failed; 2 ignored (10.13s)
+    run 4: test result: ok. 116 passed; 0 failed; 2 ignored (10.12s)
+    run 5: test result: ok. 116 passed; 0 failed; 2 ignored (10.15s)
+
+The batch itself then failed this repository's own lint gate twice, and both times
+in code this batch added rather than in code this batch was fixing:
+
+    $ cargo clippy -p xai-grok-tools --all-targets -- -D warnings
+    error: items after a test module        tests/mock_servers.rs:88  (mod interpreter_tests)
+    error: needless borrow                   tests.rs:94               (python_args(&script_path))
+
+The first clippy attempt here hid that: it ended in `| tail -15`, so `$?` was
+`tail`'s status and printed `CLIPPY_EXIT=0` next to two real errors. The numbers
+above only became trustworthy once the command was redirected to a file and the exit
+code read directly, which is why the redirect is the form recorded everywhere in this
+section. Neither lint changes anything about the diagnostic fix.
+`items_after_test_module` is a placement lint, and its other reading, moving ~600
+lines of fixtures above a three-test module, is the worse one, so the module moved to
+the end of its file. `mock_server_config` already takes `&Path`, so `&script_path` at
+that one call site was a borrow of a borrow that rustc silently deref'd; the other
+seven call sites pass an owned `PathBuf` and keep their `&`. After both fixes:
+`cargo clippy -p xai-grok-tools --all-targets -- -D warnings` exits 0,
+`cargo fmt --all -- --check` is clean, and the filtered run is still
+`116 passed; 0 failed; 2 ignored` (10.10s), so the module move changed placement
+only.
+
+== 6j. What section 6 is not evidence about
+
+* **No Windows machine was used.** Every Windows number here is read out of the log
+  of a run another machine executed. The `cargo tree` measurements in 6h are
+  genuine local measurements of the Windows target's resolved graph, because
+  feature resolution is host-independent metadata; reading it is not the same as
+  building for it.
+* **The Windows-target compile check could not be run locally.**
+  `cargo check -p xai-grok-tools --all-targets --target x86_64-pc-windows-msvc`
+  stops inside `aws-lc-sys`, which reaches this crate through
+  `xai-file-utils -> aws-smithy-http-client -> rustls` and needs a Windows C
+  toolchain (the host has cmake 3.22 and `nasm` installed for this attempt, but no
+  clang and no Windows SDK). So the `#[cfg(windows)]`-gated code added in this
+  batch -- `root()`/`root_str()` in the two fixture modules, `a_plain_push_would_
+  mix_separators`, the `py -3` candidate -- has not been compiled by anything yet.
+  The Windows leg of the run this push triggers is the first thing that will
+  compile it, and `cfg!(windows)` branches are different: those compile on every
+  host and did compile here.
+* Whether the 80 fixes turn the leg green is answered by the next run, not here.
+  The clusters are a partition of the observed set, not a claim that the causes
+  were predicted before the log was read: 6c in particular is inference from the
+  absence of `SpawnFailed` plus the presence of `InitFailed("service stopped")`,
+  and the log still does not say what `python3` actually was on that runner.
+* The two Windows-only product gaps named in 6f (`/{expanded}` fabrication,
+  `cwd.join` truncation on a drive-less rooted path) are open TODO rows, not
+  fixes.

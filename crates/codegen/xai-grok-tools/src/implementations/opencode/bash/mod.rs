@@ -839,7 +839,15 @@ mod tests {
 
         match result {
             BashToolOutput::Bash(bash) => {
-                assert_eq!(bash.output_file, "/sessions/abc/terminal/my-call-42.log");
+                // Built one component at a time, the way the writer builds it; a
+                // literal with `/` only matches on unix.
+                assert_eq!(
+                    bash.output_file,
+                    PathBuf::from("/sessions/abc")
+                        .join("terminal")
+                        .join("my-call-42.log")
+                        .to_string_lossy()
+                );
             }
             BashToolOutput::BackgroundTaskStarted(_) => panic!("Expected foreground output"),
         }

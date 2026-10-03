@@ -34,6 +34,7 @@ use super::diagnostics::DiagnosticsStore;
 use super::documents::{Documents, Update, end_position};
 use super::pull::PullDiagnostics;
 use super::refresh::{ProjectInitializationComplete, RefreshTarget};
+use super::server_stderr::ServerStderr;
 use super::watched_files::{self, WatchedFiles};
 use super::{DiagnosticsNotify, LspError, LspMainLoop, file_uri, workspace_open};
 use crate::util::{ProcessGroup, ProcessScope};
@@ -204,14 +205,18 @@ async fn spawn_transport(
     server_name: &str,
     config: &LspServerConfig,
     main_loop: LspMainLoop,
+    stderr: &ServerStderr,
 ) -> Result<TransportHandles, LspError> {
     match config.transport {
         LspTransport::Stdio => {
-            let (handle, stderr, child) =
-                LspClient::start_stdio(server_name, config, main_loop).await?;
-            Ok((handle, stderr, Some(child)))
+            let (handle, stderr_task, child) =
+                LspClient::start_stdio(server_name, config, main_loop, stderr).await?;
+            Ok((handle, stderr_task, Some(child)))
         }
         LspTransport::Socket => {
+            // No process, so no stderr, and nothing will ever mark this drained
+            // on its own. Say so up front or a failed handshake waits the grace.
+            stderr.mark_drained();
             let handle = LspClient::start_socket(server_name, config, main_loop).await?;
             Ok((handle, None, None))
         }
@@ -253,6 +258,85 @@ async fn initialize_with_timeout(
         Ok(Err(e)) => Err(LspError::InitFailed(format!("{e}"))),
         Err(_) => Err(LspError::Timeout(server_name.to_string(), timeout)),
     }
+}
+
+/// How long the stderr reader gets to finish after a failed startup.
+///
+/// A process that has exited can still have lines sitting in the pipe, so the
+/// tail is read after a wait rather than at the instant of failure. Bounded,
+/// because a hung server never reaches EOF at all.
+const STDERR_GRACE: std::time::Duration = std::time::Duration::from_millis(250);
+
+/// How the server was asked to start, for an error message that names it.
+///
+/// Under the socket transport `command` is a `host:port`, which is why the
+/// transport is spelled out instead of always calling it a command line.
+fn launch_description(config: &LspServerConfig) -> String {
+    match config.transport {
+        LspTransport::Stdio => {
+            let mut launch = config.command.clone();
+            for arg in &config.args {
+                launch.push(' ');
+                launch.push_str(arg);
+            }
+            launch
+        }
+        LspTransport::Socket => format!("socket {}", config.command),
+    }
+}
+
+/// Why the server could not answer: an exit status if it already has one, and
+/// whatever it said on its way out.
+///
+/// Without this a missing or misinstalled server binary reads as
+/// `LSP initialization failed: service stopped`, which names neither the server
+/// nor the reason, and sends the reader to a log at debug level.
+async fn startup_failure_detail(
+    child: &mut Option<std::process::Child>,
+    stderr: &ServerStderr,
+) -> String {
+    let mut detail = String::new();
+    if let Some(child) = child.as_mut() {
+        // The child is already gone by the time initialization gives up on it, but
+        // its status only becomes readable once the OS has reaped the process, and
+        // a single `try_wait` answers "not yet" often enough under a parallel test
+        // run to drop the one fact that matters. Poll for the same bounded grace
+        // the stderr tail gets, so a server that is genuinely still running costs
+        // a grace period rather than hanging the caller.
+        let deadline = tokio::time::Instant::now() + STDERR_GRACE;
+        loop {
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    detail.push_str(&exit_description(&status));
+                    break;
+                }
+                Ok(None) if tokio::time::Instant::now() < deadline => {
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+                // Reaped elsewhere, gone, or the grace is spent: there is no
+                // status to name, and the stderr tail below has to carry it.
+                _ => break,
+            }
+        }
+    }
+    detail.push_str(&stderr.summary(STDERR_GRACE).await);
+    detail
+}
+
+/// An exit status in the words someone can act on: a code means the binary
+/// refused to run, a signal means something outside it killed it.
+fn exit_description(status: &std::process::ExitStatus) -> String {
+    if let Some(code) = status.code() {
+        return format!("; the process exited with code {code}");
+    }
+    #[cfg(unix)]
+    if let Some(signal) = {
+        use std::os::unix::process::ExitStatusExt;
+        status.signal()
+    } {
+        return format!("; the process was killed by signal {signal}");
+    }
+    "; the process exited".to_owned()
 }
 
 fn send_initial_configuration(
@@ -302,14 +386,25 @@ impl LspClient {
             watched_files.clone(),
         );
 
+        let stderr_tail = ServerStderr::default();
         let (main_loop_handle, stderr_task, mut child_process) =
-            spawn_transport(&server_name, &config, main_loop).await?;
+            spawn_transport(&server_name, &config, main_loop, &stderr_tail).await?;
 
         let init_params = build_initialize_params(&config, workspace_root);
 
         let init_result =
             match initialize_with_timeout(&server_name, &config, &mut server, init_params).await {
                 Ok(result) => result,
+                Err(LspError::InitFailed(reason)) => {
+                    // Read the exit status and the last lines *before* tearing
+                    // the transport down; neither is available after the kill.
+                    let detail = startup_failure_detail(&mut child_process, &stderr_tail).await;
+                    abort_transport(&main_loop_handle, &mut child_process);
+                    return Err(LspError::InitFailed(format!(
+                        "'{server_name}' [{}] {reason}{detail}",
+                        launch_description(&config)
+                    )));
+                }
                 Err(e) => {
                     abort_transport(&main_loop_handle, &mut child_process);
                     return Err(e);
@@ -420,6 +515,7 @@ impl LspClient {
         server_name: &str,
         config: &LspServerConfig,
         main_loop: LspMainLoop,
+        stderr_tail: &ServerStderr,
     ) -> Result<
         (
             tokio::task::JoinHandle<()>,
@@ -455,14 +551,20 @@ impl LspClient {
 
         let stderr_task = child.stderr.take().map(|stderr| {
             let name = server_name.to_string();
+            let tail = stderr_tail.clone();
             tokio::spawn(async move {
                 use tokio::io::AsyncBufReadExt;
                 let stderr = tokio::process::ChildStderr::from_std(stderr);
-                let Ok(stderr) = stderr else { return };
+                let Ok(stderr) = stderr else {
+                    tail.mark_drained();
+                    return;
+                };
                 let mut lines = tokio::io::BufReader::new(stderr).lines();
                 while let Ok(Some(line)) = lines.next_line().await {
                     tracing::debug!(server = %name, "stderr: {line}");
+                    tail.record(&line);
                 }
+                tail.mark_drained();
             })
         });
 

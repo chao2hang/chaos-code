@@ -651,7 +651,16 @@ mod tests {
         let EnterPlanModeOutput::Entered {
             ref plan_file_path, ..
         } = result;
-        assert_eq!(plan_file_path, "/workspace/my-project/.grok/plan.md");
+        // Component-wise join, because the tool builds the path that way: a
+        // literal with forward slashes would only match on unix.
+        assert_eq!(
+            plan_file_path,
+            &PathBuf::from("/workspace/my-project")
+                .join(".grok")
+                .join("plan.md")
+                .display()
+                .to_string()
+        );
     }
 
     #[tokio::test]

@@ -2,6 +2,125 @@
 
 ## Unreleased
 
+### 新增：`serde_json` 的字段有序一直是靠 Unix 才生效的；cargo 的 feature 统一是按 build 且按 target 的
+
+E 簇里最贵的一条不是测试问题而是构建配置缺陷。`mcp_elicitation` 的 schema 顺序测试在 Windows 上
+报 `left: ["alpha", "zeta"] right: ["zeta", "alpha"]`。原因是 `serde_json/preserve_order` 从来没
+被 `xai-grok-tools` 自己声明，它只是经 `xai-grok-sandbox` 传递进来的，而那条链上的 `nono` 依赖位
+于 `[target.'cfg(unix)'.dependencies]`。于是 Linux 与 macOS 上 feature 在、字段保持声明顺序；
+Windows 上 feature 不在，`serde_json` 退回 `BTreeMap`，把一个 MCP elicitation 表单按字母序渲染出
+来。**cargo 的 feature 统一是按 build 且按 target 的**：同一份源码在 Windows 上链到的是能力不同
+的依赖，既没有 `cfg` 变化，也没有任何编译错误。修法就是在
+`crates/codegen/xai-grok-tools/Cargo.toml` 里把 feature 自己声明出来。
+
+这条缺陷不需要 Windows 机器、也不需要等 CI 就能复现：
+
+      cargo tree -e features -i serde_json -p xai-grok-tools --target <t>
+
+里出现该 feature 的行数，修复前 linux 3 / windows 0，修复后 3 / 3，而 linux 侧的数字一个都没动，
+这正是「任何绿灯都看不见它」的含义；`grep -c nono` 在 windows target 上是 0、在 linux 上是 1。
+
+新门禁 `scripts/ci/check-load-bearing-features.py` 读 `scripts/ci/load-bearing-features.tsv`，每
+行是一个 feature、消费它的 crate、所在依赖、必须齐平的 target 列表，以及「为什么承重」的理由。它
+**不**做全树 diff：三 target 的全树 diff 有 58 处 feature 差异且全部是有意的（`nix` 的按 OS
+feature 表、`tokio` 的 `windows-sys`、只存在于单一平台的依赖），那种门禁一周内就会被静音，所以只
+查仓库自己认领过的行。两个设计选择值得单独说：指定 target 未安装时**判失败而不是跳过**，因为「跳
+过」正是当初埋掉这个差异的那种沉默；表里出现仓库已经不再需要的行也判失败，承重表不能只增不减。对
+未修复的 `Cargo.toml` 它直接 exit 1：
+
+      check-load-bearing-features: `xai-grok-tools` builds `serde_json` without
+      `preserve_order` on x86_64-pc-windows-msvc (enabled on:
+      x86_64-unknown-linux-gnu, aarch64-apple-darwin).
+
+25 条夹具里有两条抓的是守卫自己：一是 `cargo tree` 对重复出现的 feature 会打 ` (*)` 续印标记，不
+剥掉的话，只以该形式出现的 feature 会被读成缺失；二是依赖在某 target 上根本不存在时，第一版也报
+成「构建了但没有该 feature」，那是句假话。夹具还包含一次「用真实依赖图跑真实表」，免得守卫只对自
+己的字符串玩具成立。接线由 `check-guard-wiring.py` 双向把关，当前
+`OK (48 files in scripts/ci/, 47 reachable, 43 run by scripts/verify-in-docker.sh, 4 recorded CI-only, 1 exempt)`。
+（2026-10-03；`scripts/ci/check-load-bearing-features.py`、
+`scripts/ci/test-check-load-bearing-features.py`、`scripts/ci/load-bearing-features.tsv`、
+`crates/codegen/xai-grok-tools/Cargo.toml`、`.github/workflows/ci.yml`、
+`scripts/verify-in-docker.sh`、`docs/verification/platform-ci-2026-10-02.log`）
+
+### 修复：Windows CI 腿第一次给出完整判决，80 条失败按根因分成五簇，其中一条根本不是测试问题
+
+上一次 Windows 腿只有 124 条失败的名字、没有断言原文（证据 `== 5b`：一个挂住的测试让 libtest 打
+不出 `test result:`，整个二进制的汇总跟着一起没了）。run `37103293277` 是第一次拿到完整判决的一
+轮：step 9 `cargo test (target-OS crates: except xai-grok-tools)` 24m09s success，step 10
+`cargo test (target-OS crates: xai-grok-tools)` 6m18s failure，整个 job 31m29s；同一 run 的
+macOS 腿 31m20s 且 success。`== 5c` 那次步骤拆分第一次运行就兑现了价值：五个 crate 的绿灯结论被
+保留下来，没有跟着最大的那个 crate 一起被取消。判决是 `--lib` 3006 通过/79 失败/2 忽略（97.45 s），
+`--test path_suggestions_production` 17 通过/1 失败，另外五个测试二进制与 doctest 全部
+`test result: ok`，收尾 `error: 2 targets failed`、exit 101。与 124 条那次不同，这 80 条每一条都
+有断言原文，因为没有测试挂起，libtest 得以打印 `failures:` 段。
+
+**A 簇 38 条 LSP。** 观测到的差别只是一个字符串：服务器是 `InitFailed("service stopped")` 而不是
+`SpawnFailed`，也就是 `python3` 起来了却没答 `initialize`。而客户端把服务器的 stderr 全部送进
+`tracing::debug!` 丢掉，于是这 38 行日志没有一句可行动的话。新增
+`crates/codegen/xai-grok-tools/src/implementations/lsp/server_stderr.rs` 保留最后 12 行、每行截
+300 字符，并暴露一个「读完」信号；失败路径改为报出服务器名、完整命令行、退出码与最后一段 stderr。
+同一夹具在 Linux 上现在给出：
+
+      LSP initialization failed: 'dying' [python3 -u /tmp/.tmp5fLyAP/dies_lsp.py] service
+      stopped; the process exited with code 3; last stderr: cannot start: no such root
+
+原先整句只有 `service stopped` 四个词。
+
+退出码改为在与 stderr 同样的 250 ms 宽限内**轮询**取。第一版只 `try_wait()` 一次，而并行测试下「还
+没退出」来得相当频繁，那条消息里最关键的一个事实会就这样丢掉；这个竞态是新测试在本机第一轮全量跑
+里当场抓到的，不是推演出来的。`tests/mock_servers.rs` 也不再假设有解释器：`python_command()` 依
+次探测 `python3`、`python`、（Windows 上）`py -3`，且必须 `--version` 退出 0，因为「PATH 上有这
+个名字」不等于「它是解释器」，而那恰好是 `SpawnFailed` 与 `InitFailed("service stopped")` 的分界
+线；全都探测失败时 panic 会列出试过的每个名字。
+
+5 处变异逐个注入各自变红，每次 `cmp` 校验还原逐字节一致：去掉 stderr 尾巴、去掉退出状态、服务器
+名换成字面量 `'server'`、不报具体退出码、命令行不含参数。第一次尝试的变异（整段删掉
+`{server_name}`）根本没编译过，位置参数还剩一个没人消费，rustc 直接 `argument never used`，因此
+不计入。`--lib lsp::` 连跑 5 次均为 116 通过/0 失败（10.09–10.15 s），确认新引入的时序依赖本身不
+是新的 flake 来源。
+
+**C 簇 9 条分隔符混用。** 生产代码把剥掉前缀的余段直接 `push` 到基路径上，而 `PathBuf::push` 只
+插入**一个**本机分隔符，于是产出 `C:\proj\.grok/plan.md`；更糟的是对带根的实参 `push` 会把基路径
+整个丢掉。新增 `crates/codegen/xai-grok-tools/src/util/fs.rs` 的 `join_relative`，丢弃 `Prefix`
+与 `RootDir` 分量后逐个 push，并接管四处生产调用点：skill 路径建议、`util/path_suggestions.rs`、
+grep 的结果路径、`types/resources.rs`。一条 `#[cfg(windows)]` 的测试直接钉住「普通 push 会混用分
+隔符」这个反例，免得后来人把新函数当成洁癖。
+
+**E 簇 14 条里有三条是产品缺陷，不是测试问题。** Windows 上读目录报 `PermissionDenied` 而不是
+`IsADirectory`，于是把一个完全能列出的文件夹说成权限问题：新增 `AsyncFileSystem::is_directory`（默
+认实现与同族方法一样返回 `Unsupported`），由 `classify_unreadable` 归位，且只在 kind 确实是
+`PermissionDenied` 时才多问一次。`crates/codegen/xai-grok-tools/src/gitignore.rs` 的守卫只查
+`is_absolute()`，而 `ignore::gitignore` 断言的是剥离后的 `!has_root()`，改为两者都查；顺带一提，
+那条「证明上游 crate 会 panic」的演示断言本身就是失败点，Windows 上并不 panic，故收进
+`#[cfg(unix)]`，平台中立的契约断言两端都保留。ripgrep 的候选目录 `/opt/homebrew/bin` 在 Windows
+上 `is_absolute()` 为 false（那是驱动器相对路径），`rg_install_dirs` 改为按 OS 分列并补上
+Chocolatey、Scoop、winGet 的实际落点。
+
+**D 簇 8 条**是夹具里写死的 POSIX 绝对路径：两处模块改经本地 `root()`/`root_str()` 构造，Windows
+上重新挂到 `C:\` 之下、其它平台逐字节不变。另有 15 条只在 POSIX 语义下成立的测试显式收进
+`#[cfg(unix)]` 并逐条写明原因，其中 bash 的一条此前是「通过但什么都没证明」。同处发现的两个真实
+Windows-only 产品缺陷，加上「常驻 shell 在 Windows 上被静默忽略」，各记一条 TODO 而不是改测试蒙
+过去；为跑通 Windows 腿新增的 397 处 `#[cfg(unix)]` 门控本身是一笔没有台账的覆盖债，也单独记了一
+行。查不到的部分写清：本机没有任何 Windows 机器，`#[cfg(windows)]` 门控的那部分代码至今没被任何
+编译器编译过，`cargo check --target x86_64-pc-windows-msvc` 停在 `aws-lc-sys`（经
+`xai-file-utils`、`aws-smithy-http-client`、`rustls` 进入本 crate，需要 Windows 的 C 工具链；本
+机为这次尝试装了 `nasm`，已有 cmake 3.22，但没有 clang 也没有 Windows SDK）。真实结论只能由 push
+触发的 Windows 腿给出，证据见 `docs/verification/platform-ci-2026-10-02.log` 的 `== 6.` 节。
+（2026-10-03；`crates/codegen/xai-grok-tools/src/implementations/lsp/server_stderr.rs`、
+`crates/codegen/xai-grok-tools/src/implementations/lsp/client.rs`、
+`crates/codegen/xai-grok-tools/src/implementations/lsp/tests.rs`、
+`crates/codegen/xai-grok-tools/src/implementations/lsp/tests/mock_servers.rs`、
+`crates/codegen/xai-grok-tools/src/util/fs.rs`、
+`crates/codegen/xai-grok-tools/src/util/path_suggestions.rs`、
+`crates/codegen/xai-grok-tools/src/gitignore.rs`、
+`crates/codegen/xai-grok-tools/src/computer/local/file_system.rs`、
+`crates/codegen/xai-grok-tools/src/computer/types.rs`、
+`crates/codegen/xai-grok-tools/src/implementations/grok_build/read_file/mod.rs`、
+`crates/codegen/xai-grok-tools/src/implementations/grok_build/grep/ripgrep.rs`、
+`crates/codegen/xai-grok-tools/src/implementations/grok_build/bash/mod.rs`、
+`crates/codegen/xai-grok-tools/src/implementations/grok_build/enter_plan_mode/mod.rs`、
+`docs/verification/platform-ci-2026-10-02.log`）
+
 ### 门禁：文档里指向不存在文件的路径第一次有人查；噪声从 3,935 条压到 42 条，靠的是结构而不是豁免
 
 committed 文档里「点开是 404」的链接此前没有任何机制会拦：`check-evidence-paths.py` 只管证据文件在不

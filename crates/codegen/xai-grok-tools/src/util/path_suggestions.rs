@@ -84,7 +84,10 @@ pub async fn path_not_found_hint(path: &Path, cwd: &Path, display_cwd: &Path) ->
     let suggestion = suggestion.map(|corrected| {
         corrected
             .strip_prefix(cwd)
-            .map(|rel| display_cwd.join(rel))
+            // `join_relative` rather than `join`: the stripped remainder keeps
+            // the separators of the path it came from, so a plain join would put
+            // `/home/user/project\src` in front of the model on Windows.
+            .map(|rel| super::fs::join_relative(display_cwd, rel))
             .unwrap_or_else(|_| {
                 tracing::warn!(
                     corrected = %corrected.display(),

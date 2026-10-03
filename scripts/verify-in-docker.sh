@@ -156,6 +156,10 @@ gates=(
   "panic-site census: python3 scripts/ci/test-panic-site-census.py && python3 scripts/ci/panic-site-census.py --check-baseline scripts/ci/panic-site-baseline.tsv && python3 scripts/ci/panic-site-census.py --check-uncompiled scripts/ci/uncompiled-sources.txt"
   "cwd-change census: python3 scripts/ci/test-cwd-change-census.py && python3 scripts/ci/cwd-change-census.py --check-baseline scripts/ci/cwd-change-baseline.tsv"
   "spawn-cwd portability: python3 scripts/ci/test-check-spawn-cwd-portability.py && python3 scripts/ci/check-spawn-cwd-portability.py"
+  # The `rustup target add` is load-bearing: the guard fails instead of skipping
+  # when a target named in the table is unavailable, and an image without the
+  # tier-2 targets installed would otherwise turn it into a Linux-only no-op.
+  "load-bearing features: ${bootstrap}; rustup target add x86_64-pc-windows-msvc aarch64-apple-darwin && python3 scripts/ci/test-check-load-bearing-features.py && python3 scripts/ci/check-load-bearing-features.py"
   "version lockstep: bash scripts/ci/check-versions.sh && python3 scripts/ci/check-version-lockstep.py"
   "installer guards: python3 scripts/ci/test-installer-asset-names.py && python3 scripts/ci/test-installer-bash-resolution.py && python3 scripts/ci/test-installer-signature-policy.py"
   "npm package guards: node --check crates/codegen/xai-grok-pager/npm/chaos/scripts/assemble-platform-packages.js && node --check crates/codegen/xai-grok-pager/npm/chaos/bin/postinstall.js && node --check crates/codegen/xai-grok-pager/npm/chaos/bin/chaos && bash scripts/ci/test-publish-npm.sh"

@@ -108,8 +108,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         // No gh in this dir yet.
         assert!(which::which_in("gh", Some(dir.path()), dir.path()).is_err());
-        // Create an executable `gh`.
-        let gh = dir.path().join("gh");
+        // Create an executable `gh`. On Windows the lookup only accepts a name
+        // carrying a PATHEXT extension, so the fixture has to use the host's
+        // executable suffix rather than a bare `gh`.
+        let gh = dir
+            .path()
+            .join(format!("gh{}", std::env::consts::EXE_SUFFIX));
         std::fs::write(&gh, b"#!/bin/sh\nexit 0\n").unwrap();
         #[cfg(unix)]
         {

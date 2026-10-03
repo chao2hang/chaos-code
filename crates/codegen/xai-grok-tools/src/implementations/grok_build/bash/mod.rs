@@ -2774,6 +2774,12 @@ mod tests {
 
     /// Absent `WorkspaceViewerContext` extension = no Progress emitted;
     /// terminal still surfaces.
+    ///
+    /// The paced loop is POSIX shell syntax. On Windows the detected shell is a
+    /// cascade (pwsh, powershell.exe, Git Bash, cmd.exe), so no single command
+    /// text works there and the fixture would fail on whichever shell the
+    /// machine picked; only the syntax, not the streaming path, is unix-only.
+    #[cfg(unix)]
     #[tokio::test]
     async fn bash_streaming_progress_suppressed_when_gate_off() {
         use futures::StreamExt;
@@ -2822,6 +2828,11 @@ mod tests {
 
     /// Gate ON (via `test_ctx`): ≥1 `bash_output_chunk` then exactly
     /// one `Terminal(Ok(Foreground))`, in order.
+    ///
+    /// Unix only for the same reason as
+    /// `bash_streaming_progress_suppressed_when_gate_off`: the paced loop is
+    /// POSIX syntax and the Windows shell is detected by cascade.
+    #[cfg(unix)]
     #[tokio::test]
     async fn bash_streaming_progress() {
         use futures::StreamExt;
@@ -2870,6 +2881,11 @@ mod tests {
     /// byte limit mid-stream, deltas KEEP arriving after truncation, the
     /// reported `total_bytes` stays monotonic and consistent with the delta
     /// lengths, and `truncated` is surfaced.
+    ///
+    /// `seq`, `printf` and `sleep` are the POSIX fixture; see
+    /// `bash_streaming_progress_suppressed_when_gate_off` for why the streaming
+    /// assertions themselves are not Windows-portable.
+    #[cfg(unix)]
     #[tokio::test]
     async fn bash_streaming_progress_survives_truncation() {
         use futures::StreamExt;
@@ -2979,6 +2995,12 @@ mod tests {
     /// Asserts that for an untruncated foreground run the concatenation of
     /// the non-gap deltas equals the terminal output exactly and the last
     /// delta's `total_bytes` reaches the terminal `total_bytes`.
+    ///
+    /// Unix only, and deliberately so: on the windows-latest leg this test
+    /// passed while proving nothing, because `printf` is not a command there and
+    /// the equality it checks then held between two copies of the same shell
+    /// error. Its `exit_code` is never inspected, so the failure was silent.
+    #[cfg(unix)]
     #[tokio::test]
     async fn bash_streaming_progress_includes_final_drain() {
         use futures::StreamExt;

@@ -71,6 +71,23 @@ pub trait AsyncFileSystem: Send + Sync {
             std::io::ErrorKind::Unsupported,
         ))
     }
+
+    /// Whether `path` is a directory, without reading anything from it.
+    ///
+    /// Exists because a directory is not reported as one everywhere: opening one
+    /// for reading gives `IsADirectory` on Unix and `PermissionDenied` on
+    /// Windows, so a tool that classifies by error kind alone tells the model
+    /// that a plain folder is a permissions problem.
+    ///
+    /// Same contract as [`Self::file_exists`]: the default says `Unsupported`
+    /// and callers must treat `Err` as "unknown" rather than as an answer.
+    async fn is_directory(&self, path: &Path) -> Result<bool, ComputerError> {
+        let _ = path;
+        Err(ComputerError::io_with_kind(
+            "is_directory is not supported by this backend",
+            std::io::ErrorKind::Unsupported,
+        ))
+    }
 }
 
 // ============================================================================

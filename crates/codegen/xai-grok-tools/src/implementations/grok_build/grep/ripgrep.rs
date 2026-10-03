@@ -39,13 +39,34 @@ fn rg_file_name() -> &'static str {
 /// terminal is invisible to a bare `rg` lookup. Debug builds do not embed
 /// ripgrep (only release builds bundle it), so this is the only fallback those
 /// builds have.
+///
+/// The list is per-OS because the package managers differ: the unix entries are
+/// not even absolute on Windows (`/opt/homebrew/bin` is drive-relative there),
+/// and a Windows user installs ripgrep through winget, Chocolatey or Scoop.
 fn rg_install_dirs(home: Option<&Path>) -> Vec<PathBuf> {
-    let mut dirs = vec![
-        PathBuf::from("/opt/homebrew/bin"),
-        PathBuf::from("/usr/local/bin"),
-    ];
+    let mut dirs = if cfg!(windows) {
+        vec![
+            // Chocolatey shims; the one install dir that is machine-wide.
+            PathBuf::from(r"C:\ProgramData\chocolatey\bin"),
+        ]
+    } else {
+        vec![
+            PathBuf::from("/opt/homebrew/bin"),
+            PathBuf::from("/usr/local/bin"),
+        ]
+    };
     if let Some(home) = home {
         dirs.push(home.join(".cargo").join("bin"));
+        if cfg!(windows) {
+            dirs.push(home.join("scoop").join("shims"));
+            dirs.push(
+                home.join("AppData")
+                    .join("Local")
+                    .join("Microsoft")
+                    .join("WinGet")
+                    .join("Links"),
+            );
+        }
     }
     dirs
 }
@@ -233,9 +254,11 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn a_gui_session_path_still_finds_a_standard_install() {
         // The macOS case: launched from the desktop, `PATH` has no homebrew and
-        // no cargo bin, yet ripgrep is installed at /opt/homebrew/bin.
+        // no cargo bin, yet ripgrep is installed at /opt/homebrew/bin. The dir
+        // only exists on unix, so this scenario has no Windows counterpart.
         let resolved = resolve_rg(
             None,
             None,
@@ -364,10 +387,51 @@ mod tests {
 
     #[test]
     fn install_dirs_are_absolute_and_cover_the_known_package_managers() {
-        let dirs = rg_install_dirs(Some(Path::new("/home/dev")));
-        assert!(dirs.iter().all(|dir| dir.is_absolute()));
-        assert!(dirs.contains(&PathBuf::from("/opt/homebrew/bin")));
-        assert!(dirs.contains(&PathBuf::from("/usr/local/bin")));
-        assert!(dirs.contains(&PathBuf::from("/home/dev/.cargo/bin")));
+        let home = if cfg!(windows) {
+            Path::new(r"C:\Users\dev")
+        } else {
+            Path::new("/home/dev")
+        };
+        let dirs = rg_install_dirs(Some(home));
+        assert!(
+            dirs.iter().all(|dir| dir.is_absolute()),
+            "a relative install dir would resolve against the process cwd: {dirs:?}"
+        );
+        // Cargo is the one manager whose layout is the same on both platforms.
+        assert!(dirs.contains(&home.join(".cargo").join("bin")), "{dirs:?}");
+        if cfg!(windows) {
+            assert!(
+                dirs.contains(&PathBuf::from(r"C:\ProgramData\chocolatey\bin")),
+                "{dirs:?}"
+            );
+            assert!(dirs.contains(&home.join("scoop").join("shims")), "{dirs:?}");
+            assert!(
+                dirs.contains(
+                    &home
+                        .join("AppData")
+                        .join("Local")
+                        .join("Microsoft")
+                        .join("WinGet")
+                        .join("Links")
+                ),
+                "{dirs:?}"
+            );
+        } else {
+            assert!(
+                dirs.contains(&PathBuf::from("/opt/homebrew/bin")),
+                "{dirs:?}"
+            );
+            assert!(dirs.contains(&PathBuf::from("/usr/local/bin")), "{dirs:?}");
+        }
+    }
+
+    #[test]
+    fn install_dirs_are_absolute_when_there_is_no_home_directory() {
+        // The entries that do not depend on `home` are the ones a Windows build
+        // used to get wrong: `/opt/homebrew/bin` is drive-relative there, so a
+        // relative candidate would be resolved against the process cwd.
+        let dirs = rg_install_dirs(None);
+        assert!(!dirs.is_empty());
+        assert!(dirs.iter().all(|dir| dir.is_absolute()), "{dirs:?}");
     }
 }

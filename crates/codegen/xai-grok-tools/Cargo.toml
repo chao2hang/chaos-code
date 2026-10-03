@@ -51,7 +51,14 @@ pulldown-cmark = { workspace = true }
 regex = { workspace = true }
 schemars = { workspace = true }
 serde = { workspace = true }
-serde_json = { workspace = true }
+# `preserve_order` is load-bearing, not a nicety: MCP elicitation forms are
+# built by walking a JSON Schema `properties` object, and without it serde_json
+# stores members in a BTreeMap, so a form whose schema says `zeta, alpha` renders
+# alphabetically. Until now the feature only reached this crate through
+# `xai-grok-sandbox`, whose `nono` dependency asks for it and which is declared
+# under `cfg(unix)` there; that is why the schema-order test passed on Linux and
+# reported ["alpha", "zeta"] on the Windows leg.
+serde_json = { workspace = true, features = ["preserve_order"] }
 serde_path_to_error = { workspace = true }
 xai-tool-runtime = { workspace = true }
 xai-tool-types = { workspace = true }

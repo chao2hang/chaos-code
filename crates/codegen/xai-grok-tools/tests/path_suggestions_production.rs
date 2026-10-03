@@ -220,8 +220,15 @@ async fn pattern3_dropped_folder_with_display_remap() {
     if let Some(ref suggestion) = hint.suggestion {
         // Suggestion must be in display space, not resolved space.
         let s = suggestion.display().to_string();
+        let components: Vec<String> = suggestion
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy().into_owned())
+            .collect();
+        let has_display_root = components
+            .windows(3)
+            .any(|w| w == ["home", "user", "project"]);
         assert!(
-            s.contains("/home/user/project/"),
+            has_display_root,
             "suggestion should use display path, got: {s}"
         );
         assert!(

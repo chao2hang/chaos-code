@@ -90,8 +90,8 @@ fn mock_server_config(script_path: &Path) -> LspServerConfig {
     let mut ext_map = HashMap::new();
     ext_map.insert(".ts".to_string(), "typescript".to_string());
     LspServerConfig {
-        command: "python3".to_string(),
-        args: vec!["-u".to_string(), script_path.to_string_lossy().into_owned()],
+        command: python_command(),
+        args: python_args(script_path),
         extensions: ext_map,
         startup_timeout: Some(10_000),
         ..Default::default()
@@ -604,6 +604,71 @@ async fn e2e_spawn_failure_is_graceful() {
     );
 }
 
+/// The case `SpawnFailed` does not cover, and the one that cost a CI run to
+/// diagnose: the spawn succeeds and the server dies on the way up, which is what
+/// a Microsoft Store `python3` alias does on Windows. async-lsp reports that as
+/// `service stopped` and nothing else, so the error has to carry the command
+/// line, the exit status, and whatever the server said for itself.
+#[tokio::test(flavor = "current_thread")]
+async fn a_server_that_dies_on_the_way_up_says_which_one_and_why() {
+    let (_dir, script_path) = write_dying_server();
+    let workspace = tempfile::tempdir().unwrap();
+    let notify = Arc::new(tokio::sync::Notify::new());
+
+    let err = LspClient::start(
+        "dying".to_string(),
+        1,
+        mock_server_config(&script_path),
+        workspace.path(),
+        notify,
+    )
+    .await
+    .expect_err("a server that exits immediately cannot complete the handshake");
+    let text = err.to_string();
+
+    assert!(
+        matches!(err, LspError::InitFailed(_)),
+        "expected InitFailed, got: {text}"
+    );
+    assert!(
+        text.contains("'dying'"),
+        "with several servers configured the message has to say which one failed, got: {text}"
+    );
+    assert!(
+        text.contains(&script_path.to_string_lossy().to_string()),
+        "the error has to name what it tried to run, got: {text}"
+    );
+    assert!(
+        text.contains("exited with code 3"),
+        "the exit status has to come through, got: {text}"
+    );
+    assert!(
+        text.contains("cannot start: no such root"),
+        "the server's own explanation has to be relayed, got: {text}"
+    );
+}
+
+/// A signal is a different story from a code: nothing the server itself decided.
+#[cfg(unix)]
+#[tokio::test(flavor = "current_thread")]
+async fn a_server_killed_by_a_signal_says_so() {
+    let (_dir, script_path) = write_killed_server();
+    let workspace = tempfile::tempdir().unwrap();
+    let notify = Arc::new(tokio::sync::Notify::new());
+
+    let err = LspClient::start(
+        "killed".to_string(),
+        1,
+        mock_server_config(&script_path),
+        workspace.path(),
+        notify,
+    )
+    .await
+    .expect_err("SIGKILL does not answer initialize");
+
+    assert!(err.to_string().contains("killed by signal 9"), "got: {err}");
+}
+
 /// 2 good + 1 bad server. Verifies bad one is skipped, routing works,
 /// and combined diagnostics summary includes both files.
 #[tokio::test(flavor = "current_thread")]
@@ -619,8 +684,8 @@ async fn e2e_multi_server_routing() {
     servers.insert(
         "mock-ts".to_string(),
         LspServerConfig {
-            command: "python3".to_string(),
-            args: vec!["-u".to_string(), script_path.to_string_lossy().into_owned()],
+            command: python_command(),
+            args: python_args(&script_path),
             extensions: ts_ext,
             startup_timeout: Some(10_000),
             ..Default::default()
@@ -629,8 +694,8 @@ async fn e2e_multi_server_routing() {
     servers.insert(
         "mock-py".to_string(),
         LspServerConfig {
-            command: "python3".to_string(),
-            args: vec!["-u".to_string(), script_path.to_string_lossy().into_owned()],
+            command: python_command(),
+            args: python_args(&script_path),
             extensions: py_ext,
             startup_timeout: Some(10_000),
             ..Default::default()
@@ -1076,8 +1141,8 @@ async fn e2e_finalize_no_longer_blocks_on_slow_lsp_startup() {
     let mut ext_map = HashMap::new();
     ext_map.insert(".ts".to_string(), "typescript".to_string());
     let server_config = LspServerConfig {
-        command: "python3".to_string(),
-        args: vec!["-u".to_string(), script_path.to_string_lossy().into_owned()],
+        command: python_command(),
+        args: python_args(&script_path),
         extensions: ext_map,
         startup_timeout: Some(5_000),
         ..Default::default()
@@ -1131,8 +1196,8 @@ async fn e2e_first_dispatch_waits_for_background_startup() {
     let mut ext_map = HashMap::new();
     ext_map.insert(".ts".to_string(), "typescript".to_string());
     let server_config = LspServerConfig {
-        command: "python3".to_string(),
-        args: vec!["-u".to_string(), script_path.to_string_lossy().into_owned()],
+        command: python_command(),
+        args: python_args(&script_path),
         extensions: ext_map,
         startup_timeout: Some(5_000),
         ..Default::default()
@@ -1195,15 +1260,15 @@ async fn e2e_restart_monitor_emits_failed_on_restart_init_error() {
                 counter_path.to_string_lossy().into_owned(),
             );
             let server_config = LspServerConfig {
-                command: "python3".to_string(),
-                args: vec!["-u".to_string(), script_path.to_string_lossy().into_owned()],
+                command: python_command(),
+                args: python_args(&script_path),
                 env,
                 extensions: ext_map,
                 // Generous startup window: the init-failure server responds to
                 // `initialize` (and bumps the on-disk counter) essentially
                 // instantly, so a large timeout adds no latency on the happy
                 // path. It only removes a cold-start race — with a tight 500ms
-                // window a slow python3 spawn under load is killed *before* it
+                // window a slow interpreter spawn under load is killed *before* it
                 // increments the counter, so `attempts` (deterministically 3)
                 // and the on-disk counter (2) diverge and the test flakes.
                 startup_timeout: Some(10_000),
@@ -1288,8 +1353,8 @@ async fn e2e_drain_timeout_preserves_pending_diagnostics() {
     let mut ext_map = HashMap::new();
     ext_map.insert(".ts".to_string(), "typescript".to_string());
     let server_config = LspServerConfig {
-        command: "python3".to_string(),
-        args: vec!["-u".to_string(), script_path.to_string_lossy().into_owned()],
+        command: python_command(),
+        args: python_args(&script_path),
         extensions: ext_map,
         startup_timeout: Some(10_000),
         ..Default::default()
@@ -2012,8 +2077,8 @@ async fn e2e_restart_replay_requeues_pending_diagnostics() {
     let mut ext_map = HashMap::new();
     ext_map.insert(".ts".to_string(), "typescript".to_string());
     let server_config = LspServerConfig {
-        command: "python3".to_string(),
-        args: vec!["-u".to_string(), script_path.to_string_lossy().into_owned()],
+        command: python_command(),
+        args: python_args(&script_path),
         extensions: ext_map,
         startup_timeout: Some(10_000),
         ..Default::default()

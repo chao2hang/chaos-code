@@ -1,13 +1,44 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::implementations::skills::types::SkillInfo;
 
 use super::SkillManager;
 
+/// Re-root a POSIX-shaped fixture literal so that `Path::is_absolute` holds on
+/// the host OS.
+///
+/// `suggest_skill_path` skips every registration it cannot call absolute, and on
+/// Windows a `/`-rooted path is drive-relative rather than absolute, so without
+/// this the fixture would leave the function with no candidates at all. Identity
+/// on unix, which keeps the Linux run exercising exactly the values it always did.
+fn root(path: &str) -> PathBuf {
+    let parsed = Path::new(path);
+    if !cfg!(windows) {
+        return parsed.to_path_buf();
+    }
+    let mut rooted = PathBuf::from("C:\\");
+    for component in parsed.components() {
+        if matches!(
+            component,
+            std::path::Component::Prefix(_) | std::path::Component::RootDir
+        ) {
+            continue;
+        }
+        rooted.push(component.as_os_str());
+    }
+    rooted
+}
+
+/// [`root`] as a string, because `SkillInfo::path`, `real_cwd_prefix` and
+/// `display_cwd` are stored as strings.
+fn root_str(path: &str) -> String {
+    root(path).to_string_lossy().into_owned()
+}
+
 fn skill(name: &str, path: &str) -> SkillInfo {
     SkillInfo {
         name: name.to_owned(),
-        path: path.to_owned(),
+        path: root_str(path),
         ..SkillInfo::default()
     }
 }
@@ -26,12 +57,12 @@ fn suggests_unique_registered_path_for_wrong_root() {
     )]);
 
     let suggestion = manager
-        .suggest_skill_path(Path::new("/wrong/root/skills/code-review/SKILL.md"))
+        .suggest_skill_path(&root("/wrong/root/skills/code-review/SKILL.md"))
         .unwrap();
 
     assert_eq!(
         suggestion.display_path,
-        Path::new("/home/user/.grok/skills/code-review/SKILL.md")
+        root("/home/user/.grok/skills/code-review/SKILL.md")
     );
 }
 
@@ -49,7 +80,7 @@ fn suggests_nothing_for_ambiguous_disabled_non_skill_or_exact_requests() {
     // Control: the manager does produce a suggestion for a clean miss.
     assert!(
         manager
-            .suggest_skill_path(Path::new("/wrong/root/solo/SKILL.md"))
+            .suggest_skill_path(&root("/wrong/root/solo/SKILL.md"))
             .is_some()
     );
 
@@ -64,7 +95,7 @@ fn suggests_nothing_for_ambiguous_disabled_non_skill_or_exact_requests() {
         "/home/user/.grok/skills/solo/SKILL.md",
     ] {
         assert!(
-            manager.suggest_skill_path(Path::new(requested)).is_none(),
+            manager.suggest_skill_path(&root(requested)).is_none(),
             "{requested}"
         );
     }
@@ -86,7 +117,7 @@ fn requested_path_among_same_named_registrations_is_ambiguous() {
         "/home/user/.grok/skills/review/SKILL.md",
     ] {
         assert!(
-            manager.suggest_skill_path(Path::new(requested)).is_none(),
+            manager.suggest_skill_path(&root(requested)).is_none(),
             "{requested}"
         );
     }
@@ -115,7 +146,7 @@ fn includes_model_disabled_and_held_conditional_skills() {
         "/wrong/root/conditional/SKILL.md",
     ] {
         assert!(
-            manager.suggest_skill_path(Path::new(requested)).is_some(),
+            manager.suggest_skill_path(&root(requested)).is_some(),
             "{requested}"
         );
     }
@@ -147,12 +178,12 @@ fn baseline_reload_updates_lookup_but_not_snapshot_names() {
     );
     assert!(
         manager
-            .suggest_skill_path(Path::new("/wrong/root/reloaded/SKILL.md"))
+            .suggest_skill_path(&root("/wrong/root/reloaded/SKILL.md"))
             .is_some()
     );
     assert!(
         manager
-            .suggest_skill_path(Path::new("/wrong/root/initial/SKILL.md"))
+            .suggest_skill_path(&root("/wrong/root/initial/SKILL.md"))
             .is_none()
     );
 }
@@ -172,7 +203,7 @@ fn reload_disabling_a_discovered_skill_stops_suggesting_it() {
     // neither be suggested nor count as a second match.
     assert!(
         manager
-            .suggest_skill_path(Path::new("/wrong/root/review/SKILL.md"))
+            .suggest_skill_path(&root("/wrong/root/review/SKILL.md"))
             .is_none()
     );
 }
@@ -190,11 +221,11 @@ fn reload_moving_a_skill_suggests_only_the_current_registration() {
         "/repo/new/.grok/skills/review/SKILL.md",
     )]);
     let suggestion = manager
-        .suggest_skill_path(Path::new("/wrong/root/review/SKILL.md"))
+        .suggest_skill_path(&root("/wrong/root/review/SKILL.md"))
         .unwrap();
     assert_eq!(
         suggestion.display_path,
-        Path::new("/repo/new/.grok/skills/review/SKILL.md")
+        root("/repo/new/.grok/skills/review/SKILL.md")
     );
 
     // With a stale dynamic record left at the old path, lookup cannot tell a
@@ -211,7 +242,7 @@ fn reload_moving_a_skill_suggests_only_the_current_registration() {
     )]);
     assert!(
         manager
-            .suggest_skill_path(Path::new("/wrong/root/review/SKILL.md"))
+            .suggest_skill_path(&root("/wrong/root/review/SKILL.md"))
             .is_none()
     );
 }
@@ -223,10 +254,10 @@ fn deduplicates_discovered_and_baseline_copies() {
     manager.add_discovered(vec![skill("review", path)]);
 
     let suggestion = manager
-        .suggest_skill_path(Path::new("/wrong/root/review/SKILL.md"))
+        .suggest_skill_path(&root("/wrong/root/review/SKILL.md"))
         .unwrap();
 
-    assert_eq!(suggestion.display_path, Path::new(path));
+    assert_eq!(suggestion.display_path, root(path));
 }
 
 #[test]
@@ -235,21 +266,21 @@ fn rewrites_worktree_paths_to_display_cwd_but_preserves_external_paths() {
         skill("review", "/real/worktree/.grok/skills/review/SKILL.md"),
         skill("external", "/home/user/.grok/skills/external/SKILL.md"),
     ]);
-    manager.real_cwd_prefix = Some("/real/worktree".to_owned());
-    manager.display_cwd = Some("/display/project".to_owned());
+    manager.real_cwd_prefix = Some(root_str("/real/worktree"));
+    manager.display_cwd = Some(root_str("/display/project"));
 
     assert_eq!(
         manager
-            .suggest_skill_path(Path::new("/wrong/root/review/SKILL.md"))
+            .suggest_skill_path(&root("/wrong/root/review/SKILL.md"))
             .unwrap()
             .display_path,
-        Path::new("/display/project/.grok/skills/review/SKILL.md")
+        root("/display/project/.grok/skills/review/SKILL.md")
     );
     assert_eq!(
         manager
-            .suggest_skill_path(Path::new("/wrong/root/external/SKILL.md"))
+            .suggest_skill_path(&root("/wrong/root/external/SKILL.md"))
             .unwrap()
             .display_path,
-        Path::new("/home/user/.grok/skills/external/SKILL.md")
+        root("/home/user/.grok/skills/external/SKILL.md")
     );
 }

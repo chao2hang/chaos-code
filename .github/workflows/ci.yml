@@ -105,6 +105,23 @@ jobs:
       - name: cargo clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
+      # Cargo resolves features per build AND per target, so a dependency feature
+      # that arrives through a target-gated dependency quietly vanishes on the
+      # other targets -- same source, different dependency capabilities, no
+      # compiler error. `serde_json/preserve_order` did exactly that: it reached
+      # `xai-grok-tools` only through `nono`, which is `cfg(unix)`, so the MCP
+      # elicitation schema-order test was green on Linux and reported
+      # ["alpha", "zeta"] on the Windows leg. The two extra `rustup target add`
+      # lines are the point: the guard fails rather than skip when a target in
+      # scripts/ci/load-bearing-features.tsv is unavailable, so nothing here can
+      # quietly degrade to a Linux-only comparison.
+      - name: load-bearing dependency features
+        run: |
+          set -euo pipefail
+          rustup target add x86_64-pc-windows-msvc aarch64-apple-darwin
+          python3 scripts/ci/test-check-load-bearing-features.py
+          python3 scripts/ci/check-load-bearing-features.py
+
       # Scoped, not `--all-targets`. The workspace is now covered by
       # `cargo test --workspace`. Non-ignored tests are green. Tests that
       # don't apply to the Chaos fork (billing, subscription, gh-CLI mock,

@@ -1383,6 +1383,18 @@ model: test-model
         assert!(!SKILL_SUBDIRS.contains(&"skills-cursor"));
     }
 
+    /// Whether `p` runs through `want` as consecutive path components. A
+    /// `/`-joined needle cannot be used: the paths here come from the filesystem
+    /// and carry the host's separators.
+    fn path_contains_components(p: &str, want: &[&str]) -> bool {
+        let got: Vec<String> = std::path::Path::new(p)
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy().into_owned())
+            .collect();
+        got.windows(want.len())
+            .any(|window| window.iter().map(String::as_str).eq(want.iter().copied()))
+    }
+
     #[test]
     fn find_skill_paths_ignores_skills_cursor_layout() {
         let tmp = tempfile::tempdir().unwrap();
@@ -1399,11 +1411,14 @@ model: test-model
         let paths = find_skill_paths(&cursor_dir);
         let strs: Vec<String> = paths.iter().map(|p| p.display().to_string()).collect();
         assert!(
-            strs.iter().any(|p| p.contains("skills/mine")),
+            strs.iter()
+                .any(|p| path_contains_components(p, &["skills", "mine"])),
             "standard skills/ layout must still be found: {strs:?}"
         );
         assert!(
-            !strs.iter().any(|p| p.contains("skills-cursor")),
+            !strs
+                .iter()
+                .any(|p| path_contains_components(p, &["skills-cursor"])),
             "skills-cursor layout must no longer be scanned: {strs:?}"
         );
     }
@@ -1481,7 +1496,11 @@ model: test-model
             (grok_shell.join("SKILL.md"), SkillScope::User),
         ]);
         assert_eq!(skills.len(), 1, "cursor builtin must be dropped");
-        assert!(skills[0].path.contains("/.grok/"));
+        assert!(
+            path_contains_components(&skills[0].path, &[".grok", "skills", "shell"]),
+            "user content under .grok must be kept, got {}",
+            skills[0].path
+        );
     }
 
     #[test]

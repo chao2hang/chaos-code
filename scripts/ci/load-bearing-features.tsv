@@ -1,0 +1,19 @@
+# Behaviours that depend on a cargo feature reaching a crate on every target.
+#
+# One row per behaviour. Cargo resolves features per build AND per target, so a
+# feature that arrives only through a target-gated dependency silently disappears
+# where that dependency does. Nothing in the code or the compiler shows it: the
+# crate builds the same source against a dependency with different capabilities.
+#
+# Columns: crate, dependency, feature, comma-separated targets, why.
+# `scripts/ci/check-load-bearing-features.py` fails when the feature is missing on
+# a listed target, when a listed target is not installed, and when a row stops
+# meaning anything. It does not compare whole trees: 58 legitimate target-specific
+# feature differences exist on the current tree (nix's per-OS lists, tokio's
+# windows-sys, the feature sets of platform-only dependencies), and a gate that
+# reports those is a gate that gets silenced.
+#
+# Add a row the moment a behaviour is found to depend on a feature. Keep the row
+# after the crate declares the feature itself: the declaration is the thing that
+# can be dropped by the next person tidying Cargo.toml.
+xai-grok-tools	serde_json	preserve_order	x86_64-unknown-linux-gnu,x86_64-pc-windows-msvc,aarch64-apple-darwin	MCP elicitation forms are built by walking a JSON Schema properties object; without preserve_order serde_json stores members in a BTreeMap and every form renders alphabetically (the Windows CI leg reported ["alpha", "zeta"] for a schema declared as zeta, alpha)
