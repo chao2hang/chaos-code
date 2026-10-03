@@ -104,6 +104,37 @@ prints the classification. When you add a guard, add it to the `gates` array or 
 a row; adding it to CI alone is the one option the check refuses, because that is
 how a local run quietly stops covering what it used to.
 
+## Fast local gate loop
+
+The container answers "does a fresh clone work?". It does not answer "did my edit
+break a guard?", because the same list also runs `cargo check` and `cargo clippy` over
+the whole workspace, which is an hour for a ten-line change.
+`scripts/verify-gates.sh` runs that same gate list on the host. The list is parsed out
+of the `gates` array of `scripts/verify-in-docker.sh` instead of copied, so a gate added
+there appears here with the same label and the same command line, and neither copy can
+drift from the other.
+
+```sh
+scripts/verify-gates.sh              # the cheap gates, in array order
+scripts/verify-gates.sh --list       # what would run, running nothing
+scripts/verify-gates.sh --verbose    # stream every gate's output, not just failures
+scripts/verify-gates.sh --with-build # plus cargo check/clippy/test and GUI types
+scripts/verify-gates.sh --self-test  # the runner's own fixture suite
+```
+
+Two differences from the container run are deliberate, and the runner prints both in its
+header. The `gates` entries' `${bootstrap}` prefix (git `safe.directory` plus an
+identity) is dropped: the container needs it because the tree is bind-mounted from a
+foreign uid, and a test runner has no business rewriting a contributor's global git
+config. The four build gates are skipped unless `--with-build`. Everything else runs
+verbatim, including the `rustup target add` inside the load-bearing-feature guard, which
+is what makes that guard fail rather than silently skip a target.
+
+`--self-test` is itself an entry in the `gates` array, so the container runs it too. It
+pins the shapes that would otherwise rot quietly: the appended `gates+=(...)` entries of
+full mode are found, a failing gate is named and changes the exit code, and a source the
+extractor cannot parse exits 2 instead of reporting an empty pass.
+
 The other labs (`install-sh-in-docker.sh`, `install-integrity-in-docker.sh`,
 `npm-install-in-docker.sh`, `remote-acceptance-in-docker.sh`) start their containers
 idle and drive every step with `docker exec`, so each container's lifetime is whatever

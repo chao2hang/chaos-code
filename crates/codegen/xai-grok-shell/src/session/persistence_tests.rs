@@ -31,13 +31,35 @@ fn test_actor_inner(
     remote_sync: Option<RemoteSync>,
     mark_summary_done: bool,
 ) -> ActorGuard {
+    test_actor_with_sampler(
+        info,
+        storage,
+        remote_sync,
+        mark_summary_done,
+        xai_grok_sampler::SamplerConfig::default(),
+    )
+}
+
+/// `sampler_config` decides where the title generator sends its request.
+/// The default config has an empty `base_url`, so `reqwest` fails to build the request and no
+/// socket is ever opened; the title falls back to truncated user text without leaving the
+/// process. A test that needs the generation to be observably still running has to point this
+/// at an endpoint of its own.
+fn test_actor_with_sampler(
+    info: Info,
+    storage: Arc<dyn StorageAdapter>,
+    remote_sync: Option<RemoteSync>,
+    mark_summary_done: bool,
+    sampler_config: xai_grok_sampler::SamplerConfig,
+) -> ActorGuard {
     let (tx, rx) = mpsc::unbounded_channel();
     let (disk_full_tx, disk_full_rx) = tokio::sync::watch::channel(false);
-    let sampling_client = OaiCompatClient::new(xai_grok_sampler::SamplerConfig::default()).unwrap();
+    let model = sampler_config.model.clone();
+    let sampling_client = OaiCompatClient::new(sampler_config).unwrap();
     let mut summary =
         crate::session::summary::SummaryGenerator::new(crate::session::summary::SummaryConfig {
             sampling_client,
-            model: String::new(),
+            model,
             persistence_tx: tx.downgrade(),
         });
     if mark_summary_done {
@@ -1849,7 +1871,14 @@ async fn reset_title_to_auto_adopts_in_flight_generation_as_auto() {
         .await
         .unwrap();
 
-    let actor = test_actor_inner(info.clone(), storage.clone(), None, false);
+    let (base_url, mut in_flight) = endpoint_that_holds_the_title_request().await;
+    let actor = test_actor_with_sampler(
+        info.clone(),
+        storage.clone(),
+        None,
+        false,
+        title_sampler_config(&base_url),
+    );
 
     actor
         .handle
@@ -1858,6 +1887,9 @@ async fn reset_title_to_auto_adopts_in_flight_generation_as_auto() {
             vec![acp::ContentBlock::Text(acp::TextContent::new(CHUNK))],
         )))
         .unwrap();
+    // The generation is now provably mid-request: its one open connection is held here, so no
+    // `GeneratedTitle` can exist yet and the unpin below cannot lose to it.
+    in_flight.wait_until_in_flight().await;
     assert!(storage.reset_title_to_auto(&info).await.unwrap());
     actor
         .handle
@@ -1867,6 +1899,17 @@ async fn reset_title_to_auto_adopts_in_flight_generation_as_auto() {
     flush_ack(&actor.handle).await.unwrap();
 
     let summary_path = dir.path().join("summary.json");
+    let blank: crate::session::persistence::Summary =
+        serde_json::from_slice(&std::fs::read(&summary_path).unwrap()).unwrap();
+    assert!(
+        blank.display_title().trim().is_empty(),
+        "the unpin did not blank disk while the generation was still open, so this is not the \
+         ordering it is named for: {:?}",
+        blank.display_title()
+    );
+
+    // The request dies, the generator falls back to truncated user text, and the actor adopts it.
+    in_flight.release();
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(8);
     let on_disk = loop {
         let on_disk: crate::session::persistence::Summary =
@@ -1885,6 +1928,100 @@ async fn reset_title_to_auto_adopts_in_flight_generation_as_auto() {
         "in-flight adopt after unpin must stay auto"
     );
     actor.stop().await;
+}
+
+/// A loopback endpoint that accepts the title request, reads just enough of it to be sure which
+/// request it is, and then withholds any response until the guard releases it.
+///
+/// The withheld request is what makes "the title generation is still in flight" a fact the test
+/// enforces rather than an ordering it hopes for. Left to itself, the generator's request fails
+/// inside the same microsecond it is spawned, so the `GeneratedTitle` can reach the actor before
+/// or after the unpin depending on how the runtime happens to interleave the two tasks.
+///
+/// Connections that are not the title `POST` are closed and skipped on purpose: the sampler dials
+/// an origin once before its first real request to prewarm the shared transport pool, and that
+/// `GET` must never be taken for the request under test.
+async fn endpoint_that_holds_the_title_request() -> (String, HeldTitleRequest) {
+    use tokio::io::AsyncReadExt;
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base_url = format!("http://{}", listener.local_addr().unwrap());
+    let (seen_tx, seen_rx) = tokio::sync::mpsc::channel::<()>(1);
+    let (release_tx, release_rx) = tokio::sync::oneshot::channel::<()>();
+    tokio::spawn(async move {
+        loop {
+            let Ok((mut socket, _)) = listener.accept().await else {
+                return;
+            };
+            // The method is the first token of the request line, so five bytes settle it.
+            let mut head = [0u8; 5];
+            let read = tokio::time::timeout(
+                std::time::Duration::from_secs(10),
+                socket.read_exact(&mut head),
+            )
+            .await;
+            if read.is_err() || read.unwrap().is_err() || &head != b"POST " {
+                continue;
+            }
+            if seen_tx.send(()).await.is_err() {
+                return;
+            }
+            // No response is ever written. Dropping the socket when the guard fires is what
+            // ends the request, which is the failure the fallback title comes from.
+            let _ = release_rx.await;
+            return;
+        }
+    });
+    (
+        base_url,
+        HeldTitleRequest {
+            seen: seen_rx,
+            release: Some(release_tx),
+        },
+    )
+}
+
+struct HeldTitleRequest {
+    seen: tokio::sync::mpsc::Receiver<()>,
+    release: Option<tokio::sync::oneshot::Sender<()>>,
+}
+
+impl HeldTitleRequest {
+    /// Waits until the title request has arrived and been read.
+    /// Fails the test rather than degrading quietly: a generator that never dials the endpoint is
+    /// not on the in-flight path this fixture exists to create, and a test that passed anyway
+    /// would be worse than one that failed here.
+    async fn wait_until_in_flight(&mut self) {
+        tokio::time::timeout(std::time::Duration::from_secs(10), self.seen.recv())
+            .await
+            .expect("the title request never reached the loopback endpoint")
+            .expect("the endpoint task ended before the title request arrived");
+    }
+
+    /// Closes the held connection, so the request fails and the generator falls back.
+    fn release(mut self) {
+        if let Some(tx) = self.release.take() {
+            let _ = tx.send(());
+        }
+    }
+}
+
+/// A config that makes the title generator dial `base_url` for real.
+/// An empty `base_url` is not the only thing that keeps the default config in-process: the empty
+/// `model` and missing credentials are what turn the request into a builder error before any
+/// socket is opened, which is exactly why the default path cannot express "still running".
+/// `max_retries: 0` keeps the aborted request from being re-dialled onto a fresh connection.
+fn title_sampler_config(base_url: &str) -> xai_grok_sampler::SamplerConfig {
+    xai_grok_sampler::SamplerConfig {
+        api_key: Some("test-key".to_owned()),
+        base_url: base_url.to_owned(),
+        model: "test-model".to_owned(),
+        api_backend: xai_grok_sampler::ApiBackend::ChatCompletions,
+        auth_scheme: xai_grok_sampler::AuthScheme::Bearer,
+        max_retries: Some(0),
+        context_window: 8192,
+        ..Default::default()
+    }
 }
 
 /// An unpin while the session is not resident only patches disk.

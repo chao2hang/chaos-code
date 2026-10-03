@@ -146,6 +146,10 @@ gates=(
   "evidence paths in docs: python3 scripts/ci/test-check-evidence-paths.py && python3 scripts/ci/check-evidence-paths.py"
   "docs path references: python3 scripts/ci/test-check-doc-path-refs.py && python3 scripts/ci/check-doc-path-refs.py"
   "CI guard wiring: python3 scripts/ci/test-check-guard-wiring.py && python3 scripts/ci/check-guard-wiring.py"
+  # The host gate runner reads the array below, so it is checked from inside it: the
+  # fixture cases of scripts/verify-gates.sh --self-test include parsing this real file,
+  # which fails here if the entry format changes and no local runner notices.
+  "host gate runner self-test: bash scripts/verify-gates.sh --self-test"
   # No argument on purpose: the CI step runs it with none, and pointing this one at
   # ci.yml alone left release.yml -- the workflow with the Windows matrix, which is
   # the whole reason the check exists -- unexamined locally.

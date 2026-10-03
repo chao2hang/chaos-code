@@ -14,6 +14,17 @@ defect was present:
 - a tree parser that reads no feature nodes: pinned from both sides, a dump that
   must yield the feature and the same dump with the feature line removed, which
   must yield nothing;
+- a tree parser that reads nothing because `cargo tree` colourised its output, which
+  is what happened on the first CI run of this gate -- the `rust check / clippy /
+  test` job exports `CARGO_TERM_COLOR=always`, and a coloured tree has no matchable
+  label while its glyph-free root line still matches, so the dependency read as
+  present and every feature as lost. Pinned three ways: a real coloured capture
+  parsed with and without the feature, the command asserted to pass `--color never`,
+  and the end-to-end run against the real graph forced through that same variable so
+  a developer shell that happens to leave colour off cannot hide the regression;
+- a tree that counts dev-dependency edges, where a test-only dependency hands the
+  feature to `cargo test` while `cargo build` still lacks it: pinned on the argv,
+  because the shipped binary is what the table's rows are about;
 - a `check` that treats an uninstalled target as "nothing to compare": pinned by
   requiring the failure message to name the missing target and to say
   `rustup target add`;
@@ -34,6 +45,7 @@ proves the shipped tree satisfies it rather than merely being parseable.
 
 import importlib.util
 import io
+import os
 import subprocess
 import sys
 import tempfile
@@ -82,6 +94,35 @@ TREE_WITHOUT_FEATURE = TREE_WITH_FEATURE.replace(
 
 TREE_WITHOUT_DEPENDENCY = """error: package `xai-grok-tools` does not contain serde_json
 """
+
+# The four shapes `cargo tree` uses for its glyphs when colour is on, plus the
+# repeat marker, captured from
+# `CARGO_TERM_COLOR=always cargo tree -p xai-grok-tools -e features --locked
+#  --target x86_64-unknown-linux-gnu -i serde_json`.
+# That is the environment of the `rust check / clippy / test` job, which sets
+# `CARGO_TERM_COLOR=always` for the whole job. Note that the root line carries no
+# glyphs and so survives a parser that cannot see past an escape sequence: the
+# first CI run of this gate therefore reported the dependency as present while
+# finding none of its features, which read as a real lost-feature failure.
+BRANCH = "\x1b[2m\x1b[35m├──\x1b[0m "
+TRUNK = "\x1b[2m\x1b[35m│\x1b[0m   "
+LEAF = "\x1b[2m\x1b[35m└──\x1b[0m "
+PAD = "\x1b[2m \x1b[0m   "
+REPEAT = " \x1b[33m\x1b[2m(*)\x1b[39m\x1b[22m"
+TREE_WITH_COLOUR = (
+    "serde_json v1.0.149\n"
+    f'{BRANCH}serde_json feature "alloc"\n'
+    f"{TRUNK}{LEAF}schemars v1.0.4\n"
+    f"{TRUNK}{PAD}{TRUNK}{LEAF}serde_json feature \"indexmap\"\n"
+    f'{TRUNK}{PAD}{LEAF}serde_json feature "preserve_order"\n'
+    f'{BRANCH}serde_json feature "preserve_order"{REPEAT}\n'
+    f'{TRUNK}{PAD}{BRANCH}serde_json feature "raw_value"{REPEAT}\n'
+)
+
+
+def flag_value(argv: list[str], name: str) -> str | None:
+    """The value following `name` in an argv, or None when the flag was not passed."""
+    return argv[argv.index(name) + 1] if name in argv else None
 
 
 def row(feature="preserve_order", targets=None, crate="xai-grok-tools", dep="serde_json"):
@@ -135,6 +176,65 @@ class TreeParsing(unittest.TestCase):
         features, present = guard.parse_tree(dump, "serde_json")
         self.assertTrue(present)
         self.assertEqual(features, {"preserve_order"})
+
+    def test_a_coloured_capture_yields_the_same_features_as_a_plain_one(self):
+        # A coloured tree is the same data with different bytes. The first CI run of
+        # this gate could not see past the escapes and called a fully-featured
+        # dependency featureless.
+        features, present = guard.parse_tree(TREE_WITH_COLOUR, "serde_json")
+        self.assertTrue(present)
+        self.assertEqual(features, {"alloc", "indexmap", "preserve_order", "raw_value"})
+
+    def test_the_coloured_capture_still_says_nothing_about_features_it_lacks(self):
+        # The non-vacuity half of the fixture above: colour must not turn the parser
+        # into something that reports a feature for every line it cannot read.
+        dump = "\n".join(
+            line
+            for line in TREE_WITH_COLOUR.splitlines()
+            if "preserve_order" not in line
+        )
+        features, present = guard.parse_tree(dump, "serde_json")
+        self.assertTrue(present)
+        self.assertNotIn("preserve_order", features)
+        self.assertIn("raw_value", features, "the rest of the coloured dump still parses")
+
+
+class CommandShape(unittest.TestCase):
+    """The gate reads `cargo tree` as a data source, so its output flags are load-bearing."""
+
+    def _argv(self) -> list[str]:
+        captured: dict[str, list[str]] = {}
+
+        def fake_run(argv, **_kwargs):
+            argv = list(argv)
+            captured["argv"] = argv
+            return subprocess.CompletedProcess(argv, 0, stdout="serde_json v1.0.149\n", stderr="")
+
+        with mock.patch.object(guard.subprocess, "run", fake_run):
+            features, present = guard.enabled_features(
+                "xai-grok-tools", "serde_json", LINUX, REPO
+            )
+        self.assertTrue(present, "the fixture dump should report the dependency")
+        self.assertEqual(features, set())
+        return captured["argv"]
+
+    def test_the_tree_is_requested_without_colour(self):
+        argv = self._argv()
+        self.assertEqual(flag_value(argv, "--color"), "never")
+
+    def test_dev_dependency_edges_are_excluded(self):
+        # A dev-dependency can supply the feature to `cargo test` while the shipped
+        # binary still lacks it; every row in the table is about runtime behaviour.
+        argv = self._argv()
+        self.assertEqual(flag_value(argv, "--edges"), "no-dev")
+
+    def test_the_command_still_asks_about_the_rows_own_crate_target_and_dependency(self):
+        # Guards against the flags above being "fixed" by dropping the question.
+        argv = self._argv()
+        self.assertEqual(flag_value(argv, "-p"), "xai-grok-tools")
+        self.assertEqual(flag_value(argv, "--target"), LINUX)
+        self.assertEqual(flag_value(argv, "-i"), "serde_json")
+        self.assertIn("--locked", argv)
 
 
 class CheckRows(unittest.TestCase):
@@ -273,7 +373,11 @@ class CommittedArtifacts(unittest.TestCase):
         # gate was written for.
         if not _cargo_and_targets_present():
             self.skipTest("cargo or one of the table's targets is unavailable here")
-        problems, count = guard.check(REPO, guard.parse_config((REPO / TABLE).read_text()))
+        # Run under the CI job's environment, not the developer's shell. Without the
+        # forced colour this test passed locally while the same call returned nothing
+        # parseable on the runner.
+        with mock.patch.dict(os.environ, {"CARGO_TERM_COLOR": "always"}):
+            problems, count = guard.check(REPO, guard.parse_config((REPO / TABLE).read_text()))
         self.assertEqual(problems, [], f"{count} row(s) checked")
 
 

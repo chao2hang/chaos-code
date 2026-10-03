@@ -1,0 +1,389 @@
+# A guard that is green locally and blind in CI, and a race the test only hoped to win
+
+Three 2026-10-03 follow-ups on the same push. The first is `scripts/ci/check-load-bearing-features.py`
+reporting a lost feature on the runner that it could not see locally; the second is a
+`xai-grok-shell` session-title test that passes when the scheduler is on its side and burns eight
+seconds when it is not. Both are cases where "the fixture passed" and "the fixture checked anything"
+were different questions. The third came out of writing this file: the gate sweep quoted in section
+13 had to be produced by a scratch script, so the committed table cited a command no reader can
+re-run, and `scripts/verify-gates.sh` is what replaces it.
+
+== 1. What CI actually said
+
+Head `b93a741c`, run `37114697856`. The failing step is not the Windows leg:
+
+    rust check / clippy / test :: load-bearing dependency features
+    platform tests (${{ matrix.os }})                       skipped
+
+The whole platform matrix was skipped because the legs depend on that job. That is the second
+consecutive push on which the Windows leg never ran, and in both cases the blocker was the Linux
+job in front of it: `37110356858` by the session-title race in section 7, `37114697856` by this
+guard. The three runs before those did run the matrix (`success,failure`, macOS green and Windows
+red), which is where the five-cluster failure analysis came from. The step's own fixture run ended:
+
+    FAIL: test_the_shipped_tree_satisfies_the_committed_table
+    AssertionError: Lists differ: ['`serde_json`/`preserve_order` is enabled for
+    `xai-grok-tools` on none of x86_64-unknown-linux-gnu, x86_64-pc-windows-msvc,
+    aarch64-apple-darwin; the row is stale or the feature was lost ...'] != []
+
+Locally, same commit, same `Cargo.toml`, same table:
+
+    $ git show HEAD:crates/codegen/xai-grok-tools/Cargo.toml | grep -n serde_json
+    61:serde_json = { workspace = true, features = ["preserve_order"] }
+    $ python3 scripts/ci/check-load-bearing-features.py
+    check-load-bearing-features: 1 load-bearing feature row(s) hold on every target they name
+
+== 2. The mechanism: cargo colourises on an inherited variable
+
+The CI step env, from the run log:
+
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: 0
+      CARGO_HOME: /home/runner/.cargo
+
+`CARGO_TERM_COLOR` is exported at job level, so every step inherits it, and `cargo tree` obeys it
+even with its stdout pointed at a pipe. Capturing the real bytes:
+
+    $ CARGO_TERM_COLOR=always cargo tree -p xai-grok-tools -e features --locked \
+          --target x86_64-unknown-linux-gnu -i serde_json | grep -a preserve_order | head -3
+    '^[[2m^[[35mM-bM-^TM-^B^[[0m   ^[[2m^[[35mM-bM-^TM-^TM-bM-^TM-^@M-bM-^TM-^@^[[0m serde_json feature "preserve_order"'
+    '^[[2m^[[35mM-bM-^TM-^\M-bM-^TM-^@M-bM-^TM-^@^[[0m serde_json feature "preserve_order" ^[[33m^[[2m(*)^[[39m^[[22m'
+
+The escapes sit in front of the tree glyphs and wrap the `(*)` repeat marker. The parser stripped
+glyph characters with `lstrip("│├└─ ")`, so a label beginning with `\x1b` matched neither the
+package regex nor the feature regex.
+
+== 3. Why that produced "present, but featureless" rather than "dependency absent"
+
+    $ CARGO_TERM_COLOR=always cargo tree ... | sed -n '1,3p' | cat -v
+    serde_json v1.0.149
+    ^[[2m^[[35mM-bM-^TM-^\M-bM-^TM-^@M-bM-^TM-^@^[[0m serde_json feature "alloc"
+    ^[[2m^[[35mM-bM-^TM-^B^[[0m   ^[[2mM-bM-^TM-^TM-bM-^TM-^@M-bM-^TM-^@^[[0m schemars v1.0.4
+
+The root line has no glyphs and no escapes, so it still matched `PACKAGE_NODE` and set `present =
+True`. Every feature line failed to match. The one problem the run reported is exactly that
+combination: the dependency is there, the feature is nowhere. A reader would have gone looking for
+a lost feature in `Cargo.toml`, which is what the message says and what was not true.
+
+This is the same class of miss as the `--edges` question below: a guard reading a tool's stdout has
+to pin the tool's output mode, because the ambient environment of the machine running CI is not the
+environment of the machine writing the guard.
+
+== 4. The fix, three layers, each pinned by its own fixture
+
+    $ grep -n -A9 'proc = subprocess.run' scripts/ci/check-load-bearing-features.py | head -12
+              "cargo", "tree", "-p", crate, "-e", "features", "--locked",
+              # Required, not cosmetic: see ANSI_SEQUENCE.
+              "--color", "never",
+              # A dev-dependency can hand the feature to the test build while the
+              # shipped binary still lacks it, and every row in the table is about
+              # runtime behaviour. Only the edges `cargo build` resolves count.
+              "--edges", "no-dev",
+              "--target", target, "-i", dependency,
+
+1. `--color never` on the command line, so the output mode is decided by the caller.
+2. `parse_tree` strips `ANSI_SEQUENCE` before matching, so a future call site that forgets the flag
+   reads a coloured tree as the same data instead of as "no features".
+3. The end-to-end fixture that runs the real graph now runs under a forced
+   `CARGO_TERM_COLOR=always`, so a developer shell that leaves colour off cannot hide the
+   regression. With layers 1 and 2 both present, removing either one alone still leaves the
+   end-to-end green by design; each layer's own unit fixture is what fails when that layer is
+   removed. That is stated here so the coverage is not mistaken for redundancy.
+
+== 5. Mutations against the guard
+
+    $ python3 scripts/ci/test-check-load-bearing-features.py
+    Ran 30 tests ... OK
+
+Applied one at a time against the working tree, each followed by a byte-for-byte restore.
+
+    A: --color never dropped from the cargo tree argv
+      exit=1 Ran 30 tests; FAILED (failures=1)
+      failing: test_the_tree_is_requested_without_colour [CommandShape]
+    B: ANSI sequences no longer stripped before matching labels
+      exit=1 Ran 30 tests; FAILED (failures=2)
+      failing: test_a_coloured_capture_yields_the_same_features_as_a_plain_one [TreeParsing],
+               test_the_coloured_capture_still_says_nothing_about_features_it_lacks [TreeParsing]
+    C: --edges no-dev dropped from the cargo tree argv
+      exit=1 Ran 30 tests; FAILED (failures=1)
+      failing: test_dev_dependency_edges_are_excluded [CommandShape]
+
+Each mutation is caught by exactly the fixture that names it, and by nothing else. Both files were
+restored and compared byte for byte (`RESTORED byte-identical`). Fixture count 25 to 30.
+
+After the fix, in both environments:
+
+    $ python3 scripts/ci/check-load-bearing-features.py
+    check-load-bearing-features: 1 load-bearing feature row(s) hold on every target they name
+    $ CARGO_TERM_COLOR=always python3 scripts/ci/check-load-bearing-features.py
+    check-load-bearing-features: 1 load-bearing feature row(s) hold on every target they name
+
+== 6. What `--edges no-dev` changed about the row itself
+
+    $ for t in x86_64-unknown-linux-gnu x86_64-pc-windows-msvc aarch64-apple-darwin; do
+          printf '%s nodes=' "$t"
+          cargo tree -p xai-grok-tools -e features --locked --color never --edges no-dev \
+              --target $t -i serde_json | grep -c 'serde_json feature "preserve_order"'
+      done
+    x86_64-unknown-linux-gnu nodes=3
+    x86_64-pc-windows-msvc nodes=3
+    aarch64-apple-darwin nodes=3
+
+With dev edges removed the row still holds on all three targets, and the Windows tree now names the
+provider explicitly:
+
+    ├── serde_json feature "indexmap"
+    │   └── serde_json feature "preserve_order"
+    │       └── xai-grok-tools v0.1.220-alpha.4 (/repo/crates/codegen/xai-grok-tools)
+
+Before this batch the feature reached `xai-grok-tools` only through `nono`, a `cfg(unix)` dependency
+of `xai-grok-sandbox`. With dev edges in play, a dev-only dependency could have satisfied the row
+while `cargo build` still produced a binary without the feature; the rows in the table are about
+rendered form fields at runtime, so that would have been a false green of exactly the kind the gate
+was written to catch.
+
+== 7. The second item: a CI test failure that only CI saw
+
+Run `37110356858` (head `ba85c87c`), `rust check / clippy / test`:
+
+    6871 passed; 1 failed; 32 ignored; 0 measured; finished in 95.01s
+    failures:
+        session::persistence::durable_update_tests::
+          reset_title_to_auto_adopts_in_flight_generation_as_auto
+    ... in-flight GeneratedTitle after unpin never adopted
+    ERROR xai_grok_sampler::client: Failed to build HTTP request: builder error
+
+The test's own doc comment states the precondition it then fails to create: "Disk is already blank
+when the stale `GeneratedTitle` arrives".
+
+    Mechanism. The first ContentChunk makes SummaryGenerator::update tokio::spawn a title task.
+    The default SamplerConfig has base_url = "" and model = "", so reqwest fails to build the
+    request and no socket is ever opened; generate_session_summary returns "" and the task falls
+    back to title_fallback_from_user_text and sends GeneratedTitle -- essentially immediately.
+    If that message reaches the actor before storage::reset_title_to_auto has blanked the disk,
+    generated_title_if_absent sees the manual title still there and refuses it (persistence.rs:2015
+    logs "skipped auto-generated title" and returns Ok(false)). The blank then lands, and nothing
+    ever retries: the session is left untitled and the test spends its full 8 s budget.
+
+    Measured on this machine before changing anything: 600 runs of the single test (200 idle, 400
+    while a full `cargo test -p xai-grok-shell --lib -- --test-threads=16` ran concurrently under
+    `nice -n 19`) passed every time in 0.04-0.06 s. Inserting a 300 ms yield between
+    `send(ContentChunk)` and the unpin made the same test fail 100 % of the time with the CI panic,
+    after 8.38 s.
+
+== 8. Why the production code was left alone
+
+`extensions/session_admin.rs::reset_session_title_to_auto`, the only production caller, re-arms a
+whole-conversation retitle after blanking (`SessionCommand::TitleRenamed { manual: false }`, or a
+watermark write when the session is dormant). So the lost update is recovered in the product.
+Changing `generated_title_if_absent` to accept a title that arrived before the blank would freeze
+the auto title at turn 1 for every real session, which is a product decision, not a test fix. The
+storage-level gap is recorded as an open TODO row instead of being papered over.
+
+== 9. The fixture: a loopback endpoint that holds the request open
+
+    crates/codegen/xai-grok-shell/src/session/persistence_tests.rs
+
+    endpoint_that_holds_the_title_request()
+      binds 127.0.0.1:0, accepts, reads 5 bytes of the request line, and keeps the
+      connection with no response until the guard releases it.
+    title_sampler_config(base_url)
+      api_key + base_url + model + ChatCompletions + max_retries: Some(0)
+
+Two details are load-bearing and are commented as such in the source:
+
+- The endpoint only treats a connection as the title request if the request line starts with
+  `POST `. `SamplerClient::post` calls `prewarm::note_first_sampling_use`, which dials the origin
+  with `client.get(origin)` before the first real request; taking that connection for the title
+  request would put the barrier in the wrong place.
+- `base_url` alone would not have been enough. The empty `model` and missing credentials are what
+  turn the request into a builder error before any socket is opened, which is precisely why the
+  default config cannot express "still in flight". `max_retries: Some(0)` keeps the abort from
+  being re-dialled onto a fresh connection.
+
+The test now: sends the chunk, waits for the endpoint to have the request, blanks disk, sends
+`ResetTitleToAuto`, `flush_ack`, asserts disk is blank, and only then releases the socket. The
+adoption it then waits for is the one the test is named for.
+
+== 10. Mutations against the title test
+
+Each mutation was injected into `persistence_tests.rs`, the single test run through the real
+binary, and the file restored before the next one:
+
+    A  helper without an endpoint: the request never leaves the process
+       expected FAIL, observed FAIL
+       test result: FAILED. 0 passed; 1 failed; finished in 10.05s
+       panicked at persistence_tests.rs:1990  (wait_until_in_flight timed out)
+    B  barrier wait removed, held connection still in place
+       expected FAIL, observed PASS  <-- informative, see below
+    C  the same 300 ms yield with the barrier in place
+       expected PASS, observed PASS (0.41s)
+    D  the manual title written back to disk before the checkpoint
+       expected FAIL, observed FAIL
+       panicked at persistence_tests.rs:1905  (the precondition assert)
+    B' old shape: no endpoint, no barrier, 300 ms yield
+       expected FAIL, observed FAIL
+       test result: FAILED. 0 passed; 1 failed; finished in 8.39s
+       "in-flight GeneratedTitle after unpin never adopted"
+
+B was written expecting a failure and did not produce one, and the reason is the substance of the
+fix: dropping the `wait_until_in_flight()` call does not reopen the race, because the request is
+still being held open by the endpoint. The held connection is the enforcer; the wait is the
+detector, pinned by A, which fails the test if the generator never dials the endpoint at all.
+Without that detector a future refactor could quietly stop opening a socket and the test would pass
+while proving nothing. B' is the faithful old shape and reproduces the CI failure exactly, message
+and duration included; C is the same injected delay with the barrier in place and must pass, which
+is the difference between an enforced ordering and a lucky one.
+
+== 11. Repetition stability of the rewritten test
+
+    clean tree, first run: PASS :: 1 passed; 0 failed; finished in 0.11s
+    idle repeats: 150/150 passed
+    repeats concurrent with the full lib suite at --test-threads=16: 80/80 passed
+
+All source files touched by the mutations were restored by the scripts and re-compared byte for
+byte at the end of every run.
+
+== 12. Still open, on purpose
+
+- The storage-level lost update itself: a `GeneratedTitle` that arrives before the blank is refused
+  and never retried. Recovered in the product by the re-arm in `reset_session_title_to_auto`; open
+  as a TODO row because "recovered by a second request" is not the same as "cannot be lost".
+- The Windows leg has not produced a verdict on this batch. Two consecutive pushes were blocked
+  before it: `37110356858` by this flake and `37114697856` by the guard's own colour blindness. The
+  three runs before those did run it (macOS green, Windows red), and the previous batch fixed the
+  five clusters those runs reported.
+
+== 13. The gate sweep, and the tool the sweep needed first
+
+The batch began with the usual throwaway: a scratch loop over `scripts/ci/*.py` that prints
+PASS/FAIL per gate. It gave a correct verdict, 23 of 23 green, and then turned out to be
+uncitable, because the script it came from is deleted with the session while the table it printed
+is quoted forever. Section 14 is what closed that gap, and the sweep below is that committed
+script's own output on the finished tree.
+
+    $ scripts/verify-gates.sh
+    == gates extracted from scripts/verify-in-docker.sh
+       host run: the ${bootstrap} prefix is dropped, build gates are skipped
+    PASS  toolchain matches the pin
+    PASS  pinned protoc launcher
+    PASS  cargo fmt
+    PASS  ignored-test baseline
+    PASS  brand/protocol guard
+    PASS  protocol mirror coverage
+    PASS  TODO status doc
+    PASS  evidence paths in docs
+    PASS  docs path references
+    PASS  CI guard wiring
+    PASS  host gate runner self-test
+    PASS  workflow shells
+    PASS  workflow toolchain
+    PASS  workflow yaml
+    PASS  script portability
+    PASS  panic-site census
+    PASS  cwd-change census
+    PASS  spawn-cwd portability
+    PASS  load-bearing features
+    PASS  version lockstep
+    PASS  installer guards
+    PASS  npm package guards
+    PASS  docs localization
+    PASS  localization guard self-tests
+    PASS  secret scan
+    SKIP  cargo check (build gate; --with-build runs it)
+    SKIP  cargo clippy (build gate; --with-build runs it)
+    SKIP  cargo test (build gate; --with-build runs it)
+    SKIP  GUI protocol types (build gate; --with-build runs it)
+
+    all gates passed on the host (25 run, 4 skipped)
+
+The list is not the 23 lines the scratch loop produced. It adds `toolchain matches the pin`,
+`pinned protoc launcher`, `version lockstep`, `installer guards`, `npm package guards` and
+`localization guard self-tests`, which the loop had quietly never run, plus `host gate runner
+self-test`, new with this batch; in exchange the loop's own `bash -n scripts/verify-in-docker.sh`
+line is gone, because that check now lives inside the self-test rather than beside it.
+`load-bearing features` runs both directions in one gate: the 30 self-test fixtures, then the real
+`cargo tree` check against the committed table. `TODO status doc` is the classifier lockstep, which is what
+forces `docs/architecture/todo-open-item-classification.md` to move with `TODO.md`; this batch adds
+one unchecked row (the storage-layer title gap of section 12), so the maintenance group goes from
+3/17 to 4/17 and the total from 139 rows to 140.
+
+== 14. scripts/verify-gates.sh, the runner the sweep now cites
+
+The host-side runner reads the `gates=()` array out of `scripts/verify-in-docker.sh` rather than
+keeping its own list, because a copied list is a second source of truth that stops agreeing: the
+scratch loops of previous sessions had already drifted (this one covers `version lockstep`,
+`installer guards`, `npm package guards`, `localization guard self-tests`,
+`toolchain matches the pin` and `pinned protoc launcher`, none of which the loop had). It applies
+exactly two transformations to each entry and prints both in its header: the `${bootstrap}` prefix
+is dropped (the container needs it for a bind-mounted tree owned by a foreign uid; a test runner
+rewriting a contributor's global git config is not acceptable), and the four build gates are
+skipped unless `--with-build`. Everything else runs verbatim, including the `rustup target add`
+inside the load-bearing-feature guard, which is what makes that guard fail rather than quietly skip
+a target it cannot resolve.
+
+The runner has a fixture suite of its own, `--self-test`, and that suite is itself an entry in the
+array it reads, so the container and any host run execute it. 19 cases, and the ones worth their
+keep are the ones about the runner's own blind spots:
+
+    a source with no gates array is an error         (exit 2, not an empty pass)
+    an entry the extractor cannot split is an error  (names the entry, does not skip it)
+    a build gate is skipped by default / runs under --with-build
+    the gate source is itself valid bash             (bash -n on verify-in-docker.sh)
+    the real entry file still parses                 (29 labels extracted)
+    a failing gate is named, its output is shown, and the exit code moves
+
+The last two are what make the runner's own verdict mean something: if the entry script stops
+parsing, or its array stops being readable, the runner says so with a non-zero exit instead of
+reporting an empty pass.
+
+Nine mutations, each restored and re-compared byte for byte. Every one is noticed by at least one
+case, and the case list is what makes the suite non-vacuous. M1 to M8 mutate the runner; M9 appends
+a line with an unclosed `if` to the real `scripts/verify-in-docker.sh` and must turn exactly the
+syntax case red:
+
+    M1 strip removed                  a passing set exits 0; the bootstrap placeholder is stripped
+    M2 build gates never skipped      a build gate is skipped by default
+    M3 the SKIP line made silent      and says that it skipped
+    M4 empty extraction treated as OK a source with no gates array is an error
+    M5 unsplittable entry ignored     most cases (the fixture entries stop being recognised)
+    M6 `gates+=` anchor pinned to col 0  the appended gates+=(...) entry is extracted
+    M7 failing gate output swallowed  the failing gate's own output is shown
+    M8 exit code pinned to 0          a failing gate exits 1
+    M9 gate source given bad syntax   the gate source is itself valid bash
+
+Two of those eight were bugs in the fixtures rather than in the runner, and both survived until the
+mutation was run, which is the only reason they are known. M1 escaped the first version of the
+fixture entirely: the entry was `${bootstrap}; true`, and with the strip removed bash expands the
+unset variable to nothing and executes the empty command followed by `true`, so the gate passed for
+the wrong reason (measured: exit 0). The fixture now exports `bootstrap='exit 44'`, which a
+surviving prefix expands into and aborts the gate. M6 was the extractor requiring `gates+=("...")`
+at column 0, so the two full-mode entries of the real file, which are indented inside
+`if [ "${MODE}" = "full" ]`, were invisible; the fixture entry was moved to the same indented shape
+so that the case now fails if the anchor regresses.
+
+Scope, stated plainly: this runner is a convenience wrapper over gates that already exist. It adds
+no new check, changes no verdict, and is not a substitute for `scripts/verify-in-docker.sh`, which
+still owns the claim that a cold clone works. What it removes is the per-session scratch script and
+the uncitable tables those scripts produced.
+
+== 15. The crate the batch touches, and one environment trap worth writing down
+
+    $ cargo fmt --all -- --check                                        exit 0
+    $ cargo clippy -p xai-grok-shell --all-targets -- -D warnings       exit 0
+    $ cargo test -p xai-grok-shell --lib                                exit 101
+    $ RUST_MIN_STACK=16777216 cargo test -p xai-grok-shell --lib
+    test result: ok. 6857 passed; 0 failed; 32 ignored; 0 measured; 0 filtered out; finished in 50.36s
+
+The third line is not a regression and it is worth recording because it looks exactly like one: the
+run died on
+
+    thread 'session::acp_session::cancel_running_task_tests::handle_prompt_frames_interrupt_on_user_message'
+    has overflowed its stack
+    fatal runtime error: stack overflow, aborting
+
+after 3134 tests had already printed `ok`, which means there is no `test result:` line and no
+`failures:` block to read -- the only clue is the abort line itself. This is the same
+current-thread actor stack overflow that CI pins with `RUST_MIN_STACK=16777216`; the plain command
+above omits it. Recorded here so the next person reads it as a missing environment variable rather
+than as a broken batch.

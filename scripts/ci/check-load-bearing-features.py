@@ -36,9 +36,12 @@ What it enforces per row (`crate`, `dependency`, `feature`, `targets`, `why`):
   --installed`. A missing target is a failure, not a skip: a guard that degrades
   to "nothing checked" on a machine without the tier-2 targets installed is the
   same silence that hid the `preserve_order` bug;
-- for each target, `cargo tree -p <crate> -e features -i <dependency>` reports
-  `<dependency> feature "<feature>"` as a child of the inverted root, i.e. the
-  feature really is enabled for that crate on that target;
+- for each target, `cargo tree -p <crate> -e features --edges no-dev -i
+  <dependency>` reports `<dependency> feature "<feature>"` as a child of the
+  inverted root, i.e. the feature really is enabled for that crate on that target
+  in the build a `cargo build` produces, not only in the one `cargo test` produces;
+- the same command runs with `--color never`, because `cargo tree` colourises on an
+  inherited `CARGO_TERM_COLOR=always` and a coloured tree has no parseable labels.
 - the dependency is present at all on each target, and the feature is enabled on
   at least one target -- a row asking about a feature nothing enables is stale,
   and a table of stale rows reads like coverage.
@@ -64,6 +67,18 @@ CONFIG = "scripts/ci/load-bearing-features.tsv"
 # alone identifies it; the leading glyphs only have to be stripped.
 FEATURE_NODE = re.compile(r'^(?P<pkg>[A-Za-z0-9_.+-]+) feature "(?P<feature>[^"]+)"$')
 PACKAGE_NODE = re.compile(r"^(?P<pkg>[A-Za-z0-9_.+-]+) v[^ ]+")
+
+# Colour is the difference between a guard that runs and a guard that reads as green.
+# `cargo tree` colourises whenever `CARGO_TERM_COLOR=always` is in the environment --
+# which it is, job-wide, in the `rust check / clippy / test` job -- and the escape
+# sequences then sit in front of every tree glyph and wrap the `(*)` repeat marker, so
+# no label matches either regex. The tree root, which carries no glyphs, still matched,
+# so the very first CI run of this script reported a dependency present but stripped of
+# every feature it was asked about. `--color never` on the command line is the fix;
+# stripping the sequences here as well keeps a future call site that forgets the flag
+# from reading a coloured tree as "no features enabled", the silent-green failure this
+# script exists to prevent.
+ANSI_SEQUENCE = re.compile(r"\x1b\[[0-9;]*m")
 
 Row = tuple[str, str, str, list[str], str]
 
@@ -112,7 +127,7 @@ def parse_tree(text: str, dependency: str) -> tuple[set[str], bool]:
     features: set[str] = set()
     present = False
     for line in text.splitlines():
-        label = line.rstrip("\n").strip().lstrip("│├└─ ").strip()
+        label = ANSI_SEQUENCE.sub("", line).strip().lstrip("│├└─ ").strip()
         # `cargo tree` prints a subtree it has already shown as `name rest (*)`.
         # A feature can appear only in that form, so the marker has to come off
         # before the label is matched or the feature reads as absent.
@@ -137,6 +152,12 @@ def enabled_features(
     proc = subprocess.run(
         [
             "cargo", "tree", "-p", crate, "-e", "features", "--locked",
+            # Required, not cosmetic: see ANSI_SEQUENCE.
+            "--color", "never",
+            # A dev-dependency can hand the feature to the test build while the
+            # shipped binary still lacks it, and every row in the table is about
+            # runtime behaviour. Only the edges `cargo build` resolves count.
+            "--edges", "no-dev",
             "--target", target, "-i", dependency,
         ],
         cwd=repo,

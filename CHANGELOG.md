@@ -2,6 +2,126 @@
 
 ## Unreleased
 
+### 门禁：本地跑一遍门禁的门禁，顺手让证据里的门禁表可以被重跑
+
+`scripts/verify-in-docker.sh` 是「冷克隆能不能跑通」的仪器，交付前该跑它。它不该是「我改十行有没有
+碰坏守卫」的仪器：同一张 `gates` 表它也跑，但顺带跑全 workspace 的 `cargo check` 与 `clippy`，
+为了一个守卫的结论等一小时。以前的替代方案是每个会话现场写一个 scratch 脚本去走 `scripts/ci/*.py`，
+代价不是慢，是**证据不可复现**——本轮
+`docs/verification/load-bearing-features-ci-env-2026-10-03.log` 的 `== 13.` 那张 PASS 表最初就是
+这种脚本产的，脚本随会话删除，表却永久留在仓库里，读者手里没有那条命令。
+
+新增 `scripts/verify-gates.sh`，**不复制清单**：它直接从 `scripts/verify-in-docker.sh` 的
+`gates=()` 数组里把每一条 `"标签: 命令"` 解析出来，于是那张数组加一条、宿主入口下一次就跑一条，
+不存在两份清单各自漂移。对每条命令只做两处变换，且两处都印在输出表头里：剥掉 `${bootstrap}` 前缀
+（容器需要它是因为树是别人 uid bind-mount 进来的，而一个测试运行器去改贡献者的全局 git 配置是不能接受
+的）；四条构建门默认跳过，`--with-build` 才跑。其余一律原样执行，包括 load-bearing feature 那条里的
+`rustup target add`——那一句正是这条门禁「拿不到 target 就红，而不是静默少查一个平台」的原因。
+
+它自带 19 例 `--self-test`，而这一条本身也进了数组（`host gate runner self-test`），所以容器和任何
+宿主跑都会执行它；用例里有两条专门保证「runner 自己的结论不是空的」：拿真实的 `verify-in-docker.sh`
+跑 `bash -n`，以及解析它必须抽出 29 条标签，数组格式一改 CI 当场红。九个变异逐个注入、逐个 `cmp`
+还原，每个都至少被一条用例抓住（M1 至 M8 改 runner，M9 给真实入口脚本追加一行没闭合的 `if`）：
+
+      M1 去掉剥前缀那行 → 「一套全过的夹具 exit 0」红
+      M2 构建门永不跳过 → 「默认跳过构建门」红
+      M3 把 SKIP 那行改成静默 → 「跳过了要说明」红
+      M4 空抽取当通过 → 「没有 gates 数组的源必须报错」红
+      M5 无法切分的条目直接忽略 → 夹具里的条目全都不再被认出，多数用例红
+      M6 把 `gates+=` 锚点钉回第 0 列 → 「追加的 gates+=(...) 条目被抽出」红
+      M7 失败门的输出不再打印 → 「失败门的输出必须可见」红
+      M8 失败不改退出码 → 「失败的门 exit 1」与「--with-build 会跑它」红
+      M9 入口脚本被写入坏语法 → 「门禁源本身必须能被 bash 解析」红
+
+其中两处是**夹具自己的洞，只有跑变异才看得见**。M1 的第一版夹具写的是 `${bootstrap}; true`：strip
+被拆掉之后 bash 把未定义变量展开成空命令、接着执行 `true`，仍然 exit 0，也就是那条用例当时是假绿
+（实测 exit 0）；现在夹具导出 `bootstrap='exit 44'`，前缀只要活下来就会被展开成终止该门的命令。
+M6 是抽取器要求 `gates+=("...")` 顶在第 0 列，而真实文件里 full 模式那两条缩进在
+`if [ "${MODE}" = "full" ]` 里面，所以它们一开始根本没被抽出来；把夹具改成与真实文件同形（缩进）之后
+这条用例才有牙。边界说清楚：这个 runner 不新增任何检查、不改变任何判定，也不是 `verify-in-docker.sh`
+的替身——「冷克隆跑得通」这句话仍然只有它来说；被省掉的只是每次现场写的脚本，以及那种没人能重跑的门禁表。
+`CONTRIBUTING.md` 新增一节 Fast local gate loop 说明两种入口的分工。实测：最终树上
+`scripts/verify-gates.sh` 25 条跑、4 条构建门跳、全绿；`bash -n` 通过，
+`check-script-portability.py` 对 24 份 shell 脚本报 OK（新增脚本不许用 bash 4 与 GNU 独占命令）。
+（2026-10-03；`scripts/verify-gates.sh`、`scripts/verify-in-docker.sh`、`CONTRIBUTING.md`、
+`docs/verification/load-bearing-features-ci-env-2026-10-03.log`、`CHANGELOG.md`）
+
+### 修复：刚装的 feature 门禁在 CI 上其实是瞎的，`cargo tree` 会跟随环境上色
+
+`b93a741c` 推上去之后 run `37114697856` 红的不是 Windows 腿，而是这一步自己：
+`rust check / clippy / test` 的 `load-bearing dependency features`。连带后果比报错本身更贵：
+`platform tests` 整条矩阵 `skipped`，这是连续第二轮 push 连 Windows 腿都没起跑（上一轮
+`37110356858` 被本条下面那个 flaky 挡住）。报错读起来却像一条真缺陷：
+
+      AssertionError: Lists differ: ['`serde_json`/`preserve_order` is enabled for
+      `xai-grok-tools` on none of x86_64-unknown-linux-gnu,
+      x86_64-pc-windows-msvc, aarch64-apple-darwin; ...'] != []
+
+本地同一个 commit、同一份 `Cargo.toml`、同一张表却是绿的。差别只在环境：这个 job 在 job 级导出
+`CARGO_TERM_COLOR=always`，`cargo tree` 于是给输出上色，而转义序列恰好夹在树形连接符前面，也把
+` (*)` 续印标记整个包住，于是标签正则一条都命中不了。真正让结论变成「依赖在、feature 全没了」的
+是**树根那一行没有连接符**：它照样命中包节点正则，所以 `present` 为真、feature 集合为空，整轮只
+报出一条问题。本地 shell 不上色，同一份夹具在两边给出相反结论，而这类分歧不会由任何编译错误提示。
+
+分三层修，每层各被一条自己的夹具钉住：命令行显式 `--color never`（机器读的输出不该由环境决定）；
+`parse_tree` 匹配前先剥 ANSI 序列，让将来忘记带 flag 的调用点也不会把彩色树读成「没有 feature」；
+以及把「用真实依赖图跑真实表」那次端到端强制放进 `CARGO_TERM_COLOR=always` 运行，这样开发机壳子
+的颜色设置藏不住回归。只拆其中一层时另外两层仍会让端到端那条通过，这是刻意的：argv 与解析器是互
+为备份的两道防线，各自的单元测试负责在自己被拆掉时变红。
+
+顺带把命令本身收紧一处：加 `--edges no-dev`。dev 依赖可以把 feature 只喂给 `cargo test` 而
+`cargo build` 的产物依旧拿不到，而承重表里每一行说的都是运行时行为；加完之后三 target 仍各有 3
+个 feature 节点，且 Windows 上提供者是 `xai-grok-tools` 自己，说明这条行现在描述的是产物而不是测
+试。三条变异各自只打掉对应夹具（去掉 `--color`、去掉剥色、去掉 `--edges`），夹具从 25 条涨到 30
+条，`cmp` 校验三次还原均逐字节一致。本地在两种环境下各跑一次门禁，都是
+`1 load-bearing feature row(s) hold on every target they name`。
+
+回头看，这一轮真正的教训是「门禁的夹具必须跑在 CI 的环境里，而不是开发机的环境里」：上一版那条端
+到端夹具之所以本地全绿，正是因为它继承了本地的无色输出。
+（2026-10-03；`scripts/ci/check-load-bearing-features.py`、
+`scripts/ci/test-check-load-bearing-features.py`、`.github/workflows/ci.yml`、
+`docs/verification/load-bearing-features-ci-env-2026-10-03.log`）
+
+### 修复：「生成中的标题撞上取消置顶」那条测试测的是运气，现在它把请求真的按住
+
+Linux 侧 `cargo test` 在 run `37110356858`（`ba85c87c`）红过一条：
+`6871 passed; 1 failed; 32 ignored`（95.01 s），失败者是
+`session::persistence::durable_update_tests::reset_title_to_auto_adopts_in_flight_generation_as_auto`，
+烧完自己 8 秒预算，捕获到的 stdout 里跟着一句
+`ERROR xai_grok_sampler::client: Failed to build HTTP request: builder error`。同一 job 一红，
+`platform tests` 又是整条 `skipped`。
+
+机制：第一条 `ContentChunk` 会 `tokio::spawn` 一个标题生成任务，而默认 `SamplerConfig` 的
+`base_url` 与 `model` 都是空串，请求在打开任何 socket 之前就构造失败，于是回退标题几乎瞬间
+`send(GeneratedTitle)`。它完全可能在取消置顶写盘**之前**到达 actor：那时盘上手动标题还在，
+`generated_title_if_absent` 按设计拒绝；紧接着写盘把标题清空，而此后没有任何东西重试。这条测试的
+文档注释写着「stale `GeneratedTitle` 到达时盘已经清空」，却从未保证过这个前提。本机 600 次（200
+次空载 + 400 次在满负载 `--test-threads=16` 与 `nice -n 19` 下）恰好每次都赢了这场竞争，0.04–
+0.06 s 通过；而在 `send(ContentChunk)` 与取消置顶之间插入 300 ms yield，旧测试 100 % 复现 CI 的
+那条 panic（8.38 s）。
+
+没有去动 `generated_title_if_absent` 的语义：生产路径上 `reset_session_title_to_auto` 在清空后会
+重新挂一次整会话重命名（`TitleRenamed { manual: false }`，会话休眠时改写水位），把自动标题永久冻
+结在第 1 轮是产品决定，不该由一条 flaky 测试替它拍板。改的是测试自己的前提。新增一个环回端点：接
+受连接、读满 5 字节确认请求行以 `POST ` 开头（sampler 在首次真实请求前会先对一个 origin 打一发
+prewarm 的 `GET`，绝不能把它误当成目标），随后一直不回应。被按住的连接本身就是「生成仍在进行」：
+先确认端点已收到请求，再做取消置顶与 `ResetTitleToAuto`，`flush_ack` 之后**断言盘上确实已经空了*
+*，最后才松开 socket 让请求失败、走回退标题、由 actor 采纳。全程真实：真实 spawn、真实 socket、
+真实回退、真实 actor 写盘，新测试 0.11 s 通过。
+
+六处变异各打一处，其中一处结果与预期相反、而那个相反恰恰是本轮的结论。A 换回不带端点的 helper：
+请求根本不出进程，栅栏等不到连接而超时判失败——它证明夹具不是装饰。B 只拆掉栅栏、连接仍被按住：**
+通过了**，说明真正强制顺序的是那条被按住的连接，`wait` 只是探测器（A 负责它坏掉时必须变红）。B′
+才是旧形状的忠实复现（无端点、无栅栏、300 ms yield）：8.39 s 后原样复现 CI 那句 panic。C 保留栅
+栏再加同样的 300 ms yield：必须通过，这一条正是「顺序现在由测试强制、而不是由调度器赏赐」的证明。
+D 在检查点前把手动标题写回盘上：前置断言必须响。改完本机再跑 230 次（150 次空载 + 80 次与整套
+lib 测试 `--test-threads=16` 并行）全部通过，单次 0.11 s。盘级 lost-update 本身（自动标题被拒后
+无人重试）不静默吞掉，记成一条 TODO——生产路径靠第二次请求补救，与「不会丢」不是一回事。
+（2026-10-03；`crates/codegen/xai-grok-shell/src/session/persistence_tests.rs`、
+`crates/codegen/xai-grok-shell/src/session/summary.rs`、
+`crates/codegen/xai-grok-shell/src/extensions/session_admin.rs`、`TODO.md`、
+`docs/verification/load-bearing-features-ci-env-2026-10-03.log`）
+
 ### 新增：`serde_json` 的字段有序一直是靠 Unix 才生效的；cargo 的 feature 统一是按 build 且按 target 的
 
 E 簇里最贵的一条不是测试问题而是构建配置缺陷。`mcp_elicitation` 的 schema 顺序测试在 Windows 上
