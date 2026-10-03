@@ -1,0 +1,189 @@
+390px 下头部标签被裁掉、面包屑被硬切：一次截图带出的两处窄屏缺陷，以及那条测量视口内位置的断言为什么改了写法
+================================================================================================
+
+日期：2026-10-03
+提交：本轮（`apps/chaos-ui/src/style.css` 窄屏头部规则与面包屑省略号，`e2e/workspace-flow.pw.ts` 新增 1 例并改写滚动锚点断言）
+被记录的对象：
+  apps/chaos-ui/src/style.css          `@media (max-width: 768px)` 内新增头部规则；`.header-breadcrumbs strong` 改为真正省略号；`.header-branch-pill` 不参与收缩
+  apps/chaos-ui/e2e/workspace-flow.pw.ts  新增「every header tab is reachable and nothing is clipped without a scrollbar」；改写「timeline follows new responses…」的锚点度量
+
+本文件自包含：每段输出都从当轮真实运行里逐字抄下，命令写在 `$` 行上。
+
+
+第 1 节  怎么发现的：截图，不是断言
+------------------------------------
+
+时间线分组的浏览器截图（390×844，真实 `chaos-web` + Vite）里，正文从左边被切掉一截，头部标签条伸出视口右缘。
+截图不足以定责，于是把「谁的 `scrollWidth` 大于 `clientWidth`」在三个宽度上量了一遍（一次性探针，
+未进入仓库；下面的判定逻辑已被第 4 节的测试接管）：
+
+    width=390 {
+     "docScrollWidth": 390,
+     "rows": [
+      { "path": "div.center-col",             "scrollWidth": 508, "clientWidth": 390, "overflowX": "hidden", "scrollLeft": 0 },
+      { "path": "header.conversation-header", "scrollWidth": 508, "clientWidth": 390, "overflowX": "visible" },
+      { "path": "div.header-breadcrumbs",     "scrollWidth": 231, "clientWidth": 0,   "overflowX": "hidden" }
+     ]
+    }
+    width=768 { "rows": [] }
+    width=1024 { "rows": [] }
+
+关键在于 `.center-col { overflow: hidden }`：它不是「可以滚动但需要手势」，而是**溢出部分根本不存在**。
+7 个标签加面包屑需要 508px，多出的 118px（大约 `插件`/`差异` 两个标签）在手机上没有任何方式够得到。
+同一时刻 `.header-breadcrumbs` 已被压到 0 宽——它早就不可见，只是仍然占着 231px 的固有宽度。
+
+顺带在 desktop 1440×1000 上也量到一条：
+
+    + Array [
+    +   "div.header-breadcrumbs 252<293",
+    + ]
+
+`.header-breadcrumbs` 写着 `text-overflow: ellipsis`，但它是 flex 容器：这条属性对 flex 子项不生效，
+所以既没有省略号，也没有滚动条，长工作区名会把会话 ID 从中间硬切断。
+
+
+第 2 节  修法
+------------
+
+窄屏（`@media (max-width: 768px)`）里让标签条成为可横向滚动的容器，并让本就不可见的面包屑不要再占宽度：
+
+      /* Seven tabs plus the breadcrumb path need 508px, and `.center-col` clips with
+         `overflow: hidden`, so the last tabs were cut off with no scrollbar to reach
+         them. The breadcrumb is already squeezed to zero width here; dropping it and
+         letting the tab strip scroll keeps every tab reachable. */
+      .conversation-header {
+        padding: 0 12px;
+        gap: 8px;
+      }
+      .header-breadcrumbs {
+        display: none;
+      }
+      .header-right-tools {
+        flex-shrink: 1;
+        min-width: 0;
+        overflow-x: auto;
+        scrollbar-width: none;
+      }
+
+桌面端把截断放到真正变长的那个节点上，让省略号出现、分支 chip 与会话 ID 保持完整：
+
+    .header-breadcrumbs strong {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+`.header-branch-pill` 加了 `flex-shrink: 0`，否则它会先于工作区名被压扁。
+
+
+第 3 节  一条新断言：溢出本身不是问题，「没有出口的溢出」才是
+-----------------------------------------------------------
+
+`e2e/workspace-flow.pw.ts` 新增一例，两个视口都跑。它做两件事：
+
+1. 7 个头部标签逐个 `scrollIntoViewIfNeeded()` → `toBeInViewport()` → 点击 → 断言拿到 `active`
+   class（功能面：每个标签都真的能切过去）；
+2. 从 `document.body` 起遍历 DOM，任何 `scrollWidth - clientWidth > 1` 的元素，只要它的
+   `overflow-x` 既不是 `auto`/`scroll`、`text-overflow` 又不是 `ellipsis`，就算一个 offender：
+
+       const reachable = style.overflowX === 'auto' || style.overflowX === 'scroll' || style.textOverflow === 'ellipsis'
+       if (box.scrollWidth - box.clientWidth > 1 && !reachable) { offenders.push(...) }
+
+   省略号和滚动条都是「这里还有内容」的出口，只有 `overflow: hidden` 且无出口才是删除内容。
+   没有这条豁免，第 2 节的省略号本身也会被当成 offender（截断的 `<strong>` 自己就是那个容器）。
+
+把第 2 节那段媒体查询规则原样删掉（其余一字不改），mobile 立刻回红，报的正是第 1 节量到的两个数：
+
+    $ npx playwright test workspace-flow -g "every header tab" --project=mobile-chromium
+    MUT_RC=1
+    Error: expect(received).toEqual(expected) // deep equality
+    - Expected  - 1
+    + Received  + 4
+    - Array []
+    + Array [
+    +   "div.center-col 390<508",
+    +   "header.conversation-header 390<508",
+    + ]
+      1 failed
+
+恢复后 `cmp` 通过，两个视口 2 例全绿：
+
+    $ cp …/style.css src/style.css && cmp …/style.css src/style.css
+    RESTORED-BYTE-IDENTICAL
+      ✓  1 [desktop-chromium] › e2e/workspace-flow.pw.ts:418:1 › every header tab is reachable and nothing is clipped without a scrollbar (1.7s)
+      ✓  2 [mobile-chromium] › e2e/workspace-flow.pw.ts:418:1 › every header tab is reachable and nothing is clipped without a scrollbar (1.6s)
+      2 passed (5.4s)
+
+一个必须写清楚的事实：被删掉规则后，**标签点击那一段仍然是绿的**。浏览器允许脚本滚动
+`overflow: hidden` 的容器，`scrollIntoViewIfNeeded()` 照样能把标签推进视口，Playwright 的点击因此成功。
+承重的是第 2 段遍历，不是点击；点击只负责「每个标签都能切换」这半边。
+
+
+第 4 节  连带：那条滚动锚点断言为什么换了度量
+----------------------------------------------
+
+改完窄屏头部后，既有的「timeline follows new responses at the bottom and preserves a reader anchor
+when scrolled up」在 mobile 上 8 次红 6 次，偏移量始终是 32：
+
+    Expected: <= 2
+    Received:    32
+
+先排除了偶发（6 次全是同一个数），再用一次性探针量到移动的是什么：
+
+    settled  {"timelineTop":428,"scrollTop":0,"firstUserTop":482,"firstUserOffset":106,"shellScrollTop":468}
+    after    {"timelineTop":396,"scrollTop":0,"firstUserTop":450,"firstUserOffset":106,"shellScrollTop":500}
+
+`timeline.scrollTop` 两次都是 0，时间线内部的偏移 `firstUserOffset` 两次都是 106——**时间线的锚点没有丢**。
+移动的是外层：`.shell` 在 `@media (max-width: 768px)` 里是 `flex-direction: column; overflow-y: auto`，
+侧栏整块叠在对话上方（`scrollHeight` 1344 对 `clientHeight` 844），点发送时它从 468 滚到 500，
+整列内容上移 32px。旧断言取的是视口绝对坐标，于是把「手机外壳滚动」误记成「锚点丢失」。
+
+本轮没有改这个手机布局（见第 6 节），改的是断言的度量对象——它本来就该量时间线内部：
+
+      const anchorPosition = () => page.locator('.user').first().evaluate((element) => {
+        const container = element.closest('[data-testid="session-timeline"]')
+        if (!container) throw new Error('the first message is not inside the timeline')
+        return { offset: Math.round(element.getBoundingClientRect().top - container.getBoundingClientRect().top), scrollTop: Math.round(container.scrollTop) }
+      })
+
+改完 8 次（两个视口各 4 次）全绿。为确认它没有因为换度量而变松，把锚点恢复改成无条件跟随底部：
+
+    timeline.scrollTop = anchor.atBottom ? timeline.scrollHeight : anchor.scrollTop
+    → timeline.scrollTop = timeline.scrollHeight
+
+    $ npx playwright test workspace-flow -g "timeline follows new responses"
+    MUT_RC=1
+    2 failed
+    -   "offset": 54,
+    …
+
+两个视口都红，说明新度量仍然抓得住真正要防的回归。恢复后 `cmp` 一致。
+
+
+第 5 节  截图复核
+-----------------
+
+窄屏改动之后重新截了两组（真实引擎 + fixture socket，两个视口各一张），并核对了三种工具状态的取色：
+
+    "colours": { "running": "rgb(103, 158, 254)", "completed": "rgb(74, 222, 128)", "unresolved": "rgb(255, 143, 145)" }
+    "docScrollWidth": 390, "viewportWidth": 390
+
+`docScrollWidth` 与视口相等，说明正文不再靠内部裁切；三张卡片分别落在「第 1/2/3 轮」里，
+颜色三色互不相同（执行中=业务蓝、已完成=成功绿、未见结果=错误红）。
+
+
+第 6 节  这份记录不是什么
+------------------------
+
+* 手机外壳整页滚动这件事**没有被修**。`@media (max-width: 768px)` 下侧栏整块叠在对话上方、
+  `.center-col { min-height: 500px }`，因此 `.shell` 自己会滚动，点发送会让整列移动 32px。
+  本轮只把断言改成量它该量的东西，并把这个缺陷记成 `TODO.md` 的一条；真正的修法要动手机导航形态
+  （侧栏收起或改为抽屉），比这条测试要的语义更宽。
+* 没有做真机测量。全部数字来自 headless Chromium 在 390×844 / 768 / 1024 / 1440×1000 四个尺寸，
+  触屏手势（横向拖拽标签条、惯性滚动）没有被任何自动化覆盖。
+* `scrollbar-width: none` 与 `::-webkit-scrollbar { display: none }` 只保证不显示滚动条；
+  横向可滚动这件事在窄屏上没有任何视觉提示，第一屏看不到 `差异` 标签的用户未必知道可以拖。
+  这一点记在这里，没有被断言覆盖。
+* 遍历深度截到 12 层，且只看 `Element.children`；Shadow DOM 与 `position: fixed` 相对视口的
+  超宽元素不在这条断言的射程内。

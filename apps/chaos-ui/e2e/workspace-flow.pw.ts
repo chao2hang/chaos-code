@@ -135,12 +135,20 @@ test('timeline follows new responses at the bottom and preserves a reader anchor
 
   await timeline.evaluate((element) => { element.scrollTop = 0 })
   await expect.poll(() => timeline.evaluate((element) => element.scrollTop)).toBe(0)
-  const visibleBefore = await page.locator('.user').first().evaluate((element) => element.getBoundingClientRect().top)
+  // Measured against the timeline rather than the viewport: below 768px the whole
+  // `.shell` scrolls (the sidebar stacks above the conversation), so tapping send
+  // moves the entire column and a viewport-absolute reading would blame the anchor
+  // for that. Position within the timeline plus its `scrollTop` is the guarantee.
+  const anchorPosition = () => page.locator('.user').first().evaluate((element) => {
+    const container = element.closest('[data-testid="session-timeline"]')
+    if (!container) throw new Error('the first message is not inside the timeline')
+    return { offset: Math.round(element.getBoundingClientRect().top - container.getBoundingClientRect().top), scrollTop: Math.round(container.scrollTop) }
+  })
+  const visibleBefore = await anchorPosition()
   await page.getByTestId('composer-input').fill('new response while reading history')
   await page.getByTestId('composer-submit').click()
   await expect(page.locator('.assistant').last()).toContainText('new response while reading history')
-  const visibleAfter = await page.locator('.user').first().evaluate((element) => element.getBoundingClientRect().top)
-  expect(Math.abs(visibleAfter - visibleBefore)).toBeLessThanOrEqual(2)
+  expect(await anchorPosition()).toEqual(visibleBefore)
 
 })
 
@@ -400,4 +408,46 @@ test('empty workspace prompt cancellation and empty submission remain safe', asy
   await createButton.click()
   await expect(page.getByTestId('composer-submit')).toBeDisabled()
   await expect(page.getByText('创建会话后，在下方输入 Prompt。')).toBeVisible()
+})
+
+// `.center-col` clips with `overflow: hidden` and no scrollbar, so at 390px the header
+// needed 508px and the remainder was unreachable by touch: the tree walk below is the
+// assertion that catches it (a scripted click still lands, because the browser will
+// scroll a clipped box on request). The tab loop is the functional half: every tab
+// switches, which is what a phone reader needs that width to make room for.
+test('every header tab is reachable and nothing is clipped without a scrollbar', async ({ page }) => {
+  await page.goto('/')
+  await expect(page.getByTestId('session-status')).toHaveText('会话已创建')
+
+  const tabs = page.locator('.header-tab-btn')
+  const tabCount = await tabs.count()
+  expect(tabCount).toBe(7)
+  for (let index = 0; index < tabCount; index += 1) {
+    const tab = tabs.nth(index)
+    await tab.scrollIntoViewIfNeeded()
+    await expect(tab).toBeInViewport()
+    await tab.click()
+    await expect(tab).toHaveClass(/active/)
+  }
+
+  const clipped = await page.evaluate(() => {
+    const offenders: string[] = []
+    const walk = (element: Element, depth: number) => {
+      if (depth > 12) return
+      for (const child of Array.from(element.children)) {
+        const box = child as HTMLElement
+        const style = getComputedStyle(box)
+        // An ellipsis or a scrollbar is the affordance that says "there is more
+        // here"; `overflow: hidden` without either just deletes the remainder.
+        const reachable = style.overflowX === 'auto' || style.overflowX === 'scroll' || style.textOverflow === 'ellipsis'
+        if (box.scrollWidth - box.clientWidth > 1 && !reachable) {
+          offenders.push(`${box.tagName.toLowerCase()}.${box.className.split(' ')[0]} ${box.clientWidth}<${box.scrollWidth}`)
+        }
+        walk(child, depth + 1)
+      }
+    }
+    walk(document.body, 0)
+    return offenders
+  })
+  expect(clipped).toEqual([])
 })

@@ -3,7 +3,12 @@ import type { ClientMessage, DiffPreview, HostInfo, MarketplaceEntry, ServerMess
 export type Message = TimelineMessage
 export type Approval = { requestId: string; tool: string; summary: string; confirmationStep: number }
 export type Question = { questionId: string; prompt: string }
-export type ToolActivity = { id: string; tool: string; status: 'running' | 'completed'; progress?: string; result?: string }
+/** `turnAnchor` is the transcript length when the tool started; the turn it belongs
+ * to is read back out of the messages, so a projection never has to trust a counter
+ * that a reconnect could have rebuilt differently. `unresolved` is set here rather
+ * than by the host: the turn ended without a `tool_result`, so the card must stop
+ * claiming the tool is still running. */
+export type ToolActivity = { id: string; tool: string; status: 'running' | 'completed' | 'unresolved'; progress?: string; result?: string; turnAnchor: number }
 export type PendingGitOperation = { requestId: string; sessionId: string; operation: string }
 export type Upload = {
   filename: string
@@ -16,6 +21,15 @@ export type Upload = {
   error?: string
 }
 export type ServerMessage = ProtocolServerMessage
+
+/** How a turn ended, as far as this connection could see it. `streaming` is derived
+ * from `busy`, the other three come from the terminal event that said so. */
+export type TurnOutcome = 'streaming' | 'completed' | 'cancelled' | 'failed'
+
+/** One prompt and everything the host produced for it. `key` is the ordinal of the
+ * prompt within this view; -1 is content that arrived before any prompt here, which
+ * is what a restored transcript looks like before the first send. */
+export type Turn = { key: number; prompt: Message | null; replies: Message[]; tools: ToolActivity[]; outcome: TurnOutcome | undefined }
 
 import type { WorkspaceInfo } from './generated/protocol'
 import { isUploadFailure, type UploadStatus } from './attachments'
@@ -56,11 +70,77 @@ export type SessionState = {
   tuiImport?: { sessionId: string; cwd: string; title: string | null; messageCount: number; sourceUnchanged: boolean }
   usage?: { inputTokens: number; outputTokens: number }
   toolActivities: ToolActivity[]
+  /** How each turn seen in this view ended, keyed by turn key. Restored history and
+   * another workspace's transcript start it over: an outcome is only ever recorded
+   * for a turn this connection actually watched finish. */
+  turnOutcomes: Record<string, TurnOutcome>
   pendingGitOperation?: PendingGitOperation
   upload?: Upload
 }
 
-export const initialSessionState: SessionState = { messages: [], workspaceSessions: {}, workspaces: [], busy: false, status: '连接中', filesLoading: false, fileLoading: false, searchLoading: false, gitLoading: false, terminalLoading: false, toolActivities: [] }
+export const initialSessionState: SessionState = { messages: [], workspaceSessions: {}, workspaces: [], busy: false, status: '连接中', filesLoading: false, fileLoading: false, searchLoading: false, gitLoading: false, terminalLoading: false, toolActivities: [], turnOutcomes: {} }
+
+/** The turn new events belong to: the one the newest prompt in `messages` opened, or
+ * -1 while nothing has been prompted in this view. */
+export function liveTurnKey(messages: Message[]): number {
+  let key = -1
+  for (const message of messages) if (message.role === 'user') key += 1
+  return key
+}
+
+function recordTurnOutcome(state: SessionState, outcome: TurnOutcome): Record<string, TurnOutcome> {
+  return { ...state.turnOutcomes, [String(liveTurnKey(state.messages))]: outcome }
+}
+
+/** The host ended the turn, so a card still marked running will never be answered;
+ * it is settled here instead of being left to claim activity that already stopped. */
+function settleRunningTools(toolActivities: ToolActivity[]): ToolActivity[] {
+  if (!toolActivities.some((activity) => activity.status === 'running')) return toolActivities
+  return toolActivities.map((activity) => (activity.status === 'running' ? { ...activity, status: 'unresolved' as const } : activity))
+}
+
+/** The newest card of `tool` that has not reported a result yet. Newest, because an
+ * earlier turn may have left a card unsettled, and a later `tool_result` belongs to
+ * the run that is actually in flight. */
+function openToolIndex(toolActivities: ToolActivity[], tool: string): number {
+  for (let index = toolActivities.length - 1; index >= 0; index -= 1) {
+    if (toolActivities[index].tool === tool && toolActivities[index].status !== 'completed') return index
+  }
+  return -1
+}
+
+/** A prompt the local user just sent. The reducer owns this so the transcript, the
+ * turn keys and the busy flag can only ever move together. */
+export function appendLocalPrompt(state: SessionState, text: string): SessionState {
+  return { ...state, messages: [...state.messages, { role: 'user', text }, { role: 'assistant', text: '' }], busy: true }
+}
+
+export function groupIntoTurns(state: SessionState): Turn[] {
+  const turns: Turn[] = [{ key: -1, prompt: null, replies: [], tools: [], outcome: state.turnOutcomes['-1'] }]
+  const byKey = new Map<number, Turn>([[turns[0].key, turns[0]]])
+  let current = turns[0]
+  let prompts = 0
+  for (const message of state.messages) {
+    if (message.role === 'user') {
+      current = { key: prompts, prompt: message, replies: [], tools: [], outcome: state.turnOutcomes[String(prompts)] }
+      prompts += 1
+      turns.push(current)
+      byKey.set(current.key, current)
+    } else {
+      current.replies.push(message)
+    }
+  }
+  for (const tool of state.toolActivities) {
+    const anchor = Math.min(Math.max(tool.turnAnchor, 0), state.messages.length)
+    const turn = byKey.get(liveTurnKey(state.messages.slice(0, anchor))) ?? turns[0]
+    turn.tools.push(tool)
+  }
+  if (state.busy) {
+    const live = byKey.get(liveTurnKey(state.messages))
+    if (live && live.outcome === undefined) live.outcome = 'streaming'
+  }
+  return turns.filter((turn) => turn.key !== -1 || turn.replies.length > 0 || turn.tools.length > 0)
+}
 
 export function eventBelongsToActiveSession(state: SessionState, message: ServerMessage): boolean {
   if (message.type === 'tui_session_import') return true
@@ -102,7 +182,7 @@ export function applyServerMessage(state: SessionState, message: ServerMessage):
 }
 
 function applyServerMessageProjection(state: SessionState, message: ServerMessage): SessionState {
-  if (message.type === 'session_created' && message.session_id) return { ...state, sessionId: message.session_id, workspaceSessions: { ...state.workspaceSessions, [message.workspace_id]: message.session_id }, activeWorkspaceId: message.workspace_id, messages: [], approval: undefined, question: undefined, toolActivities: [], status: '会话已创建' }
+  if (message.type === 'session_created' && message.session_id) return { ...state, sessionId: message.session_id, workspaceSessions: { ...state.workspaceSessions, [message.workspace_id]: message.session_id }, activeWorkspaceId: message.workspace_id, messages: [], approval: undefined, question: undefined, toolActivities: [], turnOutcomes: {}, status: '会话已创建' }
   if (message.type === 'workspaces') {
     const workspaceSessions = workspaceSessionMap(message.workspaces)
     const updated = { ...state, workspaces: message.workspaces, workspaceSessions }
@@ -119,7 +199,7 @@ function applyServerMessageProjection(state: SessionState, message: ServerMessag
     return state.activeWorkspaceId === message.workspace_id
       ? active
         ? workspaceChanged(nextState, active.id)
-        : { ...nextState, activeWorkspaceId: undefined, sessionId: undefined, messages: [], approval: undefined, question: undefined, busy: false }
+        : { ...nextState, activeWorkspaceId: undefined, sessionId: undefined, messages: [], approval: undefined, question: undefined, busy: false, toolActivities: [], turnOutcomes: {} }
       : nextState
   }
   if (message.type === 'session_snapshot' && message.messages) return {
@@ -132,6 +212,7 @@ function applyServerMessageProjection(state: SessionState, message: ServerMessag
     question: message.pending_question ? { questionId: message.pending_question.question_id, prompt: message.pending_question.prompt || '请继续回答待处理问题' } : undefined,
     status: message.pending_approval ? '等待审批' : message.pending_question ? '等待回答' : '历史已恢复',
     toolActivities: [],
+    turnOutcomes: {},
   }
   if (message.type === 'tool_approval_requested' && message.request_id) {
     const approval = { requestId: message.request_id, tool: message.tool ?? 'unknown', summary: message.summary ?? '', confirmationStep: state.approval?.requestId === message.request_id ? state.approval.confirmationStep + 1 : 1 }
@@ -162,18 +243,18 @@ function applyServerMessageProjection(state: SessionState, message: ServerMessag
   }
   if (message.type === 'question_resolved') return { ...state, question: undefined, status: '回答已提交' }
   if (message.type === 'tool_started') {
-    const activity: ToolActivity = { id: `${message.session_id}:${message.sequence}`, tool: message.tool, status: 'running' }
+    const activity: ToolActivity = { id: `${message.session_id}:${message.sequence}`, tool: message.tool, status: 'running', turnAnchor: state.messages.length }
     return { ...state, toolActivities: [...state.toolActivities, activity].slice(-20) }
   }
   if (message.type === 'tool_progress') {
-    const index = state.toolActivities.findIndex((activity) => activity.tool === message.tool && activity.status === 'running')
+    const index = openToolIndex(state.toolActivities, message.tool)
     if (index < 0) return state
     const toolActivities = [...state.toolActivities]
     toolActivities[index] = { ...toolActivities[index], progress: message.progress.slice(0, 2000) }
     return { ...state, toolActivities }
   }
   if (message.type === 'tool_result') {
-    const index = state.toolActivities.findIndex((activity) => activity.tool === message.tool && activity.status === 'running')
+    const index = openToolIndex(state.toolActivities, message.tool)
     if (index < 0) return state
     const toolActivities = [...state.toolActivities]
     toolActivities[index] = { ...toolActivities[index], status: 'completed', result: message.result.slice(0, 8000) }
@@ -219,14 +300,14 @@ function applyServerMessageProjection(state: SessionState, message: ServerMessag
   if (message.type === 'tui_session_import') return { ...state, tuiImport: { sessionId: message.session_id, cwd: message.cwd, title: message.title, messageCount: message.message_count, sourceUnchanged: message.source_unchanged }, status: `已导入 TUI 会话：${message.session_id}` }
   if (message.type === 'usage') return { ...state, usage: { inputTokens: message.input_tokens, outputTokens: message.output_tokens } }
   if (message.type === 'file_written') {
-    const toolActivities = state.toolActivities.map((activity) => activity.tool === 'workspace.write_file' && activity.status === 'running'
+    const toolActivities = state.toolActivities.map((activity) => activity.tool === 'workspace.write_file' && activity.status !== 'completed'
       ? { ...activity, status: 'completed' as const, result: `已写入 ${message.path}（${message.bytes} 字节）` }
       : activity)
     return { ...state, toolActivities, status: `文件已写入：${message.path}（${message.bytes} 字节）` }
   }
-  if (message.type === 'completed' || message.type === 'cancelled') return { ...state, busy: false }
+  if (message.type === 'completed' || message.type === 'cancelled') return { ...state, busy: false, toolActivities: settleRunningTools(state.toolActivities), turnOutcomes: recordTurnOutcome(state, message.type === 'cancelled' ? 'cancelled' : 'completed') }
   if (message.type === 'error') {
-    if (state.upload && isUploadFailure(message.code ?? '', state.upload.status)) return { ...state, busy: false, upload: { ...state.upload, status: 'failed', error: message.message }, status: '上传失败' }
+    if (state.upload && isUploadFailure(message.code ?? '', state.upload.status)) return { ...state, busy: false, upload: { ...state.upload, status: 'failed', error: message.message }, toolActivities: settleRunningTools(state.toolActivities), turnOutcomes: recordTurnOutcome(state, 'failed'), status: '上传失败' }
     const toolFailure = ['tool_unavailable', 'tool_failed', 'terminal_unavailable', 'terminal_failed', 'git_failed'].includes(message.code ?? '')
     if (state.gitLoading && message.code === 'git_failed') return { ...state, pendingGitOperation: undefined, gitLoading: false, gitError: message.message, status: 'Git 操作失败' }
     if (state.terminalLoading && ['terminal_unavailable', 'terminal_failed'].includes(message.code ?? '')) return { ...state, terminalLoading: false, terminalError: message.message, status: '终端执行失败' }
@@ -234,7 +315,7 @@ function applyServerMessageProjection(state: SessionState, message: ServerMessag
     if (state.fileLoading && !state.filesLoading && !state.searchLoading) return { ...state, fileLoading: false, fileError: message.message, status: '文件读取失败' }
     if (state.searchLoading && !state.filesLoading && !state.fileLoading) return { ...state, searchLoading: false, searchError: message.message, status: '文件搜索失败' }
     if (state.filesLoading || state.fileLoading || state.searchLoading) return { ...state, filesLoading: false, fileLoading: false, searchLoading: false, status: '文件请求失败' }
-    return { ...state, busy: false, status: toolFailure ? '工具执行失败' : '请求错误' }
+    return { ...state, busy: false, toolActivities: settleRunningTools(state.toolActivities), turnOutcomes: recordTurnOutcome(state, 'failed'), status: toolFailure ? '工具执行失败' : '请求错误' }
   }
   return state
 }

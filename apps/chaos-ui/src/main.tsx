@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { createRoot } from 'react-dom/client'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { applyServerMessage, fileChangeAffectsVisibleDirectory, initialSessionState, sessionLossRecoveryMessage, workspaceReconnectMessage, type ServerMessage, type SessionState } from './session'
+import { applyServerMessage, appendLocalPrompt, fileChangeAffectsVisibleDirectory, groupIntoTurns, initialSessionState, sessionLossRecoveryMessage, workspaceReconnectMessage, type ServerMessage, type SessionState, type ToolActivity } from './session'
 import { selectWorkspaceSession } from './workspace-ui'
 import { webSocketUrl } from './transport'
 import { getComposerSuggestions, initialComposerHistory, moveSuggestionIndex, navigatePromptHistory, recordPrompt, shouldSubmitOnKey, type ComposerSuggestion } from './composer'
@@ -32,6 +32,32 @@ function ZCodeWhaleLogo() {
         fill="currentColor"
       />
     </svg>
+  )
+}
+
+/** `unresolved` means the host ended the turn without reporting a result for that tool. */
+const toolStatusLabel: Record<ToolActivity['status'], string> = { running: '执行中', completed: '已完成', unresolved: '未见结果' }
+
+function MarkdownText({ text }: { text: string }) {
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      components={{
+        a: ({ href, children }) => {
+          const safe = safeMarkdownHref(href)
+          return safe ? (
+            <a href={safe.href} target={safe.external ? '_blank' : undefined} rel={safe.external ? 'noopener noreferrer' : undefined}>
+              {children}
+            </a>
+          ) : (
+            <span>{children}</span>
+          )
+        },
+        img: ({ alt }) => <span>{alt}</span>,
+      }}
+    >
+      {text}
+    </ReactMarkdown>
   )
 }
 
@@ -84,12 +110,16 @@ function App() {
   // the slices are on the wire.
   const uploadSourceRef = useRef<(AttachmentSource & { targetPath: string }) | null>(null)
 
-  useEffect(() => { sessionStateRef.current = session }, [session])
-
   // The message handler reads `sessionStateRef`, and a functional `setSession`
   // only reaches that ref after the next render. A host reply that arrives in
   // between would then be applied to a stale state, and its own write would
   // clobber the queued one, so every write goes through here instead.
+  //
+  // The ref is deliberately never written from the rendered state. React commits and
+  // runs its effects in separate steps, and a streamed frame can be handled in
+  // between; copying the just-rendered value back would then rewind the ref past that
+  // frame, and the next frame would be appended to the older text, dropping the
+  // characters in between from the answer for good.
   const updateSession = useCallback((update: (current: SessionState) => SessionState) => {
     const next = update(sessionStateRef.current)
     sessionStateRef.current = next
@@ -287,7 +317,7 @@ function App() {
   }
   function archiveWorkspace(workspaceId: string) {
     updateSession((current) => current.activeWorkspaceId === workspaceId
-      ? { ...current, messages: [], approval: undefined, question: undefined, busy: false, status: '正在归档工作区' }
+      ? { ...current, messages: [], approval: undefined, question: undefined, busy: false, toolActivities: [], turnOutcomes: {}, status: '正在归档工作区' }
       : current)
     send({ type: 'archive_workspace', client_msg_id: crypto.randomUUID(), workspace_id: workspaceId })
   }
@@ -301,7 +331,7 @@ function App() {
         scrollTop: timeline.scrollTop,
       }
     }
-    updateSession((current) => ({ ...current, messages: [...current.messages, { role: 'user', text: value }, { role: 'assistant', text: '' }], busy: true }))
+    updateSession((current) => appendLocalPrompt(current, value))
     setPromptHistory((current) => recordPrompt(current, value))
     setPrompt('')
     setSuggestions([])
@@ -758,84 +788,63 @@ function App() {
               </div>
             )}
 
-            {session.messages.map((message, index) => {
-              const isUser = message.role === 'user'
+            {groupIntoTurns(session).map((turn) => {
+              const label = turn.key < 0 ? '历史' : `第 ${turn.key + 1} 轮`
+              const streaming = turn.outcome === 'streaming'
+              const silentCompletion = turn.outcome === 'completed' && turn.replies.every((reply) => reply.text === '')
               return (
-                <article className={isUser ? 'user' : 'assistant'} key={index}>
-                  <small>{isUser ? '你' : 'Chaos'}</small>
-                  {isUser ? (
-                    <div className="user-bubble markdown-body">
-                      <ReactMarkdown
-                        remarkPlugins={[remarkGfm]}
-                        components={{
-                          a: ({ href, children }) => {
-                            const safe = safeMarkdownHref(href)
-                            return safe ? (
-                              <a href={safe.href} target={safe.external ? '_blank' : undefined} rel={safe.external ? 'noopener noreferrer' : undefined}>
-                                {children}
-                              </a>
-                            ) : (
-                              <span>{children}</span>
-                            )
-                          },
-                          img: ({ alt }) => <span>{alt}</span>,
-                        }}
-                      >
-                        {message.text}
-                      </ReactMarkdown>
-                    </div>
-                  ) : (
-                    <>
-                      {message.text && (
-                        <details className="reasoning-row" open>
-                          <summary className="reasoning-summary">
-                            <span>🧠 思考过程</span>
-                            <span>·</span>
-                            <small>{session.busy ? '正在深度思考…' : '已完成推理'}</small>
-                          </summary>
-                          <div className="reasoning-body">
-                            已分析工作区上下文，规划执行步骤。
-                          </div>
-                        </details>
-                      )}
-                      <div className="markdown-body">
-                        <ReactMarkdown
-                          remarkPlugins={[remarkGfm]}
-                          components={{
-                            a: ({ href, children }) => {
-                              const safe = safeMarkdownHref(href)
-                              return safe ? (
-                                <a href={safe.href} target={safe.external ? '_blank' : undefined} rel={safe.external ? 'noopener noreferrer' : undefined}>
-                                  {children}
-                                </a>
-                              ) : (
-                                <span>{children}</span>
-                              )
-                            },
-                            img: ({ alt }) => <span>{alt}</span>,
-                          }}
-                        >
-                          {message.text || '正在生成…'}
-                        </ReactMarkdown>
+                <section
+                  className="turn"
+                  key={turn.key}
+                  data-turn-key={turn.key}
+                  aria-label={turn.key < 0 ? '恢复的历史消息' : `${label}对话，按当前视图计数`}
+                >
+                  <div className="turn-heading">
+                    <span>{label}</span>
+                    {turn.tools.length > 0 && <small>{turn.tools.length} 个工具调用</small>}
+                  </div>
+                  {turn.prompt && (
+                    <article className="user">
+                      <small>你</small>
+                      <div className="user-bubble markdown-body">
+                        <MarkdownText text={turn.prompt.text} />
                       </div>
-                    </>
+                    </article>
                   )}
-                </article>
+                  {/* The host starts a tool before it answers, so the cards come
+                      before the reply they fed rather than after it. */}
+                  {turn.tools.length > 0 && (
+                    <ol className="tool-activity-list" aria-label={`${label}工具活动`}>
+                      {turn.tools.map((activity) => (
+                        <li key={activity.id} className="tool-activity" data-status={activity.status} aria-label={`工具 ${activity.tool} ${toolStatusLabel[activity.status]}`}>
+                          <strong>{activity.tool}</strong>
+                          <span>{toolStatusLabel[activity.status]}</span>
+                          {activity.progress && <p>{activity.progress}</p>}
+                          {activity.result && <pre>{activity.result}</pre>}
+                        </li>
+                      ))}
+                    </ol>
+                  )}
+                  {turn.replies.map((message, index) => {
+                    // The placeholder the send left behind only means "still
+                    // generating" while the host is still answering this turn.
+                    const text = message.text || (streaming && index === turn.replies.length - 1 ? '正在生成…' : '')
+                    if (!text) return null
+                    return (
+                      <article className="assistant" key={index}>
+                        <small>Chaos</small>
+                        <div className="markdown-body">
+                          <MarkdownText text={text} />
+                        </div>
+                      </article>
+                    )
+                  })}
+                  {turn.outcome === 'cancelled' && <p className="turn-outcome">本轮已取消。</p>}
+                  {turn.outcome === 'failed' && <p className="turn-outcome">本轮未完成，原因见状态栏。</p>}
+                  {silentCompletion && <p className="turn-outcome">本轮没有产生文本输出。</p>}
+                </section>
               )
             })}
-
-            {session.toolActivities.length > 0 && (
-              <ol className="tool-activity-list" aria-label="工具执行活动">
-                {session.toolActivities.map((activity) => (
-                  <li key={activity.id} className="tool-activity" aria-label={`工具 ${activity.tool} ${activity.status === 'running' ? '执行中' : '已完成'}`}>
-                    <strong>{activity.tool}</strong>
-                    <span>{activity.status === 'running' ? '执行中' : '已完成'}</span>
-                    {activity.progress && <p>{activity.progress}</p>}
-                    {activity.result && <pre>{activity.result}</pre>}
-                  </li>
-                ))}
-              </ol>
-            )}
 
             {session.approval && activeTab === 'chat' && (
               <article className="approval" aria-label="工具审批" data-request-id={session.approval.requestId}>

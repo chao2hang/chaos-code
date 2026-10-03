@@ -2,6 +2,99 @@
 
 ## Unreleased
 
+### 修复：流式回答会自己吞掉中间一段——ref 被「刚渲染的值」回抄，下一帧于是接在被回退的文本后面
+
+症状是答案看着在动，最后一帧落定却少了中间一截，而且**没有任何报错**。引擎对没有 adapter 的裸 prompt 固定回
+`演示响应：<prompt>`，按 `DELTA_SIZE = 8` 切片（`crates/codegen/chaos-engine/src/lib.rs:20`），所以丢的总是
+整齐的 8 字节倍数。这把传输与解析排除在外，指向状态写入本身。给 21 次写入插桩后形状很清楚：第 19 次还是
+`assistant:43`，紧接着 `completed` 读到的 base 却是 `assistant:2`——终结事件竟然看见一条 2 个字的回答。
+
+**两份真相是根因，而这次被咬的是流式路径。** `main.tsx` 的消息处理器读 `sessionStateRef.current`；
+`updateSession()`（上一轮为上传引入）在同一次调用里推进 ref 与 React 状态。但文件里还留着一行
+`useEffect(() => { sessionStateRef.current = session }, [session])`，负责把渲染后的值抄回 ref。React 的 commit
+与 effect 分两步跑，一帧 `text_delta` 可以正好插在两步之间：effect 于是把**上一帧的**值写回 ref，下一帧读到旧
+状态、把文本接到被回退的 base 之后，中间那段永久消失。修法不是给流式路径加补偿，而是删掉那行 effect——ref
+从此只有一个写入方，注释里写明白为什么这里绝不能从渲染状态回写。
+
+**期望值是算出来的，不是抄渲染结果。** `apps/chaos-ui/e2e/streaming-integrity.pw.ts` 发一条
+`'integrity probe paragraph 0123456789 '.repeat(16)`（约 960 字节，按 8 字节切约 120 帧），逐字断言最终等于
+`演示响应：${prompt}`；一帧只丢 8 字节，任何一次 ref 回退都会留下可见空洞。另有两个机制保证这不是「跑得快来
+不及撞」：`paceStreamedFrames()` 用 `routeWebSocket` 转发 `text_delta`，每帧在独立任务里到达，帧与帧之间必然
+插入渲染与 effect；`forceLayoutOnEveryMutation()` 用 document 级 MutationObserver 在回调里读
+`getBoundingClientRect().height`，把「渲染后才回抄」所需的强制布局也制造出来。第 2 例额外做一次真实 socket 断
+开重连（等 `历史已恢复`）再走同样的逐字比对。改前 4 轮 × 4 failed，空洞形如
+`Received: "演示obe paragraph 0123456789 …"`（开头只剩 `演示`，后面接回中段）；改后 4 轮 × 4 passed；把那行
+effect 原样加回去（测试文件一字未改）4 例全红——这就是非空洞性证明。同一棵树上 `reconnect-snapshot` 连跑 8 轮
+× 6 条全绿，全套 e2e **57 passed (1.6m)**、vitest 9 文件 **99 passed**、`npm run typecheck` 干净。全记录见
+`docs/verification/streamed-text-loss-2026-10-03.log`。（2026-10-03；`apps/chaos-ui/src/main.tsx`、
+`apps/chaos-ui/e2e/streaming-integrity.pw.ts`、`apps/chaos-ui/playwright.config.ts`）
+
+### 改进：时间线第一次按「轮」组织；工具卡片不再永远冻在「执行中」，写死的「🧠 思考过程」被删掉
+
+之前的转录本是**平铺**的：一条 prompt 拉回的回答与别的轮次的工具卡片混在同一条流里，读者无法判断哪张卡片属于
+哪次提问。协议里也没有任何轮次 id，`tool_started` 到达时手头的只有已经投影出的消息。归属因此反着推：
+`liveTurnKey()` 按「此刻转录本里已有几条 `user` 消息」给卡片盖上 `turnAnchor`，`groupIntoTurns()` 再用同一个
+函数对前缀求值找回它属于哪一轮。不依赖跨投影的序号，所以 `session_snapshot` 恢复历史之后归属仍然自洽。轮次结局
+（`streaming`/`completed`/`cancelled`/`failed`）按 key 存档在 `turnOutcomes`，切 workspace/session 与快照替换时
+一并重建。
+
+**「执行中」冻住是另一件事，而且比分组更早被用户看见。** host 有时只发 `tool_started` 就收尾——`/approve-tool`
+这条 demo 路径正是如此（它发 `approval_resolved` + `tool_started` + 一条 `error tool_unavailable`，从不发
+`tool_result`）。卡片于是永远写着「执行中」，把「我们没拿到结果」显示成「还在跑」。新状态 `unresolved`（「未见
+结果」，`--dsw-alias-state-error` 色）由 `settleRunningTools()` 在四个终态写入点统一结算：`completed`、
+`cancelled`、上传失败、请求错误。`openToolIndex()` 认 `running` 与 `unresolved` 两种，所以迟到的
+`tool_result` 仍能把已经标成「未见结果」的卡片改回「已完成」——结算不是终局判决。
+
+**删掉的是伪造，不是待办。** 每条回答上面原来无条件渲染一个 `<details>`「🧠 思考过程 / 已分析工作区上下文，规
+划执行步骤。」，而协议里根本没有推理事件（`TimelineMessage = {role, text}`，事件只有 `tool_started`/
+`tool_progress`/`tool_result`）。它是写死的装饰文案，会让用户以为模型展示了真实思考。它连同 4 条 `.reasoning-*`
+样式一起删除；真正的待办是等协议里有推理事件时再渲染它。同样按「只标注 host 真发过的东西」重写的还有轮次结局
+文案（`本轮已取消。`/`本轮未完成，原因见状态栏。`/`本轮没有产生文本输出。`）与 `正在生成…` 占位符——占位符只
+在本轮仍在 `streaming` 且是最后一条回答时出现，不再把空回答永久显示成占位文案。轮内块顺序也翻正为 prompt →
+工具 → 回答（host 先起工具再回答）。
+
+**验证**：reducer 侧 `turn grouping` 7 例 + `tool activity settlement` 7 例全部经由真实 `applyServerMessage`
+喂事件（vitest **99 passed**）。16 条单点变异：轮次那 8 条（锚点不算、`cancelled` 不记结局、key 偏一、不留占
+位、`streaming` 不标、结局一律记到 `-1`、快照保留旧结局、切工作区保留旧结局）被抓 1/3/6/2/1/4/1/1 条；结算那
+8 条被抓 4/5/4/1/1/1/1 条，其中把「未见结果」文案改成「已完成」这一条 **vitest 99 全绿、只有浏览器抓得住**
+（4 failed）——单测与 e2e 的分工在这里是实测出来的，不是设计出来的。`e2e/turn-grouping.pw.ts` 两例 × 两个视
+口：第 1 例用真实 `chaos-web` 驱动第 1 轮提问、`/approve-tool` 点「允许」、第 3 轮提问，断言 `data-turn-key`
+序列、`第 N 轮`、`1 个工具调用`、卡片留在启动它的那一轮、`未见结果` 计数 1 且 `执行中` 计数 0、`.reasoning-row`
+与「已分析工作区上下文」计数为 0，并在分组后的时间线上跑 axe 全量扫描（violations 为空）；第 2 例换 fixture
+socket 才能构造出 host 构造不了的形状（三种结局、未结算卡片迟到的 `tool_result`、`blockOrder == ['tool',
+'answer']`）。全记录见 `docs/verification/turn-grouping-2026-10-03.log`。（2026-10-03；
+`apps/chaos-ui/src/session.ts`、`src/session.test.ts`、`src/main.tsx`、`src/style.css`、`src/workspace-ui.ts`、
+`e2e/turn-grouping.pw.ts`、`playwright.config.ts`）
+
+### 修复：390px 下最后两个标签根本够不到；desktop 的面包屑则是从字符中间被硬切
+
+发现它靠的是截图不是断言：390×844 的对话页头部标签条伸出视口右缘，正文从左边被切掉一截。量一遍「谁的
+`scrollWidth` 大于 `clientWidth`」定位到三个宽度里只有 390 有 offender：`div.center-col 508>390`、
+`header.conversation-header 508>390`、`div.header-breadcrumbs 231>0`。关键在 `.center-col { overflow: hidden }`
+——这不是「可以滚动但要手势」，而是**溢出部分根本不存在**，7 个标签加面包屑需要 508px，多出的约 118px（大致是
+`插件`/`差异` 两个标签）在手机上没有任何方式够得到。同一条探针顺手在 desktop 1440×1000 上暴露了第二处：
+`div.header-breadcrumbs 252<293`——它写着 `text-overflow: ellipsis`，但那是个 flex 容器，这条属性对 flex 子项不生
+效，于是既没省略号也没滚动条，长工作区名把会话 ID 从中间硬切断。
+
+窄屏改为隐藏本就被压到 0 宽的面包屑、让标签条自己横向滚动（隐藏滚动条外观），并把真正的截断放到会变长的
+`.header-breadcrumbs strong`（工作区名）上，容器加 `min-width: 0`、分支徽标加 `flex-shrink: 0` 不参与收缩。
+
+**新增的断言里，逐个点击 7 个标签不是重点。** 浏览器**能**程序化滚动 `overflow: hidden` 的盒子，所以点击自己
+永远会命中被裁掉的标签——那条循环结构上抓不到这个缺陷。真正承重的是它之后那次 DOM 遍历（深度 12）：把
+`scrollWidth - clientWidth > 1` 且 `overflow-x` 既非 `auto` 也非 `scroll`、`text-overflow` 也不是 `ellipsis`
+的元素记为 offender。删掉那段窄屏规则，mobile 立刻红并报出 `div.center-col 390<508`、
+`header.conversation-header 390<508`；省略号这条豁免是必需的，否则第 2 节刚做好的**有意**截断会被自己判成缺陷。
+
+**顺带纠出一条测试的度量错误。** 同文件里「阅读位置保持」那条在窄屏上 8 轮红 6 轮，恒为 `Received: 32`。
+bisect 到 HEAD 的 `style.css` 就全绿，说明是本轮 CSS 让内容变高触发的；但直接测时间线证明锚点没坏
+（`scrollTop` 两次都是 0、`firstUserOffset` 两次都是 106），真正移动的是外层 `.shell`——窄屏下 `.shell` 变成
+`overflow-y: auto` 的列，`scrollHeight` 1344 对 `clientHeight` 844，点发送让整列上移 32px。断言改用
+`closest('[data-testid="session-timeline"]')` 内部度量位置并一并断言 `scrollTop`，视口绝对坐标不再被拿来当锚点
+证据；改完仍抓得住真缺陷（把 `timeline.scrollTop = timeline.scrollHeight` 无条件执行 → 2 failed，报
+`- "offset": 54,`）。手机整页滚动这件事本身没修（那要改手机导航形态），已单独立为 `TODO.md` 一行。全记录见
+`docs/verification/narrow-header-clip-2026-10-03.log`。（2026-10-03；`apps/chaos-ui/src/style.css`、
+`apps/chaos-ui/e2e/workspace-flow.pw.ts`）
+
 ### 修复：关闭 PTY 时先松开终端、后发挂断，shell 于是走 EOF 路径 `exit 0`，把后台 job 永远留在世上
 
 `pty_session::tests::close_pty_kills_a_background_grandchild` 在 run `37091358203`（commit `6b8b3dad`）

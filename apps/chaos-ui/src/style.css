@@ -457,20 +457,29 @@ html, body {
   gap: 8px;
   font-size: 13.5px;
   color: var(--dsw-alias-label-secondary);
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+/* Only the workspace name is variable-length. `text-overflow` on the flex container
+   above renders no ellipsis at all, so a long name used to cut the session id off
+   mid-word; truncating the name itself keeps the branch pill and session id intact. */
 .header-breadcrumbs strong {
   color: var(--dsw-alias-label-primary);
   font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .header-branch-pill {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  flex-shrink: 0;
   background: var(--dsw-alias-bg-layer-2);
   border: 1px solid var(--dsw-alias-border-l2);
   border-radius: 12px;
@@ -652,39 +661,28 @@ article.assistant small {
   display: none;
 }
 
-/* Reasoning Disclosure Row (ZCode ReasoningRow) */
-.reasoning-row {
+/* Turn Grouping (one prompt, the replies it produced, the tools it ran) */
+.turn {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
   width: 100%;
-  margin-bottom: 6px;
 }
 
-.reasoning-summary {
-  display: inline-flex;
+.turn-heading {
+  display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  color: var(--dsw-alias-label-tertiary);
-  cursor: pointer;
-  user-select: none;
-  padding: 4px 8px;
-  border-radius: 6px;
-  transition: background 0.15s ease;
-}
-
-.reasoning-summary:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
-  color: var(--dsw-alias-label-secondary);
-}
-
-.reasoning-body {
-  margin-top: 6px;
-  padding: 8px 12px;
-  border-left: 2px solid var(--dsw-alias-border-l3);
+  gap: 8px;
   font-size: 13px;
   line-height: 20px;
   color: var(--dsw-alias-label-tertiary);
-  background: var(--dsw-alias-bg-layer-2);
-  border-radius: 0 8px 8px 0;
+}
+
+.turn-outcome {
+  margin: 0;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--dsw-alias-label-tertiary);
 }
 
 /* Markdown Rendering */
@@ -777,6 +775,12 @@ article.assistant small {
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
+
+/* The status word is the only thing distinguishing a tool that is still going, one
+   that answered, and one whose turn ended first, so it carries the state colour. */
+.tool-activity[data-status='running'] > span { color: var(--dsw-alias-state-business-primary); }
+.tool-activity[data-status='completed'] > span { color: var(--dsw-alias-state-success); }
+.tool-activity[data-status='unresolved'] > span { color: var(--dsw-alias-state-error); }
 
 /* Approval & Questions Takeover Cards (ZCode ApprovalCommand) */
 article.approval {
@@ -1467,6 +1471,26 @@ article.approval button:first-child {
     position: sticky;
     top: 0;
     z-index: 200;
+  }
+  /* Seven tabs plus the breadcrumb path need 508px, and `.center-col` clips with
+     `overflow: hidden`, so the last tabs were cut off with no scrollbar to reach
+     them. The breadcrumb is already squeezed to zero width here; dropping it and
+     letting the tab strip scroll keeps every tab reachable. */
+  .conversation-header {
+    padding: 0 12px;
+    gap: 8px;
+  }
+  .header-breadcrumbs {
+    display: none;
+  }
+  .header-right-tools {
+    flex-shrink: 1;
+    min-width: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .header-right-tools::-webkit-scrollbar {
+    display: none;
   }
   .rightbar-header {
     position: relative;

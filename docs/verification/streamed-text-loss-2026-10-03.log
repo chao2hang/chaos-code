@@ -1,0 +1,192 @@
+流式回答会静默少掉中间一段：把渲染后的 state 抄回 ref 的那一行，是丢字的源头
+================================================================================
+
+日期：2026-10-03
+提交：本轮（`apps/chaos-ui/src/main.tsx` 状态写入改为单一入口 `updateSession`，新增 `e2e/streaming-integrity.pw.ts`，`playwright.config.ts` 三处 `testMatch` 收录）
+被记录的对象：
+  apps/chaos-ui/src/main.tsx                     删掉 `useEffect(() => { sessionStateRef.current = session }, [session])`，所有写入改走 `updateSession`
+  apps/chaos-ui/e2e/streaming-integrity.pw.ts    新增 107 行 / 2 例（两个视口共 4 次运行）
+  apps/chaos-ui/playwright.config.ts             `testMatch` 三处收录新文件
+  crates/codegen/chaos-engine/src/lib.rs         未改动，只是被引用：`DELTA_SIZE = 8`（第 20 行）、`bounded_text_chunks(text, DELTA_SIZE)`（第 430 / 2155 行）
+
+本文件自包含：每段输出都从当轮真实运行里逐字抄下，命令写在 `$` 行上。
+
+
+第 1 节  现象：答案是「跳着」长出来的
+--------------------------------------
+
+线索不是新写的测试，而是既有那条 `e2e/reconnect-snapshot.pw.ts`。它在 `sendPrompt` 里断言最后一条
+assistant 段落包含本轮 marker，失败的形状一直是对不完整的字符串：
+
+    Received string: "演示"
+    Received string: "演示响应ker murz6nmw"
+    Received string: "演示响应：recon"
+
+三条都满足「以 `演示` 开头」和「以 marker 的尾巴结尾」，中间缺一段。也就是说：不是丢帧，也不是渲染
+没跑完，而是**同一条回答的中间一段被后来的写入覆盖了**。前端拿到的是完整事件流，页面上却没有。
+
+这条测试此前被当作「偶发」放过。把它当偶发是错的：后面量出来的失败率是每 5 轮红 3 轮。
+
+
+第 2 节  定位：ref 被回退，且回退时没有任何一次「写入」被记录
+--------------------------------------------------------------
+
+先在页面里把每一次状态写入和每一次渲染都记下来（`window.__traceStore`，只在一次性探针里存在，
+未进入仓库）。`user:38|assistant:43` 表示「用户消息共 38 字、当前那条 assistant 共 43 字」。
+
+    writes: 21
+    {'tag': 'ws:text_delta', 'base': 'user:38|assistant:0',  'after': 'user:38|assistant:2'}
+    {'tag': 'ws:text_delta', 'base': 'user:38|assistant:2',  'after': 'user:38|assistant:4'}
+    {'tag': 'ws:text_delta', 'base': 'user:38|assistant:4',  'after': 'user:38|assistant:10'}
+    {'tag': 'ws:text_delta', 'base': 'user:38|assistant:10', 'after': 'user:38|assistant:18'}
+    {'tag': 'ws:text_delta', 'base': 'user:38|assistant:18', 'after': 'user:38|assistant:26'}
+    {'tag': 'ws:text_delta', 'base': 'user:38|assistant:26', 'after': 'user:38|assistant:34'}
+    {'tag': 'ws:text_delta', 'base': 'user:38|assistant:34', 'after': 'user:38|assistant:42'}
+    {'tag': 'ws:text_delta', 'base': 'user:38|assistant:42', 'after': 'user:38|assistant:43'}
+    {'tag': 'ws:completed',  'base': 'user:38|assistant:2',  'after': 'user:38|assistant:2'}
+    renders last5: ['user:38|assistant:0', 'user:38|assistant:0', 'user:38|assistant:2', 'user:38|assistant:43', 'user:38|assistant:2']
+
+三个事实同时成立：
+
+* 增量确实是 8 字节一跳（`+2` 是 marker 对齐剩下的头两条），与引擎的 `DELTA_SIZE = 8` 对得上：
+
+      $ grep -n 'DELTA_SIZE' crates/codegen/chaos-engine/src/lib.rs | head -3
+      20:const DELTA_SIZE: usize = 8;
+      430:        Ok(bounded_text_chunks(text, DELTA_SIZE))
+      2155:                                DELTA_SIZE,
+
+* 页面侧 `onmessage` 一帧都没少收，`boots: 1`（没有重载、没有第二条 socket）。
+* 倒数第二次写入把 ref 推到 43，而下一次写入的 base 是 2。**两次写入之间没有任何被记录的写入**，
+  但渲染列表里正好有一次 `assistant:2` 排在 `assistant:43` 之后。
+
+把这三条并起来只有一种解释：`main.tsx` 里那行
+
+    useEffect(() => { sessionStateRef.current = session }, [session])
+
+React 的 commit 与 effect 是两步。中间那一步里 `ws.onmessage` 完全可以被调用，它读 ref、算出更长的
+文本、写进 ref；随后这一次渲染对应的 effect 才运行，把**上一次渲染的旧 state** 抄回 ref。ref 于是
+回退到 `assistant:2`，下一帧 `text_delta` 便接到 2 字后面，43 与 2 之间那段字符永久消失。
+
+`reconnect-snapshot` 失败率高，也正是因为它比一般测试更容易命中这个窗口：每轮 marker 更长，帧数更多。
+
+
+第 3 节  修法：状态只有一个写入口
+----------------------------------
+
+`main.tsx` 现在只允许经由 `updateSession` 写状态，ref 永不从渲染结果反推：
+
+    // The message handler reads `sessionStateRef`, and a functional `setSession`
+    // only reaches that ref after the next render. A host reply that arrives in
+    // between would then be applied to a stale state, and its own write would
+    // clobber the queued one, so every write goes through here instead.
+    //
+    // The ref is deliberately never written from the rendered state. React commits and
+    // runs its effects in separate steps, and a streamed frame can be handled in
+    // between; copying the just-rendered value back would then rewind the ref past that
+    // frame, and the next frame would be appended to the older text, dropping the
+    // characters in between from the answer for good.
+    const updateSession = useCallback((update: (current: SessionState) => SessionState) => {
+      const next = update(sessionStateRef.current)
+      sessionStateRef.current = next
+      setSession(next)
+    }, [])
+
+socket 的 `onmessage` 走同一条路（它本来就是先算 `next` 再同时写 ref 与 state），差别只在于现在没有任何
+旁路会把 ref 拉回去。
+
+
+第 4 节  新测试怎么把它钉住
+---------------------------
+
+`e2e/streaming-integrity.pw.ts` 用真实 `chaos-web` + Vite `/ws` 代理，发一条已知文本的 prompt——引擎对
+无 adapter 的裸 prompt 固定回 `演示响应：<prompt>`，所以期望值是**算出来的**，不是抄渲染结果：
+
+    const BODY = 'integrity probe paragraph 0123456789 '.repeat(16)
+    ...
+    await expect.poll(() => renderedAnswer(page), { timeout: 20_000 }).toBe(`演示响应：${prompt}`)
+
+`BODY` 长约 960 字节，按 8 字节切约 120 帧；一帧只丢 8 字节，任何一次 ref 回退都会留下可见空洞。
+两个额外机制保证它不是「跑得快就没撞上」：
+
+* `paceStreamedFrames(page)`：用 `routeWebSocket` 代理转发 `text_delta`，每帧 `setTimeout(..., 1)`
+  让它在独立任务里到达，帧与帧之间必然插入渲染与 effect；
+* `forceLayoutOnEveryMutation(page)`：document 级 MutationObserver 在回调里读
+  `getBoundingClientRect().height` 与 `textContent.length`，把「渲染后才回抄」这条路径需要的
+  强制布局也制造出来。
+
+第 2 例额外做一次真实 socket 断开重连（等 `历史已恢复`），再走同样的逐字比对。
+
+
+第 5 节  红与绿
+---------------
+
+修改前（工作区仍带着那行 effect，新测试已就位），跑 4 轮：
+
+    $ for i in 1 2 3 4; do npm run test:e2e -- streaming-integrity > si-$i.log 2>&1; done
+    si-1.log: 4 failed
+    si-2.log: 4 failed
+    si-3.log: 4 failed
+    si-4.log: 4 failed
+
+失败输出里的空洞（逐字抄自 si-pre-1.log，只截断长度）：
+
+    Expected: "演示响应：integrity probe paragraph 0123456789 integrity probe paragraph 0123456789 ...
+    Received: "演示obe paragraph 0123456789 integrity probe paragraph 0123456789 ...
+
+开头只剩 `演示`，后面接回中段——与第 2 节 trace 的形状一致（base 被回退成 2 字）。另一种形状是中间断一截：
+
+    Received: "...integrity probe p paragraph 0123456789 integrity probe paragraph 0123456789 int...
+
+修改后同样 4 轮：
+
+    si-post-1.log: 4 passed
+    si-post-2.log: 4 passed
+    si-post-3.log: 4 passed
+    si-post-4.log: 4 passed
+
+再把那行 effect 原样加回去（只加这一行，测试文件一字未改），4 例全部回红：
+
+    $ npm run test:e2e -- streaming-integrity > mut-ref-rewind.log 2>&1; echo $?
+    1
+    4 failed
+    Received: "演示789 integrity probe paragraph 0123456789 ...
+    Received: "演示响应：integrity probe paragraph 012e paragraph 0123456789 ...
+
+这条就是它的非空性证明：测试红不是因为环境，而是因为那行代码。
+
+
+第 6 节  既有测试在同一棵树上的表现
+----------------------------------
+
+被这条缺陷拖累的那条测试，在修好的树上连续 8 轮全绿（每轮 6 例：3 例 × desktop/mobile 两个视口）：
+
+    $ for i in 1 2 3 4 5 6 7 8; do npm run test:e2e -- reconnect-snapshot; done
+    iter1 rc=0 6 passed
+    iter2 rc=0 6 passed
+    iter3 rc=0 6 passed
+    iter4 rc=0 6 passed
+    iter5 rc=0 6 passed
+    iter6 rc=0 6 passed
+    iter7 rc=0 6 passed
+    iter8 rc=0 6 passed
+
+整套 Playwright（57 例，desktop 1440×1000、mobile 390×844、observer-browser 三个 project）：
+
+    $ npm run test:e2e
+      57 passed (1.6m)
+
+`npm run typecheck` 无输出通过；`npx vitest run` 9 文件 99 例全绿（reducer 层的写入语义另有
+`turn grouping` / `tool activity settlement` 两组共 14 例覆盖，见同日的轮次分组记录）。
+
+
+第 7 节  这份记录不是什么
+------------------------
+
+* 它不是对 React 调度模型的证明。这里确立的是「ref 不被渲染结果回写」这条本地不变式，以及它对
+  流式拼接的可观察后果；React 何时运行 effect、是否会以别的顺序提交，没有在本仓库里被断言。
+* 它只覆盖 `text_delta` 拼接这一条链路。`tool_progress` / `tool_result` 的截断字段、
+  `session_snapshot` 恢复出来的历史文本，未在本文件中被逐字比对。
+* 帧间隔由测试用 `setTimeout(..., 1)` 拉开，是**放大**窗口而不是复现真实 provider 的到达节奏；
+  真实 provider 的流控、TCP 分片与 Web host 的写缓冲合并都没有被模拟。
+* 没有做性能测量：改成单一写入口后每秒渲染次数与长对话内存都没有量化数据。
+* 修复前的失败率（5 轮红 3）来自当时的手工记录，样本小；本节给出的 4 红 / 4 绿 / 8 绿才是本轮计数。

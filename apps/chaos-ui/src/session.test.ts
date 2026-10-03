@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { applyServerMessage, fileChangeAffectsVisibleDirectory, initialSessionState, sessionLossRecoveryMessage, workspaceReconnectMessage } from './session'
-import { NIL_WORKSPACE_ID } from './workspace-ui'
+import { applyServerMessage, appendLocalPrompt, fileChangeAffectsVisibleDirectory, groupIntoTurns, initialSessionState, liveTurnKey, sessionLossRecoveryMessage, workspaceReconnectMessage } from './session'
+import { NIL_WORKSPACE_ID, selectWorkspaceSession } from './workspace-ui'
 import type { HostInfo } from './generated/protocol'
 
 describe('session event projection', () => {
@@ -172,7 +172,7 @@ describe('session event projection', () => {
   it('completes workspace write activity when the backend confirms bytes written', () => {
     const running = applyServerMessage(initialSessionState, { type: 'tool_started', session_id: 's1', tool: 'workspace.write_file', sequence: 1 })
     const written = applyServerMessage(running, { type: 'file_written', session_id: 's1', path: 'nested/needle.txt', bytes: 34 })
-    expect(written.toolActivities).toEqual([{ id: 's1:1', tool: 'workspace.write_file', status: 'completed', result: '已写入 nested/needle.txt（34 字节）' }])
+    expect(written.toolActivities).toEqual([{ id: 's1:1', tool: 'workspace.write_file', status: 'completed', result: '已写入 nested/needle.txt（34 字节）', turnAnchor: 0 }])
   })
 
   it('projects bounded Git and terminal loading errors and clears them on success', () => {
@@ -417,5 +417,148 @@ describe('host self-report', () => {
 
   it('starts with no report so the panel cannot describe a host it never asked', () => {
     expect(initialSessionState.hostInfo).toBeUndefined()
+  })
+})
+
+describe('turn grouping', () => {
+  const session = applyServerMessage(initialSessionState, { type: 'session_created', session_id: 's1', workspace_id: 'w1' })
+
+  it('opens a turn at the prompt the user just sent', () => {
+    const sent = appendLocalPrompt(session, '列出根目录')
+    expect(sent.busy).toBe(true)
+    expect(sent.messages).toEqual([{ role: 'user', text: '列出根目录' }, { role: 'assistant', text: '' }])
+    expect(liveTurnKey(sent.messages)).toBe(0)
+  })
+
+  it('keeps the tools of each turn inside the turn that started them', () => {
+    let state = appendLocalPrompt(session, '第一轮问题')
+    state = applyServerMessage(state, { type: 'text_delta', session_id: 's1', sequence: 1, text: '第一轮回答' })
+    state = applyServerMessage(state, { type: 'tool_started', session_id: 's1', tool: 'fixture.read', sequence: 2 })
+    state = applyServerMessage(state, { type: 'tool_result', session_id: 's1', tool: 'fixture.read', result: '一', sequence: 3 })
+    state = applyServerMessage(state, { type: 'completed', session_id: 's1', sequence: 4 })
+
+    state = appendLocalPrompt(state, '第二轮问题')
+    state = applyServerMessage(state, { type: 'text_delta', session_id: 's1', sequence: 5, text: '第二轮回答' })
+    state = applyServerMessage(state, { type: 'tool_started', session_id: 's1', tool: 'fixture.write', sequence: 6 })
+    state = applyServerMessage(state, { type: 'completed', session_id: 's1', sequence: 7 })
+
+    const turns = groupIntoTurns(state)
+    expect(turns.map((turn) => turn.key)).toEqual([0, 1])
+    expect(turns[0].prompt?.text).toBe('第一轮问题')
+    expect(turns[0].replies).toEqual([{ role: 'assistant', text: '第一轮回答' }])
+    expect(turns[0].tools.map((tool) => tool.tool)).toEqual(['fixture.read'])
+    expect(turns[1].prompt?.text).toBe('第二轮问题')
+    expect(turns[1].tools.map((tool) => tool.tool)).toEqual(['fixture.write'])
+    expect(turns.map((turn) => turn.outcome)).toEqual(['completed', 'completed'])
+  })
+
+  it('labels only the turn that actually ended', () => {
+    let state = appendLocalPrompt(session, '会完成的轮')
+    state = applyServerMessage(state, { type: 'text_delta', session_id: 's1', sequence: 1, text: '答案' })
+    state = applyServerMessage(state, { type: 'completed', session_id: 's1', sequence: 2 })
+    state = appendLocalPrompt(state, '会取消的轮')
+    expect(groupIntoTurns(state).map((turn) => turn.outcome)).toEqual(['completed', 'streaming'])
+
+    state = applyServerMessage(state, { type: 'cancelled', session_id: 's1', sequence: 3 })
+    expect(groupIntoTurns(state).map((turn) => turn.outcome)).toEqual(['completed', 'cancelled'])
+  })
+
+  it('marks the turn failed when the host refuses it', () => {
+    let state = appendLocalPrompt(session, '触发失败')
+    state = applyServerMessage(state, { type: 'error', code: 'tool_unavailable', message: '没有配置获准的工具 adapter' })
+    const turns = groupIntoTurns(state)
+    expect(turns).toHaveLength(1)
+    expect(turns[0].outcome).toBe('failed')
+    expect(turns[0].replies).toEqual([{ role: 'assistant', text: '' }])
+  })
+
+  it('drops turn outcomes a reconnect could not have witnessed', () => {
+    const cancelled = applyServerMessage(applyServerMessage(session, { type: 'cancelled', session_id: 's1', sequence: 9 }), { type: 'text_delta', session_id: 's1', sequence: 10, text: 'x' })
+    expect(cancelled.turnOutcomes).toEqual({ '-1': 'cancelled' })
+    const restored = applyServerMessage(cancelled, {
+      type: 'session_snapshot', session_id: 's1', workspace_id: 'w1', sequence: 11,
+      messages: [{ role: 'user', text: '历史提问' }, { role: 'assistant', text: '历史回答' }, { role: 'user', text: '待答提问' }],
+      pending_approval: null, pending_question: null,
+    })
+    expect(restored.turnOutcomes).toEqual({})
+    const turns = groupIntoTurns(restored)
+    expect(turns.map((turn) => turn.key)).toEqual([0, 1])
+    expect(turns.map((turn) => turn.outcome)).toEqual([undefined, undefined])
+    expect(turns[0].replies).toEqual([{ role: 'assistant', text: '历史回答' }])
+  })
+
+  it('files activity with the restored history when nothing was prompted in this view', () => {
+    let state = applyServerMessage(session, { type: 'text_delta', session_id: 's1', sequence: 1, text: '恢复后的第一条' })
+    state = applyServerMessage(state, { type: 'tool_started', session_id: 's1', tool: 'fixture.resume', sequence: 2 })
+    const turns = groupIntoTurns(state)
+    expect(turns).toHaveLength(1)
+    expect(turns[0].key).toBe(-1)
+    expect(turns[0].prompt).toBeNull()
+    expect(turns[0].replies).toEqual([{ role: 'assistant', text: '恢复后的第一条' }])
+    expect(turns[0].tools.map((tool) => tool.tool)).toEqual(['fixture.resume'])
+  })
+
+  it('clears turn outcomes when the transcript is replaced', () => {
+    const cancelled = applyServerMessage(appendLocalPrompt(session, '取消这条'), { type: 'cancelled', session_id: 's1', sequence: 1 })
+    expect(groupIntoTurns(cancelled)[0].outcome).toBe('cancelled')
+    expect(applyServerMessage(cancelled, { type: 'session_created', session_id: 's2', workspace_id: 'w1' }).turnOutcomes).toEqual({})
+    expect(selectWorkspaceSession({ ...cancelled, workspaces: [{ id: 'w2', name: '另一个', archived: false, last_used_sequence: 1, last_session_id: null }], workspaceSessions: { w2: 's9' } }, 'w2').turnOutcomes).toEqual({})
+  })
+})
+
+describe('tool activity settlement', () => {
+  const session = applyServerMessage(initialSessionState, { type: 'session_created', session_id: 's1', workspace_id: 'w1' })
+  const started = applyServerMessage(appendLocalPrompt(session, '写一个文件'), { type: 'tool_started', session_id: 's1', tool: 'demo.tool', sequence: 1 })
+
+  it('stops claiming a tool is running once the host ends the turn without a result', () => {
+    const ended = applyServerMessage(started, { type: 'completed', session_id: 's1', sequence: 2 })
+    expect(ended.toolActivities.map((activity) => activity.status)).toEqual(['unresolved'])
+    expect(groupIntoTurns(ended)[0].tools.map((tool) => tool.status)).toEqual(['unresolved'])
+  })
+
+  it('settles the tool on the paths that end a turn early', () => {
+    const failed = applyServerMessage(started, { type: 'error', code: 'tool_unavailable', message: '没有配置获准的工具 adapter' })
+    expect(failed.toolActivities.map((activity) => activity.status)).toEqual(['unresolved'])
+    expect(failed.status).toBe('工具执行失败')
+    const cancelled = applyServerMessage(started, { type: 'cancelled', session_id: 's1', sequence: 2 })
+    expect(cancelled.toolActivities.map((activity) => activity.status)).toEqual(['unresolved'])
+  })
+
+  it('leaves a tool that did report a result looking completed', () => {
+    const answered = applyServerMessage(started, { type: 'tool_result', session_id: 's1', tool: 'demo.tool', result: '已写入', sequence: 2 })
+    const ended = applyServerMessage(answered, { type: 'completed', session_id: 's1', sequence: 3 })
+    expect(ended.toolActivities).toEqual([expect.objectContaining({ tool: 'demo.tool', status: 'completed', result: '已写入' })])
+  })
+
+  it('gives a result to the run in flight, not to an earlier unsettled one', () => {
+    const unsettled = applyServerMessage(started, { type: 'completed', session_id: 's1', sequence: 2 })
+    let state = appendLocalPrompt(unsettled, '再写一次')
+    state = applyServerMessage(state, { type: 'tool_started', session_id: 's1', tool: 'demo.tool', sequence: 3 })
+    state = applyServerMessage(state, { type: 'tool_result', session_id: 's1', tool: 'demo.tool', result: '第二次结果', sequence: 4 })
+    expect(state.toolActivities.map((activity) => activity.status)).toEqual(['unresolved', 'completed'])
+    expect(state.toolActivities[0]?.result).toBeUndefined()
+    expect(state.toolActivities[1]?.result).toBe('第二次结果')
+    expect(groupIntoTurns(state).map((turn) => turn.tools.map((tool) => tool.status))).toEqual([['unresolved'], ['completed']])
+  })
+
+  it('settles an unsettled write when the write is later confirmed', () => {
+    let state = applyServerMessage(appendLocalPrompt(session, '写入 README'), { type: 'tool_started', session_id: 's1', tool: 'workspace.write_file', sequence: 1 })
+    state = applyServerMessage(state, { type: 'cancelled', session_id: 's1', sequence: 2 })
+    expect(state.toolActivities[0]?.status).toBe('unresolved')
+    state = applyServerMessage(state, { type: 'file_written', session_id: 's1', path: 'README.md', bytes: 12 })
+    expect(state.toolActivities[0]).toEqual(expect.objectContaining({ status: 'completed', result: '已写入 README.md（12 字节）' }))
+  })
+
+  it('records a result that arrives after the turn already ended', () => {
+    const unsettled = applyServerMessage(started, { type: 'completed', session_id: 's1', sequence: 2 })
+    const late = applyServerMessage(unsettled, { type: 'tool_result', session_id: 's1', tool: 'demo.tool', result: '迟到的结果', sequence: 3 })
+    expect(late.toolActivities).toEqual([expect.objectContaining({ tool: 'demo.tool', status: 'completed', result: '迟到的结果' })])
+  })
+
+  it('drops progress and result frames for a tool this view never saw start', () => {
+    const unrelatedResult = applyServerMessage(started, { type: 'tool_result', session_id: 's1', tool: 'other.tool', result: 'x', sequence: 5 })
+    const unrelatedProgress = applyServerMessage(started, { type: 'tool_progress', session_id: 's1', tool: 'other.tool', progress: 'x', sequence: 6 })
+    expect(unrelatedResult.toolActivities).toEqual(started.toolActivities)
+    expect(unrelatedProgress.toolActivities).toEqual(started.toolActivities)
   })
 })

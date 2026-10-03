@@ -1,0 +1,264 @@
+轮次分组落地：一条 prompt 拉回它自己的回答与工具，工具卡片不再在轮次结束后假装还在跑
+====================================================================================
+
+日期：2026-10-03
+提交：本轮（`session.ts` 轮次模型与工具结算，`main.tsx` 按轮渲染并删掉伪造的推理块，`style.css` 轮次样式与工具状态配色，`session.test.ts` +14 例，新增 `e2e/turn-grouping.pw.ts`）
+被记录的对象：
+  apps/chaos-ui/src/session.ts         `Turn`/`TurnOutcome`/`liveTurnKey`/`appendLocalPrompt`/`groupIntoTurns`、`ToolActivity.turnAnchor` 与 `unresolved`、`settleRunningTools`、`openToolIndex`，+92/−11
+  apps/chaos-ui/src/main.tsx           时间线改为按轮渲染；删掉 `reasoning-row` 伪造块；工具状态文案与配色；+85/−78
+  apps/chaos-ui/src/style.css          `.turn`/`.turn-heading`/`.turn-outcome` 取代 4 条 `.reasoning-*`，工具状态三色
+  apps/chaos-ui/src/workspace-ui.ts    切工作区时一并清空 `turnOutcomes`（2 处）
+  apps/chaos-ui/src/session.test.ts    新增 `turn grouping` 7 例、`tool activity settlement` 7 例
+  apps/chaos-ui/e2e/turn-grouping.pw.ts 新增 164 行 / 2 例（两个视口共 8 次运行，第 1 例带 axe 扫描）
+  apps/chaos-ui/playwright.config.ts   `testMatch` 三处收录新文件
+
+本文件自包含：每段输出都从当轮真实运行里逐字抄下，命令写在 `$` 行上。
+
+
+第 1 节  改之前页面上有什么
+--------------------------
+
+三件事都不对，而且互相独立。
+
+**(a) 时间线是一条平铺的消息流。** 工具活动是整段对话之后的一个独立块，所以第 2 轮跑的工具会出现在
+第 5 轮回答的下方——读者无法判断这次调用属于哪一次提问。
+
+**(b) 「思考过程」是写死的。** HEAD 的 `main.tsx` 在每条有文本的 assistant 消息上面渲染：
+
+    {message.text && (
+      <details className="reasoning-row" open>
+        <summary className="reasoning-summary">
+          <span>🧠 思考过程</span>
+          <span>·</span>
+          <small>{session.busy ? '正在深度思考…' : '已完成推理'}</small>
+        </summary>
+        <div className="reasoning-body">
+          已分析工作区上下文，规划执行步骤。
+        </div>
+      </details>
+    )}
+
+协议里没有任何推理事件可比（`apps/chaos-ui/src/generated/protocol.ts` 的 `ServerMessage` 只有
+`text_delta`/`tool_started`/`tool_progress`/`tool_result`/`approval_*`/`question_*`/`session_snapshot`
+一类），引擎也从不产生它。「已分析工作区上下文，规划执行步骤。」是一句装饰文案，却在每次回答上都出现，
+并且随 busy 翻成「正在深度思考…/已完成推理」，读起来像是 host 报告了推理状态。这一整块被删除。
+
+**(c) 工具卡片会永远停在「执行中」。** 引擎对 `/approve-tool` 的真实序列是
+`approval_resolved` → `tool_started(demo.tool)` → `error tool_unavailable`（这台 host 没接 adapter，
+**永远不会**有 `tool_result`）。投影里 `status` 只有 `running`/`completed` 两值，`completed` 只由
+`tool_result` 写入，于是轮次早已结束、状态栏已经写着「工具执行失败」，卡片却仍然说这次调用在跑。
+
+
+第 2 节  轮次模型：锚点是「转录本长度」，不是计数器
+--------------------------------------------------
+
+`session.ts` 里新增的类型：
+
+    export type ToolActivity = { id: string; tool: string; status: 'running' | 'completed' | 'unresolved'; progress?: string; result?: string; turnAnchor: number }
+    export type TurnOutcome = 'streaming' | 'completed' | 'cancelled' | 'failed'
+    export type Turn = { key: number; prompt: Message | null; replies: Message[]; tools: ToolActivity[]; outcome: TurnOutcome | undefined }
+
+`turnAnchor` 是 `tool_started` 到达时的转录本长度。归属轮次时把它读回去：
+
+    const anchor = Math.min(Math.max(tool.turnAnchor, 0), state.messages.length)
+    const turn = byKey.get(liveTurnKey(state.messages.slice(0, anchor))) ?? turns[0]
+
+`liveTurnKey(messages)` 数的是这段转录本里 `user` 消息的条数（没提问过时为 `-1`）。这样归属只依赖
+「转录本本身」：重连后 `session_snapshot` 用 host 的历史替换 `messages`，锚点会被同样的规则重新解释，
+不需要信任一个可能被两次投影算成不同值的序号。
+
+轮次结局写在 `SessionState.turnOutcomes: Record<string, TurnOutcome>` 里，按轮 key 存档，
+所以已完成的轮次不会因为新一轮结束而改口。三条会结束一轮的路径都会记账并结算工具：
+
+    if (message.type === 'completed' || message.type === 'cancelled') return { ...state, busy: false, toolActivities: settleRunningTools(state.toolActivities), turnOutcomes: recordTurnOutcome(state, ...) }
+    ...上传失败分支...  toolActivities: settleRunningTools(...), turnOutcomes: recordTurnOutcome(state, 'failed')
+    ...错误分支...      toolActivities: settleRunningTools(...), turnOutcomes: recordTurnOutcome(state, 'failed')
+
+`workspace-ui.ts` 两处（切会话、切工作区）在清空 `toolActivities` 的同时清空 `turnOutcomes`；
+`session_snapshot` 替换转录本时同样重建，因此不会出现「新会话引用旧轮次结局」。
+
+
+第 3 节  未见结果：状态由投影判定，而不是等 host 补一帧
+------------------------------------------------------
+
+`unresolved` 不是服务端事件，是投影下的结论：轮次结束了，这张卡片却还没有 `tool_result`。
+
+    /** The host ended the turn, so a card still marked running will never be answered;
+     * it is settled here instead of being left to claim activity that already stopped. */
+    function settleRunningTools(toolActivities: ToolActivity[]): ToolActivity[] { ... }
+
+同时 `tool_progress`/`tool_result` 找卡片的方式从「第一张 running」改成「最新一张未完成的」：
+
+    /** The newest card of `tool` that has not reported a result yet. Newest, because an
+     * earlier turn may have left a card unsettled, and a later `tool_result` belongs to
+     * the run that is actually in flight. */
+    function openToolIndex(toolActivities: ToolActivity[], tool: string): number {
+      for (let index = toolActivities.length - 1; index >= 0; index -= 1) {
+        if (toolActivities[index].tool === tool && toolActivities[index].status !== 'completed') return index
+      }
+      return -1
+    }
+
+这一步是必要的：一旦允许卡片停在 `unresolved`，同名工具的第二轮 `tool_result` 就会被旧卡片抢走，
+于是旧轮次显示「已完成」、新轮次永远显示「执行中」。`file_written` 那条匹配同步放宽为
+`activity.tool === 'workspace.write_file' && activity.status !== 'completed'`，
+让先前结算的写入卡片能被后续确认改写。没有 `tool_started` 就到达的 `tool_progress`/`tool_result`
+仍然被丢弃（`openToolIndex` 返回 −1 时原样返回 state）——视图不给自己没见过的调用编一张卡片。
+
+文案与配色：`执行中` / `已完成` / `未见结果`，状态词本身带状态色（业务蓝 / 成功绿 / 错误红），
+因为它是唯一区分「还在跑」「答过了」「轮次先结束」的信息：
+
+    .tool-activity[data-status='running'] > span { color: var(--dsw-alias-state-business-primary); }
+    .tool-activity[data-status='completed'] > span { color: var(--dsw-alias-state-success); }
+    .tool-activity[data-status='unresolved'] > span { color: var(--dsw-alias-state-error); }
+
+
+第 4 节  渲染层
+--------------
+
+`main.tsx` 里一轮一个 `<section className="turn" data-turn-key=… aria-label="第 N 轮对话，按当前视图计数">`，
+内部顺序是：轮次标题（`第 N 轮` + `N 个工具调用`）→ 本轮 prompt → 本轮工具卡片 → 本轮回答 → 结局行。
+工具放在回答之前，是因为 host 先发起调用再产出文本，转录本应按因果读。
+
+结局行只在 host 真的说过时才出现：`本轮已取消。`（`cancelled`）、`本轮未完成，原因见状态栏。`
+（`failed`）、`本轮没有产生文本输出。`（`completed` 但整轮没有一个字）。`正在生成…` 只在这轮仍在
+streaming 且该条回答还是空串时出现——它是发送动作留下的占位，不是 host 说的话。
+
+Markdown 渲染抽成共用的 `MarkdownText`，本轮 prompt 与回答走同一套安全渲染，不再有两份实现。
+
+
+第 5 节  reducer 测试：14 例都走真实的 `applyServerMessage`
+----------------------------------------------------------
+
+`describe('turn grouping')` 7 例：
+
+    opens a turn at the prompt the user just sent
+    keeps the tools of each turn inside the turn that started them
+    labels only the turn that actually ended
+    marks the turn failed when the host refuses it
+    drops turn outcomes a reconnect could not have witnessed
+    files activity with the restored history when nothing was prompted in this view
+    clears turn outcomes when the transcript is replaced
+
+`describe('tool activity settlement')` 7 例：
+
+    stops claiming a tool is running once the host ends the turn without a result
+    settles the tool on the paths that end a turn early
+    leaves a tool that did report a result looking completed
+    gives a result to the run in flight, not to an earlier unsettled one
+    settles an unsettled write when the write is later confirmed
+    records a result that arrives after the turn already ended
+    drops progress and result frames for a tool this view never saw start
+
+没有一例直接调用 `groupIntoTurns` 造状态：状态一律由真实的 `applyServerMessage` 喂事件喂出来
+（`session_created` → `prompt` → `tool_started` → … → `completed`/`error`），再断言投影结果。
+
+    $ npx vitest run
+     Test Files  9 passed (9)
+          Tests  99 passed (99)
+
+
+第 6 节  变异清单
+----------------
+
+每条都是对工作区源码的单点改写，跑完立刻 `cmp` 还原。表头「被抓」指该变异导致失败的数量。
+
+轮次模型（当时全套 92 例）：
+
+| 变异 | 被抓 |
+| --- | --- |
+| `anchor-ignored`（工具不按锚点归轮） | Tests 1 failed / 91 passed |
+| `cancel-not-recorded`（`cancelled` 不记结局） | Tests 3 failed / 89 passed |
+| `key-off-by-one`（轮 key 计算偏一） | Tests 6 failed / 86 passed |
+| `no-placeholder-reply`（发送不留占位回答） | Tests 2 failed / 90 passed |
+| `no-streaming-label`（`streaming` 结局不标） | Tests 1 failed / 91 passed |
+| `outcome-key-minus-one`（结局一律记到 `-1`） | Tests 4 failed / 88 passed |
+| `snapshot-keeps-outcomes`（快照保留旧结局） | Tests 1 failed / 91 passed |
+| `switch-workspace-keeps-outcomes`（切工作区保留旧结局） | Tests 1 failed / 91 passed |
+
+工具结算（全套 99 例）：
+
+| 变异 | 被抓 |
+| --- | --- |
+| `settle-noop`（终态不结算） | Tests 4 failed / 95 passed |
+| `settle-to-completed`（结算成「已完成」） | Tests 5 failed / 94 passed |
+| `terminal-branch-no-settle`（`completed`/`cancelled` 一支漏结算） | Tests 4 failed / 95 passed |
+| `error-branch-no-settle`（错误分支漏结算） | Tests 1 failed / 98 passed |
+| `open-tool-first`（结果给最早那张卡片） | Tests 1 failed / 98 passed |
+| `open-tool-running-only`（只认 running，不认 unresolved） | Tests 1 failed / 98 passed |
+| `file-written-running-only`（写入确认只认 running） | Tests 1 failed / 98 passed |
+| `label-unresolved-as-done`（把「未见结果」文案改成「已完成」） | vitest 99 全绿 → **浏览器测试 4 failed** |
+
+最后一条值得单独说：它是纯渲染层的文案改动，reducer 无从察觉，vitest 因此全绿。抓它的是浏览器那一层：
+
+    Locator:  locator('section[data-turn-key="1"]').locator('li[aria-label="工具 demo.tool 未见结果"]')
+      - Expect "toHaveCount" … with timeout 5000ms
+    4 failed
+
+`aria-label` 里带状态词，卡片状态也落在 `data-status` 上，所以文案与状态一旦分叉，真实浏览器立刻红。
+每次变异跑完都做一次还原核对，逐字结果形如：
+
+    RESTORED-BYTE-IDENTICAL session.ts
+    RESTORED-BYTE-IDENTICAL main.tsx
+
+
+第 7 节  浏览器里跑的是什么
+--------------------------
+
+`e2e/turn-grouping.pw.ts` 第 1 例走**真实引擎**（`chaos-web` + Vite `/ws` 代理）：连发两条 prompt、
+一条 `/approve-tool`、点「允许」，于是页面上出现的每个事件都是引擎真发过的：
+
+    await expect(turn(page, 0).locator('.turn-heading')).toContainText('第 1 轮')
+    await expect(turn(page, 1).locator('.turn-heading')).toContainText('1 个工具调用')
+    await expect(turn(page, 1).locator('.turn-outcome')).toHaveText('本轮未完成，原因见状态栏。')
+    await expect(turn(page, 1).locator('li[aria-label="工具 demo.tool 未见结果"]')).toHaveCount(1)
+    await expect(turn(page, 1).locator('li[aria-label="工具 demo.tool 执行中"]')).toHaveCount(0)
+    await expect(turn(page, 2).locator('li[aria-label^="工具 demo.tool"]')).toHaveCount(0)
+    await expect(page.locator('.reasoning-row')).toHaveCount(0)
+    await expect(page.getByText('已分析工作区上下文')).toHaveCount(0)
+    expect(order).toEqual(['0', '1', '2'])
+
+倒数第二条正是 (b) 的墓碑：伪造的推理块一旦回来，这一例就红。
+最后一条防的是旧形状复发（工具块重新掉到整段转录本之后）。
+同例末尾跑一次 axe 全量扫描，违规列表必须为空：
+
+    const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa', 'best-practice']).analyze()
+    expect(results.violations.map(({ id, impact, nodes }) => ({ id, impact, targets: nodes.map(({ target }) => target) }))).toEqual([])
+
+第 2 例换成页面内替换 `window.WebSocket` 的 fixture socket，因为要断言的三种结局（无输出 / 取消 /
+同名工具两轮）无法用 demo 引擎按顺序逼出来。它逐个放行事件，断言 `正在生成…` 出现与消失、
+`本轮没有产生文本输出。`、`本轮已取消。`，以及第 2 轮那张卡片停在 `未见结果` 而第 3 轮同名卡片
+拿到 `已完成` 与 `第二次读到了`；再断言轮内块序：
+
+    expect(blockOrder).toEqual(['tool', 'answer'])
+
+两个视口各跑一遍：
+
+    $ npx playwright test turn-grouping streaming-integrity
+      ✓  3 [desktop-chromium] › e2e/turn-grouping.pw.ts:14:1 › each prompt opens its own turn and a tool card stays inside the turn that ran it (2.2s)
+      ✓  4 [desktop-chromium] › e2e/turn-grouping.pw.ts:61:1 › the streaming placeholder and the turn outcome follow what the host actually said (1.6s)
+      ✓  7 [mobile-chromium]  › e2e/turn-grouping.pw.ts:14:1 › each prompt opens its own turn and a tool card stays inside the turn that ran it (2.2s)
+      ✓  8 [mobile-chromium]  › e2e/turn-grouping.pw.ts:61:1 › the streaming placeholder and the turn outcome follow what the host actually said (1.5s)
+      8 passed (15.7s)
+
+（同一次命令里另外 4 例是流式完整性，见同日的 `streamed-text-loss-2026-10-03.log`。）
+
+截图复核（1440×1000 与 390×844，真实 `chaos-web`）确认：三轮各自成段、三种工具状态分别落在
+第 1/2/3 轮、取色为 `rgb(103, 158, 254)` / `rgb(74, 222, 128)` / `rgb(255, 143, 145)`。
+
+
+第 8 节  这份记录不是什么
+------------------------
+
+* **轮次按当前视图计数。** `第 N 轮` 里的 N 是「这个视图里第几条 prompt」。重连后 `session_snapshot`
+  带回的历史消息若早于本地第一条 prompt，会落进 key 为 `-1` 的「历史」段，标题不是「第 1 轮」。
+  协议没有轮次 ID，因此跨设备、跨标签的轮次编号一致性无法保证，也没有被断言。
+* `unresolved` 是推断，不是 host 的判决。如果 adapter 在轮次结束后很久才补 `tool_result`，
+  卡片会从 `未见结果` 改回 `已完成`（第 5 节第 6 例覆盖了这个方向），但「迟到的结果」与
+  「这一轮其实已经失败」这两种情形在 UI 上无法区分。
+* 没有虚拟滚动、行高缓存、历史分页与长对话性能门槛。本轮只把「哪条内容属于哪一轮」这件事定下来；
+  `TODO.md` M1.2 那条因此仍是 `[~]`。
+* axe 扫描只覆盖第 1 例末尾的那一个时刻（三轮 + 一张未见结果卡片），fixture 那一例没有扫描；
+  对比度按 CSS 变量在当前 dark 主题下取值核对，浅色调色板下的取色未测量。
+* 引擎侧没有为「无 adapter」新增任何事件。第 1 例依赖的是引擎既有行为：批准后 `tool_started`，
+  随后 `error tool_unavailable`。真实 adapter 接上以后是否一定发 `tool_result`，本文件不作保证。
