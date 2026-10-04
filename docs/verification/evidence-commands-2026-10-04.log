@@ -1,0 +1,386 @@
+# Documented commands: what the new gate reads, what it found, and what it refuses to judge
+
+Date: 2026-10-04.  Gate: scripts/ci/check-evidence-commands.py
+Fixtures: scripts/ci/test-check-evidence-commands.py
+Ledger:   scripts/ci/evidence-commands-allowlist.tsv
+
+Two earlier gates read prose. check-evidence-paths.py rejects a document that points at a
+session-private scratch directory, and check-doc-path-refs.py rejects a pointer to a file
+that is not in the repository. Neither reads a captured transcript, and neither reads a
+command. So the one kind of pointer a maintainer is most likely to copy-paste, a command
+line, was read by nothing. This log records what that cost and what the new gate does
+about it.
+
+== 1. The finding that started it
+
+    $ sed -n '61p;202p' docs/verification/protocol-mirror-coverage-2026-10-03.log
+
+    $ bash scripts/ci/check-gui-protocol.sh                    # GUI protocol types are up to date
+    $ python3 scripts/ci/check-gui-protocol.sh                 # GUI protocol types are up to date
+
+Line 61 is the transcript of what was actually run. Line 202 sits under a heading whose
+job is to tell a reader how to reproduce the result, and it hands a bash script to
+Python, which answers SyntaxError. A reader who follows it concludes either that the
+reproduction is broken or that the document is.
+
+The same shape had already cost this repository a false measurement, recorded in
+docs/ci-test-debt.md under "测量脚本把 .py 交给 bash 跑": a sweep ran
+`python3 scripts/ci/check-versions.sh`, Python raised on a bash file, the exit code the
+loop read came from `tail`, and the gate was reported as passing.
+
+The line was fixed rather than recorded, because the fix is one word:
+
+    $ git diff -U1 docs/verification/protocol-mirror-coverage-2026-10-03.log | tail -5
+
+    @@ -201,3 +201,3 @@
+         $ python3 scripts/ci/check-protocol-mirror.py --print     # 32 of 32 / 40 of 40
+    -    $ python3 scripts/ci/check-gui-protocol.sh                # GUI protocol types are up to date
+    +    $ bash scripts/ci/check-gui-protocol.sh                   # GUI protocol types are up to date
+
+== 2. What is read
+
+Every tracked *.md, plus every docs/verification/*.log. A command line is either a line
+whose first non-space text is "$ ", or a line inside a fence labelled as a shell (sh,
+bash, console, pwsh, ...), with the fence rules of CommonMark (a fence closes only on its
+own marker and not on a shorter run).
+
+    $ python3 scripts/ci/check-evidence-commands.py --list | wc -l
+    320
+
+The counts inside those files were measured before the rules were set, to decide what the
+rules could afford to be strict about:
+
+    scanned files        : 320  (transcripts 45, markdown 275)
+    $-marked lines       : 365   (transcripts 345, markdown 20)
+    shell-fence lines    : 722   (transcripts 0, markdown 722)
+    command lines total  : 1087
+
+No transcript uses a labelled fence, so every fence line is in Markdown. The two shapes are
+not interchangeable: a transcript marks its commands with `$` because it is a recording,
+while a guide puts them in a fence because that is what renders. A gate reading only `$`
+lines was the first version of this one, and it is the weaker version, measured in
+section 4.
+
+This log is itself in the scanned set, so the counts above include it, including the `$`
+lines below. The numbers were written last, after the last edit to any scanned file,
+because writing them earlier would have made them false.
+
+== 3. Rule 1: an interpreter cannot read what it was handed
+
+Where a command line runs a named interpreter over a script file, the script's extension
+has to belong to that interpreter's family. python3 gets .py, bash gets .sh, pwsh gets
+.ps1, node gets .mjs/.cjs/.js. The match is on the basename, so /usr/bin/python3 is the
+same interpreter, and the extension is matched case-insensitively, so a .SH is a shell
+script. Commands that name no script file (python3 -c, python3 -m, bash -c,
+python3 - <<'PY') make no claim about a file and are not examined.
+
+Across every command line in the repository the rule found exactly one mismatch, and it is
+line 202 above. That line is fixed, so the finding left on the tree is the quotation of it
+in section 1 of this log, which section 6 records:
+
+    $ python3 scripts/ci/check-evidence-commands.py
+    check-evidence-commands: 320 files, 1087 command lines, 1 interpreter mismatch(es), 5 dangling path(s), 6 recorded; every command line can run and every absence is recorded and live
+
+The two counts before "recorded" are raw finding counts, so a tree can be green while both
+are non-zero: what exit 0 promises is that every finding has a live row on the ledger. The
+test that runs this repository checks exactly that, by re-reading the --all output, because
+asserting "zero findings" here would have gone red the day the first quotation was
+recorded.
+
+== 4. Rule 2: a path a command names has to still be there
+
+A transcript is a reproduction recipe, and a recipe naming a file that no longer exists
+reproduces nothing. Four things are deliberately not claims that a file is present, and
+each was measured rather than assumed, because a rule that buries its findings in noise
+gets switched off:
+
+    $ python3 - <<'PY'                                            # counts, see below
+    ...
+    as shipped                     : 5
+    creators removed               : 5
+    copy sources unchecked         : 5
+    patterns removed               : 10
+    redirect removed               : 6
+    none of them                   : 11
+
+Reading them one at a time:
+
+    - creators (mkdir, touch, rm, rmdir, tee, truncate, mkfifo, ln): a line may write or
+      delete the path it names, and `ln -s nowhere link` is a legal dangling symlink, so
+      ln is exempt as a whole. On today's tree this rule removes nothing, which is said
+      rather than glossed over; what it buys is that a future
+      `mkdir -p docs/verify && touch docs/verify/x.log` stays quiet;
+    - copy destinations. `cp`, `mv` and `install` write their last argument and read the
+      ones before it, so `cp docs/gone.md docs/out.md` is still a claim about
+      docs/gone.md and no longer a claim about docs/out.md. This rule also removes nothing
+      on today's tree, and it closed a hole the first version had: `cp gone.md dest` read
+      as fine;
+    - a redirect target, because `> target/debug/out.tsv` names an output. Without it the
+      rule reports 6 paths where it reports 5;
+    - a token shaped like a pattern, which is the difference between 5 and 10. The trap
+      here is that the test has to run on the whole whitespace token, because the path
+      regex stops at "<", so scripts/ci/x-<hash>.py truncates to scripts/ci/x- and would
+      otherwise be reported as a missing file. A first version made exactly that mistake.
+
+The pattern rule has a cost that is not hidden by an exclusion: a template name with no
+pattern character in it, `changelogs/X.Y.Z.md`, is an honest finding, because as written
+the command does not run. The fix went into the document, not into the rule; section 7.
+
+A path is only a claim about this repository if its first segment is a tracked top-level
+entry. That is the same anchor rule check-doc-path-refs.py uses: target/, /tmp/...,
+../other/ and a directory that exists only in some developer's checkout are not statements
+about the repository.
+
+Rule 2 was also measured against the narrower reading of "command line". Restricted to
+`$` lines it reports 4 absent paths where the shipped rule reports 5, and the one it misses
+sits in a fenced recipe in a document whose whole purpose is to be executed. That is the
+argument for reading fences, and mutation M3 in section 9 is the version of the gate that
+did not.
+
+== 5. The five absent paths that are recorded
+
+Every one is real, and every one is kept because deleting or rewriting the line would
+falsify a transcript.
+
+    $ python3 scripts/ci/check-evidence-commands.py --all
+
+    check-evidence-commands: docs/verification/evidence-commands-2026-10-04.log:19: `python3 scripts/ci/check-gui-protocol.sh` cannot work: python3 is a python interpreter and `.sh` is a shell script, run it with bash (quoted-command)
+    check-evidence-commands: crates/codegen/xai-grok-pager/docs/user-guide/10-hooks.md:468: `bin/verify.sh` names a file that is not in the repository, so this command line reproduces nothing (other-root)
+    check-evidence-commands: docs/verification/doc-path-refs-2026-10-03.log:165: `third_party/nfsserve` names a file that is not in the repository, so this command line reproduces nothing (recorded-absent)
+    check-evidence-commands: docs/verification/doc-path-refs-2026-10-03.log:198: `docs/release-process.md` names a file that is not in the repository, so this command line reproduces nothing (recorded-absent)
+    check-evidence-commands: docs/verification/docker-gate-mirror-2026-10-03.log:426: `docs/verification/todo-open-items-2026-10-03.tsv` names a file that is not in the repository, so this command line reproduces nothing (historical)
+    check-evidence-commands: docs/verification/maintenance-line-review-2026-10-04.log:337: `sync/recon/2026-10-03-2bdd1d6a6-2.md` names a file that is not in the repository, so this command line reproduces nothing (recorded-absent)
+    check-evidence-commands: 320 files, 1087 command lines, 1 interpreter mismatch(es), 5 dangling path(s), 6 recorded; 6 problem(s)
+
+--all is the audit view and exits 1 by design: it prints the recorded findings as problems,
+which is the only way to see what the ledger is holding. The default run prints only the
+findings nobody has accounted for.
+
+bin/verify.sh is a sample hook script that calls a script belonging to whoever reads the
+user guide, not a path this repository ships. third_party/nfsserve and
+docs/release-process.md are named by transcripts that print `ls` refusing them, which is
+the finding itself. The dated .tsv was retired the day after the transcript was captured,
+and the recon record was written by an accidental live run and deleted after its mode was
+measured.
+
+Categories are a closed set (historical, recorded-absent, other-root, quoted-command),
+each row carries a reason of at least 20 characters, and a row whose finding has gone away
+fails as stale, so the ledger cannot accumulate rows left behind by fixed lines:
+
+    $ python3 scripts/ci/check-evidence-commands.py --allowlist /dev/null | tail -1
+    check-evidence-commands: 320 files, 1087 command lines, 1 interpreter mismatch(es), 5 dangling path(s), 0 recorded; 6 problem(s)
+
+== 6. The row keyed on a command, for a command quoted as evidence
+
+An absent path is recorded by naming the path. Rule 1 needs a different key, because a
+document may have to print a broken command to show what was wrong with it, and there is no
+path to point at: the file exists, the interpreter is the mistake. Section 1 does exactly
+that, so the row quotes the command itself, which is what the finding prints:
+
+    $ printf '%s\n' 'python3 scripts/ci/check-gui-protocol.sh	quoted-command	the log quoting it is about this exact typo ...' >> scripts/ci/evidence-commands-allowlist.tsv
+
+    $ python3 scripts/ci/check-evidence-commands.py
+    check-evidence-commands: 320 files, 1087 command lines, 1 interpreter mismatch(es), 5 dangling path(s), 6 recorded; every command line can run and every absence is recorded and live
+
+That row did not exist at first, and the gate went red on its own log: a quotation of a
+mistake is indistinguishable from a recommendation unless the document says which it is.
+
+The example line above is itself a finding the gate made and then withdrew. Written as it
+is, the line contains `python3` followed by `scripts/ci/check-gui-protocol.sh`, which is
+rule 1's shape, and the first version of the rule matched an interpreter name wherever it
+appeared in a line, so this log was reported for the command it was appending to a ledger.
+The docstring had always promised that an interpreter inside a quoted string is not
+examined, so the code was changed to keep that promise: a token whose first character is a
+quote is data, not a command word.  The cost is a command word written in quotes
+(`'python3' x.py`), which no document here writes, and the case is pinned by a fixture and
+by mutation M20.
+
+Two more properties of the category are pinned by fixtures rather than by the tree, because
+the tree has one row and it is green:
+
+    - a quoted-command row excuses only a rule-1 finding, and a path row excuses only a
+      rule-2 finding. Without that split one loose row silences both rules, which is
+      mutation M18; the subtler version, where both rules share one liveness counter so a
+      path row stays live because some rule-1 message happens to match it, is M19;
+    - a quoted-command row whose command no longer appears anywhere fails as stale, the
+      same way a path row does. So the row above disappears the day section 1 is rewritten
+      to describe the typo instead of printing it.
+
+== 7. Four placeholders in a recipe that were fixed instead of recorded
+
+.agents/skills/chaos-upstream-sync/references/port-playbook.md is a document meant to be
+pasted. On the version before the fixes it produced four findings:
+
+    $ python3 - <<'PY'
+    import importlib.util, subprocess
+    from pathlib import Path
+    spec = importlib.util.spec_from_file_location("ev", "scripts/ci/check-evidence-commands.py")
+    m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+    repo = m.Repo(Path(".").resolve())
+    PLAY = ".agents/skills/chaos-upstream-sync/references/port-playbook.md"
+    text = subprocess.run(["git", "show", f"HEAD:{PLAY}"], capture_output=True, text=True).stdout
+    for lineno, cmd in m.command_lines(text):
+        for bare, where in m.check_paths(repo, PLAY, lineno, cmd):
+            print(f"{where}: `{bare}` names a file that is not in the repository")
+    PY
+
+    check-evidence-commands: .agents/skills/chaos-upstream-sync/references/port-playbook.md:59: `crates/codegen/xai-grok-tools/src/some_module.rs` names a file that is not in the repository
+    check-evidence-commands: .agents/skills/chaos-upstream-sync/references/port-playbook.md:91: `crates/codegen/xai-grok-pager/src/foo.rs` names a file that is not in the repository
+    check-evidence-commands: .agents/skills/chaos-upstream-sync/references/port-playbook.md:106: `crates/codegen/xai-grok-shell/changelogs/X.Y.Z.md` names a file that is not in the repository
+    check-evidence-commands: .agents/skills/chaos-upstream-sync/references/port-playbook.md:107: `crates/codegen/xai-grok-shell/changelogs/X.Y.Z.json` names a file that is not in the repository
+
+(The heredoc prints the findings without the `check-evidence-commands: ` prefix; it is
+added here so the four lines match what the gate printed.)
+
+Recording those would have been the wrong call: a recipe with an invented file name is not
+evidence that was true once, it is a recipe that does not work. All four were replaced with
+paths that exist, or with a variable that makes the placeholder visible:
+
+    $ git diff -U0 .agents/skills/chaos-upstream-sync/references/port-playbook.md | grep -E '^[-+][^-+]'
+
+    -git checkout upstream/main -- crates/codegen/xai-grok-tools/src/some_module.rs
+    +git checkout upstream/main -- crates/codegen/xai-grok-tools/src/implementations/codex/read_file/mod.rs
+    -gh api repos/xai-org/grok-build/contents/crates/codegen/xai-grok-pager/src/foo.rs \
+    +gh api repos/xai-org/grok-build/contents/crates/codegen/xai-grok-pager/src/git_info.rs \
+    -git show upstream/main:crates/codegen/xai-grok-pager/src/foo.rs | head
+    +git show upstream/main:crates/codegen/xai-grok-pager/src/git_info.rs | head
+    -cp crates/codegen/xai-grok-shell/changelogs/X.Y.Z.md ~/.grok/CHANGELOG.md
+    -cp crates/codegen/xai-grok-shell/changelogs/X.Y.Z.json ~/.grok/CHANGELOG.json
+    +V=1.0.9   # 本次移植要发的版本
+    +"crates/codegen/xai-grok-shell/changelogs/$V.md" ~/.grok/CHANGELOG.md
+    +"crates/codegen/xai-grok-shell/changelogs/$V.json" ~/.grok/CHANGELOG.json
+
+The two git replacements were chosen, not grabbed. The checkout example overwrites the
+working tree, so it names a file that is byte-identical in HEAD and upstream, which makes a
+copy-paste a no-op:
+
+    $ git cat-file -e HEAD:crates/codegen/xai-grok-tools/src/implementations/codex/read_file/mod.rs && echo in HEAD
+    in HEAD
+    $ git cat-file -e upstream/main:crates/codegen/xai-grok-tools/src/implementations/codex/read_file/mod.rs && echo in upstream/main
+    in upstream/main
+
+The other example is a read-and-compare recipe, so it names a file that differs between the
+two trees, which is the situation that section is about:
+
+    $ git cat-file -e HEAD:crates/codegen/xai-grok-pager/src/git_info.rs && git cat-file -e upstream/main:crates/codegen/xai-grok-pager/src/git_info.rs && git diff --quiet upstream/main HEAD -- crates/codegen/xai-grok-pager/src/git_info.rs; echo "differs: $?"
+    differs: 1
+
+The changelog copies are the interesting two. `changelogs/X.Y.Z.md` is not a pattern by the
+rule's definition, because it holds no character from the pattern set, so it is a plain
+path claim, and the honest reading is that the recipe cannot run as printed: no such file
+exists and nothing substitutes for it. The rewrite binds a variable first, so the command
+runs as written and the thing to fill in is visible:
+
+    $ sed -n '106,108p' .agents/skills/chaos-upstream-sync/references/port-playbook.md
+
+    V=1.0.9   # 本次移植要发的版本
+    cp "crates/codegen/xai-grok-shell/changelogs/$V.md" ~/.grok/CHANGELOG.md
+    cp "crates/codegen/xai-grok-shell/changelogs/$V.json" ~/.grok/CHANGELOG.json
+
+== 8. What is a command line, pinned from both sides
+
+Whether a line is a command at all decides whether both rules apply to it, so the fence
+rules are pinned rather than trusted. A prompt-marked line is a command even inside a fence
+labelled `text`; a fence opened with `~~~` is not closed by ```` ``` ````; a 4-run fence is
+not closed by a 3-run one.
+
+    $ python3 scripts/ci/test-check-evidence-commands.py 2>&1 | tail -3
+    Ran 19 tests in 1.446s
+
+    OK
+
+The fixture is a real `git init` repository with a real index, because the anchor rule reads
+`git ls-files`: it contains a transcript, two documents, five scripts across four families,
+one uppercase extension, and one directory that exists on disk while being gitignored, so a
+path into it is not a claim. Its dirty transcript carries eight interpreter findings, one of
+them indented and with its operand in quotes, plus one absent path.
+
+Non-vacuity is asserted rather than assumed. The clean-fixture test checks the counters it
+is about to be silent for (files read, command lines read, mismatch count), so a scanner
+that stopped matching anything fails instead of looking green; and one test runs the gate
+against this repository, re-reads its --all output, and requires that every finding it
+counts has a key on the ledger.
+
+== 9. Mutation matrix
+
+One change at a time, watched by the fixture suite and by the real tree, restored with
+shutil.copy2 and confirmed byte-identical with filecmp (shallow=False). The driver first
+refuses to measure unless both the fixtures and the real tree are green.
+
+    baseline: fixtures rc=0; real tree rc=0 :: check-evidence-commands: 320 files, 1087 command lines, 1 interpreter mismatch(es), 5 dangling path(s), 6 recorded; every command line can run and every absence is recorded and live
+
+    KILLED  M1   family comparison dropped                  10 tests,  real tree rc=1
+    KILLED  M2   every fence is a shell fence               3 tests,  real tree rc=1
+    KILLED  M3   fence lines are not commands at all        4 tests,  real tree rc=1
+    KILLED  M4   creator commands are not special           3 tests,  real tree rc=0
+    KILLED  M5   a redirect target counts as a claim        2 tests,  real tree rc=0
+    KILLED  M6   a pattern is a path                        6 tests,  real tree rc=1
+    KILLED  M7   existence is assumed                       9 tests,  real tree rc=1
+    KILLED  M8   any first segment anchors a claim          6 tests,  real tree rc=1
+    KILLED  M9   stale ledger rows tolerated                3 tests,  real tree rc=0
+    KILLED  M10  a reason is not required                    1 test,  real tree rc=0
+    KILLED  M11  any category accepted                       1 test,  real tree rc=0
+    KILLED  M12  recorded findings are always hidden        2 tests,  real tree rc=0
+    KILLED  M13  shell quotes are part of the operand        1 test,  real tree rc=0
+    KILLED  M14  interpreter matched on the whole path      2 tests,  real tree rc=0
+    KILLED  M15  extension case is significant               1 test,  real tree rc=0
+    KILLED  M16  copy sources count as created too           1 test,  real tree rc=0
+    KILLED  M17  a quoted command excuses nothing           2 tests,  real tree rc=1
+    KILLED  M18  any row may excuse either rule             4 tests,  real tree rc=1
+    KILLED  M19  liveness not judged per category            1 test,  real tree rc=0
+    KILLED  M20  an interpreter inside quotes is a command  2 tests,  real tree rc=1
+
+    restored tree: fixtures rc=0, real tree rc=0 :: check-evidence-commands: 320 files, 1087 command lines, 1 interpreter mismatch(es), 5 dangling path(s), 6 recorded; every command line can run and every absence is recorded and live
+
+Four of these are worth naming. M3 ("fence lines are not commands at all") is the mutation
+that represents the first version of this gate, which checked paths only on "$ " lines; it
+turns the real tree red, which is the measurement saying the broadening was worth having.
+M13 is the pin for the operand `"scripts/ci/x.sh"` in the fixture: without the quote strip,
+the extension read off that token is `sh"` and the mismatch silently disappears. M16 is the
+copyist rule: with `cp` treated as a writer of all its arguments, the fixture's
+`cp docs/gone.md ...` stops being a finding. M20 is the reverse, the quoted-data rule above:
+with it removed, the gate reports its own ledger-writing example.
+
+A driver lesson, recorded because it hid every mutation for one run: unittest prints a
+Traceback for every failed assertion, so "output contained a Traceback" classified every
+mutation as a crash. The crash signal is a run that never reaches its `Ran N tests` summary
+line.
+
+== 10. Wired at both call sites with identical flags
+
+    $ python3 scripts/ci/check-guard-wiring.py | tail -1
+    check-guard-wiring: OK (53 files in scripts/ci/, 52 reachable, 48 run by scripts/verify-in-docker.sh, 4 recorded CI-only, 1 exempt)
+
+    $ python3 scripts/ci/check-workflow-yaml.py | tail -1
+    workflow yaml: 2 file(s), no unquoted scalar with a mapping separator
+
+    $ bash -n scripts/verify-in-docker.sh && echo parses
+    parses
+
+The same two commands run in .github/workflows/ci.yml and in the gates=() table of
+scripts/verify-in-docker.sh; check-guard-wiring.py compares both directions and the flag
+values at the two call sites, which is the rule that caught a threshold drift between legs
+on an earlier gate.
+
+== 11. What the gate does not judge
+
+    - heredoc bodies: python3 - <<'PY' claims nothing about a file, and the body is not a
+      command line. A heredoc that writes into the repository is not examined;
+    - whether the exit code a quoted pipeline printed matches the prose next to it. No
+      scanner can check that without running the command, and that exact gap is how the
+      `| tail -3` false positive in docs/ci-test-debt.md happened;
+    - a command whose interpreter is a variable (`$PY x.py`). The mirror image is judged:
+      an interpreter named outside quotes where it is only an argument
+      (`echo run python3 scripts/ci/x.sh`) reads as a claim and is reported;
+    - absolute paths outside this repository, and any relative path whose first segment is
+      not tracked;
+    - whether a command that runs does the thing the heading over it claims. Rule 1 catches
+      only the case where the interpreter cannot parse what it was handed;
+      `bash scripts/x.py` is caught, `python3 scripts/x.py --check-versions` quietly doing
+      nothing is not;
+    - a copy destination (section 4), which is the price of the creator rule and is paid
+      knowingly: `cp gone.md dest` is silent, `cp src dest-gone` is not.
+
+The gate reads itself: scripts/ci/*.py is not in the scanned set, so the path-like strings
+in its own docstring are not findings. Its fixtures, on the other hand, are checked by the
+same code path that checks this log, and this log is checked by the gate it documents.

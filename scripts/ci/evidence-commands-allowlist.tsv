@@ -1,0 +1,12 @@
+# Findings `scripts/ci/check-evidence-commands.py` may not report, one per line.
+# Columns: key<TAB>category<TAB>reason. The key is what the finding names: the path a
+# command points at (not the document that points at it) for historical,
+# recorded-absent and other-root; the command itself, as the finding prints it, for
+# quoted-command. A row may only record findings of its own category, and an entry
+# with no live finding fails as stale.
+docs/verification/todo-open-items-2026-10-03.tsv	historical	dated export the docker-gate-mirror transcript ran on 2026-10-03; retired the next day for the undated docs/verification/todo-open-items.tsv, so the two command lines describe that run and are no longer an instruction
+docs/release-process.md	recorded-absent	the transcript prints ls refusing this exact path as the finding itself: telemetry-policy.md pointed at a document that was never in the repository
+third_party/nfsserve	recorded-absent	the transcript prints git log returning 0 commits, which is the evidence that this vendored dependency was never actually vendored
+sync/recon/2026-10-03-2bdd1d6a6-2.md	recorded-absent	recon record an accidental live run of scripts/upstream-recon.sh wrote, never committed, deleted after the mode was measured; the citing ls line quotes that measurement
+bin/verify.sh	other-root	the fenced hook script is a sample the reader saves into their own settings, and bin/verify.sh is the reader's own project script the hook calls, not a path this repository ships
+python3 scripts/ci/check-gui-protocol.sh	quoted-command	the log quoting it is about this exact typo: the document prints the wrong line as the finding and the fixed line beside it, so the wrong command has to stay verbatim

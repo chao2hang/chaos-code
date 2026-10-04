@@ -57,9 +57,12 @@ merge 前基线 = 本仓库 main（上次上游同步合并点）；目标 = `up
   六个 `chaos-<平台>/package.json` 的版本由
   `crates/codegen/xai-grok-pager/npm/chaos/scripts/assemble-platform-packages.js`
   打包时按元包盖写，仓库里的值是占位，不必手改）
-  - **已知不一致（未修）**：元包 `optionalDependencies` 里六个平台包仍钉在 `0.2.121`，
-    0.3.1 那一跳就没跟着改；而 assemble 脚本会把平台包盖成元包版本，两者对不上，
-    `npm install chaos-code@<新版本>` 会去要一个没发布过的平台包版本。发布前需对齐。
+  - **曾知的不一致（2026-10-04 复核：仓库侧已修）**：元包 `optionalDependencies` 里六个平台包
+    曾钉在 `0.2.121`，0.3.1 那一跳就没跟着改；而 assemble 脚本会把平台包盖成元包版本，两者对
+    不上，`npm install chaos-code@<新版本>` 会去要一个没发布过的平台包版本。现在
+    `scripts/ci/check-versions.sh` 把「元包 = 六个平台包 = 六条钉版 = Cargo」钉成一条命令，
+    CI 与 `scripts/verify-in-docker.sh` 都跑（2026-10-04 实测三者一致于 `0.4.2`）。仍未解决的是
+    registry 侧：`chaos-code-win32-{x64,arm64}` 被 npm 的安全占位包占着，`0.4.2` 从未发布。
 - `CHANGELOG.md`（仓库根，fork 中文）
 - `crates/codegen/xai-grok-shell/CHANGELOG.md` + `changelogs/**`（fork 版本线）
 - `crates/codegen/xai-grok-shell-base/src/util/changelog.rs`（CDN base / 缓存路径）

@@ -56,7 +56,7 @@ git cherry-pick -x <sha1> <sha2>
 ```bash
 git switch -c sync/paths-<topic>
 # 从上游某点取出文件到工作区（会覆盖工作区同名文件，先确认）
-git checkout upstream/main -- crates/codegen/xai-grok-tools/src/some_module.rs
+git checkout upstream/main -- crates/codegen/xai-grok-tools/src/implementations/codex/read_file/mod.rs
 # 或
 git restore --source=upstream/main -- crates/codegen/xai-grok-pager/src/app/queue_edit.rs
 git add -A
@@ -85,10 +85,10 @@ test -f crates/codegen/xai-grok-pager/assets/logo/logo07.txt
 ## 5. 上游单文件内容只读对比
 
 ```bash
-gh api repos/xai-org/grok-build/contents/crates/codegen/xai-grok-pager/src/foo.rs \
+gh api repos/xai-org/grok-build/contents/crates/codegen/xai-grok-pager/src/git_info.rs \
   --jq '.content' | base64 -d | head
 # 或
-git show upstream/main:crates/codegen/xai-grok-pager/src/foo.rs | head
+git show upstream/main:crates/codegen/xai-grok-pager/src/git_info.rs | head
 diff -u <(git show upstream/main:path) path
 ```
 
@@ -103,8 +103,9 @@ diff -u <(git show upstream/main:path) path
 # crates/codegen/xai-grok-shell/changelogs/X.Y.Z.json
 # 更新 CHANGELOG.md 顶部
 
-cp crates/codegen/xai-grok-shell/changelogs/X.Y.Z.md ~/.grok/CHANGELOG.md
-cp crates/codegen/xai-grok-shell/changelogs/X.Y.Z.json ~/.grok/CHANGELOG.json
+V=1.0.9   # 本次移植要发的版本
+cp "crates/codegen/xai-grok-shell/changelogs/$V.md" ~/.grok/CHANGELOG.md
+cp "crates/codegen/xai-grok-shell/changelogs/$V.json" ~/.grok/CHANGELOG.json
 ```
 
 ## 7. 二进制（易错点）

@@ -65,3 +65,4 @@ crates/codegen/xai-grok-code-mode/	planned	proposed crate in the DSH port propos
 crates/codegen/xai-grok-ralph/	planned	proposed leaf crate in the same DSH port proposal; the Ralph loop shipped as a workflow instead of a crate
 crates/codegen/xai-grok-preset-files/	planned	proposed preset-discovery crate in the same proposal; never created, the plan lists it as future work
 docs/plan/code-mode-plan.md	planned	plan document the proposal says will be opened after the user confirms that section; it has not been opened
+bin/verify.sh	other-root	CHANGELOG.md names the script a sample hook in crates/codegen/xai-grok-pager/docs/user-guide/10-hooks.md calls; it belongs to the project whose settings hold that hook, not to this repository

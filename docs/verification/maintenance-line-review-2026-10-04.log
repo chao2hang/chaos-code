@@ -326,6 +326,21 @@ because it was inert rather than because a test was missing (section 10).
       RESTORED True
       rc after restore: 0
 
+    After the fix landed, the script was run against the real repository a second time,
+    deliberately, on the same UTC day and the same upstream tip. It reproduced the same
+    `-2.md` name (the date in a record name is the UTC date, so "2026-10-03" is correct
+    while the local date is already 10-04), and the record it wrote is readable:
+
+    $ bash scripts/upstream-recon.sh
+    upstream-recon: SOURCE_REV=72a61251f upstream=2bdd1d6a6 status=ahead ahead=9 behind=0
+    upstream-recon: wrote sync/recon/2026-10-03-2bdd1d6a6-2.md
+    $ ls -l sync/recon/2026-10-03-2bdd1d6a6-2.md
+    -rw-r--r-- 1 chaos chaos 925 ... sync/recon/2026-10-03-2bdd1d6a6-2.md
+
+    So the mode fix holds outside the fixtures. That record was deleted again rather
+    than committed: it is the generated table for a day whose upstream state is already
+    carried, with its adjudication, by `sync/recon/2026-10-03-2bdd1d6a6.md`.
+
 == 12. How this review was wrong before it was right
 
     These are recorded because each one produced either a misleading exit code or a

@@ -114,6 +114,37 @@ entry point and each workflow. A flag only one side passes stays legal, because
 a flag both sides pass has to carry the same values in both -- which means lowering a
 budget is a one-commit change to two files.
 
+### Commands you write down are read
+
+`scripts/ci/check-evidence-commands.py` reads every command line in the repository:
+a line starting with `$ ` in any tracked document or in `docs/verification/*.log`,
+plus every line of a fence labelled `sh`, `bash`, `console` or `pwsh`. Two rules
+apply to all of them.
+
+A named interpreter has to be able to parse the file it is handed. `python3` gets a
+`.py`, `bash` gets a `.sh`, `pwsh` gets a `.ps1`, `node` gets a `.js`/`.mjs`/`.cjs`.
+This is not pedantry: `python3 scripts/ci/check-versions.sh` does not stop a shell
+script, it runs the fragments it happens to recognise, and if the exit code is taken
+from the last stage of a pipeline the failure never surfaces. Paste-able reproducers
+say which interpreter they use. A name inside quotes is not a command, so
+`printf '%s\n' 'python3 scripts/ci/x.sh'` says nothing about python3.
+
+A path a command names has to still exist, unless the command is what creates it or
+the token is shaped like a pattern. Creators are `mkdir`, `touch`, `rm`, `rmdir`,
+`tee`, `truncate` and a redirect target; `cp`, `mv` and `install` are read as what they
+are, so the file being copied out of has to be there while the file being written to
+does not. A transcript that names a retired file is a recipe that reproduces nothing,
+even when it is an honest record of a run.
+
+Where the line should stay as written, add a row to
+`scripts/ci/evidence-commands-allowlist.tsv`: `<key><TAB><category><TAB><reason>`. The
+key is what the finding names, which is the path for `historical`, `recorded-absent` and
+`other-root`, and the whole command for `quoted-command`. That last category exists
+because a document sometimes has to print a broken command to show what was wrong with
+it, and a quotation of a mistake looks exactly like a recommendation unless the row says
+otherwise. A row whose finding has gone away fails as stale, so fixing the line means
+deleting the row rather than leaving it behind.
+
 ## Fast local gate loop
 
 The container answers "does a fresh clone work?". It does not answer "did my edit
@@ -606,6 +637,14 @@ behind `xai-org/grok-build` into `sync/recon/`. It is read-only: it queries
 and exits non-zero rather than writing a record when the network is unavailable.
 Recording a gap is not a port — each upstream change still needs the curated-port
 review in `sync/` before it touches ported source.
+
+A record is named `<UTC date>-<upstream tip>.md`, the date being UTC rather than
+local time. Identical output is a no-op. A record is never overwritten: when the
+record for the current UTC day and tip already exists and the new comparison
+differs, the script writes `<UTC date>-<tip>-2.md` (then `-3`, …) beside it instead
+of replacing it, so a record that someone has annotated cannot be silently reduced
+to the generated table. Read the newest record before deciding whether an upstream
+change is worth porting.
 
 ## Security reports
 

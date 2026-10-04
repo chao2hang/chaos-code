@@ -145,6 +145,7 @@ gates=(
   "TODO status doc: python3 scripts/ci/test-classify-open-todos.py && python3 scripts/ci/classify-open-todos.py --check-doc docs/architecture/todo-open-item-classification.md && python3 scripts/ci/classify-open-todos.py --check-export"
   "evidence paths in docs: python3 scripts/ci/test-check-evidence-paths.py && python3 scripts/ci/check-evidence-paths.py"
   "docs path references: python3 scripts/ci/test-check-doc-path-refs.py && python3 scripts/ci/check-doc-path-refs.py"
+  "documented commands: python3 scripts/ci/test-check-evidence-commands.py && python3 scripts/ci/check-evidence-commands.py"
   "CI guard wiring: python3 scripts/ci/test-check-guard-wiring.py && python3 scripts/ci/check-guard-wiring.py"
   # The host gate runner reads the array below, so it is checked from inside it: the
   # fixture cases of scripts/verify-gates.sh --self-test include parsing this real file,
@@ -163,7 +164,7 @@ gates=(
   # A `#[cfg(unix)]` on a test is not a skip: the test stops existing on the other platform, so it
   # appears in no ignored baseline and in no green leg's count. The four budgets are the measured
   # debt of 2026-10-03 and are pinned here as well as in ci.yml; only they can move down.
-  "platform-gated tests: python3 scripts/ci/test-platform-gated-tests.py && python3 scripts/ci/platform-gated-tests.py --quiet --check-baseline scripts/ci/platform-gated-tests.tsv --max-unreviewed 1106 --max-blind-windows 74 --max-blind-macos 11 --max-assumption-free 441"
+  "platform-gated tests: python3 scripts/ci/test-platform-gated-tests.py && python3 scripts/ci/platform-gated-tests.py --quiet --check-baseline scripts/ci/platform-gated-tests.tsv --max-unreviewed 1106 --max-blind-windows 74 --max-blind-macos 11 --max-assumption-free 427"
   # The `rustup target add` is load-bearing: the guard fails instead of skipping
   # when a target named in the table is unavailable, and an image without the
   # tier-2 targets installed would otherwise turn it into a Linux-only no-op.

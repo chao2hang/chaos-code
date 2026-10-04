@@ -258,6 +258,13 @@ fn windows_only_with_a_windows_call() {
 fn windows_only_with_nothing_windows() {
     assert_eq!(2 + 2, 4);
 }
+
+#[cfg(unix)]
+#[test]
+fn drives_a_posix_shell_through_a_command_string() {
+    let cmd = "export GROK_STATE=kept; kill -9 $$";
+    assert!(cmd.contains("export"));
+}
 '''
 
 POSIX_CALL_ADDED = '''\
@@ -595,6 +602,15 @@ class PlatformAssumptions(unittest.TestCase):
     def test_a_posix_word_in_a_comment_does_not_excuse_the_gate(self) -> None:
         rows = table(self.root)
         self.assertEqual(rows["mentions_posix_only_in_a_comment"]["assumptions"], "none")
+
+    def test_posix_shell_text_in_the_command_string_excuses_the_gate(self) -> None:
+        # The gate here hides nothing Rust can see, because the assumption is in the shell command
+        # the test hands to the code under test. A roster that only knows `bash -c` names whole
+        # families of these as candidates to un-gate.
+        rows = table(self.root)
+        self.assertIn("posix-shell", rows["drives_a_posix_shell_through_a_command_string"]["assumptions"])
+        listed = run("--root", str(self.root), "--quiet", "--list-assumption-free").stdout
+        self.assertNotIn("drives_a_posix_shell_through_a_command_string", listed)
 
     def test_the_budget_counts_named_rows_and_says_which(self) -> None:
         # Four rows in this fixture have no assumption in them; the budget has to be able to hold

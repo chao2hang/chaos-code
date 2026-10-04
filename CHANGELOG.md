@@ -2,6 +2,380 @@
 
 ## Unreleased
 
+### 门禁：台账里有一列是身份的一部分，于是加一个标记要重写 25 行
+
+全量门禁 28 门红了两门，两门都来自本轮那三条新测试。平台门那边刺眼的不是「新增未记的门控」，而是
+它报出 `53 problem(s)`：25 条 `stale baseline row` 加 28 条 `unlisted platform-gated test`，
+同一条测试被报两次；fixture 套件 42 例也红 3 例。原因写在门禁自己的 docstring 里：`assumptions`
+是行身份 `(file, function, runs_on, kind, extra_cfg, assumptions)` 的一列，为了让 `export VAR=`、
+`$$`、`$!`、`kill -9` 这些 shell 自己的语法进台账而加的标记改变了 25 条既有行的标签，于是每一行
+都不再匹配自己那一行，而一行匹配不上时「行过期」与「新增未记」同时成立。
+
+标记先证明它说的是真话，再谈还原。28 处命中逐条读过：26 处是交给 shell 的命令串
+（`.args(["-c", "kill -ABRT $$"])`、`write_pty_input(&pty_id, b"sleep 300 & echo pid=$!\n")`），
+2 处是被测代码要去 source 的 rc 文件内容（`home/.bashrc`、`config.rc`）。需要这个标记是因为原来的
+`shell` 标记只认测试写出解释器名字的位置，而 `sh` 与 `-c` 分在两个函数参数里时，任何两个 token
+的模式都够不着中间那段。
+
+`--write-baseline` 之后，判断加宽是否诚实的是它的 diff 而不是退出码：
+
+          rows before: 1106, after: 1109
+          added rows: 3, all three new tests in terminal.rs
+          removed rows: 0
+          assumptions column changed: 25 rows, each gaining posix-shell and nothing else
+          reasons changed: 0
+
+删除 0 条是重点：标记能把一行从「可以拆」的清单里免掉，不能删掉它记着的那道门。三条新行写的是理由
+而不是导入标记，所以 `--max-unreviewed` 停在 1106 而不是涨到 1109。点名数从 442 降到 427（标记免掉
+15 条、新增 1 条），两处接线同步改成 427，并用 1105 / 73 / 10 / 426 各打过一次红，证明四个上限仍然
+只许往下。fixture 41 → 42 例，新的一条其命令串就是 `"export GROK_STATE=kept; kill -9 $$"`，必须
+带上 `posix-shell` 且不得出现在 `--list-assumption-free` 里，它的反例（体内没有任何 POSIX 拼法）
+本来就在套件里。
+
+（2026-10-04；`scripts/ci/platform-gated-tests.py`、`scripts/ci/platform-gated-tests.tsv`、
+`scripts/ci/test-platform-gated-tests.py`、`.github/workflows/ci.yml`、
+`scripts/verify-in-docker.sh`、`docs/verification/platform-gated-tests-2026-10-03.log`、
+`docs/ci-test-debt.md`）
+
+### 改进：修这个 bug 用的那两个 `unsafe` 也被记账，普查当天就把它们换成安全包装
+
+panic-site census 报 `xai-grok-tools: production sites grew [16, 118, 8, 19] ->
+[16, 118, 8, 20]`，最后一列是 `cfg(test)` 之外的 unsafe 站点，说的是本轮新写的 `set_nonblocking`：
+它用两处 `unsafe { libc::fcntl(...) }` 读写管道 flags（净 +1 是因为同一次改动删掉了一处
+`unsafe { File::from_raw_fd(..) }`）。归因靠逐个文件回退到 HEAD：只回退 `shell_state.rs` 基线就
+成立，`manager.rs` 留在 HEAD 仍然复现增长。
+
+门禁给的两条路里便宜的那条在这里是错的：`--write-baseline` 会把新数字写成永久上限，那条路是给
+「确实需要的 unsafe」准备的。这里的 unsafe 并不需要：`nix` 已经是本 crate 的依赖，而决定性的事实
+是从 vendor 源码里读出来的——`pub mod fcntl;` 不在任何 cargo feature 后面（`Cargo.toml` 一行都
+不用改）、`pub fn fcntl<Fd: AsFd>(...)` 是安全函数而 `&OwnedFd` 本来就满足 `AsFd`、
+`pub type Error = Errno` 且有 `impl From<Errno> for io::Error`（于是 `?` 直接落进调用方已有的
+`std::io::Result`）。两处 unsafe 变成三行；读-改-写保留，因为 `F_SETFL` 写的是整个 status flag
+集合，只传 `O_NONBLOCK` 会把别的清掉；注释写明截断未知位为什么安全（`fcntl(2)` 忽略访问模式，而它
+列出的那些 status flag `OFlag` 全都建模）。十二行上面的 `set_cloexec` 保持原样，它不属于这次改动，
+也没有这一节的证据。
+
+行为断言仍然是同一套测试而不是类型检查：`cargo fmt --check -p xai-grok-tools` 与
+`cargo clippy -p xai-grok-tools --lib --tests` 都无输出，按名跑那三条加整个 `shell_state` 模块是
+`31 passed; 0 failed`，全量是 `3212 passed; 0 failed; 3 ignored`（30.06 s）。clippy 顺带在测试的
+喂数据线程里抓到一处 `sliced_string_as_bytes`（`tail[written..].as_bytes()` 改成
+`&tail.as_bytes()[written..]`）：`written` 是管道实际接受的字节数，落在多字节字符中间时字符串切片
+会先 panic，那条测试就没机会报告它本来要报的东西。基线随后按新值写下（19 → 18），这道闸门比本轮
+开始前更紧而不是更松；把那一行改成 17 复核，同一句增长消息再次报红。
+
+（2026-10-04；`crates/codegen/xai-grok-tools/src/computer/local/shell_state.rs`、
+`scripts/ci/panic-site-baseline.tsv`、`docs/verification/shell-state-dump-grace-2026-10-04.log`、
+`docs/ci-test-debt.md`）
+
+### 修复：一条命令跑得比 5 秒久，它改过的 `cd` 与 `export` 就整条丢掉
+
+`xai-grok-tools` 里有五条测试长期偶发，只在整轮套件里红，单跑全绿：
+`test_persistent_shell_env_var_persists`、`_function_persists`、`_variable_capture`、
+`_deleted_cwd_falls_back_to_request_cwd`、`_spawn_error_names_missing_cwd`。它们的断言毫不
+相像（`left: "" right: "hello123"`、`left: Some(127) right: Some(0)`、
+`fallback warning must be in the command output, got: "/tmp\n"`、
+`spawn must fail when both directories are missing`），说的却是同一句话：持久 shell 本该带进
+下一条命令的状态，没有带进去。`Some(127)` 是 command not found，而「spawn must fail」这条红
+意味着 spawn 居然成功了。
+
+状态交接只有一处。`ShellState::update_from_dump` 返回一个 bool 说明它收没收这份 dump，而它
+唯一的调用方把这个 bool 丢掉、只打一行 `debug`，于是「dump 根本没来」「dump 残缺」「shell
+类型不匹配」在日志里是同一件事。给这三支装上探针（环境变量开关，不影响出货二进制），跑五轮
+全量套件：
+
+          ==== round 1: rc=101 accept=2 reject=2 timeout=2 ====
+          ==== round 2: rc=101 accept=1 reject=1 timeout=1 ====
+          ==== round 3: rc=0   accept=0 reject=0 timeout=0 ====
+          ==== round 4: rc=101 accept=1 reject=1 timeout=1 ====
+          ==== round 5: rc=101 accept=1 reject=1 timeout=1 ====
+
+libtest 只把**失败测试**自己那份 stderr 回显在 `failures:` 底下，所以这些计数是下界；而它们
+能被归到具体哪条测试头上，正是它可用的原因。round 4 里失败那条测试自己的输出是：
+
+          ---- ...test_persistent_shell_spawn_error_names_missing_cwd stdout ----
+          SHELLDUMPPROBE read_timeout
+          SHELLDUMPPROBE reject len=0 head="" tail=""
+          SHELLDUMPPROBE accept len=464133
+
+三行按顺序就是因果：第一条命令（`cd <tmp>`）的 dump 撞上 reader 的 5 秒钟；调用方收到那个钟
+交回的空串并拒收；于是那次 `cd` 从没进过状态，第二条命令在一个仍然存在的目录里 spawn 成功，
+下面那句断言必然到不了。每个失败轮次里 `read_timeout` 的行数等于 `reject len=0` 的行数，唯一
+绿的那一轮两样都是零。
+
+钟挂在错的地方。reader 是在命令 spawn 的那一刻起跑的（`terminal.rs:878`），而它跑的那段阻塞
+读整个被包在一个期限里（修前 `shell_state.rs:681`）：
+
+          match tokio::time::timeout(DUMP_READ_TIMEOUT,   // 5s
+              tokio::task::spawn_blocking(... read until EOF or the END marker ...))
+
+这 5 秒于是得覆盖 fork 之后到 dump 最后一个字节之间的一切：命令本身，以及 dump 的排空。dump
+并不小——上面那行 `accept len=464133` 就是这台机器 zsh 的状态，约 454 KB，从 64 KiB 的管道
+里穿过去，reader 全程都得醒着排。真正压垮它的是负载：套件 32 路并发，每条命令都在起一个会
+回放快照的 shell，而这个钟是墙钟。dump 是 shell 做的最后一件事，所以一根沉默的管道开始有意
+义的那一刻，是 shell 已经退场之后——期限该挂在那儿。
+
+`read_dump_from_pipe` 现在不带钟，读到 END marker 或 EOF 就把读到的东西交回。期限搬到唯一
+等它的那个调用方 `collect_shell_state_dumps`，那里的 child 已确认退出：
+
+          match tokio::time::timeout(shell_state::DUMP_COLLECT_TIMEOUT, handle).await {
+
+`DUMP_READ_TIMEOUT` 改名 `DUMP_COLLECT_TIMEOUT`，仍是 5 秒，文档写明它 bound 的是「等」而不
+是「命令」。会杀 child 的那几条路径本来就 `abort()` 掉了 reader（`shutdown_all`、
+`kill_foreground_commands`、`kill_and_finalize`），所以没有留下任何东西去等一根再没人写的
+管道。沉默也一并结束：干净退出之后被拒收的 dump 现在是一条带字节数的 `warn`（字节数正是区分
+空串与残缺的依据），等满整个 grace 的同样是一条 `warn`；被杀掉的 shell 到不了自己的 dump，
+所以带 signal 的拒收仍留在 `debug`——那是预期内的，每条超时的命令都会来一次。
+
+三条测试各钉一件事：reader 的契约（writer 睡 6 秒，比它从前那个期限还久，然后写一整个 dump，
+必须原样交回）；出货路径上的症状（持久 shell 里一条 `cd` + `export` + `sleep 6` 的命令，下
+一条命令仍然要看得见两者，而测试先断言自己这条命令确实跑过了那个 grace，免得哪天悄悄退化成
+一条快命令）；以及被搬走的那口钟原本的理由（后台命令继承了 dump 管道，shell 随即自杀，dump
+永远不来——回复必须在 grace 到点时回来，而不是等那个孙进程松手）。三个变异各让对应的测试变
+红：把期限放回 reader 里面，前两条同时红（reader 那条红在 writer 侧的 `EPIPE`——它比断言更早
+发现读者挂了电话；另一条红在
+`the slow command should have run to completion: ""`，`left: None right: Some(0)`——这一行就是
+缺陷本身：慢命令被自己的 deadline 杀了，`cd` 与 `export` 都没走到）；把 collect 那侧的期限拿掉，
+第三条与下一条里那条配对测试同时红，其中一条把时间直接印在消息里（`elapsed 121.441363982s`，
+也就是真的等到了那个后台命令自己松手）。每轮收尾都是 `restored byte-identically=True`。
+
+没有改的也写下：dump 仍然是一条命令约 450 KB，那是另一件活；被杀掉的 shell 收不到 dump，
+session 仍停在那条命令之前的状态，这是本意。
+
+（2026-10-04；`crates/codegen/xai-grok-tools/src/computer/local/shell_state.rs`、
+`crates/codegen/xai-grok-tools/src/computer/local/terminal.rs`、
+`docs/verification/shell-state-dump-grace-2026-10-04.log`、`docs/ci-test-debt.md`、`TODO.md`）
+
+### 修复：放弃一次 dump 只是不再等它，读它的那个线程连同管道读端一起留下了
+
+上面那条改完之后，actor 侧多了一条测试：命令 `kill -9 $$` 自杀，之前它后台起的
+`( for i in {1..60}; do echo tick >&4; sleep 1; done )` 一直握着 dump 管道的写端。5 秒 grace
+到点，`handle.abort()` 也调了，然后那个后台进程一秒一次往 fd 4 写，写了完整的一分钟——我们的
+读端根本没关。每条「超时或被杀、并且留了后台子进程」的命令就此留下一个线程，而线程池是有限的。
+
+`abort()` 只让调用方不再等。那次读当时住在 `spawn_blocking` 的线程上，`File::from_raw_fd` 一旦
+把它包成文件，就没有任何东西能把它从 `read_to_end` 里叫醒；`JoinHandle` 被丢掉，任务本身继续
+待到管道结束。改法是把读注册进 reactor，放弃就等于 drop 那个 future，读端随之关闭：
+
+          let fd = AsyncFd::new(fd)?;      // 调用前先 set_nonblocking(&fd)
+          let mut guard = fd.readable().await?;
+          match guard.try_io(|inner| nix::unistd::read(inner.get_ref(), &mut chunk)) { ... }
+
+搬过去之后新写的两条测试各红了一次，红的是这次搬迁自己。第一条红在 actor：61 秒才回，
+`arm:tick` 整段消失。我第一次诊断错了，以为是 `readable()` 的 readiness 没清，去补一条 EAGAIN
+分支——那分支不可达，因为 tokio 的 `Guard::try_io` 在 `WouldBlock` 时自己就清了，而更根本的是
+**阻塞 fd 上的 `read(2)` 从来不返回 EAGAIN，它直接睡**：`os_pipe()` 用的是 `pipe2(O_CLOEXEC)`，
+没带 `O_NONBLOCK`，`AsyncFd` 只把「等」交给 reactor，读仍然是那一次系统调用，于是内核把
+current-thread runtime 唯一那条线程收走，同进程里别的一切跟着停。第二条红把这件事写成了字：
+
+          150ms of sibling sleeping took 1.603740898s, which is how long the reader was
+          told to wait for the tail
+
+`O_NONBLOCK` 只加在读端，并且单独实测过一次：管道的两端是两个独立的 open file description，
+读端设为 non-blocking 之后写端 flags 仍是 `O_WRONLY`，往没人读的满管道写 1 MiB 依旧阻塞，在
+内核里停了 2.0071 秒没回来。这一条不能想当然——dump 约 454 KB 要穿过 64 KiB 的管道，写侧全靠
+阻塞才写得完，两端共享 flag 的话 dump 会被静默截断成半个。而那次测量第一次是假的：探针把常量
+抄成 `F_GETFL = 2`，Linux x86-64 上 2 是 `F_SETFD`，它什么都没读到，却顺手把两个管道端的
+`FD_CLOEXEC` 清掉，返回 0，于是打印出「两端 flags 一样」。
+
+`abort()` 本身也不关闭任何东西。它把任务标成取消，那个 future（连同里面的 `AsyncFd` 和
+`AsyncFd` 里的 `OwnedFd`）要等运行时下一次 poll 到这条任务才被释放；actor 确实会走到那一步，
+因为它回到一个带 10 Hz tick 的 select，但那是调度的事实，不是这次调用的性质。reader 侧那条
+单测因此不能写完一次写就断言：第一版断 `Some(EPIPE)`，单跑绿、全量套件五轮红两轮，红在写被
+接受（`left: None right: Some(EPIPE)`）。改成让出一百次仍然红——在 current-thread 运行时里
+`yield_now` 换不来一次「去看那条队列」；换成最多五十次 1 ms 的 timer 轮次（actor 等自己那个
+tick 时做的也正是这件事）之后，连续八轮全量套件全绿。那条消息现在附带一次 fd 普查
+（`inode=… holders=["3691751:12(r)", "3691751:13(w)"]`，从 `/proc/<pid>/fd` 的符号链接按管道
+inode 匹配，方向取自 `/proc/<pid>/fdinfo/<n>` 的 `flags:` 行），因为「读端还开着」在持有者是
+自己和是个陌生进程时是两个完全不同的结论。
+
+四条测试钉住这四件事，四个变异逐个杀掉、逐个 byte 级还原。同一批变异当天早前在满载机器上跑过
+一轮，那轮数字全部作废（机器那一段写在下一条里），下面是清空之后在空闲机器上重跑的那一轮：去掉
+`set_nonblocking` → `waiting_for_the_next_dump_chunk_does_not_park_the_runtime_thread` 红
+（`150ms of sibling sleeping took 1.603373006s`），同一轮 `test_giving_up_on_the_dump_releases_the_pipe`
+也红，但红法是 `got exit=None signal=Some("timeout")`——线程被内核收走之后，那条命令就没被报成
+它自己执行的 `kill -9 $$`；去掉 `handle.abort()` → 只有 `test_giving_up_on_the_dump_releases_the_pipe`
+红（「那个持有者在命令退出 20.037295047s 之后还在往 dump 管道里写」）；把期限放回 reader →
+reader 契约与出货路径两条同时红；去掉 collect 的期限 → 两条管道测试同时红（`elapsed
+121.441363982s`）。判据也留一条：给「会不会停掉整个运行时」这种写测试时，必须在同一个运行时里
+放一个兄弟任务当哨兵，因为这类缺陷的表现从来不是 panic，而是别处莫名静止。
+
+（2026-10-04；`crates/codegen/xai-grok-tools/src/computer/local/shell_state.rs`、
+`crates/codegen/xai-grok-tools/src/computer/local/terminal.rs`、
+`docs/verification/shell-state-dump-grace-2026-10-04.log`、`docs/ci-test-debt.md`）
+
+### 改进：一条超时测试把 2 秒写在自己身上，而这台机器的 shell 起步就要 0.9 秒
+
+`test_output_preserved_on_timeout` 在整轮套件里红、单跑绿：
+`Timed-out output should contain 'before_timeout', got: ""`。`timed_out` 为真而输出为空，
+读起来像是期限分支把 buffer 扔了。它确实值得怀疑：`poll_process` 每个 tick 都在读管道，而
+期限分支（`terminal.rs:1866`）杀完进程组直接报告 buffer，OOM 与 reap 那两条路径会先
+`drain_remaining_output`。
+
+探针把「读错」与「写晚」分开：每个 tick 在期限检查之前打印 actor 看得见的一切，并让子进程在
+echo 之后立刻 touch 一个 marker 文件。三个失败轮次在期限处的形状一模一样——
+`elapsed_ms=2001 / 2028 / 2022`，全部 `buffer_len=0 total_bytes=0 marker_age_ms=-1`。二十来
+个 tick 全都正确地看着一根空管道，而 marker 从未存在过：期限开火时，shell 还没跑到那句
+`echo`。
+
+为什么没跑到：这台机器的 shell 是带真实 rc 文件的 zsh，出货路径每条命令还要回放一份快照。
+空闲机器（负载平均 0.22，28 核）上量到的普通交互式启动，以及一条对照组：
+
+          $ for i in 1 2 3; do /usr/bin/time -f "zsh -ic: %e s" zsh -ic 'echo M' > /dev/null; done
+          zsh -ic: 0.88 s
+          zsh -ic: 0.83 s
+          zsh -ic: 0.88 s
+
+          $ for i in 1 2 3; do /usr/bin/time -f "bash -lc: %e s" bash -lc 'echo M' > /dev/null; done
+          bash -lc: 0.01 s
+          bash -lc: 0.00 s
+
+对照组说的是那 0.9 秒值多少：同样走到提示符写一个字节，登录 bash 快九十倍，所以这是这台机器的
+zsh 配置，不是「起一个 shell」这件事的固有价格。在 0.9 秒之上再留 2 秒预算，是一盘赔率由别人
+决定的硬币：这条测试断言的是机器，不是代码。
+
+那三个失败轮次跑的时候，同一句量到 1.32 / 1.25 / 1.45 秒，日志里当时把负载平均 61 归给「正在
+跑 32 路并发的全量套件」——那句归因是错的。机器上挂着 52 个孤儿自旋循环：24 个 `while :; do :;
+done` 已经跑了 22 小时（每个 ~94% CPU），28 个由 `for i in $(seq 1 $(($(nproc)/2)))` 起的循环
+跑了 1 小时（每个 ~72%），全部 `PPID=1`，是当天被中断的探针脚本留下的。清掉之后负载回到 0.2
+左右。归因要改，结论不用：0.22 负载的同一台机器仍然要 0.88 秒，2 秒预算从来不只是「机器刚好忙了
+一下」。
+
+预算改由机器给出：同一后端先跑完一条命令并计时，期限取那个测量的 4 倍，夹在 2 到 30 秒之间；
+被测命令与断言一字未动，失败消息现在带上量到的启动耗时，下一个读者看得见机器当时说了什么。
+一次性的快照与 login-env 采集由一条热身命令吸收，量到的是「起一个 shell」而不是「跑第一条
+命令」。这条测试当时给自己算出来的两个数（临时在测试体里加一行 `eprintln!`、`--nocapture` 跑
+一次、随后逐字节还原）是 `startup=704.369614ms`、`deadline=2.817478456s`：落在 2 秒下限之上，
+所以撑住它的是四倍关系而不是那个夹取。空闲机器上单跑三轮 `5.00 / 4.90 / 5.10 秒`，同一条测试
+在那台被 52 个循环占满的机器上是 11.81 秒——它自己也要跑三次命令，机器的慢在这里同样是乘上
+去的。
+
+没被这轮解决的那半边也记下来：期限分支不做最后一次 drain，这个不对称是真的；但三次失败都
+没有可丢的字节，所以没有凭猜测去改产品代码，它进了 `docs/ci-test-debt.md`。
+
+（2026-10-04；`crates/codegen/xai-grok-tools/src/computer/local/terminal.rs`、
+`docs/verification/terminal-timeout-budget-2026-10-04.log`、`docs/ci-test-debt.md`、`TODO.md`）
+
+### 修复：Windows 腿最后一条红，用的是一条在 Windows 上根本不是文件的夹具
+
+Windows 腿从 42 条红降到 1 条：run `37126354066`（head `9e77c6d0`）42 条，run
+`37141224569`（head `e0896e54`）3 条，run `37148495679`（head `70cfd7a7`）1 条，判决是
+`3116 passed; 1 failed; 2 ignored`，同一步骤拆分里的 step 9（另外五个 crate）与同一 run 的
+macOS 腿都是绿的。剩下那一条是
+`implementations::lsp::manager::tests::a_header_decodes_the_uri_instead_of_cutting_the_scheme_off`，
+panicked at `manager.rs:817:9`：`the reader was handed the escaped form: file:///dir/a%20b.cs`。
+
+这条红不是出货代码，是测试自己。`append_file` 把 URI 交给 `path_for_file_uri`，而 url 2.5.8
+的 Windows 换算器 `file_url_segments_to_pathbuf_windows` 只认第一段长度为 2（`C:`）或 4
+（`C%3A`）的写法，其余一律落到 `_ => return Err(())`；于是
+`file:///dir/a%20b.cs` 在 Windows 上换算不出路径，`append_file` 按设计回落成「原样显示 URI」。
+同一个夹具在 Linux 上是合法路径，所以这条测试从写下来那天起就没在没有 Linux 的平台上成立过。
+被断言的确实是 Windows 的产品行为，用的却是一条 Windows 认不出的 URI——这正是本机跑一万次也
+看不见它的全部原因。
+
+一条测试拆成三条，各钉一件事：
+
+          原生路径（Windows 上是 `C:\dir\a b.cs`，其余平台 `/dir/a b.cs`）经出货的反向函数
+          `file_uri()` 变成 URI，再断言表头**等于**那条原生路径（相等，不是后缀）、`%20` 已消失、
+          `file_name` 是 `a b.cs`；外加一条「夹具确实以转义形式到达」的断言，因为哪天
+          `file_uri` 不再转义，这条测试会静默变成空断言
+          Windows 真实会发的 `file:///C:/dir/a%20b.cs`：只断言两个平台都成立的部分
+          （没有 `%20`、没有 `file:`、以 `C:{sep}dir{sep}a b.cs` 结尾）
+          `untitled:Untitled-1%20a.cs` 在任何平台都不指文件，于是按原样显示——这条把那条
+          回落路径变得可观测，CI 那次红恰好就是它被执行出来的样子
+
+本机没有 Windows，所以把结论建立在真实 Windows target 上：`chaos-winprobe:local` 由它自己的
+`docs/verification/model-path-windows-probe.Dockerfile` 重建（rust 1.94 + mingw-w64 + wine64 +
+`x86_64-pc-windows-gnu`），脚本先编出货目标需要的 `bcryptprimitives.dll` 垫片（wine 8.0 不导出
+`ProcessPrng`），再装一个 cargo runner，把垫片复制到每个测试可执行文件旁边后 exec
+`/usr/lib/wine/wine64`，然后跑三遍同一个过滤器。基线 `running 8 tests` 全绿；把 HEAD 那一份文件
+逐字放回去，得到 `running 6 tests`、`manager.rs:817:9` 与 CI 打印的一模一样的那句消息；还原之后
+8 条再次全绿，且 `restored byte-identically: True`。也就是说这条红在这里是被**造出来**的，不是从
+日志里推出来的。
+
+三处变异逐个注入各自变红：H1 恢复成「砍掉协议头」的原始缺陷，第一条与第二条同时红
+（`left: "/dir/a%20b.cs" right: "/dir/a b.cs"`）；H2 是手工剥前缀这种半个修法，同样两条红；
+H3 让换算失败时塌成空串，只有第三条看得见它。这三轮之前有两次假结果：第一次 wine 报「HEAD 的
+测试在 Windows target 上通过」，原因是 `shutil.copy2` 把变异前的 mtime 一起写回、cargo 判定源码
+没变而复用了带变异的二进制——同一个坑第二次踩，这次在还原那一侧；第二次驱动直接崩在
+`int('ok.')`，因为 libtest 那行是 `test result: ok. 8 passed`。修好之后驱动多了一条结构校验：
+`running N tests` 必须等于源文件里声明的 `#[test]` 条数（8 对 6），这条比任何一句「我记得跑过」
+都硬，因为它让复用旧二进制在算术上不可能得出绿灯。
+
+wine 不是 Windows：它是 Debian 的 wine 8.0。这条测试摸的是路径算术、百分号解码与 `PathBuf`
+的显示字符串，三者都不依赖 NTFS 语义、真实 ACL 或真实的每进程当前驱动器，但这条腿的最终判决
+仍然是 CI 的 `platform tests (windows-latest)`。
+
+（2026-10-04；`crates/codegen/xai-grok-tools/src/implementations/lsp/manager.rs`、
+`docs/verification/windows-test-failures-2026-10-04.log`、`docs/ci-test-debt.md`、`TODO.md`）
+
+### 门禁：复现步骤把 `.sh` 递给 `python3`，而现在有人读文档里写下的每一条命令
+
+这个仓库已经有两道读文字的闸：`check-evidence-paths.py` 不许文档指向会话私有的临时目录，
+`check-doc-path-refs.py` 不许指向不在仓库里的文件。两道都不读被记下来的转写稿——前者的
+docstring 明写 `docs/verification/*.log` 故意不扫，因为转写稿引的是命令当时真用过的绝对路径，
+改写它就是造假。于是维护者最可能整行复制粘贴的那一种指针，命令行，没有任何闸读它。
+
+代价当天就找到了，两条挨在一起（都在 `docs/verification/` 下）：
+
+          protocol-mirror-coverage-2026-10-03.log:61   bash scripts/ci/check-gui-protocol.sh
+          protocol-mirror-coverage-2026-10-03.log:202  python3 scripts/ci/check-gui-protocol.sh
+
+61 行是真跑过的那一条；202 行在「怎么复现」那一节底下，把 bash 脚本递给 Python，回答是
+`SyntaxError`。照着读的人只能断定复现坏了，或者断定文档坏了。同一个形状当天已经赔过一次：
+`docs/ci-test-debt.md` 记着一次扫描把 `check-versions.sh` 交给 python，python 抛错，而循环看的
+退出码来自 `tail`，那道门于是被报成通过。
+
+先量，再写规则。全仓库 320 个文件里共 1,087 条命令行：45 份转写稿 345 条 `$ ` 行；275 份
+Markdown 20 条 `$ ` 行加 722 行 shell 围栏。两条规则是：
+
+          解释器读不懂递给它的文件：python3 只配 .py，bash 只配 .sh，pwsh 只配 .ps1，
+          node 只配 .mjs/.cjs/.js；解释器按 basename 认，扩展名不分大小写；写在引号里的
+          解释器名是数据不是命令
+          命令点名的路径还得在那儿——除非这条命令本身就是把它造出来的那个动作
+
+第一条在全仓库只响过一次，就是 202 行。那一行改掉之后，它今天在树上剩下的唯一命中，是这份
+证据日志第一段对那条错命令的引用。第二条要四条豁免才读得下去：造文件的命令（`mkdir`、`touch`、
+`rm`、`tee`、`truncate` 等）、拷贝的目标（`cp`、`mv`、`install` 写最后一个参数、读前面那些，
+所以源还得在）、重定向的目标、以及形状像模式的 token。模式那条里埋着一个坑：判断必须落在整个
+空白 token 上，因为路径正则到 `<` 就断，`x-<hash>.py` 会被截成 `x-` 再被报成缺失文件——第一版
+正是这样错的。豁免的量也是测出来的：一条都不设报 11 条，四条设齐报 5 条，其中模式独占 6 条、
+重定向 1 条；造文件与拷贝这两条今天一条都不减少，这句话写出来而不是含糊过去。只读 `$ ` 行的
+旧版报 4 条，围栏里那一条它看不见，而那一条正住在一份等着被执行的文档里。
+
+那 5 条之前还有 4 条来自 `.agents/skills/chaos-upstream-sync/references/port-playbook.md` 里的假想
+文件名（`some_module.rs`、`foo.rs`、`changelogs/X.Y.Z.md`、`X.Y.Z.json`），而那份文档的全部用途
+就是被执行。把它们记进台账是错的选择——带着编造文件名的配方不是「曾经为真」的证据，它就是一条
+跑不通的配方。两处换成在 HEAD 与 `upstream/main` 里都存在的路径，会覆盖工作区的那一条特意挑了
+两棵树逐字节相同的文件，复制粘贴一次是空操作；两处 changelog 拷贝改成先 `V=1.0.9` 再引用 `$V`，
+于是原样粘贴就能跑。剩下 5 条逐条记进 `scripts/ci/evidence-commands-allowlist.tsv`：读者自己项目
+里的 `bin/verify.sh`、转写稿把 `ls` 的拒绝当作结论本身打出来的两处、一个退役的导出名、一份写完
+即删的侦察记录。台账里被记的路径若不再有任何命中就报 stale，所以修掉一行必须连带删掉那一行，
+台账不会长成墓地。
+
+台账自己也绊了一次。这道闸一旦开始读 `docs/verification/*.log`，就读到本条证据日志第一段引用的
+那条错命令，于是把它报成问题：引用一个错误与推荐一个错误，在文字上分不出来。`quoted-command`
+这一类因此从「写在 docstring 里的承诺」变成有用途的一类——按 finding 打出来的那条命令原样登记，
+而不是按它所在的文档。它有两个只能靠夹具钉住的性质：一类台账行只能免掉自己那一类的 finding
+（否则一条松行同时关掉两条规则），以及被登记的那条命令若不再出现就报 stale，所以哪天把引用
+改写成描述，这一行必须跟着消失。
+
+19 条夹具，20 条变异全 KILLED，还原后夹具与真仓库同时 `rc=0`。夹具那个仓库是真的 `git init`，
+因为锚定规则读 `git ls-files`；非空洞性由夹具自己断言——干净夹具那一条会去检查它即将保持沉默的
+那几个计数器，于是一个不再匹配任何东西的扫描器报红，而不是装绿；跑真仓库的那一条会再读一遍
+`--all`，要求每一条命中都能在台账上找到 key，因为「零命中」这种断言在第一行引用被登记的那天就会
+变红。两条命令同时接进 `.github/workflows/ci.yml` 与 `scripts/verify-in-docker.sh` 的 `gates`，
+由 `check-guard-wiring.py` 两个方向一起比。驱动那一段的教训单独记在 `docs/ci-test-debt.md`：
+第一次十五条变异全被记成 BROKEN，因为驱动拿「输出里有 Traceback」当崩溃信号，而 unittest 对
+每一个失败断言都打一段 Traceback；新增的第二十条第一次 SURVIVED，原因不在夹具而在变异只删掉
+旧行为的一半，删完与改动前语义等价。
+
+（2026-10-04；`scripts/ci/check-evidence-commands.py`、`scripts/ci/test-check-evidence-commands.py`、
+`scripts/ci/evidence-commands-allowlist.tsv`、`docs/verification/evidence-commands-2026-10-04.log`、
+`docs/verification/protocol-mirror-coverage-2026-10-03.log`、
+`.agents/skills/chaos-upstream-sync/references/port-playbook.md`、`CONTRIBUTING.md`、
+`docs/ci-test-debt.md`、`scripts/ci/doc-path-refs-allowlist.tsv`、`.github/workflows/ci.yml`、
+`scripts/verify-in-docker.sh`）
+
 ### 修复：重启后新服务器被通知的文件，是一个把协议头砍掉剩下的字符串
 
 `platform tests (windows-latest)` 上 `xai-grok-tools` 的三条失败（run 37141224569，3111

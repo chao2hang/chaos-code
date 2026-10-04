@@ -1,0 +1,590 @@
+# The persistent shell lost every `cd` and `export` made by a command slower than 5 seconds (2026-10-04)
+
+Five different tests in `xai-grok-tools` had been failing one at a time, on no schedule,
+only inside the full suite. They are written about different things (an exported variable,
+a shell function, a `$()` capture, a deleted working directory, a spawn error) and their
+assertions look nothing alike. Instrumenting the one place where shell state changes hands
+shows one cause behind all five: the deadline that bounds reading a state dump was armed
+when the command was *spawned*, so any command that took longer than it returned "no dump",
+and the session kept the state from before that command. Nothing above the reader knew.
+
+== 0. What the suite kept saying
+
+    $ cargo test -p xai-grok-tools --lib
+
+Nine full rounds before any instrumentation, and then five more with it, produced these
+five names. Each is quoted with the message the test itself printed.
+
+    test_persistent_shell_env_var_persists
+        assertion `left == right` failed: env var should persist across commands
+          left: ""
+         right: "hello123"
+
+    test_persistent_shell_function_persists
+        assertion `left == right` failed
+          left: Some(127)
+         right: Some(0)
+
+    test_persistent_shell_variable_capture
+        assertion `left == right` failed: variable from command substitution should persist
+          left: ""
+         right: "captured_value"
+
+    test_persistent_shell_deleted_cwd_falls_back_to_request_cwd
+        fallback warning must be in the command output, got: "/tmp\n"
+
+    test_persistent_shell_spawn_error_names_missing_cwd
+        spawn must fail when both directories are missing
+
+`Some(127)` is a command-not-found, and "spawn must fail" firing means the spawn
+succeeded. Every one of them is the same statement in different clothes: the state the
+persistent shell was supposed to carry into the next command was not carried. All five
+`cd` / `export` / function definitions are made by the *first* command of the test and
+read back by the second, and every one of them passed when run alone.
+
+== 1. Instrumenting the hand-over
+
+`ShellState::update_from_dump` returns a bool saying whether it accepted the dump, and its
+only caller ignored the bool and logged at `debug`
+(`crates/codegen/xai-grok-tools/src/computer/local/terminal.rs:1543`). A dump that never
+arrived, a dump that arrived truncated, and a dump for the wrong shell were therefore
+indistinguishable in the logs and indistinguishable in the suite.
+
+The probe prints both arms of that decision, and the arm of the reader that hands it an
+empty string, gated on an environment variable so the shipped binary is unaffected:
+
+    SHELLDUMPPROBE accept len=<bytes>
+    SHELLDUMPPROBE reject len=<bytes> head=<first 40 bytes> tail=<last 40 bytes>
+    SHELLDUMPPROBE read_timeout
+
+    $ python3 {SCRATCH}/probe-shell-state.py 5
+
+The driver patches `shell_state.rs`, builds, runs the suite once per requested round, and
+restores the file with `shutil.copy2` plus an `os.utime` of the original timestamps,
+checking the result with `filecmp.cmp(shallow=False)`. Final line of its own output:
+
+    restored byte-identically: True
+
+Five rounds on a 28-core box, running the suite at full parallelism:
+
+    ==== round 1: rc=101 accept=2 reject=2 timeout=2 ====
+        FAILED computer::local::terminal::tests::test_persistent_shell_spawn_error_names_missing_cwd
+        FAILED computer::local::terminal::tests::test_persistent_shell_deleted_cwd_falls_back_to_request_cwd
+        SHELLDUMPPROBE reject len=0 head="" tail=""
+        SHELLDUMPPROBE reject len=0 head="" tail=""
+        SHELLDUMPPROBE read_timeout
+        SHELLDUMPPROBE read_timeout
+    ==== round 2: rc=101 accept=1 reject=1 timeout=1 ====
+        FAILED computer::local::terminal::tests::test_persistent_shell_variable_capture
+        SHELLDUMPPROBE reject len=0 head="" tail=""
+        SHELLDUMPPROBE read_timeout
+    ==== round 3: rc=0 accept=0 reject=0 timeout=0 ====
+    ==== round 4: rc=101 accept=1 reject=1 timeout=1 ====
+        FAILED computer::local::terminal::tests::test_persistent_shell_spawn_error_names_missing_cwd
+        SHELLDUMPPROBE reject len=0 head="" tail=""
+        SHELLDUMPPROBE read_timeout
+    ==== round 5: rc=101 accept=1 reject=1 timeout=1 ====
+        FAILED computer::local::terminal::tests::test_persistent_shell_deleted_cwd_falls_back_to_request_cwd
+        SHELLDUMPPROBE reject len=0 head="" tail=""
+        SHELLDUMPPROBE read_timeout
+
+libtest captures a test's stderr and echoes it only under the `failures:` heading, so
+these counts come from the failing tests' own buffers and are lower bounds on what the
+run did. That is what makes them usable: the lines are attributed to the test that
+printed them. Round 4, verbatim:
+
+    ---- computer::local::terminal::tests::test_persistent_shell_spawn_error_names_missing_cwd stdout ----
+    SHELLDUMPPROBE read_timeout
+    SHELLDUMPPROBE reject len=0 head="" tail=""
+    SHELLDUMPPROBE accept len=464133
+
+    thread 'computer::local::terminal::tests::test_persistent_shell_spawn_error_names_missing_cwd' panicked at crates/codegen/xai-grok-tools/src/computer/local/terminal.rs:4953:13:
+    spawn must fail when both directories are missing
+
+That test runs `cd <tmpdir>` and then a `pwd` whose `working_directory` no longer exists,
+and expects the spawn itself to fail. The `read_timeout` is the first command's dump; the
+`reject len=0` is the caller receiving the empty string that timeout returns; the `cd` is
+therefore never in the state, so the second command spawns in a directory that still
+exists, and the assertion below it is unreachable. In every failing round the number of
+`read_timeout` lines equals the number of `reject len=0` lines, and the one green round
+printed neither.
+
+== 2. Where the clock was armed
+
+The reader is started for a command when that command is spawned
+(`crates/codegen/xai-grok-tools/src/computer/local/terminal.rs:878`):
+
+    let dump_handle =
+        tokio::spawn(
+            async move { shell_state::read_dump_from_pipe(prep.state_out_read).await },
+        );
+
+and the read it runs was wrapped in one deadline
+(`crates/codegen/xai-grok-tools/src/computer/local/shell_state.rs:681`, before the fix):
+
+    match tokio::time::timeout(
+        DUMP_READ_TIMEOUT,                       // 5s
+        tokio::task::spawn_blocking(move || { ...read until EOF or END marker... }),
+    )
+
+so the 5 seconds had to cover everything between the fork and the last byte of the dump:
+login-environment replay is outside it, but the per-command snapshot is not, the command
+itself obviously is not, and the drain of the dump is. The dump is not small on a real
+user's shell. The `accept` line above read `len=464133`; that is the state of this host's
+zsh, about 454 KB, pushed through a pipe whose buffer is 64 KiB, so the reader has to be
+awake and draining for the whole of it.
+
+What tipped it over was load. The suite runs at 32-way parallelism, each test spawning a
+shell that replays a snapshot, and the deadline is a wall-clock one. A `sleep`-free test
+command like `cd /tmp/xxx` needs well under 5 seconds of CPU; it does not get it reliably
+when 32 of them are queued behind each other.
+
+The dump is written by the shell as its last act, so the only moment at which a silent
+dump pipe means anything is after the shell is gone. That is where the bound belongs.
+
+== 3. Two hypotheses that died first
+
+- The END marker being split across two writes, so the reader's `buf.contains(END_MARKER)`
+  test and the caller's `raw.ends_with("MARKER\n")` test disagree. `strace` on
+  `bash -c 'printf "%s\n" M'`, on `bash -c 'echo M'` and on
+  `zsh -c 'builtin print -r -- "M"'` shows one `write()` of marker plus newline every
+  time. A marker at the end of a large dump is still one write, and pipe writes below
+  `PIPE_BUF` are atomic.
+- The poll loop reading the output pipes incorrectly. It was not: that question was the
+  `test_output_preserved_on_timeout` investigation, whose tick trace is in
+  `docs/verification/terminal-timeout-budget-2026-10-04.log`. Different defect, same week.
+
+== 4. The fix
+
+`read_dump_from_pipe` has no clock now: it reads to the END marker or to EOF, which is what
+it already did, and returns whatever arrived. The bound moved to the one caller that waits
+for it, where the child is already known to have exited
+(`crates/codegen/xai-grok-tools/src/computer/local/terminal.rs:1523`,
+`collect_shell_state_dumps`):
+
+    match tokio::time::timeout(shell_state::DUMP_COLLECT_TIMEOUT, handle).await {
+
+`DUMP_READ_TIMEOUT` became `DUMP_COLLECT_TIMEOUT`, same 5 seconds, documented as a bound on
+the wait rather than on the command. The paths that kill a child already `abort()` the
+reader (`shutdown_all`, `kill_foreground_commands`, `kill_and_finalize`), so nothing is
+left to wait on a pipe that will never be written again except this one bounded wait.
+
+The silence went too. A dump rejected after a clean exit is now a `warn` carrying the byte
+count, which is what separates the empty string from a truncated dump:
+
+    tracing::warn!(dump_len = dump.len(), "shell state dump rejected after a clean exit, ...")
+
+and a wait that ran the whole grace is a `warn` on its own. A killed shell never reaches
+its dump, so a rejection after a signal stays at `debug`: that case is expected, and
+warning on it would fire on every timed-out command.
+
+== 5. What pins it, and what each mutant costs
+
+Six tests cover the hand-over, three on each side of it. Run together on an idle host:
+
+    $ cargo test -p xai-grok-tools --lib -- \
+          computer::local::shell_state::tests::dump_written_long_after_the_reader_started_is_still_read \
+          computer::local::shell_state::tests::waiting_for_the_next_dump_chunk_does_not_park_the_runtime_thread \
+          computer::local::shell_state::tests::giving_up_on_the_dump_reader_closes_our_end_of_the_pipe \
+          computer::local::terminal::tests::test_persistent_shell_state_survives_a_slow_command \
+          computer::local::terminal::tests::test_wedged_dump_pipe_does_not_stall_the_reply \
+          computer::local::terminal::tests::test_giving_up_on_the_dump_releases_the_pipe
+
+    test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 3209 filtered out; finished in 9.39s
+
+The first is the reader's own contract: a writer sleeps 6 seconds, longer than the deadline the
+reader used to carry, then writes a whole dump, and the reader has to hand it back intact. The
+second is the one written for this slice's own defect (section 6). The third is the close (section
+7). The fourth is the user-visible symptom on the shipped tool path: a persistent-shell command
+that runs `cd`, `export` and `sleep 6` must still leave both behind for the next command, and the
+test asserts that its own command outlived the grace, so it cannot quietly decay into a fast
+command. The fifth and sixth are the case the removed clock used to be justified by: a
+backgrounded command inherits the dump pipe, the shell then kills itself, and the dump never
+comes. The fifth asks for the reply on the grace rather than when the grandchild gives up; the
+sixth asks that giving up on the wait also gave up on the read.
+
+Each mutant is applied to the working tree, run, and restored byte-identically by
+`{SCRATCH}/mutate-dump.py`. All four were re-run on an idle host, because the first set of numbers
+was taken on a machine that turns out to have been running 52 spin loops (section 9). The lines
+below are that second set.
+
+Mutant m1, put the deadline back inside the reader (`{SCRATCH}/mut-m1-reader-clock.log`):
+
+    test dump_written_long_after_the_reader_started_is_still_read ... FAILED
+    panicked at crates/codegen/xai-grok-tools/src/computer/local/shell_state.rs:1013:81:
+    called `Result::unwrap()` on an `Err` value: EPIPE
+
+    test test_persistent_shell_state_survives_a_slow_command ... FAILED
+    assertion `left == right` failed: the slow command should have run to completion: ""
+      left: None
+     right: Some(0)
+
+    test result: FAILED. 4 passed; 2 failed; ... finished in 7.36s
+
+The writer finds out before the assertion does: the reader stopped draining, so the write into the
+pipe came back EPIPE. The second failure is the defect in one line, a command killed by its own
+deadline before it reached its `cd` and `export`.
+
+Mutant m4, leave the fd blocking (`{SCRATCH}/mut-m4-blocking-fd.log`): see section 6. Mutants m2
+and m3, the two ways the wait can be unbounded, are in sections 6 and 7.
+
+== 6. The reader moved onto the reactor, which is where the blocking read showed up
+
+Section 4 left the reader on `spawn_blocking`, and that is not a wait a caller can give up on:
+dropping the `JoinHandle` leaves the closure on a pooled worker, parked in `read(2)`, holding both
+that worker and our end of the pipe for as long as any process keeps a write end open. Reading the
+kill paths showed why nobody noticed: `shutdown_all`, `kill_foreground_commands` and
+`kill_and_finalize` all `abort()` the reader, and killing the process group closes the pipe, so
+the thread always did end up finishing. The cost was one leaked pooled worker per command that
+was killed or timed out *and* had backgrounded something. The read moved to the reactor, where
+cancelling the task is what closes the fd:
+
+    set_nonblocking(&fd)?;
+    let fd = AsyncFd::new(fd)?;
+    loop {
+        let mut guard = fd.readable().await?;
+        match guard.try_io(|inner| nix::unistd::read(inner.get_ref(), &mut chunk)) { ... }
+    }
+
+The first version of that loop was wrong, and the first diagnosis of the wrongness was wrong too.
+The symptom was the new actor test taking 61 seconds for a 5 second grace. The diagnosis was that
+`AsyncFd` was handing back stale readiness, so the fix seemed to be a `clear_readiness()` call in a
+would-block arm. That does not compile: on tokio 1.52.3 the method is `clear_ready()`. Reading the
+source then removed the whole idea, because `AsyncFdReadyGuard::try_io` clears readiness itself
+when the closure returns a `WouldBlock` error, which also makes an `Ok(Err(WouldBlock))` arm
+unreachable.
+
+Unreachable is the answer, not an inconvenience: a `read(2)` on a blocking fd never returns
+EAGAIN, it sleeps in the kernel. `os_pipe()` creates the pipe with `pipe2(O_CLOEXEC)`, which says
+nothing about `O_NONBLOCK`, so `AsyncFd` was only given the *waiting*; the read was still that one
+system call, and the kernel took the single thread of a current-thread runtime with it. Every
+timer in that runtime stopped, which is the 61 seconds, and `arm:tick` vanished from the trace for
+exactly that reason.
+
+`waiting_for_the_next_dump_chunk_does_not_park_the_runtime_thread` is the test for it, and it was
+written after the misdiagnosis precisely because a timer cannot be the witness: the reader is left
+waiting for a second chunk, the chunk is delivered by a real OS thread after 1500 ms, and the test
+then times 150 ms of its own sleeping. If the read parked the thread, the test cannot even report
+the failure from inside the runtime that has stopped. Mutant m4, delete `set_nonblocking`:
+
+    test waiting_for_the_next_dump_chunk_does_not_park_the_runtime_thread ... FAILED
+    150ms of sibling sleeping took 1.603373006s, which is how long the reader was told to wait
+    for the tail: the wait between chunks was spent inside a blocking read on this thread rather
+    than on the reactor, and everything else in this runtime was stopped for the duration
+
+    test test_giving_up_on_the_dump_releases_the_pipe ... FAILED
+    assertion `left == right` failed: the shell should have killed itself before writing its dump,
+    got exit=None signal=Some("timeout")
+
+    test result: FAILED. 4 passed; 2 failed; ... finished in 61.59s
+
+The second failure is the same defect seen from the actor: with the thread parked, the command is
+not reported as killed by its own `kill -9 $$` but by its deadline.
+
+`O_NONBLOCK` is set on the read end only, deliberately. The two ends of a pipe are separate open
+file descriptions on Linux, so the write end the shell inherited stays blocking, and it has to:
+the dump is about 454 KB and the buffer is 64 KiB, so the writer depends on `write` waiting for the
+reader to drain rather than failing short. That was measured rather than assumed, and the first
+measurement of it was false: the probe used `F_GETFL = 2`, which on Linux x86-64 is `F_SETFD`, so
+it set nothing and reported both ends unchanged. With the real constants
+(`{SCRATCH}/probe-pipe-ends.py`, `{SCRATCH}/pipe-ends.log`):
+
+    $ python3 {SCRATCH}/probe-pipe-ends.py
+    pipe buffer capacity: 65536 bytes
+    read  end before: O_RDONLY (0o0)
+    write end before: O_WRONLY (0o1)
+    read  end after:  O_RDONLY|O_NONBLOCK (0o4000)
+    write end after:  O_WRONLY (0o1)
+    a 1 MiB write into the full pipe is still inside the kernel after 2.0071s: the write end never
+    saw O_NONBLOCK
+
+== 7. Giving up on the wait did not give up on the read
+
+With the reader cancellable, `collect_shell_state_dumps` had to be made to cancel it. A
+`JoinHandle` awaiting the read is now bounded by the grace and abandoned properly:
+
+    match tokio::time::timeout(shell_state::DUMP_COLLECT_TIMEOUT, &mut handle).await {
+        ...
+        Err(_elapsed) => {
+            handle.abort();
+            tracing::warn!("shell state dump did not arrive within {}s of the command exiting, ...");
+        }
+    }
+
+`abort()` alone is not the close: it marks the task cancelled and the runtime releases the future,
+and with it the `AsyncFd`, the next time it polls that task. The actor does get there, because it
+returns to a select with a 10 Hz tick, but that is a scheduling fact rather than a property of the
+call, and the test for it had to be written so that it says the same thing either way.
+
+`test_giving_up_on_the_dump_releases_the_pipe` makes the holder's death the observation. The
+command backgrounds a loop that writes into fd 4 once a second for a minute and then kills itself.
+While our read end is open those writes succeed and the holder lives; the moment it is closed the
+next write raises SIGPIPE and the holder dies. Mutant m3, drop the `handle.abort()`:
+
+    test test_giving_up_on_the_dump_releases_the_pipe ... FAILED
+    the holder was still writing into the dump pipe 20.037295047s after the command exited: the
+    reader was left on it instead of being given up on with the wait, so this command still had
+    someone holding its pipe open (load average at start: 1.15 ...)
+
+    test result: FAILED. 5 passed; 1 failed; ... finished in 28.42s
+
+Mutant m2 removes the bound itself and shows what the grace is between the command and the reply
+(`{SCRATCH}/mut-m2-no-collect-bound.log`):
+
+    test test_wedged_dump_pipe_does_not_stall_the_reply ... FAILED
+    the reply only arrived once the backgrounded command had released the dump pipe (elapsed
+    121.441363982s, load average at start: 1.12 3.14 4.22 ...) so nothing bounded the wait for a
+    dump that never arrives; every bound here is a timer in this process, ...
+
+    test result: FAILED. 4 passed; 2 failed; ... finished in 121.44s
+
+== 8. The test for that close was itself wrong, twice
+
+The first version of the holder test asked the holder to report its own death:
+
+    ( ... ) & holder=$!; ... ; wait $holder 2>/dev/null || { echo closed > marker; }
+
+It never wrote the marker. A process killed by SIGPIPE does not run a trap or an `||` arm; the
+signal arrives in the middle of the blocked `write` and the shell is gone before anything of that
+shape can execute. So the observation had to be made from outside, which is what section 7
+describes.
+
+The unit test on the reader side then failed in the full suite twice out of five rounds, with the
+write accepted rather than refused:
+
+    assertion `left == right` failed: our end of the pipe should be closed once the read is given
+    up on (still accepting writes after 100 yields)
+      left: None
+     right: Some(EPIPE)
+
+Waiting by yielding was the wrong tolerance. `abort()` puts the cancelled task back in the run
+queue, but `yield_now` hands the current-thread runtime straight back to the task that yielded, so
+a hundred yields are not a hundred looks at that queue; a 1 ms timer park does go through the
+scheduler, which is also what the actor is doing while it waits on its tick. The wait is now on
+timers, bounded at fifty of them, and eight consecutive full-suite rounds after that change were
+green (section 9).
+
+The failure message also gained a census of the pipe, because "a read end is still open" means two
+different things depending on whether the holder is this process or a stranger:
+
+    inode=… holders=["3691751:12(r)", "3691751:13(w)"]
+
+It is read from `/proc/<pid>/fd` symlinks matched against the pipe's inode, with the direction
+taken from the `flags:` line of `/proc/<pid>/fdinfo/<n>`, since the symlink itself does not say
+which end it is. It has not fired since the tolerance changed, which is the honest state of that
+diagnostic: written for a red that is now explained, kept because the next red in this family is
+not.
+
+== 9. A host nobody had looked at, and the numbers it had contaminated
+
+Two actor tests failed deterministically in five consecutive full-suite rounds, each round
+`finished in 124.6s`, each with the reply arriving exactly when the holder let go of the pipe:
+
+    test test_wedged_dump_pipe_does_not_stall_the_reply ... FAILED
+        the reply only arrived once the backgrounded command had released the dump pipe (elapsed 121.5s, ...)
+    test test_giving_up_on_the_dump_releases_the_pipe ... FAILED
+        the holder should still be running when the reply comes back
+
+The same two tests passed in isolation in 8.89 s. The machine was the difference:
+
+    $ uptime
+    06:26:25 up 10 days, 8:48, 2 users, load average: 59.06, 60.43, 58.26
+
+with 24 orphaned `/usr/bin/zsh -c 'while :; do :; done'` processes (22 h 48 m elapsed, about 94 %
+CPU each) and 28 orphaned
+`/bin/sh -c 'for i in $(seq 1 $(($(nproc)/2))); do (while :; do :; done) & done; wait'`
+(1 h 04 m, about 72 % each), all of them `PPID=1`, left behind by aborted diagnostic drivers of
+this investigation. On 28 cores that is a 2x oversubscription that never lets up, and every bound
+in these tests is a timer that needs this process to be scheduled. Clearing them is
+`{SCRATCH}/kill-orphans.py`; killing by process group was tried first and killed the shell running
+the investigation, because those orphans have PGID 0.
+
+Afterwards the same module filter, no source changes:
+
+    $ cargo test -p xai-grok-tools --lib -- computer::local::terminal::tests
+    test result: ok. 74 passed; 0 failed; 0 ignored; 0 measured; 3141 filtered out; finished in 12.35s
+
+which had been `72 passed; 2 failed; finished in 124.28s`. Shell startup, the number the timeout
+budget of `docs/verification/terminal-timeout-budget-2026-10-04.log` is built on, was contaminated
+in the same way and is corrected there: 0.88 / 0.83 / 0.88 s on an idle host (load average 0.25)
+against the 1.32 / 1.25 / 1.45 s recorded while those loops were running.
+
+Both failure messages now carry the load average they were measured at, e.g.
+`load average at start: 1.12 3.14 4.22`, because the alternative is a red that reads as a defect.
+They do not skip on load: a bound that a loaded machine cannot meet is worth knowing about, and a
+silent skip is how this family of tests would have stayed broken.
+
+One instrumented run through all of this deserves its own warning, because it produced seven
+failures that did not exist. The driver that added traces to the reader inserted its chunk counter
+as a second match arm with the same pattern instead of inside the existing one:
+
+    Ok(Ok(n)) => probe(&format!("reader chunk n={n} buf={}", buf.len() + n)),
+    Ok(Ok(n)) => buf.push_str(&String::from_utf8_lossy(&chunk[..n])),
+
+The first arm wins, so the reader counted bytes and stored none. That round reported
+`67 passed; 7 failed` with `cwd should persist across commands, got: /tmp` across the persistent
+shell family, and the probe's own lines agreed with the lie (`collect got-dump id=… len=0`), while
+also being ten times faster than the baseline. The tell was in the same build output:
+`warning: xai-grok-tools (lib test) generated 1 warning`, which is the duplicated pattern. A probe
+that changes the warning count is not measuring anything.
+
+== 10. The same suite afterwards
+
+Full `cargo test -p xai-grok-tools --lib` rounds, host condition printed with each round. First
+five rounds, after the reader fix and before the tolerance of section 8 was corrected:
+
+    ==== clean2-round 1: rc=0  result=ok    passed=3212 failed=0 ignored=3 ====
+    ==== clean2-round 2: rc=0  result=ok    passed=3212 failed=0 ignored=3 ====
+    ==== clean2-round 3: rc=101 result=FAILED passed=3211 failed=1 ignored=3 ====
+        FAILED computer::local::shell_state::tests::giving_up_on_the_dump_reader_closes_our_end_of_the_pipe
+    ==== clean2-round 4: rc=0  result=ok    passed=3212 failed=0 ignored=3 ====
+    ==== clean2-round 5: rc=101 result=FAILED passed=3211 failed=1 ignored=3 ====
+        FAILED computer::local::shell_state::tests::giving_up_on_the_dump_reader_closes_our_end_of_the_pipe
+    summary: 3/5 rounds green; failing rounds: [3, 5]
+
+Both reds are the yield-vs-timer tolerance described in section 8, and no other test failed in
+either round. Eight more rounds after that change, on a host whose load average rose from 4.6 to
+about 8 as other work came and went (28 cores):
+
+    ==== census-round 1: rc=0 result=ok passed=3212 failed=0 ignored=3 ====
+    ==== census-round 2: rc=0 result=ok passed=3212 failed=0 ignored=3 ====
+    ==== census-round 3: rc=0 result=ok passed=3212 failed=0 ignored=3 ====
+    ==== census-round 4: rc=0 result=ok passed=3212 failed=0 ignored=3 ====
+    ==== census-round 5: rc=0 result=ok passed=3212 failed=0 ignored=3 ====
+    ==== census-round 6: rc=0 result=ok passed=3212 failed=0 ignored=3 ====
+    ==== census-round 7: rc=0 result=ok passed=3212 failed=0 ignored=3 ====
+    ==== census-round 8: rc=0 result=ok passed=3212 failed=0 ignored=3 ====
+    summary: 8/8 rounds green; failing rounds: []
+
+Each round: `3212 passed; 0 failed; 3 ignored; 0 measured; 0 filtered out; finished in ~30s`.
+The six tests of section 5 were also run back to back three times with no filter competition:
+9.39 s, 9.51 s, 9.55 s, 6 passed each time.
+
+== 11. What was not changed
+
+- The dump itself is still ~450 KB per command on a shell with a heavy rc file. Bounding the wait
+  fixes correctness; making the dump smaller is a separate piece of work and the numbers above are
+  the measurement for whoever takes it.
+- A dump that is rejected because the shell was killed still leaves the session on the state from
+  before that command, which is the intended behaviour: the shell died, so its final state is not
+  knowable.
+- The grace is still 5 seconds and is still a wall-clock timer in this process. Section 9 is the
+  measurement of what that means on a saturated host: the reply arrives late by however long the
+  process was starved, not never. Making it a deadline that survives starvation would mean moving
+  the wait off the runtime that is being starved.
+- The census in section 8 is diagnostics on a failure path, not a check. The `/proc` walk is
+  Linux-only; elsewhere that message says the census needs `/proc`.
+
+== 12. 2026-10-04, later: the fix added an unsafe site, and the census said so
+
+The sweep this change went through had a second red in it, unrelated to timing. The panic-site census
+reported growth for the crate:
+
+    $ python3 scripts/ci/panic-site-census.py --check-baseline scripts/ci/panic-site-baseline.tsv
+    xai-grok-tools: production sites grew [16, 118, 8, 19] -> [16, 118, 8, 20]
+    (unwrap, expect, panic!, unsafe)
+
+    A crate gained a way to panic in code that ships. Remove it, or re-run
+    `scripts/ci/panic-site-census.py --write-baseline scripts/ci/panic-site-baseline.tsv`
+    having decided to keep it.
+
+The last column is unsafe sites in code outside `cfg(test)`, so the count was about `set_nonblocking`
+from section 6, which read and wrote the pipe flags through two `unsafe { libc::fcntl(...) }` calls.
+The net was +1 rather than +2 because the same change deleted one `unsafe { File::from_raw_fd(..) }`.
+Attribution was done by reverting one file at a time against HEAD: with only `shell_state.rs`
+reverted the baseline held, and `manager.rs` at HEAD still reproduced the growth, which is what put
+the finding on this file rather than on the other modified one.
+
+The census offers two answers and the cheaper one was wrong here. Re-running `--write-baseline`
+records the new count and the ratchet moves up permanently, which is the intended path for unsafe that
+is genuinely needed. This unsafe was not needed: `nix` is already a dependency of this crate, and the
+facts that decide it were read out of the vendored source rather than assumed:
+
+    $ grep -n "pub mod fcntl" -B 3 ~/.cargo/registry/src/*/nix-0.30.1/src/lib.rs
+    pub mod fcntl;
+
+    $ grep -n "pub fn fcntl<Fd" ~/.cargo/registry/src/*/nix-0.30.1/src/fcntl.rs
+    pub fn fcntl<Fd: std::os::fd::AsFd>(fd: Fd, arg: FcntlArg) -> Result<c_int> {
+
+    $ grep -n "pub type Error" ~/.cargo/registry/src/*/nix-0.30.1/src/lib.rs
+    pub type Error = Errno;
+
+The module is not behind a cargo feature, so no `Cargo.toml` line moves; the function is safe and
+takes `AsFd`, which `&OwnedFd` already is; and `Error` is an alias for `Errno`, which has
+`impl From<Errno> for io::Error`, so `?` lands in the `std::io::Result` the caller already returns.
+The two unsafe blocks become three lines:
+
+    fn set_nonblocking(fd: &OwnedFd) -> std::io::Result<()> {
+        use nix::fcntl::{FcntlArg, OFlag, fcntl};
+
+        // Reading the flags back first keeps any status flag we are not changing. Truncating unknown
+        // bits is safe on the way in: `F_SETFL` only applies the status flags fcntl(2) lists, and
+        // `OFlag` models every one of them, so a bit we dropped was never going to be applied.
+        let flags = OFlag::from_bits_truncate(fcntl(fd, FcntlArg::F_GETFL)?);
+        fcntl(fd, FcntlArg::F_SETFL(flags | OFlag::O_NONBLOCK))?;
+        Ok(())
+    }
+
+Two things in that shape are load-bearing rather than stylistic. The read-modify-write stays, because
+`F_SETFL` writes the whole status-flag set and passing only `O_NONBLOCK` would clear anything else
+already on the descriptor. And truncating is safe only because `fcntl(2)` ignores the access mode and
+every listed status flag is modelled by `OFlag`; that is why the comment says which of the two is the
+reason, since the ordinary version of this code (`flags | O_NONBLOCK` on the raw integer) does not
+have a step where bits can be lost.
+
+`set_cloexec`, twelve lines above, still uses `libc::fcntl` directly and its two sites stay in the
+record. Converting it would lower the number again, but it is not part of this change and it does not
+have this section's evidence behind it.
+
+The rewrite touches the path every command in a persistent shell takes, so the behaviour claim is the
+same suite, not a type check:
+
+    $ cargo fmt --check -p xai-grok-tools
+    (rc=0)
+
+    $ cargo clippy -p xai-grok-tools --lib --tests
+    Finished `dev` profile [unoptimized] target(s) in 23.88s
+
+    $ cargo test -p xai-grok-tools --lib -- computer::local::shell_state \
+          computer::local::terminal::tests::test_persistent_shell_state_survives_a_slow_command \
+          computer::local::terminal::tests::test_wedged_dump_pipe \
+          computer::local::terminal::tests::test_giving_up_on_the_dump
+    test result: ok. 31 passed; 0 failed; 1 ignored; 0 measured; 3183 filtered out; finished in 9.25s
+
+    $ cargo test -p xai-grok-tools --lib
+    test result: ok. 3212 passed; 0 failed; 3 ignored; 0 measured; 0 filtered out; finished in 30.06s
+
+Clippy found one thing on the way. It was in the feeder thread of
+`waiting_for_the_next_dump_chunk_does_not_park_the_runtime_thread`, not in the shipped function:
+
+    warning: calling `as_bytes` after slicing a string
+       --> crates/codegen/xai-grok-tools/src/computer/local/shell_state.rs:1050:50
+
+    tail_for_thread[written..].as_bytes()      before
+    &tail_for_thread.as_bytes()[written..]     after
+
+`written` is whatever the pipe accepted, so a short write ending inside a multi-byte character would
+panic on the string slice before the assertion it was feeding could report anything. The default lint
+caught an arithmetic bug in test code, which is the cheapest kind of bug this repository ever finds.
+
+The number then went into the baseline at its new value, which makes the ratchet one site tighter
+than it was before this change rather than one looser:
+
+    $ grep -n "^xai-grok-tools\b" scripts/ci/panic-site-baseline.tsv
+    70:xai-grok-tools    16    118    8    18
+
+    $ python3 scripts/ci/panic-site-census.py --check-baseline scripts/ci/panic-site-baseline.tsv
+    baseline holds: 97 crates, 0 fewer production sites than recorded
+    (rc=0)
+
+and it still bites. With that row reading 17 instead of 18, in a copy under `{SCRATCH}`, the same
+command reports:
+
+    xai-grok-tools: production sites grew [16, 118, 8, 17] -> [16, 118, 8, 18]
+    (unwrap, expect, panic!, unsafe)
+    (rc=1)
+
+The full sweep after both fixes: `all gates passed on the host (28 run, 4 skipped)`, including
+`PASS  panic-site census` and `PASS  platform-gated tests`. The second of those is the ledger rewrite
+recorded in section 12 of `docs/verification/platform-gated-tests-2026-10-03.log`, which the same
+sweep had also turned red.

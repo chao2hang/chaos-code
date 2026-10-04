@@ -18,6 +18,7 @@ use std::time::Duration;
 use command_fds::FdMapping;
 use nix::libc;
 use tokio::io::AsyncReadExt;
+use tokio::io::unix::AsyncFd;
 
 // ============================================================================
 // Marker constants
@@ -35,10 +36,17 @@ const INIT_STATE_MARKER: &str = "__GROK_INIT_STATE_MARKER__";
 /// Maximum time to wait for a shell state init (login shell + rc files).
 const INIT_TIMEOUT: Duration = Duration::from_secs(15);
 
-/// Maximum time to wait for the dump reader task after the child process exits.
-/// Uses a 5s close timeout. If a background process inherits fd 4,
-/// the reader would hang forever without this.
-const DUMP_READ_TIMEOUT: Duration = Duration::from_secs(5);
+/// Upper bound on how long the actor waits for a dump whose command has already
+/// exited.
+///
+/// This is deliberately a bound on the *wait*, not on the reader task. The dump
+/// is the shell's last act, so it cannot appear before the command finishes, and
+/// the command may run for as long as its own deadline allows. Arming the clock
+/// when the command is spawned charges the command's runtime against its dump:
+/// a ~450 KB dump drained through a 64 KiB pipe by a shell that took seconds to
+/// reach the prompt then reads as "no dump", and the session silently keeps the
+/// state from before the command.
+pub const DUMP_COLLECT_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Environment overrides applied to every agent terminal / persistent shell spawn.
 /// Prevents color/pager noise in captured output and marks the process as agent-driven.
@@ -603,6 +611,24 @@ fn set_cloexec(fd: &OwnedFd) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Set `O_NONBLOCK` on one end of a pipe.
+///
+/// Only the end passed in is affected: the read and write ends of a pipe are
+/// separate open file descriptions, so making our read end non-blocking leaves
+/// the write end the child shell inherited blocking. That matters, because the
+/// dump is far larger than the 64 KiB pipe buffer and the writing shell relies
+/// on `write` waiting for us to drain it rather than failing short.
+fn set_nonblocking(fd: &OwnedFd) -> std::io::Result<()> {
+    use nix::fcntl::{FcntlArg, OFlag, fcntl};
+
+    // Reading the flags back first keeps any status flag we are not changing. Truncating unknown
+    // bits is safe on the way in: `F_SETFL` only applies the status flags fcntl(2) lists, and
+    // `OFlag` models every one of them, so a bit we dropped was never going to be applied.
+    let flags = OFlag::from_bits_truncate(fcntl(fd, FcntlArg::F_GETFL)?);
+    fcntl(fd, FcntlArg::F_SETFL(flags | OFlag::O_NONBLOCK))?;
+    Ok(())
+}
+
 /// Parse a state dump, validating start/end markers.
 /// Returns `(cwd, snapshot_rest)` or `None` if markers are missing.
 fn parse_dump(shell: ShellKind, raw: &str) -> Option<(PathBuf, String)> {
@@ -655,66 +681,66 @@ pub async fn write_snapshot_to_pipe(snapshot: &str, fd: OwnedFd) -> std::io::Res
     .map_err(std::io::Error::other)?
 }
 
-/// Read the full dump output from the state-out pipe with a timeout.
+/// Read the dump from the state-out pipe, ending at the END marker or at EOF.
 ///
-/// If a background process inherits fd 4, the pipe never closes and the reader
-/// hangs. The timeout (5s close timeout) prevents this from
-/// blocking the actor loop forever. On timeout, returns whatever was read so far
-/// (which is typically empty, so marker validation will fail and prior state is kept).
+/// No deadline of its own: the dump is written by the shell as its last act, so
+/// a pipe that has produced nothing only means the command is still running, and
+/// charging the command's own runtime against its dump loses state that was in
+/// fact written. The actor bounds the wait from the moment the child is known to
+/// have exited ([`DUMP_COLLECT_TIMEOUT`]), and the kill paths abort the reader
+/// rather than wait on it, so nothing here can wedge the actor. Aborting reaches
+/// this read because it waits on the reactor rather than on a blocking thread:
+/// cancelling it also closes our end of the pipe.
+///
+/// Terminating on the END marker rather than on EOF is what makes the read work
+/// at all:
+///
+/// When the user's command backgrounds a subprocess (`cmd &`), the bg
+/// shell inherits fd 4 (the dump pipe's write-end) and keeps it open
+/// until *it* exits. The parent shell finishes its dump and exits, but
+/// the kernel doesn't close the read-end's EOF until every write-end
+/// holder closes theirs. Without marker-driven termination we'd block
+/// on `read_to_string` for the entire bg lifetime, which manifests
+/// as `cd` / function / alias state silently failing to persist after
+/// any command that backgrounds something. (See harness scenarios
+/// "State persistence after backgrounded command" and the cd-roundtrip
+/// tests for shell state persistence parity.)
 pub async fn read_dump_from_pipe(fd: OwnedFd) -> std::io::Result<String> {
-    // Read until either of the END markers appears, *not* until EOF.
-    //
-    // When the user's command backgrounds a subprocess (`cmd &`), the bg
-    // shell inherits fd 4 (the dump pipe's write-end) and keeps it open
-    // until *it* exits. The parent shell finishes its dump and exits, but
-    // the kernel doesn't close the read-end's EOF until every write-end
-    // holder closes theirs. Without marker-driven termination we'd block
-    // on `read_to_string` for the entire bg lifetime, hit the 5s safety
-    // timeout, and discard the (perfectly complete) dump — which manifests
-    // as `cd` / function / alias state silently failing to persist after
-    // any command that backgrounds something. (See harness scenarios
-    // "State persistence after backgrounded command" and the cd-roundtrip
-    // tests for shell state persistence parity.)
-    //
-    // We additionally cap on `DUMP_READ_TIMEOUT` so a shell that crashed
-    // before emitting the END marker doesn't wedge the actor.
-    match tokio::time::timeout(
-        DUMP_READ_TIMEOUT,
-        tokio::task::spawn_blocking(move || {
-            use std::io::Read;
-            let mut file = unsafe { std::fs::File::from_raw_fd(fd.as_raw_fd()) };
-            std::mem::forget(fd);
-            let mut buf = String::new();
-            let mut chunk = [0u8; 4096];
-            loop {
-                let n = file.read(&mut chunk)?;
-                if n == 0 {
-                    // EOF: every write-end holder closed fd 4 (the
-                    // expected path when no bg subprocess was spawned).
-                    break;
-                }
-                buf.push_str(&String::from_utf8_lossy(&chunk[..n]));
-                // Either marker suffices; we accept whichever shell the
-                // child happens to be (bash vs zsh).
-                if buf.contains(BASH_STATE_END_MARKER) || buf.contains(ZSH_STATE_END_MARKER) {
-                    break;
-                }
+    // Registered with the reactor instead of read from a pooled thread: waiting
+    // on a pipe nothing writes to then costs no worker, and a reader that is
+    // given up on has its end of the pipe closed with it, rather than staying
+    // parked there for as long as the command that inherited the write end
+    // happens to live.
+    set_nonblocking(&fd)?;
+    let fd = AsyncFd::new(fd)?;
+    let mut buf = String::new();
+    let mut chunk = [0u8; 4096];
+    loop {
+        let mut guard = fd.readable().await?;
+        match guard.try_io(|inner| {
+            nix::unistd::read(inner.get_ref(), &mut chunk).map_err(std::io::Error::from)
+        }) {
+            Ok(Ok(0)) => {
+                // EOF: every write-end holder closed fd 4 (the
+                // expected path when no bg subprocess was spawned).
+                break;
             }
-            drop(file);
-            Ok(buf)
-        }),
-    )
-    .await
-    {
-        Ok(join_result) => join_result.map_err(std::io::Error::other)?,
-        Err(_timeout) => {
-            tracing::warn!(
-                "shell state dump read timed out after {}s (END marker never arrived)",
-                DUMP_READ_TIMEOUT.as_secs()
-            );
-            Ok(String::new())
+            Ok(Ok(n)) => buf.push_str(&String::from_utf8_lossy(&chunk[..n])),
+            Ok(Err(e)) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Ok(Err(e)) => return Err(e),
+            // A reactor read has to be told there is nothing more to take: the
+            // readiness it handed us only covered the bytes we have just read.
+            // `try_io` takes that back for us when the read says it would block,
+            // so waiting again suspends instead of answering immediately.
+            Err(_would_block) => continue,
+        }
+        // Either marker suffices; we accept whichever shell the
+        // child happens to be (bash vs zsh).
+        if buf.contains(BASH_STATE_END_MARKER) || buf.contains(ZSH_STATE_END_MARKER) {
+            break;
         }
     }
+    Ok(buf)
 }
 
 // ============================================================================
@@ -955,6 +981,206 @@ mod tests {
             "snapshot should be non-empty after a successful command"
         );
         assert!(state.cwd.is_absolute(), "cwd should be absolute");
+    }
+
+    /// The reader is not on a clock. A command is allowed to run for as long as
+    /// its own deadline allows, and the dump it owes is still the state of that
+    /// session when it finally arrives.
+    ///
+    /// The bound used to live here, armed when the command was spawned, so a
+    /// command slower than it came back as "no dump" and the caller kept the
+    /// state from before that command. The delay below is past that old bound on
+    /// purpose: it is what the old code could not do.
+    #[tokio::test]
+    async fn dump_written_long_after_the_reader_started_is_still_read() {
+        let (read_fd, write_fd) = os_pipe().unwrap();
+        let dump = format!(
+            "{BASH_STATE_START_MARKER}\n/tmp\n# end of grok state dump\n{BASH_STATE_END_MARKER}\n"
+        );
+        let writer = {
+            let dump = dump.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_secs(6)).await;
+                let bytes = dump.as_bytes();
+                let mut written = 0;
+                while written < bytes.len() {
+                    written += nix::unistd::write(&write_fd, &bytes[written..]).unwrap();
+                }
+                drop(write_fd);
+            })
+        };
+
+        let read = tokio::spawn(async move { read_dump_from_pipe(read_fd).await });
+        let got = read.await.unwrap().unwrap();
+        writer.await.unwrap();
+
+        assert_eq!(got, dump, "the whole dump must survive the wait");
+        let (cwd, _snapshot) = parse_dump(ShellKind::Bash, &got).expect("valid markers");
+        assert_eq!(cwd, PathBuf::from("/tmp"));
+    }
+
+    /// Between one chunk of a dump and the next, the reader has to be *waiting*
+    /// rather than holding the thread it runs on. A blocking pipe read looks the
+    /// same to the caller until the runtime is asked for anything else: inside a
+    /// single-threaded runtime, which is what `#[tokio::test]` builds and what the
+    /// actor runs its tests under, a task parked in a syscall stops every other
+    /// task in the process from making progress, including the clock that is meant
+    /// to give up on that very read.
+    ///
+    /// The tail arrives from a real thread for that reason: a timer task could not
+    /// deliver it to a runtime that the reader itself has stopped, and the test
+    /// would hang instead of reporting the blockage it is here to catch.
+    #[tokio::test]
+    async fn waiting_for_the_next_dump_chunk_does_not_park_the_runtime_thread() {
+        let (read_fd, write_fd) = os_pipe().unwrap();
+        let reader = tokio::spawn(async move { read_dump_from_pipe(read_fd).await });
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        let head = format!("{BASH_STATE_START_MARKER}\n/tmp\n");
+        let tail = format!("# end of grok state dump\n{BASH_STATE_END_MARKER}\n");
+        let whole = head.clone() + &tail;
+        nix::unistd::write(&write_fd, head.as_bytes()).unwrap();
+        let tail_fd = nix::unistd::dup(&write_fd).unwrap();
+        let tail_for_thread = tail.clone();
+        let filler = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(1500));
+            let mut written = 0;
+            while written < tail_for_thread.len() {
+                // Slicing the bytes rather than the str: `written` is whatever the pipe accepted,
+                // and a short write that landed inside a multi-byte character would panic on a
+                // string slice.
+                written +=
+                    nix::unistd::write(&tail_fd, &tail_for_thread.as_bytes()[written..]).unwrap();
+            }
+            drop(tail_fd);
+        });
+        drop(write_fd);
+
+        // Everything below is only reachable if the reader lets go of the thread.
+        let began = std::time::Instant::now();
+        for _ in 0..3 {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        let elapsed = began.elapsed();
+
+        let got = reader.await.unwrap().unwrap();
+        filler.join().unwrap();
+
+        assert!(
+            elapsed < Duration::from_millis(600),
+            "150ms of sibling sleeping took {elapsed:?}, which is how long the \
+             reader was told to wait for the tail: the wait between chunks was spent \
+             inside a blocking read on this thread rather than on the reactor, and \
+             everything else in this runtime was stopped for the duration"
+        );
+        assert_eq!(got, whole, "both chunks must arrive, joined");
+        let (cwd, _snapshot) = parse_dump(ShellKind::Bash, &got).expect("valid markers");
+        assert_eq!(cwd, PathBuf::from("/tmp"));
+    }
+
+    /// Which fds on the machine still point at the pipe `fd` belongs to, as
+    /// `pid:fd(r)` for a read end and `pid:fd(w)` for a write end. Used to explain
+    /// a failure: a read end that outlived the reader means something different
+    /// depending on whether the holder is this process or a stranger, and the
+    /// symlink in `/proc/<pid>/fd` does not say which end it is, so the access mode
+    /// comes from `/proc/<pid>/fdinfo`.
+    #[cfg(target_os = "linux")]
+    fn pipe_holders(fd: &OwnedFd) -> String {
+        use std::os::unix::fs::MetadataExt;
+
+        let inode = match std::fs::metadata(format!("/proc/self/fd/{}", fd.as_raw_fd())) {
+            Ok(metadata) => metadata.ino(),
+            Err(e) => return format!("metadata failed: {e}"),
+        };
+        let needle = format!("pipe:[{inode}]");
+        let mut holders = Vec::new();
+        let Ok(procs) = std::fs::read_dir("/proc") else {
+            return format!("inode={inode}: /proc unreadable");
+        };
+        for proc in procs.flatten() {
+            let pid = proc.file_name().to_string_lossy().into_owned();
+            if !pid.chars().all(|c| c.is_ascii_digit()) {
+                continue;
+            }
+            let Ok(fds) = std::fs::read_dir(proc.path().join("fd")) else {
+                continue;
+            };
+            for handle in fds.flatten() {
+                let Ok(link) = std::fs::read_link(handle.path()) else {
+                    continue;
+                };
+                if link.to_string_lossy() != needle {
+                    continue;
+                }
+                let number = handle.file_name().to_string_lossy().into_owned();
+                let mode = std::fs::read_to_string(format!("/proc/{pid}/fdinfo/{number}"))
+                    .ok()
+                    .and_then(|text| {
+                        text.lines()
+                            .find_map(|line| line.strip_prefix("flags:"))
+                            .and_then(|value| u64::from_str_radix(value.trim(), 8).ok())
+                    })
+                    .map(|flags| match flags & 3 {
+                        0 => "r",
+                        1 => "w",
+                        _ => "rw",
+                    })
+                    .unwrap_or("?");
+                holders.push(format!("{pid}:{number}({mode})"));
+            }
+        }
+        format!("inode={inode} holders={holders:?}")
+    }
+
+    /// The census walks `/proc`, which is Linux-only.
+    #[cfg(not(target_os = "linux"))]
+    fn pipe_holders(_fd: &OwnedFd) -> String {
+        "fd census needs /proc".to_owned()
+    }
+
+    /// Giving up on a dump has to give up on the read itself. The actor's grace
+    /// ends the wait either way, but only a cancellable reader also releases our
+    /// end of the pipe: a reader parked inside a blocking read leaves the pipe
+    /// open for as long as whatever inherited the write end lives, and a reader
+    /// sitting on a pooled thread takes that worker with it for good.
+    #[tokio::test]
+    async fn giving_up_on_the_dump_reader_closes_our_end_of_the_pipe() {
+        let (read_fd, write_fd) = os_pipe().unwrap();
+        let reader = tokio::spawn(async move { read_dump_from_pipe(read_fd).await });
+        // Let the reader register with the reactor and park on the empty pipe.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        reader.abort();
+        let err = reader
+            .await
+            .expect_err("the read was given up on, so it cannot have completed");
+        assert!(
+            err.is_cancelled(),
+            "the reader should end cancelled, got: {err}"
+        );
+
+        // With nothing left on the read end, the kernel refuses the write instead
+        // of buffering a dump that nobody will ever read. Releasing the fd is not
+        // part of `abort`: the cancelled task's future, and the `AsyncFd` inside
+        // it, go when the runtime next polls that task, which is a scheduling
+        // decision on this thread rather than a fact about this one. So the close
+        // is waited for, within a bound a caller would recognise.
+        let mut write_err = nix::unistd::write(&write_fd, b"a dump with no reader").err();
+        let mut turns = 0;
+        while write_err.is_none() && turns < 50 {
+            turns += 1;
+            // A timer rather than a bare yield: the cancelled task is released when
+            // the runtime next drives its scheduler, which is what the actor does
+            // while it waits on its own tick.
+            tokio::time::sleep(Duration::from_millis(1)).await;
+            write_err = nix::unistd::write(&write_fd, b"a dump with no reader").err();
+        }
+        assert_eq!(
+            write_err,
+            Some(nix::errno::Errno::EPIPE),
+            "our end of the pipe should be closed once the read is given up on \
+             (still accepting writes after {turns} turns; {})",
+            pipe_holders(&write_fd),
+        );
     }
 
     /// Helper: run a command against a ShellState, update state, return (exit_code, stdout).

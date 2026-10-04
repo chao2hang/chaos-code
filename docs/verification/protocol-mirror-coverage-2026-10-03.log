@@ -199,7 +199,7 @@ ClientMessage`」这条夹具之后它被抓：那条夹具同时断言两件事
 
     $ python3 scripts/ci/test-check-protocol-mirror.py        # 26 绿
     $ python3 scripts/ci/check-protocol-mirror.py --print     # 32 of 32 / 40 of 40
-    $ python3 scripts/ci/check-gui-protocol.sh                # GUI protocol types are up to date
+    $ bash scripts/ci/check-gui-protocol.sh                   # GUI protocol types are up to date
 
 要重看「漏 6 条」长什么样，不必用临时目录：把 `protocol_schema.rs` 里那 6 行 `| { type: '…'; … }`
 删掉跑 `check-protocol-mirror.py`，应当得到第 1 节那两段点名输出与 `exit=1`；`git checkout` 还原即可。

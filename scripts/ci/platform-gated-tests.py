@@ -158,6 +158,16 @@ POSIX_ASSUMPTION: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
                        r"""|\$\{?HOME\}?|~/|\bHOME\.join\(|env\("HOME"\)"""),
         ("fs-root", r"""Path::new\(\s*\"/\"|PathBuf::from\(\s*\"/\"|join\(\"/\"\)"""),
         ("shell", r"\b(sh|bash|zsh|fish)\s+-c\b|/bin/(sh|bash)|\b(command -v|type -a|ulimit)\b"),
+        # A test can depend on a POSIX shell without ever naming one. The command string it hands
+        # to the code under test is the assumption, and so is the content of a shell rc file it
+        # writes for the code under test to source. `export VAR=`, `unset VAR`, `$$`, `$!` and
+        # `kill -9` are that shell's own syntax (PowerShell spells the first two `Set-Variable` and
+        # `$env:`, neither it nor `cmd` has the pid variables, and `kill -9` is not a thing
+        # there), so a gate on such a test is about the shell rather than convenience. Without
+        # this the roster only recognised a literal `bash -c` written two tokens apart, and named
+        # whole families of shell-driven tests as candidates to un-gate.
+        ("posix-shell", r"\bexport\s+[A-Za-z_][A-Za-z0-9_]*\s*=|\bunset\s+[A-Za-z_][A-Za-z0-9_]*\b"
+                        r"|\bkill\s+-[0-9]\b|\$\$|\$!"),
         ("posix-crate", r"\b(libc|nix|rustix)\s::"),
         ("mount-lock", r"\b(mount|unmount|umount|flock|statvfs|statfs|pivot_root|MemAvailable)\b"),
         ("unix-env", r"\bXDG_[A-Z_]+\b|\bLD_LIBRARY_PATH\b|\bgetpwuid\b"

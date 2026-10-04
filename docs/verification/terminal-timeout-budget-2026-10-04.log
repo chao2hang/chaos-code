@@ -1,0 +1,139 @@
+# The 2-second timeout in a test was smaller than this host's shell startup (2026-10-04)
+
+`test_output_preserved_on_timeout` had been going red inside the full suite and green on its
+own for as long as anyone had noticed. It is a test of shipped behaviour: a command that
+produces output and then hangs must report the output it produced before its deadline. The
+deadline branch of the actor was the suspect, and it turned out to be innocent. What was
+wrong was the number 2 in the test.
+
+== 0. What it said
+
+    $ cargo test -p xai-grok-tools --lib
+
+    test computer::local::terminal::tests::test_output_preserved_on_timeout ... FAILED
+    Timed-out output should contain 'before_timeout', got: ""
+
+`timed_out` was true and the output was empty, which reads as "the deadline threw the
+buffer away". The request the test built carried a literal 2 second timeout, and the whole
+of the assertion was satisfied by any output at all.
+
+== 1. The reasonable suspicion, and the instrument that killed it
+
+`poll_process` reads the child's pipes on every tick, and the deadline branch
+(`crates/codegen/xai-grok-tools/src/computer/local/terminal.rs:1866`) kills the process
+group and reports what the buffer holds. The OOM and reap paths call `drain_remaining_output`
+first; the deadline branch does not. So bytes sitting in the pipe at the moment of the kill
+would be lost, and the test would be right to complain.
+
+The probe prints what the actor can see, on every tick, immediately before the timeout
+check, and has the child touch a marker file right after its `echo`, so "wrote late" is
+distinguishable from "read wrong":
+
+    TIMEOUTTICK elapsed_ms=<ms> buffer_len=<n> total_bytes=<n> stdout_eof=<b> stderr_eof=<b> marker_age_ms=<ms>
+
+    $ python3 {SCRATCH}/probe-timeout-output.py 9
+
+Full-suite rounds, at 32-way parallelism, the shape repeated in every failing round:
+
+    TIMEOUTTICK elapsed_ms=1669 buffer_len=0 total_bytes=0 stdout_eof=false stderr_eof=false marker_age_ms=-1
+    TIMEOUTTICK elapsed_ms=1680 buffer_len=0 total_bytes=0 stdout_eof=false stderr_eof=false marker_age_ms=-1
+    TIMEOUTTICK elapsed_ms=1683 buffer_len=0 total_bytes=0 stdout_eof=false stderr_eof=false marker_age_ms=-1
+    TIMEOUTTICK elapsed_ms=1745 buffer_len=0 total_bytes=0 stdout_eof=false stderr_eof=false marker_age_ms=-1
+    TIMEOUTTICK elapsed_ms=1773 buffer_len=0 total_bytes=0 stdout_eof=false stderr_eof=false marker_age_ms=-1
+    TIMEOUTTICK elapsed_ms=1797 buffer_len=0 total_bytes=0 stdout_eof=false stderr_eof=false marker_age_ms=-1
+    TIMEOUTTICK elapsed_ms=1845 buffer_len=0 total_bytes=0 stdout_eof=false stderr_eof=false marker_age_ms=-1
+    TIMEOUTTICK elapsed_ms=1862 buffer_len=0 total_bytes=0 stdout_eof=false stderr_eof=false marker_age_ms=-1
+    TIMEOUTTICK elapsed_ms=1932 buffer_len=0 total_bytes=0 stdout_eof=false stderr_eof=false marker_age_ms=-1
+    TIMEOUTTICK elapsed_ms=1946 buffer_len=0 total_bytes=0 stdout_eof=false stderr_eof=false marker_age_ms=-1
+    TIMEOUTTICK elapsed_ms=1956 buffer_len=0 total_bytes=0 stdout_eof=false stderr_eof=false marker_age_ms=-1
+    TIMEOUTTICK elapsed_ms=2024 buffer_len=0 total_bytes=0 stdout_eof=false stderr_eof=false marker_age_ms=-1
+
+Three failing rounds ended on `elapsed_ms` of 2001, 2028 and 2022, each with `buffer_len=0`,
+`total_bytes=0` and `marker_age_ms=-1`. Twenty-odd polls, all of them correct about an empty
+pipe, and the child's marker file never existed. There was nothing in the pipe to drain: the
+shell had not run the `echo` yet when the deadline fired.
+
+== 2. Why it had not run yet
+
+This host's shell is zsh with a real rc file, and the shipped path replays a shell snapshot
+per command. An ordinary interactive startup, measured on an idle host (load average 0.22,
+28 cores):
+
+    $ for i in 1 2 3; do /usr/bin/time -f "zsh -ic: %e s" zsh -ic 'echo M' > /dev/null; done
+    zsh -ic: 0.88 s
+    zsh -ic: 0.83 s
+    zsh -ic: 0.88 s
+
+    $ for i in 1 2 3; do /usr/bin/time -f "bash -lc: %e s" bash -lc 'echo M' > /dev/null; done
+    bash -lc: 0.01 s
+    bash -lc: 0.00 s
+
+The `bash` line says what the rc file is worth: a login bash reaches the same byte about
+ninety times faster, so the 0.9 s is this machine's zsh configuration rather than the cost of
+starting a shell. Both of those are the shell reaching a prompt and writing one byte, before
+the actor's own per-command work.
+
+The same loop measured 1.32 / 1.25 / 1.45 s while the rounds of section 0 were being run, and
+that is the condition the test actually failed under. It was attributed at the time to the full
+suite running at 32-way parallelism; the load average of 61 was in fact mostly 52 orphaned spin
+loops left on the machine by aborted diagnostic drivers, counted and cleared in
+`docs/verification/shell-state-dump-grace-2026-10-04.log` section 9. The distinction matters for
+the fix rather than for the conclusion: the same host at load average 0.22 still needs 0.88 s,
+so a 2 second budget was never only about the machine being momentarily busy. It is a coin flip
+whose odds are set by whoever else is using the machine, and the test was asserting on the
+machine rather than on the code. Nothing about the deadline branch was load-sensitive; the
+deadline itself was.
+
+== 3. The fix
+
+The budget comes from the host instead of from a literal
+(`crates/codegen/xai-grok-tools/src/computer/local/terminal.rs`, `test_output_preserved_on_timeout`):
+one command is run to completion on the same backend and timed, and the deadline is four
+times that measurement, clamped to 2 to 30 seconds. The command under test is unchanged
+(`echo before_timeout; sleep 60`), the assertion is unchanged, and the failure message now
+carries the measured startup so the next reader can see what the host said:
+
+    let mut request = make_request("echo before_timeout; sleep 60");
+    request.timeout = (startup * 4).clamp(Duration::from_secs(2), Duration::from_secs(30));
+
+A slow machine gets a slow deadline. The one-time snapshot and login-environment capture are
+absorbed by a warm-up command first, so what is measured is the cost of starting one shell,
+not the cost of the first command ever.
+
+== 4. What this does not settle
+
+The asymmetry from section 1 is real and untouched: the deadline branch reports the buffer
+without a final drain, while the OOM and reap paths drain first. No observed failure had
+bytes to lose, so no product change was made on the strength of a hypothesis. It is recorded
+in `docs/ci-test-debt.md` so the next person does not have to re-derive it, and a command
+that writes and is killed in the same tick remains the shape that would show it.
+
+== 5. Verification
+
+    $ cargo test -p xai-grok-tools --lib -- computer::local::terminal::tests::test_output_preserved_on_timeout
+    test computer::local::terminal::tests::test_output_preserved_on_timeout ... ok
+    test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3214 filtered out; finished in 5.00s
+
+Three rounds back to back on the idle host: 5.00 s, 4.90 s, 5.10 s. An earlier recording of this
+same line said 11.81 s, which is what the test costs on the machine described in section 2; the
+test measures the host three times over (warm-up, calibration, then the command cut at its
+deadline), so host slowness arrives multiplied here as well.
+
+What the test derives for itself was printed once, by an ephemeral `eprintln!` placed in the test
+body after the measurement, run under `--nocapture`, with the file restored byte-identically
+afterwards (`{SCRATCH}/probe-budget.py` prints the value and the restore check):
+
+    $ cargo test -p xai-grok-tools --lib -- --nocapture \
+          computer::local::terminal::tests::test_output_preserved_on_timeout
+    TIMEOUTBUDGET startup=704.369614ms deadline=2.817478456s
+
+On this host the deadline lands at 2.8 s, above the 2 s floor, so the clamp is not what is holding
+the test up; four times 0.7 s is the budget. The calibration reading is smaller than the bare
+`zsh -ic` of section 2 because it goes through the shipped backend rather than a login shell
+started from a terminal.
+
+and it is green inside the full-suite rounds recorded in
+`docs/verification/shell-state-dump-grace-2026-10-04.log` section 10, which is where it used
+to fail; the multiplier was lowered from 6 to 4 after the first measurement, because 6 times
+a slow host's startup would have made the test the slowest thing in the file for no added
+coverage.

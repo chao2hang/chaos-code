@@ -1,0 +1,229 @@
+# Windows leg: 42 red tests down to 1, and the last one was this repository's own test (2026-10-04)
+
+The 42 failures are traced in `docs/verification/windows-test-failures-2026-10-03.log` and the
+three that followed them in `docs/verification/maintenance-line-review-2026-10-04.log`
+section 10. This log covers the last one, which was not shipped code: a test written on a
+Linux host was asserting something that cannot hold on Windows, and no run before CI had
+ever executed it. It also covers what was built to settle that without a Windows machine.
+
+== 0. The trend, in runs
+
+    run 37126354066  head 9e77c6d0  job 111218903002
+        cargo test (target-OS crates: except xai-grok-tools)    67 passed;  1 failed
+        cargo test (target-OS crates: xai-grok-tools)        3054 passed; 41 failed
+            42 failed
+
+    run 37141224569  head e0896e54  job 111262847586
+        cargo test (target-OS crates: xai-grok-tools)        3111 passed;  3 failed
+            3 failed
+
+    run 37148495679  head 70cfd7a7  job 111285204201
+        step 9   cargo test (target-OS crates: except xai-grok-tools)   success
+        step 10  cargo test (target-OS crates: xai-grok-tools)      1 failed
+            1 failed
+
+    $ gh run view 37148495679 --repo chao2hang/chaos-code --json headSha,conclusion,jobs \
+          --jq '{headSha,conclusion,jobs:[.jobs[]|{name,conclusion}]}'
+
+Every other job of the last run was green: `rust check / clippy / test`, `secret scan`,
+`npm package scripts`, `docs localization`, `installer integrity labs`, `workflows present`,
+`GUI engine, Web host and frontend`, `GUI browser E2E`, `platform tests (macos-14)`. The
+Windows leg is the only one still red, and step 9 of it (five crates) now passes, so the
+remaining debt is one test in one file.
+
+== 1. What the last red test said
+
+    $ gh api repos/chao2hang/chaos-code/actions/jobs/111285204201 \
+          --jq '{conclusion,steps:[.steps[]|{number,name,conclusion}]}'
+
+    thread 'implementations::lsp::manager::tests::a_header_decodes_the_uri_instead_of_cutting_the_scheme_off'
+    panicked at crates\codegen\xai-grok-tools\src\implementations\lsp\manager.rs:817:9:
+    the reader was handed the escaped form: file:///dir/a%20b.cs
+
+    test result: FAILED. 3116 passed; 1 failed; 2 ignored; 0 measured; 0 filtered out
+
+The whole `xai-grok-tools` step, summed over its seven `test result:` lines, was
+3135 passed / 1 failed / 16 ignored. The message is the test's own: it hands
+`append_file` the URI `file:///dir/a%20b.cs` and asserts the header it produces is not the
+escaped form. On Windows it was the escaped form, unchanged, because the URI came back as
+the fallback rather than as a path at all.
+
+== 2. Why only Windows could fail it
+
+`CollectedDiagnostics::append_file` builds the header through one helper
+(`crates/codegen/xai-grok-tools/src/implementations/lsp/manager.rs:90`):
+
+    let display_path = super::path_for_file_uri(uri)
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| uri.to_owned());
+
+and the helper is one expression (`crates/codegen/xai-grok-tools/src/implementations/lsp/mod.rs:75`):
+
+    pub fn path_for_file_uri(uri: &str) -> Option<PathBuf> {
+        Url::parse(uri).ok()?.to_file_path().ok()
+    }
+
+`to_file_path()` on a Windows target requires the first path segment to be a drive letter.
+In `url` 2.5.8, `file_url_segments_to_pathbuf_windows` (src/lib.rs:3128) accepts a first
+segment of length 2 (`C:`) or length 4 (`C%3A`) and everything else reaches the catch-all
+arm at src/lib.rs:3164:
+
+    _ => return Err(()),
+
+`file:///dir/a%20b.cs` has no drive: its first segment is `dir`, three characters, so on
+Windows the conversion fails, `path_for_file_uri` returns `None`, and `append_file` shows
+the URI exactly as it arrived. That is the shipped behaviour and it is the right one - a
+URI naming no file on the host should be shown rather than mangled - but it means the test
+was asserting a Windows impossibility. On Linux the same URI converts to `/dir/a b.cs` and
+the test passes.
+
+== 3. What the test was supposed to protect, and did not
+
+The defect this test was written against (`maintenance-line-review-2026-10-04.log` section 10)
+was slicing `file://` off a stored URI. The Windows half of that defect is
+`file:///C:/dir/file.ts` becoming `/C:/dir/file.ts`, a path that resolves under the root of
+whatever drive is current. The test as written never fed that URI to the code: it used a
+drive-less one. So on the platform whose bug it was written for, it checked a case that
+cannot occur, and the case that does occur went unchecked on both platforms.
+
+== 4. The rewrite
+
+Three tests replace one, in `crates/codegen/xai-grok-tools/src/implementations/lsp/manager.rs`.
+The first builds its URI from a path the host can name, so the fixture is a real document
+URI on whichever platform runs it, and compares the header against that same path:
+
+    let drive = if cfg!(windows) { "C:" } else { "" };
+    let path = PathBuf::from(format!("{drive}{sep}dir{sep}a b.cs"));
+    let uri = super::file_uri(&path).expect("a native path makes a file uri");
+
+`file_uri` is the shipped inverse, so the fixture cannot drift from what the rest of the
+crate stores, and the test asserts on equality with a native path rather than on a suffix,
+which is what let the mixed-separator bug through elsewhere (`join_posix_relative`,
+`model-path-drive-less-root-2026-10-03.log` section 9). It also asserts the fixture really
+arrives escaped, so a future `file_uri` that stopped escaping cannot silently empty the test.
+
+The second test feeds the Windows form the first one now cannot use - `file:///C:/dir/a%20b.cs` -
+and asserts only what holds on both hosts: no `%20`, no `file:`, and the header ending in
+`C:{sep}dir{sep}a b.cs`. On Windows that is the whole path; on Linux it is what the drive-less
+conversion of a Windows URI yields here, and the escapes still have to be gone.
+
+The third test pins the fallback that produced the CI message: a URI that names no file
+anywhere (`untitled:Untitled-1%20a.cs`) is shown as it arrived.
+
+== 5. Linux verification
+
+    $ cargo test -p xai-grok-tools --lib implementations::lsp::manager::tests
+        test result: ok. 8 passed; 0 failed; 0 ignored
+
+    $ cargo test -p xai-grok-tools --lib lsp
+        test result: ok. 131 passed; 0 failed; 2 ignored
+
+    $ cargo fmt --check -p xai-grok-tools
+        (no output)
+
+    $ cargo clippy -p xai-grok-tools --all-targets -- -D warnings
+        Finished `dev` profile [unoptimized] target(s) in 36.01s
+
+== 6. Windows verification without a Windows machine
+
+The container in `docs/verification/model-path-windows-probe.Dockerfile` carries a mingw
+toolchain and wine; the same image the drive-less-root batch used was rebuilt by its own
+Dockerfile and given the cross-run environment the previous batch recorded:
+
+    $ docker build -t chaos-winprobe:local -f docs/verification/model-path-windows-probe.Dockerfile docs/verification
+    $ docker run --rm -v <repo>:/work -v {SCRATCH}:/tools -v ~/.cargo:/root/.cargo \
+          -v winprobe-target:/tmp/tw -w /work -e CARGO_TARGET_DIR=/tmp/tw \
+          -e CARGO_NET_OFFLINE=true \
+          -e CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc \
+          -e CC_x86_64_pc_windows_gnu=x86_64-w64-mingw32-gcc \
+          -e CXX_x86_64_pc_windows_gnu=x86_64-w64-mingw32-g++ \
+          -e AR_x86_64_pc_windows_gnu=x86_64-w64-mingw32-ar \
+          chaos-winprobe:local bash {SCRATCH}/winprobe/header-run.sh
+
+That script builds the `bcryptprimitives.dll` shim the gnu target needs (wine 8.0 does not
+export `ProcessPrng`, see `model-path-drive-less-root-2026-10-03.log` section 7), installs a
+cargo runner that copies the shim next to each test executable and execs
+`/usr/lib/wine/wine64`, then runs the filter three times: as committed, with HEAD's file put
+back verbatim, and after the restore.
+
+    ---- baseline, tests as committed: exit 0
+        running 8 tests
+        test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 3113 filtered out
+    ---- HEAD's version of the test, the one CI ran: exit 101
+        running 6 tests
+        thread 'implementations::lsp::manager::tests::a_header_decodes_the_uri_instead_of_cutting_the_scheme_off'
+        (256) panicked at crates/codegen/xai-grok-tools/src/implementations/lsp/manager.rs:817:9:
+        the reader was handed the escaped form: file:///dir/a%20b.cs
+        test result: FAILED. 5 passed; 1 failed; 0 ignored; 0 measured; 3113 filtered out
+    ---- restored tree: exit 0
+        running 8 tests
+        test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 3113 filtered out
+    restored byte-identically: True
+
+So the Windows failure is not inferred from a CI log here: it was produced on a Windows
+target, with the same panic line (`manager.rs:817:9`) and the same message the GitHub runner
+printed, and the rewritten tests were then run green on that same target. The file the run
+restores is the one the run started from, compared byte for byte.
+
+Caveat, the same one recorded by the batch that built the image: a wine prefix is not
+Windows. It is Debian's wine 8.0. Path arithmetic, percent decoding and `PathBuf` display
+strings are what this test exercises and none of them depend on NTFS semantics, real access
+control or a real per-process drive state, but the final verdict on the leg is still the CI
+`platform tests (windows-latest)` step.
+
+== 7. Non-vacuity, on the host
+
+Each mutation is an exact-string edit to shipped source, one test binary, then a restore
+compared byte for byte and given a fresh mtime so cargo cannot reuse the mutated binary.
+Driver: `{SCRATCH}/mutate-header-decode.py`, transcript
+`{SCRATCH}/mutate-header-decode.log`. Baseline and restored tree both `rc=0`, no failures.
+
+    KILLED H1 append_file slices the scheme off (the original bug): rc=101
+        a_header_decodes_the_uri_instead_of_cutting_the_scheme_off :: assertion `left == right` failed:
+            the header is not the native path the reader has to open
+            left: "/dir/a%20b.cs" right: "/dir/a b.cs"
+        a_windows_document_uri_arrives_decoded_and_without_its_scheme :: the reader was handed
+            the escaped form: /C:/dir/a%20b.cs
+    KILLED H2 path_for_file_uri hand-strips instead of parsing: rc=101
+        (same two tests, same two messages)
+    KILLED H3 a uri that is not a path here collapses to nothing: rc=101
+        a_uri_that_names_no_file_is_left_alone :: assertion `left == right` failed
+            left: ":" right: "untitled:Untitled-1%20a.cs:"
+
+H1 is the defect as it shipped. H2 is the half-fix that decodes by hand. H3 is the
+degenerate fallback (`unwrap_or_default`), and it is the only one of the three that the
+third test can see: that test exists to make the fallback observable, which is exactly the
+behaviour the Windows leg produced by accident.
+
+== 8. Two false results this batch produced before it produced a real one
+
+The first wine run reported that HEAD's test passed on the Windows target. It had not run
+HEAD's test at all: `shutil.copy2` puts the *source* file's mtime on the destination, cargo
+rebuilds only when a source is newer than the last build, and the HEAD copy was older than
+the build it was meant to be measured against, so cargo re-ran the new binary and everything
+looked green. The documented trap in `docs/ci-test-debt.md` is about restoring; this was the
+same trap on the mutating side of a mutation round. Fix: touch the file forward after both
+the mutation and the restore.
+
+What caught it was not a verdict but a count. The driver asserts that the number of tests
+libtest says it ran equals the number of `#[test]` attributes in the file it just wrote -
+8 for the rewritten file, 6 for HEAD's. A stale binary cannot fake a test count. That guard
+is worth keeping in any driver that swaps a source file out and rebuilds: `test result: ok`
+is a claim about the binary that ran, not about the file on disk.
+
+The second false result was the driver's own crash: the count was parsed out of
+`test result: ok. 8 passed` by position, and position 2 of that line is `ok.`, so
+`int()` raised. The parse now reads libtest's `running 8 tests` line, which counts what ran
+rather than what passed, and would also have caught the filtered-out case.
+
+== 9. Left open
+
+- Whether the Windows leg is green is decided by the run this push triggers. This batch
+  changes one test file and the expectation is `3116 passed; 0 failed`; the count of
+  ignored tests moves by two because two tests were added.
+- The Windows implementation of a persistent shell (`TODO.md`, the `persistent_shell` row)
+  is still not done; only the silent-ignore half was closed.
+- `#[cfg(windows)]`-gated code in these crates is still compiled by CI only; the wine run
+  executes tests that compile for `x86_64-pc-windows-gnu` and those are not all the same
+  tests, because some of them are gated `#[cfg(windows)]` and some spawn `python3`, which
+  wine cannot execute. The LSP mock-server family was therefore not re-run under wine.

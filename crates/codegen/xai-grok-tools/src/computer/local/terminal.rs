@@ -1526,7 +1526,7 @@ impl LocalTerminalActor {
         #[cfg(unix)]
         if self.persistent_shell {
             for task_id in task_ids {
-                let handle = {
+                let taken = {
                     let Some(process) = self.processes.get_mut(task_id) else {
                         continue;
                     };
@@ -1534,21 +1534,54 @@ impl LocalTerminalActor {
                     if !process.lifecycle.has_exited() || process.bg_status.is_backgrounded() {
                         continue;
                     }
-                    process.state_dump_handle.take()
+                    // A killed shell never reaches its dump, so a dump that is
+                    // missing after a signal is expected rather than a defect.
+                    let clean_exit = process
+                        .lifecycle
+                        .exit_status()
+                        .is_some_and(|status| status.signal.is_none());
+                    process.state_dump_handle.take().map(|h| (h, clean_exit))
                 };
-                if let Some(handle) = handle {
-                    match handle.await {
-                        Ok(Ok(dump)) => {
-                            if let Some(ref mut state) = self.shell_state {
-                                state.update_from_dump(&dump);
-                            }
+                let Some((handle, clean_exit)) = taken else {
+                    continue;
+                };
+                // The clock starts here. The dump is the shell's last act, so a
+                // silent pipe before this point only meant the command was still
+                // running; timing it from spawn discarded a dump that had been
+                // written, and kept the state from before the command.
+                let mut handle = handle;
+                match tokio::time::timeout(shell_state::DUMP_COLLECT_TIMEOUT, &mut handle).await {
+                    Ok(Ok(Ok(dump))) => {
+                        let rejected = match self.shell_state.as_mut() {
+                            Some(state) => !state.update_from_dump(&dump),
+                            None => false,
+                        };
+                        if rejected && clean_exit {
+                            tracing::warn!(
+                                dump_len = dump.len(),
+                                "shell state dump rejected after a clean exit, keeping the \
+                                 state from before the command"
+                            );
                         }
-                        Ok(Err(e)) => {
-                            tracing::debug!("failed to read shell state dump: {e}");
-                        }
-                        Err(e) => {
-                            tracing::debug!("shell state dump task panicked: {e}");
-                        }
+                    }
+                    Ok(Ok(Err(e))) => {
+                        tracing::warn!("failed to read shell state dump: {e}");
+                    }
+                    Ok(Err(e)) => {
+                        tracing::warn!("shell state dump task panicked: {e}");
+                    }
+                    // Still no dump an entire grace after the shell was gone:
+                    // the reader is parked on a pipe nothing will ever write to
+                    // (a backgrounded command inherited it). Giving up on it
+                    // closes our end of the pipe, so that command cannot keep a
+                    // reader alive for the whole of its own lifetime.
+                    Err(_elapsed) => {
+                        handle.abort();
+                        tracing::warn!(
+                            "shell state dump did not arrive within {}s of the command \
+                             exiting, keeping the state from before the command",
+                            shell_state::DUMP_COLLECT_TIMEOUT.as_secs()
+                        );
                     }
                 }
             }
@@ -1925,7 +1958,8 @@ impl LocalTerminalActor {
     async fn shutdown_all(&mut self) {
         for (_, process) in self.processes.iter_mut() {
             send_sigkill_to_group(process);
-            // The dump reader's spawn_blocking thread must not outlive the actor.
+            // The dump reader holds our end of the state pipe; it must not
+            // outlive the actor.
             if let Some(handle) = process.state_dump_handle.take() {
                 handle.abort();
             }
@@ -4405,35 +4439,61 @@ mod tests {
         assert_eq!(result.signal.as_deref(), Some("timeout"));
     }
 
+    /// What this pins is output a command produced *before* its deadline: the
+    /// deadline branch reads the pipes, kills the group, and reports what the
+    /// buffer holds. What it cannot pin is how long this host needs to get a
+    /// shell to run the `echo` at all, and the budget has to be bigger than
+    /// that. The shipped path replays the user's shell snapshot per command,
+    /// measured on a box with a heavy `~/.bashrc` at 1.1 s idle and past 2 s in
+    /// the middle of the full suite, where every poll was correct about an
+    /// empty pipe and the deadline fired with the child's marker file still
+    /// absent. A hard-coded 2 s was therefore a load-sensitive coin flip.
+    ///
+    /// The budget comes from the host instead: one command is run to completion
+    /// on the same backend and timed, and the deadline is a multiple of that.
+    /// A slow machine gets a slow deadline; the assertion itself is unchanged.
     #[tokio::test]
     async fn test_output_preserved_on_timeout() {
-        // 2s timeout so the poll loop gets enough ticks to read the echo
-        // before the timeout handler snapshots the buffer.
         let backend = LocalTerminalBackend::new();
         let tmp = tempfile::TempDir::new().unwrap();
 
-        let request = TerminalRunRequest {
-            command: "echo before_timeout; sleep 60".to_string(),
-            working_directory: std::env::temp_dir(),
-            env: HashMap::new(),
-            timeout: Duration::from_secs(2),
-            output_byte_limit: 10000,
-            output_file: tmp.path().join("timeout-output.out"),
-            notification_handle: ToolNotificationHandle::noop(),
-            tool_call_id: "test-timeout-output".to_string(),
-            display_command: None,
-            auto_background_on_timeout: false,
-            foreground_block_budget: None,
-            kind: TaskKind::Bash,
-            owner_session_id: None,
-            description: None,
-        };
+        // Absorbs the one-time snapshot and login-env capture, so the measured
+        // number is the cost of starting one shell, not of the first command.
+        let warm = backend.run(make_request("true")).await.unwrap();
+        assert_eq!(
+            warm.exit_code,
+            Some(0),
+            "warm-up failed: exit={:?} signal={:?} output={:?}",
+            warm.exit_code,
+            warm.signal,
+            warm.combined_output
+        );
+
+        let measured = Instant::now();
+        let sample = backend
+            .run(make_request("echo before_timeout"))
+            .await
+            .unwrap();
+        let startup = measured.elapsed();
+        assert!(
+            sample.combined_output.contains("before_timeout"),
+            "the calibration command did not produce its own output: {:?}",
+            sample.combined_output
+        );
+
+        let mut request = make_request("echo before_timeout; sleep 60");
+        request.output_file = tmp.path().join("timeout-output.out");
+        request.tool_call_id = "test-timeout-output".to_string();
+        request.timeout = (startup * 4).clamp(Duration::from_secs(2), Duration::from_secs(30));
+        let deadline = request.timeout;
 
         let result = backend.run(request).await.unwrap();
-        assert!(result.timed_out);
+        assert!(result.timed_out, "the deadline did not fire");
         assert!(
             result.combined_output.contains("before_timeout"),
-            "Timed-out output should contain 'before_timeout', got: {:?}",
+            "Timed-out output should contain 'before_timeout', got: {:?} \
+             (this host needed {startup:?} to produce that output once, \
+             the deadline was {deadline:?})",
             result.combined_output
         );
     }
@@ -4796,6 +4856,232 @@ mod tests {
             result.combined_output.trim(),
             "hello123",
             "env var should persist across commands"
+        );
+    }
+
+    /// A command slower than the dump-collection grace still has to carry its
+    /// state into the next command.
+    ///
+    /// The grace used to be armed when the command was spawned, so it covered
+    /// shell startup, the command itself, and the drain of a ~450 KB dump through
+    /// a 64 KiB pipe. On a loaded box that adds up to more than the grace, and
+    /// every `cd` / `export` made by such a command was dropped for everything
+    /// that followed it, with a debug line as the only trace. The grace belongs
+    /// to the wait after the shell has exited, which is the only point where a
+    /// silent dump pipe means the dump is not coming.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_persistent_shell_state_survives_a_slow_command() {
+        let backend = LocalTerminalBackend::with_persistent_shell();
+        let scratch = tempfile::TempDir::new().unwrap();
+
+        let slow = format!(
+            "cd '{}'; export GROK_SLOW_CMD_STATE=kept; sleep {}",
+            shell_path(scratch.path()),
+            shell_state::DUMP_COLLECT_TIMEOUT.as_secs() + 1,
+        );
+        let started = Instant::now();
+        let mut request = make_request(&slow);
+        // A 6s command under the default 30s budget is a coin flip in the middle
+        // of the full suite, where a shell can wait a long time for a CPU. The
+        // deadline firing would fail this test for a reason it does not pin.
+        request.timeout = Duration::from_secs(120);
+        let result = backend.run(request).await.unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(
+            result.exit_code,
+            Some(0),
+            "the slow command should have run to completion: {:?}",
+            result.combined_output
+        );
+        assert!(
+            elapsed >= shell_state::DUMP_COLLECT_TIMEOUT,
+            "this test only proves something if the command outlives the \
+             collection grace: it took {elapsed:?}, the grace is {:?}",
+            shell_state::DUMP_COLLECT_TIMEOUT
+        );
+
+        let result = backend
+            .run(make_request("pwd; echo \"state=$GROK_SLOW_CMD_STATE\""))
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, Some(0));
+        assert!(
+            result.combined_output.contains("state=kept"),
+            "the export made by the slow command should persist, got: {:?}",
+            result.combined_output
+        );
+        let pwd = result
+            .combined_output
+            .lines()
+            .find(|line| line.starts_with('/'))
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        assert!(
+            pwd_reports_dir(&pwd, scratch.path()),
+            "the cd made by the slow command should persist, got: {pwd:?}"
+        );
+    }
+
+    /// How busy the machine was, for the failure messages of the tests that time
+    /// a hand-over. Every bound they assert is a timer in this process, so a host
+    /// running several times its core count can starve the very timer under test;
+    /// the load average in the message is what separates that from a real defect.
+    #[cfg(unix)]
+    fn host_load() -> String {
+        std::fs::read_to_string("/proc/loadavg")
+            .map(|contents| contents.trim().to_owned())
+            .unwrap_or_else(|_| "load average unavailable".to_owned())
+    }
+
+    /// A backgrounded command inherits the dump pipe, so a shell that dies
+    /// before writing its dump leaves the reader on a pipe that is neither
+    /// written to nor closed. The reader no longer carries a clock of its own,
+    /// which makes the bound at the collect the only thing between one wedged
+    /// pipe and a stalled reply: the dump is collected before the reply goes out
+    /// (the next command spawns from that state), so unbounded, the command that
+    /// died stays unanswered until the grandchild lets go.
+    ///
+    /// What settles it is not how long the reply took but who was still holding
+    /// the pipe when it arrived. The sleeper outlives the grace by a wide
+    /// margin, so a reply that lands while it is alive can only have come from
+    /// the bound; the outer timeout is the backstop for a reply that never comes.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_wedged_dump_pipe_does_not_stall_the_reply() {
+        let backend = LocalTerminalBackend::with_persistent_shell();
+        let scratch = tempfile::TempDir::new().unwrap();
+        let pidfile = scratch.path().join("bg.pid");
+
+        // The sleeper holds the inherited dump pipe open; the shell then kills
+        // itself, so the dump it owes never arrives.
+        let mut request = make_request(&format!(
+            "sleep 120 & echo $! > '{}'; kill -9 $$",
+            shell_path(&pidfile)
+        ));
+        // Past the backstop below, so the command's own deadline cannot be what
+        // answers: the only reply that can arrive first is the one the exit and
+        // the grace produce.
+        request.timeout = Duration::from_secs(240);
+        let load = host_load();
+        let started = std::time::Instant::now();
+        let replied = tokio::time::timeout(Duration::from_secs(150), backend.run(request)).await;
+        let elapsed = started.elapsed();
+
+        // Read the holder's pid and whether it still existed at the moment the
+        // reply came back, then let go of it before anything asserts: a failure
+        // here must not also be a wait out the sleeper's remaining time.
+        let holder = std::fs::read_to_string(&pidfile)
+            .ok()
+            .and_then(|contents| contents.trim().parse::<i32>().ok());
+        let held_the_pipe = holder.is_some_and(|pid| {
+            nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), None).is_ok()
+        });
+        if let Some(pid) = holder {
+            let _ = nix::sys::signal::kill(
+                nix::unistd::Pid::from_raw(pid),
+                nix::sys::signal::Signal::SIGKILL,
+            );
+        }
+
+        let result = replied
+            .expect(
+                "the reply has to come back on the collection grace, not when the \
+                 backgrounded command finally releases the dump pipe",
+            )
+            .unwrap();
+        assert_eq!(
+            result.signal.as_deref(),
+            Some("signal 9"),
+            "the shell should have killed itself before writing its dump, got \
+             exit={:?} signal={:?}",
+            result.exit_code,
+            result.signal
+        );
+        assert!(
+            held_the_pipe,
+            "the reply only arrived once the backgrounded command had released the dump pipe \
+             (elapsed {elapsed:?}, load average at start: {load}) so nothing bounded the wait \
+             for a dump that never arrives; every bound here is a timer in this process, so a \
+             host saturated far past its core count can starve the timer being measured"
+        );
+
+        let follow_up = backend.run(make_request("echo alive")).await.unwrap();
+        assert!(
+            follow_up.combined_output.contains("alive"),
+            "the next command should still run, got: {:?}",
+            follow_up.combined_output
+        );
+    }
+
+    /// Giving up on a dump has to close our end of the pipe, or the wait is only
+    /// deferred: whatever inherited the write end keeps the reader alive for the
+    /// whole of its own lifetime, and a killed command that had backgrounded
+    /// something is one such holder per command.
+    ///
+    /// The holder here writes into fd 4 once a second for a minute. With our read
+    /// end open those writes succeed and the holder lives; the moment it is closed
+    /// the next write raises SIGPIPE and the holder dies. Its death is therefore
+    /// the observation, and it needs no cooperation from the holder, which cannot
+    /// report anything once the pipe has refused it.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_giving_up_on_the_dump_releases_the_pipe() {
+        let backend = LocalTerminalBackend::with_persistent_shell();
+        let scratch = tempfile::TempDir::new().unwrap();
+        let pidfile = scratch.path().join("tick.pid");
+
+        // Bounded on purpose: a holder that outlived the wait below would
+        // otherwise stay behind whatever this test asserts.
+        let request = make_request(&format!(
+            "( for i in {{1..60}}; do echo tick >&4; sleep 1; done ) & echo $! > '{}'; kill -9 $$",
+            shell_path(&pidfile),
+        ));
+        let load = host_load();
+        let result = backend.run(request).await.unwrap();
+        assert_eq!(
+            result.signal.as_deref(),
+            Some("signal 9"),
+            "the shell should have killed itself before writing its dump, got \
+             exit={:?} signal={:?}",
+            result.exit_code,
+            result.signal
+        );
+
+        let holder = std::fs::read_to_string(&pidfile)
+            .ok()
+            .and_then(|contents| contents.trim().parse::<i32>().ok())
+            .expect("the command should have left the holder's pid behind");
+        assert!(
+            nix::sys::signal::kill(nix::unistd::Pid::from_raw(holder), None).is_ok(),
+            "the holder was already gone when the reply came back, so either its end of the \
+             dump pipe was closed while the command was still being answered or it stopped on \
+             its own; the close below needs it alive to be observed (load average at start: \
+             {load})"
+        );
+
+        // The actor waits the grace out after the shell is gone, so the first
+        // refused write lands a tick after that; the bound is how long a correct
+        // actor is allowed to be late by before this stops being about the pipe.
+        let began = std::time::Instant::now();
+        let bound = Duration::from_secs(20);
+        while nix::sys::signal::kill(nix::unistd::Pid::from_raw(holder), None).is_ok()
+            && began.elapsed() < bound
+        {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        let gone_at = began.elapsed();
+        let _ = nix::sys::signal::kill(
+            nix::unistd::Pid::from_raw(holder),
+            nix::sys::signal::Signal::SIGKILL,
+        );
+        assert!(
+            gone_at < bound,
+            "the holder was still writing into the dump pipe {gone_at:?} after the command \
+             exited: the reader was left on it instead of being given up on with the wait, \
+             so this command still had someone holding its pipe open (load average at start: \
+             {load})"
         );
     }
 

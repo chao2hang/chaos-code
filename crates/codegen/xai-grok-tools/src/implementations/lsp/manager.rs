@@ -804,27 +804,39 @@ mod tests {
     }
 
     /// The header is read by a person who then has to open that file, so it has
-    /// to be a path and not a URI with its scheme hacked off. The escaped space
-    /// survives slicing on every platform; on Windows the leftover leading `/`
-    /// also turned `C:\dir\a.cs` into `/C:/dir/a.cs`, which resolves under the
-    /// root of whatever drive is current.
+    /// to be a path and not a URI with its scheme hacked off. Slicing went wrong
+    /// twice over: the percent escapes in a name like `a b.cs` survived on every
+    /// platform, and on Windows the `/` left in front of `C:/dir/a.cs` resolves
+    /// under the root of whatever drive happens to be current.
+    ///
+    /// The URI is made by [`file_uri`] from a path this host can name, rather
+    /// than written out, because `file:///dir/a b.cs` is not a file on Windows
+    /// at all: a URI the platform cannot resolve proves nothing about the header
+    /// a Windows reader actually sees. `file:///C:/dir/a%20b.cs`, the form a
+    /// Windows server really sends, is the next test.
     #[test]
     fn a_header_decodes_the_uri_instead_of_cutting_the_scheme_off() {
+        let sep = std::path::MAIN_SEPARATOR;
+        let drive = if cfg!(windows) { "C:" } else { "" };
+        let path = PathBuf::from(format!("{drive}{sep}dir{sep}a b.cs"));
+        let uri = super::file_uri(&path).expect("a native path makes a file uri");
+        assert!(
+            uri.as_str().contains("%20"),
+            "the fixture has to arrive escaped for this to mean anything: {uri}"
+        );
+
         let mut collected = CollectedDiagnostics::default();
-        collected.append_file("file:///dir/a%20b.cs", errors(1));
+        collected.append_file(uri.as_str(), errors(1));
 
         let header = collected.lines[0].trim_end_matches(':');
+        assert_eq!(
+            header,
+            path.display().to_string(),
+            "the header is not the native path the reader has to open"
+        );
         assert!(
             !header.contains("%20"),
             "the reader was handed the escaped form: {header}"
-        );
-        // Checked as a suffix in this host's separator, so the assertion says
-        // "a native path to this file" without pinning how a scheme-less
-        // `file:///dir/` looks on each platform.
-        let sep = std::path::MAIN_SEPARATOR;
-        assert!(
-            header.ends_with(&format!("{sep}dir{sep}a b.cs")),
-            "{header} is not a path a reader can open"
         );
         assert_eq!(
             std::path::Path::new(header)
@@ -833,5 +845,42 @@ mod tests {
             Some("a b.cs"),
             "{header} does not name the file these diagnostics are about"
         );
+    }
+
+    /// The same decode run on the URI a Windows language server sends. The drive
+    /// letter only becomes a path a host can open on Windows, but the escapes
+    /// have to be gone wherever the decoding happens, and no host should be
+    /// shown a scheme or a `%20`.
+    #[test]
+    fn a_windows_document_uri_arrives_decoded_and_without_its_scheme() {
+        let mut collected = CollectedDiagnostics::default();
+        collected.append_file("file:///C:/dir/a%20b.cs", errors(1));
+
+        let header = collected.lines[0].trim_end_matches(':');
+        assert!(
+            !header.contains("%20"),
+            "the reader was handed the escaped form: {header}"
+        );
+        assert!(
+            !header.contains("file:"),
+            "the header is still a uri, so the decode gave up: {header}"
+        );
+        let sep = std::path::MAIN_SEPARATOR;
+        assert!(
+            header.ends_with(&format!("C:{sep}dir{sep}a b.cs")),
+            "{header} is not where the document is"
+        );
+    }
+
+    /// A URI that names no file anywhere is shown as it arrived. That is a
+    /// worse header than a path, but it is the truth; cutting the scheme off
+    /// regardless is how `/C:/dir/a.cs`, a path pointing at the root of the
+    /// current drive, once reached a reader.
+    #[test]
+    fn a_uri_that_names_no_file_is_left_alone() {
+        let mut collected = CollectedDiagnostics::default();
+        collected.append_file("untitled:Untitled-1%20a.cs", errors(1));
+
+        assert_eq!(collected.lines[0], "untitled:Untitled-1%20a.cs:");
     }
 }

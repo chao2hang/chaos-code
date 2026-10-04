@@ -526,3 +526,176 @@ M4b is worth keeping in the record for the shape of the failure rather than its 
 attempt at it was reported as "killed" by a driver that only looked for `FAIL:` lines, and what had
 actually happened was an import-time error and zero tests run. A mutation harness that cannot tell
 "the tests failed" from "the tests never ran" is the same bug this section is about, one layer up.
+
+== 12. 2026-10-04, latest: a marker the roster was missing, and the 25 rows it rewrote
+
+The full sweep went red on this gate for the first time since it was written. The trigger was the
+three new `#[cfg(unix)]` tests in `crates/codegen/xai-grok-tools/src/computer/local/terminal.rs`
+recorded in section 5 of `docs/verification/shell-state-dump-grace-2026-10-04.log`. Two of them
+carried a platform assumption already: both call `nix::sys::signal::Signal::SIGKILL` to clean up a
+backgrounded sleeper, which the `signal` marker sees. The third,
+`test_persistent_shell_state_survives_a_slow_command`, came out `none`, which named it as a candidate
+to un-gate and put the count at 442 against a budget of 441.
+
+Three ways out exist and two are closed by construction. The budget cannot go up; that is the design.
+The test cannot be un-gated: it asserts that a `cd` and an `export` made by a command outlive that
+command, and the state arrives through a pipe the shell inherits, which has no Windows counterpart to
+write the assertion against. So the row had to carry an assumption and the roster had to be able to
+see one. It could not, and the reason is visible in the marker it was graded against:
+
+    ("shell", r"\b(sh|bash|zsh|fish)\s+-c\b|/bin/(sh|bash)|\b(command -v|type -a|ulimit)\b"),
+
+The roster recognised a shell only where the test writes the interpreter's own name. The new tests
+never name one: they hand a command string to `LocalTerminalBackend::run` and the code under test
+picks the shell. The gap is not limited to new tests. It also covers
+
+    .args(["-c", "kill -ABRT $$"])
+
+in `crates/codegen/xai-grok-pager/src/app/mermaid_worker.rs`, where the interpreter name and the
+`-c` are two separate function arguments and no two-token pattern can reach across what sits between
+them.
+
+A `posix-shell` marker was therefore added for the shell's own syntax, whether it arrives as a
+command string or as the content of an rc file the code under test will source:
+
+    ("posix-shell", r"\bexport\s+[A-Za-z_][A-Za-z0-9_]*\s*=|\bunset\s+[A-Za-z_][A-Za-z0-9_]*\b"
+                    r"|\bkill\s+-[0-9]\b|\$\$|\$!"),
+
+The documented asymmetry for this column is that a marker firing on a portable test costs one
+unnamed row, while a marker missing from a test that genuinely needs the shell makes the gate demand
+cross-platform work from something that cannot run there. That asymmetry is why the roster is broad,
+but it is not a reason to add a marker that says nothing, so every match it produced was printed
+together with the line that fired, and all 28 were read. The shapes found, one per line:
+
+    xai-grok-mcp/src/servers_tests.rs
+        cmd.args(["-c", "sleep 600 & echo $!; wait"])
+    xai-grok-pager/src/app/mermaid_worker.rs
+        .args(["-c", "kill -ABRT $$"])
+    xai-grok-pager/tests/pty_e2e/background_task_reaped_on_quit.rs
+        "echo $$ > {pid}; /bin/sleep {SLEEP_SECS} 2> {err}; echo rc=$? > {done}"
+    xai-grok-shell-terminal/src/pty_session.rs
+        write_pty_input(&pty_id, b"sleep 300 & echo pid=$!\n")
+    xai-grok-workspace/src/envrc.rs
+        fs::write(dir.path().join(".envrc"), "export FOO=bar\nsleep 5 &\n")
+    xai-grok-tools/src/computer/local/terminal.rs
+        .run(make_request("export GROK_PERSIST_TEST=hello123"))
+
+26 of the 28 are a command string handed to something that runs it. Two are the content of a shell rc
+file: `std::fs::write(&rc, "export KEEP=1\n")` where `rc` is `home/.bashrc`, and
+`let original = b"export KEEP=1\r\n";` for a `config.rc` whose mode bits and backup bytes are what
+that test is about. In the second the shell never runs at all, and the accurate reading of the label
+is that the fixture's syntax is POSIX shell syntax, not that a shell is executed. Both rows already
+carry `file-mode` and `unix-ext-trait` from their own bodies, so neither one moved from named to
+unnamed.
+
+The named list moved the way a correct marker moves it:
+
+    $ python3 scripts/ci/platform-gated-tests.py --quiet --list-assumption-free | wc -l
+    427
+
+    named before the marker: 442
+    named after the marker:  427
+    rows the marker excuses:  15
+    rows newly named:          0
+
+The fifteen: `dropping_the_spawn_guard_kills_grandchildren`,
+`map_run_result_distinguishes_crash_watchdog_from_render_error`,
+`test_timeout_kills_grandchildren_and_returns_promptly`,
+`graceful_termination_escalates_when_sigterm_is_ignored`,
+`graceful_termination_exits_without_escalation`,
+`panic_like_owner_drop_kills_direct_child_and_grandchild`,
+`wait_timeout_then_hard_kill_reaps_grandchild_tree`, `test_non_persistent_shell_no_state`,
+`test_persistent_shell_env_var_persists`, `test_persistent_shell_state_survives_a_slow_command`,
+`test_persistent_shell_variable_capture`, `background_child_does_not_discard_env`,
+`chatty_background_child_does_not_discard_env`, `sentinel_named_variable_does_not_truncate_env`,
+`dropping_the_future_group_kills_grandchildren`.
+
+What was not predicted is that adding a marker rewrites the ledger instead of only adding to it.
+The `assumptions` column is part of a row's identity, so every row whose label gained `posix-shell`
+stopped matching its own line in the baseline, and the message the gate has for an identity change is
+written for the case the identity exists to catch:
+
+    $ python3 scripts/ci/platform-gated-tests.py --quiet \
+          --check-baseline {SCRATCH}/ledger-before.tsv \
+          --max-unreviewed 1106 --max-blind-windows 74 --max-blind-macos 11 \
+          --max-assumption-free 441
+    FAIL: stale baseline row crates/codegen/xai-tty-utils/src/lib.rs:1856
+          process_group_kill_reaps_grandchild_tree; the test is now
+          crates/codegen/xai-tty-utils/src/lib.rs process_group_kill_reaps_grandchild_tree
+          [cfg-gate] runs on linux+macos+other-unix only assumptions=file-name;posix-shell;signal
+    FAIL: unlisted platform-gated test crates/codegen/xai-tty-utils/src/lib.rs:1856
+          process_group_kill_reaps_grandchild_tree runs on linux+macos+other-unix only
+    ...
+    25 stale baseline row, 28 unlisted platform-gated test
+    53 problem(s)
+    (rc=1)
+
+The same row appears twice, once as missing and once as stale, because a row matching nothing is
+both. The fixture suite went red at the same moment for the same reason: three of its cases run the
+live check against the shipped ledger and assert rc 0, so `Ran 42 tests ... FAILED (failures=3)` was
+this drift read out through the self-test rather than a second defect.
+
+Re-deriving is the supported answer, and the diff it produces is what shows whether a widening was
+honest:
+
+    $ python3 scripts/ci/platform-gated-tests.py --write-baseline scripts/ci/platform-gated-tests.tsv
+    wrote 1109 rows to scripts/ci/platform-gated-tests.tsv
+
+    rows before: 1106, after: 1109
+    added rows: 3, all three new tests in terminal.rs
+    removed rows: 0
+    assumptions column changed: 25 rows, each gaining posix-shell and nothing else
+    line hints moved: 19
+    reasons changed: 0
+
+Nothing left the ledger, which is the property that matters: a marker can excuse a row from the
+named list, it cannot delete the gating the row records. The three new rows were then given written
+reasons instead of the import marker, so `--max-unreviewed` stays at 1106 rather than rising to 1109:
+
+    test_persistent_shell_state_survives_a_slow_command
+        asserts state carried by the persistent-shell dump arriving over the fd 3/fd 4 pipe the
+        shell inherits, driven through `export`/`cd` command strings; neither the pipe hand-over
+        nor that shell syntax exists on Windows
+    test_wedged_dump_pipe_does_not_stall_the_reply
+        wedges the dump pipe by backgrounding a `sleep 120` that outlives the grace, which only
+        POSIX pipe semantics can do (no data and no EOF on our read end); asserts the give-up
+        bound still releases the reply
+    test_giving_up_on_the_dump_releases_the_pipe
+        the observation is SIGPIPE killing a holder that writes into the inherited fd 4 once our
+        read end is closed, so it needs POSIX pipe and signal semantics, not just a shell
+
+The named count is 427 now, so both call sites say 427 and no more:
+
+    $ grep -rn "max-assumption-free" .github/workflows/ci.yml scripts/verify-in-docker.sh
+    .github/workflows/ci.yml:742:            --max-assumption-free 427
+    scripts/verify-in-docker.sh:167:  "platform-gated tests: ... --max-assumption-free 427"
+
+and all four caps still bite, each one lowered against the live tree:
+
+    $ python3 scripts/ci/platform-gated-tests.py --quiet \
+          --check-baseline scripts/ci/platform-gated-tests.tsv \
+          --max-unreviewed 1105 --max-blind-windows 73 --max-blind-macos 10 \
+          --max-assumption-free 426
+    FAIL: 1106 rows still carry the import marker, over the budget of 1105
+    FAIL: 74 files have platform-gated tests and nothing that runs on Windows, over the budget of 73
+    FAIL: 11 files have platform-gated tests and nothing that runs on macOS, over the budget of 10
+    FAIL: 427 gated tests show no platform assumption in their body, over the budget of 426; ...
+    4 problem(s)
+    (rc=1)
+
+At the shipped four numbers the same command prints nothing and exits 0. The fixture suite grew by
+one case: a test whose body is the command string `"export GROK_STATE=kept; kill -9 $$"`, which must
+carry `posix-shell` and must not appear in `--list-assumption-free`. Its counter-case was already in
+the suite -- a body with no POSIX spelling in it stays named.
+
+    $ python3 scripts/ci/test-platform-gated-tests.py
+    Ran 42 tests in 14.826s
+
+    OK
+
+What was not changed: the 1106 import markers, the two blind-file caps (74 and 11, neither moved),
+the shape of the ledger, or a single platform gate. No test was un-gated here. What changed is that
+15 rows stopped being called un-gating candidates on evidence a reader can check, which is the only
+form of that list anyone reads: a list that names `kill -9 $$` and `echo $!` as portable gets
+discarded, and the gating it was meant to pressure survives exactly because nobody argues with it
+line by line.
